@@ -1106,7 +1106,7 @@ func (gw *GatewayManager) Cleanup() error {
 		nextHops = append(nextHops, gwIPAddr.IP)
 	}
 	gw.staticRouteCleanup(nextHops, nil)
-	gw.policyRouteCleanup(nextHops)
+	gw.PolicyRouteCleanup(nextHops)
 
 	// Remove the patch port that connects join switch to gateway router
 	lsp := nbdb.LogicalSwitchPort{Name: portName}
@@ -1200,13 +1200,13 @@ func (gw *GatewayManager) staticRouteCleanup(nextHops []net.IP, ipPrefix *net.IP
 	}
 }
 
-// policyRouteCleanup cleans up all policies on cluster router that have a nextHop
+// PolicyRouteCleanup cleans up all policies on cluster router that have a nextHop
 // in the provided list.
 // - if the LRP exists and has the len(nexthops) > 1: it removes
 // the specified gatewayRouterIP from nexthops
 // - if the LRP exists and has the len(nexthops) == 1: it removes
 // the LRP completely
-func (gw *GatewayManager) policyRouteCleanup(nextHops []net.IP) {
+func (gw *GatewayManager) PolicyRouteCleanup(nextHops []net.IP) {
 	for _, nextHop := range nextHops {
 		gwIP := nextHop.String()
 		policyPred := func(item *nbdb.LogicalRouterPolicy) bool {

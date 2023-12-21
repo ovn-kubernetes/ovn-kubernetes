@@ -23,6 +23,7 @@ import (
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
+	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	testnm "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/networkmanager"
@@ -798,6 +799,7 @@ func expectedLayer3EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 	const (
 		routerPolicyUUID1 = "lrpol1-UUID"
 		routerPolicyUUID2 = "lrpol2-UUID"
+		routerPolicyUUID3 = "lrpol3-UUID"
 		staticRouteUUID1  = "sr1-UUID"
 		staticRouteUUID2  = "sr2-UUID"
 		staticRouteUUID3  = "sr3-UUID"
@@ -826,7 +828,7 @@ func expectedLayer3EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 			UUID:         clusterRouterName + "-UUID",
 			Ports:        []string{rtosLRPUUID},
 			StaticRoutes: []string{staticRouteUUID1, staticRouteUUID2},
-			Policies:     []string{routerPolicyUUID1, routerPolicyUUID2},
+			Policies:     []string{routerPolicyUUID1, routerPolicyUUID2, routerPolicyUUID3},
 			ExternalIDs:  standardNonDefaultNetworkExtIDs(netInfo),
 			Nat:          []string{masqSNATUUID1},
 		},
@@ -835,9 +837,30 @@ func expectedLayer3EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 		expectedGRStaticRoute(staticRouteUUID2, gwRouterJoinIPAddress().IP.String(), gwRouterJoinIPAddress().IP.String(), nil, nil, netInfo),
 		expectedLogicalRouterPolicy(routerPolicyUUID1, netInfo, nodeName, nodeIP, managementPortIP(nodeSubnet).String()),
 		expectedLogicalRouterPolicy(routerPolicyUUID2, netInfo, nodeName, masqIPAddr, managementPortIP(nodeSubnet).String()),
+		expectedNodeLogicalRouterPolicy(routerPolicyUUID3, netInfo, nodeName, managementPortIP(nodeSubnet).String(), nodeName),
 		masqSNAT,
 	}
 	return expectedEntities
+}
+
+func expectedNodeLogicalRouterPolicy(routerPolicyUUID1 string, netInfo util.NetInfo, nodeName, nextHop, targetNodeName string) *nbdb.LogicalRouterPolicy {
+	const (
+		priority      = 1500
+		rerouteAction = "reroute"
+	)
+
+	controllerName := getNetworkControllerName(netInfo.GetNetworkName())
+	dbIDs := getNodeIPAddrSetDbIDs(targetNodeName, controllerName)
+	v4NodeIPAddrSetHash, _ := addressset.GetHashNamesForAS(dbIDs)
+
+	return &nbdb.LogicalRouterPolicy{
+		UUID:        routerPolicyUUID1,
+		Action:      rerouteAction,
+		ExternalIDs: standardNonDefaultNetworkExtIDs(netInfo),
+		Match:       fmt.Sprintf(`ip4.dst == $%s /* %s */`, v4NodeIPAddrSetHash, nodeName),
+		Nexthops:    []string{nextHop},
+		Priority:    priority,
+	}
 }
 
 func expectedLogicalRouterPolicy(routerPolicyUUID1 string, netInfo util.NetInfo, nodeName, destIP, nextHop string) *nbdb.LogicalRouterPolicy {

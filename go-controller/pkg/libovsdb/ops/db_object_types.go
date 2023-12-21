@@ -33,6 +33,7 @@ const (
 	MulticastClusterOwnerType   ownerType = "MulticastCluster"
 	NetpolNodeOwnerType         ownerType = "NetpolNode"
 	NetpolNamespaceOwnerType    ownerType = "NetpolNamespace"
+	DefaultNodeOwnerType        ownerType = "DefaultNode"
 	VirtualMachineOwnerType     ownerType = "VirtualMachine"
 	UDNEnabledServiceOwnerType  ownerType = "UDNEnabledService"
 	// NetworkPolicyPortIndexOwnerType is the old version of NetworkPolicyOwnerType, kept for sync only
@@ -137,6 +138,12 @@ var AddressSetEgressService = newObjectIDsType(addressSet, EgressServiceOwnerTyp
 
 var AddressSetUDNEnabledService = newObjectIDsType(addressSet, UDNEnabledServiceOwnerType, []ExternalIDKey{
 	// cluster-wide address set name
+	ObjectNameKey,
+	IPFamilyKey,
+})
+
+var AddressSetNode = newObjectIDsType(addressSet, DefaultNodeOwnerType, []ExternalIDKey{
+	// per node address set name
 	ObjectNameKey,
 	IPFamilyKey,
 })

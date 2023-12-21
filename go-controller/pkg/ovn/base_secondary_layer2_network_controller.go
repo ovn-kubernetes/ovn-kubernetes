@@ -216,6 +216,8 @@ func (oc *BaseSecondaryLayer2NetworkController) syncNodes(nodes []interface{}) e
 			return fmt.Errorf("spurious object in syncNodes: %v", tmp)
 		}
 
+		// TODO(trozet): handle sync for stale host route policies
+
 		// Add the node to the foundNodes only if it belongs to the local zone.
 		if oc.isLocalZoneNode(node) {
 			oc.localZoneNodes.Store(node.Name, true)

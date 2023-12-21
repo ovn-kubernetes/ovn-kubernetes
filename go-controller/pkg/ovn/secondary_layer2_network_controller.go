@@ -167,6 +167,7 @@ func (h *secondaryLayer2NetworkControllerEventHandler) UpdateResource(oldObj, ne
 		}
 		newNodeIsLocalZoneNode := h.oc.isLocalZoneNode(newNode)
 		nodeSubnetChange := nodeSubnetChanged(oldNode, newNode, h.oc.GetNetworkName())
+		hostIPsChanged := hostCIDRsChanged(oldNode, newNode)
 		if newNodeIsLocalZoneNode {
 			var nodeSyncsParam *nodeSyncs
 			if h.oc.isLocalZoneNode(oldNode) {
@@ -176,7 +177,7 @@ func (h *secondaryLayer2NetworkControllerEventHandler) UpdateResource(oldObj, ne
 				_, gwUpdateFailed := h.oc.gatewaysFailed.Load(newNode.Name)
 				shouldSyncGW := gwUpdateFailed ||
 					gatewayChanged(oldNode, newNode) ||
-					hostCIDRsChanged(oldNode, newNode) ||
+					hostIPsChanged ||
 					nodeGatewayMTUSupportChanged(oldNode, newNode)
 				_, syncRerouteFailed := h.oc.syncEIPNodeRerouteFailed.Load(newNode.Name)
 				shouldSyncReroute := syncRerouteFailed || util.NodeHostCIDRsAnnotationChanged(oldNode, newNode)
@@ -199,6 +200,7 @@ func (h *secondaryLayer2NetworkControllerEventHandler) UpdateResource(oldObj, ne
 			return h.oc.addUpdateLocalNodeEvent(newNode, nodeSyncsParam)
 		} else {
 			_, syncZoneIC := h.oc.syncZoneICFailed.Load(newNode.Name)
+			syncZoneIC = syncZoneIC || hostIPsChanged
 			return h.oc.addUpdateRemoteNodeEvent(newNode, syncZoneIC)
 		}
 	case factory.PodType:
@@ -715,17 +717,80 @@ func (oc *SecondaryLayer2NetworkController) addPortForRemoteNodeGR(node *corev1.
 	if err != nil {
 		return fmt.Errorf("failed to create port %v on logical switch %q: %v", logicalSwitchPort, sw.Name, err)
 	}
+
+	joinV4 := nodeJoinSubnetIPs[0].IP
+	var joinV6 net.IP
+	if len(nodeJoinSubnetIPs) > 1 {
+		joinV6 = nodeJoinSubnetIPs[1].IP
+	}
+	if err := oc.createHostAccessReroute(node, joinV4, joinV6); err != nil {
+		oc.syncZoneICFailed.Store(node.Name, true)
+		return err
+	}
+
 	return nil
 }
 
 func (oc *SecondaryLayer2NetworkController) deleteNodeEvent(node *corev1.Node) error {
-	if err := oc.gatewayManagerForNode(node.Name).Cleanup(); err != nil {
+	klog.V(5).Infof("Deleting Node %q for network %s. Removing the node from "+
+		"various caches", node.Name, oc.GetNetworkName())
+
+	v4Mgmt, v6Mgmt, err := oc.getManagementPortIPs(node)
+	if err != nil {
+		return fmt.Errorf("failed to clean up host access route policies via mp0 for node %q, error: %w", node.Name, err)
+	}
+	var mgmtIPs []net.IP
+
+	if v4Mgmt != nil {
+		mgmtIPs = append(mgmtIPs, v4Mgmt)
+	}
+	if v6Mgmt != nil {
+		mgmtIPs = append(mgmtIPs, v6Mgmt)
+	}
+
+	gwManager := oc.newGatewayManager(node.Name)
+
+	// cleanup route policy towards mp0
+	if len(mgmtIPs) > 0 {
+		gwManager.PolicyRouteCleanup(mgmtIPs)
+	}
+
+	if config.OVNKubernetesFeature.EnableInterconnect {
+		if err := oc.cleanupHostAccessRoutePolicies(node); err != nil {
+			return err
+		}
+	}
+
+	if err := gwManager.Cleanup(); err != nil {
 		return fmt.Errorf("failed to cleanup gateway on node %q: %w", node.Name, err)
 	}
 	oc.gatewayManagers.Delete(node.Name)
 	oc.localZoneNodes.Delete(node.Name)
 	oc.mgmtPortFailed.Delete(node.Name)
 	oc.syncEIPNodeRerouteFailed.Delete(node.Name)
+	return nil
+}
+
+func (oc *SecondaryLayer2NetworkController) cleanupHostAccessRoutePolicies(node *corev1.Node) error {
+	// cleanup reroute policies towards join ips for host access
+	v4Join, v6Join, err := oc.getJoinIPs(node)
+	if err != nil {
+		return err
+	}
+
+	var joinIPs []net.IP
+
+	if v4Join != nil {
+		joinIPs = append(joinIPs, v4Join)
+	}
+	if v6Join != nil {
+		joinIPs = append(joinIPs, v6Join)
+	}
+
+	// cleanup route policy towards mp0
+	if len(joinIPs) > 0 {
+		oc.newGatewayManager(node.Name).PolicyRouteCleanup(joinIPs)
+	}
 	return nil
 }
 

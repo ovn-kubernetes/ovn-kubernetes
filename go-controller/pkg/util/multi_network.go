@@ -76,6 +76,7 @@ type NetInfo interface {
 	GetNetworkScopedClusterRouterName() string
 	GetNetworkScopedGWRouterName(nodeName string) string
 	GetNetworkScopedSwitchName(nodeName string) string
+	GetNetworkScopedSwitchToRouterPortName(nodeName string) string
 	GetNetworkScopedJoinSwitchName() string
 	GetNetworkScopedExtSwitchName(nodeName string) string
 	GetNetworkScopedPatchPortName(bridgeID, nodeName string) string
@@ -519,6 +520,10 @@ func (nInfo *DefaultNetInfo) GetNetworkScopedSwitchName(nodeName string) string 
 	return nInfo.GetNetworkScopedName(nodeName)
 }
 
+func (nInfo *DefaultNetInfo) GetNetworkScopedSwitchToRouterPortName(nodeName string) string {
+	return types.SwitchToRouterPrefix + nInfo.GetNetworkScopedName(nodeName)
+}
+
 func (nInfo *DefaultNetInfo) GetNetworkScopedJoinSwitchName() string {
 	return nInfo.GetNetworkScopedName(types.OVNJoinSwitch)
 }
@@ -712,6 +717,13 @@ func (nInfo *secondaryNetInfo) GetNetworkScopedSwitchName(nodeName string) strin
 		return fmt.Sprintf("%s%s", nInfo.getPrefix(), types.OVNLayer2Switch)
 	}
 	return nInfo.GetNetworkScopedName(nodeName)
+}
+
+func (nInfo *secondaryNetInfo) GetNetworkScopedSwitchToRouterPortName(nodeName string) string {
+	if nInfo.TopologyType() == types.Layer2Topology {
+		return fmt.Sprintf("%s%s%s_%s", types.SwitchToRouterPrefix, nInfo.getPrefix(), types.OVNLayer2Switch, nodeName)
+	}
+	return types.SwitchToRouterPrefix + nInfo.GetNetworkScopedName(nodeName)
 }
 
 func (nInfo *secondaryNetInfo) GetNetworkScopedJoinSwitchName() string {

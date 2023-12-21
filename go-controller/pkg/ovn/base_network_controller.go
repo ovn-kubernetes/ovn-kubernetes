@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -728,7 +729,7 @@ func (bnc *BaseNetworkController) syncNodeManagementPort(node *corev1.Node, swit
 		macAddress = util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(hostSubnets[0]).IP)
 	}
 
-	var v4Subnet *net.IPNet
+	var v4Subnet, v4Mgmt, v6Mgmt *net.IPNet
 	addresses := macAddress.String()
 	mgmtPortIPs := []net.IP{}
 	for _, hostSubnet := range hostSubnets {
@@ -742,6 +743,9 @@ func (bnc *BaseNetworkController) syncNodeManagementPort(node *corev1.Node, swit
 
 		if !utilnet.IsIPv6CIDR(hostSubnet) {
 			v4Subnet = hostSubnet
+			v4Mgmt = mgmtIfAddr
+		} else {
+			v6Mgmt = mgmtIfAddr
 		}
 		if config.Gateway.Mode == config.GatewayModeLocal {
 			lrsr := nbdb.LogicalRouterStaticRoute{
@@ -791,7 +795,102 @@ func (bnc *BaseNetworkController) syncNodeManagementPort(node *corev1.Node, swit
 		}
 	}
 
+	var v4MgmtIP, v6MgmtIP net.IP
+	if v4Mgmt != nil {
+		v4MgmtIP = v4Mgmt.IP
+	}
+
+	if v6Mgmt != nil {
+		v6MgmtIP = v6Mgmt.IP
+	}
+
+	// Add routes for node IPs to this node
+	if err := bnc.createHostAccessReroute(node, v4MgmtIP, v6MgmtIP); err != nil {
+		return nil, fmt.Errorf("failed to create host access reroute policy for node %q: %w", node.Name, err)
+	}
+
 	return mgmtPortIPs, nil
+}
+
+func (bnc *BaseNetworkController) createHostAccessReroute(node *corev1.Node, v4nexthop, v6nexthop net.IP) error {
+	// Add routes for node IPs to this node
+	v4NodeAddrs, v6NodeAddrs, err := util.GetNodeAddresses(config.IPv4Mode, config.IPv6Mode, node)
+	if err != nil {
+		return err
+	}
+	allAddresses := make([]string, 0, len(v4NodeAddrs)+len(v6NodeAddrs))
+	for _, ipAddr := range v4NodeAddrs {
+		allAddresses = append(allAddresses, ipAddr.String())
+	}
+	for _, ipAddr := range v6NodeAddrs {
+		allAddresses = append(allAddresses, ipAddr.String())
+	}
+
+	var as addressset.AddressSet
+
+	dbIDs := getNodeIPAddrSetDbIDs(node.Name, bnc.controllerName)
+	if as, err = bnc.addressSetFactory.EnsureAddressSet(dbIDs); err != nil {
+		return fmt.Errorf("cannot ensure that addressSet %s exists %v", dbIDs.String(), err)
+	}
+
+	if err = as.SetAddresses(allAddresses); err != nil {
+		return fmt.Errorf("unable to set IPs to no re-route address set %s: %w", dbIDs.String(), err)
+	}
+
+	ipv4NodeIPAS, ipv6NodeIPAS := as.GetASHashNames()
+
+	// construct the policy
+	if v4nexthop != nil {
+		matchV4 := fmt.Sprintf(`ip4.dst == $%s /* %s */`, ipv4NodeIPAS, node.Name)
+		if err := bnc.createReroutePolicy(types.HostAccessPolicyPriority, v4nexthop.String(), matchV4, ipv4NodeIPAS); err != nil {
+			return err
+		}
+	}
+	if v6nexthop != nil {
+		matchV6 := fmt.Sprintf(`ip6.dst == $%s /* %s */`, ipv6NodeIPAS, node.Name)
+		if err := bnc.createReroutePolicy(types.HostAccessPolicyPriority, v6nexthop.String(), matchV6, ipv6NodeIPAS); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (bnc *BaseNetworkController) createReroutePolicy(priority int, nexthop, match, existingMatch string) error {
+	logicalRouterPolicy := nbdb.LogicalRouterPolicy{
+		Priority: priority,
+		Action:   nbdb.LogicalRouterPolicyActionReroute,
+		Nexthops: []string{nexthop},
+		Match:    match,
+	}
+	if bnc.IsSecondary() {
+		logicalRouterPolicy.ExternalIDs = map[string]string{
+			types.NetworkExternalID:  bnc.GetNetworkName(),
+			types.TopologyExternalID: bnc.TopologyType(),
+		}
+	}
+
+	routers := make([]string, 0, 1)
+	if bnc.TopologyType() == types.Layer2Topology {
+		bnc.localZoneNodes.Range(func(key, _ any) bool {
+			routers = append(routers, bnc.GetNetworkScopedGWRouterName(key.(string)))
+			return true
+		})
+	} else {
+		routers = []string{bnc.GetNetworkScopedClusterRouterName()}
+	}
+
+	p := func(item *nbdb.LogicalRouterPolicy) bool {
+		return item.Priority == logicalRouterPolicy.Priority && strings.Contains(item.Match, existingMatch)
+	}
+	for _, router := range routers {
+		err := libovsdbops.CreateOrUpdateLogicalRouterPolicyWithPredicate(bnc.nbClient, router,
+			&logicalRouterPolicy, p, &logicalRouterPolicy.Nexthops, &logicalRouterPolicy.Match, &logicalRouterPolicy.Action)
+		if err != nil {
+			return fmt.Errorf("failed to add policy route %+v to %s: %v", logicalRouterPolicy, bnc.GetNetworkScopedClusterRouterName(), err)
+		}
+	}
+	return nil
 }
 
 // addLocalPodToNamespaceLocked returns the ops needed to add the pod's IP to the namespace
@@ -1143,4 +1242,90 @@ func (bnc *BaseNetworkController) GetSamplingConfig() *libovsdbops.SamplingConfi
 		return bnc.observManager.SamplingConfig()
 	}
 	return nil
+}
+
+func (bnc *BaseNetworkController) getJoinIPs(node *corev1.Node) (net.IP, net.IP, error) {
+	nodeJoinSubnetIPs, err := util.ParseNodeGatewayRouterJoinAddrs(node, bnc.GetNetworkName())
+	if err != nil || len(nodeJoinSubnetIPs) == 0 {
+		// try getting from nbdb
+		v4, v6, newErr := bnc.getJoinIPsFromOVN(node.Name)
+		if newErr != nil {
+			// if we cant get the IPs from the node annotation, and the port doesn't exist, we treat it as no error
+			// and the port does not exist. We have little chance of finding this information on a retry, so no point in failing
+			// sync functions or retrying.
+			if errors.Is(newErr, libovsdbclient.ErrNotFound) {
+				return nil, nil, nil
+			} else {
+				return nil, nil, fmt.Errorf("failed to find join subnet IPs for node %q in either "+
+					"annotations: %v, or OVN NBDB: %w", node.Name, err, newErr)
+			}
+		} else {
+			return v4, v6, nil
+		}
+
+	}
+
+	var v4Addr, v6Addr net.IP
+	for _, joinIPNet := range nodeJoinSubnetIPs {
+		if utilnet.IsIPv6CIDR(joinIPNet) {
+			v6Addr = joinIPNet.IP
+		} else if utilnet.IsIPv4CIDR(joinIPNet) {
+			v4Addr = joinIPNet.IP
+		}
+	}
+
+	return v4Addr, v6Addr, nil
+}
+
+func (bnc *BaseNetworkController) getJoinIPsFromOVN(node string) (net.IP, net.IP, error) {
+	return bnc.findIPsFromLSP(bnc.GetNetworkScopedSwitchToRouterPortName(node))
+}
+
+func (bnc *BaseNetworkController) findIPsFromLSP(portName string) (net.IP, net.IP, error) {
+	lsp := &nbdb.LogicalSwitchPort{Name: types.K8sPrefix + portName}
+	lsp, err := libovsdbops.GetLogicalSwitchPort(bnc.nbClient, lsp)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get logical switch port %q: %w", portName, err)
+	}
+	v4, v6 := getIPsFromOVNPort(lsp)
+	return v4, v6, nil
+}
+
+// getManagementPortIPs returns the v4 and v6 addresses for mgmt ports
+// This is a best effort attempt by using node annotations first, and OVN NBDB second
+func (bnc *BaseNetworkController) getManagementPortIPs(node *corev1.Node) (net.IP, net.IP, error) {
+	if node == nil {
+		return nil, nil, nil
+	}
+	hostSubnets, err := util.ParseNodeHostSubnetAnnotation(node, types.DefaultNetworkName)
+	if err != nil || len(hostSubnets) == 0 {
+		v4, v6, newErr := bnc.getManagementPortIPsFromOVN(node.Name)
+		if newErr != nil {
+			if errors.Is(newErr, libovsdbclient.ErrNotFound) {
+				return nil, nil, nil
+			} else {
+				return nil, nil, fmt.Errorf("failed to find managment port IPs for node %q in either "+
+					"annotations: %v, or OVN NBDB: %w", node.Name, err, newErr)
+			}
+		} else {
+			return v4, v6, nil
+		}
+	}
+	var v4Addr, v6Addr net.IP
+	for _, hostSubnet := range hostSubnets {
+		n := util.GetNodeManagementIfAddr(hostSubnet)
+		if n != nil {
+			if !utilnet.IsIPv6CIDR(hostSubnet) {
+				v4Addr = n.IP
+			} else {
+				v6Addr = n.IP
+			}
+		}
+	}
+
+	return v4Addr, v6Addr, nil
+}
+
+func (bnc *BaseNetworkController) getManagementPortIPsFromOVN(node string) (net.IP, net.IP, error) {
+	return bnc.findIPsFromLSP(types.K8sPrefix + node)
 }
