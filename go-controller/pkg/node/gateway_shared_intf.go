@@ -1396,7 +1396,9 @@ func (npwipt *nodePortWatcherIptables) SyncServices(services []interface{}) erro
 		}
 	}
 
-	for _, set := range []string{nftablesMgmtPortNoSNATNodePorts, nftablesMgmtPortNoSNATServicesV4, nftablesMgmtPortNoSNATServicesV6} {
+	for _, set := range []string{nftablesMgmtPortSNATPodToNodePortsV4, nftablesMgmtPortSNATPodToNodePortsV6,
+		nftablesMgmtPortNoSNATNodePorts, nftablesMgmtPortSNATPodToServicesV4, nftablesMgmtPortSNATPodToServicesV6,
+		nftablesMgmtPortNoSNATServicesV4, nftablesMgmtPortNoSNATServicesV6} {
 		if err = recreateNFTSet(set, keepNFTElems); err != nil {
 			errors = append(errors, err)
 		}
