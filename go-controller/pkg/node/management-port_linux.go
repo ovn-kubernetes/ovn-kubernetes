@@ -33,11 +33,33 @@ const (
 	// the source IP must be preserved).
 	nftablesMgmtPortChain = "mgmtport-snat"
 
+	// "mgmtport-snat-pod-to-nodeports-v4" and "mgmtport-snat-pod-to-nodeports-v6"
+	// are sets containing source pod subnet and destination
+	// protocol / nodePort tuples indicating traffic that should be SNATted when passing through
+	// the management port because it is addressed to an `externalTrafficPolicy: Local`
+	// NodePort, and originated from an ovn-networked pod. This is to preserve
+	// symmetric reply when a pod-> nodeport happens. SNAT here is OK because before
+	// we moved from host access via geneve, the pod egress traffic would always be SNAT'ed
+	// to the node IP.
+	nftablesMgmtPortSNATPodToNodePortsV4 = "mgmtport-snat-pod-to-nodeports-v4"
+	nftablesMgmtPortSNATPodToNodePortsV6 = "mgmtport-snat-pod-to-nodeports-v6"
+
 	// "mgmtport-no-snat-nodeports" is a set containing protocol / nodePort tuples
 	// indicating traffic that should not be SNATted when passing through the
 	// management port because it is addressed to an `externalTrafficPolicy: Local`
 	// NodePort.
 	nftablesMgmtPortNoSNATNodePorts = "mgmtport-no-snat-nodeports"
+
+	// "mgmtport-snat-pod-to-services-v4" and "mgmtport-snat-pod-to-services-v6" are sets
+	// containing loadBalancerIP / protocol / port tuples indicating traffic that
+	// should not be SNATted when passing through the management port because it is
+	// addressed to an `externalTrafficPolicy: Local` load balancer IP.
+	// These packets originated from an ovn-networked pod. This is to preserve
+	// symmetric reply when a pod-> service happens. SNAT here is OK because before
+	// we moved from host access via geneve, the pod egress traffic would always be SNAT'ed
+	// to the node IP.
+	nftablesMgmtPortSNATPodToServicesV4 = "mgmtport-snat-pod-to-services-v4"
+	nftablesMgmtPortSNATPodToServicesV6 = "mgmtport-snat-pod-to-services-v6"
 
 	// "mgmtport-no-snat-services-v4" and "mgmtport-no-snat-services-v6" are sets
 	// containing loadBalancerIP / protocol / port tuples indicating traffic that
@@ -287,9 +309,33 @@ func setupManagementPortNFTables(cfg *managementPortConfig) error {
 		Priority: knftables.PtrTo(knftables.SNATPriority),
 	})
 	tx.Add(&knftables.Set{
+		Name:    nftablesMgmtPortSNATPodToNodePortsV4,
+		Comment: knftables.PtrTo("Pod to NodePorts are subject to management port SNAT (IPv4)"),
+		Type:    "ipv4_addr . inet_proto . inet_service",
+		Flags:   []knftables.SetFlag{knftables.IntervalFlag},
+	})
+	tx.Add(&knftables.Set{
+		Name:    nftablesMgmtPortSNATPodToNodePortsV6,
+		Comment: knftables.PtrTo("Pod to NodePorts are subject to management port SNAT (IPv6)"),
+		Type:    "ipv6_addr . inet_proto . inet_service",
+		Flags:   []knftables.SetFlag{knftables.IntervalFlag},
+	})
+	tx.Add(&knftables.Set{
 		Name:    nftablesMgmtPortNoSNATNodePorts,
 		Comment: knftables.PtrTo("NodePorts not subject to management port SNAT"),
 		Type:    "inet_proto . inet_service",
+	})
+	tx.Add(&knftables.Set{
+		Name:    nftablesMgmtPortSNATPodToServicesV4,
+		Comment: knftables.PtrTo("eTP:Local short-circuit from OVNK Pod is subject to management port SNAT (IPv4)"),
+		Type:    "ipv4_addr . ipv4_addr . inet_proto . inet_service",
+		Flags:   []knftables.SetFlag{knftables.IntervalFlag},
+	})
+	tx.Add(&knftables.Set{
+		Name:    nftablesMgmtPortSNATPodToServicesV6,
+		Comment: knftables.PtrTo("eTP:Local short-circuit from OVNK Pod is subject to management port SNAT (IPv6)"),
+		Type:    "ipv6_addr . ipv6_addr . inet_proto . inet_service",
+		Flags:   []knftables.SetFlag{knftables.IntervalFlag},
 	})
 	tx.Add(&knftables.Set{
 		Name:    nftablesMgmtPortNoSNATServicesV4,
@@ -312,6 +358,26 @@ func setupManagementPortNFTables(cfg *managementPortConfig) error {
 			"return",
 		),
 	})
+	if cfg.ipv4 != nil {
+		tx.Add(&knftables.Rule{
+			Chain: nftablesMgmtPortChain,
+			Rule: knftables.Concat(
+				"ip saddr . meta l4proto . th dport", "@", nftablesMgmtPortSNATPodToNodePortsV4,
+				counterIfDebug,
+				"snat ip to", cfg.ipv4.ifAddr.IP,
+			),
+		})
+	}
+	if cfg.ipv6 != nil {
+		tx.Add(&knftables.Rule{
+			Chain: nftablesMgmtPortChain,
+			Rule: knftables.Concat(
+				"ip6 saddr . meta l4proto . th dport", "@", nftablesMgmtPortSNATPodToNodePortsV6,
+				counterIfDebug,
+				"snat ip6 to", cfg.ipv6.ifAddr.IP,
+			),
+		})
+	}
 	tx.Add(&knftables.Rule{
 		Chain: nftablesMgmtPortChain,
 		Rule: knftables.Concat(
@@ -324,6 +390,26 @@ func setupManagementPortNFTables(cfg *managementPortConfig) error {
 	isPodNetworkAdvertised := cfg.isPodNetworkAdvertised.Load()
 
 	if cfg.ipv4 != nil {
+		// don't SNAT if the source IP is already the Mgmt port IP
+		tx.Add(&knftables.Rule{
+			Chain: nftablesMgmtPortChain,
+			Rule: knftables.Concat(
+				"meta nfproto ipv4",
+				"ip saddr", cfg.ipv4.ifAddr.IP,
+				counterIfDebug,
+				"return",
+			),
+		})
+
+		tx.Add(&knftables.Rule{
+			Chain: nftablesMgmtPortChain,
+			Rule: knftables.Concat(
+				"ip saddr . ip daddr . meta l4proto . th dport", "@", nftablesMgmtPortSNATPodToServicesV4,
+				counterIfDebug,
+				"snat ip to", cfg.ipv4.ifAddr.IP,
+			),
+		})
+
 		if isPodNetworkAdvertised {
 			tx.Add(&knftables.Rule{
 				Chain: nftablesMgmtPortChain,
@@ -335,16 +421,7 @@ func setupManagementPortNFTables(cfg *managementPortConfig) error {
 				),
 			})
 		}
-		// don't SNAT if the source IP is already the Mgmt port IP
-		tx.Add(&knftables.Rule{
-			Chain: nftablesMgmtPortChain,
-			Rule: knftables.Concat(
-				"meta nfproto ipv4",
-				"ip saddr", cfg.ipv4.ifAddr.IP,
-				counterIfDebug,
-				"return",
-			),
-		})
+
 		tx.Add(&knftables.Rule{
 			Chain: nftablesMgmtPortChain,
 			Rule: knftables.Concat(
@@ -363,6 +440,26 @@ func setupManagementPortNFTables(cfg *managementPortConfig) error {
 	}
 
 	if cfg.ipv6 != nil {
+		// don't SNAT if the source IP is already the Mgmt port IP
+		tx.Add(&knftables.Rule{
+			Chain: nftablesMgmtPortChain,
+			Rule: knftables.Concat(
+				"meta nfproto ipv6",
+				"ip6 saddr", cfg.ipv6.ifAddr.IP,
+				counterIfDebug,
+				"return",
+			),
+		})
+
+		tx.Add(&knftables.Rule{
+			Chain: nftablesMgmtPortChain,
+			Rule: knftables.Concat(
+				"ip6 saddr . ip6 daddr . meta l4proto . th dport", "@", nftablesMgmtPortSNATPodToServicesV6,
+				counterIfDebug,
+				"snat ip6 to", cfg.ipv6.ifAddr.IP,
+			),
+		})
+
 		if isPodNetworkAdvertised {
 			tx.Add(&knftables.Rule{
 				Chain: nftablesMgmtPortChain,
@@ -374,16 +471,7 @@ func setupManagementPortNFTables(cfg *managementPortConfig) error {
 				),
 			})
 		}
-		// don't SNAT if the source IP is already the Mgmt port IP
-		tx.Add(&knftables.Rule{
-			Chain: nftablesMgmtPortChain,
-			Rule: knftables.Concat(
-				"meta nfproto ipv6",
-				"ip6 saddr", cfg.ipv6.ifAddr.IP,
-				counterIfDebug,
-				"return",
-			),
-		})
+
 		tx.Add(&knftables.Rule{
 			Chain: nftablesMgmtPortChain,
 			Rule: knftables.Concat(

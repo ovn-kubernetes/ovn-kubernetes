@@ -53,12 +53,19 @@ add table inet ovn-kubernetes
 add chain inet ovn-kubernetes mgmtport-snat { type nat hook postrouting priority 100 ; comment "OVN SNAT to Management Port" ; }
 add rule inet ovn-kubernetes mgmtport-snat oifname != %q return
 add rule inet ovn-kubernetes mgmtport-snat meta nfproto ipv4 ip saddr 10.1.1.0 counter return
+add rule inet ovn-kubernetes mgmtport-snat ip saddr . meta l4proto . th dport @mgmtport-snat-pod-to-nodeports-v4 counter snat ip to 10.1.1.0
 add rule inet ovn-kubernetes mgmtport-snat meta l4proto . th dport @mgmtport-no-snat-nodeports counter return
+add rule inet ovn-kubernetes mgmtport-snat ip saddr . ip daddr . meta l4proto . th dport @mgmtport-snat-pod-to-services-v4 counter snat ip to 10.1.1.0
 add rule inet ovn-kubernetes mgmtport-snat ip daddr . meta l4proto . th dport @mgmtport-no-snat-services-v4 counter return
 add rule inet ovn-kubernetes mgmtport-snat counter snat ip to 10.1.1.0
+add set inet ovn-kubernetes mgmtport-snat-pod-to-nodeports-v4 { type ipv4_addr . inet_proto . inet_service ; flags interval ; comment "Pod to NodePorts are subject to management port SNAT (IPv4)" ; }
+add set inet ovn-kubernetes mgmtport-snat-pod-to-nodeports-v6 { type ipv6_addr . inet_proto . inet_service ; flags interval ; comment "Pod to NodePorts are subject to management port SNAT (IPv6)" ; }
 add set inet ovn-kubernetes mgmtport-no-snat-nodeports { type inet_proto . inet_service ; comment "NodePorts not subject to management port SNAT" ; }
+add set inet ovn-kubernetes mgmtport-snat-pod-to-services-v4 { type ipv4_addr . ipv4_addr . inet_proto . inet_service ; flags interval ; comment "eTP:Local short-circuit from OVNK Pod is subject to management port SNAT (IPv4)" ; }
+add set inet ovn-kubernetes mgmtport-snat-pod-to-services-v6 { type ipv6_addr . ipv6_addr . inet_proto . inet_service ; flags interval ; comment "eTP:Local short-circuit from OVNK Pod is subject to management port SNAT (IPv6)" ; }
 add set inet ovn-kubernetes mgmtport-no-snat-services-v4 { type ipv4_addr . inet_proto . inet_service ; comment "eTP:Local short-circuit not subject to management port SNAT (IPv4)" ; }
 add set inet ovn-kubernetes mgmtport-no-snat-services-v6 { type ipv6_addr . inet_proto . inet_service ; comment "eTP:Local short-circuit not subject to management port SNAT (IPv6)" ; }
+
 `
 
 // The base expected nftables rules with UDN enabled. You must substitute in the management port interface name.

@@ -12,6 +12,7 @@ import (
 	utilnet "k8s.io/utils/net"
 	"sigs.k8s.io/knftables"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -29,7 +30,7 @@ import (
 // set to prevent SNAT of sourceIP when passing through the management port, for an
 // `externalTrafficPolicy: Local` service with NodePorts.
 func getNoSNATNodePortRules(svcPort corev1.ServicePort) []*knftables.Element {
-	return []*knftables.Element{
+	nftRules := []*knftables.Element{
 		{
 			Set: nftablesMgmtPortNoSNATNodePorts,
 			Key: []string{
@@ -38,6 +39,30 @@ func getNoSNATNodePortRules(svcPort corev1.ServicePort) []*knftables.Element {
 			},
 		},
 	}
+
+	for _, clusterEntry := range config.Default.ClusterSubnets {
+		if utilnet.IsIPv4CIDR(clusterEntry.CIDR) {
+			nftRules = append(nftRules, &knftables.Element{
+				Set: nftablesMgmtPortSNATPodToNodePortsV4,
+				Key: []string{
+					clusterEntry.CIDR.String(),
+					strings.ToLower(string(svcPort.Protocol)),
+					fmt.Sprintf("%d", svcPort.NodePort),
+				},
+			})
+		} else if utilnet.IsIPv6CIDR(clusterEntry.CIDR) {
+			nftRules = append(nftRules, &knftables.Element{
+				Set: nftablesMgmtPortSNATPodToNodePortsV6,
+				Key: []string{
+					clusterEntry.CIDR.String(),
+					strings.ToLower(string(svcPort.Protocol)),
+					fmt.Sprintf("%d", svcPort.NodePort),
+				},
+			})
+		}
+	}
+
+	return nftRules
 }
 
 // getNoSNATLoadBalancerIPRules returns elements to add to the
@@ -60,6 +85,30 @@ func getNoSNATLoadBalancerIPRules(svcPort corev1.ServicePort, localEndpoints []s
 				Key: []string{ip, protocol, port},
 			},
 		)
+
+		for _, clusterEntry := range config.Default.ClusterSubnets {
+			if utilnet.IsIPv4CIDR(clusterEntry.CIDR) {
+				nftRules = append(nftRules, &knftables.Element{
+					Set: nftablesMgmtPortSNATPodToServicesV4,
+					Key: []string{
+						clusterEntry.CIDR.String(),
+						ip,
+						protocol,
+						port,
+					},
+				})
+			} else if utilnet.IsIPv6CIDR(clusterEntry.CIDR) {
+				nftRules = append(nftRules, &knftables.Element{
+					Set: nftablesMgmtPortSNATPodToServicesV6,
+					Key: []string{
+						clusterEntry.CIDR.String(),
+						ip,
+						protocol,
+						port,
+					},
+				})
+			}
+		}
 	}
 	return nftRules
 }

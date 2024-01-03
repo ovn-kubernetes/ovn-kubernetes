@@ -647,9 +647,7 @@ func getGatewayIPTRules(service *corev1.Service, localEndpoints []string, svcHas
 				if svcTypeIsETPLocal && !svcHasLocalHostNetEndPnt {
 					// case1 (see function description for details)
 					// A DNAT rule to masqueradeIP is added that takes priority over DNAT to clusterIP.
-					if config.Gateway.Mode == config.GatewayModeLocal {
-						rules = append(rules, getNodePortIPTRules(svcPort, clusterIP, svcPort.NodePort, svcHasLocalHostNetEndPnt, svcTypeIsETPLocal)...)
-					}
+					rules = append(rules, getNodePortIPTRules(svcPort, clusterIP, svcPort.NodePort, svcHasLocalHostNetEndPnt, svcTypeIsETPLocal)...)
 					// Note: getGatewayNFTRules will add rules to ensure that sourceIP is preserved
 				}
 				// case2 (see function description for details)
