@@ -20,54 +20,11 @@ import (
 	"k8s.io/client-go/util/retry"
 	utilnet "k8s.io/utils/net"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/healthcheck"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	egressipv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/healthcheck"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
-
-type fakeEgressIPDialer struct{}
-
-func (f fakeEgressIPDialer) dial(net.IP, time.Duration) bool {
-	return true
-}
-
-type fakeEgressIPHealthClient struct {
-	Connected        bool
-	ProbeCount       int
-	FakeProbeFailure bool
-}
-
-func (fehc *fakeEgressIPHealthClient) IsConnected() bool {
-	return fehc.Connected
-}
-
-func (fehc *fakeEgressIPHealthClient) Connect(context.Context, []net.IP, int) bool {
-	if fehc.FakeProbeFailure {
-		return false
-	}
-	fehc.Connected = true
-	return true
-}
-
-func (fehc *fakeEgressIPHealthClient) Disconnect() {
-	fehc.Connected = false
-	fehc.ProbeCount = 0
-}
-
-func (fehc *fakeEgressIPHealthClient) Probe(context.Context) bool {
-	if fehc.Connected && !fehc.FakeProbeFailure {
-		fehc.ProbeCount++
-		return true
-	}
-	return false
-}
-
-type fakeEgressIPHealthClientAllocator struct{}
-
-func (f *fakeEgressIPHealthClientAllocator) allocate(string) healthcheck.EgressIPHealthClient {
-	return &fakeEgressIPHealthClient{}
-}
 
 func newNamespaceMeta(namespace string, additionalLabels map[string]string) metav1.ObjectMeta {
 	labels := map[string]string{
@@ -138,10 +95,9 @@ func setupNode(nodeName string, ipNets []string, mockAllocationIPs map[string]st
 	node := egressNode{
 		egressIPConfig:     config,
 		allocations:        mockAllcations,
-		healthClient:       hccAllocator.allocate(nodeName), // using fakeEgressIPHealthClientAllocator
 		name:               nodeName,
+		health:             healthcheck.AVAILABLE,
 		isReady:            true,
-		isReachable:        true,
 		isEgressAssignable: true,
 	}
 	return node
@@ -163,9 +119,6 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		v6NodeSubnet  = "ae70::66/64"
 	)
 
-	dialer = fakeEgressIPDialer{}
-	hccAllocator = &fakeEgressIPHealthClientAllocator{}
-
 	getEgressIPAllocatorSizeSafely := func() int {
 		fakeClusterManagerOVN.eIPC.nodeAllocator.Lock()
 		defer fakeClusterManagerOVN.eIPC.nodeAllocator.Unlock()
@@ -186,32 +139,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		}
 	}
 
-	getEgressIPAllocatorReachableSafely := func(s string) bool {
-		fakeClusterManagerOVN.eIPC.nodeAllocator.Lock()
-		defer fakeClusterManagerOVN.eIPC.nodeAllocator.Unlock()
-		c, ok := fakeClusterManagerOVN.eIPC.nodeAllocator.cache[s]
-		if !ok {
-			panic(fmt.Sprintf("failed to find key %s", s))
-		}
-		return c.isReachable
-	}
-
 	doesEgressIPAllocatorContainSafely := func(s string) bool {
 		fakeClusterManagerOVN.eIPC.nodeAllocator.Lock()
 		defer fakeClusterManagerOVN.eIPC.nodeAllocator.Unlock()
 		_, ok := fakeClusterManagerOVN.eIPC.nodeAllocator.cache[s]
 		return ok
-	}
-
-	getEgressIPAllocatorHealthCheckSafely := func(s string) *fakeEgressIPHealthClient {
-		fakeClusterManagerOVN.eIPC.nodeAllocator.Lock()
-		defer fakeClusterManagerOVN.eIPC.nodeAllocator.Unlock()
-		c, ok := fakeClusterManagerOVN.eIPC.nodeAllocator.cache[s]
-		if !ok {
-			panic(fmt.Sprintf("failed to find node %s in allocator", s))
-		}
-
-		return c.healthClient.(*fakeEgressIPHealthClient)
 	}
 
 	getEgressIPStatusLen := func(egressIPName string) func() int {
@@ -1675,35 +1607,36 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 						Items: []corev1.Node{node},
 					},
 				)
+				fakeClusterManagerOVN.FakeHealthCheckProvider.Register(healthcheck.ConsumerAdaptor(
+					"fakeHealthCheckProvider",
+					func(s string) { fakeClusterManagerOVN.eIPC.requeueNode(s) },
+					func(s string) bool { return fakeClusterManagerOVN.eIPC.monitorHealthState(s) },
+				))
 
-				// Virtually disable background reachability check by using a huge interval
-				fakeClusterManagerOVN.eIPC.reachabilityCheckInterval = time.Hour
+				// report an initial unknown status for the node
+				fakeClusterManagerOVN.FakeHealthCheckProvider.ReportHealthState(healthcheck.UNKNOWN)
 
 				_, err := fakeClusterManagerOVN.eIPC.WatchEgressNodes()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
+				// initially the node should not to be assigned
+				gomega.Consistently(getEgressIPStatusLen(eIP1.Name)).Should(gomega.Equal(0))
+
+				// report available so that the node is assigned
+				fakeClusterManagerOVN.FakeHealthCheckProvider.ReportHealthState(healthcheck.AVAILABLE)
+				fakeClusterManagerOVN.FakeHealthCheckProvider.LastConsumer().HealthStateChanged(node.Name)
 				gomega.Eventually(getEgressIPStatusLen(eIP1.Name)).Should(gomega.Equal(1))
 				egressIPs, _ := getEgressIPStatus(eIP1.Name)
 				gomega.Expect(egressIPs[0]).To(gomega.Equal(egressIP))
-				hcClient := fakeClusterManagerOVN.eIPC.nodeAllocator.cache[node.Name].healthClient.(*fakeEgressIPHealthClient)
-				hcClient.FakeProbeFailure = true
-				// explicitly call check reachability, periodic checker is not active
-				checkEgressNodesReachabilityIterate(fakeClusterManagerOVN.eIPC)
+
+				// node unassigned when unreachable
+				fakeClusterManagerOVN.FakeHealthCheckProvider.ReportHealthState(healthcheck.UNREACHABLE)
+				fakeClusterManagerOVN.FakeHealthCheckProvider.LastConsumer().HealthStateChanged(node.Name)
 				gomega.Eventually(getEgressIPStatusLen(eIP1.Name)).Should(gomega.Equal(0))
 
-				hcClient.FakeProbeFailure = false
-				node.Annotations["test"] = "dummy"
-				_, err = fakeClusterManagerOVN.fakeClient.KubeClient.CoreV1().Nodes().Update(context.TODO(), &node, metav1.UpdateOptions{})
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				gomega.Eventually(hcClient.IsConnected).Should(gomega.BeTrue())
-				// the node should not be marked as reachable in the update handler as it is not getting added
-				gomega.Consistently(func() bool { return fakeClusterManagerOVN.eIPC.nodeAllocator.cache[node.Name].isReachable }).Should(gomega.BeFalse())
-
-				// egress IP should get assigned on the next checkEgressNodesReachabilityIterate call
-				// explicitly call check reachability, periodic checker is not active
-				checkEgressNodesReachabilityIterate(fakeClusterManagerOVN.eIPC)
-				// this will trigger an immediate add retry for the node which we need to simulate for this test
-				fakeClusterManagerOVN.eIPC.retryEgressNodes.RequestRetryObjs()
+				// node assigned when available again
+				fakeClusterManagerOVN.FakeHealthCheckProvider.ReportHealthState(healthcheck.AVAILABLE)
+				fakeClusterManagerOVN.FakeHealthCheckProvider.LastConsumer().HealthStateChanged(node.Name)
 				gomega.Eventually(getEgressIPStatusLen(eIP1.Name)).Should(gomega.Equal(1))
 
 				return nil
