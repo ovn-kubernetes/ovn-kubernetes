@@ -156,8 +156,8 @@ func (c *controller) start(ctx context.Context, nodeInformer coreinformers.NodeI
 	// we rely on a node controller: nodes need to exist, have the proper
 	// configuration details and have interest from consumers for them to be
 	// probed. If so, will add the proper probing task to the queue
-	config := &controllerutil.Config[corev1.Node]{
-		RateLimiter:    workqueue.DefaultControllerRateLimiter(),
+	config := &controllerutil.ControllerConfig[corev1.Node]{
+		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
 		Informer:       nodeInformer.Informer(),
 		Lister:         nodeInformer.Lister().List,
 		ObjNeedsUpdate: func(oldObj, newObj *corev1.Node) bool { return true },
@@ -170,7 +170,7 @@ func (c *controller) start(ctx context.Context, nodeInformer coreinformers.NodeI
 	c.nodeInformer = nodeInformer
 	c.ctx = ctx
 
-	err := controllerutil.StartControllers(controller)
+	err := controllerutil.Start(controller)
 	if err != nil {
 		return fmt.Errorf("failed to start health check controller: %w", err)
 	}
@@ -181,7 +181,7 @@ func (c *controller) start(ctx context.Context, nodeInformer coreinformers.NodeI
 		c.run()
 
 		// stop & cleanup
-		controllerutil.StopControllers(controller)
+		controllerutil.Stop(controller)
 		c.cleanup()
 		klog.Infof("Stopped health check controller")
 	}()

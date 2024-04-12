@@ -3,6 +3,7 @@ package clustermanager
 import (
 	"context"
 	"net"
+	"sync"
 
 	nadfake "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
 	"github.com/onsi/gomega"
@@ -15,33 +16,33 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/egressservice"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/endpointslicemirror"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/healthcheck"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	egressip "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
 	egressipfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/clientset/versioned/fake"
 	egresssvc "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1"
 	egresssvcfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/healthcheck"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 type FakeClusterManager struct {
-	fakeClient   *util.OVNClusterManagerClientset
-	watcher      *factory.WatchFactory
-	eIPC         *egressIPClusterController
-	esvc         *egressservice.Controller
-	epsMirror    *endpointslicemirror.Controller
-	fakeRecorder *record.FakeRecorder
-}
-
-var isReachable = func(string, []net.IP, healthcheck.EgressIPHealthClient) bool {
-	return true
+	fakeClient              *util.OVNClusterManagerClientset
+	watcher                 *factory.WatchFactory
+	eIPC                    *egressIPClusterController
+	esvc                    *egressservice.Controller
+	epsMirror               *endpointslicemirror.Controller
+	fakeRecorder            *record.FakeRecorder
+	FakeHealthCheckProvider *FakeHealthCheckProvider
 }
 
 func NewFakeClusterManagerOVN() *FakeClusterManager {
 	return &FakeClusterManager{
 		fakeRecorder: record.NewFakeRecorder(10),
+		FakeHealthCheckProvider: &FakeHealthCheckProvider{
+			reportHealthState: healthcheck.AVAILABLE,
+		},
 	}
 }
 
@@ -85,7 +86,7 @@ func (o *FakeClusterManager) init() {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	}
 	if config.OVNKubernetesFeature.EnableEgressService {
-		o.esvc, err = egressservice.NewController(o.fakeClient, o.watcher, isReachable)
+		o.esvc, err = egressservice.NewController(o.fakeClient, o.watcher, o.FakeHealthCheckProvider)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 		err = o.esvc.Start(1)
@@ -114,3 +115,35 @@ func (o *FakeClusterManager) shutdown() {
 		o.epsMirror.Stop()
 	}
 }
+
+type FakeHealthCheckProvider struct {
+	sync.Mutex
+	lastConsumer      healthcheck.Consumer
+	reportHealthState healthcheck.HealthState
+}
+
+func (s *FakeHealthCheckProvider) Register(consumer healthcheck.Consumer) {
+	s.Lock()
+	defer s.Unlock()
+	s.lastConsumer = consumer
+}
+
+func (s *FakeHealthCheckProvider) LastConsumer() healthcheck.Consumer {
+	s.Lock()
+	defer s.Unlock()
+	return s.lastConsumer
+}
+
+func (s *FakeHealthCheckProvider) GetHealthState(node string) healthcheck.HealthState {
+	s.Lock()
+	defer s.Unlock()
+	return s.reportHealthState
+}
+
+func (s *FakeHealthCheckProvider) ReportHealthState(state healthcheck.HealthState) {
+	s.Lock()
+	defer s.Unlock()
+	s.reportHealthState = state
+}
+
+func (s *FakeHealthCheckProvider) MonitorHealthState(node string) {}
