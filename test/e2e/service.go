@@ -1673,7 +1673,7 @@ metadata:
 		_, err = curlInContainer(clientContainer, svcLoadBalancerIP, endpointHTTPPort, "big.iso -o big.iso", 120)
 		framework.ExpectNoError(err, "failed to curl load balancer service")
 
-		ginkgo.By("all 3 nodeIP routes are advertised correctly by metalb BGP routes")
+		ginkgo.By("all 3 nodeIP routes are advertised correctly by metalLB BGP routes")
 		// sample
 		// 192.168.10.0 nhid 84 proto bgp metric 20
 		//	nexthop via 172.19.0.3 dev eth0 weight 1
@@ -1801,25 +1801,41 @@ spec:
 		checkNumberOfETPRules := func(value int, pattern string) wait.ConditionFunc {
 			return func() (bool, error) {
 				numberOfETPRules := pokeIPTableRules(backendNodeName, pattern)
-				return (numberOfETPRules == value), nil
+				if numberOfETPRules != value {
+					framework.Logf("Number of iptables rules for node: %q pattern: %q found: %d, does not match expected: %d",
+						backendNodeName, pattern, numberOfETPRules, value)
+				}
+				return numberOfETPRules == value, nil
 			}
 		}
 		checkNumberOfNFTElements := func(value int, name string) wait.ConditionFunc {
 			return func() (bool, error) {
 				numberOfNFTElements := countNFTablesElements(backendNodeName, name)
-				return (numberOfNFTElements == value), nil
+				if numberOfNFTElements != value {
+					framework.Logf("Number of nftables elements for node: %q, pattern: %q, found: %d, does not match expected: %d",
+						backendNodeName, name, numberOfNFTElements, value)
+				}
+				return numberOfNFTElements == value, nil
 			}
 		}
 		noSNATServicesSet := "mgmtport-no-snat-services-v4"
+		snatServicesSet := "mgmtport-snat-pod-to-services-v4"
+		snatNodePortSet := "mgmtport-snat-pod-to-nodeports-v4"
 		if utilnet.IsIPv6String(svcLoadBalancerIP) {
 			noSNATServicesSet = "mgmtport-no-snat-services-v6"
+			snatServicesSet = "mgmtport-snat-pod-to-services-v6"
+			snatNodePortSet = "mgmtport-snat-pod-to-nodeports-v6"
 		}
 
 		err = wait.PollImmediate(retryInterval, retryTimeout, checkNumberOfETPRules(2, "OVN-KUBE-ETP"))
 		framework.ExpectNoError(err, "Couldn't fetch the correct number of iptable rules, err: %v", err)
 		err = wait.PollImmediate(retryInterval, retryTimeout, checkNumberOfETPRules(5, "OVN-KUBE-EXTERNALIP"))
 		framework.ExpectNoError(err, "Couldn't fetch the correct number of iptable rules, err: %v", err)
+		err = wait.PollImmediate(retryInterval, retryTimeout, checkNumberOfNFTElements(0, snatServicesSet))
+		framework.ExpectNoError(err, "Couldn't fetch the correct number of nftables elements, err: %v", err)
 		err = wait.PollImmediate(retryInterval, retryTimeout, checkNumberOfNFTElements(0, noSNATServicesSet))
+		framework.ExpectNoError(err, "Couldn't fetch the correct number of nftables elements, err: %v", err)
+		err = wait.PollImmediate(retryInterval, retryTimeout, checkNumberOfNFTElements(0, snatNodePortSet))
 		framework.ExpectNoError(err, "Couldn't fetch the correct number of nftables elements, err: %v", err)
 		err = wait.PollImmediate(retryInterval, retryTimeout, checkNumberOfNFTElements(0, "mgmtport-no-snat-nodeports"))
 		framework.ExpectNoError(err, "Couldn't fetch the correct number of nftables elements, err: %v", err)
@@ -1847,7 +1863,11 @@ spec:
 
 		err = wait.PollImmediate(retryInterval, retryTimeout, checkNumberOfETPRules(10, "OVN-KUBE-ETP"))
 		framework.ExpectNoError(err, "Couldn't fetch the correct number of iptable rules, err: %v", err)
+		err = wait.PollImmediate(retryInterval, retryTimeout, checkNumberOfNFTElements(8, snatServicesSet))
+		framework.ExpectNoError(err, "Couldn't fetch the correct number of nftables elements, err: %v", err)
 		err = wait.PollImmediate(retryInterval, retryTimeout, checkNumberOfNFTElements(8, noSNATServicesSet))
+		framework.ExpectNoError(err, "Couldn't fetch the correct number of nftables elements, err: %v", err)
+		err = wait.PollImmediate(retryInterval, retryTimeout, checkNumberOfNFTElements(0, snatNodePortSet))
 		framework.ExpectNoError(err, "Couldn't fetch the correct number of nftables elements, err: %v", err)
 		err = wait.PollImmediate(retryInterval, retryTimeout, checkNumberOfNFTElements(0, "mgmtport-no-snat-nodeports"))
 		framework.ExpectNoError(err, "Couldn't fetch the correct number of nftables elements, err: %v", err)
@@ -1877,7 +1897,11 @@ spec:
 		// one for UDP)
 		err = wait.PollImmediate(retryInterval, retryTimeout, checkNumberOfETPRules(8, "OVN-KUBE-ETP"))
 		framework.ExpectNoError(err, "Couldn't fetch the correct number of iptable rules, err: %v", err)
+		err = wait.PollImmediate(retryInterval, retryTimeout, checkNumberOfNFTElements(6, snatServicesSet))
+		framework.ExpectNoError(err, "Couldn't fetch the correct number of nftables elements, err: %v", err)
 		err = wait.PollImmediate(retryInterval, retryTimeout, checkNumberOfNFTElements(6, noSNATServicesSet))
+		framework.ExpectNoError(err, "Couldn't fetch the correct number of nftables elements, err: %v", err)
+		err = wait.PollImmediate(retryInterval, retryTimeout, checkNumberOfNFTElements(0, snatNodePortSet))
 		framework.ExpectNoError(err, "Couldn't fetch the correct number of nftables elements, err: %v", err)
 		err = wait.PollImmediate(retryInterval, retryTimeout, checkNumberOfNFTElements(0, "mgmtport-no-snat-nodeports"))
 		framework.ExpectNoError(err, "Couldn't fetch the correct number of nftables elements, err: %v", err)
