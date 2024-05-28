@@ -350,7 +350,7 @@ switch so ARP flows are not overriden.
 │ lsp stor-node1     │──┘     └───│ lsp stor-node2      │
 │ options:           │            │ options:            │
 │  arp_proxy:        │            │   arp_proxy:        │
-│   0a:58:0a:f3:00:00│            │    0a:58:0a:f3:00:00│
+│   0a:58:a9:fe:01:01│            │    0a:58:a9:fe:01:01│
 │   169.254.1.1      │            │    169.254.1.1      │
 │   10.244.0.0/16    │            │    10.244.0.0/16    │
 └────────────────────┘            └─────────────────────┘
@@ -430,8 +430,8 @@ The point to point routing cleanup (remove of static routes and policies) will b
 - ovn-kubernetes controllers are restarted, stale routing is removed.
 
 **Advertising neighbors:**
-To improve the connectivity after live migration  ovn-k sends GARPs and unsolicited NAs to pods at node owning the subnet and 
-to VM at running at migration target node.
+To improve connectivity after live migration, ovn-k sends GARPs and unsolicited NAs to pods on the node owning the subnet and
+to the VM on the migration target node.
 
 To understand it first we have to check how the neighbors tables looks before live migration at vm and pods running at the same
 node.
@@ -464,8 +464,8 @@ Now after live migration from node1 to node2 the situation is the following:
 
 ```text
     ┌────────────────────────┐ ┌────────────────────────┐
-    │logical switch node2    │ │logic switch node1      │ 
-    │   (10.244.1.0/24)      │ │   (10.244.0.0/24)      │
+    │  logical switch node2  │ │  logical switch node1  │ 
+    │    (10.244.1.0/24)     │ │    (10.244.0.0/24)     │
     └────────────────────────┘ └────────────────────────┘ 
 ┌──────────────────────┐  │     │   ┌──────────────────────┐      
 │ lsp ns-virt-launcher1│──┘     └───│ lsp pod1             │     
@@ -485,18 +485,18 @@ neighbors table pod1:
 
 Now the neighbors tables are incorrect since none of those mac addresses are 
 are part of the logical switches, after some time or traffic neighbors cache
-get invalidated and updated so they will point to the arp_proxy mac `0a:58:0a:f3:00:00`, problem
+get invalidated and updated so they will point to the arp_proxy mac `0a:58:a9:fe:01:01`, problem
 is that it may take too much time and connections will be broken.
 
 To improve the situation ovn-k sends the following GARPs and unsolicited NA taking
-into account that the arp proxy mac is `0a:58:0a:f3:00:00`:
+into account that the arp proxy mac is `0a:58:a9:fe:01:01`:
 
 At node1 broadcast vm's IP should use arp proxy mac
-- `GARP(10.244.0.8 -> 0a:58:0a:f3:00:00, broadcast mac)`
+- `GARP(10.244.0.8 -> 0a:58:a9:fe:01:01, broadcast mac)`
 - one per migrated VM
 
 At node2 advertise to VM that pod's from the same subnet should go over proxy_arp:
-- `GARP(10.244.0.9 -> 0a:58:0a:f3:00:00, vm mac(0a:58:0a:f4:00:01))`
+- `GARP(10.244.0.9 -> 0a:58:a9:fe:01:01, vm mac(0a:58:0a:f4:00:01))`
 - one per pod on the same subnet (in this example, only for pod1).
 
 Also ovn-k removes the mac address from the VM's old LSP after live migration
