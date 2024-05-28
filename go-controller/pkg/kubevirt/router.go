@@ -2,6 +2,7 @@ package kubevirt
 
 import (
 	"fmt"
+	"os"
 
 	kubevirtv1 "kubevirt.io/api/core/v1"
 
@@ -49,7 +50,31 @@ func DeleteRoutingForMigratedPod(nbClient libovsdbclient.Client, pod *corev1.Pod
 	return DeleteRoutingForMigratedPodWithZone(nbClient, pod, "")
 }
 
-// EnsureLocalZonePodAddressesToNodeRoute will add static routes and policies to ovn_cluster_route logical router
+func ReconcileClusterDefaultNetworkLocalZone(watchFactory *factory.WatchFactory, nbClient libovsdbclient.Client,
+	lsManager *logicalswitchmanager.LogicalSwitchManager, pod *corev1.Pod, clusterSubnets []config.CIDRNetworkEntry) error {
+	vmReady, err := virtualMachineReady(watchFactory, pod)
+	if err != nil {
+		return err
+	}
+	if !vmReady {
+		return nil
+	}
+
+	podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, types.DefaultNetworkName)
+	if err != nil {
+		return fmt.Errorf("failed reading local pod annotation: %v", err)
+	}
+	if err := reconcileClusterDefaultNetworkLocalZonePodAddressesToNodeRoute(watchFactory, nbClient, lsManager, pod, podAnnotation, clusterSubnets); err != nil {
+		return fmt.Errorf("failed to reconcile pod address to node route at kubevirt cluster default network local zone: %w", err)
+	}
+
+	if err := reconcileClusterDefaultNetworkLocalZoneNeighbours(watchFactory, pod, podAnnotation, types.DefaultNetworkName); err != nil {
+		return fmt.Errorf("failed to reconcile neighbours at kubevirt cluster default network local zone: %w", err)
+	}
+	return nil
+}
+
+// reconcileLocalZonePodAddressesToNodeRoute will add static routes and policies to ovn_cluster_route logical router
 // to ensure VM traffic work as expected after live migration if the pod is running at the local/global zone.
 //
 // NOTE: IC with multiple nodes per zone is not supported
@@ -66,20 +91,8 @@ func DeleteRoutingForMigratedPod(nbClient libovsdbclient.Client, pod *corev1.Pod
 //
 // Both:
 //   - static route with VM ip as dst-ip prefix and output port the LRP pointing to the VM's node switch
-func EnsureLocalZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory, nbClient libovsdbclient.Client,
-	lsManager *logicalswitchmanager.LogicalSwitchManager, pod *corev1.Pod, nadName string, clusterSubnets []config.CIDRNetworkEntry) error {
-	vmReady, err := virtualMachineReady(watchFactory, pod)
-	if err != nil {
-		return err
-	}
-	if !vmReady {
-		return nil
-	}
-	podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, nadName)
-	if err != nil {
-		return fmt.Errorf("failed reading local pod annotation: %v", err)
-	}
-
+func reconcileClusterDefaultNetworkLocalZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory, nbClient libovsdbclient.Client,
+	lsManager *logicalswitchmanager.LogicalSwitchManager, pod *corev1.Pod, podAnnotation *util.PodAnnotation, clusterSubnets []config.CIDRNetworkEntry) error {
 	nodeOwningSubnet, _ := ZoneContainsPodSubnet(lsManager, podAnnotation.IPs)
 	vmRunningAtNodeOwningSubnet := nodeOwningSubnet == pod.Spec.NodeName
 	if vmRunningAtNodeOwningSubnet {
@@ -166,16 +179,41 @@ func EnsureLocalZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory, 
 		}); err != nil {
 			return fmt.Errorf("failed adding static route: %v", err)
 		}
+
 	}
 	return nil
 }
 
-// EnsureRemoteZonePodAddressesToNodeRoute will add static routes when live
-// migrated pod belongs to remote zone to send traffic over transwitch switch
-// port of the node where the pod is running:
-//   - A dst-ip with live migrated pod ip as prefix and nexthop the pod's
-//     current node transit switch port.
-func EnsureRemoteZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory, nbClient libovsdbclient.Client, pod *corev1.Pod, nadName string) error {
+func reconcileClusterDefaultNetworkLocalZoneNeighbours(watchFactory *factory.WatchFactory, pod *corev1.Pod, podAnnotation *util.PodAnnotation, nadName string) error {
+	// TODO: Implement neighbours update for non IC
+	if !config.OVNKubernetesFeature.EnableInterconnect {
+		return nil
+	}
+
+	currentNode := os.Getenv("K8S_NODE")
+	currentNodeOwnsSubnet, err := nodeContainsPodSubnet(watchFactory, currentNode, podAnnotation, nadName)
+	if err != nil {
+		return err
+	}
+
+	vmRunningAtCurrentNode := pod.Spec.NodeName == currentNode
+
+	// Now that the VM is running at a node not owning his subnet, using pod's mac
+	// will not work since it's a different switch so overwrite those neighbors with
+	// proxy mac from gatway
+	if !currentNodeOwnsSubnet && vmRunningAtCurrentNode {
+		ipsToNotify, err := findRunningPodsIPsFromPodSubnet(watchFactory, pod, podAnnotation, nadName)
+		if err != nil {
+			return fmt.Errorf("failed discovering pod IPs within VM's subnet to update neighbors VM: %w", err)
+		}
+		if err := notifyProxy(ipsToNotify); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ReconcileClusterDefaultNetworkRemoteZone(watchFactory *factory.WatchFactory, nbClient libovsdbclient.Client, pod *corev1.Pod) error {
 	vmReady, err := virtualMachineReady(watchFactory, pod)
 	if err != nil {
 		return err
@@ -183,15 +221,30 @@ func EnsureRemoteZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory,
 	if !vmReady {
 		return nil
 	}
+
+	podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, types.DefaultNetworkName)
+	if err != nil {
+		return fmt.Errorf("failed reading remote pod annotation: %v", err)
+	}
+	if err := ensureRemoteZonePodAddressesToNodeRoute(watchFactory, nbClient, pod, podAnnotation, types.DefaultNetworkName); err != nil {
+		return fmt.Errorf("failed to reconcile pod address to node route at kubevirt cluster default network remote zone: %w", err)
+	}
+	if err := reconcileClusterDefaultNetworkRemoteZoneNeighbours(watchFactory, nbClient, pod, podAnnotation, types.DefaultNetworkName); err != nil {
+		return fmt.Errorf("failed to reconcile neighbours at kubevirt cluster default network remote zone: %w", err)
+	}
+	return nil
+}
+
+// ensureRemoteZonePodAddressesToNodeRoute will add static routes when live
+// migrated pod belongs to remote zone to send traffic over transwitch switch
+// port of the node where the pod is running:
+//   - A dst-ip with live migrated pod ip as prefix and nexthop the pod's
+//     current node transit switch port.
+func ensureRemoteZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory, nbClient libovsdbclient.Client, pod *corev1.Pod, podAnnotation *util.PodAnnotation, nadName string) error {
 	// DHCPOptions are only needed at the node is running the VM
 	// at that's the local zone node not the remote zone
 	if err := DeleteDHCPOptions(nbClient, pod); err != nil {
 		return err
-	}
-
-	podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, nadName)
-	if err != nil {
-		return fmt.Errorf("failed reading remote pod annotation: %v", err)
 	}
 
 	vmRunningAtNodeOwningSubnet, err := nodeContainsPodSubnet(watchFactory, pod.Spec.NodeName, podAnnotation, nadName)
@@ -243,29 +296,38 @@ func EnsureRemoteZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory,
 		}); err != nil {
 			return fmt.Errorf("failed adding static route to remote pod: %v", err)
 		}
+
 	}
 	return nil
 }
 
-func virtualMachineReady(watchFactory *factory.WatchFactory, pod *corev1.Pod) (bool, error) {
-	isMigratedSourcePodStale, err := IsMigratedSourcePodStale(watchFactory, pod)
+func reconcileClusterDefaultNetworkRemoteZoneNeighbours(watchFactory *factory.WatchFactory, nbClient libovsdbclient.Client, pod *corev1.Pod, podAnnotation *util.PodAnnotation, nadName string) error {
+	//TODO: Implement neighbour update for non IC
+	if !config.OVNKubernetesFeature.EnableInterconnect {
+		return nil
+	}
+	vmRunningAtNodeOwningSubnet, err := nodeContainsPodSubnet(watchFactory, pod.Spec.NodeName, podAnnotation, nadName)
 	if err != nil {
-		return false, err
-	}
-	if util.PodWantsHostNetwork(pod) || !IsPodLiveMigratable(pod) || isMigratedSourcePodStale {
-		return false, nil
+		return err
 	}
 
-	// When a virtual machine start up this
-	// label is the signal from KubeVirt to notify that the VM is
-	// ready to receive traffic.
-	targetNode := pod.Labels[kubevirtv1.NodeNameLabel]
+	currentNode := os.Getenv("K8S_NODE")
+	currentNodeOwnsSubnet, err := nodeContainsPodSubnet(watchFactory, currentNode, podAnnotation, nadName)
+	if err != nil {
+		return err
+	}
+	if !vmRunningAtNodeOwningSubnet && currentNodeOwnsSubnet {
+		// If we don't do this ARPs will be answer again with wrong mac
+		if err := deleteStaleLogicalSwitchPorts(watchFactory, nbClient, pod); err != nil {
+			return err
+		}
 
-	// This annotation only appears on live migration scenarios and it signals
-	// that target VM pod is ready to receive traffic so we can route
-	// taffic to it.
-	targetReadyTimestamp := pod.Annotations[kubevirtv1.MigrationTargetReadyTimestamp]
-
-	// VM is ready to receive traffic
-	return targetNode == pod.Spec.NodeName || targetReadyTimestamp != "", nil
+		// Now that the VM is running at a node not owning its subnet the pods at the same subnet should use
+		// the gateway to access it so we need to invalidate their  neighbor entries to point now to the
+		// gateway proxy mac.
+		if err := notifyProxy(podAnnotation.IPs); err != nil {
+			return err
+		}
+	}
+	return nil
 }
