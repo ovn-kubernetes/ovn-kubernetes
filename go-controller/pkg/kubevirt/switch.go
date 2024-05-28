@@ -1,9 +1,22 @@
 package kubevirt
 
 import (
+	"fmt"
+	"net"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/klog/v2"
+
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
+	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/ndp"
 )
 
 const (
@@ -52,4 +65,69 @@ func ComposeARPProxyLSPOption() string {
 		arpProxy = append(arpProxy, clusterSubnet.CIDR.String())
 	}
 	return strings.Join(arpProxy, " ")
+}
+
+func notifyProxy(ipsToNotify []*net.IPNet) error {
+	arpProxyHardwareAddr, err := net.ParseMAC(ARPProxyMAC)
+	if err != nil {
+		return err
+	}
+	for _, ipToNotify := range ipsToNotify {
+		if ipToNotify.IP.To4() != nil {
+			garp, err := util.NewGARP(ipToNotify.IP, &arpProxyHardwareAddr)
+			if err != nil {
+				klog.Errorf("kubevirt: failed creating GARP for IP %s: %v", ipToNotify.IP.String(), err)
+				continue // ipv6
+			}
+			if err := util.BroadcastGARP(types.K8sMgmtIntfName, garp); err != nil {
+				return fmt.Errorf("failed sending GARP: %w", err)
+			}
+		} else {
+			na, err := ndp.NewNeighborAdvertisement(ipToNotify.IP, &arpProxyHardwareAddr)
+			if err != nil {
+				klog.Errorf("kubevirt: failed creating NA for IP %s: %v", ipToNotify.IP.String(), err)
+				continue // ipv4
+			}
+			if err := ndp.SendUnsolicitedNeighborAdvertisement(types.K8sMgmtIntfName, na); err != nil {
+				return fmt.Errorf("failed sending Unsolicited NA: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
+func deleteStaleLogicalSwitchPorts(watchFactory *factory.WatchFactory, nbClient libovsdbclient.Client, pod *corev1.Pod) error {
+	vmPods, err := findVMRelatedPods(watchFactory, pod)
+	if err != nil {
+		return err
+	}
+	for _, vmPod := range vmPods {
+		if util.PodCompleted(vmPod) {
+			continue
+		}
+		// Only delete LSP for pods that are stale (not the current active VM pod)
+		isStale, err := IsMigratedSourcePodStale(watchFactory, vmPod)
+		if err != nil {
+			klog.Errorf("kubevirt: failed checking if pod %s/%s is stale: %v", vmPod.Namespace, vmPod.Name, err)
+			continue
+		}
+		if !isStale {
+			continue
+		}
+		lsp := &nbdb.LogicalSwitchPort{
+			Name: util.GetLogicalPortName(vmPod.Namespace, vmPod.Name),
+		}
+		lsp, err = libovsdbops.GetLogicalSwitchPort(nbClient, lsp)
+		if err != nil {
+			klog.Errorf("kubevirt: failed retrieving LSP %q: %v", lsp.Name, err)
+			continue
+		}
+		logicalSwitch := &nbdb.LogicalSwitch{
+			Name: vmPod.Spec.NodeName,
+		}
+		if err := libovsdbops.DeleteLogicalSwitchPorts(nbClient, logicalSwitch, lsp); err != nil {
+			return err
+		}
+	}
+	return nil
 }
