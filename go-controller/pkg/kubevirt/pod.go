@@ -1,6 +1,7 @@
 package kubevirt
 
 import (
+	"bytes"
 	"fmt"
 	"net"
 	"sort"
@@ -13,6 +14,7 @@ import (
 	ktypes "k8s.io/apimachinery/pkg/types"
 	v1 "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/util/retry"
+	"k8s.io/klog/v2"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
@@ -237,7 +239,30 @@ func nodeContainsPodSubnet(watchFactory *factory.WatchFactory, nodeName string, 
 	return false, nil
 }
 
-// ExtractVMNameFromPod returns namespace and name of vm backed up but the pod
+// findNodeOwningSubnet returns the node owning the subnet found in the pod
+// annotation passed as input
+func findNodeOwningSubnet(watchFactory *factory.WatchFactory, podAnnotation *util.PodAnnotation, nadName string) (*corev1.Node, error) {
+	nodes, err := watchFactory.GetNodes()
+	if err != nil {
+		return nil, err
+	}
+	for _, node := range nodes {
+		nodeHostSubNets, err := util.ParseNodeHostSubnetAnnotation(node, nadName)
+		if err != nil {
+			return nil, err
+		}
+		for _, subnet := range podAnnotation.IPs {
+			for _, nodeHostSubNet := range nodeHostSubNets {
+				if nodeHostSubNet.Contains(subnet.IP) {
+					return node, nil
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+// ExtractVMNameFromPod returns namespace and name of vm backed up by the pod
 // for regular pods return nil
 func ExtractVMNameFromPod(pod *corev1.Pod) *ktypes.NamespacedName {
 	vmName, ok := pod.Labels[kubevirtv1.VirtualMachineNameLabel]
@@ -685,4 +710,64 @@ func newRouterAdvertisementWithPrefixInfos(ip net.IP, destinationMAC net.Hardwar
 		Lifetime:       lifetime,
 		PrefixInfos:    prefixInfos,
 	}
+}
+func findRunningPodsIPsFromPodSubnet(watchFactory *factory.WatchFactory, podAnnotation *util.PodAnnotation, nadName string) ([]*net.IPNet, error) {
+	nodeOwningSubnet, err := findNodeOwningSubnet(watchFactory, podAnnotation, nadName)
+	if err != nil {
+		return nil, err
+	}
+	if nodeOwningSubnet == nil {
+		return nil, nil
+	}
+
+	pods, err := watchFactory.GetAllPods()
+	if err != nil {
+		return nil, err
+	}
+	ipsToNotify := []*net.IPNet{}
+	for _, podToNotify := range pods {
+		if podToNotify.Spec.NodeName != nodeOwningSubnet.Name {
+			continue
+		}
+		sameSubnetPodAnnotation, err := util.UnmarshalPodAnnotation(podToNotify.Annotations, nadName)
+		if err != nil {
+			klog.Errorf("Failed unmarshaling pod ovn for pod %s/%s annotations before GARP: %v", podToNotify.Namespace, podToNotify.Name, err)
+			continue
+		}
+
+		if util.PodCompleted(podToNotify) {
+			continue
+		}
+
+		//FIXME: Is comparing MAC enough to discard pod's from same VM
+		if bytes.Equal(sameSubnetPodAnnotation.MAC, podAnnotation.MAC) {
+			continue
+		}
+
+		ipsToNotify = append(ipsToNotify, sameSubnetPodAnnotation.IPs...)
+	}
+	return ipsToNotify, nil
+}
+
+func virtualMachineReady(watchFactory *factory.WatchFactory, pod *corev1.Pod) (bool, error) {
+	isMigratedSourcePodStale, err := IsMigratedSourcePodStale(watchFactory, pod)
+	if err != nil {
+		return false, err
+	}
+	if util.PodWantsHostNetwork(pod) || !IsPodLiveMigratable(pod) || isMigratedSourcePodStale {
+		return false, nil
+	}
+
+	// When a virtual machine start up this
+	// label is the signal from KubeVirt to notify that the VM is
+	// ready to receive traffic.
+	targetNode := pod.Labels[kubevirtv1.NodeNameLabel]
+
+	// This annotation only appears on live migration scenarios and it signals
+	// that target VM pod is ready to receive traffic so we can route
+	// taffic to it.
+	targetReadyTimestamp := pod.Annotations[kubevirtv1.MigrationTargetReadyTimestamp]
+
+	// VM is ready to receive traffic
+	return targetNode == pod.Spec.NodeName || targetReadyTimestamp != "", nil
 }
