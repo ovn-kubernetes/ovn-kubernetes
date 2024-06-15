@@ -285,6 +285,11 @@ spec:
           # We mount our socket here
         - mountPath: /var/run/ovn-kubernetes
           name: host-var-run-ovn-kubernetes
+        {{- if and .Values.global.kata (eq .Values.global.kata.enableDAN true) }}
+        # mount kata container DAN config dir
+        - mountPath: /var/run/ovn-kubernetes/dans
+          name: host-kata-dan-config-dir
+        {{- end }}
         # CNI related mounts which we take over
         - mountPath: /opt/cni/bin
           name: host-opt-cni-bin
@@ -510,6 +515,10 @@ spec:
           value: {{ hasKey .Values.global "enableObservability" | ternary .Values.global.enableObservability false | quote }}
         - name: OVN_NETWORK_QOS_ENABLE
           value: {{ hasKey .Values.global "enableNetworkQos" | ternary .Values.global.enableNetworkQos false | quote }}
+        {{- if and .Values.global.kata (eq .Values.global.kata.enableDAN true) }}
+        - name: OVNKUBE_ENABLE_KATA_DAN
+          value: "true"
+        {{- end }}
         readinessProbe:
           exec:
             command: ["/usr/bin/ovn-kube-util", "readiness-probe", "-t", "ovnkube-node"]
@@ -640,6 +649,12 @@ spec:
       - name: host-var-run-ovn-kubernetes
         hostPath:
           path: /var/run/ovn-kubernetes
+      {{- if and .Values.global.kata (eq .Values.global.kata.enableDAN true) }}
+      - name: host-kata-dan-config-dir
+        hostPath:
+          path: {{ .Values.global.kata.danConfigDir | default "/run/kata-containers/dans" }}
+          type: DirectoryOrCreate
+      {{- end }}
       - name: host-opt-cni-bin
         hostPath:
           path: /opt/cni/bin

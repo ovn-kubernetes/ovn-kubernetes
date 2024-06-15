@@ -99,6 +99,7 @@ fi
 # OVN_ENABLE_DNSNAMERESOLVER - enable dns name resolver support
 # OVN_ALLOW_ICMP_NETPOL - allow ICMP and ICMPv6 regardless of network policy
 # OVN_OBSERV_ENABLE - enable observability for ovnkube
+# OVNKUBE_ENABLE_KATA_DAN - when true, enable Kata DAN config generation support
 
 # The argument to the command is the operation to be performed
 # ovn-controller ovn-node display display_env ovn_debug
@@ -348,6 +349,11 @@ if [[ ! -z $ovn_k8s_node ]]; then
   echo "host-k8s-nodename is set, overriding K8S_NODE with $ovn_k8s_node"
   K8S_NODE=$ovn_k8s_node
 fi
+
+# OVNKUBE_ENABLE_KATA_DAN - enable Kata DAN config generation support
+ovnkube_enable_kata_dan=${OVNKUBE_ENABLE_KATA_DAN:-"false"}
+# Base directory of Kata Container's DAN(Directly Attachable Network) config
+kata_dan_conf_dir=/var/run/ovn-kubernetes/dans
 
 # Determine the ovn rundir.
 if [[ -f /usr/bin/ovn-appctl ]]; then
@@ -2756,6 +2762,13 @@ ovn-node() {
     ovn_v6_masquerade_subnet_opt="--gateway-v6-masquerade-subnet=${ovn_v6_masquerade_subnet}"
   fi
 
+  kata_dan_conf_dir_flag=
+  if [[ ${ovnkube_enable_kata_dan} == "true" ]]; then
+    mkdir -p -m 0700 ${kata_dan_conf_dir}
+    kata_dan_conf_dir_flag="--kata-dan-conf-dir=${kata_dan_conf_dir}"
+  fi
+  echo "kata_dan_conf_dir_flag=${kata_dan_conf_dir_flag}"
+
   dynamic_udn_allocation_flag=
   if [[ ${ovn_enable_dynamic_udn_allocation} == "true" ]]; then
     dynamic_udn_allocation_flag="--enable-dynamic-udn-allocation"
@@ -2816,6 +2829,7 @@ ovn-node() {
         ${dynamic_udn_allocation_flag} \
         ${dynamic_udn_grace_period} \
         ${network_qos_enabled_flag} \
+        ${kata_dan_conf_dir_flag} \
         --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
         --export-ovs-metrics \
         --gateway-mode=${ovn_gateway_mode} ${ovn_gateway_opts} \
