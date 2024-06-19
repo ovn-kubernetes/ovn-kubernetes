@@ -262,6 +262,7 @@ To implement live migration ovn-kubernetes do the following:
 - Send DHCP replies advertising the allocated IP address and subnet gateway to the guest VM (via OVN-Kubernetes DHCP options configured for the logical switch ports).
 - A point to point routing is used so one node's subnet IP can be routed from different node
 - The VM's gateway IP (subnet gateway) and MAC are kept consistent across nodes using ARP proxy
+- Send GARPs and unsolicited NAs after live migration to fix neighbors tables and point to gw mac
 
 **Point to point routing:**
 
@@ -344,7 +345,7 @@ priority than the ones from the node logical switch so ARP flows are not overrid
 │ lsp stor-node1     │──┘     └───│ lsp stor-node2      │
 │ options:           │            │ options:            │
 │  arp_proxy:        │            │   arp_proxy:        │
-│   0a:58:0a:f3:00:00│            │    0a:58:0a:f3:00:00│
+│   0a:58:a9:fe:01:01│            │    0a:58:a9:fe:01:01│
 │   169.254.1.1      │            │    169.254.1.1      │
 │   10.244.0.0/16    │            │    10.244.0.0/16    │
 └────────────────────┘            └─────────────────────┘
@@ -422,6 +423,99 @@ The point to point routing cleanup (remove of static routes and policies) will b
 - VM is deleted, all the routing related to the VM is removed at all the ovn zones.
 - VM is live migrated back to the node that owns its IP, all the routing related to the VM is removed at all the ovn zones.
 - ovn-kubernetes controllers are restarted, stale routing is removed.
+
+**Advertising neighbors:**
+To improve connectivity after live migration, ovn-k sends GARPs and unsolicited NAs to pods on the node owning the subnet and
+to the VM on the migration target node.
+
+Additionally, the gateway IP neighbor entry must also be updated on the migrated VM.
+After https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5773 the VM's IPv4
+gateway is no longer the arp_proxy link-local IP (169.254.1.1) but the actual
+subnet gateway IP (e.g., 10.244.0.1). On the subnet-owning switch the router
+port's (LRP) ARP responder has higher priority than arp_proxy, so the VM
+resolves the gateway to the node's real LRP MAC instead of the arp_proxy MAC.
+After migration to a different switch, that LRP MAC is not present and only the
+arp_proxy can answer. However, the VM still has the stale LRP MAC cached for the
+gateway, so we must also send a GARP for the gateway IP to update the VM's
+neighbor entry to the arp_proxy MAC.
+
+To understand it first we have to check how the neighbors tables looks before live migration at vm and pods running at the same
+node.
+
+Let's first look at the logical switch ports of one vm and one pod running at the same node and their neighbors tables
+
+```text
+    ┌───────────────────────────────┐
+    │     logical switch node1      │
+    │       (10.244.0.0/24)         │
+    └───────────────────────────────┘ 
+┌──────────────────────┐  │     │   ┌──────────────────────┐      
+│ lsp ns-virt-launcher1│──┘     └───│ lsp pod1             │     
+│ address:             │            │ address:             │    
+│  0a:58:0a:f4:00:01   │            │  0a:58:0a:f4:00:02   │
+│  10.244.0.8          │            │  10.244.0.9          │
+└──────────────────────┘            └──────────────────────┘
+neighbors table vm:
+┌──────────────────────────────────────────────────────┐
+│ 10.244.0.9 -> 0a:58:0a:f4:00:02                      │
+│ 10.244.0.1 -> 0a:58:0a:f4:00:03 (gateway, LRP MAC)   │
+└──────────────────────────────────────────────────────┘
+neighbors table pod1:
+┌─────────────────────────────────┐
+│ 10.244.0.8 -> 0a:58:0a:f4:00:01 │
+└─────────────────────────────────┘
+```
+
+Now after live migration from node1 to node2 the situation is the following:
+
+
+```text
+    ┌────────────────────────┐ ┌────────────────────────┐
+    │  logical switch node2  │ │  logical switch node1  │
+    │    (10.244.1.0/24)     │ │    (10.244.0.0/24)     │
+    └────────────────────────┘ └────────────────────────┘
+┌──────────────────────┐  │     │   ┌──────────────────────┐
+│ lsp ns-virt-launcher1│──┘     └───│ lsp pod1             │
+│ address:             │            │ address:             │
+│  0a:58:0a:f4:00:01   │            │  0a:58:0a:f4:00:02   │
+│  10.244.0.8          │            │  10.244.0.9          │
+└──────────────────────┘            └──────────────────────┘
+neighbors table vm:
+┌──────────────────────────────────────────────────────────────────────┐
+│ 10.244.0.9 -> 0a:58:0a:f4:00:02                                     │
+│ 10.244.0.1 -> 0a:58:0a:f4:00:03 (gateway, stale LRP MAC from node1) │
+└──────────────────────────────────────────────────────────────────────┘
+neighbors table pod1:
+┌─────────────────────────────────┐
+│ 10.244.0.8 -> 0a:58:0a:f4:00:01 │
+└─────────────────────────────────┘
+```
+
+Now the neighbors tables are incorrect since none of those mac addresses are
+part of the logical switches. Additionally, the VM's gateway entry still points
+to node1's LRP MAC which doesn't exist on node2's switch. After some time or
+traffic, neighbors cache get invalidated and updated so they will point to the
+arp_proxy mac `0a:58:a9:fe:01:01`, problem is that it may take too much time
+and connections will be broken.
+
+To improve the situation ovn-k sends the following GARPs and unsolicited NA taking
+into account that the arp proxy mac is `0a:58:a9:fe:01:01`:
+
+At node1 broadcast vm's IP should use arp proxy mac
+- `GARP(10.244.0.8 -> 0a:58:a9:fe:01:01, broadcast mac)`
+- one per migrated VM
+
+At node2 advertise to VM that pod's from the same subnet should go over proxy_arp:
+- `GARP(10.244.0.9 -> 0a:58:a9:fe:01:01, vm mac(0a:58:0a:f4:00:01))`
+- one per pod on the same subnet (in this example, only for pod1).
+
+At node2 advertise to VM that the gateway IP should use arp_proxy mac:
+- `GARP(10.244.0.1 -> 0a:58:a9:fe:01:01, vm mac(0a:58:0a:f4:00:01))`
+- one per gateway IP (one for IPv4, one for IPv6 if dual-stack)
+
+Also ovn-k removes the mac address from the VM's old LSP after live migration
+to be sure that generated ARP's from pods are not answered back with VM's mac
+instead of arp proxy.
 
 ## Future Items
 
