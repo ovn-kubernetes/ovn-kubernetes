@@ -10,6 +10,11 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 )
 
+func getQoSMutableFields(qos *nbdb.QoS) []interface{} {
+	return []interface{}{&qos.Action, &qos.Bandwidth, &qos.Direction, &qos.ExternalIDs,
+		&qos.Match, &qos.Priority}
+}
+
 type QoSPredicate func(*nbdb.QoS) bool
 
 // FindQoSesWithPredicate looks up QoSes from the cache based on a
@@ -30,7 +35,7 @@ func CreateOrUpdateQoSesOps(nbClient libovsdbclient.Client, ops []ovsdb.Operatio
 		qos := qoses[i]
 		opModel := operationModel{
 			Model:          qos,
-			OnModelUpdates: []interface{}{}, // update all fields
+			OnModelUpdates: getQoSMutableFields(qos),
 			ErrNotFound:    false,
 			BulkOp:         false,
 		}
@@ -48,7 +53,7 @@ func UpdateQoSesOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, qoses
 		qos := qoses[i]
 		opModel := operationModel{
 			Model:          qos,
-			OnModelUpdates: []interface{}{}, // update all fields
+			OnModelUpdates: getQoSMutableFields(qos),
 			ErrNotFound:    true,
 			BulkOp:         false,
 		}
@@ -111,10 +116,35 @@ func RemoveQoSesFromLogicalSwitchOps(nbClient libovsdbclient.Client, ops []ovsdb
 	opModels := operationModel{
 		Model:            sw,
 		OnModelMutations: []interface{}{&sw.QOSRules},
-		ErrNotFound:      true,
+		ErrNotFound:      false,
 		BulkOp:           false,
 	}
 
 	modelClient := newModelClient(nbClient)
 	return modelClient.DeleteOps(ops, opModels)
+}
+
+// DeleteQoSesWithPredicateOps returns the ops to delete QoSes based on a given predicate
+func DeleteQoSesWithPredicateOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, p QoSPredicate) ([]libovsdb.Operation, error) {
+	deleted := []*nbdb.QoS{}
+	opModel := operationModel{
+		ModelPredicate: p,
+		ExistingResult: &deleted,
+		ErrNotFound:    false,
+		BulkOp:         true,
+	}
+
+	m := newModelClient(nbClient)
+	return m.DeleteOps(ops, opModel)
+}
+
+// DeleteQoSesWithPredicate looks up QoSes from the cache based on
+// a given predicate and deletes them
+func DeleteQoSesWithPredicate(nbClient libovsdbclient.Client, p QoSPredicate) error {
+	ops, err := DeleteQoSesWithPredicateOps(nbClient, nil, p)
+	if err != nil {
+		return nil
+	}
+	_, err = TransactAndCheck(nbClient, ops)
+	return err
 }
