@@ -27,6 +27,7 @@ set_default_params() {
   export KIND_REMOVE_TAINT=${KIND_REMOVE_TAINT:-true}
   export ENABLE_MULTI_NET=${ENABLE_MULTI_NET:-false}
   export ENABLE_NETWORK_SEGMENTATION=${ENABLE_NETWORK_SEGMENTATION:-false}
+  export OVN_NETWORK_QOS_ENABLE=${OVN_NETWORK_QOS_ENABLE:-false}
   export KIND_NUM_WORKER=${KIND_NUM_WORKER:-2}
   export KIND_CLUSTER_NAME=${KIND_CLUSTER_NAME:-ovn}
   export OVN_IMAGE=${OVN_IMAGE:-'ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-ubuntu:helm'}
@@ -98,6 +99,7 @@ usage() {
     echo "       [ -ikv | --install-kubevirt ]"
     echo "       [ -mne | --multi-network-enable ]"
     echo "       [ -nse | --network-segmentation-enable ]"
+    echo "       [ -nqe | --network-qos-enable ]"
     echo "       [ -wk  | --num-workers <num> ]"
     echo "       [ -ic  | --enable-interconnect]"
     echo "       [ -npz | --node-per-zone ]"
@@ -119,6 +121,7 @@ usage() {
     echo "-ikv | --install-kubevirt            Install kubevirt"
     echo "-mne | --multi-network-enable        Enable multi networks. DEFAULT: Disabled"
     echo "-nse | --network-segmentation-enable Enable network segmentation. DEFAULT: Disabled"
+    echo "-nqe | --network-qos-enable          Enable network QoS. DEFAULT: Disabled"
     echo "-ha  | --ha-enabled                  Enable high availability. DEFAULT: HA Disabled"
     echo "-wk  | --num-workers                 Number of worker nodes. DEFAULT: 2 workers"
     echo "-cn  | --cluster-name                Configure the kind cluster's name"
@@ -164,6 +167,8 @@ parse_args() {
             -mne | --multi-network-enable )       ENABLE_MULTI_NET=true
                                                   ;;
             -nse | --network-segmentation-enable) ENABLE_NETWORK_SEGMENTATION=true
+                                                  ;;
+            -nqe | --network-qos-enable )         OVN_NETWORK_QOS_ENABLE=true
                                                   ;;
             -ha | --ha-enabled )                  OVN_HA=true
                                                   KIND_NUM_MASTER=3
@@ -218,6 +223,7 @@ print_params() {
      echo "KIND_REMOVE_TAINT = $KIND_REMOVE_TAINT"
      echo "ENABLE_MULTI_NET = $ENABLE_MULTI_NET"
      echo "ENABLE_NETWORK_SEGMENTATION = $ENABLE_NETWORK_SEGMENTATION"
+     echo "OVN_NETWORK_QOS_ENABLE = $OVN_NETWORK_QOS_ENABLE"
      echo "OVN_IMAGE = $OVN_IMAGE"
      echo "KIND_NUM_MASTER = $KIND_NUM_MASTER"
      echo "KIND_NUM_WORKER = $KIND_NUM_WORKER"
@@ -414,6 +420,7 @@ helm install ovn-kubernetes . -f "${value_file}" \
           --set global.enableObservability=$(if [ "${OVN_OBSERV_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.emptyLbEvents=$(if [ "${OVN_EMPTY_LB_EVENTS}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableDNSNameResolver=$(if [ "${OVN_ENABLE_DNSNAMERESOLVER}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          --set global.enableNetworkQos=$(if [ "${OVN_NETWORK_QOS_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
           ${ovnkube_db_options}
 EOF
        )
