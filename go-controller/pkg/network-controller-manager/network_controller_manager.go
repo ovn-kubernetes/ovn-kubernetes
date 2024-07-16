@@ -54,7 +54,7 @@ type NetworkControllerManager struct {
 	defaultNetworkController nad.BaseNetworkController
 
 	// net-attach-def controller handle net-attach-def and create/delete network controllers
-	nadController *nad.NetAttachDefinitionController
+	nadController nad.NADController
 }
 
 func (cm *NetworkControllerManager) NewNetworkController(nInfo util.NetInfo) (nad.NetworkController, error) {
@@ -211,11 +211,12 @@ func NewNetworkControllerManager(ovnClient *util.OVNClientset, wf *factory.Watch
 
 	var err error
 	if config.OVNKubernetesFeature.EnableMultiNetwork {
-		cm.nadController, err = nad.NewNetAttachDefinitionController("network-controller-manager", cm, wf, nil)
+		cm.nadController, err = nad.NewZoneNADController("network-controller-manager", config.Default.Zone, cm, wf)
 		if err != nil {
 			return nil, err
 		}
 	}
+
 	return cm, nil
 }
 
@@ -290,7 +291,7 @@ func (cm *NetworkControllerManager) newCommonNetworkControllerInfo() (*ovn.Commo
 }
 
 // initDefaultNetworkController creates the controller for default network
-func (cm *NetworkControllerManager) initDefaultNetworkController(nadController *nad.NetAttachDefinitionController,
+func (cm *NetworkControllerManager) initDefaultNetworkController(nadController nad.NADController,
 	observManager *observability.Manager) error {
 	cnci, err := cm.newCommonNetworkControllerInfo()
 	if err != nil {
@@ -391,12 +392,6 @@ func (cm *NetworkControllerManager) Start(ctx context.Context) error {
 		metrics.GetConfigDurationRecorder().Run(cm.nbClient, cm.kube, 10, time.Second*5, cm.stopChan)
 	}
 	cm.podRecorder.Run(cm.sbClient, cm.stopChan)
-	// nadController is nil if multi-network is disabled
-	if cm.nadController != nil {
-		if err = cm.nadController.Start(); err != nil {
-			return fmt.Errorf("failed to start NAD Controller :%v", err)
-		}
-	}
 
 	var observabilityManager *observability.Manager
 	if config.OVNKubernetesFeature.EnableObservability {
@@ -414,6 +409,14 @@ func (cm *NetworkControllerManager) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to init default network controller: %v", err)
 	}
+
+	// nadController is nil if multi-network is disabled
+	if cm.nadController != nil {
+		if err = cm.nadController.Start(); err != nil {
+			return fmt.Errorf("failed to start NAD Controller :%v", err)
+		}
+	}
+
 	err = cm.defaultNetworkController.Start(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to start default network controller: %v", err)
