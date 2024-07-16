@@ -51,6 +51,7 @@ type NetworkController interface {
 type NetworkControllerManager interface {
 	NewNetworkController(netInfo util.NetInfo) (NetworkController, error)
 	CleanupDeletedNetworks(validNetworks ...util.BasicNetInfo) error
+	GetDefaultNetworkController() ReconcilableNetworkController
 }
 
 type watchFactory interface {
