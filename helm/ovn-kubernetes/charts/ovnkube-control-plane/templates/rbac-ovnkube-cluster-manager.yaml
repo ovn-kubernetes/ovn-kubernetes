@@ -73,6 +73,7 @@ rules:
           - adminpolicybasedexternalroutes
           - egressfirewalls
           - egressqoses
+          - networkqoses
           - userdefinednetworks
           - clusteruserdefinednetworks
       verbs: [ "get", "list", "watch" ]
@@ -80,6 +81,7 @@ rules:
       resources:
           - egressips
           - egressservices/status
+          - networkqoses/status
           - userdefinednetworks
           - userdefinednetworks/status
           - clusteruserdefinednetworks
