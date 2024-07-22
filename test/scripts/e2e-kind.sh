@@ -129,18 +129,18 @@ RA_SKIPPED_TESTS="
 SKIPPED_TESTS=$SKIPPED_TESTS$IPV6_ONLY_TESTS
 
 # Either single stack IPV6 or dualstack
-if [ "$KIND_IPV6_SUPPORT" == true ]; then
+if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
   SKIPPED_TESTS=$SKIPPED_TESTS$SINGLESTACK_IPV4_ONLY_TESTS
 fi
 
 # IPv6 Only, skip any IPv4 Only Tests
-if [ "$KIND_IPV4_SUPPORT" == false ] && [ "$KIND_IPV6_SUPPORT" == true ]; then
+if [ "$PLATFORM_IPV4_SUPPORT" == false ] && [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
 	echo "IPv6 Only"
 	SKIPPED_TESTS=$SKIPPED_TESTS$IPV4_ONLY_TESTS
 fi
 
 # If not DualStack, skip DualStack tests
-if [ "$KIND_IPV4_SUPPORT" == false ] || [ "$KIND_IPV6_SUPPORT" == false ]; then
+if [ "$PLATFORM_IPV4_SUPPORT" == false ] || [ "$PLATFORM_IPV6_SUPPORT" == false ]; then
 	SKIPPED_TESTS=$SKIPPED_TESTS$DUALSTACK_ONLY_TESTS
 fi
 
