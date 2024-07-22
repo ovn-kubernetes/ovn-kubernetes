@@ -1891,7 +1891,9 @@ func newGateway(nodeName string, subnets []*net.IPNet, gwNextHops []net.IP, gwIn
 	gwIPs []*net.IPNet, nodeAnnotator kube.Annotator, cfg *managementPortConfig, kube kube.Interface,
 	watchFactory factory.NodeWatchFactory, routeManager *routemanager.Controller, networkManager nad.NetworkManager, gatewayMode config.GatewayMode) (*gateway, error) {
 	klog.Info("Creating new gateway")
-	gw := &gateway{}
+	gw := &gateway{
+		reconcile: make(chan struct{}, 1),
+	}
 
 	if gatewayMode == config.GatewayModeLocal {
 		if err := initLocalGateway(subnets, cfg); err != nil {
