@@ -53,9 +53,9 @@ var _ = ginkgo.Describe("VRF manager", func() {
 	}
 
 	vrfTables := map[string]uint32{
-		vrfLinkName1: 1000,
-		vrfLinkName2: 2000,
-		vrfLinkName3: 999,
+		vrfLinkName1: util.UDNRoutingTableIDStart,
+		vrfLinkName2: util.UDNRoutingTableIDStart + 2000,
+		vrfLinkName3: 999, // not a UDN VRF
 	}
 
 	getLinkIndex := func(linkName string) int {
@@ -237,9 +237,9 @@ var _ = ginkgo.Describe("VRF manager tests with a network namespace", func() {
 	ovntest.OnSupportedPlatformsIt("ensure VRF manager is reconciling configured VRF devices correctly", func() {
 		err := testNS.Do(func(ns.NetNS) error {
 			defer ginkgo.GinkgoRecover()
-			err := c.AddVRF(vrfLinkName1, "", 1000, nil)
+			err := c.AddVRF(vrfLinkName1, "", util.UDNRoutingTableIDStart, nil)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-			err = c.AddVRF(vrfLinkName2, "", 2000, nil)
+			err = c.AddVRF(vrfLinkName2, "", util.UDNRoutingTableIDStart+1000, nil)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 
 			wg3 := &sync.WaitGroup{}
