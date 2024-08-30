@@ -1,6 +1,7 @@
 package util
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -51,6 +52,10 @@ func CreateDefaultRouteToExternal(nbClient libovsdbclient.Client, clusterRouter,
 			Policy:   &nbdb.LogicalRouterStaticRoutePolicySrcIP,
 		}
 
+		if err = deleteStaleStaticRoutes(nbClient, clusterRouter, clusterSubnet.String(), gatewayIP.String()); err != nil {
+			klog.Errorf("Could not remove stale static route %v", err)
+		}
+
 		clusterSubnetPrefixLen, _ := clusterSubnet.CIDR.Mask.Size()
 		p := func(lrsr *nbdb.LogicalRouterStaticRoute) bool {
 			// Replace any existing LRSR for the cluster subnet.
@@ -82,6 +87,19 @@ func CreateDefaultRouteToExternal(nbClient libovsdbclient.Client, clusterRouter,
 		if err := libovsdbops.CreateOrReplaceLogicalRouterStaticRouteWithPredicate(nbClient, clusterRouter, &lrsr, p); err != nil {
 			return fmt.Errorf("unable to create pod to external catch-all reroute for gateway router %s, err: %v", gwRouterName, err)
 		}
+	}
+	return nil
+}
+
+// deleteStaleStaticRoutes removes static route matching ClusterNetwork CIDR and referencing old join switch IP as NextHop.
+func deleteStaleStaticRoutes(nbClient libovsdbclient.Client, clusterRouter, clusterSubnet, gwLRPIP string) error {
+	p := func(lrsr *nbdb.LogicalRouterStaticRoute) bool {
+		return lrsr.Nexthop != gwLRPIP && lrsr.IPPrefix == clusterSubnet && lrsr.Policy != nil &&
+			*lrsr.Policy == nbdb.LogicalRouterStaticRoutePolicySrcIP
+	}
+	err := libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicate(nbClient, clusterRouter, p)
+	if err != nil && !errors.Is(err, libovsdbclient.ErrNotFound) {
+		return fmt.Errorf("failed to delete static route from router %s: %v", clusterRouter, err)
 	}
 	return nil
 }
