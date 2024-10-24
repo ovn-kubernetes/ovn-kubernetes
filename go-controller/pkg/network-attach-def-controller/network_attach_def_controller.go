@@ -37,6 +37,7 @@ type ReconcilableNetworkController interface {
 }
 
 type BaseNetworkController interface {
+	util.NetInfo
 	ReconcilableNetworkController
 	Start(ctx context.Context) error
 	Stop()
@@ -44,7 +45,6 @@ type BaseNetworkController interface {
 
 type NetworkController interface {
 	BaseNetworkController
-	util.NetInfo
 	// Cleanup cleans up the NetworkController-owned resources, it could be called to clean up network controllers that are deleted when
 	// ovn-k8s is down; so it's receiver could be a dummy network controller, it just needs to know its network name.
 	Cleanup() error
