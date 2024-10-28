@@ -169,12 +169,12 @@ type Vlan struct {
 	deviceName string
 	id         int
 	name       string
-	ip         *string
+	ip         *net.IPNet
 }
 
-type option func(vlan *Vlan)
+type option func(vlan *Vlan) error
 
-func newVLANIface(deviceName string, vlanID int, opts ...option) *Vlan {
+func newVLANIface(deviceName string, vlanID int, opts ...option) (*Vlan, error) {
 	vlan := &Vlan{
 		deviceName: deviceName,
 		id:         vlanID,
@@ -182,14 +182,22 @@ func newVLANIface(deviceName string, vlanID int, opts ...option) *Vlan {
 	}
 
 	for _, opt := range opts {
-		opt(vlan)
+		if err := opt(vlan); err != nil {
+			return nil, err
+		}
 	}
-	return vlan
+	return vlan, nil
 }
 
 func withIP(ipAddress string) option {
-	return func(vlan *Vlan) {
-		vlan.ip = &ipAddress
+	return func(vlan *Vlan) error {
+		ip, cidr, err := net.ParseCIDR(ipAddress)
+		if err != nil {
+			return fmt.Errorf("failed to parse IP address %s: %w", ipAddress, err)
+		}
+		cidr.IP = ip
+		vlan.ip = cidr
+		return nil
 	}
 }
 
@@ -243,24 +251,10 @@ func (v *Vlan) ensureVLANHasIP() error {
 		return fmt.Errorf("failed to find VLAN interface %s: %v", v.name, err)
 	}
 
-	ip, cidr, err := net.ParseCIDR(*v.ip)
-	if err != nil {
-		return fmt.Errorf("failed to parse IP address %s: %v", *v.ip, err)
-	}
-	cidr.IP = ip
-
-	vlanAddrs, err := netlink.AddrList(vlanIface, netlink.FAMILY_ALL)
+	addr := netlink.Addr{IPNet: v.ip}
+	hasIP, err := isIPInLink(vlanIface, addr)
 	if err != nil {
 		return err
-	}
-	addr := netlink.Addr{IPNet: cidr}
-
-	hasIP := false
-	for _, vlanAddr := range vlanAddrs {
-		if vlanAddr.Equal(addr) {
-			hasIP = true
-			break
-		}
 	}
 
 	if !hasIP {
@@ -285,4 +279,18 @@ func vlanName(deviceName string, vlanID string) string {
 		deviceName = deviceName[:len(deviceName)-len(vlanID)-1]
 	}
 	return fmt.Sprintf("%s.%s", deviceName, vlanID)
+}
+
+func isIPInLink(vlanIface netlink.Link, addr netlink.Addr) (bool, error) {
+	vlanAddrs, err := netlink.AddrList(vlanIface, netlink.FAMILY_ALL)
+	if err != nil {
+		return false, err
+	}
+
+	for _, vlanAddr := range vlanAddrs {
+		if vlanAddr.Equal(addr) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
