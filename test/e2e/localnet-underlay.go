@@ -3,9 +3,10 @@ package e2e
 import (
 	"context"
 	"fmt"
-	"os"
-	"os/exec"
+	"net"
 	"strings"
+
+	"github.com/vishvananda/netlink"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -165,7 +166,7 @@ func bridgeMapping(physnet, ovsBridge string) BridgeMapping {
 
 type Vlan struct {
 	deviceName string
-	id         string
+	id         int
 	name       string
 	ip         *string
 }
@@ -175,9 +176,10 @@ type option func(vlan *Vlan)
 func newVLANIface(deviceName string, vlanID int, opts ...option) *Vlan {
 	vlan := &Vlan{
 		deviceName: deviceName,
-		id:         fmt.Sprintf("%d", vlanID),
+		id:         vlanID,
+		name:       vlanName(deviceName, fmt.Sprintf("%d", vlanID)),
 	}
-	vlan.name = vlanName(deviceName, vlan.id)
+
 	for _, opt := range opts {
 		opt(vlan)
 	}
@@ -195,34 +197,46 @@ func (v *Vlan) String() string {
 }
 
 func (v *Vlan) create() error {
-	cmd := exec.Command("sudo", "ip", "link", "add", "link", v.deviceName, "name", v.name, "type", "vlan", "id", v.id)
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to create vlan interface %s: %v", v.name, err)
+	parentDevice, err := netlink.LinkByName(v.deviceName)
+	if err != nil {
+		return fmt.Errorf("failed to find parent device %s: %v", v.deviceName, err)
 	}
-
-	cmd = exec.Command("sudo", "ip", "link", "set", "dev", v.name, "up")
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to enable vlan interface %s: %v", v.name, err)
+	vlan := &netlink.Vlan{
+		LinkAttrs:    netlink.LinkAttrs{Name: v.name, ParentIndex: parentDevice.Attrs().Index},
+		VlanId:       v.id,
+		VlanProtocol: netlink.VLAN_PROTOCOL_8021Q,
+	}
+	if err := netlink.LinkAdd(vlan); err != nil {
+		return fmt.Errorf("failed to add vlan: %v", err)
+	}
+	if err := netlink.LinkSetUp(vlan); err != nil {
+		return fmt.Errorf("failed to add vlan: %v", err)
 	}
 
 	if v.ip != nil {
-		cmd = exec.Command("sudo", "ip", "addr", "add", *v.ip, "dev", v.name)
-		cmd.Stderr = os.Stderr
+		vlanIface, err := netlink.LinkByName(v.name)
+		if err != nil {
+			return fmt.Errorf("failed to find VLAN interface %s: %v", v.name, err)
+		}
 
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to define the vlan interface %q IP Address %s: %v", v.name, *v.ip, err)
+		ip, cidr, err := net.ParseCIDR(*v.ip)
+		if err != nil {
+			return fmt.Errorf("failed to parse IP address %s: %v", *v.ip, err)
+		}
+		cidr.IP = ip
+
+		addr := &netlink.Addr{IPNet: cidr}
+		if err := netlink.AddrAdd(vlanIface, addr); err != nil {
+			return fmt.Errorf("failed to add IP address %q to VLAN interface %s: %v", *v.ip, v.name, err)
 		}
 	}
+
 	return nil
 }
 
 func (v *Vlan) delete() error {
-	cmd := exec.Command("sudo", "ip", "link", "del", v.name)
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to delete vlan interface %s: %v", v.name, err)
+	if err := netlink.LinkDel(&netlink.Vlan{LinkAttrs: netlink.LinkAttrs{Name: v.name}}); err != nil {
+		return fmt.Errorf("failed to add vlan: %v", err)
 	}
 	return nil
 }
