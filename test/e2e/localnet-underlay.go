@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -201,32 +202,69 @@ func (v *Vlan) create() error {
 	if err != nil {
 		return fmt.Errorf("failed to find parent device %s: %v", v.deviceName, err)
 	}
-	vlan := &netlink.Vlan{
-		LinkAttrs:    netlink.LinkAttrs{Name: v.name, ParentIndex: parentDevice.Attrs().Index},
-		VlanId:       v.id,
-		VlanProtocol: netlink.VLAN_PROTOCOL_8021Q,
-	}
-	if err := netlink.LinkAdd(vlan); err != nil {
-		return fmt.Errorf("failed to add vlan: %v", err)
-	}
-	if err := netlink.LinkSetUp(vlan); err != nil {
-		return fmt.Errorf("failed to add vlan: %v", err)
+
+	if err := v.ensureVLANEnabled(parentDevice); err != nil {
+		return err
 	}
 
 	if v.ip != nil {
-		vlanIface, err := netlink.LinkByName(v.name)
-		if err != nil {
-			return fmt.Errorf("failed to find VLAN interface %s: %v", v.name, err)
+		if err := v.ensureVLANHasIP(); err != nil {
+			return err
 		}
+	}
 
-		ip, cidr, err := net.ParseCIDR(*v.ip)
-		if err != nil {
-			return fmt.Errorf("failed to parse IP address %s: %v", *v.ip, err)
+	return nil
+}
+
+func (v *Vlan) ensureVLANEnabled(parentDevice netlink.Link) error {
+	vlan, err := netlink.LinkByName(v.name)
+	if errors.As(err, &netlink.LinkNotFoundError{}) {
+		vlan = &netlink.Vlan{
+			LinkAttrs:    netlink.LinkAttrs{Name: v.name, ParentIndex: parentDevice.Attrs().Index},
+			VlanId:       v.id,
+			VlanProtocol: netlink.VLAN_PROTOCOL_8021Q,
 		}
-		cidr.IP = ip
+		if err := netlink.LinkAdd(vlan); err != nil {
+			return fmt.Errorf("failed to add vlan: %v", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("failed to look for VLAN %q: %v", v.name, err)
+	}
 
-		addr := &netlink.Addr{IPNet: cidr}
-		if err := netlink.AddrAdd(vlanIface, addr); err != nil {
+	if err := netlink.LinkSetUp(vlan); err != nil {
+		return fmt.Errorf("failed to enable the vlan interface %q: %v", v.name, err)
+	}
+	return nil
+}
+
+func (v *Vlan) ensureVLANHasIP() error {
+	vlanIface, err := netlink.LinkByName(v.name)
+	if err != nil {
+		return fmt.Errorf("failed to find VLAN interface %s: %v", v.name, err)
+	}
+
+	ip, cidr, err := net.ParseCIDR(*v.ip)
+	if err != nil {
+		return fmt.Errorf("failed to parse IP address %s: %v", *v.ip, err)
+	}
+	cidr.IP = ip
+
+	vlanAddrs, err := netlink.AddrList(vlanIface, netlink.FAMILY_ALL)
+	if err != nil {
+		return err
+	}
+	addr := netlink.Addr{IPNet: cidr}
+
+	hasIP := false
+	for _, vlanAddr := range vlanAddrs {
+		if vlanAddr.Equal(addr) {
+			hasIP = true
+			break
+		}
+	}
+
+	if !hasIP {
+		if err := netlink.AddrAdd(vlanIface, &addr); err != nil {
 			return fmt.Errorf("failed to add IP address %q to VLAN interface %s: %v", *v.ip, v.name, err)
 		}
 	}
