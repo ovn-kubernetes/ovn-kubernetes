@@ -208,16 +208,16 @@ func (v *Vlan) String() string {
 func (v *Vlan) create() error {
 	parentDevice, err := netlink.LinkByName(v.deviceName)
 	if err != nil {
-		return fmt.Errorf("failed to find parent device %s: %v", v.deviceName, err)
+		return fmt.Errorf("failed to find parent device %s: %w", v.deviceName, err)
 	}
 
 	if err := v.ensureVLANEnabled(parentDevice); err != nil {
-		return err
+		return fmt.Errorf("failed to ensure VLAN device %q: %w", v.String(), err)
 	}
 
 	if v.ip != nil {
 		if err := v.ensureVLANHasIP(); err != nil {
-			return err
+			return fmt.Errorf("failed to ensure VLAN device %q has IP %q: %w", v.String(), v.ip.String(), err)
 		}
 	}
 

@@ -935,6 +935,8 @@ var _ = Describe("Multi Homing", func() {
 					By(fmt.Sprintf("creating a VLAN on top of bridge %q with ID: %d", underlayBridgeName, vlanID))
 					vlanIface, err = newVLANIface(underlayBridgeName, vlanID, withIP(underlayIP))
 					Expect(err).NotTo(HaveOccurred())
+
+					By(fmt.Sprintf("creating a VLAN named %q", vlanIface.String()))
 					Expect(vlanIface.create()).To(
 						Succeed(),
 						"create a VLAN interface on the bridge interconnecting the cluster nodes",
