@@ -482,7 +482,7 @@ func (bsnc *BaseSecondaryNetworkController) removePodForSecondaryNetwork(pod *ka
 
 		// if we allow for persistent IPs, then we need to check if this pod has an IPAM Claim
 		if bsnc.allowPersistentIPs() {
-			hasIPAMClaim, err := bsnc.hasIPAMClaim(pod, nadName)
+			hasIPAMClaim, err := bsnc.hasIPAMClaim(pod)
 			if err != nil {
 				return fmt.Errorf("unable to determine if pod %s has IPAM Claim: %w", podDesc, err)
 			}
@@ -510,40 +510,26 @@ func (bsnc *BaseSecondaryNetworkController) removePodForSecondaryNetwork(pod *ka
 
 // hasIPAMClaim determines whether a pod's IPAM is being handled by IPAMClaim CR.
 // pod passed should already be validated as having a network connection to nadName
-func (bsnc *BaseSecondaryNetworkController) hasIPAMClaim(pod *kapi.Pod, nadName string) (bool, error) {
-	// FIXME(trozet): relying on NAD/UDN existing can lead to a race condition on deletion and
-	// we should figure out a way to determine if the pod has an IPAMClaim without depending on this
-	activeNetwork, err := bsnc.getActiveNetworkForNamespace(pod.Namespace)
-	if err != nil {
-		return false, fmt.Errorf("failed looking for the active network at namespace '%s': %w", pod.Namespace, err)
-	}
-
-	on, networkMap, err := util.GetPodNADToNetworkMappingWithActiveNetwork(pod, bsnc.NetInfo, activeNetwork)
-	if err != nil {
-		bsnc.recordPodErrorEvent(pod, err)
-		return false, fmt.Errorf("error getting network-attachment for pod %s/%s network %s: %w",
-			pod.Namespace, pod.Name, bsnc.GetNetworkName(), err)
-	}
-
-	if !on {
+func (bsnc *BaseSecondaryNetworkController) hasIPAMClaim(pod *kapi.Pod) (bool, error) {
+	if !bsnc.IsPrimaryNetwork() || !bsnc.AllowsPersistentIPs() {
 		return false, nil
 	}
 
-	network := networkMap[nadName]
-	hasIPAMClaim := network != nil && network.IPAMClaimReference != ""
-	if !hasIPAMClaim {
+	ipamClaimName, wasPersistentIPRequested := pod.Annotations[util.OvnUDNIPAMClaimName]
+	if !wasPersistentIPRequested || len(ipamClaimName) == 0 {
 		return false, nil
 	}
 
-	ipamClaim, err := bsnc.ipamClaimsReconciler.FindIPAMClaim(network.IPAMClaimReference, network.Namespace)
+	ipamClaim, err := bsnc.ipamClaimsReconciler.FindIPAMClaim(ipamClaimName, pod.Namespace)
 	if apierrors.IsNotFound(err) {
-		klog.Errorf("Failed to retrieve IPAMClaim %q but will release IPs: %v", network.IPAMClaimReference, err)
+		klog.Errorf("IPAMClaim %q for namespace: %q not found...will release IPs: %v",
+			ipamClaimName, pod.Namespace, err)
 		return false, nil
 	} else if err != nil {
-		return false, fmt.Errorf("failed to get IPAMClaim %s/%s: %w", network.Namespace, network.IPAMClaimReference, err)
+		return false, fmt.Errorf("failed to get IPAMClaim %s/%s: %w", pod.Namespace, ipamClaimName, err)
 	}
 
-	hasIPAMClaim = ipamClaim != nil && len(ipamClaim.Status.IPs) > 0
+	hasIPAMClaim := ipamClaim != nil && len(ipamClaim.Status.IPs) > 0
 	return hasIPAMClaim, nil
 }
 
