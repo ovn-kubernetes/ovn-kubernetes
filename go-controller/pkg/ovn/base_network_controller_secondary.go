@@ -307,6 +307,40 @@ func (bsnc *BaseSecondaryNetworkController) addLogicalPortToNetworkForNAD(pod *k
 		if err != nil {
 			return err
 		}
+
+		if kubevirt.IsPodOwnedByVirtualMachine(pod) &&
+			kubevirt.IsAllowedForMigration(bsnc.NetInfo) {
+			kubevirtLiveMigrationStatus, err := kubevirt.DiscoverLiveMigrationStatus(bsnc.watchFactory, pod)
+			if err != nil {
+				return fmt.Errorf("failed to discover Live-migration status: %w", err)
+			}
+			if kubevirtLiveMigrationStatus != nil {
+				if pod.Name == kubevirtLiveMigrationStatus.TargetPod.Name {
+					lsps := []*nbdb.LogicalSwitchPort{lsp}
+					lsp.Enabled = ptr.To(kubevirtLiveMigrationStatus.State == kubevirt.LiveMigrationTargetDomainReady)
+					if kubevirtLiveMigrationStatus.State == kubevirt.LiveMigrationTargetDomainReady {
+						// closing the sourcePod lsp to ensure traffic goes to the now ready targetPod.
+						sourcePodLspName := bsnc.GetLogicalPortName(kubevirtLiveMigrationStatus.SourcePod, nadName)
+						sourcePodLsp := &nbdb.LogicalSwitchPort{Name: sourcePodLspName}
+						sourcePodLsp, err = libovsdbops.GetLogicalSwitchPort(bsnc.nbClient, sourcePodLsp)
+						if err != nil {
+							return fmt.Errorf("cannot fetch switch port for node %s: %v", sourcePodLspName, err)
+						}
+						sourcePodLsp.Enabled = ptr.To(false)
+						lsps = append(lsps, sourcePodLsp)
+					}
+					nodeSwitch, err := libovsdbops.GetLogicalSwitch(bsnc.nbClient, &nbdb.LogicalSwitch{Name: switchName})
+					if err != nil {
+						return fmt.Errorf("cannot fetch switch for node %s: %v", switchName, err)
+					}
+					ops, err = libovsdbops.CreateOrUpdateLogicalSwitchPortsOnSwitchOps(bsnc.nbClient, nil, nodeSwitch, lsps...)
+					if err != nil {
+						return fmt.Errorf("error updating logical switch port %+v on switch %+v: %+v", *lsp, *nodeSwitch, err)
+					}
+				}
+			}
+		}
+
 	} else if bsnc.TopologyType() == types.LocalnetTopology {
 		// On localnet networks, we might be processing the pod as a result of a
 		// node changing zone local -> remote so cleanup the logical port in

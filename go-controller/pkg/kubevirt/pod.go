@@ -352,6 +352,10 @@ func IsPodOwnedByVirtualMachine(pod *corev1.Pod) bool {
 	return ExtractVMNameFromPod(pod) != nil
 }
 
+func IsAllowedForMigration(netInfo util.NetInfo) bool {
+	return (netInfo.IsSecondary() || netInfo.IsPrimaryNetwork()) && netInfo.TopologyType() != ovntypes.Layer3Topology
+}
+
 func isTargetPodReady(targetPod *corev1.Pod) bool {
 	if targetPod == nil {
 		return false
