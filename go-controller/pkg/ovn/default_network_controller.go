@@ -27,6 +27,7 @@ import (
 	addrsetsyncer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/external_ids_syncer/address_set"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/external_ids_syncer/port_group"
 	lsm "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/routeimport"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/topology"
 	zoneic "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/zone_interconnect"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/retry"
@@ -143,17 +144,26 @@ type DefaultNetworkController struct {
 
 // NewDefaultNetworkController creates a new OVN controller for creating logical network
 // infrastructure and policy for default l3 network
-func NewDefaultNetworkController(cnci *CommonNetworkControllerInfo, nadController *nad.NetAttachDefinitionController,
-	observManager *observability.Manager) (*DefaultNetworkController, error) {
+func NewDefaultNetworkController(
+	cnci *CommonNetworkControllerInfo,
+	networkManager nad.NetworkManager,
+	observManager *observability.Manager,
+	routeImportManager routeimport.Manager,
+) (*DefaultNetworkController, error) {
 	stopChan := make(chan struct{})
 	wg := &sync.WaitGroup{}
-	return newDefaultNetworkControllerCommon(cnci, stopChan, wg, nil, nadController, observManager)
+	return newDefaultNetworkControllerCommon(cnci, stopChan, wg, nil, networkManager, observManager, routeImportManager)
 }
 
-func newDefaultNetworkControllerCommon(cnci *CommonNetworkControllerInfo,
-	defaultStopChan chan struct{}, defaultWg *sync.WaitGroup,
-	addressSetFactory addressset.AddressSetFactory, nadController *nad.NetAttachDefinitionController,
-	observManager *observability.Manager) (*DefaultNetworkController, error) {
+func newDefaultNetworkControllerCommon(
+	cnci *CommonNetworkControllerInfo,
+	defaultStopChan chan struct{},
+	defaultWg *sync.WaitGroup,
+	addressSetFactory addressset.AddressSetFactory,
+	networkManager nad.NetworkManager,
+	observManager *observability.Manager,
+	routeImportManager routeimport.Manager,
+) (*DefaultNetworkController, error) {
 
 	if addressSetFactory == nil {
 		addressSetFactory = addressset.NewOvnAddressSetFactory(cnci.nbClient, config.IPv4Mode, config.IPv6Mode)
@@ -164,7 +174,7 @@ func newDefaultNetworkControllerCommon(cnci *CommonNetworkControllerInfo,
 		cnci.watchFactory.ServiceCoreInformer(),
 		cnci.watchFactory.EndpointSliceCoreInformer(),
 		cnci.watchFactory.NodeCoreInformer(),
-		nadController,
+		networkManager,
 		cnci.recorder,
 		&util.DefaultNetInfo{},
 	)
@@ -213,7 +223,8 @@ func newDefaultNetworkControllerCommon(cnci *CommonNetworkControllerInfo,
 			zoneICHandler:               zoneICHandler,
 			cancelableCtx:               util.NewCancelableContext(),
 			observManager:               observManager,
-			nadController:               nadController,
+			networkManager:              networkManager,
+			routeImportManager:          routeImportManager,
 		},
 		externalGatewayRouteInfo: apbExternalRouteController.ExternalGWRouteInfoCache,
 		eIPC: egressIPZoneController{
@@ -348,6 +359,9 @@ func (oc *DefaultNetworkController) Stop() {
 	}
 	if oc.efNodeController != nil {
 		controller.Stop(oc.efNodeController)
+	}
+	if oc.routeImportManager != nil {
+		_ = oc.routeImportManager.ForgetNetwork(oc, 0)
 	}
 
 	close(oc.stopChan)
@@ -579,6 +593,63 @@ func (oc *DefaultNetworkController) Run(ctx context.Context) error {
 	metrics.RunOVNKubeFeatureDBObjectsMetricsUpdater(oc.nbClient, oc.controllerName, 30*time.Second, oc.stopChan)
 
 	return nil
+}
+
+func (oc *DefaultNetworkController) Reconcile(netInfo util.ReconcilableNetInfo) error {
+	var err error
+	var retryNodes []*kapi.Node
+	oc.localZoneNodes.Range(func(key, value any) bool {
+		nodeName := key.(string)
+		wasAdvertised := len(oc.GetNodeVRFs(nodeName)) > 0
+		isAdvertised := len(netInfo.GetNodeVRFs(nodeName)) > 0
+		if wasAdvertised == isAdvertised {
+			// noop
+			return true
+		}
+		var node *kapi.Node
+		node, err = oc.watchFactory.GetNode(nodeName)
+		if err != nil {
+			return false
+		}
+		retryNodes = append(retryNodes, node)
+		return true
+	})
+	if err != nil {
+		return fmt.Errorf("failed to reconcile: %w", err)
+	}
+
+	oc.SetNADs(netInfo.GetNADs()...)
+	oc.SetVRFs(netInfo.GetVRFs())
+
+	if oc.routeImportManager != nil {
+		err = oc.routeImportManager.UpdateNetwork(oc, 0)
+		if err != nil {
+			return err
+		}
+	}
+
+	var errs []error
+	for _, node := range retryNodes {
+		oc.gatewaysFailed.Store(node.Name, true)
+		err = oc.retryNodes.AddRetryObjWithAddNoBackoff(node)
+		if err != nil {
+			err := fmt.Errorf("failed to reconcile network for node %s: %w", node.Name, err)
+			errs = append(errs, err)
+		}
+	}
+	if len(retryNodes) > 0 {
+		oc.retryNodes.RequestRetryObjs()
+	}
+
+	if len(errs) > 0 {
+		klog.Errorf("Failed to reconcile network %s: %v", oc.GetNetworkName(), utilerrors.Join(errs...))
+	}
+
+	return nil
+}
+
+func (oc *DefaultNetworkController) isRoutingAdvertised(node string) bool {
+	return util.IsRoutingAdvertised(oc, node)
 }
 
 func WithSyncDurationMetric(resourceName string, f func() error) error {
