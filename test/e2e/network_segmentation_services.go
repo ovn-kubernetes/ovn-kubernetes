@@ -10,6 +10,8 @@ import (
 	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	corev1 "k8s.io/api/core/v1"
 	kapi "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -38,9 +40,8 @@ var _ = Describe("Network Segmentation: services", func() {
 		)
 
 		var (
-			cs                  clientset.Interface
-			nadClient           nadclient.K8sCniCncfIoV1Interface
-			defaultNetNamespace string
+			cs        clientset.Interface
+			nadClient nadclient.K8sCniCncfIoV1Interface
 		)
 
 		BeforeEach(func() {
@@ -49,22 +50,6 @@ var _ = Describe("Network Segmentation: services", func() {
 			var err error
 			nadClient, err = nadclient.NewForConfig(f.ClientConfig())
 			Expect(err).NotTo(HaveOccurred())
-			defaultNetNamespace = ""
-		})
-
-		cleanupFn := func() {
-			By("Removing the namespace so all resources get deleted")
-			err := cs.CoreV1().Namespaces().Delete(context.TODO(), f.Namespace.Name, metav1.DeleteOptions{})
-			framework.ExpectNoError(err, "Failed to remove the namespace %s %v", f.Namespace.Name, err)
-			if defaultNetNamespace != "" {
-				err = cs.CoreV1().Namespaces().Delete(context.TODO(), defaultNetNamespace, metav1.DeleteOptions{})
-				framework.ExpectNoError(err, "Failed to remove the namespace %v", defaultNetNamespace, err)
-			}
-
-		}
-
-		AfterEach(func() {
-			cleanupFn()
 		})
 
 		DescribeTable(
@@ -89,7 +74,7 @@ var _ = Describe("Network Segmentation: services", func() {
 			//   + clusterIP fails
 			//   + nodeIP:nodePort fails FOR NOW, when we only target the local node
 
-			"should be reachable through their cluster IP and node port",
+			"should be reachable through their cluster IP, external IP, node port and load balancer",
 			func(
 				netConfigParams networkAttachmentConfigParams,
 			) {
@@ -122,7 +107,7 @@ var _ = Describe("Network Segmentation: services", func() {
 				)
 				Expect(err).NotTo(HaveOccurred())
 
-				By(fmt.Sprintf("Creating a UDN NodePort service"))
+				By(fmt.Sprintf("Creating a UDN LoadBalancer service"))
 				policy := v1.IPFamilyPolicyPreferDualStack
 				udnService, err := jig.CreateUDPService(context.TODO(), func(s *v1.Service) {
 					s.Spec.Ports = []v1.ServicePort{
@@ -133,9 +118,13 @@ var _ = Describe("Network Segmentation: services", func() {
 							TargetPort: intstr.FromInt(int(serviceTargetPort)),
 						},
 					}
-					s.Spec.Type = v1.ServiceTypeNodePort
+					s.Spec.Type = v1.ServiceTypeLoadBalancer
 					s.Spec.IPFamilyPolicy = &policy
 				})
+				framework.ExpectNoError(err)
+
+				By("Wait for UDN LoadBalancer Ingress to pop up")
+				udnService, err = jig.WaitForLoadBalancer(context.TODO(), 180*time.Second)
 				framework.ExpectNoError(err)
 
 				By("Creating a UDN backend pod")
@@ -143,8 +132,14 @@ var _ = Describe("Network Segmentation: services", func() {
 					namespace, "backend-pod", nil, nil,
 					[]v1.ContainerPort{
 						{ContainerPort: (serviceTargetPort), Protocol: "UDP"}},
-					"netexec",
-					"--udp-port="+fmt.Sprint(serviceTargetPort))
+					"-c",
+					fmt.Sprintf(`
+set -xe
+iface=ovn-udn1
+ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | paste -sd, -)
+./agnhost netexec --udp-port=%d --udp-listen-addresses=$ips
+`, serviceTargetPort))
+				udnServerPod.Spec.Containers[0].Command = []string{"/bin/bash"}
 
 				udnServerPod.Labels = jig.Labels
 				udnServerPod.Spec.NodeName = serverPodNodeName
@@ -159,6 +154,7 @@ var _ = Describe("Network Segmentation: services", func() {
 				By("Connect to the UDN service cluster IP from the UDN client pod on the same node")
 				checkConnectionToClusterIPs(f, udnClientPod, udnService, udnServerPod.Name)
 				By("Connect to the UDN service nodePort on all 3 nodes from the UDN client pod")
+				checkConnectionToLoadBalancers(f, udnClientPod, udnService, udnServerPod.Name)
 				checkConnectionToNodePort(f, udnClientPod, udnService, &nodes.Items[0], "endpoint node", udnServerPod.Name)
 				// FIXME(dceara): Remove this check when Local Gateway external->service support is implemented.
 				if !IsGatewayModeLocal() {
@@ -173,6 +169,7 @@ var _ = Describe("Network Segmentation: services", func() {
 
 				By("Connect to the UDN service from the UDN client pod on a different node")
 				checkConnectionToClusterIPs(f, udnClientPod2, udnService, udnServerPod.Name)
+				checkConnectionToLoadBalancers(f, udnClientPod2, udnService, udnServerPod.Name)
 				checkConnectionToNodePort(f, udnClientPod2, udnService, &nodes.Items[1], "local node", udnServerPod.Name)
 				// FIXME(dceara): Remove this check when Local Gateway external->service support is implemented.
 				if !IsGatewayModeLocal() {
@@ -180,29 +177,70 @@ var _ = Describe("Network Segmentation: services", func() {
 					checkConnectionToNodePort(f, udnClientPod2, udnService, &nodes.Items[2], "other node", udnServerPod.Name)
 				}
 
+				By("Connect to the UDN service from the UDN client external container")
+				clientContainer := "frr"
+				//FIXME(qinqon) Remove this check when Local Gateway external->service support is implemented.
+				if !IsGatewayModeLocal() {
+					checkConnectionToLoadBalancersFromExternalContainer(f, clientContainer, udnService, udnServerPod.Name)
+					checkConnectionToNodePortFromExternalContainer(f, clientContainer, udnService, &nodes.Items[0], "server node", udnServerPod.Name)
+					checkConnectionToNodePortFromExternalContainer(f, clientContainer, udnService, &nodes.Items[1], "other node", udnServerPod.Name)
+					checkConnectionToNodePortFromExternalContainer(f, clientContainer, udnService, &nodes.Items[2], "other node", udnServerPod.Name)
+				}
+
 				// Default network -> UDN
 				// Check that it cannot connect
 				By(fmt.Sprintf("Create a client pod in the default network on node %s", clientNode))
-				defaultNetNamespace = f.Namespace.Name + "-default"
-				_, err = cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
+				defaultNetNamespace := &v1.Namespace{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: defaultNetNamespace,
+						Name: f.Namespace.Name + "-default",
 					},
-				}, metav1.CreateOptions{})
+				}
+				f.AddNamespacesToDelete(defaultNetNamespace)
+				_, err = cs.CoreV1().Namespaces().Create(context.Background(), defaultNetNamespace, metav1.CreateOptions{})
 				Expect(err).NotTo(HaveOccurred())
 
-				defaultClient, err := createPod(f, "default-net-pod", clientNode, defaultNetNamespace, []string{"sleep", "2000000"}, nil)
+				defaultClient, err := createPod(f, "default-net-pod", clientNode, defaultNetNamespace.Name, []string{"sleep", "2000000"}, nil)
 				Expect(err).NotTo(HaveOccurred())
 
 				By("Verify the connection of the client in the default network to the UDN service")
 				checkNoConnectionToClusterIPs(f, defaultClient, udnService)
-
+				checkNoConnectionToLoadBalancers(f, defaultClient, udnService)
 				checkNoConnectionToNodePort(f, defaultClient, udnService, &nodes.Items[1], "local node") // TODO change to checkConnectionToNodePort when we have full UDN support in ovnkube-node
-
 				// FIXME(dceara): Remove this check when Local Gateway external->service support is implemented.
 				if !IsGatewayModeLocal() {
 					checkConnectionToNodePort(f, defaultClient, udnService, &nodes.Items[0], "server node", udnServerPod.Name)
 					checkConnectionToNodePort(f, defaultClient, udnService, &nodes.Items[2], "other node", udnServerPod.Name)
+				}
+
+				By(fmt.Sprintf("Creating a UDN ExternalIPs service"))
+				udnExternalIPsService, err := jig.CreateUDPService(context.TODO(), func(s *v1.Service) {
+					s.Name += "-external-ips"
+					s.Spec.Ports = []v1.ServicePort{
+						{
+							Name:       "udp",
+							Protocol:   v1.ProtocolUDP,
+							Port:       80,
+							TargetPort: intstr.FromInt(int(serviceTargetPort)),
+						},
+					}
+					s.Spec.IPFamilyPolicy = &policy
+					s.Spec.ExternalIPs = internalIPsFromNodes(nodes.Items)
+				})
+				framework.ExpectNoError(err)
+
+				By("Verify the connection of the client to the UDN external IP service")
+				checkConnectionToExternalIPs(f, udnClientPod, udnExternalIPsService, udnExternalIPsService.Spec.ExternalIPs, udnServerPod.Name)
+				checkConnectionToExternalIPs(f, udnClientPod2, udnExternalIPsService, udnExternalIPsService.Spec.ExternalIPs, udnServerPod.Name)
+				// FIXME(quique): Remove this check when Local Gateway external->service support is implemented.
+				if !IsGatewayModeLocal() {
+					checkConnectionToExternalIPsFromExternalContainer(f, clientContainer, udnExternalIPsService, udnServerPod.Name)
+				}
+
+				By("Verify that isolation from default network client to primary UDN external IPs services is only done at node where client is running")
+				checkNoConnectionToExternalIPs(f, defaultClient, udnExternalIPsService, internalIPsFromLocalNode(nodes.Items, defaultClient))
+				// FIXME(quique): Remove this check when Local Gateway external->service support is implemented.
+				if !IsGatewayModeLocal() {
+					checkConnectionToExternalIPs(f, defaultClient, udnExternalIPsService, internalIPsFromRemoteNode(nodes.Items, defaultClient), udnServerPod.Name)
 				}
 
 				// UDN -> Default network
@@ -212,7 +250,7 @@ var _ = Describe("Network Segmentation: services", func() {
 				defaultLabels := map[string]string{"app": "default-app"}
 
 				defaultServerPod, err := createPod(f, "backend-pod-default", serverPodNodeName,
-					defaultNetNamespace, []string{"/agnhost", "netexec", "--udp-port=" + fmt.Sprint(serviceTargetPort)}, defaultLabels,
+					defaultNetNamespace.Name, []string{"/agnhost", "netexec", "--udp-port=" + fmt.Sprint(serviceTargetPort)}, defaultLabels,
 					func(pod *v1.Pod) {
 						pod.Spec.Containers[0].Ports = []v1.ContainerPort{{ContainerPort: (serviceTargetPort), Protocol: "UDP"}}
 					})
@@ -235,14 +273,39 @@ var _ = Describe("Network Segmentation: services", func() {
 					},
 				}
 
-				defaultService, err = f.ClientSet.CoreV1().Services(defaultNetNamespace).Create(context.TODO(), defaultService, metav1.CreateOptions{})
+				defaultService, err = f.ClientSet.CoreV1().Services(defaultNetNamespace.Name).Create(context.TODO(), defaultService, metav1.CreateOptions{})
 				Expect(err).NotTo(HaveOccurred())
 
 				By("Verify the UDN client connection to the default network service")
+				checkNoConnectionToLoadBalancers(f, udnClientPod2, defaultService)
 				checkConnectionToNodePort(f, udnClientPod2, defaultService, &nodes.Items[0], "server node", defaultServerPod.Name)
 				checkNoConnectionToNodePort(f, udnClientPod2, defaultService, &nodes.Items[1], "local node")
 				checkConnectionToNodePort(f, udnClientPod2, defaultService, &nodes.Items[2], "other node", defaultServerPod.Name)
 				checkNoConnectionToClusterIPs(f, udnClientPod2, defaultService)
+
+				By("Creating a default network ExternalIPs service")
+				defaultExternalIPsService := &v1.Service{
+					ObjectMeta: metav1.ObjectMeta{Name: "service-default-external-ips"},
+					Spec: v1.ServiceSpec{
+						Ports: []v1.ServicePort{
+							{
+								Name:       "udp-port",
+								Port:       int32(servicePort) + 1,
+								TargetPort: intstr.FromInt(servicePort),
+								Protocol:   v1.ProtocolUDP,
+							},
+						},
+						Selector:       defaultLabels,
+						ExternalIPs:    internalIPsFromNodes(nodes.Items),
+						IPFamilyPolicy: &policy,
+					},
+				}
+				_, err = f.ClientSet.CoreV1().Services(defaultNetNamespace).Create(context.TODO(), defaultExternalIPsService, metav1.CreateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Verify isolation between UDN client and the default network external IPs service")
+				checkConnectionToExternalIPs(f, udnClientPod2, defaultExternalIPsService, internalIPsFromRemoteNode(nodes.Items, udnClientPod2), defaultServerPod.Name)
+				checkNoConnectionToExternalIPs(f, udnClientPod2, defaultExternalIPsService, internalIPsFromLocalNode(nodes.Items, udnClientPod2))
 
 				// Make sure that restarting OVNK after applying a UDN with an affected service won't result
 				// in OVNK in CLBO state https://issues.redhat.com/browse/OCPBUGS-41499
@@ -377,18 +440,18 @@ func checkNoConnectionToClusterIPs(f *framework.Framework, clientPod *v1.Pod, se
 
 func checkConnectionOrNoConnectionToClusterIPs(f *framework.Framework, clientPod *v1.Pod, service *v1.Service, expectedOutput string, shouldConnect bool) {
 	var err error
-	targetPort := service.Spec.Ports[0].TargetPort.String()
+	port := service.Spec.Ports[0].Port
 	notStr := ""
 	if !shouldConnect {
 		notStr = "not "
 	}
 
 	for _, clusterIP := range service.Spec.ClusterIPs {
-		msg := fmt.Sprintf("Client %s/%s should %sreach service %s/%s on cluster IP %s port %s",
-			clientPod.Namespace, clientPod.Name, notStr, service.Namespace, service.Name, clusterIP, targetPort)
+		msg := fmt.Sprintf("Client %s/%s should %sreach service %s/%s on cluster IP %s port %d",
+			clientPod.Namespace, clientPod.Name, notStr, service.Namespace, service.Name, clusterIP, port)
 		By(msg)
 
-		cmd := fmt.Sprintf(`/bin/sh -c 'echo hostname | nc -u -w 1 %s %s '`, clusterIP, targetPort)
+		cmd := fmt.Sprintf(`/bin/sh -c 'echo hostname | nc -u -w 1 %s %d '`, clusterIP, port)
 
 		if shouldConnect {
 			err = checkConnectionToAgnhostPod(f, clientPod, expectedOutput, cmd)
@@ -430,4 +493,169 @@ func checkConnectionOrNoConnectionToNodePort(f *framework.Framework, clientPod *
 		}
 		framework.ExpectNoError(err, fmt.Sprintf("Failed to verify that %s", msg))
 	}
+}
+
+func checkConnectionToExternalIPs(f *framework.Framework, clientPod *v1.Pod, service *v1.Service, serviceExternalIPs []string, expectedOutput string) {
+	checkConnectionOrNoConnectionToExternalIPs(f, clientPod, service, serviceExternalIPs, expectedOutput, true)
+}
+
+func checkNoConnectionToExternalIPs(f *framework.Framework, clientPod *v1.Pod, service *v1.Service, serviceExternalIPs []string) {
+	checkConnectionOrNoConnectionToExternalIPs(f, clientPod, service, serviceExternalIPs, "", false)
+}
+
+func checkConnectionOrNoConnectionToExternalIPs(f *framework.Framework, clientPod *v1.Pod, service *v1.Service, serviceExternalIPs []string, expectedOutput string, shouldConnect bool) {
+	var err error
+	port := service.Spec.Ports[0].Port
+	notStr := ""
+	if !shouldConnect {
+		notStr = "not "
+	}
+
+	for _, externalIP := range serviceExternalIPs {
+		msg := fmt.Sprintf("Client %s/%s at node %q should %sreach service %s/%s on external IP %s port %d",
+			clientPod.Namespace, clientPod.Name, clientPod.Spec.NodeName, notStr, service.Namespace, service.Name, externalIP, port)
+		By(msg)
+
+		cmd := fmt.Sprintf(`/bin/sh -c 'echo hostname | nc -u -w 1 %s %d '`, externalIP, port)
+
+		if shouldConnect {
+			err = checkConnectionToAgnhostPod(f, clientPod, expectedOutput, cmd)
+		} else {
+			err = checkNoConnectionToAgnhostPod(f, clientPod, cmd)
+		}
+		framework.ExpectNoError(err, fmt.Sprintf("Failed to verify that %s", msg))
+	}
+}
+
+func checkConnectionToLoadBalancers(f *framework.Framework, clientPod *v1.Pod, service *v1.Service, expectedOutput string) {
+	checkConnectionOrNoConnectionToLoadBalancers(f, clientPod, service, expectedOutput, true)
+}
+
+func checkNoConnectionToLoadBalancers(f *framework.Framework, clientPod *v1.Pod, service *v1.Service) {
+	checkConnectionOrNoConnectionToLoadBalancers(f, clientPod, service, "", false)
+}
+
+func checkConnectionOrNoConnectionToLoadBalancers(f *framework.Framework, clientPod *v1.Pod, service *v1.Service, expectedOutput string, shouldConnect bool) {
+	var err error
+	port := service.Spec.Ports[0].Port
+	notStr := ""
+	if !shouldConnect {
+		notStr = "not "
+	}
+	for _, lbIngress := range service.Status.LoadBalancer.Ingress {
+		msg := fmt.Sprintf("Client %s/%s should %sreach service %s/%s on LoadBalancer IP %s port %d",
+			clientPod.Namespace, clientPod.Name, notStr, service.Namespace, service.Name, lbIngress.IP, port)
+		By(msg)
+
+		cmd := fmt.Sprintf(`/bin/sh -c 'echo hostname | nc -u -w 1 %s %d '`, lbIngress.IP, port)
+
+		if shouldConnect {
+			err = checkConnectionToAgnhostPod(f, clientPod, expectedOutput, cmd)
+		} else {
+			err = checkNoConnectionToAgnhostPod(f, clientPod, cmd)
+		}
+		framework.ExpectNoError(err, fmt.Sprintf("Failed to verify that %s", msg))
+	}
+}
+
+func checkConnectionToNodePortFromExternalContainer(f *framework.Framework, containerName string, service *v1.Service, node *v1.Node, nodeRoleMsg, expectedOutput string) {
+	GinkgoHelper()
+	var err error
+	nodePort := service.Spec.Ports[0].NodePort
+	nodeIPs, err := ParseNodeHostIPDropNetMask(node)
+	Expect(err).NotTo(HaveOccurred())
+
+	for nodeIP := range nodeIPs {
+		msg := fmt.Sprintf("Client at external container %s should connect to NodePort service %s/%s on %s:%d (node %s, %s)",
+			containerName, service.Namespace, service.Name, nodeIP, nodePort, node.Name, nodeRoleMsg)
+		By(msg)
+		cmd := []string{containerRuntime, "exec", containerName, "/bin/bash", "-c", fmt.Sprintf("echo hostname | nc -u -w 1 %s %d", nodeIP, nodePort)}
+		Eventually(func() (string, error) {
+			return runCommand(cmd...)
+		}).
+			WithTimeout(5*time.Second).
+			WithPolling(200*time.Millisecond).
+			Should(Equal(expectedOutput), "Failed to verify that %s", msg)
+	}
+}
+
+func checkConnectionToLoadBalancersFromExternalContainer(f *framework.Framework, containerName string, service *v1.Service, expectedOutput string) {
+	GinkgoHelper()
+	port := service.Spec.Ports[0].Port
+
+	for _, lbIngress := range service.Status.LoadBalancer.Ingress {
+		msg := fmt.Sprintf("Client at external container %s should reach service %s/%s on LoadBalancer IP %s port %d",
+			containerName, service.Namespace, service.Name, lbIngress.IP, port)
+		By(msg)
+		cmd := []string{containerRuntime, "exec", containerName, "/bin/bash", "-c", fmt.Sprintf("echo hostname | nc -u -w 1 %s %d", lbIngress.IP, port)}
+		Eventually(func() (string, error) {
+			return runCommand(cmd...)
+		}).
+			WithTimeout(20*time.Second).
+			WithPolling(200*time.Millisecond).
+			Should(Equal(expectedOutput), "Failed to verify that %s", msg)
+	}
+}
+
+func checkConnectionToExternalIPsFromExternalContainer(f *framework.Framework, containerName string, service *v1.Service, expectedOutput string) {
+	GinkgoHelper()
+	port := service.Spec.Ports[0].Port
+	Expect(service.Spec.ExternalIPs).ToNot(BeEmpty(), "should have field Spec.ExternalIPs configured to test external IP traffic")
+	for _, externalIP := range service.Spec.ExternalIPs {
+		msg := fmt.Sprintf("Client at external container %s should reach service %s/%s on External IP %s port %d",
+			containerName, service.Namespace, service.Name, externalIP, port)
+		By(msg)
+		cmd := []string{containerRuntime, "exec", containerName, "/bin/bash", "-c", fmt.Sprintf("echo hostname | nc -u -w 1 %s %d", externalIP, port)}
+		Eventually(func() (string, error) {
+			return runCommand(cmd...)
+		}).
+			WithTimeout(5*time.Second).
+			WithPolling(200*time.Millisecond).
+			Should(Equal(expectedOutput), "Failed to verify that %s", msg)
+	}
+}
+
+func internalIPsFromNodes(nodes []corev1.Node) []string {
+	internalIPs := []string{}
+	for _, node := range nodes {
+		for _, nodeAddress := range node.Status.Addresses {
+			if nodeAddress.Type != corev1.NodeInternalIP {
+				continue
+			}
+			internalIPs = append(internalIPs, nodeAddress.Address)
+		}
+	}
+	return internalIPs
+}
+
+func internalIPsFromLocalNode(nodes []corev1.Node, pod *corev1.Pod) []string {
+	internalIPs := []string{}
+	for _, node := range nodes {
+		if pod.Spec.NodeName != node.Name {
+			continue
+		}
+		for _, nodeAddress := range node.Status.Addresses {
+			if nodeAddress.Type != corev1.NodeInternalIP {
+				continue
+			}
+			internalIPs = append(internalIPs, nodeAddress.Address)
+		}
+	}
+	return internalIPs
+}
+
+func internalIPsFromRemoteNode(nodes []corev1.Node, pod *corev1.Pod) []string {
+	internalIPs := []string{}
+	for _, node := range nodes {
+		if pod.Spec.NodeName == node.Name {
+			continue
+		}
+		for _, nodeAddress := range node.Status.Addresses {
+			if nodeAddress.Type != corev1.NodeInternalIP {
+				continue
+			}
+			internalIPs = append(internalIPs, nodeAddress.Address)
+		}
+	}
+	return internalIPs
 }
