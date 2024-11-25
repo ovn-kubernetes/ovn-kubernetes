@@ -22,6 +22,7 @@ import (
 	logicalswitchmanager "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/ndp"
 )
 
 // IsPodLiveMigratable will return true if the pod belongs
@@ -513,6 +514,48 @@ func ReconcileIPv4DefaultGatewayAfterLiveMigration(watchFactory *factory.WatchFa
 			return err
 		}
 	}
-
 	return nil
+}
+
+func ReconcileIPv6DefaultGatewayAfterLiveMigration(watchFactory *factory.WatchFactory, netInfo util.NetInfo, liveMigration *LiveMigrationStatus, interfaceName string) error {
+	if liveMigration.State != LiveMigrationTargetDomainReady {
+		return nil
+	}
+	targetPodAnnotation, err := util.UnmarshalPodAnnotation(liveMigration.TargetPod.Annotations, netInfo.GetNADs()[0])
+	if err != nil {
+		return err
+	}
+	sourceNode, err := watchFactory.GetNode(liveMigration.SourcePod.Spec.NodeName)
+	if err != nil {
+		return err
+	}
+	sourceNodeJoinAddrs, err := util.ParseNodeGatewayRouterJoinAddrs(sourceNode, netInfo.GetNetworkName())
+	if err != nil {
+		return err
+	}
+	targetNode, err := watchFactory.GetNode(liveMigration.TargetPod.Spec.NodeName)
+	if err != nil {
+		return err
+	}
+	targetNodeJoinAddrs, err := util.ParseNodeGatewayRouterJoinAddrs(targetNode, netInfo.GetNetworkName())
+	if err != nil {
+		return err
+	}
+	return ndp.SendRouterAdvertisments(interfaceName,
+		fillInRouterAdvertismentWithLLA(ndp.RouterAdvertisment{
+			SourceMAC:      util.IPAddrToHWAddr(sourceNodeJoinAddrs[0].IP),
+			DestinationMAC: targetPodAnnotation.MAC,
+			Lifetime:       0,
+		}),
+		fillInRouterAdvertismentWithLLA(ndp.RouterAdvertisment{
+			SourceMAC:      util.IPAddrToHWAddr(targetNodeJoinAddrs[0].IP),
+			DestinationMAC: targetPodAnnotation.MAC,
+			Lifetime:       65535,
+		}))
+}
+
+func fillInRouterAdvertismentWithLLA(ra ndp.RouterAdvertisment) ndp.RouterAdvertisment {
+	ra.SourceIP = util.HWAddrToIPv6LLA(ra.SourceMAC)
+	ra.DestinationIP = util.HWAddrToIPv6LLA(ra.DestinationMAC)
+	return ra
 }
