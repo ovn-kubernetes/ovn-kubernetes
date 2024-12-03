@@ -50,8 +50,8 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-// The base expected nftables rules. You must substitute in the management port interface name.
-const baseNFTRulesFmt = `
+// The base expected nftables rules.
+const nftablesRulesBase = `
 add table inet ovn-kubernetes
 add set inet ovn-kubernetes mgmtport-no-snat-nodeports { type inet_proto . inet_service ; comment "NodePorts not subject to management port SNAT" ; }
 add set inet ovn-kubernetes mgmtport-no-snat-services-v4 { type ipv4_addr . inet_proto . inet_service ; comment "eTP:Local short-circuit not subject to management port SNAT (IPv4)" ; }
@@ -59,7 +59,7 @@ add set inet ovn-kubernetes mgmtport-no-snat-services-v6 { type ipv6_addr . inet
 add set inet ovn-kubernetes mgmtport-no-snat-subnets-v4 { type ipv4_addr ; flags interval ; comment "subnets not subject to management port SNAT (IPv4)" ; }
 add set inet ovn-kubernetes mgmtport-no-snat-subnets-v6 { type ipv6_addr ; flags interval ; comment "subnets not subject to management port SNAT (IPv6)" ; }
 add chain inet ovn-kubernetes mgmtport-snat { type nat hook postrouting priority 100 ; comment "OVN SNAT to Management Port" ; }
-add rule inet ovn-kubernetes mgmtport-snat oifname != %s return
+add rule inet ovn-kubernetes mgmtport-snat oifname != ` + types.K8sMgmtIntfName + ` return
 add rule inet ovn-kubernetes mgmtport-snat meta nfproto ipv4 ip saddr 10.1.1.2 counter return
 add rule inet ovn-kubernetes mgmtport-snat meta l4proto . th dport @mgmtport-no-snat-nodeports counter return
 add rule inet ovn-kubernetes mgmtport-snat ip daddr . meta l4proto . th dport @mgmtport-no-snat-services-v4 counter return
@@ -67,8 +67,8 @@ add rule inet ovn-kubernetes mgmtport-snat ip saddr @mgmtport-no-snat-subnets-v4
 add rule inet ovn-kubernetes mgmtport-snat counter snat ip to 10.1.1.2
 `
 
-// The base expected nftables rules with UDN enabled. You must substitute in the management port interface name.
-const baseUDNNFTRulesFmt = `
+// The additional rules expected with UDN enabled.
+const nftablesRulesUDN = `
 add map inet ovn-kubernetes udn-mark-nodeports { type inet_proto . inet_service : verdict ; comment "UDN services NodePorts mark" ; }
 add map inet ovn-kubernetes udn-mark-external-ips-v4 { type ipv4_addr . inet_proto . inet_service : verdict ; comment "UDN services External IPs mark (IPv4)" ; }
 add map inet ovn-kubernetes udn-mark-external-ips-v6 { type ipv6_addr . inet_proto . inet_service : verdict ; comment "UDN services External IPs mark (IPv6)" ; }
@@ -77,7 +77,7 @@ add rule inet ovn-kubernetes udn-service-mark fib daddr type local meta l4proto 
 add rule inet ovn-kubernetes udn-service-mark ip daddr . meta l4proto . th dport vmap @udn-mark-external-ips-v4
 add rule inet ovn-kubernetes udn-service-mark ip6 daddr . meta l4proto . th dport vmap @udn-mark-external-ips-v6
 add chain inet ovn-kubernetes udn-service-prerouting { type filter hook prerouting priority -150 ; comment "UDN services packet mark - Prerouting" ; }
-add rule inet ovn-kubernetes udn-service-prerouting iifname != %s jump udn-service-mark
+add rule inet ovn-kubernetes udn-service-prerouting iifname != ` + types.K8sMgmtIntfName + ` jump udn-service-mark
 add chain inet ovn-kubernetes udn-service-output { type filter hook output priority -150 ; comment "UDN services packet mark - Output" ; }
 add rule inet ovn-kubernetes udn-service-output jump udn-service-mark
 add chain inet ovn-kubernetes ovn-kube-udn-masq { comment "OVN UDN masquerade" ; }
@@ -85,25 +85,14 @@ add rule inet ovn-kubernetes ovn-kube-udn-masq ip saddr != 169.254.169.0/29 ip d
 add rule inet ovn-kubernetes ovn-kube-local-gw-masq jump ovn-kube-udn-masq
 `
 
-const baseLGWNFTablesRules = `
-add rule inet ovn-kubernetes ovn-kube-local-gw-masq ip saddr 169.254.169.1 masquerade
+// The additional rules expected in local gateway mode.
+const nftablesRulesLocalGateway = `
 add chain inet ovn-kubernetes ovn-kube-local-gw-masq { type nat hook postrouting priority 101 ; comment "OVN local gateway masquerade" ; }
+add rule inet ovn-kubernetes ovn-kube-local-gw-masq ip saddr 169.254.169.1 masquerade
 add rule inet ovn-kubernetes ovn-kube-local-gw-masq jump ovn-kube-pod-subnet-masq
-add rule inet ovn-kubernetes ovn-kube-pod-subnet-masq ip saddr 10.1.1.0/24 masquerade
 add chain inet ovn-kubernetes ovn-kube-pod-subnet-masq
+add rule inet ovn-kubernetes ovn-kube-pod-subnet-masq ip saddr 10.1.1.0/24 masquerade
 `
-
-func getBaseNFTRules(mgmtPort string) string {
-	ret := fmt.Sprintf(baseNFTRulesFmt, mgmtPort)
-	if util.IsNetworkSegmentationSupportEnabled() {
-		ret += fmt.Sprintf(baseUDNNFTRulesFmt, mgmtPort)
-	}
-	return ret
-}
-
-func getBaseLGWNFTablesRules(mgmtPort string) string {
-	return getBaseNFTRules(mgmtPort) + baseLGWNFTablesRules
-}
 
 func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 	eth0Name, eth0MAC, eth0GWIP, eth0CIDR string, gatewayVLANID uint, l netlink.Link, hwOffload, setNodeIP bool) {
@@ -543,7 +532,7 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 		err = f6.MatchState(expectedTables, nil)
 		Expect(err).NotTo(HaveOccurred())
 
-		expectedNFT := getBaseNFTRules(types.K8sMgmtIntfName)
+		expectedNFT := nftablesRulesBase
 		err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 		Expect(err).NotTo(HaveOccurred())
 
@@ -1449,7 +1438,10 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 		err = f6.MatchState(expectedTables, nil)
 		Expect(err).NotTo(HaveOccurred())
 
-		expectedNFT := getBaseLGWNFTablesRules(types.K8sMgmtIntfName)
+		expectedNFT := nftablesRulesBase + nftablesRulesLocalGateway
+		if util.IsNetworkSegmentationSupportEnabled() {
+			expectedNFT += nftablesRulesUDN
+		}
 		err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 		Expect(err).NotTo(HaveOccurred())
 
