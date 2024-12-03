@@ -22,12 +22,10 @@ func initLocalGateway(hostSubnets []*net.IPNet, mgmtPort managementport.Interfac
 		return nil
 	}
 
-	klog.Info("Adding iptables masquerading rules for new local gateway")
+	klog.Info("Adding nftables rules for new local gateway")
 
+	// Collect all CIDRs for masquerading rules
 	var allCIDRs []*net.IPNet
-	ifName := mgmtPort.GetInterfaceName()
-
-	// First pass: collect all CIDRs and setup iptables filter rules per interface
 	for _, hostSubnet := range hostSubnets {
 		// local gateway mode uses mp0 as default path for all ingress traffic into OVN
 		nextHop, err := util.MatchFirstIPNetFamily(utilnet.IsIPv6CIDR(hostSubnet), mgmtPort.GetAddresses())
@@ -35,22 +33,13 @@ func initLocalGateway(hostSubnets []*net.IPNet, mgmtPort managementport.Interfac
 			return fmt.Errorf("failed to find management port address: %w", err)
 		}
 
-		// add iptables masquerading for mp0 to exit the host for egress
 		cidr := nextHop.IP.Mask(nextHop.Mask)
 		cidrNet := &net.IPNet{IP: cidr, Mask: nextHop.Mask}
 		allCIDRs = append(allCIDRs, cidrNet)
-
-		// Setup iptables filter rules for this interface/CIDR
-		if err := initLocalGatewayIPTFilterRules(ifName, cidrNet); err != nil {
-			return fmt.Errorf("failed to add local NAT rules for: %s, err: %v", ifName, err)
-		}
 	}
 
-	// setup nftables masquerade rules for all CIDRs (v4, v6 or dualstack)
-	if len(allCIDRs) > 0 {
-		if err := initLocalGatewayNFTNATRules(allCIDRs...); err != nil {
-			return fmt.Errorf("failed to setup nftables masquerade rules: %w", err)
-		}
+	if err := initLocalGatewayRules(mgmtPort.GetInterfaceName(), allCIDRs); err != nil {
+		return fmt.Errorf("failed to setup nftables rules for local gateway: %w", err)
 	}
 
 	return nil

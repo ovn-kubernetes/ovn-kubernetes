@@ -75,8 +75,8 @@ func startNodePortWatcher(n *nodePortWatcher, fakeClient *util.OVNNodeClientset)
 	ipFullNet := net.IPNet{IP: ip, Mask: ipnet.Mask}
 	n.nodeIPManager.cidrs.Insert(ipFullNet.String())
 
-	// Add or delete iptables rules from FORWARD chain based on DisableForwarding. This is
-	// to imitate addition or deletion of iptales rules done in newNodePortWatcher().
+	// Add or delete nftables rules based on DisableForwarding. This is
+	// to imitate addition or deletion of rules done in newNodePortWatcher().
 	var subnets []*net.IPNet
 	for _, subnet := range config.Default.ClusterSubnets {
 		subnets = append(subnets, subnet.CIDR)
@@ -84,11 +84,11 @@ func startNodePortWatcher(n *nodePortWatcher, fakeClient *util.OVNNodeClientset)
 	subnets = append(subnets, config.Kubernetes.ServiceCIDRs...)
 	if config.Gateway.DisableForwarding {
 		if err := initExternalBridgeServiceForwardingRules(subnets); err != nil {
-			return fmt.Errorf("failed to add accept rules in forwarding table for bridge %s: err %v", linkName, err)
+			return fmt.Errorf("failed to add nftables forwarding rules for bridge %s: err %v", linkName, err)
 		}
 	} else {
-		if err := delExternalBridgeServiceForwardingRules(subnets); err != nil {
-			return fmt.Errorf("failed to delete accept rules in forwarding table for bridge %s: err %v", linkName, err)
+		if err := delExternalBridgeServiceForwardingRules(); err != nil {
+			return fmt.Errorf("failed to delete nftables forwarding rules for bridge %s: err %v", linkName, err)
 		}
 	}
 
@@ -3540,7 +3540,7 @@ var _ = Describe("Node Operations", func() {
 	})
 
 	Context("disable-forwarding", func() {
-		It("adds or removes iptables rules upon change in forwarding mode", func() {
+		It("adds or removes nftables rules upon change in forwarding mode", func() {
 			app.Action = func(*cli.Context) error {
 				config.Default.ClusterSubnets = []config.CIDRNetworkEntry{{CIDR: ovntest.MustParseIPNet("10.1.0.0/16"), HostSubnetLength: 24}}
 				config.Kubernetes.ServiceCIDRs = ovntest.MustParseIPNets("172.16.1.0/24")
@@ -3558,104 +3558,21 @@ var _ = Describe("Node Operations", func() {
 
 				fNPW.watchFactory = wf
 				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
-				expectedTables := map[string]util.FakeTable{
-					"nat": {
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-NODEPORT":   []string{},
-						"OVN-KUBE-EXTERNALIP": []string{},
-						"OVN-KUBE-ETP":        []string{},
-						"OVN-KUBE-ITP":        []string{},
-					},
-					"filter": {
-						"FORWARD": []string{
-							"-d 169.254.169.1 -j ACCEPT",
-							"-s 169.254.169.1 -j ACCEPT",
-							"-d 172.16.1.0/24 -j ACCEPT",
-							"-s 172.16.1.0/24 -j ACCEPT",
-							"-d 10.1.0.0/16 -j ACCEPT",
-							"-s 10.1.0.0/16 -j ACCEPT",
-						},
-					},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
 
-				Expect(configureGlobalForwarding()).To(Succeed())
-				f4 := iptV4.(*util.FakeIPTables)
-				err = f4.MatchState(expectedTables, map[util.FakePolicyKey]string{{
-					Table: "filter",
-					Chain: "FORWARD",
-				}: "DROP"})
-				Expect(err).NotTo(HaveOccurred())
-				expectedTables = map[string]util.FakeTable{
-					"nat":    {},
-					"filter": {},
-					"mangle": {},
-				}
-				f6 := iptV6.(*util.FakeIPTables)
-				err = f6.MatchState(expectedTables, nil)
+				expectedNFT := nftablesRulesBase + nftablesRulesForward
+				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				Expect(err).NotTo(HaveOccurred())
 
-				// Enable forwarding and test deletion of iptables rules from FORWARD chain
+				// Enable forwarding and test deletion of nftables forwarding rules
 				config.Gateway.DisableForwarding = false
 				fNPW.watchFactory = wf
 				Expect(configureGlobalForwarding()).To(Succeed())
 				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
-				expectedTables = map[string]util.FakeTable{
-					"nat": {
-						"PREROUTING": []string{
-							"-j OVN-KUBE-ETP",
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-						},
-						"OUTPUT": []string{
-							"-j OVN-KUBE-EXTERNALIP",
-							"-j OVN-KUBE-NODEPORT",
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-NODEPORT":   []string{},
-						"OVN-KUBE-EXTERNALIP": []string{},
-						"OVN-KUBE-ETP":        []string{},
-						"OVN-KUBE-ITP":        []string{},
-					},
-					"filter": {
-						"FORWARD": []string{},
-					},
-					"mangle": {
-						"OUTPUT": []string{
-							"-j OVN-KUBE-ITP",
-						},
-						"OVN-KUBE-ITP": []string{},
-					},
-				}
 
-				f4 = iptV4.(*util.FakeIPTables)
-				err = f4.MatchState(expectedTables, map[util.FakePolicyKey]string{{
-					Table: "filter",
-					Chain: "FORWARD",
-				}: "ACCEPT"})
+				expectedNFT = nftablesRulesBase
+				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				Expect(err).NotTo(HaveOccurred())
-				expectedTables = map[string]util.FakeTable{
-					"nat":    {},
-					"filter": {},
-					"mangle": {},
-				}
-				f6 = iptV6.(*util.FakeIPTables)
-				err = f6.MatchState(expectedTables, nil)
-				Expect(err).NotTo(HaveOccurred())
+
 				return nil
 			}
 			err := app.Run([]string{app.Name})

@@ -1576,8 +1576,9 @@ func DummyMasqueradeIPs() []net.IP {
 }
 
 // configureGlobalForwarding configures the global forwarding settings.
-// It sets the FORWARD policy to DROP/ACCEPT based on the config.Gateway.DisableForwarding value for all enabled IP families.
-// For IPv6 it additionally always enables the global forwarding.
+// Note that if config.Gateway.DisableForwarding is set we will also call
+// initExternalBridgeServiceForwardingRules() to create specific nftables
+// forwarding rules and block other forwarding at the netfilter level.
 func configureGlobalForwarding() error {
 	// Global forwarding works differently for IPv6:
 	//   conf/all/forwarding - BOOLEAN
@@ -1589,28 +1590,12 @@ func configureGlobalForwarding() error {
 	// It is not possible to configure the IPv6 forwarding per interface by
 	// setting the net.ipv6.conf.<ifname>.forwarding sysctl. Instead,
 	// the opposite approach is required where the global forwarding
-	// is enabled and an iptables rule is added to restrict it by default.
+	// is enabled and an nftables rule is added to restrict it by default.
 	if config.IPv6Mode {
 		if err := ip.EnableIP6Forward(); err != nil {
 			return fmt.Errorf("could not set the correct global forwarding value for ipv6:  %w", err)
 		}
 
-	}
-
-	for _, proto := range clusterIPTablesProtocols() {
-		ipt, err := util.GetIPTablesHelper(proto)
-		if err != nil {
-			return fmt.Errorf("failed to get the iptables helper: %w", err)
-		}
-
-		target := "ACCEPT"
-		if config.Gateway.DisableForwarding {
-			target = "DROP"
-
-		}
-		if err := ipt.ChangePolicy("filter", "FORWARD", target); err != nil {
-			return fmt.Errorf("failed to change the forward policy to %q: %w", target, err)
-		}
 	}
 	return nil
 }

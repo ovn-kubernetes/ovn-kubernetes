@@ -312,6 +312,11 @@ func getStaleMasqueradeIptablesRules(masqueradeIP net.IP) []nodeipt.Rule {
 		getMasqueradeIpTablesNATRules(masqueradeIP, getIPTablesProtocol(masqueradeIP.String()))...)
 }
 
+// delStaleMasqueradeIPTRules deletes all iptables rules that may have been added for a given masquerade IP.
+func delStaleMasqueradeIPTRules(masqueradeIP net.IP) error {
+	return deleteIptRules(getStaleMasqueradeIptablesRules(masqueradeIP))
+}
+
 func getMasqueradeIpTablesForwardRules(masqueradeIP net.IP, protocol iptables.Protocol) []nodeipt.Rule {
 	return []nodeipt.Rule{
 		{
@@ -349,18 +354,9 @@ func getMasqueradeIpTablesNATRules(masqueradeIP net.IP, protocol iptables.Protoc
 	}
 }
 
-// initExternalBridgeForwardingRules sets up iptables rules for br-* interface svc traffic forwarding
-// -A FORWARD -s 10.96.0.0/16 -j ACCEPT
-// -A FORWARD -d 10.96.0.0/16 -j ACCEPT
-// -A FORWARD -s 169.254.169.1 -j ACCEPT
-// -A FORWARD -d 169.254.169.1 -j ACCEPT
-func initExternalBridgeServiceForwardingRules(cidrs []*net.IPNet) error {
-	return insertIptRules(getGatewayForwardRules(cidrs))
-}
-
-// delExternalBridgeServiceForwardingRules removes iptables rules which might
+// delExternalBridgeServiceIPTForwardingRules removes iptables rules which might
 // have been added to disable forwarding
-func delExternalBridgeServiceForwardingRules(cidrs []*net.IPNet) error {
+func delExternalBridgeServiceIPTForwardingRules(cidrs []*net.IPNet) error {
 	return deleteIptRules(getGatewayForwardRules(cidrs))
 }
 
@@ -389,17 +385,9 @@ func getLocalGatewayFilterRules(ifname string, cidr *net.IPNet) []nodeipt.Rule {
 	}
 }
 
-// initLocalGatewayIPTFilterRules sets up iptables rules for interfaces
-func initLocalGatewayIPTFilterRules(ifname string, cidr *net.IPNet) error {
-	// Insert the filter table rules because they need to be evaluated BEFORE the DROP rules
-	// we have for forwarding. DO NOT change the ordering; specially important
-	// during SGW->LGW rollouts and restarts.
-	err := insertIptRules(getLocalGatewayFilterRules(ifname, cidr))
-	if err != nil {
-		return fmt.Errorf("unable to insert forwarding rules %v", err)
-	}
-	// NOTE: nftables masquerade rules are now handled separately in initLocalGatewayNFTNATRules
-	return nil
+// delLocalGatewayIPTFilterRules removes iptables rules for interfaces.
+func delLocalGatewayIPTFilterRules(ifname string, cidr *net.IPNet) error {
+	return deleteIptRules(getLocalGatewayFilterRules(ifname, cidr))
 }
 
 func addChaintoTable(ipt util.IPTablesHelper, tableName, chain string) {

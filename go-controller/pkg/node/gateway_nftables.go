@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 	utilnet "k8s.io/utils/net"
 	"sigs.k8s.io/knftables"
 
@@ -437,7 +438,7 @@ func getUDNMasqueradeNFTRules(ipFamily utilnet.IPFamily) ([]*knftables.Rule, err
 
 // initLocalGatewayNFTNATRules sets up nftables rules for local gateway NAT functionality
 // This function supports dual-stack by accepting multiple CIDRs and generating rules for all IP families
-func initLocalGatewayNFTNATRules(cidrs ...*net.IPNet) error {
+func initLocalGatewayNFTNATRules(cidrs []*net.IPNet) error {
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {
 		return fmt.Errorf("failed to get nftables helper: %w", err)
@@ -591,6 +592,183 @@ func delLocalGatewayPodSubnetNFTRules() error {
 
 	if err := nft.Run(context.TODO(), tx); err != nil && !knftables.IsNotFound(err) {
 		return fmt.Errorf("failed to delete pod subnet NAT rules: %w", err)
+	}
+
+	return nil
+}
+
+const (
+	// gatewayForwardChain is the chain used to configure forwarding rules when
+	// config.Gateway.DisableForwarding is true.
+	gatewayForwardChain = "gateway-forward"
+
+	// gatewayForwardLocalChain is the chain used to configure forwarding rules
+	// for local gateway mode.
+	gatewayForwardLocalChain = "gateway-forward-local"
+)
+
+// initExternalBridgeServiceForwardingRules is called when config.Gateway.DisableForwarding is
+// true, to set up allowed forwarding and deny other forwarding.
+func initExternalBridgeServiceForwardingRules(cidrs []*net.IPNet) error {
+	nft, err := nodenft.GetNFTablesHelper()
+	if err != nil {
+		return fmt.Errorf("could not configure bridge forwarding: %w", err)
+	}
+
+	tx := nft.NewTransaction()
+	tx.Add(&knftables.Chain{
+		Name: gatewayForwardChain,
+
+		Type:     knftables.PtrTo(knftables.FilterType),
+		Hook:     knftables.PtrTo(knftables.ForwardHook),
+		Priority: knftables.PtrTo(knftables.FilterPriority),
+	})
+	tx.Flush(&knftables.Chain{
+		Name: gatewayForwardChain,
+	})
+
+	v4CIDRset := sets.New[string]()
+	v6CIDRset := sets.New[string]()
+	for _, cidr := range cidrs {
+		switch utilnet.IPFamilyOfCIDR(cidr) {
+		case utilnet.IPv4:
+			v4CIDRset.Insert(cidr.String())
+		case utilnet.IPv6:
+			v6CIDRset.Insert(cidr.String())
+		}
+	}
+
+	if len(v4CIDRset) > 0 {
+		v4CIDRset.Insert(config.Gateway.MasqueradeIPs.V4OVNMasqueradeIP.String())
+		v4CIDRs := strings.Join(sets.List(v4CIDRset), ", ")
+
+		tx.Add(&knftables.Rule{
+			Chain: gatewayForwardChain,
+			Rule: knftables.Concat(
+				"ip saddr", "{", v4CIDRs, "}",
+				"accept",
+			),
+		})
+		tx.Add(&knftables.Rule{
+			Chain: gatewayForwardChain,
+			Rule: knftables.Concat(
+				"ip daddr", "{", v4CIDRs, "}",
+				"accept",
+			),
+		})
+	}
+
+	if len(v6CIDRset) > 0 {
+		v6CIDRset.Insert(config.Gateway.MasqueradeIPs.V6OVNMasqueradeIP.String())
+		v6CIDRs := strings.Join(sets.List(v6CIDRset), ", ")
+
+		tx.Add(&knftables.Rule{
+			Chain: gatewayForwardChain,
+			Rule: knftables.Concat(
+				"ip6 saddr", "{", v6CIDRs, "}",
+				"accept",
+			),
+		})
+		tx.Add(&knftables.Rule{
+			Chain: gatewayForwardChain,
+			Rule: knftables.Concat(
+				"ip6 daddr", "{", v6CIDRs, "}",
+				"accept",
+			),
+		})
+	}
+
+	tx.Add(&knftables.Rule{
+		Chain: gatewayForwardChain,
+		Rule:  "drop",
+	})
+
+	err = nft.Run(context.TODO(), tx)
+	if err != nil {
+		return fmt.Errorf("could not configure bridge forwarding: %w", err)
+	}
+
+	// If there are legacy IPTables rules left around, clean them up, ignoring errors.
+	_ = delStaleMasqueradeIPTRules(config.Gateway.MasqueradeIPs.V4OVNMasqueradeIP)
+	_ = delStaleMasqueradeIPTRules(config.Gateway.MasqueradeIPs.V6OVNMasqueradeIP)
+
+	return nil
+}
+
+// delExternalBridgeServiceForwardingRules removes nftables rules which might
+// have been added to configure forwarding
+func delExternalBridgeServiceForwardingRules() error {
+	nft, err := nodenft.GetNFTablesHelper()
+	if err != nil {
+		return fmt.Errorf("could not unconfigure bridge forwarding: %w", err)
+	}
+
+	tx := nft.NewTransaction()
+	tx.Delete(&knftables.Chain{Name: gatewayForwardChain})
+	err = nft.Run(context.TODO(), tx)
+	if err != nil && !knftables.IsNotFound(err) {
+		return fmt.Errorf("could not unconfigure bridge forwarding: %w", err)
+	}
+
+	return nil
+}
+
+// initLocalGatewayForwardRules sets up nftables forwarding rules specific to local
+// gateway mode
+func initLocalGatewayForwardRules(ifname string) error {
+	nft, err := nodenft.GetNFTablesHelper()
+	if err != nil {
+		return fmt.Errorf("could not configure local gateway rules: %w", err)
+	}
+
+	tx := nft.NewTransaction()
+	tx.Add(&knftables.Chain{
+		Name: gatewayForwardLocalChain,
+
+		Type:     knftables.PtrTo(knftables.FilterType),
+		Hook:     knftables.PtrTo(knftables.ForwardHook),
+		Priority: knftables.PtrTo(knftables.FilterPriority + "-1"),
+	})
+	tx.Flush(&knftables.Chain{
+		Name: gatewayForwardLocalChain,
+	})
+
+	quotedName := fmt.Sprintf("%q", ifname)
+	tx.Add(&knftables.Rule{
+		Chain: gatewayForwardLocalChain,
+		Rule: knftables.Concat(
+			"iifname", quotedName,
+			"accept",
+		),
+	})
+	tx.Add(&knftables.Rule{
+		Chain: gatewayForwardLocalChain,
+		Rule: knftables.Concat(
+			"oifname", quotedName,
+			"accept",
+		),
+	})
+
+	err = nft.Run(context.TODO(), tx)
+	if err != nil {
+		return fmt.Errorf("could not configure local gateway rules: %w", err)
+	}
+	return nil
+}
+
+// initLocalGatewayRules sets up all nftables rules specific to local gateway mode.
+func initLocalGatewayRules(ifname string, cidrs []*net.IPNet) error {
+	if err := initLocalGatewayNFTNATRules(cidrs); err != nil {
+		return err
+	}
+	if err := initLocalGatewayForwardRules(ifname); err != nil {
+		return err
+	}
+
+	// If there are legacy IPTables rules left around, clean them up, ignoring errors.
+	_ = delExternalBridgeServiceIPTForwardingRules(cidrs)
+	for _, cidr := range cidrs {
+		_ = delLocalGatewayIPTFilterRules(ifname, cidr)
 	}
 
 	return nil

@@ -1857,7 +1857,7 @@ func newNodePortWatcher(
 				return nil, fmt.Errorf("failed to add accept rules in forwarding table for bridge %s: err %v", gwBridge.GetGatewayIface(), err)
 			}
 		} else {
-			if err := delExternalBridgeServiceForwardingRules(subnets); err != nil {
+			if err := delExternalBridgeServiceForwardingRules(); err != nil {
 				return nil, fmt.Errorf("failed to delete accept rules in forwarding table for bridge %s: err %v", gwBridge.GetGatewayIface(), err)
 			}
 		}
@@ -2290,7 +2290,6 @@ func deleteStaleMasqueradeResources(bridgeName, nodeName string, wf factory.Node
 // struct and netlink.Link:
 // - neighbour object for IPv4 and IPv6 OVNMasqueradeIP and DummyNextHopMasqueradeIP.
 // - masquerade route added by addMasqueradeRoute function while starting up the gateway.
-// - iptables rules created for masquerade subnet based on ipForwarding and Gateway mode.
 // - stale HostMasqueradeIP address from gateway bridge
 func deleteMasqueradeResources(link netlink.Link, staleMasqueradeIPs *config.MasqueradeIPsConfig) error {
 	var subnets []*net.IPNet
@@ -2320,10 +2319,6 @@ func deleteMasqueradeResources(link netlink.Link, staleMasqueradeIPs *config.Mas
 		}
 		subnets = append(subnets, masqIPNet)
 		neighborIPs = append(neighborIPs, staleMasqueradeIPs.V4OVNMasqueradeIP, staleMasqueradeIPs.V4DummyNextHopMasqueradeIP)
-		if err := nodeipt.DelRules(getStaleMasqueradeIptablesRules(staleMasqueradeIPs.V4OVNMasqueradeIP)); err != nil {
-			aggregatedErrors = append(aggregatedErrors,
-				fmt.Errorf("failed to delete forwarding iptables rules for stale masquerade subnet %s: ", err))
-		}
 	}
 
 	if config.IPv6Mode && staleMasqueradeIPs.V6HostMasqueradeIP != nil {
@@ -2344,9 +2339,6 @@ func deleteMasqueradeResources(link netlink.Link, staleMasqueradeIPs *config.Mas
 		}
 		subnets = append(subnets, masqIPNet)
 		neighborIPs = append(neighborIPs, staleMasqueradeIPs.V6OVNMasqueradeIP, staleMasqueradeIPs.V6DummyNextHopMasqueradeIP)
-		if err := nodeipt.DelRules(getStaleMasqueradeIptablesRules(staleMasqueradeIPs.V6OVNMasqueradeIP)); err != nil {
-			return fmt.Errorf("failed to delete forwarding iptables rules for stale masquerade subnet %s: ", err)
-		}
 	}
 
 	for _, ip := range neighborIPs {

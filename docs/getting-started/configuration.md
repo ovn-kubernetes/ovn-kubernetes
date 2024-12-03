@@ -12,18 +12,18 @@ OVN-Kubernetes allows to enable or disable IP forwarding for all traffic on OVN-
 By default forwarding is enabled and this allows host to forward traffic across OVN-Kubernetes managed interfaces.
 If forwarding is disabled then Kubernetes related traffic is still forwarded appropriately, but other IP traffic will not be routed by cluster nodes.
 
-IP forwarding is implemented at cluster node level by modifying both iptables `FORWARD` chain and IP forwarding `sysctl` parameters. 
+IP forwarding is implemented at cluster node level by adding an nftables `forward` chain and modifying IP forwarding `sysctl` parameters.
 
 #### IPv4
 
 If forwarding is enabled(default) and it is desired to allow forwarding for traffic on unmanaged ovn-kubernetes interfaces, then system administrators need to set the following sysctl parameters on the desired interfaces or globally.
 OVN-Kubernetes already sets sysctl forwarding for interfaces it manages, such as the ovn-k8s-mp0 interface and the shared gateway bridge interface. An operator can be built to manage forwarding sysctl parameters based on forwarding mode.
-No extra iptables rules are added by OVN-Kubernetes to FORWARD chain while using this IP forwarding mode.
+No extra nftables rules are added by OVN-Kubernetes to the `forward` hook while using this IP forwarding mode.
 
 ```
 net.ipv4.ip_forward=1
 ```
-IP forwarding can be disabled either by setting `disable-forwarding` command line option to `true` while starting ovnkube or by setting `disable-forwarding` to `true` in config file. If forwarding is disabled the default policy for the [FORWARD iptables chain is set as DROP](#forwarding-rules) and system administrators can add use-case specific ACCEPT rules.
+IP forwarding can be disabled either by setting `disable-forwarding` command line option to `true` while starting ovnkube or by setting `disable-forwarding` to `true` in config file. If forwarding is disabled a [`forward`-hook chain with a default `drop` rule is created](#forwarding-rules) and system administrators can add use-case specific iptables/nftables rules to accept packets.
 
 When IP forwarding is disabled, following sysctl parameters are modified by OVN-Kubernetes to allow forwarding Kubernetes related traffic on OVN-Kubernetes managed bridge interfaces and management port interface.
 
@@ -87,41 +87,16 @@ It is not possible to configure the IPv6 forwarding per interface by setting the
 `net.ipv6.conf.IFNAME.forwarding` sysctl (it just configures the interface-specific Host/Router 
 behaviour). \
 Instead, the opposite approach is required where the global forwarding is always enabled and 
-the traffic is restricted through iptables.
+the traffic is restricted through iptables/nftables.
 
 #### Forwarding rules
 
-When the `disable-forwarding` parameter is configured specific iptables rules are added to
-the FORWARD chain to forward clusterNetwork and serviceNetwork traffic to their intended destinations.
-Additionally, the default policy for the FORWARD chain is set as `DROP`. Otherwise, the policy
-defaults to `ACCEPT` and no custom rules are added. This behavior is the same for both IPv6 and IPv4
-networks:
+When the `disable-forwarding` parameter is configured specific nftables rules are added to
+the `forward` hook to forward clusterNetwork and serviceNetwork traffic to their intended
+destinations, and to drop anything else.
 
-```
-# In IPv4 with disable-forwarding=true the FORWARD policy is set to DROP
-Chain FORWARD (policy DROP 0 packets, 0 bytes)
- pkts bytes target     prot opt in     out     source               destination         
-    0     0 ACCEPT     0    --  *      *       0.0.0.0/0            169.254.169.1       
-    0     0 ACCEPT     0    --  *      *       169.254.169.1        0.0.0.0/0           
-    0     0 ACCEPT     0    --  *      *       0.0.0.0/0            10.96.0.0/16        
-    0     0 ACCEPT     0    --  *      *       10.96.0.0/16         0.0.0.0/0           
-    0     0 ACCEPT     0    --  *      *       0.0.0.0/0            10.244.0.0/16       
-    0     0 ACCEPT     0    --  *      *       10.244.0.0/16        0.0.0.0/0           
-    0     0 ACCEPT     0    --  ovn-k8s-mp0 *       0.0.0.0/0            0.0.0.0/0           
-    0     0 ACCEPT     0    --  *      ovn-k8s-mp0  0.0.0.0/0            0.0.0.0/0
-    
-# In IPv6 with disable-forwarding=true the FORWARD policy is set to DROP
-Chain FORWARD (policy DROP 0 packets, 0 bytes)
- pkts bytes target     prot opt in     out     source               destination         
-    0     0 ACCEPT     0    --  *      *       ::/0                 fd69::1             
-    0     0 ACCEPT     0    --  *      *       fd69::1              ::/0                
-    0     0 ACCEPT     0    --  *      *       ::/0                 fd00:10:96::/112    
-    0     0 ACCEPT     0    --  *      *       fd00:10:96::/112     ::/0                
-    0     0 ACCEPT     0    --  *      *       ::/0                 fd00:10:244::/48    
-    0     0 ACCEPT     0    --  *      *       fd00:10:244::/48     ::/0                
-    0     0 ACCEPT     0    --  ovn-k8s-mp0 *       ::/0                 ::/0                
-    0     0 ACCEPT     0    --  *      ovn-k8s-mp0  ::/0                 ::/0          
-```
+Otherwise, no changes are made to the nftables forwarding rules. This behavior is the same
+for both IPv6 and IPv4 networks.
 
 ### VLAN Config
 
