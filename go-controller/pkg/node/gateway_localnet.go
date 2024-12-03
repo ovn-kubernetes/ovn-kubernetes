@@ -33,7 +33,7 @@ func initLocalGateway(hostSubnets []*net.IPNet, mgmtPort managementport.Interfac
 	// Set up iptables filter rules to allow traffic to/from the management port.
 	ifName := mgmtPort.GetInterfaceName()
 	if err := initLocalGatewayIPTFilterRules(ifName); err != nil {
-		return fmt.Errorf("failed to add local forwarding rules for: %s, err: %v", ifName, err)
+		return fmt.Errorf("failed to configure local forwarding rules for: %s, err: %v", ifName, err)
 	}
 
 	// Set up nftables masquerade rules for this node's subnets.
