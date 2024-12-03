@@ -386,16 +386,6 @@ func getLocalGatewayFilterRules(ifname string, cidr *net.IPNet) []nodeipt.Rule {
 			},
 			Protocol: protocol,
 		},
-		{
-			Table: "filter",
-			Chain: "INPUT",
-			Args: []string{
-				"-i", ifname,
-				"-m", "comment", "--comment", "from OVN to localhost",
-				"-j", "ACCEPT",
-			},
-			Protocol: protocol,
-		},
 	}
 }
 

@@ -1422,9 +1422,6 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 					"-i ovn-k8s-mp0 -j ACCEPT",
 					"-o ovn-k8s-mp0 -j ACCEPT",
 				},
-				"INPUT": []string{
-					"-i ovn-k8s-mp0 -m comment --comment from OVN to localhost -j ACCEPT",
-				},
 			},
 			"mangle": {
 				"OUTPUT": []string{
