@@ -838,12 +838,15 @@ var _ = Describe("Multi Homing", func() {
 						excludedSubnetLowerRange2 = "60.128.0.128/26" // Excludes IPs from 60.128.0.128 to 60.128.0.191
 						excludedSubnetUpperRange1 = "60.128.0.208/28" // Excludes IPs from 60.128.0.208 to 60.128.0.223
 						excludedSubnetUpperRange2 = "60.128.0.224/27" // Excludes IPs from 60.128.0.224 to 60.128.0.255
+						newLocalnetVLANID         = 30
 					)
 					BeforeEach(func() {
 						By("setting new MTU")
 						netConfig.mtu = expectedChangedMTU
 						By("setting new subnets to leave a smaller range")
 						netConfig.excludeCIDRs = []string{excludedSubnetLowerRange1, excludedSubnetLowerRange2, excludedSubnetUpperRange1, excludedSubnetUpperRange2}
+						By("setting new VLAN-ID")
+						netConfig.vlanID = newLocalnetVLANID
 						p := []byte(fmt.Sprintf(`[{"op":"replace","path":"/spec/config","value":%q}]`, generateNADSpec(netConfig)))
 						Expect(patchNADSpec(nadClient, netConfig.name, netConfig.namespace, p)).To(Succeed())
 					})
@@ -895,6 +898,55 @@ var _ = Describe("Multi Homing", func() {
 							}
 							return nil
 						}).Should(Succeed(), "pod's secondary NIC is not allocated in the desired range")
+					})
+
+					It("can no longer communicate over a localnet secondary network from pod to the underlay service", func() {
+						Eventually(func() error {
+							clientPodConfig := podConfiguration{
+								name:        clientPodName,
+								namespace:   f.Namespace.Name,
+								attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
+							}
+							kickstartPod(cs, clientPodConfig)
+
+							By("asserting the *client* pod can no longer contact the underlay service")
+							var err error
+							if err = connectToServer(clientPodConfig, underlayServiceIP, servicePort); err != nil && strings.Contains(err.Error(), "exit code 28") {
+								return nil
+							}
+							err = fmt.Errorf("expected exit code 28 from underlay service, got err %w", err)
+
+							if delErr := cs.CoreV1().Pods(clientPodConfig.namespace).Delete(context.Background(), clientPodConfig.name, metav1.DeleteOptions{}); delErr != nil {
+								err = errors.Join(err, fmt.Errorf("pod delete failed: %w", delErr))
+							}
+							return err
+						}).Should(Succeed(), "pod should be disconnected from underlay")
+					})
+
+					Context("and the service connected to the underlay is reconfigured to connect to the new VLAN-ID", func() {
+						BeforeEach(func() {
+							Expect(ovsRemoveSwitchPort(nodes, secondaryInterfaceName, newLocalnetVLANID)).To(Succeed())
+						})
+
+						It("can now communicate over a localnet secondary network from pod to the underlay service", func() {
+							Eventually(func() error {
+								clientPodConfig := podConfiguration{
+									name:        clientPodName,
+									namespace:   f.Namespace.Name,
+									attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
+								}
+								kickstartPod(cs, clientPodConfig)
+
+								By("asserting the *client* pod can contact the underlay service")
+								if err := connectToServer(clientPodConfig, underlayServiceIP, servicePort); err != nil {
+									if delErr := cs.CoreV1().Pods(clientPodConfig.namespace).Delete(context.Background(), clientPodConfig.name, metav1.DeleteOptions{}); delErr != nil {
+										err = errors.Join(err, fmt.Errorf("pod delete failed: %w", delErr))
+									}
+									return err
+								}
+								return nil
+							}).Should(Succeed(), "pod should be connected to underlay")
+						})
 					})
 				})
 
