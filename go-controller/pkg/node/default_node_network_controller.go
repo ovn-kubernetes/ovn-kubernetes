@@ -1570,7 +1570,7 @@ func (nc *DefaultNodeNetworkController) addOrUpdateNode(node *corev1.Node) error
 	gw.openflowManager.updateBridgePMTUDFlowCache(getPMTUDKey(node.Name), addrs)
 
 	if len(nftElems) > 0 {
-		if err := nodenft.UpdateNFTElements(nftElems); err != nil {
+		if err := nodenft.AddObjects(context.TODO(), nftElems); err != nil {
 			return fmt.Errorf("unable to update NFT elements for node %q, error: %w", node.Name, err)
 		}
 	}
@@ -1595,7 +1595,7 @@ func removePMTUDNodeNFTRules(nodeIPs []net.IP) error {
 		}
 	}
 	if len(nftElems) > 0 {
-		if err := nodenft.DeleteNFTElements(nftElems); err != nil {
+		if err := nodenft.DeleteObjects(context.TODO(), nftElems); err != nil {
 			return err
 		}
 	}

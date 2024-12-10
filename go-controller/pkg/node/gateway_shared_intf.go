@@ -698,7 +698,7 @@ func addServiceRules(service *corev1.Service, netInfo util.NetInfo, localEndpoin
 			nftObjs = append(nftObjs, getUDNNFTRules(service, activeNetwork)...)
 		}
 		if len(nftObjs) > 0 {
-			if err := nodenft.UpdateNFTElements(nftObjs); err != nil {
+			if err := nodenft.AddObjects(context.TODO(), nftObjs); err != nil {
 				err = fmt.Errorf("failed to update nftables rules for service %s/%s: %v",
 					service.Namespace, service.Name, err)
 				errors = append(errors, err)
@@ -760,38 +760,14 @@ func delServiceRules(service *corev1.Service, localEndpoints []string, npw *node
 		}
 		nftObjs := getGatewayNFTRules(service, localEndpoints, true)
 		nftObjs = append(nftObjs, getGatewayNFTRules(service, localEndpoints, false)...)
+		if util.IsNetworkSegmentationSupportEnabled() {
+			nftObjs = append(nftObjs, getUDNNFTRules(service, nil)...)
+		}
 		if len(nftObjs) > 0 {
-			if err := nodenft.DeleteNFTElements(nftObjs); err != nil {
+			if err := nodenft.DeleteObjects(context.TODO(), nftObjs); err != nil {
 				err = fmt.Errorf("failed to delete nftables rules for service %s/%s: %v",
 					service.Namespace, service.Name, err)
 				errors = append(errors, err)
-			}
-		}
-
-		if util.IsNetworkSegmentationSupportEnabled() {
-			// NOTE: The code below is not using nodenft.DeleteNFTElements because it first adds elements
-			// before removing them, which fails for UDN NFT rules. These rules only have map keys,
-			// not key-value pairs, making it impossible to add.
-			// Attempt to delete the elements directly and handle the IsNotFound error.
-			//
-			// TODO: Switch to `nft destroy` when supported.
-			nftObjs = getUDNNFTRules(service, nil)
-			if len(nftObjs) > 0 {
-				nft, err := nodenft.GetNFTablesHelper()
-				if err != nil {
-					return utilerrors.Join(append(errors, err)...)
-				}
-
-				tx := nft.NewTransaction()
-				for _, obj := range nftObjs {
-					tx.Delete(obj)
-				}
-
-				if err := nft.Run(context.TODO(), tx); err != nil && !knftables.IsNotFound(err) {
-					err = fmt.Errorf("failed to delete nftables rules for UDN service %s/%s: %v",
-						service.Namespace, service.Name, err)
-					errors = append(errors, err)
-				}
 			}
 		}
 	}
