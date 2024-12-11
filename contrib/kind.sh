@@ -116,6 +116,8 @@ usage() {
     echo "-gm  | --gateway-mode                 Enable 'shared' or 'local' gateway mode."
     echo "                                      DEFAULT: shared."
     echo "-ov  | --ovn-image            	      Use the specified docker image instead of building locally. DEFAULT: local build."
+    echo "-ovr  | --ovn-repo                    Specify the repository to build OVN from"
+    echo "-ovg  | --ovn-gitref                  Specify the branch, tag or commit id to build OVN from, it can be a pattern like 'branch-*' it will order results and use the first one"
     echo "-ml  | --master-loglevel              Log level for ovnkube (master), DEFAULT: 5."
     echo "-nl  | --node-loglevel                Log level for ovnkube (node), DEFAULT: 5"
     echo "-dbl | --dbchecker-loglevel           Log level for ovn-dbchecker (ovnkube-db), DEFAULT: 5."
@@ -248,6 +250,12 @@ parse_args() {
             -ov | --ovn-image )           	    shift
                                           	    OVN_IMAGE=$1
                                           	    ;;
+            -ovr | --ovn-repo )                 shift
+                                                OVN_REPO=$1
+                                                ;;
+            -ovg | --ovn-gitref)                shift
+                                                OVN_GITREF=$1
+                                                ;;
             -ml  | --master-loglevel )          shift
                                                 if ! [[ "$1" =~ ^[0-9]$ ]]; then
                                                     echo "Invalid master-loglevel: $1"
@@ -393,6 +401,8 @@ print_params() {
      echo "OVN_EMPTY_LB_EVENTS = $OVN_EMPTY_LB_EVENTS"
      echo "OVN_MULTICAST_ENABLE = $OVN_MULTICAST_ENABLE"
      echo "OVN_IMAGE = $OVN_IMAGE"
+     echo "OVN_REPO = $OVN_REPO"
+     echo "OVN_GITREF = $OVN_GITREF"
      echo "MASTER_LOG_LEVEL = $MASTER_LOG_LEVEL"
      echo "NODE_LOG_LEVEL = $NODE_LOG_LEVEL"
      echo "DBCHECKER_LOG_LEVEL = $DBCHECKER_LOG_LEVEL"
@@ -537,6 +547,8 @@ set_default_params() {
   OVN_MULTICAST_ENABLE=${OVN_MULTICAST_ENABLE:-false}
   KIND_ALLOW_SYSTEM_WRITES=${KIND_ALLOW_SYSTEM_WRITES:-false}
   OVN_IMAGE=${OVN_IMAGE:-local}
+  OVN_REPO=${OVN_REPO:-""}
+  OVN_GITREF=${OVN_GITREF:-""}
   MASTER_LOG_LEVEL=${MASTER_LOG_LEVEL:-5}
   NODE_LOG_LEVEL=${NODE_LOG_LEVEL:-5}
   DBCHECKER_LOG_LEVEL=${DBCHECKER_LOG_LEVEL:-5}
@@ -788,26 +800,19 @@ build_ovn_image() {
   if [ "$OVN_IMAGE" == local ]; then
     set_ovn_image
 
-    # Build ovn image
-    pushd ${DIR}/../go-controller
-    make
-    popd
+    # Build binaries
+    make -C ${DIR}/../go-controller
 
-    # Build ovn kube image
-    pushd ${DIR}/../dist/images
-    # Find all built executables, but ignore the 'windows' directory if it exists
-    find ../../go-controller/_output/go/bin/ -maxdepth 1 -type f -exec cp -f {} . \;
-    echo "ref: $(git rev-parse  --symbolic-full-name HEAD)  commit: $(git rev-parse  HEAD)" > git_info
-    $OCI_BIN build -t "${OVN_IMAGE}" -f Dockerfile.fedora .
+    # Build image
+    make -C ${DIR}/../dist/images IMAGE="${OVN_IMAGE}" OVN_REPO="${OVN_REPO}" OVN_GITREF="${OVN_GITREF}" fedora-image
 
     # store in local registry
     if [ "$KIND_LOCAL_REGISTRY" == true ];then
       echo "Pushing built image to local $OCI_BIN registry"
       $OCI_BIN push "${OVN_IMAGE}"
     fi
-    popd
   # We should push to local registry if image is not remote
-  elif [ "${OVN_IMAGE}" != "" -a "${KIND_LOCAL_REGISTRY}" == true ] && (echo "$OVN_IMAGE" | grep / -vq); then 
+  elif [ "${OVN_IMAGE}" != "" -a "${KIND_LOCAL_REGISTRY}" == true ] && (echo "$OVN_IMAGE" | grep / -vq); then
     local local_registry_ovn_image="localhost:5000/${OVN_IMAGE}"
     $OCI_BIN tag "$OVN_IMAGE" $local_registry_ovn_image
     OVN_IMAGE=$local_registry_ovn_image
