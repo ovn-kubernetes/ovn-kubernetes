@@ -38,14 +38,19 @@ func AddObjects(objects []knftables.Object) error {
 // correct value. Alternatively, you can leave Value unset, in which case DeleteObjects
 // will first "list" the map to find its current contents, and then only try to delete the
 // elements that are actually present.
+//
+// For knftables.Rule objects, if the Rule's Handle is not set, then it must have a
+// non-nil Comment. DeleteObjects will first "list" the Rule's Chain to find its current
+// contents, and then delete every rule in the chain with a matching comment.
 func DeleteObjects(objects []knftables.Object) error {
 	nft, err := GetNFTablesHelper()
 	if err != nil {
 		return err
 	}
 
-	// If there are any partial Map Elements, list their maps' existing contents
+	// List existing objects we need to list
 	existingMaps := make(map[string][]*knftables.Element)
+	existingChains := make(map[string][]*knftables.Rule)
 	for _, obj := range objects {
 		switch typed := obj.(type) {
 		case *knftables.Element:
@@ -56,6 +61,19 @@ func DeleteObjects(objects []knftables.Object) error {
 				}
 				existingMaps[typed.Map] = existingElements
 			}
+		case *knftables.Rule:
+			if typed.Handle != nil {
+				continue
+			} else if typed.Comment == nil {
+				return fmt.Errorf("rule passed to DeleteObject must have a Handle or Comment")
+			}
+			if existingChains[typed.Chain] == nil {
+				rules, err := nft.ListRules(context.TODO(), typed.Chain)
+				if err != nil {
+					return err
+				}
+				existingChains[typed.Chain] = rules
+			}
 		default:
 			return fmt.Errorf("unsupported object type %T passed to DeleteObjects", obj)
 		}
@@ -63,6 +81,7 @@ func DeleteObjects(objects []knftables.Object) error {
 
 	// Now build the actual transaction
 	tx := nft.NewTransaction()
+	deletedRules := sets.New[int]()
 	for _, obj := range objects {
 		switch typed := obj.(type) {
 		case *knftables.Element:
@@ -86,6 +105,20 @@ func DeleteObjects(objects []knftables.Object) error {
 			// not it previously existed.
 			tx.Add(typed)
 			tx.Delete(typed)
+		case *knftables.Rule:
+			if typed.Handle != nil {
+				if !deletedRules.Has(*typed.Handle) {
+					tx.Delete(typed)
+					deletedRules.Insert(*typed.Handle)
+				}
+			} else {
+				for _, rule := range findRulesByComment(existingChains[typed.Chain], *typed.Comment) {
+					if !deletedRules.Has(*rule.Handle) {
+						tx.Delete(rule)
+						deletedRules.Insert(*rule.Handle)
+					}
+				}
+			}
 		default:
 		}
 	}
@@ -93,8 +126,8 @@ func DeleteObjects(objects []knftables.Object) error {
 }
 
 // SyncObjects synchronizes the given nftables containers to contain only the elements in
-// contents. Currently containers must contain only Sets and Maps, while contents must
-// contain only Elements.
+// contents. containers can contain Sets, Maps, and Chains, and contents can contain
+// Elements and Rules.
 func SyncObjects(containers, contents []knftables.Object) error {
 	nft, err := GetNFTablesHelper()
 	if err != nil {
@@ -104,12 +137,15 @@ func SyncObjects(containers, contents []knftables.Object) error {
 	tx := nft.NewTransaction()
 
 	syncContainers := make(map[string]knftables.Object)
+	syncChains := make(map[string]*knftables.Chain)
 	for _, obj := range containers {
 		switch typed := obj.(type) {
 		case *knftables.Set:
 			syncContainers[typed.Name] = obj
 		case *knftables.Map:
 			syncContainers[typed.Name] = obj
+		case *knftables.Chain:
+			syncChains[typed.Name] = typed
 		default:
 			return fmt.Errorf("unsupported container type %T passed to SyncObjects", obj)
 		}
@@ -123,6 +159,10 @@ func SyncObjects(containers, contents []knftables.Object) error {
 				return fmt.Errorf("unexpected element from set %q which is not in containers", typed.Set)
 			} else if typed.Map != "" && syncContainers[typed.Map] == nil {
 				return fmt.Errorf("unexpected element from map %q which is not in containers", typed.Map)
+			}
+		case *knftables.Rule:
+			if syncChains[typed.Chain] == nil {
+				return fmt.Errorf("unexpected rule from chain %q which is not in containers", typed.Chain)
 			}
 		default:
 			return fmt.Errorf("unsupported contents type %T passed to SyncObjects", obj)
@@ -157,6 +197,26 @@ func SyncObjects(containers, contents []knftables.Object) error {
 			return err
 		}
 	}
+
+	for _, chainName := range sets.List(sets.KeySet(syncChains)) {
+		tx := nft.NewTransaction()
+		tx.Flush(syncChains[chainName])
+		keepRules := 0
+		for _, obj := range contents {
+			switch typed := obj.(type) {
+			case *knftables.Rule:
+				if typed.Chain == chainName {
+					tx.Add(obj)
+					keepRules++
+				}
+			}
+		}
+		err := nft.Run(context.TODO(), tx)
+		if err != nil && (!knftables.IsNotFound(err) || keepRules > 0) {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -175,4 +235,14 @@ elemLoop:
 		return elem
 	}
 	return nil
+}
+
+func findRulesByComment(rules []*knftables.Rule, comment string) []*knftables.Rule {
+	matches := make([]*knftables.Rule, 0, 1)
+	for _, rule := range rules {
+		if rule.Comment != nil && *rule.Comment == comment {
+			matches = append(matches, rule)
+		}
+	}
+	return matches
 }
