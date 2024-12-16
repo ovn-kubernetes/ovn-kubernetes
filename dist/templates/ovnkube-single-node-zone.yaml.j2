@@ -83,6 +83,8 @@ spec:
           value: "{{ ovn_gateway_mode }}"
         - name: OVN_ROUTE_ADVERTISEMENTS_ENABLE
           value: "{{ ovn_route_advertisements_enable }}"
+        - name: ENABLE_IPSEC
+          value: "{{ enable_ipsec }}"
         - name: K8S_APISERVER
           valueFrom:
             configMapKeyRef:
