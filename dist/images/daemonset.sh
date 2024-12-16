@@ -106,6 +106,7 @@ IN_UPGRADE=
 # northd-backoff-interval, in ms
 OVN_NORTHD_BACKOFF_INTERVAL=
 OVN_OBSERV_ENABLE="false"
+ENABLE_IPSEC="false"
 
 # Parse parameters given as arguments to this script.
 while [ "$1" != "" ]; do
@@ -931,6 +932,7 @@ ovn_image=${ovnkube_image} \
   ovn_enable_multi_external_gateway=${ovn_enable_multi_external_gateway} \
   ovn_enable_ovnkube_identity=${ovn_enable_ovnkube_identity} \
   ovn_network_qos_enable=${ovn_network_qos_enable} \
+  enable_ipsec=${enable_ipsec} \
   ovn_northd_backoff_interval=${ovn_northd_backoff_interval} \
   ovn_enable_persistent_ips=${ovn_enable_persistent_ips} \
   ovn_enable_svc_template_support=${ovn_enable_svc_template_support} \
@@ -998,6 +1000,7 @@ ovn_image=${ovnkube_image} \
   ovn_enable_multi_external_gateway=${ovn_enable_multi_external_gateway} \
   ovn_enable_ovnkube_identity=${ovn_enable_ovnkube_identity} \
   ovn_network_qos_enable=${ovn_network_qos_enable} \
+  enable_ipsec=${enable_ipsec} \
   ovn_northd_backoff_interval=${ovn_enable_backoff_interval} \
   ovn_enable_persistent_ips=${ovn_enable_persistent_ips} \
   ovn_enable_svc_template_support=${ovn_enable_svc_template_support} \
