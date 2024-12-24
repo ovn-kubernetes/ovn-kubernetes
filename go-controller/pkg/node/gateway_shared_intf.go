@@ -2298,8 +2298,10 @@ func newGateway(
 				// very unlikely - somehow node has lost its IP address
 				klog.Errorf("Failed to re-generate gateway flows after address change: %v", err)
 			}
-			npw, _ := gw.nodePortWatcher.(*nodePortWatcher)
-			npw.updateGatewayIPs(gw.nodeIPManager)
+			if gw.nodePortWatcher != nil {
+				npw, _ := gw.nodePortWatcher.(*nodePortWatcher)
+				npw.updateGatewayIPs(gw.nodeIPManager)
+			}
 			// Services create OpenFlow flows as well, need to update them all
 			if gw.servicesRetryFramework != nil {
 				if errs := gw.addAllServices(); len(errs) > 0 {
