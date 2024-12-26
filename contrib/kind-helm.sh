@@ -80,6 +80,16 @@ set_default_params() {
   export KIND_IPV4_SUPPORT=true
 
   export OVN_ENABLE_DNSNAMERESOLVER=${OVN_ENABLE_DNSNAMERESOLVER:-false}
+
+  ENABLE_ROUTE_ADVERTISEMENTS=${ENABLE_ROUTE_ADVERTISEMENTS:-false}
+  if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ] && [ "$ENABLE_MULTI_NET" != true ]; then
+    echo "Route advertisements requires multi-network to be enabled (-mne)"
+    exit 1
+  fi
+  if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ] && [ "$OVN_ENABLE_INTERCONNECT" != true ]; then
+    echo "Route advertisements requires interconnect to be enabled (-ic)"
+    exit 1
+  fi
 }
 
 usage() {
@@ -98,29 +108,31 @@ usage() {
     echo "       [ -wk  | --num-workers <num> ]"
     echo "       [ -ic  | --enable-interconnect]"
     echo "       [ -npz | --node-per-zone ]"
+    echo "       [-rae  | --enable-route-advertisements]"
     echo "       [ -cn  | --cluster-name ]"
     echo "       [ -h ]"
     echo ""
-    echo "--delete                            Delete current cluster"
-    echo "-cf  | --config-file                Name of the KIND configuration file"
-    echo "-kt  | --keep-taint                 Do not remove taint components"
-    echo "                                    DEFAULT: Remove taint components"
-    echo "-me  | --multicast-enabled          Enable multicast. DEFAULT: Disabled"
-    echo "-ho  | --hybrid-enabled             Enable hybrid overlay. DEFAULT: Disabled"
-    echo "-obs | --observability              Enable observability. DEFAULT: Disabled"
-    echo "-el  | --ovn-empty-lb-events        Enable empty-lb-events generation for LB without backends. DEFAULT: Disabled"
-    echo "-ii  | --install-ingress            Flag to install Ingress Components."
-    echo "                                    DEFAULT: Don't install ingress components."
-    echo "-mlb | --install-metallb            Install metallb to test service type LoadBalancer deployments"
-    echo "-pl  | --install-cni-plugins        Install CNI plugins"
-    echo "-ikv | --install-kubevirt           Install kubevirt"
-    echo "-mne | --multi-network-enable       Enable multi networks. DEFAULT: Disabled"
-    echo "-ha  | --ha-enabled                 Enable high availability. DEFAULT: HA Disabled"
-    echo "-wk  | --num-workers                Number of worker nodes. DEFAULT: 2 workers"
-    echo "-cn  | --cluster-name               Configure the kind cluster's name"
-    echo "-dns | --enable-dnsnameresolver     Enable DNSNameResolver for resolving the DNS names used in the DNS rules of EgressFirewall."
-    echo "-ic  | --enable-interconnect        Enable interconnect with each node as a zone (only valid if OVN_HA is false)"
-    echo "-npz | --nodes-per-zone             Specify number of nodes per zone (Default 0, which means global zone; >0 means interconnect zone, where 1 for single-node zone, >1 for multi-node zone). If this value > 1, then (total k8s nodes (workers + 1) / num of nodes per zone) should be zero."
+    echo "--delete                              Delete current cluster"
+    echo "-cf  | --config-file                  Name of the KIND configuration file"
+    echo "-kt  | --keep-taint                   Do not remove taint components"
+    echo "                                      DEFAULT: Remove taint components"
+    echo "-me  | --multicast-enabled            Enable multicast. DEFAULT: Disabled"
+    echo "-ho  | --hybrid-enabled               Enable hybrid overlay. DEFAULT: Disabled"
+    echo "-obs | --observability                Enable observability. DEFAULT: Disabled"
+    echo "-el  | --ovn-empty-lb-events          Enable empty-lb-events generation for LB without backends. DEFAULT: Disabled"
+    echo "-ii  | --install-ingress              Flag to install Ingress Components."
+    echo "                                      DEFAULT: Don't install ingress components."
+    echo "-mlb | --install-metallb              Install metallb to test service type LoadBalancer deployments"
+    echo "-pl  | --install-cni-plugins          Install CNI plugins"
+    echo "-ikv | --install-kubevirt             Install kubevirt"
+    echo "-mne | --multi-network-enable         Enable multi networks. DEFAULT: Disabled"
+    echo "-ha  | --ha-enabled                   Enable high availability. DEFAULT: HA Disabled"
+    echo "-wk  | --num-workers                  Number of worker nodes. DEFAULT: 2 workers"
+    echo "-cn  | --cluster-name                 Configure the kind cluster's name"
+    echo "-dns | --enable-dnsnameresolver       Enable DNSNameResolver for resolving the DNS names used in the DNS rules of EgressFirewall."
+    echo "-ic  | --enable-interconnect          Enable interconnect with each node as a zone (only valid if OVN_HA is false)"
+    echo "-npz | --nodes-per-zone               Specify number of nodes per zone (Default 0, which means global zone; >0 means interconnect zone, where 1 for single-node zone, >1 for multi-node zone). If this value > 1, then (total k8s nodes (workers + 1) / num of nodes per zone) should be zero."
+    echo "-rae | --enable-route-advertisements  Enable route advertisements"
     echo ""
 
 }
@@ -187,6 +199,8 @@ parse_args() {
                                                 fi
                                                 KIND_NUM_NODES_PER_ZONE=$1
                                                 ;;
+            -rae | --route-advertisements-enable) ENABLE_ROUTE_ADVERTISEMENTS=true
+                                                ;;
             * )                                 usage
                                                 exit 1
         esac
@@ -215,6 +229,7 @@ print_params() {
      echo "KIND_NUM_MASTER = $KIND_NUM_MASTER"
      echo "KIND_NUM_WORKER = $KIND_NUM_WORKER"
      echo "OVN_ENABLE_DNSNAMERESOLVER= $OVN_ENABLE_DNSNAMERESOLVER"
+     echo "ENABLE_ROUTE_ADVERTISEMENTS= $ENABLE_ROUTE_ADVERTISEMENTS"
      echo "OVN_ENABLE_INTERCONNECT = $OVN_ENABLE_INTERCONNECT"
      if [[ $OVN_ENABLE_INTERCONNECT == true ]]; then
        echo "KIND_NUM_NODES_PER_ZONE = $KIND_NUM_NODES_PER_ZONE"
@@ -404,8 +419,9 @@ create_ovn_kubernetes() {
           --set global.enableMultiNetwork=$(if [ "${ENABLE_MULTI_NET}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableHybridOverlay=$(if [ "${OVN_HYBRID_OVERLAY_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableObservability=$(if [ "${OVN_OBSERV_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
-        --set global.emptyLbEvents=$(if [ "${OVN_EMPTY_LB_EVENTS}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          --set global.emptyLbEvents=$(if [ "${OVN_EMPTY_LB_EVENTS}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableDNSNameResolver=$(if [ "${OVN_ENABLE_DNSNAMERESOLVER}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          --set global.enableRouteAdvertisements=$(if [ "${ENABLE_ROUTE_ADVERTISEMENTS}" == "true" ]; then echo "true"; else echo "false"; fi) \
           ${ovnkube_db_options}
 }
 
@@ -441,6 +457,9 @@ if [ "$OVN_ENABLE_DNSNAMERESOLVER" == true ]; then
     add_ocp_dnsnameresolver_to_coredns_config
     update_coredns_deployment_image
 fi
+if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
+  deploy_frr_external_container
+fi
 create_ovn_kubernetes
 
 install_online_ovn_kubernetes_crds
@@ -474,4 +493,7 @@ if [ "$KIND_INSTALL_PLUGINS" == true ]; then
 fi
 if [ "$KIND_INSTALL_KUBEVIRT" == true ]; then
   install_kubevirt
+fi
+if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
+  install_ffr_k8s
 fi

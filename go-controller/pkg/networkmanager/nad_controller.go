@@ -494,7 +494,7 @@ func (c *nadController) getActiveNetworkForNamespace(namespace string) (string, 
 			network = &util.DefaultNetInfo{}
 		}
 	default:
-		// we have a primary netwrok
+		// we have a primary network
 		netName := c.nads[primaryNAD]
 		if netName == "" {
 			// this should never happen where we have a nad keyed in the primaryNADs
