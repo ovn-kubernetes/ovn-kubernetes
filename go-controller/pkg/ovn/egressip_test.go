@@ -3076,6 +3076,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 					node1IPv4SecondaryHost := "10.10.10.5/16"
 					node1IPv4TranSwitchIP := "100.88.0.2/16"
 					node2IPv4OVN := "192.168.126.51/24"
+					node2IPv4SecondaryHost := "10.10.10.6/16"
 					node2IPv4TranSwitchIP := "100.88.0.3/16"
 					_, node1Subnet, _ := net.ParseCIDR(v4Node1Subnet)
 					_, node2Subnet, _ := net.ParseCIDR(v4Node2Subnet)
@@ -3084,7 +3085,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 					egressNamespace := newNamespace(eipNamespace)
 
 					node1IPv4Addresses := []string{node1IPv4OVN, node1IPv4SecondaryHost}
-					node2IPv4Addresses := []string{node2IPv4OVN}
+					node2IPv4Addresses := []string{node2IPv4OVN, node2IPv4SecondaryHost}
 
 					nodes := getIPv4Nodes([]nodeInfo{{node1IPv4Addresses, node1Zone, node1IPv4TranSwitchIP},
 						{node2IPv4Addresses, node2Zone, node2IPv4TranSwitchIP}})
@@ -3266,7 +3267,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						servedPodIPs = nil
 					}
 					egressIPServedPodsASv4, _ := buildEgressIPServedPodsAddressSets(servedPodIPs, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName)
-					ipNets, _ := util.ParseIPNets(append(node1IPv4Addresses, node2IPv4OVN))
+					ipNets, _ := util.ParseIPNets(append(node1IPv4Addresses, node2IPv4Addresses...))
 					egressNodeIPs := []string{}
 					for _, ipNet := range ipNets {
 						egressNodeIPs = append(egressNodeIPs, ipNet.IP.String())
