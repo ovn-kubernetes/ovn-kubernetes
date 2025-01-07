@@ -73,6 +73,7 @@ func (o *FakeOVNNode) restart() {
 func (o *FakeOVNNode) shutdown() {
 	close(o.stopChan)
 	o.wg.Wait()
+	o.watcher.Shutdown()
 }
 
 func (o *FakeOVNNode) init() {
