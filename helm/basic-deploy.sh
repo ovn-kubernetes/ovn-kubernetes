@@ -1,67 +1,97 @@
 #!/usr/bin/env bash
- 
-# check docker
-docker info >/dev/null 2>&1
-if [ "$?" -eq 127 ]; then
-    echo "docker not found"
-    exit
-fi
 
-# check kubectl
-kubectl cluster-info >/dev/null 2>&1
-if [ "$?" -eq 127 ]; then
-    echo "kubectl not found"
-    exit
-fi
-
-# check kind
-kind version >/dev/null 2>&1
-if [ "$?" -eq 127 ]; then
-    echo "kind not found"
-    exit
-fi
-
-# check go
-go version >/dev/null 2>&1
-if [ "$?" -eq 127 ]; then
-    echo "go not found"
-    exit
-fi
-
-# Ensure that kind network does not have ip6 enabled
-enabled_ipv6=$(docker network inspect kind -f '{{.EnableIPv6}}' 2>/dev/null)
-[ "${enabled_ipv6}" = "false" ] || {
-   docker network rm kind 2>/dev/null || :
-   docker network create kind -o "com.docker.network.bridge.enable_ip_masquerade"="true" -o "com.docker.network.driver.mtu"="1500"
+# Helper usage
+function usage() {
+  echo "Usage: $0 [OPTIONS]"
+  echo ""
+  echo "This script deploys a kind cluster and configures it to use OVN Kubernetes CNI."
+  echo ""
+  echo "Options:"
+  echo "  BUILD_IMAGE=${BUILD_IMAGE:-false}      Set to true to build the Docker image instead of pulling it."
+  echo "  OVN_INTERCONNECT=${OVN_INTERCONNECT:-true}  Set to false to use a non-interconnect deployment (values-no-ic.yaml)."
+  echo ""
+  echo "Example: BUILD_IMAGE=true OVN_INTERCONNECT=false $0"
+  exit 1
 }
-[ "${enabled_ipv6}" = "false" ] || { 2&>1 echo the kind network is not what we expected ; exit 1; }
 
+# Default values for flags
+BUILD_IMAGE=${BUILD_IMAGE:-false}
+OVN_INTERCONNECT=${OVN_INTERCONNECT:-true}
+
+# Determine the values file based on OVN_INTERCONNECT
+if [[ "$OVN_INTERCONNECT" == "true" ]]; then
+  VALUES_FILE="values-single-node-zone.yaml"
+else
+  VALUES_FILE="values-no-ic.yaml"
+fi
+
+# Verify dependencies
+check_command() {
+  command -v "$1" >/dev/null 2>&1 || { echo "$1 not found, please install it."; exit 1; }
+}
+check_command docker
+check_command kubectl
+check_command kind
+
+export DIR="$( cd -- "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+cd $DIR
+
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+  usage
+fi
+
+IMG_PREFIX='ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-ubuntu'
+TAG='master'
+IMG="${IMG_PREFIX}:${TAG}"
+
+if [[ "$BUILD_IMAGE" == "true" ]]; then
+  check_command go # Only check for Go when building the image
+
+  # Build image
+  echo "Building Docker image..."
+  pushd ../dist/images
+  make ubuntu
+  popd
+  docker tag ovn-kube-ubuntu:latest $IMG
+else
+  # Pull image from GitHub
+  echo "Pulling Docker image..."
+  docker pull $IMG
+fi
+
+# Configure system parameters
 set -euxo pipefail
-# increate fs.inotify.max_user_watches
 sudo sysctl fs.inotify.max_user_watches=524288
-# increase fs.inotify.max_user_instances
 sudo sysctl fs.inotify.max_user_instances=512
-# build image
-cd ../dist/images
-make ubuntu
-docker tag ovn-kube-ubuntu:latest ghcr.io/ovn-org/ovn-kubernetes/ovn-kube-ubuntu:master
-# create a cluster, with 1 controller and 1 worker node
+
+# Create a kind cluster
 kind_cluster_name=ovn-helm
-cat <<EOT > /tmp/kind.yaml
+kind delete clusters $kind_cluster_name || true
+cat <<EOF | kind create cluster --name $kind_cluster_name --config=-
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
 - role: control-plane
 - role: worker
+- role: worker
 networking:
   disableDefaultCNI: true
   kubeProxyMode: none
-EOT
-kind delete clusters $kind_cluster_name
-kind create cluster --name $kind_cluster_name --config /tmp/kind.yaml
-kind load docker-image --name $kind_cluster_name ghcr.io/ovn-org/ovn-kubernetes/ovn-kube-ubuntu:master
-cd ../../helm/ovn-kubernetes
-helm install ovn-kubernetes . -f values.yaml \
+EOF
+
+kind load docker-image --name $kind_cluster_name $IMG
+
+# Node labeling based on OVN_INTERCONNECT
+if [[ "$OVN_INTERCONNECT" == "true" ]]; then
+  for n in $(kind get nodes --name "${kind_cluster_name}"); do
+    kubectl label node "${n}" k8s.ovn.org/zone-name=${n} --overwrite
+  done
+fi
+
+# Deploy OVN Kubernetes using Helm
+cd ${DIR}/ovn-kubernetes
+helm install ovn-kubernetes . -f ${VALUES_FILE} \
     --set k8sAPIServer="https://$(kubectl get pods -n kube-system -l component=kube-apiserver -o jsonpath='{.items[0].status.hostIP}'):6443" \
-    --set ovnkube-identity.replicas=$(kubectl get node -l node-role.kubernetes.io/control-plane --no-headers | wc -l) \
-    --set global.image.repository=ghcr.io/ovn-org/ovn-kubernetes/ovn-kube-ubuntu --set global.image.tag=master
+    --set global.image.repository=${IMG_PREFIX} \
+    --set global.image.tag=${TAG}
+
