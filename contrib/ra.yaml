@@ -1,0 +1,7 @@
+apiVersion: k8s.ovn.org/v1
+kind: RouteAdvertisements
+metadata:
+  name: default
+spec:
+    advertisements:
+      podNetwork: true

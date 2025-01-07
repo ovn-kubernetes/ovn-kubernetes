@@ -957,7 +957,7 @@ func (c *Controller) getOrCreateDefaultNetworkNAD() (*nadtypes.NetworkAttachment
 				Labels:    map[string]string{types.DefaultNetworkLabelSelector: ""},
 			},
 			Spec: nadtypes.NetworkAttachmentDefinitionSpec{
-				Config: fmt.Sprintf("{\"cniVersion\": \"0.4.0\", \"name\": \"ovn-kubernetes\", \"type\": \"%s\"}", config.CNI.Plugin),
+				Config: fmt.Sprintf("{\"cniVersion\": \"1.0.0\", \"name\": \"ovn-kubernetes\", \"type\": \"%s\"}", config.CNI.Plugin),
 			},
 		},
 		// note we don't set ourselves as field manager for this create as we

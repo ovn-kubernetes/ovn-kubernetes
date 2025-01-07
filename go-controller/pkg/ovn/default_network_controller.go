@@ -29,6 +29,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/external_ids_syncer/nat"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/external_ids_syncer/port_group"
 	lsm "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/routeimport"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/topology"
 	zoneic "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/zone_interconnect"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/retry"
@@ -148,12 +149,13 @@ func NewDefaultNetworkController(
 	cnci *CommonNetworkControllerInfo,
 	observManager *observability.Manager,
 	networkManager networkmanager.Interface,
+	routeImportManager routeimport.Manager,
 	eIPController *EgressIPController,
 	portCache *PortCache,
 ) (*DefaultNetworkController, error) {
 	stopChan := make(chan struct{})
 	wg := &sync.WaitGroup{}
-	return newDefaultNetworkControllerCommon(cnci, stopChan, wg, nil, networkManager, observManager, eIPController, portCache)
+	return newDefaultNetworkControllerCommon(cnci, stopChan, wg, nil, networkManager, routeImportManager, observManager, eIPController, portCache)
 }
 
 func newDefaultNetworkControllerCommon(
@@ -162,6 +164,7 @@ func newDefaultNetworkControllerCommon(
 	defaultWg *sync.WaitGroup,
 	addressSetFactory addressset.AddressSetFactory,
 	networkManager networkmanager.Interface,
+	routeImportManager routeimport.Manager,
 	observManager *observability.Manager,
 	eIPController *EgressIPController,
 	portCache *PortCache,
@@ -225,6 +228,7 @@ func newDefaultNetworkControllerCommon(
 			cancelableCtx:               util.NewCancelableContext(),
 			observManager:               observManager,
 			networkManager:              networkManager,
+			routeImportManager:          routeImportManager,
 		},
 		externalGatewayRouteInfo:   apbExternalRouteController.ExternalGWRouteInfoCache,
 		eIPC:                       eIPController,
@@ -363,6 +367,9 @@ func (oc *DefaultNetworkController) Stop() {
 	if oc.efNodeController != nil {
 		controller.Stop(oc.efNodeController)
 	}
+	if oc.routeImportManager != nil {
+		oc.routeImportManager.ForgetNetwork(oc.GetNetworkName())
+	}
 
 	close(oc.stopChan)
 	oc.cancelableCtx.Cancel()
@@ -420,6 +427,14 @@ func (oc *DefaultNetworkController) Init(ctx context.Context) error {
 	klog.V(4).Info("Cleaning External Gateway ECMP routes")
 	if err := WithSyncDurationMetric("external gateway routes", oc.apbExternalRouteController.Repair); err != nil {
 		return err
+	}
+
+	// Add ourselves to the route import manager
+	if oc.routeImportManager != nil {
+		err := oc.routeImportManager.AddNetwork(util.NewMutableNetInfo(oc.GetNetInfo()))
+		if err != nil {
+			return fmt.Errorf("failed to add default network to the route import manager: %v", err)
+		}
 	}
 
 	return nil
@@ -596,9 +611,11 @@ func (oc *DefaultNetworkController) Run(ctx context.Context) error {
 }
 
 func (oc *DefaultNetworkController) Reconcile(netInfo util.NetInfo) error {
+	klog.Infof("DefaultNetworkController: [no-overlay] Reconcile default network: %s %s", netInfo.GetNetworkName(), netInfo.GetTransportProtocol())
 	// gather some information first
 	var err error
 	var retryNodes []*kapi.Node
+	var retryNodeNames []string
 	oc.localZoneNodes.Range(func(key, value any) bool {
 		nodeName := key.(string)
 		wasAdvertised := util.IsPodNetworkAdvertisedAtNode(oc, nodeName)
@@ -613,16 +630,40 @@ func (oc *DefaultNetworkController) Reconcile(netInfo util.NetInfo) error {
 			return false
 		}
 		retryNodes = append(retryNodes, node)
+		retryNodeNames = append(retryNodeNames, node.Name)
 		return true
 	})
 	if err != nil {
 		return fmt.Errorf("failed to reconcile network %s: %w", oc.GetNetworkName(), err)
 	}
 
+	reconcileRoutes := oc.routeImportManager != nil && oc.routeImportManager.NeedsReconciliation(util.NewMutableNetInfo(netInfo))
+
 	// update network information, point of no return
 	err = util.ReconcileNetInfo(oc.ReconcilableNetInfo, netInfo)
 	if err != nil {
 		klog.Errorf("Failed to reconcile network %s: %v", oc.GetNetworkName(), err)
+	}
+
+	if reconcileRoutes {
+		klog.Infof("DefaultNetworkController: [no-overlay] Reconciling imported routes for network %s", oc.GetNetworkName())
+		err = oc.routeImportManager.UpdateNetwork(netInfo, 0)
+		if err != nil {
+			return err
+		}
+		err = oc.routeImportManager.ReconcileNetwork(oc.GetNetworkName())
+		if err != nil {
+			return err
+		}
+	}
+
+	if oc.zoneICHandler.GetTransportProtocol() != netInfo.GetTransportProtocol() {
+		klog.Infof("DefaultNetworkController: [no-overlay] zoneICHandler transport protocol: %s", netInfo.GetTransportProtocol())
+		oc.zoneICHandler.SetTransportProtocol(netInfo.GetTransportProtocol())
+		err = oc.ReconcileRemoteZoneNodes(netInfo)
+		if err != nil {
+			return err
+		}
 	}
 
 	for _, node := range retryNodes {
@@ -641,6 +682,34 @@ func (oc *DefaultNetworkController) Reconcile(netInfo util.NetInfo) error {
 
 func (oc *DefaultNetworkController) isPodNetworkAdvertisedAtNode(node string) bool {
 	return util.IsPodNetworkAdvertisedAtNode(oc, node)
+}
+
+func (oc *DefaultNetworkController) ReconcileRemoteZoneNodes(netInfo util.NetInfo) error {
+	klog.Infof("Default Network uses transport protocol %s", netInfo.GetTransportProtocol())
+	nodes, err := oc.kube.GetNodes()
+	if err != nil {
+		return fmt.Errorf("failed to get nodes: %w", err)
+	}
+	var errs []error
+	for _, node := range nodes {
+		if oc.isLocalZoneNode(node) {
+			continue
+		}
+		oc.gatewaysFailed.Store(node.Name, true)
+		err = oc.retryNodes.AddRetryObjWithAddNoBackoff(node)
+		if err != nil {
+			err := fmt.Errorf("failed to reconcile network for node %s: %w", node.Name, err)
+			errs = append(errs, err)
+		}
+	}
+	if len(nodes) > 0 {
+		oc.retryNodes.RequestRetryObjs()
+	}
+	if len(errs) > 0 {
+		klog.Errorf("Failed to reconcile transport protocol %s: %v", oc.GetNetworkName(), utilerrors.Join(errs...))
+		return utilerrors.Join(errs...)
+	}
+	return nil
 }
 
 func WithSyncDurationMetric(resourceName string, f func() error) error {

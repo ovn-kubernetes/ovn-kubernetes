@@ -705,3 +705,24 @@ install_ffr_k8s() {
 
   rm -rf "${FRR_TMP_DIR}"
 }
+
+enable_no_overlay() {
+  echo "enable no-overlay mode ..."
+  # create the well known UDN for the cluster default network
+  kubectl apply -f - << EOF
+apiVersion: k8s.ovn.org/v1
+kind: UserDefinedNetwork
+metadata:
+  namespace: ovn-kubernetes
+  name: default
+spec:
+  topology: Layer3
+  transport:
+    protocol: None
+  layer3:
+    role: Primary
+    subnets:
+    - cidr: 10.244.0.0/16
+      hostSubnet: 24
+EOF
+}

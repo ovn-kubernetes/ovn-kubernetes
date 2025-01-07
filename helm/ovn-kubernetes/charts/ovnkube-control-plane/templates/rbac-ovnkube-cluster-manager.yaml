@@ -74,6 +74,7 @@ rules:
           - egressfirewalls
           - egressqoses
           - userdefinednetworks
+          - routeadvertisements
       verbs: [ "get", "list", "watch" ]
     - apiGroups: ["k8s.ovn.org"]
       resources:
@@ -81,6 +82,7 @@ rules:
           - egressservices/status
           - userdefinednetworks
           - userdefinednetworks/status
+          - routeadvertisements/status
       verbs: [ "patch", "update" ]
     - apiGroups: [""]
       resources:
@@ -119,5 +121,11 @@ rules:
     - apiGroups: ["network.openshift.io"]
       resources:
           - dnsnameresolvers
+      verbs: [ "create", "delete", "list", "patch", "update", "watch" ]
+    {{- end }}
+    {{- if eq (hasKey .Values.global "enableRouteAdvertisements" | ternary .Values.global.enableRouteAdvertisements false) true }}
+    - apiGroups: ["frrk8s.metallb.io"]
+      resources:
+          - frrconfigurations
       verbs: [ "create", "delete", "list", "patch", "update", "watch" ]
     {{- end }}
