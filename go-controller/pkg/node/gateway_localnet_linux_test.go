@@ -683,7 +683,7 @@ var _ = Describe("Node Operations", func() {
 				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				Expect(err).NotTo(HaveOccurred())
 
-				flows := fNPW.ofm.flowCache["NodePort_namespace1_service1_tcp_31111"]
+				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(BeNil())
 
 				return nil
@@ -887,11 +887,11 @@ var _ = Describe("Node Operations", func() {
 				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				Expect(err).NotTo(HaveOccurred())
 
-				flows := fNPW.ofm.flowCache["NodePort_namespace1_service1_tcp_31111"]
+				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(BeNil())
-				flows = fNPW.ofm.flowCache["Ingress_namespace1_service1_5.5.5.5_8080"]
+				flows = fNPW.ofm.getFlowsByKey("Ingress_namespace1_service1_5.5.5.5_8080")
 				Expect(flows).To(Equal(expectedLBIngressFlows))
-				flows = fNPW.ofm.flowCache["External_namespace1_service1_1.1.1.1_8080"]
+				flows = fNPW.ofm.getFlowsByKey("External_namespace1_service1_1.1.1.1_8080")
 				Expect(flows).To(Equal(expectedLBExternalIPFlows))
 
 				return nil
@@ -1024,8 +1024,8 @@ var _ = Describe("Node Operations", func() {
 				err := nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				Expect(err).NotTo(HaveOccurred())
 
-				Expect(fNPW.ofm.flowCache["Ingress_namespace1_service1_5.5.5.5_80"]).To(Equal(expectedLBIngressFlows))
-				Expect(fNPW.ofm.flowCache["External_namespace1_service1_1.1.1.1_80"]).To(Equal(expectedLBExternalIPFlows))
+				Expect(fNPW.ofm.getFlowsByKey("Ingress_namespace1_service1_5.5.5.5_80")).To(Equal(expectedLBIngressFlows))
+				Expect(fNPW.ofm.getFlowsByKey("External_namespace1_service1_1.1.1.1_80")).To(Equal(expectedLBExternalIPFlows))
 				return nil
 			}
 			Expect(app.Run([]string{app.Name})).To(Succeed())
@@ -1129,11 +1129,11 @@ var _ = Describe("Node Operations", func() {
 				expectedNFT := getBaseNFTRules(fakeMgmtPortConfig.ifName)
 				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 
-				flows := fNPW.ofm.flowCache["NodePort_namespace1_service1_tcp_31111"]
+				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(BeNil())
-				flows = fNPW.ofm.flowCache["Ingress_namespace1_service1_5.5.5.5_8080"]
+				flows = fNPW.ofm.getFlowsByKey("Ingress_namespace1_service1_5.5.5.5_8080")
 				Expect(flows).To(Equal(expectedLBIngressFlows))
-				flows = fNPW.ofm.flowCache["External_namespace1_service1_1.1.1.1_8080"]
+				flows = fNPW.ofm.getFlowsByKey("External_namespace1_service1_1.1.1.1_8080")
 				Expect(flows).To(Equal(expectedLBExternalIPFlows))
 
 				return nil
@@ -1257,11 +1257,11 @@ var _ = Describe("Node Operations", func() {
 				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				Expect(err).NotTo(HaveOccurred())
 
-				flows := fNPW.ofm.flowCache["NodePort_namespace1_service1_tcp_31111"]
+				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(Equal(expectedNodePortFlows))
-				flows = fNPW.ofm.flowCache["Ingress_namespace1_service1_5.5.5.5_8080"]
+				flows = fNPW.ofm.getFlowsByKey("Ingress_namespace1_service1_5.5.5.5_8080")
 				Expect(flows).To(Equal(expectedLBIngressFlows))
-				flows = fNPW.ofm.flowCache["External_namespace1_service1_1.1.1.1_8080"]
+				flows = fNPW.ofm.getFlowsByKey("External_namespace1_service1_1.1.1.1_8080")
 				Expect(flows).To(Equal(expectedLBExternalIPFlows))
 
 				return nil
@@ -1816,13 +1816,13 @@ var _ = Describe("Node Operations", func() {
 				}
 
 				Expect(err).NotTo(HaveOccurred())
-				flows := fNPW.ofm.flowCache["NodePort_namespace1_service1_tcp_31111"]
+				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(BeNil())
-				flows = fNPW.ofm.flowCache["Ingress_namespace1_service1_5.5.5.5_8080"]
+				flows = fNPW.ofm.getFlowsByKey("Ingress_namespace1_service1_5.5.5.5_8080")
 				Expect(flows).To(Equal(expectedLBIngressFlows))
-				flows = fNPW.ofm.flowCache["External_namespace1_service1_1.1.1.1_8080"]
+				flows = fNPW.ofm.getFlowsByKey("External_namespace1_service1_1.1.1.1_8080")
 				Expect(flows).To(Equal(expectedLBExternalIPFlows1))
-				flows = fNPW.ofm.flowCache["External_namespace1_service1_1.1.1.2_8080"]
+				flows = fNPW.ofm.getFlowsByKey("External_namespace1_service1_1.1.1.2_8080")
 				Expect(flows).To(Equal(expectedLBExternalIPFlows2))
 
 				addConntrackMocks(netlinkMock, []ctFilterDesc{
@@ -1834,13 +1834,13 @@ var _ = Describe("Node Operations", func() {
 				})
 				err = fNPW.DeleteService(&service)
 				Expect(err).NotTo(HaveOccurred())
-				flows = fNPW.ofm.flowCache["NodePort_namespace1_service1_tcp_31111"]
+				flows = fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(BeNil())
-				flows = fNPW.ofm.flowCache["Ingress_namespace1_service1_5.5.5.5_8080"]
+				flows = fNPW.ofm.getFlowsByKey("Ingress_namespace1_service1_5.5.5.5_8080")
 				Expect(flows).To(BeNil())
-				flows = fNPW.ofm.flowCache["External_namespace1_service1_1.1.1.1_8080"]
+				flows = fNPW.ofm.getFlowsByKey("External_namespace1_service1_1.1.1.1_8080")
 				Expect(flows).To(BeNil())
-				flows = fNPW.ofm.flowCache["External_namespace1_service1_1.1.1.2_8080"]
+				flows = fNPW.ofm.getFlowsByKey("External_namespace1_service1_1.1.1.2_8080")
 				Expect(flows).To(BeNil())
 
 				return nil
@@ -2153,7 +2153,7 @@ var _ = Describe("Node Operations", func() {
 				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				Expect(err).NotTo(HaveOccurred())
 
-				flows := fNPW.ofm.flowCache["NodePort_namespace1_service1_tcp_31111"]
+				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(BeNil())
 
 				addConntrackMocks(netlinkMock, []ctFilterDesc{{"10.129.0.2", 8080}, {"192.168.18.15", 31111}})
@@ -2193,7 +2193,7 @@ var _ = Describe("Node Operations", func() {
 				expectedNFT = getBaseNFTRules(fakeMgmtPortConfig.ifName)
 				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 
-				flows = fNPW.ofm.flowCache["NodePort_namespace1_service1_tcp_31111"]
+				flows = fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(BeNil())
 
 				return nil
@@ -2293,7 +2293,7 @@ var _ = Describe("Node Operations", func() {
 				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				Expect(err).NotTo(HaveOccurred())
 
-				flows := fNPW.ofm.flowCache["NodePort_namespace1_service1_tcp_31111"]
+				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(Equal(expectedFlows))
 
 				addConntrackMocks(netlinkMock, []ctFilterDesc{{"10.129.0.2", 8080}, {"192.168.18.15", 31111}})
@@ -2333,7 +2333,7 @@ var _ = Describe("Node Operations", func() {
 				expectedNFT = getBaseNFTRules(fakeMgmtPortConfig.ifName)
 				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 
-				flows = fNPW.ofm.flowCache["NodePort_namespace1_service1_tcp_31111"]
+				flows = fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(BeNil())
 
 				return nil
@@ -2437,7 +2437,7 @@ var _ = Describe("Node Operations", func() {
 				expectedNFT := getBaseNFTRules(fakeMgmtPortConfig.ifName)
 				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 
-				flows := fNPW.ofm.flowCache["NodePort_namespace1_service1_tcp_31111"]
+				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(Equal(expectedFlows))
 
 				addConntrackMocks(netlinkMock, []ctFilterDesc{{"10.129.0.2", 8080}, {"192.168.18.15", 31111}})
@@ -2477,7 +2477,7 @@ var _ = Describe("Node Operations", func() {
 				expectedNFT = getBaseNFTRules(fakeMgmtPortConfig.ifName)
 				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 
-				flows = fNPW.ofm.flowCache["NodePort_namespace1_service1_tcp_31111"]
+				flows = fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(BeNil())
 
 				return nil
@@ -2578,7 +2578,7 @@ var _ = Describe("Node Operations", func() {
 				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				Expect(err).NotTo(HaveOccurred())
 
-				flows := fNPW.ofm.flowCache["NodePort_namespace1_service1_tcp_31111"]
+				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(Equal(expectedFlows))
 
 				addConntrackMocks(netlinkMock, []ctFilterDesc{{"10.129.0.2", 8080}, {"192.168.18.15", 31111}})
@@ -2618,7 +2618,7 @@ var _ = Describe("Node Operations", func() {
 				expectedNFT = getBaseNFTRules(fakeMgmtPortConfig.ifName)
 				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 
-				flows = fNPW.ofm.flowCache["NodePort_namespace1_service1_tcp_31111"]
+				flows = fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(BeNil())
 
 				return nil
@@ -2721,7 +2721,7 @@ var _ = Describe("Node Operations", func() {
 				expectedNFT := getBaseNFTRules(fakeMgmtPortConfig.ifName)
 				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 
-				flows := fNPW.ofm.flowCache["NodePort_namespace1_service1_tcp_31111"]
+				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(Equal(expectedFlows))
 
 				addConntrackMocks(netlinkMock, []ctFilterDesc{{"10.129.0.2", 8080}, {"192.168.18.15", 31111}})
@@ -2761,7 +2761,7 @@ var _ = Describe("Node Operations", func() {
 				expectedNFT = getBaseNFTRules(fakeMgmtPortConfig.ifName)
 				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 
-				flows = fNPW.ofm.flowCache["NodePort_namespace1_service1_tcp_31111"]
+				flows = fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
 				Expect(flows).To(BeNil())
 
 				return nil

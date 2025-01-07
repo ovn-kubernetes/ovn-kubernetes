@@ -90,6 +90,12 @@ func (c *openflowManager) deleteFlowsByKey(key string) {
 	delete(c.flowCache, key)
 }
 
+func (c *openflowManager) getFlowsByKey(key string) []string {
+	c.flowMutex.Lock()
+	defer c.flowMutex.Unlock()
+	return c.flowCache[key]
+}
+
 func (c *openflowManager) updateExBridgeFlowCacheEntry(key string, flows []string) {
 	c.exGWFlowMutex.Lock()
 	defer c.exGWFlowMutex.Unlock()
