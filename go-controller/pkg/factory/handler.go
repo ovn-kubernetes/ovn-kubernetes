@@ -88,9 +88,9 @@ type listerInterface interface{}
 
 type initialAddFn func(*Handler, []interface{})
 
-type eventQueueConfig struct {
-	queueSize        uint32 // for new incoming events
-	initialQueueSize uint32 // for processing initial addition of objects
+type EventQueueConfig struct {
+	QueueSize        uint32 // for new incoming events
+	InitialQueueSize uint32 // for processing initial addition of objects
 }
 
 type queueMap struct {
@@ -513,7 +513,7 @@ func newBaseInformer(oType reflect.Type, sharedInformer cache.SharedIndexInforme
 	}, nil
 }
 
-func newQueuedInformer(qConfig eventQueueConfig, oType reflect.Type, sharedInformer cache.SharedIndexInformer,
+func newQueuedInformer(qConfig EventQueueConfig, oType reflect.Type, sharedInformer cache.SharedIndexInformer,
 	stopChan chan struct{}, numEventQueues uint32) (*informer, error) {
 	informer, err := newBaseInformer(oType, sharedInformer)
 	if err != nil {
@@ -527,7 +527,7 @@ func newQueuedInformer(qConfig eventQueueConfig, oType reflect.Type, sharedInfor
 		// existing objects.
 		addsWg := &sync.WaitGroup{}
 
-		addsMap := newQueueMap(qConfig.initialQueueSize, numEventQueues, addsWg, stopChan)
+		addsMap := newQueueMap(qConfig.InitialQueueSize, numEventQueues, addsWg, stopChan)
 		addsMap.start()
 
 		// Distribute the existing items into the handler-specific
@@ -544,7 +544,7 @@ func newQueuedInformer(qConfig eventQueueConfig, oType reflect.Type, sharedInfor
 	}
 
 	for i := 0; i < handlerPoolSize; i++ {
-		informer.internalInformers[i].queueMap = newQueueMap(qConfig.queueSize, numEventQueues, &informer.shutdownWg, stopChan)
+		informer.internalInformers[i].queueMap = newQueueMap(qConfig.QueueSize, numEventQueues, &informer.shutdownWg, stopChan)
 		informer.internalInformers[i].queueMap.start()
 
 		_, err = informer.inf.AddEventHandler(informer.newFederatedQueuedHandler(i))

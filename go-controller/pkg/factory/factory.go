@@ -194,11 +194,16 @@ var (
 	// Use a larger queue for incoming events to avoid bottlenecks
 	// due to handlers being slow but use a smaller initial add queue size
 	// to avoid contention due to initial add.
-	queueConfig eventQueueConfig = eventQueueConfig{
-		queueSize:        1000, // for new events
-		initialQueueSize: 10,   // for initial additions of objects
+	queueConfig EventQueueConfig = EventQueueConfig{
+		QueueSize:        1000, // for new events
+		InitialQueueSize: 10,   // for initial additions of objects
 	}
 )
+
+// Override default event queue configuration.  Used only for tests.
+func SetEventQueueConfig(cfg *EventQueueConfig) {
+	queueConfig = *cfg
+}
 
 // types for dynamic handlers created when adding a network policy
 type addressSetNamespaceAndPodSelector struct{}
