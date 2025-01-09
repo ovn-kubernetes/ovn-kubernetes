@@ -199,12 +199,6 @@ var _ = Describe("Node IP Handler tests", func() {
 		config.IPv6Mode = true
 		tc = configureKubeOVNContextWithNs(nodeName)
 		tc.ipManager.syncPeriod = 10 * time.Millisecond
-		tc.doneWg.Add(1)
-		go tc.ns.Do(func(netNS ns.NetNS) error {
-			tc.ipManager.runInternal(tc.stopCh, tc.ipManager.getNetlinkAddrSubFunc(tc.stopCh))
-			tc.doneWg.Done()
-			return nil
-		})
 	})
 
 	AfterEach(func() {
@@ -217,6 +211,7 @@ var _ = Describe("Node IP Handler tests", func() {
 
 	Context("valid addresses", func() {
 		ovntest.OnSupportedPlatformsIt("allows keepalived VIP", func() {
+			runIpManagerRoutine(tc)
 			Expect(tc.ns.Do(func(netNS ns.NetNS) error {
 				link, err := netlink.LinkByName(dummyBrName)
 				if err != nil {
@@ -236,6 +231,7 @@ var _ = Describe("Node IP Handler tests", func() {
 		})
 
 		ovntest.OnSupportedPlatformsIt("allows unique local address", func() {
+			runIpManagerRoutine(tc)
 			Expect(tc.ns.Do(func(netNS ns.NetNS) error {
 				link, err := netlink.LinkByName(dummyBrName)
 				if err != nil {
@@ -255,6 +251,7 @@ var _ = Describe("Node IP Handler tests", func() {
 		})
 
 		ovntest.OnSupportedPlatformsIt("allow secondary IP", func() {
+			runIpManagerRoutine(tc)
 			primaryIPNet := ovntest.MustParseIPNet(dummyAdditionalIPv4CIDR)
 			// create an additional IP which resides within the primary subnet aka secondary IP
 			secondaryIP := make(net.IP, len(primaryIPNet.IP))
@@ -288,6 +285,7 @@ var _ = Describe("Node IP Handler tests", func() {
 			config.Gateway.MasqueradeIPs.V4OVNMasqueradeIP = ovntest.MustParseIP(dummyMasqIPv4)
 			config.Gateway.MasqueradeIPs.V6OVNMasqueradeIP = ovntest.MustParseIP(dummyMasqIPv6)
 
+			runIpManagerRoutine(tc)
 			Expect(tc.ns.Do(func(netNS ns.NetNS) error {
 				link, err := netlink.LinkByName(dummyBrName)
 				if err != nil {
@@ -310,6 +308,8 @@ var _ = Describe("Node IP Handler tests", func() {
 		ovntest.OnSupportedPlatformsIt("doesn't allow OVN management port IPs", func() {
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
 			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+
+			runIpManagerRoutine(tc)
 			Expect(tc.ns.Do(func(netNS ns.NetNS) error {
 				mpLink := ovntest.AddLink(fmt.Sprintf("%s1234", ovntypes.K8sMgmtIntfNamePrefix))
 				return netlink.AddrAdd(mpLink, &netlink.Addr{LinkIndex: mpLink.Attrs().Index, Scope: unix.RT_SCOPE_UNIVERSE,
@@ -321,6 +321,18 @@ var _ = Describe("Node IP Handler tests", func() {
 		})
 	})
 })
+
+// The runIpManagerRoutine reads from the config (e.g.,
+// IsNetworkSegmentationSupportEnabled()) so it must be called explicitly
+// from each test spec _AFTER_ all custom config changes happened.
+func runIpManagerRoutine(tc *testCtx) {
+	tc.doneWg.Add(1)
+	go tc.ns.Do(func(netNS ns.NetNS) error {
+		tc.ipManager.runInternal(tc.stopCh, tc.ipManager.getNetlinkAddrSubFunc(tc.stopCh))
+		tc.doneWg.Done()
+		return nil
+	})
+}
 
 func configureKubeOVNContextWithNs(nodeName string) *testCtx {
 	testNs, err := testutils.NewNS()
