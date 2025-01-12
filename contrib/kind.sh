@@ -1072,11 +1072,16 @@ docker_create_second_interface() {
 }
 
 # run_script_in_container should be used when kind.sh is run nested in a container
-# and makes sure the control-plane node is rechable by substituting 127.0.0.1
+# and makes sure the control-plane node is reachable by substituting 127.0.0.1
 # with the control-plane container's IP
 run_script_in_container() {
-  local master_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ${KIND_CLUSTER_NAME}-control-plane | head -n 1)
-  sed -i -- "s/server: .*/server: https:\/\/$master_ip:6443/g" $KUBECONFIG
+  if [ "$KIND_IPV4_SUPPORT" == true ]; then
+    local master_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ${KIND_CLUSTER_NAME}-control-plane | head -n 1)
+    sed -i -- "s/server: .*/server: https:\/\/$master_ip:6443/g" $KUBECONFIG
+  else
+    local master_ipv6=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.GlobalIPv6Address}}{{end}}' ${KIND_CLUSTER_NAME}-control-plane | head -n 1)
+    sed -i -- "s/server: .*/server: https:\/\/[$master_ipv6]:6443/g" $KUBECONFIG
+  fi
   chmod a+r $KUBECONFIG
 }
 
