@@ -5,6 +5,7 @@ import (
 	"net"
 
 	nadfake "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
+	frrfake "github.com/metallb/frr-k8s/pkg/client/clientset/versioned/fake"
 	"github.com/onsi/gomega"
 	ocpcloudnetworkapi "github.com/openshift/api/cloudnetwork/v1"
 	cloudservicefake "github.com/openshift/client-go/cloudnetwork/clientset/versioned/fake"
@@ -20,6 +21,7 @@ import (
 	egressipfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/clientset/versioned/fake"
 	egresssvc "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1"
 	egresssvcfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/clientset/versioned/fake"
+	rafake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/healthcheck"
@@ -33,6 +35,8 @@ type FakeClusterManager struct {
 	esvc         *egressservice.Controller
 	epsMirror    *endpointslicemirror.Controller
 	fakeRecorder *record.FakeRecorder
+
+	NetworkManager networkmanager.Interface
 }
 
 var isReachable = func(nodeName string, mgmtIPs []net.IP, healthClient healthcheck.EgressIPHealthClient) bool {
@@ -67,8 +71,12 @@ func (o *FakeClusterManager) start(objects ...runtime.Object) {
 		EgressServiceClient: egresssvcfake.NewSimpleClientset(egressSvcObjects...),
 		CloudNetworkClient:  cloudservicefake.NewSimpleClientset(cloudObjects...),
 	}
-	if util.IsNetworkSegmentationSupportEnabled() {
+	if config.OVNKubernetesFeature.EnableMultiNetwork {
 		o.fakeClient.NetworkAttchDefClient = nadfake.NewSimpleClientset()
+	}
+	if config.OVNKubernetesFeature.EnableRouteAdvertisements {
+		o.fakeClient.RouteAdvertisementsClient = rafake.NewSimpleClientset()
+		o.fakeClient.FRRClient = frrfake.NewSimpleClientset()
 	}
 	o.init()
 }
@@ -80,8 +88,13 @@ func (o *FakeClusterManager) init() {
 	err = o.watcher.Start()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
+	networkManager := o.NetworkManager
+	if networkManager == nil {
+		networkManager = networkmanager.Default().Interface()
+	}
+
 	if config.OVNKubernetesFeature.EnableEgressIP {
-		o.eIPC = newEgressIPController(o.fakeClient, o.watcher, o.fakeRecorder)
+		o.eIPC = newEgressIPController(o.fakeClient, o.watcher, networkManager, o.fakeRecorder)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	}
 	if config.OVNKubernetesFeature.EnableEgressService {
@@ -92,7 +105,7 @@ func (o *FakeClusterManager) init() {
 		gomega.Expect(err).ToNot(gomega.HaveOccurred())
 	}
 	if util.IsNetworkSegmentationSupportEnabled() {
-		o.epsMirror, err = endpointslicemirror.NewController(o.fakeClient, o.watcher, networkmanager.Default().Interface())
+		o.epsMirror, err = endpointslicemirror.NewController(o.fakeClient, o.watcher, networkManager)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 		err = o.epsMirror.Start(context.TODO(), 1)

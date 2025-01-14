@@ -27,7 +27,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/kubernetes/pkg/util/iptables"
 	utiliptables "k8s.io/kubernetes/pkg/util/iptables"
 	kexec "k8s.io/utils/exec"
 	utilnet "k8s.io/utils/net"
@@ -37,6 +36,7 @@ import (
 	egressipfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	ovnkube "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	ovniptables "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/iptables"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/linkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
@@ -171,9 +171,9 @@ func setupFakeNode(nodeInitialConfig nodeConfig) (ns.NetNS, error) {
 			}
 		}
 		// adding IPTable rules
-		ipTableV4Client := iptables.New(kexec.New(), iptables.ProtocolIPv4)
-		ipTableV6Client := iptables.New(kexec.New(), iptables.ProtocolIPv6)
-		var ipTableClient iptables.Interface
+		ipTableV4Client := utiliptables.New(kexec.New(), utiliptables.ProtocolIPv4)
+		ipTableV6Client := utiliptables.New(kexec.New(), utiliptables.ProtocolIPv6)
+		var ipTableClient utiliptables.Interface
 		for _, iptableRule := range nodeInitialConfig.iptableRules {
 			if len(iptableRule.Args) != 0 {
 				if isIPTableRuleArgIPV6(iptableRule.Args) {
@@ -200,12 +200,12 @@ func setupFakeNode(nodeInitialConfig nodeConfig) (ns.NetNS, error) {
 	return testNS, nil
 }
 
-func ensureIPTableChainAndRule(ipt iptables.Interface, ruleArgs []string) error {
-	_, err := ipt.EnsureChain(iptables.TableNAT, iptChainName)
+func ensureIPTableChainAndRule(ipt utiliptables.Interface, ruleArgs []string) error {
+	_, err := ipt.EnsureChain(utiliptables.TableNAT, iptChainName)
 	if err != nil {
 		return fmt.Errorf("failed to create chain %s in NAT table: %v", iptChainName, err)
 	}
-	_, err = ipt.EnsureRule(iptables.Prepend, iptables.TableNAT, iptChainName, ruleArgs...)
+	_, err = ipt.EnsureRule(utiliptables.Prepend, utiliptables.TableNAT, iptChainName, ruleArgs...)
 	if err != nil {
 		return fmt.Errorf("failed to ensure IPTables rule (%v): %v", ruleArgs, err)
 	}
@@ -270,12 +270,16 @@ func initController(namespaces []corev1.Namespace, pods []corev1.Pod, egressIPs 
 		return nil, nil, err
 	}
 	linkManager := linkmanager.NewController(node1Name, v4, v6, nil)
-	// only CDN network is supported
-	getActiveNetForNsFn := func(namespace string) (util.NetInfo, error) {
-		return &util.DefaultNetInfo{}, nil
-	}
-	c, err := NewController(&ovnkube.Kube{KClient: kubeClient}, watchFactory.EgressIPInformer(), watchFactory.NodeInformer(), watchFactory.NamespaceInformer(),
-		watchFactory.PodCoreInformer(), getActiveNetForNsFn, rm, v4, v6, node1Name, linkManager)
+	c := NewController(
+		&ovnkube.Kube{KClient: kubeClient},
+		watchFactory,
+		networkmanager.Default().Interface(),
+		rm,
+		v4,
+		v6,
+		node1Name,
+		linkManager,
+	)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1548,8 +1552,8 @@ func newEgressIP(name, ip, node string, namespaceLabels, podLabels map[string]st
 		},
 		Status: egressipv1.EgressIPStatus{
 			Items: []egressipv1.EgressIPStatusItem{{
-				node,
-				ip,
+				Node:     node,
+				EgressIP: ip,
 			}},
 		},
 	}
