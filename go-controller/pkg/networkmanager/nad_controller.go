@@ -607,6 +607,7 @@ func (c *nadController) handleNetworkID(old util.NetInfo, new util.MutableNetInf
 		delete(annotations, types.OvnNetworkIDAnnotation)
 	}
 	if len(annotations) == 0 {
+		new.SetNetworkID(id)
 		return nil
 	}
 
