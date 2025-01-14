@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"reflect"
 	"strings"
 	"time"
@@ -617,31 +618,59 @@ func (bsnc *BaseSecondaryNetworkController) hasIPAMClaim(pod *corev1.Pod, nadNam
 
 // delPerPodSNAT will delete the SNAT towards masqueradeIP for this given pod
 func (bsnc *BaseSecondaryNetworkController) delPerPodSNAT(pod *corev1.Pod, nadName string) error {
-	if !bsnc.isPodScheduledinLocalZone(pod) {
-		// nothing to do if its a remote zone pod
+	nodeName := pod.Spec.NodeName
+
+	// Live migration is only supported at IC and on this case we should remove
+	// SNAT at this node only when the VM is removed this is necessary because
+	// guest default gw mac address may not be up to date after live migration
+	// and traffic may still go over remote node so we should keep SNAT.
+	if config.OVNKubernetesFeature.EnableInterconnect && kubevirt.IsPodAllowedForMigration(pod, bsnc.GetNetInfo()) {
+		isVirtualMachineRunning, err := kubevirt.IsVirtualMachineRunning(bsnc.watchFactory, pod)
+		if err != nil {
+			return err
+		}
+		if isVirtualMachineRunning {
+			return nil
+		}
+
+		// The pod can be remote and we are at interconnect so just use the
+		// node name where this controller is running to compose later on the
+		// GR name, in this case the GR from pod.Spec.Name does not exist
+		// at this OVN zone.
+		nodeName = os.Getenv("K8S_NODE")
+		if nodeName == "" {
+			return fmt.Errorf("failed deleting per pod snat, missing env var K8S_NODE")
+		}
+	} else if !bsnc.isPodScheduledinLocalZone(pod) {
+		// Skip for the rest of remote pods
 		return nil
 	}
+
 	// we need to add per-pod SNATs for UDN networks
 	networkID, err := bsnc.getNetworkID()
 	if err != nil {
 		return fmt.Errorf("failed to get networkID for network %q: %v", bsnc.GetNetworkName(), err)
 	}
+
 	masqIPs, err := udn.GetUDNGatewayMasqueradeIPs(networkID)
 	if err != nil {
 		return fmt.Errorf("failed to get masquerade IPs, network %s (%d): %v", bsnc.GetNetworkName(), networkID, err)
 	}
+
 	podNetAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, nadName)
 	if err != nil {
 		return fmt.Errorf("failed to fetch annotations for pod %s/%s in network %s; err: %v", pod.Namespace, pod.Name, bsnc.GetNetworkName(), err)
 	}
-	ops, err := deletePodSNATOps(bsnc.nbClient, nil, bsnc.GetNetworkScopedGWRouterName(pod.Spec.NodeName), masqIPs, podNetAnnotation.IPs, bsnc.GetNetworkScopedClusterSubnetSNATMatch(pod.Spec.NodeName))
+
+	ops, err := deletePodSNATOps(bsnc.nbClient, nil, bsnc.GetNetworkScopedGWRouterName(nodeName), masqIPs, podNetAnnotation.IPs, bsnc.GetNetworkScopedClusterSubnetSNATMatch(nodeName))
 	if err != nil {
 		return fmt.Errorf("failed to construct SNAT pods for pod %s/%s which is part of network %s, err: %v",
 			pod.Namespace, pod.Name, bsnc.GetNetworkName(), err)
 	}
+
 	if _, err = libovsdbops.TransactAndCheck(bsnc.nbClient, ops); err != nil {
 		return fmt.Errorf("failed to delete SNAT rule for pod %s/%s in network %s on gateway router %s: %w",
-			pod.Namespace, pod.Name, bsnc.GetNetworkName(), bsnc.GetNetworkScopedGWRouterName(pod.Spec.NodeName), err)
+			pod.Namespace, pod.Name, bsnc.GetNetworkName(), bsnc.GetNetworkScopedGWRouterName(nodeName), err)
 	}
 	return nil
 }

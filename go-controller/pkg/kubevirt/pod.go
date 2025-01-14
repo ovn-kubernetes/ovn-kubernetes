@@ -479,3 +479,17 @@ func DiscoverLiveMigrationStatus(client *factory.WatchFactory, pod *corev1.Pod) 
 	}
 	return &status, nil
 }
+
+func IsVirtualMachineRunning(client *factory.WatchFactory, pod *corev1.Pod) (bool, error) {
+	vmKey := ExtractVMNameFromPod(pod)
+	if vmKey == nil {
+		return false, nil
+	}
+
+	vmPods, err := client.GetPodsBySelector(pod.Namespace, metav1.LabelSelector{MatchLabels: map[string]string{kubevirtv1.VirtualMachineNameLabel: vmKey.Name}})
+	if err != nil {
+		return false, err
+	}
+
+	return len(filterNotComplete(vmPods)) > 0, nil
+}
