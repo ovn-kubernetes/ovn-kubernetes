@@ -33,6 +33,10 @@ packages:
       DNSOps:
       ExecRunner:
       FileSystemOps:
+      NetInfo:
+        # need separate package to avoid circular dependency
+        config:
+          dir: pkg/util/mocks/multinetwork
       NetLinkOps:
       SriovnetOps:
       VdpaDevice:

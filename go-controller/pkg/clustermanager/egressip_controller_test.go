@@ -12,6 +12,7 @@ import (
 	ocpcloudnetworkapi "github.com/openshift/api/cloudnetwork/v1"
 	ocpconfigapi "github.com/openshift/api/config/v1"
 	"github.com/urfave/cli/v2"
+	"golang.org/x/exp/maps"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -21,9 +22,13 @@ import (
 	utilnet "k8s.io/utils/net"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
 	egressipv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/healthcheck"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/networkmanager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	multinetworkmocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/mocks/multinetwork"
 )
 
 type fakeEgressIPDialer struct{}
@@ -279,14 +284,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 		config.OVNKubernetesFeature.EnableEgressIP = true
 		config.OVNKubernetesFeature.EgressIPNodeHealthCheckPort = 1234
+	})
 
+	ginkgo.JustBeforeEach(func() {
 		app = cli.NewApp()
 		app.Name = "test"
 		app.Flags = config.Flags
 		fakeClusterManagerOVN = NewFakeClusterManagerOVN()
 	})
 
-	ginkgo.AfterEach(func() {
+	ginkgo.JustAfterEach(func() {
 		fakeClusterManagerOVN.shutdown()
 	})
 
@@ -4289,6 +4296,542 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				gomega.Expect(mark).Should(gomega.BeNumerically(">=", eipMarkMin), "mark should be greater or equal to allowable min")
 				ecc.deallocMark(egressIPName)
 			}
+		})
+	})
+
+	ginkgo.Context("when RouteAdvertisements is enabled", func() {
+
+		const (
+			namespace1 = "egress-namespace-1"
+			namespace2 = "egress-namespace-2"
+			udn1       = "udn1"
+		)
+
+		ginkgo.BeforeEach(func() {
+			config.OVNKubernetesFeature.EnableMultiNetwork = true
+			config.OVNKubernetesFeature.EnableRouteAdvertisements = true
+		})
+
+		ginkgo.AfterEach(func() {
+			config.OVNKubernetesFeature.EnableMultiNetwork = false
+			config.OVNKubernetesFeature.EnableRouteAdvertisements = false
+		})
+
+		// mockNetInfos given the egress IP advertisement configuration and
+		// primary networks and set them on fake network manager.
+		mockNetInfos := func(
+			networkManager *networkmanager.FakeNetworkManager,
+			egressIPAdvertisements map[string][]string,
+			primaryNetworks map[string]string,
+		) *networkmanager.FakeNetworkManager {
+			networkManager.Lock()
+			defer networkManager.Unlock()
+
+			networkToNamespaces := map[string][]string{}
+			for namespace, network := range primaryNetworks {
+				networkToNamespaces[network] = append(networkToNamespaces[network], namespace)
+			}
+
+			netInfos := map[string]util.NetInfo{}
+			for network, nodes := range egressIPAdvertisements {
+				nodeToVrfs := map[string][]string{}
+				for _, node := range nodes {
+					// vrf names don't really matter in this case
+					nodeToVrfs[node] = []string{network}
+				}
+				netInfoMock := &multinetworkmocks.NetInfo{}
+				netInfoMock.On("GetNetworkName").Return(network)
+				netInfoMock.On("GetEgressIPAdvertisedVRFs").Return(nodeToVrfs)
+				netInfoMock.On("GetEgressIPAdvertisedNodes").Return(maps.Keys(nodeToVrfs))
+				netInfoMock.On("GetEgressIPAdvertisedOnNodeVRFs", node1Name).Return(nodeToVrfs[node1Name])
+				netInfoMock.On("GetEgressIPAdvertisedOnNodeVRFs", node2Name).Return(nodeToVrfs[node2Name])
+				if network == types.DefaultNetworkName {
+					netInfoMock.On("IsDefault").Return(true)
+				}
+				switch len(networkToNamespaces) {
+				case 0:
+					netInfoMock.On("IsPrimaryNetwork").Return(false)
+					netInfoMock.On("GetNADNamespaces").Return(nil)
+				default:
+					netInfoMock.On("IsPrimaryNetwork").Return(true)
+					netInfoMock.On("GetNADNamespaces").Return(networkToNamespaces[network])
+				}
+				netInfos[network] = netInfoMock
+			}
+			networkManager.OtherNetworks = netInfos
+
+			networkManager.PrimaryNetworks = map[string]util.NetInfo{}
+			for namespace, network := range primaryNetworks {
+				networkManager.PrimaryNetworks[namespace] = netInfos[network]
+			}
+			return networkManager
+		}
+
+		// meetsExpectations when the egress IP is assigned to the expected node
+		meetsExpectations := func(g gomega.Gomega, expectedNode string) {
+			switch expectedNode {
+			case "":
+				g.Expect(getEgressIPStatusLen(egressIPName)()).Should(gomega.Equal(0))
+			default:
+				g.Expect(getEgressIPStatusLen(egressIPName)()).Should(gomega.Equal(1))
+				_, nodes := getEgressIPStatus(egressIPName)
+				g.Expect(nodes[0]).To(gomega.Equal(expectedNode))
+			}
+		}
+
+		// test is the main testing function for this section. Given an initial
+		// state, it checks that an egress IP is assigned to an expected node. It
+		// then applies namespace/network changes as specified and checks the
+		// assignment again.
+		test := func(
+			// intial setup
+			egressIP string,
+			initialAdvertisingNodes map[string][]string, // network -> nodes
+			initialPrimaryNetworks map[string]string, // namespace -> network
+			// expected initial assignment
+			initialNode string,
+			// update ops
+			namespaceOp string, // "add", "update", "delete", or "" (none)
+			finalAdvertisingNodes map[string][]string, // network -> nodes
+			finalPrimaryNetworks map[string]string, // namespace -> network
+			// expected final assignment
+			finalNode string,
+		) {
+			ginkgo.GinkgoHelper()
+			app.Action = func(*cli.Context) error {
+				// two nodes on different subnets
+				node1IPv4 := "192.168.126.12/24"
+				node2IPv4 := "192.168.127.51/24"
+
+				node1 := corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: node1Name,
+						Annotations: map[string]string{
+							"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", node1IPv4, ""),
+							"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":[\"%s\", \"%s\"]}", v4NodeSubnet, v6NodeSubnet),
+							util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node1IPv4),
+						},
+						Labels: map[string]string{
+							"k8s.ovn.org/egress-assignable": "",
+						},
+					},
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
+							{
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
+							},
+						},
+					},
+				}
+				node2 := corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: node2Name,
+						Annotations: map[string]string{
+							"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", node2IPv4, ""),
+							"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\": [\"%s\",\"%s\"]}", v4NodeSubnet, v6NodeSubnet),
+							util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node2IPv4),
+						},
+						Labels: map[string]string{
+							"k8s.ovn.org/egress-assignable": "",
+						},
+					},
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
+							{
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
+							},
+						},
+					},
+				}
+				var namespaces []corev1.Namespace
+				ns1 := corev1.Namespace{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: namespace1,
+						Labels: map[string]string{
+							"selected": "true",
+						},
+					},
+				}
+				namespaces = append(namespaces, ns1)
+				ns2 := corev1.Namespace{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: namespace2,
+						Labels: map[string]string{
+							"selected": "true",
+						},
+					},
+				}
+				if namespaceOp != "add" {
+					namespaces = append(namespaces, ns2)
+				}
+				eIP := egressipv1.EgressIP{
+					ObjectMeta: newEgressIPMeta(egressIPName),
+					Spec: egressipv1.EgressIPSpec{
+						EgressIPs: []string{egressIP},
+						NamespaceSelector: metav1.LabelSelector{
+							MatchLabels: map[string]string{
+								"selected": "true",
+							},
+						},
+					},
+				}
+
+				// mock the network information to return the appropiate
+				// egress IP adverisement information
+				networkManager := mockNetInfos(
+					&networkmanager.FakeNetworkManager{},
+					initialAdvertisingNodes,
+					initialPrimaryNetworks,
+				)
+				fakeClusterManagerOVN.NetworkManager = networkManager
+
+				fakeClusterManagerOVN.start(
+					&corev1.NamespaceList{Items: namespaces},
+					&corev1.NodeList{Items: []corev1.Node{node1, node2}},
+					&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eIP}},
+				)
+
+				egressNode1 := setupNode(node1Name, []string{node1IPv4}, nil)
+				egressNode2 := setupNode(node2Name, []string{node2IPv4}, nil)
+
+				fakeClusterManagerOVN.eIPC.nodeAllocator.cache[egressNode1.name] = &egressNode1
+				fakeClusterManagerOVN.eIPC.nodeAllocator.cache[egressNode2.name] = &egressNode2
+
+				_, err := fakeClusterManagerOVN.eIPC.WatchEgressIP()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				_, err = fakeClusterManagerOVN.eIPC.WatchNamespaces()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				err = controller.Start(fakeClusterManagerOVN.eIPC.networkReconciler)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				gomega.Eventually(meetsExpectations).WithArguments(initialNode).Should(gomega.Succeed())
+				gomega.Consistently(meetsExpectations).WithArguments(initialNode).Should(gomega.Succeed())
+
+				switch namespaceOp {
+				case "add":
+					_, err = fakeClusterManagerOVN.fakeClient.KubeClient.CoreV1().Namespaces().Create(context.Background(), &ns2, metav1.CreateOptions{})
+				case "update":
+					ns2.Labels["selected"] = "false"
+					_, err = fakeClusterManagerOVN.fakeClient.KubeClient.CoreV1().Namespaces().Update(context.Background(), &ns2, metav1.UpdateOptions{})
+				case "delete":
+					err = fakeClusterManagerOVN.fakeClient.KubeClient.CoreV1().Namespaces().Delete(context.Background(), ns2.Name, metav1.DeleteOptions{})
+				}
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				oldNetworks := networkManager.OtherNetworks
+				networkManager = mockNetInfos(
+					networkManager,
+					finalAdvertisingNodes,
+					finalPrimaryNetworks,
+				)
+				fakeClusterManagerOVN.eIPC.ReconcileNetwork(udn1, oldNetworks[udn1], networkManager.OtherNetworks[udn1])
+
+				gomega.Eventually(meetsExpectations).WithArguments(finalNode).Should(gomega.Succeed())
+				gomega.Consistently(meetsExpectations).WithArguments(finalNode).Should(gomega.Succeed())
+
+				return nil
+			}
+
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		}
+
+		ginkgo.Context("on an event for", func() {
+			ginkgo.Context("EgressIP", func() {
+				ginkgo.DescribeTable(
+					"appropriately assigns a node",
+					func(
+						egressIP string,
+						advertisingNodes map[string][]string,
+						primaryNetworks map[string]string,
+						expectedNode string,
+					) {
+						test(
+							egressIP,
+							advertisingNodes,
+							primaryNetworks,
+							expectedNode,
+							"",
+							advertisingNodes,
+							primaryNetworks,
+							expectedNode,
+						)
+					},
+					// An egress IP assigned to a node as dictated by an RA
+					ginkgo.Entry(
+						"when the Egress IP is advertised on that node",
+						"172.16.0.1",
+						map[string][]string{types.DefaultNetworkName: {node2Name}},
+						nil,
+						node2Name,
+					),
+					// An egress IP is not advertised because there's no RA
+					// dictating so
+					ginkgo.Entry(
+						"when the Egress IP is not advertised on any node",
+						"172.16.0.1",
+						map[string][]string{types.DefaultNetworkName: {}},
+						nil,
+						"",
+					),
+					// An egress IP is advertised on a node it is local to
+					// even though an RA dictates a different node
+					ginkgo.Entry(
+						"when the Egress IP is local to that node but could be advertised on a different node",
+						"192.168.126.100",
+						map[string][]string{types.DefaultNetworkName: {node2Name}},
+						nil,
+						node1Name,
+					),
+					// An egress IP is advertised on a node it is local to
+					// even though an RA dictates a different node
+					ginkgo.Entry(
+						"when the Egress IP is is local to a node and can also be advertised on that node",
+						"192.168.126.100",
+						map[string][]string{types.DefaultNetworkName: {node1Name}},
+						nil,
+						node1Name,
+					),
+					// An egress IP selects multiple namespaces served by
+					// different networks. RA selecting those networks select a
+					// common subset of nodes and the egress IP is assigned to
+					// one of them.
+					ginkgo.Entry(
+						"when the Egress IP is advertised on that node for multiple selected networks",
+						"172.16.0.1",
+						map[string][]string{
+							types.DefaultNetworkName: {node2Name},
+							udn1:                     {node2Name},
+						},
+						map[string]string{namespace2: udn1},
+						node2Name,
+					),
+					// An egress IP selects multiple namespaces served by
+					// different networks. RA selecting those networks do not
+					// select a common subset of nodes and the egress IP is not
+					// assigned.
+					ginkgo.Entry(
+						"when the Egress IP is not advertised on a common node for multiple selected networks",
+						"172.16.0.1",
+						map[string][]string{
+							types.DefaultNetworkName: {node2Name},
+							udn1:                     {node1Name},
+						},
+						map[string]string{namespace2: udn1},
+						"",
+					),
+				)
+			})
+			ginkgo.Context("Namespace", func() {
+				ginkgo.DescribeTable(
+					"appropriately assigns a node",
+					func(
+						egressIP string,
+						initialAdvertisingNodes map[string][]string,
+						initialPrimaryNetworks map[string]string,
+						initialNode string,
+						namespaceOp string,
+						finalNode string,
+					) {
+						test(
+							egressIP,
+							initialAdvertisingNodes,
+							initialPrimaryNetworks,
+							initialNode,
+							namespaceOp,
+							initialAdvertisingNodes,
+							initialPrimaryNetworks,
+							finalNode,
+						)
+					},
+					// Mimics scenario:
+					// - RA 1 selects default network and node 2
+					// Initially node 2 is assigned to the egress IP.
+					// Then mimics add of  namespace 2 served by UDN
+					// 1 selected by another RA 2 that selects node 1 only.
+					// Since there is no common node where the egress IP can be
+					// advertised, none is assigned.
+					ginkgo.Entry(
+						"when namespace is added",
+						"172.16.0.1",
+						map[string][]string{
+							types.DefaultNetworkName: {node2Name},
+							udn1:                     {node1Name},
+						},
+						map[string]string{namespace2: udn1},
+						node2Name,
+						"add",
+						"",
+					),
+					// Mimics scenario:
+					// - An RA 1 selects default network and node 2
+					// - Another RA 2 selects UDN 1 and node 1 and node 2
+					// - An egress IP selects namespaces served by default network and UDN 1
+					// Since there is no common node where the egress IP can be
+					// advertised, none is assigned.
+					// Then mimics update of namespace 2 being served by UDN 1
+					// to no longer be selected.
+					// Since now the default network is the only one being considered, node 2
+					// is assigned.
+					ginkgo.Entry(
+						"when namespace is updated",
+						"172.16.0.1",
+						map[string][]string{
+							types.DefaultNetworkName: {node2Name},
+							udn1:                     {node1Name},
+						},
+						map[string]string{namespace2: udn1},
+						"",
+						"update",
+						node2Name,
+					),
+					// Mimics scenario:
+					// - An RA 1 selects default network and node 2
+					// - Another RA 2 selects UDN 1 and node 1 and node 2
+					// - An egress IP selects namespaces served by default network and UDN 1
+					// Since there is no common node where the egress IP can be
+					// advertised, none is assigned.
+					// Then mimics removal of namespace 2 being served by UDN 1.
+					// Since now the default network is the only one being considered, node 2
+					// is assigned.
+					ginkgo.Entry(
+						"when namespace is deleted",
+						"172.16.0.1",
+						map[string][]string{
+							types.DefaultNetworkName: {node2Name},
+							udn1:                     {node1Name},
+						},
+						map[string]string{namespace2: udn1},
+						"",
+						"delete",
+						node2Name,
+					),
+				)
+			})
+			ginkgo.Context("Network", func() {
+				ginkgo.DescribeTable(
+					"appropriately assigns a node",
+					func(
+						egressIP string,
+						initialAdvertisingNodes map[string][]string,
+						initialPrimaryNetworks map[string]string,
+						initialNode string,
+						finalAdvertisingNodes map[string][]string,
+						finalPrimaryNetworks map[string]string,
+						finalNode string,
+					) {
+						test(
+							egressIP,
+							initialAdvertisingNodes,
+							initialPrimaryNetworks,
+							initialNode,
+							"",
+							finalAdvertisingNodes,
+							finalPrimaryNetworks,
+							finalNode,
+						)
+					},
+					// Mimics scenario:
+					// - An RA 1 selects default network and node 2
+					// - Another RA 2 selects UDN 1 and node 1
+					// - An egress IP selects namespaces served by default network and UDN 1
+					// Since there is no common node where the egress IP can be
+					// advertised, none is assigned
+					// Then mimics an update to RA 2 that also selects node 2.
+					// Since now node 2 is selected by both RA, node 2 can be assigned.
+					ginkgo.Entry(
+						"when a node is added to advertisements",
+						"172.16.0.1",
+						map[string][]string{
+							types.DefaultNetworkName: {node2Name},
+							udn1:                     {node1Name},
+						},
+						map[string]string{namespace2: udn1},
+						"",
+						map[string][]string{
+							types.DefaultNetworkName: {node2Name},
+							udn1:                     {node1Name, node2Name},
+						},
+						map[string]string{namespace2: udn1},
+						node2Name,
+					),
+					// Mimics scenario:
+					// - An RA 1 selects default network and node 2
+					// - Another RA 2 selects UDN 1 and node 1 and node 2
+					// - An egress IP selects namespaces served by default network and UDN 1
+					// Since now node 2 is selected by both RA, node 2 can be assigned.
+					// Then mimics an update to RA 2 (or node labels) where node 2 is no
+					// longer selected.
+					// Since there is no common node where the egress IP can be
+					// advertised, none is assigned.
+					ginkgo.Entry(
+						"when a node is removed from advertisements",
+						"172.16.0.1",
+						map[string][]string{
+							types.DefaultNetworkName: {node2Name},
+							udn1:                     {node1Name, node2Name},
+						},
+						map[string]string{namespace2: udn1},
+						node2Name,
+						map[string][]string{
+							types.DefaultNetworkName: {node2Name},
+							udn1:                     {node1Name},
+						},
+						map[string]string{namespace2: udn1},
+						"",
+					),
+					// Mimics scenario:
+					// - An RA 1 selects default network and node 2
+					// Initially node 2 is assigned to the egress IP.
+					// Then mimics UDN 1 being added/selected by another
+					// RA 2 where only node 1 is selected.
+					// Since there is no common node where the egress IP can be
+					// advertised, none is assigned.
+					ginkgo.Entry(
+						"when a UDN serving a namespace selected by the egress IP is added",
+						"172.16.0.1",
+						map[string][]string{
+							types.DefaultNetworkName: {node2Name},
+						},
+						nil,
+						node2Name,
+						map[string][]string{
+							types.DefaultNetworkName: {node2Name},
+							udn1:                     {node1Name},
+						},
+						map[string]string{namespace2: udn1},
+						"",
+					),
+					// Mimics scenario:
+					// - An RA 1 selects default network and node 2
+					// - Another RA 2 selects UDN 1 and node 1 and node 2
+					// - An egress IP selects namespaces served by default network and UDN 1
+					// Since there is no common node where the egress IP can be
+					// advertised, none is assigned.
+					// Then mimics UDN 1 being removed/unselected by RA 2.
+					// Since now the default network is the only one being considered, node 2
+					// is assigned.
+					ginkgo.Entry(
+						"when a UDN serving a namespace selected by the egress IP is removed",
+						"172.16.0.1",
+						map[string][]string{
+							types.DefaultNetworkName: {node2Name},
+							udn1:                     {node1Name},
+						},
+						map[string]string{namespace2: udn1},
+						"",
+						map[string][]string{
+							types.DefaultNetworkName: {node2Name},
+						},
+						nil,
+						node2Name,
+					),
+				)
+			})
 		})
 	})
 })

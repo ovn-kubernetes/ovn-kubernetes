@@ -2,8 +2,10 @@ package networkmanager
 
 import (
 	"context"
+	"sync"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
 )
@@ -45,8 +47,11 @@ func (fcm *FakeControllerManager) Reconcile(_ string, _, _ util.NetInfo) error {
 }
 
 type FakeNetworkManager struct {
+	sync.Mutex
 	// namespace -> netInfo
 	PrimaryNetworks map[string]util.NetInfo
+	// name -> netInfo
+	OtherNetworks map[string]util.NetInfo
 }
 
 func (fnm *FakeNetworkManager) Start() error { return nil }
@@ -54,24 +59,42 @@ func (fnm *FakeNetworkManager) Start() error { return nil }
 func (fnm *FakeNetworkManager) Stop() {}
 
 func (fnm *FakeNetworkManager) GetActiveNetworkForNamespace(namespace string) (util.NetInfo, error) {
-	if primaryNetworks, ok := fnm.PrimaryNetworks[namespace]; ok && primaryNetworks != nil {
-		return primaryNetworks, nil
-	}
-	return &util.DefaultNetInfo{}, nil
+	return fnm.GetActiveNetworkForNamespaceFast(namespace), nil
 }
 
-func (nc *FakeNetworkManager) GetNetwork(networkName string) util.NetInfo {
-	for _, ni := range nc.PrimaryNetworks {
+func (fnm *FakeNetworkManager) GetActiveNetworkForNamespaceFast(namespace string) util.NetInfo {
+	fnm.Lock()
+	defer fnm.Unlock()
+	if fnm.PrimaryNetworks[namespace] != nil {
+		return fnm.PrimaryNetworks[namespace]
+	}
+	network := fnm.getNetwork(types.DefaultNetworkName)
+	if network == nil {
+		return &util.DefaultNetInfo{}
+	}
+	return network
+}
+
+func (fnm *FakeNetworkManager) GetNetwork(networkName string) util.NetInfo {
+	fnm.Lock()
+	defer fnm.Unlock()
+	return fnm.getNetwork(networkName)
+}
+
+func (fnm *FakeNetworkManager) getNetwork(networkName string) util.NetInfo {
+	for _, ni := range fnm.PrimaryNetworks {
 		if ni.GetNetworkName() == networkName {
 			return ni
 		}
 	}
-	return &util.DefaultNetInfo{}
+	return fnm.OtherNetworks[networkName]
 }
 
-func (nc *FakeNetworkManager) GetActiveNetworkNamespaces(networkName string) ([]string, error) {
+func (fnm *FakeNetworkManager) GetActiveNetworkNamespaces(networkName string) ([]string, error) {
+	fnm.Lock()
+	defer fnm.Unlock()
 	namespaces := make([]string, 0)
-	for namespaceName, primaryNAD := range nc.PrimaryNetworks {
+	for namespaceName, primaryNAD := range fnm.PrimaryNetworks {
 		nadNetworkName := primaryNAD.GetNADs()[0]
 		if nadNetworkName != networkName {
 			continue
@@ -81,9 +104,11 @@ func (nc *FakeNetworkManager) GetActiveNetworkNamespaces(networkName string) ([]
 	return namespaces, nil
 }
 
-func (nc *FakeNetworkManager) DoWithLock(f func(network util.NetInfo) error) error {
+func (fnm *FakeNetworkManager) DoWithLock(f func(network util.NetInfo) error) error {
+	fnm.Lock()
+	defer fnm.Unlock()
 	var errs []error
-	for _, ni := range nc.PrimaryNetworks {
+	for _, ni := range fnm.PrimaryNetworks {
 		if err := f(ni); err != nil {
 			errs = append(errs, err)
 		}
