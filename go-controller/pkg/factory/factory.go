@@ -196,7 +196,7 @@ var (
 	// to avoid contention due to initial add.
 	queueConfig EventQueueConfig = EventQueueConfig{
 		QueueSize:        1000, // for new events
-		InitialQueueSize: 10,   // for initial additions of objects
+		InitialQueueSize: 1000, // for initial additions of objects
 	}
 )
 
