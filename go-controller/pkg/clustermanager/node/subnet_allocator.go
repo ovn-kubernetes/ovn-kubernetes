@@ -44,6 +44,9 @@ func NewSubnetAllocator() SubnetAllocator {
 
 // Usage returns the number of used/allocated v4 and v6 subnets
 func (sna *BaseSubnetAllocator) Usage() (uint64, uint64) {
+	sna.Lock()
+	defer sna.Unlock()
+
 	var v4used, v6used uint64
 	for _, snr := range sna.v4ranges {
 		v4used = v4used + snr.usage()
@@ -56,6 +59,9 @@ func (sna *BaseSubnetAllocator) Usage() (uint64, uint64) {
 
 // Count returns the number of available (both used and unused) v4 and v6 subnets
 func (sna *BaseSubnetAllocator) Count() (uint64, uint64) {
+	sna.Lock()
+	defer sna.Unlock()
+
 	var v4count, v6count uint64
 	for _, snr := range sna.v4ranges {
 		v4count = v4count + snr.count()
