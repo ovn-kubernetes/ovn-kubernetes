@@ -1745,8 +1745,15 @@ func generateLayer3Subnets(cidrs string) []string {
 }
 
 func waitForUserDefinedNetworkReady(namespace, name string, timeout time.Duration) error {
-	_, err := e2ekubectl.RunKubectl(namespace, "wait", "userdefinednetwork", name, "--for", "condition=NetworkCreated=True", "--timeout", timeout.String())
-	return err
+	// kubectl wait for condition assumes the resource exists
+	// in CI sometimes it could take a while for the reasource to appear in etcd so better to first
+	// wait for the resource to be created before attempting to check the status
+	_, errNetCreated := e2ekubectl.RunKubectl(namespace, "wait", "userdefinednetwork", name, "--for=create", "--timeout", timeout.String())
+	if errNetCreated != nil {
+		return errNetCreated
+	}
+	_, errNetCondCreated := e2ekubectl.RunKubectl(namespace, "wait", "userdefinednetwork", name, "--for", "condition=NetworkCreated=True", "--timeout", timeout.String())
+	return errNetCondCreated
 }
 
 func waitForClusterUserDefinedNetworkReady(name string, timeout time.Duration) error {
