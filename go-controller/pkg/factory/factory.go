@@ -777,7 +777,7 @@ func NewNodeWatchFactory(ovnClientset *util.OVNNodeClientset, nodeName string) (
 	})
 
 	wf.informers[NamespaceType], err = newQueuedInformer(queueConfig, NamespaceType, wf.iFactory.Core().V1().Namespaces().Informer(),
-		wf.stopChan, minNumEventQueues)
+		wf.stopChan, defaultNumEventQueues)
 	if err != nil {
 		return nil, err
 	}
@@ -802,7 +802,7 @@ func NewNodeWatchFactory(ovnClientset *util.OVNNodeClientset, nodeName string) (
 	}
 
 	wf.informers[NodeType], err = newQueuedInformer(queueConfig, NodeType, wf.iFactory.Core().V1().Nodes().Informer(), wf.stopChan,
-		minNumEventQueues)
+		defaultNumEventQueues)
 	if err != nil {
 		return nil, err
 	}
@@ -951,7 +951,7 @@ func NewClusterManagerWatchFactory(ovnClientset *util.OVNClusterManagerClientset
 
 	wf.informers[NodeType], err = newQueuedInformer(queueConfig,
 		NodeType, wf.iFactory.Core().V1().Nodes().Informer(),
-		wf.stopChan, minNumEventQueues)
+		wf.stopChan, defaultNumEventQueues)
 	if err != nil {
 		return nil, err
 	}
