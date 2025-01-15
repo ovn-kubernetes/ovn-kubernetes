@@ -740,6 +740,60 @@ var _ = Describe("User Defined Network Controller", func() {
 					Expect(kerrors.IsNotFound(err)).To(Equal(true))
 				}
 			})
+
+			DescribeTable("should report error in status, when namespace-selector",
+				func(selector metav1.LabelSelector, expectedMessage string) {
+					cudn := &udnv1.ClusterUserDefinedNetwork{
+						ObjectMeta: metav1.ObjectMeta{Name: "test-cudn"},
+						Spec:       udnv1.ClusterUserDefinedNetworkSpec{NamespaceSelector: selector},
+					}
+					c = newTestController(template.RenderNetAttachDefManifest, cudn)
+					Expect(c.Run()).To(Succeed())
+
+					Eventually(func() []metav1.Condition {
+						cudn, err := cs.UserDefinedNetworkClient.K8sV1().ClusterUserDefinedNetworks().Get(context.Background(), cudn.Name, metav1.GetOptions{})
+						Expect(err).NotTo(HaveOccurred())
+						return normalizeConditions(cudn.Status.Conditions)
+					}).Should(Equal([]metav1.Condition{{
+						Type:    "NetworkCreated",
+						Status:  "False",
+						Reason:  "NetworkAttachmentDefinitionSyncError",
+						Message: expectedMessage,
+					}}))
+				},
+				Entry("is empty",
+					metav1.LabelSelector{},
+					"failed to get selected namespaces: namespace selector is invalid: selecting all namespaces is not allowed",
+				),
+				Entry("has nil match-labels",
+					metav1.LabelSelector{MatchLabels: nil},
+					"failed to get selected namespaces: namespace selector is invalid: selecting all namespaces is not allowed",
+				),
+				Entry("has empty match-label",
+					metav1.LabelSelector{MatchLabels: map[string]string{}},
+					"failed to get selected namespaces: namespace selector is invalid: selecting all namespaces is not allowed",
+				),
+				Entry("has single match-label rule with empty key ",
+					metav1.LabelSelector{MatchLabels: map[string]string{"": ""}},
+					"failed to get selected namespaces: failed to create label-selector: key: Invalid value: \"\": name part must be non-empty; name part must consist of alphanumeric characters, '-', '_' or '.', and must start and end with an alphanumeric character (e.g. 'MyName',  or 'my.name',  or '123-abc', regex used for validation is '([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]')",
+				),
+				Entry("has nil match expressions",
+					metav1.LabelSelector{MatchExpressions: nil},
+					"failed to get selected namespaces: namespace selector is invalid: selecting all namespaces is not allowed",
+				),
+				Entry("has empty match expressions",
+					metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{}},
+					"failed to get selected namespaces: namespace selector is invalid: selecting all namespaces is not allowed",
+				),
+				Entry("has single match expression rule with: invalid op & empty key",
+					metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{Key: "", Operator: ""}}},
+					"failed to get selected namespaces: failed to create label-selector: \"\" is not a valid label selector operator",
+				),
+				Entry("has single match expression rule with: empty key",
+					metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{Key: "", Operator: "Exists"}}},
+					"failed to get selected namespaces: failed to create label-selector: key: Invalid value: \"\": name part must be non-empty; name part must consist of alphanumeric characters, '-', '_' or '.', and must start and end with an alphanumeric character (e.g. 'MyName',  or 'my.name',  or '123-abc', regex used for validation is '([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]')",
+				),
+			)
 		})
 	})
 
@@ -1026,7 +1080,7 @@ var _ = Describe("User Defined Network Controller", func() {
 		})
 		It("should add finalizer to CR", func() {
 			cudn := &udnv1.ClusterUserDefinedNetwork{Spec: udnv1.ClusterUserDefinedNetworkSpec{
-				NamespaceSelector: metav1.LabelSelector{}}}
+				NamespaceSelector: metav1.LabelSelector{MatchLabels: map[string]string{"test": "test"}}}}
 			c := newTestController(noopRenderNadStub(), cudn)
 
 			nads, err := c.syncClusterUDN(cudn)

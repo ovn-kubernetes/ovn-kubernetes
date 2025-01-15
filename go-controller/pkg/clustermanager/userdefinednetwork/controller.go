@@ -617,6 +617,9 @@ func (c *Controller) getSelectedNamespaces(sel metav1.LabelSelector) (sets.Set[s
 	if err != nil {
 		return nil, fmt.Errorf("failed to create label-selector: %w", err)
 	}
+	if labelSelector.Empty() {
+		return nil, fmt.Errorf("namespace selector is invalid: selecting all namespaces is not allowed")
+	}
 	selectedNamespacesList, err := c.namespaceInformer.Lister().List(labelSelector)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list namespaces: %w", err)
