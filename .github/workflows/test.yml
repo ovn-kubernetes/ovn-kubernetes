@@ -38,7 +38,7 @@ jobs:
   # separate job for parallelism
   lint:
     name: Lint
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
     - name: Check out code
       uses: actions/checkout@v4
@@ -63,7 +63,7 @@ jobs:
 
   build-master:
     name: Build-master
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
     # Create a cache for the built master image
     - name: Restore master image cache
@@ -156,7 +156,7 @@ jobs:
 
   build-pr:
     name: Build-PR
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
     # Create a cache for the build PR image
     - name: Restore PR image cache
@@ -271,7 +271,7 @@ jobs:
   ovn-upgrade-e2e:
     name: Upgrade OVN from Master to PR branch based image
     if: github.event_name != 'schedule'
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     needs:
       - build-master
@@ -419,7 +419,7 @@ jobs:
 
   e2e:
     name: e2e
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     # 30 mins for kind, 180 mins for control-plane tests, 10 minutes for all other steps
     timeout-minutes: 220
     strategy:
@@ -707,7 +707,7 @@ jobs:
   e2e-dual-conversion:
     name: e2e-dual-conversion
     if: github.event_name != 'schedule'
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
       fail-fast: false
