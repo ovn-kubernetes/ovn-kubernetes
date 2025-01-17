@@ -25,13 +25,13 @@ var callbacks = map[string]readinessFunc{
 
 func ovnControllerReadiness(target string) error {
 	// Check if ovn-controller is connected to OVN SB
-	output, _, err := util.RunOVSAppctlWithTimeout(5, "-t", target, "connection-status")
+	output, _, err := util.RunOVNAppctlWithTimeout(5, "-t", target, "connection-status")
 	if err != nil {
 		return fmt.Errorf("failed getting connection status of %q: (%v)", target, err)
 	} else if output != "connected" {
 		return fmt.Errorf("%q is not connected to OVN SB database, status: (%s)", target, output)
 	}
-	result, _, err := util.RunOVSAppctlWithTimeout(5, "-t", target, "coverage/read-counter", "lflow_run")
+	result, _, err := util.RunOVNAppctlWithTimeout(5, "-t", target, "coverage/read-counter", "lflow_run")
 	if err != nil {
 		return fmt.Errorf("failed getting coverage/show of %q: (%v)", target, err)
 	} else if result == "0" {
@@ -45,7 +45,7 @@ func ovnControllerReadiness(target string) error {
 		return fmt.Errorf("failed to get pid for osvdb-server process: %v", err)
 	}
 	ctlFile := fmt.Sprintf("/var/run/openvswitch/ovsdb-server.%s.ctl", strings.Trim(string(ovsdbPid), " \n"))
-	_, _, err = util.RunOVSAppctlWithTimeout(5, "-t", ctlFile, "ovsdb-server/list-dbs")
+	_, _, err = util.RunOVNAppctlWithTimeout(5, "-t", ctlFile, "ovsdb-server/list-dbs")
 	if err != nil {
 		return fmt.Errorf("failed retrieving list of databases from ovsdb-server: %v", err)
 	}
@@ -55,7 +55,7 @@ func ovnControllerReadiness(target string) error {
 		return fmt.Errorf("failed to get pid for ovs-vswitchd process: %v", err)
 	}
 	ctlFile = fmt.Sprintf("/var/run/openvswitch/ovs-vswitchd.%s.ctl", strings.Trim(string(ovsPid), " \n"))
-	_, _, err = util.RunOVSAppctlWithTimeout(5, "-t", ctlFile, "ofproto/list")
+	_, _, err = util.RunOVNAppctlWithTimeout(5, "-t", ctlFile, "ofproto/list")
 	if err != nil {
 		return fmt.Errorf("failed to retrieve ofproto instances from ovs-vswitchd: %v", err)
 	}
@@ -137,11 +137,11 @@ func ovnNorthdReadiness(target string) error {
 }
 
 func ovsDaemonsReadiness(target string) error {
-	_, _, err := util.RunOVSAppctlWithTimeout(5, "-t", "ovsdb-server", "ovsdb-server/list-dbs")
+	_, _, err := util.RunOVNAppctlWithTimeout(5, "-t", "ovsdb-server", "ovsdb-server/list-dbs")
 	if err != nil {
 		return fmt.Errorf("failed retrieving list of databases from ovsdb-server: %v", err)
 	}
-	_, _, err = util.RunOVSAppctlWithTimeout(5, "-t", "ovs-vswitchd", "ofproto/list")
+	_, _, err = util.RunOVNAppctlWithTimeout(5, "-t", "ovs-vswitchd", "ofproto/list")
 	if err != nil {
 		return fmt.Errorf("failed to retrieve ofproto instances from ovs-vswitchd: %v", err)
 	}
