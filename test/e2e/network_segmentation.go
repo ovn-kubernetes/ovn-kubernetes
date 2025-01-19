@@ -1916,8 +1916,7 @@ spec:
     topology: Layer2
     layer2:
       role: Secondary
-      subnets: ["10.100.0.0/16"]
-`
+     subnets: ` + generateCIDRforClusterUDN()
 }
 
 func newPrimaryClusterUDNManifest(name string, targetNamespaces ...string) string {
