@@ -124,6 +124,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 		wantReleaseID             bool
 		wantRelasedIDOnRollback   bool
 		wantErr                   bool
+		multiNetworkDisabled      bool
 	}{
 		{
 			// on secondary L2 networks with no IPAM, we expect to generate a
@@ -146,7 +147,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			},
 		},
 		{
-			// on secondary L2 network with no IPAM, honor static IP requests
+			// with multiNetwork disabled, on secondary L2 network with no IPAM, honor static IP requests
 			// present in the network selection annotation
 			name: "expect requested static IP, no gateway, no IPAM",
 			args: args{
@@ -163,7 +164,8 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 				MAC:  util.IPAddrToHWAddr(ovntest.MustParseIPNets("192.168.0.4/24")[0].IP),
 				Role: types.NetworkRolePrimary,
 			},
-			role: types.NetworkRolePrimary,
+			role:                 types.NetworkRolePrimary,
+			multiNetworkDisabled: true,
 		},
 		{
 			// on secondary L2 network with no IPAM, honor static IP and gateway
@@ -662,6 +664,12 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			network.Name = "network"
 			network.Namespace = "namespace"
 
+			config.OVNKubernetesFeature.EnableInterconnect = tt.idAllocation
+			config.OVNKubernetesFeature.EnableMultiNetwork = !tt.multiNetworkDisabled
+			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+			config.IPv4Mode = true
+			config.IPv6Mode = true
+
 			var netInfo util.NetInfo
 			netInfo = &util.DefaultNetInfo{}
 			nadName := types.DefaultNetworkName
@@ -686,7 +694,6 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 				}
 			}
 
-			config.OVNKubernetesFeature.EnableInterconnect = tt.idAllocation
 
 			pod := &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
