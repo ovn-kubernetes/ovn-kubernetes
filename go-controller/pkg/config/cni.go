@@ -100,7 +100,7 @@ func ParseNetConf(bytes []byte) (*ovncnitypes.NetConf, error) {
 }
 
 func parseNetConfSingle(bytes []byte) (*ovncnitypes.NetConf, error) {
-	netconf := &ovncnitypes.NetConf{MTU: Default.MTU}
+	netconf := &ovncnitypes.NetConf{}
 	err := json.Unmarshal(bytes, &netconf)
 	if err != nil {
 		return nil, err
@@ -109,6 +109,13 @@ func parseNetConfSingle(bytes []byte) (*ovncnitypes.NetConf, error) {
 	// skip non-OVN NAD
 	if netconf.Type != "ovn-k8s-cni-overlay" {
 		return nil, ErrorAttachDefNotOvnManaged
+	}
+	if netconf.MTU == 0 {
+		if netconf.Topology != ovntypes.LocalnetTopology {
+			netconf.MTU = Default.MTU
+		} else {
+			netconf.MTU = DefaultLocalnet.MTU
+		}
 	}
 
 	err = ValidateNetConfNameFields(netconf)
@@ -124,7 +131,7 @@ func parseNetConfList(confList *libcni.NetworkConfigList) (*ovncnitypes.NetConf,
 		return nil, ErrorChainingNotSupported
 	}
 
-	netconf := &ovncnitypes.NetConf{MTU: Default.MTU}
+	netconf := &ovncnitypes.NetConf{}
 	if err := json.Unmarshal(confList.Plugins[0].Bytes, netconf); err != nil {
 		return nil, err
 	}
@@ -132,6 +139,13 @@ func parseNetConfList(confList *libcni.NetworkConfigList) (*ovncnitypes.NetConf,
 	// skip non-OVN NAD
 	if netconf.Type != "ovn-k8s-cni-overlay" {
 		return nil, ErrorAttachDefNotOvnManaged
+	}
+	if netconf.MTU == 0 {
+		if netconf.Topology != ovntypes.LocalnetTopology {
+			netconf.MTU = Default.MTU
+		} else {
+			netconf.MTU = DefaultLocalnet.MTU
+		}
 	}
 
 	netconf.Name = confList.Name

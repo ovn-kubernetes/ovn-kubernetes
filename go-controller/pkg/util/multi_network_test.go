@@ -239,7 +239,7 @@ func TestParseNetconf(t *testing.T) {
 			expectedNetConf: &ovncnitypes.NetConf{
 				Topology: "localnet",
 				NADName:  "ns1/nad1",
-				MTU:      1400,
+				MTU:      1500,
 				VLANID:   10,
 				NetConf:  cnitypes.NetConf{Name: "tenantred", Type: "ovn-k8s-cni-overlay"},
 			},
@@ -278,7 +278,7 @@ func TestParseNetconf(t *testing.T) {
 			expectedNetConf: &ovncnitypes.NetConf{
 				Topology: "localnet",
 				NADName:  "ns1/nad1",
-				MTU:      1400,
+				MTU:      1500,
 				VLANID:   10,
 				NetConf:  cnitypes.NetConf{Name: "tenantred", CNIVersion: "1.0.0", Type: "ovn-k8s-cni-overlay"},
 			},
@@ -298,7 +298,7 @@ func TestParseNetconf(t *testing.T) {
 			expectedNetConf: &ovncnitypes.NetConf{
 				Topology:           "localnet",
 				NADName:            "ns1/nad1",
-				MTU:                1400,
+				MTU:                1500,
 				NetConf:            cnitypes.NetConf{Name: "tenantred", Type: "ovn-k8s-cni-overlay"},
 				AllowPersistentIPs: true,
 				Subnets:            "192.168.200.0/16",

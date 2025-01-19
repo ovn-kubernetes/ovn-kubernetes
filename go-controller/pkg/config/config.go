@@ -76,6 +76,10 @@ var (
 		RawUDNAllowedDefaultServices: "default/kubernetes,kube-system/kube-dns",
 	}
 
+	DefaultLocalnet = DefaultConfig{
+		MTU: 1500,
+	}
+
 	// Logging holds logging-related parsed config file parameters and command-line overrides
 	Logging = LoggingConfig{
 		File:                "", // do not log to a file by default
