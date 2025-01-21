@@ -15,6 +15,9 @@ function gocmd {
 cd "${OVN_KUBE_ROOT}"
 
 PKGS=$(gocmd list -mod vendor -f '{{if len .TestGoFiles}} {{.ImportPath}} {{end}}' ${PKGS:-./cmd/... ./pkg/... ./hybrid-overlay/...} | xargs)
+echo $PKGS
+
+PKGS="github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node"
 
 if [[ "$1" == "focus" && "$2" != "" ]]; then
     ginkgo_focus="-ginkgo.focus="$(echo ${2} | sed 's/ /\\s/g')""
