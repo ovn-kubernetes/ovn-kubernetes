@@ -23,6 +23,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/linkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/syncmap"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
 
@@ -905,6 +906,10 @@ func (c *Controller) repairNode() error {
 	for _, link := range links {
 		link := link
 		linkName := link.Attrs().Name
+		// skip OVN managed interfaces that don't serve as secondary interfaces
+		if strings.HasPrefix(linkName, types.K8sMgmtIntfNamePrefix) {
+			continue
+		}
 		linkIdx := link.Attrs().Index
 		addresses, err := util.GetFilteredInterfaceAddrs(link, c.v4, c.v6)
 		if err != nil {
