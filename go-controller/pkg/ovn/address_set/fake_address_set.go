@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/onsi/gomega"
 
@@ -247,6 +248,13 @@ func (f *FakeAddressSetFactory) EventuallyExpectAddressSetWithAddresses(dbIDsOrN
 	gomega.Eventually(func(g gomega.Gomega) {
 		f.expectAddressSetWithAddresses(g, dbIDs, addresses)
 	}).Should(gomega.Succeed())
+}
+
+func (f *FakeAddressSetFactory) EventuallyExpectAddressSetWithAddressesFailure(dbIDsOrNsName any, addresses []string) {
+	dbIDs := f.getDbIDsFromNsNameOrDbIDs(dbIDsOrNsName)
+	gomega.ConsistentlyWithOffset(1, func(g gomega.Gomega) {
+		f.expectAddressSetWithAddresses(g, dbIDs, addresses)
+	}, 2*time.Second).ShouldNot(gomega.Succeed())
 }
 
 // ExpectEmptyAddressSet ensures the address set owned by dbIDsOrNsName exists with no Addresses

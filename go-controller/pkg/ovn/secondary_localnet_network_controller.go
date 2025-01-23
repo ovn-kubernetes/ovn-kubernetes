@@ -3,7 +3,9 @@ package ovn
 import (
 	"context"
 	"fmt"
+	"os"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,9 +14,14 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 
+	"github.com/ovn-org/libovsdb/client"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/pod"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	ovsops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
@@ -105,6 +112,11 @@ func (h *secondaryLocalnetNetworkControllerEventHandler) AddResource(obj interfa
 			return fmt.Errorf("could not cast %T object to Node", obj)
 		}
 		return h.oc.addUpdateNodeEvent(node)
+	case factory.PodType:
+		if err := h.oc.checkBridgeMapping(obj); err != nil {
+			return fmt.Errorf("failed pod AddResource %w", err)
+		}
+		fallthrough
 	default:
 		return h.oc.AddSecondaryNetworkResourceCommon(h.objType, obj)
 	}
@@ -122,6 +134,11 @@ func (h *secondaryLocalnetNetworkControllerEventHandler) UpdateResource(oldObj, 
 			return fmt.Errorf("could not cast %T object to Node", newObj)
 		}
 		return h.oc.addUpdateNodeEvent(node)
+	case factory.PodType:
+		if err := h.oc.checkBridgeMapping(newObj); err != nil {
+			return fmt.Errorf("failed pod UpdateResource %w", err)
+		}
+		fallthrough
 	default:
 		return h.oc.UpdateSecondaryNetworkResourceCommon(h.objType, oldObj, newObj, inRetryCache)
 	}
@@ -186,6 +203,9 @@ func (h *secondaryLocalnetNetworkControllerEventHandler) IsObjectInTerminalState
 // for a secondary localnet network
 type SecondaryLocalnetNetworkController struct {
 	BaseSecondaryLayer2NetworkController
+	ovsClient          client.Client
+	ovsClientCancel    context.CancelFunc
+	controllerNodeName string
 }
 
 // NewSecondaryLocalnetNetworkController create a new OVN controller for the given secondary localnet NAD
@@ -193,14 +213,33 @@ func NewSecondaryLocalnetNetworkController(
 	cnci *CommonNetworkControllerInfo,
 	netInfo util.NetInfo,
 	networkManager networkmanager.Interface,
-) *SecondaryLocalnetNetworkController {
+) (*SecondaryLocalnetNetworkController, error) {
+	return newSecondaryLocalnetNetworkController(cnci, netInfo, networkManager, nil)
+}
+
+func newSecondaryLocalnetNetworkController(
+	cnci *CommonNetworkControllerInfo,
+	netInfo util.NetInfo,
+	networkManager networkmanager.Interface,
+	ovsClient client.Client,
+) (*SecondaryLocalnetNetworkController, error) {
 
 	stopChan := make(chan struct{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	if ovsClient == nil {
+		var err error
+		ovsClient, err = libovsdb.NewOVSClient(ctx.Done())
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+	}
 
 	ipv4Mode, ipv6Mode := netInfo.IPMode()
 	addressSetFactory := addressset.NewOvnAddressSetFactory(cnci.nbClient, ipv4Mode, ipv6Mode)
 	oc := &SecondaryLocalnetNetworkController{
-		BaseSecondaryLayer2NetworkController{
+		BaseSecondaryLayer2NetworkController: BaseSecondaryLayer2NetworkController{
 			BaseSecondaryNetworkController: BaseSecondaryNetworkController{
 				BaseNetworkController: BaseNetworkController{
 					CommonNetworkControllerInfo: *cnci,
@@ -222,6 +261,9 @@ func NewSecondaryLocalnetNetworkController(
 				},
 			},
 		},
+		ovsClient:          ovsClient,
+		ovsClientCancel:    cancel,
+		controllerNodeName: os.Getenv("K8S_NODE"),
 	}
 
 	if oc.allocatesPodAnnotation() {
@@ -247,7 +289,7 @@ func NewSecondaryLocalnetNetworkController(
 	oc.multicastSupport = false
 
 	oc.initRetryFramework()
-	return oc
+	return oc, nil
 }
 
 // Start starts the secondary localnet controller, handles all events and creates all needed logical entities
@@ -309,6 +351,7 @@ func (oc *SecondaryLocalnetNetworkController) init() error {
 
 func (oc *SecondaryLocalnetNetworkController) Stop() {
 	klog.Infof("Stoping controller for secondary network %s", oc.GetNetworkName())
+	oc.ovsClientCancel()
 	oc.BaseSecondaryLayer2NetworkController.stop()
 }
 
@@ -360,11 +403,82 @@ func (oc *SecondaryLocalnetNetworkController) newRetryFramework(
 }
 
 func (oc *SecondaryLocalnetNetworkController) localnetPortNetworkNameOptions() map[string]string {
-	localnetLSPOptions := map[string]string{
-		"network_name": oc.GetNetworkName(),
+	return map[string]string{
+		"network_name": oc.findNetworkName(),
 	}
+}
+
+func (oc *SecondaryLocalnetNetworkController) checkBridgeMapping(obj interface{}) error {
+	if !config.OVNKubernetesFeature.EnableInterconnect {
+		return nil
+	}
+
+	pod, isPod := obj.(*corev1.Pod)
+	if !isPod {
+		return fmt.Errorf("failed casting %T object to *knet.Pod", obj)
+	}
+
+	if !util.PodScheduled(pod) {
+		return nil
+	}
+
+	if oc.controllerNodeName != pod.Spec.NodeName {
+		return nil
+	}
+
+	isNADKnown, err := oc.isPodAttachedToKnownNAD(pod)
+	if err != nil {
+		return err
+	}
+	if !isNADKnown {
+		return nil
+	}
+
+	return oc.networkMappedToBridge(pod)
+}
+
+func (oc *SecondaryLocalnetNetworkController) isPodAttachedToKnownNAD(pod *corev1.Pod) (bool, error) {
+	networks, err := util.GetK8sPodAllNetworkSelections(pod)
+	if err != nil {
+		return false, err
+	}
+
+	nInfo := oc.GetNetInfo()
+	for _, network := range networks {
+		nadName := util.GetNADName(network.Namespace, network.Name)
+		if nInfo.HasNAD(nadName) {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func (oc *SecondaryLocalnetNetworkController) networkMappedToBridge(pod *corev1.Pod) error {
+	openvSwitch, err := ovsops.GetOpenvSwitch(oc.ovsClient)
+	if err != nil {
+		return err
+	}
+
+	ovnBridgeMappings := openvSwitch.ExternalIDs["ovn-bridge-mappings"]
+
+	networkName := oc.findNetworkName()
+	bridgeMappings := strings.Split(ovnBridgeMappings, ",")
+	for _, bridgeMapping := range bridgeMappings {
+		networkBridgeAssociation := strings.Split(bridgeMapping, ":")
+		if len(networkBridgeAssociation) == 2 && networkBridgeAssociation[0] == networkName {
+			return nil
+		}
+	}
+
+	err = fmt.Errorf("failed to find bridge mapping for network: %q on node %q; Current ovn-bridge-mappings: %q", networkName, oc.controllerNodeName, ovnBridgeMappings)
+	oc.recordPodErrorEvent(pod, err)
+	return err
+}
+
+func (oc *SecondaryLocalnetNetworkController) findNetworkName() string {
 	if oc.PhysicalNetworkName() != "" {
-		localnetLSPOptions["network_name"] = oc.PhysicalNetworkName()
+		return oc.PhysicalNetworkName()
 	}
-	return localnetLSPOptions
+	return oc.GetNetworkName()
 }
