@@ -44,6 +44,7 @@ const (
 	ExternalSwitchPrefix         = "ext_"
 	GWRouterPrefix               = "GR_"
 	GWRouterLocalLBPostfix       = "_local"
+	TRouterPrefix                = "TR_"
 	RouterToSwitchPrefix         = "rtos-"
 	InterPrefix                  = "inter-"
 	HybridSubnetPrefix           = "hybrid-subnet-"
@@ -70,6 +71,9 @@ const (
 	TransitSwitch               = "transit_switch"
 	TransitSwitchToRouterPrefix = "tstor-"
 	RouterToTransitSwitchPrefix = "rtots-"
+
+	TransitRouterToRouterPrefix = "trtor-"
+	RouterToTransitRouterPrefix = "rtotr-"
 
 	// ACL Default Tier Priorities
 

@@ -802,9 +802,9 @@ func (c *Controller) configureUDNEnabledServiceRoute(service *corev1.Service) er
 			ExternalIDs: extIDs,
 		}
 		routerName := c.netInfo.GetNetworkScopedClusterRouterName()
-		if c.netInfo.TopologyType() == types.Layer2Topology {
-			routerName = nodeInfo.gatewayRouterName
-		}
+		//if c.netInfo.TopologyType() == types.Layer2Topology {
+		//	routerName = nodeInfo.gatewayRouterName
+		//}
 		ops, err = libovsdbops.CreateOrUpdateLogicalRouterStaticRoutesWithPredicateOps(c.nbClient, nil, routerName, &staticRoute, func(item *nbdb.LogicalRouterStaticRoute) bool {
 			return routesEqual(item, &staticRoute)
 		})
