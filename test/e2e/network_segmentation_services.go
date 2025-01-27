@@ -178,10 +178,10 @@ ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | 
 				checkConnectionToNodePort(f, udnClientPod2, udnService, &nodes.Items[2], "other node", udnServerPod.Name)
 
 				By("Connect to the UDN service from the UDN client external container")
-				checkConnectionToLoadBalancersFromExternalContainer(f, clientContainer, udnService, udnServerPod.Name)
-				checkConnectionToNodePortFromExternalContainer(f, clientContainer, udnService, &nodes.Items[0], "server node", udnServerPod.Name)
-				checkConnectionToNodePortFromExternalContainer(f, clientContainer, udnService, &nodes.Items[1], "other node", udnServerPod.Name)
-				checkConnectionToNodePortFromExternalContainer(f, clientContainer, udnService, &nodes.Items[2], "other node", udnServerPod.Name)
+				checkConnectionToLoadBalancersFromExternalContainer(clientContainer, udnService, udnServerPod.Name)
+				checkConnectionToNodePortFromExternalContainer(clientContainer, udnService, &nodes.Items[0], "server node", udnServerPod.Name)
+				checkConnectionToNodePortFromExternalContainer(clientContainer, udnService, &nodes.Items[1], "other node", udnServerPod.Name)
+				checkConnectionToNodePortFromExternalContainer(clientContainer, udnService, &nodes.Items[2], "other node", udnServerPod.Name)
 
 				// Default network -> UDN
 				// Check that it cannot connect
@@ -323,7 +323,8 @@ func ParseNodeHostIPDropNetMask(node *kapi.Node) (sets.Set[string], error) {
 }
 
 func checkConnectionToAgnhostPod(f *framework.Framework, clientPod *v1.Pod, expectedOutput, cmd string) error {
-	return wait.PollImmediate(200*time.Millisecond, 5*time.Second, func() (bool, error) {
+	return wait.PollUntilContextTimeout(context.TODO(), 200*time.Millisecond, 5*time.Second, true, func(ctx context.Context) (bool, error) {
+		defer GinkgoRecover()
 		stdout, stderr, err2 := ExecShellInPodWithFullOutput(f, clientPod.Namespace, clientPod.Name, cmd)
 		fmt.Printf("stdout=%s\n", stdout)
 		fmt.Printf("stderr=%s\n", stderr)
@@ -341,7 +342,8 @@ func checkConnectionToAgnhostPod(f *framework.Framework, clientPod *v1.Pod, expe
 }
 
 func checkNoConnectionToAgnhostPod(f *framework.Framework, clientPod *v1.Pod, cmd string) error {
-	err := wait.PollImmediate(500*time.Millisecond, 2*time.Second, func() (bool, error) {
+	err := wait.PollUntilContextTimeout(context.TODO(), 500*time.Millisecond, 2*time.Second, true, func(ctx context.Context) (bool, error) {
+		defer GinkgoRecover()
 		stdout, stderr, err2 := ExecShellInPodWithFullOutput(f, clientPod.Namespace, clientPod.Name, cmd)
 		fmt.Printf("stdout=%s\n", stdout)
 		fmt.Printf("stderr=%s\n", stderr)
@@ -466,7 +468,7 @@ func checkConnectionOrNoConnectionToLoadBalancers(f *framework.Framework, client
 	}
 }
 
-func checkConnectionToNodePortFromExternalContainer(f *framework.Framework, containerName string, service *v1.Service, node *v1.Node, nodeRoleMsg, expectedOutput string) {
+func checkConnectionToNodePortFromExternalContainer(containerName string, service *v1.Service, node *v1.Node, nodeRoleMsg, expectedOutput string) {
 	GinkgoHelper()
 	var err error
 	nodePort := service.Spec.Ports[0].NodePort
@@ -487,7 +489,7 @@ func checkConnectionToNodePortFromExternalContainer(f *framework.Framework, cont
 	}
 }
 
-func checkConnectionToLoadBalancersFromExternalContainer(f *framework.Framework, containerName string, service *v1.Service, expectedOutput string) {
+func checkConnectionToLoadBalancersFromExternalContainer(containerName string, service *v1.Service, expectedOutput string) {
 	GinkgoHelper()
 	port := service.Spec.Ports[0].Port
 
