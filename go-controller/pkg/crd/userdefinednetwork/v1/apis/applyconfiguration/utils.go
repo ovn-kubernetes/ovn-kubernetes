@@ -31,6 +31,8 @@ import (
 func ForKind(kind schema.GroupVersionKind) interface{} {
 	switch kind {
 	// Group=k8s.ovn.org, Version=v1
+	case v1.SchemeGroupVersion.WithKind("AccessVLANConfig"):
+		return &userdefinednetworkv1.AccessVLANConfigApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("ClusterUserDefinedNetwork"):
 		return &userdefinednetworkv1.ClusterUserDefinedNetworkApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("ClusterUserDefinedNetworkSpec"):
@@ -45,6 +47,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &userdefinednetworkv1.Layer3ConfigApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("Layer3Subnet"):
 		return &userdefinednetworkv1.Layer3SubnetApplyConfiguration{}
+	case v1.SchemeGroupVersion.WithKind("LocalnetConfig"):
+		return &userdefinednetworkv1.LocalnetConfigApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("NetworkSpec"):
 		return &userdefinednetworkv1.NetworkSpecApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("UserDefinedNetwork"):
@@ -53,6 +57,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &userdefinednetworkv1.UserDefinedNetworkSpecApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("UserDefinedNetworkStatus"):
 		return &userdefinednetworkv1.UserDefinedNetworkStatusApplyConfiguration{}
+	case v1.SchemeGroupVersion.WithKind("VLANConfig"):
+		return &userdefinednetworkv1.VLANConfigApplyConfiguration{}
 
 	}
 	return nil
