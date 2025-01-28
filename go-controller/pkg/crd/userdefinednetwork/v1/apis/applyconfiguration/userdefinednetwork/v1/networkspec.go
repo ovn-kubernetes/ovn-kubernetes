@@ -24,9 +24,10 @@ import (
 // NetworkSpecApplyConfiguration represents a declarative configuration of the NetworkSpec type for use
 // with apply.
 type NetworkSpecApplyConfiguration struct {
-	Topology *v1.NetworkTopology             `json:"topology,omitempty"`
-	Layer3   *Layer3ConfigApplyConfiguration `json:"layer3,omitempty"`
-	Layer2   *Layer2ConfigApplyConfiguration `json:"layer2,omitempty"`
+	Topology *v1.NetworkTopology               `json:"topology,omitempty"`
+	Layer3   *Layer3ConfigApplyConfiguration   `json:"layer3,omitempty"`
+	Layer2   *Layer2ConfigApplyConfiguration   `json:"layer2,omitempty"`
+	Localnet *LocalnetConfigApplyConfiguration `json:"localnet,omitempty"`
 }
 
 // NetworkSpecApplyConfiguration constructs a declarative configuration of the NetworkSpec type for use with
@@ -56,5 +57,13 @@ func (b *NetworkSpecApplyConfiguration) WithLayer3(value *Layer3ConfigApplyConfi
 // If called multiple times, the Layer2 field is set to the value of the last call.
 func (b *NetworkSpecApplyConfiguration) WithLayer2(value *Layer2ConfigApplyConfiguration) *NetworkSpecApplyConfiguration {
 	b.Layer2 = value
+	return b
+}
+
+// WithLocalnet sets the Localnet field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Localnet field is set to the value of the last call.
+func (b *NetworkSpecApplyConfiguration) WithLocalnet(value *LocalnetConfigApplyConfiguration) *NetworkSpecApplyConfiguration {
+	b.Localnet = value
 	return b
 }
