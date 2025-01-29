@@ -445,7 +445,7 @@ func (ncc *networkClusterController) Reconcile(netInfo util.NetInfo) error {
 	if err != nil {
 		klog.Errorf("Failed to reconcile network %s: %v", ncc.GetNetworkName(), err)
 	}
-	if reconcilePendingPods {
+	if reconcilePendingPods && ncc.retryPods != nil {
 		if err := objretry.RequeuePendingPods(ncc.kube, ncc.GetNetInfo(), ncc.retryPods); err != nil {
 			klog.Errorf("Failed to requeue pending pods for network %s: %v", ncc.GetNetworkName(), err)
 		}
