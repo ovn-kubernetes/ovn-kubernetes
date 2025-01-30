@@ -10,12 +10,15 @@ import (
 	"time"
 
 	nadlisters "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
+	"golang.org/x/sync/errgroup"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/util/wait"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
@@ -228,6 +231,10 @@ func (c *networkController) getAllNetworkStates() []*networkControllerState {
 }
 
 func (c *networkController) syncAll() error {
+	start := time.Now()
+	klog.Infof("%s: syncing all networks", c.name)
+	defer func() { klog.Infof("%s: finished syncing all networks. Time taken: %s", c.name, time.Since(start)) }()
+
 	// as we sync upon start, consider networks that have not been ensured as
 	// stale and clean them up
 	validNetworks := c.getAllNetworks()
@@ -240,19 +247,44 @@ func (c *networkController) syncAll() error {
 	// aware of all the existing networks on initialization. To achieve that, we need to start existing
 	// networks synchronously. Otherwise, these controllers might incorrectly assess valid configuration
 	// as stale.
-	start := time.Now()
-	klog.Infof("%s: syncing all networks", c.name)
+	eg, cancel := errgroup.WithContext(context.Background())
+	// start 1 network at a time
+	eg.SetLimit(1)
 	for _, network := range validNetworks {
-		err := c.syncNetwork(network.GetNetworkName())
-		if errors.Is(err, ErrNetworkControllerTopologyNotManaged) {
-			klog.V(5).Infof("Ignoring network %q since %q does not manage it", network.GetNetworkName(), c.name)
-			continue
-		}
-		if err != nil {
-			return fmt.Errorf("failed to sync network %s: %w", network.GetNetworkName(), err)
-		}
+		networkName := network.GetNetworkName()
+		eg.Go(func() error {
+			err := retry.OnError(
+				wait.Backoff{
+					// retry each network every 500ms during 1m
+					Steps:    120,
+					Duration: 500 * time.Millisecond,
+					Factor:   1.0,
+					Cap:      1 * time.Minute,
+				},
+				func(err error) bool {
+					select {
+					case <-cancel.Done():
+						// at least one network failed to start, no point in
+						// retrying further
+						return false
+					default:
+						return !errors.Is(err, ErrNetworkControllerTopologyNotManaged)
+					}
+				},
+				func() error { return c.syncNetwork(networkName) },
+			)
+			if errors.Is(err, ErrNetworkControllerTopologyNotManaged) {
+				klog.V(5).Infof("Ignoring network %q since %q does not manage it", networkName, c.name)
+				return nil
+			}
+			return err
+		})
 	}
-	klog.Infof("%s: finished syncing all networks. Time taken: %s", c.name, time.Since(start))
+	err := eg.Wait()
+	if err != nil {
+		return fmt.Errorf("failed to start networks: %w", err)
+	}
+
 	return nil
 }
 

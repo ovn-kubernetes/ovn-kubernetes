@@ -2,6 +2,7 @@ package factory
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"reflect"
@@ -104,6 +105,10 @@ import (
 	netlisters "k8s.io/client-go/listers/networking/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
+)
+
+var (
+	ErrSyncNoRetry = errors.New("failed while processing existing items and will not retry")
 )
 
 type handlerCounter struct {
@@ -1306,7 +1311,11 @@ func (wf *WatchFactory) addHandler(objType reflect.Type, namespace string, sel l
 		// after a restart or whatever. We will wrap it with retries to ensure it succeeds.
 		// Being so, processExisting is expected to be idem-potent!
 		err := utilwait.PollUntilContextTimeout(context.Background(), 500*time.Millisecond, 60*time.Second, true, func(ctx context.Context) (bool, error) {
-			if err := processExisting(items); err != nil {
+			err := processExisting(items)
+			if errors.Is(err, ErrSyncNoRetry) {
+				return false, err
+			}
+			if err != nil {
 				klog.Errorf("Failed (will retry) while processing existing %v items: %v", objType, err)
 				return false, nil
 			}

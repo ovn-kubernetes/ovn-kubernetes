@@ -511,10 +511,11 @@ func (oc *SecondaryLayer2NetworkController) newRetryFramework(
 		syncFunc:     nil,
 	}
 	resourceHandler := &retry.ResourceHandler{
-		HasUpdateFunc:          hasResourceAnUpdateFunc(objectType),
-		NeedsUpdateDuringRetry: needsUpdateDuringRetry(objectType),
-		ObjType:                objectType,
-		EventHandler:           eventHandler,
+		HasUpdateFunc:             hasResourceAnUpdateFunc(objectType),
+		NeedsUpdateDuringRetry:    needsUpdateDuringRetry(objectType),
+		InhibitRetryOnSyncFailure: true,
+		ObjType:                   objectType,
+		EventHandler:              eventHandler,
 	}
 	return retry.NewRetryFramework(
 		oc.stopChan,
