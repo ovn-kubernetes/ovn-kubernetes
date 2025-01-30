@@ -51,6 +51,7 @@ type ControllerManager struct {
 	// Supports OVN Template Load Balancers?
 	svcTemplateSupport bool
 
+	stopOnce                 sync.Once
 	stopChan                 chan struct{}
 	wg                       *sync.WaitGroup
 	portCache                *ovn.PortCache
@@ -472,22 +473,24 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 
 // Stop gracefully stops all managed controllers
 func (cm *ControllerManager) Stop() {
-	// stop metric recorders
-	close(cm.stopChan)
+	cm.stopOnce.Do(func() {
+		// stop metric recorders
+		close(cm.stopChan)
 
-	// stop the default network controller
-	if cm.defaultNetworkController != nil {
-		cm.defaultNetworkController.Stop()
-	}
+		// stop the default network controller
+		if cm.defaultNetworkController != nil {
+			cm.defaultNetworkController.Stop()
+		}
 
-	// stop the NAD controller
-	if cm.networkManager != nil {
-		cm.networkManager.Stop()
-	}
+		// stop the NAD controller
+		if cm.networkManager != nil {
+			cm.networkManager.Stop()
+		}
 
-	if cm.routeImportManager != nil {
-		cm.routeImportManager.Stop()
-	}
+		if cm.routeImportManager != nil {
+			cm.routeImportManager.Stop()
+		}
+	})
 }
 
 func (cm *ControllerManager) Reconcile(name string, old, new util.NetInfo) error {

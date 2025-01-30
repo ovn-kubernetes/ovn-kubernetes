@@ -473,7 +473,7 @@ func (oc *SecondaryLayer2NetworkController) Init() error {
 }
 
 func (oc *SecondaryLayer2NetworkController) Stop() {
-	klog.Infof("Stoping controller for secondary network %s", oc.GetNetworkName())
+	klog.Infof("Stopping layer 2 network controller for secondary network %s", oc.GetNetworkName())
 	oc.BaseSecondaryLayer2NetworkController.stop()
 }
 

@@ -308,7 +308,7 @@ func (oc *SecondaryLocalnetNetworkController) Init() error {
 }
 
 func (oc *SecondaryLocalnetNetworkController) Stop() {
-	klog.Infof("Stoping controller for secondary network %s", oc.GetNetworkName())
+	klog.Infof("Stopping localnet controller for secondary network %s", oc.GetNetworkName())
 	oc.BaseSecondaryLayer2NetworkController.stop()
 }
 

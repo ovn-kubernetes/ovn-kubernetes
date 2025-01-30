@@ -47,6 +47,7 @@ const (
 type Controller struct {
 	sync.Mutex
 	kubeOVN  *kube.KubeOVN
+	stopOnce sync.Once
 	stopCh   chan struct{}
 	wg       *sync.WaitGroup
 	services map[string]*svcState  // svc key -> state
@@ -218,12 +219,14 @@ func (c *Controller) Start(threadiness int) error {
 }
 
 func (c *Controller) Stop() {
-	klog.Infof("Shutting down Egress Services controller")
+	c.stopOnce.Do(func() {
+		klog.Infof("Shutting down Egress Services controller")
 
-	close(c.stopCh)
-	c.egressServiceQueue.ShutDown()
-	c.nodesQueue.ShutDown()
-	c.wg.Wait()
+		close(c.stopCh)
+		c.egressServiceQueue.ShutDown()
+		c.nodesQueue.ShutDown()
+		c.wg.Wait()
+	})
 }
 
 // This takes care of building the controller caches

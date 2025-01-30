@@ -342,6 +342,10 @@ func (c *networkController) ensureNetwork(network util.MutableNetInfo) error {
 
 	err = nc.Start(context.Background())
 	if err != nil {
+		nc.Stop()
+		if err := nc.Cleanup(); err != nil {
+			klog.Errorf("Failed to cleanup network %s: %v", networkName, err)
+		}
 		return fmt.Errorf("failed to start network %s: %w", networkName, err)
 	}
 	c.setNetworkState(network.GetNetworkName(), &networkControllerState{controller: nc})
