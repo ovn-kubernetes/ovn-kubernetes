@@ -32,8 +32,8 @@ env:
   CI_DIST_IMAGES_OUTPUT: dist/images/_output/
 
   # To run CI over custom OVN
-  # OVN_REPO: https://github.com/ovn-org/ovn
-  # OVN_GITREF: main
+  OVN_REPO: https://github.com/ovn-org/ovn
+  OVN_GITREF: main
 
 jobs:
   # separate job for parallelism
