@@ -1129,6 +1129,9 @@ func ParseNADInfo(netattachdef *nettypes.NetworkAttachmentDefinition) (NetInfo, 
 func ParseNetConf(netattachdef *nettypes.NetworkAttachmentDefinition) (*ovncnitypes.NetConf, error) {
 	netconf, err := config.ParseNetConf([]byte(netattachdef.Spec.Config))
 	if err != nil {
+		if err.Error() == ErrorAttachDefNotOvnManaged.Error() {
+			return nil, err
+		}
 		return nil, fmt.Errorf("error parsing Network Attachment Definition %s/%s: %v", netattachdef.Namespace, netattachdef.Name, err)
 	}
 
