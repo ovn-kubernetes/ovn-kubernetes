@@ -1820,7 +1820,7 @@ func generateLayer3Subnets(cidrs string) []string {
 		case 2:
 			subnets = append(subnets, fmt.Sprintf(`{cidr: "%s/%s"}`, cidrSplit[0], cidrSplit[1]))
 		case 3:
-			subnets = append(subnets, fmt.Sprintf(`{cidr: "%s/%s", hostSubnet: %q }`, cidrSplit[0], cidrSplit[1], cidrSplit[2]))
+			subnets = append(subnets, fmt.Sprintf(`{cidr: "%s/%s", hostSubnet: %s }`, cidrSplit[0], cidrSplit[1], cidrSplit[2]))
 		default:
 			panic(fmt.Sprintf("invalid layer3 subnet: %v", cidr))
 		}
