@@ -481,38 +481,3 @@ func DiscoverLiveMigrationStatus(client *factory.WatchFactory, pod *corev1.Pod) 
 	}
 	return &status, nil
 }
-
-func ReconcileIPv4DefaultGatewayAfterLiveMigration(watchFactory *factory.WatchFactory, netInfo util.NetInfo, liveMigrationStatus *LiveMigrationStatus, interfaceName string) error {
-	if liveMigrationStatus.State != LiveMigrationTargetDomainReady {
-		return nil
-	}
-
-	targetNode, err := watchFactory.GetNode(liveMigrationStatus.TargetPod.Spec.NodeName)
-	if err != nil {
-		return err
-	}
-
-	lrpJoinAddress, err := util.ParseNodeGatewayRouterJoinNetwork(targetNode, netInfo.GetNetworkName())
-	if err != nil {
-		return err
-	}
-
-	lrpJoinIPv4, _, err := net.ParseCIDR(lrpJoinAddress.IPv4)
-	if err != nil {
-		return err
-	}
-
-	lrpMAC := util.IPAddrToHWAddr(lrpJoinIPv4)
-	for _, subnet := range netInfo.Subnets() {
-		gwIP := util.GetNodeGatewayIfAddr(subnet.CIDR).IP.To4()
-		if gwIP == nil {
-			continue
-		}
-		garp := util.GARP{IP: gwIP, MAC: &lrpMAC}
-		if err := util.BroadcastGARP(interfaceName, garp); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}

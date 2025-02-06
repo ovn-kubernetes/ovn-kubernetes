@@ -17,7 +17,6 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kubevirt"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -201,17 +200,6 @@ func (h *secondaryLayer2NetworkControllerEventHandler) UpdateResource(oldObj, ne
 			_, syncZoneIC := h.oc.syncZoneICFailed.Load(newNode.Name)
 			return h.oc.addUpdateRemoteNodeEvent(newNode, syncZoneIC)
 		}
-	case factory.PodType:
-		newPod := newObj.(*corev1.Pod)
-		oldPod := oldObj.(*corev1.Pod)
-		if err := h.oc.ensurePodForSecondaryNetwork(newPod, shouldAddPort(oldPod, newPod, inRetryCache)); err != nil {
-			return err
-		}
-
-		if h.oc.isPodScheduledinLocalZone(newPod) {
-			return h.oc.updateLocalPodEvent(newPod)
-		}
-		return nil
 	default:
 		return h.oc.UpdateSecondaryNetworkResourceCommon(h.objType, oldObj, newObj, inRetryCache)
 	}
@@ -865,36 +853,6 @@ func (oc *SecondaryLayer2NetworkController) StartServiceController(wg *sync.Wait
 	err := oc.svcController.Run(5, oc.stopChan, wg, runRepair, useLBGroups, false)
 	if err != nil {
 		return fmt.Errorf("error running OVN Kubernetes Services controller for network %s: %v", oc.GetNetworkName(), err)
-	}
-	return nil
-}
-
-func (oc *SecondaryLayer2NetworkController) updateLocalPodEvent(pod *corev1.Pod) error {
-	if kubevirt.IsPodAllowedForMigration(pod, oc.GetNetInfo()) {
-		kubevirtLiveMigrationStatus, err := kubevirt.DiscoverLiveMigrationStatus(oc.watchFactory, pod)
-		if err != nil {
-			return err
-		}
-		if kubevirtLiveMigrationStatus != nil && kubevirtLiveMigrationStatus.TargetPod.Name == pod.Name {
-			if err := oc.reconcileLiveMigrationTargetZone(kubevirtLiveMigrationStatus); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (oc *SecondaryLayer2NetworkController) reconcileLiveMigrationTargetZone(kubevirtLiveMigrationStatus *kubevirt.LiveMigrationStatus) error {
-	// Only primary networks has a gateway to reconcile
-	if !oc.IsPrimaryNetwork() {
-		return nil
-	}
-	mgmtInterfaceName := util.GetNetworkScopedK8sMgmtHostIntfName(uint(oc.GetNetworkID()))
-
-	if hasIPv4Subnet, _ := oc.IPMode(); hasIPv4Subnet {
-		if err := kubevirt.ReconcileIPv4DefaultGatewayAfterLiveMigration(oc.watchFactory, oc.GetNetInfo(), kubevirtLiveMigrationStatus, mgmtInterfaceName); err != nil {
-			return err
-		}
 	}
 	return nil
 }
