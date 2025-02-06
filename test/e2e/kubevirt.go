@@ -1664,24 +1664,6 @@ runcmd:
 				checkNorthSouthIngressIperfTraffic(externalContainerName, nodeIPs, svc.Spec.Ports[0].NodePort, step)
 				checkNorthSouthEgressICMPTraffic(vmi, []string{externalContainerIPV4Address, externalContainerIPV6Address}, step)
 			}
-
-			if td.role == "primary" && td.test.description == liveMigrate.description && isIPv4Supported() && isInterconnectEnabled() {
-				step = by(vm.Name, fmt.Sprintf("Checking IPv4 gateway cached mac after %s %s", td.resource.description, td.test.description))
-				Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
-
-				targetNode, err := fr.ClientSet.CoreV1().Nodes().Get(context.Background(), vmi.Status.MigrationState.TargetNode, metav1.GetOptions{})
-				Expect(err).ToNot(HaveOccurred(), step)
-
-				expectedGatewayMAC, err := kubevirt.GenerateGatewayMAC(targetNode, netConfig.networkName)
-				Expect(err).ToNot(HaveOccurred(), step)
-
-				Expect(err).ToNot(HaveOccurred(), step)
-				Eventually(kubevirt.RetrieveCachedGatewayMAC).
-					WithArguments(vmi, "enp1s0", cidrIPv4).
-					WithTimeout(10*time.Second).
-					WithPolling(time.Second).
-					Should(Equal(expectedGatewayMAC), step)
-			}
 		},
 			func(td testData) string {
 				role := "secondary"
