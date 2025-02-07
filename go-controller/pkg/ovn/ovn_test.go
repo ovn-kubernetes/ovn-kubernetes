@@ -586,7 +586,7 @@ func (o *FakeOVN) NewSecondaryNetworkController(netattachdef *nettypes.NetworkAt
 	return nil
 }
 
-func (o *FakeOVN) patchEgressIPObj(nodeName, egressIPName, egressIP, network string) {
+func (o *FakeOVN) patchEgressIPObj(nodeName, egressIPName, egressIP string) {
 	// NOTE: Cluster manager is the one who patches the egressIP object.
 	// For the sake of unit testing egressip zone controller we need to patch egressIP object manually
 	// There are tests in cluster-manager package covering the patch logic.
