@@ -74,6 +74,7 @@ type BaseNodeNetworkController struct {
 	// Note that we assume that Pod's Network Attachment Selection Annotation will not change over time.
 	podNADToDPUCDMap sync.Map
 
+	stopOnce sync.Once
 	// stopChan and WaitGroup per controller
 	stopChan chan struct{}
 	wg       *sync.WaitGroup
@@ -1331,8 +1332,10 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 // Stop gracefully stops the controller
 // deleteLogicalEntities will never be true for default network
 func (nc *DefaultNodeNetworkController) Stop() {
-	close(nc.stopChan)
-	nc.wg.Wait()
+	nc.stopOnce.Do(func() {
+		close(nc.stopChan)
+		nc.wg.Wait()
+	})
 }
 
 func (nc *DefaultNodeNetworkController) startEgressIPHealthCheckingServer(mgmtPortEntry *managementPortEntry) error {

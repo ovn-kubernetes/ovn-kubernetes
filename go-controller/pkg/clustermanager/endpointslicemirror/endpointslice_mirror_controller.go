@@ -39,6 +39,7 @@ type Controller struct {
 	wg         *sync.WaitGroup
 	queue      workqueue.TypedRateLimitingInterface[string]
 	name       string
+	stopOnce   sync.Once
 
 	endpointSliceLister  discoverylisters.EndpointSliceLister
 	endpointSlicesSynced cache.InformerSynced
@@ -173,11 +174,13 @@ func (c *Controller) Start(ctx context.Context, threadiness int) error {
 }
 
 func (c *Controller) Stop() {
-	klog.Infof("Shutting down %s", c.name)
+	c.stopOnce.Do(func() {
+		klog.Infof("Shutting down %s", c.name)
 
-	c.cancel()
-	c.queue.ShutDown()
-	c.wg.Wait()
+		c.cancel()
+		c.queue.ShutDown()
+		c.wg.Wait()
+	})
 }
 
 // repair syncs all existing EndpointSlices to add any missing entries and remove stale ones

@@ -314,6 +314,7 @@ func (eIPC *egressIPClusterController) executeCloudPrivateIPConfigChange(egressI
 
 type egressIPClusterController struct {
 	recorder record.EventRecorder
+	stopOnce sync.Once
 	stopChan chan struct{}
 	wg       *sync.WaitGroup
 	kube     *kube.KubeOVN
@@ -457,17 +458,19 @@ func (eIPC *egressIPClusterController) WatchEgressIP() (*factory.Handler, error)
 }
 
 func (eIPC *egressIPClusterController) Stop() {
-	close(eIPC.stopChan)
-	eIPC.wg.Wait()
-	if eIPC.egressNodeHandler != nil {
-		eIPC.watchFactory.RemoveNodeHandler(eIPC.egressNodeHandler)
-	}
-	if eIPC.egressIPHandler != nil {
-		eIPC.watchFactory.RemoveEgressIPHandler(eIPC.egressIPHandler)
-	}
-	if eIPC.cloudPrivateIPConfigHandler != nil {
-		eIPC.watchFactory.RemoveCloudPrivateIPConfigHandler(eIPC.cloudPrivateIPConfigHandler)
-	}
+	eIPC.stopOnce.Do(func() {
+		close(eIPC.stopChan)
+		eIPC.wg.Wait()
+		if eIPC.egressNodeHandler != nil {
+			eIPC.watchFactory.RemoveNodeHandler(eIPC.egressNodeHandler)
+		}
+		if eIPC.egressIPHandler != nil {
+			eIPC.watchFactory.RemoveEgressIPHandler(eIPC.egressIPHandler)
+		}
+		if eIPC.cloudPrivateIPConfigHandler != nil {
+			eIPC.watchFactory.RemoveCloudPrivateIPConfigHandler(eIPC.cloudPrivateIPConfigHandler)
+		}
+	})
 }
 
 type egressIPNodeStatus struct {

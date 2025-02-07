@@ -155,6 +155,7 @@ type StatusManager struct {
 	zones         sets.Set[string]
 	zoneTracker   *zone_tracker.ZoneTracker
 	ovnClient     *util.OVNClusterManagerClientset
+	stopOnce      sync.Once
 }
 
 type resourceReconciler interface {
@@ -223,11 +224,13 @@ func (sm *StatusManager) Start() error {
 }
 
 func (sm *StatusManager) Stop() {
-	sm.zoneTracker.Stop()
-	for _, manager := range sm.typedManagers {
-		manager.Stop()
-	}
-	sm.typedManagers = map[string]resourceReconciler{}
+	sm.stopOnce.Do(func() {
+		sm.zoneTracker.Stop()
+		for _, manager := range sm.typedManagers {
+			manager.Stop()
+		}
+		sm.typedManagers = map[string]resourceReconciler{}
+	})
 }
 
 func (sm *StatusManager) onZoneUpdate(newZones sets.Set[string]) {
