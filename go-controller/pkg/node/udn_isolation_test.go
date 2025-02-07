@@ -349,6 +349,23 @@ add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-pod-default-ips-v6 dro
 		Expect(nft.Dump()).To(Equal(getExpectedDump(nil, nil)))
 	})
 
+	It("correctly handles not ready pods", func() {
+		notReadyPod := &v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "notready",
+				UID:       ktypes.UID("notready"),
+				Namespace: defaultNamespace,
+			},
+		}
+		fakeClient = util.GetOVNClientset(notReadyPod).GetNodeClientset()
+		var err error
+		wf, err = factory.NewNodeWatchFactory(fakeClient, "node1")
+		Expect(err).NotTo(HaveOccurred())
+		manager = NewUDNHostIsolationManager(true, true, wf.PodCoreInformer())
+		Expect(wf.Start()).To(Succeed())
+		Expect(manager.reconcilePod(notReadyPod.Namespace + "/" + notReadyPod.Name)).To(Succeed())
+	})
+
 	Context("updates pod IPs", func() {
 		It("on restart", func() {
 			start(

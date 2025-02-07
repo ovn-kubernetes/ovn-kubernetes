@@ -491,6 +491,10 @@ func (m *UDNHostIsolationManager) getPodInfo(podKey string, pod *v1.Pod) (*podIn
 	// only add pods with primary UDN
 	primaryUDN, err := m.isPodPrimaryUDN(pod)
 	if err != nil {
+		if util.IsAnnotationNotSetError(err) {
+			// pod IPs were not assigned yet, expecting an update event
+			return nil, nil, nil
+		}
 		return nil, nil, fmt.Errorf("failed to check if pod %s is in primary UDN: %w", podKey, err)
 	}
 	if !primaryUDN {
