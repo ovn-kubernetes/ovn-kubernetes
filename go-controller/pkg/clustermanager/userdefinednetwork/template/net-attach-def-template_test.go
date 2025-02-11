@@ -409,6 +409,8 @@ var _ = Describe("NetAttachDefTemplate", func() {
 				Spec: netv1.NetworkAttachmentDefinitionSpec{Config: expectedNadNetConf},
 			}
 
+			config.IPv4Mode = true
+			config.IPv6Mode = true
 			nad, err := RenderNetAttachDefManifest(cudn, testNs)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(nad.TypeMeta).To(Equal(expectedNAD.TypeMeta))
