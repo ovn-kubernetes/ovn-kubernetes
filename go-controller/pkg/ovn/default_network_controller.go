@@ -888,6 +888,7 @@ func (h *defaultNetworkControllerEventHandler) AddResource(obj interface{}, from
 
 	case factory.EgressIPType:
 		eIP := obj.(*egressipv1.EgressIP)
+		klog.Infof("SURYA - called from add for %v", eIP)
 		return h.oc.eIPC.reconcileEgressIP(nil, eIP)
 
 	case factory.EgressIPNamespaceType:
@@ -1070,6 +1071,7 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 	case factory.EgressIPType:
 		oldEIP := oldObj.(*egressipv1.EgressIP)
 		newEIP := newObj.(*egressipv1.EgressIP)
+		klog.Infof("SURYA - called from update for %v/%v", oldEIP, newEIP)
 		return h.oc.eIPC.reconcileEgressIP(oldEIP, newEIP)
 
 	case factory.EgressIPNamespaceType:
@@ -1149,6 +1151,7 @@ func (h *defaultNetworkControllerEventHandler) DeleteResource(obj, cachedObj int
 
 	case factory.EgressIPType:
 		eIP := obj.(*egressipv1.EgressIP)
+		klog.Infof("SURYA - called from delete for %v", eIP)
 		return h.oc.eIPC.reconcileEgressIP(eIP, nil)
 
 	case factory.EgressIPNamespaceType:

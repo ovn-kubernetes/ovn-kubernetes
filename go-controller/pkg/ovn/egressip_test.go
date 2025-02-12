@@ -25,6 +25,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 	utilpointer "k8s.io/utils/pointer"
 )
@@ -160,7 +161,9 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 			if ni.zone != "global" {
 				annotations["k8s.ovn.org/remote-zone-migrated"] = ""
 			}
-			nodes = append(nodes, getNodeObj(fmt.Sprintf("node%d", nodeSuffix), annotations, map[string]string{}))
+			nodeObj := getNodeObj(fmt.Sprintf("node%d", nodeSuffix), annotations, map[string]string{})
+			klog.Infof("SURYA %v/%v", nodeObj.Name, ni.zone)
+			nodes = append(nodes, nodeObj)
 			nodeSuffix = nodeSuffix + 1
 		}
 		return nodes
@@ -200,9 +203,12 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 
 	nodeSwitch := func() string {
 		_, nodes := getEgressIPStatus(egressIPName)
+		klog.Infof("SURYA %v", nodes)
 		if len(nodes) != 1 {
+			klog.Infof("SURYA %v", nodes)
 			return ""
 		}
+		klog.Infof("SURYA %v", nodes)
 		return nodes[0]
 	}
 
@@ -1968,7 +1974,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 					node2.Labels = map[string]string{
 						"k8s.ovn.org/egress-assignable": "",
 					}
-
+					klog.Infof("SURYA %v/%v", node1Zone, node2Zone)
 					_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Nodes().Update(context.TODO(), &node1, metav1.UpdateOptions{})
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Nodes().Update(context.TODO(), &node2, metav1.UpdateOptions{})
@@ -1977,8 +1983,9 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 					fakeOvn.patchEgressIPObj(node2Name, egressIPName, egressIP, node2IPv4SecondaryHost1Net)
 					gomega.Eventually(getEgressIPStatusLen(egressIPName)).Should(gomega.Equal(1))
 					gomega.Eventually(nodeSwitch).Should(gomega.Equal(node2.Name))
-					egressIPs, _ = getEgressIPStatus(egressIPName)
+					egressIPs, eIPNodes = getEgressIPStatus(egressIPName)
 					gomega.Expect(egressIPs[0]).To(gomega.Equal(egressIP))
+					klog.Infof("SURYA %v", eIPNodes)
 
 					_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Namespaces().Create(context.TODO(), egressNamespace, metav1.CreateOptions{})
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1988,8 +1995,9 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 					node2MgntIP, err := getSwitchManagementPortIP(&node2)
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					reroutePolicyNextHop := []string{node2MgntIP.To4().String()}
+					klog.Infof("SURYA %v/%v/%v", node1Zone, node2Zone, reroutePolicyNextHop)
 					if interconnect && node1Zone != node2Zone && node2Zone == "remote" {
-
+						klog.Infof("SURYA %v/%v/%v", node1Zone, node2Zone, reroutePolicyNextHop)
 						//todo fix me
 						reroutePolicyNextHop = []string{"100.88.0.3"} // node2's transit switch portIP
 					}
@@ -2001,6 +2009,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						servedPodIPs = nil
 					}
 					egressIPServedPodsASv4, _ := buildEgressIPServedPodsAddressSets(servedPodIPs, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName)
+					klog.Infof("SURYA %v/%v/%v", node1Zone, node2Zone, reroutePolicyNextHop)
 					expectedDatabaseState := []libovsdbtest.TestData{
 						getReRoutePolicy(egressPod.Status.PodIP, "4", "reroute-UUID", reroutePolicyNextHop,
 							getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs()),
@@ -2115,12 +2124,15 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						egressNodeIPsASv4, _ := buildEgressIPNodeAddressSets(egressNodeIPs)
 						expectedDatabaseState = append(expectedDatabaseState, egressNodeIPsASv4)
 					}
+					klog.Infof("SURYA %v/%v/%v", node1Zone, node2Zone, reroutePolicyNextHop)
 					if node1Zone == "remote" {
+						klog.Infof("SURYA %v/%v/%v", node1Zone, node2Zone, reroutePolicyNextHop)
 						expectedDatabaseState = append(expectedDatabaseState, getReRoutePolicy(egressPod.Status.PodIP, "4", "remote-reroute-UUID", reroutePolicyNextHop,
 							getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs()))
 						expectedDatabaseState[6].(*nbdb.LogicalRouter).Policies = expectedDatabaseState[6].(*nbdb.LogicalRouter).Policies[1:]                            // remove LRP ref
 						expectedDatabaseState[6].(*nbdb.LogicalRouter).Policies = append(expectedDatabaseState[6].(*nbdb.LogicalRouter).Policies, "remote-reroute-UUID") // remove LRP ref
 						expectedDatabaseState = expectedDatabaseState[1:]                                                                                                // remove LRP
+						klog.Infof("SURYA %v", expectedDatabaseState[0])
 						ipNets, _ := util.ParseIPNets(append(node1IPv4Addresses, node2IPv4Addresses...))
 						egressNodeIPs := []string{}
 						for _, ipNet := range ipNets {
@@ -2138,14 +2150,14 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 				err := app.Run([]string{app.Name})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			},
-			ginkgo.Entry("interconnect disabled; non-ic - single zone setup", false, "global", "global"),
-			ginkgo.Entry("interconnect enabled; node1 and node2 in global zones", true, "global", "global"),
+			ginkgo.Entry("SURYA: interconnect disabled; non-ic - single zone setup", false, "global", "global"),
+			ginkgo.Entry("SURYA: interconnect enabled; node1 and node2 in global zones", true, "global", "global"),
 			// will showcase localzone setup - master is in pod's zone where pod's reroute policy towards egressNode will be done.
 			// NOTE: SNAT won't be visible because its in remote zone
-			ginkgo.Entry("interconnect enabled; node1 in global and node2 in remote zones", true, "global", "remote"),
+			ginkgo.Entry("SURYA: interconnect enabled; node1 in global and node2 in remote zones", true, "global", "remote"),
 			// will showcase localzone setup - master is in egress node's zone where pod's SNAT policy and static route will be done.
 			// NOTE: reroute policy won't be visible because its in remote zone (pod is in remote zone)
-			ginkgo.Entry("interconnect enabled; node1 in remote and node2 in global zones", true, "remote", "global"),
+			ginkgo.Entry("SURYA: interconnect enabled; node1 in remote and node2 in global zones", true, "remote", "global"),
 		)
 
 		ginkgo.DescribeTable("[mixed networks] should perform proper OVN transactions when namespace and pod is created after node egress label switch",
@@ -3247,7 +3259,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 					node2.Labels = map[string]string{
 						"k8s.ovn.org/egress-assignable": "",
 					}
-
+					klog.Infof("SURYA %v/%v", node1Zone, node2Zone)
 					_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Nodes().Update(context.TODO(), &node1, metav1.UpdateOptions{})
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Nodes().Update(context.TODO(), &node2, metav1.UpdateOptions{})
@@ -3256,8 +3268,9 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 					fakeOvn.patchEgressIPObj(node2Name, egressIPName, egressIP, node2IPv4OVNNet)
 					gomega.Eventually(getEgressIPStatusLen(egressIPName)).Should(gomega.Equal(1))
 					gomega.Eventually(nodeSwitch).Should(gomega.Equal(node2.Name))
-					egressIPs, _ = getEgressIPStatus(egressIPName)
+					egressIPs, eIPNodes = getEgressIPStatus(egressIPName)
 					gomega.Expect(egressIPs[0]).To(gomega.Equal(egressIP))
+					klog.Infof("SURYA %v", eIPNodes)
 
 					_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Namespaces().Create(context.TODO(), egressNamespace, metav1.CreateOptions{})
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -3270,6 +3283,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 					if interconnect && node1Zone != node2Zone && node2Zone == "remote" {
 						reroutePolicyNextHop = []string{"100.88.0.3"} // node2's transit switch portIP
 					}
+					klog.Infof("SURYA %v/%v/%v", node1Zone, node2Zone, reroutePolicyNextHop)
 					egressSVCServedPodsASv4, _ := buildEgressServiceAddressSets(nil)
 					servedPodIPs := []string{podV4IP}
 					// pod is located on node1, therefore if remote, we dont expect to see its IPs in the served pods address set
@@ -3283,6 +3297,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						egressNodeIPs = append(egressNodeIPs, ipNet.IP.String())
 					}
 					egressNodeIPsASv4, _ := buildEgressIPNodeAddressSets(egressNodeIPs)
+					klog.Infof("SURYA %v/%v/%v", node1Zone, node2Zone, reroutePolicyNextHop)
 					expectedDatabaseState := []libovsdbtest.TestData{
 						getReRoutePolicy(egressPod.Status.PodIP, "4", "reroute-UUID", reroutePolicyNextHop,
 							getEgressIPLRPReRouteDbIDs(eIP.Name, egressPod.Namespace, egressPod.Name, IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs()),
@@ -3384,7 +3399,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						egressIPServedPodsASv4,
 						egressNodeIPsASv4,
 					}
-
+					klog.Infof("SURYA %v/%v/%v", node1Zone, node2Zone, reroutePolicyNextHop)
 					if node1Zone == "global" {
 						// QoS Rule is configured only for nodes in local zones, the master of the remote zone will do it for the remote nodes
 						node1Switch.QOSRules = []string{"default-QoS-UUID"}
@@ -3400,6 +3415,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						expectedDatabaseState[6].(*nbdb.LogicalRouter).Policies = append(expectedDatabaseState[6].(*nbdb.LogicalRouter).Policies, "static-reroute-UUID")
 						expectedDatabaseState[6].(*nbdb.LogicalRouter).Policies = expectedDatabaseState[6].(*nbdb.LogicalRouter).Policies[1:] // remove ref to LRP since static route is routing the pod
 						expectedDatabaseState = expectedDatabaseState[1:]                                                                     //remove needless LRP since static route is incharge of routing when pod is remote
+						klog.Infof("SURYA %v/%v/%v", node1Zone, node2Zone, reroutePolicyNextHop)
 					}
 
 					gomega.Eventually(fakeOvn.nbClient, inspectTimeout).Should(libovsdbtest.HaveData(expectedDatabaseState))
@@ -3410,14 +3426,14 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 				err := app.Run([]string{app.Name})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			},
-			ginkgo.Entry("interconnect disabled; non-ic - single zone setup", false, "global", "global"),
-			ginkgo.Entry("interconnect enabled; node1 and node2 in global zones", true, "global", "global"),
+			ginkgo.Entry("SURYA: interconnect disabled; non-ic - single zone setup", false, "global", "global"),
+			ginkgo.Entry("SURYA: interconnect enabled; node1 and node2 in global zones", true, "global", "global"),
 			// will showcase localzone setup - master is in pod's zone where pod's reroute policy towards egressNode will be done.
 			// NOTE: SNAT won't be visible because its in remote zone
-			ginkgo.Entry("interconnect enabled; node1 in global and node2 in remote zones", true, "global", "remote"),
+			ginkgo.Entry("SURYA: interconnect enabled; node1 in global and node2 in remote zones", true, "global", "remote"),
 			// will showcase localzone setup - master is in egress node's zone where pod's SNAT policy and static route will be done.
 			// NOTE: reroute policy won't be visible because its in remote zone (pod is in remote zone)
-			ginkgo.Entry("interconnect enabled; node1 in remote and node2 in global zones", true, "remote", "global"),
+			ginkgo.Entry("SURYA: interconnect enabled; node1 in remote and node2 in global zones", true, "remote", "global"),
 		)
 	})
 

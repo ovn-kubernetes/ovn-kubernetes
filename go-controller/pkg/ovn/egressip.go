@@ -256,6 +256,7 @@ func NewEIPController(
 //	We only care about `Spec.NamespaceSelector`, `Spec.PodSelector` and `Status` field
 func (e *EgressIPController) reconcileEgressIP(old, new *egressipv1.EgressIP) (err error) {
 	// CASE 1: EIP object deletion, we need to teardown database configuration for all the statuses
+	klog.Infof("SURYA %v/%v", old, new)
 	if old != nil && new == nil {
 		removeStatus := old.Status.Items
 		if len(removeStatus) > 0 {
@@ -273,6 +274,7 @@ func (e *EgressIPController) reconcileEgressIP(old, new *egressipv1.EgressIP) (e
 	if old == nil && new != nil {
 		addStatus := new.Status.Items
 		if len(addStatus) > 0 {
+			klog.Infof("SURYA %v", addStatus)
 			if err := e.addEgressIPAssignments(new.Name, addStatus, mark, new.Spec.NamespaceSelector, new.Spec.PodSelector); err != nil {
 				return err
 			}
@@ -286,6 +288,7 @@ func (e *EgressIPController) reconcileEgressIP(old, new *egressipv1.EgressIP) (e
 		//        1) need teardown
 		//        2) need setup
 		//        3) need no-op
+		klog.Infof("SURYA %v/%v", oldEIP.Status.Items, newEIP.Status.Items)
 		if !reflect.DeepEqual(oldEIP.Status.Items, newEIP.Status.Items) {
 			statusToRemove := make(map[string]egressipv1.EgressIPStatusItem, 0)
 			statusToKeep := make(map[string]egressipv1.EgressIPStatusItem, 0)
@@ -295,15 +298,19 @@ func (e *EgressIPController) reconcileEgressIP(old, new *egressipv1.EgressIP) (e
 			for _, status := range newEIP.Status.Items {
 				statusToKeep[status.EgressIP] = status
 			}
+			klog.Infof("SURYA %v/%v", statusToRemove, statusToKeep)
 			// only delete items that were in the oldSpec but cannot be found in the newSpec
 			statusToDelete := make([]egressipv1.EgressIPStatusItem, 0)
 			for eIP, oldStatus := range statusToRemove {
+				klog.Infof("SURYA %v", oldStatus)
 				if newStatus, ok := statusToKeep[eIP]; ok && newStatus.Node == oldStatus.Node {
+					klog.Infof("SURYA BLAH")
 					continue
 				}
 				statusToDelete = append(statusToDelete, oldStatus)
 			}
 			if len(statusToDelete) > 0 {
+				klog.Infof("SURYA %v", statusToDelete)
 				if err := e.deleteEgressIPAssignments(old.Name, statusToDelete); err != nil {
 					return err
 				}
@@ -317,6 +324,7 @@ func (e *EgressIPController) reconcileEgressIP(old, new *egressipv1.EgressIP) (e
 				statusToAdd = append(statusToAdd, newStatus)
 			}
 			if len(statusToAdd) > 0 {
+				klog.Infof("SURYA %v", statusToAdd)
 				if err := e.addEgressIPAssignments(new.Name, statusToAdd, mark, new.Spec.NamespaceSelector, new.Spec.PodSelector); err != nil {
 					return err
 				}
@@ -344,6 +352,7 @@ func (e *EgressIPController) reconcileEgressIP(old, new *egressipv1.EgressIP) (e
 		// matching the old and not matching the new, and add setup for the pod
 		// matching the new and which didn't match the old.
 		if !reflect.DeepEqual(newNamespaceSelector, oldNamespaceSelector) && reflect.DeepEqual(newPodSelector, oldPodSelector) {
+			klog.Infof("SURYA %v/%v", newNamespaceSelector, oldNamespaceSelector)
 			namespaces, err := e.watchFactory.GetNamespaces()
 			if err != nil {
 				return err
@@ -374,6 +383,7 @@ func (e *EgressIPController) reconcileEgressIP(old, new *egressipv1.EgressIP) (e
 			// matching the old and not matching the new, and add setup for the pod
 			// matching the new and which didn't match the old.
 		} else if reflect.DeepEqual(newNamespaceSelector, oldNamespaceSelector) && !reflect.DeepEqual(newPodSelector, oldPodSelector) {
+			klog.Infof("SURYA %v/%v", newPodSelector, oldPodSelector)
 			namespaces, err := e.watchFactory.GetNamespacesBySelector(newEIP.Spec.NamespaceSelector)
 			if err != nil {
 				return err
@@ -402,6 +412,7 @@ func (e *EgressIPController) reconcileEgressIP(old, new *egressipv1.EgressIP) (e
 						if err != nil {
 							return fmt.Errorf("failed to get active network for namespace %s: %v", namespace.Name, err)
 						}
+						klog.Infof("SURYA %v/%v", newPodSelector, oldPodSelector)
 						if err := e.addPodEgressIPAssignmentsWithLock(ni, newEIP.Name, newEIP.Status.Items, mark, pod); err != nil {
 							return fmt.Errorf("network %s: failed to add pod %s/%s egress IP config: %v", ni.GetNetworkName(), pod.Namespace, pod.Name, err)
 						}
@@ -413,6 +424,8 @@ func (e *EgressIPController) reconcileEgressIP(old, new *egressipv1.EgressIP) (e
 			// old ones and not matching the new ones, and add setup for all
 			// matching the new ones but which didn't match the old ones.
 		} else if !reflect.DeepEqual(newNamespaceSelector, oldNamespaceSelector) && !reflect.DeepEqual(newPodSelector, oldPodSelector) {
+			klog.Infof("SURYA %v/%v", newPodSelector, oldPodSelector)
+			klog.Infof("SURYA %v/%v", newNamespaceSelector, oldNamespaceSelector)
 			namespaces, err := e.watchFactory.GetNamespaces()
 			if err != nil {
 				return err
@@ -442,6 +455,7 @@ func (e *EgressIPController) reconcileEgressIP(old, new *egressipv1.EgressIP) (e
 					for _, pod := range pods {
 						podLabels := labels.Set(pod.Labels)
 						if newPodSelector.Matches(podLabels) {
+							klog.Infof("SURYA %v/%v", newPodSelector, oldPodSelector)
 							if err := e.addPodEgressIPAssignmentsWithLock(ni, newEIP.Name, newEIP.Status.Items, mark, pod); err != nil {
 								return fmt.Errorf("network %s: failed to add pod %s/%s egress IP config: %v", ni.GetNetworkName(), pod.Namespace, pod.Name, err)
 							}
@@ -466,6 +480,7 @@ func (e *EgressIPController) reconcileEgressIP(old, new *egressipv1.EgressIP) (e
 							continue
 						}
 						if newPodSelector.Matches(podLabels) && !oldPodSelector.Matches(podLabels) {
+							klog.Infof("SURYA %v/%v", newPodSelector, oldPodSelector)
 							if err := e.addPodEgressIPAssignmentsWithLock(ni, newEIP.Name, newEIP.Status.Items, mark, pod); err != nil {
 								return fmt.Errorf("network %s: failed to add pod %s/%s egress IP config: %v", ni.GetNetworkName(), pod.Namespace, pod.Name, err)
 							}
@@ -502,7 +517,7 @@ func (e *EgressIPController) reconcileEgressIPNamespace(old, new *corev1.Namespa
 	if reflect.DeepEqual(newLabels.AsSelector(), oldLabels.AsSelector()) {
 		return nil
 	}
-
+	klog.Infof("SURYA %v/%v", old, new)
 	// Iterate all EgressIPs and check if this namespace start/stops matching
 	// any and add/remove the setup accordingly. Namespaces can match multiple
 	// EgressIP objects (ex: users can chose to have one EgressIP object match
@@ -523,6 +538,7 @@ func (e *EgressIPController) reconcileEgressIPNamespace(old, new *corev1.Namespa
 			if err != nil {
 				return fmt.Errorf("failed to get active network for namespace %s: %v", namespaceName, err)
 			}
+			klog.Infof("SURYA %v/%v/%v/%v", egressIP.Name, egressIP.Status.Items, oldNamespace, egressIP.Spec.PodSelector)
 			if err := e.deleteNamespaceEgressIPAssignment(ni, egressIP.Name, egressIP.Status.Items, oldNamespace, egressIP.Spec.PodSelector); err != nil {
 				return fmt.Errorf("network %s: failed to delete namespace %s egress IP config: %v", ni.GetNetworkName(), namespaceName, err)
 			}
@@ -533,6 +549,7 @@ func (e *EgressIPController) reconcileEgressIPNamespace(old, new *corev1.Namespa
 			if err != nil {
 				return fmt.Errorf("failed to get active network for namespace %s: %v", namespaceName, err)
 			}
+			klog.Infof("SURYA %v/%v/%v/%v/%v", egressIP.Name, egressIP.Status.Items, mark, newNamespace, egressIP.Spec.PodSelector)
 			if err := e.addNamespaceEgressIPAssignments(ni, egressIP.Name, egressIP.Status.Items, mark, newNamespace, egressIP.Spec.PodSelector); err != nil {
 				return fmt.Errorf("network %s: failed to add namespace %s egress IP config: %v", ni.GetNetworkName(), namespaceName, err)
 			}
@@ -640,6 +657,7 @@ func (e *EgressIPController) reconcileEgressIPPod(old, new *corev1.Pod) (err err
 				// IPs assigned at that point and we need to continue trying the
 				// pod setup for every pod update as to make sure we process the
 				// pod IP assignment.
+				klog.Infof("SURYA %v/%v", newMatches, oldMatches)
 				if err := e.addPodEgressIPAssignmentsWithLock(ni, egressIP.Name, egressIP.Status.Items, mark, newPod); err != nil {
 					return fmt.Errorf("network %s: failed to add pod %s/%s egress IP config: %v", ni.GetNetworkName(), newPod.Namespace, newPod.Name, err)
 				}
@@ -655,6 +673,7 @@ func (e *EgressIPController) reconcileEgressIPPod(old, new *corev1.Pod) (err err
 				continue
 			}
 			// For all else, perform a setup for the pod
+			klog.Infof("SURYA %v/%v/%v", egressIP.Name, egressIP.Status.Items, newPod)
 			if err := e.addPodEgressIPAssignmentsWithLock(ni, egressIP.Name, egressIP.Status.Items, mark, newPod); err != nil {
 				return fmt.Errorf("network %s: failed to add pod %s/%s egress IP config: %v", ni.GetNetworkName(), newPod.Namespace, newPod.Name, err)
 			}
@@ -702,6 +721,7 @@ func (e *EgressIPController) addNamespaceEgressIPAssignments(ni util.NetInfo, na
 		}
 	}
 	for _, pod := range pods {
+		klog.Infof("SURYA %v/%v/%v/%v", name, statusAssignments, pod.Namespace, pod.Name)
 		if err := e.addPodEgressIPAssignmentsWithLock(ni, name, statusAssignments, mark, pod); err != nil {
 			return err
 		}
@@ -713,6 +733,7 @@ func (e *EgressIPController) addPodEgressIPAssignmentsWithLock(ni util.NetInfo, 
 	e.deletePreviousNetworkPodEgressIPAssignments(ni, name, statusAssignments, pod)
 	e.podAssignmentMutex.Lock()
 	defer e.podAssignmentMutex.Unlock()
+	klog.Infof("SURYA %v/%v/%v/%v", name, statusAssignments, pod.Namespace, pod.Name)
 	return e.addPodEgressIPAssignments(ni, name, statusAssignments, mark, pod)
 }
 
@@ -723,6 +744,7 @@ func (e *EgressIPController) addPodEgressIPAssignmentsWithLock(ni util.NetInfo, 
 // requires holding the podAssignmentMutex lock
 func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name string, statusAssignments []egressipv1.EgressIPStatusItem, mark util.EgressIPMark, pod *kapi.Pod) error {
 	podKey := getPodKey(pod)
+	klog.Infof("SURYA %v/%v/%v/%v/%v", ni.GetNetworkName(), name, statusAssignments, mark, podKey)
 	// If pod is already in succeeded or failed state, return it without proceeding further.
 	if util.PodCompleted(pod) {
 		klog.Infof("Pod %s is already in completed state, skipping egress ip assignment", podKey)
@@ -741,7 +763,9 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 	proceed := false
 	for _, status := range statusAssignments {
 		e.nodeZoneState.LockKey(status.Node)
+		klog.Infof("SURYA %v/%v/%v", name, status, podKey)
 		isLocalZoneEgressNode, loadedEgressNode := e.nodeZoneState.Load(status.Node)
+		klog.Infof("SURYA %v/%v", isLocalZoneEgressNode, loadedEgressNode)
 		if loadedEgressNode && isLocalZoneEgressNode {
 			proceed = true
 			e.nodeZoneState.UnlockKey(status.Node)
@@ -749,7 +773,9 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 		}
 		e.nodeZoneState.UnlockKey(status.Node)
 	}
+	klog.Infof("SURYA %v/%v", proceed, e.isPodScheduledinLocalZone(pod))
 	if !proceed && !e.isPodScheduledinLocalZone(pod) {
+		klog.Infof("SURYA return")
 		return nil // nothing to do if none of the status nodes are local to this master and pod is also remote
 	}
 	var remainingAssignments []egressipv1.EgressIPStatusItem
@@ -760,6 +786,7 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 			return fmt.Errorf("expected at least one NAD name for Namespace %s", pod.Namespace)
 		}
 		nadName = nadNames[0] // there should only be one active network
+		klog.Infof("SURYA secondary")
 	}
 	podIPNets, err := e.getPodIPs(ni, pod, nadName)
 	if err != nil {
@@ -773,6 +800,7 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 		podIPs = append(podIPs, ipNet.IP)
 	}
 	podState, exists := e.podAssignment[podKey]
+	klog.Infof("SURYA %v/%v", podState, exists)
 	if !exists {
 		remainingAssignments = statusAssignments
 		podState = &podAssignmentState{
@@ -783,6 +811,7 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 			network:              ni,
 		}
 		e.podAssignment[podKey] = podState
+		klog.Infof("SURYA %v/%v", podState, exists)
 	} else if podState.egressIPName == name || podState.egressIPName == "" {
 		// We do the setup only if this egressIP object is the one serving this pod OR
 		// podState.egressIPName can be empty if no re-routes were found in
@@ -796,6 +825,7 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 		podState.egressIPName = name
 		podState.network = ni
 		podState.standbyEgressIPNames.Delete(name)
+		klog.Infof("SURYA %v/%v", podState, exists)
 	} else if podState.egressIPName != name {
 		klog.Warningf("EgressIP object %s will not be configured for pod %s "+
 			"since another egressIP object %s is serving it", name, podKey, podState.egressIPName)
@@ -816,6 +846,7 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 		klog.V(2).Infof("Adding pod egress IP status: %v for EgressIP: %s and pod: %s/%s/%v", status, name, pod.Namespace, pod.Name, podIPNets)
 		err = e.nodeZoneState.DoWithLock(status.Node, func(key string) error {
 			if status.Node == pod.Spec.NodeName {
+				klog.Infof("SURYA %v/%v", podState, exists)
 				// we are safe, no need to grab lock again
 				if err := e.addPodEgressIPAssignment(ni, name, status, mark, pod, podIPNets); err != nil {
 					return fmt.Errorf("unable to create egressip configuration for pod %s/%s/%v, err: %w", pod.Namespace, pod.Name, podIPNets, err)
@@ -824,6 +855,7 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 				return nil
 			}
 			return e.nodeZoneState.DoWithLock(pod.Spec.NodeName, func(key string) error {
+				klog.Infof("SURYA %v/%v", podState, exists)
 				// we need to grab lock again for pod's node
 				if err := e.addPodEgressIPAssignment(ni, name, status, mark, pod, podIPNets); err != nil {
 					return fmt.Errorf("unable to create egressip configuration for pod %s/%s/%v, err: %w", pod.Namespace, pod.Name, podIPNets, err)
@@ -852,22 +884,27 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 func (e *EgressIPController) deleteEgressIPAssignments(name string, statusesToRemove []egressipv1.EgressIPStatusItem) error {
 	e.podAssignmentMutex.Lock()
 	defer e.podAssignmentMutex.Unlock()
-
+	klog.Infof("SURYA %v/%v", name, statusesToRemove)
 	for _, statusToRemove := range statusesToRemove {
 		processedNetworks := make(map[string]struct{})
+		klog.Infof("SURYA %v", statusToRemove)
 		for podKey, podStatus := range e.podAssignment {
+			klog.Infof("SURYA %v/%v", podKey, podStatus)
 			if podStatus.egressIPName != name {
 				// we can continue here since this pod was not managed by this EIP object
 				podStatus.standbyEgressIPNames.Delete(name)
+				klog.Infof("SURYA %v/%v", podKey, podStatus)
 				continue
 			}
 			if ok := podStatus.egressStatuses.contains(statusToRemove); !ok {
 				// we can continue here since this pod was not managed by this statusToRemove
+				klog.Infof("SURYA %v/%v", podKey, podStatus)
 				continue
 			}
 			podNamespace, podName := getPodNamespaceAndNameFromKey(podKey)
 			cachedNetwork := e.getNetworkFromPodAssignment(podKey)
 			if cachedNetwork == nil {
+				klog.Infof("SURYA %v/%v/%v", podKey, podStatus, cachedNetwork)
 				panic(fmt.Sprintf("cached network is missing for egress IP pod assignment: %q. This should never happen!", podKey))
 			}
 
@@ -2264,6 +2301,7 @@ func (e *EgressIPController) addPodEgressIPAssignment(ni util.NetInfo, egressIPN
 	eIPIP := net.ParseIP(status.EgressIP)
 	isLocalZoneEgressNode, loadedEgressNode := e.nodeZoneState.Load(status.Node)
 	isLocalZonePod, loadedPodNode := e.nodeZoneState.Load(pod.Spec.NodeName)
+	klog.Infof("SURYA %v/%v/%v/%v/%v/%v", pod.Spec.NodeName, status.Node, isLocalZoneEgressNode, loadedEgressNode, isLocalZonePod, loadedPodNode)
 	eNode, err := e.watchFactory.GetNode(status.Node)
 	if err != nil {
 		return fmt.Errorf("failed to add pod %s/%s because failed to lookup node %s: %v", pod.Namespace, pod.Name,
@@ -2273,6 +2311,7 @@ func (e *EgressIPController) addPodEgressIPAssignment(ni util.NetInfo, egressIPN
 	if err != nil {
 		return fmt.Errorf("failed to get node %s egress IP config: %w", eNode.Name, err)
 	}
+	klog.Infof("SURYA %v/%v", eNode, parsedNodeEIPConfig)
 	isOVNNetwork := util.IsOVNNetwork(parsedNodeEIPConfig, eIPIP)
 	nextHopIP, err := e.getNextHop(ni, status.Node, status.EgressIP, egressIPName, isLocalZoneEgressNode, isOVNNetwork)
 	if err != nil {
@@ -2283,8 +2322,10 @@ func (e *EgressIPController) addPodEgressIPAssignment(ni util.NetInfo, egressIPN
 		return fmt.Errorf("could not calculate the next hop for pod %s/%s when configuring egress IP %s"+
 			" IP %s", pod.Namespace, pod.Name, egressIPName, status.EgressIP)
 	}
+	klog.Infof("SURYA %v/%v", isOVNNetwork, nextHopIP)
 	var ops []ovsdb.Operation
 	if loadedEgressNode && isLocalZoneEgressNode {
+		klog.Infof("SURYA %v/%v", loadedEgressNode, isLocalZoneEgressNode)
 		// create NATs for CDNs only
 		// create LRPs with allow action (aka GW policy marks) only for L3 UDNs.
 		// L2 UDNs require LRPs with reroute action with a pkt_mark option attached to GW router.
@@ -2294,7 +2335,7 @@ func (e *EgressIPController) addPodEgressIPAssignment(ni util.NetInfo, egressIPN
 				if err != nil {
 					return fmt.Errorf("unable to create NAT rule ops for status: %v, err: %v", status, err)
 				}
-
+				klog.Infof("SURYA %v/%v/%v", podIPs, status, egressIPName)
 			} else if ni.IsSecondary() && ni.TopologyType() == types.Layer3Topology {
 				// not required for L2 because we always have LRPs using reroute action to pkt mark
 				ops, err = e.createGWMarkPolicyOps(ni, ops, podIPs, status, mark, pod.Namespace, pod.Name, egressIPName)
@@ -2310,6 +2351,7 @@ func (e *EgressIPController) addPodEgressIPAssignment(ni util.NetInfo, egressIPN
 			if err != nil {
 				return err
 			}
+			klog.Infof("SURYA %v/%v/%v/%v/%v/%v", routerName, isLocalZoneEgressNode, podIPs, status, egressIPName, nextHopIP)
 			ops, err = e.createReroutePolicyOps(ni, ops, podIPs, status, mark, egressIPName, nextHopIP, routerName, pod.Namespace, pod.Name)
 			if err != nil {
 				return fmt.Errorf("unable to create logical router policy ops %v, err: %v", status, err)
@@ -2326,11 +2368,14 @@ func (e *EgressIPController) addPodEgressIPAssignment(ni util.NetInfo, egressIPN
 	if err != nil {
 		return err
 	}
+	klog.Infof("SURYA %v/%v", nodeName, routerName)
 
 	// exec when node is local OR when pods are local or L2 UDN
 	// don't add a reroute policy if the egress node towards which we are adding this doesn't exist
 	if loadedEgressNode && loadedPodNode {
 		if isLocalZonePod || (isLocalZoneEgressNode && ni.IsSecondary() && ni.TopologyType() == types.Layer2Topology) {
+			klog.Infof("SURYA %v", isLocalZonePod)
+			klog.Infof("SURYA %v/%v/%v/%v/%v/%v", routerName, isLocalZoneEgressNode, podIPs, status, egressIPName, nextHopIP)
 			ops, err = e.createReroutePolicyOps(ni, ops, podIPs, status, mark, egressIPName, nextHopIP, routerName, pod.Namespace, pod.Name)
 			if err != nil {
 				return fmt.Errorf("unable to create logical router policy ops, err: %v", err)
@@ -2861,6 +2906,7 @@ func (e *EgressIPController) deleteEgressIPStatusSetup(ni util.NetInfo, name str
 		return fmt.Errorf("failed to delete egress IP %s (%s) because unable to determine next hop: %v",
 			name, status.EgressIP, err)
 	}
+	klog.Infof("SURYA %v/%v/%v", name, status, nextHopIP)
 	isIPv6 := utilnet.IsIPv6String(status.EgressIP)
 	policyPredNextHop := func(item *nbdb.LogicalRouterPolicy) bool {
 		hasIPNexthop := false
@@ -2892,6 +2938,7 @@ func (e *EgressIPController) deleteEgressIPStatusSetup(ni util.NetInfo, name str
 			return fmt.Errorf("error removing nexthop IP %s from egress ip %s policies on router %s: %v",
 				nextHopIP, name, router, err)
 		}
+		klog.Infof("SURYA %v/%v/%v/%v", name, status, nextHopIP, ops)
 	} else if ops, err = e.ensureOnlyValidNextHops(ni, name, status.Node, ops); err != nil {
 		return err
 	}
@@ -2948,6 +2995,7 @@ func (e *EgressIPController) ensureOnlyValidNextHops(ni util.NetInfo, name, node
 			return ops, fmt.Errorf("error creating ops to remove logical router policy for EgressIP %s from router %s: %v",
 				name, routerName, err)
 		}
+		klog.Infof("SURYA %v/%v/%v", name, ops, nodeName)
 	} else {
 		validNextHopIPs := make(sets.Set[string])
 		for _, validStatus := range eIP.Status.Items {
@@ -2984,6 +3032,7 @@ func (e *EgressIPController) ensureOnlyValidNextHops(ni util.NetInfo, name, node
 			}
 		}
 	}
+	klog.Infof("SURYA %v/%v/%v", name, ops, nodeName)
 	return ops, nil
 }
 
