@@ -66,7 +66,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 
 		app = cli.NewApp()
 		app.Name = "test"
-		app.Flags = config.Flags
 
 		fakeOvn = NewFakeOVN(true)
 		initialDB = libovsdbtest.TestSetup{
