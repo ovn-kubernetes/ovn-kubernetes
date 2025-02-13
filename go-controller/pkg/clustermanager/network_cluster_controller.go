@@ -410,9 +410,10 @@ func (ncc *networkClusterController) Stop() {
 
 func (ncc *networkClusterController) newRetryFramework(objectType reflect.Type, hasUpdateFunc bool) *objretry.RetryFramework {
 	resourceHandler := &objretry.ResourceHandler{
-		HasUpdateFunc:          hasUpdateFunc,
-		NeedsUpdateDuringRetry: false,
-		ObjType:                objectType,
+		HasUpdateFunc:             hasUpdateFunc,
+		NeedsUpdateDuringRetry:    false,
+		InhibitRetryOnSyncFailure: !ncc.IsDefault(),
+		ObjType:                   objectType,
 		EventHandler: &networkClusterControllerEventHandler{
 			objType:  objectType,
 			ncc:      ncc,

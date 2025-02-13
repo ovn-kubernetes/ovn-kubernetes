@@ -100,7 +100,11 @@ type ResourceHandler struct {
 	// an add on the new one.
 	HasUpdateFunc          bool
 	NeedsUpdateDuringRetry bool
-	ObjType                reflect.Type
+
+	// InhibitRetryOnSyncFailure prevents retries when initial sync fails
+	InhibitRetryOnSyncFailure bool
+
+	ObjType reflect.Type
 	EventHandler
 }
 
@@ -754,7 +758,15 @@ func (r *RetryFramework) WatchResourceFiltered(namespaceForFilteredHandler strin
 				})
 			},
 		},
-		r.ResourceHandler.SyncFunc) // processes all existing objects at startup
+		func(objs []interface{}) error {
+			// processes all existing objects at startup
+			err := r.ResourceHandler.SyncFunc(objs)
+			if err != nil && r.ResourceHandler.InhibitRetryOnSyncFailure {
+				err = fmt.Errorf("%w: %w", factory.ErrSyncNoRetry, err)
+			}
+			return err
+		},
+	)
 
 	if err != nil {
 		return nil, fmt.Errorf("watchResource for resource %v. "+
