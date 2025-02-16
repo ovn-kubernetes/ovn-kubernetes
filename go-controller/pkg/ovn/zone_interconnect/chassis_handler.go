@@ -134,9 +134,29 @@ func (zch *ZoneChassisHandler) createOrUpdateNodeChassis(node *corev1.Node, isRe
 			node.Name, parsedErr)
 	}
 
-	nodePrimaryIp, err := util.GetNodePrimaryIP(node)
+	// Get the encap IPs.
+	encapIPs, err := util.ParseNodeEncapIPsAnnotation(node)
 	if err != nil {
-		return fmt.Errorf("failed to parse node %s primary IP %w", node.Name, err)
+		return fmt.Errorf("failed to parse node-encap-ips for node - %s, error: %w",
+			node.Name, err)
+	}
+
+	encaps := make([]*sbdb.Encap, 0, len(encapIPs))
+	encapOptions := map[string]string{}
+	encapOptions["csum"] = "true"
+	// set the geneve port if using something else than default
+	if config.Default.EncapPort != config.DefaultEncapPort {
+		encapOptions["dst_port"] = strconv.FormatUint(uint64(config.Default.EncapPort), 10)
+	}
+
+	for _, ovnEncapIP := range encapIPs {
+		encap := sbdb.Encap{
+			ChassisName: chassisID,
+			IP:          strings.TrimSpace(ovnEncapIP),
+			Type:        "geneve",
+			Options:     encapOptions,
+		}
+		encaps = append(encaps, &encap)
 	}
 
 	chassis := sbdb.Chassis{
@@ -147,17 +167,5 @@ func (zch *ZoneChassisHandler) createOrUpdateNodeChassis(node *corev1.Node, isRe
 		},
 	}
 
-	encap := sbdb.Encap{
-		ChassisName: chassisID,
-		IP:          nodePrimaryIp,
-		Type:        "geneve",
-		Options:     map[string]string{"csum": "true"},
-	}
-
-	// set the geneve port if using something else than default
-	if config.Default.EncapPort != config.DefaultEncapPort {
-		encap.Options["dst_port"] = strconv.FormatUint(uint64(config.Default.EncapPort), 10)
-	}
-
-	return libovsdbops.CreateOrUpdateChassis(zch.sbClient, &chassis, &encap)
+	return libovsdbops.CreateOrUpdateChassis(zch.sbClient, &chassis, encaps...)
 }
