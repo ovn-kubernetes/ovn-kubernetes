@@ -29,7 +29,7 @@ func newManagementPortRepresentor(nodeName string, hostSubnets []*net.IPNet, rep
 	}
 }
 
-func (mp *managementPortRepresentor) Create(isPodNetworkAdvertised bool, _ *routemanager.Controller, _ *corev1.Node, waiter *startupWaiter) (*managementPortConfig, error) {
+func (mp *managementPortRepresentor) Create(isPodNetworkAdvertised bool, _ *routemanager.Controller, node *corev1.Node) (*managementPortConfig, error) {
 	k8sMgmtIntfName := types.K8sMgmtIntfName
 	if config.OvnKubeNode.Mode == types.NodeModeFull {
 		k8sMgmtIntfName += "_0"
@@ -111,7 +111,6 @@ func (mp *managementPortRepresentor) Create(isPodNetworkAdvertised bool, _ *rout
 	}
 	mpcfg.isPodNetworkAdvertised.Store(isPodNetworkAdvertised)
 
-	waiter.AddWait(managementPortReady, nil)
 	return mpcfg, nil
 }
 
@@ -170,7 +169,7 @@ func newManagementPortNetdev(hostSubnets []*net.IPNet, netdevName string) Manage
 	}
 }
 
-func (mp *managementPortNetdev) Create(isRoutingAdvertised bool, routeManager *routemanager.Controller, _ *corev1.Node, _ *startupWaiter) (*managementPortConfig, error) {
+func (mp *managementPortNetdev) Create(isRoutingAdvertised bool, routeManager *routemanager.Controller, node *corev1.Node) (*managementPortConfig, error) {
 	klog.Infof("Lookup netdevice link and existing management port using '%v'", mp.netdevName)
 	link, err := util.GetNetLinkOps().LinkByName(mp.netdevName)
 	if err != nil {

@@ -277,7 +277,6 @@ func testManagementPort(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.Net
 	watchFactory, err := factory.NewNodeWatchFactory(fakeNodeClient, nodeName)
 	Expect(err).NotTo(HaveOccurred())
 	Expect(watchFactory.Start()).To(Succeed())
-	waiter := newStartupWaiter()
 	wg := &sync.WaitGroup{}
 	rm := routemanager.NewController()
 	stopCh := make(chan struct{})
@@ -306,7 +305,6 @@ func testManagementPort(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.Net
 			configs[0].isRoutingAdvertised,
 			rm,
 			&existingNode,
-			waiter,
 		)
 		Expect(err).NotTo(HaveOccurred())
 		checkMgmtTestPortIpsAndRoutes(configs, mgtPort, mgtPortAddrs, expectedLRPMAC)
@@ -315,8 +313,6 @@ func testManagementPort(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.Net
 	Expect(err).NotTo(HaveOccurred())
 
 	err = nodeAnnotator.Run()
-	Expect(err).NotTo(HaveOccurred())
-	err = waiter.Wait()
 	Expect(err).NotTo(HaveOccurred())
 
 	checkMgmtPortTestNFTables(configs, mgtPort)
@@ -383,7 +379,6 @@ func testManagementPortDPU(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.
 	watchFactory, err := factory.NewNodeWatchFactory(fakeNodeClient, nodeName)
 	Expect(err).NotTo(HaveOccurred())
 	Expect(watchFactory.Start()).To(Succeed())
-	waiter := newStartupWaiter()
 	wg := &sync.WaitGroup{}
 	rm := routemanager.NewController()
 	stopCh := make(chan struct{})
@@ -408,7 +403,7 @@ func testManagementPortDPU(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.
 		netdevName, rep := "pf0vf0", "pf0vf0"
 
 		mgmtPorts := NewManagementPorts(nodeName, nodeSubnetCIDRs, netdevName, rep)
-		_, err = mgmtPorts[0].Create(false, rm, &existingNode, waiter)
+		_, err = mgmtPorts[0].Create(false, rm, &existingNode)
 		Expect(err).NotTo(HaveOccurred())
 		// make sure interface was renamed and mtu was set
 		l, err := netlink.LinkByName(mgtPort)
@@ -420,8 +415,6 @@ func testManagementPortDPU(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.
 	Expect(err).NotTo(HaveOccurred())
 
 	err = nodeAnnotator.Run()
-	Expect(err).NotTo(HaveOccurred())
-	err = waiter.Wait()
 	Expect(err).NotTo(HaveOccurred())
 	Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
 }
@@ -486,7 +479,7 @@ func testManagementPortDPUHost(ctx *cli.Context, fexec *ovntest.FakeExec, testNS
 		netdevName, rep := "pf0vf0", ""
 
 		mgmtPorts := NewManagementPorts(nodeName, nodeSubnetCIDRs, netdevName, rep)
-		_, err = mgmtPorts[0].Create(configs[0].isRoutingAdvertised, rm, nil, nil)
+		_, err = mgmtPorts[0].Create(configs[0].isRoutingAdvertised, rm, nil)
 		Expect(err).NotTo(HaveOccurred())
 		checkMgmtTestPortIpsAndRoutes(configs, mgtPort, mgtPortAddrs, expectedLRPMAC)
 		// check mgmt port MAC, mtu and link state
