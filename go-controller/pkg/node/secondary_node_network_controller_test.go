@@ -20,6 +20,7 @@ import (
 	factoryMocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory/mocks"
 	kubemocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube/mocks"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/iprulemanager"
+	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/vrfmanager"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
@@ -268,6 +269,7 @@ var _ = Describe("SecondaryNodeNetworkController: UserDefinedPrimaryNetwork Gate
 		nodeLister := v1mocks.NodeLister{}
 		nodeInformer.On("Lister").Return(&nodeLister)
 		nodeLister.On("Get", mock.AnythingOfType("string")).Return(node, nil)
+		nodenft.SetFakeNFTablesHelper()
 
 		By("creating NAD for primary UDN")
 		nad = ovntest.GenerateNAD("bluenet", "rednad", "greenamespace",
