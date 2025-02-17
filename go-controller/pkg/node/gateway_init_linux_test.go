@@ -35,13 +35,16 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/managementport"
 	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
+	nodemocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node"
 	linkMock "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/vishvananda/netlink"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utilMock "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/mocks"
+	multinetworkmocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/mocks/multinetwork"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -234,27 +237,15 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 			existingNode.Status = corev1.NodeStatus{Addresses: []corev1.NodeAddress{nodeAddr}}
 		}
 
-		_, nodeNet, err := net.ParseCIDR(nodeSubnet)
-		Expect(err).NotTo(HaveOccurred())
-
 		iptV4, iptV6 := util.SetFakeIPTablesHelpers()
 		nft := nodenft.SetFakeNFTablesHelper()
 
-		// Make a fake MgmtPortConfig with only the fields we care about
-		fakeMgmtPortIPFamilyConfig := managementPortIPFamilyConfig{
-			allSubnets: nil,
-			ifAddr:     nodeNet,
-			gwIP:       nodeNet.IP,
-		}
-
-		fakeMgmtPortConfig := managementPortConfig{
-			ifName:    nodeName,
-			link:      nil,
-			routerMAC: nil,
-			ipv4:      &fakeMgmtPortIPFamilyConfig,
-			ipv6:      nil,
-		}
-		err = setupManagementPortNFTables(&fakeMgmtPortConfig)
+		// Make Management port
+		hostSubnets := ovntest.MustParseIPNets(nodeSubnet)
+		rm := routemanager.NewController()
+		netInfo := &multinetworkmocks.NetInfo{}
+		netInfo.On("GetPodNetworkAdvertisedOnNodeVRFs", nodeName).Return(nil)
+		mp, err := managementport.NewManagementPortController(&existingNode, hostSubnets, "", "", rm, netInfo)
 		Expect(err).NotTo(HaveOccurred())
 
 		kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
@@ -285,7 +276,6 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 		Expect(err).NotTo(HaveOccurred())
 		err = nodeAnnotator.Run()
 		Expect(err).NotTo(HaveOccurred())
-		rm := routemanager.NewController()
 		wg.Add(1)
 		go func() {
 			defer GinkgoRecover()
@@ -298,10 +288,13 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 		}()
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
+			// start management port
+			err = mp.Start(stop)
+			Expect(err).NotTo(HaveOccurred())
 
 			// setup stale masquerade
 			// Create breth0 as a dummy link
-			err := netlink.LinkAdd(&netlink.Dummy{
+			err = netlink.LinkAdd(&netlink.Dummy{
 				LinkAttrs: netlink.LinkAttrs{
 					Name:         "br" + eth0Name,
 					HardwareAddr: ovntest.MustParseMAC(eth0MAC),
@@ -334,6 +327,7 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 
 			gatewayNextHops, gatewayIntf, err := getGatewayNextHops()
 			Expect(err).NotTo(HaveOccurred())
+
 			ifAddrs := ovntest.MustParseIPNets(eth0CIDR)
 			sharedGw, err := newGateway(
 				nodeName,
@@ -343,7 +337,7 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 				"",
 				ifAddrs,
 				nodeAnnotator,
-				&fakeMgmtPortConfig,
+				mp,
 				k,
 				wf,
 				rm,
@@ -480,7 +474,7 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 		err = f6.MatchState(expectedTables, nil)
 		Expect(err).NotTo(HaveOccurred())
 
-		expectedNFT := getBaseNFTRules(fakeMgmtPortConfig.ifName)
+		expectedNFT := getBaseNFTRules(types.K8sMgmtIntfName)
 		err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 		Expect(err).NotTo(HaveOccurred())
 
@@ -677,27 +671,6 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 			NetworkAttchDefClient: nadfake.NewSimpleClientset(),
 		}
 
-		_, nodeNet, err := net.ParseCIDR(nodeSubnet)
-		Expect(err).NotTo(HaveOccurred())
-
-		// Make a fake MgmtPortConfig with only the fields we care about
-		fakeMgmtPortIPFamilyConfig := managementPortIPFamilyConfig{
-			allSubnets: nil,
-			ifAddr:     nodeNet,
-			gwIP:       nodeNet.IP,
-		}
-
-		_ = nodenft.SetFakeNFTablesHelper()
-		fakeMgmtPortConfig := managementPortConfig{
-			ifName:    nodeName,
-			link:      nil,
-			routerMAC: nil,
-			ipv4:      &fakeMgmtPortIPFamilyConfig,
-			ipv6:      nil,
-		}
-		err = setupManagementPortNFTables(&fakeMgmtPortConfig)
-		Expect(err).NotTo(HaveOccurred())
-
 		stop := make(chan struct{})
 		wf, err := factory.NewNodeWatchFactory(fakeClient, nodeName)
 		Expect(err).NotTo(HaveOccurred())
@@ -737,6 +710,7 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 		// FIXME(mk): starting the gateway causing go routines to be spawned within sub functions and therefore they escape the
 		// netns we wanted to set it to originally here. Refactor test cases to not spawn a go routine or just fake out everything
 		// and remove need to create netns
+		mpmock := &nodemocks.ManagementPort{}
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 
@@ -750,7 +724,7 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 				"",
 				ifAddrs,
 				nodeAnnotator,
-				&fakeMgmtPortConfig,
+				mpmock,
 				k,
 				wf,
 				rm,
@@ -1138,26 +1112,16 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 		)
 		endpointSlice := *newEndpointSlice("service1", "namespace1", []discovery.Endpoint{}, []discovery.EndpointPort{})
 
-		_, nodeNet, err := net.ParseCIDR(nodeSubnet)
-		Expect(err).NotTo(HaveOccurred())
-
-		// Make a fake MgmtPortConfig with only the fields we care about
-		fakeMgmtPortIPFamilyConfig := managementPortIPFamilyConfig{
-			allSubnets: nil,
-			ifAddr:     nodeNet,
-			gwIP:       nodeNet.IP,
-		}
-
 		nft := nodenft.SetFakeNFTablesHelper()
-		fakeMgmtPortConfig := managementPortConfig{
-			ifName:    types.K8sMgmtIntfName,
-			link:      nil,
-			routerMAC: nil,
-			ipv4:      &fakeMgmtPortIPFamilyConfig,
-			ipv6:      nil,
-		}
-		err = setupManagementPortNFTables(&fakeMgmtPortConfig)
+
+		// Make Management port
+		hostSubnets := ovntest.MustParseIPNets(nodeSubnet)
+		rm := routemanager.NewController()
+		netInfo := &multinetworkmocks.NetInfo{}
+		netInfo.On("GetPodNetworkAdvertisedOnNodeVRFs", nodeName).Return(nil)
+		mp, err := managementport.NewManagementPortController(&existingNode, hostSubnets, "", "", rm, netInfo)
 		Expect(err).NotTo(HaveOccurred())
+
 		if util.IsNetworkSegmentationSupportEnabled() {
 			err = configureUDNServicesNFTables()
 			Expect(err).NotTo(HaveOccurred())
@@ -1199,7 +1163,6 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 		Expect(err).NotTo(HaveOccurred())
 		ip, ipNet, _ := net.ParseCIDR(eth0CIDR)
 		ipNet.IP = ip
-		rm := routemanager.NewController()
 		go func() {
 			defer GinkgoRecover()
 			err := testNS.Do(func(ns.NetNS) error {
@@ -1210,6 +1173,9 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 		}()
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
+			// start management port
+			err = mp.Start(stop)
+			Expect(err).NotTo(HaveOccurred())
 
 			Expect(configureGlobalForwarding()).To(Succeed())
 			gatewayNextHops, gatewayIntf, err := getGatewayNextHops()
@@ -1223,7 +1189,7 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 				"",
 				ifAddrs,
 				nodeAnnotator,
-				&fakeMgmtPortConfig,
+				mp,
 				k,
 				wf,
 				rm,
@@ -1362,7 +1328,7 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 		err = f6.MatchState(expectedTables, nil)
 		Expect(err).NotTo(HaveOccurred())
 
-		expectedNFT := getBaseNFTRules(fakeMgmtPortConfig.ifName)
+		expectedNFT := getBaseNFTRules(types.K8sMgmtIntfName)
 		err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 		Expect(err).NotTo(HaveOccurred())
 
