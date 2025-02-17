@@ -116,6 +116,28 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 		)
 
 		fexec := ovntest.NewLooseCompareFakeExec()
+
+		// management port commands
+		mpPortName := types.K8sMgmtIntfName
+		mpPortRepName := types.K8sMgmtIntfName + "_0"
+		mpPortLegacyName := types.K8sPrefix + nodeName
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ovs-vsctl --timeout=15 --no-headings --data bare --format csv --columns type,name find Interface name=" + mpPortName,
+			Output: "internal," + mpPortName,
+		})
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ovs-vsctl --timeout=15 --no-headings --data bare --format csv --columns type,name find Interface name=" + mpPortRepName,
+			Output: "internal," + mpPortRepName,
+		})
+		fexec.AddFakeCmdsNoOutputNoError([]string{
+			"ovs-vsctl --timeout=15 -- --if-exists del-port br-int " + mpPortLegacyName + " -- --may-exist add-port br-int " + mpPortName + " -- set interface " + mpPortName + " mac=\"0a:58:0a:01:01:02\" type=internal mtu_request=" + mtu + " external-ids:iface-id=" + mpPortLegacyName,
+		})
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "sysctl -w net.ipv4.conf.ovn-k8s-mp0.forwarding=1",
+			Output: "net.ipv4.conf.ovn-k8s-mp0.forwarding = 1",
+		})
+
+		// gateway commands
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 			Cmd: "ovs-vsctl --timeout=15 port-to-br eth0",
 			Err: fmt.Errorf(""),
@@ -288,6 +310,14 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 		}()
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
+
+			// create dummy management interface
+			err := netlink.LinkAdd(&netlink.Dummy{
+				LinkAttrs: netlink.LinkAttrs{
+					Name: types.K8sMgmtIntfName,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
 			// start management port
 			err = mp.Start(stop)
 			Expect(err).NotTo(HaveOccurred())
@@ -969,6 +999,27 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 
 		fexec := ovntest.NewLooseCompareFakeExec()
 
+		// management port commands
+		mpPortName := types.K8sMgmtIntfName
+		mpPortRepName := types.K8sMgmtIntfName + "_0"
+		mpPortLegacyName := types.K8sPrefix + nodeName
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ovs-vsctl --timeout=15 --no-headings --data bare --format csv --columns type,name find Interface name=" + mpPortName,
+			Output: "internal," + mpPortName,
+		})
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ovs-vsctl --timeout=15 --no-headings --data bare --format csv --columns type,name find Interface name=" + mpPortRepName,
+			Output: "internal," + mpPortRepName,
+		})
+		fexec.AddFakeCmdsNoOutputNoError([]string{
+			"ovs-vsctl --timeout=15 -- --if-exists del-port br-int " + mpPortLegacyName + " -- --may-exist add-port br-int " + mpPortName + " -- set interface " + mpPortName + " mac=\"0a:58:0a:01:01:02\" type=internal mtu_request=" + mtu + " external-ids:iface-id=" + mpPortLegacyName,
+		})
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "sysctl -w net.ipv4.conf.ovn-k8s-mp0.forwarding=1",
+			Output: "net.ipv4.conf.ovn-k8s-mp0.forwarding = 1",
+		})
+
+		// gateway commands
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 			Cmd: "ovs-vsctl --timeout=15 port-to-br eth0",
 			Err: fmt.Errorf(""),
@@ -1173,6 +1224,14 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 		}()
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
+
+			// create dummy management interface
+			err := netlink.LinkAdd(&netlink.Dummy{
+				LinkAttrs: netlink.LinkAttrs{
+					Name: types.K8sMgmtIntfName,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
 			// start management port
 			err = mp.Start(stop)
 			Expect(err).NotTo(HaveOccurred())

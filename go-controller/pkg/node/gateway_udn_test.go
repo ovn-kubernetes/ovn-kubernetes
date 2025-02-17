@@ -78,11 +78,53 @@ func getDeletionFakeOVSCommands(fexec *ovntest.FakeExec, mgtPort string) {
 	})
 }
 
-func setUpGatewayFakeOVSCommands(fexec *ovntest.FakeExec) {
+func setManagementPortFakeCommands(fexec *ovntest.FakeExec, nodeName string) {
+	// management port commands
+	mpPortName := types.K8sMgmtIntfName
+	mpPortRepName := types.K8sMgmtIntfName + "_0"
+	mpPortLegacyName := types.K8sPrefix + nodeName
 	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "ovs-vsctl --timeout=15 port-to-br eth0",
-		Output: "breth0",
+		Cmd:    "ovs-vsctl --timeout=15 --no-headings --data bare --format csv --columns type,name find Interface name=" + mpPortName,
+		Output: "internal," + mpPortName,
 	})
+	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+		Cmd:    "ovs-vsctl --timeout=15 --no-headings --data bare --format csv --columns type,name find Interface name=" + mpPortRepName,
+		Output: "internal," + mpPortRepName,
+	})
+	fexec.AddFakeCmdsNoOutputNoError([]string{
+		"ovs-vsctl --timeout=15 -- --if-exists del-port br-int " + mpPortLegacyName + " -- --may-exist add-port br-int " + mpPortName + " -- set interface " + mpPortName + " mac=\"0a:58:64:80:00:02\" type=internal mtu_request=1400 external-ids:iface-id=" + mpPortLegacyName,
+	})
+	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+		Cmd:    "sysctl -w net.ipv4.conf.ovn-k8s-mp0.forwarding=1",
+		Output: "net.ipv4.conf.ovn-k8s-mp0.forwarding = 1",
+	})
+	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+		Cmd:    "ip route replace table 7 172.16.1.0/24 via 100.128.0.1 dev ovn-k8s-mp0",
+		Output: "0",
+	})
+	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+		Cmd:    "ip -4 rule",
+		Output: "0",
+	})
+	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+		Cmd:    "ip -4 rule add fwmark 0x1745ec lookup 7 prio 30",
+		Output: "0",
+	})
+	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+		Cmd:    "ip -6 rule",
+		Output: "0",
+	})
+	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+		Cmd:    "ip -6 rule add fwmark 0x1745ec lookup 7 prio 30",
+		Output: "0",
+	})
+	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+		Cmd:    "sysctl -w net.ipv4.conf.ovn-k8s-mp0.rp_filter=2",
+		Output: "net.ipv4.conf.ovn-k8s-mp0.rp_filter = 2",
+	})
+}
+
+func setUpGatewayFakeOVSCommands(fexec *ovntest.FakeExec) {
 	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 		Cmd:    "ovs-vsctl --timeout=15 port-to-br breth0",
 		Output: "breth0",
@@ -141,30 +183,6 @@ func setUpGatewayFakeOVSCommands(fexec *ovntest.FakeExec) {
 	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 		Cmd:    "ovs-vsctl --timeout=15 get Open_vSwitch . external_ids:ovn-encap-ip",
 		Output: "192.168.1.10",
-	})
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "ip route replace table 7 172.16.1.0/24 via 100.128.0.1 dev ovn-k8s-mp0",
-		Output: "0",
-	})
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "ip -4 rule",
-		Output: "0",
-	})
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "ip -4 rule add fwmark 0x1745ec lookup 7 prio 30",
-		Output: "0",
-	})
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "ip -6 rule",
-		Output: "0",
-	})
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "ip -6 rule add fwmark 0x1745ec lookup 7 prio 30",
-		Output: "0",
-	})
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "sysctl -w net.ipv4.conf.ovn-k8s-mp0.rp_filter=2",
-		Output: "net.ipv4.conf.ovn-k8s-mp0.rp_filter = 2",
 	})
 	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 		Cmd:    "ovs-vsctl --timeout=15 --if-exists get interface breth0 ofport",
@@ -537,9 +555,10 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			ObjectMeta: metav1.ObjectMeta{
 				Name: nodeName,
 				Annotations: map[string]string{
-					"k8s.ovn.org/network-ids":  fmt.Sprintf("{\"%s\": \"%s\"}", netName, netID),
-					"k8s.ovn.org/node-subnets": fmt.Sprintf("{\"default\":[\"%s\"],\"%s\":[\"%s\", \"%s\"]}", v4NodeSubnet, netName, v4NodeSubnet, v6NodeSubnet),
-					"k8s.ovn.org/host-cidrs":   fmt.Sprintf("[\"%s\", \"%s\"]", v4NodeIP, v6NodeIP),
+					"k8s.ovn.org/network-ids":       fmt.Sprintf("{\"%s\": \"%s\"}", netName, netID),
+					"k8s.ovn.org/node-subnets":      fmt.Sprintf("{\"default\":[\"%s\"],\"%s\":[\"%s\", \"%s\"]}", v4NodeSubnet, netName, v4NodeSubnet, v6NodeSubnet),
+					"k8s.ovn.org/host-cidrs":        fmt.Sprintf("[\"%s\", \"%s\"]", v4NodeIP, v6NodeIP),
+					"k8s.ovn.org/l3-gateway-config": "{\"default\": {}}",
 				},
 			},
 			Status: corev1.NodeStatus{Addresses: []corev1.NodeAddress{
@@ -552,6 +571,14 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		ovntest.AnnotateNADWithNetworkID(netID, nad)
 		netInfo, err := util.ParseNADInfo(nad)
 		Expect(err).NotTo(HaveOccurred())
+
+		// need this for getGatewayNextHops
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ovs-vsctl --timeout=15 port-to-br eth0",
+			Output: "breth0",
+		})
+
+		setManagementPortFakeCommands(fexec, nodeName)
 		setUpGatewayFakeOVSCommands(fexec)
 		_, ipNet, err := net.ParseCIDR(v4NodeSubnet)
 		Expect(err).NotTo(HaveOccurred())
@@ -608,6 +635,11 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		kubeMock.On("SetAnnotationsOnNode", node.Name, map[string]interface{}{
 			"k8s.ovn.org/node-masquerade-subnet": "{\"ipv4\":\"169.254.0.0/17\",\"ipv6\":\"fd69::/112\"}",
 		}).Return(nil)
+		kubeMock.On("SetAnnotationsOnNode", node.Name, map[string]interface{}{
+			"k8s.ovn.org/host-cidrs":          "[\"192.168.1.10/24\",\"fc00:f853:ccd:e793::3/64\"]",
+			"k8s.ovn.org/l3-gateway-config":   "{\"default\":{\"mode\":\"\"}}",
+			"k8s.ovn.org/node-primary-ifaddr": "{\"ipv4\":\"192.168.1.10/24\",\"ipv6\":\"fc00:f853:ccd:e793::3/64\"}",
+		}).Return(nil)
 
 		wg.Add(1)
 		go func() {
@@ -622,6 +654,14 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 			gatewayNextHops, gatewayIntf, err := getGatewayNextHops()
+			Expect(err).NotTo(HaveOccurred())
+
+			// create dummy management interface
+			err = netlink.LinkAdd(&netlink.Dummy{
+				LinkAttrs: netlink.LinkAttrs{
+					Name: types.K8sMgmtIntfName,
+				},
+			})
 			Expect(err).NotTo(HaveOccurred())
 			err = mp.Start(stop)
 			Expect(err).NotTo(HaveOccurred())
@@ -649,19 +689,22 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			err = localGw.initFunc()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(localGw.Init(stop, wg)).To(Succeed())
-			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, wf.NodeCoreInformer().Lister(),
-				&kubeMock, vrf, ipRulesManager, localGw)
-			Expect(err).NotTo(HaveOccurred())
 			// we cannot start the shared gw directly because it will spawn a goroutine that may not be bound to the test netns
 			// Start does two things, starts nodeIPManager which spawns a go routine and also starts openflow manager by spawning a go routine
 			//sharedGw.Start()
 			localGw.nodeIPManager.sync()
 			// we cannot start openflow manager directly because it spawns a go routine
 			// FIXME: extract openflow manager func from the spawning of a go routine so it can be called directly below.
+			err = localGw.openflowManager.updateBridgeFlowCache(localGw.nodeIPManager.ListAddresses())
+			Expect(err).NotTo(HaveOccurred())
 			localGw.openflowManager.syncFlows()
-			flowMap := udnGateway.gateway.openflowManager.flowCache
 
+			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, wf.NodeCoreInformer().Lister(),
+				&kubeMock, vrf, ipRulesManager, localGw)
+			Expect(err).NotTo(HaveOccurred())
+			flowMap := udnGateway.gateway.openflowManager.flowCache
 			Expect(flowMap["DEFAULT"]).To(HaveLen(46))
+
 			Expect(udnGateway.masqCTMark).To(Equal(udnGateway.masqCTMark))
 			var udnFlows int
 			for _, flows := range flowMap {
@@ -767,6 +810,14 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		_, ipNet, err := net.ParseCIDR(v4NodeSubnet)
 		Expect(err).NotTo(HaveOccurred())
 		mgtPortMAC = util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(ipNet).IP).String()
+
+		// need this for getGatewayNextHops
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ovs-vsctl --timeout=15 port-to-br eth0",
+			Output: "breth0",
+		})
+
+		setManagementPortFakeCommands(fexec, nodeName)
 		setUpGatewayFakeOVSCommands(fexec)
 		getCreationFakeCommands(fexec, mgtPort, mgtPortMAC, netName, nodeName, netInfo.MTU())
 		getVRFCreationFakeOVSCommands(fexec)
@@ -838,8 +889,17 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			defer GinkgoRecover()
 			gatewayNextHops, gatewayIntf, err := getGatewayNextHops()
 			Expect(err).NotTo(HaveOccurred())
+
+			// create dummy management interface
+			err = netlink.LinkAdd(&netlink.Dummy{
+				LinkAttrs: netlink.LinkAttrs{
+					Name: types.K8sMgmtIntfName,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
 			err = mp.Start(stop)
 			Expect(err).NotTo(HaveOccurred())
+
 			// make preparations for creating openflow manager in DNCC which can be used for SNCC
 			localGw, err := newGateway(
 				nodeName,
@@ -862,16 +922,19 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			wg := &sync.WaitGroup{}
 			Expect(localGw.initFunc()).To(Succeed())
 			Expect(localGw.Init(stop, wg)).To(Succeed())
-			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, wf.NodeCoreInformer().Lister(),
-				&kubeMock, vrf, ipRulesManager, localGw)
-			Expect(err).NotTo(HaveOccurred())
 			// we cannot start the shared gw directly because it will spawn a goroutine that may not be bound to the test netns
 			// Start does two things, starts nodeIPManager which spawns a go routine and also starts openflow manager by spawning a go routine
 			//sharedGw.Start()
 			localGw.nodeIPManager.sync()
 			// we cannot start openflow manager directly because it spawns a go routine
 			// FIXME: extract openflow manager func from the spawning of a go routine so it can be called directly below.
+			err = localGw.openflowManager.updateBridgeFlowCache(localGw.nodeIPManager.ListAddresses())
+			Expect(err).NotTo(HaveOccurred())
 			localGw.openflowManager.syncFlows()
+
+			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, wf.NodeCoreInformer().Lister(),
+				&kubeMock, vrf, ipRulesManager, localGw)
+			Expect(err).NotTo(HaveOccurred())
 			flowMap := udnGateway.gateway.openflowManager.flowCache
 			Expect(flowMap["DEFAULT"]).To(HaveLen(46))
 			Expect(udnGateway.masqCTMark).To(Equal(udnGateway.masqCTMark))

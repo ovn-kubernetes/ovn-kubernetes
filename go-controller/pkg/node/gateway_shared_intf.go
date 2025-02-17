@@ -50,9 +50,6 @@ const (
 	ctMarkOVN = "0x1"
 	// ctMarkHost is the conntrack mark value for host traffic
 	ctMarkHost = "0x2"
-	// ovnkubeSvcViaMgmPortRT is the number of the custom routing table used to steer host->service
-	// traffic packets into OVN via ovn-k8s-mp0. Currently only used for ITP=local traffic.
-	ovnkubeSvcViaMgmPortRT = "7"
 	// ovnKubeNodeSNATMark is used to mark packets that need to be SNAT-ed to nodeIP for
 	// traffic originating from egressIP and egressService controlled pods towards other nodes in the cluster.
 	ovnKubeNodeSNATMark = "0x3f0"
@@ -2169,62 +2166,6 @@ func setBridgeOfPorts(bridge *bridgeConfiguration) error {
 	return nil
 }
 
-// initSvcViaMgmPortRoutingRules creates the svc2managementport routing table, routes and rules
-// that let's us forward service traffic to ovn-k8s-mp0 as opposed to the default route towards breth0
-func initSvcViaMgmPortRoutingRules(hostSubnets []*net.IPNet) error {
-	// create ovnkubeSvcViaMgmPortRT and service route towards ovn-k8s-mp0
-	for _, hostSubnet := range hostSubnets {
-		isIPv6 := utilnet.IsIPv6CIDR(hostSubnet)
-		gatewayIP := util.GetNodeGatewayIfAddr(hostSubnet).IP.String()
-		for _, svcCIDR := range config.Kubernetes.ServiceCIDRs {
-			if isIPv6 == utilnet.IsIPv6CIDR(svcCIDR) {
-				if stdout, stderr, err := util.RunIP("route", "replace", "table", ovnkubeSvcViaMgmPortRT, svcCIDR.String(), "via", gatewayIP, "dev", types.K8sMgmtIntfName); err != nil {
-					return fmt.Errorf("error adding routing table entry into custom routing table: %s: stdout: %s, stderr: %s, err: %v", ovnkubeSvcViaMgmPortRT, stdout, stderr, err)
-				}
-				klog.V(5).Infof("Successfully added route into custom routing table: %s", ovnkubeSvcViaMgmPortRT)
-			}
-		}
-	}
-
-	createRule := func(family string) error {
-		stdout, stderr, err := util.RunIP(family, "rule")
-		if err != nil {
-			return fmt.Errorf("error listing routing rules, stdout: %s, stderr: %s, err: %v", stdout, stderr, err)
-		}
-		if !strings.Contains(stdout, fmt.Sprintf("from all fwmark %s lookup %s", types.OVNKubeITPMark, ovnkubeSvcViaMgmPortRT)) {
-			if stdout, stderr, err := util.RunIP(family, "rule", "add", "fwmark", types.OVNKubeITPMark, "lookup", ovnkubeSvcViaMgmPortRT, "prio", "30"); err != nil {
-				return fmt.Errorf("error adding routing rule for service via management table (%s): stdout: %s, stderr: %s, err: %v", ovnkubeSvcViaMgmPortRT, stdout, stderr, err)
-			}
-		}
-		return nil
-	}
-
-	// create ip rule that will forward ovnkubeITPMark marked packets to ovnkubeITPRoutingTable
-	if config.IPv4Mode {
-		if err := createRule("-4"); err != nil {
-			return fmt.Errorf("could not add IPv4 rule: %v", err)
-		}
-	}
-	if config.IPv6Mode {
-		if err := createRule("-6"); err != nil {
-			return fmt.Errorf("could not add IPv6 rule: %v", err)
-		}
-	}
-
-	// lastly update the reverse path filtering options for ovn-k8s-mp0 interface to avoid dropping return packets
-	// NOTE: v6 doesn't have rp_filter strict mode block
-	rpFilterLooseMode := "2"
-	// TODO: Convert testing framework to mock golang module utilities. Example:
-	// result, err := sysctl.Sysctl(fmt.Sprintf("net/ipv4/conf/%s/rp_filter", types.K8sMgmtIntfName), rpFilterLooseMode)
-	stdout, stderr, err := util.RunSysctl("-w", fmt.Sprintf("net.ipv4.conf.%s.rp_filter=%s", types.K8sMgmtIntfName, rpFilterLooseMode))
-	if err != nil || stdout != fmt.Sprintf("net.ipv4.conf.%s.rp_filter = %s", types.K8sMgmtIntfName, rpFilterLooseMode) {
-		return fmt.Errorf("could not set the correct rp_filter value for interface %s: stdout: %v, stderr: %v, err: %v",
-			types.K8sMgmtIntfName, stdout, stderr, err)
-	}
-
-	return nil
-}
-
 func newGateway(
 	nodeName string,
 	subnets []*net.IPNet,
@@ -2362,12 +2303,6 @@ func newGateway(
 		}
 
 		if config.Gateway.NodeportEnable {
-			if config.OvnKubeNode.Mode == types.NodeModeFull {
-				// (TODO): Internal Traffic Policy is not supported in DPU mode
-				if err := initSvcViaMgmPortRoutingRules(subnets); err != nil {
-					return err
-				}
-			}
 			klog.Info("Creating Gateway Node Port Watcher")
 			gw.nodePortWatcher, err = newNodePortWatcher(gwBridge, gw.openflowManager, gw.nodeIPManager, watchFactory, networkManager)
 			if err != nil {
