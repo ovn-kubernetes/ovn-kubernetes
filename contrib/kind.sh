@@ -804,7 +804,7 @@ build_ovn_image() {
     make -C ${DIR}/../go-controller
 
     # Build image
-    make -C ${DIR}/../dist/images IMAGE="${OVN_IMAGE}" OVN_REPO="${OVN_REPO}" OVN_GITREF="${OVN_GITREF}" fedora-image
+    make -C ${DIR}/../dist/images IMAGE="${OVN_IMAGE}" OVN_REPO="${OVN_REPO}" OVN_GITREF="${OVN_GITREF}" OCI_BIN="${OCI_BIN}" fedora-image
 
     # store in local registry
     if [ "$KIND_LOCAL_REGISTRY" == true ];then
