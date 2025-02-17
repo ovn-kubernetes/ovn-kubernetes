@@ -694,8 +694,13 @@ func getMgmtPortAndRepName(node *corev1.Node) (string, string, error) {
 	}
 }
 
-func createNodeManagementPorts(node *corev1.Node, nodeAnnotator kube.Annotator, waiter *startupWaiter,
-	subnets []*net.IPNet, routeManager *routemanager.Controller, isRoutingAdvertised bool) ([]*managementPortEntry, *managementPortConfig, error) {
+func createNodeManagementPorts(
+	node *corev1.Node,
+	nodeAnnotator kube.Annotator,
+	subnets []*net.IPNet,
+	routeManager *routemanager.Controller,
+	isRoutingAdvertised bool,
+) ([]*managementPortEntry, *managementPortConfig, error) {
 	netdevName, rep, err := getMgmtPortAndRepName(node)
 	if err != nil {
 		return nil, nil, err
@@ -712,7 +717,7 @@ func createNodeManagementPorts(node *corev1.Node, nodeAnnotator kube.Annotator, 
 	var mgmtPortConfig *managementPortConfig
 	mgmtPorts := make([]*managementPortEntry, 0)
 	for _, port := range ports {
-		config, err := port.Create(isRoutingAdvertised, routeManager, node, waiter)
+		config, err := port.Create(isRoutingAdvertised, routeManager, node)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -925,13 +930,11 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 	}
 
 	nodeAnnotator := kube.NewNodeAnnotator(nc.Kube, node.Name)
-	waiter := newStartupWaiter()
 
 	// Setup management ports
 	mgmtPorts, mgmtPortConfig, err := createNodeManagementPorts(
 		node,
 		nodeAnnotator,
-		waiter,
 		subnets,
 		nc.routeManager,
 		nc.isPodNetworkAdvertisedAtNode())
