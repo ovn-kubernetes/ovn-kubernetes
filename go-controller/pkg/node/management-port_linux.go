@@ -308,7 +308,7 @@ func setupManagementPortNFTables(cfg *managementPortConfig) error {
 	tx.Add(&knftables.Rule{
 		Chain: nftablesMgmtPortChain,
 		Rule: knftables.Concat(
-			"oifname", "!=", fmt.Sprintf("%q", cfg.ifName),
+			"oifname", "!=", cfg.ifName,
 			"return",
 		),
 	})
