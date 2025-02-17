@@ -299,7 +299,7 @@ var _ = Describe("Node Operations", func() {
 	})
 
 	Context("on startup", func() {
-		It("removes stale iptables/nftables rules while keeping remaining intact", func() {
+		It("removes stale iptables rules while keeping remaining intact", func() {
 			app.Action = func(*cli.Context) error {
 				// Depending on the order of informer event processing the initial
 				// Service might be "added" once or twice.  Take that into account.
@@ -353,10 +353,6 @@ var _ = Describe("Node Operations", func() {
 				err := f4.MatchState(expectedTables, nil)
 				Expect(err).NotTo(HaveOccurred())
 
-				expectedNFT := getBaseNFTRules(types.K8sMgmtIntfName) + "\nadd rule inet ovn-kubernetes mgmtport-snat blah blah blah\n"
-				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
-				Expect(err).NotTo(HaveOccurred())
-
 				stopChan := make(chan struct{})
 				fakeClient := util.GetOVNClientset(&service).GetNodeClientset()
 				wf, err := factory.NewNodeWatchFactory(fakeClient, "node")
@@ -405,7 +401,7 @@ var _ = Describe("Node Operations", func() {
 				err = f4.MatchState(expectedTables, nil)
 				Expect(err).NotTo(HaveOccurred())
 
-				expectedNFT = getBaseNFTRules(types.K8sMgmtIntfName)
+				expectedNFT := getBaseNFTRules(types.K8sMgmtIntfName)
 				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				Expect(err).NotTo(HaveOccurred())
 
