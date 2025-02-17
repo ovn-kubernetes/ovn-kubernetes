@@ -50,15 +50,15 @@ import (
 // The base expected nftables rules. You must substitute in the management port interface name.
 const baseNFTRulesFmt = `
 add table inet ovn-kubernetes
-add chain inet ovn-kubernetes mgmtport-snat { type nat hook postrouting priority 100 ; comment "OVN SNAT to Management Port" ; }
-add rule inet ovn-kubernetes mgmtport-snat oifname != %q return
-add rule inet ovn-kubernetes mgmtport-snat meta nfproto ipv4 ip saddr 10.1.1.0 counter return
-add rule inet ovn-kubernetes mgmtport-snat meta l4proto . th dport @mgmtport-no-snat-nodeports counter return
-add rule inet ovn-kubernetes mgmtport-snat ip daddr . meta l4proto . th dport @mgmtport-no-snat-services-v4 counter return
-add rule inet ovn-kubernetes mgmtport-snat counter snat ip to 10.1.1.0
 add set inet ovn-kubernetes mgmtport-no-snat-nodeports { type inet_proto . inet_service ; comment "NodePorts not subject to management port SNAT" ; }
 add set inet ovn-kubernetes mgmtport-no-snat-services-v4 { type ipv4_addr . inet_proto . inet_service ; comment "eTP:Local short-circuit not subject to management port SNAT (IPv4)" ; }
 add set inet ovn-kubernetes mgmtport-no-snat-services-v6 { type ipv6_addr . inet_proto . inet_service ; comment "eTP:Local short-circuit not subject to management port SNAT (IPv6)" ; }
+add chain inet ovn-kubernetes mgmtport-snat { type nat hook postrouting priority 100 ; comment "OVN SNAT to Management Port" ; }
+add rule inet ovn-kubernetes mgmtport-snat oifname != %s return
+add rule inet ovn-kubernetes mgmtport-snat meta nfproto ipv4 ip saddr 10.1.1.2 counter return
+add rule inet ovn-kubernetes mgmtport-snat meta l4proto . th dport @mgmtport-no-snat-nodeports counter return
+add rule inet ovn-kubernetes mgmtport-snat ip daddr . meta l4proto . th dport @mgmtport-no-snat-services-v4 counter return
+add rule inet ovn-kubernetes mgmtport-snat counter snat ip to 10.1.1.2
 `
 
 // The base expected nftables rules with UDN enabled. You must substitute in the management port interface name.
@@ -71,7 +71,7 @@ add rule inet ovn-kubernetes udn-service-mark fib daddr type local meta l4proto 
 add rule inet ovn-kubernetes udn-service-mark ip daddr . meta l4proto . th dport vmap @udn-mark-external-ips-v4
 add rule inet ovn-kubernetes udn-service-mark ip6 daddr . meta l4proto . th dport vmap @udn-mark-external-ips-v6
 add chain inet ovn-kubernetes udn-service-prerouting { type filter hook prerouting priority -150 ; comment "UDN services packet mark - Prerouting" ; }
-add rule inet ovn-kubernetes udn-service-prerouting iifname != %q jump udn-service-mark
+add rule inet ovn-kubernetes udn-service-prerouting iifname != %s jump udn-service-mark
 add chain inet ovn-kubernetes udn-service-output { type filter hook output priority -150 ; comment "UDN services packet mark - Output" ; }
 add rule inet ovn-kubernetes udn-service-output jump udn-service-mark
 `
