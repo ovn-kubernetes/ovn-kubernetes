@@ -277,4 +277,24 @@ const (
 	// NoNetworkID is used to signal internally that an ID is empty and should, updates
 	// with this value should be ignored
 	NoNetworkID = -2
+
+	// OVNKubeITPMark is the fwmark used for host->ITP=local svc traffic. Note
+	// that the fwmark is not a part of the packet, but just stored by kernel in
+	// its memory to track/filter packet. Hence fwmark is lost as soon as packet
+	// exits the host. The mark is set with an iptables rule by gateway and used
+	// to route to management port.
+	OVNKubeITPMark = "0x1745ec" // constant itp(174)-service(5ec)
+
+	// "mgmtport-no-snat-nodeports" is a set containing protocol / nodePort tuples
+	// indicating traffic that should not be SNATted when passing through the
+	// management port because it is addressed to an `externalTrafficPolicy: Local`
+	// NodePort.
+	NFTMgmtPortNoSNATNodePorts = "mgmtport-no-snat-nodeports"
+
+	// "mgmtport-no-snat-services-v4" and "mgmtport-no-snat-services-v6" are sets
+	// containing loadBalancerIP / protocol / port tuples indicating traffic that
+	// should not be SNATted when passing through the management port because it is
+	// addressed to an `externalTrafficPolicy: Local` load balancer IP.
+	NFTMgmtPortNoSNATServicesV4 = "mgmtport-no-snat-services-v4"
+	NFTMgmtPortNoSNATServicesV6 = "mgmtport-no-snat-services-v6"
 )

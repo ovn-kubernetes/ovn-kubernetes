@@ -13,6 +13,7 @@ import (
 	"sigs.k8s.io/knftables"
 
 	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -31,7 +32,7 @@ import (
 func getNoSNATNodePortRules(svcPort corev1.ServicePort) []*knftables.Element {
 	return []*knftables.Element{
 		{
-			Set: nftablesMgmtPortNoSNATNodePorts,
+			Set: types.NFTMgmtPortNoSNATNodePorts,
 			Key: []string{
 				strings.ToLower(string(svcPort.Protocol)),
 				fmt.Sprintf("%d", svcPort.NodePort),
@@ -49,9 +50,9 @@ func getNoSNATLoadBalancerIPRules(svcPort corev1.ServicePort, localEndpoints []s
 	protocol := strings.ToLower(string(svcPort.Protocol))
 	port := fmt.Sprintf("%v", svcPort.TargetPort.IntValue())
 	for _, ip := range localEndpoints {
-		setName := nftablesMgmtPortNoSNATServicesV4
+		setName := types.NFTMgmtPortNoSNATServicesV4
 		if utilnet.IsIPv6String(ip) {
-			setName = nftablesMgmtPortNoSNATServicesV6
+			setName = types.NFTMgmtPortNoSNATServicesV6
 		}
 
 		nftRules = append(nftRules,
