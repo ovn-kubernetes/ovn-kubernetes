@@ -797,10 +797,10 @@ func portExists(namespace, name string) bool {
 
 /** HACK END **/
 
-// PreStart executes the first steps to start the DefaultNodeNetworkController.
+// Init executes the first steps to start the DefaultNodeNetworkController.
 // It is split from Start() and executed before SecondaryNodeNetworkController (SNNC),
-// to allow SNNC to reference the openflow manager created in PreStart.
-func (nc *DefaultNodeNetworkController) PreStart(ctx context.Context) error {
+// to allow SNNC to reference the openflow manager created in Init.
+func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 	klog.Infof("PreStarting the default node network controller")
 
 	var err error
