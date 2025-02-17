@@ -527,14 +527,7 @@ func (g *gateway) addAllServices() []error {
 }
 
 func (g *gateway) updateSNATRules() error {
-	var ipnets []*net.IPNet
-	if g.nodeIPManager.mgmtPortConfig.ipv4 != nil {
-		ipnets = append(ipnets, g.nodeIPManager.mgmtPortConfig.ipv4.ifAddr)
-	}
-	if g.nodeIPManager.mgmtPortConfig.ipv6 != nil {
-		ipnets = append(ipnets, g.nodeIPManager.mgmtPortConfig.ipv6.ifAddr)
-	}
-	subnets := util.IPsToNetworkIPs(ipnets...)
+	subnets := util.IPsToNetworkIPs(g.nodeIPManager.mgmtPort.GetAddresses()...)
 
 	if g.GetDefaultPodNetworkAdvertised() || config.Gateway.Mode != config.GatewayModeLocal {
 		return delLocalGatewayPodSubnetNATRules(subnets...)

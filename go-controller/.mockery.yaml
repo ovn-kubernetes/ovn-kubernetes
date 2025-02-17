@@ -24,6 +24,9 @@ packages:
     config:
       all: true
       dir: pkg/kube/mocks
+  github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node:
+    interfaces:
+      ManagementPort:
   github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set:
     config:
       all: true
@@ -33,6 +36,10 @@ packages:
       DNSOps:
       ExecRunner:
       FileSystemOps:
+      NetInfo:
+        # need separate package to avoid circular dependency
+        config:
+          dir: pkg/util/mocks/multinetwork
       NetLinkOps:
       SriovnetOps:
       VdpaDevice:

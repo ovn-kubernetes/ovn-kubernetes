@@ -28,6 +28,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	nodeipt "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/iptables"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/linkmanager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/managementport"
 	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
@@ -2168,6 +2169,62 @@ func setBridgeOfPorts(bridge *bridgeConfiguration) error {
 	return nil
 }
 
+// initSvcViaMgmPortRoutingRules creates the svc2managementport routing table, routes and rules
+// that let's us forward service traffic to ovn-k8s-mp0 as opposed to the default route towards breth0
+func initSvcViaMgmPortRoutingRules(hostSubnets []*net.IPNet) error {
+	// create ovnkubeSvcViaMgmPortRT and service route towards ovn-k8s-mp0
+	for _, hostSubnet := range hostSubnets {
+		isIPv6 := utilnet.IsIPv6CIDR(hostSubnet)
+		gatewayIP := util.GetNodeGatewayIfAddr(hostSubnet).IP.String()
+		for _, svcCIDR := range config.Kubernetes.ServiceCIDRs {
+			if isIPv6 == utilnet.IsIPv6CIDR(svcCIDR) {
+				if stdout, stderr, err := util.RunIP("route", "replace", "table", ovnkubeSvcViaMgmPortRT, svcCIDR.String(), "via", gatewayIP, "dev", types.K8sMgmtIntfName); err != nil {
+					return fmt.Errorf("error adding routing table entry into custom routing table: %s: stdout: %s, stderr: %s, err: %v", ovnkubeSvcViaMgmPortRT, stdout, stderr, err)
+				}
+				klog.V(5).Infof("Successfully added route into custom routing table: %s", ovnkubeSvcViaMgmPortRT)
+			}
+		}
+	}
+
+	createRule := func(family string) error {
+		stdout, stderr, err := util.RunIP(family, "rule")
+		if err != nil {
+			return fmt.Errorf("error listing routing rules, stdout: %s, stderr: %s, err: %v", stdout, stderr, err)
+		}
+		if !strings.Contains(stdout, fmt.Sprintf("from all fwmark %s lookup %s", types.OVNKubeITPMark, ovnkubeSvcViaMgmPortRT)) {
+			if stdout, stderr, err := util.RunIP(family, "rule", "add", "fwmark", types.OVNKubeITPMark, "lookup", ovnkubeSvcViaMgmPortRT, "prio", "30"); err != nil {
+				return fmt.Errorf("error adding routing rule for service via management table (%s): stdout: %s, stderr: %s, err: %v", ovnkubeSvcViaMgmPortRT, stdout, stderr, err)
+			}
+		}
+		return nil
+	}
+
+	// create ip rule that will forward ovnkubeITPMark marked packets to ovnkubeITPRoutingTable
+	if config.IPv4Mode {
+		if err := createRule("-4"); err != nil {
+			return fmt.Errorf("could not add IPv4 rule: %v", err)
+		}
+	}
+	if config.IPv6Mode {
+		if err := createRule("-6"); err != nil {
+			return fmt.Errorf("could not add IPv6 rule: %v", err)
+		}
+	}
+
+	// lastly update the reverse path filtering options for ovn-k8s-mp0 interface to avoid dropping return packets
+	// NOTE: v6 doesn't have rp_filter strict mode block
+	rpFilterLooseMode := "2"
+	// TODO: Convert testing framework to mock golang module utilities. Example:
+	// result, err := sysctl.Sysctl(fmt.Sprintf("net/ipv4/conf/%s/rp_filter", types.K8sMgmtIntfName), rpFilterLooseMode)
+	stdout, stderr, err := util.RunSysctl("-w", fmt.Sprintf("net.ipv4.conf.%s.rp_filter=%s", types.K8sMgmtIntfName, rpFilterLooseMode))
+	if err != nil || stdout != fmt.Sprintf("net.ipv4.conf.%s.rp_filter = %s", types.K8sMgmtIntfName, rpFilterLooseMode) {
+		return fmt.Errorf("could not set the correct rp_filter value for interface %s: stdout: %v, stderr: %v, err: %v",
+			types.K8sMgmtIntfName, stdout, stderr, err)
+	}
+
+	return nil
+}
+
 func newGateway(
 	nodeName string,
 	subnets []*net.IPNet,
@@ -2175,7 +2232,7 @@ func newGateway(
 	gwIntf, egressGWIntf string,
 	gwIPs []*net.IPNet,
 	nodeAnnotator kube.Annotator,
-	cfg *managementPortConfig,
+	mgmtPort managementport.Interface,
 	kube kube.Interface,
 	watchFactory factory.NodeWatchFactory,
 	routeManager *routemanager.Controller,
@@ -2187,7 +2244,7 @@ func newGateway(
 	gw := &gateway{}
 
 	if gatewayMode == config.GatewayModeLocal {
-		if err := initLocalGateway(subnets, cfg); err != nil {
+		if err := initLocalGateway(subnets, mgmtPort); err != nil {
 			return nil, fmt.Errorf("failed to initialize new local gateway, err: %w", err)
 		}
 	}
@@ -2254,7 +2311,7 @@ func newGateway(
 			gw.bridgeEIPAddrManager = newBridgeEIPAddrManager(nodeName, gwBridge.bridgeName, linkManager, kube, watchFactory.EgressIPInformer(), watchFactory.NodeCoreInformer())
 			gwBridge.eipMarkIPs = gw.bridgeEIPAddrManager.GetCache()
 		}
-		gw.nodeIPManager = newAddressManager(nodeName, kube, cfg, watchFactory, gwBridge)
+		gw.nodeIPManager = newAddressManager(nodeName, kube, mgmtPort, watchFactory, gwBridge)
 
 		if config.OvnKubeNode.Mode == types.NodeModeFull {
 			// Delete stale masquerade resources if there are any. This is to make sure that there
@@ -2305,6 +2362,12 @@ func newGateway(
 		}
 
 		if config.Gateway.NodeportEnable {
+			if config.OvnKubeNode.Mode == types.NodeModeFull {
+				// (TODO): Internal Traffic Policy is not supported in DPU mode
+				if err := initSvcViaMgmPortRoutingRules(subnets); err != nil {
+					return err
+				}
+			}
 			klog.Info("Creating Gateway Node Port Watcher")
 			gw.nodePortWatcher, err = newNodePortWatcher(gwBridge, gw.openflowManager, gw.nodeIPManager, watchFactory, networkManager)
 			if err != nil {
