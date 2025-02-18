@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net"
 	"strings"
-	"sync/atomic"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
@@ -25,7 +24,7 @@ type managementPortConfig struct {
 	ipv4 *managementPortIPFamilyConfig
 	ipv6 *managementPortIPFamilyConfig
 
-	isPodNetworkAdvertised atomic.Bool
+	netInfo util.NetInfo
 }
 
 func newManagementPortConfig(node *corev1.Node, hostSubnets []*net.IPNet, netInfo util.NetInfo) (*managementPortConfig, error) {
@@ -57,10 +56,8 @@ func newManagementPortConfig(node *corev1.Node, hostSubnets []*net.IPNet, netInf
 		nodeName:    nodeName,
 		hostSubnets: hostSubnets,
 		mpMAC:       mpMAC,
+		netInfo:     netInfo,
 	}
-
-	advertised := util.IsPodNetworkAdvertisedAtNode(netInfo, node.Name)
-	mpcfg.isPodNetworkAdvertised.Store(advertised)
 
 	for _, hostSubnet := range hostSubnets {
 		isIPv6 := utilnet.IsIPv6CIDR(hostSubnet)

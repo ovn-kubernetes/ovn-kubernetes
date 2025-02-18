@@ -4,7 +4,6 @@ import (
 	"net"
 	"time"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
@@ -47,8 +46,6 @@ func (c *managementPortController) Start(stopChan <-chan struct{}) error {
 }
 
 func (c *managementPortController) Reconcile() {
-	advertised := util.IsPodNetworkAdvertisedAtNode(c.netInfo, c.nodeName)
-	c.cfg.isPodNetworkAdvertised.Store(advertised)
 	c.reconcile()
 }
 

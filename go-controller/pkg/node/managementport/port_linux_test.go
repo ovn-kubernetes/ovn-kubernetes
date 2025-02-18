@@ -770,15 +770,21 @@ var _ = Describe("Management Port tests", func() {
 			It("removes stale nftables rules while keeping remaining intact", func() {
 				nft := nodenft.SetFakeNFTablesHelper()
 
+				netInfo := &multinetworkmocks.NetInfo{}
+				netInfo.On("GetPodNetworkAdvertisedOnNodeVRFs", "").Return(nil)
+
 				// Make a fake MgmtPortConfig with only the fields we care about
 				nodeNet := ovntest.MustParseIPNet("10.1.1.0/24")
 				fakeMgmtPortIPFamilyConfig := managementPortIPFamilyConfig{
 					ifAddr: nodeNet,
 				}
 				fakeMgmtPortConfig := managementPortConfig{
-					ipv4: &fakeMgmtPortIPFamilyConfig,
+					ipv4:    &fakeMgmtPortIPFamilyConfig,
+					netInfo: netInfo,
 				}
-				err := setupManagementPortNFTChain(types.K8sMgmtIntfName, &fakeMgmtPortConfig)
+				err := setupManagementPortNFTSets()
+				Expect(err).NotTo(HaveOccurred())
+				err = setupManagementPortNFTChain(types.K8sMgmtIntfName, &fakeMgmtPortConfig)
 				Expect(err).NotTo(HaveOccurred())
 
 				finalExpectedNFT := nft.Dump()
