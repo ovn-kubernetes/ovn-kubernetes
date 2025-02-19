@@ -139,6 +139,22 @@ func (c *addressManager) ListAddresses() []net.IP {
 	return out
 }
 
+func (c *addressManager) ListNetworkAddresses() []*net.IPNet {
+	c.Lock()
+	defer c.Unlock()
+	addrs := sets.List(c.cidrs)
+	out := make([]*net.IPNet, 0, len(addrs))
+	for _, addr := range addrs {
+		_, cidr, err := net.ParseCIDR(addr)
+		if err != nil {
+			klog.Errorf("Failed to parse %s: %v", addr, err)
+			continue
+		}
+		out = append(out, cidr)
+	}
+	return out
+}
+
 type subscribeFn func() (bool, chan netlink.AddrUpdate, error)
 
 func (c *addressManager) Run(stopChan <-chan struct{}, doneWg *sync.WaitGroup) {

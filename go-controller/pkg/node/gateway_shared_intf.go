@@ -1762,7 +1762,7 @@ func flowsForDefaultBridge(bridge *bridgeConfiguration, extraIPs []net.IP) ([]st
 	return dftFlows, nil
 }
 
-func commonFlows(subnets []*net.IPNet, bridge *bridgeConfiguration, isPodNetworkAdvertised bool) ([]string, error) {
+func commonFlows(subnets, hostSubnets []*net.IPNet, bridge *bridgeConfiguration, isPodNetworkAdvertised bool) ([]string, error) {
 	// CAUTION: when adding new flows where the in_port is ofPortPatch and the out_port is ofPortPhys, ensure
 	// that dl_src is included in match criteria!
 	ofPortPhys := bridge.ofPortPhys
@@ -1845,6 +1845,22 @@ func commonFlows(subnets []*net.IPNet, bridge *bridgeConfiguration, isPodNetwork
 							"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:%s",
 							defaultOpenFlowCookie, netConfig.ofPortPatch, bridgeMacAddress, config.Default.ConntrackZone,
 							netConfig.masqCTMark, ofPortPhys))
+					// IP traffic from the OVN network to the host network should be handled normally by the bridge instead of
+					// forwarding it directly to the NIC (prio=100 flow above). This allows pods in the default network to reach
+					// localnet pods on the same node.
+					for _, hostSubnet := range hostSubnets {
+						if hostSubnet.IP.To4() == nil {
+							continue
+						}
+						klog.Infof("RICCARDO v4 hostSubnet: %s", hostSubnet)
+						newFlow := fmt.Sprintf("cookie=%s, priority=101, in_port=%s, dl_src=%s, ip, nw_dst=%s, "+
+							"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:NORMAL",
+							defaultOpenFlowCookie, netConfig.ofPortPatch, bridgeMacAddress, hostSubnet,
+							config.Default.ConntrackZone, netConfig.masqCTMark)
+						klog.Infof("RICCARDO v4 newFlow: %s", newFlow)
+						dftFlows = append(dftFlows, newFlow)
+					}
+
 				} else {
 					//  for UDN we additionally SNAT the packet from masquerade IP -> node IP
 					dftFlows = append(dftFlows,
@@ -1936,6 +1952,24 @@ func commonFlows(subnets []*net.IPNet, bridge *bridgeConfiguration, isPodNetwork
 						fmt.Sprintf("cookie=%s, priority=100, in_port=%s, dl_src=%s, ipv6, "+
 							"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:%s",
 							defaultOpenFlowCookie, netConfig.ofPortPatch, bridgeMacAddress, config.Default.ConntrackZone, netConfig.masqCTMark, ofPortPhys))
+
+					// IP traffic from the OVN network to the host network should be handled normally by the bridge instead of
+					// forwarding it directly to the NIC (prio=100 flow above). This allows pods in the default network to reach
+					// localnet pods on the same node.
+					for _, hostSubnet := range hostSubnets {
+						if hostSubnet.IP.To4() != nil {
+							continue
+						}
+						klog.Infof("RICCARDO v6 hostSubnet: %s", hostSubnet)
+						newFlow := fmt.Sprintf("cookie=%s, priority=101, in_port=%s, dl_src=%s, ipv6, ipv6_dst=%s, "+
+							"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:NORMAL",
+							defaultOpenFlowCookie, netConfig.ofPortPatch, bridgeMacAddress, hostSubnet,
+							config.Default.ConntrackZone, netConfig.masqCTMark)
+						klog.Infof("RICCARDO v6 newFlow: %s", newFlow)
+						dftFlows = append(dftFlows, newFlow)
+
+					}
+
 				} else {
 					//  for UDN we additionally SNAT the packet from masquerade IP -> node IP
 					dftFlows = append(dftFlows,
@@ -2298,6 +2332,7 @@ func newGateway(
 		}
 		gw.nodeIPManager = newAddressManager(nodeName, kube, cfg, watchFactory, gwBridge)
 		nodeIPs := gw.nodeIPManager.ListAddresses()
+		hostSubnets := gw.nodeIPManager.ListNetworkAddresses()
 
 		if config.OvnKubeNode.Mode == types.NodeModeFull {
 			// Delete stale masquerade resources if there are any. This is to make sure that there
@@ -2321,7 +2356,7 @@ func newGateway(
 			}
 		}
 
-		gw.openflowManager, err = newGatewayOpenFlowManager(gwBridge, exGwBridge, subnets, nodeIPs)
+		gw.openflowManager, err = newGatewayOpenFlowManager(gwBridge, exGwBridge, subnets, hostSubnets, nodeIPs)
 		if err != nil {
 			return err
 		}
@@ -2329,7 +2364,8 @@ func newGateway(
 		// resync flows on IP change
 		gw.nodeIPManager.OnChanged = func() {
 			klog.V(5).Info("Node addresses changed, re-syncing bridge flows")
-			if err := gw.openflowManager.updateBridgeFlowCache(subnets, gw.nodeIPManager.ListAddresses(), gw.isPodNetworkAdvertised); err != nil {
+			if err := gw.openflowManager.updateBridgeFlowCache(subnets, gw.nodeIPManager.ListNetworkAddresses(),
+				gw.nodeIPManager.ListAddresses(), gw.isPodNetworkAdvertised); err != nil {
 				// very unlikely - somehow node has lost its IP address
 				klog.Errorf("Failed to re-generate gateway flows after address change: %v", err)
 			}

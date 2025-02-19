@@ -156,7 +156,7 @@ func (c *openflowManager) syncFlows() {
 //
 // -- to handle host -> service access, via masquerading from the host to OVN GR
 // -- to handle external -> service(ExternalTrafficPolicy: Local) -> host access without SNAT
-func newGatewayOpenFlowManager(gwBridge, exGWBridge *bridgeConfiguration, subnets []*net.IPNet, extraIPs []net.IP) (*openflowManager, error) {
+func newGatewayOpenFlowManager(gwBridge, exGWBridge *bridgeConfiguration, subnets, hostSubnets []*net.IPNet, extraIPs []net.IP) (*openflowManager, error) {
 	// add health check function to check default OpenFlow flows are on the shared gateway bridge
 	ofm := &openflowManager{
 		defaultBridge:         gwBridge,
@@ -169,7 +169,7 @@ func newGatewayOpenFlowManager(gwBridge, exGWBridge *bridgeConfiguration, subnet
 	}
 
 	isRoutingAdvertised := false
-	if err := ofm.updateBridgeFlowCache(subnets, extraIPs, isRoutingAdvertised); err != nil {
+	if err := ofm.updateBridgeFlowCache(subnets, hostSubnets, extraIPs, isRoutingAdvertised); err != nil {
 		return nil, err
 	}
 
@@ -213,7 +213,7 @@ func (c *openflowManager) Run(stopChan <-chan struct{}, doneWg *sync.WaitGroup) 
 
 // updateBridgeFlowCache generates the "static" per-bridge flows
 // note: this is shared between shared and local gateway modes
-func (c *openflowManager) updateBridgeFlowCache(subnets []*net.IPNet, extraIPs []net.IP, isPodNetworkAdvertised bool) error {
+func (c *openflowManager) updateBridgeFlowCache(subnets, hostSubnets []*net.IPNet, extraIPs []net.IP, isPodNetworkAdvertised bool) error {
 	// protect defaultBridge config from being updated by gw.nodeIPManager
 	c.defaultBridge.Lock()
 	defer c.defaultBridge.Unlock()
@@ -225,7 +225,7 @@ func (c *openflowManager) updateBridgeFlowCache(subnets []*net.IPNet, extraIPs [
 	if err != nil {
 		return err
 	}
-	dftCommonFlows, err := commonFlows(subnets, c.defaultBridge, isPodNetworkAdvertised)
+	dftCommonFlows, err := commonFlows(subnets, hostSubnets, c.defaultBridge, isPodNetworkAdvertised)
 	if err != nil {
 		return err
 	}
@@ -239,7 +239,7 @@ func (c *openflowManager) updateBridgeFlowCache(subnets []*net.IPNet, extraIPs [
 		c.externalGatewayBridge.Lock()
 		defer c.externalGatewayBridge.Unlock()
 		c.updateExBridgeFlowCacheEntry("NORMAL", []string{fmt.Sprintf("table=0,priority=0,actions=%s\n", util.NormalAction)})
-		exGWBridgeDftFlows, err := commonFlows(subnets, c.externalGatewayBridge, false)
+		exGWBridgeDftFlows, err := commonFlows(subnets, hostSubnets, c.externalGatewayBridge, false)
 		if err != nil {
 			return err
 		}
