@@ -1762,7 +1762,7 @@ func flowsForDefaultBridge(bridge *bridgeConfiguration, extraIPs []net.IP) ([]st
 	return dftFlows, nil
 }
 
-func commonFlows(bridge *bridgeConfiguration) ([]string, error) {
+func commonFlows(hostSubnets []*net.IPNet, bridge *bridgeConfiguration) ([]string, error) {
 	// CAUTION: when adding new flows where the in_port is ofPortPatch and the out_port is ofPortPhys, ensure
 	// that dl_src is included in match criteria!
 	ofPortPhys := bridge.ofPortPhys
@@ -1845,6 +1845,16 @@ func commonFlows(bridge *bridgeConfiguration) ([]string, error) {
 							"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:%s",
 							defaultOpenFlowCookie, netConfig.ofPortPatch, bridgeMacAddress, config.Default.ConntrackZone,
 							netConfig.masqCTMark, ofPortPhys))
+
+					// Allow OVN->Host traffic on the same node
+					if config.Gateway.Mode == config.GatewayModeShared || config.Gateway.Mode == config.GatewayModeLocal {
+						for _, hostSubnet := range hostSubnets {
+							if hostSubnet.IP.To4() == nil {
+								continue
+							}
+							dftFlows = append(dftFlows, ovnToHostNetworkNormalActionFlows(netConfig, bridgeMacAddress, hostSubnet.String())...)
+						}
+					}
 				} else {
 					//  for UDN we additionally SNAT the packet from masquerade IP -> node IP
 					dftFlows = append(dftFlows,
@@ -1936,6 +1946,16 @@ func commonFlows(bridge *bridgeConfiguration) ([]string, error) {
 						fmt.Sprintf("cookie=%s, priority=100, in_port=%s, dl_src=%s, ipv6, "+
 							"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:%s",
 							defaultOpenFlowCookie, netConfig.ofPortPatch, bridgeMacAddress, config.Default.ConntrackZone, netConfig.masqCTMark, ofPortPhys))
+
+					// Allow OVN->Host traffic on the same node
+					if config.Gateway.Mode == config.GatewayModeShared || config.Gateway.Mode == config.GatewayModeLocal {
+						for _, hostSubnet := range hostSubnets {
+							if hostSubnet.IP.To4() != nil {
+								continue
+							}
+							dftFlows = append(dftFlows, ovnToHostNetworkNormalActionFlows(netConfig, bridgeMacAddress, hostSubnet.String())...)
+						}
+					}
 				} else {
 					//  for UDN we additionally SNAT the packet from masquerade IP -> node IP
 					dftFlows = append(dftFlows,
@@ -2112,6 +2132,62 @@ func commonFlows(bridge *bridgeConfiguration) ([]string, error) {
 	}
 
 	return dftFlows, nil
+}
+
+// ovnToHostNetworkNormalActionFlows returns the flows that allow IP{v4,v6} traffic from the OVN network to the host network
+// when the destination is on the same node as the sender. This is necessary for pods in the default network to reach
+// localnet pods on the same node.
+func ovnToHostNetworkNormalActionFlows(netConfig *bridgeUDNConfiguration, srcMAC, dstIP string) []string {
+	var inPort, ctMark, ipFamily, ipFamilyDest string
+	var flows []string
+	var isIPv6 bool
+
+	if config.Gateway.Mode == config.GatewayModeShared {
+		inPort = netConfig.ofPortPatch
+		ctMark = netConfig.masqCTMark
+	} else if config.Gateway.Mode == config.GatewayModeLocal {
+		inPort = "LOCAL"
+		ctMark = ctMarkHost
+	} else {
+		return nil
+	}
+
+	if utilnet.IsIPv6CIDRString(dstIP) || utilnet.IsIPv6String(dstIP) {
+		isIPv6 = true
+		ipFamily = "ipv6"
+		ipFamilyDest = "ipv6_dst"
+	} else {
+		ipFamily = "ip"
+		ipFamilyDest = "nw_dst"
+	}
+
+	// IP traffic from the OVN network to the host network should be handled normally by the bridge instead of
+	// being output directly to the NIC by the existing flow at prio=100.
+	flows = append(flows,
+		fmt.Sprintf("cookie=%s, priority=102, in_port=%s, dl_src=%s, %s, %s=%s, "+
+			"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:NORMAL",
+			defaultOpenFlowCookie,
+			inPort,
+			srcMAC,
+			ipFamily,
+			ipFamilyDest,
+			dstIP,
+			config.Default.ConntrackZone,
+			ctMark))
+	if isIPv6 {
+		// Neighbor discovery in IPv6 happens through ICMPv6 messages to a special destination (ff02::1:ff00:0/104),
+		// which has nothing to do with the host subnets we're matching against in the flow above at prio=102.
+		// Let's allow neighbor discovery by matching against icmp type and in_port.
+		for _, icmpType := range []int{types.NeighborSolicitationICMPType, types.NeighborAdvertisementICMPType} {
+			flows = append(flows,
+				fmt.Sprintf("cookie=%s, priority=102, in_port=%s, dl_src=%s, icmp6, icmpv6_type=%d, "+
+					"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:NORMAL",
+					defaultOpenFlowCookie, inPort, srcMAC, icmpType,
+					config.Default.ConntrackZone, ctMark))
+		}
+
+	}
+	return flows
 }
 
 func setBridgeOfPorts(bridge *bridgeConfiguration) error {
@@ -2329,7 +2405,7 @@ func newGateway(
 			}
 		}
 
-		gw.openflowManager, err = newGatewayOpenFlowManager(gwBridge, exGwBridge, nodeIPs)
+		gw.openflowManager, err = newGatewayOpenFlowManager(gwBridge, exGwBridge, gw.nodeIPManager.ListNetworkAddresses(), nodeIPs)
 		if err != nil {
 			return err
 		}
@@ -2337,7 +2413,7 @@ func newGateway(
 		// resync flows on IP change
 		gw.nodeIPManager.OnChanged = func() {
 			klog.V(5).Info("Node addresses changed, re-syncing bridge flows")
-			if err := gw.openflowManager.updateBridgeFlowCache(gw.nodeIPManager.ListAddresses()); err != nil {
+			if err := gw.openflowManager.updateBridgeFlowCache(gw.nodeIPManager.ListNetworkAddresses(), gw.nodeIPManager.ListAddresses()); err != nil {
 				// very unlikely - somehow node has lost its IP address
 				klog.Errorf("Failed to re-generate gateway flows after address change: %v", err)
 			}
