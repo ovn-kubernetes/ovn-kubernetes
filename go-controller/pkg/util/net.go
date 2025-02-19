@@ -14,7 +14,8 @@ import (
 )
 
 const (
-	RoutingTableIDStart = 1000
+	EIPRoutingTableIDStart = 1000
+	UDNRoutingTableIDStart = 100000
 )
 
 var ErrorNoIP = errors.New("no IP available")
@@ -341,8 +342,13 @@ func IPNetsIPToStringSlice(ips []*net.IPNet) []string {
 	return ipAddrs
 }
 
-// CalculateRouteTableID will calculate route table ID based on the network
+// CalculateEIPRouteTableID will calculate route table ID based on the interface index
+func CalculateEIPRouteTableID(ifIndex int) int {
+	return EIPRoutingTableIDStart + ifIndex
+}
+
+// CalculateUDNRouteTableID will calculate route table ID based on the network networkID
 // interface index
-func CalculateRouteTableID(ifIndex int) int {
-	return ifIndex + RoutingTableIDStart
+func CalculateUDNRouteTableID(networkID int) int {
+	return UDNRoutingTableIDStart + networkID
 }
