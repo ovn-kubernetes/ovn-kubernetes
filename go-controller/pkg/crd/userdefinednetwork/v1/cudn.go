@@ -48,6 +48,7 @@ type NetworkSpec struct {
 	// Layer2 topology creates one logical switch shared by all nodes.
 	// Localnet topology is based on layer 2 topology, but also allows connecting to an existent (configured) physical network to provide north-south traffic to the workloads.
 	//
+	// +kubebuilder:validation:Enum=Layer2;Layer3;Localnet
 	// +kubebuilder:validation:Required
 	// +required
 	// +unionDiscriminator
