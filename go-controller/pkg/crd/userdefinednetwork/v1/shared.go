@@ -16,7 +16,6 @@ limitations under the License.
 
 package v1
 
-// +kubebuilder:validation:Enum=Layer2;Layer3
 type NetworkTopology string
 
 const (
