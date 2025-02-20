@@ -98,6 +98,7 @@ type LocalnetConfig struct {
 	// The network will be assigned to pods who has the `k8s.v1.cni.cncf.io/networks` annotation in place pointing
 	// to subject.
 	//
+	// +kubebuilder:validation:Enum=Secondary
 	// +required
 	Role NetworkRole `json:"role"`
 
