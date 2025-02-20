@@ -32,6 +32,7 @@ type Layer3Config struct {
 	// Primary network is automatically assigned to every pod created in the same namespace.
 	// Secondary network is only assigned to pods that use `k8s.v1.cni.cncf.io/networks` annotation to select given network.
 	//
+	// +kubebuilder:validation:Enum=Primary;Secondary
 	// +kubebuilder:validation:Required
 	// +required
 	Role NetworkRole `json:"role"`
@@ -96,6 +97,7 @@ type Layer2Config struct {
 	// Allowed value is "Secondary".
 	// Secondary network is only assigned to pods that use `k8s.v1.cni.cncf.io/networks` annotation to select given network.
 	//
+	// +kubebuilder:validation:Enum=Primary;Secondary
 	// +kubebuilder:validation:Required
 	// +required
 	Role NetworkRole `json:"role"`
@@ -165,7 +167,6 @@ const (
 	IPAMDisabled IPAMMode = "Disabled"
 )
 
-// +kubebuilder:validation:Enum=Primary;Secondary
 type NetworkRole string
 
 const (
