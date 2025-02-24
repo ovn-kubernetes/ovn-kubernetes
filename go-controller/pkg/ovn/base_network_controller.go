@@ -36,6 +36,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/observability"
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	nqoscontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/network_qos"
 	lsm "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/routeimport"
 	zoneic "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/zone_interconnect"
@@ -181,6 +182,9 @@ type BaseNetworkController struct {
 	observManager *observability.Manager
 
 	routeImportManager routeimport.Manager
+
+	// Controller used for programming OVN for Network QoS
+	nqosController *nqoscontroller.Controller
 }
 
 // BaseSecondaryNetworkController structure holds per-network fields and network specific
@@ -1012,6 +1016,25 @@ func (bnc *BaseNetworkController) DeleteResourceCommon(objType reflect.Type, obj
 		klog.Errorf("Can not process delete resource event, object type %s is not supported", objType)
 	}
 	return nil
+}
+
+func (bnc *BaseNetworkController) newNetworkQoSController() error {
+	var err error
+	bnc.nqosController, err = nqoscontroller.NewController(
+		bnc.controllerName,
+		bnc.ReconcilableNetInfo.GetNetInfo(),
+		bnc.nbClient,
+		bnc.recorder,
+		bnc.kube.NetworkQoSClient,
+		bnc.watchFactory.NetworkQoSInformer(),
+		bnc.watchFactory.NamespaceCoreInformer(),
+		bnc.watchFactory.PodCoreInformer(),
+		bnc.watchFactory.NodeCoreInformer(),
+		bnc.addressSetFactory,
+		bnc.isPodScheduledinLocalZone,
+		bnc.zone,
+	)
+	return err
 }
 
 func initLoadBalancerGroups(nbClient libovsdbclient.Client, netInfo util.NetInfo) (
