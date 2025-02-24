@@ -85,6 +85,8 @@ type ClusterUserDefinedNetworkList struct {
 	Items           []ClusterUserDefinedNetwork `json:"items"`
 }
 
+const NetworkTopologyLocalnet NetworkTopology = "Localnet"
+
 // +kubebuilder:validation:XValidation:rule="!has(self.ipam) || !has(self.ipam.mode) || self.ipam.mode == 'Enabled' ? has(self.subnets) : !has(self.subnets)", message="Subnets is required with ipam.mode is Enabled or unset, and forbidden otherwise"
 // +kubebuilder:validation:XValidation:rule="!has(self.excludeSubnets) || has(self.subnets)", message="excludeSubnets must be unset when subnets is unset"
 // +kubebuilder:validation:XValidation:rule="!has(self.subnets) || !has(self.mtu) || !self.subnets.exists_one(i, isCIDR(i) && cidr(i).ip().family() == 6) || self.mtu >= 1280", message="MTU should be greater than or equal to 1280 when an IPv6 subnet is used"
