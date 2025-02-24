@@ -138,15 +138,16 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter) (map[s
 		if err := validateIPAM(cfg.IPAM); err != nil {
 			return nil, err
 		}
-		netConfSpec.Role = strings.ToLower(string(cfg.Role))
-		netConfSpec.MTU = int(cfg.MTU)
-		netConfSpec.AllowPersistentIPs = cfg.IPAM != nil && cfg.IPAM.Lifecycle == userdefinednetworkv1.IPAMLifecyclePersistent
 		if ipamEnabled(cfg.IPAM) && len(cfg.Subnets) == 0 {
 			return nil, fmt.Errorf("subnets is required with ipam.mode is Enabled or unset")
 		}
 		if !ipamEnabled(cfg.IPAM) && len(cfg.Subnets) > 0 {
 			return nil, fmt.Errorf("subnets must be unset when ipam.mode is Disabled")
 		}
+
+		netConfSpec.Role = strings.ToLower(string(cfg.Role))
+		netConfSpec.MTU = int(cfg.MTU)
+		netConfSpec.AllowPersistentIPs = cfg.IPAM != nil && cfg.IPAM.Lifecycle == userdefinednetworkv1.IPAMLifecyclePersistent
 		netConfSpec.Subnets = cidrString(cfg.Subnets)
 		netConfSpec.JoinSubnet = cidrString(renderJoinSubnets(cfg.Role, cfg.JoinSubnets))
 	}
