@@ -12,6 +12,11 @@ func (s *UserDefinedNetworkSpec) GetLayer2() *Layer2Config {
 	return s.Layer2
 }
 
+func (s *UserDefinedNetworkSpec) GetLocalnet() *LocalnetConfig {
+	// localnet is not supported
+	return nil
+}
+
 func (s *NetworkSpec) GetTopology() NetworkTopology {
 	return s.Topology
 }
@@ -22,4 +27,8 @@ func (s *NetworkSpec) GetLayer3() *Layer3Config {
 
 func (s *NetworkSpec) GetLayer2() *Layer2Config {
 	return s.Layer2
+}
+
+func (s *NetworkSpec) GetLocalnet() *LocalnetConfig {
+	return s.Localnet
 }
