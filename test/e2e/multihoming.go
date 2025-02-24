@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"os"
 	"os/exec"
 	"strconv"
@@ -24,9 +25,14 @@ import (
 	mnpclient "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1beta1"
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
+
+	util "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
-const PolicyForAnnotation = "k8s.v1.cni.cncf.io/policy-for"
+const (
+	PolicyForAnnotation = "k8s.v1.cni.cncf.io/policy-for"
+	nodeHostnameKey     = "kubernetes.io/hostname"
+)
 
 var _ = Describe("Multi Homing", func() {
 	const (
@@ -189,7 +195,7 @@ var _ = Describe("Multi Homing", func() {
 				},
 			),
 			ginkgo.Entry(
-				"when attaching to an localnet - switched - network",
+				"when attaching to a localnet - switched - network",
 				networkAttachmentConfigParams{
 					cidr:     secondaryLocalnetNetworkCIDR,
 					name:     secondaryNetworkName,
@@ -202,7 +208,7 @@ var _ = Describe("Multi Homing", func() {
 				},
 			),
 			ginkgo.Entry(
-				"when attaching to an Localnet - switched - network featuring `excludeCIDR`s",
+				"when attaching to a localnet - switched - network featuring `excludeCIDR`s",
 				networkAttachmentConfigParams{
 					cidr:         secondaryLocalnetNetworkCIDR,
 					name:         secondaryNetworkName,
@@ -216,7 +222,7 @@ var _ = Describe("Multi Homing", func() {
 				},
 			),
 			ginkgo.Entry(
-				"when attaching to an localnet - switched - network without IPAM",
+				"when attaching to a localnet - switched - network without IPAM",
 				networkAttachmentConfigParams{
 					name:     secondaryNetworkName,
 					topology: "localnet",
@@ -228,7 +234,7 @@ var _ = Describe("Multi Homing", func() {
 				},
 			),
 			ginkgo.Entry(
-				"when attaching to an localnet - switched - network with an IPv6 subnet",
+				"when attaching to a localnet - switched - network with an IPv6 subnet",
 				networkAttachmentConfigParams{
 					cidr:     secondaryIPv6CIDR,
 					name:     secondaryNetworkName,
@@ -254,12 +260,123 @@ var _ = Describe("Multi Homing", func() {
 				},
 			),
 		)
+
+		const (
+			clientPodName     = "client-pod"
+			clientIPOffset    = 100
+			serverIPOffset    = 102
+			port              = 9000
+			workerOneNodeName = "ovn-worker"
+			workerTwoNodeName = "ovn-worker2"
+		)
+
+		ginkgo.DescribeTable("attached to a localnet network mapped to breth0",
+
+			func(netConfigParams networkAttachmentConfigParams, clientPodConfig, serverPodConfig podConfiguration) {
+
+				netConfig := newNetworkAttachmentConfig(networkAttachmentConfigParams{
+					name:      secondaryNetworkName,
+					namespace: f.Namespace.Name,
+					topology:  "localnet",
+				})
+				if clientPodConfig.namespace == "" {
+					clientPodConfig.namespace = f.Namespace.Name
+				}
+				if serverPodConfig.namespace == "" {
+					serverPodConfig.namespace = f.Namespace.Name
+				}
+
+				By("setting up the localnet underlay")
+				pods := ovsPods(cs)
+				Expect(pods).NotTo(BeEmpty())
+
+				Expect(setupUnderlayOnDefaultBridge(pods, netConfig)).To(Succeed())
+
+				nad := generateNAD(netConfig)
+				By(fmt.Sprintf("creating the attachment configuration: %v\n", nad))
+				_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
+					context.Background(),
+					nad,
+					metav1.CreateOptions{},
+				)
+				Expect(err).NotTo(HaveOccurred())
+
+				if serverPodConfig.attachments != nil && serverPodConfig.needsIPRequestFromHostSubnet {
+					By("finalizing the server pod IP configuration")
+					addIPRequestToPodConfig(cs, &serverPodConfig, serverIPOffset)
+					Expect(err).NotTo(HaveOccurred())
+				}
+
+				if clientPodConfig.attachments != nil && clientPodConfig.needsIPRequestFromHostSubnet {
+					By("finalizing the client pod IP configuration")
+					addIPRequestToPodConfig(cs, &clientPodConfig, clientIPOffset)
+					Expect(err).NotTo(HaveOccurred())
+				}
+
+				By("instantiating the server pod")
+				serverPod := kickstartPod(cs, serverPodConfig)
+
+				By("instantiating the client pod")
+				kickstartPod(cs, clientPodConfig)
+
+				// Check that the client pod can reach the server pod on the server localnet interface
+				serverIPs, err := podIPsForAttachment(cs, f.Namespace.Name, serverPod.GetName(), netConfig.name)
+				Expect(err).NotTo(HaveOccurred())
+				for _, serverIP := range serverIPs {
+					By(fmt.Sprintf("asserting the *client* can contact the server pod exposed endpoint: %q", serverIP))
+					Eventually(func() error {
+						return reachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
+					}, 2*time.Minute, 6*time.Second).Should(Succeed())
+				}
+			},
+			ginkgo.Entry(
+				"can be reached by a client pod in the default network on a different node",
+				networkAttachmentConfigParams{
+					name:     secondaryNetworkName,
+					topology: "localnet",
+				},
+				podConfiguration{ // client on default network
+					name:         clientPodName,
+					nodeSelector: map[string]string{nodeHostnameKey: workerOneNodeName},
+				},
+				podConfiguration{ // server attached to localnet secondary network
+					attachments: []nadapi.NetworkSelectionElement{{
+						Name: secondaryNetworkName,
+					}},
+					name:                         podName,
+					containerCmd:                 httpServerContainerCmd(port),
+					nodeSelector:                 map[string]string{nodeHostnameKey: workerTwoNodeName},
+					needsIPRequestFromHostSubnet: true, // will override attachments above with an IPRequest
+				},
+				Label("BUG", "OCPBUGS-43004"),
+			),
+			ginkgo.Entry(
+				"can be reached by a client pod in the default network on the same node",
+				networkAttachmentConfigParams{
+					name:     secondaryNetworkName,
+					topology: "localnet",
+				},
+				podConfiguration{ // client on default network
+					name:         clientPodName + "-same-node",
+					nodeSelector: map[string]string{nodeHostnameKey: workerTwoNodeName},
+				},
+				podConfiguration{ // server attached to localnet secondary network
+					attachments: []nadapi.NetworkSelectionElement{{
+						Name: secondaryNetworkName,
+					}},
+					name:                         podName,
+					containerCmd:                 httpServerContainerCmd(port),
+					nodeSelector:                 map[string]string{nodeHostnameKey: workerTwoNodeName},
+					needsIPRequestFromHostSubnet: true,
+				},
+				Label("BUG", "OCPBUGS-43004"),
+			),
+		)
 	})
 
 	Context("multiple pods connected to the same OVN-K secondary network", func() {
 		const (
 			clientPodName     = "client-pod"
-			nodeHostnameKey   = "kubernetes.io/hostname"
 			port              = 9000
 			workerOneNodeName = "ovn-worker"
 			workerTwoNodeName = "ovn-worker2"
@@ -351,11 +468,11 @@ var _ = Describe("Multi Homing", func() {
 					Expect(nodes).NotTo(BeEmpty())
 					defer func() {
 						By("tearing down the localnet underlay")
-						Expect(teardownUnderlay(nodes)).To(Succeed())
+						Expect(teardownUnderlayOnSecondaryBridge(nodes)).To(Succeed())
 					}()
 
 					const secondaryInterfaceName = "eth1"
-					Expect(setupUnderlay(nodes, secondaryInterfaceName, netConfig)).To(Succeed())
+					Expect(setupUnderlayOnSecondaryBridge(nodes, secondaryInterfaceName, netConfig)).To(Succeed())
 				}
 
 				By("creating the attachment configuration")
@@ -430,7 +547,7 @@ var _ = Describe("Multi Homing", func() {
 
 					By("asserting the *client* pod can contact the server pod exposed endpoint")
 					Eventually(func() error {
-						return reachToServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
+						return reachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
 					}, 2*time.Minute, 6*time.Second).Should(Succeed())
 				}
 			},
@@ -603,7 +720,7 @@ var _ = Describe("Multi Homing", func() {
 				},
 			),
 			ginkgo.Entry(
-				"can communicate over an localnet secondary network when the pods are scheduled on different nodes",
+				"can communicate over a localnet secondary network when the pods are scheduled on different nodes",
 				networkAttachmentConfigParams{
 					name:     secondaryNetworkName,
 					topology: "localnet",
@@ -623,7 +740,7 @@ var _ = Describe("Multi Homing", func() {
 				},
 			),
 			ginkgo.Entry(
-				"can communicate over an localnet secondary network without IPAM when the pods are scheduled on different nodes",
+				"can communicate over a localnet secondary network without IPAM when the pods are scheduled on different nodes",
 				networkAttachmentConfigParams{
 					name:     secondaryNetworkName,
 					topology: "localnet",
@@ -644,7 +761,7 @@ var _ = Describe("Multi Homing", func() {
 				},
 			),
 			ginkgo.Entry(
-				"can communicate over an localnet secondary network without IPAM when the pods are scheduled on different nodes, with static IPs configured via network selection elements",
+				"can communicate over a localnet secondary network without IPAM when the pods are scheduled on different nodes, with static IPs configured via network selection elements",
 				networkAttachmentConfigParams{
 					name:     secondaryNetworkName,
 					topology: "localnet",
@@ -669,7 +786,7 @@ var _ = Describe("Multi Homing", func() {
 				},
 			),
 			ginkgo.Entry(
-				"can communicate over an localnet secondary network with an IPv6 subnet when pods are scheduled on different nodes",
+				"can communicate over a localnet secondary network with an IPv6 subnet when pods are scheduled on different nodes",
 				networkAttachmentConfigParams{
 					name:     secondaryNetworkName,
 					topology: "localnet",
@@ -689,7 +806,7 @@ var _ = Describe("Multi Homing", func() {
 				},
 			),
 			ginkgo.Entry(
-				"can communicate over an localnet secondary network with a dual stack configuration when pods are scheduled on different nodes",
+				"can communicate over a localnet secondary network with a dual stack configuration when pods are scheduled on different nodes",
 				networkAttachmentConfigParams{
 					name:     secondaryNetworkName,
 					topology: "localnet",
@@ -741,7 +858,7 @@ var _ = Describe("Multi Homing", func() {
 					By("setting up the localnet underlay")
 					nodes = ovsPods(cs)
 					Expect(nodes).NotTo(BeEmpty())
-					Expect(setupUnderlay(nodes, secondaryInterfaceName, netConfig)).To(Succeed())
+					Expect(setupUnderlayOnSecondaryBridge(nodes, secondaryInterfaceName, netConfig)).To(Succeed())
 				})
 
 				BeforeEach(func() {
@@ -792,7 +909,7 @@ var _ = Describe("Multi Homing", func() {
 
 				AfterEach(func() {
 					By("tearing down the localnet underlay")
-					Expect(teardownUnderlay(nodes)).To(Succeed())
+					Expect(teardownUnderlayOnSecondaryBridge(nodes)).To(Succeed())
 				})
 
 				It("can communicate over a localnet secondary network from pod to the underlay service", func() {
@@ -987,7 +1104,7 @@ var _ = Describe("Multi Homing", func() {
 						})
 
 					By("setting up the localnet underlay with a trunked configuration")
-					Expect(setupUnderlay(nodes, secondaryInterfaceName, netConfig)).To(Succeed(), "configuring the OVS bridge")
+					Expect(setupUnderlayOnSecondaryBridge(nodes, secondaryInterfaceName, netConfig)).To(Succeed(), "configuring the OVS bridge")
 
 					By(fmt.Sprintf("creating a VLAN interface on top of the bridge connecting the cluster nodes with IP: %s", underlayIP))
 					cli, err := client.NewClientWithOpts(client.FromEnv)
@@ -1012,7 +1129,7 @@ var _ = Describe("Multi Homing", func() {
 				AfterEach(func() {
 					Expect(cmdWebServer.Process.Kill()).NotTo(HaveOccurred(), "kill the python webserver")
 					Expect(deleteVLANInterface(underlayBridgeName, strconv.Itoa(vlanID))).NotTo(HaveOccurred(), "remove the underlay physical configuration")
-					Expect(teardownUnderlay(nodes)).To(Succeed(), "tear down the localnet underlay")
+					Expect(teardownUnderlayOnSecondaryBridge(nodes)).To(Succeed(), "tear down the localnet underlay")
 				})
 
 				It("the same bridge mapping can be shared by a separate VLAN by using the physical network name attribute", func() {
@@ -1096,11 +1213,11 @@ var _ = Describe("Multi Homing", func() {
 						Expect(nodes).NotTo(BeEmpty())
 						defer func() {
 							By("tearing down the localnet underlay")
-							Expect(teardownUnderlay(nodes)).To(Succeed())
+							Expect(teardownUnderlayOnSecondaryBridge(nodes)).To(Succeed())
 						}()
 
 						const secondaryInterfaceName = "eth1"
-						Expect(setupUnderlay(nodes, secondaryInterfaceName, netConfig)).To(Succeed())
+						Expect(setupUnderlayOnSecondaryBridge(nodes, secondaryInterfaceName, netConfig)).To(Succeed())
 					}
 
 					Expect(createNads(f, nadClient, extraNamespace, netConfig)).NotTo(HaveOccurred())
@@ -1125,7 +1242,7 @@ var _ = Describe("Multi Homing", func() {
 
 					By("asserting the *allowed-client* pod can contact the server pod exposed endpoint")
 					Eventually(func() error {
-						return reachToServerPodFromClient(cs, serverPodConfig, allowedClientPodConfig, serverIP, port)
+						return reachServerPodFromClient(cs, serverPodConfig, allowedClientPodConfig, serverIP, port)
 					}, 2*time.Minute, 6*time.Second).Should(Succeed())
 
 					By("asserting the *blocked-client* pod **cannot** contact the server pod exposed endpoint")
@@ -1485,10 +1602,10 @@ var _ = Describe("Multi Homing", func() {
 					Expect(nodes).NotTo(BeEmpty())
 					defer func() {
 						By("tearing down the localnet underlay")
-						Expect(teardownUnderlay(nodes)).To(Succeed())
+						Expect(teardownUnderlayOnSecondaryBridge(nodes)).To(Succeed())
 					}()
 					const secondaryInterfaceName = "eth1"
-					Expect(setupUnderlay(nodes, secondaryInterfaceName, netConfig)).To(Succeed())
+					Expect(setupUnderlayOnSecondaryBridge(nodes, secondaryInterfaceName, netConfig)).To(Succeed())
 
 					Expect(createNads(f, nadClient, extraNamespace, netConfig)).NotTo(HaveOccurred())
 
@@ -1503,7 +1620,7 @@ var _ = Describe("Multi Homing", func() {
 
 					By("asserting the *client* pod can contact the server pod exposed endpoint")
 					Eventually(func() error {
-						return reachToServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
+						return reachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
 					}, 2*time.Minute, 6*time.Second).Should(Succeed())
 				},
 				ginkgo.Entry(
@@ -1617,10 +1734,10 @@ var _ = Describe("Multi Homing", func() {
 					Expect(nodes).NotTo(BeEmpty())
 					defer func() {
 						By("tearing down the localnet underlay")
-						Expect(teardownUnderlay(nodes)).To(Succeed())
+						Expect(teardownUnderlayOnSecondaryBridge(nodes)).To(Succeed())
 					}()
 					const secondaryInterfaceName = "eth1"
-					Expect(setupUnderlay(nodes, secondaryInterfaceName, netConfig)).To(Succeed())
+					Expect(setupUnderlayOnSecondaryBridge(nodes, secondaryInterfaceName, netConfig)).To(Succeed())
 
 					Expect(createNads(f, nadClient, extraNamespace, netConfig)).NotTo(HaveOccurred())
 
@@ -1635,7 +1752,7 @@ var _ = Describe("Multi Homing", func() {
 
 					By("asserting the *client* pod can't contact the server pod exposed endpoint when using ingress deny-all")
 					Eventually(func() error {
-						return reachToServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
+						return reachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
 					}, 2*time.Minute, 6*time.Second).Should(Not(Succeed()))
 				},
 				ginkgo.Entry(
@@ -1746,7 +1863,8 @@ var _ = Describe("Multi Homing", func() {
 })
 
 func kickstartPod(cs clientset.Interface, configuration podConfiguration) *v1.Pod {
-	By(fmt.Sprintf("instantiating the %q pod", fmt.Sprintf("%s/%s", configuration.namespace, configuration.name)))
+	podNamespacedName := fmt.Sprintf("%s/%s", configuration.namespace, configuration.name)
+	By(fmt.Sprintf("instantiating pod %q", podNamespacedName))
 	createdPod, err := cs.CoreV1().Pods(configuration.namespace).Create(
 		context.Background(),
 		generatePodSpec(configuration),
@@ -1754,7 +1872,7 @@ func kickstartPod(cs clientset.Interface, configuration podConfiguration) *v1.Po
 	)
 	Expect(err).WithOffset(1).NotTo(HaveOccurred())
 
-	By("asserting the pod reaches the `Ready` state")
+	By(fmt.Sprintf("asserting that pod %q reaches the `Ready` state", podNamespacedName))
 	EventuallyWithOffset(1, func() v1.PodPhase {
 		updatedPod, err := cs.CoreV1().Pods(configuration.namespace).Get(context.Background(), configuration.name, metav1.GetOptions{})
 		if err != nil {
@@ -1811,4 +1929,76 @@ func createMultiNetworkPolicy(mnpClient mnpclient.K8sCniCncfIoV1beta1Interface, 
 		metav1.CreateOptions{},
 	)
 	return err
+}
+
+func computeIPWithOffset(baseAddr string, increment int) (string, error) {
+	addr, err := netip.ParsePrefix(baseAddr)
+	if err != nil {
+		return "", fmt.Errorf("Failed to parse CIDR %v", err)
+	}
+
+	ip := addr.Addr()
+
+	for i := 0; i < increment; i++ {
+		ip = ip.Next()
+		if !ip.IsValid() {
+			return "", fmt.Errorf("overflow: IP address exceeds bounds")
+		}
+	}
+
+	return netip.PrefixFrom(ip, addr.Bits()).String(), nil
+}
+
+// Given a node name and an offset, generateIPsFromNodePrimaryIfAddr returns an IPv4 and an IPv6 address
+// at the provided offset from the primary interface addresses found on the node.
+func generateIPsFromNodePrimaryIfAddr(cs clientset.Interface, nodeName string, offset int) (string, string, error) {
+	var addressV4, addressV6 string
+
+	node, err := cs.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
+	if err != nil {
+		return "", "", fmt.Errorf("Failed to get node %s: %v", nodeName, err)
+	}
+
+	nodeIfAddr, err := util.GetNodeIfAddrAnnotation(node) // util.ParseNodeHostCIDRs(node)
+	if err != nil {
+		return "", "", err
+	}
+
+	if nodeIfAddr.IPv4 != "" {
+		addressV4, err = computeIPWithOffset(nodeIfAddr.IPv4, offset)
+		if err != nil {
+			return "", "", err
+		}
+	}
+
+	if nodeIfAddr.IPv6 != "" {
+		addressV6, err = computeIPWithOffset(nodeIfAddr.IPv6, offset)
+		if err != nil {
+			return "", "", err
+		}
+	}
+	return addressV4, addressV6, nil
+}
+func addIPRequestToPodConfig(cs clientset.Interface, podConfig *podConfiguration, offset int) error {
+	nodeName, ok := podConfig.nodeSelector[nodeHostnameKey]
+	if !ok {
+		return fmt.Errorf("No node selector found on podConfig")
+	}
+
+	staticServerIPv4, staticServerIPv6, err := generateIPsFromNodePrimaryIfAddr(cs, nodeName, offset)
+	if err != nil {
+		return err
+	}
+
+	IPsToRequest := []string{}
+	if staticServerIPv4 != "" {
+		IPsToRequest = append(IPsToRequest, staticServerIPv4)
+	}
+	if staticServerIPv6 != "" {
+		IPsToRequest = append(IPsToRequest, staticServerIPv6)
+	}
+	for i := range podConfig.attachments {
+		podConfig.attachments[i].IPRequest = IPsToRequest
+	}
+	return nil
 }
