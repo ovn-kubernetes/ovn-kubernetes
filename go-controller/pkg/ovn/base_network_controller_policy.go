@@ -161,6 +161,8 @@ type networkPolicy struct {
 	localPodHandler *factory.Handler
 	// peer namespace handlers
 	nsHandlerList []*factory.Handler
+	// peer namespace pod handlers
+	nsPodHandlers map[string]*factory.Handler
 	// peerAddressSets stores PodSelectorAddressSet keys for peers that this network policy was successfully added to.
 	// Required for cleanup.
 	peerAddressSets []string
@@ -195,6 +197,7 @@ func NewNetworkPolicy(policy *knet.NetworkPolicy) *networkPolicy {
 		isIngress:       policyTypeIngress,
 		isEgress:        policyTypeEgress,
 		nsHandlerList:   make([]*factory.Handler, 0),
+		nsPodHandlers:   map[string]*factory.Handler{},
 		localPods:       sync.Map{},
 	}
 	return np
@@ -889,7 +892,6 @@ func (bnc *BaseNetworkController) addLocalPodHandler(policy *knet.NetworkPolicy,
 			np: np,
 		},
 		np.cancelableContext.Done())
-
 	podHandler, err := retryLocalPods.WatchResourceFiltered(policy.Namespace, sel)
 	if err != nil {
 		klog.Errorf("WatchResource failed for addLocalPodHandler: %v", err)
@@ -1100,7 +1102,7 @@ func (bnc *BaseNetworkController) createNetworkPolicy(policy *knet.NetworkPolicy
 		for _, handler := range policyHandlers {
 			// For each peer namespace selector, we create a watcher that
 			// populates ingress.peerAddressSets
-			err = bnc.addPeerNamespaceHandler(handler.namespaceSelector, handler.gress, np)
+			err = bnc.addAddressSetNamespacePodHandler(handler.namespaceSelector, handler.gress, np)
 			if err != nil {
 				return fmt.Errorf("failed to start peer handler: %v", err)
 			}
@@ -1376,7 +1378,11 @@ type NetworkPolicyExtraParameters struct {
 	gp *gressPolicy
 }
 
-func (bnc *BaseNetworkController) handlePeerNamespaceSelectorAdd(np *networkPolicy, gp *gressPolicy, objs ...interface{}) error {
+// handles namespace add event (or) syncing existing namespace for the network policy.
+// it updates gress policy ACLs with namespace address set and spins up AddressSetPodSelectorType
+// watcher to handle pod add and update events. This is needed because on UDN network AddressSet
+// is created for subsequent namespace(s) only when first pod is created in the namespace.
+func (bnc *BaseNetworkController) handlePeerNamespaceAdd(np *networkPolicy, gp *gressPolicy, objs ...interface{}) error {
 	if !bnc.IsSecondary() && config.Metrics.EnableScaleMetrics {
 		start := time.Now()
 		defer func() {
@@ -1391,10 +1397,82 @@ func (bnc *BaseNetworkController) handlePeerNamespaceSelectorAdd(np *networkPoli
 	}
 	updated := false
 	var errors []error
+	var namespaces []string
 	for _, obj := range objs {
 		namespace := obj.(*kapi.Namespace)
 		// addNamespaceAddressSet is safe for concurrent use, doesn't require additional synchronization
 		nsUpdated, err := gp.addNamespaceAddressSet(namespace.Name, bnc.addressSetFactory)
+		if err != nil {
+			errors = append(errors, err)
+		} else if nsUpdated {
+			updated = true
+		}
+		namespaces = append(namespaces, namespace.Name)
+	}
+	np.RUnlock()
+	// unlock networkPolicy, before calling peerNamespaceUpdate
+	if updated {
+		err := bnc.peerNamespaceUpdate(np, gp)
+		if err != nil {
+			errors = append(errors, err)
+		}
+	}
+	// check if UDN label is present on netpol namespace.
+	ns, err := bnc.watchFactory.GetNamespace(np.namespace)
+	if err != nil {
+		errors = append(errors, err)
+	}
+	if _, exists := ns.Labels[types.RequiredUDNNamespaceLabel]; !exists {
+		// Netpol is created on the default network namespace, so address set
+		// for the namespace must be present at the time of namespace creation.
+		// so return it now without subscribing to its pod events.
+		return utilerrors.Join(errors...)
+	}
+	syncFunc := func(objs []interface{}) error {
+		// ignore returned error, since any pod that wasn't properly handled will be retried individually.
+		_ = bnc.handlePeerNamespacePodAddUpdate(np, gp, objs...)
+		return nil
+	}
+	retryFramework := bnc.newNetpolRetryFramework(
+		factory.AddressSetPodSelectorType,
+		syncFunc,
+		&NetworkPolicyExtraParameters{gp: gp, np: np},
+		np.cancelableContext.Done(),
+	)
+	for _, namespace := range namespaces {
+		if _, ok := np.nsPodHandlers[namespace]; !ok {
+			podHandler, err := retryFramework.WatchResourceFiltered(namespace, nil)
+			if err != nil {
+				errors = append(errors, err)
+			} else {
+				np.nsPodHandlers[namespace] = podHandler
+			}
+		}
+	}
+	return utilerrors.Join(errors...)
+}
+
+// handles pod add and update events (or) syncing existing pods on the namespace, it updates ACL(s) with namespace address
+// set if it needed and guarantees idempotent behavior.
+func (bnc *BaseNetworkController) handlePeerNamespacePodAddUpdate(np *networkPolicy, gp *gressPolicy, objs ...interface{}) error {
+	if config.Metrics.EnableScaleMetrics {
+		start := time.Now()
+		defer func() {
+			duration := time.Since(start)
+			metrics.RecordPodSelectorAddrSetPodEvent("add", duration)
+		}()
+	}
+	np.RLock()
+	if np.deleted {
+		np.RUnlock()
+		return nil
+	}
+	updated := false
+	var errors []error
+	for _, obj := range objs {
+		pod := obj.(*kapi.Pod)
+		// addNamespaceAddressSet is safe for concurrent use, doesn't require additional synchronization
+		nsUpdated, err := gp.addNamespaceAddressSet(pod.Namespace, bnc.addressSetFactory)
 		if err != nil {
 			errors = append(errors, err)
 		} else if nsUpdated {
@@ -1410,10 +1488,10 @@ func (bnc *BaseNetworkController) handlePeerNamespaceSelectorAdd(np *networkPoli
 		}
 	}
 	return utilerrors.Join(errors...)
-
 }
 
-func (bnc *BaseNetworkController) handlePeerNamespaceSelectorDel(np *networkPolicy, gp *gressPolicy, objs ...interface{}) error {
+// handler to listen for namesapce delete event and removes namespace address set from gress policy ACL(s).
+func (bnc *BaseNetworkController) handlePeerNamespaceDel(np *networkPolicy, gp *gressPolicy, objs ...interface{}) error {
 	if !bnc.IsSecondary() && config.Metrics.EnableScaleMetrics {
 		start := time.Now()
 		defer func() {
@@ -1489,12 +1567,12 @@ func (bnc *BaseNetworkController) peerNamespaceUpdate(np *networkPolicy, gp *gre
 	return err
 }
 
-// addPeerNamespaceHandler starts a watcher for PeerNamespaceSelectorType.
-// Sync function and Add event for every existing namespace will be executed sequentially first, and an error will be
-// returned if something fails.
-// PeerNamespaceSelectorType uses handlePeerNamespaceSelectorAdd on Add,
+// addAddressSetNamespacePodHandler starts a watcher for AddressSetNamespaceAndPodSelectorType.
+// Sync function and Add event for every existing namespace will be executed sequentially first
+// and an error will be returned if something fails.
+// AddressSetNamespaceAndPodSelectorType uses handlePeerNamespaceSelectorAdd on Add,
 // and handlePeerNamespaceSelectorDel on Delete.
-func (bnc *BaseNetworkController) addPeerNamespaceHandler(
+func (bnc *BaseNetworkController) addAddressSetNamespacePodHandler(
 	namespaceSelector *metav1.LabelSelector,
 	gress *gressPolicy, np *networkPolicy) error {
 
@@ -1506,19 +1584,18 @@ func (bnc *BaseNetworkController) addPeerNamespaceHandler(
 	// start watching namespaces selected by the namespace selector
 	syncFunc := func(objs []interface{}) error {
 		// ignore returned error, since any namespace that wasn't properly handled will be retried individually.
-		_ = bnc.handlePeerNamespaceSelectorAdd(np, gress, objs...)
+		_ = bnc.handlePeerNamespaceAdd(np, gress, objs...)
 		return nil
 	}
 	retryPeerNamespaces := bnc.newNetpolRetryFramework(
-		factory.PeerNamespaceSelectorType,
+		factory.AddressSetNamespaceAndPodSelectorType,
 		syncFunc,
 		&NetworkPolicyExtraParameters{gp: gress, np: np},
 		np.cancelableContext.Done(),
 	)
-
 	namespaceHandler, err := retryPeerNamespaces.WatchResourceFiltered("", sel)
 	if err != nil {
-		klog.Errorf("WatchResource failed for addPeerNamespaceHandler: %v", err)
+		klog.Errorf("WatchResource failed for addAddressSetNamespacePodHandler: %v", err)
 		return err
 	}
 
@@ -1540,6 +1617,11 @@ func (bnc *BaseNetworkController) shutdownHandlers(np *networkPolicy) {
 		bnc.watchFactory.RemoveNamespaceHandler(handler)
 	}
 	np.nsHandlerList = make([]*factory.Handler, 0)
+
+	for _, handler := range np.nsPodHandlers {
+		bnc.watchFactory.RemoveNamespaceHandler(handler)
+	}
+	np.nsPodHandlers = map[string]*factory.Handler{}
 }
 
 // The following 2 functions should return the same key for network policy based on k8s on internal networkPolicy object
