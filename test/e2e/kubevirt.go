@@ -15,6 +15,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"gopkg.in/yaml.v2"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -51,6 +52,8 @@ import (
 	ipamclaimsv1alpha1 "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1"
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	nadv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+
+	iputils "github.com/containernetworking/plugins/pkg/ip"
 
 	kubevirtv1 "kubevirt.io/api/core/v1"
 	kvmigrationsv1alpha1 "kubevirt.io/api/migrations/v1alpha1"
@@ -574,6 +577,11 @@ iperf3 -t 0 -c %[1]s -p %[2]d --logfile %[3]s &
 			Expect(vmi.Status.MigrationState.Mode).To(Equal(migrationMode), "should be the expected migration mode %s", migrationMode)
 		}
 
+		liveMigrateSucceed = func(vmi *kubevirtv1.VirtualMachineInstance) {
+			liveMigrateVirtualMachine(vmi.Name)
+			checkLiveMigrationSucceeded(vmi.Name, kubevirtv1.MigrationPreCopy)
+		}
+
 		vmiMigrations = func(client crclient.Client) ([]kubevirtv1.VirtualMachineInstanceMigration, error) {
 			unstructuredVMIMigrations := &unstructured.UnstructuredList{}
 			unstructuredVMIMigrations.SetGroupVersionKind(schema.GroupVersionKind{
@@ -630,6 +638,24 @@ iperf3 -t 0 -c %[1]s -p %[2]d --logfile %[3]s &
 			)
 		}
 
+		liveMigrateFailed = func(vmi *kubevirtv1.VirtualMachineInstance) {
+			GinkgoHelper()
+			forceLiveMigrationFailureAnnotationName := kubevirtv1.FuncTestForceLauncherMigrationFailureAnnotation
+			By(fmt.Sprintf("Forcing live migration failure by annotating VM with %s", forceLiveMigrationFailureAnnotationName))
+			vmiKey := types.NamespacedName{Namespace: namespace, Name: vmi.Name}
+			Eventually(func() error {
+				err := crClient.Get(context.TODO(), vmiKey, vmi)
+				if err == nil {
+					vmi.ObjectMeta.Annotations[forceLiveMigrationFailureAnnotationName] = "true"
+					err = crClient.Update(context.TODO(), vmi)
+				}
+				return err
+			}).WithPolling(time.Second).WithTimeout(time.Minute).Should(Succeed())
+
+			liveMigrateVirtualMachine(vmi.Name)
+			checkLiveMigrationFailed(vmi.Name)
+		}
+
 		ipv4 = func(iface kubevirt.Interface) []kubevirt.Address {
 			return iface.IPv4.Address
 		}
@@ -671,6 +697,9 @@ iperf3 -t 0 -c %[1]s -p %[2]d --logfile %[3]s &
 				var addresses []string
 				for _, iface := range vmi.Status.Interfaces {
 					for _, ip := range iface.IPs {
+						if netip.MustParseAddr(ip).IsLinkLocalUnicast() {
+							continue
+						}
 						addresses = append(addresses, ip)
 					}
 				}
@@ -1064,15 +1093,40 @@ if [ "$ipv6" != "" ]; then
 	iperf3 -s -D --bind $ipv6 --logfile /tmp/test_${ipv6}_iperf3.log
 fi
 `
-		createIperfServerPods = func(nodes []corev1.Node, netConfig networkAttachmentConfig) ([]*corev1.Pod, error) {
-			annotations := map[string]string{}
-			if netConfig.role != "primary" {
-				annotations["k8s.v1.cni.cncf.io/networks"] = fmt.Sprintf(`[{"name": %q}]`, netConfig.name)
+		nextIPs = func(idx int, subnets []string) ([]string, error) {
+			var ips []string
+			for _, subnet := range subnets {
+				ip, ipNet, err := net.ParseCIDR(subnet)
+				if err != nil {
+					return nil, err
+				}
+				for _ = range idx {
+					ip = iputils.NextIP(ip)
+				}
+				ipNet.IP = ip
+				ips = append(ips, ipNet.String())
 			}
+			return ips, nil
+		}
+
+		createIperfServerPods = func(nodes []corev1.Node, netConfig networkAttachmentConfig, staticSubnets []string) ([]*corev1.Pod, error) {
 			var pods []*corev1.Pod
-			for _, node := range nodes {
+			for i, node := range nodes {
+				var nse *nadapi.NetworkSelectionElement
+				if netConfig.role != "primary" {
+					staticIPs, err := nextIPs(i, staticSubnets)
+					if err != nil {
+						return nil, err
+					}
+					nse = &nadapi.NetworkSelectionElement{
+						Name:      netConfig.name,
+						IPRequest: staticIPs,
+					}
+				}
 				pod, err := createPod(fr, "testpod-"+node.Name, node.Name, namespace, []string{"bash", "-c"}, map[string]string{}, func(pod *corev1.Pod) {
-					pod.Annotations = annotations
+					if nse != nil {
+						pod.Annotations = networkSelectionElements(*nse)
+					}
 					pod.Spec.Containers[0].Image = iperf3Image
 					pod.Spec.Containers[0].Args = []string{iperfServerScript + "\n sleep infinity"}
 
@@ -1384,27 +1438,13 @@ fi
 			liveMigrate = testCommand{
 				description: "live migration",
 				cmd: func() {
-					liveMigrateVirtualMachine(vmi.Name)
-					checkLiveMigrationSucceeded(vmi.Name, kubevirtv1.MigrationPreCopy)
+					liveMigrateSucceed(vmi)
 				},
 			}
 			liveMigrateFailed = testCommand{
 				description: "live migration failed",
 				cmd: func() {
-					forceLiveMigrationFailureAnnotationName := kubevirtv1.FuncTestForceLauncherMigrationFailureAnnotation
-					By(fmt.Sprintf("Forcing live migration failure by annotating VM with %s", forceLiveMigrationFailureAnnotationName))
-					vmiKey := types.NamespacedName{Namespace: namespace, Name: vmi.Name}
-					Eventually(func() error {
-						err := crClient.Get(context.TODO(), vmiKey, vmi)
-						if err == nil {
-							vmi.ObjectMeta.Annotations[forceLiveMigrationFailureAnnotationName] = "true"
-							err = crClient.Update(context.TODO(), vmi)
-						}
-						return err
-					}).WithPolling(time.Second).WithTimeout(time.Minute).Should(Succeed())
-
-					liveMigrateVirtualMachine(vmi.Name)
-					checkLiveMigrationFailed(vmi.Name)
+					liveMigrateFailed(vmi)
 				},
 			}
 			networkData = `version: 2
@@ -1552,7 +1592,7 @@ runcmd:
 			selectedNodes = workerNodeList.Items
 			Expect(selectedNodes).NotTo(BeEmpty())
 
-			iperfServerTestPods, err = createIperfServerPods(selectedNodes, netConfig)
+			iperfServerTestPods, err = createIperfServerPods(selectedNodes, netConfig, []string{})
 			Expect(err).NotTo(HaveOccurred())
 
 			externalContainerName := namespace + "-iperf"
@@ -1887,4 +1927,130 @@ runcmd:
 
 		})
 	})
+	Context("with user defined networks with ipamless localnet topology", Ordered, func() {
+		BeforeEach(func() {
+			ns, err := fr.CreateNamespace(context.TODO(), fr.BaseName, map[string]string{
+				"e2e-framework": fr.BaseName,
+			})
+			Expect(err).ToNot(HaveOccurred())
+			fr.Namespace = ns
+			namespace = fr.Namespace.Name
+		})
+		AfterAll(func() {
+			Expect(removeImagesInNodes(kubevirt.FedoraContainerDiskImage)).To(Succeed())
+		})
+		var (
+			nad                  *nadv1.NetworkAttachmentDefinition
+			ipv4CIDR             = "10.128.0.0/24"
+			ipv6CIDR             = "2010:100:200::0/60"
+			vmiIPv4              = "10.128.0.100/24"
+			vmiIPv6              = "2010:100:200::100/60"
+			vmiMAC               = "0A:58:0A:80:00:64"
+			cidr                 = selectCIDRs(ipv4CIDR, ipv6CIDR)
+			staticIPsNetworkData = func(ips []string) (string, error) {
+				type Ethernet struct {
+					Addresses []string `json:"addresses,omitempty"`
+				}
+				networkData, err := yaml.Marshal(&struct {
+					Version   int                 `json:"version,omitempty"`
+					Ethernets map[string]Ethernet `json:"ethernets,omitempty"`
+				}{
+					Version: 2,
+					Ethernets: map[string]Ethernet{
+						"eth0": {
+							Addresses: ips,
+						},
+					},
+				})
+				if err != nil {
+					return "", err
+				}
+				return string(networkData), nil
+			}
+
+			userData = `#cloud-config
+password: fedora
+chpasswd: { expire: False }
+`
+		)
+		DescribeTable("should maintain tcp connection with minimal downtime", func(td func(vmi *kubevirtv1.VirtualMachineInstance)) {
+			netConfig := newNetworkAttachmentConfig(
+				networkAttachmentConfigParams{
+					namespace: fr.Namespace.Name,
+					name:      "net1",
+					topology:  "localnet",
+				})
+
+			By("setting up the localnet underlay")
+			nodes := ovsPods(clientSet)
+			Expect(nodes).NotTo(BeEmpty())
+			DeferCleanup(func() {
+				if e2eframework.TestContext.DeleteNamespace && (e2eframework.TestContext.DeleteNamespaceOnFailure || !CurrentSpecReport().Failed()) {
+					By("tearing down the localnet underlay")
+					Expect(teardownUnderlay(nodes, secondaryBridge)).To(Succeed())
+				}
+			})
+
+			const secondaryInterfaceName = "eth1"
+			Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, netConfig)).To(Succeed())
+
+			By("Creating NetworkAttachmentDefinition")
+			nad = generateNAD(netConfig)
+			Expect(crClient.Create(context.Background(), nad)).To(Succeed())
+			workerNodeList, err := fr.ClientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{LabelSelector: labels.FormatLabels(map[string]string{"node-role.kubernetes.io/worker": ""})})
+			Expect(err).NotTo(HaveOccurred())
+			selectedNodes = workerNodeList.Items
+			Expect(selectedNodes).NotTo(BeEmpty())
+
+			iperfServerTestPods, err = createIperfServerPods(selectedNodes, netConfig, cidr)
+			Expect(err).NotTo(HaveOccurred())
+
+			networkData, err := staticIPsNetworkData(selectCIDRs(vmiIPv4, vmiIPv6))
+			Expect(err).NotTo(HaveOccurred())
+
+			vmi := fedoraWithTestToolingVMI(nil /*labels*/, nil /*annotations*/, nil /*nodeSelector*/, kubevirtv1.NetworkSource{
+				Multus: &kubevirtv1.MultusNetwork{
+					NetworkName: nad.Name,
+				},
+			}, userData, networkData)
+			// Harcode mac address so it's the same after live migration
+			vmi.Spec.Domain.Devices.Interfaces[0].MacAddress = vmiMAC
+			createVirtualMachineInstance(vmi)
+
+			waitVirtualMachineInstanceReadiness(vmi)
+			Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
+
+			step := by(vmi.Name, "Login to virtual machine for the first time")
+			Eventually(func() error {
+				return kubevirt.LoginToFedora(vmi, "fedora", "fedora")
+			}).
+				WithTimeout(5*time.Second).
+				WithPolling(time.Second).
+				Should(Succeed(), step)
+
+			step = by(vmi.Name, "Wait for cloud init to finish at first boot")
+			output, err := kubevirt.RunCommand(vmi, "cloud-init status --wait", time.Minute)
+			Expect(err).NotTo(HaveOccurred(), step+": "+output)
+
+			testPodsIPs := podsMultusNetworkIPs(iperfServerTestPods, podNetworkStatusByNetConfigPredicate(netConfig))
+			Expect(testPodsIPs).NotTo(BeEmpty())
+
+			step = by(vmi.Name, "Check east/west traffic before virtual machine instance live migration")
+			Expect(startEastWestIperfTraffic(vmi, testPodsIPs, step)).To(Succeed(), step)
+			checkEastWestIperfTraffic(vmi, testPodsIPs, step)
+
+			by(vmi.Name, "Running live migration for virtual machine instance")
+			td(vmi)
+
+			step = by(vmi.Name, fmt.Sprintf("Login to virtual machine after virtual machine instance live migration"))
+			Expect(kubevirt.LoginToFedora(vmi, "fedora", "fedora")).To(Succeed(), step)
+
+			step = by(vmi.Name, "Check east/west traffic after virtual machine instance live migration")
+			checkEastWestIperfTraffic(vmi, testPodsIPs, step)
+		},
+			Entry("after succeeded live migration", liveMigrateSucceed),
+			Entry("after failed live migration", liveMigrateFailed),
+		)
+	})
+
 })
