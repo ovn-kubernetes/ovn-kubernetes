@@ -24,6 +24,7 @@ import (
 	"crypto/rand"
 
 	"github.com/urfave/cli/v2"
+	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
@@ -183,6 +184,42 @@ func GetNodeInternalAddrs(node *v1.Node) (net.IP, net.IP) {
 		}
 	}
 	return v4Addr, v6Addr
+}
+
+// GetEncapIP returns encapsulation IP address configured for the node.
+// When config.Gateway.GeneveVtepCidr is configured, then it use matching
+// IP address from k8s.ovn.org/host-cidrs annotation, otherwise node's
+// primary IP address is returned.
+func GetEncapIP(node *corev1.Node) (string, error) {
+	if config.Gateway.GeneveVtepCidr == "" {
+		return GetNodePrimaryIP(node)
+	}
+	v4NodeAddrs, v6NodeAddrs, err := GetNodeAddresses(config.IPv4Mode, config.IPv6Mode, node)
+	if err != nil {
+		return "", fmt.Errorf("failed to get node addresses: %v", err)
+	}
+	_, ipNet, err := net.ParseCIDR(config.Gateway.GeneveVtepCidr)
+	if err != nil {
+		return "", fmt.Errorf("error parsing encap CIDR: %v", err)
+	}
+	var encapIP string
+	if config.IPv4Mode {
+		for _, v4NodeAddr := range v4NodeAddrs {
+			if ipNet.Contains(v4NodeAddr) {
+				encapIP = v4NodeAddr.String()
+				break
+			}
+		}
+	}
+	if config.IPv6Mode {
+		for _, v6NodeAddr := range v6NodeAddrs {
+			if ipNet.Contains(v6NodeAddr) {
+				encapIP = v6NodeAddr.String()
+				break
+			}
+		}
+	}
+	return encapIP, nil
 }
 
 // GetNodeAddresses returns all of the node's IPv4 and/or IPv6 annotated

@@ -487,6 +487,8 @@ type GatewayConfig struct {
 	DisableForwarding bool `gcfg:"disable-forwarding"`
 	// AllowNoUplink (disabled by default) controls if the external gateway bridge without an uplink port is allowed in local gateway mode.
 	AllowNoUplink bool `gcfg:"allow-no-uplink"`
+	// GeneveVtepCidr to be used for selecting an interface as local tunnel endpoint for egressing Geneve overlay traffic.
+	GeneveVtepCidr string `gcfg:"geneve-vtep-cidr"`
 }
 
 // OvnAuthConfig holds client authentication and location details for
@@ -1488,6 +1490,12 @@ var OVNGatewayFlags = []cli.Flag{
 		Name:        "allow-no-uplink",
 		Usage:       "Allow the external gateway bridge without an uplink port in local gateway mode",
 		Destination: &cliConfig.Gateway.AllowNoUplink,
+	},
+	&cli.StringFlag{
+		Name:        "geneve-vtep-cidr",
+		Usage:       "Selects matching interface as local tunnel endpoint for egressing Geneve overlay traffic",
+		Destination: &cliConfig.Gateway.GeneveVtepCidr,
+		Value:       Gateway.GeneveVtepCidr,
 	},
 	// Deprecated CLI options
 	&cli.BoolFlag{

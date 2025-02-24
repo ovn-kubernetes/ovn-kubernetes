@@ -365,28 +365,28 @@ func validateEncapIP(encapIP string) (bool, error) {
 func setupOVNNode(node *kapi.Node) error {
 	var err error
 
-	nodePrimaryIP, err := util.GetNodePrimaryIP(node)
+	encapIP, err := util.GetEncapIP(node)
 	if err != nil {
-		return fmt.Errorf("failed to obtain local primary IP from node %q: %v", node.Name, err)
+		return fmt.Errorf("failed to obtain Encap IP from node %q: %v", node.Name, err)
 	}
 
-	encapIP := config.Default.EncapIP
-	if encapIP == "" {
-		config.Default.EffectiveEncapIP = nodePrimaryIP
+	defaultEncapIP := config.Default.EncapIP
+	if defaultEncapIP == "" {
+		config.Default.EffectiveEncapIP = encapIP
 	} else {
 		// OVN allows `external_ids:ovn-encap-ip` to be a list of IPs separated by comma.
-		config.Default.EffectiveEncapIP = encapIP
-		ovnEncapIps := strings.Split(encapIP, ",")
+		config.Default.EffectiveEncapIP = defaultEncapIP
+		ovnEncapIps := strings.Split(defaultEncapIP, ",")
 		for _, ovnEncapIp := range ovnEncapIps {
 			if ip := net.ParseIP(strings.TrimSpace(ovnEncapIp)); ip == nil {
-				return fmt.Errorf("invalid IP address %q in provided encap-ip setting %q", ovnEncapIp, encapIP)
+				return fmt.Errorf("invalid IP address %q in provided encap-ip setting %q", ovnEncapIp, defaultEncapIP)
 			}
 		}
 		// if there are more than one encap IPs, it must be configured explicitly. otherwise:
 		if len(ovnEncapIps) == 1 {
-			encapIP = ovnEncapIps[0]
-			if encapIP == nodePrimaryIP {
-				// the current encap IP is node primary IP, unset config.Default.EncapIP to indicate it is
+			defaultEncapIP = ovnEncapIps[0]
+			if defaultEncapIP == encapIP {
+				// the current encap IP is configured already, unset config.Default.EncapIP to indicate it is
 				// implicitly configured through the old external_ids:ovn-encap-ip value and needs to be updated
 				// if node primary IP changes.
 				config.Default.EncapIP = ""
@@ -395,12 +395,12 @@ func setupOVNNode(node *kapi.Node) error {
 				// previous implicitly set with the old primary node IP through the old external_ids:ovn-encap-ip value,
 				// that has changed when ovnkube-node is down.
 				// validate it to see if it is still a valid local IP address.
-				valid, err := validateEncapIP(encapIP)
+				valid, err := validateEncapIP(defaultEncapIP)
 				if err != nil {
-					return fmt.Errorf("invalid encap IP %s: %v", encapIP, err)
+					return fmt.Errorf("invalid encap IP %s: %v", defaultEncapIP, err)
 				}
 				if !valid {
-					return fmt.Errorf("invalid encap IP %s: does not exist", encapIP)
+					return fmt.Errorf("invalid encap IP %s: does not exist", defaultEncapIP)
 				}
 			}
 		}

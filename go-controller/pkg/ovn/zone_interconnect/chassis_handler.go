@@ -133,9 +133,9 @@ func (zch *ZoneChassisHandler) createOrUpdateNodeChassis(node *corev1.Node, isRe
 			node.Name, parsedErr)
 	}
 
-	nodePrimaryIp, err := util.GetNodePrimaryIP(node)
+	encapIP, err := util.GetEncapIP(node)
 	if err != nil {
-		return fmt.Errorf("failed to parse node %s primary IP %w", node.Name, err)
+		return fmt.Errorf("failed to get encap ip for node %s: %w", node.Name, err)
 	}
 
 	chassis := sbdb.Chassis{
@@ -148,7 +148,7 @@ func (zch *ZoneChassisHandler) createOrUpdateNodeChassis(node *corev1.Node, isRe
 
 	encap := sbdb.Encap{
 		ChassisName: chassisID,
-		IP:          nodePrimaryIp,
+		IP:          encapIP,
 		Type:        "geneve",
 		Options:     map[string]string{"csum": "true"},
 	}
