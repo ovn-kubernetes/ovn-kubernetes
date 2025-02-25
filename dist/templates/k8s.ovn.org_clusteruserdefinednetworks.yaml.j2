@@ -88,6 +88,10 @@ spec:
                     type: object
                 type: object
                 x-kubernetes-map-type: atomic
+                x-kubernetes-validations:
+                - message: namespace selector must have at least one rule
+                  rule: has(self.matchLabels) && self.matchLabels.size() > 0 || has(self.matchExpressions)
+                    && self.matchExpressions.size() > 0
               network:
                 description: Network is the user-defined-network spec
                 properties:
