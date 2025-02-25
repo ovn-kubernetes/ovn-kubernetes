@@ -7,8 +7,8 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
-	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
@@ -22,11 +22,11 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-func newPod(namespace, name string, annotations map[string]string) *v1.Pod {
+func newPod(namespace, name string, annotations map[string]string) *corev1.Pod {
 	if annotations == nil {
 		annotations = make(map[string]string)
 	}
-	return &v1.Pod{
+	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        name,
 			UID:         types.UID(name),
@@ -36,12 +36,12 @@ func newPod(namespace, name string, annotations map[string]string) *v1.Pod {
 	}
 }
 
-func newFakeClientSet(pod *v1.Pod, podNamespaceLister *mocks.PodNamespaceLister) *ClientSet {
+func newFakeClientSet(pod *corev1.Pod, podNamespaceLister *mocks.PodNamespaceLister) *ClientSet {
 	podLister := mocks.PodLister{}
 	podLister.On("Pods", mock.AnythingOfType("string")).Return(podNamespaceLister)
-	podList := &v1.PodList{}
+	podList := &corev1.PodList{}
 	if pod != nil {
-		podList.Items = []v1.Pod{*pod}
+		podList.Items = []corev1.Pod{*pod}
 	}
 	fakeClient := fake.NewSimpleClientset(podList)
 
@@ -117,7 +117,7 @@ var _ = Describe("CNI Utils tests", func() {
 
 	Context("GetPodWithAnnotations", func() {
 		var podNamespaceLister mocks.PodNamespaceLister
-		var pod *v1.Pod
+		var pod *corev1.Pod
 
 		const (
 			namespace = "some-ns"
@@ -135,7 +135,7 @@ var _ = Describe("CNI Utils tests", func() {
 			ctx, cancelFunc := context.WithTimeout(context.Background(), 20*time.Millisecond)
 			defer cancelFunc()
 
-			cond := func(podAnnotation map[string]string, netName string) (*util.PodAnnotation, bool) {
+			cond := func(podAnnotation map[string]string, _ string) (*util.PodAnnotation, bool) {
 				if _, ok := podAnnotation["foo"]; ok {
 					return nil, true
 				}
@@ -154,7 +154,7 @@ var _ = Describe("CNI Utils tests", func() {
 		It("Returns with Error if context is canceled", func() {
 			ctx, cancelFunc := context.WithCancel(context.Background())
 
-			cond := func(podAnnotation map[string]string, netName string) (*util.PodAnnotation, bool) {
+			cond := func(map[string]string, string) (*util.PodAnnotation, bool) {
 				return nil, false
 			}
 
@@ -175,7 +175,7 @@ var _ = Describe("CNI Utils tests", func() {
 			defer cancelFunc()
 
 			calledOnce := false
-			cond := func(podAnnotation map[string]string, netName string) (*util.PodAnnotation, bool) {
+			cond := func(map[string]string, string) (*util.PodAnnotation, bool) {
 				if calledOnce {
 					return nil, true
 				}
@@ -194,7 +194,7 @@ var _ = Describe("CNI Utils tests", func() {
 			ctx, cancelFunc := context.WithTimeout(context.Background(), 1*time.Second)
 			defer cancelFunc()
 
-			cond := func(podAnnotation map[string]string, netName string) (*util.PodAnnotation, bool) {
+			cond := func(map[string]string, string) (*util.PodAnnotation, bool) {
 				return nil, false
 			}
 
@@ -211,7 +211,7 @@ var _ = Describe("CNI Utils tests", func() {
 			defer cancelFunc()
 
 			calledOnce := false
-			cond := func(podAnnotation map[string]string, netName string) (*util.PodAnnotation, bool) {
+			cond := func(map[string]string, string) (*util.PodAnnotation, bool) {
 				if calledOnce {
 					return nil, true
 				}
@@ -221,7 +221,7 @@ var _ = Describe("CNI Utils tests", func() {
 
 			clientset := newFakeClientSet(pod, &podNamespaceLister)
 
-			podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(nil, errors.NewNotFound(v1.Resource("pod"), name))
+			podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(nil, apierrors.NewNotFound(corev1.Resource("pod"), name))
 			_, _, _, err := GetPodWithAnnotations(ctx, clientset, namespace, podName, ovntypes.DefaultNetworkName, cond)
 			Expect(err).ToNot(HaveOccurred())
 		})
@@ -230,13 +230,13 @@ var _ = Describe("CNI Utils tests", func() {
 			ctx, cancelFunc := context.WithTimeout(context.Background(), 1*time.Second)
 			defer cancelFunc()
 
-			cond := func(podAnnotation map[string]string, netName string) (*util.PodAnnotation, bool) {
+			cond := func(map[string]string, string) (*util.PodAnnotation, bool) {
 				return nil, false
 			}
 
 			clientset := newFakeClientSet(nil, &podNamespaceLister)
 
-			podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(nil, errors.NewNotFound(v1.Resource("pod"), name))
+			podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(nil, apierrors.NewNotFound(corev1.Resource("pod"), name))
 			_, _, _, err := GetPodWithAnnotations(ctx, clientset, namespace, podName, ovntypes.DefaultNetworkName, cond)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("timed out waiting for pod after 1s"))

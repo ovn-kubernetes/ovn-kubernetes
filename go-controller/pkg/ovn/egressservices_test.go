@@ -9,7 +9,7 @@ import (
 	"github.com/onsi/gomega"
 	"github.com/urfave/cli/v2"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilnet "k8s.io/utils/net"
@@ -20,7 +20,6 @@ import (
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	egresssvc "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/egressservice"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -52,13 +51,13 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
-		config.PrepareTestConfig()
+		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 		// disabling EgressIP to be sure we're creating the no reroute policies ourselves
 		config.OVNKubernetesFeature.EnableEgressIP = false
 		config.OVNKubernetesFeature.EnableEgressService = true
 		_, cidr4, _ := net.ParseCIDR("10.128.0.0/16")
 		_, cidr6, _ := net.ParseCIDR("fe00::/16")
-		config.Default.ClusterSubnets = []config.CIDRNetworkEntry{{cidr4, 24}, {cidr6, 64}}
+		config.Default.ClusterSubnets = []config.CIDRNetworkEntry{{CIDR: cidr4, HostSubnetLength: 24}, {CIDR: cidr6, HostSubnetLength: 64}}
 
 		app = cli.NewApp()
 		app.Name = "test"
@@ -73,13 +72,13 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 
 	ginkgo.XContext("on startup repair", func() {
 		ginkgo.It("should delete stale logical router policies and EgressService address set IPs", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				namespaceT := *newNamespace("testns")
 				node1 := nodeFor(node1Name, node1IPv4, node1IPv6, node1IPv4Subnet, node1IPv6Subnet, "", "")
 				node2 := nodeFor(node2Name, node2IPv4, node2IPv6, node2IPv4Subnet, node2IPv6Subnet, "", "")
 				config.IPv6Mode = true
 
-				nolongeregresssvc := v1.Service{
+				nolongeregresssvc := corev1.Service{
 					ObjectMeta: metav1.ObjectMeta{Name: "nolongeregresssvc", Namespace: "testns"},
 				}
 
@@ -297,19 +296,19 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				fakeOVN.startWithDBSetup(dbSetup,
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT,
 						},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{
+					&corev1.NodeList{
+						Items: []corev1.Node{
 							*node1,
 							*node2,
 						},
 					},
-					&v1.ServiceList{
-						Items: []v1.Service{
+					&corev1.ServiceList{
+						Items: []corev1.Service{
 							nolongeregresssvc,
 							svc1,
 							svc2,
@@ -358,14 +357,14 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 		})
 
 		ginkgo.It("OVN-IC: should delete stale logical router policies", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				namespaceT := *newNamespace("testns")
 				node1 := nodeFor(node1Name, node1IPv4, node1IPv6, node1IPv4Subnet, node1IPv6Subnet, node1transitIPv4, node1transitIPv6)
 				node2 := nodeFor(node2Name, node2IPv4, node2IPv6, node2IPv4Subnet, node2IPv6Subnet, node2transitIPv4, node2transitIPv6)
 				config.IPv6Mode = true
 				config.OVNKubernetesFeature.EnableInterconnect = true
 
-				nolongeregresssvc := v1.Service{
+				nolongeregresssvc := corev1.Service{
 					ObjectMeta: metav1.ObjectMeta{Name: "nolongeregresssvc", Namespace: "testns"},
 				}
 
@@ -508,19 +507,19 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 				}
 
 				fakeOVN.startWithDBSetup(dbSetup,
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT,
 						},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{
+					&corev1.NodeList{
+						Items: []corev1.Node{
 							*node1,
 							*node2,
 						},
 					},
-					&v1.ServiceList{
-						Items: []v1.Service{
+					&corev1.ServiceList{
+						Items: []corev1.Service{
 							nolongeregresssvc,
 							svc1,
 							svc2,
@@ -550,7 +549,7 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 					toKeepLRSR1,
 					clusterRouter,
 				}
-				for _, lrp := range append(noRerouteLRPS) {
+				for _, lrp := range noRerouteLRPS {
 					expectedDatabaseState = append(expectedDatabaseState, lrp)
 					clusterRouter.Policies = append(clusterRouter.Policies, lrp.UUID)
 				}
@@ -568,7 +567,7 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 	ginkgo.Context("on egress service changes", func() {
 
 		ginkgo.DescribeTable("should create/update/delete OVN configuration", func(interconnectEnabled bool) {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				namespaceT := *newNamespace("testns")
 				config.IPv6Mode = true
 				config.OVNKubernetesFeature.EnableInterconnect = interconnectEnabled
@@ -651,19 +650,19 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 				}
 
 				fakeOVN.startWithDBSetup(dbSetup,
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT,
 						},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{
+					&corev1.NodeList{
+						Items: []corev1.Node{
 							*node1,
 							*node2,
 						},
 					},
-					&v1.ServiceList{
-						Items: []v1.Service{
+					&corev1.ServiceList{
+						Items: []corev1.Service{
 							svc1,
 						},
 					},
@@ -692,8 +691,8 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 				v4lrsr := egressServiceRouterPolicy("v4lrsr-UUID", "testns/svc1:ic", "10.128.2.5", "10.128.1.2")
 				v6lrsr := egressServiceRouterPolicy("v6lrsr-UUID", "testns/svc1:ic", "fe00:10:128:2::5", "fe00:10:128:1::2")
 
-				expectedDatabaseState := []libovsdbtest.TestData{}
-				expectedEgressSvcAddrSet := []string{}
+				var expectedDatabaseState []libovsdbtest.TestData
+				var expectedEgressSvcAddrSet []string
 				if !interconnectEnabled {
 					clusterRouter.Policies = []string{"v4lrp1-UUID", "v4lrp2-UUID", "v6lrp1-UUID", "v6lrp2-UUID"}
 					expectedDatabaseState = []libovsdbtest.TestData{
@@ -784,7 +783,7 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 		)
 
 		ginkgo.DescribeTable("should delete resources when host changes to ALL", func(interconnectEnabled bool) {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				namespaceT := *newNamespace("testns")
 				config.IPv6Mode = true
 				config.OVNKubernetesFeature.EnableInterconnect = interconnectEnabled
@@ -857,19 +856,19 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 				}
 
 				fakeOVN.startWithDBSetup(dbSetup,
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT,
 						},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{
+					&corev1.NodeList{
+						Items: []corev1.Node{
 							*node1,
 							*node2,
 						},
 					},
-					&v1.ServiceList{
-						Items: []v1.Service{
+					&corev1.ServiceList{
+						Items: []corev1.Service{
 							svc1,
 						},
 					},
@@ -952,7 +951,7 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 
 	ginkgo.Context("on endpointslices changes", func() {
 		ginkgo.DescribeTable("should create/update/delete OVN configuration", func(interconnectEnabled bool) {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				namespaceT := *newNamespace("testns")
 				config.IPv6Mode = true
 				config.OVNKubernetesFeature.EnableInterconnect = interconnectEnabled
@@ -1042,18 +1041,18 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 				}
 
 				fakeOVN.startWithDBSetup(dbSetup,
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT,
 						},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{
+					&corev1.NodeList{
+						Items: []corev1.Node{
 							*node1, *node2,
 						},
 					},
-					&v1.ServiceList{
-						Items: []v1.Service{
+					&corev1.ServiceList{
+						Items: []corev1.Service{
 							svc1,
 						},
 					},
@@ -1269,7 +1268,7 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 
 	ginkgo.Context("on nodes changes", func() {
 		ginkgo.DescribeTable("should create/update/delete logical router policies and address sets", func(interconnectEnabled bool) {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				namespaceT := *newNamespace("testns")
 				config.IPv6Mode = true
 				config.OVNKubernetesFeature.EnableInterconnect = interconnectEnabled
@@ -1378,19 +1377,19 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 				}
 
 				fakeOVN.startWithDBSetup(dbSetup,
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT,
 						},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{
+					&corev1.NodeList{
+						Items: []corev1.Node{
 							*node1,
 							*node2,
 						},
 					},
-					&v1.ServiceList{
-						Items: []v1.Service{
+					&corev1.ServiceList{
+						Items: []corev1.Service{
 							svc1,
 							svc2,
 						},
@@ -1420,8 +1419,8 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 				svc1v4iclrp1 := egressServiceRouterPolicy("svc1v4lrsr1-UUID", "testns/svc1:ic", "10.128.2.5", "10.128.1.2")
 				svc1v6iclrp1 := egressServiceRouterPolicy("svc1v6lrsr1-UUID", "testns/svc1:ic", "fe00:10:128:2::5", "fe00:10:128:1::2")
 
-				expectedDatabaseState := []libovsdbtest.TestData{}
-				expectedEgressSvcAddrSet := []string{}
+				var expectedDatabaseState []libovsdbtest.TestData
+				var expectedEgressSvcAddrSet []string
 				if !interconnectEnabled {
 					clusterRouter.Policies = []string{"svc1v4lrp1-UUID", "svc1v6lrp1-UUID"}
 					expectedDatabaseState = []libovsdbtest.TestData{
@@ -1617,7 +1616,7 @@ func getDefaultNoReroutePolicies(controllerName string) []*nbdb.LogicalRouterPol
 			Action:      nbdb.LogicalRouterPolicyActionAllow,
 			UUID:        "default-no-reroute-node-UUID",
 			ExternalIDs: v4ExtIDs,
-			Options:     map[string]string{"pkt_mark": types.EgressIPNodeConnectionMark},
+			Options:     map[string]string{"pkt_mark": ovntypes.EgressIPNodeConnectionMark},
 		},
 		&nbdb.LogicalRouterPolicy{
 			Priority: ovntypes.DefaultNoRereoutePriority,
@@ -1626,7 +1625,7 @@ func getDefaultNoReroutePolicies(controllerName string) []*nbdb.LogicalRouterPol
 			Action:      nbdb.LogicalRouterPolicyActionAllow,
 			UUID:        "default-v6-no-reroute-node-UUID",
 			ExternalIDs: v6ExtIDs,
-			Options:     map[string]string{"pkt_mark": types.EgressIPNodeConnectionMark},
+			Options:     map[string]string{"pkt_mark": ovntypes.EgressIPNodeConnectionMark},
 		},
 		getNoReRouteReplyTrafficPolicy(ovntypes.DefaultNetworkName, controllerName),
 	)
@@ -1670,19 +1669,19 @@ func getDefaultNoReroutePolicies(controllerName string) []*nbdb.LogicalRouterPol
 	return allLRPS
 }
 
-func lbSvcFor(namespace, name string) v1.Service {
-	return v1.Service{
+func lbSvcFor(namespace, name string) corev1.Service {
+	return corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            name,
 			Namespace:       namespace,
 			ResourceVersion: "1",
 		},
-		Spec: v1.ServiceSpec{
-			Type: v1.ServiceTypeLoadBalancer,
+		Spec: corev1.ServiceSpec{
+			Type: corev1.ServiceTypeLoadBalancer,
 		},
-		Status: v1.ServiceStatus{
-			LoadBalancer: v1.LoadBalancerStatus{
-				Ingress: []v1.LoadBalancerIngress{
+		Status: corev1.ServiceStatus{
+			LoadBalancer: corev1.LoadBalancerStatus{
+				Ingress: []corev1.LoadBalancerIngress{
 					{
 						IP: "1.1.1.1", // arbitrary ip, we don't care about it for the lrps as long as it's there
 					},
@@ -1692,8 +1691,8 @@ func lbSvcFor(namespace, name string) v1.Service {
 	}
 }
 
-func nodeFor(name, ipv4, ipv6, v4subnet, v6subnet, transitIPv4, transitIPv6 string) *v1.Node {
-	return &v1.Node{
+func nodeFor(name, ipv4, ipv6, v4subnet, v6subnet, transitIPv4, transitIPv6 string) *corev1.Node {
+	return &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 			Annotations: map[string]string{
@@ -1710,20 +1709,20 @@ func nodeFor(name, ipv4, ipv6, v4subnet, v6subnet, transitIPv4, transitIPv6 stri
 			},
 			ResourceVersion: "1",
 		},
-		Status: v1.NodeStatus{
-			Conditions: []v1.NodeCondition{
+		Status: corev1.NodeStatus{
+			Conditions: []corev1.NodeCondition{
 				{
-					Type:   v1.NodeReady,
-					Status: v1.ConditionTrue,
+					Type:   corev1.NodeReady,
+					Status: corev1.ConditionTrue,
 				},
 			},
-			Addresses: []v1.NodeAddress{
+			Addresses: []corev1.NodeAddress{
 				{
-					Type:    v1.NodeInternalIP,
+					Type:    corev1.NodeInternalIP,
 					Address: ipv4,
 				},
 				{
-					Type:    v1.NodeInternalIP,
+					Type:    corev1.NodeInternalIP,
 					Address: ipv6,
 				},
 			},

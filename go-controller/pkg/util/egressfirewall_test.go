@@ -166,7 +166,10 @@ func TestValidateAndGetEgressFirewallDestination(t *testing.T) {
 		},
 	}
 
-	config.PrepareTestConfig()
+	if err := config.PrepareTestConfig(); err != nil {
+		t.Fatalf("failed to PrepareTestConfig: %v", err)
+	}
+
 	config.Default.ClusterSubnets = []config.CIDRNetworkEntry{{CIDR: clusterSubnet}}
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -89,7 +89,7 @@ var (
 func TestEnsureLocalRaftServerID(t *testing.T) {
 	var mockCalls map[string]*mockRes
 	unexpectedKeys := make([]string, 0)
-	mock := func(timeout int, args ...string) (string, string, error) {
+	mock := func(_ int, args ...string) (string, string, error) {
 		key := keyForArgs(args...)
 		res, ok := mockCalls[key]
 		if !ok {
@@ -253,7 +253,7 @@ func TestEnsureClusterRaftMembership(t *testing.T) {
 	var mockCalls map[string]*mockRes
 	unexpectedKeys := make([]string, 0)
 
-	mock := func(timeout int, args ...string) (string, string, error) {
+	mock := func(_ int, args ...string) (string, string, error) {
 		key := keyForArgs(args...)
 		res, ok := mockCalls[key]
 		if !ok {
@@ -385,7 +385,7 @@ func TestEnsureClusterDNSRaftMembership(t *testing.T) {
 	var mockCalls map[string]*mockRes
 	unexpectedKeys := make([]string, 0)
 
-	mock := func(timeout int, args ...string) (string, string, error) {
+	mock := func(_ int, args ...string) (string, string, error) {
 		key := keyForArgs(args...)
 		res, ok := mockCalls[key]
 		if !ok {
@@ -516,7 +516,7 @@ func TestEnsureClusterDNSRaftMembership(t *testing.T) {
 func TestEnsureElectionTimeout(t *testing.T) {
 	var mockCalls map[string]*mockRes
 	unexpectedKeys := make([]string, 0)
-	mock := func(timeout int, args ...string) (string, string, error) {
+	mock := func(_ int, args ...string) (string, string, error) {
 		key := keyForArgs(args...)
 		res, ok := mockCalls[key]
 		if !ok {
@@ -673,7 +673,7 @@ func TestResetRaftDB(t *testing.T) {
 
 	var mockCalls map[string]*mockRes
 	unexpectedKeys := make([]string, 0)
-	mock := func(timeout int, args ...string) (string, string, error) {
+	mock := func(_ int, args ...string) (string, string, error) {
 		key := keyForArgs(args...)
 		res, ok := mockCalls[key]
 		if !ok {

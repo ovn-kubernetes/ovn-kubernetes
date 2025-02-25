@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"testing"
 
 	kubevirtv1 "kubevirt.io/api/core/v1"
@@ -26,7 +25,7 @@ type fakeNodeLister struct {
 	nodes map[string]*corev1.Node
 }
 
-func (f *fakeNodeLister) List(selector labels.Selector) (ret []*corev1.Node, err error) {
+func (f *fakeNodeLister) List(labels.Selector) (ret []*corev1.Node, err error) {
 	panic("implement me")
 }
 
@@ -426,7 +425,7 @@ func TestPodAdmission_ValidateUpdate(t *testing.T) {
 	additionalPodAdmissions := PodAdmissionConditionOption{
 		CommonNamePrefix:         additionalNamePrefix,
 		AllowedPodAnnotations:    allowedPodAnnotations,
-		AllowedPodAnnotationKeys: sets.New[string](allowedPodAnnotations...),
+		AllowedPodAnnotationKeys: sets.New(allowedPodAnnotations...),
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -436,7 +435,7 @@ func TestPodAdmission_ValidateUpdate(t *testing.T) {
 				additionalPodAdmissions,
 			})
 			_, err := padm.ValidateUpdate(tt.ctx, tt.oldObj, tt.newObj)
-			if !reflect.DeepEqual(err, tt.expectedErr) {
+			if err != tt.expectedErr && err.Error() != tt.expectedErr.Error() {
 				t.Errorf("ValidateUpdate() error = %v, expectedErr %v", err, tt.expectedErr)
 				return
 			}
@@ -516,7 +515,7 @@ func TestPodAdmission_ValidateUpdateExtraUsers(t *testing.T) {
 	additionalPodAdmissions := PodAdmissionConditionOption{
 		CommonNamePrefix:         additionalNamePrefix,
 		AllowedPodAnnotations:    allowedPodAnnotations,
-		AllowedPodAnnotationKeys: sets.New[string](allowedPodAnnotations...),
+		AllowedPodAnnotationKeys: sets.New(allowedPodAnnotations...),
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -526,7 +525,7 @@ func TestPodAdmission_ValidateUpdateExtraUsers(t *testing.T) {
 				additionalPodAdmissions,
 			}, extraUser)
 			_, err := padm.ValidateUpdate(tt.ctx, tt.oldObj, tt.newObj)
-			if !reflect.DeepEqual(err, tt.expectedErr) {
+			if err != tt.expectedErr && err.Error() != tt.expectedErr.Error() {
 				t.Errorf("ValidateUpdate() error = %v, expectedErr %v", err, tt.expectedErr)
 				return
 			}

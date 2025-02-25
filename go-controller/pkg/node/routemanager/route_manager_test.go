@@ -55,8 +55,7 @@ var _ = ginkgo.Describe("Route Manager", func() {
 		stopCh = make(chan struct{})
 		syncPeriod := 300 * time.Millisecond
 		rm = NewController()
-		err = testNS.Do(func(netNS ns.NetNS) error {
-			defer ginkgo.GinkgoRecover()
+		err = testNS.Do(func(ns.NetNS) error {
 			loLink, err = netlink.LinkByName(loLinkName)
 			if err != nil {
 				return err
@@ -73,13 +72,17 @@ var _ = ginkgo.Describe("Route Manager", func() {
 			}
 			return nil
 		})
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 		wg.Add(1)
-		go testNS.Do(func(netNS ns.NetNS) error {
-			defer wg.Done()
+		go func() {
 			defer ginkgo.GinkgoRecover()
-			rm.Run(stopCh, syncPeriod)
-			return nil
-		})
+			defer wg.Done()
+			err := testNS.Do(func(ns.NetNS) error {
+				rm.Run(stopCh, syncPeriod)
+				return nil
+			})
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+		}()
 	})
 
 	ginkgo.AfterEach(func() {
@@ -162,23 +165,23 @@ var _ = ginkgo.Describe("Route Manager", func() {
 		ginkgo.It("two equal routes, different tables", func() {
 			r := netlink.Route{LinkIndex: loLink.Attrs().Index, Dst: loSubnet, Src: loIPDiff, Table: 5}
 			gomega.Expect(addRouteViaManager(rm, testNS, r)).Should(gomega.Succeed())
-			validateRoute := func(testNS ns.NetNS, link netlink.Link, r netlink.Route, family, tableID int) func() bool {
+			validateRoute := func(testNS ns.NetNS, r netlink.Route, tableID int) func() bool {
 				return func() bool {
 					return isRouteInTable(testNS, r, loLink.Attrs().Index, tableID)
 				}
 			}
-			gomega.Eventually(validateRoute(testNS, loLink, r, netlink.FAMILY_V4, 5)).WithTimeout(time.Second).Should(gomega.BeTrue())
+			gomega.Eventually(validateRoute(testNS, r, 5)).WithTimeout(time.Second).Should(gomega.BeTrue())
 			r.Table = 6
 			gomega.Expect(addRouteViaManager(rm, testNS, r)).Should(gomega.Succeed())
-			gomega.Eventually(validateRoute(testNS, loLink, r, netlink.FAMILY_V4, 6)).WithTimeout(time.Second).Should(gomega.BeTrue())
+			gomega.Eventually(validateRoute(testNS, r, 6)).WithTimeout(time.Second).Should(gomega.BeTrue())
 			// delete route in table 6
 			gomega.Eventually(func() error {
-				return testNS.Do(func(netNS ns.NetNS) error {
+				return testNS.Do(func(ns.NetNS) error {
 					return netlink.RouteDel(&r)
 				})
 			}).WithTimeout(time.Second).Should(gomega.Succeed())
 			// validate it is restored in table 6
-			gomega.Eventually(validateRoute(testNS, loLink, r, netlink.FAMILY_V4, 6), time.Second).Should(gomega.BeTrue())
+			gomega.Eventually(validateRoute(testNS, r, 6), time.Second).Should(gomega.BeTrue())
 		})
 	})
 
@@ -326,7 +329,7 @@ var _ = ginkgo.Describe("Route Manager", func() {
 				Name:         "dummy",
 				HardwareAddr: mac,
 			}}
-			gomega.Expect(testNS.Do(func(netNS ns.NetNS) error {
+			gomega.Expect(testNS.Do(func(ns.NetNS) error {
 				if err := netlink.LinkAdd(dummy); err != nil {
 					return err
 				}
@@ -348,14 +351,14 @@ var _ = ginkgo.Describe("Route Manager", func() {
 })
 
 func addRouteViaManager(rm *Controller, targetNS ns.NetNS, r netlink.Route) error {
-	return targetNS.Do(func(netNS ns.NetNS) error { return rm.Add(r) })
+	return targetNS.Do(func(ns.NetNS) error { return rm.Add(r) })
 }
 func delRouteViaManager(rm *Controller, targetNS ns.NetNS, r netlink.Route) error {
-	return targetNS.Do(func(netNS ns.NetNS) error { return rm.Del(r) })
+	return targetNS.Do(func(ns.NetNS) error { return rm.Del(r) })
 }
 
 func addRoute(targetNS ns.NetNS, r netlink.Route) error {
-	return targetNS.Do(func(netNS ns.NetNS) error {
+	return targetNS.Do(func(ns.NetNS) error {
 		return netlink.RouteAdd(&r)
 	})
 }
@@ -372,7 +375,7 @@ func isRoutesInTable(targetNs ns.NetNS, expectedRoutes []netlink.Route, linkInde
 	}
 	existingRoutes := make([]netlink.Route, 0)
 	var err error
-	err = targetNs.Do(func(netNS ns.NetNS) error {
+	err = targetNs.Do(func(ns.NetNS) error {
 		filter, mask := filterRouteByTable(linkIndex, table)
 		existingRoutes, err = netlink.RouteListFiltered(getIPFamily(expectedRoutes[0].Dst.IP), filter, mask)
 		return err
@@ -402,7 +405,7 @@ func isRoutesInTable(targetNs ns.NetNS, expectedRoutes []netlink.Route, linkInde
 func getRouteList(targetNs ns.NetNS, link netlink.Link, ipFamily int) ([]netlink.Route, error) {
 	routesFound := make([]netlink.Route, 0)
 	var err error
-	err = targetNs.Do(func(netNS ns.NetNS) error {
+	err = targetNs.Do(func(ns.NetNS) error {
 		routesFound, err = netlink.RouteList(link, ipFamily)
 		if err != nil {
 			return err
@@ -414,7 +417,7 @@ func getRouteList(targetNs ns.NetNS, link netlink.Link, ipFamily int) ([]netlink
 
 func deleteRoutes(targetNs ns.NetNS, routes ...netlink.Route) error {
 	var err error
-	err = targetNs.Do(func(netNS ns.NetNS) error {
+	err = targetNs.Do(func(ns.NetNS) error {
 		for _, route := range routes {
 			if err = netlink.RouteDel(&route); err != nil {
 				return err
@@ -433,7 +436,7 @@ func setLinkDown(targetNS ns.NetNS, link netlink.Link) error {
 	return setLink(targetNS, link, netlink.LinkSetDown)
 }
 func setLink(targetNS ns.NetNS, link netlink.Link, nlFunc func(link2 netlink.Link) error) error {
-	err := targetNS.Do(func(netNS ns.NetNS) error {
+	err := targetNS.Do(func(ns.NetNS) error {
 		if err := nlFunc(link); err != nil {
 			return err
 		}

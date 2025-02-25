@@ -7,7 +7,7 @@ import (
 	"github.com/onsi/gomega"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	utilpointer "k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/network-policy-api/apis/v1alpha1"
 
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
@@ -373,7 +373,7 @@ func accessControlList(name string, gressPrefix libovsdbutil.ACLDirection, prior
 		ExternalIDs: objIDs.GetExternalIDs(),
 		Log:         true,
 		Match:       "match",
-		Name:        utilpointer.String(name),
+		Name:        ptr.To(name),
 		Options:     map[string]string{"key": "value"},
 		Priority:    int(priority),
 		Tier:        1,

@@ -69,7 +69,6 @@ var _ = Describe("BaseSecondaryNetworkController", func() {
 		vmName                string
 		ips                   []string
 		dns                   []string
-		gateways              []string
 		expectedDHCPv4Options *nbdb.DHCPOptions
 		expectedDHCPv6Options *nbdb.DHCPOptions
 	}

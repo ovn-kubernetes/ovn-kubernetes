@@ -7,7 +7,7 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	knet "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -217,7 +217,7 @@ var _ = ginkgo.Describe("OVN Stale NetworkPolicy Operations", func() {
 
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
-		config.PrepareTestConfig()
+		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 		fakeOvn = NewFakeOVN(true)
 
 		initialData := getHairpinningACLsV4AndPortGroup()
@@ -230,9 +230,9 @@ var _ = ginkgo.Describe("OVN Stale NetworkPolicy Operations", func() {
 		fakeOvn.shutdown()
 	})
 
-	startOvn := func(dbSetup libovsdbtest.TestSetup, namespaces []v1.Namespace, networkPolicies []knet.NetworkPolicy) {
+	startOvn := func(dbSetup libovsdbtest.TestSetup, namespaces []corev1.Namespace, networkPolicies []knet.NetworkPolicy) {
 		fakeOvn.startWithDBSetup(dbSetup,
-			&v1.NamespaceList{
+			&corev1.NamespaceList{
 				Items: namespaces,
 			},
 			&knet.NetworkPolicyList{
@@ -261,7 +261,7 @@ var _ = ginkgo.Describe("OVN Stale NetworkPolicy Operations", func() {
 			initialData := initialDB.NBData
 			initialData = append(initialData, gressPolicyInitialData...)
 			initialData = append(initialData, defaultDenyInitialData...)
-			startOvn(libovsdbtest.TestSetup{NBData: initialData}, []v1.Namespace{namespace1, namespace2},
+			startOvn(libovsdbtest.TestSetup{NBData: initialData}, []corev1.Namespace{namespace1, namespace2},
 				[]knet.NetworkPolicy{*networkPolicy})
 
 			fakeOvn.asf.ExpectEmptyAddressSet(namespaceName1)
@@ -289,7 +289,7 @@ var _ = ginkgo.Describe("OVN Stale NetworkPolicy Operations", func() {
 			initialData := initialDB.NBData
 			initialData = append(initialData, gressPolicyInitialData...)
 			initialData = append(initialData, defaultDenyInitialData...)
-			startOvn(libovsdbtest.TestSetup{NBData: initialData}, []v1.Namespace{namespace1, namespace2},
+			startOvn(libovsdbtest.TestSetup{NBData: initialData}, []corev1.Namespace{namespace1, namespace2},
 				[]knet.NetworkPolicy{*networkPolicy})
 
 			fakeOvn.asf.ExpectEmptyAddressSet(longNamespaceName63)
@@ -327,7 +327,7 @@ var _ = ginkgo.Describe("OVN Stale NetworkPolicy Operations", func() {
 			_, err := fakeOvn.asf.NewAddressSet(staleAddrSetIDs, nil)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			startOvn(libovsdbtest.TestSetup{NBData: initialData}, []v1.Namespace{namespace1, namespace2},
+			startOvn(libovsdbtest.TestSetup{NBData: initialData}, []corev1.Namespace{namespace1, namespace2},
 				[]knet.NetworkPolicy{*networkPolicy})
 
 			fakeOvn.asf.ExpectEmptyAddressSet(namespaceName1)

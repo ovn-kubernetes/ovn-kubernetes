@@ -115,7 +115,7 @@ var _ = Describe("NamespaceNotifier", func() {
 		ns, err := kubeClient.CoreV1().Namespaces().Get(context.Background(), "test-1", metav1.GetOptions{})
 		Expect(err).NotTo(HaveOccurred())
 		ns.Labels["test.io"] = "example"
-		ns, err = kubeClient.CoreV1().Namespaces().Update(context.Background(), ns, metav1.UpdateOptions{})
+		_, err = kubeClient.CoreV1().Namespaces().Update(context.Background(), ns, metav1.UpdateOptions{})
 		Expect(err).NotTo(HaveOccurred())
 
 		Eventually(func() map[string]int64 {

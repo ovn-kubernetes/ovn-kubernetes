@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	utilpointer "k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 )
@@ -31,14 +31,14 @@ func TestExtractPortAddresses(t *testing.T) {
 			desc: "test path where lsp.DynamicAddresses is a zero length string and len(addresses)==0",
 			lsp: &nbdb.LogicalSwitchPort{
 				Name:             "test-pod",
-				DynamicAddresses: utilpointer.String(hwAddr + " " + ipAddr),
+				DynamicAddresses: ptr.To(hwAddr + " " + ipAddr),
 			},
 		},
 		{
 			desc: "test path where lsp.DynamicAddresses is non-zero length string and value of first address in addresses list is set to dynamic",
 			lsp: &nbdb.LogicalSwitchPort{
 				Name:             portName,
-				DynamicAddresses: utilpointer.String(hwAddr + " " + ipAddr),
+				DynamicAddresses: ptr.To(hwAddr + " " + ipAddr),
 				Addresses:        []string{"dynamic"},
 			},
 		},
@@ -46,7 +46,7 @@ func TestExtractPortAddresses(t *testing.T) {
 			desc: "test code path where port has MAC but no IPs",
 			lsp: &nbdb.LogicalSwitchPort{
 				Name:             "test-pod",
-				DynamicAddresses: utilpointer.String(hwAddr),
+				DynamicAddresses: ptr.To(hwAddr),
 			},
 			hasNoIP: true,
 		},
@@ -54,7 +54,7 @@ func TestExtractPortAddresses(t *testing.T) {
 			desc: "test the code path where ParseMAC fails",
 			lsp: &nbdb.LogicalSwitchPort{
 				Name:             portName,
-				DynamicAddresses: utilpointer.String(badHWAddr),
+				DynamicAddresses: ptr.To(badHWAddr),
 			},
 			errMatch: fmt.Errorf("failed to parse logical switch port \"%s\" MAC \"%s\": address %s: invalid MAC address", portName, badHWAddr, badHWAddr),
 		},

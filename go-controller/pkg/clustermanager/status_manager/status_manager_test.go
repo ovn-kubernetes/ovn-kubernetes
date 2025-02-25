@@ -6,15 +6,13 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/onsi/gomega"
-
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
 	clienttesting "k8s.io/client-go/testing"
 	"k8s.io/klog/v2"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	anpapi "sigs.k8s.io/network-policy-api/apis/v1alpha1"
 	anpfake "sigs.k8s.io/network-policy-api/pkg/client/clientset/versioned/fake"
 
@@ -31,12 +29,12 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-func getNodeWithZone(nodeName, zoneName string) *v1.Node {
+func getNodeWithZone(nodeName, zoneName string) *corev1.Node {
 	annotations := map[string]string{}
 	if zoneName != zone_tracker.UnknownZone {
 		annotations[util.OvnNodeZoneName] = zoneName
 	}
-	return &v1.Node{
+	return &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        nodeName,
 			Annotations: annotations,
@@ -166,7 +164,7 @@ func newEgressQoS(namespace string) *egressqosapi.EgressQoS {
 			Egress: []egressqosapi.EgressQoSRule{
 				{
 					DSCP:    60,
-					DstCIDR: pointer.String("1.2.3.4/32"),
+					DstCIDR: ptr.To("1.2.3.4/32"),
 				},
 			},
 		},
@@ -250,7 +248,7 @@ var _ = Describe("Cluster Manager Status Manager", func() {
 
 	It("updates EgressFirewall status with 1 zone", func() {
 		config.OVNKubernetesFeature.EnableEgressFirewall = true
-		zones := sets.New[string]("zone1")
+		zones := sets.New("zone1")
 		namespace1 := util.NewNamespace(namespace1Name)
 		egressFirewall := newEgressFirewall(namespace1.Name)
 		start(zones, namespace1, egressFirewall)
@@ -264,7 +262,7 @@ var _ = Describe("Cluster Manager Status Manager", func() {
 
 	It("updates EgressFirewall status with 2 zones", func() {
 		config.OVNKubernetesFeature.EnableEgressFirewall = true
-		zones := sets.New[string]("zone1", "zone2")
+		zones := sets.New("zone1", "zone2")
 		namespace1 := util.NewNamespace(namespace1Name)
 		egressFirewall := newEgressFirewall(namespace1.Name)
 		start(zones, namespace1, egressFirewall)
@@ -284,7 +282,7 @@ var _ = Describe("Cluster Manager Status Manager", func() {
 
 	It("updates EgressFirewall status with UnknownZone", func() {
 		config.OVNKubernetesFeature.EnableEgressFirewall = true
-		zones := sets.New[string]("zone1", zone_tracker.UnknownZone)
+		zones := sets.New("zone1", zone_tracker.UnknownZone)
 		namespace1 := util.NewNamespace(namespace1Name)
 		egressFirewall := newEgressFirewall(namespace1.Name)
 		start(zones, namespace1, egressFirewall)
@@ -296,7 +294,7 @@ var _ = Describe("Cluster Manager Status Manager", func() {
 		checkEmptyEFStatusConsistently(egressFirewall, fakeClient)
 
 		// when UnknownZone is removed, updates will be handled, but status from the new zone is not reported yet
-		statusManager.onZoneUpdate(sets.New[string]("zone1", "zone2"))
+		statusManager.onZoneUpdate(sets.New("zone1", "zone2"))
 		checkEmptyEFStatusConsistently(egressFirewall, fakeClient)
 		// when new zone status is reported, status will be set
 		updateEgressFirewallStatus(egressFirewall, &egressfirewallapi.EgressFirewallStatus{
@@ -306,7 +304,7 @@ var _ = Describe("Cluster Manager Status Manager", func() {
 	})
 	It("updates APBRoute status with 1 zone", func() {
 		config.OVNKubernetesFeature.EnableMultiExternalGateway = true
-		zones := sets.New[string]("zone1")
+		zones := sets.New("zone1")
 		apbRoute := newAPBRoute(apbrouteName)
 		start(zones, apbRoute)
 
@@ -319,7 +317,7 @@ var _ = Describe("Cluster Manager Status Manager", func() {
 
 	It("updates APBRoute status with 2 zones", func() {
 		config.OVNKubernetesFeature.EnableMultiExternalGateway = true
-		zones := sets.New[string]("zone1", "zone2")
+		zones := sets.New("zone1", "zone2")
 		apbRoute := newAPBRoute(apbrouteName)
 		start(zones, apbRoute)
 
@@ -338,7 +336,7 @@ var _ = Describe("Cluster Manager Status Manager", func() {
 
 	It("updates APBRoute status with UnknownZone", func() {
 		config.OVNKubernetesFeature.EnableMultiExternalGateway = true
-		zones := sets.New[string]("zone1", zone_tracker.UnknownZone)
+		zones := sets.New("zone1", zone_tracker.UnknownZone)
 		apbRoute := newAPBRoute(apbrouteName)
 		start(zones, apbRoute)
 
@@ -349,7 +347,7 @@ var _ = Describe("Cluster Manager Status Manager", func() {
 		checkEmptyAPBRouteStatusConsistently(apbRoute, fakeClient)
 
 		// when UnknownZone is removed, updates will be handled, but status from the new zone is not reported yet
-		statusManager.onZoneUpdate(sets.New[string]("zone1", "zone2"))
+		statusManager.onZoneUpdate(sets.New("zone1", "zone2"))
 		checkEmptyAPBRouteStatusConsistently(apbRoute, fakeClient)
 		// when new zone status is reported, status will be set
 		updateAPBRouteStatus(apbRoute, &adminpolicybasedrouteapi.AdminPolicyBasedRouteStatus{
@@ -360,7 +358,7 @@ var _ = Describe("Cluster Manager Status Manager", func() {
 
 	It("updates EgressQoS status with 1 zone", func() {
 		config.OVNKubernetesFeature.EnableEgressQoS = true
-		zones := sets.New[string]("zone1")
+		zones := sets.New("zone1")
 		namespace1 := util.NewNamespace(namespace1Name)
 		egressQoS := newEgressQoS(namespace1.Name)
 		start(zones, namespace1, egressQoS)
@@ -378,7 +376,7 @@ var _ = Describe("Cluster Manager Status Manager", func() {
 
 	It("updates EgressQoS status with 2 zones", func() {
 		config.OVNKubernetesFeature.EnableEgressQoS = true
-		zones := sets.New[string]("zone1", "zone2")
+		zones := sets.New("zone1", "zone2")
 		namespace1 := util.NewNamespace(namespace1Name)
 		egressQoS := newEgressQoS(namespace1.Name)
 		start(zones, namespace1, egressQoS)
@@ -413,7 +411,7 @@ var _ = Describe("Cluster Manager Status Manager", func() {
 
 	It("updates EgressQoS status with UnknownZone", func() {
 		config.OVNKubernetesFeature.EnableEgressQoS = true
-		zones := sets.New[string]("zone1", zone_tracker.UnknownZone)
+		zones := sets.New("zone1", zone_tracker.UnknownZone)
 		namespace1 := util.NewNamespace(namespace1Name)
 		egressQoS := newEgressQoS(namespace1.Name)
 		start(zones, namespace1, egressQoS)
@@ -430,7 +428,7 @@ var _ = Describe("Cluster Manager Status Manager", func() {
 		checkEmptyEQStatusConsistently(egressQoS, fakeClient)
 
 		// when UnknownZone is removed, updates will be handled, but status from the new zone is not reported yet
-		statusManager.onZoneUpdate(sets.New[string]("zone1", "zone2"))
+		statusManager.onZoneUpdate(sets.New("zone1", "zone2"))
 		checkEmptyEQStatusConsistently(egressQoS, fakeClient)
 		// when new zone status is reported, status will be set
 		updateEgressQoSStatus(egressQoS, &egressqosapi.EgressQoSStatus{
@@ -451,20 +449,20 @@ var _ = Describe("Cluster Manager Status Manager", func() {
 	// cleanup can't be tested by unit test apiserver, since it relies on SSA logic with FieldManagers
 	It("test if APIServer lister/patcher is called for AdminNetworkPolicy when the zone is deleted", func() {
 		config.OVNKubernetesFeature.EnableAdminNetworkPolicy = true
-		zones := sets.New[string]("zone1", "zone2")
+		zones := sets.New("zone1", "zone2")
 		start(zones)
-		statusManager.onZoneUpdate(sets.New[string]("zone1", "zone2", "zone3")) // add
+		statusManager.onZoneUpdate(sets.New("zone1", "zone2", "zone3")) // add
 		// the actual status update for zones is done in ovnkube-controller but here we just want to
 		// check if a zone delete at least triggers the API List calls which means we are triggering
 		// the SSA logic to delete/clear that status. Real cleanup cannot be tested since fakeClient
 		// doesn't support ApplyStatus patch with FieldManagers
 		var anpsWereListed, banpWereListed uint32
-		fakeClient.ANPClient.(*anpfake.Clientset).PrependReactor("list", "adminnetworkpolicies", func(action clienttesting.Action) (handled bool, ret runtime.Object, err error) {
+		fakeClient.ANPClient.(*anpfake.Clientset).PrependReactor("list", "adminnetworkpolicies", func(clienttesting.Action) (handled bool, ret runtime.Object, err error) {
 			atomic.StoreUint32(&anpsWereListed, anpsWereListed+1)
 			anpList := &anpapi.AdminNetworkPolicyList{Items: []anpapi.AdminNetworkPolicy{newAdminNetworkPolicy("harry-potter", 5)}}
 			return true, anpList, nil
 		})
-		fakeClient.ANPClient.(*anpfake.Clientset).PrependReactor("list", "baselineadminnetworkpolicies", func(action clienttesting.Action) (handled bool, ret runtime.Object, err error) {
+		fakeClient.ANPClient.(*anpfake.Clientset).PrependReactor("list", "baselineadminnetworkpolicies", func(clienttesting.Action) (handled bool, ret runtime.Object, err error) {
 			atomic.StoreUint32(&banpWereListed, banpWereListed+1)
 			banpList := &anpapi.BaselineAdminNetworkPolicyList{Items: []anpapi.BaselineAdminNetworkPolicy{newBaselineAdminNetworkPolicy("default")}}
 			return true, banpList, nil
@@ -490,21 +488,21 @@ var _ = Describe("Cluster Manager Status Manager", func() {
 			klog.Infof("Got an patch spec action for %v", patch.GetResource())
 			return false, nil, nil
 		})
-		statusManager.onZoneUpdate(sets.New[string]("zone1")) // delete "zone2", "zone3"
+		statusManager.onZoneUpdate(sets.New("zone1")) // delete "zone2", "zone3"
 		// ensure list was called only once for each resource even if multiple zones are deleted
-		gomega.Eventually(func() uint32 {
+		Eventually(func() uint32 {
 			return atomic.LoadUint32(&anpsWereListed)
-		}).Should(gomega.Equal(uint32(1)))
-		gomega.Eventually(func() uint32 {
+		}).Should(Equal(uint32(1)))
+		Eventually(func() uint32 {
 			return atomic.LoadUint32(&banpWereListed)
-		}).Should(gomega.Equal(uint32(1)))
+		}).Should(Equal(uint32(1)))
 		// ensure patch status clean was called once for every zone, so here since two zones were deleted
 		// we should have called it two times
-		gomega.Eventually(func() uint32 {
+		Eventually(func() uint32 {
 			return atomic.LoadUint32(&anpsWerePatched)
-		}).Should(gomega.Equal(uint32(2)))
-		gomega.Eventually(func() uint32 {
+		}).Should(Equal(uint32(2)))
+		Eventually(func() uint32 {
 			return atomic.LoadUint32(&banpWerePatched)
-		}).Should(gomega.Equal(uint32(2)))
+		}).Should(Equal(uint32(2)))
 	})
 })

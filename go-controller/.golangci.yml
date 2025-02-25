@@ -3,10 +3,6 @@ issues:
     - vendor
     - pkg/crd
 
-  exclude-files:
-    # TODO: lint test files as well
-    - ".*\\_test.go$"
-
 linters:
   disable-all: true
   enable:

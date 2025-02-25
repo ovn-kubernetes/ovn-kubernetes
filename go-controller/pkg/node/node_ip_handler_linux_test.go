@@ -213,7 +213,7 @@ var _ = Describe("Node IP Handler tests", func() {
 	Context("valid addresses", func() {
 		ovntest.OnSupportedPlatformsIt("allows keepalived VIP", func() {
 			runIpManagerRoutine(tc)
-			Expect(tc.ns.Do(func(netNS ns.NetNS) error {
+			Expect(tc.ns.Do(func(ns.NetNS) error {
 				link, err := netlink.LinkByName(dummyBrName)
 				if err != nil {
 					return err
@@ -233,7 +233,7 @@ var _ = Describe("Node IP Handler tests", func() {
 
 		ovntest.OnSupportedPlatformsIt("allows unique local address", func() {
 			runIpManagerRoutine(tc)
-			Expect(tc.ns.Do(func(netNS ns.NetNS) error {
+			Expect(tc.ns.Do(func(ns.NetNS) error {
 				link, err := netlink.LinkByName(dummyBrName)
 				if err != nil {
 					return err
@@ -260,7 +260,7 @@ var _ = Describe("Node IP Handler tests", func() {
 			secondaryIP[len(secondaryIP)-1]++
 			secondaryIPNet := &net.IPNet{IP: secondaryIP, Mask: primaryIPNet.Mask}
 
-			Expect(tc.ns.Do(func(netNS ns.NetNS) error {
+			Expect(tc.ns.Do(func(ns.NetNS) error {
 				link, err := netlink.LinkByName(dummyBrName)
 				if err != nil {
 					return err
@@ -287,7 +287,7 @@ var _ = Describe("Node IP Handler tests", func() {
 			config.Gateway.MasqueradeIPs.V6OVNMasqueradeIP = ovntest.MustParseIP(dummyMasqIPv6)
 
 			runIpManagerRoutine(tc)
-			Expect(tc.ns.Do(func(netNS ns.NetNS) error {
+			Expect(tc.ns.Do(func(ns.NetNS) error {
 				link, err := netlink.LinkByName(dummyBrName)
 				if err != nil {
 					return err
@@ -311,7 +311,7 @@ var _ = Describe("Node IP Handler tests", func() {
 			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 
 			runIpManagerRoutine(tc)
-			Expect(tc.ns.Do(func(netNS ns.NetNS) error {
+			Expect(tc.ns.Do(func(ns.NetNS) error {
 				mpLink := ovntest.AddLink(fmt.Sprintf("%s1234", ovntypes.K8sMgmtIntfNamePrefix))
 				return netlink.AddrAdd(mpLink, &netlink.Addr{LinkIndex: mpLink.Attrs().Index, Scope: unix.RT_SCOPE_UNIVERSE,
 					IPNet: ovntest.MustParseIPNet(dummyAdditionalIPv4CIDR)})
@@ -327,12 +327,17 @@ var _ = Describe("Node IP Handler tests", func() {
 // IsNetworkSegmentationSupportEnabled()) so it must be called explicitly
 // from each test spec _AFTER_ all custom config changes happened.
 func runIpManagerRoutine(tc *testCtx) {
+	GinkgoHelper()
 	tc.doneWg.Add(1)
-	go tc.ns.Do(func(netNS ns.NetNS) error {
-		tc.ipManager.runInternal(tc.stopCh, tc.ipManager.getNetlinkAddrSubFunc(tc.stopCh))
-		tc.doneWg.Done()
-		return nil
-	})
+	go func() {
+		defer GinkgoRecover()
+		defer tc.doneWg.Done()
+		err := tc.ns.Do(func(ns.NetNS) error {
+			tc.ipManager.runInternal(tc.stopCh, tc.ipManager.getNetlinkAddrSubFunc(tc.stopCh))
+			return nil
+		})
+		Expect(err).NotTo(HaveOccurred())
+	}()
 }
 
 func configureKubeOVNContextWithNs(nodeName string) *testCtx {
@@ -345,15 +350,16 @@ func configureKubeOVNContextWithNs(nodeName string) *testCtx {
 		}
 		return netlink.AddrAdd(link, &netlink.Addr{IPNet: ovntest.MustParseIPNet("2001:db8::10/64")})
 	}
-	Expect(testNs.Do(func(netNS ns.NetNS) error {
+	Expect(testNs.Do(func(ns.NetNS) error {
 		return setupPrimaryInfFn()
 	}))
 	useNetlink := true
 	var tc *testCtx
-	testNs.Do(func(netNS ns.NetNS) error {
+	err = testNs.Do(func(ns.NetNS) error {
 		tc = configureKubeOVNContext(nodeName, useNetlink)
 		return nil
 	})
+	Expect(err).NotTo(HaveOccurred())
 	tc.ns = testNs
 	return tc
 }

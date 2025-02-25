@@ -10,7 +10,7 @@ import (
 	current "github.com/containernetworking/cni/pkg/types/100"
 	nadv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes/fake"
@@ -32,10 +32,10 @@ type podRequestInterfaceOpsStub struct {
 	unconfiguredInterfaces []*PodInterfaceInfo
 }
 
-func (stub *podRequestInterfaceOpsStub) ConfigureInterface(pr *PodRequest, getter PodInfoGetter, ifInfo *PodInterfaceInfo) ([]*current.Interface, error) {
+func (stub *podRequestInterfaceOpsStub) ConfigureInterface(*PodRequest, PodInfoGetter, *PodInterfaceInfo) ([]*current.Interface, error) {
 	return nil, nil
 }
-func (stub *podRequestInterfaceOpsStub) UnconfigureInterface(pr *PodRequest, ifInfo *PodInterfaceInfo) error {
+func (stub *podRequestInterfaceOpsStub) UnconfigureInterface(_ *PodRequest, ifInfo *PodInterfaceInfo) error {
 	stub.unconfiguredInterfaces = append(stub.unconfiguredInterfaces, ifInfo)
 	return nil
 }
@@ -44,14 +44,14 @@ var _ = Describe("Network Segmentation", func() {
 	var (
 		fakeClientset            *fake.Clientset
 		pr                       PodRequest
-		pod                      *v1.Pod
+		pod                      *corev1.Pod
 		podLister                v1mocks.PodLister
 		podNamespaceLister       v1mocks.PodNamespaceLister
 		nadLister                v1nadmocks.NetworkAttachmentDefinitionLister
 		clientSet                *ClientSet
 		kubeAuth                 *KubeAPIAuth
 		obtainedPodIterfaceInfos []*PodInterfaceInfo
-		getCNIResultStub         = func(request *PodRequest, getter PodInfoGetter, podInterfaceInfo *PodInterfaceInfo) (*current.Result, error) {
+		getCNIResultStub         = func(_ *PodRequest, _ PodInfoGetter, podInterfaceInfo *PodInterfaceInfo) (*current.Result, error) {
 			obtainedPodIterfaceInfos = append(obtainedPodIterfaceInfos, podInterfaceInfo)
 			return nil, nil
 		}
@@ -113,7 +113,7 @@ var _ = Describe("Network Segmentation", func() {
 		BeforeEach(func() {
 			config.OVNKubernetesFeature.EnableMultiNetwork = false
 			config.OVNKubernetesFeature.EnableNetworkSegmentation = false
-			pod = &v1.Pod{
+			pod = &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      pr.PodName,
 					Namespace: pr.PodNamespace,
@@ -143,7 +143,7 @@ var _ = Describe("Network Segmentation", func() {
 
 		Context("pod with default primary network", func() {
 			BeforeEach(func() {
-				pod = &v1.Pod{
+				pod = &corev1.Pod{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      pr.PodName,
 						Namespace: pr.PodNamespace,
@@ -174,7 +174,7 @@ var _ = Describe("Network Segmentation", func() {
 
 			var fakeNetworkManager *testnm.FakeNetworkManager
 
-			dummyGetCNIResult := func(request *PodRequest, getter PodInfoGetter, podInterfaceInfo *PodInterfaceInfo) (*current.Result, error) {
+			dummyGetCNIResult := func(request *PodRequest, _ PodInfoGetter, podInterfaceInfo *PodInterfaceInfo) (*current.Result, error) {
 				var gatewayIP net.IP
 				if len(podInterfaceInfo.Gateways) > 0 {
 					gatewayIP = podInterfaceInfo.Gateways[0]
@@ -208,7 +208,7 @@ var _ = Describe("Network Segmentation", func() {
 			}
 
 			BeforeEach(func() {
-				pod = &v1.Pod{
+				pod = &corev1.Pod{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      pr.PodName,
 						Namespace: pr.PodNamespace,

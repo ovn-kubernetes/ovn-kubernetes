@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"os"
 	"strings"
@@ -20,7 +19,7 @@ import (
 	"github.com/urfave/cli/v2"
 	"github.com/vishvananda/netlink"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	anpfake "sigs.k8s.io/network-policy-api/pkg/client/clientset/versioned/fake"
@@ -253,7 +252,7 @@ func testManagementPort(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.Net
 		mgtPortAddrs[i] = cfg.GetMgtPortAddr()
 	}
 
-	existingNode := v1.Node{ObjectMeta: metav1.ObjectMeta{
+	existingNode := corev1.Node{ObjectMeta: metav1.ObjectMeta{
 		Name: nodeName,
 	}}
 
@@ -262,8 +261,8 @@ func testManagementPort(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.Net
 			util.OvnNodeManagementPortMacAddresses: fmt.Sprintf("{\"default\":%q}", mgmtPortMAC)}
 	}
 
-	fakeClient := fake.NewSimpleClientset(&v1.NodeList{
-		Items: []v1.Node{existingNode},
+	fakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+		Items: []corev1.Node{existingNode},
 	})
 	fakeNodeClient := &util.OVNNodeClientset{
 		KubeClient: fakeClient,
@@ -287,12 +286,15 @@ func testManagementPort(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.Net
 		wg.Wait()
 	}()
 	wg.Add(1)
-	go testNS.Do(func(netNS ns.NetNS) error {
-		defer wg.Done()
+	go func() {
 		defer GinkgoRecover()
-		rm.Run(stopCh, 10*time.Second)
-		return nil
-	})
+		defer wg.Done()
+		err := testNS.Do(func(ns.NetNS) error {
+			rm.Run(stopCh, 10*time.Second)
+			return nil
+		})
+		Expect(err).NotTo(HaveOccurred())
+	}()
 
 	err = testNS.Do(func(ns.NetNS) error {
 		defer GinkgoRecover()
@@ -362,12 +364,12 @@ func testManagementPortDPU(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.
 		nodeSubnetCIDRs[i] = cfg.GetNodeSubnetCIDR()
 	}
 
-	existingNode := v1.Node{ObjectMeta: metav1.ObjectMeta{
+	existingNode := corev1.Node{ObjectMeta: metav1.ObjectMeta{
 		Name: nodeName,
 	}}
 
-	fakeClient := fake.NewSimpleClientset(&v1.NodeList{
-		Items: []v1.Node{existingNode},
+	fakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+		Items: []corev1.Node{existingNode},
 	})
 	fakeNodeClient := &util.OVNNodeClientset{
 		KubeClient: fakeClient,
@@ -386,11 +388,15 @@ func testManagementPortDPU(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.
 	rm := routemanager.NewController()
 	stopCh := make(chan struct{})
 	wg.Add(1)
-	go testNS.Do(func(netNS ns.NetNS) error {
-		rm.Run(stopCh, 10*time.Second)
-		wg.Done()
-		return nil
-	})
+	go func() {
+		defer GinkgoRecover()
+		defer wg.Done()
+		err := testNS.Do(func(ns.NetNS) error {
+			rm.Run(stopCh, 10*time.Second)
+			return nil
+		})
+		Expect(err).NotTo(HaveOccurred())
+	}()
 	defer func() {
 		close(stopCh)
 		wg.Wait()
@@ -461,12 +467,15 @@ func testManagementPortDPUHost(ctx *cli.Context, fexec *ovntest.FakeExec, testNS
 	rm := routemanager.NewController()
 	stopCh := make(chan struct{})
 	wg.Add(1)
-	go testNS.Do(func(netNS ns.NetNS) error {
-		defer wg.Done()
+	go func() {
 		defer GinkgoRecover()
-		rm.Run(stopCh, 10*time.Second)
-		return nil
-	})
+		defer wg.Done()
+		err := testNS.Do(func(ns.NetNS) error {
+			rm.Run(stopCh, 10*time.Second)
+			return nil
+		})
+		Expect(err).NotTo(HaveOccurred())
+	}()
 	defer func() {
 		close(stopCh)
 		wg.Wait()
@@ -758,7 +767,7 @@ var _ = Describe("Management Port Operations", func() {
 		var testNS ns.NetNS
 		var fexec *ovntest.FakeExec
 
-		tmpDir, tmpErr = ioutil.TempDir("", "clusternodetest_certdir")
+		tmpDir, tmpErr = os.MkdirTemp("", "clusternodetest_certdir")
 		if tmpErr != nil {
 			GinkgoT().Errorf("failed to create tempdir: %v", tmpErr)
 		}
@@ -1052,9 +1061,8 @@ var _ = Describe("Management Port Operations", func() {
 
 		Context("Management Port, ovnkube node mode dpu-host", func() {
 			BeforeEach(func() {
-				var err error
 				// Set up a fake k8sMgmt interface
-				err = testNS.Do(func(ns.NetNS) error {
+				err := testNS.Do(func(ns.NetNS) error {
 					defer GinkgoRecover()
 					ovntest.AddLink(mgmtPortNetdev)
 					return nil

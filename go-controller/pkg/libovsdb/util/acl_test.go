@@ -5,13 +5,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 )
 
 func TestConvertK8sProtocolToOVNProtocol(t *testing.T) {
 	testcases := []struct {
 		desc     string
-		protocol v1.Protocol
+		protocol corev1.Protocol
 		expected string
 	}{
 		{
@@ -36,7 +36,7 @@ func TestConvertK8sProtocolToOVNProtocol(t *testing.T) {
 		},
 	}
 	for _, tc := range testcases {
-		protocol := ConvertK8sProtocolToOVNProtocol(v1.Protocol(tc.protocol))
+		protocol := ConvertK8sProtocolToOVNProtocol(corev1.Protocol(tc.protocol))
 		if tc.expected == "" {
 			assert.Equal(t, len(protocol), 0)
 			continue

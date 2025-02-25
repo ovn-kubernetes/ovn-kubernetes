@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/vishvananda/netlink"
 
-	kapi "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
@@ -982,7 +982,7 @@ func TestDeleteConntrack(t *testing.T) {
 		errExp                   bool
 		inputIPStr               string
 		inputPort                int32
-		inputProtocol            kapi.Protocol
+		inputProtocol            corev1.Protocol
 		labels                   [][]byte
 		onRetArgsNetLinkLibOpers []ovntest.TestifyMockHelper
 	}{
@@ -1008,7 +1008,7 @@ func TestDeleteConntrack(t *testing.T) {
 		{
 			desc:          "Valid IPv4 address input with UDP protocol",
 			inputIPStr:    "192.168.1.14",
-			inputProtocol: kapi.ProtocolUDP,
+			inputProtocol: corev1.ProtocolUDP,
 			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
 				{OnCallMethodName: "ConntrackDeleteFilter", OnCallMethodArgType: []string{"netlink.ConntrackTableType", "netlink.InetFamily", "*netlink.ConntrackFilter"}, RetArgList: []interface{}{uint(1), nil}},
 			},
@@ -1016,7 +1016,7 @@ func TestDeleteConntrack(t *testing.T) {
 		{
 			desc:          "Valid IPv4 address input with SCTP protocol",
 			inputIPStr:    "192.168.1.14",
-			inputProtocol: kapi.ProtocolSCTP,
+			inputProtocol: corev1.ProtocolSCTP,
 			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
 				{OnCallMethodName: "ConntrackDeleteFilter", OnCallMethodArgType: []string{"netlink.ConntrackTableType", "netlink.InetFamily", "*netlink.ConntrackFilter"}, RetArgList: []interface{}{uint(1), nil}},
 			},
@@ -1024,7 +1024,7 @@ func TestDeleteConntrack(t *testing.T) {
 		{
 			desc:          "Valid IPv4 address input with TCP protocol",
 			inputIPStr:    "192.168.1.14",
-			inputProtocol: kapi.ProtocolTCP,
+			inputProtocol: corev1.ProtocolTCP,
 			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
 				{OnCallMethodName: "ConntrackDeleteFilter", OnCallMethodArgType: []string{"netlink.ConntrackTableType", "netlink.InetFamily", "*netlink.ConntrackFilter"}, RetArgList: []interface{}{uint(1), nil}},
 			},
@@ -1041,7 +1041,7 @@ func TestDeleteConntrack(t *testing.T) {
 		{
 			desc:          "Valid IPv6 address input with valid port input and valid Layer 4 protocol and labels",
 			inputIPStr:    "fffb::1",
-			inputProtocol: kapi.ProtocolSCTP,
+			inputProtocol: corev1.ProtocolSCTP,
 			inputPort:     9999,
 			labels:        [][]byte{{3, 4, 61, 141, 207, 170}, {0x2}},
 			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{

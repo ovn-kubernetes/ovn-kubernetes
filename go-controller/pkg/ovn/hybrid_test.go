@@ -13,7 +13,7 @@ import (
 	"github.com/onsi/gomega"
 	"github.com/urfave/cli/v2"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kapitypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -40,7 +40,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
-func newTestNode(name, os, ovnHostSubnet, hybridHostSubnet, drMAC string) v1.Node {
+func newTestNode(name, os, ovnHostSubnet, hybridHostSubnet, drMAC string) corev1.Node {
 	var err error
 	annotations := make(map[string]string)
 	if ovnHostSubnet != "" {
@@ -53,16 +53,16 @@ func newTestNode(name, os, ovnHostSubnet, hybridHostSubnet, drMAC string) v1.Nod
 	if drMAC != "" {
 		annotations[hotypes.HybridOverlayDRMAC] = drMAC
 	}
-	return v1.Node{
+	return corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        name,
-			Labels:      map[string]string{v1.LabelOSStable: os},
+			Labels:      map[string]string{corev1.LabelOSStable: os},
 			Annotations: annotations,
 		},
 	}
 }
 
-func newTestHONode(name, hybridHostSubnet, drMAC string) v1.Node {
+func newTestHONode(name, hybridHostSubnet, drMAC string) corev1.Node {
 	annotations := make(map[string]string)
 	if hybridHostSubnet != "" {
 		annotations[hotypes.HybridOverlayNodeSubnet] = hybridHostSubnet
@@ -71,10 +71,10 @@ func newTestHONode(name, hybridHostSubnet, drMAC string) v1.Node {
 		annotations[hotypes.HybridOverlayDRMAC] = drMAC
 	}
 	annotations[util.OvnNodeChassisID] = "79fdcfc4-6fe6-4cd3-8242-c0f85a4668ec"
-	return v1.Node{
+	return corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        name,
-			Labels:      map[string]string{v1.LabelOSStable: "windows"},
+			Labels:      map[string]string{corev1.LabelOSStable: "windows"},
 			Annotations: annotations,
 		},
 	}
@@ -148,7 +148,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
-		config.PrepareTestConfig()
+		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 
 		app = cli.NewApp()
 		app.Name = "test"
@@ -186,8 +186,8 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			dbSetup := libovsdbtest.TestSetup{}
-			kubeFakeClient := fake.NewSimpleClientset(&v1.NodeList{
-				Items: []v1.Node{
+			kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+				Items: []corev1.Node{
 					newTestNode(nodeName, "windows", "", "", ""),
 				},
 			})
@@ -263,7 +263,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 		err := app.Run([]string{
 			app.Name,
 			"-loglevel=5",
-			"-no-hostsubnet-nodes=" + v1.LabelOSStable + "=windows",
+			"-no-hostsubnet-nodes=" + corev1.LabelOSStable + "=windows",
 			"-enable-hybrid-overlay",
 			"-hybrid-overlay-cluster-subnets=" + hybridOverlayClusterCIDR,
 			"-init-gateways",
@@ -300,8 +300,8 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			}
 			testNode := node1.k8sNode("2")
 
-			kubeFakeClient := fake.NewSimpleClientset(&v1.NodeList{
-				Items: []v1.Node{testNode},
+			kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+				Items: []corev1.Node{testNode},
 			})
 			egressFirewallFakeClient := &egressfirewallfake.Clientset{}
 			egressIPFakeClient := &egressipfake.Clientset{}
@@ -581,8 +581,8 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 
 			testNode := node1.k8sNode("2")
 
-			kubeFakeClient := fake.NewSimpleClientset(&v1.NodeList{
-				Items: []v1.Node{testNode},
+			kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+				Items: []corev1.Node{testNode},
 			})
 			egressFirewallFakeClient := &egressfirewallfake.Clientset{}
 			egressIPFakeClient := &egressipfake.Clientset{}
@@ -779,13 +779,13 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			}
 			testNode := node1.k8sNode("2")
 
-			kubeFakeClient := fake.NewSimpleClientset(&v1.NodeList{
-				Items: []v1.Node{
+			kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+				Items: []corev1.Node{
 
 					{
 						ObjectMeta: metav1.ObjectMeta{
 							Name:   winNodeName,
-							Labels: map[string]string{v1.LabelOSStable: "windows"},
+							Labels: map[string]string{corev1.LabelOSStable: "windows"},
 							Annotations: map[string]string{
 								hotypes.HybridOverlayNodeSubnet: winNodeSubnet,
 							},
@@ -1086,8 +1086,8 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			testNode2 := node2.k8sNode("3")
 			testNode2.Annotations["k8s.ovn.org/node-subnets"] = "{\"default\":[\"10.1.3.0/24\"]}"
 
-			kubeFakeClient := fake.NewSimpleClientset(&v1.NodeList{
-				Items: []v1.Node{
+			kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+				Items: []corev1.Node{
 					testNode1,
 					testNode2,
 				},
@@ -1199,7 +1199,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			gomega.Expect(clusterController.WatchNodes()).To(gomega.Succeed())
 
 			// switch the node to a HO node
-			testNode2.Labels = map[string]string{v1.LabelOSStable: "windows"}
+			testNode2.Labels = map[string]string{corev1.LabelOSStable: "windows"}
 			testNode2.Annotations[hotypes.HybridOverlayNodeSubnet] = hoNodeSubnet
 			testNode2.Annotations[hotypes.HybridOverlayDRMAC] = hoNodeDRMAC
 			_, err = fakeClient.KubeClient.CoreV1().Nodes().Update(context.TODO(), &testNode2, metav1.UpdateOptions{})
@@ -1299,8 +1299,8 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				DnatSnatIP:           "169.254.0.1",
 			}
 			testNode := node1.k8sNode("2")
-			kubeFakeClient := fake.NewSimpleClientset(&v1.NodeList{
-				Items: []v1.Node{
+			kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+				Items: []corev1.Node{
 					newTestHONode(hoNodeName, hoNodeSubnet, hoNodeDRMAC),
 					testNode,
 				},
@@ -1504,8 +1504,8 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			}
 			testNode := node1.k8sNode("2")
 
-			kubeFakeClient := fake.NewSimpleClientset(&v1.NodeList{
-				Items: []v1.Node{testNode},
+			kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+				Items: []corev1.Node{testNode},
 			})
 			egressFirewallFakeClient := &egressfirewallfake.Clientset{}
 			egressIPFakeClient := &egressipfake.Clientset{}
@@ -1732,8 +1732,8 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				"k8s.ovn.org/ovn-node-id":  "2",
 				util.OVNNodeGRLRPAddrs:     "{\"default\":{\"ipv4\":\"100.64.0.2/16\"}}"}
 
-			kubeFakeClient := fake.NewSimpleClientset(&v1.NodeList{
-				Items: []v1.Node{testNode},
+			kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+				Items: []corev1.Node{testNode},
 			})
 			egressFirewallFakeClient := &egressfirewallfake.Clientset{}
 			egressIPFakeClient := &egressipfake.Clientset{}

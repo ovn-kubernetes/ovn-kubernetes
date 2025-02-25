@@ -28,12 +28,12 @@ import (
 )
 
 type fakeListener struct {
-	openPorts sets.String
+	openPorts sets.Set[string]
 }
 
 func newFakeListener() *fakeListener {
 	return &fakeListener{
-		openPorts: sets.String{},
+		openPorts: sets.New[string](),
 	}
 }
 
@@ -87,7 +87,7 @@ type fakeHTTPServer struct {
 	handler http.Handler
 }
 
-func (fake *fakeHTTPServer) Serve(listener net.Listener) error {
+func (fake *fakeHTTPServer) Serve(net.Listener) error {
 	return nil // Cause the goroutine to return
 }
 
@@ -104,11 +104,6 @@ type hcPayload struct {
 		Name      string
 	}
 	LocalEndpoints int
-}
-
-type healthzPayload struct {
-	LastUpdated string
-	CurrentTime string
 }
 
 func TestServer(t *testing.T) {
@@ -402,24 +397,5 @@ func testHandler(hcs *server, nsn types.NamespacedName, status int, endpoints in
 	}
 	if payload.LocalEndpoints != endpoints {
 		t.Errorf("expected %d endpoints, got %d", endpoints, payload.LocalEndpoints)
-	}
-}
-
-func testHealthzHandler(server HTTPServer, status int, t *testing.T) {
-	handler := server.(*fakeHTTPServer).handler
-	req, err := http.NewRequest("GET", "/healthz", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp := httptest.NewRecorder()
-
-	handler.ServeHTTP(resp, req)
-
-	if resp.Code != status {
-		t.Errorf("expected status code %v, got %v", status, resp.Code)
-	}
-	var payload healthzPayload
-	if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
-		t.Fatal(err)
 	}
 }

@@ -11,11 +11,11 @@ import (
 	"github.com/onsi/gomega"
 	"github.com/urfave/cli/v2"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	egressqosapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1"
@@ -59,7 +59,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
-		config.PrepareTestConfig()
+		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 		config.OVNKubernetesFeature.EnableEgressQoS = true
 
 		app = cli.NewApp()
@@ -75,7 +75,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 
 	ginkgo.DescribeTable("reconciles existing and non-existing egressqoses without PodSelectors",
 		func(ipv4Mode, ipv6Mode bool, dst1, dst2, match1, match2 string) {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				config.IPv4Mode = ipv4Mode
 				config.IPv6Mode = ipv6Mode
 
@@ -119,8 +119,8 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 				}
 
 				fakeOVN.startWithDBSetup(dbSetup,
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT,
 						},
 					},
@@ -141,7 +141,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 				_, err := fakeOVN.fakeClient.EgressQoSClient.K8sV1().EgressQoSes(namespaceT.Name).Create(context.TODO(), eq, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				fakeOVN.InitAndRunEgressQoSController()
+				gomega.Expect(fakeOVN.InitAndRunEgressQoSController()).To(gomega.Succeed())
 
 				qos1 := &nbdb.QoS{
 					Direction:   nbdb.QoSDirectionToLport,
@@ -246,7 +246,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 
 	ginkgo.DescribeTable("reconciles existing and non-existing egressqoses with PodSelectors",
 		func(ipv4Mode, ipv6Mode bool, podIP, dst1, dst2, match1, match2 string) {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				config.IPv4Mode = ipv4Mode
 				config.IPv6Mode = ipv6Mode
 
@@ -299,13 +299,13 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 				}
 
 				fakeOVN.startWithDBSetup(dbSetup,
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT,
 						},
 					},
-					&v1.PodList{
-						Items: []v1.Pod{
+					&corev1.PodList{
+						Items: []corev1.Pod{
 							*podT,
 						},
 					},
@@ -335,7 +335,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 				_, err := fakeOVN.fakeClient.EgressQoSClient.K8sV1().EgressQoSes(namespaceT.Name).Create(context.TODO(), eq, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				fakeOVN.InitAndRunEgressQoSController()
+				gomega.Expect(fakeOVN.InitAndRunEgressQoSController()).To(gomega.Succeed())
 
 				qos1 := &nbdb.QoS{
 					Direction:   nbdb.QoSDirectionToLport,
@@ -444,7 +444,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 	)
 
 	ginkgo.It("Validate status with invalid QoS Object", func() {
-		app.Action = func(ctx *cli.Context) error {
+		app.Action = func(*cli.Context) error {
 			namespaceT := *newNamespace("namespace1")
 			maxEgressQoSRetries = 0
 			defer func() {
@@ -475,8 +475,8 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 			}
 
 			fakeOVN.startWithDBSetup(dbSetup,
-				&v1.NamespaceList{
-					Items: []v1.Namespace{
+				&corev1.NamespaceList{
+					Items: []corev1.Namespace{
 						namespaceT,
 					},
 				},
@@ -485,7 +485,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 			// Create an EgressQoS object with invalid pod selector.
 			eq := newEgressQoSObject("default", namespaceT.Name, []egressqosapi.EgressQoSRule{
 				{
-					DstCIDR: pointer.String("1.2.3.4/32"),
+					DstCIDR: ptr.To("1.2.3.4/32"),
 					DSCP:    50,
 					PodSelector: metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{Key: "foo",
 						Operator: "invalid_op", Values: []string{"bar", "bar"}}}},
@@ -494,7 +494,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 			_, err := fakeOVN.fakeClient.EgressQoSClient.K8sV1().EgressQoSes(namespaceT.Name).Create(context.TODO(), eq, metav1.CreateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			fakeOVN.InitAndRunEgressQoSController()
+			gomega.Expect(fakeOVN.InitAndRunEgressQoSController()).To(gomega.Succeed())
 
 			expectedDatabaseState := []libovsdbtest.TestData{
 				node1Switch,
@@ -513,7 +513,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 	})
 
 	ginkgo.It("should respond to node events correctly", func() {
-		app.Action = func(ctx *cli.Context) error {
+		app.Action = func(*cli.Context) error {
 			namespaceT := *newNamespace("namespace1")
 
 			node1Switch := &nbdb.LogicalSwitch{
@@ -540,8 +540,8 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 			}
 
 			fakeOVN.startWithDBSetup(dbSetup,
-				&v1.NamespaceList{
-					Items: []v1.Namespace{
+				&corev1.NamespaceList{
+					Items: []corev1.Namespace{
 						namespaceT,
 					},
 				},
@@ -550,18 +550,18 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 			// Create one EgressQoS
 			eq := newEgressQoSObject("default", namespaceT.Name, []egressqosapi.EgressQoSRule{
 				{
-					DstCIDR: pointer.String("1.2.3.4/32"),
+					DstCIDR: ptr.To("1.2.3.4/32"),
 					DSCP:    50,
 				},
 				{
-					DstCIDR: pointer.String("5.6.7.8/32"),
+					DstCIDR: ptr.To("5.6.7.8/32"),
 					DSCP:    60,
 				},
 			})
 			_, err := fakeOVN.fakeClient.EgressQoSClient.K8sV1().EgressQoSes(namespaceT.Name).Create(context.TODO(), eq, metav1.CreateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			fakeOVN.InitAndRunEgressQoSController()
+			gomega.Expect(fakeOVN.InitAndRunEgressQoSController()).To(gomega.Succeed())
 
 			qos1 := &nbdb.QoS{
 				Direction:   nbdb.QoSDirectionToLport,
@@ -639,7 +639,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 	})
 
 	ginkgo.It("should respond to node zone update events correctly", func() {
-		app.Action = func(ctx *cli.Context) error {
+		app.Action = func(*cli.Context) error {
 			namespaceT := *newNamespace("namespace1")
 
 			node1Switch := &nbdb.LogicalSwitch{
@@ -666,8 +666,8 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 			}
 
 			fakeOVN.startWithDBSetup(dbSetup,
-				&v1.NamespaceList{
-					Items: []v1.Namespace{
+				&corev1.NamespaceList{
+					Items: []corev1.Namespace{
 						namespaceT,
 					},
 				},
@@ -676,18 +676,18 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 			// Create one EgressQoS
 			eq := newEgressQoSObject("default", namespaceT.Name, []egressqosapi.EgressQoSRule{
 				{
-					DstCIDR: pointer.String("1.2.3.4/32"),
+					DstCIDR: ptr.To("1.2.3.4/32"),
 					DSCP:    50,
 				},
 				{
-					DstCIDR: pointer.String("5.6.7.8/32"),
+					DstCIDR: ptr.To("5.6.7.8/32"),
 					DSCP:    60,
 				},
 			})
 			_, err := fakeOVN.fakeClient.EgressQoSClient.K8sV1().EgressQoSes(namespaceT.Name).Create(context.TODO(), eq, metav1.CreateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			fakeOVN.InitAndRunEgressQoSController()
+			gomega.Expect(fakeOVN.InitAndRunEgressQoSController()).To(gomega.Succeed())
 
 			qos1 := &nbdb.QoS{
 				Direction:   nbdb.QoSDirectionToLport,
@@ -772,7 +772,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 	})
 
 	ginkgo.It("should respond to pod events correctly", func() {
-		app.Action = func(ctx *cli.Context) error {
+		app.Action = func(*cli.Context) error {
 			namespaceT := *newNamespace("namespace1")
 
 			node1Switch := &nbdb.LogicalSwitch{
@@ -802,13 +802,13 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 			}
 
 			fakeOVN.startWithDBSetup(dbSetup,
-				&v1.NamespaceList{
-					Items: []v1.Namespace{
+				&corev1.NamespaceList{
+					Items: []corev1.Namespace{
 						namespaceT,
 					},
 				},
-				&v1.PodList{
-					Items: []v1.Pod{
+				&corev1.PodList{
+					Items: []corev1.Pod{
 						*podLocalT,
 						*podRemoteT,
 					},
@@ -823,11 +823,11 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 
 			eq := newEgressQoSObject("default", namespaceT.Name, []egressqosapi.EgressQoSRule{
 				{
-					DstCIDR: pointer.String("1.2.3.4/32"),
+					DstCIDR: ptr.To("1.2.3.4/32"),
 					DSCP:    40,
 				},
 				{
-					DstCIDR: pointer.String("5.6.7.8/32"),
+					DstCIDR: ptr.To("5.6.7.8/32"),
 					DSCP:    50,
 					PodSelector: metav1.LabelSelector{
 						MatchLabels: map[string]string{
@@ -836,7 +836,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 					},
 				},
 				{
-					DstCIDR: pointer.String("5.6.7.8/32"),
+					DstCIDR: ptr.To("5.6.7.8/32"),
 					DSCP:    60,
 					PodSelector: metav1.LabelSelector{
 						MatchLabels: map[string]string{
@@ -848,7 +848,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 			_, err := fakeOVN.fakeClient.EgressQoSClient.K8sV1().EgressQoSes(namespaceT.Name).Create(context.TODO(), eq, metav1.CreateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			fakeOVN.InitAndRunEgressQoSController()
+			gomega.Expect(fakeOVN.InitAndRunEgressQoSController()).To(gomega.Succeed())
 
 			qos1 := &nbdb.QoS{
 				Direction:   nbdb.QoSDirectionToLport,
@@ -958,11 +958,11 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 
 			eq := newEgressQoSObject("default", namespaceT.Name, []egressqosapi.EgressQoSRule{
 				{
-					DstCIDR: pointer.String("1.2.3.4/32"),
+					DstCIDR: ptr.To("1.2.3.4/32"),
 					DSCP:    40,
 				},
 				{
-					DstCIDR: pointer.String("5.6.7.8/32"),
+					DstCIDR: ptr.To("5.6.7.8/32"),
 					DSCP:    50,
 					PodSelector: metav1.LabelSelector{
 						MatchLabels: map[string]string{
@@ -979,8 +979,8 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 			}
 
 			fakeOVN.startWithDBSetup(dbSetup,
-				&v1.NamespaceList{
-					Items: []v1.Namespace{
+				&corev1.NamespaceList{
+					Items: []corev1.Namespace{
 						namespaceT,
 					},
 				},
@@ -991,7 +991,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 				},
 			)
 
-			fakeOVN.InitAndRunEgressQoSController()
+			gomega.Expect(fakeOVN.InitAndRunEgressQoSController()).To(gomega.Succeed())
 
 			qos1 := &nbdb.QoS{
 				Direction:   nbdb.QoSDirectionToLport,
@@ -1052,22 +1052,25 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 	)
 })
 
-func (o *FakeOVN) InitAndRunEgressQoSController() {
+func (o *FakeOVN) InitAndRunEgressQoSController() error {
 	klog.Warningf("#### [%p] INIT EgressQoS", o)
-	o.controller.initEgressQoSController(o.watcher.EgressQoSInformer(), o.watcher.PodCoreInformer(), o.watcher.NodeCoreInformer())
-	o.controller.runEgressQoSController(o.egressQoSWg, 1, o.stopChan)
+	err := o.controller.initEgressQoSController(o.watcher.EgressQoSInformer(), o.watcher.PodCoreInformer(), o.watcher.NodeCoreInformer())
+	if err != nil {
+		return err
+	}
+	return o.controller.runEgressQoSController(o.egressQoSWg, 1, o.stopChan)
 }
 
-func createNodeAndLS(fakeOVN *FakeOVN, name, zone string) (*v1.Node, *nbdb.LogicalSwitch, error) {
-	node := v1.Node{
+func createNodeAndLS(fakeOVN *FakeOVN, name, zone string) (*corev1.Node, *nbdb.LogicalSwitch, error) {
+	node := corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 		},
-		Status: v1.NodeStatus{
-			Conditions: []v1.NodeCondition{
+		Status: corev1.NodeStatus{
+			Conditions: []corev1.NodeCondition{
 				{
-					Type:   v1.NodeReady,
-					Status: v1.ConditionTrue,
+					Type:   corev1.NodeReady,
+					Status: corev1.ConditionTrue,
 				},
 			},
 		},

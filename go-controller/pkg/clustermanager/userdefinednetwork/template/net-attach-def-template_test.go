@@ -4,7 +4,7 @@ import (
 	netv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
@@ -260,8 +260,8 @@ var _ = Describe("NetAttachDefTemplate", func() {
 				Kind:               "UserDefinedNetwork",
 				Name:               "test-net",
 				UID:                "1",
-				BlockOwnerDeletion: pointer.Bool(true),
-				Controller:         pointer.Bool(true),
+				BlockOwnerDeletion: ptr.To(true),
+				Controller:         ptr.To(true),
 			}
 			expectedNAD := &netv1.NetworkAttachmentDefinition{
 				ObjectMeta: metav1.ObjectMeta{
@@ -396,8 +396,8 @@ var _ = Describe("NetAttachDefTemplate", func() {
 				Kind:               "ClusterUserDefinedNetwork",
 				Name:               "test-net",
 				UID:                "1",
-				BlockOwnerDeletion: pointer.Bool(true),
-				Controller:         pointer.Bool(true),
+				BlockOwnerDeletion: ptr.To(true),
+				Controller:         ptr.To(true),
 			}
 			expectedNAD := &netv1.NetworkAttachmentDefinition{
 				ObjectMeta: metav1.ObjectMeta{

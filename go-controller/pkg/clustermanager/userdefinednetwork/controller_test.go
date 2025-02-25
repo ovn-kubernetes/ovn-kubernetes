@@ -12,12 +12,12 @@ import (
 	netv1fakeclientset "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
 
 	corev1 "k8s.io/api/core/v1"
-	kerrors "k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/testing"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/template"
@@ -114,7 +114,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				}}))
 
 				_, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(udn.Namespace).Get(context.Background(), udn.Name, metav1.GetOptions{})
-				Expect(kerrors.IsNotFound(err)).To(BeTrue())
+				Expect(apierrors.IsNotFound(err)).To(BeTrue())
 			})
 
 			It("should NOT fail when required namespace label is missing for secondary network", func() {
@@ -157,14 +157,14 @@ var _ = Describe("User Defined Network Controller", func() {
 				}}))
 
 				_, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(udn.Namespace).Get(context.Background(), udn.Name, metav1.GetOptions{})
-				Expect(kerrors.IsNotFound(err)).To(BeTrue())
+				Expect(apierrors.IsNotFound(err)).To(BeTrue())
 			})
 			It("should fail when NAD create fail", func() {
 				udn := testPrimaryUDN()
 				c = newTestController(noopRenderNadStub(), udn, testNamespace("test"))
 
 				expectedError := errors.New("create NAD error")
-				cs.NetworkAttchDefClient.(*netv1fakeclientset.Clientset).PrependReactor("create", "network-attachment-definitions", func(action testing.Action) (handled bool, ret runtime.Object, err error) {
+				cs.NetworkAttchDefClient.(*netv1fakeclientset.Clientset).PrependReactor("create", "network-attachment-definitions", func(testing.Action) (handled bool, ret runtime.Object, err error) {
 					return true, nil, expectedError
 				})
 
@@ -182,7 +182,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				}}))
 
 				_, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(udn.Namespace).Get(context.Background(), udn.Name, metav1.GetOptions{})
-				Expect(kerrors.IsNotFound(err)).To(BeTrue())
+				Expect(apierrors.IsNotFound(err)).To(BeTrue())
 			})
 
 			It("should fail when foreign NAD exist", func() {
@@ -346,7 +346,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				c = newTestController(noopRenderNadStub(), udn, testNamespace("test"))
 
 				expectedErr := errors.New("update UDN error")
-				cs.UserDefinedNetworkClient.(*udnfakeclient.Clientset).PrependReactor("update", "userdefinednetworks", func(action testing.Action) (handled bool, obj runtime.Object, err error) {
+				cs.UserDefinedNetworkClient.(*udnfakeclient.Clientset).PrependReactor("update", "userdefinednetworks", func(testing.Action) (bool, runtime.Object, error) {
 					return true, nil, expectedErr
 				})
 
@@ -394,7 +394,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				}).Should(BeEmpty(), "should remove finalizer on UDN following deletion and not being used")
 				_, err = cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nad.Namespace).Get(context.Background(), nad.Name, metav1.GetOptions{})
 				Expect(err).To(HaveOccurred())
-				Expect(kerrors.IsNotFound(err)).To(BeTrue())
+				Expect(apierrors.IsNotFound(err)).To(BeTrue())
 			})
 		})
 
@@ -831,7 +831,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				for _, nsName := range staleNADsNsNames {
 					_, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nsName).Get(context.Background(), cudn.Name, metav1.GetOptions{})
 					Expect(err).To(HaveOccurred())
-					Expect(kerrors.IsNotFound(err)).To(Equal(true))
+					Expect(apierrors.IsNotFound(err)).To(Equal(true))
 				}
 			})
 		})
@@ -874,7 +874,7 @@ var _ = Describe("User Defined Network Controller", func() {
 
 			_, err = cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(udn.Namespace).Get(context.Background(), nad.Name, metav1.GetOptions{})
 			Expect(err).To(HaveOccurred())
-			Expect(kerrors.IsNotFound(err)).To(BeTrue())
+			Expect(apierrors.IsNotFound(err)).To(BeTrue())
 		})
 		It("when UDN is being deleted, and NAD exist, should fail when remove NAD finalizer fails", func() {
 			udn := testsUDNWithDeletionTimestamp(time.Now())
@@ -882,7 +882,7 @@ var _ = Describe("User Defined Network Controller", func() {
 			c := newTestController(noopRenderNadStub(), udn, nad, testNamespace("test"))
 
 			expectedErr := errors.New("update NAD error")
-			cs.NetworkAttchDefClient.(*netv1fakeclientset.Clientset).PrependReactor("update", "network-attachment-definitions", func(action testing.Action) (bool, runtime.Object, error) {
+			cs.NetworkAttchDefClient.(*netv1fakeclientset.Clientset).PrependReactor("update", "network-attachment-definitions", func(testing.Action) (bool, runtime.Object, error) {
 				return true, nil, expectedErr
 			})
 
@@ -915,7 +915,7 @@ var _ = Describe("User Defined Network Controller", func() {
 			c := newTestController(noopRenderNadStub(), udn, nad, testNamespace("test"))
 
 			expectedErr := errors.New("update UDN error")
-			cs.UserDefinedNetworkClient.(*udnfakeclient.Clientset).PrependReactor("update", "userdefinednetworks", func(action testing.Action) (bool, runtime.Object, error) {
+			cs.UserDefinedNetworkClient.(*udnfakeclient.Clientset).PrependReactor("update", "userdefinednetworks", func(testing.Action) (bool, runtime.Object, error) {
 				return true, nil, expectedErr
 			})
 
@@ -945,7 +945,7 @@ var _ = Describe("User Defined Network Controller", func() {
 
 			_, err = cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(udn.Namespace).Get(context.Background(), nad.Name, metav1.GetOptions{})
 			Expect(err).To(HaveOccurred())
-			Expect(kerrors.IsNotFound(err)).To(BeTrue())
+			Expect(apierrors.IsNotFound(err)).To(BeTrue())
 		})
 
 		DescribeTable("when UDN is being deleted, NAD exist, should not remove finalizers when",
@@ -1094,7 +1094,7 @@ var _ = Describe("User Defined Network Controller", func() {
 			c := newTestController(noopRenderNadStub())
 
 			expectedError := errors.New("test err")
-			cs.UserDefinedNetworkClient.(*udnfakeclient.Clientset).PrependReactor("patch", "userdefinednetworks/status", func(action testing.Action) (bool, runtime.Object, error) {
+			cs.UserDefinedNetworkClient.(*udnfakeclient.Clientset).PrependReactor("patch", "userdefinednetworks/status", func(testing.Action) (bool, runtime.Object, error) {
 				return true, nil, expectedError
 			})
 
@@ -1195,7 +1195,7 @@ var _ = Describe("User Defined Network Controller", func() {
 			})
 			It("should fail remove NAD finalizer when update NAD fails", func() {
 				expectedErr := errors.New("test err")
-				cs.NetworkAttchDefClient.(*netv1fakeclientset.Clientset).PrependReactor("update", "network-attachment-definitions", func(action testing.Action) (bool, runtime.Object, error) {
+				cs.NetworkAttchDefClient.(*netv1fakeclientset.Clientset).PrependReactor("update", "network-attachment-definitions", func(testing.Action) (bool, runtime.Object, error) {
 					return true, nil, expectedErr
 				})
 
@@ -1204,7 +1204,7 @@ var _ = Describe("User Defined Network Controller", func() {
 			})
 			It("should fail remove NAD finalizer when delete NAD fails", func() {
 				expectedErr := errors.New("test err")
-				cs.NetworkAttchDefClient.(*netv1fakeclientset.Clientset).PrependReactor("delete", "network-attachment-definitions", func(action testing.Action) (bool, runtime.Object, error) {
+				cs.NetworkAttchDefClient.(*netv1fakeclientset.Clientset).PrependReactor("delete", "network-attachment-definitions", func(testing.Action) (bool, runtime.Object, error) {
 					return true, nil, expectedErr
 				})
 
@@ -1224,7 +1224,7 @@ var _ = Describe("User Defined Network Controller", func() {
 			c := newTestController(noopRenderNadStub(), cudn)
 
 			expectedErr := errors.New("test patch error")
-			cs.UserDefinedNetworkClient.(*udnfakeclient.Clientset).PrependReactor("patch", "clusteruserdefinednetworks", func(action testing.Action) (bool, runtime.Object, error) {
+			cs.UserDefinedNetworkClient.(*udnfakeclient.Clientset).PrependReactor("patch", "clusteruserdefinednetworks", func(testing.Action) (bool, runtime.Object, error) {
 				return true, nil, expectedErr
 			})
 
@@ -1442,8 +1442,8 @@ func testNAD() *netv1.NetworkAttachmentDefinition {
 					Kind:               "UserDefinedNetwork",
 					Name:               "test",
 					UID:                "1",
-					BlockOwnerDeletion: pointer.Bool(true),
-					Controller:         pointer.Bool(true),
+					BlockOwnerDeletion: ptr.To(true),
+					Controller:         ptr.To(true),
 				},
 			},
 		},
@@ -1521,8 +1521,8 @@ func testClusterUdnNAD(name, namespace string) *netv1.NetworkAttachmentDefinitio
 					Kind:               "ClusterUserDefinedNetwork",
 					Name:               name,
 					UID:                "1",
-					BlockOwnerDeletion: pointer.Bool(true),
-					Controller:         pointer.Bool(true),
+					BlockOwnerDeletion: ptr.To(true),
+					Controller:         ptr.To(true),
 				},
 			},
 		},
@@ -1543,7 +1543,7 @@ func failRenderNadStub(err error) RenderNetAttachDefManifest {
 }
 
 func newRenderNadStub(nad *netv1.NetworkAttachmentDefinition, err error) RenderNetAttachDefManifest {
-	return func(obj client.Object, targetNamespace string) (*netv1.NetworkAttachmentDefinition, error) {
+	return func(client.Object, string) (*netv1.NetworkAttachmentDefinition, error) {
 		return nad, err
 	}
 }

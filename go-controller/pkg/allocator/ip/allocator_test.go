@@ -225,11 +225,11 @@ func TestForEach(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	testCases := []sets.String{
-		sets.NewString(),
-		sets.NewString("192.168.1.1"),
-		sets.NewString("192.168.1.1", "192.168.1.254"),
-		sets.NewString("192.168.1.1", "192.168.1.128", "192.168.1.254"),
+	testCases := []sets.Set[string]{
+		sets.New[string](),
+		sets.New("192.168.1.1"),
+		sets.New("192.168.1.1", "192.168.1.254"),
+		sets.New("192.168.1.1", "192.168.1.128", "192.168.1.254"),
 	}
 
 	for i, tc := range testCases {
@@ -246,7 +246,7 @@ func TestForEach(t *testing.T) {
 				t.Errorf("[%d] expected IP %v allocated", i, ip)
 			}
 		}
-		calls := sets.NewString()
+		calls := sets.New[string]()
 		r.ForEach(func(ip net.IP) {
 			calls.Insert(ip.String())
 		})
@@ -254,7 +254,7 @@ func TestForEach(t *testing.T) {
 			t.Errorf("[%d] expected %d calls, got %d", i, len(tc), len(calls))
 		}
 		if !calls.Equal(tc) {
-			t.Errorf("[%d] expected calls to equal testcase: %v vs %v", i, calls.List(), tc.List())
+			t.Errorf("[%d] expected calls to equal testcase: %v vs %v", i, sets.List(calls), sets.List(tc))
 		}
 	}
 }

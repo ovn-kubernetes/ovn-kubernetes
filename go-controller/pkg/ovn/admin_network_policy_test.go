@@ -11,12 +11,11 @@ import (
 	"github.com/onsi/gomega"
 	"github.com/urfave/cli/v2"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clienttesting "k8s.io/client-go/testing"
 	"k8s.io/klog/v2"
-	utilpointer "k8s.io/utils/pointer"
 	"k8s.io/utils/ptr"
 	anpapi "sigs.k8s.io/network-policy-api/apis/v1alpha1"
 	anpfake "sigs.k8s.io/network-policy-api/pkg/client/clientset/versioned/fake"
@@ -100,7 +99,7 @@ func getANPGressACL(action, anpName, direction string, rulePriority int32,
 	acl.Action = action
 	acl.Severity = nil
 	acl.Log = false
-	acl.Meter = utilpointer.String(types.OvnACLLoggingMeter)
+	acl.Meter = ptr.To(types.OvnACLLoggingMeter)
 	acl.Priority = int(rulePriority)
 	acl.Tier = types.DefaultANPACLTier
 	if banp {
@@ -115,12 +114,12 @@ func getANPGressACL(action, anpName, direction string, rulePriority int32,
 		libovsdbops.OwnerTypeKey.String():          "AdminNetworkPolicy",
 		libovsdbops.PrimaryIDKey.String():          fmt.Sprintf("%s:AdminNetworkPolicy:%s:%s:%d:None", DefaultNetworkControllerName, anpName, direction, ruleIndex),
 	}
-	acl.Name = utilpointer.String(fmt.Sprintf("ANP:%s:%s:%d", anpName, direction, ruleIndex)) // tests logic for GetACLName
+	acl.Name = ptr.To(fmt.Sprintf("ANP:%s:%s:%d", anpName, direction, ruleIndex)) // tests logic for GetACLName
 	if banp {
 		acl.ExternalIDs[libovsdbops.OwnerTypeKey.String()] = "BaselineAdminNetworkPolicy"
 		acl.ExternalIDs[libovsdbops.PrimaryIDKey.String()] = fmt.Sprintf("%s:BaselineAdminNetworkPolicy:%s:%s:%d:None",
 			DefaultNetworkControllerName, anpName, direction, ruleIndex)
-		acl.Name = utilpointer.String(fmt.Sprintf("BANP:%s:%s:%d", anpName, direction, ruleIndex)) // tests logic for GetACLName
+		acl.Name = ptr.To(fmt.Sprintf("BANP:%s:%s:%d", anpName, direction, ruleIndex)) // tests logic for GetACLName
 	}
 	acl.UUID = fmt.Sprintf("%s_%s_%d-%f-UUID", anpName, direction, ruleIndex, rand.Float64())
 	// determine ACL match
@@ -292,7 +291,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
-		config.PrepareTestConfig()
+		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 		config.OVNKubernetesFeature.EnableAdminNetworkPolicy = true
 		// IC true or false does not really effect this feature
 		config.OVNKubernetesFeature.EnableInterconnect = true
@@ -310,7 +309,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 
 	ginkgo.Context("On admin network policy changes", func() {
 		ginkgo.It("should create/update/delete address-sets, acls, port-groups correctly", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				anpNamespaceSubject := *newNamespaceWithLabels(anpSubjectNamespaceName, anpLabel)
 				anpNamespacePeer := *newNamespaceWithLabels(anpPeerNamespaceName, peerDenyLabel)
 				config.IPv4Mode = true
@@ -333,14 +332,14 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 					},
 				}
 				fakeOVN.startWithDBSetup(dbSetup,
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							anpNamespaceSubject,
 							anpNamespacePeer,
 						},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{
+					&corev1.NodeList{
+						Items: []corev1.Node{
 							*node1,
 						},
 					},
@@ -515,19 +514,19 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 						Ports: &[]anpapi.AdminNetworkPolicyPort{ // test different ports combination
 							{
 								PortNumber: &anpapi.Port{
-									Protocol: v1.ProtocolTCP,
+									Protocol: corev1.ProtocolTCP,
 									Port:     int32(12345),
 								},
 							},
 							{
 								PortNumber: &anpapi.Port{
-									Protocol: v1.ProtocolUDP,
+									Protocol: corev1.ProtocolUDP,
 									Port:     int32(1235),
 								},
 							},
 							{
 								PortNumber: &anpapi.Port{
-									Protocol: v1.ProtocolSCTP,
+									Protocol: corev1.ProtocolSCTP,
 									Port:     int32(1345),
 								},
 							},
@@ -610,19 +609,19 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 						Ports: &[]anpapi.AdminNetworkPolicyPort{ // test different ports combination
 							{
 								PortNumber: &anpapi.Port{
-									Protocol: v1.ProtocolTCP,
+									Protocol: corev1.ProtocolTCP,
 									Port:     int32(12345),
 								},
 							},
 							{
 								PortNumber: &anpapi.Port{
-									Protocol: v1.ProtocolUDP,
+									Protocol: corev1.ProtocolUDP,
 									Port:     int32(12345),
 								},
 							},
 							{
 								PortNumber: &anpapi.Port{
-									Protocol: v1.ProtocolSCTP,
+									Protocol: corev1.ProtocolSCTP,
 									Port:     int32(12345),
 								},
 							},
@@ -811,7 +810,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 
 				ginkgo.By("15. update the subject pod to go into completed state; check if port group and address-set is updated")
 				anpSubjectPod.ResourceVersion = "3"
-				anpSubjectPod.Status.Phase = v1.PodSucceeded
+				anpSubjectPod.Status.Phase = corev1.PodSucceeded
 				_, err = fakeOVN.fakeClient.KubeClient.CoreV1().Pods(anpSubjectPod.Namespace).Update(context.TODO(), &anpSubjectPod, metav1.UpdateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				pg = getDefaultPGForANPSubject(anp.Name, nil, newACLs, false) // no ports in PG
@@ -939,7 +938,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		})
 		ginkgo.It("PortNumber, PortRange and NamedPort (no matching pods) Rules for ANP", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				config.IPv4Mode = true
 				config.IPv6Mode = true
 				fakeOVN.start()
@@ -969,20 +968,20 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 					{
 						PortNumber: &anpapi.Port{
 							Port:     36363,
-							Protocol: v1.ProtocolTCP,
+							Protocol: corev1.ProtocolTCP,
 						},
 					},
 					{
 						PortNumber: &anpapi.Port{
 							Port:     36364,
-							Protocol: v1.ProtocolTCP,
+							Protocol: corev1.ProtocolTCP,
 						},
 					},
 					{
 						PortRange: &anpapi.PortRange{
 							Start:    36330,
 							End:      36550,
-							Protocol: v1.ProtocolTCP,
+							Protocol: corev1.ProtocolTCP,
 						},
 					},
 					{
@@ -992,14 +991,14 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 						PortRange: &anpapi.PortRange{
 							Start:    36330,
 							End:      36550,
-							Protocol: v1.ProtocolSCTP,
+							Protocol: corev1.ProtocolSCTP,
 						},
 					},
 					{
 						PortRange: &anpapi.PortRange{
 							Start:    36330,
 							End:      36550,
-							Protocol: v1.ProtocolUDP,
+							Protocol: corev1.ProtocolUDP,
 						},
 					},
 				}
@@ -1082,7 +1081,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		})
 		ginkgo.It("NamedPort matching pods Rules for ANP", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				config.IPv4Mode = true
 				config.IPv6Mode = true
 				anpSubjectNamespace := *newNamespaceWithLabels(anpSubjectNamespaceName, anpLabel)
@@ -1110,19 +1109,19 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 					`"mac_address":"0a:58:0a:80:01:04","gateway_ips":["10.128.1.1","fe00:10:128:1::1"],"routes":[{"dest":"10.128.1.0/24","nextHop":"10.128.1.1"}],` +
 					`"ip_address":"10.128.1.4/24","gateway_ip":"10.128.1.1"}}`
 				anpPeerPod.Spec.Containers = append(anpPeerPod.Spec.Containers,
-					v1.Container{
+					corev1.Container{
 						Name:  "containerName",
 						Image: "containerImage",
-						Ports: []v1.ContainerPort{
+						Ports: []corev1.ContainerPort{
 							{
 								Name:          "web",
 								ContainerPort: 3535,
-								Protocol:      v1.ProtocolTCP,
+								Protocol:      corev1.ProtocolTCP,
 							},
 							{
 								Name:          "web123",
 								ContainerPort: 35356,
-								Protocol:      v1.ProtocolSCTP,
+								Protocol:      corev1.ProtocolSCTP,
 							},
 						},
 					},
@@ -1143,11 +1142,11 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 				anpSubjectPod.Annotations["k8s.ovn.org/pod-networks"] = `{"default":{"ip_addresses":["10.128.1.3/24","fe00:10:128:1::3/64"],` +
 					`"mac_address":"0a:58:0a:80:01:03","gateway_ips":["10.128.1.1","fe00:10:128:1::1"],"routes":[{"dest":"10.128.1.0/24","nextHop":"10.128.1.1"}],` +
 					`"ip_address":"10.128.1.3/24","gateway_ip":"10.128.1.1"}}`
-				anpSubjectPod.Spec.Containers[0].Ports = []v1.ContainerPort{
+				anpSubjectPod.Spec.Containers[0].Ports = []corev1.ContainerPort{
 					{
 						Name:          "dns",
 						ContainerPort: 5353,
-						Protocol:      v1.ProtocolUDP,
+						Protocol:      corev1.ProtocolUDP,
 					},
 				}
 				dbSetup := libovsdbtest.TestSetup{
@@ -1156,20 +1155,20 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 					},
 				}
 				fakeOVN.startWithDBSetup(dbSetup,
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							anpSubjectNamespace,
 							anpNamespacePeer,
 							anpNamespacePeer2,
 						},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{
+					&corev1.NodeList{
+						Items: []corev1.Node{
 							*node1,
 						},
 					},
-					&v1.PodList{
-						Items: []v1.Pod{
+					&corev1.PodList{
+						Items: []corev1.Pod{
 							anpPeerPod, // peer pod ("house": "slytherin")
 						},
 					},
@@ -1221,7 +1220,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 					{
 						PortNumber: &anpapi.Port{
 							Port:     36363,
-							Protocol: v1.ProtocolTCP,
+							Protocol: corev1.ProtocolTCP,
 						},
 					},
 					{
@@ -1231,7 +1230,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 						PortRange: &anpapi.PortRange{
 							Start:    36330,
 							End:      36550,
-							Protocol: v1.ProtocolSCTP,
+							Protocol: corev1.ProtocolSCTP,
 						},
 					},
 					{
@@ -1241,7 +1240,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 						PortRange: &anpapi.PortRange{
 							Start:    36330,
 							End:      36550,
-							Protocol: v1.ProtocolUDP,
+							Protocol: corev1.ProtocolUDP,
 						},
 					},
 					{
@@ -1493,7 +1492,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		})
 		ginkgo.It("ACL Logging for ANP", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				config.IPv4Mode = true
 				config.IPv6Mode = true
 				fakeOVN.start()
@@ -1630,7 +1629,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		})
 		ginkgo.It("egress node+network peers: should create/update/delete address-sets, acls, port-groups correctly", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				anpNamespaceSubject := *newNamespaceWithLabels(anpSubjectNamespaceName, anpLabel)
 				anpNamespacePeer := *newNamespaceWithLabels(anpPeerNamespaceName, peerDenyLabel)
 				config.IPv4Mode = true
@@ -1678,19 +1677,19 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 					},
 				}
 				fakeOVN.startWithDBSetup(dbSetup,
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							anpNamespaceSubject,
 							anpNamespacePeer,
 						},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{
+					&corev1.NodeList{
+						Items: []corev1.Node{
 							*node1,
 						},
 					},
-					&v1.PodList{
-						Items: []v1.Pod{
+					&corev1.PodList{
+						Items: []corev1.Pod{
 							anpSubjectPod, // subject pod ("house": "gryffindor")
 							anpPeerPod,    // peer pod ("house": "slytherin")
 						},
@@ -1802,20 +1801,20 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 						Ports: &[]anpapi.AdminNetworkPolicyPort{ // test different ports combination
 							{
 								PortNumber: &anpapi.Port{
-									Protocol: v1.ProtocolTCP,
+									Protocol: corev1.ProtocolTCP,
 									Port:     int32(12345),
 								},
 							},
 							{
 								PortRange: &anpapi.PortRange{
-									Protocol: v1.ProtocolUDP,
+									Protocol: corev1.ProtocolUDP,
 									Start:    int32(12345),
 									End:      int32(65000),
 								},
 							},
 							{
 								PortNumber: &anpapi.Port{
-									Protocol: v1.ProtocolSCTP,
+									Protocol: corev1.ProtocolSCTP,
 									Port:     int32(12345),
 								},
 							},
@@ -1975,7 +1974,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 			gomega.Expect(anp.Status.Conditions[0].Status).To(gomega.Equal(metav1.ConditionTrue))
 		})
 		ginkgo.It("should be able to create two admin network policies at the same priority; ensure duplicate priority event is emitted", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				// now try to create a second admin network policy with same priority and ensure its created and triggers event
 				ginkgo.By("2. creating an admin network policy draco-malfoy also at priority 5") // STEP1 in beforeEach
 				dupANP := newANPObject("draco-malfoy", 5, anpSubject, []anpapi.AdminNetworkPolicyIngressRule{}, []anpapi.AdminNetworkPolicyEgressRule{})
@@ -2001,7 +2000,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		})
 		ginkgo.It("deletion of existing ANP should be able to create a new ANP at the same priority without any event being emitted", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				// now try to delete the first existing ANP at that priority
 				ginkgo.By("2. deleting harry-potter at priority 5") // STEP1 in beforeEach
 				err := fakeOVN.fakeClient.ANPClient.PolicyV1alpha1().AdminNetworkPolicies().Delete(context.TODO(), "harry-potter", metav1.DeleteOptions{})
@@ -2028,7 +2027,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		})
 		ginkgo.It("should be able to create two admin network policies at different priorities; ensure duplicate priority event is NOT emitted", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				// check if "draco-malfoy" now get's created with no events
 				ginkgo.By("2. creating an admin network policy draco-malfoy at priority 6") // STEP1 in beforeEach
 				dupANP := newANPObject("draco-malfoy", 6, anpSubject, []anpapi.AdminNetworkPolicyIngressRule{}, []anpapi.AdminNetworkPolicyEgressRule{})
@@ -2051,7 +2050,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		})
 		ginkgo.It("updating an existing ANP's priority will cause priority conflict; ensure duplicate priority event is emitted", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				ginkgo.By("2. creating an admin network policy draco-malfoy at priority 6") // STEP1 in beforeEach
 				dupANP := newANPObject("draco-malfoy", 6, anpSubject, []anpapi.AdminNetworkPolicyIngressRule{}, []anpapi.AdminNetworkPolicyEgressRule{})
 				dupANP.ResourceVersion = "1"
@@ -2108,7 +2107,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 			fakeOVN.InitAndRunANPController()
 		})
 		ginkgo.It("should not be able to create admin network policy with priority > 99", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				anp := newANPObject("harry-potter", 100, anpSubject, []anpapi.AdminNetworkPolicyIngressRule{}, []anpapi.AdminNetworkPolicyEgressRule{})
 				anp.ResourceVersion = "1"
 				anp, err := fakeOVN.fakeClient.ANPClient.PolicyV1alpha1().AdminNetworkPolicies().Create(context.TODO(), anp, metav1.CreateOptions{})
@@ -2129,7 +2128,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		})
 		ginkgo.It("should not be able to update admin network policy to a priority > 99", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				ginkgo.By("create ANP at priority 5")
 				anp := newANPObject("harry-potter", 5, anpSubject, []anpapi.AdminNetworkPolicyIngressRule{}, []anpapi.AdminNetworkPolicyEgressRule{})
 				anp.ResourceVersion = "1"

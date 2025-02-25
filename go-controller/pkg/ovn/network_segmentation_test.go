@@ -7,7 +7,7 @@ import (
 	"github.com/onsi/gomega"
 	"github.com/urfave/cli/v2"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -29,7 +29,7 @@ var _ = ginkgo.Describe("OVN Pod Operations with network segmentation", func() {
 
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
-		config.PrepareTestConfig()
+		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 
 		app = cli.NewApp()
 		app.Name = "test"
@@ -55,7 +55,7 @@ var _ = ginkgo.Describe("OVN Pod Operations with network segmentation", func() {
 
 	ginkgo.Context("on startup", func() {
 		ginkgo.It("reconciles an existing pod with missing 'role=primary' ovn annotation field", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				namespaceT := *newNamespace("namespace1")
 				// use 2 pods for different test options
 				t1 := newTPod(
@@ -100,18 +100,18 @@ var _ = ginkgo.Describe("OVN Pod Operations with network segmentation", func() {
 				pod1 := newPod(t1.namespace, t1.podName, t1.nodeName, t1.podIP)
 				setPodAnnotations(pod1, t1)
 				fakeOvn.startWithDBSetup(initialDB,
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT,
 						},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{
+					&corev1.NodeList{
+						Items: []corev1.Node{
 							*newNode(node1Name, "192.168.126.202/24"),
 						},
 					},
-					&v1.PodList{
-						Items: []v1.Pod{
+					&corev1.PodList{
+						Items: []corev1.Pod{
 							*pod1,
 						},
 					},

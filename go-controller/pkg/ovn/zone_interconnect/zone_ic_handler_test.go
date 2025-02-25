@@ -70,7 +70,7 @@ func createTransitSwitchPortBindings(sbClient libovsdbclient.Client, netName str
 
 func getNetworkScopedName(netName, name string) string {
 	if netName == types.DefaultNetworkName {
-		return fmt.Sprintf("%s", name)
+		return name
 	}
 	return fmt.Sprintf("%s%s", util.GetSecondaryNetworkPrefix(netName), name)
 }

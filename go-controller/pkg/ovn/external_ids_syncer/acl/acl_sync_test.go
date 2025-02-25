@@ -8,7 +8,7 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	knet "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -33,7 +33,7 @@ type aclSync struct {
 }
 
 func testSyncerWithData(data []aclSync, controllerName string, initialDbState, finalDbState []libovsdbtest.TestData,
-	existingNodes []*v1.Node) {
+	existingNodes []*corev1.Node) {
 	// create initial db setup
 	pgBefore := &nbdb.PortGroup{
 		UUID: types.ClusterPortGroupNameBase,
@@ -322,7 +322,7 @@ var _ = ginkgo.Describe("OVN ACL Syncer", func() {
 		hostSubnets := map[string][]string{types.DefaultNetworkName: {"10.244.0.0/24", "fd02:0:0:2::2895/64"}}
 		bytes, err := json.Marshal(hostSubnets)
 		gomega.Expect(err).ToNot(gomega.HaveOccurred())
-		existingNodes := []*v1.Node{
+		existingNodes := []*corev1.Node{
 			{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:        nodeName,

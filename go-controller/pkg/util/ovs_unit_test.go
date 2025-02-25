@@ -20,7 +20,9 @@ import (
 func TestRunningPlatform(t *testing.T) {
 	// Below is defined in ovs.go file
 	AppFs = afero.NewMemMapFs()
-	AppFs.MkdirAll("/etc", 0o755)
+	if err := AppFs.MkdirAll("/etc", 0o755); err != nil {
+		t.Fatalf("failed to AppFs.MkdirAll: %v", err)
+	}
 	tests := []struct {
 		desc            string
 		fileContent     []byte
@@ -66,8 +68,15 @@ func TestRunningPlatform(t *testing.T) {
 	for i, tc := range tests {
 		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
 			if tc.fileContent != nil && tc.filePermissions != 0 {
-				afero.WriteFile(AppFs, "/etc/os-release", tc.fileContent, tc.filePermissions)
-				defer AppFs.Remove("/etc/os-release")
+				err := afero.WriteFile(AppFs, "/etc/os-release", tc.fileContent, tc.filePermissions)
+				if err != nil {
+					t.Fatalf("failed to afero.WriteFile: %v", err)
+				}
+				defer func() {
+					if err = AppFs.Remove("/etc/os-release"); err != nil {
+						t.Fatalf("failed to AppFs.Remove: %v", err)
+					}
+				}()
 			}
 			res, err := runningPlatform()
 			t.Log(res, err)
@@ -189,17 +198,26 @@ func TestGetNbctlArgsAndEnv(t *testing.T) {
 				preValOvnNBScheme := config.OvnNorth.Scheme
 				config.OvnNorth.Scheme = tc.ovnnbscheme
 				// defining below func to reset scheme to previous value
-				resetScheme := func(preVal config.OvnDBScheme) { config.OvnNorth.Scheme = preValOvnNBScheme }
+				resetScheme := func(config.OvnDBScheme) { config.OvnNorth.Scheme = preValOvnNBScheme }
 				// defer is allowed only for functions
 				defer resetScheme(preValOvnNBScheme)
 			}
 			if len(tc.dirFileMocks) > 0 {
 				for _, item := range tc.dirFileMocks {
-					AppFs.MkdirAll(item.DirName, item.Permissions)
-					defer AppFs.Remove(item.DirName)
+					if err := AppFs.MkdirAll(item.DirName, item.Permissions); err != nil {
+						t.Fatalf("failed to AppFs.MkdirAll: %v", err)
+					}
+					defer func() {
+						if err := AppFs.Remove(item.DirName); err != nil {
+							t.Fatalf("failed to AppFs.Remove: %v", err)
+						}
+					}()
 					if len(item.Files) != 0 {
 						for _, f := range item.Files {
-							afero.WriteFile(AppFs, f.FileName, f.Content, f.Permissions)
+							err := afero.WriteFile(AppFs, f.FileName, f.Content, f.Permissions)
+							if err != nil {
+								t.Fatalf("failed to afero.WriteFile: %v", err)
+							}
 						}
 					}
 				}
@@ -245,7 +263,7 @@ func TestGetNbOVSDBArgs(t *testing.T) {
 				preValOvnNBScheme := config.OvnNorth.Scheme
 				config.OvnNorth.Scheme = tc.ovnnbscheme
 				// defining below func to reset scheme to previous value
-				resetScheme := func(preVal config.OvnDBScheme) { config.OvnNorth.Scheme = preValOvnNBScheme }
+				resetScheme := func(config.OvnDBScheme) { config.OvnNorth.Scheme = preValOvnNBScheme }
 				// defer is allowed only for functions
 				defer resetScheme(preValOvnNBScheme)
 			}
@@ -287,7 +305,7 @@ func TestRunOVNNorthAppCtl(t *testing.T) {
 					DirName:     "/var/run/ovn/",
 					Permissions: 0o755,
 					Files: []ovntest.AferoFileMockHelper{
-						{"/var/run/ovn/ovn-northd.pid", 0o755, []byte("pid")},
+						{FileName: "/var/run/ovn/ovn-northd.pid", Permissions: 0o755, Content: []byte("pid")},
 					},
 				},
 			},
@@ -306,11 +324,20 @@ func TestRunOVNNorthAppCtl(t *testing.T) {
 
 			if len(tc.dirFileMocks) > 0 {
 				for _, item := range tc.dirFileMocks {
-					AppFs.MkdirAll(item.DirName, item.Permissions)
-					defer AppFs.Remove(item.DirName)
+					if err := AppFs.MkdirAll(item.DirName, item.Permissions); err != nil {
+						t.Fatalf("failed to AppFs.MkdirAll: %v", err)
+					}
+					defer func() {
+						if err := AppFs.Remove(item.DirName); err != nil {
+							t.Fatalf("failed to AppFs.Remove: %v", err)
+						}
+					}()
 					if len(item.Files) != 0 {
 						for _, f := range item.Files {
-							afero.WriteFile(AppFs, f.FileName, f.Content, f.Permissions)
+							err := afero.WriteFile(AppFs, f.FileName, f.Content, f.Permissions)
+							if err != nil {
+								t.Fatalf("failed to afero.WriteFile: %v", err)
+							}
 						}
 					}
 				}
@@ -360,7 +387,7 @@ func TestRunOVNControllerAppCtl(t *testing.T) {
 					DirName:     "/var/run/ovn/",
 					Permissions: 0o755,
 					Files: []ovntest.AferoFileMockHelper{
-						{"/var/run/ovn/ovn-controller.pid", 0o755, []byte("pid")},
+						{FileName: "/var/run/ovn/ovn-controller.pid", Permissions: 0o755, Content: []byte("pid")},
 					},
 				},
 			},
@@ -379,11 +406,20 @@ func TestRunOVNControllerAppCtl(t *testing.T) {
 
 			if len(tc.dirFileMocks) > 0 {
 				for _, item := range tc.dirFileMocks {
-					AppFs.MkdirAll(item.DirName, item.Permissions)
-					defer AppFs.Remove(item.DirName)
+					if err := AppFs.MkdirAll(item.DirName, item.Permissions); err != nil {
+						t.Fatalf("failed to AppFs.MkdirAlle: %v", err)
+					}
+					defer func() {
+						if err := AppFs.Remove(item.DirName); err != nil {
+							t.Fatalf("failed to AppFs.Remove: %v", err)
+						}
+					}()
 					if len(item.Files) != 0 {
 						for _, f := range item.Files {
-							afero.WriteFile(AppFs, f.FileName, f.Content, f.Permissions)
+							err := afero.WriteFile(AppFs, f.FileName, f.Content, f.Permissions)
+							if err != nil {
+								t.Fatalf("failed to afero.WriteFile: %v", err)
+							}
 						}
 					}
 				}
@@ -431,7 +467,7 @@ func TestRunOvsVswitchdAppCtl(t *testing.T) {
 					DirName:     "/var/run/openvswitch/",
 					Permissions: 0o755,
 					Files: []ovntest.AferoFileMockHelper{
-						{"/var/run/openvswitch/ovs-vswitchd.pid", 0o755, []byte("pid")},
+						{FileName: "/var/run/openvswitch/ovs-vswitchd.pid", Permissions: 0o755, Content: []byte("pid")},
 					},
 				},
 			},
@@ -450,11 +486,20 @@ func TestRunOvsVswitchdAppCtl(t *testing.T) {
 
 			if len(tc.dirFileMocks) > 0 {
 				for _, item := range tc.dirFileMocks {
-					AppFs.MkdirAll(item.DirName, item.Permissions)
-					defer AppFs.Remove(item.DirName)
+					if err := AppFs.MkdirAll(item.DirName, item.Permissions); err != nil {
+						t.Fatalf("failed to AppFs.MkdirAlle: %v", err)
+					}
+					defer func() {
+						if err := AppFs.Remove(item.DirName); err != nil {
+							t.Fatalf("failed to AppFs.Remove: %v", err)
+						}
+					}()
 					if len(item.Files) != 0 {
 						for _, f := range item.Files {
-							afero.WriteFile(AppFs, f.FileName, f.Content, f.Permissions)
+							err := afero.WriteFile(AppFs, f.FileName, f.Content, f.Permissions)
+							if err != nil {
+								t.Fatalf("failed to afero.WriteFile: %v", err)
+							}
 						}
 					}
 				}

@@ -29,7 +29,7 @@ func NewFakeOVSClient(data []clientOutput) fakeOVSClient {
 	return fakeOVSClient{data: data}
 }
 
-func (c *fakeOVSClient) FakeCall(args ...string) (string, string, error) {
+func (c *fakeOVSClient) FakeCall(...string) (string, string, error) {
 	output := c.data[c.dataIndex]
 	c.dataIndex++
 	return output.stdout, output.stderr, output.err

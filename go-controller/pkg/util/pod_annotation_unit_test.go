@@ -10,7 +10,7 @@ import (
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 	"github.com/stretchr/testify/assert"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
@@ -237,7 +237,7 @@ func TestGetPodIPsOfNetwork(t *testing.T) {
 	)
 	tests := []struct {
 		desc        string
-		inpPod      *v1.Pod
+		inpPod      *corev1.Pod
 		networkInfo NetInfo
 		errAssert   bool
 		errMatch    error
@@ -251,7 +251,7 @@ func TestGetPodIPsOfNetwork(t *testing.T) {
 		},*/
 		{
 			desc: "test when pod annotation is non-nil for the default cluster network",
-			inpPod: &v1.Pod{
+			inpPod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["192.168.0.1/24"],"mac_address":"0a:58:fd:98:00:01"}}`},
 				},
@@ -261,14 +261,14 @@ func TestGetPodIPsOfNetwork(t *testing.T) {
 		},
 		{
 			desc:        "test when pod.status.PodIP is empty",
-			inpPod:      &v1.Pod{},
+			inpPod:      &corev1.Pod{},
 			networkInfo: &DefaultNetInfo{},
 			errMatch:    ErrNoPodIPFound,
 		},
 		{
 			desc: "test when pod.status.PodIP is non-empty",
-			inpPod: &v1.Pod{
-				Status: v1.PodStatus{
+			inpPod: &corev1.Pod{
+				Status: corev1.PodStatus{
 					PodIP: "192.168.1.15",
 				},
 			},
@@ -277,10 +277,10 @@ func TestGetPodIPsOfNetwork(t *testing.T) {
 		},
 		{
 			desc: "test when pod.status.PodIPs is non-empty",
-			inpPod: &v1.Pod{
-				Status: v1.PodStatus{
-					PodIPs: []v1.PodIP{
-						{"192.168.1.15"},
+			inpPod: &corev1.Pod{
+				Status: corev1.PodStatus{
+					PodIPs: []corev1.PodIP{
+						{IP: "192.168.1.15"},
 					},
 				},
 			},
@@ -289,10 +289,10 @@ func TestGetPodIPsOfNetwork(t *testing.T) {
 		},
 		{
 			desc: "test path when an entry in pod.status.PodIPs is malformed",
-			inpPod: &v1.Pod{
-				Status: v1.PodStatus{
-					PodIPs: []v1.PodIP{
-						{"192.168.1."},
+			inpPod: &corev1.Pod{
+				Status: corev1.PodStatus{
+					PodIPs: []corev1.PodIP{
+						{IP: "192.168.1."},
 					},
 				},
 			},
@@ -301,7 +301,7 @@ func TestGetPodIPsOfNetwork(t *testing.T) {
 		},
 		{
 			desc: "test when pod annotation is non-nil for a secondary network",
-			inpPod: &v1.Pod{
+			inpPod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
 						"k8s.v1.cni.cncf.io/networks": fmt.Sprintf(`[{"name": %q, "namespace": %q}]`, secondaryNetworkName, namespace),
@@ -314,7 +314,7 @@ func TestGetPodIPsOfNetwork(t *testing.T) {
 		},
 		{
 			desc: "test when pod annotation is non-nil for a secondary network",
-			inpPod: &v1.Pod{
+			inpPod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
 						"k8s.v1.cni.cncf.io/networks": fmt.Sprintf(`[{"name": %q, "namespace": %q}]`, secondaryNetworkName, namespace),

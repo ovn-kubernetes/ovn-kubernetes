@@ -114,7 +114,8 @@ func TestIsFileNotEmpty(t *testing.T) {
 	assert.NoError(t, err)
 	assert.False(t, result)
 
-	os.WriteFile(featureEnablerFile, []byte("1"), 0)
+	err = os.WriteFile(featureEnablerFile, []byte("1"), 0)
+	assert.NoError(t, err)
 	result, err = isFileNotEmpty(featureEnablerFile)
 	assert.NoError(t, err)
 	assert.True(t, result)
@@ -219,7 +220,7 @@ func mockFeatureEnableFile(t *testing.T, data string) func() {
 	previousValue := featureEnablerFile
 	featureEnablerFile = f.Name()
 
-	os.WriteFile(featureEnablerFile, []byte(data), 0)
+	err = os.WriteFile(featureEnablerFile, []byte(data), 0)
 	assert.NoError(t, err)
 
 	return func() {

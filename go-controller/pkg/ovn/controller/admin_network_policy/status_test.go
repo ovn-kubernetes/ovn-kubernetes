@@ -41,8 +41,8 @@ func createTestNBGlobal(nbClient libovsdbclient.Client, zone string) error {
 	return nil
 }
 
-func deleteTestNBGlobal(nbClient libovsdbclient.Client, zone string) error {
-	p := func(nbGlobal *nbdb.NBGlobal) bool {
+func deleteTestNBGlobal(nbClient libovsdbclient.Client, _ string) error {
+	p := func(*nbdb.NBGlobal) bool {
 		return true
 	}
 
@@ -88,7 +88,7 @@ func newANPController(initANPs anpapi.AdminNetworkPolicyList, initBANPs anpapi.B
 
 func newANPControllerWithDBSetup(dbSetup libovsdbtest.TestSetup, initANPs anpapi.AdminNetworkPolicyList, initBANPs anpapi.BaselineAdminNetworkPolicyList) (*Controller, error) {
 	gomega.RegisterFailHandler(ginkgo.Fail)
-	config.PrepareTestConfig()
+	gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 	config.OVNKubernetesFeature.EnableAdminNetworkPolicy = true
 	nbClient, _, err := libovsdbtest.NewNBTestHarness(dbSetup, nil)
 	if err != nil {

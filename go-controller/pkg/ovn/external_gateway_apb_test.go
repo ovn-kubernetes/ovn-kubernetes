@@ -13,7 +13,7 @@ import (
 	"github.com/onsi/gomega"
 	"github.com/urfave/cli/v2"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes"
@@ -26,7 +26,6 @@ import (
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/apbroute"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -49,14 +48,14 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 		return newPolicy(
 			policyName,
 			&metav1.LabelSelector{MatchLabels: map[string]string{"name": namespaceName}},
-			sets.NewString("9.0.0.1"),
+			sets.New("9.0.0.1"),
 			bfd, nil, nil, false, "")
 	}
 
 	getStaticPolicy2IPs := func(bfd bool, ipv6 bool) adminpolicybasedrouteapi.AdminPolicyBasedExternalRoute {
-		ips := sets.NewString("9.0.0.1", "9.0.0.2")
+		ips := sets.New("9.0.0.1", "9.0.0.2")
 		if ipv6 {
-			ips = sets.NewString("fd2e:6f44:5dd8::89", "fd2e:6f44:5dd8::76")
+			ips = sets.New("fd2e:6f44:5dd8::89", "fd2e:6f44:5dd8::76")
 		}
 		return newPolicy(
 			policyName,
@@ -79,7 +78,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 	getStaticDynamicPolicy := func(bfdStatic, bfdDynamic bool, targetNamespace, targetPod string) adminpolicybasedrouteapi.AdminPolicyBasedExternalRoute {
 		return newPolicy(policyName,
 			&metav1.LabelSelector{MatchLabels: map[string]string{"name": namespaceName}},
-			sets.NewString("9.0.0.1"),
+			sets.New("9.0.0.1"),
 			bfdStatic,
 			&metav1.LabelSelector{MatchLabels: map[string]string{"name": targetNamespace}},
 			&metav1.LabelSelector{MatchLabels: map[string]string{"name": targetPod}},
@@ -105,7 +104,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 	ginkgo.Context("on setting namespace gateway static hop", func() {
 
 		ginkgo.DescribeTable("reconciles an new pod with namespace single exgw static GW already set", func(bfd bool, finalNB []libovsdbtest.TestData) {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 
 				namespaceT := *newNamespace(namespaceName)
 
@@ -133,13 +132,13 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 							},
 						},
 					},
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT,
 						},
 					},
-					&v1.PodList{
-						Items: []v1.Pod{
+					&corev1.PodList{
+						Items: []corev1.Pod{
 							*newPod(t.namespace, t.podName, t.nodeName, t.podIP),
 						},
 					},
@@ -247,7 +246,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 			}))
 
 		ginkgo.DescribeTable("reconciles an new pod with namespace single exgw static GW after policy is created", func(bfd bool, finalNB []libovsdbtest.TestData) {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 
 				namespaceT := *newNamespace(namespaceName)
 
@@ -275,8 +274,8 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 							},
 						},
 					},
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT,
 						},
 					},
@@ -393,7 +392,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 			}))
 
 		ginkgo.DescribeTable("reconciles an new pod with namespace single exgw static gateway already set with pod event first", func(bfd bool, finalNB []libovsdbtest.TestData) {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 
 				namespaceT := *newNamespace(namespaceName)
 
@@ -421,8 +420,8 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 							},
 						},
 					},
-					&v1.PodList{
-						Items: []v1.Pod{
+					&corev1.PodList{
+						Items: []corev1.Pod{
 							*newPod(t.namespace, t.podName, t.nodeName, t.podIP),
 						},
 					},
@@ -533,7 +532,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 
 		ginkgo.DescribeTable("reconciles an new pod with namespace double exgw static gateways already set", func(bfd bool, finalNB []libovsdbtest.TestData) {
 
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 
 				namespaceT := *newNamespace(namespaceName)
 
@@ -561,13 +560,13 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 							},
 						},
 					},
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT,
 						},
 					},
-					&v1.PodList{
-						Items: []v1.Pod{
+					&corev1.PodList{
+						Items: []corev1.Pod{
 							*newPod(t.namespace, t.podName, t.nodeName, t.podIP),
 						},
 					},
@@ -707,7 +706,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 				syncNB []libovsdbtest.TestData,
 				finalNB []libovsdbtest.TestData,
 			) {
-				app.Action = func(ctx *cli.Context) error {
+				app.Action = func(*cli.Context) error {
 
 					namespaceT := *newNamespace(namespaceName)
 
@@ -726,13 +725,13 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 						libovsdbtest.TestSetup{
 							NBData: initNB,
 						},
-						&v1.NamespaceList{
-							Items: []v1.Namespace{
+						&corev1.NamespaceList{
+							Items: []corev1.Namespace{
 								namespaceT,
 							},
 						},
-						&v1.PodList{
-							Items: []v1.Pod{
+						&corev1.PodList{
+							Items: []corev1.Pod{
 								*newPod(t.namespace, t.podName, t.nodeName, t.podIP),
 							},
 						},
@@ -923,7 +922,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 		ginkgo.DescribeTable("reconciles deleting a pod with namespace double exgw static gateway already set IPV6",
 			func(bfd bool,
 				initNB, syncNB, finalNB []libovsdbtest.TestData) {
-				app.Action = func(ctx *cli.Context) error {
+				app.Action = func(*cli.Context) error {
 					namespaceT := *newNamespace(namespaceName)
 
 					t := newTPod(
@@ -941,13 +940,13 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 						libovsdbtest.TestSetup{
 							NBData: initNB,
 						},
-						&v1.NamespaceList{
-							Items: []v1.Namespace{
+						&corev1.NamespaceList{
+							Items: []corev1.Namespace{
 								namespaceT,
 							},
 						},
-						&v1.PodList{
-							Items: []v1.Pod{
+						&corev1.PodList{
+							Items: []corev1.Pod{
 								*newPod(t.namespace, t.podName, t.nodeName, t.podIP),
 							},
 						},
@@ -1067,7 +1066,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 				initNB []libovsdbtest.TestData,
 				finalNB []libovsdbtest.TestData,
 			) {
-				app.Action = func(ctx *cli.Context) error {
+				app.Action = func(*cli.Context) error {
 
 					namespaceT := *newNamespace(namespaceName)
 
@@ -1086,13 +1085,13 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 						libovsdbtest.TestSetup{
 							NBData: initNB,
 						},
-						&v1.NamespaceList{
-							Items: []v1.Namespace{
+						&corev1.NamespaceList{
+							Items: []corev1.Namespace{
 								namespaceT,
 							},
 						},
-						&v1.PodList{
-							Items: []v1.Pod{
+						&corev1.PodList{
+							Items: []corev1.Pod{
 								*newPod(t.namespace, t.podName, t.nodeName, t.podIP),
 							},
 						},
@@ -1258,7 +1257,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 
 	ginkgo.Context("on setting pod dynamic gateways", func() {
 		ginkgo.DescribeTable("reconciles a host networked pod acting as a exgw for another namespace for new pod", func(bfd bool, finalNB []libovsdbtest.TestData) {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 
 				namespaceT := *newNamespace(namespaceName)
 				namespaceX := *newNamespace("namespace2")
@@ -1288,13 +1287,13 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 							},
 						},
 					},
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT, namespaceX,
 						},
 					},
-					&v1.PodList{
-						Items: []v1.Pod{
+					&corev1.PodList{
+						Items: []corev1.Pod{
 							gwPod,
 						},
 					},
@@ -1408,7 +1407,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 			}))
 
 		ginkgo.DescribeTable("reconciles a host networked pod acting as a exgw for another namespace for existing pod", func(bfd bool, finalNB []libovsdbtest.TestData) {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 
 				namespaceT := *newNamespace(namespaceName)
 				namespaceX := *newNamespace("namespace2")
@@ -1437,13 +1436,13 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 							},
 						},
 					},
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT, namespaceX,
 						},
 					},
-					&v1.PodList{
-						Items: []v1.Pod{
+					&corev1.PodList{
+						Items: []corev1.Pod{
 							*newPod(t.namespace, t.podName, t.nodeName, t.podIP),
 						},
 					},
@@ -1550,7 +1549,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 			}))
 
 		ginkgo.DescribeTable("reconciles a multus networked pod acting as a exgw for another namespace for new pod", func(bfd bool, finalNB []libovsdbtest.TestData) {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				ns := nettypes.NetworkStatus{Name: "dummy", IPs: []string{"11.0.0.1"}}
 				networkStatuses := []nettypes.NetworkStatus{ns}
 				nsEncoded, err := json.Marshal(networkStatuses)
@@ -1586,13 +1585,13 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 							},
 						},
 					},
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT, namespaceX,
 						},
 					},
-					&v1.PodList{
-						Items: []v1.Pod{
+					&corev1.PodList{
+						Items: []corev1.Pod{
 							gwPod,
 						},
 					},
@@ -1715,7 +1714,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 			func(bfd bool,
 				beforeDeleteNB []libovsdbtest.TestData,
 				afterDeleteNB []libovsdbtest.TestData) {
-				app.Action = func(ctx *cli.Context) error {
+				app.Action = func(*cli.Context) error {
 
 					namespaceT := *newNamespace(namespaceName)
 					namespaceX := *newNamespace("namespace2")
@@ -1744,13 +1743,13 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 								},
 							},
 						},
-						&v1.NamespaceList{
-							Items: []v1.Namespace{
+						&corev1.NamespaceList{
+							Items: []corev1.Namespace{
 								namespaceT, namespaceX,
 							},
 						},
-						&v1.PodList{
-							Items: []v1.Pod{
+						&corev1.PodList{
+							Items: []corev1.Pod{
 								*newPod(t.namespace, t.podName, t.nodeName, t.podIP),
 							},
 						},
@@ -1922,7 +1921,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 	})
 	ginkgo.Context("on using bfd", func() {
 		ginkgo.It("should enable bfd only on the namespace gw when set", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 
 				namespaceT := *newNamespace(namespaceName)
 				namespaceX := *newNamespace("namespace2")
@@ -1953,13 +1952,13 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 							},
 						},
 					},
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT, namespaceX,
 						},
 					},
-					&v1.PodList{
-						Items: []v1.Pod{
+					&corev1.PodList{
+						Items: []corev1.Pod{
 							*newPod(t.namespace, t.podName, t.nodeName, t.podIP),
 						},
 					},
@@ -2042,7 +2041,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 		ginkgo.It("should enable bfd only on the gw pod when set", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 
 				namespaceT := *newNamespace(namespaceName)
 				namespaceX := *newNamespace("namespace2")
@@ -2073,13 +2072,13 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 							},
 						},
 					},
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT, namespaceX,
 						},
 					},
-					&v1.PodList{
-						Items: []v1.Pod{
+					&corev1.PodList{
+						Items: []corev1.Pod{
 							*newPod(t.namespace, t.podName, t.nodeName, t.podIP),
 						},
 					},
@@ -2163,7 +2162,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 		ginkgo.It("should disable bfd when removing the static hop from the namespace", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				namespaceT := *newNamespace(namespaceName)
 
 				t := newTPod(
@@ -2207,13 +2206,13 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 				}
 				fakeOvn.startWithDBSetup(
 					initNB,
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT,
 						},
 					},
-					&v1.PodList{
-						Items: []v1.Pod{
+					&corev1.PodList{
+						Items: []corev1.Pod{
 							*newPod(t.namespace, t.podName, t.nodeName, t.podIP),
 						},
 					},
@@ -2311,7 +2310,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 
 				updatePolicy(policyName,
 					&metav1.LabelSelector{MatchLabels: map[string]string{"name": namespaceT.Name}},
-					sets.NewString("9.0.0.1"),
+					sets.New[string]("9.0.0.1"),
 					false,
 					nil,
 					nil,
@@ -2368,7 +2367,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 	})
 	ginkgo.Context("hybrid route policy operations in lgw mode", func() {
 		ginkgo.It("add hybrid route policy for pods", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				config.Gateway.Mode = config.GatewayModeLocal
 
 				fakeOvn.startWithDBSetup(
@@ -2433,7 +2432,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 		ginkgo.It("should reconcile a pod and create/delete the hybridRoutePolicy accordingly", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				config.Gateway.Mode = config.GatewayModeLocal
 
 				namespaceT := *newNamespace("namespace1")
@@ -2471,18 +2470,18 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 							},
 						},
 					},
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT,
 						},
 					},
-					&v1.PodList{
-						Items: []v1.Pod{
+					&corev1.PodList{
+						Items: []corev1.Pod{
 							*newPod(t.namespace, t.podName, t.nodeName, t.podIP),
 						},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{
+					&corev1.NodeList{
+						Items: []corev1.Node{
 							*newNode("node1", "192.168.126.202/24"),
 						},
 					},
@@ -2593,7 +2592,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 		ginkgo.It("should create a single policy for concurrent addHybridRoutePolicy for the same node", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				config.Gateway.Mode = config.GatewayModeLocal
 
 				fakeOvn.startWithDBSetup(
@@ -2651,9 +2650,11 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 					podIndex := i
 					wg.Add(1)
 					go func() {
+						defer ginkgo.GinkgoRecover()
 						defer wg.Done()
 						<-c
-						fakeOvn.controller.apbExternalRouteController.AddHybridRoutePolicyForPod(net.ParseIP(fmt.Sprintf("10.128.1.%d", podIndex)), "node1")
+						// errors can happen due to server side concurrency check
+						_ = fakeOvn.controller.apbExternalRouteController.AddHybridRoutePolicyForPod(net.ParseIP(fmt.Sprintf("10.128.1.%d", podIndex)), "node1")
 					}()
 				}
 				close(c)
@@ -2672,7 +2673,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 		ginkgo.It("delete hybrid route policy for pods", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				config.Gateway.Mode = config.GatewayModeLocal
 				asIndex := apbroute.GetHybridRouteAddrSetDbIDs("node1", DefaultNetworkControllerName)
 				asv4, _ := addressset.GetHashNamesForAS(asIndex)
@@ -2737,7 +2738,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 		ginkgo.It("delete hybrid route policy for pods with force", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				config.Gateway.Mode = config.GatewayModeShared
 				asIndex1 := apbroute.GetHybridRouteAddrSetDbIDs("node1", DefaultNetworkControllerName)
 				as1v4, _ := addressset.GetHashNamesForAS(asIndex1)
@@ -2811,7 +2812,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 		ginkgo.It("delete legacy hybrid route policies", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				config.Gateway.Mode = config.GatewayModeLocal
 				asIndex := apbroute.GetHybridRouteAddrSetDbIDs("node1", DefaultNetworkControllerName)
 				asv4, _ := addressset.GetHashNamesForAS(asIndex)
@@ -2893,7 +2894,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 		ginkgo.It("delete stale addresses from apb hybrid route policies on startup", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				config.Gateway.Mode = config.GatewayModeLocal
 				asIndex := apbroute.GetHybridRouteAddrSetDbIDs("node1", DefaultNetworkControllerName)
 				asv4, _ := addressset.GetHashNamesForAS(asIndex)
@@ -2959,8 +2960,8 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 							},
 						},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{
+					&corev1.NodeList{
+						Items: []corev1.Node{
 							testNode,
 						},
 					},
@@ -3010,7 +3011,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 	})
 	ginkgo.Context("SNAT on gateway router operations", func() {
 		ginkgo.It("add/delete SNAT per pod on gateway router", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				config.Gateway.Mode = config.GatewayModeShared
 				config.Gateway.DisableSNATMultipleGWs = true
 
@@ -3027,7 +3028,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 					namespaceT.Name,
 				)
 
-				pod := []v1.Pod{
+				pod := []corev1.Pod{
 					*newPod(t.namespace, t.podName, t.nodeName, t.podIP),
 				}
 
@@ -3040,8 +3041,8 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 								Networks: []string{"100.64.0.4/32"},
 							},
 							&nbdb.LogicalRouter{
-								Name:  types.GWRouterPrefix + nodeName,
-								UUID:  types.GWRouterPrefix + nodeName + "-UUID",
+								Name:  ovntypes.GWRouterPrefix + nodeName,
+								UUID:  ovntypes.GWRouterPrefix + nodeName + "-UUID",
 								Ports: []string{ovntypes.GWRouterToJoinSwitchPrefix + ovntypes.GWRouterPrefix + nodeName + "-UUID"},
 							},
 							&nbdb.LogicalSwitch{
@@ -3050,12 +3051,12 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 							},
 						},
 					},
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT,
 						},
 					},
-					&v1.PodList{
+					&corev1.PodList{
 						Items: pod,
 					},
 				)
@@ -3069,8 +3070,8 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 						Type:       nbdb.NATTypeSNAT,
 					},
 					&nbdb.LogicalRouter{
-						Name:  types.GWRouterPrefix + nodeName,
-						UUID:  types.GWRouterPrefix + nodeName + "-UUID",
+						Name:  ovntypes.GWRouterPrefix + nodeName,
+						UUID:  ovntypes.GWRouterPrefix + nodeName + "-UUID",
 						Ports: []string{ovntypes.GWRouterToJoinSwitchPrefix + ovntypes.GWRouterPrefix + nodeName + "-UUID"},
 						Nat:   []string{"nat-UUID"},
 					},
@@ -3102,8 +3103,8 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(finalNB))
 				finalNB = []libovsdbtest.TestData{
 					&nbdb.LogicalRouter{
-						Name:  types.GWRouterPrefix + nodeName,
-						UUID:  types.GWRouterPrefix + nodeName + "-UUID",
+						Name:  ovntypes.GWRouterPrefix + nodeName,
+						UUID:  ovntypes.GWRouterPrefix + nodeName + "-UUID",
 						Ports: []string{ovntypes.GWRouterToJoinSwitchPrefix + ovntypes.GWRouterPrefix + nodeName + "-UUID"},
 						Nat:   []string{},
 					},
@@ -3129,7 +3130,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 	})
 })
 
-func newPolicy(policyName string, fromNSSelector *metav1.LabelSelector, staticHopsGWIPs sets.String, bfdStatic bool,
+func newPolicy(policyName string, fromNSSelector *metav1.LabelSelector, staticHopsGWIPs sets.Set[string], bfdStatic bool,
 	dynamicHopsNSSelector *metav1.LabelSelector, dynamicHopsPodSelector *metav1.LabelSelector, bfdDynamic bool, networkAttachementName string) adminpolicybasedrouteapi.AdminPolicyBasedExternalRoute {
 	p := adminpolicybasedrouteapi.AdminPolicyBasedExternalRoute{
 		ObjectMeta: metav1.ObjectMeta{Name: policyName},
@@ -3158,7 +3159,7 @@ func newPolicy(policyName string, fromNSSelector *metav1.LabelSelector, staticHo
 	return p
 }
 
-func updatePolicy(policyName string, fromNSSelector *metav1.LabelSelector, staticHopsGWIPs sets.String, bfdStatic bool, dynamicHopsNSSelector *metav1.LabelSelector, dynamicHopsPodSelector *metav1.LabelSelector, bfdDynamic bool, networkAttachementName string, fakeRouteClient adminpolicybasedrouteclientset.Interface) {
+func updatePolicy(policyName string, fromNSSelector *metav1.LabelSelector, staticHopsGWIPs sets.Set[string], bfdStatic bool, dynamicHopsNSSelector *metav1.LabelSelector, dynamicHopsPodSelector *metav1.LabelSelector, bfdDynamic bool, networkAttachementName string, fakeRouteClient adminpolicybasedrouteclientset.Interface) {
 
 	p, err := fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Get(context.TODO(), policyName, metav1.GetOptions{})
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -3230,8 +3231,8 @@ func checkAPBRouteStatus(fakeOVN *FakeOVN, policyName string, expectFailure bool
 
 	// as soon as status is set, it should match expected status, without extra retries
 	if expectFailure {
-		gomega.Expect(status.Messages[0]).To(gomega.ContainSubstring(types.APBRouteErrorMsg))
+		gomega.Expect(status.Messages[0]).To(gomega.ContainSubstring(ovntypes.APBRouteErrorMsg))
 	} else {
-		gomega.Expect(status.Messages[0]).ToNot(gomega.ContainSubstring(types.APBRouteErrorMsg))
+		gomega.Expect(status.Messages[0]).ToNot(gomega.ContainSubstring(ovntypes.APBRouteErrorMsg))
 	}
 }

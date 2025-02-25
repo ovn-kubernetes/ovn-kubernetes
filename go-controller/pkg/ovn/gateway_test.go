@@ -10,7 +10,7 @@ import (
 	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/format"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	utilnet "k8s.io/utils/net"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
@@ -353,7 +353,7 @@ var _ = ginkgo.Describe("Gateway Init Operations", func() {
 
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
-		config.PrepareTestConfig()
+		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 
 		fakeOvn = NewFakeOVN(true)
 	})
@@ -623,7 +623,7 @@ var _ = ginkgo.Describe("Gateway Init Operations", func() {
 			a.Annotations = map[string]string{
 				util.OvnNodeMasqCIDR: "{\"ipv4\":\"170.254.169.0/16\",\"ipv6\":\"fd69::/112\"}",
 			}
-			node1 := v1.Node{ObjectMeta: a}
+			node1 := corev1.Node{ObjectMeta: a}
 			fakeOvn.startWithDBSetup(libovsdbtest.TestSetup{
 				NBData: []libovsdbtest.TestData{
 					// tests migration from local to shared
@@ -641,7 +641,7 @@ var _ = ginkgo.Describe("Gateway Init Operations", func() {
 					expectedRouterLBGroup,
 				},
 			},
-				&v1.NodeList{Items: []v1.Node{node1}},
+				&corev1.NodeList{Items: []corev1.Node{node1}},
 			)
 
 			clusterIPSubnets := ovntest.MustParseIPNets("10.128.0.0/14")

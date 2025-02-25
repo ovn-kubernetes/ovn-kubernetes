@@ -8,7 +8,7 @@ import (
 	"github.com/onsi/gomega"
 
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/cache"
 
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
@@ -45,7 +45,7 @@ func TestSetAdvertisements(t *testing.T) {
 	}
 
 	podNetworkRA := ratypes.RouteAdvertisements{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: testRAName,
 		},
 		Spec: ratypes.RouteAdvertisementsSpec{
@@ -55,26 +55,26 @@ func TestSetAdvertisements(t *testing.T) {
 			},
 		},
 		Status: ratypes.RouteAdvertisementsStatus{
-			Conditions: []v1.Condition{
+			Conditions: []metav1.Condition{
 				{
 					Type:   "Accepted",
-					Status: v1.ConditionTrue,
+					Status: metav1.ConditionTrue,
 				},
 			},
 		},
 	}
 	nonPodNetworkRA := ratypes.RouteAdvertisements{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: testRAName,
 		},
 		Spec: ratypes.RouteAdvertisementsSpec{
 			TargetVRF: testVRFName,
 		},
 		Status: ratypes.RouteAdvertisementsStatus{
-			Conditions: []v1.Condition{
+			Conditions: []metav1.Condition{
 				{
 					Type:   "Accepted",
-					Status: v1.ConditionTrue,
+					Status: metav1.ConditionTrue,
 				},
 			},
 		},
@@ -82,17 +82,17 @@ func TestSetAdvertisements(t *testing.T) {
 	podNetworkRANotAccepted := podNetworkRA
 	podNetworkRANotAccepted.Status = ratypes.RouteAdvertisementsStatus{}
 	podNetworkRARejected := *podNetworkRA.DeepCopy()
-	podNetworkRARejected.Status.Conditions[0].Status = v1.ConditionFalse
+	podNetworkRARejected.Status.Conditions[0].Status = metav1.ConditionFalse
 	podNetworkRAOutdated := podNetworkRA
 	podNetworkRAOutdated.Generation = 1
 
 	testNode := corev1.Node{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: testNodeName,
 		},
 	}
 	testNodeOnZone := corev1.Node{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: testNodeOnZoneName,
 			Annotations: map[string]string{
 				util.OvnNodeZoneName: testZoneName,
@@ -100,7 +100,7 @@ func TestSetAdvertisements(t *testing.T) {
 		},
 	}
 	otherNode := corev1.Node{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: "otherNode",
 		},
 	}
@@ -190,11 +190,11 @@ func TestSetAdvertisements(t *testing.T) {
 			nad, err := buildNADWithAnnotations(name, namespace, tt.network, nadAnnotations)
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 
-			_, err = fakeClient.KubeClient.CoreV1().Nodes().Create(context.Background(), &tt.node, v1.CreateOptions{})
+			_, err = fakeClient.KubeClient.CoreV1().Nodes().Create(context.Background(), &tt.node, metav1.CreateOptions{})
 			g.Expect(err).ToNot(gomega.HaveOccurred())
-			_, err = fakeClient.RouteAdvertisementsClient.K8sV1().RouteAdvertisements().Create(context.Background(), tt.ra, v1.CreateOptions{})
+			_, err = fakeClient.RouteAdvertisementsClient.K8sV1().RouteAdvertisements().Create(context.Background(), tt.ra, metav1.CreateOptions{})
 			g.Expect(err).ToNot(gomega.HaveOccurred())
-			_, err = fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespace).Create(context.Background(), nad, v1.CreateOptions{})
+			_, err = fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespace).Create(context.Background(), nad, metav1.CreateOptions{})
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 
 			err = wf.Start()

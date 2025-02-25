@@ -35,7 +35,7 @@ type FakeClusterManager struct {
 	fakeRecorder *record.FakeRecorder
 }
 
-var isReachable = func(nodeName string, mgmtIPs []net.IP, healthClient healthcheck.EgressIPHealthClient) bool {
+var isReachable = func(string, []net.IP, healthcheck.EgressIPHealthClient) bool {
 	return true
 }
 

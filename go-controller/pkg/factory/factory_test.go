@@ -14,7 +14,7 @@ import (
 	ocpconfigapi "github.com/openshift/api/config/v1"
 	ocpcloudnetworkclientsetfake "github.com/openshift/client-go/cloudnetwork/clientset/versioned/fake"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
 	knet "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,7 +25,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	core "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 	anpapi "sigs.k8s.io/network-policy-api/apis/v1alpha1"
 	anpapifake "sigs.k8s.io/network-policy-api/pkg/client/clientset/versioned/fake"
 
@@ -60,14 +60,14 @@ func newObjectMeta(name, namespace string) metav1.ObjectMeta {
 	}
 }
 
-func newPod(name, namespace string) *v1.Pod {
-	return &v1.Pod{
-		Status: v1.PodStatus{
-			Phase: v1.PodRunning,
+func newPod(name, namespace string) *corev1.Pod {
+	return &corev1.Pod{
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
 		},
 		ObjectMeta: newObjectMeta(name, namespace),
-		Spec: v1.PodSpec{
-			Containers: []v1.Container{
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
 				{
 					Name:  "containerName",
 					Image: "containerImage",
@@ -78,19 +78,19 @@ func newPod(name, namespace string) *v1.Pod {
 	}
 }
 
-func newNamespace(name string) *v1.Namespace {
-	return &v1.Namespace{
-		Status: v1.NamespaceStatus{
-			Phase: v1.NamespaceActive,
+func newNamespace(name string) *corev1.Namespace {
+	return &corev1.Namespace{
+		Status: corev1.NamespaceStatus{
+			Phase: corev1.NamespaceActive,
 		},
 		ObjectMeta: newObjectMeta(name, name),
 	}
 }
 
-func newNode(name string) *v1.Node {
-	return &v1.Node{
-		Status: v1.NodeStatus{
-			Phase: v1.NodeRunning,
+func newNode(name string) *corev1.Node {
+	return &corev1.Node{
+		Status: corev1.NodeStatus{
+			Phase: corev1.NodeRunning,
 		},
 		ObjectMeta: newObjectMeta(name, ""),
 	}
@@ -102,8 +102,8 @@ func newPolicy(name, namespace string) *knet.NetworkPolicy {
 	}
 }
 
-func newService(name, namespace string) *v1.Service {
-	return &v1.Service{
+func newService(name, namespace string) *corev1.Service {
+	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			UID:       types.UID(name),
@@ -172,7 +172,7 @@ func newEgressQoS(name, namespace string) *egressqos.EgressQoS {
 			Egress: []egressqos.EgressQoSRule{
 				{
 					DSCP:    50,
-					DstCIDR: pointer.String("1.2.3.4/32"),
+					DstCIDR: ptr.To("1.2.3.4/32"),
 				},
 			},
 		},
@@ -321,12 +321,12 @@ var _ = Describe("Watch Factory Operations", func() {
 		adminNetPolWatch                    *watch.FakeWatcher
 		baselineAdminNetPolWatch            *watch.FakeWatcher
 		ipamClaimsWatch                     *watch.FakeWatcher
-		pods                                []*v1.Pod
-		namespaces                          []*v1.Namespace
-		nodes                               []*v1.Node
+		pods                                []*corev1.Pod
+		namespaces                          []*corev1.Namespace
+		nodes                               []*corev1.Node
 		policies                            []*knet.NetworkPolicy
 		endpointSlices                      []*discovery.EndpointSlice
-		services                            []*v1.Service
+		services                            []*corev1.Service
 		egressIPs                           []*egressip.EgressIP
 		cloudPrivateIPConfigs               []*ocpcloudnetworkapi.CloudPrivateIPConfig
 		wf                                  *WatchFactory
@@ -347,7 +347,7 @@ var _ = Describe("Watch Factory Operations", func() {
 	BeforeEach(func() {
 
 		// Restore global default values before each testcase
-		config.PrepareTestConfig()
+		Expect(config.PrepareTestConfig()).To(Succeed())
 		config.OVNKubernetesFeature.EnableEgressIP = true
 		config.OVNKubernetesFeature.EnableEgressFirewall = true
 		config.OVNKubernetesFeature.EnableEgressQoS = true
@@ -388,27 +388,27 @@ var _ = Describe("Watch Factory Operations", func() {
 			NetworkAttchDefClient: nadsFakeClient,
 		}
 
-		pods = make([]*v1.Pod, 0)
+		pods = make([]*corev1.Pod, 0)
 		podWatch = objSetup(fakeClient, "pods", func(core.Action) (bool, runtime.Object, error) {
-			obj := &v1.PodList{}
+			obj := &corev1.PodList{}
 			for _, p := range pods {
 				obj.Items = append(obj.Items, *p)
 			}
 			return true, obj, nil
 		})
 
-		namespaces = make([]*v1.Namespace, 0)
+		namespaces = make([]*corev1.Namespace, 0)
 		namespaceWatch = objSetup(fakeClient, "namespaces", func(core.Action) (bool, runtime.Object, error) {
-			obj := &v1.NamespaceList{}
+			obj := &corev1.NamespaceList{}
 			for _, p := range namespaces {
 				obj.Items = append(obj.Items, *p)
 			}
 			return true, obj, nil
 		})
 
-		nodes = make([]*v1.Node, 0)
+		nodes = make([]*corev1.Node, 0)
 		nodeWatch = objSetup(fakeClient, "nodes", func(core.Action) (bool, runtime.Object, error) {
-			obj := &v1.NodeList{}
+			obj := &corev1.NodeList{}
 			for _, p := range nodes {
 				obj.Items = append(obj.Items, *p)
 			}
@@ -424,9 +424,9 @@ var _ = Describe("Watch Factory Operations", func() {
 			return true, obj, nil
 		})
 
-		services = make([]*v1.Service, 0)
+		services = make([]*corev1.Service, 0)
 		serviceWatch = objSetup(fakeClient, "services", func(core.Action) (bool, runtime.Object, error) {
-			obj := &v1.ServiceList{}
+			obj := &corev1.ServiceList{}
 			for _, p := range services {
 				obj.Items = append(obj.Items, *p)
 			}
@@ -506,7 +506,7 @@ var _ = Describe("Watch Factory Operations", func() {
 		})
 
 		ipamClaims = make([]*ipamclaimsapi.IPAMClaim, 0)
-		ipamClaimsWatch = ipamClaimsObjSetup(ipamClaimsFakeClient, "ipamclaims", func(action core.Action) (bool, runtime.Object, error) {
+		ipamClaimsWatch = ipamClaimsObjSetup(ipamClaimsFakeClient, "ipamclaims", func(core.Action) (bool, runtime.Object, error) {
 			obj := &ipamclaimsapi.IPAMClaimList{}
 			for _, p := range ipamClaims {
 				obj.Items = append(obj.Items, *p)
@@ -705,11 +705,11 @@ var _ = Describe("Watch Factory Operations", func() {
 			var addCalls int32
 			h, err := wf.addHandler(objType, "", nil,
 				cache.ResourceEventHandlerFuncs{
-					AddFunc: func(obj interface{}) {
+					AddFunc: func(interface{}) {
 						atomic.AddInt32(&addCalls, 1)
 					},
-					UpdateFunc: func(old, new interface{}) {},
-					DeleteFunc: func(obj interface{}) {},
+					UpdateFunc: func(interface{}, interface{}) {},
+					DeleteFunc: func(interface{}) {},
 				}, nil, wf.GetHandlerPriority(objType))
 			Expect(int(addCalls)).To(Equal(2))
 			Expect(err).NotTo(HaveOccurred())
@@ -801,9 +801,9 @@ var _ = Describe("Watch Factory Operations", func() {
 			shutdown = true
 			h, err := wf.addHandler(PodType, "", nil,
 				cache.ResourceEventHandlerFuncs{
-					AddFunc:    func(obj interface{}) {},
-					UpdateFunc: func(old, new interface{}) {},
-					DeleteFunc: func(obj interface{}) {},
+					AddFunc:    func(interface{}) {},
+					UpdateFunc: func(interface{}, interface{}) {},
+					DeleteFunc: func(interface{}) {},
 				}, nil, wf.GetHandlerPriority(PodType))
 			Expect(err).NotTo(HaveOccurred())
 			wf.removeHandler(PodType, h)
@@ -935,16 +935,16 @@ var _ = Describe("Watch Factory Operations", func() {
 		added := newPod("pod1", "default")
 		h, c := addHandler(wf, PodType, cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {
-				pod := obj.(*v1.Pod)
+				pod := obj.(*corev1.Pod)
 				Expect(reflect.DeepEqual(pod, added)).To(BeTrue())
 			},
-			UpdateFunc: func(old, new interface{}) {
-				newPod := new.(*v1.Pod)
+			UpdateFunc: func(_, new interface{}) {
+				newPod := new.(*corev1.Pod)
 				Expect(reflect.DeepEqual(newPod, added)).To(BeTrue())
 				Expect(newPod.Spec.NodeName).To(Equal("foobar"))
 			},
 			DeleteFunc: func(obj interface{}) {
-				pod := obj.(*v1.Pod)
+				pod := obj.(*corev1.Pod)
 				Expect(reflect.DeepEqual(pod, added)).To(BeTrue())
 			},
 		})
@@ -972,15 +972,15 @@ var _ = Describe("Watch Factory Operations", func() {
 		added.UID = "mybar"
 		h, c := addHandler(wf, PodType, cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {
-				pod := obj.(*v1.Pod)
+				pod := obj.(*corev1.Pod)
 				Expect(pod.Spec.NodeName).To(Equal("mynode"))
 			},
-			UpdateFunc: func(old, new interface{}) {
-				newPod := new.(*v1.Pod)
+			UpdateFunc: func(_, new interface{}) {
+				newPod := new.(*corev1.Pod)
 				Expect(newPod.UID).To(Equal(types.UID("mybar")))
 				Expect(newPod.Spec.NodeName).To(Equal("foobar"))
 			},
-			DeleteFunc: func(obj interface{}) {
+			DeleteFunc: func(interface{}) {
 			},
 		})
 
@@ -1014,7 +1014,7 @@ var _ = Describe("Watch Factory Operations", func() {
 		const nodeName string = "mynode"
 		type opTest struct {
 			mu      sync.Mutex
-			pod     *v1.Pod
+			pod     *corev1.Pod
 			added   int
 			updated int
 			deleted int
@@ -1029,7 +1029,7 @@ var _ = Describe("Watch Factory Operations", func() {
 
 		h, c := addHandler(wf, PodType, cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {
-				pod := obj.(*v1.Pod)
+				pod := obj.(*corev1.Pod)
 				ot, ok := testPods[pod.Name]
 				Expect(ok).To(BeTrue())
 				ot.mu.Lock()
@@ -1037,8 +1037,8 @@ var _ = Describe("Watch Factory Operations", func() {
 				Expect(ot.added).To(BeNumerically("<", 2))
 				ot.added++
 			},
-			UpdateFunc: func(old, new interface{}) {
-				newPod := new.(*v1.Pod)
+			UpdateFunc: func(_, new interface{}) {
+				newPod := new.(*corev1.Pod)
 				ot, ok := testPods[newPod.Name]
 				Expect(ok).To(BeTrue())
 				ot.mu.Lock()
@@ -1048,7 +1048,7 @@ var _ = Describe("Watch Factory Operations", func() {
 				Expect(newPod.Spec.NodeName).To(Equal(nodeName))
 			},
 			DeleteFunc: func(obj interface{}) {
-				pod := obj.(*v1.Pod)
+				pod := obj.(*corev1.Pod)
 				ot, ok := testPods[pod.Name]
 				Expect(ok).To(BeTrue())
 				ot.mu.Lock()
@@ -1097,16 +1097,16 @@ var _ = Describe("Watch Factory Operations", func() {
 		added := newNamespace("default")
 		h, c := addHandler(wf, NamespaceType, cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {
-				ns := obj.(*v1.Namespace)
+				ns := obj.(*corev1.Namespace)
 				Expect(reflect.DeepEqual(ns, added)).To(BeTrue())
 			},
-			UpdateFunc: func(old, new interface{}) {
-				newNS := new.(*v1.Namespace)
+			UpdateFunc: func(_, new interface{}) {
+				newNS := new.(*corev1.Namespace)
 				Expect(reflect.DeepEqual(newNS, added)).To(BeTrue())
-				Expect(newNS.Status.Phase).To(Equal(v1.NamespaceTerminating))
+				Expect(newNS.Status.Phase).To(Equal(corev1.NamespaceTerminating))
 			},
 			DeleteFunc: func(obj interface{}) {
-				ns := obj.(*v1.Namespace)
+				ns := obj.(*corev1.Namespace)
 				Expect(reflect.DeepEqual(ns, added)).To(BeTrue())
 			},
 		})
@@ -1114,7 +1114,7 @@ var _ = Describe("Watch Factory Operations", func() {
 		namespaces = append(namespaces, added)
 		namespaceWatch.Add(added)
 		Eventually(c.getAdded, 2).Should(Equal(1))
-		added.Status.Phase = v1.NamespaceTerminating
+		added.Status.Phase = corev1.NamespaceTerminating
 		namespaceWatch.Modify(added)
 		Eventually(c.getUpdated, 2).Should(Equal(1))
 		namespaces = namespaces[:0]
@@ -1133,16 +1133,16 @@ var _ = Describe("Watch Factory Operations", func() {
 		added := newNode("mynode")
 		h, c := addHandler(wf, NodeType, cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {
-				node := obj.(*v1.Node)
+				node := obj.(*corev1.Node)
 				Expect(reflect.DeepEqual(node, added)).To(BeTrue())
 			},
-			UpdateFunc: func(old, new interface{}) {
-				newNode := new.(*v1.Node)
+			UpdateFunc: func(_, new interface{}) {
+				newNode := new.(*corev1.Node)
 				Expect(reflect.DeepEqual(newNode, added)).To(BeTrue())
-				Expect(newNode.Status.Phase).To(Equal(v1.NodeTerminated))
+				Expect(newNode.Status.Phase).To(Equal(corev1.NodeTerminated))
 			},
 			DeleteFunc: func(obj interface{}) {
-				node := obj.(*v1.Node)
+				node := obj.(*corev1.Node)
 				Expect(reflect.DeepEqual(node, added)).To(BeTrue())
 			},
 		})
@@ -1150,7 +1150,7 @@ var _ = Describe("Watch Factory Operations", func() {
 		nodes = append(nodes, added)
 		nodeWatch.Add(added)
 		Eventually(c.getAdded, 2).Should(Equal(1))
-		added.Status.Phase = v1.NodeTerminated
+		added.Status.Phase = corev1.NodeTerminated
 		nodeWatch.Modify(added)
 		Eventually(c.getUpdated, 2).Should(Equal(1))
 		nodes = nodes[:0]
@@ -1168,7 +1168,7 @@ var _ = Describe("Watch Factory Operations", func() {
 
 		type opTest struct {
 			mu      sync.Mutex
-			node    *v1.Node
+			node    *corev1.Node
 			added   int
 			updated int
 			deleted int
@@ -1183,7 +1183,7 @@ var _ = Describe("Watch Factory Operations", func() {
 
 		h, c := addHandler(wf, NodeType, cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {
-				node := obj.(*v1.Node)
+				node := obj.(*corev1.Node)
 				ot, ok := testNodes[node.Name]
 				Expect(ok).To(BeTrue())
 				ot.mu.Lock()
@@ -1191,18 +1191,18 @@ var _ = Describe("Watch Factory Operations", func() {
 				Expect(ot.added).To(BeNumerically("<", 2))
 				ot.added++
 			},
-			UpdateFunc: func(old, new interface{}) {
-				newNode := new.(*v1.Node)
+			UpdateFunc: func(_, new interface{}) {
+				newNode := new.(*corev1.Node)
 				ot, ok := testNodes[newNode.Name]
 				Expect(ok).To(BeTrue())
 				ot.mu.Lock()
 				defer ot.mu.Unlock()
 				Expect(ot.updated).To(BeNumerically("<", 2))
 				ot.updated++
-				Expect(newNode.Status.Phase).To(Equal(v1.NodeTerminated))
+				Expect(newNode.Status.Phase).To(Equal(corev1.NodeTerminated))
 			},
 			DeleteFunc: func(obj interface{}) {
-				node := obj.(*v1.Node)
+				node := obj.(*corev1.Node)
 				ot, ok := testNodes[node.Name]
 				Expect(ok).To(BeTrue())
 				ot.mu.Lock()
@@ -1218,7 +1218,7 @@ var _ = Describe("Watch Factory Operations", func() {
 				nodes = append(nodes, ot.node)
 				nodeWatch.Add(ot.node)
 				ot.mu.Lock()
-				ot.node.Status.Phase = v1.NodeTerminated
+				ot.node.Status.Phase = corev1.NodeTerminated
 				ot.mu.Unlock()
 				nodeWatch.Modify(ot.node)
 				nodes = nodes[:0]
@@ -1245,7 +1245,7 @@ var _ = Describe("Watch Factory Operations", func() {
 	It("correctly orders queued informer initial add events and subsequent update events", func() {
 		type opTest struct {
 			mu      sync.Mutex
-			node    *v1.Node
+			node    *corev1.Node
 			added   int
 			updated int
 		}
@@ -1267,7 +1267,7 @@ var _ = Describe("Watch Factory Operations", func() {
 		h, c := addHandler(wf, NodeType, cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {
 				defer GinkgoRecover()
-				node := obj.(*v1.Node)
+				node := obj.(*corev1.Node)
 				ot, ok := testNodes[node.Name]
 				Expect(ok).To(BeTrue())
 				ot.mu.Lock()
@@ -1275,9 +1275,9 @@ var _ = Describe("Watch Factory Operations", func() {
 				Expect(ot.added).To(Equal(0), "add for node %s already run", node.Name)
 				ot.added++
 			},
-			UpdateFunc: func(old, new interface{}) {
+			UpdateFunc: func(_, new interface{}) {
 				defer GinkgoRecover()
-				newNode := new.(*v1.Node)
+				newNode := new.(*corev1.Node)
 				ot, ok := testNodes[newNode.Name]
 				Expect(ok).To(BeTrue())
 				// Expect updates to be processed after Add
@@ -1286,16 +1286,16 @@ var _ = Describe("Watch Factory Operations", func() {
 				Expect(ot.added).To(Equal(1), "update for node %s processed before initial add!", newNode.Name)
 				Expect(ot.updated).To(Equal(0))
 				ot.updated++
-				Expect(newNode.Status.Phase).To(Equal(v1.NodeTerminated))
+				Expect(newNode.Status.Phase).To(Equal(corev1.NodeTerminated))
 			},
-			DeleteFunc: func(obj interface{}) {},
+			DeleteFunc: func(interface{}) {},
 		})
 
 		done := make(chan bool)
 		go func() {
 			// Send an update event for each node
 			for _, n := range nodes {
-				n.Status.Phase = v1.NodeTerminated
+				n.Status.Phase = corev1.NodeTerminated
 				nodeWatch.Modify(n)
 			}
 			done <- true
@@ -1324,7 +1324,7 @@ var _ = Describe("Watch Factory Operations", func() {
 	It("correctly orders serialized informer initial add events and subsequent update events", func() {
 		type opTest struct {
 			mu        sync.Mutex
-			namespace *v1.Namespace
+			namespace *corev1.Namespace
 			added     int
 			updated   int
 		}
@@ -1351,7 +1351,7 @@ var _ = Describe("Watch Factory Operations", func() {
 			startWg.Done()
 			// Send an update event for each namespace
 			for _, n := range namespaces {
-				n.Status.Phase = v1.NamespaceTerminating
+				n.Status.Phase = corev1.NamespaceTerminating
 				namespaceWatch.Modify(n)
 			}
 			doneWg.Done()
@@ -1361,7 +1361,7 @@ var _ = Describe("Watch Factory Operations", func() {
 		h, c := addHandler(wf, NamespaceType, cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {
 				defer GinkgoRecover()
-				namespace := obj.(*v1.Namespace)
+				namespace := obj.(*corev1.Namespace)
 				ot, ok := testNamespaces[namespace.Name]
 				Expect(ok).To(BeTrue())
 				ot.mu.Lock()
@@ -1369,9 +1369,9 @@ var _ = Describe("Watch Factory Operations", func() {
 				Expect(ot.added).To(Equal(0))
 				ot.added++
 			},
-			UpdateFunc: func(old, new interface{}) {
+			UpdateFunc: func(_, new interface{}) {
 				defer GinkgoRecover()
-				newNamespace := new.(*v1.Namespace)
+				newNamespace := new.(*corev1.Namespace)
 				ot, ok := testNamespaces[newNamespace.Name]
 				Expect(ok).To(BeTrue())
 				// Expect updates to be processed after Add
@@ -1380,9 +1380,9 @@ var _ = Describe("Watch Factory Operations", func() {
 				Expect(ot.added).To(Equal(1), "update for namespace %s processed before initial add!", newNamespace.Name)
 				Expect(ot.updated).To(Equal(0))
 				ot.updated++
-				Expect(newNamespace.Status.Phase).To(Equal(v1.NamespaceTerminating))
+				Expect(newNamespace.Status.Phase).To(Equal(corev1.NamespaceTerminating))
 			},
-			DeleteFunc: func(obj interface{}) {},
+			DeleteFunc: func(interface{}) {},
 		})
 		doneWg.Wait()
 
@@ -1408,7 +1408,7 @@ var _ = Describe("Watch Factory Operations", func() {
 	It("correctly orders add events across prioritized handlers sharing the same object type", func() {
 		type opTest struct {
 			mu        sync.Mutex
-			namespace *v1.Namespace
+			namespace *corev1.Namespace
 			added     int
 			updated   int
 			deleted   int
@@ -1432,7 +1432,7 @@ var _ = Describe("Watch Factory Operations", func() {
 		nsh, c1 := addPriorityHandler(wf, NamespaceType, NamespaceType, cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {
 				defer GinkgoRecover()
-				namespace := obj.(*v1.Namespace)
+				namespace := obj.(*corev1.Namespace)
 				ot, ok := testNamespaces[namespace.Name]
 				Expect(ok).To(BeTrue())
 				ot.mu.Lock()
@@ -1441,9 +1441,9 @@ var _ = Describe("Watch Factory Operations", func() {
 				ot.added++
 				Expect(namespace.Status.Phase).To(BeEmpty())
 			},
-			UpdateFunc: func(old, new interface{}) {
+			UpdateFunc: func(_, new interface{}) {
 				defer GinkgoRecover()
-				newNamespace := new.(*v1.Namespace)
+				newNamespace := new.(*corev1.Namespace)
 				ot, ok := testNamespaces[newNamespace.Name]
 				Expect(ok).To(BeTrue())
 				// Expect updates to be processed after Add
@@ -1452,11 +1452,11 @@ var _ = Describe("Watch Factory Operations", func() {
 				Expect(ot.added).To(Equal(4), "update for EIP namespace %s processed before add was processed in all handlers!", newNamespace.Name)
 				Expect(ot.updated).To(Equal(0))
 				ot.updated++
-				Expect(newNamespace.Status.Phase).To(Equal(v1.NamespaceActive))
+				Expect(newNamespace.Status.Phase).To(Equal(corev1.NamespaceActive))
 			},
 			DeleteFunc: func(obj interface{}) {
 				defer GinkgoRecover()
-				newNamespace := obj.(*v1.Namespace)
+				newNamespace := obj.(*corev1.Namespace)
 				ot, ok := testNamespaces[newNamespace.Name]
 				Expect(ok).To(BeTrue())
 				// Verify that deletes were processed after the updates and adds
@@ -1466,14 +1466,14 @@ var _ = Describe("Watch Factory Operations", func() {
 				Expect(ot.updated).To(Equal(4), "delete for EIP namespace %s processed before update was processed in all handlers!", newNamespace.Name)
 				Expect(ot.deleted).To(Equal(8))
 				ot.deleted = ot.deleted / 2
-				Expect(newNamespace.Status.Phase).To(Equal(v1.NamespaceTerminating))
+				Expect(newNamespace.Status.Phase).To(Equal(corev1.NamespaceTerminating))
 			},
 		})
 
 		eipnsh, c2 := addPriorityHandler(wf, NamespaceType, EgressIPNamespaceType, cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {
 				defer GinkgoRecover()
-				namespace := obj.(*v1.Namespace)
+				namespace := obj.(*corev1.Namespace)
 				ot, ok := testNamespaces[namespace.Name]
 				Expect(ok).To(BeTrue())
 				ot.mu.Lock()
@@ -1482,9 +1482,9 @@ var _ = Describe("Watch Factory Operations", func() {
 				ot.added = ot.added * 10
 				Expect(namespace.Status.Phase).To(BeEmpty())
 			},
-			UpdateFunc: func(old, new interface{}) {
+			UpdateFunc: func(_, new interface{}) {
 				defer GinkgoRecover()
-				newNamespace := new.(*v1.Namespace)
+				newNamespace := new.(*corev1.Namespace)
 				ot, ok := testNamespaces[newNamespace.Name]
 				Expect(ok).To(BeTrue())
 				// Expect updates to be processed after Add
@@ -1493,11 +1493,11 @@ var _ = Describe("Watch Factory Operations", func() {
 				Expect(ot.added).To(Equal(4), "update for EIP namespace %s processed before add was processed in all handlers!", newNamespace.Name)
 				Expect(ot.updated).To(Equal(1), "update for EIP namespace %s processed before initial namespace update!", newNamespace.Name)
 				ot.updated = ot.updated * 10
-				Expect(newNamespace.Status.Phase).To(Equal(v1.NamespaceActive))
+				Expect(newNamespace.Status.Phase).To(Equal(corev1.NamespaceActive))
 			},
 			DeleteFunc: func(obj interface{}) {
 				defer GinkgoRecover()
-				newNamespace := obj.(*v1.Namespace)
+				newNamespace := obj.(*corev1.Namespace)
 				ot, ok := testNamespaces[newNamespace.Name]
 				Expect(ok).To(BeTrue())
 				// Verify that deletes were processed after the updates and adds
@@ -1507,13 +1507,13 @@ var _ = Describe("Watch Factory Operations", func() {
 				Expect(ot.updated).To(Equal(4), "delete for EIP namespace %s processed before update was processed in all handlers!", newNamespace.Name)
 				Expect(ot.deleted).To(Equal(10))
 				ot.deleted = ot.deleted - 2
-				Expect(newNamespace.Status.Phase).To(Equal(v1.NamespaceTerminating))
+				Expect(newNamespace.Status.Phase).To(Equal(corev1.NamespaceTerminating))
 			},
 		})
 		peernsh, c3 := addPriorityHandler(wf, NamespaceType, PeerNamespaceSelectorType, cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {
 				defer GinkgoRecover()
-				namespace := obj.(*v1.Namespace)
+				namespace := obj.(*corev1.Namespace)
 				ot, ok := testNamespaces[namespace.Name]
 				Expect(ok).To(BeTrue())
 				ot.mu.Lock()
@@ -1522,9 +1522,9 @@ var _ = Describe("Watch Factory Operations", func() {
 				ot.added = ot.added - 2
 				Expect(namespace.Status.Phase).To(BeEmpty())
 			},
-			UpdateFunc: func(old, new interface{}) {
+			UpdateFunc: func(_, new interface{}) {
 				defer GinkgoRecover()
-				newNamespace := new.(*v1.Namespace)
+				newNamespace := new.(*corev1.Namespace)
 				ot, ok := testNamespaces[newNamespace.Name]
 				Expect(ok).To(BeTrue())
 				// Expect updates to be processed after Add
@@ -1533,11 +1533,11 @@ var _ = Describe("Watch Factory Operations", func() {
 				Expect(ot.added).To(Equal(4), "update for EIP namespace %s processed before add was processed in all handlers!", newNamespace.Name)
 				Expect(ot.updated).To(Equal(10), "update for peer namespace %s processed before EIP namespace update!", newNamespace.Name)
 				ot.updated = ot.updated - 2
-				Expect(newNamespace.Status.Phase).To(Equal(v1.NamespaceActive))
+				Expect(newNamespace.Status.Phase).To(Equal(corev1.NamespaceActive))
 			},
 			DeleteFunc: func(obj interface{}) {
 				defer GinkgoRecover()
-				newNamespace := obj.(*v1.Namespace)
+				newNamespace := obj.(*corev1.Namespace)
 				ot, ok := testNamespaces[newNamespace.Name]
 				Expect(ok).To(BeTrue())
 				// Verify that deletes were processed after the updates and adds
@@ -1547,13 +1547,13 @@ var _ = Describe("Watch Factory Operations", func() {
 				Expect(ot.updated).To(Equal(4), "delete for EIP namespace %s processed before update was processed in all handlers!", newNamespace.Name)
 				Expect(ot.deleted).To(Equal(1))
 				ot.deleted = ot.deleted * 10
-				Expect(newNamespace.Status.Phase).To(Equal(v1.NamespaceTerminating))
+				Expect(newNamespace.Status.Phase).To(Equal(corev1.NamespaceTerminating))
 			},
 		})
 		peerpodnsh, c4 := addPriorityHandler(wf, NamespaceType, AddressSetNamespaceAndPodSelectorType, cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {
 				defer GinkgoRecover()
-				namespace := obj.(*v1.Namespace)
+				namespace := obj.(*corev1.Namespace)
 				ot, ok := testNamespaces[namespace.Name]
 				Expect(ok).To(BeTrue())
 				ot.mu.Lock()
@@ -1562,9 +1562,9 @@ var _ = Describe("Watch Factory Operations", func() {
 				ot.added = ot.added / 2
 				Expect(namespace.Status.Phase).To(BeEmpty())
 			},
-			UpdateFunc: func(old, new interface{}) {
+			UpdateFunc: func(_, new interface{}) {
 				defer GinkgoRecover()
-				newNamespace := new.(*v1.Namespace)
+				newNamespace := new.(*corev1.Namespace)
 				ot, ok := testNamespaces[newNamespace.Name]
 				Expect(ok).To(BeTrue())
 				// Expect updates to be processed after Add
@@ -1573,11 +1573,11 @@ var _ = Describe("Watch Factory Operations", func() {
 				Expect(ot.added).To(Equal(4), "update for peerPod namespace %s processed before peerPod namespace add!", newNamespace.Name)
 				Expect(ot.updated).To(Equal(8), "update for peerPod namespace %s processed before peer namespace update!", newNamespace.Name)
 				ot.updated = ot.updated / 2
-				Expect(newNamespace.Status.Phase).To(Equal(v1.NamespaceActive))
+				Expect(newNamespace.Status.Phase).To(Equal(corev1.NamespaceActive))
 			},
 			DeleteFunc: func(obj interface{}) {
 				defer GinkgoRecover()
-				newNamespace := obj.(*v1.Namespace)
+				newNamespace := obj.(*corev1.Namespace)
 				ot, ok := testNamespaces[newNamespace.Name]
 				Expect(ok).To(BeTrue())
 				// Verify that deletes were processed after the updates and adds
@@ -1587,14 +1587,14 @@ var _ = Describe("Watch Factory Operations", func() {
 				Expect(ot.updated).To(Equal(4), "delete for EIP namespace %s processed before update was processed in all handlers!", newNamespace.Name)
 				Expect(ot.deleted).To(Equal(0))
 				ot.deleted++
-				Expect(newNamespace.Status.Phase).To(Equal(v1.NamespaceTerminating))
+				Expect(newNamespace.Status.Phase).To(Equal(corev1.NamespaceTerminating))
 			},
 		})
 		done := make(chan bool)
 		go func() {
 			// Send an update event for each namespace
 			for _, n := range namespaces {
-				n.Status.Phase = v1.NamespaceActive
+				n.Status.Phase = corev1.NamespaceActive
 				namespaceWatch.Modify(n)
 			}
 			done <- true
@@ -1628,7 +1628,7 @@ var _ = Describe("Watch Factory Operations", func() {
 		go func() {
 			// Send a delete event for each namespace
 			for _, n := range namespaces {
-				n.Status.Phase = v1.NamespaceTerminating
+				n.Status.Phase = corev1.NamespaceTerminating
 				namespaceWatch.Delete(n)
 			}
 			done <- true
@@ -1665,7 +1665,7 @@ var _ = Describe("Watch Factory Operations", func() {
 				np := obj.(*knet.NetworkPolicy)
 				Expect(reflect.DeepEqual(np, added)).To(BeTrue())
 			},
-			UpdateFunc: func(old, new interface{}) {
+			UpdateFunc: func(_, new interface{}) {
 				newNP := new.(*knet.NetworkPolicy)
 				Expect(reflect.DeepEqual(newNP, added)).To(BeTrue())
 				Expect(newNP.Spec.PolicyTypes).To(Equal([]knet.PolicyType{knet.PolicyTypeIngress}))
@@ -1701,7 +1701,7 @@ var _ = Describe("Watch Factory Operations", func() {
 				epSlice := obj.(*discovery.EndpointSlice)
 				Expect(reflect.DeepEqual(epSlice, added)).To(BeTrue())
 			},
-			UpdateFunc: func(old, new interface{}) {
+			UpdateFunc: func(_, new interface{}) {
 				newEpSlice := new.(*discovery.EndpointSlice)
 				Expect(reflect.DeepEqual(newEpSlice, added)).To(BeTrue())
 				Expect(len(newEpSlice.Endpoints)).To(Equal(1))
@@ -1736,16 +1736,16 @@ var _ = Describe("Watch Factory Operations", func() {
 		added := newService("myservice", "default")
 		h, c := addHandler(wf, ServiceType, cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {
-				service := obj.(*v1.Service)
+				service := obj.(*corev1.Service)
 				Expect(reflect.DeepEqual(service, added)).To(BeTrue())
 			},
-			UpdateFunc: func(old, new interface{}) {
-				newService := new.(*v1.Service)
+			UpdateFunc: func(_, new interface{}) {
+				newService := new.(*corev1.Service)
 				Expect(reflect.DeepEqual(newService, added)).To(BeTrue())
 				Expect(newService.Spec.ClusterIP).To(Equal("1.1.1.1"))
 			},
 			DeleteFunc: func(obj interface{}) {
-				service := obj.(*v1.Service)
+				service := obj.(*corev1.Service)
 				Expect(reflect.DeepEqual(service, added)).To(BeTrue())
 			},
 		})
@@ -1775,7 +1775,7 @@ var _ = Describe("Watch Factory Operations", func() {
 				egressFirewall := obj.(*egressfirewall.EgressFirewall)
 				Expect(reflect.DeepEqual(egressFirewall, added)).To(BeTrue())
 			},
-			UpdateFunc: func(old, new interface{}) {
+			UpdateFunc: func(_, new interface{}) {
 				newEgressFirewall := new.(*egressfirewall.EgressFirewall)
 				Expect(reflect.DeepEqual(newEgressFirewall, added)).To(BeTrue())
 				Expect(newEgressFirewall.Spec.Egress[0].Type).To(Equal(egressfirewall.EgressFirewallRuleDeny))
@@ -1810,7 +1810,7 @@ var _ = Describe("Watch Factory Operations", func() {
 				egressIP := obj.(*egressip.EgressIP)
 				Expect(reflect.DeepEqual(egressIP, added)).To(BeTrue())
 			},
-			UpdateFunc: func(old, new interface{}) {
+			UpdateFunc: func(_, new interface{}) {
 				newEgressIP := new.(*egressip.EgressIP)
 				Expect(reflect.DeepEqual(newEgressIP, added)).To(BeTrue())
 				Expect(newEgressIP.Spec.EgressIPs).To(Equal([]string{"192.168.126.10"}))
@@ -1845,7 +1845,7 @@ var _ = Describe("Watch Factory Operations", func() {
 				cloudPrivateIPConfig := obj.(*ocpcloudnetworkapi.CloudPrivateIPConfig)
 				Expect(reflect.DeepEqual(cloudPrivateIPConfig, added)).To(BeTrue())
 			},
-			UpdateFunc: func(old, new interface{}) {
+			UpdateFunc: func(_, new interface{}) {
 				newCloudPrivateIPConfig := new.(*ocpcloudnetworkapi.CloudPrivateIPConfig)
 				Expect(reflect.DeepEqual(newCloudPrivateIPConfig, added)).To(BeTrue())
 				Expect(newCloudPrivateIPConfig.Name).To(Equal("192.168.126.25"))
@@ -1880,7 +1880,7 @@ var _ = Describe("Watch Factory Operations", func() {
 				egressQoS := obj.(*egressqos.EgressQoS)
 				Expect(reflect.DeepEqual(egressQoS, added)).To(BeTrue())
 			},
-			UpdateFunc: func(old, new interface{}) {
+			UpdateFunc: func(_, new interface{}) {
 				newEgressQoS := new.(*egressqos.EgressQoS)
 				Expect(reflect.DeepEqual(newEgressQoS, added)).To(BeTrue())
 				Expect(newEgressQoS.Spec.Egress[0].DSCP).To(Equal(40))
@@ -1915,7 +1915,7 @@ var _ = Describe("Watch Factory Operations", func() {
 				egressService := obj.(*egressservice.EgressService)
 				Expect(reflect.DeepEqual(egressService, added)).To(BeTrue())
 			},
-			UpdateFunc: func(old, new interface{}) {
+			UpdateFunc: func(_, new interface{}) {
 				newEgressService := new.(*egressservice.EgressService)
 				Expect(reflect.DeepEqual(newEgressService, added)).To(BeTrue())
 				Expect(newEgressService.Spec.NodeSelector).To(Equal(metav1.LabelSelector{
@@ -1958,7 +1958,7 @@ var _ = Describe("Watch Factory Operations", func() {
 				anp := obj.(*anpapi.AdminNetworkPolicy)
 				Expect(reflect.DeepEqual(anp, added)).To(BeTrue())
 			},
-			UpdateFunc: func(old, new interface{}) {
+			UpdateFunc: func(_, new interface{}) {
 				newANP := new.(*anpapi.AdminNetworkPolicy)
 				Expect(reflect.DeepEqual(newANP, added)).To(BeTrue())
 				Expect(newANP.Spec.Priority).To(Equal(int32(3)))
@@ -1993,7 +1993,7 @@ var _ = Describe("Watch Factory Operations", func() {
 				banp := obj.(*anpapi.BaselineAdminNetworkPolicy)
 				Expect(reflect.DeepEqual(banp, added)).To(BeTrue())
 			},
-			UpdateFunc: func(old, new interface{}) {
+			UpdateFunc: func(_, new interface{}) {
 				newBANP := new.(*anpapi.BaselineAdminNetworkPolicy)
 				Expect(reflect.DeepEqual(newBANP, added)).To(BeTrue())
 				labelSelect := &metav1.LabelSelector{
@@ -2037,7 +2037,7 @@ var _ = Describe("Watch Factory Operations", func() {
 				claim := obj.(*ipamclaimsapi.IPAMClaim)
 				Expect(reflect.DeepEqual(claim, added)).To(BeTrue())
 			},
-			UpdateFunc: func(old, new interface{}) {
+			UpdateFunc: func(_, new interface{}) {
 				newClaim := new.(*ipamclaimsapi.IPAMClaim)
 				Expect(reflect.DeepEqual(newClaim, added)).To(BeTrue())
 			},
@@ -2070,9 +2070,9 @@ var _ = Describe("Watch Factory Operations", func() {
 
 		added := newNamespace("default")
 		h, c := addHandler(wf, NamespaceType, cache.ResourceEventHandlerFuncs{
-			AddFunc:    func(obj interface{}) {},
-			UpdateFunc: func(old, new interface{}) {},
-			DeleteFunc: func(obj interface{}) {},
+			AddFunc:    func(interface{}) {},
+			UpdateFunc: func(interface{}, interface{}) {},
+			DeleteFunc: func(interface{}) {},
 		})
 
 		namespaces = append(namespaces, added)
@@ -2085,10 +2085,10 @@ var _ = Describe("Watch Factory Operations", func() {
 		namespaceWatch.Add(added2)
 		Consistently(c.getAdded, 2).Should(Equal(1))
 
-		added2.Status.Phase = v1.NamespaceTerminating
+		added2.Status.Phase = corev1.NamespaceTerminating
 		namespaceWatch.Modify(added2)
 		Consistently(c.getUpdated, 2).Should(Equal(0))
-		namespaces = []*v1.Namespace{added}
+		namespaces = []*corev1.Namespace{added}
 		namespaceWatch.Delete(added2)
 		Consistently(c.getDeleted, 2).Should(Equal(0))
 	})
@@ -2120,15 +2120,15 @@ var _ = Describe("Watch Factory Operations", func() {
 			sel,
 			cache.ResourceEventHandlerFuncs{
 				AddFunc: func(obj interface{}) {
-					pod := obj.(*v1.Pod)
+					pod := obj.(*corev1.Pod)
 					Expect(reflect.DeepEqual(pod, passesFilter)).To(BeTrue())
 				},
-				UpdateFunc: func(old, new interface{}) {
-					newPod := new.(*v1.Pod)
+				UpdateFunc: func(_, new interface{}) {
+					newPod := new.(*corev1.Pod)
 					Expect(reflect.DeepEqual(newPod, passesFilter)).To(BeTrue())
 				},
 				DeleteFunc: func(obj interface{}) {
-					pod := obj.(*v1.Pod)
+					pod := obj.(*corev1.Pod)
 					Expect(reflect.DeepEqual(pod, passesFilter)).To(BeTrue())
 				},
 			})
@@ -2147,20 +2147,20 @@ var _ = Describe("Watch Factory Operations", func() {
 		podWatch.Add(failsFilter2)
 		Consistently(c.getAdded, 2).Should(Equal(1))
 
-		passesFilter.Status.Phase = v1.PodFailed
+		passesFilter.Status.Phase = corev1.PodFailed
 		podWatch.Modify(passesFilter)
 		Eventually(c.getUpdated, 2).Should(Equal(1))
 
 		// numAdded should remain 1
-		failsFilter.Status.Phase = v1.PodFailed
+		failsFilter.Status.Phase = corev1.PodFailed
 		podWatch.Modify(failsFilter)
 		Consistently(c.getUpdated, 2).Should(Equal(1))
 
-		failsFilter2.Status.Phase = v1.PodFailed
+		failsFilter2.Status.Phase = corev1.PodFailed
 		podWatch.Modify(failsFilter2)
 		Consistently(c.getUpdated, 2).Should(Equal(1))
 
-		pods = []*v1.Pod{failsFilter, failsFilter2}
+		pods = []*corev1.Pod{failsFilter, failsFilter2}
 		podWatch.Delete(passesFilter)
 		Eventually(c.getDeleted, 2).Should(Equal(1))
 	})
@@ -2189,12 +2189,12 @@ var _ = Describe("Watch Factory Operations", func() {
 			sel,
 			cache.ResourceEventHandlerFuncs{
 				AddFunc: func(obj interface{}) {
-					p := obj.(*v1.Pod)
+					p := obj.(*corev1.Pod)
 					Expect(reflect.DeepEqual(p, equalPod)).To(BeTrue())
 				},
-				UpdateFunc: func(old, new interface{}) {},
+				UpdateFunc: func(_, _ interface{}) {},
 				DeleteFunc: func(obj interface{}) {
-					p := obj.(*v1.Pod)
+					p := obj.(*corev1.Pod)
 					Expect(reflect.DeepEqual(p, equalPod)).To(BeTrue())
 				},
 			})
@@ -2211,7 +2211,7 @@ var _ = Describe("Watch Factory Operations", func() {
 		// to deep-copy pod when modifying because it's a pointer all
 		// the way through when using FakeClient
 		podCopy.ObjectMeta.Labels["blah"] = "foobar"
-		pods = []*v1.Pod{podCopy}
+		pods = []*corev1.Pod{podCopy}
 		equalPod = podCopy
 		podWatch.Modify(podCopy)
 		Eventually(c.getAdded, 2).Should(Equal(1))

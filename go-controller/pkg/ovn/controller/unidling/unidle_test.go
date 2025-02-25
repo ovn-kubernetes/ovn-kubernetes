@@ -6,7 +6,7 @@ import (
 
 	"golang.org/x/net/context"
 
-	kapi "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/fake"
@@ -82,18 +82,19 @@ var _ = Describe("Unidling Controller", func() {
 
 		informerFactory.Start(ctx.Done())
 
-		svc := &kapi.Service{
+		svc := &corev1.Service{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: "foo_ns", Name: "foo_service",
 				Annotations: map[string]string{"ovn/idled-at": "2022-02-22T22:22:22Z"},
 			},
-			Spec: kapi.ServiceSpec{
+			Spec: corev1.ServiceSpec{
 				ClusterIP: "10.10.10.10",
-				Ports:     []kapi.ServicePort{{Port: 80, Protocol: kapi.ProtocolTCP}},
-				Type:      kapi.ServiceTypeClusterIP,
+				Ports:     []corev1.ServicePort{{Port: 80, Protocol: corev1.ProtocolTCP}},
+				Type:      corev1.ServiceTypeClusterIP,
 			},
 		}
-		client.CoreV1().Services("foo_ns").Create(context.Background(), svc, metav1.CreateOptions{})
+		_, err = client.CoreV1().Services("foo_ns").Create(context.Background(), svc, metav1.CreateOptions{})
+		Expect(err).NotTo(HaveOccurred())
 		cache.WaitForCacheSync(ctx.Done(), serviceInformer.HasSynced)
 
 		go c.Run(ctx.Done())
@@ -133,19 +134,21 @@ var _ = Describe("Unidling Controller", func() {
 		kube := &kube.Kube{
 			KClient: client,
 		}
-		NewUnidledAtController(kube, serviceInformer)
+		_, err := NewUnidledAtController(kube, serviceInformer)
+		Expect(err).NotTo(HaveOccurred())
 
 		informerFactory.Start(ctx.Done())
 		cache.WaitForCacheSync(ctx.Done(), serviceInformer.HasSynced)
 
-		svc := &kapi.Service{
+		svc := &corev1.Service{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: "default", Name: "svc1",
 			},
 		}
-		client.CoreV1().Services("default").Create(context.Background(), svc, metav1.CreateOptions{})
+		_, err = client.CoreV1().Services("default").Create(context.Background(), svc, metav1.CreateOptions{})
+		Expect(err).NotTo(HaveOccurred())
 
-		err := kube.SetAnnotationsOnService("default", "svc1",
+		err = kube.SetAnnotationsOnService("default", "svc1",
 			map[string]interface{}{"k8s.ovn.org/idled-at": "2023-02-06T13:48:49Z"})
 		Expect(err).ToNot(HaveOccurred())
 

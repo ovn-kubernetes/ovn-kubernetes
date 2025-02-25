@@ -9,7 +9,7 @@ import (
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes/fake"
@@ -38,7 +38,7 @@ func newPod(podName, namespace, podIP string, labels map[string]string) *corev1.
 
 func newPodWithPhaseAndIP(podName, namespace string, phase corev1.PodPhase, podIP string, labels map[string]string) *corev1.Pod {
 	p := &corev1.Pod{
-		ObjectMeta: v1.ObjectMeta{Name: podName, Namespace: namespace,
+		ObjectMeta: metav1.ObjectMeta{Name: podName, Namespace: namespace,
 			Labels: labels},
 		Spec:   corev1.PodSpec{NodeName: "node"},
 		Status: corev1.PodStatus{Phase: phase},
@@ -74,7 +74,7 @@ var (
 	err                error
 
 	node = &corev1.Node{
-		ObjectMeta: v1.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: "node",
 			Annotations: map[string]string{
 				"k8s.ovn.org/l3-gateway-config": `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"169.254.33.2/24", "next-hop":"169.254.33.1"}}`,
@@ -98,8 +98,8 @@ func createTestNBGlobal(nbClient libovsdbclient.Client, zone string) error {
 	return nil
 }
 
-func deleteTestNBGlobal(nbClient libovsdbclient.Client, zone string) error {
-	p := func(nbGlobal *nbdb.NBGlobal) bool {
+func deleteTestNBGlobal(nbClient libovsdbclient.Client, _ string) error {
+	p := func(*nbdb.NBGlobal) bool {
 		return true
 	}
 
@@ -216,17 +216,17 @@ var _ = Describe("OVN External Gateway policy", func() {
 		targetMultipleNamespaceMatch = map[string]string{"match": targetNamespaceLabel}
 
 		namespaceGW = &corev1.Namespace{
-			ObjectMeta: v1.ObjectMeta{Name: gatewayNamespaceName,
+			ObjectMeta: metav1.ObjectMeta{Name: gatewayNamespaceName,
 				Labels: gatewayNamespaceMatch}}
 		namespaceTarget = &corev1.Namespace{
-			ObjectMeta: v1.ObjectMeta{Name: targetNamespaceName,
+			ObjectMeta: metav1.ObjectMeta{Name: targetNamespaceName,
 				Labels: map[string]string{"name": targetNamespaceName, "match": targetNamespaceLabel}},
 		}
 		targetPod1 = newPod("pod_target1", namespaceTarget.Name, "192.169.10.1",
 			map[string]string{"key": "pod", "name": "pod_target1"})
 
 		namespaceTarget2 = &corev1.Namespace{
-			ObjectMeta: v1.ObjectMeta{Name: targetNamespaceName2,
+			ObjectMeta: metav1.ObjectMeta{Name: targetNamespaceName2,
 				Labels: map[string]string{"name": targetNamespaceName2, "match": targetNamespaceLabel}},
 		}
 		targetPod2 = newPod("pod_target2", namespaceTarget2.Name, "192.169.10.2",
@@ -234,16 +234,16 @@ var _ = Describe("OVN External Gateway policy", func() {
 
 		dynamicPolicy = newPolicy(
 			"dynamic",
-			&v1.LabelSelector{MatchLabels: targetNamespace2Match},
+			&metav1.LabelSelector{MatchLabels: targetNamespace2Match},
 			nil,
-			&v1.LabelSelector{MatchLabels: gatewayNamespaceMatch},
-			&v1.LabelSelector{MatchLabels: map[string]string{"key": "pod"}},
+			&metav1.LabelSelector{MatchLabels: gatewayNamespaceMatch},
+			&metav1.LabelSelector{MatchLabels: map[string]string{"key": "pod"}},
 			false,
 		)
 
 		staticPolicy = newPolicy(
 			"static",
-			&v1.LabelSelector{MatchLabels: targetNamespace1Match},
+			&metav1.LabelSelector{MatchLabels: targetNamespace1Match},
 			sets.New(staticHopGWIP),
 			nil,
 			nil,
@@ -294,15 +294,15 @@ var _ = Describe("OVN External Gateway policy", func() {
 
 		var (
 			namespaceTarget3 = &corev1.Namespace{
-				ObjectMeta: v1.ObjectMeta{Name: "target3",
+				ObjectMeta: metav1.ObjectMeta{Name: "target3",
 					Labels: map[string]string{"name": "target3", "match": targetNamespaceLabel}},
 			}
 			multipleMatchPolicy = newPolicy(
 				"multiple",
-				&v1.LabelSelector{MatchLabels: targetMultipleNamespaceMatch},
+				&metav1.LabelSelector{MatchLabels: targetMultipleNamespaceMatch},
 				sets.New(staticHopGWIP),
-				&v1.LabelSelector{MatchLabels: gatewayNamespaceMatch},
-				&v1.LabelSelector{MatchLabels: map[string]string{"key": "pod"}},
+				&metav1.LabelSelector{MatchLabels: gatewayNamespaceMatch},
+				&metav1.LabelSelector{MatchLabels: map[string]string{"key": "pod"}},
 				false,
 			)
 		)
@@ -336,10 +336,10 @@ var _ = Describe("OVN External Gateway policy", func() {
 		It("registers a new policy with multiple dynamic and static GWs and bfd enabled on all gateways", func() {
 
 			staticMultiIPPolicy := newPolicy("multiIPPolicy",
-				&v1.LabelSelector{MatchLabels: targetNamespace1Match},
+				&metav1.LabelSelector{MatchLabels: targetNamespace1Match},
 				sets.New("10.10.10.1", "10.10.10.2", "10.10.10.3", "10.10.10.3", "10.10.10.4"),
-				&v1.LabelSelector{MatchLabels: gatewayNamespaceMatch},
-				&v1.LabelSelector{MatchLabels: map[string]string{"key": "pod"}},
+				&metav1.LabelSelector{MatchLabels: gatewayNamespaceMatch},
+				&metav1.LabelSelector{MatchLabels: map[string]string{"key": "pod"}},
 				true,
 			)
 			namespaceGWWithPods := newNamespaceWithPods(namespaceGW.Name, pod1, pod2, pod3, pod4, pod5, pod6)
@@ -381,7 +381,7 @@ var _ = Describe("OVN External Gateway policy", func() {
 		It("registers policies with overlaping IPs for static and dynamic hops", func() {
 			duplicatedStatic := newPolicy(
 				"duplicatedstatic",
-				&v1.LabelSelector{MatchLabels: targetNamespace1Match},
+				&metav1.LabelSelector{MatchLabels: targetNamespace1Match},
 				sets.New(staticHopGWIP),
 				nil,
 				nil,
@@ -392,16 +392,16 @@ var _ = Describe("OVN External Gateway policy", func() {
 
 			duplicatedDynamic := newPolicy(
 				"duplicatedDynamic",
-				&v1.LabelSelector{MatchLabels: targetNamespace2Match},
+				&metav1.LabelSelector{MatchLabels: targetNamespace2Match},
 				nil,
-				&v1.LabelSelector{MatchLabels: gatewayNamespaceMatch},
-				&v1.LabelSelector{MatchLabels: map[string]string{"key": "pod"}},
+				&metav1.LabelSelector{MatchLabels: gatewayNamespaceMatch},
+				&metav1.LabelSelector{MatchLabels: map[string]string{"key": "pod"}},
 				false,
 			)
 			duplicatedDynamic.Spec.NextHops.DynamicHops = append(duplicatedDynamic.Spec.NextHops.DynamicHops,
 				&adminpolicybasedrouteapi.DynamicHop{
-					NamespaceSelector: v1.LabelSelector{MatchLabels: gatewayNamespaceMatch},
-					PodSelector:       v1.LabelSelector{MatchLabels: map[string]string{"key": "duplicated"}},
+					NamespaceSelector: metav1.LabelSelector{MatchLabels: gatewayNamespaceMatch},
+					PodSelector:       metav1.LabelSelector{MatchLabels: map[string]string{"key": "duplicated"}},
 					BFDEnabled:        false,
 				})
 
@@ -442,14 +442,14 @@ var _ = Describe("OVN External Gateway policy", func() {
 			// staticPolicy2 selects the same namespace
 			staticPolicy2 := newPolicy(
 				"static2",
-				&v1.LabelSelector{MatchLabels: targetNamespace1Match},
+				&metav1.LabelSelector{MatchLabels: targetNamespace1Match},
 				sets.New(staticHopGWIP),
 				nil,
 				nil,
 				false,
 			)
 
-			_, err = fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Create(context.TODO(), staticPolicy2, v1.CreateOptions{})
+			_, err = fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Create(context.TODO(), staticPolicy2, metav1.CreateOptions{})
 			Expect(err).NotTo(HaveOccurred())
 
 			eventuallyCheckAPBRouteStatus(staticPolicy2.Name, true)
@@ -507,7 +507,7 @@ var _ = Describe("OVN External Gateway policy", func() {
 			// staticPolicy2 selects the same namespace
 			staticPolicy2 := newPolicy(
 				"static2",
-				&v1.LabelSelector{MatchLabels: targetNamespace1Match},
+				&metav1.LabelSelector{MatchLabels: targetNamespace1Match},
 				sets.New(staticHopGWIP),
 				nil,
 				nil,
@@ -515,7 +515,7 @@ var _ = Describe("OVN External Gateway policy", func() {
 			)
 			policyName2 := staticPolicy2.Name
 
-			_, err = fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Create(context.TODO(), staticPolicy2, v1.CreateOptions{})
+			_, err = fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Create(context.TODO(), staticPolicy2, metav1.CreateOptions{})
 			Expect(err).NotTo(HaveOccurred())
 
 			eventuallyCheckAPBRouteStatus(staticPolicy2.Name, true)
@@ -550,12 +550,12 @@ var _ = Describe("OVN External Gateway policy", func() {
 			eventuallyExpectNumberOfPolicies(1)
 			eventuallyExpectConfig(policyName, expectedPolicy, expectedRefs)
 
-			p, err := fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Get(context.TODO(), dynamicPolicy.Name, v1.GetOptions{})
+			p, err := fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Get(context.TODO(), dynamicPolicy.Name, metav1.GetOptions{})
 			Expect(err).NotTo(HaveOccurred())
-			p.Spec.From.NamespaceSelector = v1.LabelSelector{MatchLabels: targetMultipleNamespaceMatch}
+			p.Spec.From.NamespaceSelector = metav1.LabelSelector{MatchLabels: targetMultipleNamespaceMatch}
 			p.Generation++
 			By("updating policy selector")
-			_, err = fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Update(context.Background(), p, v1.UpdateOptions{})
+			_, err = fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Update(context.Background(), p, metav1.UpdateOptions{})
 			Expect(err).NotTo(HaveOccurred())
 
 			expectedPolicy, expectedRefs = expectedPolicyStateAndRefs(
@@ -570,7 +570,7 @@ var _ = Describe("OVN External Gateway policy", func() {
 			newStaticIP := "10.30.20.1"
 			staticPolicy := newPolicy(
 				"static",
-				&v1.LabelSelector{MatchLabels: targetNamespace1Match},
+				&metav1.LabelSelector{MatchLabels: targetNamespace1Match},
 				sets.New(staticHopGWIP, newStaticIP),
 				nil,
 				nil,
@@ -587,13 +587,13 @@ var _ = Describe("OVN External Gateway policy", func() {
 			eventuallyExpectNumberOfPolicies(1)
 			eventuallyExpectConfig(policyName, expectedPolicy, expectedRefs)
 
-			p, err := fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Get(context.TODO(), staticPolicy.Name, v1.GetOptions{})
+			p, err := fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Get(context.TODO(), staticPolicy.Name, metav1.GetOptions{})
 			Expect(err).NotTo(HaveOccurred())
 			p.Spec.NextHops.StaticHops = []*adminpolicybasedrouteapi.StaticHop{
 				{IP: newStaticIP},
 			}
 			p.Generation++
-			_, err = fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Update(context.Background(), p, v1.UpdateOptions{})
+			_, err = fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Update(context.Background(), p, metav1.UpdateOptions{})
 			Expect(err).NotTo(HaveOccurred())
 
 			expectedPolicy, expectedRefs = expectedPolicyStateAndRefs(
@@ -607,10 +607,10 @@ var _ = Describe("OVN External Gateway policy", func() {
 		It("validates that changes to a dynamic hop from an existing policy will be applied to the target namespaces", func() {
 			singlePodDynamicPolicy := newPolicy(
 				"singlePod",
-				&v1.LabelSelector{MatchLabels: targetNamespace1Match},
+				&metav1.LabelSelector{MatchLabels: targetNamespace1Match},
 				nil,
-				&v1.LabelSelector{MatchLabels: gatewayNamespaceMatch},
-				&v1.LabelSelector{MatchLabels: map[string]string{"name": "pod1"}},
+				&metav1.LabelSelector{MatchLabels: gatewayNamespaceMatch},
+				&metav1.LabelSelector{MatchLabels: map[string]string{"name": "pod1"}},
 				false,
 			)
 			initController([]runtime.Object{namespaceGW, namespaceTarget, targetPod1, pod1, pod2}, []runtime.Object{singlePodDynamicPolicy})
@@ -624,11 +624,11 @@ var _ = Describe("OVN External Gateway policy", func() {
 			eventuallyExpectNumberOfPolicies(1)
 			eventuallyExpectConfig(policyName, expectedPolicy, expectedRefs)
 
-			p, err := fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Get(context.TODO(), singlePodDynamicPolicy.Name, v1.GetOptions{})
+			p, err := fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Get(context.TODO(), singlePodDynamicPolicy.Name, metav1.GetOptions{})
 			Expect(err).NotTo(HaveOccurred())
-			p.Spec.NextHops.DynamicHops[0].PodSelector = v1.LabelSelector{MatchLabels: map[string]string{"name": "pod2"}}
+			p.Spec.NextHops.DynamicHops[0].PodSelector = metav1.LabelSelector{MatchLabels: map[string]string{"name": "pod2"}}
 			p.Generation++
-			_, err = fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Update(context.Background(), p, v1.UpdateOptions{})
+			_, err = fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Update(context.Background(), p, metav1.UpdateOptions{})
 			Expect(err).NotTo(HaveOccurred())
 
 			expectedPolicy, expectedRefs = expectedPolicyStateAndRefs(
@@ -642,7 +642,7 @@ var _ = Describe("OVN External Gateway policy", func() {
 		It("validates that removing one of the static hop IPs will be reflected in the route policy", func() {
 
 			staticMultiIPPolicy := newPolicy("multiIPPolicy",
-				&v1.LabelSelector{MatchLabels: targetNamespace1Match},
+				&metav1.LabelSelector{MatchLabels: targetNamespace1Match},
 				sets.New("10.10.10.1", "10.10.10.2", "10.10.10.3", "10.10.10.4"),
 				nil, nil,
 				true,
@@ -658,7 +658,7 @@ var _ = Describe("OVN External Gateway policy", func() {
 			eventuallyExpectNumberOfPolicies(1)
 			eventuallyExpectConfig(policyName, expectedPolicy, expectedRefs)
 
-			p, err := fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Get(context.TODO(), staticMultiIPPolicy.Name, v1.GetOptions{})
+			p, err := fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Get(context.TODO(), staticMultiIPPolicy.Name, metav1.GetOptions{})
 			Expect(err).NotTo(HaveOccurred())
 			p.Spec.NextHops.StaticHops = []*adminpolicybasedrouteapi.StaticHop{
 				{
@@ -675,7 +675,7 @@ var _ = Describe("OVN External Gateway policy", func() {
 				},
 			}
 			p.Generation++
-			_, err = fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Update(context.Background(), p, v1.UpdateOptions{})
+			_, err = fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Update(context.Background(), p, metav1.UpdateOptions{})
 			Expect(err).NotTo(HaveOccurred())
 
 			expectedPolicy, expectedRefs = expectedPolicyStateAndRefs(
@@ -689,7 +689,7 @@ var _ = Describe("OVN External Gateway policy", func() {
 		It("validates that removing a duplicated static hop IP from an overlapping policy static hop will keep the static IP in the route policy", func() {
 
 			staticMultiIPPolicy := newPolicy("multiIPPolicy",
-				&v1.LabelSelector{MatchLabels: targetNamespace2Match},
+				&metav1.LabelSelector{MatchLabels: targetNamespace2Match},
 				sets.New(staticHopGWIP, "20.10.10.1", "20.10.10.2", "20.10.10.3", "20.10.10.4"),
 				nil, nil,
 				false,
@@ -714,7 +714,7 @@ var _ = Describe("OVN External Gateway policy", func() {
 			eventuallyExpectConfig(staticMultiIPPolicy.Name, expectedPolicy1, expectedRefs1)
 			eventuallyExpectConfig(staticPolicy.Name, expectedPolicy2, expectedRefs2)
 
-			p, err := fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Get(context.TODO(), staticMultiIPPolicy.Name, v1.GetOptions{})
+			p, err := fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Get(context.TODO(), staticMultiIPPolicy.Name, metav1.GetOptions{})
 			Expect(err).NotTo(HaveOccurred())
 			p.Spec.NextHops.StaticHops = []*adminpolicybasedrouteapi.StaticHop{
 				{
@@ -731,7 +731,7 @@ var _ = Describe("OVN External Gateway policy", func() {
 				},
 			}
 			p.Generation++
-			_, err = fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Update(context.Background(), p, v1.UpdateOptions{})
+			_, err = fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Update(context.Background(), p, metav1.UpdateOptions{})
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Validating the static references don't contain the last element")
@@ -758,12 +758,12 @@ var _ = Describe("OVN External Gateway policy", func() {
 			eventuallyExpectConfig(policyName, expectedPolicy, expectedRefs)
 
 			By("set BDF to true in the static hop")
-			p, err := fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Get(context.Background(), staticPolicy.Name, v1.GetOptions{})
+			p, err := fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Get(context.Background(), staticPolicy.Name, metav1.GetOptions{})
 			Expect(err).NotTo(HaveOccurred())
 			p.Spec.NextHops.StaticHops[0].BFDEnabled = true
 			p.Generation++
 
-			_, err = fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Update(context.Background(), p, v1.UpdateOptions{})
+			_, err = fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Update(context.Background(), p, metav1.UpdateOptions{})
 			Expect(err).NotTo(HaveOccurred())
 
 			expectedPolicy, expectedRefs = expectedPolicyStateAndRefs(
@@ -788,11 +788,11 @@ var _ = Describe("OVN External Gateway policy", func() {
 			eventuallyExpectConfig(policyName, expectedPolicy, expectedRefs)
 
 			By("set BDF to true in the dynamic hop")
-			p, err := fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Get(context.Background(), dynamicPolicy.Name, v1.GetOptions{})
+			p, err := fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Get(context.Background(), dynamicPolicy.Name, metav1.GetOptions{})
 			Expect(err).NotTo(HaveOccurred())
 			p.Spec.NextHops.DynamicHops[0].BFDEnabled = true
 			p.Generation++
-			_, err = fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Update(context.Background(), p, v1.UpdateOptions{})
+			_, err = fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Update(context.Background(), p, metav1.UpdateOptions{})
 			Expect(err).NotTo(HaveOccurred())
 
 			expectedPolicy, expectedRefs = expectedPolicyStateAndRefs(
@@ -808,7 +808,7 @@ var _ = Describe("OVN External Gateway policy", func() {
 
 func eventuallyCheckAPBRouteStatus(policyName string, expectFailure bool) {
 	Eventually(func() bool {
-		pol, err := fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Get(context.TODO(), policyName, v1.GetOptions{})
+		pol, err := fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Get(context.TODO(), policyName, metav1.GetOptions{})
 		if err != nil {
 			klog.Infof("Failed getting policy: %v", err)
 			return false

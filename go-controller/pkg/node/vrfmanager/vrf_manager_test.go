@@ -194,11 +194,15 @@ var _ = ginkgo.Describe("VRF manager tests with a network namespace", func() {
 		stopCh = make(chan struct{})
 		routeManager := routemanager.NewController()
 		wg.Add(1)
-		go testNS.Do(func(netNS ns.NetNS) error {
+		go func() {
+			defer ginkgo.GinkgoRecover()
 			defer wg.Done()
-			routeManager.Run(stopCh, 2*time.Minute)
-			return nil
-		})
+			err := testNS.Do(func(ns.NetNS) error {
+				routeManager.Run(stopCh, 2*time.Minute)
+				return nil
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		}()
 		// set vrf manager reconcile period into one second.
 		reconcilePeriod = 1 * time.Second
 		c = NewController(routeManager)
@@ -207,15 +211,14 @@ var _ = ginkgo.Describe("VRF manager tests with a network namespace", func() {
 			wg2.Wait()
 		}()
 		wg2.Add(1)
-		go testNS.Do(func(netNS ns.NetNS) error {
-			defer func() {
-				ginkgo.GinkgoRecover()
-				wg2.Done()
-			}()
-			err = c.Run(stopCh, wg)
+		go func() {
+			defer ginkgo.GinkgoRecover()
+			defer wg2.Done()
+			err := testNS.Do(func(ns.NetNS) error {
+				return c.Run(stopCh, wg)
+			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			return nil
-		})
+		}()
 	})
 	ginkgo.AfterEach(func() {
 		close(stopCh)

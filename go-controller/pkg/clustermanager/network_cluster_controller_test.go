@@ -9,7 +9,7 @@ import (
 	"github.com/onsi/gomega"
 	"github.com/urfave/cli/v2"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/record"
@@ -53,7 +53,7 @@ var _ = ginkgo.Describe("Network Cluster Controller", func() {
 	ginkgo.Context("Host Subnets", func() {
 		ginkgo.It("removes an unused dual-stack allocation from single-stack cluster", func() {
 			app.Action = func(ctx *cli.Context) error {
-				nodes := []v1.Node{
+				nodes := []corev1.Node{
 					{
 						ObjectMeta: metav1.ObjectMeta{
 							Name: "node1",
@@ -64,7 +64,7 @@ var _ = ginkgo.Describe("Network Cluster Controller", func() {
 						},
 					},
 				}
-				kubeFakeClient := fake.NewSimpleClientset(&v1.NodeList{
+				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{
@@ -81,7 +81,7 @@ var _ = ginkgo.Describe("Network Cluster Controller", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				ncc := newDefaultNetworkClusterController(&util.DefaultNetInfo{}, fakeClient, f, recorder)
-				ncc.Start(ctx.Context)
+				gomega.Expect(ncc.Start(ctx.Context)).To(gomega.Succeed())
 				defer ncc.Stop()
 
 				// Check that the default network controller removes the unused v6 node subnet annotation
@@ -105,7 +105,7 @@ var _ = ginkgo.Describe("Network Cluster Controller", func() {
 
 		ginkgo.It("allocates a subnet for a new node", func() {
 			app.Action = func(ctx *cli.Context) error {
-				nodes := []v1.Node{
+				nodes := []corev1.Node{
 					{
 						ObjectMeta: metav1.ObjectMeta{
 							Name: "node1",
@@ -115,7 +115,7 @@ var _ = ginkgo.Describe("Network Cluster Controller", func() {
 						},
 					},
 				}
-				kubeFakeClient := fake.NewSimpleClientset(&v1.NodeList{
+				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{
@@ -132,7 +132,7 @@ var _ = ginkgo.Describe("Network Cluster Controller", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				ncc := newDefaultNetworkClusterController(&util.DefaultNetInfo{}, fakeClient, f, recorder)
-				ncc.Start(ctx.Context)
+				gomega.Expect(ncc.Start(ctx.Context)).To(gomega.Succeed())
 				defer ncc.Stop()
 
 				// Check that the default network controller adds a subnet for the new node
@@ -156,7 +156,7 @@ var _ = ginkgo.Describe("Network Cluster Controller", func() {
 
 		ginkgo.It("removes an invalid single-stack annotation", func() {
 			app.Action = func(ctx *cli.Context) error {
-				nodes := []v1.Node{
+				nodes := []corev1.Node{
 					{
 						ObjectMeta: metav1.ObjectMeta{
 							Name: "node1",
@@ -167,7 +167,7 @@ var _ = ginkgo.Describe("Network Cluster Controller", func() {
 						},
 					},
 				}
-				kubeFakeClient := fake.NewSimpleClientset(&v1.NodeList{
+				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{
@@ -184,7 +184,7 @@ var _ = ginkgo.Describe("Network Cluster Controller", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				ncc := newDefaultNetworkClusterController(&util.DefaultNetInfo{}, fakeClient, f, recorder)
-				ncc.Start(ctx.Context)
+				gomega.Expect(ncc.Start(ctx.Context)).To(gomega.Succeed())
 				defer ncc.Stop()
 
 				// Check that the default network controller removes the unused v6 node subnet annotation

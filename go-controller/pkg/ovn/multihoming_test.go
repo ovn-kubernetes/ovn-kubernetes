@@ -9,7 +9,7 @@ import (
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	kubevirtv1 "kubevirt.io/api/core/v1"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
 
@@ -18,7 +18,6 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
-	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -141,7 +140,7 @@ func (em *secondaryNetworkExpectationMachine) expectedLogicalSwitchesAndPortsWit
 				hasSubnets bool
 			)
 			if len(subnets) > 0 {
-				subnet = ovntest.MustParseIPNet(subnets)
+				subnet = testing.MustParseIPNet(subnets)
 				hasSubnets = true
 			}
 
@@ -274,7 +273,7 @@ func (em *secondaryNetworkExpectationMachine) expectedLogicalSwitchesAndPortsWit
 			if _, alreadyAdded := alreadyAddedManagementElements[pod.nodeName]; !alreadyAdded &&
 				em.gatewayConfig != nil {
 				if ocInfo.bnc.TopologyType() == ovntypes.Layer3Topology {
-					data = append(data, expectedGWEntities(pod.nodeName, subnets, ocInfo.bnc, *em.gatewayConfig)...)
+					data = append(data, expectedGWEntities(pod.nodeName, ocInfo.bnc, *em.gatewayConfig)...)
 					data = append(data, expectedLayer3EgressEntities(ocInfo.bnc, *em.gatewayConfig, subnet)...)
 				} else {
 					data = append(data, expectedLayer2EgressEntities(ocInfo.bnc, *em.gatewayConfig, pod.nodeName)...)
@@ -349,14 +348,6 @@ func newExpectedSwitchToRouterPort(lspUUID string, portName string, pod testPod,
 	lrp.PortSecurity = nil
 	lrp.Type = "router"
 	return lrp
-}
-
-func subnetsAsString(subnetInfo []config.CIDRNetworkEntry) []string {
-	var subnets []string
-	for _, cidr := range subnetInfo {
-		subnets = append(subnets, cidr.String())
-	}
-	return subnets
 }
 
 func managementPortName(switchName string) string {
@@ -461,7 +452,7 @@ func nonICClusterTestConfiguration(opts ...testConfigOpt) testConfiguration {
 	return config
 }
 
-func newMultiHomedKubevirtPod(vmName string, liveMigrationInfo liveMigrationPodInfo, testPod testPod, multiHomingConfigs ...secondaryNetInfo) *v1.Pod {
+func newMultiHomedKubevirtPod(vmName string, liveMigrationInfo liveMigrationPodInfo, testPod testPod, multiHomingConfigs ...secondaryNetInfo) *corev1.Pod {
 	pod := newMultiHomedPod(testPod, multiHomingConfigs...)
 	pod.Labels[kubevirtv1.VirtualMachineNameLabel] = vmName
 	pod.Status.Phase = liveMigrationInfo.podPhase
@@ -472,7 +463,7 @@ func newMultiHomedKubevirtPod(vmName string, liveMigrationInfo liveMigrationPodI
 	return pod
 }
 
-func newMultiHomedPod(testPod testPod, multiHomingConfigs ...secondaryNetInfo) *v1.Pod {
+func newMultiHomedPod(testPod testPod, multiHomingConfigs ...secondaryNetInfo) *corev1.Pod {
 	pod := newPod(testPod.namespace, testPod.podName, testPod.nodeName, testPod.podIP)
 	var secondaryNetworks []nadapi.NetworkSelectionElement
 	if len(pod.Annotations) == 0 {

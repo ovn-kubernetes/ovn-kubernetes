@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
@@ -31,7 +31,7 @@ var _ = Describe("Annotator", func() {
 			kube := &Kube{
 				KClient: fakeClient,
 			}
-			newNode := &v1.Node{
+			newNode := &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:        nodeName,
 					Annotations: initialAnnotations,

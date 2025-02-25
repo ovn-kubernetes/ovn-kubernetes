@@ -7,7 +7,7 @@ import (
 	"github.com/urfave/cli/v2"
 	"github.com/vishvananda/netlink"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/fake"
@@ -34,7 +34,7 @@ const (
 func appHONRun(app *cli.App) {
 	err := app.Run([]string{
 		app.Name,
-		"-no-hostsubnet-nodes=" + v1.LabelOSStable + "=linux",
+		"-no-hostsubnet-nodes=" + corev1.LabelOSStable + "=linux",
 	})
 	Expect(err).NotTo(HaveOccurred())
 }
@@ -109,8 +109,8 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				types.HybridOverlayNodeSubnet: hoNodeSubnet,
 			})
 
-			fakeClient := fake.NewSimpleClientset(&v1.NodeList{
-				Items: []v1.Node{
+			fakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+				Items: []corev1.Node{
 					*testNode,
 				},
 			})
@@ -156,13 +156,13 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				types.HybridOverlayNodeSubnet: hoNodeSubnet,
 			})
 
-			fakeClient := fake.NewSimpleClientset(&v1.PodList{
-				Items: []v1.Pod{
+			fakeClient := fake.NewSimpleClientset(&corev1.PodList{
+				Items: []corev1.Pod{
 					*testPod1,
 					*testPod2,
 				},
-			}, &v1.NodeList{
-				Items: []v1.Node{
+			}, &corev1.NodeList{
+				Items: []corev1.Node{
 					*testNode,
 				},
 			})

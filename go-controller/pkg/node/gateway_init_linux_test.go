@@ -23,7 +23,7 @@ import (
 	"github.com/urfave/cli/v2"
 	"github.com/vishvananda/netlink"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -218,7 +218,7 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 		_, err = config.InitConfig(ctx, fexec, nil)
 		Expect(err).NotTo(HaveOccurred())
 
-		existingNode := v1.Node{
+		existingNode := corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: nodeName,
 				Annotations: map[string]string{
@@ -230,8 +230,8 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 		if setNodeIP {
 			expectedAddr, err := netlink.ParseAddr(eth0CIDR)
 			Expect(err).NotTo(HaveOccurred())
-			nodeAddr := v1.NodeAddress{Type: v1.NodeInternalIP, Address: expectedAddr.IP.String()}
-			existingNode.Status = v1.NodeStatus{Addresses: []v1.NodeAddress{nodeAddr}}
+			nodeAddr := corev1.NodeAddress{Type: corev1.NodeInternalIP, Address: expectedAddr.IP.String()}
+			existingNode.Status = corev1.NodeStatus{Addresses: []corev1.NodeAddress{nodeAddr}}
 		}
 
 		_, nodeNet, err := net.ParseCIDR(nodeSubnet)
@@ -257,8 +257,8 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 		err = setupManagementPortNFTables(&fakeMgmtPortConfig)
 		Expect(err).NotTo(HaveOccurred())
 
-		kubeFakeClient := fake.NewSimpleClientset(&v1.NodeList{
-			Items: []v1.Node{existingNode},
+		kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+			Items: []corev1.Node{existingNode},
 		})
 		fakeClient := &util.OVNNodeClientset{
 			KubeClient:            kubeFakeClient,
@@ -287,12 +287,15 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 		Expect(err).NotTo(HaveOccurred())
 		rm := routemanager.NewController()
 		wg.Add(1)
-		go testNS.Do(func(netNS ns.NetNS) error {
+		go func() {
 			defer GinkgoRecover()
-			rm.Run(stop, 10*time.Second)
-			wg.Done()
-			return nil
-		})
+			defer wg.Done()
+			err := testNS.Do(func(ns.NetNS) error {
+				rm.Run(stop, 10*time.Second)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+		}()
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 
@@ -659,15 +662,15 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 		_, err = config.InitConfig(ctx, fexec, nil)
 		Expect(err).NotTo(HaveOccurred())
 
-		nodeAddr := v1.NodeAddress{Type: v1.NodeInternalIP, Address: dpuIP}
-		existingNode := v1.Node{ObjectMeta: metav1.ObjectMeta{
+		nodeAddr := corev1.NodeAddress{Type: corev1.NodeInternalIP, Address: dpuIP}
+		existingNode := corev1.Node{ObjectMeta: metav1.ObjectMeta{
 			Name: nodeName,
 		},
-			Status: v1.NodeStatus{Addresses: []v1.NodeAddress{nodeAddr}},
+			Status: corev1.NodeStatus{Addresses: []corev1.NodeAddress{nodeAddr}},
 		}
 
-		kubeFakeClient := fake.NewSimpleClientset(&v1.NodeList{
-			Items: []v1.Node{existingNode},
+		kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+			Items: []corev1.Node{existingNode},
 		})
 		fakeClient := &util.OVNNodeClientset{
 			KubeClient:            kubeFakeClient,
@@ -722,12 +725,15 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 		defer runtime.UnlockOSThread()
 		rm := routemanager.NewController()
 		wg.Add(1)
-		go testNS.Do(func(netNS ns.NetNS) error {
+		go func() {
 			defer GinkgoRecover()
-			rm.Run(stop, 10*time.Second)
-			wg.Done()
-			return nil
-		})
+			defer wg.Done()
+			err := testNS.Do(func(ns.NetNS) error {
+				rm.Run(stop, 10*time.Second)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+		}()
 		// FIXME(mk): starting the gateway causing go routines to be spawned within sub functions and therefore they escape the
 		// netns we wanted to set it to originally here. Refactor test cases to not spawn a go routine or just fake out everything
 		// and remove need to create netns
@@ -827,15 +833,15 @@ func shareGatewayInterfaceDPUHostTest(app *cli.App, testNS ns.NetNS, uplinkName,
 		_, err = config.InitConfig(ctx, fexec, nil)
 		Expect(err).NotTo(HaveOccurred())
 
-		nodeAddr := v1.NodeAddress{Type: v1.NodeInternalIP, Address: hostIP}
-		existingNode := v1.Node{ObjectMeta: metav1.ObjectMeta{
+		nodeAddr := corev1.NodeAddress{Type: corev1.NodeInternalIP, Address: hostIP}
+		existingNode := corev1.Node{ObjectMeta: metav1.ObjectMeta{
 			Name: nodeName,
 		},
-			Status: v1.NodeStatus{Addresses: []v1.NodeAddress{nodeAddr}},
+			Status: corev1.NodeStatus{Addresses: []corev1.NodeAddress{nodeAddr}},
 		}
 
-		kubeFakeClient := fake.NewSimpleClientset(&v1.NodeList{
-			Items: []v1.Node{existingNode},
+		kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+			Items: []corev1.Node{existingNode},
 		})
 		fakeClient := &util.OVNNodeClientset{
 			KubeClient:             kubeFakeClient,
@@ -862,12 +868,15 @@ func shareGatewayInterfaceDPUHostTest(app *cli.App, testNS ns.NetNS, uplinkName,
 		nc := newDefaultNodeNetworkController(cnnci, stop, wg, routeManager)
 		// must run route manager manually which is usually started with nc.Start()
 		wg.Add(1)
-		go testNS.Do(func(netNS ns.NetNS) error {
+		go func() {
 			defer GinkgoRecover()
-			nc.routeManager.Run(stop, 10*time.Second)
-			wg.Done()
-			return nil
-		})
+			defer wg.Done()
+			err := testNS.Do(func(ns.NetNS) error {
+				nc.routeManager.Run(stop, 10*time.Second)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+		}()
 
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
@@ -1107,24 +1116,24 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 
 		expectedAddr, err := netlink.ParseAddr(eth0CIDR)
 		Expect(err).NotTo(HaveOccurred())
-		nodeAddr := v1.NodeAddress{Type: v1.NodeInternalIP, Address: expectedAddr.IP.String()}
-		existingNode := v1.Node{ObjectMeta: metav1.ObjectMeta{
+		nodeAddr := corev1.NodeAddress{Type: corev1.NodeInternalIP, Address: expectedAddr.IP.String()}
+		existingNode := corev1.Node{ObjectMeta: metav1.ObjectMeta{
 			Name: nodeName,
 		},
-			Status: v1.NodeStatus{Addresses: []v1.NodeAddress{nodeAddr}},
+			Status: corev1.NodeStatus{Addresses: []corev1.NodeAddress{nodeAddr}},
 		}
 		externalIP := "1.1.1.1"
 		externalIPPort := int32(8032)
 		service := *newService("service1", "namespace1", "10.129.0.2",
-			[]v1.ServicePort{
+			[]corev1.ServicePort{
 				{
 					Port:     externalIPPort,
-					Protocol: v1.ProtocolTCP,
+					Protocol: corev1.ProtocolTCP,
 				},
 			},
-			v1.ServiceTypeClusterIP,
+			corev1.ServiceTypeClusterIP,
 			[]string{externalIP},
-			v1.ServiceStatus{},
+			corev1.ServiceStatus{},
 			false, false,
 		)
 		endpointSlice := *newEndpointSlice("service1", "namespace1", []discovery.Endpoint{}, []discovery.EndpointPort{})
@@ -1155,8 +1164,8 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 		}
 
 		kubeFakeClient := fake.NewSimpleClientset(
-			&v1.NodeList{
-				Items: []v1.Node{existingNode},
+			&corev1.NodeList{
+				Items: []corev1.Node{existingNode},
 			},
 			&service,
 			&endpointSlice,
@@ -1191,11 +1200,14 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 		ip, ipNet, _ := net.ParseCIDR(eth0CIDR)
 		ipNet.IP = ip
 		rm := routemanager.NewController()
-		go testNS.Do(func(netNS ns.NetNS) error {
+		go func() {
 			defer GinkgoRecover()
-			rm.Run(stop, 10*time.Second)
-			return nil
-		})
+			err := testNS.Do(func(ns.NetNS) error {
+				rm.Run(stop, 10*time.Second)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+		}()
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 

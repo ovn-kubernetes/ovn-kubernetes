@@ -9,7 +9,7 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	knet "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -59,7 +59,7 @@ var _ = ginkgo.Describe("OVN PodSelectorAddressSet", func() {
 
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
-		config.PrepareTestConfig()
+		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 		fakeOvn = NewFakeOVN(true)
 		initialData := getHairpinningACLsV4AndPortGroup()
 		initialDB = libovsdbtest.TestSetup{
@@ -74,9 +74,9 @@ var _ = ginkgo.Describe("OVN PodSelectorAddressSet", func() {
 		}
 	})
 
-	startOvn := func(dbSetup libovsdbtest.TestSetup, namespaces []v1.Namespace, networkPolicies []knet.NetworkPolicy,
+	startOvn := func(dbSetup libovsdbtest.TestSetup, namespaces []corev1.Namespace, networkPolicies []knet.NetworkPolicy,
 		pods []testPod, podLabels map[string]string) {
-		var podsList []v1.Pod
+		var podsList []corev1.Pod
 		for _, testPod := range pods {
 			knetPod := newPod(testPod.namespace, testPod.podName, testPod.nodeName, testPod.podIP)
 			if len(podLabels) > 0 {
@@ -85,10 +85,10 @@ var _ = ginkgo.Describe("OVN PodSelectorAddressSet", func() {
 			podsList = append(podsList, *knetPod)
 		}
 		fakeOvn.startWithDBSetup(dbSetup,
-			&v1.NamespaceList{
+			&corev1.NamespaceList{
 				Items: namespaces,
 			},
-			&v1.PodList{
+			&corev1.PodList{
 				Items: podsList,
 			},
 			&knet.NetworkPolicyList{
@@ -160,7 +160,7 @@ var _ = ginkgo.Describe("OVN PodSelectorAddressSet", func() {
 			"", "label1", true, true)
 		networkPolicy2 := getMatchLabelsNetworkPolicy(netPolicyName2, namespace1.Name,
 			"", "label1", true, true)
-		startOvn(initialDB, []v1.Namespace{namespace1}, []knet.NetworkPolicy{*networkPolicy1, *networkPolicy2},
+		startOvn(initialDB, []corev1.Namespace{namespace1}, []knet.NetworkPolicy{*networkPolicy1, *networkPolicy2},
 			nil, nil)
 
 		fakeOvn.asf.ExpectEmptyAddressSet(namespaceName1)
@@ -179,16 +179,16 @@ var _ = ginkgo.Describe("OVN PodSelectorAddressSet", func() {
 			ns1pod2 := newPod(namespace1.Name, "ns1pod2", nodeName, ip2)
 			ns2pod1 := newPod(namespace2.Name, "ns2pod1", nodeName, ip3)
 			ns2pod2 := newPod(namespace2.Name, "ns2pod2", nodeName, ip4)
-			podsList := []v1.Pod{}
-			for _, pod := range []*v1.Pod{ns1pod1, ns1pod2, ns2pod1, ns2pod2} {
+			podsList := []corev1.Pod{}
+			for _, pod := range []*corev1.Pod{ns1pod1, ns1pod2, ns2pod1, ns2pod2} {
 				pod.Labels = map[string]string{podLabelKey: pod.Name}
 				podsList = append(podsList, *pod)
 			}
 			fakeOvn.startWithDBSetup(libovsdbtest.TestSetup{},
-				&v1.NamespaceList{
-					Items: []v1.Namespace{namespace1, namespace2},
+				&corev1.NamespaceList{
+					Items: []corev1.Namespace{namespace1, namespace2},
 				},
-				&v1.PodList{
+				&corev1.PodList{
 					Items: podsList,
 				},
 			)
@@ -300,6 +300,7 @@ var _ = ginkgo.Describe("OVN PodSelectorAddressSet", func() {
 		// run add again, NewAddressSet should succeed this time
 		peerASKey, _, _, err = fakeOvn.controller.EnsurePodSelectorAddressSet(
 			peer.PodSelector, peer.NamespaceSelector, networkPolicy.Namespace, getPolicyKeyWithKind(networkPolicy))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		// address set should be created
 		fakeOvn.asf.ExpectEmptyAddressSet(peerASIDs)
 		fakeOvn.asf.ExpectNumberOfAddressSets(1)
@@ -391,8 +392,8 @@ var _ = ginkgo.Describe("OVN PodSelectorAddressSet", func() {
 		}
 
 		fakeOvn.startWithDBSetup(initialDB,
-			&v1.NamespaceList{
-				Items: []v1.Namespace{
+			&corev1.NamespaceList{
+				Items: []corev1.Namespace{
 					namespace1,
 				},
 			},
@@ -422,9 +423,8 @@ var _ = ginkgo.Describe("OVN PodSelectorAddressSet", func() {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 		// Mark the pod as Completed, so delete event will be generated
-		completedPod.Status.Phase = v1.PodSucceeded
-		completedPod, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(completedPod.Namespace).
-			Update(context.TODO(), completedPod, metav1.UpdateOptions{})
+		completedPod.Status.Phase = corev1.PodSucceeded
+		_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(completedPod.Namespace).Update(context.TODO(), completedPod, metav1.UpdateOptions{})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 		// make sure the delete event is handled and address set is not changed
@@ -447,8 +447,8 @@ var _ = ginkgo.Describe("OVN PodSelectorAddressSet", func() {
 		}
 
 		fakeOvn.startWithDBSetup(initialDB,
-			&v1.NamespaceList{
-				Items: []v1.Namespace{
+			&corev1.NamespaceList{
+				Items: []corev1.Namespace{
 					namespace1,
 					namespace2,
 				},
@@ -479,9 +479,8 @@ var _ = ginkgo.Describe("OVN PodSelectorAddressSet", func() {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 		// Mark the pod as Completed, so delete event will be generated
-		completedPod.Status.Phase = v1.PodSucceeded
-		completedPod, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(completedPod.Namespace).
-			Update(context.TODO(), completedPod, metav1.UpdateOptions{})
+		completedPod.Status.Phase = corev1.PodSucceeded
+		_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(completedPod.Namespace).Update(context.TODO(), completedPod, metav1.UpdateOptions{})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 		// IP should be deleted from the address set on delete event, since the new pod with the same ip
@@ -491,7 +490,7 @@ var _ = ginkgo.Describe("OVN PodSelectorAddressSet", func() {
 	ginkgo.It("cleans up retryFramework resources", func() {
 		namespace1 := *newNamespace(namespaceName1)
 		namespace1.Labels = map[string]string{"key": "value"}
-		startOvn(initialDB, []v1.Namespace{namespace1}, nil, nil, nil)
+		startOvn(initialDB, []corev1.Namespace{namespace1}, nil, nil, nil)
 		selector := &metav1.LabelSelector{
 			MatchLabels: map[string]string{"key": "value"},
 		}

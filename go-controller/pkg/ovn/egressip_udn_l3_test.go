@@ -2604,12 +2604,6 @@ func buildEgressIPServedPodsAddressSetsForController(ips []string, network, cont
 
 }
 
-// returns the address set with externalID "k8s.ovn.org/name": "node-ips"
-func buildEgressIPNodeAddressSetsForController(ips []string) (*nbdb.AddressSet, *nbdb.AddressSet) {
-	dbIDs := getEgressIPAddrSetDbIDs(NodeIPAddrSetName, ovntypes.DefaultNetworkName, DefaultNetworkControllerName)
-	return addressset.GetTestDbAddrSets(dbIDs, ips)
-}
-
 // returns the LRP for marking reply traffic and not routing
 func getNoReRouteReplyTrafficPolicyForController(network, controller string) *nbdb.LogicalRouterPolicy {
 	return &nbdb.LogicalRouterPolicy{

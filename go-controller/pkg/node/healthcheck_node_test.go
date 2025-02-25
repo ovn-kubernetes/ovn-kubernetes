@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -27,16 +27,16 @@ const healthzAddress string = "127.0.0.1:10256"
 var ovnkNodePodName string = "ovnkube-node-test"
 var nodeName string = "test-node"
 
-func newFakeOvnkNodePod(deletionTimestamp *metav1.Time) *v1.Pod {
-	return &v1.Pod{
+func newFakeOvnkNodePod(deletionTimestamp *metav1.Time) *corev1.Pod {
+	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              ovnkNodePodName,
 			UID:               types.UID(ovnkNodePodName),
 			Namespace:         config.Kubernetes.OVNConfigNamespace,
 			DeletionTimestamp: deletionTimestamp,
 		},
-		Spec: v1.PodSpec{
-			Containers: []v1.Container{
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
 				{
 					Name:  "ovnkube-node",
 					Image: "ovnkube-image",
@@ -48,17 +48,14 @@ func newFakeOvnkNodePod(deletionTimestamp *metav1.Time) *v1.Pod {
 }
 
 func initWatchFactoryWithObjects(objects ...runtime.Object) *factory.WatchFactory {
-	v1Objects := []runtime.Object{}
-	for _, object := range objects {
-		v1Objects = append(v1Objects, object)
-	}
+	v1Objects := append([]runtime.Object{}, objects...)
 	fakeClient := &util.OVNNodeClientset{
 		KubeClient: fake.NewSimpleClientset(v1Objects...),
 	}
 
 	watcher, err := factory.NewNodeWatchFactory(fakeClient, nodeName)
 	Expect(err).NotTo(HaveOccurred())
-	watcher.Start()
+	Expect(watcher.Start()).To(Succeed())
 	return watcher
 }
 
@@ -86,7 +83,7 @@ var _ = Describe("Node healthcheck tests", func() {
 	)
 
 	BeforeEach(func() {
-		config.PrepareTestConfig()
+		Expect(config.PrepareTestConfig()).To(Succeed())
 		stopCh = make(chan struct{})
 		wg = &sync.WaitGroup{}
 		os.Setenv("POD_NAME", ovnkNodePodName)
@@ -103,8 +100,8 @@ var _ = Describe("Node healthcheck tests", func() {
 			recorder := record.NewFakeRecorder(10)
 
 			watchFactory = initWatchFactoryWithObjects(
-				&v1.PodList{
-					Items: []v1.Pod{
+				&corev1.PodList{
+					Items: []corev1.Pod{
 						*newFakeOvnkNodePod(nil),
 					},
 				})
@@ -122,8 +119,8 @@ var _ = Describe("Node healthcheck tests", func() {
 			recorder := record.NewFakeRecorder(10)
 			now := metav1.Now()
 			watchFactory = initWatchFactoryWithObjects(
-				&v1.PodList{
-					Items: []v1.Pod{
+				&corev1.PodList{
+					Items: []corev1.Pod{
 						*newFakeOvnkNodePod(&now),
 					},
 				})

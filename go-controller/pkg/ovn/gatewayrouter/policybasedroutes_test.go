@@ -8,7 +8,7 @@ import (
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilnet "k8s.io/utils/net"
 
@@ -42,7 +42,7 @@ func (n network) copyNetworkAndSetLRPs(lrps ...*nbdb.LogicalRouterPolicy) networ
 }
 
 func (n network) generateTestData(nodeName string) []libovsdbtest.TestData {
-	data := make([]libovsdbtest.TestData, 0, 0)
+	var data []libovsdbtest.TestData
 	lrpUUIDs := make([]string, 0, len(n.initialLRPs))
 	for _, lrp := range n.initialLRPs {
 		lrpUUIDs = append(lrpUUIDs, lrp.UUID)
@@ -547,7 +547,7 @@ func TestAddHostCIDRPolicy(t *testing.T) {
 			mgntIPv4:    node1UDNMgntIPv4Str,
 			mgntIPv6:    node1UDNMgntIPv6Str,
 		}
-		node = &v1.Node{
+		node = &corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: node1Name,
 				Annotations: map[string]string{

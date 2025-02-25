@@ -7,14 +7,14 @@ import (
 
 	"github.com/onsi/gomega"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 )
 
 func Test_NodeIPTemplates_SingleIP(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 
 	// System Under Test
-	sut := NewNodeIPsTemplates(v1.IPv4Protocol)
+	sut := NewNodeIPsTemplates(corev1.IPv4Protocol)
 
 	sut.AddIP("ch1", net.ParseIP("11.11.0.1"))
 	sut.AddIP("ch2", net.ParseIP("11.11.0.2"))
@@ -36,7 +36,7 @@ func Test_NodeIPTemplates_DifferentIPCount(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 
 	// System Under Test
-	sut := NewNodeIPsTemplates(v1.IPv4Protocol)
+	sut := NewNodeIPsTemplates(corev1.IPv4Protocol)
 
 	sut.AddIP("ch1", net.ParseIP("11.11.0.1"))
 	sut.AddIP("ch2", net.ParseIP("11.11.0.2"))

@@ -9,7 +9,7 @@ import (
 	ocpnetworkapiv1alpha1 "github.com/openshift/api/network/v1alpha1"
 	ocpnetworklisterv1alpha1 "github.com/openshift/client-go/network/listers/network/v1alpha1"
 
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -81,7 +81,7 @@ var _ = ginkgo.Describe("Cluster manager DNS Name Resolver Controller operations
 
 	checkDNSNameResolverExists := func(dnsName string) *ocpnetworkapiv1alpha1.DNSNameResolver {
 		var dnsNameResolvers []*ocpnetworkapiv1alpha1.DNSNameResolver
-		err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 5*time.Second, true, func(ctx context.Context) (done bool, err error) {
+		err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 5*time.Second, true, func(context.Context) (done bool, err error) {
 			dnsNameResolvers, err = dnsLister.DNSNameResolvers(config.Kubernetes.OVNConfigNamespace).List(labels.Everything())
 			if err != nil {
 				return false, err
@@ -101,9 +101,9 @@ var _ = ginkgo.Describe("Cluster manager DNS Name Resolver Controller operations
 	}
 
 	checkDNSNameResolverRemoved := func(resolverName string) {
-		err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 5*time.Second, true, func(ctx context.Context) (done bool, err error) {
+		err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 5*time.Second, true, func(context.Context) (done bool, err error) {
 			_, err = dnsLister.DNSNameResolvers(config.Kubernetes.OVNConfigNamespace).Get(resolverName)
-			if err == nil || !errors.IsNotFound(err) {
+			if err == nil || !apierrors.IsNotFound(err) {
 				return false, nil
 			}
 

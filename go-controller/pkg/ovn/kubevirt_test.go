@@ -11,19 +11,16 @@ import (
 	kubevirtv1 "kubevirt.io/api/core/v1"
 
 	corev1 "k8s.io/api/core/v1"
-	kapi "k8s.io/api/core/v1"
-	v1 "k8s.io/api/core/v1"
-	kapierrors "k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ktypes "k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kubevirt"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
-	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
@@ -111,7 +108,6 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 	type testVM struct {
 		addressIPv4 string
 		addressIPv6 string
-		mac         string
 	}
 
 	var (
@@ -203,7 +199,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 			return true
 		}
 
-		kubevirtOVNTestData = func(t testData, previousData []libovsdbtest.TestData) []libovsdbtest.TestData {
+		kubevirtOVNTestData = func(t testData, previousData []libovsdb.TestData) []libovsdb.TestData {
 			testVirtLauncherPods := []testVirtLauncherPod{t.testVirtLauncherPod}
 			testPods := []testPod{}
 			nodeSet := map[string]bool{t.nodeName: true}
@@ -232,10 +228,10 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 						portName := util.GetLogicalPortName(p.namespace, p.podName)
 						if model.Name == portName {
 							if findDHCPOptionsWithHostname(t.expectedDhcpv4, p.vmName) != nil {
-								model.Dhcpv4Options = pointer.String(dhcpv4OptionsUUID + p.vmName)
+								model.Dhcpv4Options = ptr.To(dhcpv4OptionsUUID + p.vmName)
 							}
 							if findDHCPOptionsWithHostname(t.expectedDhcpv6, p.vmName) != nil {
-								model.Dhcpv6Options = pointer.String(dhcpv6OptionsUUID + p.vmName)
+								model.Dhcpv6Options = ptr.To(dhcpv6OptionsUUID + p.vmName)
 							}
 						}
 					}
@@ -258,7 +254,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 			pod.Labels = t.labels
 			return pod
 		}
-		addOVNPodAnnotations = func(pod *kapi.Pod, t testVirtLauncherPod) {
+		addOVNPodAnnotations = func(pod *corev1.Pod, t testVirtLauncherPod) {
 			pod.Annotations = map[string]string{}
 			if t.skipPodAnnotations {
 				pod.Annotations = map[string]string{}
@@ -483,7 +479,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 
 	BeforeEach(func() {
 		// Restore global default values before each testcase
-		config.PrepareTestConfig()
+		Expect(config.PrepareTestConfig()).To(Succeed())
 
 		app = cli.NewApp()
 		app.Name = "test"
@@ -632,7 +628,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 				initVirtLauncherPod(&t.migrationTarget.testVirtLauncherPod)
 			}
 
-			pods := []v1.Pod{}
+			pods := []corev1.Pod{}
 			sourceVirtLauncherPod := t.testVirtLauncherPod
 			sourcePod := newPodFromTestVirtLauncherPod(sourceVirtLauncherPod)
 			if sourcePod != nil {
@@ -642,14 +638,14 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 				}
 			}
 
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				fakeOvn.startWithDBSetup(initialDB,
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							*newNamespace(t.namespace),
 						},
 					},
-					&v1.PodList{
+					&corev1.PodList{
 						Items: pods,
 					},
 					&corev1.Service{
@@ -661,8 +657,8 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 							ClusterIPs: t.dnsServiceIPs,
 						},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{
+					&corev1.NodeList{
+						Items: []corev1.Node{
 							{
 								ObjectMeta: metav1.ObjectMeta{
 									Name: node1,
@@ -714,7 +710,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 						podToCreate.Annotations = t.migrationTarget.annotations
 					}
 					_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(t.namespace).Get(context.TODO(), podToCreate.Name, metav1.GetOptions{})
-					Expect(err).To(MatchError(kapierrors.IsNotFound, "IsNotFound"))
+					Expect(err).To(MatchError(apierrors.IsNotFound, "IsNotFound"))
 
 					podToCreate.CreationTimestamp = metav1.NewTime(time.Now())
 					_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(t.namespace).Create(context.TODO(), podToCreate, metav1.CreateOptions{})
@@ -743,7 +739,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 					}
 				}
 
-				expectedOVN := []libovsdbtest.TestData{}
+				expectedOVN := []libovsdb.TestData{}
 				ovnClusterRouter.Policies = []string{}
 				expectedOVNClusterRouter := ovnClusterRouter.DeepCopy()
 				expectedOVNClusterRouter.Policies = []string{}
@@ -792,7 +788,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 						migrationTargetGWRouter,
 					)
 				}
-				Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedOVN), "should populate ovn")
+				Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData(expectedOVN), "should populate ovn")
 				if t.replaceNode != "" {
 					By("Replace vm node with newNode at the logical switch manager")
 					newNode := &corev1.Node{
@@ -843,7 +839,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 						err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(t.namespace).Delete(context.TODO(), t.migrationTarget.podName, metav1.DeleteOptions{})
 						Expect(err).NotTo(HaveOccurred())
 					}
-					Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedNBDBAfterCleanup(expectedStaticRoutes)), "should cleanup ovn")
+					Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData(expectedNBDBAfterCleanup(expectedStaticRoutes)), "should cleanup ovn")
 				}
 
 				return nil

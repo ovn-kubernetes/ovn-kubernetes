@@ -6,7 +6,7 @@ import (
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
@@ -24,7 +24,7 @@ var _ = Describe("cni_dpu tests", func() {
 	var fakeKubeInterface kubeMocks.Interface
 	var fakeSriovnetOps utilMocks.SriovnetOps
 	var pr PodRequest
-	var pod *v1.Pod
+	var pod *corev1.Pod
 	var podLister v1mocks.PodLister
 	var podNamespaceLister v1mocks.PodNamespaceLister
 
@@ -48,7 +48,7 @@ var _ = Describe("cni_dpu tests", func() {
 			netName:   ovntypes.DefaultNetworkName,
 			nadName:   ovntypes.DefaultNetworkName,
 		}
-		pod = &v1.Pod{
+		pod = &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:        pr.PodName,
 				Namespace:   pr.PodNamespace,

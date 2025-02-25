@@ -10,7 +10,7 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -25,7 +25,6 @@ import (
 	dnsnameresolver "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/dns_name_resolver"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
-	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -51,37 +50,37 @@ func newNamespaceMeta(namespace string, additionalLabels map[string]string) meta
 	}
 }
 
-func newUDNNamespaceWithLabels(namespace string, additionalLabels map[string]string) *v1.Namespace {
-	n := &v1.Namespace{
+func newUDNNamespaceWithLabels(namespace string, additionalLabels map[string]string) *corev1.Namespace {
+	n := &corev1.Namespace{
 		ObjectMeta: newNamespaceMeta(namespace, additionalLabels),
-		Spec:       v1.NamespaceSpec{},
-		Status:     v1.NamespaceStatus{},
+		Spec:       corev1.NamespaceSpec{},
+		Status:     corev1.NamespaceStatus{},
 	}
 	n.Labels[ovntypes.RequiredUDNNamespaceLabel] = ""
 	return n
 }
 
-func newNamespaceWithLabels(namespace string, additionalLabels map[string]string) *v1.Namespace {
-	return &v1.Namespace{
+func newNamespaceWithLabels(namespace string, additionalLabels map[string]string) *corev1.Namespace {
+	return &corev1.Namespace{
 		ObjectMeta: newNamespaceMeta(namespace, additionalLabels),
-		Spec:       v1.NamespaceSpec{},
-		Status:     v1.NamespaceStatus{},
+		Spec:       corev1.NamespaceSpec{},
+		Status:     corev1.NamespaceStatus{},
 	}
 }
 
-func newNamespace(namespace string) *v1.Namespace {
-	return &v1.Namespace{
+func newNamespace(namespace string) *corev1.Namespace {
+	return &corev1.Namespace{
 		ObjectMeta: newNamespaceMeta(namespace, nil),
-		Spec:       v1.NamespaceSpec{},
-		Status:     v1.NamespaceStatus{},
+		Spec:       corev1.NamespaceSpec{},
+		Status:     corev1.NamespaceStatus{},
 	}
 }
 
-func newUDNNamespace(namespace string) *v1.Namespace {
-	return &v1.Namespace{
+func newUDNNamespace(namespace string) *corev1.Namespace {
+	return &corev1.Namespace{
 		ObjectMeta: newNamespaceMeta(namespace, map[string]string{ovntypes.RequiredUDNNamespaceLabel: ""}),
-		Spec:       v1.NamespaceSpec{},
-		Status:     v1.NamespaceStatus{},
+		Spec:       corev1.NamespaceSpec{},
+		Status:     corev1.NamespaceStatus{},
 	}
 }
 
@@ -128,25 +127,31 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 			namespace1 := newNamespace(namespaceName)
 			// namespace-owned address set for existing namespace, should stay
 			ns1 := getNamespaceAddrSetDbIDs(namespaceName, DefaultNetworkControllerName)
-			fakeOvn.asf.NewAddressSet(ns1, []string{"1.1.1.1"})
+			_, err := fakeOvn.asf.NewAddressSet(ns1, []string{"1.1.1.1"})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			// namespace-owned address set for stale namespace, should be deleted
 			ns2 := getNamespaceAddrSetDbIDs("namespace2", DefaultNetworkControllerName)
-			fakeOvn.asf.NewAddressSet(ns2, []string{"1.1.1.2"})
+			_, err = fakeOvn.asf.NewAddressSet(ns2, []string{"1.1.1.2"})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			// netpol peer address set for existing netpol, should stay
 			netpol := getPodSelectorAddrSetDbIDs("pasName", DefaultNetworkControllerName)
-			fakeOvn.asf.NewAddressSet(netpol, []string{"1.1.1.3"})
+			_, err = fakeOvn.asf.NewAddressSet(netpol, []string{"1.1.1.3"})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			// egressQoS-owned address set, should stay
 			qos := getEgressQosAddrSetDbIDs("namespace", "0", controllerName)
-			fakeOvn.asf.NewAddressSet(qos, []string{"1.1.1.4"})
+			_, err = fakeOvn.asf.NewAddressSet(qos, []string{"1.1.1.4"})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			// hybridNode-owned address set, should stay
 			hybridNode := apbroute.GetHybridRouteAddrSetDbIDs("node", DefaultNetworkControllerName)
-			fakeOvn.asf.NewAddressSet(hybridNode, []string{"1.1.1.5"})
+			_, err = fakeOvn.asf.NewAddressSet(hybridNode, []string{"1.1.1.5"})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			// egress firewall-owned address set, should stay
 			ef := dnsnameresolver.GetEgressFirewallDNSAddrSetDbIDs("dnsname", controllerName)
-			fakeOvn.asf.NewAddressSet(ef, []string{"1.1.1.6"})
+			_, err = fakeOvn.asf.NewAddressSet(ef, []string{"1.1.1.6"})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			fakeOvn.startWithDBSetup(libovsdbtest.TestSetup{NBData: []libovsdbtest.TestData{}})
-			err := fakeOvn.controller.syncNamespaces([]interface{}{namespace1})
+			fakeOvn.startWithDBSetup(libovsdb.TestSetup{NBData: []libovsdb.TestData{}})
+			err = fakeOvn.controller.syncNamespaces([]interface{}{namespace1})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			fakeOvn.asf.ExpectAddressSetWithAddresses(ns1, []string{"1.1.1.1"})
@@ -174,18 +179,18 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 
 			tPod := newPod(namespaceT.Name, tP.podName, tP.nodeName, tP.podIP)
 			fakeOvn.start(
-				&v1.NamespaceList{
-					Items: []v1.Namespace{
+				&corev1.NamespaceList{
+					Items: []corev1.Namespace{
 						namespaceT,
 					},
 				},
-				&v1.NodeList{
-					Items: []v1.Node{
+				&corev1.NodeList{
+					Items: []corev1.Node{
 						*newNode("node1", "192.168.126.202/24"),
 					},
 				},
-				&v1.PodList{
-					Items: []v1.Pod{
+				&corev1.PodList{
+					Items: []corev1.Pod{
 						*tPod,
 					},
 				},
@@ -211,8 +216,8 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 		ginkgo.It("creates an empty address set and port group for the namespace without pods", func() {
 			// this flag will create namespaced port group
 			config.OVNKubernetesFeature.EnableEgressFirewall = true
-			fakeOvn.start(&v1.NamespaceList{
-				Items: []v1.Namespace{
+			fakeOvn.start(&corev1.NamespaceList{
+				Items: []corev1.Namespace{
 					*newNamespace(namespaceName),
 				},
 			})
@@ -272,8 +277,8 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 			expectedClusterPortGroup := newClusterPortGroup()
 
 			fakeOvn.startWithDBSetup(
-				libovsdbtest.TestSetup{
-					NBData: []libovsdbtest.TestData{
+				libovsdb.TestSetup{
+					NBData: []libovsdb.TestData{
 						newClusterJoinSwitch(),
 						expectedOVNClusterRouter,
 						expectedNodeSwitch,
@@ -284,13 +289,13 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 						expectedRouterLBGroup,
 					},
 				},
-				&v1.NamespaceList{
-					Items: []v1.Namespace{
+				&corev1.NamespaceList{
+					Items: []corev1.Namespace{
 						*newNamespace(hostNetworkNamespace),
 					},
 				},
-				&v1.NodeList{
-					Items: []v1.Node{
+				&corev1.NodeList{
+					Items: []corev1.Node{
 						testNode,
 					},
 				},
@@ -353,7 +358,7 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 				expectedNodeSwitch, node1.Name, clusterSubnets, []*net.IPNet{nodeSubnet}, l3Config,
 				[]*net.IPNet{classBIPAddress(node1.LrpIP)}, []*net.IPNet{classBIPAddress(node1.DrLrpIP)}, skipSnat,
 				node1.NodeMgmtPortIP, "1400")
-			gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+			gomega.Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
 
 			// check the namespace again and ensure the address set
 			// being created with the right set of IPs in it.
@@ -373,14 +378,14 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 			pg.UUID = pg.Name + "-UUID"
 			initialData := []libovsdb.TestData{pg}
 
-			fakeOvn.startWithDBSetup(libovsdbtest.TestSetup{NBData: initialData},
-				&v1.NamespaceList{
-					Items: []v1.Namespace{
+			fakeOvn.startWithDBSetup(libovsdb.TestSetup{NBData: initialData},
+				&corev1.NamespaceList{
+					Items: []corev1.Namespace{
 						namespaceT,
 					},
 				},
-				&v1.NodeList{
-					Items: []v1.Node{
+				&corev1.NodeList{
+					Items: []corev1.Node{
 						*newNode("node1", "192.168.126.202/24"),
 					},
 				},
@@ -399,14 +404,14 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 			pg.UUID = pg.Name + "-UUID"
 			initialData := []libovsdb.TestData{pg}
 
-			fakeOvn.startWithDBSetup(libovsdbtest.TestSetup{NBData: initialData},
-				&v1.NamespaceList{
-					Items: []v1.Namespace{
+			fakeOvn.startWithDBSetup(libovsdb.TestSetup{NBData: initialData},
+				&corev1.NamespaceList{
+					Items: []corev1.Namespace{
 						namespaceT,
 					},
 				},
-				&v1.NodeList{
-					Items: []v1.Node{
+				&corev1.NodeList{
+					Items: []corev1.Node{
 						*newNode("node1", "192.168.126.202/24"),
 					},
 				},
@@ -424,9 +429,9 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 			pg.UUID = pg.Name + "-UUID"
 			initialData := []libovsdb.TestData{pg}
 
-			fakeOvn.startWithDBSetup(libovsdbtest.TestSetup{NBData: initialData},
-				&v1.NodeList{
-					Items: []v1.Node{
+			fakeOvn.startWithDBSetup(libovsdb.TestSetup{NBData: initialData},
+				&corev1.NodeList{
+					Items: []corev1.Node{
 						*newNode("node1", "192.168.126.202/24"),
 					},
 				},
@@ -440,8 +445,8 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 
 	ginkgo.Context("during execution", func() {
 		ginkgo.It("deletes an empty namespace's resources", func() {
-			fakeOvn.start(&v1.NamespaceList{
-				Items: []v1.Namespace{
+			fakeOvn.start(&corev1.NamespaceList{
+				Items: []corev1.Namespace{
 					*newNamespace(namespaceName),
 				},
 			})

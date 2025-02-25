@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
@@ -68,7 +68,7 @@ func TestCreateSubnetAnnotation(t *testing.T) {
 }
 
 func TestSetSubnetAnnotation(t *testing.T) {
-	fakeClient := fake.NewSimpleClientset(&v1.NodeList{})
+	fakeClient := fake.NewSimpleClientset(&corev1.NodeList{})
 	k := &kube.Kube{KClient: fakeClient}
 	testAnnotator := kube.NewNodeAnnotator(k, "")
 	tests := []struct {
@@ -99,7 +99,7 @@ func TestSetSubnetAnnotation(t *testing.T) {
 func TestParseSubnetAnnotation(t *testing.T) {
 	tests := []struct {
 		desc        string
-		inpNode     v1.Node
+		inpNode     corev1.Node
 		annName     string
 		errExpected bool
 	}{
@@ -107,7 +107,7 @@ func TestParseSubnetAnnotation(t *testing.T) {
 			desc:        "incorrect annotation",
 			annName:     "blah",
 			errExpected: true,
-			inpNode: v1.Node{
+			inpNode: corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "testNode",
 					Annotations: map[string]string{
@@ -119,7 +119,7 @@ func TestParseSubnetAnnotation(t *testing.T) {
 		{
 			desc:    "correct annotation with one subnet",
 			annName: ovnNodeSubnets,
-			inpNode: v1.Node{
+			inpNode: corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "testNode",
 					Annotations: map[string]string{
@@ -131,7 +131,7 @@ func TestParseSubnetAnnotation(t *testing.T) {
 		{
 			desc:    "parse as dual-stack",
 			annName: ovnNodeSubnets,
-			inpNode: v1.Node{
+			inpNode: corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "testNode",
 					Annotations: map[string]string{
@@ -144,7 +144,7 @@ func TestParseSubnetAnnotation(t *testing.T) {
 			desc:        "error:cannot parse as single or dual stack",
 			annName:     ovnNodeSubnets,
 			errExpected: true,
-			inpNode: v1.Node{
+			inpNode: corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "testNode",
 					Annotations: map[string]string{
@@ -157,7 +157,7 @@ func TestParseSubnetAnnotation(t *testing.T) {
 			desc:        "error: annotation has no default network",
 			annName:     ovnNodeSubnets,
 			errExpected: true,
-			inpNode: v1.Node{
+			inpNode: corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "testNode",
 					Annotations: map[string]string{
@@ -185,18 +185,18 @@ func TestParseSubnetAnnotation(t *testing.T) {
 func TestNodeSubnetAnnotationChanged(t *testing.T) {
 	tests := []struct {
 		desc    string
-		oldNode *v1.Node
-		newNode *v1.Node
+		oldNode *corev1.Node
+		newNode *corev1.Node
 		result  bool
 	}{
 		{
 			desc: "true: annotation changed",
-			oldNode: &v1.Node{
+			oldNode: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{},
 				},
 			},
-			newNode: &v1.Node{
+			newNode: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
 						"k8s.ovn.org/node-subnets": "{\"default\":\"10.244.0.0/24\"}",
@@ -207,14 +207,14 @@ func TestNodeSubnetAnnotationChanged(t *testing.T) {
 		},
 		{
 			desc: "true: annotation's value changed",
-			newNode: &v1.Node{
+			newNode: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
 						"k8s.ovn.org/node-subnets": "{\"default\":\"10.244.0.0/24\"}",
 					},
 				},
 			},
-			oldNode: &v1.Node{
+			oldNode: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
 						"k8s.ovn.org/node-subnets": "{\"default\":\"10.244.2.0/24\"}",
@@ -225,14 +225,14 @@ func TestNodeSubnetAnnotationChanged(t *testing.T) {
 		},
 		{
 			desc: "false: annotation didn't change",
-			newNode: &v1.Node{
+			newNode: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
 						"k8s.ovn.org/node-subnets": "{\"default\":\"10.244.0.0/24\"}",
 					},
 				},
 			},
-			oldNode: &v1.Node{
+			oldNode: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
 						"k8s.ovn.org/node-subnets": "{\"default\":\"10.244.0.0/24\"}",
@@ -283,7 +283,7 @@ func TestCreateNodeHostSubnetAnnotation(t *testing.T) {
 }
 
 func TestSetNodeHostSubnetAnnotation(t *testing.T) {
-	fakeClient := fake.NewSimpleClientset(&v1.NodeList{})
+	fakeClient := fake.NewSimpleClientset(&corev1.NodeList{})
 	k := &kube.Kube{KClient: fakeClient}
 	testAnnotator := kube.NewNodeAnnotator(k, "")
 
@@ -311,7 +311,7 @@ func TestSetNodeHostSubnetAnnotation(t *testing.T) {
 }
 
 func TestDeleteNodeHostSubnetAnnotation(t *testing.T) {
-	fakeClient := fake.NewSimpleClientset(&v1.NodeList{})
+	fakeClient := fake.NewSimpleClientset(&corev1.NodeList{})
 	k := &kube.Kube{KClient: fakeClient}
 	testAnnotator := kube.NewNodeAnnotator(k, "")
 
@@ -325,7 +325,7 @@ func TestDeleteNodeHostSubnetAnnotation(t *testing.T) {
 		},
 	}
 	for i, tc := range tests {
-		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
+		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(*testing.T) {
 			DeleteNodeHostSubnetAnnotation(tc.inpNodeAnnotator)
 		})
 	}
@@ -334,12 +334,12 @@ func TestDeleteNodeHostSubnetAnnotation(t *testing.T) {
 func TestParseNodeHostSubnetAnnotation(t *testing.T) {
 	tests := []struct {
 		desc    string
-		inpNode v1.Node
+		inpNode corev1.Node
 		errExp  bool
 	}{
 		{
 			desc: "tests function coverage, success path",
-			inpNode: v1.Node{
+			inpNode: corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "testNode",
 					Annotations: map[string]string{

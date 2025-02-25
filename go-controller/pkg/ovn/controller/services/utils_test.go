@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -26,7 +26,7 @@ func TestExternalIDsForLoadBalancer(t *testing.T) {
 			types.LoadBalancerKindExternalID:  "Service",
 			types.LoadBalancerOwnerExternalID: "ns/svc-ab23",
 		},
-		getExternalIDsForLoadBalancer(&v1.Service{
+		getExternalIDsForLoadBalancer(&corev1.Service{
 			TypeMeta: metav1.TypeMeta{
 				Kind:       "Service",
 				APIVersion: "v1",
@@ -44,7 +44,7 @@ func TestExternalIDsForLoadBalancer(t *testing.T) {
 			types.LoadBalancerKindExternalID:  "Service",
 			types.LoadBalancerOwnerExternalID: "ns/svc-ab23",
 		},
-		getExternalIDsForLoadBalancer(&v1.Service{
+		getExternalIDsForLoadBalancer(&corev1.Service{
 			// also handle no TypeMeta, which can happen.
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      name,
@@ -61,7 +61,7 @@ func TestExternalIDsForLoadBalancer(t *testing.T) {
 			types.NetworkExternalID:           UDNNetInfo.GetNetworkName(),
 			types.NetworkRoleExternalID:       types.NetworkRolePrimary,
 		},
-		getExternalIDsForLoadBalancer(&v1.Service{
+		getExternalIDsForLoadBalancer(&corev1.Service{
 			TypeMeta: metav1.TypeMeta{
 				Kind:       "Service",
 				APIVersion: "v1",

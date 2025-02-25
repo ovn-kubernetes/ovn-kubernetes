@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/vishvananda/netlink"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
@@ -133,7 +133,7 @@ var _ = Describe("Mananagement port DPU tests", func() {
 			Expect(err).ToNot(HaveOccurred())
 			expectedMgmtPortMac := util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(ipnet).IP)
 			config.Default.MTU = 1400
-			node := &v1.Node{
+			node := &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "k8s-worker0",
 					Annotations: map[string]string{
@@ -166,8 +166,8 @@ var _ = Describe("Mananagement port DPU tests", func() {
 			execMock.AddFakeCmd(&ovntest.ExpectedCmd{
 				Cmd: genOVSAddMgmtPortCmd(mgmtPortDpu.nodeName, mgmtPortDpu.repName),
 			})
-			fakeClient := fake.NewSimpleClientset(&v1.NodeList{
-				Items: []v1.Node{*node},
+			fakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+				Items: []corev1.Node{*node},
 			})
 			fakeNodeClient := &util.OVNNodeClientset{
 				KubeClient: fakeClient,
@@ -188,7 +188,7 @@ var _ = Describe("Mananagement port DPU tests", func() {
 			Expect(err).ToNot(HaveOccurred())
 			expectedMgmtPortMac := util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(ipnet).IP)
 			config.Default.MTU = 1400
-			node := &v1.Node{
+			node := &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "k8s-worker0",
 					Annotations: map[string]string{
@@ -215,8 +215,8 @@ var _ = Describe("Mananagement port DPU tests", func() {
 				Cmd: genOVSAddMgmtPortCmd(mgmtPortDpu.nodeName, mgmtPortDpu.repName),
 			})
 
-			fakeClient := fake.NewSimpleClientset(&v1.NodeList{
-				Items: []v1.Node{*node},
+			fakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+				Items: []corev1.Node{*node},
 			})
 			fakeNodeClient := &util.OVNNodeClientset{
 				KubeClient: fakeClient,

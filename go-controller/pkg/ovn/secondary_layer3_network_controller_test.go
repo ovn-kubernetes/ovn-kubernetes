@@ -11,7 +11,7 @@ import (
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	"github.com/urfave/cli/v2"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	knet "k8s.io/utils/net"
@@ -106,7 +106,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				// tests dont support dualstack yet
 				config.IPv4Mode = false
 			}
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				nad, err := newNetworkAttachmentDefinition(
 					ns,
 					nadName,
@@ -144,16 +144,16 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				networkPolicy := getMatchLabelsNetworkPolicy(denyPolicyName, ns, "", "", false, false)
 				fakeOvn.startWithDBSetup(
 					initialDB,
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							*n,
 						},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{*testNode},
+					&corev1.NodeList{
+						Items: []corev1.Node{*testNode},
 					},
-					&v1.PodList{
-						Items: []v1.Pod{
+					&corev1.PodList{
+						Items: []corev1.Pod{
 							*newMultiHomedPod(podInfo, netInfo),
 						},
 					},
@@ -184,7 +184,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				Expect(ok).To(BeTrue())
 
 				secondaryNetController.bnc.ovnClusterLRPToJoinIfAddrs = dummyJoinIPs()
-				podInfo.populateSecondaryNetworkLogicalSwitchCache(fakeOvn, secondaryNetController)
+				podInfo.populateSecondaryNetworkLogicalSwitchCache(secondaryNetController)
 				Expect(secondaryNetController.bnc.WatchNodes()).To(Succeed())
 				Expect(secondaryNetController.bnc.WatchPods()).To(Succeed())
 
@@ -341,7 +341,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 					Expect(err).NotTo(HaveOccurred())
 					initialDB.NBData = append(
 						initialDB.NBData,
-						expectedGWEntities(podInfo.nodeName, netInfo.hostsubnets, networkConfig, *gwConfig)...)
+						expectedGWEntities(podInfo.nodeName, networkConfig, *gwConfig)...)
 					initialDB.NBData = append(
 						initialDB.NBData,
 						expectedLayer3EgressEntities(networkConfig, *gwConfig, testing.MustParseIPNet(netInfo.hostsubnets))...)
@@ -357,16 +357,16 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 
 				fakeOvn.startWithDBSetup(
 					initialDB,
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							*newUDNNamespace(ns),
 						},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{*testNode},
+					&corev1.NodeList{
+						Items: []corev1.Node{*testNode},
 					},
-					&v1.PodList{
-						Items: []v1.Pod{
+					&corev1.PodList{
+						Items: []corev1.Pod{
 							*newMultiHomedPod(podInfo, netInfo),
 						},
 					},
@@ -394,7 +394,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				Expect(ok).To(BeTrue())
 
 				secondaryNetController.bnc.ovnClusterLRPToJoinIfAddrs = dummyJoinIPs()
-				podInfo.populateSecondaryNetworkLogicalSwitchCache(fakeOvn, secondaryNetController)
+				podInfo.populateSecondaryNetworkLogicalSwitchCache(secondaryNetController)
 				Expect(secondaryNetController.bnc.WatchNodes()).To(Succeed())
 				Expect(secondaryNetController.bnc.WatchPods()).To(Succeed())
 
@@ -592,11 +592,6 @@ func dummyTestPod(nsName string, info secondaryNetInfo) testPod {
 	return pod
 }
 
-func dummyTestPodAdditionalNetworkIP() string {
-	secNetInfo := dummyPrimaryLayer2UserDefinedNetwork("192.168.0.0/16")
-	return dummyTestPod(ns, secNetInfo).getNetworkPortInfo(secNetInfo.netName, secNetInfo.nadName).podIP
-}
-
 func dummySecondaryLayer3UserDefinedNetwork(clustersubnets, hostsubnets string) secondaryNetInfo {
 	return secondaryNetInfo{
 		netName:        secondaryNetworkName,
@@ -618,7 +613,7 @@ func (sni *secondaryNetInfo) String() string {
 	return fmt.Sprintf("%q: %q", sni.netName, sni.hostsubnets)
 }
 
-func newNodeWithSecondaryNets(nodeName string, nodeIPv4CIDR string, netInfos ...secondaryNetInfo) (*v1.Node, error) {
+func newNodeWithSecondaryNets(nodeName string, nodeIPv4CIDR string, netInfos ...secondaryNetInfo) (*corev1.Node, error) {
 	var nodeSubnetInfo []string
 	for _, info := range netInfos {
 		nodeSubnetInfo = append(nodeSubnetInfo, info.String())
@@ -636,7 +631,7 @@ func newNodeWithSecondaryNets(nodeName string, nodeIPv4CIDR string, netInfos ...
 	nextHopIP := util.GetNodeGatewayIfAddr(nodeCIDR).IP
 	nodeCIDR.IP = nodeIP
 
-	return &v1.Node{
+	return &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: nodeName,
 			Annotations: map[string]string{
@@ -654,11 +649,11 @@ func newNodeWithSecondaryNets(nodeName string, nodeIPv4CIDR string, netInfos ...
 				"k8s.ovn.org/egress-assignable": "",
 			},
 		},
-		Status: v1.NodeStatus{
-			Conditions: []v1.NodeCondition{
+		Status: corev1.NodeStatus{
+			Conditions: []corev1.NodeCondition{
 				{
-					Type:   v1.NodeReady,
-					Status: v1.ConditionTrue,
+					Type:   corev1.NodeReady,
+					Status: corev1.ConditionTrue,
 				},
 			},
 		},
@@ -687,7 +682,7 @@ func emptyDefaultClusterNetworkNodeSwitch(nodeName string) []libovsdbtest.TestDa
 	return []libovsdbtest.TestData{&nbdb.LogicalSwitch{UUID: switchUUID, Name: nodeName}}
 }
 
-func expectedGWEntities(nodeName, nodeSubnet string, netInfo util.NetInfo, gwConfig util.L3GatewayConfig) []libovsdbtest.TestData {
+func expectedGWEntities(nodeName string, netInfo util.NetInfo, gwConfig util.L3GatewayConfig) []libovsdbtest.TestData {
 	gwRouterName := fmt.Sprintf("GR_%s_%s", netInfo.GetNetworkName(), nodeName)
 
 	expectedEntities := append(

@@ -13,7 +13,6 @@ import (
 	kubevirtv1 "kubevirt.io/api/core/v1"
 
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	knet "k8s.io/utils/net"
@@ -21,7 +20,6 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	testnm "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/networkmanager"
@@ -41,7 +39,7 @@ var (
 )
 
 type liveMigrationPodInfo struct {
-	podPhase           v1.PodPhase
+	podPhase           corev1.PodPhase
 	annotation         map[string]string
 	creationTimestamp  metav1.Time
 	expectedLspEnabled lspEnableValue
@@ -86,7 +84,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 			const podIdx = 0
 			podInfo := dummyL2TestPod(ns, netInfo, podIdx, podIdx)
 			setupConfig(netInfo, testConfig, gatewayMode)
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				pod := newMultiHomedPod(podInfo, netInfo)
 
 				const nodeIPv4CIDR = "192.168.126.202/24"
@@ -203,7 +201,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 			)
 			sourcePodInfo := dummyL2TestPod(ns, netInfo, sourcePodInfoIdx, secondaryNetworkIdx)
 			setupConfig(netInfo, testConfig, config.GatewayModeShared)
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				sourcePod := newMultiHomedKubevirtPod(
 					migrationInfo.vmName,
 					migrationInfo.sourcePodInfo,
@@ -356,7 +354,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 				}
 				config.OVNKubernetesFeature.EnableMultiNetwork = true
 			}
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				netConf := netInfo.netconf()
 				networkConfig, err := util.NewNetInfo(netConf)
 				Expect(err).NotTo(HaveOccurred())
@@ -395,16 +393,16 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 
 				fakeOvn.startWithDBSetup(
 					initialDB,
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							*n,
 						},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{*testNode},
+					&corev1.NodeList{
+						Items: []corev1.Node{*testNode},
 					},
-					&v1.PodList{
-						Items: []v1.Pod{
+					&corev1.PodList{
+						Items: []corev1.Pod{
 							*newMultiHomedPod(podInfo, netInfo),
 						},
 					},
@@ -439,7 +437,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				secondaryNetController.bnc.ovnClusterLRPToJoinIfAddrs = dummyJoinIPs()
-				podInfo.populateSecondaryNetworkLogicalSwitchCache(fakeOvn, secondaryNetController)
+				podInfo.populateSecondaryNetworkLogicalSwitchCache(secondaryNetController)
 				Expect(secondaryNetController.bnc.WatchNodes()).To(Succeed())
 				Expect(secondaryNetController.bnc.WatchPods()).To(Succeed())
 
@@ -448,8 +446,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 
 				err = fullSecondaryController.Cleanup()
 				Expect(err).NotTo(HaveOccurred())
-				Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(generateUDNPostInitDB([]libovsdbtest.TestData{nbZone},
-					fullSecondaryController.BaseSecondaryNetworkController.GetNetworkName())))
+				Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(generateUDNPostInitDB([]libovsdbtest.TestData{nbZone})))
 
 				return nil
 			}
@@ -542,12 +539,6 @@ func dummyL2TestPod(nsName string, info secondaryNetInfo, podIdx, secondaryNetId
 		[]util.PodRoute{},
 	)
 	return pod
-}
-
-func dummyL2TestPodAdditionalNetworkIP() string {
-	const podIdx = 0
-	secNetInfo := dummyPrimaryLayer2UserDefinedNetwork("100.200.0.0/16")
-	return dummyL2TestPod(ns, secNetInfo, podIdx, podIdx).getNetworkPortInfo(secNetInfo.netName, secNetInfo.nadName).podIP
 }
 
 func expectedLayer2EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayConfig, nodeName string) []libovsdbtest.TestData {
@@ -673,22 +664,6 @@ func dummyLayer2PrimaryUserDefinedNetwork(subnets string) secondaryNetInfo {
 	return secondaryNet
 }
 
-func newSecondaryLayer2NetworkController(
-	cnci *CommonNetworkControllerInfo,
-	netInfo util.NetInfo,
-	nodeName string,
-	networkManager networkmanager.Interface,
-	eIPController *EgressIPController,
-	portCache *PortCache,
-) *SecondaryLayer2NetworkController {
-	layer2NetworkController, _ := NewSecondaryLayer2NetworkController(cnci, netInfo, networkManager, eIPController, portCache)
-	layer2NetworkController.gatewayManagers.Store(
-		nodeName,
-		newDummyGatewayManager(cnci.kube, cnci.nbClient, netInfo, cnci.watchFactory, nodeName),
-	)
-	return layer2NetworkController
-}
-
 func nodeIP() *net.IPNet {
 	return &net.IPNet{
 		IP:   net.ParseIP("192.168.126.202"),
@@ -703,7 +678,7 @@ func nodeCIDR() *net.IPNet {
 	}
 }
 
-func setupFakeOvnForLayer2Topology(fakeOvn *FakeOVN, initialDB libovsdbtest.TestSetup, netInfo secondaryNetInfo, testNode *v1.Node, podInfo testPod, pod *corev1.Pod, extraObjects ...runtime.Object) error {
+func setupFakeOvnForLayer2Topology(fakeOvn *FakeOVN, initialDB libovsdbtest.TestSetup, netInfo secondaryNetInfo, testNode *corev1.Node, podInfo testPod, pod *corev1.Pod, extraObjects ...runtime.Object) error {
 	By(fmt.Sprintf("creating a network attachment definition for network: %s", netInfo.netName))
 	nad, err := newNetworkAttachmentDefinition(
 		ns,
@@ -732,14 +707,14 @@ func setupFakeOvnForLayer2Topology(fakeOvn *FakeOVN, initialDB libovsdbtest.Test
 	}
 
 	objects := []runtime.Object{
-		&v1.NamespaceList{
-			Items: []v1.Namespace{
+		&corev1.NamespaceList{
+			Items: []corev1.Namespace{
 				*n,
 			},
 		},
-		&v1.NodeList{Items: []v1.Node{*testNode}},
-		&v1.PodList{
-			Items: []v1.Pod{
+		&corev1.NodeList{Items: []corev1.Node{*testNode}},
+		&corev1.PodList{
+			Items: []corev1.Pod{
 				*pod,
 			},
 		},
@@ -785,7 +760,7 @@ func setupFakeOvnForLayer2Topology(fakeOvn *FakeOVN, initialDB libovsdbtest.Test
 	}
 
 	secondaryNetController.bnc.ovnClusterLRPToJoinIfAddrs = dummyJoinIPs()
-	podInfo.populateSecondaryNetworkLogicalSwitchCache(fakeOvn, secondaryNetController)
+	podInfo.populateSecondaryNetworkLogicalSwitchCache(secondaryNetController)
 	if err = secondaryNetController.bnc.WatchNodes(); err != nil {
 		return err
 	}
@@ -816,12 +791,12 @@ func notReadyMigrationInfo() *liveMigrationInfo {
 	return &liveMigrationInfo{
 		vmName: vmName,
 		sourcePodInfo: liveMigrationPodInfo{
-			podPhase:           v1.PodRunning,
+			podPhase:           corev1.PodRunning,
 			creationTimestamp:  metav1.NewTime(time.Now().Add(-time.Hour)),
 			expectedLspEnabled: lspEnableNotSpecified,
 		},
 		targetPodInfo: liveMigrationPodInfo{
-			podPhase:           v1.PodRunning,
+			podPhase:           corev1.PodRunning,
 			creationTimestamp:  metav1.NewTime(time.Now()),
 			expectedLspEnabled: lspEnableExplicitlyFalse,
 		},
@@ -833,12 +808,12 @@ func readyMigrationInfo() *liveMigrationInfo {
 	return &liveMigrationInfo{
 		vmName: vmName,
 		sourcePodInfo: liveMigrationPodInfo{
-			podPhase:           v1.PodRunning,
+			podPhase:           corev1.PodRunning,
 			creationTimestamp:  metav1.NewTime(time.Now().Add(-time.Hour)),
 			expectedLspEnabled: lspEnableExplicitlyFalse,
 		},
 		targetPodInfo: liveMigrationPodInfo{
-			podPhase:           v1.PodRunning,
+			podPhase:           corev1.PodRunning,
 			creationTimestamp:  metav1.NewTime(time.Now()),
 			annotation:         map[string]string{kubevirtv1.MigrationTargetReadyTimestamp: "some-timestamp"},
 			expectedLspEnabled: lspEnableExplicitlyTrue,
@@ -851,12 +826,12 @@ func failedMigrationInfo() *liveMigrationInfo {
 	return &liveMigrationInfo{
 		vmName: vmName,
 		sourcePodInfo: liveMigrationPodInfo{
-			podPhase:           v1.PodRunning,
+			podPhase:           corev1.PodRunning,
 			creationTimestamp:  metav1.NewTime(time.Now().Add(-time.Hour)),
 			expectedLspEnabled: lspEnableExplicitlyTrue,
 		},
 		targetPodInfo: liveMigrationPodInfo{
-			podPhase:          v1.PodFailed,
+			podPhase:          corev1.PodFailed,
 			creationTimestamp: metav1.NewTime(time.Now()),
 		},
 	}

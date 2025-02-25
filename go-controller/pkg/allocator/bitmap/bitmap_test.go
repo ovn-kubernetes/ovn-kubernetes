@@ -83,11 +83,11 @@ func TestRelease(t *testing.T) {
 }
 
 func TestForEach(t *testing.T) {
-	testCases := []sets.Int{
-		sets.NewInt(),
-		sets.NewInt(0),
-		sets.NewInt(0, 2, 5, 9),
-		sets.NewInt(0, 1, 2, 3, 4, 5, 6, 7, 8, 9),
+	testCases := []sets.Set[int]{
+		sets.New[int](),
+		sets.New(0),
+		sets.New(0, 2, 5, 9),
+		sets.New(0, 1, 2, 3, 4, 5, 6, 7, 8, 9),
 	}
 
 	for i, tc := range testCases {
@@ -100,7 +100,7 @@ func TestForEach(t *testing.T) {
 				t.Errorf("[%d] expect offset %v allocated", i, offset)
 			}
 		}
-		calls := sets.NewInt()
+		calls := sets.New[int]()
 		m.ForEach(func(i int) {
 			calls.Insert(i)
 		})
@@ -108,7 +108,7 @@ func TestForEach(t *testing.T) {
 			t.Errorf("[%d] expected %d calls, got %d", i, len(tc), len(calls))
 		}
 		if !calls.Equal(tc) {
-			t.Errorf("[%d] expected calls to equal testcase: %v vs %v", i, calls.List(), tc.List())
+			t.Errorf("[%d] expected calls to equal testcase: %v vs %v", i, sets.List(calls), sets.List(tc))
 		}
 	}
 }
@@ -288,11 +288,11 @@ func TestRoundRobinWrapAround(t *testing.T) {
 }
 
 func TestRoundRobinForEach(t *testing.T) {
-	testCases := []sets.Int{
-		sets.NewInt(),
-		sets.NewInt(0),
-		sets.NewInt(0, 2, 5, 9),
-		sets.NewInt(0, 1, 2, 3, 4, 5, 6, 7, 8, 9),
+	testCases := []sets.Set[int]{
+		sets.New[int](),
+		sets.New(0),
+		sets.New(0, 2, 5, 9),
+		sets.New(0, 1, 2, 3, 4, 5, 6, 7, 8, 9),
 	}
 
 	for i, tc := range testCases {
@@ -305,7 +305,7 @@ func TestRoundRobinForEach(t *testing.T) {
 				t.Fatalf("[%d] expect offset %d allocated", i, offset)
 			}
 		}
-		calls := sets.NewInt()
+		calls := sets.New[int]()
 		m.ForEach(func(j int) {
 			calls.Insert(j)
 		})
@@ -313,7 +313,7 @@ func TestRoundRobinForEach(t *testing.T) {
 			t.Fatalf("[%d] expected %d calls, got %d", i, len(tc), len(calls))
 		}
 		if !calls.Equal(tc) {
-			t.Fatalf("[%d] expected calls to equal testcase: %v vs %v", i, calls.List(), tc.List())
+			t.Fatalf("[%d] expected calls to equal testcase: %v vs %v", i, sets.List(calls), sets.List(tc))
 		}
 	}
 }

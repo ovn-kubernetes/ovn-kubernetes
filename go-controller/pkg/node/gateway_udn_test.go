@@ -213,11 +213,12 @@ func setUpUDNOpenflowManagerCheckPortsFakeOVSCommands(fexec *ovntest.FakeExec) {
 }
 
 func openflowManagerCheckPorts(ofMgr *openflowManager) {
+	GinkgoHelper()
 	netConfigs, uplink, ofPortPhys := ofMgr.getDefaultBridgePortConfigurations()
 	sort.SliceStable(netConfigs, func(i, j int) bool {
 		return netConfigs[i].patchPort < netConfigs[j].patchPort
 	})
-	checkPorts(netConfigs, uplink, ofPortPhys)
+	Expect(checkPorts(netConfigs, uplink, ofPortPhys)).To(Succeed())
 }
 
 func checkDefaultSvcIsolationOVSFlows(flows []string, defaultConfig *bridgeUDNConfiguration, ofPortHost, bridgeMAC string, svcCIDR *net.IPNet) {
@@ -346,20 +347,25 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		rm = routemanager.NewController()
 		vrf = vrfmanager.NewController(rm)
 		wg.Add(1)
-		go testNS.Do(func(netNS ns.NetNS) error {
-			defer wg.Done()
+		go func() {
 			defer GinkgoRecover()
-			err = vrf.Run(stopCh, &wg)
+			defer wg.Done()
+			err := testNS.Do(func(ns.NetNS) error {
+				return vrf.Run(stopCh, &wg)
+			})
 			Expect(err).NotTo(HaveOccurred())
-			return nil
-		})
+		}()
 		ipRulesManager = iprulemanager.NewController(true, true)
 		wg.Add(1)
-		go testNS.Do(func(netNS ns.NetNS) error {
+		go func() {
+			defer GinkgoRecover()
 			defer wg.Done()
-			ipRulesManager.Run(stopCh, 4*time.Minute)
-			return nil
-		})
+			err := testNS.Do(func(ns.NetNS) error {
+				ipRulesManager.Run(stopCh, 4*time.Minute)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+		}()
 	})
 	AfterEach(func() {
 		close(stopCh)
@@ -613,12 +619,15 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		}).Return(nil)
 
 		wg.Add(1)
-		go testNS.Do(func(netNS ns.NetNS) error {
+		go func() {
 			defer GinkgoRecover()
-			rm.Run(stop, 10*time.Second)
-			wg.Done()
-			return nil
-		})
+			defer wg.Done()
+			err := testNS.Do(func(ns.NetNS) error {
+				rm.Run(stop, 10*time.Second)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+		}()
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 			gatewayNextHops, gatewayIntf, err := getGatewayNextHops()
@@ -837,12 +846,15 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		}).Return(nil)
 
 		wg.Add(1)
-		go testNS.Do(func(netNS ns.NetNS) error {
+		go func() {
 			defer GinkgoRecover()
-			rm.Run(stop, 10*time.Second)
-			wg.Done()
-			return nil
-		})
+			defer wg.Done()
+			err := testNS.Do(func(ns.NetNS) error {
+				rm.Run(stop, 10*time.Second)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+		}()
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 			gatewayNextHops, gatewayIntf, err := getGatewayNextHops()

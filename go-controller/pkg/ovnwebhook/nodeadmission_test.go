@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"testing"
 
 	"golang.org/x/exp/maps"
@@ -397,7 +396,7 @@ func TestNodeAdmission_ValidateUpdate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := adm.ValidateUpdate(tt.ctx, tt.oldObj, tt.newObj)
-			if !reflect.DeepEqual(err, tt.expectedErr) {
+			if err != tt.expectedErr && err.Error() != tt.expectedErr.Error() {
 				t.Errorf("ValidateUpdate() error = %v, expectedErr %v", err, tt.expectedErr)
 				return
 			}
@@ -437,7 +436,7 @@ func TestNodeAdmission_ValidateUpdateIC(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := adm.ValidateUpdate(tt.ctx, tt.oldObj, tt.newObj)
-			if !reflect.DeepEqual(err, tt.expectedErr) {
+			if err != tt.expectedErr && err.Error() != tt.expectedErr.Error() {
 				t.Errorf("ValidateUpdateIC() error = %v, wantErr %v", err, tt.expectedErr)
 				return
 			}
@@ -496,7 +495,7 @@ func TestNodeAdmission_ValidateUpdateHybridOverlay(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := adm.ValidateUpdate(tt.ctx, tt.oldObj, tt.newObj)
-			if !reflect.DeepEqual(err, tt.expectedErr) {
+			if err != tt.expectedErr && err.Error() != tt.expectedErr.Error() {
 				t.Errorf("ValidateUpdateIC() error = %v, wantErr %v", err, tt.expectedErr)
 				return
 			}
@@ -557,7 +556,7 @@ func TestNodeAdmission_ValidateUpdateExtraUsers(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := adm.ValidateUpdate(tt.ctx, tt.oldObj, tt.newObj)
-			if !reflect.DeepEqual(err, tt.expectedErr) {
+			if err != tt.expectedErr && err.Error() != tt.expectedErr.Error() {
 				t.Errorf("ValidateUpdateIC() error = %v, wantErr %v", err, tt.expectedErr)
 				return
 			}

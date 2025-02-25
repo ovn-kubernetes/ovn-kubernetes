@@ -11,7 +11,7 @@ import (
 	"github.com/onsi/gomega"
 	"github.com/urfave/cli/v2"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	utilnet "k8s.io/utils/net"
@@ -20,7 +20,6 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -70,7 +69,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 	ginkgo.Context("Node subnet allocations", func() {
 		ginkgo.It("Linux nodes", func() {
 			app.Action = func(ctx *cli.Context) error {
-				nodes := []v1.Node{
+				nodes := []corev1.Node{
 					{
 						ObjectMeta: metav1.ObjectMeta{
 							Name: "node1",
@@ -87,7 +86,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						},
 					},
 				}
-				kubeFakeClient := fake.NewSimpleClientset(&v1.NodeList{
+				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{
@@ -153,7 +152,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 
 		ginkgo.It("Linux nodes - clear subnet annotations", func() {
 			app.Action = func(ctx *cli.Context) error {
-				nodes := []v1.Node{
+				nodes := []corev1.Node{
 					{
 						ObjectMeta: metav1.ObjectMeta{
 							Name: "node1",
@@ -170,7 +169,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						},
 					},
 				}
-				kubeFakeClient := fake.NewSimpleClientset(&v1.NodeList{
+				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{
@@ -209,7 +208,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 
 				// Clear the subnet annotation of nodes and make sure it is re-allocated by cluster manager.
 				for _, n := range nodes {
-					nodeAnnotator := kube.NewNodeAnnotator(&kube.Kube{kubeFakeClient}, n.Name)
+					nodeAnnotator := kube.NewNodeAnnotator(&kube.Kube{KClient: kubeFakeClient}, n.Name)
 					util.DeleteNodeHostSubnetAnnotation(nodeAnnotator)
 					err = nodeAnnotator.Run()
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -240,7 +239,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 		ginkgo.It("Hybrid and linux nodes", func() {
 
 			app.Action = func(ctx *cli.Context) error {
-				nodes := []v1.Node{
+				nodes := []corev1.Node{
 					{
 						ObjectMeta: metav1.ObjectMeta{
 							Name: "node1",
@@ -259,10 +258,10 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 					{
 						ObjectMeta: metav1.ObjectMeta{
 							Name:   "winnode",
-							Labels: map[string]string{v1.LabelOSStable: "windows"},
+							Labels: map[string]string{corev1.LabelOSStable: "windows"},
 						},
 					}}
-				kubeFakeClient := fake.NewSimpleClientset(&v1.NodeList{
+				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{
@@ -320,21 +319,21 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 		ginkgo.It("Hybrid nodes - clear subnet annotations", func() {
 
 			app.Action = func(ctx *cli.Context) error {
-				nodes := []v1.Node{
+				nodes := []corev1.Node{
 					{
 						ObjectMeta: metav1.ObjectMeta{
 							Name:   "winnode1",
-							Labels: map[string]string{v1.LabelOSStable: "windows"},
+							Labels: map[string]string{corev1.LabelOSStable: "windows"},
 						},
 					},
 					{
 						ObjectMeta: metav1.ObjectMeta{
 							Name:   "winnode2",
-							Labels: map[string]string{v1.LabelOSStable: "windows"},
+							Labels: map[string]string{corev1.LabelOSStable: "windows"},
 						},
 					},
 				}
-				kubeFakeClient := fake.NewSimpleClientset(&v1.NodeList{
+				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{
@@ -381,11 +380,11 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 
 				// Clear the subnet annotation of nodes and make sure it is re-allocated by cluster manager.
 				for _, n := range nodes {
-					nodeAnnotator := kube.NewNodeAnnotator(&kube.Kube{kubeFakeClient}, n.Name)
+					nodeAnnotator := kube.NewNodeAnnotator(&kube.Kube{KClient: kubeFakeClient}, n.Name)
 
 					nodeAnnotations := n.Annotations
 					for k, v := range nodeAnnotations {
-						nodeAnnotator.Set(k, v)
+						gomega.Expect(nodeAnnotator.Set(k, v)).To(gomega.Succeed())
 					}
 					nodeAnnotator.Delete(hotypes.HybridOverlayNodeSubnet)
 					err = nodeAnnotator.Run()
@@ -428,7 +427,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 	ginkgo.Context("Node Id allocations", func() {
 		ginkgo.It("check for node id allocations", func() {
 			app.Action = func(ctx *cli.Context) error {
-				nodes := []v1.Node{
+				nodes := []corev1.Node{
 					{
 						ObjectMeta: metav1.ObjectMeta{
 							Name: "node1",
@@ -445,7 +444,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						},
 					},
 				}
-				kubeFakeClient := fake.NewSimpleClientset(&v1.NodeList{
+				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{
@@ -501,7 +500,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 
 		ginkgo.It("clear the node ids and check", func() {
 			app.Action = func(ctx *cli.Context) error {
-				nodes := []v1.Node{
+				nodes := []corev1.Node{
 					{
 						ObjectMeta: metav1.ObjectMeta{
 							Name: "node1",
@@ -518,7 +517,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						},
 					},
 				}
-				kubeFakeClient := fake.NewSimpleClientset(&v1.NodeList{
+				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{
@@ -568,11 +567,11 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				// Clear the node id annotation of nodes and make sure it is reset by cluster manager
 				// with the same ids.
 				for _, n := range nodes {
-					nodeAnnotator := kube.NewNodeAnnotator(&kube.Kube{kubeFakeClient}, n.Name)
+					nodeAnnotator := kube.NewNodeAnnotator(&kube.Kube{KClient: kubeFakeClient}, n.Name)
 
 					nodeAnnotations := n.Annotations
 					for k, v := range nodeAnnotations {
-						nodeAnnotator.Set(k, v)
+						gomega.Expect(nodeAnnotator.Set(k, v)).To(gomega.Succeed())
 					}
 					nodeAnnotator.Delete(ovnNodeIDAnnotaton)
 					err = nodeAnnotator.Run()
@@ -613,7 +612,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 
 		ginkgo.It("Stop and start a new cluster manager and verify the node ids", func() {
 			app.Action = func(ctx *cli.Context) error {
-				nodes := []v1.Node{
+				nodes := []corev1.Node{
 					{
 						ObjectMeta: metav1.ObjectMeta{
 							Name: "node1",
@@ -630,7 +629,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						},
 					},
 				}
-				kubeFakeClient := fake.NewSimpleClientset(&v1.NodeList{
+				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{
@@ -677,7 +676,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 					}).ShouldNot(gomega.HaveOccurred())
 				}
 
-				updatedNodes := []v1.Node{}
+				updatedNodes := []corev1.Node{}
 				for _, n := range nodes {
 					updatedNode, _ := fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), n.Name, metav1.GetOptions{})
 					updatedNodes = append(updatedNodes, *updatedNode)
@@ -688,7 +687,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 
 				// Close the watch factory and create a new one
 				f.Shutdown()
-				kubeFakeClient = fake.NewSimpleClientset(&v1.NodeList{
+				kubeFakeClient = fake.NewSimpleClientset(&corev1.NodeList{
 					Items: updatedNodes,
 				})
 				fakeClient = &util.OVNClusterManagerClientset{
@@ -740,7 +739,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 
 		ginkgo.It("Stop cluster manager, set duplicate id, restart and verify the node ids", func() {
 			app.Action = func(ctx *cli.Context) error {
-				nodes := []v1.Node{
+				nodes := []corev1.Node{
 					{
 						ObjectMeta: metav1.ObjectMeta{
 							Name: "node1",
@@ -757,7 +756,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						},
 					},
 				}
-				kubeFakeClient := fake.NewSimpleClientset(&v1.NodeList{
+				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{
@@ -808,7 +807,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				clusterManager.Stop()
 				wg1.Wait()
 
-				updatedNodes := []v1.Node{}
+				updatedNodes := []corev1.Node{}
 				node2, _ := fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), "node2", metav1.GetOptions{})
 				for _, n := range nodes {
 					updatedNode, _ := fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), n.Name, metav1.GetOptions{})
@@ -821,7 +820,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 
 				// Close the watch factory and create a new one
 				f.Shutdown()
-				kubeFakeClient = fake.NewSimpleClientset(&v1.NodeList{
+				kubeFakeClient = fake.NewSimpleClientset(&corev1.NodeList{
 					Items: updatedNodes,
 				})
 				fakeClient = &util.OVNClusterManagerClientset{
@@ -866,7 +865,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 	ginkgo.Context("Node gateway router port IP allocations", func() {
 		ginkgo.It("verify the node annotations", func() {
 			app.Action = func(ctx *cli.Context) error {
-				nodes := []v1.Node{
+				nodes := []corev1.Node{
 					{
 						ObjectMeta: metav1.ObjectMeta{
 							Name: "node1",
@@ -883,7 +882,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						},
 					},
 				}
-				kubeFakeClient := fake.NewSimpleClientset(&v1.NodeList{
+				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{
@@ -914,7 +913,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 							return err
 						}
 
-						gwLRPAddrs, err := util.ParseNodeGatewayRouterJoinAddrs(updatedNode, types.DefaultNetworkName)
+						gwLRPAddrs, err := util.ParseNodeGatewayRouterJoinAddrs(updatedNode, ovntypes.DefaultNetworkName)
 						if err != nil {
 							return err
 						}
@@ -938,7 +937,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 
 		ginkgo.It("clear the node annotations for gateway router port ips and check", func() {
 			app.Action = func(ctx *cli.Context) error {
-				nodes := []v1.Node{
+				nodes := []corev1.Node{
 					{
 						ObjectMeta: metav1.ObjectMeta{
 							Name: "node1",
@@ -955,7 +954,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						},
 					},
 				}
-				kubeFakeClient := fake.NewSimpleClientset(&v1.NodeList{
+				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{
@@ -987,7 +986,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 							return err
 						}
 
-						gwLRPAddrs, err := util.ParseNodeGatewayRouterJoinAddrs(updatedNode, types.DefaultNetworkName)
+						gwLRPAddrs, err := util.ParseNodeGatewayRouterJoinAddrs(updatedNode, ovntypes.DefaultNetworkName)
 						if err != nil {
 							return err
 						}
@@ -1001,11 +1000,11 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				// Clear the node-gateway-router-lrp-ifaddr annotation of nodes and make sure it is reset by cluster manager
 				// with the same addrs.
 				for _, n := range nodes {
-					nodeAnnotator := kube.NewNodeAnnotator(&kube.Kube{kubeFakeClient}, n.Name)
+					nodeAnnotator := kube.NewNodeAnnotator(&kube.Kube{KClient: kubeFakeClient}, n.Name)
 
 					nodeAnnotations := n.Annotations
 					for k, v := range nodeAnnotations {
-						nodeAnnotator.Set(k, v)
+						gomega.Expect(nodeAnnotator.Set(k, v)).To(gomega.Succeed())
 					}
 					nodeAnnotator.Delete(util.OVNNodeGRLRPAddrs)
 					err = nodeAnnotator.Run()
@@ -1041,7 +1040,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 
 		ginkgo.It("Stop cluster manager, change id of a node and verify the gateway router port addr node annotation", func() {
 			app.Action = func(ctx *cli.Context) error {
-				nodes := []v1.Node{
+				nodes := []corev1.Node{
 					{
 						ObjectMeta: metav1.ObjectMeta{
 							Name: "node1",
@@ -1058,7 +1057,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						},
 					},
 				}
-				kubeFakeClient := fake.NewSimpleClientset(&v1.NodeList{
+				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{
@@ -1090,7 +1089,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 							return err
 						}
 
-						gwLRPAddrs, err := util.ParseNodeGatewayRouterJoinAddrs(updatedNode, types.DefaultNetworkName)
+						gwLRPAddrs, err := util.ParseNodeGatewayRouterJoinAddrs(updatedNode, ovntypes.DefaultNetworkName)
 						if err != nil {
 							return err
 						}
@@ -1109,7 +1108,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				clusterManager.Stop()
 				wg1.Wait()
 
-				updatedNodes := []v1.Node{}
+				updatedNodes := []corev1.Node{}
 
 				for _, n := range nodes {
 					updatedNode, _ := fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), n.Name, metav1.GetOptions{})
@@ -1122,7 +1121,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 
 				// Close the watch factory and create a new one
 				f.Shutdown()
-				kubeFakeClient = fake.NewSimpleClientset(&v1.NodeList{
+				kubeFakeClient = fake.NewSimpleClientset(&corev1.NodeList{
 					Items: updatedNodes,
 				})
 				fakeClient = &util.OVNClusterManagerClientset{
@@ -1150,7 +1149,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 					node3UpdatedGWRPAnnotation := updatedNode.Annotations[util.OVNNodeGRLRPAddrs]
 					gomega.Expect(node3UpdatedGWRPAnnotation).NotTo(gomega.Equal(node3GWRPAnnotation))
 
-					gwLRPAddrs, err := util.ParseNodeGatewayRouterJoinAddrs(updatedNode, types.DefaultNetworkName)
+					gwLRPAddrs, err := util.ParseNodeGatewayRouterJoinAddrs(updatedNode, ovntypes.DefaultNetworkName)
 					if err != nil {
 						return err
 					}
@@ -1175,7 +1174,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 			config.ClusterManager.V4TransitSwitchSubnet = "100.89.0.0/16"
 			config.ClusterManager.V6TransitSwitchSubnet = "fd99::/64"
 			app.Action = func(ctx *cli.Context) error {
-				nodes := []v1.Node{
+				nodes := []corev1.Node{
 					{
 						ObjectMeta: metav1.ObjectMeta{
 							Name: "node1",
@@ -1192,7 +1191,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						},
 					},
 				}
-				kubeFakeClient := fake.NewSimpleClientset(&v1.NodeList{
+				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{
@@ -1272,7 +1271,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 
 		ginkgo.It("Interconnect enabled - clear the transit switch port ips and check", func() {
 			app.Action = func(ctx *cli.Context) error {
-				nodes := []v1.Node{
+				nodes := []corev1.Node{
 					{
 						ObjectMeta: metav1.ObjectMeta{
 							Name: "node1",
@@ -1289,7 +1288,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						},
 					},
 				}
-				kubeFakeClient := fake.NewSimpleClientset(&v1.NodeList{
+				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{
@@ -1341,9 +1340,9 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				// Clear the transit switch port ip annotation from node 1.
 				node1, _ := fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), "node1", metav1.GetOptions{})
 				nodeAnnotations := node1.Annotations
-				nodeAnnotator := kube.NewNodeAnnotator(&kube.Kube{kubeFakeClient}, "node1")
+				nodeAnnotator := kube.NewNodeAnnotator(&kube.Kube{KClient: kubeFakeClient}, "node1")
 				for k, v := range nodeAnnotations {
-					nodeAnnotator.Set(k, v)
+					gomega.Expect(nodeAnnotator.Set(k, v)).To(gomega.Succeed())
 				}
 				node1TransitSwitchIps := node1.Annotations[ovnTransitSwitchPortAddrAnnotation]
 				nodeAnnotator.Delete(ovnTransitSwitchPortAddrAnnotation)
@@ -1386,7 +1385,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 
 		ginkgo.It("Interconnect disabled", func() {
 			app.Action = func(ctx *cli.Context) error {
-				nodes := []v1.Node{
+				nodes := []corev1.Node{
 					{
 						ObjectMeta: metav1.ObjectMeta{
 							Name: "node1",
@@ -1403,7 +1402,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						},
 					},
 				}
-				kubeFakeClient := fake.NewSimpleClientset(&v1.NodeList{
+				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{

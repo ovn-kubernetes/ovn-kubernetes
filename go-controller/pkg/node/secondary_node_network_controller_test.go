@@ -247,31 +247,40 @@ var _ = Describe("SecondaryNodeNetworkController: UserDefinedPrimaryNetwork Gate
 		stopCh = make(chan struct{})
 		routeManager := routemanager.NewController()
 		wg.Add(1)
-		go testNS.Do(func(netNS ns.NetNS) error {
+		go func() {
+			defer GinkgoRecover()
 			defer wg.Done()
-			routeManager.Run(stopCh, 2*time.Minute)
-			return nil
-		})
+			err := testNS.Do(func(ns.NetNS) error {
+				routeManager.Run(stopCh, 2*time.Minute)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+		}()
 		ipRulesManager = iprulemanager.NewController(true, true)
 		wg.Add(1)
-		go testNS.Do(func(netNS ns.NetNS) error {
+		go func() {
+			defer GinkgoRecover()
 			defer wg.Done()
-			ipRulesManager.Run(stopCh, 4*time.Minute)
-			return nil
-		})
+			err := testNS.Do(func(ns.NetNS) error {
+				ipRulesManager.Run(stopCh, 4*time.Minute)
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+		}()
 		vrf = vrfmanager.NewController(routeManager)
 		wg2 := &sync.WaitGroup{}
 		defer func() {
 			wg2.Wait()
 		}()
 		wg2.Add(1)
-		go testNS.Do(func(netNS ns.NetNS) error {
-			defer wg2.Done()
+		go func() {
 			defer GinkgoRecover()
-			err = vrf.Run(stopCh, wg)
+			defer wg2.Done()
+			err := testNS.Do(func(ns.NetNS) error {
+				return vrf.Run(stopCh, wg)
+			})
 			Expect(err).NotTo(HaveOccurred())
-			return nil
-		})
+		}()
 	})
 	AfterEach(func() {
 		close(stopCh)

@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/vishvananda/netlink"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	kexec "k8s.io/utils/exec"
 
@@ -594,11 +594,9 @@ func TestSetupSriovInterface(t *testing.T) {
 				MTU:           1500,
 				NetdevName:    "en01",
 			},
-			inpPCIAddrs:         "0000:03:00.1",
-			errExp:              true,
-			sriovOpsMockHelper:  []ovntest.TestifyMockHelper{},
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string"}, RetArgList: []interface{}{mockCmd}}},
-			onRetArgsCmdList:    []ovntest.TestifyMockHelper{{OnCallMethodName: "CombinedOutput", OnCallMethodArgType: []string{}, RetArgList: []interface{}{nil, fmt.Errorf("failed to run 'ovs-vsctl")}}},
+			inpPCIAddrs:        "0000:03:00.1",
+			errExp:             true,
+			sriovOpsMockHelper: []ovntest.TestifyMockHelper{},
 			netLinkOpsMockHelper: []ovntest.TestifyMockHelper{
 				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{nil, fmt.Errorf("mock error")}},
 			},
@@ -614,11 +612,9 @@ func TestSetupSriovInterface(t *testing.T) {
 				MTU:           1500,
 				NetdevName:    "en01",
 			},
-			inpPCIAddrs:         "0000:03:00.1",
-			errExp:              true,
-			sriovOpsMockHelper:  []ovntest.TestifyMockHelper{},
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string"}, RetArgList: []interface{}{mockCmd}}},
-			onRetArgsCmdList:    []ovntest.TestifyMockHelper{{OnCallMethodName: "CombinedOutput", OnCallMethodArgType: []string{}, RetArgList: []interface{}{nil, nil}}},
+			inpPCIAddrs:        "0000:03:00.1",
+			errExp:             true,
+			sriovOpsMockHelper: []ovntest.TestifyMockHelper{},
 			netLinkOpsMockHelper: []ovntest.TestifyMockHelper{
 				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
 				{OnCallMethodName: "LinkSetNsFd", OnCallMethodArgType: []string{"*mocks.Link", "int"}, RetArgList: []interface{}{nil}},
@@ -641,11 +637,9 @@ func TestSetupSriovInterface(t *testing.T) {
 				MTU:           1500,
 				NetdevName:    "en01",
 			},
-			inpPCIAddrs:         "0000:03:00.1",
-			errExp:              true,
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string"}, RetArgList: []interface{}{mockCmd}}},
-			onRetArgsCmdList:    []ovntest.TestifyMockHelper{{OnCallMethodName: "CombinedOutput", OnCallMethodArgType: []string{}, RetArgList: []interface{}{nil, fmt.Errorf("failed to run 'ovs-vsctl")}}},
-			runnerInstance:      mockKexecIface,
+			inpPCIAddrs:    "0000:03:00.1",
+			errExp:         true,
+			runnerInstance: mockKexecIface,
 			sriovOpsMockHelper: []ovntest.TestifyMockHelper{
 				{OnCallMethodName: "GetUplinkRepresentor", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{"", fmt.Errorf("mock error")}},
 			},
@@ -670,13 +664,9 @@ func TestSetupSriovInterface(t *testing.T) {
 				MTU:           1500,
 				NetdevName:    "en01",
 			},
-			inpPCIAddrs: "0000:03:00.1",
-			errExp:      true,
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-			},
-			onRetArgsCmdList: []ovntest.TestifyMockHelper{{OnCallMethodName: "CombinedOutput", OnCallMethodArgType: []string{}, RetArgList: []interface{}{nil, fmt.Errorf("failed to run 'ovs-vsctl")}}},
-			runnerInstance:   mockKexecIface,
+			inpPCIAddrs:    "0000:03:00.1",
+			errExp:         true,
+			runnerInstance: mockKexecIface,
 			sriovOpsMockHelper: []ovntest.TestifyMockHelper{
 				{OnCallMethodName: "GetUplinkRepresentor", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{"testlinkrepresentor", nil}},
 				{OnCallMethodName: "GetVfIndexByPciAddress", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{-1, fmt.Errorf("mock error")}},
@@ -702,13 +692,9 @@ func TestSetupSriovInterface(t *testing.T) {
 				MTU:           1500,
 				NetdevName:    "en01",
 			},
-			inpPCIAddrs: "0000:03:00.1",
-			errExp:      true,
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string"}, RetArgList: []interface{}{mockCmd}},
-			},
-			onRetArgsCmdList: []ovntest.TestifyMockHelper{{OnCallMethodName: "CombinedOutput", OnCallMethodArgType: []string{}, RetArgList: []interface{}{nil, nil}}},
-			runnerInstance:   mockKexecIface,
+			inpPCIAddrs:    "0000:03:00.1",
+			errExp:         true,
+			runnerInstance: mockKexecIface,
 			sriovOpsMockHelper: []ovntest.TestifyMockHelper{
 				{OnCallMethodName: "GetUplinkRepresentor", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{"testlinkrepresentor", nil}},
 				{OnCallMethodName: "GetVfIndexByPciAddress", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{0, nil}},
@@ -739,10 +725,8 @@ func TestSetupSriovInterface(t *testing.T) {
 			errExp:      true,
 			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
 				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
 			},
 			onRetArgsCmdList: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "CombinedOutput", OnCallMethodArgType: []string{}, RetArgList: []interface{}{nil, nil}},
 				{OnCallMethodName: "CombinedOutput", OnCallMethodArgType: []string{}, RetArgList: []interface{}{nil, nil}},
 			},
 			runnerInstance: mockKexecIface,
@@ -779,10 +763,8 @@ func TestSetupSriovInterface(t *testing.T) {
 			errMatch:    fmt.Errorf("failed to set MTU on"),
 			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
 				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
 			},
 			onRetArgsCmdList: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "CombinedOutput", OnCallMethodArgType: []string{}, RetArgList: []interface{}{nil, nil}},
 				{OnCallMethodName: "CombinedOutput", OnCallMethodArgType: []string{}, RetArgList: []interface{}{nil, nil}},
 			},
 			runnerInstance: mockKexecIface,
@@ -827,13 +809,7 @@ func TestSetupSriovInterface(t *testing.T) {
 			inpPCIAddrs:        "0000:03:00.1",
 			errExp:             false,
 			sriovOpsMockHelper: []ovntest.TestifyMockHelper{},
-			onRetArgsKexecIface: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string", "string", "string"}, RetArgList: []interface{}{mockCmd}},
-			},
-			onRetArgsCmdList: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "CombinedOutput", OnCallMethodArgType: []string{}, RetArgList: []interface{}{nil, nil}},
-			},
-			runnerInstance: mockKexecIface,
+			runnerInstance:     mockKexecIface,
 			netLinkOpsMockHelper: []ovntest.TestifyMockHelper{
 				// The below two mock calls are needed for the moveIfToNetns() call that internally invokes them
 				{OnCallMethodName: "LinkByName", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockLink, nil}},
@@ -1193,8 +1169,6 @@ func TestSetupSriovInterface(t *testing.T) {
 
 			runner = tc.runnerInstance
 
-			ovsExec()
-
 			netNsDoError = nil
 			hostIface, contIface, err := setupSriovInterface(tc.inpNetNS, tc.inpContID, tc.inpIfaceName, tc.inpPodIfaceInfo, tc.inpPCIAddrs, false)
 			t.Log(hostIface, contIface, err)
@@ -1519,13 +1493,13 @@ func TestConfigureOVS(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 
-			var pod v1.Pod
+			var pod corev1.Pod
 			pod.UID = "xyz"
 			podNamespaceLister := v1mocks.PodNamespaceLister{}
 			podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(&pod, nil)
 			var podLister v1mocks.PodLister
 			podLister.On("Pods", mock.AnythingOfType("string")).Return(&podNamespaceLister)
-			fakeClient := fake.NewSimpleClientset(&v1.PodList{Items: []v1.Pod{pod}})
+			fakeClient := fake.NewSimpleClientset(&corev1.PodList{Items: []corev1.Pod{pod}})
 			clientset := NewClientSet(fakeClient, &podLister)
 			err = ConfigureOVS(ctx, tc.podNs, tc.podName, tc.vfRep,
 				tc.ifInfo, sandboxID, vfPciAddress, clientset)
@@ -1656,7 +1630,7 @@ func TestConfigureOVS_getPfEncapIpWithError(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 
-			var pod v1.Pod
+			var pod corev1.Pod
 			podNamespaceLister := v1mocks.PodNamespaceLister{}
 			podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(pod, nil)
 

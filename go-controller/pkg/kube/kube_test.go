@@ -3,7 +3,7 @@ package kube
 import (
 	"context"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
@@ -15,25 +15,25 @@ var _ = Describe("Kube", func() {
 
 	Describe("Taint node operations", func() {
 		var kube Kube
-		var existingNodeTaints []v1.Taint
-		var taint v1.Taint
-		var node *v1.Node
+		var existingNodeTaints []corev1.Taint
+		var taint corev1.Taint
+		var node *corev1.Node
 
 		BeforeEach(func() {
 			fakeClient := fake.NewSimpleClientset()
 			kube = Kube{
 				KClient: fakeClient,
 			}
-			taint = v1.Taint{Key: "my-taint-key", Value: "my-taint-value", Effect: v1.TaintEffectNoSchedule}
+			taint = corev1.Taint{Key: "my-taint-key", Value: "my-taint-value", Effect: corev1.TaintEffectNoSchedule}
 		})
 
 		JustBeforeEach(func() {
 			// create the node with the specified taints just before the tests
-			newNode := &v1.Node{
+			newNode := &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "my-node",
 				},
-				Spec: v1.NodeSpec{
+				Spec: corev1.NodeSpec{
 					Taints: existingNodeTaints,
 				},
 			}
@@ -47,7 +47,7 @@ var _ = Describe("Kube", func() {
 		Context("with a node not having the taint", func() {
 
 			BeforeEach(func() {
-				existingNodeTaints = make([]v1.Taint, 0)
+				existingNodeTaints = make([]corev1.Taint, 0)
 			})
 
 			Context("SetTaintOnNode", func() {
@@ -76,13 +76,13 @@ var _ = Describe("Kube", func() {
 		Context("with a node having the same taint already", func() {
 
 			BeforeEach(func() {
-				existingNodeTaints = []v1.Taint{taint}
+				existingNodeTaints = []corev1.Taint{taint}
 			})
 
 			Context("SetTaintOnNode", func() {
 				It("should update the taint of the node if effect differs", func() {
 					updatedTaint := taint.DeepCopy()
-					updatedTaint.Effect = v1.TaintEffectPreferNoSchedule
+					updatedTaint.Effect = corev1.TaintEffectPreferNoSchedule
 
 					err := kube.SetTaintOnNode(node.Name, updatedTaint)
 					Expect(err).ToNot(HaveOccurred())
@@ -98,7 +98,7 @@ var _ = Describe("Kube", func() {
 
 					updatedNode, err := kube.GetNode(node.Name)
 					Expect(err).ToNot(HaveOccurred())
-					Expect(updatedNode.Spec.Taints).To(Equal([]v1.Taint{taint}))
+					Expect(updatedNode.Spec.Taints).To(Equal([]corev1.Taint{taint}))
 				})
 			})
 
@@ -141,7 +141,7 @@ var _ = Describe("Kube", func() {
 
 		Context("With a pod having annotations", func() {
 			var (
-				pod                 *v1.Pod
+				pod                 *corev1.Pod
 				existingAnnotations map[string]string
 			)
 
@@ -149,7 +149,7 @@ var _ = Describe("Kube", func() {
 				existingAnnotations = map[string]string{"foo": "foofoo", "bar": "barbar", "baz": "bazbaz"}
 
 				// create the pod
-				newPod := &v1.Pod{
+				newPod := &corev1.Pod{
 					ObjectMeta: metav1.ObjectMeta{
 						Namespace:   "default",
 						Name:        "my-pod",

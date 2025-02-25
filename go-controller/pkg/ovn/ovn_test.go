@@ -291,7 +291,7 @@ func (o *FakeOVN) init(nadList []nettypes.NetworkAttachmentDefinition) {
 }
 
 // creates the global entities that should remain after a UDN created and removed
-func generateUDNPostInitDB(testData []libovsdbtest.TestData, netName string) []libovsdbtest.TestData {
+func generateUDNPostInitDB(testData []libovsdbtest.TestData) []libovsdbtest.TestData {
 	testData = append(testData, &nbdb.MeterBand{
 		UUID:   "25-pktps-rate-limiter-UUID",
 		Action: types.MeterAction,
@@ -467,7 +467,7 @@ func createTestNBGlobal(nbClient libovsdbclient.Client, zone string) error {
 }
 
 func deleteTestNBGlobal(nbClient libovsdbclient.Client) error {
-	p := func(nbGlobal *nbdb.NBGlobal) bool {
+	p := func(*nbdb.NBGlobal) bool {
 		return true
 	}
 
@@ -591,7 +591,7 @@ func (o *FakeOVN) NewSecondaryNetworkController(netattachdef *nettypes.NetworkAt
 	return nil
 }
 
-func (o *FakeOVN) patchEgressIPObj(nodeName, egressIPName, egressIP, network string) {
+func (o *FakeOVN) patchEgressIPObj(nodeName, egressIPName, egressIP string) {
 	// NOTE: Cluster manager is the one who patches the egressIP object.
 	// For the sake of unit testing egressip zone controller we need to patch egressIP object manually
 	// There are tests in cluster-manager package covering the patch logic.
