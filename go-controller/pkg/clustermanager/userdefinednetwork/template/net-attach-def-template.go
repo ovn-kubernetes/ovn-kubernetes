@@ -162,7 +162,7 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter) (map[s
 		}
 
 		netConfSpec.Role = strings.ToLower(string(cfg.Role))
-		netConfSpec.MTU = int(cfg.MTU)
+		netConfSpec.MTU = loclanetMTU(cfg.MTU)
 		netConfSpec.AllowPersistentIPs = cfg.IPAM != nil && cfg.IPAM.Lifecycle == userdefinednetworkv1.IPAMLifecyclePersistent
 		netConfSpec.Subnets = cidrString(cfg.Subnets)
 		netConfSpec.ExcludeSubnets = cidrString(cfg.ExcludeSubnets)
@@ -241,6 +241,17 @@ func validateLocalnetConfig(cfg userdefinednetworkv1.LocalnetConfig) error {
 		return fmt.Errorf("excludeSubnets can be set only when subnets is set")
 	}
 	return nil
+}
+
+func loclanetMTU(desiredMTU int32) int {
+	// The MTU for localnet topology should be as the default MTU (1500) because the underlay
+	// is not part of the SDN and compensating for the SDN overhead is not required.
+	mtu := 1500
+	if desiredMTU > 0 {
+		mtu = int(desiredMTU)
+	}
+
+	return mtu
 }
 
 func ipamEnabled(ipam *userdefinednetworkv1.IPAMConfig) bool {
