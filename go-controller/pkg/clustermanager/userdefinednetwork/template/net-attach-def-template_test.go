@@ -687,5 +687,34 @@ var _ = Describe("NetAttachDefTemplate", func() {
 			  "allowPersistentIPs": true
 			}`,
 		),
+		Entry("secondary network, localnet, when MTU is unset it should set default MTU",
+			udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLocalnet,
+				Localnet: &udnv1.LocalnetConfig{
+					Role:                udnv1.NetworkRoleSecondary,
+					PhysicalNetworkName: "mylocalnet1",
+					VLAN:                &udnv1.VLANConfig{Mode: udnv1.VLANModeAccess, Access: &udnv1.AccessVLANConfig{ID: 200}},
+					Subnets:             udnv1.DualStackCIDRs{"192.168.100.0/24", "2001:dbb::/64"},
+					ExcludeSubnets:      []udnv1.CIDR{"192.168.100.1/32", "2001:dbb::0/128"},
+					IPAM: &udnv1.IPAMConfig{
+						Lifecycle: udnv1.IPAMLifecyclePersistent,
+					},
+				},
+			},
+			`{
+			  "cniVersion": "1.0.0",
+			  "type": "ovn-k8s-cni-overlay",
+			  "name": "cluster_udn_test-net",
+			  "netAttachDefName": "mynamespace/test-net",
+			  "role": "secondary",
+			  "topology": "localnet",
+		      "physicalNetworkName": "mylocalnet1",
+			  "subnets": "192.168.100.0/24,2001:dbb::/64",
+              "excludeSubnets": "192.168.100.1/32,2001:dbb::0/128",
+			  "mtu": 1500,
+              "vlanID": 200, 
+			  "allowPersistentIPs": true
+			}`,
+		),
 	)
 })

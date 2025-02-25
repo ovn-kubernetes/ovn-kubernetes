@@ -389,7 +389,8 @@ spec:
                       mtu:
                         description: |-
                           mtu is the maximum transmission unit for a network.
-                          mtu is optional, if not provided, the globally configured value in OVN-Kubernetes (defaults to 1400) is used for the network.
+                          mtu is optional. When omitted, the configured value in OVN-Kubernetes (defaults to 1500 for localnet topology)
+                          is used for the network.
                           Minimum value for IPv4 subnet is 576, and for IPv6 subnet is 1280.
                           Maximum value is 65536.
                           In a scenario `physicalNetworkName` points to OVS bridge mapping of a network configured with certain MTU settings,
