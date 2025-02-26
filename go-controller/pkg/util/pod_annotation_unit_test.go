@@ -9,6 +9,7 @@ import (
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -331,7 +332,7 @@ func TestGetPodIPsOfNetwork(t *testing.T) {
 			res1, e := GetPodIPsOfNetwork(tc.inpPod, tc.networkInfo)
 			t.Log(res1, e)
 			if tc.errAssert {
-				assert.Error(t, e)
+				require.Error(t, e)
 			} else if tc.errMatch != nil {
 				if errors.Is(tc.errMatch, ErrNoPodIPFound) {
 					assert.ErrorIs(t, e, ErrNoPodIPFound)
@@ -466,10 +467,10 @@ func TestUnmarshalUDNOpenPortsAnnotation(t *testing.T) {
 				UDNOpenPortsAnnotationName: tc.input,
 			})
 			if tc.errSubstr != "" {
-				assert.Error(t, err)
+				require.Error(t, err)
 				assert.Contains(t, err.Error(), tc.errSubstr)
 			} else {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				assert.Equal(t, tc.result, res)
 			}
 		})

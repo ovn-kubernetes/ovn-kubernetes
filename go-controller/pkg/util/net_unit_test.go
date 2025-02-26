@@ -8,6 +8,7 @@ import (
 
 	iputils "github.com/containernetworking/plugins/pkg/ip"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	mock_k8s_io_utils_exec "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/utils/exec"
@@ -112,7 +113,7 @@ func TestGetOVSPortMACAddress(t *testing.T) {
 			res, err := GetOVSPortMACAddress(tc.input)
 			t.Log(res, err)
 			if tc.errExpected {
-				assert.Error(t, err)
+				require.Error(t, err)
 			}
 			mockKexecIface.AssertExpectations(t)
 			mockExecRunner.AssertExpectations(t)
@@ -141,7 +142,7 @@ func TestIPFamilyName(t *testing.T) {
 		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
 			res := IPFamilyName(tc.input)
 			t.Log(res)
-			assert.Equal(t, res, tc.expOut)
+			assert.Equal(t, tc.expOut, res)
 		})
 	}
 }
@@ -283,7 +284,7 @@ func TestJoinHostPortInt32(t *testing.T) {
 		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
 			res := JoinHostPortInt32(tc.inpHost, tc.inpPort)
 			t.Log(res)
-			assert.Equal(t, res, tc.outExp)
+			assert.Equal(t, tc.outExp, res)
 		})
 	}
 }
@@ -310,7 +311,7 @@ func TestIPAddrToHWAddr(t *testing.T) {
 		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
 			res := IPAddrToHWAddr(tc.inpIP)
 			t.Log(res)
-			assert.Equal(t, res, tc.outExp)
+			assert.Equal(t, tc.outExp, res)
 		})
 	}
 }
@@ -344,7 +345,7 @@ func TestJoinIPs(t *testing.T) {
 		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
 			res := JoinIPs(tc.inpIPList, tc.inpSeparator)
 			t.Log(res)
-			assert.Equal(t, res, tc.outExp)
+			assert.Equal(t, tc.outExp, res)
 		})
 	}
 }
@@ -378,7 +379,7 @@ func TestJoinIPNets(t *testing.T) {
 		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
 			res := JoinIPNets(tc.inpIPNetList, tc.inpSeparator)
 			t.Log(res)
-			assert.Equal(t, res, tc.outExp)
+			assert.Equal(t, tc.outExp, res)
 		})
 	}
 }
@@ -412,7 +413,7 @@ func TestJoinIPNetIPs(t *testing.T) {
 		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
 			res := JoinIPNetIPs(tc.inpIPNetList, tc.inpSeparator)
 			t.Log(res)
-			assert.Equal(t, res, tc.outExp)
+			assert.Equal(t, tc.outExp, res)
 		})
 	}
 }
@@ -465,7 +466,7 @@ func TestContainsCIDR(t *testing.T) {
 		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
 			res := ContainsCIDR(tc.inpIPNet1, tc.inpIPNet2)
 			t.Log(res)
-			assert.Equal(t, res, tc.outExp)
+			assert.Equal(t, tc.outExp, res)
 		})
 	}
 }

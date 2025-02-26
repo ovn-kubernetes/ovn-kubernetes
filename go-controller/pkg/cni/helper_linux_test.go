@@ -15,6 +15,7 @@ import (
 	"github.com/k8snetworkplumbingwg/sriovnet"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"github.com/vishvananda/netlink"
 
 	corev1 "k8s.io/api/core/v1"
@@ -107,9 +108,9 @@ func TestRenameLink(t *testing.T) {
 			err := renameLink(tc.inpCurrName, tc.inpNewName)
 			t.Log(err)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			mockNetLinkOps.AssertExpectations(t)
 		})
@@ -176,7 +177,7 @@ func TestMoveIfToNetns(t *testing.T) {
 			if tc.errMatch != nil {
 				assert.Contains(t, err.Error(), tc.errMatch.Error())
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			mockNetLinkOps.AssertExpectations(t)
 			mockNetNS.AssertExpectations(t)
@@ -257,7 +258,7 @@ func TestSafeMoveIfToNetns(t *testing.T) {
 			if tc.errMatch != nil {
 				assert.Contains(t, err.Error(), tc.errMatch.Error())
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			mockNetLinkOps.AssertExpectations(t)
 			mockNetNS.AssertExpectations(t)
@@ -444,7 +445,7 @@ func TestSetupNetwork(t *testing.T) {
 			if tc.errMatch != nil {
 				assert.Contains(t, err.Error(), tc.errMatch.Error())
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			mockNetLinkOps.AssertExpectations(t)
 			mockLink.AssertExpectations(t)
@@ -521,11 +522,11 @@ func TestSetupInterface(t *testing.T) {
 			hostIface, contIface, err := setupInterface(tc.inpNetNS, tc.inpContID, tc.inpIfaceName, tc.inpPodIfaceInfo)
 			t.Log(hostIface, contIface, err)
 			if tc.errExp {
-				assert.NotNil(t, err)
+				require.Error(t, err)
 			} else if tc.errMatch != nil {
 				assert.Contains(t, err.Error(), tc.errMatch.Error())
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			mockNetLinkOps.AssertExpectations(t)
 			mockCNIPlugin.AssertExpectations(t)
@@ -1176,11 +1177,11 @@ func TestSetupSriovInterface(t *testing.T) {
 				err = netNsDoError
 			}
 			if tc.errExp {
-				assert.NotNil(t, err)
+				require.Error(t, err)
 			} else if tc.errMatch != nil {
 				assert.Contains(t, err.Error(), tc.errMatch.Error())
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			mockNetLinkOps.AssertExpectations(t)
 			mockCNIPlugin.AssertExpectations(t)
@@ -1416,9 +1417,9 @@ func TestConfigureOVS(t *testing.T) {
 			ovntest.ProcessMockFnList(&mockSriovnetOps.Mock, tc.sriovnetOpsMockHelper)
 
 			err := util.SetExec(tc.execMock)
-			assert.Nil(t, err)
+			require.NoError(t, err)
 			err = SetExec(tc.execMock)
-			assert.Nil(t, err)
+			require.NoError(t, err)
 
 			tc.execMock.AddFakeCmd(&ovntest.ExpectedCmd{
 				Cmd: genOVSGetCmd("bridge", "br-int", "datapath_type", ""),
@@ -1506,7 +1507,7 @@ func TestConfigureOVS(t *testing.T) {
 			if tc.errMatch != nil {
 				assert.Contains(t, err.Error(), tc.errMatch.Error())
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 
 			mockNetLinkOps.AssertExpectations(t)
@@ -1621,9 +1622,9 @@ func TestConfigureOVS_getPfEncapIpWithError(t *testing.T) {
 			ovntest.ProcessMockFnList(&mockSriovnetOps.Mock, tc.sriovnetOpsMockHelper)
 
 			err := util.SetExec(execMock)
-			assert.Nil(t, err)
+			require.NoError(t, err)
 			err = SetExec(execMock)
-			assert.Nil(t, err)
+			require.NoError(t, err)
 
 			execMock.AddFakeCmds(tc.execMockCommands)
 
@@ -1641,7 +1642,7 @@ func TestConfigureOVS_getPfEncapIpWithError(t *testing.T) {
 			if tc.errMatch != nil {
 				assert.Contains(t, err.Error(), tc.errMatch.Error())
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 
 			mockNetLinkOps.AssertExpectations(t)

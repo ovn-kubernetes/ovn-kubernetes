@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -60,7 +61,7 @@ func TestCreateSubnetAnnotation(t *testing.T) {
 			mapRes := map[string]string{}
 			e := updateSubnetAnnotation(mapRes, tc.inpAnnotName, types.DefaultNetworkName, defSubList)
 			if tc.expectedErr {
-				assert.Error(t, e)
+				require.Error(t, e)
 			}
 			t.Log(mapRes[tc.inpAnnotName], e)
 		})
@@ -90,7 +91,7 @@ func TestSetSubnetAnnotation(t *testing.T) {
 			err := setSubnetAnnotation(tc.inpNodeAnnotator, tc.inpAnnotName, tc.inpDefSubnetIps)
 			t.Log(err)
 			if tc.errExp {
-				assert.NotNil(t, err)
+				assert.Error(t, err)
 			}
 		})
 	}
@@ -176,7 +177,7 @@ func TestParseSubnetAnnotation(t *testing.T) {
 			} else {
 				ipList := ipListMap[types.DefaultNetworkName]
 				t.Log(ipList)
-				assert.Greater(t, len(ipList), 0)
+				assert.NotEmpty(t, ipList)
 			}
 		})
 	}
@@ -274,7 +275,7 @@ func TestCreateNodeHostSubnetAnnotation(t *testing.T) {
 			res, err := UpdateNodeHostSubnetAnnotation(nil, tc.inpDefSubnetIps, types.DefaultNetworkName)
 			t.Log(res, err)
 			if tc.errExp {
-				assert.NotNil(t, err)
+				assert.Error(t, err)
 			} else {
 				assert.True(t, reflect.DeepEqual(res, tc.outExp))
 			}
@@ -304,7 +305,7 @@ func TestSetNodeHostSubnetAnnotation(t *testing.T) {
 			err := SetNodeHostSubnetAnnotation(tc.inpNodeAnnotator, tc.inpDefSubnetIps)
 			t.Log(err)
 			if tc.errExp {
-				assert.NotNil(t, err)
+				assert.Error(t, err)
 			}
 		})
 	}
@@ -354,7 +355,7 @@ func TestParseNodeHostSubnetAnnotation(t *testing.T) {
 			res, err := ParseNodeHostSubnetAnnotation(&tc.inpNode, types.DefaultNetworkName)
 			t.Log(res, err)
 			if tc.errExp {
-				assert.NotNil(t, err)
+				assert.Error(t, err)
 			} else {
 				assert.NotNil(t, res)
 			}

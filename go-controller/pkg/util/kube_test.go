@@ -148,7 +148,7 @@ func TestIsClusterIPSet(t *testing.T) {
 	for i, tc := range tests {
 		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
 			res := IsClusterIPSet(&tc.inp)
-			assert.Equal(t, res, tc.expOut)
+			assert.Equal(t, tc.expOut, res)
 		})
 	}
 }
@@ -229,7 +229,7 @@ func TestServiceTypeHasClusterIP(t *testing.T) {
 	for i, tc := range tests {
 		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
 			res := ServiceTypeHasClusterIP(&tc.inp)
-			assert.Equal(t, res, tc.expOut)
+			assert.Equal(t, tc.expOut, res)
 		})
 	}
 }
@@ -272,7 +272,7 @@ func TestServiceTypeHasNodePort(t *testing.T) {
 	for i, tc := range tests {
 		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
 			res := ServiceTypeHasNodePort(&tc.inp)
-			assert.Equal(t, res, tc.expOut)
+			assert.Equal(t, tc.expOut, res)
 		})
 	}
 }
@@ -329,7 +329,7 @@ func TestGetNodePrimaryIP(t *testing.T) {
 			if tc.expErr {
 				assert.Error(t, e)
 			} else {
-				assert.Equal(t, res, tc.expOut)
+				assert.Equal(t, tc.expOut, res)
 			}
 		})
 	}

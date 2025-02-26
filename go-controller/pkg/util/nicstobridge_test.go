@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/vishvananda/netlink"
 
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
@@ -152,7 +153,7 @@ func TestGetNicName(t *testing.T) {
 			if tc.errMatch != nil {
 				assert.Contains(t, err.Error(), tc.errMatch.Error())
 			} else {
-				assert.Equal(t, res, tc.outputExp)
+				assert.Equal(t, tc.outputExp, res)
 			}
 			mockExecRunner.AssertExpectations(t)
 			mockKexecIface.AssertExpectations(t)
@@ -233,9 +234,9 @@ func TestSaveIPAddress(t *testing.T) {
 			err := saveIPAddress(tc.inpNewLink, tc.inpOldLink, tc.inpAddrs)
 			t.Log(err)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			mockNetLinkOps.AssertExpectations(t)
 			mockLink.AssertExpectations(t)
@@ -308,9 +309,9 @@ func TestDelAddRoute(t *testing.T) {
 			err := delAddRoute(tc.inpOldLink, tc.inpNewLink, tc.inpRoute)
 			t.Log(err)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			mockNetLinkOps.AssertExpectations(t)
 			mockLink.AssertExpectations(t)
@@ -392,9 +393,9 @@ func TestSaveRoute(t *testing.T) {
 			err := saveRoute(tc.inpOldLink, tc.inpNewLink, tc.inpRoutes)
 			t.Log(err)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			mockNetLinkOps.AssertExpectations(t)
 			mockLink.AssertExpectations(t)
@@ -557,11 +558,11 @@ func TestNicToBridge(t *testing.T) {
 			res, err := NicToBridge(tc.inpIface)
 			t.Log(res, err)
 			if tc.errExp {
-				assert.Error(t, err)
-				assert.Equal(t, len(res), 0)
+				require.Error(t, err)
+				assert.Empty(t, res)
 			} else {
-				assert.Nil(t, err)
-				assert.Greater(t, len(res), 0)
+				require.NoError(t, err)
+				assert.NotEmpty(t, res)
 			}
 			mockKexecIface.AssertExpectations(t)
 			mockExecRunner.AssertExpectations(t)
@@ -1155,9 +1156,9 @@ func TestBridgeToNic(t *testing.T) {
 			err := BridgeToNic(tc.inpBridge)
 			t.Log(err)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			mockKexecIface.AssertExpectations(t)
 			mockExecRunner.AssertExpectations(t)

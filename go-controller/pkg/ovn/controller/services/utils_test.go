@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
@@ -20,7 +21,7 @@ func TestExternalIDsForLoadBalancer(t *testing.T) {
 	defaultNetInfo := util.DefaultNetInfo{}
 	config.IPv4Mode = true
 	UDNNetInfo, err := getSampleUDNNetInfo(namespace, "layer3")
-	assert.Equal(t, err, nil)
+	require.NoError(t, err)
 	assert.Equal(t,
 		map[string]string{
 			types.LoadBalancerKindExternalID:  "Service",

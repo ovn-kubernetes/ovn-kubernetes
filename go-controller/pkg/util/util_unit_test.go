@@ -11,6 +11,7 @@ import (
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	discovery "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -99,9 +100,9 @@ func TestGetNodeChassisID(t *testing.T) {
 
 			ret, e := GetNodeChassisID()
 			if tc.errExpected {
-				assert.Error(t, e)
+				require.Error(t, e)
 			} else {
-				assert.Greater(t, len(ret), 0)
+				assert.NotEmpty(t, ret)
 			}
 			mockExecRunner.AssertExpectations(t)
 			mockCmd.AssertExpectations(t)
@@ -250,7 +251,7 @@ func TestFilterIPsSlice(t *testing.T) {
 
 func TestGenerateId(t *testing.T) {
 	id := GenerateId(10)
-	assert.Equal(t, 10, len(id))
+	assert.Len(t, id, 10)
 	matchesPattern, _ := regexp.MatchString("([a-zA-Z0-9-]*)", id)
 	assert.True(t, matchesPattern)
 }

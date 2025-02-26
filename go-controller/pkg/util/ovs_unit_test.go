@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	kexec "k8s.io/utils/exec"
 
@@ -83,7 +84,7 @@ func TestRunningPlatform(t *testing.T) {
 			if tc.expErr != nil {
 				assert.Contains(t, err.Error(), tc.expErr.Error())
 			} else {
-				assert.Equal(t, res, tc.expOut)
+				assert.Equal(t, tc.expOut, res)
 			}
 		})
 	}
@@ -142,7 +143,7 @@ func TestRunOVNretry(t *testing.T) {
 			if tc.errMatch != nil {
 				assert.Contains(t, e.Error(), tc.errMatch.Error())
 			} else {
-				assert.Nil(t, e)
+				require.NoError(t, e)
 			}
 			mockExecRunner.AssertExpectations(t)
 			mockKexecIface.AssertExpectations(t)
@@ -268,7 +269,7 @@ func TestGetNbOVSDBArgs(t *testing.T) {
 				defer resetScheme(preValOvnNBScheme)
 			}
 			res := getNbOVSDBArgs(tc.inpCmdStr, tc.inpVarArgs)
-			assert.Equal(t, res, tc.outExp)
+			assert.Equal(t, tc.outExp, res)
 		})
 	}
 }
@@ -347,7 +348,7 @@ func TestRunOVNNorthAppCtl(t *testing.T) {
 			if tc.errMatch != nil {
 				assert.Contains(t, err.Error(), tc.errMatch.Error())
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			mockExecRunner.AssertExpectations(t)
 			mockKexecIface.AssertExpectations(t)
@@ -429,7 +430,7 @@ func TestRunOVNControllerAppCtl(t *testing.T) {
 			if tc.errMatch != nil {
 				assert.Contains(t, err.Error(), tc.errMatch.Error())
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			mockExecRunner.AssertExpectations(t)
 			mockKexecIface.AssertExpectations(t)
@@ -509,7 +510,7 @@ func TestRunOvsVswitchdAppCtl(t *testing.T) {
 			if tc.errMatch != nil {
 				assert.Contains(t, err.Error(), tc.errMatch.Error())
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			mockExecRunner.AssertExpectations(t)
 			mockKexecIface.AssertExpectations(t)
@@ -556,7 +557,7 @@ func TestDefaultExecRunner_RunCmd(t *testing.T) {
 			}
 			_, _, e := runCmdExecRunner.RunCmd(tc.cmd, tc.cmdPath, tc.envVars, tc.cmdArg)
 
-			assert.Equal(t, e, tc.expectedErr)
+			assert.Equal(t, tc.expectedErr, e)
 			mockCmd.AssertExpectations(t)
 		})
 	}
@@ -592,7 +593,7 @@ func TestSetExec(t *testing.T) {
 				runner = &execHelper{exec: mockKexecIface}
 			}
 			e := SetExec(mockKexecIface)
-			assert.Equal(t, e, tc.expectedErr)
+			assert.Equal(t, tc.expectedErr, e)
 			mockKexecIface.AssertExpectations(t)
 		})
 	}
@@ -632,7 +633,7 @@ func TestSetExecWithoutOVS(t *testing.T) {
 			ovntest.ProcessMockFn(&mockKexecIface.Mock, *tc.onRetArgs)
 
 			e := SetExecWithoutOVS(mockKexecIface)
-			assert.Equal(t, e, tc.expectedErr)
+			assert.Equal(t, tc.expectedErr, e)
 			mockKexecIface.AssertExpectations(t)
 		})
 	}
@@ -672,7 +673,7 @@ func TestSetSpecificExec(t *testing.T) {
 			}
 
 			e := SetSpecificExec(mockKexecIface, tc.fnArg)
-			assert.Equal(t, e, tc.expectedErr)
+			assert.Equal(t, tc.expectedErr, e)
 			mockKexecIface.AssertExpectations(t)
 		})
 	}
@@ -718,7 +719,7 @@ func TestRunCmd(t *testing.T) {
 
 			_, _, e := runCmd(mockCmd, tc.cmdPath, tc.cmdArg)
 
-			assert.Equal(t, e, tc.expectedErr)
+			assert.Equal(t, tc.expectedErr, e)
 			mockCmd.AssertExpectations(t)
 		})
 	}
@@ -792,7 +793,7 @@ func TestRun(t *testing.T) {
 
 			_, _, e := run(tc.cmdPath, tc.cmdArg)
 
-			assert.Equal(t, e, tc.expectedErr)
+			assert.Equal(t, tc.expectedErr, e)
 			mockCmd.AssertExpectations(t)
 			mockKexecIface.AssertExpectations(t)
 		})
@@ -862,7 +863,7 @@ func TestRunWithEnvVars(t *testing.T) {
 
 			_, _, e := runWithEnvVars(tc.cmdPath, tc.envArgs, tc.cmdArg)
 
-			assert.Equal(t, e, tc.expectedErr)
+			assert.Equal(t, tc.expectedErr, e)
 			mockCmd.AssertExpectations(t)
 			mockKexecIface.AssertExpectations(t)
 		})
@@ -903,7 +904,7 @@ func TestRunOVSOfctl(t *testing.T) {
 
 			_, _, e := RunOVSOfctl()
 
-			assert.Equal(t, e, tc.expectedErr)
+			assert.Equal(t, tc.expectedErr, e)
 			mockExecRunner.AssertExpectations(t)
 			mockKexecIface.AssertExpectations(t)
 		})
@@ -996,7 +997,7 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0
 			ports, err := GetOpenFlowPorts("breth0", tc.portNumbers)
 
 			// make sure that there's no error
-			assert.Equal(t, err, tc.expectedErr)
+			assert.Equal(t, tc.expectedErr, err)
 			mockExecRunner.AssertExpectations(t)
 			mockKexecIface.AssertExpectations(t)
 
@@ -1040,7 +1041,7 @@ func TestRunOVSVsctl(t *testing.T) {
 
 			_, _, e := RunOVSVsctl()
 
-			assert.Equal(t, e, tc.expectedErr)
+			assert.Equal(t, tc.expectedErr, e)
 			mockExecRunner.AssertExpectations(t)
 			mockKexecIface.AssertExpectations(t)
 		})
@@ -1084,7 +1085,7 @@ func TestRunOVSAppctlWithTimeout(t *testing.T) {
 
 			_, _, e := RunOVSAppctlWithTimeout(tc.timeout)
 
-			assert.Equal(t, e, tc.expectedErr)
+			assert.Equal(t, tc.expectedErr, e)
 			mockExecRunner.AssertExpectations(t)
 			mockKexecIface.AssertExpectations(t)
 		})
@@ -1125,7 +1126,7 @@ func TestRunOVSAppctl(t *testing.T) {
 
 			_, _, e := RunOVSAppctl()
 
-			assert.Equal(t, e, tc.expectedErr)
+			assert.Equal(t, tc.expectedErr, e)
 			mockExecRunner.AssertExpectations(t)
 			mockKexecIface.AssertExpectations(t)
 		})
@@ -1169,7 +1170,7 @@ func TestRunOVNAppctlWithTimeout(t *testing.T) {
 
 			_, _, e := RunOVNAppctlWithTimeout(tc.timeout)
 
-			assert.Equal(t, e, tc.expectedErr)
+			assert.Equal(t, tc.expectedErr, e)
 			mockExecRunner.AssertExpectations(t)
 			mockKexecIface.AssertExpectations(t)
 		})
@@ -1214,7 +1215,7 @@ func TestRunOVNNbctlWithTimeout(t *testing.T) {
 			_, _, e := RunOVNNbctlWithTimeout(tc.timeout)
 
 			if tc.expectedErr != nil {
-				assert.Error(t, e)
+				require.Error(t, e)
 			}
 			mockExecRunner.AssertExpectations(t)
 			mockKexecIface.AssertExpectations(t)
@@ -1257,7 +1258,7 @@ func TestRunOVNNbctl(t *testing.T) {
 			_, _, e := RunOVNNbctl()
 
 			if tc.expectedErr != nil {
-				assert.Error(t, e)
+				require.Error(t, e)
 			}
 			mockExecRunner.AssertExpectations(t)
 			mockKexecIface.AssertExpectations(t)
@@ -1303,7 +1304,7 @@ func TestRunOVNSbctlWithTimeout(t *testing.T) {
 			_, _, e := RunOVNSbctlWithTimeout(tc.timeout)
 
 			if tc.expectedErr != nil {
-				assert.Error(t, e)
+				require.Error(t, e)
 			}
 			mockExecRunner.AssertExpectations(t)
 			mockKexecIface.AssertExpectations(t)
@@ -1346,7 +1347,7 @@ func TestRunOVNSbctl(t *testing.T) {
 			_, _, e := RunOVNSbctl()
 
 			if tc.expectedErr != nil {
-				assert.Error(t, e)
+				require.Error(t, e)
 			}
 			mockExecRunner.AssertExpectations(t)
 			mockKexecIface.AssertExpectations(t)
@@ -1389,7 +1390,7 @@ func TestRunOVSDBClient(t *testing.T) {
 			_, _, e := RunOVSDBClient()
 
 			if tc.expectedErr != nil {
-				assert.Error(t, e)
+				require.Error(t, e)
 			}
 			mockExecRunner.AssertExpectations(t)
 			mockKexecIface.AssertExpectations(t)
@@ -1432,7 +1433,7 @@ func TestRunOVSDBTool(t *testing.T) {
 			_, _, e := RunOVSDBTool()
 
 			if tc.expectedErr != nil {
-				assert.Error(t, e)
+				require.Error(t, e)
 			}
 			mockExecRunner.AssertExpectations(t)
 			mockKexecIface.AssertExpectations(t)
@@ -1475,7 +1476,7 @@ func TestRunOVSDBClientOVNNB(t *testing.T) {
 			_, _, e := RunOVSDBClientOVNNB("list-dbs")
 
 			if tc.expectedErr != nil {
-				assert.Error(t, e)
+				require.Error(t, e)
 			}
 			mockExecRunner.AssertExpectations(t)
 			mockKexecIface.AssertExpectations(t)
@@ -1518,7 +1519,7 @@ func TestRunOVNNBAppCtl(t *testing.T) {
 			_, _, e := RunOVNNBAppCtl()
 
 			if tc.expectedErr != nil {
-				assert.Error(t, e)
+				require.Error(t, e)
 			}
 			mockExecRunner.AssertExpectations(t)
 			mockKexecIface.AssertExpectations(t)
@@ -1561,7 +1562,7 @@ func TestRunOVNSBAppCtl(t *testing.T) {
 			_, _, e := RunOVNSBAppCtl()
 
 			if tc.expectedErr != nil {
-				assert.Error(t, e)
+				require.Error(t, e)
 			}
 			mockExecRunner.AssertExpectations(t)
 			mockKexecIface.AssertExpectations(t)
@@ -1597,7 +1598,7 @@ func TestRunIP(t *testing.T) {
 
 			_, _, e := RunIP()
 
-			assert.Equal(t, e, tc.expectedErr)
+			assert.Equal(t, tc.expectedErr, e)
 			mockExecRunner.AssertExpectations(t)
 			mockKexecIface.AssertExpectations(t)
 		})
@@ -1632,7 +1633,7 @@ func TestRunSysctl(t *testing.T) {
 
 			_, _, e := RunSysctl("-w", "net.ipv4.conf.eth0.rp_filter=2")
 
-			assert.Equal(t, e, tc.expectedErr)
+			assert.Equal(t, tc.expectedErr, e)
 			mockExecRunner.AssertExpectations(t)
 			mockKexecIface.AssertExpectations(t)
 		})
@@ -1678,7 +1679,7 @@ func TestAddOFFlowWithSpecificAction(t *testing.T) {
 			_, _, e := AddOFFlowWithSpecificAction("somename", "someaction")
 
 			if tc.expectedErr != nil {
-				assert.Error(t, e)
+				require.Error(t, e)
 			}
 			mockExecRunner.AssertExpectations(t)
 			mockKexecIface.AssertExpectations(t)
@@ -1725,7 +1726,7 @@ func TestReplaceOFFlows(t *testing.T) {
 			_, _, e := ReplaceOFFlows("somename", []string{})
 
 			if tc.expectedErr != nil {
-				assert.Error(t, e)
+				require.Error(t, e)
 			}
 			mockExecRunner.AssertExpectations(t)
 			mockKexecIface.AssertExpectations(t)
@@ -1780,7 +1781,7 @@ func TestGetOVNDBServerInfo(t *testing.T) {
 			_, e := GetOVNDBServerInfo(15, "nb", "OVN_Northbound")
 
 			if tc.expectedErr {
-				assert.Error(t, e)
+				require.Error(t, e)
 			}
 			mockExecRunner.AssertExpectations(t)
 			mockKexecIface.AssertExpectations(t)
@@ -1862,7 +1863,7 @@ func TestDetectSCTPSupport(t *testing.T) {
 			_, e := DetectSCTPSupport()
 
 			if tc.expectedErr {
-				assert.Error(t, e)
+				require.Error(t, e)
 			}
 			mockExecRunner.AssertExpectations(t)
 			mockKexecIface.AssertExpectations(t)

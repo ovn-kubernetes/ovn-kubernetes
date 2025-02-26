@@ -9,6 +9,7 @@ import (
 	"github.com/miekg/dns"
 	"github.com/stretchr/testify/assert"
 	mock "github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
@@ -53,9 +54,9 @@ func TestNewDNS(t *testing.T) {
 			res, err := NewDNS("DNS temp Name")
 			t.Log(res, err)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			mockDNSOps.AssertExpectations(t)
 
@@ -130,9 +131,9 @@ func TestGetIPsAndMinTTL(t *testing.T) {
 			res, _, err := testDNS.getIPsAndMinTTL("www.test.com")
 			t.Log(res, err)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			mockDNSOps.AssertExpectations(t)
 		})
@@ -235,12 +236,12 @@ func TestUpdate(t *testing.T) {
 			}
 			returned, err := dns.Update(dnsName)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 				assert.Equal(t, tc.changeExp, returned, "the change expected varaible should match the return from dns.Update()")
 
-				assert.Equal(t, len(dns.dnsMap[dnsName].ips), 1)
+				assert.Len(t, dns.dnsMap[dnsName].ips, 1)
 				assert.Equal(t, dns.dnsMap[dnsName].ips[0], newIP)
 
 			}
@@ -308,10 +309,10 @@ func TestAdd(t *testing.T) {
 			}
 			err := dns.Add(dnsName)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
-				assert.Equal(t, len(dns.dnsMap[dnsName].ips), 1)
+				require.NoError(t, err)
+				assert.Len(t, dns.dnsMap[dnsName].ips, 1)
 				assert.Equal(t, dns.dnsMap[dnsName].ips[0], addedIP)
 			}
 		})

@@ -9,6 +9,7 @@ import (
 	"github.com/miekg/dns"
 	"github.com/stretchr/testify/assert"
 	mock "github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 
 	utilnet "k8s.io/utils/net"
 
@@ -28,7 +29,7 @@ func TestNewEgressDNS(t *testing.T) {
 	dbSetup := libovsdbtest.TestSetup{}
 
 	libovsdbOvnNBClient, _, libovsdbCleanup, err := libovsdbtest.NewNBSBTestHarness(dbSetup)
-	assert.Nil(t, err)
+	require.NoError(t, err)
 	t.Cleanup(libovsdbCleanup.Cleanup)
 
 	testOvnAddFtry := addressset.NewOvnAddressSetFactory(libovsdbOvnNBClient, config.IPv4Mode, config.IPv6Mode)
@@ -68,9 +69,9 @@ func TestNewEgressDNS(t *testing.T) {
 			_, err := NewEgressDNS(testOvnAddFtry, DefaultNetworkControllerName, testCh, 0)
 			//t.Log(res, err)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			mockDnsOps.AssertExpectations(t)
 		})
@@ -369,16 +370,16 @@ func TestAdd(t *testing.T) {
 				call.Once()
 			}
 			res, err := NewEgressDNS(mockAddressSetFactoryOps, DefaultNetworkControllerName, testCh, tc.syncTime)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 
 			err = res.Run()
-			assert.NoError(t, err)
+			require.NoError(t, err)
 
 			_, err = res.Add("addNamespace", test1DNSName)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 				for stay, timeout := true, time.After(10*time.Second); stay; {
 					_, dnsResolves, _ := res.getDNSEntry(tc.dnsName)
 					if dnsResolves != nil {
@@ -524,17 +525,16 @@ func TestDelete(t *testing.T) {
 				call.Once()
 			}
 			res, err := NewEgressDNS(mockAddressSetFactoryOps, DefaultNetworkControllerName, testCh, tc.syncTime)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 
 			err = res.Run()
-			assert.NoError(t, err)
+			require.NoError(t, err)
 
 			_, err = res.Add("addNamespace", test1DNSName)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-
-				assert.Nil(t, err)
+				require.NoError(t, err)
 				for stay, timeout := true, time.After(10*time.Second); stay; {
 					_, dnsResolves, _ := res.getDNSEntry(tc.dnsName)
 					if dnsResolves != nil {
@@ -551,7 +551,7 @@ func TestDelete(t *testing.T) {
 			}
 			_, dnsResolves, _ := res.getDNSEntry(tc.dnsName)
 			err = res.Delete("addNamespace")
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			for stay, timeout := true, time.After(10*time.Second); stay; {
 				_, dnsResolves, _ = res.getDNSEntry(tc.dnsName)
 				if dnsResolves == nil {

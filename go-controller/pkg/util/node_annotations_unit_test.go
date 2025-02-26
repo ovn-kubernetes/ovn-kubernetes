@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -198,7 +199,7 @@ func TestL3GatewayConfig_UnmarshalJSON(t *testing.T) {
 				assert.Contains(t, e.Error(), tc.errMatch.Error())
 			} else {
 				t.Log(l3GwCfg)
-				assert.Equal(t, l3GwCfg, tc.expOut)
+				assert.Equal(t, tc.expOut, l3GwCfg)
 			}
 		})
 	}
@@ -269,7 +270,7 @@ func TestSetL3GatewayConfig(t *testing.T) {
 			e := SetL3GatewayConfig(tc.inpNodeAnnotator, &tc.inputL3GwCfg)
 			if tc.errExpected {
 				t.Log(e)
-				assert.Error(t, e)
+				require.Error(t, e)
 			}
 			mockAnnotator.AssertExpectations(t)
 		})
@@ -474,7 +475,7 @@ func TestParseNodeManagementPortMACAddresses(t *testing.T) {
 			cfg, e := ParseNodeManagementPortMACAddresses(&tc.inpNode, tc.netName)
 			if tc.errExpected {
 				t.Log(e)
-				assert.Error(t, e)
+				require.Error(t, e)
 				assert.Nil(t, cfg)
 			}
 			if tc.expOutput {
@@ -530,7 +531,7 @@ func TestParseNodeGatewayRouterLRPAddr(t *testing.T) {
 			cfg, e := ParseNodeGatewayRouterLRPAddr(&tc.inpNode)
 			if tc.errExpected {
 				t.Log(e)
-				assert.Error(t, e)
+				require.Error(t, e)
 				assert.Nil(t, cfg)
 			}
 			if tc.expOutput {
@@ -611,7 +612,7 @@ func TestParseNodeGatewayRouterJoinAddrs(t *testing.T) {
 			cfg, e := ParseNodeGatewayRouterJoinAddrs(&tc.inpNode, tc.netName)
 			if tc.errExpected {
 				t.Log(e)
-				assert.Error(t, e)
+				require.Error(t, e)
 				assert.Nil(t, cfg)
 			}
 			if tc.expOutput {
@@ -652,7 +653,7 @@ func TestCreateNodeGatewayRouterLRPAddrsAnnotation(t *testing.T) {
 			res, err := UpdateNodeGatewayRouterLRPAddrsAnnotation(nil, tc.inpDefSubnetIps, types.DefaultNetworkName)
 			t.Log(res, err)
 			if tc.errExp {
-				assert.NotNil(t, err)
+				assert.Error(t, err)
 			} else {
 				assert.True(t, reflect.DeepEqual(res, tc.outExp))
 			}
@@ -703,7 +704,7 @@ func TestSetGatewayMTUSupport(t *testing.T) {
 			e := SetGatewayMTUSupport(tc.inpNodeAnnotator, tc.inputSet)
 			if tc.errExpected {
 				t.Log(e)
-				assert.Error(t, e)
+				require.Error(t, e)
 			}
 			mockAnnotator.AssertExpectations(t)
 		})
@@ -820,9 +821,9 @@ func TestGetNetworkID(t *testing.T) {
 			if tc.expectedError != nil {
 				assert.Contains(t, obtainedError.Error(), tc.expectedError.Error())
 			} else {
-				assert.NoError(t, obtainedError)
+				require.NoError(t, obtainedError)
 			}
-			assert.Equal(t, obtainedNetworkID, tc.expectedNetworkID)
+			assert.Equal(t, tc.expectedNetworkID, obtainedNetworkID)
 		})
 	}
 }
@@ -886,7 +887,7 @@ func TestParseUDNLayer2NodeGRLRPTunnelIDs(t *testing.T) {
 			res, err := ParseUDNLayer2NodeGRLRPTunnelIDs(tc.inpNode, tc.inpNetName)
 			if tc.errExpected {
 				t.Log(err)
-				assert.Error(t, err)
+				require.Error(t, err)
 			}
 			assert.Equal(t, tc.res, res)
 		})

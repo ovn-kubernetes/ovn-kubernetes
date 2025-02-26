@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 
 	kexec "k8s.io/utils/exec"
 
@@ -109,9 +110,9 @@ func TestClearPodBandwidth(t *testing.T) {
 			e := clearPodBandwidth("sandboxID")
 
 			if tc.expectedErr {
-				assert.Error(t, e)
+				require.Error(t, e)
 			} else {
-				assert.Nil(t, e)
+				require.NoError(t, e)
 			}
 
 			mockCmd.AssertExpectations(t)
@@ -236,9 +237,9 @@ func TestSetPodBandwidth(t *testing.T) {
 			e := setPodBandwidth("sandboxID", "ifname", 1, tc.egressBPS)
 
 			if tc.expectedErr {
-				assert.Error(t, e)
+				require.Error(t, e)
 			} else {
-				assert.Nil(t, e)
+				require.NoError(t, e)
 			}
 
 			mockCmd.AssertExpectations(t)
@@ -367,11 +368,11 @@ func TestGetIngressPodBandwidth(t *testing.T) {
 			bandwidth, e := getOvsPortBandwidth("ifname", Ingress)
 			switch {
 			case tc.expectedErr:
-				assert.Error(t, e)
+				require.Error(t, e)
 			case tc.expectedNotFound:
 				assert.Equal(t, e, BandwidthNotFound)
 			default:
-				assert.Nil(t, e)
+				require.NoError(t, e)
 				assert.Equal(t, bandwidth, tc.bps)
 			}
 			mockCmd.AssertExpectations(t)
@@ -481,11 +482,11 @@ func TestGetEgressPodBandwidth(t *testing.T) {
 			bandwidth, e := getOvsPortBandwidth("ifname", Egress)
 			switch {
 			case tc.expectedErr:
-				assert.Error(t, e)
+				require.Error(t, e)
 			case tc.expectedNotFound:
 				assert.Equal(t, e, BandwidthNotFound)
 			default:
-				assert.Nil(t, e)
+				require.NoError(t, e)
 				assert.Equal(t, bandwidth, tc.bps)
 			}
 			mockCmd.AssertExpectations(t)

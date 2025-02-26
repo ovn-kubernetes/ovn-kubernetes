@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
@@ -1218,9 +1219,9 @@ func Test_buildClusterLBs(t *testing.T) {
 
 	globalconfig.IPv4Mode = true
 	l3UDN, err := getSampleUDNNetInfo(namespace, "layer3")
-	assert.Equal(t, err, nil)
+	require.NoError(t, err)
 	l2UDN, err := getSampleUDNNetInfo(namespace, "layer2")
-	assert.Equal(t, err, nil)
+	require.NoError(t, err)
 	udnNets := []util.NetInfo{l3UDN, l2UDN}
 
 	tc := []struct {
@@ -1483,9 +1484,9 @@ func Test_buildPerNodeLBs(t *testing.T) {
 	namespace := "testns"
 
 	l3UDN, err := getSampleUDNNetInfo(namespace, "layer3")
-	assert.Equal(t, err, nil)
+	require.NoError(t, err)
 	l2UDN, err := getSampleUDNNetInfo(namespace, "layer2")
-	assert.Equal(t, err, nil)
+	require.NoError(t, err)
 	udnNetworks := []util.NetInfo{l3UDN, l2UDN}
 
 	defaultService := &corev1.Service{

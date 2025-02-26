@@ -81,17 +81,17 @@ func TestExtractPortAddresses(t *testing.T) {
 			if tc.isNotFound {
 				assert.Nil(t, hardwareAddr)
 				assert.Nil(t, ips)
-				assert.Nil(t, err)
+				assert.NoError(t, err)
 
 			} else if tc.hasNoIP {
-				assert.Equal(t, hardwareAddr.String(), hwAddr)
+				assert.Equal(t, hwAddr, hardwareAddr.String())
 				assert.Nil(t, ips)
 			} else if tc.errMatch != nil {
 				assert.Equal(t, err, tc.errMatch)
 			} else {
-				assert.Equal(t, hardwareAddr.String(), hwAddr)
-				assert.Equal(t, len(ips), 1)
-				assert.Equal(t, ips[0].String(), ipAddr)
+				assert.Equal(t, hwAddr, hardwareAddr.String())
+				assert.Len(t, ips, 1)
+				assert.Equal(t, ipAddr, ips[0].String())
 			}
 		})
 	}

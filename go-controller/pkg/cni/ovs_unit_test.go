@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	kexec "k8s.io/utils/exec"
 
@@ -38,7 +39,7 @@ func TestSetExec(t *testing.T) {
 			}
 
 			e := SetExec(mockKexecIface)
-			assert.Equal(t, e, tc.expectedErr)
+			assert.Equal(t, tc.expectedErr, e)
 			mockKexecIface.AssertExpectations(t)
 		})
 	}
@@ -89,9 +90,9 @@ func TestOvsExec(t *testing.T) {
 			_, e := ovsExec()
 
 			if tc.expectedErr != nil {
-				assert.Error(t, e)
+				require.Error(t, e)
 			} else {
-				assert.Nil(t, e)
+				require.NoError(t, e)
 			}
 
 			mockCmd.AssertExpectations(t)
@@ -129,9 +130,9 @@ func TestOvsCreate(t *testing.T) {
 			_, e := ovsCreate("blah")
 
 			if tc.expectedErr != nil {
-				assert.Error(t, e)
+				require.Error(t, e)
 			} else {
-				assert.Nil(t, e)
+				require.NoError(t, e)
 			}
 
 			mockCmd.AssertExpectations(t)
@@ -169,9 +170,9 @@ func TestOvsDestroy(t *testing.T) {
 			e := ovsDestroy("table", "record")
 
 			if tc.expectedErr != nil {
-				assert.Error(t, e)
+				require.Error(t, e)
 			} else {
-				assert.Nil(t, e)
+				require.NoError(t, e)
 			}
 
 			mockCmd.AssertExpectations(t)
@@ -209,9 +210,9 @@ func TestOvsSet(t *testing.T) {
 			e := ovsSet("table", "record")
 
 			if tc.expectedErr != nil {
-				assert.Error(t, e)
+				require.Error(t, e)
 			} else {
-				assert.Nil(t, e)
+				require.NoError(t, e)
 			}
 
 			mockCmd.AssertExpectations(t)
@@ -263,9 +264,9 @@ func TestOvsFind(t *testing.T) {
 			_, e := ovsFind("table", "record", "condition")
 
 			if tc.expectedErr != nil {
-				assert.Error(t, e)
+				require.Error(t, e)
 			} else {
-				assert.Nil(t, e)
+				require.NoError(t, e)
 			}
 
 			mockCmd.AssertExpectations(t)
@@ -303,9 +304,9 @@ func TestOvsClear(t *testing.T) {
 			e := ovsClear("table", "record", "columns")
 
 			if tc.expectedErr != nil {
-				assert.Error(t, e)
+				require.Error(t, e)
 			} else {
-				assert.Nil(t, e)
+				require.NoError(t, e)
 			}
 
 			mockCmd.AssertExpectations(t)
@@ -358,9 +359,9 @@ func TestOfctlExec(t *testing.T) {
 			_, e := ofctlExec()
 
 			if tc.expectedErr != nil {
-				assert.Error(t, e)
+				require.Error(t, e)
 			} else {
-				assert.Nil(t, e)
+				require.NoError(t, e)
 			}
 
 			mockKexecIface.AssertExpectations(t)

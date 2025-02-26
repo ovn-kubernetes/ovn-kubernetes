@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -181,9 +182,9 @@ func TestValidateAndGetEgressFirewallDestination(t *testing.T) {
 			cidrSelector, dnsName, clusterSubnetIntersection, nodeSelector, err :=
 				ValidateAndGetEgressFirewallDestination(tc.egressFirewallDestination)
 			if tc.expectedErr {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 				assert.Equal(t, tc.expectedOutput.dnsName, dnsName)
 				assert.Equal(t, tc.expectedOutput.cidrSelector, cidrSelector)
 				assert.Equal(t, tc.expectedOutput.clusterSubnetIntersection, clusterSubnetIntersection)
