@@ -159,5 +159,6 @@ nav:
     - Dynamic UDN Node Allocation: okeps/okep-5552-dynamic-udn-node-allocation.md
     - Connecting User Defined Networks: okeps/okep-5224-connecting-udns/okep-5224-connecting-udns.md
     - No-Overlay Mode: okeps/okep-5259-no-overlay.md
+    - EVPN: okeps/okep-5088-evpn.md
   - Blog:
     - blog/index.md
