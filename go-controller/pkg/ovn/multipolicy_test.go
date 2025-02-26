@@ -359,7 +359,7 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 		ocInfo, ok := fakeOvn.secondaryControllers[secondaryNetworkName]
 		gomega.Expect(ok).To(gomega.BeTrue())
 		asf := ocInfo.asf
-		gomega.Expect(asf).NotTo(gomega.Equal(nil))
+		gomega.Expect(asf).NotTo(gomega.BeNil())
 		gomega.Expect(asf.ControllerName).To(gomega.Equal(getNetworkControllerName(secondaryNetworkName)))
 
 		for _, ocInfo := range fakeOvn.secondaryControllers {
@@ -505,7 +505,7 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 
 				ocInfo := fakeOvn.secondaryControllers[secondaryNetworkName]
 				portInfo := nPodTest.getNetworkPortInfo(secondaryNetworkName, nadNamespacedName)
-				gomega.Expect(portInfo).NotTo(gomega.Equal(nil))
+				gomega.Expect(portInfo).NotTo(gomega.BeNil())
 				ocInfo.asf.ExpectAddressSetWithAddresses(namespaceName1, []string{portInfo.podIP})
 
 				dataParams2 := newNetpolDataParams(networkPolicy).

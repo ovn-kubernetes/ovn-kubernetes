@@ -69,29 +69,29 @@ var _ = ginkgo.Describe("IPTables Manager", func() {
 				return c.OwnChain(utiliptables.TableNAT, testChainName, utiliptables.ProtocolIPv4)
 			})).ShouldNot(gomega.HaveOccurred())
 
-			gomega.Eventually(testNS.Do(func(ns.NetNS) error {
+			gomega.Eventually(testNS.Do).WithArguments(func(ns.NetNS) error {
 				_, err := c.iptV4.ChainExists(utiliptables.TableNAT, testChainName)
 				return err
-			})).WithTimeout(oneSecTimeout).Should(gomega.Succeed())
+			}).WithTimeout(oneSecTimeout).Should(gomega.Succeed())
 		})
 
 		ginkgo.It("ensure chain recovers following manual removal", func() {
-			gomega.Eventually(testNS.Do(func(ns.NetNS) error {
+			gomega.Eventually(testNS.Do).WithArguments(func(ns.NetNS) error {
 				if err := c.OwnChain(utiliptables.TableNAT, testChainName, utiliptables.ProtocolIPv4); err != nil {
 					return err
 				}
 				_, err := c.iptV4.ChainExists(utiliptables.TableNAT, testChainName)
 				return err
-			})).WithTimeout(oneSecTimeout).Should(gomega.Succeed())
+			}).WithTimeout(oneSecTimeout).Should(gomega.Succeed())
 			gomega.Expect(testNS.Do(func(ns.NetNS) error {
 				return c.iptV4.DeleteChain(utiliptables.TableNAT, testChainName)
 			})).Should(gomega.Succeed())
 
 			time.Sleep(100 * time.Millisecond)
-			gomega.Eventually(testNS.Do(func(ns.NetNS) error {
+			gomega.Eventually(testNS.Do).WithArguments(func(ns.NetNS) error {
 				_, err := c.iptV4.ChainExists(utiliptables.TableNAT, testChainName)
 				return err
-			})).WithTimeout(oneSecTimeout).Should(gomega.Succeed())
+			}).WithTimeout(oneSecTimeout).Should(gomega.Succeed())
 		})
 		ginkgo.It("owning a chain create a chain", func() {
 			gomega.Expect(testNS.Do(func(ns.NetNS) error {
@@ -141,15 +141,15 @@ var _ = ginkgo.Describe("IPTables Manager", func() {
 				}
 				return nil
 			})).Should(gomega.Succeed())
-			gomega.Eventually(testNS.Do(func(ns.NetNS) error {
+			gomega.Eventually(testNS.Do).WithArguments(func(ns.NetNS) error {
 				return c.iptV4.DeleteRule(utiliptables.TableNAT, testChainName, testRuleArgs[0].Args...)
-			})).WithTimeout(oneSecTimeout).Should(gomega.Succeed())
+			}).WithTimeout(oneSecTimeout).Should(gomega.Succeed())
 			gomega.Eventually(func() bool {
 				return containsRuleArgs(testNS, c.iptV4, utiliptables.TableNAT, testChainName, testRuleArgs)
 			}).WithTimeout(oneSecTimeout).Should(gomega.BeTrue())
 		})
 		ginkgo.It("doesn't remove unknown rules in un-owned chain", func() {
-			gomega.Eventually(testNS.Do(func(ns.NetNS) error {
+			gomega.Eventually(testNS.Do).WithArguments(func(ns.NetNS) error {
 				if _, err := c.iptV4.EnsureChain(utiliptables.TableNAT, testChainName); err != nil {
 					return err
 				}
@@ -157,14 +157,14 @@ var _ = ginkgo.Describe("IPTables Manager", func() {
 					return err
 				}
 				return nil
-			})).WithTimeout(oneSecTimeout).Should(gomega.Succeed())
+			}).WithTimeout(oneSecTimeout).Should(gomega.Succeed())
 			time.Sleep(100 * time.Millisecond)
 			gomega.Eventually(func() bool {
 				return containsRuleArg(testNS, c.iptV4, utiliptables.TableNAT, testChainName, differentRuleArg)
 			}).WithTimeout(oneSecTimeout).Should(gomega.BeTrue())
 		})
 		ginkgo.It("does remove unknown rules in owned chain", func() {
-			gomega.Eventually(testNS.Do(func(ns.NetNS) error {
+			gomega.Eventually(testNS.Do).WithArguments(func(ns.NetNS) error {
 				if err := c.OwnChain(utiliptables.TableNAT, testChainName, utiliptables.ProtocolIPv4); err != nil {
 					return err
 				}
@@ -175,7 +175,7 @@ var _ = ginkgo.Describe("IPTables Manager", func() {
 					return err
 				}
 				return nil
-			})).WithTimeout(oneSecTimeout).Should(gomega.Succeed())
+			}).WithTimeout(oneSecTimeout).Should(gomega.Succeed())
 			gomega.Eventually(func() bool {
 				return containsRuleArg(testNS, c.iptV4, utiliptables.TableNAT, testChainName, differentRuleArg)
 			}).WithTimeout(oneSecTimeout).Should(gomega.BeFalse())
@@ -219,15 +219,15 @@ var _ = ginkgo.Describe("IPTables Manager", func() {
 				}
 				return nil
 			})).Should(gomega.Succeed())
-			gomega.Eventually(testNS.Do(func(ns.NetNS) error {
+			gomega.Eventually(testNS.Do).WithArguments(func(ns.NetNS) error {
 				return c.iptV6.DeleteRule(utiliptables.TableNAT, testChainName, testRuleArgs[0].Args...)
-			})).WithTimeout(oneSecTimeout).Should(gomega.Succeed())
+			}).WithTimeout(oneSecTimeout).Should(gomega.Succeed())
 			gomega.Eventually(func() bool {
 				return containsRuleArgs(testNS, c.iptV6, utiliptables.TableNAT, testChainName, testRuleArgs)
 			}).WithTimeout(oneSecTimeout).Should(gomega.BeTrue())
 		})
 		ginkgo.It("doesn't remove unknown rules in un-owned chain", func() {
-			gomega.Eventually(testNS.Do(func(ns.NetNS) error {
+			gomega.Eventually(testNS.Do).WithArguments(func(ns.NetNS) error {
 				if _, err := c.iptV6.EnsureChain(utiliptables.TableNAT, testChainName); err != nil {
 					return err
 				}
@@ -235,14 +235,14 @@ var _ = ginkgo.Describe("IPTables Manager", func() {
 					return err
 				}
 				return nil
-			})).WithTimeout(oneSecTimeout).Should(gomega.Succeed())
+			}).WithTimeout(oneSecTimeout).Should(gomega.Succeed())
 			time.Sleep(100 * time.Millisecond)
 			gomega.Eventually(func() bool {
 				return containsRuleArg(testNS, c.iptV6, utiliptables.TableNAT, testChainName, differentRuleArg)
 			}).WithTimeout(oneSecTimeout).Should(gomega.BeTrue())
 		})
 		ginkgo.It("removes unknown rules in owned chain", func() {
-			gomega.Eventually(testNS.Do(func(ns.NetNS) error {
+			gomega.Eventually(testNS.Do).WithArguments(func(ns.NetNS) error {
 				if err := c.OwnChain(utiliptables.TableNAT, testChainName, utiliptables.ProtocolIPv6); err != nil {
 					return err
 				}
@@ -253,7 +253,7 @@ var _ = ginkgo.Describe("IPTables Manager", func() {
 					return err
 				}
 				return nil
-			})).WithTimeout(oneSecTimeout).Should(gomega.Succeed())
+			}).WithTimeout(oneSecTimeout).Should(gomega.Succeed())
 			gomega.Eventually(func() bool {
 				return containsRuleArg(testNS, c.iptV6, utiliptables.TableNAT, testChainName, differentRuleArg)
 			}).WithTimeout(oneSecTimeout).Should(gomega.BeFalse())

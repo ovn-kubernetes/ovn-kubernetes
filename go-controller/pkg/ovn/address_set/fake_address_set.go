@@ -290,7 +290,7 @@ func (f *FakeAddressSetFactory) EventuallyExpectNoAddressSet(dbIDsOrNsName any) 
 
 // ExpectNumberOfAddressSets ensures the number of created address sets equals given number
 func (f *FakeAddressSetFactory) ExpectNumberOfAddressSets(n int) {
-	gomega.Expect(len(f.sets)).To(gomega.Equal(n))
+	gomega.Expect(f.sets).To(gomega.HaveLen(n))
 }
 
 type removeFunc func(string)

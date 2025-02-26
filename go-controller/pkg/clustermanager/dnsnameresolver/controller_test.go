@@ -306,7 +306,7 @@ var _ = ginkgo.Describe("Cluster manager DNS Name Resolver Controller operations
 				dnsNameResolvers, err := dnsLister.DNSNameResolvers(config.Kubernetes.OVNConfigNamespace).List(labels.Everything())
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				gomega.Expect(len(dnsNameResolvers)).To(gomega.Equal(1))
+				gomega.Expect(dnsNameResolvers).To(gomega.HaveLen(1))
 
 				dnsNameResolver = checkDNSNameResolverExists(dnsName)
 

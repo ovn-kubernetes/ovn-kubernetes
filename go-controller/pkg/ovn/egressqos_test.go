@@ -225,7 +225,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 					_, err := fakeOVN.fakeClient.EgressQoSClient.K8sV1().EgressQoSes(namespaceT.Name).Get(context.TODO(),
 						"default", metav1.GetOptions{})
 					return apierrors.IsNotFound(err)
-				}, time.Second).Should(gomega.Equal(true))
+				}, time.Second).Should(gomega.BeTrue())
 
 				return nil
 			}
@@ -424,7 +424,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 					_, err := fakeOVN.fakeClient.EgressQoSClient.K8sV1().EgressQoSes(namespaceT.Name).Get(context.TODO(),
 						"default", metav1.GetOptions{})
 					return apierrors.IsNotFound(err)
-				}, time.Second).Should(gomega.Equal(true))
+				}, time.Second).Should(gomega.BeTrue())
 
 				return nil
 			}
@@ -629,7 +629,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 				_, err := fakeOVN.fakeClient.EgressQoSClient.K8sV1().EgressQoSes(namespaceT.Name).Get(context.TODO(),
 					"default", metav1.GetOptions{})
 				return apierrors.IsNotFound(err)
-			}, time.Second).Should(gomega.Equal(true))
+			}, time.Second).Should(gomega.BeTrue())
 
 			return nil
 		}
@@ -762,7 +762,7 @@ var _ = ginkgo.Describe("OVN EgressQoS Operations", func() {
 				_, err := fakeOVN.fakeClient.EgressQoSClient.K8sV1().EgressQoSes(namespaceT.Name).Get(context.TODO(),
 					"default", metav1.GetOptions{})
 				return apierrors.IsNotFound(err)
-			}, time.Second).Should(gomega.Equal(true))
+			}, time.Second).Should(gomega.BeTrue())
 
 			return nil
 		}
@@ -1108,5 +1108,5 @@ func expectEgressQoSStatusMessageEventually(fakeOVN *FakeOVN, namespace string, 
 			return len(defaultEq.Status.Conditions) > 0 &&
 				strings.Contains(defaultEq.Status.Conditions[0].Message, egressQoSAppliedCorrectly)
 		}
-	}).Should(gomega.Equal(true), fmt.Sprintf("expected EgressQoS status message with expectFailure=%v", expectFailure))
+	}).Should(gomega.BeTrue(), fmt.Sprintf("expected EgressQoS status message with expectFailure=%v", expectFailure))
 }

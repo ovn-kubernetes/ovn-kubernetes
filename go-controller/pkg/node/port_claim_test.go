@@ -64,7 +64,7 @@ func (p *fakePortManager) close(desc string, ip string, port int32, protocol cor
 		return portError
 	}
 	_, exists := p.tPortsMap[*localPort]
-	Expect(exists).To(Equal(true))
+	Expect(exists).To(BeTrue())
 	delete(p.tPortsMap, *localPort)
 	// check that we set the values for assertion
 	if len(p.tPortClose) > 0 {
@@ -630,8 +630,8 @@ var _ = Describe("Node Operations", func() {
 				)
 
 				errors := handleService(service, lpm.open)
-				Expect(len(errors)).To(Equal(0))
-				Expect(len(lpm.portsMap)).To(Equal(4))
+				Expect(errors).To(BeEmpty())
+				Expect(lpm.portsMap).To(HaveLen(4))
 				lps := make([]*utilnet.LocalPort, 0)
 				lp, err := utilnet.NewLocalPort(getDescription("", service, true), "", "", 32221, utilnet.TCP)
 				Expect(err).ShouldNot(HaveOccurred())
@@ -648,11 +648,11 @@ var _ = Describe("Node Operations", func() {
 
 				for _, lp = range lps {
 					_, exists := lpm.portsMap[*lp]
-					Expect(exists).To(Equal(true))
+					Expect(exists).To(BeTrue())
 				}
 				errors = handleService(service, lpm.close)
-				Expect(len(errors)).To(Equal(0))
-				Expect(len(lpm.portsMap)).To(Equal(0))
+				Expect(errors).To(BeEmpty())
+				Expect(lpm.portsMap).To(BeEmpty())
 
 				return nil
 			}

@@ -8,6 +8,7 @@ linters:
   enable:
     - errcheck
     - gci
+    - ginkgolinter
     - gofmt
     - gosimple
     - govet

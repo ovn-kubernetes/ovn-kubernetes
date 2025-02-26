@@ -337,7 +337,7 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 
 			gwLRPIPs, err := util.ParseNodeGatewayRouterJoinAddrs(&testNode, ovntypes.DefaultNetworkName)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(len(gwLRPIPs) != 0).To(gomega.BeTrue())
+			gomega.Expect(gwLRPIPs).ToNot(gomega.BeEmpty())
 
 			err = fakeOvn.controller.WatchNamespaces()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())

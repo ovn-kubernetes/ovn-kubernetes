@@ -352,7 +352,7 @@ var _ = Describe("SecondaryNodeNetworkController: UserDefinedPrimaryNetwork Gate
 			Expect(err).NotTo(HaveOccurred())
 			Expect(vrfLink.Type()).To(Equal("vrf"))
 			vrfDev, ok := vrfLink.(*netlink.Vrf)
-			Expect(ok).To(Equal(true))
+			Expect(ok).To(BeTrue())
 			mplink, err := util.GetNetLinkOps().LinkByName(mgtPort)
 			Expect(err).NotTo(HaveOccurred())
 			vrfTableId := util.CalculateRouteTableID(mplink.Attrs().Index)
@@ -364,7 +364,7 @@ var _ = Describe("SecondaryNodeNetworkController: UserDefinedPrimaryNetwork Gate
 			Eventually(func() error {
 				_, err := util.GetNetLinkOps().LinkByName(vrfDeviceName)
 				return err
-			}).WithTimeout(120 * time.Second).Should(BeNil())
+			}).WithTimeout(120 * time.Second).Should(Succeed())
 
 			By("check iprules are created for the network")
 			rulesFound, err := netlink.RuleList(netlink.FAMILY_ALL)
@@ -385,7 +385,7 @@ var _ = Describe("SecondaryNodeNetworkController: UserDefinedPrimaryNetwork Gate
 			Eventually(func() error {
 				_, err := util.GetNetLinkOps().LinkByName(vrfDeviceName)
 				return err
-			}).WithTimeout(120 * time.Second).ShouldNot(BeNil())
+			}).WithTimeout(120 * time.Second).ShouldNot(Succeed())
 
 			By("check masquerade iprules are deleted for the network")
 			rulesFound, err = netlink.RuleList(netlink.FAMILY_ALL)
@@ -396,7 +396,7 @@ var _ = Describe("SecondaryNodeNetworkController: UserDefinedPrimaryNetwork Gate
 					udnRules = append(udnRules, rule)
 				}
 			}
-			Expect(udnRules).To(HaveLen(0))
+			Expect(udnRules).To(BeEmpty())
 			return nil
 		})
 		Expect(err).NotTo(HaveOccurred())

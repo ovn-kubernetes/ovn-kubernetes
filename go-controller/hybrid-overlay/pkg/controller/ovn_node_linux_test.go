@@ -524,7 +524,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				linuxNode.flowMutex.Lock()
 				defer linuxNode.flowMutex.Unlock()
 				return compareFlowCache(linuxNode.flowCache, initialFlowCache)
-			}, 2).Should(BeNil())
+			}, 2).Should(Succeed())
 
 			// adding a remote pod should do nothing... we only care about directing traffic for pods on this node
 			_, err = fakeClient.CoreV1().Pods(remoteTestPod.Namespace).Create(context.TODO(), remoteTestPod, metav1.CreateOptions{})
@@ -533,7 +533,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				linuxNode.flowMutex.Lock()
 				defer linuxNode.flowMutex.Unlock()
 				return compareFlowCache(linuxNode.flowCache, initialFlowCache)
-			}, 2).Should(BeNil())
+			}, 2).Should(Succeed())
 
 			_, err = fakeClient.CoreV1().Pods(testPod.Namespace).Create(context.TODO(), testPod, metav1.CreateOptions{})
 			Expect(err).NotTo(HaveOccurred())
@@ -548,7 +548,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				linuxNode.flowMutex.Lock()
 				defer linuxNode.flowMutex.Unlock()
 				return compareFlowCache(linuxNode.flowCache, initialFlowCache)
-			}, 2).Should(BeNil())
+			}, 2).Should(Succeed())
 			Eventually(fexec.CalledMatchesExpected, 2).Should(BeTrue(), fexec.ErrorDesc)
 			return nil
 		}
@@ -630,7 +630,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				linuxNode.flowMutex.Lock()
 				defer linuxNode.flowMutex.Unlock()
 				return compareFlowCache(linuxNode.flowCache, initialFlowCache)
-			}, 2).Should(BeNil())
+			}, 2).Should(Succeed())
 			Eventually(fexec.CalledMatchesExpected, 2).Should(BeTrue(), fexec.ErrorDesc)
 			return nil
 		}
@@ -703,7 +703,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				linuxNode.flowMutex.Lock()
 				defer linuxNode.flowMutex.Unlock()
 				return compareFlowCache(linuxNode.flowCache, initialFlowCache)
-			}, 2).Should(BeNil())
+			}, 2).Should(Succeed())
 
 			windowsAnnotation := createNodeAnnotationsForSubnet(node1Subnet)
 			windowsAnnotation[hotypes.HybridOverlayDRMAC] = node1DRMAC
@@ -726,7 +726,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				linuxNode.flowMutex.Lock()
 				defer linuxNode.flowMutex.Unlock()
 				return compareFlowCache(linuxNode.flowCache, initialFlowCache)
-			}, 2).Should(BeNil())
+			}, 2).Should(Succeed())
 			return nil
 		}
 		appRun(app)
@@ -805,7 +805,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				linuxNode.flowMutex.Lock()
 				defer linuxNode.flowMutex.Unlock()
 				return compareFlowCache(linuxNode.flowCache, initialFlowCache)
-			}, 2).Should(BeNil())
+			}, 2).Should(Succeed())
 
 			// setup windows node
 			windowsAnnotation := createNodeAnnotationsForSubnet(node1Subnet)
@@ -829,7 +829,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				linuxNode.flowMutex.Lock()
 				defer linuxNode.flowMutex.Unlock()
 				return compareFlowCache(linuxNode.flowCache, initialFlowCache)
-			}, 2).Should(BeNil())
+			}, 2).Should(Succeed())
 
 			// setup local pod
 			testPod := createPod("test", "pod1", thisNode, pod1CIDR, pod1MAC)
@@ -845,7 +845,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				linuxNode.flowMutex.Lock()
 				defer linuxNode.flowMutex.Unlock()
 				return compareFlowCache(linuxNode.flowCache, initialFlowCache)
-			}, 2).Should(BeNil())
+			}, 2).Should(Succeed())
 
 			//update Node DRIP
 			node.Annotations[hotypes.HybridOverlayDRIP] = updatedDRIP
@@ -865,7 +865,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				linuxNode.flowMutex.Lock()
 				defer linuxNode.flowMutex.Unlock()
 				return compareFlowCache(linuxNode.flowCache, initialFlowCache)
-			}, 2).Should(BeNil())
+			}, 2).Should(Succeed())
 
 			return nil
 		}
@@ -943,7 +943,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				linuxNode.flowMutex.Lock()
 				defer linuxNode.flowMutex.Unlock()
 				return compareFlowCache(linuxNode.flowCache, initialFlowCache)
-			}, 2).Should(BeNil())
+			}, 2).Should(Succeed())
 
 			// setup windows node
 			windowsAnnotation := createNodeAnnotationsForSubnet(node1Subnet)
@@ -967,7 +967,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				linuxNode.flowMutex.Lock()
 				defer linuxNode.flowMutex.Unlock()
 				return compareFlowCache(linuxNode.flowCache, initialFlowCache)
-			}, 2).Should(BeNil())
+			}, 2).Should(Succeed())
 
 			// setup local pod
 			testPod := createPod("test", "pod1", thisNode, pod1CIDR, pod1MAC)
@@ -983,7 +983,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				linuxNode.flowMutex.Lock()
 				defer linuxNode.flowMutex.Unlock()
 				return compareFlowCache(linuxNode.flowCache, initialFlowCache)
-			}, 2).Should(BeNil())
+			}, 2).Should(Succeed())
 
 			//update Node DRIP
 			annotations[hotypes.HybridOverlayDRMAC] = updatedDRMAC
@@ -1000,7 +1000,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				linuxNode.flowMutex.Lock()
 				defer linuxNode.flowMutex.Unlock()
 				return compareFlowCache(linuxNode.flowCache, initialFlowCache)
-			}, 2).Should(BeNil())
+			}, 2).Should(Succeed())
 
 			return nil
 		}
@@ -1072,7 +1072,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				linuxNode.flowMutex.Lock()
 				defer linuxNode.flowMutex.Unlock()
 				return compareFlowCache(linuxNode.flowCache, initialFlowCache)
-			}, 2).Should(BeNil())
+			}, 2).Should(Succeed())
 
 			// setup hybrid overlay node
 			windowsAnnotation := createNodeAnnotationsForSubnet(node1Subnet)
@@ -1096,7 +1096,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 				linuxNode.flowMutex.Lock()
 				defer linuxNode.flowMutex.Unlock()
 				return compareFlowCache(linuxNode.flowCache, initialFlowCache)
-			}, 2).Should(BeNil())
+			}, 2).Should(Succeed())
 
 			// node is swiched to ovn node
 			_, err = fakeClient.CoreV1().Nodes().Update(context.TODO(), createNode(node1Name, "linux", node1IP, windowsAnnotation), metav1.UpdateOptions{})

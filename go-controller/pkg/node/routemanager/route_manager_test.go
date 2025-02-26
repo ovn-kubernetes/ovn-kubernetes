@@ -278,7 +278,7 @@ var _ = ginkgo.Describe("Route Manager", func() {
 			// clear routes and wait for sync to reapply
 			routeList, err := getRouteList(testNS, loLink, netlink.FAMILY_ALL)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-			gomega.Expect(len(routeList)).Should(gomega.BeNumerically(">", 0))
+			gomega.Expect(routeList).ShouldNot(gomega.BeEmpty())
 			gomega.Expect(deleteRoutes(testNS, routeList...)).ShouldNot(gomega.HaveOccurred())
 			// wait for sync to activate since managed routes have been deleted
 			gomega.Eventually(func() bool {
@@ -295,7 +295,7 @@ var _ = ginkgo.Describe("Route Manager", func() {
 			// clear routes and wait for sync to reapply
 			routeList, err := getRouteList(testNS, loLink, netlink.FAMILY_ALL)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-			gomega.Expect(len(routeList)).Should(gomega.BeNumerically(">", 0))
+			gomega.Expect(routeList).ShouldNot(gomega.BeEmpty())
 			gomega.Expect(deleteRoutes(testNS, routeList...)).ShouldNot(gomega.HaveOccurred())
 			// wait for sync to activate since managed routes have been deleted
 			gomega.Eventually(func() bool {

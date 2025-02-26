@@ -310,7 +310,7 @@ var _ = ginkgo.Describe("Gateway EgressIP", func() {
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "should process valid EgressIPs")
 			node, err := addrMgr.kube.GetNode(nodeName)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "node should be present within kapi")
-			gomega.Expect(len(parseEIPsFromAnnotation(node))).Should(gomega.BeZero())
+			gomega.Expect(parseEIPsFromAnnotation(node)).Should(gomega.BeEmpty())
 		})
 	})
 })

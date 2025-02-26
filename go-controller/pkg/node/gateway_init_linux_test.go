@@ -2065,7 +2065,7 @@ var _ = Describe("Gateway unit tests", func() {
 				gatewayNextHops, gatewayIntf, err := getGatewayNextHops()
 				Expect(errors.As(err, new(*GatewayInterfaceMismatchError))).To(BeTrue())
 				Expect(gatewayIntf).To(Equal(""))
-				Expect(len(gatewayNextHops)).To(Equal(0))
+				Expect(gatewayNextHops).To(BeEmpty())
 			})
 		})
 	})

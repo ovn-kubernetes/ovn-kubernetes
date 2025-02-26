@@ -593,7 +593,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 					}).List(ctext, &lsl)
 
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				gomega.Expect(len(lsl)).To(gomega.Equal(1))
+				gomega.Expect(lsl).To(gomega.HaveLen(1))
 
 				err = fakeOvn.controller.WatchNamespaces()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -756,7 +756,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				gomega.Eventually(func() string {
 					return getPodAnnotations(fakeOvn.fakeClient.KubeClient, t2.namespace, t2.podName)
-				}, 2).Should(gomega.HaveLen(0))
+				}, 2).Should(gomega.BeEmpty())
 				myPod2Key, err := retry.GetResourceKey(myPod2)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				retry.CheckRetryObjectEventually(myPod2Key, true, fakeOvn.controller.retryPods)
@@ -869,7 +869,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				gomega.Eventually(func() string {
 					return getPodAnnotations(fakeOvn.fakeClient.KubeClient, t2.namespace, t2.podName)
-				}, 2).Should(gomega.HaveLen(0))
+				}, 2).Should(gomega.BeEmpty())
 
 				myPod2Key, err := retry.GetResourceKey(myPod2)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -955,7 +955,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				gomega.Eventually(func() string {
 					return getPodAnnotations(fakeOvn.fakeClient.KubeClient, t3.namespace, t3.podName)
-				}, 2).Should(gomega.HaveLen(0))
+				}, 2).Should(gomega.BeEmpty())
 
 				// should be in retry because there are no more IPs left
 				myPod3Key, err := retry.GetResourceKey(myPod3)
@@ -2323,7 +2323,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				// port should not be in cache, because it should never have been added
 				_, err = fakeOvn.controller.logicalPortCache.get(pod, ovntypes.DefaultNetworkName)
-				gomega.Expect(err).NotTo(gomega.BeNil())
+				gomega.Expect(err).To(gomega.HaveOccurred())
 				myPod1Key, err := retry.GetResourceKey(pod)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				retry.CheckRetryObjectEventually(myPod1Key, true, fakeOvn.controller.retryPods)

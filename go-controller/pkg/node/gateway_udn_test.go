@@ -668,7 +668,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			localGw.openflowManager.syncFlows()
 			flowMap := udnGateway.gateway.openflowManager.flowCache
 
-			Expect(len(flowMap["DEFAULT"])).To(Equal(46))
+			Expect(flowMap["DEFAULT"]).To(HaveLen(46))
 			Expect(udnGateway.masqCTMark).To(Equal(udnGateway.masqCTMark))
 			var udnFlows int
 			for _, flows := range flowMap {
@@ -681,12 +681,12 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 				}
 			}
 			Expect(udnFlows).To(Equal(0))
-			Expect(len(udnGateway.openflowManager.defaultBridge.netConfig)).To(Equal(1)) // only default network
+			Expect(udnGateway.openflowManager.defaultBridge.netConfig).To(HaveLen(1)) // only default network
 
 			Expect(udnGateway.AddNetwork()).To(Succeed())
 			flowMap = udnGateway.gateway.openflowManager.flowCache
-			Expect(len(flowMap["DEFAULT"])).To(Equal(64))                                // 18 UDN Flows are added by default
-			Expect(len(udnGateway.openflowManager.defaultBridge.netConfig)).To(Equal(2)) // default network + UDN network
+			Expect(flowMap["DEFAULT"]).To(HaveLen(64))                                // 18 UDN Flows are added by default
+			Expect(udnGateway.openflowManager.defaultBridge.netConfig).To(HaveLen(2)) // default network + UDN network
 			defaultUdnConfig := udnGateway.openflowManager.defaultBridge.netConfig["default"]
 			bridgeUdnConfig := udnGateway.openflowManager.defaultBridge.netConfig["bluenet"]
 			bridgeMAC := udnGateway.openflowManager.defaultBridge.macAddress.String()
@@ -721,8 +721,8 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			kubeMock.On("UpdateNodeStatus", cnode).Return(nil) // check if network key gets deleted from annotation
 			Expect(udnGateway.DelNetwork()).To(Succeed())
 			flowMap = udnGateway.gateway.openflowManager.flowCache
-			Expect(len(flowMap["DEFAULT"])).To(Equal(46))                                // only default network flows are present
-			Expect(len(udnGateway.openflowManager.defaultBridge.netConfig)).To(Equal(1)) // default network only
+			Expect(flowMap["DEFAULT"]).To(HaveLen(46))                                // only default network flows are present
+			Expect(udnGateway.openflowManager.defaultBridge.netConfig).To(HaveLen(1)) // default network only
 			udnFlows = 0
 			for _, flows := range flowMap {
 				for _, flow := range flows {
@@ -892,7 +892,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			// FIXME: extract openflow manager func from the spawning of a go routine so it can be called directly below.
 			localGw.openflowManager.syncFlows()
 			flowMap := udnGateway.gateway.openflowManager.flowCache
-			Expect(len(flowMap["DEFAULT"])).To(Equal(46))
+			Expect(flowMap["DEFAULT"]).To(HaveLen(46))
 			Expect(udnGateway.masqCTMark).To(Equal(udnGateway.masqCTMark))
 			var udnFlows int
 			for _, flows := range flowMap {
@@ -905,12 +905,12 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 				}
 			}
 			Expect(udnFlows).To(Equal(0))
-			Expect(len(udnGateway.openflowManager.defaultBridge.netConfig)).To(Equal(1)) // only default network
+			Expect(udnGateway.openflowManager.defaultBridge.netConfig).To(HaveLen(1)) // only default network
 
 			Expect(udnGateway.AddNetwork()).To(Succeed())
 			flowMap = udnGateway.gateway.openflowManager.flowCache
-			Expect(len(flowMap["DEFAULT"])).To(Equal(64))                                // 18 UDN Flows are added by default
-			Expect(len(udnGateway.openflowManager.defaultBridge.netConfig)).To(Equal(2)) // default network + UDN network
+			Expect(flowMap["DEFAULT"]).To(HaveLen(64))                                // 18 UDN Flows are added by default
+			Expect(udnGateway.openflowManager.defaultBridge.netConfig).To(HaveLen(2)) // default network + UDN network
 			defaultUdnConfig := udnGateway.openflowManager.defaultBridge.netConfig["default"]
 			bridgeUdnConfig := udnGateway.openflowManager.defaultBridge.netConfig["bluenet"]
 			bridgeMAC := udnGateway.openflowManager.defaultBridge.macAddress.String()
@@ -945,8 +945,8 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			kubeMock.On("UpdateNodeStatus", cnode).Return(nil) // check if network key gets deleted from annotation
 			Expect(udnGateway.DelNetwork()).To(Succeed())
 			flowMap = udnGateway.gateway.openflowManager.flowCache
-			Expect(len(flowMap["DEFAULT"])).To(Equal(46))                                // only default network flows are present
-			Expect(len(udnGateway.openflowManager.defaultBridge.netConfig)).To(Equal(1)) // default network only
+			Expect(flowMap["DEFAULT"]).To(HaveLen(46))                                // only default network flows are present
+			Expect(udnGateway.openflowManager.defaultBridge.netConfig).To(HaveLen(1)) // default network only
 			udnFlows = 0
 			for _, flows := range flowMap {
 				for _, flow := range flows {
@@ -999,7 +999,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 
 			routes, err := udnGateway.computeRoutesForUDN(vrfTableId, mplink)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(len(routes)).To(Equal(7))
+			Expect(routes).To(HaveLen(7))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(*routes[0].Dst).To(Equal(*ovntest.MustParseIPNet("172.16.1.0/24"))) // default service subnet
 			Expect(routes[0].LinkIndex).To(Equal(bridgelink.Attrs().Index))
@@ -1068,7 +1068,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 
 			routes, err := udnGateway.computeRoutesForUDN(vrfTableId, mplink)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(len(routes)).To(Equal(8))
+			Expect(routes).To(HaveLen(8))
 			Expect(err).NotTo(HaveOccurred())
 			// 1st and 2nd routes are the service routes from user-provided config value
 			Expect(*routes[0].Dst).To(Equal(*config.Kubernetes.ServiceCIDRs[0]))
@@ -1274,7 +1274,7 @@ func TestConstructUDNVRFIPRules(t *testing.T) {
 			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, 3, node, nil, nil, nil, nil, &gateway{})
 			g.Expect(err).NotTo(HaveOccurred())
 			rules, delRules, err := udnGateway.constructUDNVRFIPRules(test.vrftableID)
-			g.Expect(err).To(BeNil())
+			g.Expect(err).ToNot(HaveOccurred())
 			for i, rule := range rules {
 				g.Expect(rule.Priority).To(Equal(test.expectedRules[i].priority))
 				g.Expect(rule.Table).To(Equal(test.expectedRules[i].table))
@@ -1438,12 +1438,13 @@ func TestConstructUDNVRFIPRulesPodNetworkAdvertised(t *testing.T) {
 			nad := ovntest.GenerateNAD("bluenet", "rednad", "greenamespace",
 				types.Layer3Topology, cidr, types.NetworkRolePrimary)
 			netInfo, err := util.ParseNADInfo(nad)
+			g.Expect(err).ToNot(HaveOccurred())
 			mutableNetInfo := util.NewMutableNetInfo(netInfo)
 			mutableNetInfo.SetPodNetworkAdvertisedVRFs(map[string][]string{node.Name: {"bluenet"}})
 			udnGateway, err := NewUserDefinedNetworkGateway(mutableNetInfo, 3, node, nil, nil, nil, nil, &gateway{})
 			g.Expect(err).NotTo(HaveOccurred())
 			rules, delRules, err := udnGateway.constructUDNVRFIPRules(test.vrftableID)
-			g.Expect(err).To(BeNil())
+			g.Expect(err).ToNot(HaveOccurred())
 			for i, rule := range rules {
 				g.Expect(rule.Priority).To(Equal(test.expectedRules[i].priority))
 				g.Expect(rule.Table).To(Equal(test.expectedRules[i].table))

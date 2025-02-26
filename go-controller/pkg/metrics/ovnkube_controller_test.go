@@ -112,7 +112,7 @@ var _ = ginkgo.Describe("Config Duration Operations", func() {
 			gomega.Expect(startTimestamp.IsZero()).Should(gomega.BeFalse())
 			ops, txOkCallback, startOVNTimestamp, err := instance.AddOVN(nbClient, "pod", testNamespaceA, testPodNameA)
 			gomega.Expect(ops).Should(gomega.HaveLen(1))
-			gomega.Expect(err).Should(gomega.BeNil())
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 			_, err = libovsdbops.TransactAndCheck(nbClient, ops)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			txOkCallback()
@@ -143,7 +143,7 @@ var _ = ginkgo.Describe("Config Duration Operations", func() {
 			gomega.Expect(startTimestamp.IsZero()).Should(gomega.BeFalse())
 			ops, txOkCallback, startOVNTimestamp, err := instance.AddOVN(nbClient, "pod", testNamespaceA, testPodNameA)
 			gomega.Expect(ops).Should(gomega.HaveLen(1))
-			gomega.Expect(err).Should(gomega.BeNil())
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 			_, err = libovsdbops.TransactAndCheck(nbClient, ops)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			txOkCallback()
@@ -157,7 +157,7 @@ var _ = ginkgo.Describe("Config Duration Operations", func() {
 			gomega.Expect(startTimestamp.IsZero()).Should(gomega.BeFalse())
 			ops, txOkCallback, startOVNTimestamp, err = instance.AddOVN(nbClient, "networkpolicy", testNamespaceB, testPodNameB)
 			gomega.Expect(ops).Should(gomega.HaveLen(1))
-			gomega.Expect(err).Should(gomega.BeNil())
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 			_, err = libovsdbops.TransactAndCheck(nbClient, ops)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			txOkCallback()
@@ -188,7 +188,7 @@ var _ = ginkgo.Describe("Config Duration Operations", func() {
 		ginkgo.It("denies recording when no start called", func() {
 			instance.Run(nbClient, k, 0, time.Millisecond, stop)
 			ops, _, _, _ := instance.AddOVN(nbClient, "pod", testNamespaceA, testPodNameA)
-			gomega.Expect(ops).Should(gomega.HaveLen(0))
+			gomega.Expect(ops).Should(gomega.BeEmpty())
 		})
 
 		ginkgo.It("allows multiple addOVN records for the same obj", func() {
@@ -202,14 +202,14 @@ var _ = ginkgo.Describe("Config Duration Operations", func() {
 			// first addOVN
 			ops, txOkCallback, firstStartOVNTimestamp, err := instance.AddOVN(nbClient, "pod", testNamespaceA, testPodNameA)
 			gomega.Expect(ops).Should(gomega.HaveLen(1))
-			gomega.Expect(err).Should(gomega.BeNil())
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 			_, err = libovsdbops.TransactAndCheck(nbClient, ops)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			txOkCallback()
 			// second addOVN
 			ops, txOkCallback, secondStartOVNTimestamp, err := instance.AddOVN(nbClient, "pod", testNamespaceA, testPodNameA)
 			gomega.Expect(ops).Should(gomega.HaveLen(1))
-			gomega.Expect(err).Should(gomega.BeNil())
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 			_, err = libovsdbops.TransactAndCheck(nbClient, ops)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			txOkCallback()

@@ -8154,7 +8154,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 				}
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
 
-				gomega.Eventually(eIP.Status.Items).Should(gomega.HaveLen(0))
+				gomega.Eventually(eIP.Status.Items).Should(gomega.BeEmpty())
 
 				node.Labels = map[string]string{
 					"k8s.ovn.org/egress-assignable": "",
@@ -9594,7 +9594,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 					egressNodeIPsASv4,
 				}
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
-				gomega.Eventually(eIP.Status.Items).Should(gomega.HaveLen(0))
+				gomega.Eventually(eIP.Status.Items).Should(gomega.BeEmpty())
 
 				node1.Labels = map[string]string{
 					"k8s.ovn.org/egress-assignable": "",

@@ -919,7 +919,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						}
 
 						gomega.Expect(gwLRPAddrs).NotTo(gomega.BeNil())
-						gomega.Expect(len(gwLRPAddrs)).To(gomega.Equal(2))
+						gomega.Expect(gwLRPAddrs).To(gomega.HaveLen(2))
 						return nil
 					}).ShouldNot(gomega.HaveOccurred())
 				}
@@ -991,7 +991,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 							return err
 						}
 						gomega.Expect(gwLRPAddrs).NotTo(gomega.BeNil())
-						gomega.Expect(len(gwLRPAddrs)).To(gomega.Equal(2))
+						gomega.Expect(gwLRPAddrs).To(gomega.HaveLen(2))
 						nodeAddrs[n.Name] = updatedNode.Annotations[util.OVNNodeGRLRPAddrs]
 						return nil
 					}).ShouldNot(gomega.HaveOccurred())
@@ -1094,7 +1094,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 							return err
 						}
 						gomega.Expect(gwLRPAddrs).NotTo(gomega.BeNil())
-						gomega.Expect(len(gwLRPAddrs)).To(gomega.Equal(2))
+						gomega.Expect(gwLRPAddrs).To(gomega.HaveLen(2))
 
 						// Store the node 3's gw router port addresses
 						if updatedNode.Name == "node3" {
@@ -1154,7 +1154,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						return err
 					}
 					gomega.Expect(gwLRPAddrs).NotTo(gomega.BeNil())
-					gomega.Expect(len(gwLRPAddrs)).To(gomega.Equal(2))
+					gomega.Expect(gwLRPAddrs).To(gomega.HaveLen(2))
 					return nil
 				}).ShouldNot(gomega.HaveOccurred())
 				return nil

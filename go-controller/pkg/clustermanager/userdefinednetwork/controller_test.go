@@ -720,7 +720,7 @@ var _ = Describe("User Defined Network Controller", func() {
 					for _, nsName := range newNsNames {
 						nads, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nsName).List(context.Background(), metav1.ListOptions{})
 						Expect(err).NotTo(HaveOccurred())
-						Expect(len(nads.Items)).To(Equal(0))
+						Expect(nads.Items).To(BeEmpty())
 					}
 				})
 
@@ -831,7 +831,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				for _, nsName := range staleNADsNsNames {
 					_, err := cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nsName).Get(context.Background(), cudn.Name, metav1.GetOptions{})
 					Expect(err).To(HaveOccurred())
-					Expect(apierrors.IsNotFound(err)).To(Equal(true))
+					Expect(apierrors.IsNotFound(err)).To(BeTrue())
 				}
 			})
 		})

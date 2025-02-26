@@ -67,13 +67,13 @@ var _ = Describe("CNI Utils tests", func() {
 		It("Returns true if OVN pod network annotation exists", func() {
 			podAnnot := map[string]string{util.OvnPodAnnotationName: defaultPodAnnotation}
 			_, ready := isOvnReady(podAnnot, ovntypes.DefaultNetworkName)
-			Expect(ready).To(Equal(true))
+			Expect(ready).To(BeTrue())
 		})
 
 		It("Returns false if OVN pod network annotation does not exist", func() {
 			podAnnot := map[string]string{}
 			_, ready := isOvnReady(podAnnot, ovntypes.DefaultNetworkName)
-			Expect(ready).To(Equal(false))
+			Expect(ready).To(BeFalse())
 		})
 	})
 
@@ -83,7 +83,7 @@ var _ = Describe("CNI Utils tests", func() {
 				util.OvnPodAnnotationName:     defaultPodAnnotation,
 				util.DPUConnectionStatusAnnot: `{"Status":"Ready"}`}
 			_, ready := isDPUReady(podAnnot, ovntypes.DefaultNetworkName)
-			Expect(ready).To(Equal(true))
+			Expect(ready).To(BeTrue())
 		})
 
 		It("Returns false if dpu.connection-status is present and Status is not Ready", func() {
@@ -91,7 +91,7 @@ var _ = Describe("CNI Utils tests", func() {
 				util.OvnPodAnnotationName:     defaultPodAnnotation,
 				util.DPUConnectionStatusAnnot: `{"Status":"NotReady"}`}
 			_, ready := isDPUReady(podAnnot, ovntypes.DefaultNetworkName)
-			Expect(ready).To(Equal(false))
+			Expect(ready).To(BeFalse())
 		})
 
 		It("Returns false if dpu.connection-status Status is not present", func() {
@@ -99,19 +99,19 @@ var _ = Describe("CNI Utils tests", func() {
 				util.OvnPodAnnotationName:     defaultPodAnnotation,
 				util.DPUConnectionStatusAnnot: `{"Foo":"Bar"}`}
 			_, ready := isDPUReady(podAnnot, ovntypes.DefaultNetworkName)
-			Expect(ready).To(Equal(false))
+			Expect(ready).To(BeFalse())
 		})
 
 		It("Returns false if dpu.connection-status is not present", func() {
 			podAnnot := map[string]string{util.OvnPodAnnotationName: defaultPodAnnotation}
 			_, ready := isDPUReady(podAnnot, ovntypes.DefaultNetworkName)
-			Expect(ready).To(Equal(false))
+			Expect(ready).To(BeFalse())
 		})
 
 		It("Returns false if OVN pod-networks is not present", func() {
 			podAnnot := map[string]string{}
 			_, ready := isDPUReady(podAnnot, ovntypes.DefaultNetworkName)
-			Expect(ready).To(Equal(false))
+			Expect(ready).To(BeFalse())
 		})
 	})
 

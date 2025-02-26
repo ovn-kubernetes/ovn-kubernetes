@@ -1990,9 +1990,9 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 				gomega.Expect(dupANP.Status.Conditions[0].Message).To(gomega.Equal("Setting up OVN DB plumbing was successful"))
 				gomega.Expect(dupANP.Status.Conditions[0].Reason).To(gomega.Equal("SetupSucceeded"))
 				gomega.Expect(dupANP.Status.Conditions[0].Status).To(gomega.Equal(metav1.ConditionTrue))
-				gomega.Expect(len(fakeOVN.fakeRecorder.Events)).To(gomega.Equal(1))
+				gomega.Expect(fakeOVN.fakeRecorder.Events).To(gomega.HaveLen(1))
 				recordedEvent := <-fakeOVN.fakeRecorder.Events // FIFO dequeued
-				gomega.Expect(len(fakeOVN.fakeRecorder.Events)).To(gomega.Equal(0))
+				gomega.Expect(fakeOVN.fakeRecorder.Events).To(gomega.BeEmpty())
 				gomega.Expect(recordedEvent).To(gomega.ContainSubstring(anpovn.ANPWithDuplicatePriorityEvent))
 				return nil
 			}
@@ -2020,7 +2020,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 				gomega.Expect(dupANP.Status.Conditions[0].Message).To(gomega.Equal("Setting up OVN DB plumbing was successful"))
 				gomega.Expect(dupANP.Status.Conditions[0].Reason).To(gomega.Equal("SetupSucceeded"))
 				gomega.Expect(dupANP.Status.Conditions[0].Status).To(gomega.Equal(metav1.ConditionTrue))
-				gomega.Expect(len(fakeOVN.fakeRecorder.Events)).To(gomega.Equal(0))
+				gomega.Expect(fakeOVN.fakeRecorder.Events).To(gomega.BeEmpty())
 				return nil
 			}
 			err := app.Run([]string{app.Name})
@@ -2043,7 +2043,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 				gomega.Expect(dupANP.Status.Conditions[0].Message).To(gomega.Equal("Setting up OVN DB plumbing was successful"))
 				gomega.Expect(dupANP.Status.Conditions[0].Reason).To(gomega.Equal("SetupSucceeded"))
 				gomega.Expect(dupANP.Status.Conditions[0].Status).To(gomega.Equal(metav1.ConditionTrue))
-				gomega.Expect(len(fakeOVN.fakeRecorder.Events)).To(gomega.Equal(0)) // no new event
+				gomega.Expect(fakeOVN.fakeRecorder.Events).To(gomega.BeEmpty()) // no new event
 				return nil
 			}
 			err := app.Run([]string{app.Name})
@@ -2065,7 +2065,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 				gomega.Expect(dupANP.Status.Conditions[0].Message).To(gomega.Equal("Setting up OVN DB plumbing was successful"))
 				gomega.Expect(dupANP.Status.Conditions[0].Reason).To(gomega.Equal("SetupSucceeded"))
 				gomega.Expect(dupANP.Status.Conditions[0].Status).To(gomega.Equal(metav1.ConditionTrue))
-				gomega.Expect(len(fakeOVN.fakeRecorder.Events)).To(gomega.Equal(0)) // no new event
+				gomega.Expect(fakeOVN.fakeRecorder.Events).To(gomega.BeEmpty()) // no new event
 
 				// now update the priority of harry-potter to 6 and ensure event is generated
 				ginkgo.By("3. update existing harry-potter ANP's priority to 6")
@@ -2088,7 +2088,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 				}, "2s").Should(gomega.Equal(1))
 				recordedEvent := <-fakeOVN.fakeRecorder.Events // FIFO dequeued
 				gomega.Expect(recordedEvent).To(gomega.ContainSubstring(anpovn.ANPWithDuplicatePriorityEvent))
-				gomega.Expect(len(fakeOVN.fakeRecorder.Events)).To(gomega.Equal(0))
+				gomega.Expect(fakeOVN.fakeRecorder.Events).To(gomega.BeEmpty())
 				return nil
 			}
 			err := app.Run([]string{app.Name})
@@ -2165,7 +2165,7 @@ var _ = ginkgo.Describe("OVN ANP Operations", func() {
 				}, "2s").Should(gomega.Equal(1))
 				recordedEvent := <-fakeOVN.fakeRecorder.Events // FIFO dequeued
 				gomega.Expect(recordedEvent).To(gomega.ContainSubstring(anpovn.ANPWithUnsupportedPriorityEvent))
-				gomega.Expect(len(fakeOVN.fakeRecorder.Events)).To(gomega.Equal(0))
+				gomega.Expect(fakeOVN.fakeRecorder.Events).To(gomega.BeEmpty())
 				return nil
 			}
 			err := app.Run([]string{app.Name})

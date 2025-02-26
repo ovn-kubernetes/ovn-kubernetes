@@ -352,7 +352,7 @@ func configureKubeOVNContextWithNs(nodeName string) *testCtx {
 	}
 	Expect(testNs.Do(func(ns.NetNS) error {
 		return setupPrimaryInfFn()
-	}))
+	})).To(Succeed())
 	useNetlink := true
 	var tc *testCtx
 	err = testNs.Do(func(ns.NetNS) error {

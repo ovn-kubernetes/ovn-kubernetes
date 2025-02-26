@@ -65,7 +65,7 @@ var _ = Describe("Kubevirt Pod", func() {
 		currentPod := params.pods[0]
 		migrationStatus, err := DiscoverLiveMigrationStatus(wf, &currentPod)
 		if params.expectedError == nil {
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 		} else {
 			Expect(err).To(MatchError(ContainSubstring(params.expectedError.Error())))
 		}

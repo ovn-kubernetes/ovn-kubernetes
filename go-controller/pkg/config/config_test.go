@@ -57,7 +57,7 @@ func writeConfigFile(cfgFile *os.File, randomOptData bool, args ...string) error
 
 		if randomOptData {
 			parts := strings.Split(arg, "=")
-			gomega.Expect(len(parts)).To(gomega.Equal(2))
+			gomega.Expect(parts).To(gomega.HaveLen(2))
 			sections[section] = append(sections[section], parts[0]+"=aklsdjfalsdfkjaslfdkjasfdlksa")
 		} else {
 			sections[section] = append(sections[section], arg)
@@ -324,9 +324,9 @@ var _ = Describe("Config Operations", func() {
 				{ovntest.MustParseIPNet("10.128.0.0/14"), 23},
 			}))
 			gomega.Expect(Default.Zone).To(gomega.Equal("global"))
-			gomega.Expect(IPv4Mode).To(gomega.Equal(true))
-			gomega.Expect(IPv6Mode).To(gomega.Equal(false))
-			gomega.Expect(HybridOverlay.Enabled).To(gomega.Equal(false))
+			gomega.Expect(IPv4Mode).To(gomega.BeTrue())
+			gomega.Expect(IPv6Mode).To(gomega.BeFalse())
+			gomega.Expect(HybridOverlay.Enabled).To(gomega.BeFalse())
 			gomega.Expect(OvnKubeNode.Mode).To(gomega.Equal(types.NodeModeFull))
 			gomega.Expect(OvnKubeNode.MgmtPortNetdev).To(gomega.Equal(""))
 			gomega.Expect(OvnKubeNode.MgmtPortDPResourceName).To(gomega.Equal(""))
@@ -647,12 +647,12 @@ var _ = Describe("Config Operations", func() {
 
 			gomega.Expect(Metrics.BindAddress).To(gomega.Equal("1.1.1.1:8080"))
 			gomega.Expect(Metrics.OVNMetricsBindAddress).To(gomega.Equal("1.1.1.2:8081"))
-			gomega.Expect(Metrics.ExportOVSMetrics).To(gomega.Equal(true))
-			gomega.Expect(Metrics.EnablePprof).To(gomega.Equal(true))
+			gomega.Expect(Metrics.ExportOVSMetrics).To(gomega.BeTrue())
+			gomega.Expect(Metrics.EnablePprof).To(gomega.BeTrue())
 			gomega.Expect(Metrics.NodeServerPrivKey).To(gomega.Equal("/path/to/node-metrics-private.key"))
 			gomega.Expect(Metrics.NodeServerCert).To(gomega.Equal("/path/to/node-metrics.crt"))
-			gomega.Expect(Metrics.EnableConfigDuration).To(gomega.Equal(true))
-			gomega.Expect(Metrics.EnableScaleMetrics).To(gomega.Equal(true))
+			gomega.Expect(Metrics.EnableConfigDuration).To(gomega.BeTrue())
+			gomega.Expect(Metrics.EnableScaleMetrics).To(gomega.BeTrue())
 
 			gomega.Expect(OvnNorth.Scheme).To(gomega.Equal(OvnDBSchemeSSL))
 			gomega.Expect(OvnNorth.PrivKey).To(gomega.Equal("/path/to/nb-client-private.key"))
@@ -757,12 +757,12 @@ var _ = Describe("Config Operations", func() {
 
 			gomega.Expect(Metrics.BindAddress).To(gomega.Equal("2.2.2.2:8080"))
 			gomega.Expect(Metrics.OVNMetricsBindAddress).To(gomega.Equal("2.2.2.3:8081"))
-			gomega.Expect(Metrics.ExportOVSMetrics).To(gomega.Equal(true))
-			gomega.Expect(Metrics.EnablePprof).To(gomega.Equal(true))
+			gomega.Expect(Metrics.ExportOVSMetrics).To(gomega.BeTrue())
+			gomega.Expect(Metrics.EnablePprof).To(gomega.BeTrue())
 			gomega.Expect(Metrics.NodeServerPrivKey).To(gomega.Equal("/tls/nodeprivkey"))
 			gomega.Expect(Metrics.NodeServerCert).To(gomega.Equal("/tls/nodecert"))
-			gomega.Expect(Metrics.EnableConfigDuration).To(gomega.Equal(true))
-			gomega.Expect(Metrics.EnableScaleMetrics).To(gomega.Equal(true))
+			gomega.Expect(Metrics.EnableConfigDuration).To(gomega.BeTrue())
+			gomega.Expect(Metrics.EnableScaleMetrics).To(gomega.BeTrue())
 
 			gomega.Expect(OvnNorth.Scheme).To(gomega.Equal(OvnDBSchemeSSL))
 			gomega.Expect(OvnNorth.PrivKey).To(gomega.Equal("/client/privkey"))
@@ -959,8 +959,8 @@ cluster-subnets=172.18.0.0/23
 			gomega.Expect(Default.ClusterSubnets).To(gomega.Equal([]CIDRNetworkEntry{
 				{ovntest.MustParseIPNet("172.15.0.0/23"), 24},
 			}))
-			gomega.Expect(IPv4Mode).To(gomega.Equal(true))
-			gomega.Expect(IPv6Mode).To(gomega.Equal(false))
+			gomega.Expect(IPv4Mode).To(gomega.BeTrue())
+			gomega.Expect(IPv6Mode).To(gomega.BeFalse())
 			return nil
 		}
 		cliArgs := []string{
@@ -1063,7 +1063,7 @@ metrics-enable-pprof=true
 			gomega.Expect(cfgPath).To(gomega.Equal(cfgFile.Name()))
 			gomega.Expect(Metrics.BindAddress).To(gomega.Equal("1.1.1.1:8080"))
 			gomega.Expect(Metrics.OVNMetricsBindAddress).To(gomega.Equal("1.1.1.2:8081"))
-			gomega.Expect(Metrics.EnablePprof).To(gomega.Equal(true))
+			gomega.Expect(Metrics.EnablePprof).To(gomega.BeTrue())
 			return nil
 		}
 		cliArgs := []string{
@@ -1094,7 +1094,7 @@ enable-pprof=true
 			gomega.Expect(cfgPath).To(gomega.Equal(cfgFile.Name()))
 			gomega.Expect(Metrics.BindAddress).To(gomega.Equal("2.2.2.2:8080"))
 			gomega.Expect(Metrics.OVNMetricsBindAddress).To(gomega.Equal("2.2.2.3:8081"))
-			gomega.Expect(Metrics.EnablePprof).To(gomega.Equal(true))
+			gomega.Expect(Metrics.EnablePprof).To(gomega.BeTrue())
 			return nil
 		}
 		cliArgs := []string{
@@ -1418,8 +1418,8 @@ enable-pprof=true
 		app.Action = func(ctx *cli.Context) error {
 			_, err := InitConfig(ctx, kexec.New(), nil)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(IPv4Mode).To(gomega.Equal(false))
-			gomega.Expect(IPv6Mode).To(gomega.Equal(true))
+			gomega.Expect(IPv4Mode).To(gomega.BeFalse())
+			gomega.Expect(IPv6Mode).To(gomega.BeTrue())
 			return nil
 		}
 		cliArgs := []string{
@@ -1435,8 +1435,8 @@ enable-pprof=true
 		app.Action = func(ctx *cli.Context) error {
 			_, err := InitConfig(ctx, kexec.New(), nil)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(IPv4Mode).To(gomega.Equal(true))
-			gomega.Expect(IPv6Mode).To(gomega.Equal(true))
+			gomega.Expect(IPv4Mode).To(gomega.BeTrue())
+			gomega.Expect(IPv6Mode).To(gomega.BeTrue())
 			return nil
 		}
 		cliArgs := []string{
@@ -1452,8 +1452,8 @@ enable-pprof=true
 		app.Action = func(ctx *cli.Context) error {
 			_, err := InitConfig(ctx, kexec.New(), nil)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(IPv4Mode).To(gomega.Equal(true))
-			gomega.Expect(IPv6Mode).To(gomega.Equal(true))
+			gomega.Expect(IPv4Mode).To(gomega.BeTrue())
+			gomega.Expect(IPv6Mode).To(gomega.BeTrue())
 			return nil
 		}
 		cliArgs := []string{

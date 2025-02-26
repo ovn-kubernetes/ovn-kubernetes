@@ -162,6 +162,6 @@ var _ = Describe("Unidling Controller", func() {
 			unidledAt := alteredSvc.Annotations["k8s.ovn.org/unidled-at"]
 			g.Expect(unidledAt).ToNot(BeNil())
 			g.Expect(unidledAt >= testStartTime).To(BeTrue(), "expected %s >= %s", unidledAt, testStartTime)
-		})
+		}).Should(Succeed())
 	})
 })

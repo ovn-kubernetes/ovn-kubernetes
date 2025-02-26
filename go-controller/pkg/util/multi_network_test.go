@@ -587,7 +587,7 @@ func TestJoinSubnets(t *testing.T) {
 		t.Run(test.desc, func(t *testing.T) {
 			g := gomega.NewWithT(t)
 			netInfo, err := NewNetInfo(test.inputNetConf)
-			g.Expect(err).To(gomega.BeNil())
+			g.Expect(err).ToNot(gomega.HaveOccurred())
 			g.Expect(netInfo.JoinSubnets()).To(gomega.Equal(test.expectedSubnets))
 			if netInfo.TopologyType() != ovntypes.LocalnetTopology {
 				g.Expect(netInfo.JoinSubnetV4()).To(gomega.Equal(test.expectedSubnets[0]))
@@ -689,7 +689,7 @@ func TestIsPrimaryNetwork(t *testing.T) {
 		t.Run(test.desc, func(t *testing.T) {
 			g := gomega.NewWithT(t)
 			netInfo, err := NewNetInfo(test.inputNetConf)
-			g.Expect(err).To(gomega.BeNil())
+			g.Expect(err).ToNot(gomega.HaveOccurred())
 			g.Expect(netInfo.IsPrimaryNetwork()).To(gomega.Equal(test.expectedPrimary))
 		})
 	}
@@ -742,7 +742,7 @@ func TestIsDefault(t *testing.T) {
 		t.Run(test.desc, func(t *testing.T) {
 			g := gomega.NewWithT(t)
 			netInfo, err := NewNetInfo(test.inputNetConf)
-			g.Expect(err).To(gomega.BeNil())
+			g.Expect(err).ToNot(gomega.HaveOccurred())
 			g.Expect(netInfo.IsDefault()).To(gomega.Equal(test.expectedDefaultVal))
 		})
 	}
@@ -821,7 +821,7 @@ func TestGetPodNADToNetworkMapping(t *testing.T) {
 		t.Run(test.desc, func(t *testing.T) {
 			g := gomega.NewWithT(t)
 			netInfo, err := NewNetInfo(test.inputNetConf)
-			g.Expect(err).To(gomega.BeNil())
+			g.Expect(err).ToNot(gomega.HaveOccurred())
 			if test.inputNetConf.NADName != "" {
 				mutableNetInfo := NewMutableNetInfo(netInfo)
 				mutableNetInfo.AddNADs(test.inputNetConf.NADName)
@@ -1016,7 +1016,7 @@ func TestGetPodNADToNetworkMappingWithActiveNetwork(t *testing.T) {
 		t.Run(test.desc, func(t *testing.T) {
 			g := gomega.NewWithT(t)
 			netInfo, err := NewNetInfo(test.inputNetConf)
-			g.Expect(err).To(gomega.BeNil())
+			g.Expect(err).ToNot(gomega.HaveOccurred())
 			if test.inputNetConf.NADName != "" {
 				mutableNetInfo := NewMutableNetInfo(netInfo)
 				mutableNetInfo.AddNADs(test.inputNetConf.NADName)
@@ -1026,7 +1026,7 @@ func TestGetPodNADToNetworkMappingWithActiveNetwork(t *testing.T) {
 			var primaryUDNNetInfo NetInfo
 			if test.inputPrimaryUDNConfig != nil {
 				primaryUDNNetInfo, err = NewNetInfo(test.inputPrimaryUDNConfig)
-				g.Expect(err).To(gomega.BeNil())
+				g.Expect(err).ToNot(gomega.HaveOccurred())
 				if test.inputPrimaryUDNConfig.NADName != "" {
 					mutableNetInfo := NewMutableNetInfo(primaryUDNNetInfo)
 					mutableNetInfo.AddNADs(test.inputPrimaryUDNConfig.NADName)
@@ -1252,7 +1252,7 @@ func TestNewNetInfo(t *testing.T) {
 			g := gomega.NewWithT(t)
 			_, err := NewNetInfo(inputNetConf)
 			if test.expectedError == nil {
-				g.Expect(err).To(gomega.BeNil())
+				g.Expect(err).ToNot(gomega.HaveOccurred())
 			} else {
 				g.Expect(err).To(gomega.MatchError(test.expectedError.Error()))
 			}

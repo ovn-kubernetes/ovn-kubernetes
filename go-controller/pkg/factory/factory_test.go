@@ -538,7 +538,7 @@ var _ = Describe("Watch Factory Operations", func() {
 				cache.ResourceEventHandlerFuncs{},
 				func(objs []interface{}) error {
 					defer GinkgoRecover()
-					Expect(len(objs)).To(Equal(1))
+					Expect(objs).To(HaveLen(1))
 					return nil
 				}, wf.GetHandlerPriority(objType))
 			Expect(h).NotTo(BeNil())
@@ -562,7 +562,7 @@ var _ = Describe("Watch Factory Operations", func() {
 				cache.ResourceEventHandlerFuncs{},
 				func(objs []interface{}) error {
 					defer GinkgoRecover()
-					Expect(len(objs)).To(Equal(1))
+					Expect(objs).To(HaveLen(1))
 					return nil
 				}, wf.GetHandlerPriority(realObj))
 			Expect(h).NotTo(BeNil())
@@ -1704,7 +1704,7 @@ var _ = Describe("Watch Factory Operations", func() {
 			UpdateFunc: func(_, new interface{}) {
 				newEpSlice := new.(*discovery.EndpointSlice)
 				Expect(reflect.DeepEqual(newEpSlice, added)).To(BeTrue())
-				Expect(len(newEpSlice.Endpoints)).To(Equal(1))
+				Expect(newEpSlice.Endpoints).To(HaveLen(1))
 			},
 			DeleteFunc: func(obj interface{}) {
 				epSlice := obj.(*discovery.EndpointSlice)

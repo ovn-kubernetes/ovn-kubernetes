@@ -2000,7 +2000,7 @@ var _ = Describe("Node Operations", func() {
 					f4 := iptV4.(*util.FakeIPTables)
 					err = f4.MatchState(expectedTables, nil)
 					g.Expect(err).NotTo(HaveOccurred())
-				})
+				}).Should(Succeed())
 
 				// TODO Make delete operation fail, check retry entry, run a successful delete
 				return nil

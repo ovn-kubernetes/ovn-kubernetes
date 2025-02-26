@@ -478,7 +478,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 					return nil, err
 				}
 				return clusterRouter.Policies, nil
-			}, 2).Should(gomega.HaveLen(0))
+			}, 2).Should(gomega.BeEmpty())
 
 			gomega.Eventually(func() error {
 				_, err := libovsdbops.GetLogicalSwitchPort(clusterController.nbClient, &nbdb.LogicalSwitchPort{Name: "jtor-GR_node1"})
@@ -496,7 +496,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				}
 				return ovnJoinSwitch.Ports, err
 
-			}, 2).Should(gomega.HaveLen(0))
+			}, 2).Should(gomega.BeEmpty())
 
 			//check if the hybrid overlay elements have been cleaned up
 			gomega.Eventually(func() ([]*nbdb.LogicalRouterStaticRoute, error) {
@@ -512,7 +512,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 					return nil, err
 				}
 				return logicalRouterStaticRoutes, nil
-			}, 2).Should(gomega.HaveLen(0))
+			}, 2).Should(gomega.BeEmpty())
 
 			gomega.Eventually(func() ([]*nbdb.LogicalRouterPolicy, error) {
 				p := func(item *nbdb.LogicalRouterPolicy) bool {
@@ -528,7 +528,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				}
 				return logicalRouterPolicies, nil
 
-			}, 2).Should(gomega.HaveLen(0))
+			}, 2).Should(gomega.BeEmpty())
 
 			gomega.Eventually(func() error {
 				_, err := libovsdbops.GetLogicalSwitchPort(clusterController.nbClient, &nbdb.LogicalSwitchPort{Name: "int-node1"})
@@ -538,7 +538,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				return nil
 			}, 2).Should(gomega.Equal(libovsdbclient.ErrNotFound))
 
-			gomega.Eventually(clusterController.nbClient.Get(context.Background(), expectedStaticMACBinding), 2).Should(gomega.Equal(libovsdbclient.ErrNotFound))
+			gomega.Eventually(clusterController.nbClient.Get, 2).WithArguments(context.Background(), expectedStaticMACBinding).Should(gomega.Equal(libovsdbclient.ErrNotFound))
 
 			return nil
 		}
@@ -961,7 +961,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 					return nil, err
 				}
 				return clusterRouter.Policies, nil
-			}, 20).Should(gomega.HaveLen(0))
+			}, 20).Should(gomega.BeEmpty())
 
 			gomega.Eventually(func() error {
 				_, err := libovsdbops.GetLogicalSwitchPort(clusterController.nbClient, &nbdb.LogicalSwitchPort{Name: "jtor-GR_node1"})
@@ -979,7 +979,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				}
 				return ovnJoinSwitch.Ports, err
 
-			}, 2).Should(gomega.HaveLen(0))
+			}, 2).Should(gomega.BeEmpty())
 
 			//check if the hybrid overlay elements have been cleaned up
 			gomega.Eventually(func() ([]*nbdb.LogicalRouterStaticRoute, error) {
@@ -995,7 +995,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 					return nil, err
 				}
 				return logicalRouterStaticRoutes, nil
-			}, 2).Should(gomega.HaveLen(0))
+			}, 2).Should(gomega.BeEmpty())
 
 			gomega.Eventually(func() ([]*nbdb.LogicalRouterPolicy, error) {
 				p := func(item *nbdb.LogicalRouterPolicy) bool {
@@ -1011,7 +1011,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				}
 				return logicalRouterPolicies, nil
 
-			}, 2).Should(gomega.HaveLen(0))
+			}, 2).Should(gomega.BeEmpty())
 
 			gomega.Eventually(func() error {
 				_, err := libovsdbops.GetLogicalSwitchPort(clusterController.nbClient, &nbdb.LogicalSwitchPort{Name: "int-node1"})
@@ -1449,7 +1449,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 					return nil, err
 				}
 				return logicalRouterStaticRoutes, nil
-			}, 2).Should(gomega.HaveLen(0))
+			}, 2).Should(gomega.BeEmpty())
 
 			gomega.Eventually(func() ([]*nbdb.LogicalRouterPolicy, error) {
 				p := func(item *nbdb.LogicalRouterPolicy) bool {
@@ -1461,7 +1461,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				}
 				return logicalRouterPolicies, nil
 
-			}, 2).Should(gomega.HaveLen(0))
+			}, 2).Should(gomega.BeEmpty())
 
 			return nil
 		}
@@ -1884,7 +1884,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 					return nil, err
 				}
 				return logicalRouterStaticRoutes, nil
-			}, 2).Should(gomega.HaveLen(0))
+			}, 2).Should(gomega.BeEmpty())
 
 			gomega.Eventually(func() ([]*nbdb.LogicalRouterPolicy, error) {
 				p := func(item *nbdb.LogicalRouterPolicy) bool {
@@ -1900,7 +1900,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				}
 				return logicalRouterPolicies, nil
 
-			}, 2).Should(gomega.HaveLen(0))
+			}, 2).Should(gomega.BeEmpty())
 
 			gomega.Eventually(func() error {
 				_, err := libovsdbops.GetLogicalSwitchPort(clusterController.nbClient, &nbdb.LogicalSwitchPort{Name: "int-node1"})
@@ -1910,7 +1910,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				return nil
 			}, 2).Should(gomega.Equal(libovsdbclient.ErrNotFound))
 
-			gomega.Eventually(clusterController.nbClient.Get(context.Background(), expectedStaticMACBinding), 2).Should(gomega.Equal(libovsdbclient.ErrNotFound))
+			gomega.Eventually(clusterController.nbClient.Get, 2).WithArguments(context.Background(), expectedStaticMACBinding).Should(gomega.Equal(libovsdbclient.ErrNotFound))
 
 			return nil
 		}
