@@ -161,6 +161,7 @@ func TestPrintCPUSetRanges(t *testing.T) {
 }
 
 func mockOvsdbProcess(t *testing.T) (int, func()) {
+	t.Helper()
 	ctx, stopCmd := context.WithCancel(context.Background())
 
 	cmd := exec.CommandContext(ctx, "sleep", "10")
@@ -180,6 +181,7 @@ func mockOvsdbProcess(t *testing.T) (int, func()) {
 }
 
 func mockOvsVSwitchdProcess(t *testing.T) (int, func()) {
+	t.Helper()
 	ctx, stopCmd := context.WithCancel(context.Background())
 
 	cmd := exec.CommandContext(ctx, "go", "run", "testdata/fake_thread_process.go")
@@ -214,7 +216,7 @@ func setTickDuration(d time.Duration) func() {
 }
 
 func mockFeatureEnableFile(t *testing.T, data string) func() {
-
+	t.Helper()
 	f, err := os.CreateTemp("", "enable_dynamic_cpu_affinity")
 	require.NoError(t, err)
 
@@ -231,6 +233,7 @@ func mockFeatureEnableFile(t *testing.T, data string) func() {
 }
 
 func assertPIDHasSchedAffinity(t *testing.T, pid int, expectedCPUSet unix.CPUSet) {
+	t.Helper()
 	var actual unix.CPUSet
 	assert.Eventually(t, func() bool {
 		err := unix.SchedGetaffinity(pid, &actual)
@@ -251,6 +254,7 @@ func assertPIDHasSchedAffinity(t *testing.T, pid int, expectedCPUSet unix.CPUSet
 }
 
 func assertNeverPIDHasSchedAffinity(t *testing.T, pid int, targetCPUSet unix.CPUSet) {
+	t.Helper()
 	var actual unix.CPUSet
 	assert.Never(t, func() bool {
 		err := unix.SchedGetaffinity(pid, &actual)

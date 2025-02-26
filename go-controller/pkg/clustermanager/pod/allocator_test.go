@@ -45,7 +45,7 @@ type testPod struct {
 }
 
 func (p testPod) getPod(t *testing.T) *corev1.Pod {
-
+	t.Helper()
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        "pod",

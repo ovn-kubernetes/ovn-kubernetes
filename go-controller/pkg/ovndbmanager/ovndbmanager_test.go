@@ -773,6 +773,7 @@ func keyForArgs(args ...string) string {
 
 // create file with name, fail on error or if the file already exists
 func createDbFile(t *testing.T, name string) {
+	t.Helper()
 	_, err := os.Stat(name)
 	if os.IsNotExist(err) {
 		f, err := os.OpenFile(name, os.O_RDONLY|os.O_CREATE, 0o644)
@@ -788,6 +789,7 @@ func createDbFile(t *testing.T, name string) {
 // failOnErrorMismatch fails either if an error is seen but not expected
 // or if an error is expected but when the substring does not match the error
 func failOnErrorMismatch(t *testing.T, receivedErr error, expectedErrorString string) {
+	t.Helper()
 	if receivedErr != nil {
 		if expectedErrorString == "" {
 			t.Errorf("No error expected. However, received '%v' from method under test.", receivedErr)

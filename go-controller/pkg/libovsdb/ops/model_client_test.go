@@ -44,6 +44,7 @@ type OperationModelTestCase struct {
 }
 
 func runTestCase(t *testing.T, tCase OperationModelTestCase) error {
+	t.Helper()
 	dbSetup := libovsdbtest.TestSetup{
 		NBData: tCase.initialDB,
 	}

@@ -29,6 +29,7 @@ import (
 )
 
 func clientDoCNI(t *testing.T, client *http.Client, req *Request) ([]byte, int) {
+	t.Helper()
 	data, err := json.Marshal(req)
 	if err != nil {
 		t.Fatalf("failed to marshal CNI request %v: %v", req, err)

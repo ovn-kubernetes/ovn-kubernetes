@@ -18,6 +18,7 @@ linters:
     - revive
     - staticcheck
     - testifylint
+    - thelper
     - typecheck
     - unused
 
