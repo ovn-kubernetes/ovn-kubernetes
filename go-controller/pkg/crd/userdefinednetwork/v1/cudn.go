@@ -33,7 +33,6 @@ type ClusterUserDefinedNetworkSpec struct {
 	// +kubebuilder:validation:XValidation:rule="has(self.topology) && self.topology == 'Layer3' ? has(self.layer3): !has(self.layer3)", message="spec.layer3 is required when topology is Layer3 and forbidden otherwise"
 	// +kubebuilder:validation:XValidation:rule="has(self.topology) && self.topology == 'Layer2' ? has(self.layer2): !has(self.layer2)", message="spec.layer2 is required when topology is Layer2 and forbidden otherwise"
 	// +kubebuilder:validation:XValidation:rule="has(self.topology) && self.topology == 'Localnet' ? has(self.localnet): !has(self.localnet)", message="spec.localnet is required when topology is Localnet and forbidden otherwise"
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="Network spec is immutable"
 	// +required
 	Network NetworkSpec `json:"network"`
 }
@@ -49,16 +48,19 @@ type NetworkSpec struct {
 	// Localnet topology is based on layer 2 topology, but also allows connecting to an existent (configured) physical network to provide north-south traffic to the workloads.
 	//
 	// +kubebuilder:validation:Enum=Layer2;Layer3;Localnet
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="spec.topology is immutable"
 	// +kubebuilder:validation:Required
 	// +required
 	// +unionDiscriminator
 	Topology NetworkTopology `json:"topology"`
 
 	// Layer3 is the Layer3 topology configuration.
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="layer3 topology config is immutable"
 	// +optional
 	Layer3 *Layer3Config `json:"layer3,omitempty"`
 
 	// Layer2 is the Layer2 topology configuration.
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="layer2 topology config is immutable"
 	// +optional
 	Layer2 *Layer2Config `json:"layer2,omitempty"`
 
@@ -100,6 +102,7 @@ type LocalnetConfig struct {
 	// The network will be assigned to pods who has the `k8s.v1.cni.cncf.io/networks` annotation in place pointing
 	// to subject.
 	//
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="layer2 topology config is immutable"
 	// +kubebuilder:validation:Enum=Secondary
 	// +required
 	Role NetworkRole `json:"role"`
@@ -108,6 +111,7 @@ type LocalnetConfig struct {
 	// Min length is 1, max length is 253, cannot contain `,` or `:` characters.
 	// In case OVS bridge-mapping is defined by Kubernetes-nmstate with `NodeNetworkConfigurationPolicy` (NNCP),
 	// this field should point to the NNCP `spec.desiredState.ovn.bridge-mappings` item's `localnet` value.
+	// physicalNetworkName is mutable.
 	//
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
@@ -127,6 +131,7 @@ type LocalnetConfig struct {
 	// (e.g.: DHCP server), `ipam.mode` should set with `Disabled, turning off OVN-Kubernetes IPAM and avoid
 	// conflicts with the existing IPAM services on the subject network.
 	//
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="layer2 topology config is immutable"
 	// +optional
 	Subnets DualStackCIDRs `json:"subnets,omitempty"`
 
@@ -140,6 +145,7 @@ type LocalnetConfig struct {
 	// that shouldn't be assigned by OVN-Kubernetes, the specified CIDRs will not be assigned. For example:
 	// Given: `subnets: "10.0.0.0/24"`, `excludeSubnets: "10.0.0.200/30", the following addresses will not be assigned
 	// to pods: `10.0.0.201`, `10.0.0.202`.
+	// excludeSubnets is mutable.
 	//
 	// +optional
 	// +kubebuilder:validation:MinItems=1
@@ -158,6 +164,7 @@ type LocalnetConfig struct {
 	//    When set with 'Persistent', the assigned IP addresses will be persisted in `ipamclaims.k8s.cni.cncf.io` object.
 	// 	  Useful for VMs, IP address will be persistent after restarts and migrations. Supported when `ipam.mode` is `Enabled`.
 	//
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="layer2 topology config is immutable"
 	// +optional
 	IPAM *IPAMConfig `json:"ipam,omitempty"`
 
@@ -170,6 +177,7 @@ type LocalnetConfig struct {
 	// this field enable configuring the same MTU the pod interface, having the pod MTU aligned with the network.
 	// Misaligned MTU across the stack (e.g.: pod has MTU X, node NIC has MTU Y), could result in network disruptions
 	// and bad performance.
+	// mtu is mutable.
 	//
 	// +kubebuilder:validation:Minimum=576
 	// +kubebuilder:validation:Maximum=65536
@@ -179,6 +187,7 @@ type LocalnetConfig struct {
 	// vlan is the VLAN ID (VID) to be used for the network.
 	// VLAN is optional, when omitted the underlying network default VLAN will be used (usually `1`).
 	// When set, OVN-Kubernetes will apply VLAN configuration to the SND infra and to the connected pods.
+	// vlan is mutable.
 	//
 	// +kubebuilder:validation:Minimum=2
 	// +kubebuilder:validation:Maximum=4094

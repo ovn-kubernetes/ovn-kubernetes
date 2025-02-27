@@ -42,6 +42,41 @@ var _ = Describe("Network Segmentation: API validations", func() {
 		},
 		Entry("ClusterUserDefinedNetwork, localnet", testdatacudn.LocalnetValid),
 	)
+
+	DescribeTable("api-server should reject CR spec mutations, given",
+		func(scenarios []testdata.ValidateCRScenario) {
+			DeferCleanup(func() {
+				cleanupValidateCRsTest(scenarios)
+			})
+			for _, s := range scenarios {
+				_, err := e2ekubectl.RunKubectlInput("", s.Manifest, "apply", "-f", "-")
+				Expect(err).NotTo(HaveOccurred(), "should create CR successfully")
+
+				_, stderr, err := runKubectlInputWithFullOutput("", s.MutatedManifest, "apply", "-f", "-")
+				Expect(err).To(HaveOccurred(), "should fail to update CR spec")
+				Expect(stderr).To(ContainSubstring(s.ExpectedErr))
+			}
+		},
+		Entry("ClusterUserDefinedNetwork, layer2", testdatacudn.Layer2SpecMutationScenarios),
+		Entry("ClusterUserDefinedNetwork, layer3", testdatacudn.Layer3SpecMutationScenarios),
+	)
+
+	DescribeTable("api-server should accept CR spec mutations, given",
+		func(scenarios []testdata.ValidateCRScenario) {
+			DeferCleanup(func() {
+				cleanupValidateCRsTest(scenarios)
+			})
+			for _, s := range scenarios {
+				_, err := e2ekubectl.RunKubectlInput("", s.Manifest, "apply", "-f", "-")
+				Expect(err).NotTo(HaveOccurred(), "should create CR successfully")
+
+				_, stderr, err := runKubectlInputWithFullOutput("", s.MutatedManifest, "apply", "-f", "-")
+				Expect(err).ToNot(HaveOccurred(), "should update CR spec successfully")
+				Expect(stderr).To(BeEmpty())
+			}
+		},
+		Entry("ClusterUserDefinedNetwork, loclanet", testdatacudn.LocalnetSpecMutationScenarios),
+	)
 })
 
 // runKubectlInputWithFullOutput is a convenience wrapper over kubectlBuilder that takes input to stdin
