@@ -195,6 +195,8 @@ spec:
                     - role
                     type: object
                     x-kubernetes-validations:
+                    - message: layer2 topology config is immutable
+                      rule: self == oldSelf
                     - message: Subnets is required with ipam.mode is Enabled or unset
                       rule: has(self.ipam) && has(self.ipam.mode) && self.ipam.mode
                         != 'Enabled' || has(self.subnets)
@@ -306,6 +308,8 @@ spec:
                     - subnets
                     type: object
                     x-kubernetes-validations:
+                    - message: layer3 topology config is immutable
+                      rule: self == oldSelf
                     - message: JoinSubnets is only supported for Primary network
                       rule: '!has(self.joinSubnets) || has(self.role) && self.role
                         == ''Primary'''
@@ -329,6 +333,16 @@ spec:
                           that shouldn't be assigned by OVN-Kubernetes, the specified CIDRs will not be assigned. For example:
                           Given: `subnets: "10.0.0.0/24"`, `excludeSubnets: "10.0.0.200/30", the following addresses will not be assigned
                           to pods: `10.0.0.201`, `10.0.0.202`.
+
+                          excludeSubnets is mutable.
+                          When mutated, OVN-Kuberentes will assign IP address according to the new excludeSubnets settings, no additional action required.
+
+                          In a scenario a new excludeSubent is added, connected pods already assigned with the IP address in the excluded range:
+                          connected pods may conflict with services running on the physical network that assigned with the excluded IP, manifest in network disruptions.
+                          In order to eliminate the conflict, and envable OVN-Kubernetes assign new IP address, consider following options:
+                          1. Re-create the connected pods who assigned with an excluded IP
+                          2. In case Multus thick plugin & multus-dynamic-network-controller are installed, unplug and then plug the network;
+                             remove and then add the network name in Multus network selection annotation `k8s.v1.cni.cncf.io/networks`.
                         items:
                           maxLength: 43
                           type: string
@@ -382,6 +396,8 @@ spec:
                             type: string
                         type: object
                         x-kubernetes-validations:
+                        - message: ipam is immutable
+                          rule: self == oldSelf
                         - message: lifecycle Persistent is only supported when ipam.mode
                             is Enabled
                           rule: '!has(self.lifecycle) || self.lifecycle != ''Persistent''
@@ -397,6 +413,16 @@ spec:
                           this field enable configuring the same MTU the pod interface, having the pod MTU aligned with the network.
                           Misaligned MTU across the stack (e.g.: pod has MTU X, node NIC has MTU Y), could result in network disruptions
                           and bad performance.
+
+                          mtu is mutable.
+                          When mutated, in order for changes to take effect, the CNI should be executed and configure the pod interface MTU.
+                          To eliminate potential issues due to misaligned MTU between connected pods and physical network make sure
+                          all connected pods configured with the new MTU settings.
+                          Consider the following options to trigger MTU re-configuration:
+                          1. Re-create the connected pods, the CNI will set the pod network with the new MTU settings.
+                          2. In case Multus thick plugin & multus-dynamic-network-controller are installed, unplug and then plug the network;
+                             by removing the network name and then add it again on Multus network selection annotation `k8s.v1.cni.cncf.io/networks`.
+                             The CNI will be executed and set the new MTU settings.
                         format: int32
                         maximum: 65536
                         minimum: 576
@@ -407,6 +433,10 @@ spec:
                           Min length is 1, max length is 253, cannot contain `,` or `:` characters.
                           In case OVS bridge-mapping is defined by Kubernetes-nmstate with `NodeNetworkConfigurationPolicy` (NNCP),
                           this field should point to the NNCP `spec.desiredState.ovn.bridge-mappings` item's `localnet` value.
+                          physicalNetworkName is mutable.
+
+                          When mutated, no additional action is required for the change to take effect.
+                          Please note a transient network disruption may occur until settings are commited.
                         maxLength: 253
                         minLength: 1
                         type: string
@@ -423,6 +453,9 @@ spec:
                         enum:
                         - Secondary
                         type: string
+                        x-kubernetes-validations:
+                        - message: role is immutable
+                          rule: self == oldSelf
                       subnets:
                         description: |-
                           subnets is a list of subnets used for the pod network across the cluster.
@@ -446,6 +479,8 @@ spec:
                         minItems: 1
                         type: array
                         x-kubernetes-validations:
+                        - message: subnets is immutable
+                          rule: self == oldSelf
                         - message: When 2 CIDRs are set, they must be from different
                             IP families
                           rule: size(self) != 2 || !isCIDR(self[0]) || !isCIDR(self[1])
@@ -459,6 +494,10 @@ spec:
                           vlan.access.id is the VLAN ID (VID) to be set on the network logical switch port.
                           vlan is optional, when omitted the underlying network default VLAN will be used (usually `1`).
                           When set, OVN-Kubernetes will apply VLAN configuration to the SDN infra and to the connected pods.
+
+                          vlan config is mutable.
+                          When mutated, no additional action is required for changes to take effect.
+                          Please note a transient network disruption may occur until settings are commited.
                         properties:
                           access:
                             description: Access is the access VLAN configuration
@@ -518,6 +557,9 @@ spec:
                     - Layer3
                     - Localnet
                     type: string
+                    x-kubernetes-validations:
+                    - message: spec.topology is immutable
+                      rule: self == oldSelf
                 required:
                 - topology
                 type: object
@@ -534,8 +576,6 @@ spec:
                     forbidden otherwise
                   rule: 'has(self.topology) && self.topology == ''Localnet'' ? has(self.localnet):
                     !has(self.localnet)'
-                - message: Network spec is immutable
-                  rule: self == oldSelf
             required:
             - namespaceSelector
             - network
