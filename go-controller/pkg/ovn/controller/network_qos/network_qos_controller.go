@@ -290,7 +290,6 @@ func (c *Controller) onNQOSAdd(obj interface{}) {
 		utilruntime.HandleError(fmt.Errorf("couldn't get key for object %+v: %v", obj, err))
 		return
 	}
-	klog.V(4).Infof("Adding Network QoS %s", key)
 	c.nqosQueue.Add(key)
 }
 
@@ -323,7 +322,6 @@ func (c *Controller) onNQOSDelete(obj interface{}) {
 		utilruntime.HandleError(fmt.Errorf("couldn't get key for object %+v: %v", obj, err))
 		return
 	}
-	klog.V(4).Infof("Deleting Network QoS %s", key)
 	c.nqosQueue.Add(key)
 }
 
@@ -334,7 +332,6 @@ func (c *Controller) onNQOSNamespaceAdd(obj interface{}) {
 		utilruntime.HandleError(fmt.Errorf("couldn't get key for object %+v: %v", obj, err))
 		return
 	}
-	klog.V(5).Infof("Adding Namespace in Network QoS controller %s", key)
 	c.nqosNamespaceQueue.Add(key)
 }
 
