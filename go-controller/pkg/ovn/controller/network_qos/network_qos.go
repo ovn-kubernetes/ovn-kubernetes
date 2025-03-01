@@ -36,7 +36,7 @@ func (c *Controller) processNextNQOSWorkItem(wg *sync.WaitGroup) bool {
 		c.nqosQueue.Forget(nqosKey)
 		return true
 	}
-	utilruntime.HandleError(fmt.Errorf("%v failed with: %v", nqosKey, err))
+	utilruntime.HandleError(fmt.Errorf("%s: failed to handle key %s, error: %v", c.controllerName, nqosKey, err))
 
 	if c.nqosQueue.NumRequeues(nqosKey) < maxRetries {
 		c.nqosQueue.AddRateLimited(nqosKey)
@@ -66,27 +66,27 @@ func (c *Controller) syncNetworkQoS(key string) error {
 		return err
 	}
 	if nqos == nil {
-		klog.V(5).Infof("%s - NetworkQoS %s has gone", c.controllerName, key)
+		klog.V(6).Infof("%s - NetworkQoS %s has gone", c.controllerName, key)
 		return c.nqosCache.DoWithLock(key, func(nqosKey string) error {
 			return c.clearNetworkQos(nqosNamespace, nqosName)
 		})
-	} else {
-		if !c.networkManagedByMe(nqos.Spec.NetworkAttachmentRefs) {
-			// maybe NetworkAttachmentName has been changed from this one to other value, try cleanup anyway
-			return c.nqosCache.DoWithLock(key, func(nqosKey string) error {
-				return c.clearNetworkQos(nqosNamespace, nqosName)
-			})
-		}
 	}
+	if !c.networkManagedByMe(nqos.Spec.NetworkAttachmentRefs) {
+		// maybe NetworkAttachmentName has been changed from this one to other value, try cleanup anyway
+		return c.nqosCache.DoWithLock(key, func(nqosKey string) error {
+			return c.clearNetworkQos(nqosNamespace, nqosName)
+		})
+	}
+
 	klog.V(5).Infof("%s - Processing NetworkQoS %s/%s", c.controllerName, nqos.Namespace, nqos.Name)
-	// save key to avoid racing
-	c.nqosCache.Store(key, nil)
 	// at this stage the NQOS exists in the cluster
 	return c.nqosCache.DoWithLock(key, func(nqosKey string) error {
+		// save key to avoid racing
+		c.nqosCache.Store(key, nil)
 		if err = c.ensureNetworkQos(nqos); err != nil {
 			c.nqosCache.Delete(key)
 			// we can ignore the error if status update doesn't succeed; best effort
-			c.updateNQOSStatusToNotReady(nqos.Namespace, nqos.Name, "failed to enforce", err)
+			c.updateNQOSStatusToNotReady(nqos.Namespace, nqos.Name, "failed to reconcile", err)
 			return err
 		}
 		recordNetworkQoSReconcileDuration(c.controllerName, time.Since(startTime).Milliseconds())
@@ -98,6 +98,7 @@ func (c *Controller) syncNetworkQoS(key string) error {
 // ensureNetworkQos will handle the main reconcile logic for any given nqos's
 // add/update that might be triggered either due to NQOS changes or the corresponding
 // matching pod or namespace changes.
+// This function need to be called with a lock held.
 func (c *Controller) ensureNetworkQos(nqos *networkqosapi.NetworkQoS) error {
 	desiredNQOSState := &networkQoSState{
 		name:      nqos.Name,
@@ -131,23 +132,20 @@ func (c *Controller) ensureNetworkQos(nqos *networkqosapi.NetworkQoS) error {
 		destStates := []*Destination{}
 		for _, destSpec := range ruleSpec.Classifier.To {
 			if destSpec.IPBlock != nil && (destSpec.PodSelector != nil || destSpec.NamespaceSelector != nil) {
-				c.updateNQOSStatusToNotReady(nqos.Namespace, nqos.Name, "specifying both ipBlock and podSelector/namespaceSelector is not allowed", nil)
-				return nil
+				return fmt.Errorf("specifying both ipBlock and podSelector/namespaceSelector is not allowed")
 			}
 			destState := &Destination{}
 			destState.IpBlock = destSpec.IPBlock.DeepCopy()
 			if destSpec.NamespaceSelector != nil && (len(destSpec.NamespaceSelector.MatchLabels) > 0 || len(destSpec.NamespaceSelector.MatchExpressions) > 0) {
 				if selector, err := metav1.LabelSelectorAsSelector(destSpec.NamespaceSelector); err != nil {
-					c.updateNQOSStatusToNotReady(nqos.Namespace, nqos.Name, "failed to parse destination namespace selector", err)
-					return nil
+					return fmt.Errorf("error parsing destination namespace selector: %v", err)
 				} else {
 					destState.NamespaceSelector = selector
 				}
 			}
 			if destSpec.PodSelector != nil && (len(destSpec.PodSelector.MatchLabels) > 0 || len(destSpec.PodSelector.MatchExpressions) > 0) {
 				if selector, err := metav1.LabelSelectorAsSelector(destSpec.PodSelector); err != nil {
-					c.updateNQOSStatusToNotReady(nqos.Namespace, nqos.Name, "failed to parse destination pod selector", err)
-					return nil
+					return fmt.Errorf("error parsing destination pod selector: %v", err)
 				} else {
 					destState.PodSelector = selector
 				}
@@ -160,7 +158,7 @@ func (c *Controller) ensureNetworkQos(nqos *networkqosapi.NetworkQoS) error {
 		if ruleSpec.Classifier.Port.Protocol != "" {
 			ruleState.Classifier.Protocol = protocol(ruleSpec.Classifier.Port.Protocol)
 			if !ruleState.Classifier.Protocol.IsValid() {
-				return fmt.Errorf("invalid protocol: %s, valid values are: tcp, udp, sctp", ruleSpec.Classifier.Port.Protocol)
+				return fmt.Errorf("invalid protocol: %s, valid values are: TCP, UDP, SCTP", ruleSpec.Classifier.Port.Protocol)
 			}
 		}
 		if ruleSpec.Classifier.Port.Port > 0 {
@@ -182,14 +180,15 @@ func (c *Controller) ensureNetworkQos(nqos *networkqosapi.NetworkQoS) error {
 	}
 	c.nqosCache.Store(joinMetaNamespaceAndName(nqos.Namespace, nqos.Name), desiredNQOSState)
 	if e := c.updateNQOSStatusToReady(nqos.Namespace, nqos.Name); e != nil {
-		return fmt.Errorf("NetworkQoS %s/%s reconciled successfully but unable to patch status: %v", nqos.Namespace, nqos.Name, e)
+		return fmt.Errorf("successfully reconciled NetworkQoS %s/%s, but failed to patch status: %v", nqos.Namespace, nqos.Name, e)
 	}
 	return nil
 }
 
 // clearNetworkQos will handle the logic for deleting all db objects related
-// to the provided nqos which got deleted.
-// uses externalIDs to figure out ownership
+// to the provided nqos which got deleted. it looks up object in OVN by comparing
+// the nqos name with the metadata in externalIDs.
+// this function need to be called with a lock held.
 func (c *Controller) clearNetworkQos(nqosNamespace, nqosName string) error {
 	k8sFullName := joinMetaNamespaceAndName(nqosNamespace, nqosName)
 	ovnObjectName := joinMetaNamespaceAndName(nqosNamespace, nqosName, ":")
@@ -217,12 +216,14 @@ func (c *Controller) updateNQOSStatusToReady(namespace, name string) error {
 		Reason:  reasonQoSSetupSuccess,
 		Message: "NetworkQoS was applied successfully",
 	}
+	startTime := time.Now()
 	err := c.updateNQOStatusCondition(cond, namespace, name)
 	if err != nil {
 		return fmt.Errorf("failed to update the status of NetworkQoS %s/%s, err: %v", namespace, name, err)
 	}
-	klog.V(5).Infof("Patched the status of NetworkQoS %s/%s with condition type %v/%v",
-		namespace, name, conditionTypeReady+c.zone, metav1.ConditionTrue)
+	klog.V(5).Infof("%s: successfully patched the status of NetworkQoS %s/%s with condition type %v/%v in %v seconds",
+		c.controllerName, namespace, name, conditionTypeReady+c.zone, metav1.ConditionTrue, time.Since(startTime).Seconds())
+	recordStatusPatchDuration(c.controllerName, time.Since(startTime).Milliseconds())
 	return nil
 }
 
@@ -238,11 +239,13 @@ func (c *Controller) updateNQOSStatusToNotReady(namespace, name, reason string, 
 		Message: msg,
 	}
 	klog.Error(msg)
+	startTime := time.Now()
 	err = c.updateNQOStatusCondition(cond, namespace, name)
 	if err != nil {
-		klog.Warningf("Failed to update the status of NetworkQoS %s/%s, err: %v", namespace, name, err)
+		klog.Warningf("%s: failed to update the status of NetworkQoS %s/%s, err: %v", c.controllerName, namespace, name, err)
 	} else {
-		klog.V(6).Infof("Patched the status of NetworkQoS %s/%s with condition type %v/%v", namespace, name, conditionTypeReady+c.zone, metav1.ConditionTrue)
+		klog.V(6).Infof("%s: successfully patched status of NetworkQoS %s/%s with condition type %v/%v in %v seconds", c.controllerName, namespace, name, conditionTypeReady+c.zone, metav1.ConditionTrue, time.Since(startTime).Seconds())
+		recordStatusPatchDuration(c.controllerName, time.Since(startTime).Milliseconds())
 	}
 }
 
@@ -308,7 +311,6 @@ func (c *Controller) networkManagedByMe(nadRefs []corev1.ObjectReference) bool {
 			(!c.IsDefault() && c.HasNAD(nadKey)) {
 			return true
 		}
-		klog.V(6).Infof("Net-attach-def %s is not managed by controller %s ", nadKey, c.controllerName)
 	}
 	return false
 }

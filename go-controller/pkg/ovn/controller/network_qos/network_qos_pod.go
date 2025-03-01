@@ -85,7 +85,7 @@ func (c *Controller) syncNetworkQoSPod(key string) error {
 		recordPodReconcileDuration(c.controllerName, time.Since(startTime).Milliseconds())
 		return nil
 	}
-	// We don't want to shortcuit only local zone pods here since peer pods
+	// We don't want to shortcut only local zone pods here since peer pods
 	// whether local or remote need to be dealt with. So we let the main
 	// NQOS controller take care of the local zone pods logic for the policy subjects
 	if !util.PodScheduled(pod) || util.PodWantsHostNetwork(pod) {
@@ -139,13 +139,13 @@ func (c *Controller) clearPodForNQOS(namespace, name string, nqosState *networkQ
 	return nil
 }
 
-// setPodForNQOS wil lcheck if the pod meets source selector or dest selector
+// setPodForNQOS will check if the pod meets source selector or dest selector
 // - match source: add the ip to source address set, bind qos rule to the switch
 // - match dest: add the ip to the destination address set
 func (c *Controller) setPodForNQOS(pod *v1.Pod, nqosState *networkQoSState, namespace *v1.Namespace) error {
 	addresses, err := getPodAddresses(pod, c.NetInfo)
 	if err == nil && len(addresses) == 0 {
-		// pod hasn't been annotated with addresses yet, return without retry
+		// pod either is not attached to this network, or hasn't been annotated with addresses yet, return without retry
 		klog.V(6).Infof("Pod %s/%s doesn't have addresses on network %s, skip NetworkQoS processing", pod.Namespace, pod.Name, c.GetNetworkName())
 		return nil
 	} else if err != nil {
