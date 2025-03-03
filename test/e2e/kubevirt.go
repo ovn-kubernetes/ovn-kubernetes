@@ -1665,22 +1665,46 @@ runcmd:
 				checkNorthSouthEgressICMPTraffic(vmi, []string{externalContainerIPV4Address, externalContainerIPV6Address}, step)
 			}
 
-			if td.role == "primary" && td.test.description == liveMigrate.description && isIPv4Supported() && isInterconnectEnabled() {
-				step = by(vm.Name, fmt.Sprintf("Checking IPv4 gateway cached mac after %s %s", td.resource.description, td.test.description))
-				Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
+			if td.role == "primary" && td.test.description == liveMigrate.description && isInterconnectEnabled() {
+				if isIPv4Supported() {
+					step = by(vm.Name, fmt.Sprintf("Checking IPv4 gateway cached mac after %s %s", td.resource.description, td.test.description))
+					Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
 
-				targetNode, err := fr.ClientSet.CoreV1().Nodes().Get(context.Background(), vmi.Status.MigrationState.TargetNode, metav1.GetOptions{})
-				Expect(err).ToNot(HaveOccurred(), step)
+					targetNode, err := fr.ClientSet.CoreV1().Nodes().Get(context.Background(), vmi.Status.MigrationState.TargetNode, metav1.GetOptions{})
+					Expect(err).ToNot(HaveOccurred(), step)
 
-				expectedGatewayMAC, err := kubevirt.GenerateGatewayMAC(targetNode, netConfig.networkName)
-				Expect(err).ToNot(HaveOccurred(), step)
+					expectedGatewayMAC, err := kubevirt.GenerateGatewayMAC(targetNode, netConfig.networkName)
+					Expect(err).ToNot(HaveOccurred(), step)
 
-				Expect(err).ToNot(HaveOccurred(), step)
-				Eventually(kubevirt.RetrieveCachedGatewayMAC).
-					WithArguments(vmi, "enp1s0", cidrIPv4).
-					WithTimeout(10*time.Second).
-					WithPolling(time.Second).
-					Should(Equal(expectedGatewayMAC), step)
+					Expect(err).ToNot(HaveOccurred(), step)
+					Eventually(kubevirt.RetrieveCachedGatewayMAC).
+						WithArguments(vmi, "enp1s0", cidrIPv4).
+						WithTimeout(10*time.Second).
+						WithPolling(time.Second).
+						Should(Equal(expectedGatewayMAC), step)
+				}
+				if isIPv6Supported() {
+					step = by(vm.Name, fmt.Sprintf("Checking IPv6 gateway after %s %s", td.resource.description, td.test.description))
+					obtainedIPv6GatwayPaths, err := kubevirt.RetrieveIPv6GatwayPaths(vmi)
+					Expect(err).ToNot(HaveOccurred())
+
+					sourceNode, err := fr.ClientSet.CoreV1().Nodes().Get(context.Background(), vmi.Status.MigrationState.SourceNode, metav1.GetOptions{})
+					Expect(err).ToNot(HaveOccurred(), step)
+
+					sourceNodeIPv6GatewayPath, err := kubevirt.GenerateGatwayIPv6RouterLLA(sourceNode, netConfig.networkName)
+					Expect(err).ToNot(HaveOccurred())
+
+					targetNode, err := fr.ClientSet.CoreV1().Nodes().Get(context.Background(), vmi.Status.MigrationState.TargetNode, metav1.GetOptions{})
+					Expect(err).ToNot(HaveOccurred(), step)
+
+					targetNodeIPv6GatewayPath, err := kubevirt.GenerateGatwayIPv6RouterLLA(targetNode, netConfig.networkName)
+					Expect(err).ToNot(HaveOccurred())
+
+					Expect(obtainedIPv6GatwayPaths).To(SatisfyAll(
+						Not(ContainElement(sourceNodeIPv6GatewayPath)),
+						ContainElement(targetNodeIPv6GatewayPath)),
+						"should reconcile ipv6 gateway nexthop after live migration")
+				}
 			}
 		},
 			func(td testData) string {
