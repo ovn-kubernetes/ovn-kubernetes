@@ -896,5 +896,10 @@ func (oc *SecondaryLayer2NetworkController) reconcileLiveMigrationTargetZone(kub
 			return err
 		}
 	}
+	if hasIPv6Subnet, _ := oc.IPMode(); hasIPv6Subnet {
+		if err := kubevirt.ReconcileIPv6DefaultGatewayAfterLiveMigration(oc.watchFactory, oc.GetNetInfo(), kubevirtLiveMigrationStatus, mgmtInterfaceName); err != nil {
+			return err
+		}
+	}
 	return nil
 }
