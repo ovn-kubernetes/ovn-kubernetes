@@ -467,6 +467,7 @@ jobs:
           - {"target": "bgp", "ha": "noHA", "gateway-mode": "shared",  "ipfamily": "ipv4", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation"}
           - {"target": "traffic-flow-test-only","ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "traffic-flow-tests": "1-24", "network-segmentation": "enable-network-segmentation"}
           - {"target": "tools", "ha": "noHA", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "SnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "network-segmentation": "enable-network-segmentation"}
+          - {"target": "tools", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "SnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "network-segmentation": "enable-network-segmentation"}
     needs: [ build-pr ]
     env:
       JOB_NAME: "${{ matrix.target }}-${{ matrix.ha }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}-${{ matrix.disable-snat-multiple-gws }}-${{ matrix.second-bridge }}-${{ matrix.ic }}"
