@@ -1,6 +1,7 @@
 package kubevirt
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	kubevirtv1 "kubevirt.io/api/core/v1"
+	v1 "kubevirt.io/api/core/v1"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -44,6 +46,25 @@ func RetrieveCachedGatewayMAC(vmi *kubevirtv1.VirtualMachineInstance, dev, cidr 
 	return outputSplit[4], nil
 }
 
+func RetrieveIPv6Gateways(vmi *v1.VirtualMachineInstance) ([]string, error) {
+	routes := []struct {
+		Gateway string `json:"gateway"`
+	}{}
+
+	output, err := RunCommand(vmi, "ip -6 -j route list default", 2*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %v", output, err)
+	}
+	if err := json.Unmarshal([]byte(output), &routes); err != nil {
+		return nil, fmt.Errorf("%s: %v", output, err)
+	}
+	paths := []string{}
+	for _, route := range routes {
+		paths = append(paths, route.Gateway)
+	}
+	return paths, nil
+}
+
 func GenerateGatewayMAC(node *corev1.Node, networkName string) (string, error) {
 	config.IPv4Mode = true
 	lrpJoinAddress, err := util.ParseNodeGatewayRouterJoinNetwork(node, networkName)
@@ -66,4 +87,15 @@ func GenerateGatewayMAC(node *corev1.Node, networkName string) (string, error) {
 	}
 
 	return util.IPAddrToHWAddr(lrpJoinIP).String(), nil
+}
+
+func GenerateGatewayIPv6RouterLLA(node *corev1.Node, networkName string) (string, error) {
+	joinAddresses, err := util.ParseNodeGatewayRouterJoinAddrs(node, networkName)
+	if err != nil {
+		return "", err
+	}
+	if len(joinAddresses) == 0 {
+		return "", fmt.Errorf("missing join addresses at node %q for network %q", node.Name, networkName)
+	}
+	return util.HWAddrToIPv6LLA(util.IPAddrToHWAddr(joinAddresses[0].IP)).String(), nil
 }
