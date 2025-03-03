@@ -886,10 +886,19 @@ func (oc *SecondaryLayer2NetworkController) reconcileLiveMigrationTargetZone(kub
 	if !oc.IsPrimaryNetwork() {
 		return nil
 	}
+	// Retrieve the primary network with the NAD for this namespace
+	netInfo, err := oc.networkManager.GetActiveNetworkForNamespace(kubevirtLiveMigrationStatus.TargetPod.Namespace)
+	if err != nil {
+		return err
+	}
 	mgmtInterfaceName := util.GetNetworkScopedK8sMgmtHostIntfName(uint(oc.GetNetworkID()))
-
 	if hasIPv4Subnet, _ := oc.IPMode(); hasIPv4Subnet {
-		if err := kubevirt.ReconcileIPv4DefaultGatewayAfterLiveMigration(oc.watchFactory, oc.GetNetInfo(), kubevirtLiveMigrationStatus, mgmtInterfaceName); err != nil {
+		if err := kubevirt.ReconcileIPv4DefaultGatewayAfterLiveMigration(oc.watchFactory, netInfo, kubevirtLiveMigrationStatus, mgmtInterfaceName); err != nil {
+			return err
+		}
+	}
+	if hasIPv6Subnet, _ := oc.IPMode(); hasIPv6Subnet {
+		if err := kubevirt.ReconcileIPv6DefaultGatewayAfterLiveMigration(oc.watchFactory, netInfo, kubevirtLiveMigrationStatus, mgmtInterfaceName); err != nil {
 			return err
 		}
 	}
