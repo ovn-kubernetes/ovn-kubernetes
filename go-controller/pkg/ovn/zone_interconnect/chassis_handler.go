@@ -134,8 +134,24 @@ func (zch *ZoneChassisHandler) createOrUpdateNodeChassis(node *corev1.Node, isRe
 			node.Name, parsedErr)
 	}
 
+	chassis := sbdb.Chassis{
+		Name:     chassisID,
+		Hostname: node.Name,
+		OtherConfig: map[string]string{
+			"is-remote": strconv.FormatBool(isRemote),
+		},
+	}
+
+	// If encap ips have changed, it is easier to delete and recreate the chassis for updating them
+	if isRemote {
+		if err := libovsdbops.DeleteChassis(zch.sbClient, &chassis); err != nil {
+			return fmt.Errorf("failed to delete existing chassis for node - %s, error: %w",
+				node.Name, err)
+		}
+	}
+
 	// Get the encap IPs.
-	encapIPs, err := util.ParseNodeEncapIPs(node)
+	encapIPs, err := util.ParseNodeEncapIPsAnnotation(node)
 	if err != nil {
 		return fmt.Errorf("failed to parse node-encap-ips for node - %s, error: %w",
 			node.Name, err)
@@ -152,19 +168,11 @@ func (zch *ZoneChassisHandler) createOrUpdateNodeChassis(node *corev1.Node, isRe
 	for _, ovnEncapIP := range encapIPs {
 		encap := sbdb.Encap{
 			ChassisName: chassisID,
-			IP:          ovnEncapIP,
+			IP:          strings.TrimSpace(ovnEncapIP),
 			Type:        "geneve",
 			Options:     encapOptions,
 		}
 		encaps = append(encaps, &encap)
-	}
-
-	chassis := sbdb.Chassis{
-		Name:     chassisID,
-		Hostname: node.Name,
-		OtherConfig: map[string]string{
-			"is-remote": strconv.FormatBool(isRemote),
-		},
 	}
 
 	return libovsdbops.CreateOrUpdateChassis(zch.sbClient, &chassis, encaps...)

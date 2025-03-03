@@ -1482,8 +1482,8 @@ func SetNodeEncapIPs(nodeAnnotator kube.Annotator, encapips sets.Set[string]) er
 	return nodeAnnotator.Set(OVNNodeEncapIPs, sets.List(encapips))
 }
 
-// ParseNodeEncapIPs returns the encap IPs set on a node
-func ParseNodeEncapIPs(node *kapi.Node) ([]string, error) {
+// ParseNodeEncapIPsAnnotation returns the encap IPs set on a node
+func ParseNodeEncapIPsAnnotation(node *corev1.Node) ([]string, error) {
 	encapIPsAnnotation, ok := node.Annotations[OVNNodeEncapIPs]
 	if !ok {
 		return nil, newAnnotationNotSetError("%s annotation not found for node %q", OVNNodeEncapIPs, node.Name)
@@ -1496,4 +1496,8 @@ func ParseNodeEncapIPs(node *kapi.Node) ([]string, error) {
 	}
 
 	return encapIPs, nil
+}
+
+func NodeEncapIPsChanged(oldNode, newNode *corev1.Node) bool {
+	return oldNode.Annotations[OVNNodeEncapIPs] != newNode.Annotations[OVNNodeEncapIPs]
 }
