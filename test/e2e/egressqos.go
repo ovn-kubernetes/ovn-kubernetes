@@ -10,6 +10,7 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 
 	"golang.org/x/sync/errgroup"
 	v1 "k8s.io/api/core/v1"
@@ -19,7 +20,7 @@ import (
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 )
 
-var _ = ginkgo.Describe("e2e EgressQoS validation", func() {
+var _ = ginkgo.Describe("e2e EgressQoS validation", feature.EgressQos, func() {
 	const (
 		egressQoSYaml = "egressqos.yaml"
 		srcPodName    = "src-dscp-pod"
