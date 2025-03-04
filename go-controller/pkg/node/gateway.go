@@ -483,7 +483,7 @@ func (g *gateway) GetDefaultPodNetworkAdvertised() bool {
 // Reconcile handles triggering updates to different components of a gateway, like OFM, Services
 func (g *gateway) Reconcile() error {
 	klog.Info("Reconciling gateway with updates")
-	if err := g.openflowManager.updateBridgeFlowCache(g.nodeIPManager.ListAddresses()); err != nil {
+	if err := g.openflowManager.updateBridgeFlowCache(g.nodeIPManager.ListNetworkAddresses(), g.nodeIPManager.ListAddresses()); err != nil {
 		return err
 	}
 	err := g.updateSNATRules()

@@ -1762,7 +1762,7 @@ func flowsForDefaultBridge(bridge *bridgeConfiguration, extraIPs []net.IP) ([]st
 	return dftFlows, nil
 }
 
-func commonFlows(bridge *bridgeConfiguration) ([]string, error) {
+func commonFlows(hostSubnets []*net.IPNet, bridge *bridgeConfiguration) ([]string, error) {
 	// CAUTION: when adding new flows where the in_port is ofPortPatch and the out_port is ofPortPhys, ensure
 	// that dl_src is included in match criteria!
 	ofPortPhys := bridge.ofPortPhys
@@ -1845,6 +1845,34 @@ func commonFlows(bridge *bridgeConfiguration) ([]string, error) {
 							"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:%s",
 							defaultOpenFlowCookie, netConfig.ofPortPatch, bridgeMacAddress, config.Default.ConntrackZone,
 							netConfig.masqCTMark, ofPortPhys))
+					// IP traffic from the OVN network to the host network should be handled normally by the bridge instead of
+					// being forwarded directly to the NIC (prio=100 flow above). This allows:
+					// (a) default network pods -> localnet pod (same node)
+					// (b) localnet pod -> host (same node)
+					for _, hostSubnet := range hostSubnets {
+						if hostSubnet.IP.To4() == nil {
+							continue
+						}
+						newFlows := []string{}
+						// scenario (a) for shared gw mode
+						if config.Gateway.Mode == config.GatewayModeShared {
+							newFlows = append(newFlows,
+								fmt.Sprintf("cookie=%s, priority=102, in_port=%s, dl_src=%s, ip, nw_dst=%s, "+
+									"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:NORMAL",
+									defaultOpenFlowCookie, netConfig.ofPortPatch, bridgeMacAddress, hostSubnet,
+									config.Default.ConntrackZone, netConfig.masqCTMark))
+						}
+						// scenario (a) for local gw mode
+						// scenario (b) for both gw modes
+						newFlows = append(newFlows,
+							fmt.Sprintf("cookie=%s, priority=102, in_port=LOCAL, dl_src=%s, ip, nw_dst=%s, "+
+								"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:NORMAL",
+								defaultOpenFlowCookie, bridgeMacAddress, hostSubnet,
+								config.Default.ConntrackZone, ctMarkHost))
+
+						dftFlows = append(dftFlows, newFlows...)
+					}
+
 				} else {
 					//  for UDN we additionally SNAT the packet from masquerade IP -> node IP
 					dftFlows = append(dftFlows,
@@ -1936,6 +1964,53 @@ func commonFlows(bridge *bridgeConfiguration) ([]string, error) {
 						fmt.Sprintf("cookie=%s, priority=100, in_port=%s, dl_src=%s, ipv6, "+
 							"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:%s",
 							defaultOpenFlowCookie, netConfig.ofPortPatch, bridgeMacAddress, config.Default.ConntrackZone, netConfig.masqCTMark, ofPortPhys))
+
+					// IP traffic from the OVN network to the host network should be handled normally by the bridge instead of
+					// being forwarded directly to the NIC (prio=100 flow above). This allows:
+					// (a) default network pods -> localnet pod (same node)
+					// (b) localnet pod -> host (same node)
+					for _, hostSubnet := range hostSubnets {
+						if hostSubnet.IP.To4() != nil {
+							continue
+						}
+						newFlows := []string{}
+						// scenario (a) for shared gw mode
+						if config.Gateway.Mode == config.GatewayModeShared {
+							newFlows = append(newFlows,
+								fmt.Sprintf("cookie=%s, priority=102, in_port=%s, dl_src=%s, ipv6, ipv6_dst=%s, "+
+									"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:NORMAL",
+									defaultOpenFlowCookie, netConfig.ofPortPatch, bridgeMacAddress, hostSubnet,
+									config.Default.ConntrackZone, netConfig.masqCTMark))
+						}
+						// scenario (a) for local gw mode
+						// scenario (b) for both gw modes
+						newFlows = append(newFlows,
+							fmt.Sprintf("cookie=%s, priority=102, in_port=LOCAL, dl_src=%s, ipv6, ipv6_dst=%s, "+
+								"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:NORMAL",
+								defaultOpenFlowCookie, bridgeMacAddress, hostSubnet,
+								config.Default.ConntrackZone, ctMarkHost))
+
+						dftFlows = append(dftFlows, newFlows...)
+					}
+					// same as for the prio=102 flows above, but for neighbor solicitation and advertisement
+					for _, icmpType := range []int{types.NeighborSolicitationICMPType, types.NeighborAdvertisementICMPType} {
+						newFlows := []string{}
+						if config.Gateway.Mode == config.GatewayModeShared {
+							newFlows = append(newFlows,
+								fmt.Sprintf("cookie=%s, priority=102, in_port=%s, dl_src=%s, icmp6, icmpv6_type=%d, "+
+									"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:NORMAL",
+									defaultOpenFlowCookie, netConfig.ofPortPatch, bridgeMacAddress, icmpType,
+									config.Default.ConntrackZone, netConfig.masqCTMark))
+						}
+						newFlows = append(newFlows,
+							fmt.Sprintf("cookie=%s, priority=102, in_port=LOCAL, dl_src=%s, icmp6, icmpv6_type=%d, "+
+								"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:NORMAL",
+								defaultOpenFlowCookie, bridgeMacAddress, icmpType,
+								config.Default.ConntrackZone, ctMarkHost))
+
+						dftFlows = append(dftFlows, newFlows...)
+					}
+
 				} else {
 					//  for UDN we additionally SNAT the packet from masquerade IP -> node IP
 					dftFlows = append(dftFlows,
@@ -2306,6 +2381,7 @@ func newGateway(
 		}
 		gw.nodeIPManager = newAddressManager(nodeName, kube, cfg, watchFactory, gwBridge)
 		nodeIPs := gw.nodeIPManager.ListAddresses()
+		hostSubnets := gw.nodeIPManager.ListNetworkAddresses()
 
 		if config.OvnKubeNode.Mode == types.NodeModeFull {
 			// Delete stale masquerade resources if there are any. This is to make sure that there
@@ -2329,7 +2405,7 @@ func newGateway(
 			}
 		}
 
-		gw.openflowManager, err = newGatewayOpenFlowManager(gwBridge, exGwBridge, nodeIPs)
+		gw.openflowManager, err = newGatewayOpenFlowManager(gwBridge, exGwBridge, hostSubnets, nodeIPs)
 		if err != nil {
 			return err
 		}
@@ -2337,7 +2413,7 @@ func newGateway(
 		// resync flows on IP change
 		gw.nodeIPManager.OnChanged = func() {
 			klog.V(5).Info("Node addresses changed, re-syncing bridge flows")
-			if err := gw.openflowManager.updateBridgeFlowCache(gw.nodeIPManager.ListAddresses()); err != nil {
+			if err := gw.openflowManager.updateBridgeFlowCache(gw.nodeIPManager.ListNetworkAddresses(), gw.nodeIPManager.ListAddresses()); err != nil {
 				// very unlikely - somehow node has lost its IP address
 				klog.Errorf("Failed to re-generate gateway flows after address change: %v", err)
 			}

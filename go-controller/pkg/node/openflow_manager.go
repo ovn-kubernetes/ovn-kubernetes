@@ -161,7 +161,7 @@ func (c *openflowManager) syncFlows() {
 // -- to handle host -> service access, via masquerading from the host to OVN GR
 // -- to handle external -> service(ExternalTrafficPolicy: Local) -> host access without SNAT
 func newGatewayOpenFlowManager(gwBridge, exGWBridge *bridgeConfiguration,
-	extraIPs []net.IP) (*openflowManager, error) {
+	hostSubnets []*net.IPNet, extraIPs []net.IP) (*openflowManager, error) {
 	// add health check function to check default OpenFlow flows are on the shared gateway bridge
 	ofm := &openflowManager{
 		defaultBridge:         gwBridge,
@@ -173,7 +173,7 @@ func newGatewayOpenFlowManager(gwBridge, exGWBridge *bridgeConfiguration,
 		flowChan:              make(chan struct{}, 1),
 	}
 
-	if err := ofm.updateBridgeFlowCache(extraIPs); err != nil {
+	if err := ofm.updateBridgeFlowCache(hostSubnets, extraIPs); err != nil {
 		return nil, err
 	}
 
@@ -217,7 +217,7 @@ func (c *openflowManager) Run(stopChan <-chan struct{}, doneWg *sync.WaitGroup) 
 
 // updateBridgeFlowCache generates the "static" per-bridge flows
 // note: this is shared between shared and local gateway modes
-func (c *openflowManager) updateBridgeFlowCache(extraIPs []net.IP) error {
+func (c *openflowManager) updateBridgeFlowCache(hostSubnets []*net.IPNet, extraIPs []net.IP) error {
 	// protect defaultBridge config from being updated by gw.nodeIPManager
 	c.defaultBridge.Lock()
 	defer c.defaultBridge.Unlock()
@@ -229,7 +229,7 @@ func (c *openflowManager) updateBridgeFlowCache(extraIPs []net.IP) error {
 	if err != nil {
 		return err
 	}
-	dftCommonFlows, err := commonFlows(c.defaultBridge)
+	dftCommonFlows, err := commonFlows(hostSubnets, c.defaultBridge)
 	if err != nil {
 		return err
 	}
@@ -243,7 +243,7 @@ func (c *openflowManager) updateBridgeFlowCache(extraIPs []net.IP) error {
 		c.externalGatewayBridge.Lock()
 		defer c.externalGatewayBridge.Unlock()
 		c.updateExBridgeFlowCacheEntry("NORMAL", []string{fmt.Sprintf("table=0,priority=0,actions=%s\n", util.NormalAction)})
-		exGWBridgeDftFlows, err := commonFlows(c.externalGatewayBridge)
+		exGWBridgeDftFlows, err := commonFlows(hostSubnets, c.externalGatewayBridge)
 		if err != nil {
 			return err
 		}
