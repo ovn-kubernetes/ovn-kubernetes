@@ -9,6 +9,8 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/ginkgo_wrapper"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -16,7 +18,7 @@ import (
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 )
 
-var _ = ginkgo.Describe("Status manager validation", func() {
+var _ = ginkgo_wrapper.Describe(feature.EgressFirewall, "Status manager validation", func() {
 	const (
 		svcname                string = "status-manager"
 		egressFirewallYamlFile string = "egress-fw.yml"

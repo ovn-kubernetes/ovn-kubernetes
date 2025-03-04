@@ -13,6 +13,8 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/ginkgo_wrapper"
 
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
@@ -32,7 +34,7 @@ import (
 	utilnet "k8s.io/utils/net"
 )
 
-var _ = ginkgo.Describe("EgressService", func() {
+var _ = ginkgo_wrapper.Describe(feature.EgressService, func() {
 	const (
 		egressServiceYAML     = "egress_service.yaml"
 		externalContainerName = "external-container-for-egress-service"

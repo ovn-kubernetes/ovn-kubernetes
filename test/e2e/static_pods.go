@@ -10,6 +10,7 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/ginkgo_wrapper"
 
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
 
@@ -83,7 +84,7 @@ func removeStaticPodFile(nodeName string, podFile string) {
 // This test does the following
 // Applies a static-pod.yaml file to a nodes /etc/kubernetes/manifest dir
 // Expects the static pod to succeed
-var _ = ginkgo.Describe("Creating a static pod on a node", func() {
+var _ = ginkgo_wrapper.Describe("Creating a static pod on a node", func() {
 	const podFile string = "static-pod.yaml"
 
 	f := wrappedTestFramework("staticpods")

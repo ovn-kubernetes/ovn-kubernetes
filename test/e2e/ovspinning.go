@@ -7,13 +7,15 @@ import (
 	"github.com/onsi/gomega"
 
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/ginkgo_wrapper"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
 
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 )
 
-var _ = ginkgo.Describe("OVS CPU affinity pinning", func() {
+var _ = ginkgo_wrapper.Describe(feature.OVSCPUPin, func() {
 
 	f := wrappedTestFramework("ovspinning")
 
