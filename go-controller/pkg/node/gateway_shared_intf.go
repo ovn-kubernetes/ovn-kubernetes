@@ -1846,25 +1846,31 @@ func commonFlows(hostSubnets []*net.IPNet, bridge *bridgeConfiguration) ([]strin
 							defaultOpenFlowCookie, netConfig.ofPortPatch, bridgeMacAddress, config.Default.ConntrackZone,
 							netConfig.masqCTMark, ofPortPhys))
 					// IP traffic from the OVN network to the host network should be handled normally by the bridge instead of
-					// being forwarded directly to the NIC (prio=100 flow above). This allows pods in the default network to reach
-					// localnet pods on the same node.
+					// being forwarded directly to the NIC (prio=100 flow above). This allows:
+					// (a) default network pods -> localnet pod (same node)
+					// (b) localnet pod -> host (same node)
 					for _, hostSubnet := range hostSubnets {
 						if hostSubnet.IP.To4() == nil {
 							continue
 						}
-						newFlow := fmt.Sprintf("cookie=%s, priority=102, in_port=%s, dl_src=%s, ip, nw_dst=%s, "+
-							"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:NORMAL",
-							defaultOpenFlowCookie, netConfig.ofPortPatch, bridgeMacAddress, hostSubnet,
-							config.Default.ConntrackZone, netConfig.masqCTMark)
-
-						if config.Gateway.Mode == config.GatewayModeLocal {
-							newFlow = fmt.Sprintf("cookie=%s, priority=102, in_port=LOCAL, dl_src=%s, ip, nw_dst=%s, "+
+						newFlows := []string{}
+						// scenario (a) for shared gw mode
+						if config.Gateway.Mode == config.GatewayModeShared {
+							newFlows = append(newFlows,
+								fmt.Sprintf("cookie=%s, priority=102, in_port=%s, dl_src=%s, ip, nw_dst=%s, "+
+									"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:NORMAL",
+									defaultOpenFlowCookie, netConfig.ofPortPatch, bridgeMacAddress, hostSubnet,
+									config.Default.ConntrackZone, netConfig.masqCTMark))
+						}
+						// scenario (a) for local gw mode
+						// scenario (b) for both gw modes
+						newFlows = append(newFlows,
+							fmt.Sprintf("cookie=%s, priority=102, in_port=LOCAL, dl_src=%s, ip, nw_dst=%s, "+
 								"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:NORMAL",
 								defaultOpenFlowCookie, bridgeMacAddress, hostSubnet,
-								config.Default.ConntrackZone, ctMarkHost)
-						}
+								config.Default.ConntrackZone, ctMarkHost))
 
-						dftFlows = append(dftFlows, newFlow)
+						dftFlows = append(dftFlows, newFlows...)
 					}
 
 				} else {
@@ -1960,41 +1966,49 @@ func commonFlows(hostSubnets []*net.IPNet, bridge *bridgeConfiguration) ([]strin
 							defaultOpenFlowCookie, netConfig.ofPortPatch, bridgeMacAddress, config.Default.ConntrackZone, netConfig.masqCTMark, ofPortPhys))
 
 					// IP traffic from the OVN network to the host network should be handled normally by the bridge instead of
-					// being forwarded directly to the NIC (prio=100 flow above). This allows pods in the default network to reach
-					// localnet pods on the same node.
+					// being forwarded directly to the NIC (prio=100 flow above). This allows:
+					// (a) default network pods -> localnet pod (same node)
+					// (b) localnet pod -> host (same node)
 					for _, hostSubnet := range hostSubnets {
 						if hostSubnet.IP.To4() != nil {
 							continue
 						}
-						newFlow := fmt.Sprintf("cookie=%s, priority=102, in_port=%s, dl_src=%s, ipv6, ipv6_dst=%s, "+
-							"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:NORMAL",
-							defaultOpenFlowCookie, netConfig.ofPortPatch, bridgeMacAddress, hostSubnet,
-							config.Default.ConntrackZone, netConfig.masqCTMark)
-
-						if config.Gateway.Mode == config.GatewayModeLocal {
-							newFlow = fmt.Sprintf("cookie=%s, priority=102, in_port=LOCAL, dl_src=%s, ipv6, ipv6_dst=%s, "+
+						newFlows := []string{}
+						// scenario (a) for shared gw mode
+						if config.Gateway.Mode == config.GatewayModeShared {
+							newFlows = append(newFlows,
+								fmt.Sprintf("cookie=%s, priority=102, in_port=%s, dl_src=%s, ipv6, ipv6_dst=%s, "+
+									"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:NORMAL",
+									defaultOpenFlowCookie, netConfig.ofPortPatch, bridgeMacAddress, hostSubnet,
+									config.Default.ConntrackZone, netConfig.masqCTMark))
+						}
+						// scenario (a) for local gw mode
+						// scenario (b) for both gw modes
+						newFlows = append(newFlows,
+							fmt.Sprintf("cookie=%s, priority=102, in_port=LOCAL, dl_src=%s, ipv6, ipv6_dst=%s, "+
 								"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:NORMAL",
 								defaultOpenFlowCookie, bridgeMacAddress, hostSubnet,
-								config.Default.ConntrackZone, ctMarkHost)
-						}
+								config.Default.ConntrackZone, ctMarkHost))
 
-						dftFlows = append(dftFlows, newFlow)
+						dftFlows = append(dftFlows, newFlows...)
 					}
-
+					// same as for the prio=102 flows above, but for neighbor solicitation and advertisement
 					for _, icmpType := range []int{types.NeighborSolicitationICMPType, types.NeighborAdvertisementICMPType} {
-						newFlow := fmt.Sprintf("cookie=%s, priority=102, in_port=%s, dl_src=%s, icmp6, icmpv6_type=%d, "+
-							"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:NORMAL",
-							defaultOpenFlowCookie, netConfig.ofPortPatch, bridgeMacAddress, icmpType,
-							config.Default.ConntrackZone, netConfig.masqCTMark)
-
-						if config.Gateway.Mode == config.GatewayModeLocal {
-							newFlow = fmt.Sprintf("cookie=%s, priority=102, in_port=LOCAL, dl_src=%s, icmp6, icmpv6_type=%d, "+
+						newFlows := []string{}
+						if config.Gateway.Mode == config.GatewayModeShared {
+							newFlows = append(newFlows,
+								fmt.Sprintf("cookie=%s, priority=102, in_port=%s, dl_src=%s, icmp6, icmpv6_type=%d, "+
+									"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:NORMAL",
+									defaultOpenFlowCookie, netConfig.ofPortPatch, bridgeMacAddress, icmpType,
+									config.Default.ConntrackZone, netConfig.masqCTMark))
+						}
+						newFlows = append(newFlows,
+							fmt.Sprintf("cookie=%s, priority=102, in_port=LOCAL, dl_src=%s, icmp6, icmpv6_type=%d, "+
 								"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:NORMAL",
 								defaultOpenFlowCookie, bridgeMacAddress, icmpType,
-								config.Default.ConntrackZone, ctMarkHost)
-						}
+								config.Default.ConntrackZone, ctMarkHost))
 
-						dftFlows = append(dftFlows, newFlow)
+						dftFlows = append(dftFlows, newFlows...)
 					}
 
 				} else {
