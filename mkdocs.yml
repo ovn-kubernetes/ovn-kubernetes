@@ -11,8 +11,8 @@ theme:
   name: material
   icon:
     repo: fontawesome/brands/git-alt
-  logo: images/ovn-inside-k8s.png
-  favicon: images/ovn-inside-k8s.png
+  logo: images/ovn-kubernetes-stacked-all-blue.png
+  favicon: images/ovn-kubernetes-stacked-all-blue.png
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
