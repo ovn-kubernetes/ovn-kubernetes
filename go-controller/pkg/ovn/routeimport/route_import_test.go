@@ -21,6 +21,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/mocks"
+	multinetworkmocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/mocks/multinetwork"
 )
 
 func Test_controller_syncNetwork(t *testing.T) {
@@ -53,7 +54,7 @@ func Test_controller_syncNetwork(t *testing.T) {
 			args: args{"default"},
 			fields: fields{
 				networkIDs: map[int]string{0: "default"},
-				networks:   map[string]*netInfo{"default": {NetInfo: defaultNetwork, id: noTable}},
+				networks:   map[string]*netInfo{"default": {NetInfo: defaultNetwork, table: noTable}},
 			},
 		},
 		{
@@ -61,7 +62,7 @@ func Test_controller_syncNetwork(t *testing.T) {
 			args: args{"default"},
 			fields: fields{
 				networkIDs: map[int]string{0: "default"},
-				networks:   map[string]*netInfo{"default": {NetInfo: defaultNetwork, id: 0, table: unix.RT_TABLE_MAIN}},
+				networks:   map[string]*netInfo{"default": {NetInfo: defaultNetwork, table: unix.RT_TABLE_MAIN}},
 			},
 			routesErr: true,
 			wantErr:   true,
@@ -71,7 +72,7 @@ func Test_controller_syncNetwork(t *testing.T) {
 			args: args{"default"},
 			fields: fields{
 				networkIDs: map[int]string{0: "default"},
-				networks:   map[string]*netInfo{"default": {NetInfo: defaultNetwork, id: 0, table: unix.RT_TABLE_MAIN}},
+				networks:   map[string]*netInfo{"default": {NetInfo: defaultNetwork, table: unix.RT_TABLE_MAIN}},
 			},
 			wantErr: true,
 		},
@@ -80,7 +81,7 @@ func Test_controller_syncNetwork(t *testing.T) {
 			args: args{"default"},
 			fields: fields{
 				networkIDs: map[int]string{0: "default"},
-				networks:   map[string]*netInfo{"default": {NetInfo: defaultNetwork, id: 0, table: unix.RT_TABLE_MAIN}},
+				networks:   map[string]*netInfo{"default": {NetInfo: defaultNetwork, table: unix.RT_TABLE_MAIN}},
 			},
 			initial: []libovsdb.TestData{
 				&nbdb.LogicalRouter{Name: defaultNetwork.GetNetworkScopedGWRouterName(node), StaticRoutes: []string{"keep-1", "keep-2", "remove"}},
@@ -179,7 +180,7 @@ func Test_controller_syncRouteUpdate(t *testing.T) {
 			name: "processes route updates",
 			fields: fields{
 				networkIDs: map[int]string{0: "default"},
-				networks:   map[string]*netInfo{"default": {NetInfo: defaultNetwork, id: 0, table: unix.RT_TABLE_MAIN}},
+				networks:   map[string]*netInfo{"default": {NetInfo: defaultNetwork, table: unix.RT_TABLE_MAIN}},
 				tables:     map[int]int{unix.RT_TABLE_MAIN: 0},
 			},
 			args:     args{&netlink.RouteUpdate{Route: netlink.Route{Protocol: unix.RTPROT_BGP, Table: unix.RT_TABLE_MAIN}}},
@@ -225,7 +226,6 @@ func Test_controller_syncRouteUpdate(t *testing.T) {
 }
 
 func Test_controller_syncLinkUpdate(t *testing.T) {
-	someNetwork := &util.DefaultNetInfo{}
 	type fields struct {
 		networkIDs map[int]string
 		networks   map[string]*netInfo
@@ -261,7 +261,7 @@ func Test_controller_syncLinkUpdate(t *testing.T) {
 			name: "ignores unknown event types",
 			fields: fields{
 				networkIDs: map[int]string{1: "net1"},
-				networks:   map[string]*netInfo{"net1": {NetInfo: someNetwork, id: 1, table: 2}},
+				networks:   map[string]*netInfo{"net1": {table: 2}},
 				tables:     map[int]int{2: 1},
 			},
 			args: args{&netlink.LinkUpdate{
@@ -274,7 +274,7 @@ func Test_controller_syncLinkUpdate(t *testing.T) {
 			name: "ignores removal of old VRFs",
 			fields: fields{
 				networkIDs: map[int]string{1: "net1", 2: "net2"},
-				networks:   map[string]*netInfo{"net1": {NetInfo: someNetwork, id: 1, table: 2}, "net2": {NetInfo: someNetwork, id: 2, table: 2}},
+				networks:   map[string]*netInfo{"net1": {table: 2}, "net2": {table: 2}},
 				tables:     map[int]int{2: 2},
 			},
 			args: args{&netlink.LinkUpdate{
@@ -287,7 +287,7 @@ func Test_controller_syncLinkUpdate(t *testing.T) {
 			name: "processes link removals",
 			fields: fields{
 				networkIDs: map[int]string{1: "net1"},
-				networks:   map[string]*netInfo{"net1": {NetInfo: someNetwork, id: 1, table: 2}},
+				networks:   map[string]*netInfo{"net1": {table: 2}},
 				tables:     map[int]int{2: 1},
 			},
 			args: args{&netlink.LinkUpdate{
@@ -300,7 +300,7 @@ func Test_controller_syncLinkUpdate(t *testing.T) {
 			name: "does not reconcile on link updates with no actual changes",
 			fields: fields{
 				networkIDs: map[int]string{1: "net1"},
-				networks:   map[string]*netInfo{"net1": {NetInfo: someNetwork, id: 1, table: 2}},
+				networks:   map[string]*netInfo{"net1": {table: 2}},
 				tables:     map[int]int{2: 1},
 			},
 			args: args{&netlink.LinkUpdate{
@@ -313,7 +313,7 @@ func Test_controller_syncLinkUpdate(t *testing.T) {
 			name: "does reconcile on link updates with actual changes",
 			fields: fields{
 				networkIDs: map[int]string{1: "net1"},
-				networks:   map[string]*netInfo{"net1": {NetInfo: someNetwork, id: 1, table: 2}},
+				networks:   map[string]*netInfo{"net1": {table: 2}},
 				tables:     map[int]int{2: 1},
 			},
 			args: args{&netlink.LinkUpdate{
@@ -343,7 +343,14 @@ func Test_controller_syncLinkUpdate(t *testing.T) {
 			}
 			r := controllerutil.NewReconciler(
 				"test",
-				&controllerutil.ReconcilerConfig{Reconcile: reconcile, Threadiness: 1, RateLimiter: workqueue.NewTypedItemFastSlowRateLimiter[string](0, 0, 0)})
+				&controllerutil.ReconcilerConfig{Reconcile: reconcile, Threadiness: 1, RateLimiter: workqueue.NewTypedItemFastSlowRateLimiter[string](0, 0, 0)},
+			)
+			for id, network := range tt.fields.networkIDs {
+				netInfo := &multinetworkmocks.NetInfo{}
+				netInfo.On("GetNetworkName").Return(network)
+				netInfo.On("GetNetworkID").Return(id)
+				tt.fields.networks[network].NetInfo = netInfo
+			}
 			c := &controller{
 				log:        testr.New(t),
 				networkIDs: tt.fields.networkIDs,
