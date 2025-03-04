@@ -5,12 +5,13 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 
 	v1 "k8s.io/api/core/v1"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 )
 
-var _ = ginkgo.Describe("Check whether gateway-mtu-support annotation on node is set based on disable-pkt-mtu-check value", func() {
+var _ = ginkgo.Describe("Check whether gateway-mtu-support annotation on node is set based on disable-pkt-mtu-check value", feature.DisablePacketMTUCheck, func() {
 	var nodes *v1.NodeList
 	f := wrappedTestFramework("gateway-mtu-support")
 

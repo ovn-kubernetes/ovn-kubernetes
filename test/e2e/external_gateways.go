@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
 	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
@@ -74,7 +75,7 @@ type gatewayTestIPs struct {
 	targetIPs  []string
 }
 
-var _ = ginkgo.Describe("External Gateway", func() {
+var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 
 	const (
 		gwTCPPort  = 80
