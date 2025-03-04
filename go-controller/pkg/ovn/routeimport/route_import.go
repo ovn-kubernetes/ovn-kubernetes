@@ -123,6 +123,9 @@ func (c *controller) AddNetwork(network util.NetInfo) error {
 
 	c.networkIDs[networkID] = name
 	c.networks[name] = network
+	if network.IsDefault() {
+		c.tables[unix.RT_TABLE_MAIN] = networkID
+	}
 
 	c.log.V(5).Info("Started tracking network", "name", name, "id", networkID)
 	c.reconcile(name)

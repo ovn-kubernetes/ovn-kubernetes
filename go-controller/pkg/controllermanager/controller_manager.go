@@ -75,7 +75,7 @@ func (cm *ControllerManager) NewNetworkController(nInfo util.NetInfo) (networkma
 	topoType := nInfo.TopologyType()
 	switch topoType {
 	case ovntypes.Layer3Topology:
-		return ovn.NewSecondaryLayer3NetworkController(cnci, nInfo, cm.networkManager.Interface(), cm.eIPController, cm.portCache)
+		return ovn.NewSecondaryLayer3NetworkController(cnci, nInfo, cm.networkManager.Interface(), cm.routeImportManager, cm.eIPController, cm.portCache)
 	case ovntypes.Layer2Topology:
 		return ovn.NewSecondaryLayer2NetworkController(cnci, nInfo, cm.networkManager.Interface(), cm.eIPController, cm.portCache)
 	case ovntypes.LocalnetTopology:
@@ -95,7 +95,7 @@ func (cm *ControllerManager) newDummyNetworkController(topoType, netName string)
 	netInfo, _ := util.NewNetInfo(&ovncnitypes.NetConf{NetConf: types.NetConf{Name: netName}, Topology: topoType})
 	switch topoType {
 	case ovntypes.Layer3Topology:
-		return ovn.NewSecondaryLayer3NetworkController(cnci, netInfo, cm.networkManager.Interface(), cm.eIPController, cm.portCache)
+		return ovn.NewSecondaryLayer3NetworkController(cnci, netInfo, cm.networkManager.Interface(), cm.routeImportManager, cm.eIPController, cm.portCache)
 	case ovntypes.Layer2Topology:
 		return ovn.NewSecondaryLayer2NetworkController(cnci, netInfo, cm.networkManager.Interface(), cm.eIPController, cm.portCache)
 	case ovntypes.LocalnetTopology:
