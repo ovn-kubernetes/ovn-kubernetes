@@ -469,6 +469,21 @@ func TestNADController(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "non ovn-k NAD added",
+			args: []args{
+				{
+					nad: "test/nad_1",
+					network: &ovncnitypes.NetConf{
+						NetConf: cnitypes.NetConf{
+							Name: "test",
+							Type: "sriov",
+						},
+					},
+					wantErr: false,
+				},
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
