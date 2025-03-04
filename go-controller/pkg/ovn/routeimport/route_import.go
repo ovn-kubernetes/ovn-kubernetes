@@ -88,7 +88,6 @@ func New(node string, nbClient client.Client) Controller {
 
 type netInfo struct {
 	util.NetInfo
-	id    int
 	table int
 }
 
@@ -126,7 +125,7 @@ func (c *controller) AddNetwork(network util.NetInfo) error {
 		return fmt.Errorf("already tracking network name %q", name)
 	}
 
-	info := &netInfo{NetInfo: network, id: networkID, table: noTable}
+	info := &netInfo{NetInfo: network, table: noTable}
 	if network.IsDefault() {
 		c.tables[unix.RT_TABLE_MAIN] = networkID
 		info.table = unix.RT_TABLE_MAIN
@@ -149,7 +148,7 @@ func (c *controller) ForgetNetwork(name string) {
 		return
 	}
 
-	delete(c.networkIDs, network.id)
+	delete(c.networkIDs, network.GetNetworkID())
 	delete(c.networks, name)
 
 	c.log.V(5).Info("Stopped tracking network", "name", name)
@@ -352,7 +351,7 @@ func (c *controller) syncNetwork(network string) error {
 		ignoreSubnets[i] = subnet.CIDR
 	}
 
-	table := c.getTableForNetwork(info.id)
+	table := c.getTableForNetwork(info.GetNetworkID())
 	if table == noTable {
 		return nil
 	}
