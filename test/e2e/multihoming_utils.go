@@ -130,14 +130,15 @@ func generateNetAttachDef(namespace, nadName, nadSpec string) *nadapi.NetworkAtt
 }
 
 type podConfiguration struct {
-	attachments            []nadapi.NetworkSelectionElement
-	containerCmd           []string
-	name                   string
-	namespace              string
-	nodeSelector           map[string]string
-	isPrivileged           bool
-	labels                 map[string]string
-	requiresExtraNamespace bool
+	attachments                  []nadapi.NetworkSelectionElement
+	containerCmd                 []string
+	name                         string
+	namespace                    string
+	nodeSelector                 map[string]string
+	isPrivileged                 bool
+	labels                       map[string]string
+	requiresExtraNamespace       bool
+	needsIPRequestFromHostSubnet bool
 }
 
 func generatePodSpec(config podConfiguration) *v1.Pod {
@@ -261,24 +262,35 @@ func areStaticIPsConfiguredViaCNI(podConfig podConfiguration) bool {
 	return false
 }
 
-func podIPForAttachment(k8sClient clientset.Interface, podNamespace string, podName string, attachmentName string, ipIndex int) (string, error) {
+func podIPsForAttachment(k8sClient clientset.Interface, podNamespace string, podName string, attachmentName string) ([]string, error) {
 	pod, err := k8sClient.CoreV1().Pods(podNamespace).Get(context.Background(), podName, metav1.GetOptions{})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	netStatus, err := podNetworkStatus(pod, func(status nadapi.NetworkStatus) bool {
 		return status.Name == namespacedName(podNamespace, attachmentName)
 	})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if len(netStatus) != 1 {
-		return "", fmt.Errorf("more than one status entry for attachment %s on pod %s", attachmentName, namespacedName(podNamespace, podName))
+		return nil, fmt.Errorf("more than one status entry for attachment %s on pod %s", attachmentName, namespacedName(podNamespace, podName))
 	}
 	if len(netStatus[0].IPs) == 0 {
-		return "", fmt.Errorf("no IPs for attachment %s on pod %s", attachmentName, namespacedName(podNamespace, podName))
+		return nil, fmt.Errorf("no IPs for attachment %s on pod %s", attachmentName, namespacedName(podNamespace, podName))
 	}
-	return netStatus[0].IPs[ipIndex], nil
+	return netStatus[0].IPs, nil
+}
+
+func podIPForAttachment(k8sClient clientset.Interface, podNamespace string, podName string, attachmentName string, ipIndex int) (string, error) {
+	ips, err := podIPsForAttachment(k8sClient, podNamespace, podName, attachmentName)
+	if err != nil {
+		return "", err
+	}
+	if ipIndex >= len(ips) {
+		return "", fmt.Errorf("no IP at index %d for attachment %s on pod %s", ipIndex, attachmentName, namespacedName(podNamespace, podName))
+	}
+	return ips[ipIndex], nil
 }
 
 func allowedClient(podName string) string {
@@ -501,7 +513,7 @@ func allowedTCPPortsForPolicy(allowPorts ...int) []mnpapi.MultiNetworkPolicyPort
 	return portAllowlist
 }
 
-func reachToServerPodFromClient(cs clientset.Interface, serverConfig podConfiguration, clientConfig podConfiguration, serverIP string, serverPort int) error {
+func reachServerPodFromClient(cs clientset.Interface, serverConfig podConfiguration, clientConfig podConfiguration, serverIP string, serverPort int) error {
 	updatedPod, err := cs.CoreV1().Pods(serverConfig.namespace).Get(context.Background(), serverConfig.name, metav1.GetOptions{})
 	if err != nil {
 		return err

@@ -13,41 +13,56 @@ import (
 )
 
 const (
-	bridgeName = "ovsbr1"
-	add        = "add-br"
-	del        = "del-br"
+	defaultOvsBridge = "breth0"
+	secondaryBridge  = "ovsbr1"
+	add              = "add-br"
+	del              = "del-br"
 )
 
-func setupUnderlay(ovsPods []v1.Pod, portName string, nadConfig networkAttachmentConfig) error {
+func configureBridgeMappingsForNode(ovsPod v1.Pod, networkName, bridgeName string) error {
+	return configureBridgeMappings(
+		ovsPod.Name,
+		defaultNetworkBridgeMapping(),
+		bridgeMapping(networkName, bridgeName),
+	)
+}
+
+func setupUnderlayOnSecondaryBridge(ovsPods []v1.Pod, portName string, nadConfig networkAttachmentConfig) error {
 	for _, ovsPod := range ovsPods {
-		if err := addOVSBridge(ovsPod.Name, bridgeName); err != nil {
+
+		if err := addOVSBridge(ovsPod.Name, secondaryBridge); err != nil {
 			return err
 		}
 
 		if nadConfig.vlanID > 0 {
-			if err := ovsEnableVLANAccessPort(ovsPod.Name, bridgeName, portName, nadConfig.vlanID); err != nil {
+			if err := ovsEnableVLANAccessPort(ovsPod.Name, secondaryBridge, portName, nadConfig.vlanID); err != nil {
 				return err
 			}
 		} else {
-			if err := ovsAttachPortToBridge(ovsPod.Name, bridgeName, portName); err != nil {
+			if err := ovsAttachPortToBridge(ovsPod.Name, secondaryBridge, portName); err != nil {
 				return err
 			}
 		}
 
-		if err := configureBridgeMappings(
-			ovsPod.Name,
-			defaultNetworkBridgeMapping(),
-			bridgeMapping(nadConfig.networkName, bridgeName),
-		); err != nil {
+		if err := configureBridgeMappingsForNode(ovsPod, nadConfig.networkName, secondaryBridge); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func teardownUnderlay(ovsPods []v1.Pod) error {
+func setupUnderlayOnDefaultBridge(ovsPods []v1.Pod, nadConfig networkAttachmentConfig) error {
 	for _, ovsPod := range ovsPods {
-		if err := removeOVSBridge(ovsPod.Name, bridgeName); err != nil {
+		if err := configureBridgeMappingsForNode(ovsPod, nadConfig.networkName, defaultOvsBridge); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func teardownUnderlayOnSecondaryBridge(ovsPods []v1.Pod) error {
+	for _, ovsPod := range ovsPods {
+		if err := removeOVSBridge(ovsPod.Name, secondaryBridge); err != nil {
 			return err
 		}
 	}
@@ -96,7 +111,6 @@ func ovsAttachPortToBridge(ovsNodeName string, bridgeName string, portName strin
 		"kubectl", "-n", ovnNamespace, "exec", ovsNodeName, "--",
 		"ovs-vsctl", "add-port", bridgeName, portName,
 	}
-
 	if _, err := runCommand(cmd...); err != nil {
 		return fmt.Errorf("failed to add port %s to OVS bridge %s: %v", portName, bridgeName, err)
 	}
@@ -107,9 +121,8 @@ func ovsAttachPortToBridge(ovsNodeName string, bridgeName string, portName strin
 func ovsEnableVLANAccessPort(ovsNodeName string, bridgeName string, portName string, vlanID int) error {
 	cmd := []string{
 		"kubectl", "-n", ovnNamespace, "exec", ovsNodeName, "--",
-		"ovs-vsctl", "add-port", bridgeName, portName, fmt.Sprintf("tag=%d", vlanID), "vlan_mode=access",
+		"ovs-vsctl", "--may-exist", "add-port", bridgeName, portName, fmt.Sprintf("tag=%d", vlanID), "vlan_mode=access",
 	}
-
 	if _, err := runCommand(cmd...); err != nil {
 		return fmt.Errorf("failed to add port %s to OVS bridge %s: %v", portName, bridgeName, err)
 	}
