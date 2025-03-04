@@ -262,33 +262,35 @@ func (c *controller) syncLinkUpdate(update *netlink.LinkUpdate) {
 		return
 	}
 
-	// get network from VRF name
-	network, err := c.getNetworkFromVRF(vrf.Name)
-	if err != nil {
-		c.log.Error(err, "Failed to parse network ID from device name", "name", vrf.Name)
-		return
-	}
-	var networkName string
-	if network != nil {
-		networkName = network.GetNetworkName()
-	}
-
 	c.Lock()
 	defer c.Unlock()
 
-	networkID := util.InvalidID
-	oldTable := noTable
-	info := c.networks[networkName]
-	if info != nil {
-		networkID = info.GetNetworkID()
-		oldTable = info.table
+	// get UDN network from VRF name
+	// for CUDNs we expect: VRF name == CUDN name
+	// for UDNs we expect: VRF name == mp<network id>-udn-vrf
+	network, err := c.getNetworkFromVRFWithLock(vrf.Name)
+	if err != nil {
+		c.log.Error(err, "Failed to get network from VRF name", "name", vrf.Name)
 	}
+
 	newTable := int(vrf.Table)
-	current := c.tables[newTable] == networkID
+	oldTable := noTable
+	var networkName string
+	networkID := types.InvalidID
+	// we might not be aware of the UDN but this might still be a VRF for a UDN
+	// that is being created or destroyed so we still need to handle it
+	if network != nil {
+		networkName = network.GetNetworkName()
+		networkID = network.GetNetworkID()
+		oldTable = c.networks[networkName].table
+	}
+	// avoid races where we might get a VRF for a new UDN that we are currently
+	// tracking for an old UDN that was deleted but we are not aware yet
+	tableStale := c.tables[newTable] != networkID
 
 	switch update.IfInfomsg.Type {
 	case unix.RTM_DELLINK:
-		if !current {
+		if tableStale {
 			c.log.Info("Ignoring VRF delete for old network", "network", networkID)
 			return
 		}
@@ -301,12 +303,15 @@ func (c *controller) syncLinkUpdate(update *netlink.LinkUpdate) {
 		c.log.Info("Unexpected VRF update event type", "type", update.IfInfomsg.Type)
 		return
 	}
-	if newTable != noTable {
-		info.table = newTable
+
+	var needsReconcile bool
+	if network != nil {
+		c.networks[networkName].table = newTable
+		// we don't bother reconciling a network that is being destroyed
+		// reconcile if the table we had for the network was old or updated
+		needsReconcile = newTable != noTable && tableStale
 	}
-
-	needsReconcile := info != nil && newTable != noTable && !current
-
+	// we might print network=-1 here if we are not yet aware of the network
 	c.log.V(5).Info("Associated table with network", "table", newTable, "network", networkID, "needsReconcile", needsReconcile)
 	if needsReconcile {
 		c.reconcile(networkName)
@@ -485,9 +490,9 @@ func (c *controller) getNetworkForTable(table int) *netInfo {
 	return nil
 }
 
-func (c *controller) getNetworksFromVRFs(vrfNames ...string) ([]util.NetInfo, error) {
-	c.RLock()
-	defer c.RUnlock()
+// getNetworksFromVRFsWithLock returns known networks for the provided VRF and
+// has to be called with the controller lock.
+func (c *controller) getNetworksFromVRFsWithLock(vrfNames ...string) ([]util.NetInfo, error) {
 	networks := make([]util.NetInfo, 0, len(vrfNames))
 	for _, vrfName := range vrfNames {
 		id, err := util.ParseNetworkIDFromVRFName(vrfName)
@@ -498,22 +503,29 @@ func (c *controller) getNetworksFromVRFs(vrfNames ...string) ([]util.NetInfo, er
 		if id != types.InvalidID {
 			networkName = c.networkIDs[id]
 			if networkName == "" {
-				return nil, fmt.Errorf("unknown network for vrf %q with id %d", vrfName, id)
+				// we might not know about this network yet
+				continue
 			}
 		}
 		network := c.networks[networkName]
 		if network == nil {
-			return nil, fmt.Errorf("unknown network for vrf %q with name %q", vrfName, networkName)
+			// we might not know about this network yet
+			continue
 		}
 		networks = append(networks, network)
 	}
 	return networks, nil
 }
 
-func (c *controller) getNetworkFromVRF(vrfNames string) (util.NetInfo, error) {
-	networks, err := c.getNetworksFromVRFs(vrfNames)
+// getNetworkFromVRFWithLock returns the network for the provided VRF if known
+// otherwise nil; and has to be called with the controller lock.
+func (c *controller) getNetworkFromVRFWithLock(vrfNames string) (util.NetInfo, error) {
+	networks, err := c.getNetworksFromVRFsWithLock(vrfNames)
 	if err != nil {
 		return nil, err
+	}
+	if len(networks) == 0 {
+		return nil, nil
 	}
 	return networks[0], nil
 }

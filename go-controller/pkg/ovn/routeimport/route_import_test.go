@@ -384,6 +384,9 @@ func Test_controller_syncLinkUpdate(t *testing.T) {
 			c.syncLinkUpdate(tt.args.update)
 
 			g.Expect(c.tables).To(gomega.Equal(tt.expectTables))
+			for table, networkID := range tt.expectTables {
+				g.Expect(c.networks[tt.fields.networkIDs[networkID]].table).To(gomega.Equal(table))
+			}
 			g.Eventually(matchReconcile).WithArguments(tt.expectReconciles).Should(gomega.Succeed())
 			g.Consistently(matchReconcile).WithArguments(tt.expectReconciles).Should(gomega.Succeed())
 		})
