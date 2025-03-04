@@ -9,6 +9,7 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/ginkgo_wrapper"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -19,7 +20,7 @@ import (
 	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 )
 
-var _ = ginkgo.Describe("Pod to external server PMTUD", func() {
+var _ = ginkgo_wrapper.Describe("Pod to external server PMTUD", func() {
 	const (
 		echoServerPodNameTemplate = "echo-server-pod-%d"
 		echoClientPodName         = "echo-client-pod"
@@ -229,7 +230,7 @@ var _ = ginkgo.Describe("Pod to external server PMTUD", func() {
 	})
 })
 
-var _ = ginkgo.Describe("Pod to pod TCP with low MTU", func() {
+var _ = ginkgo_wrapper.Describe("Pod to pod TCP with low MTU", func() {
 	const (
 		echoServerPodNameTemplate = "echo-server-pod-%d"
 		echoClientPodName         = "echo-client-pod"
