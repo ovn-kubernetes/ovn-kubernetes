@@ -3,8 +3,6 @@ package routeimport
 import (
 	"fmt"
 	"net"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -264,56 +262,54 @@ func (c *controller) syncLinkUpdate(update *netlink.LinkUpdate) {
 		return
 	}
 
-	name := vrf.Name
-	if !strings.HasPrefix(name, types.UDNVRFDevicePrefix) {
-		return
-	}
-	if !strings.HasSuffix(name, types.UDNVRFDeviceSuffix) {
-		return
-	}
-
-	id, err := strconv.Atoi(name[len(types.UDNVRFDevicePrefix) : len(name)-len(types.UDNVRFDeviceSuffix)])
+	// get network from VRF name
+	network, err := c.getNetworkFromVRF(vrf.Name)
 	if err != nil {
-		c.log.Error(err, "Failed to parse network ID from device name", "name", name)
+		c.log.Error(err, "Failed to parse network ID from device name", "name", vrf.Name)
 		return
+	}
+	var networkName string
+	if network != nil {
+		networkName = network.GetNetworkName()
 	}
 
 	c.Lock()
 	defer c.Unlock()
 
-	table := int(vrf.Table)
-	network := c.networkIDs[id]
-	info := c.networks[network]
-	current := c.tables[table] == id
-	var old int
+	networkID := util.InvalidID
+	oldTable := noTable
+	info := c.networks[networkName]
 	if info != nil {
-		old = info.table
+		networkID = info.GetNetworkID()
+		oldTable = info.table
 	}
+	newTable := int(vrf.Table)
+	current := c.tables[newTable] == networkID
 
 	switch update.IfInfomsg.Type {
 	case unix.RTM_DELLINK:
 		if !current {
-			c.log.Info("Ignoring VRF delete for old network", "network", id)
+			c.log.Info("Ignoring VRF delete for old network", "network", networkID)
 			return
 		}
-		delete(c.tables, table)
-		table = noTable
+		delete(c.tables, newTable)
+		newTable = noTable
 	case unix.RTM_NEWLINK:
-		delete(c.tables, old)
-		c.tables[table] = id
+		delete(c.tables, oldTable)
+		c.tables[newTable] = networkID
 	default:
 		c.log.Info("Unexpected VRF update event type", "type", update.IfInfomsg.Type)
 		return
 	}
-	if info != nil {
-		info.table = table
+	if newTable != noTable {
+		info.table = newTable
 	}
 
-	needsReconcile := info != nil && table != noTable && !current
+	needsReconcile := info != nil && newTable != noTable && !current
 
-	c.log.V(5).Info("Associated table with network", "table", table, "network", id, "needsReconcile", needsReconcile)
+	c.log.V(5).Info("Associated table with network", "table", newTable, "network", networkID, "needsReconcile", needsReconcile)
 	if needsReconcile {
-		c.reconcile(network)
+		c.reconcile(networkName)
 	}
 }
 
@@ -487,6 +483,39 @@ func (c *controller) getNetworkForTable(table int) *netInfo {
 		return c.networks[c.networkIDs[network]]
 	}
 	return nil
+}
+
+func (c *controller) getNetworksFromVRFs(vrfNames ...string) ([]util.NetInfo, error) {
+	c.RLock()
+	defer c.RUnlock()
+	networks := make([]util.NetInfo, 0, len(vrfNames))
+	for _, vrfName := range vrfNames {
+		id, err := util.ParseNetworkIDFromVRFName(vrfName)
+		if err != nil {
+			return nil, err
+		}
+		networkName := vrfName
+		if id != types.InvalidID {
+			networkName = c.networkIDs[id]
+			if networkName == "" {
+				return nil, fmt.Errorf("unknown network for vrf %q with id %d", vrfName, id)
+			}
+		}
+		network := c.networks[networkName]
+		if network == nil {
+			return nil, fmt.Errorf("unknown network for vrf %q with name %q", vrfName, networkName)
+		}
+		networks = append(networks, network)
+	}
+	return networks, nil
+}
+
+func (c *controller) getNetworkFromVRF(vrfNames string) (util.NetInfo, error) {
+	networks, err := c.getNetworksFromVRFs(vrfNames)
+	if err != nil {
+		return nil, err
+	}
+	return networks[0], nil
 }
 
 func routesFromNetlinkRoute(r *netlink.Route) []route {

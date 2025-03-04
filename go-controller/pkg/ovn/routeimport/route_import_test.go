@@ -310,7 +310,27 @@ func Test_controller_syncLinkUpdate(t *testing.T) {
 			expectTables: map[int]int{2: 1},
 		},
 		{
-			name: "does reconcile on link updates with actual changes",
+			name: "does reconcile on UDN link updates with actual changes",
+			fields: fields{
+				networkIDs: map[int]string{
+					1: "net1",
+					2: types.UDNVRFDevicePrefix + "1" + types.UDNVRFDeviceSuffix, // this network is ignored as parsing the network ID has preference
+				},
+				networks: map[string]*netInfo{
+					"net1": {table: 2},
+					types.UDNVRFDevicePrefix + "1" + types.UDNVRFDeviceSuffix: {table: noTable},
+				},
+				tables: map[int]int{2: 1},
+			},
+			args: args{&netlink.LinkUpdate{
+				IfInfomsg: nl.IfInfomsg{IfInfomsg: unix.IfInfomsg{Type: unix.RTM_NEWLINK}},
+				Link:      &netlink.Vrf{LinkAttrs: netlink.LinkAttrs{Name: types.UDNVRFDevicePrefix + "1" + types.UDNVRFDeviceSuffix}, Table: 3}},
+			},
+			expectTables:     map[int]int{3: 1},
+			expectReconciles: []string{"net1"},
+		},
+		{
+			name: "does reconcile on CUDN link updates with actual changes",
 			fields: fields{
 				networkIDs: map[int]string{1: "net1"},
 				networks:   map[string]*netInfo{"net1": {table: 2}},
@@ -318,7 +338,7 @@ func Test_controller_syncLinkUpdate(t *testing.T) {
 			},
 			args: args{&netlink.LinkUpdate{
 				IfInfomsg: nl.IfInfomsg{IfInfomsg: unix.IfInfomsg{Type: unix.RTM_NEWLINK}},
-				Link:      &netlink.Vrf{LinkAttrs: netlink.LinkAttrs{Name: types.UDNVRFDevicePrefix + "1" + types.UDNVRFDeviceSuffix}, Table: 3}},
+				Link:      &netlink.Vrf{LinkAttrs: netlink.LinkAttrs{Name: "net1"}, Table: 3}},
 			},
 			expectTables:     map[int]int{3: 1},
 			expectReconciles: []string{"net1"},
