@@ -1,6 +1,7 @@
 package pod
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 
@@ -15,6 +16,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
+	ipallocator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip/subnet"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/pod"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
@@ -351,6 +353,9 @@ func (a *PodAllocator) allocatePodOnNAD(pod *corev1.Pod, nad string, network *ne
 	)
 
 	if err != nil {
+		if errors.Is(err, ipallocator.ErrFull) {
+			a.recordPodErrorEvent(pod, err)
+		}
 		return err
 	}
 
