@@ -386,9 +386,10 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		}
 		nad := ovntest.GenerateNAD(netName, "rednad", "greenamespace",
 			types.Layer3Topology, "100.128.0.0/16/24,ae70::/60/64", types.NetworkRolePrimary)
+		ovntest.AnnotateNADWithNetworkID(netID, nad)
 		netInfo, err := util.ParseNADInfo(nad)
 		Expect(err).NotTo(HaveOccurred())
-		udnGateway, err := NewUserDefinedNetworkGateway(netInfo, 3, node, factoryMock.NodeCoreInformer().Lister(),
+		udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, factoryMock.NodeCoreInformer().Lister(),
 			&kubeMock, vrf, nil, &gateway{})
 		Expect(err).NotTo(HaveOccurred())
 		_, ipNet, err := net.ParseCIDR(v4NodeSubnet)
@@ -430,9 +431,10 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		// must be defined so that the primary user defined network can match the ip families of the underlying cluster
 		config.IPv4Mode = true
 		config.IPv6Mode = true
+		ovntest.AnnotateNADWithNetworkID(netID, nad)
 		netInfo, err := util.ParseNADInfo(nad)
 		Expect(err).NotTo(HaveOccurred())
-		udnGateway, err := NewUserDefinedNetworkGateway(netInfo, 3, node, factoryMock.NodeCoreInformer().Lister(),
+		udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, factoryMock.NodeCoreInformer().Lister(),
 			&kubeMock, vrf, nil, &gateway{})
 		Expect(err).NotTo(HaveOccurred())
 		getDeletionFakeOVSCommands(fexec, mgtPort)
@@ -461,9 +463,10 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		}
 		nad := ovntest.GenerateNAD(netName, "rednad", "greenamespace",
 			types.Layer2Topology, "100.128.0.0/16,ae70::/60", types.NetworkRolePrimary)
+		ovntest.AnnotateNADWithNetworkID(netID, nad)
 		netInfo, err := util.ParseNADInfo(nad)
 		Expect(err).NotTo(HaveOccurred())
-		udnGateway, err := NewUserDefinedNetworkGateway(netInfo, 3, node, factoryMock.NodeCoreInformer().Lister(),
+		udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, factoryMock.NodeCoreInformer().Lister(),
 			&kubeMock, vrf, nil, &gateway{})
 		Expect(err).NotTo(HaveOccurred())
 		_, ipNet, err := net.ParseCIDR(v4NodeSubnet)
@@ -504,9 +507,10 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		// must be defined so that the primary user defined network can match the ip families of the underlying cluster
 		config.IPv4Mode = true
 		config.IPv6Mode = true
+		ovntest.AnnotateNADWithNetworkID(netID, nad)
 		netInfo, err := util.ParseNADInfo(nad)
 		Expect(err).NotTo(HaveOccurred())
-		udnGateway, err := NewUserDefinedNetworkGateway(netInfo, 3, node, factoryMock.NodeCoreInformer().Lister(),
+		udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, factoryMock.NodeCoreInformer().Lister(),
 			&kubeMock, vrf, nil, &gateway{})
 		Expect(err).NotTo(HaveOccurred())
 		getDeletionFakeOVSCommands(fexec, mgtPort)
@@ -544,6 +548,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		}
 		nad := ovntest.GenerateNAD(netName, "rednad", "greenamespace",
 			types.Layer3Topology, "100.128.0.0/16/24,ae70::/60/64", types.NetworkRolePrimary)
+		ovntest.AnnotateNADWithNetworkID(netID, nad)
 		netInfo, err := util.ParseNADInfo(nad)
 		Expect(err).NotTo(HaveOccurred())
 		setUpGatewayFakeOVSCommands(fexec)
@@ -656,7 +661,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			err = localGw.initFunc()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(localGw.Init(stop, wg)).To(Succeed())
-			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, 3, node, wf.NodeCoreInformer().Lister(),
+			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, wf.NodeCoreInformer().Lister(),
 				&kubeMock, vrf, ipRulesManager, localGw)
 			Expect(err).NotTo(HaveOccurred())
 			// we cannot start the shared gw directly because it will spawn a goroutine that may not be bound to the test netns
@@ -768,6 +773,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		}
 		nad := ovntest.GenerateNAD(netName, "rednad", "greenamespace",
 			types.Layer2Topology, "100.128.0.0/16,ae70::/64", types.NetworkRolePrimary)
+		ovntest.AnnotateNADWithNetworkID(netID, nad)
 		netInfo, err := util.ParseNADInfo(nad)
 		Expect(err).NotTo(HaveOccurred())
 		_, ipNet, err := net.ParseCIDR(v4NodeSubnet)
@@ -881,7 +887,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			wg := &sync.WaitGroup{}
 			Expect(localGw.initFunc()).To(Succeed())
 			Expect(localGw.Init(stop, wg)).To(Succeed())
-			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, 3, node, wf.NodeCoreInformer().Lister(),
+			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, wf.NodeCoreInformer().Lister(),
 				&kubeMock, vrf, ipRulesManager, localGw)
 			Expect(err).NotTo(HaveOccurred())
 			// we cannot start the shared gw directly because it will spawn a goroutine that may not be bound to the test netns
@@ -984,9 +990,10 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		}
 		nad := ovntest.GenerateNAD(netName, "rednad", "greenamespace",
 			types.Layer3Topology, "100.128.0.0/16/24,ae70::/60/64", types.NetworkRolePrimary)
+		ovntest.AnnotateNADWithNetworkID(netID, nad)
 		netInfo, err := util.ParseNADInfo(nad)
 		Expect(err).NotTo(HaveOccurred())
-		udnGateway, err := NewUserDefinedNetworkGateway(netInfo, 3, node, nil, nil, vrf, nil, &gateway{})
+		udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, nil, nil, vrf, nil, &gateway{})
 		Expect(err).NotTo(HaveOccurred())
 		getVRFCreationFakeOVSCommands(fexec)
 		err = testNS.Do(func(ns.NetNS) error {
@@ -1052,9 +1059,10 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		}
 		nad := ovntest.GenerateNAD(netName, "rednad", "greenamespace",
 			types.Layer3Topology, "100.128.0.0/16/24,ae70::/60/64", types.NetworkRolePrimary)
+		ovntest.AnnotateNADWithNetworkID(netID, nad)
 		netInfo, err := util.ParseNADInfo(nad)
 		Expect(err).NotTo(HaveOccurred())
-		udnGateway, err := NewUserDefinedNetworkGateway(netInfo, 3, node, nil, nil, vrf, nil, &gateway{})
+		udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, nil, nil, vrf, nil, &gateway{})
 		Expect(err).NotTo(HaveOccurred())
 		getVRFCreationFakeOVSCommands(fexec)
 		err = testNS.Do(func(ns.NetNS) error {
@@ -1269,9 +1277,10 @@ func TestConstructUDNVRFIPRules(t *testing.T) {
 			}
 			nad := ovntest.GenerateNAD("bluenet", "rednad", "greenamespace",
 				types.Layer3Topology, cidr, types.NetworkRolePrimary)
+			ovntest.AnnotateNADWithNetworkID("3", nad)
 			netInfo, err := util.ParseNADInfo(nad)
 			g.Expect(err).NotTo(HaveOccurred())
-			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, 3, node, nil, nil, nil, nil, &gateway{})
+			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, nil, nil, nil, nil, &gateway{})
 			g.Expect(err).NotTo(HaveOccurred())
 			rules, delRules, err := udnGateway.constructUDNVRFIPRules(test.vrftableID)
 			g.Expect(err).ToNot(HaveOccurred())
@@ -1437,11 +1446,12 @@ func TestConstructUDNVRFIPRulesPodNetworkAdvertised(t *testing.T) {
 			}
 			nad := ovntest.GenerateNAD("bluenet", "rednad", "greenamespace",
 				types.Layer3Topology, cidr, types.NetworkRolePrimary)
+			ovntest.AnnotateNADWithNetworkID("3", nad)
 			netInfo, err := util.ParseNADInfo(nad)
 			g.Expect(err).ToNot(HaveOccurred())
 			mutableNetInfo := util.NewMutableNetInfo(netInfo)
 			mutableNetInfo.SetPodNetworkAdvertisedVRFs(map[string][]string{node.Name: {"bluenet"}})
-			udnGateway, err := NewUserDefinedNetworkGateway(mutableNetInfo, 3, node, nil, nil, nil, nil, &gateway{})
+			udnGateway, err := NewUserDefinedNetworkGateway(mutableNetInfo, node, nil, nil, nil, nil, &gateway{})
 			g.Expect(err).NotTo(HaveOccurred())
 			rules, delRules, err := udnGateway.constructUDNVRFIPRules(test.vrftableID)
 			g.Expect(err).ToNot(HaveOccurred())

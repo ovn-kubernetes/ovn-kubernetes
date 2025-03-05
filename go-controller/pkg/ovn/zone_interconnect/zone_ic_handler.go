@@ -1,7 +1,6 @@
 package zoneinterconnect
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -10,7 +9,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 
@@ -129,9 +127,6 @@ type ZoneInterconnectHandler struct {
 	networkClusterRouterName string
 	// transit switch name for the network
 	networkTransitSwitchName string
-
-	// cached network id
-	networkId int
 }
 
 // NewZoneInterconnectHandler returns a new ZoneInterconnectHandler object
@@ -141,7 +136,6 @@ func NewZoneInterconnectHandler(nInfo util.NetInfo, nbClient, sbClient libovsdbc
 		nbClient:     nbClient,
 		sbClient:     sbClient,
 		watchFactory: watchFactory,
-		networkId:    util.InvalidID,
 	}
 
 	zic.networkClusterRouterName = zic.GetNetworkScopedName(types.OVNClusterRouter)
@@ -183,31 +177,7 @@ func (zic *ZoneInterconnectHandler) ensureTransitSwitch(nodes []*corev1.Node) er
 	}
 	start := time.Now()
 
-	// first try to get the network ID from the current state of the nodes
-	networkID, err := zic.getNetworkIdFromNodes(nodes)
-
-	// if not set yet, let's retry for a bit
-	if util.IsAnnotationNotSetError(err) {
-		maxTimeout := 2 * time.Minute
-		err = wait.PollUntilContextTimeout(context.Background(), 250*time.Millisecond, maxTimeout, true, func(_ context.Context) (bool, error) {
-			var err error
-			networkID, err = zic.getNetworkId()
-			if util.IsAnnotationNotSetError(err) {
-				return false, nil
-			}
-			if err != nil {
-				return false, err
-			}
-
-			return true, nil
-		})
-	}
-
-	if err != nil {
-		return fmt.Errorf("failed to find network ID: %v", err)
-	}
-
-	if err := zic.createOrUpdateTransitSwitch(networkID); err != nil {
+	if err := zic.createOrUpdateTransitSwitch(zic.GetNetworkID()); err != nil {
 		return err
 	}
 
@@ -330,12 +300,7 @@ func (zic *ZoneInterconnectHandler) AddTransitSwitchConfig(sw *nbdb.LogicalSwitc
 		return nil
 	}
 
-	networkID, err := zic.getNetworkId()
-	if err != nil {
-		return err
-	}
-
-	zic.addTransitSwitchConfig(sw, networkID)
+	zic.addTransitSwitchConfig(sw, zic.GetNetworkID())
 	return nil
 }
 
@@ -740,46 +705,6 @@ func (zic *ZoneInterconnectHandler) getStaticRoutes(ipPrefixes []*net.IPNet, nex
 	}
 
 	return staticRoutes
-}
-
-func (zic *ZoneInterconnectHandler) getNetworkId() (int, error) {
-	if zic.networkId != util.InvalidID {
-		return zic.networkId, nil
-	}
-	if netID := zic.GetNetworkID(); netID != util.InvalidID {
-		zic.networkId = netID
-		return zic.networkId, nil
-	}
-	nodes, err := zic.watchFactory.GetNodes()
-	if err != nil {
-		return util.InvalidID, err
-	}
-	return zic.getNetworkIdFromNodes(nodes)
-}
-
-// getNetworkId returns the cached network ID or looks it up in any of the provided nodes
-func (zic *ZoneInterconnectHandler) getNetworkIdFromNodes(nodes []*corev1.Node) (int, error) {
-	if zic.networkId != util.InvalidID {
-		return zic.networkId, nil
-	}
-
-	var networkId int
-	var err error
-	for i := range nodes {
-		networkId, err = util.ParseNetworkIDAnnotation(nodes[i], zic.GetNetworkName())
-		if util.IsAnnotationNotSetError(err) {
-			continue
-		}
-		if err != nil {
-			break
-		}
-		if networkId != util.InvalidID {
-			zic.networkId = networkId
-			return zic.networkId, nil
-		}
-	}
-
-	return util.InvalidID, fmt.Errorf("could not find network ID: %w", err)
 }
 
 func getSecondaryNetTransitSwitchExtIDs(networkName, topology string, isPrimaryUDN bool) map[string]string {

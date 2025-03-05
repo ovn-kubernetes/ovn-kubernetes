@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -14,10 +15,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	factoryMocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory/mocks"
 	kubemocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube/mocks"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/iprulemanager"
@@ -35,7 +34,8 @@ import (
 
 var _ = Describe("SecondaryNodeNetworkController", func() {
 	var (
-		nad = ovntest.GenerateNAD("bluenet", "rednad", "greenamespace",
+		networkID = "3"
+		nad       = ovntest.GenerateNAD("bluenet", "rednad", "greenamespace",
 			types.Layer3Topology, "100.128.0.0/16", types.NetworkRolePrimary)
 		fexec      *ovntest.FakeExec
 		mgtPortMAC string = "00:00:00:55:66:77" // dummy MAC used for fake commands
@@ -49,62 +49,12 @@ var _ = Describe("SecondaryNodeNetworkController", func() {
 		// Set up a fake vsctl command mock interface
 		fexec = ovntest.NewFakeExec()
 		Expect(util.SetExec(fexec)).To(Succeed())
+		ovntest.AnnotateNADWithNetworkID(networkID, nad)
 	})
 	AfterEach(func() {
 		util.ResetRunner()
 	})
 
-	It("should return networkID from one of the nodes in the cluster", func() {
-		fakeClient := &util.OVNNodeClientset{
-			KubeClient: fake.NewSimpleClientset(&corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "worker1",
-					Annotations: map[string]string{
-						"k8s.ovn.org/network-ids": `{"bluenet": "3"}`,
-					},
-				},
-			}),
-		}
-		controller := SecondaryNodeNetworkController{}
-		var err error
-		controller.watchFactory, err = factory.NewNodeWatchFactory(fakeClient, "worker1")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(controller.watchFactory.Start()).To(Succeed())
-
-		netInfo, err := util.ParseNADInfo(nad)
-		Expect(err).NotTo(HaveOccurred())
-		controller.ReconcilableNetInfo = util.NewReconcilableNetInfo(netInfo)
-
-		networkID, err := controller.getNetworkID()
-		Expect(err).ToNot(HaveOccurred())
-		Expect(networkID).To(Equal(3))
-	})
-
-	It("should return invalid networkID if network not found", func() {
-		fakeClient := &util.OVNNodeClientset{
-			KubeClient: fake.NewSimpleClientset(&corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "worker1",
-					Annotations: map[string]string{
-						"k8s.ovn.org/network-ids": `{"othernet": "3"}`,
-					},
-				},
-			}),
-		}
-		controller := SecondaryNodeNetworkController{}
-		var err error
-		controller.watchFactory, err = factory.NewNodeWatchFactory(fakeClient, "worker1")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(controller.watchFactory.Start()).To(Succeed())
-
-		netInfo, err := util.ParseNADInfo(nad)
-		Expect(err).NotTo(HaveOccurred())
-		controller.ReconcilableNetInfo = util.NewReconcilableNetInfo(netInfo)
-
-		networkID, err := controller.getNetworkID()
-		Expect(err).To(HaveOccurred())
-		Expect(networkID).To(Equal(util.InvalidID))
-	})
 	It("ensure UDNGateway is not invoked when feature gate is OFF", func() {
 		config.OVNKubernetesFeature.EnableNetworkSegmentation = false
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
@@ -322,6 +272,7 @@ var _ = Describe("SecondaryNodeNetworkController: UserDefinedPrimaryNetwork Gate
 		By("creating NAD for primary UDN")
 		nad = ovntest.GenerateNAD("bluenet", "rednad", "greenamespace",
 			types.Layer3Topology, "100.128.0.0/16", types.NetworkRolePrimary)
+		ovntest.AnnotateNADWithNetworkID(strconv.Itoa(netID), nad)
 		NetInfo, err := util.ParseNADInfo(nad)
 		Expect(err).NotTo(HaveOccurred())
 		_, ipNet, err := net.ParseCIDR(v4NodeSubnet)

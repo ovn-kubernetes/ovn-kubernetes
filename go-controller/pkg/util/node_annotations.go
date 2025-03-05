@@ -129,12 +129,12 @@ const (
 	OvnNodeMigratedZoneName = "k8s.ovn.org/remote-zone-migrated"
 	/** HACK END **/
 
-	// ovnTransitSwitchPortAddr is the annotation to store the node Transit switch port ips.
+	// OvnTransitSwitchPortAddr is the annotation to store the node Transit switch port ips.
 	// It is set by cluster manager.
-	ovnTransitSwitchPortAddr = "k8s.ovn.org/node-transit-switch-port-ifaddr"
+	OvnTransitSwitchPortAddr = "k8s.ovn.org/node-transit-switch-port-ifaddr"
 
-	// ovnNodeID is the id (of type integer) of a node. It is set by cluster-manager.
-	ovnNodeID = "k8s.ovn.org/node-id"
+	// OvnNodeID is the id (of type integer) of a node. It is set by cluster-manager.
+	OvnNodeID = "k8s.ovn.org/node-id"
 
 	// InvalidNodeID indicates an invalid node id
 	InvalidNodeID = -1
@@ -152,10 +152,11 @@ const (
 	// }",
 	ovnUDNLayer2NodeGRLRPTunnelIDs = "k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids"
 
-	// InvalidID signifies its an invalid network id or invalid tunnel id
+	// InvalidID signifies an invalid ID. Currently used for network and tunnel IDs.
 	InvalidID = -1
 
-	// NoID signifies its an empty tunnel id (its reserved as un-usable when the allocator is created)
+	// NoID signifies an empty/unset ID. Currently used for tunnel ID (reserved as un-usable when the allocator is created)
+	// and network ID (reserved as default network ID).
 	NoID = 0
 )
 
@@ -463,6 +464,22 @@ func ParseNodeManagementPortMACAddresses(node *corev1.Node, netName string) (net
 	return net.ParseMAC(macAddress)
 }
 
+func HasUDNLayer2NodeGRLRPTunnelID(node *corev1.Node, netName string) bool {
+	var nodeTunMap map[string]json.RawMessage
+	annotation, ok := node.Annotations[ovnUDNLayer2NodeGRLRPTunnelIDs]
+	if !ok {
+		return false
+	}
+	if err := json.Unmarshal([]byte(annotation), &nodeTunMap); err != nil {
+		return false
+	}
+	if _, ok := nodeTunMap[netName]; ok {
+		return true
+	}
+
+	return false
+}
+
 // ParseUDNLayer2NodeGRLRPTunnelIDs parses the 'ovnUDNLayer2NodeGRLRPTunnelIDs' annotation
 // for the specified network in 'netName' and returns the tunnelID.
 func ParseUDNLayer2NodeGRLRPTunnelIDs(node *corev1.Node, netName string) (int, error) {
@@ -645,11 +662,11 @@ func parseJoinSubnetAnnotation(nodeAnnotations map[string]string, annotationName
 // CreateNodeTransitSwitchPortAddrAnnotation creates the node annotation for the node's Transit switch port addresses.
 func CreateNodeTransitSwitchPortAddrAnnotation(nodeAnnotation map[string]interface{}, nodeIPNetv4,
 	nodeIPNetv6 *net.IPNet) (map[string]interface{}, error) {
-	return createPrimaryIfAddrAnnotation(ovnTransitSwitchPortAddr, nodeAnnotation, nodeIPNetv4, nodeIPNetv6)
+	return createPrimaryIfAddrAnnotation(OvnTransitSwitchPortAddr, nodeAnnotation, nodeIPNetv4, nodeIPNetv6)
 }
 
 func NodeTransitSwitchPortAddrAnnotationChanged(oldNode, newNode *corev1.Node) bool {
-	return oldNode.Annotations[ovnTransitSwitchPortAddr] != newNode.Annotations[ovnTransitSwitchPortAddr]
+	return oldNode.Annotations[OvnTransitSwitchPortAddr] != newNode.Annotations[OvnTransitSwitchPortAddr]
 }
 
 // CreateNodeMasqueradeSubnetAnnotation sets the IPv4 / IPv6 values of the node's Masquerade subnet.
@@ -793,6 +810,22 @@ func ParseNodeGatewayRouterLRPAddrs(node *corev1.Node) ([]*net.IPNet, error) {
 	return parsePrimaryIfAddrAnnotation(node, ovnNodeGRLRPAddr)
 }
 
+func HasNodeGatewayRouterJoinNetwork(node *corev1.Node, netName string) bool {
+	var joinSubnetMap map[string]json.RawMessage
+	annotation, ok := node.Annotations[OVNNodeGRLRPAddrs]
+	if !ok {
+		return false
+	}
+	if err := json.Unmarshal([]byte(annotation), &joinSubnetMap); err != nil {
+		return false
+	}
+	if _, ok := joinSubnetMap[netName]; ok {
+		return true
+	}
+
+	return false
+}
+
 func ParseNodeGatewayRouterJoinNetwork(node *corev1.Node, netName string) (primaryIfAddrAnnotation, error) {
 	var joinSubnetMap map[string]json.RawMessage
 	var ret primaryIfAddrAnnotation
@@ -869,7 +902,7 @@ func ParseNodeGatewayRouterJoinAddrs(node *corev1.Node, netName string) ([]*net.
 // ParseNodeTransitSwitchPortAddrs returns the IPv4 and/or IPv6 addresses for the node's transit switch port
 // stored in the 'ovnTransitSwitchPortAddr' annotation
 func ParseNodeTransitSwitchPortAddrs(node *corev1.Node) ([]*net.IPNet, error) {
-	return parsePrimaryIfAddrAnnotation(node, ovnTransitSwitchPortAddr)
+	return parsePrimaryIfAddrAnnotation(node, OvnTransitSwitchPortAddr)
 }
 
 // ParseNodeMasqueradeSubnet returns the IPv4 and/or IPv6 networks for the node's gateway router port
@@ -1227,22 +1260,22 @@ func GetSecondaryHostNetworkContainingIP(node *corev1.Node, ip net.IP) (string, 
 	return match.String(), nil
 }
 
-// UpdateNodeIDAnnotation updates the ovnNodeID annotation with the node id in the annotations map
+// UpdateNodeIDAnnotation updates the OvnNodeID annotation with the node id in the annotations map
 // and returns it.
 func UpdateNodeIDAnnotation(annotations map[string]interface{}, nodeID int) map[string]interface{} {
 	if annotations == nil {
 		annotations = make(map[string]interface{})
 	}
 
-	annotations[ovnNodeID] = strconv.Itoa(nodeID)
+	annotations[OvnNodeID] = strconv.Itoa(nodeID)
 	return annotations
 }
 
-// GetNodeID returns the id of the node set in the 'ovnNodeID' node annotation.
-// Returns InvalidNodeID (-1) if the 'ovnNodeID' node annotation is not set or if the value is
+// GetNodeID returns the id of the node set in the 'OvnNodeID' node annotation.
+// Returns InvalidNodeID (-1) if the 'OvnNodeID' node annotation is not set or if the value is
 // not an integer value.
 func GetNodeID(node *corev1.Node) int {
-	nodeID, ok := node.Annotations[ovnNodeID]
+	nodeID, ok := node.Annotations[OvnNodeID]
 	if !ok {
 		return InvalidNodeID
 	}
@@ -1254,9 +1287,9 @@ func GetNodeID(node *corev1.Node) int {
 	return id
 }
 
-// NodeIDAnnotationChanged returns true if the ovnNodeID in the corev1.Nodes doesn't match
+// NodeIDAnnotationChanged returns true if the OvnNodeID in the corev1.Nodes doesn't match
 func NodeIDAnnotationChanged(oldNode, newNode *corev1.Node) bool {
-	return oldNode.Annotations[ovnNodeID] != newNode.Annotations[ovnNodeID]
+	return oldNode.Annotations[OvnNodeID] != newNode.Annotations[OvnNodeID]
 }
 
 // SetNodeZone sets the node's zone in the 'ovnNodeZoneName' node annotation.

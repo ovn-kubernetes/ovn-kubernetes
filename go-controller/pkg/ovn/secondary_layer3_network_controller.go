@@ -450,14 +450,9 @@ func (oc *SecondaryLayer3NetworkController) newRetryFramework(
 // Start starts the secondary layer3 controller, handles all events and creates all needed logical entities
 func (oc *SecondaryLayer3NetworkController) Start(_ context.Context) error {
 	klog.Infof("Start secondary %s network controller of network %s", oc.TopologyType(), oc.GetNetworkName())
-	_, err := oc.getNetworkID()
-	if err != nil {
-		return fmt.Errorf("unable to set networkID on secondary L3 controller for network %s, err: %w", oc.GetNetworkName(), err)
-	}
-	if err = oc.init(); err != nil {
+	if err := oc.init(); err != nil {
 		return err
 	}
-
 	return oc.run()
 }
 
@@ -1027,10 +1022,7 @@ func (oc *SecondaryLayer3NetworkController) nodeGatewayConfig(node *corev1.Node)
 	}
 
 	networkName := oc.GetNetworkName()
-	networkID, err := oc.getNetworkID()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get networkID for network %q: %v", networkName, err)
-	}
+	networkID := oc.GetNetworkID()
 
 	masqIPs, err := udn.GetUDNGatewayMasqueradeIPs(networkID)
 	if err != nil {

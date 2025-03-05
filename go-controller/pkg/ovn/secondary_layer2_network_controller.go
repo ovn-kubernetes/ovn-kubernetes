@@ -772,10 +772,7 @@ func (oc *SecondaryLayer2NetworkController) nodeGatewayConfig(node *corev1.Node)
 	}
 
 	networkName := oc.GetNetworkName()
-	networkID, err := oc.getNetworkID()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get networkID for network %q: %v", networkName, err)
-	}
+	networkID := oc.GetNetworkID()
 
 	masqIPs, err := udn.GetUDNGatewayMasqueradeIPs(networkID)
 	if err != nil {

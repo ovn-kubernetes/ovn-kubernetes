@@ -247,8 +247,6 @@ func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed f
 type BaseSecondaryNetworkController struct {
 	BaseNetworkController
 
-	networkID *int
-
 	// network policy events factory handler
 	netPolicyHandler *factory.Handler
 	// multi-network policy events factory handler

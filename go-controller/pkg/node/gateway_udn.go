@@ -50,8 +50,6 @@ const (
 type UserDefinedNetworkGateway struct {
 	// network information
 	util.NetInfo
-	// stores the networkID of this network
-	networkID int
 	// node that its programming things on
 	node          *corev1.Node
 	nodeLister    listers.NodeLister
@@ -222,7 +220,7 @@ func setBridgeNetworkOfPorts(bridge *bridgeConfiguration, netName string) error 
 	return netConfig.setBridgeNetworkOfPortsInternal()
 }
 
-func NewUserDefinedNetworkGateway(netInfo util.NetInfo, networkID int, node *corev1.Node, nodeLister listers.NodeLister,
+func NewUserDefinedNetworkGateway(netInfo util.NetInfo, node *corev1.Node, nodeLister listers.NodeLister,
 	kubeInterface kube.Interface, vrfManager *vrfmanager.Controller, ruleManager *iprulemanager.Controller,
 	defaultNetworkGateway Gateway) (*UserDefinedNetworkGateway, error) {
 	// Generate a per network conntrack mark and masquerade IPs to be used for egress traffic.
@@ -231,6 +229,7 @@ func NewUserDefinedNetworkGateway(netInfo util.NetInfo, networkID int, node *cor
 		v6MasqIPs *udn.MasqueradeIPs
 		err       error
 	)
+	networkID := netInfo.GetNetworkID()
 	masqCTMark := ctMarkUDNBase + uint(networkID)
 	pktMark := pktMarkBase + uint(networkID)
 	if config.IPv4Mode {
@@ -253,7 +252,6 @@ func NewUserDefinedNetworkGateway(netInfo util.NetInfo, networkID int, node *cor
 
 	return &UserDefinedNetworkGateway{
 		NetInfo:       netInfo,
-		networkID:     networkID,
 		node:          node,
 		nodeLister:    nodeLister,
 		kubeInterface: kubeInterface,
@@ -347,7 +345,7 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 		return fmt.Errorf("failed to update IP rules for network %s: %w", udng.GetNetworkName(), err)
 	}
 	// add loose mode for rp filter on management port
-	mgmtPortName := util.GetNetworkScopedK8sMgmtHostIntfName(uint(udng.networkID))
+	mgmtPortName := util.GetNetworkScopedK8sMgmtHostIntfName(uint(udng.GetNetworkID()))
 	if err := addRPFilterLooseModeForManagementPort(mgmtPortName); err != nil {
 		return fmt.Errorf("could not set loose mode for reverse path filtering on management port %s: %v", mgmtPortName, err)
 	}
@@ -399,7 +397,7 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 }
 
 func (udng *UserDefinedNetworkGateway) GetNetworkRuleMetadata() string {
-	return fmt.Sprintf("%s-%d", udng.GetNetworkName(), udng.networkID)
+	return fmt.Sprintf("%s-%d", udng.GetNetworkName(), udng.GetNetworkID())
 }
 
 // DelNetwork will be responsible to remove all plumbings
@@ -437,7 +435,7 @@ func (udng *UserDefinedNetworkGateway) DelNetwork() error {
 // Returns a netlink Link which is the UDN management port interface along with its MAC address
 func (udng *UserDefinedNetworkGateway) addUDNManagementPort() (netlink.Link, error) {
 	var err error
-	interfaceName := util.GetNetworkScopedK8sMgmtHostIntfName(uint(udng.networkID))
+	interfaceName := util.GetNetworkScopedK8sMgmtHostIntfName(uint(udng.GetNetworkID()))
 	networkLocalSubnets, err := udng.getLocalSubnets()
 	if err != nil {
 		return nil, err
@@ -532,7 +530,7 @@ func (udng *UserDefinedNetworkGateway) addUDNManagementPortIPs(mpLink netlink.Li
 // STEP2: deletes the mac address from the annotation
 func (udng *UserDefinedNetworkGateway) deleteUDNManagementPort() error {
 	var err error
-	interfaceName := util.GetNetworkScopedK8sMgmtHostIntfName(uint(udng.networkID))
+	interfaceName := util.GetNetworkScopedK8sMgmtHostIntfName(uint(udng.GetNetworkID()))
 	// STEP1
 	stdout, stderr, err := util.RunOVSVsctl(
 		"--", "--if-exists", "del-port", "br-int", interfaceName,
@@ -673,7 +671,7 @@ func (udng *UserDefinedNetworkGateway) getV4MasqueradeIP() (*net.IPNet, error) {
 	if !config.IPv4Mode {
 		return nil, nil
 	}
-	masqIPs, err := udn.AllocateV4MasqueradeIPs(udng.networkID)
+	masqIPs, err := udn.AllocateV4MasqueradeIPs(udng.GetNetworkID())
 	if err != nil {
 		return nil, fmt.Errorf("failed to allocate masquerade IPs for v4 stack for network %s: %w", udng.GetNetworkName(), err)
 	}
@@ -685,7 +683,7 @@ func (udng *UserDefinedNetworkGateway) getV6MasqueradeIP() (*net.IPNet, error) {
 	if !config.IPv6Mode {
 		return nil, nil
 	}
-	masqIPs, err := udn.AllocateV6MasqueradeIPs(udng.networkID)
+	masqIPs, err := udn.AllocateV6MasqueradeIPs(udng.GetNetworkID())
 	if err != nil {
 		return nil, fmt.Errorf("failed to allocate masquerade IPs for v6 stack for network %s: %w", udng.GetNetworkName(), err)
 	}
@@ -856,7 +854,7 @@ func (udng *UserDefinedNetworkGateway) doReconcile() error {
 // updateUDNVRFIPRule updates IP rules for a network depending on whether the
 // network is advertised or not
 func (udng *UserDefinedNetworkGateway) updateUDNVRFIPRule() error {
-	interfaceName := util.GetNetworkScopedK8sMgmtHostIntfName(uint(udng.networkID))
+	interfaceName := util.GetNetworkScopedK8sMgmtHostIntfName(uint(udng.GetNetworkID()))
 	mplink, err := util.LinkByName(interfaceName)
 	if err != nil {
 		return fmt.Errorf("unable to get link for %s, error: %v", interfaceName, err)

@@ -144,7 +144,7 @@ func GetGatewayRouterFromNode(node string) string {
 	return types.GWRouterPrefix + node
 }
 
-// GetGatewayRouterFromNode determines a node's corresponding gateway router name
+// GetExtSwitchFromNode determines a node's corresponding gateway router name
 func GetExtSwitchFromNode(node string) string {
 	return types.ExternalSwitchPrefix + node
 }

@@ -180,6 +180,21 @@ func DeleteNodeHostSubnetAnnotation(nodeAnnotator kube.Annotator) {
 	nodeAnnotator.Delete(ovnNodeSubnets)
 }
 
+func HasNodeHostSubnetAnnotation(node *corev1.Node, netName string) bool {
+	var nodeSubnetMap map[string]json.RawMessage
+	annotation, ok := node.Annotations[ovnNodeSubnets]
+	if !ok {
+		return false
+	}
+	if err := json.Unmarshal([]byte(annotation), &nodeSubnetMap); err != nil {
+		return false
+	}
+	if _, ok := nodeSubnetMap[netName]; ok {
+		return true
+	}
+	return false
+}
+
 // ParseNodeHostSubnetAnnotation parses the "k8s.ovn.org/node-subnets" annotation
 // on a node and returns the host subnet for the given network.
 func ParseNodeHostSubnetAnnotation(node *corev1.Node, netName string) ([]*net.IPNet, error) {
