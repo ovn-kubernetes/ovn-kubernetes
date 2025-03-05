@@ -55,7 +55,6 @@ const (
 	JoinSwitchToDistRouterPrefix = "jtod-"
 	EXTSwitchToGWRouterPrefix    = "etor-"
 	GWRouterToExtSwitchPrefix    = "rtoe-"
-	RouterToRouterPrefix         = "rtor-"
 	EgressGWSwitchPrefix         = "exgw-"
 	PatchPortPrefix              = "patch-"
 	PatchPortSuffix              = "-to-br-int"
@@ -72,6 +71,9 @@ const (
 	TransitSwitch               = "transit_switch"
 	TransitSwitchToRouterPrefix = "tstor-"
 	RouterToTransitSwitchPrefix = "rtots-"
+
+	TransitRouterToRouterPrefix = "trtor-"
+	RouterToTransitRouterPrefix = "rtotr-"
 
 	// ACL Default Tier Priorities
 

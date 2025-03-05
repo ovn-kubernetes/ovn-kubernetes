@@ -2039,7 +2039,7 @@ func (e *EgressIPController) addEgressNode(node *corev1.Node) error {
 				}
 				gwRouterPort := types.GWRouterToJoinSwitchPrefix + ni.GetNetworkScopedGWRouterName(node.Name)
 				if ni.TopologyType() == types.Layer2Topology {
-					gwRouterPort = types.RouterToRouterPrefix + ni.GetNetworkScopedClusterRouterName()
+					gwRouterPort = types.RouterToTransitRouterPrefix + ni.GetNetworkScopedGWRouterName(node.Name)
 				}
 				if err := libovsdbutil.CreateDefaultRouteToExternal(e.nbClient, ni.GetNetworkScopedClusterRouterName(),
 					gwRouterPort, ni.Subnets()); err != nil {
@@ -2564,7 +2564,7 @@ func (e *EgressIPController) getGatewayNextHop(ni util.NetInfo, nodeName string,
 	if ni.TopologyType() == types.Layer3Topology || ni.TopologyType() == types.Layer2Topology {
 		lrpName := types.GWRouterToJoinSwitchPrefix + ni.GetNetworkScopedGWRouterName(nodeName)
 		if ni.TopologyType() == types.Layer2Topology {
-			lrpName = types.RouterToRouterPrefix + ni.GetNetworkScopedClusterRouterName()
+			lrpName = types.RouterToTransitRouterPrefix + ni.GetNetworkScopedGWRouterName(nodeName)
 		}
 		lrpIPNets, err := libovsdbutil.GetLRPAddrs(e.nbClient, lrpName)
 		if err != nil {
@@ -3094,7 +3094,7 @@ func (e *EgressIPController) ensureRouterPoliciesForNetwork(ni util.NetInfo) err
 	if config.OVNKubernetesFeature.EnableInterconnect && (ni.TopologyType() == types.Layer3Topology || ni.TopologyType() == types.Layer2Topology) {
 		gwRouterPort := types.GWRouterToJoinSwitchPrefix + ni.GetNetworkScopedGWRouterName(localNode)
 		if ni.TopologyType() == types.Layer2Topology {
-			gwRouterPort = types.RouterToRouterPrefix + ni.GetNetworkScopedClusterRouterName()
+			gwRouterPort = types.RouterToTransitRouterPrefix + ni.GetNetworkScopedGWRouterName(localNode)
 		}
 		if err := libovsdbutil.CreateDefaultRouteToExternal(e.nbClient, routerName,
 			gwRouterPort, subnetEntries); err != nil {

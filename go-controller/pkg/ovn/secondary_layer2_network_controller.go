@@ -708,7 +708,7 @@ func (oc *SecondaryLayer2NetworkController) ensureRemoteNodeResources(node *core
 		return fmt.Errorf("invalid node id")
 	}
 	transitPort := nbdb.LogicalRouterPort{
-		Name:     types.RouterToRouterPrefix + oc.GetNetworkScopedGWRouterName(node.Name),
+		Name:     types.TransitRouterToRouterPrefix + oc.GetNetworkScopedGWRouterName(node.Name),
 		MAC:      util.IPAddrToHWAddr(clusterRouterTransitNeworks[0].IP).String(),
 		Networks: util.IPNetsToStringSlice(clusterRouterTransitNeworks),
 		Options: map[string]string{

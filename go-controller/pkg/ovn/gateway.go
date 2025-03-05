@@ -358,7 +358,7 @@ func (gw *GatewayManager) GatewayInit(
 	// created for local node access.
 	// TODO(kyrtapz): Clean this up for clarity as part of https://github.com/ovn-org/ovn-kubernetes/issues/4689
 	if gw.netInfo.TopologyType() == types.Layer2Topology {
-		gwRouterPort = types.RouterToRouterPrefix + gw.netInfo.GetNetworkScopedClusterRouterName()
+		gwRouterPort = types.RouterToTransitRouterPrefix + gatewayRouter
 	}
 
 	if gw.netInfo.TopologyType() != types.Layer2Topology {
@@ -408,13 +408,13 @@ func (gw *GatewayManager) GatewayInit(
 		}
 
 		ovnClusterRouterToGWRouterPort := nbdb.LogicalRouterPort{
-			Name:     types.RouterToRouterPrefix + gw.netInfo.GetNetworkScopedGWRouterName(nodeName),
+			Name:     types.TransitRouterToRouterPrefix + gw.netInfo.GetNetworkScopedGWRouterName(nodeName),
 			MAC:      util.IPAddrToHWAddr(clusterRouterTransitNetworks[0].IP).String(),
 			Networks: util.IPNetsToStringSlice(clusterRouterTransitNetworks),
 			Options: map[string]string{
 				"requested-tnl-key": fmt.Sprintf("%d", nodeID),
 			},
-			Peer: ptr.To(types.RouterToRouterPrefix + gw.netInfo.GetNetworkScopedClusterRouterName()),
+			Peer: ptr.To(types.RouterToTransitRouterPrefix + gw.netInfo.GetNetworkScopedGWRouterName(nodeName)),
 			ExternalIDs: map[string]string{
 				types.NetworkExternalID:  gw.netInfo.GetNetworkName(),
 				types.TopologyExternalID: gw.netInfo.TopologyType(),
@@ -437,7 +437,7 @@ func (gw *GatewayManager) GatewayInit(
 			subnetRoute := nbdb.LogicalRouterStaticRoute{
 				IPPrefix:   subnet.String(),
 				Nexthop:    nexthop.IP.String(),
-				OutputPort: ptr.To(types.RouterToRouterPrefix + gw.netInfo.GetNetworkScopedClusterRouterName()),
+				OutputPort: ptr.To(types.RouterToTransitRouterPrefix + gw.netInfo.GetNetworkScopedGWRouterName(nodeName)),
 			}
 			subnetRoute.ExternalIDs = map[string]string{
 				types.NetworkExternalID:  gw.netInfo.GetNetworkName(),
@@ -473,7 +473,7 @@ func (gw *GatewayManager) GatewayInit(
 			types.TopologyExternalID: gw.netInfo.TopologyType(),
 		}
 		if gw.netInfo.TopologyType() == types.Layer2Topology {
-			logicalRouterPort.Peer = ptr.To(types.RouterToRouterPrefix + gw.netInfo.GetNetworkScopedGWRouterName(nodeName))
+			logicalRouterPort.Peer = ptr.To(types.TransitRouterToRouterPrefix + gw.netInfo.GetNetworkScopedGWRouterName(nodeName))
 		}
 	}
 
