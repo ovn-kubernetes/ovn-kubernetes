@@ -2,9 +2,12 @@ package linkmanager
 
 import (
 	"fmt"
+	"net"
+	"net/netip"
 	"sync"
 	"time"
 
+	"github.com/mdlayher/arp"
 	"github.com/vishvananda/netlink"
 
 	"k8s.io/klog/v2"
@@ -195,7 +198,7 @@ func (c *Controller) syncLink(link netlink.Link) error {
 		// For IPv4, use arping to try to update other hosts ARP caches, in case this IP was
 		// previously active on another node
 		if addressWanted.IP.To4() != nil {
-			if err = util.BroadcastGARP(linkName, util.GARP{IP: addressWanted.IP}); err != nil {
+			if err = gratuitousArpOverIfaceByName(addressWanted.IP, linkName); err != nil {
 				klog.Errorf("Failed to send a GARP for IP %s over interface %s: %v", addressWanted.IP.String(),
 					linkName, err)
 			}
@@ -303,4 +306,30 @@ func containsAddress(addresses []netlink.Addr, candidate netlink.Addr) bool {
 		}
 	}
 	return false
+}
+
+func gratuitousArpOverIfaceByName(srcIP net.IP, ifaceName string) error {
+	iface, err := net.InterfaceByName(ifaceName)
+	if err != nil {
+		return fmt.Errorf("failed finding interface '%s': %w", ifaceName, err)
+	}
+
+	c, err := arp.Dial(iface)
+	if err != nil {
+		return fmt.Errorf("failed dialing logical switch interface '%s': %w", ifaceName, err)
+	}
+	defer c.Close()
+	addr, err := netip.ParseAddr(srcIP.String())
+	if err != nil {
+		return fmt.Errorf("failed converting net.IP to netip.Addr: %w", err)
+	}
+	p, err := arp.NewPacket(arp.OperationRequest, iface.HardwareAddr, addr, net.HardwareAddr{0, 0, 0, 0, 0, 0}, addr)
+	if err != nil {
+		return fmt.Errorf("failed create GARP: %w", err)
+	}
+	err = c.WriteTo(p, net.HardwareAddr{0xff, 0xff, 0xff, 0xff, 0xff, 0xff})
+	if err != nil {
+		return fmt.Errorf("failed sending GARP: %w", err)
+	}
+	return nil
 }
