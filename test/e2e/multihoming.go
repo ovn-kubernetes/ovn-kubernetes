@@ -19,6 +19,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
+	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 
 	mnpapi "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/apis/k8s.cni.cncf.io/v1beta1"
 	mnpclient "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1beta1"
@@ -1742,6 +1743,123 @@ var _ = Describe("Multi Homing", func() {
 			Expect(inRange(secondaryFlatL2NetworkCIDR, netStatus[0].IPs[0]))
 			Expect(inRange(secondaryFlatL2NetworkCIDR, netStatus[1].IPs[0]))
 		})
+	})
+
+	It("using ClusterUserDefinedNetwork CR, pods in different namespaces & different nodes, should be able to communicate over Localnet topology", func() {
+		const vlan = 200
+		const subnetIPv4 = "192.168.100.0/24"
+		const subnetIPv6 = "2001:dbb::/64"
+		const serverAppPort = 9000
+		physicalNetworkName := uniqueMetaName("localnet1")
+		nsBlue := uniqueMetaName("blue")
+		nsRed := uniqueMetaName("red")
+		cudnName := uniqueMetaName("localnet-test")
+
+		By("setup the localnet underlay")
+		nodes := ovsPods(cs)
+		Expect(nodes).NotTo(BeEmpty())
+		DeferCleanup(func() {
+			By("teardown the localnet underlay")
+			Expect(teardownUnderlay(nodes)).To(Succeed())
+		})
+		const secondaryInterfaceName = "eth1"
+		c := networkAttachmentConfig{networkAttachmentConfigParams: networkAttachmentConfigParams{networkName: physicalNetworkName, vlanID: vlan}}
+		Expect(setupUnderlay(nodes, secondaryInterfaceName, c)).To(Succeed())
+
+		By("create test namespaces")
+		_, err := cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: nsRed}}, metav1.CreateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		_, err = cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: nsBlue}}, metav1.CreateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() {
+			By("cleanup test namespaces")
+			Expect(cs.CoreV1().Namespaces().Delete(context.Background(), nsBlue, metav1.DeleteOptions{})).To(Succeed())
+			Expect(cs.CoreV1().Namespaces().Delete(context.Background(), nsRed, metav1.DeleteOptions{})).To(Succeed())
+		})
+
+		By("create CUDN CR selecting the test namespaces")
+		cudnYAML := `
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  name: ` + cudnName + `
+spec:
+  namespaceSelector:
+    matchExpressions:
+    - key: kubernetes.io/metadata.name
+      operator: In
+      values: [ ` + nsRed + `, ` + nsBlue + `]
+  network:
+    topology: Localnet
+    localnet:
+      role: Secondary
+      physicalNetworkName: ` + physicalNetworkName + `
+      subnets: [` + subnetIPv4 + `, ` + subnetIPv6 + `]
+      ipam:
+        lifecycle: Persistent
+      vlan: ` + strconv.Itoa(vlan) + `
+`
+		cleanup, err := createManifest("", cudnYAML)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() {
+			By("cleanup CUDN CR")
+			cleanup()
+			By(fmt.Sprintf("delete pods in namespace %q to unblock CUDN CR & associate NAD deletion", nsBlue))
+			Expect(cs.CoreV1().Pods(nsBlue).DeleteCollection(context.Background(), metav1.DeleteOptions{}, metav1.ListOptions{})).To(Succeed())
+			By(fmt.Sprintf("delete pods in namespace %q to unblock CUDN CR & associate NAD deletion", nsRed))
+			Expect(cs.CoreV1().Pods(nsRed).DeleteCollection(context.Background(), metav1.DeleteOptions{}, metav1.ListOptions{})).To(Succeed())
+			_, err := e2ekubectl.RunKubectl("", "delete", "clusteruserdefinednetwork", cudnName, "--wait", fmt.Sprintf("--timeout=%ds", 120))
+			Expect(err).NotTo(HaveOccurred())
+		})
+		Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cudnName), 5*time.Second, time.Second).Should(Succeed(), "CUDN CR is not ready")
+
+		clientPodCfg := podConfiguration{
+			name:        "test-client",
+			namespace:   nsRed,
+			attachments: []nadapi.NetworkSelectionElement{{Name: cudnName}},
+		}
+		serverPodCfg := podConfiguration{
+			name:         "test-server",
+			namespace:    nsBlue,
+			attachments:  []nadapi.NetworkSelectionElement{{Name: cudnName}},
+			containerCmd: httpServerContainerCmd(serverAppPort),
+		}
+		By("create test pods; client at namespace red, server at namespace blue")
+		clientPod, err := cs.CoreV1().Pods(clientPodCfg.namespace).Create(context.Background(), generatePodSpec(clientPodCfg), metav1.CreateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		serverPod, err := cs.CoreV1().Pods(serverPodCfg.namespace).Create(context.Background(), generatePodSpec(serverPodCfg), metav1.CreateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		By("wait for test pods to become ready")
+		Eventually(func() v1.PodPhase {
+			updatedPod, err := cs.CoreV1().Pods(clientPod.Namespace).Get(context.Background(), clientPod.Name, metav1.GetOptions{})
+			if err != nil {
+				return v1.PodFailed
+			}
+			return updatedPod.Status.Phase
+		}).WithTimeout(2 * time.Minute).WithPolling(6 * time.Second).Should(Equal(v1.PodRunning))
+		Eventually(func() v1.PodPhase {
+			updatedPod, err := cs.CoreV1().Pods(serverPod.Namespace).Get(context.Background(), serverPod.Name, metav1.GetOptions{})
+			if err != nil {
+				return v1.PodFailed
+			}
+			return updatedPod.Status.Phase
+		}).WithTimeout(2 * time.Minute).WithPolling(6 * time.Second).Should(Equal(v1.PodRunning))
+
+		for _, cfg := range []podConfiguration{serverPodCfg, clientPodCfg} {
+			By("assert pods interface's MTU is set with default MTU (1500)")
+			mtuRAW, err := e2ekubectl.RunKubectl(cfg.namespace, "exec", cfg.name, "--", "cat", "/sys/class/net/net1/mtu")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(mtuRAW).To(ContainSubstring("1500"))
+		}
+
+		for i := range []string{subnetIPv4, subnetIPv6} {
+			serverIP, err := podIPForAttachment(cs, nsBlue, serverPod.Name, cudnName, i)
+			Expect(err).NotTo(HaveOccurred())
+			By(fmt.Sprintf("asserting the *client* pod can contact the server pod exposed endpoint [%s:%d]", serverIP, serverAppPort))
+			Eventually(func() error {
+				return reachToServerPodFromClient(cs, serverPodCfg, clientPodCfg, serverIP, serverAppPort)
+			}, 2*time.Minute, 6*time.Second).Should(Succeed())
+		}
 	})
 })
 
