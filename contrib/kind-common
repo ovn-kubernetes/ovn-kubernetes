@@ -687,6 +687,46 @@ deploy_frr_external_container() {
   done
 }
 
+deploy_bgp_external_server() {
+  # We create an external docker container that acts as the server (or client) outside the cluster
+  # in the e2e tests that levergae router advertisements.
+  # This container will be connected to the frr container deployed above to simulate a realistic
+  # network topology
+  # -----------------               ------------------                         ---------------------
+	# |               | 172.26.0.0/16 |                |       172.18.0.0/16     | ovn-control-plane |
+	# |   external    |<------------- |   FRR router   |<------ KIND cluster --  ---------------------
+	# |    server     |               |                |                         |    ovn-worker     |   (client pod advertised
+	# -----------------               ------------------                         ---------------------    using RouteAdvertisements
+	#                                                                            |    ovn-worker2    |    from default pod network)
+	#                                                                            ---------------------
+  local ip_family ipv6_network
+  if [ "$KIND_IPV4_SUPPORT" == true ] && [ "$KIND_IPV6_SUPPORT" == true ]; then
+    ip_family="dual"
+    ipv6_network="--ipv6 --subnet=${BGP_SERVER_NET_SUBNET_IPV6}"
+  elif  [ "$KIND_IPV6_SUPPORT" == true ]; then
+    ip_family="ipv6"
+    ipv6_network="--ipv6 --subnet=${BGP_SERVER_NET_SUBNET_IPV6}"
+  else
+    ip_family="ipv4"
+    ipv6_network=""
+  fi
+  docker network create --subnet="${BGP_SERVER_NET_SUBNET_IPV4}" ${ipv6_network} --driver bridge bgpnet
+  docker network connect bgpnet frr
+  docker run  --cap-add NET_ADMIN --user 0  -d --network bgpnet  --rm  --name bgpserver -p 8080:8080  registry.k8s.io/e2e-test-images/agnhost:2.45 netexec
+}
+
+destroy_bgp() {
+  if docker ps --format '{{.Names}}' | grep -Eq '^bgpserver$'; then
+      docker stop bgpserver
+  fi
+  if docker ps --format '{{.Names}}' | grep -Eq '^frr$'; then
+      docker stop frr
+  fi
+  if docker network ls --format '{{.Name}}' | grep -q '^bgpnet$'; then
+      docker network rm bgpnet
+  fi
+}
+
 install_ffr_k8s() {
   echo "Installing frr-k8s ..."
   clone_frr
