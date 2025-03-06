@@ -14,6 +14,8 @@ import (
 	"github.com/onsi/ginkgo/extensions/table"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/ginkgo_wrapper"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -29,7 +31,7 @@ import (
 // Validate the egress firewall policies by applying a policy and verify
 // that both explicitly allowed traffic and implicitly denied traffic
 // is properly handled as defined in the crd configuration in the test.
-var _ = ginkgo.Describe("e2e egress firewall policy validation", func() {
+var _ = ginkgo_wrapper.Describe(feature.EgressFirewall, "policy validation", func() {
 	const (
 		svcname                string = "egress-firewall-policy"
 		egressFirewallYamlFile string = "egress-fw.yml"

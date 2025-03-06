@@ -17,6 +17,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/ginkgo_wrapper"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -30,7 +32,7 @@ import (
 	utilnet "k8s.io/utils/net"
 )
 
-var _ = Describe("Node IP and MAC address migration", func() {
+var _ = ginkgo_wrapper.Describe(feature.NodeIPMACMigration, func() {
 	const (
 		namespacePrefix            = "node-ip-migration"
 		podWorkerNodeName          = "primary"

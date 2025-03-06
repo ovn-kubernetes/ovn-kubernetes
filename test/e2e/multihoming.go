@@ -12,6 +12,8 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/ginkgo_wrapper"
 
 	"github.com/docker/docker/client"
 	v1 "k8s.io/api/core/v1"
@@ -28,7 +30,7 @@ import (
 
 const PolicyForAnnotation = "k8s.v1.cni.cncf.io/policy-for"
 
-var _ = Describe("Multi Homing", func() {
+var _ = ginkgo_wrapper.Describe(feature.MultiHoming, func() {
 	const (
 		podName                      = "tinypod"
 		secondaryNetworkCIDR         = "10.128.0.0/16"
