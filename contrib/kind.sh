@@ -45,6 +45,9 @@ delete() {
   if [ "$KIND_INSTALL_METALLB" == true ]; then
     destroy_metallb
   fi
+  if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
+    destroy_bgp
+  fi
   timeout 5 kubectl --kubeconfig "${KUBECONFIG}" delete namespace ovn-kubernetes || true
   sleep 5
   kind delete cluster --name "${KIND_CLUSTER_NAME:-ovn}"
@@ -586,6 +589,8 @@ set_default_params() {
   TRANSIT_SWITCH_SUBNET_IPV6=${TRANSIT_SWITCH_SUBNET_IPV6:-fd97::/64}
   METALLB_CLIENT_NET_SUBNET_IPV4=${METALLB_CLIENT_NET_SUBNET_IPV4:-172.22.0.0/16}
   METALLB_CLIENT_NET_SUBNET_IPV6=${METALLB_CLIENT_NET_SUBNET_IPV6:-fc00:f853:ccd:e792::/64}
+  BGP_SERVER_NET_SUBNET_IPV4=${BGP_SERVER_NET_SUBNET_IPV4:-172.26.0.0/16}
+  BGP_SERVER_NET_SUBNET_IPV6=${BGP_SERVER_NET_SUBNET_IPV6:-fc00:f853:ccd:e796::/64}
 
   KIND_NUM_MASTER=1
   OVN_ENABLE_INTERCONNECT=${OVN_ENABLE_INTERCONNECT:-false}
@@ -1183,6 +1188,7 @@ if [ "$OVN_ENABLE_DNSNAMERESOLVER" == true ]; then
 fi
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
   deploy_frr_external_container
+  deploy_bgp_external_server
 fi
 build_ovn_image
 detect_apiserver_url
