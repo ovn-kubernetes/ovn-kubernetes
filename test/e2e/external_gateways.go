@@ -164,7 +164,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 			framework.Logf("Annotating the external gateway test namespace to a container gw: %s ", exGWIpAlt1)
 			e2ekubectl.RunKubectlOrDie(f.Namespace.Name, annotateArgs...)
 
-			podCIDR, err := getNodePodCIDR(ciWorkerNodeSrc)
+			podCIDR, _, err := getNodePodCIDRs(ciWorkerNodeSrc)
 			if err != nil {
 				framework.Failf("Error retrieving the pod cidr from %s %v", ciWorkerNodeSrc, err)
 			}
@@ -342,7 +342,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				nodeIP = nodeIPv6
 			}
 			framework.Logf("the pod side node is %s and the source node ip is %s", workerNodeInfo.name, nodeIP)
-			podCIDR, err := getNodePodCIDR(workerNodeInfo.name)
+			podCIDR, _, err := getNodePodCIDRs(workerNodeInfo.name)
 			if err != nil {
 				framework.Failf("Error retrieving the pod cidr from %s %v", workerNodeInfo.name, err)
 			}
@@ -1468,9 +1468,9 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				func(protocol string, addresses *gatewayTestIPs, destPort, destPortOnPod int) {
 					ncCmd := func(sourcePort int, target string) []string {
 						if protocol == "tcp" {
-							return []string {"exec", srcPingPodName, "--", "bash", "-c", fmt.Sprintf("echo | nc -p %d -s %s -w 1 %s %d", sourcePort, addresses.srcPodIP, target, destPort)}
+							return []string{"exec", srcPingPodName, "--", "bash", "-c", fmt.Sprintf("echo | nc -p %d -s %s -w 1 %s %d", sourcePort, addresses.srcPodIP, target, destPort)}
 						} else {
-							return []string {"exec", srcPingPodName, "--", "bash", "-c", fmt.Sprintf("echo | nc -p %d -s %s -w 1 -u %s %d", sourcePort, addresses.srcPodIP, target, destPort)}
+							return []string{"exec", srcPingPodName, "--", "bash", "-c", fmt.Sprintf("echo | nc -p %d -s %s -w 1 -u %s %d", sourcePort, addresses.srcPodIP, target, destPort)}
 						}
 					}
 					if addresses.srcPodIP == "" || addresses.nodeIP == "" {
