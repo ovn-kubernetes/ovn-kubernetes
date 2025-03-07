@@ -61,7 +61,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 		nodeHostnameKey                     = "kubernetes.io/hostname"
 		podClusterNetPort            uint16 = 9000
 		podClusterNetDefaultPort     uint16 = 8080
-		userDefinedNetworkIPv4Subnet        = "10.128.0.0/16"
+		userDefinedNetworkIPv4Subnet        = "11.128.0.0/16"
 		userDefinedNetworkIPv6Subnet        = "2014:100:200::0/60"
 		userDefinedNetworkName              = "hogwarts"
 		nadName                             = "gryffindor"
@@ -410,7 +410,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 								_, err := infraprovider.Get().ExecK8NodeCommand(nodeName, []string{
 									"curl", "--connect-timeout", "2",
 									net.JoinHostPort(destIP, fmt.Sprintf("%d", podClusterNetDefaultPort)),
-									})
+								})
 								return err == nil
 							}).Should(BeTrue())
 						}
@@ -430,7 +430,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 								_, err := infraprovider.Get().ExecK8NodeCommand(nodeName, []string{
 									"curl", "--connect-timeout", "2",
 									net.JoinHostPort(destIP, fmt.Sprintf("%d", podClusterNetPort)),
-									})
+								})
 								return err != nil
 							}, 5*time.Second).Should(BeTrue())
 						}
@@ -666,7 +666,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 						"with L2 primary UDN",
 						"layer2",
 						4,
-						"10.128.0.0/29",
+						"11.128.0.0/29",
 						"2014:100:200::0/125",
 					),
 					// limit the number of pods to 10
