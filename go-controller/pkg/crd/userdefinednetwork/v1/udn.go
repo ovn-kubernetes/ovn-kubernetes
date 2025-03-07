@@ -32,6 +32,7 @@ type UserDefinedNetworkSpec struct {
 	// Layer3 topology creates a layer 2 segment per node, each with a different subnet. Layer 3 routing is used to interconnect node subnets.
 	// Layer2 topology creates one logical switch shared by all nodes.
 	//
+	// +kubebuilder:validation:Enum=Layer2;Layer3
 	// +kubebuilder:validation:Required
 	// +required
 	// +unionDiscriminator

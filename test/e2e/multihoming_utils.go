@@ -84,6 +84,12 @@ func uniqueNadName(originalNetName string) string {
 	return fmt.Sprintf("%s_%s", rand.String(randomStringLength), originalNetName)
 }
 
+// uniqueMetaName generate unique name from given string that complies with metadata object name.
+func uniqueMetaName(originalName string) string {
+	const randomStringLength = 5
+	return fmt.Sprintf("%s-%s", rand.String(randomStringLength), originalName)
+}
+
 func generateNAD(config networkAttachmentConfig) *nadapi.NetworkAttachmentDefinition {
 	if config.mtu == 0 {
 		config.mtu = 1300
