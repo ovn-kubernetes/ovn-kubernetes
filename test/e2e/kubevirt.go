@@ -1366,7 +1366,7 @@ fi
 			nad      *nadv1.NetworkAttachmentDefinition
 			vm       *kubevirtv1.VirtualMachine
 			vmi      *kubevirtv1.VirtualMachineInstance
-			cidrIPv4 = "10.128.0.0/24"
+			cidrIPv4 = "11.128.0.0/24"
 			cidrIPv6 = "2010:100:200::0/60"
 			restart  = testCommand{
 				description: "restart",
@@ -1754,7 +1754,7 @@ runcmd:
 	Context("with kubevirt VM using layer2 UDPN", Ordered, func() {
 		var (
 			podName                 = "virt-launcher-vm1"
-			cidrIPv4                = "10.128.0.0/24"
+			cidrIPv4                = "11.128.0.0/24"
 			cidrIPv6                = "2010:100:200::/60"
 			primaryUDNNetworkStatus nadapi.NetworkStatus
 			virtLauncherCommand     = func(command string) (string, error) {

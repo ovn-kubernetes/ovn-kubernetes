@@ -25,7 +25,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", func() {
 	ginkgo.Context("on a user defined primary network", func() {
 		const (
 			nadName                      = "tenant-red"
-			userDefinedNetworkIPv4Subnet = "10.128.0.0/16"
+			userDefinedNetworkIPv4Subnet = "11.128.0.0/16"
 			userDefinedNetworkIPv6Subnet = "2014:100:200::0/60"
 			nodeHostnameKey              = "kubernetes.io/hostname"
 			workerOneNodeName            = "ovn-worker"
