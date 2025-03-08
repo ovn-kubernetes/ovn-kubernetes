@@ -16,6 +16,7 @@ import (
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/sbdb"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 var _ = ginkgo.Describe("Zone Interconnect Chassis Operations", func() {
@@ -25,9 +26,11 @@ var _ = ginkgo.Describe("Zone Interconnect Chassis Operations", func() {
 		testNode1       corev1.Node
 		testNode2       corev1.Node
 		testNode3       corev1.Node
+		testNode4       corev1.Node
 		node1Chassis    sbdb.Chassis
 		node2Chassis    sbdb.Chassis
 		node3Chassis    sbdb.Chassis
+		node4Chassis    sbdb.Chassis
 		initialSBDB     []libovsdbtest.TestData
 	)
 
@@ -50,11 +53,12 @@ var _ = ginkgo.Describe("Zone Interconnect Chassis Operations", func() {
 		node1Chassis = sbdb.Chassis{Name: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6", Hostname: "node1", UUID: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6"}
 		node2Chassis = sbdb.Chassis{Name: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac7", Hostname: "node2", UUID: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac7"}
 		node3Chassis = sbdb.Chassis{Name: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac8", Hostname: "node3", UUID: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac8"}
+		node4Chassis = sbdb.Chassis{Name: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac9", Hostname: "node4", UUID: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac9"}
 
 		testNode1 = corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:        "node1",
-				Annotations: map[string]string{"k8s.ovn.org/node-chassis-id": "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6"},
+				Annotations: map[string]string{"k8s.ovn.org/node-chassis-id": "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6", "k8s.ovn.org/node-encap-ips": "[\"10.0.0.10\"]"},
 			},
 			Status: corev1.NodeStatus{
 				Addresses: []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "10.0.0.10"}},
@@ -63,7 +67,7 @@ var _ = ginkgo.Describe("Zone Interconnect Chassis Operations", func() {
 		testNode2 = corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:        "node2",
-				Annotations: map[string]string{"k8s.ovn.org/node-chassis-id": "cb9ec8fa-b409-4ef3-9f42-d9283c47aac7"},
+				Annotations: map[string]string{"k8s.ovn.org/node-chassis-id": "cb9ec8fa-b409-4ef3-9f42-d9283c47aac7", "k8s.ovn.org/node-encap-ips": "[\"10.0.0.11\"]"},
 			},
 			Status: corev1.NodeStatus{
 				Addresses: []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "10.0.0.11"}},
@@ -72,10 +76,16 @@ var _ = ginkgo.Describe("Zone Interconnect Chassis Operations", func() {
 		testNode3 = corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:        "node3",
-				Annotations: map[string]string{"k8s.ovn.org/node-chassis-id": "cb9ec8fa-b409-4ef3-9f42-d9283c47aac8"},
+				Annotations: map[string]string{"k8s.ovn.org/node-chassis-id": "cb9ec8fa-b409-4ef3-9f42-d9283c47aac8", "k8s.ovn.org/node-encap-ips": "[\"10.0.0.12\"]"},
 			},
 			Status: corev1.NodeStatus{
 				Addresses: []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "10.0.0.12"}},
+			},
+		}
+		testNode4 = corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:        "node4",
+				Annotations: map[string]string{"k8s.ovn.org/node-chassis-id": "cb9ec8fa-b409-4ef3-9f42-d9283c47aac9", "k8s.ovn.org/node-encap-ips": "[\"10.0.0.14\", \"10.0.0.15\"]"},
 			},
 		}
 
@@ -155,9 +165,12 @@ var _ = ginkgo.Describe("Zone Interconnect Chassis Operations", func() {
 			err = zoneChassisHandler.AddRemoteZoneNode(&testNode3)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
+			encapIP, err := util.ParseNodeEncapIPsAnnotation(&testNode3)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
 			encap := &sbdb.Encap{
 				Type: "geneve",
-				IP:   testNode3.Status.Addresses[0].Address,
+				IP:   encapIP[0],
 			}
 			err = libovsdbOvnSBClient.Get(context.Background(), encap)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -165,6 +178,60 @@ var _ = ginkgo.Describe("Zone Interconnect Chassis Operations", func() {
 			return nil
 		}
 
+		err := app.Run([]string{
+			app.Name,
+			"-cluster-subnets=" + clusterCIDR,
+			"-init-cluster-manager",
+			"-zone-join-switch-subnets=" + joinSubnetCIDR,
+			"-enable-interconnect",
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	})
+
+	ginkgo.It("node with multiple encaps check", func() {
+		app.Action = func(ctx *cli.Context) error {
+			dbSetup := libovsdbtest.TestSetup{
+				SBData: initialSBDB,
+			}
+
+			_, err := config.InitConfig(ctx, nil, nil)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			config.Kubernetes.HostNetworkNamespace = ""
+
+			var libovsdbOvnSBClient libovsdbclient.Client
+			_, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			zoneChassisHandler := NewZoneChassisHandler(libovsdbOvnSBClient)
+			err = zoneChassisHandler.AddRemoteZoneNode(&testNode4)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			encapIP, err := util.ParseNodeEncapIPsAnnotation(&testNode4)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			encap1 := &sbdb.Encap{
+				Type: "geneve",
+				IP:   encapIP[0],
+			}
+
+			encap2 := &sbdb.Encap{
+				Type: "geneve",
+				IP:   encapIP[1],
+			}
+
+			err = libovsdbOvnSBClient.Get(context.Background(), encap1)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			err = libovsdbOvnSBClient.Get(context.Background(), encap2)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			nodeCh, err := libovsdbops.GetChassis(libovsdbOvnSBClient, &node4Chassis)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(nodeCh.OtherConfig).Should(gomega.HaveKeyWithValue("is-remote", "true"))
+			gomega.Expect(nodeCh.Encaps).To(gomega.HaveLen(2))
+			gomega.Expect(nodeCh.Encaps).To(gomega.ContainElements(string(encap1.UUID)), string(encap2.UUID))
+
+			return nil
+		}
 		err := app.Run([]string{
 			app.Name,
 			"-cluster-subnets=" + clusterCIDR,
