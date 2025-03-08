@@ -98,6 +98,7 @@ rules:
         - egressfirewalls/status
         - egressqoses/status
       verbs: [ "patch", "update" ]
+    {{- if .Values.global.enableAdminNetworkPolicy }}
     - apiGroups: ["policy.networking.k8s.io"]
       resources:
           - adminnetworkpolicies
@@ -108,7 +109,7 @@ rules:
           - adminnetworkpolicies/status
           - baselineadminnetworkpolicies/status
       verbs: [ "patch" ]
-
+    {{- end }}
     {{- if eq (hasKey .Values.global "enableNetworkSegmentation" | ternary .Values.global.enableNetworkSegmentation false) true }}
     - apiGroups: ["discovery.k8s.io"]
       resources:
