@@ -20,16 +20,17 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/managementport"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 type addressManager struct {
-	nodeName       string
-	watchFactory   factory.NodeWatchFactory
-	cidrs          sets.Set[string]
-	nodeAnnotator  kube.Annotator
-	mgmtPortConfig *managementPortConfig
+	nodeName      string
+	watchFactory  factory.NodeWatchFactory
+	cidrs         sets.Set[string]
+	nodeAnnotator kube.Annotator
+	mgmtPort      managementport.Interface
 	// useNetlink indicates the addressManager should use machine
 	// information from netlink. Set to false for testcases.
 	useNetlink bool
@@ -43,23 +44,23 @@ type addressManager struct {
 }
 
 // initializes a new address manager which will hold all the IPs on a node
-func newAddressManager(nodeName string, k kube.Interface, config *managementPortConfig, watchFactory factory.NodeWatchFactory, gwBridge *bridgeConfiguration) *addressManager {
-	return newAddressManagerInternal(nodeName, k, config, watchFactory, gwBridge, true)
+func newAddressManager(nodeName string, k kube.Interface, mgmtPort managementport.Interface, watchFactory factory.NodeWatchFactory, gwBridge *bridgeConfiguration) *addressManager {
+	return newAddressManagerInternal(nodeName, k, mgmtPort, watchFactory, gwBridge, true)
 }
 
 // newAddressManagerInternal creates a new address manager; this function is
 // only expose for testcases to disable netlink subscription to ensure
 // reproducibility of unit tests.
-func newAddressManagerInternal(nodeName string, k kube.Interface, mgmtConfig *managementPortConfig, watchFactory factory.NodeWatchFactory, gwBridge *bridgeConfiguration, useNetlink bool) *addressManager {
+func newAddressManagerInternal(nodeName string, k kube.Interface, mgmtPort managementport.Interface, watchFactory factory.NodeWatchFactory, gwBridge *bridgeConfiguration, useNetlink bool) *addressManager {
 	mgr := &addressManager{
-		nodeName:       nodeName,
-		watchFactory:   watchFactory,
-		cidrs:          sets.New[string](),
-		mgmtPortConfig: mgmtConfig,
-		gatewayBridge:  gwBridge,
-		OnChanged:      func() {},
-		useNetlink:     useNetlink,
-		syncPeriod:     30 * time.Second,
+		nodeName:      nodeName,
+		watchFactory:  watchFactory,
+		cidrs:         sets.New[string](),
+		mgmtPort:      mgmtPort,
+		gatewayBridge: gwBridge,
+		OnChanged:     func() {},
+		useNetlink:    useNetlink,
+		syncPeriod:    30 * time.Second,
 	}
 	mgr.nodeAnnotator = kube.NewNodeAnnotator(k, nodeName)
 	if config.OvnKubeNode.Mode == types.NodeModeDPU {
@@ -410,15 +411,11 @@ func (c *addressManager) isValidNodeIP(addr net.IP, linkIndex int) bool {
 		return false
 	}
 	// check CDN management port
-	if utilnet.IsIPv4(addr) {
-		if c.mgmtPortConfig.ipv4 != nil && c.mgmtPortConfig.ipv4.ifAddr.IP.Equal(addr) {
-			return false
-		}
-	} else if utilnet.IsIPv6(addr) {
-		if c.mgmtPortConfig.ipv6 != nil && c.mgmtPortConfig.ipv6.ifAddr.IP.Equal(addr) {
-			return false
-		}
+	mgmtPortAddress, _ := util.MatchFirstIPNetFamily(utilnet.IsIPv6(addr), c.mgmtPort.GetAddresses())
+	if mgmtPortAddress != nil && addr.Equal(mgmtPortAddress.IP) {
+		return false
 	}
+
 	if util.IsNetworkSegmentationSupportEnabled() {
 		// check CDN + UDN management ports
 		if mpLink, err := util.GetNetLinkOps().LinkByIndex(linkIndex); err != nil {
