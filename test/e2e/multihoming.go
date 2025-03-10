@@ -67,6 +67,12 @@ var _ = Describe("Multi Homing", func() {
 			netConfig.namespace = f.Namespace.Name
 			podConfig.namespace = f.Namespace.Name
 
+			if netConfig.topology == "localnet" {
+				By("applying ovs bridge mapping")
+				Expect(setBridgeMappings(cs, defaultNetworkBridgeMapping(), bridgeMapping(netConfig.networkName, bridgeName))).NotTo(HaveOccurred())
+				ginkgo.DeferCleanup(setBridgeMappings, cs, defaultNetworkBridgeMapping())
+			}
+
 			By("creating the attachment configuration")
 			_, err := nadClient.NetworkAttachmentDefinitions(netConfig.namespace).Create(
 				context.Background(),
@@ -1811,4 +1817,19 @@ func createMultiNetworkPolicy(mnpClient mnpclient.K8sCniCncfIoV1beta1Interface, 
 		metav1.CreateOptions{},
 	)
 	return err
+}
+
+func setBridgeMappings(cs clientset.Interface, mappings ...BridgeMapping) error {
+	pods := ovsPods(cs)
+	if len(pods) == 0 {
+		return fmt.Errorf("pods list is empty")
+	}
+
+	for _, pods := range pods {
+		if err := configureBridgeMappings(pods.Name, mappings...); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
