@@ -254,8 +254,7 @@ between OVN zones, this make possible to use a cluster router similar to layer3 
 so the logical router port that is connected to the layer2 switch will have just the .1 address and mac and ipv6 lla generated 
 with it.
 
-This is how the topology looks:
-
+This is a big picture of the topology with the transit subnet used to connect the ovn_cluster_router and gateway routers directly without a switch for ipv4:
 ```mermaid
 %%{init: {"nodeSpacing": 20, "rankSpacing": 100}}%%
 flowchart TD
