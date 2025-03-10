@@ -161,7 +161,8 @@ routers RAs [not merged PR](https://github.com/ovn-kubernetes/ovn-kubernetes/pul
 although this fixes works, they are not very robust since messages can be lost
 or block so be do not get reconciled.
 
-This how the topolog will look after live migration and with the node down
+This is how the topology will look after the virtual machine has being live migrated from node1 to node2
+and shutting down node1 after it.
 
 ipv4:
 ```mermaid
@@ -232,32 +233,29 @@ This is not good for GCP or disconnected envs.
 
 ## User-Stories/Use-Cases
 
-(What new user-stories/use-cases does this OKEP introduce?)
+### Story 1: seamless live migration
 
-A user story should typically have a summary structured this way:
+As a kubevirt user, I want to live migrate a virtual machine using layer2 primary UDN, 
+so that tcp connections are not broken and downtime is minimun with network configuration 
+not being changed within the virtual machine.
 
-1. **As a** [user concerned by the story]
-2. **I want** [goal of the story]
-3. **so that** [reason for the story]
+For example: User has a virtual machine serving a video conference using TCP connection and the node
+where is running need to be shut down, so user do a live migration to move to other nodes, the video
+should continue with minimun downtime without changing virtual machine network configuration.
 
-The “so that” part is optional if more details are provided in the description.
-A story can also be supplemented with examples, diagrams, or additional notes.
+### Story 2: EIP for layer2 limitations
 
-e.g
-
-Story 1: Deny traffic at a cluster level
-
-As a cluster admin, I want to apply non-overridable deny rules to certain pod(s)
-and(or) Namespace(s) that isolate the selected resources from all other cluster
-internal traffic.
-
-For Example: The admin wishes to protect a sensitive namespace by applying an
-AdminNetworkPolicy which denies ingress from all other in-cluster resources
-for all ports and protocols.
+**TODO**
 
 ## Proposed Solution
 
-What is the proposed solution to solve the problem statement?
+Ther OVN team did introduce a new network topology element **transit router** that allow to have logical router share
+between OVN zones, this make possible to use a cluster router similar to layer3 topology ovn_cluster_router for layer2
+so the logical router port that is connected to the layer2 switch will have just the .1 address and mac and ipv6 lla generated 
+with it.
+
+This is how the topology looks:
+
 
 ### API Details
 
