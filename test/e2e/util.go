@@ -1388,18 +1388,23 @@ func deletePodWithWaitByName(ctx context.Context, c clientset.Interface, podName
 // This is an alternative version of e2epod.WaitForPodNotFoundInNamespace(), which takes
 // a UID as well.
 func waitForPodNotFoundInNamespace(ctx context.Context, c clientset.Interface, podName, ns string, uid types.UID, timeout time.Duration) error {
-        err := framework.Gomega().Eventually(ctx, framework.HandleRetry(func(ctx context.Context) (*v1.Pod, error) {
-                pod, err := c.CoreV1().Pods(ns).Get(ctx, podName, metav1.GetOptions{})
-                if apierrors.IsNotFound(err) {
-                        return nil, nil
-                }
+	err := framework.Gomega().Eventually(ctx, framework.HandleRetry(func(ctx context.Context) (*v1.Pod, error) {
+		pod, err := c.CoreV1().Pods(ns).Get(ctx, podName, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return nil, nil
+		}
 		if pod != nil && pod.UID != uid {
 			return nil, nil
 		}
-                return pod, err
-        })).WithTimeout(timeout).Should(gomega.BeNil())
-        if err != nil {
-                return fmt.Errorf("expected pod to not be found: %w", err)
-        }
-        return nil
+		return pod, err
+	})).WithTimeout(timeout).Should(gomega.BeNil())
+	if err != nil {
+		return fmt.Errorf("expected pod to not be found: %w", err)
+	}
+	return nil
+}
+
+func isDefaultNetworkAdvertised() bool {
+	val, present := os.LookupEnv("ADVERTISE_DEFAULT_NETWORK")
+	return present && val == "true"
 }
