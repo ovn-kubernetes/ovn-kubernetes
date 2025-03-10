@@ -265,14 +265,12 @@ flowchart TD
     classDef routerStyle fill:brown,color:white,stroke:none,rx:10px,ry:10px,font-size:25px;
     classDef switchStyle fill:brown,color:white,stroke:none,rx:10px,ry:10px,font-size:25px;
     classDef termStyle font-family:monospace,fill:black,stroke:none,color:white;
-
     subgraph node1["node1"]
         subgraph GR-node1
             rtotr-GR-node1["trtor-GR-node1 
-            100.65.0.2 (0a:58:64:41:00:02)"]
+            100.65.0.2/16 100.88.0.6/30 (0a:58:64:41:00:02)"]
         end
         subgraph VM["Virtual Machine"]
-
             class VM vmStyle;
             term["default gw 
             203.203.0.1
@@ -281,12 +279,12 @@ flowchart TD
     end
     subgraph node2
         subgraph GR-node2
-            rtotr-GR-node2["rtotr-GR-node2 (0a:58:64:41:00:03)"]
+            rtotr-GR-node2["rtotr-GR-node2 100.65.0.3/16 100.88.0.14/30 (0a:58:64:41:00:03)"]
         end
     end
     subgraph node3
         subgraph GR-node3
-            rtotr-GR-node3["rtotr-GR-node3 (0a:58:64:41:00:04)"]
+            rtotr-GR-node3["rtotr-GR-node3 100.65.0.4/16 100.88.0.10/30 (0a:58:64:41:00:04)"]
         end
     end
     subgraph layer2-switch
@@ -294,9 +292,9 @@ flowchart TD
         type: router"]
     end
     subgraph ovn_cluster_router["ovn_cluster_router "]
-        trtor-GR-node1["trtor-GR-node1 100.65.0.2 (0a:58:64:41:00:02)"]
-        trtor-GR-node2["trtor-GR-node2 100.65.0.3 (0a:58:64:41:00:03)"]
-        trtor-GR-node3["trtor-GR-node3 100.65.0.4 (0a:58:64:41:00:04)"]
+        trtor-GR-node1["trtor-GR-node1 100.88.0.5/30"]
+        trtor-GR-node2["trtor-GR-node2 100.88.0.13/30"]
+        trtor-GR-node3["trtor-GR-node3 100.88.0.9/30"]
         rtos-layer2-switch["rtos-layer2-switch 203.203.0.1 (0a:58:CB:CB:00:01)"]
     end
     rtotr-GR-node1 <--> trtor-GR-node1
@@ -322,8 +320,6 @@ flowchart TD
     class term termStyle;
     class node1,node2,node3 nodeStyle;
     
-
-
  ```
 
 
