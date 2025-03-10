@@ -40,7 +40,7 @@ type Interface interface {
 }
 
 var (
-	ErrFull      = errors.New("range is full")
+	ErrFull      = errors.New("subnet address pool exhausted")
 	ErrAllocated = errors.New("provided IP is already allocated")
 )
 
