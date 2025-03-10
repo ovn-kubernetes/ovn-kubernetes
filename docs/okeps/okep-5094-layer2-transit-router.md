@@ -249,12 +249,68 @@ should continue with minimun downtime without changing virtual machine network c
 
 ## Proposed Solution
 
-Ther OVN team did introduce a new network topology element **transit router** that allow to have logical router share
+Ther OVN team did introduce a new network topology element [**transit router**](https://www.ovn.org/support/dist-docs/ovn-nb.5.html) that allow to have logical router share
 between OVN zones, this make possible to use a cluster router similar to layer3 topology ovn_cluster_router for layer2
 so the logical router port that is connected to the layer2 switch will have just the .1 address and mac and ipv6 lla generated 
 with it.
 
 This is how the topology looks:
+
+```mermaid
+flowchart TD
+    classDef vmStyle fill:blue,stroke:none,rx:10px,ry:10px;
+    classDef portStyle fill:green,stroke:none,rx:10px,ry:10px;
+    classDef routerStyle fill:brown,stroke:none,rx:10px,ry:10px;
+    classDef switchStyle fill:brown,stroke:none,rx:10px,ry:10px;
+    
+    
+
+    subgraph node1["node1"]
+        subgraph GR-node1
+            rtotr-GR-node1["trtor-GR-node1 
+            100.65.0.2 (0a:58:64:41:00:02)"]
+        end
+        subgraph VM["Virtual Machine"]
+
+            class VM vmStyle;
+            route["default gw -> 203.203.0.1 (0a:58:CB:CB:00:01)"]
+        end
+    end
+    subgraph node2
+        subgraph GR-node2
+            rtotr-GR-node2["rtotr-GR-node2 (0a:58:64:41:00:03)"]
+        end
+    end
+    subgraph node3
+        subgraph GR-node3
+            rtotr-GR-node3["rtotr-GR-node3 (0a:58:64:41:00:04)"]
+        end
+    end
+    subgraph layer2-switch
+        stor-ovn_cluster_router["stor-ovn_cluster_router 
+        type: router"]
+    end
+    subgraph ovn_cluster_router
+        rtos-layer2-switch["203.203.0.1   (0a:58:CB:CB:00:01)"]
+    end
+    rtotr-GR-node1 <-->|"100.65.0.2  (0a:58:64:41:00:02)"| ovn_cluster_router
+    rtotr-GR-node2 <-->|"100.65.0.3   (0a:58:64:41:00:03)"| ovn_cluster_router
+    rtotr-GR-node3 <-->|"100.65.0.4   (0a:58:64:41:00:04)"| ovn_cluster_router
+    VM <-->layer2-switch
+    rtos-layer2-switch <--> stor-ovn_cluster_router
+    
+    class VM vmStyle;
+    class rtotr-GR-node1 portStyle;
+    class rtotr-GR-node2 portStyle;
+    class rtotr-GR-node3 portStyle;
+    class stor-ovn_cluster_router portStyle;
+    class rtos-layer2-switch portStyle;
+    class GR-node1 routerStyle;
+    class GR-node2 routerStyle;
+    class GR-node3 routerStyle;
+    class ovn_cluster_router routerStyle;
+    class layer2-switch switchStyle
+```
 
 
 ### API Details
