@@ -142,7 +142,7 @@ func newDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, sto
 		},
 		routeManager: routeManager,
 	}
-	if util.IsNetworkSegmentationSupportEnabled() && !config.OVNKubernetesFeature.DisableUDNHostIsolation {
+	if util.IsNetworkSegmentationSupportEnabled() {
 		c.udnHostIsolationManager = NewUDNHostIsolationManager(config.IPv4Mode, config.IPv6Mode,
 			cnnci.watchFactory.PodCoreInformer(), cnnci.name, cnnci.recorder)
 	}
