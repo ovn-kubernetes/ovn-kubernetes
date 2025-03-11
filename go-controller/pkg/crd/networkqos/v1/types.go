@@ -17,7 +17,6 @@ limitations under the License.
 package v1
 
 import (
-	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -45,12 +44,10 @@ type NetworkQoS struct {
 
 // Spec defines the desired state of NetworkQoS
 type Spec struct {
-	// netAttachRefs points to a list of objects which could be either NAD, UDN, or Cluster UDN.
-	// In the case of NAD, the network type could be of type Layer-3, Layer-2, or Localnet.
-	// If not specified, then the primary network of the selected Pods will be chosen.
+	// networkSelector selects the networks on which the pod IPs need to be added to the source address set.
 	// +optional
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="netAttachRefs is immutable"
-	NetworkAttachmentRefs []corev1.ObjectReference `json:"netAttachRefs,omitempty"`
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="networkSelector is immutable"
+	NetworkSelector metav1.LabelSelector `json:"networkSelector,omitempty"`
 
 	// podSelector applies the NetworkQoS rule only to the pods in the namespace whose label
 	// matches this definition. This field is optional, and in case it is not set
@@ -69,6 +66,7 @@ type Spec struct {
 	// within a single NetworkQos object (all of which share the priority) will be
 	// determined by the order in which the rule is written. Thus, a rule that appears
 	// first in the list of egress rules would take the lower precedence.
+	// +kubebuilder:validation:MaxItems=20
 	Egress []Rule `json:"egress"`
 }
 

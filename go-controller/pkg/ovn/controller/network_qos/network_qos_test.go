@@ -15,14 +15,13 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/kubernetes"
 
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	nqostype "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1"
-	fakenqosclient "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1/apis/clientset/versioned/fake"
+	networkqosclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1/apis/clientset/versioned"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
@@ -38,7 +37,7 @@ func init() {
 	config.IPv4Mode = true
 	config.IPv6Mode = false
 	config.OVNKubernetesFeature.EnableNetworkQoS = true
-	config.OVNKubernetesFeature.EnableMultiNetwork = false
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
 	config.OVNKubernetesFeature.EnableInterconnect = false // set via tableEntrySetup
 }
 
@@ -49,8 +48,8 @@ var (
 	stopChan              chan (struct{})
 	nbClient              libovsdbclient.Client
 	nbsbCleanup           *libovsdbtest.Context
-	fakeKubeClient        *fake.Clientset
-	fakeNQoSClient        *fakenqosclient.Clientset
+	fakeKubeClient        kubernetes.Interface
+	fakeNQoSClient        networkqosclientset.Interface
 	wg                    sync.WaitGroup
 	defaultAddrsetFactory addressset.AddressSetFactory
 	streamAddrsetFactory  addressset.AddressSetFactory
@@ -216,6 +215,11 @@ func tableEntrySetup(enableInterconnect bool) {
 		},
 	}
 
+	nad := ovnk8stesting.GenerateNAD("stream", "stream", "default", types.Layer3Topology, "10.128.2.0/16/24", types.NetworkRoleSecondary)
+	nad.Labels = map[string]string{
+		"name": "stream",
+	}
+
 	initialDB := &libovsdbtest.TestSetup{
 		NBData: []libovsdbtest.TestData{
 			&nbdb.LogicalSwitch{
@@ -230,11 +234,13 @@ func tableEntrySetup(enableInterconnect bool) {
 		},
 	}
 
-	initEnv([]runtime.Object{ns0, ns1, ns3, node1, node2, clientPod}, []runtime.Object{nqos}, initialDB)
+	ovnClientset := util.GetOVNClientset(ns0, ns1, ns3, node1, node2, clientPod, nqos, nad)
+	fakeKubeClient = ovnClientset.KubeClient
+	fakeNQoSClient = ovnClientset.NetworkQoSClient
+	initEnv(ovnClientset, initialDB)
 	// init controller for default network
 	initNetworkQoSController(&util.DefaultNetInfo{}, defaultAddrsetFactory, defaultControllerName)
 	// init controller for stream nad
-	nad := ovnk8stesting.GenerateNAD("stream", "stream", "default", types.Layer3Topology, "10.128.2.0/16/24", types.NetworkRoleSecondary)
 	streamImmutableNadInfo, err := util.ParseNADInfo(nad)
 	Expect(err).NotTo(HaveOccurred())
 	streamNadInfo := util.NewMutableNetInfo(streamImmutableNadInfo)
@@ -474,11 +480,9 @@ var _ = Describe("NetworkQoS Controller", func() {
 						Name:      "stream-qos",
 					},
 					Spec: nqostype.Spec{
-						NetworkAttachmentRefs: []corev1.ObjectReference{
-							{
-								Kind:      "NetworkAttachmentDefinition",
-								Namespace: "default",
-								Name:      "unknown",
+						NetworkSelector: metav1.LabelSelector{
+							MatchLabels: map[string]string{
+								"name": "unknown",
 							},
 						},
 						Priority: 100,
@@ -521,11 +525,9 @@ var _ = Describe("NetworkQoS Controller", func() {
 
 				By("handles NetworkQos on secondary network")
 				{
-					nqos4StreamNet.Spec.NetworkAttachmentRefs = []corev1.ObjectReference{
-						{
-							Kind:      "NetworkAttachmentDefinition",
-							Namespace: "default",
-							Name:      "stream",
+					nqos4StreamNet.Spec.NetworkSelector = metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"name": "stream",
 						},
 					}
 					nqos4StreamNet.ResourceVersion = time.Now().String()
@@ -812,16 +814,16 @@ func eventuallySwitchHasNoQoS(switchName string, qos *nbdb.QoS) {
 	}).WithTimeout(5*time.Second).WithPolling(1*time.Second).Should(BeTrue(), fmt.Sprintf("Unexpected QoS rule %s found in switch %s", qos.UUID, switchName))
 }
 
-func initEnv(k8sObjects []runtime.Object, nqosObjects []runtime.Object, initialDB *libovsdbtest.TestSetup) {
+func initEnv(clientset *util.OVNClientset, initialDB *libovsdbtest.TestSetup) {
 	var nbZoneFailed bool
 	var err error
 	stopChan = make(chan struct{})
-	fakeKubeClient = fake.NewSimpleClientset(k8sObjects...)
-	fakeNQoSClient = fakenqosclient.NewSimpleClientset(nqosObjects...)
+
 	watchFactory, err = factory.NewMasterWatchFactory(
 		&util.OVNMasterClientset{
-			KubeClient:       fakeKubeClient,
-			NetworkQoSClient: fakeNQoSClient,
+			KubeClient:            clientset.KubeClient,
+			NetworkQoSClient:      clientset.NetworkQoSClient,
+			NetworkAttchDefClient: clientset.NetworkAttchDefClient,
 		},
 	)
 	Expect(err).NotTo(HaveOccurred())
@@ -858,6 +860,7 @@ func initNetworkQoSController(netInfo util.NetInfo, addrsetFactory addressset.Ad
 		watchFactory.NamespaceCoreInformer(),
 		watchFactory.PodCoreInformer(),
 		watchFactory.NodeCoreInformer(),
+		watchFactory.NADInformer(),
 		addrsetFactory,
 		func(pod *corev1.Pod) bool {
 			return pod.Spec.NodeName == "node1"

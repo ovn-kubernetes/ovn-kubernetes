@@ -209,11 +209,9 @@ func newNetworkQoS(namespace string) *networkqosapi.NetworkQoS {
 	return &networkqosapi.NetworkQoS{
 		ObjectMeta: util.NewObjectMeta("default", namespace),
 		Spec: networkqosapi.Spec{
-			NetworkAttachmentRefs: []v1.ObjectReference{
-				{
-					Kind:      "NetworkAttachmentDefinition",
-					Namespace: "default",
-					Name:      "stream",
+			NetworkSelector: metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"name": "stream",
 				},
 			},
 			Priority: 100,

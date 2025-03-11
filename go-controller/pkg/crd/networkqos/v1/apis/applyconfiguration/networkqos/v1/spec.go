@@ -18,17 +18,16 @@ limitations under the License.
 package v1
 
 import (
-	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/client-go/applyconfigurations/meta/v1"
+	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
 // SpecApplyConfiguration represents a declarative configuration of the Spec type for use
 // with apply.
 type SpecApplyConfiguration struct {
-	NetworkAttachmentRefs []v1.ObjectReference                    `json:"netAttachRefs,omitempty"`
-	PodSelector           *metav1.LabelSelectorApplyConfiguration `json:"podSelector,omitempty"`
-	Priority              *int                                    `json:"priority,omitempty"`
-	Egress                []RuleApplyConfiguration                `json:"egress,omitempty"`
+	NetworkSelector *v1.LabelSelectorApplyConfiguration `json:"networkSelector,omitempty"`
+	PodSelector     *v1.LabelSelectorApplyConfiguration `json:"podSelector,omitempty"`
+	Priority        *int                                `json:"priority,omitempty"`
+	Egress          []RuleApplyConfiguration            `json:"egress,omitempty"`
 }
 
 // SpecApplyConfiguration constructs a declarative configuration of the Spec type for use with
@@ -37,20 +36,18 @@ func Spec() *SpecApplyConfiguration {
 	return &SpecApplyConfiguration{}
 }
 
-// WithNetworkAttachmentRefs adds the given value to the NetworkAttachmentRefs field in the declarative configuration
-// and returns the receiver, so that objects can be build by chaining "With" function invocations.
-// If called multiple times, values provided by each call will be appended to the NetworkAttachmentRefs field.
-func (b *SpecApplyConfiguration) WithNetworkAttachmentRefs(values ...v1.ObjectReference) *SpecApplyConfiguration {
-	for i := range values {
-		b.NetworkAttachmentRefs = append(b.NetworkAttachmentRefs, values[i])
-	}
+// WithNetworkSelector sets the NetworkSelector field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the NetworkSelector field is set to the value of the last call.
+func (b *SpecApplyConfiguration) WithNetworkSelector(value *v1.LabelSelectorApplyConfiguration) *SpecApplyConfiguration {
+	b.NetworkSelector = value
 	return b
 }
 
 // WithPodSelector sets the PodSelector field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the PodSelector field is set to the value of the last call.
-func (b *SpecApplyConfiguration) WithPodSelector(value *metav1.LabelSelectorApplyConfiguration) *SpecApplyConfiguration {
+func (b *SpecApplyConfiguration) WithPodSelector(value *v1.LabelSelectorApplyConfiguration) *SpecApplyConfiguration {
 	b.PodSelector = value
 	return b
 }

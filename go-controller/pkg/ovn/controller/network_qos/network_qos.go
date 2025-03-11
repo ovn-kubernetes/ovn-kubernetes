@@ -66,12 +66,20 @@ func (c *Controller) syncNetworkQoS(key string) error {
 		return err
 	}
 	if nqos == nil {
-		klog.V(6).Infof("%s - NetworkQoS %s has gone", c.controllerName, key)
+		klog.V(6).Infof("%s - NetworkQoS %s no longer exists.", c.controllerName, key)
 		return c.nqosCache.DoWithLock(key, func(nqosKey string) error {
 			return c.clearNetworkQos(nqosNamespace, nqosName)
 		})
 	}
-	if !c.networkManagedByMe(nqos.Spec.NetworkAttachmentRefs) {
+	netSelector, err := metav1.LabelSelectorAsSelector(&nqos.Spec.NetworkSelector)
+	if err != nil {
+		klog.Errorf("failed to parse network selector, not retrying: %v", err)
+		return nil
+	}
+
+	if networkManagedByMe, err := c.networkManagedByMe(netSelector); err != nil {
+		return err
+	} else if !networkManagedByMe {
 		// maybe NetworkAttachmentName has been changed from this one to other value, try cleanup anyway
 		return c.nqosCache.DoWithLock(key, func(nqosKey string) error {
 			return c.clearNetworkQos(nqosNamespace, nqosName)
@@ -301,18 +309,23 @@ func (c *Controller) resyncPods(nqosState *networkQoSState) error {
 	return nil
 }
 
-func (c *Controller) networkManagedByMe(nadRefs []corev1.ObjectReference) bool {
-	if len(nadRefs) == 0 {
-		return c.IsDefault()
+func (c *Controller) networkManagedByMe(networkSelector labels.Selector) (bool, error) {
+	if c.nadLister == nil || networkSelector.Empty() {
+		return c.IsDefault(), nil
 	}
-	for _, nadRef := range nadRefs {
-		nadKey := joinMetaNamespaceAndName(nadRef.Namespace, nadRef.Name)
+
+	nads, err := c.nadLister.List(networkSelector)
+	if err != nil && !apierrors.IsNotFound(err) {
+		return false, fmt.Errorf("failed to list net-attach-defs: %w", err)
+	}
+	for _, nad := range nads {
+		nadKey := joinMetaNamespaceAndName(nad.Namespace, nad.Name)
 		if ((nadKey == "" || nadKey == types.DefaultNetworkName) && c.IsDefault()) ||
 			(!c.IsDefault() && c.HasNAD(nadKey)) {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 func (c *Controller) getLogicalSwitchName(nodeName string) string {
