@@ -18,14 +18,14 @@ limitations under the License.
 package v1
 
 import (
-	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 )
 
 // IPAMConfigApplyConfiguration represents a declarative configuration of the IPAMConfig type for use
 // with apply.
 type IPAMConfigApplyConfiguration struct {
-	Mode      *v1.IPAMMode             `json:"mode,omitempty"`
-	Lifecycle *v1.NetworkIPAMLifecycle `json:"lifecycle,omitempty"`
+	Mode      *userdefinednetworkv1.IPAMMode             `json:"mode,omitempty"`
+	Lifecycle *userdefinednetworkv1.NetworkIPAMLifecycle `json:"lifecycle,omitempty"`
 }
 
 // IPAMConfigApplyConfiguration constructs a declarative configuration of the IPAMConfig type for use with
@@ -37,7 +37,7 @@ func IPAMConfig() *IPAMConfigApplyConfiguration {
 // WithMode sets the Mode field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Mode field is set to the value of the last call.
-func (b *IPAMConfigApplyConfiguration) WithMode(value v1.IPAMMode) *IPAMConfigApplyConfiguration {
+func (b *IPAMConfigApplyConfiguration) WithMode(value userdefinednetworkv1.IPAMMode) *IPAMConfigApplyConfiguration {
 	b.Mode = &value
 	return b
 }
@@ -45,7 +45,7 @@ func (b *IPAMConfigApplyConfiguration) WithMode(value v1.IPAMMode) *IPAMConfigAp
 // WithLifecycle sets the Lifecycle field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Lifecycle field is set to the value of the last call.
-func (b *IPAMConfigApplyConfiguration) WithLifecycle(value v1.NetworkIPAMLifecycle) *IPAMConfigApplyConfiguration {
+func (b *IPAMConfigApplyConfiguration) WithLifecycle(value userdefinednetworkv1.NetworkIPAMLifecycle) *IPAMConfigApplyConfiguration {
 	b.Lifecycle = &value
 	return b
 }

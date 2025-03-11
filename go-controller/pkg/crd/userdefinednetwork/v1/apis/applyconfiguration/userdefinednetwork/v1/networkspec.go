@@ -18,15 +18,15 @@ limitations under the License.
 package v1
 
 import (
-	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 )
 
 // NetworkSpecApplyConfiguration represents a declarative configuration of the NetworkSpec type for use
 // with apply.
 type NetworkSpecApplyConfiguration struct {
-	Topology *v1.NetworkTopology             `json:"topology,omitempty"`
-	Layer3   *Layer3ConfigApplyConfiguration `json:"layer3,omitempty"`
-	Layer2   *Layer2ConfigApplyConfiguration `json:"layer2,omitempty"`
+	Topology *userdefinednetworkv1.NetworkTopology `json:"topology,omitempty"`
+	Layer3   *Layer3ConfigApplyConfiguration       `json:"layer3,omitempty"`
+	Layer2   *Layer2ConfigApplyConfiguration       `json:"layer2,omitempty"`
 }
 
 // NetworkSpecApplyConfiguration constructs a declarative configuration of the NetworkSpec type for use with
@@ -38,7 +38,7 @@ func NetworkSpec() *NetworkSpecApplyConfiguration {
 // WithTopology sets the Topology field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Topology field is set to the value of the last call.
-func (b *NetworkSpecApplyConfiguration) WithTopology(value v1.NetworkTopology) *NetworkSpecApplyConfiguration {
+func (b *NetworkSpecApplyConfiguration) WithTopology(value userdefinednetworkv1.NetworkTopology) *NetworkSpecApplyConfiguration {
 	b.Topology = &value
 	return b
 }

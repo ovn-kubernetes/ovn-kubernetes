@@ -81,27 +81,34 @@ func (_m *NetLinkOps) AddrList(link netlink.Link, family int) ([]netlink.Addr, e
 	return r0, r1
 }
 
-// ConntrackDeleteFilter provides a mock function with given fields: table, family, filter
-func (_m *NetLinkOps) ConntrackDeleteFilter(table netlink.ConntrackTableType, family netlink.InetFamily, filter netlink.CustomConntrackFilter) (uint, error) {
-	ret := _m.Called(table, family, filter)
+// ConntrackDeleteFilters provides a mock function with given fields: table, family, filters
+func (_m *NetLinkOps) ConntrackDeleteFilters(table netlink.ConntrackTableType, family netlink.InetFamily, filters ...netlink.CustomConntrackFilter) (uint, error) {
+	_va := make([]interface{}, len(filters))
+	for _i := range filters {
+		_va[_i] = filters[_i]
+	}
+	var _ca []interface{}
+	_ca = append(_ca, table, family)
+	_ca = append(_ca, _va...)
+	ret := _m.Called(_ca...)
 
 	if len(ret) == 0 {
-		panic("no return value specified for ConntrackDeleteFilter")
+		panic("no return value specified for ConntrackDeleteFilters")
 	}
 
 	var r0 uint
 	var r1 error
-	if rf, ok := ret.Get(0).(func(netlink.ConntrackTableType, netlink.InetFamily, netlink.CustomConntrackFilter) (uint, error)); ok {
-		return rf(table, family, filter)
+	if rf, ok := ret.Get(0).(func(netlink.ConntrackTableType, netlink.InetFamily, ...netlink.CustomConntrackFilter) (uint, error)); ok {
+		return rf(table, family, filters...)
 	}
-	if rf, ok := ret.Get(0).(func(netlink.ConntrackTableType, netlink.InetFamily, netlink.CustomConntrackFilter) uint); ok {
-		r0 = rf(table, family, filter)
+	if rf, ok := ret.Get(0).(func(netlink.ConntrackTableType, netlink.InetFamily, ...netlink.CustomConntrackFilter) uint); ok {
+		r0 = rf(table, family, filters...)
 	} else {
 		r0 = ret.Get(0).(uint)
 	}
 
-	if rf, ok := ret.Get(1).(func(netlink.ConntrackTableType, netlink.InetFamily, netlink.CustomConntrackFilter) error); ok {
-		r1 = rf(table, family, filter)
+	if rf, ok := ret.Get(1).(func(netlink.ConntrackTableType, netlink.InetFamily, ...netlink.CustomConntrackFilter) error); ok {
+		r1 = rf(table, family, filters...)
 	} else {
 		r1 = ret.Error(1)
 	}

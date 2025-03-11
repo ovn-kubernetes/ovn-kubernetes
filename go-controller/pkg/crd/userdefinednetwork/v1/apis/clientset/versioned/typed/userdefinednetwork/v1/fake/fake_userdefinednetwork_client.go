@@ -28,11 +28,11 @@ type FakeK8sV1 struct {
 }
 
 func (c *FakeK8sV1) ClusterUserDefinedNetworks() v1.ClusterUserDefinedNetworkInterface {
-	return &FakeClusterUserDefinedNetworks{c}
+	return newFakeClusterUserDefinedNetworks(c)
 }
 
 func (c *FakeK8sV1) UserDefinedNetworks(namespace string) v1.UserDefinedNetworkInterface {
-	return &FakeUserDefinedNetworks{c, namespace}
+	return newFakeUserDefinedNetworks(c, namespace)
 }
 
 // RESTClient returns a RESTClient that is used to communicate

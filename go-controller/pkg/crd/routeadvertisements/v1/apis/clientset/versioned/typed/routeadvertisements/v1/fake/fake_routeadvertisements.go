@@ -18,168 +18,35 @@ limitations under the License.
 package fake
 
 import (
-	"context"
-	json "encoding/json"
-	"fmt"
-
 	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
 	routeadvertisementsv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/applyconfiguration/routeadvertisements/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	labels "k8s.io/apimachinery/pkg/labels"
-	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
-	testing "k8s.io/client-go/testing"
+	typedrouteadvertisementsv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned/typed/routeadvertisements/v1"
+	gentype "k8s.io/client-go/gentype"
 )
 
-// FakeRouteAdvertisements implements RouteAdvertisementsInterface
-type FakeRouteAdvertisements struct {
+// fakeRouteAdvertisements implements RouteAdvertisementsInterface
+type fakeRouteAdvertisements struct {
+	*gentype.FakeClientWithListAndApply[*v1.RouteAdvertisements, *v1.RouteAdvertisementsList, *routeadvertisementsv1.RouteAdvertisementsApplyConfiguration]
 	Fake *FakeK8sV1
 }
 
-var routeadvertisementsResource = v1.SchemeGroupVersion.WithResource("routeadvertisements")
-
-var routeadvertisementsKind = v1.SchemeGroupVersion.WithKind("RouteAdvertisements")
-
-// Get takes name of the routeAdvertisements, and returns the corresponding routeAdvertisements object, and an error if there is any.
-func (c *FakeRouteAdvertisements) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.RouteAdvertisements, err error) {
-	emptyResult := &v1.RouteAdvertisements{}
-	obj, err := c.Fake.
-		Invokes(testing.NewRootGetActionWithOptions(routeadvertisementsResource, name, options), emptyResult)
-	if obj == nil {
-		return emptyResult, err
+func newFakeRouteAdvertisements(fake *FakeK8sV1) typedrouteadvertisementsv1.RouteAdvertisementsInterface {
+	return &fakeRouteAdvertisements{
+		gentype.NewFakeClientWithListAndApply[*v1.RouteAdvertisements, *v1.RouteAdvertisementsList, *routeadvertisementsv1.RouteAdvertisementsApplyConfiguration](
+			fake.Fake,
+			"",
+			v1.SchemeGroupVersion.WithResource("routeadvertisements"),
+			v1.SchemeGroupVersion.WithKind("RouteAdvertisements"),
+			func() *v1.RouteAdvertisements { return &v1.RouteAdvertisements{} },
+			func() *v1.RouteAdvertisementsList { return &v1.RouteAdvertisementsList{} },
+			func(dst, src *v1.RouteAdvertisementsList) { dst.ListMeta = src.ListMeta },
+			func(list *v1.RouteAdvertisementsList) []*v1.RouteAdvertisements {
+				return gentype.ToPointerSlice(list.Items)
+			},
+			func(list *v1.RouteAdvertisementsList, items []*v1.RouteAdvertisements) {
+				list.Items = gentype.FromPointerSlice(items)
+			},
+		),
+		fake,
 	}
-	return obj.(*v1.RouteAdvertisements), err
-}
-
-// List takes label and field selectors, and returns the list of RouteAdvertisements that match those selectors.
-func (c *FakeRouteAdvertisements) List(ctx context.Context, opts metav1.ListOptions) (result *v1.RouteAdvertisementsList, err error) {
-	emptyResult := &v1.RouteAdvertisementsList{}
-	obj, err := c.Fake.
-		Invokes(testing.NewRootListActionWithOptions(routeadvertisementsResource, routeadvertisementsKind, opts), emptyResult)
-	if obj == nil {
-		return emptyResult, err
-	}
-
-	label, _, _ := testing.ExtractFromListOptions(opts)
-	if label == nil {
-		label = labels.Everything()
-	}
-	list := &v1.RouteAdvertisementsList{ListMeta: obj.(*v1.RouteAdvertisementsList).ListMeta}
-	for _, item := range obj.(*v1.RouteAdvertisementsList).Items {
-		if label.Matches(labels.Set(item.Labels)) {
-			list.Items = append(list.Items, item)
-		}
-	}
-	return list, err
-}
-
-// Watch returns a watch.Interface that watches the requested routeAdvertisements.
-func (c *FakeRouteAdvertisements) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
-	return c.Fake.
-		InvokesWatch(testing.NewRootWatchActionWithOptions(routeadvertisementsResource, opts))
-}
-
-// Create takes the representation of a routeAdvertisements and creates it.  Returns the server's representation of the routeAdvertisements, and an error, if there is any.
-func (c *FakeRouteAdvertisements) Create(ctx context.Context, routeAdvertisements *v1.RouteAdvertisements, opts metav1.CreateOptions) (result *v1.RouteAdvertisements, err error) {
-	emptyResult := &v1.RouteAdvertisements{}
-	obj, err := c.Fake.
-		Invokes(testing.NewRootCreateActionWithOptions(routeadvertisementsResource, routeAdvertisements, opts), emptyResult)
-	if obj == nil {
-		return emptyResult, err
-	}
-	return obj.(*v1.RouteAdvertisements), err
-}
-
-// Update takes the representation of a routeAdvertisements and updates it. Returns the server's representation of the routeAdvertisements, and an error, if there is any.
-func (c *FakeRouteAdvertisements) Update(ctx context.Context, routeAdvertisements *v1.RouteAdvertisements, opts metav1.UpdateOptions) (result *v1.RouteAdvertisements, err error) {
-	emptyResult := &v1.RouteAdvertisements{}
-	obj, err := c.Fake.
-		Invokes(testing.NewRootUpdateActionWithOptions(routeadvertisementsResource, routeAdvertisements, opts), emptyResult)
-	if obj == nil {
-		return emptyResult, err
-	}
-	return obj.(*v1.RouteAdvertisements), err
-}
-
-// UpdateStatus was generated because the type contains a Status member.
-// Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-func (c *FakeRouteAdvertisements) UpdateStatus(ctx context.Context, routeAdvertisements *v1.RouteAdvertisements, opts metav1.UpdateOptions) (result *v1.RouteAdvertisements, err error) {
-	emptyResult := &v1.RouteAdvertisements{}
-	obj, err := c.Fake.
-		Invokes(testing.NewRootUpdateSubresourceActionWithOptions(routeadvertisementsResource, "status", routeAdvertisements, opts), emptyResult)
-	if obj == nil {
-		return emptyResult, err
-	}
-	return obj.(*v1.RouteAdvertisements), err
-}
-
-// Delete takes name of the routeAdvertisements and deletes it. Returns an error if one occurs.
-func (c *FakeRouteAdvertisements) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
-	_, err := c.Fake.
-		Invokes(testing.NewRootDeleteActionWithOptions(routeadvertisementsResource, name, opts), &v1.RouteAdvertisements{})
-	return err
-}
-
-// DeleteCollection deletes a collection of objects.
-func (c *FakeRouteAdvertisements) DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error {
-	action := testing.NewRootDeleteCollectionActionWithOptions(routeadvertisementsResource, opts, listOpts)
-
-	_, err := c.Fake.Invokes(action, &v1.RouteAdvertisementsList{})
-	return err
-}
-
-// Patch applies the patch and returns the patched routeAdvertisements.
-func (c *FakeRouteAdvertisements) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.RouteAdvertisements, err error) {
-	emptyResult := &v1.RouteAdvertisements{}
-	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceActionWithOptions(routeadvertisementsResource, name, pt, data, opts, subresources...), emptyResult)
-	if obj == nil {
-		return emptyResult, err
-	}
-	return obj.(*v1.RouteAdvertisements), err
-}
-
-// Apply takes the given apply declarative configuration, applies it and returns the applied routeAdvertisements.
-func (c *FakeRouteAdvertisements) Apply(ctx context.Context, routeAdvertisements *routeadvertisementsv1.RouteAdvertisementsApplyConfiguration, opts metav1.ApplyOptions) (result *v1.RouteAdvertisements, err error) {
-	if routeAdvertisements == nil {
-		return nil, fmt.Errorf("routeAdvertisements provided to Apply must not be nil")
-	}
-	data, err := json.Marshal(routeAdvertisements)
-	if err != nil {
-		return nil, err
-	}
-	name := routeAdvertisements.Name
-	if name == nil {
-		return nil, fmt.Errorf("routeAdvertisements.Name must be provided to Apply")
-	}
-	emptyResult := &v1.RouteAdvertisements{}
-	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceActionWithOptions(routeadvertisementsResource, *name, types.ApplyPatchType, data, opts.ToPatchOptions()), emptyResult)
-	if obj == nil {
-		return emptyResult, err
-	}
-	return obj.(*v1.RouteAdvertisements), err
-}
-
-// ApplyStatus was generated because the type contains a Status member.
-// Add a +genclient:noStatus comment above the type to avoid generating ApplyStatus().
-func (c *FakeRouteAdvertisements) ApplyStatus(ctx context.Context, routeAdvertisements *routeadvertisementsv1.RouteAdvertisementsApplyConfiguration, opts metav1.ApplyOptions) (result *v1.RouteAdvertisements, err error) {
-	if routeAdvertisements == nil {
-		return nil, fmt.Errorf("routeAdvertisements provided to Apply must not be nil")
-	}
-	data, err := json.Marshal(routeAdvertisements)
-	if err != nil {
-		return nil, err
-	}
-	name := routeAdvertisements.Name
-	if name == nil {
-		return nil, fmt.Errorf("routeAdvertisements.Name must be provided to Apply")
-	}
-	emptyResult := &v1.RouteAdvertisements{}
-	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceActionWithOptions(routeadvertisementsResource, *name, types.ApplyPatchType, data, opts.ToPatchOptions(), "status"), emptyResult)
-	if obj == nil {
-		return emptyResult, err
-	}
-	return obj.(*v1.RouteAdvertisements), err
 }

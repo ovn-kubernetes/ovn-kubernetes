@@ -18,10 +18,10 @@ limitations under the License.
 package v1
 
 import (
-	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/client-go/listers"
-	"k8s.io/client-go/tools/cache"
+	routeadvertisementsv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
+	labels "k8s.io/apimachinery/pkg/labels"
+	listers "k8s.io/client-go/listers"
+	cache "k8s.io/client-go/tools/cache"
 )
 
 // RouteAdvertisementsLister helps list RouteAdvertisements.
@@ -29,19 +29,19 @@ import (
 type RouteAdvertisementsLister interface {
 	// List lists all RouteAdvertisements in the indexer.
 	// Objects returned here must be treated as read-only.
-	List(selector labels.Selector) (ret []*v1.RouteAdvertisements, err error)
+	List(selector labels.Selector) (ret []*routeadvertisementsv1.RouteAdvertisements, err error)
 	// Get retrieves the RouteAdvertisements from the index for a given name.
 	// Objects returned here must be treated as read-only.
-	Get(name string) (*v1.RouteAdvertisements, error)
+	Get(name string) (*routeadvertisementsv1.RouteAdvertisements, error)
 	RouteAdvertisementsListerExpansion
 }
 
 // routeAdvertisementsLister implements the RouteAdvertisementsLister interface.
 type routeAdvertisementsLister struct {
-	listers.ResourceIndexer[*v1.RouteAdvertisements]
+	listers.ResourceIndexer[*routeadvertisementsv1.RouteAdvertisements]
 }
 
 // NewRouteAdvertisementsLister returns a new RouteAdvertisementsLister.
 func NewRouteAdvertisementsLister(indexer cache.Indexer) RouteAdvertisementsLister {
-	return &routeAdvertisementsLister{listers.New[*v1.RouteAdvertisements](indexer, v1.Resource("routeadvertisements"))}
+	return &routeAdvertisementsLister{listers.New[*routeadvertisementsv1.RouteAdvertisements](indexer, routeadvertisementsv1.Resource("routeadvertisements"))}
 }

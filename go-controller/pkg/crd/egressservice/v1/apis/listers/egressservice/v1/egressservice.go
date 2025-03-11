@@ -18,10 +18,10 @@ limitations under the License.
 package v1
 
 import (
-	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1"
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/client-go/listers"
-	"k8s.io/client-go/tools/cache"
+	egressservicev1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1"
+	labels "k8s.io/apimachinery/pkg/labels"
+	listers "k8s.io/client-go/listers"
+	cache "k8s.io/client-go/tools/cache"
 )
 
 // EgressServiceLister helps list EgressServices.
@@ -29,7 +29,7 @@ import (
 type EgressServiceLister interface {
 	// List lists all EgressServices in the indexer.
 	// Objects returned here must be treated as read-only.
-	List(selector labels.Selector) (ret []*v1.EgressService, err error)
+	List(selector labels.Selector) (ret []*egressservicev1.EgressService, err error)
 	// EgressServices returns an object that can list and get EgressServices.
 	EgressServices(namespace string) EgressServiceNamespaceLister
 	EgressServiceListerExpansion
@@ -37,17 +37,17 @@ type EgressServiceLister interface {
 
 // egressServiceLister implements the EgressServiceLister interface.
 type egressServiceLister struct {
-	listers.ResourceIndexer[*v1.EgressService]
+	listers.ResourceIndexer[*egressservicev1.EgressService]
 }
 
 // NewEgressServiceLister returns a new EgressServiceLister.
 func NewEgressServiceLister(indexer cache.Indexer) EgressServiceLister {
-	return &egressServiceLister{listers.New[*v1.EgressService](indexer, v1.Resource("egressservice"))}
+	return &egressServiceLister{listers.New[*egressservicev1.EgressService](indexer, egressservicev1.Resource("egressservice"))}
 }
 
 // EgressServices returns an object that can list and get EgressServices.
 func (s *egressServiceLister) EgressServices(namespace string) EgressServiceNamespaceLister {
-	return egressServiceNamespaceLister{listers.NewNamespaced[*v1.EgressService](s.ResourceIndexer, namespace)}
+	return egressServiceNamespaceLister{listers.NewNamespaced[*egressservicev1.EgressService](s.ResourceIndexer, namespace)}
 }
 
 // EgressServiceNamespaceLister helps list and get EgressServices.
@@ -55,15 +55,15 @@ func (s *egressServiceLister) EgressServices(namespace string) EgressServiceName
 type EgressServiceNamespaceLister interface {
 	// List lists all EgressServices in the indexer for a given namespace.
 	// Objects returned here must be treated as read-only.
-	List(selector labels.Selector) (ret []*v1.EgressService, err error)
+	List(selector labels.Selector) (ret []*egressservicev1.EgressService, err error)
 	// Get retrieves the EgressService from the indexer for a given namespace and name.
 	// Objects returned here must be treated as read-only.
-	Get(name string) (*v1.EgressService, error)
+	Get(name string) (*egressservicev1.EgressService, error)
 	EgressServiceNamespaceListerExpansion
 }
 
 // egressServiceNamespaceLister implements the EgressServiceNamespaceLister
 // interface.
 type egressServiceNamespaceLister struct {
-	listers.ResourceIndexer[*v1.EgressService]
+	listers.ResourceIndexer[*egressservicev1.EgressService]
 }

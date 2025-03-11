@@ -755,7 +755,7 @@ func generateIPRuleForPacketMark(mark uint, isIPv6 bool, vrfTableId uint) netlin
 	if isIPv6 {
 		r.Family = netlink.FAMILY_V6
 	}
-	r.Mark = int(mark)
+	r.Mark = uint32(mark)
 	return r
 }
 func generateIPRuleForMasqIP(masqIP net.IP, isIPv6 bool, vrfTableId uint) netlink.Rule {

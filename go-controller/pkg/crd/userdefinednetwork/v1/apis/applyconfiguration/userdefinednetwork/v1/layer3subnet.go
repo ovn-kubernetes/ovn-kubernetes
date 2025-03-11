@@ -18,14 +18,14 @@ limitations under the License.
 package v1
 
 import (
-	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 )
 
 // Layer3SubnetApplyConfiguration represents a declarative configuration of the Layer3Subnet type for use
 // with apply.
 type Layer3SubnetApplyConfiguration struct {
-	CIDR       *v1.CIDR `json:"cidr,omitempty"`
-	HostSubnet *int32   `json:"hostSubnet,omitempty"`
+	CIDR       *userdefinednetworkv1.CIDR `json:"cidr,omitempty"`
+	HostSubnet *int32                     `json:"hostSubnet,omitempty"`
 }
 
 // Layer3SubnetApplyConfiguration constructs a declarative configuration of the Layer3Subnet type for use with
@@ -37,7 +37,7 @@ func Layer3Subnet() *Layer3SubnetApplyConfiguration {
 // WithCIDR sets the CIDR field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the CIDR field is set to the value of the last call.
-func (b *Layer3SubnetApplyConfiguration) WithCIDR(value v1.CIDR) *Layer3SubnetApplyConfiguration {
+func (b *Layer3SubnetApplyConfiguration) WithCIDR(value userdefinednetworkv1.CIDR) *Layer3SubnetApplyConfiguration {
 	b.CIDR = &value
 	return b
 }

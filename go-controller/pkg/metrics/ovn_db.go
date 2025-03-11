@@ -590,7 +590,7 @@ func getOVNDBClusterStatusInfo(timeout int, dbProperties *util.OvsDbProperties) 
 func ovnDBClusterStatusMetricsUpdater(dbProperties *util.OvsDbProperties) {
 	clusterStatus, err := getOVNDBClusterStatusInfo(5, dbProperties)
 	if err != nil {
-		klog.Errorf(err.Error())
+		klog.Errorf("Error getting OVN DB cluster status information: %v", err.Error())
 		return
 	}
 	metricDBClusterCID.WithLabelValues(dbProperties.DbName, clusterStatus.cid).Set(1)

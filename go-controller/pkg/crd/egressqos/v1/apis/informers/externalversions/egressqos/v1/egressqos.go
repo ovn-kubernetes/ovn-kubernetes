@@ -18,13 +18,13 @@ limitations under the License.
 package v1
 
 import (
-	"context"
+	context "context"
 	time "time"
 
-	egressqosv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1"
+	crdegressqosv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1"
 	versioned "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1/apis/clientset/versioned"
 	internalinterfaces "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1/apis/informers/externalversions/internalinterfaces"
-	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1/apis/listers/egressqos/v1"
+	egressqosv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1/apis/listers/egressqos/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	watch "k8s.io/apimachinery/pkg/watch"
@@ -35,7 +35,7 @@ import (
 // EgressQoSes.
 type EgressQoSInformer interface {
 	Informer() cache.SharedIndexInformer
-	Lister() v1.EgressQoSLister
+	Lister() egressqosv1.EgressQoSLister
 }
 
 type egressQoSInformer struct {
@@ -70,7 +70,7 @@ func NewFilteredEgressQoSInformer(client versioned.Interface, namespace string, 
 				return client.K8sV1().EgressQoSes(namespace).Watch(context.TODO(), options)
 			},
 		},
-		&egressqosv1.EgressQoS{},
+		&crdegressqosv1.EgressQoS{},
 		resyncPeriod,
 		indexers,
 	)
@@ -81,9 +81,9 @@ func (f *egressQoSInformer) defaultInformer(client versioned.Interface, resyncPe
 }
 
 func (f *egressQoSInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&egressqosv1.EgressQoS{}, f.defaultInformer)
+	return f.factory.InformerFor(&crdegressqosv1.EgressQoS{}, f.defaultInformer)
 }
 
-func (f *egressQoSInformer) Lister() v1.EgressQoSLister {
-	return v1.NewEgressQoSLister(f.Informer().GetIndexer())
+func (f *egressQoSInformer) Lister() egressqosv1.EgressQoSLister {
+	return egressqosv1.NewEgressQoSLister(f.Informer().GetIndexer())
 }

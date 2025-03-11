@@ -18,179 +18,33 @@ limitations under the License.
 package fake
 
 import (
-	"context"
-	json "encoding/json"
-	"fmt"
-
 	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1"
 	egressservicev1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/applyconfiguration/egressservice/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	labels "k8s.io/apimachinery/pkg/labels"
-	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
-	testing "k8s.io/client-go/testing"
+	typedegressservicev1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/clientset/versioned/typed/egressservice/v1"
+	gentype "k8s.io/client-go/gentype"
 )
 
-// FakeEgressServices implements EgressServiceInterface
-type FakeEgressServices struct {
+// fakeEgressServices implements EgressServiceInterface
+type fakeEgressServices struct {
+	*gentype.FakeClientWithListAndApply[*v1.EgressService, *v1.EgressServiceList, *egressservicev1.EgressServiceApplyConfiguration]
 	Fake *FakeK8sV1
-	ns   string
 }
 
-var egressservicesResource = v1.SchemeGroupVersion.WithResource("egressservices")
-
-var egressservicesKind = v1.SchemeGroupVersion.WithKind("EgressService")
-
-// Get takes name of the egressService, and returns the corresponding egressService object, and an error if there is any.
-func (c *FakeEgressServices) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.EgressService, err error) {
-	emptyResult := &v1.EgressService{}
-	obj, err := c.Fake.
-		Invokes(testing.NewGetActionWithOptions(egressservicesResource, c.ns, name, options), emptyResult)
-
-	if obj == nil {
-		return emptyResult, err
+func newFakeEgressServices(fake *FakeK8sV1, namespace string) typedegressservicev1.EgressServiceInterface {
+	return &fakeEgressServices{
+		gentype.NewFakeClientWithListAndApply[*v1.EgressService, *v1.EgressServiceList, *egressservicev1.EgressServiceApplyConfiguration](
+			fake.Fake,
+			namespace,
+			v1.SchemeGroupVersion.WithResource("egressservices"),
+			v1.SchemeGroupVersion.WithKind("EgressService"),
+			func() *v1.EgressService { return &v1.EgressService{} },
+			func() *v1.EgressServiceList { return &v1.EgressServiceList{} },
+			func(dst, src *v1.EgressServiceList) { dst.ListMeta = src.ListMeta },
+			func(list *v1.EgressServiceList) []*v1.EgressService { return gentype.ToPointerSlice(list.Items) },
+			func(list *v1.EgressServiceList, items []*v1.EgressService) {
+				list.Items = gentype.FromPointerSlice(items)
+			},
+		),
+		fake,
 	}
-	return obj.(*v1.EgressService), err
-}
-
-// List takes label and field selectors, and returns the list of EgressServices that match those selectors.
-func (c *FakeEgressServices) List(ctx context.Context, opts metav1.ListOptions) (result *v1.EgressServiceList, err error) {
-	emptyResult := &v1.EgressServiceList{}
-	obj, err := c.Fake.
-		Invokes(testing.NewListActionWithOptions(egressservicesResource, egressservicesKind, c.ns, opts), emptyResult)
-
-	if obj == nil {
-		return emptyResult, err
-	}
-
-	label, _, _ := testing.ExtractFromListOptions(opts)
-	if label == nil {
-		label = labels.Everything()
-	}
-	list := &v1.EgressServiceList{ListMeta: obj.(*v1.EgressServiceList).ListMeta}
-	for _, item := range obj.(*v1.EgressServiceList).Items {
-		if label.Matches(labels.Set(item.Labels)) {
-			list.Items = append(list.Items, item)
-		}
-	}
-	return list, err
-}
-
-// Watch returns a watch.Interface that watches the requested egressServices.
-func (c *FakeEgressServices) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
-	return c.Fake.
-		InvokesWatch(testing.NewWatchActionWithOptions(egressservicesResource, c.ns, opts))
-
-}
-
-// Create takes the representation of a egressService and creates it.  Returns the server's representation of the egressService, and an error, if there is any.
-func (c *FakeEgressServices) Create(ctx context.Context, egressService *v1.EgressService, opts metav1.CreateOptions) (result *v1.EgressService, err error) {
-	emptyResult := &v1.EgressService{}
-	obj, err := c.Fake.
-		Invokes(testing.NewCreateActionWithOptions(egressservicesResource, c.ns, egressService, opts), emptyResult)
-
-	if obj == nil {
-		return emptyResult, err
-	}
-	return obj.(*v1.EgressService), err
-}
-
-// Update takes the representation of a egressService and updates it. Returns the server's representation of the egressService, and an error, if there is any.
-func (c *FakeEgressServices) Update(ctx context.Context, egressService *v1.EgressService, opts metav1.UpdateOptions) (result *v1.EgressService, err error) {
-	emptyResult := &v1.EgressService{}
-	obj, err := c.Fake.
-		Invokes(testing.NewUpdateActionWithOptions(egressservicesResource, c.ns, egressService, opts), emptyResult)
-
-	if obj == nil {
-		return emptyResult, err
-	}
-	return obj.(*v1.EgressService), err
-}
-
-// UpdateStatus was generated because the type contains a Status member.
-// Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-func (c *FakeEgressServices) UpdateStatus(ctx context.Context, egressService *v1.EgressService, opts metav1.UpdateOptions) (result *v1.EgressService, err error) {
-	emptyResult := &v1.EgressService{}
-	obj, err := c.Fake.
-		Invokes(testing.NewUpdateSubresourceActionWithOptions(egressservicesResource, "status", c.ns, egressService, opts), emptyResult)
-
-	if obj == nil {
-		return emptyResult, err
-	}
-	return obj.(*v1.EgressService), err
-}
-
-// Delete takes name of the egressService and deletes it. Returns an error if one occurs.
-func (c *FakeEgressServices) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
-	_, err := c.Fake.
-		Invokes(testing.NewDeleteActionWithOptions(egressservicesResource, c.ns, name, opts), &v1.EgressService{})
-
-	return err
-}
-
-// DeleteCollection deletes a collection of objects.
-func (c *FakeEgressServices) DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error {
-	action := testing.NewDeleteCollectionActionWithOptions(egressservicesResource, c.ns, opts, listOpts)
-
-	_, err := c.Fake.Invokes(action, &v1.EgressServiceList{})
-	return err
-}
-
-// Patch applies the patch and returns the patched egressService.
-func (c *FakeEgressServices) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.EgressService, err error) {
-	emptyResult := &v1.EgressService{}
-	obj, err := c.Fake.
-		Invokes(testing.NewPatchSubresourceActionWithOptions(egressservicesResource, c.ns, name, pt, data, opts, subresources...), emptyResult)
-
-	if obj == nil {
-		return emptyResult, err
-	}
-	return obj.(*v1.EgressService), err
-}
-
-// Apply takes the given apply declarative configuration, applies it and returns the applied egressService.
-func (c *FakeEgressServices) Apply(ctx context.Context, egressService *egressservicev1.EgressServiceApplyConfiguration, opts metav1.ApplyOptions) (result *v1.EgressService, err error) {
-	if egressService == nil {
-		return nil, fmt.Errorf("egressService provided to Apply must not be nil")
-	}
-	data, err := json.Marshal(egressService)
-	if err != nil {
-		return nil, err
-	}
-	name := egressService.Name
-	if name == nil {
-		return nil, fmt.Errorf("egressService.Name must be provided to Apply")
-	}
-	emptyResult := &v1.EgressService{}
-	obj, err := c.Fake.
-		Invokes(testing.NewPatchSubresourceActionWithOptions(egressservicesResource, c.ns, *name, types.ApplyPatchType, data, opts.ToPatchOptions()), emptyResult)
-
-	if obj == nil {
-		return emptyResult, err
-	}
-	return obj.(*v1.EgressService), err
-}
-
-// ApplyStatus was generated because the type contains a Status member.
-// Add a +genclient:noStatus comment above the type to avoid generating ApplyStatus().
-func (c *FakeEgressServices) ApplyStatus(ctx context.Context, egressService *egressservicev1.EgressServiceApplyConfiguration, opts metav1.ApplyOptions) (result *v1.EgressService, err error) {
-	if egressService == nil {
-		return nil, fmt.Errorf("egressService provided to Apply must not be nil")
-	}
-	data, err := json.Marshal(egressService)
-	if err != nil {
-		return nil, err
-	}
-	name := egressService.Name
-	if name == nil {
-		return nil, fmt.Errorf("egressService.Name must be provided to Apply")
-	}
-	emptyResult := &v1.EgressService{}
-	obj, err := c.Fake.
-		Invokes(testing.NewPatchSubresourceActionWithOptions(egressservicesResource, c.ns, *name, types.ApplyPatchType, data, opts.ToPatchOptions(), "status"), emptyResult)
-
-	if obj == nil {
-		return emptyResult, err
-	}
-	return obj.(*v1.EgressService), err
 }

@@ -18,16 +18,16 @@ limitations under the License.
 package v1
 
 import (
-	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 )
 
 // Layer3ConfigApplyConfiguration represents a declarative configuration of the Layer3Config type for use
 // with apply.
 type Layer3ConfigApplyConfiguration struct {
-	Role        *v1.NetworkRole                  `json:"role,omitempty"`
-	MTU         *int32                           `json:"mtu,omitempty"`
-	Subnets     []Layer3SubnetApplyConfiguration `json:"subnets,omitempty"`
-	JoinSubnets *v1.DualStackCIDRs               `json:"joinSubnets,omitempty"`
+	Role        *userdefinednetworkv1.NetworkRole    `json:"role,omitempty"`
+	MTU         *int32                               `json:"mtu,omitempty"`
+	Subnets     []Layer3SubnetApplyConfiguration     `json:"subnets,omitempty"`
+	JoinSubnets *userdefinednetworkv1.DualStackCIDRs `json:"joinSubnets,omitempty"`
 }
 
 // Layer3ConfigApplyConfiguration constructs a declarative configuration of the Layer3Config type for use with
@@ -39,7 +39,7 @@ func Layer3Config() *Layer3ConfigApplyConfiguration {
 // WithRole sets the Role field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Role field is set to the value of the last call.
-func (b *Layer3ConfigApplyConfiguration) WithRole(value v1.NetworkRole) *Layer3ConfigApplyConfiguration {
+func (b *Layer3ConfigApplyConfiguration) WithRole(value userdefinednetworkv1.NetworkRole) *Layer3ConfigApplyConfiguration {
 	b.Role = &value
 	return b
 }
@@ -68,7 +68,7 @@ func (b *Layer3ConfigApplyConfiguration) WithSubnets(values ...*Layer3SubnetAppl
 // WithJoinSubnets sets the JoinSubnets field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the JoinSubnets field is set to the value of the last call.
-func (b *Layer3ConfigApplyConfiguration) WithJoinSubnets(value v1.DualStackCIDRs) *Layer3ConfigApplyConfiguration {
+func (b *Layer3ConfigApplyConfiguration) WithJoinSubnets(value userdefinednetworkv1.DualStackCIDRs) *Layer3ConfigApplyConfiguration {
 	b.JoinSubnets = &value
 	return b
 }

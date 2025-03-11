@@ -18,179 +18,35 @@ limitations under the License.
 package fake
 
 import (
-	"context"
-	json "encoding/json"
-	"fmt"
-
 	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/applyconfiguration/userdefinednetwork/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	labels "k8s.io/apimachinery/pkg/labels"
-	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
-	testing "k8s.io/client-go/testing"
+	typeduserdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/typed/userdefinednetwork/v1"
+	gentype "k8s.io/client-go/gentype"
 )
 
-// FakeUserDefinedNetworks implements UserDefinedNetworkInterface
-type FakeUserDefinedNetworks struct {
+// fakeUserDefinedNetworks implements UserDefinedNetworkInterface
+type fakeUserDefinedNetworks struct {
+	*gentype.FakeClientWithListAndApply[*v1.UserDefinedNetwork, *v1.UserDefinedNetworkList, *userdefinednetworkv1.UserDefinedNetworkApplyConfiguration]
 	Fake *FakeK8sV1
-	ns   string
 }
 
-var userdefinednetworksResource = v1.SchemeGroupVersion.WithResource("userdefinednetworks")
-
-var userdefinednetworksKind = v1.SchemeGroupVersion.WithKind("UserDefinedNetwork")
-
-// Get takes name of the userDefinedNetwork, and returns the corresponding userDefinedNetwork object, and an error if there is any.
-func (c *FakeUserDefinedNetworks) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.UserDefinedNetwork, err error) {
-	emptyResult := &v1.UserDefinedNetwork{}
-	obj, err := c.Fake.
-		Invokes(testing.NewGetActionWithOptions(userdefinednetworksResource, c.ns, name, options), emptyResult)
-
-	if obj == nil {
-		return emptyResult, err
+func newFakeUserDefinedNetworks(fake *FakeK8sV1, namespace string) typeduserdefinednetworkv1.UserDefinedNetworkInterface {
+	return &fakeUserDefinedNetworks{
+		gentype.NewFakeClientWithListAndApply[*v1.UserDefinedNetwork, *v1.UserDefinedNetworkList, *userdefinednetworkv1.UserDefinedNetworkApplyConfiguration](
+			fake.Fake,
+			namespace,
+			v1.SchemeGroupVersion.WithResource("userdefinednetworks"),
+			v1.SchemeGroupVersion.WithKind("UserDefinedNetwork"),
+			func() *v1.UserDefinedNetwork { return &v1.UserDefinedNetwork{} },
+			func() *v1.UserDefinedNetworkList { return &v1.UserDefinedNetworkList{} },
+			func(dst, src *v1.UserDefinedNetworkList) { dst.ListMeta = src.ListMeta },
+			func(list *v1.UserDefinedNetworkList) []*v1.UserDefinedNetwork {
+				return gentype.ToPointerSlice(list.Items)
+			},
+			func(list *v1.UserDefinedNetworkList, items []*v1.UserDefinedNetwork) {
+				list.Items = gentype.FromPointerSlice(items)
+			},
+		),
+		fake,
 	}
-	return obj.(*v1.UserDefinedNetwork), err
-}
-
-// List takes label and field selectors, and returns the list of UserDefinedNetworks that match those selectors.
-func (c *FakeUserDefinedNetworks) List(ctx context.Context, opts metav1.ListOptions) (result *v1.UserDefinedNetworkList, err error) {
-	emptyResult := &v1.UserDefinedNetworkList{}
-	obj, err := c.Fake.
-		Invokes(testing.NewListActionWithOptions(userdefinednetworksResource, userdefinednetworksKind, c.ns, opts), emptyResult)
-
-	if obj == nil {
-		return emptyResult, err
-	}
-
-	label, _, _ := testing.ExtractFromListOptions(opts)
-	if label == nil {
-		label = labels.Everything()
-	}
-	list := &v1.UserDefinedNetworkList{ListMeta: obj.(*v1.UserDefinedNetworkList).ListMeta}
-	for _, item := range obj.(*v1.UserDefinedNetworkList).Items {
-		if label.Matches(labels.Set(item.Labels)) {
-			list.Items = append(list.Items, item)
-		}
-	}
-	return list, err
-}
-
-// Watch returns a watch.Interface that watches the requested userDefinedNetworks.
-func (c *FakeUserDefinedNetworks) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
-	return c.Fake.
-		InvokesWatch(testing.NewWatchActionWithOptions(userdefinednetworksResource, c.ns, opts))
-
-}
-
-// Create takes the representation of a userDefinedNetwork and creates it.  Returns the server's representation of the userDefinedNetwork, and an error, if there is any.
-func (c *FakeUserDefinedNetworks) Create(ctx context.Context, userDefinedNetwork *v1.UserDefinedNetwork, opts metav1.CreateOptions) (result *v1.UserDefinedNetwork, err error) {
-	emptyResult := &v1.UserDefinedNetwork{}
-	obj, err := c.Fake.
-		Invokes(testing.NewCreateActionWithOptions(userdefinednetworksResource, c.ns, userDefinedNetwork, opts), emptyResult)
-
-	if obj == nil {
-		return emptyResult, err
-	}
-	return obj.(*v1.UserDefinedNetwork), err
-}
-
-// Update takes the representation of a userDefinedNetwork and updates it. Returns the server's representation of the userDefinedNetwork, and an error, if there is any.
-func (c *FakeUserDefinedNetworks) Update(ctx context.Context, userDefinedNetwork *v1.UserDefinedNetwork, opts metav1.UpdateOptions) (result *v1.UserDefinedNetwork, err error) {
-	emptyResult := &v1.UserDefinedNetwork{}
-	obj, err := c.Fake.
-		Invokes(testing.NewUpdateActionWithOptions(userdefinednetworksResource, c.ns, userDefinedNetwork, opts), emptyResult)
-
-	if obj == nil {
-		return emptyResult, err
-	}
-	return obj.(*v1.UserDefinedNetwork), err
-}
-
-// UpdateStatus was generated because the type contains a Status member.
-// Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-func (c *FakeUserDefinedNetworks) UpdateStatus(ctx context.Context, userDefinedNetwork *v1.UserDefinedNetwork, opts metav1.UpdateOptions) (result *v1.UserDefinedNetwork, err error) {
-	emptyResult := &v1.UserDefinedNetwork{}
-	obj, err := c.Fake.
-		Invokes(testing.NewUpdateSubresourceActionWithOptions(userdefinednetworksResource, "status", c.ns, userDefinedNetwork, opts), emptyResult)
-
-	if obj == nil {
-		return emptyResult, err
-	}
-	return obj.(*v1.UserDefinedNetwork), err
-}
-
-// Delete takes name of the userDefinedNetwork and deletes it. Returns an error if one occurs.
-func (c *FakeUserDefinedNetworks) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
-	_, err := c.Fake.
-		Invokes(testing.NewDeleteActionWithOptions(userdefinednetworksResource, c.ns, name, opts), &v1.UserDefinedNetwork{})
-
-	return err
-}
-
-// DeleteCollection deletes a collection of objects.
-func (c *FakeUserDefinedNetworks) DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error {
-	action := testing.NewDeleteCollectionActionWithOptions(userdefinednetworksResource, c.ns, opts, listOpts)
-
-	_, err := c.Fake.Invokes(action, &v1.UserDefinedNetworkList{})
-	return err
-}
-
-// Patch applies the patch and returns the patched userDefinedNetwork.
-func (c *FakeUserDefinedNetworks) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.UserDefinedNetwork, err error) {
-	emptyResult := &v1.UserDefinedNetwork{}
-	obj, err := c.Fake.
-		Invokes(testing.NewPatchSubresourceActionWithOptions(userdefinednetworksResource, c.ns, name, pt, data, opts, subresources...), emptyResult)
-
-	if obj == nil {
-		return emptyResult, err
-	}
-	return obj.(*v1.UserDefinedNetwork), err
-}
-
-// Apply takes the given apply declarative configuration, applies it and returns the applied userDefinedNetwork.
-func (c *FakeUserDefinedNetworks) Apply(ctx context.Context, userDefinedNetwork *userdefinednetworkv1.UserDefinedNetworkApplyConfiguration, opts metav1.ApplyOptions) (result *v1.UserDefinedNetwork, err error) {
-	if userDefinedNetwork == nil {
-		return nil, fmt.Errorf("userDefinedNetwork provided to Apply must not be nil")
-	}
-	data, err := json.Marshal(userDefinedNetwork)
-	if err != nil {
-		return nil, err
-	}
-	name := userDefinedNetwork.Name
-	if name == nil {
-		return nil, fmt.Errorf("userDefinedNetwork.Name must be provided to Apply")
-	}
-	emptyResult := &v1.UserDefinedNetwork{}
-	obj, err := c.Fake.
-		Invokes(testing.NewPatchSubresourceActionWithOptions(userdefinednetworksResource, c.ns, *name, types.ApplyPatchType, data, opts.ToPatchOptions()), emptyResult)
-
-	if obj == nil {
-		return emptyResult, err
-	}
-	return obj.(*v1.UserDefinedNetwork), err
-}
-
-// ApplyStatus was generated because the type contains a Status member.
-// Add a +genclient:noStatus comment above the type to avoid generating ApplyStatus().
-func (c *FakeUserDefinedNetworks) ApplyStatus(ctx context.Context, userDefinedNetwork *userdefinednetworkv1.UserDefinedNetworkApplyConfiguration, opts metav1.ApplyOptions) (result *v1.UserDefinedNetwork, err error) {
-	if userDefinedNetwork == nil {
-		return nil, fmt.Errorf("userDefinedNetwork provided to Apply must not be nil")
-	}
-	data, err := json.Marshal(userDefinedNetwork)
-	if err != nil {
-		return nil, err
-	}
-	name := userDefinedNetwork.Name
-	if name == nil {
-		return nil, fmt.Errorf("userDefinedNetwork.Name must be provided to Apply")
-	}
-	emptyResult := &v1.UserDefinedNetwork{}
-	obj, err := c.Fake.
-		Invokes(testing.NewPatchSubresourceActionWithOptions(userdefinednetworksResource, c.ns, *name, types.ApplyPatchType, data, opts.ToPatchOptions(), "status"), emptyResult)
-
-	if obj == nil {
-		return emptyResult, err
-	}
-	return obj.(*v1.UserDefinedNetwork), err
 }

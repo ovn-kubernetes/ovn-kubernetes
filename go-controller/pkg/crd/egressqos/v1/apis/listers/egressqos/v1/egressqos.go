@@ -18,10 +18,10 @@ limitations under the License.
 package v1
 
 import (
-	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1"
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/client-go/listers"
-	"k8s.io/client-go/tools/cache"
+	egressqosv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1"
+	labels "k8s.io/apimachinery/pkg/labels"
+	listers "k8s.io/client-go/listers"
+	cache "k8s.io/client-go/tools/cache"
 )
 
 // EgressQoSLister helps list EgressQoSes.
@@ -29,7 +29,7 @@ import (
 type EgressQoSLister interface {
 	// List lists all EgressQoSes in the indexer.
 	// Objects returned here must be treated as read-only.
-	List(selector labels.Selector) (ret []*v1.EgressQoS, err error)
+	List(selector labels.Selector) (ret []*egressqosv1.EgressQoS, err error)
 	// EgressQoSes returns an object that can list and get EgressQoSes.
 	EgressQoSes(namespace string) EgressQoSNamespaceLister
 	EgressQoSListerExpansion
@@ -37,17 +37,17 @@ type EgressQoSLister interface {
 
 // egressQoSLister implements the EgressQoSLister interface.
 type egressQoSLister struct {
-	listers.ResourceIndexer[*v1.EgressQoS]
+	listers.ResourceIndexer[*egressqosv1.EgressQoS]
 }
 
 // NewEgressQoSLister returns a new EgressQoSLister.
 func NewEgressQoSLister(indexer cache.Indexer) EgressQoSLister {
-	return &egressQoSLister{listers.New[*v1.EgressQoS](indexer, v1.Resource("egressqos"))}
+	return &egressQoSLister{listers.New[*egressqosv1.EgressQoS](indexer, egressqosv1.Resource("egressqos"))}
 }
 
 // EgressQoSes returns an object that can list and get EgressQoSes.
 func (s *egressQoSLister) EgressQoSes(namespace string) EgressQoSNamespaceLister {
-	return egressQoSNamespaceLister{listers.NewNamespaced[*v1.EgressQoS](s.ResourceIndexer, namespace)}
+	return egressQoSNamespaceLister{listers.NewNamespaced[*egressqosv1.EgressQoS](s.ResourceIndexer, namespace)}
 }
 
 // EgressQoSNamespaceLister helps list and get EgressQoSes.
@@ -55,15 +55,15 @@ func (s *egressQoSLister) EgressQoSes(namespace string) EgressQoSNamespaceLister
 type EgressQoSNamespaceLister interface {
 	// List lists all EgressQoSes in the indexer for a given namespace.
 	// Objects returned here must be treated as read-only.
-	List(selector labels.Selector) (ret []*v1.EgressQoS, err error)
+	List(selector labels.Selector) (ret []*egressqosv1.EgressQoS, err error)
 	// Get retrieves the EgressQoS from the indexer for a given namespace and name.
 	// Objects returned here must be treated as read-only.
-	Get(name string) (*v1.EgressQoS, error)
+	Get(name string) (*egressqosv1.EgressQoS, error)
 	EgressQoSNamespaceListerExpansion
 }
 
 // egressQoSNamespaceLister implements the EgressQoSNamespaceLister
 // interface.
 type egressQoSNamespaceLister struct {
-	listers.ResourceIndexer[*v1.EgressQoS]
+	listers.ResourceIndexer[*egressqosv1.EgressQoS]
 }

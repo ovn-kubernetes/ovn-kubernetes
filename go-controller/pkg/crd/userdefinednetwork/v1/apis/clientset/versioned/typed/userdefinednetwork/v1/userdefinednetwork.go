@@ -18,10 +18,10 @@ limitations under the License.
 package v1
 
 import (
-	"context"
+	context "context"
 
-	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
-	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/applyconfiguration/userdefinednetwork/v1"
+	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	applyconfigurationuserdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/applyconfiguration/userdefinednetwork/v1"
 	scheme "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/scheme"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
@@ -37,36 +37,39 @@ type UserDefinedNetworksGetter interface {
 
 // UserDefinedNetworkInterface has methods to work with UserDefinedNetwork resources.
 type UserDefinedNetworkInterface interface {
-	Create(ctx context.Context, userDefinedNetwork *v1.UserDefinedNetwork, opts metav1.CreateOptions) (*v1.UserDefinedNetwork, error)
-	Update(ctx context.Context, userDefinedNetwork *v1.UserDefinedNetwork, opts metav1.UpdateOptions) (*v1.UserDefinedNetwork, error)
+	Create(ctx context.Context, userDefinedNetwork *userdefinednetworkv1.UserDefinedNetwork, opts metav1.CreateOptions) (*userdefinednetworkv1.UserDefinedNetwork, error)
+	Update(ctx context.Context, userDefinedNetwork *userdefinednetworkv1.UserDefinedNetwork, opts metav1.UpdateOptions) (*userdefinednetworkv1.UserDefinedNetwork, error)
 	// Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-	UpdateStatus(ctx context.Context, userDefinedNetwork *v1.UserDefinedNetwork, opts metav1.UpdateOptions) (*v1.UserDefinedNetwork, error)
+	UpdateStatus(ctx context.Context, userDefinedNetwork *userdefinednetworkv1.UserDefinedNetwork, opts metav1.UpdateOptions) (*userdefinednetworkv1.UserDefinedNetwork, error)
 	Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error
 	DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error
-	Get(ctx context.Context, name string, opts metav1.GetOptions) (*v1.UserDefinedNetwork, error)
-	List(ctx context.Context, opts metav1.ListOptions) (*v1.UserDefinedNetworkList, error)
+	Get(ctx context.Context, name string, opts metav1.GetOptions) (*userdefinednetworkv1.UserDefinedNetwork, error)
+	List(ctx context.Context, opts metav1.ListOptions) (*userdefinednetworkv1.UserDefinedNetworkList, error)
 	Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error)
-	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.UserDefinedNetwork, err error)
-	Apply(ctx context.Context, userDefinedNetwork *userdefinednetworkv1.UserDefinedNetworkApplyConfiguration, opts metav1.ApplyOptions) (result *v1.UserDefinedNetwork, err error)
+	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *userdefinednetworkv1.UserDefinedNetwork, err error)
+	Apply(ctx context.Context, userDefinedNetwork *applyconfigurationuserdefinednetworkv1.UserDefinedNetworkApplyConfiguration, opts metav1.ApplyOptions) (result *userdefinednetworkv1.UserDefinedNetwork, err error)
 	// Add a +genclient:noStatus comment above the type to avoid generating ApplyStatus().
-	ApplyStatus(ctx context.Context, userDefinedNetwork *userdefinednetworkv1.UserDefinedNetworkApplyConfiguration, opts metav1.ApplyOptions) (result *v1.UserDefinedNetwork, err error)
+	ApplyStatus(ctx context.Context, userDefinedNetwork *applyconfigurationuserdefinednetworkv1.UserDefinedNetworkApplyConfiguration, opts metav1.ApplyOptions) (result *userdefinednetworkv1.UserDefinedNetwork, err error)
 	UserDefinedNetworkExpansion
 }
 
 // userDefinedNetworks implements UserDefinedNetworkInterface
 type userDefinedNetworks struct {
-	*gentype.ClientWithListAndApply[*v1.UserDefinedNetwork, *v1.UserDefinedNetworkList, *userdefinednetworkv1.UserDefinedNetworkApplyConfiguration]
+	*gentype.ClientWithListAndApply[*userdefinednetworkv1.UserDefinedNetwork, *userdefinednetworkv1.UserDefinedNetworkList, *applyconfigurationuserdefinednetworkv1.UserDefinedNetworkApplyConfiguration]
 }
 
 // newUserDefinedNetworks returns a UserDefinedNetworks
 func newUserDefinedNetworks(c *K8sV1Client, namespace string) *userDefinedNetworks {
 	return &userDefinedNetworks{
-		gentype.NewClientWithListAndApply[*v1.UserDefinedNetwork, *v1.UserDefinedNetworkList, *userdefinednetworkv1.UserDefinedNetworkApplyConfiguration](
+		gentype.NewClientWithListAndApply[*userdefinednetworkv1.UserDefinedNetwork, *userdefinednetworkv1.UserDefinedNetworkList, *applyconfigurationuserdefinednetworkv1.UserDefinedNetworkApplyConfiguration](
 			"userdefinednetworks",
 			c.RESTClient(),
 			scheme.ParameterCodec,
 			namespace,
-			func() *v1.UserDefinedNetwork { return &v1.UserDefinedNetwork{} },
-			func() *v1.UserDefinedNetworkList { return &v1.UserDefinedNetworkList{} }),
+			func() *userdefinednetworkv1.UserDefinedNetwork { return &userdefinednetworkv1.UserDefinedNetwork{} },
+			func() *userdefinednetworkv1.UserDefinedNetworkList {
+				return &userdefinednetworkv1.UserDefinedNetworkList{}
+			},
+		),
 	}
 }

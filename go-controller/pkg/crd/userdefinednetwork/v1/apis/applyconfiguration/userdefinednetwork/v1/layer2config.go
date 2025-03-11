@@ -18,17 +18,17 @@ limitations under the License.
 package v1
 
 import (
-	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 )
 
 // Layer2ConfigApplyConfiguration represents a declarative configuration of the Layer2Config type for use
 // with apply.
 type Layer2ConfigApplyConfiguration struct {
-	Role        *v1.NetworkRole               `json:"role,omitempty"`
-	MTU         *int32                        `json:"mtu,omitempty"`
-	Subnets     *v1.DualStackCIDRs            `json:"subnets,omitempty"`
-	JoinSubnets *v1.DualStackCIDRs            `json:"joinSubnets,omitempty"`
-	IPAM        *IPAMConfigApplyConfiguration `json:"ipam,omitempty"`
+	Role        *userdefinednetworkv1.NetworkRole    `json:"role,omitempty"`
+	MTU         *int32                               `json:"mtu,omitempty"`
+	Subnets     *userdefinednetworkv1.DualStackCIDRs `json:"subnets,omitempty"`
+	JoinSubnets *userdefinednetworkv1.DualStackCIDRs `json:"joinSubnets,omitempty"`
+	IPAM        *IPAMConfigApplyConfiguration        `json:"ipam,omitempty"`
 }
 
 // Layer2ConfigApplyConfiguration constructs a declarative configuration of the Layer2Config type for use with
@@ -40,7 +40,7 @@ func Layer2Config() *Layer2ConfigApplyConfiguration {
 // WithRole sets the Role field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Role field is set to the value of the last call.
-func (b *Layer2ConfigApplyConfiguration) WithRole(value v1.NetworkRole) *Layer2ConfigApplyConfiguration {
+func (b *Layer2ConfigApplyConfiguration) WithRole(value userdefinednetworkv1.NetworkRole) *Layer2ConfigApplyConfiguration {
 	b.Role = &value
 	return b
 }
@@ -56,7 +56,7 @@ func (b *Layer2ConfigApplyConfiguration) WithMTU(value int32) *Layer2ConfigApply
 // WithSubnets sets the Subnets field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Subnets field is set to the value of the last call.
-func (b *Layer2ConfigApplyConfiguration) WithSubnets(value v1.DualStackCIDRs) *Layer2ConfigApplyConfiguration {
+func (b *Layer2ConfigApplyConfiguration) WithSubnets(value userdefinednetworkv1.DualStackCIDRs) *Layer2ConfigApplyConfiguration {
 	b.Subnets = &value
 	return b
 }
@@ -64,7 +64,7 @@ func (b *Layer2ConfigApplyConfiguration) WithSubnets(value v1.DualStackCIDRs) *L
 // WithJoinSubnets sets the JoinSubnets field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the JoinSubnets field is set to the value of the last call.
-func (b *Layer2ConfigApplyConfiguration) WithJoinSubnets(value v1.DualStackCIDRs) *Layer2ConfigApplyConfiguration {
+func (b *Layer2ConfigApplyConfiguration) WithJoinSubnets(value userdefinednetworkv1.DualStackCIDRs) *Layer2ConfigApplyConfiguration {
 	b.JoinSubnets = &value
 	return b
 }
