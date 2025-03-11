@@ -28,7 +28,7 @@ type FakeK8sV1 struct {
 }
 
 func (c *FakeK8sV1) RouteAdvertisements() v1.RouteAdvertisementsInterface {
-	return &FakeRouteAdvertisements{c}
+	return newFakeRouteAdvertisements(c)
 }
 
 // RESTClient returns a RESTClient that is used to communicate

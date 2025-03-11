@@ -18,179 +18,33 @@ limitations under the License.
 package fake
 
 import (
-	"context"
-	json "encoding/json"
-	"fmt"
-
 	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
 	egressfirewallv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1/apis/applyconfiguration/egressfirewall/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	labels "k8s.io/apimachinery/pkg/labels"
-	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
-	testing "k8s.io/client-go/testing"
+	typedegressfirewallv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1/apis/clientset/versioned/typed/egressfirewall/v1"
+	gentype "k8s.io/client-go/gentype"
 )
 
-// FakeEgressFirewalls implements EgressFirewallInterface
-type FakeEgressFirewalls struct {
+// fakeEgressFirewalls implements EgressFirewallInterface
+type fakeEgressFirewalls struct {
+	*gentype.FakeClientWithListAndApply[*v1.EgressFirewall, *v1.EgressFirewallList, *egressfirewallv1.EgressFirewallApplyConfiguration]
 	Fake *FakeK8sV1
-	ns   string
 }
 
-var egressfirewallsResource = v1.SchemeGroupVersion.WithResource("egressfirewalls")
-
-var egressfirewallsKind = v1.SchemeGroupVersion.WithKind("EgressFirewall")
-
-// Get takes name of the egressFirewall, and returns the corresponding egressFirewall object, and an error if there is any.
-func (c *FakeEgressFirewalls) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.EgressFirewall, err error) {
-	emptyResult := &v1.EgressFirewall{}
-	obj, err := c.Fake.
-		Invokes(testing.NewGetActionWithOptions(egressfirewallsResource, c.ns, name, options), emptyResult)
-
-	if obj == nil {
-		return emptyResult, err
+func newFakeEgressFirewalls(fake *FakeK8sV1, namespace string) typedegressfirewallv1.EgressFirewallInterface {
+	return &fakeEgressFirewalls{
+		gentype.NewFakeClientWithListAndApply[*v1.EgressFirewall, *v1.EgressFirewallList, *egressfirewallv1.EgressFirewallApplyConfiguration](
+			fake.Fake,
+			namespace,
+			v1.SchemeGroupVersion.WithResource("egressfirewalls"),
+			v1.SchemeGroupVersion.WithKind("EgressFirewall"),
+			func() *v1.EgressFirewall { return &v1.EgressFirewall{} },
+			func() *v1.EgressFirewallList { return &v1.EgressFirewallList{} },
+			func(dst, src *v1.EgressFirewallList) { dst.ListMeta = src.ListMeta },
+			func(list *v1.EgressFirewallList) []*v1.EgressFirewall { return gentype.ToPointerSlice(list.Items) },
+			func(list *v1.EgressFirewallList, items []*v1.EgressFirewall) {
+				list.Items = gentype.FromPointerSlice(items)
+			},
+		),
+		fake,
 	}
-	return obj.(*v1.EgressFirewall), err
-}
-
-// List takes label and field selectors, and returns the list of EgressFirewalls that match those selectors.
-func (c *FakeEgressFirewalls) List(ctx context.Context, opts metav1.ListOptions) (result *v1.EgressFirewallList, err error) {
-	emptyResult := &v1.EgressFirewallList{}
-	obj, err := c.Fake.
-		Invokes(testing.NewListActionWithOptions(egressfirewallsResource, egressfirewallsKind, c.ns, opts), emptyResult)
-
-	if obj == nil {
-		return emptyResult, err
-	}
-
-	label, _, _ := testing.ExtractFromListOptions(opts)
-	if label == nil {
-		label = labels.Everything()
-	}
-	list := &v1.EgressFirewallList{ListMeta: obj.(*v1.EgressFirewallList).ListMeta}
-	for _, item := range obj.(*v1.EgressFirewallList).Items {
-		if label.Matches(labels.Set(item.Labels)) {
-			list.Items = append(list.Items, item)
-		}
-	}
-	return list, err
-}
-
-// Watch returns a watch.Interface that watches the requested egressFirewalls.
-func (c *FakeEgressFirewalls) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
-	return c.Fake.
-		InvokesWatch(testing.NewWatchActionWithOptions(egressfirewallsResource, c.ns, opts))
-
-}
-
-// Create takes the representation of a egressFirewall and creates it.  Returns the server's representation of the egressFirewall, and an error, if there is any.
-func (c *FakeEgressFirewalls) Create(ctx context.Context, egressFirewall *v1.EgressFirewall, opts metav1.CreateOptions) (result *v1.EgressFirewall, err error) {
-	emptyResult := &v1.EgressFirewall{}
-	obj, err := c.Fake.
-		Invokes(testing.NewCreateActionWithOptions(egressfirewallsResource, c.ns, egressFirewall, opts), emptyResult)
-
-	if obj == nil {
-		return emptyResult, err
-	}
-	return obj.(*v1.EgressFirewall), err
-}
-
-// Update takes the representation of a egressFirewall and updates it. Returns the server's representation of the egressFirewall, and an error, if there is any.
-func (c *FakeEgressFirewalls) Update(ctx context.Context, egressFirewall *v1.EgressFirewall, opts metav1.UpdateOptions) (result *v1.EgressFirewall, err error) {
-	emptyResult := &v1.EgressFirewall{}
-	obj, err := c.Fake.
-		Invokes(testing.NewUpdateActionWithOptions(egressfirewallsResource, c.ns, egressFirewall, opts), emptyResult)
-
-	if obj == nil {
-		return emptyResult, err
-	}
-	return obj.(*v1.EgressFirewall), err
-}
-
-// UpdateStatus was generated because the type contains a Status member.
-// Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-func (c *FakeEgressFirewalls) UpdateStatus(ctx context.Context, egressFirewall *v1.EgressFirewall, opts metav1.UpdateOptions) (result *v1.EgressFirewall, err error) {
-	emptyResult := &v1.EgressFirewall{}
-	obj, err := c.Fake.
-		Invokes(testing.NewUpdateSubresourceActionWithOptions(egressfirewallsResource, "status", c.ns, egressFirewall, opts), emptyResult)
-
-	if obj == nil {
-		return emptyResult, err
-	}
-	return obj.(*v1.EgressFirewall), err
-}
-
-// Delete takes name of the egressFirewall and deletes it. Returns an error if one occurs.
-func (c *FakeEgressFirewalls) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
-	_, err := c.Fake.
-		Invokes(testing.NewDeleteActionWithOptions(egressfirewallsResource, c.ns, name, opts), &v1.EgressFirewall{})
-
-	return err
-}
-
-// DeleteCollection deletes a collection of objects.
-func (c *FakeEgressFirewalls) DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error {
-	action := testing.NewDeleteCollectionActionWithOptions(egressfirewallsResource, c.ns, opts, listOpts)
-
-	_, err := c.Fake.Invokes(action, &v1.EgressFirewallList{})
-	return err
-}
-
-// Patch applies the patch and returns the patched egressFirewall.
-func (c *FakeEgressFirewalls) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.EgressFirewall, err error) {
-	emptyResult := &v1.EgressFirewall{}
-	obj, err := c.Fake.
-		Invokes(testing.NewPatchSubresourceActionWithOptions(egressfirewallsResource, c.ns, name, pt, data, opts, subresources...), emptyResult)
-
-	if obj == nil {
-		return emptyResult, err
-	}
-	return obj.(*v1.EgressFirewall), err
-}
-
-// Apply takes the given apply declarative configuration, applies it and returns the applied egressFirewall.
-func (c *FakeEgressFirewalls) Apply(ctx context.Context, egressFirewall *egressfirewallv1.EgressFirewallApplyConfiguration, opts metav1.ApplyOptions) (result *v1.EgressFirewall, err error) {
-	if egressFirewall == nil {
-		return nil, fmt.Errorf("egressFirewall provided to Apply must not be nil")
-	}
-	data, err := json.Marshal(egressFirewall)
-	if err != nil {
-		return nil, err
-	}
-	name := egressFirewall.Name
-	if name == nil {
-		return nil, fmt.Errorf("egressFirewall.Name must be provided to Apply")
-	}
-	emptyResult := &v1.EgressFirewall{}
-	obj, err := c.Fake.
-		Invokes(testing.NewPatchSubresourceActionWithOptions(egressfirewallsResource, c.ns, *name, types.ApplyPatchType, data, opts.ToPatchOptions()), emptyResult)
-
-	if obj == nil {
-		return emptyResult, err
-	}
-	return obj.(*v1.EgressFirewall), err
-}
-
-// ApplyStatus was generated because the type contains a Status member.
-// Add a +genclient:noStatus comment above the type to avoid generating ApplyStatus().
-func (c *FakeEgressFirewalls) ApplyStatus(ctx context.Context, egressFirewall *egressfirewallv1.EgressFirewallApplyConfiguration, opts metav1.ApplyOptions) (result *v1.EgressFirewall, err error) {
-	if egressFirewall == nil {
-		return nil, fmt.Errorf("egressFirewall provided to Apply must not be nil")
-	}
-	data, err := json.Marshal(egressFirewall)
-	if err != nil {
-		return nil, err
-	}
-	name := egressFirewall.Name
-	if name == nil {
-		return nil, fmt.Errorf("egressFirewall.Name must be provided to Apply")
-	}
-	emptyResult := &v1.EgressFirewall{}
-	obj, err := c.Fake.
-		Invokes(testing.NewPatchSubresourceActionWithOptions(egressfirewallsResource, c.ns, *name, types.ApplyPatchType, data, opts.ToPatchOptions(), "status"), emptyResult)
-
-	if obj == nil {
-		return emptyResult, err
-	}
-	return obj.(*v1.EgressFirewall), err
 }

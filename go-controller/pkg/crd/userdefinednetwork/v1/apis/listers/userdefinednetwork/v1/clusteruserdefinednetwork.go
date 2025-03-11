@@ -18,10 +18,10 @@ limitations under the License.
 package v1
 
 import (
-	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/client-go/listers"
-	"k8s.io/client-go/tools/cache"
+	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	labels "k8s.io/apimachinery/pkg/labels"
+	listers "k8s.io/client-go/listers"
+	cache "k8s.io/client-go/tools/cache"
 )
 
 // ClusterUserDefinedNetworkLister helps list ClusterUserDefinedNetworks.
@@ -29,19 +29,19 @@ import (
 type ClusterUserDefinedNetworkLister interface {
 	// List lists all ClusterUserDefinedNetworks in the indexer.
 	// Objects returned here must be treated as read-only.
-	List(selector labels.Selector) (ret []*v1.ClusterUserDefinedNetwork, err error)
+	List(selector labels.Selector) (ret []*userdefinednetworkv1.ClusterUserDefinedNetwork, err error)
 	// Get retrieves the ClusterUserDefinedNetwork from the index for a given name.
 	// Objects returned here must be treated as read-only.
-	Get(name string) (*v1.ClusterUserDefinedNetwork, error)
+	Get(name string) (*userdefinednetworkv1.ClusterUserDefinedNetwork, error)
 	ClusterUserDefinedNetworkListerExpansion
 }
 
 // clusterUserDefinedNetworkLister implements the ClusterUserDefinedNetworkLister interface.
 type clusterUserDefinedNetworkLister struct {
-	listers.ResourceIndexer[*v1.ClusterUserDefinedNetwork]
+	listers.ResourceIndexer[*userdefinednetworkv1.ClusterUserDefinedNetwork]
 }
 
 // NewClusterUserDefinedNetworkLister returns a new ClusterUserDefinedNetworkLister.
 func NewClusterUserDefinedNetworkLister(indexer cache.Indexer) ClusterUserDefinedNetworkLister {
-	return &clusterUserDefinedNetworkLister{listers.New[*v1.ClusterUserDefinedNetwork](indexer, v1.Resource("clusteruserdefinednetwork"))}
+	return &clusterUserDefinedNetworkLister{listers.New[*userdefinednetworkv1.ClusterUserDefinedNetwork](indexer, userdefinednetworkv1.Resource("clusteruserdefinednetwork"))}
 }

@@ -18,10 +18,10 @@ limitations under the License.
 package v1
 
 import (
-	"context"
+	context "context"
 
-	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
-	egressfirewallv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1/apis/applyconfiguration/egressfirewall/v1"
+	egressfirewallv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
+	applyconfigurationegressfirewallv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1/apis/applyconfiguration/egressfirewall/v1"
 	scheme "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1/apis/clientset/versioned/scheme"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
@@ -37,36 +37,37 @@ type EgressFirewallsGetter interface {
 
 // EgressFirewallInterface has methods to work with EgressFirewall resources.
 type EgressFirewallInterface interface {
-	Create(ctx context.Context, egressFirewall *v1.EgressFirewall, opts metav1.CreateOptions) (*v1.EgressFirewall, error)
-	Update(ctx context.Context, egressFirewall *v1.EgressFirewall, opts metav1.UpdateOptions) (*v1.EgressFirewall, error)
+	Create(ctx context.Context, egressFirewall *egressfirewallv1.EgressFirewall, opts metav1.CreateOptions) (*egressfirewallv1.EgressFirewall, error)
+	Update(ctx context.Context, egressFirewall *egressfirewallv1.EgressFirewall, opts metav1.UpdateOptions) (*egressfirewallv1.EgressFirewall, error)
 	// Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-	UpdateStatus(ctx context.Context, egressFirewall *v1.EgressFirewall, opts metav1.UpdateOptions) (*v1.EgressFirewall, error)
+	UpdateStatus(ctx context.Context, egressFirewall *egressfirewallv1.EgressFirewall, opts metav1.UpdateOptions) (*egressfirewallv1.EgressFirewall, error)
 	Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error
 	DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error
-	Get(ctx context.Context, name string, opts metav1.GetOptions) (*v1.EgressFirewall, error)
-	List(ctx context.Context, opts metav1.ListOptions) (*v1.EgressFirewallList, error)
+	Get(ctx context.Context, name string, opts metav1.GetOptions) (*egressfirewallv1.EgressFirewall, error)
+	List(ctx context.Context, opts metav1.ListOptions) (*egressfirewallv1.EgressFirewallList, error)
 	Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error)
-	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.EgressFirewall, err error)
-	Apply(ctx context.Context, egressFirewall *egressfirewallv1.EgressFirewallApplyConfiguration, opts metav1.ApplyOptions) (result *v1.EgressFirewall, err error)
+	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *egressfirewallv1.EgressFirewall, err error)
+	Apply(ctx context.Context, egressFirewall *applyconfigurationegressfirewallv1.EgressFirewallApplyConfiguration, opts metav1.ApplyOptions) (result *egressfirewallv1.EgressFirewall, err error)
 	// Add a +genclient:noStatus comment above the type to avoid generating ApplyStatus().
-	ApplyStatus(ctx context.Context, egressFirewall *egressfirewallv1.EgressFirewallApplyConfiguration, opts metav1.ApplyOptions) (result *v1.EgressFirewall, err error)
+	ApplyStatus(ctx context.Context, egressFirewall *applyconfigurationegressfirewallv1.EgressFirewallApplyConfiguration, opts metav1.ApplyOptions) (result *egressfirewallv1.EgressFirewall, err error)
 	EgressFirewallExpansion
 }
 
 // egressFirewalls implements EgressFirewallInterface
 type egressFirewalls struct {
-	*gentype.ClientWithListAndApply[*v1.EgressFirewall, *v1.EgressFirewallList, *egressfirewallv1.EgressFirewallApplyConfiguration]
+	*gentype.ClientWithListAndApply[*egressfirewallv1.EgressFirewall, *egressfirewallv1.EgressFirewallList, *applyconfigurationegressfirewallv1.EgressFirewallApplyConfiguration]
 }
 
 // newEgressFirewalls returns a EgressFirewalls
 func newEgressFirewalls(c *K8sV1Client, namespace string) *egressFirewalls {
 	return &egressFirewalls{
-		gentype.NewClientWithListAndApply[*v1.EgressFirewall, *v1.EgressFirewallList, *egressfirewallv1.EgressFirewallApplyConfiguration](
+		gentype.NewClientWithListAndApply[*egressfirewallv1.EgressFirewall, *egressfirewallv1.EgressFirewallList, *applyconfigurationegressfirewallv1.EgressFirewallApplyConfiguration](
 			"egressfirewalls",
 			c.RESTClient(),
 			scheme.ParameterCodec,
 			namespace,
-			func() *v1.EgressFirewall { return &v1.EgressFirewall{} },
-			func() *v1.EgressFirewallList { return &v1.EgressFirewallList{} }),
+			func() *egressfirewallv1.EgressFirewall { return &egressfirewallv1.EgressFirewall{} },
+			func() *egressfirewallv1.EgressFirewallList { return &egressfirewallv1.EgressFirewallList{} },
+		),
 	}
 }

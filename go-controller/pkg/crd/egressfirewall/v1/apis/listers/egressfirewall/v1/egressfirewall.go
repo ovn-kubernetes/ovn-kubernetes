@@ -18,10 +18,10 @@ limitations under the License.
 package v1
 
 import (
-	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/client-go/listers"
-	"k8s.io/client-go/tools/cache"
+	egressfirewallv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
+	labels "k8s.io/apimachinery/pkg/labels"
+	listers "k8s.io/client-go/listers"
+	cache "k8s.io/client-go/tools/cache"
 )
 
 // EgressFirewallLister helps list EgressFirewalls.
@@ -29,7 +29,7 @@ import (
 type EgressFirewallLister interface {
 	// List lists all EgressFirewalls in the indexer.
 	// Objects returned here must be treated as read-only.
-	List(selector labels.Selector) (ret []*v1.EgressFirewall, err error)
+	List(selector labels.Selector) (ret []*egressfirewallv1.EgressFirewall, err error)
 	// EgressFirewalls returns an object that can list and get EgressFirewalls.
 	EgressFirewalls(namespace string) EgressFirewallNamespaceLister
 	EgressFirewallListerExpansion
@@ -37,17 +37,17 @@ type EgressFirewallLister interface {
 
 // egressFirewallLister implements the EgressFirewallLister interface.
 type egressFirewallLister struct {
-	listers.ResourceIndexer[*v1.EgressFirewall]
+	listers.ResourceIndexer[*egressfirewallv1.EgressFirewall]
 }
 
 // NewEgressFirewallLister returns a new EgressFirewallLister.
 func NewEgressFirewallLister(indexer cache.Indexer) EgressFirewallLister {
-	return &egressFirewallLister{listers.New[*v1.EgressFirewall](indexer, v1.Resource("egressfirewall"))}
+	return &egressFirewallLister{listers.New[*egressfirewallv1.EgressFirewall](indexer, egressfirewallv1.Resource("egressfirewall"))}
 }
 
 // EgressFirewalls returns an object that can list and get EgressFirewalls.
 func (s *egressFirewallLister) EgressFirewalls(namespace string) EgressFirewallNamespaceLister {
-	return egressFirewallNamespaceLister{listers.NewNamespaced[*v1.EgressFirewall](s.ResourceIndexer, namespace)}
+	return egressFirewallNamespaceLister{listers.NewNamespaced[*egressfirewallv1.EgressFirewall](s.ResourceIndexer, namespace)}
 }
 
 // EgressFirewallNamespaceLister helps list and get EgressFirewalls.
@@ -55,15 +55,15 @@ func (s *egressFirewallLister) EgressFirewalls(namespace string) EgressFirewallN
 type EgressFirewallNamespaceLister interface {
 	// List lists all EgressFirewalls in the indexer for a given namespace.
 	// Objects returned here must be treated as read-only.
-	List(selector labels.Selector) (ret []*v1.EgressFirewall, err error)
+	List(selector labels.Selector) (ret []*egressfirewallv1.EgressFirewall, err error)
 	// Get retrieves the EgressFirewall from the indexer for a given namespace and name.
 	// Objects returned here must be treated as read-only.
-	Get(name string) (*v1.EgressFirewall, error)
+	Get(name string) (*egressfirewallv1.EgressFirewall, error)
 	EgressFirewallNamespaceListerExpansion
 }
 
 // egressFirewallNamespaceLister implements the EgressFirewallNamespaceLister
 // interface.
 type egressFirewallNamespaceLister struct {
-	listers.ResourceIndexer[*v1.EgressFirewall]
+	listers.ResourceIndexer[*egressfirewallv1.EgressFirewall]
 }

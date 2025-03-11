@@ -996,14 +996,14 @@ func TestDeleteConntrack(t *testing.T) {
 			desc:       "Valid IPv4 address input",
 			inputIPStr: "192.168.1.14",
 			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "ConntrackDeleteFilter", OnCallMethodArgType: []string{"netlink.ConntrackTableType", "netlink.InetFamily", "*netlink.ConntrackFilter"}, RetArgList: []interface{}{uint(1), nil}},
+				{OnCallMethodName: "ConntrackDeleteFilters", OnCallMethodArgType: []string{"netlink.ConntrackTableType", "netlink.InetFamily", "*netlink.ConntrackFilter"}, RetArgList: []interface{}{uint(1), nil}},
 			},
 		},
 		{
 			desc:       "Valid IPv6 address input",
 			inputIPStr: "fffb::1",
 			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "ConntrackDeleteFilter", OnCallMethodArgType: []string{"netlink.ConntrackTableType", "netlink.InetFamily", "*netlink.ConntrackFilter"}, RetArgList: []interface{}{uint(1), nil}},
+				{OnCallMethodName: "ConntrackDeleteFilters", OnCallMethodArgType: []string{"netlink.ConntrackTableType", "netlink.InetFamily", "*netlink.ConntrackFilter"}, RetArgList: []interface{}{uint(1), nil}},
 			},
 		},
 		{
@@ -1011,7 +1011,7 @@ func TestDeleteConntrack(t *testing.T) {
 			inputIPStr:    "192.168.1.14",
 			inputProtocol: corev1.ProtocolUDP,
 			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "ConntrackDeleteFilter", OnCallMethodArgType: []string{"netlink.ConntrackTableType", "netlink.InetFamily", "*netlink.ConntrackFilter"}, RetArgList: []interface{}{uint(1), nil}},
+				{OnCallMethodName: "ConntrackDeleteFilters", OnCallMethodArgType: []string{"netlink.ConntrackTableType", "netlink.InetFamily", "*netlink.ConntrackFilter"}, RetArgList: []interface{}{uint(1), nil}},
 			},
 		},
 		{
@@ -1019,7 +1019,7 @@ func TestDeleteConntrack(t *testing.T) {
 			inputIPStr:    "192.168.1.14",
 			inputProtocol: corev1.ProtocolSCTP,
 			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "ConntrackDeleteFilter", OnCallMethodArgType: []string{"netlink.ConntrackTableType", "netlink.InetFamily", "*netlink.ConntrackFilter"}, RetArgList: []interface{}{uint(1), nil}},
+				{OnCallMethodName: "ConntrackDeleteFilters", OnCallMethodArgType: []string{"netlink.ConntrackTableType", "netlink.InetFamily", "*netlink.ConntrackFilter"}, RetArgList: []interface{}{uint(1), nil}},
 			},
 		},
 		{
@@ -1027,7 +1027,7 @@ func TestDeleteConntrack(t *testing.T) {
 			inputIPStr:    "192.168.1.14",
 			inputProtocol: corev1.ProtocolTCP,
 			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "ConntrackDeleteFilter", OnCallMethodArgType: []string{"netlink.ConntrackTableType", "netlink.InetFamily", "*netlink.ConntrackFilter"}, RetArgList: []interface{}{uint(1), nil}},
+				{OnCallMethodName: "ConntrackDeleteFilters", OnCallMethodArgType: []string{"netlink.ConntrackTableType", "netlink.InetFamily", "*netlink.ConntrackFilter"}, RetArgList: []interface{}{uint(1), nil}},
 			},
 		},
 		{
@@ -1046,7 +1046,7 @@ func TestDeleteConntrack(t *testing.T) {
 			inputPort:     9999,
 			labels:        [][]byte{{3, 4, 61, 141, 207, 170}, {0x2}},
 			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "ConntrackDeleteFilter", OnCallMethodArgType: []string{"netlink.ConntrackTableType", "netlink.InetFamily", "*netlink.ConntrackFilter"}, RetArgList: []interface{}{uint(1), nil}},
+				{OnCallMethodName: "ConntrackDeleteFilters", OnCallMethodArgType: []string{"netlink.ConntrackTableType", "netlink.InetFamily", "*netlink.ConntrackFilter"}, RetArgList: []interface{}{uint(1), nil}},
 			},
 		},
 	}

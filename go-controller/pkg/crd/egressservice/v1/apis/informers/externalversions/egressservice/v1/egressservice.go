@@ -18,13 +18,13 @@ limitations under the License.
 package v1
 
 import (
-	"context"
+	context "context"
 	time "time"
 
-	egressservicev1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1"
+	crdegressservicev1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1"
 	versioned "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/clientset/versioned"
 	internalinterfaces "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/informers/externalversions/internalinterfaces"
-	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/listers/egressservice/v1"
+	egressservicev1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/listers/egressservice/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	watch "k8s.io/apimachinery/pkg/watch"
@@ -35,7 +35,7 @@ import (
 // EgressServices.
 type EgressServiceInformer interface {
 	Informer() cache.SharedIndexInformer
-	Lister() v1.EgressServiceLister
+	Lister() egressservicev1.EgressServiceLister
 }
 
 type egressServiceInformer struct {
@@ -70,7 +70,7 @@ func NewFilteredEgressServiceInformer(client versioned.Interface, namespace stri
 				return client.K8sV1().EgressServices(namespace).Watch(context.TODO(), options)
 			},
 		},
-		&egressservicev1.EgressService{},
+		&crdegressservicev1.EgressService{},
 		resyncPeriod,
 		indexers,
 	)
@@ -81,9 +81,9 @@ func (f *egressServiceInformer) defaultInformer(client versioned.Interface, resy
 }
 
 func (f *egressServiceInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&egressservicev1.EgressService{}, f.defaultInformer)
+	return f.factory.InformerFor(&crdegressservicev1.EgressService{}, f.defaultInformer)
 }
 
-func (f *egressServiceInformer) Lister() v1.EgressServiceLister {
-	return v1.NewEgressServiceLister(f.Informer().GetIndexer())
+func (f *egressServiceInformer) Lister() egressservicev1.EgressServiceLister {
+	return egressservicev1.NewEgressServiceLister(f.Informer().GetIndexer())
 }
