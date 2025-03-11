@@ -81,11 +81,11 @@ import (
 	egressservicescheme "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/clientset/versioned/scheme"
 	egressserviceinformerfactory "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/informers/externalversions"
 	egressserviceinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/informers/externalversions/egressservice/v1"
-	networkqosapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1"
+	networkqosapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1"
 	networkqosscheme "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/clientset/versioned/scheme"
 	networkqosinformerfactory "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/informers/externalversions"
-	networkqosinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/informers/externalversions/networkqos/v1"
-	networkqoslister "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/listers/networkqos/v1"
+	networkqosinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/informers/externalversions/networkqos/v1alpha1"
+	networkqoslister "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/listers/networkqos/v1alpha1"
 	routeadvertisementsapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
 	routeadvertisementsscheme "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned/scheme"
 	routeadvertisementsinformerfactory "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/informers/externalversions"
@@ -516,7 +516,7 @@ func NewOVNKubeControllerWatchFactory(ovnClientset *util.OVNKubeControllerClient
 
 	if config.OVNKubernetesFeature.EnableNetworkQoS {
 		wf.informers[NetworkQoSType], err = newQueuedInformer(eventQueueSize, NetworkQoSType,
-			wf.networkQoSFactory.K8s().V1().NetworkQoSes().Informer(), wf.stopChan, minNumEventQueues)
+			wf.networkQoSFactory.K8s().V1alpha1().NetworkQoSes().Informer(), wf.stopChan, minNumEventQueues)
 		if err != nil {
 			return nil, err
 		}
@@ -1820,7 +1820,7 @@ func (wf *WatchFactory) FRRConfigurationsInformer() frrinformer.FRRConfiguration
 }
 
 func (wf *WatchFactory) NetworkQoSInformer() networkqosinformer.NetworkQoSInformer {
-	return wf.networkQoSFactory.K8s().V1().NetworkQoSes()
+	return wf.networkQoSFactory.K8s().V1alpha1().NetworkQoSes()
 }
 
 // withServiceNameAndNoHeadlessServiceSelector returns a LabelSelector (added to the

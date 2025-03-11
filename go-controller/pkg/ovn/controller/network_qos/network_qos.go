@@ -17,8 +17,11 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
 
+	nadv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	networkqosapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1"
 	nqosapiapply "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/applyconfiguration/networkqos/v1alpha1"
+	crdtypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
+	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 )
 
@@ -66,12 +69,15 @@ func (c *Controller) syncNetworkQoS(key string) error {
 		return err
 	}
 	if nqos == nil {
-		klog.V(6).Infof("%s - NetworkQoS %s has gone", c.controllerName, key)
+		klog.V(6).Infof("%s - NetworkQoS %s no longer exists.", c.controllerName, key)
 		return c.nqosCache.DoWithLock(key, func(nqosKey string) error {
 			return c.clearNetworkQos(nqosNamespace, nqosName)
 		})
 	}
-	if !c.networkManagedByMe(nqos.Spec.NetworkAttachmentRefs) {
+
+	if networkManagedByMe, err := c.networkManagedByMe(nqos.Spec.NetworkSelectors); err != nil {
+		return err
+	} else if !networkManagedByMe {
 		// maybe NetworkAttachmentName has been changed from this one to other value, try cleanup anyway
 		return c.nqosCache.DoWithLock(key, func(nqosKey string) error {
 			return c.clearNetworkQos(nqosNamespace, nqosName)
@@ -301,18 +307,87 @@ func (c *Controller) resyncPods(nqosState *networkQoSState) error {
 	return nil
 }
 
-func (c *Controller) networkManagedByMe(nadRefs []corev1.ObjectReference) bool {
-	if len(nadRefs) == 0 {
-		return c.IsDefault()
+var cudnController = udnv1.SchemeGroupVersion.WithKind("ClusterUserDefinedNetwork")
+
+func (c *Controller) networkManagedByMe(networkSelectors crdtypes.NetworkSelectors) (bool, error) {
+	// return c.IsDefault() if multi-network is disabled or no selectors is provided in spec
+	if c.nadLister == nil || len(networkSelectors) == 0 {
+		return c.IsDefault(), nil
 	}
-	for _, nadRef := range nadRefs {
-		nadKey := joinMetaNamespaceAndName(nadRef.Namespace, nadRef.Name)
-		if ((nadKey == "" || nadKey == types.DefaultNetworkName) && c.IsDefault()) ||
-			(!c.IsDefault() && c.HasNAD(nadKey)) {
-			return true
+	var selectedNads []*nadv1.NetworkAttachmentDefinition
+	for _, networkSelector := range networkSelectors {
+		switch networkSelector.NetworkSelectionType {
+		case crdtypes.DefaultNetwork:
+			return c.IsDefault(), nil
+		case crdtypes.ClusterUserDefinedNetworks:
+			nadSelector, err := metav1.LabelSelectorAsSelector(&networkSelector.ClusterUserDefinedNetworkSelector.NetworkSelector)
+			if err != nil {
+				return false, err
+			}
+			nads, err := c.nadLister.List(nadSelector)
+			if err != nil {
+				return false, err
+			}
+			for _, nad := range nads {
+				// check this NAD is controlled by a CUDN
+				controller := metav1.GetControllerOfNoCopy(nad)
+				isCUDN := controller != nil && controller.Kind == cudnController.Kind && controller.APIVersion == cudnController.GroupVersion().String()
+				if !isCUDN {
+					continue
+				}
+				selectedNads = append(selectedNads, nad)
+			}
+		case crdtypes.NetworkAttachmentDefinitions:
+			if networkSelector.NetworkAttachmentDefinitionSelector == nil {
+				return false, fmt.Errorf("empty network attachment definition selector")
+			}
+			nadSelector, err := metav1.LabelSelectorAsSelector(&networkSelector.NetworkAttachmentDefinitionSelector.NetworkSelector)
+			if err != nil {
+				return false, err
+			}
+			if nadSelector.Empty() {
+				return false, fmt.Errorf("empty network selector")
+			}
+			nsSelector, err := metav1.LabelSelectorAsSelector(&networkSelector.NetworkAttachmentDefinitionSelector.NamespaceSelector)
+			if err != nil {
+				return false, err
+			}
+
+			if nsSelector.Empty() {
+				// if namespace selector is empty, list NADs in all namespaces
+				nads, err := c.nadLister.List(nadSelector)
+				if err != nil {
+					return false, err
+				}
+				selectedNads = append(selectedNads, nads...)
+			} else {
+				namespaces, err := c.nqosNamespaceLister.List(nsSelector)
+				if err != nil {
+					return false, err
+				}
+				for _, ns := range namespaces {
+					nads, err := c.nadLister.NetworkAttachmentDefinitions(ns.Name).List(nadSelector)
+					if err != nil {
+						return false, err
+					}
+					selectedNads = append(selectedNads, nads...)
+				}
+			}
+		default:
+			return false, fmt.Errorf("unsupported network selection type %s", networkSelector.NetworkSelectionType)
 		}
 	}
-	return false
+	if len(selectedNads) == 0 {
+		return false, nil
+	}
+	for _, nad := range selectedNads {
+		nadKey := joinMetaNamespaceAndName(nad.Namespace, nad.Name)
+		if ((nadKey == types.DefaultNetworkName) && c.IsDefault()) ||
+			(!c.IsDefault() && c.HasNAD(nadKey)) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (c *Controller) getLogicalSwitchName(nodeName string) string {

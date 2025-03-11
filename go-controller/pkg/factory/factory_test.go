@@ -38,9 +38,10 @@ import (
 	egressqosfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1/apis/clientset/versioned/fake"
 	egressservice "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1"
 	egressservicefake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/clientset/versioned/fake"
+	crdtypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
-	networkqos "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1"
+	networkqos "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1"
 	networkqosfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/clientset/versioned/fake"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -230,11 +231,16 @@ func newNetworkQoS(name, namespace string) *networkqos.NetworkQoS {
 	return &networkqos.NetworkQoS{
 		ObjectMeta: newObjectMeta(name, namespace),
 		Spec: networkqos.Spec{
-			NetworkAttachmentRefs: []v1.ObjectReference{
+			NetworkSelectors: []crdtypes.NetworkSelector{
 				{
-					Kind:      "NetworkAttachmentDefinition",
-					Namespace: "default",
-					Name:      "stream",
+					NetworkSelectionType: crdtypes.NetworkAttachmentDefinitions,
+					NetworkAttachmentDefinitionSelector: &crdtypes.NetworkAttachmentDefinitionSelector{
+						NetworkSelector: metav1.LabelSelector{
+							MatchLabels: map[string]string{
+								"name": "stream",
+							},
+						},
+					},
 				},
 			},
 			Priority: 100,

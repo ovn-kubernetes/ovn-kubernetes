@@ -21,9 +21,9 @@ import (
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 
+	nadinformerv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/informers/externalversions/k8s.cni.cncf.io/v1"
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
 	"github.com/ovn-org/libovsdb/ovsdb"
-
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/pod"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
@@ -1062,6 +1062,11 @@ func (bnc *BaseNetworkController) DeleteResourceCommon(objType reflect.Type, obj
 
 func (bnc *BaseNetworkController) newNetworkQoSController() error {
 	var err error
+	var nadInformer nadinformerv1.NetworkAttachmentDefinitionInformer
+
+	if config.OVNKubernetesFeature.EnableMultiNetwork {
+		nadInformer = bnc.watchFactory.NADInformer()
+	}
 	bnc.nqosController, err = nqoscontroller.NewController(
 		bnc.controllerName,
 		bnc.ReconcilableNetInfo.GetNetInfo(),
@@ -1072,6 +1077,7 @@ func (bnc *BaseNetworkController) newNetworkQoSController() error {
 		bnc.watchFactory.NamespaceCoreInformer(),
 		bnc.watchFactory.PodCoreInformer(),
 		bnc.watchFactory.NodeCoreInformer(),
+		nadInformer,
 		bnc.addressSetFactory,
 		bnc.isPodScheduledinLocalZone,
 		bnc.zone,

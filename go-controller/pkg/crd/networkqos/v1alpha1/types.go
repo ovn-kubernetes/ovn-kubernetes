@@ -17,9 +17,10 @@ limitations under the License.
 package v1alpha1
 
 import (
-	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	crdtypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
 )
 
 // +genclient
@@ -45,12 +46,12 @@ type NetworkQoS struct {
 
 // Spec defines the desired state of NetworkQoS
 type Spec struct {
-	// netAttachRefs points to a list of objects which could be either NAD, UDN, or Cluster UDN.
-	// In the case of NAD, the network type could be of type Layer-3, Layer-2, or Localnet.
-	// If not specified, then the primary network of the selected Pods will be chosen.
+	// networkSelector selects the networks on which the pod IPs need to be added to the source address set.
+	// NetworkQoS controller currently supports `NetworkAttachmentDefinitions` type only.
 	// +optional
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="netAttachRefs is immutable"
-	NetworkAttachmentRefs []corev1.ObjectReference `json:"netAttachRefs,omitempty"`
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="networkSelector is immutable"
+	// +kubebuilder:validation:XValidation:rule="self.all(sel, sel.networkSelectionType == 'ClusterUserDefinedNetworks' || sel.networkSelectionType == 'NetworkAttachmentDefinitions')", message="Unsupported network selection type"
+	NetworkSelectors crdtypes.NetworkSelectors `json:"networkSelectors,omitempty"`
 
 	// podSelector applies the NetworkQoS rule only to the pods in the namespace whose label
 	// matches this definition. This field is optional, and in case it is not set
@@ -69,6 +70,7 @@ type Spec struct {
 	// within a single NetworkQos object (all of which share the priority) will be
 	// determined by the order in which the rule is written. Thus, a rule that appears
 	// first in the list of egress rules would take the lower precedence.
+	// +kubebuilder:validation:MaxItems=20
 	Egress []Rule `json:"egress"`
 }
 
@@ -94,7 +96,7 @@ type Classifier struct {
 	To []Destination `json:"to"`
 
 	// +optional
-	Port Port `json:"port"`
+	Ports []*Port `json:"ports"`
 }
 
 // Bandwidth controls the maximum of rate traffic that can be sent
@@ -127,7 +129,7 @@ type Port struct {
 	// +kubebuilder:validation:Minimum:=1
 	// +kubebuilder:validation:Maximum:=65535
 	// +optional
-	Port int32 `json:"port"`
+	Port *int32 `json:"port"`
 }
 
 // Destination describes a peer to apply NetworkQoS configuration for the outgoing traffic.
