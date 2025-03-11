@@ -319,10 +319,9 @@ jobs:
         sudo rm -rf /usr/local/lib/android/sdk
         sudo apt-get update
         sudo eatmydata apt-get purge --auto-remove -y \
-          azure-cli aspnetcore-* dotnet-* ghc-* firefox \
+          azure-cli firefox \
           google-chrome-stable \
-          llvm-* microsoft-edge-stable mono-* \
-          msbuild mysql-server-core-* php-* php7* \
+          llvm-* microsoft-edge-stable \
           powershell temurin-* zulu-*
         # clean unused packages
         sudo apt-get autoclean
@@ -522,10 +521,9 @@ jobs:
         sudo rm -rf /usr/local/lib/android/sdk
         sudo apt-get update
         sudo eatmydata apt-get purge --auto-remove -y \
-          azure-cli aspnetcore-* dotnet-* ghc-* firefox \
+          azure-cli firefox \
           google-chrome-stable \
-          llvm-* microsoft-edge-stable mono-* \
-          msbuild mysql-server-core-* php-* php7* \
+          llvm-* microsoft-edge-stable \
           powershell temurin-* zulu-*
         # clean unused packages
         sudo apt-get autoclean
@@ -756,10 +754,9 @@ jobs:
         sudo rm -rf /usr/local/lib/android/sdk
         sudo apt-get update
         sudo eatmydata apt-get purge --auto-remove -y \
-          azure-cli aspnetcore-* dotnet-* ghc-* firefox \
+          azure-cli firefox \
           google-chrome-stable \
-          llvm-* microsoft-edge-stable mono-* \
-          msbuild mysql-server-core-* php-* php7* \
+          llvm-* microsoft-edge-stable \
           powershell temurin-* zulu-*
         # clean unused packages
         sudo apt-get autoclean
