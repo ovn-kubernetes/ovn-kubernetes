@@ -133,7 +133,7 @@ install_metallb() {
   git checkout $metallb_version
 
   # kindest/node image v1.32.2+ that we use is only compatible with kind v0.27+
-  # when using 'kind load' comand
+  # when using 'kind load' command
   # however metallb builds and uses older incompatible kind version
   # patch it so that it uses our own kind install instead of their build
   patch tasks.py << 'EOF'
