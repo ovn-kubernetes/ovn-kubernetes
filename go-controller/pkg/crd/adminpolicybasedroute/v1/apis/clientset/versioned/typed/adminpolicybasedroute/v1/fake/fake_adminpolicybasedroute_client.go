@@ -28,7 +28,7 @@ type FakeK8sV1 struct {
 }
 
 func (c *FakeK8sV1) AdminPolicyBasedExternalRoutes() v1.AdminPolicyBasedExternalRouteInterface {
-	return &FakeAdminPolicyBasedExternalRoutes{c}
+	return newFakeAdminPolicyBasedExternalRoutes(c)
 }
 
 // RESTClient returns a RESTClient that is used to communicate

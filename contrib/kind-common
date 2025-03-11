@@ -122,10 +122,11 @@ install_ingress() {
 
 METALLB_DIR="/tmp/metallb"
 install_metallb() {
-  # TODO: Pin to a version tag bigger than v0.14.8 when released
-  #       so we can have a metallb dev-env that support dual stack
-  #       and use a proper tag instead of a commit id.
-  local metallb_version=55f648102b918699da610f20e8d650e76c7561fc
+  # Tested v0.4.19 but ran into a couple of issues
+  # https://github.com/metallb/metallb/issues/2723
+  # https://github.com/metallb/metallb/issues/2724
+  # We could probably work around them but let's comfortably stay in v0.4.18
+  local metallb_version=v0.14.8
   mkdir -p /tmp/metallb
   local builddir
   builddir=$(mktemp -d "${METALLB_DIR}/XXXXXX")
@@ -134,6 +135,23 @@ install_metallb() {
   git clone https://github.com/metallb/metallb.git
   cd metallb
   git checkout $metallb_version
+
+  # kindest/node image v1.32+ that we use is only compatible with kind v0.27+
+  # when using 'kind load' command however metallb builds and uses older
+  # incompatible kind version patch it so that it uses our own kind install
+  # instead of their build
+  patch tasks.py << 'EOF'
+@@ -34,7 +34,7 @@ extra_network = "network2"
+ controller_gen_version = "v0.14.0"
+ build_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "build")
+ kubectl_path = os.path.join(build_path, "kubectl")
+-kind_path = os.path.join(build_path, "kind")
++kind_path = "kind"
+ controller_gen_path = os.path.join(build_path, "bin", "controller-gen")
+ kubectl_version = "v1.27.0"
+ kind_version = "v0.23.0"
+EOF
+
   pip install -r dev-env/requirements.txt
 
   local ip_family ipv6_network

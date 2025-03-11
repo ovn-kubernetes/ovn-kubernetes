@@ -18,13 +18,13 @@ limitations under the License.
 package v1
 
 import (
-	"context"
+	context "context"
 	time "time"
 
-	adminpolicybasedroutev1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1"
+	crdadminpolicybasedroutev1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1"
 	versioned "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/clientset/versioned"
 	internalinterfaces "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/informers/externalversions/internalinterfaces"
-	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/listers/adminpolicybasedroute/v1"
+	adminpolicybasedroutev1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/listers/adminpolicybasedroute/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	watch "k8s.io/apimachinery/pkg/watch"
@@ -35,7 +35,7 @@ import (
 // AdminPolicyBasedExternalRoutes.
 type AdminPolicyBasedExternalRouteInformer interface {
 	Informer() cache.SharedIndexInformer
-	Lister() v1.AdminPolicyBasedExternalRouteLister
+	Lister() adminpolicybasedroutev1.AdminPolicyBasedExternalRouteLister
 }
 
 type adminPolicyBasedExternalRouteInformer struct {
@@ -69,7 +69,7 @@ func NewFilteredAdminPolicyBasedExternalRouteInformer(client versioned.Interface
 				return client.K8sV1().AdminPolicyBasedExternalRoutes().Watch(context.TODO(), options)
 			},
 		},
-		&adminpolicybasedroutev1.AdminPolicyBasedExternalRoute{},
+		&crdadminpolicybasedroutev1.AdminPolicyBasedExternalRoute{},
 		resyncPeriod,
 		indexers,
 	)
@@ -80,9 +80,9 @@ func (f *adminPolicyBasedExternalRouteInformer) defaultInformer(client versioned
 }
 
 func (f *adminPolicyBasedExternalRouteInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&adminpolicybasedroutev1.AdminPolicyBasedExternalRoute{}, f.defaultInformer)
+	return f.factory.InformerFor(&crdadminpolicybasedroutev1.AdminPolicyBasedExternalRoute{}, f.defaultInformer)
 }
 
-func (f *adminPolicyBasedExternalRouteInformer) Lister() v1.AdminPolicyBasedExternalRouteLister {
-	return v1.NewAdminPolicyBasedExternalRouteLister(f.Informer().GetIndexer())
+func (f *adminPolicyBasedExternalRouteInformer) Lister() adminpolicybasedroutev1.AdminPolicyBasedExternalRouteLister {
+	return adminpolicybasedroutev1.NewAdminPolicyBasedExternalRouteLister(f.Informer().GetIndexer())
 }

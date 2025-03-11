@@ -18,10 +18,10 @@ limitations under the License.
 package v1
 
 import (
-	"context"
+	context "context"
 
-	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
-	routeadvertisementsv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/applyconfiguration/routeadvertisements/v1"
+	routeadvertisementsv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
+	applyconfigurationrouteadvertisementsv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/applyconfiguration/routeadvertisements/v1"
 	scheme "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned/scheme"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
@@ -37,36 +37,39 @@ type RouteAdvertisementsGetter interface {
 
 // RouteAdvertisementsInterface has methods to work with RouteAdvertisements resources.
 type RouteAdvertisementsInterface interface {
-	Create(ctx context.Context, routeAdvertisements *v1.RouteAdvertisements, opts metav1.CreateOptions) (*v1.RouteAdvertisements, error)
-	Update(ctx context.Context, routeAdvertisements *v1.RouteAdvertisements, opts metav1.UpdateOptions) (*v1.RouteAdvertisements, error)
+	Create(ctx context.Context, routeAdvertisements *routeadvertisementsv1.RouteAdvertisements, opts metav1.CreateOptions) (*routeadvertisementsv1.RouteAdvertisements, error)
+	Update(ctx context.Context, routeAdvertisements *routeadvertisementsv1.RouteAdvertisements, opts metav1.UpdateOptions) (*routeadvertisementsv1.RouteAdvertisements, error)
 	// Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-	UpdateStatus(ctx context.Context, routeAdvertisements *v1.RouteAdvertisements, opts metav1.UpdateOptions) (*v1.RouteAdvertisements, error)
+	UpdateStatus(ctx context.Context, routeAdvertisements *routeadvertisementsv1.RouteAdvertisements, opts metav1.UpdateOptions) (*routeadvertisementsv1.RouteAdvertisements, error)
 	Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error
 	DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error
-	Get(ctx context.Context, name string, opts metav1.GetOptions) (*v1.RouteAdvertisements, error)
-	List(ctx context.Context, opts metav1.ListOptions) (*v1.RouteAdvertisementsList, error)
+	Get(ctx context.Context, name string, opts metav1.GetOptions) (*routeadvertisementsv1.RouteAdvertisements, error)
+	List(ctx context.Context, opts metav1.ListOptions) (*routeadvertisementsv1.RouteAdvertisementsList, error)
 	Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error)
-	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.RouteAdvertisements, err error)
-	Apply(ctx context.Context, routeAdvertisements *routeadvertisementsv1.RouteAdvertisementsApplyConfiguration, opts metav1.ApplyOptions) (result *v1.RouteAdvertisements, err error)
+	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *routeadvertisementsv1.RouteAdvertisements, err error)
+	Apply(ctx context.Context, routeAdvertisements *applyconfigurationrouteadvertisementsv1.RouteAdvertisementsApplyConfiguration, opts metav1.ApplyOptions) (result *routeadvertisementsv1.RouteAdvertisements, err error)
 	// Add a +genclient:noStatus comment above the type to avoid generating ApplyStatus().
-	ApplyStatus(ctx context.Context, routeAdvertisements *routeadvertisementsv1.RouteAdvertisementsApplyConfiguration, opts metav1.ApplyOptions) (result *v1.RouteAdvertisements, err error)
+	ApplyStatus(ctx context.Context, routeAdvertisements *applyconfigurationrouteadvertisementsv1.RouteAdvertisementsApplyConfiguration, opts metav1.ApplyOptions) (result *routeadvertisementsv1.RouteAdvertisements, err error)
 	RouteAdvertisementsExpansion
 }
 
 // routeAdvertisements implements RouteAdvertisementsInterface
 type routeAdvertisements struct {
-	*gentype.ClientWithListAndApply[*v1.RouteAdvertisements, *v1.RouteAdvertisementsList, *routeadvertisementsv1.RouteAdvertisementsApplyConfiguration]
+	*gentype.ClientWithListAndApply[*routeadvertisementsv1.RouteAdvertisements, *routeadvertisementsv1.RouteAdvertisementsList, *applyconfigurationrouteadvertisementsv1.RouteAdvertisementsApplyConfiguration]
 }
 
 // newRouteAdvertisements returns a RouteAdvertisements
 func newRouteAdvertisements(c *K8sV1Client) *routeAdvertisements {
 	return &routeAdvertisements{
-		gentype.NewClientWithListAndApply[*v1.RouteAdvertisements, *v1.RouteAdvertisementsList, *routeadvertisementsv1.RouteAdvertisementsApplyConfiguration](
+		gentype.NewClientWithListAndApply[*routeadvertisementsv1.RouteAdvertisements, *routeadvertisementsv1.RouteAdvertisementsList, *applyconfigurationrouteadvertisementsv1.RouteAdvertisementsApplyConfiguration](
 			"routeadvertisements",
 			c.RESTClient(),
 			scheme.ParameterCodec,
 			"",
-			func() *v1.RouteAdvertisements { return &v1.RouteAdvertisements{} },
-			func() *v1.RouteAdvertisementsList { return &v1.RouteAdvertisementsList{} }),
+			func() *routeadvertisementsv1.RouteAdvertisements { return &routeadvertisementsv1.RouteAdvertisements{} },
+			func() *routeadvertisementsv1.RouteAdvertisementsList {
+				return &routeadvertisementsv1.RouteAdvertisementsList{}
+			},
+		),
 	}
 }

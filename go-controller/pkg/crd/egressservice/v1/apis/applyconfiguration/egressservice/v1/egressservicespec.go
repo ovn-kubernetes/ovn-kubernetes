@@ -18,14 +18,14 @@ limitations under the License.
 package v1
 
 import (
-	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1"
+	egressservicev1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1"
 	metav1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
 // EgressServiceSpecApplyConfiguration represents a declarative configuration of the EgressServiceSpec type for use
 // with apply.
 type EgressServiceSpecApplyConfiguration struct {
-	SourceIPBy   *v1.SourceIPMode                        `json:"sourceIPBy,omitempty"`
+	SourceIPBy   *egressservicev1.SourceIPMode           `json:"sourceIPBy,omitempty"`
 	NodeSelector *metav1.LabelSelectorApplyConfiguration `json:"nodeSelector,omitempty"`
 	Network      *string                                 `json:"network,omitempty"`
 }
@@ -39,7 +39,7 @@ func EgressServiceSpec() *EgressServiceSpecApplyConfiguration {
 // WithSourceIPBy sets the SourceIPBy field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the SourceIPBy field is set to the value of the last call.
-func (b *EgressServiceSpecApplyConfiguration) WithSourceIPBy(value v1.SourceIPMode) *EgressServiceSpecApplyConfiguration {
+func (b *EgressServiceSpecApplyConfiguration) WithSourceIPBy(value egressservicev1.SourceIPMode) *EgressServiceSpecApplyConfiguration {
 	b.SourceIPBy = &value
 	return b
 }

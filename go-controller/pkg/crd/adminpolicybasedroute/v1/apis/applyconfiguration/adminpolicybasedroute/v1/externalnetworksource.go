@@ -18,13 +18,13 @@ limitations under the License.
 package v1
 
 import (
-	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
+	metav1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
 // ExternalNetworkSourceApplyConfiguration represents a declarative configuration of the ExternalNetworkSource type for use
 // with apply.
 type ExternalNetworkSourceApplyConfiguration struct {
-	NamespaceSelector *v1.LabelSelectorApplyConfiguration `json:"namespaceSelector,omitempty"`
+	NamespaceSelector *metav1.LabelSelectorApplyConfiguration `json:"namespaceSelector,omitempty"`
 }
 
 // ExternalNetworkSourceApplyConfiguration constructs a declarative configuration of the ExternalNetworkSource type for use with
@@ -36,7 +36,7 @@ func ExternalNetworkSource() *ExternalNetworkSourceApplyConfiguration {
 // WithNamespaceSelector sets the NamespaceSelector field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the NamespaceSelector field is set to the value of the last call.
-func (b *ExternalNetworkSourceApplyConfiguration) WithNamespaceSelector(value *v1.LabelSelectorApplyConfiguration) *ExternalNetworkSourceApplyConfiguration {
+func (b *ExternalNetworkSourceApplyConfiguration) WithNamespaceSelector(value *metav1.LabelSelectorApplyConfiguration) *ExternalNetworkSourceApplyConfiguration {
 	b.NamespaceSelector = value
 	return b
 }

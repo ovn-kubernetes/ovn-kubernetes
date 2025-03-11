@@ -722,7 +722,7 @@ func (*defaultPodRequestInterfaceOps) UnconfigureInterface(pr *PodRequest, ifInf
 			return nil
 		})
 		if err != nil {
-			klog.Errorf(err.Error())
+			klog.Errorf("Error in UnconfigureInterface: %v", err)
 		}
 	}
 

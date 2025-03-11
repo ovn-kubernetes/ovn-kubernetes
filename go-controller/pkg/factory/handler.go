@@ -428,7 +428,7 @@ func (i *informer) newFederatedQueuedHandler(internalInformerIndex int) cache.Re
 		DeleteFunc: func(obj interface{}) {
 			realObj, err := ensureObjectOnDelete(obj, i.oType)
 			if err != nil {
-				klog.Errorf(err.Error())
+				klog.Errorf("Error in DeleteFunc: %v", err)
 				return
 			}
 			// do not enqueue events to internal informer that has no handlers for better performance
@@ -512,7 +512,6 @@ func newInformerLister(oType reflect.Type, sharedInformer cache.SharedIndexInfor
 func newBaseInformer(oType reflect.Type, sharedInformer cache.SharedIndexInformer) (*informer, error) {
 	lister, err := newInformerLister(oType, sharedInformer)
 	if err != nil {
-		klog.Errorf(err.Error())
 		return nil, err
 	}
 
