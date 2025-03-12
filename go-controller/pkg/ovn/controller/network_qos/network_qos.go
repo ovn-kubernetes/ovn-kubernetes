@@ -67,13 +67,13 @@ func (c *Controller) syncNetworkQoS(key string) error {
 	}
 	if nqos == nil {
 		klog.V(6).Infof("%s - NetworkQoS %s no longer exists.", c.controllerName, key)
-		return c.nqosCache.DoWithLock(key, func(nqosKey string) error {
+		return c.nqosCache.DoWithLock(key, func(_ string) error {
 			return c.clearNetworkQos(nqosNamespace, nqosName)
 		})
 	}
 	netSelector, err := metav1.LabelSelectorAsSelector(&nqos.Spec.NetworkSelector)
 	if err != nil {
-		klog.Errorf("failed to parse network selector, not retrying: %v", err)
+		klog.Errorf("Failed to parse network selector, not retrying: %v", err)
 		return nil
 	}
 
@@ -81,14 +81,14 @@ func (c *Controller) syncNetworkQoS(key string) error {
 		return err
 	} else if !networkManagedByMe {
 		// maybe NetworkAttachmentName has been changed from this one to other value, try cleanup anyway
-		return c.nqosCache.DoWithLock(key, func(nqosKey string) error {
+		return c.nqosCache.DoWithLock(key, func(_ string) error {
 			return c.clearNetworkQos(nqosNamespace, nqosName)
 		})
 	}
 
 	klog.V(5).Infof("%s - Processing NetworkQoS %s/%s", c.controllerName, nqos.Namespace, nqos.Name)
 	// at this stage the NQOS exists in the cluster
-	return c.nqosCache.DoWithLock(key, func(nqosKey string) error {
+	return c.nqosCache.DoWithLock(key, func(_ string) error {
 		// save key to avoid racing
 		c.nqosCache.Store(key, nil)
 		if err = c.ensureNetworkQos(nqos); err != nil {
