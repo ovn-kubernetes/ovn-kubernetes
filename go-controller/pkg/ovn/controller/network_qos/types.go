@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	knet "k8s.io/api/networking/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
@@ -79,7 +79,7 @@ func (nqosState *networkQoSState) initAddressSets(addressSetFactory addressset.A
 	return nil
 }
 
-func (nqosState *networkQoSState) matchSourceSelector(pod *v1.Pod) bool {
+func (nqosState *networkQoSState) matchSourceSelector(pod *corev1.Pod) bool {
 	if pod.Namespace != nqosState.namespace {
 		return false
 	}
@@ -89,7 +89,7 @@ func (nqosState *networkQoSState) matchSourceSelector(pod *v1.Pod) bool {
 	return nqosState.PodSelector.Matches(labels.Set(pod.Labels))
 }
 
-func (nqosState *networkQoSState) configureSourcePod(ctrl *Controller, pod *v1.Pod, addresses []string) error {
+func (nqosState *networkQoSState) configureSourcePod(ctrl *Controller, pod *corev1.Pod, addresses []string) error {
 	fullPodName := joinMetaNamespaceAndName(pod.Namespace, pod.Name)
 	if nqosState.PodSelector != nil {
 		// if PodSelector is nil, use namespace's address set, so unnecessary to add ip here
@@ -303,14 +303,14 @@ type Destination struct {
 	NamespaceSelector labels.Selector
 }
 
-func (dest *Destination) matchNamespace(podNs *v1.Namespace, qosNamespace string) bool {
+func (dest *Destination) matchNamespace(podNs *corev1.Namespace, qosNamespace string) bool {
 	if dest.NamespaceSelector == nil {
 		return podNs.Name == qosNamespace
 	}
 	return dest.NamespaceSelector.Matches(labels.Set(podNs.Labels))
 }
 
-func (dest *Destination) matchPod(podNs *v1.Namespace, pod *v1.Pod, qosNamespace string) bool {
+func (dest *Destination) matchPod(podNs *corev1.Namespace, pod *corev1.Pod, qosNamespace string) bool {
 	switch {
 	case dest.NamespaceSelector != nil && dest.PodSelector != nil:
 		return dest.NamespaceSelector.Matches(labels.Set(podNs.Labels)) && dest.PodSelector.Matches(labels.Set(pod.Labels))
@@ -349,7 +349,7 @@ func (dest *Destination) removePod(fullPodName string, addresses []string) error
 func (dest *Destination) removePodsInNamespace(namespace string) error {
 	var err error
 	// check for pods in the namespace being cleared
-	dest.Pods.Range(func(key, value any) bool {
+	dest.Pods.Range(func(key, _ any) bool {
 		fullPodName := key.(string)
 		nameParts := strings.Split(fullPodName, "/")
 		if nameParts[0] != namespace {
@@ -369,7 +369,7 @@ func (dest *Destination) addPodsInNamespace(ctrl *Controller, namespace string) 
 	}
 	pods, err := ctrl.nqosPodLister.Pods(namespace).List(podSelector)
 	if err != nil {
-		if errors.IsNotFound(err) || len(pods) == 0 {
+		if apierrors.IsNotFound(err) || len(pods) == 0 {
 			return nil
 		}
 		return fmt.Errorf("failed to look up pods in ns %s: %v", namespace, err)

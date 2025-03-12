@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/tools/cache"
@@ -142,7 +142,7 @@ func (c *Controller) clearPodForNQOS(namespace, name string, nqosState *networkQ
 // setPodForNQOS will check if the pod meets source selector or dest selector
 // - match source: add the ip to source address set, bind qos rule to the switch
 // - match dest: add the ip to the destination address set
-func (c *Controller) setPodForNQOS(pod *v1.Pod, nqosState *networkQoSState, namespace *v1.Namespace) error {
+func (c *Controller) setPodForNQOS(pod *corev1.Pod, nqosState *networkQoSState, namespace *corev1.Namespace) error {
 	addresses, err := getPodAddresses(pod, c.NetInfo)
 	if err == nil && len(addresses) == 0 {
 		// pod either is not attached to this network, or hasn't been annotated with addresses yet, return without retry
@@ -174,7 +174,7 @@ func (c *Controller) setPodForNQOS(pod *v1.Pod, nqosState *networkQoSState, name
 	return reconcilePodForDestinations(nqosState, namespace, pod, addresses)
 }
 
-func reconcilePodForDestinations(nqosState *networkQoSState, podNs *v1.Namespace, pod *v1.Pod, addresses []string) error {
+func reconcilePodForDestinations(nqosState *networkQoSState, podNs *corev1.Namespace, pod *corev1.Pod, addresses []string) error {
 	fullPodName := joinMetaNamespaceAndName(pod.Namespace, pod.Name)
 	for _, rule := range nqosState.EgressRules {
 		for index, dest := range rule.Classifier.Destinations {

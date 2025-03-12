@@ -9,9 +9,6 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -32,6 +29,9 @@ import (
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 func init() {
@@ -559,7 +559,8 @@ var _ = Describe("NetworkQoS Controller", func() {
 						libovsdbops.ObjectNameKey: nqosNamespace,
 					})
 					addrset, err := defaultAddrsetFactory.EnsureAddressSet(dbIDs)
-					addrset.AddAddresses([]string{"10.194.188.4"})
+					Expect(err).NotTo(HaveOccurred())
+					err = addrset.AddAddresses([]string{"10.194.188.4"})
 					Expect(err).NotTo(HaveOccurred())
 					nqosWithoutSrcSelector := &nqostype.NetworkQoS{
 						ObjectMeta: metav1.ObjectMeta{
@@ -918,7 +919,7 @@ func createTestNBGlobal(nbClient libovsdbclient.Client, zone string) error {
 }
 
 func deleteTestNBGlobal(nbClient libovsdbclient.Client) error {
-	p := func(nbGlobal *nbdb.NBGlobal) bool {
+	p := func(_ *nbdb.NBGlobal) bool {
 		return true
 	}
 	ops, err := nbClient.WhereCache(p).Delete()

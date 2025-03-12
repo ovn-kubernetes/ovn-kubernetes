@@ -5,14 +5,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 func (c *Controller) processNextNQOSNodeWorkItem(wg *sync.WaitGroup) bool {
@@ -102,12 +103,12 @@ func (c *Controller) syncNetworkQoSNode(key string) error {
 	return nil
 }
 
-func (c *Controller) getPodsByNode(nodeName string) ([]*v1.Pod, error) {
+func (c *Controller) getPodsByNode(nodeName string) ([]*corev1.Pod, error) {
 	pods, err := c.nqosPodLister.List(labels.Everything())
 	if err != nil {
 		return nil, fmt.Errorf("failed to list pods: %w", err)
 	}
-	podsByNode := []*v1.Pod{}
+	podsByNode := []*corev1.Pod{}
 	for _, pod := range pods {
 		if util.PodScheduled(pod) && !util.PodWantsHostNetwork(pod) && pod.Spec.NodeName == nodeName {
 			podsByNode = append(podsByNode, pod)
@@ -117,7 +118,7 @@ func (c *Controller) getPodsByNode(nodeName string) ([]*v1.Pod, error) {
 }
 
 // isNodeInLocalZone returns whether the provided node is in a zone local to the zone controller
-func (c *Controller) isNodeInLocalZone(node *v1.Node) bool {
+func (c *Controller) isNodeInLocalZone(node *corev1.Node) bool {
 	return util.GetNodeZone(node) == c.zone
 }
 

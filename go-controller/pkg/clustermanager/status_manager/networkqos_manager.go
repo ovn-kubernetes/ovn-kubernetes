@@ -4,13 +4,13 @@ import (
 	"context"
 	"strings"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	networkqosapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1"
 	networkqosapply "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/applyconfiguration/networkqos/v1alpha1"
 	networkqosclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/clientset/versioned"
 	networkqoslisters "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/listers/networkqos/v1alpha1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type networkQoSManager struct {

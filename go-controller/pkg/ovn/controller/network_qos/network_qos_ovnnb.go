@@ -7,7 +7,7 @@ import (
 	"strconv"
 
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
-	libovsdb "github.com/ovn-org/libovsdb/ovsdb"
+	"github.com/ovn-org/libovsdb/ovsdb"
 
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -59,7 +59,7 @@ func (c *Controller) addQoSToLogicalSwitch(qosState *networkQoSState, switchName
 		}
 		qoses = append(qoses, qos)
 	}
-	ops := []libovsdb.Operation{}
+	ops := []ovsdb.Operation{}
 	ops, err = libovsdbops.CreateOrUpdateQoSesOps(c.nbClient, ops, qoses...)
 	if err != nil {
 		return fmt.Errorf("failed to create QoS operations for %s/%s: %w", qosState.namespace, qosState.name, err)
@@ -94,7 +94,7 @@ func (c *Controller) removeQoSFromLogicalSwitches(qosState *networkQoSState, swi
 	if err != nil {
 		return fmt.Errorf("failed to look up QoSes for %s/%s: %v", qosState.namespace, qosState.name, err)
 	}
-	unbindQoSOps := []libovsdb.Operation{}
+	unbindQoSOps := []ovsdb.Operation{}
 	// remove qos rules from logical switches
 	for _, lsName := range switchNames {
 		ops, err := libovsdbops.RemoveQoSesFromLogicalSwitchOps(c.nbClient, nil, lsName, qoses...)
@@ -159,7 +159,7 @@ func (c *Controller) cleanupStaleOvnObjects(qosState *networkQoSState) error {
 	}
 	// remove stale qos rules from logical switches
 	for lsName, qoses := range staleSwitchQoSMap {
-		var switchOps []libovsdb.Operation
+		var switchOps []ovsdb.Operation
 		switchOps, err = libovsdbops.RemoveQoSesFromLogicalSwitchOps(c.nbClient, switchOps, lsName, qoses...)
 		if err != nil {
 			return fmt.Errorf("failed to get ops to remove stale QoSes from switches %s for NetworkQoS %s/%s: %w", lsName, qosState.namespace, qosState.name, err)
@@ -216,7 +216,7 @@ func (c *Controller) deleteOvnQoSes(qoses []*nbdb.QoS) error {
 			switchQoSMap[ls.Name] = qosList
 		}
 	}
-	unbindQoSOps := []libovsdb.Operation{}
+	unbindQoSOps := []ovsdb.Operation{}
 	// remove qos rules from logical switches
 	for lsName, qoses := range switchQoSMap {
 		ops, err := libovsdbops.RemoveQoSesFromLogicalSwitchOps(c.nbClient, nil, lsName, qoses...)
@@ -259,7 +259,7 @@ func (c *Controller) deleteAddressSet(qosName string) error {
 // 1. find address sets owned by NetworkQoS
 // 2. get address sets in use
 // 3. compare and identify those not in use
-func (c *Controller) findStaleAddressSets(qosState *networkQoSState) ([]libovsdb.Operation, error) {
+func (c *Controller) findStaleAddressSets(qosState *networkQoSState) ([]ovsdb.Operation, error) {
 	staleAddressSets := []*nbdb.AddressSet{}
 	addrsets, err := libovsdbops.FindAddressSetsWithPredicate(c.nbClient, func(item *nbdb.AddressSet) bool {
 		return item.ExternalIDs[libovsdbops.OwnerControllerKey.String()] == c.controllerName &&

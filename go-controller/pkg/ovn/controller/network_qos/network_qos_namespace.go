@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/klog/v2"
@@ -108,7 +108,7 @@ func (c *Controller) clearNamespaceForNQOS(namespace string, nqosState *networkQ
 
 // setNamespaceForNQOS will handle the logic for figuring out if the provided namespace name
 // has pods that need to populate or removed from the address sets of the network qoses.
-func (c *Controller) setNamespaceForNQOS(namespace *v1.Namespace, nqosState *networkQoSState) error {
+func (c *Controller) setNamespaceForNQOS(namespace *corev1.Namespace, nqosState *networkQoSState) error {
 	for _, rule := range nqosState.EgressRules {
 		if rule.Classifier == nil {
 			continue

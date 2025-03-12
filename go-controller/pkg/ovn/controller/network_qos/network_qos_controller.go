@@ -6,7 +6,10 @@ import (
 	"sync"
 	"time"
 
-	v1 "k8s.io/api/core/v1"
+	nadinformerv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/informers/externalversions/k8s.cni.cncf.io/v1"
+	nadlisterv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
+
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -19,8 +22,6 @@ import (
 
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
 
-	nadinformerv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/informers/externalversions/k8s.cni.cncf.io/v1"
-	nadlisterv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
 	networkqosapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1"
 	networkqosclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/clientset/versioned"
 	networkqosinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/informers/externalversions/networkqos/v1alpha1"
@@ -61,7 +62,7 @@ type Controller struct {
 	// we consider it remote - this is ok for this controller as this variable is only used to
 	// determine if we need to add pod's port to port group or not - future updates should
 	// take care of reconciling the state of the cluster
-	isPodScheduledinLocalZone func(*v1.Pod) bool
+	isPodScheduledinLocalZone func(*corev1.Pod) bool
 	// store's the name of the zone that this controller belongs to
 	zone string
 
@@ -105,7 +106,7 @@ func NewController(
 	nodeInformer corev1informers.NodeInformer,
 	nadInformer nadinformerv1.NetworkAttachmentDefinitionInformer,
 	addressSetFactory addressset.AddressSetFactory,
-	isPodScheduledinLocalZone func(*v1.Pod) bool,
+	isPodScheduledinLocalZone func(*corev1.Pod) bool,
 	zone string) (*Controller, error) {
 
 	c := &Controller{
@@ -355,8 +356,8 @@ func (c *Controller) onNQOSNamespaceAdd(obj interface{}) {
 
 // onNQOSNamespaceUpdate queues the namespace for processing.
 func (c *Controller) onNQOSNamespaceUpdate(oldObj, newObj interface{}) {
-	oldNamespace := oldObj.(*v1.Namespace)
-	newNamespace := newObj.(*v1.Namespace)
+	oldNamespace := oldObj.(*corev1.Namespace)
+	newNamespace := newObj.(*corev1.Namespace)
 
 	// don't process resync or objects that are marked for deletion
 	if oldNamespace.ResourceVersion == newNamespace.ResourceVersion ||
@@ -401,8 +402,8 @@ func (c *Controller) onNQOSPodAdd(obj interface{}) {
 
 // onNQOSPodUpdate queues the pod for processing.
 func (c *Controller) onNQOSPodUpdate(oldObj, newObj interface{}) {
-	oldPod := oldObj.(*v1.Pod)
-	newPod := newObj.(*v1.Pod)
+	oldPod := oldObj.(*corev1.Pod)
+	newPod := newObj.(*corev1.Pod)
 
 	// don't process resync or objects that are marked for deletion
 	if oldPod.ResourceVersion == newPod.ResourceVersion ||
@@ -447,8 +448,8 @@ func (c *Controller) onNQOSPodDelete(obj interface{}) {
 
 // onNQOSNodeUpdate queues the node for processing.
 func (c *Controller) onNQOSNodeUpdate(oldObj, newObj interface{}) {
-	oldNode := oldObj.(*v1.Node)
-	newNode := newObj.(*v1.Node)
+	oldNode := oldObj.(*corev1.Node)
+	newNode := newObj.(*corev1.Node)
 
 	// don't process resync or objects that are marked for deletion
 	if oldNode.ResourceVersion == newNode.ResourceVersion ||

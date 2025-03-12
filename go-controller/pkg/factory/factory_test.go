@@ -38,11 +38,10 @@ import (
 	egressqosfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1/apis/clientset/versioned/fake"
 	egressservice "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1"
 	egressservicefake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/clientset/versioned/fake"
-	crdtypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-
 	networkqos "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1"
 	networkqosfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/clientset/versioned/fake"
+	crdtypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -2165,7 +2164,7 @@ var _ = Describe("Watch Factory Operations", func() {
 				networkQoS := obj.(*networkqos.NetworkQoS)
 				Expect(reflect.DeepEqual(networkQoS, added)).To(BeTrue())
 			},
-			UpdateFunc: func(old, new interface{}) {
+			UpdateFunc: func(_, new interface{}) {
 				newNetworkQoS := new.(*networkqos.NetworkQoS)
 				Expect(reflect.DeepEqual(newNetworkQoS, added)).To(BeTrue())
 				Expect(newNetworkQoS.Spec.Egress[0].DSCP).To(Equal(42))
