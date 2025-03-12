@@ -6,15 +6,17 @@ All are welcome to join our meetings! If you want to discuss something with the 
 
 ## Meeting time
 
-We meet alternate Monday's at 10:00 AM US Pacific Time.
+We meet alternate Monday's at 6:00 PM CET/CEST.
 In order to figure out when our next meeting is, please check our agenda for previous meeting history.
 The meetings last up to 1 hour.
 
 ## Meeting location
 
-* Video call link: <https://meet.google.com/tgr-pqke-cen>
-* Or dial: (DE) +49 30 300195060 PIN: 846 145 117 7213#
-* More phone numbers: <https://tel.meet/tgr-pqke-cen?pin=8461451177213>
+Platform: CNCF Zoom
+Meeting Link: https://zoom-lfx.platform.linuxfoundation.org/meeting/98741709730?password=ec6c1c1d-8f40-4a3a-a13d-5e284db7ff43
+MeetingID: 98741709730
+Meeting Passcode: Please check the Meeting Notes Top section where passcode is represented
+[Project Community Calendar ics Link for importing](https://webcal.prod.itx.linuxfoundation.org/lfx/lfUT0YkGZgOXRcnNGf)
 
 ## Meeting agenda and minutes
 

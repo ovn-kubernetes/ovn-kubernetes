@@ -70,7 +70,7 @@ type nadController struct {
 	// nads to network mapping
 	nads map[string]string
 
-	// primaryNADs holds a mapping of namespace to primary NAD names
+	// primaryNADs holds a mapping of namespace to NAD of primary UDNs
 	primaryNADs map[string]string
 
 	networkIDAllocator id.Allocator
@@ -425,26 +425,15 @@ func (c *nadController) GetActiveNetworkForNamespace(namespace string) (util.Net
 		return &util.DefaultNetInfo{}, nil
 	}
 
-	c.RLock()
-	defer c.RUnlock()
-	primaryNAD := c.primaryNADs[namespace]
-	if primaryNAD != "" {
-		// we have a primary NAD, no need to check for NS UDN annotation because NAD would not have existed otherwise
-		// get the network
-		netName := c.nads[primaryNAD]
-		if netName == "" {
-			// this should never happen where we have a nad keyed in the primaryNADs
-			// map, but it doesn't exist in the nads map
-			panic("NAD Controller broken consistency between primary NADs and cached NADs")
-		}
-		network := c.networkController.getNetwork(netName)
-		n := util.NewMutableNetInfo(network)
-		// update the returned netInfo copy to only have the primary NAD for this namespace
-		n.SetNADs(primaryNAD)
-		return n, nil
+	network, nad := c.getActiveNetworkForNamespace(namespace)
+	if network != nil && network.IsPrimaryNetwork() {
+		// primary UDN found
+		copy := util.NewMutableNetInfo(network)
+		copy.SetNADs(nad)
+		return copy, nil
 	}
 
-	// no primary network found, make sure we just haven't processed it yet and no UDN / CUDN exists
+	// no primary UDN found, make sure we just haven't processed it yet and no UDN / CUDN exists
 	udns, err := c.udnLister.UserDefinedNetworks(namespace).List(labels.Everything())
 	if err != nil {
 		return nil, fmt.Errorf("error getting user defined networks: %w", err)
@@ -480,6 +469,38 @@ func (c *nadController) GetActiveNetworkForNamespace(namespace string) (util.Net
 
 	// namespace has required UDN label, but no UDN was found
 	return nil, util.NewInvalidPrimaryNetworkError(namespace)
+}
+
+func (c *nadController) GetActiveNetworkForNamespaceFast(namespace string) util.NetInfo {
+	network, _ := c.getActiveNetworkForNamespace(namespace)
+	return network
+}
+
+func (c *nadController) getActiveNetworkForNamespace(namespace string) (util.NetInfo, string) {
+	c.RLock()
+	defer c.RUnlock()
+
+	var network util.NetInfo
+	primaryNAD := c.primaryNADs[namespace]
+	switch primaryNAD {
+	case "":
+		// default network
+		network = c.networkController.getNetwork(types.DefaultNetworkName)
+		if network == nil {
+			network = &util.DefaultNetInfo{}
+		}
+	default:
+		// we have a primary network
+		netName := c.nads[primaryNAD]
+		if netName == "" {
+			// this should never happen where we have a nad keyed in the primaryNADs
+			// map, but it doesn't exist in the nads map
+			panic("NAD Controller broken consistency between primary NADs and cached NADs")
+		}
+		network = c.networkController.getNetwork(netName)
+	}
+
+	return network, primaryNAD
 }
 
 func (c *nadController) GetNetwork(name string) util.NetInfo {
