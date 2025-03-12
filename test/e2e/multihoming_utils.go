@@ -289,18 +289,27 @@ func blockedClient(podName string) string {
 	return "blocked-" + podName
 }
 
-func multiNetIngressLimitingPolicy(policyFor string, appliesFor metav1.LabelSelector, allowForSelector metav1.LabelSelector, allowPorts ...int) *mnpapi.MultiNetworkPolicy {
+func multiNetPolicyPort(port int) mnpapi.MultiNetworkPolicyPort {
+	tcp := v1.ProtocolTCP
+	p := intstr.FromInt32(int32(port))
+	return mnpapi.MultiNetworkPolicyPort{
+		Protocol: &tcp,
+		Port:     &p,
+	}
+}
+
+func multiNetPolicyPortRange(port, endPort int) mnpapi.MultiNetworkPolicyPort {
+	netpolPort := multiNetPolicyPort(port)
+	endPort32 := int32(endPort)
+	netpolPort.EndPort = &endPort32
+	return netpolPort
+}
+
+func multiNetIngressLimitingPolicy(policyFor string, appliesFor metav1.LabelSelector, allowForSelector metav1.LabelSelector, allowPorts ...mnpapi.MultiNetworkPolicyPort) *mnpapi.MultiNetworkPolicy {
 	var (
 		portAllowlist []mnpapi.MultiNetworkPolicyPort
 	)
-	tcp := v1.ProtocolTCP
-	for _, port := range allowPorts {
-		p := intstr.FromInt(port)
-		portAllowlist = append(portAllowlist, mnpapi.MultiNetworkPolicyPort{
-			Protocol: &tcp,
-			Port:     &p,
-		})
-	}
+	portAllowlist = append(portAllowlist, allowPorts...)
 	return &mnpapi.MultiNetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{
 			PolicyForAnnotation: policyFor,
