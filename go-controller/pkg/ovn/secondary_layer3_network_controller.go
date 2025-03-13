@@ -25,6 +25,7 @@ import (
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	svccontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/services"
 	lsm "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/routeimport"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/topology"
 	zoneic "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/zone_interconnect"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/retry"
@@ -326,6 +327,7 @@ func NewSecondaryLayer3NetworkController(
 	cnci *CommonNetworkControllerInfo,
 	netInfo util.NetInfo,
 	networkManager networkmanager.Interface,
+	routeImportManager routeimport.Manager,
 	eIPController *EgressIPController,
 	portCache *PortCache,
 ) (*SecondaryLayer3NetworkController, error) {
@@ -354,6 +356,7 @@ func NewSecondaryLayer3NetworkController(
 				localZoneNodes:              &sync.Map{},
 				cancelableCtx:               util.NewCancelableContext(),
 				networkManager:              networkManager,
+				routeImportManager:          routeImportManager,
 			},
 		},
 		mgmtPortFailed:              sync.Map{},
@@ -478,6 +481,9 @@ func (oc *SecondaryLayer3NetworkController) Stop() {
 	if oc.namespaceHandler != nil {
 		oc.watchFactory.RemoveNamespaceHandler(oc.namespaceHandler)
 	}
+	if oc.routeImportManager != nil {
+		oc.routeImportManager.ForgetNetwork(oc.GetNetworkName())
+	}
 }
 
 // Cleanup cleans up logical entities for the given network, called from net-attach-def routine
@@ -593,6 +599,14 @@ func (oc *SecondaryLayer3NetworkController) run() error {
 		// WatchNetworkPolicy depends on WatchPods and WatchNamespaces
 		if err := oc.WatchNetworkPolicy(); err != nil {
 			return err
+		}
+	}
+
+	// Add ourselves to the route import manager
+	if oc.routeImportManager != nil {
+		err := oc.routeImportManager.AddNetwork(oc.GetNetInfo())
+		if err != nil {
+			return fmt.Errorf("failed to add default network to the route import manager: %v", err)
 		}
 	}
 
