@@ -160,6 +160,15 @@ if [[ "${WHAT}" != "${NETWORK_SEGMENTATION_TESTS}"* ]]; then
   SKIPPED_TESTS+=$NETWORK_SEGMENTATION_TESTS
 fi
 
+# skip multi-homing tests that depends on network-segmentation feature when not enabled.
+# For example: the 'multi-homing-helm' job does not support network-segmentation.
+if [[ "$ENABLE_MULTI_NET" == "true" && "$ENABLE_NETWORK_SEGMENTATION" == "false" ]]; then
+  if [ "$SKIPPED_TESTS" != "" ]; then
+    SKIPPED_TESTS+="|"
+    fi
+    SKIPPED_TESTS+="using ClusterUserDefinedNetwork CR, pods in different namespaces & different nodes, should be able to communicate over Localnet topology"
+fi
+
 # setting these is required to make RuntimeClass tests work ... :/
 export KUBE_CONTAINER_RUNTIME=remote
 export KUBE_CONTAINER_RUNTIME_ENDPOINT=unix:///run/containerd/containerd.sock
