@@ -3,9 +3,11 @@ package e2e
 import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/ginkgo_wrapper"
 )
 
-var _ = ginkgo.Describe("OVS CPU affinity pinning", func() {
+var _ = ginkgo_wrapper.Describe(feature.OVSCPUPin, func() {
 
 	f := wrappedTestFramework("ovspinning")
 
