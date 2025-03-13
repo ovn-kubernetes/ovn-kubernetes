@@ -32,6 +32,7 @@ type NodeControllerManager struct {
 	ovnNodeClient *util.OVNNodeClientset
 	Kube          kube.Interface
 	watchFactory  factory.NodeWatchFactory
+	stopOnce      sync.Once
 	stopChan      chan struct{}
 	wg            *sync.WaitGroup
 	recorder      record.EventRecorder
@@ -227,17 +228,19 @@ func (ncm *NodeControllerManager) Start(ctx context.Context) (err error) {
 
 // Stop gracefully stops all managed controllers
 func (ncm *NodeControllerManager) Stop() {
-	// stop stale ovs ports cleanup
-	close(ncm.stopChan)
+	ncm.stopOnce.Do(func() {
+		// stop stale ovs ports cleanup
+		close(ncm.stopChan)
 
-	if ncm.defaultNodeNetworkController != nil {
-		ncm.defaultNodeNetworkController.Stop()
-	}
+		if ncm.defaultNodeNetworkController != nil {
+			ncm.defaultNodeNetworkController.Stop()
+		}
 
-	// stop the NAD controller
-	if ncm.networkManager != nil {
-		ncm.networkManager.Stop()
-	}
+		// stop the NAD controller
+		if ncm.networkManager != nil {
+			ncm.networkManager.Stop()
+		}
+	})
 }
 
 // checkForStaleOVSRepresentorInterfaces checks for stale OVS ports backed by Repreresentor interfaces,

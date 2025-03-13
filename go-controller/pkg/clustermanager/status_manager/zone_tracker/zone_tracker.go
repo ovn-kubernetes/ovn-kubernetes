@@ -48,6 +48,7 @@ type ZoneTracker struct {
 	// onZonesUpdate will be called on every zone change
 	onZonesUpdate func(newZones sets.Set[string])
 
+	stopOnce sync.Once
 	// stopChan is used internally to shut down UnknownZone trackers when Stop() is called
 	stopChan       chan struct{}
 	nodeLister     corelisters.NodeLister
@@ -87,8 +88,10 @@ func (zt *ZoneTracker) Start() error {
 }
 
 func (zt *ZoneTracker) Stop() {
-	close(zt.stopChan)
-	controller.Stop(zt.nodeController)
+	zt.stopOnce.Do(func() {
+		close(zt.stopChan)
+		controller.Stop(zt.nodeController)
+	})
 }
 
 func (zt *ZoneTracker) needsUpdate(oldNode, newNode *corev1.Node) bool {
