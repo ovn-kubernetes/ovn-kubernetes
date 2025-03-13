@@ -321,6 +321,18 @@ func setupManagementPortNFTSets() error {
 		Comment: knftables.PtrTo("eTP:Local short-circuit not subject to management port SNAT (IPv6)"),
 		Type:    "ipv6_addr . inet_proto . inet_service",
 	})
+	tx.Add(&knftables.Set{
+		Name:    types.NFTMgmtPortNoSNATSubnetsV4,
+		Comment: knftables.PtrTo("subnets not subject to management port SNAT (IPv4)"),
+		Type:    "ipv4_addr",
+		Flags:   []knftables.SetFlag{knftables.IntervalFlag},
+	})
+	tx.Add(&knftables.Set{
+		Name:    types.NFTMgmtPortNoSNATSubnetsV6,
+		Comment: knftables.PtrTo("subnets not subject to management port SNAT (IPv6)"),
+		Type:    "ipv6_addr",
+		Flags:   []knftables.SetFlag{knftables.IntervalFlag},
+	})
 
 	err = nft.Run(context.TODO(), tx)
 	if err != nil {
@@ -405,6 +417,14 @@ func setupManagementPortNFTChain(interfaceName string, cfg *managementPortConfig
 		tx.Add(&knftables.Rule{
 			Chain: nftMgmtPortChain,
 			Rule: knftables.Concat(
+				"ip saddr", "@", types.NFTMgmtPortNoSNATSubnetsV4,
+				counterIfDebug,
+				"return",
+			),
+		})
+		tx.Add(&knftables.Rule{
+			Chain: nftMgmtPortChain,
+			Rule: knftables.Concat(
 				counterIfDebug,
 				"snat ip to", cfg.ipv4.ifAddr.IP,
 			),
@@ -437,6 +457,14 @@ func setupManagementPortNFTChain(interfaceName string, cfg *managementPortConfig
 			Chain: nftMgmtPortChain,
 			Rule: knftables.Concat(
 				"ip6 daddr . meta l4proto . th dport", "@", types.NFTMgmtPortNoSNATServicesV6,
+				counterIfDebug,
+				"return",
+			),
+		})
+		tx.Add(&knftables.Rule{
+			Chain: nftMgmtPortChain,
+			Rule: knftables.Concat(
+				"ip6 saddr", "@", types.NFTMgmtPortNoSNATSubnetsV6,
 				counterIfDebug,
 				"return",
 			),
