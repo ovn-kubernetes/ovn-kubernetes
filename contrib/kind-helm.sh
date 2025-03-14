@@ -399,7 +399,6 @@ create_ovn_kubernetes() {
           --set ovnkube-master.replicas=${MASTER_REPLICAS} \
           --set global.image.repository=$(get_image) \
           --set global.image.tag=$(get_tag) \
-          --set global.enableAdminNetworkPolicy=true \
           --set global.enableMulticast=$(if [ "${OVN_MULTICAST_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableMultiNetwork=$(if [ "${ENABLE_MULTI_NET}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableHybridOverlay=$(if [ "${OVN_HYBRID_OVERLAY_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
@@ -415,12 +414,6 @@ delete() {
   fi
   helm uninstall ovn-kubernetes && sleep 5 ||:
   kind delete cluster --name "${KIND_CLUSTER_NAME:-ovn}"
-}
-
-install_online_ovn_kubernetes_crds() {
-  # NOTE: When you update vendoring versions for the ANP & BANP APIs, we must update the version of the CRD we pull from in the below URL
-  run_kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/network-policy-api/v0.1.5/config/crd/experimental/policy.networking.k8s.io_adminnetworkpolicies.yaml
-  run_kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/network-policy-api/v0.1.5/config/crd/experimental/policy.networking.k8s.io_baselineadminnetworkpolicies.yaml
 }
 
 check_dependencies
@@ -443,7 +436,6 @@ if [ "$OVN_ENABLE_DNSNAMERESOLVER" == true ]; then
 fi
 create_ovn_kubernetes
 
-install_online_ovn_kubernetes_crds
 if [ "$KIND_INSTALL_INGRESS" == true ]; then
   install_ingress
 fi
