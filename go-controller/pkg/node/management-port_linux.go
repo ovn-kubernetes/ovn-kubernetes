@@ -59,6 +59,7 @@ type managementPortConfig struct {
 	routerMAC              net.HardwareAddr
 	isPodNetworkAdvertised atomic.Bool
 	reconcilePeriod        time.Duration
+	dontSnatMark           string
 
 	ipv4 *managementPortIPFamilyConfig
 	ipv6 *managementPortIPFamilyConfig
@@ -99,6 +100,7 @@ func newManagementPortConfig(interfaceName string, hostSubnets []*net.IPNet, isP
 	mpcfg := &managementPortConfig{
 		ifName:          interfaceName,
 		reconcilePeriod: 30 * time.Second,
+		dontSnatMark:    ovnKubeMgmtPortDontSNATMark,
 	}
 	mpcfg.isPodNetworkAdvertised.Store(isPodNetworkAdvertised)
 
@@ -319,6 +321,14 @@ func setupManagementPortNFTables(cfg *managementPortConfig) error {
 			counterIfDebug,
 			"return",
 		),
+	})
+	tx.Add(&knftables.Rule{
+		Chain: nftablesMgmtPortChain,
+		Rule: knftables.Concat(
+			"mark", "==", cfg.dontSnatMark,
+			"return",
+		),
+		Comment: knftables.PtrTo("DoNotSNAT"),
 	})
 
 	isPodNetworkAdvertised := cfg.isPodNetworkAdvertised.Load()
