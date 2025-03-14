@@ -20,6 +20,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
@@ -945,6 +946,13 @@ func (nc *DefaultNodeNetworkController) PreStart(ctx context.Context) error {
 	if err := util.SetNodeZone(nodeAnnotator, sbZone); err != nil {
 		return fmt.Errorf("failed to set node zone annotation for node %s: %w", nc.name, err)
 	}
+
+	encapIPList := sets.New[string]()
+	encapIPList.Insert(strings.Split(config.Default.EffectiveEncapIP, ",")...)
+	if err := util.SetNodeEncapIPs(nodeAnnotator, encapIPList); err != nil {
+		return fmt.Errorf("failed to set node-encap-ips annotation for node %s: %w", nc.name, err)
+	}
+
 	if err := nodeAnnotator.Run(); err != nil {
 		return fmt.Errorf("failed to set node %s annotations: %w", nc.name, err)
 	}
