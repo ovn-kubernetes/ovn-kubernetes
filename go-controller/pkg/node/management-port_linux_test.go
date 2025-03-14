@@ -521,6 +521,8 @@ var _ = Describe("Management Port Operations", func() {
 		fakeExecErr := fmt.Errorf("face exec error")
 		linkMock := &mocks.Link{}
 
+		nodenft.SetFakeNFTablesHelper()
+
 		BeforeEach(func() {
 			Expect(config.PrepareTestConfig()).To(Succeed())
 			util.ResetRunner()
