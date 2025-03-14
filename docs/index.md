@@ -1,4 +1,4 @@
-![ovn-kubernetes-logo](images/ovn-inside-k8s.png)
+![ovn-kubernetes-logo](images/ovn-kubernetes-stacked-all-blue.png)
 
 # OVN-Kubernetes: A Robust Kubernetes Networking Provider
 
