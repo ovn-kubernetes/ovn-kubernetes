@@ -551,6 +551,7 @@ func expectedLayer2EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 		sr2                = "sr2-UUID"
 		lrsr1              = "lrsr1-UUID"
 		routerPolicyUUID1  = "lrp1-UUID"
+		routerPolicyUUID2  = "lrp2-UUID"
 		hostCIDRPolicyUUID = "host-cidr-policy-UUID"
 		masqSNATUUID1      = "masq-snat1-UUID"
 	)
@@ -570,7 +571,7 @@ func expectedLayer2EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 		StaticRoutes: []string{sr1, sr2},
 		ExternalIDs:  gwRouterExternalIDs(netInfo, gwConfig),
 		Options:      gwRouterOptions(gwConfig),
-		Policies:     []string{routerPolicyUUID1},
+		Policies:     []string{routerPolicyUUID1, routerPolicyUUID2},
 	}
 	gr.Options["lb_force_snat_ip"] = gwRouterJoinIPAddress().IP.String()
 	expectedEntities := []libovsdbtest.TestData{
@@ -581,6 +582,7 @@ func expectedLayer2EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 		expectedGRToExternalSwitchLRP(gwRouterName, netInfo, nodePhysicalIPAddress(), udnGWSNATAddress()),
 		masqSNAT,
 		expectedLogicalRouterPolicy(routerPolicyUUID1, netInfo, nodeName, nodeIP().IP.String(), managementPortIP(layer2Subnet()).String()),
+		expectedNodeLogicalRouterPolicy(routerPolicyUUID2, netInfo, nodeName, managementPortIP(layer2Subnet()).String(), nodeName),
 	}
 
 	expectedEntities = append(expectedEntities, expectedStaticMACBindings(gwRouterName, staticMACBindingIPs())...)

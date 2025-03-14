@@ -2,6 +2,7 @@ package ovn
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"reflect"
@@ -11,7 +12,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
+	utilnet "k8s.io/utils/net"
 
+	libovsdbclient "github.com/ovn-org/libovsdb/client"
 	"github.com/ovn-org/libovsdb/ovsdb"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/pod"
@@ -168,6 +171,7 @@ func (h *secondaryLayer3NetworkControllerEventHandler) UpdateResource(oldObj, ne
 		newNodeIsLocalZoneNode := h.oc.isLocalZoneNode(newNode)
 		zoneClusterChanged := h.oc.nodeZoneClusterChanged(oldNode, newNode, newNodeIsLocalZoneNode, h.oc.GetNetworkName())
 		nodeSubnetChange := nodeSubnetChanged(oldNode, newNode, h.oc.GetNetworkName())
+		hostIPsChanged := hostCIDRsChanged(oldNode, newNode)
 		if newNodeIsLocalZoneNode {
 			var nodeSyncsParam *nodeSyncs
 			if h.oc.isLocalZoneNode(oldNode) {
@@ -183,7 +187,7 @@ func (h *secondaryLayer3NetworkControllerEventHandler) UpdateResource(oldObj, ne
 				syncGw := failed ||
 					gatewayChanged(oldNode, newNode) ||
 					nodeSubnetChange ||
-					hostCIDRsChanged(oldNode, newNode) ||
+					hostIPsChanged ||
 					nodeGatewayMTUSupportChanged(oldNode, newNode)
 				_, failed = h.oc.syncEIPNodeRerouteFailed.Load(newNode.Name)
 				syncReroute := failed || util.NodeHostCIDRsAnnotationChanged(oldNode, newNode)
@@ -215,7 +219,8 @@ func (h *secondaryLayer3NetworkControllerEventHandler) UpdateResource(oldObj, ne
 
 			// Check if the node moved from local zone to remote zone and if so syncZoneIC should be set to true.
 			// Also check if node subnet changed, so static routes are properly set
-			syncZoneIC = syncZoneIC || h.oc.isLocalZoneNode(oldNode) || nodeSubnetChange || zoneClusterChanged
+			// Check if host IPs changed to see if logical route policies need to be updated
+			syncZoneIC = syncZoneIC || h.oc.isLocalZoneNode(oldNode) || nodeSubnetChange || zoneClusterChanged || hostIPsChanged
 			if syncZoneIC {
 				klog.Infof("Node %s in remote zone %s needs interconnect zone sync up. Zone cluster changed: %v",
 					newNode.Name, util.GetNodeZone(newNode), zoneClusterChanged)
@@ -825,10 +830,31 @@ func (oc *SecondaryLayer3NetworkController) addUpdateRemoteNodeEvent(node *corev
 		if err = oc.zoneICHandler.AddRemoteZoneNode(node); err != nil {
 			err = fmt.Errorf("failed to add the remote zone node [%s] to the zone interconnect handler, err : %w", node.Name, err)
 			oc.syncZoneICFailed.Store(node.Name, true)
-		} else {
-			oc.syncZoneICFailed.Delete(node.Name)
 		}
+		// Add reroute policies to access host IPs via mp0
+		nodeTransitSwitchPortIPs, err := util.ParseNodeTransitSwitchPortAddrs(node)
+		if err != nil || len(nodeTransitSwitchPortIPs) == 0 {
+			oc.syncZoneICFailed.Store(node.Name, true)
+			return fmt.Errorf("failed to get the node transit switch port IPs : %w", err)
+		}
+		var transitV4, transitV6 net.IP
+		for _, ipNet := range nodeTransitSwitchPortIPs {
+			if ipNet == nil {
+				continue
+			}
+			if utilnet.IsIPv4(ipNet.IP) {
+				transitV4 = ipNet.IP
+			} else {
+				transitV6 = ipNet.IP
+			}
+		}
+		if err := oc.createHostAccessReroute(node, transitV4, transitV6); err != nil {
+			oc.syncZoneICFailed.Store(node.Name, true)
+			return err
+		}
+		oc.syncZoneICFailed.Delete(node.Name)
 	}
+
 	return err
 }
 
@@ -915,11 +941,31 @@ func (oc *SecondaryLayer3NetworkController) deleteNodeEvent(node *corev1.Node) e
 	klog.V(5).Infof("Deleting Node %q for network %s. Removing the node from "+
 		"various caches", node.Name, oc.GetNetworkName())
 
+	v4Mgmt, v6Mgmt, err := oc.getManagementPortIPs(node)
+	if err != nil {
+		return fmt.Errorf("failed to clean up host access route policies via mp0 for node %q, error: %w", node.Name, err)
+	}
+	var mgmtIPs []net.IP
+
+	if v4Mgmt != nil {
+		mgmtIPs = append(mgmtIPs, v4Mgmt)
+	}
+	if v6Mgmt != nil {
+		mgmtIPs = append(mgmtIPs, v6Mgmt)
+	}
+
+	gwManager := oc.newGatewayManager(node.Name)
+
+	// cleanup route policy towards mp0
+	if len(mgmtIPs) > 0 {
+		gwManager.PolicyRouteCleanup(mgmtIPs)
+	}
+
 	if err := oc.deleteNode(node.Name); err != nil {
 		return err
 	}
 
-	if err := oc.gatewayManagerForNode(node.Name).Cleanup(); err != nil {
+	if err := gwManager.Cleanup(); err != nil {
 		return fmt.Errorf("failed to cleanup gateway on node %q: %w", node.Name, err)
 	}
 	oc.gatewayManagers.Delete(node.Name)
@@ -930,6 +976,9 @@ func (oc *SecondaryLayer3NetworkController) deleteNodeEvent(node *corev1.Node) e
 	oc.mgmtPortFailed.Delete(node.Name)
 	oc.nodeClusterRouterPortFailed.Delete(node.Name)
 	if config.OVNKubernetesFeature.EnableInterconnect {
+		if err := oc.cleanupTransitHostAccessPolicies(node); err != nil {
+			return err
+		}
 		if err := oc.zoneICHandler.DeleteNode(node); err != nil {
 			return err
 		}
@@ -986,6 +1035,7 @@ func (oc *SecondaryLayer3NetworkController) syncNodes(nodes []interface{}) error
 	}
 
 	if config.OVNKubernetesFeature.EnableInterconnect {
+		// TODO(trozet): handle sync for stale host route policies
 		if err := oc.zoneICHandler.SyncNodes(nodes); err != nil {
 			return fmt.Errorf("zoneICHandler failed to sync nodes: error: %w", err)
 		}
@@ -1141,4 +1191,64 @@ func (oc *SecondaryLayer3NetworkController) StartServiceController(wg *sync.Wait
 		return fmt.Errorf("error running OVN Kubernetes Services controller for network %s: %v", oc.GetNetworkName(), err)
 	}
 	return nil
+}
+
+func (oc *SecondaryLayer3NetworkController) cleanupTransitHostAccessPolicies(node *corev1.Node) error {
+	// cleanup reroute policies towards transit ips for host access
+	v4Transit, v6Transit, err := oc.getTransitPortIPs(node)
+	if err != nil {
+		return err
+	}
+
+	var transitIPs []net.IP
+
+	if v4Transit != nil {
+		transitIPs = append(transitIPs, v4Transit)
+	}
+	if v6Transit != nil {
+		transitIPs = append(transitIPs, v6Transit)
+	}
+
+	// cleanup route policy towards mp0
+	if len(transitIPs) > 0 {
+		oc.newGatewayManager(node.Name).PolicyRouteCleanup(transitIPs)
+	}
+	return nil
+}
+
+func (oc *SecondaryLayer3NetworkController) getTransitPortIPs(node *corev1.Node) (net.IP, net.IP, error) {
+	nodeTransitSwitchPortIPs, err := util.ParseNodeTransitSwitchPortAddrs(node)
+	if err != nil || len(nodeTransitSwitchPortIPs) == 0 {
+		// try getting from nbdb
+		v4, v6, newErr := oc.getTransitPortIPsFromOVN(node.Name)
+		if newErr != nil {
+			// if we cant get the IPs from the node annotation, and the port doesn't exist, we treat it as no error
+			// and the port does not exist. We have little chance of finding this information on a retry, so no point in failing
+			// sync functions or retrying.
+			if errors.Is(newErr, libovsdbclient.ErrNotFound) {
+				return nil, nil, nil
+			} else {
+				return nil, nil, fmt.Errorf("failed to find transit port IPs for node %q in either "+
+					"annotations: %v, or OVN NBDB: %w", node.Name, err, newErr)
+			}
+		} else {
+			return v4, v6, nil
+		}
+
+	}
+
+	var v4Addr, v6Addr net.IP
+	for _, transitIPNet := range nodeTransitSwitchPortIPs {
+		if utilnet.IsIPv6CIDR(transitIPNet) {
+			v6Addr = transitIPNet.IP
+		} else if utilnet.IsIPv4CIDR(transitIPNet) {
+			v4Addr = transitIPNet.IP
+		}
+	}
+
+	return v4Addr, v6Addr, nil
+}
+
+func (oc *SecondaryLayer3NetworkController) getTransitPortIPsFromOVN(node string) (net.IP, net.IP, error) {
+	return oc.findIPsFromLSP(types.TransitSwitchToRouterPrefix + node)
 }

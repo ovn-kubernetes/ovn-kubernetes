@@ -8,8 +8,10 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
+	utilnet "k8s.io/utils/net"
 
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
 
@@ -216,29 +218,62 @@ func (oc *DefaultNetworkController) deleteStaleNodeChassis(node *corev1.Node) er
 	return nil
 }
 
+func getNodeIPAddrSetDbIDs(nodeName string, controller string) *libovsdbops.DbObjectIDs {
+	return libovsdbops.NewDbObjectIDs(libovsdbops.AddressSetNode, controller, map[libovsdbops.ExternalIDKey]string{
+		// creates per node address set holding all node IPs
+		libovsdbops.ObjectNameKey: fmt.Sprintf("%s-node-ips", nodeName),
+	})
+}
+
 // cleanupNodeResources deletes the node resources from the OVN Northbound database
-func (oc *DefaultNetworkController) cleanupNodeResources(nodeName string) error {
-	if err := oc.deleteNodeLogicalNetwork(nodeName); err != nil {
-		return fmt.Errorf("error deleting node %s logical network: %v", nodeName, err)
+func (oc *DefaultNetworkController) cleanupNodeResources(node *corev1.Node) error {
+	v4Mgmt, v6Mgmt, err := oc.getManagementPortIPs(node)
+	if err != nil {
+		return fmt.Errorf("failed to clean up host access route policies via mp0 for node %q, error: %w", node.Name, err)
+	}
+	var mgmtIPs []net.IP
+
+	if v4Mgmt != nil {
+		mgmtIPs = append(mgmtIPs, v4Mgmt)
+	}
+	if v6Mgmt != nil {
+		mgmtIPs = append(mgmtIPs, v6Mgmt)
 	}
 
-	if err := oc.newGatewayManager(nodeName).Cleanup(); err != nil {
-		return fmt.Errorf("failed to clean up node %s gateway: (%w)", nodeName, err)
+	gwManager := oc.newGatewayManager(node.Name)
+
+	// cleanup route policy towards mp0
+	if len(mgmtIPs) > 0 {
+		gwManager.PolicyRouteCleanup(mgmtIPs)
+	}
+
+	if err := oc.deleteNodeLogicalNetwork(node.Name); err != nil {
+		return fmt.Errorf("error deleting node %s logical network: %v", node.Name, err)
+	}
+
+	if err := gwManager.Cleanup(); err != nil {
+		return fmt.Errorf("failed to clean up node %s gateway: (%w)", node.Name, err)
+	}
+
+	// cleanup node Address set
+	dbIDs := getNodeIPAddrSetDbIDs(node.Name, oc.controllerName)
+	if err := oc.addressSetFactory.DestroyAddressSet(dbIDs); err != nil {
+		return err
 	}
 
 	chassisTemplateVars := make([]*nbdb.ChassisTemplateVar, 0)
 	p := func(item *sbdb.Chassis) bool {
-		if item.Hostname == nodeName {
+		if item.Hostname == node.Name {
 			chassisTemplateVars = append(chassisTemplateVars, &nbdb.ChassisTemplateVar{Chassis: item.Name})
 			return true
 		}
 		return false
 	}
 	if err := libovsdbops.DeleteChassisWithPredicate(oc.sbClient, p); err != nil {
-		return fmt.Errorf("failed to remove the chassis associated with node %s in the OVN SB Chassis table: %v", nodeName, err)
+		return fmt.Errorf("failed to remove the chassis associated with node %s in the OVN SB Chassis table: %v", node.Name, err)
 	}
 	if err := libovsdbops.DeleteChassisTemplateVar(oc.nbClient, chassisTemplateVars...); err != nil {
-		return fmt.Errorf("failed deleting chassis template variables for %s: %v", nodeName, err)
+		return fmt.Errorf("failed deleting chassis template variables for %s: %v", node.Name, err)
 	}
 	return nil
 }
@@ -305,10 +340,10 @@ func (oc *DefaultNetworkController) syncNodes(kNodes []interface{}) error {
 		return fmt.Errorf("failed to get node logical switches which have other-config set: %v", err)
 	}
 
-	staleSwitches := sets.NewString()
+	nodeNames := sets.NewString()
 	for _, nodeSwitch := range nodeSwitches {
 		if nodeSwitch.Name != types.TransitSwitch && !foundNodes.Has(nodeSwitch.Name) {
-			staleSwitches.Insert(nodeSwitch.Name)
+			nodeNames.Insert(nodeSwitch.Name)
 		}
 	}
 
@@ -320,7 +355,7 @@ func (oc *DefaultNetworkController) syncNodes(kNodes []interface{}) error {
 		}
 		nodeName := strings.TrimPrefix(item.Name, types.ExternalSwitchPrefix)
 		if nodeName != item.Name && len(nodeName) > 0 && !foundNodes.Has(nodeName) {
-			staleSwitches.Insert(nodeName)
+			nodeNames.Insert(nodeName)
 			return true
 		}
 		return false
@@ -338,7 +373,7 @@ func (oc *DefaultNetworkController) syncNodes(kNodes []interface{}) error {
 		}
 		nodeName := strings.TrimPrefix(item.Name, types.GWRouterPrefix)
 		if nodeName != item.Name && len(nodeName) > 0 && !foundNodes.Has(nodeName) {
-			staleSwitches.Insert(nodeName)
+			nodeNames.Insert(nodeName)
 			return true
 		}
 		return false
@@ -349,9 +384,21 @@ func (oc *DefaultNetworkController) syncNodes(kNodes []interface{}) error {
 	}
 
 	// Cleanup stale nodes (including gateway routers and external logical switches)
-	for _, staleSwitch := range staleSwitches.UnsortedList() {
-		if err := oc.cleanupNodeResources(staleSwitch); err != nil {
-			return fmt.Errorf("failed to cleanup node resources:%s, err:%w", staleSwitch, err)
+	for _, staleNode := range nodeNames.UnsortedList() {
+		n := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: staleNode,
+			},
+		}
+		if err := oc.cleanupNodeResources(n); err != nil {
+			return fmt.Errorf("failed to cleanup node resources:%s, err:%w", staleNode, err)
+		}
+		if config.OVNKubernetesFeature.EnableInterconnect {
+			// TODO(trozet): check this again, will all remote switches be in local db?
+			if err := oc.cleanupTransitHostAccessPolicies(n); err != nil {
+				return fmt.Errorf("failed to cleanup host access route policies for rmote node: %s, err: %w",
+					staleNode, err)
+			}
 		}
 	}
 
@@ -627,7 +674,7 @@ func (oc *DefaultNetworkController) addUpdateRemoteNodeEvent(node *corev1.Node, 
 
 	if present {
 		klog.Infof("Node %q moved from the local zone %s to a remote zone %s. Cleaning the node resources", node.Name, oc.zone, util.GetNodeZone(node))
-		if err := oc.cleanupNodeResources(node.Name); err != nil {
+		if err := oc.cleanupNodeResources(node); err != nil {
 			return fmt.Errorf("error cleaning up the local resources for the remote node %s, err : %w", node.Name, err)
 		}
 		oc.localZoneNodes.Delete(node.Name)
@@ -650,9 +697,31 @@ func (oc *DefaultNetworkController) addUpdateRemoteNodeEvent(node *corev1.Node, 
 		if err = oc.zoneICHandler.AddRemoteZoneNode(node); err != nil {
 			err = fmt.Errorf("adding or updating remote node IC resources %s failed, err - %w", node.Name, err)
 			oc.syncZoneICFailed.Store(node.Name, true)
-		} else {
-			oc.syncZoneICFailed.Delete(node.Name)
+			return err
 		}
+
+		// Add reroute policies to access host IPs via mp0
+		nodeTransitSwitchPortIPs, err := util.ParseNodeTransitSwitchPortAddrs(node)
+		if err != nil || len(nodeTransitSwitchPortIPs) == 0 {
+			oc.syncZoneICFailed.Store(node.Name, true)
+			return fmt.Errorf("failed to get the node transit switch port IPs : %w", err)
+		}
+		var transitV4, transitV6 net.IP
+		for _, ipNet := range nodeTransitSwitchPortIPs {
+			if ipNet == nil {
+				continue
+			}
+			if utilnet.IsIPv4(ipNet.IP) {
+				transitV4 = ipNet.IP
+			} else {
+				transitV6 = ipNet.IP
+			}
+		}
+		if err := oc.createHostAccessReroute(node, transitV4, transitV6); err != nil {
+			oc.syncZoneICFailed.Store(node.Name, true)
+			return err
+		}
+		oc.syncZoneICFailed.Delete(node.Name)
 	}
 	klog.V(5).Infof("Creating Interconnect resources for node %v took: %s", node.Name, time.Since(start))
 	return err
@@ -676,11 +745,15 @@ func (oc *DefaultNetworkController) deleteOVNNodeEvent(node *corev1.Node) error 
 		}
 	}
 
-	if err := oc.cleanupNodeResources(node.Name); err != nil {
+	if err := oc.cleanupNodeResources(node); err != nil {
 		return err
 	}
 
 	if config.OVNKubernetesFeature.EnableInterconnect {
+		if err := oc.cleanupTransitHostAccessPolicies(node); err != nil {
+			return err
+		}
+
 		if err := oc.zoneICHandler.DeleteNode(node); err != nil {
 			return err
 		}
@@ -839,6 +912,86 @@ func (oc *DefaultNetworkController) delIPFromHostNetworkNamespaceAddrSet(node *c
 		return nil
 	}(); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+// getIPsFromOVNPort parses the addresses field, which normally includes mac address and ip addresses, and returns
+// ipv4 and ip6 addresses found
+func getIPsFromOVNPort(port *nbdb.LogicalSwitchPort) (net.IP, net.IP) {
+	if port == nil {
+		return nil, nil
+	}
+	var v4Addr, v6Addr net.IP
+	for _, addr := range port.Addresses {
+		ip := net.ParseIP(addr)
+		if utilnet.IsIPv4(ip) {
+			v4Addr = ip
+		} else if utilnet.IsIPv6(ip) {
+			v6Addr = ip
+		}
+	}
+
+	return v4Addr, v6Addr
+}
+
+func (oc *DefaultNetworkController) getTransitPortIPs(node *corev1.Node) (net.IP, net.IP, error) {
+	nodeTransitSwitchPortIPs, err := util.ParseNodeTransitSwitchPortAddrs(node)
+	if err != nil || len(nodeTransitSwitchPortIPs) == 0 {
+		// try getting from nbdb
+		v4, v6, newErr := oc.getTransitPortIPsFromOVN(node.Name)
+		if newErr != nil {
+			// if we cant get the IPs from the node annotation, and the port doesn't exist, we treat it as no error
+			// and the port does not exist. We have little chance of finding this information on a retry, so no point in failing
+			// sync functions or retrying.
+			if errors.Is(newErr, libovsdbclient.ErrNotFound) {
+				return nil, nil, nil
+			} else {
+				return nil, nil, fmt.Errorf("failed to find transit port IPs for node %q in either "+
+					"annotations: %v, or OVN NBDB: %w", node.Name, err, newErr)
+			}
+		} else {
+			return v4, v6, nil
+		}
+
+	}
+
+	var v4Addr, v6Addr net.IP
+	for _, transitIPNet := range nodeTransitSwitchPortIPs {
+		if utilnet.IsIPv6CIDR(transitIPNet) {
+			v6Addr = transitIPNet.IP
+		} else if utilnet.IsIPv4CIDR(transitIPNet) {
+			v4Addr = transitIPNet.IP
+		}
+	}
+
+	return v4Addr, v6Addr, nil
+}
+
+func (oc *DefaultNetworkController) getTransitPortIPsFromOVN(node string) (net.IP, net.IP, error) {
+	return oc.findIPsFromLSP(types.TransitSwitchToRouterPrefix + node)
+}
+
+func (oc *DefaultNetworkController) cleanupTransitHostAccessPolicies(node *corev1.Node) error {
+	// cleanup reroute policies towards transit ips for host access
+	v4Transit, v6Transit, err := oc.getTransitPortIPs(node)
+	if err != nil {
+		return err
+	}
+
+	var transitIPs []net.IP
+
+	if v4Transit != nil {
+		transitIPs = append(transitIPs, v4Transit)
+	}
+	if v6Transit != nil {
+		transitIPs = append(transitIPs, v6Transit)
+	}
+
+	// cleanup route policy towards mp0
+	if len(transitIPs) > 0 {
+		oc.newGatewayManager(node.Name).PolicyRouteCleanup(transitIPs)
 	}
 	return nil
 }
