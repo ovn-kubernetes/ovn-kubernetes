@@ -62,6 +62,17 @@ func getVRFCreationFakeOVSCommands(fexec *ovntest.FakeExec) {
 		Cmd:    "ovs-vsctl --timeout=15 port-to-br eth0",
 		Output: "breth0",
 	})
+	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+		Cmd:    "ovs-vsctl --timeout=15 port-to-br eth0",
+		Output: "breth0",
+	})
+}
+
+func getAdvertisedNonDefaultVRFCreationFakeOVSCommands(fexec *ovntest.FakeExec) {
+	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+		Cmd:    "ovs-vsctl --timeout=15 port-to-br eth0",
+		Output: "breth0",
+	})
 }
 
 func getRPFilterLooseModeFakeCommands(fexec *ovntest.FakeExec) {
@@ -1116,6 +1127,93 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
 	})
+
+	ovntest.OnSupportedPlatformsIt("should have default route when network is advertised on default VRF", func() {
+		config.Gateway.Interface = "eth0"
+		config.IPv4Mode = true
+		config.IPv6Mode = true
+		config.Gateway.NextHop = "10.0.0.11"
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: nodeName,
+				Annotations: map[string]string{
+					"k8s.ovn.org/node-subnets": fmt.Sprintf("{\"%s\":[\"%s\", \"%s\"]}", netName, v4NodeSubnet, v6NodeSubnet),
+				},
+			},
+		}
+		nad := ovntest.GenerateNAD(netName, "rednad", "greenamespace",
+			types.Layer3Topology, "100.128.0.0/16/24,ae70::/60/64", types.NetworkRolePrimary)
+		ovntest.AnnotateNADWithNetworkID(netID, nad)
+		netInfo, err := util.ParseNADInfo(nad)
+		Expect(err).NotTo(HaveOccurred())
+		mutableNetInfo := util.NewMutableNetInfo(netInfo)
+		mutableNetInfo.SetPodNetworkAdvertisedVRFs(map[string][]string{node.Name: {types.DefaultNetworkName}})
+		udnGateway, err := NewUserDefinedNetworkGateway(mutableNetInfo, node, nil, nil, vrf, nil, &gateway{})
+		Expect(err).NotTo(HaveOccurred())
+		getVRFCreationFakeOVSCommands(fexec)
+		err = testNS.Do(func(ns.NetNS) error {
+			defer GinkgoRecover()
+			mplink, err := netlink.LinkByName(mgtPort)
+			Expect(err).NotTo(HaveOccurred())
+			bridgelink, err := netlink.LinkByName("breth0")
+			Expect(err).NotTo(HaveOccurred())
+			vrfTableId := util.CalculateRouteTableID(mplink.Attrs().Index)
+
+			routes, err := udnGateway.computeRoutesForUDN(vrfTableId, mplink)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(routes).To(HaveLen(8))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(*routes[1].Dst).To(Equal(*ovntest.MustParseIPNet("0.0.0.0/0")))
+			Expect(routes[1].LinkIndex).To(Equal(bridgelink.Attrs().Index))
+			Expect(routes[1].Gw.Equal(ovntest.MustParseIP(config.Gateway.NextHop))).To(BeTrue())
+			return nil
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
+	})
+
+	ovntest.OnSupportedPlatformsIt("should omit default route when network is advertised on any other vrf than default", func() {
+		config.Gateway.Interface = "eth0"
+		config.IPv4Mode = true
+		config.IPv6Mode = true
+		config.Gateway.NextHop = "10.0.0.11"
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: nodeName,
+				Annotations: map[string]string{
+					"k8s.ovn.org/node-subnets": fmt.Sprintf("{\"%s\":[\"%s\", \"%s\"]}", netName, v4NodeSubnet, v6NodeSubnet),
+				},
+			},
+		}
+		nad := ovntest.GenerateNAD(netName, "rednad", "greenamespace",
+			types.Layer3Topology, "100.128.0.0/16/24,ae70::/60/64", types.NetworkRolePrimary)
+		ovntest.AnnotateNADWithNetworkID(netID, nad)
+		netInfo, err := util.ParseNADInfo(nad)
+		Expect(err).NotTo(HaveOccurred())
+		mutableNetInfo := util.NewMutableNetInfo(netInfo)
+		mutableNetInfo.SetPodNetworkAdvertisedVRFs(map[string][]string{node.Name: {netName}})
+		udnGateway, err := NewUserDefinedNetworkGateway(mutableNetInfo, node, nil, nil, vrf, nil, &gateway{})
+		Expect(err).NotTo(HaveOccurred())
+		getAdvertisedNonDefaultVRFCreationFakeOVSCommands(fexec)
+		err = testNS.Do(func(ns.NetNS) error {
+			defer GinkgoRecover()
+			mplink, err := netlink.LinkByName(mgtPort)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(err).NotTo(HaveOccurred())
+			vrfTableId := util.CalculateRouteTableID(mplink.Attrs().Index)
+
+			routes, err := udnGateway.computeRoutesForUDN(vrfTableId, mplink)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(routes).To(HaveLen(7))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(*routes[1].Dst).To(Not(Equal(*ovntest.MustParseIPNet("0.0.0.0/0"))))
+			Expect(routes[1].Gw.Equal(ovntest.MustParseIP(config.Gateway.NextHop))).To(BeFalse())
+			return nil
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
+	})
+
 	ovntest.OnSupportedPlatformsIt("should set rp filer to loose mode for management port interface", func() {
 		getRPFilterLooseModeFakeCommands(fexec)
 		err := testNS.Do(func(ns.NetNS) error {
