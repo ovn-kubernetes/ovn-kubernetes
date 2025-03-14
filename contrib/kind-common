@@ -413,7 +413,7 @@ install_multus() {
 
 install_mpolicy_crd() {
   echo "Installing multi-network-policy CRD ..."
-  mpolicy_manifest="https://raw.githubusercontent.com/k8snetworkplumbingwg/multi-networkpolicy/master/scheme.yml"
+  mpolicy_manifest="https://raw.githubusercontent.com/k8snetworkplumbingwg/multi-networkpolicy/refs/tags/v1.0.1/scheme.yml"
   run_kubectl apply -f "$mpolicy_manifest"
 }
 

@@ -1192,7 +1192,7 @@ var _ = Describe("Multi Homing", func() {
 			})
 		})
 
-		Context("multi-network policies", func() {
+		Context("with multi-network policies that", func() {
 			const (
 				generatedNamespaceNamePrefix = "pepe"
 				blockedServerStaticIP        = "192.168.200.30"
@@ -1229,7 +1229,7 @@ var _ = Describe("Multi Homing", func() {
 			})
 
 			ginkgo.DescribeTable(
-				"multi-network policies configure traffic allow lists",
+				"configure traffic allow lists",
 				func(netConfigParams networkAttachmentConfigParams, allowedClientPodConfig podConfiguration, blockedClientPodConfig podConfiguration, serverPodConfig podConfiguration, policy *mnpapi.MultiNetworkPolicy) {
 					netConfig := newNetworkAttachmentConfig(netConfigParams)
 
@@ -1275,7 +1275,7 @@ var _ = Describe("Multi Homing", func() {
 					Expect(connectToServer(blockedClientPodConfig, serverIP, port)).To(MatchError(ContainSubstring("exit code 28")))
 				},
 				ginkgo.Entry(
-					"for a pure L2 overlay when the multi-net policy describes the allow-list using pod selectors",
+					"using pod selectors for a pure L2 overlay",
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
 						topology: "layer2",
@@ -1308,11 +1308,49 @@ var _ = Describe("Multi Homing", func() {
 						metav1.LabelSelector{
 							MatchLabels: map[string]string{"role": "trusted"},
 						},
-						port,
+						multiNetPolicyPort(port),
 					),
 				),
 				ginkgo.Entry(
-					"for a routed topology when the multi-net policy describes the allow-list using pod selectors",
+					"using pod selectors and port range for a pure L2 overlay",
+					networkAttachmentConfigParams{
+						name:     secondaryNetworkName,
+						topology: "layer2",
+						cidr:     secondaryFlatL2NetworkCIDR,
+					},
+					podConfiguration{
+						attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
+						name:        allowedClient(clientPodName),
+						labels: map[string]string{
+							"app":  "client",
+							"role": "trusted",
+						},
+					},
+					podConfiguration{
+						attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
+						name:        blockedClient(clientPodName),
+						labels:      map[string]string{"app": "client"},
+					},
+					podConfiguration{
+						attachments:  []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
+						name:         podName,
+						containerCmd: httpServerContainerCmd(port),
+						labels:       map[string]string{"app": "stuff-doer"},
+					},
+					multiNetIngressLimitingPolicy(
+						secondaryNetworkName,
+						metav1.LabelSelector{
+							MatchLabels: map[string]string{"app": "stuff-doer"},
+						},
+						metav1.LabelSelector{
+							MatchLabels: map[string]string{"role": "trusted"},
+						},
+						// build a random range around the port we are actually trying to allow without explicitly setting it
+						multiNetPolicyPortRange(port-3, port+5),
+					),
+				),
+				ginkgo.Entry(
+					"using pod selectors for a routed topology",
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
 						topology: "layer3",
@@ -1345,11 +1383,11 @@ var _ = Describe("Multi Homing", func() {
 						metav1.LabelSelector{
 							MatchLabels: map[string]string{"role": "trusted"},
 						},
-						port,
+						multiNetPolicyPort(port),
 					),
 				),
 				ginkgo.Entry(
-					"for a localnet topology when the multi-net policy describes the allow-list using pod selectors",
+					"using pod selectors for a localnet topology",
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
 						topology: "localnet",
@@ -1382,11 +1420,11 @@ var _ = Describe("Multi Homing", func() {
 						metav1.LabelSelector{
 							MatchLabels: map[string]string{"role": "trusted"},
 						},
-						port,
+						multiNetPolicyPort(port),
 					),
 				),
 				ginkgo.Entry(
-					"for a pure L2 overlay when the multi-net policy describes the allow-list using IPBlock",
+					"using IPBlock for a pure L2 overlay",
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
 						topology: "layer2",
@@ -1418,7 +1456,7 @@ var _ = Describe("Multi Homing", func() {
 					),
 				),
 				ginkgo.Entry(
-					"for a routed topology when the multi-net policy describes the allow-list using IPBlock",
+					"using IPBlock for a routed topology",
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
 						topology: "layer3",
@@ -1450,7 +1488,7 @@ var _ = Describe("Multi Homing", func() {
 					),
 				),
 				ginkgo.Entry(
-					"for a localnet topology when the multi-net policy describes the allow-list using IPBlock",
+					"using IPBlock for a localnet topology",
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
 						topology: "localnet",
@@ -1482,7 +1520,7 @@ var _ = Describe("Multi Homing", func() {
 					),
 				),
 				ginkgo.Entry(
-					"for a pure L2 overlay when the multi-net policy describes the allow-list via namespace selectors",
+					"using namespace selectors for a pure L2 overlay",
 					networkAttachmentConfigParams{
 						name:        secondaryNetworkName,
 						topology:    "layer2",
@@ -1516,7 +1554,7 @@ var _ = Describe("Multi Homing", func() {
 					),
 				),
 				ginkgo.Entry(
-					"for a routed topology when the multi-net policy describes the allow-list via namespace selectors",
+					"using namespace selectors for a routed topology",
 					networkAttachmentConfigParams{
 						name:        secondaryNetworkName,
 						topology:    "layer3",
@@ -1550,7 +1588,7 @@ var _ = Describe("Multi Homing", func() {
 					),
 				),
 				ginkgo.Entry(
-					"for a localnet topology when the multi-net policy describes the allow-list via namespace selectors",
+					"using namespace selectors for a localnet topology",
 					networkAttachmentConfigParams{
 						name:        secondaryNetworkName,
 						topology:    "localnet",
@@ -1585,7 +1623,7 @@ var _ = Describe("Multi Homing", func() {
 				),
 
 				ginkgo.Entry(
-					"for an IPAMless pure L2 overlay when the multi-net policy describes the allow-list using IPBlock",
+					"using IPBlock for an IPAMless pure L2 overlay",
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
 						topology: "layer2",
@@ -1619,7 +1657,7 @@ var _ = Describe("Multi Homing", func() {
 			)
 
 			ginkgo.DescribeTable(
-				"multi-network ingress allow all",
+				"allow all ingress",
 				func(netConfigParams networkAttachmentConfigParams, clientPodConfig podConfiguration, serverPodConfig podConfiguration, policy *mnpapi.MultiNetworkPolicy) {
 					netConfig := newNetworkAttachmentConfig(netConfigParams)
 
@@ -1650,7 +1688,7 @@ var _ = Describe("Multi Homing", func() {
 					}, 2*time.Minute, 6*time.Second).Should(Succeed())
 				},
 				ginkgo.Entry(
-					"for a localnet topology when the multi-net policy is ingress allow-all",
+					"using ingress allow-all for a localnet topology",
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
 						topology: "localnet",
@@ -1682,7 +1720,7 @@ var _ = Describe("Multi Homing", func() {
 					),
 				),
 				ginkgo.XEntry(
-					"for a localnet topology when the multi-net policy is egress deny-all, should not affect ingress",
+					"using egress deny-all for a localnet topology",
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
 						topology: "localnet",
@@ -1715,7 +1753,7 @@ var _ = Describe("Multi Homing", func() {
 					Label("BUG", "OCPBUGS-25928"),
 				),
 				ginkgo.Entry(
-					"for a localnet topology when the multi-net policy is egress deny-all, ingress allow-all",
+					"using egress deny-all, ingress allow-all for a localnet topology",
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
 						topology: "localnet",
@@ -1751,7 +1789,7 @@ var _ = Describe("Multi Homing", func() {
 			)
 
 			ginkgo.DescribeTable(
-				"multi-network ingress deny all policies",
+				"deny all",
 				func(netConfigParams networkAttachmentConfigParams, clientPodConfig podConfiguration, serverPodConfig podConfiguration, policy *mnpapi.MultiNetworkPolicy) {
 					netConfig := newNetworkAttachmentConfig(netConfigParams)
 
@@ -1782,7 +1820,7 @@ var _ = Describe("Multi Homing", func() {
 					}, 2*time.Minute, 6*time.Second).Should(Not(Succeed()))
 				},
 				ginkgo.Entry(
-					"for a localnet topology when the multi-net policy is ingress deny-all",
+					"using ingress deny-all for a localnet topology",
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
 						topology: "localnet",
