@@ -18,10 +18,10 @@ limitations under the License.
 package v1
 
 import (
-	"context"
+	context "context"
 
-	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1"
-	adminpolicybasedroutev1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/applyconfiguration/adminpolicybasedroute/v1"
+	adminpolicybasedroutev1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1"
+	applyconfigurationadminpolicybasedroutev1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/applyconfiguration/adminpolicybasedroute/v1"
 	scheme "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/clientset/versioned/scheme"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
@@ -37,36 +37,41 @@ type AdminPolicyBasedExternalRoutesGetter interface {
 
 // AdminPolicyBasedExternalRouteInterface has methods to work with AdminPolicyBasedExternalRoute resources.
 type AdminPolicyBasedExternalRouteInterface interface {
-	Create(ctx context.Context, adminPolicyBasedExternalRoute *v1.AdminPolicyBasedExternalRoute, opts metav1.CreateOptions) (*v1.AdminPolicyBasedExternalRoute, error)
-	Update(ctx context.Context, adminPolicyBasedExternalRoute *v1.AdminPolicyBasedExternalRoute, opts metav1.UpdateOptions) (*v1.AdminPolicyBasedExternalRoute, error)
+	Create(ctx context.Context, adminPolicyBasedExternalRoute *adminpolicybasedroutev1.AdminPolicyBasedExternalRoute, opts metav1.CreateOptions) (*adminpolicybasedroutev1.AdminPolicyBasedExternalRoute, error)
+	Update(ctx context.Context, adminPolicyBasedExternalRoute *adminpolicybasedroutev1.AdminPolicyBasedExternalRoute, opts metav1.UpdateOptions) (*adminpolicybasedroutev1.AdminPolicyBasedExternalRoute, error)
 	// Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-	UpdateStatus(ctx context.Context, adminPolicyBasedExternalRoute *v1.AdminPolicyBasedExternalRoute, opts metav1.UpdateOptions) (*v1.AdminPolicyBasedExternalRoute, error)
+	UpdateStatus(ctx context.Context, adminPolicyBasedExternalRoute *adminpolicybasedroutev1.AdminPolicyBasedExternalRoute, opts metav1.UpdateOptions) (*adminpolicybasedroutev1.AdminPolicyBasedExternalRoute, error)
 	Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error
 	DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error
-	Get(ctx context.Context, name string, opts metav1.GetOptions) (*v1.AdminPolicyBasedExternalRoute, error)
-	List(ctx context.Context, opts metav1.ListOptions) (*v1.AdminPolicyBasedExternalRouteList, error)
+	Get(ctx context.Context, name string, opts metav1.GetOptions) (*adminpolicybasedroutev1.AdminPolicyBasedExternalRoute, error)
+	List(ctx context.Context, opts metav1.ListOptions) (*adminpolicybasedroutev1.AdminPolicyBasedExternalRouteList, error)
 	Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error)
-	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.AdminPolicyBasedExternalRoute, err error)
-	Apply(ctx context.Context, adminPolicyBasedExternalRoute *adminpolicybasedroutev1.AdminPolicyBasedExternalRouteApplyConfiguration, opts metav1.ApplyOptions) (result *v1.AdminPolicyBasedExternalRoute, err error)
+	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *adminpolicybasedroutev1.AdminPolicyBasedExternalRoute, err error)
+	Apply(ctx context.Context, adminPolicyBasedExternalRoute *applyconfigurationadminpolicybasedroutev1.AdminPolicyBasedExternalRouteApplyConfiguration, opts metav1.ApplyOptions) (result *adminpolicybasedroutev1.AdminPolicyBasedExternalRoute, err error)
 	// Add a +genclient:noStatus comment above the type to avoid generating ApplyStatus().
-	ApplyStatus(ctx context.Context, adminPolicyBasedExternalRoute *adminpolicybasedroutev1.AdminPolicyBasedExternalRouteApplyConfiguration, opts metav1.ApplyOptions) (result *v1.AdminPolicyBasedExternalRoute, err error)
+	ApplyStatus(ctx context.Context, adminPolicyBasedExternalRoute *applyconfigurationadminpolicybasedroutev1.AdminPolicyBasedExternalRouteApplyConfiguration, opts metav1.ApplyOptions) (result *adminpolicybasedroutev1.AdminPolicyBasedExternalRoute, err error)
 	AdminPolicyBasedExternalRouteExpansion
 }
 
 // adminPolicyBasedExternalRoutes implements AdminPolicyBasedExternalRouteInterface
 type adminPolicyBasedExternalRoutes struct {
-	*gentype.ClientWithListAndApply[*v1.AdminPolicyBasedExternalRoute, *v1.AdminPolicyBasedExternalRouteList, *adminpolicybasedroutev1.AdminPolicyBasedExternalRouteApplyConfiguration]
+	*gentype.ClientWithListAndApply[*adminpolicybasedroutev1.AdminPolicyBasedExternalRoute, *adminpolicybasedroutev1.AdminPolicyBasedExternalRouteList, *applyconfigurationadminpolicybasedroutev1.AdminPolicyBasedExternalRouteApplyConfiguration]
 }
 
 // newAdminPolicyBasedExternalRoutes returns a AdminPolicyBasedExternalRoutes
 func newAdminPolicyBasedExternalRoutes(c *K8sV1Client) *adminPolicyBasedExternalRoutes {
 	return &adminPolicyBasedExternalRoutes{
-		gentype.NewClientWithListAndApply[*v1.AdminPolicyBasedExternalRoute, *v1.AdminPolicyBasedExternalRouteList, *adminpolicybasedroutev1.AdminPolicyBasedExternalRouteApplyConfiguration](
+		gentype.NewClientWithListAndApply[*adminpolicybasedroutev1.AdminPolicyBasedExternalRoute, *adminpolicybasedroutev1.AdminPolicyBasedExternalRouteList, *applyconfigurationadminpolicybasedroutev1.AdminPolicyBasedExternalRouteApplyConfiguration](
 			"adminpolicybasedexternalroutes",
 			c.RESTClient(),
 			scheme.ParameterCodec,
 			"",
-			func() *v1.AdminPolicyBasedExternalRoute { return &v1.AdminPolicyBasedExternalRoute{} },
-			func() *v1.AdminPolicyBasedExternalRouteList { return &v1.AdminPolicyBasedExternalRouteList{} }),
+			func() *adminpolicybasedroutev1.AdminPolicyBasedExternalRoute {
+				return &adminpolicybasedroutev1.AdminPolicyBasedExternalRoute{}
+			},
+			func() *adminpolicybasedroutev1.AdminPolicyBasedExternalRouteList {
+				return &adminpolicybasedroutev1.AdminPolicyBasedExternalRouteList{}
+			},
+		),
 	}
 }

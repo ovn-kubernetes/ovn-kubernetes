@@ -18,15 +18,15 @@ limitations under the License.
 package v1
 
 import (
-	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
+	metav1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
 // EgressIPSpecApplyConfiguration represents a declarative configuration of the EgressIPSpec type for use
 // with apply.
 type EgressIPSpecApplyConfiguration struct {
-	EgressIPs         []string                            `json:"egressIPs,omitempty"`
-	NamespaceSelector *v1.LabelSelectorApplyConfiguration `json:"namespaceSelector,omitempty"`
-	PodSelector       *v1.LabelSelectorApplyConfiguration `json:"podSelector,omitempty"`
+	EgressIPs         []string                                `json:"egressIPs,omitempty"`
+	NamespaceSelector *metav1.LabelSelectorApplyConfiguration `json:"namespaceSelector,omitempty"`
+	PodSelector       *metav1.LabelSelectorApplyConfiguration `json:"podSelector,omitempty"`
 }
 
 // EgressIPSpecApplyConfiguration constructs a declarative configuration of the EgressIPSpec type for use with
@@ -48,7 +48,7 @@ func (b *EgressIPSpecApplyConfiguration) WithEgressIPs(values ...string) *Egress
 // WithNamespaceSelector sets the NamespaceSelector field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the NamespaceSelector field is set to the value of the last call.
-func (b *EgressIPSpecApplyConfiguration) WithNamespaceSelector(value *v1.LabelSelectorApplyConfiguration) *EgressIPSpecApplyConfiguration {
+func (b *EgressIPSpecApplyConfiguration) WithNamespaceSelector(value *metav1.LabelSelectorApplyConfiguration) *EgressIPSpecApplyConfiguration {
 	b.NamespaceSelector = value
 	return b
 }
@@ -56,7 +56,7 @@ func (b *EgressIPSpecApplyConfiguration) WithNamespaceSelector(value *v1.LabelSe
 // WithPodSelector sets the PodSelector field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the PodSelector field is set to the value of the last call.
-func (b *EgressIPSpecApplyConfiguration) WithPodSelector(value *v1.LabelSelectorApplyConfiguration) *EgressIPSpecApplyConfiguration {
+func (b *EgressIPSpecApplyConfiguration) WithPodSelector(value *metav1.LabelSelectorApplyConfiguration) *EgressIPSpecApplyConfiguration {
 	b.PodSelector = value
 	return b
 }

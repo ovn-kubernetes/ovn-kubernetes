@@ -19,13 +19,13 @@ package v1
 
 import (
 	adminpolicybasedroutev1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // AdminPolicyBasedRouteStatusApplyConfiguration represents a declarative configuration of the AdminPolicyBasedRouteStatus type for use
 // with apply.
 type AdminPolicyBasedRouteStatusApplyConfiguration struct {
-	LastTransitionTime *v1.Time                            `json:"lastTransitionTime,omitempty"`
+	LastTransitionTime *metav1.Time                        `json:"lastTransitionTime,omitempty"`
 	Messages           []string                            `json:"messages,omitempty"`
 	Status             *adminpolicybasedroutev1.StatusType `json:"status,omitempty"`
 }
@@ -39,7 +39,7 @@ func AdminPolicyBasedRouteStatus() *AdminPolicyBasedRouteStatusApplyConfiguratio
 // WithLastTransitionTime sets the LastTransitionTime field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the LastTransitionTime field is set to the value of the last call.
-func (b *AdminPolicyBasedRouteStatusApplyConfiguration) WithLastTransitionTime(value v1.Time) *AdminPolicyBasedRouteStatusApplyConfiguration {
+func (b *AdminPolicyBasedRouteStatusApplyConfiguration) WithLastTransitionTime(value metav1.Time) *AdminPolicyBasedRouteStatusApplyConfiguration {
 	b.LastTransitionTime = &value
 	return b
 }

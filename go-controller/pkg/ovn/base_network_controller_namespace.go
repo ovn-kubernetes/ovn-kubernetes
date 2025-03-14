@@ -176,7 +176,6 @@ func (bnc *BaseNetworkController) syncNamespaces(namespaces []interface{}) error
 		func(dbIDs *libovsdbops.DbObjectIDs) error {
 			if !expectedNs[dbIDs.GetObjectID(libovsdbops.ObjectNameKey)] {
 				if err := bnc.addressSetFactory.DestroyAddressSet(dbIDs); err != nil {
-					klog.Errorf(err.Error())
 					return err
 				}
 			}
@@ -407,7 +406,7 @@ func (bnc *BaseNetworkController) getAllNamespacePodAddresses(ns string) []net.I
 			if !util.PodWantsHostNetwork(pod) && !util.PodCompleted(pod) && util.PodScheduled(pod) {
 				podIPs, err := util.GetPodIPsOfNetwork(pod, bnc.GetNetInfo())
 				if err != nil {
-					klog.Warningf(err.Error())
+					klog.Warningf("Failed to get IPs for pod %s/%s: %v", pod.Namespace, pod.Name, err)
 					continue
 				}
 				ips = append(ips, podIPs...)

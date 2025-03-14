@@ -18,10 +18,10 @@ limitations under the License.
 package v1
 
 import (
-	"context"
+	context "context"
 
-	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1"
-	egressqosv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1/apis/applyconfiguration/egressqos/v1"
+	egressqosv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1"
+	applyconfigurationegressqosv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1/apis/applyconfiguration/egressqos/v1"
 	scheme "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1/apis/clientset/versioned/scheme"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
@@ -37,36 +37,37 @@ type EgressQoSesGetter interface {
 
 // EgressQoSInterface has methods to work with EgressQoS resources.
 type EgressQoSInterface interface {
-	Create(ctx context.Context, egressQoS *v1.EgressQoS, opts metav1.CreateOptions) (*v1.EgressQoS, error)
-	Update(ctx context.Context, egressQoS *v1.EgressQoS, opts metav1.UpdateOptions) (*v1.EgressQoS, error)
+	Create(ctx context.Context, egressQoS *egressqosv1.EgressQoS, opts metav1.CreateOptions) (*egressqosv1.EgressQoS, error)
+	Update(ctx context.Context, egressQoS *egressqosv1.EgressQoS, opts metav1.UpdateOptions) (*egressqosv1.EgressQoS, error)
 	// Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-	UpdateStatus(ctx context.Context, egressQoS *v1.EgressQoS, opts metav1.UpdateOptions) (*v1.EgressQoS, error)
+	UpdateStatus(ctx context.Context, egressQoS *egressqosv1.EgressQoS, opts metav1.UpdateOptions) (*egressqosv1.EgressQoS, error)
 	Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error
 	DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error
-	Get(ctx context.Context, name string, opts metav1.GetOptions) (*v1.EgressQoS, error)
-	List(ctx context.Context, opts metav1.ListOptions) (*v1.EgressQoSList, error)
+	Get(ctx context.Context, name string, opts metav1.GetOptions) (*egressqosv1.EgressQoS, error)
+	List(ctx context.Context, opts metav1.ListOptions) (*egressqosv1.EgressQoSList, error)
 	Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error)
-	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.EgressQoS, err error)
-	Apply(ctx context.Context, egressQoS *egressqosv1.EgressQoSApplyConfiguration, opts metav1.ApplyOptions) (result *v1.EgressQoS, err error)
+	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *egressqosv1.EgressQoS, err error)
+	Apply(ctx context.Context, egressQoS *applyconfigurationegressqosv1.EgressQoSApplyConfiguration, opts metav1.ApplyOptions) (result *egressqosv1.EgressQoS, err error)
 	// Add a +genclient:noStatus comment above the type to avoid generating ApplyStatus().
-	ApplyStatus(ctx context.Context, egressQoS *egressqosv1.EgressQoSApplyConfiguration, opts metav1.ApplyOptions) (result *v1.EgressQoS, err error)
+	ApplyStatus(ctx context.Context, egressQoS *applyconfigurationegressqosv1.EgressQoSApplyConfiguration, opts metav1.ApplyOptions) (result *egressqosv1.EgressQoS, err error)
 	EgressQoSExpansion
 }
 
 // egressQoSes implements EgressQoSInterface
 type egressQoSes struct {
-	*gentype.ClientWithListAndApply[*v1.EgressQoS, *v1.EgressQoSList, *egressqosv1.EgressQoSApplyConfiguration]
+	*gentype.ClientWithListAndApply[*egressqosv1.EgressQoS, *egressqosv1.EgressQoSList, *applyconfigurationegressqosv1.EgressQoSApplyConfiguration]
 }
 
 // newEgressQoSes returns a EgressQoSes
 func newEgressQoSes(c *K8sV1Client, namespace string) *egressQoSes {
 	return &egressQoSes{
-		gentype.NewClientWithListAndApply[*v1.EgressQoS, *v1.EgressQoSList, *egressqosv1.EgressQoSApplyConfiguration](
+		gentype.NewClientWithListAndApply[*egressqosv1.EgressQoS, *egressqosv1.EgressQoSList, *applyconfigurationegressqosv1.EgressQoSApplyConfiguration](
 			"egressqoses",
 			c.RESTClient(),
 			scheme.ParameterCodec,
 			namespace,
-			func() *v1.EgressQoS { return &v1.EgressQoS{} },
-			func() *v1.EgressQoSList { return &v1.EgressQoSList{} }),
+			func() *egressqosv1.EgressQoS { return &egressqosv1.EgressQoS{} },
+			func() *egressqosv1.EgressQoSList { return &egressqosv1.EgressQoSList{} },
+		),
 	}
 }

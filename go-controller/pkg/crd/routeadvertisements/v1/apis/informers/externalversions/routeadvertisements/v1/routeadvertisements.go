@@ -18,13 +18,13 @@ limitations under the License.
 package v1
 
 import (
-	"context"
+	context "context"
 	time "time"
 
-	routeadvertisementsv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
+	crdrouteadvertisementsv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
 	versioned "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned"
 	internalinterfaces "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/informers/externalversions/internalinterfaces"
-	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/listers/routeadvertisements/v1"
+	routeadvertisementsv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/listers/routeadvertisements/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	watch "k8s.io/apimachinery/pkg/watch"
@@ -35,7 +35,7 @@ import (
 // RouteAdvertisements.
 type RouteAdvertisementsInformer interface {
 	Informer() cache.SharedIndexInformer
-	Lister() v1.RouteAdvertisementsLister
+	Lister() routeadvertisementsv1.RouteAdvertisementsLister
 }
 
 type routeAdvertisementsInformer struct {
@@ -69,7 +69,7 @@ func NewFilteredRouteAdvertisementsInformer(client versioned.Interface, resyncPe
 				return client.K8sV1().RouteAdvertisements().Watch(context.TODO(), options)
 			},
 		},
-		&routeadvertisementsv1.RouteAdvertisements{},
+		&crdrouteadvertisementsv1.RouteAdvertisements{},
 		resyncPeriod,
 		indexers,
 	)
@@ -80,9 +80,9 @@ func (f *routeAdvertisementsInformer) defaultInformer(client versioned.Interface
 }
 
 func (f *routeAdvertisementsInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&routeadvertisementsv1.RouteAdvertisements{}, f.defaultInformer)
+	return f.factory.InformerFor(&crdrouteadvertisementsv1.RouteAdvertisements{}, f.defaultInformer)
 }
 
-func (f *routeAdvertisementsInformer) Lister() v1.RouteAdvertisementsLister {
-	return v1.NewRouteAdvertisementsLister(f.Informer().GetIndexer())
+func (f *routeAdvertisementsInformer) Lister() routeadvertisementsv1.RouteAdvertisementsLister {
+	return routeadvertisementsv1.NewRouteAdvertisementsLister(f.Informer().GetIndexer())
 }

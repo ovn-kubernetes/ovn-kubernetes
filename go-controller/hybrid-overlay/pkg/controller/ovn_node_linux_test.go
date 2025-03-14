@@ -155,7 +155,7 @@ func createPod(namespace, name, node, podIP, podMAC string) *corev1.Pod {
 	if podIP != "" || podMAC != "" {
 		ipn := ovntest.MustParseIPNet(podIP)
 		gatewayIP := iputils.NextIP(ipn.IP)
-		annotations[util.OvnPodAnnotationName] = fmt.Sprintf(`{"default": {"ip_address":"` + podIP + `", "mac_address":"` + podMAC + `", "gateway_ip": "` + gatewayIP.String() + `"}}`)
+		annotations[util.OvnPodAnnotationName] = `{"default": {"ip_address":"` + podIP + `", "mac_address":"` + podMAC + `", "gateway_ip": "` + gatewayIP.String() + `"}}`
 	}
 
 	return &corev1.Pod{

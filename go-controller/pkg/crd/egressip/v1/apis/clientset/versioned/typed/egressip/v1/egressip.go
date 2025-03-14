@@ -18,10 +18,10 @@ limitations under the License.
 package v1
 
 import (
-	"context"
+	context "context"
 
-	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
-	egressipv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/applyconfiguration/egressip/v1"
+	egressipv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
+	applyconfigurationegressipv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/applyconfiguration/egressip/v1"
 	scheme "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/clientset/versioned/scheme"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
@@ -37,32 +37,33 @@ type EgressIPsGetter interface {
 
 // EgressIPInterface has methods to work with EgressIP resources.
 type EgressIPInterface interface {
-	Create(ctx context.Context, egressIP *v1.EgressIP, opts metav1.CreateOptions) (*v1.EgressIP, error)
-	Update(ctx context.Context, egressIP *v1.EgressIP, opts metav1.UpdateOptions) (*v1.EgressIP, error)
+	Create(ctx context.Context, egressIP *egressipv1.EgressIP, opts metav1.CreateOptions) (*egressipv1.EgressIP, error)
+	Update(ctx context.Context, egressIP *egressipv1.EgressIP, opts metav1.UpdateOptions) (*egressipv1.EgressIP, error)
 	Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error
 	DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error
-	Get(ctx context.Context, name string, opts metav1.GetOptions) (*v1.EgressIP, error)
-	List(ctx context.Context, opts metav1.ListOptions) (*v1.EgressIPList, error)
+	Get(ctx context.Context, name string, opts metav1.GetOptions) (*egressipv1.EgressIP, error)
+	List(ctx context.Context, opts metav1.ListOptions) (*egressipv1.EgressIPList, error)
 	Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error)
-	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.EgressIP, err error)
-	Apply(ctx context.Context, egressIP *egressipv1.EgressIPApplyConfiguration, opts metav1.ApplyOptions) (result *v1.EgressIP, err error)
+	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *egressipv1.EgressIP, err error)
+	Apply(ctx context.Context, egressIP *applyconfigurationegressipv1.EgressIPApplyConfiguration, opts metav1.ApplyOptions) (result *egressipv1.EgressIP, err error)
 	EgressIPExpansion
 }
 
 // egressIPs implements EgressIPInterface
 type egressIPs struct {
-	*gentype.ClientWithListAndApply[*v1.EgressIP, *v1.EgressIPList, *egressipv1.EgressIPApplyConfiguration]
+	*gentype.ClientWithListAndApply[*egressipv1.EgressIP, *egressipv1.EgressIPList, *applyconfigurationegressipv1.EgressIPApplyConfiguration]
 }
 
 // newEgressIPs returns a EgressIPs
 func newEgressIPs(c *K8sV1Client) *egressIPs {
 	return &egressIPs{
-		gentype.NewClientWithListAndApply[*v1.EgressIP, *v1.EgressIPList, *egressipv1.EgressIPApplyConfiguration](
+		gentype.NewClientWithListAndApply[*egressipv1.EgressIP, *egressipv1.EgressIPList, *applyconfigurationegressipv1.EgressIPApplyConfiguration](
 			"egressips",
 			c.RESTClient(),
 			scheme.ParameterCodec,
 			"",
-			func() *v1.EgressIP { return &v1.EgressIP{} },
-			func() *v1.EgressIPList { return &v1.EgressIPList{} }),
+			func() *egressipv1.EgressIP { return &egressipv1.EgressIP{} },
+			func() *egressipv1.EgressIPList { return &egressipv1.EgressIPList{} },
+		),
 	}
 }

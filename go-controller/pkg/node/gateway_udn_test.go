@@ -1134,7 +1134,7 @@ func TestConstructUDNVRFIPRules(t *testing.T) {
 		priority int
 		family   int
 		table    int
-		mark     int
+		mark     uint32
 		dst      net.IPNet
 	}
 	type testConfig struct {
@@ -1309,7 +1309,7 @@ func TestConstructUDNVRFIPRulesPodNetworkAdvertised(t *testing.T) {
 		priority int
 		family   int
 		table    int
-		mark     int
+		mark     uint32
 		dst      net.IPNet
 	}
 	type testConfig struct {

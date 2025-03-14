@@ -575,7 +575,7 @@ func DelLegacyMgtPortIptRules() {
 func checkManagementPortHealth(routeManager *routemanager.Controller, cfg *managementPortConfig) error {
 	warnings, err := setupManagementPortConfig(routeManager, cfg)
 	for _, warning := range warnings {
-		klog.Warningf(warning)
+		klog.Warning(warning)
 	}
 	if err != nil {
 		return err

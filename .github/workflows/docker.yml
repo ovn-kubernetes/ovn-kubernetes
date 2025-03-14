@@ -9,7 +9,7 @@ permissions:
   packages: write
 
 env:
-  GO_VERSION: 1.22.0
+  GO_VERSION: 1.23
   REGISTRY: ghcr.io 
   OWNER: ovn-kubernetes
   REPOSITORY: ovn-kubernetes

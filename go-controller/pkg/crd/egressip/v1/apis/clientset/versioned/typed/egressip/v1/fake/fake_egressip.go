@@ -18,133 +18,31 @@ limitations under the License.
 package fake
 
 import (
-	"context"
-	json "encoding/json"
-	"fmt"
-
 	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
 	egressipv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/applyconfiguration/egressip/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	labels "k8s.io/apimachinery/pkg/labels"
-	types "k8s.io/apimachinery/pkg/types"
-	watch "k8s.io/apimachinery/pkg/watch"
-	testing "k8s.io/client-go/testing"
+	typedegressipv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/clientset/versioned/typed/egressip/v1"
+	gentype "k8s.io/client-go/gentype"
 )
 
-// FakeEgressIPs implements EgressIPInterface
-type FakeEgressIPs struct {
+// fakeEgressIPs implements EgressIPInterface
+type fakeEgressIPs struct {
+	*gentype.FakeClientWithListAndApply[*v1.EgressIP, *v1.EgressIPList, *egressipv1.EgressIPApplyConfiguration]
 	Fake *FakeK8sV1
 }
 
-var egressipsResource = v1.SchemeGroupVersion.WithResource("egressips")
-
-var egressipsKind = v1.SchemeGroupVersion.WithKind("EgressIP")
-
-// Get takes name of the egressIP, and returns the corresponding egressIP object, and an error if there is any.
-func (c *FakeEgressIPs) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.EgressIP, err error) {
-	emptyResult := &v1.EgressIP{}
-	obj, err := c.Fake.
-		Invokes(testing.NewRootGetActionWithOptions(egressipsResource, name, options), emptyResult)
-	if obj == nil {
-		return emptyResult, err
+func newFakeEgressIPs(fake *FakeK8sV1) typedegressipv1.EgressIPInterface {
+	return &fakeEgressIPs{
+		gentype.NewFakeClientWithListAndApply[*v1.EgressIP, *v1.EgressIPList, *egressipv1.EgressIPApplyConfiguration](
+			fake.Fake,
+			"",
+			v1.SchemeGroupVersion.WithResource("egressips"),
+			v1.SchemeGroupVersion.WithKind("EgressIP"),
+			func() *v1.EgressIP { return &v1.EgressIP{} },
+			func() *v1.EgressIPList { return &v1.EgressIPList{} },
+			func(dst, src *v1.EgressIPList) { dst.ListMeta = src.ListMeta },
+			func(list *v1.EgressIPList) []*v1.EgressIP { return gentype.ToPointerSlice(list.Items) },
+			func(list *v1.EgressIPList, items []*v1.EgressIP) { list.Items = gentype.FromPointerSlice(items) },
+		),
+		fake,
 	}
-	return obj.(*v1.EgressIP), err
-}
-
-// List takes label and field selectors, and returns the list of EgressIPs that match those selectors.
-func (c *FakeEgressIPs) List(ctx context.Context, opts metav1.ListOptions) (result *v1.EgressIPList, err error) {
-	emptyResult := &v1.EgressIPList{}
-	obj, err := c.Fake.
-		Invokes(testing.NewRootListActionWithOptions(egressipsResource, egressipsKind, opts), emptyResult)
-	if obj == nil {
-		return emptyResult, err
-	}
-
-	label, _, _ := testing.ExtractFromListOptions(opts)
-	if label == nil {
-		label = labels.Everything()
-	}
-	list := &v1.EgressIPList{ListMeta: obj.(*v1.EgressIPList).ListMeta}
-	for _, item := range obj.(*v1.EgressIPList).Items {
-		if label.Matches(labels.Set(item.Labels)) {
-			list.Items = append(list.Items, item)
-		}
-	}
-	return list, err
-}
-
-// Watch returns a watch.Interface that watches the requested egressIPs.
-func (c *FakeEgressIPs) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
-	return c.Fake.
-		InvokesWatch(testing.NewRootWatchActionWithOptions(egressipsResource, opts))
-}
-
-// Create takes the representation of a egressIP and creates it.  Returns the server's representation of the egressIP, and an error, if there is any.
-func (c *FakeEgressIPs) Create(ctx context.Context, egressIP *v1.EgressIP, opts metav1.CreateOptions) (result *v1.EgressIP, err error) {
-	emptyResult := &v1.EgressIP{}
-	obj, err := c.Fake.
-		Invokes(testing.NewRootCreateActionWithOptions(egressipsResource, egressIP, opts), emptyResult)
-	if obj == nil {
-		return emptyResult, err
-	}
-	return obj.(*v1.EgressIP), err
-}
-
-// Update takes the representation of a egressIP and updates it. Returns the server's representation of the egressIP, and an error, if there is any.
-func (c *FakeEgressIPs) Update(ctx context.Context, egressIP *v1.EgressIP, opts metav1.UpdateOptions) (result *v1.EgressIP, err error) {
-	emptyResult := &v1.EgressIP{}
-	obj, err := c.Fake.
-		Invokes(testing.NewRootUpdateActionWithOptions(egressipsResource, egressIP, opts), emptyResult)
-	if obj == nil {
-		return emptyResult, err
-	}
-	return obj.(*v1.EgressIP), err
-}
-
-// Delete takes name of the egressIP and deletes it. Returns an error if one occurs.
-func (c *FakeEgressIPs) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
-	_, err := c.Fake.
-		Invokes(testing.NewRootDeleteActionWithOptions(egressipsResource, name, opts), &v1.EgressIP{})
-	return err
-}
-
-// DeleteCollection deletes a collection of objects.
-func (c *FakeEgressIPs) DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error {
-	action := testing.NewRootDeleteCollectionActionWithOptions(egressipsResource, opts, listOpts)
-
-	_, err := c.Fake.Invokes(action, &v1.EgressIPList{})
-	return err
-}
-
-// Patch applies the patch and returns the patched egressIP.
-func (c *FakeEgressIPs) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.EgressIP, err error) {
-	emptyResult := &v1.EgressIP{}
-	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceActionWithOptions(egressipsResource, name, pt, data, opts, subresources...), emptyResult)
-	if obj == nil {
-		return emptyResult, err
-	}
-	return obj.(*v1.EgressIP), err
-}
-
-// Apply takes the given apply declarative configuration, applies it and returns the applied egressIP.
-func (c *FakeEgressIPs) Apply(ctx context.Context, egressIP *egressipv1.EgressIPApplyConfiguration, opts metav1.ApplyOptions) (result *v1.EgressIP, err error) {
-	if egressIP == nil {
-		return nil, fmt.Errorf("egressIP provided to Apply must not be nil")
-	}
-	data, err := json.Marshal(egressIP)
-	if err != nil {
-		return nil, err
-	}
-	name := egressIP.Name
-	if name == nil {
-		return nil, fmt.Errorf("egressIP.Name must be provided to Apply")
-	}
-	emptyResult := &v1.EgressIP{}
-	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceActionWithOptions(egressipsResource, *name, types.ApplyPatchType, data, opts.ToPatchOptions()), emptyResult)
-	if obj == nil {
-		return emptyResult, err
-	}
-	return obj.(*v1.EgressIP), err
 }

@@ -132,7 +132,7 @@ func updateDBRetryCounter(retryCounter *int32, db *util.OvsDbProperties) {
 		//delete the db file and start master
 		err := resetRaftDB(db)
 		if err != nil {
-			klog.Warningf(err.Error())
+			klog.Warningf("Could not reset raft DB: %v", err)
 		}
 		*retryCounter = 0
 	} else {
