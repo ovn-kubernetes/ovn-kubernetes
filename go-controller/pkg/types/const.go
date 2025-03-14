@@ -145,6 +145,7 @@ const (
 
 	// OpenFlow and Networking constants
 	RouteAdvertisementICMPType    = 134
+	NeighborSolicitationICMPType  = 135
 	NeighborAdvertisementICMPType = 136
 
 	// Meter constants

@@ -112,7 +112,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", func() {
 
 					ginkgo.By("asserting the *client* pod can contact the server pod exposed endpoint")
 					gomega.Eventually(func() error {
-						return reachToServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
+						return reachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
 					}, 2*time.Minute, 6*time.Second).Should(gomega.Succeed())
 				}
 
@@ -122,7 +122,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", func() {
 
 				ginkgo.By("asserting the *client* pod can not contact the server pod exposed endpoint")
 				gomega.Eventually(func() error {
-					return reachToServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
+					return reachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
 				}, 1*time.Minute, 6*time.Second).ShouldNot(gomega.Succeed())
 
 			},
@@ -235,12 +235,12 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", func() {
 
 				ginkgo.By("asserting the *client* pod can contact the allow server pod exposed endpoint")
 				gomega.Eventually(func() error {
-					return reachToServerPodFromClient(cs, allowServerPodConfig, clientPodConfig, allowServerPodIP, port)
+					return reachServerPodFromClient(cs, allowServerPodConfig, clientPodConfig, allowServerPodIP, port)
 				}, 2*time.Minute, 6*time.Second).Should(gomega.Succeed())
 
 				ginkgo.By("asserting the *client* pod can contact the deny server pod exposed endpoint")
 				gomega.Eventually(func() error {
-					return reachToServerPodFromClient(cs, denyServerPodConfig, clientPodConfig, denyServerPodIP, port)
+					return reachServerPodFromClient(cs, denyServerPodConfig, clientPodConfig, denyServerPodIP, port)
 				}, 2*time.Minute, 6*time.Second).Should(gomega.Succeed())
 
 				ginkgo.By("creating a \"default deny\" network policy")
@@ -249,12 +249,12 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", func() {
 
 				ginkgo.By("asserting the *client* pod can not contact the allow server pod exposed endpoint")
 				gomega.Eventually(func() error {
-					return reachToServerPodFromClient(cs, allowServerPodConfig, clientPodConfig, allowServerPodIP, port)
+					return reachServerPodFromClient(cs, allowServerPodConfig, clientPodConfig, allowServerPodIP, port)
 				}, 1*time.Minute, 6*time.Second).ShouldNot(gomega.Succeed())
 
 				ginkgo.By("asserting the *client* pod can not contact the deny server pod exposed endpoint")
 				gomega.Eventually(func() error {
-					return reachToServerPodFromClient(cs, denyServerPodConfig, clientPodConfig, denyServerPodIP, port)
+					return reachServerPodFromClient(cs, denyServerPodConfig, clientPodConfig, denyServerPodIP, port)
 				}, 1*time.Minute, 6*time.Second).ShouldNot(gomega.Succeed())
 
 				ginkgo.By("creating a \"allow-traffic-to-pod\" network policy")
@@ -263,12 +263,12 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", func() {
 
 				ginkgo.By("asserting the *client* pod can contact the allow server pod exposed endpoint")
 				gomega.Eventually(func() error {
-					return reachToServerPodFromClient(cs, allowServerPodConfig, clientPodConfig, allowServerPodIP, port)
+					return reachServerPodFromClient(cs, allowServerPodConfig, clientPodConfig, allowServerPodIP, port)
 				}, 1*time.Minute, 6*time.Second).Should(gomega.Succeed())
 
 				ginkgo.By("asserting the *client* pod can not contact deny server pod exposed endpoint")
 				gomega.Eventually(func() error {
-					return reachToServerPodFromClient(cs, denyServerPodConfig, clientPodConfig, denyServerPodIP, port)
+					return reachServerPodFromClient(cs, denyServerPodConfig, clientPodConfig, denyServerPodIP, port)
 				}, 1*time.Minute, 6*time.Second).ShouldNot(gomega.Succeed())
 
 			},
