@@ -26,6 +26,7 @@ type ClusterUserDefinedNetworkSpec struct {
 	// NamespaceSelector Label selector for which namespace network should be available for.
 	// +kubebuilder:validation:Required
 	// +required
+	// +kubebuilder:validation:XValidation:rule="has(self.matchLabels) && self.matchLabels.size() > 0 || has(self.matchExpressions) && self.matchExpressions.size() > 0", message="namespace selector must have at least one rule"
 	NamespaceSelector metav1.LabelSelector `json:"namespaceSelector"`
 
 	// Network is the user-defined-network spec
