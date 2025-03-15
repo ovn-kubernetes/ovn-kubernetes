@@ -804,7 +804,7 @@ func (oc *BaseSecondaryNetworkController) allowPersistentIPs() bool {
 
 // buildUDNEgressSNAT is used to build the conditional SNAT required on L3 and L2 UDNs to
 // steer traffic correctly via mp0 when leaving OVN to the host
-func (bsnc *BaseSecondaryNetworkController) buildUDNEgressSNAT(localPodSubnets []*net.IPNet, outputPort string) ([]*nbdb.NAT, error) {
+func (bsnc *BaseSecondaryNetworkController) buildUDNEgressSNAT(clusterSubnets, localPodSubnets []*net.IPNet, outputPort string) ([]*nbdb.NAT, error) {
 	if len(localPodSubnets) == 0 {
 		return nil, nil // nothing to do
 	}
@@ -819,8 +819,8 @@ func (bsnc *BaseSecondaryNetworkController) buildUDNEgressSNAT(localPodSubnets [
 		types.NetworkExternalID:  bsnc.GetNetworkName(),
 		types.TopologyExternalID: bsnc.TopologyType(),
 	}
-	for _, localPodSubnet := range localPodSubnets {
-		if utilnet.IsIPv6CIDR(localPodSubnet) {
+	for _, clusterSubnet := range clusterSubnets {
+		if utilnet.IsIPv6CIDR(clusterSubnet) {
 			masqIP, err = udn.AllocateV6MasqueradeIPs(networkID)
 		} else {
 			masqIP, err = udn.AllocateV4MasqueradeIPs(networkID)
@@ -831,7 +831,7 @@ func (bsnc *BaseSecondaryNetworkController) buildUDNEgressSNAT(localPodSubnets [
 		if masqIP == nil {
 			return nil, fmt.Errorf("masquerade IP cannot be empty network %s (%d): %v", bsnc.GetNetworkName(), networkID, err)
 		}
-		snats = append(snats, libovsdbops.BuildSNATWithMatch(&masqIP.ManagementPort.IP, localPodSubnet, outputPort,
+		snats = append(snats, libovsdbops.BuildSNATWithMatch(&masqIP.ManagementPort.IP, clusterSubnet, outputPort,
 			extIDs, getMasqueradeManagementIPSNATMatch(dstMac.String())))
 	}
 	return snats, nil

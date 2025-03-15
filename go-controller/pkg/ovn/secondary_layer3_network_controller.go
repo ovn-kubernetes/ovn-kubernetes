@@ -864,13 +864,13 @@ func (oc *SecondaryLayer3NetworkController) addUpdateRemoteNodeEvent(node *corev
 // these SNATs are required for pod2Egress traffic in LGW mode and pod2SameNode traffic in SGW mode to function properly on UDNs
 // SNAT Breakdown:
 // match = "eth.dst == d6:cf:fd:2c:a6:44"; the MAC here is the mpX interface MAC address for this UDN
-// logicalIP = "10.128.0.0/24"; which is the podsubnet for this node in L3 UDN
+// logicalIP = "10.128.0.0/16"; which is the pod supernet for this L3 UDN
 // externalIP = "169.254.0.12"; which is the masqueradeIP for this L3 UDN
 // so all in all we want to condionally SNAT all packets that are coming from pods hosted on this node,
 // which are leaving via UDN's mpX interface to the UDN's masqueradeIP.
-func (oc *SecondaryLayer3NetworkController) addUDNNodeSubnetEgressSNAT(localPodSubnets []*net.IPNet, node *corev1.Node) error {
+func (oc *SecondaryLayer3NetworkController) addUDNNodeSubnetEgressSNAT(clusterSubnets, podSubnets []*net.IPNet, node *corev1.Node) error {
 	outputPort := types.RouterToSwitchPrefix + oc.GetNetworkScopedName(node.Name)
-	nats, err := oc.buildUDNEgressSNAT(localPodSubnets, outputPort)
+	nats, err := oc.buildUDNEgressSNAT(clusterSubnets, podSubnets, outputPort)
 	if err != nil {
 		return fmt.Errorf("failed to build UDN masquerade SNATs for network %q on node %q, err: %w",
 			oc.GetNetworkName(), node.Name, err)
@@ -890,9 +890,9 @@ func (oc *SecondaryLayer3NetworkController) addUDNNodeSubnetEgressSNAT(localPodS
 
 // deleteUDNNodeSubnetEgressSNAT deletes SNAT rule from network specific
 // ovn_cluster_router depending on whether the network is advertised or not
-func (oc *SecondaryLayer3NetworkController) deleteUDNNodeSubnetEgressSNAT(localPodSubnets []*net.IPNet, node *corev1.Node) error {
+func (oc *SecondaryLayer3NetworkController) deleteUDNNodeSubnetEgressSNAT(clusterSubnets, localPodSubnets []*net.IPNet, node *corev1.Node) error {
 	outputPort := types.RouterToSwitchPrefix + oc.GetNetworkScopedName(node.Name)
-	nats, err := oc.buildUDNEgressSNAT(localPodSubnets, outputPort)
+	nats, err := oc.buildUDNEgressSNAT(clusterSubnets, localPodSubnets, outputPort)
 	if err != nil {
 		return fmt.Errorf("failed to build UDN masquerade SNATs for network %q on node %q, err: %w",
 			oc.GetNetworkName(), node.Name, err)
@@ -924,12 +924,17 @@ func (oc *SecondaryLayer3NetworkController) addNode(node *corev1.Node) ([]*net.I
 		return nil, err
 	}
 	if util.IsNetworkSegmentationSupportEnabled() && oc.IsPrimaryNetwork() {
+		clusterNetworks := oc.Subnets()
+		clusterSubnets := make([]*net.IPNet, 0, len(clusterNetworks))
+		for _, clusterNetwork := range clusterNetworks {
+			clusterSubnets = append(clusterSubnets, clusterNetwork.CIDR)
+		}
 		if !util.IsPodNetworkAdvertisedAtNode(oc, node.Name) {
-			if err := oc.addUDNNodeSubnetEgressSNAT(hostSubnets, node); err != nil {
+			if err := oc.addUDNNodeSubnetEgressSNAT(clusterSubnets, hostSubnets, node); err != nil {
 				return nil, err
 			}
 		} else {
-			if err := oc.deleteUDNNodeSubnetEgressSNAT(hostSubnets, node); err != nil {
+			if err := oc.deleteUDNNodeSubnetEgressSNAT(clusterSubnets, hostSubnets, node); err != nil {
 				return nil, err
 			}
 		}

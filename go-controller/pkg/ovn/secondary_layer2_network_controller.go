@@ -806,7 +806,7 @@ func (oc *SecondaryLayer2NetworkController) cleanupHostAccessRoutePolicies(node 
 // which are leaving via UDN's mpX interface to the UDN's masqueradeIP.
 func (oc *SecondaryLayer2NetworkController) addUDNClusterSubnetEgressSNAT(localPodSubnets []*net.IPNet, routerName string) error {
 	outputPort := types.GWRouterToJoinSwitchPrefix + routerName
-	nats, err := oc.buildUDNEgressSNAT(localPodSubnets, outputPort)
+	nats, err := oc.buildUDNEgressSNAT(localPodSubnets, localPodSubnets, outputPort)
 	if err != nil {
 		return err
 	}
