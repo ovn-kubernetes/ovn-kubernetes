@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"strings"
 
+	utilnet "k8s.io/utils/net"
+
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node"
@@ -66,6 +69,28 @@ func CreateDummyGWMacBindings(nbClient libovsdbclient.Client, gwRouterName strin
 	// are the same across all nodes.
 	if netInfo.IsPrimaryNetwork() {
 		ips = append(ips, node.DummyMasqueradeIPs()...)
+		// we also need to add mac bindings for the mpx masq IP as packets
+		// from other pods via geneve will be SNAT'ed to this masq mgmt port IP, egress mpx,
+		// then ingress into breth0. Reply packets would be destined to the masq IP
+		// and need to be resolvable.
+		clusterNetworks := netInfo.Subnets()
+		networkID := netInfo.GetNetworkID()
+		var masqAllocFunc func(networkID int) (*udn.MasqueradeIPs, error)
+		for _, clusterNetwork := range clusterNetworks {
+			if utilnet.IsIPv6CIDR(clusterNetwork.CIDR) {
+				masqAllocFunc = udn.AllocateV6MasqueradeIPs
+			} else {
+				masqAllocFunc = udn.AllocateV4MasqueradeIPs
+			}
+			masqIP, err := masqAllocFunc(networkID)
+			if err != nil {
+				return fmt.Errorf("error allocating masquerade IP for gateway %s: %v", gwRouterName, err)
+			}
+			if masqIP == nil {
+				return fmt.Errorf("masquerade IP cannot be empty network %s (%d): %v", netInfo.GetNetworkName(), networkID, err)
+			}
+			ips = append(ips, masqIP.ManagementPort.IP)
+		}
 	}
 	smbs := make([]*nbdb.StaticMACBinding, len(ips))
 	for i := range ips {
@@ -95,6 +120,24 @@ func DeleteDummyGWMacBindings(nbClient libovsdbclient.Client, gwRouterName strin
 	ips := node.DummyNextHopIPs()
 	if netInfo.IsPrimaryNetwork() {
 		ips = append(ips, node.DummyMasqueradeIPs()...)
+		clusterNetworks := netInfo.Subnets()
+		networkID := netInfo.GetNetworkID()
+		var masqAllocFunc func(networkID int) (*udn.MasqueradeIPs, error)
+		for _, clusterNetwork := range clusterNetworks {
+			if utilnet.IsIPv6CIDR(clusterNetwork.CIDR) {
+				masqAllocFunc = udn.AllocateV6MasqueradeIPs
+			} else {
+				masqAllocFunc = udn.AllocateV4MasqueradeIPs
+			}
+			masqIP, err := masqAllocFunc(networkID)
+			if err != nil {
+				return fmt.Errorf("error allocating masquerade IP for gateway %s: %v", gwRouterName, err)
+			}
+			if masqIP == nil {
+				return fmt.Errorf("masquerade IP cannot be empty network %s (%d): %v", netInfo.GetNetworkName(), networkID, err)
+			}
+			ips = append(ips, masqIP.ManagementPort.IP)
+		}
 	}
 	smbs := make([]*nbdb.StaticMACBinding, len(ips))
 	for i := range ips {

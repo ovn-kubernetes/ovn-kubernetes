@@ -585,7 +585,7 @@ func expectedLayer2EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 		expectedNodeLogicalRouterPolicy(routerPolicyUUID2, netInfo, nodeName, managementPortIP(layer2Subnet()).String(), nodeName),
 	}
 
-	expectedEntities = append(expectedEntities, expectedStaticMACBindings(gwRouterName, staticMACBindingIPs())...)
+	expectedEntities = append(expectedEntities, expectedStaticMACBindings(gwRouterName, netInfo)...)
 
 	if config.Gateway.Mode == config.GatewayModeLocal {
 		l2LGWLRP := expectedLogicalRouterPolicy(hostCIDRPolicyUUID, netInfo, nodeName, nodeCIDR().String(), managementPortIP(layer2Subnet()).String())

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -319,6 +321,8 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 
 				mutableNetworkConfig := util.NewMutableNetInfo(networkConfig)
 				mutableNetworkConfig.SetNADs(util.GetNADName(nad.Namespace, nad.Name))
+				nID, _ := strconv.Atoi(secondaryNetworkID)
+				mutableNetworkConfig.SetNetworkID(nID)
 				networkConfig = mutableNetworkConfig
 
 				fakeNetworkManager := &testnm.FakeNetworkManager{
@@ -692,7 +696,7 @@ func expectedGWEntities(nodeName string, netInfo util.NetInfo, gwConfig util.L3G
 		expectedGRToExternalSwitchLRP(gwRouterName, netInfo, nodePhysicalIPAddress(), udnGWSNATAddress()),
 		expectedGatewayChassis(nodeName, netInfo, gwConfig),
 	)
-	expectedEntities = append(expectedEntities, expectedStaticMACBindings(gwRouterName, staticMACBindingIPs())...)
+	expectedEntities = append(expectedEntities, expectedStaticMACBindings(gwRouterName, netInfo)...)
 	expectedEntities = append(expectedEntities, expectedExternalSwitchAndLSPs(netInfo, gwConfig, nodeName)...)
 	expectedEntities = append(expectedEntities, expectedJoinSwitchAndLSPs(netInfo, nodeName)...)
 	return expectedEntities
@@ -741,10 +745,25 @@ func expectedGWRouterPlusNATAndStaticRoutes(
 	return expectedEntities
 }
 
-func expectedStaticMACBindings(gwRouterName string, ips []net.IP) []libovsdbtest.TestData {
+func expectedStaticMACBindings(gwRouterName string, netInfo util.NetInfo) []libovsdbtest.TestData {
 	lrpName := fmt.Sprintf("%s%s", types.GWRouterToExtSwitchPrefix, gwRouterName)
 	var bindings []libovsdbtest.TestData
-	for _, ip := range ips {
+	clusterNetworks := netInfo.Subnets()
+	networkID := netInfo.GetNetworkID()
+	var masqAllocFunc func(networkID int) (*udn.MasqueradeIPs, error)
+	bindingIPs := staticMACBindingIPs()
+	for _, clusterNetwork := range clusterNetworks {
+		if knet.IsIPv6CIDR(clusterNetwork.CIDR) {
+			masqAllocFunc = udn.AllocateV6MasqueradeIPs
+		} else {
+			masqAllocFunc = udn.AllocateV4MasqueradeIPs
+		}
+		masqIP, _ := masqAllocFunc(networkID)
+		if masqIP != nil {
+			bindingIPs = append(bindingIPs, masqIP.ManagementPort.IP)
+		}
+	}
+	for _, ip := range bindingIPs {
 		bindings = append(bindings, &nbdb.StaticMACBinding{
 			UUID:               fmt.Sprintf("%sstatic-mac-binding-UUID(%s)", lrpName, ip.String()),
 			IP:                 ip.String(),
