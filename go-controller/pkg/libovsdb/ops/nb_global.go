@@ -11,7 +11,7 @@ func GetNBGlobal(nbClient libovsdbclient.Client, nbGlobal *nbdb.NBGlobal) (*nbdb
 	found := []*nbdb.NBGlobal{}
 	opModel := operationModel{
 		Model:          nbGlobal,
-		ModelPredicate: func(item *nbdb.NBGlobal) bool { return true },
+		ModelPredicate: func(_ *nbdb.NBGlobal) bool { return true },
 		ExistingResult: &found,
 		ErrNotFound:    true,
 		BulkOp:         false,

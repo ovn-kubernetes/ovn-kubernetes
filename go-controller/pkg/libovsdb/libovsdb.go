@@ -12,23 +12,25 @@ import (
 	"strings"
 	"time"
 
-	"k8s.io/apimachinery/pkg/util/wait"
-
 	"github.com/cenkalti/backoff/v4"
 	"github.com/go-logr/logr"
 	"github.com/go-logr/stdr"
+	"github.com/prometheus/client_golang/prometheus"
+	"gopkg.in/fsnotify/fsnotify.v1"
+	"gopkg.in/natefinch/lumberjack.v2"
+
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/klog/v2"
+	"k8s.io/klog/v2/textlogger"
+
 	"github.com/ovn-org/libovsdb/client"
 	"github.com/ovn-org/libovsdb/model"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/sbdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/vswitchd"
-	"github.com/prometheus/client_golang/prometheus"
-	"gopkg.in/fsnotify/fsnotify.v1"
-	"gopkg.in/natefinch/lumberjack.v2"
-	"k8s.io/klog/v2"
-	"k8s.io/klog/v2/textlogger"
 )
 
 func newClientLogger(dbModelName string) (logger logr.Logger, err error) {
@@ -308,7 +310,7 @@ func newSSLKeyPairWatcherFunc(certFile, privKeyFile string, tlsConfig *tls.Confi
 				if ok && event.Op&(fsnotify.Write|fsnotify.Remove) != 0 {
 					if event.Op&fsnotify.Remove != 0 {
 						// cert/key file removed, need wait for the file to be created again.
-						if err := wait.PollUntilContextTimeout(context.Background(), 10*time.Millisecond, 5*time.Second, true, func(ctx context.Context) (bool, error) {
+						if err := wait.PollUntilContextTimeout(context.Background(), 10*time.Millisecond, 5*time.Second, true, func(_ context.Context) (bool, error) {
 							if _, err := os.Stat(event.Name); os.IsNotExist(err) {
 								return false, nil
 							}

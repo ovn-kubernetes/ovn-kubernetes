@@ -31,6 +31,9 @@ env:
   CI_IMAGE_PR_TAR: image-pr.tar
   CI_DIST_IMAGES_OUTPUT: dist/images/_output/
 
+  # To run CI over custom OVN
+  # OVN_REPO: https://github.com/ovn-org/ovn
+  # OVN_GITREF: main
 
 jobs:
   # separate job for parallelism
@@ -49,9 +52,9 @@ jobs:
       id: go
 
     - name: Verify
-      uses: golangci/golangci-lint-action@v4
+      uses: golangci/golangci-lint-action@v6
       with:
-        version: v1.56.1
+        version: v1.59.1
         working-directory: go-controller
         args: --modules-download-mode=vendor --timeout=15m0s --verbose
 
@@ -116,12 +119,11 @@ jobs:
     - name: Build docker image - from master branch
       if: steps.is_master_image_build_needed.outputs.MASTER_IMAGE_RESTORED != 'true' && success()
       run: |
-        pushd dist/images
-          sudo cp -f ../../go-controller/_output/go/bin/ovn* .
-          sudo cp -f ../../go-controller/_output/go/bin/hybrid-overlay-node .
-          echo "ref: $(git rev-parse  --symbolic-full-name HEAD)  commit: $(git rev-parse  HEAD)" > git_info
-          docker build -t ovn-daemonset-fedora:dev -f Dockerfile.fedora .
-        popd
+        make -C dist/images \
+          IMAGE=ovn-daemonset-fedora:dev \
+          OVN_REPO=${{ env.OVN_REPO }} \
+          OVN_GITREF=${{ env.OVN_GITREF }} \
+          fedora-image
 
     - name: Cache master image
       if: steps.is_master_image_build_needed.outputs.MASTER_IMAGE_RESTORED_FROM_CACHE != 'true' && success()
@@ -207,12 +209,13 @@ jobs:
       if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
       run: |
         pushd dist/images
-          sudo cp -f ../../go-controller/_output/go/bin/ovn* .
-          sudo cp -f ../../go-controller/_output/go/bin/hybrid-overlay-node .
-          echo "ref: $(git rev-parse  --symbolic-full-name HEAD)  commit: $(git rev-parse  HEAD)" > git_info
-          docker build -t ovn-daemonset-fedora:pr -f Dockerfile.fedora .
+          IMAGE=ovn-daemonset-fedora:pr
+          make IMAGE=${IMAGE} \
+            OVN_REPO=${{ env.OVN_REPO }} \
+            OVN_GITREF=${{ env.OVN_GITREF }} \
+            fedora-image
           mkdir _output
-          docker save ovn-daemonset-fedora:pr > _output/${CI_IMAGE_PR_TAR}
+          docker save ${IMAGE} > _output/${CI_IMAGE_PR_TAR}
         popd
 
     - name: Submit code coverage to Coveralls
@@ -433,7 +436,7 @@ jobs:
           - {"target": "external-gateway",  "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "2br", "ic": "ic-single-node-zones"}
           - {"target": "external-gateway",  "ha": "noHA", "gateway-mode": "local",  "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones"}
           - {"target": "kv-live-migration", "ha": "noHA", "gateway-mode": "local",  "ipfamily": "ipv4",      "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "ic": "ic-disabled", "num-workers": "3"}
-          - {"target": "kv-live-migration", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "num-workers": "3"}
+          - {"target": "kv-live-migration", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "num-workers": "3"}
           - {"target": "control-plane", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "forwarding": "disable-forwarding"}
           - {"target": "network-segmentation", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "forwarding": "disable-forwarding"}
           - {"target": "network-segmentation", "ha": "noHA", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones"}

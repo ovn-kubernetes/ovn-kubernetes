@@ -1,7 +1,7 @@
 package types
 
 import (
-	kapi "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 )
 
 type HybridInitState *uint32
@@ -29,14 +29,14 @@ const (
 // NodeHandler interface respresents the three functions that get called by the informer upon respective events
 type NodeHandler interface {
 	// Add is called when a new object is created
-	Add(obj *kapi.Node)
+	Add(obj *corev1.Node)
 
 	// Update is called when an object is updated, both old and new ones are passed along
-	Update(oldObj *kapi.Node, newObj *kapi.Node)
+	Update(oldObj *corev1.Node, newObj *corev1.Node)
 
 	// Delete is called when an object is deleted
-	Delete(obj *kapi.Node)
+	Delete(obj *corev1.Node)
 
 	// Sync is called to synchronize the full list of objects
-	Sync(objs []*kapi.Node)
+	Sync(objs []*corev1.Node)
 }

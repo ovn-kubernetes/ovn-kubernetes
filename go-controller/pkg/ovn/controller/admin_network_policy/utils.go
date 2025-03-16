@@ -7,7 +7,7 @@ import (
 	"net"
 	"sort"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	utilnet "k8s.io/utils/net"
 	anpapi "sigs.k8s.io/network-policy-api/apis/v1alpha1"
@@ -180,7 +180,7 @@ func getACLLoggingLevelsForANP(annotations map[string]string) (*libovsdbutil.ACL
 
 // convertPodIPContainerPortToNNPP converts the given pod container port and podIPs into a list (max 2 for dualstack)
 // of libovsdbutil.NamedNetworkPolicyPort (NNPP)
-func convertPodIPContainerPortToNNPP(cPort v1.ContainerPort, podIPs []net.IP) []libovsdbutil.NamedNetworkPolicyPort {
+func convertPodIPContainerPortToNNPP(cPort corev1.ContainerPort, podIPs []net.IP) []libovsdbutil.NamedNetworkPolicyPort {
 	out := make([]libovsdbutil.NamedNetworkPolicyPort, 0)
 	namedPortRep := libovsdbutil.NamedNetworkPolicyPort{
 		L4Protocol: libovsdbutil.ConvertK8sProtocolToOVNProtocol(cPort.Protocol),

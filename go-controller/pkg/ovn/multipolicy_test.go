@@ -10,10 +10,13 @@ import (
 	mnpapi "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/apis/k8s.cni.cncf.io/v1beta1"
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	"github.com/onsi/ginkgo/v2"
-
 	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/format"
 	"github.com/urfave/cli/v2"
+
+	corev1 "k8s.io/api/core/v1"
+	knet "k8s.io/api/networking/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
@@ -22,10 +25,6 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-
-	v1 "k8s.io/api/core/v1"
-	knet "k8s.io/api/networking/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func convertNetPolicyToMultiNetPolicy(policy *knet.NetworkPolicy) *mnpapi.MultiNetworkPolicy {
@@ -91,7 +90,7 @@ func convertNetPolicyToMultiNetPolicy(policy *knet.NetworkPolicy) *mnpapi.MultiN
 	return &mpolicy
 }
 
-func addPodNetwork(pod *v1.Pod, secondaryPodInfos map[string]*secondaryPodInfo) {
+func addPodNetwork(pod *corev1.Pod, secondaryPodInfos map[string]*secondaryPodInfo) {
 	nadNames := []string{}
 	for _, podInfo := range secondaryPodInfos {
 		for nadName := range podInfo.allportInfo {
@@ -104,7 +103,7 @@ func addPodNetwork(pod *v1.Pod, secondaryPodInfos map[string]*secondaryPodInfo) 
 	pod.Annotations[nettypes.NetworkAttachmentAnnot] = strings.Join(nadNames, ",")
 }
 
-func (p testPod) populateSecondaryNetworkLogicalSwitchCache(fakeOvn *FakeOVN, ocInfo secondaryControllerInfo) {
+func (p testPod) populateSecondaryNetworkLogicalSwitchCache(ocInfo secondaryControllerInfo) {
 	var err error
 	switch ocInfo.bnc.TopologyType() {
 	case ovntypes.Layer3Topology:
@@ -210,7 +209,7 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
-		config.PrepareTestConfig()
+		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
 		config.OVNKubernetesFeature.EnableMultiNetworkPolicy = true
 
@@ -294,10 +293,10 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 		}
 	}
 
-	startOvn := func(dbSetup libovsdb.TestSetup, watchNodes bool, nodes []v1.Node, namespaces []v1.Namespace, networkPolicies []knet.NetworkPolicy,
+	startOvn := func(dbSetup libovsdb.TestSetup, watchNodes bool, nodes []corev1.Node, namespaces []corev1.Namespace, networkPolicies []knet.NetworkPolicy,
 		multinetworkPolicies []mnpapi.MultiNetworkPolicy, nads []nettypes.NetworkAttachmentDefinition,
 		pods []testPod, podLabels map[string]string) {
-		var podsList []v1.Pod
+		var podsList []corev1.Pod
 		for _, testPod := range pods {
 			knetPod := newPod(testPod.namespace, testPod.podName, testPod.nodeName, testPod.podIP)
 			if len(podLabels) > 0 {
@@ -308,13 +307,13 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 			podsList = append(podsList, *knetPod)
 		}
 		fakeOvn.startWithDBSetup(dbSetup,
-			&v1.NamespaceList{
+			&corev1.NamespaceList{
 				Items: namespaces,
 			},
-			&v1.PodList{
+			&corev1.PodList{
 				Items: podsList,
 			},
-			&v1.NodeList{
+			&corev1.NodeList{
 				Items: nodes,
 			},
 			&knet.NetworkPolicyList{
@@ -360,7 +359,7 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 		ocInfo, ok := fakeOvn.secondaryControllers[secondaryNetworkName]
 		gomega.Expect(ok).To(gomega.BeTrue())
 		asf := ocInfo.asf
-		gomega.Expect(asf).NotTo(gomega.Equal(nil))
+		gomega.Expect(asf).NotTo(gomega.BeNil())
 		gomega.Expect(asf.ControllerName).To(gomega.Equal(getNetworkControllerName(secondaryNetworkName)))
 
 		for _, ocInfo := range fakeOvn.secondaryControllers {
@@ -385,7 +384,7 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 			}
 
 			for _, testPod := range pods {
-				testPod.populateSecondaryNetworkLogicalSwitchCache(fakeOvn, ocInfo)
+				testPod.populateSecondaryNetworkLogicalSwitchCache(ocInfo)
 			}
 			if pods != nil {
 				err = ocInfo.bnc.WatchPods()
@@ -408,7 +407,7 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 
 	ginkgo.Context("during execution", func() {
 		ginkgo.It("correctly creating an multinetworkPolicy with a peer namespace label", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				var err error
 
 				topology := ovntypes.Layer2Topology
@@ -425,7 +424,7 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 				watchNodes := false
 				node := *newNode(nodeName, "192.168.126.202/24")
 
-				startOvn(initialDB, watchNodes, []v1.Node{node}, []v1.Namespace{namespace1, namespace2}, nil, nil,
+				startOvn(initialDB, watchNodes, []corev1.Node{node}, []corev1.Namespace{namespace1, namespace2}, nil, nil,
 					[]nettypes.NetworkAttachmentDefinition{*nad, *nad2}, nil, nil)
 
 				_, err = fakeOvn.fakeClient.MultiNetworkPolicyClient.K8sCniCncfIoV1beta1().MultiNetworkPolicies(mpolicy.Namespace).
@@ -454,7 +453,7 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 		})
 
 		ginkgo.It("correctly creates and deletes network policy and multi network policy with the same policy", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				var err error
 
 				topology := ovntypes.Layer2Topology
@@ -469,7 +468,7 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 				watchNodes := false
 				node := *newNode(nodeName, "192.168.126.202/24")
 
-				startOvn(initialDB, watchNodes, []v1.Node{node}, []v1.Namespace{namespace1}, nil, nil,
+				startOvn(initialDB, watchNodes, []corev1.Node{node}, []corev1.Namespace{namespace1}, nil, nil,
 					[]nettypes.NetworkAttachmentDefinition{*nad}, []testPod{nPodTest}, map[string]string{labelName: labelVal})
 
 				ginkgo.By("Creating networkPolicy applied to the pod")
@@ -506,7 +505,7 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 
 				ocInfo := fakeOvn.secondaryControllers[secondaryNetworkName]
 				portInfo := nPodTest.getNetworkPortInfo(secondaryNetworkName, nadNamespacedName)
-				gomega.Expect(portInfo).NotTo(gomega.Equal(nil))
+				gomega.Expect(portInfo).NotTo(gomega.BeNil())
 				ocInfo.asf.ExpectAddressSetWithAddresses(namespaceName1, []string{portInfo.podIP})
 
 				dataParams2 := newNetpolDataParams(networkPolicy).
@@ -541,7 +540,7 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 
 		ginkgo.DescribeTable("correctly adds and deletes pod IPs from secondary network namespace address set",
 			func(topology string, remote bool) {
-				app.Action = func(ctx *cli.Context) error {
+				app.Action = func(*cli.Context) error {
 					var err error
 
 					subnets := "10.1.0.0/16"
@@ -582,7 +581,7 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 					namespace1 := *newNamespace(namespaceName1)
 
 					config.EnableMulticast = false
-					startOvn(initialDB, watchNodes, []v1.Node{node}, []v1.Namespace{namespace1}, nil, nil,
+					startOvn(initialDB, watchNodes, []corev1.Node{node}, []corev1.Namespace{namespace1}, nil, nil,
 						[]nettypes.NetworkAttachmentDefinition{*nad}, []testPod{}, map[string]string{labelName: labelVal})
 
 					ocInfo := fakeOvn.secondaryControllers[secondaryNetworkName]
@@ -601,7 +600,7 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 					addPodNetwork(knetPod, nPodTest.secondaryPodInfos)
 					setPodAnnotations(knetPod, nPodTest)
 					nPodTest.populateLogicalSwitchCache(fakeOvn)
-					nPodTest.populateSecondaryNetworkLogicalSwitchCache(fakeOvn, ocInfo)
+					nPodTest.populateSecondaryNetworkLogicalSwitchCache(ocInfo)
 
 					ginkgo.By("Creating a pod attached to the secondary network")
 					_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(nPodTest.namespace).Create(context.TODO(), knetPod, metav1.CreateOptions{})

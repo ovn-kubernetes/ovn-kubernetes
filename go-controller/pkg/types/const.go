@@ -264,4 +264,17 @@ const (
 	// entry for the gateway routers. After this time, the entry is removed and
 	// may be refreshed with a new ARP request.
 	GRMACBindingAgeThreshold = "300"
+
+	// InvalidID signifies an invalid ID. Currently used for network and tunnel IDs.
+	InvalidID = -1
+
+	// NoTunnelID signifies an empty/unset ID. Currently used for tunnel ID (reserved as un-usable when the allocator is created)
+	NoTunnelID = 0
+
+	// DefaultNetworkID is reserved for the default network only
+	DefaultNetworkID = 0
+
+	// NoNetworkID is used to signal internally that an ID is empty and should, updates
+	// with this value should be ignored
+	NoNetworkID = -2
 )

@@ -21,7 +21,7 @@
 [go-doc-badge]: https://pkg.go.dev/badge/github.com/ovn-org/ovn-kubernetes
 [go-doc-url]: https://pkg.go.dev/github.com/ovn-org/ovn-kubernetes
 [slack-badge]: https://img.shields.io/badge/slack-ovn_kubernetes-blue
-[slack-url]: https://ovn-org.slack.com/
+[slack-url]: https://cloud-native.slack.com/archives/C08452HR8V6
 
 ## Welcome to ovn-kubernetes
 

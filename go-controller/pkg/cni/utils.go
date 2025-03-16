@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-
-	kapi "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // wait on a certain pod annotation related condition
@@ -42,8 +42,8 @@ func isDPUReady(podAnnotation map[string]string, nadName string) (*util.PodAnnot
 // getPod tries to read a Pod object from the informer cache, or if the pod
 // doesn't exist there, the apiserver. If neither a list or a kube client is
 // given, returns no pod and no error
-func (c *ClientSet) getPod(namespace, name string) (*kapi.Pod, error) {
-	var pod *kapi.Pod
+func (c *ClientSet) getPod(namespace, name string) (*corev1.Pod, error) {
+	var pod *corev1.Pod
 	var err error
 
 	pod, err = c.podLister.Pods(namespace).Get(name)
@@ -61,7 +61,7 @@ func (c *ClientSet) getPod(namespace, name string) (*kapi.Pod, error) {
 
 // GetPodAnnotations obtains the pod UID and annotation from the cache or apiserver
 func GetPodWithAnnotations(ctx context.Context, getter PodInfoGetter,
-	namespace, name, nadName string, annotCond podAnnotWaitCond) (*kapi.Pod, map[string]string, *util.PodAnnotation, error) {
+	namespace, name, nadName string, annotCond podAnnotWaitCond) (*corev1.Pod, map[string]string, *util.PodAnnotation, error) {
 	var notFoundCount uint
 
 	for {
@@ -141,7 +141,7 @@ const (
 )
 
 // GetPodSource returns the source of the pod based on the annotation.
-func GetPodSource(pod *kapi.Pod) (string, error) {
+func GetPodSource(pod *corev1.Pod) (string, error) {
 	if pod.Annotations != nil {
 		if source, ok := pod.Annotations[ConfigSourceAnnotationKey]; ok {
 			return source, nil
@@ -151,7 +151,7 @@ func GetPodSource(pod *kapi.Pod) (string, error) {
 }
 
 // IsStaticPod returns true if the pod is a static pod.
-func IsStaticPod(pod *kapi.Pod) bool {
+func IsStaticPod(pod *corev1.Pod) bool {
 	source, err := GetPodSource(pod)
 	return err == nil && source != ApiserverSource
 }

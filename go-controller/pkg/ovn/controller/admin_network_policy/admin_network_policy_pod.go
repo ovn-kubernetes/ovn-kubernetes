@@ -5,14 +5,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 func (c *Controller) processNextANPPodWorkItem(wg *sync.WaitGroup) bool {
@@ -162,7 +163,7 @@ func (c *Controller) clearPodForANP(namespace, name string, anpCache *adminNetwo
 // used to match the given anpCache.name policy or if it started matching the given anpCache.name.
 // If so, it will requeue the anpCache.name key back into the main (b)anpQueue cache for reconciling
 // the db objects. If not, function is a no-op.
-func (c *Controller) setPodForANP(pod *v1.Pod, anpCache *adminNetworkPolicyState, namespaceLabels labels.Labels, queue workqueue.TypedRateLimitingInterface[string]) {
+func (c *Controller) setPodForANP(pod *corev1.Pod, anpCache *adminNetworkPolicyState, namespaceLabels labels.Labels, queue workqueue.TypedRateLimitingInterface[string]) {
 	// (i) if this pod used to match this ANP's .Spec.Subject requeue it and return OR
 	// (ii) if this pod started to match this ANP's .Spec.Subject requeue it and return OR
 	// (iii) if above conditions are are false, check if it used to match any of the .Spec.Ingress.Peers requeue it and return OR

@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"github.com/prometheus/client_golang/prometheus"
+
 	"k8s.io/client-go/util/workqueue"
 )
 

@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
-	libovsdb "github.com/ovn-org/libovsdb/ovsdb"
+	"github.com/ovn-org/libovsdb/ovsdb"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -107,7 +107,7 @@ func SetACLLogging(acl *nbdb.ACL, severity nbdb.ACLSeverity, log bool) {
 
 // CreateOrUpdateACLsOps creates or updates the provided ACLs returning the
 // corresponding ops
-func CreateOrUpdateACLsOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, samplingConfig *SamplingConfig, acls ...*nbdb.ACL) ([]libovsdb.Operation, error) {
+func CreateOrUpdateACLsOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, samplingConfig *SamplingConfig, acls ...*nbdb.ACL) ([]ovsdb.Operation, error) {
 	opModels := make([]operationModel, 0, len(acls))
 	for i := range acls {
 		// can't use i in the predicate, for loop replaces it in-memory
@@ -131,7 +131,7 @@ func CreateOrUpdateACLsOps(nbClient libovsdbclient.Client, ops []libovsdb.Operat
 	return modelClient.CreateOrUpdateOps(ops, opModels...)
 }
 
-func UpdateACLsOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, acls ...*nbdb.ACL) ([]libovsdb.Operation, error) {
+func UpdateACLsOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, acls ...*nbdb.ACL) ([]ovsdb.Operation, error) {
 	opModels := make([]operationModel, 0, len(acls))
 	for i := range acls {
 		// can't use i in the predicate, for loop replaces it in-memory
@@ -162,7 +162,7 @@ func CreateOrUpdateACLs(nbClient libovsdbclient.Client, samplingConfig *Sampling
 
 // UpdateACLsLoggingOps updates the log and severity on the provided ACLs and
 // returns the corresponding ops
-func UpdateACLsLoggingOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, acls ...*nbdb.ACL) ([]libovsdb.Operation, error) {
+func UpdateACLsLoggingOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, acls ...*nbdb.ACL) ([]ovsdb.Operation, error) {
 	opModels := make([]operationModel, 0, len(acls))
 	for i := range acls {
 		// can't use i in the predicate, for loop replaces it in-memory

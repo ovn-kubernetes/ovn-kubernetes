@@ -10,19 +10,20 @@ import (
 	ocpnetworkapiv1alpha1 "github.com/openshift/api/network/v1alpha1"
 	ocpnetworkclientset "github.com/openshift/client-go/network/clientset/versioned"
 	ocpnetworklisterv1alpha1 "github.com/openshift/client-go/network/listers/network/v1alpha1"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/workqueue"
+	"k8s.io/klog/v2"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
 	egressfirewall "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
 	egressfirewalllister "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1/apis/listers/egressfirewall/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-
-	kerrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/client-go/tools/cache"
-	"k8s.io/client-go/util/workqueue"
-	"k8s.io/klog/v2"
 )
 
 // Controller holds the information of the DNS names and the corresponding
@@ -167,7 +168,7 @@ func (c *Controller) reconcileEgressFirewall(key string) error {
 	// Fetch the egress firewall object using the name and namespace.
 	ef, err := c.efLister.EgressFirewalls(namespace).Get(name)
 	if err != nil {
-		if kerrors.IsNotFound(err) {
+		if apierrors.IsNotFound(err) {
 			// EgressFirewall object was deleted. Delete all the DNSNameResolver
 			// objects corresponding to the DNS names used in the EgressFirewall
 			// object.
@@ -198,7 +199,7 @@ func (c *Controller) reconcileDNSNameResolver(key string) error {
 	// Fetch the dns name resolver object using the name and namespace.
 	resolverObj, err := c.dnsLister.DNSNameResolvers(namespace).Get(name)
 	if err != nil {
-		if kerrors.IsNotFound(err) {
+		if apierrors.IsNotFound(err) {
 			// DNSNameResolver object was deleted. If it is not supposed to be deleted,
 			// recreate it.
 
@@ -255,7 +256,7 @@ func createDNSNameResolver(ocpNetworkClient ocpnetworkclientset.Interface, objNa
 func deleteDNSNameResolver(ocpNetworkClient ocpnetworkclientset.Interface, objName string) error {
 	err := ocpNetworkClient.NetworkV1alpha1().DNSNameResolvers(config.Kubernetes.OVNConfigNamespace).
 		Delete(context.TODO(), objName, metav1.DeleteOptions{})
-	if err != nil && !kerrors.IsNotFound(err) {
+	if err != nil && !apierrors.IsNotFound(err) {
 		return err
 	}
 	return nil

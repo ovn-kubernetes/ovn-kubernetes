@@ -17,6 +17,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
 	v1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -1336,4 +1337,69 @@ func matchIPv4StringFamily(ipStrings []string) (string, error) {
 
 func matchIPv6StringFamily(ipStrings []string) (string, error) {
 	return util.MatchIPStringFamily(true /*ipv6*/, ipStrings)
+}
+
+// This is a replacement for e2epod.DeletePodWithWait(), which does not handle pods that
+// may be automatically restarted (https://issues.k8s.io/126785)
+func deletePodWithWait(ctx context.Context, c clientset.Interface, pod *v1.Pod) error {
+	if pod == nil {
+		return nil
+	}
+	if pod.UID == "" {
+		// We only recurse into deletePodWithWaitByName when UID is *not* set, to
+		// avoid infinite loops.
+		return deletePodWithWaitByName(ctx, c, pod.Name, pod.Namespace)
+	}
+
+	framework.Logf("Deleting pod %q in namespace %q", pod.Name, pod.Namespace)
+	err := c.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil // assume pod was already deleted
+		}
+		return fmt.Errorf("pod Delete API error: %w", err)
+	}
+	framework.Logf("Wait up to %v for pod %q to be fully deleted", e2epod.PodDeleteTimeout, pod.Name)
+	err = waitForPodNotFoundInNamespace(ctx, c, pod.Name, pod.Namespace, pod.UID, e2epod.PodDeleteTimeout)
+	if err != nil {
+		return fmt.Errorf("pod %q was not deleted: %w", pod.Name, err)
+	}
+	return nil
+}
+
+// This is a replacement for e2epod.DeletePodWithWaitByName(), which does not handle pods
+// that may be automatically restarted (https://issues.k8s.io/126785)
+func deletePodWithWaitByName(ctx context.Context, c clientset.Interface, podName, podNamespace string) error {
+	pod, err := c.CoreV1().Pods(podNamespace).Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil // assume pod was already deleted
+		}
+		return fmt.Errorf("pod Get API error: %w", err)
+	}
+	if pod.UID == "" {
+		return fmt.Errorf("unexpected Pod with no UID returned from API!")
+	}
+	// We only recurse into deletePodWithWait when UID *is* set, to avoid infinite
+	// loops.
+	return deletePodWithWait(ctx, c, pod)
+}
+
+// This is an alternative version of e2epod.WaitForPodNotFoundInNamespace(), which takes
+// a UID as well.
+func waitForPodNotFoundInNamespace(ctx context.Context, c clientset.Interface, podName, ns string, uid types.UID, timeout time.Duration) error {
+        err := framework.Gomega().Eventually(ctx, framework.HandleRetry(func(ctx context.Context) (*v1.Pod, error) {
+                pod, err := c.CoreV1().Pods(ns).Get(ctx, podName, metav1.GetOptions{})
+                if apierrors.IsNotFound(err) {
+                        return nil, nil
+                }
+		if pod != nil && pod.UID != uid {
+			return nil, nil
+		}
+                return pod, err
+        })).WithTimeout(timeout).Should(gomega.BeNil())
+        if err != nil {
+                return fmt.Errorf("expected pod to not be found: %w", err)
+        }
+        return nil
 }

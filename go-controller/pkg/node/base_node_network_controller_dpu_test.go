@@ -3,11 +3,11 @@ package node
 import (
 	"fmt"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
 	"github.com/stretchr/testify/mock"
-	v1 "k8s.io/api/core/v1"
+
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
@@ -23,7 +23,8 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utilMocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/mocks"
 
-	"k8s.io/client-go/kubernetes/fake"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 func genOVSFindCmd(timeout, table, column, condition string) string {
@@ -77,8 +78,8 @@ func checkOVSPortPodInfo(execMock *ovntest.FakeExec, vfRep string, exists bool, 
 	})
 }
 
-func newFakeKubeClientWithPod(pod *v1.Pod) *fake.Clientset {
-	return fake.NewSimpleClientset(&v1.PodList{Items: []v1.Pod{*pod}})
+func newFakeKubeClientWithPod(pod *corev1.Pod) *fake.Clientset {
+	return fake.NewSimpleClientset(&corev1.PodList{Items: []corev1.Pod{*pod}})
 }
 
 var _ = Describe("Node DPU tests", func() {
@@ -87,7 +88,7 @@ var _ = Describe("Node DPU tests", func() {
 	var execMock *ovntest.FakeExec
 	var kubeMock kubemocks.Interface
 	var factoryMock factorymocks.NodeWatchFactory
-	var pod v1.Pod
+	var pod corev1.Pod
 	var dnnc *DefaultNodeNetworkController
 	var podInformer coreinformermocks.PodInformer
 	var podLister v1mocks.PodLister
@@ -99,7 +100,7 @@ var _ = Describe("Node DPU tests", func() {
 	origNetlinkOps := util.GetNetLinkOps()
 
 	BeforeEach(func() {
-		config.PrepareTestConfig()
+		Expect(config.PrepareTestConfig()).To(Succeed())
 		sriovnetOpsMock = utilMocks.SriovnetOps{}
 		netlinkOpsMock = utilMocks.NetLinkOps{}
 		execMock = ovntest.NewFakeExec()
@@ -124,7 +125,7 @@ var _ = Describe("Node DPU tests", func() {
 		podLister = v1mocks.PodLister{}
 		podLister.On("Pods", mock.AnythingOfType("string")).Return(&podNamespaceLister)
 
-		pod = v1.Pod{ObjectMeta: metav1.ObjectMeta{
+		pod = corev1.Pod{ObjectMeta: metav1.ObjectMeta{
 			Name:        "a-pod",
 			Namespace:   "foo-ns",
 			UID:         "a-pod",

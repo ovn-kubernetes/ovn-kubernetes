@@ -5,6 +5,7 @@ import (
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
@@ -71,7 +72,7 @@ func TestBaseNetworkController_shouldWatchNamespaces(t *testing.T) {
 			config.OVNKubernetesFeature.EnableNetworkSegmentation = tt.enableNetSeg
 			config.OVNKubernetesFeature.EnableMultiNetworkPolicy = tt.enableMultiNetPolicies
 			netInfo, err := util.NewNetInfo(tt.netCfg)
-			assert.Nil(t, err, "failed to create network info")
+			require.NoError(t, err, "failed to create network info")
 			bnc := &BaseNetworkController{
 				ReconcilableNetInfo: util.NewReconcilableNetInfo(netInfo),
 			}

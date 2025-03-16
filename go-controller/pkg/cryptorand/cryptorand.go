@@ -3,8 +3,9 @@ package cryptorand
 import (
 	"crypto/rand"
 	"encoding/binary"
-	"k8s.io/klog/v2"
 	"math/big"
+
+	"k8s.io/klog/v2"
 )
 
 func Intn(n int64) uint64 {

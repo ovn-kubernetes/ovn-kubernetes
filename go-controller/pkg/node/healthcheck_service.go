@@ -4,16 +4,16 @@ import (
 	"fmt"
 	"sync"
 
+	corev1 "k8s.io/api/core/v1"
+	discovery "k8s.io/api/discovery/v1"
+	ktypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube/healthcheck"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
-
-	kapi "k8s.io/api/core/v1"
-	discovery "k8s.io/api/discovery/v1"
-	ktypes "k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 // initLoadBalancerHealthChecker initializes the health check server for
@@ -38,7 +38,7 @@ func newLoadBalancerHealthChecker(nodeName string, watchFactory factory.NodeWatc
 	}
 }
 
-func (l *loadBalancerHealthChecker) AddService(svc *kapi.Service) error {
+func (l *loadBalancerHealthChecker) AddService(svc *corev1.Service) error {
 	if svc.Spec.HealthCheckNodePort != 0 {
 		l.Lock()
 		defer l.Unlock()
@@ -62,20 +62,20 @@ func (l *loadBalancerHealthChecker) AddService(svc *kapi.Service) error {
 	return nil
 }
 
-func (l *loadBalancerHealthChecker) UpdateService(old, new *kapi.Service) error {
+func (l *loadBalancerHealthChecker) UpdateService(old, new *corev1.Service) error {
 	// if the ETP values have changed between local and cluster,
 	// we need to update health checks accordingly
 	// HealthCheckNodePort is used only in ETP=local mode
 	var err error
 	var errors []error
-	if old.Spec.ExternalTrafficPolicy == kapi.ServiceExternalTrafficPolicyTypeCluster &&
-		new.Spec.ExternalTrafficPolicy == kapi.ServiceExternalTrafficPolicyTypeLocal {
+	if old.Spec.ExternalTrafficPolicy == corev1.ServiceExternalTrafficPolicyTypeCluster &&
+		new.Spec.ExternalTrafficPolicy == corev1.ServiceExternalTrafficPolicyTypeLocal {
 		if err = l.AddService(new); err != nil {
 			errors = append(errors, err)
 		}
 	}
-	if old.Spec.ExternalTrafficPolicy == kapi.ServiceExternalTrafficPolicyTypeLocal &&
-		new.Spec.ExternalTrafficPolicy == kapi.ServiceExternalTrafficPolicyTypeCluster {
+	if old.Spec.ExternalTrafficPolicy == corev1.ServiceExternalTrafficPolicyTypeLocal &&
+		new.Spec.ExternalTrafficPolicy == corev1.ServiceExternalTrafficPolicyTypeCluster {
 		if err = l.DeleteService(old); err != nil {
 			errors = append(errors, err)
 		}
@@ -83,7 +83,7 @@ func (l *loadBalancerHealthChecker) UpdateService(old, new *kapi.Service) error 
 	return utilerrors.Join(errors...)
 }
 
-func (l *loadBalancerHealthChecker) DeleteService(svc *kapi.Service) error {
+func (l *loadBalancerHealthChecker) DeleteService(svc *corev1.Service) error {
 	if svc.Spec.HealthCheckNodePort != 0 {
 		l.Lock()
 		defer l.Unlock()
@@ -95,7 +95,7 @@ func (l *loadBalancerHealthChecker) DeleteService(svc *kapi.Service) error {
 	return nil
 }
 
-func (l *loadBalancerHealthChecker) SyncServices(svcs []interface{}) error {
+func (l *loadBalancerHealthChecker) SyncServices(_ []interface{}) error {
 	return nil
 }
 
@@ -134,7 +134,7 @@ func (l *loadBalancerHealthChecker) AddEndpointSlice(epSlice *discovery.Endpoint
 	return nil
 }
 
-func (l *loadBalancerHealthChecker) UpdateEndpointSlice(oldEpSlice, newEpSlice *discovery.EndpointSlice) error {
+func (l *loadBalancerHealthChecker) UpdateEndpointSlice(_, newEpSlice *discovery.EndpointSlice) error {
 	namespacedName, err := util.ServiceNamespacedNameFromEndpointSlice(newEpSlice)
 	if err != nil {
 		return fmt.Errorf("cannot update %s/%s in loadBalancerHealthChecker: %v",

@@ -11,6 +11,16 @@ import (
 	ocpnetworkapiv1alpha1 "github.com/openshift/api/network/v1alpha1"
 	cloudservicefake "github.com/openshift/client-go/cloudnetwork/clientset/versioned/fake"
 	ocpnetworkclientfake "github.com/openshift/client-go/network/clientset/versioned/fake"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes/fake"
+	anpapi "sigs.k8s.io/network-policy-api/apis/v1alpha1"
+	anpfake "sigs.k8s.io/network-policy-api/pkg/client/clientset/versioned/fake"
+
 	adminpolicybasedrouteapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1"
 	adminpolicybasedroutefake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/clientset/versioned/fake"
 	egressfirewall "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
@@ -25,15 +35,6 @@ import (
 	routeadvertisementsfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned/fake"
 	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	udnfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/fake"
-
-	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/kubernetes/fake"
-	anpapi "sigs.k8s.io/network-policy-api/apis/v1alpha1"
-	anpfake "sigs.k8s.io/network-policy-api/pkg/client/clientset/versioned/fake"
 )
 
 func GetOVNClientset(objects ...runtime.Object) *OVNClientset {
@@ -142,10 +143,10 @@ func NewObjectMetaWithLabels(name, namespace string, labels map[string]string) m
 	}
 }
 
-func NewNamespace(namespace string) *v1.Namespace {
-	return &v1.Namespace{
+func NewNamespace(namespace string) *corev1.Namespace {
+	return &corev1.Namespace{
 		ObjectMeta: NewObjectMetaWithLabels(namespace, "", map[string]string{"name": namespace}),
-		Spec:       v1.NamespaceSpec{},
-		Status:     v1.NamespaceStatus{},
+		Spec:       corev1.NamespaceSpec{},
+		Status:     corev1.NamespaceStatus{},
 	}
 }

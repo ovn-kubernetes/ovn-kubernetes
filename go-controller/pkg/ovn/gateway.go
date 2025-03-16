@@ -8,8 +8,9 @@ import (
 	"strings"
 
 	"golang.org/x/exp/maps"
-	kapi "k8s.io/api/core/v1"
-	kerrors "k8s.io/apimachinery/pkg/api/errors"
+
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -249,7 +250,6 @@ func (gw *GatewayManager) GatewayInit(
 	clusterIPSubnet []*net.IPNet,
 	hostSubnets []*net.IPNet,
 	l3GatewayConfig *util.L3GatewayConfig,
-	sctpSupport bool,
 	gwLRPJoinIPs, drLRPIfAddrs []*net.IPNet,
 	externalIPs []net.IP,
 	enableGatewayMTU bool,
@@ -276,9 +276,14 @@ func (gw *GatewayManager) GatewayInit(
 		physicalIPs[i] = ip.IP.String()
 	}
 
+	dynamicNeighRouters := "true"
+	if config.OVNKubernetesFeature.EnableInterconnect {
+		dynamicNeighRouters = "false"
+	}
+
 	logicalRouterOptions := map[string]string{
 		"always_learn_from_arp_request": "false",
-		"dynamic_neigh_routers":         "true",
+		"dynamic_neigh_routers":         dynamicNeighRouters,
 		"chassis":                       l3GatewayConfig.ChassisID,
 		"lb_force_snat_ip":              "router_ip",
 		"mac_binding_age_threshold":     types.GRMACBindingAgeThreshold,
@@ -501,7 +506,6 @@ func (gw *GatewayManager) GatewayInit(
 
 	if err := gw.addExternalSwitch("",
 		l3GatewayConfig.InterfaceID,
-		nodeName,
 		gatewayRouter,
 		l3GatewayConfig.MACAddress.String(),
 		physNetName(gw.netInfo),
@@ -513,7 +517,6 @@ func (gw *GatewayManager) GatewayInit(
 	if l3GatewayConfig.EgressGWInterfaceID != "" {
 		if err := gw.addExternalSwitch(types.EgressGWSwitchPrefix,
 			l3GatewayConfig.EgressGWInterfaceID,
-			nodeName,
 			gatewayRouter,
 			l3GatewayConfig.EgressGWMACAddress.String(),
 			types.PhysicalNetworkExGwName,
@@ -828,7 +831,7 @@ func (gw *GatewayManager) GatewayInit(
 
 // addExternalSwitch creates a switch connected to the external bridge and connects it to
 // the gateway router
-func (gw *GatewayManager) addExternalSwitch(prefix, interfaceID, nodeName, gatewayRouter, macAddress, physNetworkName string, ipAddresses []*net.IPNet, vlanID *uint) error {
+func (gw *GatewayManager) addExternalSwitch(prefix, interfaceID, gatewayRouter, macAddress, physNetworkName string, ipAddresses []*net.IPNet, vlanID *uint) error {
 	// Create the GR port that connects to external_switch with mac address of
 	// external interface and that IP address. In the case of `local` gateway
 	// mode, whenever ovnkube-node container restarts a new br-local bridge will
@@ -950,7 +953,7 @@ func deleteStaleMasqueradeResources(nbClient libovsdbclient.Client, routerName, 
 
 	node, err := wf.GetNode(nodeName)
 	if err != nil {
-		if kerrors.IsNotFound(err) {
+		if apierrors.IsNotFound(err) {
 			// node doesn't exist for some reason, assume we should still try to clean up with auto-detection
 			if err := deleteStaleMasqueradeRouteAndMACBinding(nbClient, routerName, nextHops); err != nil {
 				return fmt.Errorf("failed to remove stale MAC binding and static route for logical port %s: %w", logicalport, err)
@@ -1265,20 +1268,16 @@ func (gw *GatewayManager) containsJoinIP(ip net.IP) bool {
 }
 
 func (gw *GatewayManager) isRoutingAdvertised(node string) bool {
-	if gw.netInfo.IsSecondary() {
-		return false
-	}
 	return util.IsPodNetworkAdvertisedAtNode(gw.netInfo, node)
 }
 
 func (gw *GatewayManager) syncGatewayLogicalNetwork(
-	node *kapi.Node,
+	node *corev1.Node,
 	l3GatewayConfig *util.L3GatewayConfig,
 	hostSubnets []*net.IPNet,
 	hostAddrs []string,
 	clusterSubnets []*net.IPNet,
 	grLRPJoinIPs []*net.IPNet,
-	isSCTPSupported bool,
 	ovnClusterLRPToJoinIfAddrs []*net.IPNet,
 	externalIPs []net.IP,
 ) error {
@@ -1289,7 +1288,6 @@ func (gw *GatewayManager) syncGatewayLogicalNetwork(
 		clusterSubnets,
 		hostSubnets,
 		l3GatewayConfig,
-		isSCTPSupported,
 		grLRPJoinIPs, // the joinIP allocated to this node's GR for this controller's network
 		ovnClusterLRPToJoinIfAddrs,
 		externalIPs,
@@ -1333,12 +1331,11 @@ func (gw *GatewayManager) syncGatewayLogicalNetwork(
 
 // syncNodeGateway ensures a node's gateway router is configured according to the L3 config and host subnets
 func (gw *GatewayManager) syncNodeGateway(
-	node *kapi.Node,
+	node *corev1.Node,
 	l3GatewayConfig *util.L3GatewayConfig,
 	hostSubnets []*net.IPNet,
 	hostAddrs []string,
 	clusterSubnets, grLRPJoinIPs []*net.IPNet,
-	isSCTPSupported bool,
 	joinSwitchIPs []*net.IPNet,
 	externalIPs []net.IP,
 ) error {
@@ -1353,8 +1350,7 @@ func (gw *GatewayManager) syncNodeGateway(
 			hostSubnets,
 			hostAddrs,
 			clusterSubnets,
-			grLRPJoinIPs, // the joinIP allocated to this node for this controller's network
-			isSCTPSupported,
+			grLRPJoinIPs,  // the joinIP allocated to this node for this controller's network
 			joinSwitchIPs, // the .1 of this controller's global joinSubnet
 			externalIPs,
 		); err != nil {

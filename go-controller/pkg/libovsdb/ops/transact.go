@@ -12,6 +12,7 @@ import (
 	"github.com/ovn-org/libovsdb/client"
 	"github.com/ovn-org/libovsdb/model"
 	"github.com/ovn-org/libovsdb/ovsdb"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 )
 
@@ -25,7 +26,7 @@ func TransactWithRetry(ctx context.Context, c client.Client, ops []ovsdb.Operati
 		if err == nil {
 			return true, nil
 		}
-		if err != nil && errors.Is(err, client.ErrNotConnected) {
+		if errors.Is(err, client.ErrNotConnected) {
 			klog.V(5).Infof("Unable to execute transaction: %+v. Client is disconnected, will retry...", ops)
 			return false, nil
 		}

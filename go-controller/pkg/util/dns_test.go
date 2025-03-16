@@ -9,6 +9,7 @@ import (
 	"github.com/miekg/dns"
 	"github.com/stretchr/testify/assert"
 	mock "github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
@@ -27,14 +28,14 @@ func TestNewDNS(t *testing.T) {
 			desc:   "fails to read config file ",
 			errExp: true,
 			dnsOpsMockHelper: []ovntest.TestifyMockHelper{
-				{"ClientConfigFromFile", []string{"string"}, []interface{}{}, []interface{}{nil, fmt.Errorf("mock error")}, 0, 1},
+				{OnCallMethodName: "ClientConfigFromFile", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{nil, fmt.Errorf("mock error")}, CallTimes: 1},
 			},
 		},
 		{
 			desc:   "positive test case",
 			errExp: false,
 			dnsOpsMockHelper: []ovntest.TestifyMockHelper{
-				{"ClientConfigFromFile", []string{"string"}, []interface{}{}, []interface{}{&dns.ClientConfig{}, nil}, 0, 1},
+				{OnCallMethodName: "ClientConfigFromFile", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{&dns.ClientConfig{}, nil}, CallTimes: 1},
 			},
 		},
 	}
@@ -53,9 +54,9 @@ func TestNewDNS(t *testing.T) {
 			res, err := NewDNS("DNS temp Name")
 			t.Log(res, err)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			mockDNSOps.AssertExpectations(t)
 
@@ -79,9 +80,14 @@ func TestGetIPsAndMinTTL(t *testing.T) {
 			ipv4Mode: true,
 			ipv6Mode: false,
 			dnsOpsMockHelper: []ovntest.TestifyMockHelper{
-				{"SetQuestion", []string{"*dns.Msg", "string", "uint16"}, []interface{}{}, []interface{}{&dns.Msg{}}, 0, 1},
-				{"Fqdn", []string{"string"}, []interface{}{}, []interface{}{"www.test.com"}, 0, 1},
-				{"Exchange", []string{"*dns.Client", "*dns.Msg", "string"}, []interface{}{}, []interface{}{nil, 0 * time.Second, fmt.Errorf("mock error")}, 0, 1},
+				{OnCallMethodName: "SetQuestion", OnCallMethodArgType: []string{"*dns.Msg", "string", "uint16"}, RetArgList: []interface{}{&dns.Msg{}}, CallTimes: 1},
+				{OnCallMethodName: "Fqdn", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{"www.test.com"}, CallTimes: 1},
+				{
+					OnCallMethodName:    "Exchange",
+					OnCallMethodArgType: []string{"*dns.Client", "*dns.Msg", "string"},
+					RetArgList:          []interface{}{nil, 0 * time.Second, fmt.Errorf("mock error")},
+					CallTimes:           1,
+				},
 			},
 		},
 		{
@@ -90,9 +96,14 @@ func TestGetIPsAndMinTTL(t *testing.T) {
 			ipv4Mode: true,
 			ipv6Mode: false,
 			dnsOpsMockHelper: []ovntest.TestifyMockHelper{
-				{"SetQuestion", []string{"*dns.Msg", "string", "uint16"}, []interface{}{}, []interface{}{&dns.Msg{}}, 0, 1},
-				{"Fqdn", []string{"string"}, []interface{}{}, []interface{}{"www.test.com"}, 0, 1},
-				{"Exchange", []string{"*dns.Client", "*dns.Msg", "string"}, []interface{}{}, []interface{}{&dns.Msg{MsgHdr: dns.MsgHdr{Rcode: 2}}, 0 * time.Second, nil}, 0, 1},
+				{OnCallMethodName: "SetQuestion", OnCallMethodArgType: []string{"*dns.Msg", "string", "uint16"}, RetArgList: []interface{}{&dns.Msg{}}, CallTimes: 1},
+				{OnCallMethodName: "Fqdn", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{"www.test.com"}, CallTimes: 1},
+				{
+					OnCallMethodName:    "Exchange",
+					OnCallMethodArgType: []string{"*dns.Client", "*dns.Msg", "string"},
+					RetArgList:          []interface{}{&dns.Msg{MsgHdr: dns.MsgHdr{Rcode: 2}}, 0 * time.Second, nil},
+					CallTimes:           1,
+				},
 			},
 		},
 	}
@@ -120,9 +131,9 @@ func TestGetIPsAndMinTTL(t *testing.T) {
 			res, _, err := testDNS.getIPsAndMinTTL("www.test.com")
 			t.Log(res, err)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			mockDNSOps.AssertExpectations(t)
 		})
@@ -155,9 +166,14 @@ func TestUpdate(t *testing.T) {
 			},
 			},
 			dnsOpsMockHelper: []ovntest.TestifyMockHelper{
-				{"Fqdn", []string{"string"}, []interface{}{}, []interface{}{dnsName}, 0, 1},
-				{"SetQuestion", []string{"*dns.Msg", "string", "uint16"}, []interface{}{}, []interface{}{&dns.Msg{}}, 0, 1},
-				{"Exchange", []string{"*dns.Client", "*dns.Msg", "string"}, []interface{}{}, []interface{}{nil, 0 * time.Second, fmt.Errorf("mock error")}, 0, 1},
+				{OnCallMethodName: "Fqdn", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{dnsName}, CallTimes: 1},
+				{OnCallMethodName: "SetQuestion", OnCallMethodArgType: []string{"*dns.Msg", "string", "uint16"}, RetArgList: []interface{}{&dns.Msg{}}, CallTimes: 1},
+				{
+					OnCallMethodName:    "Exchange",
+					OnCallMethodArgType: []string{"*dns.Client", "*dns.Msg", "string"},
+					RetArgList:          []interface{}{nil, 0 * time.Second, fmt.Errorf("mock error")},
+					CallTimes:           1,
+				},
 			},
 			errExp: true,
 		},
@@ -168,9 +184,14 @@ func TestUpdate(t *testing.T) {
 			},
 			},
 			dnsOpsMockHelper: []ovntest.TestifyMockHelper{
-				{"Fqdn", []string{"string"}, []interface{}{}, []interface{}{dnsName}, 0, 1},
-				{"SetQuestion", []string{"*dns.Msg", "string", "uint16"}, []interface{}{}, []interface{}{&dns.Msg{}}, 0, 1},
-				{"Exchange", []string{"*dns.Client", "*dns.Msg", "string"}, []interface{}{}, []interface{}{&dns.Msg{MsgHdr: dns.MsgHdr{Rcode: dns.RcodeSuccess}, Answer: []dns.RR{&dns.A{A: newIP}}}, 0 * time.Second, nil}, 0, 1},
+				{OnCallMethodName: "Fqdn", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{dnsName}, CallTimes: 1},
+				{OnCallMethodName: "SetQuestion", OnCallMethodArgType: []string{"*dns.Msg", "string", "uint16"}, RetArgList: []interface{}{&dns.Msg{}}, CallTimes: 1},
+				{
+					OnCallMethodName:    "Exchange",
+					OnCallMethodArgType: []string{"*dns.Client", "*dns.Msg", "string"},
+					RetArgList:          []interface{}{&dns.Msg{MsgHdr: dns.MsgHdr{Rcode: dns.RcodeSuccess}, Answer: []dns.RR{&dns.A{A: newIP}}}, 0 * time.Second, nil},
+					CallTimes:           1,
+				},
 			},
 			errExp:    false,
 			changeExp: false,
@@ -182,9 +203,14 @@ func TestUpdate(t *testing.T) {
 			},
 			},
 			dnsOpsMockHelper: []ovntest.TestifyMockHelper{
-				{"Fqdn", []string{"string"}, []interface{}{}, []interface{}{dnsName}, 0, 1},
-				{"SetQuestion", []string{"*dns.Msg", "string", "uint16"}, []interface{}{}, []interface{}{&dns.Msg{}}, 0, 1},
-				{"Exchange", []string{"*dns.Client", "*dns.Msg", "string"}, []interface{}{}, []interface{}{&dns.Msg{MsgHdr: dns.MsgHdr{Rcode: dns.RcodeSuccess}, Answer: []dns.RR{&dns.A{A: newIP}}}, 0 * time.Second, nil}, 0, 1},
+				{OnCallMethodName: "Fqdn", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{dnsName}, CallTimes: 1},
+				{OnCallMethodName: "SetQuestion", OnCallMethodArgType: []string{"*dns.Msg", "string", "uint16"}, RetArgList: []interface{}{&dns.Msg{}}, CallTimes: 1},
+				{
+					OnCallMethodName:    "Exchange",
+					OnCallMethodArgType: []string{"*dns.Client", "*dns.Msg", "string"},
+					RetArgList:          []interface{}{&dns.Msg{MsgHdr: dns.MsgHdr{Rcode: dns.RcodeSuccess}, Answer: []dns.RR{&dns.A{A: newIP}}}, 0 * time.Second, nil},
+					CallTimes:           1,
+				},
 			},
 			errExp:    false,
 			changeExp: true,
@@ -210,12 +236,12 @@ func TestUpdate(t *testing.T) {
 			}
 			returned, err := dns.Update(dnsName)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 				assert.Equal(t, tc.changeExp, returned, "the change expected varaible should match the return from dns.Update()")
 
-				assert.Equal(t, len(dns.dnsMap[dnsName].ips), 1)
+				assert.Len(t, dns.dnsMap[dnsName].ips, 1)
 				assert.Equal(t, dns.dnsMap[dnsName].ips[0], newIP)
 
 			}
@@ -240,18 +266,28 @@ func TestAdd(t *testing.T) {
 			desc:   "Add fails",
 			errExp: true,
 			dnsOpsMockHelper: []ovntest.TestifyMockHelper{
-				{"Fqdn", []string{"string"}, []interface{}{}, []interface{}{dnsName}, 0, 1},
-				{"SetQuestion", []string{"*dns.Msg", "string", "uint16"}, []interface{}{}, []interface{}{&dns.Msg{}}, 0, 1},
-				{"Exchange", []string{"*dns.Client", "*dns.Msg", "string"}, []interface{}{}, []interface{}{&dns.Msg{MsgHdr: dns.MsgHdr{Rcode: dns.RcodeSuccess}, Answer: []dns.RR{}}, 0 * time.Second, nil}, 0, 1},
+				{OnCallMethodName: "Fqdn", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{dnsName}, CallTimes: 1},
+				{OnCallMethodName: "SetQuestion", OnCallMethodArgType: []string{"*dns.Msg", "string", "uint16"}, RetArgList: []interface{}{&dns.Msg{}}, CallTimes: 1},
+				{
+					OnCallMethodName:    "Exchange",
+					OnCallMethodArgType: []string{"*dns.Client", "*dns.Msg", "string"},
+					RetArgList:          []interface{}{&dns.Msg{MsgHdr: dns.MsgHdr{Rcode: dns.RcodeSuccess}, Answer: []dns.RR{}}, 0 * time.Second, nil},
+					CallTimes:           1,
+				},
 			},
 		},
 		{
 			desc:   "Add succeeds ",
 			errExp: false,
 			dnsOpsMockHelper: []ovntest.TestifyMockHelper{
-				{"Fqdn", []string{"string"}, []interface{}{}, []interface{}{dnsName}, 0, 1},
-				{"SetQuestion", []string{"*dns.Msg", "string", "uint16"}, []interface{}{}, []interface{}{&dns.Msg{}}, 0, 1},
-				{"Exchange", []string{"*dns.Client", "*dns.Msg", "string"}, []interface{}{}, []interface{}{&dns.Msg{MsgHdr: dns.MsgHdr{Rcode: dns.RcodeSuccess}, Answer: []dns.RR{&dns.A{A: addedIP}}}, 0 * time.Second, nil}, 0, 1},
+				{OnCallMethodName: "Fqdn", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{dnsName}, CallTimes: 1},
+				{OnCallMethodName: "SetQuestion", OnCallMethodArgType: []string{"*dns.Msg", "string", "uint16"}, RetArgList: []interface{}{&dns.Msg{}}, CallTimes: 1},
+				{
+					OnCallMethodName:    "Exchange",
+					OnCallMethodArgType: []string{"*dns.Client", "*dns.Msg", "string"},
+					RetArgList:          []interface{}{&dns.Msg{MsgHdr: dns.MsgHdr{Rcode: dns.RcodeSuccess}, Answer: []dns.RR{&dns.A{A: addedIP}}}, 0 * time.Second, nil},
+					CallTimes:           1,
+				},
 			},
 		},
 	}
@@ -273,10 +309,10 @@ func TestAdd(t *testing.T) {
 			}
 			err := dns.Add(dnsName)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
-				assert.Equal(t, len(dns.dnsMap[dnsName].ips), 1)
+				require.NoError(t, err)
+				assert.Len(t, dns.dnsMap[dnsName].ips, 1)
 				assert.Equal(t, dns.dnsMap[dnsName].ips[0], addedIP)
 			}
 		})

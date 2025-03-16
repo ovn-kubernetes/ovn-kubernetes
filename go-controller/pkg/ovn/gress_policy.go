@@ -7,15 +7,16 @@ import (
 	"strings"
 	"sync"
 
+	corev1 "k8s.io/api/core/v1"
+	knet "k8s.io/api/networking/v1"
+	utilnet "k8s.io/utils/net"
+
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-
-	knet "k8s.io/api/networking/v1"
-	utilnet "k8s.io/utils/net"
 )
 
 const (
@@ -102,12 +103,16 @@ func (gp *gressPolicy) addPeerAddressSets(asHashNameV4, asHashNameV6 string) {
 // If the port is not specified, it implies all ports for that protocol
 func (gp *gressPolicy) addPortPolicy(portJSON *knet.NetworkPolicyPort) {
 	var pp *libovsdbutil.NetworkPolicyPort
+	protocol := corev1.ProtocolTCP
+	if portJSON.Protocol != nil {
+		protocol = *portJSON.Protocol
+	}
 	if portJSON.Port != nil && portJSON.EndPort != nil {
-		pp = libovsdbutil.GetNetworkPolicyPort(*portJSON.Protocol, portJSON.Port.IntVal, *portJSON.EndPort)
+		pp = libovsdbutil.GetNetworkPolicyPort(protocol, portJSON.Port.IntVal, *portJSON.EndPort)
 	} else if portJSON.Port != nil {
-		pp = libovsdbutil.GetNetworkPolicyPort(*portJSON.Protocol, portJSON.Port.IntVal, 0)
+		pp = libovsdbutil.GetNetworkPolicyPort(protocol, portJSON.Port.IntVal, 0)
 	} else {
-		pp = libovsdbutil.GetNetworkPolicyPort(*portJSON.Protocol, 0, 0)
+		pp = libovsdbutil.GetNetworkPolicyPort(protocol, 0, 0)
 	}
 	gp.portPolicies = append(gp.portPolicies, pp)
 }

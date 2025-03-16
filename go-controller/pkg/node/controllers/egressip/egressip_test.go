@@ -13,6 +13,24 @@ import (
 	"sync"
 	"time"
 
+	"github.com/containernetworking/plugins/pkg/ns"
+	"github.com/containernetworking/plugins/pkg/testutils"
+	nadfake "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
+	"github.com/vishvananda/netlink"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/tools/cache"
+	utiliptables "k8s.io/kubernetes/pkg/util/iptables"
+	kexec "k8s.io/utils/exec"
+	utilnet "k8s.io/utils/net"
+
 	ovnconfig "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	egressipv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
 	egressipfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/clientset/versioned/fake"
@@ -23,24 +41,6 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-
-	"github.com/containernetworking/plugins/pkg/ns"
-	"github.com/containernetworking/plugins/pkg/testutils"
-	nadfake "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
-	"github.com/onsi/ginkgo/v2"
-	"github.com/onsi/gomega"
-	"github.com/vishvananda/netlink"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/kubernetes/fake"
-	"k8s.io/client-go/tools/cache"
-	"k8s.io/kubernetes/pkg/util/iptables"
-	utiliptables "k8s.io/kubernetes/pkg/util/iptables"
-	kexec "k8s.io/utils/exec"
-	utilnet "k8s.io/utils/net"
 )
 
 // testPodConfig holds all the information needed to validate a config is applied for a pod
@@ -97,7 +97,6 @@ const (
 	egressIP3IPCIDR                 = egressIP3IP + "/32"
 	egressIPv4Mask                  = "32"
 	egressIPv6Mask                  = "128"
-	oneSec                          = time.Second
 	dummyLink1Name                  = "dummy1"
 	dummyLink2Name                  = "dummy2"
 	dummyLink3Name                  = "dummy3"
@@ -156,7 +155,7 @@ func setupFakeNode(nodeInitialConfig nodeConfig) (ns.NetNS, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create new network namespace: %v", err)
 	}
-	err = testNS.Do(func(netNS ns.NetNS) error {
+	err = testNS.Do(func(ns.NetNS) error {
 		// adding links
 		for _, link := range nodeInitialConfig.linkConfigs {
 			if err = addLinkAndAddresses(link.linkName, link.address); err != nil {
@@ -170,9 +169,9 @@ func setupFakeNode(nodeInitialConfig nodeConfig) (ns.NetNS, error) {
 			}
 		}
 		// adding IPTable rules
-		ipTableV4Client := iptables.New(kexec.New(), iptables.ProtocolIPv4)
-		ipTableV6Client := iptables.New(kexec.New(), iptables.ProtocolIPv6)
-		var ipTableClient iptables.Interface
+		ipTableV4Client := utiliptables.New(kexec.New(), utiliptables.ProtocolIPv4)
+		ipTableV6Client := utiliptables.New(kexec.New(), utiliptables.ProtocolIPv6)
+		var ipTableClient utiliptables.Interface
 		for _, iptableRule := range nodeInitialConfig.iptableRules {
 			if len(iptableRule.Args) != 0 {
 				if isIPTableRuleArgIPV6(iptableRule.Args) {
@@ -199,12 +198,12 @@ func setupFakeNode(nodeInitialConfig nodeConfig) (ns.NetNS, error) {
 	return testNS, nil
 }
 
-func ensureIPTableChainAndRule(ipt iptables.Interface, ruleArgs []string) error {
-	_, err := ipt.EnsureChain(iptables.TableNAT, iptChainName)
+func ensureIPTableChainAndRule(ipt utiliptables.Interface, ruleArgs []string) error {
+	_, err := ipt.EnsureChain(utiliptables.TableNAT, iptChainName)
 	if err != nil {
 		return fmt.Errorf("failed to create chain %s in NAT table: %v", iptChainName, err)
 	}
-	_, err = ipt.EnsureRule(iptables.Prepend, iptables.TableNAT, iptChainName, ruleArgs...)
+	_, err = ipt.EnsureRule(utiliptables.Prepend, utiliptables.TableNAT, iptChainName, ruleArgs...)
 	if err != nil {
 		return fmt.Errorf("failed to ensure IPTables rule (%v): %v", ruleArgs, err)
 	}
@@ -233,7 +232,7 @@ func createVRFAndEnslaveLink(testNS ns.NetNS, linkName, vrfName string, vrfTable
 		LinkAttrs: netlink.LinkAttrs{Name: vrfName},
 		Table:     vrfTable,
 	}
-	return testNS.Do(func(netNS ns.NetNS) error {
+	return testNS.Do(func(ns.NetNS) error {
 		if err := netlink.LinkAdd(vrfLink); err != nil {
 			return fmt.Errorf("failed to create VRF link %s and table ID %d: %v", vrfName, vrfTable, err)
 		}
@@ -270,7 +269,7 @@ func initController(namespaces []corev1.Namespace, pods []corev1.Pod, egressIPs 
 	}
 	linkManager := linkmanager.NewController(node1Name, v4, v6, nil)
 	// only CDN network is supported
-	getActiveNetForNsFn := func(namespace string) (util.NetInfo, error) {
+	getActiveNetForNsFn := func(string) (util.NetInfo, error) {
 		return &util.DefaultNetInfo{}, nil
 	}
 	c, err := NewController(&ovnkube.Kube{KClient: kubeClient}, watchFactory.EgressIPInformer(), watchFactory.NodeInformer(), watchFactory.NamespaceInformer(),
@@ -309,6 +308,7 @@ func initController(namespaces []corev1.Namespace, pods []corev1.Pod, egressIPs 
 }
 
 func runController(testNS ns.NetNS, c *Controller) (cleanupFn, error) {
+	ginkgo.GinkgoHelper()
 	stopCh := make(chan struct{})
 	for _, se := range []struct {
 		resourceName string
@@ -328,7 +328,7 @@ func runController(testNS ns.NetNS, c *Controller) (cleanupFn, error) {
 	wg := &sync.WaitGroup{}
 	runSubControllers(testNS, c, wg, stopCh)
 
-	err := testNS.Do(func(netNS ns.NetNS) error {
+	err := testNS.Do(func(ns.NetNS) error {
 		return c.ruleManager.OwnPriority(rulePriority)
 	})
 	if err != nil {
@@ -343,18 +343,20 @@ func runController(testNS ns.NetNS, c *Controller) (cleanupFn, error) {
 		} {
 			wg.Add(1)
 			go func(fn func(*sync.WaitGroup)) {
+				defer ginkgo.GinkgoRecover()
 				defer wg.Done()
-				_ = testNS.Do(func(netNS ns.NetNS) error {
+				err := testNS.Do(func(ns.NetNS) error {
 					wait.Until(func() {
 						fn(wg)
 					}, 10*time.Millisecond, stopCh)
 					return nil
 				})
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
 			}(workerFn)
 		}
 	}
-	err = testNS.Do(func(netNS ns.NetNS) error {
+	err = testNS.Do(func(ns.NetNS) error {
 		if err = c.ruleManager.OwnPriority(rulePriority); err != nil {
 			return err
 		}
@@ -392,28 +394,41 @@ func runController(testNS ns.NetNS, c *Controller) (cleanupFn, error) {
 }
 
 func runSubControllers(testNS ns.NetNS, c *Controller, wg *sync.WaitGroup, stopCh chan struct{}) {
+	ginkgo.GinkgoHelper()
 	// we do not call start for our controller because the newly created goroutines will not be set to the correct network namespace,
 	// so we invoke them manually here and call reconcile manually
 	// normally executed during Run but we call it manually here because run spawns a go routine that we cannot control its netns during test
 	c.linkManager.Run(stopCh, wg)
 	wg.Add(1)
-	go testNS.Do(func(netNS ns.NetNS) error {
-		c.iptablesManager.Run(stopCh, 10*time.Millisecond)
-		wg.Done()
-		return nil
-	})
+	go func() {
+		defer ginkgo.GinkgoRecover()
+		defer wg.Done()
+		err := testNS.Do(func(ns.NetNS) error {
+			c.iptablesManager.Run(stopCh, 10*time.Millisecond)
+			return nil
+		})
+		gomega.Expect(err).ToNot(gomega.HaveOccurred())
+	}()
 	wg.Add(1)
-	go testNS.Do(func(netNS ns.NetNS) error {
-		c.routeManager.Run(stopCh, 10*time.Millisecond)
-		wg.Done()
-		return nil
-	})
+	go func() {
+		defer ginkgo.GinkgoRecover()
+		defer wg.Done()
+		err := testNS.Do(func(ns.NetNS) error {
+			c.routeManager.Run(stopCh, 10*time.Millisecond)
+			return nil
+		})
+		gomega.Expect(err).ToNot(gomega.HaveOccurred())
+	}()
 	wg.Add(1)
-	go testNS.Do(func(netNS ns.NetNS) error {
-		c.ruleManager.Run(stopCh, 10*time.Millisecond)
-		wg.Done()
-		return nil
-	})
+	go func() {
+		defer ginkgo.GinkgoRecover()
+		defer wg.Done()
+		err := testNS.Do(func(ns.NetNS) error {
+			c.ruleManager.Run(stopCh, 10*time.Millisecond)
+			return nil
+		})
+		gomega.Expect(err).ToNot(gomega.HaveOccurred())
+	}()
 }
 
 // FIXME(mk) - Within GH VM, if I need to create a new NetNs. I see the following error:
@@ -480,11 +495,11 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 				}
 			}
 			return nil
-		}).WithTimeout(oneSec).Should(gomega.Succeed())
+		}).WithTimeout(time.Second).Should(gomega.Succeed())
 		ginkgo.By("verify expected IP routes match what was found")
 		// Ensure only the routes we expect are present in a specific route table
 		gomega.Eventually(func() error {
-			return testNS.Do(func(netNS ns.NetNS) error {
+			return testNS.Do(func(ns.NetNS) error {
 				// loop over egress IPs
 				for _, expectedEIPConfig := range expectedEIPConfigs {
 					if len(expectedEIPConfig.podConfigs) == 0 {
@@ -520,7 +535,7 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 				}
 				return nil
 			})
-		}).WithTimeout(oneSec).Should(gomega.Succeed())
+		}).WithTimeout(time.Second).Should(gomega.Succeed())
 		ginkgo.By("verify expected IP rules match what was found")
 		// verify the correct rules are present and also no rule entries we do not expect
 		expectedIPRules := make(map[string][]netlink.Rule, 0)
@@ -547,7 +562,7 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 		}
 		// verify expected IP rules versus what was found
 		gomega.Eventually(func() error {
-			return testNS.Do(func(netNS ns.NetNS) error {
+			return testNS.Do(func(ns.NetNS) error {
 				for _, expectedEIPConfig := range expectedEIPConfigs {
 					if len(expectedEIPConfig.podConfigs) == 0 {
 						// no pod configs expected therefore no IP routes
@@ -588,13 +603,13 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 				}
 				return nil
 			})
-		}).WithTimeout(oneSec).Should(gomega.Succeed())
+		}).WithTimeout(time.Second).Should(gomega.Succeed())
 		ginkgo.By("verify expected egress IPs are assigned to interface")
 		gomega.Eventually(func() error {
-			return testNS.Do(func(netNS ns.NetNS) error {
+			return testNS.Do(func(ns.NetNS) error {
 				for _, expectedEIPConfig := range expectedEIPConfigs {
 					if expectedEIPConfig.addr == nil {
-						return nil
+						continue
 					}
 					link, err := netlink.LinkByName(expectedEIPConfig.inf)
 					if err != nil {
@@ -613,10 +628,10 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 				}
 				return nil
 			})
-		}).WithTimeout(oneSec).Should(gomega.Succeed())
+		}).WithTimeout(time.Second).Should(gomega.Succeed())
 		// save annotations before removing EIP in-order to validate the addresses aren't assigned to a link anymore
 		var annotationEIPs sets.Set[string]
-		err = testNS.Do(func(netNS ns.NetNS) error {
+		err = testNS.Do(func(ns.NetNS) error {
 			annotationEIPs, err = c.getAnnotation()
 			return err
 		})
@@ -635,10 +650,10 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 				return fmt.Errorf("expected zero IPTable rules but found %d", len(foundIPTRules))
 			}
 			return nil
-		}).WithTimeout(oneSec).Should(gomega.Succeed())
+		}).WithTimeout(time.Second).Should(gomega.Succeed())
 		ginkgo.By("verify IP routes are removed")
 		gomega.Eventually(func() error {
-			return testNS.Do(func(netNS ns.NetNS) error {
+			return testNS.Do(func(ns.NetNS) error {
 				// loop over all interfaces and ensure no EIP configured routes associated with links
 				for _, linkConfig := range nodeConfig.linkConfigs {
 					link, err := netlink.LinkByName(linkConfig.linkName)
@@ -656,10 +671,10 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 				}
 				return nil
 			})
-		}).WithTimeout(oneSec).Should(gomega.Succeed())
+		}).WithTimeout(time.Second).Should(gomega.Succeed())
 		ginkgo.By("verify IP rules are removed")
 		gomega.Eventually(func() error {
-			return testNS.Do(func(netNS ns.NetNS) error {
+			return testNS.Do(func(ns.NetNS) error {
 				filter, mask := filterRuleByPriority(rulePriority)
 				foundRules, err := netlink.RuleListFiltered(netlink.FAMILY_ALL, filter, mask)
 				if err != nil {
@@ -670,7 +685,7 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 				}
 				return nil
 			})
-		}).WithTimeout(oneSec).Should(gomega.Succeed())
+		}).WithTimeout(time.Second).Should(gomega.Succeed())
 		ginkgo.By("verify assigned IP addresses are removed from annotation")
 		gomega.Eventually(func() error {
 			eipIPs, err := c.getAnnotation()
@@ -681,10 +696,10 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 				return fmt.Errorf("expected 0 EIPs in annotation but found %d", eipIPs.Len())
 			}
 			return nil
-		}).WithTimeout(oneSec).Should(gomega.Succeed())
+		}).WithTimeout(time.Second).Should(gomega.Succeed())
 		ginkgo.By("ensure no Egress IP is still assigned to a link")
 		gomega.Eventually(func() error {
-			return testNS.Do(func(netNS ns.NetNS) error {
+			return testNS.Do(func(ns.NetNS) error {
 				for _, linkConfig := range nodeConfig.linkConfigs {
 					link, err := netlink.LinkByName(linkConfig.linkName)
 					if err != nil {
@@ -703,7 +718,7 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 				}
 				return nil
 			})
-		}).WithTimeout(oneSec).Should(gomega.Succeed())
+		}).WithTimeout(time.Second).Should(gomega.Succeed())
 		gomega.Expect(cleanupControllerFn()).ShouldNot(gomega.HaveOccurred())
 		gomega.Expect(cleanupNodeFn()).ShouldNot(gomega.HaveOccurred())
 	},
@@ -1078,7 +1093,7 @@ var _ = ginkgo.Describe("label to annotations migration", func() {
 	})
 
 	ginkgo.It("creates annotation", func() {
-		gomega.Expect(testNS.Do(func(netNS ns.NetNS) error {
+		gomega.Expect(testNS.Do(func(ns.NetNS) error {
 			return c.migrateFromAddrLabelToAnnotation()
 		})).Should(gomega.Succeed())
 		gomega.Eventually(func() bool {
@@ -1119,7 +1134,7 @@ var _ = ginkgo.Describe("VRF", func() {
 		gomega.Expect(createVRFAndEnslaveLink(testNS, dummyLink1Name, vrfName, vrfTable)).Should(gomega.Succeed())
 		ginkgo.By("add route to routing table associated with VRF")
 		vrfRoute := getDstRouteForTable(getLinkIndex(dummyLink1Name), int(vrfTable), dummy3IPv4CIDR)
-		gomega.Expect(testNS.Do(func(netNS ns.NetNS) error {
+		gomega.Expect(testNS.Do(func(ns.NetNS) error {
 			return netlink.RouteAdd(&vrfRoute)
 		})).Should(gomega.Succeed())
 		egressIPList := []egressipv1.EgressIP{*newEgressIP(egressIP1Name, egressIP1IPV4, node1Name, namespace1Label, egressPodLabel)}
@@ -1180,10 +1195,10 @@ var _ = ginkgo.DescribeTable("repair node", func(expectedStateFollowingClean []e
 	c, _, err := initController(namespaces, pods, egressIPList, nodeConfigsBeforeRepair, v4, v6, true)
 	gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 	wg := &sync.WaitGroup{}
-	stopCh := make(chan struct{}, 0)
+	stopCh := make(chan struct{})
 	runSubControllers(testNS, c, wg, stopCh)
 	// for now, we expect it to always succeed
-	err = testNS.Do(func(netNS ns.NetNS) error {
+	err = testNS.Do(func(ns.NetNS) error {
 		return c.repairNode()
 	})
 	gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
@@ -1437,7 +1452,7 @@ func getNodeObj(testNode nodeConfig, createEIPAnnot bool) corev1.Node {
 func getLinkAddresses(testNS ns.NetNS, infs ...string) (map[string][]netlink.Addr, error) {
 	var err error
 	linkAddresses := make(map[string][]netlink.Addr)
-	err = testNS.Do(func(netNS ns.NetNS) error {
+	err = testNS.Do(func(ns.NetNS) error {
 		links, err := netlink.LinkList()
 		if err != nil {
 			return err
@@ -1463,8 +1478,7 @@ func getLinkAddresses(testNS ns.NetNS, infs ...string) (map[string][]netlink.Add
 
 func getIPTableRules(testNS ns.NetNS, iptablesManager *ovniptables.Controller, v4, v6 bool) ([]ovniptables.RuleArg, error) {
 	var foundIPTRules []ovniptables.RuleArg
-	var err error
-	err = testNS.Do(func(netNS ns.NetNS) error {
+	err := testNS.Do(func(ns.NetNS) error {
 		if v4 {
 			foundIPTRulesV4, err := iptablesManager.GetIPv4ChainRuleArgs(utiliptables.TableNAT, iptChainName)
 			if err != nil {
@@ -1487,7 +1501,7 @@ func getIPTableRules(testNS ns.NetNS, iptablesManager *ovniptables.Controller, v
 func getRoutesForLinkFromTable(testNS ns.NetNS, linkName string) ([]netlink.Route, error) {
 	var err error
 	var routes []netlink.Route
-	err = testNS.Do(func(netNS ns.NetNS) error {
+	err = testNS.Do(func(ns.NetNS) error {
 		link, err := netlink.LinkByName(linkName)
 		if err != nil {
 			return err
@@ -1505,7 +1519,7 @@ func getRoutesForLinkFromTable(testNS ns.NetNS, linkName string) ([]netlink.Rout
 func getRoutesFromTable(testNS ns.NetNS, table, family int) ([]netlink.Route, error) {
 	var err error
 	var routes []netlink.Route
-	err = testNS.Do(func(netNS ns.NetNS) error {
+	err = testNS.Do(func(ns.NetNS) error {
 		filterRoute, filterMask := filterRouteByTable(table)
 		routes, err = netlink.RouteListFiltered(family, filterRoute, filterMask)
 		if err != nil {
@@ -1547,8 +1561,8 @@ func newEgressIP(name, ip, node string, namespaceLabels, podLabels map[string]st
 		},
 		Status: egressipv1.EgressIPStatus{
 			Items: []egressipv1.EgressIPStatusItem{{
-				node,
-				ip,
+				Node:     node,
+				EgressIP: ip,
 			}},
 		},
 	}
@@ -1651,18 +1665,6 @@ func getDstRouteForTable(linkIndex, table int, dst string) netlink.Route {
 	return netlink.Route{LinkIndex: linkIndex, Dst: dstIPNet, Table: table}
 }
 
-func getDstWithSrcRoute(linkIndex int, dst, src string) netlink.Route {
-	_, dstIPNet, err := net.ParseCIDR(dst)
-	if err != nil {
-		panic(err.Error())
-	}
-	ip := net.ParseIP(src)
-	if len(ip) == 0 {
-		panic("invalid src IP")
-	}
-	return netlink.Route{LinkIndex: linkIndex, Dst: dstIPNet, Src: ip, Table: util.CalculateRouteTableID(linkIndex)}
-}
-
 func getLinkLocalRoute(linkIndex int) netlink.Route {
 	return netlink.Route{LinkIndex: linkIndex, Dst: linkLocalCIDR, Table: util.CalculateRouteTableID(linkIndex)}
 }
@@ -1673,42 +1675,6 @@ func getNetlinkAddr(ip, netmask string) *netlink.Addr {
 		panic(fmt.Sprintf("failed to parse %q: %v", ip, err))
 	}
 	return addr
-}
-
-// areRoutesEqual turns true if routes are partially equal. A limited set of fields within a route are checked to ensure
-// they are equal. The reason a limit set is checked is that a user may define a limited subset of fields but when we retrieve
-// this route from the system, other fields are populated by default.
-// Duplicate routes aren't tolerated.
-func areRoutesEqual(routes1 []netlink.Route, routes2 []netlink.Route) bool {
-	if len(routes1) != len(routes2) {
-		return false
-	}
-	var found bool
-	for _, route1 := range routes1 {
-		found = false
-		for _, route2 := range routes2 {
-			if routemanager.RoutePartiallyEqual(route1, route2) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-	for _, route2 := range routes2 {
-		found = false
-		for _, route1 := range routes1 {
-			if routemanager.RoutePartiallyEqual(route2, route1) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-	return true
 }
 
 // containsRoutes returns true if routes in routes1 are presents in routes routes2
@@ -1777,7 +1743,7 @@ func isStrInArray(elements []string, candidate string) bool {
 }
 
 func setDepreciatedManagedAddressLabel(testNS ns.NetNS, cidrs ...string) error {
-	return testNS.Do(func(netNS ns.NetNS) error {
+	return testNS.Do(func(ns.NetNS) error {
 		links, err := netlink.LinkList()
 		if err != nil {
 			return nil

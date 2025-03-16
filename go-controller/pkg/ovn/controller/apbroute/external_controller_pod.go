@@ -6,14 +6,15 @@ import (
 	"net"
 
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
-	v1 "k8s.io/api/core/v1"
+
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 )
 
-func (m *externalPolicyManager) syncPod(pod *v1.Pod, routeQueue workqueue.TypedRateLimitingInterface[string]) error {
+func (m *externalPolicyManager) syncPod(pod *corev1.Pod, routeQueue workqueue.TypedRateLimitingInterface[string]) error {
 	policyKeys, err := m.getPoliciesForPodChange(pod)
 	if err != nil {
 		return err
@@ -26,7 +27,7 @@ func (m *externalPolicyManager) syncPod(pod *v1.Pod, routeQueue workqueue.TypedR
 	return nil
 }
 
-func getExGwPodIPs(gatewayPod *v1.Pod, networkName string) (sets.Set[string], error) {
+func getExGwPodIPs(gatewayPod *corev1.Pod, networkName string) (sets.Set[string], error) {
 	if networkName != "" {
 		return getMultusIPsFromNetworkName(gatewayPod, networkName)
 	}
@@ -38,7 +39,7 @@ func getExGwPodIPs(gatewayPod *v1.Pod, networkName string) (sets.Set[string], er
 		networkName)
 }
 
-func getPodIPs(pod *v1.Pod) sets.Set[string] {
+func getPodIPs(pod *corev1.Pod) sets.Set[string] {
 	foundGws := sets.New[string]()
 	for _, podIP := range pod.Status.PodIPs {
 		ip := utilnet.ParseIPSloppy(podIP.IP)
@@ -49,7 +50,7 @@ func getPodIPs(pod *v1.Pod) sets.Set[string] {
 	return foundGws
 }
 
-func getMultusIPsFromNetworkName(pod *v1.Pod, networkName string) (sets.Set[string], error) {
+func getMultusIPsFromNetworkName(pod *corev1.Pod, networkName string) (sets.Set[string], error) {
 	foundGws := sets.New[string]()
 	var multusNetworks []nettypes.NetworkStatus
 	err := json.Unmarshal([]byte(pod.ObjectMeta.Annotations[nettypes.NetworkStatusAnnot]), &multusNetworks)

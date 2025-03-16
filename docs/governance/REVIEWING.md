@@ -23,8 +23,8 @@ Avoid burnout by enforcing healthy boundaries. Here are some examples of how a r
 * Authors should meet baseline expectations when submitting a pull request, such as writing tests and relevant documentation.
 * If your availability changes, you can step down from a pull request and have someone else assigned.
 * If interactions with an author are not following code of conduct, raise it up with your Code of Conduct committee or point of contact. It's not your job to coax people into behaving.
-  * The code of conduct committee for this project is the same as the maintainers list for this project. The current maintainers can be found in [MAINTAINERS.md](./MAINTAINERS.md). If you face any issues please reach out to one of the maintainers on our slack channel (workspace: https://ovn-org.slack.com/, channel: #ovn-kubernetes)
-
+  * The code of conduct committee for this project is the same as the maintainers list for this project. The current maintainers can be found in [MAINTAINERS.md](./MAINTAINERS.md). If you face any issues please reach out to one of the maintainers on our slack channel (workspace: https://cloud-native.slack.com/, channel: #ovn-kubernetes)
+cnc
 ### Trust
 
 Be trustworthy. During a review, your actions both build and help maintain the trust that the community has placed in this project. Below are examples of ways that we build trust:

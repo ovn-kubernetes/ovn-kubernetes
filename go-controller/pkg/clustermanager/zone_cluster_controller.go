@@ -111,7 +111,7 @@ func (zcc *zoneClusterController) initRetryFramework() {
 }
 
 // Start starts the zone cluster controller to watch the kubernetes nodes
-func (zcc *zoneClusterController) Start(ctx context.Context) error {
+func (zcc *zoneClusterController) Start(_ context.Context) error {
 	nodeHandler, err := zcc.retryNodes.WatchResource()
 
 	if err != nil {
@@ -129,6 +129,23 @@ func (zcc *zoneClusterController) Stop() {
 	if zcc.nodeHandler != nil {
 		zcc.watchFactory.RemoveNodeHandler(zcc.nodeHandler)
 	}
+}
+
+func needsZoneAllocation(node *corev1.Node) bool {
+	if config.HybridOverlay.Enabled && util.NoHostSubnet(node) {
+		// skip hybrid overlay nodes
+		return false
+	}
+
+	if _, ok := node.Annotations[util.OvnNodeID]; !ok {
+		return true
+	}
+	if config.OVNKubernetesFeature.EnableInterconnect {
+		if _, ok := node.Annotations[util.OvnTransitSwitchPortAddr]; !ok {
+			return true
+		}
+	}
+	return false
 }
 
 // handleAddUpdateNodeEvent handles the add or update node event
@@ -226,9 +243,11 @@ type zoneClusterControllerEventHandler struct {
 	objType  reflect.Type
 	zcc      *zoneClusterController
 	syncFunc func([]interface{}) error
+
+	nodeSyncFailed sync.Map
 }
 
-func (h *zoneClusterControllerEventHandler) FilterOutResource(obj interface{}) bool {
+func (h *zoneClusterControllerEventHandler) FilterOutResource(_ interface{}) bool {
 	return false
 }
 
@@ -236,7 +255,7 @@ func (h *zoneClusterControllerEventHandler) FilterOutResource(obj interface{}) b
 
 // AddResource adds the specified object to the cluster according to its type and
 // returns the error, if any, yielded during object creation.
-func (h *zoneClusterControllerEventHandler) AddResource(obj interface{}, fromRetryLoop bool) error {
+func (h *zoneClusterControllerEventHandler) AddResource(obj interface{}, _ bool) error {
 	var err error
 
 	switch h.objType {
@@ -246,9 +265,11 @@ func (h *zoneClusterControllerEventHandler) AddResource(obj interface{}, fromRet
 			return fmt.Errorf("could not cast %T object to *corev1.Node", obj)
 		}
 		if err = h.zcc.handleAddUpdateNodeEvent(node); err != nil {
+			h.nodeSyncFailed.Store(node.Name, true)
 			return fmt.Errorf("node add failed for %s, will try again later: %w",
 				node.Name, err)
 		}
+		h.nodeSyncFailed.Delete(node.Name)
 	default:
 		return fmt.Errorf("no add function for object type %s", h.objType)
 	}
@@ -258,7 +279,7 @@ func (h *zoneClusterControllerEventHandler) AddResource(obj interface{}, fromRet
 // UpdateResource updates the specified object in the cluster to its version in newObj according
 // to its type and returns the error, if any, yielded during the object update.
 // The inRetryCache boolean argument is to indicate if the given resource is in the retryCache or not.
-func (h *zoneClusterControllerEventHandler) UpdateResource(oldObj, newObj interface{}, inRetryCache bool) error {
+func (h *zoneClusterControllerEventHandler) UpdateResource(_, newObj interface{}, _ bool) error {
 	var err error
 
 	switch h.objType {
@@ -267,10 +288,16 @@ func (h *zoneClusterControllerEventHandler) UpdateResource(oldObj, newObj interf
 		if !ok {
 			return fmt.Errorf("could not cast %T object to *corev1.Node", newObj)
 		}
+		_, nodeFailed := h.nodeSyncFailed.Load(node.GetName())
+		if !nodeFailed && !needsZoneAllocation(node) {
+			// node ID and transit switch IP are assigned by us and cannot change
+			return nil
+		}
 		if err = h.zcc.handleAddUpdateNodeEvent(node); err != nil {
 			return fmt.Errorf("node update failed for %s, will try again later: %w",
 				node.Name, err)
 		}
+		h.nodeSyncFailed.Delete(node.GetName())
 	default:
 		return fmt.Errorf("no update function for object type %s", h.objType)
 	}
@@ -279,14 +306,18 @@ func (h *zoneClusterControllerEventHandler) UpdateResource(oldObj, newObj interf
 
 // DeleteResource deletes the object from the cluster according to the delete logic of its resource type.
 // cachedObj is the internal cache entry for this object, used for now for pods and network policies.
-func (h *zoneClusterControllerEventHandler) DeleteResource(obj, cachedObj interface{}) error {
+func (h *zoneClusterControllerEventHandler) DeleteResource(obj, _ interface{}) error {
 	switch h.objType {
 	case factory.NodeType:
 		node, ok := obj.(*corev1.Node)
 		if !ok {
 			return fmt.Errorf("could not cast obj of type %T to *knet.Node", obj)
 		}
-		return h.zcc.handleDeleteNode(node)
+		err := h.zcc.handleDeleteNode(node)
+		if err != nil {
+			return err
+		}
+		h.nodeSyncFailed.Delete(node.GetName())
 	}
 	return nil
 }

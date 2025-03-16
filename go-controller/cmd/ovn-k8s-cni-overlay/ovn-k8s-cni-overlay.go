@@ -7,8 +7,9 @@ import (
 	"github.com/containernetworking/cni/pkg/types"
 	"github.com/containernetworking/cni/pkg/version"
 	bv "github.com/containernetworking/plugins/pkg/utils/buildversion"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni"
 	"github.com/urfave/cli/v2"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni"
 )
 
 func main() {
@@ -18,7 +19,7 @@ func main() {
 	c.Version = "0.0.2"
 
 	p := cni.NewCNIPlugin("")
-	c.Action = func(ctx *cli.Context) error {
+	c.Action = func(_ *cli.Context) error {
 		skel.PluginMain(
 			p.CmdAdd,
 			p.CmdCheck,

@@ -5,9 +5,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/urfave/cli/v2"
+
 	kexec "k8s.io/utils/exec"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 type readinessFunc func(string) error
@@ -136,7 +138,7 @@ func ovnNorthdReadiness(target string) error {
 	return nil
 }
 
-func ovsDaemonsReadiness(target string) error {
+func ovsDaemonsReadiness(_ string) error {
 	_, _, err := util.RunOVSAppctlWithTimeout(5, "-t", "ovsdb-server", "ovsdb-server/list-dbs")
 	if err != nil {
 		return fmt.Errorf("failed retrieving list of databases from ovsdb-server: %v", err)
@@ -148,7 +150,7 @@ func ovsDaemonsReadiness(target string) error {
 	return nil
 }
 
-func ovnNodeReadiness(target string) error {
+func ovnNodeReadiness(_ string) error {
 	// Inside the pod we always use `/etc/cni/net.d` folder even if kubelet
 	// was started with a different conf directory
 	confFile := "/etc/cni/net.d/10-ovn-kubernetes.conf"
@@ -159,7 +161,7 @@ func ovnNodeReadiness(target string) error {
 	return nil
 }
 
-func ovnNBDBRaftReadiness(target string) error {
+func ovnNBDBRaftReadiness(_ string) error {
 	status, err := util.GetOVNDBServerInfo(15, "nb", "OVN_Northbound")
 	if err != nil {
 		return err
@@ -170,7 +172,7 @@ func ovnNBDBRaftReadiness(target string) error {
 	return nil
 }
 
-func ovnSBDBRaftReadiness(target string) error {
+func ovnSBDBRaftReadiness(_ string) error {
 	status, err := util.GetOVNDBServerInfo(15, "sb", "OVN_Southbound")
 	if err != nil {
 		return err

@@ -7,6 +7,9 @@ import (
 	"time"
 
 	current "github.com/containernetworking/cni/pkg/types/100"
+	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
@@ -14,9 +17,6 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-
-	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
-	kapi "k8s.io/api/core/v1"
 )
 
 // ServerRunDir is the default directory for CNIServer runtime files
@@ -172,7 +172,7 @@ type podRequestFunc func(request *PodRequest, clientset *ClientSet, kubeAuth *Ku
 type getCNIResultFunc func(request *PodRequest, getter PodInfoGetter, podInterfaceInfo *PodInterfaceInfo) (*current.Result, error)
 
 type PodInfoGetter interface {
-	getPod(namespace, name string) (*kapi.Pod, error)
+	getPod(namespace, name string) (*corev1.Pod, error)
 }
 
 type ClientSet struct {

@@ -4,11 +4,12 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/services"
 	discovery "k8s.io/api/discovery/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/services"
 )
 
 /*
@@ -66,7 +67,7 @@ func (c *Controller) queueServiceForEndpointSlice(endpointSlice *discovery.Endpo
 		// Do not log endpointsSlices missing service labels as errors.
 		// Once the service label is eventually added, we will get this event
 		// and re-process.
-		if errors.Is(err, services.NoServiceLabelError) {
+		if errors.Is(err, services.ErrMissingServiceLabel) {
 			klog.V(5).Infof("EgressService endpoint slice missing service label: %v", err)
 		} else {
 			utilruntime.HandleError(fmt.Errorf("couldn't get key for EndpointSlice %+v: %v", endpointSlice, err))

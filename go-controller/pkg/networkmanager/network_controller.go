@@ -10,6 +10,7 @@ import (
 	"time"
 
 	nadlisters "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -42,6 +43,7 @@ func newNetworkController(name, zone, node string, cm ControllerManager, wf watc
 		RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
 		Reconcile:   nc.syncNetwork,
 		Threadiness: 1,
+		MaxAttempts: controller.InfiniteAttempts,
 	}
 	nc.networkReconciler = controller.NewReconciler(
 		nc.name,
@@ -530,7 +532,7 @@ func nodeNeedsUpdate(oldNode, newNode *corev1.Node) bool {
 }
 
 func (c *networkController) getRunningNetwork(id int) string {
-	if id == DefaultNetworkID {
+	if id == types.DefaultNetworkID {
 		return types.DefaultNetworkName
 	}
 	for _, state := range c.getAllNetworkStates() {

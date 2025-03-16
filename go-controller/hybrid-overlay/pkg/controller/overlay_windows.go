@@ -6,9 +6,10 @@ import (
 	"net"
 
 	"github.com/Microsoft/hcsshim/hcn"
+	ps "github.com/bhendo/go-powershell"
+
 	"k8s.io/klog/v2"
 
-	ps "github.com/bhendo/go-powershell"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 )
 

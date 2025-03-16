@@ -7,30 +7,27 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cryptorand"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
-
 	ipamclaimslister "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1/apis/listers/ipamclaims/v1alpha1"
 	multinetworkpolicylister "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/client/listers/k8s.cni.cncf.io/v1beta1"
 	networkattachmentdefinitionlister "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
-
-	egressfirewalllister "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1/apis/listers/egressfirewall/v1"
-	egressqoslister "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1/apis/listers/egressqos/v1"
-	egressservicelister "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/listers/egressservice/v1"
-
 	cloudprivateipconfiglister "github.com/openshift/client-go/cloudnetwork/listers/cloudnetwork/v1"
-	egressiplister "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/listers/egressip/v1"
-	anplister "sigs.k8s.io/network-policy-api/pkg/client/listers/apis/v1alpha1"
-
-	userdefinednetworklister "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/listers/userdefinednetwork/v1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ktypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/rand"
 	listers "k8s.io/client-go/listers/core/v1"
 	discoverylisters "k8s.io/client-go/listers/discovery/v1"
 	netlisters "k8s.io/client-go/listers/networking/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
+	anplister "sigs.k8s.io/network-policy-api/pkg/client/listers/apis/v1alpha1"
+
+	egressfirewalllister "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1/apis/listers/egressfirewall/v1"
+	egressiplister "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/listers/egressip/v1"
+	egressqoslister "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1/apis/listers/egressqos/v1"
+	egressservicelister "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/listers/egressservice/v1"
+	userdefinednetworklister "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/listers/userdefinednetwork/v1"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
 )
 
 // Use a pool of internal informers to allow multiplexing of events
@@ -107,20 +104,22 @@ type queueMapEntry struct {
 
 type internalInformer struct {
 	sync.RWMutex
-	oType    reflect.Type
+	oType reflect.Type
+	// keyed by priority - used to track the handler's priority of being invoked.
+	// example: a handler with priority 0 will process the received event first
+	// before a handler with priority 1, 0 being the highest priority.
+	// NOTE: we can have multiple handlers with the same priority hence the value
+	// is a map of handlers keyed by its unique id.
 	handlers map[int]map[uint64]*Handler
 	// queueMap handles distributing events across a queued handler's queues
 	queueMap *queueMap
+	// hasHandlers is an atomic used to determine if this internal informer actually has handlers attached to it or not
+	hasHandlers uint32
 }
 
 type informer struct {
-	oType reflect.Type
-	inf   cache.SharedIndexInformer
-	// keyed by priority - used to track the handler's priority of being invoked.
-	// example: a handler with priority 0 will process the received event first
-	// before a handler with priority 1, 0 being the higest priority.
-	// NOTE: we can have multiple handlers with the same priority hence the value
-	// is a map of handlers keyed by its unique id.
+	oType  reflect.Type
+	inf    cache.SharedIndexInformer
 	lister listerInterface
 	// initialAddFunc will be called to deliver the initial list of objects
 	// when a handler is added
@@ -133,7 +132,7 @@ type informer struct {
 func (inf *internalInformer) forEachQueuedHandler(f func(h *Handler)) {
 	inf.RLock()
 	defer inf.RUnlock()
-	for priority := 0; priority <= minHandlerPriority; priority++ { // loop over priority higest to lowest
+	for priority := 0; priority <= minHandlerPriority; priority++ { // loop over priority highest to lowest
 		for _, handler := range inf.handlers[priority] {
 			f(handler)
 		}
@@ -192,7 +191,9 @@ func (i *informer) removeHandler(handler *Handler) {
 
 		intInf.Lock()
 		defer intInf.Unlock()
-		removed := 0
+		removed := false
+		// track overall how many handlers this internal informer has
+		numHandlers := 0
 		for priority := range intInf.handlers { // loop over priority
 			if _, ok := intInf.handlers[priority]; !ok {
 				continue // protection against nil map as value
@@ -200,11 +201,18 @@ func (i *informer) removeHandler(handler *Handler) {
 			if _, ok := intInf.handlers[priority][handler.id]; ok {
 				// Remove the handler
 				delete(intInf.handlers[priority], handler.id)
-				removed = 1
+				removed = true
 				klog.V(5).Infof("Removed %v event handler %d", i.oType, handler.id)
 			}
+			numHandlers += len(intInf.handlers[priority])
 		}
-		if removed == 0 {
+
+		// if this internal informer has no handlers, update the atomic
+		if numHandlers == 0 {
+			atomic.StoreUint32(&intInf.hasHandlers, hasNoHandler)
+		}
+
+		if !removed {
 			klog.Warningf("Tried to remove unknown object type %v event handler %d", i.oType, handler.id)
 		}
 	}()
@@ -260,7 +268,7 @@ func (qm *queueMap) getNewQueueNum() uint32 {
 	if numEventQueues == 1 {
 		return 0
 	}
-	startIdx = uint32(cryptorand.Intn(int64(numEventQueues - 1)))
+	startIdx = uint32(rand.Intn(int(numEventQueues - 1)))
 	queueIdx = startIdx
 	lowestNum := len(qm.queues[startIdx])
 	for j = 0; j < numEventQueues; j++ {
@@ -381,6 +389,10 @@ func (i *informer) newFederatedQueuedHandler(internalInformerIndex int) cache.Re
 	intInf := i.internalInformers[internalInformerIndex]
 	return cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
+			// do not enqueue events to internal informer that has no handlers for better performance
+			if atomic.LoadUint32(&intInf.hasHandlers) == hasNoHandler {
+				return
+			}
 			intInf.queueMap.enqueueEvent(nil, obj, i.oType, false, func(e *event) {
 				metrics.MetricResourceUpdateCount.WithLabelValues(name, "add").Inc()
 				start := time.Now()
@@ -391,6 +403,10 @@ func (i *informer) newFederatedQueuedHandler(internalInformerIndex int) cache.Re
 			})
 		},
 		UpdateFunc: func(oldObj, newObj interface{}) {
+			// do not enqueue events to internal informer that has no handlers for better performance
+			if atomic.LoadUint32(&intInf.hasHandlers) == hasNoHandler {
+				return
+			}
 			intInf.queueMap.enqueueEvent(oldObj, newObj, i.oType, false, func(e *event) {
 				metrics.MetricResourceUpdateCount.WithLabelValues(name, "update").Inc()
 				start := time.Now()
@@ -415,6 +431,10 @@ func (i *informer) newFederatedQueuedHandler(internalInformerIndex int) cache.Re
 				klog.Errorf(err.Error())
 				return
 			}
+			// do not enqueue events to internal informer that has no handlers for better performance
+			if atomic.LoadUint32(&intInf.hasHandlers) == hasNoHandler {
+				return
+			}
 			intInf.queueMap.enqueueEvent(nil, realObj, i.oType, true, func(e *event) {
 				metrics.MetricResourceUpdateCount.WithLabelValues(name, "delete").Inc()
 				start := time.Now()
@@ -430,12 +450,12 @@ func (i *informer) newFederatedQueuedHandler(internalInformerIndex int) cache.Re
 func (inf *informer) removeAllHandlers() {
 	for _, intInf := range inf.internalInformers {
 		intInf.Lock()
-		defer intInf.Unlock()
 		for _, handlers := range intInf.handlers {
 			for _, handler := range handlers {
 				inf.removeHandler(handler)
 			}
 		}
+		intInf.Unlock()
 	}
 }
 

@@ -6,13 +6,14 @@ import (
 	"fmt"
 	"strconv"
 
-	types "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	util "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/ptr"
+
+	types "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+	util "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 func findUserDefinedNetworkVRFTableIDs(coreclient *corev1client.CoreV1Client, restconfig *rest.Config, ovnNamespace string) (string, error) {

@@ -57,7 +57,7 @@ func (f *FakeExec) LookPath(file string) (string, error) {
 }
 
 // CommandContext wraps arguments into exec.Cmd
-func (f *FakeExec) CommandContext(ctx context.Context, cmd string, args ...string) kexec.Cmd {
+func (f *FakeExec) CommandContext(_ context.Context, cmd string, args ...string) kexec.Cmd {
 	return f.Command(cmd, args...)
 }
 

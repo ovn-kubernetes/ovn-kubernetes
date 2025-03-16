@@ -8,15 +8,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 // EventHandler is an event handler that responds to
@@ -55,12 +55,12 @@ type UpdateFilterFunction func(old, new interface{}) bool
 
 // ReceiveAllUpdates always returns true
 // meaning that all updates will be enqueued
-func ReceiveAllUpdates(old, new interface{}) bool {
+func ReceiveAllUpdates(_, _ interface{}) bool {
 	return true
 }
 
 // DiscardAllUpdates always returns false, discarding updates
-func DiscardAllUpdates(old, new interface{}) bool {
+func DiscardAllUpdates(_, _ interface{}) bool {
 	return false
 }
 

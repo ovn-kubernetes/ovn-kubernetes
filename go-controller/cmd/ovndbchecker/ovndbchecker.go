@@ -11,10 +11,10 @@ import (
 	"text/tabwriter"
 	"text/template"
 
+	"github.com/urfave/cli/v2"
+
 	"k8s.io/klog/v2"
 	kexec "k8s.io/utils/exec"
-
-	"github.com/urfave/cli/v2"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"

@@ -3,10 +3,12 @@ package app
 import (
 	"fmt"
 
+	"github.com/urfave/cli/v2"
+
+	kexec "k8s.io/utils/exec"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
-	"github.com/urfave/cli/v2"
-	kexec "k8s.io/utils/exec"
 )
 
 // NicsToBridgeCommand creates ovs bridge for provided nic interfaces.

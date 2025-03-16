@@ -10,7 +10,8 @@ import (
 	utilnet "k8s.io/utils/net"
 
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
-	libovsdb "github.com/ovn-org/libovsdb/ovsdb"
+	"github.com/ovn-org/libovsdb/ovsdb"
+
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -190,7 +191,7 @@ func (oc *DefaultNetworkController) setUDNPodOpenPorts(podNamespacedName string,
 // setUDNPodOpenPortsOps returns the operations to add or remove ACLs that allow ingress on required ports.
 // first returned error is parse error, second is db ops error
 func (oc *DefaultNetworkController) setUDNPodOpenPortsOps(podNamespacedName string, podAnnotations map[string]string, lspName string,
-	ops []libovsdb.Operation) ([]libovsdb.Operation, error, error) {
+	ops []ovsdb.Operation) ([]ovsdb.Operation, error, error) {
 	udnPGName := libovsdbutil.GetPortGroupName(oc.getSecondaryPodsPortGroupDbIDs())
 
 	ingressMatch, egressMatch, parseErr := getPortsMatches(podAnnotations, lspName)

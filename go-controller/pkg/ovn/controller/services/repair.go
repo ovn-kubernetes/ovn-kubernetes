@@ -4,20 +4,20 @@ import (
 	"sync"
 	"time"
 
-	libovsdbclient "github.com/ovn-org/libovsdb/client"
-	libovsdb "github.com/ovn-org/libovsdb/ovsdb"
-
-	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
+
+	libovsdbclient "github.com/ovn-org/libovsdb/client"
+	"github.com/ovn-org/libovsdb/ovsdb"
+
+	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 // repair handles pre-sync and post-sync service cleanup.
@@ -147,7 +147,7 @@ func (r *repair) runBeforeSync(useTemplates bool, netInfo util.NetInfo, nodes ma
 	}
 
 	if len(acls) > 0 {
-		p := func(item *nbdb.LogicalSwitch) bool { return true }
+		p := func(_ *nbdb.LogicalSwitch) bool { return true }
 		err = libovsdbops.RemoveACLsFromLogicalSwitchesWithPredicate(r.nbClient, p, acls...)
 		if err != nil {
 			klog.Errorf("Failed to purge existing reject rules: %v", err)
@@ -173,7 +173,7 @@ func (r *repair) runBeforeSync(useTemplates bool, netInfo util.NetInfo, nodes ma
 	}
 
 	if netInfo.IsPrimaryNetwork() {
-		var ops []libovsdb.Operation
+		var ops []ovsdb.Operation
 		if netInfo.TopologyType() == types.Layer2Topology {
 			for _, node := range nodes {
 				if ops, err = libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicateOps(r.nbClient, ops, netInfo.GetNetworkScopedGWRouterName(node.name), udnDelPredicate); err != nil {

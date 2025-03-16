@@ -5,11 +5,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
-	kapi "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 )
 
 const (
@@ -43,7 +44,7 @@ func NewUnidledAtController(k kube.Interface, serviceInformer cache.SharedIndexI
 }
 
 // HasIdleAt returns true if the service annotation map contains a key like "*/idled-at"
-func HasIdleAt(svc *kapi.Service) bool {
+func HasIdleAt(svc *corev1.Service) bool {
 	if svc == nil {
 		return false
 	}
@@ -62,7 +63,7 @@ func HasIdleAt(svc *kapi.Service) bool {
 }
 
 // IsOnGracePeriod return true if the service has been unidled less than 30s (grace period) ago.
-func IsOnGracePeriod(svc *kapi.Service) bool {
+func IsOnGracePeriod(svc *corev1.Service) bool {
 	ok, unidledAtStr := getUnidleAt(svc)
 	if !ok {
 		return false
@@ -80,8 +81,8 @@ func IsOnGracePeriod(svc *kapi.Service) bool {
 }
 
 func (uac *unidledAtController) onServiceUpdate(old, new interface{}) {
-	oldSvc := old.(*kapi.Service)
-	newSvc := new.(*kapi.Service)
+	oldSvc := old.(*corev1.Service)
+	newSvc := new.(*corev1.Service)
 
 	oldSvcIdleAt := HasIdleAt(oldSvc)
 	newSvcIdleAt := HasIdleAt(newSvc)
@@ -108,7 +109,7 @@ func (uac *unidledAtController) onServiceUpdate(old, new interface{}) {
 
 }
 
-func (uac *unidledAtController) setUnidleAtAnnotation(svc *kapi.Service) error {
+func (uac *unidledAtController) setUnidleAtAnnotation(svc *corev1.Service) error {
 
 	nowStr := time.Now().Format(time.RFC3339)
 	err := uac.kube.SetAnnotationsOnService(svc.Namespace, svc.Name, map[string]interface{}{
@@ -121,7 +122,7 @@ func (uac *unidledAtController) setUnidleAtAnnotation(svc *kapi.Service) error {
 	return nil
 }
 
-func (uac *unidledAtController) removeUnidleAtAnnotation(svc *kapi.Service) error {
+func (uac *unidledAtController) removeUnidleAtAnnotation(svc *corev1.Service) error {
 
 	if svc.Annotations == nil {
 		return nil
@@ -143,7 +144,7 @@ func (uac *unidledAtController) removeUnidleAtAnnotation(svc *kapi.Service) erro
 	return nil
 }
 
-func getUnidleAt(svc *kapi.Service) (bool, string) {
+func getUnidleAt(svc *corev1.Service) (bool, string) {
 	if svc == nil {
 		return false, ""
 	}

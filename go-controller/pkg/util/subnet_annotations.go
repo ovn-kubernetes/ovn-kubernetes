@@ -6,8 +6,7 @@ import (
 	"fmt"
 	"net"
 
-	kapi "k8s.io/api/core/v1"
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
@@ -137,11 +136,11 @@ func parseSubnetAnnotation(nodeAnnotations map[string]string, annotationName str
 	return subnetMap, nil
 }
 
-func NodeSubnetAnnotationChanged(oldNode, newNode *v1.Node) bool {
+func NodeSubnetAnnotationChanged(oldNode, newNode *corev1.Node) bool {
 	return oldNode.Annotations[ovnNodeSubnets] != newNode.Annotations[ovnNodeSubnets]
 }
 
-func NodeSubnetAnnotationChangedForNetwork(oldNode, newNode *v1.Node, netName string) bool {
+func NodeSubnetAnnotationChangedForNetwork(oldNode, newNode *corev1.Node, netName string) bool {
 	var oldSubnets, newSubnets map[string]json.RawMessage
 
 	if err := json.Unmarshal([]byte(oldNode.Annotations[ovnNodeSubnets]), &oldSubnets); err != nil {
@@ -181,9 +180,24 @@ func DeleteNodeHostSubnetAnnotation(nodeAnnotator kube.Annotator) {
 	nodeAnnotator.Delete(ovnNodeSubnets)
 }
 
+func HasNodeHostSubnetAnnotation(node *corev1.Node, netName string) bool {
+	var nodeSubnetMap map[string]json.RawMessage
+	annotation, ok := node.Annotations[ovnNodeSubnets]
+	if !ok {
+		return false
+	}
+	if err := json.Unmarshal([]byte(annotation), &nodeSubnetMap); err != nil {
+		return false
+	}
+	if _, ok := nodeSubnetMap[netName]; ok {
+		return true
+	}
+	return false
+}
+
 // ParseNodeHostSubnetAnnotation parses the "k8s.ovn.org/node-subnets" annotation
 // on a node and returns the host subnet for the given network.
-func ParseNodeHostSubnetAnnotation(node *kapi.Node, netName string) ([]*net.IPNet, error) {
+func ParseNodeHostSubnetAnnotation(node *corev1.Node, netName string) ([]*net.IPNet, error) {
 	var nodeSubnetMap map[string]json.RawMessage
 	var ret []*net.IPNet
 	annotation, ok := node.Annotations[ovnNodeSubnets]
@@ -227,7 +241,7 @@ func ParseNodeHostSubnetAnnotation(node *kapi.Node, netName string) ([]*net.IPNe
 
 // GetNodeSubnetAnnotationNetworkNames parses the "k8s.ovn.org/node-subnets" annotation
 // on a node and returns the list of network names set.
-func GetNodeSubnetAnnotationNetworkNames(node *kapi.Node) ([]string, error) {
+func GetNodeSubnetAnnotationNetworkNames(node *corev1.Node) ([]string, error) {
 	nodeNetworks := []string{}
 	subnetsMap, err := parseSubnetAnnotation(node.Annotations, ovnNodeSubnets)
 	if err != nil {
@@ -243,7 +257,7 @@ func GetNodeSubnetAnnotationNetworkNames(node *kapi.Node) ([]string, error) {
 
 // ParseNodesHostSubnetAnnotation parses parses the "k8s.ovn.org/node-subnets" annotation
 // for all the provided nodes
-func ParseNodesHostSubnetAnnotation(nodes []*kapi.Node, netName string) ([]*net.IPNet, error) {
+func ParseNodesHostSubnetAnnotation(nodes []*corev1.Node, netName string) ([]*net.IPNet, error) {
 	allSubnets := []*net.IPNet{}
 	for _, node := range nodes {
 		subnets, err := ParseNodeHostSubnetAnnotation(node, netName)
@@ -257,6 +271,6 @@ func ParseNodesHostSubnetAnnotation(nodes []*kapi.Node, netName string) ([]*net.
 
 // ParseNodeHostSubnetsAnnotation parses parses the "k8s.ovn.org/node-subnets" annotation
 // for all the networks
-func ParseNodeHostSubnetsAnnotation(node *kapi.Node) (map[string][]*net.IPNet, error) {
+func ParseNodeHostSubnetsAnnotation(node *corev1.Node) (map[string][]*net.IPNet, error) {
 	return parseSubnetAnnotation(node.Annotations, ovnNodeSubnets)
 }

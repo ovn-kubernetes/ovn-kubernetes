@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"net"
 
+	"github.com/vishvananda/netlink"
+
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/klog/v2"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-
-	"github.com/vishvananda/netlink"
-	kapi "k8s.io/api/core/v1"
-	listers "k8s.io/client-go/listers/core/v1"
-	"k8s.io/klog/v2"
 )
 
 // HONodeController is the node hybrid overlay controller
@@ -26,10 +26,9 @@ type HONodeController struct {
 
 // newHONodeController returns a node handler that listens for node events
 // so that Add/Update/Delete events are appropriately handled.
-func newHONodeController(kube kube.Interface,
+func newHONodeController(
+	kube kube.Interface,
 	nodeName string,
-	nodeLister listers.NodeLister,
-	podLister listers.PodLister,
 ) (nodeController, error) {
 	return &HONodeController{
 		kube:     kube,
@@ -38,7 +37,7 @@ func newHONodeController(kube kube.Interface,
 }
 
 // AddNode set annotations about its VTEP and gateway MAC address to its own node object
-func (n *HONodeController) AddNode(node *kapi.Node) error {
+func (n *HONodeController) AddNode(node *corev1.Node) error {
 	if node.Name != n.nodeName {
 		return nil
 	}
@@ -77,12 +76,12 @@ func (n *HONodeController) AddNode(node *kapi.Node) error {
 }
 
 // Delete handles node deletions
-func (n *HONodeController) DeleteNode(node *kapi.Node) error {
+func (n *HONodeController) DeleteNode(_ *corev1.Node) error {
 	return nil
 }
 
 // AddPod remove the ovnkube annotation from the pods running on its own node
-func (n *HONodeController) AddPod(pod *kapi.Pod) error {
+func (n *HONodeController) AddPod(pod *corev1.Pod) error {
 	if pod.Spec.NodeName != n.nodeName {
 		return nil
 	}
@@ -99,13 +98,13 @@ func (n *HONodeController) AddPod(pod *kapi.Pod) error {
 	return nil
 }
 
-func (n *HONodeController) DeletePod(pod *kapi.Pod) error {
+func (n *HONodeController) DeletePod(_ *corev1.Pod) error {
 	return nil
 }
 
-func (n *HONodeController) RunFlowSync(stopCh <-chan struct{}) {}
+func (n *HONodeController) RunFlowSync(_ <-chan struct{}) {}
 
-func (n *HONodeController) EnsureHybridOverlayBridge(node *kapi.Node) error {
+func (n *HONodeController) EnsureHybridOverlayBridge(_ *corev1.Node) error {
 	return nil
 }
 

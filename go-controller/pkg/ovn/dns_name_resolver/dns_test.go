@@ -6,19 +6,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/miekg/dns"
+	"github.com/stretchr/testify/assert"
+	mock "github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+
+	utilnet "k8s.io/utils/net"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set/mocks"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
-	util_mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/mocks"
-	"github.com/stretchr/testify/assert"
-	mock "github.com/stretchr/testify/mock"
-
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-
-	"github.com/miekg/dns"
-	utilnet "k8s.io/utils/net"
+	util_mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/mocks"
 )
 
 const DefaultNetworkControllerName = "default-network-controller"
@@ -28,7 +29,7 @@ func TestNewEgressDNS(t *testing.T) {
 	dbSetup := libovsdbtest.TestSetup{}
 
 	libovsdbOvnNBClient, _, libovsdbCleanup, err := libovsdbtest.NewNBSBTestHarness(dbSetup)
-	assert.Nil(t, err)
+	require.NoError(t, err)
 	t.Cleanup(libovsdbCleanup.Cleanup)
 
 	testOvnAddFtry := addressset.NewOvnAddressSetFactory(libovsdbOvnNBClient, config.IPv4Mode, config.IPv6Mode)
@@ -43,13 +44,13 @@ func TestNewEgressDNS(t *testing.T) {
 			desc:   "fails to read the /etc/resolv.conf file",
 			errExp: true,
 			dnsOpsMockHelper: []ovntest.TestifyMockHelper{
-				{"ClientConfigFromFile", []string{"string"}, []interface{}{}, []interface{}{nil, fmt.Errorf("mock error")}, 0, 1},
+				{OnCallMethodName: "ClientConfigFromFile", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{nil, fmt.Errorf("mock error")}, CallTimes: 1},
 			},
 		},
 		{
 			desc: "positive tests case",
 			dnsOpsMockHelper: []ovntest.TestifyMockHelper{
-				{"ClientConfigFromFile", []string{"string"}, []interface{}{}, []interface{}{&dns.ClientConfig{}, nil}, 0, 1},
+				{OnCallMethodName: "ClientConfigFromFile", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{&dns.ClientConfig{}, nil}, CallTimes: 1},
 			},
 		},
 	}
@@ -68,9 +69,9 @@ func TestNewEgressDNS(t *testing.T) {
 			_, err := NewEgressDNS(testOvnAddFtry, DefaultNetworkControllerName, testCh, 0)
 			//t.Log(res, err)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			mockDnsOps.AssertExpectations(t)
 		})
@@ -117,12 +118,20 @@ func TestAdd(t *testing.T) {
 			errExp:   true,
 			syncTime: 5 * time.Minute,
 			dnsOpsMockHelper: []ovntest.TestifyMockHelper{
-				{"ClientConfigFromFile", []string{"string"}, []interface{}{}, []interface{}{&dns.ClientConfig{
-					Servers: []string{"1.1.1.1"},
-					Port:    "1234"}, nil}, 0, 1},
+				{
+					OnCallMethodName:    "ClientConfigFromFile",
+					OnCallMethodArgType: []string{"string"},
+					RetArgList:          []interface{}{&dns.ClientConfig{Servers: []string{"1.1.1.1"}, Port: "1234"}, nil},
+					CallTimes:           1,
+				},
 			},
 			addressSetFactoryOpsHelper: []ovntest.TestifyMockHelper{
-				{"NewAddressSet", []string{"*ops.DbObjectIDs", "[]string"}, []interface{}{}, []interface{}{nil, fmt.Errorf("mock error")}, 0, 1},
+				{
+					OnCallMethodName:    "NewAddressSet",
+					OnCallMethodArgType: []string{"*ops.DbObjectIDs", "[]string"},
+					RetArgList:          []interface{}{nil, fmt.Errorf("mock error")},
+					CallTimes:           1,
+				},
 			},
 		},
 		{
@@ -134,16 +143,22 @@ func TestAdd(t *testing.T) {
 			configIPv6: false,
 
 			dnsOpsMockHelper: []ovntest.TestifyMockHelper{
-				{"ClientConfigFromFile", []string{"string"}, []interface{}{}, []interface{}{&dns.ClientConfig{
-					Servers: []string{"1.1.1.1"},
-					Port:    "1234"}, nil}, 0, 1},
-				{"Fqdn", []string{"string"}, []interface{}{}, []interface{}{test1DNSName}, 0, 1},
-
-				{"SetQuestion", []string{"*dns.Msg", "string", "uint16"}, []interface{}{}, []interface{}{&dns.Msg{}}, 0, 1},
-				{"Exchange", []string{"*dns.Client", "*dns.Msg", "string"}, []interface{}{}, []interface{}{&dns.Msg{Answer: []dns.RR{generateRR(test1DNSName, test1IPv4, "300")}}, 500 * time.Second, nil}, 0, 1},
+				{
+					OnCallMethodName: "ClientConfigFromFile", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{&dns.ClientConfig{
+						Servers: []string{"1.1.1.1"},
+						Port:    "1234"}, nil}, CallTimes: 1,
+				},
+				{OnCallMethodName: "Fqdn", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{test1DNSName}, CallTimes: 1},
+				{OnCallMethodName: "SetQuestion", OnCallMethodArgType: []string{"*dns.Msg", "string", "uint16"}, RetArgList: []interface{}{&dns.Msg{}}, CallTimes: 1},
+				{
+					OnCallMethodName:    "Exchange",
+					OnCallMethodArgType: []string{"*dns.Client", "*dns.Msg", "string"},
+					RetArgList:          []interface{}{&dns.Msg{Answer: []dns.RR{generateRR(test1DNSName, test1IPv4, "300")}}, 500 * time.Second, nil},
+					CallTimes:           1,
+				},
 			},
 			addressSetFactoryOpsHelper: []ovntest.TestifyMockHelper{
-				{"NewAddressSet", []string{"*ops.DbObjectIDs", "[]string"}, []interface{}{}, []interface{}{mockAddressSetOps, nil}, 0, 1},
+				{OnCallMethodName: "NewAddressSet", OnCallMethodArgType: []string{"*ops.DbObjectIDs", "[]string"}, OnCallMethodArgs: []interface{}{}, RetArgList: []interface{}{mockAddressSetOps, nil}, OnCallMethodsArgsStrTypeAppendCount: 0, CallTimes: 1},
 			},
 			addressSetOpsHelper: []ovntest.TestifyMockHelper{
 				{
@@ -162,17 +177,23 @@ func TestAdd(t *testing.T) {
 			configIPv6: false,
 
 			dnsOpsMockHelper: []ovntest.TestifyMockHelper{
-				{"ClientConfigFromFile", []string{"string"}, []interface{}{}, []interface{}{&dns.ClientConfig{
-					Servers: []string{"1.1.1.1"},
-					Port:    "1234"}, nil}, 0, 1},
-				{"Fqdn", []string{"string"}, []interface{}{}, []interface{}{test1DNSName}, 0, 1},
-
-				{"SetQuestion", []string{"*dns.Msg", "string", "uint16"}, []interface{}{}, []interface{}{&dns.Msg{}}, 0, 1},
-				{"Exchange", []string{"*dns.Client", "*dns.Msg", "string"}, []interface{}{},
-					[]interface{}{&dns.Msg{Answer: []dns.RR{generateRR(test1DNSName, clusterSubnetIP, "300")}}, 500 * time.Second, nil}, 0, 1},
+				{
+					OnCallMethodName:    "ClientConfigFromFile",
+					OnCallMethodArgType: []string{"string"},
+					RetArgList:          []interface{}{&dns.ClientConfig{Servers: []string{"1.1.1.1"}, Port: "1234"}, nil},
+					CallTimes:           1,
+				},
+				{OnCallMethodName: "Fqdn", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{test1DNSName}, CallTimes: 1},
+				{OnCallMethodName: "SetQuestion", OnCallMethodArgType: []string{"*dns.Msg", "string", "uint16"}, RetArgList: []interface{}{&dns.Msg{}}, CallTimes: 1},
+				{
+					OnCallMethodName:    "Exchange",
+					OnCallMethodArgType: []string{"*dns.Client", "*dns.Msg", "string"},
+					RetArgList:          []interface{}{&dns.Msg{Answer: []dns.RR{generateRR(test1DNSName, clusterSubnetIP, "300")}}, 500 * time.Second, nil},
+					CallTimes:           1,
+				},
 			},
 			addressSetFactoryOpsHelper: []ovntest.TestifyMockHelper{
-				{"NewAddressSet", []string{"*ops.DbObjectIDs", "[]string"}, []interface{}{}, []interface{}{mockAddressSetOps, nil}, 0, 1},
+				{OnCallMethodName: "NewAddressSet", OnCallMethodArgType: []string{"*ops.DbObjectIDs", "[]string"}, OnCallMethodArgs: []interface{}{}, RetArgList: []interface{}{mockAddressSetOps, nil}, OnCallMethodsArgsStrTypeAppendCount: 0, CallTimes: 1},
 			},
 			addressSetOpsHelper: []ovntest.TestifyMockHelper{
 				{
@@ -191,17 +212,22 @@ func TestAdd(t *testing.T) {
 			configIPv6: false,
 
 			dnsOpsMockHelper: []ovntest.TestifyMockHelper{
-				{"ClientConfigFromFile", []string{"string"}, []interface{}{}, []interface{}{&dns.ClientConfig{
-					Servers: []string{"1.1.1.1"},
-					Port:    "1234"}, nil}, 0, 1},
-				{"Fqdn", []string{"string"}, []interface{}{}, []interface{}{test1DNSName}, 0, 1},
-
-				{"SetQuestion", []string{"*dns.Msg", "string", "uint16"}, []interface{}{}, []interface{}{&dns.Msg{}}, 0, 1},
-				{"Exchange", []string{"*dns.Client", "*dns.Msg", "string"}, []interface{}{},
-					[]interface{}{&dns.Msg{Answer: []dns.RR{generateRR(test1DNSName, test1IPv4, "300"), generateRR(test1DNSName, clusterSubnetIP, "300")}}, 500 * time.Second, nil}, 0, 1},
+				{
+					OnCallMethodName:    "ClientConfigFromFile",
+					OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{&dns.ClientConfig{Servers: []string{"1.1.1.1"}, Port: "1234"}, nil},
+					CallTimes: 1,
+				},
+				{OnCallMethodName: "Fqdn", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{test1DNSName}, CallTimes: 1},
+				{OnCallMethodName: "SetQuestion", OnCallMethodArgType: []string{"*dns.Msg", "string", "uint16"}, RetArgList: []interface{}{&dns.Msg{}}, CallTimes: 1},
+				{
+					OnCallMethodName:    "Exchange",
+					OnCallMethodArgType: []string{"*dns.Client", "*dns.Msg", "string"},
+					RetArgList:          []interface{}{&dns.Msg{Answer: []dns.RR{generateRR(test1DNSName, test1IPv4, "300"), generateRR(test1DNSName, clusterSubnetIP, "300")}}, 500 * time.Second, nil},
+					CallTimes:           1,
+				},
 			},
 			addressSetFactoryOpsHelper: []ovntest.TestifyMockHelper{
-				{"NewAddressSet", []string{"*ops.DbObjectIDs", "[]string"}, []interface{}{}, []interface{}{mockAddressSetOps, nil}, 0, 1},
+				{OnCallMethodName: "NewAddressSet", OnCallMethodArgType: []string{"*ops.DbObjectIDs", "[]string"}, RetArgList: []interface{}{mockAddressSetOps, nil}, CallTimes: 1},
 			},
 			addressSetOpsHelper: []ovntest.TestifyMockHelper{
 				{
@@ -221,18 +247,31 @@ func TestAdd(t *testing.T) {
 			configIPv6:               true,
 
 			dnsOpsMockHelper: []ovntest.TestifyMockHelper{
-				{"ClientConfigFromFile", []string{"string"}, []interface{}{}, []interface{}{&dns.ClientConfig{
-					Servers: []string{"1.1.1.1"},
-					Port:    "1234"}, nil}, 0, 1},
-				{"Fqdn", []string{"string"}, []interface{}{}, []interface{}{test1DNSName}, 0, 1},
-				{"Fqdn", []string{"string"}, []interface{}{}, []interface{}{test1DNSName}, 0, 1},
-				{"SetQuestion", []string{"*dns.Msg", "string", "uint16"}, []interface{}{}, []interface{}{&dns.Msg{}}, 0, 1},
-				{"SetQuestion", []string{"*dns.Msg", "string", "uint16"}, []interface{}{}, []interface{}{&dns.Msg{}}, 0, 1},
-				{"Exchange", []string{"*dns.Client", "*dns.Msg", "string"}, []interface{}{}, []interface{}{&dns.Msg{Answer: []dns.RR{generateRR(test1DNSName, test1IPv4, "300")}}, 500 * time.Second, nil}, 0, 1},
-				{"Exchange", []string{"*dns.Client", "*dns.Msg", "string"}, []interface{}{}, []interface{}{&dns.Msg{Answer: []dns.RR{generateRR(test1DNSName, test1IPv6, "300")}}, 500 * time.Second, nil}, 0, 1},
+				{
+					OnCallMethodName:    "ClientConfigFromFile",
+					OnCallMethodArgType: []string{"string"},
+					RetArgList:          []interface{}{&dns.ClientConfig{Servers: []string{"1.1.1.1"}, Port: "1234"}, nil},
+					CallTimes:           1,
+				},
+				{OnCallMethodName: "Fqdn", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{test1DNSName}, CallTimes: 1},
+				{OnCallMethodName: "Fqdn", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{test1DNSName}, CallTimes: 1},
+				{OnCallMethodName: "SetQuestion", OnCallMethodArgType: []string{"*dns.Msg", "string", "uint16"}, RetArgList: []interface{}{&dns.Msg{}}, CallTimes: 1},
+				{OnCallMethodName: "SetQuestion", OnCallMethodArgType: []string{"*dns.Msg", "string", "uint16"}, RetArgList: []interface{}{&dns.Msg{}}, CallTimes: 1},
+				{
+					OnCallMethodName:    "Exchange",
+					OnCallMethodArgType: []string{"*dns.Client", "*dns.Msg", "string"},
+					RetArgList:          []interface{}{&dns.Msg{Answer: []dns.RR{generateRR(test1DNSName, test1IPv4, "300")}}, 500 * time.Second, nil},
+					CallTimes:           1,
+				},
+				{
+					OnCallMethodName:    "Exchange",
+					OnCallMethodArgType: []string{"*dns.Client", "*dns.Msg", "string"},
+					RetArgList:          []interface{}{&dns.Msg{Answer: []dns.RR{generateRR(test1DNSName, test1IPv6, "300")}}, 500 * time.Second, nil},
+					CallTimes:           1,
+				},
 			},
 			addressSetFactoryOpsHelper: []ovntest.TestifyMockHelper{
-				{"NewAddressSet", []string{"*ops.DbObjectIDs", "[]string"}, []interface{}{}, []interface{}{mockAddressSetOps, nil}, 0, 1},
+				{OnCallMethodName: "NewAddressSet", OnCallMethodArgType: []string{"*ops.DbObjectIDs", "[]string"}, OnCallMethodArgs: []interface{}{}, RetArgList: []interface{}{mockAddressSetOps, nil}, OnCallMethodsArgsStrTypeAppendCount: 0, CallTimes: 1},
 			},
 			addressSetOpsHelper: []ovntest.TestifyMockHelper{
 				{
@@ -252,21 +291,33 @@ func TestAdd(t *testing.T) {
 			configIPv6:               false,
 
 			dnsOpsMockHelper: []ovntest.TestifyMockHelper{
-				{"ClientConfigFromFile", []string{"string"}, []interface{}{}, []interface{}{&dns.ClientConfig{
-					Servers: []string{"1.1.1.1"},
-					Port:    "1234"}, nil}, 0, 1},
-				{"Fqdn", []string{"string"}, []interface{}{}, []interface{}{test1DNSName}, 0, 1},
 
-				{"SetQuestion", []string{"*dns.Msg", "string", "uint16"}, []interface{}{}, []interface{}{&dns.Msg{}}, 0, 1},
+				{OnCallMethodName: "ClientConfigFromFile",
+					OnCallMethodArgType: []string{"string"},
+					RetArgList:          []interface{}{&dns.ClientConfig{Servers: []string{"1.1.1.1"}, Port: "1234"}, nil},
+					CallTimes:           1,
+				},
+				{OnCallMethodName: "Fqdn", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{test1DNSName}, CallTimes: 1},
+
+				{OnCallMethodName: "SetQuestion", OnCallMethodArgType: []string{"*dns.Msg", "string", "uint16"}, RetArgList: []interface{}{&dns.Msg{}}, CallTimes: 1},
 				// return a very low ttl so that the update based on ttl timeout occurs
-				{"Exchange", []string{"*dns.Client", "*dns.Msg", "string"}, []interface{}{}, []interface{}{&dns.Msg{Answer: []dns.RR{generateRR(test1DNSName, test1IPv4, "4")}}, 1 * time.Second, nil}, 0, 1},
-				{"Fqdn", []string{"string"}, []interface{}{}, []interface{}{test1DNSName}, 0, 1},
-
-				{"SetQuestion", []string{"*dns.Msg", "string", "uint16"}, []interface{}{}, []interface{}{&dns.Msg{}}, 0, 1},
-				{"Exchange", []string{"*dns.Client", "*dns.Msg", "string"}, []interface{}{}, []interface{}{&dns.Msg{Answer: []dns.RR{generateRR(test1DNSName, test1IPv4Update, "300")}}, 1 * time.Second, nil}, 0, 1},
+				{
+					OnCallMethodName:    "Exchange",
+					OnCallMethodArgType: []string{"*dns.Client", "*dns.Msg", "string"},
+					RetArgList:          []interface{}{&dns.Msg{Answer: []dns.RR{generateRR(test1DNSName, test1IPv4, "4")}}, 1 * time.Second, nil},
+					CallTimes:           1,
+				},
+				{OnCallMethodName: "Fqdn", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{test1DNSName}, CallTimes: 1},
+				{OnCallMethodName: "SetQuestion", OnCallMethodArgType: []string{"*dns.Msg", "string", "uint16"}, RetArgList: []interface{}{&dns.Msg{}}, CallTimes: 1},
+				{
+					OnCallMethodName:    "Exchange",
+					OnCallMethodArgType: []string{"*dns.Client", "*dns.Msg", "string"},
+					RetArgList:          []interface{}{&dns.Msg{Answer: []dns.RR{generateRR(test1DNSName, test1IPv4Update, "300")}}, 1 * time.Second, nil},
+					CallTimes:           1,
+				},
 			},
 			addressSetFactoryOpsHelper: []ovntest.TestifyMockHelper{
-				{"NewAddressSet", []string{"*ops.DbObjectIDs", "[]string"}, []interface{}{}, []interface{}{mockAddressSetOps, nil}, 0, 1},
+				{OnCallMethodName: "NewAddressSet", OnCallMethodArgType: []string{"*ops.DbObjectIDs", "[]string"}, OnCallMethodArgs: []interface{}{}, RetArgList: []interface{}{mockAddressSetOps, nil}, OnCallMethodsArgsStrTypeAppendCount: 0, CallTimes: 1},
 			},
 			addressSetOpsHelper: []ovntest.TestifyMockHelper{
 				{
@@ -319,15 +370,16 @@ func TestAdd(t *testing.T) {
 				call.Once()
 			}
 			res, err := NewEgressDNS(mockAddressSetFactoryOps, DefaultNetworkControllerName, testCh, tc.syncTime)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 
-			res.Run()
+			err = res.Run()
+			require.NoError(t, err)
 
 			_, err = res.Add("addNamespace", test1DNSName)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 				for stay, timeout := true, time.After(10*time.Second); stay; {
 					_, dnsResolves, _ := res.getDNSEntry(tc.dnsName)
 					if dnsResolves != nil {
@@ -404,22 +456,35 @@ func TestDelete(t *testing.T) {
 			configIPv6:               true,
 
 			dnsOpsMockHelper: []ovntest.TestifyMockHelper{
-				{"ClientConfigFromFile", []string{"string"}, []interface{}{}, []interface{}{&dns.ClientConfig{
-					Servers: []string{"1.1.1.1"},
-					Port:    "1234"}, nil}, 0, 1},
-				{"Fqdn", []string{"string"}, []interface{}{}, []interface{}{test1DNSName}, 0, 1},
-				{"Fqdn", []string{"string"}, []interface{}{}, []interface{}{test1DNSName}, 0, 1},
-				{"SetQuestion", []string{"*dns.Msg", "string", "uint16"}, []interface{}{}, []interface{}{&dns.Msg{}}, 0, 1},
-				{"SetQuestion", []string{"*dns.Msg", "string", "uint16"}, []interface{}{}, []interface{}{&dns.Msg{}}, 0, 1},
-				{"Exchange", []string{"*dns.Client", "*dns.Msg", "string"}, []interface{}{}, []interface{}{&dns.Msg{Answer: []dns.RR{generateRR(test1DNSName, test1IPv4, "300")}}, 500 * time.Second, nil}, 0, 1},
-				{"Exchange", []string{"*dns.Client", "*dns.Msg", "string"}, []interface{}{}, []interface{}{&dns.Msg{Answer: []dns.RR{generateRR(test1DNSName, test1IPv6, "300")}}, 500 * time.Second, nil}, 0, 1},
+				{
+					OnCallMethodName:    "ClientConfigFromFile",
+					OnCallMethodArgType: []string{"string"},
+					RetArgList:          []interface{}{&dns.ClientConfig{Servers: []string{"1.1.1.1"}, Port: "1234"}, nil},
+					CallTimes:           1,
+				},
+				{OnCallMethodName: "Fqdn", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{test1DNSName}, CallTimes: 1},
+				{OnCallMethodName: "Fqdn", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{test1DNSName}, CallTimes: 1},
+				{OnCallMethodName: "SetQuestion", OnCallMethodArgType: []string{"*dns.Msg", "string", "uint16"}, RetArgList: []interface{}{&dns.Msg{}}, CallTimes: 1},
+				{OnCallMethodName: "SetQuestion", OnCallMethodArgType: []string{"*dns.Msg", "string", "uint16"}, RetArgList: []interface{}{&dns.Msg{}}, CallTimes: 1},
+				{
+					OnCallMethodName:    "Exchange",
+					OnCallMethodArgType: []string{"*dns.Client", "*dns.Msg", "string"},
+					RetArgList:          []interface{}{&dns.Msg{Answer: []dns.RR{generateRR(test1DNSName, test1IPv4, "300")}}, 500 * time.Second, nil},
+					CallTimes:           1,
+				},
+				{
+					OnCallMethodName:    "Exchange",
+					OnCallMethodArgType: []string{"*dns.Client", "*dns.Msg", "string"},
+					RetArgList:          []interface{}{&dns.Msg{Answer: []dns.RR{generateRR(test1DNSName, test1IPv6, "300")}}, 500 * time.Second, nil},
+					CallTimes:           1,
+				},
 			},
 			addressSetFactoryOpsHelper: []ovntest.TestifyMockHelper{
-				{"NewAddressSet", []string{"*ops.DbObjectIDs", "[]string"}, []interface{}{}, []interface{}{mockAddressSetOps, nil}, 0, 1},
+				{OnCallMethodName: "NewAddressSet", OnCallMethodArgType: []string{"*ops.DbObjectIDs", "[]string"}, OnCallMethodArgs: []interface{}{}, RetArgList: []interface{}{mockAddressSetOps, nil}, OnCallMethodsArgsStrTypeAppendCount: 0, CallTimes: 1},
 			},
 			addressSetOpsHelper: []ovntest.TestifyMockHelper{
-				{"SetAddresses", []string{"[]string"}, []interface{}{}, []interface{}{nil}, 0, 1},
-				{"Destroy", []string{}, []interface{}{}, []interface{}{nil}, 0, 1},
+				{OnCallMethodName: "SetAddresses", OnCallMethodArgType: []string{"[]string"}, OnCallMethodArgs: []interface{}{}, RetArgList: []interface{}{nil}, OnCallMethodsArgsStrTypeAppendCount: 0, CallTimes: 1},
+				{OnCallMethodName: "Destroy", OnCallMethodArgType: []string{}, OnCallMethodArgs: []interface{}{}, RetArgList: []interface{}{nil}, OnCallMethodsArgsStrTypeAppendCount: 0, CallTimes: 1},
 			},
 		},
 	}
@@ -460,16 +525,16 @@ func TestDelete(t *testing.T) {
 				call.Once()
 			}
 			res, err := NewEgressDNS(mockAddressSetFactoryOps, DefaultNetworkControllerName, testCh, tc.syncTime)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 
-			res.Run()
+			err = res.Run()
+			require.NoError(t, err)
 
 			_, err = res.Add("addNamespace", test1DNSName)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-
-				assert.Nil(t, err)
+				require.NoError(t, err)
 				for stay, timeout := true, time.After(10*time.Second); stay; {
 					_, dnsResolves, _ := res.getDNSEntry(tc.dnsName)
 					if dnsResolves != nil {
@@ -485,7 +550,8 @@ func TestDelete(t *testing.T) {
 				}
 			}
 			_, dnsResolves, _ := res.getDNSEntry(tc.dnsName)
-			res.Delete("addNamespace")
+			err = res.Delete("addNamespace")
+			require.NoError(t, err)
 			for stay, timeout := true, time.After(10*time.Second); stay; {
 				_, dnsResolves, _ = res.getDNSEntry(tc.dnsName)
 				if dnsResolves == nil {

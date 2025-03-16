@@ -5,12 +5,10 @@ import (
 	"net"
 	"time"
 
-	v1 "k8s.io/api/core/v1"
-	listers "k8s.io/client-go/listers/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -31,8 +29,7 @@ func newManagementPortRepresentor(nodeName string, hostSubnets []*net.IPNet, rep
 	}
 }
 
-func (mp *managementPortRepresentor) Create(isPodNetworkAdvertised bool, _ *routemanager.Controller, node *v1.Node,
-	nodeLister listers.NodeLister, kubeInterface kube.Interface, waiter *startupWaiter) (*managementPortConfig, error) {
+func (mp *managementPortRepresentor) Create(isPodNetworkAdvertised bool, _ *routemanager.Controller, _ *corev1.Node, waiter *startupWaiter) (*managementPortConfig, error) {
 	k8sMgmtIntfName := types.K8sMgmtIntfName
 	if config.OvnKubeNode.Mode == types.NodeModeFull {
 		k8sMgmtIntfName += "_0"
@@ -51,7 +48,7 @@ func (mp *managementPortRepresentor) Create(isPodNetworkAdvertised bool, _ *rout
 	}
 
 	if link.Attrs().Name != k8sMgmtIntfName {
-		if err := syncMgmtPortInterface(mp.hostSubnets, k8sMgmtIntfName, false); err != nil {
+		if err := syncMgmtPortInterface(k8sMgmtIntfName, false); err != nil {
 			return nil, fmt.Errorf("failed to check existing management port: %v", err)
 		}
 	}
@@ -173,8 +170,7 @@ func newManagementPortNetdev(hostSubnets []*net.IPNet, netdevName string) Manage
 	}
 }
 
-func (mp *managementPortNetdev) Create(isRoutingAdvertised bool, routeManager *routemanager.Controller, node *v1.Node,
-	nodeLister listers.NodeLister, kubeInterface kube.Interface, waiter *startupWaiter) (*managementPortConfig, error) {
+func (mp *managementPortNetdev) Create(isRoutingAdvertised bool, routeManager *routemanager.Controller, _ *corev1.Node, _ *startupWaiter) (*managementPortConfig, error) {
 	klog.Infof("Lookup netdevice link and existing management port using '%v'", mp.netdevName)
 	link, err := util.GetNetLinkOps().LinkByName(mp.netdevName)
 	if err != nil {
@@ -182,7 +178,7 @@ func (mp *managementPortNetdev) Create(isRoutingAdvertised bool, routeManager *r
 	}
 
 	if link.Attrs().Name != types.K8sMgmtIntfName {
-		err = syncMgmtPortInterface(mp.hostSubnets, types.K8sMgmtIntfName, false)
+		err = syncMgmtPortInterface(types.K8sMgmtIntfName, false)
 		if err != nil {
 			return nil, fmt.Errorf("failed to sync management port: %v", err)
 		}

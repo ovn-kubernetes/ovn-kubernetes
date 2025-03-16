@@ -5,7 +5,8 @@ import (
 	"reflect"
 
 	ocpcloudnetworkapi "github.com/openshift/api/cloudnetwork/v1"
-	v1 "k8s.io/api/core/v1"
+
+	corev1 "k8s.io/api/core/v1"
 	cache "k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
@@ -24,7 +25,7 @@ type egressIPClusterControllerEventHandler struct {
 	syncFunc func([]interface{}) error
 }
 
-func (h *egressIPClusterControllerEventHandler) FilterOutResource(obj interface{}) bool {
+func (h *egressIPClusterControllerEventHandler) FilterOutResource(_ interface{}) bool {
 	return false
 }
 
@@ -32,10 +33,10 @@ func (h *egressIPClusterControllerEventHandler) FilterOutResource(obj interface{
 
 // AddResource adds the specified object to the cluster according to its type and
 // returns the error, if any, yielded during object creation.
-func (h *egressIPClusterControllerEventHandler) AddResource(obj interface{}, fromRetryLoop bool) error {
+func (h *egressIPClusterControllerEventHandler) AddResource(obj interface{}, _ bool) error {
 	switch h.objType {
 	case factory.EgressNodeType:
-		node := obj.(*v1.Node)
+		node := obj.(*corev1.Node)
 		// EgressIP is not supported on hybrid overlay nodes
 		if util.NoHostSubnet(node) {
 			return nil
@@ -81,15 +82,15 @@ func (h *egressIPClusterControllerEventHandler) AddResource(obj interface{}, fro
 // UpdateResource updates the specified object in the cluster to its version in newObj according
 // to its type and returns the error, if any, yielded during the object update.
 // The inRetryCache boolean argument is to indicate if the given resource is in the retryCache or not.
-func (h *egressIPClusterControllerEventHandler) UpdateResource(oldObj, newObj interface{}, inRetryCache bool) error {
+func (h *egressIPClusterControllerEventHandler) UpdateResource(oldObj, newObj interface{}, _ bool) error {
 	switch h.objType {
 	case factory.EgressIPType:
 		oldEIP := oldObj.(*egressipv1.EgressIP)
 		newEIP := newObj.(*egressipv1.EgressIP)
 		return h.eIPC.reconcileEgressIP(oldEIP, newEIP)
 	case factory.EgressNodeType:
-		oldNode := oldObj.(*v1.Node)
-		newNode := newObj.(*v1.Node)
+		oldNode := oldObj.(*corev1.Node)
+		newNode := newObj.(*corev1.Node)
 
 		// EgressIP is not supported on hybrid overlay nodes
 		if util.NoHostSubnet(newNode) {
@@ -171,13 +172,13 @@ func (h *egressIPClusterControllerEventHandler) UpdateResource(oldObj, newObj in
 
 // DeleteResource deletes the object from the cluster according to the delete logic of its resource type.
 // cachedObj is the internal cache entry for this object, used for now for pods and network policies.
-func (h *egressIPClusterControllerEventHandler) DeleteResource(obj, cachedObj interface{}) error {
+func (h *egressIPClusterControllerEventHandler) DeleteResource(obj, _ interface{}) error {
 	switch h.objType {
 	case factory.EgressIPType:
 		eIP := obj.(*egressipv1.EgressIP)
 		return h.eIPC.reconcileEgressIP(eIP, nil)
 	case factory.EgressNodeType:
-		node := obj.(*v1.Node)
+		node := obj.(*corev1.Node)
 		// EgressIP is not supported on hybrid overlay nodes
 		if util.NoHostSubnet(node) {
 			return nil

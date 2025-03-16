@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/stretchr/testify/assert"
-	utilpointer "k8s.io/utils/pointer"
+
+	"k8s.io/utils/ptr"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 )
 
 const (
@@ -29,14 +31,14 @@ func TestExtractPortAddresses(t *testing.T) {
 			desc: "test path where lsp.DynamicAddresses is a zero length string and len(addresses)==0",
 			lsp: &nbdb.LogicalSwitchPort{
 				Name:             "test-pod",
-				DynamicAddresses: utilpointer.String(hwAddr + " " + ipAddr),
+				DynamicAddresses: ptr.To(hwAddr + " " + ipAddr),
 			},
 		},
 		{
 			desc: "test path where lsp.DynamicAddresses is non-zero length string and value of first address in addresses list is set to dynamic",
 			lsp: &nbdb.LogicalSwitchPort{
 				Name:             portName,
-				DynamicAddresses: utilpointer.String(hwAddr + " " + ipAddr),
+				DynamicAddresses: ptr.To(hwAddr + " " + ipAddr),
 				Addresses:        []string{"dynamic"},
 			},
 		},
@@ -44,7 +46,7 @@ func TestExtractPortAddresses(t *testing.T) {
 			desc: "test code path where port has MAC but no IPs",
 			lsp: &nbdb.LogicalSwitchPort{
 				Name:             "test-pod",
-				DynamicAddresses: utilpointer.String(hwAddr),
+				DynamicAddresses: ptr.To(hwAddr),
 			},
 			hasNoIP: true,
 		},
@@ -52,7 +54,7 @@ func TestExtractPortAddresses(t *testing.T) {
 			desc: "test the code path where ParseMAC fails",
 			lsp: &nbdb.LogicalSwitchPort{
 				Name:             portName,
-				DynamicAddresses: utilpointer.String(badHWAddr),
+				DynamicAddresses: ptr.To(badHWAddr),
 			},
 			errMatch: fmt.Errorf("failed to parse logical switch port \"%s\" MAC \"%s\": address %s: invalid MAC address", portName, badHWAddr, badHWAddr),
 		},
@@ -79,17 +81,17 @@ func TestExtractPortAddresses(t *testing.T) {
 			if tc.isNotFound {
 				assert.Nil(t, hardwareAddr)
 				assert.Nil(t, ips)
-				assert.Nil(t, err)
+				assert.NoError(t, err)
 
 			} else if tc.hasNoIP {
-				assert.Equal(t, hardwareAddr.String(), hwAddr)
+				assert.Equal(t, hwAddr, hardwareAddr.String())
 				assert.Nil(t, ips)
 			} else if tc.errMatch != nil {
 				assert.Equal(t, err, tc.errMatch)
 			} else {
-				assert.Equal(t, hardwareAddr.String(), hwAddr)
-				assert.Equal(t, len(ips), 1)
-				assert.Equal(t, ips[0].String(), ipAddr)
+				assert.Equal(t, hwAddr, hardwareAddr.String())
+				assert.Len(t, ips, 1)
+				assert.Equal(t, ipAddr, ips[0].String())
 			}
 		})
 	}

@@ -1,32 +1,32 @@
 package factory
 
 import (
-	adminpolicybasedrouteinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/informers/externalversions/adminpolicybasedroute/v1"
-	egressipinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/informers/externalversions/egressip/v1"
-	routeadvertisementsinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/informers/externalversions/routeadvertisements/v1"
-	userdefinednetworkinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/informers/externalversions/userdefinednetwork/v1"
-
 	nadinformer "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/informers/externalversions/k8s.cni.cncf.io/v1"
 
-	kapi "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	coreinformers "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/tools/cache"
+
+	adminpolicybasedrouteinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/informers/externalversions/adminpolicybasedroute/v1"
+	egressipinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/informers/externalversions/egressip/v1"
+	routeadvertisementsinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/informers/externalversions/routeadvertisements/v1"
+	userdefinednetworkinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/informers/externalversions/userdefinednetwork/v1"
 )
 
 // ObjectCacheInterface represents the exported methods for getting
 // kubernetes resources from the informer cache
 type ObjectCacheInterface interface {
-	GetPod(namespace, name string) (*kapi.Pod, error)
-	GetAllPods() ([]*kapi.Pod, error)
-	GetPods(namespace string) ([]*kapi.Pod, error)
-	GetNodes() ([]*kapi.Node, error)
-	GetNode(name string) (*kapi.Node, error)
-	GetService(namespace, name string) (*kapi.Service, error)
+	GetPod(namespace, name string) (*corev1.Pod, error)
+	GetAllPods() ([]*corev1.Pod, error)
+	GetPods(namespace string) ([]*corev1.Pod, error)
+	GetNodes() ([]*corev1.Node, error)
+	GetNode(name string) (*corev1.Node, error)
+	GetService(namespace, name string) (*corev1.Service, error)
 	GetServiceEndpointSlices(namespace, svcName, network string) ([]*discovery.EndpointSlice, error)
-	GetNamespace(name string) (*kapi.Namespace, error)
-	GetNamespaces() ([]*kapi.Namespace, error)
+	GetNamespace(name string) (*corev1.Namespace, error)
+	GetNamespaces() ([]*corev1.Namespace, error)
 }
 
 // NodeWatchFactory is an interface that ensures node components only use informers available in a
@@ -66,20 +66,20 @@ type NodeWatchFactory interface {
 	ClusterUserDefinedNetworkInformer() userdefinednetworkinformer.ClusterUserDefinedNetworkInformer
 	RouteAdvertisementsInformer() routeadvertisementsinformer.RouteAdvertisementsInformer
 
-	GetPods(namespace string) ([]*kapi.Pod, error)
-	GetPod(namespace, name string) (*kapi.Pod, error)
-	GetAllPods() ([]*kapi.Pod, error)
-	GetNamespaces() ([]*kapi.Namespace, error)
-	GetNode(name string) (*kapi.Node, error)
-	GetNodes() ([]*kapi.Node, error)
-	ListNodes(selector labels.Selector) ([]*kapi.Node, error)
+	GetPods(namespace string) ([]*corev1.Pod, error)
+	GetPod(namespace, name string) (*corev1.Pod, error)
+	GetAllPods() ([]*corev1.Pod, error)
+	GetNamespaces() ([]*corev1.Namespace, error)
+	GetNode(name string) (*corev1.Node, error)
+	GetNodes() ([]*corev1.Node, error)
+	ListNodes(selector labels.Selector) ([]*corev1.Node, error)
 
-	GetService(namespace, name string) (*kapi.Service, error)
-	GetServices() ([]*kapi.Service, error)
+	GetService(namespace, name string) (*corev1.Service, error)
+	GetServices() ([]*corev1.Service, error)
 	GetEndpointSlice(namespace, name string) (*discovery.EndpointSlice, error)
 	GetServiceEndpointSlices(namespace, svcName, network string) ([]*discovery.EndpointSlice, error)
 
-	GetNamespace(name string) (*kapi.Namespace, error)
+	GetNamespace(name string) (*corev1.Namespace, error)
 }
 
 type Shutdownable interface {

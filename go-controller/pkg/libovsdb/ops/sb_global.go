@@ -11,7 +11,7 @@ func GetSBGlobal(sbClient libovsdbclient.Client, sbGlobal *sbdb.SBGlobal) (*sbdb
 	found := []*sbdb.SBGlobal{}
 	opModel := operationModel{
 		Model:          sbGlobal,
-		ModelPredicate: func(item *sbdb.SBGlobal) bool { return true },
+		ModelPredicate: func(_ *sbdb.SBGlobal) bool { return true },
 		ExistingResult: &found,
 		ErrNotFound:    true,
 		BulkOp:         false,

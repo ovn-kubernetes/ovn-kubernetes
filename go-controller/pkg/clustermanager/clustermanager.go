@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"sync"
 
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
@@ -24,11 +23,6 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/unidling"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/healthcheck"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-)
-
-const (
-	// ID of the default network.
-	defaultNetworkID = 0
 )
 
 // ClusterManager structure is the object which manages the cluster nodes.
@@ -64,8 +58,12 @@ type ClusterManager struct {
 }
 
 // NewClusterManager creates a new cluster manager to manage the cluster nodes.
-func NewClusterManager(ovnClient *util.OVNClusterManagerClientset, wf *factory.WatchFactory,
-	identity string, wg *sync.WaitGroup, recorder record.EventRecorder) (*ClusterManager, error) {
+func NewClusterManager(
+	ovnClient *util.OVNClusterManagerClientset,
+	wf *factory.WatchFactory,
+	identity string,
+	recorder record.EventRecorder,
+) (*ClusterManager, error) {
 
 	wf = wf.ShallowClone()
 	defaultNetClusterController := newDefaultNetworkClusterController(&util.DefaultNetInfo{}, ovnClient, wf, recorder)

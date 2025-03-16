@@ -3,17 +3,18 @@ package zone_tracker
 import (
 	"context"
 	"fmt"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
 	"sync/atomic"
 	"time"
-
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	informerfactory "k8s.io/client-go/informers"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 func getNodeWithZone(nodeName, zoneName string) *corev1.Node {
@@ -49,7 +50,7 @@ var _ = Describe("Cluster Manager Zone Tracker", func() {
 		Eventually(func() bool {
 			zoneTracker.zonesLock.RLock()
 			defer zoneTracker.zonesLock.RUnlock()
-			return zoneTracker.zones.Equal(sets.New[string](expectedZones...))
+			return zoneTracker.zones.Equal(sets.New(expectedZones...))
 		}).Should(BeTrue(), fmt.Sprintf("expected zones %v", expectedZones))
 	}
 
@@ -61,7 +62,7 @@ var _ = Describe("Cluster Manager Zone Tracker", func() {
 			for nodeName := range zoneTracker.unknownZoneNodes {
 				nodeNames.Insert(nodeName)
 			}
-			return nodeNames.Equal(sets.New[string](expectedNodes...))
+			return nodeNames.Equal(sets.New(expectedNodes...))
 		}).Should(BeTrue(), fmt.Sprintf("expected unknown nodes %v", expectedNodes))
 	}
 
@@ -87,7 +88,7 @@ var _ = Describe("Cluster Manager Zone Tracker", func() {
 	BeforeEach(func() {
 		fakeClient = util.GetOVNClientset().GetClusterManagerClientset()
 		coreFactory := informerfactory.NewSharedInformerFactory(fakeClient.KubeClient, time.Second)
-		zoneTracker = NewZoneTracker(coreFactory.Core().V1().Nodes(), func(newZones sets.Set[string]) {
+		zoneTracker = NewZoneTracker(coreFactory.Core().V1().Nodes(), func(sets.Set[string]) {
 			subscribeCounter.Add(1)
 		})
 		// reduce timeout for testing

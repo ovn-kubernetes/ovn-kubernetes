@@ -6,8 +6,13 @@ import (
 	"time"
 
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	ktypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	adminpolicybasedrouteapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1"
@@ -16,12 +21,8 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/apbroute/gateway_info"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 
-	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	ktypes "k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/client-go/kubernetes/fake"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 const (
@@ -32,9 +33,9 @@ const (
 	network_status         = `[{"name":"foo","interface":"net1","ips":["%s"],"mac":"01:23:45:67:89:10"}]`
 )
 
-func newPolicy(policyName string, fromNSSelector *v1.LabelSelector, staticHopsGWIPs sets.Set[string], dynamicHopsNSSelector *v1.LabelSelector, dynamicHopsPodSelector *v1.LabelSelector, bfdEnabled bool) *adminpolicybasedrouteapi.AdminPolicyBasedExternalRoute {
+func newPolicy(policyName string, fromNSSelector *metav1.LabelSelector, staticHopsGWIPs sets.Set[string], dynamicHopsNSSelector *metav1.LabelSelector, dynamicHopsPodSelector *metav1.LabelSelector, bfdEnabled bool) *adminpolicybasedrouteapi.AdminPolicyBasedExternalRoute {
 	p := adminpolicybasedrouteapi.AdminPolicyBasedExternalRoute{
-		ObjectMeta: v1.ObjectMeta{Name: policyName},
+		ObjectMeta: metav1.ObjectMeta{Name: policyName},
 		Spec: adminpolicybasedrouteapi.AdminPolicyBasedExternalRouteSpec{
 			From: adminpolicybasedrouteapi.ExternalNetworkSource{
 				NamespaceSelector: *fromNSSelector,
@@ -61,31 +62,31 @@ func newPolicy(policyName string, fromNSSelector *v1.LabelSelector, staticHopsGW
 }
 
 func deletePolicy(policyName string, fakeRouteClient *adminpolicybasedrouteclient.Clientset) {
-	err = fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Delete(context.TODO(), policyName, v1.DeleteOptions{})
+	err = fakeRouteClient.K8sV1().AdminPolicyBasedExternalRoutes().Delete(context.TODO(), policyName, metav1.DeleteOptions{})
 	Expect(err).NotTo(HaveOccurred())
 }
 
 func deleteNamespace(namespaceName string, fakeClient *fake.Clientset) {
-	ns, err := fakeClient.CoreV1().Namespaces().Get(context.Background(), namespaceName, v1.GetOptions{})
+	ns, err := fakeClient.CoreV1().Namespaces().Get(context.Background(), namespaceName, metav1.GetOptions{})
 	Expect(err).NotTo(HaveOccurred())
-	ns.ObjectMeta.DeletionTimestamp = &v1.Time{Time: time.Now()}
-	_, err = fakeClient.CoreV1().Namespaces().Update(context.Background(), ns, v1.UpdateOptions{})
+	ns.ObjectMeta.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+	_, err = fakeClient.CoreV1().Namespaces().Update(context.Background(), ns, metav1.UpdateOptions{})
 	Expect(err).NotTo(HaveOccurred())
-	err = fakeClient.CoreV1().Namespaces().Delete(context.Background(), namespaceName, v1.DeleteOptions{})
+	err = fakeClient.CoreV1().Namespaces().Delete(context.Background(), namespaceName, metav1.DeleteOptions{})
 	Expect(err).NotTo(HaveOccurred())
 }
 
 func createNamespace(namespace *corev1.Namespace) {
-	_, err := fakeClient.CoreV1().Namespaces().Create(context.Background(), namespace, v1.CreateOptions{})
+	_, err := fakeClient.CoreV1().Namespaces().Create(context.Background(), namespace, metav1.CreateOptions{})
 	Expect(err).NotTo(HaveOccurred())
 }
 
 func updateNamespaceLabel(namespaceName string, labels map[string]string, fakeClient *fake.Clientset) {
-	ns, err := fakeClient.CoreV1().Namespaces().Get(context.TODO(), namespaceName, v1.GetOptions{})
+	ns, err := fakeClient.CoreV1().Namespaces().Get(context.TODO(), namespaceName, metav1.GetOptions{})
 	Expect(err).NotTo(HaveOccurred())
 	incrementResourceVersion(ns)
 	ns.Labels = labels
-	_, err = fakeClient.CoreV1().Namespaces().Update(context.Background(), ns, v1.UpdateOptions{})
+	_, err = fakeClient.CoreV1().Namespaces().Update(context.Background(), ns, metav1.UpdateOptions{})
 	Expect(err).NotTo(HaveOccurred())
 }
 
@@ -159,17 +160,17 @@ var _ = Describe("OVN External Gateway namespace", func() {
 		targetNamespace2Match = map[string]string{"name": targetNamespaceName2}
 
 		namespaceGW = &corev1.Namespace{
-			ObjectMeta: v1.ObjectMeta{Name: gatewayNamespaceName,
+			ObjectMeta: metav1.ObjectMeta{Name: gatewayNamespaceName,
 				Labels: gatewayNamespaceMatch}}
 		namespaceTarget = &corev1.Namespace{
-			ObjectMeta: v1.ObjectMeta{Name: targetNamespaceName,
+			ObjectMeta: metav1.ObjectMeta{Name: targetNamespaceName,
 				Labels: map[string]string{"name": targetNamespaceName, "match": targetNamespaceLabel}},
 		}
 		targetPod1 = newPod("pod_target1", namespaceTarget.Name, "192.169.10.1",
 			map[string]string{"key": "pod", "name": "pod_target1"})
 
 		namespaceTarget2 = &corev1.Namespace{
-			ObjectMeta: v1.ObjectMeta{Name: targetNamespaceName2,
+			ObjectMeta: metav1.ObjectMeta{Name: targetNamespaceName2,
 				Labels: map[string]string{"name": targetNamespaceName2, "match": targetNamespaceLabel}},
 		}
 		targetPod2 = newPod("pod_target2", namespaceTarget2.Name, "192.169.10.2",
@@ -177,16 +178,16 @@ var _ = Describe("OVN External Gateway namespace", func() {
 
 		dynamicPolicy = newPolicy(
 			"dynamic",
-			&v1.LabelSelector{MatchLabels: targetNamespace2Match},
+			&metav1.LabelSelector{MatchLabels: targetNamespace2Match},
 			nil,
-			&v1.LabelSelector{MatchLabels: gatewayNamespaceMatch},
-			&v1.LabelSelector{MatchLabels: map[string]string{"name": "pod"}},
+			&metav1.LabelSelector{MatchLabels: gatewayNamespaceMatch},
+			&metav1.LabelSelector{MatchLabels: map[string]string{"name": "pod"}},
 			false,
 		)
 
 		staticPolicy = newPolicy(
 			"static",
-			&v1.LabelSelector{MatchLabels: targetNamespace1Match},
+			&metav1.LabelSelector{MatchLabels: targetNamespace1Match},
 			sets.New(staticHopGWIP),
 			nil,
 			nil,
@@ -194,7 +195,7 @@ var _ = Describe("OVN External Gateway namespace", func() {
 		)
 
 		annotatedPodGW = &corev1.Pod{
-			ObjectMeta: v1.ObjectMeta{Name: "annotatedPod", Namespace: namespaceGW.Name,
+			ObjectMeta: metav1.ObjectMeta{Name: "annotatedPod", Namespace: namespaceGW.Name,
 				Labels: map[string]string{"name": "annotatedPod"},
 				Annotations: map[string]string{"k8s.ovn.org/routing-namespaces": "test",
 					"k8s.ovn.org/routing-network": "",
@@ -204,7 +205,7 @@ var _ = Describe("OVN External Gateway namespace", func() {
 		}
 
 		podGW = &corev1.Pod{
-			ObjectMeta: v1.ObjectMeta{Name: "pod", Namespace: namespaceGW.Name,
+			ObjectMeta: metav1.ObjectMeta{Name: "pod", Namespace: namespaceGW.Name,
 				Labels:      map[string]string{"name": "pod"},
 				Annotations: map[string]string{nettypes.NetworkStatusAnnot: fmt.Sprintf(network_status, dynamicHopHostNetPodIP)}},
 			Status: corev1.PodStatus{PodIPs: []corev1.PodIP{{IP: dynamicHopHostNetPodIP}}, Phase: corev1.PodRunning},
@@ -283,10 +284,10 @@ var _ = Describe("OVN External Gateway namespace", func() {
 			It("registers a new namespace with one policy with dynamic GWs and the IP of an annotated pod", func() {
 				dynamicPolicy = newPolicy(
 					"dynamic",
-					&v1.LabelSelector{MatchLabels: targetNamespace2Match},
+					&metav1.LabelSelector{MatchLabels: targetNamespace2Match},
 					nil,
-					&v1.LabelSelector{MatchLabels: gatewayNamespaceMatch},
-					&v1.LabelSelector{},
+					&metav1.LabelSelector{MatchLabels: gatewayNamespaceMatch},
+					&metav1.LabelSelector{},
 					false,
 				)
 				initController([]runtime.Object{namespaceTarget2, targetPod2, namespaceGW, podGW, annotatedPodGW}, []runtime.Object{dynamicPolicy})
@@ -409,7 +410,7 @@ var _ = Describe("OVN External Gateway namespace", func() {
 		It("validates that a namespace is targeted by an existing policy after its labels are updated to match "+
 			"the policy's label selector", func() {
 			namespaceTarget := &corev1.Namespace{
-				ObjectMeta: v1.ObjectMeta{Name: "test",
+				ObjectMeta: metav1.ObjectMeta{Name: "test",
 					Labels: map[string]string{"name": "test"}},
 			}
 			targetPod := newPod("pod_target1", namespaceTarget.Name, "192.169.10.1",
@@ -489,10 +490,10 @@ var _ = Describe("OVN External Gateway namespace", func() {
 		It("validates that a namespace can't be targeted by 2 policies", func() {
 			dynamicPolicy = newPolicy(
 				"dynamic",
-				&v1.LabelSelector{MatchLabels: map[string]string{"extra": "label"}},
+				&metav1.LabelSelector{MatchLabels: map[string]string{"extra": "label"}},
 				nil,
-				&v1.LabelSelector{MatchLabels: gatewayNamespaceMatch},
-				&v1.LabelSelector{MatchLabels: map[string]string{"name": "pod"}},
+				&metav1.LabelSelector{MatchLabels: gatewayNamespaceMatch},
+				&metav1.LabelSelector{MatchLabels: map[string]string{"name": "pod"}},
 				false,
 			)
 			initController([]runtime.Object{namespaceTarget, namespaceGW, targetPod1, podGW}, []runtime.Object{staticPolicy, dynamicPolicy})

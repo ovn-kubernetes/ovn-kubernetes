@@ -6,15 +6,15 @@ import (
 	"sort"
 	"sync"
 
+	corev1 "k8s.io/api/core/v1"
+	coreinformers "k8s.io/client-go/informers/core/v1"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/klog/v2"
+
 	globalconfig "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-
-	v1 "k8s.io/api/core/v1"
-	coreinformers "k8s.io/client-go/informers/core/v1"
-	"k8s.io/client-go/tools/cache"
-	"k8s.io/klog/v2"
 )
 
 // nodeTracker watches all Node objects and maintains a cache of information relevant
@@ -91,18 +91,18 @@ func newNodeTracker(zone string, resyncFn func(nodes []nodeInfo), netInfo util.N
 func (nt *nodeTracker) Start(nodeInformer coreinformers.NodeInformer) (cache.ResourceEventHandlerRegistration, error) {
 	return nodeInformer.Informer().AddEventHandler(factory.WithUpdateHandlingForObjReplace(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
-			node, ok := obj.(*v1.Node)
+			node, ok := obj.(*corev1.Node)
 			if !ok {
 				return
 			}
 			nt.updateNode(node)
 		},
 		UpdateFunc: func(old, new interface{}) {
-			oldObj, ok := old.(*v1.Node)
+			oldObj, ok := old.(*corev1.Node)
 			if !ok {
 				return
 			}
-			newObj, ok := new.(*v1.Node)
+			newObj, ok := new.(*corev1.Node)
 			if !ok {
 				return
 			}
@@ -130,14 +130,14 @@ func (nt *nodeTracker) Start(nodeInformer coreinformers.NodeInformer) (cache.Res
 			}
 		},
 		DeleteFunc: func(obj interface{}) {
-			node, ok := obj.(*v1.Node)
+			node, ok := obj.(*corev1.Node)
 			if !ok {
 				tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
 				if !ok {
 					klog.Errorf("Couldn't understand non-tombstone object")
 					return
 				}
-				node, ok = tombstone.Obj.(*v1.Node)
+				node, ok = tombstone.Obj.(*corev1.Node)
 				if !ok {
 					klog.Errorf("Couldn't understand tombstone object")
 					return
@@ -207,7 +207,7 @@ func (nt *nodeTracker) removeNode(nodeName string) {
 // updateNode is called when a node's gateway router / switch / IPs have changed
 // The switch exists when the HostSubnet annotation is set.
 // The gateway router will exist sometime after the L3Gateway annotation is set.
-func (nt *nodeTracker) updateNode(node *v1.Node) {
+func (nt *nodeTracker) updateNode(node *corev1.Node) {
 	klog.V(2).Infof("Processing possible switch / router updates for node %s", node.Name)
 	var hsn []*net.IPNet
 	var err error

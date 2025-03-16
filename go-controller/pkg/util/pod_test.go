@@ -6,10 +6,10 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
-	v1mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/client-go/listers/core/v1"
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 
 	kubemocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube/mocks"
+	v1mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/client-go/listers/core/v1"
 )
 
 func TestUpdatePodWithAllocationOrRollback(t *testing.T) {
@@ -72,10 +72,10 @@ func TestUpdatePodWithAllocationOrRollback(t *testing.T) {
 				rollbackDone = true
 			}
 
-			pod := &v1.Pod{}
+			pod := &corev1.Pod{}
 
 			var allocated bool
-			allocate := func(pod *v1.Pod) (*v1.Pod, func(), error) {
+			allocate := func(pod *corev1.Pod) (*corev1.Pod, func(), error) {
 				allocated = true
 				if tt.allocateErr {
 					return pod, rollback, errors.New("Allocate error")
@@ -98,7 +98,7 @@ func TestUpdatePodWithAllocationOrRollback(t *testing.T) {
 				kubeMock.On("UpdatePodStatus", pod).Return(nil)
 			}
 
-			err := UpdatePodWithRetryOrRollback(podListerMock, kubeMock, &v1.Pod{}, allocate)
+			err := UpdatePodWithRetryOrRollback(podListerMock, kubeMock, &corev1.Pod{}, allocate)
 
 			if (err != nil) != tt.expectErr {
 				t.Errorf("UpdatePodWithAllocationOrRollback() error = %v, expectErr %v", err, tt.expectErr)

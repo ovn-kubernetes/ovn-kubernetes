@@ -8,18 +8,18 @@ import (
 	"sync/atomic"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
 	informerfactory "k8s.io/client-go/informers"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 func getDefaultConfig[T any](reconcileCounter *atomic.Uint64) *ControllerConfig[T] {
@@ -30,7 +30,7 @@ func getDefaultConfig[T any](reconcileCounter *atomic.Uint64) *ControllerConfig[
 			}
 			return !reflect.DeepEqual(oldObj, newObj)
 		},
-		Reconcile: func(key string) error {
+		Reconcile: func(string) error {
 			reconcileCounter.Add(1)
 			return nil
 		},
@@ -50,7 +50,7 @@ var _ = Describe("Level-driven controller", func() {
 		namespace1Name = "namespace1"
 	)
 
-	startController := func(config *ControllerConfig[v1.Pod], initialSync func() error, objects ...runtime.Object) {
+	startController := func(config *ControllerConfig[corev1.Pod], initialSync func() error, objects ...runtime.Object) {
 		fakeClient = util.GetOVNClientset(objects...).GetClusterManagerClientset()
 		coreFactory := informerfactory.NewSharedInformerFactory(fakeClient.KubeClient, time.Second)
 
@@ -59,7 +59,7 @@ var _ = Describe("Level-driven controller", func() {
 		if config.RateLimiter == nil {
 			config.RateLimiter = workqueue.NewTypedItemFastSlowRateLimiter[string](100*time.Millisecond, 1*time.Second, 5)
 		}
-		controller = NewController[v1.Pod]("controller-name", config)
+		controller = NewController("controller-name", config)
 
 		coreFactory.Start(stopChan)
 
@@ -67,8 +67,8 @@ var _ = Describe("Level-driven controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 	}
 
-	getDefaultConfig := func() *ControllerConfig[v1.Pod] {
-		return getDefaultConfig[v1.Pod](&reconcileCounter)
+	getDefaultConfig := func() *ControllerConfig[corev1.Pod] {
+		return getDefaultConfig[corev1.Pod](&reconcileCounter)
 	}
 
 	checkReconcileCounter := func(expected int) {
@@ -98,10 +98,10 @@ var _ = Describe("Level-driven controller", func() {
 	})
 	It("handles initial objects once", func() {
 		namespace := util.NewNamespace(namespace1Name)
-		pod1 := &v1.Pod{
+		pod1 := &corev1.Pod{
 			ObjectMeta: util.NewObjectMeta("pod1", namespace.Name),
 		}
-		pod2 := &v1.Pod{
+		pod2 := &corev1.Pod{
 			ObjectMeta: util.NewObjectMeta("pod2", namespace.Name),
 		}
 		startController(getDefaultConfig(), nil, namespace, pod1, pod2)
@@ -109,12 +109,12 @@ var _ = Describe("Level-driven controller", func() {
 	})
 	It("retries on failure", func() {
 		namespace := util.NewNamespace(namespace1Name)
-		pod := &v1.Pod{
+		pod := &corev1.Pod{
 			ObjectMeta: util.NewObjectMeta("pod1", namespace.Name),
 		}
 		config := getDefaultConfig()
 		failureCounter := atomic.Uint64{}
-		config.Reconcile = func(key string) error {
+		config.Reconcile = func(string) error {
 			failureCounter.Add(1)
 			if failureCounter.Load() < 3 {
 				return fmt.Errorf("failure")
@@ -128,12 +128,12 @@ var _ = Describe("Level-driven controller", func() {
 	})
 	It("drops key after maxRetries", func() {
 		namespace := util.NewNamespace(namespace1Name)
-		pod := &v1.Pod{
+		pod := &corev1.Pod{
 			ObjectMeta: util.NewObjectMeta("pod1", namespace.Name),
 		}
 		config := getDefaultConfig()
 		failureCounter := atomic.Uint64{}
-		config.Reconcile = func(key string) error {
+		config.Reconcile = func(string) error {
 			failureCounter.Add(1)
 			return fmt.Errorf("failure")
 		}
@@ -153,11 +153,11 @@ var _ = Describe("Level-driven controller", func() {
 	})
 	It("ignores events when ObjNeedsUpdate returns false", func() {
 		namespace := util.NewNamespace(namespace1Name)
-		pod := &v1.Pod{
+		pod := &corev1.Pod{
 			ObjectMeta: util.NewObjectMeta("pod1", namespace.Name),
 		}
 		config := getDefaultConfig()
-		config.ObjNeedsUpdate = func(oldObj, newObj *v1.Pod) bool {
+		config.ObjNeedsUpdate = func(oldObj, _ *corev1.Pod) bool {
 			// only return true on add
 			return oldObj == nil
 		}
@@ -173,7 +173,7 @@ var _ = Describe("Level-driven controller", func() {
 	})
 	It("runs initialSync", func() {
 		namespace := util.NewNamespace(namespace1Name)
-		pod := &v1.Pod{
+		pod := &corev1.Pod{
 			ObjectMeta: util.NewObjectMeta("pod1", namespace.Name),
 		}
 		config := getDefaultConfig()
@@ -192,10 +192,10 @@ var _ = Describe("Level-driven controller", func() {
 	})
 	It("handles events after InitialSync", func() {
 		namespace := util.NewNamespace(namespace1Name)
-		pod1 := &v1.Pod{
+		pod1 := &corev1.Pod{
 			ObjectMeta: util.NewObjectMeta("pod1", namespace.Name),
 		}
-		pod2 := &v1.Pod{
+		pod2 := &corev1.Pod{
 			ObjectMeta: util.NewObjectMeta("pod2", namespace.Name),
 		}
 		config := getDefaultConfig()
@@ -219,12 +219,12 @@ var _ = Describe("Level-driven controller", func() {
 		pod2Key, _ := cache.MetaNamespaceKeyFunc(pod2)
 		Eventually(func() sets.Set[string] {
 			keys := sets.New[string]()
-			updatedPods.Range(func(key, value any) bool {
+			updatedPods.Range(func(key, _ any) bool {
 				keys.Insert(key.(string))
 				return true
 			})
 			return keys
-		}).Should(BeEquivalentTo(sets.New[string](pod1Key, pod2Key)))
+		}).Should(BeEquivalentTo(sets.New(pod1Key, pod2Key)))
 	})
 })
 
@@ -243,7 +243,7 @@ var _ = Describe("Level-driven controllers with shared initialSync", func() {
 		namespace1Name = "namespace1"
 	)
 
-	startController := func(podConfig *ControllerConfig[v1.Pod], nsConfig *ControllerConfig[v1.Namespace], initialSync func() error, objects ...runtime.Object) {
+	startController := func(podConfig *ControllerConfig[corev1.Pod], nsConfig *ControllerConfig[corev1.Namespace], initialSync func() error, objects ...runtime.Object) {
 		fakeClient = util.GetOVNClientset(objects...).GetClusterManagerClientset()
 		coreFactory := informerfactory.NewSharedInformerFactory(fakeClient.KubeClient, time.Second)
 
@@ -252,14 +252,14 @@ var _ = Describe("Level-driven controllers with shared initialSync", func() {
 		if podConfig.RateLimiter == nil {
 			podConfig.RateLimiter = workqueue.NewTypedItemFastSlowRateLimiter[string](100*time.Millisecond, 1*time.Second, 5)
 		}
-		podController = NewController[v1.Pod]("podController", podConfig)
+		podController = NewController("podController", podConfig)
 
 		nsConfig.Informer = coreFactory.Core().V1().Namespaces().Informer()
 		nsConfig.Lister = coreFactory.Core().V1().Namespaces().Lister().List
 		if nsConfig.RateLimiter == nil {
 			nsConfig.RateLimiter = workqueue.NewTypedItemFastSlowRateLimiter[string](100*time.Millisecond, 1*time.Second, 5)
 		}
-		namespaceController = NewController[v1.Namespace]("namespaceController", nsConfig)
+		namespaceController = NewController("namespaceController", nsConfig)
 
 		coreFactory.Start(stopChan)
 
@@ -292,19 +292,19 @@ var _ = Describe("Level-driven controllers with shared initialSync", func() {
 
 	It("handle initial objects once", func() {
 		namespace := util.NewNamespace(namespace1Name)
-		pod1 := &v1.Pod{
+		pod1 := &corev1.Pod{
 			ObjectMeta: util.NewObjectMeta("pod1", namespace.Name),
 		}
-		pod2 := &v1.Pod{
+		pod2 := &corev1.Pod{
 			ObjectMeta: util.NewObjectMeta("pod2", namespace.Name),
 		}
-		startController(getDefaultConfig[v1.Pod](&reconcilePodCounter), getDefaultConfig[v1.Namespace](&reconcileNsCounter),
+		startController(getDefaultConfig[corev1.Pod](&reconcilePodCounter), getDefaultConfig[corev1.Namespace](&reconcileNsCounter),
 			nil, namespace, pod1, pod2)
 		checkReconcileCountersConsistently(2, 1)
 	})
 	It("run InitialSync", func() {
 		namespace := util.NewNamespace(namespace1Name)
-		pod := &v1.Pod{
+		pod := &corev1.Pod{
 			ObjectMeta: util.NewObjectMeta("pod1", namespace.Name),
 		}
 		synced := atomic.Bool{}
@@ -315,7 +315,7 @@ var _ = Describe("Level-driven controllers with shared initialSync", func() {
 			synced.Store(true)
 			return nil
 		}
-		startController(getDefaultConfig[v1.Pod](&reconcilePodCounter), getDefaultConfig[v1.Namespace](&reconcileNsCounter),
+		startController(getDefaultConfig[corev1.Pod](&reconcilePodCounter), getDefaultConfig[corev1.Namespace](&reconcileNsCounter),
 			initialSync, namespace, pod)
 		// start only returns after initial sync is finished, we can check synced value immediately
 		Expect(synced.Load()).To(BeEquivalentTo(true))
@@ -323,13 +323,13 @@ var _ = Describe("Level-driven controllers with shared initialSync", func() {
 	})
 	It("handle events after initialSync", func() {
 		namespace := util.NewNamespace(namespace1Name)
-		pod1 := &v1.Pod{
+		pod1 := &corev1.Pod{
 			ObjectMeta: util.NewObjectMeta("pod1", namespace.Name),
 		}
-		pod2 := &v1.Pod{
+		pod2 := &corev1.Pod{
 			ObjectMeta: util.NewObjectMeta("pod2", namespace.Name),
 		}
-		podConfig := getDefaultConfig[v1.Pod](&reconcilePodCounter)
+		podConfig := getDefaultConfig[corev1.Pod](&reconcilePodCounter)
 		updatedObjs := sync.Map{}
 		podConfig.Reconcile = func(key string) error {
 			reconcilePodCounter.Add(1)
@@ -337,7 +337,7 @@ var _ = Describe("Level-driven controllers with shared initialSync", func() {
 			updatedObjs.LoadOrStore(key, true)
 			return nil
 		}
-		nsConfig := getDefaultConfig[v1.Namespace](&reconcileNsCounter)
+		nsConfig := getDefaultConfig[corev1.Namespace](&reconcileNsCounter)
 		nsConfig.Reconcile = func(key string) error {
 			reconcileNsCounter.Add(1)
 			// add keys that were reconciled
@@ -363,12 +363,12 @@ var _ = Describe("Level-driven controllers with shared initialSync", func() {
 		pod2Key, _ := cache.MetaNamespaceKeyFunc(pod2)
 		Eventually(func() sets.Set[string] {
 			keys := sets.New[string]()
-			updatedObjs.Range(func(key, value any) bool {
+			updatedObjs.Range(func(key, _ any) bool {
 				keys.Insert(key.(string))
 				return true
 			})
 			return keys
-		}).Should(BeEquivalentTo(sets.New[string](pod1Key, pod2Key, namespace.Name)))
+		}).Should(BeEquivalentTo(sets.New(pod1Key, pod2Key, namespace.Name)))
 		fmt.Println(reconcilePodCounter.Load())
 		fmt.Println(reconcileNsCounter.Load())
 	})

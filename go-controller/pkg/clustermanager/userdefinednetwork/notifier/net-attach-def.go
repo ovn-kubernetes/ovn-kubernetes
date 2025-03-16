@@ -1,10 +1,10 @@
 package notifier
 
 import (
-	"k8s.io/client-go/util/workqueue"
-
 	netv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	netv1infomer "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/informers/externalversions/k8s.cni.cncf.io/v1"
+
+	"k8s.io/client-go/util/workqueue"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
 )

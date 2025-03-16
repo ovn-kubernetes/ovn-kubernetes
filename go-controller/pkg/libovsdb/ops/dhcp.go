@@ -2,7 +2,8 @@ package ops
 
 import (
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
-	libovsdb "github.com/ovn-org/libovsdb/ovsdb"
+	"github.com/ovn-org/libovsdb/ovsdb"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 )
 
@@ -11,7 +12,7 @@ type DHCPOptionsPredicate func(*nbdb.DHCPOptions) bool
 // CreateOrUpdateDhcpOptionsOps will configure logical switch port DHCPv4Options and DHCPv6Options fields with
 // options at dhcpv4Options and dhcpv6Options arguments and create/update DHCPOptions objects that matches the
 // pv4 and pv6 predicates. The missing DHCP options will default to nil in the LSP attributes.
-func CreateOrUpdateDhcpOptionsOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, lsp *nbdb.LogicalSwitchPort, dhcpIPv4Options, dhcpIPv6Options *nbdb.DHCPOptions) ([]libovsdb.Operation, error) {
+func CreateOrUpdateDhcpOptionsOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, lsp *nbdb.LogicalSwitchPort, dhcpIPv4Options, dhcpIPv6Options *nbdb.DHCPOptions) ([]ovsdb.Operation, error) {
 	opModels := []operationModel{}
 	if dhcpIPv4Options != nil {
 		opModel := operationModel{

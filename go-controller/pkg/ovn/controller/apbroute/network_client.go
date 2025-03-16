@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ktypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -16,6 +16,7 @@ import (
 
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
 	"github.com/ovn-org/libovsdb/ovsdb"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	adminpolicybasedroutelisters "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/listers/adminpolicybasedroute/v1"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
@@ -29,7 +30,7 @@ import (
 
 type networkClient interface {
 	deleteGatewayIPs(podNsName ktypes.NamespacedName, toBeDeletedGWIPs, toBeKept sets.Set[string]) error
-	addGatewayIPs(pod *v1.Pod, egress *gateway_info.GatewayInfoList) (bool, error)
+	addGatewayIPs(pod *corev1.Pod, egress *gateway_info.GatewayInfoList) (bool, error)
 }
 
 type northBoundClient struct {
@@ -72,7 +73,7 @@ func (nb *northBoundClient) findLogicalRoutersWithPredicate(p func(item *nbdb.Lo
 }
 
 // When IC is enabled, isNodeInLocalZone returns whether the provided node is in a zone local to the zone controller
-func (nb *northBoundClient) isPodInLocalZone(pod *v1.Pod) (bool, error) {
+func (nb *northBoundClient) isPodInLocalZone(pod *corev1.Pod) (bool, error) {
 	node, err := nb.nodeLister.Get(pod.Spec.NodeName)
 	if err != nil {
 		return false, err
@@ -170,7 +171,7 @@ func (nb *northBoundClient) deleteGatewayIPs(podNsName ktypes.NamespacedName, to
 // * If the pod's `PodIPs` status field is empty
 // This value is used to signal the caller that the gateway IPs were not applied to the pod for reasons that are not errors.
 // The error value is populated when an error occurs as usual.
-func (nb *northBoundClient) addGatewayIPs(pod *v1.Pod, egress *gateway_info.GatewayInfoList) (bool, error) {
+func (nb *northBoundClient) addGatewayIPs(pod *corev1.Pod, egress *gateway_info.GatewayInfoList) (bool, error) {
 	if util.PodCompleted(pod) || util.PodWantsHostNetwork(pod) {
 		return false, nil
 	}
@@ -667,13 +668,13 @@ func GetHybridRouteAddrSetDbIDs(nodeName, controller string) *libovsdbops.DbObje
 
 func (c *conntrackClient) deleteGatewayIPs(podNsName ktypes.NamespacedName, _, toBeKept sets.Set[string]) error {
 	// loop through all the IPs on the annotations; ARP for their MACs and form an allowlist
-	return util.SyncConntrackForExternalGateways(toBeKept, nil, func() ([]*v1.Pod, error) {
+	return util.SyncConntrackForExternalGateways(toBeKept, nil, func() ([]*corev1.Pod, error) {
 		pod, err := c.podLister.Pods(podNsName.Namespace).Get(podNsName.Name)
-		return []*v1.Pod{pod}, err
+		return []*corev1.Pod{pod}, err
 	})
 }
 
 // addGatewayIPs is a NOP (no operation) in the conntrack client as it does not add any entry to the conntrack table.
-func (c *conntrackClient) addGatewayIPs(pod *v1.Pod, egress *gateway_info.GatewayInfoList) (bool, error) {
+func (c *conntrackClient) addGatewayIPs(_ *corev1.Pod, _ *gateway_info.GatewayInfoList) (bool, error) {
 	return true, nil
 }

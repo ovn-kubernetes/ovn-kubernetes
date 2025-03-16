@@ -1,12 +1,14 @@
 package ops
 
 import (
-	"golang.org/x/net/context"
 	"hash/fnv"
+
+	"golang.org/x/net/context"
 
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
 	"github.com/ovn-org/libovsdb/model"
-	libovsdb "github.com/ovn-org/libovsdb/ovsdb"
+	"github.com/ovn-org/libovsdb/ovsdb"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 )
@@ -74,7 +76,7 @@ func ListSampleCollectors(nbClient libovsdbclient.Client) ([]*nbdb.SampleCollect
 	return collectors, err
 }
 
-func CreateOrUpdateSamplingAppsOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, samplingApps ...*nbdb.SamplingApp) ([]libovsdb.Operation, error) {
+func CreateOrUpdateSamplingAppsOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, samplingApps ...*nbdb.SamplingApp) ([]ovsdb.Operation, error) {
 	opModels := make([]operationModel, 0, len(samplingApps))
 	for i := range samplingApps {
 		// can't use i in the predicate, for loop replaces it in-memory

@@ -6,11 +6,12 @@ import (
 	"hash/fnv"
 	"sync"
 
+	ocpnetworkclientset "github.com/openshift/client-go/network/clientset/versioned"
+
 	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/sets"
 	hashutil "k8s.io/kubernetes/pkg/util/hash"
 
-	ocpnetworkclientset "github.com/openshift/client-go/network/clientset/versioned"
 	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 

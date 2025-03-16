@@ -11,6 +11,7 @@ import (
 
 	"github.com/k8snetworkplumbingwg/sriovnet"
 	"github.com/vishvananda/netlink"
+
 	"k8s.io/klog/v2"
 )
 

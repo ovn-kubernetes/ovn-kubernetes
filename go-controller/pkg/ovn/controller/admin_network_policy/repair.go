@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"time"
 
-	libovsdbclient "github.com/ovn-org/libovsdb/client"
-	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/klog/v2"
 	anpapi "sigs.k8s.io/network-policy-api/apis/v1alpha1"
+
+	libovsdbclient "github.com/ovn-org/libovsdb/client"
+
+	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 )
 
 // repairAdminNetworkPolicies is called at startup and as the name suggests

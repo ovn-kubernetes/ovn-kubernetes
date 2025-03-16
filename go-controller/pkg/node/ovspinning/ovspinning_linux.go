@@ -7,14 +7,17 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"golang.org/x/sys/unix"
+
 	"k8s.io/klog/v2"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 // These variables are meant to be used in unit tests
@@ -45,7 +48,9 @@ func Run(stopCh <-chan struct{}) {
 
 	var fsnotifyEvents chan fsnotify.Event
 	var fsnotifyErrors chan error
-	fileWatcher, err := createFileWatcherFor(featureEnablerFile)
+
+	// Watch the parent folder, as it's the only way to get events when the file is deleted and recreated.
+	fileWatcher, err := createFileWatcherFor(filepath.Dir(featureEnablerFile))
 	if err != nil {
 		klog.Warningf("Can't create a watcher for %s. Pinning will not stop by deleting it: %v", featureEnablerFile, err)
 		fsnotifyEvents = make(chan fsnotify.Event)
@@ -66,20 +71,21 @@ func Run(stopCh <-chan struct{}) {
 				continue
 			}
 
-			if event.Op.Has(fsnotify.Remove) {
-				klog.Infof("File [%s] has been removed. To re-enable the feature, restart ovnkube-node", featureEnablerFile)
-				return
+			// Since we are watching the entire folder, skip all the events not related to the enabler file
+			if event.Name != featureEnablerFile {
+				continue
 			}
 
 			isFeatureEnabled, err = isFileNotEmpty(featureEnablerFile)
 			if err != nil {
 				klog.Warningf("Error while reading [%s]: %v", featureEnablerFile, err)
-				return
+				continue
 			}
 
-			if !isFeatureEnabled {
-				klog.Infof("File [%s] is empty or missing. To re-enable the feature, restart ovnkube-node", featureEnablerFile)
-				return
+			if isFeatureEnabled {
+				klog.Infof("OVS daemon CPU pinning feature enabled")
+			} else {
+				klog.Infof("OVS daemon CPU pinning feature NOT enabled")
 			}
 
 		case err, ok := <-fsnotifyErrors:

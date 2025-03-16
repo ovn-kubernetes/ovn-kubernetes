@@ -7,18 +7,24 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
+	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 )
 
 func TestCreateDefaultRouteToExternal(t *testing.T) {
 
-	config.PrepareTestConfig()
+	if err := config.PrepareTestConfig(); err != nil {
+		t.Fatalf("failed to PrepareTestConfig: %v", err)
+	}
 	nodeName := "ovn-worker"
 
-	_, clusterSubnetV4, _ := net.ParseCIDR("10.128.0.0/16")
-	_, clusterSubnetV6, _ := net.ParseCIDR("fe00::/48")
-	config.Default.ClusterSubnets = []config.CIDRNetworkEntry{{clusterSubnetV4, 24}, {clusterSubnetV6, 64}}
+	clusterSubnetV4 := ovntest.MustParseIPNet("10.128.0.0/16")
+	clusterSubnetV6 := ovntest.MustParseIPNet("fe00::/48")
+	config.Default.ClusterSubnets = []config.CIDRNetworkEntry{
+		{CIDR: clusterSubnetV4, HostSubnetLength: 24},
+		{CIDR: clusterSubnetV6, HostSubnetLength: 64},
+	}
 
 	ovnClusterRouterName := types.OVNClusterRouter
 	gwRouterName := types.GWRouterPrefix + nodeName
@@ -188,8 +194,10 @@ func TestCreateDefaultRouteToExternal(t *testing.T) {
 			},
 			preTestAction: func() {
 				// Apply the new cluster subnets
-				config.Default.ClusterSubnets = []config.CIDRNetworkEntry{{newClusterSubnetV4, 24}, {newClusterSubnetV6, 64}}
-
+				config.Default.ClusterSubnets = []config.CIDRNetworkEntry{
+					{CIDR: newClusterSubnetV4, HostSubnetLength: 24},
+					{CIDR: newClusterSubnetV6, HostSubnetLength: 64},
+				}
 			},
 			expectedNbdb: libovsdbtest.TestSetup{
 				NBData: []libovsdbtest.TestData{

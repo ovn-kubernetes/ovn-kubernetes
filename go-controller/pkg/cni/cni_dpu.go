@@ -3,10 +3,10 @@ package cni
 import (
 	"fmt"
 
+	corev1listers "k8s.io/client-go/listers/core/v1"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-
-	corev1listers "k8s.io/client-go/listers/core/v1"
 )
 
 // updatePodDPUConnDetailsWithRetry update the pod annotation with the given connection details for the NAD in

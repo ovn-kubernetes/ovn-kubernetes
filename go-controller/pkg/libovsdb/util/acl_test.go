@@ -4,13 +4,14 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	v1 "k8s.io/api/core/v1"
+
+	corev1 "k8s.io/api/core/v1"
 )
 
 func TestConvertK8sProtocolToOVNProtocol(t *testing.T) {
 	testcases := []struct {
 		desc     string
-		protocol v1.Protocol
+		protocol corev1.Protocol
 		expected string
 	}{
 		{
@@ -35,12 +36,12 @@ func TestConvertK8sProtocolToOVNProtocol(t *testing.T) {
 		},
 	}
 	for _, tc := range testcases {
-		protocol := ConvertK8sProtocolToOVNProtocol(v1.Protocol(tc.protocol))
+		protocol := ConvertK8sProtocolToOVNProtocol(corev1.Protocol(tc.protocol))
 		if tc.expected == "" {
-			assert.Equal(t, len(protocol), 0)
+			assert.Empty(t, protocol)
 			continue
 		}
-		assert.Equal(t, protocol, tc.expected)
+		assert.Equal(t, tc.expected, protocol)
 	}
 }
 
@@ -161,10 +162,10 @@ func TestGetL4Match(t *testing.T) {
 	for _, tc := range testcases {
 		protocolPortsMap := getProtocolPortsMap(tc.portPolices)
 		if tc.expected == "" {
-			assert.Equal(t, len(protocolPortsMap), 0)
+			assert.Empty(t, protocolPortsMap)
 			continue
 		}
-		assert.Equal(t, len(protocolPortsMap), 1)
+		assert.Len(t, protocolPortsMap, 1)
 		assert.Contains(t, protocolPortsMap, tc.protocol)
 		l4Match := getL4Match(tc.protocol, protocolPortsMap[tc.protocol])
 		assert.Equal(t, tc.expected, l4Match)
@@ -290,7 +291,7 @@ func TestGetL3L4MatchesFromNamedPorts(t *testing.T) {
 		l3l4MatchPerProtocol := GetL3L4MatchesFromNamedPorts(tc.ports)
 		for i, expected := range tc.expected {
 			if expected == "" {
-				assert.Equal(t, len(l3l4MatchPerProtocol), 0)
+				assert.Empty(t, l3l4MatchPerProtocol)
 				continue
 			}
 			assert.Contains(t, l3l4MatchPerProtocol, tc.protocol[i])

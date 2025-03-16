@@ -5,8 +5,9 @@ import (
 	"net"
 	"testing"
 
-	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	utilnet "k8s.io/utils/net"
+
+	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 )
 
 const testNodeName string = "test"
@@ -73,7 +74,7 @@ func allocateNotExpected(sna SubnetAllocator, v4n, v6n int) error {
 	return nil
 }
 
-func expectNumSubnets(t *testing.T, sna SubnetAllocator, v4expected, v6expected uint64) error {
+func expectNumSubnets(sna SubnetAllocator, v4expected, v6expected uint64) error {
 	v4count, v6count := sna.Count()
 	if v4count != v4expected {
 		return fmt.Errorf("expected %d available v4 subnets but got %d", v4expected, v4count)
@@ -90,7 +91,7 @@ func TestAllocateSubnetIPv4(t *testing.T) {
 	if err != nil {
 		t.Fatal("Failed to initialize subnet allocator: ", err)
 	}
-	if err := expectNumSubnets(t, sna, 256, 0); err != nil {
+	if err := expectNumSubnets(sna, 256, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -110,7 +111,7 @@ func TestAllocateSubnetIPv6(t *testing.T) {
 	if err != nil {
 		t.Fatal("Failed to initialize subnet allocator: ", err)
 	}
-	if err := expectNumSubnets(t, sna, 0, 65536); err != nil {
+	if err := expectNumSubnets(sna, 0, 65536); err != nil {
 		t.Fatal(err)
 	}
 
@@ -142,7 +143,7 @@ func TestAllocateSubnetLargeHostBitsIPv4(t *testing.T) {
 	if err != nil {
 		t.Fatal("Failed to initialize subnet allocator: ", err)
 	}
-	if err := expectNumSubnets(t, sna, 64, 0); err != nil {
+	if err := expectNumSubnets(sna, 64, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -162,7 +163,7 @@ func TestAllocateSubnetLargeHostBitsIPv6(t *testing.T) {
 	if err != nil {
 		t.Fatal("Failed to initialize subnet allocator: ", err)
 	}
-	if err := expectNumSubnets(t, sna, 0, 4096); err != nil {
+	if err := expectNumSubnets(sna, 0, 4096); err != nil {
 		t.Fatal(err)
 	}
 
@@ -181,7 +182,7 @@ func TestAllocateSubnetLargeSubnetBitsIPv4(t *testing.T) {
 	if err != nil {
 		t.Fatal("Failed to initialize subnet allocator: ", err)
 	}
-	if err := expectNumSubnets(t, sna, 1024, 0); err != nil {
+	if err := expectNumSubnets(sna, 1024, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -218,7 +219,7 @@ func TestAllocateSubnetLargeSubnetBitsIPv6(t *testing.T) {
 	if err != nil {
 		t.Fatal("Failed to initialize subnet allocator: ", err)
 	}
-	if err := expectNumSubnets(t, sna, 0, 68719476736); err != nil {
+	if err := expectNumSubnets(sna, 0, 68719476736); err != nil {
 		t.Fatal(err)
 	}
 
@@ -253,7 +254,7 @@ func TestAllocateSubnetOverlappingIPv4(t *testing.T) {
 	if err != nil {
 		t.Fatal("Failed to initialize subnet allocator: ", err)
 	}
-	if err := expectNumSubnets(t, sna, 256, 0); err != nil {
+	if err := expectNumSubnets(sna, 256, 0); err != nil {
 		t.Fatal(err)
 	}
 

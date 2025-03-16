@@ -7,23 +7,18 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	kubetest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
-
 	"github.com/stretchr/testify/assert"
-	kapi "k8s.io/api/core/v1"
-	v1 "k8s.io/api/core/v1"
+
+	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	clientsetfake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/utils/ptr"
-)
 
-var (
-	nodeA = "node-a"
-	nodeB = "node-b"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	kubetest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 )
 
 // Go Daddy Class 2 CA
@@ -118,22 +113,22 @@ func TestNewClientset(t *testing.T) {
 func TestIsClusterIPSet(t *testing.T) {
 	tests := []struct {
 		desc   string
-		inp    v1.Service
+		inp    corev1.Service
 		expOut bool
 	}{
 		{
 			desc: "false: test when ClusterIP set to ClusterIPNone",
-			inp: v1.Service{
-				Spec: v1.ServiceSpec{
-					ClusterIP: v1.ClusterIPNone,
+			inp: corev1.Service{
+				Spec: corev1.ServiceSpec{
+					ClusterIP: corev1.ClusterIPNone,
 				},
 			},
 			expOut: false,
 		},
 		{
 			desc: "false: test when ClusterIP set to empty string",
-			inp: v1.Service{
-				Spec: v1.ServiceSpec{
+			inp: corev1.Service{
+				Spec: corev1.ServiceSpec{
 					ClusterIP: "",
 				},
 			},
@@ -141,8 +136,8 @@ func TestIsClusterIPSet(t *testing.T) {
 		},
 		{
 			desc: "true: test when ClusterIP set to NON-empty string",
-			inp: v1.Service{
-				Spec: v1.ServiceSpec{
+			inp: corev1.Service{
+				Spec: corev1.ServiceSpec{
 					ClusterIP: "blah",
 				},
 			},
@@ -153,7 +148,7 @@ func TestIsClusterIPSet(t *testing.T) {
 	for i, tc := range tests {
 		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
 			res := IsClusterIPSet(&tc.inp)
-			assert.Equal(t, res, tc.expOut)
+			assert.Equal(t, tc.expOut, res)
 		})
 	}
 }
@@ -161,13 +156,13 @@ func TestIsClusterIPSet(t *testing.T) {
 func TestValidateProtocol(t *testing.T) {
 	tests := []struct {
 		desc   string
-		inp    v1.Protocol
-		expOut v1.Protocol
+		inp    corev1.Protocol
+		expOut corev1.Protocol
 		expErr bool
 	}{
 		{
 			desc: "valid protocol SCTP",
-			inp:  v1.ProtocolSCTP,
+			inp:  corev1.ProtocolSCTP,
 		},
 		{
 			desc:   "invalid protocol -> blah",
@@ -190,13 +185,13 @@ func TestValidateProtocol(t *testing.T) {
 func TestServiceTypeHasClusterIP(t *testing.T) {
 	tests := []struct {
 		desc   string
-		inp    v1.Service
+		inp    corev1.Service
 		expOut bool
 	}{
 		{
 			desc: "true: test when Type set to `ClusterIP`",
-			inp: v1.Service{
-				Spec: v1.ServiceSpec{
+			inp: corev1.Service{
+				Spec: corev1.ServiceSpec{
 					Type: "ClusterIP",
 				},
 			},
@@ -204,8 +199,8 @@ func TestServiceTypeHasClusterIP(t *testing.T) {
 		},
 		{
 			desc: "true: test when Type set to `NodePort`",
-			inp: v1.Service{
-				Spec: v1.ServiceSpec{
+			inp: corev1.Service{
+				Spec: corev1.ServiceSpec{
 					Type: "NodePort",
 				},
 			},
@@ -213,8 +208,8 @@ func TestServiceTypeHasClusterIP(t *testing.T) {
 		},
 		{
 			desc: "true: test when Type set to `LoadBalancer`",
-			inp: v1.Service{
-				Spec: v1.ServiceSpec{
+			inp: corev1.Service{
+				Spec: corev1.ServiceSpec{
 					Type: "LoadBalancer",
 				},
 			},
@@ -222,8 +217,8 @@ func TestServiceTypeHasClusterIP(t *testing.T) {
 		},
 		{
 			desc: "false: test when Type set to `loadbalancer`",
-			inp: v1.Service{
-				Spec: v1.ServiceSpec{
+			inp: corev1.Service{
+				Spec: corev1.ServiceSpec{
 					Type: "loadbalancer",
 				},
 			},
@@ -234,7 +229,7 @@ func TestServiceTypeHasClusterIP(t *testing.T) {
 	for i, tc := range tests {
 		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
 			res := ServiceTypeHasClusterIP(&tc.inp)
-			assert.Equal(t, res, tc.expOut)
+			assert.Equal(t, tc.expOut, res)
 		})
 	}
 }
@@ -242,13 +237,13 @@ func TestServiceTypeHasClusterIP(t *testing.T) {
 func TestServiceTypeHasNodePort(t *testing.T) {
 	tests := []struct {
 		desc   string
-		inp    v1.Service
+		inp    corev1.Service
 		expOut bool
 	}{
 		{
 			desc: "true: test when Type set to `ClusterIP`",
-			inp: v1.Service{
-				Spec: v1.ServiceSpec{
+			inp: corev1.Service{
+				Spec: corev1.ServiceSpec{
 					Type: "ClusterIP",
 				},
 			},
@@ -256,8 +251,8 @@ func TestServiceTypeHasNodePort(t *testing.T) {
 		},
 		{
 			desc: "true: test when Type set to `NodePort`",
-			inp: v1.Service{
-				Spec: v1.ServiceSpec{
+			inp: corev1.Service{
+				Spec: corev1.ServiceSpec{
 					Type: "NodePort",
 				},
 			},
@@ -265,8 +260,8 @@ func TestServiceTypeHasNodePort(t *testing.T) {
 		},
 		{
 			desc: "true: test when Type set to `LoadBalancer`",
-			inp: v1.Service{
-				Spec: v1.ServiceSpec{
+			inp: corev1.Service{
+				Spec: corev1.ServiceSpec{
 					Type: "LoadBalancer",
 				},
 			},
@@ -277,7 +272,7 @@ func TestServiceTypeHasNodePort(t *testing.T) {
 	for i, tc := range tests {
 		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
 			res := ServiceTypeHasNodePort(&tc.inp)
-			assert.Equal(t, res, tc.expOut)
+			assert.Equal(t, tc.expOut, res)
 		})
 	}
 }
@@ -285,16 +280,16 @@ func TestServiceTypeHasNodePort(t *testing.T) {
 func TestGetNodePrimaryIP(t *testing.T) {
 	tests := []struct {
 		desc   string
-		inp    v1.Node
+		inp    corev1.Node
 		expErr bool
 		expOut string
 	}{
 		{
 			desc: "error: node has neither external nor internal IP",
-			inp: v1.Node{
-				Status: v1.NodeStatus{
-					Addresses: []v1.NodeAddress{
-						{Type: v1.NodeHostName, Address: "HN"},
+			inp: corev1.Node{
+				Status: corev1.NodeStatus{
+					Addresses: []corev1.NodeAddress{
+						{Type: corev1.NodeHostName, Address: "HN"},
 					},
 				},
 			},
@@ -303,12 +298,12 @@ func TestGetNodePrimaryIP(t *testing.T) {
 		},
 		{
 			desc: "success: node's internal IP returned",
-			inp: v1.Node{
-				Status: v1.NodeStatus{
-					Addresses: []v1.NodeAddress{
-						{Type: v1.NodeHostName, Address: "HN"},
-						{Type: v1.NodeInternalIP, Address: "192.168.1.1"},
-						{Type: v1.NodeExternalIP, Address: "90.90.90.90"},
+			inp: corev1.Node{
+				Status: corev1.NodeStatus{
+					Addresses: []corev1.NodeAddress{
+						{Type: corev1.NodeHostName, Address: "HN"},
+						{Type: corev1.NodeInternalIP, Address: "192.168.1.1"},
+						{Type: corev1.NodeExternalIP, Address: "90.90.90.90"},
 					},
 				},
 			},
@@ -316,11 +311,11 @@ func TestGetNodePrimaryIP(t *testing.T) {
 		},
 		{
 			desc: "success: node's external IP returned",
-			inp: v1.Node{
-				Status: v1.NodeStatus{
-					Addresses: []v1.NodeAddress{
-						{Type: v1.NodeHostName, Address: "HN"},
-						{Type: v1.NodeExternalIP, Address: "90.90.90.90"},
+			inp: corev1.Node{
+				Status: corev1.NodeStatus{
+					Addresses: []corev1.NodeAddress{
+						{Type: corev1.NodeHostName, Address: "HN"},
+						{Type: corev1.NodeExternalIP, Address: "90.90.90.90"},
 					},
 				},
 			},
@@ -334,7 +329,7 @@ func TestGetNodePrimaryIP(t *testing.T) {
 			if tc.expErr {
 				assert.Error(t, e)
 			} else {
-				assert.Equal(t, res, tc.expOut)
+				assert.Equal(t, tc.expOut, res)
 			}
 		})
 	}
@@ -343,7 +338,7 @@ func TestGetNodePrimaryIP(t *testing.T) {
 func Test_GetNodePrimaryIP(t *testing.T) {
 	cases := []struct {
 		name     string
-		nodeInfo *v1.Node
+		nodeInfo *corev1.Node
 		hostname string
 		address  string
 		wantErr  bool
@@ -396,54 +391,49 @@ func Test_GetNodePrimaryIP(t *testing.T) {
 }
 
 // makeNodeWithAddresses return a node object with the specified parameters
-func makeNodeWithAddresses(name, internal, external string) *v1.Node {
+func makeNodeWithAddresses(name, internal, external string) *corev1.Node {
 	if name == "" {
-		return &v1.Node{}
+		return &corev1.Node{}
 	}
 
-	node := &v1.Node{
+	node := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 		},
-		Status: v1.NodeStatus{
-			Addresses: []v1.NodeAddress{},
+		Status: corev1.NodeStatus{
+			Addresses: []corev1.NodeAddress{},
 		},
 	}
 
 	if internal != "" {
 		node.Status.Addresses = append(node.Status.Addresses,
-			v1.NodeAddress{Type: v1.NodeInternalIP, Address: internal},
+			corev1.NodeAddress{Type: corev1.NodeInternalIP, Address: internal},
 		)
 	}
 
 	if external != "" {
 		node.Status.Addresses = append(node.Status.Addresses,
-			v1.NodeAddress{Type: v1.NodeExternalIP, Address: external},
+			corev1.NodeAddress{Type: corev1.NodeExternalIP, Address: external},
 		)
 	}
 
 	return node
 }
 
-// protoPtr takes a Protocol and returns a pointer to it.
-func protoPtr(proto v1.Protocol) *v1.Protocol {
-	return &proto
-}
-
 func TestPodScheduled(t *testing.T) {
 	tests := []struct {
 		desc      string
-		inpPod    v1.Pod
+		inpPod    corev1.Pod
 		expResult bool
 	}{
 		{
 			desc:      "Pod is scheduled to a node",
-			inpPod:    v1.Pod{Spec: v1.PodSpec{NodeName: "node-1"}},
+			inpPod:    corev1.Pod{Spec: corev1.PodSpec{NodeName: "node-1"}},
 			expResult: true,
 		},
 		{
 			desc:      "Pod is not scheduled to a node",
-			inpPod:    v1.Pod{},
+			inpPod:    corev1.Pod{},
 			expResult: false,
 		},
 	}
@@ -457,32 +447,30 @@ func TestPodScheduled(t *testing.T) {
 }
 
 var (
-	testNode   string      = "testNode"
-	otherNode              = "otherNode"
-	ep1Address string      = "10.244.0.3"
-	ep2Address string      = "10.244.0.4"
-	ep3Address string      = "10.244.1.3"
-	tcpv1      v1.Protocol = v1.ProtocolTCP
-	udpv1      v1.Protocol = v1.ProtocolUDP
+	testNode   string          = "testNode"
+	otherNode                  = "otherNode"
+	ep1Address string          = "10.244.0.3"
+	ep2Address string          = "10.244.0.4"
+	ep3Address string          = "10.244.1.3"
+	tcpv1      corev1.Protocol = corev1.ProtocolTCP
+	udpv1      corev1.Protocol = corev1.ProtocolUDP
 
-	httpPortName    string = "http"
-	httpPortValue   int32  = int32(80)
 	httpsPortName   string = "https"
 	httpsPortValue  int32  = int32(443)
 	customPortName  string = "customApp"
 	customPortValue int32  = int32(10600)
 )
 
-func getSampleService(publishNotReadyAddresses bool) *v1.Service {
+func getSampleService(publishNotReadyAddresses bool) *corev1.Service {
 	name := "service-test"
 	namespace := "test"
-	return &v1.Service{
+	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			UID:       k8stypes.UID(namespace),
 			Name:      name,
 			Namespace: namespace,
 		},
-		Spec: v1.ServiceSpec{
+		Spec: corev1.ServiceSpec{
 			PublishNotReadyAddresses: publishNotReadyAddresses,
 		},
 	}
@@ -490,7 +478,7 @@ func getSampleService(publishNotReadyAddresses bool) *v1.Service {
 
 // returns an endpoint slice with three endpoints, two of which belong to the expected local node
 // and one belongs to "otherNode"
-func getSampleEndpointSlice(service *kapi.Service) *discovery.EndpointSlice {
+func getSampleEndpointSlice(service *corev1.Service) *discovery.EndpointSlice {
 
 	epPortHttps := discovery.EndpointPort{
 		Name:     &httpsPortName,
@@ -819,7 +807,7 @@ func TestDoesEndpointSliceContainEligibleEndpoint(t *testing.T) {
 		endpointSlice *discovery.EndpointSlice
 		epIP          string
 		epPort        int32
-		protocol      v1.Protocol
+		protocol      corev1.Protocol
 		want          bool
 	}{
 		{

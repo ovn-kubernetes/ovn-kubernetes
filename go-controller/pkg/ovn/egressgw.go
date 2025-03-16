@@ -8,6 +8,13 @@ import (
 	"regexp"
 	"strings"
 
+	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	ktypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
@@ -21,14 +28,6 @@ import (
 	apbroutecontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/apbroute"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-
-	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
-
-	kapi "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	ktypes "k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/klog/v2"
 )
 
 type gatewayInfo struct {
@@ -38,7 +37,7 @@ type gatewayInfo struct {
 
 // addPodExternalGW handles detecting if a pod is serving as an external gateway for namespace(s) and adding routes
 // to all pods in that namespace
-func (oc *DefaultNetworkController) addPodExternalGW(pod *kapi.Pod) error {
+func (oc *DefaultNetworkController) addPodExternalGW(pod *corev1.Pod) error {
 	podRoutingNamespaceAnno := pod.Annotations[util.RoutingNamespaceAnnotation]
 	if podRoutingNamespaceAnno == "" {
 		return nil
@@ -73,7 +72,7 @@ func (oc *DefaultNetworkController) addPodExternalGW(pod *kapi.Pod) error {
 }
 
 // addPodExternalGWForNamespace handles adding routes to all pods in that namespace for a pod GW
-func (oc *DefaultNetworkController) addPodExternalGWForNamespace(namespace string, pod *kapi.Pod, egress gatewayInfo) error {
+func (oc *DefaultNetworkController) addPodExternalGWForNamespace(namespace string, pod *corev1.Pod, egress gatewayInfo) error {
 	nsInfo, nsUnlock, err := oc.ensureNamespaceLocked(namespace, false, nil)
 	if err != nil {
 		return fmt.Errorf("failed to ensure namespace locked: %v", err)
@@ -128,7 +127,7 @@ func (oc *DefaultNetworkController) addPodExternalGWForNamespace(namespace strin
 }
 
 func (oc *DefaultNetworkController) syncConntrackForExternalGateways(namespace string, gwIPsToKeep sets.Set[string]) error {
-	return util.SyncConntrackForExternalGateways(gwIPsToKeep, oc.isPodInLocalZone, func() ([]*kapi.Pod, error) {
+	return util.SyncConntrackForExternalGateways(gwIPsToKeep, oc.isPodInLocalZone, func() ([]*corev1.Pod, error) {
 		return oc.watchFactory.GetPods(namespace)
 	})
 }
@@ -187,7 +186,7 @@ func (oc *DefaultNetworkController) addExternalGWsForNamespace(egress gatewayInf
 	return oc.addGWRoutesForNamespace(namespace, egress)
 }
 
-func (oc *DefaultNetworkController) isPodInLocalZone(pod *kapi.Pod) (bool, error) {
+func (oc *DefaultNetworkController) isPodInLocalZone(pod *corev1.Pod) (bool, error) {
 	node, err := oc.watchFactory.GetNode(pod.Spec.NodeName)
 	if err != nil {
 		return false, err
@@ -337,7 +336,7 @@ func (oc *DefaultNetworkController) deletePodGWRoute(routeInfo *apbroutecontroll
 
 // deletePodExternalGW detects if a given pod is acting as an external GW and removes all routes in all namespaces
 // associated with that pod
-func (oc *DefaultNetworkController) deletePodExternalGW(pod *kapi.Pod) (err error) {
+func (oc *DefaultNetworkController) deletePodExternalGW(pod *corev1.Pod) (err error) {
 	podRoutingNamespaceAnno := pod.Annotations[util.RoutingNamespaceAnnotation]
 	if podRoutingNamespaceAnno == "" {
 		return nil
@@ -354,7 +353,7 @@ func (oc *DefaultNetworkController) deletePodExternalGW(pod *kapi.Pod) (err erro
 }
 
 // deletePodGwRoutesForNamespace handles deleting all routes in a namespace for a specific pod GW
-func (oc *DefaultNetworkController) deletePodGWRoutesForNamespace(pod *kapi.Pod, namespace string) (err error) {
+func (oc *DefaultNetworkController) deletePodGWRoutesForNamespace(pod *corev1.Pod, namespace string) (err error) {
 	nsInfo, nsUnlock := oc.getNamespaceLocked(namespace, false)
 	if nsInfo == nil {
 		return nil
@@ -923,7 +922,7 @@ func (oc *DefaultNetworkController) extSwitchPrefix(nodeName string) (string, er
 	return "", nil
 }
 
-func getExGwPodIPs(gatewayPod *kapi.Pod) (sets.Set[string], error) {
+func getExGwPodIPs(gatewayPod *corev1.Pod) (sets.Set[string], error) {
 	foundGws := sets.New[string]()
 	if gatewayPod.Annotations[util.RoutingNetworkAnnotation] != "" {
 		var multusNetworks []nettypes.NetworkStatus
@@ -957,6 +956,6 @@ func getExGwPodIPs(gatewayPod *kapi.Pod) (sets.Set[string], error) {
 	return foundGws, nil
 }
 
-func makePodGWKey(pod *kapi.Pod) string {
+func makePodGWKey(pod *corev1.Pod) string {
 	return fmt.Sprintf("%s_%s", pod.Namespace, pod.Name)
 }

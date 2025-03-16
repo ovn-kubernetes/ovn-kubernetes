@@ -5,13 +5,12 @@ import (
 	"fmt"
 	"net"
 
-	"k8s.io/klog/v2"
-
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-
 	ipamclaimsapi "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1"
 	ipamclaimslister "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1/apis/listers/ipamclaims/v1alpha1"
+
+	"k8s.io/klog/v2"
 
 	ipam "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
@@ -110,7 +109,7 @@ func (icr *IPAMClaimReconciler) Reconcile(
 	}
 
 	var newIPs []string
-	if newIPAMClaim != nil && len(newIPAMClaim.Status.IPs) > 0 {
+	if len(newIPAMClaim.Status.IPs) > 0 {
 		newIPs = newIPAMClaim.Status.IPs
 	}
 

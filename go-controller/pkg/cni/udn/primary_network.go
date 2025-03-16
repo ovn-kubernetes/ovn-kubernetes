@@ -67,14 +67,14 @@ func (p *UserDefinedPrimaryNetwork) Found() bool {
 	return p.annotation != nil && p.activeNetwork != nil
 }
 
-func (p *UserDefinedPrimaryNetwork) WaitForPrimaryAnnotationFn(namespace string, annotCondFn podAnnotWaitCond) podAnnotWaitCond {
+func (p *UserDefinedPrimaryNetwork) WaitForPrimaryAnnotationFn(podName, namespace string, annotCondFn podAnnotWaitCond) podAnnotWaitCond {
 	return func(annotations map[string]string, nadName string) (*util.PodAnnotation, bool) {
 		annotation, isReady := annotCondFn(annotations, nadName)
 		if annotation == nil {
 			return nil, false
 		}
 		if err := p.ensure(namespace, annotations, nadName, annotation); err != nil {
-			klog.Errorf("Failed ensuring user defined primary network for nad '%s': %v", nadName, err)
+			klog.Errorf("Failed ensuring user defined primary network for pod '%s/%s': %v", namespace, podName, err)
 			return nil, false
 		}
 		return annotation, isReady
@@ -95,7 +95,7 @@ func (p *UserDefinedPrimaryNetwork) ensure(namespace string, annotations map[str
 		var err error
 		annotation, err = util.UnmarshalPodAnnotation(annotations, nadName)
 		if err != nil {
-			return fmt.Errorf("failed looking for ovn pod annotations for nad '%s': %w", nadName, err)
+			return fmt.Errorf("failed looking for ovn pod annotations: %w", err)
 		}
 	}
 
@@ -111,10 +111,10 @@ func (p *UserDefinedPrimaryNetwork) ensure(namespace string, annotations map[str
 	}
 
 	if err := p.ensureAnnotation(annotations); err != nil {
-		return fmt.Errorf("failed looking for primary network annotation for nad '%s': %w", nadName, err)
+		return fmt.Errorf("failed looking for primary network annotation: %w", err)
 	}
 	if err := p.ensureActiveNetwork(namespace); err != nil {
-		return fmt.Errorf("failed looking for primary network name for nad '%s': %w", nadName, err)
+		return fmt.Errorf("failed ensuring primary network for namespace: %q: %w", namespace, err)
 	}
 	return nil
 }

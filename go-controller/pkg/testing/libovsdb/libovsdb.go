@@ -17,6 +17,10 @@ import (
 	"github.com/alexflint/go-filemutex"
 	guuid "github.com/google/uuid"
 	"github.com/mitchellh/copystructure"
+	"github.com/prometheus/client_golang/prometheus"
+
+	"k8s.io/apimachinery/pkg/util/wait"
+
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
 	"github.com/ovn-org/libovsdb/database"
 	"github.com/ovn-org/libovsdb/database/inmemory"
@@ -25,8 +29,6 @@ import (
 	"github.com/ovn-org/libovsdb/ovsdb"
 	"github.com/ovn-org/libovsdb/ovsdb/serverdb"
 	"github.com/ovn-org/libovsdb/server"
-	"github.com/prometheus/client_golang/prometheus"
-	"k8s.io/apimachinery/pkg/util/wait"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cryptorand"
@@ -158,9 +160,6 @@ func NewOVSTestHarness(setup TestSetup) (libovsdbclient.Client, *Context, error)
 		server.Close()
 	}()
 
-	if err != nil {
-		return nil, nil, err
-	}
 	testCtx.OVSServer = server
 
 	return client, testCtx, err
@@ -428,7 +427,7 @@ func newOVSDBServer(cfg config.OvnAuthConfig, dbModel model.ClientDBModel, schem
 		os.RemoveAll(sockPath)
 	}()
 
-	err = wait.PollUntilContextTimeout(context.Background(), 100*time.Millisecond, 500*time.Millisecond, true, func(ctx context.Context) (bool, error) { return s.Ready(), nil })
+	err = wait.PollUntilContextTimeout(context.Background(), 100*time.Millisecond, 500*time.Millisecond, true, func(_ context.Context) (bool, error) { return s.Ready(), nil })
 	if err != nil {
 		s.Close()
 		return nil, err

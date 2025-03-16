@@ -11,20 +11,20 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/vishvananda/netlink"
+
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/wait"
+	listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/klog/v2"
+
 	hotypes "github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
 	houtil "github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-
-	"github.com/vishvananda/netlink"
-
-	kapi "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/util/wait"
-	listers "k8s.io/client-go/listers/core/v1"
-	"k8s.io/klog/v2"
 )
 
 const (
@@ -76,7 +76,7 @@ func newOVNNodeController(
 }
 
 // AddPod handles the pod add event
-func (n *NodeController) AddPod(pod *kapi.Pod) error {
+func (n *NodeController) AddPod(pod *corev1.Pod) error {
 	// nothing to do for hostnetworked pod
 	if util.PodWantsHostNetwork(pod) {
 		return nil
@@ -121,7 +121,7 @@ func (n *NodeController) AddPod(pod *kapi.Pod) error {
 }
 
 // DeletePod handles the pod delete event
-func (n *NodeController) DeletePod(pod *kapi.Pod) error {
+func (n *NodeController) DeletePod(pod *corev1.Pod) error {
 	// nothing to do for hostnetworked pods
 	if util.PodWantsHostNetwork(pod) {
 		return nil
@@ -141,7 +141,7 @@ func (n *NodeController) DeletePod(pod *kapi.Pod) error {
 }
 
 // Sync is not needed but must be implemented to fulfill the interface
-func (n *NodeController) Sync(objs []*kapi.Node) {}
+func (n *NodeController) Sync(_ []*corev1.Node) {}
 
 func nameToCookie(nodeName string) string {
 	hash := sha256.Sum256([]byte(nodeName))
@@ -150,7 +150,7 @@ func nameToCookie(nodeName string) string {
 
 // hybridOverlayNodeUpdate sets up or tears down VXLAN tunnels to hybrid overlay
 // nodes in the cluster
-func (n *NodeController) hybridOverlayNodeUpdate(node *kapi.Node) error {
+func (n *NodeController) hybridOverlayNodeUpdate(node *corev1.Node) error {
 	if !util.NoHostSubnet(node) {
 		// remove possible hybrid overlay remaining
 		return n.DeleteNode(node)
@@ -229,7 +229,7 @@ func (n *NodeController) hybridOverlayNodeUpdate(node *kapi.Node) error {
 }
 
 // AddNode handles node additions and updates
-func (n *NodeController) AddNode(node *kapi.Node) error {
+func (n *NodeController) AddNode(node *corev1.Node) error {
 	klog.Info("Add Node ", node.Name)
 	var err error
 	if node.Name == n.nodeName {
@@ -288,7 +288,7 @@ func (n *NodeController) deleteFlowsByCookie(cookie string) {
 }
 
 // DeleteNode handles node deletions
-func (n *NodeController) DeleteNode(node *kapi.Node) error {
+func (n *NodeController) DeleteNode(node *corev1.Node) error {
 	if node.Name == n.nodeName {
 		return nil
 	}
@@ -325,7 +325,7 @@ func getLocalNodeSubnet(nodeName string) (*net.IPNet, error) {
 	var err error
 
 	// First wait for the node logical switch to be created by the Master, timeout is 300s.
-	if err := wait.PollUntilContextTimeout(context.Background(), 500*time.Millisecond, 300*time.Second, true, func(ctx context.Context) (bool, error) {
+	if err := wait.PollUntilContextTimeout(context.Background(), 500*time.Millisecond, 300*time.Second, true, func(_ context.Context) (bool, error) {
 		if cidr, _, err = util.RunOVNNbctl("get", "logical_switch", nodeName, "other-config:subnet"); err != nil {
 			return false, nil
 		}
@@ -447,7 +447,7 @@ func (n *NodeController) createOrReplaceRoutes(mgmtPortLink netlink.Link, oldDRI
 }
 
 // handleHybridOverlayMACIPChange make the required changes if the nodes HybridOverlayDRIP or HybridOverlayMAC changes
-func (n *NodeController) handleHybridOverlayMACIPChange(node *kapi.Node) error {
+func (n *NodeController) handleHybridOverlayMACIPChange(node *corev1.Node) error {
 	var oldDRIP net.IP
 	var oldMAC net.HardwareAddr
 
@@ -486,7 +486,7 @@ func (n *NodeController) handleHybridOverlayMACIPChange(node *kapi.Node) error {
 }
 
 // EnsureHybridOverlayBridge sets up the hybrid overlay bridge
-func (n *NodeController) EnsureHybridOverlayBridge(node *kapi.Node) error {
+func (n *NodeController) EnsureHybridOverlayBridge(node *corev1.Node) error {
 	n.Lock()
 	defer n.Unlock()
 	if atomic.LoadUint32(n.initState) >= hotypes.DistributedRouterInitialized {

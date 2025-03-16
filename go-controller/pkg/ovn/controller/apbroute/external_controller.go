@@ -8,7 +8,9 @@ import (
 	"sync"
 	"time"
 
-	v1 "k8s.io/api/core/v1"
+	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	ktypes "k8s.io/apimachinery/pkg/types"
@@ -21,7 +23,6 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
-	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	adminpolicybasedrouteapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1"
 	adminpolicybasedrouteinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/informers/externalversions/adminpolicybasedroute/v1"
 	adminpolicybasedroutelisters "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/listers/adminpolicybasedroute/v1"
@@ -184,7 +185,7 @@ func (rp *routePolicyState) String() string {
 type routePolicyConfig struct {
 	policyName string
 	// targetNamespacesWithPods[namespaceName[podNamespacedName] = Pod
-	targetNamespacesWithPods map[string]map[ktypes.NamespacedName]*v1.Pod
+	targetNamespacesWithPods map[string]map[ktypes.NamespacedName]*corev1.Pod
 	// staticGateways contains the processed list of IPs and BFD information defined in the staticHop slice in the policy.
 	staticGateways *gateway_info.GatewayInfoList
 	// dynamicGateways contains the processed list of IPs and BFD information defined in the dynamicHop slice in the policy.
@@ -216,10 +217,10 @@ type externalPolicyManager struct {
 	// Pods
 	podLister   corev1listers.PodLister
 	podInformer cache.SharedIndexInformer
-	podQueue    workqueue.TypedRateLimitingInterface[*v1.Pod]
+	podQueue    workqueue.TypedRateLimitingInterface[*corev1.Pod]
 
 	// Namespaces
-	namespaceQueue    workqueue.TypedRateLimitingInterface[*v1.Namespace]
+	namespaceQueue    workqueue.TypedRateLimitingInterface[*corev1.Namespace]
 	namespaceLister   corev1listers.NamespaceLister
 	namespaceInformer cache.SharedIndexInformer
 
@@ -256,14 +257,14 @@ func newExternalPolicyManager(
 		podLister:   podInformer.Lister(),
 		podInformer: podInformer.Informer(),
 		podQueue: workqueue.NewTypedRateLimitingQueueWithConfig(
-			workqueue.NewTypedItemFastSlowRateLimiter[*v1.Pod](time.Second, 5*time.Second, 5),
-			workqueue.TypedRateLimitingQueueConfig[*v1.Pod]{Name: "apbexternalroutepods"},
+			workqueue.NewTypedItemFastSlowRateLimiter[*corev1.Pod](time.Second, 5*time.Second, 5),
+			workqueue.TypedRateLimitingQueueConfig[*corev1.Pod]{Name: "apbexternalroutepods"},
 		),
 		namespaceLister:   namespaceInformer.Lister(),
 		namespaceInformer: namespaceInformer.Informer(),
 		namespaceQueue: workqueue.NewTypedRateLimitingQueueWithConfig(
-			workqueue.NewTypedItemFastSlowRateLimiter[*v1.Namespace](time.Second, 5*time.Second, 5),
-			workqueue.TypedRateLimitingQueueConfig[*v1.Namespace]{Name: "apbexternalroutenamespaces"},
+			workqueue.NewTypedItemFastSlowRateLimiter[*corev1.Namespace](time.Second, 5*time.Second, 5),
+			workqueue.TypedRateLimitingQueueConfig[*corev1.Namespace]{Name: "apbexternalroutenamespaces"},
 		),
 		updatePolicyStatusFunc: updatePolicyStatusFunc,
 	}
@@ -448,9 +449,9 @@ func (m *externalPolicyManager) onPolicyDelete(obj interface{}) {
 }
 
 func (m *externalPolicyManager) onNamespaceAdd(obj interface{}) {
-	ns, ok := obj.(*v1.Namespace)
+	ns, ok := obj.(*corev1.Namespace)
 	if !ok {
-		utilruntime.HandleError(fmt.Errorf("expecting %T but received %T", &v1.Namespace{}, obj))
+		utilruntime.HandleError(fmt.Errorf("expecting %T but received %T", &corev1.Namespace{}, obj))
 		return
 	}
 	if ns == nil {
@@ -461,14 +462,14 @@ func (m *externalPolicyManager) onNamespaceAdd(obj interface{}) {
 }
 
 func (m *externalPolicyManager) onNamespaceUpdate(oldObj, newObj interface{}) {
-	oldNamespace, ok := oldObj.(*v1.Namespace)
+	oldNamespace, ok := oldObj.(*corev1.Namespace)
 	if !ok {
-		utilruntime.HandleError(fmt.Errorf("expecting %T but received %T", &v1.Namespace{}, oldObj))
+		utilruntime.HandleError(fmt.Errorf("expecting %T but received %T", &corev1.Namespace{}, oldObj))
 		return
 	}
-	newNamespace, ok := newObj.(*v1.Namespace)
+	newNamespace, ok := newObj.(*corev1.Namespace)
 	if !ok {
-		utilruntime.HandleError(fmt.Errorf("expecting %T but received %T", &v1.Namespace{}, newObj))
+		utilruntime.HandleError(fmt.Errorf("expecting %T but received %T", &corev1.Namespace{}, newObj))
 		return
 	}
 	if oldNamespace == nil || newNamespace == nil {
@@ -482,14 +483,14 @@ func (m *externalPolicyManager) onNamespaceUpdate(oldObj, newObj interface{}) {
 }
 
 func (m *externalPolicyManager) onNamespaceDelete(obj interface{}) {
-	ns, ok := obj.(*v1.Namespace)
+	ns, ok := obj.(*corev1.Namespace)
 	if !ok {
 		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
 		if !ok {
 			utilruntime.HandleError(fmt.Errorf("couldn't get object from tombstone %#v", obj))
 			return
 		}
-		ns, ok = tombstone.Obj.(*v1.Namespace)
+		ns, ok = tombstone.Obj.(*corev1.Namespace)
 		if !ok {
 			utilruntime.HandleError(fmt.Errorf("tombstone contained object that is not a Namespace: %#v", tombstone.Obj))
 			return
@@ -533,9 +534,9 @@ func (m *externalPolicyManager) processNextNamespaceWorkItem(wg *sync.WaitGroup)
 }
 
 func (m *externalPolicyManager) onPodAdd(obj interface{}) {
-	pod, ok := obj.(*v1.Pod)
+	pod, ok := obj.(*corev1.Pod)
 	if !ok {
-		utilruntime.HandleError(fmt.Errorf("expecting %T but received %T", &v1.Pod{}, obj))
+		utilruntime.HandleError(fmt.Errorf("expecting %T but received %T", &corev1.Pod{}, obj))
 		return
 	}
 	if pod == nil {
@@ -550,14 +551,14 @@ func (m *externalPolicyManager) onPodAdd(obj interface{}) {
 }
 
 func (m *externalPolicyManager) onPodUpdate(oldObj, newObj interface{}) {
-	o, ok := oldObj.(*v1.Pod)
+	o, ok := oldObj.(*corev1.Pod)
 	if !ok {
-		utilruntime.HandleError(fmt.Errorf("expecting %T but received %T", &v1.Pod{}, o))
+		utilruntime.HandleError(fmt.Errorf("expecting %T but received %T", &corev1.Pod{}, o))
 		return
 	}
-	n, ok := newObj.(*v1.Pod)
+	n, ok := newObj.(*corev1.Pod)
 	if !ok {
-		utilruntime.HandleError(fmt.Errorf("expecting %T but received %T", &v1.Pod{}, n))
+		utilruntime.HandleError(fmt.Errorf("expecting %T but received %T", &corev1.Pod{}, n))
 		return
 	}
 	if o == nil || n == nil {
@@ -574,14 +575,14 @@ func (m *externalPolicyManager) onPodUpdate(oldObj, newObj interface{}) {
 }
 
 func (m *externalPolicyManager) onPodDelete(obj interface{}) {
-	pod, ok := obj.(*v1.Pod)
+	pod, ok := obj.(*corev1.Pod)
 	if !ok {
 		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
 		if !ok {
 			utilruntime.HandleError(fmt.Errorf("couldn't get object from tombstone %#v", obj))
 			return
 		}
-		pod, ok = tombstone.Obj.(*v1.Pod)
+		pod, ok = tombstone.Obj.(*corev1.Pod)
 		if !ok {
 			utilruntime.HandleError(fmt.Errorf("tombstone contained object that is not a Pod: %#v", tombstone.Obj))
 			return
@@ -630,7 +631,7 @@ func (m *externalPolicyManager) processNextPodWorkItem(wg *sync.WaitGroup) bool 
 // 2. find policies that selected given namespace before and may need cleanup
 // Step 1 is done by fetching the latest AdminPolicyBasedExternalRoute and checking if selectors match.
 // Step 2 is done via policyReferencedObjects, which is a cache of the objects every policy selected last time.
-func (m *externalPolicyManager) getPoliciesForNamespaceChange(namespace *v1.Namespace) (sets.Set[string], error) {
+func (m *externalPolicyManager) getPoliciesForNamespaceChange(namespace *corev1.Namespace) (sets.Set[string], error) {
 	policyNames := sets.Set[string]{}
 	// first check which policies currently match given namespace.
 	// This should work when namespace is added, or starts matching a label selector
@@ -681,7 +682,7 @@ func (m *externalPolicyManager) getPoliciesForNamespaceChange(namespace *v1.Name
 // 2. find policies that selected given pod before and may need cleanup
 // Step 1 is done by fetching the latest AdminPolicyBasedExternalRoute and checking if selectors match.
 // Step 2 is done via policyReferencedObjects, which is a cache of the objects every policy selected last time.
-func (m *externalPolicyManager) getPoliciesForPodChange(pod *v1.Pod) (sets.Set[string], error) {
+func (m *externalPolicyManager) getPoliciesForPodChange(pod *corev1.Pod) (sets.Set[string], error) {
 	policyNames := sets.Set[string]{}
 	// first check which policies currently match given namespace.
 	// This should work when namespace is added, or starts matching a label selector

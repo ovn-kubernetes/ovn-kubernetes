@@ -1,12 +1,10 @@
 package batching
 
 import (
-	"fmt"
-
-	"github.com/onsi/gomega"
-
 	"strings"
 	"testing"
+
+	"github.com/onsi/gomega"
 )
 
 type batchTestData struct {
@@ -69,7 +67,7 @@ func TestBatch(t *testing.T) {
 			if tCase.expectErr != "" && strings.Contains(err.Error(), tCase.expectErr) {
 				continue
 			}
-			t.Fatal(fmt.Sprintf("test %s failed: %v", tCase.name, err))
+			t.Fatalf("test %s failed: %v", tCase.name, err)
 		}
 		// tCase.data/tCase.batchSize round up
 		expectedBatchNum := (len(tCase.data) + tCase.batchSize - 1) / tCase.batchSize
@@ -216,7 +214,7 @@ func TestBatchMap(t *testing.T) {
 			if tCase.expectErr != "" && strings.Contains(err.Error(), tCase.expectErr) {
 				continue
 			}
-			t.Fatal(fmt.Sprintf("test %s failed: %v", tCase.name, err))
+			t.Fatalf("test %s failed: %v", tCase.name, err)
 		}
 		g.Expect(batchNum).To(gomega.Equal(tCase.expectedBatchesNum))
 		g.Expect(result).To(gomega.Equal(tCase.data))

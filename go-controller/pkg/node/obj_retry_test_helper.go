@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"sync"
 
-	kapi "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/tools/cache"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
@@ -20,7 +20,7 @@ type nodePortWatcherEventHandler struct {
 	syncFunc func([]interface{}) error
 }
 
-func (h *nodePortWatcherEventHandler) FilterOutResource(obj interface{}) bool {
+func (h *nodePortWatcherEventHandler) FilterOutResource(_ interface{}) bool {
 	return false
 }
 
@@ -41,7 +41,7 @@ func (n *nodePortWatcher) newRetryFrameworkForTests(objectType reflect.Type, sto
 	return r
 }
 
-func (h *nodePortWatcherEventHandler) AreResourcesEqual(obj1, obj2 interface{}) (bool, error) {
+func (h *nodePortWatcherEventHandler) AreResourcesEqual(_, _ interface{}) (bool, error) {
 	// switch based on type
 	switch h.objType {
 	case factory.ServiceForFakeNodePortWatcherType:
@@ -81,10 +81,10 @@ func (h *nodePortWatcherEventHandler) GetResourceFromInformerCache(key string) (
 // Given a *RetryFramework instance, an object to add and a boolean specifying if the function was executed from
 // iterateRetryResources, AddResource adds the specified object to the cluster according to its type and
 // returns the error, if any, yielded during object creation.
-func (h *nodePortWatcherEventHandler) AddResource(obj interface{}, fromRetryLoop bool) error {
+func (h *nodePortWatcherEventHandler) AddResource(obj interface{}, _ bool) error {
 	switch h.objType {
 	case factory.ServiceForFakeNodePortWatcherType:
-		svc := obj.(*kapi.Service)
+		svc := obj.(*corev1.Service)
 		return h.n.AddService(svc)
 
 	default:
@@ -95,11 +95,11 @@ func (h *nodePortWatcherEventHandler) AddResource(obj interface{}, fromRetryLoop
 // Given a *RetryFramework instance, an old and a new object, UpdateResource updates the specified object in the cluster
 // to its version in newObj according to its type and returns the error, if any, yielded during the object update.
 // The inRetryCache boolean argument is to indicate if the given resource is in the retryCache or not.
-func (h *nodePortWatcherEventHandler) UpdateResource(oldObj, newObj interface{}, inRetryCache bool) error {
+func (h *nodePortWatcherEventHandler) UpdateResource(oldObj, newObj interface{}, _ bool) error {
 	switch h.objType {
 	case factory.ServiceForFakeNodePortWatcherType:
-		oldSvc := oldObj.(*kapi.Service)
-		newSvc := newObj.(*kapi.Service)
+		oldSvc := oldObj.(*corev1.Service)
+		newSvc := newObj.(*corev1.Service)
 		return h.n.UpdateService(oldSvc, newSvc)
 
 	default:
@@ -110,10 +110,10 @@ func (h *nodePortWatcherEventHandler) UpdateResource(oldObj, newObj interface{},
 // Given a *RetryFramework instance, an object and optionally a cachedObj, DeleteResource deletes the object from the cluster
 // according to the delete logic of its resource type. cachedObj is the internal cache entry for this object,
 // used for now for pods and network policies.
-func (h *nodePortWatcherEventHandler) DeleteResource(obj, cachedObj interface{}) error {
+func (h *nodePortWatcherEventHandler) DeleteResource(obj, _ interface{}) error {
 	switch h.objType {
 	case factory.ServiceForFakeNodePortWatcherType:
-		svc := obj.(*kapi.Service)
+		svc := obj.(*corev1.Service)
 		return h.n.DeleteService(svc)
 
 	default:

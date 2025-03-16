@@ -5,18 +5,19 @@ import (
 	"fmt"
 	"net"
 
+	"github.com/Microsoft/hcsshim/hcn"
 	ps "github.com/bhendo/go-powershell"
 	psBackend "github.com/bhendo/go-powershell/backend"
+	iputils "github.com/containernetworking/plugins/pkg/ip"
+
+	corev1 "k8s.io/api/core/v1"
+	listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/klog/v2"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
 	houtil "github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
-	kapi "k8s.io/api/core/v1"
-	listers "k8s.io/client-go/listers/core/v1"
-	"k8s.io/klog/v2"
-
-	"github.com/Microsoft/hcsshim/hcn"
-	iputils "github.com/containernetworking/plugins/pkg/ip"
 )
 
 const (
@@ -163,7 +164,7 @@ func ensureBaseNetwork() error {
 
 // Add sets up VXLAN tunnels to other nodes
 // For a windows node, this means watching for all nodes and programming the routing
-func (n *NodeController) AddNode(node *kapi.Node) error {
+func (n *NodeController) AddNode(node *corev1.Node) error {
 	if node.Status.NodeInfo.MachineID == n.machineID {
 		// Initialize the local node (or reconfigure it if the addresses
 		// have changed) by creating the network object and setting up
@@ -216,7 +217,7 @@ func (n *NodeController) AddNode(node *kapi.Node) error {
 }
 
 // Delete handles node deletions
-func (n *NodeController) DeleteNode(node *kapi.Node) error {
+func (n *NodeController) DeleteNode(node *corev1.Node) error {
 	// Treat the local node differently than other nodes
 	// If the local node is removed, we want to delete the network object
 	// and remove all the VXLAN plumbing towards other existing nodes. If
@@ -261,7 +262,7 @@ func (n *NodeController) DeleteNode(node *kapi.Node) error {
 //  1. Setting up this node and its VXLAN extension for talking to other nodes
 //  2. Setting back annotations about its VTEP and gateway MAC address to its own node object
 //  3. Initializing every VXLAN tunnels toward other nodes
-func (n *NodeController) initSelf(node *kapi.Node, nodeSubnet *net.IPNet) error {
+func (n *NodeController) initSelf(node *corev1.Node, nodeSubnet *net.IPNet) error {
 	// The distributed router IP (i.e. the gateway, from a container perspective)
 	// is hardcoded here to be the first IP on the subnet.
 	// TODO: could be made configurable as Windows doesn't have any restrictions
@@ -364,7 +365,7 @@ func (n *NodeController) initSelf(node *kapi.Node, nodeSubnet *net.IPNet) error 
 //  1. Cleaning up this node and its VXLAN extension for talking to other nodes
 //  2. Cleaning up annotations about its VTEP and gateway MAC address to its own node object
 //  3. Uninitializing every VXLAN tunnel toward other nodes
-func (n *NodeController) uninitSelf(node *kapi.Node) error {
+func (n *NodeController) uninitSelf(node *corev1.Node) error {
 	klog.Infof("Removing overlay network '%s' (ID: %v) from local node '%s'",
 		networkName, n.networkID, node.Name)
 
@@ -392,16 +393,16 @@ func (n *NodeController) uninitSelf(node *kapi.Node) error {
 	return nil
 }
 
-func (n *NodeController) AddPod(pod *kapi.Pod) error {
+func (n *NodeController) AddPod(pod *corev1.Pod) error {
 	return nil
 }
 
-func (n *NodeController) DeletePod(pod *kapi.Pod) error {
+func (n *NodeController) DeletePod(pod *corev1.Pod) error {
 	return nil
 }
 
 func (n *NodeController) RunFlowSync(stopCh <-chan struct{}) {}
 
-func (n *NodeController) EnsureHybridOverlayBridge(node *kapi.Node) error {
+func (n *NodeController) EnsureHybridOverlayBridge(node *corev1.Node) error {
 	return nil
 }

@@ -29,10 +29,10 @@ import (
 	"context"
 	"sync"
 
-	"k8s.io/klog/v2"
-
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
+
+	"k8s.io/klog/v2"
 )
 
 type handler struct {

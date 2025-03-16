@@ -5,14 +5,16 @@ import (
 	"net"
 	"strings"
 
+	"k8s.io/klog/v2"
+	utilnet "k8s.io/utils/net"
+
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	"k8s.io/klog/v2"
-	utilnet "k8s.io/utils/net"
 )
 
 // CreateDefaultRouteToExternal is called only when IC=true. This function adds a "catch-all" kind of LRSR to ovn-cluster-router

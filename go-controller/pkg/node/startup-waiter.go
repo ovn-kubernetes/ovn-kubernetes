@@ -48,7 +48,7 @@ func (w *startupWaiter) Wait() error {
 		w.wg.Add(1)
 		go func(task *waitTask) {
 			defer w.wg.Done()
-			err := wait.PollUntilContextTimeout(context.Background(), 500*time.Millisecond, w.timeout, true, func(ctx context.Context) (bool, error) {
+			err := wait.PollUntilContextTimeout(context.Background(), 500*time.Millisecond, w.timeout, true, func(_ context.Context) (bool, error) {
 				return task.waitFn()
 			})
 			if err == nil && task.postFn != nil {

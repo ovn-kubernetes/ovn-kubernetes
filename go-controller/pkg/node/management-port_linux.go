@@ -11,16 +11,17 @@ import (
 	"time"
 
 	"github.com/coreos/go-iptables/iptables"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/vishvananda/netlink"
 
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 	"sigs.k8s.io/knftables"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 const (
@@ -433,7 +434,7 @@ func createPlatformManagementPort(routeManager *routemanager.Controller, interfa
 // syncMgmtPortInterface verifies if no other interface configured as management port. This may happen if another
 // interface had been used as management port or Node was running in different mode.
 // If old management port is found, its IP configuration is flushed and interface renamed.
-func syncMgmtPortInterface(hostSubnets []*net.IPNet, mgmtPortName string, isExpectedToBeInternal bool) error {
+func syncMgmtPortInterface(mgmtPortName string, isExpectedToBeInternal bool) error {
 	// Query both type and name, because with type only stdout will be empty for both non-existing port and representor netdevice
 	stdout, _, _ := util.RunOVSVsctl("--no-headings",
 		"--data", "bare",
@@ -442,7 +443,7 @@ func syncMgmtPortInterface(hostSubnets []*net.IPNet, mgmtPortName string, isExpe
 		"find", "Interface", "name="+mgmtPortName)
 	if stdout == "" {
 		// Not found on the bridge. But could be that interface with the same name exists
-		return unconfigureMgmtNetdevicePort(hostSubnets, mgmtPortName)
+		return unconfigureMgmtNetdevicePort(mgmtPortName)
 	}
 
 	// Found existing port. Check its type
@@ -499,7 +500,7 @@ func unconfigureMgmtRepresentorPort(mgmtPortName string) error {
 	return nil
 }
 
-func unconfigureMgmtNetdevicePort(hostSubnets []*net.IPNet, mgmtPortName string) error {
+func unconfigureMgmtNetdevicePort(mgmtPortName string) error {
 	link, err := util.GetNetLinkOps().LinkByName(mgmtPortName)
 	if err != nil {
 		if !util.GetNetLinkOps().IsLinkNotFoundError(err) {

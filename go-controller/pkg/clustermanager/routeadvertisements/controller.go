@@ -16,7 +16,8 @@ import (
 	frrtypes "github.com/metallb/frr-k8s/api/v1beta1"
 	frrclientset "github.com/metallb/frr-k8s/pkg/client/clientset/versioned"
 	frrlisters "github.com/metallb/frr-k8s/pkg/client/listers/api/v1beta1"
-	core "k8s.io/api/core/v1"
+
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -56,11 +57,14 @@ var (
 
 // Controller reconciles RouteAdvertisements
 type Controller struct {
-	eipLister  egressiplisters.EgressIPLister
-	frrLister  frrlisters.FRRConfigurationLister
-	nadLister  nadlisters.NetworkAttachmentDefinitionLister
-	nodeLister corelisters.NodeLister
-	raLister   ralisters.RouteAdvertisementsLister
+	wf *factory.WatchFactory
+
+	eipLister       egressiplisters.EgressIPLister
+	frrLister       frrlisters.FRRConfigurationLister
+	nadLister       nadlisters.NetworkAttachmentDefinitionLister
+	nodeLister      corelisters.NodeLister
+	raLister        ralisters.RouteAdvertisementsLister
+	namespaceLister corelisters.NamespaceLister
 
 	frrClient frrclientset.Interface
 	nadClient nadclientset.Interface
@@ -71,6 +75,7 @@ type Controller struct {
 	nadController  controllerutil.Controller
 	nodeController controllerutil.Controller
 	raController   controllerutil.Controller
+	nsController   controllerutil.Controller
 
 	nm networkmanager.Interface
 }
@@ -82,15 +87,17 @@ func NewController(
 	ovnClient *util.OVNClusterManagerClientset,
 ) *Controller {
 	c := &Controller{
-		eipLister:  wf.EgressIPInformer().Lister(),
-		frrLister:  wf.FRRConfigurationsInformer().Lister(),
-		nadLister:  wf.NADInformer().Lister(),
-		nodeLister: wf.NodeCoreInformer().Lister(),
-		raLister:   wf.RouteAdvertisementsInformer().Lister(),
-		frrClient:  ovnClient.FRRClient,
-		nadClient:  ovnClient.NetworkAttchDefClient,
-		raClient:   ovnClient.RouteAdvertisementsClient,
-		nm:         nm,
+		wf:              wf,
+		eipLister:       wf.EgressIPInformer().Lister(),
+		frrLister:       wf.FRRConfigurationsInformer().Lister(),
+		nadLister:       wf.NADInformer().Lister(),
+		nodeLister:      wf.NodeCoreInformer().Lister(),
+		raLister:        wf.RouteAdvertisementsInformer().Lister(),
+		namespaceLister: wf.NamespaceInformer().Lister(),
+		frrClient:       ovnClient.FRRClient,
+		nadClient:       ovnClient.NetworkAttchDefClient,
+		raClient:        ovnClient.RouteAdvertisementsClient,
+		nm:              nm,
 	}
 
 	handleError := func(key string, errorstatus error) error {
@@ -140,9 +147,9 @@ func NewController(
 	}
 	c.nadController = controllerutil.NewController("clustermanager routeadvertisements nad controller", nadConfig)
 
-	nodeConfig := &controllerutil.ControllerConfig[core.Node]{
+	nodeConfig := &controllerutil.ControllerConfig[corev1.Node]{
 		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
-		Reconcile:      func(key string) error { c.raController.ReconcileAll(); return nil },
+		Reconcile:      func(_ string) error { c.raController.ReconcileAll(); return nil },
 		Threadiness:    1,
 		Informer:       wf.NodeCoreInformer().Informer(),
 		Lister:         wf.NodeCoreInformer().Lister().List,
@@ -152,13 +159,23 @@ func NewController(
 
 	eipConfig := &controllerutil.ControllerConfig[eiptypes.EgressIP]{
 		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
-		Reconcile:      c.reconcileEgressIP,
+		Reconcile:      c.reconcileEgressIPs,
 		Threadiness:    1,
 		Informer:       wf.EgressIPInformer().Informer(),
 		Lister:         wf.EgressIPInformer().Lister().List,
 		ObjNeedsUpdate: egressIPNeedsUpdate,
 	}
 	c.eipController = controllerutil.NewController("clustermanager routeadvertisements egressip controller", eipConfig)
+
+	nsConfig := &controllerutil.ControllerConfig[corev1.Namespace]{
+		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+		Reconcile:      c.reconcileEgressIPs,
+		Threadiness:    1,
+		Informer:       wf.NamespaceInformer().Informer(),
+		Lister:         wf.NamespaceInformer().Lister().List,
+		ObjNeedsUpdate: nsNeedsUpdate,
+	}
+	c.nsController = controllerutil.NewController("clustermanager routeadvertisements namespace controller", nsConfig)
 
 	return c
 }
@@ -170,6 +187,7 @@ func (c *Controller) Start() error {
 		c.frrController,
 		c.nadController,
 		c.nodeController,
+		c.nsController,
 		c.raController,
 	)
 }
@@ -180,20 +198,33 @@ func (c *Controller) Stop() {
 		c.frrController,
 		c.nadController,
 		c.nodeController,
+		c.nsController,
 		c.raController,
 	)
-	klog.Infof("Cluster manager routeadvertisements stoppedu")
+	klog.Infof("Cluster manager routeadvertisements stopped")
 }
 
-func (c *Controller) ReconcileNetwork(name string, old, new util.NetInfo) {
-	// This controller already listens on NAD events however we skip NADs
-	// pointing to networks that network manager is still not aware of; so we
-	// only need to signal the reconciliation of new networks. Reconcile one of
-	// the NADs of the network to do s
-	if new == nil || old != nil {
-		return
+func (c *Controller) ReconcileNetwork(_ string, old, new util.NetInfo) {
+	// This controller already listens on NAD events but there is two additional
+	// scenarios we need to cover for:
+	// - for newly created networks, we need to wait until network manager is
+	// aware of them.
+	// - if the namespaces served by a network change.
+	oldNamespaces, newNamespaces := sets.New[string](), sets.New[string]()
+	if old != nil {
+		oldNamespaces.Insert(old.GetNADNamespaces()...)
 	}
-	c.nadController.Reconcile(new.GetNADs()[0])
+	if new != nil {
+		newNamespaces.Insert(new.GetNADNamespaces()...)
+	}
+	if new != nil && !newNamespaces.Equal(oldNamespaces) {
+		// we use one of the NADs of the network to reconcile it
+		c.nadController.Reconcile(new.GetNADs()[0])
+		// if the namespaces served by a network changed, it is possible that
+		// those namespaces are served or no longer served by the default
+		// network, so reconcile it as well
+		c.nadController.Reconcile(config.Kubernetes.OVNConfigNamespace + "/" + types.DefaultNetworkName)
+	}
 }
 
 // Reconcile RouteAdvertisements. For each selected FRRConfiguration and node,
@@ -205,7 +236,8 @@ func (c *Controller) ReconcileNetwork(name string, old, new util.NetInfo) {
 //
 // - If EgressIP advertisements are enabled, the generated FRRConfiguration will
 // announce from the node the EgressIPs allocated to it on the matching target
-// VRFs.
+// VRFs. Selected EgressIP are those that serve the same namespaces as the
+// selected networks. Target VRF `auto` is not supported for EgressIPs.
 //
 // - If pod network advertisements are enabled, the generated FRRConfiguration
 // will import the target VRFs on the selected networks as required.
@@ -221,7 +253,7 @@ func (c *Controller) ReconcileNetwork(name string, old, new util.NetInfo) {
 // Finally, it will update the status of the RouteAdvertisements.
 //
 // The controller processes selected events of RouteAdvertisements,
-// FRRConfigurations, Nodes, EgressIPs and NADs.
+// FRRConfigurations, Nodes, EgressIPs, NADs and namespaces.
 func (c *Controller) reconcile(name string) error {
 	startTime := time.Now()
 	klog.V(5).Infof("Syncing routeadvertisements %q", name)
@@ -291,6 +323,11 @@ type selectedNetworks struct {
 func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) ([]*frrtypes.FRRConfiguration, []*nadtypes.NetworkAttachmentDefinition, error) {
 	if ra == nil {
 		return nil, nil, nil
+	}
+
+	advertisements := sets.New(ra.Spec.Advertisements...)
+	if advertisements.Has(ratypes.EgressIP) && ra.Spec.TargetVRF == "auto" {
+		return nil, nil, fmt.Errorf("%w: advertising EgressIP not supported with TargetVRF set to 'auto'", errConfig)
 	}
 
 	// if we are matching on the well known default network label, create an
@@ -368,7 +405,6 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 	if err != nil {
 		return nil, nil, err
 	}
-	advertisements := sets.New(ra.Spec.Advertisements...)
 	if !nodeSelector.Empty() && advertisements.Has(ratypes.PodNetwork) {
 		return nil, nil, fmt.Errorf("%w: node selector cannot be specified if pod network is advertised", errConfig)
 	}
@@ -443,15 +479,15 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 
 	// helper to gather egress ips and cache during reconcile
 	// TODO perhaps cache across reconciles as well
-	var nodeEgressIPs map[string][]string
-	getEgressIPs := func(nodeName string) ([]string, error) {
-		if nodeEgressIPs == nil {
-			nodeEgressIPs, err = c.getEgressIPsByNode()
+	var eipsByNodesByNetworks map[string]map[string]sets.Set[string]
+	getEgressIPsByNode := func(nodeName string) (map[string]sets.Set[string], error) {
+		if eipsByNodesByNetworks == nil {
+			eipsByNodesByNetworks, err = c.getEgressIPsByNodesByNetworks(networkSet)
 			if err != nil {
 				return nil, err
 			}
 		}
-		return nodeEgressIPs[nodeName], nil
+		return eipsByNodesByNetworks[nodeName], nil
 	}
 
 	// helper to gather host subnets and egress ips as prefixes
@@ -468,13 +504,11 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 		// gather EgressIPs
 		var eips []string
 		if advertisements.Has(ratypes.EgressIP) {
-			if network != types.DefaultNetworkName {
-				return nil, fmt.Errorf("%w: can't advertise EgressIP in selected non default network %q: %w", errConfig, network, err)
-			}
-			eips, err = getEgressIPs(nodeName)
+			eipsByNode, err := getEgressIPsByNode(nodeName)
 			if err != nil {
 				return nil, err
 			}
+			eips = eipsByNode[network].UnsortedList()
 		}
 
 		prefixes := make([]string, 0, len(subnets)+len(eips))
@@ -499,19 +533,27 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 			// ordered
 			slices.Sort(selectedNetworks.hostNetworkSubnets[network])
 		}
-		// ordered
-		slices.Sort(selectedNetworks.hostSubnets)
+		// order, dedup
+		selectedNetworks.hostSubnets = sets.List(sets.New(selectedNetworks.hostSubnets...))
+
+		// if there is no prefixes to advertise for this node, skip it
+		if len(selectedNetworks.hostSubnets) == 0 {
+			continue
+		}
 
 		matchedNetworks := sets.New[string]()
 		for _, frrConfig := range frrConfigs {
 			// generate FRRConfiguration for each source FRRConfiguration/node combination
-			new := c.generateFRRConfiguration(
+			new, err := c.generateFRRConfiguration(
 				ra,
 				frrConfig,
 				nodeName,
 				selectedNetworks,
 				matchedNetworks,
 			)
+			if err != nil {
+				return nil, nil, err
+			}
 			if new == nil {
 				// if we got nil, we didn't match any VRF
 				return nil, nil, fmt.Errorf("%w: FRRConfiguration %q selected for node %q has no VRF matching the RouteAdvertisements target VRF or any selected network",
@@ -537,7 +579,7 @@ func (c *Controller) generateFRRConfiguration(
 	nodeName string,
 	selectedNetworks *selectedNetworks,
 	matchedNetworks sets.Set[string],
-) *frrtypes.FRRConfiguration {
+) (*frrtypes.FRRConfiguration, error) {
 	routers := []frrtypes.Router{}
 	advertisements := sets.New(ra.Spec.Advertisements...)
 
@@ -596,16 +638,30 @@ func (c *Controller) generateFRRConfiguration(
 		targetRouter.Prefixes = advertisePrefixes
 		targetRouter.Neighbors = make([]frrtypes.Neighbor, 0, len(source.Spec.BGP.Routers[i].Neighbors))
 		for _, neighbor := range source.Spec.BGP.Routers[i].Neighbors {
-			advertisePrefixes := advertisePrefixes
-			receivePrefixes := receivePrefixes
-			if neighbor.DisableMP {
-				isIPV6 := utilnet.IsIPv6String(neighbor.Address)
-				advertisePrefixes = util.MatchAllIPNetsStringFamily(isIPV6, advertisePrefixes)
-				receivePrefixes = util.MatchAllIPNetsStringFamily(isIPV6, receivePrefixes)
+			// If MultiProtocol is enabled (default) then a BGP session carries
+			// prefixes of both IPv4 and IPv6 families. Our problem is that with
+			// an IPv4 session, FRR can incorrectly pick the masquerade IPv6
+			// address (instead of the real address) as next hop for IPv6
+			// prefixes and that won't work. Note that with a dedicated IPv6
+			// session that can't happen since FRR will use the same address
+			// that was used to stablish the session. Let's enforce the use of
+			// DisableMP for now.
+			if !neighbor.DisableMP {
+				return nil, fmt.Errorf("%w: DisableMP==false not supported, seen on FRRConfiguration %s/%s neighbor %s",
+					errConfig,
+					source.Namespace,
+					source.Name,
+					neighbor.Address,
+				)
 			}
+
+			isIPV6 := utilnet.IsIPv6String(neighbor.Address)
+			advertisePrefixes := util.MatchAllIPNetsStringFamily(isIPV6, advertisePrefixes)
+			receivePrefixes := util.MatchAllIPNetsStringFamily(isIPV6, receivePrefixes)
 			if len(advertisePrefixes) == 0 {
 				continue
 			}
+
 			neighbor.ToAdvertise = frrtypes.Advertise{
 				Allowed: frrtypes.AllowedOutPrefixes{
 					Mode:     frrtypes.AllowRestricted,
@@ -685,7 +741,7 @@ func (c *Controller) generateFRRConfiguration(
 	}
 	if len(routers) == 0 {
 		// we ended up with no routers, bail out
-		return nil
+		return nil, nil
 	}
 
 	new := &frrtypes.FRRConfiguration{}
@@ -711,7 +767,7 @@ func (c *Controller) generateFRRConfiguration(
 		},
 	}
 
-	return new
+	return new, nil
 }
 
 // updateFRRConfigurations updates the FRRConfigurations that apply for a
@@ -967,26 +1023,69 @@ func (c *Controller) getOrCreateDefaultNetworkNAD() (*nadtypes.NetworkAttachment
 	)
 }
 
-// getEgressIPsByNode iterates all existing egress IPs and returns them indexed
-// by node
-func (c *Controller) getEgressIPsByNode() (map[string][]string, error) {
+// getEgressIPsByNodesByNetworks iterates all existing egress IPs that apply to
+// any of the provided networks and returns a "node -> network -> eips"
+// map.
+func (c *Controller) getEgressIPsByNodesByNetworks(networks sets.Set[string]) (map[string]map[string]sets.Set[string], error) {
+	eipsByNodesByNetworks := map[string]map[string]sets.Set[string]{}
+	addEgressIPsByNodesByNetwork := func(eipsByNodes map[string]string, network string) {
+		for node, eip := range eipsByNodes {
+			if eipsByNodesByNetworks[node] == nil {
+				eipsByNodesByNetworks[node] = map[string]sets.Set[string]{}
+			}
+			if eipsByNodesByNetworks[node][network] == nil {
+				eipsByNodesByNetworks[node][network] = sets.New[string]()
+			}
+			eipsByNodesByNetworks[node][network].Insert(eip)
+		}
+	}
+
+	addEgressIPsByNodesByNetworkSelector := func(eipsByNodes map[string]string, namespaceSelector *metav1.LabelSelector) error {
+		nsSelector, err := metav1.LabelSelectorAsSelector(namespaceSelector)
+		if err != nil {
+			return err
+		}
+		selected, err := c.namespaceLister.List(nsSelector)
+		if err != nil {
+			return err
+		}
+		for _, namespace := range selected {
+			namespaceNetwork := c.nm.GetActiveNetworkForNamespaceFast(namespace.Name)
+			networkName := namespaceNetwork.GetNetworkName()
+			if networks.Has(networkName) {
+				addEgressIPsByNodesByNetwork(eipsByNodes, networkName)
+			}
+		}
+		return nil
+	}
+
 	eips, err := c.eipLister.List(labels.Everything())
 	if err != nil {
 		return nil, err
 	}
 
-	eipsByNode := map[string][]string{}
 	for _, eip := range eips {
+		eipsByNodes := make(map[string]string, len(eip.Status.Items))
 		for _, item := range eip.Status.Items {
-			if item.EgressIP == "" {
+			// skip unassigned EIPs
+			if item.EgressIP == "" || item.Node == "" {
 				continue
 			}
+
 			ip := item.EgressIP + util.GetIPFullMaskString(item.EgressIP)
-			eipsByNode[item.Node] = append(eipsByNode[item.Node], ip)
+			eipsByNodes[item.Node] = ip
+		}
+		if len(eipsByNodes) == 0 {
+			continue
+		}
+
+		err = addEgressIPsByNodesByNetworkSelector(eipsByNodes, &eip.Spec.NamespaceSelector)
+		if err != nil {
+			return nil, err
 		}
 	}
 
-	return eipsByNode, nil
+	return eipsByNodesByNetworks, nil
 }
 
 // isOwnUpdate checks if an object was updated by us last, as indicated by its
@@ -1034,15 +1133,16 @@ func nadNeedsUpdate(oldObj, newObj *nadtypes.NetworkAttachmentDefinition) bool {
 		oldObj.Annotations[types.OvnRouteAdvertisementsKey] != newObj.Annotations[types.OvnRouteAdvertisementsKey]
 }
 
-func nodeNeedsUpdate(oldObj, newObj *core.Node) bool {
+func nodeNeedsUpdate(oldObj, newObj *corev1.Node) bool {
 	return oldObj == nil || newObj == nil ||
 		!reflect.DeepEqual(oldObj.Labels, newObj.Labels) ||
-		util.NodeSubnetAnnotationChanged(oldObj, newObj)
+		util.NodeSubnetAnnotationChanged(oldObj, newObj) ||
+		oldObj.Annotations[util.OvnNodeIfAddr] != newObj.Annotations[util.OvnNodeIfAddr]
 }
 
 func egressIPNeedsUpdate(oldObj, newObj *eiptypes.EgressIP) bool {
-	if oldObj != nil && newObj != nil && reflect.DeepEqual(oldObj.Status, newObj.Status) {
-		return false
+	if oldObj != nil && newObj != nil {
+		return !reflect.DeepEqual(oldObj.Status, newObj.Status) || !reflect.DeepEqual(oldObj.Spec.NamespaceSelector, newObj.Spec.NamespaceSelector)
 	}
 	if oldObj != nil && len(oldObj.Status.Items) > 0 {
 		return true
@@ -1051,6 +1151,12 @@ func egressIPNeedsUpdate(oldObj, newObj *eiptypes.EgressIP) bool {
 		return true
 	}
 	return false
+}
+
+func nsNeedsUpdate(oldObj, newObj *corev1.Namespace) bool {
+	// we only care about label changes, added/deleted namespaces served by a
+	// UDN will already be reflected in a network update
+	return oldObj != nil && newObj != nil && !reflect.DeepEqual(oldObj.Labels, newObj.Labels)
 }
 
 func (c *Controller) reconcileFRRConfiguration(key string) error {
@@ -1115,7 +1221,7 @@ func (c *Controller) reconcileNAD(key string) error {
 	return nil
 }
 
-func (c *Controller) reconcileEgressIP(eipName string) error {
+func (c *Controller) reconcileEgressIPs(string) error {
 	// reconcile RAs that advertise EIPs
 	ras, err := c.raLister.List(labels.Everything())
 	if err != nil {

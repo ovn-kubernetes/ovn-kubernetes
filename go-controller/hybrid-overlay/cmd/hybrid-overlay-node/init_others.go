@@ -23,7 +23,7 @@ import (
 )
 
 // initForOS performs non-Windows specific app initialization
-func initForOS(c *cli.Context, ctx context.Context) error {
+func initForOS(_ *cli.Context, ctx context.Context) error {
 	signalHandler(ctx)
 	return nil
 }

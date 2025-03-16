@@ -5,11 +5,9 @@ import (
 	"net"
 	"testing"
 
-	"github.com/onsi/gomega"
-
 	cnitypes "github.com/containernetworking/cni/pkg/types"
-
 	nadv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	"github.com/onsi/gomega"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -17,7 +15,6 @@ import (
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 )
 
@@ -33,7 +30,7 @@ func TestParseSubnets(t *testing.T) {
 	}{
 		{
 			desc:     "multiple subnets layer 3 topology",
-			topology: types.Layer3Topology,
+			topology: ovntypes.Layer3Topology,
 			subnets:  "192.168.1.1/26/28, fda6::/48",
 			expectedSubnets: []config.CIDRNetworkEntry{
 				{
@@ -48,11 +45,11 @@ func TestParseSubnets(t *testing.T) {
 		},
 		{
 			desc:     "empty subnets layer 3 topology",
-			topology: types.Layer3Topology,
+			topology: ovntypes.Layer3Topology,
 		},
 		{
 			desc:     "multiple subnets and excludes layer 2 topology",
-			topology: types.Layer2Topology,
+			topology: ovntypes.Layer2Topology,
 			subnets:  "192.168.1.1/26, fda6::/48",
 			excludes: "192.168.1.38/32, fda6::38/128",
 			expectedSubnets: []config.CIDRNetworkEntry{
@@ -67,25 +64,25 @@ func TestParseSubnets(t *testing.T) {
 		},
 		{
 			desc:     "empty subnets layer 2 topology",
-			topology: types.Layer2Topology,
+			topology: ovntypes.Layer2Topology,
 		},
 		{
 			desc:        "invalid formatted excludes layer 2 topology",
-			topology:    types.Layer2Topology,
+			topology:    ovntypes.Layer2Topology,
 			subnets:     "192.168.1.1/26",
 			excludes:    "192.168.1.1/26/32",
 			expectError: true,
 		},
 		{
 			desc:        "invalid not contained excludes layer 2 topology",
-			topology:    types.Layer2Topology,
+			topology:    ovntypes.Layer2Topology,
 			subnets:     "fda6::/48",
 			excludes:    "fda7::38/128",
 			expectError: true,
 		},
 		{
 			desc:     "multiple subnets and excludes localnet topology",
-			topology: types.LocalnetTopology,
+			topology: ovntypes.LocalnetTopology,
 			subnets:  "192.168.1.1/26, fda6::/48",
 			excludes: "192.168.1.38/32, fda6::38/128",
 			expectedSubnets: []config.CIDRNetworkEntry{
@@ -100,18 +97,18 @@ func TestParseSubnets(t *testing.T) {
 		},
 		{
 			desc:     "empty subnets localnet topology",
-			topology: types.LocalnetTopology,
+			topology: ovntypes.LocalnetTopology,
 		},
 		{
 			desc:        "invalid formatted excludes localnet topology",
-			topology:    types.LocalnetTopology,
+			topology:    ovntypes.LocalnetTopology,
 			subnets:     "fda6::/48",
 			excludes:    "fda6::1/48/128",
 			expectError: true,
 		},
 		{
 			desc:        "invalid not contained excludes localnet topology",
-			topology:    types.LocalnetTopology,
+			topology:    ovntypes.LocalnetTopology,
 			subnets:     "192.168.1.1/26",
 			excludes:    "192.168.2.38/32",
 			expectError: true,
@@ -590,7 +587,7 @@ func TestJoinSubnets(t *testing.T) {
 		t.Run(test.desc, func(t *testing.T) {
 			g := gomega.NewWithT(t)
 			netInfo, err := NewNetInfo(test.inputNetConf)
-			g.Expect(err).To(gomega.BeNil())
+			g.Expect(err).ToNot(gomega.HaveOccurred())
 			g.Expect(netInfo.JoinSubnets()).To(gomega.Equal(test.expectedSubnets))
 			if netInfo.TopologyType() != ovntypes.LocalnetTopology {
 				g.Expect(netInfo.JoinSubnetV4()).To(gomega.Equal(test.expectedSubnets[0]))
@@ -692,7 +689,7 @@ func TestIsPrimaryNetwork(t *testing.T) {
 		t.Run(test.desc, func(t *testing.T) {
 			g := gomega.NewWithT(t)
 			netInfo, err := NewNetInfo(test.inputNetConf)
-			g.Expect(err).To(gomega.BeNil())
+			g.Expect(err).ToNot(gomega.HaveOccurred())
 			g.Expect(netInfo.IsPrimaryNetwork()).To(gomega.Equal(test.expectedPrimary))
 		})
 	}
@@ -745,7 +742,7 @@ func TestIsDefault(t *testing.T) {
 		t.Run(test.desc, func(t *testing.T) {
 			g := gomega.NewWithT(t)
 			netInfo, err := NewNetInfo(test.inputNetConf)
-			g.Expect(err).To(gomega.BeNil())
+			g.Expect(err).ToNot(gomega.HaveOccurred())
 			g.Expect(netInfo.IsDefault()).To(gomega.Equal(test.expectedDefaultVal))
 		})
 	}
@@ -824,7 +821,7 @@ func TestGetPodNADToNetworkMapping(t *testing.T) {
 		t.Run(test.desc, func(t *testing.T) {
 			g := gomega.NewWithT(t)
 			netInfo, err := NewNetInfo(test.inputNetConf)
-			g.Expect(err).To(gomega.BeNil())
+			g.Expect(err).ToNot(gomega.HaveOccurred())
 			if test.inputNetConf.NADName != "" {
 				mutableNetInfo := NewMutableNetInfo(netInfo)
 				mutableNetInfo.AddNADs(test.inputNetConf.NADName)
@@ -1019,7 +1016,7 @@ func TestGetPodNADToNetworkMappingWithActiveNetwork(t *testing.T) {
 		t.Run(test.desc, func(t *testing.T) {
 			g := gomega.NewWithT(t)
 			netInfo, err := NewNetInfo(test.inputNetConf)
-			g.Expect(err).To(gomega.BeNil())
+			g.Expect(err).ToNot(gomega.HaveOccurred())
 			if test.inputNetConf.NADName != "" {
 				mutableNetInfo := NewMutableNetInfo(netInfo)
 				mutableNetInfo.AddNADs(test.inputNetConf.NADName)
@@ -1029,7 +1026,7 @@ func TestGetPodNADToNetworkMappingWithActiveNetwork(t *testing.T) {
 			var primaryUDNNetInfo NetInfo
 			if test.inputPrimaryUDNConfig != nil {
 				primaryUDNNetInfo, err = NewNetInfo(test.inputPrimaryUDNConfig)
-				g.Expect(err).To(gomega.BeNil())
+				g.Expect(err).ToNot(gomega.HaveOccurred())
 				if test.inputPrimaryUDNConfig.NADName != "" {
 					mutableNetInfo := NewMutableNetInfo(primaryUDNNetInfo)
 					mutableNetInfo.AddNADs(test.inputPrimaryUDNConfig.NADName)
@@ -1065,7 +1062,7 @@ func TestSubnetOverlapCheck(t *testing.T) {
 	_, cidr6, _ := net.ParseCIDR("fe00::/16")
 	_, svcCidr4, _ := net.ParseCIDR("172.30.0.0/16")
 	_, svcCidr6, _ := net.ParseCIDR("fe01::/16")
-	config.Default.ClusterSubnets = []config.CIDRNetworkEntry{{cidr4, 24}, {cidr6, 64}}
+	config.Default.ClusterSubnets = []config.CIDRNetworkEntry{{CIDR: cidr4, HostSubnetLength: 24}, {CIDR: cidr6, HostSubnetLength: 64}}
 	config.Kubernetes.ServiceCIDRs = []*net.IPNet{svcCidr4, svcCidr6}
 	config.Gateway.V4MasqueradeSubnet = "169.254.169.0/29"
 	config.Gateway.V6MasqueradeSubnet = "fd69::/125"
@@ -1255,7 +1252,7 @@ func TestNewNetInfo(t *testing.T) {
 			g := gomega.NewWithT(t)
 			_, err := NewNetInfo(inputNetConf)
 			if test.expectedError == nil {
-				g.Expect(err).To(gomega.BeNil())
+				g.Expect(err).ToNot(gomega.HaveOccurred())
 			} else {
 				g.Expect(err).To(gomega.MatchError(test.expectedError.Error()))
 			}

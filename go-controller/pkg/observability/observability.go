@@ -7,10 +7,11 @@ import (
 	"sync"
 	"time"
 
-	libovsdbclient "github.com/ovn-org/libovsdb/client"
-	libovsdb "github.com/ovn-org/libovsdb/ovsdb"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
+
+	libovsdbclient "github.com/ovn-org/libovsdb/client"
+	"github.com/ovn-org/libovsdb/ovsdb"
 
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -172,14 +173,14 @@ func (m *Manager) deleteStaleCollectors() error {
 // This is expected, and Cleanup may be retried on the next restart.
 func Cleanup(nbClient libovsdbclient.Client) error {
 	// Do the opposite of init
-	err := libovsdbops.DeleteSamplingAppsWithPredicate(nbClient, func(app *nbdb.SamplingApp) bool {
+	err := libovsdbops.DeleteSamplingAppsWithPredicate(nbClient, func(_ *nbdb.SamplingApp) bool {
 		return true
 	})
 	if err != nil {
 		return fmt.Errorf("error deleting sampling apps: %w", err)
 	}
 
-	err = libovsdbops.DeleteSampleCollectorWithPredicate(nbClient, func(collector *nbdb.SampleCollector) bool {
+	err = libovsdbops.DeleteSampleCollectorWithPredicate(nbClient, func(_ *nbdb.SampleCollector) bool {
 		return true
 	})
 	if err != nil {
@@ -189,7 +190,7 @@ func Cleanup(nbClient libovsdbclient.Client) error {
 }
 
 func (m *Manager) setSamplingAppIDs() error {
-	var ops []libovsdb.Operation
+	var ops []ovsdb.Operation
 	var err error
 	for _, appConfig := range []struct {
 		id      int

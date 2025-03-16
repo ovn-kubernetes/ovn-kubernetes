@@ -9,14 +9,16 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	egressserviceapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/healthcheck"
 	"github.com/urfave/cli/v2"
-	v1 "k8s.io/api/core/v1"
+
+	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	egressserviceapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/healthcheck"
 )
 
 var _ = ginkgo.Describe("Cluster manager Egress Service operations", func() {
@@ -40,13 +42,13 @@ var _ = ginkgo.Describe("Cluster manager Egress Service operations", func() {
 
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
-		config.PrepareTestConfig()
+		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 		// disabling EgressIP to be sure we're creating the no reroute policies ourselves
 		config.OVNKubernetesFeature.EnableEgressIP = false
 		config.OVNKubernetesFeature.EnableEgressService = true
 		_, cidr4, _ := net.ParseCIDR("10.128.0.0/16")
 		_, cidr6, _ := net.ParseCIDR("fe00::/16")
-		config.Default.ClusterSubnets = []config.CIDRNetworkEntry{{cidr4, 24}, {cidr6, 64}}
+		config.Default.ClusterSubnets = []config.CIDRNetworkEntry{{CIDR: cidr4, HostSubnetLength: 24}, {CIDR: cidr6, HostSubnetLength: 64}}
 
 		app = cli.NewApp()
 		app.Name = "test"
@@ -62,7 +64,7 @@ var _ = ginkgo.Describe("Cluster manager Egress Service operations", func() {
 	ginkgo.Context("on startup repair", func() {
 
 		ginkgo.It("should delete stale labels from nodes", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				namespaceT := *newNamespace("testns")
 				node1 := nodeFor(node1Name, node1IPv4, node1IPv6, node1IPv4Subnet, node1IPv6Subnet)
 				node2 := nodeFor(node2Name, node2IPv4, node2IPv6, node2IPv4Subnet, node2IPv6Subnet)
@@ -174,19 +176,19 @@ var _ = ginkgo.Describe("Cluster manager Egress Service operations", func() {
 				}
 
 				objs := []runtime.Object{
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT,
 						},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{
+					&corev1.NodeList{
+						Items: []corev1.Node{
 							*node1,
 							*node2,
 						},
 					},
-					&v1.ServiceList{
-						Items: []v1.Service{
+					&corev1.ServiceList{
+						Items: []corev1.Service{
 							svc1,
 							svc2,
 							srcIPNotByLBService,
@@ -254,7 +256,7 @@ var _ = ginkgo.Describe("Cluster manager Egress Service operations", func() {
 		})
 
 		ginkgo.It("should delete stale status from EgressServices", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				namespaceT := *newNamespace("testns")
 				node1 := nodeFor(node1Name, node1IPv4, node1IPv6, node1IPv4Subnet, node1IPv6Subnet)
 
@@ -302,18 +304,18 @@ var _ = ginkgo.Describe("Cluster manager Egress Service operations", func() {
 				}
 
 				objs := []runtime.Object{
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT,
 						},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{
+					&corev1.NodeList{
+						Items: []corev1.Node{
 							*node1,
 						},
 					},
-					&v1.ServiceList{
-						Items: []v1.Service{
+					&corev1.ServiceList{
+						Items: []corev1.Service{
 							svc2,
 						},
 					},
@@ -364,7 +366,7 @@ var _ = ginkgo.Describe("Cluster manager Egress Service operations", func() {
 
 	ginkgo.Context("on services changes", func() {
 		ginkgo.It("should create/update/delete EgressService host", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				namespaceT := *newNamespace("testns")
 				node1 := nodeFor(node1Name, node1IPv4, node1IPv6, node1IPv4Subnet, node1IPv6Subnet)
 				node1.Labels = map[string]string{"firstName": "Albus"}
@@ -420,19 +422,19 @@ var _ = ginkgo.Describe("Cluster manager Egress Service operations", func() {
 				}
 
 				objs := []runtime.Object{
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT,
 						},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{
+					&corev1.NodeList{
+						Items: []corev1.Node{
 							*node1,
 							*node2,
 						},
 					},
-					&v1.ServiceList{
-						Items: []v1.Service{
+					&corev1.ServiceList{
+						Items: []corev1.Service{
 							svc1,
 						},
 					},
@@ -486,7 +488,7 @@ var _ = ginkgo.Describe("Cluster manager Egress Service operations", func() {
 				s2 := lbSvcFor("testns", "svc2")
 				svc2 := &s2
 
-				svc2, err = fakeCM.fakeClient.KubeClient.CoreV1().Services("testns").Create(context.TODO(), svc2, metav1.CreateOptions{})
+				_, err = fakeCM.fakeClient.KubeClient.CoreV1().Services("testns").Create(context.TODO(), svc2, metav1.CreateOptions{})
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
 				ginkgo.By("creating an EgressService for the second service with a config that matches the second node its status will be updated")
@@ -549,7 +551,7 @@ var _ = ginkgo.Describe("Cluster manager Egress Service operations", func() {
 		})
 
 		ginkgo.It("should create/update/delete node labels", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				namespaceT := *newNamespace("testns")
 				node1 := nodeFor(node1Name, node1IPv4, node1IPv6, node1IPv4Subnet, node1IPv6Subnet)
 				node1.Labels = map[string]string{"animal": "FlyingBison"}
@@ -589,19 +591,19 @@ var _ = ginkgo.Describe("Cluster manager Egress Service operations", func() {
 				}
 
 				objs := []runtime.Object{
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT,
 						},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{
+					&corev1.NodeList{
+						Items: []corev1.Node{
 							*node1,
 							*node2,
 						},
 					},
-					&v1.ServiceList{
-						Items: []v1.Service{
+					&corev1.ServiceList{
+						Items: []corev1.Service{
 							svc1,
 						},
 					},
@@ -732,7 +734,7 @@ var _ = ginkgo.Describe("Cluster manager Egress Service operations", func() {
 		})
 
 		ginkgo.It("should do nothing when an invalid nodeSelector is specified", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				namespaceT := *newNamespace("testns")
 				node1 := nodeFor(node1Name, node1IPv4, node1IPv6, node1IPv4Subnet, node1IPv6Subnet)
 
@@ -769,18 +771,18 @@ var _ = ginkgo.Describe("Cluster manager Egress Service operations", func() {
 				}
 
 				objs := []runtime.Object{
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT,
 						},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{
+					&corev1.NodeList{
+						Items: []corev1.Node{
 							*node1,
 						},
 					},
-					&v1.ServiceList{
-						Items: []v1.Service{
+					&corev1.ServiceList{
+						Items: []corev1.Service{
 							svc1,
 						},
 					},
@@ -832,7 +834,7 @@ var _ = ginkgo.Describe("Cluster manager Egress Service operations", func() {
 	ginkgo.Context("on endpointslices changes", func() {
 
 		ginkgo.It("should create/update/delete status for ETP=Local Service", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				namespaceT := *newNamespace("testns")
 				config.IPv6Mode = true
 				node1 := nodeFor(node1Name, node1IPv4, node1IPv6, node1IPv4Subnet, node1IPv6Subnet)
@@ -855,7 +857,7 @@ var _ = ginkgo.Describe("Cluster manager Egress Service operations", func() {
 					},
 				}
 				svc1 := lbSvcFor("testns", "svc1")
-				svc1.Spec.ExternalTrafficPolicy = v1.ServiceExternalTrafficPolicyTypeLocal
+				svc1.Spec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyTypeLocal
 
 				v4EpSlice := &discovery.EndpointSlice{
 					ObjectMeta: metav1.ObjectMeta{
@@ -876,18 +878,18 @@ var _ = ginkgo.Describe("Cluster manager Egress Service operations", func() {
 				}
 
 				objs := []runtime.Object{
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT,
 						},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{
+					&corev1.NodeList{
+						Items: []corev1.Node{
 							*node1,
 						},
 					},
-					&v1.ServiceList{
-						Items: []v1.Service{
+					&corev1.ServiceList{
+						Items: []corev1.Service{
 							svc1,
 						},
 					},
@@ -1021,7 +1023,7 @@ var _ = ginkgo.Describe("Cluster manager Egress Service operations", func() {
 
 	ginkgo.Context("on nodes changes", func() {
 		ginkgo.It("should create/update/delete labels and status", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				namespaceT := *newNamespace("testns")
 				config.IPv6Mode = true
 				node1 := nodeFor(node1Name, node1IPv4, node1IPv6, node1IPv4Subnet, node1IPv6Subnet)
@@ -1131,19 +1133,19 @@ var _ = ginkgo.Describe("Cluster manager Egress Service operations", func() {
 				}
 
 				objs := []runtime.Object{
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT,
 						},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{
+					&corev1.NodeList{
+						Items: []corev1.Node{
 							*node1,
 							*node2,
 						},
 					},
-					&v1.ServiceList{
-						Items: []v1.Service{
+					&corev1.ServiceList{
+						Items: []corev1.Service{
 							svc1,
 							svc2,
 						},
@@ -1216,10 +1218,10 @@ var _ = ginkgo.Describe("Cluster manager Egress Service operations", func() {
 				}).ShouldNot(gomega.HaveOccurred())
 
 				ginkgo.By("updating the first node's to be not ready the resources of first service will be deleted")
-				node1.Status.Conditions = []v1.NodeCondition{
+				node1.Status.Conditions = []corev1.NodeCondition{
 					{
-						Type:   v1.NodeReady,
-						Status: v1.ConditionFalse,
+						Type:   corev1.NodeReady,
+						Status: corev1.ConditionFalse,
 					},
 				}
 				node1.ResourceVersion = "2"
@@ -1366,7 +1368,7 @@ var _ = ginkgo.Describe("Cluster manager Egress Service operations", func() {
 		})
 
 		ginkgo.It("should update labels and status on reachability failure", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				namespaceT := *newNamespace("testns")
 				config.IPv6Mode = true
 				node1 := nodeFor(node1Name, node1IPv4, node1IPv6, node1IPv4Subnet, node1IPv6Subnet)
@@ -1423,18 +1425,18 @@ var _ = ginkgo.Describe("Cluster manager Egress Service operations", func() {
 				}
 
 				objs := []runtime.Object{
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT,
 						},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{
+					&corev1.NodeList{
+						Items: []corev1.Node{
 							*node1,
 						},
 					},
-					&v1.ServiceList{
-						Items: []v1.Service{
+					&corev1.ServiceList{
+						Items: []corev1.Service{
 							svc1,
 						},
 					},
@@ -1454,7 +1456,7 @@ var _ = ginkgo.Describe("Cluster manager Egress Service operations", func() {
 				ginkgo.By("modifying the controller's IsReachable func to return false on the first call and true for the second")
 				count := 0
 
-				isReachable = func(nodeName string, _ []net.IP, _ healthcheck.EgressIPHealthClient) bool {
+				isReachable = func(string, []net.IP, healthcheck.EgressIPHealthClient) bool {
 					count++
 					return count == 2
 				}
@@ -1553,19 +1555,19 @@ var _ = ginkgo.Describe("Cluster manager Egress Service operations", func() {
 
 })
 
-func lbSvcFor(namespace, name string) v1.Service {
-	return v1.Service{
+func lbSvcFor(namespace, name string) corev1.Service {
+	return corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            name,
 			Namespace:       namespace,
 			ResourceVersion: "1",
 		},
-		Spec: v1.ServiceSpec{
-			Type: v1.ServiceTypeLoadBalancer,
+		Spec: corev1.ServiceSpec{
+			Type: corev1.ServiceTypeLoadBalancer,
 		},
-		Status: v1.ServiceStatus{
-			LoadBalancer: v1.LoadBalancerStatus{
-				Ingress: []v1.LoadBalancerIngress{
+		Status: corev1.ServiceStatus{
+			LoadBalancer: corev1.LoadBalancerStatus{
+				Ingress: []corev1.LoadBalancerIngress{
 					{
 						IP: "1.1.1.1", // arbitrary ip, we don't care about it for the lrps as long as it's there
 					},
@@ -1575,8 +1577,8 @@ func lbSvcFor(namespace, name string) v1.Service {
 	}
 }
 
-func nodeFor(name, ipv4, ipv6, v4subnet, v6subnet string) *v1.Node {
-	return &v1.Node{
+func nodeFor(name, ipv4, ipv6, v4subnet, v6subnet string) *corev1.Node {
+	return &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 			Annotations: map[string]string{
@@ -1588,20 +1590,20 @@ func nodeFor(name, ipv4, ipv6, v4subnet, v6subnet string) *v1.Node {
 			},
 			ResourceVersion: "1",
 		},
-		Status: v1.NodeStatus{
-			Conditions: []v1.NodeCondition{
+		Status: corev1.NodeStatus{
+			Conditions: []corev1.NodeCondition{
 				{
-					Type:   v1.NodeReady,
-					Status: v1.ConditionTrue,
+					Type:   corev1.NodeReady,
+					Status: corev1.ConditionTrue,
 				},
 			},
-			Addresses: []v1.NodeAddress{
+			Addresses: []corev1.NodeAddress{
 				{
-					Type:    v1.NodeInternalIP,
+					Type:    corev1.NodeInternalIP,
 					Address: ipv4,
 				},
 				{
-					Type:    v1.NodeInternalIP,
+					Type:    corev1.NodeInternalIP,
 					Address: ipv6,
 				},
 			},

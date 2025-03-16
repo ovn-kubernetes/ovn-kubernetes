@@ -6,13 +6,7 @@ import (
 	"sync"
 	"time"
 
-	libovsdbclient "github.com/ovn-org/libovsdb/client"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/observability"
-	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -26,6 +20,14 @@ import (
 	anpclientset "sigs.k8s.io/network-policy-api/pkg/client/clientset/versioned"
 	anpinformer "sigs.k8s.io/network-policy-api/pkg/client/informers/externalversions/apis/v1alpha1"
 	anplister "sigs.k8s.io/network-policy-api/pkg/client/listers/apis/v1alpha1"
+
+	libovsdbclient "github.com/ovn-org/libovsdb/client"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
+	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/observability"
+	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 const (
@@ -58,7 +60,7 @@ type Controller struct {
 	// we consider it remote - this is ok for this controller as this variable is only used to
 	// determine if we need to add pod's port to port group or not - future updates should
 	// take care of reconciling the state of the cluster
-	isPodScheduledinLocalZone func(*v1.Pod) bool
+	isPodScheduledinLocalZone func(*corev1.Pod) bool
 	// store's the name of the zone that this controller belongs to
 	zone string
 
@@ -112,7 +114,7 @@ func NewController(
 	podInformer corev1informers.PodInformer,
 	nodeInformer corev1informers.NodeInformer,
 	addressSetFactory addressset.AddressSetFactory,
-	isPodScheduledinLocalZone func(*v1.Pod) bool,
+	isPodScheduledinLocalZone func(*corev1.Pod) bool,
 	zone string,
 	recorder record.EventRecorder,
 	observManager *observability.Manager) (*Controller, error) {
@@ -454,8 +456,8 @@ func (c *Controller) onANPNamespaceAdd(obj interface{}) {
 
 // onANPNamespaceUpdate queues the namespace for processing.
 func (c *Controller) onANPNamespaceUpdate(oldObj, newObj interface{}) {
-	oldNamespace := oldObj.(*v1.Namespace)
-	newNamespace := newObj.(*v1.Namespace)
+	oldNamespace := oldObj.(*corev1.Namespace)
+	newNamespace := newObj.(*corev1.Namespace)
 
 	// don't process resync or objects that are marked for deletion
 	if oldNamespace.ResourceVersion == newNamespace.ResourceVersion ||
@@ -500,8 +502,8 @@ func (c *Controller) onANPPodAdd(obj interface{}) {
 
 // onANPPodUpdate queues the pod for processing.
 func (c *Controller) onANPPodUpdate(oldObj, newObj interface{}) {
-	oldPod := oldObj.(*v1.Pod)
-	newPod := newObj.(*v1.Pod)
+	oldPod := oldObj.(*corev1.Pod)
+	newPod := newObj.(*corev1.Pod)
 
 	// don't process resync or objects that are marked for deletion
 	if oldPod.ResourceVersion == newPod.ResourceVersion ||
@@ -560,8 +562,8 @@ func (c *Controller) onANPNodeAdd(obj interface{}) {
 
 // onANPNodeUpdate queues the node for processing.
 func (c *Controller) onANPNodeUpdate(oldObj, newObj interface{}) {
-	oldNode := oldObj.(*v1.Node)
-	newNode := newObj.(*v1.Node)
+	oldNode := oldObj.(*corev1.Node)
+	newNode := newObj.(*corev1.Node)
 
 	// don't process resync or objects that are marked for deletion
 	if oldNode.ResourceVersion == newNode.ResourceVersion ||

@@ -6,14 +6,14 @@ import (
 	"net"
 	"time"
 
+	current "github.com/containernetworking/cni/pkg/types/100"
 	v1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
-	kapi "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 
-	current "github.com/containernetworking/cni/pkg/types/100"
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/udn"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
@@ -95,13 +95,14 @@ func (pr *PodRequest) String() string {
 // The hash is annotated in the mirror pod (kubernetes.io/config.hash)
 // and we could match against it, but let's avoid that for now as it is not
 // a published standard.
-func (pr *PodRequest) checkOrUpdatePodUID(pod *kapi.Pod) error {
+func (pr *PodRequest) checkOrUpdatePodUID(pod *corev1.Pod) error {
 	if pr.PodUID == "" || IsStaticPod(pod) {
 		// Runtime didn't pass UID, or the pod is a static pod, use the one we got from the pod object
 		pr.PodUID = string(pod.UID)
 	} else if string(pod.UID) != pr.PodUID {
 		// Exit early if the pod was deleted and recreated already
-		return fmt.Errorf("pod deleted before sandbox %v operation began", pr.Command)
+		return fmt.Errorf("pod deleted before sandbox %v operation began. Request Pod UID %s is different from "+
+			"the Pod UID (%s) retrieved from the informer/API", pr.Command, pr.PodUID, pod.UID)
 	}
 	return nil
 }
@@ -150,7 +151,7 @@ func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
 
 	primaryUDN := udn.NewPrimaryNetwork(networkManager)
 	if util.IsNetworkSegmentationSupportEnabled() {
-		annotCondFn = primaryUDN.WaitForPrimaryAnnotationFn(namespace, annotCondFn)
+		annotCondFn = primaryUDN.WaitForPrimaryAnnotationFn(podName, namespace, annotCondFn)
 	}
 	pod, annotations, podNADAnnotation, err := GetPodWithAnnotations(pr.ctx, clientset, namespace, podName, pr.nadName, annotCondFn)
 	if err != nil {
@@ -382,7 +383,7 @@ func getCNIResult(pr *PodRequest, getter PodInfoGetter, podInterfaceInfo *PodInt
 }
 
 func (pr *PodRequest) buildPrimaryUDNPodRequest(
-	pod *kapi.Pod,
+	pod *corev1.Pod,
 	primaryUDN *udn.UserDefinedPrimaryNetwork,
 ) *PodRequest {
 	req := &PodRequest{

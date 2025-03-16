@@ -3,11 +3,13 @@ package adminnetworkpolicy
 import (
 	"fmt"
 
+	"github.com/prometheus/client_golang/prometheus"
+
+	anpapi "sigs.k8s.io/network-policy-api/apis/v1alpha1"
+
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
-	"github.com/prometheus/client_golang/prometheus"
-	anpapi "sigs.k8s.io/network-policy-api/apis/v1alpha1"
 )
 
 // Descriptors used by the ANPControllerCollector below.

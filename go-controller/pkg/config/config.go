@@ -16,6 +16,7 @@ import (
 	"github.com/urfave/cli/v2"
 	gcfg "gopkg.in/gcfg.v1"
 	lumberjack "gopkg.in/natefinch/lumberjack.v2"
+
 	"k8s.io/apimachinery/pkg/api/validation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -451,7 +452,12 @@ type GatewayConfig struct {
 	Mode GatewayMode `gcfg:"mode"`
 	// Interface is the network interface to use for the gateway in "shared" mode
 	Interface string `gcfg:"interface"`
-	// Exgress gateway interface is the optional network interface to use for external gw pods traffic.
+	// GatewayAcceleratedInterface is the optional network interface to use for gateway traffic acceleration.
+	// This is typically a VF or SF device. When specified it would be used as the in_port for Openflow rules
+	// on the external bridge. The Host IP would be on this device.
+	// Should be used mutually exclusive to the `--gateway-interface` flag.
+	GatewayAcceleratedInterface string `gcfg:"gateway-accelerated-interface"`
+	// Egress gateway interface is the optional network interface to use for external gw pods traffic.
 	EgressGWInterface string `gcfg:"egw-interface"`
 	// NextHop is the gateway IP address of Interface; will be autodetected if not given
 	NextHop string `gcfg:"next-hop"`
@@ -624,7 +630,7 @@ func init() {
 	savedHybridOverlay = HybridOverlay
 	savedOvnKubeNode = OvnKubeNode
 	savedClusterManager = ClusterManager
-	cli.VersionPrinter = func(c *cli.Context) {
+	cli.VersionPrinter = func(_ *cli.Context) {
 		fmt.Printf("Version: %s\n", Version)
 		fmt.Printf("Git commit: %s\n", Commit)
 		fmt.Printf("Git branch: %s\n", Branch)
@@ -1406,6 +1412,13 @@ var OVNGatewayFlags = []cli.Flag{
 		Destination: &cliConfig.Gateway.Interface,
 	},
 	&cli.StringFlag{
+		Name: "gateway-accelerated-interface",
+		Usage: "The optional network interface to use for gateway traffic acceleration. " +
+			"This is typically a VF or SF device. When specified it would be used as the in_port for Openflow rules " +
+			"on the external bridge. The Host IP would be on this device.",
+		Destination: &cliConfig.Gateway.GatewayAcceleratedInterface,
+	},
+	&cli.StringFlag{
 		Name: "exgw-interface",
 		Usage: "The interface on nodes that will be used for external gw network traffic. " +
 			"If none specified, ovnk will use the default interface",
@@ -1953,7 +1966,7 @@ func completeGatewayConfig(allSubnets *ConfigSubnets, masqueradeIPs *MasqueradeI
 	return nil
 }
 
-func buildOVNKubernetesFeatureConfig(ctx *cli.Context, cli, file *config) error {
+func buildOVNKubernetesFeatureConfig(cli, file *config) error {
 	// Copy config file values over default values
 	if err := overrideFields(&OVNKubernetesFeature, &file.OVNKubernetesFeature, &savedOVNKubernetesFeature); err != nil {
 		return err
@@ -1965,7 +1978,7 @@ func buildOVNKubernetesFeatureConfig(ctx *cli.Context, cli, file *config) error 
 	return nil
 }
 
-func buildMasterHAConfig(ctx *cli.Context, cli, file *config) error {
+func buildMasterHAConfig(cli, file *config) error {
 	// Copy config file values over default values
 	if err := overrideFields(&MasterHA, &file.MasterHA, &savedMasterHA); err != nil {
 		return err
@@ -1990,7 +2003,7 @@ func buildMasterHAConfig(ctx *cli.Context, cli, file *config) error {
 	return nil
 }
 
-func buildClusterMgrHAConfig(ctx *cli.Context, cli, file *config) error {
+func buildClusterMgrHAConfig(cli, file *config) error {
 	// Copy config file values over default values
 	if err := overrideFields(&ClusterMgrHA, &file.ClusterMgrHA, &savedClusterMgrHA); err != nil {
 		return err
@@ -2015,7 +2028,7 @@ func buildClusterMgrHAConfig(ctx *cli.Context, cli, file *config) error {
 	return nil
 }
 
-func buildMonitoringConfig(ctx *cli.Context, cli, file *config) error {
+func buildMonitoringConfig(cli, file *config) error {
 	var err error
 	if err = overrideFields(&Monitoring, &file.Monitoring, &savedMonitoring); err != nil {
 		return err
@@ -2058,7 +2071,7 @@ func buildIPFIXConfig(cli, file *config) error {
 	return overrideFields(&IPFIX, &cli.IPFIX, &savedIPFIX)
 }
 
-func buildHybridOverlayConfig(ctx *cli.Context, cli, file *config) error {
+func buildHybridOverlayConfig(cli, file *config) error {
 	// Copy config file values over default values
 	if err := overrideFields(&HybridOverlay, &file.HybridOverlay, &savedHybridOverlay); err != nil {
 		return err
@@ -2095,7 +2108,7 @@ func completeHybridOverlayConfig(allSubnets *ConfigSubnets) error {
 	return nil
 }
 
-func buildClusterManagerConfig(ctx *cli.Context, cli, file *config) error {
+func buildClusterManagerConfig(cli, file *config) error {
 	// Copy config file values over default values
 	if err := overrideFields(&ClusterManager, &file.ClusterManager, &savedClusterManager); err != nil {
 		return err
@@ -2341,7 +2354,7 @@ func initConfigWithPath(ctx *cli.Context, exec kexec.Interface, saPath string, d
 		return "", err
 	}
 
-	if err = buildOVNKubernetesFeatureConfig(ctx, &cliConfig, &cfg); err != nil {
+	if err = buildOVNKubernetesFeatureConfig(&cliConfig, &cfg); err != nil {
 		return "", err
 	}
 
@@ -2349,15 +2362,15 @@ func initConfigWithPath(ctx *cli.Context, exec kexec.Interface, saPath string, d
 		return "", err
 	}
 
-	if err = buildMasterHAConfig(ctx, &cliConfig, &cfg); err != nil {
+	if err = buildMasterHAConfig(&cliConfig, &cfg); err != nil {
 		return "", err
 	}
 
-	if err = buildClusterMgrHAConfig(ctx, &cliConfig, &cfg); err != nil {
+	if err = buildClusterMgrHAConfig(&cliConfig, &cfg); err != nil {
 		return "", err
 	}
 
-	if err = buildMonitoringConfig(ctx, &cliConfig, &cfg); err != nil {
+	if err = buildMonitoringConfig(&cliConfig, &cfg); err != nil {
 		return "", err
 	}
 
@@ -2365,15 +2378,15 @@ func initConfigWithPath(ctx *cli.Context, exec kexec.Interface, saPath string, d
 		return "", err
 	}
 
-	if err = buildHybridOverlayConfig(ctx, &cliConfig, &cfg); err != nil {
+	if err = buildHybridOverlayConfig(&cliConfig, &cfg); err != nil {
 		return "", err
 	}
 
-	if err = buildOvnKubeNodeConfig(ctx, &cliConfig, &cfg); err != nil {
+	if err = buildOvnKubeNodeConfig(&cliConfig, &cfg); err != nil {
 		return "", err
 	}
 
-	if err = buildClusterManagerConfig(ctx, &cliConfig, &cfg); err != nil {
+	if err = buildClusterManagerConfig(&cliConfig, &cfg); err != nil {
 		return "", err
 	}
 
@@ -2696,7 +2709,7 @@ func ovnKubeNodeModeSupported(mode string) error {
 }
 
 // buildOvnKubeNodeConfig updates OvnKubeNode config from cli and config file
-func buildOvnKubeNodeConfig(ctx *cli.Context, cli, file *config) error {
+func buildOvnKubeNodeConfig(cli, file *config) error {
 	// Copy config file values over default values
 	if err := overrideFields(&OvnKubeNode, &file.OvnKubeNode, &savedOvnKubeNode); err != nil {
 		return err

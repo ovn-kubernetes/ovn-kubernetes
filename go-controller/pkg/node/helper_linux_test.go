@@ -6,12 +6,13 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+	"github.com/vishvananda/netlink"
+
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	netlink_mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/vishvananda/netlink"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	util_mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/mocks"
-	"github.com/stretchr/testify/assert"
-	"github.com/vishvananda/netlink"
 )
 
 func TestFilterRoutesByIfIndex(t *testing.T) {
@@ -281,9 +282,9 @@ func TestGetDefaultGatewayInterfaceByFamily(t *testing.T) {
 
 			t.Log(err)
 			if tc.expErr {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			mockNetLinkOps.AssertExpectations(t)
 			mockLink.AssertExpectations(t)
@@ -436,9 +437,9 @@ func TestGetDefaultGatewayInterfaceDetails(t *testing.T) {
 
 			t.Log(err)
 			if tc.expErr {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			mockNetLinkOps.AssertExpectations(t)
 			mockLink.AssertExpectations(t)

@@ -22,7 +22,7 @@ import (
 	"net/http"
 	"sync"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
@@ -152,12 +152,12 @@ func (hcs *server) SyncServices(newServices map[types.NamespacedName]uint16) err
 
 			if hcs.recorder != nil {
 				hcs.recorder.Eventf(
-					&v1.ObjectReference{
+					&corev1.ObjectReference{
 						Kind:      "Service",
 						Namespace: nsn.Namespace,
 						Name:      nsn.Name,
 						UID:       types.UID(nsn.String()),
-					}, v1.EventTypeWarning, "FailedToStartServiceHealthcheck", msg)
+					}, corev1.EventTypeWarning, "FailedToStartServiceHealthcheck", msg)
 			}
 			errors = append(errors, fmt.Errorf(msg))
 			continue
@@ -191,7 +191,7 @@ type hcHandler struct {
 
 var _ http.Handler = hcHandler{}
 
-func (h hcHandler) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
+func (h hcHandler) ServeHTTP(resp http.ResponseWriter, _ *http.Request) {
 	h.hcs.lock.RLock()
 	svc, ok := h.hcs.services[h.name]
 	if !ok || svc == nil {

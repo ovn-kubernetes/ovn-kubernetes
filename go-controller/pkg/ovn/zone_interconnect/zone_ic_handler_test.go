@@ -5,15 +5,16 @@ import (
 	"net"
 	"sort"
 
+	cnitypes "github.com/containernetworking/cni/pkg/types"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
-
-	cnitypes "github.com/containernetworking/cni/pkg/types"
 	"github.com/urfave/cli/v2"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
+
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
@@ -69,7 +70,7 @@ func createTransitSwitchPortBindings(sbClient libovsdbclient.Client, netName str
 
 func getNetworkScopedName(netName, name string) string {
 	if netName == types.DefaultNetworkName {
-		return fmt.Sprintf("%s", name)
+		return name
 	}
 	return fmt.Sprintf("%s%s", util.GetSecondaryNetworkPrefix(netName), name)
 }

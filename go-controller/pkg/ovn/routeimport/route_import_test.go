@@ -11,6 +11,7 @@ import (
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netlink/nl"
 	"golang.org/x/sys/unix"
+
 	"k8s.io/client-go/util/workqueue"
 
 	controllerutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"

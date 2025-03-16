@@ -3,19 +3,14 @@ package kube
 import (
 	"context"
 	"encoding/json"
+
 	ipamclaimsapi "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1"
 	ipamclaimssclientset "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1/apis/clientset/versioned"
 	nadclientset "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned"
 	ocpcloudnetworkapi "github.com/openshift/api/cloudnetwork/v1"
 	ocpcloudnetworkclientset "github.com/openshift/client-go/cloudnetwork/clientset/versioned"
-	adminpolicybasedrouteclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/clientset/versioned"
-	egressfirewall "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
-	egressfirewallclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1/apis/clientset/versioned"
-	egressipv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
-	egressipclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/clientset/versioned"
-	egressqosclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1/apis/clientset/versioned"
-	egressserviceclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/clientset/versioned"
-	kapi "k8s.io/api/core/v1"
+
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -26,6 +21,14 @@ import (
 	"k8s.io/client-go/tools/pager"
 	"k8s.io/klog/v2"
 	anpclientset "sigs.k8s.io/network-policy-api/pkg/client/clientset/versioned"
+
+	adminpolicybasedrouteclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/clientset/versioned"
+	egressfirewall "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
+	egressfirewallclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1/apis/clientset/versioned"
+	egressipv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
+	egressipclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/clientset/versioned"
+	egressqosclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1/apis/clientset/versioned"
+	egressserviceclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/clientset/versioned"
 )
 
 // InterfaceOVN represents the exported methods for dealing with getting/setting
@@ -52,18 +55,18 @@ type Interface interface {
 	SetAnnotationsOnService(namespace, serviceName string, annotations map[string]interface{}) error
 	SetAnnotationsOnNode(nodeName string, annotations map[string]interface{}) error
 	SetAnnotationsOnNamespace(namespaceName string, annotations map[string]interface{}) error
-	SetTaintOnNode(nodeName string, taint *kapi.Taint) error
-	RemoveTaintFromNode(nodeName string, taint *kapi.Taint) error
+	SetTaintOnNode(nodeName string, taint *corev1.Taint) error
+	RemoveTaintFromNode(nodeName string, taint *corev1.Taint) error
 	SetLabelsOnNode(nodeName string, labels map[string]interface{}) error
-	PatchNode(old, new *kapi.Node) error
-	UpdateNodeStatus(node *kapi.Node) error
-	UpdatePodStatus(pod *kapi.Pod) error
+	PatchNode(old, new *corev1.Node) error
+	UpdateNodeStatus(node *corev1.Node) error
+	UpdatePodStatus(pod *corev1.Pod) error
 	GetAnnotationsOnPod(namespace, name string) (map[string]string, error)
-	GetNodes() ([]*kapi.Node, error)
-	GetNamespaces(labelSelector metav1.LabelSelector) ([]*kapi.Namespace, error)
-	GetPods(namespace string, opts metav1.ListOptions) ([]*kapi.Pod, error)
-	GetPod(namespace, name string) (*kapi.Pod, error)
-	GetNode(name string) (*kapi.Node, error)
+	GetNodes() ([]*corev1.Node, error)
+	GetNamespaces(labelSelector metav1.LabelSelector) ([]*corev1.Namespace, error)
+	GetPods(namespace string, opts metav1.ListOptions) ([]*corev1.Pod, error)
+	GetPod(namespace, name string) (*corev1.Pod, error)
+	GetNode(name string) (*corev1.Node, error)
 	Events() kv1core.EventInterface
 }
 
@@ -195,7 +198,7 @@ func (k *Kube) SetAnnotationsOnService(namespace, name string, annotations map[s
 }
 
 // SetTaintOnNode tries to add a new taint to the node. If the taint already exists, it doesn't do anything.
-func (k *Kube) SetTaintOnNode(nodeName string, taint *kapi.Taint) error {
+func (k *Kube) SetTaintOnNode(nodeName string, taint *corev1.Taint) error {
 	node, err := k.GetNode(nodeName)
 	if err != nil {
 		klog.Errorf("Unable to retrieve node %s for tainting %s: %v", nodeName, taint.ToString(), err)
@@ -204,7 +207,7 @@ func (k *Kube) SetTaintOnNode(nodeName string, taint *kapi.Taint) error {
 	newNode := node.DeepCopy()
 	nodeTaints := newNode.Spec.Taints
 
-	var newTaints []kapi.Taint
+	var newTaints []corev1.Taint
 	for i := range nodeTaints {
 		if taint.MatchTaint(&nodeTaints[i]) {
 			klog.Infof("Taint %s already exists on Node %s", taint.ToString(), node.Name)
@@ -228,7 +231,7 @@ func (k *Kube) SetTaintOnNode(nodeName string, taint *kapi.Taint) error {
 
 // RemoveTaintFromNode removes all the taints that have the same key and effect from the node.
 // If the taint doesn't exist, it doesn't do anything.
-func (k *Kube) RemoveTaintFromNode(nodeName string, taint *kapi.Taint) error {
+func (k *Kube) RemoveTaintFromNode(nodeName string, taint *corev1.Taint) error {
 	node, err := k.GetNode(nodeName)
 	if err != nil {
 		klog.Errorf("Unable to retrieve node %s for tainting %s: %v", nodeName, taint.ToString(), err)
@@ -237,7 +240,7 @@ func (k *Kube) RemoveTaintFromNode(nodeName string, taint *kapi.Taint) error {
 	newNode := node.DeepCopy()
 	nodeTaints := newNode.Spec.Taints
 
-	var newTaints []kapi.Taint
+	var newTaints []corev1.Taint
 	for i := range nodeTaints {
 		if taint.MatchTaint(&nodeTaints[i]) {
 			klog.Infof("Removing taint %s from Node %s", taint.ToString(), node.Name)
@@ -278,7 +281,7 @@ func (k *Kube) SetLabelsOnNode(nodeName string, labels map[string]interface{}) e
 }
 
 // PatchNode patches the old node object with the changes provided in the new node object.
-func (k *Kube) PatchNode(old, new *kapi.Node) error {
+func (k *Kube) PatchNode(old, new *corev1.Node) error {
 	oldNodeObjectJson, err := json.Marshal(old)
 	if err != nil {
 		klog.Errorf("Unable to marshal node %s: %v", old.Name, err)
@@ -291,7 +294,7 @@ func (k *Kube) PatchNode(old, new *kapi.Node) error {
 		return err
 	}
 
-	patchBytes, err := strategicpatch.CreateTwoWayMergePatch(oldNodeObjectJson, newNodeObjectJson, kapi.Node{})
+	patchBytes, err := strategicpatch.CreateTwoWayMergePatch(oldNodeObjectJson, newNodeObjectJson, corev1.Node{})
 	if err != nil {
 		klog.Errorf("Unable to patch node %s: %v", old.Name, err)
 		return err
@@ -306,14 +309,14 @@ func (k *Kube) PatchNode(old, new *kapi.Node) error {
 }
 
 // UpdateNodeStatus takes the node object and sets the provided update status
-func (k *Kube) UpdateNodeStatus(node *kapi.Node) error {
+func (k *Kube) UpdateNodeStatus(node *corev1.Node) error {
 	klog.Infof("Updating status on node %s", node.Name)
 	_, err := k.KClient.CoreV1().Nodes().UpdateStatus(context.TODO(), node, metav1.UpdateOptions{})
 	return err
 }
 
 // UpdatePodStatus update pod with provided pod data, limited to .Status and .ObjectMeta fields
-func (k *Kube) UpdatePodStatus(pod *kapi.Pod) error {
+func (k *Kube) UpdatePodStatus(pod *corev1.Pod) error {
 	klog.Infof("Updating pod %s/%s", pod.Namespace, pod.Name)
 	_, err := k.KClient.CoreV1().Pods(pod.Namespace).UpdateStatus(context.TODO(), pod, metav1.UpdateOptions{})
 	return err
@@ -329,54 +332,54 @@ func (k *Kube) GetAnnotationsOnPod(namespace, name string) (map[string]string, e
 }
 
 // GetNamespaces returns the list of all Namespace objects matching the labelSelector
-func (k *Kube) GetNamespaces(labelSelector metav1.LabelSelector) ([]*kapi.Namespace, error) {
-	list := []*kapi.Namespace{}
+func (k *Kube) GetNamespaces(labelSelector metav1.LabelSelector) ([]*corev1.Namespace, error) {
+	list := []*corev1.Namespace{}
 	err := pager.New(func(ctx context.Context, opts metav1.ListOptions) (runtime.Object, error) {
 		return k.KClient.CoreV1().Namespaces().List(ctx, opts)
 	}).EachListItem(context.TODO(), metav1.ListOptions{
 		LabelSelector:   labels.Set(labelSelector.MatchLabels).String(),
 		ResourceVersion: "0",
 	}, func(obj runtime.Object) error {
-		list = append(list, obj.(*kapi.Namespace))
+		list = append(list, obj.(*corev1.Namespace))
 		return nil
 	})
 	return list, err
 }
 
 // GetPods returns the list of all Pod objects in a namespace matching the options
-func (k *Kube) GetPods(namespace string, opts metav1.ListOptions) ([]*kapi.Pod, error) {
-	list := []*kapi.Pod{}
+func (k *Kube) GetPods(namespace string, opts metav1.ListOptions) ([]*corev1.Pod, error) {
+	list := []*corev1.Pod{}
 	opts.ResourceVersion = "0"
 	err := pager.New(func(ctx context.Context, opts metav1.ListOptions) (runtime.Object, error) {
 		return k.KClient.CoreV1().Pods(namespace).List(ctx, opts)
 	}).EachListItem(context.TODO(), opts, func(obj runtime.Object) error {
-		list = append(list, obj.(*kapi.Pod))
+		list = append(list, obj.(*corev1.Pod))
 		return nil
 	})
 	return list, err
 }
 
 // GetPod obtains the pod from kubernetes apiserver, given the name and namespace
-func (k *Kube) GetPod(namespace, name string) (*kapi.Pod, error) {
+func (k *Kube) GetPod(namespace, name string) (*corev1.Pod, error) {
 	return k.KClient.CoreV1().Pods(namespace).Get(context.TODO(), name, metav1.GetOptions{})
 }
 
 // GetNodes returns the list of all Node objects from kubernetes
-func (k *Kube) GetNodes() ([]*kapi.Node, error) {
-	list := []*kapi.Node{}
+func (k *Kube) GetNodes() ([]*corev1.Node, error) {
+	list := []*corev1.Node{}
 	err := pager.New(func(ctx context.Context, opts metav1.ListOptions) (runtime.Object, error) {
 		return k.KClient.CoreV1().Nodes().List(ctx, opts)
 	}).EachListItem(context.TODO(), metav1.ListOptions{
 		ResourceVersion: "0",
 	}, func(obj runtime.Object) error {
-		list = append(list, obj.(*kapi.Node))
+		list = append(list, obj.(*corev1.Node))
 		return nil
 	})
 	return list, err
 }
 
 // GetNode returns the Node resource from kubernetes apiserver, given its name
-func (k *Kube) GetNode(name string) (*kapi.Node, error) {
+func (k *Kube) GetNode(name string) (*corev1.Node, error) {
 	return k.KClient.CoreV1().Nodes().Get(context.TODO(), name, metav1.GetOptions{})
 }
 

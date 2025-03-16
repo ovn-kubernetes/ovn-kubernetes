@@ -6,29 +6,28 @@ import (
 	"reflect"
 	"sync"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
+	corev1 "k8s.io/api/core/v1"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/klog/v2"
+
 	hotypes "github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
 	houtil "github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/informer"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	kapi "k8s.io/api/core/v1"
-
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	listers "k8s.io/client-go/listers/core/v1"
-	"k8s.io/client-go/tools/cache"
-	"k8s.io/klog/v2"
 )
 
 // The nodeController interface is implemented by the os-specific code
 type nodeController interface {
-	AddPod(*kapi.Pod) error
-	DeletePod(*kapi.Pod) error
-	AddNode(*kapi.Node) error
-	DeleteNode(*kapi.Node) error
+	AddPod(*corev1.Pod) error
+	DeletePod(*corev1.Pod) error
+	AddNode(*corev1.Node) error
+	DeleteNode(*corev1.Node) error
 	RunFlowSync(<-chan struct{})
-	EnsureHybridOverlayBridge(node *kapi.Node) error
+	EnsureHybridOverlayBridge(node *corev1.Node) error
 }
 
 // Node is a node controller and it's informers
@@ -53,8 +52,8 @@ func (n *Node) setReady(b bool) {
 }
 
 func nodeChanged(old, new interface{}) bool {
-	oldNode := old.(*kapi.Node)
-	newNode := new.(*kapi.Node)
+	oldNode := old.(*corev1.Node)
+	newNode := new.(*corev1.Node)
 
 	oldCidr, oldNodeIP, oldDrMAC, _ := getNodeDetails(oldNode)
 	newCidr, newNodeIP, newDrMAC, _ := getNodeDetails(newNode)
@@ -66,8 +65,8 @@ func nodeChanged(old, new interface{}) bool {
 
 // podChanged returns true if any relevant pod attributes changed
 func podChanged(old, new interface{}) bool {
-	oldPod := old.(*kapi.Pod)
-	newPod := new.(*kapi.Pod)
+	oldPod := old.(*corev1.Pod)
+	newPod := new.(*corev1.Pod)
 
 	oldIPs, oldMAC, _ := getPodDetails(oldPod)
 	newIPs, newMAC, _ := getPodDetails(newPod)
@@ -110,14 +109,14 @@ func NewNode(
 	n := &Node{controller: controller}
 	n.nodeEventHandler, err = eventHandlerCreateFunction("node", nodeInformer,
 		func(obj interface{}) error {
-			node, ok := obj.(*kapi.Node)
+			node, ok := obj.(*corev1.Node)
 			if !ok {
 				return fmt.Errorf("object is not a node")
 			}
 			return n.controller.AddNode(node)
 		},
 		func(obj interface{}) error {
-			node, ok := obj.(*kapi.Node)
+			node, ok := obj.(*corev1.Node)
 			if !ok {
 				return fmt.Errorf("object is not a node")
 			}
@@ -130,7 +129,7 @@ func NewNode(
 	}
 	n.podEventHandler, err = eventHandlerCreateFunction("pod", localPodInformer,
 		func(obj interface{}) error {
-			pod, ok := obj.(*kapi.Pod)
+			pod, ok := obj.(*corev1.Pod)
 			if !ok {
 				return fmt.Errorf("object is not a pod")
 			}
@@ -140,7 +139,7 @@ func NewNode(
 			return n.controller.AddPod(pod)
 		},
 		func(obj interface{}) error {
-			pod, ok := obj.(*kapi.Pod)
+			pod, ok := obj.(*corev1.Pod)
 			if !ok {
 				return fmt.Errorf("object is not a pod")
 			}
@@ -197,7 +196,7 @@ func (n *Node) Run(stopCh <-chan struct{}) {
 
 // getNodeSubnetAndIP returns the node's hybrid overlay subnet and the node's
 // first InternalIP, or nil if the subnet or node IP is invalid
-func getNodeSubnetAndIP(node *kapi.Node) (*net.IPNet, net.IP) {
+func getNodeSubnetAndIP(node *corev1.Node) (*net.IPNet, net.IP) {
 	var cidr *net.IPNet
 
 	// Parse Linux node OVN hostsubnet annotation first
@@ -207,7 +206,7 @@ func getNodeSubnetAndIP(node *kapi.Node) (*net.IPNet, net.IP) {
 		cidr = cidrs[0]
 	} else {
 		// Otherwise parse the hybrid overlay node subnet annotation
-		subnet, ok := node.Annotations[types.HybridOverlayNodeSubnet]
+		subnet, ok := node.Annotations[hotypes.HybridOverlayNodeSubnet]
 		if !ok {
 
 			klog.V(5).Infof("Missing node %q node subnet annotation", node.Name)
@@ -233,13 +232,13 @@ func getNodeSubnetAndIP(node *kapi.Node) (*net.IPNet, net.IP) {
 // getNodeDetails returns the node's hybrid overlay subnet, first InternalIP,
 // and the distributed router MAC (DRMAC), or nil if any of the addresses are
 // missing or invalid.
-func getNodeDetails(node *kapi.Node) (*net.IPNet, net.IP, net.HardwareAddr, error) {
+func getNodeDetails(node *corev1.Node) (*net.IPNet, net.IP, net.HardwareAddr, error) {
 	cidr, ip := getNodeSubnetAndIP(node)
 	if cidr == nil || ip == nil {
 		return nil, nil, nil, fmt.Errorf("missing node subnet and/or node IP")
 	}
 
-	drMACString, ok := node.Annotations[types.HybridOverlayDRMAC]
+	drMACString, ok := node.Annotations[hotypes.HybridOverlayDRMAC]
 	if !ok {
 		return nil, nil, nil, fmt.Errorf("missing distributed router MAC annotation")
 	}
@@ -251,7 +250,7 @@ func getNodeDetails(node *kapi.Node) (*net.IPNet, net.IP, net.HardwareAddr, erro
 	return cidr, ip, drMAC, nil
 }
 
-func getPodDetails(pod *kapi.Pod) ([]*net.IPNet, net.HardwareAddr, error) {
+func getPodDetails(pod *corev1.Pod) ([]*net.IPNet, net.HardwareAddr, error) {
 	podInfo, err := util.UnmarshalPodAnnotation(pod.Annotations, ovntypes.DefaultNetworkName)
 	if err != nil {
 		return nil, nil, err

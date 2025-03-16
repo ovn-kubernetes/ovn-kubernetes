@@ -7,9 +7,11 @@ import (
 	"testing"
 
 	"github.com/onsi/gomega/types"
+
 	"github.com/ovn-org/libovsdb/client"
 	"github.com/ovn-org/libovsdb/model"
 	"github.com/ovn-org/libovsdb/ovsdb"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 )
@@ -42,6 +44,7 @@ type OperationModelTestCase struct {
 }
 
 func runTestCase(t *testing.T, tCase OperationModelTestCase) error {
+	t.Helper()
 	dbSetup := libovsdbtest.TestSetup{
 		NBData: tCase.initialDB,
 	}
@@ -1128,7 +1131,7 @@ func TestLookup(t *testing.T) {
 						Model: &nbdb.AddressSet{
 							Name: adressSetTestName,
 						},
-						ModelPredicate: func(item *nbdb.AddressSet) bool { return false },
+						ModelPredicate: func(*nbdb.AddressSet) bool { return false },
 						ExistingResult: &[]*nbdb.AddressSet{},
 						ErrNotFound:    true,
 					},
@@ -1159,7 +1162,7 @@ func TestLookup(t *testing.T) {
 						Model: &nbdb.AddressSet{
 							UUID: lookupUUID,
 						},
-						ModelPredicate: func(item *nbdb.AddressSet) bool { return false },
+						ModelPredicate: func(*nbdb.AddressSet) bool { return false },
 						ExistingResult: &[]*nbdb.AddressSet{},
 						ErrNotFound:    true,
 					},
@@ -1213,7 +1216,7 @@ func TestLookup(t *testing.T) {
 						Model: &nbdb.AddressSet{
 							Name: adressSetTestName + "-not-found",
 						},
-						ModelPredicate: func(item *nbdb.AddressSet) bool { return false },
+						ModelPredicate: func(*nbdb.AddressSet) bool { return false },
 						ExistingResult: &[]*nbdb.AddressSet{},
 						ErrNotFound:    false,
 					},
@@ -1287,7 +1290,7 @@ func TestLookup(t *testing.T) {
 			generateOp: func() []operationModel {
 				return []operationModel{
 					{
-						ModelPredicate: func(item *nbdb.AddressSet) bool { return false },
+						ModelPredicate: func(*nbdb.AddressSet) bool { return false },
 						ExistingResult: &[]*nbdb.AddressSet{},
 						ErrNotFound:    true,
 					},
@@ -1308,7 +1311,7 @@ func TestLookup(t *testing.T) {
 			generateOp: func() []operationModel {
 				return []operationModel{
 					{
-						ModelPredicate: func(item *nbdb.AddressSet) bool { return false },
+						ModelPredicate: func(*nbdb.AddressSet) bool { return false },
 						ExistingResult: &[]*nbdb.AddressSet{},
 						ErrNotFound:    false,
 					},
@@ -1332,7 +1335,7 @@ func TestLookup(t *testing.T) {
 						Model: &nbdb.AddressSet{
 							Name: adressSetTestName,
 						},
-						ModelPredicate: func(item *nbdb.AddressSet) bool { return false },
+						ModelPredicate: func(*nbdb.AddressSet) bool { return false },
 						ExistingResult: &[]*nbdb.AddressSet{},
 						ErrNotFound:    true,
 						BulkOp:         true,
@@ -1393,7 +1396,7 @@ func TestLookup(t *testing.T) {
 			generateOp: func() []operationModel {
 				return []operationModel{
 					{
-						ModelPredicate: func(item *nbdb.AddressSet) bool { return true },
+						ModelPredicate: func(*nbdb.AddressSet) bool { return true },
 						ExistingResult: &[]*nbdb.AddressSet{},
 						BulkOp:         true,
 					},
@@ -1431,7 +1434,7 @@ func TestLookup(t *testing.T) {
 			generateOp: func() []operationModel {
 				return []operationModel{
 					{
-						ModelPredicate: func(item *nbdb.AddressSet) bool { return true },
+						ModelPredicate: func(*nbdb.AddressSet) bool { return true },
 						ExistingResult: &[]*nbdb.AddressSet{},
 						BulkOp:         false,
 					},

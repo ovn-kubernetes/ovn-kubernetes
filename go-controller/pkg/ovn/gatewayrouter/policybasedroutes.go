@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	utilnet "k8s.io/utils/net"
 
@@ -77,7 +77,7 @@ func (pbr *PolicyBasedRoutesManager) AddSameNodeIPPolicy(nodeName, mgmtPortIP st
 // and via br-ex to outside in LGW which is not desired.
 // Hence we need a LRP that sends all traffic destined to that primary nodeCIDR range that reroutes
 // it to mp0 in LGW mode to override this directly attached network OVN route.
-func (pbr *PolicyBasedRoutesManager) AddHostCIDRPolicy(node *v1.Node, mgmtPortIP, clusterPodSubnet string) error {
+func (pbr *PolicyBasedRoutesManager) AddHostCIDRPolicy(node *corev1.Node, mgmtPortIP, clusterPodSubnet string) error {
 	if mgmtPortIP == "" || net.ParseIP(mgmtPortIP) == nil {
 		return fmt.Errorf("invalid management port IP address: %q", mgmtPortIP)
 	}

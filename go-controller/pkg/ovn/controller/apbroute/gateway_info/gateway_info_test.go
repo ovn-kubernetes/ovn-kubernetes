@@ -1,9 +1,10 @@
 package gateway_info
 
 import (
+	"k8s.io/apimachinery/pkg/util/sets"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 var _ = Describe("GatewayInfoList", func() {

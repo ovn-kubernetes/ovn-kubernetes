@@ -3,9 +3,10 @@ package gateway
 import (
 	"testing"
 
+	"k8s.io/apimachinery/pkg/util/sets"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
-	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 func TestGetOvnGateways(t *testing.T) {
@@ -69,6 +70,9 @@ func TestGetOvnGateways(t *testing.T) {
 			t.Cleanup(cleanup.Cleanup)
 
 			got, err := GetOvnGateways(libovsdbOvnNBClient)
+			if err != nil {
+				t.Errorf("failed to GetOvnGateways: %v", err)
+			}
 			if !sets.NewString(got...).HasAll(tt.want...) {
 				t.Errorf("GetOvnGateways() got = %v, want %v", got, tt.want)
 			}

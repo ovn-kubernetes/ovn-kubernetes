@@ -9,8 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ovn-org/libovsdb/ovsdb"
-	kapi "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -24,6 +23,8 @@ import (
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 	"k8s.io/utils/ptr"
+
+	"github.com/ovn-org/libovsdb/ovsdb"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	egressqosapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1"
@@ -230,7 +231,7 @@ func (oc *DefaultNetworkController) initEgressQoSController(
 	_, err = nodeInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    oc.onEgressQoSNodeAdd,    // we only care about new logical switches being added
 		UpdateFunc: oc.onEgressQoSNodeUpdate, // we care about node's zone changes so that if add event didn't do anything update can take care of it
-		DeleteFunc: func(obj interface{}) {},
+		DeleteFunc: func(_ interface{}) {},
 	})
 	if err != nil {
 		return fmt.Errorf("could not add Event Handler for nodeInformer during egressqosController initialization, %w", err)
@@ -815,7 +816,7 @@ func (oc *DefaultNetworkController) onEgressQoSPodAdd(obj interface{}) {
 		utilruntime.HandleError(fmt.Errorf("couldn't get key for object %+v: %v", obj, err))
 		return
 	}
-	pod := obj.(*kapi.Pod)
+	pod := obj.(*corev1.Pod)
 	// only process this pod if it is local to this zone
 	if !oc.isPodScheduledinLocalZone(pod) {
 		// NOTE: This means we don't handle the case where pod goes from
@@ -835,8 +836,8 @@ func (oc *DefaultNetworkController) onEgressQoSPodAdd(obj interface{}) {
 
 // onEgressQoSPodUpdate queues the pod for processing.
 func (oc *DefaultNetworkController) onEgressQoSPodUpdate(oldObj, newObj interface{}) {
-	oldPod := oldObj.(*kapi.Pod)
-	newPod := newObj.(*kapi.Pod)
+	oldPod := oldObj.(*corev1.Pod)
+	newPod := newObj.(*corev1.Pod)
 
 	if oldPod.ResourceVersion == newPod.ResourceVersion ||
 		!newPod.GetDeletionTimestamp().IsZero() {
@@ -874,7 +875,7 @@ func (oc *DefaultNetworkController) onEgressQoSPodDelete(obj interface{}) {
 		utilruntime.HandleError(fmt.Errorf("couldn't get key for object %+v: %v", obj, err))
 		return
 	}
-	pod := obj.(*kapi.Pod)
+	pod := obj.(*corev1.Pod)
 	// only process this pod if it is local to this zone
 	if !oc.isPodScheduledinLocalZone(pod) {
 		// NOTE: This means we don't handle the case where pod goes from
@@ -930,7 +931,7 @@ func (oc *DefaultNetworkController) onEgressQoSNodeAdd(obj interface{}) {
 		utilruntime.HandleError(fmt.Errorf("couldn't get key for object %+v: %v", obj, err))
 		return
 	}
-	node := obj.(*kapi.Node)
+	node := obj.(*corev1.Node)
 	if util.GetNodeZone(node) != oc.zone {
 		return
 	}
@@ -939,8 +940,8 @@ func (oc *DefaultNetworkController) onEgressQoSNodeAdd(obj interface{}) {
 
 // onEgressQoSNodeUpdate queues the node for processing if it changed zones
 func (oc *DefaultNetworkController) onEgressQoSNodeUpdate(oldObj, newObj interface{}) {
-	oldNode := oldObj.(*kapi.Node)
-	newNode := newObj.(*kapi.Node)
+	oldNode := oldObj.(*corev1.Node)
+	newNode := newObj.(*corev1.Node)
 	if oldNode.ResourceVersion == newNode.ResourceVersion ||
 		!newNode.GetDeletionTimestamp().IsZero() {
 		return

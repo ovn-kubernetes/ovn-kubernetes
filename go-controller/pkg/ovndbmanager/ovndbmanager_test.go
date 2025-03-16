@@ -7,10 +7,11 @@ import (
 	"strings"
 	"testing"
 
+	"k8s.io/client-go/kubernetes/fake"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	"k8s.io/client-go/kubernetes/fake"
 )
 
 type mockRes struct {
@@ -88,7 +89,7 @@ var (
 func TestEnsureLocalRaftServerID(t *testing.T) {
 	var mockCalls map[string]*mockRes
 	unexpectedKeys := make([]string, 0)
-	mock := func(timeout int, args ...string) (string, string, error) {
+	mock := func(_ int, args ...string) (string, string, error) {
 		key := keyForArgs(args...)
 		res, ok := mockCalls[key]
 		if !ok {
@@ -252,7 +253,7 @@ func TestEnsureClusterRaftMembership(t *testing.T) {
 	var mockCalls map[string]*mockRes
 	unexpectedKeys := make([]string, 0)
 
-	mock := func(timeout int, args ...string) (string, string, error) {
+	mock := func(_ int, args ...string) (string, string, error) {
 		key := keyForArgs(args...)
 		res, ok := mockCalls[key]
 		if !ok {
@@ -384,7 +385,7 @@ func TestEnsureClusterDNSRaftMembership(t *testing.T) {
 	var mockCalls map[string]*mockRes
 	unexpectedKeys := make([]string, 0)
 
-	mock := func(timeout int, args ...string) (string, string, error) {
+	mock := func(_ int, args ...string) (string, string, error) {
 		key := keyForArgs(args...)
 		res, ok := mockCalls[key]
 		if !ok {
@@ -515,7 +516,7 @@ func TestEnsureClusterDNSRaftMembership(t *testing.T) {
 func TestEnsureElectionTimeout(t *testing.T) {
 	var mockCalls map[string]*mockRes
 	unexpectedKeys := make([]string, 0)
-	mock := func(timeout int, args ...string) (string, string, error) {
+	mock := func(_ int, args ...string) (string, string, error) {
 		key := keyForArgs(args...)
 		res, ok := mockCalls[key]
 		if !ok {
@@ -672,7 +673,7 @@ func TestResetRaftDB(t *testing.T) {
 
 	var mockCalls map[string]*mockRes
 	unexpectedKeys := make([]string, 0)
-	mock := func(timeout int, args ...string) (string, string, error) {
+	mock := func(_ int, args ...string) (string, string, error) {
 		key := keyForArgs(args...)
 		res, ok := mockCalls[key]
 		if !ok {
@@ -772,6 +773,7 @@ func keyForArgs(args ...string) string {
 
 // create file with name, fail on error or if the file already exists
 func createDbFile(t *testing.T, name string) {
+	t.Helper()
 	_, err := os.Stat(name)
 	if os.IsNotExist(err) {
 		f, err := os.OpenFile(name, os.O_RDONLY|os.O_CREATE, 0o644)
@@ -787,6 +789,7 @@ func createDbFile(t *testing.T, name string) {
 // failOnErrorMismatch fails either if an error is seen but not expected
 // or if an error is expected but when the substring does not match the error
 func failOnErrorMismatch(t *testing.T, receivedErr error, expectedErrorString string) {
+	t.Helper()
 	if receivedErr != nil {
 		if expectedErrorString == "" {
 			t.Errorf("No error expected. However, received '%v' from method under test.", receivedErr)

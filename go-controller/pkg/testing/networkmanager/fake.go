@@ -12,7 +12,7 @@ type FakeNetworkController struct {
 	util.NetInfo
 }
 
-func (fnc *FakeNetworkController) Start(ctx context.Context) error {
+func (fnc *FakeNetworkController) Start(_ context.Context) error {
 	return nil
 }
 
@@ -32,7 +32,7 @@ func (fcm *FakeControllerManager) NewNetworkController(netInfo util.NetInfo) (ne
 	return &FakeNetworkController{netInfo}, nil
 }
 
-func (fcm *FakeControllerManager) CleanupStaleNetworks(validNetworks ...util.NetInfo) error {
+func (fcm *FakeControllerManager) CleanupStaleNetworks(_ ...util.NetInfo) error {
 	return nil
 }
 
@@ -40,7 +40,7 @@ func (fcm *FakeControllerManager) GetDefaultNetworkController() networkmanager.R
 	return nil
 }
 
-func (fcm *FakeControllerManager) Reconcile(name string, old, new util.NetInfo) error {
+func (fcm *FakeControllerManager) Reconcile(_ string, _, _ util.NetInfo) error {
 	return nil
 }
 
@@ -54,14 +54,18 @@ func (fnm *FakeNetworkManager) Start() error { return nil }
 func (fnm *FakeNetworkManager) Stop() {}
 
 func (fnm *FakeNetworkManager) GetActiveNetworkForNamespace(namespace string) (util.NetInfo, error) {
-	if primaryNetworks, ok := fnm.PrimaryNetworks[namespace]; ok && primaryNetworks != nil {
-		return primaryNetworks, nil
-	}
-	return &util.DefaultNetInfo{}, nil
+	return fnm.GetActiveNetworkForNamespaceFast(namespace), nil
 }
 
-func (nc *FakeNetworkManager) GetNetwork(networkName string) util.NetInfo {
-	for _, ni := range nc.PrimaryNetworks {
+func (fnm *FakeNetworkManager) GetActiveNetworkForNamespaceFast(namespace string) util.NetInfo {
+	if primaryNetworks, ok := fnm.PrimaryNetworks[namespace]; ok && primaryNetworks != nil {
+		return primaryNetworks
+	}
+	return &util.DefaultNetInfo{}
+}
+
+func (fnm *FakeNetworkManager) GetNetwork(networkName string) util.NetInfo {
+	for _, ni := range fnm.PrimaryNetworks {
 		if ni.GetNetworkName() == networkName {
 			return ni
 		}
@@ -69,9 +73,9 @@ func (nc *FakeNetworkManager) GetNetwork(networkName string) util.NetInfo {
 	return &util.DefaultNetInfo{}
 }
 
-func (nc *FakeNetworkManager) GetActiveNetworkNamespaces(networkName string) ([]string, error) {
+func (fnm *FakeNetworkManager) GetActiveNetworkNamespaces(networkName string) ([]string, error) {
 	namespaces := make([]string, 0)
-	for namespaceName, primaryNAD := range nc.PrimaryNetworks {
+	for namespaceName, primaryNAD := range fnm.PrimaryNetworks {
 		nadNetworkName := primaryNAD.GetNADs()[0]
 		if nadNetworkName != networkName {
 			continue
@@ -81,9 +85,9 @@ func (nc *FakeNetworkManager) GetActiveNetworkNamespaces(networkName string) ([]
 	return namespaces, nil
 }
 
-func (nc *FakeNetworkManager) DoWithLock(f func(network util.NetInfo) error) error {
+func (fnm *FakeNetworkManager) DoWithLock(f func(network util.NetInfo) error) error {
 	var errs []error
-	for _, ni := range nc.PrimaryNetworks {
+	for _, ni := range fnm.PrimaryNetworks {
 		if err := f(ni); err != nil {
 			errs = append(errs, err)
 		}

@@ -7,11 +7,14 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+
+	"k8s.io/klog/v2/textlogger"
+
 	"github.com/ovn-org/libovsdb/client"
 	"github.com/ovn-org/libovsdb/model"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/observability-lib/ovsdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
-	"k8s.io/klog/v2/textlogger"
 )
 
 const OVSDBTimeout = 10 * time.Second

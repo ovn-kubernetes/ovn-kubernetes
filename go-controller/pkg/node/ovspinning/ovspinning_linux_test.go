@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
+
 	"k8s.io/klog/v2"
 )
 
@@ -44,7 +46,7 @@ func TestAlignCPUAffinity(t *testing.T) {
 
 	var initialCPUset unix.CPUSet
 	err := unix.SchedGetaffinity(os.Getpid(), &initialCPUset)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	defer func() {
 		// Restore any previous CPU affinity value it was in place before the test
@@ -58,7 +60,7 @@ func TestAlignCPUAffinity(t *testing.T) {
 		var tmpCPUset unix.CPUSet
 		tmpCPUset.Set(i)
 		err = unix.SchedSetaffinity(os.Getpid(), &tmpCPUset)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		klog.Infof("Test CPU Affinity %x", tmpCPUset)
 
@@ -67,33 +69,61 @@ func TestAlignCPUAffinity(t *testing.T) {
 	}
 
 	// Disable the feature by making the enabler file empty
-	os.WriteFile(featureEnablerFile, []byte(""), 0)
-	assert.NoError(t, err)
+	err = os.WriteFile(featureEnablerFile, []byte(""), 0)
+	require.NoError(t, err)
 
 	var tmpCPUset unix.CPUSet
 	tmpCPUset.Set(0)
 	err = unix.SchedSetaffinity(os.Getpid(), &tmpCPUset)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	assertNeverPIDHasSchedAffinity(t, ovsVSwitchdPid, tmpCPUset)
 	assertNeverPIDHasSchedAffinity(t, ovsDBPid, tmpCPUset)
+
+	// Enable the feature back by putting contents in the enabler file
+	err = os.WriteFile(featureEnablerFile, []byte("1"), 0)
+	require.NoError(t, err)
+
+	assertPIDHasSchedAffinity(t, ovsVSwitchdPid, tmpCPUset)
+	assertPIDHasSchedAffinity(t, ovsDBPid, tmpCPUset)
+
+	// Disable the feature by deleting the enabler file
+	klog.Infof("Remove the enabler file to disable the feature")
+	err = os.Remove(featureEnablerFile)
+	require.NoError(t, err)
+
+	tmpCPUset.Set(1)
+	err = unix.SchedSetaffinity(os.Getpid(), &tmpCPUset)
+	require.NoError(t, err)
+
+	assertNeverPIDHasSchedAffinity(t, ovsVSwitchdPid, tmpCPUset)
+	assertNeverPIDHasSchedAffinity(t, ovsDBPid, tmpCPUset)
+
+	// Re-enable the feature back by recreating the enabler file
+	klog.Infof("Re-enable the feature")
+	err = os.WriteFile(featureEnablerFile, []byte("1"), 0)
+	require.NoError(t, err)
+
+	assertPIDHasSchedAffinity(t, ovsVSwitchdPid, tmpCPUset)
+	assertPIDHasSchedAffinity(t, ovsDBPid, tmpCPUset)
 }
 
 func TestIsFileNotEmpty(t *testing.T) {
 	defer mockFeatureEnableFile(t, "")()
 
 	result, err := isFileNotEmpty(featureEnablerFile)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.False(t, result)
 
-	os.WriteFile(featureEnablerFile, []byte("1"), 0)
+	err = os.WriteFile(featureEnablerFile, []byte("1"), 0)
+	require.NoError(t, err)
 	result, err = isFileNotEmpty(featureEnablerFile)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.True(t, result)
 
 	os.Remove(featureEnablerFile)
 	result, err = isFileNotEmpty(featureEnablerFile)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.False(t, result)
 }
 
@@ -131,6 +161,7 @@ func TestPrintCPUSetRanges(t *testing.T) {
 }
 
 func mockOvsdbProcess(t *testing.T) (int, func()) {
+	t.Helper()
 	ctx, stopCmd := context.WithCancel(context.Background())
 
 	cmd := exec.CommandContext(ctx, "sleep", "10")
@@ -150,11 +181,12 @@ func mockOvsdbProcess(t *testing.T) (int, func()) {
 }
 
 func mockOvsVSwitchdProcess(t *testing.T) (int, func()) {
+	t.Helper()
 	ctx, stopCmd := context.WithCancel(context.Background())
 
 	cmd := exec.CommandContext(ctx, "go", "run", "testdata/fake_thread_process.go")
 	err := cmd.Start()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	previousGetter := getOvsVSwitchdPIDFn
 	getOvsVSwitchdPIDFn = func() (string, error) {
@@ -184,14 +216,14 @@ func setTickDuration(d time.Duration) func() {
 }
 
 func mockFeatureEnableFile(t *testing.T, data string) func() {
-
+	t.Helper()
 	f, err := os.CreateTemp("", "enable_dynamic_cpu_affinity")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	previousValue := featureEnablerFile
 	featureEnablerFile = f.Name()
 
-	os.WriteFile(featureEnablerFile, []byte(data), 0)
+	err = os.WriteFile(featureEnablerFile, []byte(data), 0)
 	assert.NoError(t, err)
 
 	return func() {
@@ -201,6 +233,7 @@ func mockFeatureEnableFile(t *testing.T, data string) func() {
 }
 
 func assertPIDHasSchedAffinity(t *testing.T, pid int, expectedCPUSet unix.CPUSet) {
+	t.Helper()
 	var actual unix.CPUSet
 	assert.Eventually(t, func() bool {
 		err := unix.SchedGetaffinity(pid, &actual)
@@ -210,17 +243,18 @@ func assertPIDHasSchedAffinity(t *testing.T, pid int, expectedCPUSet unix.CPUSet
 	}, time.Second, 10*time.Millisecond, "pid[%d] Expected CPUSet %0x != Actual CPUSet %0x", pid, expectedCPUSet, actual)
 
 	tasks, err := getThreadsOfProcess(pid)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	for _, task := range tasks {
 		err := unix.SchedGetaffinity(task, &actual)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		assert.Equal(t, expectedCPUSet, actual,
 			"task[%d] of process[%d] Expected CPUSet %0x != Actual CPUSet %0x", task, pid, expectedCPUSet, actual)
 	}
 }
 
 func assertNeverPIDHasSchedAffinity(t *testing.T, pid int, targetCPUSet unix.CPUSet) {
+	t.Helper()
 	var actual unix.CPUSet
 	assert.Never(t, func() bool {
 		err := unix.SchedGetaffinity(pid, &actual)

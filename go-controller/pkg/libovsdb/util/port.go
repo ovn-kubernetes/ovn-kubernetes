@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/ovn-org/libovsdb/client"
+
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 )

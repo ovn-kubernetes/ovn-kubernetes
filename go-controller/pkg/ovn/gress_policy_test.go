@@ -1,12 +1,13 @@
 package ovn
 
 import (
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	"github.com/stretchr/testify/assert"
-
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	knet "k8s.io/api/networking/v1"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 func TestGetMatchFromIPBlock(t *testing.T) {

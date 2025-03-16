@@ -10,17 +10,18 @@ import (
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/format"
-	libovsdbclient "github.com/ovn-org/libovsdb/client"
 	"golang.org/x/exp/maps"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	utilnet "k8s.io/utils/net"
-	utilpointer "k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
+
+	libovsdbclient "github.com/ovn-org/libovsdb/client"
 
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
@@ -38,8 +39,8 @@ var (
 	nodeA = "node-a"
 	nodeB = "node-b"
 
-	tcp = v1.ProtocolTCP
-	udp = v1.ProtocolUDP
+	tcp = corev1.ProtocolTCP
+	udp = corev1.ProtocolUDP
 )
 
 type serviceController struct {
@@ -243,7 +244,7 @@ func TestSyncServices(t *testing.T) {
 		nodeBInfo    *nodeInfo
 		enableIPv6   bool
 		slices       []discovery.EndpointSlice
-		service      *v1.Service
+		service      *corev1.Service
 		networks     []networkData
 		gatewayMode  string
 		nodeToDelete string
@@ -265,16 +266,16 @@ func TestSyncServices(t *testing.T) {
 					Endpoints:   []discovery.Endpoint{},
 				},
 			},
-			service: &v1.Service{
+			service: &corev1.Service{
 				ObjectMeta: metav1.ObjectMeta{Name: serviceName, Namespace: ns},
-				Spec: v1.ServiceSpec{
-					Type:       v1.ServiceTypeClusterIP,
+				Spec: corev1.ServiceSpec{
+					Type:       corev1.ServiceTypeClusterIP,
 					ClusterIP:  serviceClusterIP,
 					ClusterIPs: []string{serviceClusterIP},
 					Selector:   map[string]string{"foo": "bar"},
-					Ports: []v1.ServicePort{{
+					Ports: []corev1.ServicePort{{
 						Port:       servicePort,
-						Protocol:   v1.ProtocolTCP,
+						Protocol:   corev1.ProtocolTCP,
 						TargetPort: intstr.FromInt32(outPort),
 					}},
 				},
@@ -433,16 +434,16 @@ func TestSyncServices(t *testing.T) {
 					Endpoints:   []discovery.Endpoint{},
 				},
 			},
-			service: &v1.Service{
+			service: &corev1.Service{
 				ObjectMeta: metav1.ObjectMeta{Name: serviceName, Namespace: ns},
-				Spec: v1.ServiceSpec{
-					Type:       v1.ServiceTypeClusterIP,
+				Spec: corev1.ServiceSpec{
+					Type:       corev1.ServiceTypeClusterIP,
 					ClusterIP:  serviceClusterIP,
 					ClusterIPs: []string{serviceClusterIP},
 					Selector:   map[string]string{"foo": "bar"},
-					Ports: []v1.ServicePort{{
+					Ports: []corev1.ServicePort{{
 						Port:       servicePort,
-						Protocol:   v1.ProtocolTCP,
+						Protocol:   corev1.ProtocolTCP,
 						TargetPort: intstr.FromInt32(outPort),
 					}},
 				},
@@ -646,14 +647,14 @@ func TestSyncServices(t *testing.T) {
 					Endpoints: []discovery.Endpoint{
 						{
 							Conditions: discovery.EndpointConditions{
-								Ready: utilpointer.Bool(true),
+								Ready: ptr.To(true),
 							},
 							Addresses: []string{nodeAEndpoint},
 							NodeName:  &nodeA,
 						},
 						{
 							Conditions: discovery.EndpointConditions{
-								Ready: utilpointer.Bool(true),
+								Ready: ptr.To(true),
 							},
 							Addresses: []string{nodeBEndpointIP},
 							NodeName:  &nodeB,
@@ -661,16 +662,16 @@ func TestSyncServices(t *testing.T) {
 					},
 				},
 			},
-			service: &v1.Service{
+			service: &corev1.Service{
 				ObjectMeta: metav1.ObjectMeta{Name: serviceName, Namespace: ns},
-				Spec: v1.ServiceSpec{
-					Type:       v1.ServiceTypeClusterIP,
+				Spec: corev1.ServiceSpec{
+					Type:       corev1.ServiceTypeClusterIP,
 					ClusterIP:  serviceClusterIP,
 					ClusterIPs: []string{serviceClusterIP},
 					Selector:   map[string]string{"foo": "bar"},
-					Ports: []v1.ServicePort{{
+					Ports: []corev1.ServicePort{{
 						Port:       servicePort,
-						Protocol:   v1.ProtocolTCP,
+						Protocol:   corev1.ProtocolTCP,
 						TargetPort: intstr.FromInt32(outPort),
 						NodePort:   nodePort,
 					}},
@@ -715,8 +716,8 @@ func TestSyncServices(t *testing.T) {
 						nodeLogicalRouter(nodeA, initialLrGroups),
 						nodeLogicalRouter(nodeB, initialLrGroups),
 						lbGroup(types.ClusterLBGroupName, loadBalancerClusterWideTCPServiceName(ns, serviceName)),
-						lbGroup(types.ClusterSwitchLBGroupName, nodeMergedTemplateLoadBalancerName(ns, serviceName, v1.IPv4Protocol)),
-						lbGroup(types.ClusterRouterLBGroupName, nodeMergedTemplateLoadBalancerName(ns, serviceName, v1.IPv4Protocol)),
+						lbGroup(types.ClusterSwitchLBGroupName, nodeMergedTemplateLoadBalancerName(ns, serviceName, corev1.IPv4Protocol)),
+						lbGroup(types.ClusterRouterLBGroupName, nodeMergedTemplateLoadBalancerName(ns, serviceName, corev1.IPv4Protocol)),
 						nodeIPTemplate(nodeAInfo),
 						nodeIPTemplate(nodeBInfo),
 					},
@@ -778,8 +779,8 @@ func TestSyncServices(t *testing.T) {
 						lbGroup(types.ClusterSwitchLBGroupName),
 						lbGroup(types.ClusterRouterLBGroupName),
 						lbGroupForNetwork(types.ClusterLBGroupName, l3UDN, clusterWideTCPServiceLoadBalancerNameForNetwork(ns, serviceName, l3UDN)),
-						lbGroupForNetwork(types.ClusterSwitchLBGroupName, l3UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, v1.IPv4Protocol, l3UDN)),
-						lbGroupForNetwork(types.ClusterRouterLBGroupName, l3UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, v1.IPv4Protocol, l3UDN)),
+						lbGroupForNetwork(types.ClusterSwitchLBGroupName, l3UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv4Protocol, l3UDN)),
+						lbGroupForNetwork(types.ClusterRouterLBGroupName, l3UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv4Protocol, l3UDN)),
 
 						nodeIPTemplate(nodeAInfo),
 						nodeIPTemplate(nodeBInfo),
@@ -840,8 +841,8 @@ func TestSyncServices(t *testing.T) {
 						lbGroup(types.ClusterSwitchLBGroupName),
 						lbGroup(types.ClusterRouterLBGroupName),
 						lbGroupForNetwork(types.ClusterLBGroupName, l2UDN, clusterWideTCPServiceLoadBalancerNameForNetwork(ns, serviceName, l2UDN)),
-						lbGroupForNetwork(types.ClusterSwitchLBGroupName, l2UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, v1.IPv4Protocol, l2UDN)),
-						lbGroupForNetwork(types.ClusterRouterLBGroupName, l2UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, v1.IPv4Protocol, l2UDN)),
+						lbGroupForNetwork(types.ClusterSwitchLBGroupName, l2UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv4Protocol, l2UDN)),
+						lbGroupForNetwork(types.ClusterRouterLBGroupName, l2UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv4Protocol, l2UDN)),
 
 						nodeIPTemplate(nodeAInfo),
 						nodeIPTemplate(nodeBInfo),
@@ -870,14 +871,14 @@ func TestSyncServices(t *testing.T) {
 					Endpoints: []discovery.Endpoint{
 						{
 							Conditions: discovery.EndpointConditions{
-								Ready: utilpointer.Bool(true),
+								Ready: ptr.To(true),
 							},
 							Addresses: []string{nodeAEndpoint},
 							NodeName:  &nodeA,
 						},
 						{
 							Conditions: discovery.EndpointConditions{
-								Ready: utilpointer.Bool(true),
+								Ready: ptr.To(true),
 							},
 							Addresses: []string{nodeBEndpointIP},
 							NodeName:  &nodeB,
@@ -885,16 +886,16 @@ func TestSyncServices(t *testing.T) {
 					},
 				},
 			},
-			service: &v1.Service{
+			service: &corev1.Service{
 				ObjectMeta: metav1.ObjectMeta{Name: serviceName, Namespace: ns},
-				Spec: v1.ServiceSpec{
-					Type:       v1.ServiceTypeClusterIP,
+				Spec: corev1.ServiceSpec{
+					Type:       corev1.ServiceTypeClusterIP,
 					ClusterIP:  serviceClusterIP,
 					ClusterIPs: []string{serviceClusterIP},
 					Selector:   map[string]string{"foo": "bar"},
-					Ports: []v1.ServicePort{{
+					Ports: []corev1.ServicePort{{
 						Port:       servicePort,
-						Protocol:   v1.ProtocolTCP,
+						Protocol:   corev1.ProtocolTCP,
 						TargetPort: intstr.FromInt32(outPort),
 						NodePort:   nodePort,
 					}},
@@ -939,8 +940,8 @@ func TestSyncServices(t *testing.T) {
 						nodeLogicalRouter(nodeA, initialLrGroups),
 						nodeLogicalRouter(nodeB, initialLrGroups),
 						lbGroup(types.ClusterLBGroupName, loadBalancerClusterWideTCPServiceName(ns, serviceName)),
-						lbGroup(types.ClusterSwitchLBGroupName, nodeMergedTemplateLoadBalancerName(ns, serviceName, v1.IPv4Protocol)),
-						lbGroup(types.ClusterRouterLBGroupName, nodeMergedTemplateLoadBalancerName(ns, serviceName, v1.IPv4Protocol)),
+						lbGroup(types.ClusterSwitchLBGroupName, nodeMergedTemplateLoadBalancerName(ns, serviceName, corev1.IPv4Protocol)),
+						lbGroup(types.ClusterRouterLBGroupName, nodeMergedTemplateLoadBalancerName(ns, serviceName, corev1.IPv4Protocol)),
 						nodeIPTemplate(nodeAInfo),
 						nodeIPTemplate(nodeBInfo),
 					},
@@ -961,8 +962,8 @@ func TestSyncServices(t *testing.T) {
 						nodeLogicalRouter(nodeA, initialLrGroups),
 						nodeLogicalRouter(nodeB, initialLrGroups),
 						lbGroup(types.ClusterLBGroupName, loadBalancerClusterWideTCPServiceName(ns, serviceName)),
-						lbGroup(types.ClusterSwitchLBGroupName, nodeMergedTemplateLoadBalancerName(ns, serviceName, v1.IPv4Protocol)),
-						lbGroup(types.ClusterRouterLBGroupName, nodeMergedTemplateLoadBalancerName(ns, serviceName, v1.IPv4Protocol)),
+						lbGroup(types.ClusterSwitchLBGroupName, nodeMergedTemplateLoadBalancerName(ns, serviceName, corev1.IPv4Protocol)),
+						lbGroup(types.ClusterRouterLBGroupName, nodeMergedTemplateLoadBalancerName(ns, serviceName, corev1.IPv4Protocol)),
 						nodeIPTemplate(nodeAInfo),
 						nodeIPTemplate(nodeBInfo),
 					},
@@ -1023,8 +1024,8 @@ func TestSyncServices(t *testing.T) {
 						lbGroup(types.ClusterSwitchLBGroupName),
 						lbGroup(types.ClusterRouterLBGroupName),
 						lbGroupForNetwork(types.ClusterLBGroupName, l3UDN, clusterWideTCPServiceLoadBalancerNameForNetwork(ns, serviceName, l3UDN)),
-						lbGroupForNetwork(types.ClusterSwitchLBGroupName, l3UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, v1.IPv4Protocol, l3UDN)),
-						lbGroupForNetwork(types.ClusterRouterLBGroupName, l3UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, v1.IPv4Protocol, l3UDN)),
+						lbGroupForNetwork(types.ClusterSwitchLBGroupName, l3UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv4Protocol, l3UDN)),
+						lbGroupForNetwork(types.ClusterRouterLBGroupName, l3UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv4Protocol, l3UDN)),
 
 						nodeIPTemplate(nodeAInfo),
 						nodeIPTemplate(nodeBInfo),
@@ -1055,8 +1056,8 @@ func TestSyncServices(t *testing.T) {
 						lbGroup(types.ClusterSwitchLBGroupName),
 						lbGroup(types.ClusterRouterLBGroupName),
 						lbGroupForNetwork(types.ClusterLBGroupName, l3UDN, clusterWideTCPServiceLoadBalancerNameForNetwork(ns, serviceName, l3UDN)),
-						lbGroupForNetwork(types.ClusterSwitchLBGroupName, l3UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, v1.IPv4Protocol, l3UDN)),
-						lbGroupForNetwork(types.ClusterRouterLBGroupName, l3UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, v1.IPv4Protocol, l3UDN)),
+						lbGroupForNetwork(types.ClusterSwitchLBGroupName, l3UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv4Protocol, l3UDN)),
+						lbGroupForNetwork(types.ClusterRouterLBGroupName, l3UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv4Protocol, l3UDN)),
 
 						nodeIPTemplate(nodeAInfo),
 						nodeIPTemplate(nodeBInfo),
@@ -1116,8 +1117,8 @@ func TestSyncServices(t *testing.T) {
 						lbGroup(types.ClusterSwitchLBGroupName),
 						lbGroup(types.ClusterRouterLBGroupName),
 						lbGroupForNetwork(types.ClusterLBGroupName, l2UDN, clusterWideTCPServiceLoadBalancerNameForNetwork(ns, serviceName, l2UDN)),
-						lbGroupForNetwork(types.ClusterSwitchLBGroupName, l2UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, v1.IPv4Protocol, l2UDN)),
-						lbGroupForNetwork(types.ClusterRouterLBGroupName, l2UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, v1.IPv4Protocol, l2UDN)),
+						lbGroupForNetwork(types.ClusterSwitchLBGroupName, l2UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv4Protocol, l2UDN)),
+						lbGroupForNetwork(types.ClusterRouterLBGroupName, l2UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv4Protocol, l2UDN)),
 
 						nodeIPTemplate(nodeAInfo),
 						nodeIPTemplate(nodeBInfo),
@@ -1147,8 +1148,8 @@ func TestSyncServices(t *testing.T) {
 						lbGroup(types.ClusterSwitchLBGroupName),
 						lbGroup(types.ClusterRouterLBGroupName),
 						lbGroupForNetwork(types.ClusterLBGroupName, l2UDN, clusterWideTCPServiceLoadBalancerNameForNetwork(ns, serviceName, l2UDN)),
-						lbGroupForNetwork(types.ClusterSwitchLBGroupName, l2UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, v1.IPv4Protocol, l2UDN)),
-						lbGroupForNetwork(types.ClusterRouterLBGroupName, l2UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, v1.IPv4Protocol, l2UDN)),
+						lbGroupForNetwork(types.ClusterSwitchLBGroupName, l2UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv4Protocol, l2UDN)),
+						lbGroupForNetwork(types.ClusterRouterLBGroupName, l2UDN, nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv4Protocol, l2UDN)),
 
 						nodeIPTemplate(nodeAInfo),
 						nodeIPTemplate(nodeBInfo),
@@ -1186,18 +1187,18 @@ func TestSyncServices(t *testing.T) {
 					Endpoints:   kubetest.MakeReadyEndpointList(nodeA, nodeAEndpointV6, nodeAEndpoint2V6),
 				},
 			},
-			service: &v1.Service{
+			service: &corev1.Service{
 				ObjectMeta: metav1.ObjectMeta{Name: serviceName, Namespace: ns},
-				Spec: v1.ServiceSpec{
-					Type:                  v1.ServiceTypeNodePort,
+				Spec: corev1.ServiceSpec{
+					Type:                  corev1.ServiceTypeNodePort,
 					ClusterIP:             serviceClusterIP,
 					ClusterIPs:            []string{serviceClusterIP, serviceClusterIPv6},
-					IPFamilies:            []v1.IPFamily{v1.IPv4Protocol, v1.IPv6Protocol},
+					IPFamilies:            []corev1.IPFamily{corev1.IPv4Protocol, corev1.IPv6Protocol},
 					Selector:              map[string]string{"foo": "bar"},
-					ExternalTrafficPolicy: v1.ServiceExternalTrafficPolicyTypeCluster,
-					Ports: []v1.ServicePort{{
+					ExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyTypeCluster,
+					Ports: []corev1.ServicePort{{
 						Port:       servicePort,
-						Protocol:   v1.ProtocolTCP,
+						Protocol:   corev1.ProtocolTCP,
 						TargetPort: intstr.FromInt32(outPort),
 						NodePort:   30123,
 					}},
@@ -1227,8 +1228,8 @@ func TestSyncServices(t *testing.T) {
 							ExternalIDs: loadBalancerExternalIDs(namespacedServiceName(ns, serviceName)),
 						},
 						&nbdb.LoadBalancer{
-							UUID:     nodeMergedTemplateLoadBalancerName(ns, serviceName, v1.IPv4Protocol),
-							Name:     nodeMergedTemplateLoadBalancerName(ns, serviceName, v1.IPv4Protocol),
+							UUID:     nodeMergedTemplateLoadBalancerName(ns, serviceName, corev1.IPv4Protocol),
+							Name:     nodeMergedTemplateLoadBalancerName(ns, serviceName, corev1.IPv4Protocol),
 							Options:  templateServicesOptions(),
 							Protocol: &nbdb.LoadBalancerProtocolTCP,
 							Vips: map[string]string{
@@ -1239,8 +1240,8 @@ func TestSyncServices(t *testing.T) {
 							ExternalIDs: loadBalancerExternalIDs(namespacedServiceName(ns, serviceName)),
 						},
 						&nbdb.LoadBalancer{
-							UUID:     nodeMergedTemplateLoadBalancerName(ns, serviceName, v1.IPv6Protocol),
-							Name:     nodeMergedTemplateLoadBalancerName(ns, serviceName, v1.IPv6Protocol),
+							UUID:     nodeMergedTemplateLoadBalancerName(ns, serviceName, corev1.IPv6Protocol),
+							Name:     nodeMergedTemplateLoadBalancerName(ns, serviceName, corev1.IPv6Protocol),
 							Options:  templateServicesOptionsV6(),
 							Protocol: &nbdb.LoadBalancerProtocolTCP,
 							Vips: map[string]string{
@@ -1253,21 +1254,21 @@ func TestSyncServices(t *testing.T) {
 						nodeLogicalRouter(nodeA, initialLrGroups),
 						lbGroup(types.ClusterLBGroupName, loadBalancerClusterWideTCPServiceName(ns, serviceName)),
 						lbGroup(types.ClusterSwitchLBGroupName,
-							nodeMergedTemplateLoadBalancerName(ns, serviceName, v1.IPv4Protocol),
-							nodeMergedTemplateLoadBalancerName(ns, serviceName, v1.IPv6Protocol)),
+							nodeMergedTemplateLoadBalancerName(ns, serviceName, corev1.IPv4Protocol),
+							nodeMergedTemplateLoadBalancerName(ns, serviceName, corev1.IPv6Protocol)),
 						lbGroup(types.ClusterRouterLBGroupName,
-							nodeMergedTemplateLoadBalancerName(ns, serviceName, v1.IPv4Protocol),
-							nodeMergedTemplateLoadBalancerName(ns, serviceName, v1.IPv6Protocol)),
+							nodeMergedTemplateLoadBalancerName(ns, serviceName, corev1.IPv4Protocol),
+							nodeMergedTemplateLoadBalancerName(ns, serviceName, corev1.IPv6Protocol)),
 
 						&nbdb.ChassisTemplateVar{
 							UUID: nodeA, Chassis: nodeA,
 							Variables: map[string]string{
-								makeLBNodeIPTemplateNamePrefix(v1.IPv4Protocol) + "0": nodeAMultiAddressesV4[0],
-								makeLBNodeIPTemplateNamePrefix(v1.IPv4Protocol) + "1": nodeAMultiAddressesV4[1],
-								makeLBNodeIPTemplateNamePrefix(v1.IPv4Protocol) + "2": nodeAMultiAddressesV4[2],
+								makeLBNodeIPTemplateNamePrefix(corev1.IPv4Protocol) + "0": nodeAMultiAddressesV4[0],
+								makeLBNodeIPTemplateNamePrefix(corev1.IPv4Protocol) + "1": nodeAMultiAddressesV4[1],
+								makeLBNodeIPTemplateNamePrefix(corev1.IPv4Protocol) + "2": nodeAMultiAddressesV4[2],
 
-								makeLBNodeIPTemplateNamePrefix(v1.IPv6Protocol) + "0": nodeAMultiAddressesV6[0],
-								makeLBNodeIPTemplateNamePrefix(v1.IPv6Protocol) + "1": nodeAMultiAddressesV6[1],
+								makeLBNodeIPTemplateNamePrefix(corev1.IPv6Protocol) + "0": nodeAMultiAddressesV6[0],
+								makeLBNodeIPTemplateNamePrefix(corev1.IPv6Protocol) + "1": nodeAMultiAddressesV6[1],
 							},
 						},
 					},
@@ -1301,8 +1302,8 @@ func TestSyncServices(t *testing.T) {
 							ExternalIDs: loadBalancerExternalIDsForNetwork(namespacedServiceName(ns, serviceName), l3UDN.GetNetworkName()),
 						},
 						&nbdb.LoadBalancer{
-							UUID:     nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, v1.IPv4Protocol, l3UDN),
-							Name:     nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, v1.IPv4Protocol, l3UDN),
+							UUID:     nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv4Protocol, l3UDN),
+							Name:     nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv4Protocol, l3UDN),
 							Options:  templateServicesOptions(),
 							Protocol: &nbdb.LoadBalancerProtocolTCP,
 							Vips: map[string]string{
@@ -1313,8 +1314,8 @@ func TestSyncServices(t *testing.T) {
 							ExternalIDs: loadBalancerExternalIDsForNetwork(namespacedServiceName(ns, serviceName), l3UDN.GetNetworkName()),
 						},
 						&nbdb.LoadBalancer{
-							UUID:     nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, v1.IPv6Protocol, l3UDN),
-							Name:     nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, v1.IPv6Protocol, l3UDN),
+							UUID:     nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv6Protocol, l3UDN),
+							Name:     nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv6Protocol, l3UDN),
 							Options:  templateServicesOptionsV6(),
 							Protocol: &nbdb.LoadBalancerProtocolTCP,
 							Vips: map[string]string{
@@ -1337,22 +1338,22 @@ func TestSyncServices(t *testing.T) {
 						lbGroupForNetwork(types.ClusterLBGroupName, l3UDN, clusterWideTCPServiceLoadBalancerNameForNetwork(ns, serviceName, l3UDN)),
 						lbGroupForNetwork(types.ClusterSwitchLBGroupName,
 							l3UDN,
-							nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, v1.IPv4Protocol, l3UDN),
-							nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, v1.IPv6Protocol, l3UDN)),
+							nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv4Protocol, l3UDN),
+							nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv6Protocol, l3UDN)),
 						lbGroupForNetwork(types.ClusterRouterLBGroupName,
 							l3UDN,
-							nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, v1.IPv4Protocol, l3UDN),
-							nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, v1.IPv6Protocol, l3UDN)),
+							nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv4Protocol, l3UDN),
+							nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv6Protocol, l3UDN)),
 
 						&nbdb.ChassisTemplateVar{
 							UUID: nodeAInfo.chassisID, Chassis: nodeAInfo.chassisID,
 							Variables: map[string]string{
-								makeLBNodeIPTemplateNamePrefix(v1.IPv4Protocol) + "0": nodeAMultiAddressesV4[0],
-								makeLBNodeIPTemplateNamePrefix(v1.IPv4Protocol) + "1": nodeAMultiAddressesV4[1],
-								makeLBNodeIPTemplateNamePrefix(v1.IPv4Protocol) + "2": nodeAMultiAddressesV4[2],
+								makeLBNodeIPTemplateNamePrefix(corev1.IPv4Protocol) + "0": nodeAMultiAddressesV4[0],
+								makeLBNodeIPTemplateNamePrefix(corev1.IPv4Protocol) + "1": nodeAMultiAddressesV4[1],
+								makeLBNodeIPTemplateNamePrefix(corev1.IPv4Protocol) + "2": nodeAMultiAddressesV4[2],
 
-								makeLBNodeIPTemplateNamePrefix(v1.IPv6Protocol) + "0": nodeAMultiAddressesV6[0],
-								makeLBNodeIPTemplateNamePrefix(v1.IPv6Protocol) + "1": nodeAMultiAddressesV6[1],
+								makeLBNodeIPTemplateNamePrefix(corev1.IPv6Protocol) + "0": nodeAMultiAddressesV6[0],
+								makeLBNodeIPTemplateNamePrefix(corev1.IPv6Protocol) + "1": nodeAMultiAddressesV6[1],
 							},
 						},
 					},
@@ -1386,8 +1387,8 @@ func TestSyncServices(t *testing.T) {
 							ExternalIDs: loadBalancerExternalIDsForNetwork(namespacedServiceName(ns, serviceName), l2UDN.GetNetworkName()),
 						},
 						&nbdb.LoadBalancer{
-							UUID:     nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, v1.IPv4Protocol, l2UDN),
-							Name:     nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, v1.IPv4Protocol, l2UDN),
+							UUID:     nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv4Protocol, l2UDN),
+							Name:     nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv4Protocol, l2UDN),
 							Options:  templateServicesOptions(),
 							Protocol: &nbdb.LoadBalancerProtocolTCP,
 							Vips: map[string]string{
@@ -1398,8 +1399,8 @@ func TestSyncServices(t *testing.T) {
 							ExternalIDs: loadBalancerExternalIDsForNetwork(namespacedServiceName(ns, serviceName), l2UDN.GetNetworkName()),
 						},
 						&nbdb.LoadBalancer{
-							UUID:     nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, v1.IPv6Protocol, l2UDN),
-							Name:     nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, v1.IPv6Protocol, l2UDN),
+							UUID:     nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv6Protocol, l2UDN),
+							Name:     nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv6Protocol, l2UDN),
 							Options:  templateServicesOptionsV6(),
 							Protocol: &nbdb.LoadBalancerProtocolTCP,
 							Vips: map[string]string{
@@ -1422,22 +1423,22 @@ func TestSyncServices(t *testing.T) {
 						lbGroupForNetwork(types.ClusterLBGroupName, l2UDN, clusterWideTCPServiceLoadBalancerNameForNetwork(ns, serviceName, l2UDN)),
 						lbGroupForNetwork(types.ClusterSwitchLBGroupName,
 							l2UDN,
-							nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, v1.IPv4Protocol, l2UDN),
-							nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, v1.IPv6Protocol, l2UDN)),
+							nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv4Protocol, l2UDN),
+							nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv6Protocol, l2UDN)),
 						lbGroupForNetwork(types.ClusterRouterLBGroupName,
 							l2UDN,
-							nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, v1.IPv4Protocol, l2UDN),
-							nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, v1.IPv6Protocol, l2UDN)),
+							nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv4Protocol, l2UDN),
+							nodeMergedTemplateLoadBalancerNameForNetwork(ns, serviceName, corev1.IPv6Protocol, l2UDN)),
 
 						&nbdb.ChassisTemplateVar{
 							UUID: nodeAInfo.chassisID, Chassis: nodeAInfo.chassisID,
 							Variables: map[string]string{
-								makeLBNodeIPTemplateNamePrefix(v1.IPv4Protocol) + "0": nodeAMultiAddressesV4[0],
-								makeLBNodeIPTemplateNamePrefix(v1.IPv4Protocol) + "1": nodeAMultiAddressesV4[1],
-								makeLBNodeIPTemplateNamePrefix(v1.IPv4Protocol) + "2": nodeAMultiAddressesV4[2],
+								makeLBNodeIPTemplateNamePrefix(corev1.IPv4Protocol) + "0": nodeAMultiAddressesV4[0],
+								makeLBNodeIPTemplateNamePrefix(corev1.IPv4Protocol) + "1": nodeAMultiAddressesV4[1],
+								makeLBNodeIPTemplateNamePrefix(corev1.IPv4Protocol) + "2": nodeAMultiAddressesV4[2],
 
-								makeLBNodeIPTemplateNamePrefix(v1.IPv6Protocol) + "0": nodeAMultiAddressesV6[0],
-								makeLBNodeIPTemplateNamePrefix(v1.IPv6Protocol) + "1": nodeAMultiAddressesV6[1],
+								makeLBNodeIPTemplateNamePrefix(corev1.IPv6Protocol) + "0": nodeAMultiAddressesV6[0],
+								makeLBNodeIPTemplateNamePrefix(corev1.IPv6Protocol) + "1": nodeAMultiAddressesV6[1],
 							},
 						},
 					},
@@ -1488,9 +1489,11 @@ func TestSyncServices(t *testing.T) {
 
 				// Add k8s objects
 				for _, slice := range tt.slices {
-					controller.endpointSliceStore.Add(&slice)
+					err = controller.endpointSliceStore.Add(&slice)
+					g.Expect(err).NotTo(gomega.HaveOccurred())
 				}
-				controller.serviceStore.Add(tt.service)
+				err = controller.serviceStore.Add(tt.service)
+				g.Expect(err).NotTo(gomega.HaveOccurred())
 
 				// Setup node tracker
 				controller.nodeTracker.nodes = map[string]nodeInfo{}
@@ -1504,7 +1507,8 @@ func TestSyncServices(t *testing.T) {
 				// Add mirrored endpoint slices when the controller runs on a UDN
 				if !netInfo.IsDefault() {
 					for _, slice := range tt.slices {
-						controller.endpointSliceStore.Add(kubetest.MirrorEndpointSlice(&slice, netInfo.GetNetworkName(), true))
+						err = controller.endpointSliceStore.Add(kubetest.MirrorEndpointSlice(&slice, netInfo.GetNetworkName(), true))
+						g.Expect(err).NotTo(gomega.HaveOccurred())
 					}
 				}
 
@@ -1643,11 +1647,11 @@ func clusterWideTCPServiceLoadBalancerNameForNetwork(ns string, serviceName stri
 	return netInfo.GetNetworkScopedLoadBalancerName(baseName)
 }
 
-func nodeMergedTemplateLoadBalancerName(serviceNamespace string, serviceName string, addressFamily v1.IPFamily) string {
+func nodeMergedTemplateLoadBalancerName(serviceNamespace string, serviceName string, addressFamily corev1.IPFamily) string {
 	return nodeMergedTemplateLoadBalancerNameForNetwork(serviceNamespace, serviceName, addressFamily, &util.DefaultNetInfo{})
 }
 
-func nodeMergedTemplateLoadBalancerNameForNetwork(serviceNamespace string, serviceName string, addressFamily v1.IPFamily, netInfo util.NetInfo) string {
+func nodeMergedTemplateLoadBalancerNameForNetwork(serviceNamespace string, serviceName string, addressFamily corev1.IPFamily, netInfo util.NetInfo) string {
 	baseName := fmt.Sprintf(
 		"Service_%s/%s_TCP_node_switch_template_%s_merged",
 		serviceNamespace,
@@ -1718,7 +1722,7 @@ func nodeIPTemplate(node *nodeInfo) *nbdb.ChassisTemplateVar {
 		UUID:    node.chassisID,
 		Chassis: node.chassisID,
 		Variables: map[string]string{
-			makeLBNodeIPTemplateNamePrefix(v1.IPv4Protocol) + "0": node.hostAddresses[0].String(),
+			makeLBNodeIPTemplateNamePrefix(corev1.IPv4Protocol) + "0": node.hostAddresses[0].String(),
 		},
 	}
 }
@@ -1728,10 +1732,10 @@ func nodeMergedTemplateLoadBalancer(nodePort int32, serviceName string, serviceN
 }
 
 func nodeMergedTemplateLoadBalancerForNetwork(nodePort int32, serviceName string, serviceNamespace string, outputPort int32, netInfo util.NetInfo, endpointIPs ...string) *nbdb.LoadBalancer {
-	nodeTemplateIP := makeTemplate(makeLBNodeIPTemplateNamePrefix(v1.IPv4Protocol) + "0")
+	nodeTemplateIP := makeTemplate(makeLBNodeIPTemplateNamePrefix(corev1.IPv4Protocol) + "0")
 	return &nbdb.LoadBalancer{
-		UUID:     nodeMergedTemplateLoadBalancerNameForNetwork(serviceNamespace, serviceName, v1.IPv4Protocol, netInfo),
-		Name:     nodeMergedTemplateLoadBalancerNameForNetwork(serviceNamespace, serviceName, v1.IPv4Protocol, netInfo),
+		UUID:     nodeMergedTemplateLoadBalancerNameForNetwork(serviceNamespace, serviceName, corev1.IPv4Protocol, netInfo),
+		Name:     nodeMergedTemplateLoadBalancerNameForNetwork(serviceNamespace, serviceName, corev1.IPv4Protocol, netInfo),
 		Options:  templateServicesOptions(),
 		Protocol: &nbdb.LoadBalancerProtocolTCP,
 		Vips: map[string]string{
@@ -1814,7 +1818,7 @@ func createTestNBGlobal(nbClient libovsdbclient.Client, zone string) error {
 }
 
 func deleteTestNBGlobal(nbClient libovsdbclient.Client) error {
-	p := func(nbGlobal *nbdb.NBGlobal) bool {
+	p := func(*nbdb.NBGlobal) bool {
 		return true
 	}
 

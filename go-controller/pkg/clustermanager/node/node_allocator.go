@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"net"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	listers "k8s.io/client-go/listers/core/v1"
@@ -11,8 +14,6 @@ import (
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 
-	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
 	hotypes "github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
 	houtil "github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
@@ -174,6 +175,43 @@ func (na *NodeAllocator) releaseHybridOverlayNodeSubnet(nodeName string) {
 	klog.Infof("Deleted hybrid overlay HostSubnets for node %s", nodeName)
 }
 
+// NeedsNodeAllocation determines if the annotations that are assigned by NodeAllocator are missing on a node
+func (na *NodeAllocator) NeedsNodeAllocation(node *corev1.Node) bool {
+	// hybrid overlay check
+	if util.NoHostSubnet(node) {
+		if na.hasHybridOverlayAllocation() {
+			if _, ok := node.Annotations[hotypes.HybridOverlayNodeSubnet]; !ok {
+				return true
+			}
+		}
+		return false
+	}
+
+	// ovn node check
+	// allocation is all or nothing, so if one field was allocated from:
+	// nodeSubnets, joinSubnet, layer 2 tunnel id, then all of them were
+	if na.hasNodeSubnetAllocation() {
+		if util.HasNodeHostSubnetAnnotation(node, na.netInfo.GetNetworkName()) {
+			return false
+		}
+	}
+
+	if na.hasJoinSubnetAllocation() {
+		if util.HasNodeGatewayRouterJoinNetwork(node, na.netInfo.GetNetworkName()) {
+			return false
+		}
+	}
+
+	if util.IsNetworkSegmentationSupportEnabled() && na.netInfo.IsPrimaryNetwork() && util.DoesNetworkRequireTunnelIDs(na.netInfo) {
+		if util.HasUDNLayer2NodeGRLRPTunnelID(node, na.netInfo.GetNetworkName()) {
+			return false
+		}
+	}
+
+	return true
+
+}
+
 // HandleAddUpdateNodeEvent handles the add or update node event
 func (na *NodeAllocator) HandleAddUpdateNodeEvent(node *corev1.Node) error {
 	defer na.recordSubnetUsage()
@@ -201,14 +239,21 @@ func (na *NodeAllocator) HandleAddUpdateNodeEvent(node *corev1.Node) error {
 
 // syncNodeNetworkAnnotations does 2 things
 //   - syncs the node's allocated subnets in the node subnet annotation
-//   - syncs the network id in the node network id annotation
+//   - syncs the join subnet annotation
+//   - syncs the layer 2 tunnel id annotation
+//   - syncs the network id in the node network id annotation (legacy)
 func (na *NodeAllocator) syncNodeNetworkAnnotations(node *corev1.Node) error {
 	networkName := na.netInfo.GetNetworkName()
 
 	networkID, err := util.ParseNetworkIDAnnotation(node, networkName)
-	if err != nil && !util.IsAnnotationNotSetError(err) {
-		// Log the error and try to allocate new subnets
-		klog.Warningf("Failed to get node %s network id annotations for network %s : %v", node.Name, networkName, err)
+	if err != nil {
+		if !util.IsAnnotationNotSetError(err) {
+			// Log the error and try to allocate new subnets
+			klog.Warningf("Failed to get node %s network id annotations for network %s : %v", node.Name, networkName, err)
+		}
+		// if there is an error we are going to set networkID here to NoNetworkID to prevent
+		// the annotation being updated
+		networkID = types.NoNetworkID
 	}
 
 	updatedSubnetsMap := map[string][]*net.IPNet{}
@@ -279,14 +324,14 @@ func (na *NodeAllocator) syncNodeNetworkAnnotations(node *corev1.Node) error {
 			updatedSubnetsMap[networkName] = validExistingSubnets
 		}
 	}
-	newTunnelID := util.NoID
+	newTunnelID := types.NoTunnelID
 	if util.IsNetworkSegmentationSupportEnabled() && na.netInfo.IsPrimaryNetwork() && util.DoesNetworkRequireTunnelIDs(na.netInfo) {
 		existingTunnelID, err := util.ParseUDNLayer2NodeGRLRPTunnelIDs(node, networkName)
 		if err != nil && !util.IsAnnotationNotSetError(err) {
 			return fmt.Errorf("failed to fetch tunnelID annotation from the node %s for network %s, err: %v",
 				node.Name, networkName, err)
 		}
-		if existingTunnelID == util.InvalidID {
+		if existingTunnelID == types.InvalidID {
 			if newTunnelID, err = na.idAllocator.AllocateID(networkName + "_" + node.Name); err != nil {
 				return fmt.Errorf("failed to assign node %s tunnel id for network %s: %w", node.Name, networkName, err)
 			}
@@ -300,14 +345,24 @@ func (na *NodeAllocator) syncNodeNetworkAnnotations(node *corev1.Node) error {
 		}
 	}
 
+	// only update node annotation with ID if it had it before (networkID is not NoNetworkID)
+	// and does not match.
+	// NoNetworkID means do not update the annotation
+	if networkID != types.NoNetworkID && networkID != na.networkID {
+		networkID = na.networkID
+	} else if networkID == na.networkID {
+		// don't need to update if there was no change to the ID
+		networkID = types.NoNetworkID
+	}
+
 	// Also update the node annotation if the networkID doesn't match
-	if len(updatedSubnetsMap) > 0 || na.networkID != networkID || len(allocatedJoinSubnets) > 0 || newTunnelID != util.NoID {
-		err = na.updateNodeNetworkAnnotationsWithRetry(node.Name, updatedSubnetsMap, na.networkID, newTunnelID, allocatedJoinSubnets)
+	if len(updatedSubnetsMap) > 0 || networkID != types.NoNetworkID || len(allocatedJoinSubnets) > 0 || newTunnelID != types.NoTunnelID {
+		err = na.updateNodeNetworkAnnotationsWithRetry(node.Name, updatedSubnetsMap, networkID, newTunnelID, allocatedJoinSubnets)
 		if err != nil {
 			if errR := na.clusterSubnetAllocator.ReleaseNetworks(node.Name, allocatedSubnets...); errR != nil {
 				klog.Warningf("Error releasing node %s subnets: %v", node.Name, errR)
 			}
-			if util.IsNetworkSegmentationSupportEnabled() && na.netInfo.IsPrimaryNetwork() && util.DoesNetworkRequireTunnelIDs(na.netInfo) {
+			if newTunnelID != types.NoTunnelID {
 				na.idAllocator.ReleaseID(networkName + "_" + node.Name)
 				klog.Infof("Releasing node %s tunnelID for network %s since annotation update failed", node.Name, networkName)
 			}
@@ -405,12 +460,14 @@ func (na *NodeAllocator) updateNodeNetworkAnnotationsWithRetry(nodeName string, 
 			return fmt.Errorf("failed to update node %q annotation LRPAddrAnnotation %s: %w",
 				node.Name, util.JoinIPNets(joinAddr, ","), err)
 		}
-		cnode.Annotations, err = util.UpdateNetworkIDAnnotation(cnode.Annotations, networkName, networkId)
-		if err != nil {
-			return fmt.Errorf("failed to update node %q network id annotation %d for network %s: %w",
-				node.Name, networkId, networkName, err)
+		if networkId != types.NoNetworkID {
+			cnode.Annotations, err = util.UpdateNetworkIDAnnotation(cnode.Annotations, networkName, networkId)
+			if err != nil {
+				return fmt.Errorf("failed to update node %q network id annotation %d for network %s: %w",
+					node.Name, networkId, networkName, err)
+			}
 		}
-		if tunnelID != util.NoID {
+		if tunnelID != types.NoTunnelID {
 			cnode.Annotations, err = util.UpdateUDNLayer2NodeGRLRPTunnelIDs(cnode.Annotations, networkName, tunnelID)
 			if err != nil {
 				return fmt.Errorf("failed to update node %q tunnel id annotation %d for network %s: %w",
@@ -447,7 +504,7 @@ func (na *NodeAllocator) Cleanup() error {
 
 		hostSubnetsMap := map[string][]*net.IPNet{networkName: nil}
 		// passing util.InvalidID deletes the network/tunnel id annotation for the network.
-		err = na.updateNodeNetworkAnnotationsWithRetry(node.Name, hostSubnetsMap, util.InvalidID, util.InvalidID, nil)
+		err = na.updateNodeNetworkAnnotationsWithRetry(node.Name, hostSubnetsMap, types.InvalidID, types.InvalidID, nil)
 		if err != nil {
 			return fmt.Errorf("failed to clear node %q subnet annotation for network %s",
 				node.Name, networkName)
@@ -471,8 +528,6 @@ func (na *NodeAllocator) allocateNodeSubnets(allocator SubnetAllocator, nodeName
 		expectedHostSubnets = 2
 	}
 
-	klog.Infof("Expected %d subnets on node %s, found %d: %v", expectedHostSubnets, nodeName, len(existingSubnets), existingSubnets)
-
 	// If any existing subnets the node has are valid, mark them as reserved.
 	// The node might have invalid or already-reserved subnets, or it might
 	// have more subnets than configured in OVN (like for dual-stack to/from
@@ -485,7 +540,6 @@ func (na *NodeAllocator) allocateNodeSubnets(allocator SubnetAllocator, nodeName
 	for _, subnet := range existingSubnets {
 		if (ipv4Mode && utilnet.IsIPv4CIDR(subnet) && !foundIPv4) || (ipv6Mode && utilnet.IsIPv6CIDR(subnet) && !foundIPv6) {
 			if err := allocator.MarkAllocatedNetworks(nodeName, subnet); err == nil {
-				klog.Infof("Valid subnet %v allocated on node %s", subnet, nodeName)
 				existingSubnets[n] = subnet
 				n++
 				if utilnet.IsIPv4CIDR(subnet) {
@@ -497,9 +551,11 @@ func (na *NodeAllocator) allocateNodeSubnets(allocator SubnetAllocator, nodeName
 			}
 		}
 		// this subnet is no longer needed; release it
-		klog.Infof("Releasing unused or invalid subnet %v on node %s", subnet, nodeName)
+		klog.Infof("Releasing unused or invalid subnet %v on node %s, network %s",
+			subnet, na.netInfo.GetNetworkName(), nodeName)
 		if err := allocator.ReleaseNetworks(nodeName, subnet); err != nil {
-			klog.Warningf("Failed to release subnet %v on node %s: %v", subnet, nodeName, err)
+			klog.Warningf("Failed to release subnet %v on node %s, network %s: %v",
+				subnet, nodeName, na.netInfo.GetNetworkName(), err)
 		}
 	}
 	// recreate existingSubnets with the valid subnets
@@ -507,7 +563,6 @@ func (na *NodeAllocator) allocateNodeSubnets(allocator SubnetAllocator, nodeName
 
 	// Node has enough valid subnets already allocated
 	if len(existingSubnets) == expectedHostSubnets {
-		klog.Infof("Allowed existing subnets %v on node %s", existingSubnets, nodeName)
 		return existingSubnets, allocatedSubnets, nil
 	}
 
@@ -516,9 +571,10 @@ func (na *NodeAllocator) allocateNodeSubnets(allocator SubnetAllocator, nodeName
 	defer func() {
 		if releaseAllocatedSubnets {
 			for _, subnet := range allocatedSubnets {
-				klog.Warningf("Releasing subnet %v on node %s", subnet, nodeName)
+				klog.Warningf("Releasing subnet %v on node %s, network: %s", subnet, nodeName, na.netInfo.GetNetworkName())
 				if errR := allocator.ReleaseNetworks(nodeName, subnet); errR != nil {
-					klog.Warningf("Error releasing subnet %v on node %s: %v", subnet, nodeName, errR)
+					klog.Warningf("Error releasing subnet %v on node %s, network %s: %v",
+						subnet, na.netInfo.GetNetworkName(), nodeName, errR)
 				}
 			}
 		}
@@ -527,12 +583,14 @@ func (na *NodeAllocator) allocateNodeSubnets(allocator SubnetAllocator, nodeName
 	// allocateOneSubnet is a helper to process the result of a subnet allocation
 	allocateOneSubnet := func(allocatedHostSubnet *net.IPNet, allocErr error) error {
 		if allocErr != nil {
-			return fmt.Errorf("error allocating network for node %s: %v", nodeName, allocErr)
+			return fmt.Errorf("error allocating network for node %s, network name %s: %v",
+				nodeName, na.netInfo.GetNetworkName(), allocErr)
 		}
 		// the allocator returns nil if it can't provide a subnet
 		// we should filter them out or they will be appended to the slice
 		if allocatedHostSubnet != nil {
-			klog.V(5).Infof("Allocating subnet %v on node %s", allocatedHostSubnet, nodeName)
+			klog.V(5).Infof("Allocating subnet %v on node %s for network: %s",
+				allocatedHostSubnet, nodeName, na.netInfo.GetNetworkName())
 			allocatedSubnets = append(allocatedSubnets, allocatedHostSubnet)
 		}
 		return nil
@@ -555,12 +613,12 @@ func (na *NodeAllocator) allocateNodeSubnets(allocator SubnetAllocator, nodeName
 	// so it will require a reconfiguration and restart.
 	wantedSubnets := expectedHostSubnets - len(existingSubnets)
 	if wantedSubnets > 0 && len(allocatedSubnets) != wantedSubnets {
-		return nil, nil, fmt.Errorf("error allocating networks for node %s: %d subnets expected only new %d subnets allocated",
-			nodeName, expectedHostSubnets, len(allocatedSubnets))
+		return nil, nil, fmt.Errorf("error allocating networks for network: %s, node %s: %d subnets expected only new %d subnets allocated",
+			na.netInfo.GetNetworkName(), nodeName, expectedHostSubnets, len(allocatedSubnets))
 	}
 
 	hostSubnets := append(existingSubnets, allocatedSubnets...)
-	klog.Infof("Allocated Subnets %v on Node %s", hostSubnets, nodeName)
+	klog.Infof("Allocated Subnets %v on Node %s for Network: %s", hostSubnets, nodeName, na.netInfo.GetNetworkName())
 
 	// Success; prevent the release-on-error from triggering and return all node subnets
 	releaseAllocatedSubnets = false

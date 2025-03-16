@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -135,7 +135,7 @@ func (c *Controller) clearNamespaceForANP(name string, anpCache *adminNetworkPol
 // used to match the given anpCache.name policy or if it started matching the given anpCache.name.
 // If so, it will requeue the anpCache.name key back into the main (b)anpQueue cache for reconciling
 // the db objects. If not, function is a no-op.
-func (c *Controller) setNamespaceForANP(namespace *v1.Namespace, anpCache *adminNetworkPolicyState, queue workqueue.TypedRateLimitingInterface[string]) {
+func (c *Controller) setNamespaceForANP(namespace *corev1.Namespace, anpCache *adminNetworkPolicyState, queue workqueue.TypedRateLimitingInterface[string]) {
 	// (i) if this namespace used to match this ANP's .Spec.Subject requeue it and return OR
 	// (ii) if this namespace started to match this ANP's .Spec.Subject requeue it and return OR
 	// (iii) if above conditions are are false, check if it used to match any of the .Spec.Ingress.Peers requeue it and return OR

@@ -4,7 +4,7 @@ import (
 	"context"
 
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
-	libovsdb "github.com/ovn-org/libovsdb/ovsdb"
+	"github.com/ovn-org/libovsdb/ovsdb"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -60,7 +60,7 @@ func BuildLoadBalancer(name string, protocol nbdb.LoadBalancerProtocol, selectio
 
 // CreateOrUpdateLoadBalancersOps creates or updates the provided load balancers
 // returning the corresponding ops
-func CreateOrUpdateLoadBalancersOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, lbs ...*nbdb.LoadBalancer) ([]libovsdb.Operation, error) {
+func CreateOrUpdateLoadBalancersOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, lbs ...*nbdb.LoadBalancer) ([]ovsdb.Operation, error) {
 	opModels := make([]operationModel, 0, len(lbs))
 	for i := range lbs {
 		// can't use i in the predicate, for loop replaces it in-memory
@@ -80,7 +80,7 @@ func CreateOrUpdateLoadBalancersOps(nbClient libovsdbclient.Client, ops []libovs
 
 // RemoveLoadBalancerVipsOps removes the provided VIPs from the provided load
 // balancer set and returns the corresponding ops
-func RemoveLoadBalancerVipsOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, lb *nbdb.LoadBalancer, vips ...string) ([]libovsdb.Operation, error) {
+func RemoveLoadBalancerVipsOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, lb *nbdb.LoadBalancer, vips ...string) ([]ovsdb.Operation, error) {
 	originalVips := lb.Vips
 	lb.Vips = make(map[string]string, len(vips))
 	for _, vip := range vips {
@@ -101,7 +101,7 @@ func RemoveLoadBalancerVipsOps(nbClient libovsdbclient.Client, ops []libovsdb.Op
 
 // DeleteLoadBalancersOps deletes the provided load balancers and returns the
 // corresponding ops
-func DeleteLoadBalancersOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, lbs ...*nbdb.LoadBalancer) ([]libovsdb.Operation, error) {
+func DeleteLoadBalancersOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, lbs ...*nbdb.LoadBalancer) ([]ovsdb.Operation, error) {
 	opModels := make([]operationModel, 0, len(lbs))
 	for i := range lbs {
 		// can't use i in the predicate, for loop replaces it in-memory

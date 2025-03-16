@@ -4,7 +4,8 @@ import (
 	"context"
 
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
-	libovsdb "github.com/ovn-org/libovsdb/ovsdb"
+	"github.com/ovn-org/libovsdb/ovsdb"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 )
@@ -24,7 +25,7 @@ func ListTemplateVar(nbClient libovsdbclient.Client) ([]*nbdb.ChassisTemplateVar
 // CreateOrUpdateChassisTemplateVarOps creates or updates the provided
 // 'template' variable and returns the corresponding ops.
 func CreateOrUpdateChassisTemplateVarOps(nbClient libovsdbclient.Client,
-	ops []libovsdb.Operation, template *nbdb.ChassisTemplateVar) ([]libovsdb.Operation, error) {
+	ops []ovsdb.Operation, template *nbdb.ChassisTemplateVar) ([]ovsdb.Operation, error) {
 
 	modelClient := newModelClient(nbClient)
 	return modelClient.CreateOrUpdateOps(ops, operationModel{
@@ -39,8 +40,8 @@ func CreateOrUpdateChassisTemplateVarOps(nbClient libovsdbclient.Client,
 // keys of 'template.Variables' and returns the corresponding ops.
 // It applies the mutation to all records that are selected by 'predicate'.
 func deleteChassisTemplateVarVariablesOps(nbClient libovsdbclient.Client,
-	ops []libovsdb.Operation, template *nbdb.ChassisTemplateVar,
-	predicate chassisTemplateVarPredicate) ([]libovsdb.Operation, error) {
+	ops []ovsdb.Operation, template *nbdb.ChassisTemplateVar,
+	predicate chassisTemplateVarPredicate) ([]ovsdb.Operation, error) {
 
 	deleteTemplate := &nbdb.ChassisTemplateVar{
 		Chassis:   template.Chassis,
@@ -63,7 +64,7 @@ func deleteChassisTemplateVarVariablesOps(nbClient libovsdbclient.Client,
 // keys of 'template.Variables' from the record matching the same chassis
 // as 'template'. It returns the corresponding ops.
 func DeleteChassisTemplateVarVariablesOps(nbClient libovsdbclient.Client,
-	ops []libovsdb.Operation, template *nbdb.ChassisTemplateVar) ([]libovsdb.Operation, error) {
+	ops []ovsdb.Operation, template *nbdb.ChassisTemplateVar) ([]ovsdb.Operation, error) {
 
 	return deleteChassisTemplateVarVariablesOps(nbClient, ops, template, nil)
 }

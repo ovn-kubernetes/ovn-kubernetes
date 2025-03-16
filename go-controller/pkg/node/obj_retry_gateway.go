@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"reflect"
 
-	kapi "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
 	cache "k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
@@ -22,7 +22,7 @@ type gwEventHandler struct {
 	syncFunc func([]interface{}) error
 }
 
-func (h *gwEventHandler) FilterOutResource(obj interface{}) bool {
+func (h *gwEventHandler) FilterOutResource(_ interface{}) bool {
 	return false
 }
 
@@ -108,10 +108,10 @@ func (h *gwEventHandler) GetResourceFromInformerCache(key string) (interface{}, 
 // the function was executed from iterateRetryResources, AddResource adds the
 // specified object to the cluster according to its type and returns the error,
 // if any, yielded during object creation.
-func (h *gwEventHandler) AddResource(obj interface{}, fromRetryLoop bool) error {
+func (h *gwEventHandler) AddResource(obj interface{}, _ bool) error {
 	switch h.objType {
 	case factory.ServiceForGatewayType:
-		svc := obj.(*kapi.Service)
+		svc := obj.(*corev1.Service)
 		return h.g.AddService(svc)
 
 	case factory.EndpointSliceForGatewayType:
@@ -131,11 +131,11 @@ func (h *gwEventHandler) AddResource(obj interface{}, fromRetryLoop bool) error 
 // the specified object in the cluster to its version in newObj according to its type
 // and returns the error, if any, yielded during the object update. The inRetryCache
 // boolean argument is to indicate if the given resource is in the retryCache or not.
-func (h *gwEventHandler) UpdateResource(oldObj, newObj interface{}, inRetryCache bool) error {
+func (h *gwEventHandler) UpdateResource(oldObj, newObj interface{}, _ bool) error {
 	switch h.objType {
 	case factory.ServiceForGatewayType:
-		oldSvc := oldObj.(*kapi.Service)
-		newSvc := newObj.(*kapi.Service)
+		oldSvc := oldObj.(*corev1.Service)
+		newSvc := newObj.(*corev1.Service)
 		return h.g.UpdateService(oldSvc, newSvc)
 
 	case factory.EndpointSliceForGatewayType:
@@ -157,10 +157,10 @@ func (h *gwEventHandler) UpdateResource(oldObj, newObj interface{}, inRetryCache
 // deletes the object from the cluster according to the delete logic of its resource type.
 // cachedObj is the internal cache entry for this object, used for now for pods and network
 // policies.
-func (h *gwEventHandler) DeleteResource(obj, cachedObj interface{}) error {
+func (h *gwEventHandler) DeleteResource(obj, _ interface{}) error {
 	switch h.objType {
 	case factory.ServiceForGatewayType:
-		svc := obj.(*kapi.Service)
+		svc := obj.(*corev1.Service)
 		return h.g.DeleteService(svc)
 
 	case factory.EndpointSliceForGatewayType:

@@ -20,7 +20,7 @@ func GenerateFakeVirtLauncherPod(namespace, vmName string) *corev1.Pod {
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{{
 				Name:  "compute",
-				Image: "quay.io/nmstate/c10s-nmstate-dev:latest",
+				Image: FakeLauncherImage,
 				SecurityContext: &corev1.SecurityContext{
 					Privileged: ptr.To(true),
 					Capabilities: &corev1.Capabilities{

@@ -4,7 +4,10 @@ import (
 	"fmt"
 
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 )
 
 func GenerateNAD(networkName, name, namespace, topology, cidr, role string) *nadapi.NetworkAttachmentDefinition {
@@ -28,6 +31,14 @@ func GenerateNAD(networkName, name, namespace, topology, cidr, role string) *nad
 		role,
 	))
 }
+
+func AnnotateNADWithNetworkID(networkID string, nad *nadapi.NetworkAttachmentDefinition) {
+	if len(nad.Annotations) == 0 {
+		nad.Annotations = make(map[string]string)
+	}
+	nad.Annotations[types.OvnNetworkIDAnnotation] = networkID
+}
+
 func GenerateNADWithoutMTU(networkName, name, namespace, topology, cidr, role string) *nadapi.NetworkAttachmentDefinition {
 	return GenerateNADWithConfig(name, namespace, fmt.Sprintf(
 		`

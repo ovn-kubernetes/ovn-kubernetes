@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"reflect"
 
-	kapi "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
 	cache "k8s.io/client-go/tools/cache"
 
@@ -23,7 +23,7 @@ type nodeEventHandler struct {
 	syncFunc func([]interface{}) error
 }
 
-func (h *nodeEventHandler) FilterOutResource(obj interface{}) bool {
+func (h *nodeEventHandler) FilterOutResource(_ interface{}) bool {
 	return false
 }
 
@@ -94,11 +94,11 @@ func (h *nodeEventHandler) AreResourcesEqual(obj1, obj2 interface{}) (bool, erro
 	// switch based on type
 	switch h.objType {
 	case factory.NamespaceExGwType:
-		ns1, ok := obj1.(*kapi.Namespace)
+		ns1, ok := obj1.(*corev1.Namespace)
 		if !ok {
 			return false, fmt.Errorf("could not cast obj1 of type %T to *kapi.Namespace", obj1)
 		}
-		ns2, ok := obj2.(*kapi.Namespace)
+		ns2, ok := obj2.(*corev1.Namespace)
 		if !ok {
 			return false, fmt.Errorf("could not cast obj2 of type %T to *kapi.Namespace", obj2)
 		}
@@ -147,7 +147,7 @@ func (h *nodeEventHandler) GetResourceFromInformerCache(key string) (interface{}
 // the function was executed from iterateRetryResources, AddResource adds the
 // specified object to the cluster according to its type and returns the error,
 // if any, yielded during object creation.
-func (h *nodeEventHandler) AddResource(obj interface{}, fromRetryLoop bool) error {
+func (h *nodeEventHandler) AddResource(_ interface{}, _ bool) error {
 	switch h.objType {
 	case factory.NamespaceExGwType,
 		factory.EndpointSliceForStaleConntrackRemovalType:
@@ -163,7 +163,7 @@ func (h *nodeEventHandler) AddResource(obj interface{}, fromRetryLoop bool) erro
 // the specified object in the cluster to its version in newObj according to its type
 // and returns the error, if any, yielded during the object update. The inRetryCache
 // boolean argument is to indicate if the given resource is in the retryCache or not.
-func (h *nodeEventHandler) UpdateResource(oldObj, newObj interface{}, inRetryCache bool) error {
+func (h *nodeEventHandler) UpdateResource(oldObj, newObj interface{}, _ bool) error {
 	switch h.objType {
 	case factory.NamespaceExGwType:
 		// If interconnect is disabled OR interconnect is running in single-zone-mode,
@@ -176,7 +176,7 @@ func (h *nodeEventHandler) UpdateResource(oldObj, newObj interface{}, inRetryCac
 			return fmt.Errorf("error retrieving node %s: %v", h.nc.name, err)
 		}
 		if !config.OVNKubernetesFeature.EnableInterconnect || util.GetNodeZone(node) == types.OvnDefaultZone {
-			newNs := newObj.(*kapi.Namespace)
+			newNs := newObj.(*corev1.Namespace)
 			return h.nc.syncConntrackForExternalGateways(newNs)
 		}
 		return nil
@@ -196,7 +196,7 @@ func (h *nodeEventHandler) UpdateResource(oldObj, newObj interface{}, inRetryCac
 // deletes the object from the cluster according to the delete logic of its resource type.
 // cachedObj is the internal cache entry for this object, used for now for pods and network
 // policies.
-func (h *nodeEventHandler) DeleteResource(obj, cachedObj interface{}) error {
+func (h *nodeEventHandler) DeleteResource(obj, _ interface{}) error {
 	switch h.objType {
 	case factory.NamespaceExGwType:
 		// no action needed upon delete event

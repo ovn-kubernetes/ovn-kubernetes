@@ -4,8 +4,9 @@ import (
 	"runtime"
 	"sync"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 )
 
 // MetricCNIRequestDuration is a prometheus metric that tracks the duration

@@ -7,6 +7,7 @@ import (
 
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
 	"github.com/ovn-org/libovsdb/ovsdb"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -63,7 +64,7 @@ var _ = ginkgo.Describe("OVN Address Set operations", func() {
 
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
-		config.PrepareTestConfig()
+		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 
 		app = cli.NewApp()
 		app.Name = "test"
@@ -324,6 +325,7 @@ var _ = ginkgo.Describe("OVN Address Set operations", func() {
 			asFactory = NewOvnAddressSetFactory(nbClient, config.IPv4Mode, config.IPv6Mode)
 
 			as, err := asFactory.NewAddressSet(addrsetDbIDs, []string{ipAddress1, ipAddress2})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			err = as.Destroy()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -570,6 +572,7 @@ var _ = ginkgo.Describe("OVN Address Set operations", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				_, err = asFactory.NewAddressSet(addrsetDbIDs, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				expectedDatabaseState := []libovsdbtest.TestData{
 					getDbAddrSets(addrsetDbIDs, ipv4InternalID, nil),
 					getDbAddrSets(addrsetDbIDs, ipv6InternalID, nil),

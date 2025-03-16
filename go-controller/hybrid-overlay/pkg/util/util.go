@@ -4,15 +4,16 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
-	kapi "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	utilnet "k8s.io/utils/net"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
 )
 
 // ParseHybridOverlayHostSubnet returns the parsed hybrid overlay hostsubnet if
 // the annotations included a valid one, or nil if they did not include one. If
 // one was included, but it is invalid, an error is returned.
-func ParseHybridOverlayHostSubnet(node *kapi.Node) (*net.IPNet, error) {
+func ParseHybridOverlayHostSubnet(node *corev1.Node) (*net.IPNet, error) {
 	sub, ok := node.Annotations[types.HybridOverlayNodeSubnet]
 	if !ok {
 		return nil, nil
@@ -37,9 +38,9 @@ func SameIPNet(a, b *net.IPNet) bool {
 }
 
 // GetNodeInternalIP returns the first NodeInternalIP address of the node
-func GetNodeInternalIP(node *kapi.Node) (string, error) {
+func GetNodeInternalIP(node *corev1.Node) (string, error) {
 	for _, addr := range node.Status.Addresses {
-		if addr.Type == kapi.NodeInternalIP {
+		if addr.Type == corev1.NodeInternalIP {
 			return utilnet.ParseIPSloppy(addr.Address).String(), nil
 		}
 	}

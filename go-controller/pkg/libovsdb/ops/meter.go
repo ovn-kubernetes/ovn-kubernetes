@@ -3,9 +3,10 @@ package ops
 import (
 	"reflect"
 
+	"k8s.io/apimachinery/pkg/util/sets"
+
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
 	"github.com/ovn-org/libovsdb/ovsdb"
-	"k8s.io/apimachinery/pkg/util/sets"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 )

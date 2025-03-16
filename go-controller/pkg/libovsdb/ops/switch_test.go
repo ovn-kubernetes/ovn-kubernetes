@@ -104,7 +104,7 @@ func TestRemoveACLsFromSwitches(t *testing.T) {
 				}
 			}
 
-			p := func(item *nbdb.LogicalSwitch) bool { return true }
+			p := func(*nbdb.LogicalSwitch) bool { return true }
 			err = RemoveACLsFromLogicalSwitchesWithPredicate(nbClient, p, ACLs...)
 			if err != nil && !tt.expectErr {
 				t.Fatal(fmt.Errorf("RemoveACLFromNodeSwitches() error = %v", err))

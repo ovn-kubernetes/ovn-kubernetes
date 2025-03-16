@@ -11,22 +11,24 @@ import (
 	"github.com/onsi/gomega"
 	ocpcloudnetworkapi "github.com/openshift/api/cloudnetwork/v1"
 	ocpconfigapi "github.com/openshift/api/config/v1"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	egressipv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/healthcheck"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/urfave/cli/v2"
-	v1 "k8s.io/api/core/v1"
+
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/util/retry"
 	utilnet "k8s.io/utils/net"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	egressipv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/healthcheck"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 type fakeEgressIPDialer struct{}
 
-func (f fakeEgressIPDialer) dial(ip net.IP, timeout time.Duration) bool {
+func (f fakeEgressIPDialer) dial(net.IP, time.Duration) bool {
 	return true
 }
 
@@ -40,7 +42,7 @@ func (fehc *fakeEgressIPHealthClient) IsConnected() bool {
 	return fehc.Connected
 }
 
-func (fehc *fakeEgressIPHealthClient) Connect(dialCtx context.Context, mgmtIPs []net.IP, healthCheckPort int) bool {
+func (fehc *fakeEgressIPHealthClient) Connect(context.Context, []net.IP, int) bool {
 	if fehc.FakeProbeFailure {
 		return false
 	}
@@ -53,7 +55,7 @@ func (fehc *fakeEgressIPHealthClient) Disconnect() {
 	fehc.ProbeCount = 0
 }
 
-func (fehc *fakeEgressIPHealthClient) Probe(dialCtx context.Context) bool {
+func (fehc *fakeEgressIPHealthClient) Probe(context.Context) bool {
 	if fehc.Connected && !fehc.FakeProbeFailure {
 		fehc.ProbeCount++
 		return true
@@ -63,7 +65,7 @@ func (fehc *fakeEgressIPHealthClient) Probe(dialCtx context.Context) bool {
 
 type fakeEgressIPHealthClientAllocator struct{}
 
-func (f *fakeEgressIPHealthClientAllocator) allocate(nodeName string) healthcheck.EgressIPHealthClient {
+func (f *fakeEgressIPHealthClientAllocator) allocate(string) healthcheck.EgressIPHealthClient {
 	return &fakeEgressIPHealthClient{}
 }
 
@@ -82,11 +84,11 @@ func newNamespaceMeta(namespace string, additionalLabels map[string]string) meta
 	}
 }
 
-func newNamespace(namespace string) *v1.Namespace {
-	return &v1.Namespace{
+func newNamespace(namespace string) *corev1.Namespace {
+	return &corev1.Namespace{
 		ObjectMeta: newNamespaceMeta(namespace, nil),
-		Spec:       v1.NamespaceSpec{},
-		Status:     v1.NamespaceStatus{},
+		Spec:       corev1.NamespaceSpec{},
+		Status:     corev1.NamespaceStatus{},
 	}
 }
 
@@ -289,8 +291,8 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 	})
 
 	ginkgo.Context("On node ADD/UPDATE/DELETE", func() {
-		ginkgo.DescribeTable("should re-assign EgressIPs and perform proper egressIP allocation changes", func(egressIP, expectedNetwork string) {
-			app.Action = func(ctx *cli.Context) error {
+		ginkgo.DescribeTable("should re-assign EgressIPs and perform proper egressIP allocation changes", func(egressIP string) {
+			app.Action = func(*cli.Context) error {
 				node1IPv4OVN := "192.168.126.202/24"
 				node1IPv4SecondaryHost := "10.10.10.3/24"
 				node1Ipv4SecondaryHost2 := "7.7.7.7/16"
@@ -300,7 +302,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				node2Ipv4SecondaryHost3 := "5.5.5.5/16"
 
 				egressNamespace := newNamespace(namespace)
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -312,16 +314,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -330,11 +332,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\",\"%s\",\"%s\",\"%s\"]", node2IPv4OVN, node2IPv4SecondaryHost, node2Ipv4SecondaryHost2, node2Ipv4SecondaryHost3),
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -361,8 +363,8 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 					&egressipv1.EgressIPList{
 						Items: []egressipv1.EgressIP{eIP},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{node1, node2},
+					&corev1.NodeList{
+						Items: []corev1.Node{node1, node2},
 					},
 				)
 
@@ -403,14 +405,14 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				app.Name,
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		}, ginkgo.Entry("OVN network", "192.168.126.101", "192.168.126.0/24"),
-			ginkgo.Entry("Secondary host network", "10.10.10.100", "10.10.10.0/24"),
-			ginkgo.Entry("Secondary host network", "7.7.7.100", "7.7.0.0/16"),
-			ginkgo.Entry("Secondary host network", "7.7.8.100", "7.7.0.0/16"),
+		}, ginkgo.Entry("OVN network", "192.168.126.101"),
+			ginkgo.Entry("Secondary host network", "10.10.10.100"),
+			ginkgo.Entry("Secondary host network", "7.7.7.100"),
+			ginkgo.Entry("Secondary host network", "7.7.8.100"),
 		)
 
-		ginkgo.DescribeTable("should re-assign EgressIPs and perform proper egressIP allocation changes during node deletion", func(egressIP, expectedNetwork string) {
-			app.Action = func(ctx *cli.Context) error {
+		ginkgo.DescribeTable("should re-assign EgressIPs and perform proper egressIP allocation changes during node deletion", func(egressIP string) {
+			app.Action = func(*cli.Context) error {
 				node1IPv4OVN := "192.168.126.202/24"
 				node1IPv4SecondaryHost := "10.10.10.3/24"
 				node1Ipv4SecondaryHost2 := "7.7.7.7/16"
@@ -420,7 +422,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				node2Ipv4SecondaryHost3 := "5.5.5.5/16"
 				egressNamespace := newNamespace(namespace)
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -432,16 +434,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -450,11 +452,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\",\"%s\",\"%s\",\"%s\"]", node2IPv4OVN, node2IPv4SecondaryHost, node2Ipv4SecondaryHost2, node2Ipv4SecondaryHost3),
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -482,8 +484,8 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 					&egressipv1.EgressIPList{
 						Items: []egressipv1.EgressIP{eIP},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{node1, node2},
+					&corev1.NodeList{
+						Items: []corev1.Node{node1, node2},
 					},
 				)
 
@@ -521,13 +523,13 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 
 			err := app.Run([]string{app.Name})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		}, ginkgo.Entry("OVN network", "192.168.126.101", "192.168.126.0/24"),
-			ginkgo.Entry("Secondary host network", "10.10.10.100", "10.10.10.0/24"),
-			ginkgo.Entry("Secondary host network", "7.7.7.100", "7.7.0.0/16"),
-			ginkgo.Entry("Secondary host network", "7.7.8.100", "7.7.0.0/16"),
+		}, ginkgo.Entry("OVN network", "192.168.126.101"),
+			ginkgo.Entry("Secondary host network", "10.10.10.100"),
+			ginkgo.Entry("Secondary host network", "7.7.7.100"),
+			ginkgo.Entry("Secondary host network", "7.7.8.100"),
 		)
 		ginkgo.It("should assign EgressIPs to a linux node when there are windows nodes in the cluster", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				node1IPv4OVNManaged := "192.168.126.202/24"
 				node1IPv4NonOVNManaged := "10.10.10.3/24"
 				node1Ipv4NonOVNManaged2 := "7.7.7.7/16"
@@ -540,7 +542,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				})
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -552,16 +554,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				hybridOverlayNode := v1.Node{
+				hybridOverlayNode := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "hybridOverlayNode",
 						Annotations: map[string]string{
@@ -572,11 +574,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"kubernetes.io/os": "windows",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -603,8 +605,8 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 					&egressipv1.EgressIPList{
 						Items: []egressipv1.EgressIP{eIP},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{node1, hybridOverlayNode},
+					&corev1.NodeList{
+						Items: []corev1.Node{node1, hybridOverlayNode},
 					},
 				)
 				_, err = fakeClusterManagerOVN.eIPC.WatchEgressNodes()
@@ -632,7 +634,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 	ginkgo.Context("WatchEgressNodes", func() {
 
 		ginkgo.It("should populated egress node data as they are tagged `egress assignable` with variants of IPv4/IPv6", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 
 				node1IPv4OVN := "192.168.128.202/24"
 				node1IPv6OVN := "1521:b9cc:59b3:b9ee:95e9:f04c:4fec:33c4/64"
@@ -642,7 +644,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				node2IPv4SecondaryHost := "10.10.10.20/24"
 				node2IPv4SecondaryHost2 := "7.7.7.40/16"
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "node1",
 						Annotations: map[string]string{
@@ -652,16 +654,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 								node1IPv6OVN, node1IPv4SecondaryHost, node1IPv4SecondaryHost2),
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "node2",
 						Annotations: map[string]string{
@@ -671,18 +673,18 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 								node2IPv4SecondaryHost, node2IPv4SecondaryHost2),
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
 				fakeClusterManagerOVN.start(
-					&v1.NodeList{
-						Items: []v1.Node{},
+					&corev1.NodeList{
+						Items: []corev1.Node{},
 					},
 				)
 
@@ -717,10 +719,10 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		})
 
 		ginkgo.It("using retry to create egress node with forced error followed by an update", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				nodeIPv4 := "192.168.126.51/24"
 				nodeIPv6 := "9287:980a:2f3a:52e5:a579:df85:e82f:b7cd/64"
-				node := v1.Node{
+				node := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "node",
 						Annotations: map[string]string{
@@ -729,18 +731,18 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\",\"%s\"]", nodeIPv4, nodeIPv6),
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
 				fakeClusterManagerOVN.start(
-					&v1.NodeList{
-						Items: []v1.Node{},
+					&corev1.NodeList{
+						Items: []corev1.Node{},
 					},
 				)
 				_, err := fakeClusterManagerOVN.eIPC.WatchEgressNodes()
@@ -774,7 +776,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		})
 
 		ginkgo.It("ensure only one egressIP is assigned to the given node while rest of the IPs go into pending state", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 
 				config.Gateway.DisableSNATMultipleGWs = true
 
@@ -786,7 +788,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 
 				egressNamespace := newNamespace(namespace)
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -800,17 +802,17 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
 
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -821,11 +823,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node2IPv4),
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -871,8 +873,8 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 					&egressipv1.EgressIPList{
 						Items: []egressipv1.EgressIP{eIP1, eIP2},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{node1, node2},
+					&corev1.NodeList{
+						Items: []corev1.Node{node1, node2},
 					},
 				)
 
@@ -918,11 +920,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		})
 
 		ginkgo.It("should skip populating egress node data for nodes that have incorrect IP address", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				config.OVNKubernetesFeature.EnableInterconnect = true // no impact on global eIPC functions
 				nodeIPv4 := "192.168.126.510/24"
 				nodeIPv6 := "1521:b9cc:59b3:b9ee:95e9:f04c:4fec:33c4/64"
-				node := v1.Node{
+				node := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -931,18 +933,18 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\",\"%s\"]", nodeIPv4, nodeIPv6),
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
 				fakeClusterManagerOVN.start(
-					&v1.NodeList{
-						Items: []v1.Node{node},
+					&corev1.NodeList{
+						Items: []corev1.Node{node},
 					},
 				)
 
@@ -970,12 +972,12 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		})
 
 		ginkgo.It("should probe nodes using grpc", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				config.OVNKubernetesFeature.EnableInterconnect = false // no impact on global eIPC functions
 				node1IPv6 := "1521:b9cc:59b3:b9ee:95e9:f04c:4fec:33c4/64"
 				node2IPv4 := "192.168.126.51/24"
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "node1",
 						Labels: map[string]string{
@@ -987,16 +989,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node1IPv6),
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "node2",
 						Labels: map[string]string{
@@ -1008,11 +1010,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node2IPv4),
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -1085,20 +1087,20 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 						desc:            "node2 connected, disconnect node1",
 						node1FailProbes: true,
 						node2FailProbes: true,
-						tcPrepareFunc: func(hcc1, hcc2 *fakeEgressIPHealthClient) {
+						tcPrepareFunc: func(hcc1, _ *fakeEgressIPHealthClient) {
 							hcc1.Disconnect()
 						},
 					},
 					{
 						desc:            "connect node1, disconnect node2",
 						node2FailProbes: true,
-						tcPrepareFunc: func(hcc1, hcc2 *fakeEgressIPHealthClient) {
+						tcPrepareFunc: func(_, hcc2 *fakeEgressIPHealthClient) {
 							hcc2.Disconnect()
 						},
 					},
 					{
 						desc: "node1 and node2 connected and both counters bump",
-						tcPrepareFunc: func(hcc1, hcc2 *fakeEgressIPHealthClient) {
+						tcPrepareFunc: func(_, _ *fakeEgressIPHealthClient) {
 							// Perform an additional iteration, to make probe counters to bump on second call
 							checkEgressNodesReachabilityIterate(fakeClusterManagerOVN.eIPC)
 						},
@@ -1127,7 +1129,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							gomega.Expect(prevProbes).To(gomega.Equal(hcc.ProbeCount), desc)
 						} else {
 							// Still connected and probe counters should be going up
-							gomega.Expect(prevProbes < hcc.ProbeCount).To(gomega.BeTrue(), desc)
+							gomega.Expect(prevProbes).To(gomega.BeNumerically("<", hcc.ProbeCount), desc)
 						}
 					}
 				}
@@ -1178,14 +1180,14 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 
 	ginkgo.Context("WatchEgressNodes running with WatchEgressIP", func() {
 		ginkgo.It("should result in error and event if specified egress IP is a cluster node IP", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 
 				egressIP := "192.168.126.51"
 				node1IPv4 := "192.168.128.202/24"
 				node1IPv6 := "1521:b9cc:59b3:b9ee:95e9:f04c:4fec:33c4/64"
 				node2IPv4 := "192.168.126.51/24"
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Labels: map[string]string{
@@ -1197,16 +1199,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\",\"%s\"]", node1IPv4, node1IPv6),
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Labels: map[string]string{
@@ -1218,11 +1220,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node2IPv4),
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -1242,8 +1244,8 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 					&egressipv1.EgressIPList{
 						Items: []egressipv1.EgressIP{eIP},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{node1, node2},
+					&corev1.NodeList{
+						Items: []corev1.Node{node1, node2},
 					})
 
 				_, err := fakeClusterManagerOVN.eIPC.WatchEgressNodes()
@@ -1256,7 +1258,39 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				gomega.Expect(fakeClusterManagerOVN.eIPC.nodeAllocator.cache).To(gomega.HaveKey(node2.Name))
 
 				gomega.Eventually(getEgressIPStatusLen(egressIPName)).Should(gomega.Equal(0))
-				gomega.Eventually(fakeClusterManagerOVN.fakeRecorder.Events).Should(gomega.HaveLen(3))
+				// event1 triggered during node1 add for the existing EIP and event2 is triggered during node2 add for the existing EIP
+				/*I0212 20:22:37.636573 1837759 egressip_controller.go:723] Egress node: node1 about to be initialized
+				I0212 20:22:37.636670 1837759 obj_retry.go:512] Add event received for *factory.egressNode node2
+				I0212 20:22:37.636757 1837759 egressip_controller.go:723] Egress node: node2 about to be initialized
+				I0212 20:22:37.636855 1837759 egressip_controller.go:1173] Current assignments are: map[]
+				I0212 20:22:37.636865 1837759 egressip_controller.go:1175] Will attempt assignment for egress IP: 192.168.126.51
+				E0212 20:22:37.636909 1837759 egressip_controller.go:1190] Egress IP: 192.168.126.51 address is already assigned on an interface on node node2
+				I0212 20:22:37.636919 1837759 obj_retry.go:551] Creating *factory.egressNode node2 took: 217.968µs
+				I0212 20:22:37.638850 1837759 egressip_controller.go:1173] Current assignments are: map[]
+				I0212 20:22:37.639675 1837759 egressip_controller.go:1175] Will attempt assignment for egress IP: 192.168.126.51
+				E0212 20:22:37.639753 1837759 egressip_controller.go:1190] Egress IP: 192.168.126.51 address is already assigned on an interface on node node2
+				I0212 20:22:37.639776 1837759 obj_retry.go:551] Creating *factory.egressNode node1 took: 3.316342ms*/
+
+				// event3 trigged from syncEgressIPMarkAllocator called during WatchEgressIP starter syncFunc and
+				// event4 is triggered on the actual EIP add reconcile
+				/*I0212 20:22:37.639894 1837759 egressip_controller.go:1729] Patching status on EgressIP egressip: [{add /metadata/annotations map[k8s.ovn.org/egressip-mark:50000]}]
+				I0212 20:22:37.641594 1837759 obj_retry.go:512] Add event received for *v1.EgressIP egressip
+				I0212 20:22:37.641635 1837759 egressip_controller.go:1173] Current assignments are: map[]
+				I0212 20:22:37.641641 1837759 egressip_controller.go:1175] Will attempt assignment for egress IP: 192.168.126.51
+				E0212 20:22:37.641664 1837759 egressip_controller.go:1190] Egress IP: 192.168.126.51 address is already assigned on an interface on node node2
+				I0212 20:22:37.641670 1837759 obj_retry.go:551] Creating *v1.EgressIP egressip took: 53.241µs
+				I0212 20:22:37.643003 1837759 factory.go:1322] Added *v1.EgressIP event handler 2
+				I0212 20:22:37.643123 1837759 obj_retry.go:568] Update event received for resource *v1.EgressIP, old object is equal to new: false
+				I0212 20:22:37.643154 1837759 obj_retry.go:620] Update event received for *v1.EgressIP egressip
+				I0212 20:22:37.643187 1837759 egressip_controller.go:1173] Current assignments are: map[]
+				I0212 20:22:37.643205 1837759 egressip_controller.go:1175] Will attempt assignment for egress IP: 192.168.126.51
+				E0212 20:22:37.643254 1837759 egressip_controller.go:1190] Egress IP: 192.168.126.51 address is already assigned on an interface on node node2*/
+				gomega.Eventually(fakeClusterManagerOVN.fakeRecorder.Events).Should(gomega.HaveLen(4))
+				for i := 0; i < 4; i++ {
+					recordedEvent := <-fakeClusterManagerOVN.fakeRecorder.Events
+					gomega.Expect(recordedEvent).To(gomega.ContainSubstring(
+						"EgressIPConflict Egress IP egressip with IP 192.168.126.51 is conflicting with a host (node2) IP address and will not be assigned"))
+				}
 				return nil
 			}
 
@@ -1265,14 +1299,14 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		})
 
 		ginkgo.It("should remove stale EgressIP setup when node label is removed while ovnkube-master is not running and assign to newly labelled node", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 
 				egressIP1 := "192.168.126.25"
 				node1IPv4 := "192.168.126.51/24"
 
 				egressNamespace := newNamespace(namespace)
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -1281,16 +1315,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node1IPv4),
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Labels: map[string]string{
@@ -1302,11 +1336,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node1IPv4),
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -1339,8 +1373,8 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 					&egressipv1.EgressIPList{
 						Items: []egressipv1.EgressIP{eIP},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{node1, node2},
+					&corev1.NodeList{
+						Items: []corev1.Node{node1, node2},
 					},
 				)
 
@@ -1361,14 +1395,14 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		})
 
 		ginkgo.It("should only get assigned EgressIPs which matches their subnet when the node is tagged", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 
 				egressIP := "192.168.126.101"
 				node1IPv4 := "192.168.128.202/24"
 				node1IPv6 := "1521:b9cc:59b3:b9ee:95e9:f04c:4fec:33c4/64"
 				node2IPv4 := "192.168.126.51/24"
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -1377,16 +1411,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\",\"%s\"]", node1IPv4, node1IPv6),
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -1395,11 +1429,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node2IPv4),
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -1419,8 +1453,8 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 					&egressipv1.EgressIPList{
 						Items: []egressipv1.EgressIP{eIP},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{node1, node2},
+					&corev1.NodeList{
+						Items: []corev1.Node{node1, node2},
 					})
 
 				_, err := fakeClusterManagerOVN.eIPC.WatchEgressNodes()
@@ -1429,8 +1463,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				_, ip1V4Sub, err := net.ParseCIDR(node1IPv4)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				_, ip1V6Sub, err := net.ParseCIDR(node1IPv6)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				_, ip2V4Sub, err := net.ParseCIDR(node2IPv4)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				gomega.Eventually(getEgressIPAllocatorSizeSafely).Should(gomega.Equal(2))
 				gomega.Expect(fakeClusterManagerOVN.eIPC.nodeAllocator.cache).To(gomega.HaveKey(node1.Name))
@@ -1440,7 +1477,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				gomega.Expect(getEgressIPAllocatorSafely(node1.Name, false).Net).To(gomega.Equal(ip1V4Sub))
 				gomega.Expect(getEgressIPAllocatorSafely(node1.Name, true).Net).To(gomega.Equal(ip1V6Sub))
 				gomega.Expect(getEgressIPAllocatorSafely(node2.Name, false).Net).To(gomega.Equal(ip2V4Sub))
-				gomega.Eventually(eIP.Status.Items).Should(gomega.HaveLen(0))
+				gomega.Eventually(eIP.Status.Items).Should(gomega.BeEmpty())
 
 				node1.Labels = map[string]string{
 					"k8s.ovn.org/egress-assignable": "",
@@ -1475,14 +1512,14 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		})
 
 		ginkgo.It("should re-balance EgressIPs when their node is removed", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				config.OVNKubernetesFeature.EnableInterconnect = true // no impact on global eIPC functions
 				egressIP := "192.168.126.101"
 				node1IPv4 := "192.168.126.12/24"
 				node1IPv6 := "1521:b9cc:59b3:b9ee:95e9:f04c:4fec:33c4/64"
 				node2IPv4 := "192.168.126.51/24"
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -1494,16 +1531,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -1515,11 +1552,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -1539,8 +1576,8 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 					&egressipv1.EgressIPList{
 						Items: []egressipv1.EgressIP{eIP},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{node1},
+					&corev1.NodeList{
+						Items: []corev1.Node{node1},
 					})
 
 				_, err := fakeClusterManagerOVN.eIPC.WatchEgressNodes()
@@ -1599,11 +1636,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 			//  - make the node unreachable and verify that the egress IP was unassigned
 			//  - make the node reachable and update a node
 			//  - verify that the egress IP was assigned by calling the periodic reachability check
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				config.OVNKubernetesFeature.EnableInterconnect = true // no impact on global eIPC functions
 				egressIP := "192.168.126.101"
 				nodeIPv4 := "192.168.126.51/24"
-				node := v1.Node{
+				node := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -1615,11 +1652,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -1634,8 +1671,8 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 					&egressipv1.EgressIPList{
 						Items: []egressipv1.EgressIP{eIP1},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{node},
+					&corev1.NodeList{
+						Items: []corev1.Node{node},
 					},
 				)
 
@@ -1658,9 +1695,9 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				node.Annotations["test"] = "dummy"
 				_, err = fakeClusterManagerOVN.fakeClient.KubeClient.CoreV1().Nodes().Update(context.TODO(), &node, metav1.UpdateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				gomega.Eventually(hcClient.IsConnected()).Should(gomega.Equal(true))
+				gomega.Eventually(hcClient.IsConnected).Should(gomega.BeTrue())
 				// the node should not be marked as reachable in the update handler as it is not getting added
-				gomega.Consistently(func() bool { return fakeClusterManagerOVN.eIPC.nodeAllocator.cache[node.Name].isReachable }).Should(gomega.Equal(false))
+				gomega.Consistently(func() bool { return fakeClusterManagerOVN.eIPC.nodeAllocator.cache[node.Name].isReachable }).Should(gomega.BeFalse())
 
 				// egress IP should get assigned on the next checkEgressNodesReachabilityIterate call
 				// explicitly call check reachability, periodic checker is not active
@@ -1679,7 +1716,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 	ginkgo.Context("IPv6 assignment", func() {
 
 		ginkgo.It("should be able to allocate non-conflicting IP on node with lowest amount of allocations", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 
 				egressIP := "0:0:0:0:0:feff:c0a8:8e0f"
 				node1IPv4 := ""
@@ -1687,7 +1724,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				node2IPv4 := ""
 				node2IPv6 := "0:0:0:0:0:fedf:c0a8:8e0c/64"
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -1699,16 +1736,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -1720,18 +1757,18 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
 
-				fakeClusterManagerOVN.start(&v1.NodeList{
-					Items: []v1.Node{node1, node2},
+				fakeClusterManagerOVN.start(&corev1.NodeList{
+					Items: []corev1.Node{node1, node2},
 				})
 
 				egressNode1 := setupNode(node1Name, []string{"0:0:0:0:0:feff:c0a8:8e0c/64"}, map[string]string{"0:0:0:0:0:feff:c0a8:8e32": "bogus1", "0:0:0:0:0:feff:c0a8:8e1e": "bogus2"})
@@ -1759,7 +1796,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		})
 
 		ginkgo.DescribeTable("should be able to allocate several EgressIPs and avoid the same node", func(egressIP1, egressIP2 string) {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				node1IPv4OVN := ""
 				node1IPv6OVN := "0:0:0:0:0:feff:c0a8:8e0c/64"
 				node1IPv6SecondaryHost := "0:0:1:0:0:feff:c0a8:8e0c/64"
@@ -1767,7 +1804,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				node2IPv6OVN := "0:0:0:0:0:fedf:c0a8:8e0c/64"
 				node2IPv6SecondaryHost := "0:0:1:0:0:fedf:c0a8:8e0c/64"
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -1779,16 +1816,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -1800,11 +1837,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -1818,7 +1855,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				}
 
 				fakeClusterManagerOVN.start(
-					&v1.NodeList{Items: []v1.Node{node1, node2}},
+					&corev1.NodeList{Items: []corev1.Node{node1, node2}},
 					&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eIP}},
 				)
 
@@ -1844,7 +1881,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 			ginkgo.Entry("OVN and secondary host egress IPs", "0:0:1:0:0:fecf:c0a8:8e0d", "0:0:0:0:0:feff:c0a8:8e0f"))
 
 		ginkgo.DescribeTable("should be able to allocate several EgressIPs and avoid the same node and leave one un-assigned without error", func(egressIP1, egressIP2, egressIP3 string) {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				node1IPv4OVN := ""
 				node1IPv6OVN := "0:0:0:0:0:feff:c0a8:8e0c/64"
 				node1IPv6SecondaryHost := "0:0:1:0:0:feff:c0a8:8e0c/64"
@@ -1852,7 +1889,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				node2IPv6OVN := "0:0:0:0:0:fedf:c0a8:8e0c/64"
 				node2IPv6SecondaryHost := "0:0:1:0:0:fedf:c0a8:8e0c/64"
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -1864,16 +1901,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -1885,11 +1922,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -1903,7 +1940,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				}
 
 				fakeClusterManagerOVN.start(
-					&v1.NodeList{Items: []v1.Node{node1, node2}},
+					&corev1.NodeList{Items: []corev1.Node{node1, node2}},
 					&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eIP}},
 				)
 
@@ -1932,7 +1969,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		)
 
 		ginkgo.It("should be able to allocate several EgressIPs for OVN and Secondary host networks and avoid the same node and leave multiple EgressIPs un-assigned without error", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				egressIP1SecondaryHost := "0:0:1:0:0:feff:c0a8:8e0d"
 				egressIP2SecondaryHost := "0:0:1:0:0:feff:c0a8:8e0e"
 				egressIP3SecondaryHost := "0:0:1:0:0:feff:c0a8:8e0f"
@@ -1946,7 +1983,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				node2IPv6OVN := "0:0:0:0:0:feff:c0a8:8e0b/64"
 				node2IPv6SecondaryHost := "0:0:1:0:0:feff:c0a8:8e0b/64"
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -1958,16 +1995,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -1979,11 +2016,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -1997,7 +2034,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				}
 
 				fakeClusterManagerOVN.start(
-					&v1.NodeList{Items: []v1.Node{node1, node2}},
+					&corev1.NodeList{Items: []corev1.Node{node1, node2}},
 					&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eIP}},
 				)
 
@@ -2024,7 +2061,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		})
 
 		ginkgo.DescribeTable("should return the already allocated IP with the same node if it is allocated again", func(egressIP string) {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				node1IPv4OVN := ""
 				node1IPv6OVN := "0:0:0:0:0:feff:c0a8:8e0c/64"
 				node1IPv6SecondaryHost := "0:0:1:0:0:feff:c0a8:8e0c/64"
@@ -2032,7 +2069,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				node2IPv6OVN := "0:0:0:0:0:feff:c0a8:8e0b/64"
 				node2IPv6SecondaryHost := "0:0:1:0:0:feff:c0a8:8e0b/64"
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -2044,16 +2081,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -2065,11 +2102,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -2083,7 +2120,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				}
 
 				fakeClusterManagerOVN.start(
-					&v1.NodeList{Items: []v1.Node{node1, node2}},
+					&corev1.NodeList{Items: []corev1.Node{node1, node2}},
 					&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eIP}},
 				)
 
@@ -2111,7 +2148,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		)
 
 		ginkgo.It("should not be able to allocate node IP", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 
 				egressIP := "0:0:0:0:0:feff:c0a8:8e0c"
 				node1IPv4 := ""
@@ -2119,7 +2156,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				node2IPv4 := ""
 				node2IPv6 := "0:0:0:0:0:fedf:c0a8:8e0c/64"
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -2131,16 +2168,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -2152,11 +2189,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -2170,7 +2207,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				}
 
 				fakeClusterManagerOVN.start(
-					&v1.NodeList{Items: []v1.Node{node1, node2}},
+					&corev1.NodeList{Items: []corev1.Node{node1, node2}},
 					&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eIP}},
 				)
 
@@ -2181,7 +2218,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				fakeClusterManagerOVN.eIPC.nodeAllocator.cache[egressNode2.name] = &egressNode2
 
 				assignedStatuses := fakeClusterManagerOVN.eIPC.assignEgressIPs(eIP.Name, eIP.Spec.EgressIPs)
-				gomega.Expect(assignedStatuses).To(gomega.HaveLen(0))
+				gomega.Expect(assignedStatuses).To(gomega.BeEmpty())
 
 				return nil
 			}
@@ -2191,7 +2228,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		})
 
 		ginkgo.It("should not be able to allocate EgressIP equal to an address in host-cidrs annotation", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 
 				egressIP := "0:0:0:0:0:feff:c0a8:8e0a"
 				node1IPv4 := ""
@@ -2200,7 +2237,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				node2IPv4 := ""
 				node2IPv6 := "0:0:0:0:0:fedf:c0a8:8e0c/64"
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -2212,16 +2249,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -2233,11 +2270,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -2251,7 +2288,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				}
 
 				fakeClusterManagerOVN.start(
-					&v1.NodeList{Items: []v1.Node{node1, node2}},
+					&corev1.NodeList{Items: []corev1.Node{node1, node2}},
 					&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eIP}},
 				)
 
@@ -2264,7 +2301,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				gomega.Expect(fakeClusterManagerOVN.eIPC.initEgressIPAllocator(&node1)).To(gomega.Succeed())
 				gomega.Expect(fakeClusterManagerOVN.eIPC.initEgressIPAllocator(&node2)).To(gomega.Succeed())
 				assignedStatuses := fakeClusterManagerOVN.eIPC.assignEgressIPs(eIP.Name, eIP.Spec.EgressIPs)
-				gomega.Expect(assignedStatuses).To(gomega.HaveLen(0))
+				gomega.Expect(assignedStatuses).To(gomega.BeEmpty())
 
 				return nil
 			}
@@ -2274,14 +2311,14 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		})
 
 		ginkgo.It("should not be able to allocate conflicting compressed IP", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				egressIP := "::feff:c0a8:8e32"
 				node1IPv4 := ""
 				node1IPv6 := "0:0:0:0:0:feff:c0a8:8e0c/64"
 				node2IPv4 := ""
 				node2IPv6 := "0:0:0:0:0:fedf:c0a8:8e0c/64"
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -2293,16 +2330,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -2314,11 +2351,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -2332,7 +2369,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				}
 
 				fakeClusterManagerOVN.start(
-					&v1.NodeList{Items: []v1.Node{node1, node2}},
+					&corev1.NodeList{Items: []corev1.Node{node1, node2}},
 					&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eIP}},
 				)
 
@@ -2343,7 +2380,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				fakeClusterManagerOVN.eIPC.nodeAllocator.cache[egressNode2.name] = &egressNode2
 
 				assignedStatuses := fakeClusterManagerOVN.eIPC.assignEgressIPs(eIP.Name, eIP.Spec.EgressIPs)
-				gomega.Expect(assignedStatuses).To(gomega.HaveLen(0))
+				gomega.Expect(assignedStatuses).To(gomega.BeEmpty())
 				return nil
 			}
 
@@ -2352,7 +2389,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		})
 
 		ginkgo.It("should not be able to allocate IPv4 IP on nodes which can only host IPv6", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 
 				egressIP := "192.168.126.16"
 				node1IPv4 := ""
@@ -2360,7 +2397,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				node2IPv4 := ""
 				node2IPv6 := "0:0:0:0:0:fedf:c0a8:8e0c/64"
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -2372,16 +2409,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -2393,11 +2430,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -2411,7 +2448,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				}
 
 				fakeClusterManagerOVN.start(
-					&v1.NodeList{Items: []v1.Node{node1, node2}},
+					&corev1.NodeList{Items: []corev1.Node{node1, node2}},
 					&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eIP}},
 				)
 
@@ -2422,7 +2459,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				fakeClusterManagerOVN.eIPC.nodeAllocator.cache[egressNode2.name] = &egressNode2
 
 				assignedStatuses := fakeClusterManagerOVN.eIPC.assignEgressIPs(eIP.Name, eIP.Spec.EgressIPs)
-				gomega.Expect(assignedStatuses).To(gomega.HaveLen(0))
+				gomega.Expect(assignedStatuses).To(gomega.BeEmpty())
 				return nil
 			}
 
@@ -2431,7 +2468,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		})
 
 		ginkgo.It("should be able to allocate non-conflicting compressed uppercase IP", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 
 				egressIP := "::FEFF:C0A8:8D32"
 				node1IPv4 := ""
@@ -2439,7 +2476,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				node2IPv4 := ""
 				node2IPv6 := "0:0:0:0:0:fedf:c0a8:8e0c/64"
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -2451,16 +2488,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -2472,11 +2509,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -2490,7 +2527,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				}
 
 				fakeClusterManagerOVN.start(
-					&v1.NodeList{Items: []v1.Node{node1, node2}},
+					&corev1.NodeList{Items: []corev1.Node{node1, node2}},
 					&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eIP}},
 				)
 
@@ -2512,7 +2549,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		})
 
 		ginkgo.It("should not be able to allocate conflicting compressed uppercase IP", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 
 				egressIP := "::FEFF:C0A8:8E32"
 				node1IPv4 := ""
@@ -2520,7 +2557,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				node2IPv4 := ""
 				node2IPv6 := "0:0:0:0:0:fedf:c0a8:8e0c/64"
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -2532,16 +2569,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -2553,11 +2590,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -2571,7 +2608,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				}
 
 				fakeClusterManagerOVN.start(
-					&v1.NodeList{Items: []v1.Node{node1, node2}},
+					&corev1.NodeList{Items: []corev1.Node{node1, node2}},
 					&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eIP}},
 				)
 
@@ -2582,7 +2619,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				fakeClusterManagerOVN.eIPC.nodeAllocator.cache[egressNode2.name] = &egressNode2
 
 				assignedStatuses := fakeClusterManagerOVN.eIPC.assignEgressIPs(eIP.Name, eIP.Spec.EgressIPs)
-				gomega.Expect(assignedStatuses).To(gomega.HaveLen(0))
+				gomega.Expect(assignedStatuses).To(gomega.BeEmpty())
 				return nil
 			}
 
@@ -2591,7 +2628,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		})
 
 		ginkgo.It("should not be able to allocate invalid IP", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 
 				egressIPs := []string{"0:0:0:0:0:feff:c0a8:8e32:5"}
 				node1IPv4 := ""
@@ -2599,7 +2636,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				node2IPv4 := ""
 				node2IPv6 := "0:0:0:0:0:fedf:c0a8:8e0c/64"
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -2611,16 +2648,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -2632,11 +2669,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -2650,14 +2687,14 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				}
 
 				fakeClusterManagerOVN.start(
-					&v1.NodeList{Items: []v1.Node{node1, node2}},
+					&corev1.NodeList{Items: []corev1.Node{node1, node2}},
 					&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eIP}},
 				)
 
 				assignedStatuses, err := fakeClusterManagerOVN.eIPC.validateEgressIPSpec(eIP.Name, eIP.Spec.EgressIPs)
 				gomega.Expect(err).To(gomega.HaveOccurred())
 				gomega.Expect(err.Error()).To(gomega.Equal(fmt.Sprintf("unable to parse provided EgressIP: %s, invalid", egressIPs[0])))
-				gomega.Expect(assignedStatuses).To(gomega.HaveLen(0))
+				gomega.Expect(assignedStatuses).To(gomega.BeEmpty())
 				return nil
 			}
 
@@ -2669,14 +2706,14 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 	ginkgo.Context("Dual-stack assignment", func() {
 
 		ginkgo.It("should be able to allocate non-conflicting IPv4 on node which can host it, even if it happens to be the node with more assignments", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				egressIP := "192.168.126.99"
 				node1IPv4 := ""
 				node1IPv6 := "0:0:0:0:0:feff:c0a8:8e0c/64"
 				node2IPv4 := "192.168.126.51/24"
 				node2IPv6 := ""
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -2688,16 +2725,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -2709,11 +2746,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -2727,7 +2764,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				}
 
 				fakeClusterManagerOVN.start(
-					&v1.NodeList{Items: []v1.Node{node1, node2}},
+					&corev1.NodeList{Items: []corev1.Node{node1, node2}},
 					&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eIP}},
 				)
 
@@ -2753,13 +2790,13 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 	ginkgo.Context("IPv4 assignment", func() {
 
 		ginkgo.It("Should not be able to assign egress IP defined in CIDR notation", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 
 				egressIPs := []string{"192.168.126.99/32"}
 				node1IPv4 := "192.168.126.12/24"
 				node2IPv4 := "192.168.126.51/24"
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -2771,16 +2808,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -2792,11 +2829,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -2810,7 +2847,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				}
 
 				fakeClusterManagerOVN.start(
-					&v1.NodeList{Items: []v1.Node{node1, node2}},
+					&corev1.NodeList{Items: []corev1.Node{node1, node2}},
 					&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eIP}},
 				)
 
@@ -2823,7 +2860,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				validatedIPs, err := fakeClusterManagerOVN.eIPC.validateEgressIPSpec(eIP.Name, eIP.Spec.EgressIPs)
 				gomega.Expect(err).To(gomega.HaveOccurred())
 				gomega.Expect(err.Error()).To(gomega.Equal(fmt.Sprintf("unable to parse provided EgressIP: %s, invalid", egressIPs[0])))
-				gomega.Expect(validatedIPs).To(gomega.HaveLen(0))
+				gomega.Expect(validatedIPs).To(gomega.BeEmpty())
 				return nil
 			}
 
@@ -2836,12 +2873,12 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 	ginkgo.Context("WatchEgressIP", func() {
 
 		ginkgo.It("should update status correctly for single-stack IPv4", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				egressIP := "192.168.126.10"
 				node1IPv4 := "192.168.126.12/24"
 				node2IPv4 := "192.168.126.51/24"
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -2853,16 +2890,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -2874,11 +2911,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -2897,7 +2934,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				}
 
 				fakeClusterManagerOVN.start(
-					&v1.NodeList{Items: []v1.Node{node1, node2}},
+					&corev1.NodeList{Items: []corev1.Node{node1, node2}},
 					&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eIP}},
 				)
 
@@ -2923,14 +2960,14 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		})
 
 		ginkgo.It("should update status correctly for single-stack IPv6", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				egressIP := "0:0:0:0:0:feff:c0a8:8e0d"
 				node1IPv4 := ""
 				node1IPv6 := "0:0:0:0:0:feff:c0a8:8e0c/64"
 				node2IPv4 := ""
 				node2IPv6 := "0:0:0:0:0:fedf:c0a8:8e0c/64"
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -2942,16 +2979,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -2963,11 +3000,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -2981,7 +3018,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				}
 
 				fakeClusterManagerOVN.start(
-					&v1.NodeList{Items: []v1.Node{node1, node2}},
+					&corev1.NodeList{Items: []corev1.Node{node1, node2}},
 					&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eIP}},
 				)
 
@@ -3005,13 +3042,13 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		})
 
 		ginkgo.It("should update status correctly for dual-stack", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				egressIPv4 := "192.168.126.101"
 				egressIPv6 := "::feff:c0a8:8e0d"
 				node1IPv6 := "::feff:c0a8:8e0c/64"
 				node2IPv4 := "192.168.126.51/24"
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -3023,16 +3060,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -3044,11 +3081,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -3062,7 +3099,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				}
 
 				fakeClusterManagerOVN.start(
-					&v1.NodeList{Items: []v1.Node{node1, node2}},
+					&corev1.NodeList{Items: []corev1.Node{node1, node2}},
 					&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eIP}},
 				)
 
@@ -3086,12 +3123,12 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		})
 
 		ginkgo.It("should manage mark cache for add/update/delete", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				egressIP := "192.168.126.10"
 				node1IPv4 := "192.168.126.12/24"
 				node2IPv4 := "192.168.126.51/24"
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -3103,16 +3140,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -3124,11 +3161,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -3147,7 +3184,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				}
 
 				fakeClusterManagerOVN.start(
-					&v1.NodeList{Items: []v1.Node{node1, node2}},
+					&corev1.NodeList{Items: []corev1.Node{node1, node2}},
 				)
 
 				egressNode1 := setupNode(node1Name, []string{node1IPv4}, map[string]string{"192.168.126.102": "bogus1", "192.168.126.111": "bogus2"})
@@ -3175,7 +3212,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 						return err
 					}
 					eIP.Annotations = map[string]string{}
-					eIP, err = fakeClusterManagerOVN.fakeClient.EgressIPClient.K8sV1().EgressIPs().Update(context.TODO(), eIP, metav1.UpdateOptions{})
+					_, err = fakeClusterManagerOVN.fakeClient.EgressIPClient.K8sV1().EgressIPs().Update(context.TODO(), eIP, metav1.UpdateOptions{})
 					return err
 				})).ShouldNot(gomega.HaveOccurred(), "failed to update EgressIP object")
 				ginkgo.By("confirm the original mark is restored")
@@ -3208,7 +3245,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		ginkgo.It("should not update valid assignments", func() {
 			// FIXME(mk): this test doesn't ensure that the EIP status does not get patched during the test run
 			// and therefore is an invalid test to test that the status is not patched
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				config.IPv6Mode = true
 				config.IPv4Mode = true
 				egressIPv4 := "192.168.126.101"
@@ -3216,7 +3253,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				node1IPv6 := "0:0:0:0:0:feff:c0a8:8e0c/64"
 				node2IPv4 := "192.168.126.51/16"
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -3228,16 +3265,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -3249,11 +3286,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -3282,7 +3319,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				}
 
 				fakeClusterManagerOVN.start(
-					&v1.NodeList{Items: []v1.Node{node1, node2}},
+					&corev1.NodeList{Items: []corev1.Node{node1, node2}},
 					&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eIP}},
 				)
 
@@ -3307,7 +3344,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 	ginkgo.Context("syncEgressIP for IPv4", func() {
 
 		ginkgo.It("should update invalid assignments on duplicated node", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				egressIP1 := "192.168.126.101"
 				egressIP2 := "192.168.126.100"
 				node1IPv4 := "192.168.126.12/24"
@@ -3315,7 +3352,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				node2IPv4 := "192.168.126.51/24"
 				node2IPv6 := ""
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -3327,16 +3364,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -3348,11 +3385,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -3381,7 +3418,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				}
 
 				fakeClusterManagerOVN.start(
-					&v1.NodeList{Items: []v1.Node{node1, node2}},
+					&corev1.NodeList{Items: []corev1.Node{node1, node2}},
 					&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eIP}},
 				)
 
@@ -3402,13 +3439,13 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		})
 
 		ginkgo.It("should update invalid assignments with incorrectly parsed IP", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				egressIP1 := "192.168.126.101"
 				egressIPIncorrect := "192.168.126.1000"
 				node1IPv4 := "192.168.126.12/24"
 				node2IPv4 := "192.168.126.51/24"
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -3420,16 +3457,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -3441,11 +3478,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -3470,7 +3507,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				}
 
 				fakeClusterManagerOVN.start(
-					&v1.NodeList{Items: []v1.Node{node1, node2}},
+					&corev1.NodeList{Items: []corev1.Node{node1, node2}},
 					&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eIP}},
 				)
 
@@ -3491,13 +3528,13 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		})
 
 		ginkgo.It("should update invalid assignments with unhostable IP on a node", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				egressIP1 := "192.168.126.101"
 				egressIPIncorrect := "192.168.128.100"
 				node1IPv4 := "192.168.126.12/24"
 				node2IPv4 := "192.168.126.51/24"
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -3509,16 +3546,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -3530,11 +3567,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -3559,7 +3596,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				}
 
 				fakeClusterManagerOVN.start(
-					&v1.NodeList{Items: []v1.Node{node1, node2}},
+					&corev1.NodeList{Items: []corev1.Node{node1, node2}},
 					&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eIP}},
 				)
 
@@ -3580,14 +3617,14 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		})
 
 		ginkgo.It("ensure egressIP status is in sync with cloud private ip config", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				config.OVNKubernetesFeature.EnableInterconnect = true
 				config.Kubernetes.PlatformType = string(ocpconfigapi.AWSPlatformType)
 				node1IPv4 := "192.168.126.12/24"
 				node2IPv4 := "192.168.126.51/24"
 				egressIP1 := "192.168.126.101"
 				egressIP2 := "192.168.126.100"
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -3599,16 +3636,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -3620,11 +3657,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -3664,8 +3701,8 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 					&ocpcloudnetworkapi.CloudPrivateIPConfigList{
 						Items: []ocpcloudnetworkapi.CloudPrivateIPConfig{cloudPrivateIPConfig},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{node1, node2},
+					&corev1.NodeList{
+						Items: []corev1.Node{node1, node2},
 					},
 				)
 
@@ -3691,7 +3728,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		})
 
 		ginkgo.It("ensure failover egressIP status is updated properly while cloud private ip config update in progress", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				config.OVNKubernetesFeature.EnableInterconnect = true
 				config.Kubernetes.PlatformType = string(ocpconfigapi.AWSPlatformType)
 
@@ -3699,7 +3736,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				node1IPv4 := "192.168.126.12/24"
 				node2IPv4 := "192.168.126.51/24"
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -3711,16 +3748,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -3732,11 +3769,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -3772,8 +3809,8 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 					&ocpcloudnetworkapi.CloudPrivateIPConfigList{
 						Items: []ocpcloudnetworkapi.CloudPrivateIPConfig{cloudPrivateIPConfig},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{node1, node2},
+					&corev1.NodeList{
+						Items: []corev1.Node{node1, node2},
 					},
 				)
 
@@ -3800,7 +3837,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		})
 
 		ginkgo.It("ensure egressIP status is in sync with empty cloud private ip config", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				config.OVNKubernetesFeature.EnableInterconnect = true
 				config.Kubernetes.PlatformType = string(ocpconfigapi.AWSPlatformType)
 				node1IPv4 := "192.168.126.12/24"
@@ -3808,7 +3845,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				egressIP1 := "192.168.126.101"
 				egressIP2 := "192.168.126.100"
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -3820,16 +3857,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -3841,11 +3878,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -3876,8 +3913,8 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 					&egressipv1.EgressIPList{
 						Items: []egressipv1.EgressIP{eIP},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{node1, node2},
+					&corev1.NodeList{
+						Items: []corev1.Node{node1, node2},
 					},
 				)
 
@@ -3898,12 +3935,12 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		})
 
 		ginkgo.It("should not update valid assignment", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				egressIP1 := "192.168.126.101"
 				node1IPv4 := "192.168.126.12/24"
 				node2IPv4 := "192.168.126.51/24"
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -3915,16 +3952,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -3936,11 +3973,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -3965,7 +4002,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				}
 
 				fakeClusterManagerOVN.start(
-					&v1.NodeList{Items: []v1.Node{node1, node2}},
+					&corev1.NodeList{Items: []corev1.Node{node1, node2}},
 					&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eIP}},
 				)
 
@@ -3986,7 +4023,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		})
 
 		ginkgo.It("should assign new marks and add existing marks to mark cache", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				eIPMark := util.EgressIPMarkBase + 100 // mark to be added to EIP obj before sync func is called
 				eIPMarkStr := fmt.Sprintf("%d", eIPMark)
 				objMeta := newEgressIPMeta(egressIPName)
@@ -4031,12 +4068,12 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 	ginkgo.Context("AddEgressIP for IPv4", func() {
 
 		ginkgo.It("should not create two EgressIPs with same egress IP value", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				egressIP1 := "192.168.126.101"
 				node1IPv4 := "192.168.126.12/24"
 				node2IPv4 := "192.168.126.51/24"
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -4048,16 +4085,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -4069,11 +4106,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -4096,7 +4133,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				}
 
 				fakeClusterManagerOVN.start(
-					&v1.NodeList{Items: []v1.Node{node1, node2}},
+					&corev1.NodeList{Items: []corev1.Node{node1, node2}},
 					&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eIP1}},
 				)
 
@@ -4127,13 +4164,13 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 	ginkgo.Context("UpdateEgressIP for IPv4", func() {
 
 		ginkgo.It("should perform re-assingment of EgressIPs", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				egressIP := "192.168.126.101"
 				updateEgressIP := "192.168.126.10"
 				node1IPv4 := "192.168.126.12/24"
 				node2IPv4 := "192.168.126.51/24"
 
-				node1 := v1.Node{
+				node1 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
@@ -4145,16 +4182,16 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
 				}
-				node2 := v1.Node{
+				node2 := corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node2Name,
 						Annotations: map[string]string{
@@ -4166,11 +4203,11 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 							"k8s.ovn.org/egress-assignable": "",
 						},
 					},
-					Status: v1.NodeStatus{
-						Conditions: []v1.NodeCondition{
+					Status: corev1.NodeStatus{
+						Conditions: []corev1.NodeCondition{
 							{
-								Type:   v1.NodeReady,
-								Status: v1.ConditionTrue,
+								Type:   corev1.NodeReady,
+								Status: corev1.ConditionTrue,
 							},
 						},
 					},
@@ -4187,7 +4224,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				}
 
 				fakeClusterManagerOVN.start(
-					&v1.NodeList{Items: []v1.Node{node1, node2}},
+					&corev1.NodeList{Items: []corev1.Node{node1, node2}},
 					&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eIP1}},
 				)
 

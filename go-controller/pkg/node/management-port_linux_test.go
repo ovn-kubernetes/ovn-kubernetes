@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"os"
 	"strings"
@@ -19,6 +18,11 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/urfave/cli/v2"
 	"github.com/vishvananda/netlink"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
+	anpfake "sigs.k8s.io/network-policy-api/pkg/client/clientset/versioned/fake"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	egressfirewallfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1/apis/clientset/versioned/fake"
@@ -33,10 +37,6 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utilMocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/mocks"
-	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes/fake"
-	anpfake "sigs.k8s.io/network-policy-api/pkg/client/clientset/versioned/fake"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -252,7 +252,7 @@ func testManagementPort(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.Net
 		mgtPortAddrs[i] = cfg.GetMgtPortAddr()
 	}
 
-	existingNode := v1.Node{ObjectMeta: metav1.ObjectMeta{
+	existingNode := corev1.Node{ObjectMeta: metav1.ObjectMeta{
 		Name: nodeName,
 	}}
 
@@ -261,8 +261,8 @@ func testManagementPort(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.Net
 			util.OvnNodeManagementPortMacAddresses: fmt.Sprintf("{\"default\":%q}", mgmtPortMAC)}
 	}
 
-	fakeClient := fake.NewSimpleClientset(&v1.NodeList{
-		Items: []v1.Node{existingNode},
+	fakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+		Items: []corev1.Node{existingNode},
 	})
 	fakeNodeClient := &util.OVNNodeClientset{
 		KubeClient: fakeClient,
@@ -286,12 +286,15 @@ func testManagementPort(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.Net
 		wg.Wait()
 	}()
 	wg.Add(1)
-	go testNS.Do(func(netNS ns.NetNS) error {
-		defer wg.Done()
+	go func() {
 		defer GinkgoRecover()
-		rm.Run(stopCh, 10*time.Second)
-		return nil
-	})
+		defer wg.Done()
+		err := testNS.Do(func(ns.NetNS) error {
+			rm.Run(stopCh, 10*time.Second)
+			return nil
+		})
+		Expect(err).NotTo(HaveOccurred())
+	}()
 
 	err = testNS.Do(func(ns.NetNS) error {
 		defer GinkgoRecover()
@@ -303,8 +306,6 @@ func testManagementPort(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.Net
 			configs[0].isRoutingAdvertised,
 			rm,
 			&existingNode,
-			watchFactory.NodeCoreInformer().Lister(),
-			kubeInterface,
 			waiter,
 		)
 		Expect(err).NotTo(HaveOccurred())
@@ -363,12 +364,12 @@ func testManagementPortDPU(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.
 		nodeSubnetCIDRs[i] = cfg.GetNodeSubnetCIDR()
 	}
 
-	existingNode := v1.Node{ObjectMeta: metav1.ObjectMeta{
+	existingNode := corev1.Node{ObjectMeta: metav1.ObjectMeta{
 		Name: nodeName,
 	}}
 
-	fakeClient := fake.NewSimpleClientset(&v1.NodeList{
-		Items: []v1.Node{existingNode},
+	fakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+		Items: []corev1.Node{existingNode},
 	})
 	fakeNodeClient := &util.OVNNodeClientset{
 		KubeClient: fakeClient,
@@ -387,11 +388,15 @@ func testManagementPortDPU(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.
 	rm := routemanager.NewController()
 	stopCh := make(chan struct{})
 	wg.Add(1)
-	go testNS.Do(func(netNS ns.NetNS) error {
-		rm.Run(stopCh, 10*time.Second)
-		wg.Done()
-		return nil
-	})
+	go func() {
+		defer GinkgoRecover()
+		defer wg.Done()
+		err := testNS.Do(func(ns.NetNS) error {
+			rm.Run(stopCh, 10*time.Second)
+			return nil
+		})
+		Expect(err).NotTo(HaveOccurred())
+	}()
 	defer func() {
 		close(stopCh)
 		wg.Wait()
@@ -403,7 +408,7 @@ func testManagementPortDPU(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.
 		netdevName, rep := "pf0vf0", "pf0vf0"
 
 		mgmtPorts := NewManagementPorts(nodeName, nodeSubnetCIDRs, netdevName, rep)
-		_, err = mgmtPorts[0].Create(false, rm, &existingNode, watchFactory.NodeCoreInformer().Lister(), kubeInterface, waiter)
+		_, err = mgmtPorts[0].Create(false, rm, &existingNode, waiter)
 		Expect(err).NotTo(HaveOccurred())
 		// make sure interface was renamed and mtu was set
 		l, err := netlink.LinkByName(mgtPort)
@@ -462,12 +467,15 @@ func testManagementPortDPUHost(ctx *cli.Context, fexec *ovntest.FakeExec, testNS
 	rm := routemanager.NewController()
 	stopCh := make(chan struct{})
 	wg.Add(1)
-	go testNS.Do(func(netNS ns.NetNS) error {
-		defer wg.Done()
+	go func() {
 		defer GinkgoRecover()
-		rm.Run(stopCh, 10*time.Second)
-		return nil
-	})
+		defer wg.Done()
+		err := testNS.Do(func(ns.NetNS) error {
+			rm.Run(stopCh, 10*time.Second)
+			return nil
+		})
+		Expect(err).NotTo(HaveOccurred())
+	}()
 	defer func() {
 		close(stopCh)
 		wg.Wait()
@@ -478,7 +486,7 @@ func testManagementPortDPUHost(ctx *cli.Context, fexec *ovntest.FakeExec, testNS
 		netdevName, rep := "pf0vf0", ""
 
 		mgmtPorts := NewManagementPorts(nodeName, nodeSubnetCIDRs, netdevName, rep)
-		_, err = mgmtPorts[0].Create(configs[0].isRoutingAdvertised, rm, nil, nil, nil, nil)
+		_, err = mgmtPorts[0].Create(configs[0].isRoutingAdvertised, rm, nil, nil)
 		Expect(err).NotTo(HaveOccurred())
 		checkMgmtTestPortIpsAndRoutes(configs, mgtPort, mgtPortAddrs, expectedLRPMAC)
 		// check mgmt port MAC, mtu and link state
@@ -511,7 +519,6 @@ var _ = Describe("Management Port Operations", func() {
 		mgmtPortName := types.K8sMgmtIntfName
 		netlinkMockErr := fmt.Errorf("netlink mock error")
 		fakeExecErr := fmt.Errorf("face exec error")
-		hostSubnets := []*net.IPNet{}
 		linkMock := &mocks.Link{}
 
 		BeforeEach(func() {
@@ -540,7 +547,7 @@ var _ = Describe("Management Port Operations", func() {
 				netlinkOpsMock.On("LinkByName", mgmtPortName).Return(nil, netlinkMockErr)
 				netlinkOpsMock.On("IsLinkNotFoundError", mock.Anything).Return(false)
 
-				err := syncMgmtPortInterface(hostSubnets, mgmtPortName, false)
+				err := syncMgmtPortInterface(mgmtPortName, false)
 				Expect(err).To(HaveOccurred())
 			})
 
@@ -552,7 +559,7 @@ var _ = Describe("Management Port Operations", func() {
 				netlinkOpsMock.On("AddrList", linkMock, netlink.FAMILY_ALL).Return([]netlink.Addr{}, netlinkMockErr)
 				linkMock.On("Attrs").Return(&netlink.LinkAttrs{Name: netdevName})
 
-				err := syncMgmtPortInterface(hostSubnets, mgmtPortName, false)
+				err := syncMgmtPortInterface(mgmtPortName, false)
 				Expect(err).To(HaveOccurred())
 			})
 
@@ -565,7 +572,7 @@ var _ = Describe("Management Port Operations", func() {
 				netlinkOpsMock.On("RouteList", linkMock, netlink.FAMILY_ALL).Return([]netlink.Route{}, nil)
 				netlinkOpsMock.On("LinkSetDown", linkMock).Return(netlinkMockErr)
 
-				err := syncMgmtPortInterface(hostSubnets, mgmtPortName, false)
+				err := syncMgmtPortInterface(mgmtPortName, false)
 				Expect(err).To(HaveOccurred())
 			})
 
@@ -583,7 +590,7 @@ var _ = Describe("Management Port Operations", func() {
 				netlinkOpsMock.On("LinkSetDown", linkMock).Return(nil)
 				netlinkOpsMock.On("LinkSetName", linkMock, netdevName).Return(netlinkMockErr)
 
-				err := syncMgmtPortInterface(hostSubnets, mgmtPortName, false)
+				err := syncMgmtPortInterface(mgmtPortName, false)
 				Expect(err).To(HaveOccurred())
 			})
 			It("Unconfigures old management port netdevice", func() {
@@ -600,7 +607,7 @@ var _ = Describe("Management Port Operations", func() {
 				netlinkOpsMock.On("LinkSetDown", linkMock).Return(nil)
 				netlinkOpsMock.On("LinkSetName", linkMock, netdevName).Return(nil)
 
-				err := syncMgmtPortInterface(hostSubnets, mgmtPortName, false)
+				err := syncMgmtPortInterface(mgmtPortName, false)
 				Expect(err).ToNot(HaveOccurred())
 			})
 		})
@@ -612,7 +619,7 @@ var _ = Describe("Management Port Operations", func() {
 					Output: "internal," + mgmtPortName,
 				})
 
-				err := syncMgmtPortInterface(hostSubnets, mgmtPortName, true)
+				err := syncMgmtPortInterface(mgmtPortName, true)
 				Expect(err).ToNot(HaveOccurred())
 			})
 			It("Fails to remove port from the bridge", func() {
@@ -625,7 +632,7 @@ var _ = Describe("Management Port Operations", func() {
 					Err: fakeExecErr,
 				})
 
-				err := syncMgmtPortInterface(hostSubnets, mgmtPortName, false)
+				err := syncMgmtPortInterface(mgmtPortName, false)
 				Expect(err).To(HaveOccurred())
 			})
 
@@ -638,7 +645,7 @@ var _ = Describe("Management Port Operations", func() {
 					"ovs-vsctl --timeout=15 del-port br-int " + mgmtPortName,
 				})
 
-				err := syncMgmtPortInterface(hostSubnets, mgmtPortName, false)
+				err := syncMgmtPortInterface(mgmtPortName, false)
 				Expect(err).ToNot(HaveOccurred())
 			})
 		})
@@ -657,7 +664,7 @@ var _ = Describe("Management Port Operations", func() {
 					Err: fakeExecErr,
 				})
 
-				err := syncMgmtPortInterface(hostSubnets, mgmtPortName, false)
+				err := syncMgmtPortInterface(mgmtPortName, false)
 				Expect(err).To(HaveOccurred())
 			})
 
@@ -676,7 +683,7 @@ var _ = Describe("Management Port Operations", func() {
 
 				// Return error here, so we know that function didn't returned earlier
 				netlinkOpsMock.On("LinkByName", mgmtPortName).Return(nil, netlinkMockErr)
-				err := syncMgmtPortInterface(hostSubnets, mgmtPortName, false)
+				err := syncMgmtPortInterface(mgmtPortName, false)
 				Expect(err).To(HaveOccurred())
 			})
 
@@ -691,7 +698,7 @@ var _ = Describe("Management Port Operations", func() {
 				})
 				netlinkOpsMock.On("LinkByName", mgmtPortName).Return(nil, netlinkMockErr)
 
-				err := syncMgmtPortInterface(hostSubnets, mgmtPortName, false)
+				err := syncMgmtPortInterface(mgmtPortName, false)
 				Expect(err).To(HaveOccurred())
 			})
 
@@ -707,7 +714,7 @@ var _ = Describe("Management Port Operations", func() {
 				netlinkOpsMock.On("LinkByName", mgmtPortName).Return(linkMock, nil)
 				netlinkOpsMock.On("LinkSetDown", linkMock).Return(netlinkMockErr)
 
-				err := syncMgmtPortInterface(hostSubnets, mgmtPortName, false)
+				err := syncMgmtPortInterface(mgmtPortName, false)
 				Expect(err).To(HaveOccurred())
 			})
 
@@ -727,7 +734,7 @@ var _ = Describe("Management Port Operations", func() {
 				netlinkOpsMock.On("LinkSetDown", linkMock).Return(nil)
 				netlinkOpsMock.On("LinkSetName", linkMock, repName).Return(netlinkMockErr)
 
-				err := syncMgmtPortInterface(hostSubnets, mgmtPortName, false)
+				err := syncMgmtPortInterface(mgmtPortName, false)
 				Expect(err).To(HaveOccurred())
 			})
 
@@ -747,7 +754,7 @@ var _ = Describe("Management Port Operations", func() {
 				netlinkOpsMock.On("LinkSetDown", linkMock).Return(nil)
 				netlinkOpsMock.On("LinkSetName", linkMock, repName).Return(nil)
 
-				err := syncMgmtPortInterface(hostSubnets, mgmtPortName, false)
+				err := syncMgmtPortInterface(mgmtPortName, false)
 				Expect(err).ToNot(HaveOccurred())
 			})
 
@@ -760,7 +767,7 @@ var _ = Describe("Management Port Operations", func() {
 		var testNS ns.NetNS
 		var fexec *ovntest.FakeExec
 
-		tmpDir, tmpErr = ioutil.TempDir("", "clusternodetest_certdir")
+		tmpDir, tmpErr = os.MkdirTemp("", "clusternodetest_certdir")
 		if tmpErr != nil {
 			GinkgoT().Errorf("failed to create tempdir: %v", tmpErr)
 		}
@@ -1054,9 +1061,8 @@ var _ = Describe("Management Port Operations", func() {
 
 		Context("Management Port, ovnkube node mode dpu-host", func() {
 			BeforeEach(func() {
-				var err error
 				// Set up a fake k8sMgmt interface
-				err = testNS.Do(func(ns.NetNS) error {
+				err := testNS.Do(func(ns.NetNS) error {
 					defer GinkgoRecover()
 					ovntest.AddLink(mgmtPortNetdev)
 					return nil

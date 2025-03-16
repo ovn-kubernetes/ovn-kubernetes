@@ -36,14 +36,14 @@ func TestFindNATsUsingPredicate(t *testing.T) {
 	}{
 		{
 			desc: "find no nats",
-			predFunc: func(item *nbdb.NAT) bool {
+			predFunc: func(*nbdb.NAT) bool {
 				return false
 			},
 			expectedRc: []*nbdb.NAT{},
 		},
 		{
 			desc: "find all nats",
-			predFunc: func(item *nbdb.NAT) bool {
+			predFunc: func(*nbdb.NAT) bool {
 				return true
 			},
 			expectedRc: []*nbdb.NAT{fakeNAT1, fakeNAT2},

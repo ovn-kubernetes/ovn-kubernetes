@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
@@ -17,12 +17,12 @@ import (
 // To be used with UpdatePodWithAllocationOrRollback. Implementations can return
 // a nil pod if no update is warranted. Implementations can also return a
 // rollback function that will be invoked if the pod update fails.
-type AllocateToPodWithRollbackFunc func(pod *v1.Pod) (*v1.Pod, func(), error)
+type AllocateToPodWithRollbackFunc func(pod *corev1.Pod) (*corev1.Pod, func(), error)
 
 // UpdatePodWithRetryOrRollback updates the pod with the result of the
 // allocate function. If the pod update fails, it applies the rollback provided by
 // the allocate function.
-func UpdatePodWithRetryOrRollback(podLister listers.PodLister, kube kube.Interface, pod *v1.Pod, allocate AllocateToPodWithRollbackFunc) error {
+func UpdatePodWithRetryOrRollback(podLister listers.PodLister, kube kube.Interface, pod *corev1.Pod, allocate AllocateToPodWithRollbackFunc) error {
 	start := time.Now()
 	var updated bool
 

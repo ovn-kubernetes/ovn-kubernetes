@@ -33,6 +33,7 @@ require (
 	github.com/clarketm/json v1.17.1 // indirect
 	github.com/containerd/log v0.1.0 // indirect
 	github.com/containernetworking/cni v1.1.2 // indirect
+	github.com/containernetworking/plugins v1.2.0 // indirect
 	github.com/coreos/go-iptables v0.6.0 // indirect
 	github.com/coreos/go-json v0.0.0-20230131223807-18775e0fb4fb // indirect
 	github.com/coreos/go-semver v0.3.1 // indirect
@@ -95,7 +96,6 @@ require (
 	github.com/openshift/api v0.0.0-20231120222239-b86761094ee3 // indirect
 	github.com/openshift/client-go v0.0.0-20231121143148-910ca30a1a9a // indirect
 	github.com/openshift/custom-resource-status v1.1.2 // indirect
-	github.com/pborman/uuid v1.2.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/prometheus/client_golang v1.19.1 // indirect
 	github.com/prometheus/client_model v0.6.1 // indirect
@@ -172,7 +172,6 @@ require (
 )
 
 require (
-	github.com/containernetworking/plugins v1.2.0
 	github.com/coreos/butane v0.18.0
 	github.com/docker/docker v25.0.6+incompatible
 	github.com/google/goexpect v0.0.0-20210430020637-ab937bf7fd6f
@@ -182,7 +181,7 @@ require (
 	go.universe.tf/metallb v0.0.0-00010101000000-000000000000
 	google.golang.org/grpc v1.65.0
 	k8s.io/kubectl v0.31.1
-	kubevirt.io/api v1.1.0
+	kubevirt.io/api v1.4.0
 	sigs.k8s.io/controller-runtime v0.19.0
 )
 

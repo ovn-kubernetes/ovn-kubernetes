@@ -7,8 +7,16 @@ import (
 	"sync"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	knet "k8s.io/api/networking/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/klog/v2"
+	utilnet "k8s.io/utils/net"
+
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
 	"github.com/ovn-org/libovsdb/ovsdb"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
@@ -18,13 +26,6 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
-
-	kapi "k8s.io/api/core/v1"
-	knet "k8s.io/api/networking/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/klog/v2"
-	utilnet "k8s.io/utils/net"
 )
 
 type netpolDefaultDenyACLType string
@@ -531,7 +532,7 @@ func (bnc *BaseNetworkController) handleNetPolNamespaceUpdate(namespace string, 
 	// now update network policy specific ACLs
 	klog.V(5).Infof("Setting network policy ACLs for ns: %s", namespace)
 	for npKey := range nsInfo.relatedNetworkPolicies {
-		err := bnc.networkPolicies.DoWithLock(npKey, func(key string) error {
+		err := bnc.networkPolicies.DoWithLock(npKey, func(_ string) error {
 			np, found := bnc.networkPolicies.Load(npKey)
 			if !found {
 				klog.Errorf("Netpol was deleted from cache, but not from namespace related objects")
@@ -574,7 +575,7 @@ func (bnc *BaseNetworkController) getNewLocalPolicyPorts(np *networkPolicy,
 	errs = []error{}
 
 	for _, obj := range objs {
-		pod := obj.(*kapi.Pod)
+		pod := obj.(*corev1.Pod)
 		if pod.Spec.NodeName == "" {
 			// pod is not yet scheduled, will receive update event for it
 			continue
@@ -637,7 +638,7 @@ func (bnc *BaseNetworkController) getExistingLocalPolicyPorts(np *networkPolicy,
 	policyPortUUIDs = []string{}
 	policyPortsToUUIDs = map[string]string{}
 	for _, obj := range objs {
-		pod := obj.(*kapi.Pod)
+		pod := obj.(*corev1.Pod)
 
 		nadNames := bnc.getPodNADNames(pod)
 		for _, nadName := range nadNames {
@@ -1392,7 +1393,7 @@ func (bnc *BaseNetworkController) handlePeerNamespaceSelectorAdd(np *networkPoli
 	updated := false
 	var errors []error
 	for _, obj := range objs {
-		namespace := obj.(*kapi.Namespace)
+		namespace := obj.(*corev1.Namespace)
 		// addNamespaceAddressSet is safe for concurrent use, doesn't require additional synchronization
 		nsUpdated, err := gp.addNamespaceAddressSet(namespace.Name, bnc.addressSetFactory)
 		if err != nil {
@@ -1428,7 +1429,7 @@ func (bnc *BaseNetworkController) handlePeerNamespaceSelectorDel(np *networkPoli
 	}
 	updated := false
 	for _, obj := range objs {
-		namespace := obj.(*kapi.Namespace)
+		namespace := obj.(*corev1.Namespace)
 		// delNamespaceAddressSet is safe for concurrent use, doesn't require additional synchronization
 		if gp.delNamespaceAddressSet(namespace.Name) {
 			updated = true

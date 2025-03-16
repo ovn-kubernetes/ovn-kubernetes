@@ -10,12 +10,16 @@ import (
 
 	"github.com/miekg/dns"
 	"github.com/onsi/ginkgo/v2"
-
 	"github.com/onsi/gomega"
+	ocpnetworkapiv1alpha1 "github.com/openshift/api/network/v1alpha1"
 	"github.com/stretchr/testify/mock"
 	"github.com/urfave/cli/v2"
 
-	ocpnetworkapiv1alpha1 "github.com/openshift/api/network/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	utilnet "k8s.io/utils/net"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
 	egressfirewallapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
@@ -27,15 +31,9 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/retry"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
-	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	t "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	util_mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/mocks"
-
-	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
-	utilnet "k8s.io/utils/net"
 )
 
 func newObjectMeta(name, namespace string) metav1.ObjectMeta {
@@ -79,8 +77,8 @@ func newDNSNameResolverObject(name, namespace, dnsName string, ip string) *ocpne
 	}
 }
 
-func getEFExpectedDb(initialData []libovsdbtest.TestData, fakeOVN *FakeOVN, nsName string, dstMatch, portMatch string,
-	action nbdb.ACLAction) []libovsdbtest.TestData {
+func getEFExpectedDb(initialData []libovsdb.TestData, fakeOVN *FakeOVN, nsName string, dstMatch, portMatch string,
+	action nbdb.ACLAction) []libovsdb.TestData {
 	pgName := fakeOVN.controller.getNamespacePortGroupName(nsName)
 	dbIDs := fakeOVN.controller.getEgressFirewallACLDbIDs(nsName, 0)
 	match := dstMatch + " && inport == @" + pgName
@@ -109,7 +107,7 @@ func getEFExpectedDb(initialData []libovsdbtest.TestData, fakeOVN *FakeOVN, nsNa
 	return append(initialData, acl, namespacePortGroup)
 }
 
-func getEFExpectedDbAfterDelete(prevExpectedData []libovsdbtest.TestData) []libovsdbtest.TestData {
+func getEFExpectedDbAfterDelete(prevExpectedData []libovsdb.TestData) []libovsdb.TestData {
 	pg := prevExpectedData[len(prevExpectedData)-1].(*nbdb.PortGroup)
 	pg.ACLs = nil
 	return append(prevExpectedData[:len(prevExpectedData)-2], pg)
@@ -121,8 +119,8 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 		fakeOVN                *FakeOVN
 		clusterPortGroup       *nbdb.PortGroup
 		nodeSwitch, joinSwitch *nbdb.LogicalSwitch
-		initialData            []libovsdbtest.TestData
-		dbSetup                libovsdbtest.TestSetup
+		initialData            []libovsdb.TestData
+		dbSetup                libovsdb.TestSetup
 		mockDnsOps             *util_mocks.DNSOps
 	)
 	const (
@@ -173,9 +171,14 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 
 	setDNSOpsMock := func(dnsName, retIP string) {
 		methods := []ovntest.TestifyMockHelper{
-			{"Fqdn", []string{"string"}, []interface{}{}, []interface{}{dnsName}, 0, 1},
-			{"SetQuestion", []string{"*dns.Msg", "string", "uint16"}, []interface{}{}, []interface{}{&dns.Msg{}}, 0, 1},
-			{"Exchange", []string{"*dns.Client", "*dns.Msg", "string"}, []interface{}{}, []interface{}{&dns.Msg{Answer: []dns.RR{generateRR(dnsName, retIP, "300")}}, 500 * time.Second, nil}, 0, 1},
+			{OnCallMethodName: "Fqdn", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{dnsName}, CallTimes: 1},
+			{OnCallMethodName: "SetQuestion", OnCallMethodArgType: []string{"*dns.Msg", "string", "uint16"}, RetArgList: []interface{}{&dns.Msg{}}, CallTimes: 1},
+			{
+				OnCallMethodName:    "Exchange",
+				OnCallMethodArgType: []string{"*dns.Client", "*dns.Msg", "string"},
+				RetArgList:          []interface{}{&dns.Msg{Answer: []dns.RR{generateRR(dnsName, retIP, "300")}}, 500 * time.Second, nil},
+				CallTimes:           1,
+			},
 		}
 		for _, item := range methods {
 			call := mockDnsOps.On(item.OnCallMethodName)
@@ -208,16 +211,16 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 		}
 	}
 
-	startOvnWithNodes := func(dbSetup libovsdb.TestSetup, namespaces []v1.Namespace, egressFirewalls []egressfirewallapi.EgressFirewall,
-		nodes []v1.Node, oldDNS bool) {
+	startOvnWithNodes := func(dbSetup libovsdb.TestSetup, namespaces []corev1.Namespace, egressFirewalls []egressfirewallapi.EgressFirewall,
+		nodes []corev1.Node, oldDNS bool) {
 		fakeOVN.startWithDBSetup(dbSetup,
 			&egressfirewallapi.EgressFirewallList{
 				Items: egressFirewalls,
 			},
-			&v1.NamespaceList{
+			&corev1.NamespaceList{
 				Items: namespaces,
 			},
-			&v1.NodeList{
+			&corev1.NodeList{
 				Items: nodes,
 			},
 		)
@@ -244,13 +247,13 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 		}
 	}
 
-	startOvn := func(dbSetup libovsdb.TestSetup, namespaces []v1.Namespace, egressFirewalls []egressfirewallapi.EgressFirewall, oldDNS bool) {
+	startOvn := func(dbSetup libovsdb.TestSetup, namespaces []corev1.Namespace, egressFirewalls []egressfirewallapi.EgressFirewall, oldDNS bool) {
 		startOvnWithNodes(dbSetup, namespaces, egressFirewalls, nil, oldDNS)
 	}
 
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
-		config.PrepareTestConfig()
+		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 		config.OVNKubernetesFeature.EnableEgressFirewall = true
 
 		app = cli.NewApp()
@@ -267,13 +270,13 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 			UUID: "join-UUID",
 			Name: "join",
 		}
-		initialData = []libovsdbtest.TestData{
+		initialData = []libovsdb.TestData{
 			nodeSwitch,
 			joinSwitch,
 			clusterPortGroup,
 			clusterRouter,
 		}
-		dbSetup = libovsdbtest.TestSetup{
+		dbSetup = libovsdb.TestSetup{
 			NBData: initialData,
 		}
 	})
@@ -290,7 +293,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 		ginkgo.Context("on startup", func() {
 			ginkgo.It(fmt.Sprintf("reconciles stale ACLs, gateway mode %s", gwMode), func() {
 				config.Gateway.Mode = gwMode
-				app.Action = func(ctx *cli.Context) error {
+				app.Action = func(*cli.Context) error {
 					// owned by non-existing namespace
 					fakeController := getFakeController(DefaultNetworkControllerName)
 					purgeIDs := fakeController.getEgressFirewallACLDbIDs("none", 0)
@@ -375,8 +378,8 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 					joinSwitch.ACLs = []string{purgeACL.UUID, purgeACL2.UUID, updateACL.UUID, ignoreACL.UUID}
 					clusterPortGroup.ACLs = []string{purgeACL.UUID, purgeACL2.UUID, updateACL.UUID, ignoreACL.UUID}
 
-					dbSetup := libovsdbtest.TestSetup{
-						NBData: []libovsdbtest.TestData{
+					dbSetup := libovsdb.TestSetup{
+						NBData: []libovsdb.TestData{
 							purgeACL,
 							purgeACL2,
 							ignoreACL,
@@ -389,7 +392,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 						},
 					}
 
-					startOvn(dbSetup, []v1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall}, true)
+					startOvn(dbSetup, []corev1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall}, true)
 
 					// All ACLs in the egress firewall priority range will be removed from the switches
 					joinSwitch.ACLs = []string{ignoreACL.UUID}
@@ -423,7 +426,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 						namespacePG,
 					}
 
-					gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
 					return nil
 				}
 
@@ -433,7 +436,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 			})
 			ginkgo.It(fmt.Sprintf("reconciles an existing egressFirewall with IPv4 CIDR, gateway mode %s", gwMode), func() {
 				config.Gateway.Mode = gwMode
-				app.Action = func(ctx *cli.Context) error {
+				app.Action = func(*cli.Context) error {
 					namespace1 := *newNamespace("namespace1")
 					egressFirewall := newEgressFirewallObject("default", namespace1.Name, []egressfirewallapi.EgressFirewallRule{
 						{
@@ -444,7 +447,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 						},
 					})
 
-					startOvn(dbSetup, []v1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall}, true)
+					startOvn(dbSetup, []corev1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall}, true)
 
 					_, err := fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).
 						Get(context.TODO(), egressFirewall.Name, metav1.GetOptions{})
@@ -452,7 +455,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 
 					expectedDatabaseState := getEFExpectedDb(initialData, fakeOVN, namespace1.Name,
 						"(ip4.dst == 1.2.3.4/23)", "", nbdb.ACLActionAllow)
-					gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
 
 					return nil
 				}
@@ -463,7 +466,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 			})
 			ginkgo.It(fmt.Sprintf("reconciles an existing egressFirewall with IPv6 CIDR, gateway mode %s", gwMode), func() {
 				config.Gateway.Mode = gwMode
-				app.Action = func(ctx *cli.Context) error {
+				app.Action = func(*cli.Context) error {
 					namespace1 := *newNamespace("namespace1")
 					egressFirewall := newEgressFirewallObject("default", namespace1.Name, []egressfirewallapi.EgressFirewallRule{
 						{
@@ -475,11 +478,11 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 					})
 
 					config.IPv6Mode = true
-					startOvn(dbSetup, []v1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall}, true)
+					startOvn(dbSetup, []corev1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall}, true)
 
 					expectedDatabaseState := getEFExpectedDb(initialData, fakeOVN, namespace1.Name,
 						"(ip6.dst == 2002::1234:abcd:ffff:c0a8:101/64)", "", nbdb.ACLActionAllow)
-					gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
 
 					return nil
 				}
@@ -490,7 +493,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 			})
 			ginkgo.It(fmt.Sprintf("removes stale acl for delete egress firewall, gateway mode %s", gwMode), func() {
 				config.Gateway.Mode = gwMode
-				app.Action = func(ctx *cli.Context) error {
+				app.Action = func(*cli.Context) error {
 
 					fakeController := getFakeController(DefaultNetworkControllerName)
 					fakeOVN.controller = fakeController
@@ -499,13 +502,13 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 					// no egress firewalls exist
 					dbSetup := getEFExpectedDb(initialData, fakeOVN, "namespace1", "(ip4.dst == 1.2.3.4/23)",
 						"", nbdb.ACLActionAllow)
-					startOvn(libovsdbtest.TestSetup{NBData: dbSetup}, []v1.Namespace{namespace1}, nil, true)
+					startOvn(libovsdb.TestSetup{NBData: dbSetup}, []corev1.Namespace{namespace1}, nil, true)
 
 					// re-create initial db, since startOvn may add more objects to initialData
 					initialDatabaseState := getEFExpectedDb(initialData, fakeOVN, "namespace1", "(ip4.dst == 1.2.3.4/23)",
 						"", nbdb.ACLActionAllow)
 					expectedDatabaseState := getEFExpectedDbAfterDelete(initialDatabaseState)
-					gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
 					return nil
 				}
 
@@ -520,7 +523,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 				}
 				config.Gateway.Mode = gwMode
 
-				app.Action = func(ctx *cli.Context) error {
+				app.Action = func(*cli.Context) error {
 					resolvedIP := "1.1.1.1"
 					namespace1 := *newNamespace("namespace1")
 					dnsName := util.LowerCaseFQDN("www.example.com")
@@ -537,7 +540,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 						"(ip4.dst == $"+addrSetUUID+")", "", nbdb.ACLActionAllow)
 					addrSetDbState := append(dbWithACLAndPG, addrSet)
 
-					startOvn(libovsdbtest.TestSetup{NBData: addrSetDbState}, []v1.Namespace{namespace1}, nil, oldDNS)
+					startOvn(libovsdb.TestSetup{NBData: addrSetDbState}, []corev1.Namespace{namespace1}, nil, oldDNS)
 
 					// re-create initial db, since startOvn may add more objects to initialData.
 					dbWithACLAndPG = getEFExpectedDb(initialData, fakeOVN, namespace1.Name,
@@ -545,7 +548,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 					expectedDatabaseState := getEFExpectedDbAfterDelete(dbWithACLAndPG)
 
 					// check dns address set is cleaned up on initial sync.
-					gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
 					return nil
 				}
 				err := app.Run([]string{app.Name})
@@ -559,7 +562,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 		ginkgo.Context("during execution", func() {
 			ginkgo.It(fmt.Sprintf("correctly creates an egressfirewall denying traffic udp traffic on port 100, gateway mode %s", gwMode), func() {
 				config.Gateway.Mode = gwMode
-				app.Action = func(ctx *cli.Context) error {
+				app.Action = func(*cli.Context) error {
 					namespace1 := *newNamespace("namespace1")
 					egressFirewall := newEgressFirewallObject("default", namespace1.Name, []egressfirewallapi.EgressFirewallRule{
 						{
@@ -575,14 +578,14 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 							},
 						},
 					})
-					startOvn(dbSetup, []v1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall}, true)
+					startOvn(dbSetup, []corev1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall}, true)
 
 					_, err := fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).Get(context.TODO(), egressFirewall.Name, metav1.GetOptions{})
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 					expectedDatabaseState := getEFExpectedDb(initialData, fakeOVN, namespace1.Name,
 						"(ip4.dst == 1.2.3.4/23)", "((udp && ( udp.dst == 100 )))", nbdb.ACLActionDrop)
-					gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
 					return nil
 				}
 				err := app.Run([]string{app.Name})
@@ -590,7 +593,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 			})
 			ginkgo.It(fmt.Sprintf("correctly deletes an egressfirewall, gateway mode %s", gwMode), func() {
 				config.Gateway.Mode = gwMode
-				app.Action = func(ctx *cli.Context) error {
+				app.Action = func(*cli.Context) error {
 					namespace1 := *newNamespace("namespace1")
 					egressFirewall := newEgressFirewallObject("default", namespace1.Name, []egressfirewallapi.EgressFirewallRule{
 						{
@@ -607,17 +610,17 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 						},
 					})
 
-					startOvn(dbSetup, []v1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall}, true)
+					startOvn(dbSetup, []corev1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall}, true)
 
 					expectedDatabaseState := getEFExpectedDb(initialData, fakeOVN, namespace1.Name,
 						"(ip4.dst == 1.2.3.5/23)", "((tcp && ( tcp.dst == 100 )))", nbdb.ACLActionAllow)
-					gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
 
 					err := fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).Delete(context.TODO(), egressFirewall.Name, *metav1.NewDeleteOptions(0))
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 					expectedDatabaseState = getEFExpectedDbAfterDelete(expectedDatabaseState)
-					gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
 
 					return nil
 				}
@@ -627,7 +630,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 			})
 			ginkgo.It(fmt.Sprintf("correctly updates an egressfirewall, gateway mode %s", gwMode), func() {
 				config.Gateway.Mode = gwMode
-				app.Action = func(ctx *cli.Context) error {
+				app.Action = func(*cli.Context) error {
 					namespace1 := *newNamespace("namespace1")
 					egressFirewall := newEgressFirewallObject("default", namespace1.Name, []egressfirewallapi.EgressFirewallRule{
 						{
@@ -646,11 +649,11 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 						},
 					})
 
-					startOvn(dbSetup, []v1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall}, true)
+					startOvn(dbSetup, []corev1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall}, true)
 
 					expectedDatabaseState := getEFExpectedDb(initialData, fakeOVN, namespace1.Name,
 						"(ip4.dst == 1.2.3.4/23)", "", nbdb.ACLActionAllow)
-					gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
 
 					_, err := fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).Get(context.TODO(), egressFirewall.Name, metav1.GetOptions{})
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -659,7 +662,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 
 					expectedDatabaseState = getEFExpectedDb(initialData, fakeOVN, namespace1.Name,
 						"(ip4.dst == 1.2.3.4/23)", "", nbdb.ACLActionDrop)
-					gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
 
 					return nil
 				}
@@ -678,7 +681,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 				config.IPv4Mode = true
 				config.IPv6Mode = true
 
-				app.Action = func(ctx *cli.Context) error {
+				app.Action = func(*cli.Context) error {
 					namespace1 := *newNamespace("namespace1")
 					labelKey := "name"
 					labelValue := "test"
@@ -692,8 +695,8 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 						},
 					})
 
-					startOvnWithNodes(dbSetup, []v1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall},
-						[]v1.Node{
+					startOvnWithNodes(dbSetup, []corev1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall},
+						[]corev1.Node{
 							{
 								ObjectMeta: metav1.ObjectMeta{
 									Name: nodeName,
@@ -723,7 +726,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 					expectedDatabaseState := getEFExpectedDb(initialData,
 						fakeOVN, namespace1.Name,
 						fmt.Sprintf("(ip4.dst == %s || ip4.dst == %s || ip6.dst == %s)", nodeIP2, nodeIP, nodeIP3), "", nbdb.ACLActionAllow)
-					gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
 
 					ginkgo.By("Updating a node to not match nodeSelector on Egress Firewall")
 					patch.Metadata = map[string]interface{}{"labels": map[string]string{labelKey: libovsdbutil.UnspecifiedL4Match}}
@@ -735,7 +738,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 					expectedDatabaseState = getEFExpectedDbAfterDelete(expectedDatabaseState)
-					gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
 
 					return nil
 				}
@@ -753,7 +756,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 				config.IPv4Mode = true
 				config.IPv6Mode = true
 
-				app.Action = func(ctx *cli.Context) error {
+				app.Action = func(*cli.Context) error {
 					namespace1 := *newNamespace("namespace1")
 					labelKey := "name"
 					labelValue := "test"
@@ -767,8 +770,8 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 						},
 					})
 
-					startOvnWithNodes(dbSetup, []v1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall},
-						[]v1.Node{
+					startOvnWithNodes(dbSetup, []corev1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall},
+						[]corev1.Node{
 							{
 								ObjectMeta: metav1.ObjectMeta{
 									Name: nodeName,
@@ -783,7 +786,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 					expectedDatabaseState := getEFExpectedDb(initialData,
 						fakeOVN, namespace1.Name,
 						fmt.Sprintf("(ip4.dst == %s || ip4.dst == %s || ip6.dst == %s)", nodeIP2, nodeIP, nodeIP3), "", nbdb.ACLActionAllow)
-					gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
 
 					ginkgo.By("Deleting a node")
 					// trigger delete event
@@ -792,7 +795,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 					expectedDatabaseState = getEFExpectedDbAfterDelete(expectedDatabaseState)
-					gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
 
 					return nil
 				}
@@ -809,7 +812,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 				v4NodeSubnet := "10.128.0.0/16"
 
 				config.IPv4Mode = true
-				app.Action = func(ctx *cli.Context) error {
+				app.Action = func(*cli.Context) error {
 
 					namespace1 := *newNamespace("namespace1")
 					labelKey := "name"
@@ -824,7 +827,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 							},
 						},
 					})
-					startOvn(dbSetup, []v1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewallObj}, true)
+					startOvn(dbSetup, []corev1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewallObj}, true)
 					err = fakeOVN.controller.WatchNodes()
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -838,7 +841,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 
 					// now add node, then update node, check that both events are handled immediately
 					// check that egressfirewall node event is only handled after lock release
-					node := &v1.Node{
+					node := &corev1.Node{
 						ObjectMeta: metav1.ObjectMeta{
 							Name: nodeName,
 							Annotations: map[string]string{
@@ -904,7 +907,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 
 			ginkgo.It(fmt.Sprintf("correctly retries deleting an egressfirewall, gateway mode %s", gwMode), func() {
 				config.Gateway.Mode = gwMode
-				app.Action = func(ctx *cli.Context) error {
+				app.Action = func(*cli.Context) error {
 					namespace1 := *newNamespace("namespace1")
 
 					egressFirewall := newEgressFirewallObject("default", namespace1.Name, []egressfirewallapi.EgressFirewallRule{
@@ -922,17 +925,17 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 						},
 					})
 
-					startOvnWithNodes(dbSetup, []v1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall},
-						[]v1.Node{
+					startOvnWithNodes(dbSetup, []corev1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall},
+						[]corev1.Node{
 							{
-								Status: v1.NodeStatus{
-									Phase: v1.NodeRunning,
+								Status: corev1.NodeStatus{
+									Phase: corev1.NodeRunning,
 								},
 								ObjectMeta: newObjectMeta(node1Name, ""),
 							},
 							{
-								Status: v1.NodeStatus{
-									Phase: v1.NodeRunning,
+								Status: corev1.NodeStatus{
+									Phase: corev1.NodeRunning,
 								},
 								ObjectMeta: newObjectMeta(node2Name, ""),
 							},
@@ -940,7 +943,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 
 					expectedDatabaseState := getEFExpectedDb(initialData, fakeOVN, namespace1.Name,
 						"(ip4.dst == 1.2.3.5/23)", "((tcp && ( tcp.dst == 100 )))", nbdb.ACLActionAllow)
-					gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
 
 					ginkgo.By("Bringing down NBDB")
 					// inject transient problem, nbdb is down
@@ -970,7 +973,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 					fakeOVN.controller.retryEgressFirewalls.RequestRetryObjs()
 
 					expectedDatabaseState = getEFExpectedDbAfterDelete(expectedDatabaseState)
-					gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
 					// check the cache no longer has the entry
 					retry.CheckRetryObjectEventually(key, false, fakeOVN.controller.retryEgressFirewalls)
 					return nil
@@ -981,7 +984,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 			})
 			ginkgo.It(fmt.Sprintf("correctly retries adding and updating an egressfirewall, gateway mode %s", gwMode), func() {
 				config.Gateway.Mode = gwMode
-				app.Action = func(ctx *cli.Context) error {
+				app.Action = func(*cli.Context) error {
 					namespace1 := *newNamespace("namespace1")
 					egressFirewall := newEgressFirewallObject("default", namespace1.Name, []egressfirewallapi.EgressFirewallRule{
 						{
@@ -1000,11 +1003,11 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 						},
 					})
 
-					startOvn(dbSetup, []v1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall}, true)
+					startOvn(dbSetup, []corev1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall}, true)
 
 					expectedDatabaseState := getEFExpectedDb(initialData, fakeOVN, namespace1.Name,
 						"(ip4.dst == 1.2.3.4/23)", "", nbdb.ACLActionAllow)
-					gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
 
 					ginkgo.By("Bringing down NBDB")
 					// inject transient problem, nbdb is down
@@ -1044,7 +1047,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 
 					expectedDatabaseState = getEFExpectedDb(initialData, fakeOVN, namespace1.Name,
 						"(ip4.dst == 1.2.3.4/23)", "", nbdb.ACLActionDrop)
-					gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
 					return nil
 				}
 
@@ -1054,7 +1057,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 			})
 			ginkgo.It(fmt.Sprintf("correctly updates an egressfirewall's ACL logging, gateway mode %s", gwMode), func() {
 				config.Gateway.Mode = gwMode
-				app.Action = func(ctx *cli.Context) error {
+				app.Action = func(*cli.Context) error {
 					namespace1 := *newNamespace("namespace1")
 					egressFirewall := newEgressFirewallObject("default", namespace1.Name, []egressfirewallapi.EgressFirewallRule{
 						{
@@ -1065,11 +1068,11 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 						},
 					})
 
-					startOvn(dbSetup, []v1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall}, true)
+					startOvn(dbSetup, []corev1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall}, true)
 
 					expectedDatabaseState := getEFExpectedDb(initialData, fakeOVN, namespace1.Name,
 						"(ip4.dst == 1.2.3.4/23)", "", nbdb.ACLActionAllow)
-					gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
 
 					// get the current namespace
 					namespace, err := fakeOVN.fakeClient.KubeClient.CoreV1().Namespaces().Get(context.TODO(), namespace1.Name, metav1.GetOptions{})
@@ -1086,7 +1089,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 					acl := expectedDatabaseState[len(expectedDatabaseState)-2].(*nbdb.ACL)
 					acl.Log = true
 					acl.Severity = &logSeverity
-					gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
 
 					return nil
 				}
@@ -1112,7 +1115,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 						config.IPv6Mode = true
 						nodeCIDR = nodeIP6CIDR
 					}
-					app.Action = func(ctx *cli.Context) error {
+					app.Action = func(*cli.Context) error {
 						labelKey := "name"
 						labelValue := "test"
 						selector := metav1.LabelSelector{MatchLabels: map[string]string{labelKey: labelValue}}
@@ -1129,8 +1132,8 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 						mdata.Labels = map[string]string{labelKey: labelValue}
 						mdata.Annotations = map[string]string{util.OVNNodeHostCIDRs: fmt.Sprintf("[\"%s\"]", nodeCIDR)}
 
-						startOvnWithNodes(dbSetup, []v1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall},
-							[]v1.Node{
+						startOvnWithNodes(dbSetup, []corev1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall},
+							[]corev1.Node{
 								{
 									ObjectMeta: mdata,
 								},
@@ -1143,7 +1146,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 						}
 						expectedDatabaseState := getEFExpectedDb(initialData, fakeOVN, namespace1.Name,
 							match, "", nbdb.ACLActionAllow)
-						gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+						gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
 
 						return nil
 					}
@@ -1154,7 +1157,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 			}
 			ginkgo.It(fmt.Sprintf("correctly creates an egressfirewall with subnet exclusion, gateway mode %s", gwMode), func() {
 				config.Gateway.Mode = gwMode
-				app.Action = func(ctx *cli.Context) error {
+				app.Action = func(*cli.Context) error {
 					clusterSubnetStr := "10.128.0.0/14"
 					_, clusterSubnet, _ := net.ParseCIDR(clusterSubnetStr)
 					config.Default.ClusterSubnets = []config.CIDRNetworkEntry{{CIDR: clusterSubnet}}
@@ -1168,14 +1171,14 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 							},
 						},
 					})
-					startOvn(dbSetup, []v1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall}, true)
+					startOvn(dbSetup, []corev1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall}, true)
 
 					_, err := fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).Get(context.TODO(), egressFirewall.Name, metav1.GetOptions{})
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 					expectedDatabaseState := getEFExpectedDb(initialData, fakeOVN, namespace1.Name,
 						"(ip4.dst == 0.0.0.0/0 && ip4.dst != "+clusterSubnetStr+")", "", nbdb.ACLActionDrop)
-					gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
 
 					return nil
 				}
@@ -1183,7 +1186,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			})
 			ginkgo.It(fmt.Sprintf("correctly creates an egressfirewall for namespace name > 43 symbols, gateway mode %s", gwMode), func() {
-				app.Action = func(ctx *cli.Context) error {
+				app.Action = func(*cli.Context) error {
 					// 52 characters namespace
 					namespace1 := *newNamespace("abcdefghigklmnopqrstuvwxyzabcdefghigklmnopqrstuvwxyz")
 					egressFirewall := newEgressFirewallObject("default", namespace1.Name, []egressfirewallapi.EgressFirewallRule{
@@ -1201,7 +1204,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 						},
 					})
 
-					startOvn(dbSetup, []v1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall}, true)
+					startOvn(dbSetup, []corev1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall}, true)
 
 					dbWith1ACL := getEFExpectedDb(initialData, fakeOVN, namespace1.Name,
 						"(ip4.dst == 1.2.3.5/23)", "", nbdb.ACLActionAllow)
@@ -1225,18 +1228,18 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 					pg.ACLs = append(pg.ACLs, ipv4ACL2.UUID)
 
 					expectedDatabaseState := append(dbWith1ACL, ipv4ACL2)
-					gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
 
 					err := fakeOVN.controller.syncEgressFirewall([]interface{}{egressFirewall})
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
-					gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
 
 					err = fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).Delete(context.TODO(), egressFirewall.Name, *metav1.NewDeleteOptions(0))
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 					// ACL should be removed from the port group egfw is deleted
 					expectedDatabaseState = getEFExpectedDbAfterDelete(dbWith1ACL)
-					gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
 
 					return nil
 				}
@@ -1246,7 +1249,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 			})
 			ginkgo.It(fmt.Sprintf("correctly deletes object that failed to be created, gateway mode %s", gwMode), func() {
 				config.Gateway.Mode = gwMode
-				app.Action = func(ctx *cli.Context) error {
+				app.Action = func(*cli.Context) error {
 					namespace1 := *newNamespace("namespace1")
 					egressFirewall := newEgressFirewallObject("default", namespace1.Name, []egressfirewallapi.EgressFirewallRule{
 						{
@@ -1257,7 +1260,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 							},
 						},
 					})
-					startOvn(dbSetup, []v1.Namespace{namespace1}, nil, true)
+					startOvn(dbSetup, []corev1.Namespace{namespace1}, nil, true)
 
 					_, err := fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).
 						Create(context.TODO(), egressFirewall, metav1.CreateOptions{})
@@ -1288,7 +1291,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 					// enable the dns name resolver flag.
 					config.OVNKubernetesFeature.EnableDNSNameResolver = true
 				}
-				app.Action = func(ctx *cli.Context) error {
+				app.Action = func(*cli.Context) error {
 					namespace1 := *newNamespace("namespace1")
 					dnsName := "a.b.c"
 					dnsNameLowerCaseFQDN := util.LowerCaseFQDN(dnsName)
@@ -1332,7 +1335,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 						dnsnameresolver.GetEgressFirewallDNSAddrSetDbIDs(dnsNameForAddrSet, fakeOVN.controller.controllerName),
 						[]string{resolvedIP})
 					expectedDatabaseState := append(initialData, addrSet)
-					gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
 
 					// delete failed object
 					err = fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).
@@ -1351,7 +1354,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 					}
 
 					// check dns address set is cleaned up on delete
-					gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveData(initialData))
+					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(initialData))
 					return nil
 				}
 				err := app.Run([]string{app.Name})
@@ -1366,7 +1369,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 					config.OVNKubernetesFeature.EnableDNSNameResolver = true
 				}
 				config.Gateway.Mode = gwMode
-				app.Action = func(ctx *cli.Context) error {
+				app.Action = func(*cli.Context) error {
 					namespace1 := *newNamespace("namespace1")
 					dnsNameLowerCaseFQDN := util.LowerCaseFQDN(dnsName)
 					egressFirewall := newEgressFirewallObject("default", namespace1.Name, []egressfirewallapi.EgressFirewallRule{
@@ -1377,7 +1380,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 							},
 						},
 					})
-					startOvn(dbSetup, []v1.Namespace{namespace1}, nil, oldDNS)
+					startOvn(dbSetup, []corev1.Namespace{namespace1}, nil, oldDNS)
 
 					if oldDNS {
 						setDNSOpsMock(dnsName, resolvedIP)
@@ -1406,7 +1409,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 					dbWithACLAndPG := getEFExpectedDb(initialData, fakeOVN, namespace1.Name,
 						"(ip4.dst == $"+addrSetUUID+")", "", nbdb.ACLActionAllow)
 					addrSetDbState := append(dbWithACLAndPG, addrSet)
-					gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveData(addrSetDbState))
+					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(addrSetDbState))
 
 					// delete the egress firewall object.
 					err = fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).
@@ -1422,7 +1425,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 
 					// check dns address set is cleaned up on delete.
 					expectedDatabaseState := getEFExpectedDbAfterDelete(dbWithACLAndPG)
-					gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
 					return nil
 				}
 				err := app.Run([]string{app.Name})
@@ -1455,7 +1458,7 @@ var _ = ginkgo.Describe("OVN test basic functions", func() {
 
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each test
-		config.PrepareTestConfig()
+		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 		config.Gateway.Mode = config.GatewayModeShared
 		config.OVNKubernetesFeature.EnableEgressFirewall = true
 
@@ -1463,22 +1466,22 @@ var _ = ginkgo.Describe("OVN test basic functions", func() {
 		app.Name = "test"
 		app.Flags = config.Flags
 
-		dbSetup := libovsdbtest.TestSetup{}
+		dbSetup := libovsdb.TestSetup{}
 		fakeOVN = NewFakeOVN(false)
 		a := newObjectMeta(node1Name, "")
 		a.Labels = nodeLabel
 		a.Annotations = map[string]string{
 			util.OVNNodeHostCIDRs: fmt.Sprintf("[\"%s/24\"]", node1Addr),
 		}
-		node1 := v1.Node{ObjectMeta: a}
+		node1 := corev1.Node{ObjectMeta: a}
 		b := newObjectMeta(node2Name, "")
 		b.Annotations = map[string]string{
 			util.OVNNodeHostCIDRs: fmt.Sprintf("[\"%s/24\"]", node2Addr),
 		}
-		node2 := v1.Node{
+		node2 := corev1.Node{
 			ObjectMeta: b,
 		}
-		fakeOVN.startWithDBSetup(dbSetup, &v1.NodeList{Items: []v1.Node{node1, node2}})
+		fakeOVN.startWithDBSetup(dbSetup, &corev1.NodeList{Items: []corev1.Node{node1, node2}})
 	})
 
 	ginkgo.AfterEach(func() {

@@ -2,9 +2,9 @@ package ops
 
 import (
 	"context"
+
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
 	"github.com/ovn-org/libovsdb/ovsdb"
-	libovsdb "github.com/ovn-org/libovsdb/ovsdb"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -30,7 +30,7 @@ func CreateOrUpdateLoadBalancerGroupOps(nbClient libovsdbclient.Client, ops []ov
 }
 
 // DeleteLoadBalancerGroupsOps DeleteLoadBalncerGroupOps creates the operations for deleting load balancer groups
-func DeleteLoadBalancerGroupsOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, groups ...*nbdb.LoadBalancerGroup) ([]ovsdb.Operation, error) {
+func DeleteLoadBalancerGroupsOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, groups ...*nbdb.LoadBalancerGroup) ([]ovsdb.Operation, error) {
 	opModels := make([]operationModel, 0, len(groups))
 	for i := range groups {
 		// can't use i in the predicate, for loop replaces it in-memory
@@ -60,7 +60,7 @@ func DeleteLoadBalancerGroups(nbClient libovsdbclient.Client, groups []*nbdb.Loa
 
 // AddLoadBalancersToGroupOps adds the provided load balancers to the provided
 // group and returns the corresponding ops
-func AddLoadBalancersToGroupOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, group *nbdb.LoadBalancerGroup, lbs ...*nbdb.LoadBalancer) ([]libovsdb.Operation, error) {
+func AddLoadBalancersToGroupOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, group *nbdb.LoadBalancerGroup, lbs ...*nbdb.LoadBalancer) ([]ovsdb.Operation, error) {
 	originalLBs := group.LoadBalancer
 	group.LoadBalancer = make([]string, 0, len(lbs))
 	for _, lb := range lbs {
@@ -82,7 +82,7 @@ func AddLoadBalancersToGroupOps(nbClient libovsdbclient.Client, ops []libovsdb.O
 
 // RemoveLoadBalancersFromGroupOps removes the provided load balancers from the
 // provided group and returns the corresponding ops
-func RemoveLoadBalancersFromGroupOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, group *nbdb.LoadBalancerGroup, lbs ...*nbdb.LoadBalancer) ([]libovsdb.Operation, error) {
+func RemoveLoadBalancersFromGroupOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, group *nbdb.LoadBalancerGroup, lbs ...*nbdb.LoadBalancer) ([]ovsdb.Operation, error) {
 	originalLBs := group.LoadBalancer
 	group.LoadBalancer = make([]string, 0, len(lbs))
 	for _, lb := range lbs {

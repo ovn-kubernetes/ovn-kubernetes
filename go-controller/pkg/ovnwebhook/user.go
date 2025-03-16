@@ -3,8 +3,9 @@ package ovnwebhook
 import (
 	"strings"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/csrapprover"
 	authenticationv1 "k8s.io/api/authentication/v1"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/csrapprover"
 )
 
 // checkNodeIdentity retrieves user name from UserInfo, based on given podAdmissions.

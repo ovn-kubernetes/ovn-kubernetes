@@ -8,16 +8,17 @@ import (
 
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	nadutils "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/utils"
+
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
+	listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/tools/cache"
+	utilnet "k8s.io/utils/net"
+	"sigs.k8s.io/yaml"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"k8s.io/client-go/tools/cache"
-
-	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/util/sets"
-	listers "k8s.io/client-go/listers/core/v1"
-	utilnet "k8s.io/utils/net"
-	"sigs.k8s.io/yaml"
 )
 
 // This handles the "k8s.ovn.org/pod-networks" annotation on Pods, used to pass
@@ -298,7 +299,7 @@ func UnmarshalPodAnnotationAllNetworks(annotations map[string]string) (map[strin
 
 // GetPodCIDRsWithFullMask returns the pod's IP addresses in a CIDR with FullMask format
 // Internally it calls GetPodIPsOfNetwork
-func GetPodCIDRsWithFullMask(pod *v1.Pod, nInfo NetInfo) ([]*net.IPNet, error) {
+func GetPodCIDRsWithFullMask(pod *corev1.Pod, nInfo NetInfo) ([]*net.IPNet, error) {
 	podIPs, err := GetPodIPsOfNetwork(pod, nInfo)
 	if err != nil {
 		return nil, err
@@ -317,7 +318,7 @@ func GetPodCIDRsWithFullMask(pod *v1.Pod, nInfo NetInfo) ([]*net.IPNet, error) {
 // GetPodIPsOfNetwork returns the pod's IP addresses, first from the OVN annotation
 // and then falling back to the Pod Status IPs. This function is intended to
 // also return IPs for HostNetwork and other non-OVN-IPAM-ed pods.
-func GetPodIPsOfNetwork(pod *v1.Pod, nInfo NetInfo) ([]net.IP, error) {
+func GetPodIPsOfNetwork(pod *corev1.Pod, nInfo NetInfo) ([]net.IP, error) {
 	if nInfo.IsSecondary() {
 		return SecondaryNetworkPodIPs(pod, nInfo)
 	}
@@ -326,7 +327,7 @@ func GetPodIPsOfNetwork(pod *v1.Pod, nInfo NetInfo) ([]net.IP, error) {
 
 // GetPodCIDRsWithFullMaskOfNetwork returns the pod's IP addresses in a CIDR with FullMask format
 // from a pod network annotation 'k8s.ovn.org/pod-networks' using key nadName.
-func GetPodCIDRsWithFullMaskOfNetwork(pod *v1.Pod, nadName string) []*net.IPNet {
+func GetPodCIDRsWithFullMaskOfNetwork(pod *corev1.Pod, nadName string) []*net.IPNet {
 	ips := getAnnotatedPodIPs(pod, nadName)
 	ipNets := make([]*net.IPNet, 0, len(ips))
 	for _, ip := range ips {
@@ -339,7 +340,7 @@ func GetPodCIDRsWithFullMaskOfNetwork(pod *v1.Pod, nadName string) []*net.IPNet 
 	return ipNets
 }
 
-func DefaultNetworkPodIPs(pod *v1.Pod) ([]net.IP, error) {
+func DefaultNetworkPodIPs(pod *corev1.Pod) ([]net.IP, error) {
 	// Try to use Kube API pod IPs for default network first
 	// This is much faster than trying to unmarshal annotations
 	ips := make([]net.IP, 0, len(pod.Status.PodIPs))
@@ -370,7 +371,7 @@ func DefaultNetworkPodIPs(pod *v1.Pod) ([]net.IP, error) {
 	return []net.IP{ip}, nil
 }
 
-func SecondaryNetworkPodIPs(pod *v1.Pod, networkInfo NetInfo) ([]net.IP, error) {
+func SecondaryNetworkPodIPs(pod *corev1.Pod, networkInfo NetInfo) ([]net.IP, error) {
 	ips := []net.IP{}
 	podNadNames, err := PodNadNames(pod, networkInfo)
 	if err != nil {
@@ -386,7 +387,7 @@ func SecondaryNetworkPodIPs(pod *v1.Pod, networkInfo NetInfo) ([]net.IP, error) 
 // If netinfo belongs to user defined primary network, then retrieve NAD names from
 // netinfo.GetNADs() which is serving pod's namespace.
 // For all other cases, retrieve NAD names for the pod based on NetworkSelectionElement.
-func PodNadNames(pod *v1.Pod, netinfo NetInfo) ([]string, error) {
+func PodNadNames(pod *corev1.Pod, netinfo NetInfo) ([]string, error) {
 	if netinfo.IsPrimaryNetwork() {
 		return GetPrimaryNetworkNADNamesForNamespaceFromNetInfo(pod.Namespace, netinfo)
 	}
@@ -418,7 +419,7 @@ func GetPrimaryNetworkNADNamesForNamespaceFromNetInfo(namespace string, netinfo 
 	return []string{}, nil
 }
 
-func getAnnotatedPodIPs(pod *v1.Pod, nadName string) []net.IP {
+func getAnnotatedPodIPs(pod *corev1.Pod, nadName string) []net.IP {
 	var ips []net.IP
 	annotation, _ := UnmarshalPodAnnotation(pod.Annotations, nadName)
 	if annotation != nil {
@@ -431,7 +432,7 @@ func getAnnotatedPodIPs(pod *v1.Pod, nadName string) []net.IP {
 }
 
 // GetK8sPodDefaultNetworkSelection get pod default network from annotations
-func GetK8sPodDefaultNetworkSelection(pod *v1.Pod) (*nadapi.NetworkSelectionElement, error) {
+func GetK8sPodDefaultNetworkSelection(pod *corev1.Pod) (*nadapi.NetworkSelectionElement, error) {
 	var netAnnot string
 
 	netAnnot, ok := pod.Annotations[DefNetworkAnnotation]
@@ -455,7 +456,7 @@ func GetK8sPodDefaultNetworkSelection(pod *v1.Pod) (*nadapi.NetworkSelectionElem
 }
 
 // GetK8sPodAllNetworkSelections get pod's all network NetworkSelectionElement from k8s.v1.cni.cncf.io/networks annotation
-func GetK8sPodAllNetworkSelections(pod *v1.Pod) ([]*nadapi.NetworkSelectionElement, error) {
+func GetK8sPodAllNetworkSelections(pod *corev1.Pod) ([]*nadapi.NetworkSelectionElement, error) {
 	networks, err := nadutils.ParsePodNetworkAnnotation(pod)
 	if err != nil {
 		if _, ok := err.(*nadapi.NoK8sNetworkError); !ok {
@@ -468,8 +469,8 @@ func GetK8sPodAllNetworkSelections(pod *v1.Pod) ([]*nadapi.NetworkSelectionEleme
 
 // UpdatePodAnnotationWithRetry updates the pod annotation on the pod retrying
 // on conflict
-func UpdatePodAnnotationWithRetry(podLister listers.PodLister, kube kube.Interface, pod *v1.Pod, podAnnotation *PodAnnotation, nadName string) error {
-	updatePodAnnotationNoRollback := func(pod *v1.Pod) (*v1.Pod, func(), error) {
+func UpdatePodAnnotationWithRetry(podLister listers.PodLister, kube kube.Interface, pod *corev1.Pod, podAnnotation *PodAnnotation, nadName string) error {
+	updatePodAnnotationNoRollback := func(pod *corev1.Pod) (*corev1.Pod, func(), error) {
 		var err error
 		pod.Annotations, err = MarshalPodAnnotation(pod.Annotations, podAnnotation, nadName)
 		if err != nil {
@@ -535,7 +536,7 @@ func hairpinMasqueradeIPToRoute(isIPv6 bool, gatewayIP net.IP) PodRoute {
 // with the gateways derived from the allocated IPs
 func AddRoutesGatewayIP(
 	netinfo NetInfo,
-	pod *v1.Pod,
+	pod *corev1.Pod,
 	podAnnotation *PodAnnotation,
 	network *nadapi.NetworkSelectionElement) error {
 

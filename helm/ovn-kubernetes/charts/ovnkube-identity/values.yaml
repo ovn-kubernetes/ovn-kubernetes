@@ -18,3 +18,12 @@ affinity:
               operator: In
               values:
                 - "linux"
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchExpressions:
+            - key: name
+              operator: In
+              values:
+                - ovnkube-identity
+        topologyKey: kubernetes.io/hostname

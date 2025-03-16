@@ -8,8 +8,12 @@ import (
 	"strings"
 	"sync/atomic"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/klog/v2"
+	utilnet "k8s.io/utils/net"
+
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
+
 	hotypes "github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
 	houtil "github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
@@ -17,13 +21,8 @@ import (
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
-
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-
-	kapi "k8s.io/api/core/v1"
-	"k8s.io/klog/v2"
-	utilnet "k8s.io/utils/net"
 )
 
 const (
@@ -37,14 +36,14 @@ const (
 //   - annotation, no lsp: configure lsp
 //   - annotation, lsp: ensure lsp matches annotation
 //   - no annotation, lsp: set annotation from lsp
-func (oc *DefaultNetworkController) handleHybridOverlayPort(node *kapi.Node, annotator kube.Annotator) error {
+func (oc *DefaultNetworkController) handleHybridOverlayPort(node *corev1.Node, annotator kube.Annotator) error {
 	var err error
 	var annotationMAC, portMAC net.HardwareAddr
 	var drIP net.IP
 	portName := util.GetHybridOverlayPortName(node.Name)
 
 	// retrieve mac annotation
-	am, annotationOK := node.Annotations[types.HybridOverlayDRMAC]
+	am, annotationOK := node.Annotations[hotypes.HybridOverlayDRMAC]
 	if annotationOK {
 		annotationMAC, err = net.ParseMAC(am)
 		if err != nil {
@@ -62,7 +61,7 @@ func (oc *DefaultNetworkController) handleHybridOverlayPort(node *kapi.Node, ann
 			if err := oc.deleteHybridOverlayPort(node); err != nil {
 				return err
 			}
-			annotator.Delete(types.HybridOverlayDRMAC)
+			annotator.Delete(hotypes.HybridOverlayDRMAC)
 		}
 		return nil
 	}
@@ -129,7 +128,7 @@ func (oc *DefaultNetworkController) handleHybridOverlayPort(node *kapi.Node, ann
 
 	if !annotationOK {
 		klog.Infof("Setting node %s hybrid overlay mac annotation to %s", node.Name, annotationMAC.String())
-		if err := annotator.Set(types.HybridOverlayDRMAC, portMAC.String()); err != nil {
+		if err := annotator.Set(hotypes.HybridOverlayDRMAC, portMAC.String()); err != nil {
 			return fmt.Errorf("failed to set node %s hybrid overlay DRMAC annotation: %v", node.Name, err)
 		}
 	}
@@ -137,7 +136,7 @@ func (oc *DefaultNetworkController) handleHybridOverlayPort(node *kapi.Node, ann
 	return nil
 }
 
-func (oc *DefaultNetworkController) deleteHybridOverlayPort(node *kapi.Node) error {
+func (oc *DefaultNetworkController) deleteHybridOverlayPort(node *corev1.Node) error {
 	klog.Infof("Removing node %s hybrid overlay port", node.Name)
 	portName := util.GetHybridOverlayPortName(node.Name)
 	lsp := nbdb.LogicalSwitchPort{Name: portName}
@@ -311,7 +310,7 @@ func (oc *DefaultNetworkController) setupHybridLRPolicySharedGw(nodeSubnets []*n
 	return nil
 }
 
-func (oc *DefaultNetworkController) removeHybridLRPolicySharedGW(node *kapi.Node) error {
+func (oc *DefaultNetworkController) removeHybridLRPolicySharedGW(node *corev1.Node) error {
 	nodeName := node.Name
 	name := ovntypes.HybridSubnetPrefix + nodeName
 
@@ -350,7 +349,7 @@ func (oc *DefaultNetworkController) removeHybridLRPolicySharedGW(node *kapi.Node
 }
 
 // takes the node name and allocates the hybrid overlay distributed router ip address
-func (oc *DefaultNetworkController) allocateHybridOverlayDRIP(node *kapi.Node) error {
+func (oc *DefaultNetworkController) allocateHybridOverlayDRIP(node *corev1.Node) error {
 	if atomic.LoadUint32(&oc.allInitialPodsProcessed) == 0 {
 		return fmt.Errorf("cannot allocate hybrid overlay distributed router ip for nodes until all initial pods are processed")
 	}

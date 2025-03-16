@@ -8,20 +8,22 @@ import (
 	"sync"
 	"time"
 
-	libovsdbclient "github.com/ovn-org/libovsdb/client"
-	"github.com/ovn-org/libovsdb/ovsdb"
-	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 	anpapi "sigs.k8s.io/network-policy-api/apis/v1alpha1"
+
+	libovsdbclient "github.com/ovn-org/libovsdb/client"
+	"github.com/ovn-org/libovsdb/ovsdb"
+
+	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 func (c *Controller) processNextANPWorkItem(wg *sync.WaitGroup) bool {
@@ -105,10 +107,10 @@ func (c *Controller) ensureAdminNetworkPolicy(anp *anpapi.AdminNetworkPolicy) er
 	// supports upto 1000. The 0 (highest) corresponds to 30,000 in OVN world and
 	// 99 (lowest) corresponds to 20,100 in OVN world
 	if anp.Spec.Priority > ovnkSupportedPriorityUpperBound {
-		c.eventRecorder.Eventf(&v1.ObjectReference{
+		c.eventRecorder.Eventf(&corev1.ObjectReference{
 			Kind: "AdminNetworkPolicy",
 			Name: anp.Name,
-		}, v1.EventTypeWarning, ANPWithUnsupportedPriorityEvent, "This ANP %s has an unsupported priority %d; "+
+		}, corev1.EventTypeWarning, ANPWithUnsupportedPriorityEvent, "This ANP %s has an unsupported priority %d; "+
 			"Please update the priority to a value between 0(highest priority) and 99(lowest priority)", anp.Name, anp.Spec.Priority)
 		return fmt.Errorf("error attempting to add ANP %s with priority %d because, "+
 			"%w", anp.Name, anp.Spec.Priority, ErrorANPPriorityUnsupported)
@@ -152,10 +154,10 @@ func (c *Controller) ensureAdminNetworkPolicy(anp *anpapi.AdminNetworkPolicy) er
 		if existingName, loaded := c.anpPriorityMap[desiredANPState.anpPriority]; loaded && existingName != anp.Name {
 			klog.Warningf("Warning against attempting to add ANP %s with priority %d when at least one other ANP %s, "+
 				"exists with the same priority", anp.Name, anp.Spec.Priority, existingName)
-			c.eventRecorder.Eventf(&v1.ObjectReference{
+			c.eventRecorder.Eventf(&corev1.ObjectReference{
 				Kind: "AdminNetworkPolicy",
 				Name: anp.Name,
-			}, v1.EventTypeWarning, ANPWithDuplicatePriorityEvent, "This ANP %s has a conflicting priority with ANP %s:"+
+			}, corev1.EventTypeWarning, ANPWithDuplicatePriorityEvent, "This ANP %s has a conflicting priority with ANP %s:"+
 				"Please verify your rules are non-lapping between all policies at same priority to avoid undefined behavior",
 				anp.Name, existingName)
 		} else {
@@ -186,10 +188,10 @@ func (c *Controller) ensureAdminNetworkPolicy(anp *anpapi.AdminNetworkPolicy) er
 		if existingName, loaded := c.anpPriorityMap[desiredANPState.anpPriority]; loaded && existingName != desiredANPState.name {
 			klog.Warningf("Warning against attempting to update ANP %s with priority %d when at least one other ANP %s, "+
 				"exists with the same priority", desiredANPState.name, anp.Spec.Priority, existingName)
-			c.eventRecorder.Eventf(&v1.ObjectReference{
+			c.eventRecorder.Eventf(&corev1.ObjectReference{
 				Kind: "AdminNetworkPolicy",
 				Name: anp.Name,
-			}, v1.EventTypeWarning, ANPWithDuplicatePriorityEvent, "This ANP %s has a conflicting priority with ANP %s:"+
+			}, corev1.EventTypeWarning, ANPWithDuplicatePriorityEvent, "This ANP %s has a conflicting priority with ANP %s:"+
 				"Please verify your rules are non-lapping between all policies at same priority to avoid undefined behavior",
 				anp.Name, existingName)
 		} else {

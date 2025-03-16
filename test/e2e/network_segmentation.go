@@ -676,6 +676,101 @@ var _ = Describe("Network Segmentation", func() {
 				return err
 			}),
 		)
+
+		It("doesn't cause network name conflict", func() {
+			// generate 2 UDNs with ns+name
+			// "f.Namespace.Name" + "tenant-blue"
+			// "f.Namespace.Name-tenant" + "blue"
+			netConfig1 := networkAttachmentConfigParams{
+				name:      "tenant-blue",
+				namespace: f.Namespace.Name,
+				topology:  "layer2",
+				cidr:      correctCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+				role:      "primary",
+			}
+			netConfig2 := networkAttachmentConfigParams{
+				name:      "blue",
+				namespace: f.Namespace.Name + "-tenant",
+				topology:  "layer2",
+				cidr:      correctCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+				role:      "primary",
+			}
+			clientPodConfig := *podConfig(
+				"client-pod",
+				withNodeSelector(map[string]string{nodeHostnameKey: workerOneNodeName}),
+			)
+			serverPodConfig := *podConfig(
+				"server-pod",
+				withCommand(func() []string {
+					return httpServerContainerCmd(port)
+				}),
+				withNodeSelector(map[string]string{nodeHostnameKey: workerTwoNodeName}),
+			)
+
+			By("creating second namespace")
+			_, err := cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   netConfig2.namespace,
+					Labels: map[string]string{RequiredUDNNamespaceLabel: ""},
+				},
+			}, metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			// required so the namespaces get cleaned up
+			defer func() {
+				Expect(cs.CoreV1().Namespaces().Delete(context.Background(), netConfig2.namespace, metav1.DeleteOptions{})).To(Succeed())
+			}()
+
+			By(fmt.Sprintf("creating the network in namespace %s", netConfig1.namespace))
+			udnManifest := generateUserDefinedNetworkManifest(&netConfig1)
+			cleanup, err := createManifest(netConfig1.namespace, udnManifest)
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(cleanup)
+			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, netConfig1.namespace, netConfig1.name), 5*time.Second, time.Second).Should(Succeed())
+
+			By(fmt.Sprintf("creating client/server pods in namespace %s", netConfig1.namespace))
+			serverPodConfig.namespace = netConfig1.namespace
+			clientPodConfig.namespace = netConfig1.namespace
+			runUDNPod(cs, netConfig1.namespace, serverPodConfig, nil)
+			runUDNPod(cs, netConfig1.namespace, clientPodConfig, nil)
+
+			By(fmt.Sprintf("creating the network in namespace %s", netConfig2.namespace))
+			udnManifest = generateUserDefinedNetworkManifest(&netConfig2)
+			cleanup2, err := createManifest(netConfig2.namespace, udnManifest)
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(cleanup2)
+			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, netConfig2.namespace, netConfig2.name), 5*time.Second, time.Second).Should(Succeed())
+
+			By(fmt.Sprintf("creating client/server pods in namespace %s", netConfig2.namespace))
+			serverPodConfig.namespace = netConfig2.namespace
+			clientPodConfig.namespace = netConfig2.namespace
+			runUDNPod(cs, netConfig2.namespace, serverPodConfig, nil)
+			runUDNPod(cs, netConfig2.namespace, clientPodConfig, nil)
+
+			var serverIP string
+			for _, config := range []networkAttachmentConfigParams{netConfig1, netConfig2} {
+				serverPodConfig.namespace = config.namespace
+				clientPodConfig.namespace = config.namespace
+				By(fmt.Sprintf("asserting network works in namespace %s", config.namespace))
+				for i, cidr := range strings.Split(config.cidr, ",") {
+					if cidr != "" {
+						serverIP, err = podIPsForUserDefinedPrimaryNetwork(
+							cs,
+							config.namespace,
+							serverPodConfig.name,
+							namespacedName(config.namespace, config.name),
+							i,
+						)
+						Expect(err).NotTo(HaveOccurred())
+
+						By("asserting the *client* pod can contact the server pod exposed endpoint")
+						Eventually(func() error {
+							return reachToServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
+						}, 2*time.Minute, 6*time.Second).Should(Succeed())
+					}
+				}
+			}
+		})
+
 		Context("with multicast feature enabled for namespace", func() {
 			var (
 				clientNodeInfo, serverNodeInfo nodeInfo
@@ -1810,7 +1905,7 @@ func assertL2SecondaryNetAttachDefManifest(nadClient nadclient.K8sCniCncfIoV1Int
 		BlockOwnerDeletion: pointer.Bool(true),
 		Controller:         pointer.Bool(true),
 	}}))
-	expectedNetworkName := namespace + "." + udnName
+	expectedNetworkName := namespace + "_" + udnName
 	expectedNadName := namespace + "/" + udnName
 	ExpectWithOffset(1, nad.Spec.Config).To(MatchJSON(`{
 		"cniVersion":"1.0.0",
@@ -1875,7 +1970,7 @@ func assertClusterNADManifest(nadClient nadclient.K8sCniCncfIoV1Interface, names
 	ExpectWithOffset(1, nad.Labels).To(Equal(map[string]string{"k8s.ovn.org/user-defined-network": ""}))
 	ExpectWithOffset(1, nad.Finalizers).To(Equal([]string{"k8s.ovn.org/user-defined-network-protection"}))
 
-	expectedNetworkName := "cluster.udn." + udnName
+	expectedNetworkName := "cluster_udn_" + udnName
 	expectedNadName := namespace + "/" + udnName
 	ExpectWithOffset(1, nad.Spec.Config).To(MatchJSON(`{
 		"cniVersion":"1.0.0",

@@ -2,19 +2,18 @@ package vrfmanager
 
 import (
 	"fmt"
-
 	"sync"
 	"time"
 
 	"github.com/containernetworking/plugins/pkg/ns"
+	"github.com/vishvananda/netlink"
+
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/klog/v2"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
-
-	"github.com/vishvananda/netlink"
-	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/klog/v2"
 )
 
 // reconcile period for vrf manager, this would kick in for every 60 seconds if there is no
@@ -85,7 +84,7 @@ func (vrfm *Controller) runInternal(stopChan <-chan struct{}, doneWg *sync.WaitG
 	doneWg.Add(1)
 	go func() {
 		defer doneWg.Done()
-		err = currentNs.Do(func(netNS ns.NetNS) error {
+		err = currentNs.Do(func(_ ns.NetNS) error {
 			linkSyncTimer := time.NewTicker(reconcilePeriod)
 			defer linkSyncTimer.Stop()
 

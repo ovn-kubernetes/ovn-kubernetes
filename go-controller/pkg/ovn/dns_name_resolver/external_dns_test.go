@@ -5,8 +5,16 @@ import (
 	"net"
 	"time"
 
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 	ocpnetworkapiv1alpha1 "github.com/openshift/api/network/v1alpha1"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
+
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
@@ -14,13 +22,6 @@ import (
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-
-	"github.com/onsi/ginkgo/v2"
-	"github.com/onsi/gomega"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 func newDNSNameResolverObject(name, namespace, dnsName string, addresses []string) *ocpnetworkapiv1alpha1.DNSNameResolver {
@@ -52,7 +53,7 @@ func newDNSNameResolverObject(name, namespace, dnsName string, addresses []strin
 
 func expectDNSNameWithAddresses(extEgDNS *ExternalEgressDNS, dnsName string, expectedAddresses []string) {
 	var resolvedName *dnsResolvedName
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 5*time.Minute, true, func(ctx context.Context) (done bool, err error) {
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 5*time.Minute, true, func(context.Context) (done bool, err error) {
 		var exists bool
 		resolvedName, exists = extEgDNS.getResolvedName(dnsName)
 		if !exists {
@@ -214,7 +215,7 @@ var _ = ginkgo.Describe("Egress Firewall External DNS Operations", func() {
 				Delete(context.TODO(), dnsNameResolver.Name, metav1.DeleteOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			err = wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 5*time.Minute, true, func(ctx context.Context) (done bool, err error) {
+			err = wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 5*time.Minute, true, func(context.Context) (done bool, err error) {
 				_, exists := extEgDNS.getResolvedName(dnsName)
 				if exists {
 					return false, nil
@@ -279,7 +280,7 @@ var _ = ginkgo.Describe("Egress Firewall External DNS Operations", func() {
 		err = extEgDNS.Delete(namespace)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-		err = wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 5*time.Minute, true, func(ctx context.Context) (done bool, err error) {
+		err = wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 5*time.Minute, true, func(context.Context) (done bool, err error) {
 			_, exists := extEgDNS.getResolvedName(dnsName)
 			if exists {
 				return false, nil

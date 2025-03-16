@@ -9,9 +9,10 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/urfave/cli/v2"
-	v1 "k8s.io/api/core/v1"
+
+	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -77,16 +78,16 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 
 	ginkgo.Context("on startup repair", func() {
 		ginkgo.It("should delete stale mirrored EndpointSlices and create missing ones", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				namespaceT := *util.NewNamespace("testns")
 				namespaceT.Labels[types.RequiredUDNNamespaceLabel] = ""
-				pod := v1.Pod{
+				pod := corev1.Pod{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:        "test-pod",
 						Namespace:   namespaceT.Name,
 						Annotations: map[string]string{util.OvnPodAnnotationName: `{"default":{"mac_address":"0a:58:0a:f4:02:03","ip_address":"10.244.2.3/24","role":"infrastructure-locked"},"testns/l3-network":{"mac_address":"0a:58:0a:84:02:04","ip_address":"10.132.2.4/24","role":"primary"}}`},
 					},
-					Status: v1.PodStatus{Phase: v1.PodRunning},
+					Status: corev1.PodStatus{Phase: corev1.PodRunning},
 				}
 
 				defaultEndpointSlice := discovery.EndpointSlice{
@@ -101,7 +102,7 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 					Endpoints: []discovery.Endpoint{
 						{
 							Addresses: []string{"10.244.2.3"},
-							TargetRef: &v1.ObjectReference{
+							TargetRef: &corev1.ObjectReference{
 								Kind:      "Pod",
 								Namespace: namespaceT.Name,
 								Name:      pod.Name,
@@ -113,13 +114,13 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 				staleEndpointSlice.Annotations[types.SourceEndpointSliceAnnotation] = "non-existing-endpointslice"
 
 				objs := []runtime.Object{
-					&v1.PodList{
-						Items: []v1.Pod{
+					&corev1.PodList{
+						Items: []corev1.Pod{
 							pod,
 						},
 					},
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT,
 						},
 					},
@@ -154,7 +155,7 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 					if err == nil {
 						return fmt.Errorf("the stale mirrored EndpointSlice should not exist: %v", staleMirror)
 					}
-					if err != nil && !errors.IsNotFound(err) {
+					if err != nil && !apierrors.IsNotFound(err) {
 						return err
 					}
 
@@ -185,16 +186,16 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 
 	ginkgo.Context("on EndpointSlices changes", func() {
 		ginkgo.It("should not create mirrored EndpointSlices in namespaces that are not using user defined networks as primary", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				namespaceT := *util.NewNamespace("testns")
 
-				pod := v1.Pod{
+				pod := corev1.Pod{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:        "test-pod",
 						Namespace:   namespaceT.Name,
 						Annotations: map[string]string{util.OvnPodAnnotationName: `{"default":{"mac_address":"0a:58:0a:f4:02:03","ip_address":"10.244.2.3/24","role":"primary"},"testns/l3-network":{"mac_address":"0a:58:0a:84:02:04","ip_address":"10.132.2.4/24","role":"secondary}}`},
 					},
-					Status: v1.PodStatus{Phase: v1.PodRunning},
+					Status: corev1.PodStatus{Phase: corev1.PodRunning},
 				}
 
 				defaultEndpointSlice := discovery.EndpointSlice{
@@ -209,7 +210,7 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 					Endpoints: []discovery.Endpoint{
 						{
 							Addresses: []string{"10.244.2.3"},
-							TargetRef: &v1.ObjectReference{
+							TargetRef: &corev1.ObjectReference{
 								Kind:      "Pod",
 								Namespace: namespaceT.Name,
 								Name:      pod.Name,
@@ -219,13 +220,13 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 				}
 
 				objs := []runtime.Object{
-					&v1.PodList{
-						Items: []v1.Pod{
+					&corev1.PodList{
+						Items: []corev1.Pod{
 							pod,
 						},
 					},
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT,
 						},
 					},
@@ -277,17 +278,17 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 		})
 
 		ginkgo.It("should update/delete mirrored EndpointSlices in namespaces that use user defined networks as primary ", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				namespaceT := *util.NewNamespace("testns")
 				namespaceT.Labels[types.RequiredUDNNamespaceLabel] = ""
 
-				pod := v1.Pod{
+				pod := corev1.Pod{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:        "test-pod",
 						Namespace:   namespaceT.Name,
 						Annotations: map[string]string{util.OvnPodAnnotationName: `{"default":{"mac_address":"0a:58:0a:f4:02:03","ip_address":"10.244.2.3/24","role":"infrastructure-locked"},"testns/l3-network":{"mac_address":"0a:58:0a:84:02:04","ip_address":"10.132.2.4/24","role":"primary"}}`},
 					},
-					Status: v1.PodStatus{Phase: v1.PodRunning},
+					Status: corev1.PodStatus{Phase: corev1.PodRunning},
 				}
 
 				defaultEndpointSlice := discovery.EndpointSlice{
@@ -303,7 +304,7 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 					Endpoints: []discovery.Endpoint{
 						{
 							Addresses: []string{"10.244.2.3"},
-							TargetRef: &v1.ObjectReference{
+							TargetRef: &corev1.ObjectReference{
 								Kind:      "Pod",
 								Namespace: namespaceT.Name,
 								Name:      pod.Name,
@@ -313,13 +314,13 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 				}
 				mirroredEndpointSlice := testing.MirrorEndpointSlice(&defaultEndpointSlice, "l3-network", false)
 				objs := []runtime.Object{
-					&v1.PodList{
-						Items: []v1.Pod{
+					&corev1.PodList{
+						Items: []corev1.Pod{
 							pod,
 						},
 					},
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT,
 						},
 					},
@@ -371,13 +372,13 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 				gomega.Expect(mirroredEndpointSlices[0].Endpoints[0].Addresses).To(gomega.BeEquivalentTo([]string{"10.132.2.4"}))
 
 				ginkgo.By("when the EndpointSlice changes the mirrored one gets updated")
-				newPod := v1.Pod{
+				newPod := corev1.Pod{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:        "test-pod-new",
 						Namespace:   namespaceT.Name,
 						Annotations: map[string]string{util.OvnPodAnnotationName: `{"default":{"mac_address":"0a:58:0a:f4:02:04","ip_address":"10.244.2.4/24","primary":false},"testns/l3-network":{"mac_address":"0a:58:0a:84:02:05","ip_address":"10.132.2.5/24","primary":true}}`},
 					},
-					Status: v1.PodStatus{Phase: v1.PodRunning},
+					Status: corev1.PodStatus{Phase: corev1.PodRunning},
 				}
 				_, err = fakeClient.KubeClient.CoreV1().Pods(newPod.Namespace).Create(context.TODO(), &newPod, metav1.CreateOptions{})
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
@@ -391,7 +392,7 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 
 				defaultEndpointSlice.Endpoints = append(defaultEndpointSlice.Endpoints, discovery.Endpoint{
 					Addresses: []string{"10.244.2.4"},
-					TargetRef: &v1.ObjectReference{
+					TargetRef: &corev1.ObjectReference{
 						Kind:      "Pod",
 						Namespace: newPod.Namespace,
 						Name:      newPod.Name,
@@ -446,17 +447,17 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 		})
 
 		ginkgo.It("should create mirrored EndpointSlices for long endpointslice and network names", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				namespaceT := *util.NewNamespace("testns")
 				namespaceT.Labels[types.RequiredUDNNamespaceLabel] = ""
 
-				pod := v1.Pod{
+				pod := corev1.Pod{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:        "test-pod",
 						Namespace:   namespaceT.Name,
 						Annotations: map[string]string{util.OvnPodAnnotationName: `{"default":{"mac_address":"0a:58:0a:f4:02:03","ip_address":"10.244.2.3/24","role":"infrastructure-locked"},"testns/l3-network":{"mac_address":"0a:58:0a:84:02:04","ip_address":"10.132.2.4/24","role":"primary"}}`},
 					},
-					Status: v1.PodStatus{Phase: v1.PodRunning},
+					Status: corev1.PodStatus{Phase: corev1.PodRunning},
 				}
 				longName := strings.Repeat("a", 253)
 
@@ -473,7 +474,7 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 					Endpoints: []discovery.Endpoint{
 						{
 							Addresses: []string{"10.244.2.3"},
-							TargetRef: &v1.ObjectReference{
+							TargetRef: &corev1.ObjectReference{
 								Kind:      "Pod",
 								Namespace: namespaceT.Name,
 								Name:      pod.Name,
@@ -485,13 +486,13 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 				longNetName := "network" + longName
 				mirroredEndpointSlice := testing.MirrorEndpointSlice(&defaultEndpointSlice, longNetName, false)
 				objs := []runtime.Object{
-					&v1.PodList{
-						Items: []v1.Pod{
+					&corev1.PodList{
+						Items: []corev1.Pod{
 							pod,
 						},
 					},
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							namespaceT,
 						},
 					},

@@ -13,16 +13,16 @@ import (
 	"strings"
 	"time"
 
-	"k8s.io/klog/v2"
-
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-
 	current "github.com/containernetworking/cni/pkg/types/100"
 	"github.com/containernetworking/plugins/pkg/ip"
 	"github.com/containernetworking/plugins/pkg/ns"
 	"github.com/safchain/ethtool"
 	"github.com/vishvananda/netlink"
+
+	"k8s.io/klog/v2"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 type CNIPluginLibOps interface {
@@ -306,7 +306,7 @@ func setupSriovInterface(netns ns.NetNS, containerID, ifName string, ifInfo *Pod
 			if err != nil {
 				return nil, nil, err
 			}
-			err = netns.Do(func(hostNS ns.NetNS) error {
+			err = netns.Do(func(_ ns.NetNS) error {
 				contIface.Name = ifName
 				err = renameLink(newNetdevName, contIface.Name)
 				if err != nil {
@@ -623,7 +623,7 @@ func (*defaultPodRequestInterfaceOps) ConfigureInterface(pr *PodRequest, getter 
 		}
 	}
 	if haveV6 && !pr.IsVFIO {
-		err = netns.Do(func(hostNS ns.NetNS) error {
+		err = netns.Do(func(_ ns.NetNS) error {
 			// deny IPv6 neighbor solicitations
 			dadSysctlIface := fmt.Sprintf("/proc/sys/net/ipv6/conf/%s/dad_transmits", contIface.Name)
 			if _, err := os.Stat(dadSysctlIface); !os.IsNotExist(err) {

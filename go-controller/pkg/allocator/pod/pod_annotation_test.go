@@ -6,13 +6,13 @@ import (
 	"net"
 	"testing"
 
-	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
 	cnitypes "github.com/containernetworking/cni/pkg/types"
-
 	ipamclaimsapi "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1"
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	"github.com/onsi/gomega"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
 	ipam "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip"
@@ -23,8 +23,6 @@ import (
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-
-	"github.com/onsi/gomega"
 )
 
 type ipAllocatorStub struct {
@@ -33,7 +31,7 @@ type ipAllocatorStub struct {
 	releasedIPs      []*net.IPNet
 }
 
-func (a *ipAllocatorStub) AllocateIPs(ips []*net.IPNet) error {
+func (a *ipAllocatorStub) AllocateIPs([]*net.IPNet) error {
 	return a.allocateIPsError
 }
 
@@ -60,7 +58,7 @@ func (a *idAllocatorStub) AllocateID() (int, error) {
 	return a.nextID, nil
 }
 
-func (a *idAllocatorStub) ReserveID(id int) error {
+func (a *idAllocatorStub) ReserveID(int) error {
 	return a.reserveIDError
 }
 
@@ -690,7 +688,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 
 			config.OVNKubernetesFeature.EnableInterconnect = tt.idAllocation
 
-			pod := &v1.Pod{
+			pod := &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "pod",
 					Namespace: "namespace",

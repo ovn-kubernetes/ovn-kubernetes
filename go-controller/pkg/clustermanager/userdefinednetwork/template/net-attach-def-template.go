@@ -3,18 +3,17 @@ package template
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
+
+	cnitypes "github.com/containernetworking/cni/pkg/types"
+	netv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	netv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
-
-	cnitypes "github.com/containernetworking/cni/pkg/types"
-
-	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
-
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
+	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -34,16 +33,6 @@ type SpecGetter interface {
 	GetLayer2() *userdefinednetworkv1.Layer2Config
 }
 
-// This function has a copy in go-controller/observability-lib/sampledecoder/sample_decoder.go
-// Please update together with this function.
-func ParseNetworkName(networkName string) (udnNamespace, udnName string) {
-	parts := strings.Split(networkName, ".")
-	if len(parts) == 2 {
-		return parts[0], parts[1]
-	}
-	return "", ""
-}
-
 func RenderNetAttachDefManifest(obj client.Object, targetNamespace string) (*netv1.NetworkAttachmentDefinition, error) {
 	if obj == nil {
 		return nil, nil
@@ -60,11 +49,11 @@ func RenderNetAttachDefManifest(obj client.Object, targetNamespace string) (*net
 	case *userdefinednetworkv1.UserDefinedNetwork:
 		ownerRef = *metav1.NewControllerRef(obj, userdefinednetworkv1.SchemeGroupVersion.WithKind("UserDefinedNetwork"))
 		spec = &o.Spec
-		networkName = targetNamespace + "." + obj.GetName()
+		networkName = util.GenerateUDNNetworkName(targetNamespace, obj.GetName())
 	case *userdefinednetworkv1.ClusterUserDefinedNetwork:
 		ownerRef = *metav1.NewControllerRef(obj, userdefinednetworkv1.SchemeGroupVersion.WithKind("ClusterUserDefinedNetwork"))
 		spec = &o.Spec.Network
-		networkName = "cluster.udn." + obj.GetName()
+		networkName = util.GenerateCUDNNetworkName(obj.GetName())
 	default:
 		return nil, fmt.Errorf("unknown type %T", obj)
 	}
@@ -80,7 +69,7 @@ func RenderNetAttachDefManifest(obj client.Object, targetNamespace string) (*net
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            obj.GetName(),
 			OwnerReferences: []metav1.OwnerReference{ownerRef},
-			Labels:          map[string]string{LabelUserDefinedNetwork: ""},
+			Labels:          renderNADLabels(obj),
 			Finalizers:      []string{FinalizerUserDefinedNetwork},
 		},
 		Spec: *nadSpec,
@@ -104,6 +93,18 @@ func RenderNADSpec(networkName, nadName string, spec SpecGetter) (*netv1.Network
 	return &netv1.NetworkAttachmentDefinitionSpec{
 		Config: string(cniNetConfRaw),
 	}, nil
+}
+
+// renderNADLabels copies labels from UDN to help RenderNADSpec
+// function add those labels to corresponding NAD
+func renderNADLabels(obj client.Object) map[string]string {
+	labels := make(map[string]string)
+	labels[LabelUserDefinedNetwork] = ""
+	udnLabels := obj.GetLabels()
+	if len(udnLabels) != 0 {
+		maps.Copy(labels, udnLabels)
+	}
+	return labels
 }
 
 func validateTopology(spec SpecGetter) error {

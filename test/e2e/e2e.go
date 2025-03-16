@@ -613,7 +613,7 @@ func restartOVNKubeNodePod(clientset kubernetes.Interface, namespace string, nod
 		return fmt.Errorf("could not find ovnkube-node pod running on node %s", nodeName)
 	}
 	for _, pod := range ovnKubeNodePods.Items {
-		if err := e2epod.DeletePodWithWait(context.TODO(), clientset, &pod); err != nil {
+		if err := deletePodWithWait(context.TODO(), clientset, &pod); err != nil {
 			return fmt.Errorf("could not delete ovnkube-node pod on node %s: %w", nodeName, err)
 		}
 	}
@@ -852,7 +852,7 @@ var _ = ginkgo.Describe("e2e control plane", func() {
 		}
 
 		ginkgo.By("Deleting ovnkube control plane pod " + podName)
-		e2epod.DeletePodWithWaitByName(context.TODO(), f.ClientSet, podName, ovnNamespace)
+		deletePodWithWaitByName(context.TODO(), f.ClientSet, podName, ovnNamespace)
 		framework.Logf("Deleted ovnkube control plane pod %q", podName)
 
 		ginkgo.By("Ensuring there were no connectivity errors")
@@ -898,7 +898,8 @@ var _ = ginkgo.Describe("e2e control plane", func() {
 				!strings.HasPrefix(pod.Name, "ovnkube-identity") &&
 				!strings.HasPrefix(pod.Name, "ovs-node") {
 				framework.Logf("%q", pod.Namespace)
-				e2epod.DeletePodWithWaitByName(context.TODO(), f.ClientSet, pod.Name, ovnNamespace)
+				err = deletePodWithWaitByName(context.TODO(), f.ClientSet, pod.Name, ovnNamespace)
+				framework.ExpectNoError(err, fmt.Sprintf("failed to delete pod %s", pod.Name))
 				framework.Logf("Deleted control plane pod %q", pod.Name)
 			}
 		}
@@ -931,7 +932,8 @@ var _ = ginkgo.Describe("e2e control plane", func() {
 		for _, pod := range podList.Items {
 			if strings.HasPrefix(pod.Name, controlPlanePodName) && !strings.HasPrefix(pod.Name, "ovs-node") {
 				framework.Logf("%q", pod.Namespace)
-				e2epod.DeletePodWithWaitByName(context.TODO(), f.ClientSet, pod.Name, ovnNamespace)
+				err = deletePodWithWaitByName(context.TODO(), f.ClientSet, pod.Name, ovnNamespace)
+				framework.ExpectNoError(err, fmt.Sprintf("failed to delete pod %s", pod.Name))
 				framework.Logf("Deleted control plane pod %q", pod.Name)
 			}
 		}
@@ -1009,11 +1011,12 @@ var _ = ginkgo.Describe("e2e control plane", func() {
 				}
 				framework.Failf("could not restart ovnkube-node pod: %s", err)
 			}
-			node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), testNodeName, metav1.GetOptions{ResourceVersion: "0"})
-			if err != nil {
-				framework.Failf("could not find node resource: %s", err)
-			}
+
 			gomega.Eventually(func() bool {
+				node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), testNodeName, metav1.GetOptions{ResourceVersion: "0"})
+				if err != nil {
+					framework.Failf("could not find node resource: %s", err)
+				}
 				return e2enode.IsNodeReady(node)
 			}, 30*time.Second).Should(gomega.BeFalse())
 		})
@@ -1031,11 +1034,11 @@ var _ = ginkgo.Describe("e2e control plane", func() {
 			}
 
 			// validate that node is in Ready state
-			node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), testNodeName, metav1.GetOptions{ResourceVersion: "0"})
-			if err != nil {
-				framework.Failf("could not find node resource: %s", err)
-			}
 			gomega.Eventually(func() bool {
+				node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), testNodeName, metav1.GetOptions{ResourceVersion: "0"})
+				if err != nil {
+					framework.Failf("could not find node resource: %s", err)
+				}
 				return e2enode.IsNodeReady(node)
 			}, 30*time.Second).Should(gomega.BeTrue())
 		})
@@ -2185,8 +2188,10 @@ var _ = ginkgo.Describe("e2e delete databases", func() {
 		var (
 			command = []string{"/agnhost", "netexec", fmt.Sprintf("--http-port=" + port)}
 		)
-		createGenericPod(f, pod1Name, node1Name, f.Namespace.Name, command)
-		createGenericPod(f, pod2Name, node2Name, f.Namespace.Name, command)
+		_, err := createGenericPod(f, pod1Name, node1Name, f.Namespace.Name, command)
+		framework.ExpectNoError(err, "failed to create pod %s/%s", f.Namespace.Name, pod1Name)
+		_, err = createGenericPod(f, pod2Name, node2Name, f.Namespace.Name, command)
+		framework.ExpectNoError(err, "failed to create pod %s/%s", f.Namespace.Name, pod2Name)
 
 		pod2IP := getPodAddress(pod2Name, f.Namespace.Name)
 
@@ -2339,7 +2344,8 @@ var _ = ginkgo.Describe("e2e delete databases", func() {
 		}
 
 		framework.Logf("wait for all the Deployment to become ready again after pod deletion")
-		e2edeployment.WaitForDeploymentComplete(f.ClientSet, dbDeployment)
+		err = e2edeployment.WaitForDeploymentComplete(f.ClientSet, dbDeployment)
+		framework.ExpectNoError(err, "failed to wait for DB deployment to complete")
 
 		framework.Logf("all the pods finish full restart")
 

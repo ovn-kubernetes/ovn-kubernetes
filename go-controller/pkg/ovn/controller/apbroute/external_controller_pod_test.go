@@ -5,17 +5,17 @@ import (
 	"strconv"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes/fake"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 
-	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/kubernetes/fake"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("OVN External Gateway pod", func() {
@@ -31,17 +31,17 @@ var _ = Describe("OVN External Gateway pod", func() {
 		targetNamespace2Match = map[string]string{"name": targetNamespaceName2}
 
 		namespaceGW = &corev1.Namespace{
-			ObjectMeta: v1.ObjectMeta{Name: gatewayNamespaceName,
+			ObjectMeta: metav1.ObjectMeta{Name: gatewayNamespaceName,
 				Labels: gatewayNamespaceMatch}}
 		namespaceTarget = &corev1.Namespace{
-			ObjectMeta: v1.ObjectMeta{Name: targetNamespaceName,
+			ObjectMeta: metav1.ObjectMeta{Name: targetNamespaceName,
 				Labels: map[string]string{"name": targetNamespaceName, "match": targetNamespaceLabel}},
 		}
 		targetPod1 = newPod("pod_target1", namespaceTarget.Name, "192.169.10.1",
 			map[string]string{"key": "pod", "name": "pod_target1"})
 
 		namespaceTarget2 = &corev1.Namespace{
-			ObjectMeta: v1.ObjectMeta{Name: targetNamespaceName2,
+			ObjectMeta: metav1.ObjectMeta{Name: targetNamespaceName2,
 				Labels: map[string]string{"name": targetNamespaceName2, "match": targetNamespaceLabel}},
 		}
 		targetPod2 = newPod("pod_target2", namespaceTarget2.Name, "192.169.10.2",
@@ -49,28 +49,28 @@ var _ = Describe("OVN External Gateway pod", func() {
 
 		dynamicPolicy = newPolicy(
 			"dynamic",
-			&v1.LabelSelector{MatchLabels: targetNamespace2Match},
+			&metav1.LabelSelector{MatchLabels: targetNamespace2Match},
 			nil,
-			&v1.LabelSelector{MatchLabels: gatewayNamespaceMatch},
-			&v1.LabelSelector{MatchLabels: map[string]string{"key": "pod"}},
+			&metav1.LabelSelector{MatchLabels: gatewayNamespaceMatch},
+			&metav1.LabelSelector{MatchLabels: map[string]string{"key": "pod"}},
 			false,
 		)
 
 		dynamicPolicyDiffTargetNS = newPolicy(
 			"dynamic2",
-			&v1.LabelSelector{MatchLabels: targetNamespace1Match},
+			&metav1.LabelSelector{MatchLabels: targetNamespace1Match},
 			nil,
-			&v1.LabelSelector{MatchLabels: gatewayNamespaceMatch},
-			&v1.LabelSelector{MatchLabels: map[string]string{"key": "pod"}},
+			&metav1.LabelSelector{MatchLabels: gatewayNamespaceMatch},
+			&metav1.LabelSelector{MatchLabels: map[string]string{"key": "pod"}},
 			false,
 		)
 
 		dynamicPolicyDiffTargetNSAndPodSel = newPolicy(
 			"dynamic2",
-			&v1.LabelSelector{MatchLabels: targetNamespace1Match},
+			&metav1.LabelSelector{MatchLabels: targetNamespace1Match},
 			nil,
-			&v1.LabelSelector{MatchLabels: gatewayNamespaceMatch},
-			&v1.LabelSelector{MatchLabels: map[string]string{"duplicated": "true"}},
+			&metav1.LabelSelector{MatchLabels: gatewayNamespaceMatch},
+			&metav1.LabelSelector{MatchLabels: map[string]string{"duplicated": "true"}},
 			false,
 		)
 
@@ -133,7 +133,7 @@ var _ = Describe("OVN External Gateway pod", func() {
 			eventuallyExpectConfig(dynamicPolicy.Name, expectedPolicy1, expectedRefs1)
 			eventuallyExpectConfig(dynamicPolicyDiffTargetNS.Name, expectedPolicy2, expectedRefs2)
 
-			_, err := fakeClient.CoreV1().Pods(pod1.Namespace).Create(context.Background(), pod1, v1.CreateOptions{})
+			_, err := fakeClient.CoreV1().Pods(pod1.Namespace).Create(context.Background(), pod1, metav1.CreateOptions{})
 			Expect(err).NotTo(HaveOccurred())
 
 			expectedPolicy1, expectedRefs1 = expectedPolicyStateAndRefs(
@@ -155,10 +155,10 @@ var _ = Describe("OVN External Gateway pod", func() {
 		It("processes the pod that has no policy match", func() {
 			noMatchPolicy := newPolicy(
 				"noMatchPolicy",
-				&v1.LabelSelector{MatchLabels: targetNamespace1Match},
+				&metav1.LabelSelector{MatchLabels: targetNamespace1Match},
 				nil,
-				&v1.LabelSelector{MatchLabels: gatewayNamespaceMatch},
-				&v1.LabelSelector{MatchLabels: map[string]string{"key": "nomatch"}},
+				&metav1.LabelSelector{MatchLabels: gatewayNamespaceMatch},
+				&metav1.LabelSelector{MatchLabels: map[string]string{"key": "nomatch"}},
 				false,
 			)
 			initController([]runtime.Object{namespaceGW, namespaceTarget}, []runtime.Object{noMatchPolicy})
@@ -246,10 +246,10 @@ var _ = Describe("OVN External Gateway pod", func() {
 		It("deletes a gateway pod that does not match any policy", func() {
 			noMatchPolicy := newPolicy(
 				"noMatchPolicy",
-				&v1.LabelSelector{MatchLabels: targetNamespace1Match},
+				&metav1.LabelSelector{MatchLabels: targetNamespace1Match},
 				nil,
-				&v1.LabelSelector{MatchLabels: gatewayNamespaceMatch},
-				&v1.LabelSelector{MatchLabels: map[string]string{"key": "nomatch"}},
+				&metav1.LabelSelector{MatchLabels: gatewayNamespaceMatch},
+				&metav1.LabelSelector{MatchLabels: map[string]string{"key": "nomatch"}},
 				false,
 			)
 			initController([]runtime.Object{namespaceGW, namespaceTarget, pod1}, []runtime.Object{noMatchPolicy})
@@ -451,34 +451,34 @@ var _ = Describe("OVN External Gateway pod", func() {
 })
 
 func deletePod(pod *corev1.Pod, fakeClient *fake.Clientset) {
-	err = fakeClient.CoreV1().Pods(pod.Namespace).Delete(context.Background(), pod.Name, v1.DeleteOptions{})
+	err = fakeClient.CoreV1().Pods(pod.Namespace).Delete(context.Background(), pod.Name, metav1.DeleteOptions{})
 	Expect(err).NotTo(HaveOccurred())
 }
 
 func createPod(pod *corev1.Pod, fakeClient *fake.Clientset) {
-	_, err = fakeClient.CoreV1().Pods(pod.Namespace).Create(context.Background(), pod, v1.CreateOptions{})
+	_, err = fakeClient.CoreV1().Pods(pod.Namespace).Create(context.Background(), pod, metav1.CreateOptions{})
 	Expect(err).NotTo(HaveOccurred())
 }
 
 func updatePodLabels(pod *corev1.Pod, newLabels map[string]string, fakeClient *fake.Clientset) {
-	p, err := fakeClient.CoreV1().Pods(pod.Namespace).Get(context.TODO(), pod.Name, v1.GetOptions{})
+	p, err := fakeClient.CoreV1().Pods(pod.Namespace).Get(context.TODO(), pod.Name, metav1.GetOptions{})
 	Expect(err).NotTo(HaveOccurred())
 	incrementResourceVersion(p)
 	p.Labels = newLabels
-	_, err = fakeClient.CoreV1().Pods(pod.Namespace).Update(context.Background(), p, v1.UpdateOptions{})
+	_, err = fakeClient.CoreV1().Pods(pod.Namespace).Update(context.Background(), p, metav1.UpdateOptions{})
 	Expect(err).NotTo(HaveOccurred())
 }
 
 func updatePodStatus(pod *corev1.Pod, podStatus corev1.PodStatus) {
-	p, err := fakeClient.CoreV1().Pods(pod.Namespace).Get(context.TODO(), pod.Name, v1.GetOptions{})
+	p, err := fakeClient.CoreV1().Pods(pod.Namespace).Get(context.TODO(), pod.Name, metav1.GetOptions{})
 	Expect(err).NotTo(HaveOccurred())
 	incrementResourceVersion(p)
 	p.Status = podStatus
-	_, err = fakeClient.CoreV1().Pods(pod.Namespace).Update(context.Background(), p, v1.UpdateOptions{})
+	_, err = fakeClient.CoreV1().Pods(pod.Namespace).Update(context.Background(), p, metav1.UpdateOptions{})
 	Expect(err).NotTo(HaveOccurred())
 }
 
-func incrementResourceVersion(obj v1.Object) {
+func incrementResourceVersion(obj metav1.Object) {
 	var rs int64
 	if obj.GetResourceVersion() != "" {
 		rs, err = strconv.ParseInt(obj.GetResourceVersion(), 10, 64)

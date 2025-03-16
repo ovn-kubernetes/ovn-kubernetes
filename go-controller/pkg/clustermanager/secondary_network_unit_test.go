@@ -7,24 +7,23 @@ import (
 	"sync"
 
 	"github.com/containernetworking/cni/pkg/types"
-	"github.com/onsi/ginkgo/v2"
-	"github.com/onsi/gomega"
-	"github.com/urfave/cli/v2"
-	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes/fake"
-	"k8s.io/client-go/tools/record"
-
 	ipamclaimsapi "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1"
 	fakeipamclaimclient "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1/apis/clientset/versioned/fake"
 	fakenadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
+	"github.com/urfave/cli/v2"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/tools/record"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip"
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
-	nad "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -61,7 +60,7 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 	ginkgo.Context("Secondary networks", func() {
 		ginkgo.It("Attach secondary layer3 network", func() {
 			app.Action = func(ctx *cli.Context) error {
-				kubeFakeClient := fake.NewSimpleClientset(&v1.NodeList{Items: nodes()})
+				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{Items: nodes()})
 				fakeClient := &util.OVNClusterManagerClientset{
 					KubeClient:            kubeFakeClient,
 					IPAMClaimsClient:      fakeipamclaimclient.NewSimpleClientset(),
@@ -116,7 +115,7 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 			ginkgo.BeforeEach(func() {
 
 				fakeClient = &util.OVNClusterManagerClientset{
-					KubeClient:            fake.NewSimpleClientset(&v1.NodeList{Items: nodes()}),
+					KubeClient:            fake.NewSimpleClientset(&corev1.NodeList{Items: nodes()}),
 					IPAMClaimsClient:      fakeipamclaimclient.NewSimpleClientset(),
 					NetworkAttchDefClient: fakenadclient.NewSimpleClientset(),
 				}
@@ -149,7 +148,7 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 
 					config.OVNKubernetesFeature.EnableInterconnect = false
 					nc, err := sncm.NewNetworkController(netInfo)
-					gomega.Expect(err).To(gomega.Equal(nad.ErrNetworkControllerTopologyNotManaged))
+					gomega.Expect(err).To(gomega.Equal(networkmanager.ErrNetworkControllerTopologyNotManaged))
 					gomega.Expect(nc).To(gomega.BeNil())
 
 					config.OVNKubernetesFeature.EnableInterconnect = true
@@ -219,7 +218,7 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 
 			ginkgo.BeforeEach(func() {
 				fakeClient = &util.OVNClusterManagerClientset{
-					KubeClient:            fake.NewSimpleClientset(&v1.NodeList{Items: nodes()}),
+					KubeClient:            fake.NewSimpleClientset(&corev1.NodeList{Items: nodes()}),
 					NetworkAttchDefClient: fakenadclient.NewSimpleClientset(),
 				}
 
@@ -260,7 +259,7 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 					"does not manage localnet topologies on IC deployments for networks without subnets",
 					&ovncnitypes.NetConf{NetConf: types.NetConf{Name: "blue"}, Topology: ovntypes.LocalnetTopology},
 					config.OVNKubernetesFeatureConfig{EnableInterconnect: true, EnableMultiNetwork: true},
-					nad.ErrNetworkControllerTopologyNotManaged,
+					networkmanager.ErrNetworkControllerTopologyNotManaged,
 				),
 				ginkgo.Entry(
 					"manages localnet topologies on IC deployments for networks with subnets",
@@ -276,7 +275,7 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 					"does not manage localnet topologies on non-IC deployments without subnets",
 					&ovncnitypes.NetConf{NetConf: types.NetConf{Name: "blue"}, Topology: ovntypes.LocalnetTopology},
 					config.OVNKubernetesFeatureConfig{EnableMultiNetwork: true},
-					nad.ErrNetworkControllerTopologyNotManaged,
+					networkmanager.ErrNetworkControllerTopologyNotManaged,
 				),
 				ginkgo.Entry(
 					"does not manage localnet topologies on non-IC deployments with subnets",
@@ -286,14 +285,14 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 						Subnets:  subnets,
 					},
 					config.OVNKubernetesFeatureConfig{EnableMultiNetwork: true},
-					nad.ErrNetworkControllerTopologyNotManaged,
+					networkmanager.ErrNetworkControllerTopologyNotManaged,
 				),
 			)
 		})
 
 		ginkgo.It("Cleanup", func() {
 			app.Action = func(ctx *cli.Context) error {
-				nodes := []v1.Node{
+				nodes := []corev1.Node{
 					{
 						ObjectMeta: metav1.ObjectMeta{
 							Name: "node1",
@@ -322,7 +321,7 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 						},
 					},
 				}
-				kubeFakeClient := fake.NewSimpleClientset(&v1.NodeList{
+				kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
 					Items: nodes,
 				})
 				fakeClient := &util.OVNClusterManagerClientset{
@@ -778,7 +777,7 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 					fakeClient = &util.OVNClusterManagerClientset{
-						KubeClient:            fake.NewSimpleClientset(&v1.NodeList{Items: nodes()}),
+						KubeClient:            fake.NewSimpleClientset(&corev1.NodeList{Items: nodes()}),
 						IPAMClaimsClient:      fakeipamclaimclient.NewSimpleClientset(),
 						NetworkAttchDefClient: fakenadclient.NewSimpleClientset(),
 					}
@@ -834,8 +833,8 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 	})
 })
 
-func nodes() []v1.Node {
-	return []v1.Node{
+func nodes() []corev1.Node {
+	return []corev1.Node{
 		{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "node1",

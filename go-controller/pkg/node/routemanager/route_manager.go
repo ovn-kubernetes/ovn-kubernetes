@@ -6,13 +6,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 
-	"github.com/vishvananda/netlink"
-	"golang.org/x/sys/unix"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 // MainTableID is the default routing table. IPRoute2 names the default routing table as 'main'

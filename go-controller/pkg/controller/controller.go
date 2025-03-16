@@ -8,14 +8,14 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-
 	"k8s.io/apimachinery/pkg/labels"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 const (
@@ -116,7 +116,7 @@ func NewController[T any](name string, config *ControllerConfig[T]) Controller {
 		c.config.MaxAttempts = DefaultMaxAttempts
 	}
 	if c.config.HandleError == nil {
-		c.config.HandleError = func(key string, err error) error {
+		c.config.HandleError = func(_ string, err error) error {
 			utilruntime.HandleError(err)
 			return nil
 		}

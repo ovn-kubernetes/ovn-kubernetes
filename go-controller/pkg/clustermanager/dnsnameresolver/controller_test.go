@@ -8,15 +8,17 @@ import (
 	"github.com/onsi/gomega"
 	ocpnetworkapiv1alpha1 "github.com/openshift/api/network/v1alpha1"
 	ocpnetworklisterv1alpha1 "github.com/openshift/client-go/network/listers/network/v1alpha1"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	egressfirewallapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	"k8s.io/apimachinery/pkg/api/errors"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	egressfirewallapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 var _ = ginkgo.Describe("Cluster manager DNS Name Resolver Controller operations", func() {
@@ -79,7 +81,7 @@ var _ = ginkgo.Describe("Cluster manager DNS Name Resolver Controller operations
 
 	checkDNSNameResolverExists := func(dnsName string) *ocpnetworkapiv1alpha1.DNSNameResolver {
 		var dnsNameResolvers []*ocpnetworkapiv1alpha1.DNSNameResolver
-		err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 5*time.Second, true, func(ctx context.Context) (done bool, err error) {
+		err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 5*time.Second, true, func(context.Context) (done bool, err error) {
 			dnsNameResolvers, err = dnsLister.DNSNameResolvers(config.Kubernetes.OVNConfigNamespace).List(labels.Everything())
 			if err != nil {
 				return false, err
@@ -99,9 +101,9 @@ var _ = ginkgo.Describe("Cluster manager DNS Name Resolver Controller operations
 	}
 
 	checkDNSNameResolverRemoved := func(resolverName string) {
-		err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 5*time.Second, true, func(ctx context.Context) (done bool, err error) {
+		err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 5*time.Second, true, func(context.Context) (done bool, err error) {
 			_, err = dnsLister.DNSNameResolvers(config.Kubernetes.OVNConfigNamespace).Get(resolverName)
-			if err == nil || !errors.IsNotFound(err) {
+			if err == nil || !apierrors.IsNotFound(err) {
 				return false, nil
 			}
 
@@ -304,7 +306,7 @@ var _ = ginkgo.Describe("Cluster manager DNS Name Resolver Controller operations
 				dnsNameResolvers, err := dnsLister.DNSNameResolvers(config.Kubernetes.OVNConfigNamespace).List(labels.Everything())
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				gomega.Expect(len(dnsNameResolvers)).To(gomega.Equal(1))
+				gomega.Expect(dnsNameResolvers).To(gomega.HaveLen(1))
 
 				dnsNameResolver = checkDNSNameResolverExists(dnsName)
 

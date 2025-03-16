@@ -4,9 +4,16 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sync"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	"github.com/urfave/cli/v2"
+
+	corev1 "k8s.io/api/core/v1"
+	discovery "k8s.io/api/discovery/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/knftables"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	egressserviceapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
@@ -15,11 +22,9 @@ import (
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	util "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/mocks"
-	"github.com/urfave/cli/v2"
-	v1 "k8s.io/api/core/v1"
-	discovery "k8s.io/api/discovery/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/knftables"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 const nftablesRulesEgressServicesBase = `
@@ -33,7 +38,6 @@ add rule inet ovn-kubernetes egress-services snat to ip saddr map @egress-servic
 var _ = Describe("Egress Service Operations", func() {
 	var (
 		app         *cli.App
-		fakeOvnNode *FakeOVNNode
 		fExec       *ovntest.FakeExec
 		nft         *knftables.Fake
 		netlinkMock *mocks.NetLinkOps
@@ -51,10 +55,8 @@ var _ = Describe("Egress Service Operations", func() {
 		app.Name = "test"
 		app.Flags = config.Flags
 		fExec = ovntest.NewLooseCompareFakeExec()
-		fakeOvnNode = NewFakeOVNNode(fExec)
-		fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd: "ovs-vsctl --timeout=15 --no-heading --data=bare --format=csv --columns name list interface",
-		})
+		err := util.SetExec(fExec)
+		Expect(err).NotTo(HaveOccurred())
 
 		config.OVNKubernetesFeature.EnableEgressService = true
 		_, cidr4, _ := net.ParseCIDR("10.128.0.0/16")
@@ -64,15 +66,14 @@ var _ = Describe("Egress Service Operations", func() {
 	})
 
 	AfterEach(func() {
-		fakeOvnNode.shutdown()
 		util.SetNetLinkOpMockInst(origNetlinkInst)
 		config.OVNKubernetesFeature.EnableEgressService = false
 	})
 
 	Context("on egress service resource changes", func() {
 		It("repairs nftables and ip rules when stale entries are present", func() {
-			app.Action = func(ctx *cli.Context) error {
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+			app.Action = func(*cli.Context) error {
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: "ip -4 --json rule show",
 					Output: "[{\"priority\":5000,\"src\":\"10.128.0.3\",\"table\":\"wrongTable\"},{\"priority\":5000,\"src\":\"goneEp\",\"table\":\"mynetwork\"}," +
 						"{\"priority\":5000,\"src\":\"10.128.0.3\",\"table\":\"mynetwork\"},{\"priority\":5000,\"src\":\"10.129.0.2\",\"table\":\"mynetwork\"}," +
@@ -82,15 +83,15 @@ var _ = Describe("Egress Service Operations", func() {
 						fmt.Sprintf("{\"priority\":5000,\"src\":\"%s\",\"sport\":30300,\"table\":\"mynetwork2\"}]", config.Gateway.MasqueradeIPs.V4HostETPLocalMasqueradeIP),
 					Err: nil,
 				})
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: "ip -4 rule del prio 5000 from 10.128.0.3 table wrongTable",
 					Err: nil,
 				})
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: "ip -4 rule del prio 5000 from goneEp table mynetwork",
 					Err: nil,
 				})
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: fmt.Sprintf("ip -4 rule del prio 5000 from %s sport 31111 table mynetwork", config.Gateway.MasqueradeIPs.V4HostETPLocalMasqueradeIP),
 					Err: nil,
 				})
@@ -148,18 +149,18 @@ var _ = Describe("Egress Service Operations", func() {
 					},
 				}
 				service := *newService("service1", "namespace1", "10.129.0.2",
-					[]v1.ServicePort{
+					[]corev1.ServicePort{
 						{
 							NodePort: int32(31111),
-							Protocol: v1.ProtocolTCP,
+							Protocol: corev1.ProtocolTCP,
 							Port:     int32(8080),
 						},
 					},
-					v1.ServiceTypeLoadBalancer,
+					corev1.ServiceTypeLoadBalancer,
 					[]string{},
-					v1.ServiceStatus{
-						LoadBalancer: v1.LoadBalancerStatus{
-							Ingress: []v1.LoadBalancerIngress{{
+					corev1.ServiceStatus{
+						LoadBalancer: corev1.LoadBalancerStatus{
+							Ingress: []corev1.LoadBalancerIngress{{
 								IP: "5.5.5.5",
 							}},
 						},
@@ -201,18 +202,18 @@ var _ = Describe("Egress Service Operations", func() {
 					},
 				}
 				service2 := *newService("service2", "namespace1", "10.129.0.3",
-					[]v1.ServicePort{
+					[]corev1.ServicePort{
 						{
 							NodePort: int32(30300),
-							Protocol: v1.ProtocolTCP,
+							Protocol: corev1.ProtocolTCP,
 							Port:     int32(8080),
 						},
 					},
-					v1.ServiceTypeLoadBalancer,
+					corev1.ServiceTypeLoadBalancer,
 					[]string{},
-					v1.ServiceStatus{
-						LoadBalancer: v1.LoadBalancerStatus{
-							Ingress: []v1.LoadBalancerIngress{{
+					corev1.ServiceStatus{
+						LoadBalancer: corev1.LoadBalancerStatus{
+							Ingress: []corev1.LoadBalancerIngress{{
 								IP: "5.5.5.6",
 							}},
 						},
@@ -243,18 +244,18 @@ var _ = Describe("Egress Service Operations", func() {
 					},
 				}
 				service3 := *newService("service3", "namespace1", "10.129.0.4",
-					[]v1.ServicePort{
+					[]corev1.ServicePort{
 						{
 							NodePort: int32(32222),
-							Protocol: v1.ProtocolTCP,
+							Protocol: corev1.ProtocolTCP,
 							Port:     int32(8080),
 						},
 					},
-					v1.ServiceTypeLoadBalancer,
+					corev1.ServiceTypeLoadBalancer,
 					[]string{},
-					v1.ServiceStatus{
-						LoadBalancer: v1.LoadBalancerStatus{
-							Ingress: []v1.LoadBalancerIngress{{
+					corev1.ServiceStatus{
+						LoadBalancer: corev1.LoadBalancerStatus{
+							Ingress: []corev1.LoadBalancerIngress{{
 								IP: "6.6.6.6",
 							}},
 						},
@@ -269,37 +270,42 @@ var _ = Describe("Egress Service Operations", func() {
 					"service3",
 					"namespace1",
 					[]discovery.Endpoint{ep3_1},
-					[]discovery.EndpointPort{epPort})
-
-				fakeOvnNode.start(ctx,
-					&v1.ServiceList{
-						Items: []v1.Service{
-							service,
-							service2,
-							service3,
-						},
-					},
-					&discovery.EndpointSliceList{
-						Items: []discovery.EndpointSlice{
-							endpointSlice,
-							endpointSlice2,
-							endpointSlice3,
-						},
-					},
-					&egressserviceapi.EgressServiceList{
-						Items: []egressserviceapi.EgressService{
-							egressService,
-							egressService2,
-							egressService3,
-						},
-					},
+					[]discovery.EndpointPort{epPort},
 				)
 
-				wf := fakeOvnNode.watcher.(*factory.WatchFactory)
-				c, err := egressservice.NewController(fakeOvnNode.stopChan, ovnKubeNodeSNATMark, fakeOvnNode.nc.name,
-					wf.EgressServiceInformer(), wf.ServiceInformer(), wf.EndpointSliceInformer())
+				objects := []runtime.Object{
+					&service,
+					&service2,
+					&service3,
+					&endpointSlice,
+					&endpointSlice2,
+					&endpointSlice3,
+					&egressService,
+					&egressService2,
+					&egressService3,
+				}
+				stopChan := make(chan struct{})
+				wg := &sync.WaitGroup{}
+				fakeClient := util.GetOVNClientset(objects...).GetNodeClientset()
+				wf, err := factory.NewNodeWatchFactory(fakeClient, "node")
 				Expect(err).ToNot(HaveOccurred())
-				err = c.Run(fakeOvnNode.wg, 1)
+				Expect(wf.Start()).To(Succeed())
+				defer func() {
+					close(stopChan)
+					wg.Wait()
+					wf.Shutdown()
+				}()
+
+				c, err := egressservice.NewController(
+					stopChan,
+					ovnKubeNodeSNATMark,
+					"node",
+					wf.EgressServiceInformer(),
+					wf.ServiceInformer(),
+					wf.EndpointSliceInformer(),
+				)
+				Expect(err).ToNot(HaveOccurred())
+				err = c.Run(wg, 1)
 				Expect(err).ToNot(HaveOccurred())
 
 				expectedNFT := nftablesRulesEgressServicesBase + `
@@ -310,7 +316,7 @@ add element inet ovn-kubernetes egress-service-snat-v4 { 10.128.0.4 comment "nam
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}).ShouldNot(HaveOccurred())
 
-				Expect(fakeOvnNode.fakeExec.CalledMatchesExpected()).To(BeTrue(), fakeOvnNode.fakeExec.ErrorDesc)
+				Expect(fExec.CalledMatchesExpected()).To(BeTrue(), fExec.ErrorDesc)
 
 				return nil
 			}
@@ -318,8 +324,8 @@ add element inet ovn-kubernetes egress-service-snat-v4 { 10.128.0.4 comment "nam
 			Expect(err).NotTo(HaveOccurred())
 		})
 		It("manages iptables rules for LoadBalancer egress service backed by cluster networked pods", func() {
-			app.Action = func(ctx *cli.Context) error {
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+			app.Action = func(*cli.Context) error {
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd:    "ip -4 --json rule show",
 					Output: "[]",
 					Err:    nil,
@@ -338,18 +344,18 @@ add element inet ovn-kubernetes egress-service-snat-v4 { 10.128.0.4 comment "nam
 					},
 				}
 				service := *newService("service1", "namespace1", "10.129.0.2",
-					[]v1.ServicePort{
+					[]corev1.ServicePort{
 						{
 							NodePort: int32(31111),
-							Protocol: v1.ProtocolTCP,
+							Protocol: corev1.ProtocolTCP,
 							Port:     int32(8080),
 						},
 					},
-					v1.ServiceTypeLoadBalancer,
+					corev1.ServiceTypeLoadBalancer,
 					[]string{},
-					v1.ServiceStatus{
-						LoadBalancer: v1.LoadBalancerStatus{
-							Ingress: []v1.LoadBalancerIngress{{
+					corev1.ServiceStatus{
+						LoadBalancer: corev1.LoadBalancerStatus{
+							Ingress: []corev1.LoadBalancerIngress{{
 								IP: "5.5.5.5",
 							}},
 						},
@@ -376,31 +382,36 @@ add element inet ovn-kubernetes egress-service-snat-v4 { 10.128.0.4 comment "nam
 					"service1",
 					"namespace1",
 					[]discovery.Endpoint{ep1, ep2},
-					[]discovery.EndpointPort{epPort})
-
-				fakeOvnNode.start(ctx,
-					&v1.ServiceList{
-						Items: []v1.Service{
-							service,
-						},
-					},
-					&discovery.EndpointSliceList{
-						Items: []discovery.EndpointSlice{
-							endpointSlice,
-						},
-					},
-					&egressserviceapi.EgressServiceList{
-						Items: []egressserviceapi.EgressService{
-							egressService,
-						},
-					},
+					[]discovery.EndpointPort{epPort},
 				)
 
-				wf := fakeOvnNode.watcher.(*factory.WatchFactory)
-				c, err := egressservice.NewController(fakeOvnNode.stopChan, ovnKubeNodeSNATMark, fakeOvnNode.nc.name,
-					wf.EgressServiceInformer(), wf.ServiceInformer(), wf.EndpointSliceInformer())
+				objects := []runtime.Object{
+					&service,
+					&endpointSlice,
+					&egressService,
+				}
+				stopChan := make(chan struct{})
+				wg := &sync.WaitGroup{}
+				fakeClient := util.GetOVNClientset(objects...).GetNodeClientset()
+				wf, err := factory.NewNodeWatchFactory(fakeClient, "node")
 				Expect(err).ToNot(HaveOccurred())
-				err = c.Run(fakeOvnNode.wg, 1)
+				Expect(wf.Start()).To(Succeed())
+				defer func() {
+					close(stopChan)
+					wg.Wait()
+					wf.Shutdown()
+				}()
+
+				c, err := egressservice.NewController(
+					stopChan,
+					ovnKubeNodeSNATMark,
+					"node",
+					wf.EgressServiceInformer(),
+					wf.ServiceInformer(),
+					wf.EndpointSliceInformer(),
+				)
+				Expect(err).ToNot(HaveOccurred())
+				err = c.Run(wg, 1)
 				Expect(err).ToNot(HaveOccurred())
 
 				expectedNFT := nftablesRulesEgressServicesBase + `
@@ -410,7 +421,7 @@ add element inet ovn-kubernetes egress-service-snat-v4 { 10.128.0.3 comment "nam
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}).ShouldNot(HaveOccurred())
 
-				err = fakeOvnNode.fakeClient.EgressServiceClient.K8sV1().EgressServices("namespace1").Delete(context.TODO(), "service1", metav1.DeleteOptions{})
+				err = fakeClient.EgressServiceClient.K8sV1().EgressServices("namespace1").Delete(context.TODO(), "service1", metav1.DeleteOptions{})
 				Expect(err).ToNot(HaveOccurred())
 
 				expectedNFT = nftablesRulesEgressServicesBase
@@ -418,7 +429,7 @@ add element inet ovn-kubernetes egress-service-snat-v4 { 10.128.0.3 comment "nam
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}).ShouldNot(HaveOccurred())
 
-				Expect(fakeOvnNode.fakeExec.CalledMatchesExpected()).To(BeTrue(), fakeOvnNode.fakeExec.ErrorDesc)
+				Expect(fExec.CalledMatchesExpected()).To(BeTrue(), fExec.ErrorDesc)
 
 				return nil
 			}
@@ -427,49 +438,49 @@ add element inet ovn-kubernetes egress-service-snat-v4 { 10.128.0.3 comment "nam
 		})
 
 		It("manages iptables/ip rules for LoadBalancer egress service backed by ovn-k pods with Network", func() {
-			app.Action = func(ctx *cli.Context) error {
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+			app.Action = func(*cli.Context) error {
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd:    "ip -4 --json rule show",
 					Output: "[]",
 					Err:    nil,
 				})
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: "ip -4 rule add prio 5000 from 10.129.0.2 table mynetwork",
 					Err: nil,
 				})
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: "ip -4 rule add prio 5000 from 10.128.0.3 table mynetwork",
 					Err: nil,
 				})
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: "ip -4 rule add prio 5000 from 10.129.0.10 table mynetwork",
 					Err: nil,
 				})
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: "ip -4 rule add prio 5000 from 10.128.0.11 table mynetwork",
 					Err: nil,
 				})
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: fmt.Sprintf("ip -4 rule add prio 5000 from %s sport 30300 table mynetwork", config.Gateway.MasqueradeIPs.V4HostETPLocalMasqueradeIP),
 					Err: nil,
 				})
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: "ip -4 rule del prio 5000 from 10.129.0.2 table mynetwork",
 					Err: nil,
 				})
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: "ip -4 rule del prio 5000 from 10.128.0.3 table mynetwork",
 					Err: nil,
 				})
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: "ip -4 rule del prio 5000 from 10.129.0.10 table mynetwork",
 					Err: nil,
 				})
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: "ip -4 rule del prio 5000 from 10.128.0.11 table mynetwork",
 					Err: nil,
 				})
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: fmt.Sprintf("ip -4 rule del prio 5000 from %s sport 30300 table mynetwork", config.Gateway.MasqueradeIPs.V4HostETPLocalMasqueradeIP),
 					Err: nil,
 				})
@@ -490,18 +501,18 @@ add element inet ovn-kubernetes egress-service-snat-v4 { 10.128.0.3 comment "nam
 				}
 
 				service := *newService("service1", "namespace1", "10.129.0.2",
-					[]v1.ServicePort{
+					[]corev1.ServicePort{
 						{
 							NodePort: int32(31111),
-							Protocol: v1.ProtocolTCP,
+							Protocol: corev1.ProtocolTCP,
 							Port:     int32(8080),
 						},
 					},
-					v1.ServiceTypeLoadBalancer,
+					corev1.ServiceTypeLoadBalancer,
 					[]string{},
-					v1.ServiceStatus{
-						LoadBalancer: v1.LoadBalancerStatus{
-							Ingress: []v1.LoadBalancerIngress{{
+					corev1.ServiceStatus{
+						LoadBalancer: corev1.LoadBalancerStatus{
+							Ingress: []corev1.LoadBalancerIngress{{
 								IP: "5.5.5.5",
 							}},
 						},
@@ -544,18 +555,18 @@ add element inet ovn-kubernetes egress-service-snat-v4 { 10.128.0.3 comment "nam
 				}
 
 				service2 := *newService("service2", "namespace1", "10.129.0.10",
-					[]v1.ServicePort{
+					[]corev1.ServicePort{
 						{
 							NodePort: int32(30300),
-							Protocol: v1.ProtocolTCP,
+							Protocol: corev1.ProtocolTCP,
 							Port:     int32(8080),
 						},
 					},
-					v1.ServiceTypeLoadBalancer,
+					corev1.ServiceTypeLoadBalancer,
 					[]string{},
-					v1.ServiceStatus{
-						LoadBalancer: v1.LoadBalancerStatus{
-							Ingress: []v1.LoadBalancerIngress{{
+					corev1.ServiceStatus{
+						LoadBalancer: corev1.LoadBalancerStatus{
+							Ingress: []corev1.LoadBalancerIngress{{
 								IP: "5.5.5.6",
 							}},
 						},
@@ -573,34 +584,39 @@ add element inet ovn-kubernetes egress-service-snat-v4 { 10.128.0.3 comment "nam
 					"service2",
 					"namespace1",
 					[]discovery.Endpoint{ep3},
-					[]discovery.EndpointPort{epPort})
-
-				fakeOvnNode.start(ctx,
-					&v1.ServiceList{
-						Items: []v1.Service{
-							service,
-							service2,
-						},
-					},
-					&discovery.EndpointSliceList{
-						Items: []discovery.EndpointSlice{
-							endpointSlice,
-							endpointSlice2,
-						},
-					},
-					&egressserviceapi.EgressServiceList{
-						Items: []egressserviceapi.EgressService{
-							egressService,
-							egressService2,
-						},
-					},
+					[]discovery.EndpointPort{epPort},
 				)
 
-				wf := fakeOvnNode.watcher.(*factory.WatchFactory)
-				c, err := egressservice.NewController(fakeOvnNode.stopChan, ovnKubeNodeSNATMark, fakeOvnNode.nc.name,
-					wf.EgressServiceInformer(), wf.ServiceInformer(), wf.EndpointSliceInformer())
+				objects := []runtime.Object{
+					&service,
+					&service2,
+					&endpointSlice,
+					&endpointSlice2,
+					&egressService,
+					&egressService2,
+				}
+				stopChan := make(chan struct{})
+				wg := &sync.WaitGroup{}
+				fakeClient := util.GetOVNClientset(objects...).GetNodeClientset()
+				wf, err := factory.NewNodeWatchFactory(fakeClient, "node")
 				Expect(err).ToNot(HaveOccurred())
-				err = c.Run(fakeOvnNode.wg, 1)
+				Expect(wf.Start()).To(Succeed())
+				defer func() {
+					close(stopChan)
+					wg.Wait()
+					wf.Shutdown()
+				}()
+
+				c, err := egressservice.NewController(
+					stopChan,
+					ovnKubeNodeSNATMark,
+					"node",
+					wf.EgressServiceInformer(),
+					wf.ServiceInformer(),
+					wf.EndpointSliceInformer(),
+				)
+				Expect(err).ToNot(HaveOccurred())
+				err = c.Run(wg, 1)
 				Expect(err).ToNot(HaveOccurred())
 
 				expectedNFT := nftablesRulesEgressServicesBase + `
@@ -611,10 +627,10 @@ add element inet ovn-kubernetes egress-service-snat-v4 { 10.128.0.11 comment "na
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}).ShouldNot(HaveOccurred())
 
-				err = fakeOvnNode.fakeClient.EgressServiceClient.K8sV1().EgressServices("namespace1").Delete(context.TODO(), "service1", metav1.DeleteOptions{})
+				err = fakeClient.EgressServiceClient.K8sV1().EgressServices("namespace1").Delete(context.TODO(), "service1", metav1.DeleteOptions{})
 				Expect(err).ToNot(HaveOccurred())
 
-				err = fakeOvnNode.fakeClient.EgressServiceClient.K8sV1().EgressServices("namespace1").Delete(context.TODO(), "service2", metav1.DeleteOptions{})
+				err = fakeClient.EgressServiceClient.K8sV1().EgressServices("namespace1").Delete(context.TODO(), "service2", metav1.DeleteOptions{})
 				Expect(err).ToNot(HaveOccurred())
 
 				expectedNFT = nftablesRulesEgressServicesBase
@@ -622,7 +638,7 @@ add element inet ovn-kubernetes egress-service-snat-v4 { 10.128.0.11 comment "na
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}).ShouldNot(HaveOccurred())
 
-				Expect(fakeOvnNode.fakeExec.CalledMatchesExpected()).To(BeTrue(), fakeOvnNode.fakeExec.ErrorDesc)
+				Expect(fExec.CalledMatchesExpected()).To(BeTrue(), fExec.ErrorDesc)
 				return nil
 			}
 			err := app.Run([]string{app.Name})
@@ -630,29 +646,29 @@ add element inet ovn-kubernetes egress-service-snat-v4 { 10.128.0.11 comment "na
 		})
 
 		It("manages ip rules for LoadBalancer egress service backed by ovn-k pods with Network and Host=ALL", func() {
-			app.Action = func(ctx *cli.Context) error {
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+			app.Action = func(*cli.Context) error {
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd:    "ip -4 --json rule show",
 					Output: "[]",
 					Err:    nil,
 				})
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: "ip -4 rule add prio 5000 from 10.129.0.2 table mynetwork",
 					Err: nil,
 				})
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: "ip -4 rule add prio 5000 from 10.128.0.3 table mynetwork",
 					Err: nil,
 				})
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: "ip -4 rule add prio 5000 from 10.129.0.10 table mynetwork",
 					Err: nil,
 				})
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: "ip -4 rule add prio 5000 from 10.128.0.11 table mynetwork",
 					Err: nil,
 				})
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: fmt.Sprintf("ip -4 rule add prio 5000 from %s sport 30300 table mynetwork", config.Gateway.MasqueradeIPs.V4HostETPLocalMasqueradeIP),
 					Err: nil,
 				})
@@ -673,18 +689,18 @@ add element inet ovn-kubernetes egress-service-snat-v4 { 10.128.0.11 comment "na
 				}
 
 				service := *newService("service1", "namespace1", "10.129.0.2",
-					[]v1.ServicePort{
+					[]corev1.ServicePort{
 						{
 							NodePort: int32(31111),
-							Protocol: v1.ProtocolTCP,
+							Protocol: corev1.ProtocolTCP,
 							Port:     int32(8080),
 						},
 					},
-					v1.ServiceTypeLoadBalancer,
+					corev1.ServiceTypeLoadBalancer,
 					[]string{},
-					v1.ServiceStatus{
-						LoadBalancer: v1.LoadBalancerStatus{
-							Ingress: []v1.LoadBalancerIngress{{
+					corev1.ServiceStatus{
+						LoadBalancer: corev1.LoadBalancerStatus{
+							Ingress: []corev1.LoadBalancerIngress{{
 								IP: "5.5.5.5",
 							}},
 						},
@@ -735,18 +751,18 @@ add element inet ovn-kubernetes egress-service-snat-v4 { 10.128.0.11 comment "na
 				}
 
 				service2 := *newService("service2", "namespace1", "10.129.0.10",
-					[]v1.ServicePort{
+					[]corev1.ServicePort{
 						{
 							NodePort: int32(30300),
-							Protocol: v1.ProtocolTCP,
+							Protocol: corev1.ProtocolTCP,
 							Port:     int32(8080),
 						},
 					},
-					v1.ServiceTypeLoadBalancer,
+					corev1.ServiceTypeLoadBalancer,
 					[]string{},
-					v1.ServiceStatus{
-						LoadBalancer: v1.LoadBalancerStatus{
-							Ingress: []v1.LoadBalancerIngress{{
+					corev1.ServiceStatus{
+						LoadBalancer: corev1.LoadBalancerStatus{
+							Ingress: []corev1.LoadBalancerIngress{{
 								IP: "5.5.5.6",
 							}},
 						},
@@ -763,34 +779,39 @@ add element inet ovn-kubernetes egress-service-snat-v4 { 10.128.0.11 comment "na
 					"service2",
 					"namespace1",
 					[]discovery.Endpoint{ep4},
-					[]discovery.EndpointPort{epPort})
-
-				fakeOvnNode.start(ctx,
-					&v1.ServiceList{
-						Items: []v1.Service{
-							service,
-							service2,
-						},
-					},
-					&discovery.EndpointSliceList{
-						Items: []discovery.EndpointSlice{
-							endpointSlice,
-							endpointSlice2,
-						},
-					},
-					&egressserviceapi.EgressServiceList{
-						Items: []egressserviceapi.EgressService{
-							egressService,
-							egressService2,
-						},
-					},
+					[]discovery.EndpointPort{epPort},
 				)
 
-				wf := fakeOvnNode.watcher.(*factory.WatchFactory)
-				c, err := egressservice.NewController(fakeOvnNode.stopChan, ovnKubeNodeSNATMark, fakeOvnNode.nc.name,
-					wf.EgressServiceInformer(), wf.ServiceInformer(), wf.EndpointSliceInformer())
+				objects := []runtime.Object{
+					&service,
+					&service2,
+					&endpointSlice,
+					&endpointSlice2,
+					&egressService,
+					&egressService2,
+				}
+				stopChan := make(chan struct{})
+				wg := &sync.WaitGroup{}
+				fakeClient := util.GetOVNClientset(objects...).GetNodeClientset()
+				wf, err := factory.NewNodeWatchFactory(fakeClient, "node")
 				Expect(err).ToNot(HaveOccurred())
-				err = c.Run(fakeOvnNode.wg, 1)
+				Expect(wf.Start()).To(Succeed())
+				defer func() {
+					close(stopChan)
+					wg.Wait()
+					wf.Shutdown()
+				}()
+
+				c, err := egressservice.NewController(
+					stopChan,
+					ovnKubeNodeSNATMark,
+					"node",
+					wf.EgressServiceInformer(),
+					wf.ServiceInformer(),
+					wf.EndpointSliceInformer(),
+				)
+				Expect(err).ToNot(HaveOccurred())
+				err = c.Run(wg, 1)
 				Expect(err).ToNot(HaveOccurred())
 
 				expectedNFT := nftablesRulesEgressServicesBase
@@ -799,34 +820,34 @@ add element inet ovn-kubernetes egress-service-snat-v4 { 10.128.0.11 comment "na
 				}).ShouldNot(HaveOccurred())
 
 				Eventually(func() bool {
-					return fakeOvnNode.fakeExec.CalledMatchesExpected()
+					return fExec.CalledMatchesExpected()
 				}).Should(BeTrue())
 
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: "ip -4 rule del prio 5000 from 10.129.0.2 table mynetwork",
 					Err: nil,
 				})
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: "ip -4 rule del prio 5000 from 10.128.0.3 table mynetwork",
 					Err: nil,
 				})
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: "ip -4 rule del prio 5000 from 10.129.0.10 table mynetwork",
 					Err: nil,
 				})
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: "ip -4 rule del prio 5000 from 10.128.0.11 table mynetwork",
 					Err: nil,
 				})
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: fmt.Sprintf("ip -4 rule del prio 5000 from %s sport 30300 table mynetwork", config.Gateway.MasqueradeIPs.V4HostETPLocalMasqueradeIP),
 					Err: nil,
 				})
 
-				err = fakeOvnNode.fakeClient.EgressServiceClient.K8sV1().EgressServices("namespace1").Delete(context.TODO(), "service1", metav1.DeleteOptions{})
+				err = fakeClient.EgressServiceClient.K8sV1().EgressServices("namespace1").Delete(context.TODO(), "service1", metav1.DeleteOptions{})
 				Expect(err).ToNot(HaveOccurred())
 
-				err = fakeOvnNode.fakeClient.EgressServiceClient.K8sV1().EgressServices("namespace1").Delete(context.TODO(), "service2", metav1.DeleteOptions{})
+				err = fakeClient.EgressServiceClient.K8sV1().EgressServices("namespace1").Delete(context.TODO(), "service2", metav1.DeleteOptions{})
 				Expect(err).ToNot(HaveOccurred())
 
 				expectedNFT = nftablesRulesEgressServicesBase
@@ -835,7 +856,7 @@ add element inet ovn-kubernetes egress-service-snat-v4 { 10.128.0.11 comment "na
 				}).ShouldNot(HaveOccurred())
 
 				Eventually(func() bool {
-					return fakeOvnNode.fakeExec.CalledMatchesExpected()
+					return fExec.CalledMatchesExpected()
 				}).Should(BeTrue())
 				return nil
 			}
@@ -844,17 +865,17 @@ add element inet ovn-kubernetes egress-service-snat-v4 { 10.128.0.11 comment "na
 		})
 
 		It("updates network ip rules for LoadBalancer egress service when ETP changes", func() {
-			app.Action = func(ctx *cli.Context) error {
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+			app.Action = func(*cli.Context) error {
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd:    "ip -4 --json rule show",
 					Output: "[]",
 					Err:    nil,
 				})
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: "ip -4 rule add prio 5000 from 10.129.0.2 table mynetwork",
 					Err: nil,
 				})
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: "ip -4 rule add prio 5000 from 10.128.0.3 table mynetwork",
 					Err: nil,
 				})
@@ -875,18 +896,18 @@ add element inet ovn-kubernetes egress-service-snat-v4 { 10.128.0.11 comment "na
 				}
 
 				service := *newService("service1", "namespace1", "10.129.0.2",
-					[]v1.ServicePort{
+					[]corev1.ServicePort{
 						{
 							NodePort: int32(30300),
-							Protocol: v1.ProtocolTCP,
+							Protocol: corev1.ProtocolTCP,
 							Port:     int32(8080),
 						},
 					},
-					v1.ServiceTypeLoadBalancer,
+					corev1.ServiceTypeLoadBalancer,
 					[]string{},
-					v1.ServiceStatus{
-						LoadBalancer: v1.LoadBalancerStatus{
-							Ingress: []v1.LoadBalancerIngress{{
+					corev1.ServiceStatus{
+						LoadBalancer: corev1.LoadBalancerStatus{
+							Ingress: []corev1.LoadBalancerIngress{{
 								IP: "5.5.5.5",
 							}},
 						},
@@ -923,29 +944,33 @@ add element inet ovn-kubernetes egress-service-snat-v4 { 10.128.0.11 comment "na
 					[]discovery.Endpoint{ep1, ep2, ep3},
 					[]discovery.EndpointPort{epPort})
 
-				fakeOvnNode.start(ctx,
-					&v1.ServiceList{
-						Items: []v1.Service{
-							service,
-						},
-					},
-					&discovery.EndpointSliceList{
-						Items: []discovery.EndpointSlice{
-							endpointSlice,
-						},
-					},
-					&egressserviceapi.EgressServiceList{
-						Items: []egressserviceapi.EgressService{
-							egressService,
-						},
-					},
-				)
-
-				wf := fakeOvnNode.watcher.(*factory.WatchFactory)
-				c, err := egressservice.NewController(fakeOvnNode.stopChan, ovnKubeNodeSNATMark, fakeOvnNode.nc.name,
-					wf.EgressServiceInformer(), wf.ServiceInformer(), wf.EndpointSliceInformer())
+				objects := []runtime.Object{
+					&service,
+					&endpointSlice,
+					&egressService,
+				}
+				stopChan := make(chan struct{})
+				wg := &sync.WaitGroup{}
+				fakeClient := util.GetOVNClientset(objects...).GetNodeClientset()
+				wf, err := factory.NewNodeWatchFactory(fakeClient, "node")
 				Expect(err).ToNot(HaveOccurred())
-				err = c.Run(fakeOvnNode.wg, 1)
+				Expect(wf.Start()).To(Succeed())
+				defer func() {
+					close(stopChan)
+					wg.Wait()
+					wf.Shutdown()
+				}()
+
+				c, err := egressservice.NewController(
+					stopChan,
+					ovnKubeNodeSNATMark,
+					"node",
+					wf.EgressServiceInformer(),
+					wf.ServiceInformer(),
+					wf.EndpointSliceInformer(),
+				)
+				Expect(err).ToNot(HaveOccurred())
+				err = c.Run(wg, 1)
 				Expect(err).ToNot(HaveOccurred())
 
 				expectedNFT := nftablesRulesEgressServicesBase
@@ -954,17 +979,17 @@ add element inet ovn-kubernetes egress-service-snat-v4 { 10.128.0.11 comment "na
 				}).ShouldNot(HaveOccurred())
 
 				Eventually(func() bool {
-					return fakeOvnNode.fakeExec.CalledMatchesExpected()
-				}).Should(BeTrue())
+					return fExec.CalledMatchesExpected()
+				}).Should(BeTrue(), fExec.ErrorDesc)
 
 				By("switching to ETP=Local an ip rule should be created for the masquerade IP")
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: fmt.Sprintf("ip -4 rule add prio 5000 from %s sport 30300 table mynetwork", config.Gateway.MasqueradeIPs.V4HostETPLocalMasqueradeIP),
 					Err: nil,
 				})
-				service.Spec.ExternalTrafficPolicy = v1.ServiceExternalTrafficPolicyLocal
+				service.Spec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyLocal
 				service.ResourceVersion = "100"
-				_, err = fakeOvnNode.fakeClient.KubeClient.CoreV1().Services("namespace1").Update(context.TODO(), &service, metav1.UpdateOptions{})
+				_, err = fakeClient.KubeClient.CoreV1().Services("namespace1").Update(context.TODO(), &service, metav1.UpdateOptions{})
 				Expect(err).ToNot(HaveOccurred())
 
 				expectedNFT = nftablesRulesEgressServicesBase
@@ -973,17 +998,17 @@ add element inet ovn-kubernetes egress-service-snat-v4 { 10.128.0.11 comment "na
 				}).ShouldNot(HaveOccurred())
 
 				Eventually(func() bool {
-					return fakeOvnNode.fakeExec.CalledMatchesExpected()
+					return fExec.CalledMatchesExpected()
 				}).Should(BeTrue())
 
 				By("switching back to ETP=Cluster the masquerade ip rule should be deleted")
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: fmt.Sprintf("ip -4 rule del prio 5000 from %s sport 30300 table mynetwork", config.Gateway.MasqueradeIPs.V4HostETPLocalMasqueradeIP),
 					Err: nil,
 				})
-				service.Spec.ExternalTrafficPolicy = v1.ServiceExternalTrafficPolicyCluster
+				service.Spec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyCluster
 				service.ResourceVersion = "110"
-				_, err = fakeOvnNode.fakeClient.KubeClient.CoreV1().Services("namespace1").Update(context.TODO(), &service, metav1.UpdateOptions{})
+				_, err = fakeClient.KubeClient.CoreV1().Services("namespace1").Update(context.TODO(), &service, metav1.UpdateOptions{})
 				Expect(err).ToNot(HaveOccurred())
 
 				expectedNFT = nftablesRulesEgressServicesBase
@@ -992,20 +1017,20 @@ add element inet ovn-kubernetes egress-service-snat-v4 { 10.128.0.11 comment "na
 				}).ShouldNot(HaveOccurred())
 
 				Eventually(func() bool {
-					return fakeOvnNode.fakeExec.CalledMatchesExpected()
+					return fExec.CalledMatchesExpected()
 				}).Should(BeTrue())
 
 				By("deleting the egress service the ip rules should be deleted")
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: "ip -4 rule del prio 5000 from 10.129.0.2 table mynetwork",
 					Err: nil,
 				})
-				fakeOvnNode.fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: "ip -4 rule del prio 5000 from 10.128.0.3 table mynetwork",
 					Err: nil,
 				})
 
-				err = fakeOvnNode.fakeClient.EgressServiceClient.K8sV1().EgressServices("namespace1").Delete(context.TODO(), "service1", metav1.DeleteOptions{})
+				err = fakeClient.EgressServiceClient.K8sV1().EgressServices("namespace1").Delete(context.TODO(), "service1", metav1.DeleteOptions{})
 				Expect(err).ToNot(HaveOccurred())
 
 				expectedNFT = nftablesRulesEgressServicesBase
@@ -1014,7 +1039,7 @@ add element inet ovn-kubernetes egress-service-snat-v4 { 10.128.0.11 comment "na
 				}).ShouldNot(HaveOccurred())
 
 				Eventually(func() bool {
-					return fakeOvnNode.fakeExec.CalledMatchesExpected()
+					return fExec.CalledMatchesExpected()
 				}).Should(BeTrue())
 				return nil
 			}

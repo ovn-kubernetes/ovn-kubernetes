@@ -4,19 +4,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"testing"
 
-	hotypes "github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/csrapprover"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"golang.org/x/exp/maps"
+
 	v1 "k8s.io/api/admission/v1"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
+
+	hotypes "github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/csrapprover"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 func TestNewNodeAdmissionWebhook(t *testing.T) {
@@ -395,7 +396,7 @@ func TestNodeAdmission_ValidateUpdate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := adm.ValidateUpdate(tt.ctx, tt.oldObj, tt.newObj)
-			if !reflect.DeepEqual(err, tt.expectedErr) {
+			if err != tt.expectedErr && err.Error() != tt.expectedErr.Error() {
 				t.Errorf("ValidateUpdate() error = %v, expectedErr %v", err, tt.expectedErr)
 				return
 			}
@@ -435,7 +436,7 @@ func TestNodeAdmission_ValidateUpdateIC(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := adm.ValidateUpdate(tt.ctx, tt.oldObj, tt.newObj)
-			if !reflect.DeepEqual(err, tt.expectedErr) {
+			if err != tt.expectedErr && err.Error() != tt.expectedErr.Error() {
 				t.Errorf("ValidateUpdateIC() error = %v, wantErr %v", err, tt.expectedErr)
 				return
 			}
@@ -494,7 +495,7 @@ func TestNodeAdmission_ValidateUpdateHybridOverlay(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := adm.ValidateUpdate(tt.ctx, tt.oldObj, tt.newObj)
-			if !reflect.DeepEqual(err, tt.expectedErr) {
+			if err != tt.expectedErr && err.Error() != tt.expectedErr.Error() {
 				t.Errorf("ValidateUpdateIC() error = %v, wantErr %v", err, tt.expectedErr)
 				return
 			}
@@ -555,7 +556,7 @@ func TestNodeAdmission_ValidateUpdateExtraUsers(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := adm.ValidateUpdate(tt.ctx, tt.oldObj, tt.newObj)
-			if !reflect.DeepEqual(err, tt.expectedErr) {
+			if err != tt.expectedErr && err.Error() != tt.expectedErr.Error() {
 				t.Errorf("ValidateUpdateIC() error = %v, wantErr %v", err, tt.expectedErr)
 				return
 			}

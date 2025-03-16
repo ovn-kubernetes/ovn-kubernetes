@@ -17,36 +17,51 @@ DOCKERFILE_ARCH =
 ifeq ($(ARCH),arm64)
         DOCKERFILE_ARCH=.arm64
 endif
-OVS_BRANCH ?= main
-OVN_BRANCH ?= main
+IMAGE ?= ovn-daemonset-fedora
+
+OVN_REPO ?= https://github.com/ovn-org/ovn
+OVN_GITREF ?=
+ifeq ($(OVN_GITREF),)
+OVN_FROM := koji
+else
+OVN_FROM := source
+OVN_GITSHA := $(shell git ls-remote "${OVN_REPO}" "${OVN_GITREF}" | sort -k2  -V  |tail -1 | awk '{ print $$1 }')
+endif
+
+
 OCI_BIN ?= docker
 
 # The image of ovnkube/ovn-daemonset-ubuntu should be multi-arched before using it on arm64
-ubuntu: bld
+ubuntu-image: bld
 	${OCI_BIN} build -t ovn-kube-ubuntu$(IMAGE_ARCH) -f Dockerfile.ubuntu$(DOCKERFILE_ARCH) .
 ifeq ($(ARCH),amd64)
 	${OCI_BIN} tag "ovn-kube-ubuntu$(IMAGE_ARCH):latest" \
               "ovn-kube-ubuntu:latest"
 endif
+
+ubuntu-shared-gw-deployment: ubuntu-image
 	# This is the default in the ovnkube*.yaml files
 	# ${OCI_BIN} login -u ovnkube docker.io/ovnkube
 	# ${OCI_BIN} push docker.io/ovnkube/ovn-daemonset-ubuntu:latest
 	./daemonset.sh --image=docker.io/ovnkube/ovn-daemonset-ubuntu:latest
 
-fedora: bld
-	${OCI_BIN} build -t ovn-kube-fedora -f Dockerfile.fedora .
-	# ${OCI_BIN} login -u ovnkube docker.io/ovnkube
-	# ${OCI_BIN} push docker.io/ovnkube/ovn-daemonset-fedora:latest
-	./daemonset.sh --image=docker.io/ovnkube/ovn-daemonset-fedora:latest
-
-fedora-dev: bld
+fedora-image: bld
 	${OCI_BIN} build \
-		     --build-arg OVS_BRANCH=$(OVS_BRANCH) \
-		     --build-arg OVN_BRANCH=$(OVN_BRANCH) \
-		     -t ovn-kube-fedora-dev -f Dockerfile.fedora.dev .
+		--build-arg OVN_FROM=${OVN_FROM} \
+		--build-arg OVN_REPO=${OVN_REPO} \
+		--build-arg OVN_GITREF=${OVN_GITSHA} \
+		-t ${IMAGE} \
+		-f Dockerfile.fedora .
+
+fedora-shared-gw-deployment: fedora-image
 	# ${OCI_BIN} login -u ovnkube docker.io/ovnkube
 	# ${OCI_BIN} push docker.io/ovnkube/ovn-daemonset-fedora:latest
-	./daemonset.sh --image=docker.io/ovnkube/ovn-daemonset-fedora:latest \
+	./daemonset.sh --image=docker.io/ovnkube/${IMAGE}
+
+fedora-dev-local-gw-deployment: fedora-image
+	# ${OCI_BIN} login -u ovnkube docker.io/ovnkube
+	# ${OCI_BIN} push docker.io/ovnkube/ovn-daemonset-fedora:latest
+	./daemonset.sh --image=docker.io/ovnkube/${IMAGE} \
                     --net-cidr=10.244.0.0/16 \
                     --svc-cidr=10.96.0.0/12 \
                     --gateway-mode="local" \
@@ -78,5 +93,5 @@ daemonsetyaml:
 BRANCH = $(shell git rev-parse  --symbolic-full-name HEAD)
 COMMIT = $(shell git rev-parse  HEAD)
 bld: ../../go-controller/_output/go/bin/ovnkube
-	cp -r ../../go-controller/_output/go/bin/* .
+	find ../../go-controller/_output/go/bin/ -maxdepth 1 -type f -exec cp -f {} . \;
 	echo "ref: ${BRANCH}  commit: ${COMMIT}" > git_info

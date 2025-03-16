@@ -7,20 +7,21 @@ import (
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	knet "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/klog/v2"
+	utilnet "k8s.io/utils/net"
+
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
-	libovsdb "github.com/ovn-org/libovsdb/ovsdb"
+	"github.com/ovn-org/libovsdb/ovsdb"
+
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/batching"
-
-	v1 "k8s.io/api/core/v1"
-	knet "k8s.io/api/networking/v1"
-	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/klog/v2"
-	utilnet "k8s.io/utils/net"
 )
 
 const (
@@ -62,7 +63,7 @@ func NewACLSyncer(nbClient libovsdbclient.Client, controllerName string) *ACLSyn
 	}
 }
 
-func (syncer *ACLSyncer) SyncACLs(existingNodes []*v1.Node) error {
+func (syncer *ACLSyncer) SyncACLs(existingNodes []*corev1.Node) error {
 	// stale acls don't have controller ID
 	legacyAclPred := libovsdbops.GetNoOwnerPredicate[*nbdb.ACL]()
 	legacyACLs, err := libovsdbops.FindACLsWithPredicate(syncer.nbClient, legacyAclPred)
@@ -144,7 +145,7 @@ func (syncer *ACLSyncer) SyncACLs(existingNodes []*v1.Node) error {
 		if err != nil {
 			return fmt.Errorf("unable to find leftover ACLs, cannot update stale data: %v", err)
 		}
-		p := func(item *nbdb.LogicalSwitch) bool { return true }
+		p := func(_ *nbdb.LogicalSwitch) bool { return true }
 		err = libovsdbops.RemoveACLsFromLogicalSwitchesWithPredicate(syncer.nbClient, p, leftoverACLs...)
 		if err != nil {
 			return fmt.Errorf("unable delete leftover ACLs from switches: %v", err)
@@ -279,7 +280,7 @@ func (syncer *ACLSyncer) getAllowFromNodeACLDbIDs(nodeName, mgmtPortIP string) *
 // updateStaleNetpolNodeACLs updates allow from node ACLs, that don't have new ExternalIDs based
 // on DbObjectIDs set. Allow from node acls are applied on the node switch, therefore the cleanup for deleted is not needed,
 // since acl will be deleted toegther with the node switch.
-func (syncer *ACLSyncer) updateStaleNetpolNodeACLs(legacyACLs []*nbdb.ACL, existingNodes []*v1.Node) []*nbdb.ACL {
+func (syncer *ACLSyncer) updateStaleNetpolNodeACLs(legacyACLs []*nbdb.ACL, existingNodes []*corev1.Node) []*nbdb.ACL {
 	// ACL to allow traffic from host via management port has no name or ExternalIDs
 	// The only way to find it is by exact match
 	type aclInfo struct {
@@ -415,7 +416,7 @@ func (syncer *ACLSyncer) getDefaultDenyPolicyACLIDs(ns, policyType, defaultACLTy
 }
 
 func (syncer *ACLSyncer) updateStaleDefaultDenyNetpolACLs(legacyACLs []*nbdb.ACL) (updatedACLs []*nbdb.ACL,
-	deleteOps []libovsdb.Operation, err error) {
+	deleteOps []ovsdb.Operation, err error) {
 	for _, acl := range legacyACLs {
 		// sync default Deny policies
 		// defaultDenyPolicyTypeACLExtIdKey ExternalID was used by default deny and multicast acls,

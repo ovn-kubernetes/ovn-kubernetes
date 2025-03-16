@@ -8,10 +8,10 @@ import (
 	"net"
 	"strings"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 func initLocalGateway(hostSubnets []*net.IPNet, cfg *managementPortConfig) error {

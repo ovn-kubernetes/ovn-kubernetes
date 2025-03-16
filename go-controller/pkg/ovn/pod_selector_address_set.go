@@ -8,6 +8,12 @@ import (
 	"sync"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/klog/v2"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kubevirt"
@@ -18,13 +24,6 @@ import (
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
-
-	kapi "k8s.io/api/core/v1"
-	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/klog/v2"
 )
 
 // PodSelectorAddressSet should always be accessed with oc.podSelectorAddressSets key lock
@@ -358,7 +357,7 @@ func (handlerInfo *PodSelectorAddrSetHandlerInfo) GetASHashNames() (string, stri
 // addPods will get all currently assigned ips for given pods, and add them to the address set.
 // If pod ips change, this function should be called again.
 // must be called with PodSelectorAddrSetHandlerInfo read lock
-func (handlerInfo *PodSelectorAddrSetHandlerInfo) addPods(pods ...*v1.Pod) error {
+func (handlerInfo *PodSelectorAddrSetHandlerInfo) addPods(pods ...*corev1.Pod) error {
 	if handlerInfo.addressSet == nil {
 		return fmt.Errorf("pod selector AddressSet %s is nil, cannot add pod(s)", handlerInfo.key)
 	}
@@ -380,7 +379,7 @@ func (handlerInfo *PodSelectorAddrSetHandlerInfo) addPods(pods ...*v1.Pod) error
 }
 
 // must be called with PodSelectorAddrSetHandlerInfo read lock
-func (handlerInfo *PodSelectorAddrSetHandlerInfo) deletePod(pod *v1.Pod) error {
+func (handlerInfo *PodSelectorAddrSetHandlerInfo) deletePod(pod *corev1.Pod) error {
 	ips, err := util.GetPodIPsOfNetwork(pod, handlerInfo.netInfo)
 	if err != nil {
 		// if pod ips can't be fetched on delete, we don't expect that information about ips will ever be updated,
@@ -406,9 +405,9 @@ func (bnc *BaseNetworkController) handlePodAddUpdate(podHandlerInfo *PodSelector
 	if podHandlerInfo.deleted {
 		return nil
 	}
-	pods := make([]*kapi.Pod, 0, len(objs))
+	pods := make([]*corev1.Pod, 0, len(objs))
 	for _, obj := range objs {
-		pod := obj.(*kapi.Pod)
+		pod := obj.(*corev1.Pod)
 		if pod.Spec.NodeName == "" {
 			// update event will be received for this pod later, no ips should be assigned yet
 			continue
@@ -434,7 +433,7 @@ func (bnc *BaseNetworkController) handlePodDelete(podHandlerInfo *PodSelectorAdd
 	if podHandlerInfo.deleted {
 		return nil
 	}
-	pod := obj.(*kapi.Pod)
+	pod := obj.(*corev1.Pod)
 	if pod.Spec.NodeName == "" {
 		klog.Infof("Pod %s/%s not scheduled on any node, skipping it", pod.Namespace, pod.Name)
 		return nil
@@ -463,7 +462,7 @@ func (bnc *BaseNetworkController) handlePodDelete(podHandlerInfo *PodSelectorAdd
 // of completed pod, then that ip should stay in the address set in case new pod is selected by the PodSelectorAddressSet.
 // returns collidingPod namespace+name if the ip shouldn't be removed, because it is reused.
 // Must be called with PodSelectorAddressSet.RLock.
-func (bnc *BaseNetworkController) podSelectorPodNeedsDelete(pod *kapi.Pod, podHandlerInfo *PodSelectorAddrSetHandlerInfo) (string, error) {
+func (bnc *BaseNetworkController) podSelectorPodNeedsDelete(pod *corev1.Pod, podHandlerInfo *PodSelectorAddrSetHandlerInfo) (string, error) {
 	if !util.PodCompleted(pod) {
 		return "", nil
 	}
@@ -545,7 +544,7 @@ func (bnc *BaseNetworkController) handleNamespaceAddUpdate(podHandlerInfo *PodSe
 			metrics.RecordPodSelectorAddrSetNamespaceEvent("add", duration)
 		}()
 	}
-	namespace := obj.(*kapi.Namespace)
+	namespace := obj.(*corev1.Namespace)
 	podHandlerInfo.RLock()
 	locked := true
 	defer func() {
@@ -608,7 +607,7 @@ func (bnc *BaseNetworkController) handleNamespaceDel(podHandlerInfo *PodSelector
 	// stop pod handler,
 	// remove the namespaces pods from the address_set
 	var errs []error
-	namespace := obj.(*kapi.Namespace)
+	namespace := obj.(*corev1.Namespace)
 
 	if handler, ok := podHandlerInfo.namespacedPodHandlers.Load(namespace.Name); ok {
 		bnc.watchFactory.RemovePodHandler(handler.(*factory.Handler))

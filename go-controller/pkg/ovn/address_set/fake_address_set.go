@@ -7,12 +7,13 @@ import (
 
 	"github.com/onsi/gomega"
 
-	"github.com/ovn-org/libovsdb/ovsdb"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
+
+	"github.com/ovn-org/libovsdb/ovsdb"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 )
 
 func NewFakeAddressSetFactory(controllerName string) *FakeAddressSetFactory {
@@ -289,7 +290,7 @@ func (f *FakeAddressSetFactory) EventuallyExpectNoAddressSet(dbIDsOrNsName any) 
 
 // ExpectNumberOfAddressSets ensures the number of created address sets equals given number
 func (f *FakeAddressSetFactory) ExpectNumberOfAddressSets(n int) {
-	gomega.Expect(len(f.sets)).To(gomega.Equal(n))
+	gomega.Expect(f.sets).To(gomega.HaveLen(n))
 }
 
 type removeFunc func(string)

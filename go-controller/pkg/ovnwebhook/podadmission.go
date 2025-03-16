@@ -110,7 +110,7 @@ func NewPodAdmissionWebhook(nodeLister listers.NodeLister, podAdmissions []PodAd
 	}
 }
 
-func (p PodAdmission) ValidateCreate(ctx context.Context, obj runtime.Object) (warnings admission.Warnings, err error) {
+func (p PodAdmission) ValidateCreate(_ context.Context, _ runtime.Object) (warnings admission.Warnings, err error) {
 	// Ignore creation, the webhook is configured to only handle pod/status updates
 	return nil, nil
 }

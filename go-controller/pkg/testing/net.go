@@ -2,8 +2,9 @@ package testing
 
 import (
 	"github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
 	"github.com/vishvananda/netlink"
+
+	. "github.com/onsi/gomega"
 )
 
 // AddLink sets up a dummy link for testing networking implementations

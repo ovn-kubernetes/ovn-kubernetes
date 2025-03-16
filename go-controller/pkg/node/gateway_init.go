@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/vishvananda/netlink"
+
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 
@@ -450,7 +451,6 @@ func (nc *DefaultNodeNetworkController) initGatewayMainStart(gw *gateway, waiter
 	if portClaimWatcher != nil {
 		gw.portClaimWatcher = portClaimWatcher
 	}
-	gw.isPodNetworkAdvertised = nc.isPodNetworkAdvertisedAtNode()
 
 	initGwFunc := func() error {
 		return gw.Init(nc.stopChan, nc.wg)
@@ -603,7 +603,7 @@ func (nc *DefaultNodeNetworkController) updateGatewayMAC(link netlink.Link) erro
 		return nil
 	}
 
-	if nc.Gateway.GetGatewayBridgeIface() != link.Attrs().Name {
+	if nc.Gateway.GetGatewayIface() != link.Attrs().Name {
 		return nil
 	}
 

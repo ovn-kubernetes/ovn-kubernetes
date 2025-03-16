@@ -6,14 +6,14 @@ import (
 	"reflect"
 	"sync"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
-
-	kapi "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
 // Constants for valid LocalHost descriptions:
@@ -22,11 +22,11 @@ const (
 	externalPortDescr = "externalIP for"
 )
 
-type handler func(desc string, ip string, port int32, protocol kapi.Protocol, svc *kapi.Service) error
+type handler func(desc string, ip string, port int32, protocol corev1.Protocol, svc *corev1.Service) error
 
 type portManager interface {
-	open(desc string, ip string, port int32, protocol kapi.Protocol, svc *kapi.Service) error
-	close(desc string, ip string, port int32, protocol kapi.Protocol, svc *kapi.Service) error
+	open(desc string, ip string, port int32, protocol corev1.Protocol, svc *corev1.Service) error
+	close(desc string, ip string, port int32, protocol corev1.Protocol, svc *corev1.Service) error
 }
 
 type localPortManager struct {
@@ -37,7 +37,7 @@ type localPortManager struct {
 	portOpener        utilnet.PortOpener
 }
 
-func (p *localPortManager) open(desc string, ip string, port int32, protocol kapi.Protocol, svc *kapi.Service) error {
+func (p *localPortManager) open(desc string, ip string, port int32, protocol corev1.Protocol, svc *corev1.Service) error {
 	klog.V(5).Infof("Opening socket for service: %s/%s, port: %v and protocol %s", svc.Namespace, svc.Name, port, protocol)
 
 	if ip != "" {
@@ -49,9 +49,9 @@ func (p *localPortManager) open(desc string, ip string, port int32, protocol kap
 	var localPort *utilnet.LocalPort
 	var portError error
 	switch protocol {
-	case kapi.ProtocolTCP, kapi.ProtocolUDP:
+	case corev1.ProtocolTCP, corev1.ProtocolUDP:
 		localPort, portError = utilnet.NewLocalPort(desc, ip, "", int(port), utilnet.Protocol(protocol))
-	case kapi.ProtocolSCTP:
+	case corev1.ProtocolSCTP:
 		// Do not open ports for SCTP, ref: https://github.com/kubernetes/enhancements/blob/master/keps/sig-network/0015-20180614-SCTP-support.md#the-solution-in-the-kubernetes-sctp-support-implementation
 		return nil
 	default:
@@ -81,10 +81,10 @@ func (p *localPortManager) open(desc string, ip string, port int32, protocol kap
 	return nil
 }
 
-func (p *localPortManager) close(desc string, ip string, port int32, protocol kapi.Protocol, svc *kapi.Service) error {
+func (p *localPortManager) close(desc string, ip string, port int32, protocol corev1.Protocol, svc *corev1.Service) error {
 	klog.V(5).Infof("Closing socket claimed for service: %s/%s and port: %v", svc.Namespace, svc.Name, port)
 
-	if protocol != kapi.ProtocolTCP && protocol != kapi.ProtocolUDP {
+	if protocol != corev1.ProtocolTCP && protocol != corev1.ProtocolUDP {
 		return nil
 	}
 	if ip != "" {
@@ -115,13 +115,13 @@ func (p *localPortManager) close(desc string, ip string, port int32, protocol ka
 	return nil
 }
 
-func (p *localPortManager) emitPortClaimEvent(svc *kapi.Service, port int32, err error) {
-	serviceRef := kapi.ObjectReference{
+func (p *localPortManager) emitPortClaimEvent(svc *corev1.Service, port int32, err error) {
+	serviceRef := corev1.ObjectReference{
 		Kind:      "Service",
 		Namespace: svc.Namespace,
 		Name:      svc.Name,
 	}
-	p.recorder.Eventf(&serviceRef, kapi.EventTypeWarning,
+	p.recorder.Eventf(&serviceRef, corev1.EventTypeWarning,
 		"PortClaim", "Service: %s/%s requires port: %v to be opened on node, but port cannot be opened, err: %v", svc.Namespace, svc.Name, port, err)
 	klog.Warningf("PortClaim for svc: %s/%s on port: %v, err: %v", svc.Namespace, svc.Name, port, err)
 }
@@ -146,7 +146,7 @@ func newPortClaimWatcher(recorder record.EventRecorder) (*portClaimWatcher, erro
 	}, nil
 }
 
-func (p *portClaimWatcher) AddService(svc *kapi.Service) error {
+func (p *portClaimWatcher) AddService(svc *corev1.Service) error {
 	var errors []error
 	if raw_errors := handleService(svc, p.port.open); len(errors) > 0 {
 		for _, err := range raw_errors {
@@ -156,7 +156,7 @@ func (p *portClaimWatcher) AddService(svc *kapi.Service) error {
 	return utilerrors.Join(errors...)
 }
 
-func (p *portClaimWatcher) UpdateService(old, new *kapi.Service) error {
+func (p *portClaimWatcher) UpdateService(old, new *corev1.Service) error {
 	if reflect.DeepEqual(old.Spec.ExternalIPs, new.Spec.ExternalIPs) && reflect.DeepEqual(old.Spec.Ports, new.Spec.Ports) {
 		return nil
 	}
@@ -171,7 +171,7 @@ func (p *portClaimWatcher) UpdateService(old, new *kapi.Service) error {
 	return utilerrors.Join(errors...)
 }
 
-func (p *portClaimWatcher) DeleteService(svc *kapi.Service) error {
+func (p *portClaimWatcher) DeleteService(svc *corev1.Service) error {
 	var errors []error
 	if raw_errors := handleService(svc, p.port.close); len(raw_errors) > 0 {
 		for _, err := range raw_errors {
@@ -182,11 +182,11 @@ func (p *portClaimWatcher) DeleteService(svc *kapi.Service) error {
 	return nil
 }
 
-func (p *portClaimWatcher) SyncServices(objs []interface{}) error {
+func (p *portClaimWatcher) SyncServices(_ []interface{}) error {
 	return nil
 }
 
-func handleService(svc *kapi.Service, handler handler) []error {
+func handleService(svc *corev1.Service, handler handler) []error {
 	errors := []error{}
 	if !util.ServiceTypeHasNodePort(svc) && len(svc.Spec.ExternalIPs) == 0 {
 		return errors
@@ -215,7 +215,7 @@ func handleService(svc *kapi.Service, handler handler) []error {
 //
 //	for NodePort services            - "nodePort for namespace/name[:portName]
 //	for services with External IPs   - "externalIP for namespace/name[:portName]
-func getDescription(portName string, svc *kapi.Service, nodePort bool) string {
+func getDescription(portName string, svc *corev1.Service, nodePort bool) string {
 	svcName := types.NamespacedName{Namespace: svc.Namespace, Name: svc.Name}
 	prefix := externalPortDescr
 	if nodePort {
@@ -228,7 +228,7 @@ func getDescription(portName string, svc *kapi.Service, nodePort bool) string {
 	}
 }
 
-func handlePort(desc string, svc *kapi.Service, ip string, port int32, protocol kapi.Protocol, handler handler) error {
+func handlePort(desc string, svc *corev1.Service, ip string, port int32, protocol corev1.Protocol, handler handler) error {
 	if err := util.ValidatePort(protocol, port); err != nil {
 		return fmt.Errorf("invalid service port %s, err: %v", svc.Name, err)
 	}

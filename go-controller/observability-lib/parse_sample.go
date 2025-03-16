@@ -13,12 +13,11 @@ import (
 	"syscall"
 	"unsafe"
 
-	"golang.org/x/sys/unix"
-
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netlink/nl"
+	"golang.org/x/sys/unix"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/observability-lib/sampledecoder"
 )

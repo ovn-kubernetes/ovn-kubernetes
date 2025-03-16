@@ -4,7 +4,8 @@ import (
 	"context"
 
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
-	libovsdb "github.com/ovn-org/libovsdb/ovsdb"
+	"github.com/ovn-org/libovsdb/ovsdb"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 )
@@ -22,7 +23,7 @@ func FindQoSesWithPredicate(nbClient libovsdbclient.Client, p QoSPredicate) ([]*
 }
 
 // CreateOrUpdateQoSesOps returns the ops to create or update the provided QoSes.
-func CreateOrUpdateQoSesOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, qoses ...*nbdb.QoS) ([]libovsdb.Operation, error) {
+func CreateOrUpdateQoSesOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, qoses ...*nbdb.QoS) ([]ovsdb.Operation, error) {
 	opModels := make([]operationModel, 0, len(qoses))
 	for i := range qoses {
 		// can't use i in the predicate, for loop replaces it in-memory
@@ -40,7 +41,7 @@ func CreateOrUpdateQoSesOps(nbClient libovsdbclient.Client, ops []libovsdb.Opera
 	return modelClient.CreateOrUpdateOps(ops, opModels...)
 }
 
-func UpdateQoSesOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, qoses ...*nbdb.QoS) ([]libovsdb.Operation, error) {
+func UpdateQoSesOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, qoses ...*nbdb.QoS) ([]ovsdb.Operation, error) {
 	opModels := make([]operationModel, 0, len(qoses))
 	for i := range qoses {
 		// can't use i in the predicate, for loop replaces it in-memory
@@ -59,7 +60,7 @@ func UpdateQoSesOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, qo
 }
 
 // AddQoSesToLogicalSwitchOps returns the ops to add the provided QoSes to the switch
-func AddQoSesToLogicalSwitchOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, name string, qoses ...*nbdb.QoS) ([]libovsdb.Operation, error) {
+func AddQoSesToLogicalSwitchOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, name string, qoses ...*nbdb.QoS) ([]ovsdb.Operation, error) {
 	sw := &nbdb.LogicalSwitch{
 		Name:     name,
 		QOSRules: make([]string, 0, len(qoses)),
@@ -80,7 +81,7 @@ func AddQoSesToLogicalSwitchOps(nbClient libovsdbclient.Client, ops []libovsdb.O
 }
 
 // DeleteQoSesOps returns the ops to delete the provided QoSes.
-func DeleteQoSesOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, qoses ...*nbdb.QoS) ([]libovsdb.Operation, error) {
+func DeleteQoSesOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, qoses ...*nbdb.QoS) ([]ovsdb.Operation, error) {
 	opModels := make([]operationModel, 0, len(qoses))
 	for i := range qoses {
 		// can't use i in the predicate, for loop replaces it in-memory
@@ -98,7 +99,7 @@ func DeleteQoSesOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, qo
 }
 
 // RemoveQoSesFromLogicalSwitchOps returns the ops to remove the provided QoSes from the provided switch.
-func RemoveQoSesFromLogicalSwitchOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, name string, qoses ...*nbdb.QoS) ([]libovsdb.Operation, error) {
+func RemoveQoSesFromLogicalSwitchOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, name string, qoses ...*nbdb.QoS) ([]ovsdb.Operation, error) {
 	sw := &nbdb.LogicalSwitch{
 		Name:     name,
 		QOSRules: make([]string, 0, len(qoses)),

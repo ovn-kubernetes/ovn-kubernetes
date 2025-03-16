@@ -22,8 +22,9 @@ import (
 	"math/big"
 	"net"
 
-	allocator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/bitmap"
 	utilnet "k8s.io/utils/net"
+
+	allocator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/bitmap"
 )
 
 // Interface manages the allocation of IP addresses out of a range. Interface

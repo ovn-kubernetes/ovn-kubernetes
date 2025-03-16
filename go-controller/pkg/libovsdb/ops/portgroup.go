@@ -4,7 +4,8 @@ import (
 	"context"
 
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
-	libovsdb "github.com/ovn-org/libovsdb/ovsdb"
+	"github.com/ovn-org/libovsdb/ovsdb"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 )
@@ -23,7 +24,7 @@ func FindPortGroupsWithPredicate(nbClient libovsdbclient.Client, p portGroupPred
 
 // CreateOrUpdatePortGroupsOps creates or updates the provided port groups
 // returning the corresponding ops
-func CreateOrUpdatePortGroupsOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, pgs ...*nbdb.PortGroup) ([]libovsdb.Operation, error) {
+func CreateOrUpdatePortGroupsOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, pgs ...*nbdb.PortGroup) ([]ovsdb.Operation, error) {
 	opModels := make([]operationModel, 0, len(pgs))
 	for i := range pgs {
 		pg := pgs[i]
@@ -84,7 +85,7 @@ func GetPortGroup(nbClient libovsdbclient.Client, pg *nbdb.PortGroup) (*nbdb.Por
 	return found[0], nil
 }
 
-func AddPortsToPortGroupOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, name string, ports ...string) ([]libovsdb.Operation, error) {
+func AddPortsToPortGroupOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, name string, ports ...string) ([]ovsdb.Operation, error) {
 	if len(ports) == 0 {
 		return ops, nil
 	}
@@ -118,7 +119,7 @@ func AddPortsToPortGroup(nbClient libovsdbclient.Client, name string, ports ...s
 
 // DeletePortsFromPortGroupOps removes the provided ports from the provided port
 // group and returns the corresponding ops
-func DeletePortsFromPortGroupOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, name string, ports ...string) ([]libovsdb.Operation, error) {
+func DeletePortsFromPortGroupOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, name string, ports ...string) ([]ovsdb.Operation, error) {
 	if len(ports) == 0 {
 		return ops, nil
 	}
@@ -153,7 +154,7 @@ func DeletePortsFromPortGroup(nbClient libovsdbclient.Client, name string, ports
 
 // AddACLsToPortGroupOps adds the provided ACLs to the provided port group and
 // returns the corresponding ops
-func AddACLsToPortGroupOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, name string, acls ...*nbdb.ACL) ([]libovsdb.Operation, error) {
+func AddACLsToPortGroupOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, name string, acls ...*nbdb.ACL) ([]ovsdb.Operation, error) {
 	if len(acls) == 0 {
 		return ops, nil
 	}
@@ -181,7 +182,7 @@ func AddACLsToPortGroupOps(nbClient libovsdbclient.Client, ops []libovsdb.Operat
 // UpdatePortGroupSetACLsOps updates the provided ACLs on the provided port group and
 // returns the corresponding ops. It entirely replaces the existing ACLs on the PG with
 // the newly provided list
-func UpdatePortGroupSetACLsOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, name string, acls []*nbdb.ACL) ([]libovsdb.Operation, error) {
+func UpdatePortGroupSetACLsOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, name string, acls []*nbdb.ACL) ([]ovsdb.Operation, error) {
 	pg := nbdb.PortGroup{
 		Name: name,
 		ACLs: make([]string, 0, len(acls)),
@@ -202,7 +203,7 @@ func UpdatePortGroupSetACLsOps(nbClient libovsdbclient.Client, ops []libovsdb.Op
 
 // DeleteACLsFromPortGroupOps removes the provided ACLs from the provided port
 // group and returns the corresponding ops
-func DeleteACLsFromPortGroupOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, name string, acls ...*nbdb.ACL) ([]libovsdb.Operation, error) {
+func DeleteACLsFromPortGroupOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, name string, acls ...*nbdb.ACL) ([]ovsdb.Operation, error) {
 	if len(acls) == 0 {
 		return ops, nil
 	}
@@ -229,7 +230,7 @@ func DeleteACLsFromPortGroupOps(nbClient libovsdbclient.Client, ops []libovsdb.O
 
 func DeleteACLsFromPortGroups(nbClient libovsdbclient.Client, names []string, acls ...*nbdb.ACL) error {
 	var err error
-	var ops []libovsdb.Operation
+	var ops []ovsdb.Operation
 	for _, pgName := range names {
 		ops, err = DeleteACLsFromPortGroupOps(nbClient, ops, pgName, acls...)
 		if err != nil {
@@ -255,7 +256,7 @@ func DeleteACLsFromAllPortGroups(nbClient libovsdbclient.Client, acls ...*nbdb.A
 
 	opModel := operationModel{
 		Model:            &pg,
-		ModelPredicate:   func(item *nbdb.PortGroup) bool { return true },
+		ModelPredicate:   func(_ *nbdb.PortGroup) bool { return true },
 		OnModelMutations: []interface{}{&pg.ACLs},
 		ErrNotFound:      false,
 		BulkOp:           true,
@@ -272,7 +273,7 @@ func DeleteACLsFromAllPortGroups(nbClient libovsdbclient.Client, acls ...*nbdb.A
 
 // DeletePortGroupsOps deletes the provided port groups and returns the
 // corresponding ops
-func DeletePortGroupsOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, names ...string) ([]libovsdb.Operation, error) {
+func DeletePortGroupsOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, names ...string) ([]ovsdb.Operation, error) {
 	opModels := make([]operationModel, 0, len(names))
 	for _, name := range names {
 		pg := nbdb.PortGroup{
@@ -304,7 +305,7 @@ func DeletePortGroups(nbClient libovsdbclient.Client, names ...string) error {
 
 // DeletePortGroupsWithPredicateOps returns the corresponding ops to delete port groups based on
 // a given predicate
-func DeletePortGroupsWithPredicateOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, p portGroupPredicate) ([]libovsdb.Operation, error) {
+func DeletePortGroupsWithPredicateOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, p portGroupPredicate) ([]ovsdb.Operation, error) {
 	deleted := []*nbdb.PortGroup{}
 	opModel := operationModel{
 		ModelPredicate: p,

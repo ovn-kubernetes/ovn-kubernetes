@@ -69,8 +69,6 @@ func (d *DNS) GetIPs(dns string) []net.IP {
 	if res, ok := d.dnsMap[dns]; ok {
 		data.ips = make([]net.IP, len(res.ips))
 		copy(data.ips, res.ips)
-		data.ttl = res.ttl
-		data.nextQueryTime = res.nextQueryTime
 	}
 	return data.ips
 }

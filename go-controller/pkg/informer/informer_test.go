@@ -7,18 +7,18 @@ import (
 	"testing"
 	"time"
 
-	"k8s.io/apimachinery/pkg/util/wait"
-
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-	kapi "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 func TestEventHandler(t *testing.T) {
@@ -26,10 +26,10 @@ func TestEventHandler(t *testing.T) {
 	RunSpecs(t, "Event Handler Suite")
 }
 
-func newPod(name, namespace string) *kapi.Pod {
-	return &kapi.Pod{
-		Status: kapi.PodStatus{
-			Phase: kapi.PodRunning,
+func newPod(name, namespace string) *corev1.Pod {
+	return &corev1.Pod{
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -39,8 +39,8 @@ func newPod(name, namespace string) *kapi.Pod {
 				"name": name,
 			},
 		},
-		Spec: kapi.PodSpec{
-			Containers: []kapi.Container{
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
 				{
 					Name:  "containerName",
 					Image: "containerImage",
@@ -75,13 +75,13 @@ var _ = Describe("Informer Event Handler Tests", func() {
 		deletes := int32(0)
 
 		k := fake.NewSimpleClientset(
-			&kapi.Namespace{
+			&corev1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
 					UID:  types.UID(namespace),
 					Name: namespace,
 				},
-				Spec:   kapi.NamespaceSpec{},
-				Status: kapi.NamespaceStatus{},
+				Spec:   corev1.NamespaceSpec{},
+				Status: corev1.NamespaceStatus{},
 			},
 		)
 
@@ -90,11 +90,11 @@ var _ = Describe("Informer Event Handler Tests", func() {
 		e, err := NewDefaultEventHandler(
 			"test",
 			f.Core().V1().Pods().Informer(),
-			func(obj interface{}) error {
+			func(interface{}) error {
 				atomic.AddInt32(&adds, 1)
 				return nil
 			},
-			func(obj interface{}) error {
+			func(interface{}) error {
 				atomic.AddInt32(&deletes, 1)
 				return nil
 			},
@@ -105,8 +105,9 @@ var _ = Describe("Informer Event Handler Tests", func() {
 		f.Start(stopChan)
 		wg.Add(1)
 		go func() {
+			defer GinkgoRecover()
 			defer wg.Done()
-			e.Run(1, stopChan)
+			Expect(e.Run(1, stopChan)).To(Succeed())
 		}()
 
 		err = wait.PollUntilContextTimeout(
@@ -141,13 +142,13 @@ var _ = Describe("Informer Event Handler Tests", func() {
 		deletes := int32(0)
 
 		k := fake.NewSimpleClientset(
-			&kapi.Namespace{
+			&corev1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
 					UID:  types.UID(namespace),
 					Name: namespace,
 				},
-				Spec:   kapi.NamespaceSpec{},
-				Status: kapi.NamespaceStatus{},
+				Spec:   corev1.NamespaceSpec{},
+				Status: corev1.NamespaceStatus{},
 			},
 		)
 
@@ -156,11 +157,11 @@ var _ = Describe("Informer Event Handler Tests", func() {
 		e, err := NewDefaultEventHandler(
 			"test",
 			f.Core().V1().Pods().Informer(),
-			func(obj interface{}) error {
+			func(interface{}) error {
 				atomic.AddInt32(&adds, 1)
 				return nil
 			},
-			func(obj interface{}) error {
+			func(interface{}) error {
 				atomic.AddInt32(&deletes, 1)
 				return nil
 			},
@@ -171,8 +172,9 @@ var _ = Describe("Informer Event Handler Tests", func() {
 		f.Start(stopChan)
 		wg.Add(1)
 		go func() {
+			defer GinkgoRecover()
 			defer wg.Done()
-			e.Run(1, stopChan)
+			Expect(e.Run(1, stopChan)).To(Succeed())
 		}()
 
 		err = wait.PollUntilContextTimeout(
@@ -212,13 +214,13 @@ var _ = Describe("Informer Event Handler Tests", func() {
 		pod := newPod("foo", namespace)
 		k := fake.NewSimpleClientset(
 			[]runtime.Object{
-				&kapi.Namespace{
+				&corev1.Namespace{
 					ObjectMeta: metav1.ObjectMeta{
 						UID:  types.UID(namespace),
 						Name: namespace,
 					},
-					Spec:   kapi.NamespaceSpec{},
-					Status: kapi.NamespaceStatus{},
+					Spec:   corev1.NamespaceSpec{},
+					Status: corev1.NamespaceStatus{},
 				},
 				pod,
 			}...,
@@ -229,11 +231,11 @@ var _ = Describe("Informer Event Handler Tests", func() {
 		e, err := NewDefaultEventHandler(
 			"test",
 			f.Core().V1().Pods().Informer(),
-			func(obj interface{}) error {
+			func(interface{}) error {
 				atomic.AddInt32(&adds, 1)
 				return nil
 			},
-			func(obj interface{}) error {
+			func(interface{}) error {
 				atomic.AddInt32(&deletes, 1)
 				return nil
 			},
@@ -244,8 +246,9 @@ var _ = Describe("Informer Event Handler Tests", func() {
 		f.Start(stopChan)
 		wg.Add(1)
 		go func() {
+			defer GinkgoRecover()
 			defer wg.Done()
-			e.Run(1, stopChan)
+			Expect(e.Run(1, stopChan)).To(Succeed())
 		}()
 
 		err = wait.PollUntilContextTimeout(
@@ -299,13 +302,13 @@ var _ = Describe("Informer Event Handler Tests", func() {
 		pod := newPod("foo", namespace)
 		k := fake.NewSimpleClientset(
 			[]runtime.Object{
-				&kapi.Namespace{
+				&corev1.Namespace{
 					ObjectMeta: metav1.ObjectMeta{
 						UID:  types.UID(namespace),
 						Name: namespace,
 					},
-					Spec:   kapi.NamespaceSpec{},
-					Status: kapi.NamespaceStatus{},
+					Spec:   corev1.NamespaceSpec{},
+					Status: corev1.NamespaceStatus{},
 				},
 				pod,
 			}...,
@@ -316,11 +319,11 @@ var _ = Describe("Informer Event Handler Tests", func() {
 		e, err := NewDefaultEventHandler(
 			"test",
 			f.Core().V1().Pods().Informer(),
-			func(obj interface{}) error {
+			func(interface{}) error {
 				atomic.AddInt32(&adds, 1)
 				return nil
 			},
-			func(obj interface{}) error {
+			func(interface{}) error {
 				atomic.AddInt32(&deletes, 1)
 				return nil
 			},
@@ -331,8 +334,9 @@ var _ = Describe("Informer Event Handler Tests", func() {
 		f.Start(stopChan)
 		wg.Add(1)
 		go func() {
+			GinkgoRecover()
 			defer wg.Done()
-			e.Run(1, stopChan)
+			Expect(e.Run(1, stopChan)).To(Succeed())
 		}()
 
 		err = wait.PollUntilContextTimeout(
@@ -373,13 +377,13 @@ var _ = Describe("Informer Event Handler Tests", func() {
 
 		k := fake.NewSimpleClientset(
 			[]runtime.Object{
-				&kapi.Namespace{
+				&corev1.Namespace{
 					ObjectMeta: metav1.ObjectMeta{
 						UID:  types.UID(namespace),
 						Name: namespace,
 					},
-					Spec:   kapi.NamespaceSpec{},
-					Status: kapi.NamespaceStatus{},
+					Spec:   corev1.NamespaceSpec{},
+					Status: corev1.NamespaceStatus{},
 				},
 				newPod("foo", namespace),
 			}...,
@@ -390,11 +394,11 @@ var _ = Describe("Informer Event Handler Tests", func() {
 		e, err := NewDefaultEventHandler(
 			"test",
 			f.Core().V1().Pods().Informer(),
-			func(obj interface{}) error {
+			func(interface{}) error {
 				atomic.AddInt32(&adds, 1)
 				return nil
 			},
-			func(obj interface{}) error {
+			func(interface{}) error {
 				atomic.AddInt32(&deletes, 1)
 				return nil
 			},
@@ -405,8 +409,9 @@ var _ = Describe("Informer Event Handler Tests", func() {
 		f.Start(stopChan)
 		wg.Add(1)
 		go func() {
+			GinkgoRecover()
 			defer wg.Done()
-			e.Run(1, stopChan)
+			Expect(e.Run(1, stopChan)).To(Succeed())
 		}()
 
 		err = wait.PollUntilContextTimeout(
@@ -447,13 +452,13 @@ var _ = Describe("Informer Event Handler Tests", func() {
 		pod := newPod("foo", namespace)
 		k := fake.NewSimpleClientset(
 			[]runtime.Object{
-				&kapi.Namespace{
+				&corev1.Namespace{
 					ObjectMeta: metav1.ObjectMeta{
 						UID:  types.UID(namespace),
 						Name: namespace,
 					},
-					Spec:   kapi.NamespaceSpec{},
-					Status: kapi.NamespaceStatus{},
+					Spec:   corev1.NamespaceSpec{},
+					Status: corev1.NamespaceStatus{},
 				},
 				pod,
 			}...,
@@ -464,11 +469,11 @@ var _ = Describe("Informer Event Handler Tests", func() {
 		e, err := NewDefaultEventHandler(
 			"test",
 			f.Core().V1().Pods().Informer(),
-			func(obj interface{}) error {
+			func(interface{}) error {
 				atomic.AddInt32(&adds, 1)
 				return nil
 			},
-			func(obj interface{}) error {
+			func(interface{}) error {
 				atomic.AddInt32(&deletes, 1)
 				return nil
 			},
@@ -479,8 +484,9 @@ var _ = Describe("Informer Event Handler Tests", func() {
 		f.Start(stopChan)
 		wg.Add(1)
 		go func() {
+			GinkgoRecover()
 			defer wg.Done()
-			e.Run(1, stopChan)
+			Expect(e.Run(1, stopChan)).To(Succeed())
 		}()
 
 		err = wait.PollUntilContextTimeout(
@@ -524,10 +530,10 @@ var _ = Describe("Event Handler Internals", func() {
 			informer:       factory.Core().V1().Pods().Informer(),
 			deletedIndexer: cache.NewIndexer(cache.DeletionHandlingMetaNamespaceKeyFunc, cache.Indexers{}),
 			workqueue:      workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
-			add: func(obj interface{}) error {
+			add: func(interface{}) error {
 				return nil
 			},
-			delete: func(obj interface{}) error {
+			delete: func(interface{}) error {
 				return nil
 			},
 			updateFilter: ReceiveAllUpdates,
@@ -548,10 +554,10 @@ var _ = Describe("Event Handler Internals", func() {
 			informer:       factory.Core().V1().Pods().Informer(),
 			deletedIndexer: cache.NewIndexer(cache.DeletionHandlingMetaNamespaceKeyFunc, cache.Indexers{}),
 			workqueue:      workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
-			add: func(obj interface{}) error {
+			add: func(interface{}) error {
 				return nil
 			},
-			delete: func(obj interface{}) error {
+			delete: func(interface{}) error {
 				return nil
 			},
 			updateFilter: ReceiveAllUpdates,
@@ -577,10 +583,10 @@ var _ = Describe("Event Handler Internals", func() {
 			informer:       factory.Core().V1().Pods().Informer(),
 			deletedIndexer: cache.NewIndexer(cache.DeletionHandlingMetaNamespaceKeyFunc, cache.Indexers{}),
 			workqueue:      workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
-			add: func(obj interface{}) error {
+			add: func(interface{}) error {
 				return nil
 			},
-			delete: func(obj interface{}) error {
+			delete: func(interface{}) error {
 				return nil
 			},
 			updateFilter: ReceiveAllUpdates,

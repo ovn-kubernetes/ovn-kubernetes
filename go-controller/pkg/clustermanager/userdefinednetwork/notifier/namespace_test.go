@@ -6,21 +6,20 @@ import (
 	"strconv"
 	"sync"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	netv1fake "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
-	netv1fake "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
-
-	udnv1fake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/fake"
-
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
+	udnv1fake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("NamespaceNotifier", func() {
@@ -116,7 +115,7 @@ var _ = Describe("NamespaceNotifier", func() {
 		ns, err := kubeClient.CoreV1().Namespaces().Get(context.Background(), "test-1", metav1.GetOptions{})
 		Expect(err).NotTo(HaveOccurred())
 		ns.Labels["test.io"] = "example"
-		ns, err = kubeClient.CoreV1().Namespaces().Update(context.Background(), ns, metav1.UpdateOptions{})
+		_, err = kubeClient.CoreV1().Namespaces().Update(context.Background(), ns, metav1.UpdateOptions{})
 		Expect(err).NotTo(HaveOccurred())
 
 		Eventually(func() map[string]int64 {

@@ -7,6 +7,17 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	"github.com/urfave/cli/v2"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	clienttesting "k8s.io/client-go/testing"
+	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
+	anpapi "sigs.k8s.io/network-policy-api/apis/v1alpha1"
+	anpfake "sigs.k8s.io/network-policy-api/pkg/client/clientset/versioned/fake"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -14,16 +25,6 @@ import (
 	anpovn "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/admin_network_policy"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	"github.com/urfave/cli/v2"
-	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	clienttesting "k8s.io/client-go/testing"
-	"k8s.io/klog/v2"
-	utilpointer "k8s.io/utils/pointer"
-	"k8s.io/utils/ptr"
-	anpapi "sigs.k8s.io/network-policy-api/apis/v1alpha1"
-	anpfake "sigs.k8s.io/network-policy-api/pkg/client/clientset/versioned/fake"
 )
 
 var banpLabel = map[string]string{"house": "gryffindor"}
@@ -117,7 +118,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 
 	ginkgo.BeforeEach(func() {
 		// Restore global default values before each testcase
-		config.PrepareTestConfig()
+		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 		config.OVNKubernetesFeature.EnableAdminNetworkPolicy = true
 
 		app = cli.NewApp()
@@ -133,7 +134,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 
 	ginkgo.Context("on baseline admin network policy changes", func() {
 		ginkgo.It("should create/update/delete address-sets, acls, port-groups correctly", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				banpNamespaceSubject := *newNamespaceWithLabels(banpSubjectNamespaceName, anpLabel)
 				banpNamespacePeer := *newNamespaceWithLabels(banpPeerNamespaceName, peerDenyLabel)
 				config.IPv4Mode = true
@@ -156,14 +157,14 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 					},
 				}
 				fakeOVN.startWithDBSetup(dbSetup,
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							banpNamespaceSubject,
 							banpNamespacePeer,
 						},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{
+					&corev1.NodeList{
+						Items: []corev1.Node{
 							*node1,
 						},
 					},
@@ -337,19 +338,19 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 						Ports: &[]anpapi.AdminNetworkPolicyPort{ // test different ports combination
 							{
 								PortNumber: &anpapi.Port{
-									Protocol: v1.ProtocolTCP,
+									Protocol: corev1.ProtocolTCP,
 									Port:     int32(12345),
 								},
 							},
 							{
 								PortNumber: &anpapi.Port{
-									Protocol: v1.ProtocolUDP,
+									Protocol: corev1.ProtocolUDP,
 									Port:     int32(12345),
 								},
 							},
 							{
 								PortNumber: &anpapi.Port{
-									Protocol: v1.ProtocolSCTP,
+									Protocol: corev1.ProtocolSCTP,
 									Port:     int32(12345),
 								},
 							},
@@ -430,19 +431,19 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 						Ports: &[]anpapi.AdminNetworkPolicyPort{ // test different ports combination
 							{
 								PortNumber: &anpapi.Port{
-									Protocol: v1.ProtocolTCP,
+									Protocol: corev1.ProtocolTCP,
 									Port:     int32(12345),
 								},
 							},
 							{
 								PortNumber: &anpapi.Port{
-									Protocol: v1.ProtocolUDP,
+									Protocol: corev1.ProtocolUDP,
 									Port:     int32(12345),
 								},
 							},
 							{
 								PortNumber: &anpapi.Port{
-									Protocol: v1.ProtocolSCTP,
+									Protocol: corev1.ProtocolSCTP,
 									Port:     int32(12345),
 								},
 							},
@@ -622,7 +623,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 
 				ginkgo.By("15. update the subject pod to go into completed state; check if port group is updated")
 				banpSubjectPod.ResourceVersion = "3"
-				banpSubjectPod.Status.Phase = v1.PodSucceeded
+				banpSubjectPod.Status.Phase = corev1.PodSucceeded
 				_, err = fakeOVN.fakeClient.KubeClient.CoreV1().Pods(banpSubjectPod.Namespace).Update(context.TODO(), &banpSubjectPod, metav1.UpdateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				pg = getDefaultPGForANPSubject(banp.Name, nil, newACLs, true) // no ports in PG
@@ -754,7 +755,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		})
 		ginkgo.It("ACL Logging for BANP", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				config.IPv4Mode = true
 				config.IPv6Mode = true
 				fakeOVN.start()
@@ -822,9 +823,9 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 					// update ACL logging information
 					acl.Log = true
 					if acl.Action == nbdb.ACLActionDrop {
-						acl.Severity = utilpointer.String(nbdb.ACLSeverityAlert)
+						acl.Severity = ptr.To(nbdb.ACLSeverityAlert)
 					} else if acl.Action == nbdb.ACLActionAllowRelated {
-						acl.Severity = utilpointer.String(nbdb.ACLSeverityInfo)
+						acl.Severity = ptr.To(nbdb.ACLSeverityInfo)
 					}
 					expectedDatabaseState = append(expectedDatabaseState, acl)
 				}
@@ -848,9 +849,9 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 					// update ACL logging information
 					acl.Log = true
 					if acl.Action == nbdb.ACLActionDrop {
-						acl.Severity = utilpointer.String(nbdb.ACLSeverityWarning)
+						acl.Severity = ptr.To(nbdb.ACLSeverityWarning)
 					} else if acl.Action == nbdb.ACLActionAllowRelated {
-						acl.Severity = utilpointer.String(nbdb.ACLSeverityDebug)
+						acl.Severity = ptr.To(nbdb.ACLSeverityDebug)
 					}
 				}
 				gomega.Eventually(fakeOVN.nbClient).Should(libovsdbtest.HaveDataIgnoringUUIDs(expectedDatabaseState))
@@ -873,7 +874,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		})
 		ginkgo.It("egress node+network peers: should create/update/delete address-sets, acls, port-groups correctly", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				banpNamespaceSubject := *newNamespaceWithLabels(banpSubjectNamespaceName, anpLabel)
 				banpNamespacePeer := *newNamespaceWithLabels(banpPeerNamespaceName, peerDenyLabel)
 				config.IPv4Mode = true
@@ -921,19 +922,19 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 					},
 				}
 				fakeOVN.startWithDBSetup(dbSetup,
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							banpNamespaceSubject,
 							banpNamespacePeer,
 						},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{
+					&corev1.NodeList{
+						Items: []corev1.Node{
 							*node1,
 						},
 					},
-					&v1.PodList{
-						Items: []v1.Pod{
+					&corev1.PodList{
+						Items: []corev1.Pod{
 							anpSubjectPod, // subject pod ("house": "gryffindor")
 							anpPeerPod,    // peer pod ("house": "slytherin")
 						},
@@ -1026,20 +1027,20 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 						Ports: &[]anpapi.AdminNetworkPolicyPort{ // test different ports combination
 							{
 								PortNumber: &anpapi.Port{
-									Protocol: v1.ProtocolTCP,
+									Protocol: corev1.ProtocolTCP,
 									Port:     int32(12345),
 								},
 							},
 							{
 								PortRange: &anpapi.PortRange{
-									Protocol: v1.ProtocolUDP,
+									Protocol: corev1.ProtocolUDP,
 									Start:    int32(12345),
 									End:      int32(65000),
 								},
 							},
 							{
 								PortNumber: &anpapi.Port{
-									Protocol: v1.ProtocolSCTP,
+									Protocol: corev1.ProtocolSCTP,
 									Port:     int32(12345),
 								},
 							},
@@ -1169,7 +1170,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		})
 		ginkgo.It("NamedPort matching pods Rules for BANP", func() {
-			app.Action = func(ctx *cli.Context) error {
+			app.Action = func(*cli.Context) error {
 				config.IPv4Mode = true
 				config.IPv6Mode = true
 				banpSubjectNamespace := *newNamespaceWithLabels(banpSubjectNamespaceName, anpLabel)
@@ -1197,19 +1198,19 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 					`"mac_address":"0a:58:0a:80:01:04","gateway_ips":["10.128.1.1","fe00:10:128:1::1"],"routes":[{"dest":"10.128.1.0/24","nextHop":"10.128.1.1"}],` +
 					`"ip_address":"10.128.1.4/24","gateway_ip":"10.128.1.1"}}`
 				banpPeerPod.Spec.Containers = append(banpPeerPod.Spec.Containers,
-					v1.Container{
+					corev1.Container{
 						Name:  "containerName",
 						Image: "containerImage",
-						Ports: []v1.ContainerPort{
+						Ports: []corev1.ContainerPort{
 							{
 								Name:          "web",
 								ContainerPort: 3535,
-								Protocol:      v1.ProtocolTCP,
+								Protocol:      corev1.ProtocolTCP,
 							},
 							{
 								Name:          "web123",
 								ContainerPort: 35356,
-								Protocol:      v1.ProtocolSCTP,
+								Protocol:      corev1.ProtocolSCTP,
 							},
 						},
 					},
@@ -1230,11 +1231,11 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 				banpSubjectPod.Annotations["k8s.ovn.org/pod-networks"] = `{"default":{"ip_addresses":["10.128.1.3/24","fe00:10:128:1::3/64"],` +
 					`"mac_address":"0a:58:0a:80:01:03","gateway_ips":["10.128.1.1","fe00:10:128:1::1"],"routes":[{"dest":"10.128.1.0/24","nextHop":"10.128.1.1"}],` +
 					`"ip_address":"10.128.1.3/24","gateway_ip":"10.128.1.1"}}`
-				banpSubjectPod.Spec.Containers[0].Ports = []v1.ContainerPort{
+				banpSubjectPod.Spec.Containers[0].Ports = []corev1.ContainerPort{
 					{
 						Name:          "dns",
 						ContainerPort: 5353,
-						Protocol:      v1.ProtocolUDP,
+						Protocol:      corev1.ProtocolUDP,
 					},
 				}
 				dbSetup := libovsdbtest.TestSetup{
@@ -1243,20 +1244,20 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 					},
 				}
 				fakeOVN.startWithDBSetup(dbSetup,
-					&v1.NamespaceList{
-						Items: []v1.Namespace{
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{
 							banpSubjectNamespace,
 							banpNamespacePeer,
 							banpNamespacePeer2,
 						},
 					},
-					&v1.NodeList{
-						Items: []v1.Node{
+					&corev1.NodeList{
+						Items: []corev1.Node{
 							*node1,
 						},
 					},
-					&v1.PodList{
-						Items: []v1.Pod{
+					&corev1.PodList{
+						Items: []corev1.Pod{
 							banpPeerPod, // peer pod ("house": "slytherin")
 						},
 					},
@@ -1303,7 +1304,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 					{
 						PortNumber: &anpapi.Port{
 							Port:     36363,
-							Protocol: v1.ProtocolTCP,
+							Protocol: corev1.ProtocolTCP,
 						},
 					},
 					{
@@ -1313,7 +1314,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 						PortRange: &anpapi.PortRange{
 							Start:    36330,
 							End:      36550,
-							Protocol: v1.ProtocolSCTP,
+							Protocol: corev1.ProtocolSCTP,
 						},
 					},
 					{
@@ -1323,7 +1324,7 @@ var _ = ginkgo.Describe("OVN BANP Operations", func() {
 						PortRange: &anpapi.PortRange{
 							Start:    36330,
 							End:      36550,
-							Protocol: v1.ProtocolUDP,
+							Protocol: corev1.ProtocolUDP,
 						},
 					},
 					{

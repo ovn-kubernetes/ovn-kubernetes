@@ -5,14 +5,16 @@ import (
 	"net"
 	"testing"
 
-	kapi "k8s.io/api/core/v1"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/vishvananda/netlink"
+
+	corev1 "k8s.io/api/core/v1"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	netlink_mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/vishvananda/netlink"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/mocks"
-	"github.com/stretchr/testify/assert"
-	"github.com/vishvananda/netlink"
 )
 
 func TestGetFamily(t *testing.T) {
@@ -36,7 +38,7 @@ func TestGetFamily(t *testing.T) {
 		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
 			res := getFamily(tc.input)
 			t.Log(res)
-			assert.Equal(t, res, tc.outExp)
+			assert.Equal(t, tc.outExp, res)
 		})
 	}
 }
@@ -76,7 +78,7 @@ func TestLinkByName(t *testing.T) {
 			res, err := LinkByName(tc.input)
 			t.Log(res, err)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
 				assert.NotNil(t, res)
 			}
@@ -130,7 +132,7 @@ func TestLinkSetUp(t *testing.T) {
 			res, err := LinkSetUp(tc.input)
 			t.Log(res, err)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
 				assert.NotNil(t, res)
 			}
@@ -231,9 +233,9 @@ func TestLinkAddrFlush(t *testing.T) {
 			err := LinkAddrFlush(tc.input)
 			t.Log(err)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			mockNetLinkOps.AssertExpectations(t)
 			mockLink.AssertExpectations(t)
@@ -304,9 +306,9 @@ func TestLinkAddrExist(t *testing.T) {
 			flag, err := LinkAddrExist(tc.inputLink, tc.inputAddrToMatch)
 			t.Log(flag, err)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			mockNetLinkOps.AssertExpectations(t)
 			mockLink.AssertExpectations(t)
@@ -427,9 +429,9 @@ func TestSyncAddresses(t *testing.T) {
 			err := SyncAddresses(tc.inputLink, tc.inputNewAddrs)
 			t.Log(err)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			mockNetLinkOps.AssertExpectations(t)
 			mockLink.AssertExpectations(t)
@@ -496,9 +498,9 @@ func TestLinkAddrAdd(t *testing.T) {
 			err := LinkAddrAdd(tc.inputLink, tc.inputNewAddr, tc.inputFlags, 0, 0)
 			t.Log(err)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			mockNetLinkOps.AssertExpectations(t)
 			mockLink.AssertExpectations(t)
@@ -634,9 +636,9 @@ func TestLinkRoutesDel(t *testing.T) {
 			err := LinkRoutesDel(tc.inputLink, tc.inputSubnets)
 			t.Log(err)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			mockNetLinkOps.AssertExpectations(t)
 			mockLink.AssertExpectations(t)
@@ -697,9 +699,9 @@ func TestLinkRoutesAdd(t *testing.T) {
 			err := LinkRoutesAdd(tc.inputLink, tc.inputGwIP, tc.inputSubnets, 0, nil)
 			t.Log(err)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			mockNetLinkOps.AssertExpectations(t)
 			mockLink.AssertExpectations(t)
@@ -800,12 +802,12 @@ func TestLinkRouteExists(t *testing.T) {
 			route, err := LinkRouteGetByDstAndGw(tc.inputLink, tc.inputGwIP, tc.inputSubnet)
 			t.Log(route, err)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			if tc.outBoolFlag {
-				assert.True(t, route != nil)
+				assert.NotNil(t, route)
 			}
 			mockNetLinkOps.AssertExpectations(t)
 			mockLink.AssertExpectations(t)
@@ -859,9 +861,9 @@ func TestLinkNeighAdd(t *testing.T) {
 			err := LinkNeighAdd(tc.inputLink, tc.inputNeigIP, tc.inputMacAddr)
 			t.Log(err)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			mockNetLinkOps.AssertExpectations(t)
 			mockLink.AssertExpectations(t)
@@ -957,9 +959,9 @@ func TestLinkNeighExists(t *testing.T) {
 			flag, err := LinkNeighExists(tc.inputLink, tc.inputNeigIP, tc.inputMacAddr)
 			t.Log(flag, err)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			if tc.outBoolFlag {
 				assert.True(t, flag)
@@ -981,7 +983,7 @@ func TestDeleteConntrack(t *testing.T) {
 		errExp                   bool
 		inputIPStr               string
 		inputPort                int32
-		inputProtocol            kapi.Protocol
+		inputProtocol            corev1.Protocol
 		labels                   [][]byte
 		onRetArgsNetLinkLibOpers []ovntest.TestifyMockHelper
 	}{
@@ -1007,7 +1009,7 @@ func TestDeleteConntrack(t *testing.T) {
 		{
 			desc:          "Valid IPv4 address input with UDP protocol",
 			inputIPStr:    "192.168.1.14",
-			inputProtocol: kapi.ProtocolUDP,
+			inputProtocol: corev1.ProtocolUDP,
 			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
 				{OnCallMethodName: "ConntrackDeleteFilter", OnCallMethodArgType: []string{"netlink.ConntrackTableType", "netlink.InetFamily", "*netlink.ConntrackFilter"}, RetArgList: []interface{}{uint(1), nil}},
 			},
@@ -1015,7 +1017,7 @@ func TestDeleteConntrack(t *testing.T) {
 		{
 			desc:          "Valid IPv4 address input with SCTP protocol",
 			inputIPStr:    "192.168.1.14",
-			inputProtocol: kapi.ProtocolSCTP,
+			inputProtocol: corev1.ProtocolSCTP,
 			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
 				{OnCallMethodName: "ConntrackDeleteFilter", OnCallMethodArgType: []string{"netlink.ConntrackTableType", "netlink.InetFamily", "*netlink.ConntrackFilter"}, RetArgList: []interface{}{uint(1), nil}},
 			},
@@ -1023,7 +1025,7 @@ func TestDeleteConntrack(t *testing.T) {
 		{
 			desc:          "Valid IPv4 address input with TCP protocol",
 			inputIPStr:    "192.168.1.14",
-			inputProtocol: kapi.ProtocolTCP,
+			inputProtocol: corev1.ProtocolTCP,
 			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
 				{OnCallMethodName: "ConntrackDeleteFilter", OnCallMethodArgType: []string{"netlink.ConntrackTableType", "netlink.InetFamily", "*netlink.ConntrackFilter"}, RetArgList: []interface{}{uint(1), nil}},
 			},
@@ -1040,7 +1042,7 @@ func TestDeleteConntrack(t *testing.T) {
 		{
 			desc:          "Valid IPv6 address input with valid port input and valid Layer 4 protocol and labels",
 			inputIPStr:    "fffb::1",
-			inputProtocol: kapi.ProtocolSCTP,
+			inputProtocol: corev1.ProtocolSCTP,
 			inputPort:     9999,
 			labels:        [][]byte{{3, 4, 61, 141, 207, 170}, {0x2}},
 			onRetArgsNetLinkLibOpers: []ovntest.TestifyMockHelper{
@@ -1054,9 +1056,9 @@ func TestDeleteConntrack(t *testing.T) {
 
 			err := DeleteConntrack(tc.inputIPStr, tc.inputPort, tc.inputProtocol, netlink.ConntrackReplyAnyIP, tc.labels)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			mockNetLinkOps.AssertExpectations(t)
 		})
@@ -1067,9 +1069,9 @@ func TestDeleteConntrack(t *testing.T) {
 
 			err := DeleteConntrack(tc.inputIPStr, tc.inputPort, tc.inputProtocol, netlink.ConntrackOrigDstIP, tc.labels)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			mockNetLinkOps.AssertExpectations(t)
 		})
@@ -1175,12 +1177,12 @@ func TestGetIPv6OnSubnet(t *testing.T) {
 			ip, err := GetIPv6OnSubnet(tc.inputIface, tc.inputIP)
 			t.Log(ip, err)
 			if tc.errExp {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 			}
 			if tc.expectedIP != nil {
-				assert.Equal(t, ip, tc.expectedIP)
+				assert.Equal(t, tc.expectedIP, ip)
 			}
 			mockNetLinkOps.AssertExpectations(t)
 			mockLink.AssertExpectations(t)
@@ -1262,8 +1264,8 @@ func TestGetMTUOfInterfaceWithAddress(t *testing.T) {
 			ovntest.ProcessMockFnList(&exisitngMockLink.Mock, tc.onRetArgsLinkIfaceOpers)
 
 			_, mtu, err := GetIFNameAndMTUForAddress(tc.interfaceAddress)
-			assert.Equal(t, err != nil, tc.wantError)
-			assert.Equal(t, mtu, tc.wantMTU)
+			assert.Equal(t, tc.wantError, err != nil)
+			assert.Equal(t, tc.wantMTU, mtu)
 			mockNetLinkOps.AssertExpectations(t)
 			exisitngMockLink.AssertExpectations(t)
 		})
@@ -1301,7 +1303,7 @@ func TestIsAddressReservedForInternalUse(t *testing.T) {
 		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
 			res := IsAddressReservedForInternalUse(tc.input)
 			t.Log(res)
-			assert.Equal(t, res, tc.outExp)
+			assert.Equal(t, tc.outExp, res)
 		})
 	}
 }

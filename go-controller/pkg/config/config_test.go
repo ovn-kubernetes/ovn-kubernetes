@@ -2,21 +2,21 @@ package config
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/onsi/gomega"
 	"github.com/urfave/cli/v2"
+
 	kexec "k8s.io/utils/exec"
 
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 
 	. "github.com/onsi/ginkgo/v2"
-	"github.com/onsi/gomega"
 )
 
 func TestConfig(t *testing.T) {
@@ -57,7 +57,7 @@ func writeConfigFile(cfgFile *os.File, randomOptData bool, args ...string) error
 
 		if randomOptData {
 			parts := strings.Split(arg, "=")
-			gomega.Expect(len(parts)).To(gomega.Equal(2))
+			gomega.Expect(parts).To(gomega.HaveLen(2))
 			sections[section] = append(sections[section], parts[0]+"=aklsdjfalsdfkjaslfdkjasfdlksa")
 		} else {
 			sections[section] = append(sections[section], arg)
@@ -117,7 +117,7 @@ var _ = AfterSuite(func() {
 func createTempFile(name string) (string, []byte, error) {
 	fileData := []byte{0x20}
 	fname := filepath.Join(tmpDir, name)
-	if err := ioutil.WriteFile(fname, fileData, 0o644); err != nil {
+	if err := os.WriteFile(fname, fileData, 0o644); err != nil {
 		return "", nil, err
 	}
 	return fname, fileData, nil
@@ -125,7 +125,7 @@ func createTempFile(name string) (string, []byte, error) {
 
 func createTempFileContent(name, value string) (string, error) {
 	fname := filepath.Join(tmpDir, name)
-	if err := ioutil.WriteFile(fname, []byte(value), 0o644); err != nil {
+	if err := os.WriteFile(fname, []byte(value), 0o644); err != nil {
 		return "", err
 	}
 	return fname, nil
@@ -251,7 +251,7 @@ v6-transit-switch-subnet=fd98::/64
 		}
 		newData += line + "\n"
 	}
-	return ioutil.WriteFile(path, []byte(newData), 0o644)
+	return os.WriteFile(path, []byte(newData), 0o644)
 }
 
 var _ = Describe("Config Operations", func() {
@@ -259,7 +259,7 @@ var _ = Describe("Config Operations", func() {
 	var cfgFile *os.File
 
 	var tmpErr error
-	tmpDir, tmpErr = ioutil.TempDir("", "configtest_certdir")
+	tmpDir, tmpErr = os.MkdirTemp("", "configtest_certdir")
 	if tmpErr != nil {
 		GinkgoT().Errorf("failed to create tempdir: %v", tmpErr)
 	}
@@ -274,7 +274,7 @@ var _ = Describe("Config Operations", func() {
 		app.Name = "test"
 		app.Flags = Flags
 
-		cfgFile, err = ioutil.TempFile("", "conftest-")
+		cfgFile, err = os.CreateTemp("", "conftest-")
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	})
 
@@ -324,9 +324,9 @@ var _ = Describe("Config Operations", func() {
 				{ovntest.MustParseIPNet("10.128.0.0/14"), 23},
 			}))
 			gomega.Expect(Default.Zone).To(gomega.Equal("global"))
-			gomega.Expect(IPv4Mode).To(gomega.Equal(true))
-			gomega.Expect(IPv6Mode).To(gomega.Equal(false))
-			gomega.Expect(HybridOverlay.Enabled).To(gomega.Equal(false))
+			gomega.Expect(IPv4Mode).To(gomega.BeTrue())
+			gomega.Expect(IPv6Mode).To(gomega.BeFalse())
+			gomega.Expect(HybridOverlay.Enabled).To(gomega.BeFalse())
 			gomega.Expect(OvnKubeNode.Mode).To(gomega.Equal(types.NodeModeFull))
 			gomega.Expect(OvnKubeNode.MgmtPortNetdev).To(gomega.Equal(""))
 			gomega.Expect(OvnKubeNode.MgmtPortDPResourceName).To(gomega.Equal(""))
@@ -647,12 +647,12 @@ var _ = Describe("Config Operations", func() {
 
 			gomega.Expect(Metrics.BindAddress).To(gomega.Equal("1.1.1.1:8080"))
 			gomega.Expect(Metrics.OVNMetricsBindAddress).To(gomega.Equal("1.1.1.2:8081"))
-			gomega.Expect(Metrics.ExportOVSMetrics).To(gomega.Equal(true))
-			gomega.Expect(Metrics.EnablePprof).To(gomega.Equal(true))
+			gomega.Expect(Metrics.ExportOVSMetrics).To(gomega.BeTrue())
+			gomega.Expect(Metrics.EnablePprof).To(gomega.BeTrue())
 			gomega.Expect(Metrics.NodeServerPrivKey).To(gomega.Equal("/path/to/node-metrics-private.key"))
 			gomega.Expect(Metrics.NodeServerCert).To(gomega.Equal("/path/to/node-metrics.crt"))
-			gomega.Expect(Metrics.EnableConfigDuration).To(gomega.Equal(true))
-			gomega.Expect(Metrics.EnableScaleMetrics).To(gomega.Equal(true))
+			gomega.Expect(Metrics.EnableConfigDuration).To(gomega.BeTrue())
+			gomega.Expect(Metrics.EnableScaleMetrics).To(gomega.BeTrue())
 
 			gomega.Expect(OvnNorth.Scheme).To(gomega.Equal(OvnDBSchemeSSL))
 			gomega.Expect(OvnNorth.PrivKey).To(gomega.Equal("/path/to/nb-client-private.key"))
@@ -757,12 +757,12 @@ var _ = Describe("Config Operations", func() {
 
 			gomega.Expect(Metrics.BindAddress).To(gomega.Equal("2.2.2.2:8080"))
 			gomega.Expect(Metrics.OVNMetricsBindAddress).To(gomega.Equal("2.2.2.3:8081"))
-			gomega.Expect(Metrics.ExportOVSMetrics).To(gomega.Equal(true))
-			gomega.Expect(Metrics.EnablePprof).To(gomega.Equal(true))
+			gomega.Expect(Metrics.ExportOVSMetrics).To(gomega.BeTrue())
+			gomega.Expect(Metrics.EnablePprof).To(gomega.BeTrue())
 			gomega.Expect(Metrics.NodeServerPrivKey).To(gomega.Equal("/tls/nodeprivkey"))
 			gomega.Expect(Metrics.NodeServerCert).To(gomega.Equal("/tls/nodecert"))
-			gomega.Expect(Metrics.EnableConfigDuration).To(gomega.Equal(true))
-			gomega.Expect(Metrics.EnableScaleMetrics).To(gomega.Equal(true))
+			gomega.Expect(Metrics.EnableConfigDuration).To(gomega.BeTrue())
+			gomega.Expect(Metrics.EnableScaleMetrics).To(gomega.BeTrue())
 
 			gomega.Expect(OvnNorth.Scheme).To(gomega.Equal(OvnDBSchemeSSL))
 			gomega.Expect(OvnNorth.PrivKey).To(gomega.Equal("/client/privkey"))
@@ -887,7 +887,7 @@ var _ = Describe("Config Operations", func() {
 	})
 
 	It("overrides config file and defaults with CLI legacy service-cluster-ip-range option", func() {
-		err := ioutil.WriteFile(cfgFile.Name(), []byte(`[kubernetes]
+		err := os.WriteFile(cfgFile.Name(), []byte(`[kubernetes]
 service-cidrs=172.18.0.0/24
 `), 0o644)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -910,7 +910,7 @@ service-cidrs=172.18.0.0/24
 	})
 
 	It("accepts legacy service-cidr config file option", func() {
-		err := ioutil.WriteFile(cfgFile.Name(), []byte(`[kubernetes]
+		err := os.WriteFile(cfgFile.Name(), []byte(`[kubernetes]
 service-cidr=172.18.0.0/24
 `), 0o644)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -946,7 +946,7 @@ service-cidr=172.18.0.0/24
 	})
 
 	It("overrides config file and defaults with CLI legacy cluster-subnet option", func() {
-		err := ioutil.WriteFile(cfgFile.Name(), []byte(`[default]
+		err := os.WriteFile(cfgFile.Name(), []byte(`[default]
 cluster-subnets=172.18.0.0/23
 `), 0o644)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -959,8 +959,8 @@ cluster-subnets=172.18.0.0/23
 			gomega.Expect(Default.ClusterSubnets).To(gomega.Equal([]CIDRNetworkEntry{
 				{ovntest.MustParseIPNet("172.15.0.0/23"), 24},
 			}))
-			gomega.Expect(IPv4Mode).To(gomega.Equal(true))
-			gomega.Expect(IPv6Mode).To(gomega.Equal(false))
+			gomega.Expect(IPv4Mode).To(gomega.BeTrue())
+			gomega.Expect(IPv6Mode).To(gomega.BeFalse())
 			return nil
 		}
 		cliArgs := []string{
@@ -1002,7 +1002,7 @@ cluster-subnets=172.18.0.0/23
 	})
 
 	It("overrides config file and defaults with CLI legacy --init-gateways option", func() {
-		err := ioutil.WriteFile(cfgFile.Name(), []byte(`[gateway]
+		err := os.WriteFile(cfgFile.Name(), []byte(`[gateway]
 mode=local
 `), 0o644)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1025,7 +1025,7 @@ mode=local
 	})
 
 	It("overrides config file and defaults with CLI legacy --gateway-local option", func() {
-		err := ioutil.WriteFile(cfgFile.Name(), []byte(`[gateway]
+		err := os.WriteFile(cfgFile.Name(), []byte(`[gateway]
 mode=shared
 `), 0o644)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1049,7 +1049,7 @@ mode=shared
 	})
 
 	It("honors legacy [kubernetes] metrics config file options", func() {
-		err := ioutil.WriteFile(cfgFile.Name(), []byte(`[kubernetes]
+		err := os.WriteFile(cfgFile.Name(), []byte(`[kubernetes]
 metrics-bind-address=1.1.1.1:8080
 ovn-metrics-bind-address=1.1.1.2:8081
 metrics-enable-pprof=true
@@ -1063,7 +1063,7 @@ metrics-enable-pprof=true
 			gomega.Expect(cfgPath).To(gomega.Equal(cfgFile.Name()))
 			gomega.Expect(Metrics.BindAddress).To(gomega.Equal("1.1.1.1:8080"))
 			gomega.Expect(Metrics.OVNMetricsBindAddress).To(gomega.Equal("1.1.1.2:8081"))
-			gomega.Expect(Metrics.EnablePprof).To(gomega.Equal(true))
+			gomega.Expect(Metrics.EnablePprof).To(gomega.BeTrue())
 			return nil
 		}
 		cliArgs := []string{
@@ -1075,7 +1075,7 @@ metrics-enable-pprof=true
 	})
 
 	It("overrides legacy [kubernetes] metrics config file options with [metrics] ones", func() {
-		err := ioutil.WriteFile(cfgFile.Name(), []byte(`[kubernetes]
+		err := os.WriteFile(cfgFile.Name(), []byte(`[kubernetes]
 metrics-bind-address=1.1.1.1:8080
 ovn-metrics-bind-address=1.1.1.2:8081
 metrics-enable-pprof=false
@@ -1094,7 +1094,7 @@ enable-pprof=true
 			gomega.Expect(cfgPath).To(gomega.Equal(cfgFile.Name()))
 			gomega.Expect(Metrics.BindAddress).To(gomega.Equal("2.2.2.2:8080"))
 			gomega.Expect(Metrics.OVNMetricsBindAddress).To(gomega.Equal("2.2.2.3:8081"))
-			gomega.Expect(Metrics.EnablePprof).To(gomega.Equal(true))
+			gomega.Expect(Metrics.EnablePprof).To(gomega.BeTrue())
 			return nil
 		}
 		cliArgs := []string{
@@ -1418,8 +1418,8 @@ enable-pprof=true
 		app.Action = func(ctx *cli.Context) error {
 			_, err := InitConfig(ctx, kexec.New(), nil)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(IPv4Mode).To(gomega.Equal(false))
-			gomega.Expect(IPv6Mode).To(gomega.Equal(true))
+			gomega.Expect(IPv4Mode).To(gomega.BeFalse())
+			gomega.Expect(IPv6Mode).To(gomega.BeTrue())
 			return nil
 		}
 		cliArgs := []string{
@@ -1435,8 +1435,8 @@ enable-pprof=true
 		app.Action = func(ctx *cli.Context) error {
 			_, err := InitConfig(ctx, kexec.New(), nil)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(IPv4Mode).To(gomega.Equal(true))
-			gomega.Expect(IPv6Mode).To(gomega.Equal(true))
+			gomega.Expect(IPv4Mode).To(gomega.BeTrue())
+			gomega.Expect(IPv6Mode).To(gomega.BeTrue())
 			return nil
 		}
 		cliArgs := []string{
@@ -1452,8 +1452,8 @@ enable-pprof=true
 		app.Action = func(ctx *cli.Context) error {
 			_, err := InitConfig(ctx, kexec.New(), nil)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(IPv4Mode).To(gomega.Equal(true))
-			gomega.Expect(IPv6Mode).To(gomega.Equal(true))
+			gomega.Expect(IPv4Mode).To(gomega.BeTrue())
+			gomega.Expect(IPv6Mode).To(gomega.BeTrue())
 			return nil
 		}
 		cliArgs := []string{
@@ -1558,7 +1558,7 @@ enable-pprof=true
 	})
 
 	It("ignores unknown fields in config file and does not return an error", func() {
-		err := ioutil.WriteFile(cfgFile.Name(), []byte(`[default]
+		err := os.WriteFile(cfgFile.Name(), []byte(`[default]
 key=value
 mtu=1234
 
@@ -1588,7 +1588,7 @@ foo=bar
 	})
 
 	It("rejects a config with invalid syntax", func() {
-		err := ioutil.WriteFile(cfgFile.Name(), []byte(`[default]
+		err := os.WriteFile(cfgFile.Name(), []byte(`[default]
 mtu=1234
 
 [foobar
@@ -1611,7 +1611,7 @@ foo=bar
 	})
 
 	It("rejects a config with invalid udn allowed services", func() {
-		err := ioutil.WriteFile(cfgFile.Name(), []byte(`[default]
+		err := os.WriteFile(cfgFile.Name(), []byte(`[default]
 udn-allowed-default-services=namespace/invalid.name,test
 `), 0o644)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1631,7 +1631,7 @@ udn-allowed-default-services=namespace/invalid.name,test
 	})
 
 	It("accepts a config with valid udn allowed services", func() {
-		err := ioutil.WriteFile(cfgFile.Name(), []byte(`[default]
+		err := os.WriteFile(cfgFile.Name(), []byte(`[default]
 udn-allowed-default-services= ns/svc, ns1/svc1
 `), 0o644)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1933,7 +1933,7 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 					Mode: types.NodeModeDPU,
 				},
 			}
-			err := buildOvnKubeNodeConfig(nil, &cliConfig, &file)
+			err := buildOvnKubeNodeConfig(&cliConfig, &file)
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 			gomega.Expect(OvnKubeNode.Mode).To(gomega.Equal(types.NodeModeDPU))
 		})
@@ -1946,7 +1946,7 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 					MgmtPortDPResourceName: "openshift.io/mgmtvf",
 				},
 			}
-			err := buildOvnKubeNodeConfig(nil, &cliConfig, &config{})
+			err := buildOvnKubeNodeConfig(&cliConfig, &config{})
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 			gomega.Expect(OvnKubeNode.Mode).To(gomega.Equal(types.NodeModeDPUHost))
 			gomega.Expect(OvnKubeNode.MgmtPortNetdev).To(gomega.Equal("enp1s0f0v0"))
@@ -1959,7 +1959,7 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 					Mode: "invalid",
 				},
 			}
-			err := buildOvnKubeNodeConfig(nil, &cliConfig, &config{})
+			err := buildOvnKubeNodeConfig(&cliConfig, &config{})
 			gomega.Expect(err).To(gomega.HaveOccurred())
 			gomega.Expect(err.Error()).To(gomega.ContainSubstring("unexpected ovnkube-node-mode"))
 		})
@@ -1971,7 +1971,7 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 					Mode: types.NodeModeDPU,
 				},
 			}
-			err := buildOvnKubeNodeConfig(nil, &cliConfig, &config{})
+			err := buildOvnKubeNodeConfig(&cliConfig, &config{})
 			gomega.Expect(err).To(gomega.HaveOccurred())
 			gomega.Expect(err.Error()).To(gomega.ContainSubstring(
 				"hybrid overlay is not supported with ovnkube-node mode"))
@@ -1984,7 +1984,7 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 					MgmtPortNetdev: "enp1s0f0v0",
 				},
 			}
-			err := buildOvnKubeNodeConfig(nil, &cliConfig, &config{})
+			err := buildOvnKubeNodeConfig(&cliConfig, &config{})
 			gomega.Expect(err).To(gomega.HaveOccurred())
 			gomega.Expect(err.Error()).To(gomega.ContainSubstring("ovnkube-node-mgmt-port-netdev or ovnkube-node-mgmt-port-dp-resource-name must not be provided"))
 		})
@@ -1995,7 +1995,7 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 					Mode: types.NodeModeDPUHost,
 				},
 			}
-			err := buildOvnKubeNodeConfig(nil, &cliConfig, &config{})
+			err := buildOvnKubeNodeConfig(&cliConfig, &config{})
 			gomega.Expect(err).To(gomega.HaveOccurred())
 			gomega.Expect(err.Error()).To(gomega.ContainSubstring("ovnkube-node-mgmt-port-netdev or ovnkube-node-mgmt-port-dp-resource-name must be provided"))
 		})
@@ -2012,7 +2012,7 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 					Mode: types.NodeModeFull,
 				},
 			}
-			err := buildOvnKubeNodeConfig(nil, &cliConfig, &file)
+			err := buildOvnKubeNodeConfig(&cliConfig, &file)
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		})
 
@@ -2028,7 +2028,7 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 					Mode: types.NodeModeFull,
 				},
 			}
-			err := buildOvnKubeNodeConfig(nil, &cliConfig, &file)
+			err := buildOvnKubeNodeConfig(&cliConfig, &file)
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		})
 	})

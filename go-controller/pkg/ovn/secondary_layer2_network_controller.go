@@ -10,10 +10,14 @@ import (
 	"sync"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/klog/v2"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/pod"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kubevirt"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -28,9 +32,6 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
-
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/klog/v2"
 )
 
 // method/structure shared by all layer 2 network controller, including localnet and layer2 network controllres.
@@ -88,7 +89,7 @@ func (h *secondaryLayer2NetworkControllerEventHandler) RecordSuccessEvent(obj in
 }
 
 // RecordErrorEvent records the error event on this given object.
-func (h *secondaryLayer2NetworkControllerEventHandler) RecordErrorEvent(obj interface{}, reason string, err error) {
+func (h *secondaryLayer2NetworkControllerEventHandler) RecordErrorEvent(_ interface{}, _ string, _ error) {
 }
 
 // IsResourceScheduled returns true if the given object has been scheduled.
@@ -112,9 +113,18 @@ func (h *secondaryLayer2NetworkControllerEventHandler) AddResource(obj interface
 			if fromRetryLoop {
 				_, syncMgmtPort := h.oc.mgmtPortFailed.Load(node.Name)
 				_, syncGw := h.oc.gatewaysFailed.Load(node.Name)
-				nodeParams = &nodeSyncs{syncMgmtPort: syncMgmtPort, syncGw: syncGw}
+				_, syncReroute := h.oc.syncEIPNodeRerouteFailed.Load(node.Name)
+				nodeParams = &nodeSyncs{
+					syncMgmtPort: syncMgmtPort,
+					syncGw:       syncGw,
+					syncReroute:  syncReroute,
+				}
 			} else {
-				nodeParams = &nodeSyncs{syncMgmtPort: true, syncGw: true}
+				nodeParams = &nodeSyncs{
+					syncMgmtPort: true,
+					syncGw:       true,
+					syncReroute:  true,
+				}
 			}
 			return h.oc.addUpdateLocalNodeEvent(node, nodeParams)
 		}
@@ -156,27 +166,34 @@ func (h *secondaryLayer2NetworkControllerEventHandler) UpdateResource(oldObj, ne
 			return fmt.Errorf("could not cast oldObj of type %T to *kapi.Node", oldObj)
 		}
 		newNodeIsLocalZoneNode := h.oc.isLocalZoneNode(newNode)
-		nodeSubnetChanged := nodeSubnetChanged(oldNode, newNode, h.oc.GetNetworkName())
+		nodeSubnetChange := nodeSubnetChanged(oldNode, newNode, h.oc.GetNetworkName())
 		if newNodeIsLocalZoneNode {
 			var nodeSyncsParam *nodeSyncs
 			if h.oc.isLocalZoneNode(oldNode) {
 				// determine what actually changed in this update and combine that with what failed previously
 				_, mgmtUpdateFailed := h.oc.mgmtPortFailed.Load(newNode.Name)
-				shouldSyncMgmtPort := mgmtUpdateFailed ||
-					macAddressChanged(oldNode, newNode, h.oc.GetNetworkName()) ||
-					nodeSubnetChanged
+				shouldSyncMgmtPort := mgmtUpdateFailed || nodeSubnetChange
 				_, gwUpdateFailed := h.oc.gatewaysFailed.Load(newNode.Name)
 				shouldSyncGW := gwUpdateFailed ||
 					gatewayChanged(oldNode, newNode) ||
 					hostCIDRsChanged(oldNode, newNode) ||
 					nodeGatewayMTUSupportChanged(oldNode, newNode)
-
-				nodeSyncsParam = &nodeSyncs{syncMgmtPort: shouldSyncMgmtPort, syncGw: shouldSyncGW}
+				_, syncRerouteFailed := h.oc.syncEIPNodeRerouteFailed.Load(newNode.Name)
+				shouldSyncReroute := syncRerouteFailed || util.NodeHostCIDRsAnnotationChanged(oldNode, newNode)
+				nodeSyncsParam = &nodeSyncs{
+					syncMgmtPort: shouldSyncMgmtPort,
+					syncGw:       shouldSyncGW,
+					syncReroute:  shouldSyncReroute,
+				}
 			} else {
 				klog.Infof("Node %s moved from the remote zone %s to local zone %s.",
 					newNode.Name, util.GetNodeZone(oldNode), util.GetNodeZone(newNode))
 				// The node is now a local zone node. Trigger a full node sync.
-				nodeSyncsParam = &nodeSyncs{syncMgmtPort: true, syncGw: true}
+				nodeSyncsParam = &nodeSyncs{
+					syncMgmtPort: true,
+					syncGw:       true,
+					syncReroute:  true,
+				}
 			}
 
 			return h.oc.addUpdateLocalNodeEvent(newNode, nodeSyncsParam)
@@ -184,6 +201,17 @@ func (h *secondaryLayer2NetworkControllerEventHandler) UpdateResource(oldObj, ne
 			_, syncZoneIC := h.oc.syncZoneICFailed.Load(newNode.Name)
 			return h.oc.addUpdateRemoteNodeEvent(newNode, syncZoneIC)
 		}
+	case factory.PodType:
+		newPod := newObj.(*corev1.Pod)
+		oldPod := oldObj.(*corev1.Pod)
+		if err := h.oc.ensurePodForSecondaryNetwork(newPod, shouldAddPort(oldPod, newPod, inRetryCache)); err != nil {
+			return err
+		}
+
+		if h.oc.isPodScheduledinLocalZone(newPod) {
+			return h.oc.updateLocalPodEvent(newPod)
+		}
+		return nil
 	default:
 		return h.oc.UpdateSecondaryNetworkResourceCommon(h.objType, oldObj, newObj, inRetryCache)
 	}
@@ -237,9 +265,10 @@ type SecondaryLayer2NetworkController struct {
 	BaseSecondaryLayer2NetworkController
 
 	// Node-specific syncMaps used by node event handler
-	mgmtPortFailed   sync.Map
-	gatewaysFailed   sync.Map
-	syncZoneICFailed sync.Map
+	mgmtPortFailed           sync.Map
+	gatewaysFailed           sync.Map
+	syncZoneICFailed         sync.Map
+	syncEIPNodeRerouteFailed sync.Map
 
 	// Cluster-wide router default Control Plane Protection (COPP) UUID
 	defaultCOPPUUID string
@@ -361,7 +390,7 @@ func NewSecondaryLayer2NetworkController(
 }
 
 // Start starts the secondary layer2 controller, handles all events and creates all needed logical entities
-func (oc *SecondaryLayer2NetworkController) Start(ctx context.Context) error {
+func (oc *SecondaryLayer2NetworkController) Start(_ context.Context) error {
 	klog.Infof("Starting controller for secondary network %s", oc.GetNetworkName())
 
 	start := time.Now()
@@ -369,7 +398,7 @@ func (oc *SecondaryLayer2NetworkController) Start(ctx context.Context) error {
 		klog.Infof("Starting controller for secondary network %s took %v", oc.GetNetworkName(), time.Since(start))
 	}()
 
-	if err := oc.Init(); err != nil {
+	if err := oc.init(); err != nil {
 		return err
 	}
 
@@ -431,7 +460,7 @@ func (oc *SecondaryLayer2NetworkController) Cleanup() error {
 	return nil
 }
 
-func (oc *SecondaryLayer2NetworkController) Init() error {
+func (oc *SecondaryLayer2NetworkController) init() error {
 	// Create default Control Plane Protection (COPP) entry for routers
 	defaultCOPPUUID, err := EnsureDefaultCOPP(oc.nbClient)
 	if err != nil {
@@ -475,6 +504,13 @@ func (oc *SecondaryLayer2NetworkController) Init() error {
 func (oc *SecondaryLayer2NetworkController) Stop() {
 	klog.Infof("Stoping controller for secondary network %s", oc.GetNetworkName())
 	oc.BaseSecondaryLayer2NetworkController.stop()
+}
+
+func (oc *SecondaryLayer2NetworkController) Reconcile(netInfo util.NetInfo) error {
+	return oc.BaseNetworkController.reconcile(
+		netInfo,
+		func(node string) { oc.gatewaysFailed.Store(node, true) },
+	)
 }
 
 func (oc *SecondaryLayer2NetworkController) initRetryFramework() {
@@ -544,14 +580,13 @@ func (oc *SecondaryLayer2NetworkController) addUpdateLocalNodeEvent(node *corev1
 					nil,
 					gwConfig.hostSubnets,
 					gwConfig.gwLRPJoinIPs, // the joinIP allocated to this node for this controller's network
-					oc.SCTPSupport,
-					nil, // no need for ovnClusterLRPToJoinIfAddrs
+					nil,                   // no need for ovnClusterLRPToJoinIfAddrs
 					gwConfig.externalIPs,
 				); err != nil {
 					errs = append(errs, err)
 					oc.gatewaysFailed.Store(node.Name, true)
 				} else {
-					if err := oc.addUDNClusterSubnetEgressSNAT(gwConfig.hostSubnets, gwManager.gwRouterName, node); err != nil {
+					if err := oc.addUDNClusterSubnetEgressSNAT(gwConfig.hostSubnets, gwManager.gwRouterName); err != nil {
 						errs = append(errs, err)
 						oc.gatewaysFailed.Store(node.Name, true)
 					} else {
@@ -579,12 +614,20 @@ func (oc *SecondaryLayer2NetworkController) addUpdateLocalNodeEvent(node *corev1
 			}
 		}
 
-		if config.OVNKubernetesFeature.EnableEgressIP {
+		if config.OVNKubernetesFeature.EnableEgressIP && nSyncs.syncReroute {
+			rerouteFailed := false
 			if err := oc.eIPController.ensureRouterPoliciesForNetwork(oc.GetNetInfo()); err != nil {
 				errs = append(errs, fmt.Errorf("failed to ensure EgressIP router policies for network %s: %v", oc.GetNetworkName(), err))
+				rerouteFailed = true
 			}
 			if err := oc.eIPController.ensureSwitchPoliciesForNode(oc.GetNetInfo(), node.Name); err != nil {
 				errs = append(errs, fmt.Errorf("failed to ensure EgressIP switch policies for network %s: %v", oc.GetNetworkName(), err))
+				rerouteFailed = true
+			}
+			if rerouteFailed {
+				oc.syncEIPNodeRerouteFailed.Store(node.Name, true)
+			} else {
+				oc.syncEIPNodeRerouteFailed.Delete(node.Name)
 			}
 		}
 	}
@@ -682,6 +725,7 @@ func (oc *SecondaryLayer2NetworkController) deleteNodeEvent(node *corev1.Node) e
 	oc.gatewayManagers.Delete(node.Name)
 	oc.localZoneNodes.Delete(node.Name)
 	oc.mgmtPortFailed.Delete(node.Name)
+	oc.syncEIPNodeRerouteFailed.Delete(node.Name)
 	return nil
 }
 
@@ -695,9 +739,9 @@ func (oc *SecondaryLayer2NetworkController) deleteNodeEvent(node *corev1.Node) e
 // externalIP = "169.254.0.12"; which is the masqueradeIP for this L2 UDN
 // so all in all we want to condionally SNAT all packets that are coming from pods hosted on this node,
 // which are leaving via UDN's mpX interface to the UDN's masqueradeIP.
-func (oc *SecondaryLayer2NetworkController) addUDNClusterSubnetEgressSNAT(localPodSubnets []*net.IPNet, routerName string, node *corev1.Node) error {
+func (oc *SecondaryLayer2NetworkController) addUDNClusterSubnetEgressSNAT(localPodSubnets []*net.IPNet, routerName string) error {
 	outputPort := types.GWRouterToJoinSwitchPrefix + routerName
-	nats, err := oc.buildUDNEgressSNAT(localPodSubnets, outputPort, node)
+	nats, err := oc.buildUDNEgressSNAT(localPodSubnets, outputPort)
 	if err != nil {
 		return err
 	}
@@ -728,10 +772,7 @@ func (oc *SecondaryLayer2NetworkController) nodeGatewayConfig(node *corev1.Node)
 	}
 
 	networkName := oc.GetNetworkName()
-	networkID, err := oc.getNetworkID()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get networkID for network %q: %v", networkName, err)
-	}
+	networkID := oc.GetNetworkID()
 
 	masqIPs, err := udn.GetUDNGatewayMasqueradeIPs(networkID)
 	if err != nil {
@@ -821,6 +862,36 @@ func (oc *SecondaryLayer2NetworkController) StartServiceController(wg *sync.Wait
 	err := oc.svcController.Run(5, oc.stopChan, wg, runRepair, useLBGroups, false)
 	if err != nil {
 		return fmt.Errorf("error running OVN Kubernetes Services controller for network %s: %v", oc.GetNetworkName(), err)
+	}
+	return nil
+}
+
+func (oc *SecondaryLayer2NetworkController) updateLocalPodEvent(pod *corev1.Pod) error {
+	if kubevirt.IsPodAllowedForMigration(pod, oc.GetNetInfo()) {
+		kubevirtLiveMigrationStatus, err := kubevirt.DiscoverLiveMigrationStatus(oc.watchFactory, pod)
+		if err != nil {
+			return err
+		}
+		if kubevirtLiveMigrationStatus != nil && kubevirtLiveMigrationStatus.TargetPod.Name == pod.Name {
+			if err := oc.reconcileLiveMigrationTargetZone(kubevirtLiveMigrationStatus); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (oc *SecondaryLayer2NetworkController) reconcileLiveMigrationTargetZone(kubevirtLiveMigrationStatus *kubevirt.LiveMigrationStatus) error {
+	// Only primary networks has a gateway to reconcile
+	if !oc.IsPrimaryNetwork() {
+		return nil
+	}
+	mgmtInterfaceName := util.GetNetworkScopedK8sMgmtHostIntfName(uint(oc.GetNetworkID()))
+
+	if hasIPv4Subnet, _ := oc.IPMode(); hasIPv4Subnet {
+		if err := kubevirt.ReconcileIPv4DefaultGatewayAfterLiveMigration(oc.watchFactory, oc.GetNetInfo(), kubevirtLiveMigrationStatus, mgmtInterfaceName); err != nil {
+			return err
+		}
 	}
 	return nil
 }

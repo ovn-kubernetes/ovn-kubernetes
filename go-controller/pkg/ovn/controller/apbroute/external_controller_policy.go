@@ -5,7 +5,7 @@ import (
 	"net"
 	"strings"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -221,7 +221,7 @@ func (m *externalPolicyManager) updateRoutePolicy(existingPolicy *routePolicySta
 }
 
 // applyPodConfig applies the gateway IPs derived from the processed policy to a pod and updates existingPodConfig.
-func (m *externalPolicyManager) applyPodConfig(pod *v1.Pod, existingPodConfig *podInfo, updatedPolicy *routePolicyConfig) error {
+func (m *externalPolicyManager) applyPodConfig(pod *corev1.Pod, existingPodConfig *podInfo, updatedPolicy *routePolicyConfig) error {
 	// update static gw
 	gwsToAdd := gateway_info.NewGatewayInfoList()
 	for _, newGW := range updatedPolicy.staticGateways.Elems() {
@@ -410,14 +410,14 @@ func (m *externalPolicyManager) getPolicyConfigAndUpdatePolicyRefs(policy *admin
 	}
 
 	targetNsNames := sets.Set[string]{}
-	targetNamespaces := map[string]map[ktypes.NamespacedName]*v1.Pod{}
+	targetNamespaces := map[string]map[ktypes.NamespacedName]*corev1.Pod{}
 	for _, ns := range targetNs {
 		targetNsNames.Insert(ns.Name)
 		targetPods, err := m.podLister.Pods(ns.Name).List(labels.Everything())
 		if err != nil {
 			return nil, fmt.Errorf("failed to get all ns %s pods: %v", ns.Name, err)
 		}
-		podsMap := map[ktypes.NamespacedName]*v1.Pod{}
+		podsMap := map[ktypes.NamespacedName]*corev1.Pod{}
 		for _, pod := range targetPods {
 			// Ignore completed pods, host networked pods, pods not scheduled or pods without a status IP
 			if util.PodWantsHostNetwork(pod) || util.PodCompleted(pod) || !util.PodScheduled(pod) || len(pod.Status.PodIPs) == 0 {
@@ -461,6 +461,6 @@ func (m *externalPolicyManager) deletePolicyRefObjects(policyName string) {
 	delete(m.policyReferencedObjects, policyName)
 }
 
-func getPodNamespacedName(pod *v1.Pod) ktypes.NamespacedName {
+func getPodNamespacedName(pod *corev1.Pod) ktypes.NamespacedName {
 	return ktypes.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}
 }

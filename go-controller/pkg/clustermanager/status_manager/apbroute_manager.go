@@ -4,13 +4,13 @@ import (
 	"context"
 	"strings"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	adminpolicybasedrouteapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1"
 	adminpolicybasedrouteapply "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/applyconfiguration/adminpolicybasedroute/v1"
 	adminpolicybasedrouteclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/clientset/versioned"
 	adminpolicybasedroutelisters "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/listers/adminpolicybasedroute/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type apbRouteManager struct {
@@ -26,7 +26,7 @@ func newAPBRouteManager(lister adminpolicybasedroutelisters.AdminPolicyBasedExte
 }
 
 //lint:ignore U1000 generic interfaces throw false-positives https://github.com/dominikh/go-tools/issues/1440
-func (m *apbRouteManager) get(namespace, name string) (*adminpolicybasedrouteapi.AdminPolicyBasedExternalRoute, error) {
+func (m *apbRouteManager) get(_, name string) (*adminpolicybasedrouteapi.AdminPolicyBasedExternalRoute, error) {
 	return m.lister.Get(name)
 }
 

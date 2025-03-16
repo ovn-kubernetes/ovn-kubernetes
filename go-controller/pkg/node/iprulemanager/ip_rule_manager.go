@@ -5,9 +5,9 @@ import (
 	"sync"
 	"time"
 
-	"k8s.io/klog/v2"
-
 	"github.com/vishvananda/netlink"
+
+	"k8s.io/klog/v2"
 
 	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
 )

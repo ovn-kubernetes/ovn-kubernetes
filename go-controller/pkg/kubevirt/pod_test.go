@@ -5,17 +5,18 @@ import (
 	"fmt"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	kubevirtv1 "kubevirt.io/api/core/v1"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/rand"
-	kubevirtv1 "kubevirt.io/api/core/v1"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 const vmName = "test-vm"
@@ -64,7 +65,7 @@ var _ = Describe("Kubevirt Pod", func() {
 		currentPod := params.pods[0]
 		migrationStatus, err := DiscoverLiveMigrationStatus(wf, &currentPod)
 		if params.expectedError == nil {
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 		} else {
 			Expect(err).To(MatchError(ContainSubstring(params.expectedError.Error())))
 		}

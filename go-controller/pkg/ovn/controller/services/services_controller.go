@@ -7,9 +7,29 @@ import (
 	"sync"
 	"time"
 
-	libovsdbclient "github.com/ovn-org/libovsdb/client"
-	libovsdb "github.com/ovn-org/libovsdb/ovsdb"
 	"golang.org/x/time/rate"
+
+	corev1 "k8s.io/api/core/v1"
+	discovery "k8s.io/api/discovery/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	ktypes "k8s.io/apimachinery/pkg/types"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
+	coreinformers "k8s.io/client-go/informers/core/v1"
+	discoveryinformers "k8s.io/client-go/informers/discovery/v1"
+	clientset "k8s.io/client-go/kubernetes"
+	corelisters "k8s.io/client-go/listers/core/v1"
+	discoverylisters "k8s.io/client-go/listers/discovery/v1"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/workqueue"
+	"k8s.io/klog/v2"
+	utilnet "k8s.io/utils/net"
+
+	libovsdbclient "github.com/ovn-org/libovsdb/client"
+	"github.com/ovn-org/libovsdb/ovsdb"
 
 	globalconfig "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
@@ -20,27 +40,6 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-
-	v1 "k8s.io/api/core/v1"
-	discovery "k8s.io/api/discovery/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
-	ktypes "k8s.io/apimachinery/pkg/types"
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/apimachinery/pkg/util/wait"
-	discoverylisters "k8s.io/client-go/listers/discovery/v1"
-	utilnet "k8s.io/utils/net"
-
-	coreinformers "k8s.io/client-go/informers/core/v1"
-	discoveryinformers "k8s.io/client-go/informers/discovery/v1"
-	clientset "k8s.io/client-go/kubernetes"
-	corelisters "k8s.io/client-go/listers/core/v1"
-	"k8s.io/client-go/tools/cache"
-	"k8s.io/client-go/tools/record"
-	"k8s.io/client-go/util/workqueue"
-
-	"k8s.io/klog/v2"
 )
 
 const (
@@ -55,7 +54,7 @@ const (
 	nodeControllerName = "node-tracker-controller"
 )
 
-var NoServiceLabelError = fmt.Errorf("endpointSlice missing the service name label")
+var ErrMissingServiceLabel = fmt.Errorf("endpointSlice missing the service name label")
 
 // NewController returns a new *Controller.
 func NewController(client clientset.Interface,
@@ -77,8 +76,8 @@ func NewController(client clientset.Interface,
 		),
 		workerLoopPeriod:      time.Second,
 		alreadyApplied:        map[string][]LB{},
-		nodeIPv4Templates:     NewNodeIPsTemplates(v1.IPv4Protocol),
-		nodeIPv6Templates:     NewNodeIPsTemplates(v1.IPv6Protocol),
+		nodeIPv4Templates:     NewNodeIPsTemplates(corev1.IPv4Protocol),
+		nodeIPv6Templates:     NewNodeIPsTemplates(corev1.IPv6Protocol),
 		serviceInformer:       serviceInformer,
 		serviceLister:         serviceInformer.Lister(),
 		endpointSliceInformer: endpointSliceInformer,
@@ -393,7 +392,7 @@ func (c *Controller) syncService(key string) error {
 	// - the Service was deleted from the cache (doesn't exist in Kubernetes anymore)
 	// - the Service mutated to a new service Type that we don't handle (ExternalName, Headless)
 	if err != nil || service == nil || !util.ServiceTypeHasClusterIP(service) || !util.IsClusterIPSet(service) {
-		service = &v1.Service{
+		service = &corev1.Service{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: namespace,
 				Name:      name,
@@ -498,8 +497,8 @@ func (c *Controller) syncNodeInfos(nodeInfos []nodeInfo) {
 	}
 
 	// Compute the nodeIP template values.
-	c.nodeIPv4Templates = NewNodeIPsTemplates(v1.IPv4Protocol)
-	c.nodeIPv6Templates = NewNodeIPsTemplates(v1.IPv6Protocol)
+	c.nodeIPv4Templates = NewNodeIPsTemplates(corev1.IPv4Protocol)
+	c.nodeIPv6Templates = NewNodeIPsTemplates(corev1.IPv6Protocol)
 
 	for _, nodeInfo := range c.nodeInfos {
 		if nodeInfo.chassisID == "" {
@@ -606,7 +605,7 @@ func (c *Controller) onServiceAdd(obj interface{}) {
 		return
 	}
 
-	service := obj.(*v1.Service)
+	service := obj.(*corev1.Service)
 	if c.skipService(service.Name, service.Namespace) {
 		return
 	}
@@ -617,8 +616,8 @@ func (c *Controller) onServiceAdd(obj interface{}) {
 
 // onServiceUpdate updates the Service Selector in the cache and queues the Service for processing.
 func (c *Controller) onServiceUpdate(oldObj, newObj interface{}) {
-	oldService := oldObj.(*v1.Service)
-	newService := newObj.(*v1.Service)
+	oldService := oldObj.(*corev1.Service)
+	newService := newObj.(*corev1.Service)
 
 	// don't process resync or objects that are marked for deletion
 	if oldService.ResourceVersion == newService.ResourceVersion ||
@@ -644,7 +643,7 @@ func (c *Controller) onServiceDelete(obj interface{}) {
 		utilruntime.HandleError(fmt.Errorf("couldn't get key for object %+v: %v", obj, err))
 		return
 	}
-	service := obj.(*v1.Service)
+	service := obj.(*corev1.Service)
 
 	if c.skipService(service.Name, service.Namespace) {
 		return
@@ -710,7 +709,7 @@ func (c *Controller) queueServiceForEndpointSlice(endpointSlice *discovery.Endpo
 		// Do not log endpointsSlices missing service labels as errors.
 		// Once the service label is eventually added, we will get this event
 		// and re-process.
-		if errors.Is(err, NoServiceLabelError) {
+		if errors.Is(err, ErrMissingServiceLabel) {
 			klog.V(5).Infof("network=%s, error=%s", c.netInfo.GetNetworkName(), err.Error())
 		} else {
 			utilruntime.HandleError(fmt.Errorf("network=%s, couldn't get key for EndpointSlice %+v: %v", c.netInfo.GetNetworkName(), endpointSlice, err))
@@ -752,7 +751,7 @@ func (c *Controller) cleanupUDNEnabledServiceRoute(key string) error {
 			route.ExternalIDs[types.UDNEnabledServiceExternalID] == key
 	}
 
-	var ops []libovsdb.Operation
+	var ops []ovsdb.Operation
 	var err error
 	if c.netInfo.TopologyType() == types.Layer2Topology {
 		for _, node := range c.nodeInfos {
@@ -769,7 +768,7 @@ func (c *Controller) cleanupUDNEnabledServiceRoute(key string) error {
 	return err
 }
 
-func (c *Controller) configureUDNEnabledServiceRoute(service *v1.Service) error {
+func (c *Controller) configureUDNEnabledServiceRoute(service *corev1.Service) error {
 	klog.Infof("Configuring UDN enabled service route for service %s/%s in network: %s", service.Namespace, service.Name, c.netInfo.GetNetworkName())
 
 	extIDs := map[string]string{
@@ -786,7 +785,7 @@ func (c *Controller) configureUDNEnabledServiceRoute(service *v1.Service) error 
 			a.Nexthop == b.Nexthop
 
 	}
-	var ops []libovsdb.Operation
+	var ops []ovsdb.Operation
 	for _, nodeInfo := range c.nodeInfos {
 		var mgmtPortIPs []net.IP
 		for _, subnet := range nodeInfo.podSubnets {
@@ -824,7 +823,7 @@ func _getServiceNameFromEndpointSlice(endpointSlice *discovery.EndpointSlice, in
 	}
 
 	label := discovery.LabelServiceName
-	errTemplate := NoServiceLabelError
+	errTemplate := ErrMissingServiceLabel
 	if !inDefaultNetwork {
 		label = types.LabelUserDefinedServiceName
 	}

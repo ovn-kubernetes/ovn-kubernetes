@@ -2,16 +2,17 @@ package port_group
 
 import (
 	"fmt"
-	"github.com/onsi/ginkgo/v2"
-	"github.com/onsi/gomega"
-	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"strings"
 
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
+
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 type pgSync struct {
@@ -31,7 +32,7 @@ func testSyncerWithData(data []pgSync, initialDbState, finalDbState []libovsdbte
 	var fakePortUUID string
 	var dbPortAndSwitch []libovsdbtest.TestData
 
-	dbSetup := libovsdbtest.TestSetup{NBData: append(initialDbState)}
+	dbSetup := libovsdbtest.TestSetup{NBData: initialDbState}
 	for _, pgSync := range data {
 		dbSetup.NBData = append(dbSetup.NBData, pgSync.before)
 		if len(pgSync.before.Ports) > 0 {
@@ -90,7 +91,7 @@ func testSyncerWithData(data []pgSync, initialDbState, finalDbState []libovsdbte
 	// run sync
 	syncer := NewPortGroupSyncer(libovsdbOvnNBClient)
 	// to make sure batching works, set it to 0.5 to cover number of batches = 0,1,>1
-	syncer.getPGWeight = func(acls, ports int) float64 {
+	syncer.getPGWeight = func(_, _ int) float64 {
 		return 0.5
 	}
 	err = syncer.SyncPortGroups()

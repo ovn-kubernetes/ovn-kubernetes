@@ -4,12 +4,14 @@ import (
 	"net"
 	"testing"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	egressfirewallapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	egressfirewallapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
 )
 
 type output struct {
@@ -165,7 +167,10 @@ func TestValidateAndGetEgressFirewallDestination(t *testing.T) {
 		},
 	}
 
-	config.PrepareTestConfig()
+	if err := config.PrepareTestConfig(); err != nil {
+		t.Fatalf("failed to PrepareTestConfig: %v", err)
+	}
+
 	config.Default.ClusterSubnets = []config.CIDRNetworkEntry{{CIDR: clusterSubnet}}
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -177,9 +182,9 @@ func TestValidateAndGetEgressFirewallDestination(t *testing.T) {
 			cidrSelector, dnsName, clusterSubnetIntersection, nodeSelector, err :=
 				ValidateAndGetEgressFirewallDestination(tc.egressFirewallDestination)
 			if tc.expectedErr {
-				assert.Error(t, err)
+				require.Error(t, err)
 			} else {
-				assert.Nil(t, err)
+				require.NoError(t, err)
 				assert.Equal(t, tc.expectedOutput.dnsName, dnsName)
 				assert.Equal(t, tc.expectedOutput.cidrSelector, cidrSelector)
 				assert.Equal(t, tc.expectedOutput.clusterSubnetIntersection, clusterSubnetIntersection)

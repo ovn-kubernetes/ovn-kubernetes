@@ -36,7 +36,7 @@ We welcome many different types of contributions including:
 * Release management
 
 Not everything happens through a GitHub pull request. Please come to our
-[meetings](./MEETINGS.md) or [contact us](https://ovn-org.slack.com/archives/C010SQ5FSNL) and let's discuss how we can work
+[meetings](./MEETINGS.md) or [contact us](https://cloud-native.slack.com/archives/C08452HR8V6) and let's discuss how we can work
 together. 
 
 ### Come to Meetings
@@ -60,7 +60,7 @@ your first pull request.
 
 Sometimes there won’t be any issues with these labels. That’s ok! There is
 likely still something for you to work on. If you want to contribute but you
-don’t know where to start or can't find a suitable issue, you can you can reach out to us on [Slack](https://ovn-org.slack.com/) and we will be happy to help.
+don’t know where to start or can't find a suitable issue, you can reach out to us on [Slack](https://cloud-native.slack.com/archives/C08452HR8V6) and we will be happy to help.
 
 Once you see an issue that you'd like to work on, please post a comment saying
 that you want to work on it. Something like "I want to work on this" is fine.
@@ -71,7 +71,7 @@ The best way to reach us with a question when contributing is to ask on:
 
 * The original github issue
 * The developer mailing list (mailing-list: https://groups.google.com/g/ovn-kubernetes)
-* Our Slack channel (workspace: https://ovn-org.slack.com/, channel: #ovn-kubernetes)
+* Our Slack channel (workspace: https://cloud-native.slack.com/, channel: #ovn-kubernetes)
 
 ## Pull Request Lifecycle
 

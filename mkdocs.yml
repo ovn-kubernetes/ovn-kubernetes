@@ -36,7 +36,7 @@ theme:
     - navigation.instant.preview
 plugins:
   - search
-  - awesome-pages
+  - awesome-nav
   - mike
   - macros:
       #include_dir: examples

@@ -6,7 +6,15 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/tools/record"
+	anpapi "sigs.k8s.io/network-policy-api/apis/v1alpha1"
+	anpfake "sigs.k8s.io/network-policy-api/pkg/client/clientset/versioned/fake"
+
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
@@ -14,11 +22,6 @@ import (
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes/fake"
-	"k8s.io/client-go/tools/record"
-	anpapi "sigs.k8s.io/network-policy-api/apis/v1alpha1"
-	anpfake "sigs.k8s.io/network-policy-api/pkg/client/clientset/versioned/fake"
 )
 
 var alwaysReady = func() bool { return true }
@@ -38,8 +41,8 @@ func createTestNBGlobal(nbClient libovsdbclient.Client, zone string) error {
 	return nil
 }
 
-func deleteTestNBGlobal(nbClient libovsdbclient.Client, zone string) error {
-	p := func(nbGlobal *nbdb.NBGlobal) bool {
+func deleteTestNBGlobal(nbClient libovsdbclient.Client, _ string) error {
+	p := func(*nbdb.NBGlobal) bool {
 		return true
 	}
 
@@ -85,7 +88,7 @@ func newANPController(initANPs anpapi.AdminNetworkPolicyList, initBANPs anpapi.B
 
 func newANPControllerWithDBSetup(dbSetup libovsdbtest.TestSetup, initANPs anpapi.AdminNetworkPolicyList, initBANPs anpapi.BaselineAdminNetworkPolicyList) (*Controller, error) {
 	gomega.RegisterFailHandler(ginkgo.Fail)
-	config.PrepareTestConfig()
+	gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 	config.OVNKubernetesFeature.EnableAdminNetworkPolicy = true
 	nbClient, _, err := libovsdbtest.NewNBTestHarness(dbSetup, nil)
 	if err != nil {

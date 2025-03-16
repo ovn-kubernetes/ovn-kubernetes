@@ -6,17 +6,18 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	annotatorMock "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube/mocks"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/stretchr/testify/assert"
-	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestL3GatewayConfig_MarshalJSON(t *testing.T) {
@@ -198,7 +199,7 @@ func TestL3GatewayConfig_UnmarshalJSON(t *testing.T) {
 				assert.Contains(t, e.Error(), tc.errMatch.Error())
 			} else {
 				t.Log(l3GwCfg)
-				assert.Equal(t, l3GwCfg, tc.expOut)
+				assert.Equal(t, tc.expOut, l3GwCfg)
 			}
 		})
 	}
@@ -269,7 +270,7 @@ func TestSetL3GatewayConfig(t *testing.T) {
 			e := SetL3GatewayConfig(tc.inpNodeAnnotator, &tc.inputL3GwCfg)
 			if tc.errExpected {
 				t.Log(e)
-				assert.Error(t, e)
+				require.Error(t, e)
 			}
 			mockAnnotator.AssertExpectations(t)
 		})
@@ -279,19 +280,19 @@ func TestSetL3GatewayConfig(t *testing.T) {
 func TestParseNodeL3GatewayAnnotation(t *testing.T) {
 	tests := []struct {
 		desc      string
-		inpNode   *v1.Node
+		inpNode   *corev1.Node
 		errAssert bool
 		errMatch  error
 	}{
 		{
 			desc:      "error: annotation not found for node",
-			inpNode:   &v1.Node{},
+			inpNode:   &corev1.Node{},
 			errAssert: true,
 			errMatch:  fmt.Errorf("%s annotation not found for node", OvnNodeL3GatewayConfig),
 		},
 		{
 			desc: "error: fail to unmarshal l3 gateway config annotations",
-			inpNode: &v1.Node{
+			inpNode: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{"k8s.ovn.org/l3-gateway-config": `{"default":{"mode":"local","mac_address":"}}`},
 				},
@@ -301,7 +302,7 @@ func TestParseNodeL3GatewayAnnotation(t *testing.T) {
 		},
 		{
 			desc: "error: annotation for network not found",
-			inpNode: &v1.Node{
+			inpNode: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{"k8s.ovn.org/l3-gateway-config": `{"nondefault":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"169.255.33.2/24", "next-hop":"169.255.33.1"}}`},
 				},
@@ -311,7 +312,7 @@ func TestParseNodeL3GatewayAnnotation(t *testing.T) {
 		},
 		{
 			desc: "error: nod chassis ID annotation not found",
-			inpNode: &v1.Node{
+			inpNode: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{"k8s.ovn.org/l3-gateway-config": `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"169.255.33.2/24", "next-hop":"169.255.33.1"}}`},
 				},
@@ -321,7 +322,7 @@ func TestParseNodeL3GatewayAnnotation(t *testing.T) {
 		},
 		{
 			desc: "success: parse completed",
-			inpNode: &v1.Node{
+			inpNode: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
 						"k8s.ovn.org/l3-gateway-config": `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"169.255.33.2/24", "next-hop":"169.255.33.1"}}`,
@@ -349,18 +350,18 @@ func TestParseNodeL3GatewayAnnotation(t *testing.T) {
 func TestNodeL3GatewayAnnotationChanged(t *testing.T) {
 	tests := []struct {
 		desc    string
-		oldNode *v1.Node
-		newNode *v1.Node
+		oldNode *corev1.Node
+		newNode *corev1.Node
 		result  bool
 	}{
 		{
 			desc: "true: annotation changed",
-			oldNode: &v1.Node{
+			oldNode: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{},
 				},
 			},
-			newNode: &v1.Node{
+			newNode: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
 						"k8s.ovn.org/l3-gateway-config": `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"169.255.33.2/24", "next-hop":"169.255.33.1"}}`,
@@ -371,14 +372,14 @@ func TestNodeL3GatewayAnnotationChanged(t *testing.T) {
 		},
 		{
 			desc: "true: annotation's node IP field changed",
-			newNode: &v1.Node{
+			newNode: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
 						"k8s.ovn.org/l3-gateway-config": `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"169.254.33.3/24", "next-hop":"169.255.33.1"}}`,
 					},
 				},
 			},
-			oldNode: &v1.Node{
+			oldNode: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
 						"k8s.ovn.org/l3-gateway-config": `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"169.255.33.2/24", "next-hop":"169.255.33.1"}}`,
@@ -389,14 +390,14 @@ func TestNodeL3GatewayAnnotationChanged(t *testing.T) {
 		},
 		{
 			desc: "false: annotation didn't change",
-			newNode: &v1.Node{
+			newNode: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
 						"k8s.ovn.org/l3-gateway-config": `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"169.255.33.2/24", "next-hop":"169.255.33.1"}}`,
 					},
 				},
 			},
-			oldNode: &v1.Node{
+			oldNode: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
 						"k8s.ovn.org/l3-gateway-config": `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"169.255.33.2/24", "next-hop":"169.255.33.1"}}`,
@@ -417,19 +418,19 @@ func TestNodeL3GatewayAnnotationChanged(t *testing.T) {
 func TestParseNodeManagementPortMACAddresses(t *testing.T) {
 	tests := []struct {
 		desc        string
-		inpNode     v1.Node
+		inpNode     corev1.Node
 		errExpected bool
 		expOutput   bool
 		netName     string
 	}{
 		{
 			desc:      "mac address annotation not found for node, however, does not return error",
-			inpNode:   v1.Node{},
+			inpNode:   corev1.Node{},
 			expOutput: false,
 		},
 		{
 			desc: "success: parse mac address for given netName",
-			inpNode: v1.Node{
+			inpNode: corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{"k8s.ovn.org/node-mgmt-port-mac-addresses": "{\"default\":\"96:8f:e8:25:a2:e5\",\"blue\":\"d6:bc:85:32:30:fb\",\"red\":\"4a:ea:1d:8d:8f:8c\"}"},
 				},
@@ -439,7 +440,7 @@ func TestParseNodeManagementPortMACAddresses(t *testing.T) {
 		},
 		{
 			desc: "error: parse mac address error",
-			inpNode: v1.Node{
+			inpNode: corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{"k8s.ovn.org/node-mgmt-port-mac-addresses": "{\"default\":\"96:8f:e8:25:a2:\",\"blue\":\"1\",\"red\":\"2\"}"},
 				},
@@ -449,7 +450,7 @@ func TestParseNodeManagementPortMACAddresses(t *testing.T) {
 		},
 		{
 			desc: "error: parse mac address error since value of secondary network is invalid",
-			inpNode: v1.Node{
+			inpNode: corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{"k8s.ovn.org/node-mgmt-port-mac-addresses": "{\"default\":\"96:8f:e8:25:a2:\",\"blue\":\"1\",\"red\":\"2\"}"},
 				},
@@ -459,7 +460,7 @@ func TestParseNodeManagementPortMACAddresses(t *testing.T) {
 		},
 		{
 			desc: "error: parse mac address error since network doesn't exist on the annotation",
-			inpNode: v1.Node{
+			inpNode: corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{"k8s.ovn.org/node-mgmt-port-mac-addresses": "{\"default\":\"96:8f:e8:25:a2:\",\"blue\":\"1\",\"red\":\"2\"}"},
 				},
@@ -474,7 +475,7 @@ func TestParseNodeManagementPortMACAddresses(t *testing.T) {
 			cfg, e := ParseNodeManagementPortMACAddresses(&tc.inpNode, tc.netName)
 			if tc.errExpected {
 				t.Log(e)
-				assert.Error(t, e)
+				require.Error(t, e)
 				assert.Nil(t, cfg)
 			}
 			if tc.expOutput {
@@ -487,18 +488,18 @@ func TestParseNodeManagementPortMACAddresses(t *testing.T) {
 func TestParseNodeGatewayRouterLRPAddr(t *testing.T) {
 	tests := []struct {
 		desc        string
-		inpNode     v1.Node
+		inpNode     corev1.Node
 		errExpected bool
 		expOutput   bool
 	}{
 		{
 			desc:      "Gateway router LPR IP address annotation not found for node, however, does not return error",
-			inpNode:   v1.Node{},
+			inpNode:   corev1.Node{},
 			expOutput: false,
 		},
 		{
 			desc: "success: Gateway router parse LPR IP address",
-			inpNode: v1.Node{
+			inpNode: corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{"k8s.ovn.org/node-gateway-router-lrp-ifaddr": `{"ipv4":"100.64.0.5/16"}`},
 				},
@@ -507,7 +508,7 @@ func TestParseNodeGatewayRouterLRPAddr(t *testing.T) {
 		},
 		{
 			desc: "success: Gateway router parse LPR IP address dual stack",
-			inpNode: v1.Node{
+			inpNode: corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{"k8s.ovn.org/node-gateway-router-lrp-ifaddr": `{"ipv4":"100.64.0.5/16", "ipv6":"fd:98::/64"}`},
 				},
@@ -516,7 +517,7 @@ func TestParseNodeGatewayRouterLRPAddr(t *testing.T) {
 		},
 		{
 			desc: "error: Gateway router parse LPR IP address error",
-			inpNode: v1.Node{
+			inpNode: corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{"k8s.ovn.org/node-gateway-router-lrp-ifaddr": `{"ipv4":"100.64.0.5"}`},
 				},
@@ -530,7 +531,7 @@ func TestParseNodeGatewayRouterLRPAddr(t *testing.T) {
 			cfg, e := ParseNodeGatewayRouterLRPAddr(&tc.inpNode)
 			if tc.errExpected {
 				t.Log(e)
-				assert.Error(t, e)
+				require.Error(t, e)
 				assert.Nil(t, cfg)
 			}
 			if tc.expOutput {
@@ -543,19 +544,19 @@ func TestParseNodeGatewayRouterLRPAddr(t *testing.T) {
 func TestParseNodeGatewayRouterJoinAddrs(t *testing.T) {
 	tests := []struct {
 		desc        string
-		inpNode     v1.Node
+		inpNode     corev1.Node
 		netName     string
 		errExpected bool
 		expOutput   bool
 	}{
 		{
 			desc:      "Gateway router LPR IP address annotation not found for node, however, does not return error",
-			inpNode:   v1.Node{},
+			inpNode:   corev1.Node{},
 			expOutput: false,
 		},
 		{
 			desc: "success: Gateway router parse LPR IP address",
-			inpNode: v1.Node{
+			inpNode: corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{"k8s.ovn.org/node-gateway-router-lrp-ifaddrs": `{"default":{"ipv4":"100.64.0.4/16"}}`},
 				},
@@ -565,7 +566,7 @@ func TestParseNodeGatewayRouterJoinAddrs(t *testing.T) {
 		},
 		{
 			desc: "success: Gateway router parse LPR IP address dual stack",
-			inpNode: v1.Node{
+			inpNode: corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{"k8s.ovn.org/node-gateway-router-lrp-ifaddrs": `{"default":{"ipv4":"100.64.0.5/16","ipv6":"fd:98::/64"}}`},
 				},
@@ -575,7 +576,7 @@ func TestParseNodeGatewayRouterJoinAddrs(t *testing.T) {
 		},
 		{
 			desc: "success: Gateway router parse LPR IP address dual stack for the right network name",
-			inpNode: v1.Node{
+			inpNode: corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{"k8s.ovn.org/node-gateway-router-lrp-ifaddrs": `{"default":{"ipv4":"100.64.0.5/16","ipv6":"fd:98::/64"},"l3-network":{"ipv4":"100.65.0.5/16","ipv6":"fd:99::/64"}}`},
 				},
@@ -585,7 +586,7 @@ func TestParseNodeGatewayRouterJoinAddrs(t *testing.T) {
 		},
 		{
 			desc: "error: Gateway router parse LPR IP address dual stack cannot find the requested network name",
-			inpNode: v1.Node{
+			inpNode: corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{"k8s.ovn.org/node-gateway-router-lrp-ifaddrs": `{"default":{"ipv4":"100.64.0.5/16","ipv6":"fd:98::/64"},"l3-network":{"ipv4":"100.65.0.5/16","ipv6":"fd:99::/64"}}`},
 				},
@@ -595,7 +596,7 @@ func TestParseNodeGatewayRouterJoinAddrs(t *testing.T) {
 		},
 		{
 			desc: "error: Gateway router parse LPR IP address error",
-			inpNode: v1.Node{
+			inpNode: corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{"k8s.ovn.org/node-gateway-router-lrp-ifaddrs": `{"default":{"ipv4":"100.64.0.5"}}`},
 				},
@@ -611,7 +612,7 @@ func TestParseNodeGatewayRouterJoinAddrs(t *testing.T) {
 			cfg, e := ParseNodeGatewayRouterJoinAddrs(&tc.inpNode, tc.netName)
 			if tc.errExpected {
 				t.Log(e)
-				assert.Error(t, e)
+				require.Error(t, e)
 				assert.Nil(t, cfg)
 			}
 			if tc.expOutput {
@@ -652,7 +653,7 @@ func TestCreateNodeGatewayRouterLRPAddrsAnnotation(t *testing.T) {
 			res, err := UpdateNodeGatewayRouterLRPAddrsAnnotation(nil, tc.inpDefSubnetIps, types.DefaultNetworkName)
 			t.Log(res, err)
 			if tc.errExp {
-				assert.NotNil(t, err)
+				assert.Error(t, err)
 			} else {
 				assert.True(t, reflect.DeepEqual(res, tc.outExp))
 			}
@@ -703,7 +704,7 @@ func TestSetGatewayMTUSupport(t *testing.T) {
 			e := SetGatewayMTUSupport(tc.inpNodeAnnotator, tc.inputSet)
 			if tc.errExpected {
 				t.Log(e)
-				assert.Error(t, e)
+				require.Error(t, e)
 			}
 			mockAnnotator.AssertExpectations(t)
 		})
@@ -713,17 +714,17 @@ func TestSetGatewayMTUSupport(t *testing.T) {
 func TestParseNodeGatewayMTUSupport(t *testing.T) {
 	tests := []struct {
 		desc    string
-		inpNode *v1.Node
+		inpNode *corev1.Node
 		res     bool
 	}{
 		{
 			desc:    "annotation not found for node and true",
-			inpNode: &v1.Node{},
+			inpNode: &corev1.Node{},
 			res:     true,
 		},
 		{
 			desc: "parse completed and true",
-			inpNode: &v1.Node{
+			inpNode: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
 						"k8s.ovn.org/gateway-mtu-support": "true",
@@ -734,7 +735,7 @@ func TestParseNodeGatewayMTUSupport(t *testing.T) {
 		},
 		{
 			desc: "parse completed and false",
-			inpNode: &v1.Node{
+			inpNode: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
 						"k8s.ovn.org/gateway-mtu-support": "false",
@@ -745,7 +746,7 @@ func TestParseNodeGatewayMTUSupport(t *testing.T) {
 		},
 		{
 			desc: "parse invalid value completed and true",
-			inpNode: &v1.Node{
+			inpNode: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
 						"k8s.ovn.org/gateway-mtu-support": "tru",
@@ -763,87 +764,23 @@ func TestParseNodeGatewayMTUSupport(t *testing.T) {
 	}
 }
 
-func TestGetNetworkID(t *testing.T) {
-	tests := []struct {
-		desc              string
-		nodes             []*corev1.Node
-		netInfo           NetInfo
-		expectedError     error
-		expectedNetworkID int
-	}{
-		{
-			desc:              "with no nodes should return and error and invalid network ID",
-			netInfo:           newDummyNetInfo("rednamespace", "bluenet"),
-			expectedError:     fmt.Errorf("missing network id for network 'bluenet'"),
-			expectedNetworkID: InvalidID,
-		},
-		{
-			desc: "with bad network ID annotations should return and error and invalid network ID",
-			nodes: []*corev1.Node{
-				&v1.Node{
-					ObjectMeta: metav1.ObjectMeta{
-						Annotations: map[string]string{
-							"k8s.ovn.org/network-ids": "not a map",
-						},
-					},
-				},
-			},
-			netInfo:           newDummyNetInfo("rednamespace", "bluenet"),
-			expectedError:     fmt.Errorf("could not parse"),
-			expectedNetworkID: InvalidID,
-		},
-		{
-			desc: "with multiple networks annotation should return expected network ID and no error",
-			nodes: []*corev1.Node{
-				&v1.Node{
-					ObjectMeta: metav1.ObjectMeta{
-						Annotations: map[string]string{
-							"k8s.ovn.org/network-ids": `{"rednet": "5"}`,
-						},
-					},
-				},
-				&v1.Node{
-					ObjectMeta: metav1.ObjectMeta{
-						Annotations: map[string]string{
-							"k8s.ovn.org/network-ids": `{"yellownet": "6", "bluenet": "3"}`,
-						},
-					},
-				},
-			},
-			netInfo:           newDummyNetInfo("rednamespace", "bluenet"),
-			expectedNetworkID: 3,
-		},
-	}
-	for i, tc := range tests {
-		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
-			obtainedNetworkID, obtainedError := GetNetworkID(tc.nodes, tc.netInfo)
-			if tc.expectedError != nil {
-				assert.Contains(t, obtainedError.Error(), tc.expectedError.Error())
-			} else {
-				assert.NoError(t, obtainedError)
-			}
-			assert.Equal(t, obtainedNetworkID, tc.expectedNetworkID)
-		})
-	}
-}
-
 func TestParseUDNLayer2NodeGRLRPTunnelIDs(t *testing.T) {
 	tests := []struct {
 		desc        string
-		inpNode     *v1.Node
+		inpNode     *corev1.Node
 		inpNetName  string
 		res         int
 		errExpected bool
 	}{
 		{
 			desc:       "annotation not found for node and invalidID",
-			inpNode:    &v1.Node{},
+			inpNode:    &corev1.Node{},
 			inpNetName: "rednet",
 			res:        -1,
 		},
 		{
 			desc: "parse completed and validID",
-			inpNode: &v1.Node{
+			inpNode: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
 						"k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids": `{"rednet":"5"}`,
@@ -856,7 +793,7 @@ func TestParseUDNLayer2NodeGRLRPTunnelIDs(t *testing.T) {
 		},
 		{
 			desc: "parse completed and invalid value",
-			inpNode: &v1.Node{
+			inpNode: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
 						"k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids": `blah`,
@@ -869,7 +806,7 @@ func TestParseUDNLayer2NodeGRLRPTunnelIDs(t *testing.T) {
 		},
 		{
 			desc: "multiple networks; parse completed and validID",
-			inpNode: &v1.Node{
+			inpNode: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
 						"k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids": `{"rednet":"5", "bluenet":"8"}`,
@@ -886,7 +823,7 @@ func TestParseUDNLayer2NodeGRLRPTunnelIDs(t *testing.T) {
 			res, err := ParseUDNLayer2NodeGRLRPTunnelIDs(tc.inpNode, tc.inpNetName)
 			if tc.errExpected {
 				t.Log(err)
-				assert.Error(t, err)
+				require.Error(t, err)
 			}
 			assert.Equal(t, tc.res, res)
 		})

@@ -5,18 +5,17 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	conf "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/unidling"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/apis/core"
 	utilnet "k8s.io/utils/net"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/unidling"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 // magic string used in vips to indicate that the node's physical
@@ -26,9 +25,9 @@ const placeholderNodeIPs = "node"
 // lbConfig is the abstract desired load balancer configuration.
 // vips and endpoints are mixed families.
 type lbConfig struct {
-	vips     []string    // just ip or the special value "node" for the node's physical IPs (i.e. NodePort)
-	protocol v1.Protocol // TCP, UDP, or SCTP
-	inport   int32       // the incoming (virtual) port number
+	vips     []string        // just ip or the special value "node" for the node's physical IPs (i.e. NodePort)
+	protocol corev1.Protocol // TCP, UDP, or SCTP
+	inport   int32           // the incoming (virtual) port number
 
 	clusterEndpoints lbEndpoints            // addresses of cluster-wide endpoints
 	nodeEndpoints    map[string]lbEndpoints // node -> addresses of local endpoints
@@ -105,10 +104,10 @@ func makeNodeRouterTargetIPs(node *nodeInfo, c *lbConfig, hostMasqueradeIPV4, ho
 }
 
 // just used for consistent ordering
-var protos = []v1.Protocol{
-	v1.ProtocolTCP,
-	v1.ProtocolUDP,
-	v1.ProtocolSCTP,
+var protos = []corev1.Protocol{
+	corev1.ProtocolTCP,
+	corev1.ProtocolUDP,
+	corev1.ProtocolSCTP,
 }
 
 // buildServiceLBConfigs generates the abstract load balancer(s) configurations for each service. The abstract configurations
@@ -131,7 +130,7 @@ var protos = []v1.Protocol{
 // Template LBs will be created for
 //   - services with NodePort set but *without* ExternalTrafficPolicy=Local or
 //     affinity timeout set.
-func buildServiceLBConfigs(service *v1.Service, endpointSlices []*discovery.EndpointSlice, nodeInfos []nodeInfo,
+func buildServiceLBConfigs(service *corev1.Service, endpointSlices []*discovery.EndpointSlice, nodeInfos []nodeInfo,
 	useLBGroup, useTemplates bool, networkName string) (perNodeConfigs, templateConfigs, clusterConfigs []lbConfig) {
 
 	needsAffinityTimeout := hasSessionAffinityTimeOut(service)
@@ -228,12 +227,12 @@ func buildServiceLBConfigs(service *v1.Service, endpointSlices []*discovery.Endp
 	return
 }
 
-func makeLBNameForNetwork(service *v1.Service, proto v1.Protocol, scope string, netInfo util.NetInfo) string {
+func makeLBNameForNetwork(service *corev1.Service, proto corev1.Protocol, scope string, netInfo util.NetInfo) string {
 	return netInfo.GetNetworkScopedLoadBalancerName(makeLBName(service, proto, scope))
 }
 
 // makeLBName creates the load balancer name - used to minimize churn
-func makeLBName(service *v1.Service, proto v1.Protocol, scope string) string {
+func makeLBName(service *corev1.Service, proto corev1.Protocol, scope string) string {
 	return fmt.Sprintf("Service_%s/%s_%s_%s",
 		service.Namespace, service.Name,
 		proto, scope)
@@ -246,7 +245,7 @@ func makeLBName(service *v1.Service, proto v1.Protocol, scope string) string {
 // them to a list of (proto:[vip:port -> [endpoint:port]])
 // This load balancer is attached to all node switches. In shared-GW mode, it is also on all routers
 // The input netInfo is needed to get the right LB groups and network IDs for the specified network.
-func buildClusterLBs(service *v1.Service, configs []lbConfig, nodeInfos []nodeInfo, useLBGroup bool, netInfo util.NetInfo) []LB {
+func buildClusterLBs(service *corev1.Service, configs []lbConfig, nodeInfos []nodeInfo, useLBGroup bool, netInfo util.NetInfo) []LB {
 	var nodeSwitches []string
 	var nodeRouters []string
 	var groups []string
@@ -352,7 +351,7 @@ func buildClusterLBs(service *v1.Service, configs []lbConfig, nodeInfos []nodeIn
 // non-template per-node LBs.
 //
 // The input netInfo is needed to get the right LB groups and network IDs for the specified network.
-func buildTemplateLBs(service *v1.Service, configs []lbConfig, nodes []nodeInfo,
+func buildTemplateLBs(service *corev1.Service, configs []lbConfig, nodes []nodeInfo,
 	nodeIPv4Templates, nodeIPv6Templates *NodeIPsTemplates, netInfo util.NetInfo) []LB {
 
 	cbp := configsByProto(configs)
@@ -370,36 +369,36 @@ func buildTemplateLBs(service *v1.Service, configs []lbConfig, nodes []nodeInfo,
 		routerV4Rules := make([]LBRule, 0, len(configs))
 		routerV6Rules := make([]LBRule, 0, len(configs))
 
-		optsV4 := lbTemplateOpts(service, v1.IPv4Protocol)
-		optsV6 := lbTemplateOpts(service, v1.IPv6Protocol)
+		optsV4 := lbTemplateOpts(service, corev1.IPv4Protocol)
+		optsV6 := lbTemplateOpts(service, corev1.IPv6Protocol)
 
-		for _, config := range configs {
+		for _, cfg := range configs {
 			switchV4TemplateTarget :=
 				makeTemplate(
 					makeLBTargetTemplateName(
-						service, proto, config.inport,
+						service, proto, cfg.inport,
 						optsV4.AddressFamily, "node_switch_template", netInfo))
 			switchV6TemplateTarget :=
 				makeTemplate(
 					makeLBTargetTemplateName(
-						service, proto, config.inport,
+						service, proto, cfg.inport,
 						optsV6.AddressFamily, "node_switch_template", netInfo))
 
 			routerV4TemplateTarget :=
 				makeTemplate(
 					makeLBTargetTemplateName(
-						service, proto, config.inport,
+						service, proto, cfg.inport,
 						optsV4.AddressFamily, "node_router_template", netInfo))
 			routerV6TemplateTarget :=
 				makeTemplate(
 					makeLBTargetTemplateName(
-						service, proto, config.inport,
+						service, proto, cfg.inport,
 						optsV6.AddressFamily, "node_router_template", netInfo))
 
-			allV4TargetIPs := config.clusterEndpoints.V4IPs
-			allV6TargetIPs := config.clusterEndpoints.V6IPs
+			allV4TargetIPs := cfg.clusterEndpoints.V4IPs
+			allV6TargetIPs := cfg.clusterEndpoints.V6IPs
 
-			for range config.vips {
+			for range cfg.vips {
 				klog.V(5).Infof("buildTemplateLBs() service %s/%s adding rules for network=%s",
 					service.Namespace, service.Name, netInfo.GetNetworkName())
 
@@ -413,7 +412,7 @@ func buildTemplateLBs(service *v1.Service, configs []lbConfig, nodes []nodeInfo,
 
 				for _, node := range nodes {
 
-					switchV4TargetIPs, switchV6TargetIPs, v4Changed, v6Changed := makeNodeSwitchTargetIPs(node.name, &config)
+					switchV4TargetIPs, switchV6TargetIPs, v4Changed, v6Changed := makeNodeSwitchTargetIPs(node.name, &cfg)
 					if !switchV4TargetNeedsTemplate && v4Changed {
 						switchV4TargetNeedsTemplate = true
 					}
@@ -423,9 +422,9 @@ func buildTemplateLBs(service *v1.Service, configs []lbConfig, nodes []nodeInfo,
 
 					routerV4TargetIPs, routerV6TargetIPs, v4Changed, v6Changed := makeNodeRouterTargetIPs(
 						&node,
-						&config,
-						conf.Gateway.MasqueradeIPs.V4HostMasqueradeIP.String(),
-						conf.Gateway.MasqueradeIPs.V6HostMasqueradeIP.String())
+						&cfg,
+						config.Gateway.MasqueradeIPs.V4HostMasqueradeIP.String(),
+						config.Gateway.MasqueradeIPs.V6HostMasqueradeIP.String())
 
 					if !routerV4TargetNeedsTemplate && v4Changed {
 						routerV4TargetNeedsTemplate = true
@@ -435,47 +434,47 @@ func buildTemplateLBs(service *v1.Service, configs []lbConfig, nodes []nodeInfo,
 					}
 
 					switchV4TemplateTarget.Value[node.chassisID] = addrsToString(
-						joinHostsPort(switchV4TargetIPs, config.clusterEndpoints.Port))
+						joinHostsPort(switchV4TargetIPs, cfg.clusterEndpoints.Port))
 					switchV6TemplateTarget.Value[node.chassisID] = addrsToString(
-						joinHostsPort(switchV6TargetIPs, config.clusterEndpoints.Port))
+						joinHostsPort(switchV6TargetIPs, cfg.clusterEndpoints.Port))
 
 					routerV4TemplateTarget.Value[node.chassisID] = addrsToString(
-						joinHostsPort(routerV4TargetIPs, config.clusterEndpoints.Port))
+						joinHostsPort(routerV4TargetIPs, cfg.clusterEndpoints.Port))
 					routerV6TemplateTarget.Value[node.chassisID] = addrsToString(
-						joinHostsPort(routerV6TargetIPs, config.clusterEndpoints.Port))
+						joinHostsPort(routerV6TargetIPs, cfg.clusterEndpoints.Port))
 				}
 
 				sharedV4Targets := []Addr{}
 				sharedV6Targets := []Addr{}
 				if !switchV4TargetNeedsTemplate || !routerV4TargetNeedsTemplate {
-					sharedV4Targets = joinHostsPort(allV4TargetIPs, config.clusterEndpoints.Port)
+					sharedV4Targets = joinHostsPort(allV4TargetIPs, cfg.clusterEndpoints.Port)
 				}
 				if !switchV6TargetNeedsTemplate || !routerV6TargetNeedsTemplate {
-					sharedV6Targets = joinHostsPort(allV6TargetIPs, config.clusterEndpoints.Port)
+					sharedV6Targets = joinHostsPort(allV6TargetIPs, cfg.clusterEndpoints.Port)
 				}
 
 				for _, nodeIPv4Template := range nodeIPv4Templates.AsTemplates() {
 
 					if switchV4TargetNeedsTemplate {
 						switchV4Rules = append(switchV4Rules, LBRule{
-							Source:  Addr{Template: nodeIPv4Template, Port: config.inport},
+							Source:  Addr{Template: nodeIPv4Template, Port: cfg.inport},
 							Targets: []Addr{{Template: switchV4TemplateTarget}},
 						})
 					} else {
 						switchV4Rules = append(switchV4Rules, LBRule{
-							Source:  Addr{Template: nodeIPv4Template, Port: config.inport},
+							Source:  Addr{Template: nodeIPv4Template, Port: cfg.inport},
 							Targets: sharedV4Targets,
 						})
 					}
 
 					if routerV4TargetNeedsTemplate {
 						routerV4Rules = append(routerV4Rules, LBRule{
-							Source:  Addr{Template: nodeIPv4Template, Port: config.inport},
+							Source:  Addr{Template: nodeIPv4Template, Port: cfg.inport},
 							Targets: []Addr{{Template: routerV4TemplateTarget}},
 						})
 					} else {
 						routerV4Rules = append(routerV4Rules, LBRule{
-							Source:  Addr{Template: nodeIPv4Template, Port: config.inport},
+							Source:  Addr{Template: nodeIPv4Template, Port: cfg.inport},
 							Targets: sharedV4Targets,
 						})
 					}
@@ -485,24 +484,24 @@ func buildTemplateLBs(service *v1.Service, configs []lbConfig, nodes []nodeInfo,
 
 					if switchV6TargetNeedsTemplate {
 						switchV6Rules = append(switchV6Rules, LBRule{
-							Source:  Addr{Template: nodeIPv6Template, Port: config.inport},
+							Source:  Addr{Template: nodeIPv6Template, Port: cfg.inport},
 							Targets: []Addr{{Template: switchV6TemplateTarget}},
 						})
 					} else {
 						switchV6Rules = append(switchV6Rules, LBRule{
-							Source:  Addr{Template: nodeIPv6Template, Port: config.inport},
+							Source:  Addr{Template: nodeIPv6Template, Port: cfg.inport},
 							Targets: sharedV6Targets,
 						})
 					}
 
 					if routerV6TargetNeedsTemplate {
 						routerV6Rules = append(routerV6Rules, LBRule{
-							Source:  Addr{Template: nodeIPv6Template, Port: config.inport},
+							Source:  Addr{Template: nodeIPv6Template, Port: cfg.inport},
 							Targets: []Addr{{Template: routerV6TemplateTarget}},
 						})
 					} else {
 						routerV6Rules = append(routerV6Rules, LBRule{
-							Source:  Addr{Template: nodeIPv6Template, Port: config.inport},
+							Source:  Addr{Template: nodeIPv6Template, Port: cfg.inport},
 							Targets: sharedV6Targets,
 						})
 					}
@@ -590,7 +589,7 @@ func buildTemplateLBs(service *v1.Service, configs []lbConfig, nodes []nodeInfo,
 // This results in the creation of an additional load balancer on the GatewayRouters and NodeSwitches.
 //
 // The input netInfo is needed to get the right network IDs for the specified network.
-func buildPerNodeLBs(service *v1.Service, configs []lbConfig, nodes []nodeInfo, netInfo util.NetInfo) []LB {
+func buildPerNodeLBs(service *corev1.Service, configs []lbConfig, nodes []nodeInfo, netInfo util.NetInfo) []LB {
 	cbp := configsByProto(configs)
 	eids := getExternalIDsForLoadBalancer(service, netInfo)
 
@@ -610,26 +609,26 @@ func buildPerNodeLBs(service *v1.Service, configs []lbConfig, nodes []nodeInfo, 
 			noSNATRouterRules := make([]LBRule, 0)
 			switchRules := make([]LBRule, 0, len(configs))
 
-			for _, config := range configs {
+			for _, cfg := range configs {
 
-				switchV4TargetIPs, switchV6TargetIPs, _, _ := makeNodeSwitchTargetIPs(node.name, &config)
+				switchV4TargetIPs, switchV6TargetIPs, _, _ := makeNodeSwitchTargetIPs(node.name, &cfg)
 
 				routerV4TargetIPs, routerV6TargetIPs, _, _ := makeNodeRouterTargetIPs(
 					&node,
-					&config,
-					conf.Gateway.MasqueradeIPs.V4HostMasqueradeIP.String(),
-					conf.Gateway.MasqueradeIPs.V6HostMasqueradeIP.String())
+					&cfg,
+					config.Gateway.MasqueradeIPs.V4HostMasqueradeIP.String(),
+					config.Gateway.MasqueradeIPs.V6HostMasqueradeIP.String())
 
-				routerV4targets := joinHostsPort(routerV4TargetIPs, config.clusterEndpoints.Port)
-				routerV6targets := joinHostsPort(routerV6TargetIPs, config.clusterEndpoints.Port)
+				routerV4targets := joinHostsPort(routerV4TargetIPs, cfg.clusterEndpoints.Port)
+				routerV6targets := joinHostsPort(routerV6TargetIPs, cfg.clusterEndpoints.Port)
 
-				switchV4targets := joinHostsPort(config.clusterEndpoints.V4IPs, config.clusterEndpoints.Port)
-				switchV6targets := joinHostsPort(config.clusterEndpoints.V6IPs, config.clusterEndpoints.Port)
+				switchV4targets := joinHostsPort(cfg.clusterEndpoints.V4IPs, cfg.clusterEndpoints.Port)
+				switchV6targets := joinHostsPort(cfg.clusterEndpoints.V6IPs, cfg.clusterEndpoints.Port)
 
 				// Substitute the special vip "node" for the node's physical ips
 				// This is used for nodeport
-				vips := make([]string, 0, len(config.vips))
-				for _, vip := range config.vips {
+				vips := make([]string, 0, len(cfg.vips))
+				for _, vip := range cfg.vips {
 					if vip == placeholderNodeIPs {
 						if !node.nodePortDisabled {
 							vips = append(vips, node.hostAddressesStr()...)
@@ -647,31 +646,31 @@ func buildPerNodeLBs(service *v1.Service, configs []lbConfig, nodes []nodeInfo, 
 						targets = switchV6targets
 					}
 
-					if config.externalTrafficLocal && config.hasNodePort {
+					if cfg.externalTrafficLocal && cfg.hasNodePort {
 						// add special masqueradeIP as a vip if its nodePort svc with ETP=local
-						mvip := conf.Gateway.MasqueradeIPs.V4HostETPLocalMasqueradeIP.String()
-						targetsETP := joinHostsPort(switchV4TargetIPs, config.clusterEndpoints.Port)
+						mvip := config.Gateway.MasqueradeIPs.V4HostETPLocalMasqueradeIP.String()
+						targetsETP := joinHostsPort(switchV4TargetIPs, cfg.clusterEndpoints.Port)
 						if isv6 {
-							mvip = conf.Gateway.MasqueradeIPs.V6HostETPLocalMasqueradeIP.String()
-							targetsETP = joinHostsPort(switchV6TargetIPs, config.clusterEndpoints.Port)
+							mvip = config.Gateway.MasqueradeIPs.V6HostETPLocalMasqueradeIP.String()
+							targetsETP = joinHostsPort(switchV6TargetIPs, cfg.clusterEndpoints.Port)
 						}
 						switchRules = append(switchRules, LBRule{
-							Source:  Addr{IP: mvip, Port: config.inport},
+							Source:  Addr{IP: mvip, Port: cfg.inport},
 							Targets: targetsETP,
 						})
 					}
-					if config.internalTrafficLocal && util.IsClusterIP(vip) { // ITP only applicable to CIP
-						targetsITP := joinHostsPort(switchV4TargetIPs, config.clusterEndpoints.Port)
+					if cfg.internalTrafficLocal && util.IsClusterIP(vip) { // ITP only applicable to CIP
+						targetsITP := joinHostsPort(switchV4TargetIPs, cfg.clusterEndpoints.Port)
 						if isv6 {
-							targetsITP = joinHostsPort(switchV6TargetIPs, config.clusterEndpoints.Port)
+							targetsITP = joinHostsPort(switchV6TargetIPs, cfg.clusterEndpoints.Port)
 						}
 						switchRules = append(switchRules, LBRule{
-							Source:  Addr{IP: vip, Port: config.inport},
+							Source:  Addr{IP: vip, Port: cfg.inport},
 							Targets: targetsITP,
 						})
 					} else {
 						switchRules = append(switchRules, LBRule{
-							Source:  Addr{IP: vip, Port: config.inport},
+							Source:  Addr{IP: vip, Port: cfg.inport},
 							Targets: targets,
 						})
 					}
@@ -683,14 +682,14 @@ func buildPerNodeLBs(service *v1.Service, configs []lbConfig, nodes []nodeInfo, 
 						targets = routerV6targets
 					}
 					rule := LBRule{
-						Source:  Addr{IP: vip, Port: config.inport},
+						Source:  Addr{IP: vip, Port: cfg.inport},
 						Targets: targets,
 					}
 
 					// in other words, is this ExternalTrafficPolicy=local?
 					// if so, this gets a separate load balancer with SNAT disabled
 					// (but there's no need to do this if the list of targets is empty)
-					if config.externalTrafficLocal && len(targets) > 0 {
+					if cfg.externalTrafficLocal && len(targets) > 0 {
 						noSNATRouterRules = append(noSNATRouterRules, rule)
 					} else {
 						routerRules = append(routerRules, rule)
@@ -758,15 +757,15 @@ func buildPerNodeLBs(service *v1.Service, configs []lbConfig, nodes []nodeInfo, 
 }
 
 // configsByProto buckets a list of configs by protocol (tcp, udp, sctp)
-func configsByProto(configs []lbConfig) map[v1.Protocol][]lbConfig {
-	out := map[v1.Protocol][]lbConfig{}
+func configsByProto(configs []lbConfig) map[corev1.Protocol][]lbConfig {
+	out := map[corev1.Protocol][]lbConfig{}
 	for _, config := range configs {
 		out[config.protocol] = append(out[config.protocol], config)
 	}
 	return out
 }
 
-func getSessionAffinityTimeOut(service *v1.Service) int32 {
+func getSessionAffinityTimeOut(service *corev1.Service) int32 {
 	// NOTE: This if condition is actually not needed, present only for protection against nil value as good coding practice,
 	// The API always puts the default value of 10800 whenever sessionAffinity == ClientIP if timeout is not explicitly set
 	// There is no ClientIP session affinity without a timeout set.
@@ -778,14 +777,14 @@ func getSessionAffinityTimeOut(service *v1.Service) int32 {
 	return *service.Spec.SessionAffinityConfig.ClientIP.TimeoutSeconds
 }
 
-func hasSessionAffinityTimeOut(service *v1.Service) bool {
-	return service.Spec.SessionAffinity == v1.ServiceAffinityClientIP &&
+func hasSessionAffinityTimeOut(service *corev1.Service) bool {
+	return service.Spec.SessionAffinity == corev1.ServiceAffinityClientIP &&
 		getSessionAffinityTimeOut(service) != core.MaxClientIPServiceAffinitySeconds
 }
 
 // lbOpts generates the OVN load balancer options from the kubernetes Service.
-func lbOpts(service *v1.Service) LBOpts {
-	affinity := service.Spec.SessionAffinity == v1.ServiceAffinityClientIP
+func lbOpts(service *corev1.Service) LBOpts {
+	affinity := service.Spec.SessionAffinity == corev1.ServiceAffinityClientIP
 	lbOptions := LBOpts{
 		SkipSNAT: false, // never service-wide, ExternalTrafficPolicy-specific
 	}
@@ -817,7 +816,7 @@ func lbOpts(service *v1.Service) LBOpts {
 	return lbOptions
 }
 
-func lbTemplateOpts(service *v1.Service, addressFamily v1.IPFamily) LBOpts {
+func lbTemplateOpts(service *corev1.Service, addressFamily corev1.IPFamily) LBOpts {
 	lbOptions := lbOpts(service)
 
 	// Only template LBs need an explicit address family.
@@ -884,7 +883,7 @@ func joinHostsPort(ips []string, port int32) []Addr {
 	return out
 }
 
-func getServicePortKey(protocol v1.Protocol, name string) string {
+func getServicePortKey(protocol corev1.Protocol, name string) string {
 	return fmt.Sprintf("%s/%s", protocol, name)
 }
 
@@ -893,7 +892,7 @@ func getServicePortKey(protocol v1.Protocol, name string) string {
 // one classified by port, one classified by port,node. This second map is only filled in
 // when the service needs local (per-node) endpoints, that is when ETP=local or ITP=local.
 // The node list helps to keep the resulting map small, since we're only interested in local endpoints.
-func getEndpointsForService(slices []*discovery.EndpointSlice, service *v1.Service, nodes sets.Set[string],
+func getEndpointsForService(slices []*discovery.EndpointSlice, service *corev1.Service, nodes sets.Set[string],
 	networkName string) (map[string]lbEndpoints, map[string]map[string]lbEndpoints) {
 
 	// classify endpoints

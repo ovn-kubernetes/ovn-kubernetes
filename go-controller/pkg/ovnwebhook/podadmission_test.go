@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"testing"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	kubevirtv1 "kubevirt.io/api/core/v1"
+
 	admv1 "k8s.io/api/admission/v1"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -16,15 +16,16 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
 	listersv1 "k8s.io/client-go/listers/core/v1"
-	kubevirtv1 "kubevirt.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 type fakeNodeLister struct {
 	nodes map[string]*corev1.Node
 }
 
-func (f *fakeNodeLister) List(selector labels.Selector) (ret []*corev1.Node, err error) {
+func (f *fakeNodeLister) List(labels.Selector) (ret []*corev1.Node, err error) {
 	panic("implement me")
 }
 
@@ -424,7 +425,7 @@ func TestPodAdmission_ValidateUpdate(t *testing.T) {
 	additionalPodAdmissions := PodAdmissionConditionOption{
 		CommonNamePrefix:         additionalNamePrefix,
 		AllowedPodAnnotations:    allowedPodAnnotations,
-		AllowedPodAnnotationKeys: sets.New[string](allowedPodAnnotations...),
+		AllowedPodAnnotationKeys: sets.New(allowedPodAnnotations...),
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -434,7 +435,7 @@ func TestPodAdmission_ValidateUpdate(t *testing.T) {
 				additionalPodAdmissions,
 			})
 			_, err := padm.ValidateUpdate(tt.ctx, tt.oldObj, tt.newObj)
-			if !reflect.DeepEqual(err, tt.expectedErr) {
+			if err != tt.expectedErr && err.Error() != tt.expectedErr.Error() {
 				t.Errorf("ValidateUpdate() error = %v, expectedErr %v", err, tt.expectedErr)
 				return
 			}
@@ -514,7 +515,7 @@ func TestPodAdmission_ValidateUpdateExtraUsers(t *testing.T) {
 	additionalPodAdmissions := PodAdmissionConditionOption{
 		CommonNamePrefix:         additionalNamePrefix,
 		AllowedPodAnnotations:    allowedPodAnnotations,
-		AllowedPodAnnotationKeys: sets.New[string](allowedPodAnnotations...),
+		AllowedPodAnnotationKeys: sets.New(allowedPodAnnotations...),
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -524,7 +525,7 @@ func TestPodAdmission_ValidateUpdateExtraUsers(t *testing.T) {
 				additionalPodAdmissions,
 			}, extraUser)
 			_, err := padm.ValidateUpdate(tt.ctx, tt.oldObj, tt.newObj)
-			if !reflect.DeepEqual(err, tt.expectedErr) {
+			if err != tt.expectedErr && err.Error() != tt.expectedErr.Error() {
 				t.Errorf("ValidateUpdate() error = %v, expectedErr %v", err, tt.expectedErr)
 				return
 			}

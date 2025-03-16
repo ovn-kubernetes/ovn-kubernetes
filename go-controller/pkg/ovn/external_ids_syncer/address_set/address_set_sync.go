@@ -5,14 +5,15 @@ import (
 	"strconv"
 	"strings"
 
+	"k8s.io/klog/v2"
+
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
-	libovsdb "github.com/ovn-org/libovsdb/ovsdb"
+	"github.com/ovn-org/libovsdb/ovsdb"
+
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/batching"
-
-	"k8s.io/klog/v2"
 )
 
 const (
@@ -247,7 +248,7 @@ func (syncer *AddressSetsSyncer) getReferencingObjsAndNewDbIDs(oldHash, oldName 
 	return
 }
 
-func (syncer *AddressSetsSyncer) getUpdateAddrSetOps(addrSetsInfo []*updateAddrSetInfo) (ops []libovsdb.Operation, err error) {
+func (syncer *AddressSetsSyncer) getUpdateAddrSetOps(addrSetsInfo []*updateAddrSetInfo) (ops []ovsdb.Operation, err error) {
 	// one referencing object may contain multiple references that need to be updated
 	// these maps are used to track referenced that need to be replaced for every object type
 	aclsToUpdate := map[string]*nbdb.ACL{}

@@ -41,7 +41,7 @@ func TestJoin(t *testing.T) {
 		want: []error{err1, err2},
 	}} {
 		got := Join(test.errs...).(interface{ Unwrap() []error }).Unwrap()
-		if !reflect.DeepEqual(got, test.want) {
+		if !reflect.DeepEqual(got, test.want) { //nolint:govet
 			t.Errorf("Join(%v) = %v; want %v", test.errs, got, test.want)
 		}
 		if len(got) != cap(got) {

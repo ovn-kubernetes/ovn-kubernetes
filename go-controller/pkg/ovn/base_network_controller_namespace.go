@@ -8,6 +8,11 @@ import (
 	"net"
 	"sync"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/klog/v2"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kubevirt"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
@@ -16,11 +21,6 @@ import (
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
-
-	kapi "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/klog/v2"
 )
 
 // namespaceInfo contains information related to a Namespace. Use oc.getNamespaceLocked()
@@ -162,7 +162,7 @@ func (bnc *BaseNetworkController) syncNamespaces(namespaces []interface{}) error
 	expectedNs := make(map[string]bool)
 	nsWithMulticast := make(map[string]bool)
 	for _, nsInterface := range namespaces {
-		ns, ok := nsInterface.(*kapi.Namespace)
+		ns, ok := nsInterface.(*corev1.Namespace)
 		if !ok {
 			return fmt.Errorf("spurious object in syncNamespaces: %v", nsInterface)
 		}
@@ -210,7 +210,7 @@ func (bnc *BaseNetworkController) syncNamespaces(namespaces []interface{}) error
 // Creates an explicit "allow" policy for multicast traffic within the
 // namespace if multicast is enabled. Otherwise, removes the "allow" policy.
 // Traffic will be dropped by the default multicast deny ACL.
-func (bnc *BaseNetworkController) multicastUpdateNamespace(ns *kapi.Namespace, nsInfo *namespaceInfo) error {
+func (bnc *BaseNetworkController) multicastUpdateNamespace(ns *corev1.Namespace, nsInfo *namespaceInfo) error {
 	if !bnc.multicastSupport {
 		return nil
 	}
@@ -236,7 +236,7 @@ func (bnc *BaseNetworkController) multicastUpdateNamespace(ns *kapi.Namespace, n
 
 // Cleans up the multicast policy for this namespace if multicast was
 // previously allowed.
-func (bnc *BaseNetworkController) multicastDeleteNamespace(ns *kapi.Namespace, nsInfo *namespaceInfo) error {
+func (bnc *BaseNetworkController) multicastDeleteNamespace(ns *corev1.Namespace, nsInfo *namespaceInfo) error {
 	if nsInfo.multicastEnabled {
 		nsInfo.multicastEnabled = false
 		if err := bnc.deleteMulticastAllowPolicy(ns.Name); err != nil {
@@ -250,8 +250,8 @@ func (bnc *BaseNetworkController) multicastDeleteNamespace(ns *kapi.Namespace, n
 // it locks namespacesMutex, gets/creates an entry for ns, and returns it with nsInfo's mutex locked.
 // ns is the name of the namespace, while namespace is the optional k8s namespace object
 // if no k8s namespace object is provided, this function will attempt to find it via informer cache
-func (bnc *BaseNetworkController) ensureNamespaceLockedCommon(ns string, readOnly bool, namespace *kapi.Namespace,
-	ipsGetter func(ns string) []net.IP, configureNamespace func(nsInfo *namespaceInfo, ns *kapi.Namespace) error) (*namespaceInfo, func(), error) {
+func (bnc *BaseNetworkController) ensureNamespaceLockedCommon(ns string, readOnly bool, namespace *corev1.Namespace,
+	ipsGetter func(ns string) []net.IP, configureNamespace func(nsInfo *namespaceInfo, ns *corev1.Namespace) error) (*namespaceInfo, func(), error) {
 	bnc.namespacesMutex.Lock()
 	nsInfo := bnc.namespaces[ns]
 	nsInfoExisted := false
@@ -337,7 +337,7 @@ func (bnc *BaseNetworkController) needNamespacedPortGroup() bool {
 	return bnc.multicastSupport || config.OVNKubernetesFeature.EnableEgressFirewall
 }
 
-func (bnc *BaseNetworkController) configureNamespaceCommon(nsInfo *namespaceInfo, ns *kapi.Namespace) error {
+func (bnc *BaseNetworkController) configureNamespaceCommon(nsInfo *namespaceInfo, ns *corev1.Namespace) error {
 	if annotation, ok := ns.Annotations[util.AclLoggingAnnotation]; ok {
 		if err := bnc.aclLoggingUpdateNsInfo(annotation, nsInfo); err == nil {
 			klog.Infof("Namespace %s: ACL logging is set to deny=%s allow=%s", ns.Name, nsInfo.aclLogging.Deny, nsInfo.aclLogging.Allow)
@@ -447,7 +447,7 @@ func (bnc *BaseNetworkController) getNamespacePortGroupName(namespace string) st
 
 // removeRemoteZonePodFromNamespaceAddressset tries to remove the remote zone pod ips from the pod namespace address set.
 // failure indicates it should be retried later.
-func (bsnc *BaseNetworkController) removeRemoteZonePodFromNamespaceAddressSet(pod *kapi.Pod) error {
+func (bsnc *BaseNetworkController) removeRemoteZonePodFromNamespaceAddressSet(pod *corev1.Pod) error {
 	podDesc := fmt.Sprintf("pod %s/%s/%s", bsnc.GetNetworkName(), pod.Namespace, pod.Name)
 	podIfAddrs, err := util.GetPodCIDRsWithFullMask(pod, bsnc.GetNetInfo())
 	if err != nil {

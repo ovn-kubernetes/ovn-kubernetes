@@ -8,24 +8,13 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/onsi/gomega"
-	"github.com/stretchr/testify/mock"
-
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip/subnet"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/pod"
-	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/persistentips"
-	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-
 	ipamclaimsapi "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1"
 	fakeipamclaimclient "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1/apis/clientset/versioned/fake"
 	ipamclaimsfactory "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1/apis/informers/externalversions"
 	ipamclaimslister "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1/apis/listers/ipamclaims/v1alpha1"
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	"github.com/onsi/gomega"
+	"github.com/stretchr/testify/mock"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,9 +23,18 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/record"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip/subnet"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/pod"
+	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	kubemocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube/mocks"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/persistentips"
+	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	v1mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/client-go/listers/core/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/networkmanager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 type testPod struct {
@@ -47,7 +45,7 @@ type testPod struct {
 }
 
 func (p testPod) getPod(t *testing.T) *corev1.Pod {
-
+	t.Helper()
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        "pod",
@@ -82,40 +80,40 @@ type ipAllocatorStub struct {
 	released bool
 }
 
-func (a *ipAllocatorStub) AddOrUpdateSubnet(name string, subnets []*net.IPNet, excludeSubnets ...*net.IPNet) error {
+func (a *ipAllocatorStub) AddOrUpdateSubnet(string, []*net.IPNet, ...*net.IPNet) error {
 	panic("not implemented") // TODO: Implement
 }
 
-func (a ipAllocatorStub) DeleteSubnet(name string) {
+func (a ipAllocatorStub) DeleteSubnet(string) {
 	panic("not implemented") // TODO: Implement
 }
 
-func (a *ipAllocatorStub) GetSubnets(name string) ([]*net.IPNet, error) {
+func (a *ipAllocatorStub) GetSubnets(string) ([]*net.IPNet, error) {
 	panic("not implemented") // TODO: Implement
 }
 
-func (a *ipAllocatorStub) AllocateUntilFull(name string) error {
+func (a *ipAllocatorStub) AllocateUntilFull(string) error {
 	panic("not implemented") // TODO: Implement
 }
 
-func (a *ipAllocatorStub) AllocateIPPerSubnet(name string, ips []*net.IPNet) error {
+func (a *ipAllocatorStub) AllocateIPPerSubnet(string, []*net.IPNet) error {
 	panic("not implemented") // TODO: Implement
 }
 
-func (a *ipAllocatorStub) AllocateNextIPs(name string) ([]*net.IPNet, error) {
+func (a *ipAllocatorStub) AllocateNextIPs(string) ([]*net.IPNet, error) {
 	panic("not implemented") // TODO: Implement
 }
 
-func (a *ipAllocatorStub) ReleaseIPs(name string, ips []*net.IPNet) error {
+func (a *ipAllocatorStub) ReleaseIPs(string, []*net.IPNet) error {
 	a.released = true
 	return nil
 }
 
-func (a *ipAllocatorStub) ConditionalIPRelease(name string, ips []*net.IPNet, predicate func() (bool, error)) (bool, error) {
+func (a *ipAllocatorStub) ConditionalIPRelease(string, []*net.IPNet, func() (bool, error)) (bool, error) {
 	panic("not implemented") // TODO: Implement
 }
 
-func (a *ipAllocatorStub) ForSubnet(name string) subnet.NamedAllocator {
+func (a *ipAllocatorStub) ForSubnet(string) subnet.NamedAllocator {
 	return &namedAllocatorStub{}
 }
 
@@ -127,19 +125,19 @@ type idAllocatorStub struct {
 	released bool
 }
 
-func (a *idAllocatorStub) AllocateID(name string) (int, error) {
+func (a *idAllocatorStub) AllocateID(string) (int, error) {
 	panic("not implemented") // TODO: Implement
 }
 
-func (a *idAllocatorStub) ReserveID(name string, id int) error {
+func (a *idAllocatorStub) ReserveID(string, int) error {
 	panic("not implemented") // TODO: Implement
 }
 
-func (a *idAllocatorStub) ReleaseID(name string) {
+func (a *idAllocatorStub) ReleaseID(string) {
 	a.released = true
 }
 
-func (a *idAllocatorStub) ForName(name string) id.NamedAllocator {
+func (a *idAllocatorStub) ForName(string) id.NamedAllocator {
 	panic("not implemented") // TODO: Implement
 }
 
@@ -150,7 +148,7 @@ func (a *idAllocatorStub) GetSubnetName([]*net.IPNet) (string, bool) {
 type namedAllocatorStub struct {
 }
 
-func (nas *namedAllocatorStub) AllocateIPs(ips []*net.IPNet) error {
+func (nas *namedAllocatorStub) AllocateIPs([]*net.IPNet) error {
 	return nil
 }
 
@@ -158,7 +156,7 @@ func (nas *namedAllocatorStub) AllocateNextIPs() ([]*net.IPNet, error) {
 	return nil, nil
 }
 
-func (nas *namedAllocatorStub) ReleaseIPs(ips []*net.IPNet) error {
+func (nas *namedAllocatorStub) ReleaseIPs([]*net.IPNet) error {
 	return nil
 }
 
@@ -527,7 +525,7 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 
 			var allocated bool
 			kubeMock.On("UpdatePodStatus", mock.AnythingOfType(fmt.Sprintf("%T", &corev1.Pod{}))).Run(
-				func(args mock.Arguments) {
+				func(mock.Arguments) {
 					allocated = true
 				},
 			).Return(nil)

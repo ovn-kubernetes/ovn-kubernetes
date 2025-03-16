@@ -3,10 +3,12 @@ package sampledecoder
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
-	"github.com/stretchr/testify/assert"
 )
 
 func TestCreateOrUpdateACL(t *testing.T) {
@@ -18,7 +20,7 @@ func TestCreateOrUpdateACL(t *testing.T) {
 			libovsdbops.PolicyDirectionKey.String(): string(libovsdbutil.ACLIngress),
 		},
 	})
-	assert.ErrorContains(t, err, "expected format namespace:name for Object Name, but found: foo")
+	require.ErrorContains(t, err, "expected format namespace:name for Object Name, but found: foo")
 	assert.Nil(t, event)
 
 	event, err = newACLEvent(&nbdb.ACL{
@@ -29,7 +31,7 @@ func TestCreateOrUpdateACL(t *testing.T) {
 			libovsdbops.PolicyDirectionKey.String(): string(libovsdbutil.ACLIngress),
 		},
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, "Allowed by network policy foo in namespace bar, direction Ingress", event.String())
 
 	event, err = newACLEvent(&nbdb.ACL{
@@ -40,7 +42,7 @@ func TestCreateOrUpdateACL(t *testing.T) {
 			libovsdbops.PolicyDirectionKey.String(): string(libovsdbutil.ACLIngress),
 		},
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, "Allowed by admin network policy foo, direction Ingress", event.String())
 
 	event, err = newACLEvent(&nbdb.ACL{
@@ -50,7 +52,7 @@ func TestCreateOrUpdateACL(t *testing.T) {
 			libovsdbops.ObjectNameKey.String(): "foo",
 		},
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, "Allowed by egress firewall in namespace foo", event.String())
 	assert.Equal(t, "Egress", event.Direction)
 
@@ -60,7 +62,7 @@ func TestCreateOrUpdateACL(t *testing.T) {
 			libovsdbops.OwnerTypeKey.String(): libovsdbops.NetpolNodeOwnerType,
 		},
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, "Allowed by default allow from local node policy, direction Ingress", event.String())
 	assert.Equal(t, "Ingress", event.Direction)
 }

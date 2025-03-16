@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	utilpointer "k8s.io/utils/pointer"
 )
 
 var (
@@ -24,10 +25,10 @@ func TestEnsureStaleLBs(t *testing.T) {
 	}
 	t.Cleanup(cleanup.Cleanup)
 
-	defaultService := &v1.Service{
+	defaultService := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
-		Spec: v1.ServiceSpec{
-			Type: v1.ServiceTypeClusterIP,
+		Spec: corev1.ServiceSpec{
+			Type: corev1.ServiceTypeClusterIP,
 		},
 	}
 
@@ -93,20 +94,20 @@ func TestEnsureStaleLBs(t *testing.T) {
 func TestEnsureLBs(t *testing.T) {
 	tests := []struct {
 		desc    string
-		service *v1.Service
+		service *corev1.Service
 		LBs     []LB
 		finalLB *nbdb.LoadBalancer
 	}{
 		{
 			desc: "create service with permanent session affinity",
-			service: &v1.Service{
+			service: &corev1.Service{
 				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
-				Spec: v1.ServiceSpec{
-					Type:            v1.ServiceTypeClusterIP,
-					SessionAffinity: v1.ServiceAffinityClientIP,
-					SessionAffinityConfig: &v1.SessionAffinityConfig{
-						ClientIP: &v1.ClientIPConfig{
-							TimeoutSeconds: utilpointer.Int32(86400),
+				Spec: corev1.ServiceSpec{
+					Type:            corev1.ServiceTypeClusterIP,
+					SessionAffinity: corev1.ServiceAffinityClientIP,
+					SessionAffinityConfig: &corev1.SessionAffinityConfig{
+						ClientIP: &corev1.ClientIPConfig{
+							TimeoutSeconds: ptr.To(int32(86400)),
 						},
 					},
 				},
@@ -144,14 +145,14 @@ func TestEnsureLBs(t *testing.T) {
 		},
 		{
 			desc: "create service with default session affinity timeout",
-			service: &v1.Service{
+			service: &corev1.Service{
 				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
-				Spec: v1.ServiceSpec{
-					Type:            v1.ServiceTypeClusterIP,
-					SessionAffinity: v1.ServiceAffinityClientIP,
-					SessionAffinityConfig: &v1.SessionAffinityConfig{
-						ClientIP: &v1.ClientIPConfig{
-							TimeoutSeconds: utilpointer.Int32(10800),
+				Spec: corev1.ServiceSpec{
+					Type:            corev1.ServiceTypeClusterIP,
+					SessionAffinity: corev1.ServiceAffinityClientIP,
+					SessionAffinityConfig: &corev1.SessionAffinityConfig{
+						ClientIP: &corev1.ClientIPConfig{
+							TimeoutSeconds: ptr.To(int32(10800)),
 						},
 					},
 				},

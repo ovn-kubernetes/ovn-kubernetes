@@ -6,14 +6,12 @@ import (
 	"strings"
 	"time"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
-	listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -23,7 +21,7 @@ import (
 type ManagementPort interface {
 	// Create Management port, use annotator to update node annotation with management port details
 	// and waiter to set up condition to wait on for management port creation
-	Create(isRoutingAdvertised bool, routeManager *routemanager.Controller, node *v1.Node, nodeLister listers.NodeLister, kubeInterface kube.Interface, waiter *startupWaiter) (*managementPortConfig, error)
+	Create(isRoutingAdvertised bool, routeManager *routemanager.Controller, node *corev1.Node, waiter *startupWaiter) (*managementPortConfig, error)
 	// CheckManagementPortHealth checks periodically for management port health until stopChan is posted
 	// or closed and reports any warnings/errors to log
 	CheckManagementPortHealth(routeManager *routemanager.Controller, cfg *managementPortConfig) error
@@ -78,10 +76,9 @@ func newManagementPort(nodeName string, hostSubnets []*net.IPNet) ManagementPort
 	}
 }
 
-func (mp *managementPort) Create(isRoutingAdvertised bool, routeManager *routemanager.Controller, node *v1.Node,
-	nodeLister listers.NodeLister, kubeInterface kube.Interface, waiter *startupWaiter) (*managementPortConfig, error) {
+func (mp *managementPort) Create(isRoutingAdvertised bool, routeManager *routemanager.Controller, node *corev1.Node, waiter *startupWaiter) (*managementPortConfig, error) {
 	for _, mgmtPortName := range []string{types.K8sMgmtIntfName, types.K8sMgmtIntfName + "_0"} {
-		if err := syncMgmtPortInterface(mp.hostSubnets, mgmtPortName, true); err != nil {
+		if err := syncMgmtPortInterface(mgmtPortName, true); err != nil {
 			return nil, fmt.Errorf("failed to sync management port: %v", err)
 		}
 	}
@@ -223,6 +220,6 @@ func (p *managementPortEntry) doReconcile() error {
 	return p.port.CheckManagementPortHealth(p.routeManager, p.config)
 }
 
-func (p *managementPortEntry) SetPodNetworkAdvertised(isPodNetworkAdvertised bool) {
+func (p *managementPortEntry) SetDefaultPodNetworkAdvertised(isPodNetworkAdvertised bool) {
 	p.config.isPodNetworkAdvertised.Store(isPodNetworkAdvertised)
 }

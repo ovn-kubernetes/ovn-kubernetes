@@ -14,7 +14,7 @@ import (
 	"github.com/mdlayher/ndp"
 	"github.com/vishvananda/netlink"
 
-	kapi "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
@@ -236,7 +236,7 @@ func getIPv4Macs(resolveIPs ...string) ([]net.HardwareAddr, error) {
 	}
 	wg.Wait()
 	validNextHopMACs := []net.HardwareAddr{}
-	validMACs.Range(func(key interface{}, value interface{}) bool {
+	validMACs.Range(func(_ interface{}, value interface{}) bool {
 		validNextHopMACs = append(validNextHopMACs, value.(net.HardwareAddr))
 		return true
 	})
@@ -259,8 +259,8 @@ func convertMacToLabel(hwAddr net.HardwareAddr) []byte {
 // SyncConntrackForExternalGateways removes stale conntrack entries for pods returned by podsGetter.
 // To do so, it resolves all given gwIPsToKeep MAC addresses that are used as labels by ecmp conntrack flows.
 // Conntrack flows with MAC labels that do not belong to any of gwIPsToKeep are removed.
-func SyncConntrackForExternalGateways(gwIPsToKeep sets.Set[string], isPodInLocalZone func(pod *kapi.Pod) (bool, error),
-	podsGetter func() ([]*kapi.Pod, error)) error {
+func SyncConntrackForExternalGateways(gwIPsToKeep sets.Set[string], isPodInLocalZone func(pod *corev1.Pod) (bool, error),
+	podsGetter func() ([]*corev1.Pod, error)) error {
 	ipv6IPs := []string{}
 	ipv4IPs := []string{}
 	for gwIP := range gwIPsToKeep {

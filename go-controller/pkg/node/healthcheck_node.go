@@ -8,21 +8,21 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-
-	kapi "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	ktypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 )
 
 var updateInterval time.Duration = 500 * time.Millisecond
 
 type proxierHealthUpdater struct {
 	address      string
-	nodeRef      *kapi.ObjectReference
+	nodeRef      *corev1.ObjectReference
 	recorder     record.EventRecorder
 	c            clock.Clock
 	healthy      bool
@@ -47,7 +47,7 @@ func newNodeProxyHealthzServer(nodeName, address string, eventRecorder record.Ev
 		c:           clock.RealClock{},
 		healthy:     true,
 		lastUpdated: time.Time{},
-		nodeRef: &kapi.ObjectReference{
+		nodeRef: &corev1.ObjectReference{
 			Kind:      "Node",
 			Name:      nodeName,
 			UID:       ktypes.UID(nodeName),
@@ -82,7 +82,7 @@ func (phu *proxierHealthUpdater) isOvnkNodePodHealthy() bool {
 	return phu.healthy
 }
 
-func (phu *proxierHealthUpdater) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
+func (phu *proxierHealthUpdater) ServeHTTP(resp http.ResponseWriter, _ *http.Request) {
 	resp.Header().Set("Content-Type", "application/json")
 	resp.Header().Set("X-Content-Type-Options", "nosniff")
 	if phu.isOvnkNodePodHealthy() {
@@ -128,7 +128,7 @@ func (phu *proxierHealthUpdater) Start(stopChan chan struct{}, wg *sync.WaitGrou
 				return
 			}
 			msg := fmt.Sprintf("serving healthz on %s failed: %v", phu.address, err)
-			phu.recorder.Eventf(phu.nodeRef, kapi.EventTypeWarning, "FailedToStartProxierHealthcheck", "StartOVNKubernetesNode", msg)
+			phu.recorder.Eventf(phu.nodeRef, corev1.EventTypeWarning, "FailedToStartProxierHealthcheck", "StartOVNKubernetesNode", msg)
 			klog.Errorf(msg)
 			time.Sleep(5 * time.Second)
 		}

@@ -3,9 +3,9 @@ package udn
 import (
 	"testing"
 
-	. "github.com/onsi/gomega"
-
 	"k8s.io/utils/ptr"
+
+	. "github.com/onsi/gomega"
 )
 
 func TestAllocateMasqueradeIPs(t *testing.T) {

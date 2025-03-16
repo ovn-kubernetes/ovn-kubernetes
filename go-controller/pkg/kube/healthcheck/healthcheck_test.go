@@ -28,12 +28,12 @@ import (
 )
 
 type fakeListener struct {
-	openPorts sets.String
+	openPorts sets.Set[string]
 }
 
 func newFakeListener() *fakeListener {
 	return &fakeListener{
-		openPorts: sets.String{},
+		openPorts: sets.New[string](),
 	}
 }
 
@@ -87,7 +87,7 @@ type fakeHTTPServer struct {
 	handler http.Handler
 }
 
-func (fake *fakeHTTPServer) Serve(listener net.Listener) error {
+func (fake *fakeHTTPServer) Serve(net.Listener) error {
 	return nil // Cause the goroutine to return
 }
 
@@ -104,11 +104,6 @@ type hcPayload struct {
 		Name      string
 	}
 	LocalEndpoints int
-}
-
-type healthzPayload struct {
-	LastUpdated string
-	CurrentTime string
 }
 
 func TestServer(t *testing.T) {
@@ -166,7 +161,7 @@ func TestServer(t *testing.T) {
 		t.Errorf("expected port :9376 to be open\n%#v", listener.openPorts)
 	}
 	// test the handler
-	testHandler(hcs, nsn, http.StatusServiceUnavailable, 0, t)
+	testHandler(t, hcs, nsn, http.StatusServiceUnavailable, 0)
 
 	// sync an endpoint
 	err = hcs.SyncEndpoints(map[types.NamespacedName]int{nsn: 18})
@@ -180,7 +175,7 @@ func TestServer(t *testing.T) {
 		t.Errorf("expected 18 endpoints, got %d", hcs.services[nsn].endpoints)
 	}
 	// test the handler
-	testHandler(hcs, nsn, http.StatusOK, 18, t)
+	testHandler(t, hcs, nsn, http.StatusOK, 18)
 
 	// sync zero endpoints
 	err = hcs.SyncEndpoints(map[types.NamespacedName]int{nsn: 0})
@@ -194,7 +189,7 @@ func TestServer(t *testing.T) {
 		t.Errorf("expected 0 endpoints, got %d", hcs.services[nsn].endpoints)
 	}
 	// test the handler
-	testHandler(hcs, nsn, http.StatusServiceUnavailable, 0, t)
+	testHandler(t, hcs, nsn, http.StatusServiceUnavailable, 0)
 
 	// put the endpoint back
 	err = hcs.SyncEndpoints(map[types.NamespacedName]int{nsn: 11})
@@ -219,7 +214,7 @@ func TestServer(t *testing.T) {
 		t.Errorf("expected 0 endpoints, got %d", hcs.services[nsn].endpoints)
 	}
 	// test the handler
-	testHandler(hcs, nsn, http.StatusServiceUnavailable, 0, t)
+	testHandler(t, hcs, nsn, http.StatusServiceUnavailable, 0)
 
 	// put the endpoint back
 	err = hcs.SyncEndpoints(map[types.NamespacedName]int{nsn: 18})
@@ -270,9 +265,9 @@ func TestServer(t *testing.T) {
 		t.Errorf("expected 3 open ports, got %d\n%#v", len(listener.openPorts), listener.openPorts)
 	}
 	// test the handlers
-	testHandler(hcs, nsn1, http.StatusServiceUnavailable, 0, t)
-	testHandler(hcs, nsn2, http.StatusServiceUnavailable, 0, t)
-	testHandler(hcs, nsn3, http.StatusServiceUnavailable, 0, t)
+	testHandler(t, hcs, nsn1, http.StatusServiceUnavailable, 0)
+	testHandler(t, hcs, nsn2, http.StatusServiceUnavailable, 0)
+	testHandler(t, hcs, nsn3, http.StatusServiceUnavailable, 0)
 
 	// sync endpoints
 	err = hcs.SyncEndpoints(map[types.NamespacedName]int{
@@ -296,9 +291,9 @@ func TestServer(t *testing.T) {
 		t.Errorf("expected 7 endpoints, got %d", hcs.services[nsn3].endpoints)
 	}
 	// test the handlers
-	testHandler(hcs, nsn1, http.StatusOK, 9, t)
-	testHandler(hcs, nsn2, http.StatusOK, 3, t)
-	testHandler(hcs, nsn3, http.StatusOK, 7, t)
+	testHandler(t, hcs, nsn1, http.StatusOK, 9)
+	testHandler(t, hcs, nsn2, http.StatusOK, 3)
+	testHandler(t, hcs, nsn3, http.StatusOK, 7)
 
 	// sync new services
 	err = hcs.SyncServices(map[types.NamespacedName]uint16{
@@ -323,9 +318,9 @@ func TestServer(t *testing.T) {
 		t.Errorf("expected 0 endpoints, got %d", hcs.services[nsn4].endpoints)
 	}
 	// test the handlers
-	testHandler(hcs, nsn2, http.StatusOK, 3, t)
-	testHandler(hcs, nsn3, http.StatusServiceUnavailable, 0, t)
-	testHandler(hcs, nsn4, http.StatusServiceUnavailable, 0, t)
+	testHandler(t, hcs, nsn2, http.StatusOK, 3)
+	testHandler(t, hcs, nsn3, http.StatusServiceUnavailable, 0)
+	testHandler(t, hcs, nsn4, http.StatusServiceUnavailable, 0)
 
 	// sync endpoints
 	err = hcs.SyncEndpoints(map[types.NamespacedName]int{
@@ -350,9 +345,9 @@ func TestServer(t *testing.T) {
 		t.Errorf("expected 6 endpoints, got %d", hcs.services[nsn4].endpoints)
 	}
 	// test the handlers
-	testHandler(hcs, nsn2, http.StatusOK, 3, t)
-	testHandler(hcs, nsn3, http.StatusOK, 7, t)
-	testHandler(hcs, nsn4, http.StatusOK, 6, t)
+	testHandler(t, hcs, nsn2, http.StatusOK, 3)
+	testHandler(t, hcs, nsn3, http.StatusOK, 7)
+	testHandler(t, hcs, nsn4, http.StatusOK, 6)
 
 	// sync endpoints, missing nsn2
 	err = hcs.SyncEndpoints(map[types.NamespacedName]int{
@@ -375,12 +370,13 @@ func TestServer(t *testing.T) {
 		t.Errorf("expected 6 endpoints, got %d", hcs.services[nsn4].endpoints)
 	}
 	// test the handlers
-	testHandler(hcs, nsn2, http.StatusServiceUnavailable, 0, t)
-	testHandler(hcs, nsn3, http.StatusOK, 7, t)
-	testHandler(hcs, nsn4, http.StatusOK, 6, t)
+	testHandler(t, hcs, nsn2, http.StatusServiceUnavailable, 0)
+	testHandler(t, hcs, nsn3, http.StatusOK, 7)
+	testHandler(t, hcs, nsn4, http.StatusOK, 6)
 }
 
-func testHandler(hcs *server, nsn types.NamespacedName, status int, endpoints int, t *testing.T) {
+func testHandler(t *testing.T, hcs *server, nsn types.NamespacedName, status int, endpoints int) {
+	t.Helper()
 	handler := hcs.services[nsn].server.(*fakeHTTPServer).handler
 	req, err := http.NewRequest("GET", "/healthz", nil)
 	if err != nil {
@@ -402,24 +398,5 @@ func testHandler(hcs *server, nsn types.NamespacedName, status int, endpoints in
 	}
 	if payload.LocalEndpoints != endpoints {
 		t.Errorf("expected %d endpoints, got %d", endpoints, payload.LocalEndpoints)
-	}
-}
-
-func testHealthzHandler(server HTTPServer, status int, t *testing.T) {
-	handler := server.(*fakeHTTPServer).handler
-	req, err := http.NewRequest("GET", "/healthz", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp := httptest.NewRecorder()
-
-	handler.ServeHTTP(resp, req)
-
-	if resp.Code != status {
-		t.Errorf("expected status code %v, got %v", status, resp.Code)
-	}
-	var payload healthzPayload
-	if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
-		t.Fatal(err)
 	}
 }

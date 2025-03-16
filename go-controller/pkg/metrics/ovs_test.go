@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics/mocks"
-
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cryptorand"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics/mocks"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/vswitchd"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 type clientOutput struct {
@@ -29,7 +29,7 @@ func NewFakeOVSClient(data []clientOutput) fakeOVSClient {
 	return fakeOVSClient{data: data}
 }
 
-func (c *fakeOVSClient) FakeCall(args ...string) (string, string, error) {
+func (c *fakeOVSClient) FakeCall(...string) (string, string, error) {
 	output := c.data[c.dataIndex]
 	c.dataIndex++
 	return output.stdout, output.stderr, output.err
@@ -130,7 +130,7 @@ var _ = ginkgo.Describe("OVS metrics", func() {
 			}
 			ovsOfctl := NewFakeOVSClient(ovsOfctlOutput)
 			err = updateOvsBridgeMetrics(ovsClient, ovsOfctl.FakeCall)
-			gomega.Expect(err).To(gomega.BeNil())
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 			// There is no easy way (that I can think of besides creating my own interface - none exist upstream) to
 			// mock prometheus.gaugevec.
 			// Validate the number of expected prom time series only.
@@ -157,7 +157,7 @@ var _ = ginkgo.Describe("OVS metrics", func() {
 			}
 			ovsAppctl := NewFakeOVSClient(ovsAppctlOutput)
 			err = updateOvsBridgeMetrics(ovsClient, ovsAppctl.FakeCall)
-			gomega.Expect(err).ToNot(gomega.BeNil())
+			gomega.Expect(err).To(gomega.HaveOccurred())
 			libovsdbCleanup.Cleanup()
 		})
 
@@ -173,7 +173,7 @@ var _ = ginkgo.Describe("OVS metrics", func() {
 			}
 			ovsAppctl := NewFakeOVSClient(ovsAppctlOutput)
 			err = updateOvsBridgeMetrics(ovsClient, ovsAppctl.FakeCall)
-			gomega.Expect(err).ToNot(gomega.BeNil())
+			gomega.Expect(err).To(gomega.HaveOccurred())
 			libovsdbCleanup.Cleanup()
 		})
 
@@ -189,7 +189,7 @@ var _ = ginkgo.Describe("OVS metrics", func() {
 			}
 			ovsAppctl := NewFakeOVSClient(ovsAppctlOutput)
 			err = updateOvsBridgeMetrics(ovsClient, ovsAppctl.FakeCall)
-			gomega.Expect(err).ToNot(gomega.BeNil())
+			gomega.Expect(err).To(gomega.HaveOccurred())
 			libovsdbCleanup.Cleanup()
 		})
 	})
@@ -215,7 +215,7 @@ var _ = ginkgo.Describe("OVS metrics", func() {
 			ovsClient, libovsdbCleanup, err := libovsdbtest.NewOVSTestHarness(dbSetup)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			err = updateOvsInterfaceMetrics(ovsClient)
-			gomega.Expect(err).Should(gomega.BeNil())
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 			gomega.Expect(resetsTotalMock.GetValue()).Should(gomega.BeNumerically("==", 2))
 			gomega.Expect(rxDroppedTotalMock.GetValue()).Should(gomega.BeNumerically("==", 10))
 			gomega.Expect(txDroppedTotalMock.GetValue()).Should(gomega.BeNumerically("==", 100))
@@ -247,7 +247,7 @@ var _ = ginkgo.Describe("OVS metrics", func() {
 			ovsClient, libovsdbCleanup, err := libovsdbtest.NewOVSTestHarness(dbSetup)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			err = setOvsHwOffloadMetrics(ovsClient)
-			gomega.Expect(err).Should(gomega.BeNil())
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 			gomega.Expect(hwOffloadMock.GetValue()).Should(gomega.BeNumerically("==", 1))
 			gomega.Expect(tcPolicyMock.GetValue()).Should(gomega.BeNumerically("==", 1))
 			libovsdbCleanup.Cleanup()
@@ -261,7 +261,7 @@ var _ = ginkgo.Describe("OVS metrics", func() {
 			ovsClient, libovsdbCleanup, err := libovsdbtest.NewOVSTestHarness(dbSetup)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			err = setOvsHwOffloadMetrics(ovsClient)
-			gomega.Expect(err).ToNot(gomega.BeNil())
+			gomega.Expect(err).To(gomega.HaveOccurred())
 			libovsdbCleanup.Cleanup()
 		})
 	})

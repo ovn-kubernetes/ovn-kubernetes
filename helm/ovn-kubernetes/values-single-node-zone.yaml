@@ -82,8 +82,6 @@ global:
   enableMultiExternalGateway: true
   # -- Configure to use stateless network policy feature with ovn-kubernetes
   enableStatelessNetworkPolicy: false
-  # -- Configure to use the IPAMClaims CRD feature with ovn-kubernetes, thus granting persistent IPs across restarts / migration for KubeVirt VMs
-  enablePersistentIPs: true
   # -- Configure to use service template feature with ovn-kubernetes
   enableSvcTemplate: true
   # -- Enables metrics related to scaling

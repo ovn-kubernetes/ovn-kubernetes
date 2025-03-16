@@ -7,13 +7,12 @@ import (
 	"sync"
 	"time"
 
-	kapi "k8s.io/api/core/v1"
-	kerrors "k8s.io/apimachinery/pkg/api/errors"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/tools/cache"
-
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
@@ -74,25 +73,25 @@ type DefaultEventHandler struct{}
 
 func (h *DefaultEventHandler) SyncFunc([]interface{}) error { return nil }
 
-func (h *DefaultEventHandler) AreResourcesEqual(obj1, obj2 interface{}) (bool, error) {
+func (h *DefaultEventHandler) AreResourcesEqual(_, _ interface{}) (bool, error) {
 	return false, nil
 }
 
-func (h *DefaultEventHandler) GetInternalCacheEntry(obj interface{}) interface{} { return nil }
+func (h *DefaultEventHandler) GetInternalCacheEntry(_ interface{}) interface{} { return nil }
 
-func (h *DefaultEventHandler) IsResourceScheduled(obj interface{}) bool { return true }
+func (h *DefaultEventHandler) IsResourceScheduled(_ interface{}) bool { return true }
 
-func (h *DefaultEventHandler) IsObjectInTerminalState(obj interface{}) bool { return false }
+func (h *DefaultEventHandler) IsObjectInTerminalState(_ interface{}) bool { return false }
 
-func (h *DefaultEventHandler) RecordAddEvent(obj interface{}) {}
+func (h *DefaultEventHandler) RecordAddEvent(_ interface{}) {}
 
-func (h *DefaultEventHandler) RecordUpdateEvent(obj interface{}) {}
+func (h *DefaultEventHandler) RecordUpdateEvent(_ interface{}) {}
 
-func (h *DefaultEventHandler) RecordDeleteEvent(obj interface{}) {}
+func (h *DefaultEventHandler) RecordDeleteEvent(_ interface{}) {}
 
-func (h *DefaultEventHandler) RecordSuccessEvent(obj interface{}) {}
+func (h *DefaultEventHandler) RecordSuccessEvent(_ interface{}) {}
 
-func (h *DefaultEventHandler) RecordErrorEvent(obj interface{}, reason string, err error) {}
+func (h *DefaultEventHandler) RecordErrorEvent(_ interface{}, _ string, _ error) {}
 
 type ResourceHandler struct {
 	// HasUpdateFunc is true if an update event for this resource type is implemented as an
@@ -307,7 +306,7 @@ func (r *RetryFramework) resourceRetry(objKey string, now time.Time) {
 			// if it doesn't exist we are not going to create the new object.
 			kObj, err := r.ResourceHandler.GetResourceFromInformerCache(objKey)
 			if err != nil {
-				if kerrors.IsNotFound(err) {
+				if apierrors.IsNotFound(err) {
 					klog.Infof("%s %s not found in the informers cache,"+
 						" not going to retry object create", r.ResourceHandler.ObjType, objKey)
 					kObj = nil
@@ -597,11 +596,11 @@ func (r *RetryFramework) WatchResourceFiltered(namespaceForFilteredHandler strin
 					// When processing an object in terminal state there is a chance that it was already removed from
 					// the API server. Since delete events for objects in terminal state are skipped delete it here.
 					// This only applies to pod watchers (pods + dynamic network policy handlers watching pods).
-					if kerrors.IsNotFound(err) {
+					if apierrors.IsNotFound(err) {
 						if r.ResourceHandler.IsObjectInTerminalState(newer) {
 							klog.V(5).Infof("%s %s is in terminal state but no longer exists in informer cache, removing",
 								r.ResourceHandler.ObjType, newKey)
-							r.DoWithLock(newKey, func(key string) {
+							r.DoWithLock(newKey, func(_ string) {
 								r.processObjectInTerminalState(newer, newKey, resourceEventUpdate)
 							})
 						} else {
@@ -773,11 +772,11 @@ func (r *RetryFramework) WatchResourceFiltered(namespaceForFilteredHandler strin
 }
 
 // getPendingPods returns all pods that are in the Pending state
-func getPendingPods(kubeClient kube.InterfaceOVN) ([]*kapi.Pod, error) {
-	var allPods []*kapi.Pod
+func getPendingPods(kubeClient kube.InterfaceOVN) ([]*corev1.Pod, error) {
+	var allPods []*corev1.Pod
 
-	pods, err := kubeClient.GetPods(kapi.NamespaceAll, metav1.ListOptions{
-		FieldSelector: fields.OneTermEqualSelector("status.phase", string(kapi.PodPending)).String(),
+	pods, err := kubeClient.GetPods(corev1.NamespaceAll, metav1.ListOptions{
+		FieldSelector: fields.OneTermEqualSelector("status.phase", string(corev1.PodPending)).String(),
 	})
 	if err != nil {
 		return nil, err

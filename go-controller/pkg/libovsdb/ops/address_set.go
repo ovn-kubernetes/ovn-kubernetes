@@ -4,7 +4,7 @@ import (
 	"context"
 
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
-	libovsdb "github.com/ovn-org/libovsdb/ovsdb"
+	"github.com/ovn-org/libovsdb/ovsdb"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -60,7 +60,7 @@ func GetAddressSet(nbClient libovsdbclient.Client, as *nbdb.AddressSet) (*nbdb.A
 }
 
 // CreateAddressSetsOps creates the create-ops for the provided address sets
-func CreateAddressSetsOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, addrSets ...*nbdb.AddressSet) ([]libovsdb.Operation, error) {
+func CreateAddressSetsOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, addrSets ...*nbdb.AddressSet) ([]ovsdb.Operation, error) {
 	opModels := make([]operationModel, 0, len(addrSets))
 	for i := range addrSets {
 		as := addrSets[i]
@@ -88,8 +88,8 @@ func CreateAddressSets(nbClient libovsdbclient.Client, addrSets ...*nbdb.Address
 	return err
 }
 
-func CreateOrUpdateAddressSetsOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation,
-	addrSets ...*nbdb.AddressSet) ([]libovsdb.Operation, error) {
+func CreateOrUpdateAddressSetsOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation,
+	addrSets ...*nbdb.AddressSet) ([]ovsdb.Operation, error) {
 	opModels := make([]operationModel, 0, len(addrSets))
 	for i := range addrSets {
 		as := addrSets[i]
@@ -138,7 +138,7 @@ func UpdateAddressSetsAddresses(nbClient libovsdbclient.Client, addrSets ...*nbd
 
 // AddAddressesToAddressSetOps adds the provided addresses to the provided address set and
 // returns the corresponding ops
-func AddAddressesToAddressSetOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, as *nbdb.AddressSet, addresses ...string) ([]libovsdb.Operation, error) {
+func AddAddressesToAddressSetOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, as *nbdb.AddressSet, addresses ...string) ([]ovsdb.Operation, error) {
 	originalAddresses := as.Addresses
 	as.Addresses = addresses
 	opModel := operationModel{
@@ -156,7 +156,7 @@ func AddAddressesToAddressSetOps(nbClient libovsdbclient.Client, ops []libovsdb.
 
 // DeleteAddressesFromAddressSetOps removes the provided addresses from the provided address
 // set and returns the corresponding ops
-func DeleteAddressesFromAddressSetOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, as *nbdb.AddressSet, addresses ...string) ([]libovsdb.Operation, error) {
+func DeleteAddressesFromAddressSetOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, as *nbdb.AddressSet, addresses ...string) ([]ovsdb.Operation, error) {
 	originalAddresses := as.Addresses
 	as.Addresses = addresses
 	opModel := operationModel{
@@ -172,7 +172,7 @@ func DeleteAddressesFromAddressSetOps(nbClient libovsdbclient.Client, ops []libo
 	return ops, err
 }
 
-func DeleteAddressSetsOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, addrSets ...*nbdb.AddressSet) ([]libovsdb.Operation, error) {
+func DeleteAddressSetsOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, addrSets ...*nbdb.AddressSet) ([]ovsdb.Operation, error) {
 	opModels := make([]operationModel, 0, len(addrSets))
 	for i := range addrSets {
 		as := addrSets[i]
@@ -206,7 +206,7 @@ func DeleteAddressSets(nbClient libovsdbclient.Client, addrSets ...*nbdb.Address
 }
 
 // DeleteAddressSetsWithPredicateOps returns the ops to delete address sets based on a given predicate
-func DeleteAddressSetsWithPredicateOps(nbClient libovsdbclient.Client, ops []libovsdb.Operation, p addressSetPredicate) ([]libovsdb.Operation, error) {
+func DeleteAddressSetsWithPredicateOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, p addressSetPredicate) ([]ovsdb.Operation, error) {
 	deleted := []*nbdb.AddressSet{}
 	opModel := operationModel{
 		ModelPredicate: p,

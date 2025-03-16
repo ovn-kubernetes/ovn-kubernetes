@@ -1,7 +1,6 @@
 package gateway
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
@@ -17,12 +16,6 @@ import (
 const (
 	// OvnGatewayLoadBalancerIds represent the OVN loadbalancers used on nodes
 	OvnGatewayLoadBalancerIds = "lb_gateway_router"
-)
-
-var (
-	// It is perfectly normal to have OVN GW routers to not to have LB rules. This happens
-	// when NodePort is disabled for that node.
-	OVNGatewayLBIsEmpty = errors.New("load balancer item in OVN DB is an empty string")
 )
 
 // GetOvnGateways return all created gateways.

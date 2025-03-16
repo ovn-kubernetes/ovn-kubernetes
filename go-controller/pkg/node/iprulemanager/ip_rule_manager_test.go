@@ -9,15 +9,12 @@ import (
 
 	"github.com/containernetworking/plugins/pkg/ns"
 	"github.com/containernetworking/plugins/pkg/testutils"
-
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/vishvananda/netlink"
 
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 )
-
-const oneSec = 1 * time.Second
 
 // FIXME(mk) - Within GH VM, if I need to create a new NetNs. I see the following error:
 // "failed to create new network namespace: mount --make-rshared /run/user/1001/netns failed: "operation not permitted""
@@ -51,11 +48,15 @@ var _ = ginkgo.XDescribe("IP Rule Manager", func() {
 		stopCh = make(chan struct{})
 		wg.Add(1)
 		c = NewController(true, true)
-		go testNS.Do(func(netNS ns.NetNS) error {
-			c.Run(stopCh, time.Millisecond*50)
-			wg.Done()
-			return nil
-		})
+		go func() {
+			defer ginkgo.GinkgoRecover()
+			defer wg.Done()
+			err := testNS.Do(func(ns.NetNS) error {
+				c.Run(stopCh, time.Millisecond*50)
+				return nil
+			})
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+		}()
 	})
 
 	ginkgo.AfterEach(func() {
@@ -69,13 +70,13 @@ var _ = ginkgo.XDescribe("IP Rule Manager", func() {
 	ginkgo.Context("Add rule", func() {
 		ginkgo.It("ensure rule exist", func() {
 			gomega.Expect(func() error {
-				return testNS.Do(func(netNS ns.NetNS) error {
+				return testNS.Do(func(ns.NetNS) error {
 					return c.Add(*ruleWithDst)
 				})
 			}()).Should(gomega.Succeed())
 
 			gomega.Eventually(func() error {
-				return testNS.Do(func(netNS ns.NetNS) error {
+				return testNS.Do(func(ns.NetNS) error {
 					rules, err := netlink.RuleList(netlink.FAMILY_ALL)
 					if err != nil {
 						return err
@@ -85,18 +86,18 @@ var _ = ginkgo.XDescribe("IP Rule Manager", func() {
 					}
 					return nil
 				})
-			}).WithTimeout(oneSec).Should(gomega.Succeed())
+			}).WithTimeout(time.Second).Should(gomega.Succeed())
 		})
 
 		ginkgo.It("ensure rule is restored if it is removed", func() {
 			gomega.Expect(func() error {
-				return testNS.Do(func(netNS ns.NetNS) error {
+				return testNS.Do(func(ns.NetNS) error {
 					return c.Add(*ruleWithDst)
 				})
 			}()).Should(gomega.Succeed())
 
 			gomega.Eventually(func() error {
-				return testNS.Do(func(netNS ns.NetNS) error {
+				return testNS.Do(func(ns.NetNS) error {
 					rules, err := netlink.RuleList(netlink.FAMILY_ALL)
 					if err != nil {
 						return err
@@ -106,15 +107,15 @@ var _ = ginkgo.XDescribe("IP Rule Manager", func() {
 					}
 					return nil
 				})
-			}).WithTimeout(oneSec).Should(gomega.Succeed())
+			}).WithTimeout(time.Second).Should(gomega.Succeed())
 			gomega.Expect(func() error {
-				return testNS.Do(func(netNS ns.NetNS) error {
+				return testNS.Do(func(ns.NetNS) error {
 					return netlink.RuleDel(ruleWithDst)
 				})
 			}()).Should(gomega.Succeed())
 			// check that rule is restored
 			gomega.Eventually(func() error {
-				return testNS.Do(func(netNS ns.NetNS) error {
+				return testNS.Do(func(ns.NetNS) error {
 					rules, err := netlink.RuleList(netlink.FAMILY_ALL)
 					if err != nil {
 						return err
@@ -124,23 +125,23 @@ var _ = ginkgo.XDescribe("IP Rule Manager", func() {
 					}
 					return nil
 				})
-			}).WithTimeout(oneSec).Should(gomega.Succeed())
+			}).WithTimeout(time.Second).Should(gomega.Succeed())
 		})
 
 		ginkgo.It("ensure multiple rules are restored if they're removed", func() {
 			gomega.Expect(func() error {
-				return testNS.Do(func(netNS ns.NetNS) error {
+				return testNS.Do(func(ns.NetNS) error {
 					return c.Add(*ruleWithDst)
 				})
 			}()).Should(gomega.Succeed())
 			gomega.Expect(func() error {
-				return testNS.Do(func(netNS ns.NetNS) error {
+				return testNS.Do(func(ns.NetNS) error {
 					return c.Add(*ruleWithSrc)
 				})
 			}()).Should(gomega.Succeed())
 
 			gomega.Eventually(func() error {
-				return testNS.Do(func(netNS ns.NetNS) error {
+				return testNS.Do(func(ns.NetNS) error {
 					rules, err := netlink.RuleList(netlink.FAMILY_ALL)
 					if err != nil {
 						return err
@@ -153,15 +154,15 @@ var _ = ginkgo.XDescribe("IP Rule Manager", func() {
 					}
 					return nil
 				})
-			}).WithTimeout(oneSec).Should(gomega.Succeed())
+			}).WithTimeout(time.Second).Should(gomega.Succeed())
 			gomega.Expect(func() error {
-				return testNS.Do(func(netNS ns.NetNS) error {
+				return testNS.Do(func(ns.NetNS) error {
 					return netlink.RuleDel(ruleWithDst)
 				})
 			}()).Should(gomega.Succeed())
 
 			gomega.Eventually(func() error {
-				return testNS.Do(func(netNS ns.NetNS) error {
+				return testNS.Do(func(ns.NetNS) error {
 					rules, err := netlink.RuleList(netlink.FAMILY_ALL)
 					if err != nil {
 						return err
@@ -171,15 +172,15 @@ var _ = ginkgo.XDescribe("IP Rule Manager", func() {
 					}
 					return nil
 				})
-			}).WithTimeout(oneSec).Should(gomega.Succeed())
+			}).WithTimeout(time.Second).Should(gomega.Succeed())
 			gomega.Expect(func() error {
-				return testNS.Do(func(netNS ns.NetNS) error {
+				return testNS.Do(func(ns.NetNS) error {
 					return netlink.RuleDel(ruleWithSrc)
 				})
 			}()).Should(gomega.Succeed())
 
 			gomega.Eventually(func() error {
-				return testNS.Do(func(netNS ns.NetNS) error {
+				return testNS.Do(func(ns.NetNS) error {
 					rules, err := netlink.RuleList(netlink.FAMILY_ALL)
 					if err != nil {
 						return err
@@ -189,14 +190,14 @@ var _ = ginkgo.XDescribe("IP Rule Manager", func() {
 					}
 					return nil
 				})
-			}).WithTimeout(oneSec).Should(gomega.Succeed())
+			}).WithTimeout(time.Second).Should(gomega.Succeed())
 		})
 	})
 
 	ginkgo.Context("Del rule", func() {
 		ginkgo.It("doesn't fail when no rule to delete", func() {
 			gomega.Expect(func() error {
-				return testNS.Do(func(netNS ns.NetNS) error {
+				return testNS.Do(func(ns.NetNS) error {
 					return c.Delete(*ruleWithDst)
 				})
 			}()).Should(gomega.Succeed())
@@ -204,7 +205,7 @@ var _ = ginkgo.XDescribe("IP Rule Manager", func() {
 
 		ginkgo.It("deletes a rule", func() {
 			gomega.Expect(func() error {
-				return testNS.Do(func(netNS ns.NetNS) error {
+				return testNS.Do(func(ns.NetNS) error {
 					if err := c.Add(*ruleWithDst); err != nil {
 						return err
 					}
@@ -216,7 +217,7 @@ var _ = ginkgo.XDescribe("IP Rule Manager", func() {
 			}()).Should(gomega.Succeed())
 
 			gomega.Eventually(func() error {
-				return testNS.Do(func(netNS ns.NetNS) error {
+				return testNS.Do(func(ns.NetNS) error {
 					rules, err := netlink.RuleList(netlink.FAMILY_ALL)
 					if err != nil {
 						return err
@@ -226,7 +227,7 @@ var _ = ginkgo.XDescribe("IP Rule Manager", func() {
 					}
 					return nil
 				})
-			}).WithTimeout(oneSec).Should(gomega.Succeed())
+			}).WithTimeout(time.Second).Should(gomega.Succeed())
 		})
 	})
 })

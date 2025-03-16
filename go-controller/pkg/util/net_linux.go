@@ -14,13 +14,14 @@ import (
 	"time"
 
 	"github.com/mdlayher/arp"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 
-	kapi "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 )
 
 type NetLinkOps interface {
@@ -581,24 +582,24 @@ func LinkNeighIPExists(link netlink.Link, neighIP net.IP) (bool, error) {
 	return false, nil
 }
 
-func DeleteConntrack(ip string, port int32, protocol kapi.Protocol, ipFilterType netlink.ConntrackFilterType, labels [][]byte) error {
+func DeleteConntrack(ip string, port int32, protocol corev1.Protocol, ipFilterType netlink.ConntrackFilterType, labels [][]byte) error {
 	ipAddress := net.ParseIP(ip)
 	if ipAddress == nil {
 		return fmt.Errorf("value %q passed to DeleteConntrack is not an IP address", ipAddress)
 	}
 
 	filter := &netlink.ConntrackFilter{}
-	if protocol == kapi.ProtocolUDP {
+	if protocol == corev1.ProtocolUDP {
 		// 17 = UDP protocol
 		if err := filter.AddProtocol(17); err != nil {
 			return fmt.Errorf("could not add Protocol UDP to conntrack filter %v", err)
 		}
-	} else if protocol == kapi.ProtocolSCTP {
+	} else if protocol == corev1.ProtocolSCTP {
 		// 132 = SCTP protocol
 		if err := filter.AddProtocol(132); err != nil {
 			return fmt.Errorf("could not add Protocol SCTP to conntrack filter %v", err)
 		}
-	} else if protocol == kapi.ProtocolTCP {
+	} else if protocol == corev1.ProtocolTCP {
 		// 6 = TCP protocol
 		if err := filter.AddProtocol(6); err != nil {
 			return fmt.Errorf("could not add Protocol TCP to conntrack filter %v", err)
@@ -634,7 +635,7 @@ func DeleteConntrack(ip string, port int32, protocol kapi.Protocol, ipFilterType
 // DeleteConntrackServicePort is a wrapper around DeleteConntrack for the purpose of deleting conntrack entries that
 // belong to ServicePorts. Before deleting any conntrack entry, it makes sure that the port is valid. If the port is
 // invalid, it will log a level 5 info message and simply return.
-func DeleteConntrackServicePort(ip string, port int32, protocol kapi.Protocol, ipFilterType netlink.ConntrackFilterType,
+func DeleteConntrackServicePort(ip string, port int32, protocol corev1.Protocol, ipFilterType netlink.ConntrackFilterType,
 	labels [][]byte) error {
 	if err := ValidatePort(protocol, port); err != nil {
 		klog.V(5).Infof("Skipping conntrack deletion for IP %q, protocol %q, port \"%d\", err: %q",

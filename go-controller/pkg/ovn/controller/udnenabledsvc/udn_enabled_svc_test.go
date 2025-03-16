@@ -8,18 +8,21 @@ import (
 	"time"
 
 	"github.com/onsi/gomega"
+
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
+
 	"github.com/ovn-org/libovsdb/client"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 func TestUDNEnabledServices(t *testing.T) {
@@ -165,7 +168,7 @@ func TestUDNEnabledServices(t *testing.T) {
 			t.Logf("delete all services and ensure address map is empty")
 			for ns, name := range map[string]string{service1Namespace: service1Name, service2Namespace: service2Name} {
 				err = ovnClient.KubeClient.CoreV1().Services(ns).Delete(context.Background(), name, metav1.DeleteOptions{})
-				if err != nil && !errors.IsNotFound(err) {
+				if err != nil && !apierrors.IsNotFound(err) {
 					t.Fatalf("failed to ensure service %s/%s is deleted: %v", ns, name, err)
 				}
 			}
@@ -206,7 +209,7 @@ func createOrUpdateServices(client *util.OVNKubeControllerClientset, services []
 	for _, service := range services {
 		_, err := client.KubeClient.CoreV1().Services(service.Namespace).Get(context.Background(), service.Name, metav1.GetOptions{})
 		if err != nil {
-			if errors.IsNotFound(err) {
+			if apierrors.IsNotFound(err) {
 				_, err = client.KubeClient.CoreV1().Services(service.Namespace).Create(context.Background(), service, metav1.CreateOptions{})
 				if err != nil {
 					return fmt.Errorf("failed to create service %s/%s: %v", service.Namespace, service.Name, err)

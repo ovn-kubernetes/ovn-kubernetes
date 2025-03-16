@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/coreos/go-iptables/iptables"
+
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
