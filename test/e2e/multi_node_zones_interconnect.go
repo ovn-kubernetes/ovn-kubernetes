@@ -38,9 +38,10 @@ func changeNodeZone(node *v1.Node, zone string, cs clientset.Interface) error {
 
 	_, err = cs.CoreV1().Nodes().Patch(context.TODO(), node.Name, types.MergePatchType, patchData, metav1.PatchOptions{})
 	framework.ExpectNoError(err)
-
+	ovnKubeNs, err := getOVNKubeNamespaceName(cs.CoreV1().Namespaces())
+	framework.ExpectNoError(err, "failed to get ovn-kubernetes namespace")
 	// Restart the ovnkube-node on this node
-	err = restartOVNKubeNodePod(cs, ovnNamespace, node.Name)
+	err = restartOVNKubeNodePod(cs, ovnKubeNs, node.Name)
 	framework.ExpectNoError(err)
 
 	// Verify that the node is moved to the expected zone

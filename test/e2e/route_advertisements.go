@@ -45,11 +45,11 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 		serverContainerIPs = []string{}
 
 		bgpServerIPv4, bgpServerIPv6 := getContainerAddressesForNetwork(serverContainerName, bgpExternalNetworkName)
-		if isIPv4Supported() {
+		if isIPv4Supported(f.ClientSet) {
 			serverContainerIPs = append(serverContainerIPs, bgpServerIPv4)
 		}
 
-		if isIPv6Supported() {
+		if isIPv6Supported(f.ClientSet) {
 			serverContainerIPs = append(serverContainerIPs, bgpServerIPv6)
 		}
 		framework.Logf("The external server IPs are: %+v", serverContainerIPs)
@@ -211,7 +211,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 					60*time.Second)
 				framework.ExpectNoError(err, fmt.Sprintf("Testing pod to external traffic failed: %v", err))
 				expectedPodIP := podv4IP
-				if isIPv6Supported() && utilnet.IsIPv6String(serverContainerIP) {
+				if isIPv6Supported(f.ClientSet) && utilnet.IsIPv6String(serverContainerIP) {
 					expectedPodIP = podv6IP
 					// For IPv6 addresses, need to handle the brackets in the output
 					outputIP := strings.TrimPrefix(strings.Split(stdout, "]:")[0], "[")
@@ -261,11 +261,11 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN Layer3 Network is
 		serverContainerIPs = []string{}
 
 		bgpServerIPv4, bgpServerIPv6 := getContainerAddressesForNetwork(serverContainerName, bgpExternalNetworkName)
-		if isIPv4Supported() {
+		if isIPv4Supported(f.ClientSet) {
 			serverContainerIPs = append(serverContainerIPs, bgpServerIPv4)
 		}
 
-		if isIPv6Supported() {
+		if isIPv6Supported(f.ClientSet) {
 			serverContainerIPs = append(serverContainerIPs, bgpServerIPv6)
 		}
 		framework.Logf("The external server IPs are: %+v", serverContainerIPs)
@@ -292,7 +292,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN Layer3 Network is
 			gomega.Expect(len(nodes.Items)).To(gomega.BeNumerically(">", 2))
 
 			ginkgo.By("create layer3 ClusterUserDefinedNetwork")
-			cudnManifest := generateBGPCUDNManifest(testCudnName, f.Namespace.Name)
+			cudnManifest := generateBGPCUDNManifest(cs, testCudnName, f.Namespace.Name)
 			cleanup, err := createManifest("", cudnManifest)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			gomega.Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, testCudnName), 5*time.Second, time.Second).Should(gomega.Succeed())
@@ -417,7 +417,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN Layer3 Network is
 					framework.Poll,
 					60*time.Second)
 				framework.ExpectNoError(err, fmt.Sprintf("Testing pod to external traffic failed: %v", err))
-				if isIPv6Supported() && utilnet.IsIPv6String(serverContainerIP) {
+				if isIPv6Supported(cs) && utilnet.IsIPv6String(serverContainerIP) {
 					podIP, err := podIPsForUserDefinedPrimaryNetwork(cs, f.Namespace.Name, clientPod.Name, namespacedName(f.Namespace.Name, testCudnName), 1)
 					framework.ExpectNoError(err, fmt.Sprintf("Getting podIPs for pod %s failed: %v", clientPod.Name, err))
 					// For IPv6 addresses, need to handle the brackets in the output
@@ -434,7 +434,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN Layer3 Network is
 	})
 })
 
-func generateBGPCUDNManifest(testCudnName string, targetNamespaces ...string) string {
+func generateBGPCUDNManifest(cs clientset.Interface, testCudnName string, targetNamespaces ...string) string {
 	targetNs := strings.Join(targetNamespaces, ",")
 	return `
 apiVersion: k8s.ovn.org/v1
@@ -453,7 +453,7 @@ spec:
     topology: Layer3
     layer3:
       role: Primary
-      subnets: ` + generateCIDRforClusterUDN("103.103.0.0/16", "2014:100:200::0/60")
+      subnets: ` + generateCIDRforClusterUDN(cs, "103.103.0.0/16", "2014:100:200::0/60")
 }
 
 func generateRAManifest(name string) string {

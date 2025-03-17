@@ -1524,7 +1524,7 @@ runcmd:
 					namespace:          namespace,
 					name:               "net1",
 					topology:           td.topology,
-					cidr:               correctCIDRFamily(cidrIPv4, cidrIPv6),
+					cidr:               correctCIDRFamily(fr.ClientSet, cidrIPv4, cidrIPv6),
 					allowPersistentIPs: true,
 					role:               td.role,
 				})
@@ -1533,15 +1533,17 @@ runcmd:
 				By("setting up the localnet underlay")
 				nodes := ovsPods(clientSet)
 				Expect(nodes).NotTo(BeEmpty())
+				ovnKubeNs, err := getOVNKubeNamespaceName(fr.ClientSet.CoreV1().Namespaces())
+				Expect(err).ShouldNot(HaveOccurred(), "failed to retrieve ovn-kubernetes namespace")
 				DeferCleanup(func() {
 					if e2eframework.TestContext.DeleteNamespace && (e2eframework.TestContext.DeleteNamespaceOnFailure || !CurrentSpecReport().Failed()) {
 						By("tearing down the localnet underlay")
-						Expect(teardownUnderlay(nodes)).To(Succeed())
+						Expect(teardownUnderlay(nodes, ovnKubeNs)).To(Succeed())
 					}
 				})
 
 				const secondaryInterfaceName = "eth1"
-				Expect(setupUnderlay(nodes, secondaryInterfaceName, netConfig)).To(Succeed())
+				Expect(setupUnderlay(nodes, ovnKubeNs, secondaryInterfaceName, netConfig)).To(Succeed())
 			}
 
 			By("Creating NetworkAttachmentDefinition")
@@ -1665,7 +1667,7 @@ runcmd:
 				checkNorthSouthEgressICMPTraffic(vmi, []string{externalContainerIPV4Address, externalContainerIPV6Address}, step)
 			}
 
-			if td.role == "primary" && td.test.description == liveMigrate.description && isIPv4Supported() && isInterconnectEnabled() {
+			if td.role == "primary" && td.test.description == liveMigrate.description && isIPv4Supported(fr.ClientSet) && isInterconnectEnabled() {
 				step = by(vm.Name, fmt.Sprintf("Checking IPv4 gateway cached mac after %s %s", td.resource.description, td.test.description))
 				Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
 
@@ -1794,7 +1796,7 @@ runcmd:
 					namespace: namespace,
 					name:      "net1",
 					topology:  "layer2",
-					cidr:      correctCIDRFamily(cidrIPv4, cidrIPv6),
+					cidr:      correctCIDRFamily(fr.ClientSet, cidrIPv4, cidrIPv6),
 					role:      "primary",
 					mtu:       1300,
 				})
@@ -1838,7 +1840,7 @@ runcmd:
 				Get(context.Background(), config.Kubernetes.DNSServiceName, metav1.GetOptions{})
 			Expect(err).NotTo(HaveOccurred())
 
-			if isIPv4Supported() {
+			if isIPv4Supported(fr.ClientSet) {
 				expectedIP, err := matchIPv4StringFamily(primaryUDNNetworkStatus.IPs)
 				Expect(err).NotTo(HaveOccurred())
 
@@ -1866,7 +1868,7 @@ runcmd:
 				Expect(primaryUDNValueForDevice("GENERAL.MTU")).To(ConsistOf("1300"))
 			}
 
-			if isIPv6Supported() {
+			if isIPv6Supported(fr.ClientSet) {
 				expectedIP, err := matchIPv6StringFamily(primaryUDNNetworkStatus.IPs)
 				Expect(err).NotTo(HaveOccurred())
 				Eventually(primaryUDNValueFor).

@@ -407,7 +407,6 @@ var _ = ginkgo.Describe("External Gateway", func() {
 			var (
 				sleepCommand             = []string{"bash", "-c", "sleep 20000"}
 				addressesv4, addressesv6 gatewayTestIPs
-				clientSet                kubernetes.Interface
 				servingNamespace         string
 			)
 
@@ -418,7 +417,6 @@ var _ = ginkgo.Describe("External Gateway", func() {
 			f := wrappedTestFramework(svcname)
 
 			ginkgo.BeforeEach(func() {
-				clientSet = f.ClientSet // so it can be used in AfterEach
 				// retrieve worker node names
 				nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 3)
 				framework.ExpectNoError(err)
@@ -437,7 +435,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 			})
 
 			ginkgo.AfterEach(func() {
-				cleanExGWContainers(clientSet, []string{gwContainer1, gwContainer2}, addressesv4, addressesv6)
+				cleanExGWContainers([]string{gwContainer1, gwContainer2}, addressesv4, addressesv6)
 				resetGatewayAnnotations(f)
 			})
 
@@ -770,18 +768,20 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				}
 
 				ginkgo.By("Check if conntrack entries for ECMP routes are created for the 2 external gateways")
+				ovnKubeNs, err := getOVNKubeNamespaceName(f.ClientSet.CoreV1().Namespaces())
+				framework.ExpectNoError(err, "failed to get ovn-kubernetes namespace")
 				nodeName := getPod(f, srcPodName).Spec.NodeName
-				podConnEntriesWithMACLabelsSet := pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, macAddressGW)
+				podConnEntriesWithMACLabelsSet := pokeConntrackEntries(nodeName, ovnKubeNs, addresses.srcPodIP, protocol, macAddressGW)
 				gomega.Expect(podConnEntriesWithMACLabelsSet).To(gomega.Equal(2))
-				totalPodConnEntries := pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, nil)
+				totalPodConnEntries := pokeConntrackEntries(nodeName, ovnKubeNs, addresses.srcPodIP, protocol, nil)
 				gomega.Expect(totalPodConnEntries).To(gomega.Equal(6)) // total conntrack entries for this pod/protocol
 
 				ginkgo.By("Remove second external gateway IP from the app namespace annotation")
 				annotateNamespaceForGateway(f.Namespace.Name, false, addresses.gatewayIPs[0])
 
 				ginkgo.By("Check if conntrack entries for ECMP routes are removed for the deleted external gateway if traffic is UDP")
-				podConnEntriesWithMACLabelsSet = pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, macAddressGW)
-				totalPodConnEntries = pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, nil)
+				podConnEntriesWithMACLabelsSet = pokeConntrackEntries(nodeName, ovnKubeNs, addresses.srcPodIP, protocol, macAddressGW)
+				totalPodConnEntries = pokeConntrackEntries(nodeName, ovnKubeNs, addresses.srcPodIP, protocol, nil)
 
 				gomega.Expect(podConnEntriesWithMACLabelsSet).To(gomega.Equal(1)) // we still have the conntrack entry for the remaining gateway
 				gomega.Expect(totalPodConnEntries).To(gomega.Equal(5))            // 6-1
@@ -790,8 +790,8 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				annotateNamespaceForGateway(f.Namespace.Name, false, "")
 
 				ginkgo.By("Check if conntrack entries for ECMP routes are removed for the deleted external gateway if traffic is UDP")
-				podConnEntriesWithMACLabelsSet = pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, macAddressGW)
-				totalPodConnEntries = pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, nil)
+				podConnEntriesWithMACLabelsSet = pokeConntrackEntries(nodeName, ovnKubeNs, addresses.srcPodIP, protocol, macAddressGW)
+				totalPodConnEntries = pokeConntrackEntries(nodeName, ovnKubeNs, addresses.srcPodIP, protocol, nil)
 
 				gomega.Expect(podConnEntriesWithMACLabelsSet).To(gomega.Equal(0)) // we don't have any remaining gateways left
 				gomega.Expect(totalPodConnEntries).To(gomega.Equal(4))            // 6-2
@@ -843,10 +843,12 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				}
 
 				ginkgo.By("Check if conntrack entries for ECMP routes are created for the 2 external gateways")
+				ovnKubeNs, err := getOVNKubeNamespaceName(f.ClientSet.CoreV1().Namespaces())
+				framework.ExpectNoError(err, "failed to get ovn-kubernetes namespace")
 				nodeName := getPod(f, srcPodName).Spec.NodeName
-				podConnEntriesWithMACLabelsSet := pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, macAddressGW)
+				podConnEntriesWithMACLabelsSet := pokeConntrackEntries(nodeName, ovnKubeNs, addresses.srcPodIP, protocol, macAddressGW)
 				gomega.Expect(podConnEntriesWithMACLabelsSet).To(gomega.Equal(2))
-				totalPodConnEntries := pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, nil)
+				totalPodConnEntries := pokeConntrackEntries(nodeName, ovnKubeNs, addresses.srcPodIP, protocol, nil)
 				gomega.Expect(totalPodConnEntries).To(gomega.Equal(6)) // total conntrack entries for this pod/protocol
 
 				if deletePod {
@@ -871,8 +873,8 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				}
 
 				ginkgo.By("Check if conntrack entries for ECMP routes are removed for the deleted external gateway if traffic is UDP")
-				podConnEntriesWithMACLabelsSet = pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, macAddressGW)
-				totalPodConnEntries = pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, nil)
+				podConnEntriesWithMACLabelsSet = pokeConntrackEntries(nodeName, ovnKubeNs, addresses.srcPodIP, protocol, macAddressGW)
+				totalPodConnEntries = pokeConntrackEntries(nodeName, ovnKubeNs, addresses.srcPodIP, protocol, nil)
 
 				gomega.Expect(podConnEntriesWithMACLabelsSet).To(gomega.Equal(1)) // we still have the conntrack entry for the remaining gateway
 				gomega.Expect(totalPodConnEntries).To(gomega.Equal(5))            // 6-1
@@ -891,8 +893,8 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				}
 
 				ginkgo.By("Check if conntrack entries for ECMP routes are removed for the deleted external gateway if traffic is UDP")
-				podConnEntriesWithMACLabelsSet = pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, macAddressGW)
-				totalPodConnEntries = pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, nil)
+				podConnEntriesWithMACLabelsSet = pokeConntrackEntries(nodeName, ovnKubeNs, addresses.srcPodIP, protocol, macAddressGW)
+				totalPodConnEntries = pokeConntrackEntries(nodeName, ovnKubeNs, addresses.srcPodIP, protocol, nil)
 
 				gomega.Expect(podConnEntriesWithMACLabelsSet).To(gomega.Equal(0)) // we don't have any remaining gateways left
 				gomega.Expect(totalPodConnEntries).To(gomega.Equal(4))            // 6-2
@@ -928,7 +930,6 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				var (
 					sleepCommand             = []string{"bash", "-c", "sleep 20000"}
 					addressesv4, addressesv6 gatewayTestIPs
-					clientSet                kubernetes.Interface
 					servingNamespace         string
 				)
 
@@ -939,7 +940,6 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				f := wrappedTestFramework(svcname)
 
 				ginkgo.BeforeEach(func() {
-					clientSet = f.ClientSet // so it can be used in AfterEach
 					// retrieve worker node names
 					nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 3)
 					framework.ExpectNoError(err)
@@ -959,7 +959,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				})
 
 				ginkgo.AfterEach(func() {
-					cleanExGWContainers(clientSet, []string{gwContainer1, gwContainer2}, addressesv4, addressesv6)
+					cleanExGWContainers([]string{gwContainer1, gwContainer2}, addressesv4, addressesv6)
 					resetGatewayAnnotations(f)
 				})
 
@@ -1336,7 +1336,6 @@ var _ = ginkgo.Describe("External Gateway", func() {
 			var (
 				sleepCommand             = []string{"bash", "-c", "sleep 20000"}
 				addressesv4, addressesv6 gatewayTestIPs
-				clientSet                kubernetes.Interface
 				servingNamespace         string
 				gwContainers             []string
 			)
@@ -1344,7 +1343,6 @@ var _ = ginkgo.Describe("External Gateway", func() {
 			f := wrappedTestFramework(svcname)
 
 			ginkgo.BeforeEach(func() {
-				clientSet = f.ClientSet // so it can be used in AfterEach
 				// retrieve worker node names
 				nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 3)
 				framework.ExpectNoError(err)
@@ -1364,7 +1362,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 
 			ginkgo.AfterEach(func() {
 				deleteAPBExternalRouteCR(defaultPolicyName)
-				cleanExGWContainers(clientSet, []string{gwContainer1, gwContainer2}, addressesv4, addressesv6)
+				cleanExGWContainers([]string{gwContainer1, gwContainer2}, addressesv4, addressesv6)
 			})
 
 			ginkgo.DescribeTable("Should validate ICMP connectivity to an external gateway's loopback address via a gateway pod",
@@ -1817,10 +1815,12 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				nodeName := getPod(f, srcPodName).Spec.NodeName
 				podConnEntriesWithMACLabelsSet := 2
 				totalPodConnEntries := 6
+				ovnKubeNs, err := getOVNKubeNamespaceName(f.ClientSet.CoreV1().Namespaces())
+				framework.ExpectNoError(err, "failed to get ovn-kubernetes namespace")
 				gomega.Eventually(func() int {
-					return pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, macAddressGW)
+					return pokeConntrackEntries(nodeName, ovnKubeNs, addresses.srcPodIP, protocol, macAddressGW)
 				}, time.Minute, 5).Should(gomega.Equal(podConnEntriesWithMACLabelsSet))
-				gomega.Expect(pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, nil)).To(gomega.Equal(totalPodConnEntries))
+				gomega.Expect(pokeConntrackEntries(nodeName, ovnKubeNs, addresses.srcPodIP, protocol, nil)).To(gomega.Equal(totalPodConnEntries))
 
 				ginkgo.By("Check if conntrack entries for ECMP routes are removed for the deleted external gateway if traffic is UDP")
 				updateAPBExternalRouteCRWithStaticHop(defaultPolicyName, f.Namespace.Name, false, addresses.gatewayIPs[0])
@@ -1829,12 +1829,12 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				totalPodConnEntries = 5            // 6-1
 
 				gomega.Eventually(func() int {
-					n := pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, macAddressGW)
+					n := pokeConntrackEntries(nodeName, ovnKubeNs, addresses.srcPodIP, protocol, macAddressGW)
 					klog.Infof("Number of entries with macAddressGW %s:%d", macAddressGW, n)
 					return n
 				}, 10).Should(gomega.Equal(podConnEntriesWithMACLabelsSet))
 
-				gomega.Expect(pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, nil)).To(gomega.Equal(totalPodConnEntries))
+				gomega.Expect(pokeConntrackEntries(nodeName, ovnKubeNs, addresses.srcPodIP, protocol, nil)).To(gomega.Equal(totalPodConnEntries))
 
 				ginkgo.By("Remove the remaining static hop from the CR")
 				deleteAPBExternalRouteCR(defaultPolicyName)
@@ -1844,12 +1844,12 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				totalPodConnEntries = 4            // 6-2
 
 				gomega.Eventually(func() int {
-					n := pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, macAddressGW)
+					n := pokeConntrackEntries(nodeName, ovnKubeNs, addresses.srcPodIP, protocol, macAddressGW)
 					klog.Infof("Number of entries with macAddressGW %s:%d", macAddressGW, n)
 					return n
 				}, time.Minute, 5).Should(gomega.Equal(podConnEntriesWithMACLabelsSet))
 
-				gomega.Expect(pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, nil)).To(gomega.Equal(totalPodConnEntries))
+				gomega.Expect(pokeConntrackEntries(nodeName, ovnKubeNs, addresses.srcPodIP, protocol, nil)).To(gomega.Equal(totalPodConnEntries))
 			},
 				ginkgo.Entry("IPV4 udp", &addressesv4, "udp"),
 				ginkgo.Entry("IPV4 tcp", &addressesv4, "tcp"),
@@ -1889,13 +1889,14 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				nodeName := getPod(f, srcPodName).Spec.NodeName
 				podConnEntriesWithMACLabelsSet := 2 // TCP
 				totalPodConnEntries := 6            // TCP
-
+				ovnKubeNs, err := getOVNKubeNamespaceName(f.ClientSet.CoreV1().Namespaces())
+				framework.ExpectNoError(err, "failed to get ovn-kubernetes namespace")
 				gomega.Eventually(func() int {
-					n := pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, macAddressGW)
+					n := pokeConntrackEntries(nodeName, ovnKubeNs, addresses.srcPodIP, protocol, macAddressGW)
 					klog.Infof("Number of entries with macAddressGW %s:%d", macAddressGW, n)
 					return n
 				}, time.Minute, 5).Should(gomega.Equal(podConnEntriesWithMACLabelsSet))
-				gomega.Expect(pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, nil)).To(gomega.Equal(totalPodConnEntries)) // total conntrack entries for this pod/protocol
+				gomega.Expect(pokeConntrackEntries(nodeName, ovnKubeNs, addresses.srcPodIP, protocol, nil)).To(gomega.Equal(totalPodConnEntries)) // total conntrack entries for this pod/protocol
 
 				ginkgo.By("Remove second external gateway pod's routing-namespace annotation")
 				p := getGatewayPod(f, servingNamespace, gatewayPodName2)
@@ -1908,11 +1909,11 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				totalPodConnEntries = 5            // 6-1
 
 				gomega.Eventually(func() int {
-					n := pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, macAddressGW)
+					n := pokeConntrackEntries(nodeName, ovnKubeNs, addresses.srcPodIP, protocol, macAddressGW)
 					klog.Infof("Number of entries with macAddressGW %s:%d", macAddressGW, n)
 					return n
 				}, 10).Should(gomega.Equal(podConnEntriesWithMACLabelsSet))
-				gomega.Expect(pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, nil)).To(gomega.Equal(totalPodConnEntries))
+				gomega.Expect(pokeConntrackEntries(nodeName, ovnKubeNs, addresses.srcPodIP, protocol, nil)).To(gomega.Equal(totalPodConnEntries))
 
 				ginkgo.By("Remove first external gateway pod's routing-namespace annotation")
 				p = getGatewayPod(f, servingNamespace, gatewayPodName1)
@@ -1924,11 +1925,11 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				podConnEntriesWithMACLabelsSet = 0 //we don't have any remaining gateways left
 				totalPodConnEntries = 4
 				gomega.Eventually(func() int {
-					n := pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, macAddressGW)
+					n := pokeConntrackEntries(nodeName, ovnKubeNs, addresses.srcPodIP, protocol, macAddressGW)
 					klog.Infof("Number of entries with macAddressGW %s:%d", macAddressGW, n)
 					return n
 				}, 5).Should(gomega.Equal(podConnEntriesWithMACLabelsSet))
-				gomega.Expect(pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, nil)).To(gomega.Equal(totalPodConnEntries))
+				gomega.Expect(pokeConntrackEntries(nodeName, ovnKubeNs, addresses.srcPodIP, protocol, nil)).To(gomega.Equal(totalPodConnEntries))
 				checkAPBExternalRouteStatus(defaultPolicyName)
 			},
 				ginkgo.Entry("IPV4 udp", &addressesv4, "udp"),
@@ -1961,7 +1962,6 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				var (
 					sleepCommand             = []string{"bash", "-c", "sleep 20000"}
 					addressesv4, addressesv6 gatewayTestIPs
-					clientSet                kubernetes.Interface
 					servingNamespace         string
 					gwContainers             []string
 				)
@@ -1969,7 +1969,6 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				f := wrappedTestFramework(svcname)
 
 				ginkgo.BeforeEach(func() {
-					clientSet = f.ClientSet // so it can be used in AfterEach
 					// retrieve worker node names
 					nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 3)
 					framework.ExpectNoError(err)
@@ -1992,7 +1991,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 
 				ginkgo.AfterEach(func() {
 					deleteAPBExternalRouteCR(defaultPolicyName)
-					cleanExGWContainers(clientSet, []string{gwContainer1, gwContainer2}, addressesv4, addressesv6)
+					cleanExGWContainers([]string{gwContainer1, gwContainer2}, addressesv4, addressesv6)
 				})
 
 				ginkgo.DescribeTable("Should validate ICMP connectivity to an external gateway's loopback address via a pod with dynamic hop",
@@ -2368,7 +2367,6 @@ var _ = ginkgo.Describe("External Gateway", func() {
 			var (
 				sleepCommand             = []string{"bash", "-c", "sleep 20000"}
 				addressesv4, addressesv6 gatewayTestIPs
-				clientSet                kubernetes.Interface
 				servingNamespace         string
 				gwContainers             []string
 			)
@@ -2376,7 +2374,6 @@ var _ = ginkgo.Describe("External Gateway", func() {
 			f := wrappedTestFramework(svcname)
 
 			ginkgo.BeforeEach(func() {
-				clientSet = f.ClientSet // so it can be used in AfterEach
 				// retrieve worker node names
 				nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 3)
 				framework.ExpectNoError(err)
@@ -2395,7 +2392,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 			})
 
 			ginkgo.AfterEach(func() {
-				cleanExGWContainers(clientSet, []string{gwContainer1, gwContainer2}, addressesv4, addressesv6)
+				cleanExGWContainers([]string{gwContainer1, gwContainer2}, addressesv4, addressesv6)
 				deleteAPBExternalRouteCR(defaultPolicyName)
 				resetGatewayAnnotations(f)
 			})
@@ -2590,24 +2587,26 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				expectedTotalEntries := 6
 				expectedMACEntries := 2
 				ginkgo.By("Check to ensure initial conntrack entries are 2 mac address label, and 6 total entries")
+				ovnKubeNs, err := getOVNKubeNamespaceName(f.ClientSet.CoreV1().Namespaces())
+				framework.ExpectNoError(err, "failed to get ovn-kubernetes namespace")
 				gomega.Eventually(func() int {
-					n := pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, macAddressGW)
+					n := pokeConntrackEntries(nodeName, ovnKubeNs, addresses.srcPodIP, protocol, macAddressGW)
 					klog.Infof("Number of entries with macAddressGW %s:%d", macAddressGW, n)
 					return n
 				}, time.Minute, 5).Should(gomega.Equal(expectedMACEntries))
-				gomega.Expect(pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, nil)).To(gomega.Equal(expectedTotalEntries)) // total conntrack entries for this pod/protocol
+				gomega.Expect(pokeConntrackEntries(nodeName, ovnKubeNs, addresses.srcPodIP, protocol, nil)).To(gomega.Equal(expectedTotalEntries)) // total conntrack entries for this pod/protocol
 
 				ginkgo.By("Removing the namespace annotations to leave only the CR policy active")
 				annotateNamespaceForGateway(f.Namespace.Name, false, "")
 
 				ginkgo.By("Check if conntrack entries for ECMP routes still exist for the 2 external gateways")
 				gomega.Eventually(func() int {
-					n := pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, macAddressGW)
+					n := pokeConntrackEntries(nodeName, ovnKubeNs, addresses.srcPodIP, protocol, macAddressGW)
 					klog.Infof("Number of entries with macAddressGW %s:%d", macAddressGW, n)
 					return n
 				}, time.Minute, 5).Should(gomega.Equal(expectedMACEntries))
 
-				totalPodConnEntries := pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, nil)
+				totalPodConnEntries := pokeConntrackEntries(nodeName, ovnKubeNs, addresses.srcPodIP, protocol, nil)
 				gomega.Expect(totalPodConnEntries).To(gomega.Equal(expectedTotalEntries)) // total conntrack entries for this pod/protocol
 
 			},
@@ -2660,10 +2659,12 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				}
 
 				ginkgo.By("Check if conntrack entries for ECMP routes are created for the 2 external gateways")
+				ovnKubeNs, err := getOVNKubeNamespaceName(f.ClientSet.CoreV1().Namespaces())
+				framework.ExpectNoError(err, "failed to get ovn-kubernetes namespace")
 				nodeName := getPod(f, srcPodName).Spec.NodeName
-				podConnEntriesWithMACLabelsSet := pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, macAddressGW)
+				podConnEntriesWithMACLabelsSet := pokeConntrackEntries(nodeName, ovnKubeNs, addresses.srcPodIP, protocol, macAddressGW)
 				gomega.Expect(podConnEntriesWithMACLabelsSet).To(gomega.Equal(2))
-				totalPodConnEntries := pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, nil)
+				totalPodConnEntries := pokeConntrackEntries(nodeName, ovnKubeNs, addresses.srcPodIP, protocol, nil)
 				gomega.Expect(totalPodConnEntries).To(gomega.Equal(6)) // total conntrack entries for this pod/protocol
 				checkAPBExternalRouteStatus(defaultPolicyName)
 			},
@@ -2923,7 +2924,7 @@ func setupPolicyBasedGatewayPods(f *framework.Framework, nodes *v1.NodeList, pod
 	return gwPods
 }
 
-func cleanExGWContainers(clientSet kubernetes.Interface, gwContainers []string, addressesv4, addressesv6 gatewayTestIPs) {
+func cleanExGWContainers(gwContainers []string, addressesv4, addressesv6 gatewayTestIPs) {
 	ginkgo.By("Deleting the gateway containers")
 	if externalContainerNetwork == "host" {
 		cleanRoutesAndIPs(gwContainers[0], addressesv4, addressesv6)
@@ -3260,12 +3261,12 @@ func pokeHostnameViaNC(podName, namespace, protocol, target string, port int) st
 }
 
 // pokeConntrackEntries returns the number of conntrack entries that match the provided pattern, protocol and podIP
-func pokeConntrackEntries(nodeName, podIP, protocol string, patterns []string) int {
+func pokeConntrackEntries(nodeName, ovnKubeNs, podIP, protocol string, patterns []string) int {
 	args := []string{"get", "pods", "--selector=app=ovs-node", "--field-selector", fmt.Sprintf("spec.nodeName=%s", nodeName), "-o", "jsonpath={.items..metadata.name}"}
-	ovsPodName, err := e2ekubectl.RunKubectl(ovnNamespace, args...)
+	ovsPodName, err := e2ekubectl.RunKubectl(ovnKubeNs, args...)
 	framework.ExpectNoError(err, "failed to get the ovs pod on node %s", nodeName)
 	args = []string{"exec", ovsPodName, "--", "ovs-appctl", "dpctl/dump-conntrack"}
-	conntrackEntries, err := e2ekubectl.RunKubectl(ovnNamespace, args...)
+	conntrackEntries, err := e2ekubectl.RunKubectl(ovnKubeNs, args...)
 	framework.ExpectNoError(err, "failed to get the conntrack entries from node %s", nodeName)
 	numOfConnEntries := 0
 	for _, connEntry := range strings.Split(conntrackEntries, "\n") {

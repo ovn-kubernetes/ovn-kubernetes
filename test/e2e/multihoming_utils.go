@@ -19,6 +19,7 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
+	utilsnet "k8s.io/utils/net"
 	"k8s.io/utils/ptr"
 
 	mnpapi "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/apis/k8s.cni.cncf.io/v1beta1"
@@ -29,14 +30,31 @@ func netCIDR(netCIDR string, netPrefixLengthPerNode int) string {
 	return fmt.Sprintf("%s/%d", netCIDR, netPrefixLengthPerNode)
 }
 
+func joinCIDRs(cidr ...string) string {
+	return strings.Join(cidr, ",")
+}
+
+func filterUnsupportedCIDRs(cs clientset.Interface, cidrs string) string {
+	cidrsSplit := strings.Split(cidrs, ",")
+	var ipv4CIDR, ipv6CIDR []string
+	for _, cidr := range cidrsSplit {
+		if utilsnet.IsIPv6CIDRString(cidr) {
+			ipv6CIDR = append(ipv6CIDR, cidr)
+		} else {
+			ipv4CIDR = append(ipv4CIDR, cidr)
+		}
+	}
+	return correctCIDRFamily(cs, strings.Join(ipv4CIDR, ","), strings.Join(ipv6CIDR, ","))
+}
+
 // takes ipv4 and ipv6 cidrs and returns the correct type for the cluster under test
-func correctCIDRFamily(ipv4CIDR, ipv6CIDR string) string {
+func correctCIDRFamily(cs clientset.Interface, ipv4CIDR, ipv6CIDR string) string {
 	// dual stack cluster
-	if isIPv6Supported() && isIPv4Supported() {
+	if isIPv6Supported(cs) && isIPv4Supported(cs) {
 		return strings.Join([]string{ipv4CIDR, ipv6CIDR}, ",")
 	}
 	// is an ipv6 only cluster
-	if isIPv6Supported() {
+	if isIPv6Supported(cs) {
 		return ipv6CIDR
 	}
 

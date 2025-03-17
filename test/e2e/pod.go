@@ -95,11 +95,11 @@ var _ = ginkgo.Describe("Pod to external server PMTUD", func() {
 				agntHostCmds,
 			)
 
-			if isIPv4Supported() {
+			if isIPv4Supported(f.ClientSet) {
 				serverNodeInternalIPs = append(serverNodeInternalIPs, externalIpv4)
 			}
 
-			if isIPv6Supported() {
+			if isIPv6Supported(f.ClientSet) {
 				serverNodeInternalIPs = append(serverNodeInternalIPs, externalIpv6)
 			}
 
@@ -198,12 +198,14 @@ var _ = ginkgo.Describe("Pod to external server PMTUD", func() {
 							}
 							return nil
 						}, 60*time.Second, 1*time.Second).Should(gomega.Succeed())
+						ovnKubeNs, err := getOVNKubeNamespaceName(f.ClientSet.CoreV1().Namespaces())
+						framework.ExpectNoError(err, "failed to get ovn-kubernetes namespace")
 						// Flushing the IP route cache will remove any routes in the cache
 						// that are a result of receiving a "need to frag" packet. Let's
 						// flush this on all 3 nodes else we will run into the
 						// bug: https://issues.redhat.com/browse/OCPBUGS-7609.
 						// TODO: Revisit this once https://bugzilla.redhat.com/show_bug.cgi?id=2169839 is fixed.
-						ovnKubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+						ovnKubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnKubeNs).List(context.TODO(), metav1.ListOptions{
 							LabelSelector: "name=ovnkube-node",
 						})
 						if err != nil {
@@ -215,7 +217,7 @@ var _ = ginkgo.Describe("Pod to external server PMTUD", func() {
 							if isInterconnectEnabled() {
 								containerName = "ovnkube-controller"
 							}
-							_, err := e2ekubectl.RunKubectl(ovnNamespace, "exec", ovnKubeNodePod.Name, "--container", containerName, "--",
+							_, err := e2ekubectl.RunKubectl(ovnKubeNs, "exec", ovnKubeNodePod.Name, "--container", containerName, "--",
 								"ip", "route", "flush", "cache")
 							framework.ExpectNoError(err, "Flushing the ip route cache failed")
 						}

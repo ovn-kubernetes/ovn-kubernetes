@@ -59,6 +59,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", func() {
 					) {
 						By("creating the network")
 						netConfig.namespace = f.Namespace.Name
+						netConfig.cidr = filterUnsupportedCIDRs(cs, netConfig.cidr)
 						Expect(createNetworkFn(netConfig)).To(Succeed())
 
 						replicas := int32(3)
@@ -120,7 +121,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", func() {
 						networkAttachmentConfigParams{
 							name:     nadName,
 							topology: "layer2",
-							cidr:     correctCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							role:     "primary",
 						},
 						false,
@@ -130,7 +131,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", func() {
 						networkAttachmentConfigParams{
 							name:     nadName,
 							topology: "layer3",
-							cidr:     correctCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							role:     "primary",
 						},
 						false,
@@ -140,7 +141,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", func() {
 						networkAttachmentConfigParams{
 							name:     nadName,
 							topology: "layer2",
-							cidr:     correctCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							role:     "primary",
 						},
 						true,
@@ -150,7 +151,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", func() {
 						networkAttachmentConfigParams{
 							name:     nadName,
 							topology: "layer3",
-							cidr:     correctCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							role:     "primary",
 						},
 						true,
@@ -190,6 +191,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", func() {
 						Expect(err).NotTo(HaveOccurred())
 						By("creating the network")
 						netConfig.namespace = defaultNetNamespace.Name
+						netConfig.cidr = filterUnsupportedCIDRs(cs, netConfig.cidr)
 						Expect(createNetworkFn(netConfig)).To(Succeed())
 
 						replicas := int32(3)
@@ -228,7 +230,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", func() {
 						networkAttachmentConfigParams{
 							name:     nadName,
 							topology: "layer2",
-							cidr:     correctCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							role:     "secondary",
 						},
 					),
@@ -237,7 +239,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", func() {
 						networkAttachmentConfigParams{
 							name:     nadName,
 							topology: "layer3",
-							cidr:     correctCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							role:     "secondary",
 						},
 					),
