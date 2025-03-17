@@ -12,11 +12,11 @@ The meetings last up to 1 hour.
 
 ## Meeting location
 
-Platform: CNCF Zoom
-Meeting Link: https://zoom-lfx.platform.linuxfoundation.org/meeting/98741709730?password=ec6c1c1d-8f40-4a3a-a13d-5e284db7ff43
-MeetingID: 98741709730
-Meeting Passcode: Please check the Meeting Notes Top section where passcode is represented
-[Project Community Calendar ics Link for importing](https://webcal.prod.itx.linuxfoundation.org/lfx/lfUT0YkGZgOXRcnNGf)
+* Platform: CNCF Zoom
+* [Meeting Link](https://zoom-lfx.platform.linuxfoundation.org/meeting/98741709730?password=ec6c1c1d-8f40-4a3a-a13d-5e284db7ff43)
+* MeetingID: 98741709730
+* Meeting Passcode: Please check the Meeting Notes Top section where passcode is represented
+* [Project Community Calendar ics Link for importing](https://webcal.prod.itx.linuxfoundation.org/lfx/lfUT0YkGZgOXRcnNGf)
 
 ## Meeting agenda and minutes
 
