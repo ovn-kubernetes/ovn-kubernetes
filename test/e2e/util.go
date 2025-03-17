@@ -26,18 +26,19 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	clientset "k8s.io/client-go/kubernetes"
+	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/kubernetes/test/e2e/framework"
 	"k8s.io/kubernetes/test/e2e/framework/debug"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
+	e2eservice "k8s.io/kubernetes/test/e2e/framework/service"
 	testutils "k8s.io/kubernetes/test/utils"
 	admissionapi "k8s.io/pod-security-admission/api"
 	utilnet "k8s.io/utils/net"
 )
 
 const (
-	ovnNamespace   = "ovn-kubernetes"
 	ovnNodeSubnets = "k8s.ovn.org/node-subnets"
 	// ovnNodeZoneNameAnnotation is the node annotation name to store the node zone name.
 	ovnNodeZoneNameAnnotation = "k8s.ovn.org/zone-name"
@@ -602,6 +603,19 @@ func getMACAddressesForNetwork(container, network string) string {
 	return strings.TrimSuffix(macAddr, "\n")
 }
 
+func getOVNKubeNamespaceName(nsClient typedcorev1.NamespaceInterface) (string, error) {
+	namespaces, err := nsClient.List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to list namepaces: %v", err)
+	}
+	for _, ns := range namespaces.Items {
+		if strings.Contains(ns.Name, "ovn-kubernetes") {
+			return ns.Name, nil
+		}
+	}
+	return "", fmt.Errorf("failed to find OVN-Kubernetes namespace name")
+}
+
 // waitClusterHealthy ensures we have a given number of ovn-k worker and master nodes,
 // as well as all nodes are healthy
 func waitClusterHealthy(f *framework.Framework, numControlPlanePods int, controlPlanePodName string) error {
@@ -625,8 +639,11 @@ func waitClusterHealthy(f *framework.Framework, numControlPlanePods int, control
 			framework.Logf("Not enough schedulable nodes, have %d want %d", len(afterNodes.Items), numNodes)
 			return false, nil
 		}
-
-		podClient := f.ClientSet.CoreV1().Pods(ovnNamespace)
+		ovnKubeNs, err := getOVNKubeNamespaceName(f.ClientSet.CoreV1().Namespaces())
+		if err != nil {
+			return false, fmt.Errorf("failed to find ovn-kubernetes namespace: %v", err)
+		}
+		podClient := f.ClientSet.CoreV1().Pods(ovnKubeNs)
 		// Ensure all nodes are running and healthy
 		podList, err := podClient.List(context.Background(), metav1.ListOptions{
 			LabelSelector: "app=ovnkube-node",
@@ -1083,7 +1100,7 @@ func countACLLogs(targetNodeName string, policyNameRegex string, expectedACLVerd
 func getTemplateContainerEnv(namespace, resource, container, key string) string {
 	args := []string{"get", resource,
 		"-o=jsonpath='{.spec.template.spec.containers[?(@.name==\"" + container + "\")].env[?(@.name==\"" + key + "\")].value}'"}
-	value := e2ekubectl.RunKubectlOrDie(ovnNamespace, args...)
+	value := e2ekubectl.RunKubectlOrDie(namespace, args...)
 	return strings.Trim(value, "'")
 }
 
@@ -1109,7 +1126,7 @@ func setUnsetTemplateContainerEnv(c kubernetes.Interface, namespace, resource, c
 
 // allowOrDropNodeInputTrafficOnPort ensures or deletes a drop iptables
 // input rule for the specified node, protocol and port
-func allowOrDropNodeInputTrafficOnPort(op, nodeName, protocol, port string) {
+func allowOrDropNodeInputTrafficOnPort(nsClient typedcorev1.NamespaceInterface, op, ovnKubeNs, nodeName, protocol, port string) {
 	ipTablesArgs := []string{"INPUT", "-p", protocol, "--dport", port, "-j", "DROP"}
 	switch op {
 	case "Allow":
@@ -1119,20 +1136,20 @@ func allowOrDropNodeInputTrafficOnPort(op, nodeName, protocol, port string) {
 	default:
 		framework.Failf("unsupported op %s", op)
 	}
-	updateIPTablesRulesForNode(op, nodeName, ipTablesArgs, false)
-	updateIPTablesRulesForNode(op, nodeName, ipTablesArgs, true)
+	updateIPTablesRulesForNode(nsClient, op, ovnKubeNs, nodeName, ipTablesArgs, false)
+	updateIPTablesRulesForNode(nsClient, op, ovnKubeNs, nodeName, ipTablesArgs, true)
 }
 
-func updateIPTablesRulesForNode(op, nodeName string, ipTablesArgs []string, ipv6 bool) {
+func updateIPTablesRulesForNode(nsClient typedcorev1.NamespaceInterface, op, ovnKubeNs, nodeName string, ipTablesArgs []string, ipv6 bool) {
 	args := []string{"get", "pods", "--selector=app=ovnkube-node", "--field-selector", fmt.Sprintf("spec.nodeName=%s", nodeName), "-o", "jsonpath={.items..metadata.name}"}
-	ovnKubePodName := e2ekubectl.RunKubectlOrDie(ovnNamespace, args...)
+	ovnKubePodName := e2ekubectl.RunKubectlOrDie(ovnKubeNs, args...)
 	iptables := "iptables"
 	if ipv6 {
 		iptables = "ip6tables"
 	}
 
-	args = []string{"exec", ovnKubePodName, "-c", getNodeContainerName(), "--", iptables, "--check"}
-	_, err := e2ekubectl.RunKubectl(ovnNamespace, append(args, ipTablesArgs...)...)
+	args = []string{"exec", ovnKubePodName, "-c", getNodeContainerName(nsClient), "--", iptables, "--check"}
+	_, err := e2ekubectl.RunKubectl(ovnKubeNs, append(args, ipTablesArgs...)...)
 	// errors known to be equivalent to not found
 	notFound1 := "No chain/target/match by that name"
 	notFound2 := "does a matching rule exist in that chain?"
@@ -1147,9 +1164,9 @@ func updateIPTablesRulesForNode(op, nodeName string, ipTablesArgs []string, ipv6
 		// rule is already there
 		return
 	}
-	args = []string{"exec", ovnKubePodName, "-c", getNodeContainerName(), "--", iptables, "--" + op}
+	args = []string{"exec", ovnKubePodName, "-c", getNodeContainerName(nsClient), "--", iptables, "--" + op}
 	framework.Logf("%s %s rule: %q on node %s", op, iptables, strings.Join(ipTablesArgs, ","), nodeName)
-	e2ekubectl.RunKubectlOrDie(ovnNamespace, append(args, ipTablesArgs...)...)
+	e2ekubectl.RunKubectlOrDie(ovnKubeNs, append(args, ipTablesArgs...)...)
 }
 
 func randStr(n int) string {
@@ -1162,14 +1179,22 @@ func randStr(n int) string {
 	return string(b)
 }
 
-func isIPv4Supported() bool {
-	val, present := os.LookupEnv("KIND_IPV4_SUPPORT")
-	return present && val == "true"
+func isIPv4Supported(cs clientset.Interface) bool {
+	v4, _ := getSupportedIPFamilies(cs)
+	return v4
 }
 
-func isIPv6Supported() bool {
-	val, present := os.LookupEnv("KIND_IPV6_SUPPORT")
-	return present && val == "true"
+func isIPv6Supported(cs clientset.Interface) bool {
+	_, v6 := getSupportedIPFamilies(cs)
+	return v6
+}
+
+func getSupportedIPFamilies(cs clientset.Interface) (bool, bool) {
+	nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), cs, e2eservice.MaxNodesForEndpointsTests)
+	framework.ExpectNoError(err)
+	v4NodeAddrs := e2enode.FirstAddressByTypeAndFamily(nodes, v1.NodeInternalIP, v1.IPv4Protocol)
+	v6NodeAddrs := e2enode.FirstAddressByTypeAndFamily(nodes, v1.NodeInternalIP, v1.IPv6Protocol)
+	return len(v4NodeAddrs) > 0, len(v6NodeAddrs) > 0
 }
 
 func isInterconnectEnabled() bool {
@@ -1192,10 +1217,13 @@ func isLocalGWModeEnabled() bool {
 	return present && val == "local"
 }
 
-func singleNodePerZone() bool {
+func singleNodePerZone(nsClient typedcorev1.NamespaceInterface) bool {
 	if singleNodePerZoneResult == nil {
+		ovnKubeNs, err := getOVNKubeNamespaceName(nsClient)
+		framework.ExpectNoError(err, "failed to get ovn-kubernetes namespace")
+
 		args := []string{"get", "pods", "--selector=app=ovnkube-node", "-o", "jsonpath={.items[0].spec.containers[*].name}"}
-		containerNames := e2ekubectl.RunKubectlOrDie(ovnNamespace, args...)
+		containerNames := e2ekubectl.RunKubectlOrDie(ovnKubeNs, args...)
 		result := true
 		for _, containerName := range strings.Split(containerNames, " ") {
 			if containerName == "ovnkube-node" {
@@ -1208,8 +1236,8 @@ func singleNodePerZone() bool {
 	return *singleNodePerZoneResult
 }
 
-func getNodeContainerName() string {
-	if singleNodePerZone() {
+func getNodeContainerName(nsClient typedcorev1.NamespaceInterface) string {
+	if singleNodePerZone(nsClient) {
 		return "ovnkube-controller"
 	}
 	return "ovnkube-node"

@@ -105,6 +105,7 @@ var _ = Describe("Network Segmentation: services", func() {
 				clientNode := nodes.Items[1].Name // when client runs on a different node than the server
 
 				By("Creating the attachment configuration")
+				netConfigParams.cidr = filterUnsupportedCIDRs(cs, netConfigParams.cidr)
 				netConfig := newNetworkAttachmentConfig(netConfigParams)
 				netConfig.namespace = f.Namespace.Name
 				_, err = nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
@@ -251,7 +252,9 @@ ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | 
 				// in OVNK in CLBO state https://issues.redhat.com/browse/OCPBUGS-41499
 				if netConfigParams.topology == "layer3" { // no need to run it for layer 2 as well
 					By("Restart ovnkube-node on one node and verify that the new ovnkube-node pod goes to the running state")
-					err = restartOVNKubeNodePod(cs, ovnNamespace, clientNode)
+					ovnKubeNs, err := getOVNKubeNamespaceName(f.ClientSet.CoreV1().Namespaces())
+					framework.ExpectNoError(err, "failed to get ovn-kubernetes namespace")
+					err = restartOVNKubeNodePod(cs, ovnKubeNs, clientNode)
 					Expect(err).NotTo(HaveOccurred())
 				}
 			},
@@ -261,7 +264,7 @@ ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | 
 				networkAttachmentConfigParams{
 					name:     nadName,
 					topology: "layer3",
-					cidr:     correctCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 					role:     "primary",
 				},
 			),
@@ -270,7 +273,7 @@ ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | 
 				networkAttachmentConfigParams{
 					name:     nadName,
 					topology: "layer2",
-					cidr:     correctCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 					role:     "primary",
 				},
 			),
