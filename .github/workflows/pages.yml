@@ -1,0 +1,26 @@
+name: Test GitHub Pages Build
+
+on:
+  pull_request:
+    branches: ["master"]
+
+permissions:
+  contents: read
+
+jobs:
+  test-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: 3.x
+      - run: |
+          pip install mkdocs-material
+          pip install $(mkdocs-get-deps)
+      - run: mkdocs build
+      - name: Upload Artifact (Test)
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-mkdocs-site
+          path: ./site
