@@ -89,6 +89,11 @@ const (
 	// OvnNodeZoneName is the zone to which the node belongs to. It is set by ovnkube-node.
 	// ovnkube-node gets the node's zone from the OVN Southbound database.
 	OvnNodeZoneName = "k8s.ovn.org/zone-name"
+	// OvnNodeEncapIp is the encap-ip belonging to each local/remote chassis. This is used to
+	// make sure that the chassis handler correctly gets the encap-ip set by the "--encap-ip"
+	// flag. This is especially important in the DPU case where ovn-k runs on behalf of another
+	// cluster.
+	OvnNodeEncapIp = "k8s.ovn.org/encap-ip"
 
 	/** HACK BEGIN **/
 	// TODO(tssurya): Remove this annotation a few months from now (when one or two release jump
@@ -425,6 +430,36 @@ func SetNodePrimaryIfAddrs(nodeAnnotator kube.Annotator, ifAddrs []*net.IPNet) (
 		primaryIfAddrAnnotation.IPv6 = nodeIPNetv6.String()
 	}
 	return nodeAnnotator.Set(OvnNodeIfAddr, primaryIfAddrAnnotation)
+}
+
+// SetNodePrimaryIfAddr sets the IPv4 / IPv6 values of the node's primary network interface
+func SetDpuNodePrimaryIfAddrs(nodeAnnotator kube.Annotator, ifAddrs []*net.IPNet) (err error) {
+	nodeIPNetv4, _ := MatchFirstIPNetFamily(false, ifAddrs)
+	nodeIPNetv6, _ := MatchFirstIPNetFamily(true, ifAddrs)
+
+	primaryIfAddrAnnotation := primaryIfAddrAnnotation{}
+	if nodeIPNetv4 != nil {
+		primaryIfAddrAnnotation.IPv4 = nodeIPNetv4.String()
+	}
+	if nodeIPNetv6 != nil {
+		primaryIfAddrAnnotation.IPv6 = nodeIPNetv6.String()
+	}
+	return nodeAnnotator.Set("k8s.ovn.org/node-primary-ifaddr-dpu", primaryIfAddrAnnotation)
+}
+
+func GetDpuNodeIfAddrAnnotation(node *kapi.Node) (*primaryIfAddrAnnotation, error) {
+	nodeIfAddrAnnotation, ok := node.Annotations["k8s.ovn.org/node-primary-ifaddr-dpu"]
+	if !ok {
+		return nil, newAnnotationNotSetError("%s annotation not found for node %q", "k8s.ovn.org/node-primary-ifaddr-dpu", node.Name)
+	}
+	nodeIfAddr := &primaryIfAddrAnnotation{}
+	if err := json.Unmarshal([]byte(nodeIfAddrAnnotation), nodeIfAddr); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal annotation: %s for node %q, err: %v", "k8s.ovn.org/node-primary-ifaddr-dpu", node.Name, err)
+	}
+	if nodeIfAddr.IPv4 == "" && nodeIfAddr.IPv6 == "" {
+		return nil, fmt.Errorf("node: %q does not have any IP information set", node.Name)
+	}
+	return nodeIfAddr, nil
 }
 
 // createPrimaryIfAddrAnnotation marshals the IPv4 / IPv6 values in the
@@ -970,6 +1005,25 @@ func GetNodeZone(node *kapi.Node) string {
 // NodeZoneAnnotationChanged returns true if the ovnNodeZoneName in the corev1.Nodes doesn't match
 func NodeZoneAnnotationChanged(oldNode, newNode *corev1.Node) bool {
 	return oldNode.Annotations[OvnNodeZoneName] != newNode.Annotations[OvnNodeZoneName]
+}
+
+// SetNodeEncapIp sets the node's encap-ip in the "OvnNodeEncapIp" node annotation.
+func SetNodeEncapIp(nodeAnnotator kube.Annotator, ip string) (err error) {
+	return nodeAnnotator.Set(OvnNodeEncapIp, ip)
+}
+
+// GetNodeEncapIp returns the encap-ip that the node is using as stored in "config.Default.EncapIP".
+func GetNodeEncapIp(node *kapi.Node) (string, error) {
+	ip, ok := node.Annotations[OvnNodeEncapIp]
+	if !ok {
+		return "", newAnnotationNotSetError("OVN Encap IP annotation not found for node %q ", node.Name)
+	}
+	return ip, nil
+}
+
+// NodeEncapIpAnnotationChanged returns true if the OvnNodeEncapIp in the corev1.Nodes doesn't match.
+func NodeEncapIpAnnotationChanged(oldNode, newNode *corev1.Node) bool {
+	return oldNode.Annotations[OvnNodeEncapIp] != newNode.Annotations[OvnNodeEncapIp]
 }
 
 func parseNetworkIDsAnnotation(nodeAnnotations map[string]string, annotationName string) (map[string]string, error) {
