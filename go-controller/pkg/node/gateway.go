@@ -265,6 +265,7 @@ func setupUDPAggregationUplink(ifname string) error {
 
 func gatewayInitInternal(nodeName, gwIntf, egressGatewayIntf string, gwNextHops []net.IP, gwIPs []*net.IPNet, nodeAnnotator kube.Annotator) (
 	*bridgeConfiguration, *bridgeConfiguration, error) {
+
 	gatewayBridge, err := bridgeForInterface(gwIntf, nodeName, types.PhysicalNetworkName, gwIPs)
 	if err != nil {
 		return nil, nil, fmt.Errorf("bridge for interface failed for %s: %w", gwIntf, err)
@@ -440,19 +441,18 @@ type bridgeConfiguration struct {
 func (b *bridgeConfiguration) updateInterfaceIPAddresses(node *kapi.Node) ([]*net.IPNet, error) {
 	b.Lock()
 	defer b.Unlock()
-	ifAddrs, err := getNetworkInterfaceIPAddresses(b.bridgeName)
-	if err != nil {
-		return nil, err
-	}
-
-	// For DPU, here we need to use the DPU host's IP address which is the tenant cluster's
-	// host internal IP address instead of the DPU's external bridge IP address.
-	if config.OvnKubeNode.Mode == types.NodeModeDPU {
-		nodeAddrStr, err := util.GetNodePrimaryIP(node)
+	var err error
+	var ifAddrs []*net.IPNet
+	if config.OvnKubeNode.Mode == types.NodeModeFull {
+		ifAddrs, err = getNetworkInterfaceIPAddresses(b.bridgeName)
+	} else {
+		// For DPU, here we need to use the DPU host's IP address which is the tenant cluster's
+		// host internal IP address instead of the DPU's external bridge IP address.
+		nodeAddrStr, err := util.GetDpuNodeIfAddrAnnotation(node)
 		if err != nil {
 			return nil, err
 		}
-		nodeAddr := net.ParseIP(nodeAddrStr)
+		nodeAddr := net.ParseIP(nodeAddrStr.IPv4)
 		if nodeAddr == nil {
 			return nil, fmt.Errorf("failed to parse node IP address. %v", nodeAddrStr)
 		}
@@ -460,6 +460,9 @@ func (b *bridgeConfiguration) updateInterfaceIPAddresses(node *kapi.Node) ([]*ne
 		if err != nil {
 			return nil, err
 		}
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	b.ips = ifAddrs
@@ -469,17 +472,19 @@ func (b *bridgeConfiguration) updateInterfaceIPAddresses(node *kapi.Node) ([]*ne
 func bridgeForInterface(intfName, nodeName, physicalNetworkName string, gwIPs []*net.IPNet) (*bridgeConfiguration, error) {
 	res := bridgeConfiguration{}
 	gwIntf := intfName
+	uplinkName := config.Gateway.UplinkPort
 
-	if bridgeName, _, err := util.RunOVSVsctl("port-to-br", intfName); err == nil {
-		// This is an OVS bridge's internal port
-		uplinkName, err := util.GetNicName(bridgeName)
+	if uplinkName != "" {
+		// Uplink name is explicitly set
+		bridgeName, _, err := util.RunOVSVsctl("port-to-br", uplinkName)
 		if err != nil {
-			return nil, fmt.Errorf("failed to find nic name for bridge %s: %w", bridgeName, err)
+			return nil, fmt.Errorf("failed to find bridge that has port %s", uplinkName)
 		}
-		res.bridgeName = bridgeName
-		res.uplinkName = uplinkName
-		gwIntf = bridgeName
-	} else if _, _, err := util.RunOVSVsctl("br-exists", intfName); err != nil {
+		if intfName == bridgeName {
+			res.bridgeName = intfName
+			res.uplinkName = uplinkName
+		}
+	} else if _, _, err := util.RunOVSVsctl("port-to-br", intfName); err == nil {
 		// This is not a OVS bridge. We need to create a OVS bridge
 		// and add cluster.GatewayIntf as a port of that bridge.
 		bridgeName, err := util.NicToBridge(intfName)

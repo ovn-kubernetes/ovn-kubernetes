@@ -876,7 +876,7 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 
 	// Initialize gateway
 	if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
-		err = nc.initGatewayDPUHost(nodeAddr)
+		err = nc.initGatewayDPUHost(nodeAddr, nodeAnnotator)
 		if err != nil {
 			return err
 		}
@@ -889,6 +889,13 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 
 	if err := util.SetNodeZone(nodeAnnotator, sbZone); err != nil {
 		return fmt.Errorf("failed to set node zone annotation for node %s: %w", nc.name, err)
+	}
+
+	if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
+		klog.Infof("Setting EncapIp %s in node annotation", config.Default.EncapIP)
+		if err = util.SetNodeEncapIp(nodeAnnotator, config.Default.EncapIP); err != nil {
+			return err
+		}
 	}
 
 	if err := nodeAnnotator.Run(); err != nil {

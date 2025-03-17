@@ -2,14 +2,15 @@ package node
 
 import (
 	"fmt"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"net"
 	"os"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
@@ -206,7 +207,30 @@ func (c *openflowManager) updateBridgeFlowCache(subnets []*net.IPNet, extraIPs [
 	}
 	dftFlows = append(dftFlows, dftCommonFlows...)
 
-	c.updateFlowCacheEntry("NORMAL", []string{fmt.Sprintf("table=0,priority=0,actions=%s\n", util.NormalAction)})
+	checkCmd := []string{
+		"get",
+		"Open_vSwitch",
+		".",
+		"external_ids:ovn-encap-ip",
+	}
+	encapIP, _, err := util.RunOVSVsctl(checkCmd...)
+	if err != nil {
+		return err
+	}
+	encapIP = strings.TrimSuffix(encapIP, "\n")
+
+	if config.OvnKubeNode.Mode == types.NodeModeDPU {
+		c.updateFlowCacheEntry("NORMAL", []string{
+			fmt.Sprintf("table=0,priority=0,actions=%s\n", util.NormalAction),
+			fmt.Sprintf("table=0,priority=999,udp,tp_dst=67,actions=%s\n", util.NormalAction),
+			fmt.Sprintf("table=0,priority=999,udp,nw_dst=%s,tp_dst=6081,actions=LOCAL\n", encapIP),
+			fmt.Sprintf("table=0,priority=998,ip,nw_dst=%s,actions=%s\n", encapIP, util.NormalAction),
+		})
+	} else {
+		c.updateFlowCacheEntry("NORMAL", []string{
+			fmt.Sprintf("table=0,priority=0,actions=%s\n", util.NormalAction),
+		})
+	}
 	c.updateFlowCacheEntry("DEFAULT", dftFlows)
 
 	// we consume ex gw bridge flows only if that is enabled
