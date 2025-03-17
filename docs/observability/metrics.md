@@ -1,6 +1,6 @@
 # Metrics
 ## OVN-Kubernetes master
-This includes a description of a selective set of metrics and to explore the exhausted set, see `go-controller/pkg/metrics/master.go`
+This includes a description of a selective set of metrics and to explore the exhausted set, see `go-controller/pkg/metrics/metrics.go`
 ### Configuration duration recorder
 #### Setup
 Enabled by default with the `kind.sh` (in directory `$ROOT/contrib`) [Kind](https://kind.sigs.k8s.io/) setup script.
