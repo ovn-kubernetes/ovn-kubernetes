@@ -39,7 +39,7 @@ jobs:
   # separate job for parallelism
   lint:
     name: Lint
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
     - name: Check out code
       uses: actions/checkout@v4
@@ -60,7 +60,7 @@ jobs:
 
   build-master:
     name: Build-master
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
     # Create a cache for the built master image
     - name: Restore master image cache
@@ -149,7 +149,7 @@ jobs:
 
   build-pr:
     name: Build-PR
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
     # Create a cache for the build PR image
     - name: Restore PR image cache
@@ -260,7 +260,7 @@ jobs:
   ovn-upgrade-e2e:
     name: Upgrade OVN from Master to PR branch based image
     if: github.event_name != 'schedule'
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     needs:
       - build-master
@@ -301,10 +301,9 @@ jobs:
         sudo rm -rf /usr/local/lib/android/sdk
         sudo apt-get update
         sudo eatmydata apt-get purge --auto-remove -y \
-          azure-cli aspnetcore-* dotnet-* ghc-* firefox \
+          azure-cli firefox \
           google-chrome-stable \
-          llvm-* microsoft-edge-stable mono-* \
-          msbuild mysql-server-core-* php-* php7* \
+          llvm-* microsoft-edge-stable \
           powershell temurin-* zulu-*
 
     - name: Download test-image-master
@@ -390,7 +389,7 @@ jobs:
 
   e2e:
     name: e2e
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     # 30 mins for kind, 180 mins for control-plane tests, 10 minutes for all other steps
     timeout-minutes: 220
     strategy:
@@ -460,7 +459,6 @@ jobs:
       KIND_IPV6_SUPPORT: "${{ matrix.ipfamily == 'IPv6' || matrix.ipfamily == 'dualstack' }}"
       ENABLE_MULTI_NET: "${{ matrix.target == 'multi-homing' || matrix.target == 'kv-live-migration' || matrix.target == 'network-segmentation' || matrix.target == 'tools' || matrix.target == 'multi-homing-helm' || matrix.target == 'traffic-flow-test-only' }}"
       ENABLE_NETWORK_SEGMENTATION: "${{ matrix.target == 'network-segmentation' || matrix.target == 'tools' || matrix.target == 'kv-live-migration' || matrix.target == 'traffic-flow-test-only' }}"
-      DISABLE_UDN_HOST_ISOLATION: "true"
       KIND_INSTALL_KUBEVIRT: "${{ matrix.target == 'kv-live-migration' }}"
       OVN_COMPACT_MODE: "${{ matrix.target == 'compact-mode' }}"
       OVN_DUMMY_GATEWAY_BRIDGE: "${{ matrix.target == 'compact-mode' }}"
@@ -484,10 +482,9 @@ jobs:
         sudo rm -rf /usr/local/lib/android/sdk
         sudo apt-get update
         sudo eatmydata apt-get purge --auto-remove -y \
-          azure-cli aspnetcore-* dotnet-* ghc-* firefox \
+          azure-cli firefox \
           google-chrome-stable \
-          llvm-* microsoft-edge-stable mono-* \
-          msbuild mysql-server-core-* php-* php7* \
+          llvm-* microsoft-edge-stable \
           powershell temurin-* zulu-*
 
     - name: Setup /mnt/runner directory
@@ -610,7 +607,7 @@ jobs:
   e2e-dual-conversion:
     name: e2e-dual-conversion
     if: github.event_name != 'schedule'
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -654,10 +651,9 @@ jobs:
         sudo rm -rf /usr/local/lib/android/sdk
         sudo apt-get update
         sudo eatmydata apt-get purge --auto-remove -y \
-          azure-cli aspnetcore-* dotnet-* ghc-* firefox \
+          azure-cli firefox \
           google-chrome-stable \
-          llvm-* microsoft-edge-stable mono-* \
-          msbuild mysql-server-core-* php-* php7* \
+          llvm-* microsoft-edge-stable \
           powershell temurin-* zulu-*
 
     - name: Disable ufw
