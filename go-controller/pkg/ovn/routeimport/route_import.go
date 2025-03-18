@@ -275,7 +275,7 @@ func (c *controller) syncLinkUpdate(update *netlink.LinkUpdate) {
 		old = info.table
 	}
 
-	switch update.IfInfomsg.Type {
+	switch update.Header.Type {
 	case unix.RTM_DELLINK:
 		if !current {
 			c.log.Info("Ignoring VRF delete for old network", "network", id)

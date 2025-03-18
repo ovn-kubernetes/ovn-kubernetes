@@ -9,7 +9,6 @@ import (
 	"github.com/onsi/gomega"
 	"github.com/stretchr/testify/mock"
 	"github.com/vishvananda/netlink"
-	"github.com/vishvananda/netlink/nl"
 	"golang.org/x/sys/unix"
 
 	"k8s.io/client-go/util/workqueue"
@@ -265,8 +264,8 @@ func Test_controller_syncLinkUpdate(t *testing.T) {
 				tables:     map[int]int{2: 1},
 			},
 			args: args{&netlink.LinkUpdate{
-				IfInfomsg: nl.IfInfomsg{IfInfomsg: unix.IfInfomsg{Type: unix.RTM_BASE}},
-				Link:      &netlink.Vrf{LinkAttrs: netlink.LinkAttrs{Name: types.UDNVRFDevicePrefix + "1" + types.UDNVRFDeviceSuffix}, Table: 2}},
+				Header: unix.NlMsghdr{Type: unix.RTM_BASE},
+				Link:   &netlink.Vrf{LinkAttrs: netlink.LinkAttrs{Name: types.UDNVRFDevicePrefix + "1" + types.UDNVRFDeviceSuffix}, Table: 2}},
 			},
 			expectTables: map[int]int{2: 1},
 		},
@@ -278,8 +277,8 @@ func Test_controller_syncLinkUpdate(t *testing.T) {
 				tables:     map[int]int{2: 2},
 			},
 			args: args{&netlink.LinkUpdate{
-				IfInfomsg: nl.IfInfomsg{IfInfomsg: unix.IfInfomsg{Type: unix.RTM_DELLINK}},
-				Link:      &netlink.Vrf{LinkAttrs: netlink.LinkAttrs{Name: types.UDNVRFDevicePrefix + "1" + types.UDNVRFDeviceSuffix}, Table: 2}},
+				Header: unix.NlMsghdr{Type: unix.RTM_DELLINK},
+				Link:   &netlink.Vrf{LinkAttrs: netlink.LinkAttrs{Name: types.UDNVRFDevicePrefix + "1" + types.UDNVRFDeviceSuffix}, Table: 2}},
 			},
 			expectTables: map[int]int{2: 2},
 		},
@@ -291,8 +290,8 @@ func Test_controller_syncLinkUpdate(t *testing.T) {
 				tables:     map[int]int{2: 1},
 			},
 			args: args{&netlink.LinkUpdate{
-				IfInfomsg: nl.IfInfomsg{IfInfomsg: unix.IfInfomsg{Type: unix.RTM_DELLINK}},
-				Link:      &netlink.Vrf{LinkAttrs: netlink.LinkAttrs{Name: types.UDNVRFDevicePrefix + "1" + types.UDNVRFDeviceSuffix}, Table: 2}},
+				Header: unix.NlMsghdr{Type: unix.RTM_DELLINK},
+				Link:   &netlink.Vrf{LinkAttrs: netlink.LinkAttrs{Name: types.UDNVRFDevicePrefix + "1" + types.UDNVRFDeviceSuffix}, Table: 2}},
 			},
 			expectTables: map[int]int{},
 		},
@@ -304,8 +303,8 @@ func Test_controller_syncLinkUpdate(t *testing.T) {
 				tables:     map[int]int{2: 1},
 			},
 			args: args{&netlink.LinkUpdate{
-				IfInfomsg: nl.IfInfomsg{IfInfomsg: unix.IfInfomsg{Type: unix.RTM_NEWLINK}},
-				Link:      &netlink.Vrf{LinkAttrs: netlink.LinkAttrs{Name: types.UDNVRFDevicePrefix + "1" + types.UDNVRFDeviceSuffix}, Table: 2}},
+				Header: unix.NlMsghdr{Type: unix.RTM_NEWLINK},
+				Link:   &netlink.Vrf{LinkAttrs: netlink.LinkAttrs{Name: types.UDNVRFDevicePrefix + "1" + types.UDNVRFDeviceSuffix}, Table: 2}},
 			},
 			expectTables: map[int]int{2: 1},
 		},
@@ -317,8 +316,8 @@ func Test_controller_syncLinkUpdate(t *testing.T) {
 				tables:     map[int]int{2: 1},
 			},
 			args: args{&netlink.LinkUpdate{
-				IfInfomsg: nl.IfInfomsg{IfInfomsg: unix.IfInfomsg{Type: unix.RTM_NEWLINK}},
-				Link:      &netlink.Vrf{LinkAttrs: netlink.LinkAttrs{Name: types.UDNVRFDevicePrefix + "1" + types.UDNVRFDeviceSuffix}, Table: 3}},
+				Header: unix.NlMsghdr{Type: unix.RTM_NEWLINK},
+				Link:   &netlink.Vrf{LinkAttrs: netlink.LinkAttrs{Name: types.UDNVRFDevicePrefix + "1" + types.UDNVRFDeviceSuffix}, Table: 3}},
 			},
 			expectTables:     map[int]int{3: 1},
 			expectReconciles: []string{"net1"},
