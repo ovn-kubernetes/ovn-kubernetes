@@ -585,9 +585,13 @@ func getApiAddress() string {
 func IsGatewayModeLocal() bool {
 	anno, err := e2ekubectl.RunKubectl("default", "get", "node", "ovn-control-plane", "-o", "template", "--template={{.metadata.annotations}}")
 	if err != nil {
+		framework.Logf("Error getting annotations: %v", err)
 		return false
 	}
-	return strings.Contains(anno, "local")
+	framework.Logf("Annotations received: %s", anno)
+	isLocal := strings.Contains(anno, "local")
+	framework.Logf("IsGatewayModeLocal returning: %v", isLocal)
+	return isLocal
 }
 
 // runCommand runs the cmd and returns the combined stdout and stderr
