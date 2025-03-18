@@ -288,7 +288,7 @@ func (c *controller) syncLinkUpdate(update *netlink.LinkUpdate) {
 	// tracking for an old UDN that was deleted but we are not aware yet
 	tableStale := c.tables[newTable] != networkID
 
-	switch update.IfInfomsg.Type {
+	switch update.Header.Type {
 	case unix.RTM_DELLINK:
 		if tableStale {
 			c.log.Info("Ignoring VRF delete for old network", "network", networkID)
