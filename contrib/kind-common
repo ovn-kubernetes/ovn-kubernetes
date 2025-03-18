@@ -122,11 +122,12 @@ install_ingress() {
 
 METALLB_DIR="/tmp/metallb"
 install_metallb() {
-  # Tested v0.4.19 but ran into a couple of issues
+  # Using latest v0.14.9 as the commit we were using would not build and this
+  # version is the one having least issues for dual stack. However tests might
+  # have to workaround these two outstanding issue until fixed
   # https://github.com/metallb/metallb/issues/2723
   # https://github.com/metallb/metallb/issues/2724
-  # We could probably work around them but let's comfortably stay in v0.4.18
-  local metallb_version=v0.14.8
+  local metallb_version=v0.14.9
   mkdir -p /tmp/metallb
   local builddir
   builddir=$(mktemp -d "${METALLB_DIR}/XXXXXX")
@@ -141,15 +142,15 @@ install_metallb() {
   # incompatible kind version patch it so that it uses our own kind install
   # instead of their build
   patch tasks.py << 'EOF'
-@@ -34,7 +34,7 @@ extra_network = "network2"
- controller_gen_version = "v0.14.0"
+@@ -29,7 +29,7 @@ extra_network = "network2"
+ controller_gen_version = "v0.16.3"
  build_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "build")
  kubectl_path = os.path.join(build_path, "kubectl")
 -kind_path = os.path.join(build_path, "kind")
 +kind_path = "kind"
+ ginkgo_path = os.path.join(build_path, "bin", "ginkgo")
  controller_gen_path = os.path.join(build_path, "bin", "controller-gen")
- kubectl_version = "v1.27.0"
- kind_version = "v0.23.0"
+ kubectl_version = "v1.31.0"
 EOF
 
   pip install -r dev-env/requirements.txt
@@ -168,6 +169,7 @@ EOF
   # Override GOBIN until https://github.com/metallb/metallb/issues/2218 is fixed.
   GOBIN="" inv dev-env -n ovn -b frr -p bgp -i "${ip_family}"
 
+  docker network rm clientnet || true
   docker network create --subnet="${METALLB_CLIENT_NET_SUBNET_IPV4}" ${ipv6_network} --driver bridge clientnet
   docker network connect clientnet frr
   if  [ "$KIND_IPV6_SUPPORT" == true ]; then
@@ -175,6 +177,7 @@ EOF
     docker exec frr sysctl -w net.ipv6.conf.all.forwarding=1
   fi
   # Note: this image let's us use it also for creating load balancer backends that can send big packets
+  docker rm -f lbclient || true
   docker run  --cap-add NET_ADMIN --user 0  -d --network clientnet  --rm  --name lbclient  quay.io/itssurya/dev-images:metallb-lbservice
   popd
   delete_metallb_dir

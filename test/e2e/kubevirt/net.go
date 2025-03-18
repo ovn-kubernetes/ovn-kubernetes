@@ -15,7 +15,12 @@ import (
 )
 
 func GenerateAddressDiscoveryConfigurationCommand(iface string) string {
+	// since kindest/node v1.32+, which was upgraded with containerd v2, /sys is
+	// mounted into kind pods as read/write which activates udev in them
+	// including a rule that sets as unmanaged any veth device with a name not
+	// starting with 'eth*'. To workaround, we force the device as managed here.
 	return fmt.Sprintf(`
+nmcli d set %[1]s managed true
 nmcli c mod %[1]s ipv4.addresses "" ipv6.addresses "" ipv4.gateway "" ipv6.gateway "" ipv6.method auto ipv4.method auto ipv6.addr-gen-mode eui64
 nmcli d reapply %[1]s`, iface)
 }

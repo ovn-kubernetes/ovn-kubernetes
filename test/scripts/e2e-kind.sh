@@ -64,8 +64,18 @@ should prevent Ingress creation if more than 1 IngressClass marked as default
 # TODO: Figure out why the below test is failing and if we need to add support in OVN-K for them
 validates that there is no conflict between pods with same hostPort but different hostIP and protocol
 
-# Skip ServiceCidr tests as we dont currenly support this v1alpha feature
-should create Services and servce on different Service CIDRs
+# https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5119
+\[sig-network\] Services should implement NodePort and HealthCheckNodePort correctly when ExternalTrafficPolicy changes
+
+# Skip Alpha features in general
+\[Feature:Alpha\]
+\[Alpha\]
+
+# Skip Beta features by feature name for visibility
+\[FeatureGate:MultiCIDRServiceAllocator\] \[Beta\]
+
+# Skip unsupported GA features by feature name for visibility
+# TODO
 "
 
 IPV4_ONLY_TESTS="
