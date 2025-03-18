@@ -639,7 +639,7 @@ func buildPerNodeLBs(service *corev1.Service, configs []lbConfig, nodes []nodeIn
 				}
 
 				for _, vip := range vips {
-					isv6 := utilnet.IsIPv6String((vip))
+					isv6 := utilnet.IsIPv6String(vip)
 					// build switch rules
 					targets := switchV4targets
 					if isv6 {
@@ -669,6 +669,14 @@ func buildPerNodeLBs(service *corev1.Service, configs []lbConfig, nodes []nodeIn
 							Targets: targetsITP,
 						})
 					} else {
+						if !util.IsClusterIP(vip) && cfg.externalTrafficLocal { // this is a node VIP or external IP, respect ETP
+							if isv6 {
+								targets = joinHostsPort(switchV6TargetIPs, cfg.clusterEndpoints.Port)
+							} else {
+								targets = joinHostsPort(switchV4TargetIPs, cfg.clusterEndpoints.Port)
+							}
+						}
+
 						switchRules = append(switchRules, LBRule{
 							Source:  Addr{IP: vip, Port: cfg.inport},
 							Targets: targets,

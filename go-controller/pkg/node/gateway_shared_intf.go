@@ -56,6 +56,9 @@ const (
 	// ovnkubeSvcViaMgmPortRT is the number of the custom routing table used to steer host->service
 	// traffic packets into OVN via ovn-k8s-mp0. Currently only used for ITP=local traffic.
 	ovnkubeSvcViaMgmPortRT = "7"
+	// ovnkubeSvcViaMgmPortRT is the number of the custom routing table used to steer host->service
+	// traffic packets into OVN via ovn-k8s-mp0. Currently only used for ITP=local traffic.
+	ovnkubeETPSvcViaMgmPortRT = "8"
 	// ovnKubeNodeSNATMark is used to mark packets that need to be SNAT-ed to nodeIP for
 	// traffic originating from egressIP and egressService controlled pods towards other nodes in the cluster.
 	ovnKubeNodeSNATMark = "0x3f0"
@@ -2179,6 +2182,10 @@ func initSvcViaMgmPortRoutingRules(hostSubnets []*net.IPNet) error {
 				klog.V(5).Infof("Successfully added route into custom routing table: %s", ovnkubeSvcViaMgmPortRT)
 			}
 		}
+		if stdout, stderr, err := util.RunIP("route", "replace", "table", ovnkubeETPSvcViaMgmPortRT, "default", "via", gatewayIP, "dev", types.K8sMgmtIntfName, "mtu", "1400"); err != nil {
+			return fmt.Errorf("error adding routing table entry into custom routing table: %s: stdout: %s, stderr: %s, err: %v", ovnkubeETPSvcViaMgmPortRT, stdout, stderr, err)
+		}
+		klog.V(5).Infof("Successfully added route into custom routing table: %s", ovnkubeETPSvcViaMgmPortRT)
 	}
 
 	createRule := func(family string) error {
@@ -2189,6 +2196,11 @@ func initSvcViaMgmPortRoutingRules(hostSubnets []*net.IPNet) error {
 		if !strings.Contains(stdout, fmt.Sprintf("from all fwmark %s lookup %s", ovnkubeITPMark, ovnkubeSvcViaMgmPortRT)) {
 			if stdout, stderr, err := util.RunIP(family, "rule", "add", "fwmark", ovnkubeITPMark, "lookup", ovnkubeSvcViaMgmPortRT, "prio", "30"); err != nil {
 				return fmt.Errorf("error adding routing rule for service via management table (%s): stdout: %s, stderr: %s, err: %v", ovnkubeSvcViaMgmPortRT, stdout, stderr, err)
+			}
+		}
+		if !strings.Contains(stdout, fmt.Sprintf("from all dport 30000-32767 lookup %s", ovnkubeETPSvcViaMgmPortRT)) {
+			if stdout, stderr, err := util.RunIP(family, "rule", "add", "from", "all", "dport", "30000-32767", "lookup", ovnkubeETPSvcViaMgmPortRT, "prio", "30"); err != nil {
+				return fmt.Errorf("error adding routing rule for service via management table (%s): stdout: %s, stderr: %s, err: %v", ovnkubeETPSvcViaMgmPortRT, stdout, stderr, err)
 			}
 		}
 		return nil
