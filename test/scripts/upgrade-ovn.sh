@@ -6,6 +6,13 @@ set -ex
 export KUBECONFIG=${KUBECONFIG:-${HOME}/ovn.conf}
 export OVN_IMAGE=${OVN_IMAGE:-ovn-daemonset-fedora:pr}
 
+set -ex
+ARCH=""
+case $(uname -m) in
+    x86_64)  ARCH="amd64" ;;
+    aarch64) ARCH="arm64"   ;;
+esac
+
 kubectl_wait_pods() {
   # Check that everything is fine and running. IPv6 cluster seems to take a little
   # longer to come up, so extend the wait time.
@@ -337,14 +344,14 @@ for node in $MASTER_NODES; do
 done
 
 # redownload the e2e test binaries if their version differs
-K8S_VERSION="v1.31.0"
+K8S_VERSION="v1.32.3"
 E2E_VERSION=$(/usr/local/bin/e2e.test --version)
 if [[ "$E2E_VERSION" != "$K8S_VERSION" ]]; then
    echo "found version $E2E_VERSION of e2e binary, need version $K8S_VERSION ; will download it."
    # Install e2e test binary and ginkgo
-   curl -L https://storage.googleapis.com/kubernetes-release/release/${K8S_VERSION}/kubernetes-test-linux-amd64.tar.gz -o kubernetes-test-linux-amd64.tar.gz
-   tar xvzf kubernetes-test-linux-amd64.tar.gz
+   curl -LO https://dl.k8s.io/${K8S_VERSION}/kubernetes-test-linux-${ARCH}.tar.gz
+   tar xvzf kubernetes-test-linux-${ARCH}.tar.gz
    sudo mv kubernetes/test/bin/e2e.test /usr/local/bin/e2e.test
    sudo mv kubernetes/test/bin/ginkgo /usr/local/bin/ginkgo
-   rm kubernetes-test-linux-amd64.tar.gz
+   rm kubernetes-test-linux-${ARCH}.tar.gz
 fi
