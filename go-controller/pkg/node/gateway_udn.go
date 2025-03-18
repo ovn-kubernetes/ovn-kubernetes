@@ -400,11 +400,10 @@ func (udng *UserDefinedNetworkGateway) GetNetworkRuleMetadata() string {
 	return fmt.Sprintf("%s-%d", udng.GetNetworkName(), udng.GetNetworkID())
 }
 
-// DelNetwork will be responsible to remove all plumbings
-// used by this UDN on the gateway side
+// DelNetwork will be responsible to remove all plumbings used by this UDN on
+// the gateway side. It's considered invalid to call this instance after
+// DelNetwork has returned succesfully.
 func (udng *UserDefinedNetworkGateway) DelNetwork() error {
-	close(udng.reconcile)
-
 	vrfDeviceName := util.GetNetworkVRFName(udng.NetInfo)
 	// delete the iprules for this network
 	if err := udng.ruleManager.DeleteWithMetadata(udng.GetNetworkRuleMetadata()); err != nil {
@@ -425,7 +424,15 @@ func (udng *UserDefinedNetworkGateway) DelNetwork() error {
 		return err
 	}
 	// delete the management port interface for this network
-	return udng.deleteUDNManagementPort()
+	err := udng.deleteUDNManagementPort()
+	if err != nil {
+		return err
+	}
+
+	// close channel only when succesful since we can be called multiple times
+	// on failure
+	close(udng.reconcile)
+	return nil
 }
 
 // addUDNManagementPort does the following:
