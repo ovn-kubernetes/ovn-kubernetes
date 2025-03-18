@@ -327,7 +327,28 @@ func (c *controller) syncNetwork(network string) error {
 	if info == nil {
 		return nil
 	}
-	router := info.GetNetworkScopedGWRouterName(c.node)
+
+	// get the table from the network VRF. Note we go to netlink for this as
+	// source of truth instead of using c.tables cache which is just a hint for
+	// syncRouteUpdate. This avoids implementing a more complicated logic to
+	// mantain c.tables
+	table, err := c.getRoutingTableForNetwork(network)
+	if err != nil {
+		return fmt.Errorf("failed to get VRF table from network: %w", err)
+	}
+	if table == noTable {
+		// no VRF exists yet for the network
+		return nil
+	}
+
+	// sneakily set the hint for syncRouteUpdate. Handles this sequence of events:
+	// 1. link create event
+	// 2. add Network
+	// 3. Route update event <- we wouldn't know the network of a table to add
+	//    routes to
+	c.Lock()
+	c.setTableForNetworkUnlocked(info.GetNetworkID(), table)
+	c.Unlock()
 
 	// skip routes in the pod network
 	// TODO do not skip these routes in no overlay mode
@@ -336,16 +357,12 @@ func (c *controller) syncNetwork(network string) error {
 		ignoreSubnets[i] = subnet.CIDR
 	}
 
-	table := c.getTableForNetwork(info.GetNetworkID())
-	if table == noTable {
-		return nil
-	}
-
 	expected, err := c.getBGPRoutes(table, ignoreSubnets)
 	if err != nil {
 		return err
 	}
 
+	router := info.GetNetworkScopedGWRouterName(c.node)
 	actual, uuids, err := c.getOVNRoutes(router)
 	if err != nil {
 		return fmt.Errorf("failed to get routes from OVN: %w", err)
@@ -450,19 +467,39 @@ func (c *controller) getOVNRoutes(router string) (sets.Set[route], map[route]str
 	return routes, uuids, nil
 }
 
-func (c *controller) getNetwork(network string) *netInfo {
+func (c *controller) getNetwork(network string) util.NetInfo {
 	c.RLock()
 	defer c.RUnlock()
 	return c.networks[network]
 }
 
-func (c *controller) getTableForNetwork(network int) int {
-	c.RLock()
-	defer c.RUnlock()
-	if info := c.networks[c.networkIDs[network]]; info != nil {
-		return info.table
+func (c *controller) getRoutingTableForNetwork(name string) (int, error) {
+	network := c.getNetwork(name)
+	if network == nil {
+		// unknown network, shouldn't happen but in any case will reconcile
+		// later if network is added
+		return noTable, nil
 	}
-	return noTable
+	if network.IsDefault() {
+		return unix.RT_TABLE_MAIN, nil
+	}
+	vrf := util.GetNetworkVRFName(network)
+	link, err := c.netlink.LinkByName(vrf)
+	if c.netlink.IsLinkNotFoundError(err) {
+		// unknown link, will reconcile later if link is updated
+		return noTable, nil
+	}
+	if err != nil {
+		return noTable, err
+	}
+	vrfLink, isVrf := link.(*netlink.Vrf)
+	if !isVrf {
+		// unexpected type, log error, will reconcile later if link is updated
+		c.log.Error(nil, "Expected a VRF but got a different device type", "name", vrf, "type", link.Type())
+		return noTable, nil
+	}
+
+	return int(vrfLink.Table), nil
 }
 
 func (c *controller) getNetworkForTable(table int) *netInfo {
@@ -472,6 +509,15 @@ func (c *controller) getNetworkForTable(table int) *netInfo {
 		return c.networks[c.networkIDs[network]]
 	}
 	return nil
+}
+
+// setTableForNetworkUnlocked needs to be called with lock
+func (c *controller) setTableForNetworkUnlocked(networkID, table int) {
+	maps.DeleteFunc(c.tables, func(_, id int) bool { return id == networkID })
+	if table == noTable {
+		return
+	}
+	c.tables[table] = networkID
 }
 
 func routesFromNetlinkRoute(r *netlink.Route) []route {

@@ -25,11 +25,26 @@ import (
 
 func Test_controller_syncNetwork(t *testing.T) {
 	node := "testnode"
+
 	defaultNetwork := &util.DefaultNetInfo{}
+
+	udn := &multinetworkmocks.NetInfo{}
+	udn.On("IsDefault").Return(false)
+	udn.On("GetNetworkName").Return("udn")
+	udn.On("GetNetworkID").Return(1)
+	udn.On("Subnets").Return(nil)
+	udn.On("GetNetworkScopedGWRouterName", node).Return("router")
+
+	cudn := &multinetworkmocks.NetInfo{}
+	cudn.On("IsDefault").Return(false)
+	cudn.On("GetNetworkName").Return(types.CUDNPrefix + "cudn")
+	cudn.On("GetNetworkID").Return(2)
+	cudn.On("Subnets").Return(nil)
+	cudn.On("GetNetworkScopedGWRouterName", node).Return("router")
+
 	type fields struct {
 		networkIDs map[int]string
 		networks   map[string]*netInfo
-		tables     map[int]int
 	}
 	type args struct {
 		network string
@@ -41,27 +56,39 @@ func Test_controller_syncNetwork(t *testing.T) {
 		initial   []libovsdb.TestData
 		expected  []libovsdb.TestData
 		routes    []netlink.Route
+		link      netlink.Link
+		linkErr   bool
 		routesErr bool
 		wantErr   bool
 	}{
 		{
-			name: "reconciled ignored if network not known",
+			name: "ignored if network not known",
 			args: args{"default"},
 		},
 		{
-			name: "reconciled ignored if network table not known",
-			args: args{"default"},
+			name: "ignored if vrf not known",
+			args: args{"udn"},
 			fields: fields{
-				networkIDs: map[int]string{0: "default"},
-				networks:   map[string]*netInfo{"default": {NetInfo: defaultNetwork, table: noTable}},
+				networkIDs: map[int]string{1: "udn"},
+				networks:   map[string]*netInfo{"udn": {NetInfo: udn}},
 			},
+		},
+		{
+			name: "fails if vrf link cannot be fetched",
+			args: args{"udn"},
+			fields: fields{
+				networkIDs: map[int]string{1: "udn"},
+				networks:   map[string]*netInfo{"udn": {NetInfo: udn}},
+			},
+			linkErr: true,
+			wantErr: true,
 		},
 		{
 			name: "fails if kernel routes cannot be fetched",
 			args: args{"default"},
 			fields: fields{
 				networkIDs: map[int]string{0: "default"},
-				networks:   map[string]*netInfo{"default": {NetInfo: defaultNetwork, table: unix.RT_TABLE_MAIN}},
+				networks:   map[string]*netInfo{"default": {NetInfo: defaultNetwork}},
 			},
 			routesErr: true,
 			wantErr:   true,
@@ -69,19 +96,51 @@ func Test_controller_syncNetwork(t *testing.T) {
 		{
 			name: "fails if OVN routes cannot be fetched (i.e. router does not exist)",
 			args: args{"default"},
+			link: &netlink.Vrf{Table: unix.RT_TABLE_MAIN},
 			fields: fields{
 				networkIDs: map[int]string{0: "default"},
-				networks:   map[string]*netInfo{"default": {NetInfo: defaultNetwork, table: unix.RT_TABLE_MAIN}},
+				networks:   map[string]*netInfo{"default": {NetInfo: defaultNetwork}},
 			},
 			wantErr: true,
+		},
+		{
+			name: "imports routes for a UDN",
+			args: args{"udn"},
+			link: &netlink.Vrf{Table: 1000},
+			fields: fields{
+				networkIDs: map[int]string{1: "udn"},
+				networks:   map[string]*netInfo{"udn": {NetInfo: udn}},
+			},
+			initial: []libovsdb.TestData{
+				&nbdb.LogicalRouter{Name: "router"},
+			},
+			expected: []libovsdb.TestData{
+				&nbdb.LogicalRouter{UUID: "router", Name: "router"},
+			},
+		},
+		{
+			name: "imports routes for a CUDN",
+			args: args{"cudn"},
+			link: &netlink.Vrf{Table: 10001},
+			fields: fields{
+				networkIDs: map[int]string{1: "cudn"},
+				networks:   map[string]*netInfo{"cudn": {NetInfo: cudn}},
+			},
+			initial: []libovsdb.TestData{
+				&nbdb.LogicalRouter{Name: "router"},
+			},
+			expected: []libovsdb.TestData{
+				&nbdb.LogicalRouter{UUID: "router", Name: "router"},
+			},
 		},
 		{
 			name: "adds and removes routes as necessary",
 			args: args{"default"},
 			fields: fields{
 				networkIDs: map[int]string{0: "default"},
-				networks:   map[string]*netInfo{"default": {NetInfo: defaultNetwork, table: unix.RT_TABLE_MAIN}},
+				networks:   map[string]*netInfo{"default": {NetInfo: defaultNetwork}},
 			},
+			link: &netlink.Vrf{Table: unix.RT_TABLE_MAIN},
 			initial: []libovsdb.TestData{
 				&nbdb.LogicalRouter{Name: defaultNetwork.GetNetworkScopedGWRouterName(node), StaticRoutes: []string{"keep-1", "keep-2", "remove"}},
 				&nbdb.LogicalRouterStaticRoute{UUID: "keep-1", IPPrefix: "1.1.1.0/24", Nexthop: "1.1.1.1", ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
@@ -107,17 +166,28 @@ func Test_controller_syncNetwork(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			g := gomega.NewWithT(t)
 
+			testError := errors.New("test forced error or incorrect test arguments")
+			network := tt.fields.networks[tt.args.network]
+
 			nlmock := &mocks.NetLinkOps{}
-			if info := tt.fields.networks[tt.args.network]; info != nil && info.table != 0 {
+			nlmock.On("IsLinkNotFoundError", mock.Anything).Return(tt.link == nil && !tt.linkErr)
+			switch {
+			case network == nil || tt.linkErr:
+				nlmock.On("LinkByName", mock.Anything).Return(nil, testError)
+			default:
+				nlmock.On("LinkByName", util.GetNetworkVRFName(network)).Return(tt.link, nil)
+			}
+
+			switch {
+			case tt.link == nil || tt.link.Type() != "vrf" || tt.routesErr:
+				nlmock.On("RouteListFiltered", mock.Anything, mock.Anything, mock.Anything).Return(nil, testError)
+			default:
+				vrf := tt.link.(*netlink.Vrf)
 				matchFilter := func(r *netlink.Route) bool {
-					return r != nil && r.Equal(netlink.Route{Protocol: unix.RTPROT_BGP, Table: info.table})
+					return r != nil && r.Equal(netlink.Route{Protocol: unix.RTPROT_BGP, Table: int(vrf.Table)})
 				}
-				nlcall := nlmock.On("RouteListFiltered", netlink.FAMILY_ALL, mock.MatchedBy(matchFilter), netlink.RT_FILTER_PROTOCOL|netlink.RT_FILTER_TABLE)
-				if tt.routesErr {
-					nlcall.Return(nil, errors.New("test error"))
-				} else {
-					nlcall.Return(tt.routes, nil)
-				}
+				nlmock.On("RouteListFiltered", netlink.FAMILY_ALL, mock.MatchedBy(matchFilter), netlink.RT_FILTER_PROTOCOL|netlink.RT_FILTER_TABLE).
+					Return(tt.routes, nil)
 			}
 
 			client, ctx, err := libovsdb.NewNBTestHarness(libovsdb.TestSetup{NBData: tt.initial}, nil)
@@ -130,7 +200,7 @@ func Test_controller_syncNetwork(t *testing.T) {
 				log:        testr.New(t),
 				networkIDs: tt.fields.networkIDs,
 				networks:   tt.fields.networks,
-				tables:     tt.fields.tables,
+				tables:     map[int]int{},
 				netlink:    nlmock,
 			}
 
