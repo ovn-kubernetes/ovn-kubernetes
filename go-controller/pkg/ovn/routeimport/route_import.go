@@ -3,8 +3,6 @@ package routeimport
 import (
 	"fmt"
 	"net"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -22,7 +20,6 @@ import (
 	controllerutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
 	nbdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
 )
@@ -264,19 +261,7 @@ func (c *controller) syncLinkUpdate(update *netlink.LinkUpdate) {
 		return
 	}
 
-	name := vrf.Name
-	if !strings.HasPrefix(name, types.UDNVRFDevicePrefix) {
-		return
-	}
-	if !strings.HasSuffix(name, types.UDNVRFDeviceSuffix) {
-		return
-	}
-
-	id, err := strconv.Atoi(name[len(types.UDNVRFDevicePrefix) : len(name)-len(types.UDNVRFDeviceSuffix)])
-	if err != nil {
-		c.log.Error(err, "Failed to parse network ID from device name", "name", name)
-		return
-	}
+	id := util.ParseNetworkIDFromVRFName(vrf.Name)
 
 	c.Lock()
 	defer c.Unlock()
