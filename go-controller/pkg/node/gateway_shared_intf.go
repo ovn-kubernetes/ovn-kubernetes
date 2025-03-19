@@ -59,6 +59,8 @@ const (
 	// ovnKubeNodeSNATMark is used to mark packets that need to be SNAT-ed to nodeIP for
 	// traffic originating from egressIP and egressService controlled pods towards other nodes in the cluster.
 	ovnKubeNodeSNATMark = "0x3f0"
+	// ovnKubeMgmtPortDontSNATMark is used to identify packets that should bypass SNAT to node IP.
+	ovnKubeMgmtPortDontSNATMark = "0x4f0"
 
 	// nftablesUDNServicePreroutingChain is a base chain registered into the prerouting hook,
 	// and it contains one rule that jumps to nftablesUDNServiceMarkChain.
