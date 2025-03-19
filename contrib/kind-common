@@ -709,6 +709,8 @@ deploy_bgp_external_server() {
     ip_family="ipv4"
     ipv6_network=""
   fi
+  docker rm -f bgpserver || true
+  docker network rm bgpnet || true
   docker network create --subnet="${BGP_SERVER_NET_SUBNET_IPV4}" ${ipv6_network} --driver bridge bgpnet
   docker network connect bgpnet frr
   docker run  --cap-add NET_ADMIN --user 0  -d --network bgpnet  --rm  --name bgpserver -p 8080:8080  registry.k8s.io/e2e-test-images/agnhost:2.45 netexec
