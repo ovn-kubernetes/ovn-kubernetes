@@ -57,8 +57,6 @@ var _ = Describe("Network Segmentation", func() {
 		userDefinedNetworkIPv6Subnet = "2014:100:200::0/60"
 		userDefinedNetworkName       = "hogwarts"
 		nadName                      = "gryffindor"
-		workerOneNodeName            = "ovn-worker"
-		workerTwoNodeName            = "ovn-worker2"
 	)
 
 	BeforeEach(func() {
@@ -146,13 +144,18 @@ var _ = Describe("Network Segmentation", func() {
 						netConfig.namespace = f.Namespace.Name
 						Expect(createNetworkFn(netConfig)).To(Succeed())
 
+						nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.Background(), cs, 2)
+						Expect(err).NotTo(HaveOccurred())
+						Expect(len(nodes.Items)).To(BeNumerically(">=", 2), "must be at least 2 Nodes to schedule pods")
+
 						By("creating client/server pods")
 						serverPodConfig.namespace = f.Namespace.Name
+						serverPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[0].Name}
 						clientPodConfig.namespace = f.Namespace.Name
+						clientPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[1].Name}
 						runUDNPod(cs, f.Namespace.Name, serverPodConfig, nil)
 						runUDNPod(cs, f.Namespace.Name, clientPodConfig, nil)
 
-						var err error
 						var serverIP string
 						for i, cidr := range strings.Split(netConfig.cidr, ",") {
 							if cidr != "" {
@@ -188,14 +191,12 @@ var _ = Describe("Network Segmentation", func() {
 						},
 						*podConfig(
 							"client-pod",
-							withNodeSelector(map[string]string{nodeHostnameKey: workerOneNodeName}),
 						),
 						*podConfig(
 							"server-pod",
 							withCommand(func() []string {
 								return httpServerContainerCmd(port)
 							}),
-							withNodeSelector(map[string]string{nodeHostnameKey: workerTwoNodeName}),
 						),
 					),
 					Entry(
@@ -208,14 +209,12 @@ var _ = Describe("Network Segmentation", func() {
 						},
 						*podConfig(
 							"client-pod",
-							withNodeSelector(map[string]string{nodeHostnameKey: workerOneNodeName}),
 						),
 						*podConfig(
 							"server-pod",
 							withCommand(func() []string {
 								return httpServerContainerCmd(port)
 							}),
-							withNodeSelector(map[string]string{nodeHostnameKey: workerTwoNodeName}),
 						),
 					),
 				)
@@ -250,7 +249,13 @@ var _ = Describe("Network Segmentation", func() {
 						netConfigParams.namespace = f.Namespace.Name
 						Expect(createNetworkFn(netConfigParams)).To(Succeed())
 
+						nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.Background(), cs, 1)
+						Expect(err).NotTo(HaveOccurred())
+						Expect(len(nodes.Items)).To(BeNumerically(">=", 1), "must be at least one Node to schedule pods")
+						nodeName := nodes.Items[0].Name
 						udnPodConfig.namespace = f.Namespace.Name
+						udnPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[0].Name}
+
 						udnPod := runUDNPod(cs, f.Namespace.Name, udnPodConfig, func(pod *v1.Pod) {
 							pod.Spec.Containers[0].ReadinessProbe = &v1.Probe{
 								ProbeHandler: v1.ProbeHandler{
@@ -294,11 +299,11 @@ var _ = Describe("Network Segmentation", func() {
 						})
 
 						By("creating default network pod")
-						defaultPod, err := createPod(f, "default-net-pod", udnPodConfig.nodeSelector[nodeHostnameKey],
+						defaultPod, err := createPod(f, "default-net-pod", nodeName,
 							defaultNetNamespace, []string{"/agnhost", "netexec"}, nil)
 						Expect(err).NotTo(HaveOccurred())
 						By("creating default network client pod")
-						defaultClientPod, err := createPod(f, "default-net-client-pod", udnPodConfig.nodeSelector[nodeHostnameKey],
+						defaultClientPod, err := createPod(f, "default-net-client-pod", nodeName,
 							defaultNetNamespace, []string{}, nil)
 						Expect(err).NotTo(HaveOccurred())
 
@@ -353,7 +358,7 @@ var _ = Describe("Network Segmentation", func() {
 						Expect(udnPod.Status.ContainerStatuses[0].RestartCount).To(Equal(int32(0)))
 
 						By("restarting kubelet, pod should stay ready")
-						_, err = runCommand(containerRuntime, "exec", workerOneNodeName,
+						_, err = runCommand(containerRuntime, "exec", nodeName,
 							"systemctl", "restart", "kubelet")
 						Expect(err).NotTo(HaveOccurred())
 
@@ -366,7 +371,7 @@ var _ = Describe("Network Segmentation", func() {
 
 						if !isUDNHostIsolationDisabled() {
 							By("checking default network hostNetwork pod and non-kubelet host process can't reach the UDN pod")
-							hostNetPod, err := createPod(f, "host-net-pod", udnPodConfig.nodeSelector[nodeHostnameKey],
+							hostNetPod, err := createPod(f, "host-net-pod", nodeName,
 								defaultNetNamespace, []string{}, nil, func(pod *v1.Pod) {
 									pod.Spec.HostNetwork = true
 								})
@@ -383,7 +388,7 @@ var _ = Describe("Network Segmentation", func() {
 								}).Should(BeTrue())
 								By("checking the non-kubelet host process can reach default pod on IP " + destIP)
 								Eventually(func() bool {
-									_, err = runCommand(containerRuntime, "exec", workerOneNodeName,
+									_, err = runCommand(containerRuntime, "exec", nodeName,
 										"curl", "--connect-timeout", "2",
 										net.JoinHostPort(destIP, fmt.Sprintf("%d", defaultPort)))
 									return err == nil
@@ -402,7 +407,7 @@ var _ = Describe("Network Segmentation", func() {
 
 								By("checking the non-kubelet host process can't reach UDN pod on IP " + destIP)
 								Consistently(func() bool {
-									_, err = runCommand(containerRuntime, "exec", workerOneNodeName,
+									_, err = runCommand(containerRuntime, "exec", nodeName,
 										"curl", "--connect-timeout", "2",
 										net.JoinHostPort(destIP, fmt.Sprintf("%d", port)))
 									return err != nil
@@ -478,7 +483,6 @@ var _ = Describe("Network Segmentation", func() {
 							withCommand(func() []string {
 								return httpServerContainerCmd(port)
 							}),
-							withNodeSelector(map[string]string{nodeHostnameKey: workerOneNodeName}),
 						),
 					),
 					Entry(
@@ -494,7 +498,6 @@ var _ = Describe("Network Segmentation", func() {
 							withCommand(func() []string {
 								return httpServerContainerCmd(port)
 							}),
-							withNodeSelector(map[string]string{nodeHostnameKey: workerOneNodeName}),
 						),
 					),
 				)
@@ -513,6 +516,12 @@ var _ = Describe("Network Segmentation", func() {
 
 						namespaceRed := f.Namespace.Name + "-" + red
 						namespaceBlue := f.Namespace.Name + "-" + blue
+
+						nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), cs, 2)
+						framework.ExpectNoError(err)
+
+						node1Name := nodes.Items[0].Name
+						node2Name := nodes.Items[1].Name
 
 						for _, namespace := range []string{namespaceRed, namespaceBlue} {
 							By("Creating namespace " + namespace)
@@ -569,11 +578,11 @@ var _ = Describe("Network Segmentation", func() {
 								podConfig.namespace = namespace
 								//ensure testing accross nodes
 								if i%2 == 0 {
-									podConfig.nodeSelector = map[string]string{nodeHostnameKey: workerOneNodeName}
+									podConfig.nodeSelector = map[string]string{nodeHostnameKey: node1Name}
 
 								} else {
 
-									podConfig.nodeSelector = map[string]string{nodeHostnameKey: workerTwoNodeName}
+									podConfig.nodeSelector = map[string]string{nodeHostnameKey: node2Name}
 								}
 								By("creating pod " + podConfig.name + " in " + podConfig.namespace)
 								pod := runUDNPod(cs, podConfig.namespace, podConfig, nil)
@@ -695,20 +704,23 @@ var _ = Describe("Network Segmentation", func() {
 				cidr:      correctCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 				role:      "primary",
 			}
+			nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), cs, 2)
+			framework.ExpectNoError(err)
+			node1Name, node2Name := nodes.Items[0].Name, nodes.Items[1].Name
 			clientPodConfig := *podConfig(
 				"client-pod",
-				withNodeSelector(map[string]string{nodeHostnameKey: workerOneNodeName}),
+				withNodeSelector(map[string]string{nodeHostnameKey: node1Name}),
 			)
 			serverPodConfig := *podConfig(
 				"server-pod",
 				withCommand(func() []string {
 					return httpServerContainerCmd(port)
 				}),
-				withNodeSelector(map[string]string{nodeHostnameKey: workerTwoNodeName}),
+				withNodeSelector(map[string]string{nodeHostnameKey: node2Name}),
 			)
 
 			By("creating second namespace")
-			_, err := cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
+			_, err = cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:   netConfig2.namespace,
 					Labels: map[string]string{RequiredUDNNamespaceLabel: ""},
@@ -1556,9 +1568,12 @@ spec:
 		})
 
 		It("should react to k8s.ovn.org/open-default-ports annotations changes", func() {
+			nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), cs, 1)
+			framework.ExpectNoError(err)
+			node1Name := nodes.Items[0].Name
 			By("Creating second namespace for default network pod")
 			defaultNetNamespace := f.Namespace.Name + "-default"
-			_, err := cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
+			_, err = cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: defaultNetNamespace,
 				},
@@ -1569,12 +1584,12 @@ spec:
 			}()
 
 			By("creating default network client pod")
-			defaultClientPod, err := createPod(f, "default-net-client-pod", workerOneNodeName,
+			defaultClientPod, err := createPod(f, "default-net-client-pod", node1Name,
 				defaultNetNamespace, []string{}, nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			By("creating default network hostNetwork client pod")
-			hostNetPod, err := createPod(f, "host-net-client-pod", workerOneNodeName,
+			hostNetPod, err := createPod(f, "host-net-client-pod", node1Name,
 				defaultNetNamespace, []string{}, nil, func(pod *v1.Pod) {
 					pod.Spec.HostNetwork = true
 				})
@@ -1692,7 +1707,9 @@ spec:
 				Expect(err).ShouldNot(HaveOccurred(), "test requires at least two schedulable nodes")
 				Expect(len(nodes.Items)).Should(BeNumerically(">=", 2), "test requires >= 2 Ready nodes")
 				serverPodConfig.namespace = f.Namespace.Name
+				serverPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[0].Name}
 				clientPodConfig.namespace = f.Namespace.Name
+				clientPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[1].Name}
 				runUDNPod(cs, f.Namespace.Name, serverPodConfig, nil)
 				runUDNPod(cs, f.Namespace.Name, clientPodConfig, nil)
 				serverIP, err := podIPsForUserDefinedPrimaryNetwork(cs, f.Namespace.Name, serverPodConfig.name, namespacedName(f.Namespace.Name, netConfig.name), 0)
@@ -1719,14 +1736,12 @@ spec:
 				},
 				*podConfig(
 					"client-pod",
-					withNodeSelector(map[string]string{nodeHostnameKey: workerOneNodeName}),
 				),
 				*podConfig(
 					"server-pod",
 					withCommand(func() []string {
 						return httpServerContainerCmd(port)
 					}),
-					withNodeSelector(map[string]string{nodeHostnameKey: workerTwoNodeName}),
 				),
 			),
 			Entry(
@@ -1739,14 +1754,12 @@ spec:
 				},
 				*podConfig(
 					"client-pod",
-					withNodeSelector(map[string]string{nodeHostnameKey: workerOneNodeName}),
 				),
 				*podConfig(
 					"server-pod",
 					withCommand(func() []string {
 						return httpServerContainerCmd(port)
 					}),
-					withNodeSelector(map[string]string{nodeHostnameKey: workerTwoNodeName}),
 				),
 			),
 		)
