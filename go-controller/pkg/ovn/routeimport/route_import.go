@@ -356,6 +356,8 @@ func (c *controller) syncNetwork(network string) error {
 	}
 
 	router := info.GetNetworkScopedGWRouterName(c.node)
+	// we set the outport incase our IPv6 next hops are link local addresses
+	outport := types.GWRouterToExtSwitchPrefix + router
 	actual, uuids, err := c.getOVNRoutes(router)
 	if err != nil {
 		return fmt.Errorf("failed to get routes from OVN: %w", err)
@@ -380,10 +382,11 @@ func (c *controller) syncNetwork(network string) error {
 			UUID:        uuids[add],
 			IPPrefix:    add.dst,
 			Nexthop:     add.gw,
+			OutputPort:  &outport,
 			ExternalIDs: map[string]string{controllerExternalIDKey: controllerName},
 		}
 		p := func(db *nbdb.LogicalRouterStaticRoute) bool { return p(lrsr, db) }
-		ops, err = nbdbops.CreateOrUpdateLogicalRouterStaticRoutesWithPredicateOps(c.nbClient, ops, router, lrsr, p)
+		ops, err = nbdbops.CreateOrReplaceLogicalRouterStaticRouteWithPredicateOps(c.nbClient, ops, router, lrsr, p)
 		if err != nil {
 			err := fmt.Errorf("failed to add routes on router %s: %w", router, err)
 			errs = append(errs, err)
