@@ -221,8 +221,9 @@ spec:
 					err := migrateWorkerNodeIP(workerNode.Name, migrationWorkerNodeIP, workerNodeIPs[ipAddrFamily],
 						true)
 					Expect(err).NotTo(HaveOccurred())
-
-					ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+					ovnKubeNs, err := getOVNKubeNamespaceName(f.ClientSet.CoreV1().Namespaces())
+					framework.ExpectNoError(err, "failed to get ovn-kubernetes namespace")
+					ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnKubeNs).List(context.TODO(), metav1.ListOptions{
 						LabelSelector: "app=ovnkube-node",
 						FieldSelector: "spec.nodeName=" + workerNode.Name,
 					})
@@ -232,7 +233,7 @@ spec:
 
 					Eventually(func() bool {
 						By("waiting for the ovn-encap-ip to be reconfigured")
-						return isOVNEncapIPReady(workerNode.Name, workerNodeIPs[ipAddrFamily], ovnkubePodWorkerNode.Name)
+						return isOVNEncapIPReady(workerNode.Name, workerNodeIPs[ipAddrFamily], ovnKubeNs, ovnkubePodWorkerNode.Name)
 					}, pollingTimeout, pollingInterval).Should(BeTrue())
 
 					err = deletePodWithWait(context.TODO(), f.ClientSet, &ovnkubePodWorkerNode)
@@ -258,8 +259,9 @@ spec:
 
 							By("Setting rollbackNeeded to true")
 							rollbackNeeded = true
-
-							ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+							ovnKubeNs, err := getOVNKubeNamespaceName(f.ClientSet.CoreV1().Namespaces())
+							framework.ExpectNoError(err, "failed to get ovn-kubernetes namespace")
+							ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnKubeNs).List(context.TODO(), metav1.ListOptions{
 								LabelSelector: "app=ovnkube-node",
 								FieldSelector: "spec.nodeName=" + workerNode.Name,
 							})
@@ -269,7 +271,7 @@ spec:
 
 							Eventually(func() bool {
 								By("waiting for the ovn-encap-ip to be reconfigured")
-								return isOVNEncapIPReady(workerNode.Name, migrationWorkerNodeIP, ovnkubePodWorkerNode.Name)
+								return isOVNEncapIPReady(workerNode.Name, migrationWorkerNodeIP, ovnKubeNs, ovnkubePodWorkerNode.Name)
 							}, pollingTimeout, pollingInterval).Should(BeTrue())
 
 							By(fmt.Sprintf("Sleeping for %d seconds to give things time to settle", settleTimeout))
@@ -358,8 +360,9 @@ spec:
 
 							By("Setting rollbackNeeded to true")
 							rollbackNeeded = true
-
-							ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+							ovnKubeNs, err := getOVNKubeNamespaceName(f.ClientSet.CoreV1().Namespaces())
+							framework.ExpectNoError(err, "failed to get ovn-kubernetes namespace")
+							ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnKubeNs).List(context.TODO(), metav1.ListOptions{
 								LabelSelector: "app=ovnkube-node",
 								FieldSelector: "spec.nodeName=" + workerNode.Name,
 							})
@@ -369,7 +372,7 @@ spec:
 
 							Eventually(func() bool {
 								By("waiting for the ovn-encap-ip to be reconfigured")
-								return isOVNEncapIPReady(workerNode.Name, migrationWorkerNodeIP, ovnkubePodWorkerNode.Name)
+								return isOVNEncapIPReady(workerNode.Name, migrationWorkerNodeIP, ovnKubeNs, ovnkubePodWorkerNode.Name)
 							}, pollingTimeout, pollingInterval).Should(BeTrue())
 
 							By(fmt.Sprintf("Sleeping for %d seconds to give things time to settle", settleTimeout))
@@ -438,7 +441,9 @@ spec:
 					assignedNodePort = svc.Spec.Ports[0].NodePort
 
 					// find the ovn-kube node pod on this node
-					pods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+					ovnKubeNs, err := getOVNKubeNamespaceName(f.ClientSet.CoreV1().Namespaces())
+					framework.ExpectNoError(err, "failed to get ovn-kubernetes namespace")
+					pods, err := f.ClientSet.CoreV1().Pods(ovnKubeNs).List(context.TODO(), metav1.ListOptions{
 						LabelSelector: "app=ovnkube-node",
 						FieldSelector: "spec.nodeName=" + workerNode.Name,
 					})
@@ -487,8 +492,9 @@ spec:
 
 							By("Setting rollbackNeeded to true")
 							rollbackNeeded = true
-
-							ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+							ovnKubeNs, err := getOVNKubeNamespaceName(f.ClientSet.CoreV1().Namespaces())
+							framework.ExpectNoError(err, "failed to get ovn-kubernetes namespace")
+							ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnKubeNs).List(context.TODO(), metav1.ListOptions{
 								LabelSelector: "app=ovnkube-node",
 								FieldSelector: "spec.nodeName=" + workerNode.Name,
 							})
@@ -498,7 +504,7 @@ spec:
 
 							Eventually(func() bool {
 								By("waiting for the ovn-encap-ip to be reconfigured")
-								return isOVNEncapIPReady(workerNode.Name, migrationWorkerNodeIP, ovnkubePodWorkerNode.Name)
+								return isOVNEncapIPReady(workerNode.Name, migrationWorkerNodeIP, ovnKubeNs, ovnkubePodWorkerNode.Name)
 							}, pollingTimeout, pollingInterval).Should(BeTrue())
 
 							By(fmt.Sprintf("Sleeping for %d seconds to give things time to settle", settleTimeout))
@@ -537,7 +543,9 @@ spec:
 	When("when MAC address changes", func() {
 		BeforeEach(func() {
 			By("Storing original MAC")
-			ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+			ovnKubeNs, err := getOVNKubeNamespaceName(f.ClientSet.CoreV1().Namespaces())
+			framework.ExpectNoError(err, "failed to get ovn-kubernetes namespace")
+			ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnKubeNs).List(context.TODO(), metav1.ListOptions{
 				LabelSelector: "app=ovnkube-node",
 				FieldSelector: "spec.nodeName=" + workerNode.Name,
 			})
@@ -859,9 +867,9 @@ func isAddressReachableFromContainer(containerName, targetIP string) (bool, erro
 	return false, nil
 }
 
-func isOVNEncapIPReady(nodeName, nodeIP, ovnkubePodName string) bool {
+func isOVNEncapIPReady(nodeName, nodeIP, ovnkubeNamespaceName, ovnkubePodName string) bool {
 	framework.Logf("Verifying ovn-encap-ip for node %s", nodeName)
-	cmd := []string{"kubectl", "-n", ovnNamespace, "exec", ovnkubePodName, "-c", "ovn-controller",
+	cmd := []string{"kubectl", "-n", ovnkubeNamespaceName, "exec", ovnkubePodName, "-c", "ovn-controller",
 		"--", "ovs-vsctl", "get", "open_vswitch", ".", "external-ids:ovn-encap-ip"}
 	output, err := runCommand(cmd...)
 	if err != nil {
