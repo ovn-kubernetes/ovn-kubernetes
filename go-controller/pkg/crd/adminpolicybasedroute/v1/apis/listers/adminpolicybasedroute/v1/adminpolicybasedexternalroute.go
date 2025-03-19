@@ -18,10 +18,10 @@ limitations under the License.
 package v1
 
 import (
-	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1"
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/client-go/listers"
-	"k8s.io/client-go/tools/cache"
+	adminpolicybasedroutev1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1"
+	labels "k8s.io/apimachinery/pkg/labels"
+	listers "k8s.io/client-go/listers"
+	cache "k8s.io/client-go/tools/cache"
 )
 
 // AdminPolicyBasedExternalRouteLister helps list AdminPolicyBasedExternalRoutes.
@@ -29,19 +29,19 @@ import (
 type AdminPolicyBasedExternalRouteLister interface {
 	// List lists all AdminPolicyBasedExternalRoutes in the indexer.
 	// Objects returned here must be treated as read-only.
-	List(selector labels.Selector) (ret []*v1.AdminPolicyBasedExternalRoute, err error)
+	List(selector labels.Selector) (ret []*adminpolicybasedroutev1.AdminPolicyBasedExternalRoute, err error)
 	// Get retrieves the AdminPolicyBasedExternalRoute from the index for a given name.
 	// Objects returned here must be treated as read-only.
-	Get(name string) (*v1.AdminPolicyBasedExternalRoute, error)
+	Get(name string) (*adminpolicybasedroutev1.AdminPolicyBasedExternalRoute, error)
 	AdminPolicyBasedExternalRouteListerExpansion
 }
 
 // adminPolicyBasedExternalRouteLister implements the AdminPolicyBasedExternalRouteLister interface.
 type adminPolicyBasedExternalRouteLister struct {
-	listers.ResourceIndexer[*v1.AdminPolicyBasedExternalRoute]
+	listers.ResourceIndexer[*adminpolicybasedroutev1.AdminPolicyBasedExternalRoute]
 }
 
 // NewAdminPolicyBasedExternalRouteLister returns a new AdminPolicyBasedExternalRouteLister.
 func NewAdminPolicyBasedExternalRouteLister(indexer cache.Indexer) AdminPolicyBasedExternalRouteLister {
-	return &adminPolicyBasedExternalRouteLister{listers.New[*v1.AdminPolicyBasedExternalRoute](indexer, v1.Resource("adminpolicybasedexternalroute"))}
+	return &adminPolicyBasedExternalRouteLister{listers.New[*adminpolicybasedroutev1.AdminPolicyBasedExternalRoute](indexer, adminpolicybasedroutev1.Resource("adminpolicybasedexternalroute"))}
 }

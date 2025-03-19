@@ -526,7 +526,6 @@ func (bnc *BaseNetworkController) createNodeLogicalSwitch(nodeName string, hostS
 	if bnc.multicastSupport {
 		err = libovsdbops.AddPortsToPortGroup(bnc.nbClient, bnc.getClusterPortGroupName(types.ClusterRtrPortGroupNameBase), logicalSwitchPort.UUID)
 		if err != nil {
-			klog.Errorf(err.Error())
 			return fmt.Errorf("failed adding port to portgroup for multicast: %v", err)
 		}
 	}

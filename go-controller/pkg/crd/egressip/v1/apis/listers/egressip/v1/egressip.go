@@ -18,10 +18,10 @@ limitations under the License.
 package v1
 
 import (
-	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/client-go/listers"
-	"k8s.io/client-go/tools/cache"
+	egressipv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
+	labels "k8s.io/apimachinery/pkg/labels"
+	listers "k8s.io/client-go/listers"
+	cache "k8s.io/client-go/tools/cache"
 )
 
 // EgressIPLister helps list EgressIPs.
@@ -29,19 +29,19 @@ import (
 type EgressIPLister interface {
 	// List lists all EgressIPs in the indexer.
 	// Objects returned here must be treated as read-only.
-	List(selector labels.Selector) (ret []*v1.EgressIP, err error)
+	List(selector labels.Selector) (ret []*egressipv1.EgressIP, err error)
 	// Get retrieves the EgressIP from the index for a given name.
 	// Objects returned here must be treated as read-only.
-	Get(name string) (*v1.EgressIP, error)
+	Get(name string) (*egressipv1.EgressIP, error)
 	EgressIPListerExpansion
 }
 
 // egressIPLister implements the EgressIPLister interface.
 type egressIPLister struct {
-	listers.ResourceIndexer[*v1.EgressIP]
+	listers.ResourceIndexer[*egressipv1.EgressIP]
 }
 
 // NewEgressIPLister returns a new EgressIPLister.
 func NewEgressIPLister(indexer cache.Indexer) EgressIPLister {
-	return &egressIPLister{listers.New[*v1.EgressIP](indexer, v1.Resource("egressip"))}
+	return &egressIPLister{listers.New[*egressipv1.EgressIP](indexer, egressipv1.Resource("egressip"))}
 }

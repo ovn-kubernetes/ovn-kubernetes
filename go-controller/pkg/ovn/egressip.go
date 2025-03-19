@@ -2091,7 +2091,7 @@ func (e *EgressIPController) initClusterEgressPolicies(_ []interface{}) error {
 	defaultNetInfo := e.networkManager.GetNetwork(types.DefaultNetworkName)
 	localNodeName, err := e.getALocalZoneNodeName()
 	if err != nil {
-		klog.Warningf(err.Error())
+		klog.Warningf("Failed to get a local zone node name: %v", err)
 	}
 	subnets := util.GetAllClusterSubnetsFromEntries(defaultNetInfo.Subnets())
 	if err := InitClusterEgressPolicies(e.nbClient, e.addressSetFactory, defaultNetInfo, subnets, e.controllerName, defaultNetInfo.GetNetworkScopedClusterRouterName()); err != nil {

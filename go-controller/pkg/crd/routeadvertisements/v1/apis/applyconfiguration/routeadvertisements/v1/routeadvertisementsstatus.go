@@ -18,14 +18,14 @@ limitations under the License.
 package v1
 
 import (
-	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
+	metav1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
 // RouteAdvertisementsStatusApplyConfiguration represents a declarative configuration of the RouteAdvertisementsStatus type for use
 // with apply.
 type RouteAdvertisementsStatusApplyConfiguration struct {
-	Status     *string                          `json:"status,omitempty"`
-	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`
+	Status     *string                              `json:"status,omitempty"`
+	Conditions []metav1.ConditionApplyConfiguration `json:"conditions,omitempty"`
 }
 
 // RouteAdvertisementsStatusApplyConfiguration constructs a declarative configuration of the RouteAdvertisementsStatus type for use with
@@ -45,7 +45,7 @@ func (b *RouteAdvertisementsStatusApplyConfiguration) WithStatus(value string) *
 // WithConditions adds the given value to the Conditions field in the declarative configuration
 // and returns the receiver, so that objects can be build by chaining "With" function invocations.
 // If called multiple times, values provided by each call will be appended to the Conditions field.
-func (b *RouteAdvertisementsStatusApplyConfiguration) WithConditions(values ...*v1.ConditionApplyConfiguration) *RouteAdvertisementsStatusApplyConfiguration {
+func (b *RouteAdvertisementsStatusApplyConfiguration) WithConditions(values ...*metav1.ConditionApplyConfiguration) *RouteAdvertisementsStatusApplyConfiguration {
 	for i := range values {
 		if values[i] == nil {
 			panic("nil value passed to WithConditions")

@@ -16,8 +16,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GO_VERSION: 1.22.0
-  K8S_VERSION: v1.31.0
+  GO_VERSION: 1.23
+  K8S_VERSION: v1.32.3
   KIND_CLUSTER_NAME: ovn
   KIND_INSTALL_INGRESS: true
   KIND_ALLOW_SYSTEM_WRITES: true
@@ -54,7 +54,7 @@ jobs:
     - name: Verify
       uses: golangci/golangci-lint-action@v6
       with:
-        version: v1.59.1
+        version: v1.60.3
         working-directory: go-controller
         args: --modules-download-mode=vendor --timeout=15m0s --verbose
 

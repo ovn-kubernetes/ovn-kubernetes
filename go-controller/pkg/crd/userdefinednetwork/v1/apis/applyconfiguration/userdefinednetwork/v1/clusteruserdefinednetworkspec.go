@@ -18,14 +18,14 @@ limitations under the License.
 package v1
 
 import (
-	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
+	metav1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
 // ClusterUserDefinedNetworkSpecApplyConfiguration represents a declarative configuration of the ClusterUserDefinedNetworkSpec type for use
 // with apply.
 type ClusterUserDefinedNetworkSpecApplyConfiguration struct {
-	NamespaceSelector *v1.LabelSelectorApplyConfiguration `json:"namespaceSelector,omitempty"`
-	Network           *NetworkSpecApplyConfiguration      `json:"network,omitempty"`
+	NamespaceSelector *metav1.LabelSelectorApplyConfiguration `json:"namespaceSelector,omitempty"`
+	Network           *NetworkSpecApplyConfiguration          `json:"network,omitempty"`
 }
 
 // ClusterUserDefinedNetworkSpecApplyConfiguration constructs a declarative configuration of the ClusterUserDefinedNetworkSpec type for use with
@@ -37,7 +37,7 @@ func ClusterUserDefinedNetworkSpec() *ClusterUserDefinedNetworkSpecApplyConfigur
 // WithNamespaceSelector sets the NamespaceSelector field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the NamespaceSelector field is set to the value of the last call.
-func (b *ClusterUserDefinedNetworkSpecApplyConfiguration) WithNamespaceSelector(value *v1.LabelSelectorApplyConfiguration) *ClusterUserDefinedNetworkSpecApplyConfiguration {
+func (b *ClusterUserDefinedNetworkSpecApplyConfiguration) WithNamespaceSelector(value *metav1.LabelSelectorApplyConfiguration) *ClusterUserDefinedNetworkSpecApplyConfiguration {
 	b.NamespaceSelector = value
 	return b
 }

@@ -148,7 +148,7 @@ func (hcs *server) SyncServices(newServices map[types.NamespacedName]uint16) err
 		svc.server = hcs.httpFactory.New(addr, hcHandler{name: nsn, hcs: hcs})
 		svc.listener, err = hcs.listener.Listen(addr)
 		if err != nil {
-			msg := fmt.Sprintf("node %s failed to start healthcheck %q on port %d: %v", hcs.hostname, nsn.String(), port, err)
+			err := fmt.Errorf("node %s failed to start healthcheck %q on port %d: %v", hcs.hostname, nsn.String(), port, err)
 
 			if hcs.recorder != nil {
 				hcs.recorder.Eventf(
@@ -157,9 +157,9 @@ func (hcs *server) SyncServices(newServices map[types.NamespacedName]uint16) err
 						Namespace: nsn.Namespace,
 						Name:      nsn.Name,
 						UID:       types.UID(nsn.String()),
-					}, corev1.EventTypeWarning, "FailedToStartServiceHealthcheck", msg)
+					}, corev1.EventTypeWarning, "FailedToStartServiceHealthcheck", err.Error())
 			}
-			errors = append(errors, fmt.Errorf(msg))
+			errors = append(errors, err)
 			continue
 		}
 		hcs.services[nsn] = svc
