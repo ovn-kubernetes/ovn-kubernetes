@@ -61,6 +61,9 @@ var (
 
 	app1Namespace = "app1-ns"
 	app3Namespace = "app3-ns"
+	port8080      = int32(8080)
+	port8081      = int32(8081)
+	port9090      = int32(9090)
 )
 
 func TestNetworkQoS(t *testing.T) {
@@ -138,9 +141,15 @@ func tableEntrySetup(enableInterconnect bool) {
 								},
 							},
 						},
-						Port: nqostype.Port{
-							Protocol: "tcp",
-							Port:     8080,
+						Ports: []*nqostype.Port{
+							{
+								Protocol: "tcp",
+								Port:     &port8080,
+							},
+							{
+								Protocol: "tcp",
+								Port:     &port8081,
+							},
 						},
 					},
 				},
@@ -170,9 +179,23 @@ func tableEntrySetup(enableInterconnect bool) {
 								},
 							},
 						},
-						Port: nqostype.Port{
-							Protocol: "udp",
-							Port:     9090,
+						Ports: []*nqostype.Port{
+							{
+								Protocol: "tcp",
+								Port:     &port8080,
+							},
+							{
+								Protocol: "tcp",
+								Port:     &port8081,
+							},
+							{
+								Protocol: "udp",
+								Port:     &port9090,
+							},
+							{
+								Protocol: "udp",
+								Port:     &port8080,
+							},
 						},
 					},
 				},
@@ -285,14 +308,14 @@ var _ = Describe("NetworkQoS Controller", func() {
 					Expect(err1).NotTo(HaveOccurred())
 					srcHashName4, _ := sourceAddrSet.GetASHashNames()
 					dst1HashName4, _ := dst1AddrSet.GetASHashNames()
-					Expect(qos0.Match).Should(Equal(fmt.Sprintf("ip4.src == {$%s} && (ip4.dst == {$%s} || (ip4.dst == 128.116.0.0/17 && ip4.dst != {128.116.0.0,128.116.0.255})) && tcp && tcp.dst == 8080", srcHashName4, dst1HashName4)))
+					Expect(qos0.Match).Should(Equal(fmt.Sprintf("ip4.src == {$%s} && (ip4.dst == {$%s} || (ip4.dst == 128.116.0.0/17 && ip4.dst != {128.116.0.0,128.116.0.255})) && tcp && tcp.dst == {8080,8081}", srcHashName4, dst1HashName4)))
 					Expect(qos0.Action).To(ContainElement(50))
 					Expect(qos0.Priority).To(Equal(11000))
 					Expect(qos0.Bandwidth).To(ContainElements(10000, 100000))
 					dst3AddrSet, err3 := findAddressSet(defaultAddrsetFactory, nqosNamespace, nqosName, "1", "0", defaultControllerName)
 					Expect(err3).NotTo(HaveOccurred())
 					dst3HashName4, _ := dst3AddrSet.GetASHashNames()
-					Expect(qos1.Match).Should(Equal(fmt.Sprintf("ip4.src == {$%s} && (ip4.dst == {$%s} || (ip4.dst == 128.118.0.0/17 && ip4.dst != {128.118.0.0,128.118.0.255})) && udp && udp.dst == 9090", srcHashName4, dst3HashName4)))
+					Expect(qos1.Match).Should(Equal(fmt.Sprintf("ip4.src == {$%s} && (ip4.dst == {$%s} || (ip4.dst == 128.118.0.0/17 && ip4.dst != {128.118.0.0,128.118.0.255})) && ((tcp && tcp.dst == {8080,8081}) || (udp && udp.dst == {9090,8080}))", srcHashName4, dst3HashName4)))
 				}
 
 				app1Pod := &corev1.Pod{
@@ -338,7 +361,7 @@ var _ = Describe("NetworkQoS Controller", func() {
 							return err.Error()
 						}
 						return qos.Match
-					}).WithTimeout(5 * time.Second).Should(Equal(fmt.Sprintf("ip4.src == {$%s} && (ip4.dst == {$%s} || (ip4.dst == 128.116.0.0/17 && ip4.dst != {128.116.0.0,128.116.0.255})) && tcp && tcp.dst == 8080", srcHashName4, dst1HashName4)))
+					}).WithTimeout(5 * time.Second).Should(Equal(fmt.Sprintf("ip4.src == {$%s} && (ip4.dst == {$%s} || (ip4.dst == 128.116.0.0/17 && ip4.dst != {128.116.0.0,128.116.0.255})) && tcp && tcp.dst == {8080,8081}", srcHashName4, dst1HashName4)))
 
 					dst3AddrSet, err3 := findAddressSet(defaultAddrsetFactory, nqosNamespace, nqosName, "1", "0", defaultControllerName)
 					Expect(err3).NotTo(HaveOccurred())
@@ -349,7 +372,7 @@ var _ = Describe("NetworkQoS Controller", func() {
 							return err.Error()
 						}
 						return qos.Match
-					}).WithTimeout(5 * time.Second).Should(Equal(fmt.Sprintf("ip4.src == {$%s} && (ip4.dst == {$%s} || ip4.dst == 128.118.0.0/17) && udp && udp.dst == 9090", srcHashName4, dst3HashName4)))
+					}).WithTimeout(5 * time.Second).Should(Equal(fmt.Sprintf("ip4.src == {$%s} && (ip4.dst == {$%s} || ip4.dst == 128.118.0.0/17) && ((tcp && tcp.dst == {8080,8081}) || (udp && udp.dst == {9090,8080}))", srcHashName4, dst3HashName4)))
 				}
 
 				By("removes IP from destination address set if pod's labels don't match the selector")

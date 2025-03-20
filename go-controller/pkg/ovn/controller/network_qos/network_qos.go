@@ -162,16 +162,7 @@ func (c *Controller) ensureNetworkQos(nqos *networkqosapi.NetworkQoS) error {
 		ruleState.Classifier = &Classifier{
 			Destinations: destStates,
 		}
-		if ruleSpec.Classifier.Port.Protocol != "" {
-			ruleState.Classifier.Protocol = protocol(ruleSpec.Classifier.Port.Protocol)
-			if !ruleState.Classifier.Protocol.IsValid() {
-				return fmt.Errorf("invalid protocol: %s, valid values are: TCP, UDP, SCTP", ruleSpec.Classifier.Port.Protocol)
-			}
-		}
-		if ruleSpec.Classifier.Port.Port > 0 {
-			port := int(ruleSpec.Classifier.Port.Port)
-			ruleState.Classifier.Port = &port
-		}
+		ruleState.Classifier.Ports = ruleSpec.Classifier.Ports
 		rules = append(rules, ruleState)
 	}
 	desiredNQOSState.EgressRules = rules

@@ -199,8 +199,8 @@ spec:
             app: nqos-test
   - dscp: %d
     classifier:
-      port:
-        protocol: TCP
+      ports:
+      - protocol: TCP
       to:
       - podSelector:
           matchLabels:
@@ -210,8 +210,8 @@ spec:
            app: nqos-test
   - dscp: %d
     classifier:
-      port:
-        protocol: TCP
+      ports:
+      - protocol: TCP
         port: 80
       to:
       - podSelector:
@@ -327,8 +327,8 @@ spec:
           cidr: %s
   - dscp: %d
     classifier:
-      port:
-        protocol: TCP
+      ports:
+      - protocol: TCP
       to:
       - ipBlock:
           cidr: %s
@@ -336,8 +336,8 @@ spec:
           cidr: %s
   - dscp: %d
     classifier:
-      port:
-        protocol: TCP
+      ports:
+      - protocol: TCP
         port: 80
       to:
       - ipBlock:
@@ -477,9 +477,8 @@ spec:
     bandwidth:
       rate: %d
     classifier:
-      port:
-        protocol: TCP
-
+      ports:
+      - protocol: TCP
       to:
       - podSelector:
           matchLabels:
@@ -542,8 +541,8 @@ spec:
     bandwidth:
       rate: %d
     classifier:
-      port:
-        protocol: TCP
+      ports:
+      - protocol: TCP
         port: 80
       to:
       - podSelector:
