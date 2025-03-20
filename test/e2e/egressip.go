@@ -190,9 +190,22 @@ func (h *egressNodeAvailabilityHandlerViaHealthCheck) Disable(nodeName string) {
 }
 
 type node struct {
-	name   string
-	nodeIP string
-	port   uint16
+	name     string
+	nodeIP   string
+	port     uint16
+	endpoint string
+}
+
+func (n node) getURL() string {
+	port := "80"
+	if n.port != 0 {
+		port = fmt.Sprintf("%d", n.port)
+	}
+	var endpoint string
+	if n.endpoint != "" {
+		endpoint = n.endpoint
+	}
+	return fmt.Sprintf("%s/%s", net.JoinHostPort(n.nodeIP, port), endpoint)
 }
 
 func getLastLogLine(data string) string {
@@ -844,7 +857,6 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigPa
 		e2ekubectl.RunKubectlOrDie("default", "delete", "eip", egressIPName2, "--ignore-not-found=true")
 		e2ekubectl.RunKubectlOrDie("default", "label", "node", egress1Node.name, "k8s.ovn.org/egress-assignable-")
 		e2ekubectl.RunKubectlOrDie("default", "label", "node", egress2Node.name, "k8s.ovn.org/egress-assignable-")
-
 		// ensure all nodes are ready and reachable
 		for _, node := range []string{egress1Node.name, egress2Node.name} {
 			setNodeReady(providerCtx, node, true)
@@ -966,10 +978,19 @@ spec:
 					return true, nil
 				})
 				framework.ExpectNoError(err, "Step 3. Create two pods matching the EgressIP: one running on each of the egress nodes, failed, err: %v", err)
-				var pod2IP string
+				var pod1IP, pod2IP string
 				if isClusterDefaultNetwork(netConfigParams) {
+					pod1IP = getPodAddress(pod1Name, f.Namespace.Name)
 					pod2IP = getPodAddress(pod2Name, f.Namespace.Name)
 				} else {
+					pod1IP, err = podIPsForUserDefinedPrimaryNetwork(
+						f.ClientSet,
+						f.Namespace.Name,
+						pod1Name,
+						namespacedName(f.Namespace.Name, netConfigParams.name),
+						0,
+					)
+					framework.ExpectNoError(err, "Step 3. Create two UDN pods matching the EgressIP: one running on each of the egress nodes, failed getting pod1 IP, err: %v", err)
 					pod2IP, err = podIPsForUserDefinedPrimaryNetwork(
 						f.ClientSet,
 						f.Namespace.Name,
@@ -977,7 +998,7 @@ spec:
 						namespacedName(f.Namespace.Name, netConfigParams.name),
 						0,
 					)
-					framework.ExpectNoError(err, "Step 3. Create two UDN pods matching the EgressIP: one running on each of the egress nodes, failed, err: %v", err)
+					framework.ExpectNoError(err, "Step 3. Create two UDN pods matching the EgressIP: one running on each of the egress nodes, failed getting pod2 IP, err: %v", err)
 				}
 
 				ginkgo.By("4. Check connectivity from both to an external \"node\" and verify that the IPs are both of the above")
@@ -1008,10 +1029,14 @@ spec:
 				pod2.Labels = map[string]string{}
 				updatePod(f, pod2)
 
-				ginkgo.By("8. Check connectivity from that one to an external \"node\" and verify that the IP is the node IP.")
+				ginkgo.By("8. Check connectivity from that one to an external \"node\" and verify that the IP is the node IP or Pod IP if CDN and default is exposed.")
+				expectedNodeIP := pod2Node.nodeIP
+				if isClusterDefaultNetwork(netConfigParams) && isDefaultNetworkAdvertised() {
+					expectedNodeIP = pod2IP
+				}
 				err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer,
-					podNamespace.Name, pod2Name, true, []string{pod2Node.nodeIP}))
-				framework.ExpectNoError(err, "Step 8. Check connectivity from that one to an external \"node\" and verify that the IP is the node IP, failed, err: %v", err)
+					podNamespace.Name, pod2Name, true, []string{expectedNodeIP}))
+				framework.ExpectNoError(err, "Step 8. Check connectivity from that one to an external \"node\" and verify that the IP is the node IP or Pod IP if CDN and default is exposed, failed, err: %v", err)
 
 				ginkgo.By("9. Check connectivity from the other one to an external \"node\" and verify that the IPs are both of the above")
 				err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer,
@@ -1035,10 +1060,14 @@ spec:
 				ginkgo.By("14. Check that the status is of length zero")
 				statuses = verifyEgressIPStatusLengthEquals(0, nil)
 
-				ginkgo.By("15. Check connectivity from the remaining pod to an external \"node\" and verify that the IP is the node IP.")
+				ginkgo.By("15. Check connectivity from the remaining pod to an external \"node\" and verify that the IP is the node IP or Pod IP if default is exposed.")
+				expectedNodeIP = pod1Node.nodeIP
+				if isClusterDefaultNetwork(netConfigParams) && isDefaultNetworkAdvertised() {
+					expectedNodeIP = pod1IP
+				}
 				err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer,
-					podNamespace.Name, pod1Name, true, []string{pod1Node.nodeIP}))
-				framework.ExpectNoError(err, "Step  15. Check connectivity from the remaining pod to an external \"node\" and verify that the IP is the node IP, failed, err: %v", err)
+					podNamespace.Name, pod1Name, true, []string{expectedNodeIP}))
+				framework.ExpectNoError(err, "Step  15. Check connectivity from the remaining pod to an external \"node\" and verify that the IP is the node IP or Pod IP if CDN and default is exposed, failed, err: %v", err)
 
 				ginkgo.By("16. Setting one node as available for egress")
 				usedEgressNodeAvailabilityHandler.Enable(egress2Node.name)
@@ -1193,8 +1222,7 @@ spec:
 		ginkgo.By("5. Create one pod matching the EgressIP: running on egress1Node")
 		_, err = createGenericPodWithLabel(f, pod1Name, pod2Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
 		framework.ExpectNoError(err, "failed to create pod %s/%s", f.Namespace.Name, pod1Name)
-
-		_, err = getPodIPWithRetry(f.ClientSet, isIPv6TestRun, f.Namespace.Name, pod1Name)
+		pod1IP, err := getPodIPWithRetry(f.ClientSet, isIPv6TestRun, f.Namespace.Name, pod1Name)
 		framework.ExpectNoError(err, "Step 5. Create one pod matching the EgressIP: running on egress1Node, failed, err: %v", err)
 		framework.Logf("Created pod %s on node %s", pod1Name, pod2Node.name)
 
@@ -1231,24 +1259,32 @@ spec:
 		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod1Name, true, []string{egressIP1.String()}))
 		framework.ExpectNoError(err, "Step 12. Check connectivity from pod to an external \"node\" and verify that the srcIP is the expected egressIP, failed, err: %v", err)
 
-		ginkgo.By("13. Check connectivity from pod to another node primary IP and verify that the srcIP is the expected nodeIP")
-		err = wait.PollImmediate(retryInterval, retryTimeout, targetHostNetworkContainerAndTest(hostNetPod, podNamespace.Name, pod1Name, true, []string{egress1Node.nodeIP}))
-		framework.ExpectNoError(err, "Step 13. Check connectivity from pod to another node and verify that the srcIP is the expected nodeIP, failed: %v", err)
+		ginkgo.By("13. Check connectivity from pod to another node primary IP and verify that the srcIP is the expected nodeIP or Pod IP if CDN and default is exposed.")
+		expectedIP := egress2Node.nodeIP
+		if isClusterDefaultNetwork(netConfigParams) && isDefaultNetworkAdvertised() {
+			expectedIP = pod1IP.String()
+		}
+		err = wait.PollImmediate(retryInterval, retryTimeout, targetHostNetworkContainerAndTest(hostNetPod, podNamespace.Name, pod1Name, true, []string{expectedIP}))
+		framework.ExpectNoError(err, "Step 13. Check connectivity from pod to another node and verify that the srcIP is the expected nodeIP or Pod IP if CDN and default is exposed, failed: %v", err)
 
-		ginkgo.By("14. Check connectivity from pod to another node secondary IP and verify that the srcIP is the expected nodeIP")
-		err = wait.PollImmediate(retryInterval, retryTimeout, targetHostNetworkContainerAndTest(otherHostNetPodIP, podNamespace.Name, pod1Name, true, []string{egress1Node.nodeIP}))
-		framework.ExpectNoError(err, "Step 14. Check connectivity from pod to another node secondary IP and verify that the srcIP is the expected nodeIP, failed: %v", err)
+		ginkgo.By("14. Check connectivity from pod to another node secondary IP and verify that the srcIP is the expected nodeIP or Pod IP if CDN and default is exposed")
+		err = wait.PollImmediate(retryInterval, retryTimeout, targetHostNetworkContainerAndTest(otherHostNetPodIP, podNamespace.Name, pod1Name, true, []string{expectedIP}))
+		framework.ExpectNoError(err, "Step 14. Check connectivity from pod to another node secondary IP and verify that the srcIP is the expected nodeIP or Pod IP if CDN and default is exposed, failed: %v", err)
 
 		ginkgo.By("15. Create second pod not matching the EgressIP: running on egress1Node")
-		_, err = createGenericPodWithLabel(f, pod2Name, pod2Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), map[string]string{})
-		framework.ExpectNoError(err, "failed to create pod %s/%s", pod2Name, f.Namespace.Name)
-		_, err = getPodIPWithRetry(f.ClientSet, isIPv6TestRun, f.Namespace.Name, pod2Name)
+		sleepCommand := []string{"bash", "-c", "sleep 20000"}
+		createGenericPodWithLabel(f, pod2Name, pod2Node.name, f.Namespace.Name, sleepCommand, map[string]string{})
+		pod2IP, err := getPodIPWithRetry(f.ClientSet, isIPv6TestRun, f.Namespace.Name, pod2Name)
 		framework.ExpectNoError(err, "Step 15. Create second pod not matching the EgressIP: running on egress1Node, failed, err: %v", err)
 		framework.Logf("Created pod %s on node %s", pod2Name, pod2Node.name)
 
-		ginkgo.By("16. Check connectivity from second pod to external node and verify that the srcIP is the expected nodeIP")
-		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod2Name, true, []string{egress1Node.nodeIP}))
-		framework.ExpectNoError(err, "Step 16. Check connectivity from second pod to external node and verify that the srcIP is the expected nodeIP, failed: %v", err)
+		ginkgo.By("16. Check connectivity from second pod to external node and verify that the srcIP is the expected nodeIP or Pod IP if CDN and default is exposed.")
+		expectedIP = egress1Node.nodeIP
+		if isClusterDefaultNetwork(netConfigParams) && isDefaultNetworkAdvertised() {
+			expectedIP = pod2IP.String()
+		}
+		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod2Name, true, []string{expectedIP}))
+		framework.ExpectNoError(err, "Step 16. Check connectivity from second pod to external node and verify that the srcIP is the expected nodeIP or Pod IP if CDN and default is exposed, failed: %v", err)
 
 		ginkgo.By("17. Add pod selector label to make second pod egressIP managed")
 		pod2 := getPod(f, pod2Name)
@@ -1259,13 +1295,17 @@ spec:
 		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod2Name, true, []string{egressIP1.String()}))
 		framework.ExpectNoError(err, "Step 18. Check connectivity from second pod to external node and verify that the srcIP is the expected egressIP, failed: %v", err)
 
-		ginkgo.By("19. Check connectivity from second pod to another node primary IP and verify that the srcIP is the expected nodeIP (this verifies SNAT's towards nodeIP are not deleted unless node is egressNode)")
-		err = wait.PollImmediate(retryInterval, retryTimeout, targetHostNetworkContainerAndTest(hostNetPod, podNamespace.Name, pod2Name, true, []string{egress1Node.nodeIP}))
-		framework.ExpectNoError(err, "Step 19. Check connectivity from second pod to another node and verify that the srcIP is the expected nodeIP (this verifies SNAT's towards nodeIP are not deleted unless node is egressNode), failed: %v", err)
+		ginkgo.By("19. Check connectivity from second pod to another node primary IP and verify that the srcIP is the expected node / Pod IP (this verifies SNAT's towards nodeIP are not deleted unless node is egressNode)")
+		expectedIP = egress1Node.nodeIP
+		if isClusterDefaultNetwork(netConfigParams) && isDefaultNetworkAdvertised() {
+			expectedIP = pod2IP.String()
+		}
+		err = wait.PollImmediate(retryInterval, retryTimeout, targetHostNetworkContainerAndTest(hostNetPod, podNamespace.Name, pod2Name, true, []string{expectedIP}))
+		framework.ExpectNoError(err, "Step 19. Check connectivity from second pod to another node and verify that the srcIP is the expected node /pod IP (this verifies SNAT's towards nodeIP are not deleted unless node is egressNode), failed: %v", err)
 
-		ginkgo.By("20. Check connectivity from second pod to another node secondary IP and verify that the srcIP is the expected nodeIP (this verifies SNAT's towards nodeIP are not deleted unless node is egressNode)")
-		err = wait.PollImmediate(retryInterval, retryTimeout, targetHostNetworkContainerAndTest(otherHostNetPodIP, podNamespace.Name, pod2Name, true, []string{egress1Node.nodeIP}))
-		framework.ExpectNoError(err, "Step 20. Check connectivity from second pod to another node secondary IP and verify that the srcIP is the expected nodeIP (this verifies SNAT's towards nodeIP are not deleted unless node is egressNode), failed: %v", err)
+		ginkgo.By("20. Check connectivity from second pod to another node secondary IP and verify that the srcIP is the expected node / pod IP (this verifies SNAT's towards nodeIP are not deleted unless node is egressNode)")
+		err = wait.PollImmediate(retryInterval, retryTimeout, targetHostNetworkContainerAndTest(otherHostNetPodIP, podNamespace.Name, pod2Name, true, []string{expectedIP}))
+		framework.ExpectNoError(err, "Step 20. Check connectivity from second pod to another node secondary IP and verify that the srcIP is the expected node / pod IP (this verifies SNAT's towards nodeIP are not deleted unless node is egressNode), failed: %v", err)
 	})
 
 	// Validate the egress IP with stateful sets or pods recreated with same name
@@ -1696,9 +1736,13 @@ spec:
 		ginkgo.By("19. Delete the remaining egressIP object")
 		e2ekubectl.RunKubectlOrDie("default", "delete", "eip", toKeepEIP)
 
-		ginkgo.By("20. Check connectivity from pod to an external container and verify that the srcIP is the expected nodeIP")
-		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod1Name, true, []string{pod2Node.nodeIP}))
-		framework.ExpectNoError(err, "Step 20. Check connectivity from pod to an external container and verify that the srcIP is the expected nodeIP, failed: %v", err)
+		ginkgo.By("20. Check connectivity from pod to an external container and verify that the srcIP is the expected node IP")
+		if isClusterDefaultNetwork(netConfigParams) && isDefaultNetworkAdvertised() {
+			framework.Logf("Skipping targeting external host when CDN is advertised by BGP because external doesn't have routes for the pod network for reply traffic")
+		} else {
+			err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod1Name, true, []string{pod2Node.nodeIP}))
+			framework.ExpectNoError(err, "Step 20. Check connectivity from pod to an external container and verify that the srcIP is the expected nodeIP, failed: %v", err)
+		}
 	})
 
 	/* This test does the following:
@@ -1820,8 +1864,12 @@ spec:
 		verifyEgressIPStatusLengthEquals(0, nil)
 
 		ginkgo.By("10. Check connectivity from pod to an external \"node\" and verify that the IP is the node IP")
-		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod1Name, true, []string{pod1Node.nodeIP}))
-		framework.ExpectNoError(err, "10. Check connectivity from pod to an external \"node\" and verify that the IP is the node IP, failed, err: %v", err)
+		if isClusterDefaultNetwork(netConfigParams) && isDefaultNetworkAdvertised() {
+			framework.Logf("Skipping because CDN is advertised and external container does not know how to route pod IPs")
+		} else {
+			err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod1Name, true, []string{pod1Node.nodeIP}))
+			framework.ExpectNoError(err, "10. Check connectivity from pod to an external \"node\" and verify that the IP is the node IP, failed, err: %v", err)
+		}
 
 		ginkgo.By("11. Make node 1 reachable again")
 		setNodeReachable(node1, true)
@@ -2225,6 +2273,12 @@ spec:
 		if isUserDefinedNetwork(netConfigParams) {
 			ginkgo.Skip("Unsupported for UDNs")
 		}
+		if isClusterDefaultNetwork(netConfigParams) && isDefaultNetworkAdvertised() {
+			// BGP will install routes with metric 20 towards the CDN subnet in the default routing table which overrides
+			// the existing route towards mp0. Fix is needed.
+			// FIXME: remove when EIPs hosted by a secondary host net is fixed with CDN advertised by BGP
+			ginkgo.Skip("EgressIP attached to a secondary host network while CDN is exported is broken")
+		}
 		// get v4, v6 from eips
 		// check that node has both of them
 		v4, v6 := getIPVersions(egressIPIP1, egressIPIP2)
@@ -2301,8 +2355,12 @@ spec:
 
 		ginkgo.By("5. Check connectivity from both pods to an external \"node\" hosted on the secondary host network " +
 			"and verify the expected IPs")
-		err := wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(secondaryTargetExternalContainer,
-			podNamespace.Name, pod1Name, true, []string{egressIPIP1, egressIPIP2}))
+		pod1IP, err := getPodIPWithRetry(f.ClientSet, isIPv6TestRun, podNamespace.Name, pod1Name)
+		framework.ExpectNoError(err, "Step 5. Check connectivity from pod (%s/%s) to an external container attached to "+
+			"a network that is a secondary host network and verify that the src IP is the expected egressIP, failed to get pod IP: %v",
+			podNamespace.Name, pod1Name, err)
+		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(secondaryTargetExternalContainer, podNamespace.Name, pod1Name,
+			true, []string{egressIPIP1, egressIPIP2}))
 		framework.ExpectNoError(err, "Step 5. Check connectivity from pod (%s/%s) to an external container attached to "+
 			"a network that is a secondary host network and verify that the src IP is the expected egressIP, failed: %v",
 			podNamespace.Name, pod1Name, err)
@@ -2337,11 +2395,14 @@ spec:
 		updatePod(f, pod2)
 
 		ginkgo.By("9. Check connectivity from pod that isn't selected by EgressIP anymore to an external \"node\" on " +
-			"the OVN network and verify that the IP is the node IP.")
-		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer,
-			podNamespace.Name, pod2Name, true, []string{pod2Node.nodeIP}))
+			"the OVN network and verify that the IP is the node IP or Pod IP if CDN and default is exposed.")
+		expectedNodeIP := pod2Node.nodeIP
+		if isClusterDefaultNetwork(netConfigParams) && isDefaultNetworkAdvertised() {
+			expectedNodeIP = pod2IP.String()
+		}
+		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod2Name, true, []string{expectedNodeIP}))
 		framework.ExpectNoError(err, "Step 9. Check connectivity from that one to an external \"node\" on the OVN "+
-			"network and verify that the IP is the node IP failed: %v", err)
+			"network and verify that the IP is the node IP or Pod IP if CDN and default is exposed, failed: %v", err)
 
 		ginkgo.By("10. Update the unselected pod to be selected by the EgressIP")
 		pod2 = getPod(f, pod2Name)
@@ -2379,17 +2440,24 @@ spec:
 		egressNodeAvailabilityHandler.Disable(egress2Node.name)
 
 		ginkgo.By("17. Check connectivity from a pod to an external \"node\" on the OVN network and " +
-			"verify that the IP is the node IP")
+			"verify that the IP is the node IP or Pod IP if CDN and default is exposed.")
+		expectedNodeIP = pod1Node.nodeIP
+		if isClusterDefaultNetwork(netConfigParams) && isDefaultNetworkAdvertised() {
+			expectedNodeIP = pod1IP.String()
+		}
 		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod1Name,
-			true, []string{pod1Node.nodeIP}))
+			true, []string{expectedNodeIP}))
 		framework.ExpectNoError(err, "17. Check connectivity from a pod to an external \"node\" on the OVN network "+
-			"and verify that the IP is the node IP for pod %s/%s and egress-ing from node %s with node IP %s: %v",
-			podNamespace.Name, pod1Name, pod1Node.name, pod1Node.nodeIP, err)
-		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer,
-			podNamespace.Name, pod2Name, true, []string{pod2Node.nodeIP}))
+			"and verify that the IP is the node IP for pod %s/%s and egress-ing from node %s with node IP or Pod IP if CDN and default is exposed %s: %v",
+			podNamespace.Name, pod1Name, pod1Node.name, expectedNodeIP, err)
+		expectedNodeIP = pod2Node.nodeIP
+		if isClusterDefaultNetwork(netConfigParams) && isDefaultNetworkAdvertised() {
+			expectedNodeIP = pod2IP.String()
+		}
+		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod2Name, true, []string{expectedNodeIP}))
 		framework.ExpectNoError(err, "17. Check connectivity from a pod to an external \"node\" on the OVN network "+
-			"and verify that the IP is the node IP for pod %s/%s and egress-ing from node %s with node IP %s: %v",
-			podNamespace.Name, pod2Name, pod2Node.name, pod2Node.nodeIP, err)
+			"and verify that the IP is the node IP for pod %s/%s and egress-ing from node %s with node IP or Pod IP if CDN and default is exposed %s: %v",
+			podNamespace.Name, pod2Name, pod2Node.name, expectedNodeIP, err)
 
 		ginkgo.By("18. Check that the status is of length zero")
 		verifyEgressIPStatusLengthEquals(0, nil)
@@ -2467,6 +2535,12 @@ spec:
 	ginkgo.It("[secondary-host-eip] Using different methods to disable a node or pod availability for egress", func() {
 		if isUserDefinedNetwork(netConfigParams) {
 			ginkgo.Skip("Unsupported for UDNs")
+		}
+		if isClusterDefaultNetwork(netConfigParams) && isDefaultNetworkAdvertised() {
+			// BGP will install routes with metric 20 towards the CDN subnet in the default routing table which overrides
+			// the existing route towards mp0. Fix is needed.
+			// FIXME: remove when EIPs hosted by a secondary host net is fixed with CDN advertised by BGP
+			ginkgo.Skip("EgressIP attached to a secondary host network while CDN is exported is broken")
 		}
 		if utilnet.IsIPv6(net.ParseIP(egress1Node.nodeIP)) {
 			ginkgo.Skip("Node does not have IPv4 address")
@@ -2593,11 +2667,15 @@ spec:
 		updatePod(f, pod2)
 
 		ginkgo.By("10. Check connectivity from pod that isn't selected by EgressIP anymore to an external \"node\" on " +
-			"the OVN network and verify that the IP is the node IP.")
+			"the OVN network and verify that the IP is the node IP or Pod IP if CDN and default is exposed.")
+		expectedIP := pod2Node.nodeIP
+		if isClusterDefaultNetwork(netConfigParams) && isDefaultNetworkAdvertised() {
+			expectedIP = pod2IP.String()
+		}
 		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer,
-			podNamespace.Name, pod2Name, true, []string{pod2Node.nodeIP}))
+			podNamespace.Name, pod2Name, true, []string{expectedIP}))
 		framework.ExpectNoError(err, "Step 10. Check connectivity from that one to an external \"node\" on the OVN "+
-			"network and verify that the IP is the node IP failed: %v", err)
+			"network and verify that the IP is the node IP or Pod IP if CDN and default is exposed failed: %v", err)
 
 		ginkgo.By("11. Update the unselected pod to be selected by the Egress IP")
 		pod2 = getPod(f, pod2Name)
@@ -2725,6 +2803,12 @@ spec:
 		if isUserDefinedNetwork(netConfigParams) {
 			ginkgo.Skip("Unsupported for UDNs")
 		}
+		if isClusterDefaultNetwork(netConfigParams) && isDefaultNetworkAdvertised() {
+			// BGP will install routes with metric 20 towards the CDN subnet in the default routing table which overrides
+			// the existing route towards mp0. Fix is needed.
+			// FIXME: remove when EIPs hosted by a secondary host net is fixed with CDN advertised by BGP
+			ginkgo.Skip("EgressIP attached to a secondary host network while CDN is exported is broken")
+		}
 		var egressIP1, egressIP2 string
 		if utilnet.IsIPv6(net.ParseIP(egress1Node.nodeIP)) {
 			egressIP1 = "2001:db8:abcd:1234:c001::"
@@ -2843,6 +2927,12 @@ spec:
 		}
 		if isUserDefinedNetwork(netConfigParams) {
 			ginkgo.Skip("Unsupported for UDNs")
+		}
+		if isClusterDefaultNetwork(netConfigParams) && isDefaultNetworkAdvertised() {
+			// BGP will install routes with metric 20 towards the CDN subnet in the default routing table which overrides
+			// the existing route towards mp0. Fix is needed.
+			// FIXME: remove when EIPs hosted by a secondary host net is fixed with CDN advertised by BGP
+			ginkgo.Skip("EgressIP attached to a secondary host network while CDN is exported is broken")
 		}
 		var egressIP1 string
 		isV6Node := utilnet.IsIPv6(net.ParseIP(egress1Node.nodeIP))
@@ -3186,6 +3276,10 @@ spec:
 		framework.ExpectNoError(err, "Step 6. Check connectivity from pod to an external node and verify that the srcIP is the expected egressIP, failed: %v", err)
 
 		ginkgo.By("7. Check connectivity from pod connected to a different network and verify that the srcIP is the expected egressIP")
+		if isClusterDefaultNetwork(netConfigParams) && isDefaultNetworkAdvertised() {
+			framework.Logf("Skipping because UDN isn't exposed and therefore FRR router doesnt contain routers for this UDN")
+			return
+		}
 		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer, pod2OtherNetworkNamespace, pod2Name, true, []string{egressIP1.String()}))
 		framework.ExpectNoError(err, "Step 7. Check connectivity from pod connected to a different network and verify that the srcIP is the expected nodeIP, failed: %v", err)
 	},
