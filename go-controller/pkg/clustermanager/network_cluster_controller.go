@@ -42,6 +42,7 @@ type NetworkStatusReporter func(networkName string, fieldManager string, conditi
 type networkClusterController struct {
 	watchFactory *factory.WatchFactory
 	kube         kube.InterfaceOVN
+	stopOnce     sync.Once
 	stopChan     chan struct{}
 	wg           *sync.WaitGroup
 
@@ -420,20 +421,22 @@ func (ncc *networkClusterController) Start(_ context.Context) error {
 }
 
 func (ncc *networkClusterController) Stop() {
-	close(ncc.stopChan)
-	ncc.wg.Wait()
+	ncc.stopOnce.Do(func() {
+		close(ncc.stopChan)
+		ncc.wg.Wait()
 
-	if ncc.ipamClaimHandler != nil {
-		ncc.watchFactory.RemoveIPAMClaimsHandler(ncc.ipamClaimHandler)
-	}
+		if ncc.ipamClaimHandler != nil {
+			ncc.watchFactory.RemoveIPAMClaimsHandler(ncc.ipamClaimHandler)
+		}
 
-	if ncc.nodeHandler != nil {
-		ncc.watchFactory.RemoveNodeHandler(ncc.nodeHandler)
-	}
+		if ncc.nodeHandler != nil {
+			ncc.watchFactory.RemoveNodeHandler(ncc.nodeHandler)
+		}
 
-	if ncc.podHandler != nil {
-		ncc.watchFactory.RemovePodHandler(ncc.podHandler)
-	}
+		if ncc.podHandler != nil {
+			ncc.watchFactory.RemovePodHandler(ncc.podHandler)
+		}
+	})
 }
 
 func (ncc *networkClusterController) newRetryFramework(objectType reflect.Type, hasUpdateFunc bool) *objretry.RetryFramework {

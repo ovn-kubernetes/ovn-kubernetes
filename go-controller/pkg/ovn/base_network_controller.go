@@ -146,6 +146,7 @@ type BaseNetworkController struct {
 
 	podSelectorAddressSets *syncmap.SyncMap[*PodSelectorAddressSet]
 
+	stopOnce sync.Once
 	// stopChan per controller
 	stopChan chan struct{}
 	// waitGroup per-Controller
