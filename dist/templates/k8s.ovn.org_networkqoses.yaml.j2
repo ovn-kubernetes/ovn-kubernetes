@@ -87,23 +87,25 @@ spec:
                         This field is optional, and in case it is not set the rule is applied
                         to all egress traffic regardless of the destination.
                       properties:
-                        port:
-                          description: |-
-                            Port specifies destination protocol and port on which NetworkQoS
-                            rule is applied
-                          properties:
-                            port:
-                              description: port that the traffic must match
-                              format: int32
-                              maximum: 65535
-                              minimum: 1
-                              type: integer
-                            protocol:
-                              description: protocol (tcp, udp, sctp) that the traffic
-                                must match.
-                              pattern: ^TCP|UDP|SCTP$
-                              type: string
-                          type: object
+                        ports:
+                          items:
+                            description: |-
+                              Port specifies destination protocol and port on which NetworkQoS
+                              rule is applied
+                            properties:
+                              port:
+                                description: port that the traffic must match
+                                format: int32
+                                maximum: 65535
+                                minimum: 1
+                                type: integer
+                              protocol:
+                                description: protocol (tcp, udp, sctp) that the traffic
+                                  must match.
+                                pattern: ^TCP|UDP|SCTP$
+                                type: string
+                            type: object
+                          type: array
                         to:
                           items:
                             description: |-
@@ -304,8 +306,6 @@ spec:
                 type: object
                 x-kubernetes-map-type: atomic
                 x-kubernetes-validations:
-                - message: netAttachRefs is immutable
-                  rule: self == oldSelf
                 - message: networkSelector is immutable
                   rule: self == oldSelf
               podSelector:

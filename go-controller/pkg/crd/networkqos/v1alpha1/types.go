@@ -92,7 +92,7 @@ type Classifier struct {
 	To []Destination `json:"to"`
 
 	// +optional
-	Port Port `json:"port"`
+	Ports []*Port `json:"ports"`
 }
 
 // Bandwidth controls the maximum of rate traffic that can be sent
@@ -125,7 +125,7 @@ type Port struct {
 	// +kubebuilder:validation:Minimum:=1
 	// +kubebuilder:validation:Maximum:=65535
 	// +optional
-	Port int32 `json:"port"`
+	Port *int32 `json:"port"`
 }
 
 // Destination describes a peer to apply NetworkQoS configuration for the outgoing traffic.

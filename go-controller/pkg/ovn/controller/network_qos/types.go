@@ -3,6 +3,7 @@ package networkqos
 import (
 	"fmt"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 
+	networkqosv1alpha1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
@@ -199,21 +201,6 @@ type GressRule struct {
 	Burst *int
 }
 
-type protocol string
-
-func (p protocol) IsValid() bool {
-	switch p.String() {
-	case "tcp", "udp", "sctp":
-		return true
-	default:
-		return false
-	}
-}
-
-func (p protocol) String() string {
-	return strings.ToLower(string(p))
-}
-
 type trafficDirection string
 
 const (
@@ -223,10 +210,7 @@ const (
 
 type Classifier struct {
 	Destinations []*Destination
-
-	// port
-	Protocol protocol
-	Port     *int
+	Ports        []*networkqosv1alpha1.Port
 }
 
 // ToQosMatchString generates dest and protocol/port part of QoS match string, based on
@@ -275,21 +259,43 @@ func (c *Classifier) ToQosMatchString(ipv4Enabled, ipv6Enabled bool) string {
 	if strings.Contains(output, "||") {
 		output = fmt.Sprintf("(%s)", output)
 	}
-	if c.Protocol != "" {
-		if c.Port != nil && *c.Port > 0 {
-			match := fmt.Sprintf("%s && %s.dst == %d", c.Protocol.String(), c.Protocol.String(), *c.Port)
-			if output != "" {
-				output = fmt.Sprintf("%s && %s", output, match)
-			} else {
-				output = match
-			}
-		} else {
-			if output != "" {
-				output = fmt.Sprintf("%s && %s", output, c.Protocol.String())
-			} else {
-				output = c.Protocol.String()
-			}
+	protoPortMap := map[string][]string{}
+	for _, port := range c.Ports {
+		if port.Protocol == "" {
+			continue
 		}
+		protocol := strings.ToLower(port.Protocol)
+		ports := protoPortMap[protocol]
+		if ports == nil {
+			ports = []string{}
+		}
+		if port.Port != nil {
+			ports = append(ports, fmt.Sprintf("%d", *port.Port))
+		}
+		protoPortMap[protocol] = ports
+	}
+
+	sortedProtocols := make([]string, 0, len(protoPortMap))
+	for protocol := range protoPortMap {
+		sortedProtocols = append(sortedProtocols, protocol)
+	}
+	sort.Strings(sortedProtocols)
+
+	portMatches := []string{}
+	for _, protocol := range sortedProtocols {
+		ports := protoPortMap[protocol]
+		match := protocol
+		if len(ports) == 1 {
+			match = fmt.Sprintf("%s && %s.dst == %s", protocol, protocol, ports[0])
+		} else if len(ports) > 1 {
+			match = fmt.Sprintf("%s && %s.dst == {%s}", protocol, protocol, strings.Join(ports, ","))
+		}
+		portMatches = append(portMatches, match)
+	}
+	if len(portMatches) == 1 {
+		output = fmt.Sprintf("%s && %s", output, portMatches[0])
+	} else if len(portMatches) > 1 {
+		output = fmt.Sprintf("%s && ((%s))", output, strings.Join(portMatches, ") || ("))
 	}
 	return output
 }
