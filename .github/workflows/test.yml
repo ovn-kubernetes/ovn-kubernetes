@@ -637,6 +637,7 @@ jobs:
           make -C test control-plane WHAT="Network Segmentation"
         elif [ "${{ matrix.target }}" == "bgp" ]; then
           make -C test control-plane WHAT="BGP"
+          make -C test control-plane WHAT="egress IP"
         elif [ "${{ matrix.target }}" == "tools" ]; then
           make -C go-controller build
           make -C test tools
