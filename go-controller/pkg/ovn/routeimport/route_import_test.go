@@ -9,7 +9,6 @@ import (
 	"github.com/onsi/gomega"
 	"github.com/stretchr/testify/mock"
 	"github.com/vishvananda/netlink"
-	"github.com/vishvananda/netlink/nl"
 	"golang.org/x/sys/unix"
 
 	"k8s.io/client-go/util/workqueue"
@@ -21,15 +20,33 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/mocks"
+	multinetworkmocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/mocks/multinetwork"
 )
 
 func Test_controller_syncNetwork(t *testing.T) {
 	node := "testnode"
+
 	defaultNetwork := &util.DefaultNetInfo{}
+	defaultNetworkRouter := defaultNetwork.GetNetworkScopedGWRouterName(node)
+	defaultNetworkRouterPort := types.GWRouterToExtSwitchPrefix + defaultNetworkRouter
+
+	udn := &multinetworkmocks.NetInfo{}
+	udn.On("IsDefault").Return(false)
+	udn.On("GetNetworkName").Return("udn")
+	udn.On("GetNetworkID").Return(1)
+	udn.On("Subnets").Return(nil)
+	udn.On("GetNetworkScopedGWRouterName", node).Return("router")
+
+	cudn := &multinetworkmocks.NetInfo{}
+	cudn.On("IsDefault").Return(false)
+	cudn.On("GetNetworkName").Return(types.CUDNPrefix + "cudn")
+	cudn.On("GetNetworkID").Return(2)
+	cudn.On("Subnets").Return(nil)
+	cudn.On("GetNetworkScopedGWRouterName", node).Return("router")
+
 	type fields struct {
 		networkIDs map[int]string
-		networks   map[string]*netInfo
-		tables     map[int]int
+		networks   map[string]util.NetInfo
 	}
 	type args struct {
 		network string
@@ -41,27 +58,39 @@ func Test_controller_syncNetwork(t *testing.T) {
 		initial   []libovsdb.TestData
 		expected  []libovsdb.TestData
 		routes    []netlink.Route
+		link      netlink.Link
+		linkErr   bool
 		routesErr bool
 		wantErr   bool
 	}{
 		{
-			name: "reconciled ignored if network not known",
+			name: "ignored if network not known",
 			args: args{"default"},
 		},
 		{
-			name: "reconciled ignored if network table not known",
-			args: args{"default"},
+			name: "ignored if vrf not known",
+			args: args{"udn"},
 			fields: fields{
-				networkIDs: map[int]string{0: "default"},
-				networks:   map[string]*netInfo{"default": {NetInfo: defaultNetwork, id: noTable}},
+				networkIDs: map[int]string{1: "udn"},
+				networks:   map[string]util.NetInfo{"udn": udn},
 			},
+		},
+		{
+			name: "fails if vrf link cannot be fetched",
+			args: args{"udn"},
+			fields: fields{
+				networkIDs: map[int]string{1: "udn"},
+				networks:   map[string]util.NetInfo{"udn": udn},
+			},
+			linkErr: true,
+			wantErr: true,
 		},
 		{
 			name: "fails if kernel routes cannot be fetched",
 			args: args{"default"},
 			fields: fields{
 				networkIDs: map[int]string{0: "default"},
-				networks:   map[string]*netInfo{"default": {NetInfo: defaultNetwork, id: 0, table: unix.RT_TABLE_MAIN}},
+				networks:   map[string]util.NetInfo{"default": defaultNetwork},
 			},
 			routesErr: true,
 			wantErr:   true,
@@ -69,24 +98,58 @@ func Test_controller_syncNetwork(t *testing.T) {
 		{
 			name: "fails if OVN routes cannot be fetched (i.e. router does not exist)",
 			args: args{"default"},
+			link: &netlink.Vrf{Table: unix.RT_TABLE_MAIN},
 			fields: fields{
 				networkIDs: map[int]string{0: "default"},
-				networks:   map[string]*netInfo{"default": {NetInfo: defaultNetwork, id: 0, table: unix.RT_TABLE_MAIN}},
+				networks:   map[string]util.NetInfo{"default": defaultNetwork},
 			},
 			wantErr: true,
+		},
+		{
+			name: "imports routes for a UDN",
+			args: args{"udn"},
+			link: &netlink.Vrf{Table: 1000},
+			fields: fields{
+				networkIDs: map[int]string{1: "udn"},
+				networks:   map[string]util.NetInfo{"udn": udn},
+			},
+			initial: []libovsdb.TestData{
+				&nbdb.LogicalRouter{Name: "router"},
+			},
+			expected: []libovsdb.TestData{
+				&nbdb.LogicalRouter{UUID: "router", Name: "router"},
+			},
+		},
+		{
+			name: "imports routes for a CUDN",
+			args: args{"cudn"},
+			link: &netlink.Vrf{Table: 10001},
+			fields: fields{
+				networkIDs: map[int]string{1: "cudn"},
+				networks:   map[string]util.NetInfo{"cudn": cudn},
+			},
+			initial: []libovsdb.TestData{
+				&nbdb.LogicalRouter{Name: "router"},
+			},
+			expected: []libovsdb.TestData{
+				&nbdb.LogicalRouter{UUID: "router", Name: "router"},
+			},
 		},
 		{
 			name: "adds and removes routes as necessary",
 			args: args{"default"},
 			fields: fields{
 				networkIDs: map[int]string{0: "default"},
-				networks:   map[string]*netInfo{"default": {NetInfo: defaultNetwork, id: 0, table: unix.RT_TABLE_MAIN}},
+				networks:   map[string]util.NetInfo{"default": defaultNetwork},
 			},
+			link: &netlink.Vrf{Table: unix.RT_TABLE_MAIN},
 			initial: []libovsdb.TestData{
-				&nbdb.LogicalRouter{Name: defaultNetwork.GetNetworkScopedGWRouterName(node), StaticRoutes: []string{"keep-1", "keep-2", "remove"}},
-				&nbdb.LogicalRouterStaticRoute{UUID: "keep-1", IPPrefix: "1.1.1.0/24", Nexthop: "1.1.1.1", ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
+				&nbdb.LogicalRouter{Name: defaultNetworkRouter, StaticRoutes: []string{"keep-1", "keep-2", "remove"}},
+				&nbdb.LogicalRouterStaticRoute{UUID: "keep-1", IPPrefix: "1.1.1.0/24", Nexthop: "1.1.1.1", OutputPort: &defaultNetworkRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
 				&nbdb.LogicalRouterStaticRoute{UUID: "keep-2", IPPrefix: "5.5.5.0/24", Nexthop: "5.5.5.1"},
-				&nbdb.LogicalRouterStaticRoute{UUID: "remove", IPPrefix: "6.6.6.0/24", Nexthop: "6.6.6.1", ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
+				&nbdb.LogicalRouterStaticRoute{UUID: "remove", IPPrefix: "6.6.6.0/24", Nexthop: "6.6.6.1", OutputPort: &defaultNetworkRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
+				&nbdb.LogicalRouter{UUID: "otherRouter", Name: "otherRouter", StaticRoutes: []string{"untouched-1"}},
+				&nbdb.LogicalRouterStaticRoute{UUID: "untouched-1", IPPrefix: "3.3.3.0/24", Nexthop: "3.3.3.2", ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
 			},
 			routes: []netlink.Route{
 				{Dst: ovntesting.MustParseIPNet("1.1.1.0/24"), Gw: ovntesting.MustParseIP("1.1.1.1")},
@@ -94,12 +157,15 @@ func Test_controller_syncNetwork(t *testing.T) {
 				{Dst: ovntesting.MustParseIPNet("3.3.3.0/24"), MultiPath: []*netlink.NexthopInfo{{Gw: ovntesting.MustParseIP("3.3.3.1")}, {Gw: ovntesting.MustParseIP("3.3.3.2")}}},
 			},
 			expected: []libovsdb.TestData{
-				&nbdb.LogicalRouter{UUID: "router", Name: defaultNetwork.GetNetworkScopedGWRouterName(node), StaticRoutes: []string{"keep-1", "keep-2", "add-1", "add-2", "add-3"}},
-				&nbdb.LogicalRouterStaticRoute{UUID: "keep-1", IPPrefix: "1.1.1.0/24", Nexthop: "1.1.1.1", ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
+				&nbdb.LogicalRouter{UUID: "router", Name: defaultNetworkRouter, StaticRoutes: []string{"keep-1", "keep-2", "add-1", "add-2", "add-3"}},
+				&nbdb.LogicalRouterStaticRoute{UUID: "keep-1", IPPrefix: "1.1.1.0/24", Nexthop: "1.1.1.1", OutputPort: &defaultNetworkRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
 				&nbdb.LogicalRouterStaticRoute{UUID: "keep-2", IPPrefix: "5.5.5.0/24", Nexthop: "5.5.5.1"},
-				&nbdb.LogicalRouterStaticRoute{UUID: "add-1", IPPrefix: "2.2.2.0/24", Nexthop: "2.2.2.1", ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
-				&nbdb.LogicalRouterStaticRoute{UUID: "add-2", IPPrefix: "3.3.3.0/24", Nexthop: "3.3.3.1", ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
-				&nbdb.LogicalRouterStaticRoute{UUID: "add-3", IPPrefix: "3.3.3.0/24", Nexthop: "3.3.3.2", ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
+				&nbdb.LogicalRouterStaticRoute{UUID: "add-1", IPPrefix: "2.2.2.0/24", Nexthop: "2.2.2.1", OutputPort: &defaultNetworkRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
+				&nbdb.LogicalRouterStaticRoute{UUID: "add-2", IPPrefix: "3.3.3.0/24", Nexthop: "3.3.3.1", OutputPort: &defaultNetworkRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
+				&nbdb.LogicalRouterStaticRoute{UUID: "add-3", IPPrefix: "3.3.3.0/24", Nexthop: "3.3.3.2", OutputPort: &defaultNetworkRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
+				&nbdb.LogicalRouter{UUID: "otherRouter", Name: "otherRouter", StaticRoutes: []string{"untouched-1"}},
+				// this route should not be updated as it belongs to a different network
+				&nbdb.LogicalRouterStaticRoute{UUID: "untouched-1", IPPrefix: "3.3.3.0/24", Nexthop: "3.3.3.2", ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
 			},
 		},
 	}
@@ -107,17 +173,28 @@ func Test_controller_syncNetwork(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			g := gomega.NewWithT(t)
 
+			testError := errors.New("test forced error or incorrect test arguments")
+			network := tt.fields.networks[tt.args.network]
+
 			nlmock := &mocks.NetLinkOps{}
-			if info := tt.fields.networks[tt.args.network]; info != nil && info.table != 0 {
+			nlmock.On("IsLinkNotFoundError", mock.Anything).Return(tt.link == nil && !tt.linkErr)
+			switch {
+			case network == nil || tt.linkErr:
+				nlmock.On("LinkByName", mock.Anything).Return(nil, testError)
+			default:
+				nlmock.On("LinkByName", util.GetNetworkVRFName(network)).Return(tt.link, nil)
+			}
+
+			switch {
+			case tt.link == nil || tt.link.Type() != "vrf" || tt.routesErr:
+				nlmock.On("RouteListFiltered", mock.Anything, mock.Anything, mock.Anything).Return(nil, testError)
+			default:
+				vrf := tt.link.(*netlink.Vrf)
 				matchFilter := func(r *netlink.Route) bool {
-					return r != nil && r.Equal(netlink.Route{Protocol: unix.RTPROT_BGP, Table: info.table})
+					return r != nil && r.Equal(netlink.Route{Protocol: unix.RTPROT_BGP, Table: int(vrf.Table)})
 				}
-				nlcall := nlmock.On("RouteListFiltered", netlink.FAMILY_ALL, mock.MatchedBy(matchFilter), netlink.RT_FILTER_PROTOCOL|netlink.RT_FILTER_TABLE)
-				if tt.routesErr {
-					nlcall.Return(nil, errors.New("test error"))
-				} else {
-					nlcall.Return(tt.routes, nil)
-				}
+				nlmock.On("RouteListFiltered", netlink.FAMILY_ALL, mock.MatchedBy(matchFilter), netlink.RT_FILTER_PROTOCOL|netlink.RT_FILTER_TABLE).
+					Return(tt.routes, nil)
 			}
 
 			client, ctx, err := libovsdb.NewNBTestHarness(libovsdb.TestSetup{NBData: tt.initial}, nil)
@@ -130,7 +207,7 @@ func Test_controller_syncNetwork(t *testing.T) {
 				log:        testr.New(t),
 				networkIDs: tt.fields.networkIDs,
 				networks:   tt.fields.networks,
-				tables:     tt.fields.tables,
+				tables:     map[int]int{},
 				netlink:    nlmock,
 			}
 
@@ -150,7 +227,7 @@ func Test_controller_syncRouteUpdate(t *testing.T) {
 	defaultNetwork := &util.DefaultNetInfo{}
 	type fields struct {
 		networkIDs map[int]string
-		networks   map[string]*netInfo
+		networks   map[string]util.NetInfo
 		tables     map[int]int
 	}
 	type args struct {
@@ -179,7 +256,7 @@ func Test_controller_syncRouteUpdate(t *testing.T) {
 			name: "processes route updates",
 			fields: fields{
 				networkIDs: map[int]string{0: "default"},
-				networks:   map[string]*netInfo{"default": {NetInfo: defaultNetwork, id: 0, table: unix.RT_TABLE_MAIN}},
+				networks:   map[string]util.NetInfo{"default": defaultNetwork},
 				tables:     map[int]int{unix.RT_TABLE_MAIN: 0},
 			},
 			args:     args{&netlink.RouteUpdate{Route: netlink.Route{Protocol: unix.RTPROT_BGP, Table: unix.RT_TABLE_MAIN}}},
@@ -225,10 +302,10 @@ func Test_controller_syncRouteUpdate(t *testing.T) {
 }
 
 func Test_controller_syncLinkUpdate(t *testing.T) {
-	someNetwork := &util.DefaultNetInfo{}
+	udn := &multinetworkmocks.NetInfo{}
 	type fields struct {
 		networkIDs map[int]string
-		networks   map[string]*netInfo
+		networks   map[string]util.NetInfo
 		tables     map[int]int
 	}
 	type args struct {
@@ -247,81 +324,63 @@ func Test_controller_syncLinkUpdate(t *testing.T) {
 		},
 		{
 			name: "ignores link updates with incorrect prefix",
-			args: args{&netlink.LinkUpdate{Link: &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "something10" + types.UDNVRFDeviceSuffix}}}},
+			args: args{&netlink.LinkUpdate{Link: &netlink.Vrf{LinkAttrs: netlink.LinkAttrs{Name: "something10" + types.UDNVRFDeviceSuffix}}}},
 		},
 		{
 			name: "ignores link updates with incorrect suffix",
-			args: args{&netlink.LinkUpdate{Link: &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: types.UDNVRFDevicePrefix + "10-something"}}}},
+			args: args{&netlink.LinkUpdate{Link: &netlink.Vrf{LinkAttrs: netlink.LinkAttrs{Name: types.UDNVRFDevicePrefix + "10-something"}}}},
 		},
 		{
 			name: "ignores link updates with incorrect format",
-			args: args{&netlink.LinkUpdate{Link: &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: types.UDNVRFDevicePrefix + "something" + types.UDNVRFDeviceSuffix}}}},
+			args: args{&netlink.LinkUpdate{Link: &netlink.Vrf{LinkAttrs: netlink.LinkAttrs{Name: types.UDNVRFDevicePrefix + "something" + types.UDNVRFDeviceSuffix}}}},
 		},
 		{
-			name: "ignores unknown event types",
-			fields: fields{
-				networkIDs: map[int]string{1: "net1"},
-				networks:   map[string]*netInfo{"net1": {NetInfo: someNetwork, id: 1, table: 2}},
-				tables:     map[int]int{2: 1},
-			},
-			args: args{&netlink.LinkUpdate{
-				IfInfomsg: nl.IfInfomsg{IfInfomsg: unix.IfInfomsg{Type: unix.RTM_BASE}},
-				Link:      &netlink.Vrf{LinkAttrs: netlink.LinkAttrs{Name: types.UDNVRFDevicePrefix + "1" + types.UDNVRFDeviceSuffix}, Table: 2}},
-			},
-			expectTables: map[int]int{2: 1},
+			name: "ignores link updates of unknown UDN networks",
+			args: args{&netlink.LinkUpdate{Link: &netlink.Vrf{LinkAttrs: netlink.LinkAttrs{Name: types.UDNVRFDevicePrefix + "10" + types.UDNVRFDeviceSuffix}}}},
 		},
 		{
-			name: "ignores removal of old VRFs",
-			fields: fields{
-				networkIDs: map[int]string{1: "net1", 2: "net2"},
-				networks:   map[string]*netInfo{"net1": {NetInfo: someNetwork, id: 1, table: 2}, "net2": {NetInfo: someNetwork, id: 2, table: 2}},
-				tables:     map[int]int{2: 2},
-			},
-			args: args{&netlink.LinkUpdate{
-				IfInfomsg: nl.IfInfomsg{IfInfomsg: unix.IfInfomsg{Type: unix.RTM_DELLINK}},
-				Link:      &netlink.Vrf{LinkAttrs: netlink.LinkAttrs{Name: types.UDNVRFDevicePrefix + "1" + types.UDNVRFDeviceSuffix}, Table: 2}},
-			},
-			expectTables: map[int]int{2: 2},
+			name: "ignores link updates of unknown CUDN networks",
+			args: args{&netlink.LinkUpdate{Link: &netlink.Vrf{LinkAttrs: netlink.LinkAttrs{Name: "cudn"}}}},
 		},
 		{
-			name: "processes link removals",
+			name: "ignores link delete event types",
 			fields: fields{
-				networkIDs: map[int]string{1: "net1"},
-				networks:   map[string]*netInfo{"net1": {NetInfo: someNetwork, id: 1, table: 2}},
-				tables:     map[int]int{2: 1},
+				networkIDs: map[int]string{1: "udn"},
+				networks:   map[string]util.NetInfo{"udn": udn},
+				tables:     map[int]int{1000: 1},
 			},
 			args: args{&netlink.LinkUpdate{
-				IfInfomsg: nl.IfInfomsg{IfInfomsg: unix.IfInfomsg{Type: unix.RTM_DELLINK}},
-				Link:      &netlink.Vrf{LinkAttrs: netlink.LinkAttrs{Name: types.UDNVRFDevicePrefix + "1" + types.UDNVRFDeviceSuffix}, Table: 2}},
+				Header: unix.NlMsghdr{Type: unix.RTM_DELLINK},
+				Link:   &netlink.Vrf{LinkAttrs: netlink.LinkAttrs{Name: types.UDNVRFDevicePrefix + "1" + types.UDNVRFDeviceSuffix}, Table: 1000}},
 			},
-			expectTables: map[int]int{},
+			expectTables: map[int]int{1000: 1},
 		},
 		{
 			name: "does not reconcile on link updates with no actual changes",
 			fields: fields{
-				networkIDs: map[int]string{1: "net1"},
-				networks:   map[string]*netInfo{"net1": {NetInfo: someNetwork, id: 1, table: 2}},
-				tables:     map[int]int{2: 1},
+				networkIDs: map[int]string{1: "udn"},
+				networks:   map[string]util.NetInfo{"udn": udn},
+				tables:     map[int]int{1000: 1},
 			},
 			args: args{&netlink.LinkUpdate{
-				IfInfomsg: nl.IfInfomsg{IfInfomsg: unix.IfInfomsg{Type: unix.RTM_NEWLINK}},
-				Link:      &netlink.Vrf{LinkAttrs: netlink.LinkAttrs{Name: types.UDNVRFDevicePrefix + "1" + types.UDNVRFDeviceSuffix}, Table: 2}},
+				Header: unix.NlMsghdr{Type: unix.RTM_NEWLINK},
+				Link:   &netlink.Vrf{LinkAttrs: netlink.LinkAttrs{Name: types.UDNVRFDevicePrefix + "1" + types.UDNVRFDeviceSuffix}, Table: 1000}},
 			},
-			expectTables: map[int]int{2: 1},
+			expectTables: map[int]int{1000: 1},
 		},
 		{
 			name: "does reconcile on link updates with actual changes",
 			fields: fields{
-				networkIDs: map[int]string{1: "net1"},
-				networks:   map[string]*netInfo{"net1": {NetInfo: someNetwork, id: 1, table: 2}},
-				tables:     map[int]int{2: 1},
+				networkIDs: map[int]string{1: "udn"},
+				networks:   map[string]util.NetInfo{"udn": udn},
+				tables:     map[int]int{1000: 1},
 			},
 			args: args{&netlink.LinkUpdate{
-				IfInfomsg: nl.IfInfomsg{IfInfomsg: unix.IfInfomsg{Type: unix.RTM_NEWLINK}},
-				Link:      &netlink.Vrf{LinkAttrs: netlink.LinkAttrs{Name: types.UDNVRFDevicePrefix + "1" + types.UDNVRFDeviceSuffix}, Table: 3}},
+				Header: unix.NlMsghdr{Type: unix.RTM_NEWLINK},
+				Link:   &netlink.Vrf{LinkAttrs: netlink.LinkAttrs{Name: types.UDNVRFDevicePrefix + "1" + types.UDNVRFDeviceSuffix}, Table: 1001}},
 			},
-			expectTables:     map[int]int{3: 1},
-			expectReconciles: []string{"net1"},
+			expectTables:     map[int]int{1001: 1},
+			expectReconciles: []string{"udn"},
 		},
 	}
 	for _, tt := range tests {
@@ -343,7 +402,14 @@ func Test_controller_syncLinkUpdate(t *testing.T) {
 			}
 			r := controllerutil.NewReconciler(
 				"test",
-				&controllerutil.ReconcilerConfig{Reconcile: reconcile, Threadiness: 1, RateLimiter: workqueue.NewTypedItemFastSlowRateLimiter[string](0, 0, 0)})
+				&controllerutil.ReconcilerConfig{Reconcile: reconcile, Threadiness: 1, RateLimiter: workqueue.NewTypedItemFastSlowRateLimiter[string](0, 0, 0)},
+			)
+			for id, network := range tt.fields.networkIDs {
+				netInfo := &multinetworkmocks.NetInfo{}
+				netInfo.On("GetNetworkName").Return(network)
+				netInfo.On("GetNetworkID").Return(id)
+				tt.fields.networks[network] = netInfo
+			}
 			c := &controller{
 				log:        testr.New(t),
 				networkIDs: tt.fields.networkIDs,
