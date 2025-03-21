@@ -101,11 +101,13 @@ func (c *Controller) addRoute(r netlink.Route) error {
 		// already managed - nothing to do
 		return nil
 	}
-	link, err := util.GetNetLinkOps().LinkByIndex(r.LinkIndex)
-	if err != nil {
-		return fmt.Errorf("failed to apply route (%s) because unable to get link: %v", r.String(), err)
+	if r.LinkIndex != 0 {
+		_, err := util.GetNetLinkOps().LinkByIndex(r.LinkIndex)
+		if err != nil {
+			return fmt.Errorf("failed to apply route (%s) because unable to get link: %v", r.String(), err)
+		}
 	}
-	if err := c.applyRoute(link, r.Gw, r.Dst, r.MTU, r.Src, r.Table); err != nil {
+	if err := c.applyRoute(r.LinkIndex, r.Gw, r.Dst, r.MTU, r.Src, r.Table, r.Priority, r.Type, r.Scope); err != nil {
 		return fmt.Errorf("failed to apply route (%s): %v", r.String(), err)
 	}
 	klog.Infof("Route Manager: completed adding route: %s", r.String())
@@ -118,15 +120,17 @@ func (c *Controller) delRoute(r netlink.Route) error {
 	c.Lock()
 	defer c.Unlock()
 	klog.Infof("Route Manager: attempting to delete route: %s", r.String())
-	link, err := util.GetNetLinkOps().LinkByIndex(r.LinkIndex)
-	if err != nil {
-		if util.GetNetLinkOps().IsLinkNotFoundError(err) {
-			delete(c.store, r.LinkIndex)
-			return nil
+	if r.LinkIndex != 0 {
+		_, err := util.GetNetLinkOps().LinkByIndex(r.LinkIndex)
+		if err != nil {
+			if util.GetNetLinkOps().IsLinkNotFoundError(err) {
+				delete(c.store, r.LinkIndex)
+				return nil
+			}
+			return fmt.Errorf("failed to delete route (%s) because unable to get link: %v", r.String(), err)
 		}
-		return fmt.Errorf("failed to delete route (%s) because unable to get link: %v", r.String(), err)
 	}
-	if err := c.netlinkDelRoute(link, r.Dst, r.Table); err != nil {
+	if err := c.netlinkDelRoute(r.LinkIndex, r.Dst, r.Table); err != nil {
 		return fmt.Errorf("failed to delete route (%s): %v", r.String(), err)
 	}
 	managedRoutes, ok := c.store[r.LinkIndex]
@@ -171,12 +175,15 @@ func (c *Controller) processNetlinkEvent(ru netlink.RouteUpdate) error {
 	}
 	for _, managedRoute := range managedRoutes {
 		if RoutePartiallyEqual(managedRoute, ru.Route) {
-			link, err := util.GetNetLinkOps().LinkByIndex(managedRoute.LinkIndex)
-			if err != nil {
-				klog.Errorf("Route Manager: failed to restore route because unable to get link by index %d: %v", managedRoute.LinkIndex, err)
-				continue
+			if managedRoute.LinkIndex != 0 {
+				_, err := util.GetNetLinkOps().LinkByIndex(managedRoute.LinkIndex)
+				if err != nil {
+					klog.Errorf("Route Manager: failed to restore route because unable to get link by index %d: %v", managedRoute.LinkIndex, err)
+					continue
+				}
 			}
-			if err = c.applyRoute(link, managedRoute.Gw, managedRoute.Dst, managedRoute.MTU, managedRoute.Src, managedRoute.Table); err != nil {
+			if err := c.applyRoute(managedRoute.LinkIndex, managedRoute.Gw, managedRoute.Dst, managedRoute.MTU, managedRoute.Src, managedRoute.Table,
+				managedRoute.Priority, managedRoute.Type, managedRoute.Scope); err != nil {
 				klog.Errorf("Route Manager: failed to apply route (%s): %v", managedRoute.String(), err)
 			}
 		}
@@ -184,14 +191,15 @@ func (c *Controller) processNetlinkEvent(ru netlink.RouteUpdate) error {
 	return nil
 }
 
-func (c *Controller) applyRoute(link netlink.Link, gwIP net.IP, subnet *net.IPNet, mtu int, src net.IP, table int) error {
-	filterRoute, filterMask := filterRouteByDstAndTable(link.Attrs().Index, subnet, table)
+func (c *Controller) applyRoute(linkIndex int, gwIP net.IP, subnet *net.IPNet, mtu int, src net.IP,
+	table, priority, rtype int, scope netlink.Scope) error {
+	filterRoute, filterMask := filterRouteByDstAndTable(linkIndex, subnet, table)
 	existingRoutes, err := util.GetNetLinkOps().RouteListFiltered(getNetlinkIPFamily(subnet), filterRoute, filterMask)
 	if err != nil {
 		return fmt.Errorf("failed to list filtered routes: %v", err)
 	}
 	if len(existingRoutes) == 0 {
-		return c.netlinkAddRoute(link, gwIP, subnet, mtu, src, table)
+		return c.netlinkAddRoute(linkIndex, gwIP, subnet, mtu, src, table, priority, rtype, scope)
 	}
 	netlinkRoute := &existingRoutes[0]
 	if netlinkRoute.MTU != mtu || !src.Equal(netlinkRoute.Src) || !gwIP.Equal(netlinkRoute.Gw) {
@@ -207,10 +215,11 @@ func (c *Controller) applyRoute(link netlink.Link, gwIP net.IP, subnet *net.IPNe
 	return nil
 }
 
-func (c *Controller) netlinkAddRoute(link netlink.Link, gwIP net.IP, subnet *net.IPNet, mtu int, srcIP net.IP, table int) error {
+func (c *Controller) netlinkAddRoute(linkIndex int, gwIP net.IP, subnet *net.IPNet,
+	mtu int, srcIP net.IP, table, priority, rtype int, scope netlink.Scope) error {
 	newNlRoute := &netlink.Route{
 		Dst:       subnet,
-		LinkIndex: link.Attrs().Index,
+		LinkIndex: linkIndex,
 		Scope:     netlink.SCOPE_UNIVERSE,
 		Table:     table,
 	}
@@ -223,21 +232,31 @@ func (c *Controller) netlinkAddRoute(link netlink.Link, gwIP net.IP, subnet *net
 	if mtu != 0 {
 		newNlRoute.MTU = mtu
 	}
+	if priority != 0 {
+		newNlRoute.Priority = priority
+	}
+	if rtype != 0 {
+		newNlRoute.Type = rtype
+	}
+	if scope != netlink.Scope(0) {
+		newNlRoute.Scope = scope
+	}
 	err := util.GetNetLinkOps().RouteAdd(newNlRoute)
 	if err != nil {
-		return fmt.Errorf("failed to add route (gw: %v, subnet %v, mtu %d, src IP %v): %v", gwIP, subnet, mtu, srcIP, err)
+		return fmt.Errorf("failed to add route (linkIndex: %d gw: %v, subnet %v, mtu %d, src IP %v): %v",
+			newNlRoute.LinkIndex, gwIP, subnet, mtu, srcIP, err)
 	}
 	return nil
 }
 
-func (c *Controller) netlinkDelRoute(link netlink.Link, subnet *net.IPNet, table int) error {
+func (c *Controller) netlinkDelRoute(linkIndex int, subnet *net.IPNet, table int) error {
 	if subnet == nil {
 		return fmt.Errorf("cannot delete route with no valid subnet")
 	}
-	filter, mask := filterRouteByDstAndTable(link.Attrs().Index, subnet, table)
+	filter, mask := filterRouteByDstAndTable(linkIndex, subnet, table)
 	existingRoutes, err := util.GetNetLinkOps().RouteListFiltered(netlink.FAMILY_ALL, filter, mask)
 	if err != nil {
-		return fmt.Errorf("failed to get routes for link %s: %v", link.Attrs().Name, err)
+		return fmt.Errorf("failed to get routes for link %d: %v", linkIndex, err)
 	}
 	for _, existingRoute := range existingRoutes {
 		if err = util.GetNetLinkOps().RouteDel(&existingRoute); err != nil {
@@ -286,16 +305,19 @@ func (c *Controller) sync() {
 				}
 			}
 			if !found {
-				link, err := util.GetNetLinkOps().LinkByIndex(managedRoute.LinkIndex)
-				if err != nil {
-					if util.GetNetLinkOps().IsLinkNotFoundError(err) {
-						deletedLinkIndexes = append(deletedLinkIndexes, linkIndex)
-					} else {
-						klog.Errorf("Route Manager: failed to apply route (%s) because unable to retrieve associated link: %v", managedRoute.String(), err)
+				if managedRoute.LinkIndex != 0 {
+					_, err := util.GetNetLinkOps().LinkByIndex(managedRoute.LinkIndex)
+					if err != nil {
+						if util.GetNetLinkOps().IsLinkNotFoundError(err) {
+							deletedLinkIndexes = append(deletedLinkIndexes, linkIndex)
+						} else {
+							klog.Errorf("Route Manager: failed to apply route (%s) because unable to retrieve associated link: %v", managedRoute.String(), err)
+						}
+						continue
 					}
-					continue
 				}
-				if err := c.applyRoute(link, managedRoute.Gw, managedRoute.Dst, managedRoute.MTU, managedRoute.Src, managedRoute.Table); err != nil {
+				if err := c.applyRoute(managedRoute.LinkIndex, managedRoute.Gw, managedRoute.Dst, managedRoute.MTU, managedRoute.Src, managedRoute.Table,
+					managedRoute.Priority, managedRoute.Type, managedRoute.Scope); err != nil {
 					klog.Errorf("Route Manager: failed to apply route (%s): %v", managedRoute.String(), err)
 				}
 			}
@@ -353,5 +375,8 @@ func RoutePartiallyEqual(r, x netlink.Route) bool {
 		r.Gw.Equal(x.Gw) &&
 		r.Table == x.Table &&
 		r.Flags == x.Flags &&
-		r.MTU == x.MTU
+		r.MTU == x.MTU &&
+		r.Type == x.Type &&
+		r.Priority == x.Priority &&
+		r.Scope == x.Scope
 }

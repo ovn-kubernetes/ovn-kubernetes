@@ -25,6 +25,9 @@ const (
 	PhysicalNetworkName     = "physnet"
 	PhysicalNetworkExGwName = "exgwphysnet"
 
+	// LoopbackInterfaceIndex is the link index corresponding to loopback interface
+	LoopbackInterfaceIndex = 1
+
 	// LocalNetworkName is the name that maps to an OVS bridge that provides
 	// access to local service
 	LocalNetworkName = "locnet"

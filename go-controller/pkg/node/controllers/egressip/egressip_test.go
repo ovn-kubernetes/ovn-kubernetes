@@ -19,6 +19,7 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -1133,7 +1134,7 @@ var _ = ginkgo.Describe("VRF", func() {
 		ginkgo.By("create VRF and add link")
 		gomega.Expect(createVRFAndEnslaveLink(testNS, dummyLink1Name, vrfName, vrfTable)).Should(gomega.Succeed())
 		ginkgo.By("add route to routing table associated with VRF")
-		vrfRoute := getDstRouteForTable(getLinkIndex(dummyLink1Name), int(vrfTable), dummy3IPv4CIDR)
+		vrfRoute := getV4DstRouteForTable(getLinkIndex(dummyLink1Name), int(vrfTable), dummy3IPv4CIDR)
 		gomega.Expect(testNS.Do(func(ns.NetNS) error {
 			return netlink.RouteAdd(&vrfRoute)
 		})).Should(gomega.Succeed())
@@ -1642,31 +1643,49 @@ func isIPTableRuleArgIPV6(ruleArgs []string) bool {
 	panic("unable to determine IP version of IPTable rule")
 }
 
+// For any IPV4 or IPV6 route, default type is unicast if not mentioned explicitly
+// Ref: https://www.man7.org/linux/man-pages/man8/ip-route.8.html
 func getDefaultIPv4Route(linkIndex int) netlink.Route {
 	// dst is nil because netlink represents a default route as nil
-	return netlink.Route{LinkIndex: linkIndex, Table: util.CalculateRouteTableID(linkIndex), Dst: defaultV4AnyCIDR}
+	return netlink.Route{LinkIndex: linkIndex, Table: util.CalculateRouteTableID(linkIndex), Dst: defaultV4AnyCIDR, Type: unix.RTN_UNICAST}
 }
 
 func getDefaultIPv6Route(linkIndex int) netlink.Route {
 	// dst is nil because netlink represents a default route as nil
-	return netlink.Route{LinkIndex: linkIndex, Table: util.CalculateRouteTableID(linkIndex), Dst: defaultV6AnyCIDR}
+	// Priority for a default IPv6 route gets set to 1024
+	// Ref : https://access.redhat.com/solutions/3659171
+	return netlink.Route{LinkIndex: linkIndex, Table: util.CalculateRouteTableID(linkIndex), Dst: defaultV6AnyCIDR, Type: unix.RTN_UNICAST, Priority: 1024}
 }
 
 func getDstRoute(linkIndex int, dst string) netlink.Route {
-	return getDstRouteForTable(linkIndex, util.CalculateRouteTableID(linkIndex), dst)
+	if utilnet.IsIPv6CIDRString(dst) {
+		return getV6DstRouteForTable(linkIndex, util.CalculateRouteTableID(linkIndex), dst)
+	} else {
+		return getV4DstRouteForTable(linkIndex, util.CalculateRouteTableID(linkIndex), dst)
+	}
 
 }
 
-func getDstRouteForTable(linkIndex, table int, dst string) netlink.Route {
+// Default scope is link for direct unicast routes
+// Ref: https://www.man7.org/linux/man-pages/man8/ip-route.8.html
+func getV4DstRouteForTable(linkIndex, table int, dst string) netlink.Route {
 	_, dstIPNet, err := net.ParseCIDR(dst)
 	if err != nil {
 		panic(err.Error())
 	}
-	return netlink.Route{LinkIndex: linkIndex, Dst: dstIPNet, Table: table}
+	return netlink.Route{LinkIndex: linkIndex, Dst: dstIPNet, Table: table, Type: unix.RTN_UNICAST, Scope: netlink.SCOPE_LINK}
+}
+
+func getV6DstRouteForTable(linkIndex, table int, dst string) netlink.Route {
+	_, dstIPNet, err := net.ParseCIDR(dst)
+	if err != nil {
+		panic(err.Error())
+	}
+	return netlink.Route{LinkIndex: linkIndex, Dst: dstIPNet, Table: table, Type: unix.RTN_UNICAST, Priority: 256}
 }
 
 func getLinkLocalRoute(linkIndex int) netlink.Route {
-	return netlink.Route{LinkIndex: linkIndex, Dst: linkLocalCIDR, Table: util.CalculateRouteTableID(linkIndex)}
+	return netlink.Route{LinkIndex: linkIndex, Dst: linkLocalCIDR, Table: util.CalculateRouteTableID(linkIndex), Type: unix.RTN_UNICAST, Priority: 256}
 }
 
 func getNetlinkAddr(ip, netmask string) *netlink.Addr {
