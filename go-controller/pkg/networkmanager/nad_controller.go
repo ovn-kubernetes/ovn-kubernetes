@@ -274,6 +274,11 @@ func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefin
 	if nad != nil {
 		nadNetwork, err = util.ParseNADInfo(nad)
 		if err != nil {
+			// in case the type for the NAD is not ovn-k we should not record the error event
+			if err.Error() == util.ErrorAttachDefNotOvnManaged.Error() {
+				return nil
+			}
+
 			if c.recorder != nil {
 				c.recorder.Eventf(&corev1.ObjectReference{Kind: nad.Kind, Namespace: nad.Namespace, Name: nad.Name}, corev1.EventTypeWarning,
 					"InvalidConfig", "Failed to parse network config: %v", err.Error())
