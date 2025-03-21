@@ -1,8 +1,9 @@
 name: ovn-docker-images
 
 on:
+  workflow_dispatch:
   push:
-    branches: [ master,release-1.0 ]
+    branches: [ master, release-1.0 ]
 
 permissions:
   contents: read
@@ -10,9 +11,9 @@ permissions:
 
 env:
   GO_VERSION: 1.22.0
-  REGISTRY: ghcr.io 
-  OWNER: ovn-kubernetes
-  REPOSITORY: ovn-kubernetes
+  REGISTRY: ghcr.io
+  OWNER: ${{ github.repository_owner }}
+  REPOSITORY: ${{ github.event.repository.name }}
   FEDORA_IMAGE_NAME: ovn-kube-fedora
   UBUNTU_IMAGE_NAME: ovn-kube-ubuntu
 
@@ -36,8 +37,8 @@ jobs:
       with:
         registry: ${{ env.REGISTRY }}
         username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}    
-   
+        password: ${{ secrets.GITHUB_TOKEN }}
+
     - name: Set up environment
       run: |
         export GOPATH=$(go env GOPATH)
@@ -57,7 +58,7 @@ jobs:
     - name: Generate git-info to write to image
       run: | 
         BRANCH=$(git rev-parse --short "$GITHUB_SHA")
-        COMMIT=$(git rev-parse  HEAD)
+        COMMIT=$(git rev-parse HEAD)
         pushd dist/images
           echo "ref: ${BRANCH}  commit: ${COMMIT}" > git_info
         popd 
