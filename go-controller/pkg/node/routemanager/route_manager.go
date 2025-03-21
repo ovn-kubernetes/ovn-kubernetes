@@ -105,7 +105,7 @@ func (c *Controller) addRoute(r netlink.Route) error {
 	if err != nil {
 		return fmt.Errorf("failed to apply route (%s) because unable to get link: %v", r.String(), err)
 	}
-	if err := c.applyRoute(link, r.Gw, r.Dst, r.MTU, r.Src, r.Table); err != nil {
+	if err := c.applyRoute(link, r.Gw, r.Dst, r.MTU, r.Src, r.Table, r.Priority, r.Type); err != nil {
 		return fmt.Errorf("failed to apply route (%s): %v", r.String(), err)
 	}
 	klog.Infof("Route Manager: completed adding route: %s", r.String())
@@ -126,7 +126,7 @@ func (c *Controller) delRoute(r netlink.Route) error {
 		}
 		return fmt.Errorf("failed to delete route (%s) because unable to get link: %v", r.String(), err)
 	}
-	if err := c.netlinkDelRoute(link, r.Dst, r.Table); err != nil {
+	if err := c.netlinkDelRoute(link, r.Dst, r.Table, r.Priority, r.Type); err != nil {
 		return fmt.Errorf("failed to delete route (%s): %v", r.String(), err)
 	}
 	managedRoutes, ok := c.store[r.LinkIndex]
@@ -176,7 +176,7 @@ func (c *Controller) processNetlinkEvent(ru netlink.RouteUpdate) error {
 				klog.Errorf("Route Manager: failed to restore route because unable to get link by index %d: %v", managedRoute.LinkIndex, err)
 				continue
 			}
-			if err = c.applyRoute(link, managedRoute.Gw, managedRoute.Dst, managedRoute.MTU, managedRoute.Src, managedRoute.Table); err != nil {
+			if err = c.applyRoute(link, managedRoute.Gw, managedRoute.Dst, managedRoute.MTU, managedRoute.Src, managedRoute.Table, managedRoute.Priority, managedRoute.Type); err != nil {
 				klog.Errorf("Route Manager: failed to apply route (%s): %v", managedRoute.String(), err)
 			}
 		}
@@ -184,14 +184,20 @@ func (c *Controller) processNetlinkEvent(ru netlink.RouteUpdate) error {
 	return nil
 }
 
-func (c *Controller) applyRoute(link netlink.Link, gwIP net.IP, subnet *net.IPNet, mtu int, src net.IP, table int) error {
+func (c *Controller) applyRoute(link netlink.Link, gwIP net.IP, subnet *net.IPNet, mtu int, src net.IP, table, priority, rtype int) error {
 	filterRoute, filterMask := filterRouteByDstAndTable(link.Attrs().Index, subnet, table)
+	if rtype == unix.RTN_BLACKHOLE || rtype == unix.RTN_UNREACHABLE {
+		// non 0 link index for an unreachable or blackhole route returns 'invalid argument'
+		klog.V(5).Infof("Route Manager: changing link index to 0 for unreachable or blackhole route (Dst: %v, GW: %d, Table: %d, Priority: %d)",
+			*subnet, gwIP, table, priority)
+		filterRoute.LinkIndex = 0
+	}
 	existingRoutes, err := util.GetNetLinkOps().RouteListFiltered(getNetlinkIPFamily(subnet), filterRoute, filterMask)
 	if err != nil {
 		return fmt.Errorf("failed to list filtered routes: %v", err)
 	}
 	if len(existingRoutes) == 0 {
-		return c.netlinkAddRoute(link, gwIP, subnet, mtu, src, table)
+		return c.netlinkAddRoute(link, gwIP, subnet, mtu, src, table, priority, rtype)
 	}
 	netlinkRoute := &existingRoutes[0]
 	if netlinkRoute.MTU != mtu || !src.Equal(netlinkRoute.Src) || !gwIP.Equal(netlinkRoute.Gw) {
@@ -207,7 +213,7 @@ func (c *Controller) applyRoute(link netlink.Link, gwIP net.IP, subnet *net.IPNe
 	return nil
 }
 
-func (c *Controller) netlinkAddRoute(link netlink.Link, gwIP net.IP, subnet *net.IPNet, mtu int, srcIP net.IP, table int) error {
+func (c *Controller) netlinkAddRoute(link netlink.Link, gwIP net.IP, subnet *net.IPNet, mtu int, srcIP net.IP, table, priority, rtype int) error {
 	newNlRoute := &netlink.Route{
 		Dst:       subnet,
 		LinkIndex: link.Attrs().Index,
@@ -223,6 +229,15 @@ func (c *Controller) netlinkAddRoute(link netlink.Link, gwIP net.IP, subnet *net
 	if mtu != 0 {
 		newNlRoute.MTU = mtu
 	}
+	if priority != 0 {
+		newNlRoute.Priority = priority
+	}
+	if rtype != 0 {
+		newNlRoute.Type = rtype
+	}
+	if rtype == unix.RTN_BLACKHOLE || rtype == unix.RTN_UNREACHABLE {
+		newNlRoute.LinkIndex = 0
+	}
 	err := util.GetNetLinkOps().RouteAdd(newNlRoute)
 	if err != nil {
 		return fmt.Errorf("failed to add route (gw: %v, subnet %v, mtu %d, src IP %v): %v", gwIP, subnet, mtu, srcIP, err)
@@ -230,11 +245,17 @@ func (c *Controller) netlinkAddRoute(link netlink.Link, gwIP net.IP, subnet *net
 	return nil
 }
 
-func (c *Controller) netlinkDelRoute(link netlink.Link, subnet *net.IPNet, table int) error {
+func (c *Controller) netlinkDelRoute(link netlink.Link, subnet *net.IPNet, table, priority, rtype int) error {
 	if subnet == nil {
 		return fmt.Errorf("cannot delete route with no valid subnet")
 	}
 	filter, mask := filterRouteByDstAndTable(link.Attrs().Index, subnet, table)
+	if rtype == unix.RTN_BLACKHOLE || rtype == unix.RTN_UNREACHABLE {
+		// non 0 link index for an unreachable or blackhole route returns 'invalid argument'
+		klog.V(5).Infof("Route Manager: changing link index to 0 for unreachable or blackhole route (Dst: %v, Table: %d, Priority: %d)",
+			*subnet, table, priority)
+		filter.LinkIndex = 0
+	}
 	existingRoutes, err := util.GetNetLinkOps().RouteListFiltered(netlink.FAMILY_ALL, filter, mask)
 	if err != nil {
 		return fmt.Errorf("failed to get routes for link %s: %v", link.Attrs().Name, err)
@@ -273,6 +294,11 @@ func (c *Controller) sync() {
 	for linkIndex, managedRoutes := range c.store {
 		for _, managedRoute := range managedRoutes {
 			filterRoute, filterMask := filterRouteByDstAndTable(linkIndex, managedRoute.Dst, managedRoute.Table)
+			if managedRoute.Type == unix.RTN_BLACKHOLE || managedRoute.Type == unix.RTN_UNREACHABLE {
+				// non 0 link index for an unreachable or blackhole route returns 'invalid argument'
+				klog.V(5).Infof("Route Manager: changing link index to 0 for unreachable or blackhole route %s", managedRoute.String())
+				filterRoute.LinkIndex = 0
+			}
 			existingRoutes, err := util.GetNetLinkOps().RouteListFiltered(netlink.FAMILY_ALL, filterRoute, filterMask)
 			if err != nil {
 				klog.Errorf("Route Manager: failed to list routes for link %d with route filter %s and mask filter %d: %v", linkIndex, filterRoute.String(), filterMask, err)
@@ -295,7 +321,7 @@ func (c *Controller) sync() {
 					}
 					continue
 				}
-				if err := c.applyRoute(link, managedRoute.Gw, managedRoute.Dst, managedRoute.MTU, managedRoute.Src, managedRoute.Table); err != nil {
+				if err := c.applyRoute(link, managedRoute.Gw, managedRoute.Dst, managedRoute.MTU, managedRoute.Src, managedRoute.Table, managedRoute.Priority, managedRoute.Type); err != nil {
 					klog.Errorf("Route Manager: failed to apply route (%s): %v", managedRoute.String(), err)
 				}
 			}

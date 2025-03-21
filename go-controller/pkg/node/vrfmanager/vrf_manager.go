@@ -2,6 +2,7 @@ package vrfmanager
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -295,6 +296,35 @@ func (vrfm *Controller) AddVRFRoutes(name string, routes []netlink.Route) error 
 	vrfDev.routes = append(vrfDev.routes, routes...)
 
 	return vrfm.sync(vrfDev)
+}
+
+// DeleteVRFRoutes deletes a set of routes from a VRF
+func (vrfm *Controller) DeleteVRFRoutes(name string, routes []netlink.Route) error {
+	vrfm.mu.Lock()
+	defer vrfm.mu.Unlock()
+
+	vrfLink, err := util.GetNetLinkOps().LinkByName(name)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve VRF device %s, err: %v", name, err)
+	}
+
+	vrf, ok := vrfm.vrfs[vrfLink.Attrs().Index]
+	if !ok {
+		return fmt.Errorf("failed to find VRF %s", name)
+	}
+	for _, route := range routes {
+		for i, cachedRoute := range vrf.routes {
+			if route.Dst.String() == cachedRoute.Dst.String() && route.Table == cachedRoute.Table {
+				vrf.routes = slices.Delete(vrf.routes, i, i+1)
+			}
+		}
+		if err := vrfm.routeManager.Del(route); err != nil {
+			return fmt.Errorf("failed to delete route for VRF device %s, err: %w", route, err)
+		}
+
+	}
+
+	return nil
 }
 
 // Repair deletes stale VRF device(s) on the host. This helps remove
