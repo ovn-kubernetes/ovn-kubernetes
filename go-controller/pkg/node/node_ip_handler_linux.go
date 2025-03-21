@@ -124,20 +124,22 @@ func (c *addressManager) delAddr(ipnet net.IPNet, linkIndex int) bool {
 }
 
 // ListAddresses returns all the addresses we know about
-func (c *addressManager) ListAddresses() []net.IP {
+func (c *addressManager) ListAddresses() ([]net.IP, []*net.IPNet) {
 	c.Lock()
 	defer c.Unlock()
 	addrs := sets.List(c.cidrs)
-	out := make([]net.IP, 0, len(addrs))
+	addresses := make([]net.IP, 0, len(addrs))
+	networkAddresses := make([]*net.IPNet, 0, len(addrs))
 	for _, addr := range addrs {
-		ip, _, err := net.ParseCIDR(addr)
+		ip, networkAddress, err := net.ParseCIDR(addr)
 		if err != nil {
 			klog.Errorf("Failed to parse %s: %v", addr, err)
 			continue
 		}
-		out = append(out, ip)
+		addresses = append(addresses, ip)
+		networkAddresses = append(networkAddresses, networkAddress)
 	}
-	return out
+	return addresses, networkAddresses
 }
 
 type subscribeFn func() (bool, chan netlink.AddrUpdate, error)
