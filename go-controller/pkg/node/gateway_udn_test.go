@@ -14,6 +14,7 @@ import (
 	nadfake "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
 	"github.com/stretchr/testify/mock"
 	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -1051,7 +1052,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 
 			routes, err := udnGateway.computeRoutesForUDN(mplink)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(routes).To(HaveLen(7))
+			Expect(routes).To(HaveLen(9))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(*routes[0].Dst).To(Equal(*ovntest.MustParseIPNet("172.16.1.0/24"))) // default service subnet
 			Expect(routes[0].LinkIndex).To(Equal(bridgelink.Attrs().Index))
@@ -1089,7 +1090,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
 	})
-	ovntest.OnSupportedPlatformsIt("should compute correct service routes for a user defined network", func() {
+	ovntest.OnSupportedPlatformsIt("should compute correct routes for a user defined network", func() {
 		config.Gateway.Interface = "eth0"
 		config.IPv4Mode = true
 		config.IPv6Mode = true
@@ -1122,7 +1123,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 
 			routes, err := udnGateway.computeRoutesForUDN(mplink)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(routes).To(HaveLen(8))
+			Expect(routes).To(HaveLen(10))
 			Expect(err).NotTo(HaveOccurred())
 			// 1st and 2nd routes are the service routes from user-provided config value
 			Expect(*routes[0].Dst).To(Equal(*config.Kubernetes.ServiceCIDRs[0]))
@@ -1157,6 +1158,16 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(*routes[7].Dst).To(Equal(*ovntest.MustParseIPNet("ae70::/60"))) // cluster subnet route
 			Expect(routes[7].LinkIndex).To(Equal(mplink.Attrs().Index))
 			Expect(routes[7].Gw.Equal(ovntest.MustParseIP("ae70::1"))).To(BeTrue())
+
+			// IPv4 default unreachable route
+			Expect(*routes[8].Dst).To(Equal(*ovntest.MustParseIPNet("0.0.0.0/0"))) // cluster subnet route
+			Expect(routes[8].Priority).To(Equal(4278198272))
+			Expect(routes[8].Type).To(Equal(unix.RTN_UNREACHABLE))
+
+			// IPv6 default unreachable route
+			Expect(*routes[9].Dst).To(Equal(*ovntest.MustParseIPNet("::/0"))) // cluster subnet route
+			Expect(routes[9].Priority).To(Equal(4278198272))
+			Expect(routes[9].Type).To(Equal(unix.RTN_UNREACHABLE))
 			return nil
 		})
 		Expect(err).NotTo(HaveOccurred())
