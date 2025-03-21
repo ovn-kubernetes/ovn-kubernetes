@@ -692,22 +692,52 @@ func PolicyEqualPredicate(p1, p2 *nbdb.LogicalRouterStaticRoutePolicy) bool {
 	return *p1 == *p2
 }
 
-// CreateOrReplaceLogicalRouterStaticRouteWithPredicate looks up a logical
-// router static route from the cache based on a given predicate. If it does not
-// exist, it creates the provided logical router static route. If it does, it
-// updates it. The logical router static route is added to the provided logical
-// router.
-// If more than one route matches the predicate on the router, the additional routes are removed.
-func CreateOrReplaceLogicalRouterStaticRouteWithPredicate(nbClient libovsdbclient.Client, routerName string,
-	lrsr *nbdb.LogicalRouterStaticRoute, p logicalRouterStaticRoutePredicate, fields ...interface{}) error {
+// CreateOrReplaceLogicalRouterStaticRouteWithPredicateOps executes ops
+// according to the following logic:
+//   - Looks up a logical router static route from the cache based on a given predicate.
+//   - If the route does not exist, it creates the provided logical router static
+//     route.
+//   - If it does, it updates it.
+//   - The logical router static route is added to the provided logical router.
+//   - If more than one route matches the predicate on the router, the additional
+//     routes are removed.
+func CreateOrReplaceLogicalRouterStaticRouteWithPredicate(
+	nbClient libovsdbclient.Client,
+	routerName string,
+	lrsr *nbdb.LogicalRouterStaticRoute,
+	p logicalRouterStaticRoutePredicate,
+	fields ...interface{},
+) error {
+	ops, err := CreateOrReplaceLogicalRouterStaticRouteWithPredicateOps(nbClient, nil, routerName, lrsr, p, fields...)
+	if err != nil {
+		return err
+	}
+	_, err = TransactAndCheck(nbClient, ops)
+	return err
+}
 
+// CreateOrReplaceLogicalRouterStaticRouteWithPredicateOps returns ops according
+// to the following logic:
+//   - Looks up a logical router static route from the cache based on a given predicate.
+//   - If the route does not exist, it creates the provided logical router static
+//     route.
+//   - If it does, it updates it.
+//   - The logical router static route is added to the provided logical router.
+//   - If more than one route matches the predicate on the router, the additional
+//     routes are removed.
+func CreateOrReplaceLogicalRouterStaticRouteWithPredicateOps(
+	nbClient libovsdbclient.Client,
+	ops []ovsdb.Operation,
+	routerName string,
+	lrsr *nbdb.LogicalRouterStaticRoute,
+	p logicalRouterStaticRoutePredicate,
+	fields ...interface{},
+) ([]ovsdb.Operation, error) {
 	lr := &nbdb.LogicalRouter{Name: routerName}
 	routes, err := GetRouterLogicalRouterStaticRoutesWithPredicate(nbClient, lr, p)
 	if err != nil {
-		return fmt.Errorf("unable to get logical router static routes with predicate on router %s: %w", routerName, err)
+		return nil, fmt.Errorf("unable to get logical router static routes with predicate on router %s: %w", routerName, err)
 	}
-
-	var ops []ovsdb.Operation
 
 	if len(routes) > 0 {
 		lrsr.UUID = routes[0].UUID
@@ -718,16 +748,16 @@ func CreateOrReplaceLogicalRouterStaticRouteWithPredicate(nbClient libovsdbclien
 		routes = routes[1:]
 		ops, err = DeleteLogicalRouterStaticRoutesOps(nbClient, ops, routerName, routes...)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	ops, err = CreateOrUpdateLogicalRouterStaticRoutesWithPredicateOps(nbClient, ops, routerName, lrsr, nil, fields...)
 	if err != nil {
-		return fmt.Errorf("unable to get create or update logical router static routes on router %s: %w", routerName, err)
+		return nil, fmt.Errorf("unable to get create or update logical router static routes on router %s: %w", routerName, err)
 	}
-	_, err = TransactAndCheck(nbClient, ops)
-	return err
+
+	return ops, nil
 }
 
 // DeleteLogicalRouterStaticRoutesWithPredicate looks up logical router static
