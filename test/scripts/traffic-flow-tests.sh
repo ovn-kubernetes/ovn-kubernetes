@@ -8,7 +8,7 @@ export OCI_BIN="${KIND_EXPERIMENTAL_PROVIDER:-docker}"
 export TFT_TEST_IMAGE="ghcr.io/ovn-kubernetes/kubernetes-traffic-flow-tests:latest"
 export TRAFFIC_FLOW_TESTS_DIRNAME="kubernetes-traffic-flow-tests"
 export TRAFFIC_FLOW_TESTS_REPO="https://github.com/ovn-kubernetes/kubernetes-traffic-flow-tests.git"
-export TRAFFIC_FLOW_TESTS_COMMIT="3e092f2c448bdffcddd5d025b97df53145ccea62"
+export TRAFFIC_FLOW_TESTS_COMMIT="d67f5d2ad6f14f00f6c21e1bcbf1eaa3152cc791"
 export TRAFFIC_FLOW_TESTS="${TRAFFIC_FLOW_TESTS:-1,2,3}"
 
 export SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
@@ -114,7 +114,7 @@ run() {
     source tft-venv/bin/activate || error_exit "Python environment missing. Missing setup?"
 
     local OUTPUT_BASE="${TRAFFIC_FLOW_TESTS_FULL_PATH}/ft-logs/result-"
-    time ./tft.py config.yaml -o "$OUTPUT_BASE" || error_exit "Test execution FAILED."
+    time ./tft.py -v debug config.yaml -o "$OUTPUT_BASE" || error_exit "Test execution FAILED."
     local RESULT_FILE=$(ls -rt "${OUTPUT_BASE}"*.json | tail -1)
     cp -vf "${RESULT_FILE}" /tmp/traffic_flow_test_result.json  || error_exit "Unable to locate results.json."
 
