@@ -114,7 +114,7 @@ run() {
     source tft-venv/bin/activate || error_exit "Python environment missing. Missing setup?"
 
     local OUTPUT_BASE="${TRAFFIC_FLOW_TESTS_FULL_PATH}/ft-logs/result-"
-    time ./tft.py config.yaml -o "$OUTPUT_BASE" || error_exit "Test execution FAILED."
+    time ./tft.py -v debug config.yaml -o "$OUTPUT_BASE" || error_exit "Test execution FAILED."
     local RESULT_FILE=$(ls -rt "${OUTPUT_BASE}"*.json | tail -1)
     cp -vf "${RESULT_FILE}" /tmp/traffic_flow_test_result.json  || error_exit "Unable to locate results.json."
 
