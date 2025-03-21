@@ -22,6 +22,7 @@ import (
 	logicalswitchmanager "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/ndp"
 )
 
 // IsPodLiveMigratable will return true if the pod belongs
@@ -482,17 +483,20 @@ func DiscoverLiveMigrationStatus(client *factory.WatchFactory, pod *corev1.Pod) 
 	return &status, nil
 }
 
-func ReconcileIPv4DefaultGatewayAfterLiveMigration(watchFactory *factory.WatchFactory, netInfo util.NetInfo, liveMigrationStatus *LiveMigrationStatus, interfaceName string) error {
+// ReconcileIPv4AfterLiveMigration will send a GARP after live migration
+// to update the default gw mac address to the node where the VM is running
+// now.
+func (r *DefaultGatewayReconciler) ReconcileIPv4AfterLiveMigration(liveMigrationStatus *LiveMigrationStatus) error {
 	if liveMigrationStatus.State != LiveMigrationTargetDomainReady {
 		return nil
 	}
 
-	targetNode, err := watchFactory.GetNode(liveMigrationStatus.TargetPod.Spec.NodeName)
+	targetNode, err := r.watchFactory.GetNode(liveMigrationStatus.TargetPod.Spec.NodeName)
 	if err != nil {
 		return err
 	}
 
-	lrpJoinAddress, err := util.ParseNodeGatewayRouterJoinNetwork(targetNode, netInfo.GetNetworkName())
+	lrpJoinAddress, err := util.ParseNodeGatewayRouterJoinNetwork(targetNode, r.netInfo.GetNetworkName())
 	if err != nil {
 		return err
 	}
@@ -503,16 +507,63 @@ func ReconcileIPv4DefaultGatewayAfterLiveMigration(watchFactory *factory.WatchFa
 	}
 
 	lrpMAC := util.IPAddrToHWAddr(lrpJoinIPv4)
-	for _, subnet := range netInfo.Subnets() {
+	for _, subnet := range r.netInfo.Subnets() {
 		gwIP := util.GetNodeGatewayIfAddr(subnet.CIDR).IP.To4()
 		if gwIP == nil {
 			continue
 		}
 		garp := util.GARP{IP: gwIP, MAC: &lrpMAC}
-		if err := util.BroadcastGARP(interfaceName, garp); err != nil {
+		if err := util.BroadcastGARP(r.interfaceName, garp); err != nil {
 			return err
 		}
 	}
-
 	return nil
+}
+
+// ReconcileIPv6AfterLiveMigration will do two things at VM's:
+// - Remove ipv6 default gw path from VM's node before live migration
+// - Add ipv6 default gw path from VM's node after live migration
+// This is done by sending a pair of unsolicited RA's one with lifetime=0
+// (to remove the gateway path) another with lifetime=max to add the new
+// default gateway path
+func (r *DefaultGatewayReconciler) ReconcileIPv6AfterLiveMigration(liveMigration *LiveMigrationStatus) error {
+	if liveMigration.State != LiveMigrationTargetDomainReady {
+		return nil
+	}
+	sourceNode, err := r.watchFactory.GetNode(liveMigration.SourcePod.Spec.NodeName)
+	if err != nil {
+		return err
+	}
+	sourceNodeJoinAddrs, err := util.ParseNodeGatewayRouterJoinAddrs(sourceNode, r.netInfo.GetNetworkName())
+	if err != nil {
+		return err
+	}
+	targetNode, err := r.watchFactory.GetNode(liveMigration.TargetPod.Spec.NodeName)
+	if err != nil {
+		return err
+	}
+	targetNodeJoinAddrs, err := util.ParseNodeGatewayRouterJoinAddrs(targetNode, r.netInfo.GetNetworkName())
+	if err != nil {
+		return err
+	}
+	return ndp.SendRouterAdvertisements(r.interfaceName,
+		newRouterAdvertisementFromJoinIPAndLifetime(sourceNodeJoinAddrs[0].IP, 0),
+		newRouterAdvertisementFromJoinIPAndLifetime(targetNodeJoinAddrs[0].IP, 65535),
+	)
+}
+
+// newRouterAdvertisementFromJoinIPAndLifetime apart from calculating the LLA and mac for source
+// mac/ip from the join ip address and adding the Lifetime is configuring the
+// destination ip/mac with ipv6 multicast all nodes, this way we don't need to
+// discover/pass the VM's network lla/mac, this RA is kind of idempotent so if
+// other VM's receive this it's ok, since it match with the network configuration
+func newRouterAdvertisementFromJoinIPAndLifetime(ip net.IP, lifetime uint16) ndp.RouterAdvertisement {
+	sourceMAC := util.IPAddrToHWAddr(ip)
+	return ndp.RouterAdvertisement{
+		SourceMAC:      sourceMAC,
+		SourceIP:       util.HWAddrToIPv6LLA(sourceMAC),
+		DestinationMAC: net.HardwareAddr{0x33, 0x33, 0, 0, 0, 0x1},
+		DestinationIP:  net.IPv6linklocalallnodes,
+		Lifetime:       lifetime,
+	}
 }
