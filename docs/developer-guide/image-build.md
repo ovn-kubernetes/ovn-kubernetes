@@ -21,8 +21,8 @@ To build images locally, use the following [Makefile](https://github.com/ovn-kub
 
 ```bash
 $ cd dist/images
-$ make fedora
-$ make ubuntu
+$ make fedora-image
+$ make ubuntu-image
 ```
 
 The build will create an image called ovn-kube-fedora:latest or ovn-kube-ubuntu:latest, which can be re-tagged.
