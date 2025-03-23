@@ -18,6 +18,8 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
+
 	"github.com/pkg/errors"
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
@@ -43,9 +45,6 @@ const (
 	retryInterval        = 1 * time.Second  // polling interval timer
 	retryTimeout         = 40 * time.Second // polling timeout
 	rolloutTimeout       = 10 * time.Minute
-	agnhostImage         = "registry.k8s.io/e2e-test-images/agnhost:2.26"
-	agnhostImageNew      = "registry.k8s.io/e2e-test-images/agnhost:2.53"
-	iperf3Image          = "quay.io/sronanrh/iperf"
 	redirectIP           = "123.123.123.123"
 	redirectPort         = "13337"
 	exContainerName      = "tcp-continuous-client"
@@ -94,7 +93,7 @@ func setupHostRedirectPod(f *framework.Framework, node *v1.Node, exContainerName
 			Containers: []v1.Container{
 				{
 					Name:    tcpServer,
-					Image:   agnhostImage,
+					Image:   images.AgnHost(),
 					Command: command,
 				},
 			},
@@ -135,7 +134,7 @@ func checkContinuousConnectivity(f *framework.Framework, nodeName, podName, host
 			Containers: []v1.Container{
 				{
 					Name:    contName,
-					Image:   agnhostImage,
+					Image:   images.AgnHost(),
 					Command: command,
 				},
 			},
@@ -221,7 +220,7 @@ func checkConnectivityPingToHost(f *framework.Framework, nodeName, podName, host
 			Containers: []v1.Container{
 				{
 					Name:    contName,
-					Image:   agnhostImage,
+					Image:   images.AgnHost(),
 					Command: command,
 					Args:    args,
 				},
@@ -276,7 +275,7 @@ func getPodGWRoute(f *framework.Framework, nodeName string, podName string) net.
 			Containers: []v1.Container{
 				{
 					Name:    contName,
-					Image:   agnhostImage,
+					Image:   images.AgnHost(),
 					Command: command,
 				},
 			},
@@ -515,7 +514,7 @@ func createPod(f *framework.Framework, podName, nodeSelector, namespace string, 
 			Containers: []v1.Container{
 				{
 					Name:    contName,
-					Image:   agnhostImage,
+					Image:   images.AgnHost(),
 					Command: command,
 				},
 			},
@@ -1267,7 +1266,7 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 			// the client uses the netexec command from the agnhost image, which is able to receive commands for poking other
 			// addresses.
 			// CAP NET_ADMIN is needed to remove neighbor entries for ARP/NS flap tests
-			externalIpv4, externalIpv6 = createClusterExternalContainer(clientContainerName, agnhostImage, []string{"--network", "kind", "-P", "--cap-add", "NET_ADMIN"}, []string{"netexec", "--http-port=80"})
+			externalIpv4, externalIpv6 = createClusterExternalContainer(clientContainerName, images.AgnHost(), []string{"--network", "kind", "-P", "--cap-add", "NET_ADMIN"}, []string{"netexec", "--http-port=80"})
 		})
 
 		ginkgo.AfterEach(func() {
@@ -1673,7 +1672,7 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 			ginkgo.By("Creating an external container to send the traffic from")
 			// the client uses the netexec command from the agnhost image, which is able to receive commands for poking other
 			// addresses.
-			createClusterExternalContainer(clientContainerName, agnhostImage, []string{"--network", "kind", "-P"}, []string{"netexec", "--http-port=80"})
+			createClusterExternalContainer(clientContainerName, images.AgnHost(), []string{"--network", "kind", "-P"}, []string{"netexec", "--http-port=80"})
 
 			// If `kindexgw` exists, connect client container to it
 			runCommand(containerRuntime, "network", "connect", "kindexgw", clientContainerName)
@@ -1827,7 +1826,7 @@ var _ = ginkgo.Describe("e2e ingress to host-networked pods traffic validation",
 			ginkgo.By("Creating an external container to send the traffic from")
 			// the client uses the netexec command from the agnhost image, which is able to receive commands for poking other
 			// addresses.
-			externalIpv4, externalIpv6 = createClusterExternalContainer(clientContainerName, agnhostImage, []string{"--network", "kind", "-P"}, []string{"netexec", "--http-port=80"})
+			externalIpv4, externalIpv6 = createClusterExternalContainer(clientContainerName, images.AgnHost(), []string{"--network", "kind", "-P"}, []string{"netexec", "--http-port=80"})
 		})
 
 		ginkgo.AfterEach(func() {

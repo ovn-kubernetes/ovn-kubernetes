@@ -8,6 +8,7 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
 
 	v1 "k8s.io/api/core/v1"
 	clientset "k8s.io/client-go/kubernetes"
@@ -67,8 +68,7 @@ func removeStaticPodFile(nodeName string, podFile string) {
 var _ = ginkgo.Describe("Creating a static pod on a node", func() {
 
 	const (
-		podFile      string = "static-pod.yaml"
-		agnhostImage string = "registry.k8s.io/e2e-test-images/agnhost:2.26"
+		podFile string = "static-pod.yaml"
 	)
 
 	f := wrappedTestFramework("staticpods")
@@ -100,7 +100,7 @@ spec:
     - name: web 
       image: %s
       command: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
-`, f.Namespace.Name, agnhostImage)
+`, f.Namespace.Name, images.AgnHost())
 		createStaticPod(f, nodeName, staticPodYaml)
 		err = waitForPodRunningInNamespaceTimeout(f.ClientSet, podName, f.Namespace.Name, time.Second*30)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())

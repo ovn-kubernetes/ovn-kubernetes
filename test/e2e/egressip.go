@@ -16,6 +16,7 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
 
 	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
 	"github.com/onsi/ginkgo/v2"
@@ -1990,7 +1991,7 @@ spec:
 		targetNode.name = externalKindContainerName
 		externalKindIPv4, _ := createClusterExternalContainer(
 			externalKindContainerName,
-			agnhostImage,
+			images.AgnHost(),
 			[]string{"--privileged", "--network", "kind"},
 			[]string{"pause"},
 		)

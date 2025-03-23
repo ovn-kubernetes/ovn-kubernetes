@@ -15,6 +15,7 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
 
 	v1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
@@ -1427,7 +1428,7 @@ spec:
 		BeforeEach(func() {
 			externalIpv4, externalIpv6 = createClusterExternalContainer(
 				externalContainerName,
-				"registry.k8s.io/e2e-test-images/agnhost:2.45",
+				images.AgnHost(),
 				runExternalContainerCmd(),
 				httpServerContainerCmd(port),
 			)

@@ -1073,7 +1073,7 @@ fi
 			for _, node := range nodes {
 				pod, err := createPod(fr, "testpod-"+node.Name, node.Name, namespace, []string{"bash", "-c"}, map[string]string{}, func(pod *corev1.Pod) {
 					pod.Annotations = annotations
-					pod.Spec.Containers[0].Image = iperf3Image
+					pod.Spec.Containers[0].Image = images.IPerf3()
 					pod.Spec.Containers[0].Args = []string{iperfServerScript + "\n sleep infinity"}
 
 				})
@@ -1160,7 +1160,7 @@ fi
 		createIperfExternalContainer = func(name string) (string, string) {
 			return createClusterExternalContainer(
 				name,
-				iperf3Image,
+				images.IPerf3(),
 				[]string{"--network", "kind", "--entrypoint", "/bin/bash"},
 				[]string{"-c", "sleep infinity"},
 			)
