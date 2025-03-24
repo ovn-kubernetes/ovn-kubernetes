@@ -485,7 +485,8 @@ func generateL2Subnets(v4, v6 string) udnv1.DualStackCIDRs {
 	var subnets udnv1.DualStackCIDRs
 	if isIPv4Supported() {
 		subnets = append(subnets, udnv1.CIDR(v4))
-	} else if isIPv6Supported() {
+	}
+	if isIPv6Supported() {
 		subnets = append(subnets, udnv1.CIDR(v6))
 	}
 	return subnets
