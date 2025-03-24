@@ -739,8 +739,7 @@ do not support readiness probes with UDN so the readiness probe is not an issue,
 also disrupting dns resolution is not a big issue since client would retry the
 resolution.
 
-The main problem is the local gateway traffic so we should document that so
-customers are prepare for it.
+At local gateway all the egress traffic goes over the management port at the switch, so this gateway mode is going to be the one affected by it, since SNAT is going to change from gateway router to ovn_cluster_router, this has to be documented so customers are prepare for it.
 
 ## OVN Kubernetes Version Skew
 
