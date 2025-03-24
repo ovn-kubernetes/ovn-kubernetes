@@ -25,6 +25,10 @@ func NewPrimaryNetwork(networkManager networkmanager.Interface) *UserDefinedPrim
 	}
 }
 
+func (p *UserDefinedPrimaryNetwork) TopologyType() string {
+	return p.activeNetwork.TopologyType()
+}
+
 func (p *UserDefinedPrimaryNetwork) InterfaceName() string {
 	return "ovn-udn1"
 }

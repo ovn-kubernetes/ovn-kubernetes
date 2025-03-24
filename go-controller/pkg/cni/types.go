@@ -166,6 +166,9 @@ type PodRequest struct {
 
 	// the DeviceInfo struct
 	deviceInfo nadapi.DeviceInfo
+
+	// the topology type
+	toplogy string
 }
 
 type podRequestFunc func(request *PodRequest, clientset *ClientSet, kubeAuth *KubeAPIAuth, networkManager networkmanager.Interface) ([]byte, error)

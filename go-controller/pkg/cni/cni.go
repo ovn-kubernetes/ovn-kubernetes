@@ -4,10 +4,14 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	current "github.com/containernetworking/cni/pkg/types/100"
 	v1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb"
+
+	ovsops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -345,6 +349,10 @@ func HandlePodRequest(
 // instance of the pod in the apiserver, see checkCancelSandbox for more info.
 // If kube api is not available from the CNI, pass nil to skip this check.
 func getCNIResult(pr *PodRequest, getter PodInfoGetter, podInterfaceInfo *PodInterfaceInfo) (*current.Result, error) {
+	if err := checkBridgeMapping(pr.toplogy, pr.netName); err != nil {
+		return nil, fmt.Errorf("failed bridge mapping validation: %w", err)
+	}
+
 	interfacesArray, err := podRequestInterfaceOps.ConfigureInterface(pr, getter, podInterfaceInfo)
 	if err != nil {
 		return nil, fmt.Errorf("failed to configure pod interface: %v", err)
@@ -404,6 +412,7 @@ func (pr *PodRequest) buildPrimaryUDNPodRequest(
 		netName:    primaryUDN.NetworkName(),
 		nadName:    primaryUDN.NADName(),
 		deviceInfo: v1.DeviceInfo{},
+		toplogy:    primaryUDN.TopologyType(),
 	}
 	req.ctx, req.cancel = context.WithTimeout(context.Background(), 2*time.Minute)
 	return req
@@ -419,4 +428,36 @@ func (pr *PodRequest) buildPodInterfaceInfo(annotations map[string]string, podAn
 		pr.netName,
 		pr.CNIConf.MTU,
 	)
+}
+
+func checkBridgeMapping(topology string, networkName string) error {
+	if topology != types.LocalnetTopology || networkName == types.DefaultNetworkName || !config.OVNKubernetesFeature.EnableInterconnect {
+		return nil
+	}
+
+	ctx := context.Background()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	ovsClient, err := libovsdb.NewOVSClient(ctx.Done())
+	if err != nil {
+		return fmt.Errorf("failed to create ovs client: %w", err)
+	}
+
+	openvSwitch, err := ovsops.GetOpenvSwitch(ovsClient)
+	if err != nil {
+		return fmt.Errorf("failed getting openvswitch: %w", err)
+	}
+
+	ovnBridgeMappings := openvSwitch.ExternalIDs["ovn-bridge-mappings"]
+
+	bridgeMappings := strings.Split(ovnBridgeMappings, ",")
+	for _, bridgeMapping := range bridgeMappings {
+		networkBridgeAssociation := strings.Split(bridgeMapping, ":")
+		if len(networkBridgeAssociation) == 2 && networkBridgeAssociation[0] == networkName {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("failed to find bridge mapping for network: %q; Current ovn-bridge-mappings: %q", networkName, ovnBridgeMappings)
 }
