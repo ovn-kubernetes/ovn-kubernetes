@@ -12,12 +12,15 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	. "github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 	. "github.com/onsi/gomega"
 	"gopkg.in/yaml.v2"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/diagnostics"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
@@ -82,6 +85,10 @@ func newControllerRuntimeClient() (crclient.Client, error) {
 		return nil, err
 	}
 	err = corev1.AddToScheme(scheme)
+	if err != nil {
+		return nil, err
+	}
+	err = udnv1.AddToScheme(scheme)
 	if err != nil {
 		return nil, err
 	}
@@ -1417,12 +1424,13 @@ fi
 			cmd         func() string
 		}
 		var (
-			nad      *nadv1.NetworkAttachmentDefinition
-			vm       *kubevirtv1.VirtualMachine
-			vmi      *kubevirtv1.VirtualMachineInstance
-			cidrIPv4 = "10.128.0.0/24"
-			cidrIPv6 = "2010:100:200::0/60"
-			restart  = testCommand{
+			udnName     string
+			networkName string
+			vm          *kubevirtv1.VirtualMachine
+			vmi         *kubevirtv1.VirtualMachineInstance
+			cidrIPv4    = "10.128.0.0/24"
+			cidrIPv6    = "2010:100:200::0/60"
+			restart     = testCommand{
 				description: "restart",
 				cmd: func() {
 					By("Restarting vm")
@@ -1468,7 +1476,7 @@ runcmd:
 				cmd: func() string {
 					vm = fedoraWithTestToolingVM(nil /*labels*/, nil /*annotations*/, nil /*nodeSelector*/, kubevirtv1.NetworkSource{
 						Multus: &kubevirtv1.MultusNetwork{
-							NetworkName: nad.Name,
+							NetworkName: udnName,
 						},
 					}, userData, networkData)
 					createVirtualMachine(vm)
@@ -1495,7 +1503,7 @@ runcmd:
 				cmd: func() string {
 					vmi = fedoraWithTestToolingVMI(nil /*labels*/, nil /*annotations*/, nil /*nodeSelector*/, kubevirtv1.NetworkSource{
 						Multus: &kubevirtv1.MultusNetwork{
-							NetworkName: nad.Name,
+							NetworkName: udnName,
 						},
 					}, userData, networkData)
 					createVirtualMachineInstance(vmi)
@@ -1584,9 +1592,47 @@ runcmd:
 				Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, netConfig)).To(Succeed())
 			}
 
-			By("Creating NetworkAttachmentDefinition")
-			nad = generateNAD(netConfig)
-			Expect(crClient.Create(context.Background(), nad)).To(Succeed())
+			if td.topology == "layer2" {
+				By("Creating ClusterUserDefinedNetwork")
+				cudn := &udnv1.ClusterUserDefinedNetwork{
+					ObjectMeta: metav1.ObjectMeta{
+						GenerateName: netConfig.name,
+					},
+					Spec: udnv1.ClusterUserDefinedNetworkSpec{
+						Network: udnv1.NetworkSpec{
+							Topology: udnv1.NetworkTopologyLayer2,
+							Layer2: &udnv1.Layer2Config{
+								Role:    udnv1.NetworkRole(capitalizeFirstLetter(td.role)),
+								Subnets: generateL2Subnets(cidrIPv4, cidrIPv6),
+								IPAM: &udnv1.IPAMConfig{
+									Lifecycle: udnv1.IPAMLifecyclePersistent,
+								},
+							},
+						},
+						NamespaceSelector: metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
+							Key:      "kubernetes.io/metadata.name",
+							Operator: metav1.LabelSelectorOpIn,
+							Values:   []string{fr.Namespace.Name},
+						}}},
+					},
+				}
+				Expect(crClient.Create(context.Background(), cudn)).To(Succeed())
+				DeferCleanup(func() {
+					if e2eframework.TestContext.DeleteNamespace && (e2eframework.TestContext.DeleteNamespaceOnFailure || !CurrentSpecReport().Failed()) {
+						crClient.Delete(context.Background(), cudn)
+					}
+				})
+				Eventually(clusterUserDefinedNetworkReadyFunc(fr.DynamicClient, cudn.Name), 5*time.Second, time.Second).Should(gomega.Succeed())
+				udnName = cudn.Name
+				networkName = util.GenerateCUDNNetworkName(cudn.Name)
+			} else {
+				By("Creating NetworkAttachmentDefinition")
+				nad := generateNAD(netConfig)
+				Expect(crClient.Create(context.Background(), nad)).To(Succeed())
+				udnName = nad.Name
+				networkName = netConfig.networkName
+			}
+
 			workerNodeList, err := fr.ClientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{LabelSelector: labels.FormatLabels(map[string]string{"node-role.kubernetes.io/worker": ""})})
 			Expect(err).NotTo(HaveOccurred())
 			selectedNodes = workerNodeList.Items
@@ -1712,7 +1758,7 @@ runcmd:
 				targetNode, err := fr.ClientSet.CoreV1().Nodes().Get(context.Background(), vmi.Status.MigrationState.TargetNode, metav1.GetOptions{})
 				Expect(err).ToNot(HaveOccurred(), step)
 
-				expectedGatewayMAC, err := kubevirt.GenerateGatewayMAC(targetNode, netConfig.networkName)
+				expectedGatewayMAC, err := kubevirt.GenerateGatewayMAC(targetNode, networkName)
 				Expect(err).ToNot(HaveOccurred(), step)
 
 				Expect(err).ToNot(HaveOccurred(), step)
@@ -2054,3 +2100,12 @@ chpasswd: { expire: False }
 	})
 
 })
+
+func capitalizeFirstLetter(s string) string {
+	if s == "" {
+		return s
+	}
+	r := []rune(s) // Convert to rune slice to handle Unicode characters
+	r[0] = unicode.ToUpper(r[0])
+	return string(r)
+}
