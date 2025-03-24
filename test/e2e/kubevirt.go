@@ -14,12 +14,17 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	. "github.com/onsi/gomega"
 	"gopkg.in/yaml.v2"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	rav1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
+	applycfgrav1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/applyconfiguration/routeadvertisements/v1"
+	raclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned"
+	crdtypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
 	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/diagnostics"
@@ -37,6 +42,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
+	applymetav1 "k8s.io/client-go/applyconfigurations/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/retry"
@@ -1547,6 +1553,7 @@ runcmd:
 			test        testCommand
 			topology    string
 			role        string
+			ingress     string
 		}
 		DescribeTable("should keep ip", func(td testData) {
 			if td.role == "" {
@@ -1600,6 +1607,9 @@ runcmd:
 				cudn := &udnv1.ClusterUserDefinedNetwork{
 					ObjectMeta: metav1.ObjectMeta{
 						GenerateName: netConfig.name,
+						Annotations: map[string]string{
+							"ingress": td.ingress,
+						},
 					},
 					Spec: udnv1.ClusterUserDefinedNetworkSpec{
 						Network: udnv1.NetworkSpec{
@@ -1628,6 +1638,41 @@ runcmd:
 				Eventually(clusterUserDefinedNetworkReadyFunc(fr.DynamicClient, cudn.Name), 5*time.Second, time.Second).Should(gomega.Succeed())
 				udnName = cudn.Name
 				networkName = util.GenerateCUDNNetworkName(cudn.Name)
+				if td.ingress == "routed" {
+					ginkgo.By("create router advertisement")
+					raClient, err := raclientset.NewForConfig(fr.ClientConfig())
+					Expect(err).NotTo(HaveOccurred())
+
+					raApplyCfg := applycfgrav1.RouteAdvertisements(udnName).
+						WithSpec(
+							applycfgrav1.RouteAdvertisementsSpec().
+								WithAdvertisements(rav1.PodNetwork).
+								WithNodeSelector(&applymetav1.LabelSelectorApplyConfiguration{}).
+								WithFRRConfigurationSelector(&applymetav1.LabelSelectorApplyConfiguration{}).
+								WithNetworkSelectors(crdtypes.NetworkSelectors{{
+									NetworkSelectionType: crdtypes.ClusterUserDefinedNetworks,
+									ClusterUserDefinedNetworkSelector: &crdtypes.ClusterUserDefinedNetworkSelector{
+										NetworkSelector: metav1.LabelSelector{
+											MatchLabels: map[string]string{"namespace": fr.Namespace.Name},
+										}}}}),
+						)
+					ra, err := raClient.K8sV1().RouteAdvertisements().Apply(context.TODO(), raApplyCfg, metav1.ApplyOptions{
+						FieldManager: fr.Namespace.Name,
+					})
+					Expect(err).ToNot(HaveOccurred())
+					ginkgo.DeferCleanup(func() {
+						if e2eframework.TestContext.DeleteNamespace && (e2eframework.TestContext.DeleteNamespaceOnFailure || !CurrentSpecReport().Failed()) {
+							raClient.K8sV1().RouteAdvertisements().Delete(context.TODO(), ra.Name, metav1.DeleteOptions{})
+						}
+					})
+
+					ginkgo.By("ensure route advertisement matching CUDN was created successfully")
+					Eventually(func(g Gomega) string {
+						ra, err = raClient.K8sV1().RouteAdvertisements().Get(context.TODO(), ra.Name, metav1.GetOptions{})
+						g.Expect(err).ToNot(HaveOccurred())
+						return ra.Status.Status
+					}, 30*time.Second, time.Second).Should(gomega.Equal("Accepted"))
+				}
 			} else {
 				By("Creating NetworkAttachmentDefinition")
 				nad := generateNAD(netConfig)
@@ -1777,7 +1822,11 @@ runcmd:
 				if td.role != "" {
 					role = td.role
 				}
-				return fmt.Sprintf("after %s of %s with %s/%s", td.test.description, td.resource.description, role, td.topology)
+				ingress := "snat"
+				if td.ingress != "" {
+					ingress = td.ingress
+				}
+				return fmt.Sprintf("after %s of %s with %s/%s with %q ingress", td.test.description, td.resource.description, role, td.topology, ingress)
 			},
 			Entry(nil, testData{
 				resource: virtualMachine,
