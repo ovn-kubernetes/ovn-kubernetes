@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
@@ -539,9 +540,11 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 		})
 
 		ginkgo.DescribeTable("correctly adds and deletes pod IPs from secondary network namespace address set",
-			func(topology string, remote bool) {
+			func(topology string, remote bool, ovnMapping string, expectedError string) {
 				app.Action = func(*cli.Context) error {
 					var err error
+					os.Setenv("K8S_NODE", "node1")
+					ginkgo.DeferCleanup(os.Unsetenv, "K8S_NODE")
 
 					subnets := "10.1.0.0/16"
 					nodeSubnet := ""
@@ -581,6 +584,12 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 					namespace1 := *newNamespace(namespaceName1)
 
 					config.EnableMulticast = false
+
+					if ovnMapping != "" {
+						fakeOvn.SetExternalIDs(map[string]string{"ovn-bridge-mappings": ovnMapping})
+						ginkgo.DeferCleanup(fakeOvn.ClearExternalIDs)
+					}
+
 					startOvn(initialDB, watchNodes, []corev1.Node{node}, []corev1.Namespace{namespace1}, nil, nil,
 						[]nettypes.NetworkAttachmentDefinition{*nad}, []testPod{}, map[string]string{labelName: labelVal})
 
@@ -615,8 +624,13 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 						gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					}
 
-					ocInfo.asf.EventuallyExpectAddressSetWithAddresses(namespaceName1, []string{"10.1.1.1"})
-
+					if expectedError == "" {
+						ocInfo.asf.EventuallyExpectAddressSetWithAddresses(namespaceName1, []string{"10.1.1.1"})
+					} else {
+						ocInfo.asf.EventuallyExpectAddressSetWithAddressesFailure(namespaceName1, []string{"10.1.1.1"})
+						gomega.Expect(fakeOvn.fakeRecorder.Events).To(gomega.HaveLen(1))
+						gomega.Expect(<-fakeOvn.fakeRecorder.Events).To(gomega.Equal(`Warning ErrorReconcilingPod failed to find bridge mapping for network: "network1" on node "node1"; Current ovn-bridge-mappings: ""`))
+					}
 					// Delete the pod
 					ginkgo.By("Deleting the pod")
 					err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(nPodTest.namespace).Delete(context.TODO(), nPodTest.podName, metav1.DeleteOptions{})
@@ -629,12 +643,52 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 				err := app.Run([]string{app.Name})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			},
-			ginkgo.Entry("on local zone for layer3 topology", ovntypes.Layer3Topology, false),
-			ginkgo.Entry("on remote zone for layer3 topology", ovntypes.Layer3Topology, true),
-			ginkgo.Entry("on local zone for layer2 topology", ovntypes.Layer2Topology, false),
-			ginkgo.Entry("on remote zone for layer2 topology", ovntypes.Layer2Topology, true),
-			ginkgo.Entry("on local zone for localnet topology", ovntypes.LocalnetTopology, false),
-			ginkgo.Entry("on remote zone for localnet topology", ovntypes.LocalnetTopology, true),
+			NewTestCase(ovntypes.Layer3Topology).Build(),
+			NewTestCase(ovntypes.Layer3Topology).WithRemote().Build(),
+			NewTestCase(ovntypes.Layer2Topology).Build(),
+			NewTestCase(ovntypes.Layer2Topology).WithRemote().Build(),
+			NewTestCase(ovntypes.LocalnetTopology).Build(),
+			NewTestCase(ovntypes.LocalnetTopology).WithRemote().WithOVNMapping("physnet:breth0,network1:ovsbr1").Build(),
+			NewTestCase(ovntypes.LocalnetTopology).WithRemote().ExpectFailure(
+				`Warning ErrorReconcilingPod failed to find bridge mapping for network: "network1", node "node1", ovn-bridge-mappings: ""`,
+			).Build(),
 		)
 	})
 })
+
+type TestCaseBuilder struct {
+	topology      string
+	remote        bool
+	expectedError string
+	mapping       string
+}
+
+func NewTestCase(topology string) *TestCaseBuilder {
+	return &TestCaseBuilder{topology: topology}
+}
+
+func (b *TestCaseBuilder) WithRemote() *TestCaseBuilder {
+	b.remote = true
+	return b
+}
+
+func (b *TestCaseBuilder) ExpectFailure(msg string) *TestCaseBuilder {
+	b.expectedError = msg
+	return b
+}
+
+func (b *TestCaseBuilder) Build() ginkgo.TableEntry {
+	zone := "local"
+	if b.remote {
+		zone = "remote"
+	}
+
+	return ginkgo.Entry(
+		fmt.Sprintf("on %s zone for %s topology", zone, b.topology), b.topology, b.remote, b.mapping, b.expectedError,
+	)
+}
+
+func (b *TestCaseBuilder) WithOVNMapping(mapping string) *TestCaseBuilder {
+	b.mapping = mapping
+	return b
+}
