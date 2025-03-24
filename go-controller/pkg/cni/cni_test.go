@@ -15,14 +15,18 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes/fake"
 
+	"github.com/ovn-org/libovsdb/client"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
+	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	v1nadmocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
 	v1mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/client-go/listers/core/v1"
 	testnm "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/networkmanager"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/vswitchd"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -325,4 +329,70 @@ func dummyPrimaryUDNConfig(ns, nadName string) string {
             "role": "primary"
     }
 `, namespacedName)
+}
+
+var _ = Describe("checkBridgeMapping", func() {
+	const networkName = "test-network"
+
+	BeforeEach(func() {
+		config.OVNKubernetesFeature.EnableInterconnect = true
+	})
+
+	Context("when topology is not localnet", func() {
+		It("should return nil without checking bridge mappings", func() {
+			ovsClient, err := newOVSClientWithExternalIDs(map[string]string{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(checkBridgeMapping(ovsClient, ovntypes.Layer2Topology, networkName)).To(Succeed())
+		})
+	})
+
+	Context("when using default network", func() {
+		It("should return nil without checking bridge mappings", func() {
+			ovsClient, err := newOVSClientWithExternalIDs(map[string]string{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(checkBridgeMapping(ovsClient, ovntypes.LocalnetTopology, ovntypes.DefaultNetworkName)).To(Succeed())
+		})
+	})
+
+	Context("when OVN Interconnect is disabled", func() {
+		BeforeEach(func() {
+			config.OVNKubernetesFeature.EnableInterconnect = false
+		})
+
+		It("should return nil without checking bridge mappings", func() {
+			ovsClient, err := newOVSClientWithExternalIDs(map[string]string{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(checkBridgeMapping(ovsClient, ovntypes.LocalnetTopology, networkName)).To(Succeed())
+		})
+	})
+
+	Context("when bridge mapping exists in external IDs", func() {
+		It("should return nil if the bridge mapping is found", func() {
+			ovsClient, err := newOVSClientWithExternalIDs(map[string]string{
+				"ovn-bridge-mappings": "test-network:br-int",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(checkBridgeMapping(ovsClient, ovntypes.LocalnetTopology, networkName)).To(Succeed())
+		})
+
+		It("should return error if the bridge mapping isn't found", func() {
+			ovsClient, err := newOVSClientWithExternalIDs(map[string]string{
+				"ovn-bridge-mappings": "other-network:br-int",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(checkBridgeMapping(ovsClient, ovntypes.LocalnetTopology, networkName).Error()).To(
+				Equal(`failed to find bridge mapping for network: "test-network"; Current ovn-bridge-mappings: "other-network:br-int"`))
+		})
+	})
+})
+
+func newOVSClientWithExternalIDs(externalIDs map[string]string) (client.Client, error) {
+	ovsClient, _, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
+		OVSData: []libovsdbtest.TestData{
+			&vswitchd.OpenvSwitch{
+				ExternalIDs: externalIDs,
+			},
+		},
+	})
+	return ovsClient, err
 }
