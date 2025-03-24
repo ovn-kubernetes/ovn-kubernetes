@@ -301,7 +301,7 @@ var _ = Describe("Multi Homing", func() {
 					By("tearing down the localnet underlay")
 					Expect(teardownUnderlay(pods, defaultOvsBridge)).To(Succeed())
 				}()
-				Expect(setupUnderlay(pods, defaultOvsBridge, "", netConfig)).To(Succeed())
+				Expect(setupUnderlay(pods, defaultOvsBridge, "", netConfig.networkName, netConfig.vlanID)).To(Succeed())
 
 				nad := generateNAD(netConfig)
 				By(fmt.Sprintf("creating the attachment configuration: %v\n", nad))
@@ -550,7 +550,7 @@ var _ = Describe("Multi Homing", func() {
 					}()
 
 					const secondaryInterfaceName = "eth1"
-					Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, netConfig)).To(Succeed())
+					Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, netConfig.networkName, netConfig.vlanID)).To(Succeed())
 				}
 
 				By("creating the attachment configuration")
@@ -937,7 +937,7 @@ var _ = Describe("Multi Homing", func() {
 					By("setting up the localnet underlay")
 					nodes = ovsPods(cs)
 					Expect(nodes).NotTo(BeEmpty())
-					Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, netConfig)).To(Succeed())
+					Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, netConfig.networkName, netConfig.vlanID)).To(Succeed())
 				})
 
 				BeforeEach(func() {
@@ -1323,7 +1323,7 @@ var _ = Describe("Multi Homing", func() {
 						})
 
 					By("setting up the localnet underlay with a trunked configuration")
-					Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, netConfig)).To(Succeed(), "configuring the OVS bridge")
+					Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, netConfig.networkName, netConfig.vlanID)).To(Succeed(), "configuring the OVS bridge")
 
 					By(fmt.Sprintf("creating a VLAN interface on top of the bridge connecting the cluster nodes with IP: %s", underlayIP))
 					cli, err := client.NewClientWithOpts(client.FromEnv)
@@ -1436,7 +1436,7 @@ var _ = Describe("Multi Homing", func() {
 						}()
 
 						const secondaryInterfaceName = "eth1"
-						Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, netConfig)).To(Succeed())
+						Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, netConfig.networkName, netConfig.vlanID)).To(Succeed())
 					}
 
 					Expect(createNads(f, nadClient, extraNamespace, netConfig)).NotTo(HaveOccurred())
@@ -1862,7 +1862,7 @@ var _ = Describe("Multi Homing", func() {
 						Expect(teardownUnderlay(nodes, secondaryBridge)).To(Succeed())
 					}()
 					const secondaryInterfaceName = "eth1"
-					Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, netConfig)).To(Succeed())
+					Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, netConfig.networkName, netConfig.vlanID)).To(Succeed())
 
 					Expect(createNads(f, nadClient, extraNamespace, netConfig)).NotTo(HaveOccurred())
 
@@ -1994,7 +1994,7 @@ var _ = Describe("Multi Homing", func() {
 						Expect(teardownUnderlay(nodes, secondaryBridge)).To(Succeed())
 					}()
 					const secondaryInterfaceName = "eth1"
-					Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, netConfig)).To(Succeed())
+					Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, netConfig.networkName, netConfig.vlanID)).To(Succeed())
 
 					Expect(createNads(f, nadClient, extraNamespace, netConfig)).NotTo(HaveOccurred())
 
