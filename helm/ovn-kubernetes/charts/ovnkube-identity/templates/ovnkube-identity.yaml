@@ -20,8 +20,8 @@ spec:
       name: ovnkube-identity
   strategy:
     rollingUpdate:
-      maxSurge: 0
-      maxUnavailable: 1
+      maxSurge: 100%
+      maxUnavailable: 0
     type: RollingUpdate
   template:
     metadata:
