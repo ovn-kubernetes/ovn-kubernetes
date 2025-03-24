@@ -13,6 +13,8 @@ import (
 	"k8s.io/klog/v2"
 	kexec "k8s.io/utils/exec"
 
+	"github.com/ovn-org/libovsdb/client"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
@@ -46,6 +48,8 @@ type NodeControllerManager struct {
 	routeManager *routemanager.Controller
 	// iprule manager that creates and manages iprules for all UDNs
 	ruleManager *iprulemanager.Controller
+	// ovs client that allows to read ovs info
+	ovsClient client.Client
 }
 
 // NewNetworkController create secondary node network controllers for the given NetInfo
@@ -97,7 +101,7 @@ func isNetworkManagerRequiredForNode() bool {
 
 // NewNodeControllerManager creates a new OVN controller manager to manage all the controller for all networks
 func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatchFactory, name string,
-	wg *sync.WaitGroup, eventRecorder record.EventRecorder, routeManager *routemanager.Controller) (*NodeControllerManager, error) {
+	wg *sync.WaitGroup, eventRecorder record.EventRecorder, routeManager *routemanager.Controller, ovsClient client.Client) (*NodeControllerManager, error) {
 	ncm := &NodeControllerManager{
 		name:          name,
 		ovnNodeClient: &util.OVNNodeClientset{KubeClient: ovnClient.KubeClient, AdminPolicyRouteClient: ovnClient.AdminPolicyRouteClient},
@@ -107,6 +111,7 @@ func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatch
 		wg:            wg,
 		recorder:      eventRecorder,
 		routeManager:  routeManager,
+		ovsClient:     ovsClient,
 	}
 
 	// need to configure OVS interfaces for Pods on secondary networks in the DPU mode
@@ -129,7 +134,7 @@ func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatch
 
 // initDefaultNodeNetworkController creates the controller for default network
 func (ncm *NodeControllerManager) initDefaultNodeNetworkController(ctx context.Context) error {
-	defaultNodeNetworkController, err := node.NewDefaultNodeNetworkController(ncm.newCommonNetworkControllerInfo(ncm.watchFactory), ncm.networkManager.Interface())
+	defaultNodeNetworkController, err := node.NewDefaultNodeNetworkController(ncm.newCommonNetworkControllerInfo(ncm.watchFactory), ncm.networkManager.Interface(), ncm.ovsClient)
 	if err != nil {
 		return err
 	}

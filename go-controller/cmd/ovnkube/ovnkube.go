@@ -521,6 +521,12 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 		}()
 	}
 
+	ovsClient, err := libovsdb.NewOVSClient(ctx.Done())
+	if err != nil {
+		cancel()
+		return fmt.Errorf("failed to initialize libovsdb vswitchd client: %w", err)
+	}
+
 	if runMode.node {
 		wg.Add(1)
 		go func() {
@@ -541,7 +547,8 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 				runMode.identity,
 				wg,
 				eventRecorder,
-				routemanager.NewController())
+				routemanager.NewController(),
+				ovsClient)
 			if err != nil {
 				nodeErr = fmt.Errorf("failed to create node network controller: %w", err)
 				return
@@ -565,12 +572,6 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 	// Note: for ovnkube node mode dpu-host no metrics is required as ovs/ovn is not running on the node.
 	if config.OvnKubeNode.Mode != types.NodeModeDPUHost && config.Metrics.OVNMetricsBindAddress != "" {
 		metricsScrapeInterval := 30
-		defer cancel()
-
-		ovsClient, err := libovsdb.NewOVSClient(ctx.Done())
-		if err != nil {
-			return fmt.Errorf("failed to initialize libovsdb vswitchd client: %w", err)
-		}
 		if config.Metrics.ExportOVSMetrics {
 			metrics.RegisterOvsMetricsWithOvnMetrics(ovsClient, metricsScrapeInterval, ctx.Done())
 		}

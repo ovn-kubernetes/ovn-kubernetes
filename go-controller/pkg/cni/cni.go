@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	current "github.com/containernetworking/cni/pkg/types/100"
@@ -14,11 +15,14 @@ import (
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 
+	"github.com/ovn-org/libovsdb/client"
+
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/udn"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kubevirt"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -107,8 +111,8 @@ func (pr *PodRequest) checkOrUpdatePodUID(pod *corev1.Pod) error {
 	return nil
 }
 
-func (pr *PodRequest) cmdAdd(kubeAuth *KubeAPIAuth, clientset *ClientSet, networkManager networkmanager.Interface) (*Response, error) {
-	return pr.cmdAddWithGetCNIResultFunc(kubeAuth, clientset, getCNIResult, networkManager)
+func (pr *PodRequest) cmdAdd(kubeAuth *KubeAPIAuth, clientset *ClientSet, networkManager networkmanager.Interface, ovsClient client.Client) (*Response, error) {
+	return pr.cmdAddWithGetCNIResultFunc(kubeAuth, clientset, getCNIResult, networkManager, ovsClient)
 }
 
 func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
@@ -116,6 +120,7 @@ func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
 	clientset *ClientSet,
 	getCNIResultFn getCNIResultFunc,
 	networkManager networkmanager.Interface,
+	ovsClient client.Client,
 ) (*Response, error) {
 	namespace := pr.PodNamespace
 	podName := pr.PodName
@@ -172,6 +177,15 @@ func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
 	if !config.UnprivilegedMode {
 		//TODO: There is nothing technical to run this at unprivileged mode but
 		//      we will tackle that later on.
+
+		netName := pr.netName
+		if pr.CNIConf.PhysicalNetworkName != "" {
+			netName = pr.CNIConf.PhysicalNetworkName
+		}
+		if err := checkBridgeMapping(ovsClient, pr.CNIConf.Topology, netName); err != nil {
+			return nil, fmt.Errorf("failed bridge mapping validation: %w", err)
+		}
+
 		response.Result, err = getCNIResultFn(pr, clientset, podInterfaceInfo)
 		if err != nil {
 			return nil, err
@@ -304,6 +318,7 @@ func HandlePodRequest(
 	clientset *ClientSet,
 	kubeAuth *KubeAPIAuth,
 	networkManager networkmanager.Interface,
+	ovsClient client.Client,
 ) ([]byte, error) {
 	var result, resultForLogging []byte
 	var response *Response
@@ -312,7 +327,7 @@ func HandlePodRequest(
 	klog.Infof("%s %s starting CNI request %+v", request, request.Command, request)
 	switch request.Command {
 	case CNIAdd:
-		response, err = request.cmdAdd(kubeAuth, clientset, networkManager)
+		response, err = request.cmdAdd(kubeAuth, clientset, networkManager, ovsClient)
 	case CNIDel:
 		response, err = request.cmdDel(clientset)
 	case CNICheck:
@@ -419,4 +434,27 @@ func (pr *PodRequest) buildPodInterfaceInfo(annotations map[string]string, podAn
 		pr.netName,
 		pr.CNIConf.MTU,
 	)
+}
+
+func checkBridgeMapping(ovsClient client.Client, topology string, networkName string) error {
+	if topology != types.LocalnetTopology || networkName == types.DefaultNetworkName {
+		return nil
+	}
+
+	openvSwitch, err := ovs.GetOpenvSwitch(ovsClient)
+	if err != nil {
+		return fmt.Errorf("failed getting openvswitch: %w", err)
+	}
+
+	ovnBridgeMappings := openvSwitch.ExternalIDs["ovn-bridge-mappings"]
+
+	bridgeMappings := strings.Split(ovnBridgeMappings, ",")
+	for _, bridgeMapping := range bridgeMappings {
+		networkBridgeAssociation := strings.Split(bridgeMapping, ":")
+		if len(networkBridgeAssociation) == 2 && networkBridgeAssociation[0] == networkName {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("failed to find bridge mapping for network: %q; Current ovn-bridge-mappings: %q", networkName, ovnBridgeMappings)
 }
