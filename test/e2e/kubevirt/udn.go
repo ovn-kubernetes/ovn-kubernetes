@@ -11,6 +11,9 @@ func GenerateCUDN(namespace, name string, topology udnv1.NetworkTopology, role u
 	cudn := &udnv1.ClusterUserDefinedNetwork{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: namespace + "-" + name,
+			Labels: map[string]string{
+				"name": namespace + "-" + name,
+			},
 		},
 		Spec: udnv1.ClusterUserDefinedNetworkSpec{
 			NamespaceSelector: metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
