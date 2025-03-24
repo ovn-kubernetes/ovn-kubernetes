@@ -2,7 +2,7 @@
 # ovnkube-identity
 # starts ovnkube-identity
 # it is run on the master(s).
-kind: Deployment
+kind: DaemonSet
 apiVersion: apps/v1
 metadata:
   name: ovnkube-identity
@@ -10,18 +10,16 @@ metadata:
   namespace: ovn-kubernetes
   annotations:
     kubernetes.io/description: |
-      This Deployment launches the ovnkube-identity networking component.
+      This DaemonSet launches the ovnkube-identity networking component on control-plane nodes.
 spec:
-  progressDeadlineSeconds: 600
-  replicas: {{ default 1 .Values.replicas }}
   revisionHistoryLimit: 10
   selector:
     matchLabels:
       name: ovnkube-identity
-  strategy:
+  updateStrategy:
     rollingUpdate:
-      maxSurge: 0
-      maxUnavailable: 1
+      maxSurge: 100%
+      maxUnavailable: 0
     type: RollingUpdate
   template:
     metadata:
@@ -40,9 +38,9 @@ spec:
       serviceAccountName: ovnkube-identity
       hostNetwork: true
       dnsPolicy: Default
-      {{- if .Values.affinity }}
-      affinity: {{ toYaml .Values.affinity | nindent 8 }}
-      {{- end }}
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+        kubernetes.io/os: "linux"
       containers:
       - name: ovnkube-identity
         image: {{ include "getImage" . }}
