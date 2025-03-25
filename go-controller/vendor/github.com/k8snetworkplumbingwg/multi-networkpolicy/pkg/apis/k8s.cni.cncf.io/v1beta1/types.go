@@ -98,6 +98,9 @@ type MultiNetworkPolicyPort struct {
 
 	// +optional
 	Port *intstr.IntOrString `json:"port,omitempty"`
+
+	// +optional
+	EndPort *int32 `json:"endPort,omitempty"`
 }
 
 // IPBlock ...

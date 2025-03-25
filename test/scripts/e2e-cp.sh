@@ -160,6 +160,15 @@ if [[ "${WHAT}" != "${NETWORK_SEGMENTATION_TESTS}"* ]]; then
   SKIPPED_TESTS+=$NETWORK_SEGMENTATION_TESTS
 fi
 
+# Only run bgp tests if they are explicitly requested
+BGP_TESTS="BGP"
+if [[ "${WHAT}" != "${BGP_TESTS}"* ]]; then
+  if [ "$SKIPPED_TESTS" != "" ]; then
+	SKIPPED_TESTS+="|"
+  fi
+  SKIPPED_TESTS+=$BGP_TESTS
+fi
+
 # setting these is required to make RuntimeClass tests work ... :/
 export KUBE_CONTAINER_RUNTIME=remote
 export KUBE_CONTAINER_RUNTIME_ENDPOINT=unix:///run/containerd/containerd.sock

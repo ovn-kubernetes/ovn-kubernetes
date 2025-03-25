@@ -174,7 +174,7 @@ var _ = Describe("Network Segmentation", func() {
 
 							By("asserting the *client* pod can contact the server pod exposed endpoint")
 							Eventually(func() error {
-								return reachToServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
+								return reachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
 							}, 2*time.Minute, 6*time.Second).Should(Succeed())
 						}
 					},
@@ -764,7 +764,7 @@ var _ = Describe("Network Segmentation", func() {
 
 						By("asserting the *client* pod can contact the server pod exposed endpoint")
 						Eventually(func() error {
-							return reachToServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
+							return reachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
 						}, 2*time.Minute, 6*time.Second).Should(Succeed())
 					}
 				}
@@ -1702,11 +1702,11 @@ spec:
 				clientPod := getPod(f, clientPodConfig.name)
 				for _, testPod := range []*v1.Pod{clientPod, serverPod} {
 					By(fmt.Sprintf("asserting the server pod IP %v is reachable from client before restart of OVNKube node pod on Node %s", serverIP, testPod.Spec.Hostname))
-					Expect(reachToServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)).ShouldNot(HaveOccurred(), "must have connectivity to server pre OVN Kube node Pod restart")
+					Expect(reachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)).ShouldNot(HaveOccurred(), "must have connectivity to server pre OVN Kube node Pod restart")
 					By(fmt.Sprintf("restarting OVNKube node Pod located on Node %s which hosts test Pod %s/%s", testPod.Spec.NodeName, testPod.Namespace, testPod.Name))
 					Expect(restartOVNKubeNodePod(cs, ovnNamespace, testPod.Spec.NodeName)).ShouldNot(HaveOccurred(), "restart of OVNKube node pod must succeed")
 					By(fmt.Sprintf("asserting the server pod IP %v is reachable from client post restart", serverIP))
-					Expect(reachToServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)).ShouldNot(HaveOccurred(), "must have connectivity to server post restart")
+					Expect(reachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)).ShouldNot(HaveOccurred(), "must have connectivity to server post restart")
 				}
 			},
 			Entry(
@@ -2117,7 +2117,7 @@ spec:
     topology: Layer3
     layer3:
       role: Primary
-      subnets: ` + generateCIDRforClusterUDN()
+      subnets: ` + generateCIDRforClusterUDN("10.20.100.0/16", "2014:100:200::0/60")
 }
 
 func newL2SecondaryUDNManifest(name string) string {
@@ -2144,32 +2144,32 @@ spec:
   topology: Layer3
   layer3:
     role: Primary
-    subnets: ` + generateCIDRforUDN()
+    subnets: ` + generateCIDRforUDN("10.20.100.0/16", "2014:100:200::0/60")
 }
 
-func generateCIDRforUDN() string {
+func generateCIDRforUDN(v4, v6 string) string {
 	cidr := `
-    - cidr: 10.20.100.0/16
+    - cidr: ` + v4 + `
 `
 	if isIPv6Supported() && isIPv4Supported() {
 		cidr = `
-    - cidr: 10.20.100.0/16
-    - cidr: 2014:100:200::0/60
+    - cidr: ` + v4 + `
+    - cidr: ` + v6 + `
 `
 	} else if isIPv6Supported() {
 		cidr = `
-    - cidr: 2014:100:200::0/60
+    - cidr: ` + v6 + `
 `
 	}
 	return cidr
 }
 
-func generateCIDRforClusterUDN() string {
-	cidr := `[{cidr: "10.100.0.0/16"}]`
+func generateCIDRforClusterUDN(v4, v6 string) string {
+	cidr := `[{cidr: ` + v4 + `}]`
 	if isIPv6Supported() && isIPv4Supported() {
-		cidr = `[{cidr: "10.100.0.0/16"},{cidr: "2014:100:200::0/60"}]`
+		cidr = `[{cidr: ` + v4 + `},{cidr: ` + v6 + `}]`
 	} else if isIPv6Supported() {
-		cidr = `[{cidr: "2014:100:200::0/60"}]`
+		cidr = `[{cidr: ` + v6 + `}]`
 	}
 	return cidr
 }

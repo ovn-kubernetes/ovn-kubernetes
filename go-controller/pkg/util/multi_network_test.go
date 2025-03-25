@@ -1260,6 +1260,34 @@ func TestNewNetInfo(t *testing.T) {
 	}
 }
 
+func TestAreNetworksCompatible(t *testing.T) {
+	tests := []struct {
+		desc                   string
+		aNetwork               NetInfo
+		anotherNetwork         NetInfo
+		expectedResult         bool
+		expectationDescription string
+	}{
+		{
+			desc:                   "physical network name update",
+			aNetwork:               &secondaryNetInfo{physicalNetworkName: "A"},
+			anotherNetwork:         &secondaryNetInfo{physicalNetworkName: "B"},
+			expectedResult:         false,
+			expectationDescription: "we should reconcile on physical network name updates",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.desc, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			g.Expect(AreNetworksCompatible(test.aNetwork, test.anotherNetwork)).To(
+				gomega.Equal(test.expectedResult),
+				test.expectationDescription,
+			)
+		})
+	}
+}
+
 func applyNADDefaults(nad *nadv1.NetworkAttachmentDefinition) *nadv1.NetworkAttachmentDefinition {
 	const (
 		name      = "nad1"

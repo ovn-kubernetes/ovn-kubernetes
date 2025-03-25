@@ -400,7 +400,7 @@ will be executed. The math for the priority is as described below:
 1. we want to save the first 10K OVN priorities for future use.
 2. we evaluate the priority based on the fact that we allow only 20 rules per QoS object, and we use the index of the rule within the object
    So, 10020 was derived like so => 10000 + NetworkQoS.priority * 20 + index(rule) => 10000 + 1 * 20 + 0 => 10020
-   S0, 10040 was derived liek so => 10000 + 2 * 20 + 0
+   S0, 10040 was derived like so => 10000 + 2 * 20 + 0
 
 Creating a new Pod in games namespace that matches the podSelector in either `qos-external-paid` or `qos-external-free`
 results in its IPs being added to the corresponding Address Set.

@@ -840,6 +840,9 @@ func (nInfo *secondaryNetInfo) canReconcile(other NetInfo) bool {
 	if nInfo.primaryNetwork != other.IsPrimaryNetwork() {
 		return false
 	}
+	if nInfo.physicalNetworkName != other.PhysicalNetworkName() {
+		return false
+	}
 
 	lessCIDRNetworkEntry := func(a, b config.CIDRNetworkEntry) bool { return a.String() < b.String() }
 	if !cmp.Equal(nInfo.subnets, other.Subnets(), cmpopts.SortSlices(lessCIDRNetworkEntry)) {
