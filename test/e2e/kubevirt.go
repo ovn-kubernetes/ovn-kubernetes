@@ -1094,7 +1094,6 @@ passwd:
 		}
 
 		iperfServerScript = `
-dnf install -y psmisc procps
 iface=$(ifconfig  |grep flags |grep -v "eth0\|lo" | sed "s/: .*//")
 ipv4=$(ifconfig $iface | grep "inet "|awk '{print $2}'| sed "s#/.*##")
 ipv6=$(ifconfig $iface | grep inet6 |grep -v fe80 |awk '{print $2}'| sed "s#/.*##")
@@ -1223,11 +1222,11 @@ fi
 			return nil
 		}
 
-		createIperfExternalContainer = func(name string) (string, string) {
+		createIperfExternalContainer = func(name, network string) (string, string) {
 			return createClusterExternalContainer(
 				name,
 				iperf3Image,
-				[]string{"--network", "kind", "--entrypoint", "/bin/bash"},
+				[]string{"--network", network, "--privileged", "--entrypoint", "/bin/bash"},
 				[]string{"-c", "sleep infinity"},
 			)
 		}
@@ -1603,8 +1602,8 @@ runcmd:
 				cudn := &udnv1.ClusterUserDefinedNetwork{
 					ObjectMeta: metav1.ObjectMeta{
 						GenerateName: netConfig.name,
-						Annotations: map[string]string{
-							"ingress": td.ingress,
+						Labels: map[string]string{
+							"namespace": fr.Namespace.Name,
 						},
 					},
 					Spec: udnv1.ClusterUserDefinedNetworkSpec{
@@ -1644,7 +1643,7 @@ runcmd:
 							applycfgrav1.RouteAdvertisementsSpec().
 								WithAdvertisements(rav1.PodNetwork).
 								WithNetworkSelector(
-									applyconfmetav1.LabelSelector().WithMatchLabels(map[string]string{"ingress": "routed"}),
+									applyconfmetav1.LabelSelector().WithMatchLabels(map[string]string{"namespace": fr.Namespace.Name}),
 								),
 						)
 					ra, err := raClient.K8sV1().RouteAdvertisements().Apply(context.TODO(), raApplyCfg, metav1.ApplyOptions{
@@ -1680,13 +1679,29 @@ runcmd:
 			iperfServerTestPods, err = createIperfServerPods(selectedNodes, netConfig, []string{})
 			Expect(err).NotTo(HaveOccurred())
 
+			routerContainerName := "frr"
 			externalContainerName := namespace + "-iperf"
-			externalContainerIPV4Address, externalContainerIPV6Address := createIperfExternalContainer(externalContainerName)
+			containerNetwork := "kind"
+			if td.ingress == "routed" {
+				containerNetwork = "bgpnet"
+			}
+			externalContainerIPV4Address, externalContainerIPV6Address := createIperfExternalContainer(externalContainerName, containerNetwork)
 			DeferCleanup(func() {
 				if e2eframework.TestContext.DeleteNamespace && (e2eframework.TestContext.DeleteNamespaceOnFailure || !CurrentSpecReport().Failed()) {
 					deleteClusterExternalContainer(externalContainerName)
 				}
 			})
+			if td.ingress == "routed" {
+				frrContainerIPv4, frrContainerIPv6 := getContainerAddressesForNetwork(routerContainerName, containerNetwork)
+				output, err := runCommand(containerRuntime, "exec", externalContainerName, "bash", "-c", fmt.Sprintf(`
+set -xe
+dnf install -y iproute
+ip route add %[1]s via %[2]s
+ip route add %[3]s via %[4]s
+`, cidrIPv4, frrContainerIPv4, cidrIPv6, frrContainerIPv6))
+				Expect(err).NotTo(HaveOccurred(), output)
+
+			}
 
 			vmiName := td.resource.cmd()
 			vmi = &kubevirtv1.VirtualMachineInstance{
@@ -1718,9 +1733,18 @@ runcmd:
 			expectedAddresesAtGuest := expectedAddreses
 			testPodsIPs := podsMultusNetworkIPs(iperfServerTestPods, podNetworkStatusByNetConfigPredicate(netConfig))
 
-			step = by(vmi.Name, "Expose VM iperf server as a service")
-			svc, err := fr.ClientSet.CoreV1().Services(namespace).Create(context.TODO(), composeService("iperf3-vm-server", vmi.Name, 5201), metav1.CreateOptions{})
-			Expect(svc.Spec.Ports[0].NodePort).NotTo(Equal(0), step)
+			serverPort := int32(5021)
+			serverIPs := expectedAddreses
+			if td.ingress != "routed" {
+				step = by(vmi.Name, "Expose VM iperf server as a service")
+				svc, err := fr.ClientSet.CoreV1().Services(namespace).Create(context.TODO(), composeService("iperf3-vm-server", vmi.Name, 5201), metav1.CreateOptions{})
+				Expect(err).ToNot(HaveOccurred())
+				Expect(svc.Spec.Ports[0].NodePort).NotTo(Equal(0), step)
+				serverPort = svc.Spec.Ports[0].NodePort
+				nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), fr.ClientSet, 1)
+				Expect(err).NotTo(HaveOccurred())
+				serverIPs = e2enode.CollectAddresses(nodes, v1.NodeInternalIP)
+			}
 
 			// IPv6 is not support for secondaries with IPAM so guest will
 			// have only ipv4.
@@ -1741,15 +1765,10 @@ runcmd:
 			Expect(startEastWestIperfTraffic(vmi, testPodsIPs, step)).To(Succeed(), step)
 			checkEastWestIperfTraffic(vmi, testPodsIPs, step)
 
-			nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), fr.ClientSet, 1)
-			Expect(err).NotTo(HaveOccurred())
-
-			nodeIPs := e2enode.CollectAddresses(nodes, v1.NodeInternalIP)
-
 			if td.role == "primary" {
 				step = by(vmi.Name, fmt.Sprintf("Check north/south traffic before %s %s", td.resource.description, td.test.description))
-				startNorthSouthIngressIperfTraffic(externalContainerName, nodeIPs, svc.Spec.Ports[0].NodePort, step)
-				checkNorthSouthIngressIperfTraffic(externalContainerName, nodeIPs, svc.Spec.Ports[0].NodePort, step)
+				startNorthSouthIngressIperfTraffic(externalContainerName, serverIPs, serverPort, step)
+				checkNorthSouthIngressIperfTraffic(externalContainerName, serverIPs, serverPort, step)
 				checkNorthSouthEgressICMPTraffic(vmi, []string{externalContainerIPV4Address, externalContainerIPV6Address}, step)
 			}
 
@@ -1780,13 +1799,13 @@ runcmd:
 				// At restart we need re-connect
 				Expect(startEastWestIperfTraffic(vmi, testPodsIPs, step)).To(Succeed(), step)
 				if td.role == "primary" {
-					startNorthSouthIngressIperfTraffic(externalContainerName, nodeIPs, svc.Spec.Ports[0].NodePort, step)
+					startNorthSouthIngressIperfTraffic(externalContainerName, serverIPs, serverPort, step)
 				}
 			}
 			checkEastWestIperfTraffic(vmi, testPodsIPs, step)
 			if td.role == "primary" {
 				step = by(vmi.Name, fmt.Sprintf("Check north/south traffic after %s %s", td.resource.description, td.test.description))
-				checkNorthSouthIngressIperfTraffic(externalContainerName, nodeIPs, svc.Spec.Ports[0].NodePort, step)
+				checkNorthSouthIngressIperfTraffic(externalContainerName, serverIPs, serverPort, step)
 				checkNorthSouthEgressICMPTraffic(vmi, []string{externalContainerIPV4Address, externalContainerIPV6Address}, step)
 			}
 
@@ -1850,6 +1869,13 @@ runcmd:
 				test:     liveMigrate,
 				topology: "layer2",
 				role:     "primary",
+			}),
+			Entry(nil, testData{
+				resource: virtualMachineWithUDN,
+				test:     liveMigrate,
+				topology: "layer2",
+				role:     "primary",
+				ingress:  "routed",
 			}),
 			Entry(nil, testData{
 				resource: virtualMachineInstance,
