@@ -102,6 +102,25 @@ var _ = ginkgo.Describe("Route Manager", func() {
 			}, time.Second).Should(gomega.BeTrue())
 		})
 
+		ginkgo.It("applies default route in custom table and checks it exists in cache", func() {
+			r := netlink.Route{LinkIndex: loLink.Attrs().Index, Dst: v4DefaultRouteIPNet, Table: customTableID}
+			gomega.Expect(addRouteViaManager(rm, testNS, r)).Should(gomega.Succeed())
+			gomega.Eventually(func() bool {
+				return isRouteInTable(testNS, r, loLink.Attrs().Index, customTableID)
+			}, time.Second).Should(gomega.BeTrue())
+			gomega.Expect(routeExistsViaManager(rm, testNS, r.Dst)).Should(gomega.Succeed())
+		})
+
+		ginkgo.It("expect error when route does not exist in cache", func() {
+			r := netlink.Route{LinkIndex: loLink.Attrs().Index, Dst: v4DefaultRouteIPNet, Table: customTableID}
+			gomega.Expect(addRouteViaManager(rm, testNS, r)).Should(gomega.Succeed())
+			gomega.Eventually(func() bool {
+				return isRouteInTable(testNS, r, loLink.Attrs().Index, customTableID)
+			}, time.Second).Should(gomega.BeTrue())
+			_, randomIPNet, _ := net.ParseCIDR("5.6.7.8/32")
+			gomega.Expect(routeExistsViaManager(rm, testNS, randomIPNet)).ShouldNot(gomega.Succeed())
+		})
+
 		ginkgo.It("applies default route with gateway in custom table", func() {
 			r := netlink.Route{LinkIndex: loLink.Attrs().Index, Dst: v4DefaultRouteIPNet, Gw: loIP, Table: customTableID}
 			gomega.Expect(addRouteViaManager(rm, testNS, r)).Should(gomega.Succeed())
@@ -146,6 +165,16 @@ var _ = ginkgo.Describe("Route Manager", func() {
 			route := netlink.Route{LinkIndex: loLink.Attrs().Index, Dst: loSubnet, MTU: loMTU, Src: loIP, Table: MainTableID}
 			gomega.Expect(addRoute(testNS, route)).Should(gomega.Succeed())
 			r := netlink.Route{LinkIndex: loLink.Attrs().Index, Dst: loSubnet, MTU: loAlternativeMTU, Src: loIP, Table: MainTableID}
+			gomega.Expect(addRouteViaManager(rm, testNS, r)).Should(gomega.Succeed())
+			gomega.Eventually(func() bool {
+				return isRouteInTable(testNS, r, loLink.Attrs().Index, MainTableID)
+			}, time.Second).Should(gomega.BeTrue())
+		})
+
+		ginkgo.It("route exists, has does not have MTU lock and is updated", func() {
+			route := netlink.Route{LinkIndex: loLink.Attrs().Index, Dst: loSubnet, MTU: loMTU, Src: loIP, Table: MainTableID}
+			gomega.Expect(addRoute(testNS, route)).Should(gomega.Succeed())
+			r := netlink.Route{LinkIndex: loLink.Attrs().Index, Dst: loSubnet, MTU: loMTU, MTULock: true, Src: loIP, Table: MainTableID}
 			gomega.Expect(addRouteViaManager(rm, testNS, r)).Should(gomega.Succeed())
 			gomega.Eventually(func() bool {
 				return isRouteInTable(testNS, r, loLink.Attrs().Index, MainTableID)
@@ -355,6 +384,13 @@ func addRouteViaManager(rm *Controller, targetNS ns.NetNS, r netlink.Route) erro
 }
 func delRouteViaManager(rm *Controller, targetNS ns.NetNS, r netlink.Route) error {
 	return targetNS.Do(func(ns.NetNS) error { return rm.Del(r) })
+}
+
+func routeExistsViaManager(rm *Controller, targetNS ns.NetNS, cidr *net.IPNet) error {
+	return targetNS.Do(func(ns.NetNS) error {
+		_, _, err := rm.FindRouteInStore(cidr)
+		return err
+	})
 }
 
 func addRoute(targetNS ns.NetNS, r netlink.Route) error {

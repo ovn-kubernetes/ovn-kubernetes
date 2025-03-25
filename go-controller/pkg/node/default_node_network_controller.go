@@ -115,6 +115,9 @@ type DefaultNodeNetworkController struct {
 	// retry framework for endpoint slices, used for the removal of stale conntrack entries for services
 	retryEndpointSlices *retry.RetryFramework
 
+	// retry framework for nodes, used for updating routes/nftables rules for node PMTUD guarding
+	retryNodes *retry.RetryFramework
+
 	apbExternalRouteNodeController *apbroute.ExternalGatewayNodeController
 
 	networkManager networkmanager.Interface
@@ -182,6 +185,7 @@ func NewDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, net
 func (nc *DefaultNodeNetworkController) initRetryFrameworkForNode() {
 	nc.retryNamespaces = nc.newRetryFrameworkNode(factory.NamespaceExGwType)
 	nc.retryEndpointSlices = nc.newRetryFrameworkNode(factory.EndpointSliceForStaleConntrackRemovalType)
+	nc.retryNodes = nc.newRetryFrameworkNode(factory.NodeType)
 }
 
 func (oc *DefaultNodeNetworkController) shouldReconcileNetworkChange(old, new util.NetInfo) bool {
@@ -1233,6 +1237,10 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("failed to watch endpointSlices: %w", err)
 		}
+		err = nc.WatchNodes()
+		if err != nil {
+			return fmt.Errorf("failed to watch nodes: %w", err)
+		}
 	}
 
 	if nc.healthzServer != nil {
@@ -1438,6 +1446,116 @@ func (nc *DefaultNodeNetworkController) syncConntrackForExternalGateways(newNs *
 func (nc *DefaultNodeNetworkController) WatchNamespaces() error {
 	_, err := nc.retryNamespaces.WatchResource()
 	return err
+}
+
+func (nc *DefaultNodeNetworkController) WatchNodes() error {
+	_, err := nc.retryNodes.WatchResource()
+	return err
+}
+
+// addOrUpdateNode handles creating routes or nftables rules for each node to handle PMTUD
+func (nc *DefaultNodeNetworkController) addOrUpdateNode(node *corev1.Node) error {
+	hostCIDRs := nc.Gateway.GetHostCIDRs()
+	for _, address := range node.Status.Addresses {
+		if address.Type != corev1.NodeInternalIP {
+			continue
+		}
+		nodeIP := net.ParseIP(address.Address)
+		if nodeIP == nil {
+			continue
+		}
+		var existingHostSubnet *net.IPNet
+		for _, hostCIDR := range hostCIDRs {
+			if utilnet.IsIPv6CIDR(hostCIDR) != utilnet.IsIPv6(nodeIP) {
+				continue
+			}
+			if hostCIDR.Contains(nodeIP) {
+				existingHostSubnet = hostCIDR
+				break
+			}
+		}
+
+		// subnet exists on our node
+		if existingHostSubnet != nil {
+			// create MTU lock routes
+			mask := 32
+			nlFamily := netlink.FAMILY_V4
+			if utilnet.IsIPv6(nodeIP) {
+				mask = 128
+				nlFamily = netlink.FAMILY_V6
+			}
+			routes, err := util.GetNetLinkOps().RouteList(nil, nlFamily)
+			if err != nil {
+				return fmt.Errorf("unable to list host routes: %w", err)
+			}
+			linkIndex := -1
+			existingRoute := netlink.Route{}
+			for _, route := range routes {
+				if existingHostSubnet.Contains(route.Dst.IP) {
+					linkIndex = route.LinkIndex
+					existingRoute = route
+					break
+				}
+			}
+			if linkIndex == -1 {
+				return fmt.Errorf("unable to find suitable host route for node %s with IP: %s, existing host subnet: %s",
+					node.Name, nodeIP, existingHostSubnet)
+			}
+			_, fullCIDR, err := net.ParseCIDR(fmt.Sprintf("%s/%d", nodeIP, mask))
+			if err != nil {
+				return fmt.Errorf("unable to parse CIDR for node %s: %v", node.Name, err)
+			}
+			existingRoute.Dst = fullCIDR
+			link, err := util.GetNetLinkOps().LinkByIndex(linkIndex)
+			if err != nil {
+				return err
+			}
+			mtu := link.Attrs().MTU
+			existingRoute.MTU = mtu
+			existingRoute.MTULock = true
+			klog.Infof("Adding route for remote node: %s, IP: %s, locked MTU: %d", node.Name, nodeIP, mtu)
+			if err := nc.routeManager.Add(existingRoute); err != nil {
+				return err
+			}
+		}
+		// TODO(trozet): else case...create nftables rules to block egress of ICMP needs frag
+
+	}
+	return nil
+}
+
+func (nc *DefaultNodeNetworkController) deleteNode(node *corev1.Node) {
+	for _, address := range node.Status.Addresses {
+		if address.Type != corev1.NodeInternalIP {
+			continue
+		}
+		nodeIP := net.ParseIP(address.Address)
+		if nodeIP == nil {
+			continue
+		}
+		mask := 32
+		if utilnet.IsIPv6(nodeIP) {
+			mask = 128
+		}
+		_, nodeCIDR, err := net.ParseCIDR(fmt.Sprintf("%s/%d", nodeIP, mask))
+		if err != nil {
+			klog.Errorf("Unable to parse CIDR for node %s, CIDR: %s: %v", node.Name, nodeCIDR, err)
+			continue
+		}
+		// Remove routes first
+		_, route, err := nc.routeManager.FindRouteInStore(nodeCIDR)
+		if err != nil {
+			if !errors.Is(err, routemanager.ErrRouteNotFound) {
+				klog.Errorf("Error while finding route for node %s, CIDR: %s: %v", node.Name, nodeCIDR, err)
+			}
+			continue
+		}
+		err = nc.routeManager.Del(route)
+		if err != nil {
+			klog.Errorf("Error while deleting route for node %s, CIDR: %s: %v", node.Name, nodeCIDR, err)
+		}
+		// TODO(trozet): Remove nftables rule
+	}
 }
 
 // validateVTEPInterfaceMTU checks if the MTU of the interface that has ovn-encap-ip is big
