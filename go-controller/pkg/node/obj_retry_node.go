@@ -290,7 +290,8 @@ func (h *nodeEventHandler) SyncFunc(objs []interface{}) error {
 
 		switch h.objType {
 		case factory.NamespaceExGwType,
-			factory.EndpointSliceForStaleConntrackRemovalType:
+			factory.EndpointSliceForStaleConntrackRemovalType,
+			factory.NodeType:
 			// no sync needed
 			syncFunc = nil
 		case factory.NodeType:
