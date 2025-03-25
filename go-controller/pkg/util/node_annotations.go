@@ -151,6 +151,9 @@ const (
 	//		"l2-network-b":"10"}
 	// }",
 	ovnUDNLayer2NodeGRLRPTunnelIDs = "k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids"
+
+	// ovnNodeEncapIPs is used to indicate encap IPs set on the node
+	OVNNodeEncapIPs = "k8s.ovn.org/node-encap-ips"
 )
 
 type L3GatewayConfig struct {
@@ -1473,4 +1476,28 @@ func filterIPVersion(cidrs []netip.Prefix, v6 bool) []netip.Prefix {
 		validCIDRs = append(validCIDRs, cidr)
 	}
 	return validCIDRs
+}
+
+func SetNodeEncapIPs(nodeAnnotator kube.Annotator, encapips sets.Set[string]) error {
+	return nodeAnnotator.Set(OVNNodeEncapIPs, sets.List(encapips))
+}
+
+// ParseNodeEncapIPsAnnotation returns the encap IPs set on a node
+func ParseNodeEncapIPsAnnotation(node *corev1.Node) ([]string, error) {
+	encapIPsAnnotation, ok := node.Annotations[OVNNodeEncapIPs]
+	if !ok {
+		return nil, newAnnotationNotSetError("%s annotation not found for node %q", OVNNodeEncapIPs, node.Name)
+	}
+
+	var encapIPs []string
+	if err := json.Unmarshal([]byte(encapIPsAnnotation), &encapIPs); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal %s annotation for node %q: %v",
+			encapIPsAnnotation, node.Name, err)
+	}
+
+	return encapIPs, nil
+}
+
+func NodeEncapIPsChanged(oldNode, newNode *corev1.Node) bool {
+	return oldNode.Annotations[OVNNodeEncapIPs] != newNode.Annotations[OVNNodeEncapIPs]
 }
