@@ -72,6 +72,8 @@ global:
   enableMulticast: ""
   # -- Configure to use multiple NetworkAttachmentDefinition CRD feature with ovn-kubernetes
   enableMultiNetwork: false
+  # -- Configure to use user defined networks (UDN) feature with ovn-kubernetes
+  enableNetworkSegmentation: false
   # -- Configure to enable IPsec
   enableIpsec: false
   # -- Use SSL transport to NB/SB db and northd
