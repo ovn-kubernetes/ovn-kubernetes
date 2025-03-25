@@ -70,7 +70,8 @@ func (nc *DefaultNodeNetworkController) newRetryFrameworkNode(objectType reflect
 func hasResourceAnUpdateFunc(objType reflect.Type) bool {
 	switch objType {
 	case factory.NamespaceExGwType,
-		factory.EndpointSliceForStaleConntrackRemovalType:
+		factory.EndpointSliceForStaleConntrackRemovalType,
+		factory.NodeType:
 		return true
 	}
 	return false
@@ -80,7 +81,8 @@ func hasResourceAnUpdateFunc(objType reflect.Type) bool {
 func needsUpdateDuringRetry(objType reflect.Type) bool {
 	switch objType {
 	case factory.NamespaceExGwType,
-		factory.EndpointSliceForStaleConntrackRemovalType:
+		factory.EndpointSliceForStaleConntrackRemovalType,
+		factory.NodeType:
 		return true
 	}
 	return false
@@ -109,6 +111,17 @@ func (h *nodeEventHandler) AreResourcesEqual(obj1, obj2 interface{}) (bool, erro
 		// always run update code
 		return false, nil
 
+	case factory.NodeType:
+		node1, ok := obj1.(*corev1.Node)
+		if !ok {
+			return false, fmt.Errorf("could not cast obj1 of type %T to *kapi.Node", obj1)
+		}
+		node2, ok := obj2.(*corev1.Node)
+		if !ok {
+			return false, fmt.Errorf("could not cast obj2 of type %T to *kapi.Node", obj2)
+		}
+		return reflect.DeepEqual(node1.Status.Addresses, node2.Status.Addresses), nil
+
 	default:
 		return false, fmt.Errorf("no object comparison for type %s", h.objType)
 	}
@@ -135,6 +148,9 @@ func (h *nodeEventHandler) GetResourceFromInformerCache(key string) (interface{}
 	case factory.EndpointSliceForStaleConntrackRemovalType:
 		obj, err = h.nc.watchFactory.GetEndpointSlice(namespace, name)
 
+	case factory.NodeType:
+		obj, err = h.nc.watchFactory.GetNode(name)
+
 	default:
 		err = fmt.Errorf("object type %s not supported, cannot retrieve it from informers cache",
 			h.objType)
@@ -147,12 +163,20 @@ func (h *nodeEventHandler) GetResourceFromInformerCache(key string) (interface{}
 // the function was executed from iterateRetryResources, AddResource adds the
 // specified object to the cluster according to its type and returns the error,
 // if any, yielded during object creation.
-func (h *nodeEventHandler) AddResource(_ interface{}, _ bool) error {
+func (h *nodeEventHandler) AddResource(obj interface{}, _ bool) error {
 	switch h.objType {
 	case factory.NamespaceExGwType,
 		factory.EndpointSliceForStaleConntrackRemovalType:
 		// no action needed upon add event
 		return nil
+
+	case factory.NodeType:
+		node := obj.(*corev1.Node)
+		// if it's our node that is changing, then nothing to do as we dont add our own IP to the nftables rules
+		if node.Name == h.nc.name {
+			return nil
+		}
+		return h.nc.addOrUpdateNode(node)
 
 	default:
 		return fmt.Errorf("no add function for object type %s", h.objType)
@@ -187,6 +211,19 @@ func (h *nodeEventHandler) UpdateResource(oldObj, newObj interface{}, _ bool) er
 		return h.nc.reconcileConntrackUponEndpointSliceEvents(
 			oldEndpointSlice, newEndpointSlice)
 
+	case factory.NodeType:
+		oldNode := oldObj.(*corev1.Node)
+		newNode := newObj.(*corev1.Node)
+
+		// if it's our node that is changing, then nothing to do as we dont add our own IP to the nftables rules
+		if newNode.Name == h.nc.name {
+			return nil
+		}
+
+		// remote node that is changing
+		h.nc.deleteNode(oldNode)
+		return h.nc.addOrUpdateNode(newNode)
+
 	default:
 		return fmt.Errorf("no update function for object type %s", h.objType)
 	}
@@ -206,6 +243,10 @@ func (h *nodeEventHandler) DeleteResource(obj, _ interface{}) error {
 		endpointslice := obj.(*discovery.EndpointSlice)
 		return h.nc.reconcileConntrackUponEndpointSliceEvents(endpointslice, nil)
 
+	case factory.NodeType:
+		h.nc.deleteNode(obj.(*corev1.Node))
+		return nil
+
 	default:
 		return fmt.Errorf("no delete function for object type %s", h.objType)
 	}
@@ -224,6 +265,8 @@ func (h *nodeEventHandler) SyncFunc(objs []interface{}) error {
 			factory.EndpointSliceForStaleConntrackRemovalType:
 			// no sync needed
 			syncFunc = nil
+		case factory.NodeType:
+			syncFunc = h.nc.syncNodes
 
 		default:
 			return fmt.Errorf("no sync function for object type %s", h.objType)
