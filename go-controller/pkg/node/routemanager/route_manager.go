@@ -1,6 +1,7 @@
 package routemanager
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -17,6 +18,8 @@ import (
 
 // MainTableID is the default routing table. IPRoute2 names the default routing table as 'main'
 const MainTableID = 254
+
+var ErrRouteNotFound = errors.New("route not found")
 
 type Controller struct {
 	*sync.Mutex
@@ -105,7 +108,7 @@ func (c *Controller) addRoute(r netlink.Route) error {
 	if err != nil {
 		return fmt.Errorf("failed to apply route (%s) because unable to get link: %v", r.String(), err)
 	}
-	if err := c.applyRoute(link, r.Gw, r.Dst, r.MTU, r.Src, r.Table); err != nil {
+	if err := c.applyRoute(link, r.Gw, r.Dst, r.MTU, r.Src, r.Table, r.MTULock); err != nil {
 		return fmt.Errorf("failed to apply route (%s): %v", r.String(), err)
 	}
 	klog.Infof("Route Manager: completed adding route: %s", r.String())
@@ -176,7 +179,7 @@ func (c *Controller) processNetlinkEvent(ru netlink.RouteUpdate) error {
 				klog.Errorf("Route Manager: failed to restore route because unable to get link by index %d: %v", managedRoute.LinkIndex, err)
 				continue
 			}
-			if err = c.applyRoute(link, managedRoute.Gw, managedRoute.Dst, managedRoute.MTU, managedRoute.Src, managedRoute.Table); err != nil {
+			if err = c.applyRoute(link, managedRoute.Gw, managedRoute.Dst, managedRoute.MTU, managedRoute.Src, managedRoute.Table, managedRoute.MTULock); err != nil {
 				klog.Errorf("Route Manager: failed to apply route (%s): %v", managedRoute.String(), err)
 			}
 		}
@@ -184,20 +187,21 @@ func (c *Controller) processNetlinkEvent(ru netlink.RouteUpdate) error {
 	return nil
 }
 
-func (c *Controller) applyRoute(link netlink.Link, gwIP net.IP, subnet *net.IPNet, mtu int, src net.IP, table int) error {
+func (c *Controller) applyRoute(link netlink.Link, gwIP net.IP, subnet *net.IPNet, mtu int, src net.IP, table int, mtuLock bool) error {
 	filterRoute, filterMask := filterRouteByDstAndTable(link.Attrs().Index, subnet, table)
 	existingRoutes, err := util.GetNetLinkOps().RouteListFiltered(getNetlinkIPFamily(subnet), filterRoute, filterMask)
 	if err != nil {
 		return fmt.Errorf("failed to list filtered routes: %v", err)
 	}
 	if len(existingRoutes) == 0 {
-		return c.netlinkAddRoute(link, gwIP, subnet, mtu, src, table)
+		return c.netlinkAddRoute(link, gwIP, subnet, mtu, src, table, mtuLock)
 	}
 	netlinkRoute := &existingRoutes[0]
-	if netlinkRoute.MTU != mtu || !src.Equal(netlinkRoute.Src) || !gwIP.Equal(netlinkRoute.Gw) {
+	if netlinkRoute.MTU != mtu || !src.Equal(netlinkRoute.Src) || !gwIP.Equal(netlinkRoute.Gw) || netlinkRoute.MTULock != mtuLock {
 		netlinkRoute.MTU = mtu
 		netlinkRoute.Src = src
 		netlinkRoute.Gw = gwIP
+		netlinkRoute.MTULock = mtuLock
 		err = util.GetNetLinkOps().RouteReplace(netlinkRoute)
 		if err != nil {
 			return fmt.Errorf("failed to replace route for subnet %s via gateway %s with mtu %d: %v",
@@ -207,7 +211,7 @@ func (c *Controller) applyRoute(link netlink.Link, gwIP net.IP, subnet *net.IPNe
 	return nil
 }
 
-func (c *Controller) netlinkAddRoute(link netlink.Link, gwIP net.IP, subnet *net.IPNet, mtu int, srcIP net.IP, table int) error {
+func (c *Controller) netlinkAddRoute(link netlink.Link, gwIP net.IP, subnet *net.IPNet, mtu int, srcIP net.IP, table int, mtuLock bool) error {
 	newNlRoute := &netlink.Route{
 		Dst:       subnet,
 		LinkIndex: link.Attrs().Index,
@@ -222,7 +226,9 @@ func (c *Controller) netlinkAddRoute(link netlink.Link, gwIP net.IP, subnet *net
 	}
 	if mtu != 0 {
 		newNlRoute.MTU = mtu
+		newNlRoute.MTULock = mtuLock
 	}
+
 	err := util.GetNetLinkOps().RouteAdd(newNlRoute)
 	if err != nil {
 		return fmt.Errorf("failed to add route (gw: %v, subnet %v, mtu %d, src IP %v): %v", gwIP, subnet, mtu, srcIP, err)
@@ -264,6 +270,20 @@ func (c *Controller) addRouteToStore(r netlink.Route) bool {
 	return true
 }
 
+// FindRouteInStore looks up any route whose destination would fit within a given cidr
+func (c *Controller) FindRouteInStore(cidr *net.IPNet) (int, netlink.Route, error) {
+	c.Lock()
+	defer c.Unlock()
+	for linkdIndex, routes := range c.store {
+		for _, route := range routes {
+			if cidr.Contains(route.Dst.IP) {
+				return linkdIndex, route, nil
+			}
+		}
+	}
+	return 0, netlink.Route{}, ErrRouteNotFound
+}
+
 // sync will iterate through all routes seen on a node and ensure any route manager managed routes are applied. Any additional
 // routes for this link are preserved. sync only inspects routes for links which we managed and ignore routes for non-managed links.
 func (c *Controller) sync() {
@@ -295,7 +315,7 @@ func (c *Controller) sync() {
 					}
 					continue
 				}
-				if err := c.applyRoute(link, managedRoute.Gw, managedRoute.Dst, managedRoute.MTU, managedRoute.Src, managedRoute.Table); err != nil {
+				if err := c.applyRoute(link, managedRoute.Gw, managedRoute.Dst, managedRoute.MTU, managedRoute.Src, managedRoute.Table, managedRoute.MTULock); err != nil {
 					klog.Errorf("Route Manager: failed to apply route (%s): %v", managedRoute.String(), err)
 				}
 			}
@@ -353,5 +373,6 @@ func RoutePartiallyEqual(r, x netlink.Route) bool {
 		r.Gw.Equal(x.Gw) &&
 		r.Table == x.Table &&
 		r.Flags == x.Flags &&
-		r.MTU == x.MTU
+		r.MTU == x.MTU &&
+		r.MTULock == x.MTULock
 }

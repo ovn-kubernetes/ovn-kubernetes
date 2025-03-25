@@ -4,15 +4,25 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sync"
+	"time"
 
+	"github.com/containernetworking/plugins/pkg/ns"
+	"github.com/containernetworking/plugins/pkg/testutils"
+	nadfake "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
 	"github.com/urfave/cli/v2"
 	"github.com/vishvananda/netlink"
 
 	corev1 "k8s.io/api/core/v1"
+	discovery "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	adminpolicybasedrouteclient "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/clientset/versioned/fake"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube/mocks"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	netlink_mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/vishvananda/netlink"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
@@ -652,4 +662,364 @@ var _ = Describe("Node", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 	})
+	Describe("node route management", func() {
+		var (
+			testNS ns.NetNS
+			nc     *DefaultNodeNetworkController
+			app    *cli.App
+		)
+
+		const (
+			nodeName       = "my-node"
+			remoteNodeName = "other-node"
+		)
+
+		BeforeEach(func() {
+			var err error
+			testNS, err = testutils.NewNS()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(config.PrepareTestConfig()).To(Succeed())
+
+			app = cli.NewApp()
+			app.Name = "test"
+			app.Flags = config.Flags
+		})
+
+		AfterEach(func() {
+			util.ResetNetLinkOpMockInst() // other tests in this package rely directly on netlink (e.g. gateway_init_linux_test.go)
+			Expect(testNS.Close()).To(Succeed())
+		})
+
+		Context("with a cluster in IPv4 mode", func() {
+			const (
+				ethName     string = "eth0"
+				nodeIP      string = "169.254.254.60"
+				ethCIDR     string = nodeIP + "/24"
+				otherNodeIP string = "169.254.254.61"
+				fullMask           = 32
+			)
+			var link netlink.Link
+
+			BeforeEach(func() {
+				config.IPv4Mode = true
+				config.IPv6Mode = false
+
+				// Note we must do this in default netNS because
+				// nc.WatchNodes() will spawn goroutines which we cannot lock to the testNS
+				ovntest.AddLink(ethName)
+
+				var err error
+				link, err = netlink.LinkByName(ethName)
+				Expect(err).NotTo(HaveOccurred())
+				err = netlink.LinkSetUp(link)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Add an IP address
+				addr, err := netlink.ParseAddr(ethCIDR)
+				Expect(err).NotTo(HaveOccurred())
+				addr.Scope = int(netlink.SCOPE_UNIVERSE)
+				err = netlink.AddrAdd(link, addr)
+				Expect(err).NotTo(HaveOccurred())
+				fmt.Print(netlink.RouteList(link, netlink.FAMILY_V6))
+
+			})
+
+			AfterEach(func() {
+				err := netlink.LinkDel(link)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			ovntest.OnSupportedPlatformsIt("adds and removes MTU lock route for remote node", func() {
+
+				app.Action = func(_ *cli.Context) error {
+					node := corev1.Node{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: nodeName,
+						},
+						Status: corev1.NodeStatus{
+							Addresses: []corev1.NodeAddress{
+								{
+									Type:    corev1.NodeInternalIP,
+									Address: nodeIP,
+								},
+							},
+						},
+					}
+
+					otherNode := corev1.Node{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: remoteNodeName,
+						},
+						Status: corev1.NodeStatus{
+							Addresses: []corev1.NodeAddress{
+								{
+									Type:    corev1.NodeInternalIP,
+									Address: otherNodeIP,
+								},
+							},
+						},
+					}
+
+					kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+						Items: []corev1.Node{node, otherNode},
+					})
+					fakeClient := &util.OVNNodeClientset{
+						KubeClient:             kubeFakeClient,
+						AdminPolicyRouteClient: adminpolicybasedrouteclient.NewSimpleClientset(),
+						NetworkAttchDefClient:  nadfake.NewSimpleClientset(),
+					}
+
+					stop := make(chan struct{})
+					wf, err := factory.NewNodeWatchFactory(fakeClient, nodeName)
+					Expect(err).NotTo(HaveOccurred())
+					wg := &sync.WaitGroup{}
+					defer func() {
+						close(stop)
+						wg.Wait()
+						wf.Shutdown()
+					}()
+
+					err = wf.Start()
+					Expect(err).NotTo(HaveOccurred())
+					routeManager := routemanager.NewController()
+					cnnci := NewCommonNodeNetworkControllerInfo(kubeFakeClient, fakeClient.AdminPolicyRouteClient, wf, nil, nodeName, routeManager)
+					nc = newDefaultNodeNetworkController(cnnci, stop, wg, routeManager)
+					nc.initRetryFrameworkForNode()
+					_, hostCIDR, _ := net.ParseCIDR(ethCIDR)
+					nc.Gateway = &fakeGateway{
+						hostCIDR: hostCIDR,
+					}
+
+					// must run route manager manually which is usually started with nc.Start()
+					wg.Add(1)
+					go func() {
+						defer GinkgoRecover()
+						defer wg.Done()
+						nc.routeManager.Run(stop, 10*time.Second)
+						Expect(err).NotTo(HaveOccurred())
+					}()
+					By("start up should add route for remote node with MTU locked")
+
+					err = nc.WatchNodes()
+					Expect(err).NotTo(HaveOccurred())
+					_, remoteNodeCIDR, err := net.ParseCIDR(fmt.Sprintf("%s/%d", otherNodeIP, fullMask))
+					Expect(err).NotTo(HaveOccurred())
+					fmt.Print(netlink.RouteList(link, netlink.FAMILY_V6))
+					_, route, err := nc.routeManager.FindRouteInStore(remoteNodeCIDR)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(route.MTULock).To(BeTrue())
+
+					By("deleting the remote node should remove the route")
+					err = kubeFakeClient.CoreV1().Nodes().Delete(context.TODO(), remoteNodeName, metav1.DeleteOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					Eventually(func() error {
+						_, _, err := nc.routeManager.FindRouteInStore(remoteNodeCIDR)
+						return err
+					}).Should(HaveOccurred())
+					return nil
+
+				}
+
+				err := app.Run([]string{app.Name})
+				Expect(err).NotTo(HaveOccurred())
+			})
+		})
+
+		Context("with a cluster in IPv6 mode", func() {
+			const (
+				ethName     string = "eth1337"
+				nodeIP      string = "2001:db8:1::3"
+				ethCIDR     string = nodeIP + "/64"
+				otherNodeIP string = "2001:db8:1::4"
+				fullMask           = 128
+			)
+
+			var link netlink.Link
+
+			BeforeEach(func() {
+				config.IPv4Mode = false
+				config.IPv6Mode = true
+
+				// Note we must do this in default netNS because
+				// nc.WatchNodes() will spawn goroutines which we cannot lock to the testNS
+				ovntest.AddLink(ethName)
+
+				var err error
+				link, err = netlink.LinkByName(ethName)
+				Expect(err).NotTo(HaveOccurred())
+				err = netlink.LinkSetUp(link)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Add an IP address
+				addr, err := netlink.ParseAddr(ethCIDR)
+				Expect(err).NotTo(HaveOccurred())
+				addr.Scope = int(netlink.SCOPE_UNIVERSE)
+				err = netlink.AddrAdd(link, addr)
+				Expect(err).NotTo(HaveOccurred())
+				fmt.Print(netlink.RouteList(link, netlink.FAMILY_V6))
+
+			})
+
+			AfterEach(func() {
+				err := netlink.LinkDel(link)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			ovntest.OnSupportedPlatformsIt("adds and removes MTU lock route for remote node", func() {
+
+				app.Action = func(_ *cli.Context) error {
+					node := corev1.Node{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: nodeName,
+						},
+						Status: corev1.NodeStatus{
+							Addresses: []corev1.NodeAddress{
+								{
+									Type:    corev1.NodeInternalIP,
+									Address: nodeIP,
+								},
+							},
+						},
+					}
+
+					otherNode := corev1.Node{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: remoteNodeName,
+						},
+						Status: corev1.NodeStatus{
+							Addresses: []corev1.NodeAddress{
+								{
+									Type:    corev1.NodeInternalIP,
+									Address: otherNodeIP,
+								},
+							},
+						},
+					}
+
+					kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+						Items: []corev1.Node{node, otherNode},
+					})
+					fakeClient := &util.OVNNodeClientset{
+						KubeClient:             kubeFakeClient,
+						AdminPolicyRouteClient: adminpolicybasedrouteclient.NewSimpleClientset(),
+						NetworkAttchDefClient:  nadfake.NewSimpleClientset(),
+					}
+
+					stop := make(chan struct{})
+					wf, err := factory.NewNodeWatchFactory(fakeClient, nodeName)
+					Expect(err).NotTo(HaveOccurred())
+					wg := &sync.WaitGroup{}
+					defer func() {
+						close(stop)
+						wg.Wait()
+						wf.Shutdown()
+					}()
+
+					err = wf.Start()
+					Expect(err).NotTo(HaveOccurred())
+					routeManager := routemanager.NewController()
+					cnnci := NewCommonNodeNetworkControllerInfo(kubeFakeClient, fakeClient.AdminPolicyRouteClient, wf, nil, nodeName, routeManager)
+					nc = newDefaultNodeNetworkController(cnnci, stop, wg, routeManager)
+					nc.initRetryFrameworkForNode()
+					_, hostCIDR, _ := net.ParseCIDR(ethCIDR)
+					nc.Gateway = &fakeGateway{
+						hostCIDR: hostCIDR,
+					}
+
+					// must run route manager manually which is usually started with nc.Start()
+					wg.Add(1)
+					go func() {
+						defer GinkgoRecover()
+						defer wg.Done()
+						nc.routeManager.Run(stop, 10*time.Second)
+						Expect(err).NotTo(HaveOccurred())
+					}()
+					By("start up should add route for remote node with MTU locked")
+
+					err = nc.WatchNodes()
+					Expect(err).NotTo(HaveOccurred())
+					_, remoteNodeCIDR, err := net.ParseCIDR(fmt.Sprintf("%s/%d", otherNodeIP, fullMask))
+					Expect(err).NotTo(HaveOccurred())
+					fmt.Print(netlink.RouteList(link, netlink.FAMILY_V6))
+					_, route, err := nc.routeManager.FindRouteInStore(remoteNodeCIDR)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(route.MTULock).To(BeTrue())
+
+					By("deleting the remote node should remove the route")
+					err = kubeFakeClient.CoreV1().Nodes().Delete(context.TODO(), remoteNodeName, metav1.DeleteOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					Eventually(func() error {
+						_, _, err := nc.routeManager.FindRouteInStore(remoteNodeCIDR)
+						return err
+					}).Should(HaveOccurred())
+					return nil
+
+				}
+
+				err := app.Run([]string{app.Name})
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+		})
+
+	})
+
 })
+
+type fakeGateway struct {
+	hostCIDR *net.IPNet
+}
+
+func (g *fakeGateway) Init(_ <-chan struct{}, _ *sync.WaitGroup) error {
+	return nil
+}
+
+func (g *fakeGateway) Start() error {
+	return nil
+}
+
+func (g *fakeGateway) GetGatewayBridgeIface() string {
+	return ""
+}
+func (g *fakeGateway) GetGatewayIface() string {
+	return ""
+}
+func (g *fakeGateway) SetDefaultGatewayBridgeMAC(_ net.HardwareAddr) {}
+
+func (g *fakeGateway) SetDefaultPodNetworkAdvertised(bool) {}
+
+func (g *fakeGateway) Reconcile() error {
+	return nil
+}
+
+func (g *fakeGateway) GetHostCIDRs() []*net.IPNet {
+	return []*net.IPNet{g.hostCIDR}
+}
+
+func (g *fakeGateway) AddService(*corev1.Service) error {
+	return nil
+}
+
+func (g *fakeGateway) DeleteService(*corev1.Service) error {
+	return nil
+}
+
+func (g *fakeGateway) UpdateService(_, _ *corev1.Service) error {
+	return nil
+}
+
+func (g *fakeGateway) SyncServices([]interface{}) error {
+	return nil
+}
+
+func (g *fakeGateway) AddEndpointSlice(*discovery.EndpointSlice) error {
+	return nil
+}
+
+func (g *fakeGateway) DeleteEndpointSlice(*discovery.EndpointSlice) error {
+	return nil
+}
+
+func (g *fakeGateway) UpdateEndpointSlice(_, _ *discovery.EndpointSlice) error {
+	return nil
+}
