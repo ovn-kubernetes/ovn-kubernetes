@@ -31,6 +31,8 @@ import (
 	egressqosfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1/apis/clientset/versioned/fake"
 	egressservice "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1"
 	egressservicefake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/clientset/versioned/fake"
+	networkqos "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1"
+	networkqosfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/clientset/versioned/fake"
 	routeadvertisements "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
 	routeadvertisementsfake "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned/fake"
 	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
@@ -45,6 +47,7 @@ func GetOVNClientset(objects ...runtime.Object) *OVNClientset {
 	egressServiceObjects := []runtime.Object{}
 	apbExternalRouteObjects := []runtime.Object{}
 	anpObjects := []runtime.Object{}
+	networkQoSObjects := []runtime.Object{}
 	v1Objects := []runtime.Object{}
 	nads := []runtime.Object{}
 	cloudObjects := []runtime.Object{}
@@ -80,6 +83,8 @@ func GetOVNClientset(objects ...runtime.Object) *OVNClientset {
 			raObjects = append(raObjects, object)
 		case *frrapi.FRRConfiguration:
 			frrObjects = append(frrObjects, object)
+		case *networkqos.NetworkQoS:
+			networkQoSObjects = append(networkQoSObjects, object)
 		default:
 			v1Objects = append(v1Objects, object)
 		}
@@ -107,6 +112,7 @@ func GetOVNClientset(objects ...runtime.Object) *OVNClientset {
 		UserDefinedNetworkClient:  udnfake.NewSimpleClientset(udnObjects...),
 		RouteAdvertisementsClient: routeadvertisementsfake.NewSimpleClientset(raObjects...),
 		FRRClient:                 frrfake.NewSimpleClientset(frrObjects...),
+		NetworkQoSClient:          networkqosfake.NewSimpleClientset(networkQoSObjects...),
 	}
 }
 
