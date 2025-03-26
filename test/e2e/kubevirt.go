@@ -890,11 +890,25 @@ iperf3 -t 0 -c %[1]s -p %[2]d --logfile %[3]s &
 					NetworkData: networkData,
 				},
 			}
-			return generateVMI(labels, annotations, nodeSelector, networkSource, cloudInitVolumeSource, kubevirt.FedoraContainerDiskImage)
+			return generateVMI(labels, annotations, nodeSelector, networkSource, cloudInitVolumeSource, kubevirt.FedoraWithTestToolingContainerDiskImage)
 		}
 
 		fedoraWithTestToolingVM = func(labels map[string]string, annotations map[string]string, nodeSelector map[string]string, networkSource kubevirtv1.NetworkSource, userData, networkData string) *kubevirtv1.VirtualMachine {
 			return generateVM(fedoraWithTestToolingVMI(labels, annotations, nodeSelector, networkSource, userData, networkData))
+		}
+
+		fedoraVMI = func(labels map[string]string, annotations map[string]string, nodeSelector map[string]string, networkSource kubevirtv1.NetworkSource, userData, networkData string) *kubevirtv1.VirtualMachineInstance {
+			cloudInitVolumeSource := kubevirtv1.VolumeSource{
+				CloudInitNoCloud: &kubevirtv1.CloudInitNoCloudSource{
+					UserData:    userData,
+					NetworkData: networkData,
+				},
+			}
+			return generateVMI(labels, annotations, nodeSelector, networkSource, cloudInitVolumeSource, kubevirt.FedoraContainerDiskImage)
+		}
+
+		fedoraVM = func(labels map[string]string, annotations map[string]string, nodeSelector map[string]string, networkSource kubevirtv1.NetworkSource, userData, networkData string) *kubevirtv1.VirtualMachine {
+			return generateVM(fedoraVMI(labels, annotations, nodeSelector, networkSource, userData, networkData))
 		}
 
 		composeDefaultNetworkLiveMigratableVM = func(labels map[string]string, butane string) (*kubevirtv1.VirtualMachine, error) {
@@ -1413,9 +1427,15 @@ ethernets:
     dhcp4: true
     dhcp6: true
     ipv6-address-generation: eui64`
-			userData = fmt.Sprintf(`#cloud-config
+			userData = `
+#cloud-config
 password: fedora
 chpasswd: { expire: False }
+`
+
+			userDataWithIperfServer = userData + fmt.Sprintf(`
+packages:
+  - iperf3
 write_files:
   - path: /tmp/iperf-server.sh
     encoding: b64
@@ -1423,6 +1443,7 @@ write_files:
     permissions: '0755'
 runcmd:
 - /tmp/iperf-server.sh`, base64.StdEncoding.EncodeToString([]byte(iperfServerScript)))
+
 			virtualMachine = resourceCommand{
 				description: "VirtualMachine",
 				cmd: func() string {
@@ -1439,10 +1460,10 @@ runcmd:
 			virtualMachineWithUDN = resourceCommand{
 				description: "VirtualMachine with interface binding for UDN",
 				cmd: func() string {
-					vm = fedoraWithTestToolingVM(nil /*labels*/, nil /*annotations*/, nil, /*nodeSelector*/
+					vm = fedoraVM(nil /*labels*/, nil /*annotations*/, nil, /*nodeSelector*/
 						kubevirtv1.NetworkSource{
 							Pod: &kubevirtv1.PodNetwork{},
-						}, userData, networkData)
+						}, userDataWithIperfServer, networkData)
 					vm.Spec.Template.Spec.Domain.Devices.Interfaces[0].Bridge = nil
 					vm.Spec.Template.Spec.Domain.Devices.Interfaces[0].Binding = &kubevirtv1.PluginBinding{Name: "l2bridge"}
 					createVirtualMachine(vm)
@@ -1466,10 +1487,10 @@ runcmd:
 			virtualMachineInstanceWithUDN = resourceCommand{
 				description: "VirtualMachineInstance with interface binding for UDN",
 				cmd: func() string {
-					vmi = fedoraWithTestToolingVMI(nil /*labels*/, nil /*annotations*/, nil, /*nodeSelector*/
+					vmi = fedoraVMI(nil /*labels*/, nil /*annotations*/, nil, /*nodeSelector*/
 						kubevirtv1.NetworkSource{
 							Pod: &kubevirtv1.PodNetwork{},
-						}, userData, networkData)
+						}, userDataWithIperfServer, networkData)
 					vmi.Spec.Domain.Devices.Interfaces[0].Bridge = nil
 					vmi.Spec.Domain.Devices.Interfaces[0].Binding = &kubevirtv1.PluginBinding{Name: "l2bridge"}
 					createVirtualMachineInstance(vmi)
@@ -1515,7 +1536,7 @@ runcmd:
 				l[RequiredUDNNamespaceLabel] = ""
 			}
 			ns, err := fr.CreateNamespace(context.TODO(), fr.BaseName, l)
-			Expect(err).ToNot(HaveOccurred())
+			Expect(err).NotTo(HaveOccurred())
 			fr.Namespace = ns
 			namespace = fr.Namespace.Name
 
@@ -1665,22 +1686,46 @@ runcmd:
 				checkNorthSouthEgressICMPTraffic(vmi, []string{externalContainerIPV4Address, externalContainerIPV6Address}, step)
 			}
 
-			if td.role == "primary" && td.test.description == liveMigrate.description && isIPv4Supported() && isInterconnectEnabled() {
-				step = by(vm.Name, fmt.Sprintf("Checking IPv4 gateway cached mac after %s %s", td.resource.description, td.test.description))
-				Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
+			if td.role == "primary" && td.test.description == liveMigrate.description && isInterconnectEnabled() {
+				if isIPv4Supported() {
+					step = by(vm.Name, fmt.Sprintf("Checking IPv4 gateway cached mac after %s %s", td.resource.description, td.test.description))
+					Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
 
-				targetNode, err := fr.ClientSet.CoreV1().Nodes().Get(context.Background(), vmi.Status.MigrationState.TargetNode, metav1.GetOptions{})
-				Expect(err).ToNot(HaveOccurred(), step)
+					targetNode, err := fr.ClientSet.CoreV1().Nodes().Get(context.Background(), vmi.Status.MigrationState.TargetNode, metav1.GetOptions{})
+					Expect(err).NotTo(HaveOccurred(), step)
 
-				expectedGatewayMAC, err := kubevirt.GenerateGatewayMAC(targetNode, netConfig.networkName)
-				Expect(err).ToNot(HaveOccurred(), step)
+					expectedGatewayMAC, err := kubevirt.GenerateGatewayMAC(targetNode, netConfig.networkName)
+					Expect(err).NotTo(HaveOccurred(), step)
 
-				Expect(err).ToNot(HaveOccurred(), step)
-				Eventually(kubevirt.RetrieveCachedGatewayMAC).
-					WithArguments(vmi, "enp1s0", cidrIPv4).
-					WithTimeout(10*time.Second).
-					WithPolling(time.Second).
-					Should(Equal(expectedGatewayMAC), step)
+					Expect(err).NotTo(HaveOccurred(), step)
+					Eventually(kubevirt.RetrieveCachedGatewayMAC).
+						WithArguments(vmi, "enp1s0", cidrIPv4).
+						WithTimeout(10*time.Second).
+						WithPolling(time.Second).
+						Should(Equal(expectedGatewayMAC), step)
+				}
+				if isIPv6Supported() {
+					step = by(vm.Name, fmt.Sprintf("Checking IPv6 gateway after %s %s", td.resource.description, td.test.description))
+					obtainedIPv6Gateways, err := kubevirt.RetrieveIPv6Gateways(vmi)
+					Expect(err).NotTo(HaveOccurred())
+
+					sourceNode, err := fr.ClientSet.CoreV1().Nodes().Get(context.Background(), vmi.Status.MigrationState.SourceNode, metav1.GetOptions{})
+					Expect(err).NotTo(HaveOccurred(), step)
+
+					sourceNodeIPv6GatewayPath, err := kubevirt.GenerateGatewayIPv6RouterLLA(sourceNode, netConfig.networkName)
+					Expect(err).NotTo(HaveOccurred())
+
+					targetNode, err := fr.ClientSet.CoreV1().Nodes().Get(context.Background(), vmi.Status.MigrationState.TargetNode, metav1.GetOptions{})
+					Expect(err).NotTo(HaveOccurred(), step)
+
+					targetNodeIPv6GatewayPath, err := kubevirt.GenerateGatewayIPv6RouterLLA(targetNode, netConfig.networkName)
+					Expect(err).NotTo(HaveOccurred())
+
+					Expect(obtainedIPv6Gateways).To(SatisfyAll(
+						Not(ContainElement(sourceNodeIPv6GatewayPath)),
+						ContainElement(targetNodeIPv6GatewayPath)),
+						"should reconcile ipv6 gateway nexthop after live migration")
+				}
 			}
 		},
 			func(td testData) string {
