@@ -11,6 +11,7 @@ export OCI_BIN=${KIND_EXPERIMENTAL_PROVIDER:-docker}
 source "${DIR}/kind-common"
 
 set_default_params() {
+  set_common_default_params
 
   # Set default values
   export KIND_CONFIG=${KIND_CONFIG:-}
@@ -25,6 +26,7 @@ set_default_params() {
   export OVN_EMPTY_LB_EVENTS=${OVN_EMPTY_LB_EVENTS:-false}
   export KIND_REMOVE_TAINT=${KIND_REMOVE_TAINT:-true}
   export ENABLE_MULTI_NET=${ENABLE_MULTI_NET:-false}
+  export ENABLE_NETWORK_SEGMENTATION=${ENABLE_NETWORK_SEGMENTATION:-false}
   export KIND_NUM_WORKER=${KIND_NUM_WORKER:-2}
   export KIND_CLUSTER_NAME=${KIND_CLUSTER_NAME:-ovn}
   export OVN_IMAGE=${OVN_IMAGE:-'ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-ubuntu:helm'}
@@ -95,32 +97,34 @@ usage() {
     echo "       [ -pl  | --install-cni-plugins ]"
     echo "       [ -ikv | --install-kubevirt ]"
     echo "       [ -mne | --multi-network-enable ]"
+    echo "       [ -nse | --network-segmentation-enable ]"
     echo "       [ -wk  | --num-workers <num> ]"
     echo "       [ -ic  | --enable-interconnect]"
     echo "       [ -npz | --node-per-zone ]"
     echo "       [ -cn  | --cluster-name ]"
     echo "       [ -h ]"
     echo ""
-    echo "--delete                            Delete current cluster"
-    echo "-cf  | --config-file                Name of the KIND configuration file"
-    echo "-kt  | --keep-taint                 Do not remove taint components"
-    echo "                                    DEFAULT: Remove taint components"
-    echo "-me  | --multicast-enabled          Enable multicast. DEFAULT: Disabled"
-    echo "-ho  | --hybrid-enabled             Enable hybrid overlay. DEFAULT: Disabled"
-    echo "-obs | --observability              Enable observability. DEFAULT: Disabled"
-    echo "-el  | --ovn-empty-lb-events        Enable empty-lb-events generation for LB without backends. DEFAULT: Disabled"
-    echo "-ii  | --install-ingress            Flag to install Ingress Components."
-    echo "                                    DEFAULT: Don't install ingress components."
-    echo "-mlb | --install-metallb            Install metallb to test service type LoadBalancer deployments"
-    echo "-pl  | --install-cni-plugins        Install CNI plugins"
-    echo "-ikv | --install-kubevirt           Install kubevirt"
-    echo "-mne | --multi-network-enable       Enable multi networks. DEFAULT: Disabled"
-    echo "-ha  | --ha-enabled                 Enable high availability. DEFAULT: HA Disabled"
-    echo "-wk  | --num-workers                Number of worker nodes. DEFAULT: 2 workers"
-    echo "-cn  | --cluster-name               Configure the kind cluster's name"
-    echo "-dns | --enable-dnsnameresolver     Enable DNSNameResolver for resolving the DNS names used in the DNS rules of EgressFirewall."
-    echo "-ic  | --enable-interconnect        Enable interconnect with each node as a zone (only valid if OVN_HA is false)"
-    echo "-npz | --nodes-per-zone             Specify number of nodes per zone (Default 0, which means global zone; >0 means interconnect zone, where 1 for single-node zone, >1 for multi-node zone). If this value > 1, then (total k8s nodes (workers + 1) / num of nodes per zone) should be zero."
+    echo "--delete                             Delete current cluster"
+    echo "-cf  | --config-file                 Name of the KIND configuration file"
+    echo "-kt  | --keep-taint                  Do not remove taint components"
+    echo "                                     DEFAULT: Remove taint components"
+    echo "-me  | --multicast-enabled           Enable multicast. DEFAULT: Disabled"
+    echo "-ho  | --hybrid-enabled              Enable hybrid overlay. DEFAULT: Disabled"
+    echo "-obs | --observability               Enable observability. DEFAULT: Disabled"
+    echo "-el  | --ovn-empty-lb-events         Enable empty-lb-events generation for LB without backends. DEFAULT: Disabled"
+    echo "-ii  | --install-ingress             Flag to install Ingress Components."
+    echo "                                     DEFAULT: Don't install ingress components."
+    echo "-mlb | --install-metallb             Install metallb to test service type LoadBalancer deployments"
+    echo "-pl  | --install-cni-plugins         Install CNI plugins"
+    echo "-ikv | --install-kubevirt            Install kubevirt"
+    echo "-mne | --multi-network-enable        Enable multi networks. DEFAULT: Disabled"
+    echo "-nse | --network-segmentation-enable Enable network segmentation. DEFAULT: Disabled"
+    echo "-ha  | --ha-enabled                  Enable high availability. DEFAULT: HA Disabled"
+    echo "-wk  | --num-workers                 Number of worker nodes. DEFAULT: 2 workers"
+    echo "-cn  | --cluster-name                Configure the kind cluster's name"
+    echo "-dns | --enable-dnsnameresolver      Enable DNSNameResolver for resolving the DNS names used in the DNS rules of EgressFirewall."
+    echo "-ic  | --enable-interconnect         Enable interconnect with each node as a zone (only valid if OVN_HA is false)"
+    echo "-npz | --nodes-per-zone              Specify number of nodes per zone (Default 0, which means global zone; >0 means interconnect zone, where 1 for single-node zone, >1 for multi-node zone). If this value > 1, then (total k8s nodes (workers + 1) / num of nodes per zone) should be zero."
     echo ""
 
 }
@@ -128,67 +132,69 @@ usage() {
 parse_args() {
     while [ "$1" != "" ]; do
         case $1 in
-            --delete )                          delete
-                                                exit
-                                                ;;
-            -cf | --config-file )               shift
-                                                if test ! -f "$1"; then
-                                                    echo "$1 does not  exist"
-                                                    usage
-                                                    exit 1
-                                                fi
-                                                KIND_CONFIG=$1
-                                                ;;
-            -kt | --keep-taint )                KIND_REMOVE_TAINT=false
-                                                ;;
-            -me | --multicast-enabled)          OVN_MULTICAST_ENABLE=true
-                                                ;;
-            -ho | --hybrid-enabled )            OVN_HYBRID_OVERLAY_ENABLE=true
-                                                ;;
-            -obs | --observability )            OVN_OBSERV_ENABLE=true
-                                                ;;
-            -el | --ovn-empty-lb-events )       OVN_EMPTY_LB_EVENTS=true
-                                                ;;
-            -ii | --install-ingress )           KIND_INSTALL_INGRESS=true
-                                                ;;
-            -mlb | --install-metallb )          KIND_INSTALL_METALLB=true
-                                                ;;
-            -pl | --install-cni-plugins )       KIND_INSTALL_PLUGINS=true
-                                                ;;
-            -ikv | --install-kubevirt)          KIND_INSTALL_KUBEVIRT=true
-                                                ;;
-            -mne | --multi-network-enable )     ENABLE_MULTI_NET=true
-                                                ;;
-            -ha | --ha-enabled )                OVN_HA=true
-                                                KIND_NUM_MASTER=3
-                                                ;;
-            -wk | --num-workers )               shift
-                                                if ! [[ "$1" =~ ^[0-9]+$ ]]; then
-                                                    echo "Invalid num-workers: $1"
-                                                    usage
-                                                    exit 1
-                                                fi
-                                                KIND_NUM_WORKER=$1
-                                                ;;
-            -cn | --cluster-name )              shift
-                                                KIND_CLUSTER_NAME=$1
-                                                # Setup KUBECONFIG
-                                                set_default_params
-                                                ;;
-            -dns | --enable-dnsnameresolver )   OVN_ENABLE_DNSNAMERESOLVER=true
-                                                ;;
-            -ic | --enable-interconnect )       OVN_ENABLE_INTERCONNECT=true
-                                                ;;
-            -npz | --nodes-per-zone )           shift
-                                                if ! [[ "$1" =~ ^[0-9]+$ ]]; then
-                                                    echo "Invalid num-nodes-per-zone: $1"
-                                                    usage
-                                                    exit 1
-                                                fi
-                                                KIND_NUM_NODES_PER_ZONE=$1
-                                                ;;
-            * )                                 usage
-                                                exit 1
+            --delete )                            delete
+                                                  exit
+                                                  ;;
+            -cf | --config-file )                 shift
+                                                  if test ! -f "$1"; then
+                                                      echo "$1 does not  exist"
+                                                      usage
+                                                      exit 1
+                                                  fi
+                                                  KIND_CONFIG=$1
+                                                  ;;
+            -kt | --keep-taint )                  KIND_REMOVE_TAINT=false
+                                                  ;;
+            -me | --multicast-enabled)            OVN_MULTICAST_ENABLE=true
+                                                  ;;
+            -ho | --hybrid-enabled )              OVN_HYBRID_OVERLAY_ENABLE=true
+                                                  ;;
+            -obs | --observability )              OVN_OBSERV_ENABLE=true
+                                                  ;;
+            -el | --ovn-empty-lb-events )         OVN_EMPTY_LB_EVENTS=true
+                                                  ;;
+            -ii | --install-ingress )             KIND_INSTALL_INGRESS=true
+                                                  ;;
+            -mlb | --install-metallb )            KIND_INSTALL_METALLB=true
+                                                  ;;
+            -pl | --install-cni-plugins )         KIND_INSTALL_PLUGINS=true
+                                                  ;;
+            -ikv | --install-kubevirt)            KIND_INSTALL_KUBEVIRT=true
+                                                  ;;
+            -mne | --multi-network-enable )       ENABLE_MULTI_NET=true
+                                                  ;;
+            -nse | --network-segmentation-enable) ENABLE_NETWORK_SEGMENTATION=true
+                                                  ;;
+            -ha | --ha-enabled )                  OVN_HA=true
+                                                  KIND_NUM_MASTER=3
+                                                  ;;
+            -wk | --num-workers )                 shift
+                                                  if ! [[ "$1" =~ ^[0-9]+$ ]]; then
+                                                      echo "Invalid num-workers: $1"
+                                                      usage
+                                                      exit 1
+                                                  fi
+                                                  KIND_NUM_WORKER=$1
+                                                  ;;
+            -cn | --cluster-name )                shift
+                                                  KIND_CLUSTER_NAME=$1
+                                                  # Setup KUBECONFIG
+                                                  set_default_params
+                                                  ;;
+            -dns | --enable-dnsnameresolver )     OVN_ENABLE_DNSNAMERESOLVER=true
+                                                  ;;
+            -ic | --enable-interconnect )         OVN_ENABLE_INTERCONNECT=true
+                                                  ;;
+            -npz | --nodes-per-zone )             shift
+                                                  if ! [[ "$1" =~ ^[0-9]+$ ]]; then
+                                                      echo "Invalid num-nodes-per-zone: $1"
+                                                      usage
+                                                      exit 1
+                                                  fi
+                                                  KIND_NUM_NODES_PER_ZONE=$1
+                                                  ;;
+            * )                                   usage
+                                                  exit 1
         esac
         shift
     done
@@ -211,6 +217,7 @@ print_params() {
      echo "KIND_CLUSTER_NAME = $KIND_CLUSTER_NAME"
      echo "KIND_REMOVE_TAINT = $KIND_REMOVE_TAINT"
      echo "ENABLE_MULTI_NET = $ENABLE_MULTI_NET"
+     echo "ENABLE_NETWORK_SEGMENTATION = $ENABLE_NETWORK_SEGMENTATION"
      echo "OVN_IMAGE = $OVN_IMAGE"
      echo "KIND_NUM_MASTER = $KIND_NUM_MASTER"
      echo "KIND_NUM_WORKER = $KIND_NUM_WORKER"
@@ -320,7 +327,7 @@ networking:
 EOT
 
     kind delete clusters $KIND_CLUSTER_NAME ||:
-    kind create cluster --name $KIND_CLUSTER_NAME --config "${KIND_CONFIG}" --retain
+    kind create cluster --name $KIND_CLUSTER_NAME --image "${KIND_IMAGE}":"${K8S_VERSION}" --config "${KIND_CONFIG}" --retain
     kind load docker-image --name $KIND_CLUSTER_NAME $OVN_IMAGE
 
     # When using HA, label nodes to host db.
@@ -391,7 +398,8 @@ create_ovn_kubernetes() {
                           --set tags.ovnkube-db=$(if [ "${OVN_HA}" == "false" ]; then echo "true"; else echo "false"; fi)"
     fi
     echo "value_file=${value_file}"
-    helm install ovn-kubernetes . -f ${value_file} \
+    cmd=$(cat <<EOF
+helm install ovn-kubernetes . -f "${value_file}" \
           --set k8sAPIServer=${API_URL} \
           --set podNetwork="${NET_CIDR_IPV4}/24" \
           --set serviceNetwork=${SVC_CIDR_IPV4} \
@@ -402,11 +410,16 @@ create_ovn_kubernetes() {
           --set global.enableAdminNetworkPolicy=true \
           --set global.enableMulticast=$(if [ "${OVN_MULTICAST_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableMultiNetwork=$(if [ "${ENABLE_MULTI_NET}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          --set global.enableNetworkSegmentation=$(if [ "${ENABLE_NETWORK_SEGMENTATION}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableHybridOverlay=$(if [ "${OVN_HYBRID_OVERLAY_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableObservability=$(if [ "${OVN_OBSERV_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
-        --set global.emptyLbEvents=$(if [ "${OVN_EMPTY_LB_EVENTS}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          --set global.emptyLbEvents=$(if [ "${OVN_EMPTY_LB_EVENTS}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableDNSNameResolver=$(if [ "${OVN_ENABLE_DNSNAMERESOLVER}" == "true" ]; then echo "true"; else echo "false"; fi) \
           ${ovnkube_db_options}
+EOF
+       )
+    echo "${cmd}"
+    eval "${cmd}"
 }
 
 delete() {

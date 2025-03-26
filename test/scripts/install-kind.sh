@@ -61,7 +61,7 @@ sudo mv kubernetes/test/bin/ginkgo /usr/local/bin/ginkgo
 rm kubernetes-test-linux-${ARCH}.tar.gz
 
 if [ "$USE_HELM" == true ]; then
-    HELM_VERSION="v3.14.2"
+    HELM_VERSION="v3.17.2"
 	# to get latest stable version: https://github.com/helm/helm/releases
     curl -L  https://get.helm.sh/helm-${HELM_VERSION}-linux-${ARCH}.tar.gz -o helm-linux-${ARCH}.tar.gz
 	tar xvzf helm-linux-${ARCH}.tar.gz

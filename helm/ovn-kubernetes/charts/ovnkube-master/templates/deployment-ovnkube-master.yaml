@@ -234,6 +234,8 @@ spec:
           value: {{ default "" .Values.global.enableEgressQos | quote }}
         - name: OVN_MULTI_NETWORK_ENABLE
           value: {{ hasKey .Values.global "enableMultiNetwork" | ternary .Values.global.enableMultiNetwork false | quote }}
+        - name: OVN_NETWORK_SEGMENTATION_ENABLE
+          value: {{ default "" .Values.global.enableNetworkSegmentation | quote }}
         - name: OVN_EGRESSSERVICE_ENABLE
           value: {{ default "" .Values.global.enableEgressService | quote }}
         - name: OVN_HYBRID_OVERLAY_NET_CIDR
