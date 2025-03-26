@@ -19,6 +19,8 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/diagnostics"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/ginkgo_wrapper"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/kubevirt"
 
@@ -87,7 +89,7 @@ func newControllerRuntimeClient() (crclient.Client, error) {
 	})
 }
 
-var _ = Describe("Kubevirt Virtual Machines", func() {
+var _ = ginkgo_wrapper.Describe(feature.VirtualMachineSupport, func() {
 	var (
 		fr                  = wrappedTestFramework("kv-live-migration")
 		d                   = diagnostics.New(fr)
