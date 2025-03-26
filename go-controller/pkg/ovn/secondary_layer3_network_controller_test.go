@@ -1044,7 +1044,7 @@ func newSecondaryLayer3NetworkController(
 	eIPController *EgressIPController,
 	portCache *PortCache,
 ) *SecondaryLayer3NetworkController {
-	layer3NetworkController, err := NewSecondaryLayer3NetworkController(cnci, netInfo, networkManager, eIPController, portCache)
+	layer3NetworkController, err := NewSecondaryLayer3NetworkController(cnci, netInfo, networkManager, nil, eIPController, portCache)
 	Expect(err).NotTo(HaveOccurred())
 	layer3NetworkController.gatewayManagers.Store(
 		nodeName,
