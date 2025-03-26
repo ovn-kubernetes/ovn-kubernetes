@@ -361,8 +361,7 @@ install_kubevirt() {
     kubectl -n kubevirt patch kubevirt kubevirt --type=json --patch '[{"op":"add","path":"/spec/configuration/developerConfiguration","value":{"featureGates":[]}},{"op":"add","path":"/spec/configuration/developerConfiguration/featureGates/-","value":"NetworkBindingPlugins"},{"op":"add","path":"/spec/configuration/developerConfiguration/featureGates/-","value":"DynamicPodInterfaceNaming"}]'
 
     local kubevirt_stable_release_url=$(get_kubevirt_release_url "stable")
-    local passt_binding_image="quay.io/kubevirt/network-passt-binding:${kubevirt_stable_release_url##*/}"
-    kubectl -n kubevirt patch kubevirt kubevirt --type=json --patch '[{"op":"add","path":"/spec/configuration/network","value":{}},{"op":"add","path":"/spec/configuration/network/binding","value":{"passt":{"computeResourceOverhead":{"requests":{"memory":"500Mi"}},"migration":{"method":"link-refresh"},"networkAttachmentDefinition":"default/primary-udn-kubevirt-binding","sidecarImage":"'"${passt_binding_image}"'"},"l2bridge":{"domainAttachmentType":"managedTap","migration":{}}}}]'
+    kubectl -n kubevirt patch kubevirt kubevirt --type=json --patch '[{"op":"add","path":"/spec/configuration/network","value":{}},{"op":"add","path":"/spec/configuration/network/binding","value":{"l2bridge":{"domainAttachmentType":"managedTap","migration":{}}}}]'
     
     if [ ! -d "./bin" ]
     then
@@ -595,35 +594,6 @@ kubectl_wait_dnsnameresolver_pods() {
   timeout=$(calculate_timeout ${endtime})
   echo "Waiting for pods in dnsnameresolver-operator namespace to become ready (timeout ${timeout})..."
   kubectl wait -n dnsnameresolver-operator --for=condition=ready pods --all --timeout=${timeout}s
-}
-
-deploy_kubevirt_binding() {
-  cat <<EOF | run_kubectl apply -f -
----
-apiVersion: "k8s.cni.cncf.io/v1"
-kind: NetworkAttachmentDefinition
-metadata:
-  name: primary-udn-kubevirt-binding
-  namespace: default
-spec:
-  config: '{
-  "cniVersion": "1.0.0",
-  "name": "primary-udn-kubevirt-binding",
-  "plugins": [
-    {
-      "type": "network-passt-binding"
-    }
-  ]
-}'
-EOF
-}
-
-deploy_passt_binary() {
-  echo "Installing passt-binding-cni-ds ..."
-  local manifest="https://raw.githubusercontent.com/kubevirt/ipam-extensions/main/passt/passt-binding-cni-ds.yaml"
-  run_kubectl apply -f "$manifest"
-
-  run_kubectl rollout status -n kube-system daemonset/passt-binding-cni --timeout 2m
 }
 
 get_kubevirt_release_url() {
