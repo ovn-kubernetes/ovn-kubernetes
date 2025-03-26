@@ -23,7 +23,10 @@ import (
 // newNetpolRetryFramework is also called directly by the watchers that are
 // dynamically created when a network policy is added:
 // AddressSetNamespaceAndPodSelectorType, AddressSetPodSelectorType, PeerNamespaceSelectorType,
-// LocalPodSelectorType,
+// LocalPodSelectorType.
+// When Event handler is created for AddressSetNamespaceAndPodSelectorType, we must check
+// extraParameters type upon receiving the event and invoke appropriate handler method.
+// The type must be either PodSelectorAddrSetHandlerInfo or NetworkPolicyExtraParameters.
 func (bnc *BaseNetworkController) newNetpolRetryFramework(
 	objectType reflect.Type,
 	syncFunc func([]interface{}) error,
@@ -77,8 +80,7 @@ func (h *networkControllerPolicyEventHandler) AreResourcesEqual(_, _ interface{}
 		// so pretend they're always different so that the update code gets executed
 		return false, nil
 
-	case factory.PeerNamespaceSelectorType, //
-		factory.AddressSetNamespaceAndPodSelectorType: //
+	case factory.AddressSetNamespaceAndPodSelectorType: //
 		// For these types there is no update code, so pretend old and new
 		// objs are always equivalent and stop processing the update event.
 		return true, nil
@@ -110,8 +112,7 @@ func (h *networkControllerPolicyEventHandler) GetResourceFromInformerCache(key s
 		factory.LocalPodSelectorType:
 		obj, err = h.watchFactory.GetPod(namespace, name)
 
-	case factory.AddressSetNamespaceAndPodSelectorType,
-		factory.PeerNamespaceSelectorType:
+	case factory.AddressSetNamespaceAndPodSelectorType:
 		obj, err = h.watchFactory.GetNamespace(name)
 
 	default:
@@ -127,16 +128,18 @@ func (h *networkControllerPolicyEventHandler) GetResourceFromInformerCache(key s
 func (h *networkControllerPolicyEventHandler) AddResource(obj interface{}, _ bool) error {
 	switch h.objType {
 	case factory.AddressSetPodSelectorType:
-		peerAS := h.extraParameters.(*PodSelectorAddrSetHandlerInfo)
-		return h.bnc.handlePodAddUpdate(peerAS, obj)
+		if peerAS, ok := h.extraParameters.(*PodSelectorAddrSetHandlerInfo); ok {
+			return h.bnc.handlePodAddUpdate(peerAS, obj)
+		}
+		extraParameters := h.extraParameters.(*NetworkPolicyExtraParameters)
+		return h.bnc.handlePeerNamespacePodAddUpdate(extraParameters.np, extraParameters.gp, obj)
 
 	case factory.AddressSetNamespaceAndPodSelectorType:
-		peerAS := h.extraParameters.(*PodSelectorAddrSetHandlerInfo)
-		return h.bnc.handleNamespaceAddUpdate(peerAS, obj)
-
-	case factory.PeerNamespaceSelectorType:
+		if peerAS, ok := h.extraParameters.(*PodSelectorAddrSetHandlerInfo); ok {
+			return h.bnc.handleNamespaceAddUpdate(peerAS, obj)
+		}
 		extraParameters := h.extraParameters.(*NetworkPolicyExtraParameters)
-		return h.bnc.handlePeerNamespaceSelectorAdd(extraParameters.np, extraParameters.gp, obj)
+		return h.bnc.handlePeerNamespaceAdd(extraParameters.np, extraParameters.gp, obj)
 
 	case factory.LocalPodSelectorType:
 		extraParameters := h.extraParameters.(*NetworkPolicyExtraParameters)
@@ -165,8 +168,11 @@ func hasPolicyResourceAnUpdateFunc(objType reflect.Type) bool {
 func (h *networkControllerPolicyEventHandler) UpdateResource(_, newObj interface{}, _ bool) error {
 	switch h.objType {
 	case factory.AddressSetPodSelectorType:
-		peerAS := h.extraParameters.(*PodSelectorAddrSetHandlerInfo)
-		return h.bnc.handlePodAddUpdate(peerAS, newObj)
+		if peerAS, ok := h.extraParameters.(*PodSelectorAddrSetHandlerInfo); ok {
+			return h.bnc.handlePodAddUpdate(peerAS, newObj)
+		}
+		extraParameters := h.extraParameters.(*NetworkPolicyExtraParameters)
+		return h.bnc.handlePeerNamespacePodAddUpdate(extraParameters.np, extraParameters.gp, newObj)
 
 	case factory.LocalPodSelectorType:
 		extraParameters := h.extraParameters.(*NetworkPolicyExtraParameters)
@@ -183,16 +189,19 @@ func (h *networkControllerPolicyEventHandler) UpdateResource(_, newObj interface
 func (h *networkControllerPolicyEventHandler) DeleteResource(obj, _ interface{}) error {
 	switch h.objType {
 	case factory.AddressSetPodSelectorType:
-		peerAS := h.extraParameters.(*PodSelectorAddrSetHandlerInfo)
-		return h.bnc.handlePodDelete(peerAS, obj)
+		if peerAS, ok := h.extraParameters.(*PodSelectorAddrSetHandlerInfo); ok {
+			return h.bnc.handlePodDelete(peerAS, obj)
+		}
+		// If extra parameters are not PodSelectorAddrSetHandlerInfo, then it must be
+		// NetworkPolicyExtraParameters, so don't need to handle pod delete event.
+		return nil
 
 	case factory.AddressSetNamespaceAndPodSelectorType:
-		peerAS := h.extraParameters.(*PodSelectorAddrSetHandlerInfo)
-		return h.bnc.handleNamespaceDel(peerAS, obj)
-
-	case factory.PeerNamespaceSelectorType:
+		if peerAS, ok := h.extraParameters.(*PodSelectorAddrSetHandlerInfo); ok {
+			return h.bnc.handleNamespaceDel(peerAS, obj)
+		}
 		extraParameters := h.extraParameters.(*NetworkPolicyExtraParameters)
-		return h.bnc.handlePeerNamespaceSelectorDel(extraParameters.np, extraParameters.gp, obj)
+		return h.bnc.handlePeerNamespaceDel(extraParameters.np, extraParameters.gp, obj)
 
 	case factory.LocalPodSelectorType:
 		extraParameters := h.extraParameters.(*NetworkPolicyExtraParameters)
@@ -215,8 +224,7 @@ func (h *networkControllerPolicyEventHandler) SyncFunc(objs []interface{}) error
 		switch h.objType {
 		case factory.LocalPodSelectorType,
 			factory.AddressSetNamespaceAndPodSelectorType,
-			factory.AddressSetPodSelectorType,
-			factory.PeerNamespaceSelectorType:
+			factory.AddressSetPodSelectorType:
 			syncFunc = nil
 
 		default:
