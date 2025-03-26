@@ -190,5 +190,6 @@ go test -test.timeout 180m -v . \
         -provider skeleton \
         -kubeconfig ${KUBECONFIG} \
         ${NUM_NODES:+"--num-nodes=${NUM_NODES}"} \
-        ${E2E_REPORT_DIR:+"--report-dir=${E2E_REPORT_DIR}"}
+        ${E2E_REPORT_DIR:+"--report-dir=${E2E_REPORT_DIR}"} \
+        -delete-namespace-on-failure=false
 popd
