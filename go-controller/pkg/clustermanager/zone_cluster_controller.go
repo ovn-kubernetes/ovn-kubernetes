@@ -29,6 +29,7 @@ const (
 type zoneClusterController struct {
 	kube         kube.Interface
 	watchFactory *factory.WatchFactory
+	stopOnce     sync.Once
 	stopChan     chan struct{}
 	wg           *sync.WaitGroup
 
@@ -123,12 +124,14 @@ func (zcc *zoneClusterController) Start(_ context.Context) error {
 }
 
 func (zcc *zoneClusterController) Stop() {
-	close(zcc.stopChan)
-	zcc.wg.Wait()
+	zcc.stopOnce.Do(func() {
+		close(zcc.stopChan)
+		zcc.wg.Wait()
 
-	if zcc.nodeHandler != nil {
-		zcc.watchFactory.RemoveNodeHandler(zcc.nodeHandler)
-	}
+		if zcc.nodeHandler != nil {
+			zcc.watchFactory.RemoveNodeHandler(zcc.nodeHandler)
+		}
+	})
 }
 
 func needsZoneAllocation(node *corev1.Node) bool {

@@ -83,13 +83,15 @@ func (nc *SecondaryNodeNetworkController) Start(_ context.Context) error {
 
 // Stop gracefully stops the controller
 func (nc *SecondaryNodeNetworkController) Stop() {
-	klog.Infof("Stop secondary node network controller of network %s", nc.GetNetworkName())
-	close(nc.stopChan)
-	nc.wg.Wait()
+	nc.stopOnce.Do(func() {
+		klog.Infof("Stopping secondary node network controller of network %s", nc.GetNetworkName())
+		close(nc.stopChan)
+		nc.wg.Wait()
 
-	if nc.podHandler != nil {
-		nc.watchFactory.RemovePodHandler(nc.podHandler)
-	}
+		if nc.podHandler != nil {
+			nc.watchFactory.RemovePodHandler(nc.podHandler)
+		}
+	})
 }
 
 // Cleanup cleans up node entities for the given secondary network

@@ -362,19 +362,21 @@ func (oc *DefaultNetworkController) Start(ctx context.Context) error {
 
 // Stop gracefully stops the controller
 func (oc *DefaultNetworkController) Stop() {
-	if oc.dnsNameResolver != nil {
-		oc.dnsNameResolver.Shutdown()
-	}
-	if oc.efNodeController != nil {
-		controller.Stop(oc.efNodeController)
-	}
-	if oc.routeImportManager != nil {
-		oc.routeImportManager.ForgetNetwork(oc.GetNetworkName())
-	}
+	oc.stopOnce.Do(func() {
+		if oc.dnsNameResolver != nil {
+			oc.dnsNameResolver.Shutdown()
+		}
+		if oc.efNodeController != nil {
+			controller.Stop(oc.efNodeController)
+		}
+		if oc.routeImportManager != nil {
+			oc.routeImportManager.ForgetNetwork(oc.GetNetworkName())
+		}
 
-	close(oc.stopChan)
-	oc.cancelableCtx.Cancel()
-	oc.wg.Wait()
+		close(oc.stopChan)
+		oc.cancelableCtx.Cancel()
+		oc.wg.Wait()
+	})
 }
 
 // init runs a subnet IPAM and a controller that watches arrival/departure

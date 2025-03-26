@@ -35,6 +35,7 @@ type EgressDNS struct {
 	// Report change when Add operation is done
 	added          chan struct{}
 	deleted        chan string
+	stopOnce       sync.Once
 	stopChan       chan struct{}
 	controllerStop <-chan struct{}
 }
@@ -267,7 +268,9 @@ func (e *EgressDNS) Run() error {
 }
 
 func (e *EgressDNS) Shutdown() {
-	close(e.stopChan)
+	e.stopOnce.Do(func() {
+		close(e.stopChan)
+	})
 }
 
 // DeleteStaleAddrSets deletes all the address sets related to EgressFirewall DNS rules which are not

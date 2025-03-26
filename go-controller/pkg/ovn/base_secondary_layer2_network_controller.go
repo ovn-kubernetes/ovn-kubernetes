@@ -26,29 +26,31 @@ type BaseSecondaryLayer2NetworkController struct {
 
 // stop gracefully stops the controller, and delete all logical entities for this network if requested
 func (oc *BaseSecondaryLayer2NetworkController) stop() {
-	klog.Infof("Stop secondary %s network controller of network %s", oc.TopologyType(), oc.GetNetworkName())
-	close(oc.stopChan)
-	oc.cancelableCtx.Cancel()
-	oc.wg.Wait()
+	oc.stopOnce.Do(func() {
+		klog.Infof("Stopping secondary %s network controller of network %s", oc.TopologyType(), oc.GetNetworkName())
+		close(oc.stopChan)
+		oc.cancelableCtx.Cancel()
+		oc.wg.Wait()
 
-	if oc.ipamClaimsHandler != nil {
-		oc.watchFactory.RemoveIPAMClaimsHandler(oc.ipamClaimsHandler)
-	}
-	if oc.netPolicyHandler != nil {
-		oc.watchFactory.RemovePolicyHandler(oc.netPolicyHandler)
-	}
-	if oc.multiNetPolicyHandler != nil {
-		oc.watchFactory.RemoveMultiNetworkPolicyHandler(oc.multiNetPolicyHandler)
-	}
-	if oc.podHandler != nil {
-		oc.watchFactory.RemovePodHandler(oc.podHandler)
-	}
-	if oc.nodeHandler != nil {
-		oc.watchFactory.RemoveNodeHandler(oc.nodeHandler)
-	}
-	if oc.namespaceHandler != nil {
-		oc.watchFactory.RemoveNamespaceHandler(oc.namespaceHandler)
-	}
+		if oc.ipamClaimsHandler != nil {
+			oc.watchFactory.RemoveIPAMClaimsHandler(oc.ipamClaimsHandler)
+		}
+		if oc.netPolicyHandler != nil {
+			oc.watchFactory.RemovePolicyHandler(oc.netPolicyHandler)
+		}
+		if oc.multiNetPolicyHandler != nil {
+			oc.watchFactory.RemoveMultiNetworkPolicyHandler(oc.multiNetPolicyHandler)
+		}
+		if oc.podHandler != nil {
+			oc.watchFactory.RemovePodHandler(oc.podHandler)
+		}
+		if oc.nodeHandler != nil {
+			oc.watchFactory.RemoveNodeHandler(oc.nodeHandler)
+		}
+		if oc.namespaceHandler != nil {
+			oc.watchFactory.RemoveNamespaceHandler(oc.namespaceHandler)
+		}
+	})
 }
 
 // cleanup cleans up logical entities for the given network, called from net-attach-def routine
