@@ -25,6 +25,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
+	"sigs.k8s.io/knftables"
 
 	honode "github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/controller"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni"
@@ -38,6 +39,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/controllers/egressservice"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/linkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/managementport"
+	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/ovspinning"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/apbroute"
@@ -178,6 +180,16 @@ func NewDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, net
 	nc.networkManager = networkManager
 
 	nc.initRetryFrameworkForNode()
+
+	err = setupPMTUDNFTSets()
+	if err != nil {
+		return nil, err
+	}
+
+	err = setupPMTUDNFTChain()
+	if err != nil {
+		return nil, err
+	}
 
 	return nc, nil
 }
@@ -1460,6 +1472,7 @@ func (nc *DefaultNodeNetworkController) WatchNodes() error {
 // addOrUpdateNode handles creating routes or nftables rules for each node to handle PMTUD
 func (nc *DefaultNodeNetworkController) addOrUpdateNode(node *corev1.Node) error {
 	hostCIDRs := nc.Gateway.GetHostCIDRs()
+	var nftElems []*knftables.Element
 	for _, address := range node.Status.Addresses {
 		if address.Type != corev1.NodeInternalIP {
 			continue
@@ -1521,14 +1534,33 @@ func (nc *DefaultNodeNetworkController) addOrUpdateNode(node *corev1.Node) error
 			if err := nc.routeManager.Add(existingRoute); err != nil {
 				return err
 			}
+		} else {
+			// remote node add nftables rules
+			klog.Infof("Adding remote node %q, IP: %s to nftables PMTUD blocking rules", node.Name, nodeIP)
+			if utilnet.IsIPv4(nodeIP) {
+				nftElems = append(nftElems, &knftables.Element{
+					Set: types.NFTNoPMTUDRemoteNodeIPsv4,
+					Key: []string{nodeIP.String()},
+				})
+			} else {
+				nftElems = append(nftElems, &knftables.Element{
+					Set: types.NFTNoPMTUDRemoteNodeIPsv6,
+					Key: []string{nodeIP.String()},
+				})
+			}
 		}
-		// TODO(trozet): else case...create nftables rules to block egress of ICMP needs frag
-
 	}
+	if len(nftElems) > 0 {
+		if err := nodenft.UpdateNFTElements(nftElems); err != nil {
+			return fmt.Errorf("unable to update NFT elements: %w", err)
+		}
+	}
+
 	return nil
 }
 
 func (nc *DefaultNodeNetworkController) deleteNode(node *corev1.Node) {
+	var nftElems []*knftables.Element
 	for _, address := range node.Status.Addresses {
 		if address.Type != corev1.NodeInternalIP {
 			continue
@@ -1546,19 +1578,39 @@ func (nc *DefaultNodeNetworkController) deleteNode(node *corev1.Node) {
 			klog.Errorf("Unable to parse CIDR for node %s, CIDR: %s: %v", node.Name, nodeCIDR, err)
 			continue
 		}
+		klog.Infof("Deleting PMTUD routes/NFT rules for node: %q, IP: %s", node.Name, nodeIP)
 		// Remove routes first
 		_, route, err := nc.routeManager.FindRouteInStore(nodeCIDR)
 		if err != nil {
 			if !errors.Is(err, routemanager.ErrRouteNotFound) {
 				klog.Errorf("Error while finding route for node %s, CIDR: %s: %v", node.Name, nodeCIDR, err)
 			}
-			continue
+		} else {
+			err = nc.routeManager.Del(route)
+			if err != nil {
+				klog.Errorf("Error while deleting route for node %s, CIDR: %s: %v", node.Name, nodeCIDR, err)
+			}
 		}
-		err = nc.routeManager.Del(route)
-		if err != nil {
-			klog.Errorf("Error while deleting route for node %s, CIDR: %s: %v", node.Name, nodeCIDR, err)
+
+		// Remove IPs from NFT sets
+		if utilnet.IsIPv4(nodeIP) {
+			nftElems = append(nftElems, &knftables.Element{
+				Set: types.NFTNoPMTUDRemoteNodeIPsv4,
+				Key: []string{nodeIP.String()},
+			})
+		} else {
+			nftElems = append(nftElems, &knftables.Element{
+				Set: types.NFTNoPMTUDRemoteNodeIPsv6,
+				Key: []string{nodeIP.String()},
+			})
 		}
-		// TODO(trozet): Remove nftables rule
+	}
+
+	if len(nftElems) > 0 {
+		klog.Infof("Deleting NFT elements for node: %s", node.Name)
+		if err := nodenft.DeleteNFTElements(nftElems); err != nil {
+			klog.Errorf("Failed to delete nftables rules for PMTUD blocking: %v", err)
+		}
 	}
 }
 
