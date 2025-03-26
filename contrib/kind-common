@@ -32,6 +32,11 @@ if_error_exit() {
     fi
 }
 
+set_common_default_params() {
+  KIND_IMAGE=${KIND_IMAGE:-kindest/node}
+  K8S_VERSION=${K8S_VERSION:-v1.31.1}
+}
+    
 run_kubectl() {
   local retries=0
   local attempts=10

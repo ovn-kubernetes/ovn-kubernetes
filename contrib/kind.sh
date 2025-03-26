@@ -512,6 +512,8 @@ set_openssl_binary() {
 }
 
 set_default_params() {
+  set_common_default_params
+    
   # Set default values
   # Used for multi cluster setups
   KIND_CREATE=${KIND_CREATE:-true}
@@ -528,8 +530,6 @@ set_default_params() {
     MANIFEST_OUTPUT_DIR="${DIR}/../dist/yaml/${KIND_CLUSTER_NAME}"
   fi
   RUN_IN_CONTAINER=${RUN_IN_CONTAINER:-false}
-  KIND_IMAGE=${KIND_IMAGE:-kindest/node}
-  K8S_VERSION=${K8S_VERSION:-v1.31.1}
   OVN_GATEWAY_MODE=${OVN_GATEWAY_MODE:-shared}
   KIND_INSTALL_INGRESS=${KIND_INSTALL_INGRESS:-false}
   KIND_INSTALL_METALLB=${KIND_INSTALL_METALLB:-false}

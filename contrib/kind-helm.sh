@@ -11,6 +11,7 @@ export OCI_BIN=${KIND_EXPERIMENTAL_PROVIDER:-docker}
 source "${DIR}/kind-common"
 
 set_default_params() {
+  set_common_default_params
 
   # Set default values
   export KIND_CONFIG=${KIND_CONFIG:-}
@@ -326,7 +327,7 @@ networking:
 EOT
 
     kind delete clusters $KIND_CLUSTER_NAME ||:
-    kind create cluster --name $KIND_CLUSTER_NAME --config "${KIND_CONFIG}" --retain
+    kind create cluster --name $KIND_CLUSTER_NAME --image "${KIND_IMAGE}":"${K8S_VERSION}" --config "${KIND_CONFIG}" --retain
     kind load docker-image --name $KIND_CLUSTER_NAME $OVN_IMAGE
 
     # When using HA, label nodes to host db.
