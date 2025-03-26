@@ -18,6 +18,7 @@ import (
 
 // MainTableID is the default routing table. IPRoute2 names the default routing table as 'main'
 const MainTableID = 254
+const OVNKRouteProtocol = 201
 
 var ErrRouteNotFound = errors.New("route not found")
 
@@ -86,6 +87,41 @@ func (c *Controller) Del(r netlink.Route) error {
 	if err := c.delRoute(r); err != nil {
 		return fmt.Errorf("route manager: failed to delete route (%s): %v", r.String(), err)
 	}
+	return nil
+}
+
+// CleanupStaleRoutes examines all routes programmed on the host by OVNK, and removes routes that do not
+// exist in the cache
+func (c *Controller) CleanupStaleRoutes() error {
+	c.Lock()
+	defer c.Unlock()
+	routes, err := util.GetNetLinkOps().RouteList(nil, netlink.FAMILY_ALL)
+	if err != nil {
+		return fmt.Errorf("route manager: failed to list routes: %w", err)
+	}
+	for _, route := range routes {
+		// skip routes not programmed by us
+		if route.Protocol != OVNKRouteProtocol {
+			continue
+		}
+		storedRoutes := c.store[route.LinkIndex]
+		cachedRouteFound := false
+		for _, storedRoute := range storedRoutes {
+			if RoutePartiallyEqual(storedRoute, route) {
+				cachedRouteFound = true
+				break
+			}
+		}
+		if cachedRouteFound {
+			continue
+		}
+		// no cached route, need to remove
+		klog.Infof("Cleaning up stale route: %s", route)
+		if err := util.GetNetLinkOps().RouteDel(&route); err != nil {
+			klog.Errorf("Failed to delete stale route (%s): %v", route.String(), err)
+		}
+	}
+
 	return nil
 }
 
@@ -202,6 +238,7 @@ func (c *Controller) applyRoute(link netlink.Link, gwIP net.IP, subnet *net.IPNe
 		netlinkRoute.Src = src
 		netlinkRoute.Gw = gwIP
 		netlinkRoute.MTULock = mtuLock
+		netlinkRoute.Protocol = OVNKRouteProtocol
 		err = util.GetNetLinkOps().RouteReplace(netlinkRoute)
 		if err != nil {
 			return fmt.Errorf("failed to replace route for subnet %s via gateway %s with mtu %d: %v",
@@ -228,6 +265,8 @@ func (c *Controller) netlinkAddRoute(link netlink.Link, gwIP net.IP, subnet *net
 		newNlRoute.MTU = mtu
 		newNlRoute.MTULock = mtuLock
 	}
+	// We set this to a unique value for OVNK so that we know we installed the route
+	newNlRoute.Protocol = OVNKRouteProtocol
 
 	err := util.GetNetLinkOps().RouteAdd(newNlRoute)
 	if err != nil {
@@ -340,6 +379,7 @@ func filterRouteByDstAndTable(linkIndex int, subnet *net.IPNet, table int) (*net
 			Dst:       subnet,
 			LinkIndex: linkIndex,
 			Table:     table,
+			Protocol:  OVNKRouteProtocol,
 		},
 		netlink.RT_FILTER_DST | netlink.RT_FILTER_OIF | netlink.RT_FILTER_TABLE
 }

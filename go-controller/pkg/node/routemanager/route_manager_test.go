@@ -348,6 +348,23 @@ var _ = ginkgo.Describe("Route Manager", func() {
 			}, time.Second).Should(gomega.BeTrue())
 		})
 
+		ginkgo.It("cleans up stale routes previously programmed by routeManager", func() {
+			r := netlink.Route{LinkIndex: loLink.Attrs().Index, Dst: loSubnet, MTU: loMTU, Src: loIP, Table: MainTableID, Protocol: OVNKRouteProtocol}
+			gomega.Expect(addRoute(testNS, r)).Should(gomega.Succeed())
+			time.Sleep(2 * time.Second)
+			gomega.Expect(isRouteInTable(testNS, r, loLink.Attrs().Index, MainTableID)).To(gomega.BeTrue())
+			gomega.Expect(cleanupRoutesViaManager(rm, testNS)).NotTo(gomega.HaveOccurred())
+			gomega.Expect(isRouteInTable(testNS, r, loLink.Attrs().Index, MainTableID)).To(gomega.BeFalse())
+		})
+
+		ginkgo.It("does not clean up route that is unmanaged by routeManager", func() {
+			r := netlink.Route{LinkIndex: loLink.Attrs().Index, Dst: loSubnet, MTU: loMTU, Src: loIP, Table: MainTableID}
+			gomega.Expect(addRoute(testNS, r)).Should(gomega.Succeed())
+			gomega.Expect(isRouteInTable(testNS, r, loLink.Attrs().Index, MainTableID)).To(gomega.BeTrue())
+			gomega.Expect(cleanupRoutesViaManager(rm, testNS)).NotTo(gomega.HaveOccurred())
+			gomega.Expect(isRouteInTable(testNS, r, loLink.Attrs().Index, MainTableID)).To(gomega.BeTrue())
+		})
+
 		ginkgo.It("deleting link doesn't cause panic", func() {
 			var link netlink.Link
 			var err error
@@ -384,6 +401,10 @@ func addRouteViaManager(rm *Controller, targetNS ns.NetNS, r netlink.Route) erro
 }
 func delRouteViaManager(rm *Controller, targetNS ns.NetNS, r netlink.Route) error {
 	return targetNS.Do(func(ns.NetNS) error { return rm.Del(r) })
+}
+
+func cleanupRoutesViaManager(rm *Controller, targetNS ns.NetNS) error {
+	return targetNS.Do(func(ns.NetNS) error { return rm.CleanupStaleRoutes() })
 }
 
 func routeExistsViaManager(rm *Controller, targetNS ns.NetNS, cidr *net.IPNet) error {
