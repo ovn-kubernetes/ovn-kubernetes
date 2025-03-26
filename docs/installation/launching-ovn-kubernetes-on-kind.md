@@ -44,7 +44,7 @@ Build the image for fedora and launch the KIND Deployment
 
 ```
 $ pushd dist/images
-$ make fedora
+$ make fedora-image
 $ popd
 
 $ pushd contrib
@@ -70,7 +70,7 @@ $ OCI_BIN=podman
 Then build,
 
 ```
-$ make fedora
+$ make fedora-image
 $ popd
 ```
 
@@ -319,7 +319,7 @@ $ cd go-controller/
 $ make
 
 $ cd ../dist/images/
-$ make fedora
+$ make fedora-image
 
 $ cd ../../contrib/
 $ KIND_IPV4_SUPPORT=false KIND_IPV6_SUPPORT=true ./kind.sh
@@ -423,7 +423,7 @@ $ cd go-controller/
 $ make
 
 $ cd ../dist/images/
-$ make fedora
+$ make fedora-image
 
 $ cd ../../contrib/
 $ KIND_IPV4_SUPPORT=true KIND_IPV6_SUPPORT=true K8S_VERSION=v1.31.0 ./kind.sh
