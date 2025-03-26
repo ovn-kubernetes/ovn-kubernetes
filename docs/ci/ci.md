@@ -14,6 +14,7 @@ The following tasks are performed:
 - Check out the Kubernetes source tree and compiles some dependencies
 - Install KIND
 - Run a matrix of End-To-End Tests using KIND
+- Ensure that documentation builds successfully
 
 The full matrix of e2e tests found [here](https://github.com/ovn-org/ovn-kubernetes/blob/master/.github/workflows/test.yml)
 are also run periodically (twice daily) using an OVN-Kubernetes build based on the currently merged code base.
@@ -379,3 +380,8 @@ defined in https://github.com/kubernetes-sigs/network-policy-api/tree/master/con
 and then invoked from this repo. Any changes to the tests first have to be submitted
 upstream to `network-policy-api` repo and then brought downstream into the ovn-kubernetes repo
 through version bump.
+
+# Documentation Build Check
+
+To catch any potential documentation build breakages which would prevent any docs changes
+from being deployed to our GitHub Pages [site](https://github.com/ovn-org/ovn-kubernetes)
