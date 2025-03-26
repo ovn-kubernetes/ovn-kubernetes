@@ -301,4 +301,12 @@ const (
 
 	// CUDNPrefix of all CUDN network names
 	CUDNPrefix = "cluster_udn_"
+
+	// NFTNoPMTUDRemoteNodeIPsv4 is a set used to track remote node IPs that do not belong to
+	// the local node's subnet.
+	NFTNoPMTUDRemoteNodeIPsv4 = "no-pmtud-remote-node-ips-v4"
+
+	// NFTNoPMTUDRemoteNodeIPsv6 is a set used to track remote node IPs that do not belong to
+	// the local node's subnet.
+	NFTNoPMTUDRemoteNodeIPsv6 = "no-pmtud-remote-node-ips-v6"
 )
