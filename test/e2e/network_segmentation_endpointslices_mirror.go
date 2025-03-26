@@ -7,6 +7,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
@@ -63,7 +64,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", func() {
 
 						replicas := int32(3)
 						By("creating the deployment")
-						deployment := e2edeployment.NewDeployment("test-deployment", replicas, map[string]string{"app": "test"}, "agnhost", agnhostImage, appsv1.RollingUpdateDeploymentStrategyType)
+						deployment := e2edeployment.NewDeployment("test-deployment", replicas, map[string]string{"app": "test"}, "agnhost", images.AgnHost(), appsv1.RollingUpdateDeploymentStrategyType)
 						deployment.Namespace = f.Namespace.Name
 						deployment.Spec.Template.Spec.HostNetwork = isHostNetwork
 						deployment.Spec.Template.Spec.Containers[0].Command = e2epod.GenerateScriptCmd("/agnhost netexec --http-port 80")
@@ -194,7 +195,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", func() {
 
 						replicas := int32(3)
 						By("creating the deployment")
-						deployment := e2edeployment.NewDeployment("test-deployment", replicas, map[string]string{"app": "test"}, "agnhost", agnhostImage, appsv1.RollingUpdateDeploymentStrategyType)
+						deployment := e2edeployment.NewDeployment("test-deployment", replicas, map[string]string{"app": "test"}, "agnhost", images.AgnHost(), appsv1.RollingUpdateDeploymentStrategyType)
 						deployment.Namespace = defaultNetNamespace.Name
 						deployment.Spec.Template.Spec.Containers[0].Command = e2epod.GenerateScriptCmd("/agnhost netexec --http-port 80")
 

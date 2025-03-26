@@ -14,6 +14,7 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -786,7 +787,7 @@ var _ = ginkgo.Describe("Services", func() {
 			}
 
 			ginkgo.By("Creating an external container to send the traffic from")
-			createClusterExternalContainer(clientContainerName, agnhostImage,
+			createClusterExternalContainer(clientContainerName, images.AgnHost(),
 				[]string{"--network", "kind", "-P"},
 				[]string{"netexec", "--http-port=80"})
 
@@ -990,7 +991,7 @@ spec:
 			}
 
 			ginkgo.By("Creating an external container to send the ingress nodeport service traffic from")
-			extClientv4, extClientv6 := createClusterExternalContainer(clientContainerName, agnhostImage,
+			extClientv4, extClientv6 := createClusterExternalContainer(clientContainerName, images.AgnHost(),
 				[]string{"--network", "kind", "-P"},
 				[]string{"netexec", "--http-port=80"})
 
@@ -1202,7 +1203,7 @@ spec:
 			ginkgo.By("Creating an external client")
 			clientIPv4, clientIPv6 := createClusterExternalContainer(
 				clientContainerName,
-				agnhostImage,
+				images.AgnHost(),
 				[]string{"--privileged", "--network", "kind"},
 				[]string{"pause"},
 			)
