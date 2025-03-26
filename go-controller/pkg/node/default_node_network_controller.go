@@ -1304,6 +1304,10 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 		ovspinning.Run(nc.stopChan)
 	}()
 
+	if err := nc.routeManager.CleanupStaleRoutes(); err != nil {
+		return fmt.Errorf("failed to cleanup stale routes: %w", err)
+	}
+
 	klog.Infof("Default node network controller initialized and ready.")
 	return nil
 }
