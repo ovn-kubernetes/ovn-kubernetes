@@ -1802,6 +1802,7 @@ var _ = Describe("Gateway unit tests", func() {
 				Gw:        gwIPs[0],
 				MTU:       config.Default.MTU,
 				Src:       srcIP,
+				Protocol:  routemanager.OVNKRouteProtocol,
 			}
 
 			lnk.On("Attrs").Return(lnkAttr)
