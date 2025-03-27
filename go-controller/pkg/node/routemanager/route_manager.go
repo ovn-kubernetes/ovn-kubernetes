@@ -105,7 +105,7 @@ func (c *Controller) addRoute(r netlink.Route) error {
 	if err != nil {
 		return fmt.Errorf("failed to apply route (%s) because unable to get link: %v", r.String(), err)
 	}
-	if err := c.applyRoute(link, r.Gw, r.Dst, r.MTU, r.Src, r.Table); err != nil {
+	if err := c.applyRoute(link, r.Gw, r.Dst, r.MTU, r.Src, r.Table, r.Priority, r.Type, r.Scope); err != nil {
 		return fmt.Errorf("failed to apply route (%s): %v", r.String(), err)
 	}
 	klog.Infof("Route Manager: completed adding route: %s", r.String())
@@ -126,7 +126,7 @@ func (c *Controller) delRoute(r netlink.Route) error {
 		}
 		return fmt.Errorf("failed to delete route (%s) because unable to get link: %v", r.String(), err)
 	}
-	if err := c.netlinkDelRoute(link, r.Dst, r.Table); err != nil {
+	if err := c.netlinkDelRoute(link, r.Dst, r.Table, r.Type); err != nil {
 		return fmt.Errorf("failed to delete route (%s): %v", r.String(), err)
 	}
 	managedRoutes, ok := c.store[r.LinkIndex]
@@ -176,7 +176,8 @@ func (c *Controller) processNetlinkEvent(ru netlink.RouteUpdate) error {
 				klog.Errorf("Route Manager: failed to restore route because unable to get link by index %d: %v", managedRoute.LinkIndex, err)
 				continue
 			}
-			if err = c.applyRoute(link, managedRoute.Gw, managedRoute.Dst, managedRoute.MTU, managedRoute.Src, managedRoute.Table); err != nil {
+			if err = c.applyRoute(link, managedRoute.Gw, managedRoute.Dst, managedRoute.MTU, managedRoute.Src, managedRoute.Table,
+				managedRoute.Priority, managedRoute.Type, managedRoute.Scope); err != nil {
 				klog.Errorf("Route Manager: failed to apply route (%s): %v", managedRoute.String(), err)
 			}
 		}
@@ -184,14 +185,16 @@ func (c *Controller) processNetlinkEvent(ru netlink.RouteUpdate) error {
 	return nil
 }
 
-func (c *Controller) applyRoute(link netlink.Link, gwIP net.IP, subnet *net.IPNet, mtu int, src net.IP, table int) error {
+func (c *Controller) applyRoute(link netlink.Link, gwIP net.IP, subnet *net.IPNet, mtu int, src net.IP,
+	table, priority, rtype int, scope netlink.Scope) error {
 	filterRoute, filterMask := filterRouteByDstAndTable(link.Attrs().Index, subnet, table)
+	filterRoute = updateLinkIndexBasedOnRouteTypes(rtype, subnet, filterRoute)
 	existingRoutes, err := util.GetNetLinkOps().RouteListFiltered(getNetlinkIPFamily(subnet), filterRoute, filterMask)
 	if err != nil {
 		return fmt.Errorf("failed to list filtered routes: %v", err)
 	}
 	if len(existingRoutes) == 0 {
-		return c.netlinkAddRoute(link, gwIP, subnet, mtu, src, table)
+		return c.netlinkAddRoute(link, gwIP, subnet, mtu, src, table, priority, rtype, scope)
 	}
 	netlinkRoute := &existingRoutes[0]
 	if netlinkRoute.MTU != mtu || !src.Equal(netlinkRoute.Src) || !gwIP.Equal(netlinkRoute.Gw) {
@@ -207,7 +210,8 @@ func (c *Controller) applyRoute(link netlink.Link, gwIP net.IP, subnet *net.IPNe
 	return nil
 }
 
-func (c *Controller) netlinkAddRoute(link netlink.Link, gwIP net.IP, subnet *net.IPNet, mtu int, srcIP net.IP, table int) error {
+func (c *Controller) netlinkAddRoute(link netlink.Link, gwIP net.IP, subnet *net.IPNet,
+	mtu int, srcIP net.IP, table, priority, rtype int, scope netlink.Scope) error {
 	newNlRoute := &netlink.Route{
 		Dst:       subnet,
 		LinkIndex: link.Attrs().Index,
@@ -223,18 +227,31 @@ func (c *Controller) netlinkAddRoute(link netlink.Link, gwIP net.IP, subnet *net
 	if mtu != 0 {
 		newNlRoute.MTU = mtu
 	}
+	if priority != 0 {
+		newNlRoute.Priority = priority
+	}
+	if rtype != 0 {
+		newNlRoute.Type = rtype
+	}
+	if scope != netlink.Scope(0) {
+		newNlRoute.Scope = scope
+	}
+	// set link index for unreachable or blackhole route to avoid unexpected error.
+	newNlRoute = updateLinkIndexBasedOnRouteTypes(rtype, subnet, newNlRoute)
 	err := util.GetNetLinkOps().RouteAdd(newNlRoute)
 	if err != nil {
-		return fmt.Errorf("failed to add route (gw: %v, subnet %v, mtu %d, src IP %v): %v", gwIP, subnet, mtu, srcIP, err)
+		return fmt.Errorf("failed to add route (linkIndex: %d gw: %v, subnet %v, mtu %d, src IP %v): %v",
+			newNlRoute.LinkIndex, gwIP, subnet, mtu, srcIP, err)
 	}
 	return nil
 }
 
-func (c *Controller) netlinkDelRoute(link netlink.Link, subnet *net.IPNet, table int) error {
+func (c *Controller) netlinkDelRoute(link netlink.Link, subnet *net.IPNet, table, rtype int) error {
 	if subnet == nil {
 		return fmt.Errorf("cannot delete route with no valid subnet")
 	}
 	filter, mask := filterRouteByDstAndTable(link.Attrs().Index, subnet, table)
+	filter = updateLinkIndexBasedOnRouteTypes(rtype, subnet, filter)
 	existingRoutes, err := util.GetNetLinkOps().RouteListFiltered(netlink.FAMILY_ALL, filter, mask)
 	if err != nil {
 		return fmt.Errorf("failed to get routes for link %s: %v", link.Attrs().Name, err)
@@ -273,6 +290,7 @@ func (c *Controller) sync() {
 	for linkIndex, managedRoutes := range c.store {
 		for _, managedRoute := range managedRoutes {
 			filterRoute, filterMask := filterRouteByDstAndTable(linkIndex, managedRoute.Dst, managedRoute.Table)
+			filterRoute = updateLinkIndexBasedOnRouteTypes(managedRoute.Type, managedRoute.Dst, filterRoute)
 			existingRoutes, err := util.GetNetLinkOps().RouteListFiltered(netlink.FAMILY_ALL, filterRoute, filterMask)
 			if err != nil {
 				klog.Errorf("Route Manager: failed to list routes for link %d with route filter %s and mask filter %d: %v", linkIndex, filterRoute.String(), filterMask, err)
@@ -280,6 +298,8 @@ func (c *Controller) sync() {
 			}
 			var found bool
 			for _, activeRoute := range existingRoutes {
+				// update link index based on route type and compare
+				managedRoute = *updateLinkIndexBasedOnRouteTypes(managedRoute.Type, managedRoute.Dst, &managedRoute)
 				if RoutePartiallyEqual(activeRoute, managedRoute) {
 					found = true
 					break
@@ -295,7 +315,8 @@ func (c *Controller) sync() {
 					}
 					continue
 				}
-				if err := c.applyRoute(link, managedRoute.Gw, managedRoute.Dst, managedRoute.MTU, managedRoute.Src, managedRoute.Table); err != nil {
+				if err := c.applyRoute(link, managedRoute.Gw, managedRoute.Dst, managedRoute.MTU, managedRoute.Src, managedRoute.Table,
+					managedRoute.Priority, managedRoute.Type, managedRoute.Scope); err != nil {
 					klog.Errorf("Route Manager: failed to apply route (%s): %v", managedRoute.String(), err)
 				}
 			}
@@ -354,4 +375,16 @@ func RoutePartiallyEqual(r, x netlink.Route) bool {
 		r.Table == x.Table &&
 		r.Flags == x.Flags &&
 		r.MTU == x.MTU
+}
+
+// update link index for unreachable or blackhole route based on IP mode. non 0 link index for an
+// unreachable or blackhole IPv4 route returns 'invalid argument'. Whereas link index for an unreachable
+// or blackhole IPv6 route always get set to 1.
+func updateLinkIndexBasedOnRouteTypes(rtype int, subnet *net.IPNet, r *netlink.Route) *netlink.Route {
+	if (rtype == unix.RTN_BLACKHOLE || rtype == unix.RTN_UNREACHABLE) && utilnet.IsIPv6(subnet.IP) {
+		r.LinkIndex = 1
+	} else if (rtype == unix.RTN_BLACKHOLE || rtype == unix.RTN_UNREACHABLE) && !utilnet.IsIPv6(subnet.IP) {
+		r.LinkIndex = 0
+	}
+	return r
 }

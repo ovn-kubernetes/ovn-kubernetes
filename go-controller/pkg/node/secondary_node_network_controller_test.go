@@ -291,7 +291,6 @@ var _ = Describe("SecondaryNodeNetworkController: UserDefinedPrimaryNetwork Gate
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 			getCreationFakeCommands(fexec, mgtPort, mgtPortMAC, netName, nodeName, NetInfo.MTU())
-			getVRFCreationFakeOVSCommands(fexec)
 			getRPFilterLooseModeFakeCommands(fexec)
 			getDeletionFakeOVSCommands(fexec, mgtPort)
 

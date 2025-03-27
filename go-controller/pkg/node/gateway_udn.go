@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"slices"
 	"sync/atomic"
 	"time"
 
 	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -81,6 +83,9 @@ type UserDefinedNetworkGateway struct {
 	// reconcile channel to signal reconciliation of the gateway on network
 	// configuration changes
 	reconcile chan struct{}
+
+	// vrfTableId holds the link index of management port interface for this network
+	vrfTableId int
 }
 
 // UTILS Needed for UDN (also leveraged for default netInfo) in bridgeConfiguration
@@ -319,25 +324,17 @@ func (udng *UserDefinedNetworkGateway) addMarkChain() error {
 func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 	// port is created first and its MAC address configured. The IP(s) on that link are added after enslaving to a VRF device (addUDNManagementPortIPs)
 	// because IPv6 addresses are removed by the kernel (if not link local) when enslaved to a VRF device.
-	// Add the routes after setting the IP(s) to ensure that the default subnet route towards the mgmt network exists.
+	// Add the routes(AddVRFRoutes) after setting the IP(s) to ensure that the default subnet route towards the mgmt network exists.
 	mplink, err := udng.addUDNManagementPort()
 	if err != nil {
 		return fmt.Errorf("could not create management port netdevice for network %s: %w", udng.GetNetworkName(), err)
 	}
 	vrfDeviceName := util.GetNetworkVRFName(udng.NetInfo)
-	vrfTableId := util.CalculateRouteTableID(mplink.Attrs().Index)
-	routes, err := udng.computeRoutesForUDN(vrfTableId, mplink)
-	if err != nil {
-		return fmt.Errorf("failed to compute routes for network %s, err: %v", udng.GetNetworkName(), err)
-	}
-	if err = udng.vrfManager.AddVRF(vrfDeviceName, mplink.Attrs().Name, uint32(vrfTableId), nil); err != nil {
-		return fmt.Errorf("could not add VRF %d for network %s, err: %v", vrfTableId, udng.GetNetworkName(), err)
+	if err = udng.vrfManager.AddVRF(vrfDeviceName, mplink.Attrs().Name, uint32(udng.vrfTableId), nil); err != nil {
+		return fmt.Errorf("could not add VRF %d for network %s, err: %v", udng.vrfTableId, udng.GetNetworkName(), err)
 	}
 	if err = udng.addUDNManagementPortIPs(mplink); err != nil {
 		return fmt.Errorf("unable to add management port IP(s) for link %s, for network %s: %w", mplink.Attrs().Name, udng.GetNetworkName(), err)
-	}
-	if err = udng.vrfManager.AddVRFRoutes(vrfDeviceName, routes); err != nil {
-		return fmt.Errorf("could not add VRF %s routes for network %s, err: %v", vrfDeviceName, udng.GetNetworkName(), err)
 	}
 	// create the iprules for this network
 	err = udng.updateUDNVRFIPRule()
@@ -350,6 +347,14 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 		return fmt.Errorf("could not set loose mode for reverse path filtering on management port %s: %v", mgmtPortName, err)
 	}
 	if udng.openflowManager != nil {
+		// Add routes to the VRF device
+		routes, err := udng.computeRoutesForUDN(mplink)
+		if err != nil {
+			return fmt.Errorf("failed to compute routes for network %s, err: %v", udng.GetNetworkName(), err)
+		}
+		if err = udng.vrfManager.AddVRFRoutes(vrfDeviceName, routes); err != nil {
+			return fmt.Errorf("could not add VRF %s routes for network %s, err: %v", vrfDeviceName, udng.GetNetworkName(), err)
+		}
 		nodeSubnets, err := udng.getLocalSubnets()
 		if err != nil {
 			return fmt.Errorf("failed to get node subnets for network %s: %w", udng.GetNetworkName(), err)
@@ -464,6 +469,8 @@ func (udng *UserDefinedNetworkGateway) addUDNManagementPort() (netlink.Link, err
 		return nil, fmt.Errorf("failed to set the link up for interface %s while plumbing network %s, err: %v",
 			interfaceName, udng.GetNetworkName(), err)
 	}
+	vrfTableId := util.CalculateRouteTableID(mplink.Attrs().Index)
+	udng.vrfTableId = vrfTableId
 	klog.V(3).Infof("Setup management port link %s for network %s succeeded", interfaceName, udng.GetNetworkName())
 
 	// STEP3
@@ -545,11 +552,8 @@ func (udng *UserDefinedNetworkGateway) deleteUDNManagementPort() error {
 
 // computeRoutesForUDN returns a list of routes programmed into a given UDN's VRF
 // when adding new routes please leave a sample comment on how that route looks like
-func (udng *UserDefinedNetworkGateway) computeRoutesForUDN(vrfTableId int, mpLink netlink.Link) ([]netlink.Route, error) {
-	nextHops, intfName, err := getGatewayNextHops()
-	if err != nil {
-		return nil, fmt.Errorf("unable to get the gateway next hops for node %s, err: %v", udng.node.Name, err)
-	}
+func (udng *UserDefinedNetworkGateway) computeRoutesForUDN(mpLink netlink.Link) ([]netlink.Route, error) {
+	intfName := udng.gateway.openflowManager.defaultBridge.getGatewayIface()
 	link, err := util.GetNetLinkOps().LinkByName(intfName)
 	if err != nil {
 		return nil, fmt.Errorf("unable to get link for %s, error: %v", intfName, err)
@@ -573,27 +577,18 @@ func (udng *UserDefinedNetworkGateway) computeRoutesForUDN(vrfTableId int, mpLin
 			Dst:       serviceSubnet,
 			MTU:       networkMTU,
 			Gw:        gwIP,
-			Table:     vrfTableId,
+			Table:     udng.vrfTableId,
 		})
 	}
 
 	// Route2: Add default route: default via 172.18.0.1 dev breth0 mtu 1400
 	// necessary for UDN CNI and host-networked pods default traffic to go to node's gatewayIP
-	var defaultAnyCIDR *net.IPNet
-	for _, nextHop := range nextHops {
-		isV6 := utilnet.IsIPv6(nextHop)
-		_, defaultAnyCIDR, _ = net.ParseCIDR("0.0.0.0/0")
-		if isV6 {
-			_, defaultAnyCIDR, _ = net.ParseCIDR("::/0")
-		}
-		retVal = append(retVal, netlink.Route{
-			LinkIndex: link.Attrs().Index,
-			Dst:       defaultAnyCIDR,
-			MTU:       networkMTU,
-			Gw:        nextHop,
-			Table:     vrfTableId,
-		})
+	isNetworkAdvertised := util.IsPodNetworkAdvertisedAtNode(udng.NetInfo, udng.node.Name)
+	defaultRoute, err := udng.getDefaultRoute(isNetworkAdvertised)
+	if err != nil {
+		return nil, fmt.Errorf("unable to add default route for network %s, err: %v", udng.GetNetworkName(), err)
 	}
+	retVal = append(retVal, defaultRoute...)
 
 	// Route3: Add MasqueradeRoute for reply traffic route: 169.254.169.12 dev ovn-k8s-mpX mtu 1400
 	// necessary for reply traffic towards UDN CNI pods to go into OVN
@@ -606,7 +601,7 @@ func (udng *UserDefinedNetworkGateway) computeRoutesForUDN(vrfTableId int, mpLin
 			LinkIndex: mpLink.Attrs().Index,
 			Dst:       masqIPv4,
 			MTU:       networkMTU,
-			Table:     vrfTableId,
+			Table:     udng.vrfTableId,
 		})
 	}
 
@@ -619,7 +614,7 @@ func (udng *UserDefinedNetworkGateway) computeRoutesForUDN(vrfTableId int, mpLin
 			LinkIndex: mpLink.Attrs().Index,
 			Dst:       masqIPv6,
 			MTU:       networkMTU,
-			Table:     vrfTableId,
+			Table:     udng.vrfTableId,
 		})
 	}
 
@@ -647,7 +642,7 @@ func (udng *UserDefinedNetworkGateway) computeRoutesForUDN(vrfTableId int, mpLin
 				Mask: util.GetIPFullMask(etpLocalMasqueradeIP),
 			},
 			Gw:    gwIP.IP,
-			Table: vrfTableId,
+			Table: udng.vrfTableId,
 		})
 		if udng.NetInfo.TopologyType() == types.Layer3Topology {
 			for _, clusterSubnet := range udng.Subnets() {
@@ -656,13 +651,68 @@ func (udng *UserDefinedNetworkGateway) computeRoutesForUDN(vrfTableId int, mpLin
 						LinkIndex: mpLink.Attrs().Index,
 						Dst:       clusterSubnet.CIDR,
 						Gw:        gwIP.IP,
-						Table:     vrfTableId,
+						Table:     udng.vrfTableId,
 					})
 				}
 			}
 		}
 	}
+	hasV4Subnet, hasV6Subnet := udng.IPMode()
+	if hasV4Subnet {
+		_, v4AnyCIDR, _ := net.ParseCIDR("0.0.0.0/0")
+		retVal = append(retVal, netlink.Route{
+			LinkIndex: mpLink.Attrs().Index,
+			Dst:       v4AnyCIDR,
+			Table:     udng.vrfTableId,
+			Priority:  4278198272,
+			Type:      unix.RTN_UNREACHABLE,
+		})
+	}
+	if hasV6Subnet {
+		_, v6AnyCIDR, _ := net.ParseCIDR("::/0")
+		retVal = append(retVal, netlink.Route{
+			LinkIndex: mpLink.Attrs().Index,
+			Dst:       v6AnyCIDR,
+			Table:     udng.vrfTableId,
+			Priority:  4278198272,
+			Type:      unix.RTN_UNREACHABLE,
+		})
+	}
+	return retVal, nil
+}
 
+func (udng *UserDefinedNetworkGateway) getDefaultRoute(isNetworkAdvertised bool) ([]netlink.Route, error) {
+	vrfs := udng.GetPodNetworkAdvertisedOnNodeVRFs(udng.node.Name)
+	if isNetworkAdvertised && !slices.Contains(vrfs, types.DefaultNetworkName) {
+		return nil, nil
+	}
+	intfName := udng.gateway.openflowManager.defaultBridge.getGatewayIface()
+	link, err := util.GetNetLinkOps().LinkByName(intfName)
+	if err != nil {
+		return nil, fmt.Errorf("unable to get link for %s, error: %v", intfName, err)
+	}
+
+	networkMTU := udng.NetInfo.MTU()
+	if networkMTU == 0 {
+		networkMTU = config.Default.MTU
+	}
+
+	var retVal []netlink.Route
+	var defaultAnyCIDR *net.IPNet
+	for _, nextHop := range udng.gateway.openflowManager.defaultBridge.nextHops {
+		isV6 := utilnet.IsIPv6(nextHop)
+		_, defaultAnyCIDR, _ = net.ParseCIDR("0.0.0.0/0")
+		if isV6 {
+			_, defaultAnyCIDR, _ = net.ParseCIDR("::/0")
+		}
+		retVal = append(retVal, netlink.Route{
+			LinkIndex: link.Attrs().Index,
+			Dst:       defaultAnyCIDR,
+			MTU:       networkMTU,
+			Gw:        nextHop,
+			Table:     udng.vrfTableId,
+		})
+	}
 	return retVal, nil
 }
 
@@ -703,7 +753,7 @@ func (udng *UserDefinedNetworkGateway) getV6MasqueradeIP() (*net.IPNet, error) {
 // 2000:	from all to 10.132.0.0/14 lookup 1007
 // 2000:	from all fwmark 0x1001 lookup 1009
 // 2000:	from all to 10.134.0.0/14 lookup 1009
-func (udng *UserDefinedNetworkGateway) constructUDNVRFIPRules(vrfTableId int) ([]netlink.Rule, []netlink.Rule, error) {
+func (udng *UserDefinedNetworkGateway) constructUDNVRFIPRules() ([]netlink.Rule, []netlink.Rule, error) {
 	var addIPRules []netlink.Rule
 	var delIPRules []netlink.Rule
 	var masqIPRules []netlink.Rule
@@ -719,20 +769,20 @@ func (udng *UserDefinedNetworkGateway) constructUDNVRFIPRules(vrfTableId int) ([
 	}
 
 	if masqIPv4 != nil {
-		addIPRules = append(addIPRules, generateIPRuleForPacketMark(udng.pktMark, false, uint(vrfTableId)))
-		masqIPRules = append(masqIPRules, generateIPRuleForMasqIP(masqIPv4.IP, false, uint(vrfTableId)))
+		addIPRules = append(addIPRules, generateIPRuleForPacketMark(udng.pktMark, false, uint(udng.vrfTableId)))
+		masqIPRules = append(masqIPRules, generateIPRuleForMasqIP(masqIPv4.IP, false, uint(udng.vrfTableId)))
 		for _, subnet := range udng.Subnets() {
 			if utilnet.IsIPv4CIDR(subnet.CIDR) {
-				subnetIPRules = append(subnetIPRules, generateIPRuleForUDNSubnet(subnet.CIDR, false, uint(vrfTableId)))
+				subnetIPRules = append(subnetIPRules, generateIPRuleForUDNSubnet(subnet.CIDR, false, uint(udng.vrfTableId)))
 			}
 		}
 	}
 	if masqIPv6 != nil {
-		addIPRules = append(addIPRules, generateIPRuleForPacketMark(udng.pktMark, true, uint(vrfTableId)))
-		masqIPRules = append(masqIPRules, generateIPRuleForMasqIP(masqIPv6.IP, true, uint(vrfTableId)))
+		addIPRules = append(addIPRules, generateIPRuleForPacketMark(udng.pktMark, true, uint(udng.vrfTableId)))
+		masqIPRules = append(masqIPRules, generateIPRuleForMasqIP(masqIPv6.IP, true, uint(udng.vrfTableId)))
 		for _, subnet := range udng.Subnets() {
 			if utilnet.IsIPv6CIDR(subnet.CIDR) {
-				subnetIPRules = append(subnetIPRules, generateIPRuleForUDNSubnet(subnet.CIDR, true, uint(vrfTableId)))
+				subnetIPRules = append(subnetIPRules, generateIPRuleForUDNSubnet(subnet.CIDR, true, uint(udng.vrfTableId)))
 			}
 		}
 	}
@@ -841,6 +891,10 @@ func (udng *UserDefinedNetworkGateway) doReconcile() error {
 		return fmt.Errorf("error while updating ip rule for UDN %s: %s", udng.GetNetworkName(), err)
 	}
 
+	if err := udng.updateUDNVRFIPRoute(isNetworkAdvertised); err != nil {
+		return fmt.Errorf("error while updating ip route for UDN %s: %s", udng.GetNetworkName(), err)
+	}
+
 	// add below OpenFlows based on the gateway mode and whether the network is advertised or not:
 	// table=1, n_packets=0, n_bytes=0, priority=16,ip,nw_dst=128.192.0.2 actions=LOCAL (Both gateway modes)
 	// table=1, n_packets=0, n_bytes=0, priority=15,ip,nw_dst=128.192.0.0/14 actions=output:3 (shared gateway mode)
@@ -854,13 +908,7 @@ func (udng *UserDefinedNetworkGateway) doReconcile() error {
 // updateUDNVRFIPRule updates IP rules for a network depending on whether the
 // network is advertised or not
 func (udng *UserDefinedNetworkGateway) updateUDNVRFIPRule() error {
-	interfaceName := util.GetNetworkScopedK8sMgmtHostIntfName(uint(udng.GetNetworkID()))
-	mplink, err := util.LinkByName(interfaceName)
-	if err != nil {
-		return fmt.Errorf("unable to get link for %s, error: %v", interfaceName, err)
-	}
-	vrfTableId := util.CalculateRouteTableID(mplink.Attrs().Index)
-	addIPRules, deleteIPRules, err := udng.constructUDNVRFIPRules(vrfTableId)
+	addIPRules, deleteIPRules, err := udng.constructUDNVRFIPRules()
 	if err != nil {
 		return fmt.Errorf("unable to get iprules for network %s, err: %v", udng.GetNetworkName(), err)
 	}
@@ -874,6 +922,40 @@ func (udng *UserDefinedNetworkGateway) updateUDNVRFIPRule() error {
 		if err = udng.ruleManager.Delete(rule); err != nil {
 			return fmt.Errorf("unable to delete iprule for network %s, err: %v", udng.GetNetworkName(), err)
 		}
+	}
+	return nil
+}
+
+// Add or remove default route from a vrf device based on the network is
+// advertised on its own network or default network
+func (udng *UserDefinedNetworkGateway) updateUDNVRFIPRoute(isNetworkAdvertised bool) error {
+	vrfs := udng.GetPodNetworkAdvertisedOnNodeVRFs(udng.node.Name)
+	if isNetworkAdvertised && !slices.Contains(vrfs, types.DefaultNetworkName) {
+		if err := udng.removeDefaultRouteFromVRF(); err != nil {
+			return fmt.Errorf("error while removing default route from VRF %s corresponding to network %s: %s",
+				util.GetNetworkVRFName(udng.NetInfo), udng.GetNetworkName(), err)
+		}
+	} else if !isNetworkAdvertised || slices.Contains(vrfs, types.DefaultNetworkName) {
+		defaultRoute, err := udng.getDefaultRoute(isNetworkAdvertised)
+		if err != nil {
+			return fmt.Errorf("unable to get default route for network %s, err: %v", udng.GetNetworkName(), err)
+		}
+		if err = udng.vrfManager.AddVRFRoutes(util.GetNetworkVRFName(udng.NetInfo), defaultRoute); err != nil {
+			return fmt.Errorf("error while adding default route to VRF %s corresponding to network %s, err: %v",
+				util.GetNetworkVRFName(udng.NetInfo), udng.GetNetworkName(), err)
+		}
+	}
+	return nil
+}
+
+func (udng *UserDefinedNetworkGateway) removeDefaultRouteFromVRF() error {
+	vrfDeviceName := util.GetNetworkVRFName(udng.NetInfo)
+	defaultRoute, err := udng.getDefaultRoute(false)
+	if err != nil {
+		return fmt.Errorf("unable to get default route for network %s, err: %v", udng.GetNetworkName(), err)
+	}
+	if err = udng.vrfManager.DeleteVRFRoutes(vrfDeviceName, defaultRoute); err != nil {
+		return fmt.Errorf("unable to delete routes for network %s, err: %v", udng.GetNetworkName(), err)
 	}
 	return nil
 }
