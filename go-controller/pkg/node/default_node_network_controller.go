@@ -1473,6 +1473,7 @@ func (nc *DefaultNodeNetworkController) WatchNodes() error {
 func (nc *DefaultNodeNetworkController) addOrUpdateNode(node *corev1.Node) error {
 	hostCIDRs := nc.Gateway.GetHostCIDRs()
 	var nftElems []*knftables.Element
+outerLoop:
 	for _, address := range node.Status.Addresses {
 		if address.Type != corev1.NodeInternalIP {
 			continue
@@ -1508,6 +1509,15 @@ func (nc *DefaultNodeNetworkController) addOrUpdateNode(node *corev1.Node) error
 			linkIndex := -1
 			existingRoute := netlink.Route{}
 			for _, route := range routes {
+				ones, _ := route.Dst.Mask.Size()
+				if route.Dst.IP.Equal(nodeIP) && ones == mask {
+					// route to this node was already added.
+					// if it already has MTU lock and is managed by us, we don't need to program it
+					_, _, err := nc.routeManager.FindRouteInStore(route.Dst)
+					if route.MTULock && err == nil {
+						continue outerLoop
+					}
+				}
 				if existingHostSubnet.Contains(route.Dst.IP) {
 					linkIndex = route.LinkIndex
 					existingRoute = route
