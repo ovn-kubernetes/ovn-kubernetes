@@ -10,6 +10,8 @@ import (
 	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/deployment"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/provider"
 
 	kapi "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
@@ -37,7 +39,7 @@ var _ = Describe("Network Segmentation: services", func() {
 			serviceTargetPort            = 80
 			userDefinedNetworkIPv4Subnet = "10.128.0.0/16"
 			userDefinedNetworkIPv6Subnet = "2014:100:200::0/60"
-			clientContainer              = "frr"
+			clientContainerName          = "frr"
 		)
 
 		var (
@@ -178,10 +180,11 @@ ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | 
 				checkConnectionToNodePort(f, udnClientPod2, udnService, &nodes.Items[2], "other node", udnServerPod.Name)
 
 				By("Connect to the UDN service from the UDN client external container")
-				checkConnectionToLoadBalancersFromExternalContainer(f, clientContainer, udnService, udnServerPod.Name)
-				checkConnectionToNodePortFromExternalContainer(f, clientContainer, udnService, &nodes.Items[0], "server node", udnServerPod.Name)
-				checkConnectionToNodePortFromExternalContainer(f, clientContainer, udnService, &nodes.Items[1], "other node", udnServerPod.Name)
-				checkConnectionToNodePortFromExternalContainer(f, clientContainer, udnService, &nodes.Items[2], "other node", udnServerPod.Name)
+				externalContainer := provider.ExternalContainer{Name: clientContainerName}
+				checkConnectionToLoadBalancersFromExternalContainer(externalContainer, udnService, udnServerPod.Name)
+				checkConnectionToNodePortFromExternalContainer(externalContainer, udnService, &nodes.Items[0], "server node", udnServerPod.Name)
+				checkConnectionToNodePortFromExternalContainer(externalContainer, udnService, &nodes.Items[1], "other node", udnServerPod.Name)
+				checkConnectionToNodePortFromExternalContainer(externalContainer, udnService, &nodes.Items[2], "other node", udnServerPod.Name)
 
 				// Default network -> UDN
 				// Check that it cannot connect
@@ -251,7 +254,7 @@ ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | 
 				// in OVNK in CLBO state https://issues.redhat.com/browse/OCPBUGS-41499
 				if netConfigParams.topology == "layer3" { // no need to run it for layer 2 as well
 					By("Restart ovnkube-node on one node and verify that the new ovnkube-node pod goes to the running state")
-					err = restartOVNKubeNodePod(cs, ovnNamespace, clientNode)
+					err = restartOVNKubeNodePod(cs, deployment.Get().OVNKubernetesNamespace(), clientNode)
 					Expect(err).NotTo(HaveOccurred())
 				}
 			},
@@ -466,7 +469,7 @@ func checkConnectionOrNoConnectionToLoadBalancers(f *framework.Framework, client
 	}
 }
 
-func checkConnectionToNodePortFromExternalContainer(f *framework.Framework, containerName string, service *v1.Service, node *v1.Node, nodeRoleMsg, expectedOutput string) {
+func checkConnectionToNodePortFromExternalContainer(externalContainer provider.ExternalContainer, service *v1.Service, node *v1.Node, nodeRoleMsg, expectedOutput string) {
 	GinkgoHelper()
 	var err error
 	nodePort := service.Spec.Ports[0].NodePort
@@ -475,11 +478,12 @@ func checkConnectionToNodePortFromExternalContainer(f *framework.Framework, cont
 
 	for nodeIP := range nodeIPs {
 		msg := fmt.Sprintf("Client at external container %s should connect to NodePort service %s/%s on %s:%d (node %s, %s)",
-			containerName, service.Namespace, service.Name, nodeIP, nodePort, node.Name, nodeRoleMsg)
+			externalContainer.GetName(), service.Namespace, service.Name, nodeIP, nodePort, node.Name, nodeRoleMsg)
 		By(msg)
-		cmd := []string{containerRuntime, "exec", containerName, "/bin/bash", "-c", fmt.Sprintf("echo hostname | nc -u -w 1 %s %d", nodeIP, nodePort)}
 		Eventually(func() (string, error) {
-			return runCommand(cmd...)
+			return provider.Get().ExecExternalContainerCommand(externalContainer, []string{
+				"/bin/bash", "-c", fmt.Sprintf("echo hostname | nc -u -w 1 %s %d", nodeIP, nodePort),
+			})
 		}).
 			WithTimeout(5*time.Second).
 			WithPolling(200*time.Millisecond).
@@ -487,17 +491,18 @@ func checkConnectionToNodePortFromExternalContainer(f *framework.Framework, cont
 	}
 }
 
-func checkConnectionToLoadBalancersFromExternalContainer(f *framework.Framework, containerName string, service *v1.Service, expectedOutput string) {
+func checkConnectionToLoadBalancersFromExternalContainer(externalContainer provider.ExternalContainer, service *v1.Service, expectedOutput string) {
 	GinkgoHelper()
 	port := service.Spec.Ports[0].Port
 
 	for _, lbIngress := range service.Status.LoadBalancer.Ingress {
 		msg := fmt.Sprintf("Client at external container %s should reach service %s/%s on LoadBalancer IP %s port %d",
-			containerName, service.Namespace, service.Name, lbIngress.IP, port)
+			externalContainer.GetName(), service.Namespace, service.Name, lbIngress.IP, port)
 		By(msg)
-		cmd := []string{containerRuntime, "exec", containerName, "/bin/bash", "-c", fmt.Sprintf("echo hostname | nc -u -w 1 %s %d", lbIngress.IP, port)}
 		Eventually(func() (string, error) {
-			return runCommand(cmd...)
+			return provider.Get().ExecExternalContainerCommand(externalContainer, []string{
+				"/bin/bash", "-c", fmt.Sprintf("echo hostname | nc -u -w 1 %s %d", lbIngress.IP, port),
+			})
 		}).
 			// It takes some time for the container to receive the dynamic routing
 			WithTimeout(20*time.Second).

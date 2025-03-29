@@ -94,8 +94,6 @@ require (
 	github.com/mxk/go-flowrate v0.0.0-20140419014527-cca7078d478f // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.0.2 // indirect
-	github.com/openshift/api v0.0.0-20231120222239-b86761094ee3 // indirect
-	github.com/openshift/client-go v0.0.0-20231121143148-910ca30a1a9a // indirect
 	github.com/openshift/custom-resource-status v1.1.2 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/prometheus/client_golang v1.19.1 // indirect
@@ -130,7 +128,6 @@ require (
 	go.opentelemetry.io/proto/otlp v1.3.1 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.26.0 // indirect
-	golang.org/x/crypto v0.24.0 // indirect
 	golang.org/x/exp v0.0.0-20240613232115-7f521ea00fb8 // indirect
 	golang.org/x/mod v0.18.0 // indirect
 	golang.org/x/net v0.26.0 // indirect
@@ -159,7 +156,6 @@ require (
 	k8s.io/component-base v0.31.1 // indirect
 	k8s.io/component-helpers v0.31.1 // indirect
 	k8s.io/controller-manager v0.31.1 // indirect
-	k8s.io/klog/v2 v2.130.1 // indirect
 	k8s.io/kms v0.31.1 // indirect
 	k8s.io/kube-openapi v0.0.0-20240521193020-835d969ad83a // indirect
 	k8s.io/kubelet v0.31.1 // indirect
@@ -178,9 +174,13 @@ require (
 	github.com/google/goexpect v0.0.0-20210430020637-ab937bf7fd6f
 	github.com/onsi/ginkgo v1.16.5
 	github.com/openshift-kni/k8sreporter v1.0.6
+	github.com/openshift/api v0.0.0-20231120222239-b86761094ee3
+	github.com/openshift/client-go v0.0.0-20231121143148-910ca30a1a9a
 	github.com/ovn-org/ovn-kubernetes/go-controller v0.0.0-20250304211626-ab2bbed40acc
 	go.universe.tf/metallb v0.0.0-00010101000000-000000000000
+	golang.org/x/crypto v0.24.0
 	google.golang.org/grpc v1.65.0
+	k8s.io/klog/v2 v2.130.1
 	k8s.io/kubectl v0.31.1
 	kubevirt.io/api v1.4.0
 	sigs.k8s.io/controller-runtime v0.19.0
