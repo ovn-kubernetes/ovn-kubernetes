@@ -727,7 +727,73 @@ nodes has to be kept, following is a possible transitory topology to fix this
 issue:
 
 ```mermaid
-TODO
+
+%%{init: {"nodeSpacing": 20, "rankSpacing": 100}}%%
+flowchart TD
+    classDef nodeStyle fill:orange,stroke:none,rx:10px,ry:10px,font-size:25px;
+    classDef vmStyle fill:blue,stroke:none,color:white,rx:10px,ry:10px,font-size:25px;
+    classDef portStyle fill:#3CB371,color:black,stroke:none,rx:10px,ry:10px,font-size:25px;
+    classDef routerStyle fill:brown,color:white,stroke:none,rx:10px,ry:10px,font-size:25px;
+    classDef switchStyle fill:brown,color:white,stroke:none,rx:10px,ry:10px,font-size:25px;
+    classDef termStyle font-family:monospace,fill:black,stroke:none,color:white;
+    subgraph node1["node1 <b>(updated)</b>"]
+        subgraph GR-node1
+            rtotr-GR-node1["trtor-GR-node1 
+            100.65.0.2/16 100.88.0.6/30 (0a:58:64:41:00:02)"]
+        end
+        subgraph VM["Virtual Machine"]
+            class VM vmStyle;
+            term["default gw 
+            203.203.0.1
+            (0a:58:CB:CB:00:01)"]
+        end
+    end
+    subgraph node2["node2 <b>(updated)</b>"]
+        subgraph GR-node2
+            rtotr-GR-node2["rtotr-GR-node2 100.65.0.3/16 100.88.0.14/30 (0a:58:64:41:00:03)"]
+        end
+    end
+    subgraph node3["node3 <b>(old topo)</b>"]
+        subgraph GR-node3
+            rtos-GR-node3["rtos-GR-node3"]
+        end
+    end
+    subgraph layer2-switch
+        stor-ovn_cluster_router["stor-ovn_cluster_router 
+        type: router"]
+        stor-GR-node3["stor-GR-node3  100.65.0.4/16 (0a:58:64:41:00:04)
+        type: remote"]
+    end
+    subgraph ovn_cluster_router["ovn_cluster_router "]
+        trtor-GR-node1["trtor-GR-node1 100.88.0.5/30"]
+        trtor-GR-node2["trtor-GR-node2 100.88.0.13/30"]
+   
+        rtos-layer2-switch["rtos-layer2-switch 203.203.0.1/24 <b>100.65.0.2/16</b> (0a:58:CB:CB:00:01)"]
+    end
+    rtotr-GR-node1 <--> trtor-GR-node1
+    rtotr-GR-node2 <--> trtor-GR-node2
+    rtos-GR-node3 <--> stor-GR-node3
+    VM <-->layer2-switch
+    rtos-layer2-switch <--> stor-ovn_cluster_router
+    
+    class VM vmStyle;
+    class rtotr-GR-node1 portStyle;
+    class rtotr-GR-node2 portStyle;
+    class rtotr-GR-node3 portStyle;
+    class trtor-GR-node1 portStyle;
+    class trtor-GR-node2 portStyle;
+    class trtor-GR-node3 portStyle;
+    class stor-GR-node3 portStyle;
+    class rtos-GR-node3 portStyle;
+    class stor-ovn_cluster_router portStyle;
+    class rtos-layer2-switch portStyle;
+    class GR-node1 routerStyle;
+    class GR-node2 routerStyle;
+    class GR-node3 routerStyle;
+    class ovn_cluster_router routerStyle;
+    class layer2-switch switchStyle
+    class term termStyle;
+    class node1,node2,node3 nodeStyle;
 ```
 
 With this topology updated nodes should keep the remote node connection towards
