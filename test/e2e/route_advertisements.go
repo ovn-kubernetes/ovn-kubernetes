@@ -280,12 +280,6 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN Layer3 Network is
 		var err error
 
 		ginkgo.BeforeEach(func() {
-			if !IsGatewayModeLocal() {
-				const upstreamIssue = "https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5134"
-				e2eskipper.Skipf(
-					"The import of routes into UDNs is broken on shared gateway mode. Upstream issue: %s", upstreamIssue,
-				)
-			}
 			ginkgo.By("Selecting 3 schedulable nodes")
 			nodes, err = e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 3)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
