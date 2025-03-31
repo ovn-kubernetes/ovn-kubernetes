@@ -128,7 +128,7 @@ func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatch
 }
 
 // initDefaultNodeNetworkController creates the controller for default network
-func (ncm *NodeControllerManager) initDefaultNodeNetworkController() error {
+func (ncm *NodeControllerManager) initDefaultNodeNetworkController(ctx context.Context) error {
 	defaultNodeNetworkController, err := node.NewDefaultNodeNetworkController(ncm.newCommonNetworkControllerInfo(ncm.watchFactory), ncm.networkManager.Interface())
 	if err != nil {
 		return err
@@ -137,7 +137,8 @@ func (ncm *NodeControllerManager) initDefaultNodeNetworkController() error {
 	// otherwise we would initialize the interface with a nil implementation
 	// which is not the same as nil interface.
 	ncm.defaultNodeNetworkController = defaultNodeNetworkController
-	return nil
+
+	return ncm.defaultNodeNetworkController.Init(ctx) // partial gateway init + OpenFlow Manager
 }
 
 // Start the node network controller manager
@@ -179,13 +180,9 @@ func (ncm *NodeControllerManager) Start(ctx context.Context) (err error) {
 		ncm.routeManager.Run(ncm.stopChan, 2*time.Minute)
 	}()
 
-	err = ncm.initDefaultNodeNetworkController()
+	err = ncm.initDefaultNodeNetworkController(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to init default node network controller: %v", err)
-	}
-	err = ncm.defaultNodeNetworkController.PreStart(ctx) // partial gateway init + OpenFlow Manager
-	if err != nil {
-		return fmt.Errorf("failed to start default node network controller: %v", err)
 	}
 
 	if ncm.networkManager != nil {

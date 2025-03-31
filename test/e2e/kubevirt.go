@@ -1536,12 +1536,12 @@ runcmd:
 				DeferCleanup(func() {
 					if e2eframework.TestContext.DeleteNamespace && (e2eframework.TestContext.DeleteNamespaceOnFailure || !CurrentSpecReport().Failed()) {
 						By("tearing down the localnet underlay")
-						Expect(teardownUnderlay(nodes)).To(Succeed())
+						Expect(teardownUnderlay(nodes, secondaryBridge)).To(Succeed())
 					}
 				})
 
 				const secondaryInterfaceName = "eth1"
-				Expect(setupUnderlay(nodes, secondaryInterfaceName, netConfig)).To(Succeed())
+				Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, netConfig)).To(Succeed())
 			}
 
 			By("Creating NetworkAttachmentDefinition")

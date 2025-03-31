@@ -585,9 +585,13 @@ func getApiAddress() string {
 func IsGatewayModeLocal() bool {
 	anno, err := e2ekubectl.RunKubectl("default", "get", "node", "ovn-control-plane", "-o", "template", "--template={{.metadata.annotations}}")
 	if err != nil {
+		framework.Logf("Error getting annotations: %v", err)
 		return false
 	}
-	return strings.Contains(anno, "local")
+	framework.Logf("Annotations received: %s", anno)
+	isLocal := strings.Contains(anno, "local")
+	framework.Logf("IsGatewayModeLocal returning: %v", isLocal)
+	return isLocal
 }
 
 // runCommand runs the cmd and returns the combined stdout and stderr
@@ -2024,25 +2028,47 @@ var _ = ginkgo.Describe("e2e br-int flow monitoring export validation", func() {
 
 })
 
-func getNodePodCIDR(nodeName string) (string, error) {
+func getNodePodCIDRs(nodeName string) (string, string, error) {
 	// retrieve the pod cidr for the worker node
 	jsonFlag := "jsonpath='{.metadata.annotations.k8s\\.ovn\\.org/node-subnets}'"
 	kubectlOut, err := e2ekubectl.RunKubectl("default", "get", "node", nodeName, "-o", jsonFlag)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	// strip the apostrophe from stdout and parse the pod cidr
 	annotation := strings.Replace(kubectlOut, "'", "", -1)
 
+	var ipv4CIDR, ipv6CIDR string
+
 	ssSubnets := make(map[string]string)
 	if err := json.Unmarshal([]byte(annotation), &ssSubnets); err == nil {
-		return ssSubnets["default"], nil
+		// If only one subnet, determine if it's v4 or v6
+		if subnet, ok := ssSubnets["default"]; ok {
+			if strings.Contains(subnet, ":") {
+				ipv6CIDR = subnet
+			} else {
+				ipv4CIDR = subnet
+			}
+			return ipv4CIDR, ipv6CIDR, nil
+		}
 	}
+
 	dsSubnets := make(map[string][]string)
 	if err := json.Unmarshal([]byte(annotation), &dsSubnets); err == nil {
-		return dsSubnets["default"][0], nil
+		if subnets, ok := dsSubnets["default"]; ok && len(subnets) > 0 {
+			// Classify each subnet as IPv4 or IPv6
+			for _, subnet := range subnets {
+				if strings.Contains(subnet, ":") {
+					ipv6CIDR = subnet
+				} else {
+					ipv4CIDR = subnet
+				}
+			}
+			return ipv4CIDR, ipv6CIDR, nil
+		}
 	}
-	return "", fmt.Errorf("could not parse annotation %q", annotation)
+
+	return "", "", fmt.Errorf("could not parse annotation %q", annotation)
 }
 
 var _ = ginkgo.Describe("e2e delete databases", func() {

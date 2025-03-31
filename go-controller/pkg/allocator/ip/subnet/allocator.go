@@ -264,6 +264,9 @@ func (allocator *allocator) AllocateNextIPs(name string) ([]*net.IPNet, error) {
 	for idx, ipam := range subnetInfo.ipams {
 		ip, err = ipam.AllocateNext()
 		if err != nil {
+			if errors.Is(err, ipallocator.ErrFull) {
+				err = fmt.Errorf("failed to allocate new IPs for %s: %w", name, ipallocator.ErrFull)
+			}
 			return nil, err
 		}
 		ipnet := &net.IPNet{

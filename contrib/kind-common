@@ -413,7 +413,7 @@ install_multus() {
 
 install_mpolicy_crd() {
   echo "Installing multi-network-policy CRD ..."
-  mpolicy_manifest="https://raw.githubusercontent.com/k8snetworkplumbingwg/multi-networkpolicy/master/scheme.yml"
+  mpolicy_manifest="https://raw.githubusercontent.com/k8snetworkplumbingwg/multi-networkpolicy/refs/tags/v1.0.1/scheme.yml"
   run_kubectl apply -f "$mpolicy_manifest"
 }
 
@@ -652,7 +652,7 @@ get_kubevirt_release_url() {
     echo "$kubevirt_release_url"
 }
 
-readonly FRR_K8S_VERSION=v0.0.14
+readonly FRR_K8S_VERSION=v0.0.17
 readonly FRR_TMP_DIR=$(mktemp -d -u)
 
 clone_frr() {
@@ -660,6 +660,15 @@ clone_frr() {
     mkdir -p "$FRR_TMP_DIR" && trap 'rm -rf $FRR_TMP_DIR' EXIT
     pushd "$FRR_TMP_DIR" || exit 1
     git clone --depth 1 --branch $FRR_K8S_VERSION https://github.com/metallb/frr-k8s
+
+    # Download the patches
+    curl -Ls https://github.com/jcaamano/frr-k8s/archive/refs/heads/ovnk-bgp.tar.gz | tar xzvf - frr-k8s-ovnk-bgp/patches --strip-components 1
+
+    # Change into the cloned repo directory before applying patches
+    pushd frr-k8s
+    git apply ../patches/*
+    popd
+
     popd || exit 1
   }
 }
@@ -676,19 +685,86 @@ deploy_frr_external_container() {
   # can peer with acting as BGP (reflector) external gateway
   pushd "${FRR_TMP_DIR}"/frr-k8s/hack/demo || exit 1
   # modify config template to configure neighbors as route reflector clients
+  # First check if IPv4 network already exists
+  grep -q 'network '"${BGP_SERVER_NET_SUBNET_IPV4}" frr/frr.conf.tmpl || \
+    sed -i '/address-family ipv4 unicast/a \ \ network '"${BGP_SERVER_NET_SUBNET_IPV4}"'' frr/frr.conf.tmpl
+
+  # Add route reflector client config
   sed -i '/remote-as 64512/a \ neighbor {{ . }} route-reflector-client' frr/frr.conf.tmpl
+
+  if [ "$KIND_IPV6_SUPPORT" == true ]; then
+    # Check if IPv6 address-family section exists
+    if ! grep -q 'address-family ipv6 unicast' frr/frr.conf.tmpl; then
+      # Add IPv6 address-family section if it doesn't exist
+      sed -i '/exit-address-family/a \ \
+  address-family ipv6 unicast\
+    network '"${BGP_SERVER_NET_SUBNET_IPV6}"'\
+  exit-address-family' frr/frr.conf.tmpl
+    else
+      # Add network to existing IPv6 section
+      sed -i '/address-family ipv6 unicast/a \ \ network '"${BGP_SERVER_NET_SUBNET_IPV6}"'' frr/frr.conf.tmpl
+    fi
+
+    # Add route-reflector-client for IPv6 neighbors
+    sed -i '/neighbor fc00.*remote-as 64512/a \ neighbor {{ . }} route-reflector-client' frr/frr.conf.tmpl
+  fi
   ./demo.sh
   popd || exit 1
+  if  [ "$KIND_IPV6_SUPPORT" == true ]; then
+    # Enable IPv6 forwarding in FRR
+    docker exec frr sysctl -w net.ipv6.conf.all.forwarding=1
+  fi
+}
 
-  # this container will act as the gateway for the cluster and will masquerade
-  # towards the external world
-  $OCI_BIN exec frr iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
-  # set default route
-  FRR_IP=$($OCI_BIN inspect -f "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}" frr)
-  KIND_NODES=$(kind_get_nodes)
-  for n in $KIND_NODES; do
-    $OCI_BIN exec "$n" ip route replace default via "$FRR_IP"
-  done
+deploy_bgp_external_server() {
+  # We create an external docker container that acts as the server (or client) outside the cluster
+  # in the e2e tests that levergae router advertisements.
+  # This container will be connected to the frr container deployed above to simulate a realistic
+  # network topology
+  # -----------------               ------------------                         ---------------------
+  # |               | 172.26.0.0/16 |                |       172.18.0.0/16     | ovn-control-plane |
+  # |   external    |<------------- |   FRR router   |<------ KIND cluster --  ---------------------
+  # |    server     |               |                |                         |    ovn-worker     |   (client pod advertised
+  # -----------------               ------------------                         ---------------------    using RouteAdvertisements
+  #                                                                            |    ovn-worker2    |    from default pod network)
+  #                                                                            ---------------------
+  local ip_family ipv6_network
+  if [ "$KIND_IPV4_SUPPORT" == true ] && [ "$KIND_IPV6_SUPPORT" == true ]; then
+    ip_family="dual"
+    ipv6_network="--ipv6 --subnet=${BGP_SERVER_NET_SUBNET_IPV6}"
+  elif  [ "$KIND_IPV6_SUPPORT" == true ]; then
+    ip_family="ipv6"
+    ipv6_network="--ipv6 --subnet=${BGP_SERVER_NET_SUBNET_IPV6}"
+  else
+    ip_family="ipv4"
+    ipv6_network=""
+  fi
+  docker network create --subnet="${BGP_SERVER_NET_SUBNET_IPV4}" ${ipv6_network} --driver bridge bgpnet
+  docker network connect bgpnet frr
+  docker run  --cap-add NET_ADMIN --user 0  -d --network bgpnet  --rm  --name bgpserver -p 8080:8080  registry.k8s.io/e2e-test-images/agnhost:2.45 netexec
+  # let's make the bgp external server have its default route towards FRR router so that we don't need to add routes during tests back to the pods in the
+  # cluster for return traffic
+  local bgp_network_frr_v4 bgp_network_frr_v6
+  bgp_network_frr_v4=$($OCI_BIN inspect -f '{{index .NetworkSettings.Networks "bgpnet" "IPAddress"}}' frr)
+  echo "FRR kind network IPv4: ${bgp_network_frr_v4}"
+  $OCI_BIN exec bgpserver ip route replace default via "$bgp_network_frr_v4"
+  if  [ "$KIND_IPV6_SUPPORT" == true ] ; then
+    bgp_network_frr_v6=$($OCI_BIN inspect -f '{{index .NetworkSettings.Networks "bgpnet" "GlobalIPv6Address"}}' frr)
+    echo "FRR kind network IPv6: ${bgp_network_frr_v6}"
+    $OCI_BIN exec bgpserver ip -6 route replace default via "$bgp_network_frr_v6"
+  fi
+}
+
+destroy_bgp() {
+  if docker ps --format '{{.Names}}' | grep -Eq '^bgpserver$'; then
+      docker stop bgpserver
+  fi
+  if docker ps --format '{{.Names}}' | grep -Eq '^frr$'; then
+      docker stop frr
+  fi
+  if docker network ls --format '{{.Name}}' | grep -q '^bgpnet$'; then
+      docker network rm bgpnet
+  fi
 }
 
 install_ffr_k8s() {
@@ -703,9 +779,57 @@ install_ffr_k8s() {
   # apply a BGP peer configration with the external gateway that does not
   # exchange routes
   pushd "${FRR_TMP_DIR}"/frr-k8s/hack/demo/configs || exit 1
-  sed 's/all$/filtered/g' receive_all.yaml > receive_filtered.yaml
-  kubectl apply -f receive_filtered.yaml
+  sed 's/mode: all/mode: filtered/g' receive_all.yaml > receive_filtered.yaml
+  # Allow receiving the bgp external server's prefix
+  sed -i '/mode: filtered/a\            prefixes:\n            - prefix: '"${BGP_SERVER_NET_SUBNET_IPV4}"'' receive_filtered.yaml
+  # If IPv6 is enabled, add the IPv6 prefix as well
+  if [ "$KIND_IPV6_SUPPORT" == true ]; then
+    # Find all line numbers where the IPv4 prefix is defined
+    IPv6_LINE="            - prefix: ${BGP_SERVER_NET_SUBNET_IPV6}"
+    # Process each occurrence of the IPv4 prefix
+    for LINE_NUM in $(grep -n "prefix: ${BGP_SERVER_NET_SUBNET_IPV4}" receive_filtered.yaml | cut -d ':' -f 1); do
+      # Insert the IPv6 prefix after each IPv4 prefix line
+      sed -i "${LINE_NUM}a\\${IPv6_LINE}" receive_filtered.yaml
+    done
+  fi
+  kubectl apply -n frr-k8s-system -f receive_filtered.yaml
   popd || exit 1
 
   rm -rf "${FRR_TMP_DIR}"
+  # Add routes for pod networks dynamically into the github runner for return traffic to pass back
+  if [ -n "${JOB_NAME:-}" ] && [[ "$JOB_NAME" == *"shard-conformance"* ]] && [ "$ADVERTISE_DEFAULT_NETWORK" == "true" ]; then
+    echo "Adding routes for Kubernetes pod networks..."
+    NODES=$(kubectl get nodes -o jsonpath='{.items[*].metadata.name}')
+    echo "Found nodes: $NODES"
+    for node in $NODES; do
+      # Get the addresses
+      node_ips=$(kubectl get node $node -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')
+      # Get subnet information
+      subnet_json=$(kubectl get node $node -o jsonpath='{.metadata.annotations.k8s\.ovn\.org/node-subnets}')
+      
+      if [ "$KIND_IPV4_SUPPORT" == true ]; then
+        # Extract IPv4 address (first address)
+        node_ipv4=$(echo "$node_ips" | awk '{print $1}')
+        ipv4_subnet=$(echo "$subnet_json" | jq -r '.default[0]')
+        
+        # Add IPv4 route
+        if [ -n "$ipv4_subnet" ] && [ -n "$node_ipv4" ]; then
+          echo "Adding IPv4 route for $node ($node_ipv4): $ipv4_subnet"
+          sudo ip route add $ipv4_subnet via $node_ipv4
+        fi
+      fi
+
+      # Add IPv6 route if enabled
+      if [ "$KIND_IPV6_SUPPORT" == true ]; then
+        # Extract IPv6 address (second address, if present)
+        node_ipv6=$(echo "$node_ips" | awk '{print $2}')
+        ipv6_subnet=$(echo "$subnet_json" | jq -r '.default[1] // empty')
+        
+        if [ -n "$ipv6_subnet" ] && [ -n "$node_ipv6" ]; then
+          echo "Adding IPv6 route for $node ($node_ipv6): $ipv6_subnet"
+          sudo ip -6 route add $ipv6_subnet via $node_ipv6
+        fi
+      fi
+    done
+  fi
 }

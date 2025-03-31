@@ -35,13 +35,16 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/managementport"
 	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
+	nodemocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node"
 	linkMock "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/vishvananda/netlink"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utilMock "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/mocks"
+	multinetworkmocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/mocks/multinetwork"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -50,15 +53,15 @@ import (
 // The base expected nftables rules. You must substitute in the management port interface name.
 const baseNFTRulesFmt = `
 add table inet ovn-kubernetes
-add chain inet ovn-kubernetes mgmtport-snat { type nat hook postrouting priority 100 ; comment "OVN SNAT to Management Port" ; }
-add rule inet ovn-kubernetes mgmtport-snat oifname != %q return
-add rule inet ovn-kubernetes mgmtport-snat meta nfproto ipv4 ip saddr 10.1.1.0 counter return
-add rule inet ovn-kubernetes mgmtport-snat meta l4proto . th dport @mgmtport-no-snat-nodeports counter return
-add rule inet ovn-kubernetes mgmtport-snat ip daddr . meta l4proto . th dport @mgmtport-no-snat-services-v4 counter return
-add rule inet ovn-kubernetes mgmtport-snat counter snat ip to 10.1.1.0
 add set inet ovn-kubernetes mgmtport-no-snat-nodeports { type inet_proto . inet_service ; comment "NodePorts not subject to management port SNAT" ; }
 add set inet ovn-kubernetes mgmtport-no-snat-services-v4 { type ipv4_addr . inet_proto . inet_service ; comment "eTP:Local short-circuit not subject to management port SNAT (IPv4)" ; }
 add set inet ovn-kubernetes mgmtport-no-snat-services-v6 { type ipv6_addr . inet_proto . inet_service ; comment "eTP:Local short-circuit not subject to management port SNAT (IPv6)" ; }
+add chain inet ovn-kubernetes mgmtport-snat { type nat hook postrouting priority 100 ; comment "OVN SNAT to Management Port" ; }
+add rule inet ovn-kubernetes mgmtport-snat oifname != %s return
+add rule inet ovn-kubernetes mgmtport-snat meta nfproto ipv4 ip saddr 10.1.1.2 counter return
+add rule inet ovn-kubernetes mgmtport-snat meta l4proto . th dport @mgmtport-no-snat-nodeports counter return
+add rule inet ovn-kubernetes mgmtport-snat ip daddr . meta l4proto . th dport @mgmtport-no-snat-services-v4 counter return
+add rule inet ovn-kubernetes mgmtport-snat counter snat ip to 10.1.1.2
 `
 
 // The base expected nftables rules with UDN enabled. You must substitute in the management port interface name.
@@ -71,7 +74,7 @@ add rule inet ovn-kubernetes udn-service-mark fib daddr type local meta l4proto 
 add rule inet ovn-kubernetes udn-service-mark ip daddr . meta l4proto . th dport vmap @udn-mark-external-ips-v4
 add rule inet ovn-kubernetes udn-service-mark ip6 daddr . meta l4proto . th dport vmap @udn-mark-external-ips-v6
 add chain inet ovn-kubernetes udn-service-prerouting { type filter hook prerouting priority -150 ; comment "UDN services packet mark - Prerouting" ; }
-add rule inet ovn-kubernetes udn-service-prerouting iifname != %q jump udn-service-mark
+add rule inet ovn-kubernetes udn-service-prerouting iifname != %s jump udn-service-mark
 add chain inet ovn-kubernetes udn-service-output { type filter hook output priority -150 ; comment "UDN services packet mark - Output" ; }
 add rule inet ovn-kubernetes udn-service-output jump udn-service-mark
 `
@@ -113,6 +116,28 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 		)
 
 		fexec := ovntest.NewLooseCompareFakeExec()
+
+		// management port commands
+		mpPortName := types.K8sMgmtIntfName
+		mpPortRepName := types.K8sMgmtIntfName + "_0"
+		mpPortLegacyName := types.K8sPrefix + nodeName
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ovs-vsctl --timeout=15 --no-headings --data bare --format csv --columns type,name find Interface name=" + mpPortName,
+			Output: "internal," + mpPortName,
+		})
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ovs-vsctl --timeout=15 --no-headings --data bare --format csv --columns type,name find Interface name=" + mpPortRepName,
+			Output: "internal," + mpPortRepName,
+		})
+		fexec.AddFakeCmdsNoOutputNoError([]string{
+			"ovs-vsctl --timeout=15 -- --if-exists del-port br-int " + mpPortLegacyName + " -- --may-exist add-port br-int " + mpPortName + " -- set interface " + mpPortName + " mac=\"0a:58:0a:01:01:02\" type=internal mtu_request=" + mtu + " external-ids:iface-id=" + mpPortLegacyName,
+		})
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "sysctl -w net.ipv4.conf.ovn-k8s-mp0.forwarding=1",
+			Output: "net.ipv4.conf.ovn-k8s-mp0.forwarding = 1",
+		})
+
+		// gateway commands
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 			Cmd: "ovs-vsctl --timeout=15 port-to-br eth0",
 			Err: fmt.Errorf(""),
@@ -234,27 +259,15 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 			existingNode.Status = corev1.NodeStatus{Addresses: []corev1.NodeAddress{nodeAddr}}
 		}
 
-		_, nodeNet, err := net.ParseCIDR(nodeSubnet)
-		Expect(err).NotTo(HaveOccurred())
-
 		iptV4, iptV6 := util.SetFakeIPTablesHelpers()
 		nft := nodenft.SetFakeNFTablesHelper()
 
-		// Make a fake MgmtPortConfig with only the fields we care about
-		fakeMgmtPortIPFamilyConfig := managementPortIPFamilyConfig{
-			allSubnets: nil,
-			ifAddr:     nodeNet,
-			gwIP:       nodeNet.IP,
-		}
-
-		fakeMgmtPortConfig := managementPortConfig{
-			ifName:    nodeName,
-			link:      nil,
-			routerMAC: nil,
-			ipv4:      &fakeMgmtPortIPFamilyConfig,
-			ipv6:      nil,
-		}
-		err = setupManagementPortNFTables(&fakeMgmtPortConfig)
+		// Make Management port
+		hostSubnets := ovntest.MustParseIPNets(nodeSubnet)
+		rm := routemanager.NewController()
+		netInfo := &multinetworkmocks.NetInfo{}
+		netInfo.On("GetPodNetworkAdvertisedOnNodeVRFs", nodeName).Return(nil)
+		mp, err := managementport.NewManagementPortController(&existingNode, hostSubnets, "", "", rm, netInfo)
 		Expect(err).NotTo(HaveOccurred())
 
 		kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
@@ -285,7 +298,6 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 		Expect(err).NotTo(HaveOccurred())
 		err = nodeAnnotator.Run()
 		Expect(err).NotTo(HaveOccurred())
-		rm := routemanager.NewController()
 		wg.Add(1)
 		go func() {
 			defer GinkgoRecover()
@@ -299,9 +311,20 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 
+			// create dummy management interface
+			err := netlink.LinkAdd(&netlink.Dummy{
+				LinkAttrs: netlink.LinkAttrs{
+					Name: types.K8sMgmtIntfName,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			// start management port
+			err = mp.Start(stop)
+			Expect(err).NotTo(HaveOccurred())
+
 			// setup stale masquerade
 			// Create breth0 as a dummy link
-			err := netlink.LinkAdd(&netlink.Dummy{
+			err = netlink.LinkAdd(&netlink.Dummy{
 				LinkAttrs: netlink.LinkAttrs{
 					Name:         "br" + eth0Name,
 					HardwareAddr: ovntest.MustParseMAC(eth0MAC),
@@ -334,6 +357,7 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 
 			gatewayNextHops, gatewayIntf, err := getGatewayNextHops()
 			Expect(err).NotTo(HaveOccurred())
+
 			ifAddrs := ovntest.MustParseIPNets(eth0CIDR)
 			sharedGw, err := newGateway(
 				nodeName,
@@ -343,7 +367,7 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 				"",
 				ifAddrs,
 				nodeAnnotator,
-				&fakeMgmtPortConfig,
+				mp,
 				k,
 				wf,
 				rm,
@@ -480,7 +504,7 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 		err = f6.MatchState(expectedTables, nil)
 		Expect(err).NotTo(HaveOccurred())
 
-		expectedNFT := getBaseNFTRules(fakeMgmtPortConfig.ifName)
+		expectedNFT := getBaseNFTRules(types.K8sMgmtIntfName)
 		err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 		Expect(err).NotTo(HaveOccurred())
 
@@ -677,27 +701,6 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 			NetworkAttchDefClient: nadfake.NewSimpleClientset(),
 		}
 
-		_, nodeNet, err := net.ParseCIDR(nodeSubnet)
-		Expect(err).NotTo(HaveOccurred())
-
-		// Make a fake MgmtPortConfig with only the fields we care about
-		fakeMgmtPortIPFamilyConfig := managementPortIPFamilyConfig{
-			allSubnets: nil,
-			ifAddr:     nodeNet,
-			gwIP:       nodeNet.IP,
-		}
-
-		_ = nodenft.SetFakeNFTablesHelper()
-		fakeMgmtPortConfig := managementPortConfig{
-			ifName:    nodeName,
-			link:      nil,
-			routerMAC: nil,
-			ipv4:      &fakeMgmtPortIPFamilyConfig,
-			ipv6:      nil,
-		}
-		err = setupManagementPortNFTables(&fakeMgmtPortConfig)
-		Expect(err).NotTo(HaveOccurred())
-
 		stop := make(chan struct{})
 		wf, err := factory.NewNodeWatchFactory(fakeClient, nodeName)
 		Expect(err).NotTo(HaveOccurred())
@@ -737,6 +740,7 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 		// FIXME(mk): starting the gateway causing go routines to be spawned within sub functions and therefore they escape the
 		// netns we wanted to set it to originally here. Refactor test cases to not spawn a go routine or just fake out everything
 		// and remove need to create netns
+		mpmock := &nodemocks.ManagementPort{}
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 
@@ -750,7 +754,7 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 				"",
 				ifAddrs,
 				nodeAnnotator,
-				&fakeMgmtPortConfig,
+				mpmock,
 				k,
 				wf,
 				rm,
@@ -995,6 +999,27 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 
 		fexec := ovntest.NewLooseCompareFakeExec()
 
+		// management port commands
+		mpPortName := types.K8sMgmtIntfName
+		mpPortRepName := types.K8sMgmtIntfName + "_0"
+		mpPortLegacyName := types.K8sPrefix + nodeName
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ovs-vsctl --timeout=15 --no-headings --data bare --format csv --columns type,name find Interface name=" + mpPortName,
+			Output: "internal," + mpPortName,
+		})
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ovs-vsctl --timeout=15 --no-headings --data bare --format csv --columns type,name find Interface name=" + mpPortRepName,
+			Output: "internal," + mpPortRepName,
+		})
+		fexec.AddFakeCmdsNoOutputNoError([]string{
+			"ovs-vsctl --timeout=15 -- --if-exists del-port br-int " + mpPortLegacyName + " -- --may-exist add-port br-int " + mpPortName + " -- set interface " + mpPortName + " mac=\"0a:58:0a:01:01:02\" type=internal mtu_request=" + mtu + " external-ids:iface-id=" + mpPortLegacyName,
+		})
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "sysctl -w net.ipv4.conf.ovn-k8s-mp0.forwarding=1",
+			Output: "net.ipv4.conf.ovn-k8s-mp0.forwarding = 1",
+		})
+
+		// gateway commands
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 			Cmd: "ovs-vsctl --timeout=15 port-to-br eth0",
 			Err: fmt.Errorf(""),
@@ -1138,26 +1163,16 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 		)
 		endpointSlice := *newEndpointSlice("service1", "namespace1", []discovery.Endpoint{}, []discovery.EndpointPort{})
 
-		_, nodeNet, err := net.ParseCIDR(nodeSubnet)
-		Expect(err).NotTo(HaveOccurred())
-
-		// Make a fake MgmtPortConfig with only the fields we care about
-		fakeMgmtPortIPFamilyConfig := managementPortIPFamilyConfig{
-			allSubnets: nil,
-			ifAddr:     nodeNet,
-			gwIP:       nodeNet.IP,
-		}
-
 		nft := nodenft.SetFakeNFTablesHelper()
-		fakeMgmtPortConfig := managementPortConfig{
-			ifName:    types.K8sMgmtIntfName,
-			link:      nil,
-			routerMAC: nil,
-			ipv4:      &fakeMgmtPortIPFamilyConfig,
-			ipv6:      nil,
-		}
-		err = setupManagementPortNFTables(&fakeMgmtPortConfig)
+
+		// Make Management port
+		hostSubnets := ovntest.MustParseIPNets(nodeSubnet)
+		rm := routemanager.NewController()
+		netInfo := &multinetworkmocks.NetInfo{}
+		netInfo.On("GetPodNetworkAdvertisedOnNodeVRFs", nodeName).Return(nil)
+		mp, err := managementport.NewManagementPortController(&existingNode, hostSubnets, "", "", rm, netInfo)
 		Expect(err).NotTo(HaveOccurred())
+
 		if util.IsNetworkSegmentationSupportEnabled() {
 			err = configureUDNServicesNFTables()
 			Expect(err).NotTo(HaveOccurred())
@@ -1199,7 +1214,6 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 		Expect(err).NotTo(HaveOccurred())
 		ip, ipNet, _ := net.ParseCIDR(eth0CIDR)
 		ipNet.IP = ip
-		rm := routemanager.NewController()
 		go func() {
 			defer GinkgoRecover()
 			err := testNS.Do(func(ns.NetNS) error {
@@ -1210,6 +1224,17 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 		}()
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
+
+			// create dummy management interface
+			err := netlink.LinkAdd(&netlink.Dummy{
+				LinkAttrs: netlink.LinkAttrs{
+					Name: types.K8sMgmtIntfName,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			// start management port
+			err = mp.Start(stop)
+			Expect(err).NotTo(HaveOccurred())
 
 			Expect(configureGlobalForwarding()).To(Succeed())
 			gatewayNextHops, gatewayIntf, err := getGatewayNextHops()
@@ -1223,7 +1248,7 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 				"",
 				ifAddrs,
 				nodeAnnotator,
-				&fakeMgmtPortConfig,
+				mp,
 				k,
 				wf,
 				rm,
@@ -1362,7 +1387,7 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 		err = f6.MatchState(expectedTables, nil)
 		Expect(err).NotTo(HaveOccurred())
 
-		expectedNFT := getBaseNFTRules(fakeMgmtPortConfig.ifName)
+		expectedNFT := getBaseNFTRules(types.K8sMgmtIntfName)
 		err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 		Expect(err).NotTo(HaveOccurred())
 

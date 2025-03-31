@@ -1,5 +1,5 @@
 /*
-Copyright 2020 The Kubernetes Authors
+Copyright 2022 The Kubernetes Authors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -26,8 +26,10 @@ import (
 )
 
 // MultiNetworkPolicyLister helps list MultiNetworkPolicies.
+// All objects returned here must be treated as read-only.
 type MultiNetworkPolicyLister interface {
 	// List lists all MultiNetworkPolicies in the indexer.
+	// Objects returned here must be treated as read-only.
 	List(selector labels.Selector) (ret []*v1beta1.MultiNetworkPolicy, err error)
 	// MultiNetworkPolicies returns an object that can list and get MultiNetworkPolicies.
 	MultiNetworkPolicies(namespace string) MultiNetworkPolicyNamespaceLister
@@ -58,10 +60,13 @@ func (s *multiNetworkPolicyLister) MultiNetworkPolicies(namespace string) MultiN
 }
 
 // MultiNetworkPolicyNamespaceLister helps list and get MultiNetworkPolicies.
+// All objects returned here must be treated as read-only.
 type MultiNetworkPolicyNamespaceLister interface {
 	// List lists all MultiNetworkPolicies in the indexer for a given namespace.
+	// Objects returned here must be treated as read-only.
 	List(selector labels.Selector) (ret []*v1beta1.MultiNetworkPolicy, err error)
 	// Get retrieves the MultiNetworkPolicy from the indexer for a given namespace and name.
+	// Objects returned here must be treated as read-only.
 	Get(name string) (*v1beta1.MultiNetworkPolicy, error)
 	MultiNetworkPolicyNamespaceListerExpansion
 }

@@ -54,6 +54,7 @@ var _ = Describe("Egress Service Operations", func() {
 		app = cli.NewApp()
 		app.Name = "test"
 		app.Flags = config.Flags
+		_, _ = util.SetFakeIPTablesHelpers()
 		fExec = ovntest.NewLooseCompareFakeExec()
 		err := util.SetExec(fExec)
 		Expect(err).NotTo(HaveOccurred())

@@ -30,7 +30,7 @@ import (
 type Gateway interface {
 	informer.ServiceAndEndpointsEventHandler
 	Init(<-chan struct{}, *sync.WaitGroup) error
-	Start()
+	Start() error
 	GetGatewayBridgeIface() string
 	GetGatewayIface() string
 	SetDefaultGatewayBridgeMAC(addr net.HardwareAddr)
@@ -320,15 +320,21 @@ func (g *gateway) Init(stopChan <-chan struct{}, wg *sync.WaitGroup) error {
 	return nil
 }
 
-func (g *gateway) Start() {
+func (g *gateway) Start() error {
+	if g.openflowManager != nil {
+		klog.Info("Spawning Conntrack Rule Check Thread")
+		err := g.openflowManager.updateBridgeFlowCache(g.nodeIPManager.ListAddresses())
+		if err != nil {
+			return fmt.Errorf("failed to update bridge flow cache: %w", err)
+		}
+		g.openflowManager.Run(g.stopChan, g.wg)
+	}
+
 	if g.nodeIPManager != nil {
 		g.nodeIPManager.Run(g.stopChan, g.wg)
 	}
 
-	if g.openflowManager != nil {
-		klog.Info("Spawning Conntrack Rule Check Thread")
-		g.openflowManager.Run(g.stopChan, g.wg)
-	}
+	return nil
 }
 
 // sets up an uplink interface for UDP Generic Receive Offload forwarding as part of
@@ -521,14 +527,7 @@ func (g *gateway) addAllServices() []error {
 }
 
 func (g *gateway) updateSNATRules() error {
-	var ipnets []*net.IPNet
-	if g.nodeIPManager.mgmtPortConfig.ipv4 != nil {
-		ipnets = append(ipnets, g.nodeIPManager.mgmtPortConfig.ipv4.ifAddr)
-	}
-	if g.nodeIPManager.mgmtPortConfig.ipv6 != nil {
-		ipnets = append(ipnets, g.nodeIPManager.mgmtPortConfig.ipv6.ifAddr)
-	}
-	subnets := util.IPsToNetworkIPs(ipnets...)
+	subnets := util.IPsToNetworkIPs(g.nodeIPManager.mgmtPort.GetAddresses()...)
 
 	if g.GetDefaultPodNetworkAdvertised() || config.Gateway.Mode != config.GatewayModeLocal {
 		return delLocalGatewayPodSubnetNATRules(subnets...)

@@ -19,6 +19,7 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
+	"k8s.io/utils/ptr"
 
 	mnpapi "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/apis/k8s.cni.cncf.io/v1beta1"
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
@@ -148,14 +149,15 @@ func patchNADSpec(nadClient nadclient.K8sCniCncfIoV1Interface, name, namespace s
 }
 
 type podConfiguration struct {
-	attachments            []nadapi.NetworkSelectionElement
-	containerCmd           []string
-	name                   string
-	namespace              string
-	nodeSelector           map[string]string
-	isPrivileged           bool
-	labels                 map[string]string
-	requiresExtraNamespace bool
+	attachments                  []nadapi.NetworkSelectionElement
+	containerCmd                 []string
+	name                         string
+	namespace                    string
+	nodeSelector                 map[string]string
+	isPrivileged                 bool
+	labels                       map[string]string
+	requiresExtraNamespace       bool
+	needsIPRequestFromHostSubnet bool
 }
 
 func generatePodSpec(config podConfiguration) *v1.Pod {
@@ -166,8 +168,19 @@ func generatePodSpec(config podConfiguration) *v1.Pod {
 	podSpec.Spec.NodeSelector = config.nodeSelector
 	podSpec.Labels = config.labels
 	if config.isPrivileged {
-		privileged := true
-		podSpec.Spec.Containers[0].SecurityContext.Privileged = &privileged
+		podSpec.Spec.Containers[0].SecurityContext.Privileged = ptr.To(true)
+	} else {
+		for _, container := range podSpec.Spec.Containers {
+			if container.SecurityContext.Capabilities == nil {
+				container.SecurityContext.Capabilities = &v1.Capabilities{}
+			}
+			container.SecurityContext.Capabilities.Drop = []v1.Capability{"ALL"}
+			container.SecurityContext.Privileged = ptr.To(false)
+			container.SecurityContext.RunAsNonRoot = ptr.To(true)
+			container.SecurityContext.RunAsUser = ptr.To(int64(1000))
+			container.SecurityContext.AllowPrivilegeEscalation = ptr.To(false)
+			container.SecurityContext.SeccompProfile = &v1.SeccompProfile{Type: v1.SeccompProfileTypeRuntimeDefault}
+		}
 	}
 	return podSpec
 }
@@ -291,6 +304,19 @@ func getSecondaryInterfaceMTU(clientPodConfig podConfiguration) (int, error) {
 	return mtu, nil
 }
 
+func pingServer(clientPodConfig podConfiguration, serverIP string) error {
+	_, err := e2ekubectl.RunKubectl(
+		clientPodConfig.namespace,
+		"exec",
+		clientPodConfig.name,
+		"--",
+		"ping",
+		"-c", "1", // send one ICMP echo request
+		"-W", "2", // timeout after 2 seconds if no response
+		serverIP)
+	return err
+}
+
 func newAttachmentConfigWithOverriddenName(name, namespace, networkName, topology, cidr string) networkAttachmentConfig {
 	return newNetworkAttachmentConfig(
 		networkAttachmentConfigParams{
@@ -320,24 +346,35 @@ func areStaticIPsConfiguredViaCNI(podConfig podConfiguration) bool {
 	return false
 }
 
-func podIPForAttachment(k8sClient clientset.Interface, podNamespace string, podName string, attachmentName string, ipIndex int) (string, error) {
+func podIPsForAttachment(k8sClient clientset.Interface, podNamespace string, podName string, attachmentName string) ([]string, error) {
 	pod, err := k8sClient.CoreV1().Pods(podNamespace).Get(context.Background(), podName, metav1.GetOptions{})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	netStatus, err := podNetworkStatus(pod, func(status nadapi.NetworkStatus) bool {
 		return status.Name == namespacedName(podNamespace, attachmentName)
 	})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if len(netStatus) != 1 {
-		return "", fmt.Errorf("more than one status entry for attachment %s on pod %s", attachmentName, namespacedName(podNamespace, podName))
+		return nil, fmt.Errorf("more than one status entry for attachment %s on pod %s", attachmentName, namespacedName(podNamespace, podName))
 	}
 	if len(netStatus[0].IPs) == 0 {
-		return "", fmt.Errorf("no IPs for attachment %s on pod %s", attachmentName, namespacedName(podNamespace, podName))
+		return nil, fmt.Errorf("no IPs for attachment %s on pod %s", attachmentName, namespacedName(podNamespace, podName))
 	}
-	return netStatus[0].IPs[ipIndex], nil
+	return netStatus[0].IPs, nil
+}
+
+func podIPForAttachment(k8sClient clientset.Interface, podNamespace string, podName string, attachmentName string, ipIndex int) (string, error) {
+	ips, err := podIPsForAttachment(k8sClient, podNamespace, podName, attachmentName)
+	if err != nil {
+		return "", err
+	}
+	if ipIndex >= len(ips) {
+		return "", fmt.Errorf("no IP at index %d for attachment %s on pod %s", ipIndex, attachmentName, namespacedName(podNamespace, podName))
+	}
+	return ips[ipIndex], nil
 }
 
 func allowedClient(podName string) string {
@@ -348,18 +385,27 @@ func blockedClient(podName string) string {
 	return "blocked-" + podName
 }
 
-func multiNetIngressLimitingPolicy(policyFor string, appliesFor metav1.LabelSelector, allowForSelector metav1.LabelSelector, allowPorts ...int) *mnpapi.MultiNetworkPolicy {
+func multiNetPolicyPort(port int) mnpapi.MultiNetworkPolicyPort {
+	tcp := v1.ProtocolTCP
+	p := intstr.FromInt32(int32(port))
+	return mnpapi.MultiNetworkPolicyPort{
+		Protocol: &tcp,
+		Port:     &p,
+	}
+}
+
+func multiNetPolicyPortRange(port, endPort int) mnpapi.MultiNetworkPolicyPort {
+	netpolPort := multiNetPolicyPort(port)
+	endPort32 := int32(endPort)
+	netpolPort.EndPort = &endPort32
+	return netpolPort
+}
+
+func multiNetIngressLimitingPolicy(policyFor string, appliesFor metav1.LabelSelector, allowForSelector metav1.LabelSelector, allowPorts ...mnpapi.MultiNetworkPolicyPort) *mnpapi.MultiNetworkPolicy {
 	var (
 		portAllowlist []mnpapi.MultiNetworkPolicyPort
 	)
-	tcp := v1.ProtocolTCP
-	for _, port := range allowPorts {
-		p := intstr.FromInt(port)
-		portAllowlist = append(portAllowlist, mnpapi.MultiNetworkPolicyPort{
-			Protocol: &tcp,
-			Port:     &p,
-		})
-	}
+	portAllowlist = append(portAllowlist, allowPorts...)
 	return &mnpapi.MultiNetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{
 			PolicyForAnnotation: policyFor,
@@ -560,7 +606,7 @@ func allowedTCPPortsForPolicy(allowPorts ...int) []mnpapi.MultiNetworkPolicyPort
 	return portAllowlist
 }
 
-func reachToServerPodFromClient(cs clientset.Interface, serverConfig podConfiguration, clientConfig podConfiguration, serverIP string, serverPort int) error {
+func reachServerPodFromClient(cs clientset.Interface, serverConfig podConfiguration, clientConfig podConfiguration, serverIP string, serverPort int) error {
 	updatedPod, err := cs.CoreV1().Pods(serverConfig.namespace).Get(context.Background(), serverConfig.name, metav1.GetOptions{})
 	if err != nil {
 		return err
@@ -568,6 +614,19 @@ func reachToServerPodFromClient(cs clientset.Interface, serverConfig podConfigur
 
 	if updatedPod.Status.Phase == v1.PodRunning {
 		return connectToServer(clientConfig, serverIP, serverPort)
+	}
+
+	return fmt.Errorf("pod not running. /me is sad")
+}
+
+func pingServerPodFromClient(cs clientset.Interface, serverConfig podConfiguration, clientConfig podConfiguration, serverIP string) error {
+	updatedPod, err := cs.CoreV1().Pods(serverConfig.namespace).Get(context.Background(), serverConfig.name, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+
+	if updatedPod.Status.Phase == v1.PodRunning {
+		return pingServer(clientConfig, serverIP)
 	}
 
 	return fmt.Errorf("pod not running. /me is sad")

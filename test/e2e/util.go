@@ -590,6 +590,45 @@ func getContainerAddressesForNetwork(container, network string) (string, string)
 	return strings.TrimSuffix(ipv4, "\n"), strings.TrimSuffix(ipv6, "\n")
 }
 
+// Returns the network's ipv4 and ipv6 CIDRs for the given network.
+func getContainerNetworkCIDRs(network string) (string, string) {
+	output, err := runCommand(containerRuntime, "network", "inspect", network)
+	if err != nil {
+		framework.Failf("failed to inspect network %s: %v", network, err)
+	}
+
+	// Parse the JSON output
+	var networks []map[string]interface{}
+	if err := json.Unmarshal([]byte(output), &networks); err != nil {
+		framework.Failf("failed to parse network inspect output: %v", err)
+	}
+
+	if len(networks) == 0 {
+		framework.Failf("no network found with name %s", network)
+	}
+
+	ipv4CIDR := ""
+	ipv6CIDR := ""
+
+	if ipam, ok := networks[0]["IPAM"].(map[string]interface{}); ok {
+		if configs, ok := ipam["Config"].([]interface{}); ok {
+			for _, c := range configs {
+				if config, ok := c.(map[string]interface{}); ok {
+					if subnet, ok := config["Subnet"].(string); ok {
+						if strings.Contains(subnet, ":") {
+							ipv6CIDR = subnet
+						} else {
+							ipv4CIDR = subnet
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return ipv4CIDR, ipv6CIDR
+}
+
 // Returns the container's MAC addresses
 // related to the given network.
 func getMACAddressesForNetwork(container, network string) string {
@@ -1264,6 +1303,48 @@ func routeToNode(nodeName string, ips []string, mtu int, add bool) error {
 	return nil
 }
 
+// GetNodeIPv6LinkLocalAddressForEth0 returns the IPv6 link-local address for eth0 interface
+func GetNodeIPv6LinkLocalAddressForEth0(nodeName string) (string, error) {
+	// Command to get IPv6 link-local address for eth0
+	ipCmd := []string{"ip", "-6", "addr", "show", "dev", "eth0", "scope", "link"}
+
+	cmd := []string{"docker", "exec", nodeName}
+	cmd = append(cmd, ipCmd...)
+
+	output, err := runCommand(cmd...)
+	if err != nil {
+		return "", fmt.Errorf("failed to get link-local address for eth0: %v", err)
+	}
+
+	// Parse the output to extract the fe80:: address
+	lines := strings.Split(string(output), "\n")
+
+	for _, line := range lines {
+		if strings.Contains(line, "inet6") {
+			// Extract just the address
+			parts := strings.Fields(line)
+			for _, part := range parts {
+				if strings.Contains(part, "/") {
+					// This looks like an IP address with prefix
+					addrWithPrefix := part
+					addrParts := strings.Split(addrWithPrefix, "/")
+					if len(addrParts) > 0 {
+						ipStr := addrParts[0]
+						ip := net.ParseIP(ipStr)
+
+						// Check if it's a valid IPv6 address and is link-local
+						if ip != nil && ip.To4() == nil && ip.IsLinkLocalUnicast() {
+							return ipStr, nil
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return "", fmt.Errorf("no IPv6 link-local address found for eth0 on node %s", nodeName)
+}
+
 // CaptureContainerOutput captures output of a container according to the
 // right-most match of the provided regex. Returns a map of subexpression name
 // to subexpression capture. A zero string name `""` maps to the full expression
@@ -1388,18 +1469,26 @@ func deletePodWithWaitByName(ctx context.Context, c clientset.Interface, podName
 // This is an alternative version of e2epod.WaitForPodNotFoundInNamespace(), which takes
 // a UID as well.
 func waitForPodNotFoundInNamespace(ctx context.Context, c clientset.Interface, podName, ns string, uid types.UID, timeout time.Duration) error {
-        err := framework.Gomega().Eventually(ctx, framework.HandleRetry(func(ctx context.Context) (*v1.Pod, error) {
-                pod, err := c.CoreV1().Pods(ns).Get(ctx, podName, metav1.GetOptions{})
-                if apierrors.IsNotFound(err) {
-                        return nil, nil
-                }
+	err := framework.Gomega().Eventually(ctx, framework.HandleRetry(func(ctx context.Context) (*v1.Pod, error) {
+		pod, err := c.CoreV1().Pods(ns).Get(ctx, podName, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return nil, nil
+		}
 		if pod != nil && pod.UID != uid {
 			return nil, nil
 		}
-                return pod, err
-        })).WithTimeout(timeout).Should(gomega.BeNil())
-        if err != nil {
-                return fmt.Errorf("expected pod to not be found: %w", err)
-        }
-        return nil
+		return pod, err
+	})).WithTimeout(timeout).Should(gomega.BeNil())
+	if err != nil {
+		return fmt.Errorf("expected pod to not be found: %w", err)
+	}
+	return nil
+}
+
+func isDefaultNetworkAdvertised() bool {
+	podNetworkValue, err := runCommand("kubectl", "get", "ra", "default", "--template={{index .spec.advertisements 0}}")
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(podNetworkValue)) == "PodNetwork"
 }

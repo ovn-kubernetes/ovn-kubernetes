@@ -1012,7 +1012,7 @@ local-sb-ovsdb() {
 
 # v1.0.0 - Runs northd on master. Does not run nb_ovsdb, and sb_ovsdb
 run-ovn-northd() {
-  trap 'ovs-appctl -t ovn-northd exit >/dev/null 2>&1; exit 0' TERM
+  trap 'ovn-appctl -t ovn-northd exit >/dev/null 2>&1; exit 0' TERM
   check_ovn_daemonset_version "1.0.0"
   rm -f ${OVN_RUNDIR}/ovn-northd.pid
   rm -f ${OVN_RUNDIR}/ovn-northd.*.ctl
