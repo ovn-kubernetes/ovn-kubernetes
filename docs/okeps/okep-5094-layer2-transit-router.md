@@ -727,8 +727,7 @@ nodes has to be kept, following is a possible transitory topology to fix this
 issue:
 
 ```mermaid
-
-%%{init: {"nodeSpacing": 20, "rankSpacing": 100}}%%
+%%{init: {"nodeSpacing": 20, "rankSpacing": 150}}%%
 flowchart TD
     classDef nodeStyle fill:orange,stroke:none,rx:10px,ry:10px,font-size:25px;
     classDef vmStyle fill:blue,stroke:none,color:white,rx:10px,ry:10px,font-size:25px;
@@ -755,27 +754,36 @@ flowchart TD
     end
     subgraph node3["node3 <b>(old topo)</b>"]
         subgraph GR-node3
-            rtos-GR-node3["rtos-GR-node3"]
+            rtos-GR-node3["rtos-GR-node3   100.65.0.4/16 (0a:58:64:41:00:04)"]
         end
     end
-    subgraph layer2-switch
+    subgraph layer2-switch["layer2-switch (node1)"]
         stor-ovn_cluster_router["stor-ovn_cluster_router 
         type: router"]
         stor-GR-node3["stor-GR-node3  100.65.0.4/16 (0a:58:64:41:00:04)
         type: remote"]
     end
+    subgraph layer2-switch-node3["layer2-switch (node3)"]
+        stor-GR-node3-local["stor-GR-node3 
+        type: router"]
+        stor-GR-node1["stor-GR-node1
+        100.65.0.2/16 (0a:58:64:41:00:02) 
+        type: remote"]
+    end
     subgraph ovn_cluster_router["ovn_cluster_router "]
         trtor-GR-node1["trtor-GR-node1 100.88.0.5/30"]
         trtor-GR-node2["trtor-GR-node2 100.88.0.13/30"]
-   
+
         rtos-layer2-switch["rtos-layer2-switch 203.203.0.1/24 <b>100.65.0.2/16</b> (0a:58:CB:CB:00:01)"]
     end
     rtotr-GR-node1 <--> trtor-GR-node1
     rtotr-GR-node2 <--> trtor-GR-node2
-    rtos-GR-node3 <--> stor-GR-node3
+    rtos-GR-node3 <--> stor-GR-node3-local
+    stor-GR-node3-local <--> stor-GR-node3
     VM <-->layer2-switch
     rtos-layer2-switch <--> stor-ovn_cluster_router
-    
+    stor-GR-node1 <--> stor-ovn_cluster_router
+
     class VM vmStyle;
     class rtotr-GR-node1 portStyle;
     class rtotr-GR-node2 portStyle;
@@ -787,11 +795,14 @@ flowchart TD
     class rtos-GR-node3 portStyle;
     class stor-ovn_cluster_router portStyle;
     class rtos-layer2-switch portStyle;
+    class stor-GR-node3-local portStyle;
+    class stor-GR-node1 portStyle;
     class GR-node1 routerStyle;
     class GR-node2 routerStyle;
     class GR-node3 routerStyle;
     class ovn_cluster_router routerStyle;
     class layer2-switch switchStyle
+    class layer2-switch-node3 switchStyle;
     class term termStyle;
     class node1,node2,node3 nodeStyle;
 ```
