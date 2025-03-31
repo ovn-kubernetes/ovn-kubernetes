@@ -406,18 +406,12 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigPa
 		waitForStatus(node, setReady)
 	}
 
-	setNodeReachable := func(iptablesCmd, node string, setReachable bool) {
-		if !setReachable {
-			_, err := runCommand("docker", "exec", node, iptablesCmd, "-I", "INPUT", "-p", "tcp", "--dport", "9107", "-j", "DROP")
-			if err != nil {
-				framework.Failf("failed to block port 9107 on node: %s, err: %v", node, err)
-			}
-		} else {
-			_, err := runCommand("docker", "exec", node, iptablesCmd, "-I", "INPUT", "-p", "tcp", "--dport", "9107", "-j", "ACCEPT")
-			if err != nil {
-				framework.Failf("failed to allow port 9107 on node: %s, err: %v", node, err)
-			}
+	setNodeReachable := func(node string, setReachable bool) {
+		op := "Drop"
+		if setReachable {
+			op = "Allow"
 		}
+		allowOrDropNodeInputTrafficOnPort(op, node, "tcp", "9107")
 	}
 
 	getSpecificEgressIPStatusItems := func(eipName string) []egressIPStatus {
@@ -687,10 +681,7 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigPa
 		// ensure all nodes are ready and reachable
 		for _, node := range nodes.Items {
 			setNodeReady(node.Name, true)
-			setNodeReachable("iptables", node.Name, true)
-			if isV6 {
-				setNodeReachable("ip6tables", node.Name, true)
-			}
+			setNodeReachable(node.Name, true)
 			waitForNoTaint(node.Name, "node.kubernetes.io/unreachable")
 			waitForNoTaint(node.Name, "node.kubernetes.io/not-ready")
 		}
@@ -730,10 +721,7 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigPa
 		// ensure all nodes are ready and reachable
 		for _, node := range []string{egress1Node.name, egress2Node.name} {
 			setNodeReady(node, true)
-			setNodeReachable("iptables", node, true)
-			if isIPv6TestRun {
-				setNodeReachable("ip6tables", node, true)
-			}
+			setNodeReachable(node, true)
 			waitForNoTaint(node, "node.kubernetes.io/unreachable")
 			waitForNoTaint(node, "node.kubernetes.io/not-ready")
 		}
@@ -1644,10 +1632,7 @@ spec:
 		createGenericPodWithLabel(f, pod1Name, pod1Node.name, f.Namespace.Name, command, podEgressLabel)
 
 		ginkgo.By(fmt.Sprintf("4. Make egress node: %s unreachable", node1))
-		setNodeReachable("iptables", node1, false)
-		if isIPv6TestRun {
-			setNodeReachable("ip6tables", node1, false)
-		}
+		setNodeReachable(node1, false)
 
 		otherNode := egress1Node.name
 		if node1 == egress1Node.name {
@@ -1674,10 +1659,7 @@ spec:
 			framework.Logf("Skipping API server reachability check because IP family does not equal IP family of the EgressIP")
 		}
 		ginkgo.By("8, Make node 2 unreachable")
-		setNodeReachable("iptables", node2, false)
-		if isIPv6TestRun {
-			setNodeReachable("ip6tables", node2, false)
-		}
+		setNodeReachable(node2, false)
 
 		ginkgo.By("9. Check that egress IP is un-assigned (empty status)")
 		verifyEgressIPStatusLengthEquals(0, nil)
@@ -1687,10 +1669,7 @@ spec:
 		framework.ExpectNoError(err, "10. Check connectivity from pod to an external \"node\" and verify that the IP is the node IP, failed, err: %v", err)
 
 		ginkgo.By("11. Make node 1 reachable again")
-		setNodeReachable("iptables", node1, true)
-		if isIPv6TestRun {
-			setNodeReachable("ip6tables", node1, true)
-		}
+		setNodeReachable(node1, true)
 
 		ginkgo.By("12. Check that egress IP is assigned to node 1 again")
 		statuses = verifyEgressIPStatusLengthEquals(1, func(statuses []egressIPStatus) bool {
@@ -1703,10 +1682,7 @@ spec:
 		framework.ExpectNoError(err, "13. Check connectivity from pod to an external \"node\" and verify that the IP is the egress IP, failed, err: %v", err)
 
 		ginkgo.By("14. Make node 2 reachable again")
-		setNodeReachable("iptables", node2, true)
-		if isIPv6TestRun {
-			setNodeReachable("ip6tables", node2, true)
-		}
+		setNodeReachable(node2, true)
 
 		ginkgo.By("15. Check that egress IP remains assigned to node 1. We should not be moving the egress IP to node 2 if the node 1 works fine, as to reduce cluster entropy - read: changes.")
 		statuses = verifyEgressIPStatusLengthEquals(1, func(statuses []egressIPStatus) bool {
@@ -1728,10 +1704,7 @@ spec:
 		framework.ExpectNoError(err, "19. Check connectivity from pod to an external \"node\" and verify that the IP is the egress IP, failed, err: %v", err)
 
 		ginkgo.By("20. Make node 1 not reachable")
-		setNodeReachable("iptables", node1, false)
-		if isIPv6TestRun {
-			setNodeReachable("ip6tables", node1, false)
-		}
+		setNodeReachable(node1, false)
 
 		ginkgo.By("21. Unlabel node 2")
 		e2enode.RemoveLabelOffNode(f.ClientSet, node2, "k8s.ovn.org/egress-assignable")
@@ -1746,10 +1719,7 @@ spec:
 		verifyEgressIPStatusLengthEquals(0, nil)
 
 		ginkgo.By("25. Make node 1 reachable again")
-		setNodeReachable("iptables", node1, true)
-		if isIPv6TestRun {
-			setNodeReachable("ip6tables", node1, true)
-		}
+		setNodeReachable(node1, true)
 
 		ginkgo.By("26. Check that egress IP is assigned to node 1 again")
 		statuses = verifyEgressIPStatusLengthEquals(1, func(statuses []egressIPStatus) bool {

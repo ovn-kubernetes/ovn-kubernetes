@@ -1163,15 +1163,13 @@ func allowOrDropNodeInputTrafficOnPort(op, nodeName, protocol, port string) {
 }
 
 func updateIPTablesRulesForNode(op, nodeName string, ipTablesArgs []string, ipv6 bool) {
-	args := []string{"get", "pods", "--selector=app=ovnkube-node", "--field-selector", fmt.Sprintf("spec.nodeName=%s", nodeName), "-o", "jsonpath={.items..metadata.name}"}
-	ovnKubePodName := e2ekubectl.RunKubectlOrDie(ovnNamespace, args...)
 	iptables := "iptables"
 	if ipv6 {
 		iptables = "ip6tables"
 	}
 
-	args = []string{"exec", ovnKubePodName, "-c", getNodeContainerName(), "--", iptables, "--check"}
-	_, err := e2ekubectl.RunKubectl(ovnNamespace, append(args, ipTablesArgs...)...)
+	args := []string{"docker", "exec", nodeName, iptables, "-v", "--check"}
+	_, err := runCommand(append(args, ipTablesArgs...)...)
 	// errors known to be equivalent to not found
 	notFound1 := "No chain/target/match by that name"
 	notFound2 := "does a matching rule exist in that chain?"
@@ -1186,9 +1184,13 @@ func updateIPTablesRulesForNode(op, nodeName string, ipTablesArgs []string, ipv6
 		// rule is already there
 		return
 	}
-	args = []string{"exec", ovnKubePodName, "-c", getNodeContainerName(), "--", iptables, "--" + op}
+
+	args = []string{"docker", "exec", nodeName, iptables, "--" + op}
 	framework.Logf("%s %s rule: %q on node %s", op, iptables, strings.Join(ipTablesArgs, ","), nodeName)
-	e2ekubectl.RunKubectlOrDie(ovnNamespace, append(args, ipTablesArgs...)...)
+	_, err = runCommand(append(args, ipTablesArgs...)...)
+	if err != nil {
+		framework.Failf("failed to update %s rule on node %s: %v", iptables, nodeName, err)
+	}
 }
 
 func randStr(n int) string {
