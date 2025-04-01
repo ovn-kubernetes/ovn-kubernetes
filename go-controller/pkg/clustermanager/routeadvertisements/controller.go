@@ -379,10 +379,6 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 			return nil, nil, fmt.Errorf("%w: selected network %q has unsupported topology %q", errConfig, networkName, network.TopologyType())
 		}
 
-		if config.Gateway.Mode == config.GatewayModeLocal && network.TopologyType() != types.Layer2Topology {
-			return nil, nil, fmt.Errorf("BGP is currenty not supported for Layer2 networks in local gateway mode, network: %s", network.GetNetworkName())
-		}
-
 		vrf := util.GetNetworkVRFName(network)
 		if vfrNet, hasVFR := selectedNetworks.networkVRFs[vrf]; hasVFR && vfrNet != networkName {
 			return nil, nil, fmt.Errorf("%w: vrf %q found to be mapped to multiple networks %v", errConfig, vrf, []string{vfrNet, networkName})

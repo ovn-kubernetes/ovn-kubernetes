@@ -285,11 +285,6 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 				Values:   []string{f.Namespace.Name},
 			}}}
 
-			if IsGatewayModeLocal() || cudnTemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer2 {
-				e2eskipper.Skipf(
-					"BGP for L2 networks on LGW is currently unsupported",
-				)
-			}
 			// Create CUDN
 			ginkgo.By("create ClusterUserDefinedNetwork")
 			udnClient, err := udnclientset.NewForConfig(f.ClientConfig())
