@@ -515,7 +515,10 @@ func (oc *SecondaryLayer2NetworkController) Stop() {
 func (oc *SecondaryLayer2NetworkController) Reconcile(netInfo util.NetInfo) error {
 	return oc.BaseNetworkController.reconcile(
 		netInfo,
-		func(node string) { oc.gatewaysFailed.Store(node, true) },
+		func(node string) {
+			oc.gatewaysFailed.Store(node, true)
+			oc.mgmtPortFailed.Store(node, true)
+		},
 	)
 }
 

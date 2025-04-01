@@ -38,6 +38,7 @@ const (
 	// arpAllowPolicyMatch is the match used when creating default allow ARP ACLs for a namespace
 	arpAllowPolicyMatch   = "(arp || nd)"
 	allowHairpinningACLID = "allow-hairpinning"
+	allowPodSubnetACLID   = "allow-pod-subnet"
 	// ovnStatelessNetPolAnnotationName is an annotation on K8s Network Policy resource to specify that all
 	// the resulting OVN ACLs must be created as stateless
 	ovnStatelessNetPolAnnotationName = "k8s.ovn.org/acl-stateless"
@@ -348,6 +349,52 @@ func (bnc *BaseNetworkController) addAllowACLFromNode(switchName string, mgmtPor
 	}
 
 	return nil
+}
+
+// addNetworkSubnetAllowACL creates stateless ACLs that allow traffic to and from subnets through the management port
+func (bnc *BaseNetworkController) addNetworkSubnetAllowACL(nodeName, switchName string, subnets []*net.IPNet) error {
+	var matchesIngress, matchesEgress []string
+	klog.V(5).Infof("Configure subnet allow ACL policy for network %s", bnc.GetNetworkName())
+
+	for _, cidr := range subnets {
+		prefix := "ip4"
+		if utilnet.IsIPv6CIDR(cidr) {
+			prefix = "ip6"
+		}
+		matchesIngress = append(matchesIngress, fmt.Sprintf("%s.src == %s", prefix, cidr))
+		matchesEgress = append(matchesEgress, fmt.Sprintf("%s.dst == %s", prefix, cidr))
+	}
+	matchIngress := fmt.Sprintf("outport == %q && (%s)", bnc.GetNetworkScopedK8sMgmtIntfName(nodeName), strings.Join(matchesIngress, " || "))
+	matchEgress := fmt.Sprintf("inport == %q && (%s)", bnc.GetNetworkScopedK8sMgmtIntfName(nodeName), strings.Join(matchesEgress, " || "))
+
+	ingressACL := libovsdbutil.BuildACL(
+		bnc.getPodSubnetAllowACLDbIDs(string(knet.PolicyTypeIngress)),
+		types.UDNSubnetAllowPriority,
+		matchIngress,
+		nbdb.ACLActionAllowStateless,
+		nil,
+		libovsdbutil.LportIngress)
+
+	egressACL := libovsdbutil.BuildACL(
+		bnc.getPodSubnetAllowACLDbIDs(string(knet.PolicyTypeEgress)),
+		types.UDNSubnetAllowPriority,
+		matchEgress,
+		nbdb.ACLActionAllowStateless,
+		nil,
+		libovsdbutil.LportEgress)
+
+	ops, err := libovsdbops.CreateOrUpdateACLsOps(bnc.nbClient, nil, nil, ingressACL, egressACL)
+	if err != nil {
+		return fmt.Errorf("failed to create or update subnet allow ACL %v", err)
+	}
+
+	ops, err = libovsdbops.AddACLsToLogicalSwitchOps(bnc.nbClient, ops, switchName, ingressACL, egressACL)
+	if err != nil {
+		return fmt.Errorf("failed to add ACLs to switch %s: %v", switchName, err)
+	}
+
+	_, err = libovsdbops.TransactAndCheck(bnc.nbClient, ops)
+	return err
 }
 
 func (bnc *BaseNetworkController) getDefaultDenyPolicyACLIDs(ns string, aclDir libovsdbutil.ACLDirection,
@@ -1584,6 +1631,14 @@ func (bnc *BaseNetworkController) getNetpolDefaultACLDbIDs(direction string) *li
 	return libovsdbops.NewDbObjectIDs(libovsdbops.ACLNetpolDefault, bnc.controllerName,
 		map[libovsdbops.ExternalIDKey]string{
 			libovsdbops.ObjectNameKey:      allowHairpinningACLID,
+			libovsdbops.PolicyDirectionKey: direction,
+		})
+}
+
+func (bnc *BaseNetworkController) getPodSubnetAllowACLDbIDs(direction string) *libovsdbops.DbObjectIDs {
+	return libovsdbops.NewDbObjectIDs(libovsdbops.ACLNetpolDefault, bnc.controllerName,
+		map[libovsdbops.ExternalIDKey]string{
+			libovsdbops.ObjectNameKey:      allowPodSubnetACLID,
 			libovsdbops.PolicyDirectionKey: direction,
 		})
 }

@@ -95,7 +95,8 @@ const (
 	PrimaryUDNAllowPriority = 1001
 	// Default deny acl rule priority
 	PrimaryUDNDenyPriority = 1000
-
+	// UDN subnet allow acl priority used for enabling assymetric traffic for L2 networks in LGW with BGP
+	UDNSubnetAllowPriority = 999
 	// ACL Tiers
 	// Tier 0 is called Primary as it is evaluated before any other feature-related Tiers.
 	// Currently used for User Defined Network Feature.
