@@ -494,11 +494,25 @@ jobs:
           llvm-* microsoft-edge-stable mono-* \
           msbuild mysql-server-core-* php-* php7* \
           powershell temurin-* zulu-*
+        sudo docker system prune -af
 
     - name: Setup /mnt/runner directory
       run: |
         sudo mkdir -pv /mnt/runner
         sudo chown runner:runner /mnt/runner
+
+    - name: Setup /mnt/docker-data as docker storage
+      run: |
+        sudo mkdir -pv /mnt/docker-data
+        sudo systemctl stop docker.socket docker
+        [ -s "/etc/docker/daemon.json" ] && {
+          cat "/etc/docker/daemon.json" | jq '. + {"data-root": "/mnt/docker-data"}' | sudo tee /etc/docker/daemon.$$
+        } || {
+          echo '{"data-root": "/mnt/docker-data"}' | sudo tee /etc/docker/daemon.$$
+        }
+        sudo mv -f /etc/docker/daemon.$$ /etc/docker/daemon.json
+        sudo systemctl start docker docker.socket
+        docker system info
 
     - name: Check out code into the Go module directory
       uses: actions/checkout@v4
