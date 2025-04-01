@@ -298,4 +298,18 @@ const (
 	// addressed to an `externalTrafficPolicy: Local` load balancer IP.
 	NFTMgmtPortNoSNATServicesV4 = "mgmtport-no-snat-services-v4"
 	NFTMgmtPortNoSNATServicesV6 = "mgmtport-no-snat-services-v6"
+
+	// NFTNoPMTUDRemoteNodeIPsv4 is a set used to track remote node IPs that do not belong to
+	// the local node's subnet.
+	NFTNoPMTUDRemoteNodeIPsv4 = "no-pmtud-remote-node-ips-v4"
+
+	// NFTNoPMTUDRemoteNodeIPsv6 is a set used to track remote node IPs that do not belong to
+	// the local node's subnet.
+	NFTNoPMTUDRemoteNodeIPsv6 = "no-pmtud-remote-node-ips-v6"
+
+	// "mgmtport-no-snat-subnets-v4" and "mgmtport-no-snat-subnets-v6" are sets containing
+	// subnets, indicating traffic that should not be SNATted when passing through the
+	// management port.
+	NFTMgmtPortNoSNATSubnetsV4 = "mgmtport-no-snat-subnets-v4"
+	NFTMgmtPortNoSNATSubnetsV6 = "mgmtport-no-snat-subnets-v6"
 )

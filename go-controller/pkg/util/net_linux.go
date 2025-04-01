@@ -187,7 +187,7 @@ func (defaultNetLinkOps) NeighList(linkIndex, family int) ([]netlink.Neigh, erro
 }
 
 func (defaultNetLinkOps) ConntrackDeleteFilter(table netlink.ConntrackTableType, family netlink.InetFamily, filter netlink.CustomConntrackFilter) (uint, error) {
-	return netlink.ConntrackDeleteFilter(table, family, filter)
+	return netlink.ConntrackDeleteFilters(table, family, filter)
 }
 
 func (defaultNetLinkOps) RouteSubscribeWithOptions(ch chan<- netlink.RouteUpdate, done <-chan struct{}, options netlink.RouteSubscribeOptions) error {
