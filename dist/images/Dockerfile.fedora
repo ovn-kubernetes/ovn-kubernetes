@@ -97,6 +97,7 @@ RUN if [ "$TARGETPLATFORM" = "linux/amd64" ] || [ -z "$TARGETPLATFORM"] ; then k
 ######################################
 FROM fedora:41 AS source
 COPY --from=ovnbuilder /root/ovn/rpm/rpmbuild/RPMS/x86_64/*.rpm /
+COPY --from=ovnbuilder /root/ovs/rpm/rpmbuild/RPMS/x86_64/*.rpm /
 
 ####################################
 # Stage to copy OVN RPMs from koji #
