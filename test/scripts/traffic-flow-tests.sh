@@ -8,7 +8,7 @@ export OCI_BIN="${KIND_EXPERIMENTAL_PROVIDER:-docker}"
 export TFT_TEST_IMAGE="ghcr.io/ovn-kubernetes/kubernetes-traffic-flow-tests:latest"
 export TRAFFIC_FLOW_TESTS_DIRNAME="kubernetes-traffic-flow-tests"
 export TRAFFIC_FLOW_TESTS_REPO="https://github.com/ovn-kubernetes/kubernetes-traffic-flow-tests.git"
-export TRAFFIC_FLOW_TESTS_COMMIT="3e092f2c448bdffcddd5d025b97df53145ccea62"
+export TRAFFIC_FLOW_TESTS_COMMIT="bfe3626627b03257f7c469c61709dec5da790846"
 export TRAFFIC_FLOW_TESTS="${TRAFFIC_FLOW_TESTS:-1,2,3}"
 
 export SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
