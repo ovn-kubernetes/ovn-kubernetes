@@ -27,7 +27,11 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version-file: 'go-controller/go.mod'
-        cache-dependency-path: "**/*.sum"
+        # Disabling cache to avoid warnings until these two issues are fixed
+        # https://github.com/actions/setup-go/issues/424
+        # https://github.com/actions/setup-go/issues/403
+        # cache-dependency-path: "**/*.sum"
+        cache: false
       id: go
 
     - name: Log in to the GH Container registry
