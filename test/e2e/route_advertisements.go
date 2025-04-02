@@ -2,20 +2,23 @@ package e2e
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net"
 	"strings"
 
 	"time"
 
-	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	rav1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
+	applycfgrav1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/applyconfiguration/routeadvertisements/v1"
+	raclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned"
+	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	udnclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned"
+	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	clientset "k8s.io/client-go/kubernetes"
 	utilnet "k8s.io/utils/net"
 
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -24,6 +27,7 @@ import (
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
+	"k8s.io/apimachinery/pkg/api/meta"
 )
 
 var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is advertised", func() {
@@ -31,8 +35,6 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 		serverContainerName    = "bgpserver"
 		routerContainerName    = "frr"
 		echoClientPodName      = "echo-client-pod"
-		echoServerPodPortMin   = 9800
-		echoServerPodPortMax   = 9899
 		primaryNetworkName     = "kind"
 		bgpExternalNetworkName = "bgpnet"
 	)
@@ -227,36 +229,31 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 	})
 })
 
-var _ = ginkgo.Describe("BGP: Pod to external server when CUDN Layer3 Network is advertised", func() {
+var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advertised", func() {
 	const (
 		serverContainerName    = "bgpserver"
 		routerContainerName    = "frr"
 		echoClientPodName      = "echo-client-pod"
-		echoServerPodPortMin   = 9800
-		echoServerPodPortMax   = 9899
 		primaryNetworkName     = "kind"
 		bgpExternalNetworkName = "bgpnet"
-		testCudnName           = "bgp-udn-layer3-network"
-		testRAName             = "udn-layer3-ra"
+		placeholder            = "PLACEHOLDER_NAMESPACE"
 	)
 	var serverContainerIPs []string
 	var frrContainerIPv4, frrContainerIPv6 string
 	var nodes *corev1.NodeList
-	var cs clientset.Interface
+	var clientPod *corev1.Pod
+
 	f := wrappedTestFramework("pod2external-route-advertisements")
-	// disable automatic namespace creation, we need to add the required UDN label
 	f.SkipNamespaceCreation = true
 
 	ginkgo.BeforeEach(func() {
-		cs = f.ClientSet
-
 		var err error
 		namespace, err := f.CreateNamespace(context.TODO(), f.BaseName, map[string]string{
 			"e2e-framework":           f.BaseName,
 			RequiredUDNNamespaceLabel: "",
 		})
-		f.Namespace = namespace
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		f.Namespace = namespace
 
 		serverContainerIPs = []string{}
 
@@ -272,70 +269,93 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN Layer3 Network is
 
 		frrContainerIPv4, frrContainerIPv6 = getContainerAddressesForNetwork(routerContainerName, primaryNetworkName)
 		framework.Logf("The frr router container IPs are: %s/%s", frrContainerIPv4, frrContainerIPv6)
+
+		// Select nodes here so they're available for all tests
+		ginkgo.By("Selecting 3 schedulable nodes")
+		nodes, err = e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 3)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(len(nodes.Items)).To(gomega.BeNumerically(">", 2))
 	})
 
-	ginkgo.When("a client ovnk pod targeting an external server is created", func() {
+	ginkgo.DescribeTable("Route Advertisements",
+		func(cudnTemplate *udnv1.ClusterUserDefinedNetwork, raApplyCfg *applycfgrav1.RouteAdvertisementsApplyConfiguration) {
+			// set the exact selector
+			cudnTemplate.Spec.NamespaceSelector = metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
+				Key:      "kubernetes.io/metadata.name",
+				Operator: metav1.LabelSelectorOpIn,
+				Values:   []string{f.Namespace.Name},
+			}}}
 
-		var clientPod *corev1.Pod
-		var err error
-
-		ginkgo.BeforeEach(func() {
-			ginkgo.By("Selecting 3 schedulable nodes")
-			nodes, err = e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 3)
+			if IsGatewayModeLocal() && cudnTemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer2 {
+				e2eskipper.Skipf(
+					"BGP for L2 networks on LGW is currently unsupported",
+				)
+			}
+			// Create CUDN
+			ginkgo.By("create ClusterUserDefinedNetwork")
+			udnClient, err := udnclientset.NewForConfig(f.ClientConfig())
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(len(nodes.Items)).To(gomega.BeNumerically(">", 2))
-
-			ginkgo.By("create layer3 ClusterUserDefinedNetwork")
-			cudnManifest := generateBGPCUDNManifest(testCudnName, f.Namespace.Name)
-			cleanup, err := createManifest("", cudnManifest)
+			cUDN, err := udnClient.K8sV1().ClusterUserDefinedNetworks().Create(context.Background(), cudnTemplate, metav1.CreateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, testCudnName), 5*time.Second, time.Second).Should(gomega.Succeed())
-
-			conditionsJSON, err := e2ekubectl.RunKubectl("", "get", "clusteruserdefinednetwork", testCudnName, "-o", "jsonpath={.status.conditions}")
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			var actualConditions []metav1.Condition
-			gomega.Expect(json.Unmarshal([]byte(conditionsJSON), &actualConditions)).To(gomega.Succeed())
 			ginkgo.DeferCleanup(func() {
-				cleanup()
+				udnClient.K8sV1().ClusterUserDefinedNetworks().Delete(context.TODO(), cUDN.Name, metav1.DeleteOptions{})
+			})
+			gomega.Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cUDN.Name), 5*time.Second, time.Second).Should(gomega.Succeed())
+
+			ginkgo.DeferCleanup(func() {
 				ginkgo.By(fmt.Sprintf("delete pods in %s namespace to unblock CUDN CR & associate NAD deletion", f.Namespace.Name))
-				gomega.Expect(cs.CoreV1().Pods(f.Namespace.Name).DeleteCollection(context.Background(), metav1.DeleteOptions{}, metav1.ListOptions{})).To(gomega.Succeed())
-				_, err := e2ekubectl.RunKubectl("", "delete", "clusteruserdefinednetwork", testCudnName, "--wait", fmt.Sprintf("--timeout=%ds", 120))
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(f.ClientSet.CoreV1().Pods(f.Namespace.Name).DeleteCollection(context.Background(), metav1.DeleteOptions{}, metav1.ListOptions{})).To(gomega.Succeed())
 			})
 
-			ginkgo.By("Creating client pod on the udn namespace")
-			podConfig := *podConfig(echoClientPodName)
-			podConfig.namespace = f.Namespace.Name
-			clientPod = runUDNPod(cs, f.Namespace.Name, podConfig, nil)
+			// Create client pod
+			ginkgo.By("Creating client pod")
+			podSpec := e2epod.NewAgnhostPod(f.Namespace.Name, echoClientPodName, nil, nil, nil)
+			podSpec.Spec.NodeName = nodes.Items[1].Name
+			for k := range podSpec.Spec.Containers {
+				if podSpec.Spec.Containers[k].Name == "agnhost-container" {
+					podSpec.Spec.Containers[k].Command = []string{
+						"sleep",
+						"infinity",
+					}
+				}
+			}
+			clientPod = e2epod.NewPodClient(f).CreateSync(context.TODO(), podSpec)
 
-			ginkgo.By("asserting the pod UDN interface on the network-status annotation")
-			udnNetStat, err := podNetworkStatus(clientPod, func(status nadapi.NetworkStatus) bool {
-				return status.Default
+			// Create route advertisement
+			ginkgo.By("create router advertisement")
+			raClient, err := raclientset.NewForConfig(f.ClientConfig())
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			ra, err := raClient.K8sV1().RouteAdvertisements().Apply(context.TODO(), raApplyCfg, metav1.ApplyOptions{
+				FieldManager: f.Namespace.Name,
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			const (
-				expectedDefaultNetStatusLen = 1
-				ovnUDNInterface             = "ovn-udn1"
-			)
-			gomega.Expect(udnNetStat).To(gomega.HaveLen(expectedDefaultNetStatusLen))
-			gomega.Expect(udnNetStat[0].Interface).To(gomega.Equal(ovnUDNInterface))
+			ginkgo.DeferCleanup(func() { raClient.K8sV1().RouteAdvertisements().Delete(context.TODO(), ra.Name, metav1.DeleteOptions{}) })
+			ginkgo.By("ensure route advertisement matching CUDN was created successfully")
+			gomega.Eventually(func() string {
+				ra, err := raClient.K8sV1().RouteAdvertisements().Get(context.TODO(), ra.Name, metav1.GetOptions{})
+				if err != nil {
+					return ""
+				}
+				condition := meta.FindStatusCondition(ra.Status.Conditions, "Accepted")
+				if condition == nil {
+					return ""
+				}
+				return condition.Reason
+			}, 30*time.Second, time.Second).Should(gomega.Equal("Accepted"))
 
 			gomega.Expect(len(serverContainerIPs)).To(gomega.BeNumerically(">", 0))
-		})
-		ginkgo.AfterEach(func() {
-			e2ekubectl.RunKubectlOrDie("", "delete", "ra", testRAName, "--ignore-not-found=true")
-		})
-		// -----------------               ------------------                         ---------------------
-		// |               | 172.26.0.0/16 |                |       172.18.0.0/16     | ovn-control-plane |
-		// |   external    |<------------- |   FRR router   |<------ KIND cluster --  ---------------------
-		// |    server     |               |                |                         |    ovn-worker     |   (client UDN pod advertised
-		// -----------------               ------------------                         ---------------------    using RouteAdvertisements
-		//                                                                            |    ovn-worker2    |    from default pod network)
-		//                                                                            ---------------------
-		// The client pod inside the KIND cluster on the default network exposed using default network Router
-		// Advertisement will curl the external server container sitting outside the cluster via a FRR router
-		// This test ensures the north-south connectivity is happening through podIP
-		ginkgo.It("tests are run towards the external agnhost echo server", func() {
+
+			// -----------------               ------------------                         ---------------------
+			// |               | 172.26.0.0/16 |                |       172.18.0.0/16     | ovn-control-plane |
+			// |   external    |<------------- |   FRR router   |<------ KIND cluster --  ---------------------
+			// |    server     |               |                |                         |    ovn-worker     |   (client UDN pod advertised
+			// -----------------               ------------------                         ---------------------    using RouteAdvertisements
+			//                                                                            |    ovn-worker2    |    from default pod network)
+			//                                                                            ---------------------
+			// The client pod inside the KIND cluster on the default network exposed using default network Router
+			// Advertisement will curl the external server container sitting outside the cluster via a FRR router
+			// This test ensures the north-south connectivity is happening through podIP
 			ginkgo.By("routes from external bgp server are imported by nodes in the cluster")
 			externalServerV4CIDR, externalServerV6CIDR := getContainerNetworkCIDRs(bgpExternalNetworkName)
 			framework.Logf("the network cidrs to be imported are v4=%s and v6=%s", externalServerV4CIDR, externalServerV6CIDR)
@@ -368,36 +388,13 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN Layer3 Network is
 				}
 			}
 
-			ginkgo.By("routes to the CUDN network are advertised to external frr router")
-			// Get the first element in the advertisements array (assuming you want to check the first one)
-			ginkgo.By("create route advertisement matching CUDN Network")
-			raManifest := generateRAManifest(testRAName)
-			cleanup, err := createManifest(f.Namespace.Name, raManifest)
-			ginkgo.DeferCleanup(cleanup)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-			ginkgo.By("ensure route advertisement matching CUDN was created successfully")
-			gomega.Eventually(func() string {
-				podNetworkValue, err := e2ekubectl.RunKubectl("", "get", "ra", testRAName, "--template={{index .spec.advertisements 0}}")
-				if err != nil {
-					return ""
-				}
-				return podNetworkValue
-			}, 5*time.Second, time.Second).Should(gomega.Equal("PodNetwork"))
-
-			gomega.Eventually(func() string {
-				reason, err := e2ekubectl.RunKubectl("", "get", "ra", testRAName, "-o", "jsonpath={.status.conditions[?(@.type=='Accepted')].reason}")
-				if err != nil {
-					return ""
-				}
-				return reason
-			}, 30*time.Second, time.Second).Should(gomega.Equal("Accepted"))
-
-			ginkgo.By("queries to the external server are not SNATed (uses UDN podIP)")
-			podIP, err := podIPsForUserDefinedPrimaryNetwork(cs, f.Namespace.Name, clientPod.Name, namespacedName(f.Namespace.Name, testCudnName), 0)
-			framework.ExpectNoError(err, fmt.Sprintf("Getting podIPs for pod %s failed: %v", clientPod.Name, err))
-			framework.Logf("Client pod IP address=%s", podIP)
+			ginkgo.By("queries to the external server are not SNATed (uses podIP)")
 			for _, serverContainerIP := range serverContainerIPs {
+				podIP, err := podIPsForUserDefinedPrimaryNetwork(f.ClientSet, f.Namespace.Name, clientPod.Name, namespacedName(f.Namespace.Name, cUDN.Name), 0)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				framework.ExpectNoError(err, fmt.Sprintf("Getting podIPs for pod %s failed: %v", clientPod.Name, err))
+				framework.Logf("Client pod IP address=%s", podIP)
+
 				ginkgo.By(fmt.Sprintf("Sending request to node IP %s "+
 					"and expecting to receive the same payload", serverContainerIP))
 				cmd := fmt.Sprintf("curl --max-time 10 -g -q -s http://%s/clientip",
@@ -412,8 +409,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN Layer3 Network is
 					60*time.Second)
 				framework.ExpectNoError(err, fmt.Sprintf("Testing pod to external traffic failed: %v", err))
 				if isIPv6Supported() && utilnet.IsIPv6String(serverContainerIP) {
-					podIP, err := podIPsForUserDefinedPrimaryNetwork(cs, f.Namespace.Name, clientPod.Name, namespacedName(f.Namespace.Name, testCudnName), 1)
-					framework.ExpectNoError(err, fmt.Sprintf("Getting podIPs for pod %s failed: %v", clientPod.Name, err))
+					podIP, err = podIPsForUserDefinedPrimaryNetwork(f.ClientSet, f.Namespace.Name, clientPod.Name, namespacedName(f.Namespace.Name, cUDN.Name), 1)
 					// For IPv6 addresses, need to handle the brackets in the output
 					outputIP := strings.TrimPrefix(strings.Split(stdout, "]:")[0], "[")
 					gomega.Expect(outputIP).To(gomega.Equal(podIP),
@@ -424,42 +420,84 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN Layer3 Network is
 						fmt.Sprintf("Testing pod %s to external traffic failed while analysing output %v", echoClientPodName, stdout))
 				}
 			}
-		})
-	})
+		},
+		ginkgo.Entry("layer3",
+			&udnv1.ClusterUserDefinedNetwork{
+				ObjectMeta: metav1.ObjectMeta{
+					GenerateName: "bgp-udn-layer3-network",
+					Labels:       map[string]string{"bgp-udn-layer3-network": ""},
+				},
+				Spec: udnv1.ClusterUserDefinedNetworkSpec{
+					Network: udnv1.NetworkSpec{
+						Topology: udnv1.NetworkTopologyLayer3,
+						Layer3: &udnv1.Layer3Config{
+							Role: "Primary",
+							Subnets: generateL3Subnets(udnv1.Layer3Subnet{
+								CIDR:       "103.103.0.0/16",
+								HostSubnet: 24,
+							}, udnv1.Layer3Subnet{
+								CIDR:       "2014:100:200::0/60",
+								HostSubnet: 64,
+							}),
+						},
+					},
+				},
+			},
+			applycfgrav1.RouteAdvertisements("bgp-udn-layer3-network-ra").
+				WithSpec(
+					applycfgrav1.RouteAdvertisementsSpec().
+						WithAdvertisements(rav1.PodNetwork).
+						WithNetworkSelector(
+							v1.LabelSelector().WithMatchLabels(map[string]string{"bgp-udn-layer3-network": ""}),
+						),
+				),
+		),
+		ginkgo.Entry("layer2",
+			&udnv1.ClusterUserDefinedNetwork{
+				ObjectMeta: metav1.ObjectMeta{
+					GenerateName: "bgp-udn-layer2-network",
+					Labels:       map[string]string{"bgp-udn-layer2-network": ""},
+				},
+				Spec: udnv1.ClusterUserDefinedNetworkSpec{
+					Network: udnv1.NetworkSpec{
+						Topology: udnv1.NetworkTopologyLayer2,
+						Layer2: &udnv1.Layer2Config{
+							Role:    "Primary",
+							Subnets: generateL2Subnets("103.0.0.0/16", "2014:100::0/60"),
+						},
+					},
+				},
+			},
+			applycfgrav1.RouteAdvertisements("bgp-udn-layer2-network-ra").
+				WithSpec(
+					applycfgrav1.RouteAdvertisementsSpec().
+						WithAdvertisements(rav1.PodNetwork).
+						WithNetworkSelector(
+							v1.LabelSelector().WithMatchLabels(map[string]string{"bgp-udn-layer2-network": ""}),
+						),
+				),
+		),
+	)
 })
 
-func generateBGPCUDNManifest(testCudnName string, targetNamespaces ...string) string {
-	targetNs := strings.Join(targetNamespaces, ",")
-	return `
-apiVersion: k8s.ovn.org/v1
-kind: ClusterUserDefinedNetwork
-metadata:
-  name: ` + testCudnName + `
-  labels:
-    k8s.ovn.org/bgp-network: ""
-spec:
-  namespaceSelector:
-    matchExpressions:
-    - key: kubernetes.io/metadata.name
-      operator: In
-      values: [ ` + targetNs + ` ]
-  network:
-    topology: Layer3
-    layer3:
-      role: Primary
-      subnets: ` + generateCIDRforClusterUDN("103.103.0.0/16", "2014:100:200::0/60")
+func generateL3Subnets(v4, v6 udnv1.Layer3Subnet) []udnv1.Layer3Subnet {
+	var subnets []udnv1.Layer3Subnet
+	if isIPv4Supported() {
+		subnets = append(subnets, v4)
+	}
+	if isIPv6Supported() {
+		subnets = append(subnets, v6)
+	}
+	return subnets
 }
 
-func generateRAManifest(name string) string {
-	return `
-apiVersion: k8s.ovn.org/v1
-kind: RouteAdvertisements
-metadata:
-  name: ` + name + `
-spec:
-  networkSelector:
-    matchLabels:
-      k8s.ovn.org/bgp-network: ""
-  advertisements:
-    - "PodNetwork"`
+func generateL2Subnets(v4, v6 string) udnv1.DualStackCIDRs {
+	var subnets udnv1.DualStackCIDRs
+	if isIPv4Supported() {
+		subnets = append(subnets, udnv1.CIDR(v4))
+	}
+	if isIPv6Supported() {
+		subnets = append(subnets, udnv1.CIDR(v6))
+	}
+	return subnets
 }
