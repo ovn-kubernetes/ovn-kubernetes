@@ -3121,7 +3121,7 @@ func createDefaultNoRerouteServicePolicies(nbClient libovsdbclient.Client, netwo
 		}
 		dbIDs := getEgressIPLRPNoReRoutePodToJoinDbIDs(IPFamilyValueV4, network, controller)
 		match := fmt.Sprintf("ip4.src == %s && ip4.dst == %s", v4Subnet.String(), v4JoinSubnet.String())
-		if err := createLogicalRouterPolicy(nbClient, clusterRouter, match, types.DefaultNoRereoutePriority, nil, dbIDs); err != nil {
+		if err := createEgressIPLogicalRouterPolicy(nbClient, clusterRouter, match, types.DefaultNoRereoutePriority, nil, dbIDs); err != nil {
 			return fmt.Errorf("unable to create IPv4 no-reroute service policies, err: %v", err)
 		}
 	}
@@ -3132,7 +3132,7 @@ func createDefaultNoRerouteServicePolicies(nbClient libovsdbclient.Client, netwo
 		}
 		dbIDs := getEgressIPLRPNoReRoutePodToJoinDbIDs(IPFamilyValueV6, network, controller)
 		match := fmt.Sprintf("ip6.src == %s && ip6.dst == %s", v6Subnet.String(), v6JoinSubnet.String())
-		if err := createLogicalRouterPolicy(nbClient, clusterRouter, match, types.DefaultNoRereoutePriority, nil, dbIDs); err != nil {
+		if err := createEgressIPLogicalRouterPolicy(nbClient, clusterRouter, match, types.DefaultNoRereoutePriority, nil, dbIDs); err != nil {
 			return fmt.Errorf("unable to create IPv6 no-reroute service policies, err: %v", err)
 		}
 	}
@@ -3191,7 +3191,7 @@ func (e *EgressIPController) ensureSwitchPoliciesForNode(ni util.NetInfo, nodeNa
 func createDefaultNoRerouteReplyTrafficPolicy(nbClient libovsdbclient.Client, network, controller, routerName string) error {
 	match := fmt.Sprintf("pkt.mark == %d", types.EgressIPReplyTrafficConnectionMark)
 	dbIDs := getEgressIPLRPNoReRouteDbIDs(types.DefaultNoRereoutePriority, ReplyTrafficNoReroute, IPFamilyValue, network, controller)
-	if err := createLogicalRouterPolicy(nbClient, routerName, match, types.DefaultNoRereoutePriority, nil, dbIDs); err != nil {
+	if err := createEgressIPLogicalRouterPolicy(nbClient, routerName, match, types.DefaultNoRereoutePriority, nil, dbIDs); err != nil {
 		return fmt.Errorf("unable to create no-reroute reply traffic policies, err: %v", err)
 	}
 	return nil
@@ -3203,14 +3203,14 @@ func createDefaultNoReroutePodPolicies(nbClient libovsdbclient.Client, network, 
 	for _, v4Subnet := range v4ClusterSubnet {
 		match := fmt.Sprintf("ip4.src == %s && ip4.dst == %s", v4Subnet.String(), v4Subnet.String())
 		dbIDs := getEgressIPLRPNoReRoutePodToPodDbIDs(IPFamilyValueV4, network, controller)
-		if err := createLogicalRouterPolicy(nbClient, routerName, match, types.DefaultNoRereoutePriority, nil, dbIDs); err != nil {
+		if err := createEgressIPLogicalRouterPolicy(nbClient, routerName, match, types.DefaultNoRereoutePriority, nil, dbIDs); err != nil {
 			return fmt.Errorf("unable to create IPv4 no-reroute pod policies, err: %v", err)
 		}
 	}
 	for _, v6Subnet := range v6ClusterSubnet {
 		match := fmt.Sprintf("ip6.src == %s && ip6.dst == %s", v6Subnet.String(), v6Subnet.String())
 		dbIDs := getEgressIPLRPNoReRoutePodToPodDbIDs(IPFamilyValueV6, network, controller)
-		if err := createLogicalRouterPolicy(nbClient, routerName, match, types.DefaultNoRereoutePriority, nil, dbIDs); err != nil {
+		if err := createEgressIPLogicalRouterPolicy(nbClient, routerName, match, types.DefaultNoRereoutePriority, nil, dbIDs); err != nil {
 			return fmt.Errorf("unable to create IPv6 no-reroute pod policies, err: %v", err)
 		}
 	}
@@ -3477,14 +3477,14 @@ func ensureDefaultNoRerouteNodePolicies(nbClient libovsdbclient.Client, addressS
 	// Create global allow policy for node traffic
 	if matchV4 != "" {
 		dbIDs = getEgressIPLRPNoReRoutePodToNodeDbIDs(IPFamilyValueV4, network, controller)
-		if err := createLogicalRouterPolicy(nbClient, router, matchV4, types.DefaultNoRereoutePriority, options, dbIDs); err != nil {
+		if err := createEgressIPLogicalRouterPolicy(nbClient, router, matchV4, types.DefaultNoRereoutePriority, options, dbIDs); err != nil {
 			return fmt.Errorf("unable to create IPv4 no-reroute node policies, err: %v", err)
 		}
 	}
 
 	if matchV6 != "" {
 		dbIDs = getEgressIPLRPNoReRoutePodToNodeDbIDs(IPFamilyValueV6, network, controller)
-		if err := createLogicalRouterPolicy(nbClient, router, matchV6, types.DefaultNoRereoutePriority, options, dbIDs); err != nil {
+		if err := createEgressIPLogicalRouterPolicy(nbClient, router, matchV6, types.DefaultNoRereoutePriority, options, dbIDs); err != nil {
 			return fmt.Errorf("unable to create IPv6 no-reroute node policies, err: %v", err)
 		}
 	}
@@ -3544,7 +3544,7 @@ func (e *EgressIPController) getPodIPs(ni util.NetInfo, pod *corev1.Pod, nadName
 	return podIPs, nil
 }
 
-func createLogicalRouterPolicy(nbClient libovsdbclient.Client, clusterRouter, match string, priority int, options map[string]string, dbIDs *libovsdbops.DbObjectIDs) error {
+func createEgressIPLogicalRouterPolicy(nbClient libovsdbclient.Client, clusterRouter, match string, priority int, options map[string]string, dbIDs *libovsdbops.DbObjectIDs) error {
 	lrp := nbdb.LogicalRouterPolicy{
 		Priority:    priority,
 		Action:      nbdb.LogicalRouterPolicyActionAllow,
@@ -3553,6 +3553,19 @@ func createLogicalRouterPolicy(nbClient libovsdbclient.Client, clusterRouter, ma
 		Options:     options,
 	}
 	p := libovsdbops.GetPredicate[*nbdb.LogicalRouterPolicy](dbIDs, nil)
+	externalIDs := dbIDs.GetExternalIDs()
+	objectType, ok := externalIDs[libovsdbops.ObjectNameKey.String()]
+	if !ok {
+		return fmt.Errorf("failed to find Name key for DB ID (%q)", dbIDs.String())
+	}
+	// if multiple cluster subnets, we will retrieve multiple LRPs if using a predicate generated from DB IDs alone,
+	// therefore filter by match and options also only for pod to pod and pod to join LRPs.
+	if objectType == string(NoReRoutePodToJoin) || objectType == string(NoReRoutePodToPod) {
+		p = libovsdbops.GetPredicate[*nbdb.LogicalRouterPolicy](dbIDs, func(item *nbdb.LogicalRouterPolicy) bool {
+			return item.Match == match
+		})
+	}
+
 	err := libovsdbops.CreateOrUpdateLogicalRouterPolicyWithPredicate(nbClient, clusterRouter, &lrp, p)
 	if err != nil {
 		return fmt.Errorf("error creating logical router policy %+v on router %s: %v", lrp, clusterRouter, err)
@@ -3691,14 +3704,14 @@ func ensureDefaultNoRerouteUDNEnabledSvcPolicies(nbClient libovsdbclient.Client,
 	// Create global allow policy for UDN enabled service traffic
 	if v4 && matchV4 != "" {
 		dbIDs = getEgressIPLRPNoReRouteDbIDs(types.DefaultNoRereoutePriority, NoReRouteUDNPodToCDNSvc, IPFamilyValueV4, ni.GetNetworkName(), controllerName)
-		if err := createLogicalRouterPolicy(nbClient, routerName, matchV4, types.DefaultNoRereoutePriority, nil, dbIDs); err != nil {
+		if err := createEgressIPLogicalRouterPolicy(nbClient, routerName, matchV4, types.DefaultNoRereoutePriority, nil, dbIDs); err != nil {
 			return fmt.Errorf("unable to create IPv4 no-rerouteUDN pod to CDN svc, err: %v", err)
 		}
 	}
 
 	if v6 && matchV6 != "" {
 		dbIDs = getEgressIPLRPNoReRouteDbIDs(types.DefaultNoRereoutePriority, NoReRouteUDNPodToCDNSvc, IPFamilyValueV6, ni.GetNetworkName(), controllerName)
-		if err := createLogicalRouterPolicy(nbClient, routerName, matchV6, types.DefaultNoRereoutePriority, nil, dbIDs); err != nil {
+		if err := createEgressIPLogicalRouterPolicy(nbClient, routerName, matchV6, types.DefaultNoRereoutePriority, nil, dbIDs); err != nil {
 			return fmt.Errorf("unable to create IPv6 no-reroute UDN pod to CDN svc policies, err: %v", err)
 		}
 	}
