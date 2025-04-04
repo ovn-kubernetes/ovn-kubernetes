@@ -209,16 +209,16 @@ func (gp *gressPolicy) addNamespaceAddressSet(name string, asf addressset.Addres
 		return false, fmt.Errorf("cannot add peer namespace %s: failed to get address set: %v", name, err)
 	}
 	v4HashName, v6HashName := as.GetASHashNames()
-	v4HashName = "$" + v4HashName
-	v6HashName = "$" + v6HashName
 
 	v4NoUpdate := true
 	v6NoUpdate := true
 	// only update vXNoUpdate if value was stored and not loaded
-	if gp.ipv4Mode {
+	if gp.ipv4Mode && v4HashName != "" {
+		v4HashName = "$" + v4HashName
 		_, v4NoUpdate = gp.peerV4AddressSets.LoadOrStore(v4HashName, true)
 	}
-	if gp.ipv6Mode {
+	if gp.ipv6Mode && v6HashName != "" {
+		v6HashName = "$" + v6HashName
 		_, v6NoUpdate = gp.peerV6AddressSets.LoadOrStore(v6HashName, true)
 	}
 	if v4NoUpdate && v6NoUpdate {
@@ -234,16 +234,16 @@ func (gp *gressPolicy) addNamespaceAddressSet(name string, asf addressset.Addres
 func (gp *gressPolicy) delNamespaceAddressSet(name string) bool {
 	dbIDs := getNamespaceAddrSetDbIDs(name, gp.controllerName)
 	v4HashName, v6HashName := addressset.GetHashNamesForAS(dbIDs)
-	v4HashName = "$" + v4HashName
-	v6HashName = "$" + v6HashName
 
 	v4Update := false
 	v6Update := false
 	// only update vXUpdate if value was loaded
-	if gp.ipv4Mode {
+	if gp.ipv4Mode && v4HashName != "" {
+		v4HashName = "$" + v4HashName
 		_, v4Update = gp.peerV4AddressSets.LoadAndDelete(v4HashName)
 	}
-	if gp.ipv6Mode {
+	if gp.ipv6Mode && v6HashName != "" {
+		v6HashName = "$" + v6HashName
 		_, v6Update = gp.peerV6AddressSets.LoadAndDelete(v6HashName)
 	}
 	if v4Update || v6Update {
