@@ -11813,6 +11813,228 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 
+		ginkgo.It("creates pod to pod and pod to join LRPs for multiple default network subnets of the same IP family", func() {
+			// test creates two IPv4 cluster subnets and two IPv6 cluster subnets and ensures the appropriate pod to pod and
+			// pod to join LRPs are created.
+			app.Action = func(*cli.Context) error {
+				config.IPv4Mode = true
+				config.IPv6Mode = true
+				clusterSubnetIPv41 := ovntest.MustParseIPNet("10.128.0.0/14")
+				clusterSubnetIPv42 := ovntest.MustParseIPNet("10.132.0.0/14")
+				clusterSubnetIPv61 := ovntest.MustParseIPNet("fd69::1/64")
+				clusterSubnetIPv62 := ovntest.MustParseIPNet("fd70::1/64")
+				config.Default.ClusterSubnets = []config.CIDRNetworkEntry{
+					{
+						CIDR:             clusterSubnetIPv41,
+						HostSubnetLength: 23,
+					},
+					{
+						CIDR:             clusterSubnetIPv42,
+						HostSubnetLength: 23,
+					},
+					{
+						CIDR:             clusterSubnetIPv61,
+						HostSubnetLength: 120,
+					},
+					{
+						CIDR:             clusterSubnetIPv62,
+						HostSubnetLength: 120,
+					},
+				}
+				node1IPv4 := "192.168.126.12"
+				node1IPv4CIDR := node1IPv4 + "/24"
+				node1IPv6 := "::feff:c0a8:8e0c"
+				node1IPv6CIDR := node1IPv6 + "/64"
+				egressNamespace := newNamespace(eipNamespace)
+				annotations := map[string]string{
+					"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", node1IPv4CIDR, node1IPv6CIDR),
+					"k8s.ovn.org/node-subnets":        "{\"default\":[\"10.128.0.0/23\", \"10.132.0.0/23\", \"fd69::1/120\"]}",
+					util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\",\"%s\"]", node1IPv4CIDR, node1IPv6CIDR),
+				}
+				node1 := getNodeObj(node1Name, annotations, nil)
+
+				node1Switch := &nbdb.LogicalSwitch{
+					UUID: node1.Name + "-UUID",
+					Name: node1.Name,
+				}
+
+				fakeOvn.startWithDBSetup(
+					libovsdbtest.TestSetup{
+						NBData: []libovsdbtest.TestData{
+							&nbdb.LogicalRouterPort{
+								UUID:     types.GWRouterToJoinSwitchPrefix + types.GWRouterPrefix + node1.Name + "-UUID",
+								Name:     types.GWRouterToJoinSwitchPrefix + types.GWRouterPrefix + node1.Name,
+								Networks: []string{nodeLogicalRouterIfAddrV4, nodeLogicalRouterIfAddrV6},
+							},
+							&nbdb.LogicalRouter{
+								Name: types.OVNClusterRouter,
+								UUID: types.OVNClusterRouter + "-UUID",
+							},
+							&nbdb.LogicalRouter{
+								Name:  types.GWRouterPrefix + node1.Name,
+								UUID:  types.GWRouterPrefix + node1.Name + "-UUID",
+								Ports: []string{types.GWRouterToJoinSwitchPrefix + types.GWRouterPrefix + node1.Name + "-UUID"},
+							},
+							&nbdb.LogicalSwitchPort{
+								UUID: types.EXTSwitchToGWRouterPrefix + types.GWRouterPrefix + node1Name + "-UUID",
+								Name: types.EXTSwitchToGWRouterPrefix + types.GWRouterPrefix + node1Name,
+								Type: "router",
+								Options: map[string]string{
+									"nat-addresses":             "router",
+									"exclude-lb-vips-from-garp": "true",
+									"router-port":               types.GWRouterToExtSwitchPrefix + "GR_" + node1Name,
+								},
+							},
+							&nbdb.LogicalSwitch{
+								UUID:  types.ExternalSwitchPrefix + node1Name + "-UUID",
+								Name:  types.ExternalSwitchPrefix + node1Name,
+								Ports: []string{types.EXTSwitchToGWRouterPrefix + types.GWRouterPrefix + node1Name + "-UUID"},
+							},
+							node1Switch,
+						},
+					},
+					&corev1.NodeList{
+						Items: []corev1.Node{node1},
+					},
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{*egressNamespace},
+					},
+				)
+				err := fakeOvn.controller.WatchEgressIPNamespaces()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = fakeOvn.controller.WatchEgressIPPods()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = fakeOvn.controller.WatchEgressNodes()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = fakeOvn.controller.WatchEgressIP()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				egressSVCServedPodsASv4, egressSVCServedPodsASv6 := buildEgressServiceAddressSets(nil)
+				egressIPServedPodsASv4, egressIPServedPodsASv6 := buildEgressIPServedPodsAddressSets([]string{}, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName)
+				egressNodeIPsASv4, egressNodeIPsASv6 := buildEgressIPNodeAddressSets([]string{node1IPv4, node1IPv6})
+
+				node1Switch.QOSRules = []string{"default-QoS-UUID", "default-QoSv6-UUID"}
+				expectedDatabaseState := []libovsdbtest.TestData{
+					getNoReRouteReplyTrafficPolicy(types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName),
+					&nbdb.LogicalRouterPolicy{
+						Priority: types.DefaultNoRereoutePriority,
+						Match: fmt.Sprintf("(ip4.src == $%s || ip4.src == $%s) && ip4.dst == $%s",
+							egressIPServedPodsASv4.Name, egressSVCServedPodsASv4.Name, egressNodeIPsASv4.Name),
+						Action:      nbdb.LogicalRouterPolicyActionAllow,
+						UUID:        "default-v4-no-reroute-node-UUID",
+						Options:     map[string]string{"pkt_mark": types.EgressIPNodeConnectionMark},
+						ExternalIDs: getEgressIPLRPNoReRoutePodToNodeDbIDs(IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
+					},
+					&nbdb.LogicalRouterPolicy{
+						Priority: types.DefaultNoRereoutePriority,
+						Match: fmt.Sprintf("(ip6.src == $%s || ip6.src == $%s) && ip6.dst == $%s",
+							egressIPServedPodsASv6.Name, egressSVCServedPodsASv6.Name, egressNodeIPsASv6.Name),
+						Action:      nbdb.LogicalRouterPolicyActionAllow,
+						UUID:        "default-v6-no-reroute-node-UUID",
+						Options:     map[string]string{"pkt_mark": types.EgressIPNodeConnectionMark},
+						ExternalIDs: getEgressIPLRPNoReRoutePodToNodeDbIDs(IPFamilyValueV6, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
+					},
+
+					&nbdb.LogicalRouterPort{
+						UUID:     types.GWRouterToJoinSwitchPrefix + types.GWRouterPrefix + node1.Name + "-UUID",
+						Name:     types.GWRouterToJoinSwitchPrefix + types.GWRouterPrefix + node1.Name,
+						Networks: []string{nodeLogicalRouterIfAddrV4, nodeLogicalRouterIfAddrV6},
+					},
+					&nbdb.LogicalRouterPolicy{
+						Priority:    types.DefaultNoRereoutePriority,
+						Match:       "ip4.src == 10.128.0.0/14 && ip4.dst == 10.128.0.0/14",
+						Action:      nbdb.LogicalRouterPolicyActionAllow,
+						UUID:        "no-reroute-ipv4-1-UUID",
+						ExternalIDs: getEgressIPLRPNoReRoutePodToPodDbIDs(IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
+					},
+					&nbdb.LogicalRouterPolicy{
+						Priority:    types.DefaultNoRereoutePriority,
+						Match:       "ip4.src == 10.132.0.0/14 && ip4.dst == 10.132.0.0/14",
+						Action:      nbdb.LogicalRouterPolicyActionAllow,
+						UUID:        "no-reroute-ipv4-2-UUID",
+						ExternalIDs: getEgressIPLRPNoReRoutePodToPodDbIDs(IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
+					},
+					&nbdb.LogicalRouterPolicy{
+						Priority:    types.DefaultNoRereoutePriority,
+						Match:       "ip6.src == fd69::1/64 && ip6.dst == fd69::1/64",
+						Action:      nbdb.LogicalRouterPolicyActionAllow,
+						UUID:        "no-reroute-ipv6-1-UUID",
+						ExternalIDs: getEgressIPLRPNoReRoutePodToPodDbIDs(IPFamilyValueV6, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
+					},
+					&nbdb.LogicalRouterPolicy{
+						Priority:    types.DefaultNoRereoutePriority,
+						Match:       "ip6.src == fd70::1/64 && ip6.dst == fd70::1/64",
+						Action:      nbdb.LogicalRouterPolicyActionAllow,
+						UUID:        "no-reroute-ipv6-2-UUID",
+						ExternalIDs: getEgressIPLRPNoReRoutePodToPodDbIDs(IPFamilyValueV6, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
+					},
+					&nbdb.LogicalRouterPolicy{
+						Priority:    types.DefaultNoRereoutePriority,
+						Match:       fmt.Sprintf("ip4.src == 10.128.0.0/14 && ip4.dst == %s", config.Gateway.V4JoinSubnet),
+						Action:      nbdb.LogicalRouterPolicyActionAllow,
+						UUID:        "no-reroute-service-ipv4-1-UUID",
+						ExternalIDs: getEgressIPLRPNoReRoutePodToJoinDbIDs(IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
+					},
+					&nbdb.LogicalRouterPolicy{
+						Priority:    types.DefaultNoRereoutePriority,
+						Match:       fmt.Sprintf("ip4.src == 10.132.0.0/14 && ip4.dst == %s", config.Gateway.V4JoinSubnet),
+						Action:      nbdb.LogicalRouterPolicyActionAllow,
+						UUID:        "no-reroute-service-ipv4-2-UUID",
+						ExternalIDs: getEgressIPLRPNoReRoutePodToJoinDbIDs(IPFamilyValueV4, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
+					},
+					&nbdb.LogicalRouterPolicy{
+						Priority:    types.DefaultNoRereoutePriority,
+						Match:       fmt.Sprintf("ip6.src == fd69::1/64 && ip6.dst == %s", config.Gateway.V6JoinSubnet),
+						Action:      nbdb.LogicalRouterPolicyActionAllow,
+						UUID:        "no-reroute-service-ipv6-1-UUID",
+						ExternalIDs: getEgressIPLRPNoReRoutePodToJoinDbIDs(IPFamilyValueV6, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
+					},
+					&nbdb.LogicalRouterPolicy{
+						Priority:    types.DefaultNoRereoutePriority,
+						Match:       fmt.Sprintf("ip6.src == fd70::1/64 && ip6.dst == %s", config.Gateway.V6JoinSubnet),
+						Action:      nbdb.LogicalRouterPolicyActionAllow,
+						UUID:        "no-reroute-service-ipv6-2-UUID",
+						ExternalIDs: getEgressIPLRPNoReRoutePodToJoinDbIDs(IPFamilyValueV6, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs(),
+					},
+					&nbdb.LogicalRouter{
+						Name: types.OVNClusterRouter,
+						UUID: types.OVNClusterRouter + "-UUID",
+						Policies: []string{"no-reroute-ipv4-1-UUID", "no-reroute-ipv4-2-UUID", "no-reroute-service-ipv4-1-UUID",
+							"no-reroute-ipv6-1-UUID", "no-reroute-ipv6-2-UUID", "no-reroute-service-ipv4-2-UUID", "no-reroute-service-ipv6-1-UUID",
+							"no-reroute-service-ipv6-2-UUID", "default-v4-no-reroute-node-UUID", "default-v6-no-reroute-node-UUID", "default-no-reroute-reply-traffic"},
+					},
+					&nbdb.LogicalRouter{
+						Name:  types.GWRouterPrefix + node1.Name,
+						UUID:  types.GWRouterPrefix + node1.Name + "-UUID",
+						Ports: []string{types.GWRouterToJoinSwitchPrefix + types.GWRouterPrefix + node1.Name + "-UUID"},
+					},
+					&nbdb.LogicalSwitchPort{
+						UUID: types.EXTSwitchToGWRouterPrefix + types.GWRouterPrefix + node1Name + "-UUID",
+						Name: types.EXTSwitchToGWRouterPrefix + types.GWRouterPrefix + node1Name,
+						Type: "router",
+						Options: map[string]string{
+							"router-port":               types.GWRouterToExtSwitchPrefix + "GR_" + node1Name,
+							"nat-addresses":             "router",
+							"exclude-lb-vips-from-garp": "true",
+						},
+					},
+					&nbdb.LogicalSwitch{
+						UUID:  types.ExternalSwitchPrefix + node1Name + "-UUID",
+						Name:  types.ExternalSwitchPrefix + node1Name,
+						Ports: []string{types.EXTSwitchToGWRouterPrefix + types.GWRouterPrefix + node1Name + "-UUID"},
+					},
+					node1Switch,
+					getDefaultQoSRule(false, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName),
+					getDefaultQoSRule(true, types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName),
+					egressSVCServedPodsASv4, egressSVCServedPodsASv6, egressIPServedPodsASv4, egressIPServedPodsASv6, egressNodeIPsASv4, egressNodeIPsASv6,
+				}
+				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
 		ginkgo.It("should re-balance EgressIPs when their node is removed", func() {
 			app.Action = func(*cli.Context) error {
 				config.IPv4Mode = true
