@@ -1,9 +1,10 @@
 # Simple workflow for deploying static content to GitHub Pages
-name: Deploy static content to Pages
+name: Test and Deploy static content to Pages
 
 on:
-  # Runs on pushes targeting the default branch
   push:
+    branches: ["master"]
+  pull_request:
     branches: ["master"]
 
   # Allows you to run this workflow manually from the Actions tab
@@ -22,11 +23,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Single deploy job since we're just deploying
+  # build and deploy pages on merges
   deploy:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -47,3 +49,21 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+  # test that docs build correctly on PRs
+  test-deploy:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: 3.x
+      - run: |
+          pip install mkdocs-material
+          pip install $(mkdocs-get-deps)
+      - run: mkdocs build
+      - name: Upload Artifact (Test)
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-mkdocs-site
+          path: ./site
