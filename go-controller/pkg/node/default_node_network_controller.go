@@ -405,10 +405,10 @@ func setupOVNNode(node *corev1.Node) error {
 		fmt.Sprintf("external_ids:ovn-encap-ip=%s", config.Default.EffectiveEncapIP),
 		fmt.Sprintf("external_ids:ovn-remote-probe-interval=%d",
 			config.Default.InactivityProbe),
-		fmt.Sprintf("external_ids:ovn-openflow-probe-interval=%d",
+		fmt.Sprintf("external_ids:ovn-bridge-remote-probe-interval=%d",
 			config.Default.OpenFlowProbe),
 		// bundle-idle-timeout default value is 10s, it should be set
-		// as high as the ovn-openflow-probe-interval to allow ovn-controller
+		// as high as the ovn-bridge-remote-probe-interval to allow ovn-controller
 		// to finish computation specially with complex acl configuration with port range.
 		fmt.Sprintf("other_config:bundle-idle-timeout=%d",
 			config.Default.OpenFlowProbe),
