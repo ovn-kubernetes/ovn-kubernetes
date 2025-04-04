@@ -271,6 +271,11 @@ func GetUDNMarkChain(pktMark string) string {
 	return "udn-mark-" + pktMark
 }
 
+// GetUDNBGPDropChain returns the UDN drop chain name
+func GetUDNBGPDropChain(netID int) string {
+	return fmt.Sprintf("udn-bgp-drop-%d", netID)
+}
+
 // delMarkChain removes the UDN packet mark nftables chain
 func (udng *UserDefinedNetworkGateway) delMarkChain() error {
 	nft, err := nodenft.GetNFTablesHelper()
@@ -425,6 +430,11 @@ func (udng *UserDefinedNetworkGateway) DelNetwork() error {
 	}
 	// delete the management port interface for this network
 	err := udng.deleteUDNManagementPort()
+	if err != nil {
+		return err
+	}
+
+	err = udng.updateAdvertisedUDNIsolationRules(false)
 	if err != nil {
 		return err
 	}
@@ -855,6 +865,9 @@ func (udng *UserDefinedNetworkGateway) doReconcile() error {
 		return fmt.Errorf("error while updating logical flow for UDN %s: %s", udng.GetNetworkName(), err)
 	}
 
+	if err := udng.updateAdvertisedUDNIsolationRules(isNetworkAdvertised); err != nil {
+		return fmt.Errorf("error while updating advertised UDN isolation rules: %w", err)
+	}
 	return nil
 }
 
@@ -883,4 +896,48 @@ func (udng *UserDefinedNetworkGateway) updateUDNVRFIPRule() error {
 		}
 	}
 	return nil
+}
+
+// updateAdvertisedUDNIsolationRules adds nft rules to drop locally generated traffic destined to the local UDN subnets for
+// BGP advertised networks. When isNetworkAdvertised is false the chain is removed.
+func (udng *UserDefinedNetworkGateway) updateAdvertisedUDNIsolationRules(isNetworkAdvertised bool) error {
+	nft, err := nodenft.GetNFTablesHelper()
+	if err != nil {
+		return err
+	}
+	tx := nft.NewTransaction()
+	chain := &knftables.Chain{
+		Name:    GetUDNBGPDropChain(udng.GetNetworkID()),
+		Comment: knftables.PtrTo(fmt.Sprintf("Drop traffic generated locally towards the %s subnets", udng.GetNetworkName())),
+
+		Type:     knftables.PtrTo(knftables.FilterType),
+		Hook:     knftables.PtrTo(knftables.OutputHook),
+		Priority: knftables.PtrTo(knftables.FilterPriority),
+	}
+	tx.Add(chain)
+
+	if !isNetworkAdvertised {
+		tx.Delete(chain)
+		return nft.Run(context.TODO(), tx)
+	}
+
+	tx.Flush(chain)
+	counterIfDebug := ""
+	if config.Logging.Level > 4 {
+		counterIfDebug = "counter"
+	}
+
+	subnets, err := udng.getLocalSubnets()
+	if err != nil {
+		return err
+	}
+	udng.GetPodNetworkAdvertisedVRFs()
+	for _, udnNet := range subnets {
+		tx.Add(&knftables.Rule{
+			Chain: chain.Name,
+			// TODO: This will drop traffic from the VRF too
+			Rule: knftables.Concat(fmt.Sprintf("ip daddr %s", udnNet), counterIfDebug, "drop"),
+		})
+	}
+	return nft.Run(context.TODO(), tx)
 }
