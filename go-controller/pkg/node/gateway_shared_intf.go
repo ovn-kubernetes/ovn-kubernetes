@@ -69,6 +69,10 @@ const (
 	// nftablesUDNMarkExternalIPsV4Map, nftablesUDNMarkExternalIPsV6Map
 	nftablesUDNServiceMarkChain = "udn-service-mark"
 
+	// nftablesUDNBGPOutputChain is a base chain used for blocking the local processes
+	// from accessing any of the advertised UDN networks
+	nftablesUDNBGPOutputChain = "udn-bgp-drop"
+
 	// nftablesUDNMarkNodePortsMap is a verdict maps containing
 	// localNodeIP / protocol / port keys indicating traffic that
 	// should be marked with a UDN specific value, which is used to direct the traffic
@@ -83,9 +87,10 @@ const (
 	nftablesUDNMarkExternalIPsV6Map = "udn-mark-external-ips-v6"
 )
 
-// configureUDNServicesNFTables configures the nftables chains, rules, and verdict maps
-// that are used to set packet marks on externally exposed UDN services
-func configureUDNServicesNFTables() error {
+// configureUDNNFTables configures the nftables chains, rules, and verdict maps
+// that are used to set packet marks on externally exposed UDN services.
+// Additionally, it adds a chain used to drop traffic towards BGP advertised networks.
+func configureUDNNFTables() error {
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {
 		return err
@@ -97,6 +102,16 @@ func configureUDNServicesNFTables() error {
 		Comment: knftables.PtrTo("UDN services packet mark"),
 	})
 	tx.Flush(&knftables.Chain{Name: nftablesUDNServiceMarkChain})
+
+	tx.Add(&knftables.Chain{
+		Name:    nftablesUDNBGPOutputChain,
+		Comment: knftables.PtrTo("Drop traffic generated locally towards advertised UDN subnets"),
+
+		Type:     knftables.PtrTo(knftables.FilterType),
+		Hook:     knftables.PtrTo(knftables.OutputHook),
+		Priority: knftables.PtrTo(knftables.FilterPriority),
+	})
+	tx.Flush(&knftables.Chain{Name: nftablesUDNBGPOutputChain})
 
 	tx.Add(&knftables.Chain{
 		Name:    nftablesUDNServicePreroutingChain,
@@ -2428,7 +2443,7 @@ func newNodePortWatcher(
 			}
 		}
 		if util.IsNetworkSegmentationSupportEnabled() {
-			if err := configureUDNServicesNFTables(); err != nil {
+			if err := configureUDNNFTables(); err != nil {
 				return nil, fmt.Errorf("unable to configure UDN nftables: %w", err)
 			}
 		}
