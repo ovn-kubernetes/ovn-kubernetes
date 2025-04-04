@@ -77,7 +77,7 @@ func (cm *ControllerManager) NewNetworkController(nInfo util.NetInfo) (networkma
 	case ovntypes.Layer3Topology:
 		return ovn.NewSecondaryLayer3NetworkController(cnci, nInfo, cm.networkManager.Interface(), cm.routeImportManager, cm.eIPController, cm.portCache)
 	case ovntypes.Layer2Topology:
-		return ovn.NewSecondaryLayer2NetworkController(cnci, nInfo, cm.networkManager.Interface(), cm.eIPController, cm.portCache)
+		return ovn.NewSecondaryLayer2NetworkController(cnci, nInfo, cm.networkManager.Interface(), cm.routeImportManager, cm.portCache, cm.eIPController)
 	case ovntypes.LocalnetTopology:
 		return ovn.NewSecondaryLocalnetNetworkController(cnci, nInfo, cm.networkManager.Interface()), nil
 	}
@@ -97,7 +97,7 @@ func (cm *ControllerManager) newDummyNetworkController(topoType, netName string)
 	case ovntypes.Layer3Topology:
 		return ovn.NewSecondaryLayer3NetworkController(cnci, netInfo, cm.networkManager.Interface(), cm.routeImportManager, cm.eIPController, cm.portCache)
 	case ovntypes.Layer2Topology:
-		return ovn.NewSecondaryLayer2NetworkController(cnci, netInfo, cm.networkManager.Interface(), cm.eIPController, cm.portCache)
+		return ovn.NewSecondaryLayer2NetworkController(cnci, netInfo, cm.networkManager.Interface(), cm.routeImportManager, cm.portCache, cm.eIPController)
 	case ovntypes.LocalnetTopology:
 		return ovn.NewSecondaryLocalnetNetworkController(cnci, netInfo, cm.networkManager.Interface()), nil
 	}
