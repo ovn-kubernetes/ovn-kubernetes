@@ -73,6 +73,7 @@ add chain inet ovn-kubernetes udn-service-mark { comment "UDN services packet ma
 add rule inet ovn-kubernetes udn-service-mark fib daddr type local meta l4proto . th dport vmap @udn-mark-nodeports
 add rule inet ovn-kubernetes udn-service-mark ip daddr . meta l4proto . th dport vmap @udn-mark-external-ips-v4
 add rule inet ovn-kubernetes udn-service-mark ip6 daddr . meta l4proto . th dport vmap @udn-mark-external-ips-v6
+add chain inet ovn-kubernetes udn-bgp-drop { type filter hook output priority 0 ; comment "Drop traffic generated locally towards advertised UDN subnets" ; }
 add chain inet ovn-kubernetes udn-service-prerouting { type filter hook prerouting priority -150 ; comment "UDN services packet mark - Prerouting" ; }
 add rule inet ovn-kubernetes udn-service-prerouting iifname != %s jump udn-service-mark
 add chain inet ovn-kubernetes udn-service-output { type filter hook output priority -150 ; comment "UDN services packet mark - Output" ; }
@@ -1174,7 +1175,7 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 		Expect(err).NotTo(HaveOccurred())
 
 		if util.IsNetworkSegmentationSupportEnabled() {
-			err = configureUDNServicesNFTables()
+			err = configureUDNNFTables()
 			Expect(err).NotTo(HaveOccurred())
 		}
 
