@@ -253,7 +253,7 @@ func inRange(cidr string, ip string) error {
 	return fmt.Errorf("ip [%s] is NOT in range %s", ip, cidr)
 }
 
-func connectToServer(clientPodConfig podConfiguration, serverIP string, port int) error {
+func connectToServer(clientPodConfig podConfiguration, serverIP string, port uint16) error {
 	_, err := e2ekubectl.RunKubectl(
 		clientPodConfig.namespace,
 		"exec",
@@ -610,7 +610,7 @@ func allowedTCPPortsForPolicy(allowPorts ...int) []mnpapi.MultiNetworkPolicyPort
 	return portAllowlist
 }
 
-func reachServerPodFromClient(cs clientset.Interface, serverConfig podConfiguration, clientConfig podConfiguration, serverIP string, serverPort int) error {
+func reachServerPodFromClient(cs clientset.Interface, serverConfig podConfiguration, clientConfig podConfiguration, serverIP string, serverPort uint16) error {
 	updatedPod, err := cs.CoreV1().Pods(serverConfig.namespace).Get(context.Background(), serverConfig.name, metav1.GetOptions{})
 	if err != nil {
 		return err
