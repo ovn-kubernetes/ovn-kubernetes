@@ -27,7 +27,18 @@ if [[ "${builddir}" == /tmp/* ]]; then #paranoia
     rm -rf "${builddir}"
 fi
 
+# deepcopy for types
+deepcopy-gen \
+  --go-header-file hack/boilerplate.go.txt \
+  --output-file zz_generated.deepcopy.go \
+  --bounding-dirs github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types \
+  github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types
+
 for crd in ${crds}; do
+
+  # for types we already generated deepcopy above which is all we need
+  [ "$crd" = "types" ] && continue
+  
   echo "Generating deepcopy funcs for $crd"
   deepcopy-gen \
     --go-header-file hack/boilerplate.go.txt \
