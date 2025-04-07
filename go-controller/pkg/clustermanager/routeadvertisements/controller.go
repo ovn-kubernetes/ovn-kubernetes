@@ -38,6 +38,8 @@ import (
 	raapply "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/applyconfiguration/routeadvertisements/v1"
 	raclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned"
 	ralisters "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/listers/routeadvertisements/v1"
+	apitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
+	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
@@ -51,8 +53,9 @@ const (
 )
 
 var (
-	errConfig  = errors.New("configuration error")
-	errPending = errors.New("configuration pending")
+	errConfig      = errors.New("configuration error")
+	errPending     = errors.New("configuration pending")
+	cudnController = userdefinednetworkv1.SchemeGroupVersion.WithKind("ClusterUserDefinedNetwork")
 )
 
 // Controller reconciles RouteAdvertisements
@@ -332,20 +335,7 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 
 	// if we are matching on the well known default network label, create an
 	// internal nad for it if it doesn't exist
-	if matchesDefaultNetworkLabel(ra.Spec.NetworkSelector) {
-		_, err := c.getOrCreateDefaultNetworkNAD()
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to get/create default network NAD: %w", err)
-		}
-	}
-
-	// gather selected networks
-	var nads []*nadtypes.NetworkAttachmentDefinition
-	nadSelector, err := metav1.LabelSelectorAsSelector(&ra.Spec.NetworkSelector)
-	if err != nil {
-		return nil, nil, err
-	}
-	nads, err = c.nadLister.List(nadSelector)
+	nads, err := c.getSelectedNADs(ra.Spec.NetworkSelectors)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -994,6 +984,44 @@ func (c *Controller) updateRAStatus(ra *ratypes.RouteAdvertisements, hadUpdates 
 	return nil
 }
 
+func (c *Controller) getSelectedNADs(networkSelectors apitypes.NetworkSelectors) ([]*nadtypes.NetworkAttachmentDefinition, error) {
+	var selected []*nadtypes.NetworkAttachmentDefinition
+	for _, networkSelector := range networkSelectors {
+		switch networkSelector.NetworkSelectionType {
+		case apitypes.DefaultNetwork:
+			// if we are selecting the default networkdefault network label,
+			// make sure a NAD exists for it
+			nad, err := c.getOrCreateDefaultNetworkNAD()
+			if err != nil {
+				return nil, fmt.Errorf("failed to get/create default network NAD: %w", err)
+			}
+			selected = append(selected, nad)
+		case apitypes.ClusterUserDefinedNetworks:
+			nadSelector, err := metav1.LabelSelectorAsSelector(&networkSelector.ClusterUserDefinedNetworkSelector.NetworkSelector)
+			if err != nil {
+				return nil, err
+			}
+			nads, err := c.nadLister.List(nadSelector)
+			if err != nil {
+				return nil, err
+			}
+			for _, nad := range nads {
+				// check this NAD is controlled by a CUDN
+				controller := metav1.GetControllerOfNoCopy(nad)
+				isCUDN := controller != nil && controller.Kind == cudnController.Kind && controller.APIVersion == cudnController.GroupVersion().String()
+				if !isCUDN {
+					continue
+				}
+				selected = append(selected, nad)
+			}
+		default:
+			return nil, fmt.Errorf("%w: unsupported network selection type %s", errConfig, networkSelector.NetworkSelectionType)
+		}
+	}
+
+	return selected, nil
+}
+
 // getOrCreateDefaultNetworkNAD ensure that a well-known NAD exists for the
 // default network in ovn-k namespace.
 func (c *Controller) getOrCreateDefaultNetworkNAD() (*nadtypes.NetworkAttachmentDefinition, error) {
@@ -1010,7 +1038,6 @@ func (c *Controller) getOrCreateDefaultNetworkNAD() (*nadtypes.NetworkAttachment
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      types.DefaultNetworkName,
 				Namespace: config.Kubernetes.OVNConfigNamespace,
-				Labels:    map[string]string{types.DefaultNetworkLabelSelector: ""},
 			},
 			Spec: nadtypes.NetworkAttachmentDefinitionSpec{
 				Config: fmt.Sprintf("{\"cniVersion\": \"0.4.0\", \"name\": \"ovn-kubernetes\", \"type\": \"%s\"}", config.CNI.Plugin),
@@ -1235,17 +1262,4 @@ func (c *Controller) reconcileEgressIPs(string) error {
 	}
 
 	return nil
-}
-
-func matchesDefaultNetworkLabel(selector metav1.LabelSelector) bool {
-	_, matchesLabel := selector.MatchLabels[types.DefaultNetworkLabelSelector]
-	if matchesLabel {
-		return true
-	}
-	for _, expr := range selector.MatchExpressions {
-		if expr.Key == types.DefaultNetworkLabelSelector {
-			return true
-		}
-	}
-	return false
 }
