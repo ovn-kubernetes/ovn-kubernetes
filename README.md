@@ -1,4 +1,4 @@
-![ovn-kubernetes logo](./docs/images/ovn-inside-k8s.png) <!-- markdownlint-disable-line first-line-heading -->
+![ovn-kubernetes logo](./docs/images/ovn-kubernetes-stacked-all-blue.png) <!-- markdownlint-disable-line first-line-heading -->
 
 # ovn-kubernetes: A robust Kubernetes networking platform
 
