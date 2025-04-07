@@ -27,6 +27,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controllermanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
 	ovnnode "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
@@ -561,16 +562,17 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 		}()
 	}
 
+	ovsClient, err := ovs.GetOVSClient(ctx)
+	if err != nil {
+		cancel()
+		return fmt.Errorf("failed to initialize libovsdb vswitchd client: %w", err)
+	}
+	defer cancel()
+
 	// start the prometheus server to serve OVS and OVN Metrics (default port: 9476)
 	// Note: for ovnkube node mode dpu-host no metrics is required as ovs/ovn is not running on the node.
 	if config.OvnKubeNode.Mode != types.NodeModeDPUHost && config.Metrics.OVNMetricsBindAddress != "" {
 		metricsScrapeInterval := 30
-		defer cancel()
-
-		ovsClient, err := libovsdb.NewOVSClient(ctx.Done())
-		if err != nil {
-			return fmt.Errorf("failed to initialize libovsdb vswitchd client: %w", err)
-		}
 		if config.Metrics.ExportOVSMetrics {
 			metrics.RegisterOvsMetricsWithOvnMetrics(ovsClient, metricsScrapeInterval, ctx.Done())
 		}
@@ -583,7 +585,6 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 	// run until cancelled
 	<-ctx.Done()
 	klog.Infof("Stopping ovnkube...")
-	cancel()
 	watchFactory.Shutdown()
 	wg.Wait()
 	klog.Infof("Stopped ovnkube")

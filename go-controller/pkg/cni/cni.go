@@ -22,8 +22,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kubevirt"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb"
-	ovsops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -350,13 +349,9 @@ func HandlePodRequest(
 // instance of the pod in the apiserver, see checkCancelSandbox for more info.
 // If kube api is not available from the CNI, pass nil to skip this check.
 func getCNIResult(pr *PodRequest, getter PodInfoGetter, podInterfaceInfo *PodInterfaceInfo) (*current.Result, error) {
-	ctx := context.Background()
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	ovsClient, err := libovsdb.NewOVSClient(ctx.Done())
+	ovsClient, err := ovs.GetOVSClient(context.Background())
 	if err != nil {
-		return nil, fmt.Errorf("failed to create ovs client: %w", err)
+		return nil, fmt.Errorf("failed to get ovs client: %w", err)
 	}
 
 	netName := pr.netName
@@ -448,7 +443,7 @@ func checkBridgeMapping(ovsClient client.Client, topology string, networkName st
 		return nil
 	}
 
-	openvSwitch, err := ovsops.GetOpenvSwitch(ovsClient)
+	openvSwitch, err := ovs.GetOpenvSwitch(ovsClient)
 	if err != nil {
 		return fmt.Errorf("failed getting openvswitch: %w", err)
 	}
