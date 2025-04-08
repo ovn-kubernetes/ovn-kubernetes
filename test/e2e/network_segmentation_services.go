@@ -27,6 +27,11 @@ import (
 	utilnet "k8s.io/utils/net"
 )
 
+const (
+	checkConnectionTimeout   = 5 * time.Second
+	checkNoConnectionTimeout = 2 * time.Second
+)
+
 var _ = Describe("Network Segmentation: services", func() {
 
 	f := wrappedTestFramework("udn-services")
@@ -180,10 +185,10 @@ ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | 
 				checkConnectionToNodePort(f, udnClientPod2, udnService, &nodes.Items[2], "other node", udnServerPod.Name)
 
 				By("Connect to the UDN service from the UDN client external container")
-				checkConnectionToLoadBalancersFromExternalContainer(f, clientContainer, udnService, udnServerPod.Name)
-				checkConnectionToNodePortFromExternalContainer(f, clientContainer, udnService, &nodes.Items[0], "server node", udnServerPod.Name)
-				checkConnectionToNodePortFromExternalContainer(f, clientContainer, udnService, &nodes.Items[1], "other node", udnServerPod.Name)
-				checkConnectionToNodePortFromExternalContainer(f, clientContainer, udnService, &nodes.Items[2], "other node", udnServerPod.Name)
+				checkConnectionToLoadBalancersFromExternalContainer(clientContainer, udnService, udnServerPod.Name)
+				checkConnectionToNodePortFromExternalContainer(clientContainer, udnService, &nodes.Items[0], "server node", udnServerPod.Name)
+				checkConnectionToNodePortFromExternalContainer(clientContainer, udnService, &nodes.Items[1], "other node", udnServerPod.Name)
+				checkConnectionToNodePortFromExternalContainer(clientContainer, udnService, &nodes.Items[2], "other node", udnServerPod.Name)
 
 				// Default network -> UDN
 				// Check that it cannot connect
@@ -324,8 +329,9 @@ func ParseNodeHostIPDropNetMask(node *kapi.Node) (sets.Set[string], error) {
 	return sets.New(cfg...), nil
 }
 
-func checkConnectionToAgnhostPod(f *framework.Framework, clientPod *v1.Pod, expectedOutput, cmd string) error {
-	return wait.PollImmediate(200*time.Millisecond, 5*time.Second, func() (bool, error) {
+func checkConnectionToAgnhostPod(f *framework.Framework, clientPod *v1.Pod, expectedOutput, cmd string, timeout time.Duration) error {
+	return wait.PollUntilContextTimeout(context.TODO(), 200*time.Millisecond, timeout, true, func(ctx context.Context) (bool, error) {
+		defer GinkgoRecover()
 		stdout, stderr, err2 := ExecShellInPodWithFullOutput(f, clientPod.Namespace, clientPod.Name, cmd)
 		fmt.Printf("stdout=%s\n", stdout)
 		fmt.Printf("stderr=%s\n", stderr)
@@ -342,8 +348,9 @@ func checkConnectionToAgnhostPod(f *framework.Framework, clientPod *v1.Pod, expe
 	})
 }
 
-func checkNoConnectionToAgnhostPod(f *framework.Framework, clientPod *v1.Pod, cmd string) error {
-	err := wait.PollImmediate(500*time.Millisecond, 2*time.Second, func() (bool, error) {
+func checkNoConnectionToAgnhostPod(f *framework.Framework, clientPod *v1.Pod, cmd string, timeout time.Duration) error {
+	err := wait.PollUntilContextTimeout(context.TODO(), 500*time.Millisecond, timeout, true, func(ctx context.Context) (bool, error) {
+		defer GinkgoRecover()
 		stdout, stderr, err2 := ExecShellInPodWithFullOutput(f, clientPod.Namespace, clientPod.Name, cmd)
 		fmt.Printf("stdout=%s\n", stdout)
 		fmt.Printf("stderr=%s\n", stderr)
@@ -396,9 +403,9 @@ func checkConnectionOrNoConnectionToClusterIPs(f *framework.Framework, clientPod
 		cmd := fmt.Sprintf(`/bin/sh -c 'echo hostname | nc -u -w 1 %s %d '`, clusterIP, servicePort)
 
 		if shouldConnect {
-			err = checkConnectionToAgnhostPod(f, clientPod, expectedOutput, cmd)
+			err = checkConnectionToAgnhostPod(f, clientPod, expectedOutput, cmd, checkConnectionTimeout)
 		} else {
-			err = checkNoConnectionToAgnhostPod(f, clientPod, cmd)
+			err = checkNoConnectionToAgnhostPod(f, clientPod, cmd, checkNoConnectionTimeout)
 		}
 		framework.ExpectNoError(err, fmt.Sprintf("Failed to verify that %s", msg))
 	}
@@ -429,9 +436,9 @@ func checkConnectionOrNoConnectionToNodePort(f *framework.Framework, clientPod *
 		cmd := fmt.Sprintf(`/bin/sh -c 'echo hostname | nc -u -w 1 %s %d '`, nodeIP, nodePort)
 
 		if shouldConnect {
-			err = checkConnectionToAgnhostPod(f, clientPod, expectedOutput, cmd)
+			err = checkConnectionToAgnhostPod(f, clientPod, expectedOutput, cmd, checkConnectionTimeout)
 		} else {
-			err = checkNoConnectionToAgnhostPod(f, clientPod, cmd)
+			err = checkNoConnectionToAgnhostPod(f, clientPod, cmd, checkNoConnectionTimeout)
 		}
 		framework.ExpectNoError(err, fmt.Sprintf("Failed to verify that %s", msg))
 	}
@@ -460,15 +467,15 @@ func checkConnectionOrNoConnectionToLoadBalancers(f *framework.Framework, client
 		cmd := fmt.Sprintf(`/bin/sh -c 'echo hostname | nc -u -w 1 %s %d '`, lbIngress.IP, port)
 
 		if shouldConnect {
-			err = checkConnectionToAgnhostPod(f, clientPod, expectedOutput, cmd)
+			err = checkConnectionToAgnhostPod(f, clientPod, expectedOutput, cmd, checkConnectionTimeout)
 		} else {
-			err = checkNoConnectionToAgnhostPod(f, clientPod, cmd)
+			err = checkNoConnectionToAgnhostPod(f, clientPod, cmd, checkNoConnectionTimeout)
 		}
 		framework.ExpectNoError(err, fmt.Sprintf("Failed to verify that %s", msg))
 	}
 }
 
-func checkConnectionToNodePortFromExternalContainer(f *framework.Framework, containerName string, service *v1.Service, node *v1.Node, nodeRoleMsg, expectedOutput string) {
+func checkConnectionToNodePortFromExternalContainer(containerName string, service *v1.Service, node *v1.Node, nodeRoleMsg, expectedOutput string) {
 	GinkgoHelper()
 	var err error
 	nodePort := service.Spec.Ports[0].NodePort
@@ -483,13 +490,13 @@ func checkConnectionToNodePortFromExternalContainer(f *framework.Framework, cont
 		Eventually(func() (string, error) {
 			return runCommand(cmd...)
 		}).
-			WithTimeout(5*time.Second).
+			WithTimeout(checkConnectionTimeout).
 			WithPolling(200*time.Millisecond).
 			Should(Equal(expectedOutput), "Failed to verify that %s", msg)
 	}
 }
 
-func checkConnectionToLoadBalancersFromExternalContainer(f *framework.Framework, containerName string, service *v1.Service, expectedOutput string) {
+func checkConnectionToLoadBalancersFromExternalContainer(containerName string, service *v1.Service, expectedOutput string) {
 	GinkgoHelper()
 	port := service.Spec.Ports[0].Port
 
