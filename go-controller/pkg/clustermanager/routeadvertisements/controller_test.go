@@ -55,8 +55,10 @@ func (tra testRA) RouteAdvertisements() *ratypes.RouteAdvertisements {
 			Name: tra.Name,
 		},
 		Spec: ratypes.RouteAdvertisementsSpec{
-			TargetVRF:      tra.TargetVRF,
-			Advertisements: []ratypes.AdvertisementType{},
+			TargetVRF:                tra.TargetVRF,
+			Advertisements:           []ratypes.AdvertisementType{},
+			NodeSelector:             metav1.LabelSelector{},
+			FRRConfigurationSelector: metav1.LabelSelector{},
 		},
 	}
 	if tra.AdvertisePods {

@@ -49,7 +49,8 @@ func TestSetAdvertisements(t *testing.T) {
 			Name: testRAName,
 		},
 		Spec: ratypes.RouteAdvertisementsSpec{
-			TargetVRF: testVRFName,
+			TargetVRF:    testVRFName,
+			NodeSelector: metav1.LabelSelector{},
 			Advertisements: []ratypes.AdvertisementType{
 				ratypes.PodNetwork,
 			},
@@ -68,7 +69,8 @@ func TestSetAdvertisements(t *testing.T) {
 			Name: testRAName,
 		},
 		Spec: ratypes.RouteAdvertisementsSpec{
-			TargetVRF: testVRFName,
+			TargetVRF:    testVRFName,
+			NodeSelector: metav1.LabelSelector{},
 		},
 		Status: ratypes.RouteAdvertisementsStatus{
 			Conditions: []metav1.Condition{

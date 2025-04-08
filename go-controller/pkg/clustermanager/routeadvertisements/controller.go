@@ -396,7 +396,7 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 		return nil, nil, err
 	}
 	if !nodeSelector.Empty() && advertisements.Has(ratypes.PodNetwork) {
-		return nil, nil, fmt.Errorf("%w: node selector cannot be specified if pod network is advertised", errConfig)
+		return nil, nil, fmt.Errorf("%w: node selector has to select all nodes if pod network is advertised", errConfig)
 	}
 	nodes, err := c.nodeLister.List(nodeSelector)
 	if err != nil {
