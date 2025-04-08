@@ -468,6 +468,14 @@ check_dependencies() {
     exit 1
   fi
 
+  local kind_min="0.27.0"
+  local kind_cur
+  kind_cur=$(kind version -q)
+  if [ "$(echo -e "$kind_min\n$kind_cur" | sort -V | head -1)" != "$kind_min" ]; then
+    echo "Dependency not met: expected kind version >= $kind_min but have $kind_cur"
+    exit 1
+  fi
+
   if ! command_exists jq ; then
     echo "Dependency not met: Command not found 'jq'"
     exit 1
