@@ -62,8 +62,8 @@ spec:
               frrConfigurationSelector:
                 description: |-
                   frrConfigurationSelector determines which FRRConfigurations will the
-                  OVN-Kubernetes driven FRRConfigurations be based on.
-                  When omitted, all FRRConfigurations will be considered.
+                  OVN-Kubernetes driven FRRConfigurations be based on. This field follows
+                  standard label selector semantics.
                 properties:
                   matchExpressions:
                     description: matchExpressions is a list of label selector requirements.
@@ -486,8 +486,8 @@ spec:
                 x-kubernetes-list-type: map
               nodeSelector:
                 description: |-
-                  nodeSelector limits the advertisements to selected nodes.
-                  When omitted, all nodes are selected.
+                  nodeSelector limits the advertisements to selected nodes. This field
+                  follows standard label selector semantics.
                 properties:
                   matchExpressions:
                     description: matchExpressions is a list of label selector requirements.
@@ -538,12 +538,15 @@ spec:
                 type: string
             required:
             - advertisements
+            - frrConfigurationSelector
             - networkSelectors
+            - nodeSelector
             type: object
             x-kubernetes-validations:
             - message: If 'PodNetwork' is selected for advertisement, a 'nodeSelector'
                 can't be specified as it needs to be advertised on all nodes
-              rule: '!has(self.nodeSelector) || !(''PodNetwork'' in self.advertisements)'
+              rule: (!has(self.nodeSelector.matchLabels) && !has(self.nodeSelector.matchExpressions))
+                || !('PodNetwork' in self.advertisements)
             - message: Only DefaultNetwork or ClusterUserDefinedNetworks can be selected
               rule: '!self.networkSelectors.exists(i, i.networkSelectionType != ''DefaultNetwork''
                 && i.networkSelectionType != ''ClusterUserDefinedNetworks'')'
