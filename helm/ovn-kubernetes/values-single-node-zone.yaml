@@ -57,7 +57,7 @@ global:
   # -- A comma separated set of IP subnets and the associated hostsubnetlengths (eg, \"10.128.0.0/14/23,10.0.0.0/14/23\") to use with the extended hybrid network
   hybridOverlayNetCidr: ""
   # -- Whether or not to use Admin Network Policy CRD feature with ovn-kubernetes
-  enableAdminNetworkPolicy: false
+  enableAdminNetworkPolicy: true
   # -- Configure to use EgressIP CRD feature with ovn-kubernetes
   enableEgressIp: true
   # -- Configure EgressIP node reachability using gRPC on this TCP port

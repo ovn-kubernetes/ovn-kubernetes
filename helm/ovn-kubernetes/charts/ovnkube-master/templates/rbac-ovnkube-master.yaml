@@ -71,11 +71,13 @@ rules:
       resources:
           - networkpolicies
       verbs: [ "get", "list", "watch" ]
+    {{- if .Values.global.enableAdminNetworkPolicy }}
     - apiGroups: ["policy.networking.k8s.io"]
       resources:
           - adminnetworkpolicies
           - baselineadminnetworkpolicies
       verbs: ["list", "get", "watch"]
+    {{- end }}
     - apiGroups: ["k8s.ovn.org"]
       resources:
           - egressfirewalls
@@ -93,11 +95,13 @@ rules:
       resources:
           - network-attachment-definitions
       verbs: ["patch"]
+    {{- if .Values.global.enableAdminNetworkPolicy }}
     - apiGroups: ["policy.networking.k8s.io"]
       resources:
           - adminnetworkpolicies/status
           - baselineadminnetworkpolicies/status
       verbs: [ "patch", "update" ]
+    {{- end }}
     - apiGroups: ["k8s.ovn.org"]
       resources:
           - egressfirewalls/status
