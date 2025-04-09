@@ -493,11 +493,11 @@ func TestController_reconcile(t *testing.T) {
 			},
 			nads: []*testNAD{
 				{Name: "default", Namespace: "ovn-kubernetes", Network: "default"},
-				{Name: "red", Namespace: "red", Network: "cluster.udn.red", Topology: "layer3", Subnet: "1.2.0.0/16"},
-				{Name: "blue", Namespace: "blue", Network: "cluster.udn.blue", Topology: "layer3", Subnet: "1.3.0.0/16", Labels: map[string]string{"selected": "true"}},
+				{Name: "red", Namespace: "red", Network: "cluster_udn_red", Topology: "layer3", Subnet: "1.2.0.0/16"},
+				{Name: "blue", Namespace: "blue", Network: "cluster_udn_blue", Topology: "layer3", Subnet: "1.3.0.0/16", Labels: map[string]string{"selected": "true"}},
 			},
 			nodes: []*testNode{
-				{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.1.0/24\", \"cluster.udn.red\":\"1.2.1.0/24\", \"cluster.udn.blue\":\"1.3.1.0/24\"}"},
+				{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.1.0/24\", \"cluster_udn_red\":\"1.2.1.0/24\", \"cluster_udn_blue\":\"1.3.1.0/24\"}"},
 			},
 			namespaces: []*testNamespace{
 				{Name: "default", Labels: map[string]string{"selected": "default"}},
@@ -519,7 +519,8 @@ func TestController_reconcile(t *testing.T) {
 					Routers: []*testRouter{
 						{ASN: 1, VRF: "red", Prefixes: []string{"1.0.1.3/32", "172.100.0.16/32"}, Neighbors: []*testNeighbor{
 							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.0.1.3/32", "172.100.0.16/32"}},
-						}},
+						}, Imports: []string{"blue"}},
+						{ASN: 1, VRF: "blue", Imports: []string{"red"}},
 					}},
 			},
 			expectNADAnnotations: map[string]map[string]string{"blue": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},

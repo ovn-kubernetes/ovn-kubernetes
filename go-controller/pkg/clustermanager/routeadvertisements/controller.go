@@ -702,11 +702,6 @@ func (c *Controller) generateFRRConfiguration(
 			continue
 		}
 
-		// we won't do imports if the pod network is not advertised
-		if !advertisements.Has(ratypes.PodNetwork) {
-			continue
-		}
-
 		// before handling imports, lets normalize the VRF for the default
 		// network: when doing imports, the default VRF is is referred to as
 		// "default" instead of ""
