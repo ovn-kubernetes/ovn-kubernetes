@@ -466,12 +466,9 @@ kind: RouteAdvertisements
 metadata:
   name: ` + name + `
 spec:
-  networkSelectors:
-    - networkSelectionType: ClusterUserDefinedNetworks
-      clusterUserDefinedNetworkSelector:
-        networkSelector:
-          matchLabels:
-            k8s.ovn.org/bgp-network: ""
+  networkSelector:
+    matchLabels:
+      k8s.ovn.org/bgp-network: ""
   advertisements:
     - "PodNetwork"`
 }

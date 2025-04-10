@@ -19,7 +19,6 @@ package v1
 
 import (
 	routeadvertisementsv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
-	types "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
 	metav1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
@@ -27,7 +26,7 @@ import (
 // with apply.
 type RouteAdvertisementsSpecApplyConfiguration struct {
 	TargetVRF                *string                                   `json:"targetVRF,omitempty"`
-	NetworkSelectors         *types.NetworkSelectors                   `json:"networkSelectors,omitempty"`
+	NetworkSelector          *metav1.LabelSelectorApplyConfiguration   `json:"networkSelector,omitempty"`
 	NodeSelector             *metav1.LabelSelectorApplyConfiguration   `json:"nodeSelector,omitempty"`
 	FRRConfigurationSelector *metav1.LabelSelectorApplyConfiguration   `json:"frrConfigurationSelector,omitempty"`
 	Advertisements           []routeadvertisementsv1.AdvertisementType `json:"advertisements,omitempty"`
@@ -47,11 +46,11 @@ func (b *RouteAdvertisementsSpecApplyConfiguration) WithTargetVRF(value string) 
 	return b
 }
 
-// WithNetworkSelectors sets the NetworkSelectors field in the declarative configuration to the given value
+// WithNetworkSelector sets the NetworkSelector field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the NetworkSelectors field is set to the value of the last call.
-func (b *RouteAdvertisementsSpecApplyConfiguration) WithNetworkSelectors(value types.NetworkSelectors) *RouteAdvertisementsSpecApplyConfiguration {
-	b.NetworkSelectors = &value
+// If called multiple times, the NetworkSelector field is set to the value of the last call.
+func (b *RouteAdvertisementsSpecApplyConfiguration) WithNetworkSelector(value *metav1.LabelSelectorApplyConfiguration) *RouteAdvertisementsSpecApplyConfiguration {
+	b.NetworkSelector = value
 	return b
 }
 

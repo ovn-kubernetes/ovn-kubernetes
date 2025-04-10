@@ -2,8 +2,6 @@ package v1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
 )
 
 // +genclient
@@ -26,16 +24,14 @@ type RouteAdvertisements struct {
 
 // RouteAdvertisementsSpec defines the desired state of RouteAdvertisements
 // +kubebuilder:validation:XValidation:rule="!has(self.nodeSelector) || !('PodNetwork' in self.advertisements)",message="If 'PodNetwork' is selected for advertisement, a 'nodeSelector' can't be specified as it needs to be advertised on all nodes"
-// +kubebuilder:validation:XValidation:rule="!self.networkSelectors.exists(i, i.networkSelectionType != 'DefaultNetwork' && i.networkSelectionType != 'ClusterUserDefinedNetworks')",message="Only DefaultNetwork or ClusterUserDefinedNetworks can be selected"
 type RouteAdvertisementsSpec struct {
 	// targetVRF determines which VRF the routes should be advertised in.
 	// +kubebuilder:validation:Optional
 	TargetVRF string `json:"targetVRF,omitempty"`
 
-	// networkSelectors determines which network routes should be advertised.
-	// Only ClusterUserDefinedNetworks and the default network can be selected.
-	// +kubebuilder:validation:Required
-	NetworkSelectors types.NetworkSelectors `json:"networkSelectors"`
+	// networkSelector determines which network routes should be advertised. To
+	// select the default network, match on label 'k8s.ovn.org/default-network'.
+	NetworkSelector metav1.LabelSelector `json:"networkSelector,omitempty"`
 
 	// nodeSelector limits the advertisements to selected nodes.
 	// When omitted, all nodes are selected.

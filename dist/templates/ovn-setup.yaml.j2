@@ -86,8 +86,9 @@ kind: RouteAdvertisements
 metadata:
   name: default
 spec:
-  networkSelectors:
-    - networkSelectionType: DefaultNetwork
+  networkSelector:
+    matchLabels:
+      k8s.ovn.org/default-network: ""
   advertisements:
     - "PodNetwork"
 {%- endif %}
