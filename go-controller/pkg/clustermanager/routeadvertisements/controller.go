@@ -16,10 +16,11 @@ import (
 	frrtypes "github.com/metallb/frr-k8s/api/v1beta1"
 	frrclientset "github.com/metallb/frr-k8s/pkg/client/clientset/versioned"
 	frrlisters "github.com/metallb/frr-k8s/pkg/client/listers/api/v1beta1"
+	"golang.org/x/exp/maps"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	meta "k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -300,8 +301,8 @@ func (c *Controller) reconcileRouteAdvertisements(name string, ra *ratypes.Route
 // that have been selected by a RouteAdvertisements. It is important that prefix
 // lists are ordered to generate consistent FRRConfigurations.
 type selectedNetworks struct {
-	// networks is an ordered list of selected network names
-	networks []string
+	// networks is a map of NetInfo keyed by the network name
+	networks map[string]util.NetInfo
 	// vrfs is an ordered list of selected networks VRF's
 	vrfs []string
 	// networkVRFs is a mapping of VRF to corresponding network
@@ -354,7 +355,8 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 	}
 
 	// validate and gather information about the networks
-	networkSet := sets.New[string]()
+
+	networks := map[string]util.NetInfo{}
 	selectedNetworks := &selectedNetworks{
 		networkVRFs:    map[string]string{},
 		networkSubnets: map[string][]string{},
@@ -367,21 +369,21 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 			// network not yet known by network manager, skip
 			continue
 		}
-		if networkSet.Has(networkName) {
+		if _, has := networks[networkName]; has {
 			continue
 		}
 		if !network.IsDefault() && !network.IsPrimaryNetwork() {
 			return nil, nil, fmt.Errorf("%w: selected network %q is not the default nor a primary network", errConfig, networkName)
 		}
-		if network.TopologyType() != types.Layer3Topology {
-			// TODO don't really know what to do with layer 2 topologies yet
+		if network.TopologyType() != types.Layer3Topology && network.TopologyType() != types.Layer2Topology {
 			return nil, nil, fmt.Errorf("%w: selected network %q has unsupported topology %q", errConfig, networkName, network.TopologyType())
 		}
+
 		vrf := util.GetNetworkVRFName(network)
 		if vfrNet, hasVFR := selectedNetworks.networkVRFs[vrf]; hasVFR && vfrNet != networkName {
 			return nil, nil, fmt.Errorf("%w: vrf %q found to be mapped to multiple networks %v", errConfig, vrf, []string{vfrNet, networkName})
 		}
-		networkSet.Insert(networkName)
+		networks[networkName] = network
 		selectedNetworks.vrfs = append(selectedNetworks.vrfs, vrf)
 		selectedNetworks.networkVRFs[vrf] = networkName
 		// TODO check overlaps?
@@ -398,7 +400,7 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 	// ordered
 	slices.Sort(selectedNetworks.vrfs)
 	slices.Sort(selectedNetworks.subnets)
-	selectedNetworks.networks = sets.List(networkSet)
+	selectedNetworks.networks = networks
 
 	// gather selected nodes
 	nodeSelector, err := metav1.LabelSelectorAsSelector(&ra.Spec.NodeSelector)
@@ -482,7 +484,7 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 	var eipsByNodesByNetworks map[string]map[string]sets.Set[string]
 	getEgressIPsByNode := func(nodeName string) (map[string]sets.Set[string], error) {
 		if eipsByNodesByNetworks == nil {
-			eipsByNodesByNetworks, err = c.getEgressIPsByNodesByNetworks(networkSet)
+			eipsByNodesByNetworks, err = c.getEgressIPsByNodesByNetworks(networks)
 			if err != nil {
 				return nil, err
 			}
@@ -490,14 +492,20 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 		return eipsByNodesByNetworks[nodeName], nil
 	}
 
-	// helper to gather host subnets and egress ips as prefixes
-	getPrefixes := func(nodeName string, network string) ([]string, error) {
-		// gather host subnets
+	// helper to gather subnets and egress ips as prefixes
+	getPrefixes := func(nodeName string, network util.NetInfo) ([]string, error) {
+		// gather subnets
 		var subnets []string
 		if advertisements.Has(ratypes.PodNetwork) {
-			subnets, err = getHostSubnets(nodeName, network)
-			if err != nil || len(subnets) == 0 {
-				return nil, fmt.Errorf("%w: will wait for subnet annotation to be set for node %q and network %q: %w", errConfig, nodeName, network, err)
+			if network.TopologyType() == types.Layer2Topology {
+				for _, subnet := range network.Subnets() {
+					subnets = append(subnets, subnet.CIDR.String())
+				}
+			} else {
+				subnets, err = getHostSubnets(nodeName, network.GetNetworkName())
+				if err != nil || len(subnets) == 0 {
+					return nil, fmt.Errorf("%w: will wait for subnet annotation to be set for node %q and network %q: %w", errConfig, nodeName, network, err)
+				}
 			}
 
 		}
@@ -508,7 +516,7 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 			if err != nil {
 				return nil, err
 			}
-			eips = eipsByNode[network].UnsortedList()
+			eips = eipsByNode[network.GetNetworkName()].UnsortedList()
 		}
 
 		prefixes := make([]string, 0, len(subnets)+len(eips))
@@ -524,14 +532,14 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 		selectedNetworks.hostSubnets = []string{}
 
 		// gather node specific information
-		for _, network := range selectedNetworks.networks {
-			selectedNetworks.hostNetworkSubnets[network], err = getPrefixes(nodeName, network)
+		for networkName, network := range selectedNetworks.networks {
+			selectedNetworks.hostNetworkSubnets[networkName], err = getPrefixes(nodeName, network)
 			if err != nil {
 				return nil, nil, err
 			}
-			selectedNetworks.hostSubnets = append(selectedNetworks.hostSubnets, selectedNetworks.hostNetworkSubnets[network]...)
+			selectedNetworks.hostSubnets = append(selectedNetworks.hostSubnets, selectedNetworks.hostNetworkSubnets[networkName]...)
 			// ordered
-			slices.Sort(selectedNetworks.hostNetworkSubnets[network])
+			slices.Sort(selectedNetworks.hostNetworkSubnets[networkName])
 		}
 		// order, dedup
 		selectedNetworks.hostSubnets = sets.List(sets.New(selectedNetworks.hostSubnets...))
@@ -562,7 +570,7 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 			generated = append(generated, new)
 		}
 		// check that we matched all the selected networks on 'auto'
-		if ra.Spec.TargetVRF == "auto" && !matchedNetworks.HasAll(selectedNetworks.networks...) {
+		if ra.Spec.TargetVRF == "auto" && !matchedNetworks.HasAll(maps.Keys(selectedNetworks.networks)...) {
 			return nil, nil, fmt.Errorf("%w: selected FRRConfigurations for node %q don't match all selected networks with target VRF 'auto'", errConfig, nodeName)
 		}
 	}
@@ -1026,7 +1034,7 @@ func (c *Controller) getOrCreateDefaultNetworkNAD() (*nadtypes.NetworkAttachment
 // getEgressIPsByNodesByNetworks iterates all existing egress IPs that apply to
 // any of the provided networks and returns a "node -> network -> eips"
 // map.
-func (c *Controller) getEgressIPsByNodesByNetworks(networks sets.Set[string]) (map[string]map[string]sets.Set[string], error) {
+func (c *Controller) getEgressIPsByNodesByNetworks(networks map[string]util.NetInfo) (map[string]map[string]sets.Set[string], error) {
 	eipsByNodesByNetworks := map[string]map[string]sets.Set[string]{}
 	addEgressIPsByNodesByNetwork := func(eipsByNodes map[string]string, network string) {
 		for node, eip := range eipsByNodes {
@@ -1052,7 +1060,7 @@ func (c *Controller) getEgressIPsByNodesByNetworks(networks sets.Set[string]) (m
 		for _, namespace := range selected {
 			namespaceNetwork := c.nm.GetActiveNetworkForNamespaceFast(namespace.Name)
 			networkName := namespaceNetwork.GetNetworkName()
-			if networks.Has(networkName) {
+			if _, has := networks[networkName]; has {
 				addEgressIPsByNodesByNetwork(eipsByNodes, networkName)
 			}
 		}

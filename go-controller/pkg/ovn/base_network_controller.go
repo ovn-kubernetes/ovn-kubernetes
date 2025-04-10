@@ -730,6 +730,14 @@ func (bnc *BaseNetworkController) syncNodeManagementPort(node *corev1.Node, swit
 	var v4Subnet *net.IPNet
 	addresses := macAddress.String()
 	mgmtPortIPs := []net.IP{}
+
+	if config.Gateway.Mode == config.GatewayModeLocal &&
+		bnc.TopologyType() == types.Layer2Topology &&
+		util.IsPodNetworkAdvertisedAtNode(bnc.GetNetInfo(), node.Name) {
+		if err := bnc.addNetworkSubnetAllowACL(node.Name, switchName, hostSubnets); err != nil {
+			return nil, err
+		}
+	}
 	for _, hostSubnet := range hostSubnets {
 		mgmtIfAddr := util.GetNodeManagementIfAddr(hostSubnet)
 		addresses += " " + mgmtIfAddr.IP.String()
