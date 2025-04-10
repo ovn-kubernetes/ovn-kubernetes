@@ -473,9 +473,7 @@ spec:
           matchLabels:
             k8s.ovn.org/bgp-network: ""
   advertisements:
-    - "PodNetwork"
-  nodeSelector: {}
-  frrConfigurationSelector: {}`
+    - "PodNetwork"`
 }
 
 var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks",
