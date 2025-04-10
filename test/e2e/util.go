@@ -43,6 +43,8 @@ const (
 	ovnNodeZoneNameAnnotation = "k8s.ovn.org/zone-name"
 	// ovnGatewayMTUSupport annotation determines if options:gateway_mtu shall be set for a node's gateway router
 	ovnGatewayMTUSupport = "k8s.ovn.org/gateway-mtu-support"
+	// ovnkRouteProtocol is the route protocol number used to identify and manage routes installed by OVNK
+	ovnkRouteProtocol = 102
 )
 
 var containerRuntime = "docker"
@@ -1266,23 +1268,8 @@ func getNodeZone(node *v1.Node) (string, error) {
 	return nodeZone, nil
 }
 
-// adds route to a docker node with a full mask
-func addRouteToNode(nodeName string, ips []string, mtu int) error {
-	return routeToNode(nodeName, ips, mtu, true)
-}
-
-// removes a route on a docker node
-func delRouteToNode(nodeName string, ips []string) error {
-	return routeToNode(nodeName, ips, 0, false)
-}
-
-// executes route commands on a node, if add is true, the route is added
-// otherwise removed
-func routeToNode(nodeName string, ips []string, mtu int, add bool) error {
-	ipOp := "del"
-	if add {
-		ipOp = "add"
-	}
+// modifyRouteToNode modifies a route to a new MTU value, and locks it
+func modifyRouteToNode(nodeName string, ips []string, mtu int) error {
 	for _, ip := range ips {
 		mask := 32
 		ipCmd := []string{"ip"}
@@ -1293,10 +1280,8 @@ func routeToNode(nodeName string, ips []string, mtu int, add bool) error {
 		var err error
 		cmd := []string{"docker", "exec", nodeName}
 		cmd = append(cmd, ipCmd...)
-		cmd = append(cmd, "route", ipOp, fmt.Sprintf("%s/%d", ip, mask), "dev", "breth0")
-		if mtu != 0 {
-			cmd = append(cmd, "mtu", strconv.Itoa(mtu))
-		}
+		cmd = append(cmd, "route", "change", fmt.Sprintf("%s/%d", ip, mask), "dev", "breth0")
+		cmd = append(cmd, "proto", strconv.Itoa(ovnkRouteProtocol), "mtu", "lock", strconv.Itoa(mtu))
 		_, err = runCommand(cmd...)
 		if err != nil {
 			return err

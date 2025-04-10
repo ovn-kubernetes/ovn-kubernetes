@@ -242,6 +242,7 @@ var _ = ginkgo.Describe("Pod to pod TCP with low MTU", func() {
 		echoClientPodName         = "echo-client-pod"
 		serverPodPort             = 9899
 		mtu                       = 1400
+		originalMTU               = 1500
 	)
 
 	f := wrappedTestFramework("pod2pod-tcp-low-mtu")
@@ -311,19 +312,23 @@ var _ = ginkgo.Describe("Pod to pod TCP with low MTU", func() {
 			clientNodeInternalIPs = e2enode.GetAddresses(&clientNode, v1.NodeInternalIP)
 			gomega.Expect(len(serverNodeInternalIPs)).To(gomega.BeNumerically(">", 0))
 
+			// Note, this test is supposed to simulate 2 nodes on different L2 domains with different MTUs.
+			// However, we have no way to do this in KIND, so to simulate we lower the MTU temporarily
+			// between the nodes, to force the kernel to send ICMP needs frag back to the pod when trying to send
+			// via Geneve.
 			ginkgo.By("Lowering the MTU route from server -> client")
 			fmt.Println(clientNodeInternalIPs)
-			err = addRouteToNode(serverPodNodeName, clientNodeInternalIPs, mtu)
+			err = modifyRouteToNode(serverPodNodeName, clientNodeInternalIPs, mtu)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			ginkgo.By("Lowering the MTU route from client -> server")
 			fmt.Println(serverNodeInternalIPs)
-			err = addRouteToNode(clientPodNodeName, serverNodeInternalIPs, mtu)
+			err = modifyRouteToNode(clientPodNodeName, serverNodeInternalIPs, mtu)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			cleanupFn = func() {
-				err = delRouteToNode(serverPodNodeName, clientNodeInternalIPs)
-				err = delRouteToNode(clientPodNodeName, serverNodeInternalIPs)
+				err = modifyRouteToNode(serverPodNodeName, clientNodeInternalIPs, originalMTU)
+				err = modifyRouteToNode(clientPodNodeName, serverNodeInternalIPs, originalMTU)
 			}
 
 		})
