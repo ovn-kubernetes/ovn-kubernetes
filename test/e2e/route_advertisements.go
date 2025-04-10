@@ -710,8 +710,13 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					return out, nil
 				}
 
-				gomega.Eventually(func() error {
-					clientName, clientNamespace, dst, expectedOutput, expectErr := connInfo(0)
+				clientName, clientNamespace, dst, expectedOutput, expectErr := connInfo(0)
+				asynAssertion := gomega.Eventually
+				if expectErr {
+					// When the connectivity check is expected to fail it should be failing consistently
+					asynAssertion = gomega.Consistently
+				}
+				asynAssertion(func() error {
 					out, err := checkConnectivity(clientName, clientNamespace, dst)
 					if expectErr != (err != nil) {
 						return fmt.Errorf("expected connectivity check to return error(%t), got %v, output %v", expectErr, err, out)
