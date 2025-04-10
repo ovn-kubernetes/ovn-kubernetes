@@ -233,6 +233,8 @@ spec:
           value: {{ hasKey .Values.global "enableMultiExternalGateway" | ternary .Values.global.enableMultiExternalGateway false | quote }}
         - name: OVNKUBE_NODE_MGMT_PORT_NETDEV
           value: {{ default "" .Values.global.nodeMgmtPortNetdev | quote }}
+        - name: OVN_ENCAP_TOS_INHERIT_ENABLE
+          value: {{ hasKey .Values.global "enableOvnEncapTosInherit" | ternary .Values.global.enableOvnEncapTosInherit false | quote }}
         - name: OVN_HOST_NETWORK_NAMESPACE
           valueFrom:
             configMapKeyRef:

@@ -432,6 +432,7 @@ type OVNKubernetesFeatureConfig struct {
 	EnableDNSNameResolver        bool `gcfg:"enable-dns-name-resolver"`
 	EnableServiceTemplateSupport bool `gcfg:"enable-svc-template-support"`
 	EnableObservability          bool `gcfg:"enable-observability"`
+	EnableOVNEncapTosInherit     bool `gcfg:"enable-ovn-encap-tos-inherit"`
 }
 
 // GatewayMode holds the node gateway mode
@@ -1140,6 +1141,12 @@ var OVNK8sFeatureFlags = []cli.Flag{
 		Usage:       "Configure to use OVN sampling with ovn-kubernetes.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnableObservability,
 		Value:       OVNKubernetesFeature.EnableObservability,
+	},
+	&cli.BoolFlag{
+		Name:        "enable-ovn-encap-tos-inherit",
+		Usage:       "Configure to use OVN to inherit the encapsulation ToS value with ovn-kubernetes.",
+		Destination: &cliConfig.OVNKubernetesFeature.EnableOVNEncapTosInherit,
+		Value:       OVNKubernetesFeature.EnableOVNEncapTosInherit,
 	},
 }
 

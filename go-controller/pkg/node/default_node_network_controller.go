@@ -440,6 +440,12 @@ func setupOVNNode(node *corev1.Node) error {
 		setExternalIdsCmd = append(setExternalIdsCmd, fmt.Sprintf("external_ids:hostname=\"%s\"", node.Name))
 	}
 
+	if config.OVNKubernetesFeature.EnableOVNEncapTosInherit {
+		setExternalIdsCmd = append(setExternalIdsCmd,
+			fmt.Sprintf("external_ids:ovn-encap-tos=inherit"),
+		)
+	}
+
 	_, stderr, err := util.RunOVSVsctl(setExternalIdsCmd...)
 	if err != nil {
 		return fmt.Errorf("error setting OVS external IDs: %v\n  %q", err, stderr)

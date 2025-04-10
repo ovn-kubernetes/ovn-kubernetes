@@ -91,6 +91,8 @@ global:
   # -- Indicates if ovn-controller should enable/disable the logical flow in-memory cache when processing Southbound database logical flow changes
   # @default -- true
   enableLFlowCache: true
+  # -- Configure to enable ToS value inheritance for OVN encapsulation from ovn-kubernetes
+  enableOvnEncapTosInherit: false
   # -- Maximum number of logical flow cache entries ovn-controller may create when the logical flow cache is enabled
   # @default -- unlimited
   lFlowCacheLimit: ""
