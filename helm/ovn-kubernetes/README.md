@@ -385,6 +385,15 @@ false
 true
 </pre>
 </td>
+			<td>Configure to use OVN to inherit the encapsulation ToS value with ovn-kubernetes.</td>
+		</tr>
+		<tr>
+			<td>global.enableOvnEncapTosInherit</td>
+			<td>bool</td>
+			<td><pre lang="json">
+false
+</pre>
+</td>
 			<td>Configure to use service template feature with ovn-kubernetes</td>
 		</tr>
 		<tr>
