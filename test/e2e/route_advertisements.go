@@ -12,11 +12,10 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	rav1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
-	applycfgrav1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/applyconfiguration/routeadvertisements/v1"
 	raclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned"
+	apitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
 	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	udnclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned"
-	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -588,22 +587,33 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			ginkgo.By("Expose networks")
-			raCfg := applycfgrav1.RouteAdvertisements("advertised-networks-isolation-ra").
-				WithSpec(
-					applycfgrav1.RouteAdvertisementsSpec().
-						WithAdvertisements(rav1.PodNetwork).
-						WithNetworkSelector(
-							v1.LabelSelector().WithMatchLabels(map[string]string{"advertised-networks-isolation":""}),
-					),
-				)
+			ra := &rav1.RouteAdvertisements{
+				ObjectMeta: metav1.ObjectMeta{
+					GenerateName: "advertised-networks-isolation-ra",
+				},
+				Spec: rav1.RouteAdvertisementsSpec{
+					NetworkSelectors: apitypes.NetworkSelectors{
+						apitypes.NetworkSelector{
+							NetworkSelectionType: apitypes.ClusterUserDefinedNetworks,
+							ClusterUserDefinedNetworkSelector: &apitypes.ClusterUserDefinedNetworkSelector{
+								NetworkSelector: metav1.LabelSelector{
+									MatchLabels: map[string]string{"advertised-networks-isolation": ""},
+								},
+							},
+						},
+					},
+					NodeSelector:             metav1.LabelSelector{},
+					FRRConfigurationSelector: metav1.LabelSelector{},
+					Advertisements: []rav1.AdvertisementType{
+						rav1.PodNetwork,
+					},
+				},
+			}
 
 			raClient, err := raclientset.NewForConfig(f.ClientConfig())
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			ra, err = raClient.K8sV1().RouteAdvertisements().Apply(context.TODO(), raCfg, metav1.ApplyOptions{
-				FieldManager: f.Namespace.Name,
-				Force:        true,
-			})
+			ra, err = raClient.K8sV1().RouteAdvertisements().Create(context.TODO(), ra, metav1.CreateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			ginkgo.By("ensure route advertisement matching both networks was created successfully")
@@ -670,7 +680,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 				// checkConnectivity performs a curl command from a specified client (pod or node)
 				// to targetAddress. If clientNamespace is empty the function assumes clientName is a node that will be used as the
 				// client.
-				var checkConnectivity = func (clientName, clientNamespace, targetAddress string) (string, error) {
+				var checkConnectivity = func(clientName, clientNamespace, targetAddress string) (string, error) {
 					curlCmd := []string{"curl", "-g", "-q", "-s", "--max-time", "5", targetAddress}
 					var out string
 					var err error

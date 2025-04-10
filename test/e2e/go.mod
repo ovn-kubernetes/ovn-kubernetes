@@ -165,7 +165,7 @@ require (
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	gotest.tools/v3 v3.5.0 // indirect
-	k8s.io/apiextensions-apiserver v0.32.1 // indirect
+	k8s.io/apiextensions-apiserver v0.32.3 // indirect
 	k8s.io/apiserver v0.32.3 // indirect
 	k8s.io/cloud-provider v0.32.3 // indirect
 	k8s.io/component-base v0.32.3 // indirect
@@ -197,7 +197,7 @@ require (
 	github.com/google/goexpect v0.0.0-20210430020637-ab937bf7fd6f
 	github.com/onsi/ginkgo v1.16.5
 	github.com/openshift-kni/k8sreporter v1.0.6
-	github.com/ovn-org/ovn-kubernetes/go-controller v0.0.0-20250304211626-ab2bbed40acc
+	github.com/ovn-org/ovn-kubernetes/go-controller v1.0.0
 	go.universe.tf/metallb v0.0.0-00010101000000-000000000000
 	google.golang.org/grpc v1.65.0
 	gopkg.in/yaml.v2 v2.4.0
@@ -206,6 +206,8 @@ require (
 	sigs.k8s.io/controller-runtime v0.20.3
 )
 
-replace go.universe.tf/metallb => github.com/metallb/metallb v0.14.9
-
-replace github.com/coreos/go-iptables => github.com/trozet/go-iptables v0.0.0-20240328221912-077e672b3808
+replace (
+	github.com/coreos/go-iptables => github.com/trozet/go-iptables v0.0.0-20240328221912-077e672b3808
+	github.com/ovn-org/ovn-kubernetes/go-controller => ../../go-controller
+	go.universe.tf/metallb => github.com/metallb/metallb v0.14.9
+)
