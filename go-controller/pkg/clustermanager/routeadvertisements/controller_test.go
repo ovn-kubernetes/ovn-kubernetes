@@ -541,7 +541,8 @@ func TestController_reconcile(t *testing.T) {
 					Routers: []*testRouter{
 						{ASN: 1, VRF: "red", Prefixes: []string{"1.0.1.3/32", "172.100.0.16/32"}, Neighbors: []*testNeighbor{
 							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.0.1.3/32", "172.100.0.16/32"}},
-						}},
+						}, Imports: []string{"blue"}},
+						{ASN: 1, VRF: "blue", Imports: []string{"red"}},
 					}},
 			},
 			expectNADAnnotations: map[string]map[string]string{"blue": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
