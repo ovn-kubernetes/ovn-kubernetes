@@ -25,6 +25,7 @@ import (
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	svccontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/services"
 	lsm "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/routeimport"
 	zoneinterconnect "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/zone_interconnect"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/persistentips"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/retry"
@@ -299,9 +300,9 @@ func NewSecondaryLayer2NetworkController(
 	cnci *CommonNetworkControllerInfo,
 	netInfo util.NetInfo,
 	networkManager networkmanager.Interface,
-	eIPController *EgressIPController,
+	routeImportManager routeimport.Manager,
 	portCache *PortCache,
-) (*SecondaryLayer2NetworkController, error) {
+	eIPController *EgressIPController) (*SecondaryLayer2NetworkController, error) {
 
 	stopChan := make(chan struct{})
 
@@ -334,6 +335,7 @@ func NewSecondaryLayer2NetworkController(
 					localZoneNodes:              &sync.Map{},
 					cancelableCtx:               util.NewCancelableContext(),
 					networkManager:              networkManager,
+					routeImportManager:          routeImportManager,
 				},
 			},
 		},
@@ -586,7 +588,12 @@ func (oc *SecondaryLayer2NetworkController) addUpdateLocalNodeEvent(node *corev1
 					errs = append(errs, err)
 					oc.gatewaysFailed.Store(node.Name, true)
 				} else {
-					if err := oc.addUDNClusterSubnetEgressSNAT(gwConfig.hostSubnets, gwManager.gwRouterName); err != nil {
+					if !util.IsPodNetworkAdvertisedAtNode(oc, node.Name) {
+						err = oc.addUDNClusterSubnetEgressSNAT(gwConfig.hostSubnets, gwManager.gwRouterName)
+					} else {
+						err = oc.deleteUDNClusterSubnetEgressSNAT(gwConfig.hostSubnets, gwManager.gwRouterName)
+					}
+					if err != nil {
 						errs = append(errs, err)
 						oc.gatewaysFailed.Store(node.Name, true)
 					} else {
@@ -753,6 +760,25 @@ func (oc *SecondaryLayer2NetworkController) addUDNClusterSubnetEgressSNAT(localP
 	}
 	if err := libovsdbops.CreateOrUpdateNATs(oc.nbClient, router, nats...); err != nil {
 		return fmt.Errorf("failed to update SNAT for cluster on router: %q for network %q, error: %w",
+			routerName, oc.GetNetworkName(), err)
+	}
+	return nil
+}
+
+func (oc *SecondaryLayer2NetworkController) deleteUDNClusterSubnetEgressSNAT(localPodSubnets []*net.IPNet, routerName string) error {
+	outputPort := types.GWRouterToJoinSwitchPrefix + routerName
+	nats, err := oc.buildUDNEgressSNAT(localPodSubnets, outputPort)
+	if err != nil {
+		return err
+	}
+	if len(nats) == 0 {
+		return nil // nothing to do
+	}
+	router := &nbdb.LogicalRouter{
+		Name: routerName,
+	}
+	if err := libovsdbops.DeleteNATs(oc.nbClient, router, nats...); err != nil {
+		return fmt.Errorf("failed to delete SNAT for cluster on router: %q for network %q, error: %w",
 			routerName, oc.GetNetworkName(), err)
 	}
 	return nil

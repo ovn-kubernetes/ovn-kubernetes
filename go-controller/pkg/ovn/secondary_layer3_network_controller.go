@@ -606,7 +606,7 @@ func (oc *SecondaryLayer3NetworkController) run() error {
 	if oc.routeImportManager != nil {
 		err := oc.routeImportManager.AddNetwork(oc.GetNetInfo())
 		if err != nil {
-			return fmt.Errorf("failed to add default network to the route import manager: %v", err)
+			return fmt.Errorf("failed to add network %s to the route import manager: %v", oc.GetNetworkName(), err)
 		}
 	}
 

@@ -36,7 +36,7 @@ const (
 )
 
 type Manager interface {
-	// AddNetwork instructs the manager to continously reconcile BGP routes from
+	// AddNetwork instructs the manager to continuously reconcile BGP routes from
 	// the network host vrf to the network gateway router. A network can only be
 	// added once otherwise an error will be returned.
 	AddNetwork(network util.NetInfo) error
