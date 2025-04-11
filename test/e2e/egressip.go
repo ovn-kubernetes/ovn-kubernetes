@@ -14,6 +14,9 @@ import (
 	"strings"
 	"time"
 
+	rav1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
+	raclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned"
+	apitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
@@ -597,6 +600,19 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigPa
 		return true, "network is supported"
 	}
 
+	isNetworkNameAvailable := func(candidateNetworkName string) (bool, error) {
+		allNetworks, err := runCommand(containerRuntime, "network", "ls", "--format", "'{{ .Name }}'")
+		if err != nil {
+			return false, fmt.Errorf("failed to list networks: %v", err)
+		}
+		for _, networkName := range strings.Split(allNetworks, "\n") {
+			if strings.Trim(networkName, "'") == candidateNetworkName {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+
 	getNodeIPs := func(nodes *corev1.NodeList, netConfigParams networkAttachmentConfigParams) []string {
 		isIPv4Cluster := isNodeInternalAddressesPresentForIPFamily(nodes, corev1.IPv4Protocol)
 		isIPv6Cluster := isNodeInternalAddressesPresentForIPFamily(nodes, corev1.IPv6Protocol)
@@ -667,6 +683,7 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigPa
 		return false
 	}
 
+	// [1]
 	// getBGPTarget fetches a container which is used when the CDN is exported because this container can reply to CDN.
 	//  # -----------------               ------------------                         ---------------------
 	//  # |               | 172.26.0.0/16 |                |       172.18.0.0/16     | ovn-control-plane |
@@ -3213,6 +3230,173 @@ spec:
 			role:     "primary",
 		}),
 	)
+
+	// The goal of the test is to validate EgressIP functionality when that network is selected by a RouteAdvertisement
+	// which advertises EgressIP.
+	// This test relies on preexisting config that can be created by using -adv flag with kind.sh setup script.
+	// This test validates that BGP will install the correct routes for Egress IP IPs otherwise traffic would not flow
+	// between networks 'kind' and 'bgpnet'.
+	//
+	// 1. Get target BGP server
+	// 2. Add the "k8s.ovn.org/egress-assignable" label to node 1 and node 2
+	// 3. Create an EgressIP object with two egress IP defined
+	// 4. Check that the status is of length two
+	// 5. Create one pod matching the EgressIP
+	// 6. Check connectivity from pod to an external node and verify no connectivity
+	// 7. Expose EgressIP that selects a pod in test namespace using a RouteAdvertisement
+	// 8. Check connectivity from pod to an external node and verify that the source IP is the expected egressIPs
+	// 9. Disable EgressIP and verify connectivity with pod IP
+	// 10. Enable EgressIP and verify connectivity
+	ginkgo.It("[BGP] expose EgressIP with a RouteAdvertisement", func() {
+		// This test relies on the platform being setup with kind.sh arg -adv
+		// This creates the network described previously [1]
+		isBGPNetworkAvailable, err := isNetworkNameAvailable(bgpExternalNetworkName)
+		framework.ExpectNoError(err, "network check must succeed because its a test dependency")
+		if !isBGPNetworkAvailable {
+			ginkgo.Skip("test skipped because dependent test artifacts aren't available (BGP network + containers)")
+		}
+		if !isClusterDefaultNetwork(netConfigParams) {
+			ginkgo.Skip("unimplemented")
+		}
+		ginkgo.By("1. Get target BGP server")
+		bgpServerTargetNode := getBGPTarget()
+		gomega.Expect(bgpServerTargetNode.nodeIP).ShouldNot(gomega.BeEmpty(), "unable to fetch BGP target IP")
+		framework.Logf("found BGP server IP & port: %s:%d", bgpServerTargetNode.nodeIP, bgpServerTargetNode.port)
+		if isIPv6TestRun != utilnet.IsIPv6String(bgpServerTargetNode.nodeIP) {
+			ginkgo.Fail("BGP server IP family is not equal to the the test run IP family")
+		}
+		// Assign the egress IP without conflicting with any node IP,
+		// the kind subnet is /16 or /64 so the following should be fine.
+		egressNodeIP := net.ParseIP(egress1Node.nodeIP)
+		egressIP1 := dupIP(egressNodeIP)
+		egressIP1[len(egressIP1)-2]++
+		egressIP2 := dupIP(egressIP1)
+		egressIP2[len(egressIP2)-2]++
+
+		// we incremented the second octet and if the route predicated on the EIP IP isn't installed, there is a machine network subnet
+		// route which will route the packet out the correct interface. Instead of removing this route, add a lower prefix route that
+		// routes traffic to loopback and essentially blackhole the traffic. BGP will install a lower prefix route that will be selected.
+		matchIP := dupIP(egressIP1)
+		matchIP[len(matchIP)-1] = 0 // zero the last octet
+		mask := net.CIDRMask(24, 32)
+		if utilnet.IsIPv6(matchIP) {
+			mask = net.CIDRMask(120, 128)
+		}
+		matchCIDR := net.IPNet{matchIP, mask}
+		// black hole traffic (ipv4: /24) to override the machine subnet (ipv4: /16). BGP will install a lower prefix route (ipv4: /32) matching on EIP IP.
+		out, err := runCommand(containerRuntime, "exec", "-i", "frr", "ip", "route", "add", matchCIDR.String(), "via", "127.0.0.1", "dev", "lo")
+		framework.ExpectNoError(err, "must add route to frr container, out: %s", out)
+		ginkgo.DeferCleanup(func() error {
+			_, err = runCommand(containerRuntime, "exec", "-i", "frr", "ip", "route", "del", matchCIDR.String(), "dev", "lo")
+			return err
+		})
+		ginkgo.By("2. Add the \"k8s.ovn.org/egress-assignable\" label to node 1 and node 2")
+		// pod on node 1 and egress node is node 2
+		e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable", "dummy")
+
+		// pod on node 1 and egress node is node 2
+		e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress2Node.name, "k8s.ovn.org/egress-assignable", "dummy")
+
+		ginkgo.By("3. Create an EgressIP object with two egress IP defined")
+		podNamespace := f.Namespace
+		labels := map[string]string{
+			"name": f.Namespace.Name,
+		}
+		updateNamespaceLabels(f, podNamespace, labels)
+
+		var egressIPConfig = fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
+kind: EgressIP
+metadata:
+    name: ` + egressIPName + `
+spec:
+    egressIPs:
+    - ` + egressIP1.String() + `
+    - ` + egressIP2.String() + `
+    podSelector:
+        matchLabels:
+            wants: egress
+    namespaceSelector:
+        matchLabels:
+            name: ` + f.Namespace.Name + `
+`)
+		if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
+			framework.Failf("Unable to write CRD config to disk: %v", err)
+		}
+		ginkgo.DeferCleanup(func() {
+			if err := os.Remove(egressIPYaml); err != nil {
+				framework.Logf("Unable to remove the CRD config from disk: %v", err)
+			}
+		})
+
+		framework.Logf("Applying the EgressIP configuration")
+		e2ekubectl.RunKubectlOrDie("default", "create", "-f", egressIPYaml)
+
+		ginkgo.By("4. Check that the status is of length two")
+		_ = verifyEgressIPStatusLengthEquals(2, nil)
+
+		ginkgo.By("5. Create one pod matching the EgressIP")
+		pod, err := createGenericPodWithLabel(f, pod1Name, pod1Node.name, f.Namespace.Name, command, podEgressLabel)
+		framework.ExpectNoError(err, "must create pod")
+		podIPs, err := util.GetPodIPsOfNetwork(pod, &util.DefaultNetInfo{})
+		framework.ExpectNoError(err, "pod IPs must be available")
+		podIP, err := util.MatchFirstIPFamily(isIPv6TestRun, podIPs)
+		framework.ExpectNoError(err, "must get correct IP family for pod")
+
+		ginkgo.By("6. Check connectivity from pod to an external node and verify no connectivity")
+		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(bgpServerTargetNode, pod1Name, pod.Namespace, false, []string{}))
+		framework.ExpectNoError(err, "Step 6. Check connectivity from pod to an external node and verify no connectivity, failed: %v", err)
+
+		ginkgo.By("7. Expose EgressIP that selects a pod in test namespace using a RouteAdvertisement")
+		raClient, err := raclientset.NewForConfig(f.ClientConfig())
+		framework.ExpectNoError(err, "must get RouterAdvertisement client")
+		ra := &rav1.RouteAdvertisements{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: fmt.Sprintf("e2e-eip-expose-ns-%s-eip", f.Namespace.Name),
+			},
+			Spec: rav1.RouteAdvertisementsSpec{
+				NetworkSelectors: apitypes.NetworkSelectors{
+					apitypes.NetworkSelector{
+						NetworkSelectionType: apitypes.DefaultNetwork,
+					},
+				},
+				NodeSelector:             metav1.LabelSelector{},
+				FRRConfigurationSelector: metav1.LabelSelector{},
+				Advertisements: []rav1.AdvertisementType{
+					rav1.EgressIP,
+				},
+			},
+		}
+
+		ra, err = raClient.K8sV1().RouteAdvertisements().Create(context.TODO(), ra, metav1.CreateOptions{})
+		framework.ExpectNoError(err, "must create RouteAdvertisement")
+		ginkgo.DeferCleanup(func() { raClient.K8sV1().RouteAdvertisements().Delete(context.TODO(), ra.Name, metav1.DeleteOptions{}) })
+
+		gomega.Eventually(func() string {
+			eipValue, err := e2ekubectl.RunKubectl(f.Namespace.GetName(), "get", "ra", ra.Name, "--template={{index .spec.advertisements 0}}")
+			if err != nil {
+				return ""
+			}
+			return eipValue
+		}, 5*time.Second, time.Second).Should(gomega.Equal("EgressIP"), "RA exposing EgressIP must be accepted")
+
+		ginkgo.By("8. Check connectivity from pod to an external node and verify that the source IP is the expected egressIPs")
+		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(bgpServerTargetNode, pod1Name, pod.Namespace, true, []string{egressIP1.String(), egressIP2.String()}))
+		framework.ExpectNoError(err, "Step 8. Check connectivity from pod to an external node and verify that the srcIP is the expected egressIP, failed: %v", err)
+
+		ginkgo.By("9. Disable EgressIP and verify connectivity with pod IP")
+		unlabelNodeForEgress(f, egress1Node.name)
+		unlabelNodeForEgress(f, egress2Node.name)
+		verifyEgressIPStatusLengthEquals(0, nil)
+		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(bgpServerTargetNode, pod1Name, pod.Namespace, true, []string{podIP.String()}))
+		framework.ExpectNoError(err, "Step 9. Disable EgressIP and verify connectivity with pod IP, failed: %v", err)
+
+		ginkgo.By("10. Enable EgressIP and verify connectivity")
+		labelNodeForEgress(f, egress1Node.name)
+		labelNodeForEgress(f, egress2Node.name)
+		verifyEgressIPStatusLengthEquals(2, nil)
+		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(bgpServerTargetNode, pod1Name, pod.Namespace, true, []string{egressIP1.String(), egressIP2.String()}))
+		framework.ExpectNoError(err, "Step 13. Enable egressIP and verify connectivity, failed: %v", err)
+	})
 },
 	ginkgo.Entry(
 		"Cluster Default Network",
