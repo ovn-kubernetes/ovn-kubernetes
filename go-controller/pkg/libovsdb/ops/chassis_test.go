@@ -181,3 +181,97 @@ func TestDeleteChassis(t *testing.T) {
 		})
 	}
 }
+
+func TestCreateOrUpdateChassis(t *testing.T) {
+	uuid1 := "b9998337-2498-4d1e-86e6-fc0417abb2f0"
+	uuid2 := "b9998337-2498-4d1e-86e6-fc0417abb2f1"
+	uuid3 := "b9998337-2498-4d1e-86e6-fc0417abb2f2"
+	tests := []struct {
+		desc       string
+		chassis    *sbdb.Chassis
+		encaps     []*sbdb.Encap
+		initialDB  []libovsdbtest.TestData
+		expectedDB []libovsdbtest.TestData
+	}{
+		{
+			desc:    "create new chassis with encap records",
+			chassis: &sbdb.Chassis{Name: "test1"},
+			encaps: []*sbdb.Encap{{ChassisName: "test1", IP: "10.0.0.10", Type: "geneve"},
+				{ChassisName: "test1", IP: "10.0.0.11", Type: "geneve"}},
+			initialDB: []libovsdbtest.TestData{},
+			expectedDB: []libovsdbtest.TestData{
+				&sbdb.Chassis{UUID: uuid1, Name: "test1", Encaps: []string{uuid2, uuid3}},
+				&sbdb.Encap{UUID: uuid2, ChassisName: "test1", IP: "10.0.0.10", Type: "geneve"},
+				&sbdb.Encap{UUID: uuid3, ChassisName: "test1", IP: "10.0.0.11", Type: "geneve"},
+			},
+		},
+		{
+			desc:    "update chassis by inserting new encap record",
+			chassis: &sbdb.Chassis{Name: "test2"},
+			encaps: []*sbdb.Encap{{ChassisName: "test2", IP: "10.0.0.10", Type: "geneve"},
+				{ChassisName: "test2", IP: "10.0.0.11", Type: "geneve"}},
+			initialDB: []libovsdbtest.TestData{
+				&sbdb.Chassis{UUID: uuid1, Name: "test2", Encaps: []string{uuid2}},
+				&sbdb.Encap{UUID: uuid2, ChassisName: "test2", IP: "10.0.0.10", Type: "geneve"},
+			},
+			expectedDB: []libovsdbtest.TestData{
+				&sbdb.Chassis{UUID: uuid1, Name: "test2", Encaps: []string{uuid2, uuid3}},
+				&sbdb.Encap{UUID: uuid2, ChassisName: "test2", IP: "10.0.0.10", Type: "geneve"},
+				&sbdb.Encap{UUID: uuid3, ChassisName: "test2", IP: "10.0.0.11", Type: "geneve"},
+			},
+		},
+		{
+			desc:    "update chassis by removing obsolete encap record",
+			chassis: &sbdb.Chassis{Name: "test3"},
+			encaps:  []*sbdb.Encap{{ChassisName: "test3", IP: "10.0.0.11", Type: "geneve"}},
+			initialDB: []libovsdbtest.TestData{
+				&sbdb.Chassis{UUID: uuid1, Name: "test3", Encaps: []string{uuid2, uuid3}},
+				&sbdb.Encap{UUID: uuid2, ChassisName: "test3", IP: "10.0.0.10", Type: "geneve"},
+				&sbdb.Encap{UUID: uuid3, ChassisName: "test3", IP: "10.0.0.11", Type: "geneve"},
+			},
+			expectedDB: []libovsdbtest.TestData{
+				&sbdb.Chassis{UUID: uuid1, Name: "test3", Encaps: []string{uuid3}},
+				&sbdb.Encap{UUID: uuid3, ChassisName: "test3", IP: "10.0.0.11", Type: "geneve"},
+			},
+		},
+		{
+			desc:    "update chassis by adding new encap record and deleting the old one",
+			chassis: &sbdb.Chassis{Name: "test4"},
+			encaps:  []*sbdb.Encap{{ChassisName: "test4", IP: "10.0.0.11", Type: "geneve"}},
+			initialDB: []libovsdbtest.TestData{
+				&sbdb.Chassis{UUID: uuid1, Name: "test4", Encaps: []string{uuid2}},
+				&sbdb.Encap{UUID: uuid2, ChassisName: "test4", IP: "10.0.0.10", Type: "geneve"},
+			},
+			expectedDB: []libovsdbtest.TestData{
+				&sbdb.Chassis{UUID: uuid1, Name: "test4", Encaps: []string{uuid3}},
+				&sbdb.Encap{UUID: uuid3, ChassisName: "test4", IP: "10.0.0.11", Type: "geneve"},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			dbSetup := libovsdbtest.TestSetup{
+				SBData: tt.initialDB,
+			}
+			sbClient, cleanup, err := libovsdbtest.NewSBTestHarness(dbSetup, nil)
+			if err != nil {
+				t.Fatalf("%s: failed to set up test harness: %v", tt.desc, err)
+			}
+			t.Cleanup(cleanup.Cleanup)
+
+			err = CreateOrUpdateChassis(sbClient, tt.chassis, tt.encaps...)
+			if err != nil {
+				t.Fatal(fmt.Errorf("%s: got unexpected error: %v", tt.desc, err))
+			}
+
+			matcher := libovsdbtest.HaveDataIgnoringUUIDs(tt.expectedDB)
+			match, err := matcher.Match(sbClient)
+			if err != nil {
+				t.Fatalf("%s: matcher error: %v", tt.desc, err)
+			}
+			if !match {
+				t.Fatalf("%s: DB state did not match: %s", tt.desc, matcher.FailureMessage(sbClient))
+			}
+		})
+	}
+}
