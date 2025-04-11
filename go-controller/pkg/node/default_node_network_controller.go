@@ -441,9 +441,7 @@ func setupOVNNode(node *corev1.Node) error {
 	}
 
 	if config.OVNKubernetesFeature.EnableOVNEncapTosInherit {
-		setExternalIdsCmd = append(setExternalIdsCmd,
-			fmt.Sprintf("external_ids:ovn-encap-tos=inherit"),
-		)
+		setExternalIdsCmd = append(setExternalIdsCmd, "external_ids:ovn-encap-tos=inherit")
 	}
 
 	_, stderr, err := util.RunOVSVsctl(setExternalIdsCmd...)
