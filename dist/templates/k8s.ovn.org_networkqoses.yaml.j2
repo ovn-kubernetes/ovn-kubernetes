@@ -87,23 +87,25 @@ spec:
                         This field is optional, and in case it is not set the rule is applied
                         to all egress traffic regardless of the destination.
                       properties:
-                        port:
-                          description: |-
-                            Port specifies destination protocol and port on which NetworkQoS
-                            rule is applied
-                          properties:
-                            port:
-                              description: port that the traffic must match
-                              format: int32
-                              maximum: 65535
-                              minimum: 1
-                              type: integer
-                            protocol:
-                              description: protocol (tcp, udp, sctp) that the traffic
-                                must match.
-                              pattern: ^TCP|UDP|SCTP$
-                              type: string
-                          type: object
+                        ports:
+                          items:
+                            description: |-
+                              Port specifies destination protocol and port on which NetworkQoS
+                              rule is applied
+                            properties:
+                              port:
+                                description: port that the traffic must match
+                                format: int32
+                                maximum: 65535
+                                minimum: 1
+                                type: integer
+                              protocol:
+                                description: protocol (tcp, udp, sctp) that the traffic
+                                  must match.
+                                pattern: ^TCP|UDP|SCTP$
+                                type: string
+                            type: object
+                          type: array
                         to:
                           items:
                             description: |-
@@ -254,60 +256,390 @@ spec:
                   required:
                   - dscp
                   type: object
+                maxItems: 20
                 type: array
-              netAttachRefs:
+              networkSelectors:
                 description: |-
-                  netAttachRefs points to a list of objects which could be either NAD, UDN, or Cluster UDN.
-                  In the case of NAD, the network type could be of type Layer-3, Layer-2, or Localnet.
-                  If not specified, then the primary network of the selected Pods will be chosen.
+                  networkSelector selects the networks on which the pod IPs need to be added to the source address set.
+                  NetworkQoS controller currently supports `NetworkAttachmentDefinitions` type only.
                 items:
-                  description: ObjectReference contains enough information to let
-                    you inspect or modify the referred object.
+                  description: NetworkSelector selects a set of networks.
                   properties:
-                    apiVersion:
-                      description: API version of the referent.
-                      type: string
-                    fieldPath:
+                    clusterUserDefinedNetworkSelector:
                       description: |-
-                        If referring to a piece of an object instead of an entire object, this string
-                        should contain a valid JSON/Go field access statement, such as desiredState.manifest.containers[2].
-                        For example, if the object reference is to a container within a pod, this would take on a value like:
-                        "spec.containers{name}" (where "name" refers to the name of the container that triggered
-                        the event) or if no container name is specified "spec.containers[2]" (container with
-                        index 2 in this pod). This syntax is chosen only to have some well-defined way of
-                        referencing a part of an object.
-                      type: string
-                    kind:
+                        clusterUserDefinedNetworkSelector selects ClusterUserDefinedNetworks when
+                        NetworkSelectionType is 'ClusterUserDefinedNetworks'.
+                      properties:
+                        networkSelector:
+                          description: |-
+                            networkSelector selects ClusterUserDefinedNetworks by label. A null
+                            selector will mot match anything, while an empty ({}) selector will match
+                            all.
+                          properties:
+                            matchExpressions:
+                              description: matchExpressions is a list of label selector
+                                requirements. The requirements are ANDed.
+                              items:
+                                description: |-
+                                  A label selector requirement is a selector that contains values, a key, and an operator that
+                                  relates the key and values.
+                                properties:
+                                  key:
+                                    description: key is the label key that the selector
+                                      applies to.
+                                    type: string
+                                  operator:
+                                    description: |-
+                                      operator represents a key's relationship to a set of values.
+                                      Valid operators are In, NotIn, Exists and DoesNotExist.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      values is an array of string values. If the operator is In or NotIn,
+                                      the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                      the values array must be empty. This array is replaced during a strategic
+                                      merge patch.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                operator is "In", and the values array contains only "value". The requirements are ANDed.
+                              type: object
+                          type: object
+                          x-kubernetes-map-type: atomic
+                      required:
+                      - networkSelector
+                      type: object
+                    networkAttachmentDefinitionSelector:
                       description: |-
-                        Kind of the referent.
-                        More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+                        networkAttachmentDefinitionSelector selects networks defined in the
+                        selected NetworkAttachmentDefinitions when NetworkSelectionType is
+                        'SecondaryUserDefinedNetworks'.
+                      properties:
+                        namespaceSelector:
+                          description: |-
+                            namespaceSelector selects namespaces where the
+                            NetworkAttachmentDefinitions are defined. This field follows standard
+                            label selector semantics.
+                          properties:
+                            matchExpressions:
+                              description: matchExpressions is a list of label selector
+                                requirements. The requirements are ANDed.
+                              items:
+                                description: |-
+                                  A label selector requirement is a selector that contains values, a key, and an operator that
+                                  relates the key and values.
+                                properties:
+                                  key:
+                                    description: key is the label key that the selector
+                                      applies to.
+                                    type: string
+                                  operator:
+                                    description: |-
+                                      operator represents a key's relationship to a set of values.
+                                      Valid operators are In, NotIn, Exists and DoesNotExist.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      values is an array of string values. If the operator is In or NotIn,
+                                      the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                      the values array must be empty. This array is replaced during a strategic
+                                      merge patch.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                operator is "In", and the values array contains only "value". The requirements are ANDed.
+                              type: object
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        networkSelector:
+                          description: |-
+                            networkSelector selects NetworkAttachmentDefinitions within the selected
+                            namespaces by label. This field follows standard label selector
+                            semantics.
+                          properties:
+                            matchExpressions:
+                              description: matchExpressions is a list of label selector
+                                requirements. The requirements are ANDed.
+                              items:
+                                description: |-
+                                  A label selector requirement is a selector that contains values, a key, and an operator that
+                                  relates the key and values.
+                                properties:
+                                  key:
+                                    description: key is the label key that the selector
+                                      applies to.
+                                    type: string
+                                  operator:
+                                    description: |-
+                                      operator represents a key's relationship to a set of values.
+                                      Valid operators are In, NotIn, Exists and DoesNotExist.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      values is an array of string values. If the operator is In or NotIn,
+                                      the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                      the values array must be empty. This array is replaced during a strategic
+                                      merge patch.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                operator is "In", and the values array contains only "value". The requirements are ANDed.
+                              type: object
+                          type: object
+                          x-kubernetes-map-type: atomic
+                      required:
+                      - namespaceSelector
+                      - networkSelector
+                      type: object
+                    networkSelectionType:
+                      description: networkSelectionType determines the type of networks
+                        selected.
+                      enum:
+                      - DefaultNetwork
+                      - ClusterUserDefinedNetworks
+                      - PrimaryUserDefinedNetworks
+                      - SecondaryUserDefinedNetworks
+                      - NetworkAttachmentDefinitions
                       type: string
-                    name:
+                    primaryUserDefinedNetworkSelector:
                       description: |-
-                        Name of the referent.
-                        More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
-                      type: string
-                    namespace:
+                        primaryUserDefinedNetworkSelector selects primary UserDefinedNetworks when
+                        NetworkSelectionType is 'PrimaryUserDefinedNetworks'.
+                      properties:
+                        namespaceSelector:
+                          description: |-
+                            namespaceSelector select the primary UserDefinedNetworks that are servind
+                            the selected namespaces. This field follows standard label selector
+                            semantics.
+                          properties:
+                            matchExpressions:
+                              description: matchExpressions is a list of label selector
+                                requirements. The requirements are ANDed.
+                              items:
+                                description: |-
+                                  A label selector requirement is a selector that contains values, a key, and an operator that
+                                  relates the key and values.
+                                properties:
+                                  key:
+                                    description: key is the label key that the selector
+                                      applies to.
+                                    type: string
+                                  operator:
+                                    description: |-
+                                      operator represents a key's relationship to a set of values.
+                                      Valid operators are In, NotIn, Exists and DoesNotExist.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      values is an array of string values. If the operator is In or NotIn,
+                                      the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                      the values array must be empty. This array is replaced during a strategic
+                                      merge patch.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                operator is "In", and the values array contains only "value". The requirements are ANDed.
+                              type: object
+                          type: object
+                          x-kubernetes-map-type: atomic
+                      required:
+                      - namespaceSelector
+                      type: object
+                    secondaryUserDefinedNetworkSelector:
                       description: |-
-                        Namespace of the referent.
-                        More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/
-                      type: string
-                    resourceVersion:
-                      description: |-
-                        Specific resourceVersion to which this reference is made, if any.
-                        More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
-                      type: string
-                    uid:
-                      description: |-
-                        UID of the referent.
-                        More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids
-                      type: string
+                        secondaryUserDefinedNetworkSelector selects secondary UserDefinedNetworks
+                        when NetworkSelectionType is 'SecondaryUserDefinedNetworks'.
+                      properties:
+                        namespaceSelector:
+                          description: |-
+                            namespaceSelector selects namespaces where the secondary
+                            UserDefinedNetworks are defined. This field follows standard label
+                            selector semantics.
+                          properties:
+                            matchExpressions:
+                              description: matchExpressions is a list of label selector
+                                requirements. The requirements are ANDed.
+                              items:
+                                description: |-
+                                  A label selector requirement is a selector that contains values, a key, and an operator that
+                                  relates the key and values.
+                                properties:
+                                  key:
+                                    description: key is the label key that the selector
+                                      applies to.
+                                    type: string
+                                  operator:
+                                    description: |-
+                                      operator represents a key's relationship to a set of values.
+                                      Valid operators are In, NotIn, Exists and DoesNotExist.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      values is an array of string values. If the operator is In or NotIn,
+                                      the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                      the values array must be empty. This array is replaced during a strategic
+                                      merge patch.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                operator is "In", and the values array contains only "value". The requirements are ANDed.
+                              type: object
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        networkSelector:
+                          description: |-
+                            networkSelector selects secondary UserDefinedNetworks within the selected
+                            namespaces by label. This field follows standard label selector
+                            semantics.
+                          properties:
+                            matchExpressions:
+                              description: matchExpressions is a list of label selector
+                                requirements. The requirements are ANDed.
+                              items:
+                                description: |-
+                                  A label selector requirement is a selector that contains values, a key, and an operator that
+                                  relates the key and values.
+                                properties:
+                                  key:
+                                    description: key is the label key that the selector
+                                      applies to.
+                                    type: string
+                                  operator:
+                                    description: |-
+                                      operator represents a key's relationship to a set of values.
+                                      Valid operators are In, NotIn, Exists and DoesNotExist.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      values is an array of string values. If the operator is In or NotIn,
+                                      the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                      the values array must be empty. This array is replaced during a strategic
+                                      merge patch.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                operator is "In", and the values array contains only "value". The requirements are ANDed.
+                              type: object
+                          type: object
+                          x-kubernetes-map-type: atomic
+                      required:
+                      - namespaceSelector
+                      - networkSelector
+                      type: object
+                  required:
+                  - networkSelectionType
                   type: object
-                  x-kubernetes-map-type: atomic
+                  x-kubernetes-validations:
+                  - message: 'Inconsistent selector: both networkSelectionType ClusterUserDefinedNetworks
+                      and clusterUserDefinedNetworkSelector have to be set or neither'
+                    rule: '!has(self.networkSelectionType) ? true : has(self.clusterUserDefinedNetworkSelector)
+                      ? self.networkSelectionType == ''ClusterUserDefinedNetworks''
+                      : self.networkSelectionType != ''ClusterUserDefinedNetworks'''
+                  - message: 'Inconsistent selector: both networkSelectionType PrimaryUserDefinedNetworks
+                      and primaryUserDefinedNetworkSelector have to be set or neither'
+                    rule: '!has(self.networkSelectionType) ? true : has(self.primaryUserDefinedNetworkSelector)
+                      ? self.networkSelectionType == ''PrimaryUserDefinedNetworks''
+                      : self.networkSelectionType != ''PrimaryUserDefinedNetworks'''
+                  - message: 'Inconsistent selector: both networkSelectionType SecondaryUserDefinedNetworks
+                      and secondaryUserDefinedNetworkSelector have to be set or neither'
+                    rule: '!has(self.networkSelectionType) ? true : has(self.secondaryUserDefinedNetworkSelector)
+                      ? self.networkSelectionType == ''SecondaryUserDefinedNetworks''
+                      : self.networkSelectionType != ''SecondaryUserDefinedNetworks'''
+                  - message: 'Inconsistent selector: both networkSelectionType NetworkAttachmentDefinitions
+                      and networkAttachmentDefinitionSelector have to be set or neither'
+                    rule: '!has(self.networkSelectionType) ? true : has(self.networkAttachmentDefinitionSelector)
+                      ? self.networkSelectionType == ''NetworkAttachmentDefinitions''
+                      : self.networkSelectionType != ''NetworkAttachmentDefinitions'''
+                maxItems: 5
+                minItems: 1
                 type: array
+                x-kubernetes-list-map-keys:
+                - networkSelectionType
+                x-kubernetes-list-type: map
                 x-kubernetes-validations:
-                - message: netAttachRefs is immutable
+                - message: networkSelector is immutable
                   rule: self == oldSelf
+                - message: Unsupported network selection type
+                  rule: self.all(sel, sel.networkSelectionType == 'ClusterUserDefinedNetworks'
+                    || sel.networkSelectionType == 'NetworkAttachmentDefinitions')
               podSelector:
                 description: |-
                   podSelector applies the NetworkQoS rule only to the pods in the namespace whose label

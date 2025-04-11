@@ -17,11 +17,15 @@ limitations under the License.
 
 package v1alpha1
 
+import (
+	networkqosv1alpha1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1"
+)
+
 // ClassifierApplyConfiguration represents a declarative configuration of the Classifier type for use
 // with apply.
 type ClassifierApplyConfiguration struct {
-	To   []DestinationApplyConfiguration `json:"to,omitempty"`
-	Port *PortApplyConfiguration         `json:"port,omitempty"`
+	To    []DestinationApplyConfiguration `json:"to,omitempty"`
+	Ports []*networkqosv1alpha1.Port      `json:"ports,omitempty"`
 }
 
 // ClassifierApplyConfiguration constructs a declarative configuration of the Classifier type for use with
@@ -43,10 +47,15 @@ func (b *ClassifierApplyConfiguration) WithTo(values ...*DestinationApplyConfigu
 	return b
 }
 
-// WithPort sets the Port field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the Port field is set to the value of the last call.
-func (b *ClassifierApplyConfiguration) WithPort(value *PortApplyConfiguration) *ClassifierApplyConfiguration {
-	b.Port = value
+// WithPorts adds the given value to the Ports field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the Ports field.
+func (b *ClassifierApplyConfiguration) WithPorts(values ...**networkqosv1alpha1.Port) *ClassifierApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithPorts")
+		}
+		b.Ports = append(b.Ports, *values[i])
+	}
 	return b
 }
