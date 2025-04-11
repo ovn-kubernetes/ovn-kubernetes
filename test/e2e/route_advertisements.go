@@ -587,7 +587,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			ginkgo.By("Expose networks")
-			ra := &rav1.RouteAdvertisements{
+			ra = &rav1.RouteAdvertisements{
 				ObjectMeta: metav1.ObjectMeta{
 					GenerateName: "advertised-networks-isolation-ra",
 				},
@@ -710,8 +710,13 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					return out, nil
 				}
 
-				gomega.Eventually(func() error {
-					clientName, clientNamespace, dst, expectedOutput, expectErr := connInfo(0)
+				clientName, clientNamespace, dst, expectedOutput, expectErr := connInfo(0)
+				asynAssertion := gomega.Eventually
+				if expectErr {
+					// When the connectivity check is expected to fail it should be failing consistently
+					asynAssertion = gomega.Consistently
+				}
+				asynAssertion(func() error {
 					out, err := checkConnectivity(clientName, clientNamespace, dst)
 					if expectErr != (err != nil) {
 						return fmt.Errorf("expected connectivity check to return error(%t), got %v, output %v", expectErr, err, out)
@@ -813,13 +818,9 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 
 					srvPodStatus, err := userDefinedNetworkStatus(srvPod, namespacedName(srvPod.Namespace, cudnATemplate.Name))
 					framework.ExpectNoError(err)
-					// FIXME: L3 - curl returns code 7, the request works partially
-					// The client starts a connection from the default VRF. An IP rule sends this traffic into a specific VRF to reach the server pod.
-					// When the server pod replies (SYN-ACK), the reply packet is handled by the VRF. This stack doesn't contain the original client socket information,
-					// so it sees no active connection matching the reply and terminates the attempt with a RST.
-					return clientNode, "", net.JoinHostPort(srvPodStatus.IPs[ipFamilyIndex].IP.String(), "8080") + "/clientip", "", true
+					return clientNode, "", net.JoinHostPort(srvPodStatus.IPs[ipFamilyIndex].IP.String(), "8080") + "/clientip", curlConnectionTimeoutCode, true
 				}),
-			ginkgo.Entry("host to an different node UDN pod should not work",
+			ginkgo.Entry("host to a different node UDN pod should not work",
 				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
 					// podsNetA[0] and podsNetA[2] are on different nodes
 					clientNode := podsNetA[2].Spec.NodeName
@@ -827,8 +828,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 
 					srvPodStatus, err := userDefinedNetworkStatus(srvPod, namespacedName(srvPod.Namespace, cudnATemplate.Name))
 					framework.ExpectNoError(err)
-					// FIXME: L3 - host to UDN pod on different node should not work
-					return clientNode, "", net.JoinHostPort(srvPodStatus.IPs[ipFamilyIndex].IP.String(), "8080") + "/clientip", "", false
+					return clientNode, "", net.JoinHostPort(srvPodStatus.IPs[ipFamilyIndex].IP.String(), "8080") + "/clientip", curlConnectionTimeoutCode, true
 				}),
 		)
 
