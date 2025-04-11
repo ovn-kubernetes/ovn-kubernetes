@@ -222,7 +222,10 @@ func (c *Controller) ReconcileNetwork(_ string, old, new util.NetInfo) {
 	}
 	if new != nil && !newNamespaces.Equal(oldNamespaces) {
 		// we use one of the NADs of the network to reconcile it
-		c.nadController.Reconcile(new.GetNADs()[0])
+		nads := new.GetNADs()
+		if len(nads) > 0 {
+			c.nadController.Reconcile(nads[0])
+		}
 		// if the namespaces served by a network changed, it is possible that
 		// those namespaces are served or no longer served by the default
 		// network, so reconcile it as well
