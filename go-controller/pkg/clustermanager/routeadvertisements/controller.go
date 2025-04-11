@@ -19,7 +19,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	meta "k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -319,6 +319,8 @@ type selectedNetworks struct {
 	hostNetworkSubnets map[string][]string
 	// prefixLength is a map of selected network to their prefix length
 	prefixLength map[string]uint32
+	// networkType is a map of selected network to their topology
+	networkTopology map[string]string
 }
 
 // generateFRRConfigurations generates FRRConfigurations for the route
@@ -346,9 +348,10 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 	// validate and gather information about the networks
 	networkSet := sets.New[string]()
 	selectedNetworks := &selectedNetworks{
-		networkVRFs:    map[string]string{},
-		networkSubnets: map[string][]string{},
-		prefixLength:   map[string]uint32{},
+		networkVRFs:     map[string]string{},
+		networkSubnets:  map[string][]string{},
+		prefixLength:    map[string]uint32{},
+		networkTopology: map[string]string{},
 	}
 	for _, nad := range nads {
 		networkName := util.GetAnnotatedNetworkName(nad)
@@ -363,10 +366,14 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 		if !network.IsDefault() && !network.IsPrimaryNetwork() {
 			return nil, nil, fmt.Errorf("%w: selected network %q is not the default nor a primary network", errConfig, networkName)
 		}
-		if network.TopologyType() != types.Layer3Topology {
-			// TODO don't really know what to do with layer 2 topologies yet
+		if network.TopologyType() != types.Layer3Topology && network.TopologyType() != types.Layer2Topology {
 			return nil, nil, fmt.Errorf("%w: selected network %q has unsupported topology %q", errConfig, networkName, network.TopologyType())
 		}
+
+		if config.Gateway.Mode == config.GatewayModeLocal && network.TopologyType() == types.Layer2Topology {
+			return nil, nil, fmt.Errorf("%w: BGP is currenty not supported for Layer2 networks in local gateway mode, network: %s", errConfig, network.GetNetworkName())
+		}
+
 		vrf := util.GetNetworkVRFName(network)
 		if vfrNet, hasVFR := selectedNetworks.networkVRFs[vrf]; hasVFR && vfrNet != networkName {
 			return nil, nil, fmt.Errorf("%w: vrf %q found to be mapped to multiple networks %v", errConfig, vrf, []string{vfrNet, networkName})
@@ -374,6 +381,7 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 		networkSet.Insert(networkName)
 		selectedNetworks.vrfs = append(selectedNetworks.vrfs, vrf)
 		selectedNetworks.networkVRFs[vrf] = networkName
+		selectedNetworks.networkTopology[networkName] = network.TopologyType()
 		// TODO check overlaps?
 		for _, cidr := range network.Subnets() {
 			subnet := cidr.CIDR.String()
@@ -480,14 +488,24 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 		return eipsByNodesByNetworks[nodeName], nil
 	}
 
-	// helper to gather host subnets and egress ips as prefixes
-	getPrefixes := func(nodeName string, network string) ([]string, error) {
+	// helper to gather the following prefixes:
+	//  - EgressIPs
+	//  - host subnets for networks with networkTopology layer3
+	//  - network subnets for networks with networkTopology layer2
+	getPrefixes := func(nodeName, network, networkTopology string, networkSubnets []string) ([]string, error) {
 		// gather host subnets
 		var subnets []string
 		if advertisements.Has(ratypes.PodNetwork) {
-			subnets, err = getHostSubnets(nodeName, network)
-			if err != nil || len(subnets) == 0 {
-				return nil, fmt.Errorf("%w: will wait for subnet annotation to be set for node %q and network %q: %w", errConfig, nodeName, network, err)
+			if networkTopology == types.Layer2Topology {
+				subnets = networkSubnets
+				if len(subnets) == 0 {
+					return nil, fmt.Errorf("%w: no layer2 subnets found", errConfig)
+				}
+			} else {
+				subnets, err = getHostSubnets(nodeName, network)
+				if err != nil || len(subnets) == 0 {
+					return nil, fmt.Errorf("%w: will wait for subnet annotation to be set for node %q and network %q: %w", errConfig, nodeName, network, err)
+				}
 			}
 
 		}
@@ -515,7 +533,8 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 
 		// gather node specific information
 		for _, network := range selectedNetworks.networks {
-			selectedNetworks.hostNetworkSubnets[network], err = getPrefixes(nodeName, network)
+			selectedNetworks.hostNetworkSubnets[network], err = getPrefixes(nodeName, network,
+				selectedNetworks.networkTopology[network], selectedNetworks.networkSubnets[network])
 			if err != nil {
 				return nil, nil, err
 			}
@@ -1148,7 +1167,8 @@ func nadNeedsUpdate(oldObj, newObj *nadtypes.NetworkAttachmentDefinition) bool {
 		if err != nil {
 			return true
 		}
-		return network.IsDefault() || (network.IsPrimaryNetwork() && network.TopologyType() == types.Layer3Topology)
+		return network.IsDefault() ||
+			(network.IsPrimaryNetwork() && (network.TopologyType() == types.Layer3Topology || network.TopologyType() == types.Layer2Topology))
 	}
 	// ignore if we don't support this NAD
 	if !nadSupported(oldObj) && !nadSupported(newObj) {
