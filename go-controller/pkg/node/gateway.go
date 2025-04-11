@@ -36,6 +36,7 @@ type Gateway interface {
 	SetDefaultGatewayBridgeMAC(addr net.HardwareAddr)
 	SetDefaultPodNetworkAdvertised(bool)
 	Reconcile() error
+	GetHostCIDRs() []*net.IPNet
 }
 
 type gateway struct {
@@ -504,6 +505,11 @@ func (g *gateway) Reconcile() error {
 		}
 	}
 	return nil
+}
+
+func (g *gateway) GetHostCIDRs() []*net.IPNet {
+	_, cidrs := g.nodeIPManager.ListAddresses()
+	return cidrs
 }
 
 func (g *gateway) addAllServices() []error {
