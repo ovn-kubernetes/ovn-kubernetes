@@ -485,6 +485,57 @@ func setupManagementPortNFTChain(interfaceName string, cfg *managementPortConfig
 	return nil
 }
 
+func UpdateNoSNATSubnetsSets(node *corev1.Node, getSubnetsFn func(*corev1.Node) ([]string, error)) error {
+	subnetsList, err := getSubnetsFn(node)
+	if err != nil {
+		return fmt.Errorf("error retrieving subnets list: %w", err)
+	}
+
+	subNetV4 := make([]*knftables.Element, 0)
+	subNetV6 := make([]*knftables.Element, 0)
+
+	for _, subnet := range subnetsList {
+		if utilnet.IPFamilyOfCIDRString(subnet) == utilnet.IPv4 {
+			subNetV4 = append(subNetV4,
+				&knftables.Element{
+					Set: types.NFTMgmtPortNoSNATSubnetsV4,
+					Key: []string{subnet},
+				},
+			)
+		}
+		if utilnet.IPFamilyOfCIDRString(subnet) == utilnet.IPv6 {
+			subNetV6 = append(subNetV6,
+				&knftables.Element{
+					Set: types.NFTMgmtPortNoSNATSubnetsV6,
+					Key: []string{subnet},
+				},
+			)
+		}
+
+	}
+	nft, err := nodenft.GetNFTablesHelper()
+	if err != nil {
+		return fmt.Errorf("failed to get nftables: %v", err)
+	}
+
+	tx := nft.NewTransaction()
+	tx.Flush(&knftables.Set{
+		Name: types.NFTMgmtPortNoSNATSubnetsV4,
+	})
+	tx.Flush(&knftables.Set{
+		Name: types.NFTMgmtPortNoSNATSubnetsV6,
+	})
+
+	for _, elem := range subNetV4 {
+		tx.Add(elem)
+	}
+	for _, elem := range subNetV6 {
+		tx.Add(elem)
+	}
+
+	return nft.Run(context.TODO(), tx)
+}
+
 // createPlatformManagementPort creates a management port attached to the node switch
 // that lets the node access its pods via their private IP address. This is used
 // for health checking and other management tasks.
