@@ -404,17 +404,19 @@ func (npw *nodePortWatcher) updateServiceFlowCache(service *corev1.Service, netI
 
 			ipPrefix := "ip"
 			masqueradeSubnet := config.Gateway.V4MasqueradeSubnet
-			if !utilnet.IsIPv4String(service.Spec.ClusterIP) {
+			// Determine the IP family of the ClusterIP
+			isIPv6 := !utilnet.IsIPv4String(service.Spec.ClusterIP)
+			if isIPv6 {
 				ipPrefix = "ipv6"
 				masqueradeSubnet = config.Gateway.V6MasqueradeSubnet
 			}
 			// table 2, user-defined network host -> OVN towards default cluster network services
 			defaultNetConfig := npw.ofm.defaultBridge.getActiveNetworkBridgeConfig(types.DefaultNetworkName)
-
 			npw.ofm.updateFlowCacheEntry(key, []string{fmt.Sprintf("cookie=%s, priority=300, table=2, %s, %s_src=%s, %s_dst=%s, "+
 				"actions=set_field:%s->eth_dst,output:%s",
 				defaultOpenFlowCookie, ipPrefix, ipPrefix, masqueradeSubnet, ipPrefix, service.Spec.ClusterIP,
 				npw.ofm.getDefaultBridgeMAC().String(), defaultNetConfig.ofPortPatch)})
+
 		}
 	}
 	return utilerrors.Join(errors...)
@@ -1585,6 +1587,34 @@ func flowsForDefaultBridge(bridge *bridgeConfiguration, extraIPs []net.IP) ([]st
 					"actions=ct(commit,zone=%d,table=2)",
 					defaultOpenFlowCookie, ofPortHost, protoPrefix, protoPrefix,
 					masqSubnet, protoPrefix, svcCIDR, config.Default.HostMasqConntrackZone))
+			// If the UDN is advertised then instead of matching on the masqSubnet
+			// we match on the UDNPodSubnet itself and we also don't SNAT to 169.254.0.2
+			for _, netConfig := range bridge.patchedNetConfigs() {
+				if netConfig.isDefaultNetwork() {
+					continue
+				}
+				if netConfig.advertised.Load() {
+					var udnAdvertisedSubnets []*net.IPNet
+					for _, clusterEntry := range netConfig.subnets {
+						udnAdvertisedSubnets = append(udnAdvertisedSubnets, clusterEntry.CIDR)
+					}
+					// Filter subnets based on the clusterIP service family
+					// NOTE: We don't support more than 1 subnet CIDR of same family type; we only pick the first one
+					matchingIPFamilySubnet, err := util.MatchFirstIPNetFamily(utilnet.IsIPv6CIDR(svcCIDR), udnAdvertisedSubnets)
+					if err != nil {
+						return nil, fmt.Errorf("unable to determine UDN subnet: %v", err)
+					}
+
+					// Use the filtered subnets for the flow compute instead of the masqueradeIP
+					srcSubnet := matchingIPFamilySubnet.String()
+					klog.Infof("SURYA %v", srcSubnet)
+					dftFlows = append(dftFlows,
+						fmt.Sprintf("cookie=%s, priority=550, in_port=%s, %s, %s_src=%s, %s_dst=%s, "+
+							"actions=ct(commit,zone=%d,table=2)",
+							defaultOpenFlowCookie, ofPortHost, protoPrefix, protoPrefix,
+							srcSubnet, protoPrefix, svcCIDR, config.Default.HostMasqConntrackZone))
+				}
+			}
 		}
 
 		masqDst := masqIP
@@ -1593,6 +1623,27 @@ func flowsForDefaultBridge(bridge *bridgeConfiguration, extraIPs []net.IP) ([]st
 			masqDst = masqSubnet
 		}
 		for _, netConfig := range bridge.patchedNetConfigs() {
+			/*if netConfig.advertised.Load() && !netConfig.isDefaultNetwork() {
+				// if the UDN is advertised then we need to match on the
+				// UDN Subnets instead of the masqueradeIP subnets
+				var udnAdvertisedSubnets []*net.IPNet
+				for _, clusterEntry := range netConfig.subnets {
+					udnAdvertisedSubnets = append(udnAdvertisedSubnets, clusterEntry.CIDR)
+				}
+				// Filter subnets based on the clusterIP service family
+				// NOTE: We don't support more than 1 subnet CIDR of same family type; we only pick the first one
+				matchingIPFamilySubnet, err := util.MatchFirstIPNetFamily(utilnet.IsIPv6CIDR(svcCIDR), udnAdvertisedSubnets)
+				if err != nil {
+					return nil, fmt.Errorf("unable to determine UDN subnet: %v", err)
+				}
+				dstSubnet = matchingIPFamilySubnet.String()
+				defaultNetConfig := bridge.netConfig[types.DefaultNetworkName]
+				dftFlows = append(dftFlows,
+					fmt.Sprintf("cookie=%s, priority=500, in_port=%s, %s, %s_src=%s, %s_dst=%s,"+
+						"actions=ct(zone=%d,nat,table=3)",
+						defaultOpenFlowCookie, defaultNetConfig.ofPortPatch, protoPrefix, protoPrefix, svcCIDR,
+						protoPrefix, masqDst, config.Default.HostMasqConntrackZone))
+			}*/
 			// table 0, Reply hairpin traffic to host, coming from OVN, unSNAT
 			dftFlows = append(dftFlows,
 				fmt.Sprintf("cookie=%s, priority=500, in_port=%s, %s, %s_src=%s, %s_dst=%s,"+
@@ -1698,16 +1749,50 @@ func flowsForDefaultBridge(bridge *bridgeConfiguration, extraIPs []net.IP) ([]st
 			if netConfig.isDefaultNetwork() {
 				continue
 			}
+			srcIPOrSubnet := netConfig.v4MasqIPs.ManagementPort.IP.String()
+			if netConfig.advertised.Load() {
+				klog.Infof("SURYA %v", srcIPOrSubnet)
+				var udnAdvertisedSubnets []*net.IPNet
+				for _, clusterEntry := range netConfig.subnets {
+					udnAdvertisedSubnets = append(udnAdvertisedSubnets, clusterEntry.CIDR)
+				}
+				// Filter subnets based on the clusterIP service family
+				// NOTE: We don't support more than 1 subnet CIDR of same family type; we only pick the first one
+				matchingIPFamilySubnet, err := util.MatchFirstIPNetFamily(false, udnAdvertisedSubnets)
+				if err != nil {
+					return nil, fmt.Errorf("unable to determine IPv4 UDN subnet: %v", err)
+				}
+
+				// Use the filtered subnets for the flow compute instead of the masqueradeIP
+				srcIPOrSubnet = matchingIPFamilySubnet.String()
+				klog.Infof("SURYA %v", srcIPOrSubnet)
+				for _, clusterIP := range bridge.udnEnabledDefaultNetServiceIPs {
+					if utilnet.IsIPv6String(clusterIP) {
+						continue
+					}
+					dftFlows = append(dftFlows, fmt.Sprintf("cookie=%s, priority=300, table=2, ip, ip_src=%s, ip_dst=%s, "+
+						"actions=set_field:%s->eth_dst,output:%s",
+						defaultOpenFlowCookie, matchingIPFamilySubnet.String(), clusterIP,
+						bridgeMacAddress, defaultNetConfig.ofPortPatch))
+					// response
+					dftFlows = append(dftFlows,
+						fmt.Sprintf("cookie=%s, priority=500, in_port=%s, ip, ip_src=%s, ip_dst=%s,"+
+							"actions=ct(zone=%d,nat,table=3)",
+							defaultOpenFlowCookie, defaultNetConfig.ofPortPatch, clusterIP,
+							srcIPOrSubnet, config.Default.HostMasqConntrackZone))
+				}
+			}
 			dftFlows = append(dftFlows,
 				fmt.Sprintf("cookie=%s, priority=200, table=2, ip, ip_src=%s, "+
 					"actions=set_field:%s->eth_dst,output:%s",
-					defaultOpenFlowCookie, netConfig.v4MasqIPs.ManagementPort.IP,
+					defaultOpenFlowCookie, srcIPOrSubnet,
 					bridgeMacAddress, netConfig.ofPortPatch))
 			dftFlows = append(dftFlows,
 				fmt.Sprintf("cookie=%s, priority=200, table=2, ip, pkt_mark=%s, "+
 					"actions=set_field:%s->eth_dst,output:%s",
 					defaultOpenFlowCookie, netConfig.pktMark,
 					bridgeMacAddress, netConfig.ofPortPatch))
+
 		}
 	}
 
@@ -1716,11 +1801,43 @@ func flowsForDefaultBridge(bridge *bridgeConfiguration, extraIPs []net.IP) ([]st
 			if netConfig.isDefaultNetwork() {
 				continue
 			}
+			srcIPOrSubnet := netConfig.v6MasqIPs.ManagementPort.IP.String()
+			if netConfig.advertised.Load() {
+				klog.Infof("SURYA %v", srcIPOrSubnet)
+				var udnAdvertisedSubnets []*net.IPNet
+				for _, clusterEntry := range netConfig.subnets {
+					udnAdvertisedSubnets = append(udnAdvertisedSubnets, clusterEntry.CIDR)
+				}
+				// Filter subnets based on the clusterIP service family
+				// NOTE: We don't support more than 1 subnet CIDR of same family type; we only pick the first one
+				matchingIPFamilySubnet, err := util.MatchFirstIPNetFamily(true, udnAdvertisedSubnets)
+				if err != nil {
+					return nil, fmt.Errorf("unable to determine IPv6 UDN subnet: %v", err)
+				}
 
+				// Use the filtered subnets for the flow compute instead of the masqueradeIP
+				srcIPOrSubnet = matchingIPFamilySubnet.String()
+				klog.Infof("SURYA %v", srcIPOrSubnet)
+				for _, clusterIP := range bridge.udnEnabledDefaultNetServiceIPs {
+					if utilnet.IsIPv4String(clusterIP) {
+						continue
+					}
+					dftFlows = append(dftFlows, fmt.Sprintf("cookie=%s, priority=300, table=2, ip6, ipv6_src=%s, ipv6_dst=%s, "+
+						"actions=set_field:%s->eth_dst,output:%s",
+						defaultOpenFlowCookie, matchingIPFamilySubnet.String(), clusterIP,
+						bridgeMacAddress, defaultNetConfig.ofPortPatch))
+					// response
+					dftFlows = append(dftFlows,
+						fmt.Sprintf("cookie=%s, priority=500, in_port=%s, ip6, ipv6_src=%s, ipv6_dst=%s,"+
+							"actions=ct(zone=%d,nat,table=3)",
+							defaultOpenFlowCookie, defaultNetConfig.ofPortPatch, clusterIP,
+							srcIPOrSubnet, config.Default.HostMasqConntrackZone))
+				}
+			}
 			dftFlows = append(dftFlows,
 				fmt.Sprintf("cookie=%s, priority=200, table=2, ip6, ipv6_src=%s, "+
 					"actions=set_field:%s->eth_dst,output:%s",
-					defaultOpenFlowCookie, netConfig.v6MasqIPs.ManagementPort.IP,
+					defaultOpenFlowCookie, srcIPOrSubnet,
 					bridgeMacAddress, netConfig.ofPortPatch))
 			dftFlows = append(dftFlows,
 				fmt.Sprintf("cookie=%s, priority=200, table=2, ip6, pkt_mark=%s, "+
@@ -2322,6 +2439,13 @@ func newGateway(
 		if util.IsNetworkSegmentationSupportEnabled() && config.OVNKubernetesFeature.EnableInterconnect && config.Gateway.Mode != config.GatewayModeDisabled {
 			gw.bridgeEIPAddrManager = newBridgeEIPAddrManager(nodeName, gwBridge.bridgeName, linkManager, kube, watchFactory.EgressIPInformer(), watchFactory.NodeCoreInformer())
 			gwBridge.eipMarkIPs = gw.bridgeEIPAddrManager.GetCache()
+			// this is required for UDN advertised networks for computing flows to allow traffic towards kapi and DNS
+			// if the enabled default services is changeable by users as day2, then the flows for UDN advertised networks won't be updated
+			// TODO: When support for configurable services is added, we must add support for handling updates to this list
+			gwBridge.udnEnabledDefaultNetServiceIPs, err = fetchUDNEnabledDefaultNetServiceIPs(watchFactory)
+			if err != nil {
+				return err
+			}
 		}
 		gw.nodeIPManager = newAddressManager(nodeName, kube, mgmtPort, watchFactory, gwBridge)
 
