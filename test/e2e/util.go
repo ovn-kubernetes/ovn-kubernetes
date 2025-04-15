@@ -117,7 +117,7 @@ func newAgnhostPod(namespace, name string, command ...string) *v1.Pod {
 			Containers: []v1.Container{
 				{
 					Name:    name,
-					Image:   agnhostImage,
+					Image:   images.AgnHost(),
 					Command: command,
 				},
 			},
@@ -138,7 +138,7 @@ func newLatestAgnhostPod(namespace, name string, command ...string) *v1.Pod {
 			Containers: []v1.Container{
 				{
 					Name:    name,
-					Image:   agnhostImageNew,
+					Image:   images.AgnHost(),
 					Command: command,
 				},
 			},
@@ -160,7 +160,7 @@ func newAgnhostPodOnNode(name, nodeName string, labels map[string]string, comman
 			Containers: []v1.Container{
 				{
 					Name:    name,
-					Image:   agnhostImage,
+					Image:   images.AgnHost(),
 					Command: command,
 				},
 			},
@@ -1493,4 +1493,14 @@ func isDefaultNetworkAdvertised() bool {
 		return false
 	}
 	return strings.TrimSpace(string(podNetworkValue)) == "PodNetwork"
+}
+
+// getAgnHostHTTPPortBindFullCMD returns the full command for agnhost netexec server. Args must not be defined in Container spec.
+func getAgnHostHTTPPortBindFullCMD(port uint16) []string {
+	return append([]string{"/agnhost"}, getAgnHostHTTPPortBindCMDArgs(port)...)
+}
+
+// getAgnHostHTTPPortBindCMDArgs returns the aruments for /agnhost binary
+func getAgnHostHTTPPortBindCMDArgs(port uint16) []string {
+	return []string{"netexec", fmt.Sprintf("--http-port=%d", port)}
 }

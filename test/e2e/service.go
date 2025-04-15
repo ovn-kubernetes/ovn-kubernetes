@@ -1361,7 +1361,7 @@ var _ = ginkgo.Describe("Service Hairpin SNAT", func() {
 	ginkgo.It("Should ensure service hairpin traffic is SNATed to hairpin masquerade IP; Switch LB", func() {
 
 		ginkgo.By("creating an ovn-network backend pod")
-		_, err := createGenericPodWithLabel(f, backendName, backendNodeName, namespaceName, []string{"/agnhost", "netexec", fmt.Sprintf("--http-port=%s", endpointHTTPPort)}, hairpinPodSel)
+		_, err := createGenericPodWithLabel(f, backendName, backendNodeName, namespaceName, getAgnHostHTTPPortBindFullCMD(endpointHTTPPort), hairpinPodSel)
 		framework.ExpectNoError(err, fmt.Sprintf("unable to create backend pod: %s, err: %v", backendName, err))
 
 		ginkgo.By("creating a TCP service service-for-pods with type=ClusterIP in namespace " + namespaceName)
