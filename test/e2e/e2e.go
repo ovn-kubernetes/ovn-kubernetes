@@ -43,8 +43,6 @@ const (
 	retryInterval        = 1 * time.Second  // polling interval timer
 	retryTimeout         = 40 * time.Second // polling timeout
 	rolloutTimeout       = 10 * time.Minute
-	agnhostImage         = "registry.k8s.io/e2e-test-images/agnhost:2.26"
-	agnhostImageNew      = "registry.k8s.io/e2e-test-images/agnhost:2.53"
 	iperf3Image          = "quay.io/sronanrh/iperf"
 	redirectIP           = "123.123.123.123"
 	redirectPort         = "13337"
@@ -94,7 +92,7 @@ func setupHostRedirectPod(f *framework.Framework, node *v1.Node, exContainerName
 			Containers: []v1.Container{
 				{
 					Name:    tcpServer,
-					Image:   agnhostImage,
+					Image:   images.AgnHost(),
 					Command: command,
 				},
 			},
@@ -135,7 +133,7 @@ func checkContinuousConnectivity(f *framework.Framework, nodeName, podName, host
 			Containers: []v1.Container{
 				{
 					Name:    contName,
-					Image:   agnhostImage,
+					Image:   images.AgnHost(),
 					Command: command,
 				},
 			},
@@ -221,7 +219,7 @@ func checkConnectivityPingToHost(f *framework.Framework, nodeName, podName, host
 			Containers: []v1.Container{
 				{
 					Name:    contName,
-					Image:   agnhostImage,
+					Image:   images.AgnHost(),
 					Command: command,
 					Args:    args,
 				},
@@ -276,7 +274,7 @@ func getPodGWRoute(f *framework.Framework, nodeName string, podName string) net.
 			Containers: []v1.Container{
 				{
 					Name:    contName,
-					Image:   agnhostImage,
+					Image:   images.AgnHost(),
 					Command: command,
 				},
 			},
@@ -516,7 +514,7 @@ func createPod(f *framework.Framework, podName, nodeSelector, namespace string, 
 			Containers: []v1.Container{
 				{
 					Name:    contName,
-					Image:   agnhostImage,
+					Image:   images.AgnHost(),
 					Command: command,
 				},
 			},
@@ -1180,7 +1178,7 @@ var _ = ginkgo.Describe("e2e network policy hairpinning validation", func() {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 		ginkgo.By("creating pods")
-		cmd := []string{"/bin/bash", "-c", fmt.Sprintf("/agnhost netexec --http-port %s", endpointHTTPPort)}
+		cmd := getAgnHostHTTPPortBindFullCMD(endpointHTTPPort)
 		// pod1 is a client and a service backend for hairpinned traffic
 		pod1 := newAgnhostPod(namespaceName, "pod1", cmd...)
 		pod1.Labels = hairpinPodSel
@@ -2215,12 +2213,9 @@ var _ = ginkgo.Describe("e2e delete databases", func() {
 			timeIntervalBetweenChecks time.Duration = 2 * time.Second
 		)
 
-		var (
-			command = []string{"/agnhost", "netexec", fmt.Sprintf("--http-port=" + port)}
-		)
-		_, err := createGenericPod(f, pod1Name, node1Name, f.Namespace.Name, command)
+		_, err := createGenericPod(f, pod1Name, node1Name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(podPort))
 		framework.ExpectNoError(err, "failed to create pod %s/%s", f.Namespace.Name, pod1Name)
-		_, err = createGenericPod(f, pod2Name, node2Name, f.Namespace.Name, command)
+		_, err = createGenericPod(f, pod2Name, node2Name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(podPort))
 		framework.ExpectNoError(err, "failed to create pod %s/%s", f.Namespace.Name, pod2Name)
 
 		pod2IP := getPodAddress(pod2Name, f.Namespace.Name)
