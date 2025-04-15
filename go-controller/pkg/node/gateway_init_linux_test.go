@@ -1756,8 +1756,7 @@ var _ = Describe("Gateway unit tests", func() {
 			netlinkMock.On("LinkByName", lnkAttr.Name).Return(lnk, nil)
 			netlinkMock.On("LinkByIndex", lnkAttr.Index).Return(lnk, nil)
 			netlinkMock.On("LinkSetUp", mock.Anything).Return(nil)
-			netlinkMock.On("RouteListFiltered", mock.Anything, mock.Anything, mock.Anything).Return(nil, nil)
-			netlinkMock.On("RouteAdd", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+			netlinkMock.On("RouteReplace", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 			wg := &sync.WaitGroup{}
 			rm := routemanager.NewController()
 			util.SetNetLinkOpMockInst(netlinkMock)
@@ -1786,15 +1785,6 @@ var _ = Describe("Gateway unit tests", func() {
 				Name:  "ens1f0",
 				Index: 5,
 			}
-			previousRoute := &netlink.Route{
-				Dst:       ipnet,
-				LinkIndex: 5,
-				Scope:     netlink.SCOPE_UNIVERSE,
-				Gw:        gwIPs[0],
-				MTU:       config.Default.MTU - 100,
-				Src:       srcIP,
-			}
-
 			expectedRoute := &netlink.Route{
 				Dst:       ipnet,
 				LinkIndex: 5,
@@ -1802,13 +1792,13 @@ var _ = Describe("Gateway unit tests", func() {
 				Gw:        gwIPs[0],
 				MTU:       config.Default.MTU,
 				Src:       srcIP,
+				Table:     syscall.RT_TABLE_MAIN,
 			}
 
 			lnk.On("Attrs").Return(lnkAttr)
 			netlinkMock.On("LinkByName", lnkAttr.Name).Return(lnk, nil)
 			netlinkMock.On("LinkByIndex", lnkAttr.Index).Return(lnk, nil)
 			netlinkMock.On("LinkSetUp", mock.Anything).Return(nil)
-			netlinkMock.On("RouteListFiltered", mock.Anything, mock.Anything, mock.Anything).Return([]netlink.Route{*previousRoute}, nil)
 			netlinkMock.On("RouteReplace", expectedRoute).Return(nil)
 			wg := &sync.WaitGroup{}
 			rm := routemanager.NewController()
