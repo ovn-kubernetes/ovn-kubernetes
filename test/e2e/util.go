@@ -1204,12 +1204,12 @@ func randStr(n int) string {
 }
 
 func isIPv4Supported() bool {
-	val, present := os.LookupEnv("KIND_IPV4_SUPPORT")
+	val, present := os.LookupEnv("PLATFORM_IPV4_SUPPORT")
 	return present && val == "true"
 }
 
 func isIPv6Supported() bool {
-	val, present := os.LookupEnv("KIND_IPV6_SUPPORT")
+	val, present := os.LookupEnv("PLATFORM_IPV6_SUPPORT")
 	return present && val == "true"
 }
 
