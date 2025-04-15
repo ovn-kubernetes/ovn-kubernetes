@@ -3,6 +3,8 @@ package routemanager
 import (
 	"fmt"
 	"net"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -10,27 +12,31 @@ import (
 	"golang.org/x/sys/unix"
 
 	"k8s.io/klog/v2"
-	utilnet "k8s.io/utils/net"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
-// MainTableID is the default routing table. IPRoute2 names the default routing table as 'main'
-const MainTableID = 254
+// key of a managed route, only one route allowed with the same key
+type key struct {
+	dst      string
+	table    int
+	priority int
+}
 
 type Controller struct {
 	*sync.Mutex
-	store map[int][]netlink.Route // key is link index
+	store map[key]*netlink.Route
 }
 
-// NewController manages routes which include adding and deletion of routes. It also manages restoration of managed routes.
-// Begin managing routes by calling Run() to start the manager.
-// Routes should be added via add(route) and deletion via del(route) functions only.
-// All other functions are used internally.
+// NewController manages routes which include adding and deletion of routes. It
+// also manages restoration of managed routes. Begin managing routes by calling
+// Run() to start the manager. Routes should be added via Add(route) and
+// deletion via Del(route) functions only. All other functions are used
+// internally.
 func NewController() *Controller {
 	return &Controller{
 		Mutex: &sync.Mutex{},
-		store: make(map[int][]netlink.Route),
+		store: make(map[key]*netlink.Route),
 	}
 }
 
@@ -51,105 +57,81 @@ func (c *Controller) Run(stopCh <-chan struct{}, syncPeriod time.Duration) {
 			return
 		case newRouteEvent, ok := <-routeEventCh:
 			if !ok {
-				klog.Info("Route Manager: failed to read netlink route event - resubscribing")
+				klog.Warning("Route Manager: netlink route events subscription lost, resubscribing...")
 				subscribed, routeEventCh = subscribeNetlinkRouteEvents(stopCh)
 				continue
 			}
 			if err = c.processNetlinkEvent(newRouteEvent); err != nil {
 				// TODO: make util.GetNetLinkOps().IsLinkNotFoundError(err) smarter to unwrap error
 				// and use it here to log errors that are not IsLinkNotFoundError
-				klog.V(5).Infof("Route Manager: failed to process route update event (%s): %v", newRouteEvent.String(), err)
+				klog.Errorf("Route Manager: failed to process route update event %v: %v", newRouteEvent, err)
 			}
 		case <-ticker.C:
 			if !subscribed {
-				klog.Info("Route Manager: netlink route events aren't subscribed - resubscribing")
+				klog.Warning("Route Manager: netlink route events subscription lost, resubscribing...")
 				subscribed, routeEventCh = subscribeNetlinkRouteEvents(stopCh)
 			}
 			c.sync()
+			ticker.Reset(syncPeriod)
 		}
 	}
 }
 
-// Add submits a request to add a route
+// Add submits a request to add a route. This route will replace any existing
+// route with the same priority, prefix and table, even if not previously
+// managed.
 func (c *Controller) Add(r netlink.Route) error {
-	if err := c.addRoute(r); err != nil {
-		return fmt.Errorf("route manager: failed to add route (%s): %w", r.String(), err)
-	}
-	return nil
+	c.Lock()
+	defer c.Unlock()
+	return c.addRoute(&r)
 }
 
-// Del submits a request to del a route
+// Del submits a request to delete a route.
 func (c *Controller) Del(r netlink.Route) error {
-	if err := c.delRoute(r); err != nil {
-		return fmt.Errorf("route manager: failed to delete route (%s): %v", r.String(), err)
-	}
-	return nil
+	c.Lock()
+	defer c.Unlock()
+	return c.delRoute(&r)
 }
 
 // addRoute attempts to add the route and returns with error
 // if it fails to do so.
-func (c *Controller) addRoute(r netlink.Route) error {
-	c.Lock()
-	defer c.Unlock()
-	klog.Infof("Route Manager: attempting to add route: %s", r.String())
-	// If table is unspecified aka 0, then set it to main table ID. This is done by default when adding a route.
-	// Set it explicitly to aid comparison of routes.
-	if r.Table == 0 {
-		r.Table = MainTableID
+func (c *Controller) addRoute(r *netlink.Route) error {
+	r, err := validateAndNormalizeRoute(r)
+	if err != nil {
+		return err
 	}
-	if addedToStore := c.addRouteToStore(r); !addedToStore {
+	if c.hasRouteInStore(r) {
 		// already managed - nothing to do
 		return nil
 	}
-	if r.LinkIndex != 0 {
-		_, err := util.GetNetLinkOps().LinkByIndex(r.LinkIndex)
-		if err != nil {
-			return fmt.Errorf("failed to apply route (%s) because unable to get link: %v", r.String(), err)
-		}
+	err = c.netlinkAddRoute(r)
+	if err != nil {
+		return err
 	}
-	if err := c.applyRoute(r.LinkIndex, r.Gw, r.Dst, r.MTU, r.Src, r.Table, r.Priority, r.Type, r.Scope); err != nil {
-		return fmt.Errorf("failed to apply route (%s): %v", r.String(), err)
-	}
-	klog.Infof("Route Manager: completed adding route: %s", r.String())
+	c.addRouteToStore(r)
 	return nil
 }
 
 // delRoute attempts to remove the route and returns with error
 // if it fails to do so.
-func (c *Controller) delRoute(r netlink.Route) error {
-	c.Lock()
-	defer c.Unlock()
-	klog.Infof("Route Manager: attempting to delete route: %s", r.String())
-	if r.LinkIndex != 0 {
-		_, err := util.GetNetLinkOps().LinkByIndex(r.LinkIndex)
+func (c *Controller) delRoute(r *netlink.Route) error {
+	r, err := validateAndNormalizeRoute(r)
+	if err != nil {
+		return err
+	}
+	err = c.netlinkDelRoute(r)
+	if err != nil {
+		return err
+	}
+	// also remove the route we had in store if different
+	o := c.store[keyFromNetlink(r)]
+	if !util.RouteEqual(r, o) {
+		err = c.netlinkDelRoute(r)
 		if err != nil {
-			if util.GetNetLinkOps().IsLinkNotFoundError(err) {
-				delete(c.store, r.LinkIndex)
-				return nil
-			}
-			return fmt.Errorf("failed to delete route (%s) because unable to get link: %v", r.String(), err)
+			return err
 		}
 	}
-	if err := c.netlinkDelRoute(r.LinkIndex, r.Dst, r.Table); err != nil {
-		return fmt.Errorf("failed to delete route (%s): %v", r.String(), err)
-	}
-	managedRoutes, ok := c.store[r.LinkIndex]
-	if !ok {
-		return nil
-	}
-	// remove route from existing routes
-	managedRoutesTemp := make([]netlink.Route, 0, len(managedRoutes))
-	for _, managedRoute := range managedRoutes {
-		if !RoutePartiallyEqual(managedRoute, r) {
-			managedRoutesTemp = append(managedRoutesTemp, managedRoute)
-		}
-	}
-	if len(managedRoutesTemp) == 0 {
-		delete(c.store, r.LinkIndex)
-	} else {
-		c.store[r.LinkIndex] = managedRoutesTemp
-	}
-	klog.Infof("Route Manager: deletion of routes for link complete: %s", r.String())
+	c.removeRouteFromStore(r)
 	return nil
 }
 
@@ -158,200 +140,139 @@ func (c *Controller) delRoute(r netlink.Route) error {
 func (c *Controller) processNetlinkEvent(ru netlink.RouteUpdate) error {
 	c.Lock()
 	defer c.Unlock()
-	if ru.Type == unix.RTM_NEWROUTE {
-		// An event resulting from `ip route change` will be seen as type RTM_NEWROUTE event and therefore this function will only
-		// log the changes and not attempt to restore the change. This will be accomplished by the sync function.
-		klog.Infof("Route Manager: netlink route addition event: %q", ru.String())
+	r := c.store[keyFromNetlink(&ru.Route)]
+	if r == nil {
 		return nil
 	}
-	if ru.Type != unix.RTM_DELROUTE {
-		return nil
-	}
-	klog.V(5).Infof("Route Manager: netlink route deletion event: %q", ru.String())
-	managedRoutes, ok := c.store[ru.LinkIndex]
-	if !ok {
-		// we don't manage this interface
-		return nil
-	}
-	for _, managedRoute := range managedRoutes {
-		if RoutePartiallyEqual(managedRoute, ru.Route) {
-			if managedRoute.LinkIndex != 0 {
-				_, err := util.GetNetLinkOps().LinkByIndex(managedRoute.LinkIndex)
-				if err != nil {
-					klog.Errorf("Route Manager: failed to restore route because unable to get link by index %d: %v", managedRoute.LinkIndex, err)
-					continue
-				}
-			}
-			if err := c.applyRoute(managedRoute.LinkIndex, managedRoute.Gw, managedRoute.Dst, managedRoute.MTU, managedRoute.Src, managedRoute.Table,
-				managedRoute.Priority, managedRoute.Type, managedRoute.Scope); err != nil {
-				klog.Errorf("Route Manager: failed to apply route (%s): %v", managedRoute.String(), err)
-			}
-		}
+	if ru.Type == unix.RTM_DELROUTE || !routePartiallyEqualWantedToExisting(r, &ru.Route) {
+		return c.netlinkAddRoute(r)
 	}
 	return nil
 }
 
-func (c *Controller) applyRoute(linkIndex int, gwIP net.IP, subnet *net.IPNet, mtu int, src net.IP,
-	table, priority, rtype int, scope netlink.Scope) error {
-	filterRoute, filterMask := filterRouteByDstAndTable(linkIndex, subnet, table)
-	existingRoutes, err := util.GetNetLinkOps().RouteListFiltered(getNetlinkIPFamily(subnet), filterRoute, filterMask)
+func (c *Controller) netlinkAddRoute(r *netlink.Route) error {
+	err := util.GetNetLinkOps().RouteReplace(r)
 	if err != nil {
-		return fmt.Errorf("failed to list filtered routes: %v", err)
+		return fmt.Errorf("failed to add route %s: %w", r, err)
 	}
-	if len(existingRoutes) == 0 {
-		return c.netlinkAddRoute(linkIndex, gwIP, subnet, mtu, src, table, priority, rtype, scope)
-	}
-	netlinkRoute := &existingRoutes[0]
-	if netlinkRoute.MTU != mtu || !src.Equal(netlinkRoute.Src) || !gwIP.Equal(netlinkRoute.Gw) {
-		netlinkRoute.MTU = mtu
-		netlinkRoute.Src = src
-		netlinkRoute.Gw = gwIP
-		err = util.GetNetLinkOps().RouteReplace(netlinkRoute)
-		if err != nil {
-			return fmt.Errorf("failed to replace route for subnet %s via gateway %s with mtu %d: %v",
-				subnet.String(), gwIP.String(), mtu, err)
-		}
-	}
+	klog.V(5).Infof("Route Manager: added route %s", r)
 	return nil
 }
 
-func (c *Controller) netlinkAddRoute(linkIndex int, gwIP net.IP, subnet *net.IPNet,
-	mtu int, srcIP net.IP, table, priority, rtype int, scope netlink.Scope) error {
-	newNlRoute := &netlink.Route{
-		Dst:       subnet,
-		LinkIndex: linkIndex,
-		Scope:     netlink.SCOPE_UNIVERSE,
-		Table:     table,
+func (c *Controller) netlinkDelRoute(r *netlink.Route) error {
+	err := util.GetNetLinkOps().RouteDel(r)
+	if err != nil && !isRouteNotFoundError(err) {
+		return fmt.Errorf("failed to delete route %s: %w", r, err)
 	}
-	if len(gwIP) > 0 {
-		newNlRoute.Gw = gwIP
-	}
-	if len(srcIP) > 0 {
-		newNlRoute.Src = srcIP
-	}
-	if mtu != 0 {
-		newNlRoute.MTU = mtu
-	}
-	if priority != 0 {
-		newNlRoute.Priority = priority
-	}
-	if rtype != 0 {
-		newNlRoute.Type = rtype
-	}
-	if scope != netlink.Scope(0) {
-		newNlRoute.Scope = scope
-	}
-	err := util.GetNetLinkOps().RouteAdd(newNlRoute)
-	if err != nil {
-		return fmt.Errorf("failed to add route (linkIndex: %d gw: %v, subnet %v, mtu %d, src IP %v): %v",
-			newNlRoute.LinkIndex, gwIP, subnet, mtu, srcIP, err)
-	}
-	return nil
-}
-
-func (c *Controller) netlinkDelRoute(linkIndex int, subnet *net.IPNet, table int) error {
-	if subnet == nil {
-		return fmt.Errorf("cannot delete route with no valid subnet")
-	}
-	filter, mask := filterRouteByDstAndTable(linkIndex, subnet, table)
-	existingRoutes, err := util.GetNetLinkOps().RouteListFiltered(netlink.FAMILY_ALL, filter, mask)
-	if err != nil {
-		return fmt.Errorf("failed to get routes for link %d: %v", linkIndex, err)
-	}
-	for _, existingRoute := range existingRoutes {
-		if err = util.GetNetLinkOps().RouteDel(&existingRoute); err != nil {
-			return err
-		}
-	}
+	klog.V(5).Infof("Route Manager: deleted route %s", r)
 	return nil
 }
 
 // addRouteToStore adds routes to the internal cache
 // Must be called with the controller locked
-func (c *Controller) addRouteToStore(r netlink.Route) bool {
-	existingRoutes, ok := c.store[r.LinkIndex]
-	if !ok {
-		c.store[r.LinkIndex] = []netlink.Route{r}
-		return true
-	}
-	for _, existingRoute := range existingRoutes {
-		if RoutePartiallyEqual(existingRoute, r) {
-			return false
-		}
-	}
-	c.store[r.LinkIndex] = append(existingRoutes, r)
-	return true
+func (c *Controller) addRouteToStore(r *netlink.Route) {
+	route := keyFromNetlink(r)
+	c.store[route] = r
 }
 
-// sync will iterate through all routes seen on a node and ensure any route manager managed routes are applied. Any additional
-// routes for this link are preserved. sync only inspects routes for links which we managed and ignore routes for non-managed links.
+// removeRouteFromStore removes route from the internal cache
+// Must be called with the controller locked
+func (c *Controller) removeRouteFromStore(r *netlink.Route) {
+	delete(c.store, keyFromNetlink(r))
+}
+
+// hasRouteInStore checks if a route with the same key is stored in the
+// internal cache as requested. Must be called with the controller locked
+func (c *Controller) hasRouteInStore(r *netlink.Route) bool {
+	route := c.store[keyFromNetlink(r)]
+	return route != nil && util.RouteEqual(r, route)
+}
+
+func validateAndNormalizeRoute(r *netlink.Route) (*netlink.Route, error) {
+	if r.Table == unix.RT_TABLE_UNSPEC {
+		r.Table = unix.RT_TABLE_MAIN
+	}
+	// no specific validation for now
+	return r, nil
+}
+
+func keyFromNetlink(r *netlink.Route) key {
+	return key{
+		dst:      r.Dst.String(),
+		table:    r.Table,
+		priority: r.Priority,
+	}
+}
+
+// sync will iterate through all routes seen on a node and ensure any route
+// manager managed routes are applied. Any conflicting additional routes are
+// removed. Other routes are preserved.
 func (c *Controller) sync() {
 	c.Lock()
 	defer c.Unlock()
-	deletedLinkIndexes := make([]int, 0)
-	for linkIndex, managedRoutes := range c.store {
-		for _, managedRoute := range managedRoutes {
-			filterRoute, filterMask := filterRouteByDstAndTable(linkIndex, managedRoute.Dst, managedRoute.Table)
-			existingRoutes, err := util.GetNetLinkOps().RouteListFiltered(netlink.FAMILY_ALL, filterRoute, filterMask)
+
+	var read, added, deleted int
+	start := time.Now()
+	defer func() {
+		klog.V(5).Infof("Route Manager: synced routes: stored[%d] read[%d] added[%d] deleted[%d], took %s",
+			len(c.store),
+			read,
+			added,
+			deleted,
+			time.Since(start),
+		)
+	}()
+
+	// there can be many routes on the system so make sure we list them as few
+	// times as possible
+	// note that RouteListFiltered dumps ALL routes, filtering happens on the
+	// client side
+	// we need to filter by table without specifying any table to get routes
+	// form all tables
+	filter := &netlink.Route{}
+	mask := netlink.RT_FILTER_TABLE
+	existing, err := util.GetNetLinkOps().RouteListFiltered(netlink.FAMILY_ALL, filter, mask)
+	if err != nil {
+		klog.Errorf("Route Manager: failed to list routes: %v", err)
+		return
+	}
+	read = len(existing)
+
+	existingAndTracked := map[key][]*netlink.Route{}
+	for _, r := range existing {
+		key := keyFromNetlink(&r)
+		wants := c.store[key]
+		if wants == nil {
+			continue
+		}
+		existingAndTracked[key] = append(existingAndTracked[key], &r)
+	}
+
+	for key, wants := range c.store {
+		existing := existingAndTracked[key]
+		if len(existing) == 1 && routePartiallyEqualWantedToExisting(wants, existing[0]) {
+			continue
+		}
+		// take the safe approach to delete routes before adding ours to make
+		// sure we don't end up deleting what we shouldn't
+		// deleting now may cause network blips until we add our route but
+		// nobody should be manipulating conflicting routes anyway
+		for _, r := range existing {
+			err := c.netlinkDelRoute(r)
 			if err != nil {
-				klog.Errorf("Route Manager: failed to list routes for link %d with route filter %s and mask filter %d: %v", linkIndex, filterRoute.String(), filterMask, err)
+				klog.Errorf("Route Manager: failed while syncing: %v", err)
 				continue
 			}
-			var found bool
-			for _, activeRoute := range existingRoutes {
-				if RoutePartiallyEqual(activeRoute, managedRoute) {
-					found = true
-					break
-				}
-			}
-			if !found {
-				if managedRoute.LinkIndex != 0 {
-					_, err := util.GetNetLinkOps().LinkByIndex(managedRoute.LinkIndex)
-					if err != nil {
-						if util.GetNetLinkOps().IsLinkNotFoundError(err) {
-							deletedLinkIndexes = append(deletedLinkIndexes, linkIndex)
-						} else {
-							klog.Errorf("Route Manager: failed to apply route (%s) because unable to retrieve associated link: %v", managedRoute.String(), err)
-						}
-						continue
-					}
-				}
-				if err := c.applyRoute(managedRoute.LinkIndex, managedRoute.Gw, managedRoute.Dst, managedRoute.MTU, managedRoute.Src, managedRoute.Table,
-					managedRoute.Priority, managedRoute.Type, managedRoute.Scope); err != nil {
-					klog.Errorf("Route Manager: failed to apply route (%s): %v", managedRoute.String(), err)
-				}
-			}
+			klog.Warningf("Route Manager: removed unexpected route %s", r)
+			deleted++
 		}
+		err := c.netlinkAddRoute(wants)
+		if err != nil {
+			klog.Errorf("Route Manager: failed while syncing: %v", err)
+			continue
+		}
+		added++
 	}
-	for _, linkIndex := range deletedLinkIndexes {
-		klog.Infof("Route Manager: removing all routes associated with link index %d because link deleted", linkIndex)
-		delete(c.store, linkIndex)
-	}
-}
-
-func getNetlinkIPFamily(ipNet *net.IPNet) int {
-	if utilnet.IsIPv6(ipNet.IP) {
-		return netlink.FAMILY_V6
-	} else {
-		return netlink.FAMILY_V4
-	}
-}
-
-func filterRouteByDstAndTable(linkIndex int, subnet *net.IPNet, table int) (*netlink.Route, uint64) {
-	return &netlink.Route{
-			Dst:       subnet,
-			LinkIndex: linkIndex,
-			Table:     table,
-		},
-		netlink.RT_FILTER_DST | netlink.RT_FILTER_OIF | netlink.RT_FILTER_TABLE
-}
-
-func filterRouteByTable(linkIndex, table int) (*netlink.Route, uint64) {
-	return &netlink.Route{
-			LinkIndex: linkIndex,
-			Table:     table,
-		},
-		netlink.RT_FILTER_OIF | netlink.RT_FILTER_TABLE
 }
 
 func subscribeNetlinkRouteEvents(stopCh <-chan struct{}) (bool, chan netlink.RouteUpdate) {
@@ -363,20 +284,68 @@ func subscribeNetlinkRouteEvents(stopCh <-chan struct{}) (bool, chan netlink.Rou
 	return true, routeEventCh
 }
 
-// RoutePartiallyEqual compares a limited set of route attributes.
-// The reason for not using the Equal method associated with type netlink.Route is because a user will only specify a limited
-// subset of fields but when we introspect routes seen on the system, other fields are populated by default and therefore
-// won't be equal anymore with user defined routes. Compare a limited set of fields that we care about.
-// Also, netlink.Routes Equal method doesn't compare MTU.
-func RoutePartiallyEqual(r, x netlink.Route) bool {
-	return r.LinkIndex == x.LinkIndex &&
-		util.IsIPNetEqual(r.Dst, x.Dst) &&
-		r.Src.Equal(x.Src) &&
-		r.Gw.Equal(x.Gw) &&
-		r.Table == x.Table &&
-		r.Flags == x.Flags &&
-		r.MTU == x.MTU &&
-		r.Type == x.Type &&
-		r.Priority == x.Priority &&
-		r.Scope == x.Scope
+func equalOrLeftZero[T comparable](l, r, z T) bool {
+	return l == z || l == r
+}
+
+func equalOrLeftZeroFunc[T any](eq func(l, r T) bool, l, r, z T) bool {
+	return eq(l, z) || eq(l, r)
+}
+
+// routePartiallyEqualWantedToExisting compares non zero values of left wanted route with the
+// right existing route. The reason for not using the Equal method associated
+// with type netlink.Route is because a user will only specify a limited subset
+// of fields but when we introspect routes seen on the system, other fields are
+// populated by default and therefore won't be equal anymore with user defined
+// routes. Also, netlink.Routes Equal method doesn't compare MTU.
+func routePartiallyEqualWantedToExisting(w, e *netlink.Route) bool {
+	if (w == nil) != (e == nil) {
+		return false
+	}
+	// this compares dst, table and priority which must be equal for us
+	if keyFromNetlink(w) != keyFromNetlink(e) {
+		return false
+	}
+	var z netlink.Route
+	return equalOrLeftZero(w.LinkIndex, e.LinkIndex, z.LinkIndex) &&
+		equalOrLeftZero(w.ILinkIndex, e.ILinkIndex, z.ILinkIndex) &&
+		equalOrLeftZero(w.Scope, e.Scope, z.Scope) &&
+		equalOrLeftZeroFunc(func(l, r net.IP) bool { return l.Equal(r) }, w.Src, e.Src, z.Src) &&
+		equalOrLeftZeroFunc(func(l, r net.IP) bool { return l.Equal(r) }, w.Gw, e.Gw, z.Gw) &&
+		equalOrLeftZeroFunc(
+			func(l, r []*netlink.NexthopInfo) bool {
+				return slices.EqualFunc(l, r,
+					func(l, r *netlink.NexthopInfo) bool { return l == r || (l != nil && r != nil && l.Equal(*r)) },
+				)
+			}, w.MultiPath, e.MultiPath, z.MultiPath) &&
+		equalOrLeftZero(w.Protocol, e.Protocol, z.Protocol) &&
+		equalOrLeftZero(w.Family, e.Family, z.Family) &&
+		equalOrLeftZero(w.Type, e.Type, z.Type) &&
+		equalOrLeftZero(w.Tos, e.Tos, z.Tos) &&
+		equalOrLeftZero(w.Flags, e.Flags, z.Flags) &&
+		equalOrLeftZeroFunc(func(l, r *int) bool { return l == r || (l != nil && r != nil && *l == *r) }, w.MPLSDst, e.MPLSDst, z.MPLSDst) &&
+		equalOrLeftZeroFunc(func(l, r netlink.Destination) bool { return l == r || (l != nil && r != nil && l.Equal(r)) }, w.NewDst, e.NewDst, z.NewDst) &&
+		equalOrLeftZeroFunc(func(l, r netlink.Encap) bool { return l == r || (l != nil && r != nil && l.Equal(r)) }, w.Encap, e.Encap, z.Encap) &&
+		equalOrLeftZeroFunc(func(l, r netlink.Destination) bool { return l == r || (l != nil && r != nil && l.Equal(r)) }, w.Via, e.Via, z.Via) &&
+		equalOrLeftZero(w.Realm, e.Realm, z.Realm) &&
+		equalOrLeftZero(w.MTU, e.MTU, z.MTU) &&
+		equalOrLeftZero(w.Window, e.Window, z.Window) &&
+		equalOrLeftZero(w.Rtt, e.Rtt, z.Rtt) &&
+		equalOrLeftZero(w.RttVar, e.RttVar, z.RttVar) &&
+		equalOrLeftZero(w.Ssthresh, e.Ssthresh, z.Ssthresh) &&
+		equalOrLeftZero(w.Cwnd, e.Cwnd, z.Cwnd) &&
+		equalOrLeftZero(w.AdvMSS, e.AdvMSS, z.AdvMSS) &&
+		equalOrLeftZero(w.Reordering, e.Reordering, z.Reordering) &&
+		equalOrLeftZero(w.Hoplimit, e.Hoplimit, z.Hoplimit) &&
+		equalOrLeftZero(w.InitCwnd, e.InitCwnd, z.InitCwnd) &&
+		equalOrLeftZero(w.Features, e.Features, z.Features) &&
+		equalOrLeftZero(w.RtoMin, e.RtoMin, z.RtoMin) &&
+		equalOrLeftZero(w.InitRwnd, e.InitRwnd, z.InitRwnd) &&
+		equalOrLeftZero(w.QuickACK, e.QuickACK, z.QuickACK) &&
+		equalOrLeftZero(w.Congctl, e.Congctl, z.Congctl) &&
+		equalOrLeftZero(w.FastOpenNoCookie, e.FastOpenNoCookie, z.FastOpenNoCookie)
+}
+
+func isRouteNotFoundError(err error) bool {
+	return strings.Contains(err.Error(), "no such process")
 }
