@@ -821,14 +821,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 
 					srvPodStatus, err := userDefinedNetworkStatus(srvPod, namespacedName(srvPod.Namespace, cudnBTemplate.Name))
 					framework.ExpectNoError(err)
-					retErr := true
-					out := curlConnectionTimeoutCode
-					if cudnATemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer3 {
-						// FIXME: L3 - pod to pod on different networks and different nodes should NOT work
-						retErr = false
-						out = ""
-					}
-					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(srvPodStatus.IPs[ipFamilyIndex].IP.String(), "8080") + "/clientip", out, retErr
+					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(srvPodStatus.IPs[ipFamilyIndex].IP.String(), "8080") + "/clientip", curlConnectionTimeoutCode, true
 				}),
 			ginkgo.Entry("pod in the default network should not be able to access a UDN service",
 				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {

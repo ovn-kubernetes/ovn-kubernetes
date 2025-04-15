@@ -450,6 +450,11 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to init default network controller: %v", err)
 	}
 
+	if util.IsRouteAdvertisementsEnabled() {
+		if err := cm.configureAdvertisedUDNIsolation(); err != nil {
+			return fmt.Errorf("failed to initialize advertised udn isolation: %v", err)
+		}
+	}
 	if cm.networkManager != nil {
 		if err = cm.networkManager.Start(); err != nil {
 			return fmt.Errorf("failed to start NAD Controller :%v", err)
@@ -493,4 +498,16 @@ func (cm *ControllerManager) Stop() {
 
 func (cm *ControllerManager) Reconcile(_ string, _, _ util.NetInfo) error {
 	return nil
+}
+
+func (cm *ControllerManager) configureAdvertisedUDNIsolation() error {
+	addressSetFactory := addressset.NewOvnAddressSetFactory(cm.nbClient, config.IPv4Mode, config.IPv6Mode)
+	addrSet, err := addressSetFactory.EnsureAddressSet(ovn.GetAdvertisedUDNSubnetsAddressSetDBIDs())
+	if err != nil {
+		return err
+	}
+
+	// TODO: rebuild the addresses
+	v4Addrs, v6Addrs := addrSet.GetAddresses()
+	return addrSet.DeleteAddresses(append(v6Addrs, v4Addrs...))
 }
