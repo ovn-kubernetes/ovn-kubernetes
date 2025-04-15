@@ -14,7 +14,9 @@ import (
 	utilnet "k8s.io/utils/net"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
+	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
@@ -29,6 +31,33 @@ func init() {
 	// libovsdb matcher might produce a lengthy output that will be cropped by
 	// default gomega output limit, set to 0 to unlimit.
 	format.MaxLength = 0
+}
+
+func generateAdvertisedUDNIsolationExpectedNB(testData []libovsdbtest.TestData, networkName string, clusterIPSubnets []*net.IPNet, nodeSwitch *nbdb.LogicalSwitch, addrSet addressset.AddressSet) []libovsdbtest.TestData {
+	var acceptMatches []string
+	for _, subnet := range clusterIPSubnets {
+		ipPrefix := "ip4"
+		if utilnet.IsIPv6CIDR(subnet) {
+			ipPrefix = "ip6"
+		}
+		acceptMatches = append(acceptMatches, fmt.Sprintf("(%s.src == %s && %s.dst == %s)", ipPrefix, subnet, ipPrefix, subnet))
+
+	}
+	acceptACL := libovsdbutil.BuildACL(
+		GetAdvertisedUDNSubnetsAcceptACLdbIDs(networkName),
+		types.DefaultAllowPriority,
+		strings.Join(acceptMatches, " || "),
+		nbdb.ACLActionPass,
+		nil,
+		libovsdbutil.LportEgress)
+	acceptACL.Tier = types.PrimaryACLTier
+	acceptACL.UUID = "advertised-udn-isolation-accept-acl-UUID"
+	dropACL := BuildAdvertisedUDNSubnetsDropACL(addrSet)
+	dropACL.UUID = "advertised-udn-isolation-drop-acl-UUID"
+	nodeSwitch.ACLs = append(nodeSwitch.ACLs, acceptACL.UUID, dropACL.UUID)
+	testData = append(testData, acceptACL, dropACL)
+
+	return testData
 }
 
 func generateGatewayInitExpectedNB(testData []libovsdbtest.TestData, expectedOVNClusterRouter *nbdb.LogicalRouter,

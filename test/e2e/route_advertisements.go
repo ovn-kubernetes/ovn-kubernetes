@@ -803,28 +803,47 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					framework.ExpectNoError(err)
 					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(srvPodStatus.IPs[ipFamilyIndex].IP.String(), "8080") + "/clientip", clientPodStatus.IPs[ipFamilyIndex].IP.String(), false
 				}),
-			// TODO: Enable the following tests once pod-pod on different advertised networks isolation is addressed
-			//ginkgo.Entry("pod to pod on different networks and same node should not work",
-			//	func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
-			//		// podsNetA[2] and podNetB are on the same node
-			//		clientPod := podsNetA[2]
-			//		srvPod := podNetB
-			//
-			//		srvPodStatus, err := userDefinedNetworkStatus(srvPod, namespacedName(srvPod.Namespace, cudnBTemplate.Name))
-			//		framework.ExpectNoError(err)
-			//		return clientPod.Name, clientPod.Namespace, net.JoinHostPort(srvPodStatus.IPs[ipFamilyIndex].IP.String(), "8080") + "/clientip", curlConnectionTimeoutCode, true
-			//	}),
+			ginkgo.Entry("pod to pod on different networks and same node should not work",
+				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
+					// podsNetA[2] and podNetB are on the same node
+					clientPod := podsNetA[2]
+					srvPod := podNetB
 
-			//ginkgo.Entry("pod to pod on different networks and different nodes should not work",
-			//	func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
-			//		// podsNetA[0] and podNetB are on different nodes
-			//		clientPod := podsNetA[0]
-			//		srvPod := podNetB
-			//
-			//		srvPodStatus, err := userDefinedNetworkStatus(srvPod, namespacedName(srvPod.Namespace, cudnBTemplate.Name))
-			//		framework.ExpectNoError(err)
-			//		return clientPod.Name, clientPod.Namespace, net.JoinHostPort(srvPodStatus.IPs[ipFamilyIndex].IP.String(), "8080") + "/clientip", curlConnectionTimeoutCode, true
-			//	}),
+					srvPodStatus, err := userDefinedNetworkStatus(srvPod, namespacedName(srvPod.Namespace, cudnBTemplate.Name))
+					framework.ExpectNoError(err)
+					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(srvPodStatus.IPs[ipFamilyIndex].IP.String(), "8080") + "/clientip", curlConnectionTimeoutCode, true
+				}),
+
+			ginkgo.Entry("pod to pod on different networks and different nodes should not work",
+				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
+					// podsNetA[0] and podNetB are on different nodes
+					clientPod := podsNetA[0]
+					srvPod := podNetB
+
+					srvPodStatus, err := userDefinedNetworkStatus(srvPod, namespacedName(srvPod.Namespace, cudnBTemplate.Name))
+					framework.ExpectNoError(err)
+					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(srvPodStatus.IPs[ipFamilyIndex].IP.String(), "8080") + "/clientip", curlConnectionTimeoutCode, true
+				}),
+			ginkgo.Entry("pod in the default network should not be able to access an advertised UDN pod on the same node",
+				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
+					// podNetDefault and podNetB are on the same node
+					clientPod := podNetDefault
+					srvPod := podNetB
+
+					srvPodStatus, err := userDefinedNetworkStatus(srvPod, namespacedName(srvPod.Namespace, cudnBTemplate.Name))
+					framework.ExpectNoError(err)
+					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(srvPodStatus.IPs[ipFamilyIndex].IP.String(), "8080") + "/clientip", curlConnectionTimeoutCode, true
+				}),
+			ginkgo.Entry("pod in the default network should not be able to access an advertised UDN pod on a different node",
+				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
+					// podNetDefault and podsNetA[0] are on different nodes
+					clientPod := podNetDefault
+					srvPod := podsNetA[0]
+
+					srvPodStatus, err := userDefinedNetworkStatus(srvPod, namespacedName(srvPod.Namespace, cudnATemplate.Name))
+					framework.ExpectNoError(err)
+					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(srvPodStatus.IPs[ipFamilyIndex].IP.String(), "8080") + "/clientip", curlConnectionTimeoutCode, true
+				}),
 			ginkgo.Entry("pod in the default network should not be able to access a UDN service",
 				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
 					return podNetDefault.Name, podNetDefault.Namespace, net.JoinHostPort(svcNetA.Spec.ClusterIPs[ipFamilyIndex], "8080") + "/clientip", curlConnectionTimeoutCode, true
