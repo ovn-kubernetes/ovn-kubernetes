@@ -18,6 +18,8 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
+
 	"github.com/pkg/errors"
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
@@ -43,8 +45,6 @@ const (
 	retryInterval        = 1 * time.Second  // polling interval timer
 	retryTimeout         = 40 * time.Second // polling timeout
 	rolloutTimeout       = 10 * time.Minute
-	agnhostImage         = "registry.k8s.io/e2e-test-images/agnhost:2.26"
-	agnhostImageNew      = "registry.k8s.io/e2e-test-images/agnhost:2.53"
 	iperf3Image          = "quay.io/sronanrh/iperf"
 	redirectIP           = "123.123.123.123"
 	redirectPort         = "13337"
@@ -94,7 +94,7 @@ func setupHostRedirectPod(f *framework.Framework, node *v1.Node, exContainerName
 			Containers: []v1.Container{
 				{
 					Name:    tcpServer,
-					Image:   agnhostImage,
+					Image:   images.AgnHost(),
 					Command: command,
 				},
 			},
@@ -135,7 +135,7 @@ func checkContinuousConnectivity(f *framework.Framework, nodeName, podName, host
 			Containers: []v1.Container{
 				{
 					Name:    contName,
-					Image:   agnhostImage,
+					Image:   images.AgnHost(),
 					Command: command,
 				},
 			},
@@ -221,7 +221,7 @@ func checkConnectivityPingToHost(f *framework.Framework, nodeName, podName, host
 			Containers: []v1.Container{
 				{
 					Name:    contName,
-					Image:   agnhostImage,
+					Image:   images.AgnHost(),
 					Command: command,
 					Args:    args,
 				},
@@ -276,7 +276,7 @@ func getPodGWRoute(f *framework.Framework, nodeName string, podName string) net.
 			Containers: []v1.Container{
 				{
 					Name:    contName,
-					Image:   agnhostImage,
+					Image:   images.AgnHost(),
 					Command: command,
 				},
 			},
@@ -516,7 +516,7 @@ func createPod(f *framework.Framework, podName, nodeSelector, namespace string, 
 			Containers: []v1.Container{
 				{
 					Name:    contName,
-					Image:   agnhostImage,
+					Image:   images.AgnHost(),
 					Command: command,
 				},
 			},
@@ -1163,7 +1163,7 @@ var _ = ginkgo.Describe("e2e network policy hairpinning validation", func() {
 	const (
 		svcName          string = "network-policy"
 		serviceHTTPPort         = 6666
-		endpointHTTPPort        = "80"
+		endpointHTTPPort uint16 = 80
 	)
 
 	f := wrappedTestFramework(svcName)
@@ -1177,7 +1177,7 @@ var _ = ginkgo.Describe("e2e network policy hairpinning validation", func() {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 		ginkgo.By("creating pods")
-		cmd := []string{"/bin/bash", "-c", fmt.Sprintf("/agnhost netexec --http-port %s", endpointHTTPPort)}
+		cmd := getAgnHostHTTPPortBindFullCMD(endpointHTTPPort)
 		// pod1 is a client and a service backend for hairpinned traffic
 		pod1 := newAgnhostPod(namespaceName, "pod1", cmd...)
 		pod1.Labels = hairpinPodSel
@@ -1187,7 +1187,7 @@ var _ = ginkgo.Describe("e2e network policy hairpinning validation", func() {
 		pod2 = e2epod.NewPodClient(f).CreateSync(context.TODO(), pod2)
 
 		ginkgo.By("creating a service with a single backend")
-		svcIP, err := createServiceForPodsWithLabel(f, namespaceName, serviceHTTPPort, endpointHTTPPort, "ClusterIP", hairpinPodSel)
+		svcIP, err := createServiceForPodsWithLabel(f, namespaceName, serviceHTTPPort, fmt.Sprintf("%d", endpointHTTPPort), "ClusterIP", hairpinPodSel)
 		framework.ExpectNoError(err, fmt.Sprintf("unable to create ClusterIP svc: %v", err))
 
 		err = framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, "service-for-pods", 1, time.Second, wait.ForeverTestTimeout)
@@ -1268,7 +1268,7 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 			// the client uses the netexec command from the agnhost image, which is able to receive commands for poking other
 			// addresses.
 			// CAP NET_ADMIN is needed to remove neighbor entries for ARP/NS flap tests
-			externalIpv4, externalIpv6 = createClusterExternalContainer(clientContainerName, agnhostImage, []string{"--network", "kind", "-P", "--cap-add", "NET_ADMIN"}, []string{"netexec", "--http-port=80"})
+			externalIpv4, externalIpv6 = createClusterExternalContainer(clientContainerName, images.AgnHost(), []string{"--network", "kind", "-P", "--cap-add", "NET_ADMIN"}, []string{"netexec", "--http-port=80"})
 		})
 
 		ginkgo.AfterEach(func() {
@@ -1674,7 +1674,7 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 			ginkgo.By("Creating an external container to send the traffic from")
 			// the client uses the netexec command from the agnhost image, which is able to receive commands for poking other
 			// addresses.
-			createClusterExternalContainer(clientContainerName, agnhostImage, []string{"--network", "kind", "-P"}, []string{"netexec", "--http-port=80"})
+			createClusterExternalContainer(clientContainerName, images.AgnHost(), []string{"--network", "kind", "-P"}, []string{"netexec", "--http-port=80"})
 
 			// If `kindexgw` exists, connect client container to it
 			runCommand(containerRuntime, "network", "connect", "kindexgw", clientContainerName)
@@ -1828,7 +1828,7 @@ var _ = ginkgo.Describe("e2e ingress to host-networked pods traffic validation",
 			ginkgo.By("Creating an external container to send the traffic from")
 			// the client uses the netexec command from the agnhost image, which is able to receive commands for poking other
 			// addresses.
-			externalIpv4, externalIpv6 = createClusterExternalContainer(clientContainerName, agnhostImage, []string{"--network", "kind", "-P"}, []string{"netexec", "--http-port=80"})
+			externalIpv4, externalIpv6 = createClusterExternalContainer(clientContainerName, images.AgnHost(), []string{"--network", "kind", "-P"}, []string{"netexec", "--http-port=80"})
 		})
 
 		ginkgo.AfterEach(func() {
@@ -2208,23 +2208,20 @@ var _ = ginkgo.Describe("e2e delete databases", func() {
 		const (
 			pod1Name                  string        = "connectivity-test-pod1"
 			pod2Name                  string        = "connectivity-test-pod2"
-			port                      string        = "8080"
+			port                      uint16        = 8080
 			timeIntervalBetweenChecks time.Duration = 2 * time.Second
 		)
 
-		var (
-			command = []string{"/agnhost", "netexec", fmt.Sprintf("--http-port=" + port)}
-		)
-		_, err := createGenericPod(f, pod1Name, node1Name, f.Namespace.Name, command)
+		_, err := createGenericPod(f, pod1Name, node1Name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(port))
 		framework.ExpectNoError(err, "failed to create pod %s/%s", f.Namespace.Name, pod1Name)
-		_, err = createGenericPod(f, pod2Name, node2Name, f.Namespace.Name, command)
+		_, err = createGenericPod(f, pod2Name, node2Name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(port))
 		framework.ExpectNoError(err, "failed to create pod %s/%s", f.Namespace.Name, pod2Name)
 
 		pod2IP := getPodAddress(pod2Name, f.Namespace.Name)
 
 		ginkgo.By("Checking initial connectivity from one pod to the other and verifying that the connection is achieved")
 
-		stdout, err := e2ekubectl.RunKubectl(f.Namespace.Name, "exec", pod1Name, "--", "curl", fmt.Sprintf("%s/hostname", net.JoinHostPort(pod2IP, port)))
+		stdout, err := e2ekubectl.RunKubectl(f.Namespace.Name, "exec", pod1Name, "--", "curl", fmt.Sprintf("%s/hostname", net.JoinHostPort(pod2IP, "8080")))
 
 		if err != nil || stdout != pod2Name {
 			errChan <- fmt.Errorf("Error: attempted connection to pod %s found err:  %v", pod2Name, err)
@@ -2239,7 +2236,7 @@ var _ = ginkgo.Describe("e2e delete databases", func() {
 				framework.Logf(msg + ": finish connectivity test.")
 				break L
 			default:
-				stdout, err := e2ekubectl.RunKubectl(f.Namespace.Name, "exec", pod1Name, "--", "curl", fmt.Sprintf("%s/hostname", net.JoinHostPort(pod2IP, port)))
+				stdout, err := e2ekubectl.RunKubectl(f.Namespace.Name, "exec", pod1Name, "--", "curl", fmt.Sprintf("%s/hostname", net.JoinHostPort(pod2IP, "8080")))
 				if err != nil || stdout != pod2Name {
 					errChan <- err
 					framework.Failf("Error: attempted connection to pod %s found err:  %v", pod2Name, err)

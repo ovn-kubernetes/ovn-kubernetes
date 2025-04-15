@@ -16,6 +16,8 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
+
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -801,7 +803,7 @@ var _ = ginkgo.Describe("Services", func() {
 			}
 
 			ginkgo.By("Creating an external container to send the traffic from")
-			createClusterExternalContainer(clientContainerName, agnhostImage,
+			createClusterExternalContainer(clientContainerName, images.AgnHost(),
 				[]string{"--network", "kind", "-P"},
 				[]string{"netexec", "--http-port=80"})
 
@@ -1005,7 +1007,7 @@ spec:
 			}
 
 			ginkgo.By("Creating an external container to send the ingress nodeport service traffic from")
-			extClientv4, extClientv6 := createClusterExternalContainer(clientContainerName, agnhostImage,
+			extClientv4, extClientv6 := createClusterExternalContainer(clientContainerName, images.AgnHost(),
 				[]string{"--network", "kind", "-P"},
 				[]string{"netexec", "--http-port=80"})
 
@@ -1217,7 +1219,7 @@ spec:
 			ginkgo.By("Creating an external client")
 			clientIPv4, clientIPv6 := createClusterExternalContainer(
 				clientContainerName,
-				agnhostImage,
+				images.AgnHost(),
 				[]string{"--privileged", "--network", "kind"},
 				[]string{"pause"},
 			)
@@ -1342,12 +1344,12 @@ func getServiceBackendsFromPod(execPod *v1.Pod, serviceIP string, servicePort in
 // or "fd69::5"
 var _ = ginkgo.Describe("Service Hairpin SNAT", func() {
 	const (
-		svcName                 = "service-hairpin-test"
-		backendName             = "hairpin-backend-pod"
-		endpointHTTPPort        = "80"
-		serviceHTTPPort         = 6666
-		V4LBHairpinMasqueradeIP = "169.254.0.5"
-		V6LBHairpinMasqueradeIP = "fd69::5"
+		svcName                        = "service-hairpin-test"
+		backendName                    = "hairpin-backend-pod"
+		endpointHTTPPort        uint16 = 80
+		serviceHTTPPort                = 6666
+		V4LBHairpinMasqueradeIP        = "169.254.0.5"
+		V6LBHairpinMasqueradeIP        = "fd69::5"
 	)
 
 	var (
@@ -1376,12 +1378,12 @@ var _ = ginkgo.Describe("Service Hairpin SNAT", func() {
 	ginkgo.It("Should ensure service hairpin traffic is SNATed to hairpin masquerade IP; Switch LB", func() {
 
 		ginkgo.By("creating an ovn-network backend pod")
-		_, err := createGenericPodWithLabel(f, backendName, backendNodeName, namespaceName, []string{"/agnhost", "netexec", fmt.Sprintf("--http-port=%s", endpointHTTPPort)}, hairpinPodSel)
+		_, err := createGenericPodWithLabel(f, backendName, backendNodeName, namespaceName, getAgnHostHTTPPortBindFullCMD(endpointHTTPPort), hairpinPodSel)
 		framework.ExpectNoError(err, fmt.Sprintf("unable to create backend pod: %s, err: %v", backendName, err))
 
 		ginkgo.By("creating a TCP service service-for-pods with type=ClusterIP in namespace " + namespaceName)
 
-		svcIP, err = createServiceForPodsWithLabel(f, namespaceName, serviceHTTPPort, endpointHTTPPort, "ClusterIP", hairpinPodSel)
+		svcIP, err = createServiceForPodsWithLabel(f, namespaceName, serviceHTTPPort, fmt.Sprintf("%d", endpointHTTPPort), "ClusterIP", hairpinPodSel)
 		framework.ExpectNoError(err, fmt.Sprintf("unable to create service: service-for-pods, err: %v", err))
 
 		err = framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, "service-for-pods", 1, time.Second, wait.ForeverTestTimeout)
@@ -1417,7 +1419,7 @@ var _ = ginkgo.Describe("Service Hairpin SNAT", func() {
 
 		ginkgo.By("creating a TCP service service-for-pods with type=NodePort in namespace " + namespaceName)
 
-		svcIP, err = createServiceForPodsWithLabel(f, namespaceName, serviceHTTPPort, endpointHTTPPort, "NodePort", hairpinPodSel)
+		svcIP, err = createServiceForPodsWithLabel(f, namespaceName, serviceHTTPPort, fmt.Sprintf("%d", endpointHTTPPort), "NodePort", hairpinPodSel)
 		framework.ExpectNoError(err, fmt.Sprintf("unable to create service: service-for-pods, err: %v", err))
 
 		err = framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, "service-for-pods", 1, time.Second, wait.ForeverTestTimeout)

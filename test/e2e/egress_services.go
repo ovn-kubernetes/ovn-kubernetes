@@ -13,6 +13,8 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
+
 	"golang.org/x/sync/errgroup"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -57,7 +59,7 @@ var _ = ginkgo.Describe("EgressService", func() {
 		}
 		nodes = n.Items
 		ginkgo.By("Creating the external kind container to send the traffic to/from")
-		externalKindIPv4, externalKindIPv6 = createClusterExternalContainer(externalKindContainerName, agnhostImage,
+		externalKindIPv4, externalKindIPv6 = createClusterExternalContainer(externalKindContainerName, images.AgnHost(),
 			[]string{"--privileged", "--network", "kind"}, []string{"netexec", fmt.Sprintf("--http-port=%d", podHTTPPort)})
 
 	})
@@ -1163,7 +1165,7 @@ metadata:
 
 				ginkgo.By(fmt.Sprintf("Creating container %s", net.containerName))
 				// Setting the --hostname here is important since later we poke the container's /hostname endpoint
-				net.containerIPv4, net.containerIPv6 = createClusterExternalContainer(net.containerName, agnhostImage,
+				net.containerIPv4, net.containerIPv6 = createClusterExternalContainer(net.containerName, images.AgnHost(),
 					[]string{"--privileged", "--network", net.name, "--hostname", net.containerName}, []string{"netexec", fmt.Sprintf("--http-port=%d", podHTTPPort)})
 
 				ginkgo.By(fmt.Sprintf("Adding a listener for the shared IPv4 %s on %s", sharedIPv4, net.containerName))

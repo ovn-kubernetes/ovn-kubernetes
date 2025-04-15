@@ -12,6 +12,8 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
+
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -97,7 +99,7 @@ var _ = ginkgo.Describe("Pod to external server PMTUD", func() {
 			serverPodName = fmt.Sprintf(echoServerPodNameTemplate, serverPodPort)
 			framework.Logf("Creating server pod listening on TCP and UDP port %d", serverPodPort)
 			agntHostCmds := []string{"netexec", "--http-port", fmt.Sprintf("%d", serverPodPort), "--udp-port", fmt.Sprintf("%d", serverPodPort)}
-			externalIpv4, externalIpv6 := createClusterExternalContainer(serverPodName, agnhostImage,
+			externalIpv4, externalIpv6 := createClusterExternalContainer(serverPodName, images.AgnHost(),
 				[]string{"--network", "kind", "-P", "--cap-add", "NET_ADMIN"},
 				agntHostCmds,
 			)

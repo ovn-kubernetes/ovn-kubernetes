@@ -14,6 +14,8 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
+
 	"github.com/google/go-cmp/cmp"
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	v1 "k8s.io/api/core/v1"
@@ -132,7 +134,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 			ciWorkerNodeSrc := ovnWorkerNode
 
 			// start the container that will act as an external gateway
-			_, err := runCommand(containerRuntime, "run", "-itd", "--privileged", "--network", externalContainerNetwork, "--name", gwContainerNameAlt1, agnhostImage)
+			_, err := runCommand(containerRuntime, "run", "-itd", "--privileged", "--network", externalContainerNetwork, "--name", gwContainerNameAlt1, images.AgnHost())
 			if err != nil {
 				framework.Failf("failed to start external gateway test container %s: %v", gwContainerNameAlt1, err)
 			}
@@ -206,7 +208,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				framework.Failf("Failed to ping the first gateway network %s from container %s on node %s: %v", exGWRemoteIpAlt1, ovnContainer, ovnWorkerNode, err)
 			}
 			// start the container that will act as a new external gateway that the tests will be updated to use
-			_, err = runCommand(containerRuntime, "run", "-itd", "--privileged", "--network", externalContainerNetwork, "--name", gwContainerNameAlt2, agnhostImage)
+			_, err = runCommand(containerRuntime, "run", "-itd", "--privileged", "--network", externalContainerNetwork, "--name", gwContainerNameAlt2, images.AgnHost())
 			if err != nil {
 				framework.Failf("failed to start external gateway test container %s: %v", gwContainerNameAlt2, err)
 			}
@@ -319,7 +321,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 
 			// start the first container that will act as an external gateway
 			_, err := runCommand(containerRuntime, "run", "-itd", "--privileged", "--network", externalContainerNetwork,
-				"--name", gwContainer, agnhostImage)
+				"--name", gwContainer, images.AgnHost())
 			if err != nil {
 				framework.Failf("failed to start external gateway test container %s: %v", gwContainer, err)
 			}
