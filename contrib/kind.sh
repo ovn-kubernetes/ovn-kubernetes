@@ -220,9 +220,9 @@ parse_args() {
                                                 ;;
             -kt | --keep-taint )                KIND_REMOVE_TAINT=false
                                                 ;;
-            -n4 | --no-ipv4 )                   KIND_IPV4_SUPPORT=false
+            -n4 | --no-ipv4 )                   PLATFORM_IPV4_SUPPORT=false
                                                 ;;
-            -i6 | --ipv6 )                      KIND_IPV6_SUPPORT=true
+            -i6 | --ipv6 )                      PLATFORM_IPV6_SUPPORT=true
                                                 ;;
             -is | --ipsec )                     ENABLE_IPSEC=true
                                                 ;;
@@ -390,8 +390,8 @@ print_params() {
      echo "KIND_DNS_DOMAIN = $KIND_DNS_DOMAIN"
      echo "KIND_CONFIG_FILE = $KIND_CONFIG"
      echo "KIND_REMOVE_TAINT = $KIND_REMOVE_TAINT"
-     echo "KIND_IPV4_SUPPORT = $KIND_IPV4_SUPPORT"
-     echo "KIND_IPV6_SUPPORT = $KIND_IPV6_SUPPORT"
+     echo "PLATFORM_IPV4_SUPPORT = $PLATFORM_IPV4_SUPPORT"
+     echo "PLATFORM_IPV6_SUPPORT = $PLATFORM_IPV6_SUPPORT"
      echo "ENABLE_IPSEC = $ENABLE_IPSEC"
      echo "KIND_ALLOW_SYSTEM_WRITES = $KIND_ALLOW_SYSTEM_WRITES"
      echo "KIND_EXPERIMENTAL_PROVIDER = $KIND_EXPERIMENTAL_PROVIDER"
@@ -556,8 +556,8 @@ set_default_params() {
   KIND_DNS_DOMAIN=${KIND_DNS_DOMAIN:-"cluster.local"}
   KIND_CONFIG=${KIND_CONFIG:-${DIR}/kind.yaml.j2}
   KIND_REMOVE_TAINT=${KIND_REMOVE_TAINT:-true}
-  KIND_IPV4_SUPPORT=${KIND_IPV4_SUPPORT:-true}
-  KIND_IPV6_SUPPORT=${KIND_IPV6_SUPPORT:-false}
+  PLATFORM_IPV4_SUPPORT=${PLATFORM_IPV4_SUPPORT:-true}
+  PLATFORM_IPV6_SUPPORT=${PLATFORM_IPV6_SUPPORT:-false}
   ENABLE_IPSEC=${ENABLE_IPSEC:-false}
   OVN_HYBRID_OVERLAY_ENABLE=${OVN_HYBRID_OVERLAY_ENABLE:-false}
   OVN_DISABLE_SNAT_MULTIPLE_GWS=${OVN_DISABLE_SNAT_MULTIPLE_GWS:-false}
@@ -669,7 +669,7 @@ set_default_params() {
 }
 
 check_ipv6() {
-  if [ "$KIND_IPV6_SUPPORT" == true ]; then
+  if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     # Collect additional IPv6 data on test environment
     ERROR_FOUND=false
     TMPVAR=$(sysctl net.ipv6.conf.all.forwarding | awk '{print $3}')
@@ -705,23 +705,23 @@ check_ipv6() {
 }
 
 set_cluster_cidr_ip_families() {
-  if [ "$KIND_IPV4_SUPPORT" == true ] && [ "$KIND_IPV6_SUPPORT" == false ]; then
+  if [ "$PLATFORM_IPV4_SUPPORT" == true ] && [ "$PLATFORM_IPV6_SUPPORT" == false ]; then
     IP_FAMILY=""
     NET_CIDR=$NET_CIDR_IPV4
     SVC_CIDR=$SVC_CIDR_IPV4
     echo "IPv4 Only Support: --net-cidr=$NET_CIDR --svc-cidr=$SVC_CIDR"
-  elif [ "$KIND_IPV4_SUPPORT" == false ] && [ "$KIND_IPV6_SUPPORT" == true ]; then
+  elif [ "$PLATFORM_IPV4_SUPPORT" == false ] && [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     IP_FAMILY="ipv6"
     NET_CIDR=$NET_CIDR_IPV6
     SVC_CIDR=$SVC_CIDR_IPV6
     echo "IPv6 Only Support: --net-cidr=$NET_CIDR --svc-cidr=$SVC_CIDR"
-  elif [ "$KIND_IPV4_SUPPORT" == true ] && [ "$KIND_IPV6_SUPPORT" == true ]; then
+  elif [ "$PLATFORM_IPV4_SUPPORT" == true ] && [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     IP_FAMILY="dual"
     NET_CIDR=$NET_CIDR_IPV4,$NET_CIDR_IPV6
     SVC_CIDR=$SVC_CIDR_IPV4,$SVC_CIDR_IPV6
     echo "Dual Stack Support: --net-cidr=$NET_CIDR --svc-cidr=$SVC_CIDR"
   else
-    echo "Invalid setup. KIND_IPV4_SUPPORT and/or KIND_IPV6_SUPPORT must be true."
+    echo "Invalid setup. PLATFORM_IPV4_SUPPORT and/or PLATFORM_IPV6_SUPPORT must be true."
     exit 1
   fi
 }
@@ -1108,7 +1108,7 @@ docker_create_second_interface() {
 # and makes sure the control-plane node is reachable by substituting 127.0.0.1
 # with the control-plane container's IP
 run_script_in_container() {
-  if [ "$KIND_IPV4_SUPPORT" == true ]; then
+  if [ "$PLATFORM_IPV4_SUPPORT" == true ]; then
     local master_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ${KIND_CLUSTER_NAME}-control-plane | head -n 1)
     sed -i -- "s/server: .*/server: https:\/\/$master_ip:6443/g" $KUBECONFIG
   else

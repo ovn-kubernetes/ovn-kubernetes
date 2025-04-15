@@ -161,10 +161,10 @@ EOF
   pip install -r dev-env/requirements.txt
 
   local ip_family ipv6_network
-  if [ "$KIND_IPV4_SUPPORT" == true ] && [ "$KIND_IPV6_SUPPORT" == true ]; then
+  if [ "$PLATFORM_IPV4_SUPPORT" == true ] && [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     ip_family="dual"
     ipv6_network="--ipv6 --subnet=${METALLB_CLIENT_NET_SUBNET_IPV6}"
-  elif  [ "$KIND_IPV6_SUPPORT" == true ]; then
+  elif  [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     ip_family="ipv6"
     ipv6_network="--ipv6 --subnet=${METALLB_CLIENT_NET_SUBNET_IPV6}"
   else
@@ -177,7 +177,7 @@ EOF
   docker network rm -f clientnet
   docker network create --subnet="${METALLB_CLIENT_NET_SUBNET_IPV4}" ${ipv6_network} --driver bridge clientnet
   docker network connect clientnet frr
-  if  [ "$KIND_IPV6_SUPPORT" == true ]; then
+  if  [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     # Enable IPv6 forwarding in FRR
     docker exec frr sysctl -w net.ipv6.conf.all.forwarding=1
   fi
@@ -218,10 +218,10 @@ EOF
 
   KIND_NODES=$(kind_get_nodes)
   for n in ${KIND_NODES}; do
-    if [ "$KIND_IPV4_SUPPORT" == true ]; then
+    if [ "$PLATFORM_IPV4_SUPPORT" == true ]; then
         docker exec "${n}" ip route add "${client_subnets_v4}" via "${kind_network_v4}"
     fi
-    if [ "$KIND_IPV6_SUPPORT" == true ]; then
+    if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
         docker exec "${n}" ip -6 route add "${client_subnets_v6}" via "${kind_network_v6}"
     fi
   done
@@ -229,10 +229,10 @@ EOF
   # for now, we only run one test with metalLB load balancer for which this
   # one svcVIP (192.168.10.0/fc00:f853:ccd:e799::) is more than enough since at a time we will only
   # have one load balancer service
-  if [ "$KIND_IPV4_SUPPORT" == true ]; then
+  if [ "$PLATFORM_IPV4_SUPPORT" == true ]; then
     docker exec lbclient ip route add 192.168.10.0 via "${client_network_v4}" dev eth0
   fi
-  if [ "$KIND_IPV6_SUPPORT" == true ]; then
+  if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     docker exec lbclient ip -6 route add fc00:f853:ccd:e799:: via "${client_network_v6}" dev eth0
   fi
   sleep 30
@@ -284,7 +284,7 @@ delete_metallb_dir() {
 kubectl_wait_pods() {
   # IPv6 cluster seems to take a little longer to come up, so extend the wait time.
   OVN_TIMEOUT=300
-  if [ "$KIND_IPV6_SUPPORT" == true ]; then
+  if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     OVN_TIMEOUT=480
   fi
 
@@ -688,7 +688,7 @@ deploy_frr_external_container() {
   # Add route reflector client config
   sed -i '/remote-as 64512/a \ neighbor {{ . }} route-reflector-client' frr/frr.conf.tmpl
 
-  if [ "$KIND_IPV6_SUPPORT" == true ]; then
+  if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     # Check if IPv6 address-family section exists
     if ! grep -q 'address-family ipv6 unicast' frr/frr.conf.tmpl; then
       # Add IPv6 address-family section if it doesn't exist
@@ -706,7 +706,7 @@ deploy_frr_external_container() {
   fi
   ./demo.sh
   popd || exit 1
-  if  [ "$KIND_IPV6_SUPPORT" == true ]; then
+  if  [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     # Enable IPv6 forwarding in FRR
     docker exec frr sysctl -w net.ipv6.conf.all.forwarding=1
   fi
@@ -725,10 +725,10 @@ deploy_bgp_external_server() {
   #                                                                            |    ovn-worker2    |    from default pod network)
   #                                                                            ---------------------
   local ip_family ipv6_network
-  if [ "$KIND_IPV4_SUPPORT" == true ] && [ "$KIND_IPV6_SUPPORT" == true ]; then
+  if [ "$PLATFORM_IPV4_SUPPORT" == true ] && [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     ip_family="dual"
     ipv6_network="--ipv6 --subnet=${BGP_SERVER_NET_SUBNET_IPV6}"
-  elif  [ "$KIND_IPV6_SUPPORT" == true ]; then
+  elif  [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     ip_family="ipv6"
     ipv6_network="--ipv6 --subnet=${BGP_SERVER_NET_SUBNET_IPV6}"
   else
@@ -746,7 +746,7 @@ deploy_bgp_external_server() {
   bgp_network_frr_v4=$($OCI_BIN inspect -f '{{index .NetworkSettings.Networks "bgpnet" "IPAddress"}}' frr)
   echo "FRR kind network IPv4: ${bgp_network_frr_v4}"
   $OCI_BIN exec bgpserver ip route replace default via "$bgp_network_frr_v4"
-  if  [ "$KIND_IPV6_SUPPORT" == true ] ; then
+  if  [ "$PLATFORM_IPV6_SUPPORT" == true ] ; then
     bgp_network_frr_v6=$($OCI_BIN inspect -f '{{index .NetworkSettings.Networks "bgpnet" "GlobalIPv6Address"}}' frr)
     echo "FRR kind network IPv6: ${bgp_network_frr_v6}"
     $OCI_BIN exec bgpserver ip -6 route replace default via "$bgp_network_frr_v6"
@@ -781,7 +781,7 @@ install_ffr_k8s() {
   # Allow receiving the bgp external server's prefix
   sed -i '/mode: filtered/a\            prefixes:\n            - prefix: '"${BGP_SERVER_NET_SUBNET_IPV4}"'' receive_filtered.yaml
   # If IPv6 is enabled, add the IPv6 prefix as well
-  if [ "$KIND_IPV6_SUPPORT" == true ]; then
+  if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     # Find all line numbers where the IPv4 prefix is defined
     IPv6_LINE="            - prefix: ${BGP_SERVER_NET_SUBNET_IPV6}"
     # Process each occurrence of the IPv4 prefix
@@ -827,7 +827,7 @@ EOF
       # Get subnet information
       subnet_json=$(kubectl get node $node -o jsonpath='{.metadata.annotations.k8s\.ovn\.org/node-subnets}')
       
-      if [ "$KIND_IPV4_SUPPORT" == true ]; then
+      if [ "$PLATFORM_IPV4_SUPPORT" == true ]; then
         # Extract IPv4 address (first address)
         node_ipv4=$(echo "$node_ips" | awk '{print $1}')
         ipv4_subnet=$(echo "$subnet_json" | jq -r '.default[0]')
@@ -840,7 +840,7 @@ EOF
       fi
 
       # Add IPv6 route if enabled
-      if [ "$KIND_IPV6_SUPPORT" == true ]; then
+      if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
         # Extract IPv6 address (second address, if present)
         node_ipv6=$(echo "$node_ips" | awk '{print $2}')
         ipv6_subnet=$(echo "$subnet_json" | jq -r '.default[1] // empty')
