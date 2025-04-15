@@ -70,7 +70,7 @@ func setupHostRedirectPod(f *framework.Framework, node *v1.Node, exContainerName
 	cmd := []string{"docker", "exec", exContainerName}
 	cmd = append(cmd, ipCmd...)
 	cmd = append(cmd, "route", "add", fmt.Sprintf("%s/%d", redirectIP, mask), "via", nodeIP)
-	_, err := runCommand(cmd...)
+	_, err := infraprovider.Get().ExecExternalContainerCommand(externalContainer, cmd) // cleanup not needed because containers persist for a single tests lifetime
 	if err != nil {
 		return err
 	}
@@ -376,10 +376,11 @@ func isolateIPv6Networks(networkA, networkB string) error {
 	bridgeIDLimit := 12
 	for _, network := range []string{networkA, networkB} {
 		// output will be wrapped in single quotes
-		id, err := runCommand(containerRuntime, "inspect", network, "--format", "'{{.Id}}'")
+		idByte, err := exec.Command("docker", "inspect", network, "--format", "'{{.Id}}'").CombinedOutput()
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to inspect network %s: %v", network, err)
 		}
+		id := string(idByte)
 		if len(id) <= bridgeIDLimit+1 {
 			return fmt.Errorf("invalid bridge ID %q", id)
 		}
@@ -972,6 +973,9 @@ var _ = ginkgo.Describe("e2e control plane", func() {
 		var originalMTU int
 
 		ginkgo.BeforeEach(func() {
+			node, err := e2enode.GetRandomReadySchedulableNode(context.Background(), f.ClientSet)
+			framework.ExpectNoError(err, "must get a schedulable Node")
+			testNodeName = node.GetName()
 			// get the interface current mtu and store it as original value to be able to reset it after the test
 			res, err := runCommand(containerRuntime, "exec", testNodeName, "cat", "/sys/class/net/breth0/mtu")
 			if err != nil {

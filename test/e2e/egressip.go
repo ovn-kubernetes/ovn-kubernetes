@@ -1320,7 +1320,7 @@ spec:
 		}
 
 		ginkgo.By("4. Check connectivity from pod to an external container and verify that the srcIP is the expected egressIP from object1")
-		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(targetNode, pod1Name, podNamespace.Name, true, []string{assignedEIP}))
+		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod1Name, true, []string{assignedEIP}))
 		framework.ExpectNoError(err, "Step 4. Check connectivity from pod to an zexternal container and verify that the srcIP is the expected egressIP from object1, failed: %v", err)
 
 		ginkgo.By("5. Create an EgressIP object2 with one egress IP3 defined (standby egressIP)")
@@ -1458,7 +1458,7 @@ spec:
 		framework.ExpectNoError(err, "Step 10. Check that the status is of length one and that standby egressIP3 of egressIP object2 is assigned to node2 (pod2Node/egress1Node), failed: %v", err)
 
 		ginkgo.By("11. Check connectivity from pod to an external container and verify that the srcIP is the expected standby egressIP3 from object2")
-		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(targetNode, pod1Name, podNamespace.Name, true, []string{egressIP3.String()}))
+		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer, podNamespace.Name, pod1Name, true, []string{egressIP3.String()}))
 		framework.ExpectNoError(err, "Step 11. Check connectivity from pod to an external container and verify that the srcIP is the expected standby egressIP3 from object2, failed: %v", err)
 
 		ginkgo.By("12. Check the OVN DB to ensure SNATs are added for only the standby egressIP")
