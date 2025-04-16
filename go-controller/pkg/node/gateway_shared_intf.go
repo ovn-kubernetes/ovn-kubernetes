@@ -44,6 +44,9 @@ const (
 	// bridge to move packets between host and external for etp=local traffic.
 	// The hex number 0xe745ecf105, represents etp(e74)-service(5ec)-flows which makes it easier for debugging.
 	etpSvcOpenFlowCookie = "0xe745ecf105"
+	// pmtudOpenFlowCookie identifies the flows used to drop ICMP type (3) destination unreachable,
+	// fragmentation-needed (4)
+	pmtudOpenFlowCookie = "0x0304"
 	// ovsLocalPort is the name of the OVS bridge local port
 	ovsLocalPort = "LOCAL"
 	// ctMarkOVN is the conntrack mark value for OVN traffic
@@ -81,6 +84,10 @@ const (
 	// to the appropriate network.
 	nftablesUDNMarkExternalIPsV4Map = "udn-mark-external-ips-v4"
 	nftablesUDNMarkExternalIPsV6Map = "udn-mark-external-ips-v6"
+
+	// outputPortDrop is used to signify that there is no output port for an openflow action and the
+	// rendered action should result in a drop
+	outputPortDrop = "output-port-drop"
 )
 
 // configureUDNServicesNFTables configures the nftables chains, rules, and verdict maps
@@ -507,7 +514,7 @@ func (npw *nodePortWatcher) createLbAndExternalSvcFlows(service *corev1.Service,
 					etpSvcOpenFlowCookie, npw.ofportPhys))
 		} else if config.Gateway.Mode == config.GatewayModeShared {
 			// add the ICMP Fragmentation flow for shared gateway mode.
-			icmpFlow := npw.generateICMPFragmentationFlow(nwDst, externalIPOrLBIngressIP, netConfig.ofPortPatch, cookie)
+			icmpFlow := generateICMPFragmentationFlow(externalIPOrLBIngressIP, netConfig.ofPortPatch, npw.ofportPhys, cookie, 110)
 			externalIPFlows = append(externalIPFlows, icmpFlow)
 			// case2 (see function description for details)
 			externalIPFlows = append(externalIPFlows,
@@ -573,20 +580,28 @@ func (npw *nodePortWatcher) generateARPBypassFlow(ofPorts []string, ofPortPatch,
 	return arpFlow
 }
 
-func (npw *nodePortWatcher) generateICMPFragmentationFlow(nwDst, ipAddr string, ofPortPatch, cookie string) string {
+func generateICMPFragmentationFlow(ipAddr, outputPort, inPort, cookie string, priority int) string {
 	// we send any ICMP destination unreachable, fragmentation needed to the OVN pipeline too so that
 	// path MTU discovery continues to work.
 	icmpMatch := "icmp"
 	icmpType := 3
 	icmpCode := 4
+	nwDst := "nw_dst"
 	if utilnet.IsIPv6String(ipAddr) {
 		icmpMatch = "icmp6"
 		icmpType = 2
 		icmpCode = 0
+		nwDst = "ipv6_dst"
 	}
-	icmpFragmentationFlow := fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, %s=%s, icmp_type=%d, "+
-		"icmp_code=%d, actions=output:%s",
-		cookie, npw.ofportPhys, icmpMatch, nwDst, ipAddr, icmpType, icmpCode, ofPortPatch)
+
+	action := fmt.Sprintf("output:%s", outputPort)
+	if outputPort == outputPortDrop {
+		action = "drop"
+	}
+
+	icmpFragmentationFlow := fmt.Sprintf("cookie=%s, priority=%d, in_port=%s, %s, %s=%s, icmp_type=%d, "+
+		"icmp_code=%d, actions=%s",
+		cookie, priority, inPort, icmpMatch, nwDst, ipAddr, icmpType, icmpCode, action)
 	return icmpFragmentationFlow
 }
 
@@ -2126,6 +2141,21 @@ func commonFlows(hostSubnets []*net.IPNet, bridge *bridgeConfiguration) ([]strin
 	}
 
 	return dftFlows, nil
+}
+
+func pmtudDropFlows(bridge *bridgeConfiguration, ipAddrs []string) []string {
+	var flows []string
+	if config.Gateway.Mode != config.GatewayModeShared {
+		return nil
+	}
+	for _, addr := range ipAddrs {
+		for _, netConfig := range bridge.patchedNetConfigs() {
+			flows = append(flows,
+				generateICMPFragmentationFlow(addr, outputPortDrop, netConfig.ofPortPatch, pmtudOpenFlowCookie, 700))
+		}
+	}
+
+	return flows
 }
 
 // ovnToHostNetworkNormalActionFlows returns the flows that allow IP{v4,v6} traffic from the OVN network to the host network
