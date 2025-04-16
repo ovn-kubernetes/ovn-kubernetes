@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
+
 	"github.com/onsi/ginkgo/extensions/table"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
@@ -577,7 +579,7 @@ spec:
 				for _, ip := range ipFamilies {
 					// manually add the a secondary IP to each node
 					framework.Logf("Adding IP %s to node %s", ip, nodeName)
-					_, err = runCommand(containerRuntime, "exec", nodeName, "ip", "addr", "add", ip, "dev", "breth0")
+					_, err = runCommand(containerRuntime, "exec", nodeName, "ip", "addr", "add", ip, "dev", deploymentconfig.Get().PrimaryInterfaceName())
 					if err != nil && !strings.Contains(err.Error(), "Address already assigned") {
 						framework.Failf("failed to add new IP address %s to node %s: %v", ip, nodeName, err)
 					}

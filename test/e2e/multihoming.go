@@ -2297,7 +2297,7 @@ func setBridgeMappings(cs clientset.Interface, mappings ...BridgeMapping) error 
 	}
 
 	for _, pods := range pods {
-		if err := configureBridgeMappings(pods.Name, mappings...); err != nil {
+		if err := configureBridgeMappings(pods.Namespace, pods.Name, mappings...); err != nil {
 			return err
 		}
 	}

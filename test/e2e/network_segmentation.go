@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
+
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
 	"github.com/onsi/ginkgo/v2"
@@ -1721,7 +1723,7 @@ spec:
 					By(fmt.Sprintf("asserting the server pod IP %v is reachable from client before restart of OVNKube node pod on Node %s", serverIP, testPod.Spec.Hostname))
 					Expect(reachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)).ShouldNot(HaveOccurred(), "must have connectivity to server pre OVN Kube node Pod restart")
 					By(fmt.Sprintf("restarting OVNKube node Pod located on Node %s which hosts test Pod %s/%s", testPod.Spec.NodeName, testPod.Namespace, testPod.Name))
-					Expect(restartOVNKubeNodePod(cs, ovnNamespace, testPod.Spec.NodeName)).ShouldNot(HaveOccurred(), "restart of OVNKube node pod must succeed")
+					Expect(restartOVNKubeNodePod(cs, deploymentconfig.Get().OVNKubernetesNamespace(), testPod.Spec.NodeName)).ShouldNot(HaveOccurred(), "restart of OVNKube node pod must succeed")
 					By(fmt.Sprintf("asserting the server pod IP %v is reachable from client post restart", serverIP))
 					Expect(reachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)).ShouldNot(HaveOccurred(), "must have connectivity to server post restart")
 				}

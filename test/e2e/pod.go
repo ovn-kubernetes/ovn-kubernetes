@@ -12,6 +12,7 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
 
 	v1 "k8s.io/api/core/v1"
@@ -212,7 +213,7 @@ var _ = ginkgo.Describe("Pod to external server PMTUD", func() {
 						// flush this on all 3 nodes else we will run into the
 						// bug: https://issues.redhat.com/browse/OCPBUGS-7609.
 						// TODO: Revisit this once https://bugzilla.redhat.com/show_bug.cgi?id=2169839 is fixed.
-						ovnKubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+						ovnKubeNodePods, err := f.ClientSet.CoreV1().Pods(deploymentconfig.Get().OVNKubernetesNamespace()).List(context.TODO(), metav1.ListOptions{
 							LabelSelector: "app=ovnkube-node",
 						})
 						if err != nil {
@@ -224,7 +225,7 @@ var _ = ginkgo.Describe("Pod to external server PMTUD", func() {
 							if isInterconnectEnabled() {
 								containerName = "ovnkube-controller"
 							}
-							_, err := e2ekubectl.RunKubectl(ovnNamespace, "exec", ovnKubeNodePod.Name, "--container", containerName, "--",
+							_, err := e2ekubectl.RunKubectl(deploymentconfig.Get().OVNKubernetesNamespace(), "exec", ovnKubeNodePod.Name, "--container", containerName, "--",
 								"ip", "route", "flush", "cache")
 							framework.ExpectNoError(err, "Flushing the ip route cache failed")
 						}
@@ -383,7 +384,7 @@ var _ = ginkgo.Describe("blocking ICMP needs frag", func() {
 	var echoMtuRegex = regexp.MustCompile(`expires.*mtu.*1400`)
 	f := wrappedTestFramework("icmp-needs-frag")
 	cleanupFn := func() {
-		ovnKubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+		ovnKubeNodePods, err := f.ClientSet.CoreV1().Pods(deploymentconfig.Get().OVNKubernetesNamespace()).List(context.TODO(), metav1.ListOptions{
 			LabelSelector: "app=ovnkube-node",
 		})
 		if err != nil {
@@ -395,7 +396,7 @@ var _ = ginkgo.Describe("blocking ICMP needs frag", func() {
 			if isInterconnectEnabled() {
 				containerName = "ovnkube-controller"
 			}
-			_, err := e2ekubectl.RunKubectl(ovnNamespace, "exec", ovnKubeNodePod.Name, "--container", containerName, "--",
+			_, err := e2ekubectl.RunKubectl(deploymentconfig.Get().OVNKubernetesNamespace(), "exec", ovnKubeNodePod.Name, "--container", containerName, "--",
 				"ip", "route", "flush", "cache")
 			framework.ExpectNoError(err, "Flushing the ip route cache failed")
 		}

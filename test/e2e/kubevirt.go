@@ -19,6 +19,7 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/diagnostics"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/kubevirt"
@@ -205,7 +206,7 @@ var _ = Describe("Kubevirt Virtual Machines", func() {
 			nodePort := fmt.Sprintf("%d", svc.Spec.Ports[0].NodePort)
 			port := fmt.Sprintf("%d", svc.Spec.Ports[0].Port)
 
-			d.TCPDumpDaemonSet([]string{"any", "eth0", "breth0"}, fmt.Sprintf("port %s or port %s", port, nodePort))
+			d.TCPDumpDaemonSet([]string{"any", deploymentconfig.Get().PrimaryInterfaceName(), deploymentconfig.Get().ExternalBridgeName()}, fmt.Sprintf("port %s or port %s", port, nodePort))
 			for _, address := range worker.Status.Addresses {
 				if address.Type != corev1.NodeHostName {
 					addr := net.JoinHostPort(address.Address, nodePort)
