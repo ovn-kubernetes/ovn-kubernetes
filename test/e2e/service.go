@@ -2247,11 +2247,13 @@ spec:
 		if err := os.WriteFile("egressip.yaml", []byte(egressIPConfig), 0644); err != nil {
 			framework.Failf("Unable to write CRD config to disk: %v", err)
 		}
-		defer func() {
+		ginkgo.DeferCleanup(func() error {
+			e2ekubectl.RunKubectlOrDie("default", "delete", "-f", "egressip.yaml", "--ignore-not-found=true")
 			if err := os.Remove("egressip.yaml"); err != nil {
-				framework.Logf("Unable to remove the CRD config from disk: %v", err)
+				return fmt.Errorf("unable to remove the CRD config from disk: %v", err)
 			}
-		}()
+			return nil
+		})
 
 		framework.Logf("Create the EgressIP configuration")
 		e2ekubectl.RunKubectlOrDie("default", "create", "-f", "egressip.yaml")
@@ -2289,7 +2291,7 @@ spec:
 		} else if strings.Count(targetPodLogs, lbClientIPv6) >= 2 {
 			framework.Logf("found the expected srcIP %s!", lbClientIPv6)
 		} else {
-			framework.Failf("could not get expected srcIP!")
+			framework.Failf("could not get expected srcIP!, target pod logs:\n%q", targetPodLogs)
 		}
 	})
 })

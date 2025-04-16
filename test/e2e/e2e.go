@@ -2201,9 +2201,7 @@ var _ = ginkgo.Describe("e2e delete databases", func() {
 		framework.ExpectNoError(<-errChan)
 	}
 
-	twoPodsContinuousConnectivityTest := func(f *framework.Framework,
-		node1Name string, node2Name string,
-		syncChan chan string, errChan chan error) {
+	twoPodsContinuousConnectivityTest := func(f *framework.Framework, node1Name string, node2Name string, syncChan chan string, errChan chan error) {
 		const (
 			pod1Name                  string        = "connectivity-test-pod1"
 			pod2Name                  string        = "connectivity-test-pod2"
@@ -2220,7 +2218,8 @@ var _ = ginkgo.Describe("e2e delete databases", func() {
 
 		ginkgo.By("Checking initial connectivity from one pod to the other and verifying that the connection is achieved")
 
-		stdout, err := e2ekubectl.RunKubectl(f.Namespace.Name, "exec", pod1Name, "--", "curl", fmt.Sprintf("%s/hostname", net.JoinHostPort(pod2IP, "8080")))
+		stdout, err := e2ekubectl.RunKubectl(f.Namespace.Name, "exec", pod1Name, "--", "curl", fmt.Sprintf("%s/hostname",
+			net.JoinHostPort(pod2IP, fmt.Sprintf("%d", podPort))))
 
 		if err != nil || stdout != pod2Name {
 			errChan <- fmt.Errorf("Error: attempted connection to pod %s found err:  %v", pod2Name, err)
@@ -2235,7 +2234,8 @@ var _ = ginkgo.Describe("e2e delete databases", func() {
 				framework.Logf(msg + ": finish connectivity test.")
 				break L
 			default:
-				stdout, err := e2ekubectl.RunKubectl(f.Namespace.Name, "exec", pod1Name, "--", "curl", fmt.Sprintf("%s/hostname", net.JoinHostPort(pod2IP, "8080")))
+				stdout, err := e2ekubectl.RunKubectl(f.Namespace.Name, "exec", pod1Name, "--", "curl", fmt.Sprintf("%s/hostname",
+					net.JoinHostPort(pod2IP, fmt.Sprintf("%d", podPort))))
 				if err != nil || stdout != pod2Name {
 					errChan <- err
 					framework.Failf("Error: attempted connection to pod %s found err:  %v", pod2Name, err)

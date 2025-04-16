@@ -411,9 +411,9 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigPa
 
 	targetPodAndTest := func(namespace, fromName, toName, toIP string, toPort uint16) wait.ConditionFunc {
 		return func() (bool, error) {
-			dstPortStr := fmt.Sprintf("%d", toPort)
-			stdout, err := e2ekubectl.RunKubectl(namespace, "exec", fromName, "--", "curl", "--connect-timeout", "2",
-				fmt.Sprintf("%s/hostname", net.JoinHostPort(toIP, dstPortStr)))
+			stdout, err := e2ekubectl.RunKubectl(namespace, "exec", fromName, "--",
+				"curl", "--connect-timeout", "2", fmt.Sprintf("%s/hostname",
+					net.JoinHostPort(toIP, fmt.Sprintf("%d", toPort))))
 			if err != nil || stdout != toName {
 				framework.Logf("Error: attempted connection to pod %s found err:  %v", toName, err)
 				return false, nil
@@ -427,7 +427,7 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigPa
 			for _, podName := range podNames {
 				_, err := e2ekubectl.RunKubectl(namespace, "exec", podName, "--", "curl", "--connect-timeout", "2", "-k", destination)
 				if err != nil {
-					framework.Logf("Error: attempted connection to API server found err:  %v", err)
+					framework.Logf("Error: attempted connection to destination %s failed, found err:  %v", destination, err)
 					return false, nil
 				}
 			}

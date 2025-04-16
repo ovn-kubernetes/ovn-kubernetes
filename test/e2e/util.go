@@ -7,7 +7,6 @@ import (
 	"math/rand"
 	"net"
 	"os"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -1409,7 +1408,7 @@ func waitForPodNotFoundInNamespace(ctx context.Context, c clientset.Interface, p
 }
 
 func isDefaultNetworkAdvertised() bool {
-	podNetworkValue, err := exec.Command("kubectl", "get", "ra", "default", "--template={{index .spec.advertisements 0}}").CombinedOutput()
+	podNetworkValue, err := e2ekubectl.RunKubectl("default", "get", "ra", "default", "--template={{index .spec.advertisements 0}}")
 	if err != nil {
 		return false
 	}
