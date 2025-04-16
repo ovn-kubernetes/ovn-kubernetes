@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
 	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
@@ -588,13 +589,13 @@ spec:
 					// manually add the a secondary IP to each node
 					framework.Logf("Adding IP %s to node %s", ip, nodeName)
 					_, err = infraprovider.Get().ExecK8NodeCommand(nodeName, []string{
-						"ip", "addr", "add", ip, "dev", infraprovider.Get().PrimaryInterfaceName(),
+						"ip", "addr", "add", ip, "dev", deploymentconfig.Get().PrimaryInterfaceName(),
 					})
 					if err != nil && !strings.Contains(err.Error(), "Address already assigned") {
 						framework.Failf("failed to add new IP address %s to node %s: %v", ip, nodeName, err)
 					}
 					ginkgo.DeferCleanup(func() error {
-						_, err = infraprovider.Get().ExecK8NodeCommand(nodeName, []string{"ip", "addr", "delete", ip, "dev", infraprovider.Get().PrimaryInterfaceName()})
+						_, err = infraprovider.Get().ExecK8NodeCommand(nodeName, []string{"ip", "addr", "delete", ip, "dev", deploymentconfig.Get().PrimaryInterfaceName()})
 						return err
 					})
 					toCurlSecondaryNodeIPAddresses.Insert(ip)
