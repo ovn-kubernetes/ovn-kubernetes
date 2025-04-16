@@ -1699,10 +1699,21 @@ func getNetlinkAddr(ip, netmask string) *netlink.Addr {
 // containsRoutes returns true if routes in routes1 are presents in routes routes2
 func containsRoutes(routes1 []netlink.Route, routes2 []netlink.Route) bool {
 	var found bool
+	eq := func(route1, route2 netlink.Route) bool {
+		// normalize fields that we don't set explicitly and just get set once
+		// the route is installed
+		if route1.Family == netlink.FAMILY_ALL {
+			route1.Family = route2.Family
+		}
+		if route1.Protocol == unix.RTPROT_UNSPEC {
+			route1.Protocol = route2.Protocol
+		}
+		return util.RouteEqual(&route1, &route2)
+	}
 	for _, route1 := range routes1 {
 		found = false
 		for _, route2 := range routes2 {
-			if routemanager.RoutePartiallyEqual(route1, route2) {
+			if eq(route1, route2) {
 				found = true
 				break
 			}
