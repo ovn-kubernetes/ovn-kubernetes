@@ -203,13 +203,12 @@ spec:
 				}, pollingTimeout, pollingInterval).Should(BeTrue())
 
 				By(fmt.Sprintf("Finding worker node %s's IPv%d migration IP address", workerNode.Name, ipAddrFamily))
-				// Pick something at the end of the range to avoid conflicts with the kind / docker network setup.
+				// Pick something at the end of the range to avoid conflicts with existing allocated IPs.
 				// Also exclude the current node IPs and the egressIP (if already selected).
-				workerNode, err := f.ClientSet.CoreV1().Nodes().Get(context.Background(), workerNode.Name, metav1.GetOptions{})
-				framework.ExpectNoError(err, "Node %s must be available", workerNode.Name)
+				var err error
 				migrationWorkerNodeIP, err = findLastFreeSubnetIP(
-					workerNode.Name,
-					workerNode.Name,
+					externalContainerName,
+					externalContainerIPs[ipAddrFamily],
 					[]string{workerNodeIPs[ipAddrFamily], secondaryWorkerNodeIPs[ipAddrFamily], egressIP},
 				)
 				framework.Logf("New worker node IP will be %s", migrationWorkerNodeIP)
@@ -231,6 +230,9 @@ spec:
 					Expect(err).NotTo(HaveOccurred())
 					Expect(ovnkubeNodePods.Items).To(HaveLen(1))
 					ovnkubePodWorkerNode := ovnkubeNodePods.Items[0]
+
+					err = e2epod.WaitTimeoutForPodReadyInNamespace(context.TODO(), f.ClientSet, ovnkubePodWorkerNode.GetName(), ovnkubePodWorkerNode.GetNamespace(), 200*time.Second)
+					framework.ExpectNoError(err, "failed waiting for ovnkube to be ready")
 
 					Eventually(func() bool {
 						By("waiting for the ovn-encap-ip to be reconfigured")
@@ -268,7 +270,8 @@ spec:
 							Expect(err).NotTo(HaveOccurred())
 							Expect(ovnkubeNodePods.Items).To(HaveLen(1))
 							ovnkubePodWorkerNode := ovnkubeNodePods.Items[0]
-
+							err = e2epod.WaitTimeoutForPodReadyInNamespace(context.TODO(), f.ClientSet, ovnkubePodWorkerNode.GetName(), ovnkubePodWorkerNode.GetNamespace(), 200*time.Second)
+							framework.ExpectNoError(err, "failed waiting for ovnkube to be ready")
 							Eventually(func() bool {
 								By("waiting for the ovn-encap-ip to be reconfigured")
 								return isOVNEncapIPReady(workerNode.Name, migrationWorkerNodeIP, ovnkubePodWorkerNode.Name)
@@ -367,6 +370,8 @@ spec:
 							Expect(err).NotTo(HaveOccurred())
 							Expect(ovnkubeNodePods.Items).To(HaveLen(1))
 							ovnkubePodWorkerNode := ovnkubeNodePods.Items[0]
+							err = e2epod.WaitTimeoutForPodReadyInNamespace(context.TODO(), f.ClientSet, ovnkubePodWorkerNode.GetName(), ovnkubePodWorkerNode.GetNamespace(), 200*time.Second)
+							framework.ExpectNoError(err, "failed waiting for ovnkube to be ready")
 
 							Eventually(func() bool {
 								By("waiting for the ovn-encap-ip to be reconfigured")
@@ -497,6 +502,8 @@ spec:
 							Expect(err).NotTo(HaveOccurred())
 							Expect(ovnkubeNodePods.Items).To(HaveLen(1))
 							ovnkubePodWorkerNode := ovnkubeNodePods.Items[0]
+							err = e2epod.WaitTimeoutForPodReadyInNamespace(context.TODO(), f.ClientSet, ovnkubePodWorkerNode.GetName(), ovnkubePodWorkerNode.GetNamespace(), 200*time.Second)
+							framework.ExpectNoError(err, "failed waiting for ovnkube to be ready")
 
 							Eventually(func() bool {
 								By("waiting for the ovn-encap-ip to be reconfigured")

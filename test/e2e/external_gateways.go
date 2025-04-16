@@ -145,6 +145,9 @@ var _ = ginkgo.Describe("External Gateway", func() {
 			// non-ha ci mode runs a set of kind nodes prefixed with ovn-worker
 			nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 1)
 			framework.ExpectNoError(err, "failed to find 3 ready and schedulable nodes")
+			if len(nodes.Items) < 1 {
+				framework.Failf("requires at least 1 Nodes")
+			}
 			node := &nodes.Items[0]
 			ni, err := infraprovider.Get().GetK8NodeNetworkInterface(node.Name, network)
 			framework.ExpectNoError(err, "must get network interface info")

@@ -146,19 +146,24 @@ var _ = Describe("Network Segmentation", func() {
 						clientPodConfig podConfiguration,
 						serverPodConfig podConfiguration,
 					) {
+						By("ensure 2 scheduable Nodes")
+						nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), cs, 2)
+						framework.ExpectNoError(err)
+						if len(nodes.Items) < 2 {
+							ginkgo.Skip("requires at least 2 Nodes")
+						}
+						node1Name, node2Name := nodes.Items[0].GetName(), nodes.Items[1].GetName()
+
 						By("creating the network")
 						netConfig.namespace = f.Namespace.Name
 						Expect(createNetworkFn(netConfig)).To(Succeed())
 
-						nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.Background(), cs, 2)
-						Expect(err).NotTo(HaveOccurred())
-						Expect(len(nodes.Items)).To(BeNumerically(">=", 2), "must be at least 2 Nodes to schedule pods")
-
 						By("creating client/server pods")
 						serverPodConfig.namespace = f.Namespace.Name
-						serverPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[0].Name}
+						serverPodConfig.nodeSelector = map[string]string{nodeHostnameKey: node1Name}
 						clientPodConfig.namespace = f.Namespace.Name
-						clientPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[1].Name}
+						clientPodConfig.nodeSelector = map[string]string{nodeHostnameKey: node2Name}
+
 						runUDNPod(cs, f.Namespace.Name, serverPodConfig, nil)
 						runUDNPod(cs, f.Namespace.Name, clientPodConfig, nil)
 
@@ -201,7 +206,7 @@ var _ = Describe("Network Segmentation", func() {
 						*podConfig(
 							"server-pod",
 							withCommand(func() []string {
-								return httpServerContainerCmd(port)
+								return httpServerContainerCmd(podClusterNetPort)
 							}),
 						),
 					),
@@ -219,7 +224,7 @@ var _ = Describe("Network Segmentation", func() {
 						*podConfig(
 							"server-pod",
 							withCommand(func() []string {
-								return httpServerContainerCmd(port)
+								return httpServerContainerCmd(podClusterNetPort)
 							}),
 						),
 					),
@@ -238,9 +243,18 @@ var _ = Describe("Network Segmentation", func() {
 							)
 						}
 
+						By("ensure enough schedable nodes exist")
+						nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.Background(), cs, 1)
+						Expect(err).NotTo(HaveOccurred())
+						if len(nodes.Items) < 1 {
+							framework.Failf("expect at least one Node: %v", err)
+						}
+						nodeName := nodes.Items[0].Name
+						udnPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodeName}
+
 						By("Creating second namespace for default network pods")
 						defaultNetNamespace := f.Namespace.Name + "-default"
-						_, err := cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
+						_, err = cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
 							ObjectMeta: metav1.ObjectMeta{
 								Name: defaultNetNamespace,
 							},
@@ -255,10 +269,6 @@ var _ = Describe("Network Segmentation", func() {
 						netConfigParams.namespace = f.Namespace.Name
 						Expect(createNetworkFn(netConfigParams)).To(Succeed())
 
-						nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.Background(), cs, 1)
-						Expect(err).NotTo(HaveOccurred())
-						Expect(len(nodes.Items)).To(BeNumerically(">=", 1), "must be at least one Node to schedule pods")
-						nodeName := nodes.Items[0].Name
 						udnPodConfig.namespace = f.Namespace.Name
 						udnPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[0].Name}
 
@@ -488,7 +498,7 @@ var _ = Describe("Network Segmentation", func() {
 						*podConfig(
 							"udn-pod",
 							withCommand(func() []string {
-								return httpServerContainerCmd(port)
+								return httpServerContainerCmd(podClusterNetPort)
 							}),
 						),
 					),
@@ -503,7 +513,7 @@ var _ = Describe("Network Segmentation", func() {
 						*podConfig(
 							"udn-pod",
 							withCommand(func() []string {
-								return httpServerContainerCmd(port)
+								return httpServerContainerCmd(podClusterNetPort)
 							}),
 						),
 					),
@@ -524,11 +534,12 @@ var _ = Describe("Network Segmentation", func() {
 						namespaceRed := f.Namespace.Name + "-" + red
 						namespaceBlue := f.Namespace.Name + "-" + blue
 
-						nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), cs, 2)
-						framework.ExpectNoError(err)
-
-						node1Name := nodes.Items[0].Name
-						node2Name := nodes.Items[1].Name
+						nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.Background(), f.ClientSet, 2)
+						framework.ExpectNoError(err, "two scheduable nodes are required")
+						if len(nodes.Items) < 2 {
+							ginkgo.Skip("requires at least 2 Nodes")
+						}
+						node1Name, node2Name := nodes.Items[0].GetName(), nodes.Items[1].GetName()
 
 						for _, namespace := range []string{namespaceRed, namespaceBlue} {
 							By("Creating namespace " + namespace)
@@ -586,9 +597,7 @@ var _ = Describe("Network Segmentation", func() {
 								//ensure testing accross nodes
 								if i%2 == 0 {
 									podConfig.nodeSelector = map[string]string{nodeHostnameKey: node1Name}
-
 								} else {
-
 									podConfig.nodeSelector = map[string]string{nodeHostnameKey: node2Name}
 								}
 								By("creating pod " + podConfig.name + " in " + podConfig.namespace)
@@ -713,19 +722,19 @@ var _ = Describe("Network Segmentation", func() {
 			}
 			nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), cs, 2)
 			framework.ExpectNoError(err)
+			if len(nodes.Items) < 2 {
+				ginkgo.Skip("requires at least 2 Nodes")
+			}
 			node1Name, node2Name := nodes.Items[0].Name, nodes.Items[1].Name
 			clientPodConfig := *podConfig(
 				"client-pod",
-				withNodeSelector(map[string]string{nodeHostnameKey: node1Name}),
 			)
 			serverPodConfig := *podConfig(
 				"server-pod",
 				withCommand(func() []string {
-					return httpServerContainerCmd(port)
+					return httpServerContainerCmd(podClusterNetPort)
 				}),
-				withNodeSelector(map[string]string{nodeHostnameKey: node2Name}),
 			)
-
 			By("creating second namespace")
 			_, err = cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
@@ -761,7 +770,9 @@ var _ = Describe("Network Segmentation", func() {
 
 			By(fmt.Sprintf("creating client/server pods in namespace %s", netConfig2.namespace))
 			serverPodConfig.namespace = netConfig2.namespace
+			serverPodConfig.nodeSelector = map[string]string{nodeHostnameKey: node1Name}
 			clientPodConfig.namespace = netConfig2.namespace
+			clientPodConfig.nodeSelector = map[string]string{nodeHostnameKey: node2Name}
 			runUDNPod(cs, netConfig2.namespace, serverPodConfig, nil)
 			runUDNPod(cs, netConfig2.namespace, clientPodConfig, nil)
 
@@ -1575,16 +1586,20 @@ spec:
 			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, f.Namespace.Name, testUdnName), 5*time.Second, time.Second).Should(Succeed())
 			By("create UDN pod")
 			cfg := podConfig(testPodName, withCommand(func() []string {
-				return httpServerContainerCmd(port)
+				return httpServerContainerCmd(podClusterNetPort)
 			}))
 			cfg.namespace = f.Namespace.Name
 			udnPod = runUDNPod(cs, f.Namespace.Name, *cfg, nil)
 		})
 
 		It("should react to k8s.ovn.org/open-default-ports annotations changes", func() {
-			nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), cs, 1)
-			framework.ExpectNoError(err)
-			node1Name := nodes.Items[0].Name
+			By("ensure enough Nodes are available for scheduling")
+			nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.Background(), f.ClientSet, 2)
+			framework.ExpectNoError(err, "two scheduleable Nodes must be available")
+			if len(nodes.Items) < 2 {
+				ginkgo.Skip("requires at least 2 Nodes")
+			}
+			node1Name, node2Name := nodes.Items[0].GetName(), nodes.Items[1].GetName()
 			By("Creating second namespace for default network pod")
 			defaultNetNamespace := f.Namespace.Name + "-default"
 			_, err = cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
@@ -1603,7 +1618,7 @@ spec:
 			Expect(err).NotTo(HaveOccurred())
 
 			By("creating default network hostNetwork client pod")
-			hostNetPod, err := createPod(f, "host-net-client-pod", node1Name,
+			hostNetPod, err := createPod(f, "host-net-client-pod", node2Name,
 				defaultNetNamespace, []string{}, nil, func(pod *v1.Pod) {
 					pod.Spec.HostNetwork = true
 				})
@@ -1717,13 +1732,18 @@ spec:
 				Expect(err).ShouldNot(HaveOccurred(), "creating manifest must succeed")
 				DeferCleanup(cleanup)
 				Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, netConfig.namespace, netConfig.name), 5*time.Second, time.Second).Should(Succeed())
+				By("ensure two Nodes are available for scheduling")
 				nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.Background(), f.ClientSet, 2)
 				Expect(err).ShouldNot(HaveOccurred(), "test requires at least two schedulable nodes")
+				if len(nodes.Items) < 2 {
+					ginkgo.Skip("requires at least 2 Nodes")
+				}
+				node1Name, node2Name := nodes.Items[0].GetName(), nodes.Items[1].GetName()
 				Expect(len(nodes.Items)).Should(BeNumerically(">=", 2), "test requires >= 2 Ready nodes")
 				serverPodConfig.namespace = f.Namespace.Name
-				serverPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[0].Name}
+				serverPodConfig.nodeSelector = map[string]string{nodeHostnameKey: node1Name}
 				clientPodConfig.namespace = f.Namespace.Name
-				clientPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[1].Name}
+				clientPodConfig.nodeSelector = map[string]string{nodeHostnameKey: node2Name}
 				runUDNPod(cs, f.Namespace.Name, serverPodConfig, nil)
 				runUDNPod(cs, f.Namespace.Name, clientPodConfig, nil)
 				serverIP, err := podIPsForUserDefinedPrimaryNetwork(cs, f.Namespace.Name, serverPodConfig.name, namespacedName(f.Namespace.Name, netConfig.name), 0)
@@ -1754,7 +1774,7 @@ spec:
 				*podConfig(
 					"server-pod",
 					withCommand(func() []string {
-						return httpServerContainerCmd(port)
+						return httpServerContainerCmd(podClusterNetPort)
 					}),
 				),
 			),
@@ -1772,7 +1792,7 @@ spec:
 				*podConfig(
 					"server-pod",
 					withCommand(func() []string {
-						return httpServerContainerCmd(port)
+						return httpServerContainerCmd(podClusterNetPort)
 					}),
 				),
 			),

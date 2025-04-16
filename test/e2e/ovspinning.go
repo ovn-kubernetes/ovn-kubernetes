@@ -9,6 +9,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
 
+	"k8s.io/kubernetes/test/e2e/framework"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 )
 
@@ -17,12 +18,9 @@ var _ = ginkgo.Describe("OVS CPU affinity pinning", func() {
 	f := wrappedTestFramework("ovspinning")
 
 	ginkgo.It("can be enabled on specific nodes by creating enable_dynamic_cpu_affinity file", func() {
-
-		nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.Background(), f.ClientSet, 2)
-		gomega.Expect(err).ToNot(gomega.HaveOccurred(), "must get one Ready Node")
-		if len(nodes.Items) < 2 {
-			ginkgo.Skip("test requires two Ready and Schedulable Nodes")
-		}
+		nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 2)
+		framework.ExpectNoError(err)
+		gomega.Expect(len(nodes.Items)).To(gomega.BeNumerically(">", 1))
 		nodeWithEnabledOvsAffinityPinning := nodes.Items[0].Name
 		nodeWithDisabledOvsAffinityPinning := nodes.Items[1].Name
 
