@@ -2228,9 +2228,11 @@ var _ = ginkgo.Describe("e2e delete databases", func() {
 			singlePodConnectivityTest(f, "before-delete-db-files")
 			framework.Logf("setup two pods for continuous connectivity test")
 			syncChan, errChan := make(chan string), make(chan error)
+			nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.Background(), f.ClientSet, 2)
+			node1Name, node2Name := nodes.Items[0].GetName(), nodes.Items[1].GetName()
 			go func() {
 				defer ginkgo.GinkgoRecover()
-				twoPodsContinuousConnectivityTest(f, ovnWorkerNode, ovnWorkerNode2, syncChan, errChan)
+				twoPodsContinuousConnectivityTest(f, node1Name, node2Name, syncChan, errChan)
 			}()
 
 			select {

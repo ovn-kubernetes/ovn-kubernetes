@@ -70,14 +70,8 @@ var _ = ginkgo.Describe("Creating a static pod on a node", func() {
 
 	f := wrappedTestFramework("staticpods")
 
-	var cs clientset.Interface
-
-	ginkgo.BeforeEach(func() {
-		cs = f.ClientSet
-	})
-
 	ginkgo.It("Should successfully create then remove a static pod", func() {
-		nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), cs, 3)
+		nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 3)
 		framework.ExpectNoError(err)
 		if len(nodes.Items) < 1 {
 			framework.Failf("Test requires 1 Ready node, but there are none")
