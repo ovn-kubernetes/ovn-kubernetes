@@ -10,9 +10,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
+
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
-
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -63,12 +64,13 @@ var _ = ginkgo.Describe("Unidling", func() {
 		ginkgo.By("creating an annotated service with no endpoints and idle annotation")
 		_, err = jig.CreateTCPServiceWithPort(context.TODO(), func(svc *v1.Service) {
 			svc.Annotations = map[string]string{ovnServiceIdledAt: "true"}
-		}, int32(port))
+		}, int32(servicePort))
 		framework.ExpectNoError(err)
 
 		// Add a backend pod to the service in one node
 		ginkgo.By("creating a backend pod for the service " + serviceName)
-		serverPod := e2epod.NewAgnhostPod(namespace, "pod-backend", nil, nil, []v1.ContainerPort{{ContainerPort: 9376}}, "serve-hostname")
+		serverPodPort := infraprovider.Get().GetK8HostPort()
+		serverPod := e2epod.NewAgnhostPod(namespace, "pod-backend", nil, nil, []v1.ContainerPort{{ContainerPort: int32(serverPodPort)}}, "serve-hostname")
 		serverPod.Labels = jig.Labels
 		serverPod.Spec.NodeName = nodeName
 		e2epod.NewPodClient(f).CreateSync(context.TODO(), serverPod)
@@ -82,7 +84,7 @@ var _ = ginkgo.Describe("Unidling", func() {
 			pod.Spec.NodeName = nodeName
 		})
 
-		serviceAddress := net.JoinHostPort(serviceName, strconv.Itoa(port))
+		serviceAddress := net.JoinHostPort(serviceName, strconv.Itoa(servicePort))
 		framework.Logf("waiting up to %v to connect to %v", e2eservice.KubeProxyEndpointLagTimeout, serviceAddress)
 		cmd := fmt.Sprintf("/agnhost connect --timeout=3s %s", serviceAddress)
 
@@ -138,14 +140,14 @@ var _ = ginkgo.Describe("Unidling", func() {
 			ginkgo.By("creating an annotated service with no endpoints and idle annotation")
 			service, err = jig.CreateTCPServiceWithPort(context.TODO(), func(svc *v1.Service) {
 				svc.Annotations = map[string]string{ovnServiceIdledAt: "true"}
-			}, int32(port))
+			}, int32(servicePort))
 			framework.ExpectNoError(err)
 
 			ginkgo.By(fmt.Sprintf("creating %v on node %v", podName, node))
 			clientPod = e2epod.CreateExecPodOrFail(context.TODO(), f.ClientSet, namespace, podName, func(pod *v1.Pod) {
 				pod.Spec.NodeName = node
 			})
-			serviceAddress := net.JoinHostPort(serviceName, strconv.Itoa(port))
+			serviceAddress := net.JoinHostPort(serviceName, strconv.Itoa(servicePort))
 			framework.Logf("waiting up to %v to connect to %v", e2eservice.KubeProxyEndpointLagTimeout, serviceAddress)
 			cmd = fmt.Sprintf("/agnhost connect --timeout=10s %s", serviceAddress)
 		})
@@ -179,7 +181,7 @@ var _ = ginkgo.Describe("Unidling", func() {
 		})
 
 		ginkgo.It("Should not generate a NeedPods event when has backend", func() {
-			createBackend(f, serviceName, namespace, node, jig.Labels, port)
+			createBackend(f, serviceName, namespace, node, jig.Labels, servicePort)
 			gomega.Eventually(func() serviceStatus {
 				return checkService(clientPod, cmd)
 			}, 10*time.Second, 1*time.Second).Should(gomega.Equal(works), "Service is failing")
@@ -190,7 +192,7 @@ var _ = ginkgo.Describe("Unidling", func() {
 		})
 
 		ginkgo.It("Should generate a NeedPods event when backends were added and then removed", func() {
-			be := createBackend(f, serviceName, namespace, node, jig.Labels, port)
+			be := createBackend(f, serviceName, namespace, node, jig.Labels, servicePort)
 			e2epod.NewPodClient(f).DeleteSync(context.TODO(), be.Name, metav1.DeleteOptions{}, e2epod.DefaultPodDeletionTimeout)
 			err := framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, f.Namespace.Name, serviceName, 0, time.Second, wait.ForeverTestTimeout)
 			framework.ExpectNoError(err)
@@ -220,7 +222,7 @@ var _ = ginkgo.Describe("Unidling", func() {
 				wg.Done()
 
 				time.Sleep(time.Second)
-				createBackend(f, serviceName, namespace, node, jig.Labels, port)
+				createBackend(f, serviceName, namespace, node, jig.Labels, servicePort)
 				close(done)
 			}()
 			wg.Wait()
@@ -256,14 +258,14 @@ var _ = ginkgo.Describe("Unidling", func() {
 			node = nodes.Items[0].Name
 			ginkgo.By("creating an annotated service with no endpoints and idle annotation")
 			service, err = jig.CreateTCPServiceWithPort(context.TODO(), func(svc *v1.Service) {
-			}, int32(port))
+			}, int32(servicePort))
 			framework.ExpectNoError(err)
 
 			ginkgo.By(fmt.Sprintf("creating %v on node %v", podName, node))
 			clientPod = e2epod.CreateExecPodOrFail(context.TODO(), f.ClientSet, namespace, podName, func(pod *v1.Pod) {
 				pod.Spec.NodeName = node
 			})
-			serviceAddress := net.JoinHostPort(serviceName, strconv.Itoa(port))
+			serviceAddress := net.JoinHostPort(serviceName, strconv.Itoa(servicePort))
 			framework.Logf("waiting up to %v to connect to %v", e2eservice.KubeProxyEndpointLagTimeout, serviceAddress)
 			cmd = fmt.Sprintf("/agnhost connect --timeout=3s %s", serviceAddress)
 		})
@@ -295,7 +297,7 @@ var _ = ginkgo.Describe("Unidling", func() {
 		})
 
 		ginkgo.It("Should not generate a NeedPods event when has backend", func() {
-			createBackend(f, serviceName, namespace, node, jig.Labels, port)
+			createBackend(f, serviceName, namespace, node, jig.Labels, servicePort)
 			gomega.Eventually(func() serviceStatus {
 				return checkService(clientPod, cmd)
 			}, 10*time.Second, 1*time.Second).Should(gomega.Equal(works), "Service is failing")
@@ -306,7 +308,7 @@ var _ = ginkgo.Describe("Unidling", func() {
 		})
 
 		ginkgo.It("Should not generate a NeedPods event when backends were added and then removed", func() {
-			be := createBackend(f, serviceName, namespace, node, jig.Labels, port)
+			be := createBackend(f, serviceName, namespace, node, jig.Labels, servicePort)
 			e2epod.NewPodClient(f).DeleteSync(context.TODO(), be.Name, metav1.DeleteOptions{}, e2epod.DefaultPodDeletionTimeout)
 			err := framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, f.Namespace.Name, serviceName, 0, time.Second, wait.ForeverTestTimeout)
 			framework.ExpectNoError(err)
