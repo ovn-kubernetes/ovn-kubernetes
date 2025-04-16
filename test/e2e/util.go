@@ -48,14 +48,7 @@ const (
 	ovnGatewayMTUSupport = "k8s.ovn.org/gateway-mtu-support"
 )
 
-var containerRuntime = "docker"
 var singleNodePerZoneResult *bool
-
-func init() {
-	if cr, found := os.LookupEnv("CONTAINER_RUNTIME"); found {
-		containerRuntime = cr
-	}
-}
 
 type IpNeighbor struct {
 	Dst    string `dst`
