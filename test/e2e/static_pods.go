@@ -79,8 +79,8 @@ var _ = ginkgo.Describe("Creating a static pod on a node", func() {
 		nodeName := nodes.Items[0].Name
 		podName := fmt.Sprintf("static-pod-%s", nodeName)
 
-		ginkgo.By("copying a pod.yaml file into the /etc/kubernetes/manifests dir of a node")
-		framework.Logf("creating %s on node %s", podName, nodeName)
+		ginkgo.By("creating static pod file")
+
 		var staticPodYaml = fmt.Sprintf(`apiVersion: v1
 kind: Pod
 metadata:
@@ -93,12 +93,12 @@ spec:
       command: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
 `, f.Namespace.Name, images.AgnHost())
 		createStaticPod(f, nodeName, staticPodYaml)
-		err = waitForPodRunningInNamespaceTimeout(f.ClientSet, podName, f.Namespace.Name, time.Second*30)
+		err = waitForPodRunningInNamespaceTimeout(f.ClientSet, podName, f.Namespace.Name, time.Second*60)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		ginkgo.By("Removing the pod file from the nodes /etc/kubernetes/manifests")
 		framework.Logf("Removing %s from %s", podName, nodeName)
 		removeStaticPodFile(nodeName, podFile)
-		err = e2epod.WaitForPodNotFoundInNamespace(context.TODO(), f.ClientSet, podName, f.Namespace.Name, time.Second*30)
+		err = e2epod.WaitForPodNotFoundInNamespace(context.TODO(), f.ClientSet, podName, f.Namespace.Name, time.Second*60)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	})
 })

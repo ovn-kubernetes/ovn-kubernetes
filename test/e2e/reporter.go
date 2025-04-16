@@ -136,8 +136,7 @@ func DumpBGPInfo(basePath, testName string, f *framework.Framework) {
 		if len(pod.Spec.Containers) == 1 { // we dump only in case of frr
 			break
 		}
-		podExec := ForPod(pod.Namespace, pod.Name, "frr")
-		dump, err := rawDump(podExec, "/etc/frr/frr.conf", "/etc/frr/frr.log")
+		dump, err = rawDump(pod.Namespace, pod.Name, "/etc/frr/frr.conf", "/etc/frr/frr.log")
 		if err != nil {
 			framework.Logf("External frr dump for pod %s failed %v", pod.Name, err)
 			continue
@@ -189,40 +188,40 @@ func rawDump(namespace, containerName string, filesToDump ...string) (string, er
 	}
 
 	res += "####### BGP Neighbors\n"
-	out, err = exec.Exec("vtysh", "-c", "show bgp neighbor")
+	out, err = e2epodoutput.RunHostCmd(namespace, containerName, "vtysh -c show bgp neighbor")
 	if err != nil {
 		allerrs = errors.Wrapf(allerrs, "\nFailed exec show bgp neighbor: %v", err)
 	}
 	res += out
 
 	res += "####### BFD Peers\n"
-	out, err = exec.Exec("vtysh", "-c", "show bfd peer")
+	out, err = e2epodoutput.RunHostCmd(namespace, containerName, "vtysh -c show bfd peer")
 	if err != nil {
 		allerrs = errors.Wrapf(allerrs, "\nFailed exec show bfd peer: %v", err)
 	}
 	res += out
 
 	res += "####### Routes published by BGP Speakers\n"
-	out, err = exec.Exec("vtysh", "-c", "show ip bgp detail")
+	out, err = e2epodoutput.RunHostCmd(namespace, containerName, "vtysh -c show ip bgp detail")
 	if err != nil {
 		allerrs = errors.Wrapf(allerrs, "\nFailed exec show ip bgp detail: %v", err)
 	}
 	res += out
 
 	res += "####### ip route show\n"
-	out, err = exec.Exec("bash", "-c", "ip route show")
+	out, err = e2epodoutput.RunHostCmd(namespace, containerName, "ip route show")
 	if err != nil {
 		allerrs = errors.Wrapf(allerrs, "\nFailed exec ip route show: %v", err)
 	}
 	res += out
 
 	res += "####### Check for any crashinfo files\n"
-	if crashInfo, err := exec.Exec("bash", "-c", "ls /var/tmp/frr/bgpd.*/crashlog"); err == nil {
+	if crashInfo, err := e2epodoutput.RunHostCmd(namespace, containerName, "ls /var/tmp/frr/bgpd.*/crashlog"); err == nil {
 		crashInfo = strings.TrimSuffix(crashInfo, "\n")
 		files := strings.Split(crashInfo, "\n")
 		for _, file := range files {
 			res += fmt.Sprintf("####### Dumping crash file %s\n", file)
-			out, err = exec.Exec("bash", "-c", fmt.Sprintf("cat %s", file))
+			out, err = e2epodoutput.RunHostCmd(namespace, containerName, fmt.Sprintf("cat %s", file))
 			if err != nil {
 				allerrs = errors.Wrapf(allerrs, "\nFailed to cat bgpd crashinfo file %s: %v", file, err)
 			}
