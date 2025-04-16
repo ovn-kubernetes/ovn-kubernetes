@@ -23,6 +23,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
@@ -791,6 +792,30 @@ spec:
 			defer func() {
 				e2ekubectl.RunKubectlOrDie("default", "delete", "eip", "egress-svc-test-eip")
 			}()
+
+			ginkgo.By("wait until egress IP is assigned")
+			err = wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
+				egressIPs := egressIPs{}
+				egressIPStdout, err := e2ekubectl.RunKubectl("default", "get", "eip", "-o", "json")
+				if err != nil {
+					framework.Logf("Error: failed to get the EgressIP object, err: %v", err)
+					return false, nil
+				}
+				err = json.Unmarshal([]byte(egressIPStdout), &egressIPs)
+				if err != nil {
+					panic(err.Error())
+				}
+				if len(egressIPs.Items) == 0 {
+					return false, nil
+				}
+				if len(egressIPs.Items) > 1 {
+					framework.Failf("Didn't expect to retrieve more than one egress IP during the execution of this test, saw: %v", len(egressIPs.Items))
+				}
+				return len(egressIPs.Items[0].Status.Items) > 0, nil
+			})
+			if err != nil {
+				framework.Failf("Error: expected to have 1 egress IP assignment, got: 0")
+			}
 
 			ginkgo.By("Verifying the pods reach the external container with the service's ingress ip")
 			for _, pod := range pods {
