@@ -212,7 +212,7 @@ var _ = Describe("Kubevirt Virtual Machines", func() {
 			nodePort := fmt.Sprintf("%d", svc.Spec.Ports[0].NodePort)
 			port := fmt.Sprintf("%d", svc.Spec.Ports[0].Port)
 
-			d.TCPDumpDaemonSet([]string{"any", infraprovider.Get().PrimaryInterfaceName(), deploymentconfig.Get().ExternalBridgeName()}, fmt.Sprintf("port %s or port %s", port, nodePort))
+			d.TCPDumpDaemonSet([]string{"any", deploymentconfig.Get().PrimaryInterfaceName(), deploymentconfig.Get().ExternalBridgeName()}, fmt.Sprintf("port %s or port %s", port, nodePort))
 			for _, address := range worker.Status.Addresses {
 				if address.Type != corev1.NodeHostName {
 					addr := net.JoinHostPort(address.Address, nodePort)

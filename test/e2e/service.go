@@ -131,7 +131,7 @@ var _ = ginkgo.Describe("Services", func() {
 
 		ginkgo.By("Connecting to the service from another host-network pod on node " + nodeName)
 		// find the ovn-kube node pod on this node
-		pods, err := cs.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+		pods, err := cs.CoreV1().Pods(deploymentconfig.Get().OVNKubernetesNamespace()).List(context.TODO(), metav1.ListOptions{
 			LabelSelector: "app=ovnkube-node",
 			FieldSelector: "spec.nodeName=" + nodeName,
 		})
@@ -496,7 +496,8 @@ var _ = ginkgo.Describe("Services", func() {
 							// flush this on all 3 nodes else we will run into the
 							// bug: https://issues.redhat.com/browse/OCPBUGS-7609.
 							// TODO: Revisit this once https://bugzilla.redhat.com/show_bug.cgi?id=2169839 is fixed.
-							ovnKubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+							ovnKubernetesNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+							ovnKubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnKubernetesNamespace).List(context.TODO(), metav1.ListOptions{
 								LabelSelector: "name=ovnkube-node",
 							})
 							if err != nil {
@@ -508,11 +509,8 @@ var _ = ginkgo.Describe("Services", func() {
 								if isInterconnectEnabled() {
 									containerName = "ovnkube-controller"
 								}
-
-								arguments := []string{"exec", ovnKubeNodePod.Name, "--container", containerName, "--"}
-								sepFlush := strings.Split(flushCmd, " ")
-								arguments = append(arguments, sepFlush...)
-								_, err := e2ekubectl.RunKubectl(ovnNamespace, arguments...)
+								_, err := e2ekubectl.RunKubectl(ovnKubernetesNamespace, "exec", ovnKubeNodePod.Name, "--container", containerName, "--",
+									"ip", "route", "flush", "cache")
 								framework.ExpectNoError(err, "Flushing the ip route cache failed")
 							}
 						}
@@ -576,7 +574,7 @@ var _ = ginkgo.Describe("Services", func() {
 		framework.ExpectNoError(err)
 		node := nodes.Items[0]
 		nodeName := node.Name
-		pods, err := cs.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+		pods, err := cs.CoreV1().Pods(deploymentconfig.Get().OVNKubernetesNamespace()).List(context.TODO(), metav1.ListOptions{
 			LabelSelector: "app=ovnkube-node",
 			FieldSelector: "spec.nodeName=" + nodeName,
 		})
@@ -617,7 +615,7 @@ var _ = ginkgo.Describe("Services", func() {
 		framework.ExpectNoError(err)
 		cleanupFn = func() {
 			// initial pod used for host command may be deleted at this point, refetch
-			pods, err := cs.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+			pods, err := cs.CoreV1().Pods(deploymentconfig.Get().OVNKubernetesNamespace()).List(context.TODO(), metav1.ListOptions{
 				LabelSelector: "app=ovnkube-node",
 				FieldSelector: "spec.nodeName=" + nodeName,
 			})

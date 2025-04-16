@@ -222,7 +222,7 @@ spec:
 						true)
 					Expect(err).NotTo(HaveOccurred())
 
-					ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+					ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(deploymentconfig.Get().OVNKubernetesNamespace()).List(context.TODO(), metav1.ListOptions{
 						LabelSelector: "app=ovnkube-node",
 						FieldSelector: "spec.nodeName=" + workerNode.Name,
 					})
@@ -259,7 +259,7 @@ spec:
 							By("Setting rollbackNeeded to true")
 							rollbackNeeded = true
 
-							ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+							ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(deploymentconfig.Get().OVNKubernetesNamespace()).List(context.TODO(), metav1.ListOptions{
 								LabelSelector: "app=ovnkube-node",
 								FieldSelector: "spec.nodeName=" + workerNode.Name,
 							})
@@ -358,7 +358,7 @@ spec:
 							By("Setting rollbackNeeded to true")
 							rollbackNeeded = true
 
-							ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+							ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(deploymentconfig.Get().OVNKubernetesNamespace()).List(context.TODO(), metav1.ListOptions{
 								LabelSelector: "app=ovnkube-node",
 								FieldSelector: "spec.nodeName=" + workerNode.Name,
 							})
@@ -438,7 +438,7 @@ spec:
 					assignedNodePort = svc.Spec.Ports[0].NodePort
 
 					// find the ovn-kube node pod on this node
-					pods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+					pods, err := f.ClientSet.CoreV1().Pods(deploymentconfig.Get().OVNKubernetesNamespace()).List(context.TODO(), metav1.ListOptions{
 						LabelSelector: "app=ovnkube-node",
 						FieldSelector: "spec.nodeName=" + workerNode.Name,
 					})
@@ -488,7 +488,7 @@ spec:
 							By("Setting rollbackNeeded to true")
 							rollbackNeeded = true
 
-							ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+							ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(deploymentconfig.Get().OVNKubernetesNamespace()).List(context.TODO(), metav1.ListOptions{
 								LabelSelector: "app=ovnkube-node",
 								FieldSelector: "spec.nodeName=" + workerNode.Name,
 							})
@@ -536,7 +536,7 @@ spec:
 	When("when MAC address changes", func() {
 		BeforeEach(func() {
 			By("Storing original MAC")
-			ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+			ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(deploymentconfig.Get().OVNKubernetesNamespace()).List(context.TODO(), metav1.ListOptions{
 				LabelSelector: "app=ovnkube-node",
 				FieldSelector: "spec.nodeName=" + workerNode.Name,
 			})
@@ -636,16 +636,17 @@ func checkFlowsForMAC(ovnkPod v1.Pod, mac net.HardwareAddr) error {
 }
 
 func setMACAddress(ovnkubePod v1.Pod, mac string) error {
-	cmd := []string{"kubectl", "-n", ovnkubePod.Namespace, "exec", ovnkubePod.Name, "-c", "ovn-controller",
-		"--", "ovs-vsctl", "set", "bridge", "breth0", fmt.Sprintf("other-config:hwaddr=%s", mac)}
-	_, err := runCommand(cmd...)
-	return err
+	cmd := fmt.Sprintf("ovs-vsctl set bridge %s other-config:hwaddr=%s", deploymentconfig.Get().ExternalBridgeName(), mac)
+	_, err := e2epodoutput.RunHostCmd(ovnkubePod.Namespace, ovnkubePod.Name, cmd)
+	if err != nil {
+		return fmt.Errorf("failed to set MAC address on ovs bridge: %v", err)
+	}
+	return nil
 }
 
 func getMACAddress(ovnkubePod v1.Pod) (net.HardwareAddr, error) {
-	cmd := []string{"kubectl", "-n", ovnkubePod.Namespace, "exec", ovnkubePod.Name, "-c", "ovn-controller",
-		"--", "ip", "link", "show", "breth0"}
-	output, err := runCommand(cmd...)
+	cmd := fmt.Sprintf("ip link show %s", deploymentconfig.Get().ExternalBridgeName())
+	output, err := e2epodoutput.RunHostCmd(ovnkubePod.Namespace, ovnkubePod.Name, cmd)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ip link output: %w", err)
 	}
@@ -868,14 +869,12 @@ func isAddressReachableFromNode(nodeName, targetIP string) (bool, error) {
 
 func isOVNEncapIPReady(nodeName, nodeIP, ovnkubePodName string) bool {
 	framework.Logf("Verifying ovn-encap-ip for node %s", nodeName)
-	cmd := []string{"kubectl", "-n", ovnNamespace, "exec", ovnkubePodName, "-c", "ovn-controller",
-		"--", "ovs-vsctl", "get", "open_vswitch", ".", "external-ids:ovn-encap-ip"}
-	output, err := runCommand(cmd...)
+	cmd := "ovs-vsctl get open_vswitch . external-ids:ovn-encap-ip"
+	output, err := e2epodoutput.RunHostCmdWithRetries(deploymentconfig.Get().OVNKubernetesNamespace(), ovnkubePodName, cmd, 10*time.Millisecond, 10*time.Second)
 	if err != nil {
-		framework.Logf("Failed to get ovn-encap-ip: %q", err)
+		framework.Logf("when running command on pod %s: %v", ovnkubePodName, err)
 		return false
 	}
-
 	output = strings.Replace(output, "\"", "", -1)
 	output = strings.Replace(output, "\n", "", -1)
 
