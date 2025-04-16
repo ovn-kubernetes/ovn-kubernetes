@@ -445,6 +445,9 @@ var _ = Describe("Network Segmentation", func() {
 								"2",
 								"--insecure",
 								"https://kubernetes.default/healthz")
+							if err != nil {
+								framework.Logf("connecting to kapi service failed: %v", err)
+							}
 							return err == nil
 						}, 5*time.Second).Should(BeTrue())
 						By("asserting UDN pod can't reach host via default network interface")
