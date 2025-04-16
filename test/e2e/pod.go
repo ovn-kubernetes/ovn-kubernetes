@@ -78,7 +78,7 @@ var _ = ginkgo.Describe("Pod to external server PMTUD", func() {
 			clientPodNodeName = nodes.Items[1].Name
 
 			ginkgo.By("Creating hostNetwork:false (ovnk) client pod")
-			clientPod = e2epod.NewAgnhostPod(f.Namespace.Name, echoClientPodName, nil, nil, nil)
+			clientPod = e2epod.NewAgnhostPod(f.Namespace.Name, echoClientName, nil, nil, nil)
 			clientPod.Spec.NodeName = clientPodNodeName
 			for k := range clientPod.Spec.Containers {
 				if clientPod.Spec.Containers[k].Name == "agnhost-container" {

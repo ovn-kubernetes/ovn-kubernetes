@@ -42,7 +42,7 @@ var _ = ginkgo.Describe("Unidling", func() {
 		serviceName       = "empty-service"
 		podName           = "execpod-noendpoints"
 		ovnServiceIdledAt = "k8s.ovn.org/idled-at"
-		port              = 80
+		servicePort       = 80
 	)
 
 	f := wrappedTestFramework("unidling")
