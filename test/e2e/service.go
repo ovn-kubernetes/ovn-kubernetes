@@ -17,6 +17,7 @@ import (
 	"github.com/onsi/gomega"
 
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/ipalloc"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -2121,15 +2122,13 @@ spec:
 		ginkgo.By("Create an EgressIP object with one egress IP defined")
 		// Assign the egress IP without conflicting with any node IP,
 		// the kind subnet is /16 or /64 so the following should be fine.
-		dupIP := func(ip net.IP) net.IP {
-			dup := make(net.IP, len(ip))
-			copy(dup, ip)
-			return dup
+		var egressIP1 net.IP
+		if utilnet.IsIPv6String(svcLoadBalancerIP) {
+			egressIP1, err = ipalloc.NewPrimaryIPv6()
+		} else {
+			egressIP1, err = ipalloc.NewPrimaryIPv4()
 		}
-		sampleNodeIP := net.ParseIP(nodeIP)
-		egressIP1 := dupIP(sampleNodeIP)
-		egressIP1[len(egressIP1)-2]++
-
+		framework.ExpectNoError(err, "must allocate new Node IP for EgressIP IP")
 		var egressIPConfig = fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
 kind: EgressIP
 metadata:

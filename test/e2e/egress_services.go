@@ -14,6 +14,7 @@ import (
 	"github.com/onsi/gomega"
 
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/ipalloc"
 
 	"golang.org/x/sync/errgroup"
 	v1 "k8s.io/api/core/v1"
@@ -383,19 +384,18 @@ spec:
 				}
 			}
 			ginkgo.By("By setting a secondary IP on non-egress node acting as \"another node\"")
-			var otherDstIP string
+			var otherDstIP net.IP
 			if protocol == v1.IPv6Protocol {
-				otherDstIP = "fc00:f853:ccd:e793:ffff::1"
+				otherDstIP, err = ipalloc.NewPrimaryIPv6()
 			} else {
-				// TODO(mk): replace with non-repeating IP allocator
-				otherDstIP = "172.18.1.1"
+				otherDstIP, err = ipalloc.NewPrimaryIPv4()
 			}
-			_, err = runCommand(containerRuntime, "exec", dstNode.Name, "ip", "addr", "add", otherDstIP, "dev", "breth0")
+			_, err = runCommand(containerRuntime, "exec", dstNode.Name, "ip", "addr", "add", otherDstIP.String(), "dev", "breth0")
 			if err != nil {
 				framework.Failf("failed to add address to node %s: %v", dstNode.Name, err)
 			}
 			defer func() {
-				_, err = runCommand(containerRuntime, "exec", dstNode.Name, "ip", "addr", "delete", otherDstIP, "dev", "breth0")
+				_, err = runCommand(containerRuntime, "exec", dstNode.Name, "ip", "addr", "delete", otherDstIP.String(), "dev", "breth0")
 				if err != nil {
 					framework.Failf("failed to remove address from node %s: %v", dstNode.Name, err)
 				}
@@ -428,7 +428,7 @@ spec:
 					return curlAgnHostClientIPFromPod(f.Namespace.Name, pod, expectedsrcIP, dstIP, podHTTPPort)
 				}, 1*time.Second, 200*time.Millisecond).ShouldNot(gomega.HaveOccurred(), "failed to reach other node with node's primary ip")
 				gomega.Consistently(func() error {
-					return curlAgnHostClientIPFromPod(f.Namespace.Name, pod, expectedsrcIP, otherDstIP, podHTTPPort)
+					return curlAgnHostClientIPFromPod(f.Namespace.Name, pod, expectedsrcIP, otherDstIP.String(), podHTTPPort)
 				}, 1*time.Second, 200*time.Millisecond).ShouldNot(gomega.HaveOccurred(), "failed to reach other node with node's secondary ip")
 			}
 		},
@@ -712,15 +712,14 @@ spec:
 			defer func() {
 				e2ekubectl.RunKubectlOrDie("default", "label", "node", eipNode.Name, "k8s.ovn.org/egress-assignable-")
 			}()
-			nodev4IP, nodev6IP := getNodeAddresses(&eipNode)
-			egressNodeIP := net.ParseIP(nodev4IP)
-			if utilnet.IsIPv6String(svcIP) {
-				egressNodeIP = net.ParseIP(nodev6IP)
+			// allocate EIP IP
+			var egressIP net.IP
+			if IsIPv6Cluster(f.ClientSet) {
+				egressIP, err = ipalloc.NewPrimaryIPv6()
+			} else {
+				egressIP, err = ipalloc.NewPrimaryIPv4()
 			}
-			egressIP := make(net.IP, len(egressNodeIP))
-			copy(egressIP, egressNodeIP)
-			egressIP[len(egressIP)-2]++
-
+			framework.ExpectNoError(err, "must allocate new primary network IP address")
 			egressIPYaml := "egressip.yaml"
 			egressIPConfig := fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
 kind: EgressIP
