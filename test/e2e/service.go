@@ -2303,7 +2303,10 @@ func getNodeIP(c clientset.Interface, nodeName string) (string, error) {
 
 func buildAndRunCommand(command string) error {
 	cmd := strings.Split(command, " ")
-	_, err := runCommand(cmd...)
+	output, err := exec.Command(cmd[0], cmd[1:]...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to run %q: %s (%s)", strings.Join(cmd, " "), err, output)
+	}
 	return err
 }
 
