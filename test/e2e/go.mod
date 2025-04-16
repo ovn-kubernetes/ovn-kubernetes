@@ -210,4 +210,14 @@ replace (
 	github.com/coreos/go-iptables => github.com/trozet/go-iptables v0.0.0-20240328221912-077e672b3808
 	github.com/ovn-org/ovn-kubernetes/go-controller => ../../go-controller
 	go.universe.tf/metallb => github.com/metallb/metallb v0.14.9
+
+	k8s.io/cli-runtime => k8s.io/cli-runtime v0.0.0
+	k8s.io/cluster-bootstrap => k8s.io/cluster-bootstrap v0.0.0
+	k8s.io/endpointslice => k8s.io/endpointslice v0.0.0
+	k8s.io/kube-aggregator => k8s.io/kube-aggregator v0.0.0
+	k8s.io/kube-controller-manager => k8s.io/kube-controller-manager v0.0.0
+	k8s.io/kube-proxy => k8s.io/kube-proxy v0.0.0
+	k8s.io/metrics => k8s.io/metrics v0.0.0
+	k8s.io/sample-apiserver => k8s.io/sample-apiserver v0.0.0
+	k8s.io/externaljwt => k8s.io/externaljwt v0.0.0
 )
