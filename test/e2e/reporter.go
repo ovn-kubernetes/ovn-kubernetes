@@ -29,6 +29,7 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
+	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 	"k8s.io/utils/strings/slices"
 )
 
@@ -114,8 +115,7 @@ func DumpBGPInfo(basePath, testName string, f *framework.Framework) {
 		fmt.Fprintf(os.Stderr, "failed to create test dir: %v\n", err)
 		return
 	}
-	frrContainer := &containerExecutor{container: frrContainerName}
-	dump, err := rawDump(frrContainer, "/etc/frr/bgpd.conf", "/tmp/frr.log", "/etc/frr/daemons")
+	dump, err := rawDump(metallbNamespace, frrContainerName, "/etc/frr/bgpd.conf", "/tmp/frr.log", "/etc/frr/daemons")
 	if err != nil {
 		framework.Logf("External frr dump for container %s failed %v", frrContainerName, err)
 	}
@@ -168,11 +168,11 @@ func logFileFor(base string, kind string) (*os.File, error) {
 
 // rawDump dumps all the low level info as a single string.
 // To be used for debugging in order to print the status of the frr instance.
-func rawDump(exec Executor, filesToDump ...string) (string, error) {
+func rawDump(namespace, containerName string, filesToDump ...string) (string, error) {
 	allerrs := errors.New("")
 
 	res := "####### Show running config\n"
-	out, err := exec.Exec("vtysh", "-c", "show running-config")
+	out, err := e2epodoutput.RunHostCmd(namespace, containerName, "vtysh -c show running-config")
 	if err != nil {
 		allerrs = errors.Wrapf(allerrs, "\nFailed exec show bgp neighbor: %v", err)
 	}
@@ -181,7 +181,7 @@ func rawDump(exec Executor, filesToDump ...string) (string, error) {
 	for _, file := range filesToDump {
 		res += fmt.Sprintf("####### Dumping file %s\n", file)
 		// limiting the output to 500 lines:
-		out, err = exec.Exec("bash", "-c", fmt.Sprintf("cat %s | tail -n 500", file))
+		out, err = e2epodoutput.RunHostCmd(namespace, containerName, fmt.Sprintf("bash -c 'cat %s | tail -n 500", file))
 		if err != nil {
 			allerrs = errors.Wrapf(allerrs, "\nFailed to cat file %s: %v", file, err)
 		}

@@ -6,10 +6,13 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
+	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 )
 
 const (

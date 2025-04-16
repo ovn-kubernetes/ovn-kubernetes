@@ -1,8 +1,15 @@
 package e2e
 
 import (
+	"context"
+
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
+
+	"k8s.io/kubernetes/test/e2e/framework"
+	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 )
 
 var _ = ginkgo.Describe("OVS CPU affinity pinning", func() {
@@ -11,9 +18,7 @@ var _ = ginkgo.Describe("OVS CPU affinity pinning", func() {
 
 	ginkgo.It("can be enabled on specific nodes by creating enable_dynamic_cpu_affinity file", func() {
 
-		nodeWithEnabledOvsAffinityPinning := "ovn-worker2"
-
-		_, err := runCommand(containerRuntime, "exec", nodeWithEnabledOvsAffinityPinning, "bash", "-c", "echo 1 > /etc/openvswitch/enable_dynamic_cpu_affinity")
+		_, err = infraprovider.Get().ExecK8NodeCommand(nodeWithEnabledOvsAffinityPinning, []string{"bash", "-c", "echo 1 > /etc/openvswitch/enable_dynamic_cpu_affinity"})
 		gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
 		restartOVNKubeNodePodsInParallel(f.ClientSet, ovnNamespace, "ovn-worker", "ovn-worker2")
