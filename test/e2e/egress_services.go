@@ -754,15 +754,14 @@ spec:
 			defer func() {
 				e2ekubectl.RunKubectlOrDie("default", "label", "node", eipNode.Name, "k8s.ovn.org/egress-assignable-")
 			}()
-			nodev4IP, nodev6IP := getNodeAddresses(&eipNode)
-			egressNodeIP := net.ParseIP(nodev4IP)
-			if utilnet.IsIPv6String(svcIP) {
-				egressNodeIP = net.ParseIP(nodev6IP)
+			// allocate EIP IP
+			var egressIP net.IP
+			if IsIPv6Cluster(f.ClientSet) {
+				egressIP, err = ipalloc.NewPrimaryIPv6()
+			} else {
+				egressIP, err = ipalloc.NewPrimaryIPv4()
 			}
-			egressIP := make(net.IP, len(egressNodeIP))
-			copy(egressIP, egressNodeIP)
-			egressIP[len(egressIP)-2]++
-
+			framework.ExpectNoError(err, "must allocate new primary network IP address")
 			egressIPYaml := "egressip.yaml"
 			egressIPConfig := fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
 kind: EgressIP
