@@ -25,6 +25,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
+	"sigs.k8s.io/knftables"
 
 	honode "github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/controller"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni"
@@ -38,6 +39,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/controllers/egressservice"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/linkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/managementport"
+	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/ovspinning"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/apbroute"
@@ -115,6 +117,9 @@ type DefaultNodeNetworkController struct {
 	// retry framework for endpoint slices, used for the removal of stale conntrack entries for services
 	retryEndpointSlices *retry.RetryFramework
 
+	// retry framework for nodes, used for updating routes/nftables rules for node PMTUD guarding
+	retryNodes *retry.RetryFramework
+
 	apbExternalRouteNodeController *apbroute.ExternalGatewayNodeController
 
 	networkManager networkmanager.Interface
@@ -176,12 +181,23 @@ func NewDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, net
 
 	nc.initRetryFrameworkForNode()
 
+	err = setupPMTUDNFTSets()
+	if err != nil {
+		return nil, err
+	}
+
+	err = setupPMTUDNFTChain()
+	if err != nil {
+		return nil, err
+	}
+
 	return nc, nil
 }
 
 func (nc *DefaultNodeNetworkController) initRetryFrameworkForNode() {
 	nc.retryNamespaces = nc.newRetryFrameworkNode(factory.NamespaceExGwType)
 	nc.retryEndpointSlices = nc.newRetryFrameworkNode(factory.EndpointSliceForStaleConntrackRemovalType)
+	nc.retryNodes = nc.newRetryFrameworkNode(factory.NodeType)
 }
 
 func (oc *DefaultNodeNetworkController) shouldReconcileNetworkChange(old, new util.NetInfo) bool {
@@ -1233,6 +1249,10 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("failed to watch endpointSlices: %w", err)
 		}
+		err = nc.WatchNodes()
+		if err != nil {
+			return fmt.Errorf("failed to watch nodes: %w", err)
+		}
 	}
 
 	if nc.healthzServer != nil {
@@ -1440,6 +1460,95 @@ func (nc *DefaultNodeNetworkController) WatchNamespaces() error {
 	return err
 }
 
+func (nc *DefaultNodeNetworkController) WatchNodes() error {
+	_, err := nc.retryNodes.WatchResource()
+	return err
+}
+
+// addOrUpdateNode handles creating flows or nftables rules for each node to handle PMTUD
+func (nc *DefaultNodeNetworkController) addOrUpdateNode(node *corev1.Node) error {
+	var nftElems []*knftables.Element
+	var addrs []string
+	for _, address := range node.Status.Addresses {
+		if address.Type != corev1.NodeInternalIP {
+			continue
+		}
+		nodeIP := net.ParseIP(address.Address)
+		if nodeIP == nil {
+			continue
+		}
+
+		addrs = append(addrs, nodeIP.String())
+		klog.Infof("Adding remote node %q, IP: %s to PMTUD blocking rules", node.Name, nodeIP)
+		if utilnet.IsIPv4(nodeIP) {
+			nftElems = append(nftElems, &knftables.Element{
+				Set: types.NFTNoPMTUDRemoteNodeIPsv4,
+				Key: []string{nodeIP.String()},
+			})
+		} else {
+			nftElems = append(nftElems, &knftables.Element{
+				Set: types.NFTNoPMTUDRemoteNodeIPsv6,
+				Key: []string{nodeIP.String()},
+			})
+		}
+	}
+
+	gw := nc.Gateway.(*gateway)
+	gw.openflowManager.updateBridgePMTUDFlowCache(getPMTUDKey(node.Name), addrs)
+
+	if len(nftElems) > 0 {
+		if err := nodenft.UpdateNFTElements(nftElems); err != nil {
+			return fmt.Errorf("unable to update NFT elements: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (nc *DefaultNodeNetworkController) deleteNode(node *corev1.Node) {
+	var nftElems []*knftables.Element
+	gw := nc.Gateway.(*gateway)
+	gw.openflowManager.deleteFlowsByKey(getPMTUDKey(node.Name))
+	for _, address := range node.Status.Addresses {
+		if address.Type != corev1.NodeInternalIP {
+			continue
+		}
+		nodeIP := net.ParseIP(address.Address)
+		if nodeIP == nil {
+			continue
+		}
+		mask := 32
+		if utilnet.IsIPv6(nodeIP) {
+			mask = 128
+		}
+		_, nodeCIDR, err := net.ParseCIDR(fmt.Sprintf("%s/%d", nodeIP, mask))
+		if err != nil {
+			klog.Errorf("Unable to parse CIDR for node %s, CIDR: %s: %v", node.Name, nodeCIDR, err)
+			continue
+		}
+
+		// Remove IPs from NFT sets
+		if utilnet.IsIPv4(nodeIP) {
+			nftElems = append(nftElems, &knftables.Element{
+				Set: types.NFTNoPMTUDRemoteNodeIPsv4,
+				Key: []string{nodeIP.String()},
+			})
+		} else {
+			nftElems = append(nftElems, &knftables.Element{
+				Set: types.NFTNoPMTUDRemoteNodeIPsv6,
+				Key: []string{nodeIP.String()},
+			})
+		}
+	}
+
+	if len(nftElems) > 0 {
+		klog.Infof("Deleting NFT elements for node: %s", node.Name)
+		if err := nodenft.DeleteNFTElements(nftElems); err != nil {
+			klog.Errorf("Failed to delete nftables rules for PMTUD blocking: %v", err)
+		}
+	}
+}
+
 // validateVTEPInterfaceMTU checks if the MTU of the interface that has ovn-encap-ip is big
 // enough to carry the `config.Default.MTU` and the Geneve header. If the MTU is not big
 // enough, it will return an error
@@ -1478,6 +1587,10 @@ func (nc *DefaultNodeNetworkController) validateVTEPInterfaceMTU() error {
 			mtu, interfaceName, requiredMTU)
 	}
 	return nil
+}
+
+func getPMTUDKey(nodeName string) string {
+	return fmt.Sprintf("%s_pmtud", nodeName)
 }
 
 func configureSvcRouteViaBridge(routeManager *routemanager.Controller, bridge string) error {

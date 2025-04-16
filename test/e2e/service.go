@@ -343,7 +343,16 @@ var _ = ginkgo.Describe("Services", func() {
 			// The payload is transmitted to and echoed from the echo service for both HTTP and UDP tests.
 			ginkgo.When("tests are run towards the agnhost echo service", func() {
 				ginkgo.It("queries to the nodePort service shall work for TCP", func() {
-					for _, size := range []string{"small", "large"} {
+					packetSizes := []string{"small", "large"}
+					if isLocalGWModeEnabled() && hostNetwork {
+						// if local gateway mode the intermediary node will attempt to fragment the packet, if the DF
+						// bit is not set. However, the decision on setting DF bit is left up to the kernel, and
+						// is unpredictable. If the DF bit is set, the iptables rule that DNATs nodeport -> cluster IP
+						// will then attempt to route the packet, and hit our 1400 byte MTU route. This will cause:
+						// 172.18.0.2:37755->10.96.141.254:9881(udp) sk_skb_reason_drop(SKB_DROP_REASON_PKT_TOO_BIG)
+						packetSizes = []string{"small"}
+					}
+					for _, size := range packetSizes {
 						for _, serviceNodeIP := range serviceNodeInternalIPs {
 							targetIP := serviceNodeIP
 							if IsIPv6Cluster(f.ClientSet) {
@@ -395,7 +404,26 @@ var _ = ginkgo.Describe("Services", func() {
 				//                0.0.0.0/0                172.18.0.1 dst-ip rtoe-GR_ovn-worker
 				// This time, the packet will leave the rtoj port and it will be fragmented.
 				ginkgo.It("queries to the nodePort service shall work for UDP", func() {
-					for _, size := range []string{"small", "large"} {
+					packetSizes := []string{"small", "large"}
+					// If gateway mode is shared, and endpoint is OVN networked, host networked originated packets
+					// exceeding pod MTU will not be delivered. This is because ICMP needs frag will be sent back to the original
+					// OCP node by OVN (even if DF bit is not set) and the node will refuse to install an MTU cache route.
+					// To fix this later we can install ip rules that match on nodeport and lower the MTU from the originator
+					// but for now we consider nodeport access from a k8s node as not a practical use case. See
+					// https://issues.redhat.com/browse/OCPBUGS-7609
+					// Furthermore, in local gateway mode, if the DF bit was not set the packet will go into the host of
+					// intermediary node, where nodeport will be DNAT'ed to cluster IP service, and then hit the MTU 1400 route.
+					// Netcat will not set Don't Fragment (DF) bit, so packet will be fragmented at intermediary
+					// node and sent to server. However, it is up to the kernel to decide whether to set the DF bit,
+					// and it is not predictable. Therefore, we have to skip large packet size for local gateway mode
+					// as well. This is true when the endpoint is host or ovn networked, because the route for the cluster
+					// cidr service is set to 1400, which causes:
+					// 172.18.0.2:37755->10.96.141.254:9881(udp) sk_skb_reason_drop(SKB_DROP_REASON_PKT_TOO_BIG)
+					if !hostNetwork || isLocalGWModeEnabled() {
+						packetSizes = []string{"small"}
+					}
+
+					for _, size := range packetSizes {
 						for _, serviceNodeIP := range serviceNodeInternalIPs {
 							flushCmd := "ip route flush cache"
 							if utilnet.IsIPv6String(serviceNodeIP) {
@@ -462,23 +490,9 @@ var _ = ginkgo.Describe("Services", func() {
 									if err != nil {
 										return fmt.Errorf("could not list IP route cache, err: %q", err)
 									}
-									if !hostNetwork || isLocalGWModeEnabled() {
-										// with local gateway mode the packet will be sent:
-										// client -> intermediary node -> server
-										// With local gw mode, the packet will go into the host of intermediary node, where
-										// nodeport will be DNAT'ed to cluster IP service, and then hit the MTU 1400 route
-										// and trigger ICMP needs frag.
-										// MTU 1400 should be removed after bumping to OVS with https://bugzilla.redhat.com/show_bug.cgi?id=2170920
-										// fixed.
-										ginkgo.By("Making sure that the ip route cache contains an MTU route")
-										if !echoMtuRegex.Match([]byte(stdout)) {
-											return fmt.Errorf("cannot find MTU cache entry in route: %s", stdout)
-										}
-									} else {
-										ginkgo.By("Making sure that the ip route cache does NOT contain an MTU route")
-										if echoMtuRegex.Match([]byte(stdout)) {
-											framework.Failf("found unexpected MTU cache route: %s", stdout)
-										}
+									ginkgo.By("Making sure that the ip route cache does NOT contain an MTU route")
+									if echoMtuRegex.Match([]byte(stdout)) {
+										framework.Failf("found unexpected MTU cache route: %s", stdout)
 									}
 								}
 								return nil

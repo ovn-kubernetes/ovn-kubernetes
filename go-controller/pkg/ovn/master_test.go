@@ -335,6 +335,9 @@ func addNodeLogicalFlowsHelper(testData []libovsdbtest.TestData, expectedOVNClus
 		MAC:            node.NodeLRPMAC,
 		Networks:       []string{node.NodeGWIP},
 		GatewayChassis: []string{chassisName + "-UUID"},
+		Options: map[string]string{
+			"gateway_mtu": "1400",
+		},
 	})
 	if serviceControllerEnabled {
 		testData = append(testData, &nbdb.ChassisTemplateVar{

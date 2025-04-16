@@ -151,6 +151,9 @@ const (
 	//		"l2-network-b":"10"}
 	// }",
 	ovnUDNLayer2NodeGRLRPTunnelIDs = "k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids"
+
+	// OvnNodeDontSNATSubnets is a user assigned subnets that should avoid SNAT at ovn-k8s-mp0 interface
+	OvnNodeDontSNATSubnets = "k8s.ovn.org/node-ingress-snat-exclude-subnets"
 )
 
 type L3GatewayConfig struct {
@@ -1112,15 +1115,45 @@ func ParseNodeHostCIDRsExcludeOVNNetworks(node *corev1.Node) ([]string, error) {
 }
 
 func ParseNodeHostCIDRsList(node *corev1.Node) ([]string, error) {
-	addrAnnotation, ok := node.Annotations[OVNNodeHostCIDRs]
+	return parseNodeAnnotationList(node, OVNNodeHostCIDRs)
+}
+
+func ParseNodeDontSNATSubnetsList(node *corev1.Node) ([]string, error) {
+	return parseNodeAnnotationList(node, OvnNodeDontSNATSubnets)
+}
+
+// NodeDontSNATSubnetAnnotationChanged returns true if the OvnNodeDontSNATSubnets in the corev1.Nodes doesn't match
+func NodeDontSNATSubnetAnnotationChanged(oldNode, newNode *corev1.Node) bool {
+	oldVal, oldOk := oldNode.Annotations[OvnNodeDontSNATSubnets]
+	newVal, newOk := newNode.Annotations[OvnNodeDontSNATSubnets]
+
+	if oldOk != newOk {
+		return true
+	}
+
+	if oldOk && newOk && oldVal != newVal {
+		return true
+	}
+
+	return false
+}
+
+// NodeDontSNATSubnetAnnotationExist returns true OvnNodeDontSNATSubnets annotation key exists in node annotation
+func NodeDontSNATSubnetAnnotationExist(node *corev1.Node) bool {
+	_, ok := node.Annotations[OvnNodeDontSNATSubnets]
+	return ok
+}
+
+func parseNodeAnnotationList(node *corev1.Node, annotationKey string) ([]string, error) {
+	annotationValue, ok := node.Annotations[annotationKey]
 	if !ok {
-		return nil, newAnnotationNotSetError("%s annotation not found for node %q", OVNNodeHostCIDRs, node.Name)
+		return []string{}, nil
 	}
 
 	var cfg []string
-	if err := json.Unmarshal([]byte(addrAnnotation), &cfg); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal host cidrs annotation %s for node %q: %v",
-			addrAnnotation, node.Name, err)
+	if err := json.Unmarshal([]byte(annotationValue), &cfg); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal %s annotation %s for node %q: %v",
+			annotationKey, annotationValue, node.Name, err)
 	}
 	return cfg, nil
 }
