@@ -24,7 +24,7 @@ import (
 
 var _ = ginkgo.Describe("e2e NetworkQoS validation", func() {
 	const (
-		podImage       = "nicolaka/netshoot"
+		podImage       = "ghcr.io/nicolaka/netshoot:v0.13"
 		networkQoSYaml = "networkqos.yaml"
 		nqosSpecName   = "nqos-test-spec"
 		srcPodName     = "src-nqos-pod"
