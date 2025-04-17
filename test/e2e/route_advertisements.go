@@ -32,9 +32,13 @@ import (
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 )
 
+const (
+	bgpExternalNetworkName = "bgpnet"
+	bgpServerContainerName = "bgpserver"
+)
+
 var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is advertised", func() {
 	const (
-		serverContainerName    = "bgpserver"
 		routerContainerName    = "frr"
 		echoClientPodName      = "echo-client-pod"
 		primaryNetworkName     = "kind"
@@ -48,7 +52,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 	ginkgo.BeforeEach(func() {
 		serverContainerIPs = []string{}
 
-		bgpServerIPv4, bgpServerIPv6 := getContainerAddressesForNetwork(serverContainerName, bgpExternalNetworkName)
+		bgpServerIPv4, bgpServerIPv6 := getContainerAddressesForNetwork(bgpServerContainerName, bgpExternalNetworkName)
 		if isIPv4Supported() {
 			serverContainerIPs = append(serverContainerIPs, bgpServerIPv4)
 		}
