@@ -410,6 +410,48 @@ func isolateKinDIPv6Networks(networkA, networkB string) error {
 	return err
 }
 
+// forwardIPWithIPTables inserts an iptables rule to always accept source and destination of arg ip
+func forwardIPWithIPTables(ip string) (func() error, error) {
+	isIPv6 := utilnet.IsIPv6String(ip)
+	ipTablesBin := "iptables"
+	if isIPv6 {
+		ipTablesBin = "ip6tables"
+	}
+	mask := "/32"
+	if isIPv6 {
+		mask = "/128"
+	}
+
+	var cleanUpFns []func() error
+	cleanUp := func() error {
+		var errs []error
+		for _, cleanUpFn := range cleanUpFns {
+			if err := cleanUpFn(); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		return utilerrors.AggregateGoroutines(cleanUpFns...)
+	}
+	exec := exec.New()
+	_, err := exec.Command("sudo", ipTablesBin, "-I", "FORWARD", "-s", ip+mask, "-j", "ACCEPT").CombinedOutput()
+	if err != nil {
+		return cleanUp, fmt.Errorf("failed to insert rule to forward IP %q: %w", ip+mask, err)
+	}
+	cleanUpFns = append(cleanUpFns, func() error {
+		exec.Command("sudo", ipTablesBin, "-D", "FORWARD", "-s", ip+mask, "-j", "ACCEPT").CombinedOutput()
+		return nil
+	})
+	_, err = exec.Command("sudo", ipTablesBin, "-I", "FORWARD", "-d", ip+mask, "-j", "ACCEPT").CombinedOutput()
+	if err != nil {
+		return cleanUp, fmt.Errorf("failed to insert rule to forward IP %q: %w", ip+mask, err)
+	}
+	cleanUpFns = append(cleanUpFns, func() error {
+		exec.Command("sudo", ipTablesBin, "-D", "FORWARD", "-d", ip+mask, "-j", "ACCEPT").CombinedOutput()
+		return nil
+	})
+	return cleanUp, nil
+}
+
 // updatesNamespace labels while preserving the required UDN label
 func updateNamespaceLabels(f *framework.Framework, namespace *v1.Namespace, labels map[string]string) {
 	// should never be nil

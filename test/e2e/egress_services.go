@@ -1345,6 +1345,9 @@ spec:
 							expected = net.nodesV6IPs[nodes[i].Name]
 							dst = sharedIPv6
 						}
+						cleanUp, err := forwardIPWithIPTables(dst)
+						ginkgo.DeferCleanup(cleanUp)
+						framework.ExpectNoError(err, "must add rules to always forward IP")
 
 						gomega.Eventually(func() error {
 							return curlAgnHostClientIPFromPod(f.Namespace.Name, pod, expected, dst, podHTTPPort)
@@ -1359,6 +1362,9 @@ spec:
 						}, 1*time.Second, 200*time.Millisecond).ShouldNot(gomega.HaveOccurred(), "reached an external container with the wrong hostname")
 					}
 					//FIXME(mk): whole test case is broken for multi platform
+					cleanUp, err := forwardIPWithIPTables(net.serviceIP)
+					ginkgo.DeferCleanup(cleanUp)
+					framework.ExpectNoError(err, "must add rules to always forward IP")
 					reachAllServiceBackendsFromExternalContainer(infraapi.ExternalContainer{Name: net.containerName}, net.serviceIP, podHTTPPort, net.createdPods)
 				}
 
