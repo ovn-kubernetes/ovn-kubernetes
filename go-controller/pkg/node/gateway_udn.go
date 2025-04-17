@@ -437,6 +437,14 @@ func (udng *UserDefinedNetworkGateway) DelNetwork() error {
 			return fmt.Errorf("failed to reconcile default gateway for network %s, err: %v", udng.GetNetworkName(), err)
 		}
 	}
+
+	if util.IsPodNetworkAdvertisedAtNode(udng.NetInfo, udng.node.Name) {
+		err := udng.updateAdvertisedUDNIsolationRules(false)
+		if err != nil {
+			return err
+		}
+	}
+
 	if err := udng.delMarkChain(); err != nil {
 		return err
 	}
@@ -918,6 +926,9 @@ func (udng *UserDefinedNetworkGateway) doReconcile() error {
 		return fmt.Errorf("error while updating logical flow for UDN %s: %s", udng.GetNetworkName(), err)
 	}
 
+	if err := udng.updateAdvertisedUDNIsolationRules(isNetworkAdvertised); err != nil {
+		return fmt.Errorf("error while updating advertised UDN isolation rules: %w", err)
+	}
 	return nil
 }
 
@@ -974,4 +985,75 @@ func (udng *UserDefinedNetworkGateway) removeDefaultRouteFromVRF() error {
 		return fmt.Errorf("unable to delete routes for network %s, err: %v", udng.GetNetworkName(), err)
 	}
 	return nil
+}
+
+// updateAdvertisedUDNIsolationRules adds the full UDN subnets to nftablesAdvertisedUDNsSetV[4|6] nft set that is used
+// in the following chain/rules to drop locally generated traffic towards a UDN network:
+//
+//	chain udn-bgp-drop {
+//	  comment "Drop traffic generated locally towards advertised UDN subnets"
+//	  type filter hook output priority filter; policy accept;
+//	  ip daddr @advertised-udn-subnets-v4 counter packets 0 bytes 0 drop
+//	  ip6 daddr @advertised-udn-subnets-v6 counter packets 0 bytes 0 drop
+//	}
+//
+// It blocks access to the full UDN subnet to handle a case in L3 when a node tries to access
+// a host subnet available on a different node. Example set entries:
+//
+//	 set advertised-udn-subnets-v4 {
+//	   type ipv4_addr
+//	   flags interval
+//	   comment "advertised UDNs V4 subnets"
+//	   elements = { 10.10.0.0/16 comment "cluster_udn_l3network" }
+//	}
+func (udng *UserDefinedNetworkGateway) updateAdvertisedUDNIsolationRules(isNetworkAdvertised bool) error {
+	nft, err := nodenft.GetNFTablesHelper()
+	if err != nil {
+		return err
+	}
+	tx := nft.NewTransaction()
+
+	if !isNetworkAdvertised {
+		existingV4, err := nft.ListElements(context.TODO(), "set", nftablesAdvertisedUDNsSetV4)
+		if err != nil {
+			if !knftables.IsNotFound(err) {
+				return fmt.Errorf("could not list existing items in %s set: %w", nftablesAdvertisedUDNsSetV4, err)
+			}
+		}
+		existingV6, err := nft.ListElements(context.TODO(), "set", nftablesAdvertisedUDNsSetV6)
+		if err != nil {
+			if !knftables.IsNotFound(err) {
+				return fmt.Errorf("could not list existing items in %s set: %w", nftablesAdvertisedUDNsSetV6, err)
+			}
+		}
+
+		for _, elem := range append(existingV4, existingV6...) {
+			if elem.Comment != nil && *elem.Comment == udng.GetNetworkName() {
+				tx.Delete(elem)
+			}
+		}
+
+		if tx.NumOperations() == 0 {
+			return nil
+		}
+		return nft.Run(context.TODO(), tx)
+	}
+
+	for _, udnNet := range udng.Subnets() {
+		set := nftablesAdvertisedUDNsSetV4
+		if utilnet.IsIPv6CIDR(udnNet.CIDR) {
+			set = nftablesAdvertisedUDNsSetV6
+		}
+		tx.Add(&knftables.Element{
+			Set:     set,
+			Key:     []string{udnNet.CIDR.String()},
+			Comment: knftables.PtrTo(udng.GetNetworkName()),
+		})
+
+	}
+
+	if tx.NumOperations() == 0 {
+		return nil
+	}
+	return nft.Run(context.TODO(), tx)
 }

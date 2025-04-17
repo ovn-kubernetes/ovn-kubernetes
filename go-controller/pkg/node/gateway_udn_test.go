@@ -1,6 +1,7 @@
 package node
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"sort"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/containernetworking/plugins/pkg/ns"
 	"github.com/containernetworking/plugins/pkg/testutils"
+	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	nadfake "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
 	"github.com/stretchr/testify/mock"
 	"github.com/vishvananda/netlink"
@@ -21,6 +23,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	utilnet "k8s.io/utils/net"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/knftables"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	udnfakeclient "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/fake"
@@ -1648,6 +1651,140 @@ func TestConstructUDNVRFIPRulesPodNetworkAdvertised(t *testing.T) {
 				g.Expect(rule.Table).To(Equal(test.deleteRules[i].table))
 				g.Expect(rule.Family).To(Equal(test.deleteRules[i].family))
 				g.Expect(*rule.Dst).To(Equal(test.deleteRules[i].dst))
+			}
+		})
+	}
+}
+
+func TestUserDefinedNetworkGateway_updateAdvertisedUDNIsolationRules(t *testing.T) {
+	tests := []struct {
+		name                string
+		nad                 *nadapi.NetworkAttachmentDefinition
+		isNetworkAdvertised bool
+		initialElements     []*knftables.Element
+		expectedV4Elements  []*knftables.Element
+		expectedV6Elements  []*knftables.Element
+	}{
+		{
+			name: "Should add V4 and V6 entries to the set for advertised L3 network",
+			nad: ovntest.GenerateNAD("test", "rednad", "greenamespace",
+				types.Layer3Topology, "100.128.0.0/16/24,ae70::/60/64", types.NetworkRolePrimary),
+			isNetworkAdvertised: true,
+			expectedV4Elements: []*knftables.Element{{
+				Set:     nftablesAdvertisedUDNsSetV4,
+				Key:     []string{"100.128.0.0/16"},
+				Comment: knftables.PtrTo[string]("test"),
+			}},
+			expectedV6Elements: []*knftables.Element{{
+				Set:     nftablesAdvertisedUDNsSetV6,
+				Key:     []string{"ae70::/60"},
+				Comment: knftables.PtrTo[string]("test"),
+			}},
+		},
+		{
+			name: "Should add V4 and V6 entries to the set for advertised L2 network",
+			nad: ovntest.GenerateNAD("test", "rednad", "greenamespace",
+				types.Layer2Topology, "100.128.0.0/16,ae70::/60", types.NetworkRolePrimary),
+			isNetworkAdvertised: true,
+			expectedV4Elements: []*knftables.Element{{
+				Set:     nftablesAdvertisedUDNsSetV4,
+				Key:     []string{"100.128.0.0/16"},
+				Comment: knftables.PtrTo[string]("test"),
+			}},
+			expectedV6Elements: []*knftables.Element{{
+				Set:     nftablesAdvertisedUDNsSetV6,
+				Key:     []string{"ae70::/60"},
+				Comment: knftables.PtrTo[string]("test"),
+			}},
+		},
+		{
+			name: "Should not add duplicate V4 and V6 entries to the for advertised network",
+			nad: ovntest.GenerateNAD("test", "rednad", "greenamespace",
+				types.Layer3Topology, "100.128.0.0/16/24,ae70::/60/64", types.NetworkRolePrimary),
+			isNetworkAdvertised: true,
+			initialElements: []*knftables.Element{
+				{
+					Set:     nftablesAdvertisedUDNsSetV4,
+					Key:     []string{"100.128.0.0/16"},
+					Comment: knftables.PtrTo[string]("test"),
+				}, {
+					Set:     nftablesAdvertisedUDNsSetV6,
+					Key:     []string{"ae70::/60"},
+					Comment: knftables.PtrTo[string]("test"),
+				},
+			},
+			expectedV4Elements: []*knftables.Element{{
+				Set:     nftablesAdvertisedUDNsSetV4,
+				Key:     []string{"100.128.0.0/16"},
+				Comment: knftables.PtrTo[string]("test"),
+			}},
+			expectedV6Elements: []*knftables.Element{{
+				Set:     nftablesAdvertisedUDNsSetV6,
+				Key:     []string{"ae70::/60"},
+				Comment: knftables.PtrTo[string]("test"),
+			}},
+		},
+		{
+			name: "Should remove V4 and V6 entries from the set when network for not advertised network",
+			nad: ovntest.GenerateNAD("test", "rednad", "greenamespace",
+				types.Layer3Topology, "100.128.0.0/16/24,ae70::/60/64", types.NetworkRolePrimary),
+			isNetworkAdvertised: false,
+			initialElements: []*knftables.Element{
+				{
+					Set:     nftablesAdvertisedUDNsSetV4,
+					Key:     []string{"100.128.0.0/16"},
+					Comment: knftables.PtrTo[string]("test"),
+				}, {
+					Set:     nftablesAdvertisedUDNsSetV6,
+					Key:     []string{"ae70::/60"},
+					Comment: knftables.PtrTo[string]("test"),
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			nft := nodenft.SetFakeNFTablesHelper()
+			config.IPv4Mode = true
+			config.IPv6Mode = true
+
+			netInfo, err := util.ParseNADInfo(tt.nad)
+			g.Expect(err).NotTo(HaveOccurred())
+
+			err = configureAdvertisedUDNIsolationNFTables()
+			g.Expect(err).ToNot(HaveOccurred())
+			tx := nft.NewTransaction()
+			for _, element := range tt.initialElements {
+				tx.Add(element)
+			}
+			if tx.NumOperations() > 0 {
+				err = nft.Run(context.TODO(), tx)
+				g.Expect(err).NotTo(HaveOccurred())
+			}
+			udng := &UserDefinedNetworkGateway{
+				NetInfo: netInfo,
+			}
+			err = udng.updateAdvertisedUDNIsolationRules(tt.isNetworkAdvertised)
+			g.Expect(err).NotTo(HaveOccurred())
+
+			v4Elems, err := nft.ListElements(context.TODO(), "set", nftablesAdvertisedUDNsSetV4)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(v4Elems).To(HaveLen(len(tt.expectedV4Elements)))
+
+			v6Elems, err := nft.ListElements(context.TODO(), "set", nftablesAdvertisedUDNsSetV6)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(v6Elems).To(HaveLen(len(tt.expectedV6Elements)))
+
+			for i, element := range tt.expectedV4Elements {
+				g.Expect(element.Key).To(HaveLen(len(v4Elems[i].Key)))
+				g.Expect(element.Key[0]).To(BeEquivalentTo(v4Elems[i].Key[0]))
+				g.Expect(element.Comment).To(BeEquivalentTo(v4Elems[i].Comment))
+			}
+			for i, element := range tt.expectedV6Elements {
+				g.Expect(element.Key).To(HaveLen(len(v6Elems[i].Key)))
+				g.Expect(element.Key[0]).To(BeEquivalentTo(v6Elems[i].Key[0]))
+				g.Expect(element.Comment).To(BeEquivalentTo(v6Elems[i].Comment))
 			}
 		})
 	}

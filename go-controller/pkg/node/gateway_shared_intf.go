@@ -69,6 +69,14 @@ const (
 	// nftablesUDNMarkExternalIPsV4Map, nftablesUDNMarkExternalIPsV6Map
 	nftablesUDNServiceMarkChain = "udn-service-mark"
 
+	// nftablesUDNBGPOutputChain is a base chain used for blocking the local processes
+	// from accessing any of the advertised UDN networks
+	nftablesUDNBGPOutputChain = "udn-bgp-drop"
+
+	// nftablesAdvertisedUDNsSetV[4|6] is a set containing advertised UDN subnets
+	nftablesAdvertisedUDNsSetV4 = "advertised-udn-subnets-v4"
+	nftablesAdvertisedUDNsSetV6 = "advertised-udn-subnets-v6"
+
 	// nftablesUDNMarkNodePortsMap is a verdict maps containing
 	// localNodeIP / protocol / port keys indicating traffic that
 	// should be marked with a UDN specific value, which is used to direct the traffic
@@ -2457,6 +2465,11 @@ func newNodePortWatcher(
 				return nil, fmt.Errorf("unable to configure UDN nftables: %w", err)
 			}
 		}
+		if util.IsRouteAdvertisementsEnabled() {
+			if err := configureAdvertisedUDNIsolationNFTables(); err != nil {
+				return nil, fmt.Errorf("unable to configure UDN isolation nftables: %w", err)
+			}
+		}
 	}
 
 	var subnets []*net.IPNet
@@ -2918,4 +2931,75 @@ func getIPv(ipnet *net.IPNet) string {
 		prefix = "ipv6"
 	}
 	return prefix
+}
+
+// configureAdvertisedUDNIsolationNFTables configures nftables to drop traffic generated locally towards advertised UDN subnets.
+// It sets up a nftables chain named nftablesUDNBGPOutputChain in the output hook with filter priority which drops
+// traffic originating from the local node destined to nftablesAdvertisedUDNsSet.
+// It creates nftablesAdvertisedUDNsSet[v4|v6] set which stores the subnets.
+// Results in:
+//
+//	set advertised-udn-subnets-v4 {
+//	  type ipv4_addr
+//	  flags interval
+//	  comment "advertised UDN V4 subnets"
+//	}
+//	set advertised-udn-subnets-v6 {
+//	  type ipv6_addr
+//	  flags interval
+//	  comment "advertised UDN V6 subnets"
+//	}
+//	chain udn-bgp-drop {
+//	  comment "Drop traffic generated locally towards advertised UDN subnets"
+//	   type filter hook output priority filter; policy accept;
+//	   ip daddr @advertised-udn-subnets-v4 counter packets 0 bytes 0 drop
+//	   ip6 daddr @advertised-udn-subnets-v6 counter packets 0 bytes 0 drop
+//	 }
+func configureAdvertisedUDNIsolationNFTables() error {
+	counterIfDebug := ""
+	if config.Logging.Level > 4 {
+		counterIfDebug = "counter"
+	}
+
+	nft, err := nodenft.GetNFTablesHelper()
+	if err != nil {
+		return err
+	}
+	tx := nft.NewTransaction()
+	tx.Add(&knftables.Chain{
+		Name:    nftablesUDNBGPOutputChain,
+		Comment: knftables.PtrTo("Drop traffic generated locally towards advertised UDN subnets"),
+
+		Type:     knftables.PtrTo(knftables.FilterType),
+		Hook:     knftables.PtrTo(knftables.OutputHook),
+		Priority: knftables.PtrTo(knftables.FilterPriority),
+	})
+	tx.Flush(&knftables.Chain{Name: nftablesUDNBGPOutputChain})
+	set := &knftables.Set{
+		Name:    nftablesAdvertisedUDNsSetV4,
+		Comment: knftables.PtrTo("advertised UDN V4 subnets"),
+		Type:    "ipv4_addr",
+		Flags:   []knftables.SetFlag{knftables.IntervalFlag},
+	}
+	tx.Add(set)
+	tx.Flush(set)
+
+	set = &knftables.Set{
+		Name:    nftablesAdvertisedUDNsSetV6,
+		Comment: knftables.PtrTo("advertised UDN V6 subnets"),
+		Type:    "ipv6_addr",
+		Flags:   []knftables.SetFlag{knftables.IntervalFlag},
+	}
+	tx.Add(set)
+	tx.Flush(set)
+
+	tx.Add(&knftables.Rule{
+		Chain: nftablesUDNBGPOutputChain,
+		Rule:  knftables.Concat(fmt.Sprintf("ip daddr @%s", nftablesAdvertisedUDNsSetV4), counterIfDebug, "drop"),
+	})
+	tx.Add(&knftables.Rule{
+		Chain: nftablesUDNBGPOutputChain,
+		Rule:  knftables.Concat(fmt.Sprintf("ip6 daddr @%s", nftablesAdvertisedUDNsSetV6), counterIfDebug, "drop"),
+	})
+	return nft.Run(context.TODO(), tx)
 }
