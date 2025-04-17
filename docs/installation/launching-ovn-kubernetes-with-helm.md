@@ -64,7 +64,7 @@ networking:
 - Optional: build local image and load it into Kind nodes
 ```
 # cd dist/images
-# make ubuntu
+# make ubuntu-image
 # docker tag ovn-kube-ubuntu:latest ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-ubuntu:master
 # kind load docker-image ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-ubuntu:master
 ```
