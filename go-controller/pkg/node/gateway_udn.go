@@ -437,11 +437,17 @@ func (udng *UserDefinedNetworkGateway) DelNetwork() error {
 			return fmt.Errorf("failed to reconcile default gateway for network %s, err: %v", udng.GetNetworkName(), err)
 		}
 	}
+
+	err := udng.updateAdvertisedUDNIsolationRules(false)
+	if err != nil {
+		return err
+	}
+
 	if err := udng.delMarkChain(); err != nil {
 		return err
 	}
 	// delete the management port interface for this network
-	err := udng.deleteUDNManagementPort()
+	err = udng.deleteUDNManagementPort()
 	if err != nil {
 		return err
 	}
@@ -918,6 +924,9 @@ func (udng *UserDefinedNetworkGateway) doReconcile() error {
 		return fmt.Errorf("error while updating logical flow for UDN %s: %s", udng.GetNetworkName(), err)
 	}
 
+	if err := udng.updateAdvertisedUDNIsolationRules(isNetworkAdvertised); err != nil {
+		return fmt.Errorf("error while updating advertised UDN isolation rules: %w", err)
+	}
 	return nil
 }
 
@@ -974,4 +983,57 @@ func (udng *UserDefinedNetworkGateway) removeDefaultRouteFromVRF() error {
 		return fmt.Errorf("unable to delete routes for network %s, err: %v", udng.GetNetworkName(), err)
 	}
 	return nil
+}
+
+// updateAdvertisedUDNIsolationRules adds nft rules to drop locally generated traffic destined to the UDN subnets for
+// BGP advertised networks. It blocks access to the full UDN subnet to handle a case in L3 when a node tries to access
+// a host subnet available on a different node. When isNetworkAdvertised is false the rules are removed.
+// Example:
+//
+//	chain udn-bgp-drop {
+//	  comment "Drop traffic generated locally towards the advertised UDN subnets"
+//	  type filter hook output priority filter; policy accept;
+//	  ip daddr 10.10.0.0/16 counter packets 0 bytes 0 drop comment "cluster_udn_l3network"
+//	}
+func (udng *UserDefinedNetworkGateway) updateAdvertisedUDNIsolationRules(isNetworkAdvertised bool) error {
+	nft, err := nodenft.GetNFTablesHelper()
+	if err != nil {
+		return err
+	}
+	tx := nft.NewTransaction()
+
+	if !isNetworkAdvertised {
+		existing, err := nft.ListRules(context.TODO(), nftablesUDNBGPOutputChain)
+		if err != nil {
+			if knftables.IsNotFound(err) {
+				return nil
+			}
+			return fmt.Errorf("could not list existing rules in %s chain: %w", nftablesUDNBGPOutputChain, err)
+		}
+		for _, rule := range existing {
+			if rule.Comment != nil && *rule.Comment == udng.GetNetworkName() {
+				tx.Delete(rule)
+			}
+		}
+		return nft.Run(context.TODO(), tx)
+	}
+
+	counterIfDebug := ""
+	if config.Logging.Level > 4 {
+		counterIfDebug = "counter"
+	}
+	for _, udnNet := range udng.Subnets() {
+		ip := "ip"
+		if utilnet.IsIPv6CIDR(udnNet.CIDR) {
+			ip = "ip6"
+		}
+		rule := &knftables.Rule{
+			Chain:   nftablesUDNBGPOutputChain,
+			Comment: knftables.PtrTo(udng.GetNetworkName()),
+			// NOTE: This will drop traffic from the VRF too
+			Rule: knftables.Concat(fmt.Sprintf("%s daddr %s", ip, udnNet.CIDR), counterIfDebug, "drop"),
+		}
+		tx.Add(rule)
+	}
+	return nft.Run(context.TODO(), tx)
 }

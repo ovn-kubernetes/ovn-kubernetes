@@ -743,9 +743,16 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					framework.Logf("Connectivity check successful:'%s' -> %s", client, targetAddress)
 					return out, nil
 				}
+				clientName, clientNamespace, dst, expectedOutput, expectErr := connInfo(0)
 
-				gomega.Eventually(func() error {
-					clientName, clientNamespace, dst, expectedOutput, expectErr := connInfo(0)
+				asyncAssertion := gomega.Eventually
+				timeout := time.Second * 30
+				if expectErr {
+					// When the connectivity check is expected to fail it should be failing consistently
+					asyncAssertion = gomega.Consistently
+					timeout = time.Second * 15
+				}
+				asyncAssertion(func() error {
 					out, err := checkConnectivity(clientName, clientNamespace, dst)
 					if expectErr != (err != nil) {
 						return fmt.Errorf("expected connectivity check to return error(%t), got %v, output %v", expectErr, err, out)
@@ -769,7 +776,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 						}
 					}
 					return nil
-				}, 30*time.Second).Should(gomega.BeNil())
+				}, timeout).Should(gomega.BeNil())
 			},
 			ginkgo.Entry("pod to pod on the same network and same node should work",
 				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
@@ -814,14 +821,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 
 					srvPodStatus, err := userDefinedNetworkStatus(srvPod, namespacedName(srvPod.Namespace, cudnBTemplate.Name))
 					framework.ExpectNoError(err)
-					retErr := true
-					out := curlConnectionTimeoutCode
-					if cudnATemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer3 {
-						// FIXME: L3 - pod to pod on different networks and different nodes should NOT work
-						retErr = false
-						out = ""
-					}
-					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(srvPodStatus.IPs[ipFamilyIndex].IP.String(), "8080") + "/clientip", out, retErr
+					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(srvPodStatus.IPs[ipFamilyIndex].IP.String(), "8080") + "/clientip", curlConnectionTimeoutCode, true
 				}),
 			ginkgo.Entry("pod in the default network should not be able to access a UDN service",
 				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
@@ -853,11 +853,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 
 					srvPodStatus, err := userDefinedNetworkStatus(srvPod, namespacedName(srvPod.Namespace, cudnATemplate.Name))
 					framework.ExpectNoError(err)
-					// FIXME: L3 - curl returns code 7, the request works partially
-					// The client starts a connection from the default VRF. An IP rule sends this traffic into a specific VRF to reach the server pod.
-					// When the server pod replies (SYN-ACK), the reply packet is handled by the VRF. This stack doesn't contain the original client socket information,
-					// so it sees no active connection matching the reply and terminates the attempt with a RST.
-					return clientNode, "", net.JoinHostPort(srvPodStatus.IPs[ipFamilyIndex].IP.String(), "8080") + "/clientip", "", true
+					return clientNode, "", net.JoinHostPort(srvPodStatus.IPs[ipFamilyIndex].IP.String(), "8080") + "/clientip", curlConnectionTimeoutCode, true
 				}),
 			ginkgo.Entry("host to a different node UDN pod should not work",
 				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
@@ -867,14 +863,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 
 					srvPodStatus, err := userDefinedNetworkStatus(srvPod, namespacedName(srvPod.Namespace, cudnATemplate.Name))
 					framework.ExpectNoError(err)
-					retErr := true
-					out := curlConnectionTimeoutCode
-					if cudnATemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer3 {
-						// FIXME: L3 - host to UDN pod on different node should not work
-						retErr = false
-						out = ""
-					}
-					return clientNode, "", net.JoinHostPort(srvPodStatus.IPs[ipFamilyIndex].IP.String(), "8080") + "/clientip", out, retErr
+					return clientNode, "", net.JoinHostPort(srvPodStatus.IPs[ipFamilyIndex].IP.String(), "8080") + "/clientip", curlConnectionTimeoutCode, true
 				}),
 		)
 
