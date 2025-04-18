@@ -21,6 +21,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
+	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 
 	mnpapi "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/apis/k8s.cni.cncf.io/v1beta1"
 	mnpclient "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1beta1"
@@ -448,12 +449,11 @@ var _ = Describe("Multi Homing", func() {
 
 	Context("multiple pods connected to the same OVN-K secondary network", func() {
 		const (
-			clientPodName     = "client-pod"
-			port              = 9000
-			workerOneNodeName = "ovn-worker"
-			workerTwoNodeName = "ovn-worker2"
-			clientIP          = "192.168.200.10/24"
-			staticServerIP    = "192.168.200.20/24"
+			clientPodName   = "client-pod"
+			nodeHostnameKey = "kubernetes.io/hostname"
+			port            = 9000
+			clientIP        = "192.168.200.10/24"
+			staticServerIP  = "192.168.200.20/24"
 		)
 
 		ginkgo.It("eventually configures pods that were added to an already existing network before the nad", func() {
@@ -555,6 +555,12 @@ var _ = Describe("Multi Homing", func() {
 				)
 				Expect(err).NotTo(HaveOccurred())
 
+				By("Get two scheduable nodes and schedule client and server to be on distinct Nodes")
+				nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.Background(), f.ClientSet, 2)
+				framework.ExpectNoError(err, "2 scheduable nodes are required")
+				clientPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[0].GetName()}
+				serverPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[1].GetName()}
+
 				By("instantiating the server pod")
 				serverPod, err := cs.CoreV1().Pods(serverPodConfig.namespace).Create(
 					context.Background(),
@@ -631,15 +637,13 @@ var _ = Describe("Multi Homing", func() {
 					cidr:     secondaryNetworkCIDR,
 				},
 				podConfiguration{
-					attachments:  []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
-					name:         clientPodName,
-					nodeSelector: map[string]string{nodeHostnameKey: workerOneNodeName},
+					attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
+					name:        clientPodName,
 				},
 				podConfiguration{
 					attachments:  []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
 					name:         podName,
 					containerCmd: httpServerContainerCmd(port),
-					nodeSelector: map[string]string{nodeHostnameKey: workerTwoNodeName},
 				},
 			),
 			ginkgo.Entry(
@@ -702,15 +706,13 @@ var _ = Describe("Multi Homing", func() {
 					cidr:     strings.Join([]string{netCIDR(secondaryNetworkCIDR, netPrefixLengthPerNode), netCIDR(secondaryIPv6CIDR, netPrefixLengthIPv6PerNode)}, ","),
 				},
 				podConfiguration{
-					attachments:  []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
-					name:         clientPodName,
-					nodeSelector: map[string]string{nodeHostnameKey: workerOneNodeName},
+					attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
+					name:        clientPodName,
 				},
 				podConfiguration{
 					attachments:  []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
 					name:         podName,
 					containerCmd: httpServerContainerCmd(port),
-					nodeSelector: map[string]string{nodeHostnameKey: workerTwoNodeName},
 				},
 			),
 			ginkgo.Entry(
@@ -761,15 +763,13 @@ var _ = Describe("Multi Homing", func() {
 					cidr:     secondaryIPv6CIDR,
 				},
 				podConfiguration{
-					attachments:  []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
-					name:         clientPodName,
-					nodeSelector: map[string]string{nodeHostnameKey: workerOneNodeName},
+					attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
+					name:        clientPodName,
 				},
 				podConfiguration{
 					attachments:  []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
 					name:         podName,
 					containerCmd: httpServerContainerCmd(port),
-					nodeSelector: map[string]string{nodeHostnameKey: workerTwoNodeName},
 				},
 			),
 			ginkgo.Entry(
@@ -780,15 +780,13 @@ var _ = Describe("Multi Homing", func() {
 					cidr:     strings.Join([]string{secondaryFlatL2NetworkCIDR, secondaryIPv6CIDR}, ","),
 				},
 				podConfiguration{
-					attachments:  []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
-					name:         clientPodName,
-					nodeSelector: map[string]string{nodeHostnameKey: workerOneNodeName},
+					attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
+					name:        clientPodName,
 				},
 				podConfiguration{
 					attachments:  []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
 					name:         podName,
 					containerCmd: httpServerContainerCmd(port),
-					nodeSelector: map[string]string{nodeHostnameKey: workerTwoNodeName},
 				},
 			),
 			ginkgo.Entry(
@@ -800,15 +798,13 @@ var _ = Describe("Multi Homing", func() {
 					vlanID:   localnetVLANID,
 				},
 				podConfiguration{
-					attachments:  []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
-					name:         clientPodName,
-					nodeSelector: map[string]string{nodeHostnameKey: workerOneNodeName},
+					attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
+					name:        clientPodName,
 				},
 				podConfiguration{
 					attachments:  []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
 					name:         podName,
 					containerCmd: httpServerContainerCmd(port),
-					nodeSelector: map[string]string{nodeHostnameKey: workerTwoNodeName},
 				},
 			),
 			ginkgo.Entry(
@@ -821,14 +817,12 @@ var _ = Describe("Multi Homing", func() {
 				podConfiguration{
 					attachments:  []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
 					name:         clientPodName,
-					nodeSelector: map[string]string{nodeHostnameKey: workerOneNodeName},
 					isPrivileged: true,
 				},
 				podConfiguration{
 					attachments:  []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
 					name:         podName,
 					containerCmd: httpServerContainerCmd(port),
-					nodeSelector: map[string]string{nodeHostnameKey: workerTwoNodeName},
 					isPrivileged: true,
 				},
 			),
@@ -844,8 +838,7 @@ var _ = Describe("Multi Homing", func() {
 						Name:      secondaryNetworkName,
 						IPRequest: []string{clientIP},
 					}},
-					name:         clientPodName,
-					nodeSelector: map[string]string{nodeHostnameKey: workerOneNodeName},
+					name: clientPodName,
 				},
 				podConfiguration{
 					attachments: []nadapi.NetworkSelectionElement{{
@@ -854,7 +847,6 @@ var _ = Describe("Multi Homing", func() {
 					}},
 					name:         podName,
 					containerCmd: httpServerContainerCmd(port),
-					nodeSelector: map[string]string{nodeHostnameKey: workerTwoNodeName},
 				},
 			),
 			ginkgo.Entry(
@@ -866,15 +858,13 @@ var _ = Describe("Multi Homing", func() {
 					vlanID:   localnetVLANID,
 				},
 				podConfiguration{
-					attachments:  []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
-					name:         clientPodName,
-					nodeSelector: map[string]string{nodeHostnameKey: workerOneNodeName},
+					attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
+					name:        clientPodName,
 				},
 				podConfiguration{
 					attachments:  []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
 					name:         podName,
 					containerCmd: httpServerContainerCmd(port),
-					nodeSelector: map[string]string{nodeHostnameKey: workerTwoNodeName},
 				},
 			),
 			ginkgo.Entry(
@@ -886,27 +876,25 @@ var _ = Describe("Multi Homing", func() {
 					vlanID:   localnetVLANID,
 				},
 				podConfiguration{
-					attachments:  []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
-					name:         clientPodName,
-					nodeSelector: map[string]string{nodeHostnameKey: workerOneNodeName},
+					attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
+					name:        clientPodName,
 				},
 				podConfiguration{
 					attachments:  []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
 					name:         podName,
 					containerCmd: httpServerContainerCmd(port),
-					nodeSelector: map[string]string{nodeHostnameKey: workerTwoNodeName},
 				},
 			),
 		)
 
 		Context("localnet OVN-K secondary network", func() {
 			const (
-				clientPodName          = "client-pod"
-				servicePort            = 9000
-				dockerNetworkName      = "underlay"
-				underlayServiceIP      = "60.128.0.1"
-				secondaryInterfaceName = "eth1"
-				expectedOriginalMTU    = 1200
+				clientPodName                 = "client-pod"
+				servicePort            uint16 = 9000
+				dockerNetworkName             = "underlay"
+				underlayServiceIP             = "60.128.0.1"
+				secondaryInterfaceName        = "eth1"
+				expectedOriginalMTU           = 1200
 			)
 
 			var netConfig networkAttachmentConfig
@@ -953,7 +941,7 @@ var _ = Describe("Multi Homing", func() {
 
 				BeforeEach(func() {
 					By("starting a service, connected to the underlay")
-					cmdWebServer = exec.Command("python3", "-m", "http.server", "--bind", underlayServiceIP, strconv.Itoa(servicePort))
+					cmdWebServer = exec.Command("python3", "-m", "http.server", "--bind", underlayServiceIP, strconv.Itoa(int(servicePort)))
 					cmdWebServer.Stderr = os.Stderr
 					Expect(cmdWebServer.Start()).NotTo(HaveOccurred(), "failed to create web server, port might be busy")
 				})
