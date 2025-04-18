@@ -91,6 +91,8 @@ global:
   enableLFlowCache: true
   # -- Configure to use DNSNameResolver feature with ovn-kubernetes
   enableDNSNameResolver: false
+  # -- Configure to enable ToS value inheritance for OVN encapsulation from ovn-kubernetes
+  enableOvnEncapTosInherit: false
   # -- Maximum number of logical flow cache entries ovn-controller may create when the logical flow cache is enabled
   # @default -- unlimited
   lFlowCacheLimit: ""
