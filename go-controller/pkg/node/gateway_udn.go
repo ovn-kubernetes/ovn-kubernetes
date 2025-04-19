@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"sigs.k8s.io/knftables"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/iprulemanager"
@@ -128,6 +130,7 @@ func (b *bridgeConfiguration) addNetworkBridgeConfig(
 			subnets:     nInfo.Subnets(),
 			nodeSubnets: nodeSubnets,
 		}
+		klog.Infof("SURYA %v/%v", netName, util.IsPodNetworkAdvertisedAtNode(nInfo, b.nodeName))
 		netConfig.advertised.Store(util.IsPodNetworkAdvertisedAtNode(nInfo, b.nodeName))
 
 		b.netConfig[netName] = netConfig
@@ -974,4 +977,20 @@ func (udng *UserDefinedNetworkGateway) removeDefaultRouteFromVRF() error {
 		return fmt.Errorf("unable to delete routes for network %s, err: %v", udng.GetNetworkName(), err)
 	}
 	return nil
+}
+
+func fetchUDNEnabledDefaultNetServiceIPs(wf factory.NodeWatchFactory) ([]string, error) {
+	var clusterIPs []string
+	for _, enabledService := range config.Default.UDNAllowedDefaultServices {
+		klog.Infof("SURYA %v", enabledService)
+		parts := strings.Split(enabledService, "/")
+		namespace := parts[0]
+		name := parts[1]
+		service, err := wf.GetService(namespace, name)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get service %s/%s: err %w", namespace, name, err)
+		}
+		clusterIPs = append(clusterIPs, service.Spec.ClusterIPs...)
+	}
+	return clusterIPs, nil
 }

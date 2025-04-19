@@ -551,6 +551,12 @@ type bridgeConfiguration struct {
 	netConfig   map[string]*bridgeUDNConfiguration
 	eipMarkIPs  *markIPsCache
 	nextHops    []net.IP
+	// stores the clusterIPs of the services in default network
+	// that should be reachable from the UDN networks
+	// this list is expected to be immutable and is used when
+	// computing flows for advertised UDN networks to be able to
+	// talk to these services.
+	udnEnabledDefaultNetServiceIPs []string
 }
 
 func (b *bridgeConfiguration) getGatewayIface() string {
