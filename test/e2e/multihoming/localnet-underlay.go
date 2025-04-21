@@ -1,10 +1,9 @@
-package e2e
+package multihoming
 
 import (
 	"context"
 	"fmt"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/helpers"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/multihoming"
 	"os"
 	"os/exec"
 	"strings"
@@ -15,15 +14,15 @@ import (
 )
 
 const (
-	defaultOvsBridge = "breth0"
-	secondaryBridge  = "ovsbr1"
+	DefaultOvsBridge = "breth0"
+	SecondaryBridge  = "ovsbr1"
 	add              = "add-br"
 	del              = "del-br"
 )
 
-func setupUnderlay(ovsPods []v1.Pod, bridgeName, portName string, nadConfig multihoming.NetworkAttachmentConfig) error {
+func SetupUnderlay(ovsPods []v1.Pod, bridgeName, portName string, nadConfig NetworkAttachmentConfig) error {
 	for _, ovsPod := range ovsPods {
-		if bridgeName != defaultOvsBridge {
+		if bridgeName != DefaultOvsBridge {
 			if err := addOVSBridge(ovsPod.Name, bridgeName); err != nil {
 				return err
 			}
@@ -49,13 +48,13 @@ func setupUnderlay(ovsPods []v1.Pod, bridgeName, portName string, nadConfig mult
 	return nil
 }
 
-func ovsRemoveSwitchPort(ovsPods []v1.Pod, portName string, newVLANID int) error {
+func OvsRemoveSwitchPort(ovsPods []v1.Pod, portName string, newVLANID int) error {
 	for _, ovsPod := range ovsPods {
-		if err := ovsRemoveVLANAccessPort(ovsPod.Name, secondaryBridge, portName); err != nil {
+		if err := ovsRemoveVLANAccessPort(ovsPod.Name, SecondaryBridge, portName); err != nil {
 			return fmt.Errorf("failed to remove old VLAN port: %v", err)
 		}
 
-		if err := ovsEnableVLANAccessPort(ovsPod.Name, secondaryBridge, portName, newVLANID); err != nil {
+		if err := ovsEnableVLANAccessPort(ovsPod.Name, SecondaryBridge, portName, newVLANID); err != nil {
 			return fmt.Errorf("failed to add new VLAN port: %v", err)
 		}
 	}
@@ -63,9 +62,9 @@ func ovsRemoveSwitchPort(ovsPods []v1.Pod, portName string, newVLANID int) error
 	return nil
 }
 
-func teardownUnderlay(ovsPods []v1.Pod, bridgeName string) error {
+func TeardownUnderlay(ovsPods []v1.Pod, bridgeName string) error {
 	for _, ovsPod := range ovsPods {
-		if bridgeName != defaultOvsBridge {
+		if bridgeName != DefaultOvsBridge {
 			if err := removeOVSBridge(ovsPod.Name, bridgeName); err != nil {
 				return err
 			}
@@ -81,7 +80,7 @@ func teardownUnderlay(ovsPods []v1.Pod, bridgeName string) error {
 	return nil
 }
 
-func ovsPods(clientSet clientset.Interface) []v1.Pod {
+func OvsPods(clientSet clientset.Interface) []v1.Pod {
 	const (
 		ovsNodeLabel = "app=ovs-node"
 	)
@@ -201,8 +200,8 @@ func bridgeMapping(physnet, ovsBridge string) BridgeMapping {
 	}
 }
 
-// TODO: make this function idempotent; use golang netlink instead
-func createVLANInterface(deviceName string, vlanID string, ipAddress *string) error {
+// CreateVLANInterface TODO: make this function idempotent; use golang netlink instead
+func CreateVLANInterface(deviceName string, vlanID string, ipAddress *string) error {
 	vlan := vlanName(deviceName, vlanID)
 	cmd := exec.Command("sudo", "ip", "link", "add", "link", deviceName, "name", vlan, "type", "vlan", "id", vlanID)
 	cmd.Stderr = os.Stderr
@@ -227,8 +226,8 @@ func createVLANInterface(deviceName string, vlanID string, ipAddress *string) er
 	return nil
 }
 
-// TODO: make this function idempotent; use golang netlink instead
-func deleteVLANInterface(deviceName string, vlanID string) error {
+// DeleteVLANInterface TODO: make this function idempotent; use golang netlink instead
+func DeleteVLANInterface(deviceName string, vlanID string) error {
 	vlan := vlanName(deviceName, vlanID)
 	cmd := exec.Command("sudo", "ip", "link", "del", vlan)
 	cmd.Stderr = os.Stderr
