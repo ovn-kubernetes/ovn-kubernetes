@@ -33,6 +33,7 @@ import (
 	utilnet "k8s.io/utils/net"
 
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/helpers"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/multihoming"
 )
 
 const (
@@ -300,7 +301,7 @@ func targetExternalContainerAndTest(targetNode node, podName, podNamespace strin
 	}
 }
 
-var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigParams networkAttachmentConfigParams) {
+var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigParams multihoming.NetworkAttachmentConfigParams) {
 	//FIXME: tests for CDN are designed for single stack clusters (IPv4 or IPv6) and must choose a single IP family for dual stack clusters.
 	// Remove this restriction and allow the tests to detect if an IP family support is available.
 	const (
@@ -514,9 +515,9 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigPa
 		return false
 	}
 
-	isNetworkSupported := func(nodes *corev1.NodeList, netConfigParams networkAttachmentConfigParams) (bool, string) {
+	isNetworkSupported := func(nodes *corev1.NodeList, netConfigParams multihoming.NetworkAttachmentConfigParams) (bool, string) {
 		// cluster default network
-		if netConfigParams.networkName == types.DefaultNetworkName {
+		if netConfigParams.NetworkName == types.DefaultNetworkName {
 			return true, "cluster default network is always supported"
 		}
 		// user defined networks
@@ -526,27 +527,27 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigPa
 		if !helpers.IsInterconnectEnabled() {
 			return false, "interconnect is disabled. Environment variable 'OVN_ENABLE_INTERCONNECT' must have value true"
 		}
-		if netConfigParams.topology == types.LocalnetTopology {
+		if netConfigParams.Topology == types.LocalnetTopology {
 			return false, "unsupported network topology"
 		}
-		if netConfigParams.cidr == "" {
+		if netConfigParams.Cidr == "" {
 			return false, "UDN network must have subnet specified"
 		}
-		if utilnet.IsIPv4CIDRString(netConfigParams.cidr) && !isNodeInternalAddressesPresentForIPFamily(nodes, corev1.IPv4Protocol) {
+		if utilnet.IsIPv4CIDRString(netConfigParams.Cidr) && !isNodeInternalAddressesPresentForIPFamily(nodes, corev1.IPv4Protocol) {
 			return false, "cluster must have IPv4 Node internal address"
 		}
-		if utilnet.IsIPv6CIDRString(netConfigParams.cidr) && !isNodeInternalAddressesPresentForIPFamily(nodes, corev1.IPv6Protocol) {
+		if utilnet.IsIPv6CIDRString(netConfigParams.Cidr) && !isNodeInternalAddressesPresentForIPFamily(nodes, corev1.IPv6Protocol) {
 			return false, "cluster must have IPv6 Node internal address"
 		}
 		return true, "network is supported"
 	}
 
-	getNodeIPs := func(nodes *corev1.NodeList, netConfigParams networkAttachmentConfigParams) []string {
+	getNodeIPs := func(nodes *corev1.NodeList, netConfigParams multihoming.NetworkAttachmentConfigParams) []string {
 		isIPv4Cluster := isNodeInternalAddressesPresentForIPFamily(nodes, corev1.IPv4Protocol)
 		isIPv6Cluster := isNodeInternalAddressesPresentForIPFamily(nodes, corev1.IPv6Protocol)
 		var ipFamily corev1.IPFamily
 		// cluster default network
-		if netConfigParams.networkName == types.DefaultNetworkName {
+		if netConfigParams.NetworkName == types.DefaultNetworkName {
 			// we do not create a CDN, we utilize the network within the cluster.
 			// The current e2e tests assume a single stack, therefore if dual stack, default to IPv4
 			// until the tests are refactored to accommodate dual stack.
@@ -558,13 +559,13 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigPa
 			}
 		} else {
 			// user defined network
-			if netConfigParams.cidr == "" {
+			if netConfigParams.Cidr == "" {
 				framework.Failf("network config must have subnet defined")
 			}
-			if utilnet.IsIPv4CIDRString(netConfigParams.cidr) && isIPv4Cluster {
+			if utilnet.IsIPv4CIDRString(netConfigParams.Cidr) && isIPv4Cluster {
 				ipFamily = corev1.IPv4Protocol
 			}
-			if utilnet.IsIPv6CIDRString(netConfigParams.cidr) && isIPv6Cluster {
+			if utilnet.IsIPv6CIDRString(netConfigParams.Cidr) && isIPv6Cluster {
 				ipFamily = corev1.IPv6Protocol
 			}
 		}
@@ -597,15 +598,15 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigPa
 		return srcPodIP, nil
 	}
 
-	isUserDefinedNetwork := func(netParams networkAttachmentConfigParams) bool {
-		if netParams.networkName == types.DefaultNetworkName {
+	isUserDefinedNetwork := func(netParams multihoming.NetworkAttachmentConfigParams) bool {
+		if netParams.NetworkName == types.DefaultNetworkName {
 			return false
 		}
 		return true
 	}
 
-	isClusterDefaultNetwork := func(netParams networkAttachmentConfigParams) bool {
-		if netParams.networkName == types.DefaultNetworkName {
+	isClusterDefaultNetwork := func(netParams multihoming.NetworkAttachmentConfigParams) bool {
+		if netParams.NetworkName == types.DefaultNetworkName {
 			return true
 		}
 		return false
@@ -694,11 +695,11 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigPa
 		// configure UDN
 		nadClient, err := nadclient.NewForConfig(f.ClientConfig())
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		netConfig := newNetworkAttachmentConfig(netConfigParams)
-		netConfig.namespace = f.Namespace.Name
+		netConfig := multihoming.NewNetworkAttachmentConfig(netConfigParams)
+		netConfig.Namespace = f.Namespace.Name
 		_, err = nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
 			context.Background(),
-			generateNAD(netConfig),
+			multihoming.GenerateNAD(netConfig),
 			metav1.CreateOptions{},
 		)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -846,7 +847,7 @@ spec:
 						f.ClientSet,
 						f.Namespace.Name,
 						pod2Name,
-						namespacedName(f.Namespace.Name, netConfigParams.name),
+						multihoming.NamespacedName(f.Namespace.Name, netConfigParams.Name),
 						0,
 					)
 					framework.ExpectNoError(err, "Step 3. Create two UDN pods matching the EgressIP: one running on each of the egress nodes, failed, err: %v", err)
@@ -2808,14 +2809,14 @@ spec:
 		})
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 
-		ginkgo.By(fmt.Sprintf("namespace is connected to UDN, create a namespace attached to this primary as a %s UDN", netConfigParams.topology))
+		ginkgo.By(fmt.Sprintf("namespace is connected to UDN, create a namespace attached to this primary as a %s UDN", netConfigParams.Topology))
 		nadClient, err := nadclient.NewForConfig(f.ClientConfig())
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		netConfig := newNetworkAttachmentConfig(netConfigParams)
-		netConfig.namespace = otherNetworkNamespace.Name
+		netConfig := multihoming.NewNetworkAttachmentConfig(netConfigParams)
+		netConfig.Namespace = otherNetworkNamespace.Name
 		_, err = nadClient.NetworkAttachmentDefinitions(otherNetworkNamespace.Name).Create(
 			context.Background(),
-			generateNAD(netConfig),
+			multihoming.GenerateNAD(netConfig),
 			metav1.CreateOptions{},
 		)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -2908,14 +2909,14 @@ spec:
 		framework.ExpectNoError(err, "Step 11. Check connectivity from other pod and verify that the srcIP is the expected egressIP and verify that the srcIP is the expected nodeIP, failed: %v", err)
 	})
 
-	ginkgo.DescribeTable("[OVN network] multiple namespaces with different primary networks", func(otherNetworkAttachParms networkAttachmentConfigParams) {
+	ginkgo.DescribeTable("[OVN network] multiple namespaces with different primary networks", func(otherNetworkAttachParms multihoming.NetworkAttachmentConfigParams) {
 		if !helpers.IsNetworkSegmentationEnabled() {
 			ginkgo.Skip("network segmentation is disabled")
 		}
 		var otherNetworkNamespace *corev1.Namespace
 		var err error
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-		isOtherNetworkIPv6 := utilnet.IsIPv6CIDRString(otherNetworkAttachParms.cidr)
+		isOtherNetworkIPv6 := utilnet.IsIPv6CIDRString(otherNetworkAttachParms.Cidr)
 		// The EgressIP IP must match both networks IP family
 		if isOtherNetworkIPv6 != isIPv6TestRun {
 			ginkgo.Skip(fmt.Sprintf("Test run IP family (is IPv6: %v) doesn't match other networks IP family (is IPv6: %v)", isIPv6TestRun, isOtherNetworkIPv6))
@@ -2927,15 +2928,15 @@ spec:
 				helpers.RequiredUDNNamespaceLabel: "",
 				"e2e-framework":                   f.BaseName,
 			})
-			ginkgo.By(fmt.Sprintf("namespace is connected to CDN, create a namespace with %s primary UDN", otherNetworkAttachParms.topology))
+			ginkgo.By(fmt.Sprintf("namespace is connected to CDN, create a namespace with %s primary UDN", otherNetworkAttachParms.Topology))
 			// create primary UDN
 			nadClient, err := nadclient.NewForConfig(f.ClientConfig())
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			netConfig := newNetworkAttachmentConfig(otherNetworkAttachParms)
-			netConfig.namespace = otherNetworkNamespace.Name
+			netConfig := multihoming.NewNetworkAttachmentConfig(otherNetworkAttachParms)
+			netConfig.Namespace = otherNetworkNamespace.Name
 			_, err = nadClient.NetworkAttachmentDefinitions(otherNetworkNamespace.Name).Create(
 				context.Background(),
-				generateNAD(netConfig),
+				multihoming.GenerateNAD(netConfig),
 				metav1.CreateOptions{},
 			)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -3024,62 +3025,62 @@ spec:
 		err = wait.PollImmediate(helpers.RetryInterval, retryTimeout, targetExternalContainerAndTest(targetNode, pod2Name, pod2OtherNetworkNamespace, true, []string{egressIP1.String()}))
 		framework.ExpectNoError(err, "Step 7. Check connectivity from pod connected to a different network and verify that the srcIP is the expected nodeIP, failed: %v", err)
 	},
-		ginkgo.Entry("L3 Primary UDN", networkAttachmentConfigParams{
-			name:     "l3primary",
-			topology: types.Layer3Topology,
-			cidr:     correctCIDRFamily("30.10.0.0/16", "2014:100:200::0/60"),
-			role:     "primary",
+		ginkgo.Entry("L3 Primary UDN", multihoming.NetworkAttachmentConfigParams{
+			Name:     "l3primary",
+			Topology: types.Layer3Topology,
+			Cidr:     multihoming.CorrectCIDRFamily("30.10.0.0/16", "2014:100:200::0/60"),
+			Role:     "primary",
 		}),
-		ginkgo.Entry("L2 Primary UDN", networkAttachmentConfigParams{
-			name:     "l2primary",
-			topology: types.Layer2Topology,
-			cidr:     correctCIDRFamily("10.10.0.0/16", "2014:100:200::0/60"),
-			role:     "primary",
+		ginkgo.Entry("L2 Primary UDN", multihoming.NetworkAttachmentConfigParams{
+			Name:     "l2primary",
+			Topology: types.Layer2Topology,
+			Cidr:     multihoming.CorrectCIDRFamily("10.10.0.0/16", "2014:100:200::0/60"),
+			Role:     "primary",
 		}),
 	)
 },
 	ginkgo.Entry(
 		"Cluster Default Network",
-		networkAttachmentConfigParams{
-			networkName: types.DefaultNetworkName,
-			topology:    types.Layer3Topology,
+		multihoming.NetworkAttachmentConfigParams{
+			NetworkName: types.DefaultNetworkName,
+			Topology:    types.Layer3Topology,
 		},
 	),
 	// FIXME: fix tests for CDN to specify IPv4 and IPv6 entries in-order to enable testing all IP families on dual stack clusters
 	ginkgo.Entry(
 		"Network Segmentation: IPv4 L3 role primary",
-		networkAttachmentConfigParams{
-			name:     "l3primaryv4",
-			topology: types.Layer3Topology,
-			cidr:     "10.10.0.0/16",
-			role:     "primary",
+		multihoming.NetworkAttachmentConfigParams{
+			Name:     "l3primaryv4",
+			Topology: types.Layer3Topology,
+			Cidr:     "10.10.0.0/16",
+			Role:     "primary",
 		},
 	),
 	ginkgo.Entry(
 		"Network Segmentation: IPv6 L3 role primary",
-		networkAttachmentConfigParams{
-			name:     "l3primaryv6",
-			topology: types.Layer3Topology,
-			cidr:     "2014:100:200::0/60",
-			role:     "primary",
+		multihoming.NetworkAttachmentConfigParams{
+			Name:     "l3primaryv6",
+			Topology: types.Layer3Topology,
+			Cidr:     "2014:100:200::0/60",
+			Role:     "primary",
 		},
 	),
 	ginkgo.Entry(
 		"Network Segmentation: IPv4 L2 role primary",
-		networkAttachmentConfigParams{
-			name:     "l2primary",
-			topology: types.Layer2Topology,
-			cidr:     "20.10.0.0/16",
-			role:     "primary",
+		multihoming.NetworkAttachmentConfigParams{
+			Name:     "l2primary",
+			Topology: types.Layer2Topology,
+			Cidr:     "20.10.0.0/16",
+			Role:     "primary",
 		},
 	),
 	ginkgo.Entry(
 		"Network Segmentation: IPv6 L2 role primary",
-		networkAttachmentConfigParams{
-			name:     "l2primary",
-			topology: types.Layer2Topology,
-			cidr:     "2015:100:200::0/60",
-			role:     "primary",
+		multihoming.NetworkAttachmentConfigParams{
+			Name:     "l2primary",
+			Topology: types.Layer2Topology,
+			Cidr:     "2015:100:200::0/60",
+			Role:     "primary",
 		},
 	),
 )

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/helpers"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/multihoming"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
@@ -73,12 +74,12 @@ func checkPodsInterconnectivity(clientPod, serverPod *v1.Pod, namespace string, 
 			return err
 		}
 
-		clientPodConfig := podConfiguration{
-			name:      clientPod.Name,
-			namespace: namespace,
+		clientPodConfig := multihoming.PodConfiguration{
+			Name:      clientPod.Name,
+			Namespace: namespace,
 		}
 		if updatedPod.Status.Phase == v1.PodRunning {
-			return connectToServer(clientPodConfig, updatedPod.Status.PodIP, 8000)
+			return multihoming.ConnectToServer(clientPodConfig, updatedPod.Status.PodIP, 8000)
 		}
 
 		return fmt.Errorf("pod not running. /me is sad")
@@ -147,7 +148,7 @@ var _ = ginkgo.Describe("Multi node zones interconnect", func() {
 
 	ginkgo.It("Pod interconnectivity", func() {
 		// Create a server pod on zone - zone-1
-		cmd := httpServerContainerCmd(8000)
+		cmd := multihoming.HttpServerContainerCmd(8000)
 		serverPod := e2epod.NewAgnhostPod(fr.Namespace.Name, serverPodName, nil, nil, nil, cmd...)
 		serverPod.Spec.NodeName = serverPodNodeName
 		e2epod.NewPodClient(fr).CreateSync(context.TODO(), serverPod)

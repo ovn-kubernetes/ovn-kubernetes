@@ -18,10 +18,13 @@ import (
 
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/helpers"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/multihoming"
 )
 
 var _ = Describe("Network Segmentation: Localnet", func() {
-	f := wrappedTestFramework("network-segmentation-localnet")
+	f := helpers.WrappedTestFramework("network-segmentation-localnet")
 	f.SkipNamespaceCreation = true
 
 	It("using ClusterUserDefinedNetwork CR, pods in different namespaces, should communicate over localnet topology", func() {
@@ -48,7 +51,7 @@ var _ = Describe("Network Segmentation: Localnet", func() {
 			By("teardown the localnet underlay")
 			Expect(teardownUnderlay(ovsPods, ovsBrName)).To(Succeed())
 		})
-		c := networkAttachmentConfig{networkAttachmentConfigParams: networkAttachmentConfigParams{networkName: physicalNetworkName, vlanID: vlan}}
+		c := multihoming.NetworkAttachmentConfig{NetworkAttachmentConfigParams: multihoming.NetworkAttachmentConfigParams{NetworkName: physicalNetworkName, VlanID: vlan}}
 		Expect(setupUnderlay(ovsPods, ovsBrName, secondaryIfaceName, c)).To(Succeed())
 
 		By("create test namespaces")
@@ -63,12 +66,12 @@ var _ = Describe("Network Segmentation: Localnet", func() {
 		})
 
 		By("create CR selecting the test namespaces")
-		netConf := networkAttachmentConfigParams{
-			name:                cudnName,
-			physicalNetworkName: physicalNetworkName,
-			vlanID:              vlan,
-			cidr:                correctCIDRFamily(subnetIPv4, subnetIPv6),
-			excludeCIDRs:        selectCIDRs(excludeSubnetIPv4, excludeSubnetIPv6),
+		netConf := multihoming.NetworkAttachmentConfigParams{
+			Name:                cudnName,
+			PhysicalNetworkName: physicalNetworkName,
+			VlanID:              vlan,
+			Cidr:                multihoming.CorrectCIDRFamily(subnetIPv4, subnetIPv6),
+			ExcludeCIDRs:        multihoming.SelectCIDRs(excludeSubnetIPv4, excludeSubnetIPv6),
 		}
 		cudnYAML := newLocalnetCUDNYaml(netConf, nsBlue, nsRed)
 		cleanup, err := createManifest("", cudnYAML)
@@ -87,40 +90,40 @@ var _ = Describe("Network Segmentation: Localnet", func() {
 			Should(Succeed(), "CUDN CR is not ready")
 
 		By("create test pods")
-		serverPodCfg := podConfiguration{
-			name:         "test-server",
-			namespace:    nsBlue,
-			attachments:  []nadapi.NetworkSelectionElement{{Name: cudnName}},
-			containerCmd: httpServerContainerCmd(testPort),
+		serverPodCfg := multihoming.PodConfiguration{
+			Name:         "test-server",
+			Namespace:    nsBlue,
+			Attachments:  []nadapi.NetworkSelectionElement{{Name: cudnName}},
+			ContainerCmd: multihoming.HttpServerContainerCmd(testPort),
 		}
-		clientPodCfg := podConfiguration{
-			name:        "test-client",
-			namespace:   nsRed,
-			attachments: []nadapi.NetworkSelectionElement{{Name: cudnName}},
+		clientPodCfg := multihoming.PodConfiguration{
+			Name:        "test-client",
+			Namespace:   nsRed,
+			Attachments: []nadapi.NetworkSelectionElement{{Name: cudnName}},
 		}
-		serverPod, err := f.ClientSet.CoreV1().Pods(serverPodCfg.namespace).Create(context.Background(), generatePodSpec(serverPodCfg), metav1.CreateOptions{})
+		serverPod, err := f.ClientSet.CoreV1().Pods(serverPodCfg.Namespace).Create(context.Background(), multihoming.GeneratePodSpec(serverPodCfg), metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred())
-		clientPod, err := f.ClientSet.CoreV1().Pods(clientPodCfg.namespace).Create(context.Background(), generatePodSpec(clientPodCfg), metav1.CreateOptions{})
+		clientPod, err := f.ClientSet.CoreV1().Pods(clientPodCfg.Namespace).Create(context.Background(), multihoming.GeneratePodSpec(clientPodCfg), metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(e2epod.WaitForPodNameRunningInNamespace(context.Background(), f.ClientSet, clientPod.Name, clientPod.Namespace)).To(Succeed())
 		Expect(e2epod.WaitForPodNameRunningInNamespace(context.Background(), f.ClientSet, serverPod.Name, serverPod.Namespace)).To(Succeed())
 
 		By("assert pods interface's MTU is set with default MTU (1500)")
-		for _, cfg := range []podConfiguration{serverPodCfg, clientPodCfg} {
-			mtuRAW, err := e2ekubectl.RunKubectl(cfg.namespace, "exec", cfg.name, "--", "cat", "/sys/class/net/net1/mtu")
+		for _, cfg := range []multihoming.PodConfiguration{serverPodCfg, clientPodCfg} {
+			mtuRAW, err := e2ekubectl.RunKubectl(cfg.Namespace, "exec", cfg.Name, "--", "cat", "/sys/class/net/net1/mtu")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(mtuRAW).To(ContainSubstring("1500"))
 		}
 
 		By("assert pods IPs not in exclude range")
-		serverIPs, err := podIPsForAttachment(f.ClientSet, serverPodCfg.namespace, serverPodCfg.name, cudnName)
+		serverIPs, err := multihoming.PodIPsForAttachment(f.ClientSet, serverPodCfg.Namespace, serverPodCfg.Name, cudnName)
 		Expect(err).NotTo(HaveOccurred())
-		clientIPs, err := podIPsForAttachment(f.ClientSet, clientPodCfg.namespace, clientPodCfg.name, cudnName)
+		clientIPs, err := multihoming.PodIPsForAttachment(f.ClientSet, clientPodCfg.Namespace, clientPodCfg.Name, cudnName)
 		Expect(err).NotTo(HaveOccurred())
 		podIPs := append(serverIPs, clientIPs...)
-		for _, excludedRange := range netConf.excludeCIDRs {
+		for _, excludedRange := range netConf.ExcludeCIDRs {
 			for _, podIP := range podIPs {
-				Expect(inRange(excludedRange, podIP)).To(
+				Expect(multihoming.InRange(excludedRange, podIP)).To(
 					MatchError(fmt.Errorf("ip [%s] is NOT in range %s", podIP, excludedRange)))
 			}
 		}
@@ -128,20 +131,20 @@ var _ = Describe("Network Segmentation: Localnet", func() {
 		for _, serverIP := range serverIPs {
 			By(fmt.Sprintf("asserting the *client* pod can contact the server pod exposed endpoint [%s:%d]", serverIP, testPort))
 			Eventually(func() error {
-				return reachServerPodFromClient(f.ClientSet, serverPodCfg, clientPodCfg, serverIP, testPort)
+				return multihoming.ReachServerPodFromClient(f.ClientSet, serverPodCfg, clientPodCfg, serverIP, testPort)
 			}).WithTimeout(2 * time.Minute).WithPolling(6 * time.Second).Should(Succeed())
 		}
 	})
 })
 
-func newLocalnetCUDNYaml(params networkAttachmentConfigParams, selectedNamespaces ...string) string {
+func newLocalnetCUDNYaml(params multihoming.NetworkAttachmentConfigParams, selectedNamespaces ...string) string {
 	selectedNs := strings.Join(selectedNamespaces, ",")
-	excludeSubnets := strings.Join(params.excludeCIDRs, ",")
+	excludeSubnets := strings.Join(params.ExcludeCIDRs, ",")
 	return `
 apiVersion: k8s.ovn.org/v1
 kind: ClusterUserDefinedNetwork
 metadata:
-  name: ` + params.name + `
+  name: ` + params.Name + `
 spec:
   namespaceSelector:
     matchExpressions:
@@ -152,12 +155,12 @@ spec:
     topology: Localnet
     localnet:
       role: Secondary
-      physicalNetworkName: ` + params.physicalNetworkName + `
-      subnets: [` + params.cidr + `]
+      physicalNetworkName: ` + params.PhysicalNetworkName + `
+      subnets: [` + params.Cidr + `]
       excludeSubnets: [` + excludeSubnets + `]
       vlan:
         mode: Access
-        access: {id: ` + strconv.Itoa(params.vlanID) + `}
+        access: {id: ` + strconv.Itoa(params.VlanID) + `}
 `
 }
 

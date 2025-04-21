@@ -1413,11 +1413,11 @@ func IsKernelModuleLoaded(nodeName, kernelModuleName string) bool {
 	return false
 }
 
-func matchIPv4StringFamily(ipStrings []string) (string, error) {
+func MatchIPv4StringFamily(ipStrings []string) (string, error) {
 	return util.MatchIPStringFamily(false /*ipv4*/, ipStrings)
 }
 
-func matchIPv6StringFamily(ipStrings []string) (string, error) {
+func MatchIPv6StringFamily(ipStrings []string) (string, error) {
 	return util.MatchIPStringFamily(true /*ipv6*/, ipStrings)
 }
 

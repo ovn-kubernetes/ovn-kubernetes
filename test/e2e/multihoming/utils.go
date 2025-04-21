@@ -1,4 +1,4 @@
-package e2e
+package multihoming
 
 import (
 	"context"
@@ -27,17 +27,17 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/helpers"
 )
 
-func netCIDR(netCIDR string, netPrefixLengthPerNode int) string {
+func NetCIDR(netCIDR string, netPrefixLengthPerNode int) string {
 	return fmt.Sprintf("%s/%d", netCIDR, netPrefixLengthPerNode)
 }
 
-// takes ipv4 and ipv6 cidrs and returns the correct type for the cluster under test
-func correctCIDRFamily(ipv4CIDR, ipv6CIDR string) string {
-	return strings.Join(selectCIDRs(ipv4CIDR, ipv6CIDR), ",")
+// CorrectCIDRFamily takes ipv4 and ipv6 cidrs and returns the correct type for the cluster under test
+func CorrectCIDRFamily(ipv4CIDR, ipv6CIDR string) string {
+	return strings.Join(SelectCIDRs(ipv4CIDR, ipv6CIDR), ",")
 }
 
-// takes ipv4 and ipv6 cidrs and returns the correct type for the cluster under test
-func selectCIDRs(ipv4CIDR, ipv6CIDR string) []string {
+// SelectCIDRs takes ipv4 and ipv6 cidrs and returns the correct type for the cluster under test
+func SelectCIDRs(ipv4CIDR, ipv6CIDR string) []string {
 	// dual stack cluster
 	if helpers.IsIPv6Supported() && helpers.IsIPv4Supported() {
 		return []string{ipv4CIDR, ipv6CIDR}
@@ -51,7 +51,7 @@ func selectCIDRs(ipv4CIDR, ipv6CIDR string) []string {
 	return []string{ipv4CIDR}
 }
 
-func getNetCIDRSubnet(netCIDR string) (string, error) {
+func GetNetCIDRSubnet(netCIDR string) (string, error) {
 	subStrings := strings.Split(netCIDR, "/")
 	if len(subStrings) == 3 {
 		return subStrings[0] + "/" + subStrings[1], nil
@@ -61,48 +61,20 @@ func getNetCIDRSubnet(netCIDR string) (string, error) {
 	return "", fmt.Errorf("invalid network cidr: %q", netCIDR)
 }
 
-type networkAttachmentConfigParams struct {
-	cidr                string
-	excludeCIDRs        []string
-	namespace           string
-	name                string
-	topology            string
-	networkName         string
-	vlanID              int
-	allowPersistentIPs  bool
-	role                string
-	mtu                 int
-	physicalNetworkName string
-}
-
-type networkAttachmentConfig struct {
-	networkAttachmentConfigParams
-}
-
-func newNetworkAttachmentConfig(params networkAttachmentConfigParams) networkAttachmentConfig {
-	networkAttachmentConfig := networkAttachmentConfig{
-		networkAttachmentConfigParams: params,
-	}
-	if networkAttachmentConfig.networkName == "" {
-		networkAttachmentConfig.networkName = uniqueNadName(networkAttachmentConfig.name)
-	}
-	return networkAttachmentConfig
-}
-
-func uniqueNadName(originalNetName string) string {
+func UniqueNadName(originalNetName string) string {
 	const randomStringLength = 5
 	return fmt.Sprintf("%s_%s", rand.String(randomStringLength), originalNetName)
 }
 
-func generateNADSpec(config networkAttachmentConfig) string {
-	if config.mtu == 0 {
-		config.mtu = 1300
+func GenerateNADSpec(config NetworkAttachmentConfig) string {
+	if config.Mtu == 0 {
+		config.Mtu = 1300
 	}
 	return fmt.Sprintf(
 		`
 {
         "cniVersion": "0.3.0",
-        "name": %q,
+        "Name": %q,
         "type": "ovn-k8s-cni-overlay",
         "topology":%q,
         "subnets": %q,
@@ -115,22 +87,22 @@ func generateNADSpec(config networkAttachmentConfig) string {
         "role": %q
 }
 `,
-		config.networkName,
-		config.topology,
-		config.cidr,
-		strings.Join(config.excludeCIDRs, ","),
-		config.mtu,
-		namespacedName(config.namespace, config.name),
-		config.vlanID,
-		config.allowPersistentIPs,
-		config.physicalNetworkName,
-		config.role,
+		config.NetworkName,
+		config.Topology,
+		config.Cidr,
+		strings.Join(config.ExcludeCIDRs, ","),
+		config.Mtu,
+		NamespacedName(config.Namespace, config.Name),
+		config.VlanID,
+		config.AllowPersistentIPs,
+		config.PhysicalNetworkName,
+		config.Role,
 	)
 }
 
-func generateNAD(config networkAttachmentConfig) *nadapi.NetworkAttachmentDefinition {
-	nadSpec := generateNADSpec(config)
-	return generateNetAttachDef(config.namespace, config.name, nadSpec)
+func GenerateNAD(config NetworkAttachmentConfig) *nadapi.NetworkAttachmentDefinition {
+	nadSpec := GenerateNADSpec(config)
+	return generateNetAttachDef(config.Namespace, config.Name, nadSpec)
 }
 
 func generateNetAttachDef(namespace, nadName, nadSpec string) *nadapi.NetworkAttachmentDefinition {
@@ -143,7 +115,7 @@ func generateNetAttachDef(namespace, nadName, nadSpec string) *nadapi.NetworkAtt
 	}
 }
 
-func patchNADSpec(nadClient nadclient.K8sCniCncfIoV1Interface, name, namespace string, patch []byte) error {
+func PatchNADSpec(nadClient nadclient.K8sCniCncfIoV1Interface, name, namespace string, patch []byte) error {
 	_, err := nadClient.NetworkAttachmentDefinitions(namespace).Patch(
 		context.Background(),
 		name,
@@ -154,28 +126,25 @@ func patchNADSpec(nadClient nadclient.K8sCniCncfIoV1Interface, name, namespace s
 	return err
 }
 
-type podConfiguration struct {
-	attachments                  []nadapi.NetworkSelectionElement
-	containerCmd                 []string
-	name                         string
-	namespace                    string
-	nodeSelector                 map[string]string
-	isPrivileged                 bool
-	labels                       map[string]string
-	requiresExtraNamespace       bool
-	hostNetwork                  bool
-	needsIPRequestFromHostSubnet bool
-}
-
-func generatePodSpec(config podConfiguration) *v1.Pod {
-	podSpec := e2epod.NewAgnhostPod(config.namespace, config.name, nil, nil, nil, config.containerCmd...)
-	if len(config.attachments) > 0 {
-		podSpec.Annotations = networkSelectionElements(config.attachments...)
+//	func generatePodSpec(config podConfiguration) *v1.Pod {
+//		podSpec := e2epod.NewAgnhostPod(config.namespace, config.name, nil, nil, nil, config.containerCmd...)
+//		if len(config.attachments) > 0 {
+//			podSpec.Annotations = networkSelectionElements(config.attachments...)
+//		}
+//		podSpec.Spec.NodeSelector = config.nodeSelector
+//		podSpec.Labels = config.labels
+//		podSpec.Spec.HostNetwork = config.hostNetwork
+//		if config.isPrivileged {
+//
+// =======
+func GeneratePodSpec(config PodConfiguration) *v1.Pod {
+	podSpec := e2epod.NewAgnhostPod(config.Namespace, config.Name, nil, nil, nil, config.ContainerCmd...)
+	if len(config.Attachments) > 0 {
+		podSpec.Annotations = NetworkSelectionElements(config.Attachments...)
 	}
-	podSpec.Spec.NodeSelector = config.nodeSelector
-	podSpec.Labels = config.labels
-	podSpec.Spec.HostNetwork = config.hostNetwork
-	if config.isPrivileged {
+	podSpec.Spec.NodeSelector = config.NodeSelector
+	podSpec.Labels = config.Labels
+	if config.IsPrivileged {
 		podSpec.Spec.Containers[0].SecurityContext.Privileged = ptr.To(true)
 	} else {
 		for _, container := range podSpec.Spec.Containers {
@@ -193,7 +162,7 @@ func generatePodSpec(config podConfiguration) *v1.Pod {
 	return podSpec
 }
 
-func networkSelectionElements(elements ...nadapi.NetworkSelectionElement) map[string]string {
+func NetworkSelectionElements(elements ...nadapi.NetworkSelectionElement) map[string]string {
 	marshalledElements, err := json.Marshal(elements)
 	if err != nil {
 		panic(fmt.Errorf("programmer error: you've provided wrong input to the test data: %v", err))
@@ -203,11 +172,11 @@ func networkSelectionElements(elements ...nadapi.NetworkSelectionElement) map[st
 	}
 }
 
-func httpServerContainerCmd(port uint16) []string {
+func HttpServerContainerCmd(port uint16) []string {
 	return []string{"netexec", "--http-port", fmt.Sprintf("%d", port)}
 }
 
-func podNetworkStatus(pod *v1.Pod, predicates ...func(nadapi.NetworkStatus) bool) ([]nadapi.NetworkStatus, error) {
+func PodNetworkStatus(pod *v1.Pod, predicates ...func(nadapi.NetworkStatus) bool) ([]nadapi.NetworkStatus, error) {
 	podNetStatus, found := pod.Annotations[nadapi.NetworkStatusAnnot]
 	if !found {
 		return nil, fmt.Errorf("the pod must feature the `networks-status` annotation")
@@ -230,21 +199,21 @@ func podNetworkStatus(pod *v1.Pod, predicates ...func(nadapi.NetworkStatus) bool
 	return netStatusMeetingPredicates, nil
 }
 
-func podNetworkStatusByNetConfigPredicate(netConfig networkAttachmentConfig) func(nadapi.NetworkStatus) bool {
+func PodNetworkStatusByNetConfigPredicate(netConfig NetworkAttachmentConfig) func(nadapi.NetworkStatus) bool {
 	return func(networkStatus nadapi.NetworkStatus) bool {
-		if netConfig.role == "primary" {
+		if netConfig.Role == "primary" {
 			return networkStatus.Default
 		} else {
-			return networkStatus.Name == netConfig.namespace+"/"+netConfig.name
+			return networkStatus.Name == netConfig.Namespace+"/"+netConfig.Name
 		}
 	}
 }
 
-func namespacedName(namespace, name string) string {
+func NamespacedName(namespace, name string) string {
 	return fmt.Sprintf("%s/%s", namespace, name)
 }
 
-func inRange(cidr string, ip string) error {
+func InRange(cidr string, ip string) error {
 	_, cidrRange, err := net.ParseCIDR(cidr)
 	if err != nil {
 		return err
@@ -257,19 +226,20 @@ func inRange(cidr string, ip string) error {
 	return fmt.Errorf("ip [%s] is NOT in range %s", ip, cidr)
 }
 
-func connectToServer(clientPodConfig podConfiguration, serverIP string, port int, args ...string) error {
+func ConnectToServer(clientPodConfig PodConfiguration, serverIP string, port int, args ...string) error {
 	target := net.JoinHostPort(serverIP, fmt.Sprintf("%d", port))
 	baseArgs := []string{
 		"exec",
-		clientPodConfig.name,
+		clientPodConfig.Name,
 		"--",
 		"curl",
 		"--connect-timeout",
 		"2",
 	}
+
 	baseArgs = append(baseArgs, args...)
 
-	_, err := e2ekubectl.RunKubectl(clientPodConfig.namespace, append(baseArgs, target)...)
+	_, err := e2ekubectl.RunKubectl(clientPodConfig.Namespace, append(baseArgs, target)...)
 	return err
 }
 
@@ -291,12 +261,12 @@ func getMTUByInterfaceName(output, interfaceName string) (int, error) {
 	return 0, fmt.Errorf("interface %s not found", interfaceName)
 }
 
-func getSecondaryInterfaceMTU(clientPodConfig podConfiguration) (int, error) {
+func GetSecondaryInterfaceMTU(clientPodConfig PodConfiguration) (int, error) {
 	const podSecondaryInterface = "net1"
 	deviceInfoJSON, err := e2ekubectl.RunKubectl(
-		clientPodConfig.namespace,
+		clientPodConfig.Namespace,
 		"exec",
-		clientPodConfig.name,
+		clientPodConfig.Name,
 		"--",
 		"ip",
 		"-j",
@@ -314,10 +284,10 @@ func getSecondaryInterfaceMTU(clientPodConfig podConfiguration) (int, error) {
 	return mtu, nil
 }
 
-func pingServer(clientPodConfig podConfiguration, serverIP string, args ...string) error {
+func pingServer(clientPodConfig PodConfiguration, serverIP string, args ...string) error {
 	baseArgs := []string{
 		"exec",
-		clientPodConfig.name,
+		clientPodConfig.Name,
 		"--",
 		"ping",
 		"-c", "1", // send one ICMP echo request
@@ -325,24 +295,24 @@ func pingServer(clientPodConfig podConfiguration, serverIP string, args ...strin
 	}
 	baseArgs = append(baseArgs, args...)
 
-	_, err := e2ekubectl.RunKubectl(clientPodConfig.namespace, append(baseArgs, serverIP)...)
+	_, err := e2ekubectl.RunKubectl(clientPodConfig.Namespace, append(baseArgs, serverIP)...)
 
 	return err
 }
 
-func newAttachmentConfigWithOverriddenName(name, namespace, networkName, topology, cidr string) networkAttachmentConfig {
-	return newNetworkAttachmentConfig(
-		networkAttachmentConfigParams{
-			cidr:        cidr,
-			name:        name,
-			namespace:   namespace,
-			networkName: networkName,
-			topology:    topology,
+func NewAttachmentConfigWithOverriddenName(name, namespace, networkName, topology, cidr string) NetworkAttachmentConfig {
+	return NewNetworkAttachmentConfig(
+		NetworkAttachmentConfigParams{
+			Cidr:        cidr,
+			Name:        name,
+			Namespace:   namespace,
+			NetworkName: networkName,
+			Topology:    topology,
 		},
 	)
 }
 
-func configurePodStaticIP(podNamespace string, podName string, staticIP string) error {
+func ConfigurePodStaticIP(podNamespace string, podName string, staticIP string) error {
 	_, err := e2ekubectl.RunKubectl(
 		podNamespace, "exec", podName, "--",
 		"ip", "addr", "add", staticIP, "dev", "net1",
@@ -350,8 +320,8 @@ func configurePodStaticIP(podNamespace string, podName string, staticIP string) 
 	return err
 }
 
-func areStaticIPsConfiguredViaCNI(podConfig podConfiguration) bool {
-	for _, attachment := range podConfig.attachments {
+func AreStaticIPsConfiguredViaCNI(podConfig PodConfiguration) bool {
+	for _, attachment := range podConfig.Attachments {
 		if len(attachment.IPRequest) > 0 {
 			return true
 		}
@@ -359,38 +329,38 @@ func areStaticIPsConfiguredViaCNI(podConfig podConfiguration) bool {
 	return false
 }
 
-func podIPsForAttachment(k8sClient clientset.Interface, podNamespace string, podName string, attachmentName string) ([]string, error) {
+func PodIPsForAttachment(k8sClient clientset.Interface, podNamespace string, podName string, attachmentName string) ([]string, error) {
 	pod, err := k8sClient.CoreV1().Pods(podNamespace).Get(context.Background(), podName, metav1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}
-	netStatus, err := podNetworkStatus(pod, func(status nadapi.NetworkStatus) bool {
-		return status.Name == namespacedName(podNamespace, attachmentName)
+	netStatus, err := PodNetworkStatus(pod, func(status nadapi.NetworkStatus) bool {
+		return status.Name == NamespacedName(podNamespace, attachmentName)
 	})
 	if err != nil {
 		return nil, err
 	}
 	if len(netStatus) != 1 {
-		return nil, fmt.Errorf("more than one status entry for attachment %s on pod %s", attachmentName, namespacedName(podNamespace, podName))
+		return nil, fmt.Errorf("more than one status entry for attachment %s on pod %s", attachmentName, NamespacedName(podNamespace, podName))
 	}
 	if len(netStatus[0].IPs) == 0 {
-		return nil, fmt.Errorf("no IPs for attachment %s on pod %s", attachmentName, namespacedName(podNamespace, podName))
+		return nil, fmt.Errorf("no IPs for attachment %s on pod %s", attachmentName, NamespacedName(podNamespace, podName))
 	}
 	return netStatus[0].IPs, nil
 }
 
-func podIPForAttachment(k8sClient clientset.Interface, podNamespace string, podName string, attachmentName string, ipIndex int) (string, error) {
-	ips, err := podIPsForAttachment(k8sClient, podNamespace, podName, attachmentName)
+func PodIPForAttachment(k8sClient clientset.Interface, podNamespace string, podName string, attachmentName string, ipIndex int) (string, error) {
+	ips, err := PodIPsForAttachment(k8sClient, podNamespace, podName, attachmentName)
 	if err != nil {
 		return "", err
 	}
 	if ipIndex >= len(ips) {
-		return "", fmt.Errorf("no IP at index %d for attachment %s on pod %s", ipIndex, attachmentName, namespacedName(podNamespace, podName))
+		return "", fmt.Errorf("no IP at index %d for attachment %s on pod %s", ipIndex, attachmentName, NamespacedName(podNamespace, podName))
 	}
 	return ips[ipIndex], nil
 }
 
-func podIPsFromStatus(k8sClient clientset.Interface, podNamespace string, podName string) ([]string, error) {
+func PodIPsFromStatus(k8sClient clientset.Interface, podNamespace string, podName string) ([]string, error) {
 	pod, err := k8sClient.CoreV1().Pods(podNamespace).Get(context.Background(), podName, metav1.GetOptions{})
 	if err != nil {
 		return nil, err
@@ -402,15 +372,15 @@ func podIPsFromStatus(k8sClient clientset.Interface, podNamespace string, podNam
 	return podIPs, nil
 }
 
-func allowedClient(podName string) string {
+func AllowedClient(podName string) string {
 	return "allowed-" + podName
 }
 
-func blockedClient(podName string) string {
+func BlockedClient(podName string) string {
 	return "blocked-" + podName
 }
 
-func multiNetPolicyPort(port int) mnpapi.MultiNetworkPolicyPort {
+func MultiNetPolicyPort(port int) mnpapi.MultiNetworkPolicyPort {
 	tcp := v1.ProtocolTCP
 	p := intstr.FromInt32(int32(port))
 	return mnpapi.MultiNetworkPolicyPort{
@@ -419,14 +389,14 @@ func multiNetPolicyPort(port int) mnpapi.MultiNetworkPolicyPort {
 	}
 }
 
-func multiNetPolicyPortRange(port, endPort int) mnpapi.MultiNetworkPolicyPort {
-	netpolPort := multiNetPolicyPort(port)
+func MultiNetPolicyPortRange(port, endPort int) mnpapi.MultiNetworkPolicyPort {
+	netpolPort := MultiNetPolicyPort(port)
 	endPort32 := int32(endPort)
 	netpolPort.EndPort = &endPort32
 	return netpolPort
 }
 
-func multiNetIngressLimitingPolicy(policyFor string, appliesFor metav1.LabelSelector, allowForSelector metav1.LabelSelector, allowPorts ...mnpapi.MultiNetworkPolicyPort) *mnpapi.MultiNetworkPolicy {
+func MultiNetIngressLimitingPolicy(policyFor string, appliesFor metav1.LabelSelector, allowForSelector metav1.LabelSelector, allowPorts ...mnpapi.MultiNetworkPolicyPort) *mnpapi.MultiNetworkPolicy {
 	var (
 		portAllowlist []mnpapi.MultiNetworkPolicyPort
 	)
@@ -455,7 +425,7 @@ func multiNetIngressLimitingPolicy(policyFor string, appliesFor metav1.LabelSele
 	}
 }
 
-func multiNetIngressLimitingIPBlockPolicy(
+func MultiNetIngressLimitingIPBlockPolicy(
 	policyFor string,
 	appliesFor metav1.LabelSelector,
 	allowForIPBlock mnpapi.IPBlock,
@@ -496,7 +466,7 @@ func multiNetIngressLimitingIPBlockPolicy(
 	}
 }
 
-func multiNetEgressLimitingIPBlockPolicy(
+func MultiNetEgressLimitingIPBlockPolicy(
 	policyName string,
 	policyFor string,
 	appliesFor metav1.LabelSelector,
@@ -526,7 +496,7 @@ func multiNetEgressLimitingIPBlockPolicy(
 	}
 }
 
-func multiNetPolicy(
+func MultiNetPolicy(
 	policyName string,
 	policyFor string,
 	appliesFor metav1.LabelSelector,
@@ -550,7 +520,7 @@ func multiNetPolicy(
 	}
 }
 
-func doesPolicyFeatAnIPBlock(policy *mnpapi.MultiNetworkPolicy) bool {
+func DoesPolicyFeatAnIPBlock(policy *mnpapi.MultiNetworkPolicy) bool {
 	for _, rule := range policy.Spec.Ingress {
 		for _, peer := range rule.From {
 			if peer.IPBlock != nil {
@@ -568,7 +538,7 @@ func doesPolicyFeatAnIPBlock(policy *mnpapi.MultiNetworkPolicy) bool {
 	return false
 }
 
-func setBlockedClientIPInPolicyIPBlockExcludedRanges(policy *mnpapi.MultiNetworkPolicy, blockedIP string) {
+func SetBlockedClientIPInPolicyIPBlockExcludedRanges(policy *mnpapi.MultiNetworkPolicy, blockedIP string) {
 	if policy.Spec.Ingress != nil {
 		for _, rule := range policy.Spec.Ingress {
 			for _, peer := range rule.From {
@@ -589,7 +559,7 @@ func setBlockedClientIPInPolicyIPBlockExcludedRanges(policy *mnpapi.MultiNetwork
 	}
 }
 
-func multiNetIngressLimitingPolicyAllowFromNamespace(
+func MultiNetIngressLimitingPolicyAllowFromNamespace(
 	policyFor string, appliesFor metav1.LabelSelector, allowForSelector metav1.LabelSelector, allowPorts ...int,
 ) *mnpapi.MultiNetworkPolicy {
 	return &mnpapi.MultiNetworkPolicy{
@@ -631,21 +601,21 @@ func allowedTCPPortsForPolicy(allowPorts ...int) []mnpapi.MultiNetworkPolicyPort
 	return portAllowlist
 }
 
-func reachServerPodFromClient(cs clientset.Interface, serverConfig podConfiguration, clientConfig podConfiguration, serverIP string, serverPort int, args ...string) error {
-	updatedPod, err := cs.CoreV1().Pods(serverConfig.namespace).Get(context.Background(), serverConfig.name, metav1.GetOptions{})
+func ReachServerPodFromClient(cs clientset.Interface, serverConfig PodConfiguration, clientConfig PodConfiguration, serverIP string, serverPort int, args ...string) error {
+	updatedPod, err := cs.CoreV1().Pods(serverConfig.Namespace).Get(context.Background(), serverConfig.Name, metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
 
 	if updatedPod.Status.Phase == v1.PodRunning {
-		return connectToServer(clientConfig, serverIP, serverPort, args...)
+		return ConnectToServer(clientConfig, serverIP, serverPort, args...)
 	}
 
 	return fmt.Errorf("pod not running. /me is sad")
 }
 
-func pingServerPodFromClient(cs clientset.Interface, serverConfig podConfiguration, clientConfig podConfiguration, serverIP string, args ...string) error {
-	updatedPod, err := cs.CoreV1().Pods(serverConfig.namespace).Get(context.Background(), serverConfig.name, metav1.GetOptions{})
+func PingServerPodFromClient(cs clientset.Interface, serverConfig PodConfiguration, clientConfig PodConfiguration, serverIP string, args ...string) error {
+	updatedPod, err := cs.CoreV1().Pods(serverConfig.Namespace).Get(context.Background(), serverConfig.Name, metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
@@ -657,7 +627,7 @@ func pingServerPodFromClient(cs clientset.Interface, serverConfig podConfigurati
 	return fmt.Errorf("pod not running. /me is sad")
 }
 
-func findInterfaceByIP(targetIP string) (string, error) {
+func FindInterfaceByIP(targetIP string) (string, error) {
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		return "", err
@@ -684,7 +654,7 @@ func findInterfaceByIP(targetIP string) (string, error) {
 	return "", fmt.Errorf("Interface with IP %s not found", targetIP)
 }
 
-func getNetworkGateway(cli *client.Client, networkName string) (string, error) {
+func GetNetworkGateway(cli *client.Client, networkName string) (string, error) {
 	network, err := cli.NetworkInspect(context.Background(), networkName, types.NetworkInspectOptions{})
 	if err != nil {
 		return "", err

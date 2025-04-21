@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/multihoming"
 	"net"
 	"strings"
 
@@ -392,7 +393,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 
 			ginkgo.By("queries to the external server are not SNATed (uses podIP)")
 			for _, serverContainerIP := range serverContainerIPs {
-				podIP, err := podIPsForUserDefinedPrimaryNetwork(f.ClientSet, f.Namespace.Name, clientPod.Name, namespacedName(f.Namespace.Name, cUDN.Name), 0)
+				podIP, err := podIPsForUserDefinedPrimaryNetwork(f.ClientSet, f.Namespace.Name, clientPod.Name, multihoming.NamespacedName(f.Namespace.Name, cUDN.Name), 0)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				framework.ExpectNoError(err, fmt.Sprintf("Getting podIPs for pod %s failed: %v", clientPod.Name, err))
 				framework.Logf("Client pod IP address=%s", podIP)
@@ -411,7 +412,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 					60*time.Second)
 				framework.ExpectNoError(err, fmt.Sprintf("Testing pod to external traffic failed: %v", err))
 				if helpers.IsIPv6Supported() && utilnet.IsIPv6String(serverContainerIP) {
-					podIP, err = podIPsForUserDefinedPrimaryNetwork(f.ClientSet, f.Namespace.Name, clientPod.Name, namespacedName(f.Namespace.Name, cUDN.Name), 1)
+					podIP, err = podIPsForUserDefinedPrimaryNetwork(f.ClientSet, f.Namespace.Name, clientPod.Name, multihoming.NamespacedName(f.Namespace.Name, cUDN.Name), 1)
 					// For IPv6 addresses, need to handle the brackets in the output
 					outputIP := strings.TrimPrefix(strings.Split(stdout, "]:")[0], "[")
 					gomega.Expect(outputIP).To(gomega.Equal(podIP),
@@ -779,9 +780,9 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					clientPod := podsNetA[0]
 					srvPod := podsNetA[1]
 
-					clientPodStatus, err := userDefinedNetworkStatus(clientPod, namespacedName(clientPod.Namespace, cudnATemplate.Name))
+					clientPodStatus, err := userDefinedNetworkStatus(clientPod, multihoming.NamespacedName(clientPod.Namespace, cudnATemplate.Name))
 					framework.ExpectNoError(err)
-					srvPodStatus, err := userDefinedNetworkStatus(srvPod, namespacedName(srvPod.Namespace, cudnATemplate.Name))
+					srvPodStatus, err := userDefinedNetworkStatus(srvPod, multihoming.NamespacedName(srvPod.Namespace, cudnATemplate.Name))
 					framework.ExpectNoError(err)
 					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(srvPodStatus.IPs[ipFamilyIndex].IP.String(), "8080") + "/clientip", clientPodStatus.IPs[ipFamilyIndex].IP.String(), false
 				}),
@@ -791,9 +792,9 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					clientPod := podsNetA[0]
 					srvPod := podsNetA[2]
 
-					clientPodStatus, err := userDefinedNetworkStatus(clientPod, namespacedName(clientPod.Namespace, cudnATemplate.Name))
+					clientPodStatus, err := userDefinedNetworkStatus(clientPod, multihoming.NamespacedName(clientPod.Namespace, cudnATemplate.Name))
 					framework.ExpectNoError(err)
-					srvPodStatus, err := userDefinedNetworkStatus(srvPod, namespacedName(srvPod.Namespace, cudnATemplate.Name))
+					srvPodStatus, err := userDefinedNetworkStatus(srvPod, multihoming.NamespacedName(srvPod.Namespace, cudnATemplate.Name))
 					framework.ExpectNoError(err)
 					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(srvPodStatus.IPs[ipFamilyIndex].IP.String(), "8080") + "/clientip", clientPodStatus.IPs[ipFamilyIndex].IP.String(), false
 				}),
@@ -803,7 +804,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					clientPod := podsNetA[2]
 					srvPod := podNetB
 
-					srvPodStatus, err := userDefinedNetworkStatus(srvPod, namespacedName(srvPod.Namespace, cudnBTemplate.Name))
+					srvPodStatus, err := userDefinedNetworkStatus(srvPod, multihoming.NamespacedName(srvPod.Namespace, cudnBTemplate.Name))
 					framework.ExpectNoError(err)
 					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(srvPodStatus.IPs[ipFamilyIndex].IP.String(), "8080") + "/clientip", curlConnectionTimeoutCode, true
 				}),
@@ -814,7 +815,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					clientPod := podsNetA[0]
 					srvPod := podNetB
 
-					srvPodStatus, err := userDefinedNetworkStatus(srvPod, namespacedName(srvPod.Namespace, cudnBTemplate.Name))
+					srvPodStatus, err := userDefinedNetworkStatus(srvPod, multihoming.NamespacedName(srvPod.Namespace, cudnBTemplate.Name))
 					framework.ExpectNoError(err)
 					retErr := true
 					out := curlConnectionTimeoutCode
@@ -853,7 +854,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					clientNode := podsNetA[0].Spec.NodeName
 					srvPod := podsNetA[0]
 
-					srvPodStatus, err := userDefinedNetworkStatus(srvPod, namespacedName(srvPod.Namespace, cudnATemplate.Name))
+					srvPodStatus, err := userDefinedNetworkStatus(srvPod, multihoming.NamespacedName(srvPod.Namespace, cudnATemplate.Name))
 					framework.ExpectNoError(err)
 					// FIXME: L3 - curl returns code 7, the request works partially
 					// The client starts a connection from the default VRF. An IP rule sends this traffic into a specific VRF to reach the server pod.
@@ -867,7 +868,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					clientNode := podsNetA[2].Spec.NodeName
 					srvPod := podsNetA[0]
 
-					srvPodStatus, err := userDefinedNetworkStatus(srvPod, namespacedName(srvPod.Namespace, cudnATemplate.Name))
+					srvPodStatus, err := userDefinedNetworkStatus(srvPod, multihoming.NamespacedName(srvPod.Namespace, cudnATemplate.Name))
 					framework.ExpectNoError(err)
 					retErr := true
 					out := curlConnectionTimeoutCode
