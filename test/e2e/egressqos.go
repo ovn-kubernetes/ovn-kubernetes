@@ -17,6 +17,8 @@ import (
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/helpers"
 )
 
 var _ = ginkgo.Describe("e2e EgressQoS validation", func() {
@@ -38,7 +40,7 @@ var _ = ginkgo.Describe("e2e EgressQoS validation", func() {
 		srcNode     string
 	)
 
-	f := wrappedTestFramework("egressqos")
+	f := helpers.WrappedTestFramework("egressqos")
 
 	waitForEgressQoSApplied := func(namespace string) {
 		gomega.Eventually(func() bool {
@@ -62,18 +64,18 @@ var _ = ginkgo.Describe("e2e EgressQoS validation", func() {
 
 		srcNode = nodes.Items[0].Name
 
-		dstPod1, err := createPod(f, dstPod1Name, nodes.Items[1].Name, f.Namespace.Name, []string{"bash", "-c", "apk update; apk add tcpdump; sleep 20000"}, map[string]string{}, func(p *v1.Pod) {
+		dstPod1, err := helpers.CreatePod(f, dstPod1Name, nodes.Items[1].Name, f.Namespace.Name, []string{"bash", "-c", "apk update; apk add tcpdump; sleep 20000"}, map[string]string{}, func(p *v1.Pod) {
 			p.Spec.HostNetwork = true
 		})
 		framework.ExpectNoError(err)
-		dstPod1IPv4, dstPod1IPv6 = getPodAddresses(dstPod1)
+		dstPod1IPv4, dstPod1IPv6 = helpers.GetPodAddresses(dstPod1)
 
-		dstPod2, err := createPod(f, dstPod2Name, nodes.Items[2].Name, f.Namespace.Name, []string{"bash", "-c", "apk update; apk add tcpdump; sleep 20000"}, map[string]string{}, func(p *v1.Pod) {
+		dstPod2, err := helpers.CreatePod(f, dstPod2Name, nodes.Items[2].Name, f.Namespace.Name, []string{"bash", "-c", "apk update; apk add tcpdump; sleep 20000"}, map[string]string{}, func(p *v1.Pod) {
 			p.Spec.HostNetwork = true
 		})
 		framework.ExpectNoError(err)
 
-		dstPod2IPv4, dstPod2IPv6 = getPodAddresses(dstPod2)
+		dstPod2IPv4, dstPod2IPv6 = helpers.GetPodAddresses(dstPod2)
 
 		gomega.Eventually(func() error {
 			_, err := e2ekubectl.RunKubectl(f.Namespace.Name, "exec", dstPod1Name, "--", "which", "tcpdump")
@@ -94,7 +96,7 @@ var _ = ginkgo.Describe("e2e EgressQoS validation", func() {
 		func(tcpDumpTpl string, dst1IP *string, prefix1 string, dst2IP *string, podBeforeQoS bool) {
 			dscpValue := 50
 			if podBeforeQoS {
-				_, err := createPod(f, srcPodName, srcNode, f.Namespace.Name, []string{}, map[string]string{"app": "test"})
+				_, err := helpers.CreatePod(f, srcPodName, srcNode, f.Namespace.Name, []string{}, map[string]string{"app": "test"})
 				framework.ExpectNoError(err)
 			}
 
@@ -129,7 +131,7 @@ spec:
 			waitForEgressQoSApplied(f.Namespace.Name)
 
 			if !podBeforeQoS {
-				_, err := createPod(f, srcPodName, srcNode, f.Namespace.Name, []string{}, map[string]string{"app": "test"})
+				_, err := helpers.CreatePod(f, srcPodName, srcNode, f.Namespace.Name, []string{}, map[string]string{"app": "test"})
 				framework.ExpectNoError(err)
 			}
 
@@ -176,7 +178,7 @@ spec:
 			dscpValue := 50
 
 			// create without labels, no packets should be marked
-			pod, err := createPod(f, srcPodName, srcNode, f.Namespace.Name, []string{}, nil)
+			pod, err := helpers.CreatePod(f, srcPodName, srcNode, f.Namespace.Name, []string{}, nil)
 			framework.ExpectNoError(err)
 
 			egressQoSConfig := fmt.Sprintf(`

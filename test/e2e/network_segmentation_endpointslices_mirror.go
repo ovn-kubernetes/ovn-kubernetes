@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/helpers"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -23,7 +24,7 @@ import (
 )
 
 var _ = Describe("Network Segmentation EndpointSlices mirroring", func() {
-	f := wrappedTestFramework("endpointslices-mirror")
+	f := helpers.WrappedTestFramework("endpointslices-mirror")
 	f.SkipNamespaceCreation = true
 	Context("a user defined primary network", func() {
 		const (
@@ -40,8 +41,8 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", func() {
 		BeforeEach(func() {
 			cs = f.ClientSet
 			namespace, err := f.CreateNamespace(context.TODO(), f.BaseName, map[string]string{
-				"e2e-framework":           f.BaseName,
-				RequiredUDNNamespaceLabel: "",
+				"e2e-framework":                   f.BaseName,
+				helpers.RequiredUDNNamespaceLabel: "",
 			})
 			f.Namespace = namespace
 			Expect(err).NotTo(HaveOccurred())
@@ -63,7 +64,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", func() {
 
 						replicas := int32(3)
 						By("creating the deployment")
-						deployment := e2edeployment.NewDeployment("test-deployment", replicas, map[string]string{"app": "test"}, "agnhost", agnhostImage, appsv1.RollingUpdateDeploymentStrategyType)
+						deployment := e2edeployment.NewDeployment("test-deployment", replicas, map[string]string{"app": "test"}, "agnhost", helpers.AgnhostImage, appsv1.RollingUpdateDeploymentStrategyType)
 						deployment.Namespace = f.Namespace.Name
 						deployment.Spec.Template.Spec.HostNetwork = isHostNetwork
 						deployment.Spec.Template.Spec.Containers[0].Command = e2epod.GenerateScriptCmd("/agnhost netexec --http-port 80")
@@ -84,7 +85,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", func() {
 						framework.ExpectNoError(err, "Failed listing nodes %v", err)
 						hostSubnets, err := util.ParseNodePrimaryIfAddr(&nodes.Items[0])
 						framework.ExpectNoError(err, "Failed parsing nodes host CIDR %v", err)
-						isDualStack := isDualStackCluster(nodes)
+						isDualStack := helpers.IsDualStackCluster(nodes)
 
 						By("asserting the mirrored EndpointSlice exists and contains PODs primary IPs")
 						Eventually(func() error {
@@ -194,7 +195,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", func() {
 
 						replicas := int32(3)
 						By("creating the deployment")
-						deployment := e2edeployment.NewDeployment("test-deployment", replicas, map[string]string{"app": "test"}, "agnhost", agnhostImage, appsv1.RollingUpdateDeploymentStrategyType)
+						deployment := e2edeployment.NewDeployment("test-deployment", replicas, map[string]string{"app": "test"}, "agnhost", helpers.AgnhostImage, appsv1.RollingUpdateDeploymentStrategyType)
 						deployment.Namespace = defaultNetNamespace.Name
 						deployment.Spec.Template.Spec.Containers[0].Command = e2epod.GenerateScriptCmd("/agnhost netexec --http-port 80")
 

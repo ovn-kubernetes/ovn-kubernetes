@@ -33,14 +33,14 @@ import (
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	utilnet "k8s.io/utils/net"
 	"k8s.io/utils/pointer"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/helpers"
 )
 
 const openDefaultPortsAnnotation = "k8s.ovn.org/open-default-ports"
-const RequiredUDNNamespaceLabel = "k8s.ovn.org/primary-user-defined-network"
-const OvnPodAnnotationName = "k8s.ovn.org/pod-networks"
 
 var _ = Describe("Network Segmentation", func() {
-	f := wrappedTestFramework("network-segmentation")
+	f := helpers.WrappedTestFramework("network-segmentation")
 	// disable automatic namespace creation, we need to add the required UDN label
 	f.SkipNamespaceCreation = true
 
@@ -66,8 +66,8 @@ var _ = Describe("Network Segmentation", func() {
 		nadClient, err = nadclient.NewForConfig(f.ClientConfig())
 		Expect(err).NotTo(HaveOccurred())
 		namespace, err := f.CreateNamespace(context.TODO(), f.BaseName, map[string]string{
-			"e2e-framework":           f.BaseName,
-			RequiredUDNNamespaceLabel: "",
+			"e2e-framework":                   f.BaseName,
+			helpers.RequiredUDNNamespaceLabel: "",
 		})
 		f.Namespace = namespace
 		Expect(err).NotTo(HaveOccurred())
@@ -225,7 +225,7 @@ var _ = Describe("Network Segmentation", func() {
 						netConfigParams *networkAttachmentConfigParams,
 						udnPodConfig podConfiguration,
 					) {
-						if !isInterconnectEnabled() {
+						if !helpers.IsInterconnectEnabled() {
 							const upstreamIssue = "https://github.com/ovn-org/ovn-kubernetes/issues/4528"
 							e2eskipper.Skipf(
 								"These tests are known to fail on non-IC deployments. Upstream issue: %s", upstreamIssue,
@@ -299,11 +299,11 @@ var _ = Describe("Network Segmentation", func() {
 						})
 
 						By("creating default network pod")
-						defaultPod, err := createPod(f, "default-net-pod", nodeName,
+						defaultPod, err := helpers.CreatePod(f, "default-net-pod", nodeName,
 							defaultNetNamespace, []string{"/agnhost", "netexec"}, nil)
 						Expect(err).NotTo(HaveOccurred())
 						By("creating default network client pod")
-						defaultClientPod, err := createPod(f, "default-net-client-pod", nodeName,
+						defaultClientPod, err := helpers.CreatePod(f, "default-net-client-pod", nodeName,
 							defaultNetNamespace, []string{}, nil)
 						Expect(err).NotTo(HaveOccurred())
 
@@ -358,7 +358,7 @@ var _ = Describe("Network Segmentation", func() {
 						Expect(udnPod.Status.ContainerStatuses[0].RestartCount).To(Equal(int32(0)))
 
 						By("restarting kubelet, pod should stay ready")
-						_, err = runCommand(containerRuntime, "exec", nodeName,
+						_, err = helpers.RunCommand(helpers.ContainerRuntime, "exec", nodeName,
 							"systemctl", "restart", "kubelet")
 						Expect(err).NotTo(HaveOccurred())
 
@@ -369,9 +369,9 @@ var _ = Describe("Network Segmentation", func() {
 						}, 10*time.Second, 1*time.Second).Should(BeTrue())
 						Expect(udnPod.Status.ContainerStatuses[0].RestartCount).To(Equal(int32(0)))
 
-						if !isUDNHostIsolationDisabled() {
+						if !helpers.IsUDNHostIsolationDisabled() {
 							By("checking default network hostNetwork pod and non-kubelet host process can't reach the UDN pod")
-							hostNetPod, err := createPod(f, "host-net-pod", nodeName,
+							hostNetPod, err := helpers.CreatePod(f, "host-net-pod", nodeName,
 								defaultNetNamespace, []string{}, nil, func(pod *v1.Pod) {
 									pod.Spec.HostNetwork = true
 								})
@@ -388,7 +388,7 @@ var _ = Describe("Network Segmentation", func() {
 								}).Should(BeTrue())
 								By("checking the non-kubelet host process can reach default pod on IP " + destIP)
 								Eventually(func() bool {
-									_, err = runCommand(containerRuntime, "exec", nodeName,
+									_, err = helpers.RunCommand(helpers.ContainerRuntime, "exec", nodeName,
 										"curl", "--connect-timeout", "2",
 										net.JoinHostPort(destIP, fmt.Sprintf("%d", defaultPort)))
 									return err == nil
@@ -407,7 +407,7 @@ var _ = Describe("Network Segmentation", func() {
 
 								By("checking the non-kubelet host process can't reach UDN pod on IP " + destIP)
 								Consistently(func() bool {
-									_, err = runCommand(containerRuntime, "exec", nodeName,
+									_, err = helpers.RunCommand(helpers.ContainerRuntime, "exec", nodeName,
 										"curl", "--connect-timeout", "2",
 										net.JoinHostPort(destIP, fmt.Sprintf("%d", port)))
 									return err != nil
@@ -528,7 +528,7 @@ var _ = Describe("Network Segmentation", func() {
 							_, err := cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
 								ObjectMeta: metav1.ObjectMeta{
 									Name:   namespace,
-									Labels: map[string]string{RequiredUDNNamespaceLabel: ""},
+									Labels: map[string]string{helpers.RequiredUDNNamespaceLabel: ""},
 								},
 							}, metav1.CreateOptions{})
 							Expect(err).NotTo(HaveOccurred())
@@ -723,7 +723,7 @@ var _ = Describe("Network Segmentation", func() {
 			_, err = cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:   netConfig2.namespace,
-					Labels: map[string]string{RequiredUDNNamespaceLabel: ""},
+					Labels: map[string]string{helpers.RequiredUDNNamespaceLabel: ""},
 				},
 			}, metav1.CreateOptions{})
 			Expect(err).NotTo(HaveOccurred())
@@ -821,7 +821,7 @@ var _ = Describe("Network Segmentation", func() {
 					metav1.CreateOptions{},
 				)
 				framework.ExpectNoError(err)
-				testMulticastUDPTraffic(f, clientNodeInfo, serverNodeInfo, udnPodInterface)
+				testMulticastUDPTraffic(f, clientNodeInfo, serverNodeInfo, helpers.UdnPodInterface)
 			},
 				ginkgo.Entry("with primary layer3 UDN", networkAttachmentConfigParams{
 					name:     nadName,
@@ -897,7 +897,7 @@ var _ = Describe("Network Segmentation", func() {
 				podConfig := *podConfig("some-pod")
 				podConfig.namespace = defaultNetNamespace.Name
 				pod := runUDNPod(cs, defaultNetNamespace.Name, podConfig, nil)
-				ovnPodAnnotation, err := unmarshalPodAnnotationAllNetworks(pod.Annotations)
+				ovnPodAnnotation, err := helpers.UnmarshalPodAnnotationAllNetworks(pod.Annotations)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(len(ovnPodAnnotation)).To(BeNumerically("==", 1))
 				Expect(ovnPodAnnotation).To(HaveKey("default"))
@@ -905,7 +905,7 @@ var _ = Describe("Network Segmentation", func() {
 
 			It("should not be able to update the namespace and add the UDN label", func() {
 				defaultNetNamespace.Labels = map[string]string{
-					RequiredUDNNamespaceLabel: "",
+					helpers.RequiredUDNNamespaceLabel: "",
 				}
 				_, err := cs.CoreV1().Namespaces().Update(context.TODO(), defaultNetNamespace, metav1.UpdateOptions{})
 				Expect(err).To(HaveOccurred())
@@ -1146,7 +1146,7 @@ spec:
 				_, err := cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:   nsName,
-						Labels: map[string]string{RequiredUDNNamespaceLabel: ""},
+						Labels: map[string]string{helpers.RequiredUDNNamespaceLabel: ""},
 					}}, metav1.CreateOptions{})
 				Expect(err).NotTo(HaveOccurred())
 				DeferCleanup(func() error {
@@ -1231,7 +1231,7 @@ spec:
 			_, err = cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:   testNewNs,
-					Labels: map[string]string{RequiredUDNNamespaceLabel: ""},
+					Labels: map[string]string{helpers.RequiredUDNNamespaceLabel: ""},
 				}}, metav1.CreateOptions{})
 			Expect(err).NotTo(HaveOccurred())
 			DeferCleanup(func() error {
@@ -1260,7 +1260,7 @@ spec:
 				_, err := cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:   testNewNs,
-						Labels: map[string]string{RequiredUDNNamespaceLabel: ""},
+						Labels: map[string]string{helpers.RequiredUDNNamespaceLabel: ""},
 					}}, metav1.CreateOptions{})
 				Expect(err).NotTo(HaveOccurred())
 				DeferCleanup(func() error {
@@ -1385,7 +1385,7 @@ spec:
 			_, err := cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:   nsName,
-					Labels: map[string]string{RequiredUDNNamespaceLabel: ""},
+					Labels: map[string]string{helpers.RequiredUDNNamespaceLabel: ""},
 				}}, metav1.CreateOptions{})
 			Expect(err).NotTo(HaveOccurred())
 			DeferCleanup(func() error {
@@ -1437,7 +1437,7 @@ spec:
 		)
 		var externalIpv4, externalIpv6 string
 		BeforeEach(func() {
-			externalIpv4, externalIpv6 = createClusterExternalContainer(
+			externalIpv4, externalIpv6 = helpers.CreateClusterExternalContainer(
 				externalContainerName,
 				"registry.k8s.io/e2e-test-images/agnhost:2.45",
 				runExternalContainerCmd(),
@@ -1445,7 +1445,7 @@ spec:
 			)
 
 			DeferCleanup(func() {
-				deleteClusterExternalContainer(externalContainerName)
+				helpers.DeleteClusterExternalContainer(externalContainerName)
 			})
 		})
 		DescribeTableSubtree("created using",
@@ -1454,7 +1454,7 @@ spec:
 				DescribeTable(
 					"can be accessed to from the pods running in the Kubernetes cluster",
 					func(netConfigParams *networkAttachmentConfigParams, clientPodConfig podConfiguration) {
-						if netConfigParams.topology == "layer2" && !isInterconnectEnabled() {
+						if netConfigParams.topology == "layer2" && !helpers.IsInterconnectEnabled() {
 							const upstreamIssue = "https://github.com/ovn-org/ovn-kubernetes/issues/4642"
 							e2eskipper.Skipf(
 								"Egress e2e tests for layer2 topologies are known to fail on non-IC deployments. Upstream issue: %s", upstreamIssue,
@@ -1487,7 +1487,7 @@ spec:
 						framework.Logf("Client pod was created on node %s", updatedPod.Spec.NodeName)
 
 						By("asserting UDN pod is connected to UDN network")
-						podAnno, err := unmarshalPodAnnotation(updatedPod.Annotations, f.Namespace.Name+"/"+netConfigParams.name)
+						podAnno, err := helpers.UnmarshalPodAnnotation(updatedPod.Annotations, f.Namespace.Name+"/"+netConfigParams.name)
 						Expect(err).NotTo(HaveOccurred())
 						framework.Logf("Client pod's annotation for network %s is %v", netConfigParams.name, podAnno)
 
@@ -1584,12 +1584,12 @@ spec:
 			}()
 
 			By("creating default network client pod")
-			defaultClientPod, err := createPod(f, "default-net-client-pod", node1Name,
+			defaultClientPod, err := helpers.CreatePod(f, "default-net-client-pod", node1Name,
 				defaultNetNamespace, []string{}, nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			By("creating default network hostNetwork client pod")
-			hostNetPod, err := createPod(f, "host-net-client-pod", node1Name,
+			hostNetPod, err := helpers.CreatePod(f, "host-net-client-pod", node1Name,
 				defaultNetNamespace, []string{}, nil, func(pod *v1.Pod) {
 					pod.Spec.HostNetwork = true
 				})
@@ -1612,7 +1612,7 @@ spec:
 					return connectToServer(podConfiguration{namespace: defaultClientPod.Namespace, name: defaultClientPod.Name}, destIP, port) != nil
 				}, 5*time.Second).Should(BeTrue())
 
-				if !isUDNHostIsolationDisabled() {
+				if !helpers.IsUDNHostIsolationDisabled() {
 					By("checking the default hostNetwork pod can't reach UDN pod on IP " + destIP)
 					Consistently(func() bool {
 						return connectToServer(podConfiguration{namespace: hostNetPod.Namespace, name: hostNetPod.Name}, destIP, port) != nil
@@ -1662,7 +1662,7 @@ spec:
 					return connectToServer(podConfiguration{namespace: defaultClientPod.Namespace, name: defaultClientPod.Name}, destIP, port) != nil
 				}, 5*time.Second).Should(BeTrue())
 
-				if !isUDNHostIsolationDisabled() {
+				if !helpers.IsUDNHostIsolationDisabled() {
 					By("checking the default hostNetwork pod can't reach UDN pod on IP " + destIP)
 					Eventually(func() bool {
 						return connectToServer(podConfiguration{namespace: hostNetPod.Namespace, name: hostNetPod.Name}, destIP, port) != nil
@@ -1690,7 +1690,7 @@ spec:
 				clientPodConfig podConfiguration,
 				serverPodConfig podConfiguration,
 			) {
-				if netConfig.topology == "layer2" && !isInterconnectEnabled() {
+				if netConfig.topology == "layer2" && !helpers.IsInterconnectEnabled() {
 					const upstreamIssue = "https://github.com/ovn-kubernetes/ovn-kubernetes/issues/4958"
 					e2eskipper.Skipf(
 						"Test skipped for layer2 topology due to known issue for non-IC deployments. Upstream issue: %s", upstreamIssue,
@@ -1715,13 +1715,13 @@ spec:
 				serverIP, err := podIPsForUserDefinedPrimaryNetwork(cs, f.Namespace.Name, serverPodConfig.name, namespacedName(f.Namespace.Name, netConfig.name), 0)
 				Expect(err).ShouldNot(HaveOccurred(), "UDN pod IP must be retrieved")
 				By("restart OVNKube node pods on client and server Nodes and ensure connectivity")
-				serverPod := getPod(f, serverPodConfig.name)
-				clientPod := getPod(f, clientPodConfig.name)
+				serverPod := helpers.GetPod(f, serverPodConfig.name)
+				clientPod := helpers.GetPod(f, clientPodConfig.name)
 				for _, testPod := range []*v1.Pod{clientPod, serverPod} {
 					By(fmt.Sprintf("asserting the server pod IP %v is reachable from client before restart of OVNKube node pod on Node %s", serverIP, testPod.Spec.Hostname))
 					Expect(reachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)).ShouldNot(HaveOccurred(), "must have connectivity to server pre OVN Kube node Pod restart")
 					By(fmt.Sprintf("restarting OVNKube node Pod located on Node %s which hosts test Pod %s/%s", testPod.Spec.NodeName, testPod.Namespace, testPod.Name))
-					Expect(restartOVNKubeNodePod(cs, ovnNamespace, testPod.Spec.NodeName)).ShouldNot(HaveOccurred(), "restart of OVNKube node pod must succeed")
+					Expect(helpers.RestartOVNKubeNodePod(cs, helpers.OvnNamespace, testPod.Spec.NodeName)).ShouldNot(HaveOccurred(), "restart of OVNKube node pod must succeed")
 					By(fmt.Sprintf("asserting the server pod IP %v is reachable from client post restart", serverIP))
 					Expect(reachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)).ShouldNot(HaveOccurred(), "must have connectivity to server post restart")
 				}
@@ -1736,12 +1736,14 @@ spec:
 				},
 				*podConfig(
 					"client-pod",
+					withNodeSelector(map[string]string{nodeHostnameKey: workerOneNodeName}),
 				),
 				*podConfig(
 					"server-pod",
 					withCommand(func() []string {
 						return httpServerContainerCmd(port)
 					}),
+					withNodeSelector(map[string]string{nodeHostnameKey: workerTwoNodeName}),
 				),
 			),
 			Entry(
@@ -1754,12 +1756,14 @@ spec:
 				},
 				*podConfig(
 					"client-pod",
+					withNodeSelector(map[string]string{nodeHostnameKey: workerOneNodeName}),
 				),
 				*podConfig(
 					"server-pod",
 					withCommand(func() []string {
 						return httpServerContainerCmd(port)
 					}),
+					withNodeSelector(map[string]string{nodeHostnameKey: workerTwoNodeName}),
 				),
 			),
 		)
@@ -2164,12 +2168,12 @@ func generateCIDRforUDN(v4, v6 string) string {
 	cidr := `
     - cidr: ` + v4 + `
 `
-	if isIPv6Supported() && isIPv4Supported() {
+	if helpers.IsIPv6Supported() && helpers.IsIPv4Supported() {
 		cidr = `
     - cidr: ` + v4 + `
     - cidr: ` + v6 + `
 `
-	} else if isIPv6Supported() {
+	} else if helpers.IsIPv6Supported() {
 		cidr = `
     - cidr: ` + v6 + `
 `
@@ -2179,9 +2183,9 @@ func generateCIDRforUDN(v4, v6 string) string {
 
 func generateCIDRforClusterUDN(v4, v6 string) string {
 	cidr := `[{cidr: ` + v4 + `}]`
-	if isIPv6Supported() && isIPv4Supported() {
+	if helpers.IsIPv6Supported() && helpers.IsIPv4Supported() {
 		cidr = `[{cidr: ` + v4 + `},{cidr: ` + v6 + `}]`
-	} else if isIPv6Supported() {
+	} else if helpers.IsIPv6Supported() {
 		cidr = `[{cidr: ` + v6 + `}]`
 	}
 	return cidr
@@ -2248,14 +2252,14 @@ func podIPsForDefaultNetwork(k8sClient clientset.Interface, podNamespace string,
 	if err != nil {
 		return "", "", err
 	}
-	ipv4, ipv6 := getPodAddresses(pod)
+	ipv4, ipv6 := helpers.GetPodAddresses(pod)
 	return ipv4, ipv6, nil
 }
 
-func userDefinedNetworkStatus(pod *v1.Pod, networkName string) (PodAnnotation, error) {
-	netStatus, err := unmarshalPodAnnotation(pod.Annotations, networkName)
+func userDefinedNetworkStatus(pod *v1.Pod, networkName string) (helpers.PodAnnotation, error) {
+	netStatus, err := helpers.UnmarshalPodAnnotation(pod.Annotations, networkName)
 	if err != nil {
-		return PodAnnotation{}, fmt.Errorf("failed to unmarshall annotations for pod %q: %v", pod.Name, err)
+		return helpers.PodAnnotation{}, fmt.Errorf("failed to unmarshall annotations for pod %q: %v", pod.Name, err)
 	}
 
 	return *netStatus, nil
@@ -2306,14 +2310,14 @@ func connectToServerViaDefaultNetwork(clientPodConfig podConfiguration, serverIP
 
 // assertClientExternalConnectivity checks if the client can connect to an externally created IP outside the cluster
 func assertClientExternalConnectivity(clientPodConfig podConfiguration, externalIpv4 string, externalIpv6 string, port int) {
-	if isIPv4Supported() {
+	if helpers.IsIPv4Supported() {
 		By("asserting the *client* pod can contact the server's v4 IP located outside the cluster")
 		Eventually(func() error {
 			return connectToServer(clientPodConfig, externalIpv4, port)
 		}, 2*time.Minute, 6*time.Second).Should(Succeed())
 	}
 
-	if isIPv6Supported() {
+	if helpers.IsIPv6Supported() {
 		By("asserting the *client* pod can contact the server's v6 IP located outside the cluster")
 		Eventually(func() error {
 			return connectToServer(clientPodConfig, externalIpv6, port)
@@ -2327,26 +2331,14 @@ func runExternalContainerCmd() []string {
 
 func expectedNumberOfRoutes(netConfig networkAttachmentConfigParams) int {
 	if netConfig.topology == "layer2" {
-		if isIPv6Supported() && isIPv4Supported() {
+		if helpers.IsIPv6Supported() && helpers.IsIPv4Supported() {
 			return 4 // 2 routes per family
 		} else {
 			return 2 //one family supported
 		}
 	}
-	if isIPv6Supported() && isIPv4Supported() {
+	if helpers.IsIPv6Supported() && helpers.IsIPv4Supported() {
 		return 6 // 3 v4 routes + 3 v6 routes for UDN
 	}
 	return 3 //only one family, each has 3 routes
-}
-
-func unmarshalPodAnnotationAllNetworks(annotations map[string]string) (map[string]podAnnotation, error) {
-	podNetworks := make(map[string]podAnnotation)
-	ovnAnnotation, ok := annotations[OvnPodAnnotationName]
-	if ok {
-		if err := json.Unmarshal([]byte(ovnAnnotation), &podNetworks); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal ovn pod annotation %q: %v",
-				ovnAnnotation, err)
-		}
-	}
-	return podNetworks, nil
 }

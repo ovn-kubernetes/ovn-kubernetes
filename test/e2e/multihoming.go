@@ -29,6 +29,8 @@ import (
 
 	ipgenerator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/ip"
 	util "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/helpers"
 )
 
 const (
@@ -50,7 +52,7 @@ var _ = Describe("Multi Homing", func() {
 		secondaryIPv6CIDR            = "2010:100:200::0/60"
 		netPrefixLengthIPv6PerNode   = 64
 	)
-	f := wrappedTestFramework("multi-homing")
+	f := helpers.WrappedTestFramework("multi-homing")
 
 	var (
 		cs        clientset.Interface
@@ -988,7 +990,7 @@ var _ = Describe("Multi Homing", func() {
 				It("correctly sets the MTU on the pod", func() {
 					Eventually(func() error {
 						clientPodConfig := podConfiguration{
-							name:        clientPodName + randStr(10),
+							name:        clientPodName + helpers.RandStr(10),
 							namespace:   f.Namespace.Name,
 							attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
 						}
@@ -1041,7 +1043,7 @@ var _ = Describe("Multi Homing", func() {
 					It("sets the new MTU on the pod after NetworkAttachmentDefinition reconcile", func() {
 						Eventually(func() error {
 							clientPodConfig := podConfiguration{
-								name:        clientPodName + randStr(10),
+								name:        clientPodName + helpers.RandStr(10),
 								namespace:   f.Namespace.Name,
 								attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
 							}
@@ -1065,7 +1067,7 @@ var _ = Describe("Multi Homing", func() {
 						By("asserting the pod's secondary interface IP is properly configured")
 						Eventually(func() error {
 							clientPodConfig := podConfiguration{
-								name:        clientPodName + "-" + randStr(10),
+								name:        clientPodName + "-" + helpers.RandStr(10),
 								namespace:   f.Namespace.Name,
 								attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
 							}

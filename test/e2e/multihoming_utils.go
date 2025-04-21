@@ -23,6 +23,8 @@ import (
 
 	mnpapi "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/apis/k8s.cni.cncf.io/v1beta1"
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/helpers"
 )
 
 func netCIDR(netCIDR string, netPrefixLengthPerNode int) string {
@@ -37,11 +39,11 @@ func correctCIDRFamily(ipv4CIDR, ipv6CIDR string) string {
 // takes ipv4 and ipv6 cidrs and returns the correct type for the cluster under test
 func selectCIDRs(ipv4CIDR, ipv6CIDR string) []string {
 	// dual stack cluster
-	if isIPv6Supported() && isIPv4Supported() {
+	if helpers.IsIPv6Supported() && helpers.IsIPv4Supported() {
 		return []string{ipv4CIDR, ipv6CIDR}
 	}
 	// is an ipv6 only cluster
-	if isIPv6Supported() {
+	if helpers.IsIPv6Supported() {
 		return []string{ipv6CIDR}
 	}
 

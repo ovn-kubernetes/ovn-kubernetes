@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/helpers"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
@@ -21,7 +22,7 @@ import (
 )
 
 func changeNodeZone(node *v1.Node, zone string, cs clientset.Interface) error {
-	node.Labels[ovnNodeZoneNameAnnotation] = zone
+	node.Labels[helpers.OvnNodeZoneNameAnnotation] = zone
 
 	var err error
 	var patchData []byte
@@ -40,7 +41,7 @@ func changeNodeZone(node *v1.Node, zone string, cs clientset.Interface) error {
 	framework.ExpectNoError(err)
 
 	// Restart the ovnkube-node on this node
-	err = restartOVNKubeNodePod(cs, ovnNamespace, node.Name)
+	err = helpers.RestartOVNKubeNodePod(cs, helpers.OvnNamespace, node.Name)
 	framework.ExpectNoError(err)
 
 	// Verify that the node is moved to the expected zone
@@ -51,7 +52,7 @@ func changeNodeZone(node *v1.Node, zone string, cs clientset.Interface) error {
 			return false, fmt.Errorf("could not get the node %s: %w", node.Name, err)
 		}
 
-		z, err := getNodeZone(n)
+		z, err := helpers.GetNodeZone(n)
 		if err != nil {
 			return false, fmt.Errorf("could not get the node %s zone: %w", node.Name, err)
 		}
@@ -94,7 +95,7 @@ var _ = ginkgo.Describe("Multi node zones interconnect", func() {
 		clientPodNodeName = "ovn-worker3"
 		clientPodName     = "client-pod"
 	)
-	fr := wrappedTestFramework("multi-node-zones")
+	fr := helpers.WrappedTestFramework("multi-node-zones")
 
 	var (
 		cs clientset.Interface
@@ -131,10 +132,10 @@ var _ = ginkgo.Describe("Multi node zones interconnect", func() {
 			)
 		}
 
-		serverPodNodeZone, err = getNodeZone(serverPodNode)
+		serverPodNodeZone, err = helpers.GetNodeZone(serverPodNode)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-		clientPodNodeZone, err = getNodeZone(clientPodNode)
+		clientPodNodeZone, err = helpers.GetNodeZone(clientPodNode)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 		if serverPodNodeZone == clientPodNodeZone {

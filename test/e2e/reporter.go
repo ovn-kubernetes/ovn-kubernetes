@@ -5,6 +5,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/helpers"
 	"log"
 	"os"
 	"path"
@@ -114,7 +115,7 @@ func DumpBGPInfo(basePath, testName string, f *framework.Framework) {
 		fmt.Fprintf(os.Stderr, "failed to create test dir: %v\n", err)
 		return
 	}
-	frrContainer := &containerExecutor{container: frrContainerName}
+	frrContainer := &helpers.ContainerExecutor{Container: frrContainerName}
 	dump, err := rawDump(frrContainer, "/etc/frr/bgpd.conf", "/tmp/frr.log", "/etc/frr/daemons")
 	if err != nil {
 		framework.Logf("External frr dump for container %s failed %v", frrContainerName, err)
@@ -136,7 +137,7 @@ func DumpBGPInfo(basePath, testName string, f *framework.Framework) {
 		if len(pod.Spec.Containers) == 1 { // we dump only in case of frr
 			break
 		}
-		podExec := ForPod(pod.Namespace, pod.Name, "frr")
+		podExec := helpers.ForPod(pod.Namespace, pod.Name, "frr")
 		dump, err := rawDump(podExec, "/etc/frr/frr.conf", "/etc/frr/frr.log")
 		if err != nil {
 			framework.Logf("External frr dump for pod %s failed %v", pod.Name, err)
@@ -168,7 +169,7 @@ func logFileFor(base string, kind string) (*os.File, error) {
 
 // rawDump dumps all the low level info as a single string.
 // To be used for debugging in order to print the status of the frr instance.
-func rawDump(exec Executor, filesToDump ...string) (string, error) {
+func rawDump(exec helpers.Executor, filesToDump ...string) (string, error) {
 	allerrs := errors.New("")
 
 	res := "####### Show running config\n"

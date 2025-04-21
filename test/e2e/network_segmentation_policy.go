@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/helpers"
 	"strings"
 	"time"
 
@@ -19,7 +20,7 @@ import (
 )
 
 var _ = ginkgo.Describe("Network Segmentation: Network Policies", func() {
-	f := wrappedTestFramework("network-segmentation")
+	f := helpers.WrappedTestFramework("network-segmentation")
 	f.SkipNamespaceCreation = true
 
 	ginkgo.Context("on a user defined primary network", func() {
@@ -46,8 +47,8 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", func() {
 		ginkgo.BeforeEach(func() {
 			cs = f.ClientSet
 			namespace, err := f.CreateNamespace(context.TODO(), f.BaseName, map[string]string{
-				"e2e-framework":           f.BaseName,
-				RequiredUDNNamespaceLabel: "",
+				"e2e-framework":                   f.BaseName,
+				helpers.RequiredUDNNamespaceLabel: "",
 			})
 			f.Namespace = namespace
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -61,7 +62,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", func() {
 				ns, err := cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:   namespace,
-						Labels: map[string]string{RequiredUDNNamespaceLabel: ""},
+						Labels: map[string]string{helpers.RequiredUDNNamespaceLabel: ""},
 					},
 				}, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -117,7 +118,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", func() {
 				}
 
 				ginkgo.By("creating a \"default deny\" network policy")
-				_, err = makeDenyAllPolicy(f, f.Namespace.Name, "deny-all")
+				_, err = helpers.MakeDenyAllPolicy(f, f.Namespace.Name, "deny-all")
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				ginkgo.By("asserting the *client* pod can not contact the server pod exposed endpoint")
@@ -244,7 +245,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", func() {
 				}, 2*time.Minute, 6*time.Second).Should(gomega.Succeed())
 
 				ginkgo.By("creating a \"default deny\" network policy")
-				_, err := makeDenyAllPolicy(f, namespaceYellow, "deny-all")
+				_, err := helpers.MakeDenyAllPolicy(f, namespaceYellow, "deny-all")
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				ginkgo.By("asserting the *client* pod can not contact the allow server pod exposed endpoint")

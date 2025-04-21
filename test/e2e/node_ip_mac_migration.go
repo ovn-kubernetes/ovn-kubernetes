@@ -28,6 +28,8 @@ import (
 	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 	e2eservice "k8s.io/kubernetes/test/e2e/framework/service"
 	utilnet "k8s.io/utils/net"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/helpers"
 )
 
 var _ = Describe("Node IP and MAC address migration", func() {
@@ -90,7 +92,7 @@ spec:
 			false: "update the IP address first, kubelet later",
 		}
 
-		f = wrappedTestFramework(namespacePrefix)
+		f = helpers.WrappedTestFramework(namespacePrefix)
 
 		udpPort  = int32(rand.Intn(1000) + 10000)
 		udpPortS = fmt.Sprintf("%d", udpPort)
@@ -129,13 +131,13 @@ spec:
 
 		By("Creating a cluster external container")
 		externalContainerIPs = make(map[int]string)
-		externalContainerIPs[4], externalContainerIPs[6] = createClusterExternalContainer(externalContainerName,
+		externalContainerIPs[4], externalContainerIPs[6] = helpers.CreateClusterExternalContainer(externalContainerName,
 			externalContainerImage, []string{"--network", ciNetworkName, "-P"}, externalContainerCommand)
 	})
 
 	AfterEach(func() {
 		By("Removing the external container")
-		deleteClusterExternalContainer(externalContainerName)
+		helpers.DeleteClusterExternalContainer(externalContainerName)
 
 		By("Removing the temp directory")
 		Expect(os.RemoveAll(tmpDirIPMigration)).To(Succeed())
@@ -155,12 +157,12 @@ spec:
 				}
 
 				By("Creating a test pod on both selected worker nodes")
-				podWorkerNode = newAgnhostPodOnNode(
+				podWorkerNode = helpers.NewAgnhostPodOnNode(
 					podWorkerNodeName,
 					workerNode.Name,
 					podLabels,
 					podCommand...)
-				podSecondaryWorkerNode = newAgnhostPodOnNode(
+				podSecondaryWorkerNode = helpers.NewAgnhostPodOnNode(
 					podSecondaryWorkerNodeName,
 					secondaryWorkerNode.Name,
 					podLabels,
@@ -194,7 +196,7 @@ spec:
 					pollingTimeout))
 				Eventually(func() bool {
 					By("Poking the pod")
-					err := pokeAllPodIPs(f, podWorkerNodeName, podSecondaryWorkerNode)
+					err := helpers.PokeAllPodIPs(f, podWorkerNodeName, podSecondaryWorkerNode)
 					if err != nil {
 						framework.Logf("Poking all pod IPs failed: %q", err)
 					}
@@ -222,7 +224,7 @@ spec:
 						true)
 					Expect(err).NotTo(HaveOccurred())
 
-					ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+					ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(helpers.OvnNamespace).List(context.TODO(), metav1.ListOptions{
 						LabelSelector: "app=ovnkube-node",
 						FieldSelector: "spec.nodeName=" + workerNode.Name,
 					})
@@ -235,7 +237,7 @@ spec:
 						return isOVNEncapIPReady(workerNode.Name, workerNodeIPs[ipAddrFamily], ovnkubePodWorkerNode.Name)
 					}, pollingTimeout, pollingInterval).Should(BeTrue())
 
-					err = deletePodWithWait(context.TODO(), f.ClientSet, &ovnkubePodWorkerNode)
+					err = helpers.DeletePodWithWait(context.TODO(), f.ClientSet, &ovnkubePodWorkerNode)
 					Expect(err).NotTo(HaveOccurred())
 
 					By(fmt.Sprintf("Sleeping for %d seconds to give things time to settle", settleTimeout))
@@ -259,7 +261,7 @@ spec:
 							By("Setting rollbackNeeded to true")
 							rollbackNeeded = true
 
-							ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+							ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(helpers.OvnNamespace).List(context.TODO(), metav1.ListOptions{
 								LabelSelector: "app=ovnkube-node",
 								FieldSelector: "spec.nodeName=" + workerNode.Name,
 							})
@@ -281,7 +283,7 @@ spec:
 								pollingTimeout))
 							Eventually(func() bool {
 								By("Poking the pod")
-								err := pokeAllPodIPs(f, podWorkerNodeName, podSecondaryWorkerNode)
+								err := helpers.PokeAllPodIPs(f, podWorkerNodeName, podSecondaryWorkerNode)
 								if err != nil {
 									framework.Logf("Poking all pod IPs failed: %q", err)
 								}
@@ -359,7 +361,7 @@ spec:
 							By("Setting rollbackNeeded to true")
 							rollbackNeeded = true
 
-							ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+							ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(helpers.OvnNamespace).List(context.TODO(), metav1.ListOptions{
 								LabelSelector: "app=ovnkube-node",
 								FieldSelector: "spec.nodeName=" + workerNode.Name,
 							})
@@ -398,7 +400,7 @@ spec:
 								pollingTimeout))
 							Eventually(func() bool {
 								By("Poking the pod")
-								err := pokeAllPodIPs(f, podWorkerNodeName, podSecondaryWorkerNode)
+								err := helpers.PokeAllPodIPs(f, podWorkerNodeName, podSecondaryWorkerNode)
 								if err != nil {
 									framework.Logf("Poking all pod IPs failed: %q", err)
 								}
@@ -438,7 +440,7 @@ spec:
 					assignedNodePort = svc.Spec.Ports[0].NodePort
 
 					// find the ovn-kube node pod on this node
-					pods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+					pods, err := f.ClientSet.CoreV1().Pods(helpers.OvnNamespace).List(context.TODO(), metav1.ListOptions{
 						LabelSelector: "app=ovnkube-node",
 						FieldSelector: "spec.nodeName=" + workerNode.Name,
 					})
@@ -488,7 +490,7 @@ spec:
 							By("Setting rollbackNeeded to true")
 							rollbackNeeded = true
 
-							ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+							ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(helpers.OvnNamespace).List(context.TODO(), metav1.ListOptions{
 								LabelSelector: "app=ovnkube-node",
 								FieldSelector: "spec.nodeName=" + workerNode.Name,
 							})
@@ -523,7 +525,7 @@ spec:
 								// Due to potential k8s bug described here: https://github.com/ovn-org/ovn-kubernetes/issues/4073
 								// We may need to restart kubelet for the backend pod to update its host networked IP address
 								restartCmd := []string{"docker", "exec", workerNode.Name, "systemctl", "restart", "kubelet"}
-								_, restartErr := runCommand(restartCmd...)
+								_, restartErr := helpers.RunCommand(restartCmd...)
 								framework.ExpectNoError(restartErr)
 								return false, nil
 							})
@@ -537,7 +539,7 @@ spec:
 	When("when MAC address changes", func() {
 		BeforeEach(func() {
 			By("Storing original MAC")
-			ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+			ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(helpers.OvnNamespace).List(context.TODO(), metav1.ListOptions{
 				LabelSelector: "app=ovnkube-node",
 				FieldSelector: "spec.nodeName=" + workerNode.Name,
 			})
@@ -639,14 +641,14 @@ func checkFlowsForMAC(ovnkPod v1.Pod, mac net.HardwareAddr) error {
 func setMACAddress(ovnkubePod v1.Pod, mac string) error {
 	cmd := []string{"kubectl", "-n", ovnkubePod.Namespace, "exec", ovnkubePod.Name, "-c", "ovn-controller",
 		"--", "ovs-vsctl", "set", "bridge", "breth0", fmt.Sprintf("other-config:hwaddr=%s", mac)}
-	_, err := runCommand(cmd...)
+	_, err := helpers.RunCommand(cmd...)
 	return err
 }
 
 func getMACAddress(ovnkubePod v1.Pod) (net.HardwareAddr, error) {
 	cmd := []string{"kubectl", "-n", ovnkubePod.Namespace, "exec", ovnkubePod.Name, "-c", "ovn-controller",
 		"--", "ip", "link", "show", "breth0"}
-	output, err := runCommand(cmd...)
+	output, err := helpers.RunCommand(cmd...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ip link output: %w", err)
 	}
@@ -678,7 +680,7 @@ func getNodeInternalAddresses(node *v1.Node) (string, string) {
 // findIpAddressMaskOnHost finds the string "<IP address>/<mask>" and interface name on container <containerName> for
 // nodeIP.
 func findIPAddressMaskInterfaceOnHost(containerName, containerIP string) (net.IPNet, string, error) {
-	ipAddressCmdOutput, err := runCommand("docker", "exec", containerName, "ip", "-o", "address")
+	ipAddressCmdOutput, err := helpers.RunCommand("docker", "exec", containerName, "ip", "-o", "address")
 	if err != nil {
 		return net.IPNet{}, "", err
 	}
@@ -828,7 +830,7 @@ func isAddressReachableFromContainer(containerName, targetIP string) (bool, erro
 	}
 	curlCommand := strings.Split(fmt.Sprintf("curl -g -q -s http://%s:%d", targetIP, 80), " ")
 	cmd = append(cmd, curlCommand...)
-	_, err := runCommand(cmd...)
+	_, err := helpers.RunCommand(cmd...)
 	// If this curl works, then the node is logically reachable, shortcut.
 	if err == nil {
 		return true, nil
@@ -836,7 +838,7 @@ func isAddressReachableFromContainer(containerName, targetIP string) (bool, erro
 
 	// Now, check the neighbor table and if the entry does not have REACHABLE or STALE or PERMANENT, then this must be
 	// an unreachable entry (could be FAILED or INCOMPLETE).
-	ipNeighborOutput, err := runCommand("docker", "exec", containerName, "ip", "neigh")
+	ipNeighborOutput, err := helpers.RunCommand("docker", "exec", containerName, "ip", "neigh")
 	if err != nil {
 		return false, err
 	}
@@ -861,9 +863,9 @@ func isAddressReachableFromContainer(containerName, targetIP string) (bool, erro
 
 func isOVNEncapIPReady(nodeName, nodeIP, ovnkubePodName string) bool {
 	framework.Logf("Verifying ovn-encap-ip for node %s", nodeName)
-	cmd := []string{"kubectl", "-n", ovnNamespace, "exec", ovnkubePodName, "-c", "ovn-controller",
+	cmd := []string{"kubectl", "-n", helpers.OvnNamespace, "exec", ovnkubePodName, "-c", "ovn-controller",
 		"--", "ovs-vsctl", "get", "open_vswitch", ".", "external-ids:ovn-encap-ip"}
-	output, err := runCommand(cmd...)
+	output, err := helpers.RunCommand(cmd...)
 	if err != nil {
 		framework.Logf("Failed to get ovn-encap-ip: %q", err)
 		return false
@@ -890,7 +892,7 @@ func migrateWorkerNodeIP(nodeName, fromIP, targetIP string, invertOrder bool) (e
 		if err != nil {
 			for _, cmd := range cleanupCommands {
 				framework.Logf("Attempting cleanup with command %q", cmd)
-				runCommand(cmd...)
+				helpers.RunCommand(cmd...)
 			}
 		}
 	}()
@@ -916,7 +918,7 @@ func migrateWorkerNodeIP(nodeName, fromIP, targetIP string, invertOrder bool) (e
 		cleanupCommands = append(cleanupCommands, cleanupCmd)
 		// Run command.
 		cmd := []string{"docker", "exec", nodeName, "ip", "address", "add", newIPMask, "dev", iface}
-		_, err = runCommand(cmd...)
+		_, err = helpers.RunCommand(cmd...)
 		if err != nil {
 			return err
 		}
@@ -927,7 +929,7 @@ func migrateWorkerNodeIP(nodeName, fromIP, targetIP string, invertOrder bool) (e
 		cleanupCommands = append([][]string{cleanupCmd}, cleanupCommands...)
 		// Run command.
 		cmd = []string{"docker", "exec", nodeName, "ip", "address", "del", parsedNetIPMask.String(), "dev", iface}
-		_, err = runCommand(cmd...)
+		_, err = helpers.RunCommand(cmd...)
 		if err != nil {
 			return err
 		}
@@ -946,7 +948,7 @@ func migrateWorkerNodeIP(nodeName, fromIP, targetIP string, invertOrder bool) (e
 		// Run command.
 		cmd := []string{"docker", "exec", nodeName, "sed", "-i", fmt.Sprintf("s/node-ip=%s/node-ip=%s/", fromIP, targetIP),
 			"/var/lib/kubelet/kubeadm-flags.env"}
-		_, err = runCommand(cmd...)
+		_, err = helpers.RunCommand(cmd...)
 		if err != nil {
 			return err
 		}
@@ -954,7 +956,7 @@ func migrateWorkerNodeIP(nodeName, fromIP, targetIP string, invertOrder bool) (e
 		// Restart kubelet.
 		framework.Logf("Restarting kubelet on node %s", nodeName)
 		cmd = []string{"docker", "exec", nodeName, "systemctl", "restart", "kubelet"}
-		_, err = runCommand(cmd...)
+		_, err = helpers.RunCommand(cmd...)
 		if err != nil {
 			return err
 		}
