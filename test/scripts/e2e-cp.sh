@@ -180,7 +180,7 @@ FOCUS=$(echo ${@:1} | sed 's/ /\\s/g')
 pushd e2e
 
 go mod download
-go test -test.timeout 180m -v . \
+go test -test.timeout 180m -v ./... \
         -ginkgo.v \
         -ginkgo.focus ${FOCUS:-.} \
         -ginkgo.timeout 3h \
