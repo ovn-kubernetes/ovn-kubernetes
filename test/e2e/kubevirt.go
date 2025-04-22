@@ -939,20 +939,6 @@ iperf3 -t 0 -c %[1]s -p %[2]d --logfile %[3]s &
 			return generateVM(fedoraWithTestToolingVMI(labels, annotations, nodeSelector, networkSource, userData, networkData))
 		}
 
-		fedoraVMI = func(labels map[string]string, annotations map[string]string, nodeSelector map[string]string, networkSource kubevirtv1.NetworkSource, userData, networkData string) *kubevirtv1.VirtualMachineInstance {
-			cloudInitVolumeSource := kubevirtv1.VolumeSource{
-				CloudInitNoCloud: &kubevirtv1.CloudInitNoCloudSource{
-					UserData:    userData,
-					NetworkData: networkData,
-				},
-			}
-			return generateVMI(labels, annotations, nodeSelector, networkSource, cloudInitVolumeSource, kubevirt.FedoraContainerDiskImage)
-		}
-
-		fedoraVM = func(labels map[string]string, annotations map[string]string, nodeSelector map[string]string, networkSource kubevirtv1.NetworkSource, userData, networkData string) *kubevirtv1.VirtualMachine {
-			return generateVM(fedoraVMI(labels, annotations, nodeSelector, networkSource, userData, networkData))
-		}
-
 		composeDefaultNetworkLiveMigratableVM = func(labels map[string]string, butane string) (*kubevirtv1.VirtualMachine, error) {
 			annotations := map[string]string{
 				"kubevirt.io/allow-pod-bridge-network-live-migration": "",
@@ -1503,7 +1489,18 @@ fi
 					liveMigrateFailed(vmi)
 				},
 			}
-			networkData = `version: 2
+			// For secondary network interfaces:
+			// - DHCPv6 cannot be activated because KubeVirt does not support it.
+			// - In Fedora 39, the "may-fail" option is configured by cloud-init in
+			//   NetworkManager. This causes the entire interface to remain inactive
+			//   if no IPv6 address is assigned.
+			networkDataIPv4 = `version: 2
+ethernets:
+  eth0:
+    dhcp4: true
+`
+
+			networkDataDualSatck = `version: 2
 ethernets:
   eth0:
     dhcp4: true
@@ -1516,8 +1513,6 @@ chpasswd: { expire: False }
 `
 
 			userDataWithIperfServer = userData + fmt.Sprintf(`
-packages:
-  - iperf3
 write_files:
   - path: /tmp/iperf-server.sh
     encoding: b64
@@ -1533,7 +1528,7 @@ runcmd:
 						Multus: &kubevirtv1.MultusNetwork{
 							NetworkName: cudn.Name,
 						},
-					}, userData, networkData)
+					}, userData, networkDataIPv4)
 					createVirtualMachine(vm)
 					return vm.Name
 				},
@@ -1542,10 +1537,10 @@ runcmd:
 			virtualMachineWithUDN = resourceCommand{
 				description: "VirtualMachine with interface binding for UDN",
 				cmd: func() string {
-					vm = fedoraVM(nil /*labels*/, nil /*annotations*/, nil, /*nodeSelector*/
+					vm = fedoraWithTestToolingVM(nil /*labels*/, nil /*annotations*/, nil, /*nodeSelector*/
 						kubevirtv1.NetworkSource{
 							Pod: &kubevirtv1.PodNetwork{},
-						}, userDataWithIperfServer, networkData)
+						}, userDataWithIperfServer, networkDataDualSatck)
 					vm.Spec.Template.Spec.Domain.Devices.Interfaces[0].Bridge = nil
 					vm.Spec.Template.Spec.Domain.Devices.Interfaces[0].Binding = &kubevirtv1.PluginBinding{Name: "l2bridge"}
 					createVirtualMachine(vm)
@@ -1560,7 +1555,7 @@ runcmd:
 						Multus: &kubevirtv1.MultusNetwork{
 							NetworkName: cudn.Name,
 						},
-					}, userData, networkData)
+					}, userData, networkDataIPv4)
 					createVirtualMachineInstance(vmi)
 					return vmi.Name
 				},
@@ -1569,10 +1564,10 @@ runcmd:
 			virtualMachineInstanceWithUDN = resourceCommand{
 				description: "VirtualMachineInstance with interface binding for UDN",
 				cmd: func() string {
-					vmi = fedoraVMI(nil /*labels*/, nil /*annotations*/, nil, /*nodeSelector*/
+					vmi = fedoraWithTestToolingVMI(nil /*labels*/, nil /*annotations*/, nil, /*nodeSelector*/
 						kubevirtv1.NetworkSource{
 							Pod: &kubevirtv1.PodNetwork{},
-						}, userDataWithIperfServer, networkData)
+						}, userDataWithIperfServer, networkDataDualSatck)
 					vmi.Spec.Domain.Devices.Interfaces[0].Bridge = nil
 					vmi.Spec.Domain.Devices.Interfaces[0].Binding = &kubevirtv1.PluginBinding{Name: "l2bridge"}
 					createVirtualMachineInstance(vmi)
@@ -1700,10 +1695,6 @@ runcmd:
 				WithPolling(time.Second).
 				Should(Succeed(), step)
 
-			step = by(vmi.Name, "Wait for cloud init to finish at first boot")
-			output, err := kubevirt.RunCommand(vmi, "cloud-init status --wait", time.Minute)
-			Expect(err).NotTo(HaveOccurred(), step+": "+output)
-
 			// expect 2 addresses on dual-stack deployments; 1 on single-stack
 			step = by(vmi.Name, "Wait for addresses at the virtual machine")
 			expectedNumberOfAddresses := len(cidrs)
@@ -1765,12 +1756,6 @@ runcmd:
 
 			step = by(vmi.Name, fmt.Sprintf("Login to virtual machine after %s %s", td.resource.description, td.test.description))
 			Expect(kubevirt.LoginToFedora(vmi, "fedora", "fedora")).To(Succeed(), step)
-
-			if td.test.description == restart.description {
-				step := by(vmi.Name, "Wait for cloud init to finish after restart")
-				output, err = kubevirt.RunCommand(vmi, "cloud-init status --wait", time.Minute)
-				Expect(err).NotTo(HaveOccurred(), step+": "+output)
-			}
 
 			obtainedAddresses := virtualMachineAddressesFromStatus(vmi, expectedNumberOfAddresses)
 
