@@ -287,7 +287,7 @@ func NodePortServiceSpecFrom(svcName string, ipFamily v1.IPFamilyPolicyType, htt
 	return res
 }
 
-func externalIPServiceSpecFrom(svcName string, httpPort, updPort, clusterHTTPPort, clusterUDPPort int, selector map[string]string, externalIps []string) *v1.Service {
+func ExternalIPServiceSpecFrom(svcName string, httpPort, updPort, clusterHTTPPort, clusterUDPPort int, selector map[string]string, externalIps []string) *v1.Service {
 	preferDual := v1.IPFamilyPolicyPreferDualStack
 
 	res := &v1.Service{
@@ -337,7 +337,7 @@ func PokeEndpoint(namespace, clientContainer, protocol, targetHost string, targe
 		res, err = RunCommand(cmd...)
 	}
 	framework.ExpectNoError(err, "failed to run command on external Container")
-	response, err := parseNetexecResponse(res)
+	response, err := ParseNetexecResponse(res)
 	if err != nil {
 		framework.Logf("FAILED Command was %s", curlCommand)
 		framework.Logf("FAILED Response was %v", res)
@@ -348,9 +348,9 @@ func PokeEndpoint(namespace, clientContainer, protocol, targetHost string, targe
 	return response
 }
 
-// wrapper logic around PokeEndpoint
+// PokeExternalIpService is wrapper logic around PokeEndpoint
 // contact the ExternalIP service until each endpoint returns its hostname and return true, or false otherwise
-func pokeExternalIpService(clientContainerName, protocol, externalAddress string, externalPort int32, maxTries int, nodesHostnames sets.String) bool {
+func PokeExternalIpService(clientContainerName, protocol, externalAddress string, externalPort int32, maxTries int, nodesHostnames sets.String) bool {
 	responses := sets.NewString()
 
 	for i := 0; i < maxTries; i++ {
@@ -366,10 +366,10 @@ func pokeExternalIpService(clientContainerName, protocol, externalAddress string
 	return false
 }
 
-// run a few iterations to make sure that the hwaddr is stable
+// IsNeighborEntryStable runs a few iterations to make sure that the hwaddr is stable
 // we will always run iterations + 1 in the loop to make sure that we have values
 // to compare
-func isNeighborEntryStable(clientContainer, targetHost string, iterations int) bool {
+func IsNeighborEntryStable(clientContainer, targetHost string, iterations int) bool {
 	cmd := []string{ContainerRuntime, "exec", clientContainer}
 	var hwAddrOld string
 	var hwAddrNew string
@@ -474,9 +474,9 @@ func CurlInContainer(clientContainer, targetHost string, targetPort int32, endPo
 	return RunCommand(cmd...)
 }
 
-// parseNetexecResponse parses a json string of type '{"responses":"...", "errors":""}'.
+// ParseNetexecResponse parses a json string of type '{"responses":"...", "errors":""}'.
 // it returns "", error if the errors value is not empty, or the responses otherwise.
-func parseNetexecResponse(response string) (string, error) {
+func ParseNetexecResponse(response string) (string, error) {
 	res := struct {
 		Responses []string `json:"responses"`
 		Errors    []string `json:"errors"`
@@ -506,9 +506,9 @@ func NodePortsFromService(service *v1.Service) (int32, int32) {
 	return resTCP, resUDP
 }
 
-// addressIsIP tells wether the given address is an
+// AddressIsIP tells wether the given address is an
 // address or a hostname
-func addressIsIP(address v1.NodeAddress) bool {
+func AddressIsIP(address v1.NodeAddress) bool {
 	addr := net.ParseIP(address.Address)
 	if addr == nil {
 		return false
@@ -516,9 +516,9 @@ func addressIsIP(address v1.NodeAddress) bool {
 	return true
 }
 
-// addressIsIPv4 tells whether the given address is an
+// AddressIsIPv4 tells whether the given address is an
 // IPv4 address.
-func addressIsIPv4(address v1.NodeAddress) bool {
+func AddressIsIPv4(address v1.NodeAddress) bool {
 	addr := net.ParseIP(address.Address)
 	if addr == nil {
 		return false
@@ -526,9 +526,9 @@ func addressIsIPv4(address v1.NodeAddress) bool {
 	return utilnet.IsIPv4String(addr.String())
 }
 
-// addressIsIPv6 tells whether the given address is an
+// AddressIsIPv6 tells whether the given address is an
 // IPv6 address.
-func addressIsIPv6(address v1.NodeAddress) bool {
+func AddressIsIPv6(address v1.NodeAddress) bool {
 	addr := net.ParseIP(address.Address)
 	if addr == nil {
 		return false
@@ -640,9 +640,9 @@ func GetMACAddressesForNetwork(container, network string) string {
 	return strings.TrimSuffix(macAddr, "\n")
 }
 
-// waitClusterHealthy ensures we have a given number of ovn-k worker and master nodes,
+// WaitClusterHealthy ensures we have a given number of ovn-k worker and master nodes,
 // as well as all nodes are healthy
-func waitClusterHealthy(f *framework.Framework, numControlPlanePods int, controlPlanePodName string) error {
+func WaitClusterHealthy(f *framework.Framework, numControlPlanePods int, controlPlanePodName string) error {
 	return wait.PollImmediate(2*time.Second, 120*time.Second, func() (bool, error) {
 		nodes, err := f.ClientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
 		if err != nil {
@@ -1232,7 +1232,7 @@ func IsLocalGWModeEnabled() bool {
 	return present && val == "local"
 }
 
-func singleNodePerZone() bool {
+func IsSingleNodePerZone() bool {
 	if singleNodePerZoneResult == nil {
 		args := []string{"get", "pods", "--selector=app=ovnkube-node", "-o", "jsonpath={.items[0].spec.containers[*].name}"}
 		containerNames := e2ekubectl.RunKubectlOrDie(OvnNamespace, args...)
@@ -1249,7 +1249,7 @@ func singleNodePerZone() bool {
 }
 
 func GetNodeContainerName() string {
-	if singleNodePerZone() {
+	if IsSingleNodePerZone() {
 		return "ovnkube-controller"
 	}
 	return "ovnkube-node"
