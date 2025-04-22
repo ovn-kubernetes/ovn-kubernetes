@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/helpers"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/multihoming"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
@@ -21,7 +23,7 @@ import (
 )
 
 func changeNodeZone(node *v1.Node, zone string, cs clientset.Interface) error {
-	node.Labels[ovnNodeZoneNameAnnotation] = zone
+	node.Labels[helpers.OvnNodeZoneNameAnnotation] = zone
 
 	var err error
 	var patchData []byte
@@ -40,7 +42,7 @@ func changeNodeZone(node *v1.Node, zone string, cs clientset.Interface) error {
 	framework.ExpectNoError(err)
 
 	// Restart the ovnkube-node on this node
-	err = restartOVNKubeNodePod(cs, ovnNamespace, node.Name)
+	err = helpers.RestartOVNKubeNodePod(cs, helpers.OvnNamespace, node.Name)
 	framework.ExpectNoError(err)
 
 	// Verify that the node is moved to the expected zone
@@ -51,7 +53,7 @@ func changeNodeZone(node *v1.Node, zone string, cs clientset.Interface) error {
 			return false, fmt.Errorf("could not get the node %s: %w", node.Name, err)
 		}
 
-		z, err := getNodeZone(n)
+		z, err := helpers.GetNodeZone(n)
 		if err != nil {
 			return false, fmt.Errorf("could not get the node %s zone: %w", node.Name, err)
 		}
@@ -72,12 +74,12 @@ func checkPodsInterconnectivity(clientPod, serverPod *v1.Pod, namespace string, 
 			return err
 		}
 
-		clientPodConfig := podConfiguration{
-			name:      clientPod.Name,
-			namespace: namespace,
+		clientPodConfig := multihoming.PodConfiguration{
+			Name:      clientPod.Name,
+			Namespace: namespace,
 		}
 		if updatedPod.Status.Phase == v1.PodRunning {
-			return connectToServer(clientPodConfig, updatedPod.Status.PodIP, 8000)
+			return multihoming.ConnectToServer(clientPodConfig, updatedPod.Status.PodIP, 8000)
 		}
 
 		return fmt.Errorf("pod not running. /me is sad")
@@ -94,7 +96,7 @@ var _ = ginkgo.Describe("Multi node zones interconnect", func() {
 		clientPodNodeName = "ovn-worker3"
 		clientPodName     = "client-pod"
 	)
-	fr := wrappedTestFramework("multi-node-zones")
+	fr := helpers.WrappedTestFramework("multi-node-zones")
 
 	var (
 		cs clientset.Interface
@@ -131,10 +133,10 @@ var _ = ginkgo.Describe("Multi node zones interconnect", func() {
 			)
 		}
 
-		serverPodNodeZone, err = getNodeZone(serverPodNode)
+		serverPodNodeZone, err = helpers.GetNodeZone(serverPodNode)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-		clientPodNodeZone, err = getNodeZone(clientPodNode)
+		clientPodNodeZone, err = helpers.GetNodeZone(clientPodNode)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 		if serverPodNodeZone == clientPodNodeZone {
@@ -146,7 +148,7 @@ var _ = ginkgo.Describe("Multi node zones interconnect", func() {
 
 	ginkgo.It("Pod interconnectivity", func() {
 		// Create a server pod on zone - zone-1
-		cmd := httpServerContainerCmd(8000)
+		cmd := multihoming.HttpServerContainerCmd(8000)
 		serverPod := e2epod.NewAgnhostPod(fr.Namespace.Name, serverPodName, nil, nil, nil, cmd...)
 		serverPod.Spec.NodeName = serverPodNodeName
 		e2epod.NewPodClient(fr).CreateSync(context.TODO(), serverPod)

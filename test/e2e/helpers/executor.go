@@ -1,6 +1,6 @@
 // SPDX-License-Identifier:Apache-2.0
 
-package e2e
+package helpers
 
 import (
 	"os"
@@ -32,15 +32,15 @@ func (hostExecutor) Exec(cmd string, args ...string) (string, error) {
 }
 
 func ForContainer(containerName string) Executor {
-	return &containerExecutor{container: containerName}
+	return &ContainerExecutor{Container: containerName}
 }
 
-type containerExecutor struct {
-	container string
+type ContainerExecutor struct {
+	Container string
 }
 
-func (e *containerExecutor) Exec(cmd string, args ...string) (string, error) {
-	newArgs := append([]string{"exec", e.container, cmd}, args...)
+func (e *ContainerExecutor) Exec(cmd string, args ...string) (string, error) {
+	newArgs := append([]string{"exec", e.Container, cmd}, args...)
 	out, err := exec.Command(ContainerRuntime, newArgs...).CombinedOutput()
 	return string(out), err
 }

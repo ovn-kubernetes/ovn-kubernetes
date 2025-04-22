@@ -14,6 +14,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/helpers"
 )
 
 var _ = ginkgo.Describe("Status manager validation", func() {
@@ -22,7 +24,7 @@ var _ = ginkgo.Describe("Status manager validation", func() {
 		egressFirewallYamlFile string = "egress-fw.yml"
 	)
 
-	f := wrappedTestFramework(svcname)
+	f := helpers.WrappedTestFramework(svcname)
 
 	ginkgo.BeforeEach(func() {
 		// create EgressFirewall

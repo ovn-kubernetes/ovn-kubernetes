@@ -22,6 +22,8 @@ import (
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 	e2eservice "k8s.io/kubernetes/test/e2e/framework/service"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/helpers"
 )
 
 type serviceStatus int
@@ -44,7 +46,7 @@ var _ = ginkgo.Describe("Unidling", func() {
 		port              = 80
 	)
 
-	f := wrappedTestFramework("unidling")
+	f := helpers.WrappedTestFramework("unidling")
 
 	var cs clientset.Interface
 
@@ -391,8 +393,6 @@ func lastIdlingEventForService(service *v1.Service, cs clientset.Interface) meta
 	return mostRecent
 }
 
-const charset = "abcdefghijklmnopqrstuvwxyz"
-
 var seededRand *rand.Rand = rand.New(
 	rand.NewSource(time.Now().UnixNano()))
 
@@ -405,5 +405,5 @@ func StringWithCharset(length int, charset string) string {
 }
 
 func randString(length int) string {
-	return StringWithCharset(length, charset)
+	return StringWithCharset(length, helpers.Charset)
 }

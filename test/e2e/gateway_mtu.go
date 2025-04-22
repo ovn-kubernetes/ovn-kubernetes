@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/helpers"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
@@ -12,7 +13,7 @@ import (
 
 var _ = ginkgo.Describe("Check whether gateway-mtu-support annotation on node is set based on disable-pkt-mtu-check value", func() {
 	var nodes *v1.NodeList
-	f := wrappedTestFramework("gateway-mtu-support")
+	f := helpers.WrappedTestFramework("gateway-mtu-support")
 
 	ginkgo.BeforeEach(func() {
 		var err error
@@ -22,9 +23,9 @@ var _ = ginkgo.Describe("Check whether gateway-mtu-support annotation on node is
 	})
 	ginkgo.When("DisablePacketMTUCheck is either not set or set to false", func() {
 		ginkgo.It("Verify whether gateway-mtu-support annotation is not set on nodes when DisablePacketMTUCheck is either not set or set to false", func() {
-			if !isDisablePacketMTUCheckEnabled() {
+			if !helpers.IsDisablePacketMTUCheckEnabled() {
 				for _, node := range nodes.Items {
-					supported := getGatewayMTUSupport(&node)
+					supported := helpers.GetGatewayMTUSupport(&node)
 					gomega.Expect(supported).To(gomega.Equal(true))
 
 				}

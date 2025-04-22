@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/helpers"
 	"os"
 	"time"
 
@@ -44,7 +45,7 @@ func createStaticPod(f *framework.Framework, nodeName string, podYaml string) {
 	var dst = fmt.Sprintf("%s:/etc/kubernetes/manifests/%s", nodeName, podFile)
 	cmd := []string{"docker", "cp", podFile, dst}
 	framework.Logf("Running command %v", cmd)
-	_, err := runCommand(cmd...)
+	_, err := helpers.RunCommand(cmd...)
 	if err != nil {
 		framework.Failf("failed to copy pod file to node %s", nodeName)
 	}
@@ -54,7 +55,7 @@ func createStaticPod(f *framework.Framework, nodeName string, podYaml string) {
 func removeStaticPodFile(nodeName string, podFile string) {
 	cmd := []string{"docker", "exec", nodeName, "bash", "-c", "rm /etc/kubernetes/manifests/static-pod.yaml"}
 	framework.Logf("Running command %v", cmd)
-	_, err := runCommand(cmd...)
+	_, err := helpers.RunCommand(cmd...)
 	if err != nil {
 		framework.Failf("failed to remove pod file from node %s", nodeName)
 	}
@@ -71,7 +72,7 @@ var _ = ginkgo.Describe("Creating a static pod on a node", func() {
 		agnhostImage string = "registry.k8s.io/e2e-test-images/agnhost:2.26"
 	)
 
-	f := wrappedTestFramework("staticpods")
+	f := helpers.WrappedTestFramework("staticpods")
 
 	var cs clientset.Interface
 

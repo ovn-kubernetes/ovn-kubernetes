@@ -22,6 +22,8 @@ import (
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 	utilnet "k8s.io/utils/net"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/helpers"
 )
 
 var _ = ginkgo.Describe("EgressService", func() {
@@ -43,7 +45,7 @@ var _ = ginkgo.Describe("EgressService", func() {
 		nodes            []v1.Node
 	)
 
-	f := wrappedTestFramework("egress-services")
+	f := helpers.WrappedTestFramework("egress-services")
 
 	ginkgo.BeforeEach(func() {
 		var err error
@@ -57,13 +59,13 @@ var _ = ginkgo.Describe("EgressService", func() {
 		}
 		nodes = n.Items
 		ginkgo.By("Creating the external kind container to send the traffic to/from")
-		externalKindIPv4, externalKindIPv6 = createClusterExternalContainer(externalKindContainerName, agnhostImage,
+		externalKindIPv4, externalKindIPv6 = helpers.CreateClusterExternalContainer(externalKindContainerName, helpers.AgnhostImage,
 			[]string{"--privileged", "--network", "kind"}, []string{"netexec", fmt.Sprintf("--http-port=%d", podHTTPPort)})
 
 	})
 
 	ginkgo.AfterEach(func() {
-		deleteClusterExternalContainer(externalKindContainerName)
+		helpers.DeleteClusterExternalContainer(externalKindContainerName)
 		flushCustomRoutingTablesOnNodes(nodes, blackholeRoutingTable)
 	})
 
@@ -75,7 +77,7 @@ var _ = ginkgo.Describe("EgressService", func() {
 				name := name
 				i := i
 				podsCreateSync.Go(func() error {
-					p, err := createGenericPodWithLabel(f, name, nodes[i].Name, f.Namespace.Name, command, podsLabels)
+					p, err := helpers.CreateGenericPodWithLabel(f, name, nodes[i].Name, f.Namespace.Name, command, podsLabels)
 					if p != nil {
 						framework.Logf("%s podIPs are: %v", p.Name, p.Status.PodIPs)
 					}
@@ -185,7 +187,7 @@ spec:
 
 			for i, pod := range pods {
 				node := &nodes[i]
-				v4, v6 := getNodeAddresses(node)
+				v4, v6 := helpers.GetNodeAddresses(node)
 				expected := v4
 				if utilnet.IsIPv6String(svcIP) {
 					expected = v6
@@ -212,7 +214,7 @@ spec:
 				name := name
 				i := i
 				podsCreateSync.Go(func() error {
-					p, err := createGenericPodWithLabel(f, name, nodes[i].Name, f.Namespace.Name, command, podsLabels)
+					p, err := helpers.CreateGenericPodWithLabel(f, name, nodes[i].Name, f.Namespace.Name, command, podsLabels)
 					if p != nil {
 						framework.Logf("%s podIPs are: %v", p.Name, p.Status.PodIPs)
 					}
@@ -269,7 +271,7 @@ spec:
 			delExternalClientBlackholeFromNodes(nodes, blackholeRoutingTable, externalKindIPv4, externalKindIPv6, protocol == v1.IPv4Protocol)
 			for i, pod := range pods {
 				node := &nodes[i]
-				v4, v6 := getNodeAddresses(node)
+				v4, v6 := helpers.GetNodeAddresses(node)
 				expected := v4
 				if utilnet.IsIPv6String(svcIP) {
 					expected = v6
@@ -308,7 +310,7 @@ spec:
 
 			for i, pod := range pods {
 				node := &nodes[i]
-				v4, v6 := getNodeAddresses(node)
+				v4, v6 := helpers.GetNodeAddresses(node)
 				expected := v4
 				if utilnet.IsIPv6String(svcIP) {
 					expected = v6
@@ -336,7 +338,7 @@ spec:
 				name := name
 				i := i
 				podsCreateSync.Go(func() error {
-					p, err := createGenericPodWithLabel(f, name, nodes[i].Name, f.Namespace.Name, command, podsLabels)
+					p, err := helpers.CreateGenericPodWithLabel(f, name, nodes[i].Name, f.Namespace.Name, command, podsLabels)
 					framework.Logf("%s podIPs are: %v", p.Name, p.Status.PodIPs)
 					return err
 				})
@@ -388,24 +390,24 @@ spec:
 				// TODO(mk): replace with non-repeating IP allocator
 				otherDstIP = "172.18.1.1"
 			}
-			_, err = runCommand(containerRuntime, "exec", dstNode.Name, "ip", "addr", "add", otherDstIP, "dev", "breth0")
+			_, err = helpers.RunCommand(helpers.ContainerRuntime, "exec", dstNode.Name, "ip", "addr", "add", otherDstIP, "dev", "breth0")
 			if err != nil {
 				framework.Failf("failed to add address to node %s: %v", dstNode.Name, err)
 			}
 			defer func() {
-				_, err = runCommand(containerRuntime, "exec", dstNode.Name, "ip", "addr", "delete", otherDstIP, "dev", "breth0")
+				_, err = helpers.RunCommand(helpers.ContainerRuntime, "exec", dstNode.Name, "ip", "addr", "delete", otherDstIP, "dev", "breth0")
 				if err != nil {
 					framework.Failf("failed to remove address from node %s: %v", dstNode.Name, err)
 				}
 			}()
 			ginkgo.By("Creating host-networked pod on non-egress node acting as \"another node\"")
-			_, err = createPod(f, hostNetPod, dstNode.Name, f.Namespace.Name, []string{"/agnhost", "netexec", fmt.Sprintf("--http-port=%d", podHTTPPort)}, map[string]string{}, func(p *v1.Pod) {
+			_, err = helpers.CreatePod(f, hostNetPod, dstNode.Name, f.Namespace.Name, []string{"/agnhost", "netexec", fmt.Sprintf("--http-port=%d", podHTTPPort)}, map[string]string{}, func(p *v1.Pod) {
 				p.Spec.HostNetwork = true
 			})
 			framework.ExpectNoError(err)
 			framework.Logf("Created pod %s on node %s", hostNetPod, dstNode.Name)
 
-			v4, v6 := getNodeAddresses(&dstNode)
+			v4, v6 := helpers.GetNodeAddresses(&dstNode)
 			dstIP := v4
 			if protocol == v1.IPv6Protocol {
 				dstIP = v6
@@ -417,7 +419,7 @@ spec:
 					framework.Logf("Skipping check for pod %s because its on the destination node; srcIP will be podIP", pod)
 					continue // traffic flow is pod -> mp0 -> local host: This won't have nodeIP as SNAT
 				}
-				v4, v6 = getNodeAddresses(&srcNode)
+				v4, v6 = helpers.GetNodeAddresses(&srcNode)
 				expectedsrcIP := v4
 				if protocol == v1.IPv6Protocol {
 					expectedsrcIP = v6
@@ -443,7 +445,7 @@ spec:
 				name := name
 				i := i
 				podsCreateSync.Go(func() error {
-					_, err := createGenericPodWithLabel(f, name, nodes[i].Name, f.Namespace.Name, command, podsLabels)
+					_, err := helpers.CreateGenericPodWithLabel(f, name, nodes[i].Name, f.Namespace.Name, command, podsLabels)
 					return err
 				})
 				index++
@@ -585,7 +587,7 @@ spec:
 			ginkgo.By("Verifying the backend pods exit with their node's IP")
 			for i, pod := range pods {
 				node := nodes[i]
-				v4, v6 := getNodeAddresses(&node)
+				v4, v6 := helpers.GetNodeAddresses(&node)
 				expected := v4
 				if utilnet.IsIPv6String(svcIP) {
 					expected = v6
@@ -660,7 +662,7 @@ spec:
 				name := name
 				i := i
 				podsCreateSync.Go(func() error {
-					p, err := createGenericPodWithLabel(f, name, nodes[i].Name, f.Namespace.Name, command, labels)
+					p, err := helpers.CreateGenericPodWithLabel(f, name, nodes[i].Name, f.Namespace.Name, command, labels)
 					if p != nil {
 						framework.Logf("%s podIPs are: %v", p.Name, p.Status.PodIPs)
 					}
@@ -710,7 +712,7 @@ spec:
 			defer func() {
 				e2ekubectl.RunKubectlOrDie("default", "label", "node", eipNode.Name, "k8s.ovn.org/egress-assignable-")
 			}()
-			nodev4IP, nodev6IP := getNodeAddresses(&eipNode)
+			nodev4IP, nodev6IP := helpers.GetNodeAddresses(&eipNode)
 			egressNodeIP := net.ParseIP(nodev4IP)
 			if utilnet.IsIPv6String(svcIP) {
 				egressNodeIP = net.ParseIP(nodev6IP)
@@ -797,7 +799,7 @@ spec:
 			for _, name := range pods[:2] {
 				name := name
 				podsCreateSync.Go(func() error {
-					p, err := createGenericPodWithLabel(f, name, secondNode, f.Namespace.Name, command, podsLabels)
+					p, err := helpers.CreateGenericPodWithLabel(f, name, secondNode, f.Namespace.Name, command, podsLabels)
 					if p != nil {
 						framework.Logf("%s podIPs are: %v", p.Name, p.Status.PodIPs)
 					}
@@ -858,7 +860,7 @@ spec:
 			}, 3*time.Second, 500*time.Millisecond).ShouldNot(gomega.HaveOccurred())
 
 			ginkgo.By("Creating the third backend pod on the first node")
-			p, err := createGenericPodWithLabel(f, pods[2], firstNode, f.Namespace.Name, command, podsLabels)
+			p, err := helpers.CreateGenericPodWithLabel(f, pods[2], firstNode, f.Namespace.Name, command, podsLabels)
 			if p != nil {
 				framework.Logf("%s podIPs are: %v", p.Name, p.Status.PodIPs)
 			}
@@ -914,7 +916,7 @@ spec:
 			ginkgo.By("Verifying the two backend pods left exit with their node's IP")
 			for _, pod := range pods[:2] {
 				node := nodes[1]
-				v4, v6 := getNodeAddresses(&node)
+				v4, v6 := helpers.GetNodeAddresses(&node)
 				expected := v4
 				if utilnet.IsIPv6String(svcIP) {
 					expected = v6
@@ -943,7 +945,7 @@ spec:
 				name := name
 				i := i
 				podsCreateSync.Go(func() error {
-					p, err := createGenericPodWithLabel(f, name, nodes[i].Name, f.Namespace.Name, command, podsLabels)
+					p, err := helpers.CreateGenericPodWithLabel(f, name, nodes[i].Name, f.Namespace.Name, command, podsLabels)
 					if p != nil {
 						framework.Logf("%s podIPs are: %v", p.Name, p.Status.PodIPs)
 						createdPodsLock.Lock()
@@ -990,7 +992,7 @@ spec:
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
 				ginkgo.By("Setting the routes on the external container to reach the service")
-				v4Via, v6Via := getContainerAddressesForNetwork(createdPods[0].Spec.NodeName, primaryNetworkName) // if it's host=ALL, just pick a node with an ep
+				v4Via, v6Via := helpers.GetContainerAddressesForNetwork(createdPods[0].Spec.NodeName, primaryNetworkName) // if it's host=ALL, just pick a node with an ep
 				if sourceIPBy == "LoadBalancerIP" {
 					_, v4Via, v6Via = getEgressSVCHost(f.ClientSet, f.Namespace.Name, serviceName)
 				}
@@ -1158,36 +1160,36 @@ metadata:
 			ginkgo.By("Setting up the external networks and containers")
 			for _, net := range []*netSettings{net1, net2} {
 				ginkgo.By(fmt.Sprintf("Creating network %s", net.name))
-				out, err := runCommand(containerRuntime, "network", "create", net.name, "--ipv6", "--subnet", net.IPv4CIDR, "--subnet", net.IPv6CIDR)
+				out, err := helpers.RunCommand(helpers.ContainerRuntime, "network", "create", net.name, "--ipv6", "--subnet", net.IPv4CIDR, "--subnet", net.IPv6CIDR)
 				framework.ExpectNoError(err, "failed to create external network %s, out: %s", net.name, out)
 
 				ginkgo.By(fmt.Sprintf("Creating container %s", net.containerName))
 				// Setting the --hostname here is important since later we poke the container's /hostname endpoint
-				net.containerIPv4, net.containerIPv6 = createClusterExternalContainer(net.containerName, agnhostImage,
+				net.containerIPv4, net.containerIPv6 = helpers.CreateClusterExternalContainer(net.containerName, helpers.AgnhostImage,
 					[]string{"--privileged", "--network", net.name, "--hostname", net.containerName}, []string{"netexec", fmt.Sprintf("--http-port=%d", podHTTPPort)})
 
 				ginkgo.By(fmt.Sprintf("Adding a listener for the shared IPv4 %s on %s", sharedIPv4, net.containerName))
-				out, err = runCommand(containerRuntime, "exec", net.containerName, "ip", "address", "add", sharedIPv4+"/32", "dev", "lo")
+				out, err = helpers.RunCommand(helpers.ContainerRuntime, "exec", net.containerName, "ip", "address", "add", sharedIPv4+"/32", "dev", "lo")
 				framework.ExpectNoError(err, "failed to add the loopback ip to dev lo on the container %s, out: %s", net.containerName, out)
 
 				ginkgo.By(fmt.Sprintf("Adding a listener for the shared IPv6 %s on %s", sharedIPv6, net.containerName))
-				out, err = runCommand(containerRuntime, "exec", net.containerName, "ip", "address", "add", sharedIPv6+"/128", "dev", "lo")
+				out, err = helpers.RunCommand(helpers.ContainerRuntime, "exec", net.containerName, "ip", "address", "add", sharedIPv6+"/128", "dev", "lo")
 				framework.ExpectNoError(err, "failed to add the ipv6 loopback ip to dev lo on the container %s, out: %s", net.containerName, out)
 
 				// Connecting the nodes (kind containers) to the networks and creating the routing table
 				for _, node := range nodes {
 					ginkgo.By(fmt.Sprintf("Connecting container %s to network %s", node.Name, net.name))
-					out, err = runCommand(containerRuntime, "network", "connect", net.name, node.Name)
+					out, err = helpers.RunCommand(helpers.ContainerRuntime, "network", "connect", net.name, node.Name)
 					framework.ExpectNoError(err, "failed to connect container %s to external network %s, out: %s", node.Name, net.name, out)
 
 					ginkgo.By(fmt.Sprintf("Setting routes on node %s for network %s (table id %s)", node.Name, net.name, net.routingTable))
-					out, err = runCommand(containerRuntime, "exec", node.Name, "ip", "route", "add", sharedIPv4, "via", net.containerIPv4, "table", net.routingTable)
+					out, err = helpers.RunCommand(helpers.ContainerRuntime, "exec", node.Name, "ip", "route", "add", sharedIPv4, "via", net.containerIPv4, "table", net.routingTable)
 					framework.ExpectNoError(err, fmt.Sprintf("failed to add route to %s on node %s table %s, out: %s", net.containerIPv4, node.Name, net.routingTable, out))
 
-					out, err = runCommand(containerRuntime, "exec", node.Name, "ip", "-6", "route", "add", sharedIPv6, "via", net.containerIPv6, "table", net.routingTable)
+					out, err = helpers.RunCommand(helpers.ContainerRuntime, "exec", node.Name, "ip", "-6", "route", "add", sharedIPv6, "via", net.containerIPv6, "table", net.routingTable)
 					framework.ExpectNoError(err, fmt.Sprintf("failed to add route to %s on node %s table %s, out: %s", net.containerIPv6, node.Name, net.routingTable, out))
 
-					v4, v6 := getContainerAddressesForNetwork(node.Name, net.name)
+					v4, v6 := helpers.GetContainerAddressesForNetwork(node.Name, net.name)
 					net.nodesV4IPs[node.Name] = v4
 					net.nodesV6IPs[node.Name] = v6
 				}
@@ -1197,13 +1199,13 @@ metadata:
 
 		ginkgo.AfterEach(func() {
 			for _, net := range []*netSettings{net1, net2} {
-				deleteClusterExternalContainer(net.containerName)
+				helpers.DeleteClusterExternalContainer(net.containerName)
 				for _, node := range nodes {
-					out, err := runCommand(containerRuntime, "network", "disconnect", net.name, node.Name)
+					out, err := helpers.RunCommand(helpers.ContainerRuntime, "network", "disconnect", net.name, node.Name)
 					framework.ExpectNoError(err, "failed to disconnect container %s from external network %s, out: %s", node.Name, net.name, out)
 				}
 				// Remove network after removing the external container and disconnecting the nodes so nothing is attached to it on deletion.
-				out, err := runCommand(containerRuntime, "network", "rm", net.name)
+				out, err := helpers.RunCommand(helpers.ContainerRuntime, "network", "rm", net.name)
 				framework.ExpectNoError(err, "failed to remove external network %s, out: %s", net.name, out)
 
 				flushCustomRoutingTablesOnNodes(nodes, net.routingTable)
@@ -1220,7 +1222,7 @@ metadata:
 						i := i
 						labels := net.podLabels
 						podsCreateSync.Go(func() error {
-							p, err := createGenericPodWithLabel(f, name, nodes[i].Name, f.Namespace.Name, command, labels)
+							p, err := helpers.CreateGenericPodWithLabel(f, name, nodes[i].Name, f.Namespace.Name, command, labels)
 							if p != nil {
 								framework.Logf("%s podIPs are: %v", p.Name, p.Status.PodIPs)
 							}
@@ -1427,7 +1429,7 @@ func getEgressSVCHost(cs kubernetes.Interface, svcNamespace, svcName string) (*v
 				egressHost.Name, svc.Namespace, svc.Name, egressHost.Labels)
 		}
 
-		egressHostV4IP, egressHostV6IP = getNodeAddresses(egressHost)
+		egressHostV4IP, egressHostV6IP = helpers.GetNodeAddresses(egressHost)
 
 		return nil
 	}, 5*time.Second, 1*time.Second).ShouldNot(gomega.HaveOccurred(), "failed to get egress service host")
@@ -1440,12 +1442,12 @@ func getEgressSVCHost(cs kubernetes.Interface, svcNamespace, svcName string) (*v
 // from the LoadBalancer provider.
 func setSVCRouteOnContainer(container, svcIP, v4Via, v6Via string) {
 	if utilnet.IsIPv4String(svcIP) {
-		out, err := runCommand(containerRuntime, "exec", container, "ip", "route", "replace", svcIP, "via", v4Via)
+		out, err := helpers.RunCommand(helpers.ContainerRuntime, "exec", container, "ip", "route", "replace", svcIP, "via", v4Via)
 		framework.ExpectNoError(err, "failed to add the service host route on the external container %s, out: %s", container, out)
 		return
 	}
 
-	out, err := runCommand(containerRuntime, "exec", container, "ip", "-6", "route", "replace", svcIP, "via", v6Via)
+	out, err := helpers.RunCommand(helpers.ContainerRuntime, "exec", container, "ip", "-6", "route", "replace", svcIP, "via", v6Via)
 	framework.ExpectNoError(err, "failed to add the service host route on the external container %s, out: %s", container, out)
 }
 
@@ -1470,7 +1472,7 @@ func curlAgnHostClientIPFromPod(namespace, pod, expectedIP, dstIP string, contai
 
 func curlServiceAgnHostHostnameFromExternalContainer(container, svcIP string, svcPort int32) (string, error) {
 	dst := net.JoinHostPort(svcIP, fmt.Sprint(svcPort))
-	out, err := runCommand(containerRuntime, "exec", container, "curl", "-s", "--retry-connrefused", "--retry", "2", "--max-time", "0.5",
+	out, err := helpers.RunCommand(helpers.ContainerRuntime, "exec", container, "curl", "-s", "--retry-connrefused", "--retry", "2", "--max-time", "0.5",
 		"--connect-timeout", "0.5", "--retry-delay", "1", fmt.Sprintf("http://%s/hostname", dst))
 	if err != nil {
 		return out, err
@@ -1538,7 +1540,7 @@ func setBlackholeRoutesOnRoutingTable(container, ip, table string) {
 		Dst string `json:"dst"`
 		Dev string `json:"dev"`
 	}
-	out, err := runCommand(containerRuntime, "exec", container, "ip", "--json", "route", "get", ip)
+	out, err := helpers.RunCommand(helpers.ContainerRuntime, "exec", container, "ip", "--json", "route", "get", ip)
 	framework.ExpectNoError(err, fmt.Sprintf("failed to get default route to %s on node %s, out: %s", ip, container, out))
 
 	routes := []route{}
@@ -1547,10 +1549,10 @@ func setBlackholeRoutesOnRoutingTable(container, ip, table string) {
 	gomega.Expect(routes).ToNot(gomega.HaveLen(0))
 
 	routeTo := routes[0]
-	out, err = runCommand(containerRuntime, "exec", container, "ip", "route", "replace", ip, "dev", routeTo.Dev, "table", table, "prio", "100")
+	out, err = helpers.RunCommand(helpers.ContainerRuntime, "exec", container, "ip", "route", "replace", ip, "dev", routeTo.Dev, "table", table, "prio", "100")
 	framework.ExpectNoError(err, fmt.Sprintf("failed to set route to %s on node %s table %s, out: %s", ip, container, table, out))
 
-	out, err = runCommand(containerRuntime, "exec", container, "ip", "route", "replace", "blackhole", ip, "table", table, "prio", "50")
+	out, err = helpers.RunCommand(helpers.ContainerRuntime, "exec", container, "ip", "route", "replace", "blackhole", ip, "table", table, "prio", "50")
 	framework.ExpectNoError(err, fmt.Sprintf("failed to set blackhole route to %s on node %s table %s, out: %s", ip, container, table, out))
 }
 
@@ -1558,11 +1560,11 @@ func setBlackholeRoutesOnRoutingTable(container, ip, table string) {
 func delExternalClientBlackholeFromNodes(nodes []v1.Node, routingTable, externalV4, externalV6 string, useV4 bool) {
 	for _, node := range nodes {
 		if useV4 {
-			out, err := runCommand(containerRuntime, "exec", node.Name, "ip", "route", "del", "blackhole", externalV4, "table", routingTable)
+			out, err := helpers.RunCommand(helpers.ContainerRuntime, "exec", node.Name, "ip", "route", "del", "blackhole", externalV4, "table", routingTable)
 			framework.ExpectNoError(err, fmt.Sprintf("failed to delete blackhole route to %s on node %s table %s, out: %s", externalV4, node.Name, routingTable, out))
 			continue
 		}
-		out, err := runCommand(containerRuntime, "exec", node.Name, "ip", "route", "del", "blackhole", externalV6, "table", routingTable)
+		out, err := helpers.RunCommand(helpers.ContainerRuntime, "exec", node.Name, "ip", "route", "del", "blackhole", externalV6, "table", routingTable)
 		framework.ExpectNoError(err, fmt.Sprintf("failed to delete blackhole route to %s on node %s table %s, out: %s", externalV6, node.Name, routingTable, out))
 	}
 }
@@ -1570,11 +1572,11 @@ func delExternalClientBlackholeFromNodes(nodes []v1.Node, routingTable, external
 // Flush the custom routing table from all of the nodes.
 func flushCustomRoutingTablesOnNodes(nodes []v1.Node, routingTable string) {
 	for _, node := range nodes {
-		out, err := runCommand(containerRuntime, "exec", node.Name, "ip", "route", "flush", "table", routingTable)
+		out, err := helpers.RunCommand(helpers.ContainerRuntime, "exec", node.Name, "ip", "route", "flush", "table", routingTable)
 		if err != nil && !strings.Contains(err.Error(), "FIB table does not exist") {
 			framework.Failf("Unable to flush table %s on node %s: out: %s, err: %v", routingTable, node.Name, out, err)
 		}
-		out, err = runCommand(containerRuntime, "exec", node.Name, "ip", "-6", "route", "flush", "table", routingTable)
+		out, err = helpers.RunCommand(helpers.ContainerRuntime, "exec", node.Name, "ip", "-6", "route", "flush", "table", routingTable)
 		if err != nil && !strings.Contains(err.Error(), "FIB table does not exist") {
 			framework.Failf("Unable to flush table %s on node %s: out: %s err: %v", routingTable, node.Name, out, err)
 		}

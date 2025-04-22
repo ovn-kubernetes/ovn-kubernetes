@@ -78,7 +78,7 @@ func GenerateGatewayMAC(node *corev1.Node, networkName string) (string, error) {
 	}
 
 	if lrpJoinIPString == "" {
-		return "", fmt.Errorf("missing lrp join ip at node %q with network %q", node.Name)
+		return "", fmt.Errorf("missing lrp join ip at node %q with network %q", node.Name, networkName)
 	}
 
 	lrpJoinIP, _, err := net.ParseCIDR(lrpJoinIPString)
