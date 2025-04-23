@@ -815,8 +815,8 @@ var _ = ginkgo.Describe("Services", func() {
 			externalContainer, err = providerCtx.CreateExternalContainer(externalContainer)
 			framework.ExpectNoError(err, "external container %s must be created", externalContainer.Name)
 
-			// If `kindexgw` exists, connect client container to it
-			exGwNetwork, err := infraprovider.Get().GetNetwork("kindexgw")
+			// If `xgw` exists, connect client container to it
+			exGwNetwork, err := infraprovider.Get().GetNetwork("xgw")
 			if err == nil {
 				_, _ = providerCtx.AttachNetwork(exGwNetwork, externalContainer.Name)
 			}
@@ -1074,10 +1074,10 @@ spec:
 			// FIXME: implement feature to connect networks
 			// FIXME: tests shouldnt depend on external resources precreated and instead manage those resources within
 			// the lifecycle of the test.
-			// If `kindexgw` exists, connect client container to it
-			kindExGWNetwork, err := infraprovider.Get().GetNetwork("kindexgw")
+			// If `xgw` exists, connect client container to it
+			exGWNetwork, err := infraprovider.Get().GetNetwork("xgw")
 			if err == nil {
-				_, _ = providerCtx.AttachNetwork(kindExGWNetwork, serverExternalContainer.GetName())
+				_, _ = providerCtx.AttachNetwork(exGWNetwork, serverExternalContainer.GetName())
 			}
 
 			ginkgo.By("Selecting additional IP addresses for each node")
