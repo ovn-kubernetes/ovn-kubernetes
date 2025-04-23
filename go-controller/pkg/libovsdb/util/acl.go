@@ -88,10 +88,10 @@ func GetACLName(dbIDs *libovsdbops.DbObjectIDs) string {
 	return fmt.Sprintf("%.63s", aclName)
 }
 
-// BuildACL should be used to build ACL instead of directly calling libovsdbops.BuildACL.
+// BuildDefaultTierACL should be used to build ACL instead of directly calling libovsdbops.BuildDefaultTierACL.
 // It can properly set and reset log settings for ACL based on ACLLoggingLevels, and
 // set acl.Name and acl.ExternalIDs based on given DbIDs
-func BuildACL(dbIDs *libovsdbops.DbObjectIDs, priority int, match, action string, logLevels *ACLLoggingLevels,
+func BuildDefaultTierACL(dbIDs *libovsdbops.DbObjectIDs, priority int, match, action string, logLevels *ACLLoggingLevels,
 	aclT ACLPipelineType) *nbdb.ACL {
 	var options map[string]string
 	var direction string
@@ -127,8 +127,44 @@ func BuildACL(dbIDs *libovsdbops.DbObjectIDs, priority int, match, action string
 	return ACL
 }
 
+func BuildACL(dbIDs *libovsdbops.DbObjectIDs, priority int, match, action string, logLevels *ACLLoggingLevels,
+	aclT ACLPipelineType, tier int) *nbdb.ACL {
+	var options map[string]string
+	var direction string
+	switch aclT {
+	case LportEgress:
+		direction = nbdb.ACLDirectionFromLport
+	case LportEgressAfterLB:
+		direction = nbdb.ACLDirectionFromLport
+		options = map[string]string{
+			"apply-after-lb": "true",
+		}
+	case LportIngress:
+		direction = nbdb.ACLDirectionToLport
+	default:
+		panic(fmt.Sprintf("Failed to build ACL: unknown acl type %s", aclT))
+	}
+	externalIDs := dbIDs.GetExternalIDs()
+	aclName := GetACLName(dbIDs)
+	log, logSeverity := getLogSeverity(action, logLevels)
+	ACL := libovsdbops.BuildACL(
+		aclName,
+		direction,
+		priority,
+		match,
+		action,
+		types.OvnACLLoggingMeter,
+		logSeverity,
+		log,
+		externalIDs,
+		options,
+		tier,
+	)
+	return ACL
+}
+
 func BuildANPACL(dbIDs *libovsdbops.DbObjectIDs, priority int, match, action string, aclT ACLPipelineType, logLevels *ACLLoggingLevels) *nbdb.ACL {
-	anpACL := BuildACL(dbIDs, priority, match, action, logLevels, aclT)
+	anpACL := BuildDefaultTierACL(dbIDs, priority, match, action, logLevels, aclT)
 	anpACL.Tier = GetACLTier(dbIDs)
 	return anpACL
 }
