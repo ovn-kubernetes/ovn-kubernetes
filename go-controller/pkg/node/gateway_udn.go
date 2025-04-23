@@ -407,6 +407,11 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 		return fmt.Errorf("failed to add the service masquerade chain: %w", err)
 	}
 
+	if util.IsRouteAdvertisementsEnabled() {
+		if err := udng.reconcileAdvertisementConfig(); err != nil {
+			return fmt.Errorf("failed to setup advertisement config for network %s: %w", udng.GetNetworkName(), err)
+		}
+	}
 	// run gateway reconciliation loop on network configuration changes
 	udng.run()
 
@@ -904,19 +909,33 @@ func (udng *UserDefinedNetworkGateway) Reconcile() {
 	}
 }
 
+func (udng *UserDefinedNetworkGateway) reconcileAdvertisementConfig() error {
+	isNetworkAdvertised := util.IsPodNetworkAdvertisedAtNode(udng.NetInfo, udng.node.Name)
+	klog.Infof("Reconciling network advertisement config for network %s advertised: %t", udng.GetNetworkName(), isNetworkAdvertised)
+
+	udng.openflowManager.defaultBridge.netConfig[udng.GetNetworkName()].advertised.Store(isNetworkAdvertised)
+
+	if err := udng.updateUDNVRFIPRoute(isNetworkAdvertised); err != nil {
+		return fmt.Errorf("error while updating ip route for UDN %w", err)
+	}
+
+	if err := udng.updateAdvertisedUDNIsolationRules(isNetworkAdvertised); err != nil {
+		return fmt.Errorf("error while updating advertised UDN isolation rules %w", err)
+	}
+	return nil
+}
+
 func (udng *UserDefinedNetworkGateway) doReconcile() error {
 	klog.Infof("Reconciling gateway with updates for UDN %s", udng.GetNetworkName())
 
-	// update bridge configuration
-	isNetworkAdvertised := util.IsPodNetworkAdvertisedAtNode(udng.NetInfo, udng.node.Name)
-	udng.openflowManager.defaultBridge.netConfig[udng.GetNetworkName()].advertised.Store(isNetworkAdvertised)
+	if util.IsRouteAdvertisementsEnabled() {
+		if err := udng.reconcileAdvertisementConfig(); err != nil {
+			return fmt.Errorf("failed to reconcile advertisement config for network %s: %w", udng.GetNetworkName(), err)
+		}
+	}
 
 	if err := udng.updateUDNVRFIPRule(); err != nil {
 		return fmt.Errorf("error while updating ip rule for UDN %s: %s", udng.GetNetworkName(), err)
-	}
-
-	if err := udng.updateUDNVRFIPRoute(isNetworkAdvertised); err != nil {
-		return fmt.Errorf("error while updating ip route for UDN %s: %s", udng.GetNetworkName(), err)
 	}
 
 	// add below OpenFlows based on the gateway mode and whether the network is advertised or not:
@@ -926,9 +945,6 @@ func (udng *UserDefinedNetworkGateway) doReconcile() error {
 		return fmt.Errorf("error while updating logical flow for UDN %s: %s", udng.GetNetworkName(), err)
 	}
 
-	if err := udng.updateAdvertisedUDNIsolationRules(isNetworkAdvertised); err != nil {
-		return fmt.Errorf("error while updating advertised UDN isolation rules for network %s: %w", udng.GetNetworkName(), err)
-	}
 	return nil
 }
 
