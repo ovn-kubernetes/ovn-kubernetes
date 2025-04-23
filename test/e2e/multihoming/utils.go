@@ -1,4 +1,4 @@
-package e2e
+package multihoming
 
 import (
 	"context"
@@ -31,7 +31,7 @@ const (
 	PolicyForAnnotation = "k8s.v1.cni.cncf.io/policy-for"
 )
 
-func netCIDR(netCIDR string, netPrefixLengthPerNode int) string {
+func NetCIDR(netCIDR string, netPrefixLengthPerNode int) string {
 	return fmt.Sprintf("%s/%d", netCIDR, netPrefixLengthPerNode)
 }
 
@@ -55,7 +55,7 @@ func SelectCIDRs(ipv4CIDR, ipv6CIDR string) []string {
 	return []string{ipv4CIDR}
 }
 
-func getNetCIDRSubnet(netCIDR string) (string, error) {
+func GetNetCIDRSubnet(netCIDR string) (string, error) {
 	subStrings := strings.Split(netCIDR, "/")
 	if len(subStrings) == 3 {
 		return subStrings[0] + "/" + subStrings[1], nil
@@ -65,35 +65,17 @@ func getNetCIDRSubnet(netCIDR string) (string, error) {
 	return "", fmt.Errorf("invalid network cidr: %q", netCIDR)
 }
 
-type NetworkAttachmentConfigParams struct {
-	Cidr                string
-	ExcludeCIDRs        []string
-	Namespace           string
-	Name                string
-	Topology            string
-	NetworkName         string
-	VlanID              int
-	AllowPersistentIPs  bool
-	Role                string
-	Mtu                 int
-	PhysicalNetworkName string
-}
-
-type NetworkAttachmentConfig struct {
-	NetworkAttachmentConfigParams
-}
-
 func NewNetworkAttachmentConfig(params NetworkAttachmentConfigParams) NetworkAttachmentConfig {
 	networkAttachmentConfig := NetworkAttachmentConfig{
 		NetworkAttachmentConfigParams: params,
 	}
 	if networkAttachmentConfig.NetworkName == "" {
-		networkAttachmentConfig.NetworkName = uniqueNadName(networkAttachmentConfig.Name)
+		networkAttachmentConfig.NetworkName = UniqueNadName(networkAttachmentConfig.Name)
 	}
 	return networkAttachmentConfig
 }
 
-func uniqueNadName(originalNetName string) string {
+func UniqueNadName(originalNetName string) string {
 	const randomStringLength = 5
 	return fmt.Sprintf("%s_%s", rand.String(randomStringLength), originalNetName)
 }
@@ -124,7 +106,7 @@ func GenerateNADSpec(config NetworkAttachmentConfig) string {
 		config.Cidr,
 		strings.Join(config.ExcludeCIDRs, ","),
 		config.Mtu,
-		namespacedName(config.Namespace, config.Name),
+		NamespacedName(config.Namespace, config.Name),
 		config.VlanID,
 		config.AllowPersistentIPs,
 		config.PhysicalNetworkName,
@@ -156,19 +138,6 @@ func PatchNADSpec(nadClient nadclient.K8sCniCncfIoV1Interface, name, namespace s
 		metav1.PatchOptions{},
 	)
 	return err
-}
-
-type PodConfiguration struct {
-	Attachments                  []nadapi.NetworkSelectionElement
-	ContainerCmd                 []string
-	Name                         string
-	Namespace                    string
-	NodeSelector                 map[string]string
-	IsPrivileged                 bool
-	Labels                       map[string]string
-	RequiresExtraNamespace       bool
-	HostNetwork                  bool
-	NeedsIPRequestFromHostSubnet bool
 }
 
 func GeneratePodSpec(config PodConfiguration) *v1.Pod {
@@ -244,7 +213,7 @@ func PodNetworkStatusByNetConfigPredicate(netConfig NetworkAttachmentConfig) fun
 	}
 }
 
-func namespacedName(namespace, name string) string {
+func NamespacedName(namespace, name string) string {
 	return fmt.Sprintf("%s/%s", namespace, name)
 }
 
@@ -369,16 +338,16 @@ func PodIPsForAttachment(k8sClient clientset.Interface, podNamespace string, pod
 		return nil, err
 	}
 	netStatus, err := PodNetworkStatus(pod, func(status nadapi.NetworkStatus) bool {
-		return status.Name == namespacedName(podNamespace, attachmentName)
+		return status.Name == NamespacedName(podNamespace, attachmentName)
 	})
 	if err != nil {
 		return nil, err
 	}
 	if len(netStatus) != 1 {
-		return nil, fmt.Errorf("more than one status entry for attachment %s on pod %s", attachmentName, namespacedName(podNamespace, podName))
+		return nil, fmt.Errorf("more than one status entry for attachment %s on pod %s", attachmentName, NamespacedName(podNamespace, podName))
 	}
 	if len(netStatus[0].IPs) == 0 {
-		return nil, fmt.Errorf("no IPs for attachment %s on pod %s", attachmentName, namespacedName(podNamespace, podName))
+		return nil, fmt.Errorf("no IPs for attachment %s on pod %s", attachmentName, NamespacedName(podNamespace, podName))
 	}
 	return netStatus[0].IPs, nil
 }
@@ -389,7 +358,7 @@ func PodIPForAttachment(k8sClient clientset.Interface, podNamespace string, podN
 		return "", err
 	}
 	if ipIndex >= len(ips) {
-		return "", fmt.Errorf("no IP at index %d for attachment %s on pod %s", ipIndex, attachmentName, namespacedName(podNamespace, podName))
+		return "", fmt.Errorf("no IP at index %d for attachment %s on pod %s", ipIndex, attachmentName, NamespacedName(podNamespace, podName))
 	}
 	return ips[ipIndex], nil
 }

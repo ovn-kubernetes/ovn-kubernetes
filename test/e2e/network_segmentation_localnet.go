@@ -18,6 +18,8 @@ import (
 
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/multihoming"
 )
 
 var _ = Describe("Network Segmentation: Localnet", func() {
@@ -48,7 +50,7 @@ var _ = Describe("Network Segmentation: Localnet", func() {
 			By("teardown the localnet underlay")
 			Expect(teardownUnderlay(ovsPods, ovsBrName)).To(Succeed())
 		})
-		c := NetworkAttachmentConfig{NetworkAttachmentConfigParams: NetworkAttachmentConfigParams{NetworkName: physicalNetworkName, VlanID: vlan}}
+		c := multihoming.NetworkAttachmentConfig{NetworkAttachmentConfigParams: multihoming.NetworkAttachmentConfigParams{NetworkName: physicalNetworkName, VlanID: vlan}}
 		Expect(setupUnderlay(ovsPods, ovsBrName, secondaryIfaceName, c)).To(Succeed())
 
 		By("create test namespaces")
@@ -63,12 +65,12 @@ var _ = Describe("Network Segmentation: Localnet", func() {
 		})
 
 		By("create CR selecting the test namespaces")
-		netConf := NetworkAttachmentConfigParams{
+		netConf := multihoming.NetworkAttachmentConfigParams{
 			Name:                cudnName,
 			PhysicalNetworkName: physicalNetworkName,
 			VlanID:              vlan,
-			Cidr:                CorrectCIDRFamily(subnetIPv4, subnetIPv6),
-			ExcludeCIDRs:        SelectCIDRs(excludeSubnetIPv4, excludeSubnetIPv6),
+			Cidr:                multihoming.CorrectCIDRFamily(subnetIPv4, subnetIPv6),
+			ExcludeCIDRs:        multihoming.SelectCIDRs(excludeSubnetIPv4, excludeSubnetIPv6),
 		}
 		cudnYAML := newLocalnetCUDNYaml(netConf, nsBlue, nsRed)
 		cleanup, err := createManifest("", cudnYAML)
@@ -87,40 +89,40 @@ var _ = Describe("Network Segmentation: Localnet", func() {
 			Should(Succeed(), "CUDN CR is not ready")
 
 		By("create test pods")
-		serverPodCfg := PodConfiguration{
+		serverPodCfg := multihoming.PodConfiguration{
 			Name:         "test-server",
 			Namespace:    nsBlue,
 			Attachments:  []nadapi.NetworkSelectionElement{{Name: cudnName}},
-			ContainerCmd: HttpServerContainerCmd(testPort),
+			ContainerCmd: multihoming.HttpServerContainerCmd(testPort),
 		}
-		clientPodCfg := PodConfiguration{
+		clientPodCfg := multihoming.PodConfiguration{
 			Name:        "test-client",
 			Namespace:   nsRed,
 			Attachments: []nadapi.NetworkSelectionElement{{Name: cudnName}},
 		}
-		serverPod, err := f.ClientSet.CoreV1().Pods(serverPodCfg.Namespace).Create(context.Background(), GeneratePodSpec(serverPodCfg), metav1.CreateOptions{})
+		serverPod, err := f.ClientSet.CoreV1().Pods(serverPodCfg.Namespace).Create(context.Background(), multihoming.GeneratePodSpec(serverPodCfg), metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred())
-		clientPod, err := f.ClientSet.CoreV1().Pods(clientPodCfg.Namespace).Create(context.Background(), GeneratePodSpec(clientPodCfg), metav1.CreateOptions{})
+		clientPod, err := f.ClientSet.CoreV1().Pods(clientPodCfg.Namespace).Create(context.Background(), multihoming.GeneratePodSpec(clientPodCfg), metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(e2epod.WaitForPodNameRunningInNamespace(context.Background(), f.ClientSet, clientPod.Name, clientPod.Namespace)).To(Succeed())
 		Expect(e2epod.WaitForPodNameRunningInNamespace(context.Background(), f.ClientSet, serverPod.Name, serverPod.Namespace)).To(Succeed())
 
 		By("assert pods interface's MTU is set with default MTU (1500)")
-		for _, cfg := range []PodConfiguration{serverPodCfg, clientPodCfg} {
+		for _, cfg := range []multihoming.PodConfiguration{serverPodCfg, clientPodCfg} {
 			mtuRAW, err := e2ekubectl.RunKubectl(cfg.Namespace, "exec", cfg.Name, "--", "cat", "/sys/class/net/net1/mtu")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(mtuRAW).To(ContainSubstring("1500"))
 		}
 
 		By("assert pods IPs not in exclude range")
-		serverIPs, err := PodIPsForAttachment(f.ClientSet, serverPodCfg.Namespace, serverPodCfg.Name, cudnName)
+		serverIPs, err := multihoming.PodIPsForAttachment(f.ClientSet, serverPodCfg.Namespace, serverPodCfg.Name, cudnName)
 		Expect(err).NotTo(HaveOccurred())
-		clientIPs, err := PodIPsForAttachment(f.ClientSet, clientPodCfg.Namespace, clientPodCfg.Name, cudnName)
+		clientIPs, err := multihoming.PodIPsForAttachment(f.ClientSet, clientPodCfg.Namespace, clientPodCfg.Name, cudnName)
 		Expect(err).NotTo(HaveOccurred())
 		podIPs := append(serverIPs, clientIPs...)
 		for _, excludedRange := range netConf.ExcludeCIDRs {
 			for _, podIP := range podIPs {
-				Expect(InRange(excludedRange, podIP)).To(
+				Expect(multihoming.InRange(excludedRange, podIP)).To(
 					MatchError(fmt.Errorf("ip [%s] is NOT in range %s", podIP, excludedRange)))
 			}
 		}
@@ -128,13 +130,13 @@ var _ = Describe("Network Segmentation: Localnet", func() {
 		for _, serverIP := range serverIPs {
 			By(fmt.Sprintf("asserting the *client* pod can contact the server pod exposed endpoint [%s:%d]", serverIP, testPort))
 			Eventually(func() error {
-				return ReachServerPodFromClient(f.ClientSet, serverPodCfg, clientPodCfg, serverIP, testPort)
+				return multihoming.ReachServerPodFromClient(f.ClientSet, serverPodCfg, clientPodCfg, serverIP, testPort)
 			}).WithTimeout(2 * time.Minute).WithPolling(6 * time.Second).Should(Succeed())
 		}
 	})
 })
 
-func newLocalnetCUDNYaml(params NetworkAttachmentConfigParams, selectedNamespaces ...string) string {
+func newLocalnetCUDNYaml(params multihoming.NetworkAttachmentConfigParams, selectedNamespaces ...string) string {
 	selectedNs := strings.Join(selectedNamespaces, ",")
 	excludeSubnets := strings.Join(params.ExcludeCIDRs, ",")
 	return `

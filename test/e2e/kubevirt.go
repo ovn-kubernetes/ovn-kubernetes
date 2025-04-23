@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/clusterinspection"
 	"net"
 	"net/netip"
 	"os"
@@ -58,6 +57,9 @@ import (
 
 	kubevirtv1 "kubevirt.io/api/core/v1"
 	kvmigrationsv1alpha1 "kubevirt.io/api/migrations/v1alpha1"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/clusterinspection"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/multihoming"
 )
 
 func newControllerRuntimeClient() (crclient.Client, error) {
@@ -415,7 +417,7 @@ iperf3 -t 0 -c %[1]s -p %[2]d --logfile %[3]s &
 				var networkStatuses []nadapi.NetworkStatus
 				Eventually(func() ([]nadapi.NetworkStatus, error) {
 					var err error
-					networkStatuses, err = PodNetworkStatus(pod, networkStatusPredicate)
+					networkStatuses, err = multihoming.PodNetworkStatus(pod, networkStatusPredicate)
 					return networkStatuses, err
 				}).
 					WithTimeout(5 * time.Second).
@@ -1124,7 +1126,7 @@ fi
 			return ips, nil
 		}
 
-		createIperfServerPods = func(nodes []corev1.Node, netConfig NetworkAttachmentConfig, staticSubnets []string) ([]*corev1.Pod, error) {
+		createIperfServerPods = func(nodes []corev1.Node, netConfig multihoming.NetworkAttachmentConfig, staticSubnets []string) ([]*corev1.Pod, error) {
 			var pods []*corev1.Pod
 			for i, node := range nodes {
 				var nse *nadapi.NetworkSelectionElement
@@ -1140,7 +1142,7 @@ fi
 				}
 				pod, err := createPod(fr, "testpod-"+node.Name, node.Name, namespace, []string{"bash", "-c"}, map[string]string{}, func(pod *corev1.Pod) {
 					if nse != nil {
-						pod.Annotations = NetworkSelectionElements(*nse)
+						pod.Annotations = multihoming.NetworkSelectionElements(*nse)
 					}
 					pod.Spec.Containers[0].Image = iperf3Image
 					pod.Spec.Containers[0].Args = []string{iperfServerScript + "\n sleep infinity"}
@@ -1581,12 +1583,12 @@ runcmd:
 			fr.Namespace = ns
 			namespace = fr.Namespace.Name
 
-			netConfig := NewNetworkAttachmentConfig(
-				NetworkAttachmentConfigParams{
+			netConfig := multihoming.NewNetworkAttachmentConfig(
+				multihoming.NetworkAttachmentConfigParams{
 					Namespace:          namespace,
 					Name:               "net1",
 					Topology:           td.topology,
-					Cidr:               CorrectCIDRFamily(cidrIPv4, cidrIPv6),
+					Cidr:               multihoming.CorrectCIDRFamily(cidrIPv4, cidrIPv6),
 					AllowPersistentIPs: true,
 					Role:               td.role,
 				})
@@ -1607,7 +1609,7 @@ runcmd:
 			}
 
 			By("Creating NetworkAttachmentDefinition")
-			nad = GenerateNAD(netConfig)
+			nad = multihoming.GenerateNAD(netConfig)
 			Expect(crClient.Create(context.Background(), nad)).To(Succeed())
 			workerNodeList, err := fr.ClientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{LabelSelector: labels.FormatLabels(map[string]string{"node-role.kubernetes.io/worker": ""})})
 			Expect(err).NotTo(HaveOccurred())
@@ -1653,7 +1655,7 @@ runcmd:
 			expectedNumberOfAddresses := len(strings.Split(netConfig.Cidr, ","))
 			expectedAddreses := virtualMachineAddressesFromStatus(vmi, expectedNumberOfAddresses)
 			expectedAddresesAtGuest := expectedAddreses
-			testPodsIPs := podsMultusNetworkIPs(iperfServerTestPods, PodNetworkStatusByNetConfigPredicate(netConfig))
+			testPodsIPs := podsMultusNetworkIPs(iperfServerTestPods, multihoming.PodNetworkStatusByNetConfigPredicate(netConfig))
 
 			step = by(vmi.Name, "Expose VM iperf server as a service")
 			svc, err := fr.ClientSet.CoreV1().Services(namespace).Create(context.TODO(), composeService("iperf3-vm-server", vmi.Name, 5201), metav1.CreateOptions{})
@@ -1881,17 +1883,17 @@ runcmd:
 			fr.Namespace = ns
 			namespace = fr.Namespace.Name
 
-			netConfig := NewNetworkAttachmentConfig(
-				NetworkAttachmentConfigParams{
+			netConfig := multihoming.NewNetworkAttachmentConfig(
+				multihoming.NetworkAttachmentConfigParams{
 					Namespace: namespace,
 					Name:      "net1",
 					Topology:  "layer2",
-					Cidr:      CorrectCIDRFamily(cidrIPv4, cidrIPv6),
+					Cidr:      multihoming.CorrectCIDRFamily(cidrIPv4, cidrIPv6),
 					Role:      "primary",
 					Mtu:       1300,
 				})
 			By("Creating NetworkAttachmentDefinition")
-			Expect(crClient.Create(context.Background(), GenerateNAD(netConfig))).To(Succeed())
+			Expect(crClient.Create(context.Background(), multihoming.GenerateNAD(netConfig))).To(Succeed())
 
 			By("Create virt-launcher pod")
 			kubevirtPod := kubevirt.GenerateFakeVirtLauncherPod(namespace, "vm1")
@@ -1903,7 +1905,7 @@ runcmd:
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(ok).To(BeTrue())
 
-				primaryUDNNetworkStatuses, err := PodNetworkStatus(pod, func(networkStatus nadapi.NetworkStatus) bool {
+				primaryUDNNetworkStatuses, err := multihoming.PodNetworkStatus(pod, func(networkStatus nadapi.NetworkStatus) bool {
 					return networkStatus.Default
 				})
 				g.Expect(err).NotTo(HaveOccurred())
@@ -1998,7 +2000,7 @@ runcmd:
 			vmiIPv4              = "10.128.0.100/24"
 			vmiIPv6              = "2010:100:200::100/60"
 			vmiMAC               = "0A:58:0A:80:00:64"
-			cidr                 = SelectCIDRs(ipv4CIDR, ipv6CIDR)
+			cidr                 = multihoming.SelectCIDRs(ipv4CIDR, ipv6CIDR)
 			staticIPsNetworkData = func(ips []string) (string, error) {
 				type Ethernet struct {
 					Addresses []string `json:"addresses,omitempty"`
@@ -2026,8 +2028,8 @@ chpasswd: { expire: False }
 `
 		)
 		DescribeTable("should maintain tcp connection with minimal downtime", func(td func(vmi *kubevirtv1.VirtualMachineInstance)) {
-			netConfig := NewNetworkAttachmentConfig(
-				NetworkAttachmentConfigParams{
+			netConfig := multihoming.NewNetworkAttachmentConfig(
+				multihoming.NetworkAttachmentConfigParams{
 					Namespace: fr.Namespace.Name,
 					Name:      "net1",
 					Topology:  "localnet",
@@ -2047,7 +2049,7 @@ chpasswd: { expire: False }
 			Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, netConfig)).To(Succeed())
 
 			By("Creating NetworkAttachmentDefinition")
-			nad = GenerateNAD(netConfig)
+			nad = multihoming.GenerateNAD(netConfig)
 			Expect(crClient.Create(context.Background(), nad)).To(Succeed())
 			workerNodeList, err := fr.ClientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{LabelSelector: labels.FormatLabels(map[string]string{"node-role.kubernetes.io/worker": ""})})
 			Expect(err).NotTo(HaveOccurred())
@@ -2057,7 +2059,7 @@ chpasswd: { expire: False }
 			iperfServerTestPods, err = createIperfServerPods(selectedNodes, netConfig, cidr)
 			Expect(err).NotTo(HaveOccurred())
 
-			networkData, err := staticIPsNetworkData(SelectCIDRs(vmiIPv4, vmiIPv6))
+			networkData, err := staticIPsNetworkData(multihoming.SelectCIDRs(vmiIPv4, vmiIPv6))
 			Expect(err).NotTo(HaveOccurred())
 
 			vmi := fedoraWithTestToolingVMI(nil /*labels*/, nil /*annotations*/, nil /*nodeSelector*/, kubevirtv1.NetworkSource{
@@ -2084,7 +2086,7 @@ chpasswd: { expire: False }
 			output, err := kubevirt.RunCommand(vmi, "cloud-init status --wait", time.Minute)
 			Expect(err).NotTo(HaveOccurred(), step+": "+output)
 
-			testPodsIPs := podsMultusNetworkIPs(iperfServerTestPods, PodNetworkStatusByNetConfigPredicate(netConfig))
+			testPodsIPs := podsMultusNetworkIPs(iperfServerTestPods, multihoming.PodNetworkStatusByNetConfigPredicate(netConfig))
 			Expect(testPodsIPs).NotTo(BeEmpty())
 
 			step = by(vmi.Name, "Check east/west traffic before virtual machine instance live migration")

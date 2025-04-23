@@ -31,6 +31,8 @@ import (
 	"k8s.io/kubernetes/test/e2e/framework/pod"
 	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 	utilnet "k8s.io/utils/net"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/multihoming"
 )
 
 const (
@@ -298,7 +300,7 @@ func targetExternalContainerAndTest(targetNode node, podName, podNamespace strin
 	}
 }
 
-var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigParams NetworkAttachmentConfigParams) {
+var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigParams multihoming.NetworkAttachmentConfigParams) {
 	//FIXME: tests for CDN are designed for single stack clusters (IPv4 or IPv6) and must choose a single IP family for dual stack clusters.
 	// Remove this restriction and allow the tests to detect if an IP family support is available.
 	const (
@@ -512,7 +514,7 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigPa
 		return false
 	}
 
-	isNetworkSupported := func(nodes *corev1.NodeList, netConfigParams NetworkAttachmentConfigParams) (bool, string) {
+	isNetworkSupported := func(nodes *corev1.NodeList, netConfigParams multihoming.NetworkAttachmentConfigParams) (bool, string) {
 		// cluster default network
 		if netConfigParams.NetworkName == types.DefaultNetworkName {
 			return true, "cluster default network is always supported"
@@ -539,7 +541,7 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigPa
 		return true, "network is supported"
 	}
 
-	getNodeIPs := func(nodes *corev1.NodeList, netConfigParams NetworkAttachmentConfigParams) []string {
+	getNodeIPs := func(nodes *corev1.NodeList, netConfigParams multihoming.NetworkAttachmentConfigParams) []string {
 		isIPv4Cluster := isNodeInternalAddressesPresentForIPFamily(nodes, corev1.IPv4Protocol)
 		isIPv6Cluster := isNodeInternalAddressesPresentForIPFamily(nodes, corev1.IPv6Protocol)
 		var ipFamily corev1.IPFamily
@@ -595,14 +597,14 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigPa
 		return srcPodIP, nil
 	}
 
-	isUserDefinedNetwork := func(netParams NetworkAttachmentConfigParams) bool {
+	isUserDefinedNetwork := func(netParams multihoming.NetworkAttachmentConfigParams) bool {
 		if netParams.NetworkName == types.DefaultNetworkName {
 			return false
 		}
 		return true
 	}
 
-	isClusterDefaultNetwork := func(netParams NetworkAttachmentConfigParams) bool {
+	isClusterDefaultNetwork := func(netParams multihoming.NetworkAttachmentConfigParams) bool {
 		if netParams.NetworkName == types.DefaultNetworkName {
 			return true
 		}
@@ -692,11 +694,11 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigPa
 		// configure UDN
 		nadClient, err := nadclient.NewForConfig(f.ClientConfig())
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		netConfig := NewNetworkAttachmentConfig(netConfigParams)
+		netConfig := multihoming.NewNetworkAttachmentConfig(netConfigParams)
 		netConfig.Namespace = f.Namespace.Name
 		_, err = nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
 			context.Background(),
-			GenerateNAD(netConfig),
+			multihoming.GenerateNAD(netConfig),
 			metav1.CreateOptions{},
 		)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -844,7 +846,7 @@ spec:
 						f.ClientSet,
 						f.Namespace.Name,
 						pod2Name,
-						namespacedName(f.Namespace.Name, netConfigParams.Name),
+						multihoming.NamespacedName(f.Namespace.Name, netConfigParams.Name),
 						0,
 					)
 					framework.ExpectNoError(err, "Step 3. Create two UDN pods matching the EgressIP: one running on each of the egress nodes, failed, err: %v", err)
@@ -2809,11 +2811,11 @@ spec:
 		ginkgo.By(fmt.Sprintf("namespace is connected to UDN, create a namespace attached to this primary as a %s UDN", netConfigParams.Topology))
 		nadClient, err := nadclient.NewForConfig(f.ClientConfig())
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		netConfig := NewNetworkAttachmentConfig(netConfigParams)
+		netConfig := multihoming.NewNetworkAttachmentConfig(netConfigParams)
 		netConfig.Namespace = otherNetworkNamespace.Name
 		_, err = nadClient.NetworkAttachmentDefinitions(otherNetworkNamespace.Name).Create(
 			context.Background(),
-			GenerateNAD(netConfig),
+			multihoming.GenerateNAD(netConfig),
 			metav1.CreateOptions{},
 		)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -2906,7 +2908,7 @@ spec:
 		framework.ExpectNoError(err, "Step 11. Check connectivity from other pod and verify that the srcIP is the expected egressIP and verify that the srcIP is the expected nodeIP, failed: %v", err)
 	})
 
-	ginkgo.DescribeTable("[OVN network] multiple namespaces with different primary networks", func(otherNetworkAttachParms NetworkAttachmentConfigParams) {
+	ginkgo.DescribeTable("[OVN network] multiple namespaces with different primary networks", func(otherNetworkAttachParms multihoming.NetworkAttachmentConfigParams) {
 		if !isNetworkSegmentationEnabled() {
 			ginkgo.Skip("network segmentation is disabled")
 		}
@@ -2929,11 +2931,11 @@ spec:
 			// create primary UDN
 			nadClient, err := nadclient.NewForConfig(f.ClientConfig())
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			netConfig := NewNetworkAttachmentConfig(otherNetworkAttachParms)
+			netConfig := multihoming.NewNetworkAttachmentConfig(otherNetworkAttachParms)
 			netConfig.Namespace = otherNetworkNamespace.Name
 			_, err = nadClient.NetworkAttachmentDefinitions(otherNetworkNamespace.Name).Create(
 				context.Background(),
-				GenerateNAD(netConfig),
+				multihoming.GenerateNAD(netConfig),
 				metav1.CreateOptions{},
 			)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -3022,23 +3024,23 @@ spec:
 		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(targetNode, pod2Name, pod2OtherNetworkNamespace, true, []string{egressIP1.String()}))
 		framework.ExpectNoError(err, "Step 7. Check connectivity from pod connected to a different network and verify that the srcIP is the expected nodeIP, failed: %v", err)
 	},
-		ginkgo.Entry("L3 Primary UDN", NetworkAttachmentConfigParams{
+		ginkgo.Entry("L3 Primary UDN", multihoming.NetworkAttachmentConfigParams{
 			Name:     "l3primary",
 			Topology: types.Layer3Topology,
-			Cidr:     CorrectCIDRFamily("30.10.0.0/16", "2014:100:200::0/60"),
+			Cidr:     multihoming.CorrectCIDRFamily("30.10.0.0/16", "2014:100:200::0/60"),
 			Role:     "primary",
 		}),
-		ginkgo.Entry("L2 Primary UDN", NetworkAttachmentConfigParams{
+		ginkgo.Entry("L2 Primary UDN", multihoming.NetworkAttachmentConfigParams{
 			Name:     "l2primary",
 			Topology: types.Layer2Topology,
-			Cidr:     CorrectCIDRFamily("10.10.0.0/16", "2014:100:200::0/60"),
+			Cidr:     multihoming.CorrectCIDRFamily("10.10.0.0/16", "2014:100:200::0/60"),
 			Role:     "primary",
 		}),
 	)
 },
 	ginkgo.Entry(
 		"Cluster Default Network",
-		NetworkAttachmentConfigParams{
+		multihoming.NetworkAttachmentConfigParams{
 			NetworkName: types.DefaultNetworkName,
 			Topology:    types.Layer3Topology,
 		},
@@ -3046,7 +3048,7 @@ spec:
 	// FIXME: fix tests for CDN to specify IPv4 and IPv6 entries in-order to enable testing all IP families on dual stack clusters
 	ginkgo.Entry(
 		"Network Segmentation: IPv4 L3 role primary",
-		NetworkAttachmentConfigParams{
+		multihoming.NetworkAttachmentConfigParams{
 			Name:     "l3primaryv4",
 			Topology: types.Layer3Topology,
 			Cidr:     "10.10.0.0/16",
@@ -3055,7 +3057,7 @@ spec:
 	),
 	ginkgo.Entry(
 		"Network Segmentation: IPv6 L3 role primary",
-		NetworkAttachmentConfigParams{
+		multihoming.NetworkAttachmentConfigParams{
 			Name:     "l3primaryv6",
 			Topology: types.Layer3Topology,
 			Cidr:     "2014:100:200::0/60",
@@ -3064,7 +3066,7 @@ spec:
 	),
 	ginkgo.Entry(
 		"Network Segmentation: IPv4 L2 role primary",
-		NetworkAttachmentConfigParams{
+		multihoming.NetworkAttachmentConfigParams{
 			Name:     "l2primary",
 			Topology: types.Layer2Topology,
 			Cidr:     "20.10.0.0/16",
@@ -3073,7 +3075,7 @@ spec:
 	),
 	ginkgo.Entry(
 		"Network Segmentation: IPv6 L2 role primary",
-		NetworkAttachmentConfigParams{
+		multihoming.NetworkAttachmentConfigParams{
 			Name:     "l2primary",
 			Topology: types.Layer2Topology,
 			Cidr:     "2015:100:200::0/60",

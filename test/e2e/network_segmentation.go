@@ -35,6 +35,7 @@ import (
 	"k8s.io/utils/pointer"
 
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/clusterinspection"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/multihoming"
 )
 
 const openDefaultPortsAnnotation = "k8s.ovn.org/open-default-ports"
@@ -78,11 +79,11 @@ var _ = Describe("Network Segmentation", func() {
 	Context("a user defined primary network", func() {
 
 		DescribeTableSubtree("created using",
-			func(createNetworkFn func(c *NetworkAttachmentConfigParams) error) {
+			func(createNetworkFn func(c *multihoming.NetworkAttachmentConfigParams) error) {
 
 				DescribeTable(
 					"creates a networkStatus Annotation with UDN interface",
-					func(netConfig *NetworkAttachmentConfigParams) {
+					func(netConfig *multihoming.NetworkAttachmentConfigParams) {
 						By("creating the network")
 						netConfig.Namespace = f.Namespace.Name
 						Expect(createNetworkFn(netConfig)).To(Succeed())
@@ -93,7 +94,7 @@ var _ = Describe("Network Segmentation", func() {
 						pod := runUDNPod(cs, f.Namespace.Name, podConfig, nil)
 
 						By("asserting the pod UDN interface on the network-status annotation")
-						udnNetStat, err := PodNetworkStatus(pod, func(status nadapi.NetworkStatus) bool {
+						udnNetStat, err := multihoming.PodNetworkStatus(pod, func(status nadapi.NetworkStatus) bool {
 							return status.Default
 						})
 						Expect(err).NotTo(HaveOccurred())
@@ -111,25 +112,25 @@ var _ = Describe("Network Segmentation", func() {
 								By("asserting the server pod has an IP from the configured range")
 								const netPrefixLengthPerNode = 24
 								By(fmt.Sprintf("asserting the pod IP %s is from the configured range %s/%d", serverIP, cidr, netPrefixLengthPerNode))
-								subnet, err := getNetCIDRSubnet(cidr)
+								subnet, err := multihoming.GetNetCIDRSubnet(cidr)
 								Expect(err).NotTo(HaveOccurred())
-								Expect(InRange(subnet, serverIP)).To(Succeed())
+								Expect(multihoming.InRange(subnet, serverIP)).To(Succeed())
 							}
 						}
 					},
 					Entry("L2 primary UDN",
-						&NetworkAttachmentConfigParams{
+						&multihoming.NetworkAttachmentConfigParams{
 							Name:     nadName,
 							Topology: "layer2",
-							Cidr:     CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							Cidr:     multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							Role:     "primary",
 						},
 					),
 					Entry("L3 primary UDN",
-						&NetworkAttachmentConfigParams{
+						&multihoming.NetworkAttachmentConfigParams{
 							Name:     nadName,
 							Topology: "layer3",
-							Cidr:     CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							Cidr:     multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							Role:     "primary",
 						},
 					),
@@ -138,9 +139,9 @@ var _ = Describe("Network Segmentation", func() {
 				DescribeTable(
 					"can perform east/west traffic between nodes",
 					func(
-						netConfig *NetworkAttachmentConfigParams,
-						clientPodConfig PodConfiguration,
-						serverPodConfig PodConfiguration,
+						netConfig *multihoming.NetworkAttachmentConfigParams,
+						clientPodConfig multihoming.PodConfiguration,
+						serverPodConfig multihoming.PodConfiguration,
 					) {
 						By("creating the network")
 						netConfig.Namespace = f.Namespace.Name
@@ -166,29 +167,29 @@ var _ = Describe("Network Segmentation", func() {
 									cs,
 									f.Namespace.Name,
 									serverPodConfig.Name,
-									namespacedName(f.Namespace.Name, netConfig.Name),
+									multihoming.NamespacedName(f.Namespace.Name, netConfig.Name),
 									i,
 								)
 								Expect(err).NotTo(HaveOccurred())
 								const netPrefixLengthPerNode = 24
 								By(fmt.Sprintf("asserting the server pod IP %v is from the configured range %v/%v", serverIP, cidr, netPrefixLengthPerNode))
-								subnet, err := getNetCIDRSubnet(cidr)
+								subnet, err := multihoming.GetNetCIDRSubnet(cidr)
 								Expect(err).NotTo(HaveOccurred())
-								Expect(InRange(subnet, serverIP)).To(Succeed())
+								Expect(multihoming.InRange(subnet, serverIP)).To(Succeed())
 							}
 
 							By("asserting the *client* pod can contact the server pod exposed endpoint")
 							Eventually(func() error {
-								return ReachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
+								return multihoming.ReachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
 							}, 2*time.Minute, 6*time.Second).Should(Succeed())
 						}
 					},
 					Entry(
 						"two pods connected over a L2 primary UDN",
-						&NetworkAttachmentConfigParams{
+						&multihoming.NetworkAttachmentConfigParams{
 							Name:     nadName,
 							Topology: "layer2",
-							Cidr:     CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							Cidr:     multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							Role:     "primary",
 						},
 						*podConfig(
@@ -197,16 +198,16 @@ var _ = Describe("Network Segmentation", func() {
 						*podConfig(
 							"server-pod",
 							withCommand(func() []string {
-								return HttpServerContainerCmd(port)
+								return multihoming.HttpServerContainerCmd(port)
 							}),
 						),
 					),
 					Entry(
 						"two pods connected over a L3 primary UDN",
-						&NetworkAttachmentConfigParams{
+						&multihoming.NetworkAttachmentConfigParams{
 							Name:     nadName,
 							Topology: "layer3",
-							Cidr:     CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							Cidr:     multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							Role:     "primary",
 						},
 						*podConfig(
@@ -215,7 +216,7 @@ var _ = Describe("Network Segmentation", func() {
 						*podConfig(
 							"server-pod",
 							withCommand(func() []string {
-								return HttpServerContainerCmd(port)
+								return multihoming.HttpServerContainerCmd(port)
 							}),
 						),
 					),
@@ -224,8 +225,8 @@ var _ = Describe("Network Segmentation", func() {
 				DescribeTable(
 					"is isolated from the default network",
 					func(
-						netConfigParams *NetworkAttachmentConfigParams,
-						udnPodConfig PodConfiguration,
+						netConfigParams *multihoming.NetworkAttachmentConfigParams,
+						udnPodConfig multihoming.PodConfiguration,
 					) {
 						if !isInterconnectEnabled() {
 							const upstreamIssue = "https://github.com/ovn-org/ovn-kubernetes/issues/4528"
@@ -323,7 +324,7 @@ var _ = Describe("Network Segmentation", func() {
 							// positive case for UDN pod is a successful healthcheck, checked later
 							By("checking the default network pod can't reach UDN pod on IP " + destIP)
 							Consistently(func() bool {
-								return ConnectToServer(PodConfiguration{Namespace: defaultPod.Namespace, Name: defaultPod.Name}, destIP, port) != nil
+								return multihoming.ConnectToServer(multihoming.PodConfiguration{Namespace: defaultPod.Namespace, Name: defaultPod.Name}, destIP, port) != nil
 							}, 5*time.Second).Should(BeTrue())
 						}
 
@@ -340,11 +341,11 @@ var _ = Describe("Network Segmentation", func() {
 							}
 							By("checking the default network client pod can reach default pod on IP " + destIP)
 							Eventually(func() bool {
-								return ConnectToServer(PodConfiguration{Namespace: defaultClientPod.Namespace, Name: defaultClientPod.Name}, destIP, defaultPort) == nil
+								return multihoming.ConnectToServer(multihoming.PodConfiguration{Namespace: defaultClientPod.Namespace, Name: defaultClientPod.Name}, destIP, defaultPort) == nil
 							}).Should(BeTrue())
 							By("checking the UDN pod can't reach the default network pod on IP " + destIP)
 							Consistently(func() bool {
-								return ConnectToServer(udnPodConfig, destIP, defaultPort) != nil
+								return multihoming.ConnectToServer(udnPodConfig, destIP, defaultPort) != nil
 							}, 5*time.Second).Should(BeTrue())
 						}
 
@@ -386,7 +387,7 @@ var _ = Describe("Network Segmentation", func() {
 								}
 								By("checking the default network hostNetwork can reach default pod on IP " + destIP)
 								Eventually(func() bool {
-									return ConnectToServer(PodConfiguration{Namespace: hostNetPod.Namespace, Name: hostNetPod.Name}, destIP, defaultPort) == nil
+									return multihoming.ConnectToServer(multihoming.PodConfiguration{Namespace: hostNetPod.Namespace, Name: hostNetPod.Name}, destIP, defaultPort) == nil
 								}).Should(BeTrue())
 								By("checking the non-kubelet host process can reach default pod on IP " + destIP)
 								Eventually(func() bool {
@@ -404,7 +405,7 @@ var _ = Describe("Network Segmentation", func() {
 
 								By("checking the default network hostNetwork pod can't reach UDN pod on IP " + destIP)
 								Consistently(func() bool {
-									return ConnectToServer(PodConfiguration{Namespace: hostNetPod.Namespace, Name: hostNetPod.Name}, destIP, port) != nil
+									return multihoming.ConnectToServer(multihoming.PodConfiguration{Namespace: hostNetPod.Namespace, Name: hostNetPod.Name}, destIP, port) != nil
 								}, 5*time.Second).Should(BeTrue())
 
 								By("checking the non-kubelet host process can't reach UDN pod on IP " + destIP)
@@ -474,31 +475,31 @@ var _ = Describe("Network Segmentation", func() {
 					},
 					Entry(
 						"with L2 primary UDN",
-						&NetworkAttachmentConfigParams{
+						&multihoming.NetworkAttachmentConfigParams{
 							Name:     nadName,
 							Topology: "layer2",
-							Cidr:     CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							Cidr:     multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							Role:     "primary",
 						},
 						*podConfig(
 							"udn-pod",
 							withCommand(func() []string {
-								return HttpServerContainerCmd(port)
+								return multihoming.HttpServerContainerCmd(port)
 							}),
 						),
 					),
 					Entry(
 						"with L3 primary UDN",
-						&NetworkAttachmentConfigParams{
+						&multihoming.NetworkAttachmentConfigParams{
 							Name:     nadName,
 							Topology: "layer3",
-							Cidr:     CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							Cidr:     multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							Role:     "primary",
 						},
 						*podConfig(
 							"udn-pod",
 							withCommand(func() []string {
-								return HttpServerContainerCmd(port)
+								return multihoming.HttpServerContainerCmd(port)
 							}),
 						),
 					),
@@ -543,9 +544,9 @@ var _ = Describe("Network Segmentation", func() {
 						for namespace, network := range networkNamespaceMap {
 							By("creating the network " + network + " in namespace " + namespace)
 
-							netConfig := &NetworkAttachmentConfigParams{
+							netConfig := &multihoming.NetworkAttachmentConfigParams{
 								Topology:  topology,
-								Cidr:      CorrectCIDRFamily(userDefinedv4Subnet, userDefinedv6Subnet),
+								Cidr:      multihoming.CorrectCIDRFamily(userDefinedv4Subnet, userDefinedv6Subnet),
 								Role:      "primary",
 								Namespace: namespace,
 								Name:      network,
@@ -574,7 +575,7 @@ var _ = Describe("Network Segmentation", func() {
 								podConfig := *podConfig(
 									fmt.Sprintf("%s-pod-%d", network, i),
 									withCommand(func() []string {
-										return HttpServerContainerCmd(httpServerPort)
+										return multihoming.HttpServerContainerCmd(httpServerPort)
 									}),
 								)
 								podConfig.Namespace = namespace
@@ -593,7 +594,7 @@ var _ = Describe("Network Segmentation", func() {
 									cs,
 									pod.Namespace,
 									pod.Name,
-									namespacedName(namespace, network),
+									multihoming.NamespacedName(namespace, network),
 									0,
 								)
 								Expect(err).NotTo(HaveOccurred())
@@ -658,20 +659,20 @@ var _ = Describe("Network Segmentation", func() {
 					),
 				)
 			},
-			Entry("NetworkAttachmentDefinitions", func(c *NetworkAttachmentConfigParams) error {
-				netConfig := NewNetworkAttachmentConfig(*c)
-				nad := GenerateNAD(netConfig)
+			Entry("NetworkAttachmentDefinitions", func(c *multihoming.NetworkAttachmentConfigParams) error {
+				netConfig := multihoming.NewNetworkAttachmentConfig(*c)
+				nad := multihoming.GenerateNAD(netConfig)
 				_, err := nadClient.NetworkAttachmentDefinitions(c.Namespace).Create(context.Background(), nad, metav1.CreateOptions{})
 				return err
 			}),
-			Entry("UserDefinedNetwork", func(c *NetworkAttachmentConfigParams) error {
+			Entry("UserDefinedNetwork", func(c *multihoming.NetworkAttachmentConfigParams) error {
 				udnManifest := generateUserDefinedNetworkManifest(c)
 				cleanup, err := createManifest(c.Namespace, udnManifest)
 				DeferCleanup(cleanup)
 				Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, c.Namespace, c.Name), 5*time.Second, time.Second).Should(Succeed())
 				return err
 			}),
-			Entry("ClusterUserDefinedNetwork", func(c *NetworkAttachmentConfigParams) error {
+			Entry("ClusterUserDefinedNetwork", func(c *multihoming.NetworkAttachmentConfigParams) error {
 				cudnName := randomNetworkMetaName()
 				c.Name = cudnName
 				cudnManifest := generateClusterUserDefinedNetworkManifest(c)
@@ -692,18 +693,18 @@ var _ = Describe("Network Segmentation", func() {
 			// generate 2 UDNs with ns+name
 			// "f.Namespace.Name" + "tenant-blue"
 			// "f.Namespace.Name-tenant" + "blue"
-			netConfig1 := NetworkAttachmentConfigParams{
+			netConfig1 := multihoming.NetworkAttachmentConfigParams{
 				Name:      "tenant-blue",
 				Namespace: f.Namespace.Name,
 				Topology:  "layer2",
-				Cidr:      CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+				Cidr:      multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 				Role:      "primary",
 			}
-			netConfig2 := NetworkAttachmentConfigParams{
+			netConfig2 := multihoming.NetworkAttachmentConfigParams{
 				Name:      "blue",
 				Namespace: f.Namespace.Name + "-tenant",
 				Topology:  "layer2",
-				Cidr:      CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+				Cidr:      multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 				Role:      "primary",
 			}
 			nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), cs, 2)
@@ -716,7 +717,7 @@ var _ = Describe("Network Segmentation", func() {
 			serverPodConfig := *podConfig(
 				"server-pod",
 				withCommand(func() []string {
-					return HttpServerContainerCmd(port)
+					return multihoming.HttpServerContainerCmd(port)
 				}),
 				withNodeSelector(map[string]string{nodeHostnameKey: node2Name}),
 			)
@@ -761,7 +762,7 @@ var _ = Describe("Network Segmentation", func() {
 			runUDNPod(cs, netConfig2.Namespace, clientPodConfig, nil)
 
 			var serverIP string
-			for _, config := range []NetworkAttachmentConfigParams{netConfig1, netConfig2} {
+			for _, config := range []multihoming.NetworkAttachmentConfigParams{netConfig1, netConfig2} {
 				serverPodConfig.Namespace = config.Namespace
 				clientPodConfig.Namespace = config.Namespace
 				By(fmt.Sprintf("asserting network works in namespace %s", config.Namespace))
@@ -771,14 +772,14 @@ var _ = Describe("Network Segmentation", func() {
 							cs,
 							config.Namespace,
 							serverPodConfig.Name,
-							namespacedName(config.Namespace, config.Name),
+							multihoming.NamespacedName(config.Namespace, config.Name),
 							i,
 						)
 						Expect(err).NotTo(HaveOccurred())
 
 						By("asserting the *client* pod can contact the server pod exposed endpoint")
 						Eventually(func() error {
-							return ReachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
+							return multihoming.ReachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
 						}, 2*time.Minute, 6*time.Second).Should(Succeed())
 					}
 				}
@@ -813,53 +814,53 @@ var _ = Describe("Network Segmentation", func() {
 
 				enableMulticastForNamespace(f)
 			})
-			DescribeTable("should be able to send multicast UDP traffic between nodes", func(netConfigParams NetworkAttachmentConfigParams) {
+			DescribeTable("should be able to send multicast UDP traffic between nodes", func(netConfigParams multihoming.NetworkAttachmentConfigParams) {
 				ginkgo.By("creating the attachment configuration")
 				netConfigParams.Namespace = f.Namespace.Name
-				netConfig := NewNetworkAttachmentConfig(netConfigParams)
+				netConfig := multihoming.NewNetworkAttachmentConfig(netConfigParams)
 				_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
 					context.Background(),
-					GenerateNAD(netConfig),
+					multihoming.GenerateNAD(netConfig),
 					metav1.CreateOptions{},
 				)
 				framework.ExpectNoError(err)
 				testMulticastUDPTraffic(f, clientNodeInfo, serverNodeInfo, udnPodInterface)
 			},
-				ginkgo.Entry("with primary layer3 UDN", NetworkAttachmentConfigParams{
+				ginkgo.Entry("with primary layer3 UDN", multihoming.NetworkAttachmentConfigParams{
 					Name:     nadName,
 					Topology: "layer3",
-					Cidr:     CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					Cidr:     multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 					Role:     "primary",
 				}),
-				ginkgo.Entry("with primary layer2 UDN", NetworkAttachmentConfigParams{
+				ginkgo.Entry("with primary layer2 UDN", multihoming.NetworkAttachmentConfigParams{
 					Name:     nadName,
 					Topology: "layer2",
-					Cidr:     CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					Cidr:     multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 					Role:     "primary",
 				}),
 			)
-			DescribeTable("should be able to receive multicast IGMP query", func(netConfigParams NetworkAttachmentConfigParams) {
+			DescribeTable("should be able to receive multicast IGMP query", func(netConfigParams multihoming.NetworkAttachmentConfigParams) {
 				ginkgo.By("creating the attachment configuration")
 				netConfigParams.Namespace = f.Namespace.Name
-				netConfig := NewNetworkAttachmentConfig(netConfigParams)
+				netConfig := multihoming.NewNetworkAttachmentConfig(netConfigParams)
 				_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
 					context.Background(),
-					GenerateNAD(netConfig),
+					multihoming.GenerateNAD(netConfig),
 					metav1.CreateOptions{},
 				)
 				framework.ExpectNoError(err)
 				testMulticastIGMPQuery(f, clientNodeInfo, serverNodeInfo)
 			},
-				ginkgo.Entry("with primary layer3 UDN", NetworkAttachmentConfigParams{
+				ginkgo.Entry("with primary layer3 UDN", multihoming.NetworkAttachmentConfigParams{
 					Name:     nadName,
 					Topology: "layer3",
-					Cidr:     CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					Cidr:     multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 					Role:     "primary",
 				}),
-				ginkgo.Entry("with primary layer2 UDN", NetworkAttachmentConfigParams{
+				ginkgo.Entry("with primary layer2 UDN", multihoming.NetworkAttachmentConfigParams{
 					Name:     nadName,
 					Topology: "layer2",
-					Cidr:     CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					Cidr:     multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 					Role:     "primary",
 				}),
 			)
@@ -1101,12 +1102,12 @@ spec:
 		)
 
 		By("create primary network NetworkAttachmentDefinition")
-		primaryNetNad := GenerateNAD(NewNetworkAttachmentConfig(NetworkAttachmentConfigParams{
+		primaryNetNad := multihoming.GenerateNAD(multihoming.NewNetworkAttachmentConfig(multihoming.NetworkAttachmentConfigParams{
 			Role:        "primary",
 			Topology:    "layer3",
 			Name:        primaryNadName,
 			NetworkName: primaryNadName,
-			Cidr:        CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+			Cidr:        multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 		}))
 		_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(context.Background(), primaryNetNad, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred())
@@ -1399,12 +1400,12 @@ spec:
 		By("create primary network NAD in one of the tenant namespaces")
 		const primaryNadName = "some-primary-net"
 		primaryNetTenantNs := testTenantNamespaces[0]
-		primaryNetNad := GenerateNAD(NewNetworkAttachmentConfig(NetworkAttachmentConfigParams{
+		primaryNetNad := multihoming.GenerateNAD(multihoming.NewNetworkAttachmentConfig(multihoming.NetworkAttachmentConfigParams{
 			Role:        "primary",
 			Topology:    "layer3",
 			Name:        primaryNadName,
 			NetworkName: primaryNadName,
-			Cidr:        CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+			Cidr:        multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 		}))
 		_, err := nadClient.NetworkAttachmentDefinitions(primaryNetTenantNs).Create(context.Background(), primaryNetNad, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred())
@@ -1443,7 +1444,7 @@ spec:
 				externalContainerName,
 				"registry.k8s.io/e2e-test-images/agnhost:2.45",
 				runExternalContainerCmd(),
-				HttpServerContainerCmd(port),
+				multihoming.HttpServerContainerCmd(port),
 			)
 
 			DeferCleanup(func() {
@@ -1451,11 +1452,11 @@ spec:
 			})
 		})
 		DescribeTableSubtree("created using",
-			func(createNetworkFn func(c *NetworkAttachmentConfigParams) error) {
+			func(createNetworkFn func(c *multihoming.NetworkAttachmentConfigParams) error) {
 
 				DescribeTable(
 					"can be accessed to from the pods running in the Kubernetes cluster",
-					func(netConfigParams *NetworkAttachmentConfigParams, clientPodConfig PodConfiguration) {
+					func(netConfigParams *multihoming.NetworkAttachmentConfigParams, clientPodConfig multihoming.PodConfiguration) {
 						if netConfigParams.Topology == "layer2" && !isInterconnectEnabled() {
 							const upstreamIssue = "https://github.com/ovn-org/ovn-kubernetes/issues/4642"
 							e2eskipper.Skipf(
@@ -1471,7 +1472,7 @@ spec:
 						By("instantiating the client pod")
 						clientPod, err := cs.CoreV1().Pods(clientPodConfig.Namespace).Create(
 							context.Background(),
-							GeneratePodSpec(clientPodConfig),
+							multihoming.GeneratePodSpec(clientPodConfig),
 							metav1.CreateOptions{},
 						)
 						Expect(err).NotTo(HaveOccurred())
@@ -1498,39 +1499,39 @@ spec:
 						assertClientExternalConnectivity(clientPodConfig, externalIpv4, externalIpv6, port)
 					},
 					Entry("by one pod over a layer2 network",
-						&NetworkAttachmentConfigParams{
+						&multihoming.NetworkAttachmentConfigParams{
 							Name:     userDefinedNetworkName,
 							Topology: "layer2",
-							Cidr:     CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							Cidr:     multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							Role:     "primary",
 						},
 						*podConfig("client-pod"),
 					),
 					Entry("by one pod over a layer3 network",
-						&NetworkAttachmentConfigParams{
+						&multihoming.NetworkAttachmentConfigParams{
 							Name:     userDefinedNetworkName,
 							Topology: "layer3",
-							Cidr:     CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							Cidr:     multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							Role:     "primary",
 						},
 						*podConfig("client-pod"),
 					),
 				)
 			},
-			Entry("NetworkAttachmentDefinitions", func(c *NetworkAttachmentConfigParams) error {
-				netConfig := NewNetworkAttachmentConfig(*c)
-				nad := GenerateNAD(netConfig)
+			Entry("NetworkAttachmentDefinitions", func(c *multihoming.NetworkAttachmentConfigParams) error {
+				netConfig := multihoming.NewNetworkAttachmentConfig(*c)
+				nad := multihoming.GenerateNAD(netConfig)
 				_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(context.Background(), nad, metav1.CreateOptions{})
 				return err
 			}),
-			Entry("UserDefinedNetwork", func(c *NetworkAttachmentConfigParams) error {
+			Entry("UserDefinedNetwork", func(c *multihoming.NetworkAttachmentConfigParams) error {
 				udnManifest := generateUserDefinedNetworkManifest(c)
 				cleanup, err := createManifest(f.Namespace.Name, udnManifest)
 				DeferCleanup(cleanup)
 				Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, f.Namespace.Name, c.Name), 5*time.Second, time.Second).Should(Succeed())
 				return err
 			}),
-			Entry("ClusterUserDefinedNetwork", func(c *NetworkAttachmentConfigParams) error {
+			Entry("ClusterUserDefinedNetwork", func(c *multihoming.NetworkAttachmentConfigParams) error {
 				c.Name = randomNetworkMetaName()
 				cudnManifest := generateClusterUserDefinedNetworkManifest(c)
 				cleanup, err := createManifest("", cudnManifest)
@@ -1563,7 +1564,7 @@ spec:
 			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, f.Namespace.Name, testUdnName), 5*time.Second, time.Second).Should(Succeed())
 			By("create UDN pod")
 			cfg := podConfig(testPodName, withCommand(func() []string {
-				return HttpServerContainerCmd(port)
+				return multihoming.HttpServerContainerCmd(port)
 			}))
 			cfg.Namespace = f.Namespace.Name
 			udnPod = runUDNPod(cs, f.Namespace.Name, *cfg, nil)
@@ -1611,13 +1612,13 @@ spec:
 				}
 				By("checking the default network pod can't reach UDN pod on IP " + destIP)
 				Consistently(func() bool {
-					return ConnectToServer(PodConfiguration{Namespace: defaultClientPod.Namespace, Name: defaultClientPod.Name}, destIP, port) != nil
+					return multihoming.ConnectToServer(multihoming.PodConfiguration{Namespace: defaultClientPod.Namespace, Name: defaultClientPod.Name}, destIP, port) != nil
 				}, 5*time.Second).Should(BeTrue())
 
 				if !isUDNHostIsolationDisabled() {
 					By("checking the default hostNetwork pod can't reach UDN pod on IP " + destIP)
 					Consistently(func() bool {
-						return ConnectToServer(PodConfiguration{Namespace: hostNetPod.Namespace, Name: hostNetPod.Name}, destIP, port) != nil
+						return multihoming.ConnectToServer(multihoming.PodConfiguration{Namespace: hostNetPod.Namespace, Name: hostNetPod.Name}, destIP, port) != nil
 					}, 5*time.Second).Should(BeTrue())
 				}
 			}
@@ -1637,12 +1638,12 @@ spec:
 				}
 				By("checking the default network pod can reach UDN pod on IP " + destIP)
 				Eventually(func() bool {
-					return ConnectToServer(PodConfiguration{Namespace: defaultClientPod.Namespace, Name: defaultClientPod.Name}, destIP, port) == nil
+					return multihoming.ConnectToServer(multihoming.PodConfiguration{Namespace: defaultClientPod.Namespace, Name: defaultClientPod.Name}, destIP, port) == nil
 				}, 5*time.Second).Should(BeTrue())
 
 				By("checking the default hostNetwork pod can reach UDN pod on IP " + destIP)
 				Eventually(func() bool {
-					return ConnectToServer(PodConfiguration{Namespace: hostNetPod.Namespace, Name: hostNetPod.Name}, destIP, port) == nil
+					return multihoming.ConnectToServer(multihoming.PodConfiguration{Namespace: hostNetPod.Namespace, Name: hostNetPod.Name}, destIP, port) == nil
 				}, 5*time.Second).Should(BeTrue())
 			}
 
@@ -1661,13 +1662,13 @@ spec:
 				}
 				By("checking the default network pod can't reach UDN pod on IP " + destIP)
 				Eventually(func() bool {
-					return ConnectToServer(PodConfiguration{Namespace: defaultClientPod.Namespace, Name: defaultClientPod.Name}, destIP, port) != nil
+					return multihoming.ConnectToServer(multihoming.PodConfiguration{Namespace: defaultClientPod.Namespace, Name: defaultClientPod.Name}, destIP, port) != nil
 				}, 5*time.Second).Should(BeTrue())
 
 				if !isUDNHostIsolationDisabled() {
 					By("checking the default hostNetwork pod can't reach UDN pod on IP " + destIP)
 					Eventually(func() bool {
-						return ConnectToServer(PodConfiguration{Namespace: hostNetPod.Namespace, Name: hostNetPod.Name}, destIP, port) != nil
+						return multihoming.ConnectToServer(multihoming.PodConfiguration{Namespace: hostNetPod.Namespace, Name: hostNetPod.Name}, destIP, port) != nil
 					}, 5*time.Second).Should(BeTrue())
 				}
 			}
@@ -1688,9 +1689,9 @@ spec:
 		DescribeTable(
 			"perform east/west traffic between nodes following OVN Kube node pod restart",
 			func(
-				netConfig NetworkAttachmentConfigParams,
-				clientPodConfig PodConfiguration,
-				serverPodConfig PodConfiguration,
+				netConfig multihoming.NetworkAttachmentConfigParams,
+				clientPodConfig multihoming.PodConfiguration,
+				serverPodConfig multihoming.PodConfiguration,
 			) {
 				if netConfig.Topology == "layer2" && !isInterconnectEnabled() {
 					const upstreamIssue = "https://github.com/ovn-kubernetes/ovn-kubernetes/issues/4958"
@@ -1714,26 +1715,26 @@ spec:
 				clientPodConfig.NodeSelector = map[string]string{nodeHostnameKey: nodes.Items[1].Name}
 				runUDNPod(cs, f.Namespace.Name, serverPodConfig, nil)
 				runUDNPod(cs, f.Namespace.Name, clientPodConfig, nil)
-				serverIP, err := podIPsForUserDefinedPrimaryNetwork(cs, f.Namespace.Name, serverPodConfig.Name, namespacedName(f.Namespace.Name, netConfig.Name), 0)
+				serverIP, err := podIPsForUserDefinedPrimaryNetwork(cs, f.Namespace.Name, serverPodConfig.Name, multihoming.NamespacedName(f.Namespace.Name, netConfig.Name), 0)
 				Expect(err).ShouldNot(HaveOccurred(), "UDN pod IP must be retrieved")
 				By("restart OVNKube node pods on client and server Nodes and ensure connectivity")
 				serverPod := getPod(f, serverPodConfig.Name)
 				clientPod := getPod(f, clientPodConfig.Name)
 				for _, testPod := range []*v1.Pod{clientPod, serverPod} {
 					By(fmt.Sprintf("asserting the server pod IP %v is reachable from client before restart of OVNKube node pod on Node %s", serverIP, testPod.Spec.Hostname))
-					Expect(ReachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)).ShouldNot(HaveOccurred(), "must have connectivity to server pre OVN Kube node Pod restart")
+					Expect(multihoming.ReachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)).ShouldNot(HaveOccurred(), "must have connectivity to server pre OVN Kube node Pod restart")
 					By(fmt.Sprintf("restarting OVNKube node Pod located on Node %s which hosts test Pod %s/%s", testPod.Spec.NodeName, testPod.Namespace, testPod.Name))
 					Expect(restartOVNKubeNodePod(cs, ovnNamespace, testPod.Spec.NodeName)).ShouldNot(HaveOccurred(), "restart of OVNKube node pod must succeed")
 					By(fmt.Sprintf("asserting the server pod IP %v is reachable from client post restart", serverIP))
-					Expect(ReachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)).ShouldNot(HaveOccurred(), "must have connectivity to server post restart")
+					Expect(multihoming.ReachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)).ShouldNot(HaveOccurred(), "must have connectivity to server post restart")
 				}
 			},
 			Entry(
 				"L3",
-				NetworkAttachmentConfigParams{
+				multihoming.NetworkAttachmentConfigParams{
 					Name:     nadName,
 					Topology: "layer3",
-					Cidr:     CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					Cidr:     multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 					Role:     "primary",
 				},
 				*podConfig(
@@ -1742,16 +1743,16 @@ spec:
 				*podConfig(
 					"server-pod",
 					withCommand(func() []string {
-						return HttpServerContainerCmd(port)
+						return multihoming.HttpServerContainerCmd(port)
 					}),
 				),
 			),
 			Entry(
 				"L2",
-				NetworkAttachmentConfigParams{
+				multihoming.NetworkAttachmentConfigParams{
 					Name:     nadName,
 					Topology: "layer2",
-					Cidr:     CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					Cidr:     multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 					Role:     "primary",
 				},
 				*podConfig(
@@ -1760,7 +1761,7 @@ spec:
 				*podConfig(
 					"server-pod",
 					withCommand(func() []string {
-						return HttpServerContainerCmd(port)
+						return multihoming.HttpServerContainerCmd(port)
 					}),
 				),
 			),
@@ -1782,7 +1783,7 @@ var nadToUdnParams = map[string]string{
 	"layer3":    "Layer3",
 }
 
-func generateUserDefinedNetworkManifest(params *NetworkAttachmentConfigParams) string {
+func generateUserDefinedNetworkManifest(params *multihoming.NetworkAttachmentConfigParams) string {
 	subnets := generateSubnetsYaml(params)
 	return `
 apiVersion: k8s.ovn.org/v1
@@ -1797,7 +1798,7 @@ spec:
 `
 }
 
-func generateClusterUserDefinedNetworkManifest(params *NetworkAttachmentConfigParams) string {
+func generateClusterUserDefinedNetworkManifest(params *multihoming.NetworkAttachmentConfigParams) string {
 	subnets := generateSubnetsYaml(params)
 	return `
 apiVersion: k8s.ovn.org/v1
@@ -1818,7 +1819,7 @@ spec:
 `
 }
 
-func generateSubnetsYaml(params *NetworkAttachmentConfigParams) string {
+func generateSubnetsYaml(params *multihoming.NetworkAttachmentConfigParams) string {
 	if params.Topology == "layer3" {
 		l3Subnets := generateLayer3Subnets(params.Cidr)
 		return fmt.Sprintf("[%s]", strings.Join(l3Subnets, ","))
@@ -2189,10 +2190,10 @@ func generateCIDRforClusterUDN(v4, v6 string) string {
 	return cidr
 }
 
-type podOption func(*PodConfiguration)
+type podOption func(*multihoming.PodConfiguration)
 
-func podConfig(podName string, opts ...podOption) *PodConfiguration {
-	pod := &PodConfiguration{
+func podConfig(podName string, opts ...podOption) *multihoming.PodConfiguration {
+	pod := &multihoming.PodConfiguration{
 		Name: podName,
 	}
 	for _, opt := range opts {
@@ -2202,25 +2203,25 @@ func podConfig(podName string, opts ...podOption) *PodConfiguration {
 }
 
 func withCommand(cmdGenerationFn func() []string) podOption {
-	return func(pod *PodConfiguration) {
+	return func(pod *multihoming.PodConfiguration) {
 		pod.ContainerCmd = cmdGenerationFn()
 	}
 }
 
 func withNodeSelector(nodeSelector map[string]string) podOption {
-	return func(pod *PodConfiguration) {
+	return func(pod *multihoming.PodConfiguration) {
 		pod.NodeSelector = nodeSelector
 	}
 }
 
 func withLabels(labels map[string]string) podOption {
-	return func(pod *PodConfiguration) {
+	return func(pod *multihoming.PodConfiguration) {
 		pod.Labels = labels
 	}
 }
 
 func withNetworkAttachment(networks []nadapi.NetworkSelectionElement) podOption {
-	return func(pod *PodConfiguration) {
+	return func(pod *multihoming.PodConfiguration) {
 		pod.Attachments = networks
 	}
 }
@@ -2263,9 +2264,9 @@ func userDefinedNetworkStatus(pod *v1.Pod, networkName string) (PodAnnotation, e
 	return *netStatus, nil
 }
 
-func runUDNPod(cs clientset.Interface, namespace string, serverPodConfig PodConfiguration, podSpecTweak func(*v1.Pod)) *v1.Pod {
+func runUDNPod(cs clientset.Interface, namespace string, serverPodConfig multihoming.PodConfiguration, podSpecTweak func(*v1.Pod)) *v1.Pod {
 	By(fmt.Sprintf("instantiating the UDN pod %s", serverPodConfig.Name))
-	podSpec := GeneratePodSpec(serverPodConfig)
+	podSpec := multihoming.GeneratePodSpec(serverPodConfig)
 	if podSpecTweak != nil {
 		podSpecTweak(podSpec)
 	}
@@ -2290,7 +2291,7 @@ func runUDNPod(cs clientset.Interface, namespace string, serverPodConfig PodConf
 }
 
 // connectToServerViaDefaultNetwork sends the traffic via the pod's default interface
-func connectToServerViaDefaultNetwork(clientPodConfig PodConfiguration, serverIP string, port int) error {
+func connectToServerViaDefaultNetwork(clientPodConfig multihoming.PodConfiguration, serverIP string, port int) error {
 	_, err := e2ekubectl.RunKubectl(
 		clientPodConfig.Namespace,
 		"exec",
@@ -2307,18 +2308,18 @@ func connectToServerViaDefaultNetwork(clientPodConfig PodConfiguration, serverIP
 }
 
 // assertClientExternalConnectivity checks if the client can connect to an externally created IP outside the cluster
-func assertClientExternalConnectivity(clientPodConfig PodConfiguration, externalIpv4 string, externalIpv6 string, port int) {
+func assertClientExternalConnectivity(clientPodConfig multihoming.PodConfiguration, externalIpv4 string, externalIpv6 string, port int) {
 	if clusterinspection.IsIPv4Supported() {
 		By("asserting the *client* pod can contact the server's v4 IP located outside the cluster")
 		Eventually(func() error {
-			return ConnectToServer(clientPodConfig, externalIpv4, port)
+			return multihoming.ConnectToServer(clientPodConfig, externalIpv4, port)
 		}, 2*time.Minute, 6*time.Second).Should(Succeed())
 	}
 
 	if clusterinspection.IsIPv6Supported() {
 		By("asserting the *client* pod can contact the server's v6 IP located outside the cluster")
 		Eventually(func() error {
-			return ConnectToServer(clientPodConfig, externalIpv6, port)
+			return multihoming.ConnectToServer(clientPodConfig, externalIpv6, port)
 		}, 2*time.Minute, 6*time.Second).Should(Succeed())
 	}
 }
@@ -2327,7 +2328,7 @@ func runExternalContainerCmd() []string {
 	return []string{"--network", "kind"}
 }
 
-func expectedNumberOfRoutes(netConfig NetworkAttachmentConfigParams) int {
+func expectedNumberOfRoutes(netConfig multihoming.NetworkAttachmentConfigParams) int {
 	if netConfig.Topology == "layer2" {
 		if clusterinspection.IsIPv6Supported() && clusterinspection.IsIPv4Supported() {
 			return 4 // 2 routes per family

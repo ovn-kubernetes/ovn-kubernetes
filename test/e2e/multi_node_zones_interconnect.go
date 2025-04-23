@@ -18,6 +18,8 @@ import (
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/multihoming"
 )
 
 func changeNodeZone(node *v1.Node, zone string, cs clientset.Interface) error {
@@ -72,12 +74,12 @@ func checkPodsInterconnectivity(clientPod, serverPod *v1.Pod, namespace string, 
 			return err
 		}
 
-		clientPodConfig := PodConfiguration{
+		clientPodConfig := multihoming.PodConfiguration{
 			Name:      clientPod.Name,
 			Namespace: namespace,
 		}
 		if updatedPod.Status.Phase == v1.PodRunning {
-			return ConnectToServer(clientPodConfig, updatedPod.Status.PodIP, 8000)
+			return multihoming.ConnectToServer(clientPodConfig, updatedPod.Status.PodIP, 8000)
 		}
 
 		return fmt.Errorf("pod not running. /me is sad")
@@ -146,7 +148,7 @@ var _ = ginkgo.Describe("Multi node zones interconnect", func() {
 
 	ginkgo.It("Pod interconnectivity", func() {
 		// Create a server pod on zone - zone-1
-		cmd := HttpServerContainerCmd(8000)
+		cmd := multihoming.HttpServerContainerCmd(8000)
 		serverPod := e2epod.NewAgnhostPod(fr.Namespace.Name, serverPodName, nil, nil, nil, cmd...)
 		serverPod.Spec.NodeName = serverPodNodeName
 		e2epod.NewPodClient(fr).CreateSync(context.TODO(), serverPod)

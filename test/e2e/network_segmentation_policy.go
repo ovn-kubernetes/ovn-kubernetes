@@ -16,6 +16,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/rand"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/multihoming"
 )
 
 var _ = ginkgo.Describe("Network Segmentation: Network Policies", func() {
@@ -72,16 +74,16 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", func() {
 		ginkgo.DescribeTable(
 			"pods within namespace should be isolated when deny policy is present",
 			func(
-				netConfigParams NetworkAttachmentConfigParams,
-				clientPodConfig PodConfiguration,
-				serverPodConfig PodConfiguration,
+				netConfigParams multihoming.NetworkAttachmentConfigParams,
+				clientPodConfig multihoming.PodConfiguration,
+				serverPodConfig multihoming.PodConfiguration,
 			) {
 				ginkgo.By("Creating the attachment configuration")
-				netConfig := NewNetworkAttachmentConfig(netConfigParams)
+				netConfig := multihoming.NewNetworkAttachmentConfig(netConfigParams)
 				netConfig.Namespace = f.Namespace.Name
 				_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
 					context.Background(),
-					GenerateNAD(netConfig),
+					multihoming.GenerateNAD(netConfig),
 					metav1.CreateOptions{},
 				)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -100,19 +102,19 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", func() {
 							cs,
 							f.Namespace.Name,
 							serverPodConfig.Name,
-							namespacedName(f.Namespace.Name, netConfig.Name),
+							multihoming.NamespacedName(f.Namespace.Name, netConfig.Name),
 							i,
 						)
 						gomega.Expect(err).NotTo(gomega.HaveOccurred())
 						ginkgo.By(fmt.Sprintf("asserting the server pod IP %v is from the configured range %v", serverIP, cidr))
-						subnet, err := getNetCIDRSubnet(cidr)
+						subnet, err := multihoming.GetNetCIDRSubnet(cidr)
 						gomega.Expect(err).NotTo(gomega.HaveOccurred())
-						gomega.Expect(InRange(subnet, serverIP)).To(gomega.Succeed())
+						gomega.Expect(multihoming.InRange(subnet, serverIP)).To(gomega.Succeed())
 					}
 
 					ginkgo.By("asserting the *client* pod can contact the server pod exposed endpoint")
 					gomega.Eventually(func() error {
-						return ReachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
+						return multihoming.ReachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
 					}, 2*time.Minute, 6*time.Second).Should(gomega.Succeed())
 				}
 
@@ -122,16 +124,16 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", func() {
 
 				ginkgo.By("asserting the *client* pod can not contact the server pod exposed endpoint")
 				gomega.Eventually(func() error {
-					return ReachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
+					return multihoming.ReachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
 				}, 1*time.Minute, 6*time.Second).ShouldNot(gomega.Succeed())
 
 			},
 			ginkgo.Entry(
 				"in L2 dualstack primary UDN",
-				NetworkAttachmentConfigParams{
+				multihoming.NetworkAttachmentConfigParams{
 					Name:     nadName,
 					Topology: "layer2",
-					Cidr:     CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					Cidr:     multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 					Role:     "primary",
 				},
 				*podConfig(
@@ -141,17 +143,17 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", func() {
 				*podConfig(
 					"server-pod",
 					withCommand(func() []string {
-						return HttpServerContainerCmd(port)
+						return multihoming.HttpServerContainerCmd(port)
 					}),
 					withNodeSelector(map[string]string{nodeHostnameKey: workerTwoNodeName}),
 				),
 			),
 			ginkgo.Entry(
 				"in L3 dualstack primary UDN",
-				NetworkAttachmentConfigParams{
+				multihoming.NetworkAttachmentConfigParams{
 					Name:     nadName,
 					Topology: "layer3",
-					Cidr:     CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					Cidr:     multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 					Role:     "primary",
 				},
 				*podConfig(
@@ -161,7 +163,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", func() {
 				*podConfig(
 					"server-pod",
 					withCommand(func() []string {
-						return HttpServerContainerCmd(port)
+						return multihoming.HttpServerContainerCmd(port)
 					}),
 					withNodeSelector(map[string]string{nodeHostnameKey: workerTwoNodeName}),
 				),
@@ -172,17 +174,17 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", func() {
 			"allow ingress traffic to one pod from a particular namespace",
 			func(
 				topology string,
-				clientPodConfig PodConfiguration,
-				allowServerPodConfig PodConfiguration,
-				denyServerPodConfig PodConfiguration,
+				clientPodConfig multihoming.PodConfiguration,
+				allowServerPodConfig multihoming.PodConfiguration,
+				denyServerPodConfig multihoming.PodConfiguration,
 			) {
 
 				namespaceYellow := getNamespaceName(f, nameSpaceYellowSuffix)
 				namespaceBlue := getNamespaceName(f, namespaceBlueSuffix)
 
-				nad := NetworkAttachmentConfigParams{
+				nad := multihoming.NetworkAttachmentConfigParams{
 					Topology: topology,
-					Cidr:     CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					Cidr:     multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 					// Both yellow and blue namespaces are going to served by green network.
 					// Use random suffix for the network name to avoid race between tests.
 					NetworkName: fmt.Sprintf("%s-%s", "green", rand.String(randomStringLength)),
@@ -193,13 +195,13 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", func() {
 				netConfName := fmt.Sprintf("sharednet-%s", rand.String(randomStringLength))
 				for _, namespace := range []string{namespaceYellow, namespaceBlue} {
 					ginkgo.By("creating the attachment configuration for " + netConfName + " in namespace " + namespace)
-					netConfig := NewNetworkAttachmentConfig(nad)
+					netConfig := multihoming.NewNetworkAttachmentConfig(nad)
 					netConfig.Namespace = namespace
 					netConfig.Name = netConfName
 
 					_, err := nadClient.NetworkAttachmentDefinitions(namespace).Create(
 						context.Background(),
-						GenerateNAD(netConfig),
+						multihoming.GenerateNAD(netConfig),
 						metav1.CreateOptions{},
 					)
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -219,28 +221,28 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", func() {
 					if cidr == "" {
 						continue
 					}
-					subnet, err := getNetCIDRSubnet(cidr)
+					subnet, err := multihoming.GetNetCIDRSubnet(cidr)
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					allowServerPodIP, err = podIPsForUserDefinedPrimaryNetwork(cs, namespaceYellow, allowServerPodConfig.Name,
-						namespacedName(namespaceYellow, netConfName), i)
+						multihoming.NamespacedName(namespaceYellow, netConfName), i)
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					ginkgo.By(fmt.Sprintf("asserting the allow server pod IP %v is from the configured range %v", allowServerPodIP, cidr))
-					gomega.Expect(InRange(subnet, allowServerPodIP)).To(gomega.Succeed())
+					gomega.Expect(multihoming.InRange(subnet, allowServerPodIP)).To(gomega.Succeed())
 					denyServerPodIP, err = podIPsForUserDefinedPrimaryNetwork(cs, namespaceYellow, denyServerPodConfig.Name,
-						namespacedName(namespaceYellow, netConfName), i)
+						multihoming.NamespacedName(namespaceYellow, netConfName), i)
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					ginkgo.By(fmt.Sprintf("asserting the deny server pod IP %v is from the configured range %v", denyServerPodIP, cidr))
-					gomega.Expect(InRange(subnet, denyServerPodIP)).To(gomega.Succeed())
+					gomega.Expect(multihoming.InRange(subnet, denyServerPodIP)).To(gomega.Succeed())
 				}
 
 				ginkgo.By("asserting the *client* pod can contact the allow server pod exposed endpoint")
 				gomega.Eventually(func() error {
-					return ReachServerPodFromClient(cs, allowServerPodConfig, clientPodConfig, allowServerPodIP, port)
+					return multihoming.ReachServerPodFromClient(cs, allowServerPodConfig, clientPodConfig, allowServerPodIP, port)
 				}, 2*time.Minute, 6*time.Second).Should(gomega.Succeed())
 
 				ginkgo.By("asserting the *client* pod can contact the deny server pod exposed endpoint")
 				gomega.Eventually(func() error {
-					return ReachServerPodFromClient(cs, denyServerPodConfig, clientPodConfig, denyServerPodIP, port)
+					return multihoming.ReachServerPodFromClient(cs, denyServerPodConfig, clientPodConfig, denyServerPodIP, port)
 				}, 2*time.Minute, 6*time.Second).Should(gomega.Succeed())
 
 				ginkgo.By("creating a \"default deny\" network policy")
@@ -249,12 +251,12 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", func() {
 
 				ginkgo.By("asserting the *client* pod can not contact the allow server pod exposed endpoint")
 				gomega.Eventually(func() error {
-					return ReachServerPodFromClient(cs, allowServerPodConfig, clientPodConfig, allowServerPodIP, port)
+					return multihoming.ReachServerPodFromClient(cs, allowServerPodConfig, clientPodConfig, allowServerPodIP, port)
 				}, 1*time.Minute, 6*time.Second).ShouldNot(gomega.Succeed())
 
 				ginkgo.By("asserting the *client* pod can not contact the deny server pod exposed endpoint")
 				gomega.Eventually(func() error {
-					return ReachServerPodFromClient(cs, denyServerPodConfig, clientPodConfig, denyServerPodIP, port)
+					return multihoming.ReachServerPodFromClient(cs, denyServerPodConfig, clientPodConfig, denyServerPodIP, port)
 				}, 1*time.Minute, 6*time.Second).ShouldNot(gomega.Succeed())
 
 				ginkgo.By("creating a \"allow-traffic-to-pod\" network policy")
@@ -263,12 +265,12 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", func() {
 
 				ginkgo.By("asserting the *client* pod can contact the allow server pod exposed endpoint")
 				gomega.Eventually(func() error {
-					return ReachServerPodFromClient(cs, allowServerPodConfig, clientPodConfig, allowServerPodIP, port)
+					return multihoming.ReachServerPodFromClient(cs, allowServerPodConfig, clientPodConfig, allowServerPodIP, port)
 				}, 1*time.Minute, 6*time.Second).Should(gomega.Succeed())
 
 				ginkgo.By("asserting the *client* pod can not contact deny server pod exposed endpoint")
 				gomega.Eventually(func() error {
-					return ReachServerPodFromClient(cs, denyServerPodConfig, clientPodConfig, denyServerPodIP, port)
+					return multihoming.ReachServerPodFromClient(cs, denyServerPodConfig, clientPodConfig, denyServerPodIP, port)
 				}, 1*time.Minute, 6*time.Second).ShouldNot(gomega.Succeed())
 
 			},
@@ -282,7 +284,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", func() {
 				*podConfig(
 					"allow-server-pod",
 					withCommand(func() []string {
-						return HttpServerContainerCmd(port)
+						return multihoming.HttpServerContainerCmd(port)
 					}),
 					withNodeSelector(map[string]string{nodeHostnameKey: workerTwoNodeName}),
 					withLabels(allowServerPodLabel),
@@ -290,7 +292,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", func() {
 				*podConfig(
 					"deny-server-pod",
 					withCommand(func() []string {
-						return HttpServerContainerCmd(port)
+						return multihoming.HttpServerContainerCmd(port)
 					}),
 					withNodeSelector(map[string]string{nodeHostnameKey: workerTwoNodeName}),
 					withLabels(denyServerPodLabel),
@@ -306,7 +308,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", func() {
 				*podConfig(
 					"allow-server-pod",
 					withCommand(func() []string {
-						return HttpServerContainerCmd(port)
+						return multihoming.HttpServerContainerCmd(port)
 					}),
 					withNodeSelector(map[string]string{nodeHostnameKey: workerTwoNodeName}),
 					withLabels(allowServerPodLabel),
@@ -314,7 +316,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", func() {
 				*podConfig(
 					"deny-server-pod",
 					withCommand(func() []string {
-						return HttpServerContainerCmd(port)
+						return multihoming.HttpServerContainerCmd(port)
 					}),
 					withNodeSelector(map[string]string{nodeHostnameKey: workerTwoNodeName}),
 					withLabels(denyServerPodLabel),

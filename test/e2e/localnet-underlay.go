@@ -10,6 +10,8 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/multihoming"
 )
 
 const (
@@ -19,7 +21,7 @@ const (
 	del              = "del-br"
 )
 
-func setupUnderlay(ovsPods []v1.Pod, bridgeName, portName string, nadConfig NetworkAttachmentConfig) error {
+func setupUnderlay(ovsPods []v1.Pod, bridgeName, portName string, nadConfig multihoming.NetworkAttachmentConfig) error {
 	for _, ovsPod := range ovsPods {
 		if bridgeName != defaultOvsBridge {
 			if err := addOVSBridge(ovsPod.Name, bridgeName); err != nil {

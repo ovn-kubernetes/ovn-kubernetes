@@ -25,6 +25,8 @@ import (
 	e2eservice "k8s.io/kubernetes/test/e2e/framework/service"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	utilnet "k8s.io/utils/net"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/multihoming"
 )
 
 var _ = Describe("Network Segmentation: services", func() {
@@ -85,7 +87,7 @@ var _ = Describe("Network Segmentation: services", func() {
 
 			"should be reachable through their cluster IP, node port and load balancer",
 			func(
-				netConfigParams NetworkAttachmentConfigParams,
+				netConfigParams multihoming.NetworkAttachmentConfigParams,
 			) {
 				namespace := f.Namespace.Name
 				jig := e2eservice.NewTestJig(cs, namespace, "udn-service")
@@ -107,11 +109,11 @@ var _ = Describe("Network Segmentation: services", func() {
 				clientNode := nodes.Items[1].Name // when client runs on a different node than the server
 
 				By("Creating the attachment configuration")
-				netConfig := NewNetworkAttachmentConfig(netConfigParams)
+				netConfig := multihoming.NewNetworkAttachmentConfig(netConfigParams)
 				netConfig.Namespace = f.Namespace.Name
 				_, err = nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
 					context.Background(),
-					GenerateNAD(netConfig),
+					multihoming.GenerateNAD(netConfig),
 					metav1.CreateOptions{},
 				)
 				Expect(err).NotTo(HaveOccurred())
@@ -260,19 +262,19 @@ ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | 
 
 			Entry(
 				"L3 primary UDN, cluster-networked pods, NodePort service",
-				NetworkAttachmentConfigParams{
+				multihoming.NetworkAttachmentConfigParams{
 					Name:     nadName,
 					Topology: "layer3",
-					Cidr:     CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					Cidr:     multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 					Role:     "primary",
 				},
 			),
 			Entry(
 				"L2 primary UDN, cluster-networked pods, NodePort service",
-				NetworkAttachmentConfigParams{
+				multihoming.NetworkAttachmentConfigParams{
 					Name:     nadName,
 					Topology: "layer2",
-					Cidr:     CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					Cidr:     multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 					Role:     "primary",
 				},
 			),

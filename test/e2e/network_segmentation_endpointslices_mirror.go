@@ -20,6 +20,8 @@ import (
 	e2edeployment "k8s.io/kubernetes/test/e2e/framework/deployment"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	e2eservice "k8s.io/kubernetes/test/e2e/framework/service"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/multihoming"
 )
 
 var _ = Describe("Network Segmentation EndpointSlices mirroring", func() {
@@ -50,11 +52,11 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", func() {
 		})
 
 		DescribeTableSubtree("created using",
-			func(createNetworkFn func(c NetworkAttachmentConfigParams) error) {
+			func(createNetworkFn func(c multihoming.NetworkAttachmentConfigParams) error) {
 				DescribeTable(
 					"mirrors EndpointSlices managed by the default controller for namespaces with user defined primary networks",
 					func(
-						netConfig NetworkAttachmentConfigParams,
+						netConfig multihoming.NetworkAttachmentConfigParams,
 						isHostNetwork bool,
 					) {
 						By("creating the network")
@@ -117,53 +119,53 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", func() {
 					},
 					Entry(
 						"L2 primary UDN, cluster-networked pods",
-						NetworkAttachmentConfigParams{
+						multihoming.NetworkAttachmentConfigParams{
 							Name:     nadName,
 							Topology: "layer2",
-							Cidr:     CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							Cidr:     multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							Role:     "primary",
 						},
 						false,
 					),
 					Entry(
 						"L3 primary UDN, cluster-networked pods",
-						NetworkAttachmentConfigParams{
+						multihoming.NetworkAttachmentConfigParams{
 							Name:     nadName,
 							Topology: "layer3",
-							Cidr:     CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							Cidr:     multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							Role:     "primary",
 						},
 						false,
 					),
 					Entry(
 						"L2 primary UDN, host-networked pods",
-						NetworkAttachmentConfigParams{
+						multihoming.NetworkAttachmentConfigParams{
 							Name:     nadName,
 							Topology: "layer2",
-							Cidr:     CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							Cidr:     multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							Role:     "primary",
 						},
 						true,
 					),
 					Entry(
 						"L3 primary UDN, host-networked pods",
-						NetworkAttachmentConfigParams{
+						multihoming.NetworkAttachmentConfigParams{
 							Name:     nadName,
 							Topology: "layer3",
-							Cidr:     CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							Cidr:     multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							Role:     "primary",
 						},
 						true,
 					),
 				)
 			},
-			Entry("NetworkAttachmentDefinitions", func(c NetworkAttachmentConfigParams) error {
-				netConfig := NewNetworkAttachmentConfig(c)
-				nad := GenerateNAD(netConfig)
+			Entry("NetworkAttachmentDefinitions", func(c multihoming.NetworkAttachmentConfigParams) error {
+				netConfig := multihoming.NewNetworkAttachmentConfig(c)
+				nad := multihoming.GenerateNAD(netConfig)
 				_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(context.Background(), nad, metav1.CreateOptions{})
 				return err
 			}),
-			Entry("UserDefinedNetwork", func(c NetworkAttachmentConfigParams) error {
+			Entry("UserDefinedNetwork", func(c multihoming.NetworkAttachmentConfigParams) error {
 				udnManifest := generateUserDefinedNetworkManifest(&c)
 				cleanup, err := createManifest(f.Namespace.Name, udnManifest)
 				DeferCleanup(cleanup)
@@ -173,11 +175,11 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", func() {
 		)
 
 		DescribeTableSubtree("created using",
-			func(createNetworkFn func(c NetworkAttachmentConfigParams) error) {
+			func(createNetworkFn func(c multihoming.NetworkAttachmentConfigParams) error) {
 				DescribeTable(
 					"does not mirror EndpointSlices in namespaces not using user defined primary networks",
 					func(
-						netConfig NetworkAttachmentConfigParams,
+						netConfig multihoming.NetworkAttachmentConfigParams,
 					) {
 						By("creating default net namespace")
 						defaultNetNamespace := &v1.Namespace{
@@ -225,31 +227,31 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", func() {
 					},
 					Entry(
 						"L2 secondary UDN",
-						NetworkAttachmentConfigParams{
+						multihoming.NetworkAttachmentConfigParams{
 							Name:     nadName,
 							Topology: "layer2",
-							Cidr:     CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							Cidr:     multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							Role:     "secondary",
 						},
 					),
 					Entry(
 						"L3 secondary UDN",
-						NetworkAttachmentConfigParams{
+						multihoming.NetworkAttachmentConfigParams{
 							Name:     nadName,
 							Topology: "layer3",
-							Cidr:     CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							Cidr:     multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							Role:     "secondary",
 						},
 					),
 				)
 			},
-			Entry("NetworkAttachmentDefinitions", func(c NetworkAttachmentConfigParams) error {
-				netConfig := NewNetworkAttachmentConfig(c)
-				nad := GenerateNAD(netConfig)
+			Entry("NetworkAttachmentDefinitions", func(c multihoming.NetworkAttachmentConfigParams) error {
+				netConfig := multihoming.NewNetworkAttachmentConfig(c)
+				nad := multihoming.GenerateNAD(netConfig)
 				_, err := nadClient.NetworkAttachmentDefinitions(fmt.Sprintf("%s-default", f.Namespace.Name)).Create(context.Background(), nad, metav1.CreateOptions{})
 				return err
 			}),
-			Entry("UserDefinedNetwork", func(c NetworkAttachmentConfigParams) error {
+			Entry("UserDefinedNetwork", func(c multihoming.NetworkAttachmentConfigParams) error {
 				udnManifest := generateUserDefinedNetworkManifest(&c)
 				cleanup, err := createManifest(fmt.Sprintf("%s-default", f.Namespace.Name), udnManifest)
 				DeferCleanup(cleanup)
@@ -294,7 +296,7 @@ func validateMirroredEndpointSlices(cs clientset.Interface, namespace, svcName, 
 			if len(endpoint.Addresses) != 1 {
 				return fmt.Errorf("expected 1 endpoint, got: %d", len(endpoint.Addresses))
 			}
-			if err := InRange(subnet, endpoint.Addresses[0]); err != nil {
+			if err := multihoming.InRange(subnet, endpoint.Addresses[0]); err != nil {
 				return err
 			}
 		}
