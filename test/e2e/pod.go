@@ -17,6 +17,8 @@ import (
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/clusterinspection"
 )
 
 var _ = ginkgo.Describe("Pod to external server PMTUD", func() {
@@ -95,11 +97,11 @@ var _ = ginkgo.Describe("Pod to external server PMTUD", func() {
 				agntHostCmds,
 			)
 
-			if isIPv4Supported() {
+			if clusterinspection.IsIPv4Supported() {
 				serverNodeInternalIPs = append(serverNodeInternalIPs, externalIpv4)
 			}
 
-			if isIPv6Supported() {
+			if clusterinspection.IsIPv6Supported() {
 				serverNodeInternalIPs = append(serverNodeInternalIPs, externalIpv6)
 			}
 

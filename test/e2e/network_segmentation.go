@@ -33,6 +33,8 @@ import (
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	utilnet "k8s.io/utils/net"
 	"k8s.io/utils/pointer"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/clusterinspection"
 )
 
 const openDefaultPortsAnnotation = "k8s.ovn.org/open-default-ports"
@@ -2164,12 +2166,12 @@ func generateCIDRforUDN(v4, v6 string) string {
 	cidr := `
     - cidr: ` + v4 + `
 `
-	if isIPv6Supported() && isIPv4Supported() {
+	if clusterinspection.IsIPv6Supported() && clusterinspection.IsIPv4Supported() {
 		cidr = `
     - cidr: ` + v4 + `
     - cidr: ` + v6 + `
 `
-	} else if isIPv6Supported() {
+	} else if clusterinspection.IsIPv6Supported() {
 		cidr = `
     - cidr: ` + v6 + `
 `
@@ -2179,9 +2181,9 @@ func generateCIDRforUDN(v4, v6 string) string {
 
 func generateCIDRforClusterUDN(v4, v6 string) string {
 	cidr := `[{cidr: ` + v4 + `}]`
-	if isIPv6Supported() && isIPv4Supported() {
+	if clusterinspection.IsIPv6Supported() && clusterinspection.IsIPv4Supported() {
 		cidr = `[{cidr: ` + v4 + `},{cidr: ` + v6 + `}]`
-	} else if isIPv6Supported() {
+	} else if clusterinspection.IsIPv6Supported() {
 		cidr = `[{cidr: ` + v6 + `}]`
 	}
 	return cidr
@@ -2306,14 +2308,14 @@ func connectToServerViaDefaultNetwork(clientPodConfig podConfiguration, serverIP
 
 // assertClientExternalConnectivity checks if the client can connect to an externally created IP outside the cluster
 func assertClientExternalConnectivity(clientPodConfig podConfiguration, externalIpv4 string, externalIpv6 string, port int) {
-	if isIPv4Supported() {
+	if clusterinspection.IsIPv4Supported() {
 		By("asserting the *client* pod can contact the server's v4 IP located outside the cluster")
 		Eventually(func() error {
 			return connectToServer(clientPodConfig, externalIpv4, port)
 		}, 2*time.Minute, 6*time.Second).Should(Succeed())
 	}
 
-	if isIPv6Supported() {
+	if clusterinspection.IsIPv6Supported() {
 		By("asserting the *client* pod can contact the server's v6 IP located outside the cluster")
 		Eventually(func() error {
 			return connectToServer(clientPodConfig, externalIpv6, port)
@@ -2327,13 +2329,13 @@ func runExternalContainerCmd() []string {
 
 func expectedNumberOfRoutes(netConfig networkAttachmentConfigParams) int {
 	if netConfig.topology == "layer2" {
-		if isIPv6Supported() && isIPv4Supported() {
+		if clusterinspection.IsIPv6Supported() && clusterinspection.IsIPv4Supported() {
 			return 4 // 2 routes per family
 		} else {
 			return 2 //one family supported
 		}
 	}
-	if isIPv6Supported() && isIPv4Supported() {
+	if clusterinspection.IsIPv6Supported() && clusterinspection.IsIPv4Supported() {
 		return 6 // 3 v4 routes + 3 v6 routes for UDN
 	}
 	return 3 //only one family, each has 3 routes

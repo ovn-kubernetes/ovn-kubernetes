@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/clusterinspection"
 	"net"
 	"net/netip"
 	"os"
@@ -1683,7 +1684,7 @@ runcmd:
 			nodeIPs := e2enode.CollectAddresses(nodes, v1.NodeInternalIP)
 
 			if td.role == "primary" {
-				if isIPv6Supported() && isInterconnectEnabled() {
+				if clusterinspection.IsIPv6Supported() && isInterconnectEnabled() {
 					step = by(vmi.Name, fmt.Sprintf("Checking IPv6 gateway before %s %s", td.resource.description, td.test.description))
 
 					nodeRunningVMI, err := fr.ClientSet.CoreV1().Nodes().Get(context.Background(), vmi.Status.NodeName, metav1.GetOptions{})
@@ -1741,7 +1742,7 @@ runcmd:
 			}
 
 			if td.role == "primary" && td.test.description == liveMigrate.description && isInterconnectEnabled() {
-				if isIPv4Supported() {
+				if clusterinspection.IsIPv4Supported() {
 					step = by(vmi.Name, fmt.Sprintf("Checking IPv4 gateway cached mac after %s %s", td.resource.description, td.test.description))
 					Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
 
@@ -1758,7 +1759,7 @@ runcmd:
 						WithPolling(time.Second).
 						Should(Equal(expectedGatewayMAC), step)
 				}
-				if isIPv6Supported() {
+				if clusterinspection.IsIPv6Supported() {
 					step = by(vmi.Name, fmt.Sprintf("Checking IPv6 gateway after %s %s", td.resource.description, td.test.description))
 
 					targetNode, err := fr.ClientSet.CoreV1().Nodes().Get(context.Background(), vmi.Status.MigrationState.TargetNode, metav1.GetOptions{})
@@ -1929,7 +1930,7 @@ runcmd:
 				Get(context.Background(), config.Kubernetes.DNSServiceName, metav1.GetOptions{})
 			Expect(err).NotTo(HaveOccurred())
 
-			if isIPv4Supported() {
+			if clusterinspection.IsIPv4Supported() {
 				expectedIP, err := matchIPv4StringFamily(primaryUDNNetworkStatus.IPs)
 				Expect(err).NotTo(HaveOccurred())
 
@@ -1957,7 +1958,7 @@ runcmd:
 				Expect(primaryUDNValueForDevice("GENERAL.MTU")).To(ConsistOf("1300"))
 			}
 
-			if isIPv6Supported() {
+			if clusterinspection.IsIPv6Supported() {
 				expectedIP, err := matchIPv6StringFamily(primaryUDNNetworkStatus.IPs)
 				Expect(err).NotTo(HaveOccurred())
 				Eventually(primaryUDNValueFor).

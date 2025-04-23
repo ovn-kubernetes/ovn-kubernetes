@@ -30,6 +30,8 @@ import (
 	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 	e2eservice "k8s.io/kubernetes/test/e2e/framework/service"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/clusterinspection"
 )
 
 var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is advertised", func() {
@@ -49,11 +51,11 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 		serverContainerIPs = []string{}
 
 		bgpServerIPv4, bgpServerIPv6 := getContainerAddressesForNetwork(serverContainerName, bgpExternalNetworkName)
-		if isIPv4Supported() {
+		if clusterinspection.IsIPv4Supported() {
 			serverContainerIPs = append(serverContainerIPs, bgpServerIPv4)
 		}
 
-		if isIPv6Supported() {
+		if clusterinspection.IsIPv6Supported() {
 			serverContainerIPs = append(serverContainerIPs, bgpServerIPv6)
 		}
 		framework.Logf("The external server IPs are: %+v", serverContainerIPs)
@@ -215,7 +217,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 					60*time.Second)
 				framework.ExpectNoError(err, fmt.Sprintf("Testing pod to external traffic failed: %v", err))
 				expectedPodIP := podv4IP
-				if isIPv6Supported() && utilnet.IsIPv6String(serverContainerIP) {
+				if clusterinspection.IsIPv6Supported() && utilnet.IsIPv6String(serverContainerIP) {
 					expectedPodIP = podv6IP
 					// For IPv6 addresses, need to handle the brackets in the output
 					outputIP := strings.TrimPrefix(strings.Split(stdout, "]:")[0], "[")
@@ -260,11 +262,11 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 		serverContainerIPs = []string{}
 
 		bgpServerIPv4, bgpServerIPv6 := getContainerAddressesForNetwork(serverContainerName, bgpExternalNetworkName)
-		if isIPv4Supported() {
+		if clusterinspection.IsIPv4Supported() {
 			serverContainerIPs = append(serverContainerIPs, bgpServerIPv4)
 		}
 
-		if isIPv6Supported() {
+		if clusterinspection.IsIPv6Supported() {
 			serverContainerIPs = append(serverContainerIPs, bgpServerIPv6)
 		}
 		framework.Logf("The external server IPs are: %+v", serverContainerIPs)
@@ -408,7 +410,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 					framework.Poll,
 					60*time.Second)
 				framework.ExpectNoError(err, fmt.Sprintf("Testing pod to external traffic failed: %v", err))
-				if isIPv6Supported() && utilnet.IsIPv6String(serverContainerIP) {
+				if clusterinspection.IsIPv6Supported() && utilnet.IsIPv6String(serverContainerIP) {
 					podIP, err = podIPsForUserDefinedPrimaryNetwork(f.ClientSet, f.Namespace.Name, clientPod.Name, namespacedName(f.Namespace.Name, cUDN.Name), 1)
 					// For IPv6 addresses, need to handle the brackets in the output
 					outputIP := strings.TrimPrefix(strings.Split(stdout, "]:")[0], "[")
@@ -763,7 +765,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 							return fmt.Errorf("expected connectivity check to contain %q, got %q", expectedOutput, out)
 						}
 					}
-					if isIPv6Supported() && isIPv4Supported() {
+					if clusterinspection.IsIPv6Supported() && clusterinspection.IsIPv4Supported() {
 						// use ipFamilyIndex of 1 to pick the IPv6 addresses
 						clientName, clientNamespace, dst, expectedOutput, expectErr := connInfo(1)
 						out, err := checkConnectivity(clientName, clientNamespace, dst)
@@ -948,10 +950,10 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 
 func generateL3Subnets(v4, v6 udnv1.Layer3Subnet) []udnv1.Layer3Subnet {
 	var subnets []udnv1.Layer3Subnet
-	if isIPv4Supported() {
+	if clusterinspection.IsIPv4Supported() {
 		subnets = append(subnets, v4)
 	}
-	if isIPv6Supported() {
+	if clusterinspection.IsIPv6Supported() {
 		subnets = append(subnets, v6)
 	}
 	return subnets
@@ -959,10 +961,10 @@ func generateL3Subnets(v4, v6 udnv1.Layer3Subnet) []udnv1.Layer3Subnet {
 
 func generateL2Subnets(v4, v6 string) udnv1.DualStackCIDRs {
 	var subnets udnv1.DualStackCIDRs
-	if isIPv4Supported() {
+	if clusterinspection.IsIPv4Supported() {
 		subnets = append(subnets, udnv1.CIDR(v4))
 	}
-	if isIPv6Supported() {
+	if clusterinspection.IsIPv6Supported() {
 		subnets = append(subnets, udnv1.CIDR(v6))
 	}
 	return subnets
