@@ -1596,17 +1596,17 @@ runcmd:
 
 			if td.topology == "localnet" {
 				By("setting up the localnet underlay")
-				nodes := OvsPods(clientSet)
+				nodes := multihoming.OvsPods(clientSet)
 				Expect(nodes).NotTo(BeEmpty())
 				DeferCleanup(func() {
 					if e2eframework.TestContext.DeleteNamespace && (e2eframework.TestContext.DeleteNamespaceOnFailure || !CurrentSpecReport().Failed()) {
 						By("tearing down the localnet underlay")
-						Expect(TeardownUnderlay(nodes, SecondaryBridge)).To(Succeed())
+						Expect(multihoming.TeardownUnderlay(nodes, multihoming.SecondaryBridge)).To(Succeed())
 					}
 				})
 
 				const secondaryInterfaceName = "eth1"
-				Expect(SetupUnderlay(nodes, SecondaryBridge, secondaryInterfaceName, netConfig)).To(Succeed())
+				Expect(multihoming.SetupUnderlay(nodes, multihoming.SecondaryBridge, secondaryInterfaceName, netConfig)).To(Succeed())
 			}
 
 			By("Creating NetworkAttachmentDefinition")
@@ -2037,17 +2037,17 @@ chpasswd: { expire: False }
 				})
 
 			By("setting up the localnet underlay")
-			nodes := OvsPods(clientSet)
+			nodes := multihoming.OvsPods(clientSet)
 			Expect(nodes).NotTo(BeEmpty())
 			DeferCleanup(func() {
 				if e2eframework.TestContext.DeleteNamespace && (e2eframework.TestContext.DeleteNamespaceOnFailure || !CurrentSpecReport().Failed()) {
 					By("tearing down the localnet underlay")
-					Expect(TeardownUnderlay(nodes, SecondaryBridge)).To(Succeed())
+					Expect(multihoming.TeardownUnderlay(nodes, multihoming.SecondaryBridge)).To(Succeed())
 				}
 			})
 
 			const secondaryInterfaceName = "eth1"
-			Expect(SetupUnderlay(nodes, SecondaryBridge, secondaryInterfaceName, netConfig)).To(Succeed())
+			Expect(multihoming.SetupUnderlay(nodes, multihoming.SecondaryBridge, secondaryInterfaceName, netConfig)).To(Succeed())
 
 			By("Creating NetworkAttachmentDefinition")
 			nad = multihoming.GenerateNAD(netConfig)

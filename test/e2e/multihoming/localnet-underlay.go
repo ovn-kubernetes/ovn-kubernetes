@@ -1,4 +1,4 @@
-package e2e
+package multihoming
 
 import (
 	"context"
@@ -12,7 +12,6 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/inclustercommands"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/multihoming"
 )
 
 const (
@@ -22,7 +21,7 @@ const (
 	del              = "del-br"
 )
 
-func SetupUnderlay(ovsPods []v1.Pod, bridgeName, portName string, nadConfig multihoming.NetworkAttachmentConfig) error {
+func SetupUnderlay(ovsPods []v1.Pod, bridgeName, portName string, nadConfig NetworkAttachmentConfig) error {
 	for _, ovsPod := range ovsPods {
 		if bridgeName != DefaultOvsBridge {
 			if err := addOVSBridge(ovsPod.Name, bridgeName); err != nil {
@@ -50,7 +49,7 @@ func SetupUnderlay(ovsPods []v1.Pod, bridgeName, portName string, nadConfig mult
 	return nil
 }
 
-func ovsRemoveSwitchPort(ovsPods []v1.Pod, portName string, newVLANID int) error {
+func OvsRemoveSwitchPort(ovsPods []v1.Pod, portName string, newVLANID int) error {
 	for _, ovsPod := range ovsPods {
 		if err := ovsRemoveVLANAccessPort(ovsPod.Name, SecondaryBridge, portName); err != nil {
 			return fmt.Errorf("failed to remove old VLAN port: %v", err)
@@ -202,8 +201,9 @@ func bridgeMapping(physnet, ovsBridge string) BridgeMapping {
 	}
 }
 
+// CreateVLANInterface creates a VLAN subinterface on `deviceName`, having `vlanID`
 // TODO: make this function idempotent; use golang netlink instead
-func createVLANInterface(deviceName string, vlanID string, ipAddress *string) error {
+func CreateVLANInterface(deviceName string, vlanID string, ipAddress *string) error {
 	vlan := vlanName(deviceName, vlanID)
 	cmd := exec.Command("sudo", "ip", "link", "add", "link", deviceName, "name", vlan, "type", "vlan", "id", vlanID)
 	cmd.Stderr = os.Stderr
@@ -228,8 +228,9 @@ func createVLANInterface(deviceName string, vlanID string, ipAddress *string) er
 	return nil
 }
 
+// DeleteVLANInterface deletes the VLAN subinterface on `deviceName` having `vlanID`
 // TODO: make this function idempotent; use golang netlink instead
-func deleteVLANInterface(deviceName string, vlanID string) error {
+func DeleteVLANInterface(deviceName string, vlanID string) error {
 	vlan := vlanName(deviceName, vlanID)
 	cmd := exec.Command("sudo", "ip", "link", "del", vlan)
 	cmd.Stderr = os.Stderr
