@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/testframework"
 	"os"
 	"strings"
 	"time"
@@ -22,7 +23,7 @@ var _ = ginkgo.Describe("Status manager validation", func() {
 		egressFirewallYamlFile string = "egress-fw.yml"
 	)
 
-	f := wrappedTestFramework(svcname)
+	f := testframework.WrappedTestFramework(svcname)
 
 	ginkgo.BeforeEach(func() {
 		// create EgressFirewall

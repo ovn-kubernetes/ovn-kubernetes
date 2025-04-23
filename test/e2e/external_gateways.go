@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/clusterinspection"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/testframework"
 	"net"
 	"os"
 	"strconv"
@@ -94,7 +96,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 			exGWRemoteIpAlt1 string
 			exGWRemoteIpAlt2 string
 		)
-		f := wrappedTestFramework(svcname)
+		f := testframework.WrappedTestFramework(svcname)
 
 		// Determine what mode the CI is running in and get relevant endpoint information for the tests
 		ginkgo.BeforeEach(func() {
@@ -108,13 +110,13 @@ var _ = ginkgo.Describe("External Gateway", func() {
 
 		ginkgo.AfterEach(func() {
 			// tear down the containers simulating the gateways
-			if cid, _ := inclustercommands.RunCommand(containerRuntime, "ps", "-qaf", fmt.Sprintf("name=%s", gwContainerNameAlt1)); cid != "" {
-				if _, err := inclustercommands.RunCommand(containerRuntime, "rm", "-f", gwContainerNameAlt1); err != nil {
+			if cid, _ := inclustercommands.RunCommand(testframework.ContainerRuntime, "ps", "-qaf", fmt.Sprintf("name=%s", gwContainerNameAlt1)); cid != "" {
+				if _, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "rm", "-f", gwContainerNameAlt1); err != nil {
 					framework.Logf("failed to delete the gateway test container %s %v", gwContainerNameAlt1, err)
 				}
 			}
-			if cid, _ := inclustercommands.RunCommand(containerRuntime, "ps", "-qaf", fmt.Sprintf("name=%s", gwContainerNameAlt2)); cid != "" {
-				if _, err := inclustercommands.RunCommand(containerRuntime, "rm", "-f", gwContainerNameAlt2); err != nil {
+			if cid, _ := inclustercommands.RunCommand(testframework.ContainerRuntime, "ps", "-qaf", fmt.Sprintf("name=%s", gwContainerNameAlt2)); cid != "" {
+				if _, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "rm", "-f", gwContainerNameAlt2); err != nil {
 					framework.Logf("failed to delete the gateway test container %s %v", gwContainerNameAlt2, err)
 				}
 			}
@@ -134,7 +136,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 			ciWorkerNodeSrc := ovnWorkerNode
 
 			// start the container that will act as an external gateway
-			_, err := inclustercommands.RunCommand(containerRuntime, "run", "-itd", "--privileged", "--network", externalContainerNetwork, "--name", gwContainerNameAlt1, agnhostImage)
+			_, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "run", "-itd", "--privileged", "--network", externalContainerNetwork, "--name", gwContainerNameAlt1, agnhostImage)
 			if err != nil {
 				framework.Failf("failed to start external gateway test container %s: %v", gwContainerNameAlt1, err)
 			}
@@ -172,7 +174,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 			}
 			framework.Logf("the pod cidr for node %s is %s", ciWorkerNodeSrc, podCIDR)
 			// add loopback interface used to validate all traffic is getting drained through the gateway
-			_, err = inclustercommands.RunCommand(containerRuntime, "exec", gwContainerNameAlt1, "ip", "address", "add", exGWRemoteCidrAlt1, "dev", "lo")
+			_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", gwContainerNameAlt1, "ip", "address", "add", exGWRemoteCidrAlt1, "dev", "lo")
 			if err != nil {
 				framework.Failf("failed to add the loopback ip to dev lo on the test container: %v", err)
 			}
@@ -193,11 +195,11 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				framework.Failf("Error trying to get the pod IP address")
 			}
 			// add a host route on the first mock gateway for return traffic to the pod
-			_, err = inclustercommands.RunCommand(containerRuntime, "exec", gwContainerNameAlt1, "ip", "route", "add", pingSrc, "via", nodeIP)
+			_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", gwContainerNameAlt1, "ip", "route", "add", pingSrc, "via", nodeIP)
 			if err != nil {
 				framework.Failf("failed to add the pod host route on the test container: %v", err)
 			}
-			_, err = inclustercommands.RunCommand(containerRuntime, "exec", gwContainerNameAlt1, "ping", "-c", "5", pingSrc)
+			_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", gwContainerNameAlt1, "ping", "-c", "5", pingSrc)
 			framework.ExpectNoError(err, "Failed to ping %s from container %s", pingSrc, gwContainerNameAlt1)
 
 			time.Sleep(time.Second * 15)
@@ -208,7 +210,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				framework.Failf("Failed to ping the first gateway network %s from container %s on node %s: %v", exGWRemoteIpAlt1, ovnContainer, ovnWorkerNode, err)
 			}
 			// start the container that will act as a new external gateway that the tests will be updated to use
-			_, err = inclustercommands.RunCommand(containerRuntime, "run", "-itd", "--privileged", "--network", externalContainerNetwork, "--name", gwContainerNameAlt2, agnhostImage)
+			_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "run", "-itd", "--privileged", "--network", externalContainerNetwork, "--name", gwContainerNameAlt2, agnhostImage)
 			if err != nil {
 				framework.Failf("failed to start external gateway test container %s: %v", gwContainerNameAlt2, err)
 			}
@@ -230,17 +232,17 @@ var _ = ginkgo.Describe("External Gateway", func() {
 			framework.Logf("Annotating the external gateway test namespace to a new container remote IP:%s gw:%s ", exGWIpAlt2, exGWRemoteIpAlt2)
 			e2ekubectl.RunKubectlOrDie(f.Namespace.Name, annotateArgs...)
 			// add loopback interface used to validate all traffic is getting drained through the gateway
-			_, err = inclustercommands.RunCommand(containerRuntime, "exec", gwContainerNameAlt2, "ip", "address", "add", exGWRemoteCidrAlt2, "dev", "lo")
+			_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", gwContainerNameAlt2, "ip", "address", "add", exGWRemoteCidrAlt2, "dev", "lo")
 			if err != nil {
 				framework.Failf("failed to add the loopback ip to dev lo on the test container: %v", err)
 			}
 			// add a host route on the second mock gateway for return traffic to the pod
-			_, err = inclustercommands.RunCommand(containerRuntime, "exec", gwContainerNameAlt2, "ip", "route", "add", pingSrc, "via", nodeIP)
+			_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", gwContainerNameAlt2, "ip", "route", "add", pingSrc, "via", nodeIP)
 			if err != nil {
 				framework.Failf("failed to add the pod route on the test container: %v", err)
 			}
 
-			_, err = inclustercommands.RunCommand(containerRuntime, "exec", gwContainerNameAlt2, "ping", "-c", "5", pingSrc)
+			_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", gwContainerNameAlt2, "ping", "-c", "5", pingSrc)
 			framework.ExpectNoError(err, "Failed to ping %s from container %s", pingSrc, gwContainerNameAlt1)
 
 			// Verify the updated gateway and remote address is reachable from the initial pod
@@ -263,7 +265,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 			gwContainer string = "gw-ingress-test-container"
 		)
 
-		f := wrappedTestFramework(svcname)
+		f := testframework.WrappedTestFramework(svcname)
 
 		type nodeInfo struct {
 			name   string
@@ -295,8 +297,8 @@ var _ = ginkgo.Describe("External Gateway", func() {
 
 		ginkgo.AfterEach(func() {
 			// tear down the container simulating the gateway
-			if cid, _ := inclustercommands.RunCommand(containerRuntime, "ps", "-qaf", fmt.Sprintf("name=%s", gwContainer)); cid != "" {
-				if _, err := inclustercommands.RunCommand(containerRuntime, "rm", "-f", gwContainer); err != nil {
+			if cid, _ := inclustercommands.RunCommand(testframework.ContainerRuntime, "ps", "-qaf", fmt.Sprintf("name=%s", gwContainer)); cid != "" {
+				if _, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "rm", "-f", gwContainer); err != nil {
 					framework.Logf("failed to delete the gateway test container %s %v", gwContainer, err)
 				}
 			}
@@ -320,7 +322,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 			}
 
 			// start the first container that will act as an external gateway
-			_, err := inclustercommands.RunCommand(containerRuntime, "run", "-itd", "--privileged", "--network", externalContainerNetwork,
+			_, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "run", "-itd", "--privileged", "--network", externalContainerNetwork,
 				"--name", gwContainer, agnhostImage)
 			if err != nil {
 				framework.Failf("failed to start external gateway test container %s: %v", gwContainer, err)
@@ -367,12 +369,12 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				framework.Failf("Error trying to get the pod IP address")
 			}
 			// add a host route on the gateway for return traffic to the pod
-			_, err = inclustercommands.RunCommand(containerRuntime, "exec", gwContainer, "ip", "route", "add", pingDstPod, "via", nodeIP)
+			_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", gwContainer, "ip", "route", "add", pingDstPod, "via", nodeIP)
 			if err != nil {
 				framework.Failf("failed to add the pod host route on the test container %s: %v", gwContainer, err)
 			}
 			// add a loopback address to the mock container that will source the ingress test
-			_, err = inclustercommands.RunCommand(containerRuntime, "exec", gwContainer, "ip", "address", "add", exGWLoCidr, "dev", "lo")
+			_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", gwContainer, "ip", "address", "add", exGWLoCidr, "dev", "lo")
 			if err != nil {
 				framework.Failf("failed to add the loopback ip to dev lo on the test container: %v", err)
 			}
@@ -380,7 +382,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 			// Validate connectivity from the external gateway loopback to the pod in the test namespace
 			ginkgo.By(fmt.Sprintf("Validate ingress traffic from the external gateway %s can reach the pod in the exgw annotated namespace", gwContainer))
 			// generate traffic that will verify connectivity from the mock external gateway loopback
-			_, err = inclustercommands.RunCommand(containerRuntime, "exec", gwContainer, string(pingCmd), "-c", pingCount, "-I", "eth0", pingDstPod)
+			_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", gwContainer, string(pingCmd), "-c", pingCount, "-I", "eth0", pingDstPod)
 			if err != nil {
 				framework.Failf("failed to ping the pod address %s from mock container %s: %v", pingDstPod, gwContainer, err)
 			}
@@ -417,7 +419,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				gwContainers []string
 			)
 
-			f := wrappedTestFramework(svcname)
+			f := testframework.WrappedTestFramework(svcname)
 
 			ginkgo.BeforeEach(func() {
 				clientSet = f.ClientSet // so it can be used in AfterEach
@@ -452,7 +454,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 					ginkgo.By(fmt.Sprintf("Verifying connectivity to the pod [%s] from external gateways", addresses.srcPodIP))
 					for _, gwContainer := range gwContainers {
 						// Ping from a common IP address that exists on both gateways to ensure test coverage where ingress reply goes back to the same host.
-						_, err := inclustercommands.RunCommand(containerRuntime, "exec", gwContainer, "ping", "-I", addresses.targetIPs[0], "-c", testTimeout, addresses.srcPodIP)
+						_, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", gwContainer, "ping", "-I", addresses.targetIPs[0], "-c", testTimeout, addresses.srcPodIP)
 						framework.ExpectNoError(err, "Failed to ping %s from container %s", addresses.srcPodIP, gwContainer)
 					}
 
@@ -494,7 +496,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 
 					expectedHostNames := make(map[string]struct{})
 					for _, c := range gwContainers {
-						res, err := inclustercommands.RunCommand(containerRuntime, "exec", c, "hostname")
+						res, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", c, "hostname")
 						framework.ExpectNoError(err, "failed to run hostname in %s", c)
 						hostname := strings.TrimSuffix(res, "\n")
 						framework.Logf("Hostname for %s is %s", c, hostname)
@@ -559,7 +561,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				externalUDPPort        = 90
 			)
 
-			f := wrappedTestFramework(svcname)
+			f := testframework.WrappedTestFramework(svcname)
 
 			var gwContainers []string
 			var addressesv4, addressesv6 gatewayTestIPs
@@ -584,8 +586,8 @@ var _ = ginkgo.Describe("External Gateway", func() {
 
 			ginkgo.AfterEach(func() {
 				// tear down the containers simulating the gateways
-				deleteClusterExternalContainer(gwContainer1)
-				deleteClusterExternalContainer(gwContainer2)
+				DeleteClusterExternalContainer(gwContainer1)
+				DeleteClusterExternalContainer(gwContainer2)
 				resetGatewayAnnotations(f)
 			})
 
@@ -599,13 +601,13 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				ginkgo.By("Verifying connectivity to the pod from external gateways")
 				for _, gwContainer := range gwContainers {
 					// Ping from a common IP address that exists on both gateways to ensure test coverage where ingress reply goes back to the same host.
-					_, err := inclustercommands.RunCommand(containerRuntime, "exec", gwContainer, "ping", "-I", addresses.targetIPs[0], "-c", testTimeout, addresses.srcPodIP)
+					_, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", gwContainer, "ping", "-I", addresses.targetIPs[0], "-c", testTimeout, addresses.srcPodIP)
 					framework.ExpectNoError(err, "Failed to ping %s from container %s", addresses.srcPodIP, gwContainer)
 				}
 
 				ginkgo.By("Verifying connectivity to the pod from external gateways with large packets > pod MTU")
 				for _, gwContainer := range gwContainers {
-					_, err := inclustercommands.RunCommand(containerRuntime, "exec", gwContainer, "ping", "-s", "1420", "-c", testTimeout, addresses.srcPodIP)
+					_, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", gwContainer, "ping", "-s", "1420", "-c", testTimeout, addresses.srcPodIP)
 					framework.ExpectNoError(err, "Failed to ping %s from container %s", addresses.srcPodIP, gwContainer)
 				}
 
@@ -701,7 +703,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				gatewayPodName2 string = "e2e-gateway-pod2"
 			)
 
-			f := wrappedTestFramework(svcname)
+			f := testframework.WrappedTestFramework(svcname)
 
 			var (
 				addressesv4, addressesv6 gatewayTestIPs
@@ -742,8 +744,8 @@ var _ = ginkgo.Describe("External Gateway", func() {
 			ginkgo.AfterEach(func() {
 				// tear down the containers and pods simulating the gateways
 				ginkgo.By("Deleting the gateway containers")
-				deleteClusterExternalContainer(gwContainer1)
-				deleteClusterExternalContainer(gwContainer2)
+				DeleteClusterExternalContainer(gwContainer1)
+				DeleteClusterExternalContainer(gwContainer2)
 				resetGatewayAnnotations(f)
 			})
 
@@ -756,7 +758,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 
 				setupIperf3Client := func(container, address string, port int) {
 					// note iperf3 even when using udp also spawns tcp connection first; so we indirectly also have the tcp connection when using "-u" flag
-					cmd := []string{containerRuntime, "exec", container, "iperf3", "-u", "-c", address, "-p", fmt.Sprintf("%d", port), "-b", "1M", "-i", "1", "-t", "3", "&"}
+					cmd := []string{testframework.ContainerRuntime, "exec", container, "iperf3", "-u", "-c", address, "-p", fmt.Sprintf("%d", port), "-b", "1M", "-i", "1", "-t", "3", "&"}
 					_, err := inclustercommands.RunCommand(cmd...)
 					framework.ExpectNoError(err, "failed to setup iperf3 client for %s", container)
 				}
@@ -818,7 +820,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				}
 
 				// ensure the conntrack deletion tracker annotation is updated
-				if !isInterconnectEnabled() {
+				if !clusterinspection.IsInterconnectEnabled() {
 					ginkgo.By("Check if the k8s.ovn.org/external-gw-pod-ips got updated for the app namespace")
 					err := wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
 						ns := getNamespace(f, f.Namespace.Name)
@@ -829,7 +831,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 
 				setupIperf3Client := func(container, address string, port int) {
 					// note iperf3 even when using udp also spawns tcp connection first; so we indirectly also have the tcp connection when using "-u" flag
-					cmd := []string{containerRuntime, "exec", container, "iperf3", "-u", "-c", address, "-p", fmt.Sprintf("%d", port), "-b", "1M", "-i", "1", "-t", "3", "&"}
+					cmd := []string{testframework.ContainerRuntime, "exec", container, "iperf3", "-u", "-c", address, "-p", fmt.Sprintf("%d", port), "-b", "1M", "-i", "1", "-t", "3", "&"}
 					_, err := inclustercommands.RunCommand(cmd...)
 					framework.ExpectNoError(err, "failed to setup iperf3 client for %s", container)
 				}
@@ -863,7 +865,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				}
 
 				// ensure the conntrack deletion tracker annotation is updated
-				if !isInterconnectEnabled() {
+				if !clusterinspection.IsInterconnectEnabled() {
 					ginkgo.By("Check if the k8s.ovn.org/external-gw-pod-ips got updated for the app namespace")
 					err = wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
 						ns := getNamespace(f, f.Namespace.Name)
@@ -883,7 +885,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				annotatePodForGateway(gatewayPodName1, servingNamespace, "", addresses.gatewayIPs[0], false)
 
 				// ensure the conntrack deletion tracker annotation is updated
-				if !isInterconnectEnabled() {
+				if !clusterinspection.IsInterconnectEnabled() {
 					ginkgo.By("Check if the k8s.ovn.org/external-gw-pod-ips got updated for the app namespace")
 					err = wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
 						ns := getNamespace(f, f.Namespace.Name)
@@ -938,7 +940,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 					gwContainers []string
 				)
 
-				f := wrappedTestFramework(svcname)
+				f := testframework.WrappedTestFramework(svcname)
 
 				ginkgo.BeforeEach(func() {
 					clientSet = f.ClientSet // so it can be used in AfterEach
@@ -974,7 +976,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 						ginkgo.By("Verifying connectivity to the pod from external gateways")
 						for _, gwContainer := range gwContainers {
 							// Ping from a common IP address that exists on both gateways to ensure test coverage where ingress reply goes back to the same host.
-							_, err := inclustercommands.RunCommand(containerRuntime, "exec", gwContainer, "ping", "-I", addresses.targetIPs[0], "-c", testTimeout, addresses.srcPodIP)
+							_, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", gwContainer, "ping", "-I", addresses.targetIPs[0], "-c", testTimeout, addresses.srcPodIP)
 							framework.ExpectNoError(err, "Failed to ping %s from container %s", addresses.srcPodIP, gwContainer)
 						}
 
@@ -1015,7 +1017,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 
 						if len(gwContainers) > 1 {
 							ginkgo.By("Deleting one container")
-							deleteClusterExternalContainer(gwContainers[1])
+							DeleteClusterExternalContainer(gwContainers[1])
 							time.Sleep(3 * time.Second) // bfd timeout
 
 							tcpDumpSync = sync.WaitGroup{}
@@ -1050,7 +1052,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 						}
 
 						for _, gwContainer := range gwContainers {
-							_, err := inclustercommands.RunCommand(containerRuntime, "exec", gwContainer, "ping", "-c", testTimeout, addresses.srcPodIP)
+							_, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", gwContainer, "ping", "-c", testTimeout, addresses.srcPodIP)
 							framework.ExpectNoError(err, "Failed to ping %s from container %s", addresses.srcPodIP, gwContainer)
 						}
 
@@ -1083,7 +1085,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 
 						if len(gwContainers) > 1 {
 							ginkgo.By("Deleting one container")
-							deleteClusterExternalContainer(gwContainers[1])
+							DeleteClusterExternalContainer(gwContainers[1])
 							ginkgo.By("Waiting for BFD to sync")
 							time.Sleep(3 * time.Second) // bfd timeout
 
@@ -1131,7 +1133,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				testContainer := fmt.Sprintf("%s-container", srcPodName)
 				testContainerFlag := fmt.Sprintf("--container=%s", testContainer)
 
-				f := wrappedTestFramework(svcname)
+				f := testframework.WrappedTestFramework(svcname)
 
 				var addressesv4, addressesv6 gatewayTestIPs
 
@@ -1155,8 +1157,8 @@ var _ = ginkgo.Describe("External Gateway", func() {
 
 				ginkgo.AfterEach(func() {
 					// tear down the containers simulating the gateways
-					deleteClusterExternalContainer(gwContainer1)
-					deleteClusterExternalContainer(gwContainer2)
+					DeleteClusterExternalContainer(gwContainer1)
+					DeleteClusterExternalContainer(gwContainer2)
 					resetGatewayAnnotations(f)
 				})
 
@@ -1168,7 +1170,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 					annotateNamespaceForGateway(f.Namespace.Name, true, addresses.gatewayIPs[:]...)
 					for _, gwContainer := range gwContainers {
 						// Ping from a common IP address that exists on both gateways to ensure test coverage where ingress reply goes back to the same host.
-						_, err := inclustercommands.RunCommand(containerRuntime, "exec", gwContainer, "ping", "-I", addresses.targetIPs[0], "-c", testTimeout, addresses.srcPodIP)
+						_, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", gwContainer, "ping", "-I", addresses.targetIPs[0], "-c", testTimeout, addresses.srcPodIP)
 						framework.ExpectNoError(err, "Failed to ping %s from container %s", addresses.srcPodIP, gwContainer)
 					}
 
@@ -1219,7 +1221,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 					tcpDumpSync.Wait()
 
 					ginkgo.By("Deleting one container")
-					deleteClusterExternalContainer(gwContainers[1])
+					DeleteClusterExternalContainer(gwContainers[1])
 					time.Sleep(3 * time.Second) // bfd timeout
 
 					pingSync = sync.WaitGroup{}
@@ -1258,7 +1260,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 					annotateNamespaceForGateway(f.Namespace.Name, true, addresses.gatewayIPs[:]...)
 
 					for _, gwContainer := range gwContainers {
-						_, err := inclustercommands.RunCommand(containerRuntime, "exec", gwContainer, "ping", "-c", testTimeout, addresses.srcPodIP)
+						_, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", gwContainer, "ping", "-c", testTimeout, addresses.srcPodIP)
 						framework.ExpectNoError(err, "Failed to ping %s from container %s", addresses.srcPodIP, gwContainer)
 					}
 
@@ -1295,7 +1297,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 					}
 
 					ginkgo.By("Deleting one container")
-					deleteClusterExternalContainer(gwContainers[1])
+					DeleteClusterExternalContainer(gwContainers[1])
 					ginkgo.By("Waiting for BFD to sync")
 					time.Sleep(3 * time.Second) // bfd timeout
 
@@ -1343,7 +1345,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				gwContainers             []string
 			)
 
-			f := wrappedTestFramework(svcname)
+			f := testframework.WrappedTestFramework(svcname)
 
 			ginkgo.BeforeEach(func() {
 				clientSet = f.ClientSet // so it can be used in AfterEach
@@ -1379,7 +1381,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 					ginkgo.By(fmt.Sprintf("Verifying connectivity to the pod [%s] from external gateways", addresses.srcPodIP))
 					for _, gwContainer := range gwContainers {
 						// Ping from a common IP address that exists on both gateways to ensure test coverage where ingress reply goes back to the same host.
-						_, err := inclustercommands.RunCommand(containerRuntime, "exec", gwContainer, "ping", "-I", addresses.targetIPs[0], "-c", testTimeout, addresses.srcPodIP)
+						_, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", gwContainer, "ping", "-I", addresses.targetIPs[0], "-c", testTimeout, addresses.srcPodIP)
 						framework.ExpectNoError(err, "Failed to ping %s from container %s", addresses.srcPodIP, gwContainer)
 					}
 
@@ -1423,7 +1425,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 
 					expectedHostNames := make(map[string]struct{})
 					for _, c := range gwContainers {
-						res, err := inclustercommands.RunCommand(containerRuntime, "exec", c, "hostname")
+						res, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", c, "hostname")
 						framework.ExpectNoError(err, "failed to run hostname in %s", c)
 						hostname := strings.TrimSuffix(res, "\n")
 						framework.Logf("Hostname for %s is %s", c, hostname)
@@ -1491,10 +1493,10 @@ var _ = ginkgo.Describe("External Gateway", func() {
 					expectedHostNames := make(map[string]string)
 					gwAddresses := make(map[string]string)
 					for _, c := range gwContainers {
-						res, err := inclustercommands.RunCommand(containerRuntime, "exec", c, "hostname")
+						res, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", c, "hostname")
 						framework.ExpectNoError(err, "failed to run hostname in %s", c)
 						hostname := strings.TrimSuffix(res, "\n")
-						res, err = inclustercommands.RunCommand(containerRuntime, "exec", c, "hostname", "-I")
+						res, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", c, "hostname", "-I")
 						framework.ExpectNoError(err, "failed to run hostname in %s", c)
 						ips := strings.TrimSuffix(res, "\n")
 						framework.Logf("Hostname for %s is %s, with IP addresses: %s", c, hostname, ips)
@@ -1610,7 +1612,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				externalUDPPort        = 90
 			)
 
-			f := wrappedTestFramework(svcname)
+			f := testframework.WrappedTestFramework(svcname)
 
 			var gwContainers []string
 			var addressesv4, addressesv6 gatewayTestIPs
@@ -1633,8 +1635,8 @@ var _ = ginkgo.Describe("External Gateway", func() {
 
 			ginkgo.AfterEach(func() {
 				// tear down the containers simulating the gateways
-				deleteClusterExternalContainer(gwContainer1)
-				deleteClusterExternalContainer(gwContainer2)
+				DeleteClusterExternalContainer(gwContainer1)
+				DeleteClusterExternalContainer(gwContainer2)
 				deleteAPBExternalRouteCR(defaultPolicyName)
 			})
 
@@ -1647,13 +1649,13 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				ginkgo.By("Verifying connectivity to the pod from external gateways")
 				for _, gwContainer := range gwContainers {
 					// Ping from a common IP address that exists on both gateways to ensure test coverage where ingress reply goes back to the same host.
-					_, err := inclustercommands.RunCommand(containerRuntime, "exec", gwContainer, "ping", "-I", addresses.targetIPs[0], "-c", testTimeout, addresses.srcPodIP)
+					_, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", gwContainer, "ping", "-I", addresses.targetIPs[0], "-c", testTimeout, addresses.srcPodIP)
 					framework.ExpectNoError(err, "Failed to ping %s from container %s", addresses.srcPodIP, gwContainer)
 				}
 
 				ginkgo.By("Verifying connectivity to the pod from external gateways with large packets > pod MTU")
 				for _, gwContainer := range gwContainers {
-					_, err := inclustercommands.RunCommand(containerRuntime, "exec", gwContainer, "ping", "-s", "1420", "-c", testTimeout, addresses.srcPodIP)
+					_, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", gwContainer, "ping", "-s", "1420", "-c", testTimeout, addresses.srcPodIP)
 					framework.ExpectNoError(err, "Failed to ping %s from container %s", addresses.srcPodIP, gwContainer)
 				}
 
@@ -1748,7 +1750,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				gatewayPodName2 string = "e2e-gateway-pod2"
 			)
 
-			f := wrappedTestFramework(svcname)
+			f := testframework.WrappedTestFramework(svcname)
 
 			var (
 				servingNamespace         string
@@ -1787,8 +1789,8 @@ var _ = ginkgo.Describe("External Gateway", func() {
 			})
 
 			ginkgo.AfterEach(func() {
-				deleteClusterExternalContainer(gwContainer1)
-				deleteClusterExternalContainer(gwContainer2)
+				DeleteClusterExternalContainer(gwContainer1)
+				DeleteClusterExternalContainer(gwContainer2)
 				deleteAPBExternalRouteCR(defaultPolicyName)
 			})
 
@@ -1800,7 +1802,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				createAPBExternalRouteCRWithStaticHop(defaultPolicyName, f.Namespace.Name, false, addresses.gatewayIPs...)
 				setupIperf3Client := func(container, address string, port int) {
 					// note iperf3 even when using udp also spawns tcp connection first; so we indirectly also have the tcp connection when using "-u" flag
-					cmd := []string{containerRuntime, "exec", container, "iperf3", "-u", "-c", address, "-p", fmt.Sprintf("%d", port), "-b", "1M", "-i", "1", "-t", "3", "&"}
+					cmd := []string{testframework.ContainerRuntime, "exec", container, "iperf3", "-u", "-c", address, "-p", fmt.Sprintf("%d", port), "-b", "1M", "-i", "1", "-t", "3", "&"}
 					_, err := inclustercommands.RunCommand(cmd...)
 					klog.Infof("iperf3 command %s", strings.Join(cmd, " "))
 					framework.ExpectNoError(err, "failed to setup iperf3 client for %s", container)
@@ -1871,7 +1873,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 
 				setupIperf3Client := func(container, address string, port int) {
 					// note iperf3 even when using udp also spawns tcp connection first; so we indirectly also have the tcp connection when using "-u" flag
-					cmd := []string{containerRuntime, "exec", container, "iperf3", "-u", "-c", address, "-p", fmt.Sprintf("%d", port), "-b", "1M", "-i", "1", "-t", "3", "&"}
+					cmd := []string{testframework.ContainerRuntime, "exec", container, "iperf3", "-u", "-c", address, "-p", fmt.Sprintf("%d", port), "-b", "1M", "-i", "1", "-t", "3", "&"}
 					klog.Infof("Run command %+v", cmd)
 					_, err := inclustercommands.RunCommand(cmd...)
 					framework.ExpectNoError(err, "failed to setup iperf3 client for %s", container)
@@ -1968,7 +1970,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 					gwContainers             []string
 				)
 
-				f := wrappedTestFramework(svcname)
+				f := testframework.WrappedTestFramework(svcname)
 
 				ginkgo.BeforeEach(func() {
 					clientSet = f.ClientSet // so it can be used in AfterEach
@@ -2007,7 +2009,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 						ginkgo.By("Verifying connectivity to the pod from external gateways")
 						for _, gwContainer := range gwContainers {
 							// Ping from a common IP address that exists on both gateways to ensure test coverage where ingress reply goes back to the same host.
-							_, err := inclustercommands.RunCommand(containerRuntime, "exec", gwContainer, "ping", "-I", addresses.targetIPs[0], "-c", testTimeout, addresses.srcPodIP)
+							_, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", gwContainer, "ping", "-I", addresses.targetIPs[0], "-c", testTimeout, addresses.srcPodIP)
 							framework.ExpectNoError(err, "Failed to ping %s from container %s", addresses.srcPodIP, gwContainer)
 						}
 
@@ -2048,7 +2050,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 
 						if len(gwContainers) > 1 {
 							ginkgo.By("Deleting one container")
-							deleteClusterExternalContainer(gwContainers[1])
+							DeleteClusterExternalContainer(gwContainers[1])
 							time.Sleep(3 * time.Second) // bfd timeout
 
 							tcpDumpSync = sync.WaitGroup{}
@@ -2085,7 +2087,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 						createAPBExternalRouteCRWithDynamicHop(defaultPolicyName, f.Namespace.Name, servingNamespace, true, addressesv4.gatewayIPs)
 
 						for _, gwContainer := range gwContainers {
-							_, err := inclustercommands.RunCommand(containerRuntime, "exec", gwContainer, "ping", "-c", testTimeout, addresses.srcPodIP)
+							_, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", gwContainer, "ping", "-c", testTimeout, addresses.srcPodIP)
 							framework.ExpectNoError(err, "Failed to ping %s from container %s", addresses.srcPodIP, gwContainer)
 						}
 
@@ -2120,7 +2122,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 
 						if len(gwContainers) > 1 {
 							ginkgo.By("Deleting one container")
-							deleteClusterExternalContainer(gwContainers[1])
+							DeleteClusterExternalContainer(gwContainers[1])
 							ginkgo.By("Waiting for BFD to sync")
 							time.Sleep(3 * time.Second) // bfd timeout
 
@@ -2169,7 +2171,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				testContainer := fmt.Sprintf("%s-container", srcPodName)
 				testContainerFlag := fmt.Sprintf("--container=%s", testContainer)
 
-				f := wrappedTestFramework(svcname)
+				f := testframework.WrappedTestFramework(svcname)
 
 				var addressesv4, addressesv6 gatewayTestIPs
 
@@ -2192,8 +2194,8 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				})
 
 				ginkgo.AfterEach(func() {
-					deleteClusterExternalContainer(gwContainer1)
-					deleteClusterExternalContainer(gwContainer2)
+					DeleteClusterExternalContainer(gwContainer1)
+					DeleteClusterExternalContainer(gwContainer2)
 					deleteAPBExternalRouteCR(defaultPolicyName)
 				})
 
@@ -2204,7 +2206,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 					createAPBExternalRouteCRWithStaticHop(defaultPolicyName, f.Namespace.Name, true, addresses.gatewayIPs...)
 
 					for _, gwContainer := range gwContainers {
-						_, err := inclustercommands.RunCommand(containerRuntime, "exec", gwContainer, "ping", "-c", testTimeout, addresses.srcPodIP)
+						_, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", gwContainer, "ping", "-c", testTimeout, addresses.srcPodIP)
 						framework.ExpectNoError(err, "Failed to ping %s from container %s", addresses.srcPodIP, gwContainer)
 					}
 
@@ -2254,7 +2256,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 					tcpDumpSync.Wait()
 
 					ginkgo.By("Deleting one container")
-					deleteClusterExternalContainer(gwContainers[1])
+					DeleteClusterExternalContainer(gwContainers[1])
 					time.Sleep(3 * time.Second) // bfd timeout
 
 					pingSync = sync.WaitGroup{}
@@ -2292,7 +2294,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 					createAPBExternalRouteCRWithStaticHop(defaultPolicyName, f.Namespace.Name, true, addresses.gatewayIPs...)
 
 					for _, gwContainer := range gwContainers {
-						_, err := inclustercommands.RunCommand(containerRuntime, "exec", gwContainer, "ping", "-c", testTimeout, addresses.srcPodIP)
+						_, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", gwContainer, "ping", "-c", testTimeout, addresses.srcPodIP)
 						framework.ExpectNoError(err, "Failed to ping %s from container %s", addresses.srcPodIP, gwContainer)
 					}
 
@@ -2329,7 +2331,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 					}
 
 					ginkgo.By("Deleting one container")
-					deleteClusterExternalContainer(gwContainers[1])
+					DeleteClusterExternalContainer(gwContainers[1])
 					ginkgo.By("Waiting for BFD to sync")
 					time.Sleep(3 * time.Second) // bfd timeout
 
@@ -2375,7 +2377,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				gwContainers             []string
 			)
 
-			f := wrappedTestFramework(svcname)
+			f := testframework.WrappedTestFramework(svcname)
 
 			ginkgo.BeforeEach(func() {
 				clientSet = f.ClientSet // so it can be used in AfterEach
@@ -2416,7 +2418,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 					ginkgo.By(fmt.Sprintf("Verifying connectivity to the pod [%s] from external gateways", addresses.srcPodIP))
 					for _, gwContainer := range gwContainers {
 						// Ping from a common IP address that exists on both gateways to ensure test coverage where ingress reply goes back to the same host.
-						_, err := inclustercommands.RunCommand(containerRuntime, "exec", gwContainer, "ping", "-I", addresses.targetIPs[0], "-c", testTimeout, addresses.srcPodIP)
+						_, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", gwContainer, "ping", "-I", addresses.targetIPs[0], "-c", testTimeout, addresses.srcPodIP)
 						framework.ExpectNoError(err, "Failed to ping %s from container %s", addresses.srcPodIP, gwContainer)
 					}
 					tcpDumpSync := sync.WaitGroup{}
@@ -2462,7 +2464,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 
 					expectedHostNames := make(map[string]struct{})
 					for _, c := range gwContainers {
-						res, err := inclustercommands.RunCommand(containerRuntime, "exec", c, "hostname")
+						res, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", c, "hostname")
 						framework.ExpectNoError(err, "failed to run hostname in %s", c)
 						hostname := strings.TrimSuffix(res, "\n")
 						framework.Logf("Hostname for %s is %s", c, hostname)
@@ -2525,7 +2527,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				clientSet                kubernetes.Interface
 			)
 
-			f := wrappedTestFramework(svcname)
+			f := testframework.WrappedTestFramework(svcname)
 
 			ginkgo.BeforeEach(func() {
 				clientSet = f.ClientSet // so it can be used in AfterEach
@@ -2557,8 +2559,8 @@ var _ = ginkgo.Describe("External Gateway", func() {
 			ginkgo.AfterEach(func() {
 				// tear down the containers and pods simulating the gateways
 				ginkgo.By("Deleting the gateway containers")
-				deleteClusterExternalContainer(gwContainer1)
-				deleteClusterExternalContainer(gwContainer2)
+				DeleteClusterExternalContainer(gwContainer1)
+				DeleteClusterExternalContainer(gwContainer2)
 				deleteAPBExternalRouteCR(defaultPolicyName)
 				resetGatewayAnnotations(f)
 			})
@@ -2573,7 +2575,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 
 				setupIperf3Client := func(container, address string, port int) {
 					// note iperf3 even when using udp also spawns tcp connection first; so we indirectly also have the tcp connection when using "-u" flag
-					cmd := []string{containerRuntime, "exec", container, "iperf3", "-u", "-c", address, "-p", fmt.Sprintf("%d", port), "-b", "1M", "-i", "1", "-t", "3", "&"}
+					cmd := []string{testframework.ContainerRuntime, "exec", container, "iperf3", "-u", "-c", address, "-p", fmt.Sprintf("%d", port), "-b", "1M", "-i", "1", "-t", "3", "&"}
 					_, err := inclustercommands.RunCommand(cmd...)
 					framework.ExpectNoError(err, "failed to setup iperf3 client for %s", container)
 				}
@@ -2633,7 +2635,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				}
 				createAPBExternalRouteCRWithDynamicHop(defaultPolicyName, f.Namespace.Name, servingNamespace, false, addresses.gatewayIPs)
 				// ensure the conntrack deletion tracker annotation is updated
-				if !isInterconnectEnabled() {
+				if !clusterinspection.IsInterconnectEnabled() {
 					ginkgo.By("Check if the k8s.ovn.org/external-gw-pod-ips got updated for the app namespace")
 					err := wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
 						ns := getNamespace(f, f.Namespace.Name)
@@ -2646,7 +2648,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 
 				setupIperf3Client := func(container, address string, port int) {
 					// note iperf3 even when using udp also spawns tcp connection first; so we indirectly also have the tcp connection when using "-u" flag
-					cmd := []string{containerRuntime, "exec", container, "iperf3", "-u", "-c", address, "-p", fmt.Sprintf("%d", port), "-b", "1M", "-i", "1", "-t", "3", "&"}
+					cmd := []string{testframework.ContainerRuntime, "exec", container, "iperf3", "-u", "-c", address, "-p", fmt.Sprintf("%d", port), "-b", "1M", "-i", "1", "-t", "3", "&"}
 					_, err := inclustercommands.RunCommand(cmd...)
 					framework.ExpectNoError(err, "failed to setup iperf3 client for %s", container)
 				}
@@ -2689,7 +2691,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 			duplicatedPolicy        = "duplicated"
 		)
 
-		f := wrappedTestFramework(svcname)
+		f := testframework.WrappedTestFramework(svcname)
 
 		var addressesv4 gatewayTestIPs
 
@@ -2709,8 +2711,8 @@ var _ = ginkgo.Describe("External Gateway", func() {
 		})
 
 		ginkgo.AfterEach(func() {
-			deleteClusterExternalContainer(gwContainer1)
-			deleteClusterExternalContainer(gwContainer2)
+			DeleteClusterExternalContainer(gwContainer1)
+			DeleteClusterExternalContainer(gwContainer2)
 			deleteAPBExternalRouteCR(defaultPolicyName)
 			deleteAPBExternalRouteCR(duplicatedPolicy)
 		})
@@ -2745,12 +2747,12 @@ func setupGatewayContainers(f *framework.Framework, nodes *v1.NodeList, containe
 			framework.Fail(fmt.Sprintf("OVN_TEST_EX_GW_IPV6 is invalid: %s", externalContainerIPv6))
 		}
 
-		_, _ = createClusterExternalContainer(gwContainers[0], externalContainerImage, []string{"-itd", "--privileged", "--network", externalContainerNetwork}, []string{})
+		_, _ = CreateClusterExternalContainer(gwContainers[0], externalContainerImage, []string{"-itd", "--privileged", "--network", externalContainerNetwork}, []string{})
 		addressesv4.gatewayIPs = append(addressesv4.gatewayIPs, externalContainerIPv4)
 		addressesv6.gatewayIPs = append(addressesv6.gatewayIPs, externalContainerIPv6)
 	} else {
 		for _, gwContainer := range gwContainers {
-			gwipv4, gwipv6 := createClusterExternalContainer(gwContainer, externalContainerImage, []string{"-itd", "--privileged", "--network", externalContainerNetwork}, []string{})
+			gwipv4, gwipv6 := CreateClusterExternalContainer(gwContainer, externalContainerImage, []string{"-itd", "--privileged", "--network", externalContainerNetwork}, []string{})
 			addressesv4.gatewayIPs = append(addressesv4.gatewayIPs, gwipv4)
 			addressesv6.gatewayIPs = append(addressesv6.gatewayIPs, gwipv6)
 		}
@@ -2790,7 +2792,7 @@ func setupGatewayContainers(f *framework.Framework, nodes *v1.NodeList, containe
 		fmt.Sprintf("--http-port=%d", srcHTTPPort),
 		fmt.Sprintf("--udp-port=%d", srcUDPPort),
 	}
-	clientPod, err := createPod(f, srcPodName, node.Name, f.Namespace.Name, []string{}, map[string]string{}, func(p *v1.Pod) {
+	clientPod, err := CreatePod(f, srcPodName, node.Name, f.Namespace.Name, []string{}, map[string]string{}, func(p *v1.Pod) {
 		p.Spec.Containers[0].Args = args
 	})
 
@@ -2818,11 +2820,11 @@ func setupGatewayContainers(f *framework.Framework, nodes *v1.NodeList, containe
 
 	// This sets up a listener that replies with the hostname, both on tcp and on udp
 	setupListenersOrDie := func(container, address string) {
-		cmd := []string{containerRuntime, "exec", container, "bash", "-c", fmt.Sprintf("while true; do echo $(hostname) | nc -l -u %s %d; done &", address, updPort)}
+		cmd := []string{testframework.ContainerRuntime, "exec", container, "bash", "-c", fmt.Sprintf("while true; do echo $(hostname) | nc -l -u %s %d; done &", address, updPort)}
 		_, err = inclustercommands.RunCommand(cmd...)
 		framework.ExpectNoError(err, "failed to setup UDP listener for %s on %s", address, container)
 
-		cmd = []string{containerRuntime, "exec", container, "bash", "-c", fmt.Sprintf("while true; do echo $(hostname) | nc -l %s %d; done &", address, tcpPort)}
+		cmd = []string{testframework.ContainerRuntime, "exec", container, "bash", "-c", fmt.Sprintf("while true; do echo $(hostname) | nc -l %s %d; done &", address, tcpPort)}
 		_, err = inclustercommands.RunCommand(cmd...)
 		framework.ExpectNoError(err, "failed to setup TCP listener for %s on %s", address, container)
 	}
@@ -2835,12 +2837,12 @@ func setupGatewayContainers(f *framework.Framework, nodes *v1.NodeList, containe
 		if testIPv4 {
 			ginkgo.By(fmt.Sprintf("Setting up the destination ips to %s", containerName))
 			for _, address := range addressesv4.targetIPs {
-				_, err = inclustercommands.RunCommand(containerRuntime, "exec", containerName, "ip", "address", "add", address+"/32", "dev", "lo")
+				_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", containerName, "ip", "address", "add", address+"/32", "dev", "lo")
 				framework.ExpectNoError(err, "failed to add the loopback ip to dev lo on the test container %s", containerName)
 			}
 
 			ginkgo.By(fmt.Sprintf("Adding a route from %s to the src pod", containerName))
-			_, err = inclustercommands.RunCommand(containerRuntime, "exec", containerName, "ip", "route", "add", addressesv4.srcPodIP, "via", addressesv4.nodeIP)
+			_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", containerName, "ip", "route", "add", addressesv4.srcPodIP, "via", addressesv4.nodeIP)
 			framework.ExpectNoError(err, "failed to add the pod host route on the test container %s", containerName)
 
 			ginkgo.By("Setting up the listeners on the gateway")
@@ -2849,11 +2851,11 @@ func setupGatewayContainers(f *framework.Framework, nodes *v1.NodeList, containe
 		if testIPv6 {
 			ginkgo.By(fmt.Sprintf("Setting up the destination ips to %s (ipv6)", containerName))
 			for _, address := range addressesv6.targetIPs {
-				_, err = inclustercommands.RunCommand(containerRuntime, "exec", containerName, "ip", "address", "add", address+"/128", "dev", "lo")
+				_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", containerName, "ip", "address", "add", address+"/128", "dev", "lo")
 				framework.ExpectNoError(err, "ipv6: failed to add the loopback ip to dev lo on the test container %s", containerName)
 			}
 			ginkgo.By(fmt.Sprintf("Adding a route from %s to the src pod (ipv6)", containerName))
-			_, err = inclustercommands.RunCommand(containerRuntime, "exec", containerName, "ip", "-6", "route", "add", addressesv6.srcPodIP, "via", addressesv6.nodeIP)
+			_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", containerName, "ip", "-6", "route", "add", addressesv6.srcPodIP, "via", addressesv6.nodeIP)
 			framework.ExpectNoError(err, "ipv6: failed to add the pod host route on the test container %s", containerName)
 
 			ginkgo.By("Setting up the listeners on the gateway (v6)")
@@ -2929,10 +2931,10 @@ func cleanExGWContainers(clientSet kubernetes.Interface, gwContainers []string, 
 	ginkgo.By("Deleting the gateway containers")
 	if externalContainerNetwork == "host" {
 		cleanRoutesAndIPs(gwContainers[0], addressesv4, addressesv6)
-		deleteClusterExternalContainer(gwContainers[0])
+		DeleteClusterExternalContainer(gwContainers[0])
 	} else {
 		for _, container := range gwContainers {
-			deleteClusterExternalContainer(container)
+			DeleteClusterExternalContainer(container)
 		}
 	}
 }
@@ -2947,13 +2949,13 @@ func setupGatewayContainersForConntrackTest(f *framework.Framework, nodes *v1.No
 	addressesv4 := gatewayTestIPs{gatewayIPs: make([]string, 2)}
 	addressesv6 := gatewayTestIPs{gatewayIPs: make([]string, 2)}
 	ginkgo.By("Creating the gateway containers for the UDP test")
-	addressesv4.gatewayIPs[0], addressesv6.gatewayIPs[0] = createClusterExternalContainer(gwContainer1, iperf3Image, []string{"-itd", "--privileged", "--network", externalContainerNetwork}, []string{})
-	addressesv4.gatewayIPs[1], addressesv6.gatewayIPs[1] = createClusterExternalContainer(gwContainer2, iperf3Image, []string{"-itd", "--privileged", "--network", externalContainerNetwork}, []string{})
+	addressesv4.gatewayIPs[0], addressesv6.gatewayIPs[0] = CreateClusterExternalContainer(gwContainer1, Iperf3Image, []string{"-itd", "--privileged", "--network", externalContainerNetwork}, []string{})
+	addressesv4.gatewayIPs[1], addressesv6.gatewayIPs[1] = CreateClusterExternalContainer(gwContainer2, Iperf3Image, []string{"-itd", "--privileged", "--network", externalContainerNetwork}, []string{})
 
 	node := nodes.Items[0]
 	ginkgo.By("Creating the source pod to reach the destination ips from")
-	clientPod, err = createPod(f, srcPodName, node.Name, f.Namespace.Name, []string{}, map[string]string{}, func(p *v1.Pod) {
-		p.Spec.Containers[0].Image = iperf3Image
+	clientPod, err = CreatePod(f, srcPodName, node.Name, f.Namespace.Name, []string{}, map[string]string{}, func(p *v1.Pod) {
+		p.Spec.Containers[0].Image = Iperf3Image
 	})
 	framework.ExpectNoError(err)
 
@@ -2988,16 +2990,16 @@ func setupGatewayContainersForConntrackTest(f *framework.Framework, nodes *v1.No
 	// A route back to the src pod must be set in order for the ping reply to work.
 	for _, containerName := range []string{gwContainer1, gwContainer2} {
 		ginkgo.By(fmt.Sprintf("Install iproute in %s", containerName))
-		_, err = inclustercommands.RunCommand(containerRuntime, "exec", containerName, "dnf", "install", "-y", "iproute")
+		_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", containerName, "dnf", "install", "-y", "iproute")
 		framework.ExpectNoError(err, "failed to install iproute package on the test container %s", containerName)
 		if testIPv4 {
 			ginkgo.By(fmt.Sprintf("Adding a route from %s to the src pod with IP %s", containerName, addressesv4.srcPodIP))
-			_, err = inclustercommands.RunCommand(containerRuntime, "exec", containerName, "ip", "route", "add", addressesv4.srcPodIP, "via", addressesv4.nodeIP, "dev", "eth0")
+			_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", containerName, "ip", "route", "add", addressesv4.srcPodIP, "via", addressesv4.nodeIP, "dev", "eth0")
 			framework.ExpectNoError(err, "failed to add the pod host route on the test container %s", containerName)
 		}
 		if testIPv6 {
 			ginkgo.By(fmt.Sprintf("Adding a route from %s to the src pod (ipv6)", containerName))
-			_, err = inclustercommands.RunCommand(containerRuntime, "exec", containerName, "ip", "-6", "route", "add", addressesv6.srcPodIP, "via", addressesv6.nodeIP)
+			_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", containerName, "ip", "-6", "route", "add", addressesv6.srcPodIP, "via", addressesv6.nodeIP)
 			framework.ExpectNoError(err, "ipv6: failed to add the pod host route on the test container %s", containerName)
 		}
 	}
@@ -3006,7 +3008,7 @@ func setupGatewayContainersForConntrackTest(f *framework.Framework, nodes *v1.No
 
 func reachPodFromGateway(targetAddress, targetPort, targetPodName, srcContainer, protocol string) {
 	ginkgo.By(fmt.Sprintf("Checking that %s can reach the pod", srcContainer))
-	dockerCmd := []string{containerRuntime, "exec", srcContainer, "bash", "-c"}
+	dockerCmd := []string{testframework.ContainerRuntime, "exec", srcContainer, "bash", "-c"}
 	if protocol == "tcp" {
 		dockerCmd = append(dockerCmd, fmt.Sprintf("curl -s http://%s/hostname", net.JoinHostPort(targetAddress, targetPort)))
 	} else {
@@ -3242,7 +3244,7 @@ func hostNamesForContainers(containers []string) map[string]struct{} {
 }
 
 func hostNameForContainer(container string) string {
-	res, err := inclustercommands.RunCommand(containerRuntime, "exec", container, "hostname")
+	res, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", container, "hostname")
 	framework.ExpectNoError(err, "failed to run hostname in %s", container)
 	framework.Logf("Hostname for %s is %s", container, res)
 	return strings.TrimSuffix(res, "\n")
@@ -3310,7 +3312,7 @@ func setupBFDOnContainer(nodes []v1.Node) func(string) {
 					continue
 				}
 				// Configure the node as a bfd peer on the frr side
-				cmd := []string{containerRuntime, "exec", containerName, "bash", "-c",
+				cmd := []string{testframework.ContainerRuntime, "exec", containerName, "bash", "-c",
 					fmt.Sprintf(`cat << EOF >> /etc/frr/frr.conf
 
 bfd
@@ -3324,14 +3326,14 @@ EOF
 				framework.ExpectNoError(err, "failed to setup FRR peer %s in %s", a, containerName)
 			}
 		}
-		cmd := []string{containerRuntime, "exec", containerName, "/usr/libexec/frr/frrinit.sh", "start"}
+		cmd := []string{testframework.ContainerRuntime, "exec", containerName, "/usr/libexec/frr/frrinit.sh", "start"}
 		_, err := inclustercommands.RunCommand(cmd...)
 		framework.ExpectNoError(err, "failed to start frr in %s", containerName)
 	}
 }
 
 func isBFDPaired(container, peer string) bool {
-	res, err := inclustercommands.RunCommand(containerRuntime, "exec", container, "bash", "-c", fmt.Sprintf("vtysh -c \"show bfd peer %s\"", peer))
+	res, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", container, "bash", "-c", fmt.Sprintf("vtysh -c \"show bfd peer %s\"", peer))
 	framework.ExpectNoError(err, "failed to check bfd status in %s", container)
 	return strings.Contains(res, "Status: up")
 }
@@ -3360,17 +3362,17 @@ func cleanRoutesAndIPsForFamily(containerName string, family int, addresses gate
 	ginkgo.By(fmt.Sprintf("Removing the destination ips from %s (IPv%d)", containerName, family))
 	for _, address := range addresses.targetIPs {
 		addressMask = fmt.Sprintf("%s/%d", address, mask)
-		_, err = inclustercommands.RunCommand(containerRuntime, "exec", containerName, "ip", addressSelector, "address", "del", addressMask, "dev", "lo")
+		_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", containerName, "ip", addressSelector, "address", "del", addressMask, "dev", "lo")
 		framework.ExpectNoError(err, "failed to del the loopback ip %s from dev lo on the test container %s", addressMask, containerName)
 	}
 
 	ginkgo.By(fmt.Sprintf("Removing the route from %s to the src pod (IPv%d)", containerName, family))
-	_, err = inclustercommands.RunCommand(containerRuntime, "exec", containerName, "ip", addressSelector, "route", "del", addresses.srcPodIP, "via", addresses.nodeIP)
+	_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", containerName, "ip", addressSelector, "route", "del", addresses.srcPodIP, "via", addresses.nodeIP)
 	framework.ExpectNoError(err, "failed to del the pod host route on the test container %s", containerName)
 }
 
 func setMACAddrOnContainer(containerName, addr, link string) {
-	_, err := inclustercommands.RunCommand(containerRuntime, "exec", containerName, "ip", "link", "set", "dev", link, "addr", addr)
+	_, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", containerName, "ip", "link", "set", "dev", link, "addr", addr)
 	framework.ExpectNoError(err, "failed to set MAC address on  container %s", containerName)
 }
 
@@ -3380,7 +3382,7 @@ func checkReceivedPacketsOnContainer(container, srcPodName, link string, filter 
 	if len(link) == 0 {
 		link = anyLink
 	}
-	args := []string{containerRuntime, "exec", container, "timeout", "60", "tcpdump", "-c", "1", "-i", link}
+	args := []string{testframework.ContainerRuntime, "exec", container, "timeout", "60", "tcpdump", "-c", "1", "-i", link}
 	args = append(args, filter...)
 	_, err := inclustercommands.RunCommand(args...)
 	framework.ExpectNoError(err, "Failed to detect packets from %s on gateway %s", srcPodName, container)
@@ -3408,14 +3410,14 @@ func resetGatewayAnnotations(f *framework.Framework) {
 
 func sendGARP(container, ip, link string) {
 	ginkgo.By(fmt.Sprintf("Sending ARP on container %s, for IP: %s", container, ip))
-	args := []string{containerRuntime, "exec", container, "arping", "-U", ip, "-I", link, "-c", "1", "-s", ip}
+	args := []string{testframework.ContainerRuntime, "exec", container, "arping", "-U", ip, "-I", link, "-c", "1", "-s", ip}
 	_, err := inclustercommands.RunCommand(args...)
 	framework.ExpectNoError(err, "Failed to send arping on container: %s", container)
 }
 
 func sendNDPAdvertisement(container, ip, link string) {
 	ginkgo.By(fmt.Sprintf("Sending NDP Unsolicited NA on container %s, for IP: %s", container, ip))
-	args := []string{containerRuntime, "exec", container, "ndptool", "-t", "na", "-U", "-i", link, "-T", ip, "send"}
+	args := []string{testframework.ContainerRuntime, "exec", container, "ndptool", "-t", "na", "-U", "-i", link, "-T", ip, "send"}
 	_, err := inclustercommands.RunCommand(args...)
 	framework.ExpectNoError(err, "Failed to send NDP unsolicted advertisement on container: %s", container)
 }

@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/testframework"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -25,7 +26,7 @@ import (
 )
 
 var _ = Describe("Network Segmentation EndpointSlices mirroring", func() {
-	f := wrappedTestFramework("endpointslices-mirror")
+	f := testframework.WrappedTestFramework("endpointslices-mirror")
 	f.SkipNamespaceCreation = true
 	Context("a user defined primary network", func() {
 		const (

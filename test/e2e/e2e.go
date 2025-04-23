@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/clusterinspection"
 	"net"
 	"net/http"
 	"path"
@@ -37,6 +38,7 @@ import (
 	utilnet "k8s.io/utils/net"
 
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/inclustercommands"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/testframework"
 )
 
 const (
@@ -46,7 +48,7 @@ const (
 	rolloutTimeout       = 10 * time.Minute
 	agnhostImage         = "registry.k8s.io/e2e-test-images/agnhost:2.26"
 	agnhostImageNew      = "registry.k8s.io/e2e-test-images/agnhost:2.53"
-	iperf3Image          = "quay.io/sronanrh/iperf"
+	Iperf3Image          = "quay.io/sronanrh/iperf"
 	redirectIP           = "123.123.123.123"
 	redirectPort         = "13337"
 	exContainerName      = "tcp-continuous-client"
@@ -58,7 +60,7 @@ type podCondition = func(pod *v1.Pod) (bool, error)
 
 // setupHostRedirectPod
 func setupHostRedirectPod(f *framework.Framework, node *v1.Node, exContainerName string, isIPv6 bool) error {
-	_, _ = createClusterExternalContainer(exContainerName, externalContainerImage, []string{"-itd", "--privileged", "--network", externalContainerNetwork}, []string{})
+	_, _ = CreateClusterExternalContainer(exContainerName, externalContainerImage, []string{"-itd", "--privileged", "--network", externalContainerNetwork}, []string{})
 	nodeV4, nodeV6 := getContainerAddressesForNetwork(node.Name, externalContainerNetwork)
 	mask := 32
 	ipCmd := []string{"ip"}
@@ -320,12 +322,12 @@ func getPodGWRoute(f *framework.Framework, nodeName string, podName string) net.
 
 // Create a pod on the specified node using the agnostic host image
 func createGenericPod(f *framework.Framework, podName, nodeSelector, namespace string, command []string) (*v1.Pod, error) {
-	return createPod(f, podName, nodeSelector, namespace, command, nil)
+	return CreatePod(f, podName, nodeSelector, namespace, command, nil)
 }
 
 // Create a pod on the specified node using the agnostic host image
 func createGenericPodWithLabel(f *framework.Framework, podName, nodeSelector, namespace string, command []string, labels map[string]string, options ...func(*v1.Pod)) (*v1.Pod, error) {
-	return createPod(f, podName, nodeSelector, namespace, command, labels, options...)
+	return CreatePod(f, podName, nodeSelector, namespace, command, labels, options...)
 }
 
 func createServiceForPodsWithLabel(f *framework.Framework, namespace string, servicePort int32, targetPort string, serviceType string, labels map[string]string) (string, error) {
@@ -369,7 +371,7 @@ func createServiceForPodsWithLabel(f *framework.Framework, namespace string, ser
 // Remove when this func when it is no longer experimental.
 // [1] https://docs.docker.com/config/daemon/ipv6/
 func isolateIPv6Networks(networkA, networkB string) error {
-	if containerRuntime != "docker" {
+	if testframework.ContainerRuntime != "docker" {
 		panic("unsupported container runtime")
 	}
 	var bridgeInfNames []string
@@ -377,7 +379,7 @@ func isolateIPv6Networks(networkA, networkB string) error {
 	bridgeIDLimit := 12
 	for _, network := range []string{networkA, networkB} {
 		// output will be wrapped in single quotes
-		id, err := inclustercommands.RunCommand(containerRuntime, "inspect", network, "--format", "'{{.Id}}'")
+		id, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "inspect", network, "--format", "'{{.Id}}'")
 		if err != nil {
 			return err
 		}
@@ -404,7 +406,7 @@ func isolateIPv6Networks(networkA, networkB string) error {
 }
 
 func createNetwork(networkName string, subnet string, v6 bool) {
-	args := []string{containerRuntime, "network", "create", "--internal", "--driver", "bridge", networkName, "--subnet", subnet}
+	args := []string{testframework.ContainerRuntime, "network", "create", "--internal", "--driver", "bridge", networkName, "--subnet", subnet}
 	if v6 {
 		args = append(args, "--ipv6")
 	}
@@ -415,7 +417,7 @@ func createNetwork(networkName string, subnet string, v6 bool) {
 }
 
 func deleteNetwork(networkName string) {
-	args := []string{containerRuntime, "network", "rm", networkName}
+	args := []string{testframework.ContainerRuntime, "network", "rm", networkName}
 	_, err := inclustercommands.RunCommand(args...)
 	if err != nil && !strings.Contains(err.Error(), "not found") {
 		framework.Failf("failed to delete network %q: %v", networkName, err)
@@ -423,7 +425,7 @@ func deleteNetwork(networkName string) {
 }
 
 func attachNetwork(networkName, containerName string) {
-	args := []string{containerRuntime, "network", "connect", networkName, containerName}
+	args := []string{testframework.ContainerRuntime, "network", "connect", networkName, containerName}
 	_, err := inclustercommands.RunCommand(args...)
 	if err != nil && !strings.Contains(err.Error(), "already exists") {
 		framework.Failf("failed to attach network %q to container %q: %v", networkName, containerName, err)
@@ -431,15 +433,15 @@ func attachNetwork(networkName, containerName string) {
 }
 
 func detachNetwork(networkName, containerName string) {
-	args := []string{containerRuntime, "network", "disconnect", networkName, containerName}
+	args := []string{testframework.ContainerRuntime, "network", "disconnect", networkName, containerName}
 	_, err := inclustercommands.RunCommand(args...)
 	if err != nil {
 		framework.Failf("failed to attach network %q to container %q: %v", networkName, containerName, err)
 	}
 }
 
-func createClusterExternalContainer(containerName string, containerImage string, dockerArgs []string, entrypointArgs []string) (string, string) {
-	args := []string{containerRuntime, "run", "-itd"}
+func CreateClusterExternalContainer(containerName string, containerImage string, dockerArgs []string, entrypointArgs []string) (string, string) {
+	args := []string{testframework.ContainerRuntime, "run", "-itd"}
 	args = append(args, dockerArgs...)
 	args = append(args, []string{"--name", containerName, containerImage}...)
 	args = append(args, entrypointArgs...)
@@ -447,11 +449,11 @@ func createClusterExternalContainer(containerName string, containerImage string,
 	if err != nil {
 		framework.Failf("failed to start external test container: %v", err)
 	}
-	ipv4, err := inclustercommands.RunCommand(containerRuntime, "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", containerName)
+	ipv4, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", containerName)
 	if err != nil {
 		framework.Failf("failed to inspect external test container for its IP: %v", err)
 	}
-	ipv6, err := inclustercommands.RunCommand(containerRuntime, "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.GlobalIPv6Address}}{{end}}", containerName)
+	ipv6, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.GlobalIPv6Address}}{{end}}", containerName)
 	if err != nil {
 		framework.Failf("failed to inspect external test container for its IP (v6): %v", err)
 	}
@@ -461,13 +463,13 @@ func createClusterExternalContainer(containerName string, containerImage string,
 	return strings.Trim(ipv4, "\n"), strings.Trim(ipv6, "\n")
 }
 
-func deleteClusterExternalContainer(containerName string) {
-	_, err := inclustercommands.RunCommand(containerRuntime, "rm", "-f", containerName)
+func DeleteClusterExternalContainer(containerName string) {
+	_, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "rm", "-f", containerName)
 	if err != nil {
 		framework.Failf("failed to delete external test container, err: %v", err)
 	}
 	gomega.Eventually(func() string {
-		output, err := inclustercommands.RunCommand(containerRuntime, "ps", "-f", fmt.Sprintf("name=%s", containerName), "-q")
+		output, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "ps", "-f", fmt.Sprintf("name=%s", containerName), "-q")
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		return output
 	}, 5).Should(gomega.HaveLen(0))
@@ -503,7 +505,7 @@ func getPod(f *framework.Framework, podName string) *v1.Pod {
 }
 
 // Create a pod on the specified node using the agnostic host image
-func createPod(f *framework.Framework, podName, nodeSelector, namespace string, command []string, labels map[string]string, options ...func(*v1.Pod)) (*v1.Pod, error) {
+func CreatePod(f *framework.Framework, podName, nodeSelector, namespace string, command []string, labels map[string]string, options ...func(*v1.Pod)) (*v1.Pod, error) {
 
 	contName := fmt.Sprintf("%s-container", podName)
 
@@ -709,7 +711,7 @@ func findOvnKubeControlPlaneNode(controlPlanePodName, leaseName string) (string,
 var _ = ginkgo.Describe("e2e control plane", func() {
 	var svcname = "nettest"
 
-	f := wrappedTestFramework(svcname)
+	f := testframework.WrappedTestFramework(svcname)
 
 	var (
 		extDNSIP              string
@@ -729,7 +731,7 @@ var _ = ginkgo.Describe("e2e control plane", func() {
 			framework.Failf("Unable to connect/talk to the internet: %v", err)
 		}
 
-		if isInterconnectEnabled() {
+		if clusterinspection.IsInterconnectEnabled() {
 			controlPlanePodName = "ovnkube-control-plane"
 			// in "one node per zone" config, ovnkube-controller doesn't create leader election lease
 			if !singleNodePerZone() {
@@ -758,7 +760,7 @@ var _ = ginkgo.Describe("e2e control plane", func() {
 	})
 
 	ginkgo.AfterEach(func() {
-		deleteClusterExternalContainer(exContainerName)
+		DeleteClusterExternalContainer(exContainerName)
 	})
 
 	ginkgo.It("should provide Internet connection continuously when ovnkube-node pod is killed", func() {
@@ -789,7 +791,7 @@ var _ = ginkgo.Describe("e2e control plane", func() {
 		// start TCP client
 		go func() {
 			defer ginkgo.GinkgoRecover()
-			_, _ = inclustercommands.RunCommand(containerRuntime, "exec", exContainerName, "nc", "--idle-timeout", "120s", redirectIP, redirectPort)
+			_, _ = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", exContainerName, "nc", "--idle-timeout", "120s", redirectIP, redirectPort)
 		}()
 
 		ginkgo.By("Checking that TCP redirect connection entry in conntrack before ovnkube-node restart")
@@ -965,7 +967,7 @@ var _ = ginkgo.Describe("e2e control plane", func() {
 
 		ginkgo.BeforeEach(func() {
 			// get the interface current mtu and store it as original value to be able to reset it after the test
-			res, err := inclustercommands.RunCommand(containerRuntime, "exec", testNodeName, "cat", "/sys/class/net/breth0/mtu")
+			res, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", testNodeName, "cat", "/sys/class/net/breth0/mtu")
 			if err != nil {
 				framework.Failf("could not get MTU of interface: %s", err)
 			}
@@ -979,7 +981,7 @@ var _ = ginkgo.Describe("e2e control plane", func() {
 
 		ginkgo.AfterEach(func() {
 			// reset MTU to original value
-			_, err := inclustercommands.RunCommand(containerRuntime, "exec", testNodeName, "ip", "link", "set", "breth0", "mtu", fmt.Sprintf("%d", originalMTU))
+			_, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", testNodeName, "ip", "link", "set", "breth0", "mtu", fmt.Sprintf("%d", originalMTU))
 			if err != nil {
 				framework.Failf("could not reset MTU of interface: %s", err)
 			}
@@ -995,7 +997,7 @@ var _ = ginkgo.Describe("e2e control plane", func() {
 
 		ginkgo.It("should get node not ready with a too small MTU", func() {
 			// set the defaults interface MTU very low
-			_, err := inclustercommands.RunCommand(containerRuntime, "exec", testNodeName, "ip", "link", "set", "breth0", "mtu", "1000")
+			_, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", testNodeName, "ip", "link", "set", "breth0", "mtu", "1000")
 			if err != nil {
 				framework.Failf("could not set MTU of interface: %s", err)
 			}
@@ -1019,7 +1021,7 @@ var _ = ginkgo.Describe("e2e control plane", func() {
 
 		ginkgo.It("should get node ready with a big enough MTU", func() {
 			// set the defaults interface MTU big enough
-			_, err := inclustercommands.RunCommand(containerRuntime, "exec", testNodeName, "ip", "link", "set", "breth0", "mtu", "2000")
+			_, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", testNodeName, "ip", "link", "set", "breth0", "mtu", "2000")
 			if err != nil {
 				framework.Failf("could not set MTU of interface: %s", err)
 			}
@@ -1052,7 +1054,7 @@ var _ = ginkgo.Describe("test e2e pod connectivity to host addresses", func() {
 		singleIPMask string
 	)
 
-	f := wrappedTestFramework(svcname)
+	f := testframework.WrappedTestFramework(svcname)
 
 	ginkgo.BeforeEach(func() {
 		targetIP = "123.123.123.123"
@@ -1062,13 +1064,13 @@ var _ = ginkgo.Describe("test e2e pod connectivity to host addresses", func() {
 			singleIPMask = "128"
 		}
 		// Add another IP address to the worker
-		_, err := inclustercommands.RunCommand(containerRuntime, "exec", ovnWorkerNode, "ip", "a", "add",
+		_, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", ovnWorkerNode, "ip", "a", "add",
 			fmt.Sprintf("%s/%s", targetIP, singleIPMask), "dev", "breth0")
 		framework.ExpectNoError(err, "failed to add IP to %s", ovnWorkerNode)
 	})
 
 	ginkgo.AfterEach(func() {
-		_, err := inclustercommands.RunCommand(containerRuntime, "exec", ovnWorkerNode, "ip", "a", "del",
+		_, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", ovnWorkerNode, "ip", "a", "del",
 			fmt.Sprintf("%s/%s", targetIP, singleIPMask), "dev", "breth0")
 		framework.ExpectNoError(err, "failed to remove IP from %s", ovnWorkerNode)
 	})
@@ -1089,7 +1091,7 @@ var _ = ginkgo.Describe("test e2e inter-node connectivity between worker nodes",
 		getPodIPRetry  int    = 20
 	)
 
-	f := wrappedTestFramework(svcname)
+	f := testframework.WrappedTestFramework(svcname)
 
 	ginkgo.It("Should validate connectivity within a namespace of pods on separate nodes", func() {
 		var validIP net.IP
@@ -1157,7 +1159,7 @@ var _ = ginkgo.Describe("e2e network policy hairpinning validation", func() {
 		endpointHTTPPort        = "80"
 	)
 
-	f := wrappedTestFramework(svcName)
+	f := testframework.WrappedTestFramework(svcName)
 	hairpinPodSel := map[string]string{"hairpinbackend": "true"}
 
 	ginkgo.It("Should validate the hairpinned traffic is always allowed", func() {
@@ -1206,7 +1208,7 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 		clientContainerName = "npclient"
 	)
 
-	f := wrappedTestFramework("nodeport-ingress-test")
+	f := testframework.WrappedTestFramework("nodeport-ingress-test")
 	endpointsSelector := map[string]string{"servicebackend": "true"}
 
 	var endPoints []*v1.Pod
@@ -1244,7 +1246,7 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 					fmt.Sprintf("--http-port=%d", endpointHTTPPort),
 					fmt.Sprintf("--udp-port=%d", endpointUDPPort),
 				}
-				pod, err := createPod(f, node.Name+"-ep", node.Name, f.Namespace.Name, []string{}, endpointsSelector, func(p *v1.Pod) {
+				pod, err := CreatePod(f, node.Name+"-ep", node.Name, f.Namespace.Name, []string{}, endpointsSelector, func(p *v1.Pod) {
 					p.Spec.Containers[0].Args = args
 				})
 				framework.ExpectNoError(err)
@@ -1259,11 +1261,11 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 			// the client uses the netexec command from the agnhost image, which is able to receive commands for poking other
 			// addresses.
 			// CAP NET_ADMIN is needed to remove neighbor entries for ARP/NS flap tests
-			externalIpv4, externalIpv6 = createClusterExternalContainer(clientContainerName, agnhostImage, []string{"--network", "kind", "-P", "--cap-add", "NET_ADMIN"}, []string{"netexec", "--http-port=80"})
+			externalIpv4, externalIpv6 = CreateClusterExternalContainer(clientContainerName, agnhostImage, []string{"--network", "kind", "-P", "--cap-add", "NET_ADMIN"}, []string{"netexec", "--http-port=80"})
 		})
 
 		ginkgo.AfterEach(func() {
-			deleteClusterExternalContainer(clientContainerName)
+			DeleteClusterExternalContainer(clientContainerName)
 		})
 
 		// This test validates ingress traffic to nodeports.
@@ -1407,7 +1409,7 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 					ipPort := net.JoinHostPort("localhost", "80")
 					for _, ipAddresses := range ipv4Addresses {
 						for _, targetHost := range ipAddresses {
-							cmd := []string{containerRuntime, "exec", clientContainerName}
+							cmd := []string{testframework.ContainerRuntime, "exec", clientContainerName}
 							curlCommand := strings.Split(fmt.Sprintf("curl --max-time 2 -g -q -s http://%s/dial?request=hostname&protocol=http&host=%s&port=%d&tries=1",
 								ipPort,
 								targetHost,
@@ -1651,7 +1653,7 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 					fmt.Sprintf("--http-port=%d", endpointHTTPPort),
 					fmt.Sprintf("--udp-port=%d", endpointUDPPort),
 				}
-				pod, err := createPod(f, node.Name+"-ep", node.Name, f.Namespace.Name, []string{}, endpointsSelector, func(p *v1.Pod) {
+				pod, err := CreatePod(f, node.Name+"-ep", node.Name, f.Namespace.Name, []string{}, endpointsSelector, func(p *v1.Pod) {
 					p.Spec.Containers[0].Args = args
 				})
 				framework.ExpectNoError(err)
@@ -1665,10 +1667,10 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 			ginkgo.By("Creating an external container to send the traffic from")
 			// the client uses the netexec command from the agnhost image, which is able to receive commands for poking other
 			// addresses.
-			createClusterExternalContainer(clientContainerName, agnhostImage, []string{"--network", "kind", "-P"}, []string{"netexec", "--http-port=80"})
+			CreateClusterExternalContainer(clientContainerName, agnhostImage, []string{"--network", "kind", "-P"}, []string{"netexec", "--http-port=80"})
 
 			// If `kindexgw` exists, connect client container to it
-			inclustercommands.RunCommand(containerRuntime, "network", "connect", "kindexgw", clientContainerName)
+			inclustercommands.RunCommand(testframework.ContainerRuntime, "network", "connect", "kindexgw", clientContainerName)
 
 			ginkgo.By("Adding ip addresses to each node")
 			// add new secondary IP from node subnet to all nodes, if the cluster is v6 add an ipv6 address
@@ -1681,7 +1683,7 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 					newIP = "172.18.1." + strconv.Itoa(i+1)
 				}
 				// manually add the a secondary IP to each node
-				_, err := inclustercommands.RunCommand(containerRuntime, "exec", node.Name, "ip", "addr", "add", newIP, "dev", "breth0")
+				_, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", node.Name, "ip", "addr", "add", newIP, "dev", "breth0")
 				if err != nil {
 					framework.Failf("failed to add new Addresses to node %s: %v", node.Name, err)
 				}
@@ -1691,11 +1693,11 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 		})
 
 		ginkgo.AfterEach(func() {
-			deleteClusterExternalContainer(clientContainerName)
+			DeleteClusterExternalContainer(clientContainerName)
 
 			for i, node := range nodes.Items {
 				// delete the secondary IP previoulsy added to the nodes
-				_, err := inclustercommands.RunCommand(containerRuntime, "exec", node.Name, "ip", "addr", "delete", newNodeAddresses[i], "dev", "breth0")
+				_, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", node.Name, "ip", "addr", "delete", newNodeAddresses[i], "dev", "breth0")
 				if err != nil {
 					framework.Failf("failed to delete new Addresses to node %s: %v", node.Name, err)
 				}
@@ -1760,7 +1762,7 @@ var _ = ginkgo.Describe("e2e ingress to host-networked pods traffic validation",
 		clientContainerName = "npclient"
 	)
 
-	f := wrappedTestFramework("nodeport-ingress-test")
+	f := testframework.WrappedTestFramework("nodeport-ingress-test")
 	hostNetEndpointsSelector := map[string]string{"hostNetservicebackend": "true"}
 	var endPoints []*v1.Pod
 	var nodesHostnames sets.String
@@ -1803,7 +1805,7 @@ var _ = ginkgo.Describe("e2e ingress to host-networked pods traffic validation",
 				}
 
 				// create hostNeworkedPods
-				hostNetPod, err := createPod(f, node.Name+"-hostnet-ep", node.Name, f.Namespace.Name, []string{}, hostNetEndpointsSelector, func(p *v1.Pod) {
+				hostNetPod, err := CreatePod(f, node.Name+"-hostnet-ep", node.Name, f.Namespace.Name, []string{}, hostNetEndpointsSelector, func(p *v1.Pod) {
 					p.Spec.Containers[0].Args = args
 					p.Spec.HostNetwork = true
 				})
@@ -1819,11 +1821,11 @@ var _ = ginkgo.Describe("e2e ingress to host-networked pods traffic validation",
 			ginkgo.By("Creating an external container to send the traffic from")
 			// the client uses the netexec command from the agnhost image, which is able to receive commands for poking other
 			// addresses.
-			externalIpv4, externalIpv6 = createClusterExternalContainer(clientContainerName, agnhostImage, []string{"--network", "kind", "-P"}, []string{"netexec", "--http-port=80"})
+			externalIpv4, externalIpv6 = CreateClusterExternalContainer(clientContainerName, agnhostImage, []string{"--network", "kind", "-P"}, []string{"netexec", "--http-port=80"})
 		})
 
 		ginkgo.AfterEach(func() {
-			deleteClusterExternalContainer(clientContainerName)
+			DeleteClusterExternalContainer(clientContainerName)
 			// f.Delete will delete the namespace and run WaitForNamespacesDeleted
 			// This is inside the Context and will happen before the framework's teardown inside the Describe
 			f.DeleteNamespace(context.TODO(), f.Namespace.Name)
@@ -1907,11 +1909,11 @@ var _ = ginkgo.Describe("e2e br-int flow monitoring export validation", func() {
 	keywordInLogs := map[flowMonitoringProtocol]string{
 		netflow_v5: "NETFLOW_V5", ipfix: "IPFIX", sflow: "SFLOW_5"}
 
-	f := wrappedTestFramework(svcname)
+	f := testframework.WrappedTestFramework(svcname)
 	ginkgo.AfterEach(func() {
 		// tear down the collector container
-		if cid, _ := inclustercommands.RunCommand(containerRuntime, "ps", "-qaf", fmt.Sprintf("name=%s", collectorContainer)); cid != "" {
-			if _, err := inclustercommands.RunCommand(containerRuntime, "rm", "-f", collectorContainer); err != nil {
+		if cid, _ := inclustercommands.RunCommand(testframework.ContainerRuntime, "ps", "-qaf", fmt.Sprintf("name=%s", collectorContainer)); cid != "" {
+			if _, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "rm", "-f", collectorContainer); err != nil {
 				framework.Logf("failed to delete the collector test container %s %v",
 					collectorContainer, err)
 			}
@@ -1930,14 +1932,14 @@ var _ = ginkgo.Describe("e2e br-int flow monitoring export validation", func() {
 
 			ginkgo.By("Starting a flow collector container")
 			// start the collector container that will receive data
-			_, err := inclustercommands.RunCommand(containerRuntime, "run", "-itd", "--privileged", "--network", ciNetworkName,
+			_, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "run", "-itd", "--privileged", "--network", ciNetworkName,
 				"--name", collectorContainer, "cloudflare/goflow", "-kafka=false")
 			if err != nil {
 				framework.Failf("failed to start flow collector container %s: %v", collectorContainer, err)
 			}
 			ovnEnvVar := fmt.Sprintf("OVN_%s_TARGETS", strings.ToUpper(protocolStr))
 			// retrieve the ip of the collector container
-			collectorIP, err := inclustercommands.RunCommand(containerRuntime, "inspect", "-f", ciNetworkFlag, collectorContainer)
+			collectorIP, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "inspect", "-f", ciNetworkFlag, collectorContainer)
 			if err != nil {
 				framework.Failf("could not retrieve IP address of collector container: %v", err)
 			}
@@ -1957,7 +1959,7 @@ var _ = ginkgo.Describe("e2e br-int flow monitoring export validation", func() {
 			keyword := keywordInLogs[protocol]
 			collectorContainerLogsTest := func() wait.ConditionFunc {
 				return func() (bool, error) {
-					collectorContainerLogs, err := inclustercommands.RunCommand(containerRuntime, "logs", collectorContainer)
+					collectorContainerLogs, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "logs", collectorContainer)
 					if err != nil {
 						framework.Logf("failed to inspect logs in test container: %v", err)
 						return false, nil
@@ -2077,7 +2079,7 @@ var _ = ginkgo.Describe("e2e delete databases", func() {
 	)
 	var allDBFiles = []string{path.Join(dirDB, northDBFileName), path.Join(dirDB, southDBFileName)}
 
-	f := wrappedTestFramework(svcname)
+	f := testframework.WrappedTestFramework(svcname)
 
 	// WaitForPodConditionAllowNotFoundError is a wrapper for WaitForPodCondition that allows at most 6 times for the pod not to be found.
 	WaitForPodConditionAllowNotFoundErrors := func(f *framework.Framework, ns, podName, desc string, timeout time.Duration, condition podCondition) error {
@@ -2333,7 +2335,7 @@ var _ = ginkgo.Describe("e2e delete databases", func() {
 	)
 
 	ginkgo.It("Should validate connectivity before and after deleting all the db-pods at once in Non-HA mode", func() {
-		if isInterconnectEnabled() {
+		if clusterinspection.IsInterconnectEnabled() {
 			e2eskipper.Skipf(
 				"No separate db pods in muliple zones interconnect deployment",
 			)

@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/testframework"
 	"strconv"
 	"strings"
 	"time"
@@ -23,7 +24,7 @@ import (
 )
 
 var _ = Describe("Network Segmentation: Localnet", func() {
-	f := wrappedTestFramework("network-segmentation-localnet")
+	f := testframework.WrappedTestFramework("network-segmentation-localnet")
 	f.SkipNamespaceCreation = true
 
 	It("using ClusterUserDefinedNetwork CR, pods in different namespaces, should communicate over localnet topology", func() {

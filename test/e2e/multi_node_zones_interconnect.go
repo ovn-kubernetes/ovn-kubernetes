@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/testframework"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
@@ -97,7 +98,7 @@ var _ = ginkgo.Describe("Multi node zones interconnect", func() {
 		clientPodNodeName = "ovn-worker3"
 		clientPodName     = "client-pod"
 	)
-	fr := wrappedTestFramework("multi-node-zones")
+	fr := testframework.WrappedTestFramework("multi-node-zones")
 
 	var (
 		cs clientset.Interface

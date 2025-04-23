@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/testframework"
 	"os"
 	"time"
 
@@ -37,7 +38,7 @@ var _ = Describe("ACL Logging for NetworkPolicy", func() {
 		egressDefaultDenySuffix = "Egress"
 	)
 
-	fr := wrappedTestFramework(namespacePrefix)
+	fr := testframework.WrappedTestFramework(namespacePrefix)
 
 	var (
 		nsName string
@@ -182,7 +183,7 @@ var _ = Describe("ACL Logging for AdminNetworkPolicy and BaselineAdminNetworkPol
 		passACLVerdict          = "pass"
 		anpName                 = "harry-potter"
 	)
-	fr := wrappedTestFramework("anp-subject")
+	fr := testframework.WrappedTestFramework("anp-subject")
 	var (
 		pods    []v1.Pod
 		nsNames [4]string
@@ -501,7 +502,7 @@ var _ = Describe("ACL Logging for EgressFirewall", func() {
 		dstPort                  = 8080
 	)
 
-	fr := wrappedTestFramework(namespacePrefix)
+	fr := testframework.WrappedTestFramework(namespacePrefix)
 
 	var (
 		nsName           string

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/testframework"
 	"net"
 	"os"
 	"reflect"
@@ -44,7 +45,7 @@ const RequiredUDNNamespaceLabel = "k8s.ovn.org/primary-user-defined-network"
 const OvnPodAnnotationName = "k8s.ovn.org/pod-networks"
 
 var _ = Describe("Network Segmentation", func() {
-	f := wrappedTestFramework("network-segmentation")
+	f := testframework.WrappedTestFramework("network-segmentation")
 	// disable automatic namespace creation, we need to add the required UDN label
 	f.SkipNamespaceCreation = true
 
@@ -229,7 +230,7 @@ var _ = Describe("Network Segmentation", func() {
 						netConfigParams *multihoming.NetworkAttachmentConfigParams,
 						udnPodConfig multihoming.PodConfiguration,
 					) {
-						if !isInterconnectEnabled() {
+						if !clusterinspection.IsInterconnectEnabled() {
 							const upstreamIssue = "https://github.com/ovn-org/ovn-kubernetes/issues/4528"
 							e2eskipper.Skipf(
 								"These tests are known to fail on non-IC deployments. Upstream issue: %s", upstreamIssue,
@@ -303,11 +304,11 @@ var _ = Describe("Network Segmentation", func() {
 						})
 
 						By("creating default network pod")
-						defaultPod, err := createPod(f, "default-net-pod", nodeName,
+						defaultPod, err := CreatePod(f, "default-net-pod", nodeName,
 							defaultNetNamespace, []string{"/agnhost", "netexec"}, nil)
 						Expect(err).NotTo(HaveOccurred())
 						By("creating default network client pod")
-						defaultClientPod, err := createPod(f, "default-net-client-pod", nodeName,
+						defaultClientPod, err := CreatePod(f, "default-net-client-pod", nodeName,
 							defaultNetNamespace, []string{}, nil)
 						Expect(err).NotTo(HaveOccurred())
 
@@ -362,7 +363,7 @@ var _ = Describe("Network Segmentation", func() {
 						Expect(udnPod.Status.ContainerStatuses[0].RestartCount).To(Equal(int32(0)))
 
 						By("restarting kubelet, pod should stay ready")
-						_, err = inclustercommands.RunCommand(containerRuntime, "exec", nodeName,
+						_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", nodeName,
 							"systemctl", "restart", "kubelet")
 						Expect(err).NotTo(HaveOccurred())
 
@@ -375,7 +376,7 @@ var _ = Describe("Network Segmentation", func() {
 
 						if !isUDNHostIsolationDisabled() {
 							By("checking default network hostNetwork pod and non-kubelet host process can't reach the UDN pod")
-							hostNetPod, err := createPod(f, "host-net-pod", nodeName,
+							hostNetPod, err := CreatePod(f, "host-net-pod", nodeName,
 								defaultNetNamespace, []string{}, nil, func(pod *v1.Pod) {
 									pod.Spec.HostNetwork = true
 								})
@@ -392,7 +393,7 @@ var _ = Describe("Network Segmentation", func() {
 								}).Should(BeTrue())
 								By("checking the non-kubelet host process can reach default pod on IP " + destIP)
 								Eventually(func() bool {
-									_, err = inclustercommands.RunCommand(containerRuntime, "exec", nodeName,
+									_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", nodeName,
 										"curl", "--connect-timeout", "2",
 										net.JoinHostPort(destIP, fmt.Sprintf("%d", defaultPort)))
 									return err == nil
@@ -411,7 +412,7 @@ var _ = Describe("Network Segmentation", func() {
 
 								By("checking the non-kubelet host process can't reach UDN pod on IP " + destIP)
 								Consistently(func() bool {
-									_, err = inclustercommands.RunCommand(containerRuntime, "exec", nodeName,
+									_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", nodeName,
 										"curl", "--connect-timeout", "2",
 										net.JoinHostPort(destIP, fmt.Sprintf("%d", port)))
 									return err != nil
@@ -1441,7 +1442,7 @@ spec:
 		)
 		var externalIpv4, externalIpv6 string
 		BeforeEach(func() {
-			externalIpv4, externalIpv6 = createClusterExternalContainer(
+			externalIpv4, externalIpv6 = CreateClusterExternalContainer(
 				externalContainerName,
 				"registry.k8s.io/e2e-test-images/agnhost:2.45",
 				runExternalContainerCmd(),
@@ -1449,7 +1450,7 @@ spec:
 			)
 
 			DeferCleanup(func() {
-				deleteClusterExternalContainer(externalContainerName)
+				DeleteClusterExternalContainer(externalContainerName)
 			})
 		})
 		DescribeTableSubtree("created using",
@@ -1458,7 +1459,7 @@ spec:
 				DescribeTable(
 					"can be accessed to from the pods running in the Kubernetes cluster",
 					func(netConfigParams *multihoming.NetworkAttachmentConfigParams, clientPodConfig multihoming.PodConfiguration) {
-						if netConfigParams.Topology == "layer2" && !isInterconnectEnabled() {
+						if netConfigParams.Topology == "layer2" && !clusterinspection.IsInterconnectEnabled() {
 							const upstreamIssue = "https://github.com/ovn-org/ovn-kubernetes/issues/4642"
 							e2eskipper.Skipf(
 								"Egress e2e tests for layer2 topologies are known to fail on non-IC deployments. Upstream issue: %s", upstreamIssue,
@@ -1588,12 +1589,12 @@ spec:
 			}()
 
 			By("creating default network client pod")
-			defaultClientPod, err := createPod(f, "default-net-client-pod", node1Name,
+			defaultClientPod, err := CreatePod(f, "default-net-client-pod", node1Name,
 				defaultNetNamespace, []string{}, nil)
 			Expect(err).NotTo(HaveOccurred())
 
 			By("creating default network hostNetwork client pod")
-			hostNetPod, err := createPod(f, "host-net-client-pod", node1Name,
+			hostNetPod, err := CreatePod(f, "host-net-client-pod", node1Name,
 				defaultNetNamespace, []string{}, nil, func(pod *v1.Pod) {
 					pod.Spec.HostNetwork = true
 				})
@@ -1694,7 +1695,7 @@ spec:
 				clientPodConfig multihoming.PodConfiguration,
 				serverPodConfig multihoming.PodConfiguration,
 			) {
-				if netConfig.Topology == "layer2" && !isInterconnectEnabled() {
+				if netConfig.Topology == "layer2" && !clusterinspection.IsInterconnectEnabled() {
 					const upstreamIssue = "https://github.com/ovn-kubernetes/ovn-kubernetes/issues/4958"
 					e2eskipper.Skipf(
 						"Test skipped for layer2 topology due to known issue for non-IC deployments. Upstream issue: %s", upstreamIssue,

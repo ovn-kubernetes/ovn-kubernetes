@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/clusterinspection"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/testframework"
 	"math/rand"
 	"net"
 	"os"
@@ -106,7 +108,7 @@ func (h *egressNodeAvailabilityHandlerViaHealthCheck) checkMode(restore bool) (s
 	framework.Logf("Checking the ovnkube-node and ovnkube-master (ovnkube-cluster-manager if interconnect=true) healthcheck ports in use")
 	portNode := getTemplateContainerEnv(inclustercommands.OvnNamespace, "daemonset/ovnkube-node", getNodeContainerName(), OVN_EGRESSIP_HEALTHCHECK_PORT_ENV_NAME)
 	var portMaster string
-	if isInterconnectEnabled() {
+	if clusterinspection.IsInterconnectEnabled() {
 		portMaster = getTemplateContainerEnv(inclustercommands.OvnNamespace, "deployment/ovnkube-control-plane", "ovnkube-cluster-manager", OVN_EGRESSIP_HEALTHCHECK_PORT_ENV_NAME)
 	} else {
 		portMaster = getTemplateContainerEnv(inclustercommands.OvnNamespace, "deployment/ovnkube-master", "ovnkube-master", OVN_EGRESSIP_HEALTHCHECK_PORT_ENV_NAME)
@@ -154,7 +156,7 @@ func (h *egressNodeAvailabilityHandlerViaHealthCheck) setMode(nodeName string, r
 		framework.Logf("Updating ovnkube to use health check on port %s (0 is legacy, non 0 is GRPC)", portEnv)
 		setEnv := map[string]string{OVN_EGRESSIP_HEALTHCHECK_PORT_ENV_NAME: portEnv}
 		setUnsetTemplateContainerEnv(h.F.ClientSet, inclustercommands.OvnNamespace, "daemonset/ovnkube-node", getNodeContainerName(), setEnv)
-		if isInterconnectEnabled() {
+		if clusterinspection.IsInterconnectEnabled() {
 			setUnsetTemplateContainerEnv(h.F.ClientSet, inclustercommands.OvnNamespace, "deployment/ovnkube-control-plane", "ovnkube-cluster-manager", setEnv)
 		} else {
 			setUnsetTemplateContainerEnv(h.F.ClientSet, inclustercommands.OvnNamespace, "deployment/ovnkube-master", "ovnkube-master", setEnv)
@@ -218,7 +220,7 @@ func configNetworkAndGetTarget(subnet string, nodesToAttachNet []string, v6 bool
 	for _, nodeName := range nodesToAttachNet {
 		attachNetwork(secondaryNetworkName, nodeName)
 	}
-	v4Addr, v6Addr := createClusterExternalContainer(targetSecondaryNode.name, httpdContainerImageName, []string{"--network", secondaryNetworkName, "-P"}, []string{})
+	v4Addr, v6Addr := CreateClusterExternalContainer(targetSecondaryNode.name, httpdContainerImageName, []string{"--network", secondaryNetworkName, "-P"}, []string{})
 	if v4Addr == "" && !v6 {
 		panic("failed to get v4 address")
 	}
@@ -229,7 +231,7 @@ func configNetworkAndGetTarget(subnet string, nodesToAttachNet []string, v6 bool
 }
 
 func tearDownNetworkAndTargetForMultiNIC(nodeToDetachNet []string, targetSecondaryNode node) {
-	deleteClusterExternalContainer(targetSecondaryNode.name)
+	DeleteClusterExternalContainer(targetSecondaryNode.name)
 	for _, nodeName := range nodeToDetachNet {
 		detachNetwork(secondaryNetworkName, nodeName)
 	}
@@ -274,7 +276,7 @@ func targetExternalContainerAndTest(targetNode node, podName, podNamespace strin
 			targetNodeLogs, err = e2ekubectl.RunKubectl(podNamespace, "logs", targetNode.name)
 		} else {
 			// external container
-			targetNodeLogs, err = inclustercommands.RunCommand(containerRuntime, "logs", targetNode.name)
+			targetNodeLogs, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "logs", targetNode.name)
 		}
 		if err != nil {
 			framework.Logf("failed to inspect logs in test container: %v", err)
@@ -524,7 +526,7 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigPa
 		if !isNetworkSegmentationEnabled() {
 			return false, "network segmentation is disabled. Environment variable 'ENABLE_NETWORK_SEGMENTATION' must have value true"
 		}
-		if !isInterconnectEnabled() {
+		if !clusterinspection.IsInterconnectEnabled() {
 			return false, "interconnect is disabled. Environment variable 'OVN_ENABLE_INTERCONNECT' must have value true"
 		}
 		if netConfigParams.Topology == types.LocalnetTopology {
@@ -612,7 +614,7 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigPa
 		return false
 	}
 
-	f := wrappedTestFramework(egressIPName)
+	f := testframework.WrappedTestFramework(egressIPName)
 	f.SkipNamespaceCreation = true
 
 	// Determine what mode the CI is running in and get relevant endpoint information for the tests
@@ -670,13 +672,13 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigPa
 		}
 		isV6 := utilnet.IsIPv6String(egress1Node.nodeIP)
 		if isV6 {
-			_, targetNode.nodeIP = createClusterExternalContainer(targetNode.name, httpdContainerImageName, []string{"--network", ciNetworkName, "-P"}, []string{})
-			_, deniedTargetNode.nodeIP = createClusterExternalContainer(deniedTargetNode.name, httpdContainerImageName, []string{"--network", ciNetworkName, "-P"}, []string{})
+			_, targetNode.nodeIP = CreateClusterExternalContainer(targetNode.name, httpdContainerImageName, []string{"--network", ciNetworkName, "-P"}, []string{})
+			_, deniedTargetNode.nodeIP = CreateClusterExternalContainer(deniedTargetNode.name, httpdContainerImageName, []string{"--network", ciNetworkName, "-P"}, []string{})
 			// configure and add additional network to worker containers for EIP multi NIC feature
 			_, targetSecondaryNode.nodeIP = configNetworkAndGetTarget(secondaryIPV6Subnet, []string{egress1Node.name, egress2Node.name}, isV6, targetSecondaryNode)
 		} else {
-			targetNode.nodeIP, _ = createClusterExternalContainer(targetNode.name, httpdContainerImageName, []string{"--network", ciNetworkName, "-P"}, []string{})
-			deniedTargetNode.nodeIP, _ = createClusterExternalContainer(deniedTargetNode.name, httpdContainerImageName, []string{"--network", ciNetworkName, "-P"}, []string{})
+			targetNode.nodeIP, _ = CreateClusterExternalContainer(targetNode.name, httpdContainerImageName, []string{"--network", ciNetworkName, "-P"}, []string{})
+			deniedTargetNode.nodeIP, _ = CreateClusterExternalContainer(deniedTargetNode.name, httpdContainerImageName, []string{"--network", ciNetworkName, "-P"}, []string{})
 			// configure and add additional network to worker containers for EIP multi NIC feature
 			targetSecondaryNode.nodeIP, _ = configNetworkAndGetTarget(secondaryIPV4Subnet, []string{egress1Node.name, egress2Node.name}, isV6, targetSecondaryNode)
 		}
@@ -718,8 +720,8 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigPa
 		e2ekubectl.RunKubectlOrDie("default", "delete", "eip", egressIPName2, "--ignore-not-found=true")
 		e2ekubectl.RunKubectlOrDie("default", "label", "node", egress1Node.name, "k8s.ovn.org/egress-assignable-")
 		e2ekubectl.RunKubectlOrDie("default", "label", "node", egress2Node.name, "k8s.ovn.org/egress-assignable-")
-		deleteClusterExternalContainer(targetNode.name)
-		deleteClusterExternalContainer(deniedTargetNode.name)
+		DeleteClusterExternalContainer(targetNode.name)
+		DeleteClusterExternalContainer(deniedTargetNode.name)
 		tearDownNetworkAndTargetForMultiNIC([]string{egress1Node.name, egress2Node.name}, targetSecondaryNode)
 		// ensure all nodes are ready and reachable
 		for _, node := range []string{egress1Node.name, egress2Node.name} {
@@ -968,12 +970,12 @@ spec:
 			// TODO(mk): replace with non-repeating IP allocator
 			otherDstIP = "172.18.1.99"
 		}
-		_, err := inclustercommands.RunCommand(containerRuntime, "exec", egress2Node.name, "ip", "addr", "add", otherDstIP, "dev", "breth0")
+		_, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", egress2Node.name, "ip", "addr", "add", otherDstIP, "dev", "breth0")
 		if err != nil {
 			framework.Failf("failed to add address to node %s: %v", egress2Node.name, err)
 		}
 		defer func() {
-			_, err = inclustercommands.RunCommand(containerRuntime, "exec", egress2Node.name, "ip", "addr", "delete", otherDstIP, "dev", "breth0")
+			_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", egress2Node.name, "ip", "addr", "delete", otherDstIP, "dev", "breth0")
 			if err != nil {
 				framework.Failf("failed to remove address from node %s: %v", egress2Node.name, err)
 			}
@@ -985,7 +987,7 @@ spec:
 
 		ginkgo.By("2. Creating host-networked pod, on non-egress node acting as \"another node\"")
 		hostNetPodName := egress2Node.name + "-host-net-pod"
-		p, err := createPod(f, hostNetPodName, egress2Node.name, f.Namespace.Name, []string{}, map[string]string{}, func(p *corev1.Pod) {
+		p, err := CreatePod(f, hostNetPodName, egress2Node.name, f.Namespace.Name, []string{}, map[string]string{}, func(p *corev1.Pod) {
 			p.Spec.HostNetwork = true
 			p.Spec.Containers[0].Image = httpdContainerImageName
 		})
@@ -1385,7 +1387,7 @@ spec:
 		ginkgo.By("7. Check the OVN DB to ensure no SNATs are added for the standby egressIP")
 		dbPods, err := e2ekubectl.RunKubectl(inclustercommands.OvnNamespace, "get", "pods", "-l", "name=ovnkube-db", "-o=jsonpath='{.items..metadata.name}'")
 		dbContainerName := "nb-ovsdb"
-		if isInterconnectEnabled() {
+		if clusterinspection.IsInterconnectEnabled() {
 			dbPods, err = e2ekubectl.RunKubectl(inclustercommands.OvnNamespace, "get", "pods", "-l", "name=ovnkube-node", "--field-selector", fmt.Sprintf("spec.nodeName=%s", egress1Node.name), "-o=jsonpath='{.items..metadata.name}'")
 		}
 		if err != nil || len(dbPods) == 0 {
@@ -1499,7 +1501,7 @@ spec:
 		})
 		framework.ExpectNoError(err, "Step 14. Ensure egressIP1 from egressIP object1 and egressIP3 from object2 is correctly transferred to egress2Node, failed: %v", err)
 
-		if isInterconnectEnabled() {
+		if clusterinspection.IsInterconnectEnabled() {
 			dbPods, err = e2ekubectl.RunKubectl(inclustercommands.OvnNamespace, "get", "pods", "-l", "name=ovnkube-node", "--field-selector", fmt.Sprintf("spec.nodeName=%s", egress2Node.name), "-o=jsonpath='{.items..metadata.name}'")
 		}
 		if err != nil || len(dbPods) == 0 {
@@ -1959,9 +1961,9 @@ spec:
 		externalKindContainerName := "kind-external-container-for-egressip-mtu-test"
 		serverPodPort := rand.Intn(echoServerPodPortMax-echoServerPodPortMin) + echoServerPodPortMin
 
-		deleteClusterExternalContainer(targetNode.name)
+		DeleteClusterExternalContainer(targetNode.name)
 		targetNode.name = externalKindContainerName
-		externalKindIPv4, _ := createClusterExternalContainer(
+		externalKindIPv4, _ := CreateClusterExternalContainer(
 			externalKindContainerName,
 			agnhostImage,
 			[]string{"--privileged", "--network", "kind"},
@@ -1969,13 +1971,13 @@ spec:
 		)
 
 		// First disable PMTUD
-		_, err = inclustercommands.RunCommand(containerRuntime, "exec", externalKindContainerName, "sysctl", "-w", "net.ipv4.ip_no_pmtu_disc=2")
+		_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", externalKindContainerName, "sysctl", "-w", "net.ipv4.ip_no_pmtu_disc=2")
 		framework.ExpectNoError(err, "disabling PMTUD in the external kind container failed: %v", err)
 
 		// Then run the server
 		httpPort := fmt.Sprintf("--http-port=%d", serverPodPort)
 		udpPort := fmt.Sprintf("--udp-port=%d", serverPodPort)
-		_, err = inclustercommands.RunCommand(containerRuntime, "exec", "-d", externalKindContainerName, "/agnhost", "netexec", httpPort, udpPort)
+		_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", "-d", externalKindContainerName, "/agnhost", "netexec", httpPort, udpPort)
 		framework.ExpectNoError(err, "running netexec server in the external kind container failed: %v", err)
 
 		ginkgo.By("Checking connectivity to the external kind container and verify that the source IP is the egress IP")
@@ -2017,7 +2019,7 @@ spec:
 		}
 
 		ginkgo.By("Checking that there is no IP route exception and thus reply was fragmented")
-		stdout, err = inclustercommands.RunCommand(containerRuntime, "exec", externalKindContainerName, "ip", "route", "get", egressIP1.String())
+		stdout, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", externalKindContainerName, "ip", "route", "get", egressIP1.String())
 		framework.ExpectNoError(err, "listing the server IP route cache failed: %v", err)
 
 		if regexp.MustCompile(`cache expires.*mtu.*`).Match([]byte(stdout)) {
@@ -2690,7 +2692,7 @@ spec:
 		vrfName := "egress-vrf"
 		vrfRoutingTable := "99999"
 		// find the egress interface name
-		out, err := inclustercommands.RunCommand(containerRuntime, "exec", egress1Node.name, "ip", "-o", "route", "get", egressIP1)
+		out, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", egress1Node.name, "ip", "-o", "route", "get", egressIP1)
 		if err != nil {
 			framework.Failf("failed to add expected EIP assigned interface, err %v, out: %s", err, out)
 		}
@@ -2710,7 +2712,7 @@ spec:
 		restoreLinkIPv6AddrFn := func() error { return nil }
 		if isV6Node {
 			ginkgo.By("attempting to find IPv6 global address for secondary network")
-			address, err := inclustercommands.RunCommand(containerRuntime, "inspect", "-f",
+			address, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "inspect", "-f",
 				fmt.Sprintf("'{{ (index .NetworkSettings.Networks \"%s\").GlobalIPv6Address }}'", secondaryNetworkName), egress1Node.name)
 			if err != nil {
 				framework.Failf("failed to get node %s IP address for network %s: %v", egress1Node.name, secondaryNetworkName, err)
@@ -2719,7 +2721,7 @@ spec:
 			address = strings.Trim(address, "'")
 			ginkgo.By(fmt.Sprintf("found address %q", address))
 			gomega.Expect(net.ParseIP(address)).ShouldNot(gomega.BeNil(), "IPv6 address for secondary network must be present")
-			prefix, err := inclustercommands.RunCommand(containerRuntime, "inspect", "-f",
+			prefix, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "inspect", "-f",
 				fmt.Sprintf("'{{ (index .NetworkSettings.Networks \"%s\").GlobalIPv6PrefixLen }}'", secondaryNetworkName), egress1Node.name)
 			if err != nil {
 				framework.Failf("failed to get node %s IP prefix length for network %s: %v", egress1Node.name, secondaryNetworkName, err)
@@ -2729,17 +2731,17 @@ spec:
 			_, err = strconv.Atoi(prefix)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "requires valid IPv6 address prefix")
 			restoreLinkIPv6AddrFn = func() error {
-				_, err := inclustercommands.RunCommand(containerRuntime, "exec", egress1Node.name, "ip", "-6", "address", "add",
+				_, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", egress1Node.name, "ip", "-6", "address", "add",
 					fmt.Sprintf("%s/%s", address, prefix), "dev", egressInterface, "nodad", "scope", "global")
 				return err
 			}
 		}
-		_, err = inclustercommands.RunCommand(containerRuntime, "exec", egress1Node.name, "ip", "link", "add", vrfName, "type", "vrf", "table", vrfRoutingTable)
+		_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", egress1Node.name, "ip", "link", "add", vrfName, "type", "vrf", "table", vrfRoutingTable)
 		if err != nil {
 			framework.Failf("failed to add VRF to node %s: %v", egress1Node.name, err)
 		}
-		defer inclustercommands.RunCommand(containerRuntime, "exec", egress1Node.name, "ip", "link", "del", vrfName)
-		_, err = inclustercommands.RunCommand(containerRuntime, "exec", egress1Node.name, "ip", "link", "set", "dev", egressInterface, "master", vrfName)
+		defer inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", egress1Node.name, "ip", "link", "del", vrfName)
+		_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", egress1Node.name, "ip", "link", "set", "dev", egressInterface, "master", vrfName)
 		if err != nil {
 			framework.Failf("failed to enslave interface %s to VRF %s node %s: %v", egressInterface, vrfName, egress1Node.name, err)
 		}

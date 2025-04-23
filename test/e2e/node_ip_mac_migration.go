@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/testframework"
 	"math/big"
 	"math/rand"
 	"net"
@@ -92,7 +93,7 @@ spec:
 			false: "update the IP address first, kubelet later",
 		}
 
-		f = wrappedTestFramework(namespacePrefix)
+		f = testframework.WrappedTestFramework(namespacePrefix)
 
 		udpPort  = int32(rand.Intn(1000) + 10000)
 		udpPortS = fmt.Sprintf("%d", udpPort)
@@ -131,13 +132,13 @@ spec:
 
 		By("Creating a cluster external container")
 		externalContainerIPs = make(map[int]string)
-		externalContainerIPs[4], externalContainerIPs[6] = createClusterExternalContainer(externalContainerName,
+		externalContainerIPs[4], externalContainerIPs[6] = CreateClusterExternalContainer(externalContainerName,
 			externalContainerImage, []string{"--network", ciNetworkName, "-P"}, externalContainerCommand)
 	})
 
 	AfterEach(func() {
 		By("Removing the external container")
-		deleteClusterExternalContainer(externalContainerName)
+		DeleteClusterExternalContainer(externalContainerName)
 
 		By("Removing the temp directory")
 		Expect(os.RemoveAll(tmpDirIPMigration)).To(Succeed())

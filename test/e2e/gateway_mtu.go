@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/testframework"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
@@ -12,7 +13,7 @@ import (
 
 var _ = ginkgo.Describe("Check whether gateway-mtu-support annotation on node is set based on disable-pkt-mtu-check value", func() {
 	var nodes *v1.NodeList
-	f := wrappedTestFramework("gateway-mtu-support")
+	f := testframework.WrappedTestFramework("gateway-mtu-support")
 
 	ginkgo.BeforeEach(func() {
 		var err error

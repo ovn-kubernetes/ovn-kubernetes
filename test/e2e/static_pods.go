@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/testframework"
 	"os"
 	"time"
 
@@ -73,7 +74,7 @@ var _ = ginkgo.Describe("Creating a static pod on a node", func() {
 		agnhostImage string = "registry.k8s.io/e2e-test-images/agnhost:2.26"
 	)
 
-	f := wrappedTestFramework("staticpods")
+	f := testframework.WrappedTestFramework("staticpods")
 
 	var cs clientset.Interface
 

@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/testframework"
 	"strings"
 	"time"
 
@@ -21,7 +22,7 @@ import (
 )
 
 var _ = ginkgo.Describe("Network Segmentation: Network Policies", func() {
-	f := wrappedTestFramework("network-segmentation")
+	f := testframework.WrappedTestFramework("network-segmentation")
 	f.SkipNamespaceCreation = true
 
 	ginkgo.Context("on a user defined primary network", func() {

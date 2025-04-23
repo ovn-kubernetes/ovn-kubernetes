@@ -1,4 +1,4 @@
-package e2e
+package virt_tests
 
 import (
 	"context"
@@ -58,9 +58,12 @@ import (
 	kubevirtv1 "kubevirt.io/api/core/v1"
 	kvmigrationsv1alpha1 "kubevirt.io/api/migrations/v1alpha1"
 
+	"github.com/ovn-org/ovn-kubernetes/test/e2e"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/clusterinspection"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/inclustercommands"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/ip"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/multihoming"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/testframework"
 )
 
 func newControllerRuntimeClient() (crclient.Client, error) {
@@ -96,7 +99,7 @@ func newControllerRuntimeClient() (crclient.Client, error) {
 
 var _ = Describe("Kubevirt Virtual Machines", func() {
 	var (
-		fr                  = wrappedTestFramework("kv-live-migration")
+		fr                  = testframework.WrappedTestFramework("kv-live-migration")
 		d                   = diagnostics.New(fr)
 		crClient            crclient.Client
 		namespace           string
@@ -362,7 +365,7 @@ var _ = Describe("Kubevirt Virtual Machines", func() {
 			Expect(addresses).NotTo(BeEmpty())
 			for _, address := range addresses {
 				iperfLogFile := fmt.Sprintf("/tmp/ingress_test_%[1]s_%[2]d_iperf3.log", address, port)
-				output, err := inclustercommands.RunCommand(containerRuntime, "exec", containerName, "bash", "-c", fmt.Sprintf(`
+				output, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", containerName, "bash", "-c", fmt.Sprintf(`
 iperf3 -c %[1]s -p %[2]d
 killall iperf3
 rm -f %[3]s
@@ -381,7 +384,7 @@ iperf3 -t 0 -c %[1]s -p %[2]d --logfile %[3]s &
 			for _, ip := range addresses {
 				iperfLogFile := fmt.Sprintf("/tmp/ingress_test_%s_%d_iperf3.log", ip, port)
 				execFn := func(cmd string) (string, error) {
-					return inclustercommands.RunCommand(containerRuntime, "exec", containerName, "bash", "-c", cmd)
+					return inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", containerName, "bash", "-c", cmd)
 				}
 				checkIperfTraffic(iperfLogFile, execFn, stage)
 			}
@@ -1141,11 +1144,11 @@ fi
 						IPRequest: staticIPs,
 					}
 				}
-				pod, err := createPod(fr, "testpod-"+node.Name, node.Name, namespace, []string{"bash", "-c"}, map[string]string{}, func(pod *corev1.Pod) {
+				pod, err := e2e.CreatePod(fr, "testpod-"+node.Name, node.Name, namespace, []string{"bash", "-c"}, map[string]string{}, func(pod *corev1.Pod) {
 					if nse != nil {
 						pod.Annotations = multihoming.NetworkSelectionElements(*nse)
 					}
-					pod.Spec.Containers[0].Image = iperf3Image
+					pod.Spec.Containers[0].Image = e2e.Iperf3Image
 					pod.Spec.Containers[0].Args = []string{iperfServerScript + "\n sleep infinity"}
 
 				})
@@ -1190,7 +1193,7 @@ fi
 
 		removeImagesInNode = func(node, imageURL string) error {
 			By("Removing unused images in node " + node)
-			output, err := inclustercommands.RunCommand(containerRuntime, "exec", node,
+			output, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", node,
 				"crictl", "images", "-o", "json")
 			if err != nil {
 				return err
@@ -1203,12 +1206,12 @@ fi
 				return err
 			}
 			if imageID != "" {
-				_, err = inclustercommands.RunCommand(containerRuntime, "exec", node,
+				_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", node,
 					"crictl", "rmi", imageID)
 				if err != nil {
 					return err
 				}
-				_, err = inclustercommands.RunCommand(containerRuntime, "exec", node,
+				_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", node,
 					"crictl", "rmi", "--prune")
 				if err != nil {
 					return err
@@ -1230,9 +1233,9 @@ fi
 		}
 
 		createIperfExternalContainer = func(name string) (string, string) {
-			return createClusterExternalContainer(
+			return e2e.CreateClusterExternalContainer(
 				name,
-				iperf3Image,
+				e2e.Iperf3Image,
 				[]string{"--network", "kind", "--entrypoint", "/bin/bash"},
 				[]string{"-c", "sleep infinity"},
 			)
@@ -1566,7 +1569,7 @@ runcmd:
 			role        string
 		}
 		DescribeTable("should keep ip", func(td testData) {
-			if td.role == "primary" && !isInterconnectEnabled() {
+			if td.role == "primary" && !clusterinspection.IsInterconnectEnabled() {
 				const upstreamIssue = "https://github.com/ovn-org/ovn-kubernetes/issues/4528"
 				e2eskipper.Skipf(
 					"The egress check of tests are known to fail on non-IC deployments. Upstream issue: %s", upstreamIssue,
@@ -1577,7 +1580,7 @@ runcmd:
 				"e2e-framework": fr.BaseName,
 			}
 			if td.role == "primary" {
-				l[RequiredUDNNamespaceLabel] = ""
+				l[e2e.RequiredUDNNamespaceLabel] = ""
 			}
 			ns, err := fr.CreateNamespace(context.TODO(), fr.BaseName, l)
 			Expect(err).NotTo(HaveOccurred())
@@ -1624,7 +1627,7 @@ runcmd:
 			externalContainerIPV4Address, externalContainerIPV6Address := createIperfExternalContainer(externalContainerName)
 			DeferCleanup(func() {
 				if e2eframework.TestContext.DeleteNamespace && (e2eframework.TestContext.DeleteNamespaceOnFailure || !CurrentSpecReport().Failed()) {
-					deleteClusterExternalContainer(externalContainerName)
+					e2e.DeleteClusterExternalContainer(externalContainerName)
 				}
 			})
 
@@ -1687,7 +1690,7 @@ runcmd:
 			nodeIPs := e2enode.CollectAddresses(nodes, v1.NodeInternalIP)
 
 			if td.role == "primary" {
-				if clusterinspection.IsIPv6Supported() && isInterconnectEnabled() {
+				if clusterinspection.IsIPv6Supported() && clusterinspection.IsInterconnectEnabled() {
 					step = by(vmi.Name, fmt.Sprintf("Checking IPv6 gateway before %s %s", td.resource.description, td.test.description))
 
 					nodeRunningVMI, err := fr.ClientSet.CoreV1().Nodes().Get(context.Background(), vmi.Status.NodeName, metav1.GetOptions{})
@@ -1744,7 +1747,7 @@ runcmd:
 				checkNorthSouthEgressICMPTraffic(vmi, []string{externalContainerIPV4Address, externalContainerIPV6Address}, step)
 			}
 
-			if td.role == "primary" && td.test.description == liveMigrate.description && isInterconnectEnabled() {
+			if td.role == "primary" && td.test.description == liveMigrate.description && clusterinspection.IsInterconnectEnabled() {
 				if clusterinspection.IsIPv4Supported() {
 					step = by(vmi.Name, fmt.Sprintf("Checking IPv4 gateway cached mac after %s %s", td.resource.description, td.test.description))
 					Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
@@ -1853,7 +1856,7 @@ runcmd:
 			cidrIPv6                = "2010:100:200::/60"
 			primaryUDNNetworkStatus nadapi.NetworkStatus
 			virtLauncherCommand     = func(command string) (string, error) {
-				stdout, stderr, err := ExecShellInPodWithFullOutput(fr, namespace, podName, command)
+				stdout, stderr, err := e2e.ExecShellInPodWithFullOutput(fr, namespace, podName, command)
 				if err != nil {
 					return "", fmt.Errorf("%s: %s: %w", stdout, stderr, err)
 				}
@@ -1878,8 +1881,8 @@ runcmd:
 		})
 		BeforeEach(func() {
 			ns, err := fr.CreateNamespace(context.TODO(), fr.BaseName, map[string]string{
-				"e2e-framework":           fr.BaseName,
-				RequiredUDNNamespaceLabel: "",
+				"e2e-framework":               fr.BaseName,
+				e2e.RequiredUDNNamespaceLabel: "",
 			})
 			fr.Namespace = ns
 			namespace = fr.Namespace.Name
@@ -1934,10 +1937,10 @@ runcmd:
 			Expect(err).NotTo(HaveOccurred())
 
 			if clusterinspection.IsIPv4Supported() {
-				expectedIP, err := matchIPv4StringFamily(primaryUDNNetworkStatus.IPs)
+				expectedIP, err := ip.MatchIPv4StringFamily(primaryUDNNetworkStatus.IPs)
 				Expect(err).NotTo(HaveOccurred())
 
-				expectedDNS, err := matchIPv4StringFamily(dnsService.Spec.ClusterIPs)
+				expectedDNS, err := ip.MatchIPv4StringFamily(dnsService.Spec.ClusterIPs)
 				Expect(err).NotTo(HaveOccurred())
 
 				_, cidr, err := net.ParseCIDR(cidrIPv4)
@@ -1962,7 +1965,7 @@ runcmd:
 			}
 
 			if clusterinspection.IsIPv6Supported() {
-				expectedIP, err := matchIPv6StringFamily(primaryUDNNetworkStatus.IPs)
+				expectedIP, err := ip.MatchIPv6StringFamily(primaryUDNNetworkStatus.IPs)
 				Expect(err).NotTo(HaveOccurred())
 				Eventually(primaryUDNValueFor).
 					WithArguments("connection", "DHCP6.OPTION").

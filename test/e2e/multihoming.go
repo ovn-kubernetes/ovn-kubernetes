@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/testframework"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -51,7 +52,7 @@ var _ = Describe("Multi Homing", func() {
 		secondaryIPv6CIDR            = "2010:100:200::0/60"
 		netPrefixLengthIPv6PerNode   = 64
 	)
-	f := wrappedTestFramework("multi-homing")
+	f := testframework.WrappedTestFramework("multi-homing")
 
 	var (
 		cs        clientset.Interface

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/clusterinspection"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/testframework"
 	"net"
 	"slices"
 	"time"
@@ -32,7 +34,7 @@ import (
 
 var _ = Describe("Network Segmentation: services", func() {
 
-	f := wrappedTestFramework("udn-services")
+	f := testframework.WrappedTestFramework("udn-services")
 	f.SkipNamespaceCreation = true
 
 	Context("on a user defined primary network", func() {
@@ -93,7 +95,7 @@ var _ = Describe("Network Segmentation: services", func() {
 				namespace := f.Namespace.Name
 				jig := e2eservice.NewTestJig(cs, namespace, "udn-service")
 
-				if netConfigParams.Topology == "layer2" && !isInterconnectEnabled() {
+				if netConfigParams.Topology == "layer2" && !clusterinspection.IsInterconnectEnabled() {
 					const upstreamIssue = "https://github.com/ovn-org/ovn-kubernetes/issues/4703"
 					e2eskipper.Skipf(
 						"Service e2e tests for layer2 topologies are known to fail on non-IC deployments. Upstream issue: %s", upstreamIssue,
@@ -200,7 +202,7 @@ ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | 
 				_, err = cs.CoreV1().Namespaces().Create(context.Background(), defaultNetNamespace, metav1.CreateOptions{})
 				Expect(err).NotTo(HaveOccurred())
 
-				defaultClient, err := createPod(f, "default-net-pod", clientNode, defaultNetNamespace.Name, []string{"sleep", "2000000"}, nil)
+				defaultClient, err := CreatePod(f, "default-net-pod", clientNode, defaultNetNamespace.Name, []string{"sleep", "2000000"}, nil)
 				Expect(err).NotTo(HaveOccurred())
 
 				By("Verify the connection of the client in the default network to the UDN service")
@@ -217,7 +219,7 @@ ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | 
 				By(fmt.Sprintf("Creating a backend pod in the default network on node %s", serverPodNodeName))
 				defaultLabels := map[string]string{"app": "default-app"}
 
-				defaultServerPod, err := createPod(f, "backend-pod-default", serverPodNodeName,
+				defaultServerPod, err := CreatePod(f, "backend-pod-default", serverPodNodeName,
 					defaultNetNamespace.Name, []string{"/agnhost", "netexec", "--udp-port=" + fmt.Sprint(serviceTargetPort)}, defaultLabels,
 					func(pod *v1.Pod) {
 						pod.Spec.Containers[0].Ports = []v1.ContainerPort{{ContainerPort: (serviceTargetPort), Protocol: "UDP"}}
@@ -482,7 +484,7 @@ func checkConnectionToNodePortFromExternalContainer(f *framework.Framework, cont
 		msg := fmt.Sprintf("Client at external container %s should connect to NodePort service %s/%s on %s:%d (node %s, %s)",
 			containerName, service.Namespace, service.Name, nodeIP, nodePort, node.Name, nodeRoleMsg)
 		By(msg)
-		cmd := []string{containerRuntime, "exec", containerName, "/bin/bash", "-c", fmt.Sprintf("echo hostname | nc -u -w 1 %s %d", nodeIP, nodePort)}
+		cmd := []string{testframework.ContainerRuntime, "exec", containerName, "/bin/bash", "-c", fmt.Sprintf("echo hostname | nc -u -w 1 %s %d", nodeIP, nodePort)}
 		Eventually(func() (string, error) {
 			return inclustercommands.RunCommand(cmd...)
 		}).
@@ -500,7 +502,7 @@ func checkConnectionToLoadBalancersFromExternalContainer(f *framework.Framework,
 		msg := fmt.Sprintf("Client at external container %s should reach service %s/%s on LoadBalancer IP %s port %d",
 			containerName, service.Namespace, service.Name, lbIngress.IP, port)
 		By(msg)
-		cmd := []string{containerRuntime, "exec", containerName, "/bin/bash", "-c", fmt.Sprintf("echo hostname | nc -u -w 1 %s %d", lbIngress.IP, port)}
+		cmd := []string{testframework.ContainerRuntime, "exec", containerName, "/bin/bash", "-c", fmt.Sprintf("echo hostname | nc -u -w 1 %s %d", lbIngress.IP, port)}
 		Eventually(func() (string, error) {
 			return inclustercommands.RunCommand(cmd...)
 		}).
