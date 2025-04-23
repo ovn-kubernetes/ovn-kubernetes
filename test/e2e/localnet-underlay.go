@@ -15,15 +15,15 @@ import (
 )
 
 const (
-	defaultOvsBridge = "breth0"
-	secondaryBridge  = "ovsbr1"
+	DefaultOvsBridge = "breth0"
+	SecondaryBridge  = "ovsbr1"
 	add              = "add-br"
 	del              = "del-br"
 )
 
-func setupUnderlay(ovsPods []v1.Pod, bridgeName, portName string, nadConfig multihoming.NetworkAttachmentConfig) error {
+func SetupUnderlay(ovsPods []v1.Pod, bridgeName, portName string, nadConfig multihoming.NetworkAttachmentConfig) error {
 	for _, ovsPod := range ovsPods {
-		if bridgeName != defaultOvsBridge {
+		if bridgeName != DefaultOvsBridge {
 			if err := addOVSBridge(ovsPod.Name, bridgeName); err != nil {
 				return err
 			}
@@ -51,11 +51,11 @@ func setupUnderlay(ovsPods []v1.Pod, bridgeName, portName string, nadConfig mult
 
 func ovsRemoveSwitchPort(ovsPods []v1.Pod, portName string, newVLANID int) error {
 	for _, ovsPod := range ovsPods {
-		if err := ovsRemoveVLANAccessPort(ovsPod.Name, secondaryBridge, portName); err != nil {
+		if err := ovsRemoveVLANAccessPort(ovsPod.Name, SecondaryBridge, portName); err != nil {
 			return fmt.Errorf("failed to remove old VLAN port: %v", err)
 		}
 
-		if err := ovsEnableVLANAccessPort(ovsPod.Name, secondaryBridge, portName, newVLANID); err != nil {
+		if err := ovsEnableVLANAccessPort(ovsPod.Name, SecondaryBridge, portName, newVLANID); err != nil {
 			return fmt.Errorf("failed to add new VLAN port: %v", err)
 		}
 	}
@@ -63,9 +63,9 @@ func ovsRemoveSwitchPort(ovsPods []v1.Pod, portName string, newVLANID int) error
 	return nil
 }
 
-func teardownUnderlay(ovsPods []v1.Pod, bridgeName string) error {
+func TeardownUnderlay(ovsPods []v1.Pod, bridgeName string) error {
 	for _, ovsPod := range ovsPods {
-		if bridgeName != defaultOvsBridge {
+		if bridgeName != DefaultOvsBridge {
 			if err := removeOVSBridge(ovsPod.Name, bridgeName); err != nil {
 				return err
 			}
@@ -81,7 +81,7 @@ func teardownUnderlay(ovsPods []v1.Pod, bridgeName string) error {
 	return nil
 }
 
-func ovsPods(clientSet clientset.Interface) []v1.Pod {
+func OvsPods(clientSet clientset.Interface) []v1.Pod {
 	const (
 		ovsNodeLabel = "app=ovs-node"
 	)

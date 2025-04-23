@@ -44,14 +44,14 @@ var _ = Describe("Network Segmentation: Localnet", func() {
 		physicalNetworkName := uniqueMetaName("localnet1")
 
 		By("setup the localnet underlay")
-		ovsPods := ovsPods(f.ClientSet)
+		ovsPods := OvsPods(f.ClientSet)
 		Expect(ovsPods).NotTo(BeEmpty())
 		DeferCleanup(func() {
 			By("teardown the localnet underlay")
-			Expect(teardownUnderlay(ovsPods, ovsBrName)).To(Succeed())
+			Expect(TeardownUnderlay(ovsPods, ovsBrName)).To(Succeed())
 		})
 		c := multihoming.NetworkAttachmentConfig{NetworkAttachmentConfigParams: multihoming.NetworkAttachmentConfigParams{NetworkName: physicalNetworkName, VlanID: vlan}}
-		Expect(setupUnderlay(ovsPods, ovsBrName, secondaryIfaceName, c)).To(Succeed())
+		Expect(SetupUnderlay(ovsPods, ovsBrName, secondaryIfaceName, c)).To(Succeed())
 
 		By("create test namespaces")
 		_, err := f.ClientSet.CoreV1().Namespaces().Create(context.Background(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: nsRed}}, metav1.CreateOptions{})
