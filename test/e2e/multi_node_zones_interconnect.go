@@ -19,6 +19,7 @@ import (
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/inclustercommands"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/multihoming"
 )
 
@@ -42,7 +43,7 @@ func changeNodeZone(node *v1.Node, zone string, cs clientset.Interface) error {
 	framework.ExpectNoError(err)
 
 	// Restart the ovnkube-node on this node
-	err = restartOVNKubeNodePod(cs, ovnNamespace, node.Name)
+	err = restartOVNKubeNodePod(cs, inclustercommands.OvnNamespace, node.Name)
 	framework.ExpectNoError(err)
 
 	// Verify that the node is moved to the expected zone

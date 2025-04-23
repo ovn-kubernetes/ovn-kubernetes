@@ -224,7 +224,7 @@ spec:
 						true)
 					Expect(err).NotTo(HaveOccurred())
 
-					ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+					ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(inclustercommands.OvnNamespace).List(context.TODO(), metav1.ListOptions{
 						LabelSelector: "app=ovnkube-node",
 						FieldSelector: "spec.nodeName=" + workerNode.Name,
 					})
@@ -261,7 +261,7 @@ spec:
 							By("Setting rollbackNeeded to true")
 							rollbackNeeded = true
 
-							ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+							ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(inclustercommands.OvnNamespace).List(context.TODO(), metav1.ListOptions{
 								LabelSelector: "app=ovnkube-node",
 								FieldSelector: "spec.nodeName=" + workerNode.Name,
 							})
@@ -361,7 +361,7 @@ spec:
 							By("Setting rollbackNeeded to true")
 							rollbackNeeded = true
 
-							ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+							ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(inclustercommands.OvnNamespace).List(context.TODO(), metav1.ListOptions{
 								LabelSelector: "app=ovnkube-node",
 								FieldSelector: "spec.nodeName=" + workerNode.Name,
 							})
@@ -440,7 +440,7 @@ spec:
 					assignedNodePort = svc.Spec.Ports[0].NodePort
 
 					// find the ovn-kube node pod on this node
-					pods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+					pods, err := f.ClientSet.CoreV1().Pods(inclustercommands.OvnNamespace).List(context.TODO(), metav1.ListOptions{
 						LabelSelector: "app=ovnkube-node",
 						FieldSelector: "spec.nodeName=" + workerNode.Name,
 					})
@@ -490,7 +490,7 @@ spec:
 							By("Setting rollbackNeeded to true")
 							rollbackNeeded = true
 
-							ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+							ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(inclustercommands.OvnNamespace).List(context.TODO(), metav1.ListOptions{
 								LabelSelector: "app=ovnkube-node",
 								FieldSelector: "spec.nodeName=" + workerNode.Name,
 							})
@@ -539,7 +539,7 @@ spec:
 	When("when MAC address changes", func() {
 		BeforeEach(func() {
 			By("Storing original MAC")
-			ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+			ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(inclustercommands.OvnNamespace).List(context.TODO(), metav1.ListOptions{
 				LabelSelector: "app=ovnkube-node",
 				FieldSelector: "spec.nodeName=" + workerNode.Name,
 			})
@@ -863,7 +863,7 @@ func isAddressReachableFromContainer(containerName, targetIP string) (bool, erro
 
 func isOVNEncapIPReady(nodeName, nodeIP, ovnkubePodName string) bool {
 	framework.Logf("Verifying ovn-encap-ip for node %s", nodeName)
-	cmd := []string{"kubectl", "-n", ovnNamespace, "exec", ovnkubePodName, "-c", "ovn-controller",
+	cmd := []string{"kubectl", "-n", inclustercommands.OvnNamespace, "exec", ovnkubePodName, "-c", "ovn-controller",
 		"--", "ovs-vsctl", "get", "open_vswitch", ".", "external-ids:ovn-encap-ip"}
 	output, err := inclustercommands.RunCommand(cmd...)
 	if err != nil {

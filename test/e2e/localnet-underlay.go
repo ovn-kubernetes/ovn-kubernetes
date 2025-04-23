@@ -86,7 +86,7 @@ func OvsPods(clientSet clientset.Interface) []v1.Pod {
 	const (
 		ovsNodeLabel = "app=ovs-node"
 	)
-	pods, err := clientSet.CoreV1().Pods(ovnNamespace).List(
+	pods, err := clientSet.CoreV1().Pods(inclustercommands.OvnNamespace).List(
 		context.Background(),
 		metav1.ListOptions{LabelSelector: ovsNodeLabel},
 	)
@@ -114,14 +114,14 @@ func removeOVSBridge(ovnNodeName string, bridgeName string) error {
 
 func ovsBridgeCommand(ovnNodeName string, addOrDeleteCmd string, bridgeName string) []string {
 	return []string{
-		"kubectl", "-n", ovnNamespace, "exec", ovnNodeName, "--",
+		"kubectl", "-n", inclustercommands.OvnNamespace, "exec", ovnNodeName, "--",
 		"ovs-vsctl", addOrDeleteCmd, bridgeName,
 	}
 }
 
 func ovsAttachPortToBridge(ovsNodeName string, bridgeName string, portName string) error {
 	cmd := []string{
-		"kubectl", "-n", ovnNamespace, "exec", ovsNodeName, "--",
+		"kubectl", "-n", inclustercommands.OvnNamespace, "exec", ovsNodeName, "--",
 		"ovs-vsctl", "add-port", bridgeName, portName,
 	}
 	if _, err := inclustercommands.RunCommand(cmd...); err != nil {
@@ -133,7 +133,7 @@ func ovsAttachPortToBridge(ovsNodeName string, bridgeName string, portName strin
 
 func ovsEnableVLANAccessPort(ovsNodeName string, bridgeName string, portName string, vlanID int) error {
 	cmd := []string{
-		"kubectl", "-n", ovnNamespace, "exec", ovsNodeName, "--",
+		"kubectl", "-n", inclustercommands.OvnNamespace, "exec", ovsNodeName, "--",
 		"ovs-vsctl", "--may-exist", "add-port", bridgeName, portName, fmt.Sprintf("tag=%d", vlanID), "vlan_mode=access",
 	}
 	if _, err := inclustercommands.RunCommand(cmd...); err != nil {
@@ -145,7 +145,7 @@ func ovsEnableVLANAccessPort(ovsNodeName string, bridgeName string, portName str
 
 func ovsRemoveVLANAccessPort(ovsNodeName string, bridgeName string, portName string) error {
 	cmd := []string{
-		"kubectl", "-n", ovnNamespace, "exec", ovsNodeName, "--",
+		"kubectl", "-n", inclustercommands.OvnNamespace, "exec", ovsNodeName, "--",
 		"ovs-vsctl", "del-port", bridgeName, portName,
 	}
 
@@ -181,7 +181,7 @@ func Map[T, V any](items []T, fn func(T) V) []V {
 
 func configureBridgeMappings(ovnNodeName string, mappings ...BridgeMapping) error {
 	mappingsString := fmt.Sprintf("external_ids:ovn-bridge-mappings=%s", BridgeMappings(mappings).String())
-	cmd := []string{"kubectl", "-n", ovnNamespace, "exec", ovnNodeName,
+	cmd := []string{"kubectl", "-n", inclustercommands.OvnNamespace, "exec", ovnNodeName,
 		"--", "ovs-vsctl", "set", "open", ".", mappingsString,
 	}
 	_, err := inclustercommands.RunCommand(cmd...)

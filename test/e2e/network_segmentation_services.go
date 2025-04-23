@@ -256,7 +256,7 @@ ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | 
 				// in OVNK in CLBO state https://issues.redhat.com/browse/OCPBUGS-41499
 				if netConfigParams.Topology == "layer3" { // no need to run it for layer 2 as well
 					By("Restart ovnkube-node on one node and verify that the new ovnkube-node pod goes to the running state")
-					err = restartOVNKubeNodePod(cs, ovnNamespace, clientNode)
+					err = restartOVNKubeNodePod(cs, inclustercommands.OvnNamespace, clientNode)
 					Expect(err).NotTo(HaveOccurred())
 				}
 			},

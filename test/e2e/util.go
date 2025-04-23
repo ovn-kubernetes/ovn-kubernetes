@@ -39,7 +39,6 @@ import (
 )
 
 const (
-	ovnNamespace   = "ovn-kubernetes"
 	ovnNodeSubnets = "k8s.ovn.org/node-subnets"
 	// ovnNodeZoneNameAnnotation is the node annotation name to store the node zone name.
 	ovnNodeZoneNameAnnotation = "k8s.ovn.org/zone-name"
@@ -667,7 +666,7 @@ func waitClusterHealthy(f *framework.Framework, numControlPlanePods int, control
 			return false, nil
 		}
 
-		podClient := f.ClientSet.CoreV1().Pods(ovnNamespace)
+		podClient := f.ClientSet.CoreV1().Pods(inclustercommands.OvnNamespace)
 		// Ensure all nodes are running and healthy
 		podList, err := podClient.List(context.Background(), metav1.ListOptions{
 			LabelSelector: "app=ovnkube-node",
@@ -1124,7 +1123,7 @@ func countACLLogs(targetNodeName string, policyNameRegex string, expectedACLVerd
 func getTemplateContainerEnv(namespace, resource, container, key string) string {
 	args := []string{"get", resource,
 		"-o=jsonpath='{.spec.template.spec.containers[?(@.name==\"" + container + "\")].env[?(@.name==\"" + key + "\")].value}'"}
-	value := e2ekubectl.RunKubectlOrDie(ovnNamespace, args...)
+	value := e2ekubectl.RunKubectlOrDie(inclustercommands.OvnNamespace, args...)
 	return strings.Trim(value, "'")
 }
 
@@ -1228,7 +1227,7 @@ func isLocalGWModeEnabled() bool {
 func singleNodePerZone() bool {
 	if singleNodePerZoneResult == nil {
 		args := []string{"get", "pods", "--selector=app=ovnkube-node", "-o", "jsonpath={.items[0].spec.containers[*].name}"}
-		containerNames := e2ekubectl.RunKubectlOrDie(ovnNamespace, args...)
+		containerNames := e2ekubectl.RunKubectlOrDie(inclustercommands.OvnNamespace, args...)
 		result := true
 		for _, containerName := range strings.Split(containerNames, " ") {
 			if containerName == "ovnkube-node" {
