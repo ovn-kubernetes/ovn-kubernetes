@@ -32,8 +32,7 @@ import (
 )
 
 const (
-	PolicyForAnnotation = "k8s.v1.cni.cncf.io/policy-for"
-	nodeHostnameKey     = "kubernetes.io/hostname"
+	nodeHostnameKey = "kubernetes.io/hostname"
 )
 
 var _ = Describe("Multi Homing", func() {

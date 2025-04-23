@@ -27,6 +27,10 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/clusterinspection"
 )
 
+const (
+	PolicyForAnnotation = "k8s.v1.cni.cncf.io/policy-for"
+)
+
 func netCIDR(netCIDR string, netPrefixLengthPerNode int) string {
 	return fmt.Sprintf("%s/%d", netCIDR, netPrefixLengthPerNode)
 }
