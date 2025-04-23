@@ -72,12 +72,12 @@ func checkPodsInterconnectivity(clientPod, serverPod *v1.Pod, namespace string, 
 			return err
 		}
 
-		clientPodConfig := podConfiguration{
-			name:      clientPod.Name,
-			namespace: namespace,
+		clientPodConfig := PodConfiguration{
+			Name:      clientPod.Name,
+			Namespace: namespace,
 		}
 		if updatedPod.Status.Phase == v1.PodRunning {
-			return connectToServer(clientPodConfig, updatedPod.Status.PodIP, 8000)
+			return ConnectToServer(clientPodConfig, updatedPod.Status.PodIP, 8000)
 		}
 
 		return fmt.Errorf("pod not running. /me is sad")
@@ -146,7 +146,7 @@ var _ = ginkgo.Describe("Multi node zones interconnect", func() {
 
 	ginkgo.It("Pod interconnectivity", func() {
 		// Create a server pod on zone - zone-1
-		cmd := httpServerContainerCmd(8000)
+		cmd := HttpServerContainerCmd(8000)
 		serverPod := e2epod.NewAgnhostPod(fr.Namespace.Name, serverPodName, nil, nil, nil, cmd...)
 		serverPod.Spec.NodeName = serverPodNodeName
 		e2epod.NewPodClient(fr).CreateSync(context.TODO(), serverPod)

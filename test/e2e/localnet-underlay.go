@@ -19,15 +19,15 @@ const (
 	del              = "del-br"
 )
 
-func setupUnderlay(ovsPods []v1.Pod, bridgeName, portName string, nadConfig networkAttachmentConfig) error {
+func setupUnderlay(ovsPods []v1.Pod, bridgeName, portName string, nadConfig NetworkAttachmentConfig) error {
 	for _, ovsPod := range ovsPods {
 		if bridgeName != defaultOvsBridge {
 			if err := addOVSBridge(ovsPod.Name, bridgeName); err != nil {
 				return err
 			}
 
-			if nadConfig.vlanID > 0 {
-				if err := ovsEnableVLANAccessPort(ovsPod.Name, bridgeName, portName, nadConfig.vlanID); err != nil {
+			if nadConfig.VlanID > 0 {
+				if err := ovsEnableVLANAccessPort(ovsPod.Name, bridgeName, portName, nadConfig.VlanID); err != nil {
 					return err
 				}
 			} else {
@@ -39,7 +39,7 @@ func setupUnderlay(ovsPods []v1.Pod, bridgeName, portName string, nadConfig netw
 		if err := configureBridgeMappings(
 			ovsPod.Name,
 			defaultNetworkBridgeMapping(),
-			bridgeMapping(nadConfig.networkName, bridgeName),
+			bridgeMapping(nadConfig.NetworkName, bridgeName),
 		); err != nil {
 			return err
 		}

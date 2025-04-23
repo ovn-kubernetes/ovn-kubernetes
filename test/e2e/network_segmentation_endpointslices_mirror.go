@@ -50,15 +50,15 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", func() {
 		})
 
 		DescribeTableSubtree("created using",
-			func(createNetworkFn func(c networkAttachmentConfigParams) error) {
+			func(createNetworkFn func(c NetworkAttachmentConfigParams) error) {
 				DescribeTable(
 					"mirrors EndpointSlices managed by the default controller for namespaces with user defined primary networks",
 					func(
-						netConfig networkAttachmentConfigParams,
+						netConfig NetworkAttachmentConfigParams,
 						isHostNetwork bool,
 					) {
 						By("creating the network")
-						netConfig.namespace = f.Namespace.Name
+						netConfig.Namespace = f.Namespace.Name
 						Expect(createNetworkFn(netConfig)).To(Succeed())
 
 						replicas := int32(3)
@@ -117,67 +117,67 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", func() {
 					},
 					Entry(
 						"L2 primary UDN, cluster-networked pods",
-						networkAttachmentConfigParams{
-							name:     nadName,
-							topology: "layer2",
-							cidr:     correctCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
-							role:     "primary",
+						NetworkAttachmentConfigParams{
+							Name:     nadName,
+							Topology: "layer2",
+							Cidr:     CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							Role:     "primary",
 						},
 						false,
 					),
 					Entry(
 						"L3 primary UDN, cluster-networked pods",
-						networkAttachmentConfigParams{
-							name:     nadName,
-							topology: "layer3",
-							cidr:     correctCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
-							role:     "primary",
+						NetworkAttachmentConfigParams{
+							Name:     nadName,
+							Topology: "layer3",
+							Cidr:     CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							Role:     "primary",
 						},
 						false,
 					),
 					Entry(
 						"L2 primary UDN, host-networked pods",
-						networkAttachmentConfigParams{
-							name:     nadName,
-							topology: "layer2",
-							cidr:     correctCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
-							role:     "primary",
+						NetworkAttachmentConfigParams{
+							Name:     nadName,
+							Topology: "layer2",
+							Cidr:     CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							Role:     "primary",
 						},
 						true,
 					),
 					Entry(
 						"L3 primary UDN, host-networked pods",
-						networkAttachmentConfigParams{
-							name:     nadName,
-							topology: "layer3",
-							cidr:     correctCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
-							role:     "primary",
+						NetworkAttachmentConfigParams{
+							Name:     nadName,
+							Topology: "layer3",
+							Cidr:     CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							Role:     "primary",
 						},
 						true,
 					),
 				)
 			},
-			Entry("NetworkAttachmentDefinitions", func(c networkAttachmentConfigParams) error {
-				netConfig := newNetworkAttachmentConfig(c)
-				nad := generateNAD(netConfig)
+			Entry("NetworkAttachmentDefinitions", func(c NetworkAttachmentConfigParams) error {
+				netConfig := NewNetworkAttachmentConfig(c)
+				nad := GenerateNAD(netConfig)
 				_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(context.Background(), nad, metav1.CreateOptions{})
 				return err
 			}),
-			Entry("UserDefinedNetwork", func(c networkAttachmentConfigParams) error {
+			Entry("UserDefinedNetwork", func(c NetworkAttachmentConfigParams) error {
 				udnManifest := generateUserDefinedNetworkManifest(&c)
 				cleanup, err := createManifest(f.Namespace.Name, udnManifest)
 				DeferCleanup(cleanup)
-				Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, f.Namespace.Name, c.name), 5*time.Second, time.Second).Should(Succeed())
+				Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, f.Namespace.Name, c.Name), 5*time.Second, time.Second).Should(Succeed())
 				return err
 			}),
 		)
 
 		DescribeTableSubtree("created using",
-			func(createNetworkFn func(c networkAttachmentConfigParams) error) {
+			func(createNetworkFn func(c NetworkAttachmentConfigParams) error) {
 				DescribeTable(
 					"does not mirror EndpointSlices in namespaces not using user defined primary networks",
 					func(
-						netConfig networkAttachmentConfigParams,
+						netConfig NetworkAttachmentConfigParams,
 					) {
 						By("creating default net namespace")
 						defaultNetNamespace := &v1.Namespace{
@@ -189,7 +189,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", func() {
 						_, err := cs.CoreV1().Namespaces().Create(context.Background(), defaultNetNamespace, metav1.CreateOptions{})
 						Expect(err).NotTo(HaveOccurred())
 						By("creating the network")
-						netConfig.namespace = defaultNetNamespace.Name
+						netConfig.Namespace = defaultNetNamespace.Name
 						Expect(createNetworkFn(netConfig)).To(Succeed())
 
 						replicas := int32(3)
@@ -225,35 +225,35 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", func() {
 					},
 					Entry(
 						"L2 secondary UDN",
-						networkAttachmentConfigParams{
-							name:     nadName,
-							topology: "layer2",
-							cidr:     correctCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
-							role:     "secondary",
+						NetworkAttachmentConfigParams{
+							Name:     nadName,
+							Topology: "layer2",
+							Cidr:     CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							Role:     "secondary",
 						},
 					),
 					Entry(
 						"L3 secondary UDN",
-						networkAttachmentConfigParams{
-							name:     nadName,
-							topology: "layer3",
-							cidr:     correctCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
-							role:     "secondary",
+						NetworkAttachmentConfigParams{
+							Name:     nadName,
+							Topology: "layer3",
+							Cidr:     CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							Role:     "secondary",
 						},
 					),
 				)
 			},
-			Entry("NetworkAttachmentDefinitions", func(c networkAttachmentConfigParams) error {
-				netConfig := newNetworkAttachmentConfig(c)
-				nad := generateNAD(netConfig)
+			Entry("NetworkAttachmentDefinitions", func(c NetworkAttachmentConfigParams) error {
+				netConfig := NewNetworkAttachmentConfig(c)
+				nad := GenerateNAD(netConfig)
 				_, err := nadClient.NetworkAttachmentDefinitions(fmt.Sprintf("%s-default", f.Namespace.Name)).Create(context.Background(), nad, metav1.CreateOptions{})
 				return err
 			}),
-			Entry("UserDefinedNetwork", func(c networkAttachmentConfigParams) error {
+			Entry("UserDefinedNetwork", func(c NetworkAttachmentConfigParams) error {
 				udnManifest := generateUserDefinedNetworkManifest(&c)
 				cleanup, err := createManifest(fmt.Sprintf("%s-default", f.Namespace.Name), udnManifest)
 				DeferCleanup(cleanup)
-				Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, fmt.Sprintf("%s-default", f.Namespace.Name), c.name), 5*time.Second, time.Second).Should(Succeed())
+				Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, fmt.Sprintf("%s-default", f.Namespace.Name), c.Name), 5*time.Second, time.Second).Should(Succeed())
 				return err
 			}),
 		)
@@ -294,7 +294,7 @@ func validateMirroredEndpointSlices(cs clientset.Interface, namespace, svcName, 
 			if len(endpoint.Addresses) != 1 {
 				return fmt.Errorf("expected 1 endpoint, got: %d", len(endpoint.Addresses))
 			}
-			if err := inRange(subnet, endpoint.Addresses[0]); err != nil {
+			if err := InRange(subnet, endpoint.Addresses[0]); err != nil {
 				return err
 			}
 		}
