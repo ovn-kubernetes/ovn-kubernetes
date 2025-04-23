@@ -33,7 +33,7 @@ func waitForPodRunningInNamespaceTimeout(c clientset.Interface, podName, namespa
 	})
 }
 
-func createStaticPod(f *framework.Framework, nodeName string, podYaml string) {
+func createStaticPod(nodeName string, podYaml string) {
 	// FIXME; remove need to use a container runtime because its not portable
 	runCommand := func(cmd ...string) (string, error) {
 		output, err := exec.Command(cmd[0], cmd[1:]...).CombinedOutput()
@@ -71,7 +71,7 @@ func removeStaticPodFile(nodeName string, podFile string) {
 		return string(output), nil
 	}
 
-	cmd := []string{"docker", "exec", nodeName, "bash", "-c", "rm /etc/kubernetes/manifests/static-pod.yaml"}
+	cmd := []string{"docker", "exec", nodeName, "bash", "-c", fmt.Sprintf("rm /etc/kubernetes/manifests/%s", podFile)}
 	framework.Logf("Running command %v", cmd)
 	_, err := runCommand(cmd...)
 	if err != nil {
@@ -109,7 +109,7 @@ spec:
       image: %s
       command: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
 `, f.Namespace.Name, images.AgnHost())
-		createStaticPod(f, nodeName, staticPodYaml)
+		createStaticPod(nodeName, staticPodYaml)
 		err = waitForPodRunningInNamespaceTimeout(f.ClientSet, podName, f.Namespace.Name, time.Second*60)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		ginkgo.By("Removing the pod file from the nodes /etc/kubernetes/manifests")
