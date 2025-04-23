@@ -34,6 +34,8 @@ import (
 	imageutils "k8s.io/kubernetes/test/utils/image"
 	utilnet "k8s.io/utils/net"
 	"k8s.io/utils/pointer"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/inclustercommands"
 )
 
 const (
@@ -535,7 +537,7 @@ var _ = ginkgo.Describe("Services", func() {
 				cmd = append(cmd, "-6")
 			}
 			cmd = append(cmd, "route", "get", dst)
-			output, err := runCommand(cmd...)
+			output, err := inclustercommands.RunCommand(cmd...)
 			framework.ExpectNoError(err, fmt.Sprintf("failed to exec '%v': %v", cmd, err))
 			return output
 		}
@@ -738,7 +740,7 @@ var _ = ginkgo.Describe("Services", func() {
 					if utilnet.IsIPv6String(ip) {
 						subnetMask = "/128"
 					}
-					_, err := runCommand(containerRuntime, "exec", nodeName, "ip", "addr", "delete",
+					_, err := inclustercommands.RunCommand(containerRuntime, "exec", nodeName, "ip", "addr", "delete",
 						fmt.Sprintf("%s%s", ip, subnetMask), "dev", "breth0")
 					if err != nil && !strings.Contains(err.Error(),
 						"RTNETLINK answers: Cannot assign requested address") {
@@ -791,7 +793,7 @@ var _ = ginkgo.Describe("Services", func() {
 				[]string{"netexec", "--http-port=80"})
 
 			// If `kindexgw` exists, connect client container to it
-			runCommand(containerRuntime, "network", "connect", "kindexgw", clientContainerName)
+			inclustercommands.RunCommand(containerRuntime, "network", "connect", "kindexgw", clientContainerName)
 
 			ginkgo.By("Selecting additional IP addresses for each node")
 			// add new secondary IP from node subnet to all nodes, if the cluster is v6 add an ipv6 address
@@ -830,7 +832,7 @@ var _ = ginkgo.Describe("Services", func() {
 			for nodeName, ipFamilies := range nodeIPs {
 				for _, ip := range ipFamilies {
 					// manually add the a secondary IP to each node
-					_, err = runCommand(containerRuntime, "exec", nodeName, "ip", "addr", "add", ip, "dev", "breth0")
+					_, err = inclustercommands.RunCommand(containerRuntime, "exec", nodeName, "ip", "addr", "add", ip, "dev", "breth0")
 					if err != nil {
 						framework.Failf("failed to add new IP address %s to node %s: %v", ip, nodeName, err)
 					}
@@ -995,7 +997,7 @@ spec:
 				[]string{"netexec", "--http-port=80"})
 
 			// If `kindexgw` exists, connect client container to it
-			runCommand(containerRuntime, "network", "connect", "kindexgw", clientContainerName)
+			inclustercommands.RunCommand(containerRuntime, "network", "connect", "kindexgw", clientContainerName)
 
 			ginkgo.By("Selecting additional IP addresses for each node")
 			// add new secondary IP from node subnet to all nodes, if the cluster is v6 add an ipv6 address
@@ -1034,7 +1036,7 @@ spec:
 			for nodeName, ipFamilies := range nodeIPs {
 				for _, ip := range ipFamilies {
 					// manually add the a secondary IP to each node
-					_, err = runCommand(containerRuntime, "exec", nodeName, "ip", "addr", "add", ip, "dev", "breth0")
+					_, err = inclustercommands.RunCommand(containerRuntime, "exec", nodeName, "ip", "addr", "add", ip, "dev", "breth0")
 					if err != nil {
 						framework.Failf("failed to add new IP address %s to node %s: %v", ip, nodeName, err)
 					}
@@ -1241,7 +1243,7 @@ spec:
 				ipContainerCmd,
 			}
 			framework.Logf("Running %v", cmd)
-			_, err = runCommand(cmd...)
+			_, err = inclustercommands.RunCommand(cmd...)
 			framework.ExpectNoError(err, "lowering MTU in the external kind container failed: %v", err)
 
 			var udpPort int32
@@ -1278,7 +1280,7 @@ spec:
 					containerCmd,
 				}
 				framework.Logf("Running %v", cmd)
-				stdout, err := runCommand(cmd...)
+				stdout, err := inclustercommands.RunCommand(cmd...)
 				framework.ExpectNoError(err, "sending echo request failed: %v", err)
 
 				ginkgo.By("Checking that the service received the request and replied")
@@ -1556,7 +1558,7 @@ spec:
 			cmd := []string{containerRuntime, "exec", routerContainer}
 			mtuCommand := strings.Split("ip link set mtu 1500 dev eth1", " ")
 			cmd = append(cmd, mtuCommand...)
-			_, err := runCommand(cmd...)
+			_, err := inclustercommands.RunCommand(cmd...)
 			framework.ExpectNoError(err, "failed to reset MTU on intermediary router")
 			framework.Logf("Delete the custom BGP Advertisement configuration")
 			e2ekubectl.RunKubectlOrDie("metallb-system", "delete", "bgpadvertisement", "example", "--ignore-not-found=true")
@@ -1692,13 +1694,13 @@ metadata:
 		nonBackendNodeIP, err := getNodeIP(f.ClientSet, backendNodeName)
 		framework.ExpectNoError(err, fmt.Sprintf("failed to get node's %s node ip address", backendNodeName))
 		gomega.Eventually(func() bool {
-			routes, err := runCommand(cmd...)
+			routes, err := inclustercommands.RunCommand(cmd...)
 			framework.ExpectNoError(err, "failed to get BGP routes from intermediary router")
 			framework.Logf("Routes in FRR %s", routes)
 			return strings.Contains(routes, backendNodeIP)
 		}, 30*time.Second).Should(gomega.BeTrue())
 		gomega.Eventually(func() bool {
-			routes, err := runCommand(cmd...)
+			routes, err := inclustercommands.RunCommand(cmd...)
 			framework.ExpectNoError(err, "failed to get BGP routes from intermediary router")
 			framework.Logf("Routes in FRR %s", routes)
 			return strings.Contains(routes, nonBackendNodeIP)
@@ -1741,7 +1743,7 @@ spec:
 
 			cmd = append(cmd, bgpRouteCommand...)
 			gomega.Eventually(func() bool {
-				routes, err := runCommand(cmd...)
+				routes, err := inclustercommands.RunCommand(cmd...)
 				framework.ExpectNoError(err, "failed to get BGP routes from intermediary router")
 				framework.Logf("Routes in FRR %s", routes)
 				routeCount := 0
@@ -1769,7 +1771,7 @@ spec:
 			mtuCommand := strings.Split("ip link set mtu 1280 dev eth1", " ")
 
 			cmd = append(cmd, mtuCommand...)
-			_, err = runCommand(cmd...)
+			_, err = inclustercommands.RunCommand(cmd...)
 			framework.ExpectNoError(err, "failed to change MTU on intermediary router")
 
 			time.Sleep(time.Second * 5) // buffer to ensure MTU change took effect
@@ -1783,7 +1785,7 @@ spec:
 			cmd = []string{containerRuntime, "exec", routerContainer}
 			mtuCommand = strings.Split("ip link set mtu 1500 dev eth1", " ")
 			cmd = append(cmd, mtuCommand...)
-			_, err = runCommand(cmd...)
+			_, err = inclustercommands.RunCommand(cmd...)
 			framework.ExpectNoError(err, "failed to reset MTU on intermediary router")
 		}
 	})
@@ -1926,7 +1928,7 @@ spec:
 		cmd = append(cmd, bgpRouteCommand...)
 
 		gomega.Eventually(func() bool {
-			routes, err := runCommand(cmd...)
+			routes, err := inclustercommands.RunCommand(cmd...)
 			framework.ExpectNoError(err, "failed to get BGP routes from intermediary router")
 			framework.Logf("Routes in FRR %s", routes)
 			routeCount := 0
@@ -1951,7 +1953,7 @@ spec:
 		)
 		cmd = []string{containerRuntime, "exec", clientContainer, "bash", "-x", "-c", netcatCmd}
 		framework.Logf("netcat command %s", cmd)
-		output, err = runCommand(cmd...)
+		output, err = inclustercommands.RunCommand(cmd...)
 		framework.ExpectNoError(err, "failed to connect to load balancer service")
 		framework.Logf("netcat command output %s", output)
 
@@ -1982,13 +1984,13 @@ spec:
 		ginkgo.By("by sending a UDP packet to service " + svcName + " with type=LoadBalancer in namespace " + namespaceName + " with backend pod " + backendName)
 		// OVN drops the 1st packet so this one does nothing basically.
 		// See https://issues.redhat.com/browse/FDP-223 for details
-		output, err = runCommand(cmd...)
+		output, err = inclustercommands.RunCommand(cmd...)
 		framework.ExpectNoError(err, "failed to connect to load balancer service")
 		framework.Logf("netcat command output %s", output)
 		time.Sleep(time.Second * 10) // buffer to ensure all learn flows are created correctly after the previous drop
 
 		// OVN drops the 1st packet so let's be sure to another set of netcat connections at least to check the srcIP
-		output, err = runCommand(cmd...)
+		output, err = inclustercommands.RunCommand(cmd...)
 		framework.ExpectNoError(err, "failed to connect to load balancer service")
 		framework.Logf("netcat command output %s", output)
 
@@ -2054,7 +2056,7 @@ spec:
 		cmd = append(cmd, bgpRouteCommand...)
 
 		gomega.Eventually(func() bool {
-			routes, err := runCommand(cmd...)
+			routes, err := inclustercommands.RunCommand(cmd...)
 			framework.ExpectNoError(err, "failed to get BGP routes from intermediary router")
 			framework.Logf("Routes in FRR %s", routes)
 			routeCount := 0
@@ -2079,7 +2081,7 @@ spec:
 		)
 		cmd = []string{containerRuntime, "exec", clientContainer, "bash", "-x", "-c", netcatCmd}
 		framework.Logf("netcat command %s", cmd)
-		output, err = runCommand(cmd...)
+		output, err = inclustercommands.RunCommand(cmd...)
 		framework.ExpectNoError(err, "failed to connect to load balancer service")
 		framework.Logf("netcat command output %s", output)
 
@@ -2158,7 +2160,7 @@ spec:
 		}
 
 		ginkgo.By("by sending a UDP packet to service " + svcName + " with type=LoadBalancer in namespace " + namespaceName + " with backend pod " + backendName)
-		output, err = runCommand(cmd...)
+		output, err = inclustercommands.RunCommand(cmd...)
 		framework.ExpectNoError(err, "failed to connect to load balancer service")
 		framework.Logf("netcat command output %s", output)
 
@@ -2196,7 +2198,7 @@ func getNodeIP(c clientset.Interface, nodeName string) (string, error) {
 
 func buildAndRunCommand(command string) error {
 	cmd := strings.Split(command, " ")
-	_, err := runCommand(cmd...)
+	_, err := inclustercommands.RunCommand(cmd...)
 	return err
 }
 

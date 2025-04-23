@@ -35,6 +35,7 @@ import (
 	"k8s.io/utils/pointer"
 
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/clusterinspection"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/inclustercommands"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/multihoming"
 )
 
@@ -361,7 +362,7 @@ var _ = Describe("Network Segmentation", func() {
 						Expect(udnPod.Status.ContainerStatuses[0].RestartCount).To(Equal(int32(0)))
 
 						By("restarting kubelet, pod should stay ready")
-						_, err = runCommand(containerRuntime, "exec", nodeName,
+						_, err = inclustercommands.RunCommand(containerRuntime, "exec", nodeName,
 							"systemctl", "restart", "kubelet")
 						Expect(err).NotTo(HaveOccurred())
 
@@ -391,7 +392,7 @@ var _ = Describe("Network Segmentation", func() {
 								}).Should(BeTrue())
 								By("checking the non-kubelet host process can reach default pod on IP " + destIP)
 								Eventually(func() bool {
-									_, err = runCommand(containerRuntime, "exec", nodeName,
+									_, err = inclustercommands.RunCommand(containerRuntime, "exec", nodeName,
 										"curl", "--connect-timeout", "2",
 										net.JoinHostPort(destIP, fmt.Sprintf("%d", defaultPort)))
 									return err == nil
@@ -410,7 +411,7 @@ var _ = Describe("Network Segmentation", func() {
 
 								By("checking the non-kubelet host process can't reach UDN pod on IP " + destIP)
 								Consistently(func() bool {
-									_, err = runCommand(containerRuntime, "exec", nodeName,
+									_, err = inclustercommands.RunCommand(containerRuntime, "exec", nodeName,
 										"curl", "--connect-timeout", "2",
 										net.JoinHostPort(destIP, fmt.Sprintf("%d", port)))
 									return err != nil

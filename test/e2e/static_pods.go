@@ -14,6 +14,8 @@ import (
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/inclustercommands"
 )
 
 // pulled from https://github.com/kubernetes/kubernetes/blob/v1.26.2/test/e2e/framework/pod/wait.go#L468
@@ -44,7 +46,7 @@ func createStaticPod(f *framework.Framework, nodeName string, podYaml string) {
 	var dst = fmt.Sprintf("%s:/etc/kubernetes/manifests/%s", nodeName, podFile)
 	cmd := []string{"docker", "cp", podFile, dst}
 	framework.Logf("Running command %v", cmd)
-	_, err := runCommand(cmd...)
+	_, err := inclustercommands.RunCommand(cmd...)
 	if err != nil {
 		framework.Failf("failed to copy pod file to node %s", nodeName)
 	}
@@ -54,7 +56,7 @@ func createStaticPod(f *framework.Framework, nodeName string, podYaml string) {
 func removeStaticPodFile(nodeName string, podFile string) {
 	cmd := []string{"docker", "exec", nodeName, "bash", "-c", "rm /etc/kubernetes/manifests/static-pod.yaml"}
 	framework.Logf("Running command %v", cmd)
-	_, err := runCommand(cmd...)
+	_, err := inclustercommands.RunCommand(cmd...)
 	if err != nil {
 		framework.Failf("failed to remove pod file from node %s", nodeName)
 	}

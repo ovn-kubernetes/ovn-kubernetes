@@ -26,6 +26,7 @@ import (
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	utilnet "k8s.io/utils/net"
 
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/inclustercommands"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/multihoming"
 )
 
@@ -483,7 +484,7 @@ func checkConnectionToNodePortFromExternalContainer(f *framework.Framework, cont
 		By(msg)
 		cmd := []string{containerRuntime, "exec", containerName, "/bin/bash", "-c", fmt.Sprintf("echo hostname | nc -u -w 1 %s %d", nodeIP, nodePort)}
 		Eventually(func() (string, error) {
-			return runCommand(cmd...)
+			return inclustercommands.RunCommand(cmd...)
 		}).
 			WithTimeout(5*time.Second).
 			WithPolling(200*time.Millisecond).
@@ -501,7 +502,7 @@ func checkConnectionToLoadBalancersFromExternalContainer(f *framework.Framework,
 		By(msg)
 		cmd := []string{containerRuntime, "exec", containerName, "/bin/bash", "-c", fmt.Sprintf("echo hostname | nc -u -w 1 %s %d", lbIngress.IP, port)}
 		Eventually(func() (string, error) {
-			return runCommand(cmd...)
+			return inclustercommands.RunCommand(cmd...)
 		}).
 			// It takes some time for the container to receive the dynamic routing
 			WithTimeout(20*time.Second).

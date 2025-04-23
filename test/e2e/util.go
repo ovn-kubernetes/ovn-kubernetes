@@ -34,6 +34,8 @@ import (
 	testutils "k8s.io/kubernetes/test/utils"
 	admissionapi "k8s.io/pod-security-admission/api"
 	utilnet "k8s.io/utils/net"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/inclustercommands"
 )
 
 const (
@@ -335,7 +337,7 @@ func pokeEndpoint(namespace, clientContainer, protocol, targetHost string, targe
 		res, err = e2ekubectl.RunKubectl(namespace, cmd...)
 	} else {
 		// command is to be run inside runtime container
-		res, err = runCommand(cmd...)
+		res, err = inclustercommands.RunCommand(cmd...)
 	}
 	framework.ExpectNoError(err, "failed to run command on external container")
 	response, err := parseNetexecResponse(res)
@@ -401,7 +403,7 @@ func isNeighborEntryStable(clientContainer, targetHost string, iterations int) b
 	// run this for time of iterations + 1 to make sure that the entry is stable
 	for i := 0; i <= iterations; i++ {
 		// run the command
-		output, err := runCommand(cmd...)
+		output, err := inclustercommands.RunCommand(cmd...)
 		if err != nil {
 			framework.ExpectNoError(
 				fmt.Errorf("FAILED Command was: %s\nFAILED Response was: %v\nERROR is: %s",
@@ -472,7 +474,7 @@ func curlInContainer(clientContainer, targetHost string, targetPort int32, endPo
 		endPoint), " ")
 
 	cmd = append(cmd, curlCommand...)
-	return runCommand(cmd...)
+	return inclustercommands.RunCommand(cmd...)
 }
 
 // parseNetexecResponse parses a json string of type '{"responses":"...", "errors":""}'.
@@ -579,11 +581,11 @@ func getContainerAddressesForNetwork(container, network string) (string, string)
 	ipv4Format := fmt.Sprintf("{{.NetworkSettings.Networks.%s.IPAddress}}", network)
 	ipv6Format := fmt.Sprintf("{{.NetworkSettings.Networks.%s.GlobalIPv6Address}}", network)
 
-	ipv4, err := runCommand(containerRuntime, "inspect", "-f", ipv4Format, container)
+	ipv4, err := inclustercommands.RunCommand(containerRuntime, "inspect", "-f", ipv4Format, container)
 	if err != nil {
 		framework.Failf("failed to inspect external test container for its IPv4: %v", err)
 	}
-	ipv6, err := runCommand(containerRuntime, "inspect", "-f", ipv6Format, container)
+	ipv6, err := inclustercommands.RunCommand(containerRuntime, "inspect", "-f", ipv6Format, container)
 	if err != nil {
 		framework.Failf("failed to inspect external test container for its IPv4: %v", err)
 	}
@@ -592,7 +594,7 @@ func getContainerAddressesForNetwork(container, network string) (string, string)
 
 // Returns the network's ipv4 and ipv6 CIDRs for the given network.
 func getContainerNetworkCIDRs(network string) (string, string) {
-	output, err := runCommand(containerRuntime, "network", "inspect", network)
+	output, err := inclustercommands.RunCommand(containerRuntime, "network", "inspect", network)
 	if err != nil {
 		framework.Failf("failed to inspect network %s: %v", network, err)
 	}
@@ -634,7 +636,7 @@ func getContainerNetworkCIDRs(network string) (string, string) {
 func getMACAddressesForNetwork(container, network string) string {
 	mac := fmt.Sprintf("{{.NetworkSettings.Networks.%s.MacAddress}}", network)
 
-	macAddr, err := runCommand(containerRuntime, "inspect", "-f", mac, container)
+	macAddr, err := inclustercommands.RunCommand(containerRuntime, "inspect", "-f", mac, container)
 	if err != nil {
 		framework.Failf("failed to inspect external test container for its MAC: %v", err)
 	}
@@ -856,7 +858,7 @@ func ExecCommandInContainerWithFullOutput(f *framework.Framework, namespace, pod
 
 func assertACLLogs(targetNodeName string, policyNameRegex string, expectedACLVerdict string, expectedACLSeverity string) (bool, error) {
 	framework.Logf("collecting the ovn-controller logs for node: %s", targetNodeName)
-	targetNodeLog, err := runCommand([]string{containerRuntime, "exec", targetNodeName, "grep", "acl_log", ovnControllerLogPath}...)
+	targetNodeLog, err := inclustercommands.RunCommand([]string{containerRuntime, "exec", targetNodeName, "grep", "acl_log", ovnControllerLogPath}...)
 	if err != nil {
 		return false, fmt.Errorf("error accessing logs in node %s: %v", targetNodeName, err)
 	}
@@ -928,11 +930,11 @@ func pokeIPTableRules(clientContainer, pattern string) int {
 	cmd := []string{containerRuntime, "exec", clientContainer}
 
 	ipv4Cmd := append(cmd, strings.Split("iptables-save -c", " ")...)
-	ipt4Rules, err := runCommand(ipv4Cmd...)
+	ipt4Rules, err := inclustercommands.RunCommand(ipv4Cmd...)
 	framework.ExpectNoError(err, "failed to get iptables rules from node %s", clientContainer)
 
 	ipv6Cmd := append(cmd, strings.Split("ip6tables-save -c", " ")...)
-	ipt6Rules, err := runCommand(ipv6Cmd...)
+	ipt6Rules, err := inclustercommands.RunCommand(ipv6Cmd...)
 	framework.ExpectNoError(err, "failed to get ip6tables rules from node %s", clientContainer)
 
 	iptRules := ipt4Rules + ipt6Rules
@@ -954,7 +956,7 @@ func countNFTablesElements(clientContainer, name string) int {
 	cmd := []string{containerRuntime, "exec", clientContainer}
 
 	nftCmd := append(cmd, "nft", "-j", "list", "set", "inet", "ovn-kubernetes", name)
-	nftElements, err := runCommand(nftCmd...)
+	nftElements, err := inclustercommands.RunCommand(nftCmd...)
 	framework.ExpectNoError(err, "failed to get nftables elements from node %s", clientContainer)
 
 	framework.Logf("DEBUG: Dumping NFTElements %v", nftElements)
@@ -1043,18 +1045,18 @@ func wrappedTestFramework(basename string) *framework.Framework {
 		for _, node := range nodes.Items {
 			// ensure e2e-dbs directory with test case exists
 			args = []string{containerRuntime, "exec", node.Name, "mkdir", "-p", logDir}
-			_, err = runCommand(args...)
+			_, err = inclustercommands.RunCommand(args...)
 			framework.ExpectNoError(err)
 
 			// Loop through potential OVSDB db locations
 			for _, ovsdbLocation := range ovsdbLocations {
 				args = []string{containerRuntime, "exec", node.Name, "stat", fmt.Sprintf("%s/%s", ovsdbLocation, ovsdb)}
-				_, err = runCommand(args...)
+				_, err = inclustercommands.RunCommand(args...)
 				if err == nil {
 					// node name is the same in kapi and docker
 					args = []string{containerRuntime, "exec", node.Name, "cp", "-f", fmt.Sprintf("%s/%s", ovsdbLocation, ovsdb),
 						fmt.Sprintf("%s/%s", logDir, fmt.Sprintf("%s-%s", node.Name, ovsdb))}
-					_, err = runCommand(args...)
+					_, err = inclustercommands.RunCommand(args...)
 					framework.ExpectNoError(err)
 					break // Stop the loop: the file is found and copied successfully
 				}
@@ -1062,12 +1064,12 @@ func wrappedTestFramework(basename string) *framework.Framework {
 
 			// IC will have dbs on every node, but legacy mode wont, check if they exist
 			args = []string{containerRuntime, "exec", node.Name, "stat", fmt.Sprintf("%s/%s", dbLocation, dbs[0])}
-			_, err = runCommand(args...)
+			_, err = inclustercommands.RunCommand(args...)
 			if err == nil {
 				for _, db := range dbs {
 					args = []string{containerRuntime, "exec", node.Name, "cp", "-f", fmt.Sprintf("%s/%s", dbLocation, db),
 						fmt.Sprintf("%s/%s", logDir, db)}
-					_, err = runCommand(args...)
+					_, err = inclustercommands.RunCommand(args...)
 					framework.ExpectNoError(err)
 				}
 			}
@@ -1093,7 +1095,7 @@ func countACLLogs(targetNodeName string, policyNameRegex string, expectedACLVerd
 	count := 0
 
 	framework.Logf("collecting the ovn-controller logs for node: %s", targetNodeName)
-	targetNodeLog, err := runCommand([]string{containerRuntime, "exec", targetNodeName, "cat", ovnControllerLogPath}...)
+	targetNodeLog, err := inclustercommands.RunCommand([]string{containerRuntime, "exec", targetNodeName, "cat", ovnControllerLogPath}...)
 	if err != nil {
 		return 0, fmt.Errorf("error accessing logs in node %s: %v", targetNodeName, err)
 	}
@@ -1169,7 +1171,7 @@ func updateIPTablesRulesForNode(op, nodeName string, ipTablesArgs []string, ipv6
 	}
 
 	args := []string{"docker", "exec", nodeName, iptables, "-v", "--check"}
-	_, err := runCommand(append(args, ipTablesArgs...)...)
+	_, err := inclustercommands.RunCommand(append(args, ipTablesArgs...)...)
 	// errors known to be equivalent to not found
 	notFound1 := "No chain/target/match by that name"
 	notFound2 := "does a matching rule exist in that chain?"
@@ -1187,7 +1189,7 @@ func updateIPTablesRulesForNode(op, nodeName string, ipTablesArgs []string, ipv6
 
 	args = []string{"docker", "exec", nodeName, iptables, "--" + op}
 	framework.Logf("%s %s rule: %q on node %s", op, iptables, strings.Join(ipTablesArgs, ","), nodeName)
-	_, err = runCommand(append(args, ipTablesArgs...)...)
+	_, err = inclustercommands.RunCommand(append(args, ipTablesArgs...)...)
 	if err != nil {
 		framework.Failf("failed to update %s rule on node %s: %v", iptables, nodeName, err)
 	}
@@ -1287,7 +1289,7 @@ func routeToNode(nodeName string, ips []string, mtu int, add bool) error {
 		if mtu != 0 {
 			cmd = append(cmd, "mtu", strconv.Itoa(mtu))
 		}
-		_, err = runCommand(cmd...)
+		_, err = inclustercommands.RunCommand(cmd...)
 		if err != nil {
 			return err
 		}
@@ -1303,7 +1305,7 @@ func GetNodeIPv6LinkLocalAddressForEth0(nodeName string) (string, error) {
 	cmd := []string{"docker", "exec", nodeName}
 	cmd = append(cmd, ipCmd...)
 
-	output, err := runCommand(cmd...)
+	output, err := inclustercommands.RunCommand(cmd...)
 	if err != nil {
 		return "", fmt.Errorf("failed to get link-local address for eth0: %v", err)
 	}
@@ -1392,7 +1394,7 @@ func getGatewayMTUSupport(node *v1.Node) bool {
 }
 
 func isKernelModuleLoaded(nodeName, kernelModuleName string) bool {
-	out, err := runCommand(containerRuntime, "exec", nodeName, "lsmod")
+	out, err := inclustercommands.RunCommand(containerRuntime, "exec", nodeName, "lsmod")
 	if err != nil {
 		framework.Failf("failed to list kernel modules for node %s: %v", nodeName, err)
 	}
@@ -1478,7 +1480,7 @@ func waitForPodNotFoundInNamespace(ctx context.Context, c clientset.Interface, p
 }
 
 func isDefaultNetworkAdvertised() bool {
-	podNetworkValue, err := runCommand("kubectl", "get", "ra", "default", "--template={{index .spec.advertisements 0}}")
+	podNetworkValue, err := inclustercommands.RunCommand("kubectl", "get", "ra", "default", "--template={{index .spec.advertisements 0}}")
 	if err != nil {
 		return false
 	}

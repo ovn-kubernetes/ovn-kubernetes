@@ -32,6 +32,7 @@ import (
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/clusterinspection"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/inclustercommands"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/multihoming"
 )
 
@@ -121,7 +122,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 				cmd = append(cmd, bgpRouteCommand...)
 				framework.Logf("Checking for server's route in node %s", node.Name)
 				gomega.Eventually(func() bool {
-					routes, err := runCommand(cmd...)
+					routes, err := inclustercommands.RunCommand(cmd...)
 					framework.ExpectNoError(err, "failed to get BGP routes from node")
 					framework.Logf("Routes in node %s", routes)
 					return strings.Contains(routes, frrContainerIPv4)
@@ -135,7 +136,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 					cmd = append(cmd, bgpRouteCommand...)
 					framework.Logf("Checking for server's route in node %s", node.Name)
 					gomega.Eventually(func() bool {
-						routes, err := runCommand(cmd...)
+						routes, err := inclustercommands.RunCommand(cmd...)
 						framework.ExpectNoError(err, "failed to get BGP routes from node")
 						framework.Logf("Routes in node %s", routes)
 						return strings.Contains(routes, nodeIPv6LLA)
@@ -191,7 +192,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 					cmd = append(cmd, bgpRouteCommand...)
 					framework.Logf("Checking for node %s's route for pod subnet %s", node.Name, podCIDR)
 					gomega.Eventually(func() bool {
-						routes, err := runCommand(cmd...)
+						routes, err := inclustercommands.RunCommand(cmd...)
 						framework.ExpectNoError(err, "failed to get BGP routes from intermediary router")
 						framework.Logf("Routes in FRR %s", routes)
 						return strings.Contains(routes, nodeIP[0])
@@ -369,7 +370,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 				cmd = append(cmd, bgpRouteCommand...)
 				framework.Logf("Checking for server's route in node %s", node.Name)
 				gomega.Eventually(func() bool {
-					routes, err := runCommand(cmd...)
+					routes, err := inclustercommands.RunCommand(cmd...)
 					framework.ExpectNoError(err, "failed to get BGP routes from node")
 					framework.Logf("Routes in node %s", routes)
 					return strings.Contains(routes, frrContainerIPv4)
@@ -383,7 +384,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 					cmd = append(cmd, bgpRouteCommand...)
 					framework.Logf("Checking for server's route in node %s", node.Name)
 					gomega.Eventually(func() bool {
-						routes, err := runCommand(cmd...)
+						routes, err := inclustercommands.RunCommand(cmd...)
 						framework.ExpectNoError(err, "failed to get BGP routes from node")
 						framework.Logf("Routes in node %s", routes)
 						return strings.Contains(routes, nodeIPv6LLA)
@@ -733,7 +734,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 						framework.Logf("Attempting connectivity from node: %s -> %s", clientName, targetAddress)
 						nodeCmd := []string{containerRuntime, "exec", clientName}
 						nodeCmd = append(nodeCmd, curlCmd...)
-						out, err = runCommand(nodeCmd...)
+						out, err = inclustercommands.RunCommand(nodeCmd...)
 						if err != nil {
 							// out is empty on error and error contains out...
 							return err.Error(), fmt.Errorf("connectivity check failed from node %s to %s: %w", clientName, targetAddress, err)

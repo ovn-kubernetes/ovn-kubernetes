@@ -28,6 +28,8 @@ import (
 	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 	e2eservice "k8s.io/kubernetes/test/e2e/framework/service"
 	utilnet "k8s.io/utils/net"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/inclustercommands"
 )
 
 var _ = Describe("Node IP and MAC address migration", func() {
@@ -523,7 +525,7 @@ spec:
 								// Due to potential k8s bug described here: https://github.com/ovn-org/ovn-kubernetes/issues/4073
 								// We may need to restart kubelet for the backend pod to update its host networked IP address
 								restartCmd := []string{"docker", "exec", workerNode.Name, "systemctl", "restart", "kubelet"}
-								_, restartErr := runCommand(restartCmd...)
+								_, restartErr := inclustercommands.RunCommand(restartCmd...)
 								framework.ExpectNoError(restartErr)
 								return false, nil
 							})
@@ -639,14 +641,14 @@ func checkFlowsForMAC(ovnkPod v1.Pod, mac net.HardwareAddr) error {
 func setMACAddress(ovnkubePod v1.Pod, mac string) error {
 	cmd := []string{"kubectl", "-n", ovnkubePod.Namespace, "exec", ovnkubePod.Name, "-c", "ovn-controller",
 		"--", "ovs-vsctl", "set", "bridge", "breth0", fmt.Sprintf("other-config:hwaddr=%s", mac)}
-	_, err := runCommand(cmd...)
+	_, err := inclustercommands.RunCommand(cmd...)
 	return err
 }
 
 func getMACAddress(ovnkubePod v1.Pod) (net.HardwareAddr, error) {
 	cmd := []string{"kubectl", "-n", ovnkubePod.Namespace, "exec", ovnkubePod.Name, "-c", "ovn-controller",
 		"--", "ip", "link", "show", "breth0"}
-	output, err := runCommand(cmd...)
+	output, err := inclustercommands.RunCommand(cmd...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ip link output: %w", err)
 	}
@@ -678,7 +680,7 @@ func getNodeInternalAddresses(node *v1.Node) (string, string) {
 // findIpAddressMaskOnHost finds the string "<IP address>/<mask>" and interface name on container <containerName> for
 // nodeIP.
 func findIPAddressMaskInterfaceOnHost(containerName, containerIP string) (net.IPNet, string, error) {
-	ipAddressCmdOutput, err := runCommand("docker", "exec", containerName, "ip", "-o", "address")
+	ipAddressCmdOutput, err := inclustercommands.RunCommand("docker", "exec", containerName, "ip", "-o", "address")
 	if err != nil {
 		return net.IPNet{}, "", err
 	}
@@ -828,7 +830,7 @@ func isAddressReachableFromContainer(containerName, targetIP string) (bool, erro
 	}
 	curlCommand := strings.Split(fmt.Sprintf("curl -g -q -s http://%s:%d", targetIP, 80), " ")
 	cmd = append(cmd, curlCommand...)
-	_, err := runCommand(cmd...)
+	_, err := inclustercommands.RunCommand(cmd...)
 	// If this curl works, then the node is logically reachable, shortcut.
 	if err == nil {
 		return true, nil
@@ -836,7 +838,7 @@ func isAddressReachableFromContainer(containerName, targetIP string) (bool, erro
 
 	// Now, check the neighbor table and if the entry does not have REACHABLE or STALE or PERMANENT, then this must be
 	// an unreachable entry (could be FAILED or INCOMPLETE).
-	ipNeighborOutput, err := runCommand("docker", "exec", containerName, "ip", "neigh")
+	ipNeighborOutput, err := inclustercommands.RunCommand("docker", "exec", containerName, "ip", "neigh")
 	if err != nil {
 		return false, err
 	}
@@ -863,7 +865,7 @@ func isOVNEncapIPReady(nodeName, nodeIP, ovnkubePodName string) bool {
 	framework.Logf("Verifying ovn-encap-ip for node %s", nodeName)
 	cmd := []string{"kubectl", "-n", ovnNamespace, "exec", ovnkubePodName, "-c", "ovn-controller",
 		"--", "ovs-vsctl", "get", "open_vswitch", ".", "external-ids:ovn-encap-ip"}
-	output, err := runCommand(cmd...)
+	output, err := inclustercommands.RunCommand(cmd...)
 	if err != nil {
 		framework.Logf("Failed to get ovn-encap-ip: %q", err)
 		return false
@@ -890,7 +892,7 @@ func migrateWorkerNodeIP(nodeName, fromIP, targetIP string, invertOrder bool) (e
 		if err != nil {
 			for _, cmd := range cleanupCommands {
 				framework.Logf("Attempting cleanup with command %q", cmd)
-				runCommand(cmd...)
+				inclustercommands.RunCommand(cmd...)
 			}
 		}
 	}()
@@ -916,7 +918,7 @@ func migrateWorkerNodeIP(nodeName, fromIP, targetIP string, invertOrder bool) (e
 		cleanupCommands = append(cleanupCommands, cleanupCmd)
 		// Run command.
 		cmd := []string{"docker", "exec", nodeName, "ip", "address", "add", newIPMask, "dev", iface}
-		_, err = runCommand(cmd...)
+		_, err = inclustercommands.RunCommand(cmd...)
 		if err != nil {
 			return err
 		}
@@ -927,7 +929,7 @@ func migrateWorkerNodeIP(nodeName, fromIP, targetIP string, invertOrder bool) (e
 		cleanupCommands = append([][]string{cleanupCmd}, cleanupCommands...)
 		// Run command.
 		cmd = []string{"docker", "exec", nodeName, "ip", "address", "del", parsedNetIPMask.String(), "dev", iface}
-		_, err = runCommand(cmd...)
+		_, err = inclustercommands.RunCommand(cmd...)
 		if err != nil {
 			return err
 		}
@@ -946,7 +948,7 @@ func migrateWorkerNodeIP(nodeName, fromIP, targetIP string, invertOrder bool) (e
 		// Run command.
 		cmd := []string{"docker", "exec", nodeName, "sed", "-i", fmt.Sprintf("s/node-ip=%s/node-ip=%s/", fromIP, targetIP),
 			"/var/lib/kubelet/kubeadm-flags.env"}
-		_, err = runCommand(cmd...)
+		_, err = inclustercommands.RunCommand(cmd...)
 		if err != nil {
 			return err
 		}
@@ -954,7 +956,7 @@ func migrateWorkerNodeIP(nodeName, fromIP, targetIP string, invertOrder bool) (e
 		// Restart kubelet.
 		framework.Logf("Restarting kubelet on node %s", nodeName)
 		cmd = []string{"docker", "exec", nodeName, "systemctl", "restart", "kubelet"}
-		_, err = runCommand(cmd...)
+		_, err = inclustercommands.RunCommand(cmd...)
 		if err != nil {
 			return err
 		}

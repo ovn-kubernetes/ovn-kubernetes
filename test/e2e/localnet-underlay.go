@@ -11,6 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
 
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/inclustercommands"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/multihoming"
 )
 
@@ -96,7 +97,7 @@ func OvsPods(clientSet clientset.Interface) []v1.Pod {
 }
 
 func addOVSBridge(ovnNodeName string, bridgeName string) error {
-	_, err := runCommand(ovsBridgeCommand(ovnNodeName, add, bridgeName)...)
+	_, err := inclustercommands.RunCommand(ovsBridgeCommand(ovnNodeName, add, bridgeName)...)
 	if err != nil {
 		return fmt.Errorf("failed to ADD OVS bridge %s: %v", bridgeName, err)
 	}
@@ -104,7 +105,7 @@ func addOVSBridge(ovnNodeName string, bridgeName string) error {
 }
 
 func removeOVSBridge(ovnNodeName string, bridgeName string) error {
-	_, err := runCommand(ovsBridgeCommand(ovnNodeName, del, bridgeName)...)
+	_, err := inclustercommands.RunCommand(ovsBridgeCommand(ovnNodeName, del, bridgeName)...)
 	if err != nil {
 		return fmt.Errorf("failed to DELETE OVS bridge %s: %v", bridgeName, err)
 	}
@@ -123,7 +124,7 @@ func ovsAttachPortToBridge(ovsNodeName string, bridgeName string, portName strin
 		"kubectl", "-n", ovnNamespace, "exec", ovsNodeName, "--",
 		"ovs-vsctl", "add-port", bridgeName, portName,
 	}
-	if _, err := runCommand(cmd...); err != nil {
+	if _, err := inclustercommands.RunCommand(cmd...); err != nil {
 		return fmt.Errorf("failed to add port %s to OVS bridge %s: %v", portName, bridgeName, err)
 	}
 
@@ -135,7 +136,7 @@ func ovsEnableVLANAccessPort(ovsNodeName string, bridgeName string, portName str
 		"kubectl", "-n", ovnNamespace, "exec", ovsNodeName, "--",
 		"ovs-vsctl", "--may-exist", "add-port", bridgeName, portName, fmt.Sprintf("tag=%d", vlanID), "vlan_mode=access",
 	}
-	if _, err := runCommand(cmd...); err != nil {
+	if _, err := inclustercommands.RunCommand(cmd...); err != nil {
 		return fmt.Errorf("failed to add port %s to OVS bridge %s: %v", portName, bridgeName, err)
 	}
 
@@ -148,7 +149,7 @@ func ovsRemoveVLANAccessPort(ovsNodeName string, bridgeName string, portName str
 		"ovs-vsctl", "del-port", bridgeName, portName,
 	}
 
-	if _, err := runCommand(cmd...); err != nil {
+	if _, err := inclustercommands.RunCommand(cmd...); err != nil {
 		return fmt.Errorf("failed to remove port %s from OVS bridge %s: %v", portName, bridgeName, err)
 	}
 
@@ -183,7 +184,7 @@ func configureBridgeMappings(ovnNodeName string, mappings ...BridgeMapping) erro
 	cmd := []string{"kubectl", "-n", ovnNamespace, "exec", ovnNodeName,
 		"--", "ovs-vsctl", "set", "open", ".", mappingsString,
 	}
-	_, err := runCommand(cmd...)
+	_, err := inclustercommands.RunCommand(cmd...)
 	return err
 }
 

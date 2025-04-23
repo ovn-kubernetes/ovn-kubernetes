@@ -59,6 +59,7 @@ import (
 	kvmigrationsv1alpha1 "kubevirt.io/api/migrations/v1alpha1"
 
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/clusterinspection"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/inclustercommands"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/multihoming"
 )
 
@@ -361,7 +362,7 @@ var _ = Describe("Kubevirt Virtual Machines", func() {
 			Expect(addresses).NotTo(BeEmpty())
 			for _, address := range addresses {
 				iperfLogFile := fmt.Sprintf("/tmp/ingress_test_%[1]s_%[2]d_iperf3.log", address, port)
-				output, err := runCommand(containerRuntime, "exec", containerName, "bash", "-c", fmt.Sprintf(`
+				output, err := inclustercommands.RunCommand(containerRuntime, "exec", containerName, "bash", "-c", fmt.Sprintf(`
 iperf3 -c %[1]s -p %[2]d
 killall iperf3
 rm -f %[3]s
@@ -380,7 +381,7 @@ iperf3 -t 0 -c %[1]s -p %[2]d --logfile %[3]s &
 			for _, ip := range addresses {
 				iperfLogFile := fmt.Sprintf("/tmp/ingress_test_%s_%d_iperf3.log", ip, port)
 				execFn := func(cmd string) (string, error) {
-					return runCommand(containerRuntime, "exec", containerName, "bash", "-c", cmd)
+					return inclustercommands.RunCommand(containerRuntime, "exec", containerName, "bash", "-c", cmd)
 				}
 				checkIperfTraffic(iperfLogFile, execFn, stage)
 			}
@@ -1189,7 +1190,7 @@ fi
 
 		removeImagesInNode = func(node, imageURL string) error {
 			By("Removing unused images in node " + node)
-			output, err := runCommand(containerRuntime, "exec", node,
+			output, err := inclustercommands.RunCommand(containerRuntime, "exec", node,
 				"crictl", "images", "-o", "json")
 			if err != nil {
 				return err
@@ -1202,12 +1203,12 @@ fi
 				return err
 			}
 			if imageID != "" {
-				_, err = runCommand(containerRuntime, "exec", node,
+				_, err = inclustercommands.RunCommand(containerRuntime, "exec", node,
 					"crictl", "rmi", imageID)
 				if err != nil {
 					return err
 				}
-				_, err = runCommand(containerRuntime, "exec", node,
+				_, err = inclustercommands.RunCommand(containerRuntime, "exec", node,
 					"crictl", "rmi", "--prune")
 				if err != nil {
 					return err

@@ -19,6 +19,7 @@ import (
 	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/clusterinspection"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/inclustercommands"
 )
 
 var _ = ginkgo.Describe("Pod to external server PMTUD", func() {
@@ -153,12 +154,12 @@ var _ = ginkgo.Describe("Pod to external server PMTUD", func() {
 							// Flushing the IP route cache will remove any routes in the cache
 							// that are a result of receiving a "need to frag" packet.
 							ginkgo.By("Flushing the ip route cache")
-							stdout, err := runCommand(containerRuntime, "exec", "-i", serverPodName, "ip", "route", "flush", "cache")
+							stdout, err := inclustercommands.RunCommand(containerRuntime, "exec", "-i", serverPodName, "ip", "route", "flush", "cache")
 							framework.ExpectNoError(err, "Flushing the ip route cache failed")
 							framework.Logf("Flushed cache on %s", serverPodName)
 							// List the current IP route cache for informative purposes.
 							cmd := fmt.Sprintf("ip route get %s", clientnodeIP)
-							stdout, err = runCommand(containerRuntime, "exec", "-i", serverPodName, "ip", "route", "get", clientnodeIP)
+							stdout, err = inclustercommands.RunCommand(containerRuntime, "exec", "-i", serverPodName, "ip", "route", "get", clientnodeIP)
 							framework.ExpectNoError(err, "Listing IP route cache")
 							framework.Logf("%s: %s", cmd, stdout)
 						}
@@ -189,7 +190,7 @@ var _ = ginkgo.Describe("Pod to external server PMTUD", func() {
 							if size == "large" {
 								ginkgo.By("Making sure that the ip route cache contains an MTU route")
 								// Get IP route cache and make sure that it contains an MTU route on the server side.
-								stdout, err = runCommand(containerRuntime, "exec", "-i", serverPodName, "ip", "route", "get", clientnodeIP)
+								stdout, err = inclustercommands.RunCommand(containerRuntime, "exec", "-i", serverPodName, "ip", "route", "get", clientnodeIP)
 								if err != nil {
 									return fmt.Errorf("could not list IP route cache using cmd: %s, err: %q", cmd, err)
 								}
@@ -222,7 +223,7 @@ var _ = ginkgo.Describe("Pod to external server PMTUD", func() {
 							framework.ExpectNoError(err, "Flushing the ip route cache failed")
 						}
 						framework.Logf("Flushing the ip route cache on %s", serverPodName)
-						_, err = runCommand(containerRuntime, "exec", "-i", serverPodName, "ip", "route", "flush", "cache")
+						_, err = inclustercommands.RunCommand(containerRuntime, "exec", "-i", serverPodName, "ip", "route", "flush", "cache")
 						framework.ExpectNoError(err, "Flushing the ip route cache failed")
 					}
 				}
