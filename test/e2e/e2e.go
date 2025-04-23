@@ -1681,10 +1681,10 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 			externalContainer, err = providerCtx.CreateExternalContainer(externalContainer)
 			framework.ExpectNoError(err, "external container %s must be created successfully", externalContainer.Name)
 
-			// If `kindexgw` exists, connect client container to it
-			kindExgwNetwork, err := infraprovider.Get().GetNetwork("kindexgw")
+			// If `xgw` exists, connect client container to it
+			exGwNetwork, err := infraprovider.Get().GetNetwork("xgw")
 			if err == nil {
-				_, _ = providerCtx.AttachNetwork(kindExgwNetwork, externalContainer.Name)
+				_, _ = providerCtx.AttachNetwork(exGwNetwork, externalContainer.Name)
 			}
 			ginkgo.By("Adding ip addresses to each node")
 			// add new secondary IP from node subnet to all nodes, if the cluster is v6 add an ipv6 address

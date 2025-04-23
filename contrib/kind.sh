@@ -1088,11 +1088,11 @@ docker_create_second_interface() {
   echo "adding second interfaces to nodes"
 
   # Create the network as dual stack, regardless of the type of the deployment. Ignore if already exists.
-  "$OCI_BIN" network create --ipv6 --driver=bridge kindexgw --subnet=172.19.0.0/16 --subnet=fc00:f853:ccd:e798::/64 || true
+  "$OCI_BIN" network create --ipv6 --driver=bridge xgw --subnet=172.19.0.0/16 --subnet=fc00:f853:ccd:e798::/64 || true
 
   KIND_NODES=$(kind get nodes --name "${KIND_CLUSTER_NAME}")
   for n in $KIND_NODES; do
-    "$OCI_BIN" network connect kindexgw "$n"
+    "$OCI_BIN" network connect xgw "$n"
   done
 }
 

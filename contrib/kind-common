@@ -450,7 +450,7 @@ install_ipamclaim_crd() {
 
 docker_create_second_disconnected_interface() {
   echo "adding second interfaces to nodes"
-  local bridge_name="${1:-kindexgw}"
+  local bridge_name="${1:-xgw}"
   echo "bridge: $bridge_name"
 
   if [ "${OCI_BIN}" = "podman" ]; then
