@@ -1052,6 +1052,7 @@ ovn_image=${ovnkube_image} \
 
 if ${enable_ipsec}; then
   ovn_image=${image} \
+    ovn_unprivileged_mode=${ovn_unprivileged_mode} \
     jinjanate ../templates/ovn-ipsec.yaml.j2 -o ${output_dir}/ovn-ipsec.yaml
 fi
 

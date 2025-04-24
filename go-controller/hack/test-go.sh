@@ -74,6 +74,7 @@ function testrun {
 # These packages requires root for network namespace manipulation in unit tests
 root_pkgs=(
     "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controllermanager"
+    "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
     "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node"
     "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/controllers/egressip"
     "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/iptables"

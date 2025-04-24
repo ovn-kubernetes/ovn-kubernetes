@@ -308,6 +308,10 @@ spec:
         - mountPath: /var/run/k8s.cni.cncf.io/devinfo/dp
           name: host-devinfo-dp
           readOnly: true
+        {% if enable_ipsec=="true" -%}
+        - mountPath: /var/run/pluto
+          name: run-pluto
+        {% endif %}
 
         resources:
           requests:
@@ -646,9 +650,18 @@ spec:
       - name: run-systemd
         hostPath:
           path: /run/systemd
+<<<<<<< HEAD
       - name: host-devinfo-dp
         hostPath:
           path: /var/run/k8s.cni.cncf.io/devinfo/dp
+=======
+      {% if enable_ipsec=="true" -%}
+      - name: run-pluto
+        hostPath:
+          path: /var/run/pluto
+          type: DirectoryOrCreate
+      {% endif %}
+>>>>>>> 59d185436 (Add IPsec tunnel state metric)
 
       tolerations:
       - operator: "Exists"
