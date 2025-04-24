@@ -145,7 +145,7 @@ func (c *Controller) cleanupStaleOvnObjects(qosState *networkQoSState) error {
 			if _, qosInUse := qosState.SwitchRefs.Load(ls.Name); indexWithinRange && qosInUse {
 				continue
 			}
-			qosList := staleSwitchQoSMap[ls.UUID]
+			qosList := staleSwitchQoSMap[ls.Name]
 			if qosList == nil {
 				qosList = []*nbdb.QoS{}
 			}

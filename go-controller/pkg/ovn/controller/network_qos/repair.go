@@ -1,10 +1,8 @@
 package networkqos
 
 import (
-	"fmt"
 	"time"
 
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/klog/v2"
 
 	networkqosapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1"
@@ -20,9 +18,9 @@ func (c *Controller) repairNetworkQoSes() error {
 	defer func() {
 		klog.Infof("Repairing network qos took %v", time.Since(start))
 	}()
-	nqoses, err := c.nqosLister.List(labels.Everything())
+	nqoses, err := c.getAllNetworkQoSes()
 	if err != nil {
-		return fmt.Errorf("unable to list NetworkQoSes from the lister: %v", err)
+		return err
 	}
 	nqosMap := map[string]*networkqosapi.NetworkQoS{}
 	for _, nqos := range nqoses {

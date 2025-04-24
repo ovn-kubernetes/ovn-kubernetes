@@ -263,13 +263,13 @@ func tableEntrySetup(enableInterconnect bool) {
 	fakeNQoSClient = ovnClientset.NetworkQoSClient
 	initEnv(ovnClientset, initialDB)
 	// init controller for default network
-	initNetworkQoSController(&util.DefaultNetInfo{}, defaultAddrsetFactory, defaultControllerName)
+	initNetworkQoSController(&util.DefaultNetInfo{}, defaultAddrsetFactory, defaultControllerName, enableInterconnect)
 	// init controller for stream nad
 	streamImmutableNadInfo, err := util.ParseNADInfo(nad)
 	Expect(err).NotTo(HaveOccurred())
 	streamNadInfo := util.NewMutableNetInfo(streamImmutableNadInfo)
 	streamNadInfo.AddNADs("default/stream")
-	initNetworkQoSController(streamNadInfo, streamAddrsetFactory, streamControllerName)
+	initNetworkQoSController(streamNadInfo, streamAddrsetFactory, streamControllerName, enableInterconnect)
 }
 
 var _ = AfterEach(func() {
@@ -339,7 +339,11 @@ var _ = Describe("NetworkQoS Controller", func() {
 				{
 					_, err := fakeKubeClient.CoreV1().Pods(app1Pod.Namespace).Create(context.TODO(), app1Pod, metav1.CreateOptions{})
 					Expect(err).NotTo(HaveOccurred())
-					eventuallyAddressSetHas(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
+					if enableInterconnect {
+						eventuallyAddressSetHasNo(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
+					} else {
+						eventuallyAddressSetHas(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
+					}
 
 					By("updates match strings if egress rules change")
 					nqosUpdate, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Get(context.TODO(), nqosName, metav1.GetOptions{})
@@ -382,7 +386,11 @@ var _ = Describe("NetworkQoS Controller", func() {
 					updatePod.ResourceVersion = time.Now().String()
 					_, err := fakeKubeClient.CoreV1().Pods(app1Pod.Namespace).Update(context.TODO(), updatePod, metav1.UpdateOptions{})
 					Expect(err).NotTo(HaveOccurred())
-					eventuallyAddressSetHasNo(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
+					if enableInterconnect {
+						eventuallyAddressSetHas(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
+					} else {
+						eventuallyAddressSetHasNo(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
+					}
 				}
 
 				By("adds IP to destination address set again if pod's labels match the selector")
@@ -391,7 +399,11 @@ var _ = Describe("NetworkQoS Controller", func() {
 					updatePod.Labels["component"] = "service1"
 					_, err := fakeKubeClient.CoreV1().Pods(app1Pod.Namespace).Update(context.TODO(), updatePod, metav1.UpdateOptions{})
 					Expect(err).NotTo(HaveOccurred())
-					eventuallyAddressSetHas(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
+					if enableInterconnect {
+						eventuallyAddressSetHas(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
+					} else {
+						eventuallyAddressSetHasNo(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
+					}
 				}
 
 				By("removes IP from destination address set if target namespace labels don't match the selector")
@@ -402,7 +414,11 @@ var _ = Describe("NetworkQoS Controller", func() {
 					ns.Labels["app"] = "dummy"
 					_, err = fakeKubeClient.CoreV1().Namespaces().Update(context.TODO(), ns, metav1.UpdateOptions{})
 					Expect(err).NotTo(HaveOccurred())
-					eventuallyAddressSetHasNo(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
+					if enableInterconnect {
+						eventuallyAddressSetHas(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
+					} else {
+						eventuallyAddressSetHasNo(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
+					}
 				}
 
 				By("adds IP to destination address set again if namespace's labels match the selector")
@@ -413,7 +429,11 @@ var _ = Describe("NetworkQoS Controller", func() {
 					ns.Labels["app"] = "app1"
 					_, err = fakeKubeClient.CoreV1().Namespaces().Update(context.TODO(), ns, metav1.UpdateOptions{})
 					Expect(err).NotTo(HaveOccurred())
-					eventuallyAddressSetHas(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
+					if enableInterconnect {
+						eventuallyAddressSetHas(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
+					} else {
+						eventuallyAddressSetHasNo(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
+					}
 				}
 
 				By("removes IP from destination address set if namespace selector changes")
@@ -428,7 +448,11 @@ var _ = Describe("NetworkQoS Controller", func() {
 					nqosUpdate.ResourceVersion = time.Now().String()
 					_, err = fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Update(context.TODO(), nqosUpdate, metav1.UpdateOptions{})
 					Expect(err).NotTo(HaveOccurred())
-					eventuallyAddressSetHasNo(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
+					if enableInterconnect {
+						eventuallyAddressSetHas(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
+					} else {
+						eventuallyAddressSetHasNo(defaultAddrsetFactory, nqosNamespace, nqosName, "0", "0", defaultControllerName, "10.194.188.4")
+					}
 				}
 
 				By("adds IP to destination address set if namespace selector is restored")
@@ -552,6 +576,31 @@ var _ = Describe("NetworkQoS Controller", func() {
 					_, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Create(context.TODO(), nqos4StreamNet, metav1.CreateOptions{})
 					Expect(err).NotTo(HaveOccurred())
 					eventuallyExpectNoQoS(defaultControllerName, nqosNamespace, "stream-qos", 0)
+				}
+
+				By("will not populate source address set NetworkQos with incorrect namespace selector in spec")
+				{
+					nqos4StreamNet.Spec.NetworkSelectors = []crdtypes.NetworkSelector{
+						{
+							NetworkSelectionType: crdtypes.NetworkAttachmentDefinitions,
+							NetworkAttachmentDefinitionSelector: &crdtypes.NetworkAttachmentDefinitionSelector{
+								NamespaceSelector: metav1.LabelSelector{
+									MatchLabels: map[string]string{
+										"name": "unknown",
+									},
+								},
+								NetworkSelector: metav1.LabelSelector{
+									MatchLabels: map[string]string{
+										"name": "stream",
+									},
+								},
+							},
+						},
+					}
+					nqos4StreamNet.ResourceVersion = time.Now().String()
+					_, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Update(context.TODO(), nqos4StreamNet, metav1.UpdateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					eventuallyAddressSetHasNo(streamAddrsetFactory, nqosNamespace, "stream-qos", "src", "0", streamControllerName, "10.128.2.3")
 				}
 
 				By("handles NetworkQos on secondary network")
@@ -736,7 +785,7 @@ var _ = Describe("NetworkQoS Controller", func() {
 					Expect(err).NotTo(HaveOccurred())
 					localnetNadInfo := util.NewMutableNetInfo(localnetImmutableNadInfo)
 					localnetNadInfo.AddNADs("default/netwk1")
-					ctrl := initNetworkQoSController(localnetNadInfo, addressset.NewFakeAddressSetFactory("netwk1-controller"), "netwk1-controller")
+					ctrl := initNetworkQoSController(localnetNadInfo, addressset.NewFakeAddressSetFactory("netwk1-controller"), "netwk1-controller", enableInterconnect)
 					lsName := ctrl.getLogicalSwitchName("dummy")
 					Expect(lsName).To(Equal("netwk1_ovn_localnet_switch"))
 				}
@@ -748,7 +797,7 @@ var _ = Describe("NetworkQoS Controller", func() {
 					Expect(err).NotTo(HaveOccurred())
 					layer2NadInfo := util.NewMutableNetInfo(layer2ImmutableNadInfo)
 					layer2NadInfo.AddNADs("default/netwk2")
-					ctrl := initNetworkQoSController(layer2NadInfo, addressset.NewFakeAddressSetFactory("netwk2-controller"), "netwk2-controller")
+					ctrl := initNetworkQoSController(layer2NadInfo, addressset.NewFakeAddressSetFactory("netwk2-controller"), "netwk2-controller", enableInterconnect)
 					lsName := ctrl.getLogicalSwitchName("dummy")
 					Expect(lsName).To(Equal("netwk2_ovn_layer2_switch"))
 				}
@@ -888,7 +937,7 @@ func initEnv(clientset *util.OVNClientset, initialDB *libovsdbtest.TestSetup) {
 	streamAddrsetFactory = addressset.NewFakeAddressSetFactory("stream-network-controller")
 }
 
-func initNetworkQoSController(netInfo util.NetInfo, addrsetFactory addressset.AddressSetFactory, controllerName string) *Controller {
+func initNetworkQoSController(netInfo util.NetInfo, addrsetFactory addressset.AddressSetFactory, controllerName string, enableInterconnect bool) *Controller {
 	nqosController, err := NewController(
 		controllerName,
 		netInfo,
@@ -902,7 +951,7 @@ func initNetworkQoSController(netInfo util.NetInfo, addrsetFactory addressset.Ad
 		watchFactory.NADInformer(),
 		addrsetFactory,
 		func(pod *corev1.Pod) bool {
-			return pod.Spec.NodeName == "node1"
+			return pod.Spec.NodeName == "node1" || !enableInterconnect
 		}, "node1")
 	Expect(err).NotTo(HaveOccurred())
 	err = watchFactory.Start()

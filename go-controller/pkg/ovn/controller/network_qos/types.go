@@ -11,8 +11,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	knet "k8s.io/api/networking/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 
@@ -65,7 +65,6 @@ func (nqosState *networkQoSState) initAddressSets(addressSetFactory addressset.A
 	if err != nil {
 		return fmt.Errorf("failed to init source address set for %s/%s: %w", nqosState.namespace, nqosState.name, err)
 	}
-
 	// ensure destination address sets
 	for ruleIndex, rule := range nqosState.EgressRules {
 		for destIndex, dest := range rule.Classifier.Destinations {
@@ -191,6 +190,45 @@ func (nqosState *networkQoSState) getAddressSetHashNames() []string {
 	return addrsetNames
 }
 
+func (nqosState *networkQoSState) cleanupStaleAddresses(addressSetMap map[string]sets.Set[string]) error {
+	if nqosState.SrcAddrSet != nil {
+		addresses := addressSetMap[nqosState.SrcAddrSet.GetName()]
+		v4Addresses, _ := nqosState.SrcAddrSet.GetAddresses()
+		staleAddresses := []string{}
+		for _, address := range v4Addresses {
+			if !addresses.Has(address) {
+				staleAddresses = append(staleAddresses, address)
+			}
+		}
+		if len(staleAddresses) > 0 {
+			if err := nqosState.SrcAddrSet.DeleteAddresses(staleAddresses); err != nil {
+				return err
+			}
+		}
+	}
+	for _, egress := range nqosState.EgressRules {
+		for _, dest := range egress.Classifier.Destinations {
+			if dest.DestAddrSet == nil {
+				continue
+			}
+			addresses := addressSetMap[dest.DestAddrSet.GetName()]
+			v4Addresses, _ := dest.DestAddrSet.GetAddresses()
+			staleAddresses := []string{}
+			for _, address := range v4Addresses {
+				if !addresses.Has(address) {
+					staleAddresses = append(staleAddresses, address)
+				}
+			}
+			if len(staleAddresses) > 0 {
+				if err := dest.DestAddrSet.DeleteAddresses(staleAddresses); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
 type GressRule struct {
 	Priority   int
 	Dscp       int
@@ -309,13 +347,6 @@ type Destination struct {
 	NamespaceSelector labels.Selector
 }
 
-func (dest *Destination) matchNamespace(podNs *corev1.Namespace, qosNamespace string) bool {
-	if dest.NamespaceSelector == nil {
-		return podNs.Name == qosNamespace
-	}
-	return dest.NamespaceSelector.Matches(labels.Set(podNs.Labels))
-}
-
 func (dest *Destination) matchPod(podNs *corev1.Namespace, pod *corev1.Pod, qosNamespace string) bool {
 	switch {
 	case dest.NamespaceSelector != nil && dest.PodSelector != nil:
@@ -349,47 +380,6 @@ func (dest *Destination) removePod(fullPodName string, addresses []string) error
 		return fmt.Errorf("failed to remove addresses (%s): %v", strings.Join(addresses, ","), err)
 	}
 	dest.Pods.Delete(fullPodName)
-	return nil
-}
-
-func (dest *Destination) removePodsInNamespace(namespace string) error {
-	var err error
-	// check for pods in the namespace being cleared
-	dest.Pods.Range(func(key, _ any) bool {
-		fullPodName := key.(string)
-		nameParts := strings.Split(fullPodName, "/")
-		if nameParts[0] != namespace {
-			// pod's namespace doesn't match
-			return true
-		}
-		err = dest.removePod(fullPodName, nil)
-		return err == nil
-	})
-	return err
-}
-
-func (dest *Destination) addPodsInNamespace(ctrl *Controller, namespace string) error {
-	podSelector := labels.Everything()
-	if dest.PodSelector != nil {
-		podSelector = dest.PodSelector
-	}
-	pods, err := ctrl.nqosPodLister.Pods(namespace).List(podSelector)
-	if err != nil {
-		if apierrors.IsNotFound(err) || len(pods) == 0 {
-			return nil
-		}
-		return fmt.Errorf("failed to look up pods in ns %s: %v", namespace, err)
-	}
-	klog.V(5).Infof("Found %d pods in namespace %s by selector %s", len(pods), namespace, podSelector.String())
-	for _, pod := range pods {
-		podAddresses, err := getPodAddresses(pod, ctrl.NetInfo)
-		if err != nil {
-			return fmt.Errorf("failed to parse IPs for pod %s/%s: %v", pod.Namespace, pod.Name, err)
-		}
-		if err := dest.addPod(pod.Namespace, pod.Name, podAddresses); err != nil {
-			return fmt.Errorf("failed to add addresses {%s} to address set %s: %v", strings.Join(podAddresses, ","), dest.DestAddrSet.GetName(), err)
-		}
-	}
 	return nil
 }
 

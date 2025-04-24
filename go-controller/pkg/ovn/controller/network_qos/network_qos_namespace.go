@@ -6,130 +6,179 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
+
+	nqosv1alpha1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1"
+	crdtypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
 )
 
 func (c *Controller) processNextNQOSNamespaceWorkItem(wg *sync.WaitGroup) bool {
 	wg.Add(1)
 	defer wg.Done()
-	nqosNSKey, quit := c.nqosNamespaceQueue.Get()
-	if quit {
+	eventData, shutdown := c.nqosNamespaceQueue.Get()
+	if shutdown {
 		return false
 	}
-	defer c.nqosNamespaceQueue.Done(nqosNSKey)
+	defer c.nqosNamespaceQueue.Done(eventData)
 
-	err := c.syncNetworkQoSNamespace(nqosNSKey)
-	if err == nil {
-		c.nqosNamespaceQueue.Forget(nqosNSKey)
-		return true
+	if err := c.syncNetworkQoSNamespace(eventData); err != nil {
+		if c.nqosNamespaceQueue.NumRequeues(eventData) < maxRetries {
+			klog.Errorf("%s: Failed to reconcile namespace %s: %v", c.controllerName, eventData.name(), err)
+			c.nqosNamespaceQueue.AddRateLimited(eventData)
+			return true
+		}
+		utilruntime.HandleError(fmt.Errorf("failed to reconcile namespace %s: %v", eventData.name(), err))
 	}
-
-	utilruntime.HandleError(fmt.Errorf("%v failed with: %v", nqosNSKey, err))
-
-	if c.nqosNamespaceQueue.NumRequeues(nqosNSKey) < maxRetries {
-		c.nqosNamespaceQueue.AddRateLimited(nqosNSKey)
-		return true
-	}
-
-	c.nqosNamespaceQueue.Forget(nqosNSKey)
+	c.nqosNamespaceQueue.Forget(eventData)
 	return true
 }
 
-// syncNetworkQoSNamespace decides the main logic everytime
-// we dequeue a key from the nqosNamespaceQueue cache
-func (c *Controller) syncNetworkQoSNamespace(key string) error {
+// syncNetworkQoSNamespace checks if the namespace change affects any NetworkQoS
+func (c *Controller) syncNetworkQoSNamespace(eventData *eventData[*corev1.Namespace]) error {
 	startTime := time.Now()
-	klog.V(5).Infof("Processing sync for Namespace %s in Network QoS controller", key)
+	klog.V(5).Infof("Reconciling namespace event for %s ", eventData.name())
 	defer func() {
-		klog.V(5).Infof("Finished syncing Namespace %s Network QoS controller: took %v", key, time.Since(startTime))
+		klog.V(5).Infof("Finished reconciling namespace %s, took %v", eventData.name(), time.Since(startTime))
 	}()
-	namespace, err := c.nqosNamespaceLister.Get(key)
-	if err != nil && !apierrors.IsNotFound(err) {
+	nqosNames, err := c.getNetworkQosForNamespaceChange(eventData)
+	if err != nil {
 		return err
 	}
-	// (i) namespace add
-	// (ii) namespace update because namespace's labels changed
-	// (iii) namespace delete
-	// case (iii)
-	if namespace == nil {
-		for _, cachedKey := range c.nqosCache.GetKeys() {
-			err := c.nqosCache.DoWithLock(cachedKey, func(nqosKey string) error {
-				if nqosObj, _ := c.nqosCache.Load(nqosKey); nqosObj != nil {
-					return c.clearNamespaceForNQOS(key, nqosObj)
-				}
-				return nil
-			})
-			if err != nil {
-				return err
-			}
-		}
-		recordNamespaceReconcileDuration(c.controllerName, time.Since(startTime).Milliseconds())
-		return nil
-	}
-	// case (i)/(ii)
-	for _, cachedKey := range c.nqosCache.GetKeys() {
-		err := c.nqosCache.DoWithLock(cachedKey, func(nqosKey string) error {
-			if nqosObj, _ := c.nqosCache.Load(nqosKey); nqosObj != nil {
-				return c.setNamespaceForNQOS(namespace, nqosObj)
-			} else {
-				klog.Warningf("NetworkQoS not synced yet: %s", nqosKey)
-				// requeue nqos key to sync it
-				c.nqosQueue.Add(nqosKey)
-				// requeue namespace key 3 seconds later, allow NetworkQoS to be handled
-				c.nqosNamespaceQueue.AddAfter(key, 3*time.Second)
-				return nil
-			}
-		})
-		if err != nil {
-			return err
-		}
+	for nqosName := range nqosNames {
+		c.nqosQueue.Add(nqosName)
 	}
 	recordNamespaceReconcileDuration(c.controllerName, time.Since(startTime).Milliseconds())
 	return nil
 }
 
-// clearNamespaceForNQOS will handle the logic for figuring out if the provided namespace name
-// has pods that affect address sets of the cached network qoses. If so, remove them.
-func (c *Controller) clearNamespaceForNQOS(namespace string, nqosState *networkQoSState) error {
-	for _, rule := range nqosState.EgressRules {
-		if rule.Classifier == nil {
+// getNetworkQosForNamespaceChange returns the set of NetworkQoS names that are affected by the namespace change
+func (c *Controller) getNetworkQosForNamespaceChange(eventData *eventData[*corev1.Namespace]) (sets.Set[*nqosv1alpha1.NetworkQoS], error) {
+	networkQoSes := sets.Set[*nqosv1alpha1.NetworkQoS]{}
+	nqoses, err := c.getAllNetworkQoSes()
+	if err != nil {
+		return nil, err
+	}
+	for _, nqos := range nqoses {
+		ns := eventData.new
+		if ns == nil {
+			ns = eventData.old
+		}
+		// check if any network selector matches the namespace, or ns label change affects the network selection
+		if namespaceMatchesNetworkSelector(ns, nqos) || networkSelectionChanged(nqos, eventData.new, eventData.old) {
+			networkQoSes.Insert(nqos)
 			continue
 		}
-		for _, dest := range rule.Classifier.Destinations {
-			if err := dest.removePodsInNamespace(namespace); err != nil {
-				return fmt.Errorf("error removing IPs from dest address set %s: %v", dest.DestAddrSet.GetName(), err)
-			}
+		// check if any egress rule matches the namespace, or ns label change affects the egress selection
+		if namespaceMatchesEgressRule(ns, nqos) || egressSelectionChanged(nqos, eventData.new, eventData.old) {
+			networkQoSes.Insert(nqos)
 		}
 	}
-	return nil
+	return networkQoSes, nil
 }
 
-// setNamespaceForNQOS will handle the logic for figuring out if the provided namespace name
-// has pods that need to populate or removed from the address sets of the network qoses.
-func (c *Controller) setNamespaceForNQOS(namespace *corev1.Namespace, nqosState *networkQoSState) error {
-	for _, rule := range nqosState.EgressRules {
-		if rule.Classifier == nil {
+// namespaceMatchesNetworkSelector checks if the namespace matches any of the network selectors in the NetworkQoS
+func namespaceMatchesNetworkSelector(namespace *corev1.Namespace, nqos *nqosv1alpha1.NetworkQoS) bool {
+	for _, selector := range nqos.Spec.NetworkSelectors {
+		var nsSelector *metav1.LabelSelector
+		switch {
+		case selector.NetworkAttachmentDefinitionSelector != nil:
+			if selector.NetworkAttachmentDefinitionSelector.NamespaceSelector.Size() == 0 {
+				// namespace selector is empty, match all
+				return true
+			}
+			nsSelector = &selector.NetworkAttachmentDefinitionSelector.NamespaceSelector
+			/*case selector.PrimaryUserDefinedNetworkSelector != nil:
+				if selector.PrimaryUserDefinedNetworkSelector.NamespaceSelector.Size() == 0 {
+					// namespace selector is empty, match all
+					return true
+				}
+				nsSelector = &selector.PrimaryUserDefinedNetworkSelector.NamespaceSelector
+			case selector.SecondaryUserDefinedNetworkSelector != nil:
+				if selector.SecondaryUserDefinedNetworkSelector.NamespaceSelector.Size() == 0 {
+					// namespace selector is empty, match all
+					return true
+				}
+				nsSelector = &selector.SecondaryUserDefinedNetworkSelector.NamespaceSelector
+			*/
+		}
+		if nsSelector == nil {
 			continue
 		}
-		for index, dest := range rule.Classifier.Destinations {
-			if dest.PodSelector == nil && dest.NamespaceSelector == nil {
-				// no selectors, no address set
-				continue
-			}
-			if !dest.matchNamespace(namespace, nqosState.namespace) {
-				if err := dest.removePodsInNamespace(namespace.Name); err != nil {
-					return fmt.Errorf("error removing pods in namespace %s from NetworkQoS %s/%s rule %d: %v", namespace.Name, nqosState.namespace, nqosState.name, index, err)
-				}
-				continue
-			}
-			// add matching pods in the namespace to dest
-			if err := dest.addPodsInNamespace(c, namespace.Name); err != nil {
-				return err
-			}
-			klog.V(5).Infof("Added pods in namespace %s for NetworkQoS %s/%s rule %d", namespace.Name, nqosState.namespace, nqosState.name, index)
+		if ls, err := metav1.LabelSelectorAsSelector(nsSelector); err != nil {
+			klog.Errorf("%s/%s - failed to convert namespace selector %s : %v", nqos.Namespace, nqos.Name, nsSelector.String(), err)
+		} else if ls != nil && ls.Matches(labels.Set(namespace.Labels)) {
+			return true
 		}
 	}
-	return nil
+	return false
+}
+
+func namespaceMatchesEgressRule(namespace *corev1.Namespace, nqos *nqosv1alpha1.NetworkQoS) bool {
+	for _, egress := range nqos.Spec.Egress {
+		for _, dest := range egress.Classifier.To {
+			if dest.NamespaceSelector == nil || dest.NamespaceSelector.Size() == 0 {
+				// namespace selector is empty, match all
+				return true
+			}
+			if ls, err := metav1.LabelSelectorAsSelector(dest.NamespaceSelector); err != nil {
+				klog.Errorf("%s/%s - failed to convert egress namespace selector %s: %v", nqos.Namespace, nqos.Name, dest.NamespaceSelector.String(), err)
+			} else if ls != nil && ls.Matches(labels.Set(namespace.Labels)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// check if namespace change causes the network selection change
+func networkSelectionChanged(nqos *nqosv1alpha1.NetworkQoS, new *corev1.Namespace, old *corev1.Namespace) bool {
+	for _, selector := range nqos.Spec.NetworkSelectors {
+		var nsSelector *metav1.LabelSelector
+		switch selector.NetworkSelectionType {
+		/*case crdtypes.PrimaryUserDefinedNetworks:
+			if selector.PrimaryUserDefinedNetworkSelector != nil {
+				nsSelector = &selector.PrimaryUserDefinedNetworkSelector.NamespaceSelector
+			}
+		case crdtypes.SecondaryUserDefinedNetworks:
+			if selector.SecondaryUserDefinedNetworkSelector != nil {
+				nsSelector = &selector.SecondaryUserDefinedNetworkSelector.NamespaceSelector
+			}
+		*/
+		case crdtypes.NetworkAttachmentDefinitions:
+			if selector.NetworkAttachmentDefinitionSelector != nil {
+				nsSelector = &selector.NetworkAttachmentDefinitionSelector.NamespaceSelector
+			}
+		}
+		if nsSelector == nil {
+			continue
+		}
+		if ls, err := metav1.LabelSelectorAsSelector(nsSelector); err != nil {
+			// namespace selector is not valid, skip this selector
+			klog.Errorf("%s/%s - failed to convert namespace selector %s: %v", nqos.Namespace, nqos.Name, nsSelector.String(), err)
+		} else if old != nil && new != nil {
+			return ls.Matches(labels.Set(old.Labels)) != ls.Matches(labels.Set(new.Labels))
+		}
+	}
+	return false
+}
+
+func egressSelectionChanged(nqos *nqosv1alpha1.NetworkQoS, new *corev1.Namespace, old *corev1.Namespace) bool {
+	for _, egress := range nqos.Spec.Egress {
+		for _, dest := range egress.Classifier.To {
+			if dest.NamespaceSelector == nil || dest.NamespaceSelector.Size() == 0 {
+				// empty namespace selector won't make difference
+				continue
+			}
+			if nsSelector, err := metav1.LabelSelectorAsSelector(dest.NamespaceSelector); err != nil {
+				klog.Errorf("Failed to convert namespace selector in %s/%s: %v", nqos.Namespace, nqos.Name, err)
+			} else if old != nil && new != nil {
+				return nsSelector.Matches(labels.Set(old.Labels)) != nsSelector.Matches(labels.Set(new.Labels))
+			}
+		}
+	}
+	return false
 }

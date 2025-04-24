@@ -6,13 +6,10 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/labels"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -41,121 +38,31 @@ func (c *Controller) processNextNQOSNodeWorkItem(wg *sync.WaitGroup) bool {
 	return true
 }
 
-// syncNetworkQoSNode decides the main logic everytime
-// we dequeue a key from the nqosNodeQueue cache
+// syncNetworkQoSNode triggers resync of all the NetworkQoSes when a node moves in/out of local zone
 func (c *Controller) syncNetworkQoSNode(key string) error {
 	startTime := time.Now()
-	_, name, err := cache.SplitMetaNamespaceKey(key)
+	_, nodeName, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
 		return err
 	}
-	klog.V(5).Infof("Processing sync for Node %s in Network QoS controller", name)
+	klog.V(5).Infof("Processing sync for Node %s in Network QoS controller", nodeName)
 
 	defer func() {
-		klog.V(5).Infof("Finished syncing Node %s Network QoS controller: took %v", name, time.Since(startTime))
+		klog.V(5).Infof("Finished syncing Node %s Network QoS controller: took %v", nodeName, time.Since(startTime))
 	}()
-	node, err := c.nqosNodeLister.Get(name)
-	if err != nil && !apierrors.IsNotFound(err) {
-		return err
-	}
-
-	if !c.isNodeInLocalZone(node) && c.TopologyType() == types.Layer3Topology {
-		// clean up qos/address set for the node
-		return c.cleanupQoSFromNode(node.Name)
-	}
-	// configure qos for pods on the node
-	pods, err := c.getPodsByNode(node.Name)
-	if err != nil {
-		return err
-	}
-	switchName := c.getLogicalSwitchName(node.Name)
-	_, err = c.findLogicalSwitch(switchName)
-	if err != nil {
-		klog.V(4).Infof("Failed to look up logical switch %s: %v", switchName, err)
-		return err
-	}
-	for _, cachedKey := range c.nqosCache.GetKeys() {
-		err := c.nqosCache.DoWithLock(cachedKey, func(nqosKey string) error {
-			nqosObj, _ := c.nqosCache.Load(nqosKey)
-			if nqosObj == nil {
-				klog.Warningf("NetworkQoS not synced yet: %s", nqosKey)
-				// requeue nqos key to sync it
-				c.nqosQueue.Add(nqosKey)
-				// requeue namespace key 3 seconds later, allow NetworkQoS to be handled
-				c.nqosNamespaceQueue.AddAfter(key, 3*time.Second)
-				return nil
-			}
-			for _, pod := range pods {
-				ns, err := c.nqosNamespaceLister.Get(pod.Namespace)
-				if err != nil {
-					return fmt.Errorf("failed to look up namespace %s: %w", pod.Namespace, err)
-				}
-				if err = c.setPodForNQOS(pod, nqosObj, ns); err != nil {
-					return err
-				}
-			}
-			return nil
-		})
-		if err != nil {
-			return err
+	// node moves in/out of local zone, resync all the NetworkQoSes
+	for _, nqosName := range c.nqosCache.GetKeys() {
+		ns, name, _ := cache.SplitMetaNamespaceKey(nqosName)
+		if nqos, err := c.nqosLister.NetworkQoSes(ns).Get(name); err != nil {
+			klog.Errorf("Failed to get NetworkQoS %s: %v", nqosName, err)
+		} else if nqos != nil {
+			c.nqosQueue.Add(nqos)
 		}
 	}
 	return nil
-}
-
-func (c *Controller) getPodsByNode(nodeName string) ([]*corev1.Pod, error) {
-	pods, err := c.nqosPodLister.List(labels.Everything())
-	if err != nil {
-		return nil, fmt.Errorf("failed to list pods: %w", err)
-	}
-	podsByNode := []*corev1.Pod{}
-	for _, pod := range pods {
-		if util.PodScheduled(pod) && !util.PodWantsHostNetwork(pod) && pod.Spec.NodeName == nodeName {
-			podsByNode = append(podsByNode, pod)
-		}
-	}
-	return podsByNode, nil
 }
 
 // isNodeInLocalZone returns whether the provided node is in a zone local to the zone controller
 func (c *Controller) isNodeInLocalZone(node *corev1.Node) bool {
 	return util.GetNodeZone(node) == c.zone
-}
-
-func (c *Controller) cleanupQoSFromNode(nodeName string) error {
-	switchName := c.getLogicalSwitchName(nodeName)
-	for _, cachedKey := range c.nqosCache.GetKeys() {
-		err := c.nqosCache.DoWithLock(cachedKey, func(nqosKey string) error {
-			nqosObj, _ := c.nqosCache.Load(nqosKey)
-			if nqosObj == nil {
-				klog.V(4).Infof("Expected networkqos %s not found in cache", nqosKey)
-				return nil
-			}
-			pods := []string{}
-			if val, _ := nqosObj.SwitchRefs.Load(switchName); val != nil {
-				pods = val.([]string)
-			}
-			for _, pod := range pods {
-				addrs, _ := nqosObj.Pods.Load(pod)
-				if addrs != nil {
-					err := nqosObj.SrcAddrSet.DeleteAddresses(addrs.([]string))
-					if err != nil {
-						return err
-					}
-				}
-				nqosObj.Pods.Delete(pod)
-			}
-			err := c.removeQoSFromLogicalSwitches(nqosObj, []string{switchName})
-			if err != nil {
-				return err
-			}
-			nqosObj.SwitchRefs.Delete(switchName)
-			return nil
-		})
-		if err != nil {
-			return err
-		}
-		klog.V(4).Infof("Successfully cleaned up qos rules %s from %s", cachedKey, switchName)
-	}
-	return nil
 }
