@@ -66,6 +66,7 @@ spec:
       serviceAccountName: ovnkube-node
       hostNetwork: true
       dnsPolicy: Default
+      {{ "hostPID: true" if ovn_unprivileged_mode=="no" }}
       priorityClassName: "system-node-critical"
       initContainers:
       - name: ovn-keys
@@ -263,6 +264,8 @@ spec:
           name: host-var-log-ovs
         - mountPath: /etc/openvswitch
           name: etc-openvswitch
+        - mountPath: /var/run/pluto
+          name: host-var-run-pluto
         resources:
           requests:
             cpu: 10m
@@ -289,6 +292,10 @@ spec:
       - name: host-var-run-ovs
         hostPath:
           path: /var/run/openvswitch
+          type: DirectoryOrCreate
+      - name: host-var-run-pluto
+        hostPath:
+          path: /var/run/pluto
           type: DirectoryOrCreate
       - name: signer-ca
         configMap:
