@@ -455,6 +455,6 @@ func checkBridgeMapping(ovsClient client.Client, topology string, networkName st
 			return nil
 		}
 	}
-
-	return fmt.Errorf("failed to find bridge mapping for network: %q; Current ovn-bridge-mappings: %q", networkName, ovnBridgeMappings)
+	klog.V(5).Infof("Failed to find bridge mapping for network: %q, current OVN bridge-mappings: (%s)", networkName, ovnBridgeMappings)
+	return fmt.Errorf("failed to find OVN bridge-mapping for network: %q", networkName)
 }

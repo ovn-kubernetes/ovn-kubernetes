@@ -372,7 +372,7 @@ var _ = Describe("checkBridgeMapping", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(checkBridgeMapping(ovsClient, ovntypes.LocalnetTopology, networkName).Error()).To(
-				Equal(`failed to find bridge mapping for network: "test-network"; Current ovn-bridge-mappings: "other-network:br-int"`))
+				Equal(`failed to find OVN bridge-mapping for network: "test-network"`))
 		})
 	})
 })
