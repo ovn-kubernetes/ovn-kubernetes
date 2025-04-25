@@ -723,6 +723,11 @@ func PodTerminating(pod *corev1.Pod) bool {
 	return pod.DeletionTimestamp != nil
 }
 
+// PodTerminating checks if the pod has been deleted via API but still in the process of terminating
+func NamespaceTerminating(namespace *corev1.Namespace) bool {
+	return namespace.Status.Phase == corev1.NamespaceTerminating || namespace.DeletionTimestamp != nil
+}
+
 // EventRecorder returns an EventRecorder type that can be
 // used to post Events to different object's lifecycles.
 func EventRecorder(kubeClient kubernetes.Interface) record.EventRecorder {
