@@ -27,8 +27,8 @@ type NetworkState struct {
 	Interfaces []Interface `json:"interfaces"`
 }
 
-func RetrieveNetworkState(vmi *v1.VirtualMachineInstance) (*NetworkState, error) {
-	output, err := RunCommand(vmi, "nmstatectl show --json", 2*time.Second)
+func RetrieveNetworkState(cli *Client, vmi *v1.VirtualMachineInstance) (*NetworkState, error) {
+	output, err := cli.RunCommand(vmi, "nmstatectl show --json", 2*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %v", output, err)
 	}
