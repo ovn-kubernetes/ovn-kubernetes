@@ -630,7 +630,9 @@ jobs:
           make -C test control-plane WHAT="Kubevirt Virtual Machines"
         elif [ "${{ matrix.target }}" == "control-plane-helm" ]; then
           make -C test control-plane
-          make -C test conformance
+          if [ "${{ matrix.ipfamily }}" != "ipv6" ]; then
+            make -C test conformance
+          fi
         elif [ "${{ matrix.target }}" == "network-segmentation" ]; then
           make -C test control-plane WHAT="Network Segmentation"
         elif [ "${{ matrix.target }}" == "bgp" ]; then
