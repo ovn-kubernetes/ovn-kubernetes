@@ -1092,11 +1092,15 @@ passwd:
 			g.Expect(pod.Status.PodIP).NotTo(BeEmpty(), "pod %s has no valid IP address yet", pod.Name)
 		}
 
+		sanitizeNodeName = func(nodeName string) string {
+			return strings.ReplaceAll(nodeName, ".", "-")
+		}
+
 		createHTTPServerPods = func(annotations map[string]string) []*corev1.Pod {
 			var pods []*corev1.Pod
 			for _, selectedNode := range selectedNodes {
 				pod := composeAgnhostPod(
-					"testpod-"+selectedNode.Name,
+					"testpod-"+sanitizeNodeName(selectedNode.Name),
 					namespace,
 					selectedNode.Name,
 					"netexec", "--http-port", "8000")
@@ -1148,7 +1152,7 @@ fi
 						IPRequest: staticIPs,
 					}
 				}
-				pod, err := createPod(fr, "testpod-"+node.Name, node.Name, namespace, []string{"bash", "-c"}, map[string]string{}, func(pod *corev1.Pod) {
+				pod, err := createPod(fr, "testpod-"+sanitizeNodeName(node.Name), node.Name, namespace, []string{"bash", "-c"}, map[string]string{}, func(pod *corev1.Pod) {
 					if nse != nil {
 						pod.Annotations = networkSelectionElements(*nse)
 					}
