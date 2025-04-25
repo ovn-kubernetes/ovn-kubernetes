@@ -2466,7 +2466,7 @@ func newNodePortWatcher(
 			}
 		}
 		if util.IsRouteAdvertisementsEnabled() {
-			if err := configureAdvertisedUDNIsolationNFTables(); err != nil {
+			if err := configureAdvertisedUDNIsolationNFTables(networkManager, nodeIPManager.nodeName); err != nil {
 				return nil, fmt.Errorf("unable to configure UDN isolation nftables: %w", err)
 			}
 		}
@@ -2955,7 +2955,7 @@ func getIPv(ipnet *net.IPNet) string {
 //	   ip daddr @advertised-udn-subnets-v4 counter packets 0 bytes 0 drop
 //	   ip6 daddr @advertised-udn-subnets-v6 counter packets 0 bytes 0 drop
 //	 }
-func configureAdvertisedUDNIsolationNFTables() error {
+func configureAdvertisedUDNIsolationNFTables(networkManager networkmanager.Interface, nodeName string) error {
 	counterIfDebug := ""
 	if config.Logging.Level > 4 {
 		counterIfDebug = "counter"
@@ -3001,5 +3001,62 @@ func configureAdvertisedUDNIsolationNFTables() error {
 		Chain: nftablesUDNBGPOutputChain,
 		Rule:  knftables.Concat(fmt.Sprintf("ip6 daddr @%s", nftablesAdvertisedUDNsSetV6), counterIfDebug, "drop"),
 	})
-	return nft.Run(context.TODO(), tx)
+
+	if err := nft.Run(context.TODO(), tx); err != nil {
+		return fmt.Errorf("failed to configure advertised UDNs isolation nftables: %w", err)
+	}
+
+	// Cleanup any stale entries
+	tx = nft.NewTransaction()
+	existingV4, err := nft.ListElements(context.TODO(), "set", nftablesAdvertisedUDNsSetV4)
+	if err != nil {
+		if !knftables.IsNotFound(err) {
+			return fmt.Errorf("could not list existing items in %s set: %w", nftablesAdvertisedUDNsSetV4, err)
+		}
+	}
+	existingV6, err := nft.ListElements(context.TODO(), "set", nftablesAdvertisedUDNsSetV6)
+	if err != nil {
+		if !knftables.IsNotFound(err) {
+			return fmt.Errorf("could not list existing items in %s set: %w", nftablesAdvertisedUDNsSetV6, err)
+		}
+	}
+
+	for _, elem := range append(existingV4, existingV6...) {
+		// Only elements with a comment and one key are expected, remove aliens
+		if elem.Comment == nil || len(elem.Key) != 1 {
+			klog.Warningf("Removing unexpected isolation element: %v", elem)
+			tx.Delete(elem)
+			continue
+		}
+
+		netInfo := networkManager.GetNetwork(*elem.Comment)
+		if netInfo == nil {
+			klog.Infof("Network %q not found, removing isolation element: %v", *elem.Comment, elem)
+			tx.Delete(elem)
+			continue
+		}
+
+		if !util.IsPodNetworkAdvertisedAtNode(netInfo, nodeName) {
+			klog.Infof("Network %q is no longer advertised, removing isolation element: %v", *elem.Comment, elem)
+			tx.Delete(elem)
+			continue
+		}
+
+		found := false
+		for _, netSubnet := range netInfo.Subnets() {
+			if netSubnet.CIDR.String() == elem.Key[0] {
+				// matched the subnet
+				found = true
+				break
+			}
+		}
+		if !found {
+			klog.Warningf("Network %q does not contain the %s subnet, removing isolation element: %v", *elem.Comment, elem.Key[0], elem)
+			tx.Delete(elem)
+		}
+	}
+	if tx.NumOperations() == 0 {
+		return nil
+	}
+	return nft.Run(context.Background(), tx)
 }
