@@ -538,11 +538,15 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 			// register ovnkube node specific prometheus metrics exported by the node
 			metrics.RegisterNodeMetrics(ctx.Done())
 
-			ovsClient, err = libovsdb.NewOVSClient(ctx.Done())
-			if err != nil {
-				nodeErr = fmt.Errorf("failed to initialize libovsdb vswitchd client: %w", err)
-				return
+			// OVS is not running on dpu-host nodes
+			if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
+				ovsClient, err = libovsdb.NewOVSClient(ctx.Done())
+				if err != nil {
+					nodeErr = fmt.Errorf("failed to initialize libovsdb vswitchd client: %w", err)
+					return
+				}
 			}
+
 			nodeControllerManager, err := controllermanager.NewNodeControllerManager(
 				ovnClientset,
 				watchFactory,

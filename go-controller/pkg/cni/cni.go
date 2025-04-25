@@ -182,8 +182,12 @@ func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
 		if pr.CNIConf.PhysicalNetworkName != "" {
 			netName = pr.CNIConf.PhysicalNetworkName
 		}
-		if err := checkBridgeMapping(ovsClient, pr.CNIConf.Topology, netName); err != nil {
-			return nil, fmt.Errorf("failed bridge mapping validation: %w", err)
+
+		// Skip checking bridge mapping on DPU hosts as OVS is not present
+		if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
+			if err := checkBridgeMapping(ovsClient, pr.CNIConf.Topology, netName); err != nil {
+				return nil, fmt.Errorf("failed bridge mapping validation: %w", err)
+			}
 		}
 
 		response.Result, err = getCNIResultFn(pr, clientset, podInterfaceInfo)
