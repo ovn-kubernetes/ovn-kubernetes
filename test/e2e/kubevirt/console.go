@@ -54,21 +54,12 @@ var (
 	shellFailRegexp    = regexp.MustCompile(shellFail)
 )
 
-// SafeExpectBatch runs the batch from `expected`, connecting to a VMI's console and
-// waiting `wait` seconds for the batch to return.
-// It validates that the commands arrive to the console.
-// NOTE: This functions heritage limitations from `expectBatchWithValidatedSend` refer to it to check them.
-func safeExpectBatch(vmi *v1.VirtualMachineInstance, expected []expect.Batcher, timeout time.Duration) error {
-	_, err := safeExpectBatchWithResponse(vmi, expected, timeout)
-	return err
-}
-
 // safeExpectBatchWithResponse runs the batch from `expected`, connecting to a VMI's console and
 // waiting `wait` seconds for the batch to return with a response.
 // It validates that the commands arrive to the console.
 // NOTE: This functions inherits limitations from `expectBatchWithValidatedSend`, refer to it for more information.
-func safeExpectBatchWithResponse(vmi *v1.VirtualMachineInstance, expected []expect.Batcher, timeout time.Duration) ([]expect.BatchRes, error) {
-	expecter, _, err := newExpecter(vmi, consoleConnectionTimeout, expect.Verbose(true), expect.VerboseWriter(GinkgoWriter))
+func safeExpectBatchWithResponse(virtctlPath string, vmi *v1.VirtualMachineInstance, expected []expect.Batcher, timeout time.Duration) ([]expect.BatchRes, error) {
+	expecter, _, err := newExpecter(virtctlPath, vmi, consoleConnectionTimeout, expect.Verbose(true), expect.VerboseWriter(GinkgoWriter))
 	if err != nil {
 		return nil, err
 	}
@@ -81,8 +72,12 @@ func safeExpectBatchWithResponse(vmi *v1.VirtualMachineInstance, expected []expe
 	return resp, err
 }
 
-func RunCommand(vmi *v1.VirtualMachineInstance, command string, timeout time.Duration) (string, error) {
-	results, err := safeExpectBatchWithResponse(vmi, []expect.Batcher{
+func (virtctl *Client) RunCommand(vmi *v1.VirtualMachineInstance, command string, timeout time.Duration) (string, error) {
+	return runCommand(virtctl.path, vmi, command, timeout)
+}
+
+func runCommand(virtctlPath string, vmi *v1.VirtualMachineInstance, command string, timeout time.Duration) (string, error) {
+	results, err := safeExpectBatchWithResponse(virtctlPath, vmi, []expect.Batcher{
 		&expect.BSnd{S: "\n"},
 		&expect.BExp{R: PromptExpression},
 		&expect.BSnd{S: command + "\n"},
@@ -114,10 +109,11 @@ func skipInput(scanner *bufio.Scanner) bool {
 
 // newExpecter will connect to an already logged in VMI console and return the generated expecter it will wait `timeout` for the connection.
 func newExpecter(
+	virtctlPath string,
 	vmi *v1.VirtualMachineInstance,
 	timeout time.Duration,
 	opts ...expect.Option) (expect.Expecter, <-chan error, error) {
-	virtctlCmd := []string{"virtctl", "console", "-n", vmi.Namespace, vmi.Name}
+	virtctlCmd := []string{virtctlPath, "console", "-n", vmi.Namespace, vmi.Name}
 	return expect.SpawnWithArgs(virtctlCmd, timeout, expect.SendTimeout(timeout), expect.Verbose(true), expect.VerboseWriter(GinkgoWriter))
 }
 
@@ -182,13 +178,13 @@ func expectBatchWithValidatedSend(expecter expect.Expecter, batch []expect.Batch
 	return res, err
 }
 
-func LoginToFedora(vmi *kubevirtv1.VirtualMachineInstance, user, password string) error {
-	return LoginToFedoraWithHostname(vmi, user, password, vmi.Name)
+func (virtctl *Client) LoginToFedora(vmi *kubevirtv1.VirtualMachineInstance, user, password string) error {
+	return loginToFedoraWithHostname(virtctl.path, vmi, user, password, vmi.Name)
 }
 
 // LoginToFedora performs a console login to a Fedora base VM
-func LoginToFedoraWithHostname(vmi *kubevirtv1.VirtualMachineInstance, user, password, hostname string) error {
-	expecter, _, err := newExpecter(vmi, consoleConnectionTimeout, expect.Verbose(true), expect.VerboseWriter(GinkgoWriter))
+func loginToFedoraWithHostname(virtctlPath string, vmi *kubevirtv1.VirtualMachineInstance, user, password, hostname string) error {
+	expecter, _, err := newExpecter(virtctlPath, vmi, consoleConnectionTimeout, expect.Verbose(true), expect.VerboseWriter(GinkgoWriter))
 	if err != nil {
 		return err
 	}
