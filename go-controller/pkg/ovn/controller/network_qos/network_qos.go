@@ -238,6 +238,11 @@ func (c *Controller) updateNQOSStatusToNotReady(namespace, name, reason string, 
 func (c *Controller) updateNQOStatusCondition(newCondition metav1.Condition, namespace, name string) error {
 	nqos, err := c.nqosLister.NetworkQoSes(namespace).Get(name)
 	if err != nil {
+		if apierrors.IsNotFound(err) {
+			// Resource was deleted, log it
+			klog.V(5).Infof("NetworkQoS %s/%s updating status but not found, ignoring", namespace, name)
+			return nil
+		}
 		return err
 	}
 

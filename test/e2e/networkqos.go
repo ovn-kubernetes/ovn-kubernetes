@@ -81,7 +81,6 @@ var _ = ginkgo.Describe("e2e NetworkQoS validation", func() {
 			nodeIPv4Range = ipnet.String()
 			skipIpv4 = false
 		} else {
-			framework.Fail("Node IPv4 address not found")
 			ginkgo.By("Node IPv4 address not found: Will be skipping IPv4 checks in the Networking QoS test")
 			nodeIPv4Range = "0.0.0.0/0"
 			skipIpv4 = true
@@ -94,6 +93,9 @@ var _ = ginkgo.Describe("e2e NetworkQoS validation", func() {
 			ginkgo.By("Node IPv6 address not found: Will be skipping IPv6 checks in the Networking QoS test")
 			nodeIPv6Range = "::/0"
 			skipIpv6 = true
+		}
+		if skipIpv4 && skipIpv6 {
+			framework.Fail("Neither IPv4 nor IPv6 is configured on the node")
 		}
 		dstPodNamespace = f.Namespace.Name + "-dest"
 		// set up dest namespace
