@@ -1719,8 +1719,7 @@ write_files:
 					}
 				})
 
-				const secondaryInterfaceName = "eth1"
-				Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, networkName, 0 /*vlanID*/)).To(Succeed())
+				Expect(setupUnderlay(nodes, secondaryBridge, deploymentconfig.Get().SecondaryInterfaceName(), networkName, 0 /*vlanID*/)).To(Succeed())
 			}
 			createCUDN(cudn)
 
@@ -2210,8 +2209,7 @@ chpasswd: { expire: False }
 			cudn, networkName := kubevirt.GenerateCUDN(namespace, "net1", udnv1.NetworkTopologyLocalnet, udnv1.NetworkRoleSecondary, udnv1.DualStackCIDRs{})
 			createCUDN(cudn)
 
-			const secondaryInterfaceName = "eth1"
-			Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, networkName, 0 /*vlanID*/)).To(Succeed())
+			Expect(setupUnderlay(nodes, secondaryBridge, deploymentconfig.Get().SecondaryInterfaceName(), networkName, 0 /*vlanID*/)).To(Succeed())
 
 			workerNodeList, err := fr.ClientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{LabelSelector: labels.FormatLabels(map[string]string{"node-role.kubernetes.io/worker": ""})})
 			Expect(err).NotTo(HaveOccurred())
