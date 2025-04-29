@@ -30,6 +30,7 @@ import (
 
 	ipgenerator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/ip"
 	util "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
 )
 
 const (
@@ -279,7 +280,7 @@ var _ = Describe("Multi Homing", func() {
 			workerTwoNodeName = "ovn-worker2"
 		)
 
-		ginkgo.DescribeTable("attached to a localnet network mapped to breth0",
+		ginkgo.DescribeTable(fmt.Sprintf("attached to a localnet network mapped to external primary interface bridge"), //nolint:lll
 
 			func(netConfigParams networkAttachmentConfigParams, clientPodConfig, serverPodConfig podConfiguration) {
 
@@ -300,9 +301,9 @@ var _ = Describe("Multi Homing", func() {
 				Expect(pods).NotTo(BeEmpty())
 				defer func() {
 					By("tearing down the localnet underlay")
-					Expect(teardownUnderlay(pods, defaultOvsBridge)).To(Succeed())
+					Expect(teardownUnderlay(pods, deploymentconfig.Get().ExternalBridgeName())).To(Succeed())
 				}()
-				Expect(setupUnderlay(pods, defaultOvsBridge, "", netConfig.networkName, netConfig.vlanID)).To(Succeed())
+				Expect(setupUnderlay(pods, deploymentconfig.Get().ExternalBridgeName(), "", netConfig.networkName, netConfig.vlanID)).To(Succeed())
 
 				nad := generateNAD(netConfig)
 				By(fmt.Sprintf("creating the attachment configuration: %v\n", nad))
