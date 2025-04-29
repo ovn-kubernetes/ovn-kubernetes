@@ -145,9 +145,9 @@ else
 
     # pod reached from default network through secondary interface, asymetric, configuration does not make sense
     # TODO: perhaps the secondary network attached pods should not be attached to default network
-    skip "Multi Homing A single pod with an OVN-K secondary network attached to a localnet network mapped to breth0 can be reached by a client pod in the default network on the same node"
-    skip "Multi Homing A single pod with an OVN-K secondary network attached to a localnet network mapped to breth0 can be reached by a client pod in the default network on a different node"
-  
+    skip "Multi Homing A single pod with an OVN-K secondary network attached to a localnet network mapped to external primary interface bridge can be reached by a client pod in the default network on the same node"
+    skip "Multi Homing A single pod with an OVN-K secondary network attached to a localnet network mapped to external primary interface bridge can be reached by a client pod in the default network on a different node"
+
     # these tests require metallb but the configuration we do for it is not compatible with the configuration we do to advertise the default network
     # TODO: consolidate configuration
     skip "Load Balancer Service Tests with MetalLB"
