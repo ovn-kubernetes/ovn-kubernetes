@@ -1270,6 +1270,11 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 					[]*net.IPNet{classBIPAddress(node1.LrpIP)}, []*net.IPNet{classBIPAddress(node1.DrLrpIP)},
 					skipSnat, node1.NodeMgmtPortIP, "1400")
 
+				if oc.isPodNetworkAdvertisedAtNode(node1.Name) {
+					addrSet, err := oc.addressSetFactory.GetAddressSet(GetAdvertisedUDNSubnetsAddressSetDBIDs())
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					expectedNBDatabaseState = generateAdvertisedUDNIsolationExpectedNB(expectedNBDatabaseState, oc.GetNetworkName(), clusterSubnets, expectedNodeSwitch, addrSet)
+				}
 				GR = nil
 				for _, testObj := range expectedNBDatabaseState {
 					if router, ok := testObj.(*nbdb.LogicalRouter); ok && router.UUID == types.GWRouterPrefix+node1.Name+"-UUID" {

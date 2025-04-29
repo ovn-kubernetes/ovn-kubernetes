@@ -594,8 +594,14 @@ func (oc *SecondaryLayer2NetworkController) addUpdateLocalNodeEvent(node *corev1
 				} else {
 					if !util.IsPodNetworkAdvertisedAtNode(oc, node.Name) {
 						err = oc.addUDNClusterSubnetEgressSNAT(gwConfig.hostSubnets, gwManager.gwRouterName)
+						if err == nil && util.IsRouteAdvertisementsEnabled() {
+							err = oc.deleteAdvertisedUDNIsolation(node.Name)
+						}
 					} else {
 						err = oc.deleteUDNClusterSubnetEgressSNAT(gwConfig.hostSubnets, gwManager.gwRouterName)
+						if err == nil {
+							err = oc.addAdvertisedUDNIsolation(node.Name)
+						}
 					}
 					if err != nil {
 						errs = append(errs, err)

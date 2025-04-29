@@ -402,7 +402,11 @@ func (oc *DefaultNetworkController) syncNodeGateway(node *corev1.Node, hostSubne
 			return fmt.Errorf("error creating gateway for node %s: %v", node.Name, err)
 		}
 	}
-	return nil
+
+	if util.IsPodNetworkAdvertisedAtNode(oc, node.Name) {
+		return oc.addAdvertisedUDNIsolation(node.Name)
+	}
+	return oc.deleteAdvertisedUDNIsolation(node.Name)
 }
 
 // gatewayChanged() compares old annotations to new and returns true if something has changed.
