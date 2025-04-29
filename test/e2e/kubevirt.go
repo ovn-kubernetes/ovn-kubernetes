@@ -1335,7 +1335,7 @@ fi
 			Expect(err).NotTo(HaveOccurred())
 
 			d.ConntrackDumpingDaemonSet()
-			d.OVSFlowsDumpingDaemonSet("breth0")
+			d.OVSFlowsDumpingDaemonSet(deploymentconfig.Get().ExternalBridgeName())
 			d.IPTablesDumpingDaemonSet()
 
 			bandwidthPerMigration := resource.MustParse("40Mi")
