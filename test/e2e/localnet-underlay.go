@@ -17,15 +17,14 @@ import (
 )
 
 const (
-	defaultOvsBridge = "breth0"
-	secondaryBridge  = "ovsbr1"
-	add              = "add-br"
-	del              = "del-br"
+	secondaryBridge = "ovsbr1"
+	add             = "add-br"
+	del             = "del-br"
 )
 
 func setupUnderlay(ovsPods []v1.Pod, bridgeName, portName, networkName string, vlanID int) error {
 	for _, ovsPod := range ovsPods {
-		if bridgeName != defaultOvsBridge {
+		if bridgeName != deploymentconfig.Get().ExternalBridgeName() {
 			if err := addOVSBridge(ovsPod.Namespace, ovsPod.Name, bridgeName); err != nil {
 				return err
 			}
@@ -68,7 +67,7 @@ func ovsRemoveSwitchPort(ovsPods []v1.Pod, portName string, newVLANID int) error
 
 func teardownUnderlay(ovsPods []v1.Pod, bridgeName string) error {
 	for _, ovsPod := range ovsPods {
-		if bridgeName != defaultOvsBridge {
+		if bridgeName != deploymentconfig.Get().ExternalBridgeName() {
 			if err := removeOVSBridge(ovsPod.Namespace, ovsPod.Name, bridgeName); err != nil {
 				return err
 			}
@@ -180,7 +179,7 @@ func configureBridgeMappings(podNamespace, podName string, mappings ...BridgeMap
 func defaultNetworkBridgeMapping() BridgeMapping {
 	return BridgeMapping{
 		physnet:   "physnet",
-		ovsBridge: "breth0",
+		ovsBridge: deploymentconfig.Get().ExternalBridgeName(),
 	}
 }
 
