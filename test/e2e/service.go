@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/clusterinspection"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/testframework"
 	"math/rand"
 	"net"
 	"os"
@@ -34,6 +36,8 @@ import (
 	imageutils "k8s.io/kubernetes/test/utils/image"
 	utilnet "k8s.io/utils/net"
 	"k8s.io/utils/pointer"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/inclustercommands"
 )
 
 const (
@@ -58,7 +62,7 @@ var _ = ginkgo.Describe("Services", func() {
 		echoServicePortMax        = 31299
 	)
 
-	f := wrappedTestFramework("services")
+	f := testframework.WrappedTestFramework("services")
 
 	var cs clientset.Interface
 
@@ -133,7 +137,7 @@ var _ = ginkgo.Describe("Services", func() {
 
 		ginkgo.By("Connecting to the service from another host-network pod on node " + nodeName)
 		// find the ovn-kube node pod on this node
-		pods, err := cs.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+		pods, err := cs.CoreV1().Pods(inclustercommands.OvnNamespace).List(context.TODO(), metav1.ListOptions{
 			LabelSelector: "app=ovnkube-node",
 			FieldSelector: "spec.nodeName=" + nodeName,
 		})
@@ -488,7 +492,7 @@ var _ = ginkgo.Describe("Services", func() {
 							// flush this on all 3 nodes else we will run into the
 							// bug: https://issues.redhat.com/browse/OCPBUGS-7609.
 							// TODO: Revisit this once https://bugzilla.redhat.com/show_bug.cgi?id=2169839 is fixed.
-							ovnKubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+							ovnKubeNodePods, err := f.ClientSet.CoreV1().Pods(inclustercommands.OvnNamespace).List(context.TODO(), metav1.ListOptions{
 								LabelSelector: "name=ovnkube-node",
 							})
 							if err != nil {
@@ -497,14 +501,14 @@ var _ = ginkgo.Describe("Services", func() {
 							for _, ovnKubeNodePod := range ovnKubeNodePods.Items {
 								framework.Logf("Flushing the ip route cache on %s", ovnKubeNodePod.Name)
 								containerName := "ovnkube-node"
-								if isInterconnectEnabled() {
+								if clusterinspection.IsInterconnectEnabled() {
 									containerName = "ovnkube-controller"
 								}
 
 								arguments := []string{"exec", ovnKubeNodePod.Name, "--container", containerName, "--"}
 								sepFlush := strings.Split(flushCmd, " ")
 								arguments = append(arguments, sepFlush...)
-								_, err := e2ekubectl.RunKubectl(ovnNamespace, arguments...)
+								_, err := e2ekubectl.RunKubectl(inclustercommands.OvnNamespace, arguments...)
 								framework.ExpectNoError(err, "Flushing the ip route cache failed")
 							}
 						}
@@ -530,12 +534,12 @@ var _ = ginkgo.Describe("Services", func() {
 			framework.Failf("unable to detect if cluster supports IPv4 or IPv6")
 		}
 		getIPRouteGetOutput := func(dst string) string {
-			cmd := []string{containerRuntime, "exec", ovnWorkerNode, "ip"}
+			cmd := []string{testframework.ContainerRuntime, "exec", ovnWorkerNode, "ip"}
 			if utilnet.IsIPv6String(dst) {
 				cmd = append(cmd, "-6")
 			}
 			cmd = append(cmd, "route", "get", dst)
-			output, err := runCommand(cmd...)
+			output, err := inclustercommands.RunCommand(cmd...)
 			framework.ExpectNoError(err, fmt.Sprintf("failed to exec '%v': %v", cmd, err))
 			return output
 		}
@@ -566,7 +570,7 @@ var _ = ginkgo.Describe("Services", func() {
 		framework.ExpectNoError(err)
 		node := nodes.Items[0]
 		nodeName := node.Name
-		pods, err := cs.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+		pods, err := cs.CoreV1().Pods(inclustercommands.OvnNamespace).List(context.TODO(), metav1.ListOptions{
 			LabelSelector: "app=ovnkube-node",
 			FieldSelector: "spec.nodeName=" + nodeName,
 		})
@@ -606,7 +610,7 @@ var _ = ginkgo.Describe("Services", func() {
 		framework.ExpectNoError(err)
 		cleanupFn = func() {
 			// initial pod used for host command may be deleted at this point, refetch
-			pods, err := cs.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+			pods, err := cs.CoreV1().Pods(inclustercommands.OvnNamespace).List(context.TODO(), metav1.ListOptions{
 				LabelSelector: "app=ovnkube-node",
 				FieldSelector: "spec.nodeName=" + nodeName,
 			})
@@ -730,7 +734,7 @@ var _ = ginkgo.Describe("Services", func() {
 
 		ginkgo.AfterEach(func() {
 			ginkgo.By("Cleaning up external container")
-			deleteClusterExternalContainer(clientContainerName)
+			DeleteClusterExternalContainer(clientContainerName)
 			ginkgo.By("Deleting additional IP addresses from nodes")
 			for nodeName, ipFamilies := range nodeIPs {
 				for _, ip := range ipFamilies {
@@ -738,7 +742,7 @@ var _ = ginkgo.Describe("Services", func() {
 					if utilnet.IsIPv6String(ip) {
 						subnetMask = "/128"
 					}
-					_, err := runCommand(containerRuntime, "exec", nodeName, "ip", "addr", "delete",
+					_, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", nodeName, "ip", "addr", "delete",
 						fmt.Sprintf("%s%s", ip, subnetMask), "dev", "breth0")
 					if err != nil && !strings.Contains(err.Error(),
 						"RTNETLINK answers: Cannot assign requested address") {
@@ -775,7 +779,7 @@ var _ = ginkgo.Describe("Services", func() {
 					fmt.Sprintf("--http-port=%d", endpointHTTPPort),
 					fmt.Sprintf("--udp-port=%d", endpointUDPPort),
 				}
-				pod, err := createPod(f, node.Name+"-ep", node.Name, f.Namespace.Name, []string{},
+				pod, err := CreatePod(f, node.Name+"-ep", node.Name, f.Namespace.Name, []string{},
 					endpointsSelector, func(p *v1.Pod) {
 						p.Spec.Containers[0].Args = args
 					})
@@ -786,12 +790,12 @@ var _ = ginkgo.Describe("Services", func() {
 			}
 
 			ginkgo.By("Creating an external container to send the traffic from")
-			createClusterExternalContainer(clientContainerName, agnhostImage,
+			CreateClusterExternalContainer(clientContainerName, agnhostImage,
 				[]string{"--network", "kind", "-P"},
 				[]string{"netexec", "--http-port=80"})
 
 			// If `kindexgw` exists, connect client container to it
-			runCommand(containerRuntime, "network", "connect", "kindexgw", clientContainerName)
+			inclustercommands.RunCommand(testframework.ContainerRuntime, "network", "connect", "kindexgw", clientContainerName)
 
 			ginkgo.By("Selecting additional IP addresses for each node")
 			// add new secondary IP from node subnet to all nodes, if the cluster is v6 add an ipv6 address
@@ -830,7 +834,7 @@ var _ = ginkgo.Describe("Services", func() {
 			for nodeName, ipFamilies := range nodeIPs {
 				for _, ip := range ipFamilies {
 					// manually add the a secondary IP to each node
-					_, err = runCommand(containerRuntime, "exec", nodeName, "ip", "addr", "add", ip, "dev", "breth0")
+					_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", nodeName, "ip", "addr", "add", ip, "dev", "breth0")
 					if err != nil {
 						framework.Failf("failed to add new IP address %s to node %s: %v", ip, nodeName, err)
 					}
@@ -918,7 +922,7 @@ var _ = ginkgo.Describe("Services", func() {
 					fmt.Sprintf("--http-port=%d", endpointHTTPPort),
 					fmt.Sprintf("--udp-port=%d", endpointUDPPort),
 				}
-				pod, err := createPod(f, node.Name+"-ep", node.Name, f.Namespace.Name, []string{},
+				pod, err := CreatePod(f, node.Name+"-ep", node.Name, f.Namespace.Name, []string{},
 					endpointsSelector, func(p *v1.Pod) {
 						p.Spec.Containers[0].Args = args
 					})
@@ -990,12 +994,12 @@ spec:
 			}
 
 			ginkgo.By("Creating an external container to send the ingress nodeport service traffic from")
-			extClientv4, extClientv6 := createClusterExternalContainer(clientContainerName, agnhostImage,
+			extClientv4, extClientv6 := CreateClusterExternalContainer(clientContainerName, agnhostImage,
 				[]string{"--network", "kind", "-P"},
 				[]string{"netexec", "--http-port=80"})
 
 			// If `kindexgw` exists, connect client container to it
-			runCommand(containerRuntime, "network", "connect", "kindexgw", clientContainerName)
+			inclustercommands.RunCommand(testframework.ContainerRuntime, "network", "connect", "kindexgw", clientContainerName)
 
 			ginkgo.By("Selecting additional IP addresses for each node")
 			// add new secondary IP from node subnet to all nodes, if the cluster is v6 add an ipv6 address
@@ -1034,7 +1038,7 @@ spec:
 			for nodeName, ipFamilies := range nodeIPs {
 				for _, ip := range ipFamilies {
 					// manually add the a secondary IP to each node
-					_, err = runCommand(containerRuntime, "exec", nodeName, "ip", "addr", "add", ip, "dev", "breth0")
+					_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", nodeName, "ip", "addr", "add", ip, "dev", "breth0")
 					if err != nil {
 						framework.Failf("failed to add new IP address %s to node %s: %v", ip, nodeName, err)
 					}
@@ -1164,7 +1168,7 @@ spec:
 
 			serverPodName := nodeName + "-ep"
 			var serverContainerName string
-			_, err := createPod(f, serverPodName, nodeName, f.Namespace.Name, []string{}, endpointsSelector,
+			_, err := CreatePod(f, serverPodName, nodeName, f.Namespace.Name, []string{}, endpointsSelector,
 				func(p *v1.Pod) {
 					p.Spec.Containers[0].Args = args
 					serverContainerName = p.Spec.Containers[0].Name
@@ -1200,7 +1204,7 @@ spec:
 			framework.ExpectNoError(err)
 
 			ginkgo.By("Creating an external client")
-			clientIPv4, clientIPv6 := createClusterExternalContainer(
+			clientIPv4, clientIPv6 := CreateClusterExternalContainer(
 				clientContainerName,
 				agnhostImage,
 				[]string{"--privileged", "--network", "kind"},
@@ -1233,7 +1237,7 @@ spec:
 			ginkgo.By("Lowering PMTU towards the server")
 			ipContainerCmd += " route add " + serverNodeIP + " dev eth0 src " + clientIP + " mtu " + pmtu
 			cmd := []string{
-				containerRuntime,
+				testframework.ContainerRuntime,
 				"exec",
 				clientContainerName,
 				"/bin/sh",
@@ -1241,7 +1245,7 @@ spec:
 				ipContainerCmd,
 			}
 			framework.Logf("Running %v", cmd)
-			_, err = runCommand(cmd...)
+			_, err = inclustercommands.RunCommand(cmd...)
 			framework.ExpectNoError(err, "lowering MTU in the external kind container failed: %v", err)
 
 			var udpPort int32
@@ -1270,7 +1274,7 @@ spec:
 					containerCmd = fmt.Sprintf("echo 'echo %s' | nc -w2 -u -p %s %s %d", payload, sourcePort, serverNodeIP, udpPort)
 				}
 				cmd = []string{
-					containerRuntime,
+					testframework.ContainerRuntime,
 					"exec",
 					clientContainerName,
 					"/bin/sh",
@@ -1278,7 +1282,7 @@ spec:
 					containerCmd,
 				}
 				framework.Logf("Running %v", cmd)
-				stdout, err := runCommand(cmd...)
+				stdout, err := inclustercommands.RunCommand(cmd...)
 				framework.ExpectNoError(err, "sending echo request failed: %v", err)
 
 				ginkgo.By("Checking that the service received the request and replied")
@@ -1343,7 +1347,7 @@ var _ = ginkgo.Describe("Service Hairpin SNAT", func() {
 		nodeIP          string
 	)
 
-	f := wrappedTestFramework(svcName)
+	f := testframework.WrappedTestFramework(svcName)
 	hairpinPodSel := map[string]string{"hairpinbackend": "true"}
 
 	ginkgo.BeforeEach(func() {
@@ -1394,7 +1398,7 @@ var _ = ginkgo.Describe("Service Hairpin SNAT", func() {
 
 		ginkgo.By("creating an host-network backend pod on " + backendNodeName)
 		// create hostNeworkedPods
-		_, err := createPod(f, backendName, backendNodeName, namespaceName, []string{}, hairpinPodSel, func(p *v1.Pod) {
+		_, err := CreatePod(f, backendName, backendNodeName, namespaceName, []string{}, hairpinPodSel, func(p *v1.Pod) {
 			p.Spec.Containers[0].Command = []string{"/agnhost", "netexec", fmt.Sprintf("--http-port=%s", endpointHTTPPort)}
 			p.Spec.HostNetwork = true
 		})
@@ -1441,7 +1445,7 @@ var _ = ginkgo.Describe("Load Balancer Service Tests with MetalLB", func() {
 		nonBackendNodeName string
 		namespaceName      = "default"
 	)
-	f := wrappedTestFramework(svcName)
+	f := testframework.WrappedTestFramework(svcName)
 	ginkgo.BeforeEach(func() {
 		nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 2)
 		framework.ExpectNoError(err)
@@ -1553,10 +1557,10 @@ spec:
 				framework.Logf("Unable to remove the CRD config from disk: %v", err)
 			}
 			framework.Logf("Reset MTU on intermediary router to allow large packets")
-			cmd := []string{containerRuntime, "exec", routerContainer}
+			cmd := []string{testframework.ContainerRuntime, "exec", routerContainer}
 			mtuCommand := strings.Split("ip link set mtu 1500 dev eth1", " ")
 			cmd = append(cmd, mtuCommand...)
-			_, err := runCommand(cmd...)
+			_, err := inclustercommands.RunCommand(cmd...)
 			framework.ExpectNoError(err, "failed to reset MTU on intermediary router")
 			framework.Logf("Delete the custom BGP Advertisement configuration")
 			e2ekubectl.RunKubectlOrDie("metallb-system", "delete", "bgpadvertisement", "example", "--ignore-not-found=true")
@@ -1679,7 +1683,7 @@ metadata:
 		//	nexthop via 172.19.0.3 dev eth0 weight 1
 		//	nexthop via 172.19.0.4 dev eth0 weight 1
 		//	nexthop via 172.19.0.2 dev eth0 weight 1
-		cmd := []string{containerRuntime, "exec", routerContainer}
+		cmd := []string{testframework.ContainerRuntime, "exec", routerContainer}
 		ipVer := ""
 		if utilnet.IsIPv6String(svcLoadBalancerIP) {
 			ipVer = " -6"
@@ -1692,13 +1696,13 @@ metadata:
 		nonBackendNodeIP, err := getNodeIP(f.ClientSet, backendNodeName)
 		framework.ExpectNoError(err, fmt.Sprintf("failed to get node's %s node ip address", backendNodeName))
 		gomega.Eventually(func() bool {
-			routes, err := runCommand(cmd...)
+			routes, err := inclustercommands.RunCommand(cmd...)
 			framework.ExpectNoError(err, "failed to get BGP routes from intermediary router")
 			framework.Logf("Routes in FRR %s", routes)
 			return strings.Contains(routes, backendNodeIP)
 		}, 30*time.Second).Should(gomega.BeTrue())
 		gomega.Eventually(func() bool {
-			routes, err := runCommand(cmd...)
+			routes, err := inclustercommands.RunCommand(cmd...)
 			framework.ExpectNoError(err, "failed to get BGP routes from intermediary router")
 			framework.Logf("Routes in FRR %s", routes)
 			return strings.Contains(routes, nonBackendNodeIP)
@@ -1737,11 +1741,11 @@ spec:
 			nodeIP, err := getNodeIP(f.ClientSet, node)
 			framework.ExpectNoError(err, fmt.Sprintf("failed to get nodes's %s node ip address", node))
 			framework.Logf("NodeIP of node %s is %s", node, nodeIP)
-			cmd := []string{containerRuntime, "exec", routerContainer}
+			cmd := []string{testframework.ContainerRuntime, "exec", routerContainer}
 
 			cmd = append(cmd, bgpRouteCommand...)
 			gomega.Eventually(func() bool {
-				routes, err := runCommand(cmd...)
+				routes, err := inclustercommands.RunCommand(cmd...)
 				framework.ExpectNoError(err, "failed to get BGP routes from intermediary router")
 				framework.Logf("Routes in FRR %s", routes)
 				routeCount := 0
@@ -1765,11 +1769,11 @@ spec:
 			framework.ExpectNoError(err, "failed to curl load balancer service")
 
 			ginkgo.By("change MTU on intermediary router to force icmp related packets")
-			cmd = []string{containerRuntime, "exec", routerContainer}
+			cmd = []string{testframework.ContainerRuntime, "exec", routerContainer}
 			mtuCommand := strings.Split("ip link set mtu 1280 dev eth1", " ")
 
 			cmd = append(cmd, mtuCommand...)
-			_, err = runCommand(cmd...)
+			_, err = inclustercommands.RunCommand(cmd...)
 			framework.ExpectNoError(err, "failed to change MTU on intermediary router")
 
 			time.Sleep(time.Second * 5) // buffer to ensure MTU change took effect
@@ -1780,10 +1784,10 @@ spec:
 			framework.ExpectNoError(err, "failed to curl load balancer service")
 
 			ginkgo.By("reset MTU on intermediary router to allow large packets")
-			cmd = []string{containerRuntime, "exec", routerContainer}
+			cmd = []string{testframework.ContainerRuntime, "exec", routerContainer}
 			mtuCommand = strings.Split("ip link set mtu 1500 dev eth1", " ")
 			cmd = append(cmd, mtuCommand...)
-			_, err = runCommand(cmd...)
+			_, err = inclustercommands.RunCommand(cmd...)
 			framework.ExpectNoError(err, "failed to reset MTU on intermediary router")
 		}
 	})
@@ -1916,7 +1920,7 @@ spec:
 		nodeIP, err := getNodeIP(f.ClientSet, backendNodeName)
 		framework.ExpectNoError(err, fmt.Sprintf("failed to get nodes's %s node ip address", backendNodeName))
 		framework.Logf("NodeIP of node %s is %s", backendNodeName, nodeIP)
-		cmd := []string{containerRuntime, "exec", routerContainer}
+		cmd := []string{testframework.ContainerRuntime, "exec", routerContainer}
 
 		ipVer := ""
 		if utilnet.IsIPv6String(svcLoadBalancerIP) {
@@ -1926,7 +1930,7 @@ spec:
 		cmd = append(cmd, bgpRouteCommand...)
 
 		gomega.Eventually(func() bool {
-			routes, err := runCommand(cmd...)
+			routes, err := inclustercommands.RunCommand(cmd...)
 			framework.ExpectNoError(err, "failed to get BGP routes from intermediary router")
 			framework.Logf("Routes in FRR %s", routes)
 			routeCount := 0
@@ -1949,9 +1953,9 @@ spec:
 			svcLoadBalancerIP,
 			endpointUDPPort,
 		)
-		cmd = []string{containerRuntime, "exec", clientContainer, "bash", "-x", "-c", netcatCmd}
+		cmd = []string{testframework.ContainerRuntime, "exec", clientContainer, "bash", "-x", "-c", netcatCmd}
 		framework.Logf("netcat command %s", cmd)
-		output, err = runCommand(cmd...)
+		output, err = inclustercommands.RunCommand(cmd...)
 		framework.ExpectNoError(err, "failed to connect to load balancer service")
 		framework.Logf("netcat command output %s", output)
 
@@ -1982,13 +1986,13 @@ spec:
 		ginkgo.By("by sending a UDP packet to service " + svcName + " with type=LoadBalancer in namespace " + namespaceName + " with backend pod " + backendName)
 		// OVN drops the 1st packet so this one does nothing basically.
 		// See https://issues.redhat.com/browse/FDP-223 for details
-		output, err = runCommand(cmd...)
+		output, err = inclustercommands.RunCommand(cmd...)
 		framework.ExpectNoError(err, "failed to connect to load balancer service")
 		framework.Logf("netcat command output %s", output)
 		time.Sleep(time.Second * 10) // buffer to ensure all learn flows are created correctly after the previous drop
 
 		// OVN drops the 1st packet so let's be sure to another set of netcat connections at least to check the srcIP
-		output, err = runCommand(cmd...)
+		output, err = inclustercommands.RunCommand(cmd...)
 		framework.ExpectNoError(err, "failed to connect to load balancer service")
 		framework.Logf("netcat command output %s", output)
 
@@ -2044,7 +2048,7 @@ spec:
 		nodeIP, err := getNodeIP(f.ClientSet, backendNodeName)
 		framework.ExpectNoError(err, fmt.Sprintf("failed to get nodes's %s node ip address", backendNodeName))
 		framework.Logf("NodeIP of node %s is %s", backendNodeName, nodeIP)
-		cmd := []string{containerRuntime, "exec", routerContainer}
+		cmd := []string{testframework.ContainerRuntime, "exec", routerContainer}
 
 		ipVer := ""
 		if utilnet.IsIPv6String(svcLoadBalancerIP) {
@@ -2054,7 +2058,7 @@ spec:
 		cmd = append(cmd, bgpRouteCommand...)
 
 		gomega.Eventually(func() bool {
-			routes, err := runCommand(cmd...)
+			routes, err := inclustercommands.RunCommand(cmd...)
 			framework.ExpectNoError(err, "failed to get BGP routes from intermediary router")
 			framework.Logf("Routes in FRR %s", routes)
 			routeCount := 0
@@ -2077,9 +2081,9 @@ spec:
 			svcLoadBalancerIP,
 			endpointUDPPort,
 		)
-		cmd = []string{containerRuntime, "exec", clientContainer, "bash", "-x", "-c", netcatCmd}
+		cmd = []string{testframework.ContainerRuntime, "exec", clientContainer, "bash", "-x", "-c", netcatCmd}
 		framework.Logf("netcat command %s", cmd)
-		output, err = runCommand(cmd...)
+		output, err = inclustercommands.RunCommand(cmd...)
 		framework.ExpectNoError(err, "failed to connect to load balancer service")
 		framework.Logf("netcat command output %s", output)
 
@@ -2158,7 +2162,7 @@ spec:
 		}
 
 		ginkgo.By("by sending a UDP packet to service " + svcName + " with type=LoadBalancer in namespace " + namespaceName + " with backend pod " + backendName)
-		output, err = runCommand(cmd...)
+		output, err = inclustercommands.RunCommand(cmd...)
 		framework.ExpectNoError(err, "failed to connect to load balancer service")
 		framework.Logf("netcat command output %s", output)
 
@@ -2196,7 +2200,7 @@ func getNodeIP(c clientset.Interface, nodeName string) (string, error) {
 
 func buildAndRunCommand(command string) error {
 	cmd := strings.Split(command, " ")
-	_, err := runCommand(cmd...)
+	_, err := inclustercommands.RunCommand(cmd...)
 	return err
 }
 

@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/testframework"
 	"strings"
 	"time"
 
@@ -26,7 +27,7 @@ type nodeInfo struct {
 
 var _ = ginkgo.Describe("Multicast", func() {
 
-	fr := wrappedTestFramework("multicast")
+	fr := testframework.WrappedTestFramework("multicast")
 
 	var (
 		clientNodeInfo, serverNodeInfo nodeInfo

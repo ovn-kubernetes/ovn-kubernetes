@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/clusterinspection"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/testframework"
 	"net"
 	"slices"
 	"time"
@@ -25,11 +27,14 @@ import (
 	e2eservice "k8s.io/kubernetes/test/e2e/framework/service"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	utilnet "k8s.io/utils/net"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/inclustercommands"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/multihoming"
 )
 
 var _ = Describe("Network Segmentation: services", func() {
 
-	f := wrappedTestFramework("udn-services")
+	f := testframework.WrappedTestFramework("udn-services")
 	f.SkipNamespaceCreation = true
 
 	Context("on a user defined primary network", func() {
@@ -85,12 +90,12 @@ var _ = Describe("Network Segmentation: services", func() {
 
 			"should be reachable through their cluster IP, node port and load balancer",
 			func(
-				netConfigParams networkAttachmentConfigParams,
+				netConfigParams multihoming.NetworkAttachmentConfigParams,
 			) {
 				namespace := f.Namespace.Name
 				jig := e2eservice.NewTestJig(cs, namespace, "udn-service")
 
-				if netConfigParams.topology == "layer2" && !isInterconnectEnabled() {
+				if netConfigParams.Topology == "layer2" && !clusterinspection.IsInterconnectEnabled() {
 					const upstreamIssue = "https://github.com/ovn-org/ovn-kubernetes/issues/4703"
 					e2eskipper.Skipf(
 						"Service e2e tests for layer2 topologies are known to fail on non-IC deployments. Upstream issue: %s", upstreamIssue,
@@ -107,11 +112,11 @@ var _ = Describe("Network Segmentation: services", func() {
 				clientNode := nodes.Items[1].Name // when client runs on a different node than the server
 
 				By("Creating the attachment configuration")
-				netConfig := newNetworkAttachmentConfig(netConfigParams)
-				netConfig.namespace = f.Namespace.Name
+				netConfig := multihoming.NewNetworkAttachmentConfig(netConfigParams)
+				netConfig.Namespace = f.Namespace.Name
 				_, err = nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
 					context.Background(),
-					generateNAD(netConfig),
+					multihoming.GenerateNAD(netConfig),
 					metav1.CreateOptions{},
 				)
 				Expect(err).NotTo(HaveOccurred())
@@ -197,7 +202,7 @@ ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | 
 				_, err = cs.CoreV1().Namespaces().Create(context.Background(), defaultNetNamespace, metav1.CreateOptions{})
 				Expect(err).NotTo(HaveOccurred())
 
-				defaultClient, err := createPod(f, "default-net-pod", clientNode, defaultNetNamespace.Name, []string{"sleep", "2000000"}, nil)
+				defaultClient, err := CreatePod(f, "default-net-pod", clientNode, defaultNetNamespace.Name, []string{"sleep", "2000000"}, nil)
 				Expect(err).NotTo(HaveOccurred())
 
 				By("Verify the connection of the client in the default network to the UDN service")
@@ -214,7 +219,7 @@ ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | 
 				By(fmt.Sprintf("Creating a backend pod in the default network on node %s", serverPodNodeName))
 				defaultLabels := map[string]string{"app": "default-app"}
 
-				defaultServerPod, err := createPod(f, "backend-pod-default", serverPodNodeName,
+				defaultServerPod, err := CreatePod(f, "backend-pod-default", serverPodNodeName,
 					defaultNetNamespace.Name, []string{"/agnhost", "netexec", "--udp-port=" + fmt.Sprint(serviceTargetPort)}, defaultLabels,
 					func(pod *v1.Pod) {
 						pod.Spec.Containers[0].Ports = []v1.ContainerPort{{ContainerPort: (serviceTargetPort), Protocol: "UDP"}}
@@ -251,29 +256,29 @@ ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | 
 
 				// Make sure that restarting OVNK after applying a UDN with an affected service won't result
 				// in OVNK in CLBO state https://issues.redhat.com/browse/OCPBUGS-41499
-				if netConfigParams.topology == "layer3" { // no need to run it for layer 2 as well
+				if netConfigParams.Topology == "layer3" { // no need to run it for layer 2 as well
 					By("Restart ovnkube-node on one node and verify that the new ovnkube-node pod goes to the running state")
-					err = restartOVNKubeNodePod(cs, ovnNamespace, clientNode)
+					err = restartOVNKubeNodePod(cs, inclustercommands.OvnNamespace, clientNode)
 					Expect(err).NotTo(HaveOccurred())
 				}
 			},
 
 			Entry(
 				"L3 primary UDN, cluster-networked pods, NodePort service",
-				networkAttachmentConfigParams{
-					name:     nadName,
-					topology: "layer3",
-					cidr:     correctCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
-					role:     "primary",
+				multihoming.NetworkAttachmentConfigParams{
+					Name:     nadName,
+					Topology: "layer3",
+					Cidr:     multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					Role:     "primary",
 				},
 			),
 			Entry(
 				"L2 primary UDN, cluster-networked pods, NodePort service",
-				networkAttachmentConfigParams{
-					name:     nadName,
-					topology: "layer2",
-					cidr:     correctCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
-					role:     "primary",
+				multihoming.NetworkAttachmentConfigParams{
+					Name:     nadName,
+					Topology: "layer2",
+					Cidr:     multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					Role:     "primary",
 				},
 			),
 		)
@@ -479,9 +484,9 @@ func checkConnectionToNodePortFromExternalContainer(f *framework.Framework, cont
 		msg := fmt.Sprintf("Client at external container %s should connect to NodePort service %s/%s on %s:%d (node %s, %s)",
 			containerName, service.Namespace, service.Name, nodeIP, nodePort, node.Name, nodeRoleMsg)
 		By(msg)
-		cmd := []string{containerRuntime, "exec", containerName, "/bin/bash", "-c", fmt.Sprintf("echo hostname | nc -u -w 1 %s %d", nodeIP, nodePort)}
+		cmd := []string{testframework.ContainerRuntime, "exec", containerName, "/bin/bash", "-c", fmt.Sprintf("echo hostname | nc -u -w 1 %s %d", nodeIP, nodePort)}
 		Eventually(func() (string, error) {
-			return runCommand(cmd...)
+			return inclustercommands.RunCommand(cmd...)
 		}).
 			WithTimeout(5*time.Second).
 			WithPolling(200*time.Millisecond).
@@ -497,9 +502,9 @@ func checkConnectionToLoadBalancersFromExternalContainer(f *framework.Framework,
 		msg := fmt.Sprintf("Client at external container %s should reach service %s/%s on LoadBalancer IP %s port %d",
 			containerName, service.Namespace, service.Name, lbIngress.IP, port)
 		By(msg)
-		cmd := []string{containerRuntime, "exec", containerName, "/bin/bash", "-c", fmt.Sprintf("echo hostname | nc -u -w 1 %s %d", lbIngress.IP, port)}
+		cmd := []string{testframework.ContainerRuntime, "exec", containerName, "/bin/bash", "-c", fmt.Sprintf("echo hostname | nc -u -w 1 %s %d", lbIngress.IP, port)}
 		Eventually(func() (string, error) {
-			return runCommand(cmd...)
+			return inclustercommands.RunCommand(cmd...)
 		}).
 			// It takes some time for the container to receive the dynamic routing
 			WithTimeout(20*time.Second).

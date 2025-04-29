@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/testframework"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
@@ -18,6 +19,9 @@ import (
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/inclustercommands"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/multihoming"
 )
 
 func changeNodeZone(node *v1.Node, zone string, cs clientset.Interface) error {
@@ -40,7 +44,7 @@ func changeNodeZone(node *v1.Node, zone string, cs clientset.Interface) error {
 	framework.ExpectNoError(err)
 
 	// Restart the ovnkube-node on this node
-	err = restartOVNKubeNodePod(cs, ovnNamespace, node.Name)
+	err = restartOVNKubeNodePod(cs, inclustercommands.OvnNamespace, node.Name)
 	framework.ExpectNoError(err)
 
 	// Verify that the node is moved to the expected zone
@@ -72,12 +76,12 @@ func checkPodsInterconnectivity(clientPod, serverPod *v1.Pod, namespace string, 
 			return err
 		}
 
-		clientPodConfig := podConfiguration{
-			name:      clientPod.Name,
-			namespace: namespace,
+		clientPodConfig := multihoming.PodConfiguration{
+			Name:      clientPod.Name,
+			Namespace: namespace,
 		}
 		if updatedPod.Status.Phase == v1.PodRunning {
-			return connectToServer(clientPodConfig, updatedPod.Status.PodIP, 8000)
+			return multihoming.ConnectToServer(clientPodConfig, updatedPod.Status.PodIP, 8000)
 		}
 
 		return fmt.Errorf("pod not running. /me is sad")
@@ -94,7 +98,7 @@ var _ = ginkgo.Describe("Multi node zones interconnect", func() {
 		clientPodNodeName = "ovn-worker3"
 		clientPodName     = "client-pod"
 	)
-	fr := wrappedTestFramework("multi-node-zones")
+	fr := testframework.WrappedTestFramework("multi-node-zones")
 
 	var (
 		cs clientset.Interface
@@ -146,7 +150,7 @@ var _ = ginkgo.Describe("Multi node zones interconnect", func() {
 
 	ginkgo.It("Pod interconnectivity", func() {
 		// Create a server pod on zone - zone-1
-		cmd := httpServerContainerCmd(8000)
+		cmd := multihoming.HttpServerContainerCmd(8000)
 		serverPod := e2epod.NewAgnhostPod(fr.Namespace.Name, serverPodName, nil, nil, nil, cmd...)
 		serverPod.Spec.NodeName = serverPodNodeName
 		e2epod.NewPodClient(fr).CreateSync(context.TODO(), serverPod)

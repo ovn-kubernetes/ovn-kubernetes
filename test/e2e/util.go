@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/testframework"
 	"math/rand"
 	"net"
 	"os"
@@ -12,10 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -27,17 +25,16 @@ import (
 	"k8s.io/client-go/kubernetes"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
-	"k8s.io/kubernetes/test/e2e/framework/debug"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	testutils "k8s.io/kubernetes/test/utils"
-	admissionapi "k8s.io/pod-security-admission/api"
 	utilnet "k8s.io/utils/net"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/inclustercommands"
 )
 
 const (
-	ovnNamespace   = "ovn-kubernetes"
 	ovnNodeSubnets = "k8s.ovn.org/node-subnets"
 	// ovnNodeZoneNameAnnotation is the node annotation name to store the node zone name.
 	ovnNodeZoneNameAnnotation = "k8s.ovn.org/zone-name"
@@ -45,14 +42,7 @@ const (
 	ovnGatewayMTUSupport = "k8s.ovn.org/gateway-mtu-support"
 )
 
-var containerRuntime = "docker"
 var singleNodePerZoneResult *bool
-
-func init() {
-	if cr, found := os.LookupEnv("CONTAINER_RUNTIME"); found {
-		containerRuntime = cr
-	}
-}
 
 type IpNeighbor struct {
 	Dst    string `dst`
@@ -314,9 +304,9 @@ func externalIPServiceSpecFrom(svcName string, httpPort, updPort, clusterHTTPPor
 // Returns the response based on the provided "request".
 func pokeEndpoint(namespace, clientContainer, protocol, targetHost string, targetPort int32, request string) string {
 	ipPort := net.JoinHostPort("localhost", "80")
-	cmd := []string{containerRuntime, "exec", clientContainer}
+	cmd := []string{testframework.ContainerRuntime, "exec", clientContainer}
 	if len(namespace) != 0 {
-		// command is to be run inside a pod, not containerRuntime
+		// command is to be run inside a pod, not ContainerRuntime
 		cmd = []string{"exec", clientContainer, "--"}
 	}
 
@@ -335,7 +325,7 @@ func pokeEndpoint(namespace, clientContainer, protocol, targetHost string, targe
 		res, err = e2ekubectl.RunKubectl(namespace, cmd...)
 	} else {
 		// command is to be run inside runtime container
-		res, err = runCommand(cmd...)
+		res, err = inclustercommands.RunCommand(cmd...)
 	}
 	framework.ExpectNoError(err, "failed to run command on external container")
 	response, err := parseNetexecResponse(res)
@@ -371,7 +361,7 @@ func pokeExternalIpService(clientContainerName, protocol, externalAddress string
 // we will always run iterations + 1 in the loop to make sure that we have values
 // to compare
 func isNeighborEntryStable(clientContainer, targetHost string, iterations int) bool {
-	cmd := []string{containerRuntime, "exec", clientContainer}
+	cmd := []string{testframework.ContainerRuntime, "exec", clientContainer}
 	var hwAddrOld string
 	var hwAddrNew string
 	// used for reporting only
@@ -401,7 +391,7 @@ func isNeighborEntryStable(clientContainer, targetHost string, iterations int) b
 	// run this for time of iterations + 1 to make sure that the entry is stable
 	for i := 0; i <= iterations; i++ {
 		// run the command
-		output, err := runCommand(cmd...)
+		output, err := inclustercommands.RunCommand(cmd...)
 		if err != nil {
 			framework.ExpectNoError(
 				fmt.Errorf("FAILED Command was: %s\nFAILED Response was: %v\nERROR is: %s",
@@ -459,7 +449,7 @@ func isNeighborEntryStable(clientContainer, targetHost string, iterations int) b
 // netexec on the given target host / protocol / port.
 // Returns a pair of either result, nil or "", error in case of an error.
 func curlInContainer(clientContainer, targetHost string, targetPort int32, endPoint string, maxTime int) (string, error) {
-	cmd := []string{containerRuntime, "exec", clientContainer}
+	cmd := []string{testframework.ContainerRuntime, "exec", clientContainer}
 	if utilnet.IsIPv6String(targetHost) {
 		targetHost = fmt.Sprintf("[%s]", targetHost)
 	}
@@ -472,7 +462,7 @@ func curlInContainer(clientContainer, targetHost string, targetPort int32, endPo
 		endPoint), " ")
 
 	cmd = append(cmd, curlCommand...)
-	return runCommand(cmd...)
+	return inclustercommands.RunCommand(cmd...)
 }
 
 // parseNetexecResponse parses a json string of type '{"responses":"...", "errors":""}'.
@@ -579,11 +569,11 @@ func getContainerAddressesForNetwork(container, network string) (string, string)
 	ipv4Format := fmt.Sprintf("{{.NetworkSettings.Networks.%s.IPAddress}}", network)
 	ipv6Format := fmt.Sprintf("{{.NetworkSettings.Networks.%s.GlobalIPv6Address}}", network)
 
-	ipv4, err := runCommand(containerRuntime, "inspect", "-f", ipv4Format, container)
+	ipv4, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "inspect", "-f", ipv4Format, container)
 	if err != nil {
 		framework.Failf("failed to inspect external test container for its IPv4: %v", err)
 	}
-	ipv6, err := runCommand(containerRuntime, "inspect", "-f", ipv6Format, container)
+	ipv6, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "inspect", "-f", ipv6Format, container)
 	if err != nil {
 		framework.Failf("failed to inspect external test container for its IPv4: %v", err)
 	}
@@ -592,7 +582,7 @@ func getContainerAddressesForNetwork(container, network string) (string, string)
 
 // Returns the network's ipv4 and ipv6 CIDRs for the given network.
 func getContainerNetworkCIDRs(network string) (string, string) {
-	output, err := runCommand(containerRuntime, "network", "inspect", network)
+	output, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "network", "inspect", network)
 	if err != nil {
 		framework.Failf("failed to inspect network %s: %v", network, err)
 	}
@@ -634,7 +624,7 @@ func getContainerNetworkCIDRs(network string) (string, string) {
 func getMACAddressesForNetwork(container, network string) string {
 	mac := fmt.Sprintf("{{.NetworkSettings.Networks.%s.MacAddress}}", network)
 
-	macAddr, err := runCommand(containerRuntime, "inspect", "-f", mac, container)
+	macAddr, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "inspect", "-f", mac, container)
 	if err != nil {
 		framework.Failf("failed to inspect external test container for its MAC: %v", err)
 	}
@@ -665,7 +655,7 @@ func waitClusterHealthy(f *framework.Framework, numControlPlanePods int, control
 			return false, nil
 		}
 
-		podClient := f.ClientSet.CoreV1().Pods(ovnNamespace)
+		podClient := f.ClientSet.CoreV1().Pods(inclustercommands.OvnNamespace)
 		// Ensure all nodes are running and healthy
 		podList, err := podClient.List(context.Background(), metav1.ListOptions{
 			LabelSelector: "app=ovnkube-node",
@@ -856,7 +846,7 @@ func ExecCommandInContainerWithFullOutput(f *framework.Framework, namespace, pod
 
 func assertACLLogs(targetNodeName string, policyNameRegex string, expectedACLVerdict string, expectedACLSeverity string) (bool, error) {
 	framework.Logf("collecting the ovn-controller logs for node: %s", targetNodeName)
-	targetNodeLog, err := runCommand([]string{containerRuntime, "exec", targetNodeName, "grep", "acl_log", ovnControllerLogPath}...)
+	targetNodeLog, err := inclustercommands.RunCommand([]string{testframework.ContainerRuntime, "exec", targetNodeName, "grep", "acl_log", ovnControllerLogPath}...)
 	if err != nil {
 		return false, fmt.Errorf("error accessing logs in node %s: %v", targetNodeName, err)
 	}
@@ -925,14 +915,14 @@ func patchService(c kubernetes.Interface, serviceName, serviceNamespace, jsonPat
 
 // pokeIPTableRules returns the number of iptables (both ipv6 and ipv4) rules that match the provided pattern
 func pokeIPTableRules(clientContainer, pattern string) int {
-	cmd := []string{containerRuntime, "exec", clientContainer}
+	cmd := []string{testframework.ContainerRuntime, "exec", clientContainer}
 
 	ipv4Cmd := append(cmd, strings.Split("iptables-save -c", " ")...)
-	ipt4Rules, err := runCommand(ipv4Cmd...)
+	ipt4Rules, err := inclustercommands.RunCommand(ipv4Cmd...)
 	framework.ExpectNoError(err, "failed to get iptables rules from node %s", clientContainer)
 
 	ipv6Cmd := append(cmd, strings.Split("ip6tables-save -c", " ")...)
-	ipt6Rules, err := runCommand(ipv6Cmd...)
+	ipt6Rules, err := inclustercommands.RunCommand(ipv6Cmd...)
 	framework.ExpectNoError(err, "failed to get ip6tables rules from node %s", clientContainer)
 
 	iptRules := ipt4Rules + ipt6Rules
@@ -951,10 +941,10 @@ func pokeIPTableRules(clientContainer, pattern string) int {
 // countNFTablesElements returns the number of nftables elements in the indicated set
 // of the "ovn-kubernetes" table.
 func countNFTablesElements(clientContainer, name string) int {
-	cmd := []string{containerRuntime, "exec", clientContainer}
+	cmd := []string{testframework.ContainerRuntime, "exec", clientContainer}
 
 	nftCmd := append(cmd, "nft", "-j", "list", "set", "inet", "ovn-kubernetes", name)
-	nftElements, err := runCommand(nftCmd...)
+	nftElements, err := inclustercommands.RunCommand(nftCmd...)
 	framework.ExpectNoError(err, "failed to get nftables elements from node %s", clientContainer)
 
 	framework.Logf("DEBUG: Dumping NFTElements %v", nftElements)
@@ -1016,76 +1006,6 @@ func isDualStackCluster(nodes *v1.NodeList) bool {
 	return false
 }
 
-// used to inject OVN specific test actions
-func wrappedTestFramework(basename string) *framework.Framework {
-	f := newPrivelegedTestFramework(basename)
-	// inject dumping dbs on failure
-	ginkgo.JustAfterEach(func() {
-		if !ginkgo.CurrentSpecReport().Failed() {
-			return
-		}
-
-		logLocation := "/var/log"
-		dbLocation := "/var/lib/openvswitch"
-		// Potential database locations
-		ovsdbLocations := []string{"/etc/origin/openvswitch", "/etc/openvswitch"}
-		dbs := []string{"ovnnb_db.db", "ovnsb_db.db"}
-		ovsdb := "conf.db"
-
-		testName := strings.Replace(ginkgo.CurrentSpecReport().LeafNodeText, " ", "_", -1)
-		logDir := fmt.Sprintf("%s/e2e-dbs/%s-%s", logLocation, testName, f.UniqueName)
-
-		var args []string
-
-		// grab all OVS and OVN dbs
-		nodes, err := f.ClientSet.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
-		framework.ExpectNoError(err)
-		for _, node := range nodes.Items {
-			// ensure e2e-dbs directory with test case exists
-			args = []string{containerRuntime, "exec", node.Name, "mkdir", "-p", logDir}
-			_, err = runCommand(args...)
-			framework.ExpectNoError(err)
-
-			// Loop through potential OVSDB db locations
-			for _, ovsdbLocation := range ovsdbLocations {
-				args = []string{containerRuntime, "exec", node.Name, "stat", fmt.Sprintf("%s/%s", ovsdbLocation, ovsdb)}
-				_, err = runCommand(args...)
-				if err == nil {
-					// node name is the same in kapi and docker
-					args = []string{containerRuntime, "exec", node.Name, "cp", "-f", fmt.Sprintf("%s/%s", ovsdbLocation, ovsdb),
-						fmt.Sprintf("%s/%s", logDir, fmt.Sprintf("%s-%s", node.Name, ovsdb))}
-					_, err = runCommand(args...)
-					framework.ExpectNoError(err)
-					break // Stop the loop: the file is found and copied successfully
-				}
-			}
-
-			// IC will have dbs on every node, but legacy mode wont, check if they exist
-			args = []string{containerRuntime, "exec", node.Name, "stat", fmt.Sprintf("%s/%s", dbLocation, dbs[0])}
-			_, err = runCommand(args...)
-			if err == nil {
-				for _, db := range dbs {
-					args = []string{containerRuntime, "exec", node.Name, "cp", "-f", fmt.Sprintf("%s/%s", dbLocation, db),
-						fmt.Sprintf("%s/%s", logDir, db)}
-					_, err = runCommand(args...)
-					framework.ExpectNoError(err)
-				}
-			}
-		}
-	})
-
-	return f
-}
-
-func newPrivelegedTestFramework(basename string) *framework.Framework {
-	f := framework.NewDefaultFramework(basename)
-	f.NamespacePodSecurityEnforceLevel = admissionapi.LevelPrivileged
-	f.DumpAllNamespaceInfo = func(ctx context.Context, f *framework.Framework, namespace string) {
-		debug.DumpAllNamespaceInfo(context.TODO(), f.ClientSet, namespace)
-	}
-	return f
-}
-
 // countACLLogs connects to <targetNodeName> (ovn-control-plane, ovn-worker or ovn-worker2 in kind environments) via the docker exec
 // command and it greps for the string "acl_log" inside the OVN controller logs. It then checks if the line contains name=<policyNameRegex>
 // and if it does, it increases the counter if both the verdict and the severity for this line match what's expected.
@@ -1093,7 +1013,7 @@ func countACLLogs(targetNodeName string, policyNameRegex string, expectedACLVerd
 	count := 0
 
 	framework.Logf("collecting the ovn-controller logs for node: %s", targetNodeName)
-	targetNodeLog, err := runCommand([]string{containerRuntime, "exec", targetNodeName, "cat", ovnControllerLogPath}...)
+	targetNodeLog, err := inclustercommands.RunCommand([]string{testframework.ContainerRuntime, "exec", targetNodeName, "cat", ovnControllerLogPath}...)
 	if err != nil {
 		return 0, fmt.Errorf("error accessing logs in node %s: %v", targetNodeName, err)
 	}
@@ -1122,7 +1042,7 @@ func countACLLogs(targetNodeName string, policyNameRegex string, expectedACLVerd
 func getTemplateContainerEnv(namespace, resource, container, key string) string {
 	args := []string{"get", resource,
 		"-o=jsonpath='{.spec.template.spec.containers[?(@.name==\"" + container + "\")].env[?(@.name==\"" + key + "\")].value}'"}
-	value := e2ekubectl.RunKubectlOrDie(ovnNamespace, args...)
+	value := e2ekubectl.RunKubectlOrDie(inclustercommands.OvnNamespace, args...)
 	return strings.Trim(value, "'")
 }
 
@@ -1169,7 +1089,7 @@ func updateIPTablesRulesForNode(op, nodeName string, ipTablesArgs []string, ipv6
 	}
 
 	args := []string{"docker", "exec", nodeName, iptables, "-v", "--check"}
-	_, err := runCommand(append(args, ipTablesArgs...)...)
+	_, err := inclustercommands.RunCommand(append(args, ipTablesArgs...)...)
 	// errors known to be equivalent to not found
 	notFound1 := "No chain/target/match by that name"
 	notFound2 := "does a matching rule exist in that chain?"
@@ -1187,7 +1107,7 @@ func updateIPTablesRulesForNode(op, nodeName string, ipTablesArgs []string, ipv6
 
 	args = []string{"docker", "exec", nodeName, iptables, "--" + op}
 	framework.Logf("%s %s rule: %q on node %s", op, iptables, strings.Join(ipTablesArgs, ","), nodeName)
-	_, err = runCommand(append(args, ipTablesArgs...)...)
+	_, err = inclustercommands.RunCommand(append(args, ipTablesArgs...)...)
 	if err != nil {
 		framework.Failf("failed to update %s rule on node %s: %v", iptables, nodeName, err)
 	}
@@ -1201,21 +1121,6 @@ func randStr(n int) string {
 		b[i] = charset[rand.Intn(len(charset))]
 	}
 	return string(b)
-}
-
-func isIPv4Supported() bool {
-	val, present := os.LookupEnv("KIND_IPV4_SUPPORT")
-	return present && val == "true"
-}
-
-func isIPv6Supported() bool {
-	val, present := os.LookupEnv("KIND_IPV6_SUPPORT")
-	return present && val == "true"
-}
-
-func isInterconnectEnabled() bool {
-	val, present := os.LookupEnv("OVN_ENABLE_INTERCONNECT")
-	return present && val == "true"
 }
 
 func isUDNHostIsolationDisabled() bool {
@@ -1236,7 +1141,7 @@ func isLocalGWModeEnabled() bool {
 func singleNodePerZone() bool {
 	if singleNodePerZoneResult == nil {
 		args := []string{"get", "pods", "--selector=app=ovnkube-node", "-o", "jsonpath={.items[0].spec.containers[*].name}"}
-		containerNames := e2ekubectl.RunKubectlOrDie(ovnNamespace, args...)
+		containerNames := e2ekubectl.RunKubectlOrDie(inclustercommands.OvnNamespace, args...)
 		result := true
 		for _, containerName := range strings.Split(containerNames, " ") {
 			if containerName == "ovnkube-node" {
@@ -1297,7 +1202,7 @@ func routeToNode(nodeName string, ips []string, mtu int, add bool) error {
 		if mtu != 0 {
 			cmd = append(cmd, "mtu", strconv.Itoa(mtu))
 		}
-		_, err = runCommand(cmd...)
+		_, err = inclustercommands.RunCommand(cmd...)
 		if err != nil {
 			return err
 		}
@@ -1313,7 +1218,7 @@ func GetNodeIPv6LinkLocalAddressForEth0(nodeName string) (string, error) {
 	cmd := []string{"docker", "exec", nodeName}
 	cmd = append(cmd, ipCmd...)
 
-	output, err := runCommand(cmd...)
+	output, err := inclustercommands.RunCommand(cmd...)
 	if err != nil {
 		return "", fmt.Errorf("failed to get link-local address for eth0: %v", err)
 	}
@@ -1402,7 +1307,7 @@ func getGatewayMTUSupport(node *v1.Node) bool {
 }
 
 func isKernelModuleLoaded(nodeName, kernelModuleName string) bool {
-	out, err := runCommand(containerRuntime, "exec", nodeName, "lsmod")
+	out, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", nodeName, "lsmod")
 	if err != nil {
 		framework.Failf("failed to list kernel modules for node %s: %v", nodeName, err)
 	}
@@ -1412,14 +1317,6 @@ func isKernelModuleLoaded(nodeName, kernelModuleName string) bool {
 		}
 	}
 	return false
-}
-
-func matchIPv4StringFamily(ipStrings []string) (string, error) {
-	return util.MatchIPStringFamily(false /*ipv4*/, ipStrings)
-}
-
-func matchIPv6StringFamily(ipStrings []string) (string, error) {
-	return util.MatchIPStringFamily(true /*ipv6*/, ipStrings)
 }
 
 // This is a replacement for e2epod.DeletePodWithWait(), which does not handle pods that
@@ -1488,7 +1385,7 @@ func waitForPodNotFoundInNamespace(ctx context.Context, c clientset.Interface, p
 }
 
 func isDefaultNetworkAdvertised() bool {
-	podNetworkValue, err := runCommand("kubectl", "get", "ra", "default", "--template={{index .spec.advertisements 0}}")
+	podNetworkValue, err := inclustercommands.RunCommand("kubectl", "get", "ra", "default", "--template={{index .spec.advertisements 0}}")
 	if err != nil {
 		return false
 	}

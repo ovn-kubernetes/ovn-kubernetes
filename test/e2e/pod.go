@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/testframework"
 	"math/rand"
 	"regexp"
 	"time"
@@ -17,6 +18,9 @@ import (
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/clusterinspection"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/inclustercommands"
 )
 
 var _ = ginkgo.Describe("Pod to external server PMTUD", func() {
@@ -28,7 +32,7 @@ var _ = ginkgo.Describe("Pod to external server PMTUD", func() {
 		primaryNetworkName        = "kind"
 	)
 
-	f := wrappedTestFramework("pod2external-pmtud")
+	f := testframework.WrappedTestFramework("pod2external-pmtud")
 	cleanupFn := func() {}
 
 	ginkgo.AfterEach(func() {
@@ -90,16 +94,16 @@ var _ = ginkgo.Describe("Pod to external server PMTUD", func() {
 			serverPodName = fmt.Sprintf(echoServerPodNameTemplate, serverPodPort)
 			framework.Logf("Creating server pod listening on TCP and UDP port %d", serverPodPort)
 			agntHostCmds := []string{"netexec", "--http-port", fmt.Sprintf("%d", serverPodPort), "--udp-port", fmt.Sprintf("%d", serverPodPort)}
-			externalIpv4, externalIpv6 := createClusterExternalContainer(serverPodName, agnhostImage,
+			externalIpv4, externalIpv6 := CreateClusterExternalContainer(serverPodName, agnhostImage,
 				[]string{"--network", "kind", "-P", "--cap-add", "NET_ADMIN"},
 				agntHostCmds,
 			)
 
-			if isIPv4Supported() {
+			if clusterinspection.IsIPv4Supported() {
 				serverNodeInternalIPs = append(serverNodeInternalIPs, externalIpv4)
 			}
 
-			if isIPv6Supported() {
+			if clusterinspection.IsIPv6Supported() {
 				serverNodeInternalIPs = append(serverNodeInternalIPs, externalIpv6)
 			}
 
@@ -109,7 +113,7 @@ var _ = ginkgo.Describe("Pod to external server PMTUD", func() {
 		ginkgo.AfterEach(func() {
 			ginkgo.By("Removing external container")
 			if len(serverPodName) > 0 {
-				deleteClusterExternalContainer(serverPodName)
+				DeleteClusterExternalContainer(serverPodName)
 			}
 		})
 
@@ -151,12 +155,12 @@ var _ = ginkgo.Describe("Pod to external server PMTUD", func() {
 							// Flushing the IP route cache will remove any routes in the cache
 							// that are a result of receiving a "need to frag" packet.
 							ginkgo.By("Flushing the ip route cache")
-							stdout, err := runCommand(containerRuntime, "exec", "-i", serverPodName, "ip", "route", "flush", "cache")
+							stdout, err := inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", "-i", serverPodName, "ip", "route", "flush", "cache")
 							framework.ExpectNoError(err, "Flushing the ip route cache failed")
 							framework.Logf("Flushed cache on %s", serverPodName)
 							// List the current IP route cache for informative purposes.
 							cmd := fmt.Sprintf("ip route get %s", clientnodeIP)
-							stdout, err = runCommand(containerRuntime, "exec", "-i", serverPodName, "ip", "route", "get", clientnodeIP)
+							stdout, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", "-i", serverPodName, "ip", "route", "get", clientnodeIP)
 							framework.ExpectNoError(err, "Listing IP route cache")
 							framework.Logf("%s: %s", cmd, stdout)
 						}
@@ -187,7 +191,7 @@ var _ = ginkgo.Describe("Pod to external server PMTUD", func() {
 							if size == "large" {
 								ginkgo.By("Making sure that the ip route cache contains an MTU route")
 								// Get IP route cache and make sure that it contains an MTU route on the server side.
-								stdout, err = runCommand(containerRuntime, "exec", "-i", serverPodName, "ip", "route", "get", clientnodeIP)
+								stdout, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", "-i", serverPodName, "ip", "route", "get", clientnodeIP)
 								if err != nil {
 									return fmt.Errorf("could not list IP route cache using cmd: %s, err: %q", cmd, err)
 								}
@@ -203,7 +207,7 @@ var _ = ginkgo.Describe("Pod to external server PMTUD", func() {
 						// flush this on all 3 nodes else we will run into the
 						// bug: https://issues.redhat.com/browse/OCPBUGS-7609.
 						// TODO: Revisit this once https://bugzilla.redhat.com/show_bug.cgi?id=2169839 is fixed.
-						ovnKubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+						ovnKubeNodePods, err := f.ClientSet.CoreV1().Pods(inclustercommands.OvnNamespace).List(context.TODO(), metav1.ListOptions{
 							LabelSelector: "name=ovnkube-node",
 						})
 						if err != nil {
@@ -212,15 +216,15 @@ var _ = ginkgo.Describe("Pod to external server PMTUD", func() {
 						for _, ovnKubeNodePod := range ovnKubeNodePods.Items {
 							framework.Logf("Flushing the ip route cache on %s", ovnKubeNodePod.Name)
 							containerName := "ovnkube-node"
-							if isInterconnectEnabled() {
+							if clusterinspection.IsInterconnectEnabled() {
 								containerName = "ovnkube-controller"
 							}
-							_, err := e2ekubectl.RunKubectl(ovnNamespace, "exec", ovnKubeNodePod.Name, "--container", containerName, "--",
+							_, err := e2ekubectl.RunKubectl(inclustercommands.OvnNamespace, "exec", ovnKubeNodePod.Name, "--container", containerName, "--",
 								"ip", "route", "flush", "cache")
 							framework.ExpectNoError(err, "Flushing the ip route cache failed")
 						}
 						framework.Logf("Flushing the ip route cache on %s", serverPodName)
-						_, err = runCommand(containerRuntime, "exec", "-i", serverPodName, "ip", "route", "flush", "cache")
+						_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", "-i", serverPodName, "ip", "route", "flush", "cache")
 						framework.ExpectNoError(err, "Flushing the ip route cache failed")
 					}
 				}
@@ -237,7 +241,7 @@ var _ = ginkgo.Describe("Pod to pod TCP with low MTU", func() {
 		mtu                       = 1400
 	)
 
-	f := wrappedTestFramework("pod2pod-tcp-low-mtu")
+	f := testframework.WrappedTestFramework("pod2pod-tcp-low-mtu")
 	cleanupFn := func() {}
 
 	ginkgo.AfterEach(func() {

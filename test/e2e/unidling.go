@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/testframework"
 	"math/rand"
 	"net"
 	"strconv"
@@ -44,7 +45,7 @@ var _ = ginkgo.Describe("Unidling", func() {
 		port              = 80
 	)
 
-	f := wrappedTestFramework("unidling")
+	f := testframework.WrappedTestFramework("unidling")
 
 	var cs clientset.Interface
 

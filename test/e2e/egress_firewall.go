@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/inclustercommands"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/testframework"
 	"math/rand"
 	"net"
 	"os"
@@ -81,7 +83,7 @@ var _ = ginkgo.Describe("e2e egress firewall policy validation", func() {
 		waitForEFApplied(namespace)
 	}
 
-	f := wrappedTestFramework(svcname)
+	f := testframework.WrappedTestFramework(svcname)
 
 	// Determine what mode the CI is running in and get relevant endpoint information for the tests
 	ginkgo.BeforeEach(func() {
@@ -144,7 +146,7 @@ var _ = ginkgo.Describe("e2e egress firewall policy validation", func() {
 			cmd := []string{"docker", "exec", containerName,
 				"curl", "-s", "--connect-timeout", fmt.Sprint(testTimeout), net.JoinHostPort(dstIP, fmt.Sprint(dstPort))}
 			framework.Logf("Running command %v", cmd)
-			_, err := runCommand(cmd...)
+			_, err := inclustercommands.RunCommand(cmd...)
 			if err != nil {
 				framework.Failf("Failed to connect from external container %s to %s:%d: %v",
 					containerName, dstIP, dstPort, err)
@@ -177,11 +179,11 @@ var _ = ginkgo.Describe("e2e egress firewall policy validation", func() {
 		}
 
 		ginkgo.BeforeEach(func() {
-			externalContainer1IPV4, externalContainer1IPV6 := createClusterExternalContainer(externalContainerName1, agnhostImage,
+			externalContainer1IPV4, externalContainer1IPV6 := CreateClusterExternalContainer(externalContainerName1, agnhostImage,
 				[]string{"--network", ciNetworkName, "-p", fmt.Sprintf("%d:%d", externalContainerPort1, externalContainerPort1)},
 				[]string{"netexec", fmt.Sprintf("--http-port=%d", externalContainerPort1)})
 
-			externalContainer2IPV4, externalContainer2IPV6 := createClusterExternalContainer(externalContainerName2, agnhostImage,
+			externalContainer2IPV4, externalContainer2IPV6 := CreateClusterExternalContainer(externalContainerName2, agnhostImage,
 				[]string{"--network", ciNetworkName, "-p", fmt.Sprintf("%d:%d", externalContainerPort2, externalContainerPort2)},
 				[]string{"netexec", fmt.Sprintf("--http-port=%d", externalContainerPort2)})
 
@@ -197,7 +199,7 @@ var _ = ginkgo.Describe("e2e egress firewall policy validation", func() {
 				cmd := []string{"docker", "exec", externalContainerName1,
 					"curl", "-s", "--connect-timeout", fmt.Sprint(testTimeout), net.JoinHostPort(externalContainer2IP, fmt.Sprint(externalContainerPort2))}
 				framework.Logf("Running command %v", cmd)
-				_, err := runCommand(cmd...)
+				_, err := inclustercommands.RunCommand(cmd...)
 				if err != nil {
 					framework.Logf("Failed: %v", err)
 					return false
@@ -205,7 +207,7 @@ var _ = ginkgo.Describe("e2e egress firewall policy validation", func() {
 				cmd = []string{"docker", "exec", externalContainerName2,
 					"curl", "-s", "--connect-timeout", fmt.Sprint(testTimeout), net.JoinHostPort(externalContainer1IP, fmt.Sprint(externalContainerPort1))}
 				framework.Logf("Running command %v", cmd)
-				_, err = runCommand(cmd...)
+				_, err = inclustercommands.RunCommand(cmd...)
 				if err != nil {
 					framework.Logf("Failed: %v", err)
 					return false
@@ -222,8 +224,8 @@ var _ = ginkgo.Describe("e2e egress firewall policy validation", func() {
 		})
 
 		ginkgo.AfterEach(func() {
-			deleteClusterExternalContainer(externalContainerName1)
-			deleteClusterExternalContainer(externalContainerName2)
+			DeleteClusterExternalContainer(externalContainerName1)
+			DeleteClusterExternalContainer(externalContainerName2)
 		})
 
 		ginkgo.It("Should validate the egress firewall policy functionality for allowed IP", func() {
@@ -311,7 +313,7 @@ spec:
 			ginkgo.By("Creating the egress firewall pod")
 			// 1. create nodePort service and external container
 			endpointsSelector := map[string]string{"servicebackend": "true"}
-			_, err := createPod(f, efPodName, serverNodeInfo.name, f.Namespace.Name,
+			_, err := CreatePod(f, efPodName, serverNodeInfo.name, f.Namespace.Name,
 				[]string{"/agnhost", "netexec", fmt.Sprintf("--http-port=%d", efPodPort)}, endpointsSelector)
 			if err != nil {
 				framework.Failf("Failed to create pod %s: %v", efPodName, err)
@@ -388,7 +390,7 @@ spec:
 			createSrcPod(srcPodName, serverNodeInfo.name, retryInterval, retryTimeout, f)
 
 			// create dst pod
-			dstPod, err := createPod(f, dstPodName, serverNodeInfo.name, f.Namespace.Name,
+			dstPod, err := CreatePod(f, dstPodName, serverNodeInfo.name, f.Namespace.Name,
 				[]string{"/agnhost", "netexec", fmt.Sprintf("--http-port=%d", dstPort)}, nil)
 			if err != nil {
 				framework.Failf("Failed to create dst pod %s: %v", dstPodName, err)
@@ -541,7 +543,7 @@ spec:
 				}
 
 				// create host networked Pods
-				_, err := createPod(f, node.Name+"-hostnet-ep", node.Name, f.Namespace.Name, []string{}, map[string]string{}, func(p *v1.Pod) {
+				_, err := CreatePod(f, node.Name+"-hostnet-ep", node.Name, f.Namespace.Name, []string{}, map[string]string{}, func(p *v1.Pod) {
 					p.Spec.Containers[0].Args = args
 					p.Spec.HostNetwork = true
 				})
@@ -575,7 +577,7 @@ spec:
 				for _, ip := range ipFamilies {
 					// manually add the a secondary IP to each node
 					framework.Logf("Adding IP %s to node %s", ip, nodeName)
-					_, err = runCommand(containerRuntime, "exec", nodeName, "ip", "addr", "add", ip, "dev", "breth0")
+					_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", nodeName, "ip", "addr", "add", ip, "dev", "breth0")
 					if err != nil && !strings.Contains(err.Error(), "Address already assigned") {
 						framework.Failf("failed to add new IP address %s to node %s: %v", ip, nodeName, err)
 					}
@@ -587,7 +589,7 @@ spec:
 					for _, ip := range ipFamilies {
 						// manually add the a secondary IP to each node
 						framework.Logf("Deleting IP %s from node %s", ip, nodeName)
-						_, err = runCommand(containerRuntime, "exec", nodeName, "ip", "addr", "del", ip, "dev", "breth0")
+						_, err = inclustercommands.RunCommand(testframework.ContainerRuntime, "exec", nodeName, "ip", "addr", "del", ip, "dev", "breth0")
 						if err != nil {
 							framework.Logf("failed to delete secondary ip from the node %s: %v", nodeName, err)
 						}
