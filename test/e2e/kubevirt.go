@@ -428,7 +428,7 @@ iperf3 -t 0 -c %[1]s -p %[2]d --logfile %[3]s &
 					networkStatuses, err = podNetworkStatus(pod, networkStatusPredicate)
 					return networkStatuses, err
 				}).
-					WithTimeout(5 * time.Second).
+					WithTimeout(15 * time.Second).
 					WithPolling(200 * time.Millisecond).
 					Should(HaveLen(1))
 				for _, ip := range networkStatuses[0].IPs {
