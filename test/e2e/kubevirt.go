@@ -1629,19 +1629,22 @@ runcmd:
 			iperfServerTestPods, err = createIperfServerPods(selectedNodes, netConfig, []string{})
 			Expect(err).NotTo(HaveOccurred())
 
-			primaryProviderNetwork, err := infraprovider.Get().PrimaryNetwork()
-			Expect(err).ShouldNot(HaveOccurred(), "primary network must be available to attach containers")
-			externalContainerPort := infraprovider.Get().GetExternalContainerPort()
-			externalContainerName := namespace + "-iperf"
-			externalContainerSpec := infraapi.ExternalContainer{
-				Name:    externalContainerName,
-				Image:   images.IPerf3(),
-				Network: primaryProviderNetwork,
-				Args:    []string{"sleep infinity"},
-				ExtPort: externalContainerPort,
+			var externalContainer infraapi.ExternalContainer
+			if td.role == "primary" {
+				primaryProviderNetwork, err := infraprovider.Get().PrimaryNetwork()
+				Expect(err).ShouldNot(HaveOccurred(), "primary network must be available to attach containers")
+				externalContainerPort := infraprovider.Get().GetExternalContainerPort()
+				externalContainerName := namespace + "-iperf"
+				externalContainerSpec := infraapi.ExternalContainer{
+					Name:    externalContainerName,
+					Image:   images.IPerf3(),
+					Network: primaryProviderNetwork,
+					Args:    []string{"sleep infinity"},
+					ExtPort: externalContainerPort,
+				}
+				externalContainer, err = providerCtx.CreateExternalContainer(externalContainerSpec)
+				Expect(err).ShouldNot(HaveOccurred(), "creation of external container is test dependency")
 			}
-			externalContainer, err := providerCtx.CreateExternalContainer(externalContainerSpec)
-			Expect(err).ShouldNot(HaveOccurred(), "creation of external container is test dependency")
 
 			vmiName := td.resource.cmd()
 			vmi = &kubevirtv1.VirtualMachineInstance{
