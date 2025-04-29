@@ -550,8 +550,7 @@ var _ = Describe("Multi Homing", func() {
 						Expect(teardownUnderlay(nodes, secondaryBridge)).To(Succeed())
 					}()
 
-					const secondaryInterfaceName = "eth1"
-					Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, netConfig)).To(Succeed())
+					Expect(setupUnderlay(nodes, secondaryBridge, deploymentconfig.Get().SecondaryInterfaceName(), netConfig)).To(Succeed())
 				}
 
 				By("creating the attachment configuration")
@@ -896,12 +895,11 @@ var _ = Describe("Multi Homing", func() {
 
 		Context("localnet OVN-K secondary network", func() {
 			const (
-				clientPodName                 = "client-pod"
-				servicePort            uint16 = 9000
-				dockerNetworkName             = "underlay"
-				underlayServiceIP             = "60.128.0.1"
-				secondaryInterfaceName        = "eth1"
-				expectedOriginalMTU           = 1200
+				clientPodName              = "client-pod"
+				servicePort         uint16 = 9000
+				dockerNetworkName          = "underlay"
+				underlayServiceIP          = "60.128.0.1"
+				expectedOriginalMTU        = 1200
 			)
 
 			var netConfig networkAttachmentConfig
@@ -926,7 +924,7 @@ var _ = Describe("Multi Homing", func() {
 					By("setting up the localnet underlay")
 					nodes = ovsPods(cs)
 					Expect(nodes).NotTo(BeEmpty())
-					Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, netConfig)).To(Succeed())
+					Expect(setupUnderlay(nodes, secondaryBridge, deploymentconfig.Get().SecondaryInterfaceName(), netConfig)).To(Succeed())
 				})
 
 				BeforeEach(func() {
@@ -1107,7 +1105,7 @@ var _ = Describe("Multi Homing", func() {
 
 					Context("and the service connected to the underlay is reconfigured to connect to the new VLAN-ID", func() {
 						BeforeEach(func() {
-							Expect(ovsRemoveSwitchPort(nodes, secondaryInterfaceName, newLocalnetVLANID)).To(Succeed())
+							Expect(ovsRemoveSwitchPort(nodes, deploymentconfig.Get().SecondaryInterfaceName(), newLocalnetVLANID)).To(Succeed())
 						})
 
 						It("can now communicate over a localnet secondary network from pod to the underlay service", func() {
@@ -1312,7 +1310,7 @@ var _ = Describe("Multi Homing", func() {
 						})
 
 					By("setting up the localnet underlay with a trunked configuration")
-					Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, netConfig)).To(Succeed(), "configuring the OVS bridge")
+					Expect(setupUnderlay(nodes, secondaryBridge, deploymentconfig.Get().SecondaryInterfaceName(), netConfig)).To(Succeed(), "configuring the OVS bridge")
 
 					By(fmt.Sprintf("creating a VLAN interface on top of the bridge connecting the cluster nodes with IP: %s", underlayIP))
 					cli, err := client.NewClientWithOpts(client.FromEnv)
@@ -1424,8 +1422,7 @@ var _ = Describe("Multi Homing", func() {
 							Expect(teardownUnderlay(nodes, secondaryBridge)).To(Succeed())
 						}()
 
-						const secondaryInterfaceName = "eth1"
-						Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, netConfig)).To(Succeed())
+						Expect(setupUnderlay(nodes, secondaryBridge, deploymentconfig.Get().SecondaryInterfaceName(), netConfig)).To(Succeed())
 					}
 
 					Expect(createNads(f, nadClient, extraNamespace, netConfig)).NotTo(HaveOccurred())
@@ -1850,8 +1847,7 @@ var _ = Describe("Multi Homing", func() {
 						By("tearing down the localnet underlay")
 						Expect(teardownUnderlay(nodes, secondaryBridge)).To(Succeed())
 					}()
-					const secondaryInterfaceName = "eth1"
-					Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, netConfig)).To(Succeed())
+					Expect(setupUnderlay(nodes, secondaryBridge, deploymentconfig.Get().SecondaryInterfaceName(), netConfig)).To(Succeed())
 
 					Expect(createNads(f, nadClient, extraNamespace, netConfig)).NotTo(HaveOccurred())
 
@@ -1982,8 +1978,7 @@ var _ = Describe("Multi Homing", func() {
 						By("tearing down the localnet underlay")
 						Expect(teardownUnderlay(nodes, secondaryBridge)).To(Succeed())
 					}()
-					const secondaryInterfaceName = "eth1"
-					Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, netConfig)).To(Succeed())
+					Expect(setupUnderlay(nodes, secondaryBridge, deploymentconfig.Get().SecondaryInterfaceName(), netConfig)).To(Succeed())
 
 					Expect(createNads(f, nadClient, extraNamespace, netConfig)).NotTo(HaveOccurred())
 

@@ -1614,8 +1614,7 @@ runcmd:
 					}
 				})
 
-				const secondaryInterfaceName = "eth1"
-				Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, netConfig)).To(Succeed())
+				Expect(setupUnderlay(nodes, secondaryBridge, deploymentconfig.Get().SecondaryInterfaceName(), netConfig)).To(Succeed())
 			}
 
 			By("Creating NetworkAttachmentDefinition")
@@ -2065,8 +2064,7 @@ chpasswd: { expire: False }
 				}
 			})
 
-			const secondaryInterfaceName = "eth1"
-			Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, netConfig)).To(Succeed())
+			Expect(setupUnderlay(nodes, secondaryBridge, deploymentconfig.Get().SecondaryInterfaceName(), netConfig)).To(Succeed())
 
 			By("Creating NetworkAttachmentDefinition")
 			nad = generateNAD(netConfig)

@@ -1644,7 +1644,7 @@ spec:
 			primaryProviderNetwork, err := infraprovider.Get().PrimaryNetwork()
 			framework.ExpectNoError(err, "must get primary provider network")
 			externalContainer := infraapi.ExternalContainer{Name: externalRouterContainerName, Network: primaryProviderNetwork}
-			_, err = infraprovider.Get().ExecExternalContainerCommand(externalContainer, []string{"ip", "link", "set", "mtu", "1500", "dev", "eth1"})
+			_, err = infraprovider.Get().ExecExternalContainerCommand(externalContainer, []string{"ip", "link", "set", "mtu", "1500", "dev", deploymentconfig.Get().SecondaryInterfaceName()})
 			framework.ExpectNoError(err, "failed to reset MTU on intermediary router")
 			framework.Logf("Delete the custom BGP Advertisement configuration")
 			e2ekubectl.RunKubectlOrDie("metallb-system", "delete", "bgpadvertisement", "example", "--ignore-not-found=true")
@@ -1858,7 +1858,7 @@ spec:
 
 			ginkgo.By("change MTU on intermediary router to force icmp related packets")
 			cmd = []string{}
-			mtuCommand := strings.Split("ip link set mtu 1280 dev eth1", " ")
+			mtuCommand := strings.Split("ip link set mtu 1280 dev "+deploymentconfig.Get().SecondaryInterfaceName(), " ")
 			cmd = append(cmd, mtuCommand...)
 			_, err = infraprovider.Get().ExecExternalContainerCommand(externalContainer, cmd)
 			framework.ExpectNoError(err, "failed to change MTU on intermediary router")
@@ -1872,7 +1872,7 @@ spec:
 
 			ginkgo.By("reset MTU on intermediary router to allow large packets")
 			cmd = []string{}
-			mtuCommand = strings.Split("ip link set mtu 1500 dev eth1", " ")
+			mtuCommand = strings.Split("ip link set mtu 1500 dev "+deploymentconfig.Get().SecondaryInterfaceName(), " ")
 			cmd = append(cmd, mtuCommand...)
 			_, err = infraprovider.Get().ExecExternalContainerCommand(externalContainer, cmd)
 			framework.ExpectNoError(err, "failed to reset MTU on intermediary router")
