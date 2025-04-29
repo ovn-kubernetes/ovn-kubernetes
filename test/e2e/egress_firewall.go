@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/inclustercommands"
 	"math/rand"
 	"net"
 	"os"
@@ -144,7 +145,7 @@ var _ = ginkgo.Describe("e2e egress firewall policy validation", func() {
 			cmd := []string{"docker", "exec", containerName,
 				"curl", "-s", "--connect-timeout", fmt.Sprint(testTimeout), net.JoinHostPort(dstIP, fmt.Sprint(dstPort))}
 			framework.Logf("Running command %v", cmd)
-			_, err := runCommand(cmd...)
+			_, err := inclustercommands.RunCommand(cmd...)
 			if err != nil {
 				framework.Failf("Failed to connect from external container %s to %s:%d: %v",
 					containerName, dstIP, dstPort, err)
@@ -197,7 +198,7 @@ var _ = ginkgo.Describe("e2e egress firewall policy validation", func() {
 				cmd := []string{"docker", "exec", externalContainerName1,
 					"curl", "-s", "--connect-timeout", fmt.Sprint(testTimeout), net.JoinHostPort(externalContainer2IP, fmt.Sprint(externalContainerPort2))}
 				framework.Logf("Running command %v", cmd)
-				_, err := runCommand(cmd...)
+				_, err := inclustercommands.RunCommand(cmd...)
 				if err != nil {
 					framework.Logf("Failed: %v", err)
 					return false
@@ -205,7 +206,7 @@ var _ = ginkgo.Describe("e2e egress firewall policy validation", func() {
 				cmd = []string{"docker", "exec", externalContainerName2,
 					"curl", "-s", "--connect-timeout", fmt.Sprint(testTimeout), net.JoinHostPort(externalContainer1IP, fmt.Sprint(externalContainerPort1))}
 				framework.Logf("Running command %v", cmd)
-				_, err = runCommand(cmd...)
+				_, err = inclustercommands.RunCommand(cmd...)
 				if err != nil {
 					framework.Logf("Failed: %v", err)
 					return false
@@ -575,7 +576,7 @@ spec:
 				for _, ip := range ipFamilies {
 					// manually add the a secondary IP to each node
 					framework.Logf("Adding IP %s to node %s", ip, nodeName)
-					_, err = runCommand(containerRuntime, "exec", nodeName, "ip", "addr", "add", ip, "dev", "breth0")
+					_, err = inclustercommands.RunCommand(containerRuntime, "exec", nodeName, "ip", "addr", "add", ip, "dev", "breth0")
 					if err != nil && !strings.Contains(err.Error(), "Address already assigned") {
 						framework.Failf("failed to add new IP address %s to node %s: %v", ip, nodeName, err)
 					}
@@ -587,7 +588,7 @@ spec:
 					for _, ip := range ipFamilies {
 						// manually add the a secondary IP to each node
 						framework.Logf("Deleting IP %s from node %s", ip, nodeName)
-						_, err = runCommand(containerRuntime, "exec", nodeName, "ip", "addr", "del", ip, "dev", "breth0")
+						_, err = inclustercommands.RunCommand(containerRuntime, "exec", nodeName, "ip", "addr", "del", ip, "dev", "breth0")
 						if err != nil {
 							framework.Logf("failed to delete secondary ip from the node %s: %v", nodeName, err)
 						}

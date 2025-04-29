@@ -31,6 +31,9 @@ import (
 	"k8s.io/kubernetes/test/e2e/framework/pod"
 	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 	utilnet "k8s.io/utils/net"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/inclustercommands"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/multihoming"
 )
 
 const (
@@ -101,12 +104,12 @@ func (h *egressNodeAvailabilityHandlerViaHealthCheck) checkMode(restore bool) (s
 		return "", "", false
 	}
 	framework.Logf("Checking the ovnkube-node and ovnkube-master (ovnkube-cluster-manager if interconnect=true) healthcheck ports in use")
-	portNode := getTemplateContainerEnv(ovnNamespace, "daemonset/ovnkube-node", getNodeContainerName(), OVN_EGRESSIP_HEALTHCHECK_PORT_ENV_NAME)
+	portNode := getTemplateContainerEnv(inclustercommands.OvnNamespace, "daemonset/ovnkube-node", getNodeContainerName(), OVN_EGRESSIP_HEALTHCHECK_PORT_ENV_NAME)
 	var portMaster string
 	if isInterconnectEnabled() {
-		portMaster = getTemplateContainerEnv(ovnNamespace, "deployment/ovnkube-control-plane", "ovnkube-cluster-manager", OVN_EGRESSIP_HEALTHCHECK_PORT_ENV_NAME)
+		portMaster = getTemplateContainerEnv(inclustercommands.OvnNamespace, "deployment/ovnkube-control-plane", "ovnkube-cluster-manager", OVN_EGRESSIP_HEALTHCHECK_PORT_ENV_NAME)
 	} else {
-		portMaster = getTemplateContainerEnv(ovnNamespace, "deployment/ovnkube-master", "ovnkube-master", OVN_EGRESSIP_HEALTHCHECK_PORT_ENV_NAME)
+		portMaster = getTemplateContainerEnv(inclustercommands.OvnNamespace, "deployment/ovnkube-master", "ovnkube-master", OVN_EGRESSIP_HEALTHCHECK_PORT_ENV_NAME)
 	}
 
 	wantLegacy := (h.Legacy && !restore) || (h.modeWasLegacy && restore)
@@ -150,11 +153,11 @@ func (h *egressNodeAvailabilityHandlerViaHealthCheck) setMode(nodeName string, r
 	if changeEnv {
 		framework.Logf("Updating ovnkube to use health check on port %s (0 is legacy, non 0 is GRPC)", portEnv)
 		setEnv := map[string]string{OVN_EGRESSIP_HEALTHCHECK_PORT_ENV_NAME: portEnv}
-		setUnsetTemplateContainerEnv(h.F.ClientSet, ovnNamespace, "daemonset/ovnkube-node", getNodeContainerName(), setEnv)
+		setUnsetTemplateContainerEnv(h.F.ClientSet, inclustercommands.OvnNamespace, "daemonset/ovnkube-node", getNodeContainerName(), setEnv)
 		if isInterconnectEnabled() {
-			setUnsetTemplateContainerEnv(h.F.ClientSet, ovnNamespace, "deployment/ovnkube-control-plane", "ovnkube-cluster-manager", setEnv)
+			setUnsetTemplateContainerEnv(h.F.ClientSet, inclustercommands.OvnNamespace, "deployment/ovnkube-control-plane", "ovnkube-cluster-manager", setEnv)
 		} else {
-			setUnsetTemplateContainerEnv(h.F.ClientSet, ovnNamespace, "deployment/ovnkube-master", "ovnkube-master", setEnv)
+			setUnsetTemplateContainerEnv(h.F.ClientSet, inclustercommands.OvnNamespace, "deployment/ovnkube-master", "ovnkube-master", setEnv)
 		}
 	}
 	if port != "" {
@@ -271,7 +274,7 @@ func targetExternalContainerAndTest(targetNode node, podName, podNamespace strin
 			targetNodeLogs, err = e2ekubectl.RunKubectl(podNamespace, "logs", targetNode.name)
 		} else {
 			// external container
-			targetNodeLogs, err = runCommand(containerRuntime, "logs", targetNode.name)
+			targetNodeLogs, err = inclustercommands.RunCommand(containerRuntime, "logs", targetNode.name)
 		}
 		if err != nil {
 			framework.Logf("failed to inspect logs in test container: %v", err)
@@ -298,7 +301,7 @@ func targetExternalContainerAndTest(targetNode node, podName, podNamespace strin
 	}
 }
 
-var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigParams networkAttachmentConfigParams) {
+var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigParams multihoming.NetworkAttachmentConfigParams) {
 	//FIXME: tests for CDN are designed for single stack clusters (IPv4 or IPv6) and must choose a single IP family for dual stack clusters.
 	// Remove this restriction and allow the tests to detect if an IP family support is available.
 	const (
@@ -393,12 +396,12 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigPa
 
 	setNodeReady := func(node string, setReady bool) {
 		if !setReady {
-			_, err := runCommand("docker", "exec", node, "systemctl", "stop", "kubelet.service")
+			_, err := inclustercommands.RunCommand("docker", "exec", node, "systemctl", "stop", "kubelet.service")
 			if err != nil {
 				framework.Failf("failed to stop kubelet on node: %s, err: %v", node, err)
 			}
 		} else {
-			_, err := runCommand("docker", "exec", node, "systemctl", "start", "kubelet.service")
+			_, err := inclustercommands.RunCommand("docker", "exec", node, "systemctl", "start", "kubelet.service")
 			if err != nil {
 				framework.Failf("failed to start kubelet on node: %s, err: %v", node, err)
 			}
@@ -512,9 +515,9 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigPa
 		return false
 	}
 
-	isNetworkSupported := func(nodes *corev1.NodeList, netConfigParams networkAttachmentConfigParams) (bool, string) {
+	isNetworkSupported := func(nodes *corev1.NodeList, netConfigParams multihoming.NetworkAttachmentConfigParams) (bool, string) {
 		// cluster default network
-		if netConfigParams.networkName == types.DefaultNetworkName {
+		if netConfigParams.NetworkName == types.DefaultNetworkName {
 			return true, "cluster default network is always supported"
 		}
 		// user defined networks
@@ -524,27 +527,27 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigPa
 		if !isInterconnectEnabled() {
 			return false, "interconnect is disabled. Environment variable 'OVN_ENABLE_INTERCONNECT' must have value true"
 		}
-		if netConfigParams.topology == types.LocalnetTopology {
+		if netConfigParams.Topology == types.LocalnetTopology {
 			return false, "unsupported network topology"
 		}
-		if netConfigParams.cidr == "" {
+		if netConfigParams.Cidr == "" {
 			return false, "UDN network must have subnet specified"
 		}
-		if utilnet.IsIPv4CIDRString(netConfigParams.cidr) && !isNodeInternalAddressesPresentForIPFamily(nodes, corev1.IPv4Protocol) {
+		if utilnet.IsIPv4CIDRString(netConfigParams.Cidr) && !isNodeInternalAddressesPresentForIPFamily(nodes, corev1.IPv4Protocol) {
 			return false, "cluster must have IPv4 Node internal address"
 		}
-		if utilnet.IsIPv6CIDRString(netConfigParams.cidr) && !isNodeInternalAddressesPresentForIPFamily(nodes, corev1.IPv6Protocol) {
+		if utilnet.IsIPv6CIDRString(netConfigParams.Cidr) && !isNodeInternalAddressesPresentForIPFamily(nodes, corev1.IPv6Protocol) {
 			return false, "cluster must have IPv6 Node internal address"
 		}
 		return true, "network is supported"
 	}
 
-	getNodeIPs := func(nodes *corev1.NodeList, netConfigParams networkAttachmentConfigParams) []string {
+	getNodeIPs := func(nodes *corev1.NodeList, netConfigParams multihoming.NetworkAttachmentConfigParams) []string {
 		isIPv4Cluster := isNodeInternalAddressesPresentForIPFamily(nodes, corev1.IPv4Protocol)
 		isIPv6Cluster := isNodeInternalAddressesPresentForIPFamily(nodes, corev1.IPv6Protocol)
 		var ipFamily corev1.IPFamily
 		// cluster default network
-		if netConfigParams.networkName == types.DefaultNetworkName {
+		if netConfigParams.NetworkName == types.DefaultNetworkName {
 			// we do not create a CDN, we utilize the network within the cluster.
 			// The current e2e tests assume a single stack, therefore if dual stack, default to IPv4
 			// until the tests are refactored to accommodate dual stack.
@@ -556,13 +559,13 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigPa
 			}
 		} else {
 			// user defined network
-			if netConfigParams.cidr == "" {
+			if netConfigParams.Cidr == "" {
 				framework.Failf("network config must have subnet defined")
 			}
-			if utilnet.IsIPv4CIDRString(netConfigParams.cidr) && isIPv4Cluster {
+			if utilnet.IsIPv4CIDRString(netConfigParams.Cidr) && isIPv4Cluster {
 				ipFamily = corev1.IPv4Protocol
 			}
-			if utilnet.IsIPv6CIDRString(netConfigParams.cidr) && isIPv6Cluster {
+			if utilnet.IsIPv6CIDRString(netConfigParams.Cidr) && isIPv6Cluster {
 				ipFamily = corev1.IPv6Protocol
 			}
 		}
@@ -595,15 +598,15 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigPa
 		return srcPodIP, nil
 	}
 
-	isUserDefinedNetwork := func(netParams networkAttachmentConfigParams) bool {
-		if netParams.networkName == types.DefaultNetworkName {
+	isUserDefinedNetwork := func(netParams multihoming.NetworkAttachmentConfigParams) bool {
+		if netParams.NetworkName == types.DefaultNetworkName {
 			return false
 		}
 		return true
 	}
 
-	isClusterDefaultNetwork := func(netParams networkAttachmentConfigParams) bool {
-		if netParams.networkName == types.DefaultNetworkName {
+	isClusterDefaultNetwork := func(netParams multihoming.NetworkAttachmentConfigParams) bool {
+		if netParams.NetworkName == types.DefaultNetworkName {
 			return true
 		}
 		return false
@@ -692,11 +695,11 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigPa
 		// configure UDN
 		nadClient, err := nadclient.NewForConfig(f.ClientConfig())
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		netConfig := newNetworkAttachmentConfig(netConfigParams)
-		netConfig.namespace = f.Namespace.Name
+		netConfig := multihoming.NewNetworkAttachmentConfig(netConfigParams)
+		netConfig.Namespace = f.Namespace.Name
 		_, err = nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
 			context.Background(),
-			generateNAD(netConfig),
+			multihoming.GenerateNAD(netConfig),
 			metav1.CreateOptions{},
 		)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -844,7 +847,7 @@ spec:
 						f.ClientSet,
 						f.Namespace.Name,
 						pod2Name,
-						namespacedName(f.Namespace.Name, netConfigParams.name),
+						multihoming.NamespacedName(f.Namespace.Name, netConfigParams.Name),
 						0,
 					)
 					framework.ExpectNoError(err, "Step 3. Create two UDN pods matching the EgressIP: one running on each of the egress nodes, failed, err: %v", err)
@@ -965,12 +968,12 @@ spec:
 			// TODO(mk): replace with non-repeating IP allocator
 			otherDstIP = "172.18.1.99"
 		}
-		_, err := runCommand(containerRuntime, "exec", egress2Node.name, "ip", "addr", "add", otherDstIP, "dev", "breth0")
+		_, err := inclustercommands.RunCommand(containerRuntime, "exec", egress2Node.name, "ip", "addr", "add", otherDstIP, "dev", "breth0")
 		if err != nil {
 			framework.Failf("failed to add address to node %s: %v", egress2Node.name, err)
 		}
 		defer func() {
-			_, err = runCommand(containerRuntime, "exec", egress2Node.name, "ip", "addr", "delete", otherDstIP, "dev", "breth0")
+			_, err = inclustercommands.RunCommand(containerRuntime, "exec", egress2Node.name, "ip", "addr", "delete", otherDstIP, "dev", "breth0")
 			if err != nil {
 				framework.Failf("failed to remove address from node %s: %v", egress2Node.name, err)
 			}
@@ -1380,10 +1383,10 @@ spec:
 		framework.ExpectNoError(err, "Step 6. Check that the second egressIP object is assigned to node2 (pod2Node/egress1Node), failed: %v", err)
 
 		ginkgo.By("7. Check the OVN DB to ensure no SNATs are added for the standby egressIP")
-		dbPods, err := e2ekubectl.RunKubectl(ovnNamespace, "get", "pods", "-l", "name=ovnkube-db", "-o=jsonpath='{.items..metadata.name}'")
+		dbPods, err := e2ekubectl.RunKubectl(inclustercommands.OvnNamespace, "get", "pods", "-l", "name=ovnkube-db", "-o=jsonpath='{.items..metadata.name}'")
 		dbContainerName := "nb-ovsdb"
 		if isInterconnectEnabled() {
-			dbPods, err = e2ekubectl.RunKubectl(ovnNamespace, "get", "pods", "-l", "name=ovnkube-node", "--field-selector", fmt.Sprintf("spec.nodeName=%s", egress1Node.name), "-o=jsonpath='{.items..metadata.name}'")
+			dbPods, err = e2ekubectl.RunKubectl(inclustercommands.OvnNamespace, "get", "pods", "-l", "name=ovnkube-node", "--field-selector", fmt.Sprintf("spec.nodeName=%s", egress1Node.name), "-o=jsonpath='{.items..metadata.name}'")
 		}
 		if err != nil || len(dbPods) == 0 {
 			framework.Failf("Error: Check the OVN DB to ensure no SNATs are added for the standby egressIP, err: %v", err)
@@ -1398,7 +1401,7 @@ spec:
 		if isIPv6TestRun {
 			logicalIP = fmt.Sprintf("logical_ip=\"%s\"", srcPodIP.String())
 		}
-		snats, err := e2ekubectl.RunKubectl(ovnNamespace, "exec", dbPod, "-c", dbContainerName, "--", "ovn-nbctl", "--no-leader-only", "--columns=external_ip", "find", "nat", logicalIP)
+		snats, err := e2ekubectl.RunKubectl(inclustercommands.OvnNamespace, "exec", dbPod, "-c", dbContainerName, "--", "ovn-nbctl", "--no-leader-only", "--columns=external_ip", "find", "nat", logicalIP)
 		if err != nil {
 			framework.Failf("Error: Check the OVN DB to ensure no SNATs are added for the standby egressIP, err: %v", err)
 		}
@@ -1462,7 +1465,7 @@ spec:
 		framework.ExpectNoError(err, "Step 11. Check connectivity from pod to an external container and verify that the srcIP is the expected standby egressIP3 from object2, failed: %v", err)
 
 		ginkgo.By("12. Check the OVN DB to ensure SNATs are added for only the standby egressIP")
-		snats, err = e2ekubectl.RunKubectl(ovnNamespace, "exec", dbPod, "-c", dbContainerName, "--", "ovn-nbctl", "--no-leader-only", "--columns=external_ip", "find", "nat", logicalIP)
+		snats, err = e2ekubectl.RunKubectl(inclustercommands.OvnNamespace, "exec", dbPod, "-c", dbContainerName, "--", "ovn-nbctl", "--no-leader-only", "--columns=external_ip", "find", "nat", logicalIP)
 		if err != nil {
 			framework.Failf("Error: Check the OVN DB to ensure SNATs are added for only the standby egressIP, err: %v", err)
 		}
@@ -1497,7 +1500,7 @@ spec:
 		framework.ExpectNoError(err, "Step 14. Ensure egressIP1 from egressIP object1 and egressIP3 from object2 is correctly transferred to egress2Node, failed: %v", err)
 
 		if isInterconnectEnabled() {
-			dbPods, err = e2ekubectl.RunKubectl(ovnNamespace, "get", "pods", "-l", "name=ovnkube-node", "--field-selector", fmt.Sprintf("spec.nodeName=%s", egress2Node.name), "-o=jsonpath='{.items..metadata.name}'")
+			dbPods, err = e2ekubectl.RunKubectl(inclustercommands.OvnNamespace, "get", "pods", "-l", "name=ovnkube-node", "--field-selector", fmt.Sprintf("spec.nodeName=%s", egress2Node.name), "-o=jsonpath='{.items..metadata.name}'")
 		}
 		if err != nil || len(dbPods) == 0 {
 			framework.Failf("Error: Check the OVN DB to ensure no SNATs are added for the standby egressIP, err: %v", err)
@@ -1510,7 +1513,7 @@ spec:
 		}
 
 		ginkgo.By("15. Check the OVN DB to ensure SNATs are added for either egressIP1 or egressIP3")
-		snats, err = e2ekubectl.RunKubectl(ovnNamespace, "exec", dbPod, "-c", dbContainerName, "--", "ovn-nbctl", "--no-leader-only", "--columns=external_ip", "find", "nat", logicalIP)
+		snats, err = e2ekubectl.RunKubectl(inclustercommands.OvnNamespace, "exec", dbPod, "-c", dbContainerName, "--", "ovn-nbctl", "--no-leader-only", "--columns=external_ip", "find", "nat", logicalIP)
 		if err != nil {
 			framework.Failf("Error: Check the OVN DB to ensure SNATs are added for either egressIP1 or egressIP3, err: %v", err)
 		}
@@ -1966,13 +1969,13 @@ spec:
 		)
 
 		// First disable PMTUD
-		_, err = runCommand(containerRuntime, "exec", externalKindContainerName, "sysctl", "-w", "net.ipv4.ip_no_pmtu_disc=2")
+		_, err = inclustercommands.RunCommand(containerRuntime, "exec", externalKindContainerName, "sysctl", "-w", "net.ipv4.ip_no_pmtu_disc=2")
 		framework.ExpectNoError(err, "disabling PMTUD in the external kind container failed: %v", err)
 
 		// Then run the server
 		httpPort := fmt.Sprintf("--http-port=%d", serverPodPort)
 		udpPort := fmt.Sprintf("--udp-port=%d", serverPodPort)
-		_, err = runCommand(containerRuntime, "exec", "-d", externalKindContainerName, "/agnhost", "netexec", httpPort, udpPort)
+		_, err = inclustercommands.RunCommand(containerRuntime, "exec", "-d", externalKindContainerName, "/agnhost", "netexec", httpPort, udpPort)
 		framework.ExpectNoError(err, "running netexec server in the external kind container failed: %v", err)
 
 		ginkgo.By("Checking connectivity to the external kind container and verify that the source IP is the egress IP")
@@ -2014,7 +2017,7 @@ spec:
 		}
 
 		ginkgo.By("Checking that there is no IP route exception and thus reply was fragmented")
-		stdout, err = runCommand(containerRuntime, "exec", externalKindContainerName, "ip", "route", "get", egressIP1.String())
+		stdout, err = inclustercommands.RunCommand(containerRuntime, "exec", externalKindContainerName, "ip", "route", "get", egressIP1.String())
 		framework.ExpectNoError(err, "listing the server IP route cache failed: %v", err)
 
 		if regexp.MustCompile(`cache expires.*mtu.*`).Match([]byte(stdout)) {
@@ -2687,7 +2690,7 @@ spec:
 		vrfName := "egress-vrf"
 		vrfRoutingTable := "99999"
 		// find the egress interface name
-		out, err := runCommand(containerRuntime, "exec", egress1Node.name, "ip", "-o", "route", "get", egressIP1)
+		out, err := inclustercommands.RunCommand(containerRuntime, "exec", egress1Node.name, "ip", "-o", "route", "get", egressIP1)
 		if err != nil {
 			framework.Failf("failed to add expected EIP assigned interface, err %v, out: %s", err, out)
 		}
@@ -2707,7 +2710,7 @@ spec:
 		restoreLinkIPv6AddrFn := func() error { return nil }
 		if isV6Node {
 			ginkgo.By("attempting to find IPv6 global address for secondary network")
-			address, err := runCommand(containerRuntime, "inspect", "-f",
+			address, err := inclustercommands.RunCommand(containerRuntime, "inspect", "-f",
 				fmt.Sprintf("'{{ (index .NetworkSettings.Networks \"%s\").GlobalIPv6Address }}'", secondaryNetworkName), egress1Node.name)
 			if err != nil {
 				framework.Failf("failed to get node %s IP address for network %s: %v", egress1Node.name, secondaryNetworkName, err)
@@ -2716,7 +2719,7 @@ spec:
 			address = strings.Trim(address, "'")
 			ginkgo.By(fmt.Sprintf("found address %q", address))
 			gomega.Expect(net.ParseIP(address)).ShouldNot(gomega.BeNil(), "IPv6 address for secondary network must be present")
-			prefix, err := runCommand(containerRuntime, "inspect", "-f",
+			prefix, err := inclustercommands.RunCommand(containerRuntime, "inspect", "-f",
 				fmt.Sprintf("'{{ (index .NetworkSettings.Networks \"%s\").GlobalIPv6PrefixLen }}'", secondaryNetworkName), egress1Node.name)
 			if err != nil {
 				framework.Failf("failed to get node %s IP prefix length for network %s: %v", egress1Node.name, secondaryNetworkName, err)
@@ -2726,17 +2729,17 @@ spec:
 			_, err = strconv.Atoi(prefix)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "requires valid IPv6 address prefix")
 			restoreLinkIPv6AddrFn = func() error {
-				_, err := runCommand(containerRuntime, "exec", egress1Node.name, "ip", "-6", "address", "add",
+				_, err := inclustercommands.RunCommand(containerRuntime, "exec", egress1Node.name, "ip", "-6", "address", "add",
 					fmt.Sprintf("%s/%s", address, prefix), "dev", egressInterface, "nodad", "scope", "global")
 				return err
 			}
 		}
-		_, err = runCommand(containerRuntime, "exec", egress1Node.name, "ip", "link", "add", vrfName, "type", "vrf", "table", vrfRoutingTable)
+		_, err = inclustercommands.RunCommand(containerRuntime, "exec", egress1Node.name, "ip", "link", "add", vrfName, "type", "vrf", "table", vrfRoutingTable)
 		if err != nil {
 			framework.Failf("failed to add VRF to node %s: %v", egress1Node.name, err)
 		}
-		defer runCommand(containerRuntime, "exec", egress1Node.name, "ip", "link", "del", vrfName)
-		_, err = runCommand(containerRuntime, "exec", egress1Node.name, "ip", "link", "set", "dev", egressInterface, "master", vrfName)
+		defer inclustercommands.RunCommand(containerRuntime, "exec", egress1Node.name, "ip", "link", "del", vrfName)
+		_, err = inclustercommands.RunCommand(containerRuntime, "exec", egress1Node.name, "ip", "link", "set", "dev", egressInterface, "master", vrfName)
 		if err != nil {
 			framework.Failf("failed to enslave interface %s to VRF %s node %s: %v", egressInterface, vrfName, egress1Node.name, err)
 		}
@@ -2806,14 +2809,14 @@ spec:
 		})
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 
-		ginkgo.By(fmt.Sprintf("namespace is connected to UDN, create a namespace attached to this primary as a %s UDN", netConfigParams.topology))
+		ginkgo.By(fmt.Sprintf("namespace is connected to UDN, create a namespace attached to this primary as a %s UDN", netConfigParams.Topology))
 		nadClient, err := nadclient.NewForConfig(f.ClientConfig())
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		netConfig := newNetworkAttachmentConfig(netConfigParams)
-		netConfig.namespace = otherNetworkNamespace.Name
+		netConfig := multihoming.NewNetworkAttachmentConfig(netConfigParams)
+		netConfig.Namespace = otherNetworkNamespace.Name
 		_, err = nadClient.NetworkAttachmentDefinitions(otherNetworkNamespace.Name).Create(
 			context.Background(),
-			generateNAD(netConfig),
+			multihoming.GenerateNAD(netConfig),
 			metav1.CreateOptions{},
 		)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -2906,14 +2909,14 @@ spec:
 		framework.ExpectNoError(err, "Step 11. Check connectivity from other pod and verify that the srcIP is the expected egressIP and verify that the srcIP is the expected nodeIP, failed: %v", err)
 	})
 
-	ginkgo.DescribeTable("[OVN network] multiple namespaces with different primary networks", func(otherNetworkAttachParms networkAttachmentConfigParams) {
+	ginkgo.DescribeTable("[OVN network] multiple namespaces with different primary networks", func(otherNetworkAttachParms multihoming.NetworkAttachmentConfigParams) {
 		if !isNetworkSegmentationEnabled() {
 			ginkgo.Skip("network segmentation is disabled")
 		}
 		var otherNetworkNamespace *corev1.Namespace
 		var err error
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-		isOtherNetworkIPv6 := utilnet.IsIPv6CIDRString(otherNetworkAttachParms.cidr)
+		isOtherNetworkIPv6 := utilnet.IsIPv6CIDRString(otherNetworkAttachParms.Cidr)
 		// The EgressIP IP must match both networks IP family
 		if isOtherNetworkIPv6 != isIPv6TestRun {
 			ginkgo.Skip(fmt.Sprintf("Test run IP family (is IPv6: %v) doesn't match other networks IP family (is IPv6: %v)", isIPv6TestRun, isOtherNetworkIPv6))
@@ -2925,15 +2928,15 @@ spec:
 				RequiredUDNNamespaceLabel: "",
 				"e2e-framework":           f.BaseName,
 			})
-			ginkgo.By(fmt.Sprintf("namespace is connected to CDN, create a namespace with %s primary UDN", otherNetworkAttachParms.topology))
+			ginkgo.By(fmt.Sprintf("namespace is connected to CDN, create a namespace with %s primary UDN", otherNetworkAttachParms.Topology))
 			// create primary UDN
 			nadClient, err := nadclient.NewForConfig(f.ClientConfig())
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			netConfig := newNetworkAttachmentConfig(otherNetworkAttachParms)
-			netConfig.namespace = otherNetworkNamespace.Name
+			netConfig := multihoming.NewNetworkAttachmentConfig(otherNetworkAttachParms)
+			netConfig.Namespace = otherNetworkNamespace.Name
 			_, err = nadClient.NetworkAttachmentDefinitions(otherNetworkNamespace.Name).Create(
 				context.Background(),
-				generateNAD(netConfig),
+				multihoming.GenerateNAD(netConfig),
 				metav1.CreateOptions{},
 			)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -3022,62 +3025,62 @@ spec:
 		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(targetNode, pod2Name, pod2OtherNetworkNamespace, true, []string{egressIP1.String()}))
 		framework.ExpectNoError(err, "Step 7. Check connectivity from pod connected to a different network and verify that the srcIP is the expected nodeIP, failed: %v", err)
 	},
-		ginkgo.Entry("L3 Primary UDN", networkAttachmentConfigParams{
-			name:     "l3primary",
-			topology: types.Layer3Topology,
-			cidr:     correctCIDRFamily("30.10.0.0/16", "2014:100:200::0/60"),
-			role:     "primary",
+		ginkgo.Entry("L3 Primary UDN", multihoming.NetworkAttachmentConfigParams{
+			Name:     "l3primary",
+			Topology: types.Layer3Topology,
+			Cidr:     multihoming.CorrectCIDRFamily("30.10.0.0/16", "2014:100:200::0/60"),
+			Role:     "primary",
 		}),
-		ginkgo.Entry("L2 Primary UDN", networkAttachmentConfigParams{
-			name:     "l2primary",
-			topology: types.Layer2Topology,
-			cidr:     correctCIDRFamily("10.10.0.0/16", "2014:100:200::0/60"),
-			role:     "primary",
+		ginkgo.Entry("L2 Primary UDN", multihoming.NetworkAttachmentConfigParams{
+			Name:     "l2primary",
+			Topology: types.Layer2Topology,
+			Cidr:     multihoming.CorrectCIDRFamily("10.10.0.0/16", "2014:100:200::0/60"),
+			Role:     "primary",
 		}),
 	)
 },
 	ginkgo.Entry(
 		"Cluster Default Network",
-		networkAttachmentConfigParams{
-			networkName: types.DefaultNetworkName,
-			topology:    types.Layer3Topology,
+		multihoming.NetworkAttachmentConfigParams{
+			NetworkName: types.DefaultNetworkName,
+			Topology:    types.Layer3Topology,
 		},
 	),
 	// FIXME: fix tests for CDN to specify IPv4 and IPv6 entries in-order to enable testing all IP families on dual stack clusters
 	ginkgo.Entry(
 		"Network Segmentation: IPv4 L3 role primary",
-		networkAttachmentConfigParams{
-			name:     "l3primaryv4",
-			topology: types.Layer3Topology,
-			cidr:     "10.10.0.0/16",
-			role:     "primary",
+		multihoming.NetworkAttachmentConfigParams{
+			Name:     "l3primaryv4",
+			Topology: types.Layer3Topology,
+			Cidr:     "10.10.0.0/16",
+			Role:     "primary",
 		},
 	),
 	ginkgo.Entry(
 		"Network Segmentation: IPv6 L3 role primary",
-		networkAttachmentConfigParams{
-			name:     "l3primaryv6",
-			topology: types.Layer3Topology,
-			cidr:     "2014:100:200::0/60",
-			role:     "primary",
+		multihoming.NetworkAttachmentConfigParams{
+			Name:     "l3primaryv6",
+			Topology: types.Layer3Topology,
+			Cidr:     "2014:100:200::0/60",
+			Role:     "primary",
 		},
 	),
 	ginkgo.Entry(
 		"Network Segmentation: IPv4 L2 role primary",
-		networkAttachmentConfigParams{
-			name:     "l2primary",
-			topology: types.Layer2Topology,
-			cidr:     "20.10.0.0/16",
-			role:     "primary",
+		multihoming.NetworkAttachmentConfigParams{
+			Name:     "l2primary",
+			Topology: types.Layer2Topology,
+			Cidr:     "20.10.0.0/16",
+			Role:     "primary",
 		},
 	),
 	ginkgo.Entry(
 		"Network Segmentation: IPv6 L2 role primary",
-		networkAttachmentConfigParams{
-			name:     "l2primary",
-			topology: types.Layer2Topology,
-			cidr:     "2015:100:200::0/60",
-			role:     "primary",
+		multihoming.NetworkAttachmentConfigParams{
+			Name:     "l2primary",
+			Topology: types.Layer2Topology,
+			Cidr:     "2015:100:200::0/60",
+			Role:     "primary",
 		},
 	),
 )

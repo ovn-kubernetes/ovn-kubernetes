@@ -25,6 +25,9 @@ import (
 	e2eservice "k8s.io/kubernetes/test/e2e/framework/service"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	utilnet "k8s.io/utils/net"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/inclustercommands"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/multihoming"
 )
 
 var _ = Describe("Network Segmentation: services", func() {
@@ -85,12 +88,12 @@ var _ = Describe("Network Segmentation: services", func() {
 
 			"should be reachable through their cluster IP, node port and load balancer",
 			func(
-				netConfigParams networkAttachmentConfigParams,
+				netConfigParams multihoming.NetworkAttachmentConfigParams,
 			) {
 				namespace := f.Namespace.Name
 				jig := e2eservice.NewTestJig(cs, namespace, "udn-service")
 
-				if netConfigParams.topology == "layer2" && !isInterconnectEnabled() {
+				if netConfigParams.Topology == "layer2" && !isInterconnectEnabled() {
 					const upstreamIssue = "https://github.com/ovn-org/ovn-kubernetes/issues/4703"
 					e2eskipper.Skipf(
 						"Service e2e tests for layer2 topologies are known to fail on non-IC deployments. Upstream issue: %s", upstreamIssue,
@@ -107,11 +110,11 @@ var _ = Describe("Network Segmentation: services", func() {
 				clientNode := nodes.Items[1].Name // when client runs on a different node than the server
 
 				By("Creating the attachment configuration")
-				netConfig := newNetworkAttachmentConfig(netConfigParams)
-				netConfig.namespace = f.Namespace.Name
+				netConfig := multihoming.NewNetworkAttachmentConfig(netConfigParams)
+				netConfig.Namespace = f.Namespace.Name
 				_, err = nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
 					context.Background(),
-					generateNAD(netConfig),
+					multihoming.GenerateNAD(netConfig),
 					metav1.CreateOptions{},
 				)
 				Expect(err).NotTo(HaveOccurred())
@@ -251,29 +254,29 @@ ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | 
 
 				// Make sure that restarting OVNK after applying a UDN with an affected service won't result
 				// in OVNK in CLBO state https://issues.redhat.com/browse/OCPBUGS-41499
-				if netConfigParams.topology == "layer3" { // no need to run it for layer 2 as well
+				if netConfigParams.Topology == "layer3" { // no need to run it for layer 2 as well
 					By("Restart ovnkube-node on one node and verify that the new ovnkube-node pod goes to the running state")
-					err = restartOVNKubeNodePod(cs, ovnNamespace, clientNode)
+					err = restartOVNKubeNodePod(cs, inclustercommands.OvnNamespace, clientNode)
 					Expect(err).NotTo(HaveOccurred())
 				}
 			},
 
 			Entry(
 				"L3 primary UDN, cluster-networked pods, NodePort service",
-				networkAttachmentConfigParams{
-					name:     nadName,
-					topology: "layer3",
-					cidr:     correctCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
-					role:     "primary",
+				multihoming.NetworkAttachmentConfigParams{
+					Name:     nadName,
+					Topology: "layer3",
+					Cidr:     multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					Role:     "primary",
 				},
 			),
 			Entry(
 				"L2 primary UDN, cluster-networked pods, NodePort service",
-				networkAttachmentConfigParams{
-					name:     nadName,
-					topology: "layer2",
-					cidr:     correctCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
-					role:     "primary",
+				multihoming.NetworkAttachmentConfigParams{
+					Name:     nadName,
+					Topology: "layer2",
+					Cidr:     multihoming.CorrectCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					Role:     "primary",
 				},
 			),
 		)
@@ -481,7 +484,7 @@ func checkConnectionToNodePortFromExternalContainer(f *framework.Framework, cont
 		By(msg)
 		cmd := []string{containerRuntime, "exec", containerName, "/bin/bash", "-c", fmt.Sprintf("echo hostname | nc -u -w 1 %s %d", nodeIP, nodePort)}
 		Eventually(func() (string, error) {
-			return runCommand(cmd...)
+			return inclustercommands.RunCommand(cmd...)
 		}).
 			WithTimeout(5*time.Second).
 			WithPolling(200*time.Millisecond).
@@ -499,7 +502,7 @@ func checkConnectionToLoadBalancersFromExternalContainer(f *framework.Framework,
 		By(msg)
 		cmd := []string{containerRuntime, "exec", containerName, "/bin/bash", "-c", fmt.Sprintf("echo hostname | nc -u -w 1 %s %d", lbIngress.IP, port)}
 		Eventually(func() (string, error) {
-			return runCommand(cmd...)
+			return inclustercommands.RunCommand(cmd...)
 		}).
 			// It takes some time for the container to receive the dynamic routing
 			WithTimeout(20*time.Second).
