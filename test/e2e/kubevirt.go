@@ -392,10 +392,10 @@ var _ = Describe("Kubevirt Virtual Machines", func() {
 			return nil
 		}
 
-		startNorthSouthIngressIperfTraffic = func(containerName string, addresses []string, port int32, stage string) error {
+		startNorthSouthIngressIperfTraffic = func(container infraapi.ExternalContainer, addresses []string, port int32, stage string) error {
 			GinkgoHelper()
 			execFn := func(cmd string) (string, error) {
-				return infraprovider.Get().ExecExternalContainerCommand(infraapi.ExternalContainer{Name: containerName}, []string{"bash", "-c", cmd})
+				return infraprovider.Get().ExecExternalContainerCommand(container, []string{"bash", "-c", cmd})
 			}
 			return startNorthSouthIperfTraffic(execFn, addresses, port, "ingress", stage)
 		}
@@ -408,13 +408,13 @@ var _ = Describe("Kubevirt Virtual Machines", func() {
 			return startNorthSouthIperfTraffic(execFn, addresses, port, "egress", stage)
 		}
 
-		checkNorthSouthIngressIperfTraffic = func(containerName string, addresses []string, port int32, stage string) {
+		checkNorthSouthIngressIperfTraffic = func(container infraapi.ExternalContainer, addresses []string, port int32, stage string) {
 			GinkgoHelper()
 			Expect(addresses).NotTo(BeEmpty())
 			for _, ip := range addresses {
 				iperfLogFile := fmt.Sprintf("/tmp/ingress_test_%s_%d_iperf3.log", ip, port)
 				execFn := func(cmd string) (string, error) {
-					return infraprovider.Get().ExecExternalContainerCommand(infraapi.ExternalContainer{Name: containerName}, []string{"bash", "-c", cmd})
+					return infraprovider.Get().ExecExternalContainerCommand(container, []string{"bash", "-c", cmd})
 				}
 				checkIperfTraffic(iperfLogFile, execFn, stage)
 			}
@@ -1751,23 +1751,22 @@ write_files:
 			iperfServerTestPods, err = createIperfServerPods(selectedNodes, cudn.Name, td.role, []string{})
 			Expect(err).NotTo(HaveOccurred())
 
-			network, err := infraprovider.Get().PrimaryNetwork()
-			Expect(err).ShouldNot(HaveOccurred(), "primary network must be available to attach containers")
-			if containerNetwork := containerNetwork(td); containerNetwork != network.Name() {
-				network, err = infraprovider.Get().GetNetwork(containerNetwork)
-				Expect(err).ShouldNot(HaveOccurred(), "must to get alternative network")
+			var externalContainer infraapi.ExternalContainer
+			if td.role == udnv1.NetworkRolePrimary {
+				primaryProviderNetwork, err := infraprovider.Get().PrimaryNetwork()
+				Expect(err).ShouldNot(HaveOccurred(), "primary network must be available to attach containers")
+				externalContainerPort := infraprovider.Get().GetExternalContainerPort()
+				externalContainerName := namespace + "-iperf"
+				externalContainerSpec := infraapi.ExternalContainer{
+					Name:    externalContainerName,
+					Image:   images.IPerf3(),
+					Network: primaryProviderNetwork,
+					Args:    []string{"sleep infinity"},
+					ExtPort: externalContainerPort,
+				}
+				externalContainer, err = providerCtx.CreateExternalContainer(externalContainerSpec)
+				Expect(err).ShouldNot(HaveOccurred(), "creation of external container is test dependency")
 			}
-			externalContainerPort := infraprovider.Get().GetExternalContainerPort()
-			externalContainerName := namespace + "-iperf"
-			externalContainerSpec := infraapi.ExternalContainer{
-				Name:    externalContainerName,
-				Image:   images.IPerf3(),
-				Network: network,
-				Args:    []string{"sleep infinity"},
-				ExtPort: externalContainerPort,
-			}
-			externalContainer, err := providerCtx.CreateExternalContainer(externalContainerSpec)
-			Expect(err).ShouldNot(HaveOccurred(), "creation of external container is test dependency")
 
 			var externalContainerIPs []string
 			if externalContainer.IsIPv4() {
@@ -1859,8 +1858,8 @@ ip route add %[3]s via %[4]s
 				step = by(vmi.Name, fmt.Sprintf("Check north/south traffic before %s %s", td.resource.description, td.test.description))
 				output, err := virtClient.RunCommand(vmi, "/tmp/iperf-server.sh", time.Minute)
 				Expect(err).NotTo(HaveOccurred(), step+": "+output)
-				Expect(startNorthSouthIngressIperfTraffic(externalContainerName, serverIPs, serverPort, step)).To(Succeed())
-				checkNorthSouthIngressIperfTraffic(externalContainerName, serverIPs, serverPort, step)
+				Expect(startNorthSouthIngressIperfTraffic(externalContainer, serverIPs, serverPort, step)).To(Succeed())
+				checkNorthSouthIngressIperfTraffic(externalContainer, serverIPs, serverPort, step)
 				checkNorthSouthEgressICMPTraffic(vmi, externalContainerIPs, step)
 				if td.ingress == "routed" {
 					_, err := infraprovider.Get().ExecExternalContainerCommand(externalContainer, []string{"bash", "-c", iperfServerScript})
@@ -1898,13 +1897,13 @@ ip route add %[3]s via %[4]s
 				if td.role == udnv1.NetworkRolePrimary {
 					output, err := virtClient.RunCommand(vmi, "/tmp/iperf-server.sh &", time.Minute)
 					Expect(err).NotTo(HaveOccurred(), step+": "+output)
-					Expect(startNorthSouthIngressIperfTraffic(externalContainerName, serverIPs, serverPort, step)).To(Succeed())
+					Expect(startNorthSouthIngressIperfTraffic(externalContainer, serverIPs, serverPort, step)).To(Succeed())
 				}
 			}
 			checkEastWestIperfTraffic(vmi, testPodsIPs, step)
 			if td.role == udnv1.NetworkRolePrimary {
 				step = by(vmi.Name, fmt.Sprintf("Check north/south traffic after %s %s", td.resource.description, td.test.description))
-				checkNorthSouthIngressIperfTraffic(externalContainerName, serverIPs, serverPort, step)
+				checkNorthSouthIngressIperfTraffic(externalContainer, serverIPs, serverPort, step)
 				checkNorthSouthEgressICMPTraffic(vmi, externalContainerIPs, step)
 				if td.ingress == "routed" {
 					checkNorthSouthEgressIperfTraffic(vmi, externalContainerIPs, iperf3DefaultPort, step)
