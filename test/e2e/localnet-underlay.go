@@ -86,7 +86,7 @@ func teardownUnderlay(ovsPods []v1.Pod, bridgeName string) error {
 
 func ovsPods(clientSet clientset.Interface) []v1.Pod {
 	const (
-		ovsNodeLabel = "app=ovs-node"
+		ovsNodeLabel = "app=ovnkube-node"
 	)
 	pods, err := clientSet.CoreV1().Pods(deploymentconfig.Get().OVNKubernetesNamespace()).List(
 		context.Background(),
