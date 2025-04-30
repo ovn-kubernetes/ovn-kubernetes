@@ -322,7 +322,7 @@ $ cd ../dist/images/
 $ make fedora-image
 
 $ cd ../../contrib/
-$ KIND_IPV4_SUPPORT=false KIND_IPV6_SUPPORT=true ./kind.sh
+$ PLATFORM_IPV4_SUPPORT=false PLATFORM_IPV6_SUPPORT=true ./kind.sh
 ```
 
 Once `kind.sh` completes, setup kube config file:
@@ -426,7 +426,7 @@ $ cd ../dist/images/
 $ make fedora-image
 
 $ cd ../../contrib/
-$ KIND_IPV4_SUPPORT=true KIND_IPV6_SUPPORT=true K8S_VERSION=v1.32.3 ./kind.sh
+$ PLATFORM_IPV4_SUPPORT=true PLATFORM_IPV6_SUPPORT=true K8S_VERSION=v1.32.3 ./kind.sh
 ```
 
 Once `kind.sh` completes, setup kube config file:

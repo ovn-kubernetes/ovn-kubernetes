@@ -9,6 +9,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -26,15 +27,14 @@ var _ = Describe("Network Segmentation: Localnet", func() {
 
 	It("using ClusterUserDefinedNetwork CR, pods in different namespaces, should communicate over localnet topology", func() {
 		const (
-			vlan               = 200
-			testPort           = 9000
-			subnetIPv4         = "192.168.100.0/24"
-			subnetIPv6         = "2001:dbb::/64"
-			excludeSubnetIPv4  = "192.168.100.0/29"
-			excludeSubnetIPv6  = "2001:dbb::/120"
-			secondaryIfaceName = "eth1"
-			ovsBrName          = "ovsbr-eth1"
+			vlan              = 200
+			testPort          = 9000
+			subnetIPv4        = "192.168.100.0/24"
+			subnetIPv6        = "2001:dbb::/64"
+			excludeSubnetIPv4 = "192.168.100.0/29"
+			excludeSubnetIPv6 = "2001:dbb::/120"
 		)
+		ovsBrName := "ovsbr-" + deploymentconfig.Get().SecondaryInterfaceName()
 		// use unique names to avoid conflicts with tests running in parallel
 		nsBlue := uniqueMetaName("blue")
 		nsRed := uniqueMetaName("red")
@@ -49,7 +49,7 @@ var _ = Describe("Network Segmentation: Localnet", func() {
 			Expect(teardownUnderlay(ovsPods, ovsBrName)).To(Succeed())
 		})
 		c := networkAttachmentConfig{networkAttachmentConfigParams: networkAttachmentConfigParams{networkName: physicalNetworkName, vlanID: vlan}}
-		Expect(setupUnderlay(ovsPods, ovsBrName, secondaryIfaceName, c)).To(Succeed())
+		Expect(setupUnderlay(ovsPods, ovsBrName, deploymentconfig.Get().SecondaryInterfaceName(), c)).To(Succeed())
 
 		By("create test namespaces")
 		_, err := f.ClientSet.CoreV1().Namespaces().Create(context.Background(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: nsRed}}, metav1.CreateOptions{})

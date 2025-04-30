@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math/big"
-	"math/rand"
 	"net"
 	"os"
 	"path"
@@ -16,6 +15,11 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
+	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -39,10 +43,7 @@ var _ = Describe("Node IP and MAC address migration", func() {
 		pollingInterval            = 10
 		settleTimeout              = 10
 		egressIPYaml               = "egressip.yaml"
-		externalContainerImage     = "registry.k8s.io/e2e-test-images/agnhost:2.26"
-		ciNetworkName              = "kind"
 		externalContainerName      = "ip-migration-external"
-		externalContainerPort      = "80"
 		externalContainerEndpoint  = "/clientip"
 		egressIPYamlTemplate       = `apiVersion: k8s.ovn.org/v1
 kind: EgressIP
@@ -78,25 +79,21 @@ spec:
 		egressIP               string
 		assignedNodePort       int32
 		ovnkPod                v1.Pod
-
-		podLabels = map[string]string{
+		f                      = wrappedTestFramework(namespacePrefix)
+		providerCtx            infraapi.Context
+		externalContainer      infraapi.ExternalContainer
+		podLabels              = map[string]string{
 			"app": "ip-migration-test",
 		}
-		podCommand               = []string{"/bin/bash", "-c", "/agnhost netexec --http-port 8000"}
-		externalContainerCommand = []string{"netexec", "--http-port=" + externalContainerPort}
-
+		podCommand                = []string{"/bin/bash", "-c", "/agnhost netexec --http-port 8000"}
 		updateKubeletIPAddressMsg = map[bool]string{
 			true:  "update kubelet first, the IP address later",
 			false: "update the IP address first, kubelet later",
 		}
-
-		f = wrappedTestFramework(namespacePrefix)
-
-		udpPort  = int32(rand.Intn(1000) + 10000)
-		udpPortS = fmt.Sprintf("%d", udpPort)
 	)
 
 	BeforeEach(func() {
+		providerCtx = infraprovider.Get().NewTestContext()
 		By("Creating the temp directory")
 		var err error
 		tmpDirIPMigration, err = os.MkdirTemp("", "e2e")
@@ -129,14 +126,17 @@ spec:
 
 		By("Creating a cluster external container")
 		externalContainerIPs = make(map[int]string)
-		externalContainerIPs[4], externalContainerIPs[6] = createClusterExternalContainer(externalContainerName,
-			externalContainerImage, []string{"--network", ciNetworkName, "-P"}, externalContainerCommand)
+		primaryProviderNetwork, err := infraprovider.Get().PrimaryNetwork()
+		framework.ExpectNoError(err, "failed to get primary network")
+		externalContainerPort := infraprovider.Get().GetExternalContainerPort()
+		externalContainer = infraapi.ExternalContainer{Name: externalContainerName, Image: images.AgnHost(), Network: primaryProviderNetwork,
+			Args: getAgnHostHTTPPortBindCMDArgs(externalContainerPort), ExtPort: externalContainerPort}
+		externalContainer, err = providerCtx.CreateExternalContainer(externalContainer)
+		framework.ExpectNoError(err, "failed to create external container")
+		externalContainerIPs[4], externalContainerIPs[6] = externalContainer.GetIPv4(), externalContainer.GetIPv6()
 	})
 
 	AfterEach(func() {
-		By("Removing the external container")
-		deleteClusterExternalContainer(externalContainerName)
-
 		By("Removing the temp directory")
 		Expect(os.RemoveAll(tmpDirIPMigration)).To(Succeed())
 	})
@@ -202,13 +202,16 @@ spec:
 				}, pollingTimeout, pollingInterval).Should(BeTrue())
 
 				By(fmt.Sprintf("Finding worker node %s's IPv%d migration IP address", workerNode.Name, ipAddrFamily))
-				// Pick something at the end of the range to avoid conflicts with the kind / docker network setup.
+				// Pick something at the end of the range to avoid conflicts with existing allocated IPs.
 				// Also exclude the current node IPs and the egressIP (if already selected).
 				var err error
+				workerNode, err := f.ClientSet.CoreV1().Nodes().Get(context.Background(), workerNode.Name, metav1.GetOptions{})
+				framework.ExpectNoError(err, "Node %s must be available", workerNode.Name)
 				migrationWorkerNodeIP, err = findLastFreeSubnetIP(
-					externalContainerName,
-					externalContainerIPs[ipAddrFamily],
+					workerNode,
+					workerNode.Name,
 					[]string{workerNodeIPs[ipAddrFamily], secondaryWorkerNodeIPs[ipAddrFamily], egressIP},
+					ipAddrFamily,
 				)
 				framework.Logf("New worker node IP will be %s", migrationWorkerNodeIP)
 				Expect(err).NotTo(HaveOccurred())
@@ -222,13 +225,16 @@ spec:
 						true)
 					Expect(err).NotTo(HaveOccurred())
 
-					ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+					ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(deploymentconfig.Get().OVNKubernetesNamespace()).List(context.TODO(), metav1.ListOptions{
 						LabelSelector: "app=ovnkube-node",
 						FieldSelector: "spec.nodeName=" + workerNode.Name,
 					})
 					Expect(err).NotTo(HaveOccurred())
 					Expect(ovnkubeNodePods.Items).To(HaveLen(1))
 					ovnkubePodWorkerNode := ovnkubeNodePods.Items[0]
+
+					err = e2epod.WaitTimeoutForPodReadyInNamespace(context.TODO(), f.ClientSet, ovnkubePodWorkerNode.GetName(), ovnkubePodWorkerNode.GetNamespace(), 200*time.Second)
+					framework.ExpectNoError(err, "failed waiting for ovnkube to be ready")
 
 					Eventually(func() bool {
 						By("waiting for the ovn-encap-ip to be reconfigured")
@@ -259,14 +265,15 @@ spec:
 							By("Setting rollbackNeeded to true")
 							rollbackNeeded = true
 
-							ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+							ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(deploymentconfig.Get().OVNKubernetesNamespace()).List(context.TODO(), metav1.ListOptions{
 								LabelSelector: "app=ovnkube-node",
 								FieldSelector: "spec.nodeName=" + workerNode.Name,
 							})
 							Expect(err).NotTo(HaveOccurred())
 							Expect(ovnkubeNodePods.Items).To(HaveLen(1))
 							ovnkubePodWorkerNode := ovnkubeNodePods.Items[0]
-
+							err = e2epod.WaitTimeoutForPodReadyInNamespace(context.TODO(), f.ClientSet, ovnkubePodWorkerNode.GetName(), ovnkubePodWorkerNode.GetNamespace(), 200*time.Second)
+							framework.ExpectNoError(err, "failed waiting for ovnkube to be ready")
 							Eventually(func() bool {
 								By("waiting for the ovn-encap-ip to be reconfigured")
 								return isOVNEncapIPReady(workerNode.Name, migrationWorkerNodeIP, ovnkubePodWorkerNode.Name)
@@ -301,11 +308,13 @@ spec:
 					// the kind subnet is /16 or /64 so the following should be fine.
 					// pick something at the end of the range to avoid conflicts with the kind / docker network setup.
 					// Exclude current node IPs and the migrationWorkerNodeIP (if already selected).
-					var err error
+					workerNodeObj, err := f.ClientSet.CoreV1().Nodes().Get(context.Background(), workerNode.Name, metav1.GetOptions{})
+					framework.ExpectNoError(err, "Node %s must be available", workerNode.Name)
 					egressIP, err = findLastFreeSubnetIP(
-						externalContainerName,
-						externalContainerIPs[ipAddrFamily],
+						workerNodeObj,
+						workerNode.Name,
 						[]string{workerNodeIPs[ipAddrFamily], secondaryWorkerNodeIPs[ipAddrFamily], migrationWorkerNodeIP},
+						ipAddrFamily,
 					)
 					Expect(err).NotTo(HaveOccurred())
 					framework.Logf("EgressIP will be %s", egressIP)
@@ -326,9 +335,8 @@ spec:
 					}
 					Eventually(func() bool {
 						By("Checking the egress IP")
-						res, err := targetExternalContainerConnectToEndpoint(externalContainerName,
-							externalContainerIPs[ipAddrFamily], externalContainerPort, externalContainerEndpoint,
-							podWorkerNode.Name, f.Namespace.Name, expectedAnswer)
+						res, err := targetExternalContainerConnectToEndpoint(externalContainerIPs[ipAddrFamily],
+							externalContainer.ExtPort, externalContainerEndpoint, podWorkerNode.Name, f.Namespace.Name, expectedAnswer)
 						if err != nil {
 							framework.Logf("Current verification failed with %s", err)
 							return false
@@ -359,13 +367,15 @@ spec:
 							By("Setting rollbackNeeded to true")
 							rollbackNeeded = true
 
-							ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+							ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(deploymentconfig.Get().OVNKubernetesNamespace()).List(context.TODO(), metav1.ListOptions{
 								LabelSelector: "app=ovnkube-node",
 								FieldSelector: "spec.nodeName=" + workerNode.Name,
 							})
 							Expect(err).NotTo(HaveOccurred())
 							Expect(ovnkubeNodePods.Items).To(HaveLen(1))
 							ovnkubePodWorkerNode := ovnkubeNodePods.Items[0]
+							err = e2epod.WaitTimeoutForPodReadyInNamespace(context.TODO(), f.ClientSet, ovnkubePodWorkerNode.GetName(), ovnkubePodWorkerNode.GetNamespace(), 200*time.Second)
+							framework.ExpectNoError(err, "failed waiting for ovnkube to be ready")
 
 							Eventually(func() bool {
 								By("waiting for the ovn-encap-ip to be reconfigured")
@@ -382,9 +392,8 @@ spec:
 							}
 							Eventually(func() bool {
 								By("Checking the egress IP")
-								res, err := targetExternalContainerConnectToEndpoint(externalContainerName,
-									externalContainerIPs[ipAddrFamily], externalContainerPort, externalContainerEndpoint,
-									podWorkerNode.Name, f.Namespace.Name, expectedAnswer)
+								res, err := targetExternalContainerConnectToEndpoint(externalContainerIPs[ipAddrFamily],
+									externalContainer.ExtPort, externalContainerEndpoint, podWorkerNode.Name, f.Namespace.Name, expectedAnswer)
 								if err != nil {
 									framework.Logf("Current verification failed with %s", err)
 									return false
@@ -412,8 +421,10 @@ spec:
 				BeforeEach(func() {
 					By("creating a host-network backend pod")
 					jig := e2eservice.NewTestJig(f.ClientSet, f.Namespace.Name, serviceName)
-					serverPod := e2epod.NewAgnhostPod(f.Namespace.Name, podName, nil, nil, []v1.ContainerPort{{ContainerPort: udpPort}, {ContainerPort: udpPort, Protocol: "UDP"}},
-						"netexec", "--udp-port="+udpPortS)
+					udpPort := infraprovider.Get().GetK8HostPort()
+					serverPod := e2epod.NewAgnhostPod(f.Namespace.Name, podName, nil, nil,
+						[]v1.ContainerPort{{ContainerPort: int32(udpPort)}, {ContainerPort: int32(udpPort), Protocol: "UDP"}},
+						"netexec", fmt.Sprintf("--udp-port=%d", udpPort))
 					serverPod.Labels = jig.Labels
 					serverPod.Spec.HostNetwork = true
 					serverPod.Spec.NodeName = workerNode.Name
@@ -438,7 +449,7 @@ spec:
 					assignedNodePort = svc.Spec.Ports[0].NodePort
 
 					// find the ovn-kube node pod on this node
-					pods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+					pods, err := f.ClientSet.CoreV1().Pods(deploymentconfig.Get().OVNKubernetesNamespace()).List(context.TODO(), metav1.ListOptions{
 						LabelSelector: "app=ovnkube-node",
 						FieldSelector: "spec.nodeName=" + workerNode.Name,
 					})
@@ -446,7 +457,7 @@ spec:
 					Expect(pods.Items).To(HaveLen(1))
 					ovnkPod = pods.Items[0]
 
-					cmd := "ovs-ofctl dump-flows breth0 table=0"
+					cmd := fmt.Sprintf("ovs-ofctl dump-flows %s table=0", deploymentconfig.Get().ExternalBridgeName())
 					err = wait.PollImmediate(framework.Poll, 30*time.Second, func() (bool, error) {
 						stdout, err := e2epodoutput.RunHostCmdWithRetries(ovnkPod.Namespace, ovnkPod.Name, cmd, framework.Poll, 30*time.Second)
 						if err != nil {
@@ -488,13 +499,15 @@ spec:
 							By("Setting rollbackNeeded to true")
 							rollbackNeeded = true
 
-							ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+							ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(deploymentconfig.Get().OVNKubernetesNamespace()).List(context.TODO(), metav1.ListOptions{
 								LabelSelector: "app=ovnkube-node",
 								FieldSelector: "spec.nodeName=" + workerNode.Name,
 							})
 							Expect(err).NotTo(HaveOccurred())
 							Expect(ovnkubeNodePods.Items).To(HaveLen(1))
 							ovnkubePodWorkerNode := ovnkubeNodePods.Items[0]
+							err = e2epod.WaitTimeoutForPodReadyInNamespace(context.TODO(), f.ClientSet, ovnkubePodWorkerNode.GetName(), ovnkubePodWorkerNode.GetNamespace(), 200*time.Second)
+							framework.ExpectNoError(err, "failed waiting for ovnkube to be ready")
 
 							Eventually(func() bool {
 								By("waiting for the ovn-encap-ip to be reconfigured")
@@ -505,7 +518,7 @@ spec:
 							time.Sleep(time.Duration(settleTimeout) * time.Second)
 
 							By(fmt.Sprintf("Checking nodeport flows have been updated to use new IP: %s", migrationWorkerNodeIP))
-							cmd := "ovs-ofctl dump-flows breth0 table=0"
+							cmd := fmt.Sprintf("ovs-ofctl dump-flows %s table=0", deploymentconfig.Get().ExternalBridgeName())
 							err = wait.PollImmediate(framework.Poll, 30*time.Second, func() (bool, error) {
 								stdout, err := e2epodoutput.RunHostCmdWithRetries(ovnkPod.Namespace, ovnkPod.Name, cmd, framework.Poll, 30*time.Second)
 								if err != nil {
@@ -522,8 +535,7 @@ spec:
 								}
 								// Due to potential k8s bug described here: https://github.com/ovn-org/ovn-kubernetes/issues/4073
 								// We may need to restart kubelet for the backend pod to update its host networked IP address
-								restartCmd := []string{"docker", "exec", workerNode.Name, "systemctl", "restart", "kubelet"}
-								_, restartErr := runCommand(restartCmd...)
+								_, restartErr := infraprovider.Get().ExecK8NodeCommand(workerNode.Name, []string{"systemctl", "restart", "kubelet"})
 								framework.ExpectNoError(restartErr)
 								return false, nil
 							})
@@ -537,7 +549,7 @@ spec:
 	When("when MAC address changes", func() {
 		BeforeEach(func() {
 			By("Storing original MAC")
-			ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+			ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods(deploymentconfig.Get().OVNKubernetesNamespace()).List(context.TODO(), metav1.ListOptions{
 				LabelSelector: "app=ovnkube-node",
 				FieldSelector: "spec.nodeName=" + workerNode.Name,
 			})
@@ -570,7 +582,7 @@ spec:
 							Name:       serviceName,
 							Protocol:   v1.ProtocolUDP,
 							Port:       80,
-							TargetPort: intstr.FromInt(int(udpPort)),
+							TargetPort: intstr.FromInt(8080),
 						},
 					}
 					s.Spec.Type = v1.ServiceTypeNodePort
@@ -619,7 +631,7 @@ func checkFlowsForMACPeriodically(ovnkPod v1.Pod, addr net.HardwareAddr, duratio
 }
 
 func checkFlowsForMAC(ovnkPod v1.Pod, mac net.HardwareAddr) error {
-	cmd := "ovs-ofctl dump-flows breth0"
+	cmd := fmt.Sprintf("ovs-ofctl dump-flows %s", deploymentconfig.Get().ExternalBridgeName())
 	flowOutput := e2epodoutput.RunHostCmdOrDie(ovnkPod.Namespace, ovnkPod.Name, cmd)
 	lines := strings.Split(flowOutput, "\n")
 	for _, line := range lines {
@@ -637,16 +649,17 @@ func checkFlowsForMAC(ovnkPod v1.Pod, mac net.HardwareAddr) error {
 }
 
 func setMACAddress(ovnkubePod v1.Pod, mac string) error {
-	cmd := []string{"kubectl", "-n", ovnkubePod.Namespace, "exec", ovnkubePod.Name, "-c", "ovn-controller",
-		"--", "ovs-vsctl", "set", "bridge", "breth0", fmt.Sprintf("other-config:hwaddr=%s", mac)}
-	_, err := runCommand(cmd...)
-	return err
+	cmd := fmt.Sprintf("ovs-vsctl set bridge %s other-config:hwaddr=%s", deploymentconfig.Get().ExternalBridgeName(), mac)
+	_, err := e2epodoutput.RunHostCmd(ovnkubePod.Namespace, ovnkubePod.Name, cmd)
+	if err != nil {
+		return fmt.Errorf("failed to set MAC address on ovs bridge: %v", err)
+	}
+	return nil
 }
 
 func getMACAddress(ovnkubePod v1.Pod) (net.HardwareAddr, error) {
-	cmd := []string{"kubectl", "-n", ovnkubePod.Namespace, "exec", ovnkubePod.Name, "-c", "ovn-controller",
-		"--", "ip", "link", "show", "breth0"}
-	output, err := runCommand(cmd...)
+	cmd := fmt.Sprintf("ip link show %s", deploymentconfig.Get().ExternalBridgeName())
+	output, err := e2epodoutput.RunHostCmd(ovnkubePod.Namespace, ovnkubePod.Name, cmd)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ip link output: %w", err)
 	}
@@ -675,14 +688,13 @@ func getNodeInternalAddresses(node *v1.Node) (string, string) {
 	return v4Addr, v6Addr
 }
 
-// findIpAddressMaskOnHost finds the string "<IP address>/<mask>" and interface name on container <containerName> for
-// nodeIP.
-func findIPAddressMaskInterfaceOnHost(containerName, containerIP string) (net.IPNet, string, error) {
-	ipAddressCmdOutput, err := runCommand("docker", "exec", containerName, "ip", "-o", "address")
+// findIPAddressMaskInterfaceOnNode finds the string "<IP address>/<mask>" and interface name on node
+func findIPAddressMaskInterfaceOnNode(nodeName, ip string) (net.IPNet, string, error) {
+	ipAddressCmdOutput, err := infraprovider.Get().ExecK8NodeCommand(nodeName, []string{"ip", "-o", "address"})
 	if err != nil {
 		return net.IPNet{}, "", err
 	}
-	re, err := regexp.Compile(fmt.Sprintf("%s/[0-9]{1,3}", containerIP))
+	re, err := regexp.Compile(fmt.Sprintf("%s/[0-9]{1,3}", ip))
 	if err != nil {
 		return net.IPNet{}, "", err
 	}
@@ -701,12 +713,11 @@ func findIPAddressMaskInterfaceOnHost(containerName, containerIP string) (net.IP
 	}
 	if ipAddressMask == "" {
 		return net.IPNet{}, "", fmt.Errorf("IP address and mask were not found via `ip address` for node %s with IP %s",
-			containerName,
-			containerIP)
+			nodeName, ip)
 	}
 	if iface == "" {
 		return net.IPNet{}, "", fmt.Errorf("interface not found for node %s with IP %s",
-			containerName, containerIP)
+			nodeName, ip)
 	}
 	parsedNetIP, parsedNetCIDR, err := net.ParseCIDR(ipAddressMask)
 	if err != nil {
@@ -750,18 +761,30 @@ func intToIP(i *big.Int) net.IP {
 	return net.IP(i.Bytes())
 }
 
-// findLastFreeSubnetIP will find the last available IP on the container's subnet. It'll try the last 20 IPs in the
+// findLastFreeSubnetIP will find the last available IP on the nodes's primary interface subnet. It'll try the last 20 IPs in the
 // subnet, that should be good enough.
-func findLastFreeSubnetIP(containerName, containerIP string, excludedIPs []string) (string, error) {
-	parsedNetIPMask, _, err := findIPAddressMaskInterfaceOnHost(containerName, containerIP)
+func findLastFreeSubnetIP(node *v1.Node, nodeName string, excludedIPs []string, ipFamily int) (string, error) {
+	nodeIPConfig, err := util.ParseNodePrimaryIfAddr(node)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to get node %s primary interface address information: %v", nodeName, err)
 	}
+	var ipNet net.IPNet
+	if ipFamily == 6 {
+		if nodeIPConfig.V6.Net == nil {
+			return "", fmt.Errorf("ipv6 is required, but wasn't found")
+		}
+		ipNet = net.IPNet{IP: nodeIPConfig.V6.IP, Mask: nodeIPConfig.V6.Net.Mask}
 
+	} else {
+		if nodeIPConfig.V4.Net == nil {
+			return "", fmt.Errorf("ipv4 is required, but wasn't found")
+		}
+		ipNet = net.IPNet{IP: nodeIPConfig.V4.IP, Mask: nodeIPConfig.V4.Net.Mask}
+	}
 	// We are using 172.18.0.0/16 for the docker subnet. We should be able to find something that we need here and
 	// that's not assigned.
-	broadcastIP := subnetBroadcastIP(net.IPNet{IP: parsedNetIPMask.IP, Mask: parsedNetIPMask.Mask})
-	decrementedIPNet := net.IPNet{IP: broadcastIP, Mask: parsedNetIPMask.Mask}
+	broadcastIP := subnetBroadcastIP(ipNet)
+	decrementedIPNet := net.IPNet{IP: broadcastIP, Mask: ipNet.Mask}
 
 	var isReachable bool
 outer:
@@ -775,7 +798,7 @@ outer:
 				continue outer
 			}
 		}
-		isReachable, err = isAddressReachableFromContainer(containerName, decrementedIPNet.IP.String())
+		isReachable, err = isAddressReachableFromNode(nodeName, decrementedIPNet.IP.String())
 		if err != nil {
 			return "", err
 		}
@@ -783,7 +806,7 @@ outer:
 			return decrementedIPNet.IP.String(), nil
 		}
 	}
-	return "", fmt.Errorf("unexpected error while trying to find the last free subnet IP %s", containerIP)
+	return "", fmt.Errorf("unexpected error while trying to find the last free subnet IP within subnet %s", ipNet.String())
 }
 
 // subnetBroadcastIP returns the IP network's broadcast IP.
@@ -816,19 +839,17 @@ func subnetBroadcastIP(ipnet net.IPNet) net.IP {
 	return net.IP(byteTargetIP)
 }
 
-// isAddressReachableFromContainer will curl towards targetIP. If the curl succeeds, return true. Otherwise, check the
+// isAddressReachableFromNode will curl towards targetIP. If the curl succeeds, return true. Otherwise, check the
 // node's neighbor table. If a neighbor entry for targetIP exists, return true, false otherwise. We use curl because
 // it's installed by default in the ubuntu kind containers; ping/arping are unfortunately not available.
-func isAddressReachableFromContainer(containerName, targetIP string) (bool, error) {
+func isAddressReachableFromNode(nodeName, targetIP string) (bool, error) {
 	// There's no ping/arping inside the default containers, so just use curl instead. It's good enough to trigger
 	// ARP resolution.
-	cmd := []string{"docker", "exec", containerName}
 	if utilnet.IsIPv6String(targetIP) {
 		targetIP = fmt.Sprintf("[%s]", targetIP)
 	}
 	curlCommand := strings.Split(fmt.Sprintf("curl -g -q -s http://%s:%d", targetIP, 80), " ")
-	cmd = append(cmd, curlCommand...)
-	_, err := runCommand(cmd...)
+	_, err := infraprovider.Get().ExecK8NodeCommand(nodeName, curlCommand)
 	// If this curl works, then the node is logically reachable, shortcut.
 	if err == nil {
 		return true, nil
@@ -836,7 +857,7 @@ func isAddressReachableFromContainer(containerName, targetIP string) (bool, erro
 
 	// Now, check the neighbor table and if the entry does not have REACHABLE or STALE or PERMANENT, then this must be
 	// an unreachable entry (could be FAILED or INCOMPLETE).
-	ipNeighborOutput, err := runCommand("docker", "exec", containerName, "ip", "neigh")
+	ipNeighborOutput, err := infraprovider.Get().ExecK8NodeCommand(nodeName, []string{"ip", "neigh"})
 	if err != nil {
 		return false, err
 	}
@@ -861,14 +882,12 @@ func isAddressReachableFromContainer(containerName, targetIP string) (bool, erro
 
 func isOVNEncapIPReady(nodeName, nodeIP, ovnkubePodName string) bool {
 	framework.Logf("Verifying ovn-encap-ip for node %s", nodeName)
-	cmd := []string{"kubectl", "-n", ovnNamespace, "exec", ovnkubePodName, "-c", "ovn-controller",
-		"--", "ovs-vsctl", "get", "open_vswitch", ".", "external-ids:ovn-encap-ip"}
-	output, err := runCommand(cmd...)
+	cmd := "ovs-vsctl get open_vswitch . external-ids:ovn-encap-ip"
+	output, err := e2epodoutput.RunHostCmdWithRetries(deploymentconfig.Get().OVNKubernetesNamespace(), ovnkubePodName, cmd, 10*time.Millisecond, 10*time.Second)
 	if err != nil {
-		framework.Logf("Failed to get ovn-encap-ip: %q", err)
+		framework.Logf("when running command on pod %s: %v", ovnkubePodName, err)
 		return false
 	}
-
 	output = strings.Replace(output, "\"", "", -1)
 	output = strings.Replace(output, "\n", "", -1)
 
@@ -890,13 +909,14 @@ func migrateWorkerNodeIP(nodeName, fromIP, targetIP string, invertOrder bool) (e
 		if err != nil {
 			for _, cmd := range cleanupCommands {
 				framework.Logf("Attempting cleanup with command %q", cmd)
-				runCommand(cmd...)
+				output, err := infraprovider.Get().ExecK8NodeCommand(nodeName, cmd)
+				framework.ExpectNoError(err, "failed to cleanup node IP migration on node %s: %s", nodeName, output)
 			}
 		}
 	}()
 
 	framework.Logf("Finding fromIP %s on host %s", fromIP, nodeName)
-	parsedNetIPMask, iface, err := findIPAddressMaskInterfaceOnHost(nodeName, fromIP)
+	parsedNetIPMask, iface, err := findIPAddressMaskInterfaceOnNode(nodeName, fromIP)
 	if err != nil {
 		return err
 	}
@@ -912,22 +932,20 @@ func migrateWorkerNodeIP(nodeName, fromIP, targetIP string, invertOrder bool) (e
 		newIPMask := targetIP + "/" + mask
 		framework.Logf("Adding new IP address %s to node %s", newIPMask, nodeName)
 		// Add cleanup command.
-		cleanupCmd := []string{"docker", "exec", nodeName, "ip", "address", "del", newIPMask, "dev", iface}
+		cleanupCmd := []string{"ip", "address", "del", newIPMask, "dev", iface}
 		cleanupCommands = append(cleanupCommands, cleanupCmd)
 		// Run command.
-		cmd := []string{"docker", "exec", nodeName, "ip", "address", "add", newIPMask, "dev", iface}
-		_, err = runCommand(cmd...)
+		_, err = infraprovider.Get().ExecK8NodeCommand(nodeName, []string{"ip", "address", "add", newIPMask, "dev", iface})
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to add new IP %s to interface %s on node %s: %v", newIPMask, iface, nodeName, err)
 		}
 		// Delete current IP address. On rollback, first add the old IP and then delete the new one.
 		framework.Logf("Deleting current IP address %s from node %s", parsedNetIPMask.String(), nodeName)
 		// Add cleanup command.
-		cleanupCmd = []string{"docker", "exec", nodeName, "ip", "address", "add", parsedNetIPMask.String(), "dev", iface}
+		cleanupCmd = []string{"ip", "address", "add", parsedNetIPMask.String(), "dev", iface}
 		cleanupCommands = append([][]string{cleanupCmd}, cleanupCommands...)
 		// Run command.
-		cmd = []string{"docker", "exec", nodeName, "ip", "address", "del", parsedNetIPMask.String(), "dev", iface}
-		_, err = runCommand(cmd...)
+		_, err = infraprovider.Get().ExecK8NodeCommand(nodeName, []string{"ip", "address", "del", parsedNetIPMask.String(), "dev", iface})
 		if err != nil {
 			return err
 		}
@@ -938,23 +956,21 @@ func migrateWorkerNodeIP(nodeName, fromIP, targetIP string, invertOrder bool) (e
 		// Change kubeadm-flags.env IP.
 		framework.Logf("Modifying kubelet configuration for node %s", nodeName)
 		// Add cleanup commands.
-		cleanupCmd := []string{"docker", "exec", nodeName, "sed", "-i", fmt.Sprintf("s/node-ip=%s/node-ip=%s/", targetIP, fromIP),
+		cleanupCmd := []string{"sed", "-i", fmt.Sprintf("s/node-ip=%s/node-ip=%s/", targetIP, fromIP),
 			"/var/lib/kubelet/kubeadm-flags.env"}
 		cleanupCommands = append(cleanupCommands, cleanupCmd)
-		cleanupCmd = []string{"docker", "exec", nodeName, "systemctl", "restart", "kubelet"}
+		cleanupCmd = []string{"systemctl", "restart", "kubelet"}
 		cleanupCommands = append(cleanupCommands, cleanupCmd)
 		// Run command.
-		cmd := []string{"docker", "exec", nodeName, "sed", "-i", fmt.Sprintf("s/node-ip=%s/node-ip=%s/", fromIP, targetIP),
+		cmd := []string{"sed", "-i", fmt.Sprintf("s/node-ip=%s/node-ip=%s/", fromIP, targetIP),
 			"/var/lib/kubelet/kubeadm-flags.env"}
-		_, err = runCommand(cmd...)
+		_, err = infraprovider.Get().ExecK8NodeCommand(nodeName, cmd)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to change kubelet node IP config: %v", err)
 		}
-
 		// Restart kubelet.
 		framework.Logf("Restarting kubelet on node %s", nodeName)
-		cmd = []string{"docker", "exec", nodeName, "systemctl", "restart", "kubelet"}
-		_, err = runCommand(cmd...)
+		_, err = infraprovider.Get().ExecK8NodeCommand(nodeName, []string{"systemctl", "restart", "kubelet"})
 		if err != nil {
 			return err
 		}
@@ -976,9 +992,9 @@ func migrateWorkerNodeIP(nodeName, fromIP, targetIP string, invertOrder bool) (e
 
 // targetExternalContainerConnectToEndpoint targets the external test container from the specified pod and compares
 // expectedAnswer to the actual answer.
-func targetExternalContainerConnectToEndpoint(externalContainerName, externalContainerIP, externalContainerPort,
+func targetExternalContainerConnectToEndpoint(externalContainerIP string, externalContainerPort uint16,
 	externalContainerEndpoint, podName, podNamespace string, expectedAnswer string) (bool, error) {
-	containerIPAndPort := net.JoinHostPort(externalContainerIP, externalContainerPort)
+	containerIPAndPort := net.JoinHostPort(externalContainerIP, fmt.Sprintf("%d", externalContainerPort))
 	u := path.Join(containerIPAndPort, externalContainerEndpoint)
 	output, err := e2ekubectl.RunKubectl(podNamespace, "exec", podName, "--", "curl", "--max-time", "2", u)
 	if err != nil {
