@@ -320,6 +320,8 @@ ovn_nohostsubnet_label=${OVN_NOHOSTSUBNET_LABEL:-""}
 # OVN_DISABLE_REQUESTEDCHASSIS - disable requested-chassis option during pod creation
 # should be set to true when dpu nodes are in the cluster
 ovn_disable_requestedchassis=${OVN_DISABLE_REQUESTEDCHASSIS:-false}
+# OVN_ENCAP_TOS_INHERIT_ENABLE - enable ToS value inheritance for OVN encapsulation from ovn-kubernetes
+ovn_encap_tos_inherit_enable=${OVN_ENCAP_TOS_INHERIT_ENABLE:-false}
 
 # Determine the ovn rundir.
 if [[ -f /usr/bin/ovn-appctl ]]; then
@@ -2031,6 +2033,12 @@ ovnkube-controller-with-node() {
   fi
   echo "ovn_observ_enable_flag=${ovn_observ_enable_flag}"
 
+  ovn_encap_tos_inherit_enable_flag=
+  if [[ ${ovn_encap_tos_inherit_enable} == "true" ]]; then
+    ovn_encap_tos_inherit_enable_flag="--enable-ovn-encap-tos-inherit"
+  fi
+  echo "ovn_encap_tos_inherit_enable_flag=${ovn_encap_tos_inherit_enable_flag}"
+
   echo "=============== ovnkube-controller-with-node --init-ovnkube-controller-with-node=========="
   /usr/bin/ovnkube --init-ovnkube-controller ${K8S_NODE} --init-node ${K8S_NODE} \
     ${anp_enabled_flag} \
@@ -2065,6 +2073,7 @@ ovnkube-controller-with-node() {
     ${ovn_observ_enable_flag} \
     ${ovn_encap_ip_flag} \
     ${ovn_encap_port_flag} \
+    ${ovn_encap_tos_inherit_enable_flag} \
     ${ovnkube_config_duration_enable_flag} \
     ${ovnkube_enable_interconnect_flag} \
     ${ovnkube_local_cert_flags} \
@@ -2692,6 +2701,7 @@ ovn-node() {
         ${ovn_dbs} \
         ${ovn_encap_ip_flag} \
         ${ovn_encap_port_flag} \
+        ${ovn_encap_tos_inherit_enable_flag} \
         ${ovn_conntrack_zone_flag} \
         ${ovnkube_enable_interconnect_flag} \
         ${ovnkube_enable_multi_external_gateway_flag} \
