@@ -160,8 +160,8 @@ export OVN_EMPTY_LB_EVENTS=[true|false]
 export OVN_HA=[true|false]
 export OVN_DISABLE_SNAT_MULTIPLE_GWS=[true|false]
 export OVN_GATEWAY_MODE=["local"|"shared"]
-export KIND_IPV4_SUPPORT=[true|false]
-export KIND_IPV6_SUPPORT=[true|false]
+export PLATFORM_IPV4_SUPPORT=[true|false]
+export PLATFORM_IPV6_SUPPORT=[true|false]
 # not required for the OVN Kind installation script, but export this already for later
 OVN_SECOND_BRIDGE=[true|false]
 ```
@@ -181,8 +181,8 @@ export OVN_EMPTY_LB_EVENTS=true
 export OVN_HA=false
 export OVN_DISABLE_SNAT_MULTIPLE_GWS=false
 export OVN_GATEWAY_MODE="local"
-export KIND_IPV4_SUPPORT=true
-export KIND_IPV6_SUPPORT=false
+export PLATFORM_IPV4_SUPPORT=true
+export PLATFORM_IPV6_SUPPORT=false
 # not required for the OVN Kind installation script, but export this already for later
 export OVN_SECOND_BRIDGE=false
 ```
@@ -353,13 +353,13 @@ ok  	github.com/ovn-org/ovn-kubernetes/test/e2e	12.371s
 ### IPv6 tests
 
 To skip the IPv4 only tests (in a IPv6 only deployment), pass the
-`KIND_IPV6_SUPPORT=true` environmental variable to `make`:
+`PLATFORM_IPV6_SUPPORT=true` environmental variable to `make`:
 
 ```
 $ cd $GOPATH/src/github.com/ovn-org/ovn-kubernetes
 
 $ pushd test
-$ KIND_IPV6_SUPPORT=true make shard-conformance
+$ PLATFORM_IPV6_SUPPORT=true make shard-conformance
 $ popd
 ```
 

@@ -255,7 +255,7 @@ func inRange(cidr string, ip string) error {
 	return fmt.Errorf("ip [%s] is NOT in range %s", ip, cidr)
 }
 
-func connectToServer(clientPodConfig podConfiguration, serverIP string, port int, args ...string) error {
+func connectToServer(clientPodConfig podConfiguration, serverIP string, port uint16, args ...string) error {
 	target := net.JoinHostPort(serverIP, fmt.Sprintf("%d", port))
 	baseArgs := []string{
 		"exec",
@@ -629,7 +629,7 @@ func allowedTCPPortsForPolicy(allowPorts ...int) []mnpapi.MultiNetworkPolicyPort
 	return portAllowlist
 }
 
-func reachServerPodFromClient(cs clientset.Interface, serverConfig podConfiguration, clientConfig podConfiguration, serverIP string, serverPort int, args ...string) error {
+func reachServerPodFromClient(cs clientset.Interface, serverConfig podConfiguration, clientConfig podConfiguration, serverIP string, serverPort uint16, args ...string) error {
 	updatedPod, err := cs.CoreV1().Pods(serverConfig.namespace).Get(context.Background(), serverConfig.name, metav1.GetOptions{})
 	if err != nil {
 		return err

@@ -79,7 +79,7 @@ set_default_params() {
   fi
 
   # Hard code ipv4 support until IPv6 is implemented
-  export KIND_IPV4_SUPPORT=true
+  export PLATFORM_IPV4_SUPPORT=true
 
   export OVN_ENABLE_DNSNAMERESOLVER=${OVN_ENABLE_DNSNAMERESOLVER:-false}
 }
@@ -242,7 +242,7 @@ check_dependencies() {
     done
 
     # check for currently unsupported features
-    [ "${KIND_IPV6_SUPPORT}" == "true" ] && { &>1 echo "Fatal: KIND_IPV6_SUPPORT support not implemented yet"; exit 1; } ||:
+    [ "${PLATFORM_IPV6_SUPPORT}" == "true" ] && { &>1 echo "Fatal: PLATFORM_IPV6_SUPPORT support not implemented yet"; exit 1; } ||:
 }
 
 helm_prereqs() {

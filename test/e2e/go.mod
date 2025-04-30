@@ -175,7 +175,6 @@ require (
 	k8s.io/cri-client v0.32.3 // indirect
 	k8s.io/csi-translation-lib v0.32.3 // indirect
 	k8s.io/dynamic-resource-allocation v0.32.3 // indirect
-	k8s.io/klog/v2 v2.130.1 // indirect
 	k8s.io/kms v0.32.3 // indirect
 	k8s.io/kube-openapi v0.0.0-20241105132330-32ad38e42d3f // indirect
 	k8s.io/kube-scheduler v0.32.3 // indirect
@@ -201,6 +200,7 @@ require (
 	go.universe.tf/metallb v0.0.0-00010101000000-000000000000
 	google.golang.org/grpc v1.65.0
 	gopkg.in/yaml.v2 v2.4.0
+	k8s.io/klog/v2 v2.130.1
 	k8s.io/kubectl v0.32.3
 	kubevirt.io/api v1.4.0
 	sigs.k8s.io/controller-runtime v0.20.3

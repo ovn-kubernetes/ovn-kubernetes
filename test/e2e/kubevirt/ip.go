@@ -8,7 +8,7 @@ import (
 	v1 "kubevirt.io/api/core/v1"
 )
 
-func RetrieveAllGlobalAddressesFromGuest(vmi *v1.VirtualMachineInstance) ([]string, error) {
+func RetrieveAllGlobalAddressesFromGuest(cli *Client, vmi *v1.VirtualMachineInstance) ([]string, error) {
 	ifaces := []struct {
 		Name      string `json:"ifname"`
 		Addresses []struct {
@@ -19,7 +19,7 @@ func RetrieveAllGlobalAddressesFromGuest(vmi *v1.VirtualMachineInstance) ([]stri
 		} `json:"addr_info"`
 	}{}
 
-	output, err := RunCommand(vmi, "ip -j a show", 2*time.Second)
+	output, err := cli.RunCommand(vmi, "ip -j a show", 2*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("failed retrieving adresses with ip command: %s: %w", output, err)
 	}

@@ -97,6 +97,9 @@ var _ = ginkgo.Describe("e2e EgressQoS validation", func() {
 				_, err := createPod(f, srcPodName, srcNode, f.Namespace.Name, []string{}, map[string]string{"app": "test"})
 				framework.ExpectNoError(err)
 			}
+			if dst1IP == nil || *dst1IP == "" {
+				ginkgo.Skip("destination IP is not available from target. IP family may not be available")
+			}
 
 			egressQoSConfig := fmt.Sprintf(`
 apiVersion: k8s.ovn.org/v1
@@ -174,6 +177,9 @@ spec:
 	ginkgo.DescribeTable("Should validate correct DSCP value on pod labels changes",
 		func(tcpDumpTpl string, dst1IP *string, prefix1 string, dst2IP *string, prefix2 string) {
 			dscpValue := 50
+			if *dst1IP == "" || *dst2IP == "" {
+				ginkgo.Skip("destination IP(s) are not available")
+			}
 
 			// create without labels, no packets should be marked
 			pod, err := createPod(f, srcPodName, srcNode, f.Namespace.Name, []string{}, nil)

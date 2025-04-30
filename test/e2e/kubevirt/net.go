@@ -27,7 +27,7 @@ nmcli c mod %[1]s ipv4.addresses "" ipv6.addresses "" ipv4.gateway "" ipv6.gatew
 nmcli d reapply %[1]s`, iface)
 }
 
-func RetrieveCachedGatewayMAC(vmi *kubevirtv1.VirtualMachineInstance, dev, cidr string) (string, error) {
+func RetrieveCachedGatewayMAC(cli *Client, vmi *kubevirtv1.VirtualMachineInstance, dev, cidr string) (string, error) {
 	_, ipNet, err := net.ParseCIDR(cidr)
 	if err != nil {
 		return "", err
@@ -35,7 +35,7 @@ func RetrieveCachedGatewayMAC(vmi *kubevirtv1.VirtualMachineInstance, dev, cidr 
 
 	gatewayIP := util.GetNodeGatewayIfAddr(ipNet).IP.String()
 
-	output, err := RunCommand(vmi, fmt.Sprintf("ip neigh get %s dev %s", gatewayIP, dev), 2*time.Second)
+	output, err := cli.RunCommand(vmi, fmt.Sprintf("ip neigh get %s dev %s", gatewayIP, dev), 2*time.Second)
 	if err != nil {
 		return "", fmt.Errorf("%s: %v", output, err)
 	}
@@ -46,12 +46,12 @@ func RetrieveCachedGatewayMAC(vmi *kubevirtv1.VirtualMachineInstance, dev, cidr 
 	return outputSplit[4], nil
 }
 
-func RetrieveIPv6Gateways(vmi *v1.VirtualMachineInstance) ([]string, error) {
+func RetrieveIPv6Gateways(cli *Client, vmi *v1.VirtualMachineInstance) ([]string, error) {
 	routes := []struct {
 		Gateway string `json:"gateway"`
 	}{}
 
-	output, err := RunCommand(vmi, "ip -6 -j route list default", 2*time.Second)
+	output, err := cli.RunCommand(vmi, "ip -6 -j route list default", 2*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %v", output, err)
 	}
