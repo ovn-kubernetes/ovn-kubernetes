@@ -80,6 +80,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				ginkgo.By("Creating the attachment configuration")
 				netConfig := newNetworkAttachmentConfig(netConfigParams)
 				netConfig.namespace = f.Namespace.Name
+				netConfig.cidr = filterCIDRsAndJoin(cs, netConfig.cidr)
 				_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
 					context.Background(),
 					generateNAD(netConfig),
@@ -132,7 +133,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				networkAttachmentConfigParams{
 					name:     nadName,
 					topology: "layer2",
-					cidr:     correctCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 					role:     "primary",
 				},
 				*podConfig(
@@ -152,7 +153,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				networkAttachmentConfigParams{
 					name:     nadName,
 					topology: "layer3",
-					cidr:     correctCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 					role:     "primary",
 				},
 				*podConfig(
@@ -183,7 +184,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 
 				nad := networkAttachmentConfigParams{
 					topology: topology,
-					cidr:     correctCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					cidr:     filterCIDRsAndJoin(cs, joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet)),
 					// Both yellow and blue namespaces are going to served by green network.
 					// Use random suffix for the network name to avoid race between tests.
 					networkName: fmt.Sprintf("%s-%s", "green", rand.String(randomStringLength)),
@@ -195,6 +196,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				for _, namespace := range []string{namespaceYellow, namespaceBlue} {
 					ginkgo.By("creating the attachment configuration for " + netConfName + " in namespace " + namespace)
 					netConfig := newNetworkAttachmentConfig(nad)
+					netConfig.cidr = filterCIDRsAndJoin(cs, netConfig.cidr)
 					netConfig.namespace = namespace
 					netConfig.name = netConfName
 
