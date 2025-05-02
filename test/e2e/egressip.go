@@ -700,6 +700,7 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigPa
 		if len(nodes.Items) < 3 {
 			framework.Failf("Test requires >= 3 Ready nodes, but there are only %v nodes", len(nodes.Items))
 		}
+		netConfigParams.cidr = filterJoinedCIDRsAndMerge(f.ClientSet, netConfigParams.cidr)
 		if isSupported, reason := isNetworkSupported(nodes, netConfigParams); !isSupported {
 			ginkgo.Skip(reason)
 		}
@@ -3190,13 +3191,13 @@ spec:
 		ginkgo.Entry("L3 Primary UDN", networkAttachmentConfigParams{
 			name:     "l3primary",
 			topology: types.Layer3Topology,
-			cidr:     correctCIDRFamily("30.10.0.0/16", "2014:100:200::0/60"),
+			cidr:     joinCIDRs("30.10.0.0/16", "2014:100:200::0/60"),
 			role:     "primary",
 		}),
 		ginkgo.Entry("L2 Primary UDN", networkAttachmentConfigParams{
 			name:     "l2primary",
 			topology: types.Layer2Topology,
-			cidr:     correctCIDRFamily("10.10.0.0/16", "2014:100:200::0/60"),
+			cidr:     joinCIDRs("10.10.0.0/16", "2014:100:200::0/60"),
 			role:     "primary",
 		}),
 	)

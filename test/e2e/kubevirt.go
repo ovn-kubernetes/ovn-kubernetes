@@ -1591,7 +1591,7 @@ runcmd:
 					namespace:          namespace,
 					name:               "net1",
 					topology:           td.topology,
-					cidr:               correctCIDRFamily(cidrIPv4, cidrIPv6),
+					cidr:               joinCIDRs(cidrIPv4, cidrIPv6),
 					allowPersistentIPs: true,
 					role:               td.role,
 				})
@@ -1695,7 +1695,7 @@ runcmd:
 			nodeIPs := e2enode.CollectAddresses(nodes, v1.NodeInternalIP)
 
 			if td.role == "primary" {
-				if isIPv6Supported() && isInterconnectEnabled() {
+				if isIPv6Supported(fr.ClientSet) && isInterconnectEnabled() {
 					step = by(vmi.Name, fmt.Sprintf("Checking IPv6 gateway before %s %s", td.resource.description, td.test.description))
 
 					nodeRunningVMI, err := fr.ClientSet.CoreV1().Nodes().Get(context.Background(), vmi.Status.NodeName, metav1.GetOptions{})
@@ -1754,7 +1754,7 @@ runcmd:
 			}
 
 			if td.role == "primary" && td.test.description == liveMigrate.description && isInterconnectEnabled() {
-				if isIPv4Supported() {
+				if isIPv4Supported(fr.ClientSet) {
 					step = by(vmi.Name, fmt.Sprintf("Checking IPv4 gateway cached mac after %s %s", td.resource.description, td.test.description))
 					Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
 
@@ -1771,7 +1771,7 @@ runcmd:
 						WithPolling(time.Second).
 						Should(Equal(expectedGatewayMAC), step)
 				}
-				if isIPv6Supported() {
+				if isIPv6Supported(fr.ClientSet) {
 					step = by(vmi.Name, fmt.Sprintf("Checking IPv6 gateway after %s %s", td.resource.description, td.test.description))
 
 					targetNode, err := fr.ClientSet.CoreV1().Nodes().Get(context.Background(), vmi.Status.MigrationState.TargetNode, metav1.GetOptions{})
@@ -1898,10 +1898,11 @@ runcmd:
 					namespace: namespace,
 					name:      "net1",
 					topology:  "layer2",
-					cidr:      correctCIDRFamily(cidrIPv4, cidrIPv6),
+					cidr:      joinCIDRs(cidrIPv4, cidrIPv6),
 					role:      "primary",
 					mtu:       1300,
 				})
+			netConfig.cidr = filterJoinedCIDRsAndMerge(fr.ClientSet, netConfig.cidr)
 			By("Creating NetworkAttachmentDefinition")
 			Expect(crClient.Create(context.Background(), generateNAD(netConfig))).To(Succeed())
 
@@ -1942,7 +1943,7 @@ runcmd:
 				Get(context.Background(), config.Kubernetes.DNSServiceName, metav1.GetOptions{})
 			Expect(err).NotTo(HaveOccurred())
 
-			if isIPv4Supported() {
+			if isIPv4Supported(fr.ClientSet) {
 				expectedIP, err := matchIPv4StringFamily(primaryUDNNetworkStatus.IPs)
 				Expect(err).NotTo(HaveOccurred())
 
@@ -1970,7 +1971,7 @@ runcmd:
 				Expect(primaryUDNValueForDevice("GENERAL.MTU")).To(ConsistOf("1300"))
 			}
 
-			if isIPv6Supported() {
+			if isIPv6Supported(fr.ClientSet) {
 				expectedIP, err := matchIPv6StringFamily(primaryUDNNetworkStatus.IPs)
 				Expect(err).NotTo(HaveOccurred())
 				Eventually(primaryUDNValueFor).
@@ -2010,7 +2011,7 @@ runcmd:
 			vmiIPv4              = "10.128.0.100/24"
 			vmiIPv6              = "2010:100:200::100/60"
 			vmiMAC               = "0A:58:0A:80:00:64"
-			cidr                 = selectCIDRs(ipv4CIDR, ipv6CIDR)
+			cidrs                = []string{ipv4CIDR, ipv6CIDR}
 			staticIPsNetworkData = func(ips []string) (string, error) {
 				type Ethernet struct {
 					Addresses []string `json:"addresses,omitempty"`
@@ -2066,10 +2067,10 @@ chpasswd: { expire: False }
 			selectedNodes = workerNodeList.Items
 			Expect(selectedNodes).NotTo(BeEmpty())
 
-			iperfServerTestPods, err = createIperfServerPods(selectedNodes, netConfig, cidr)
+			iperfServerTestPods, err = createIperfServerPods(selectedNodes, netConfig, filterCIDRs(fr.ClientSet, cidrs...))
 			Expect(err).NotTo(HaveOccurred())
 
-			networkData, err := staticIPsNetworkData(selectCIDRs(vmiIPv4, vmiIPv6))
+			networkData, err := staticIPsNetworkData(filterCIDRs(fr.ClientSet, vmiIPv4, vmiIPv6))
 			Expect(err).NotTo(HaveOccurred())
 
 			vmi := fedoraWithTestToolingVMI(nil /*labels*/, nil /*annotations*/, nil /*nodeSelector*/, kubevirtv1.NetworkSource{
