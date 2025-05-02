@@ -1699,8 +1699,8 @@ write_files:
 			namespace = fr.Namespace.Name
 
 			networkName := ""
-			cidrs := generateL2Subnets(cidrIPv4, cidrIPv6)
-			cudn, networkName = kubevirt.GenerateCUDN(namespace, "net1", td.topology, td.role, cidrs)
+			dualCIDRs := filterDualStackCIDRs(fr.ClientSet, []udnv1.CIDR{udnv1.CIDR(cidrIPv4), udnv1.CIDR(cidrIPv6)})
+			cudn, networkName = kubevirt.GenerateCUDN(namespace, "net1", td.topology, td.role, dualCIDRs)
 
 			if td.topology == udnv1.NetworkTopologyLocalnet {
 				By("setting up the localnet underlay")
@@ -1809,7 +1809,7 @@ ip route add %[3]s via %[4]s
 
 			// expect 2 addresses on dual-stack deployments; 1 on single-stack
 			step = by(vmi.Name, "Wait for addresses at the virtual machine")
-			expectedNumberOfAddresses := len(cidrs)
+			expectedNumberOfAddresses := len(dualCIDRs)
 			expectedAddreses := virtualMachineAddressesFromStatus(vmi, expectedNumberOfAddresses)
 			expectedAddresesAtGuest := expectedAddreses
 			testPodsIPs := podsMultusNetworkIPs(iperfServerTestPods, podNetworkStatusByNetConfigPredicate(namespace, cudn.Name, strings.ToLower(string(td.role))))
@@ -1836,7 +1836,7 @@ ip route add %[3]s via %[4]s
 			checkEastWestIperfTraffic(vmi, testPodsIPs, step)
 
 			if td.role == udnv1.NetworkRolePrimary {
-				if isIPv6Supported() && isInterconnectEnabled() {
+				if isIPv6Supported(fr.ClientSet) && isInterconnectEnabled() {
 					step = by(vmi.Name, fmt.Sprintf("Checking IPv6 gateway before %s %s", td.resource.description, td.test.description))
 
 					nodeRunningVMI, err := fr.ClientSet.CoreV1().Nodes().Get(context.Background(), vmi.Status.NodeName, metav1.GetOptions{})
@@ -1906,7 +1906,7 @@ ip route add %[3]s via %[4]s
 			}
 
 			if td.role == udnv1.NetworkRolePrimary && td.test.description == liveMigrate.description && isInterconnectEnabled() {
-				if isIPv4Supported() {
+				if isIPv4Supported(fr.ClientSet) {
 					step = by(vmi.Name, fmt.Sprintf("Checking IPv4 gateway cached mac after %s %s", td.resource.description, td.test.description))
 					Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
 
@@ -1923,7 +1923,7 @@ ip route add %[3]s via %[4]s
 						WithPolling(time.Second).
 						Should(Equal(expectedGatewayMAC), step)
 				}
-				if isIPv6Supported() {
+				if isIPv6Supported(fr.ClientSet) {
 					step = by(vmi.Name, fmt.Sprintf("Checking IPv6 gateway after %s %s", td.resource.description, td.test.description))
 
 					targetNode, err := fr.ClientSet.CoreV1().Nodes().Get(context.Background(), vmi.Status.MigrationState.TargetNode, metav1.GetOptions{})
@@ -2055,8 +2055,8 @@ ip route add %[3]s via %[4]s
 			})
 			fr.Namespace = ns
 			namespace = fr.Namespace.Name
-			cidrs := generateL2Subnets(cidrIPv4, cidrIPv6)
-			cudn, _ := kubevirt.GenerateCUDN(namespace, "net1", udnv1.NetworkTopologyLayer2, udnv1.NetworkRolePrimary, cidrs)
+			dualCIDRs := filterDualStackCIDRs(fr.ClientSet, []udnv1.CIDR{udnv1.CIDR(cidrIPv4), udnv1.CIDR(cidrIPv6)})
+			cudn, _ := kubevirt.GenerateCUDN(namespace, "net1", udnv1.NetworkTopologyLayer2, udnv1.NetworkRolePrimary, dualCIDRs)
 			cudn.Spec.Network.Layer2.MTU = 1300
 			createCUDN(cudn)
 
@@ -2097,7 +2097,7 @@ ip route add %[3]s via %[4]s
 				Get(context.Background(), config.Kubernetes.DNSServiceName, metav1.GetOptions{})
 			Expect(err).NotTo(HaveOccurred())
 
-			if isIPv4Supported() {
+			if isIPv4Supported(fr.ClientSet) {
 				expectedIP, err := matchIPv4StringFamily(primaryUDNNetworkStatus.IPs)
 				Expect(err).NotTo(HaveOccurred())
 
@@ -2125,7 +2125,7 @@ ip route add %[3]s via %[4]s
 				Expect(primaryUDNValueForDevice("GENERAL.MTU")).To(ConsistOf("1300"))
 			}
 
-			if isIPv6Supported() {
+			if isIPv6Supported(fr.ClientSet) {
 				expectedIP, err := matchIPv6StringFamily(primaryUDNNetworkStatus.IPs)
 				Expect(err).NotTo(HaveOccurred())
 				Eventually(primaryUDNValueFor).
@@ -2164,7 +2164,7 @@ ip route add %[3]s via %[4]s
 			vmiIPv4              = "10.128.0.100/24"
 			vmiIPv6              = "2010:100:200::100/60"
 			vmiMAC               = "0A:58:0A:80:00:64"
-			cidr                 = selectCIDRs(ipv4CIDR, ipv6CIDR)
+			cidrs                = []string{ipv4CIDR, ipv6CIDR}
 			staticIPsNetworkData = func(ips []string) (string, error) {
 				type Ethernet struct {
 					Addresses []string `json:"addresses,omitempty"`
@@ -2213,10 +2213,10 @@ chpasswd: { expire: False }
 			selectedNodes = workerNodeList.Items
 			Expect(selectedNodes).NotTo(BeEmpty())
 
-			iperfServerTestPods, err = createIperfServerPods(selectedNodes, cudn.Name, cudn.Spec.Network.Localnet.Role, cidr)
+			iperfServerTestPods, err = createIperfServerPods(selectedNodes, cudn.Name, cudn.Spec.Network.Localnet.Role, filterCIDRs(fr.ClientSet, cidrs...))
 			Expect(err).NotTo(HaveOccurred())
 
-			networkData, err := staticIPsNetworkData(selectCIDRs(vmiIPv4, vmiIPv6))
+			networkData, err := staticIPsNetworkData(filterCIDRs(fr.ClientSet, vmiIPv4, vmiIPv6))
 			Expect(err).NotTo(HaveOccurred())
 
 			vmi := fedoraWithTestToolingVMI(nil /*labels*/, nil /*annotations*/, nil /*nodeSelector*/, kubevirtv1.NetworkSource{

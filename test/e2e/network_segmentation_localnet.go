@@ -67,9 +67,10 @@ var _ = Describe("Network Segmentation: Localnet", func() {
 			name:                cudnName,
 			physicalNetworkName: physicalNetworkName,
 			vlanID:              vlan,
-			cidr:                correctCIDRFamily(subnetIPv4, subnetIPv6),
-			excludeCIDRs:        selectCIDRs(excludeSubnetIPv4, excludeSubnetIPv6),
+			cidr:                filterCIDRsAndJoin(f.ClientSet, joinCIDRs(subnetIPv4, subnetIPv6)),
+			excludeCIDRs:        filterCIDRs(f.ClientSet, excludeSubnetIPv4, excludeSubnetIPv6),
 		}
+
 		cudnYAML := newLocalnetCUDNYaml(netConf, nsBlue, nsRed)
 		cleanup, err := createManifest("", cudnYAML)
 		Expect(err).NotTo(HaveOccurred())
