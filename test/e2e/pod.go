@@ -109,11 +109,11 @@ var _ = ginkgo.Describe("Pod to external server PMTUD", func() {
 				ExtPort: externalContainerPort}
 			externalContainer, err = providerCtx.CreateExternalContainer(externalContainer)
 			framework.ExpectNoError(err, "failed to create external container (%s)", externalContainer)
-			if isIPv4Supported() {
+			if isIPv4Supported(f.ClientSet) {
 				gomega.Expect(externalContainer.GetIPv4()).ToNot(gomega.BeEmpty())
 				externalContainerIPs = append(externalContainerIPs, externalContainer.GetIPv4())
 			}
-			if isIPv6Supported() {
+			if isIPv6Supported(f.ClientSet) {
 				gomega.Expect(externalContainer.GetIPv6()).ToNot(gomega.BeEmpty())
 				externalContainerIPs = append(externalContainerIPs, fmt.Sprintf("[%s]", externalContainer.GetIPv6()))
 			}
@@ -155,7 +155,7 @@ var _ = ginkgo.Describe("Pod to external server PMTUD", func() {
 				primaryInf, err := infraprovider.Get().GetK8NodeNetworkInterface(clientPodNodeName, providerPrimaryNetwork)
 				framework.ExpectNoError(err, "failed to get provider primary network interface info")
 				clientnodeIP := primaryInf.IPv4
-				if IsIPv6Cluster(f.ClientSet) && isIPv6Supported() {
+				if IsIPv6Cluster(f.ClientSet) && isIPv6Supported(f.ClientSet) {
 					clientnodeIP = fmt.Sprintf("[%s]", primaryInf.IPv6)
 				}
 				gomega.Expect(clientnodeIP).NotTo(gomega.BeEmpty())

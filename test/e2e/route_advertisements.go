@@ -51,10 +51,10 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 		bgpServer := infraapi.ExternalContainer{Name: serverContainerName}
 		networkInterface, err := infraprovider.Get().GetExternalContainerNetworkInterface(bgpServer, bgpNetwork)
 		framework.ExpectNoError(err, "container %s attached to network %s must contain network info", serverContainerName, bgpExternalNetworkName)
-		if isIPv4Supported() && len(networkInterface.IPv4) > 0 {
+		if isIPv4Supported(f.ClientSet) && len(networkInterface.IPv4) > 0 {
 			serverContainerIPs = append(serverContainerIPs, networkInterface.IPv4)
 		}
-		if isIPv6Supported() && len(networkInterface.IPv6) > 0 {
+		if isIPv6Supported(f.ClientSet) && len(networkInterface.IPv6) > 0 {
 			serverContainerIPs = append(serverContainerIPs, networkInterface.IPv6)
 		}
 		framework.Logf("The external server IPs are: %+v", serverContainerIPs)
@@ -217,7 +217,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 					60*time.Second)
 				framework.ExpectNoError(err, fmt.Sprintf("Testing pod to external traffic failed: %v", err))
 				expectedPodIP := podv4IP
-				if isIPv6Supported() && utilnet.IsIPv6String(serverContainerIP) {
+				if isIPv6Supported(f.ClientSet) && utilnet.IsIPv6String(serverContainerIP) {
 					expectedPodIP = podv6IP
 					// For IPv6 addresses, need to handle the brackets in the output
 					outputIP := strings.TrimPrefix(strings.Split(stdout, "]:")[0], "[")
@@ -265,10 +265,10 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 		bgpServer := infraapi.ExternalContainer{Name: serverContainerName}
 		networkInterface, err := infraprovider.Get().GetExternalContainerNetworkInterface(bgpServer, bgpNetwork)
 		framework.ExpectNoError(err, "container %s attached to network %s must contain network info", serverContainerName, bgpExternalNetworkName)
-		if isIPv4Supported() && len(networkInterface.IPv4) > 0 {
+		if isIPv4Supported(f.ClientSet) && len(networkInterface.IPv4) > 0 {
 			serverContainerIPs = append(serverContainerIPs, networkInterface.IPv4)
 		}
-		if isIPv6Supported() && len(networkInterface.IPv6) > 0 {
+		if isIPv6Supported(f.ClientSet) && len(networkInterface.IPv6) > 0 {
 			serverContainerIPs = append(serverContainerIPs, networkInterface.IPv6)
 		}
 		gomega.Expect(len(serverContainerIPs)).Should(gomega.BeNumerically(">", 0), "failed to find external container IPs")
@@ -306,6 +306,12 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 			ginkgo.By("create ClusterUserDefinedNetwork")
 			udnClient, err := udnclientset.NewForConfig(f.ClientConfig())
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			if cudnTemplate.Spec.Network.Layer3 != nil {
+				cudnTemplate.Spec.Network.Layer3.Subnets = filterL3Subnets(f.ClientSet, cudnTemplate.Spec.Network.Layer3.Subnets)
+			}
+			if cudnTemplate.Spec.Network.Layer2 != nil {
+				cudnTemplate.Spec.Network.Layer2.Subnets = filterDualStackCIDRs(f.ClientSet, cudnTemplate.Spec.Network.Layer2.Subnets)
+			}
 			cUDN, err := udnClient.K8sV1().ClusterUserDefinedNetworks().Create(context.Background(), cudnTemplate, metav1.CreateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			ginkgo.DeferCleanup(func() {
@@ -416,7 +422,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 					framework.Poll,
 					60*time.Second)
 				framework.ExpectNoError(err, fmt.Sprintf("Testing pod to external traffic failed: %v", err))
-				if isIPv6Supported() && utilnet.IsIPv6String(serverContainerIP) {
+				if isIPv6Supported(f.ClientSet) && utilnet.IsIPv6String(serverContainerIP) {
 					podIP, err = podIPsForUserDefinedPrimaryNetwork(f.ClientSet, f.Namespace.Name, clientPod.Name, namespacedName(f.Namespace.Name, cUDN.Name), 1)
 					// For IPv6 addresses, need to handle the brackets in the output
 					outputIP := strings.TrimPrefix(strings.Split(stdout, "]:")[0], "[")
@@ -440,13 +446,13 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 						Topology: udnv1.NetworkTopologyLayer3,
 						Layer3: &udnv1.Layer3Config{
 							Role: "Primary",
-							Subnets: generateL3Subnets(udnv1.Layer3Subnet{
+							Subnets: []udnv1.Layer3Subnet{{
 								CIDR:       "103.103.0.0/16",
 								HostSubnet: 24,
-							}, udnv1.Layer3Subnet{
+							}, {
 								CIDR:       "2014:100:200::0/60",
 								HostSubnet: 64,
-							}),
+							}},
 						},
 					},
 				},
@@ -485,7 +491,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 						Topology: udnv1.NetworkTopologyLayer2,
 						Layer2: &udnv1.Layer2Config{
 							Role:    "Primary",
-							Subnets: generateL2Subnets("103.0.0.0/16", "2014:100::0/60"),
+							Subnets: udnv1.DualStackCIDRs{"103.0.0.0/16", "2014:100::0/60"},
 						},
 					},
 				},
@@ -569,6 +575,19 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 
 			udnClient, err := udnclientset.NewForConfig(f.ClientConfig())
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			if cudnATemplate.Spec.Network.Layer3 != nil {
+				cudnATemplate.Spec.Network.Layer3.Subnets = filterL3Subnets(f.ClientSet, cudnATemplate.Spec.Network.Layer3.Subnets)
+			}
+			if cudnATemplate.Spec.Network.Layer2 != nil {
+				cudnATemplate.Spec.Network.Layer2.Subnets = filterDualStackCIDRs(f.ClientSet, cudnATemplate.Spec.Network.Layer2.Subnets)
+			}
+			if cudnBTemplate.Spec.Network.Layer3 != nil {
+				cudnBTemplate.Spec.Network.Layer3.Subnets = filterL3Subnets(f.ClientSet, cudnBTemplate.Spec.Network.Layer3.Subnets)
+			}
+			if cudnBTemplate.Spec.Network.Layer2 != nil {
+				cudnBTemplate.Spec.Network.Layer2.Subnets = filterDualStackCIDRs(f.ClientSet, cudnBTemplate.Spec.Network.Layer2.Subnets)
+			}
 
 			cudnA, err = udnClient.K8sV1().ClusterUserDefinedNetworks().Create(context.Background(), cudnATemplate, metav1.CreateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -772,7 +791,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 							return fmt.Errorf("expected connectivity check to contain %q, got %q", expectedOutput, out)
 						}
 					}
-					if isIPv6Supported() && isIPv4Supported() {
+					if isIPv6Supported(f.ClientSet) && isIPv4Supported(f.ClientSet) {
 						// use ipFamilyIndex of 1 to pick the IPv6 addresses
 						clientName, clientNamespace, dst, expectedOutput, expectErr := connInfo(1)
 						out, err := checkConnectivity(clientName, clientNamespace, dst)
@@ -915,13 +934,13 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					Topology: udnv1.NetworkTopologyLayer3,
 					Layer3: &udnv1.Layer3Config{
 						Role: "Primary",
-						Subnets: generateL3Subnets(udnv1.Layer3Subnet{
+						Subnets: []udnv1.Layer3Subnet{{
 							CIDR:       "102.102.0.0/16",
 							HostSubnet: 24,
-						}, udnv1.Layer3Subnet{
+						}, {
 							CIDR:       "2013:100:200::0/60",
 							HostSubnet: 64,
-						}),
+						}},
 					},
 				},
 			},
@@ -935,13 +954,13 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					Topology: udnv1.NetworkTopologyLayer3,
 					Layer3: &udnv1.Layer3Config{
 						Role: "Primary",
-						Subnets: generateL3Subnets(udnv1.Layer3Subnet{
+						Subnets: []udnv1.Layer3Subnet{{
 							CIDR:       "103.103.0.0/16",
 							HostSubnet: 24,
-						}, udnv1.Layer3Subnet{
+						}, {
 							CIDR:       "2014:100:200::0/60",
 							HostSubnet: 64,
-						}),
+						}},
 					},
 				},
 			},
@@ -958,7 +977,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					Topology: udnv1.NetworkTopologyLayer2,
 					Layer2: &udnv1.Layer2Config{
 						Role:    "Primary",
-						Subnets: generateL2Subnets("102.102.0.0/16", "2013:100:200::0/60"),
+						Subnets: udnv1.DualStackCIDRs{"102.102.0.0/16", "2013:100:200::0/60"},
 					},
 				},
 			},
@@ -972,32 +991,10 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					Topology: udnv1.NetworkTopologyLayer2,
 					Layer2: &udnv1.Layer2Config{
 						Role:    "Primary",
-						Subnets: generateL2Subnets("103.103.0.0/16", "2014:100:200::0/60"),
+						Subnets: udnv1.DualStackCIDRs{"103.103.0.0/16", "2014:100:200::0/60"},
 					},
 				},
 			},
 		},
 	),
 )
-
-func generateL3Subnets(v4, v6 udnv1.Layer3Subnet) []udnv1.Layer3Subnet {
-	var subnets []udnv1.Layer3Subnet
-	if isIPv4Supported() {
-		subnets = append(subnets, v4)
-	}
-	if isIPv6Supported() {
-		subnets = append(subnets, v6)
-	}
-	return subnets
-}
-
-func generateL2Subnets(v4, v6 string) udnv1.DualStackCIDRs {
-	var subnets udnv1.DualStackCIDRs
-	if isIPv4Supported() {
-		subnets = append(subnets, udnv1.CIDR(v4))
-	}
-	if isIPv6Supported() {
-		subnets = append(subnets, udnv1.CIDR(v6))
-	}
-	return subnets
-}
