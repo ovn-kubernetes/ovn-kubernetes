@@ -454,10 +454,11 @@ var _ = Describe("Multi Homing", func() {
 
 	Context("multiple pods connected to the same OVN-K secondary network", func() {
 		const (
-			clientPodName     = "client-pod"
-			port              = 9000
 			workerOneNodeName = "ovn-worker"
 			workerTwoNodeName = "ovn-worker2"
+			clientPodName     = "client-pod"
+			nodeHostnameKey   = "kubernetes.io/hostname"
+			port              = 9000
 			clientIP          = "192.168.200.10/24"
 			staticServerIP    = "192.168.200.20/24"
 		)
@@ -959,7 +960,7 @@ var _ = Describe("Multi Homing", func() {
 
 				BeforeEach(func() {
 					By("starting a service, connected to the underlay")
-					cmdWebServer = exec.Command("python3", "-m", "http.server", "--bind", underlayServiceIP, strconv.Itoa(servicePort))
+					cmdWebServer = exec.Command("python3", "-m", "http.server", "--bind", underlayServiceIP, strconv.Itoa(int(servicePort)))
 					cmdWebServer.Stderr = os.Stderr
 					Expect(cmdWebServer.Start()).NotTo(HaveOccurred(), "failed to create web server, port might be busy")
 				})

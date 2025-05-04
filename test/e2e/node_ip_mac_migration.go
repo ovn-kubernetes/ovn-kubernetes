@@ -6,9 +6,9 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math/big"
-	"math/rand"
 	"net"
 	"os"
+	"os/exec"
 	"path"
 	"regexp"
 	"strings"
@@ -18,6 +18,9 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
+	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -41,9 +44,7 @@ var _ = Describe("Node IP and MAC address migration", func() {
 		pollingInterval            = 10
 		settleTimeout              = 10
 		egressIPYaml               = "egressip.yaml"
-		ciNetworkName              = "kind"
 		externalContainerName      = "ip-migration-external"
-		externalContainerPort      = "80"
 		externalContainerEndpoint  = "/clientip"
 		egressIPYamlTemplate       = `apiVersion: k8s.ovn.org/v1
 kind: EgressIP
@@ -79,25 +80,21 @@ spec:
 		egressIP               string
 		assignedNodePort       int32
 		ovnkPod                v1.Pod
-
-		podLabels = map[string]string{
+		f                      = wrappedTestFramework(namespacePrefix)
+		providerCtx            infraapi.Context
+		externalContainer      infraapi.ExternalContainer
+		podLabels              = map[string]string{
 			"app": "ip-migration-test",
 		}
-		podCommand               = []string{"/bin/bash", "-c", "/agnhost netexec --http-port 8000"}
-		externalContainerCommand = []string{"netexec", "--http-port=" + externalContainerPort}
-
+		podCommand                = []string{"/bin/bash", "-c", "/agnhost netexec --http-port 8000"}
 		updateKubeletIPAddressMsg = map[bool]string{
 			true:  "update kubelet first, the IP address later",
 			false: "update the IP address first, kubelet later",
 		}
-
-		f = wrappedTestFramework(namespacePrefix)
-
-		udpPort  = int32(rand.Intn(1000) + 10000)
-		udpPortS = fmt.Sprintf("%d", udpPort)
 	)
 
 	BeforeEach(func() {
+		providerCtx = infraprovider.Get().NewTestContext()
 		By("Creating the temp directory")
 		var err error
 		tmpDirIPMigration, err = os.MkdirTemp("", "e2e")
@@ -130,14 +127,17 @@ spec:
 
 		By("Creating a cluster external container")
 		externalContainerIPs = make(map[int]string)
-		externalContainerIPs[4], externalContainerIPs[6] = createClusterExternalContainer(externalContainerName,
-			externalContainerImage, []string{"--network", ciNetworkName, "-P"}, externalContainerCommand)
+		primaryProviderNetwork, err := infraprovider.Get().PrimaryNetwork()
+		framework.ExpectNoError(err, "failed to get primary network")
+		externalContainerPort := infraprovider.Get().GetExternalContainerPort()
+		externalContainer = infraapi.ExternalContainer{Name: externalContainerName, Image: images.AgnHost(), Network: primaryProviderNetwork,
+			Args: getAgnHostHTTPPortBindCMDArgs(externalContainerPort), ExtPort: externalContainerPort}
+		externalContainer, err = providerCtx.CreateExternalContainer(externalContainer)
+		framework.ExpectNoError(err, "failed to create external container")
+		externalContainerIPs[4], externalContainerIPs[6] = externalContainer.GetIPv4(), externalContainer.GetIPv6()
 	})
 
 	AfterEach(func() {
-		By("Removing the external container")
-		deleteClusterExternalContainer(externalContainerName)
-
 		By("Removing the temp directory")
 		Expect(os.RemoveAll(tmpDirIPMigration)).To(Succeed())
 	})
@@ -205,10 +205,11 @@ spec:
 				By(fmt.Sprintf("Finding worker node %s's IPv%d migration IP address", workerNode.Name, ipAddrFamily))
 				// Pick something at the end of the range to avoid conflicts with the kind / docker network setup.
 				// Also exclude the current node IPs and the egressIP (if already selected).
-				var err error
+				workerNode, err := f.ClientSet.CoreV1().Nodes().Get(context.Background(), workerNode.Name, metav1.GetOptions{})
+				framework.ExpectNoError(err, "Node %s must be available", workerNode.Name)
 				migrationWorkerNodeIP, err = findLastFreeSubnetIP(
-					externalContainerName,
-					externalContainerIPs[ipAddrFamily],
+					workerNode.Name,
+					workerNode.Name,
 					[]string{workerNodeIPs[ipAddrFamily], secondaryWorkerNodeIPs[ipAddrFamily], egressIP},
 				)
 				framework.Logf("New worker node IP will be %s", migrationWorkerNodeIP)
@@ -327,9 +328,8 @@ spec:
 					}
 					Eventually(func() bool {
 						By("Checking the egress IP")
-						res, err := targetExternalContainerConnectToEndpoint(externalContainerName,
-							externalContainerIPs[ipAddrFamily], externalContainerPort, externalContainerEndpoint,
-							podWorkerNode.Name, f.Namespace.Name, expectedAnswer)
+						res, err := targetExternalContainerConnectToEndpoint(externalContainerIPs[ipAddrFamily],
+							externalContainer.ExtPort, externalContainerEndpoint, podWorkerNode.Name, f.Namespace.Name, expectedAnswer)
 						if err != nil {
 							framework.Logf("Current verification failed with %s", err)
 							return false
@@ -383,9 +383,8 @@ spec:
 							}
 							Eventually(func() bool {
 								By("Checking the egress IP")
-								res, err := targetExternalContainerConnectToEndpoint(externalContainerName,
-									externalContainerIPs[ipAddrFamily], externalContainerPort, externalContainerEndpoint,
-									podWorkerNode.Name, f.Namespace.Name, expectedAnswer)
+								res, err := targetExternalContainerConnectToEndpoint(externalContainerIPs[ipAddrFamily],
+									externalContainer.ExtPort, externalContainerEndpoint, podWorkerNode.Name, f.Namespace.Name, expectedAnswer)
 								if err != nil {
 									framework.Logf("Current verification failed with %s", err)
 									return false
@@ -413,8 +412,10 @@ spec:
 				BeforeEach(func() {
 					By("creating a host-network backend pod")
 					jig := e2eservice.NewTestJig(f.ClientSet, f.Namespace.Name, serviceName)
-					serverPod := e2epod.NewAgnhostPod(f.Namespace.Name, podName, nil, nil, []v1.ContainerPort{{ContainerPort: udpPort}, {ContainerPort: udpPort, Protocol: "UDP"}},
-						"netexec", "--udp-port="+udpPortS)
+					udpPort := infraprovider.Get().GetK8HostPort()
+					serverPod := e2epod.NewAgnhostPod(f.Namespace.Name, podName, nil, nil,
+						[]v1.ContainerPort{{ContainerPort: int32(udpPort)}, {ContainerPort: int32(udpPort), Protocol: "UDP"}},
+						"netexec", fmt.Sprintf("--udp-port=%d", udpPort))
 					serverPod.Labels = jig.Labels
 					serverPod.Spec.HostNetwork = true
 					serverPod.Spec.NodeName = workerNode.Name
@@ -523,8 +524,7 @@ spec:
 								}
 								// Due to potential k8s bug described here: https://github.com/ovn-org/ovn-kubernetes/issues/4073
 								// We may need to restart kubelet for the backend pod to update its host networked IP address
-								restartCmd := []string{"docker", "exec", workerNode.Name, "systemctl", "restart", "kubelet"}
-								_, restartErr := runCommand(restartCmd...)
+								_, restartErr := infraprovider.Get().ExecK8NodeCommand(workerNode.Name, []string{"systemctl", "restart", "kubelet"})
 								framework.ExpectNoError(restartErr)
 								return false, nil
 							})
@@ -571,7 +571,7 @@ spec:
 							Name:       serviceName,
 							Protocol:   v1.ProtocolUDP,
 							Port:       80,
-							TargetPort: intstr.FromInt(int(udpPort)),
+							TargetPort: intstr.FromInt(8080),
 						},
 					}
 					s.Spec.Type = v1.ServiceTypeNodePort
@@ -677,10 +677,48 @@ func getNodeInternalAddresses(node *v1.Node) (string, string) {
 	return v4Addr, v6Addr
 }
 
+// findIPAddressMaskInterfaceOnNode finds the string "<IP address>/<mask>" and interface name on node
+func findIPAddressMaskInterfaceOnNode(nodeName, ip string) (net.IPNet, string, error) {
+	ipAddressCmdOutput, err := infraprovider.Get().ExecK8NodeCommand(nodeName, []string{"ip", "-o", "address"})
+	if err != nil {
+		return net.IPNet{}, "", err
+	}
+	re, err := regexp.Compile(fmt.Sprintf("%s/[0-9]{1,3}", ip))
+	if err != nil {
+		return net.IPNet{}, "", err
+	}
+	ipAddressMask := ""
+	iface := ""
+	scanner := bufio.NewScanner(strings.NewReader(ipAddressCmdOutput))
+	for scanner.Scan() {
+		line := scanner.Text()
+		ipAddressMask = re.FindString(line)
+		if ipAddressMask != "" {
+			if exploded := strings.Fields(line); len(exploded) > 1 {
+				iface = exploded[1]
+			}
+			break
+		}
+	}
+	if ipAddressMask == "" {
+		return net.IPNet{}, "", fmt.Errorf("IP address and mask were not found via `ip address` for node %s with IP %s",
+			nodeName, ip)
+	}
+	if iface == "" {
+		return net.IPNet{}, "", fmt.Errorf("interface not found for node %s with IP %s",
+			nodeName, ip)
+	}
+	parsedNetIP, parsedNetCIDR, err := net.ParseCIDR(ipAddressMask)
+	if err != nil {
+		return net.IPNet{}, "", err
+	}
+	return net.IPNet{IP: parsedNetIP, Mask: parsedNetCIDR.Mask}, iface, nil
+}
+
 // findIpAddressMaskOnHost finds the string "<IP address>/<mask>" and interface name on container <containerName> for
 // nodeIP.
 func findIPAddressMaskInterfaceOnHost(containerName, containerIP string) (net.IPNet, string, error) {
-	ipAddressCmdOutput, err := runCommand("docker", "exec", containerName, "ip", "-o", "address")
+	ipAddressCmdOutput, err := exec.Command("docker", "exec", containerName, "ip", "-o", "address").CombinedOutput()
 	if err != nil {
 		return net.IPNet{}, "", err
 	}
@@ -690,7 +728,7 @@ func findIPAddressMaskInterfaceOnHost(containerName, containerIP string) (net.IP
 	}
 	ipAddressMask := ""
 	iface := ""
-	scanner := bufio.NewScanner(strings.NewReader(ipAddressCmdOutput))
+	scanner := bufio.NewScanner(strings.NewReader(string(ipAddressCmdOutput)))
 	for scanner.Scan() {
 		line := scanner.Text()
 		ipAddressMask = re.FindString(line)
@@ -818,19 +856,17 @@ func subnetBroadcastIP(ipnet net.IPNet) net.IP {
 	return net.IP(byteTargetIP)
 }
 
-// isAddressReachableFromContainer will curl towards targetIP. If the curl succeeds, return true. Otherwise, check the
+// isAddressReachableFromNode will curl towards targetIP. If the curl succeeds, return true. Otherwise, check the
 // node's neighbor table. If a neighbor entry for targetIP exists, return true, false otherwise. We use curl because
 // it's installed by default in the ubuntu kind containers; ping/arping are unfortunately not available.
 func isAddressReachableFromContainer(containerName, targetIP string) (bool, error) {
 	// There's no ping/arping inside the default containers, so just use curl instead. It's good enough to trigger
 	// ARP resolution.
-	cmd := []string{"docker", "exec", containerName}
 	if utilnet.IsIPv6String(targetIP) {
 		targetIP = fmt.Sprintf("[%s]", targetIP)
 	}
 	curlCommand := strings.Split(fmt.Sprintf("curl -g -q -s http://%s:%d", targetIP, 80), " ")
-	cmd = append(cmd, curlCommand...)
-	_, err := runCommand(cmd...)
+	_, err := infraprovider.Get().ExecK8NodeCommand(containerName, curlCommand)
 	// If this curl works, then the node is logically reachable, shortcut.
 	if err == nil {
 		return true, nil
@@ -838,7 +874,7 @@ func isAddressReachableFromContainer(containerName, targetIP string) (bool, erro
 
 	// Now, check the neighbor table and if the entry does not have REACHABLE or STALE or PERMANENT, then this must be
 	// an unreachable entry (could be FAILED or INCOMPLETE).
-	ipNeighborOutput, err := runCommand("docker", "exec", containerName, "ip", "neigh")
+	ipNeighborOutput, err := infraprovider.Get().ExecK8NodeCommand(containerName, []string{"ip", "neigh"})
 	if err != nil {
 		return false, err
 	}
@@ -890,13 +926,14 @@ func migrateWorkerNodeIP(nodeName, fromIP, targetIP string, invertOrder bool) (e
 		if err != nil {
 			for _, cmd := range cleanupCommands {
 				framework.Logf("Attempting cleanup with command %q", cmd)
-				runCommand(cmd...)
+				output, err := infraprovider.Get().ExecK8NodeCommand(nodeName, cmd)
+				framework.ExpectNoError(err, "failed to cleanup node IP migration on node %s: %s", nodeName, output)
 			}
 		}
 	}()
 
 	framework.Logf("Finding fromIP %s on host %s", fromIP, nodeName)
-	parsedNetIPMask, iface, err := findIPAddressMaskInterfaceOnHost(nodeName, fromIP)
+	parsedNetIPMask, iface, err := findIPAddressMaskInterfaceOnNode(nodeName, fromIP)
 	if err != nil {
 		return err
 	}
@@ -912,22 +949,20 @@ func migrateWorkerNodeIP(nodeName, fromIP, targetIP string, invertOrder bool) (e
 		newIPMask := targetIP + "/" + mask
 		framework.Logf("Adding new IP address %s to node %s", newIPMask, nodeName)
 		// Add cleanup command.
-		cleanupCmd := []string{"docker", "exec", nodeName, "ip", "address", "del", newIPMask, "dev", iface}
+		cleanupCmd := []string{"ip", "address", "del", newIPMask, "dev", iface}
 		cleanupCommands = append(cleanupCommands, cleanupCmd)
 		// Run command.
-		cmd := []string{"docker", "exec", nodeName, "ip", "address", "add", newIPMask, "dev", iface}
-		_, err = runCommand(cmd...)
+		_, err = infraprovider.Get().ExecK8NodeCommand(nodeName, []string{"ip", "address", "add", newIPMask, "dev", iface})
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to add new IP %s to interface %s on node %s: %v", newIPMask, iface, nodeName, err)
 		}
 		// Delete current IP address. On rollback, first add the old IP and then delete the new one.
 		framework.Logf("Deleting current IP address %s from node %s", parsedNetIPMask.String(), nodeName)
 		// Add cleanup command.
-		cleanupCmd = []string{"docker", "exec", nodeName, "ip", "address", "add", parsedNetIPMask.String(), "dev", iface}
+		cleanupCmd = []string{"ip", "address", "add", parsedNetIPMask.String(), "dev", iface}
 		cleanupCommands = append([][]string{cleanupCmd}, cleanupCommands...)
 		// Run command.
-		cmd = []string{"docker", "exec", nodeName, "ip", "address", "del", parsedNetIPMask.String(), "dev", iface}
-		_, err = runCommand(cmd...)
+		_, err = infraprovider.Get().ExecK8NodeCommand(nodeName, []string{"ip", "address", "del", parsedNetIPMask.String(), "dev", iface})
 		if err != nil {
 			return err
 		}
@@ -938,23 +973,21 @@ func migrateWorkerNodeIP(nodeName, fromIP, targetIP string, invertOrder bool) (e
 		// Change kubeadm-flags.env IP.
 		framework.Logf("Modifying kubelet configuration for node %s", nodeName)
 		// Add cleanup commands.
-		cleanupCmd := []string{"docker", "exec", nodeName, "sed", "-i", fmt.Sprintf("s/node-ip=%s/node-ip=%s/", targetIP, fromIP),
+		cleanupCmd := []string{"sed", "-i", fmt.Sprintf("s/node-ip=%s/node-ip=%s/", targetIP, fromIP),
 			"/var/lib/kubelet/kubeadm-flags.env"}
 		cleanupCommands = append(cleanupCommands, cleanupCmd)
-		cleanupCmd = []string{"docker", "exec", nodeName, "systemctl", "restart", "kubelet"}
+		cleanupCmd = []string{"systemctl", "restart", "kubelet"}
 		cleanupCommands = append(cleanupCommands, cleanupCmd)
 		// Run command.
-		cmd := []string{"docker", "exec", nodeName, "sed", "-i", fmt.Sprintf("s/node-ip=%s/node-ip=%s/", fromIP, targetIP),
+		cmd := []string{"sed", "-i", fmt.Sprintf("s/node-ip=%s/node-ip=%s/", fromIP, targetIP),
 			"/var/lib/kubelet/kubeadm-flags.env"}
-		_, err = runCommand(cmd...)
+		_, err = infraprovider.Get().ExecK8NodeCommand(nodeName, cmd)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to change kubelet node IP config: %v", err)
 		}
-
 		// Restart kubelet.
 		framework.Logf("Restarting kubelet on node %s", nodeName)
-		cmd = []string{"docker", "exec", nodeName, "systemctl", "restart", "kubelet"}
-		_, err = runCommand(cmd...)
+		_, err = infraprovider.Get().ExecK8NodeCommand(nodeName, []string{"systemctl", "restart", "kubelet"})
 		if err != nil {
 			return err
 		}
@@ -976,9 +1009,9 @@ func migrateWorkerNodeIP(nodeName, fromIP, targetIP string, invertOrder bool) (e
 
 // targetExternalContainerConnectToEndpoint targets the external test container from the specified pod and compares
 // expectedAnswer to the actual answer.
-func targetExternalContainerConnectToEndpoint(externalContainerName, externalContainerIP, externalContainerPort,
+func targetExternalContainerConnectToEndpoint(externalContainerIP string, externalContainerPort uint16,
 	externalContainerEndpoint, podName, podNamespace string, expectedAnswer string) (bool, error) {
-	containerIPAndPort := net.JoinHostPort(externalContainerIP, externalContainerPort)
+	containerIPAndPort := net.JoinHostPort(externalContainerIP, fmt.Sprintf("%d", externalContainerPort))
 	u := path.Join(containerIPAndPort, externalContainerEndpoint)
 	output, err := e2ekubectl.RunKubectl(podNamespace, "exec", podName, "--", "curl", "--max-time", "2", u)
 	if err != nil {
