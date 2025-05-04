@@ -398,6 +398,8 @@ func allocatePodAnnotationWithRollback(
 			tentative.MAC, err = net.ParseMAC(network.MacRequest)
 		} else if len(tentative.IPs) > 0 {
 			tentative.MAC = util.IPAddrToHWAddr(tentative.IPs[0].IP)
+		} else if _, exists := pod.Annotations["ramsamsam.io/exclude-ip-assignment"]; exists {
+			tentative.MAC, err = net.ParseMAC("00:AA:BB:CC:DD:EE")
 		} else {
 			tentative.MAC, err = util.GenerateRandMAC()
 		}
