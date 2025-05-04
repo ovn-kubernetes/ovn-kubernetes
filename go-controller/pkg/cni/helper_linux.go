@@ -233,9 +233,14 @@ func setupInterface(netns ns.NetNS, containerID, ifName string, ifInfo *PodInter
 			return fmt.Errorf("failed to lookup %s: %v", contIface.Name, err)
 		}
 
-		err = setupNetwork(link, ifInfo)
-		if err != nil {
-			return err
+		ramsamsamMAC, _ := net.ParseMAC("00:AA:BB:CC:DD:EE")
+		if ifInfo.MAC.String() == ramsamsamMAC.String() {
+			klog.Infof("Bypassing network setup for network link %+v", link)
+		} else {
+			err = setupNetwork(link, ifInfo)
+			if err != nil {
+				return err
+			}
 		}
 		contIface.Sandbox = netns.Path()
 
