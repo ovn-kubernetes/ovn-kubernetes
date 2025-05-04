@@ -376,10 +376,11 @@ func isolateIPv6Networks(networkA, networkB string) error {
 	bridgeIDLimit := 12
 	for _, network := range []string{networkA, networkB} {
 		// output will be wrapped in single quotes
-		id, err := runCommand(containerRuntime, "inspect", network, "--format", "'{{.Id}}'")
+		idByte, err := exec.Command("docker", "inspect", network, "--format", "'{{.Id}}'").CombinedOutput()
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to inspect network %s: %v", network, err)
 		}
+		id := string(idByte)
 		if len(id) <= bridgeIDLimit+1 {
 			return fmt.Errorf("invalid bridge ID %q", id)
 		}

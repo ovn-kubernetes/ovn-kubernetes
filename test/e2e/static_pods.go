@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
@@ -31,6 +33,14 @@ func waitForPodRunningInNamespaceTimeout(c clientset.Interface, podName, namespa
 }
 
 func createStaticPod(f *framework.Framework, nodeName string, podYaml string) {
+	// FIXME; remove need to use a container runtime because its not portable
+	runCommand := func(cmd ...string) (string, error) {
+		output, err := exec.Command(cmd[0], cmd[1:]...).CombinedOutput()
+		if err != nil {
+			return "", fmt.Errorf("failed to run %q: %s (%s)", strings.Join(cmd, " "), err, output)
+		}
+		return string(output), nil
+	}
 	//create file
 	var podFile = "static-pod.yaml"
 	if err := os.WriteFile(podFile, []byte(podYaml), 0644); err != nil {
@@ -48,17 +58,24 @@ func createStaticPod(f *framework.Framework, nodeName string, podYaml string) {
 	if err != nil {
 		framework.Failf("failed to copy pod file to node %s", nodeName)
 	}
-
 }
 
 func removeStaticPodFile(nodeName string, podFile string) {
+	// FIXME; remove need to use a container runtime because its not portable
+	runCommand := func(cmd ...string) (string, error) {
+		output, err := exec.Command(cmd[0], cmd[1:]...).CombinedOutput()
+		if err != nil {
+			return "", fmt.Errorf("failed to run %q: %s (%s)", strings.Join(cmd, " "), err, output)
+		}
+		return string(output), nil
+	}
+
 	cmd := []string{"docker", "exec", nodeName, "bash", "-c", "rm /etc/kubernetes/manifests/static-pod.yaml"}
 	framework.Logf("Running command %v", cmd)
 	_, err := runCommand(cmd...)
 	if err != nil {
 		framework.Failf("failed to remove pod file from node %s", nodeName)
 	}
-
 }
 
 // This test does the following
