@@ -366,37 +366,46 @@ var _ = Describe("Kubevirt Virtual Machines", func() {
 			}
 		}
 
-		startNorthSouthIngressIperfTraffic = func(containerName string, addresses []string, port int32, stage string) error {
+		startNorthSouthIperfTraffic = func(execFn func(cmd string) (string, error), addresses []string, port int32, logPrefix, stage string) error {
 			GinkgoHelper()
 			Expect(addresses).NotTo(BeEmpty())
-			By(fmt.Sprintf("kill iperf3: %s", stage))
-			output, err := runCommand(containerRuntime, "exec", "-i", containerName, "bash", "-c", "killall -q iperf3 | true")
-			if err != nil {
-				return fmt.Errorf("failed killing iperf3 %s: %w", output, err)
-			}
 			for _, address := range addresses {
-				iperfLogFile := fmt.Sprintf("/tmp/ingress_test_%[1]s_%[2]d_iperf3.log", address, port)
+				iperfLogFile := fmt.Sprintf("/tmp/%s_test_%s_%d_iperf3.log", logPrefix, address, port)
 				By(fmt.Sprintf("remove iperf3 log for %s: %s", address, stage))
-				output, err := runCommand(containerRuntime, "exec", "-i", containerName, "bash", "-c", fmt.Sprintf("rm -f %s", iperfLogFile))
+				output, err := execFn(fmt.Sprintf("rm -f %s", iperfLogFile))
 				if err != nil {
 					return fmt.Errorf("failed removing iperf3 log file %s: %w", output, err)
 				}
 
 				By(fmt.Sprintf("check iperf3 connectivity for %s: %s", address, stage))
-				output, err = runCommand(containerRuntime, "exec", "-i", containerName, "bash", "-c", fmt.Sprintf("iperf3 -c %s -p %d", address, port))
+				output, err = execFn(fmt.Sprintf("iperf3 -c %s -p %d", address, port))
 				if err != nil {
 					return fmt.Errorf("failed checking iperf3 connectivity %s: %w", output, err)
 				}
 
 				By(fmt.Sprintf("start from %s: %s", address, stage))
-				output, err = runCommand(containerRuntime, "exec", containerName, "bash", "-c", fmt.Sprintf(`
-iperf3 -t 0 -c %[1]s -p %[2]d --logfile %[3]s &
-`, address, port, iperfLogFile))
+				output, err = execFn(fmt.Sprintf("nohup iperf3 -t 0 -c %[1]s -p %[2]d --logfile %[3]s &", address, port, iperfLogFile))
 				if err != nil {
-					return fmt.Errorf("failed at staring iperf3 in background %s: %w", output, err)
+					return fmt.Errorf("failed at starting iperf3 in background %s: %w", output, err)
 				}
 			}
 			return nil
+		}
+
+		startNorthSouthIngressIperfTraffic = func(containerName string, addresses []string, port int32, stage string) error {
+			GinkgoHelper()
+			execFn := func(cmd string) (string, error) {
+				return runCommand(containerRuntime, "exec", "-i", containerName, "bash", "-c", cmd)
+			}
+			return startNorthSouthIperfTraffic(execFn, addresses, port, "ingress", stage)
+		}
+
+		startNorthSouthEgressIperfTraffic = func(vmi *kubevirtv1.VirtualMachineInstance, addresses []string, stage string) error {
+			GinkgoHelper()
+			execFn := func(cmd string) (string, error) {
+				return kubevirt.RunCommand(vmi, cmd, 5*time.Second)
+			}
+			return startNorthSouthIperfTraffic(execFn, addresses, 5201, "egress", stage)
 		}
 
 		checkNorthSouthIngressIperfTraffic = func(containerName string, addresses []string, port int32, stage string) {
@@ -408,6 +417,23 @@ iperf3 -t 0 -c %[1]s -p %[2]d --logfile %[3]s &
 					return runCommand(containerRuntime, "exec", containerName, "bash", "-c", cmd)
 				}
 				checkIperfTraffic(iperfLogFile, execFn, stage)
+			}
+		}
+
+		checkNorthSouthEgressIperfTraffic = func(vmi *kubevirtv1.VirtualMachineInstance, addresses []string, stage string) {
+			GinkgoHelper()
+			Expect(addresses).NotTo(BeEmpty())
+			for _, ip := range addresses {
+				if ip == "" {
+					continue
+				}
+				for _, ip := range addresses {
+					iperfLogFile := fmt.Sprintf("/tmp/egress_test_%s_%d_iperf3.log", ip, 5201)
+					execFn := func(cmd string) (string, error) {
+						return kubevirt.RunCommand(vmi, cmd, 5*time.Second)
+					}
+					checkIperfTraffic(iperfLogFile, execFn, stage)
+				}
 			}
 		}
 
@@ -1712,6 +1738,7 @@ write_files:
 					deleteClusterExternalContainer(externalContainerName)
 				}
 			})
+			externalContainerIPs := []string{externalContainerIPV4Address, externalContainerIPV6Address}
 			if td.ingress == "routed" {
 				frrContainerIPv4, frrContainerIPv6 := getContainerAddressesForNetwork(routerContainerName, containerNetwork)
 				output, err := runCommand(containerRuntime, "exec", externalContainerName, "bash", "-c", fmt.Sprintf(`
@@ -1802,7 +1829,20 @@ ip route add %[3]s via %[4]s
 				Expect(err).NotTo(HaveOccurred(), step+": "+output)
 				Expect(startNorthSouthIngressIperfTraffic(externalContainerName, serverIPs, serverPort, step)).To(Succeed())
 				checkNorthSouthIngressIperfTraffic(externalContainerName, serverIPs, serverPort, step)
-				checkNorthSouthEgressICMPTraffic(vmi, []string{externalContainerIPV4Address, externalContainerIPV6Address}, step)
+				checkNorthSouthEgressICMPTraffic(vmi, externalContainerIPs, step)
+				if td.ingress == "routed" {
+					_, err := runCommand(containerRuntime, "exec", externalContainerName, "bash", "-c", iperfServerScript)
+					Expect(err).NotTo(HaveOccurred(), step)
+					Expect(startNorthSouthEgressIperfTraffic(vmi, externalContainerIPs, step)).To(Succeed())
+					By("Check egress src ip is not node IP on 'routed' ingress mode")
+					for _, vmAddress := range expectedAddreses {
+						output, err := runCommand(containerRuntime, "exec", externalContainerName, "bash", "-c",
+							fmt.Sprintf("grep 'connected to %s' /tmp/test_*", vmAddress))
+						Expect(err).NotTo(HaveOccurred(), step+": "+output)
+					}
+					checkNorthSouthEgressIperfTraffic(vmi, externalContainerIPs, step)
+
+				}
 			}
 
 			by(vmi.Name, fmt.Sprintf("Running %s for %s", td.test.description, td.resource.description))
@@ -1834,7 +1874,10 @@ ip route add %[3]s via %[4]s
 			if td.role == udnv1.NetworkRolePrimary {
 				step = by(vmi.Name, fmt.Sprintf("Check north/south traffic after %s %s", td.resource.description, td.test.description))
 				checkNorthSouthIngressIperfTraffic(externalContainerName, serverIPs, serverPort, step)
-				checkNorthSouthEgressICMPTraffic(vmi, []string{externalContainerIPV4Address, externalContainerIPV6Address}, step)
+				checkNorthSouthEgressICMPTraffic(vmi, externalContainerIPs, step)
+				if td.ingress == "routed" {
+					checkNorthSouthEgressIperfTraffic(vmi, externalContainerIPs, step)
+				}
 			}
 
 			if td.role == udnv1.NetworkRolePrimary && td.test.description == liveMigrate.description && isInterconnectEnabled() {
