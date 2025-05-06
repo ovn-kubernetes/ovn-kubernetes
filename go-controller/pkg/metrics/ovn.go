@@ -252,7 +252,7 @@ var ovnControllerStopwatchShowMetricsMap = map[string]*stopwatchMetricDetails{
 }
 
 // setOvnControllerConfigurationMetrics updates ovn-controller configuration
-// values (ovn-bridge-remote-probe-interval, ovn-remote-probe-interval, ovn-monitor-all,
+// values (ovn-openflow-probe-interval, ovn-remote-probe-interval, ovn-monitor-all,
 // ovn-encap-ip, ovn-encap-type, ovn-remote) obtained from Open_vSwitch entry updates
 func setOvnControllerConfigurationMetrics(ovsDBClient libovsdbclient.Client) (err error) {
 	openvSwitch, err := ovsops.GetOpenvSwitch(ovsDBClient)
@@ -260,8 +260,8 @@ func setOvnControllerConfigurationMetrics(ovsDBClient libovsdbclient.Client) (er
 		return fmt.Errorf("failed to get Open_vSwitch entry (%v)", err)
 	}
 
-	openflowProbeField := openvSwitch.ExternalIDs["ovn-bridge-remote-probe-interval"]
-	openflowProbeVal := parseMetricToFloat(MetricOvnSubsystemController, "ovn-bridge-remote-probe-interval", openflowProbeField)
+	openflowProbeField := openvSwitch.ExternalIDs["ovn-openflow-probe-interval"]
+	openflowProbeVal := parseMetricToFloat(MetricOvnSubsystemController, "ovn-openflow-probe-interval", openflowProbeField)
 	metricOpenFlowProbeInterval.Set(openflowProbeVal)
 
 	remoteProbeField := openvSwitch.ExternalIDs["ovn-remote-probe-interval"]
