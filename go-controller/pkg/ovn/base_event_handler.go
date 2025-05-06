@@ -182,6 +182,21 @@ func (h *baseNetworkControllerEventHandler) isResourceScheduled(objType reflect.
 	return true
 }
 
+// IsResourceScheduledOnTerminatedNamespace returns true if the given object has been scheduled on a terminating namespace.
+// Only applied to pods for now. Returns false for all other types.
+func (h *baseNetworkControllerEventHandler) isResourceScheduledOnTerminatedNamespace(objType reflect.Type, obj interface{}, watchFactory *factory.WatchFactory) (bool, error) {
+	switch objType {
+	case factory.PodType:
+		pod := obj.(*corev1.Pod)
+		namespace, err := watchFactory.GetNamespace(pod.Namespace)
+		if err != nil {
+			return false, err
+		}
+		return util.NamespaceTerminating(namespace), nil
+	}
+	return false, nil
+}
+
 // Given an object type, resourceNeedsUpdate returns true if the object needs to invoke update during iterate retry.
 func needsUpdateDuringRetry(objType reflect.Type) bool {
 	switch objType {
@@ -202,6 +217,10 @@ func (h *baseNetworkControllerEventHandler) isObjectInTerminalState(objType refl
 		factory.EgressIPPodType:
 		pod := obj.(*corev1.Pod)
 		return util.PodCompleted(pod)
+
+	case factory.NamespaceType:
+		namespace := obj.(*corev1.Namespace)
+		return util.NamespaceTerminating(namespace)
 
 	default:
 		return false
