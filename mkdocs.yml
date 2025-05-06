@@ -139,5 +139,6 @@ nav:
     # - FeatureName: okeps/<filename.md>
     - Template: okeps/okep-4368-template.md
     - Localnet API: okeps/okep-5085-localnet-api.md
+    - User Defined Networks: okeps/okep-5193-user-defined-networks.md
   - Blog:
     - blog/index.md
