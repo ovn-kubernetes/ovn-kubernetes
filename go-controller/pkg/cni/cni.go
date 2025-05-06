@@ -395,6 +395,19 @@ func getCNIResult(pr *PodRequest, getter PodInfoGetter, podInterfaceInfo *PodInt
 		ips = append(ips, ip)
 	}
 
+	// mimic an ip entry with gateway in order to trick multus to set this interface as default: true
+	ramsamsamMAC, _ := net.ParseMAC("00:AA:BB:CC:DD:EE")
+	if podInterfaceInfo.MAC.String() == ramsamsamMAC.String() {
+		ips = append(ips, &current.IPConfig{
+			Interface: current.Int(1),
+			Gateway:   podInterfaceInfo.Gateways[0],
+			Address: net.IPNet{
+				IP:   net.ParseIP("0.0.0.0"),
+				Mask: net.CIDRMask(0, 32),
+			},
+		})
+	}
+
 	return &current.Result{
 		Interfaces: interfacesArray,
 		IPs:        ips,

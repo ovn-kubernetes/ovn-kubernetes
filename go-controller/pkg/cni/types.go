@@ -3,10 +3,13 @@ package cni
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"time"
 
+	cnitypes "github.com/containernetworking/cni/pkg/types"
 	current "github.com/containernetworking/cni/pkg/types/100"
+
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
 	corev1 "k8s.io/api/core/v1"
@@ -103,6 +106,80 @@ type Response struct {
 
 func (response *Response) Marshal() ([]byte, error) {
 	return json.Marshal(response)
+}
+
+// Unmarshal safely parses a Response from JSON, especially guarding against malformed or empty IPConfig.Address
+// values that would normally break json.Unmarshal
+func (response *Response) Unmarshal(data []byte) error {
+	type Alias Response // Prevent recursion
+	aux := &struct {
+		Result *json.RawMessage `json:"Result"`
+		*Alias
+	}{
+		Alias: (*Alias)(response),
+	}
+
+	// Unmarshal Response except Result directly, leaving Result as a raw JSON blob
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	if aux.Result == nil {
+		return nil
+	}
+
+	var rawResult struct {
+		CNIVersion string               `json:"cniVersion,omitempty"`
+		Interfaces []*current.Interface `json:"interfaces,omitempty"`
+		IPs        []json.RawMessage    `json:"ips,omitempty"`
+		Routes     []*cnitypes.Route    `json:"routes,omitempty"`
+		DNS        cnitypes.DNS         `json:"dns,omitempty"`
+	}
+	// Unmarshal Result except IPs directly, leaving IPs as a raw JSON blob
+	if err := json.Unmarshal(*aux.Result, &rawResult); err != nil {
+		return err
+	}
+
+	// Convert raw IPConfigs safely
+	var safeIPs []*current.IPConfig
+	for _, rawIP := range rawResult.IPs {
+		var ip current.IPConfig
+		if err := safeUnmarshalIPConfig(rawIP, &ip); err == nil {
+			safeIPs = append(safeIPs, &ip)
+		}
+	}
+
+	// Safely bring everything together
+	response.Result = &current.Result{
+		CNIVersion: rawResult.CNIVersion,
+		Interfaces: rawResult.Interfaces,
+		IPs:        safeIPs,
+		Routes:     rawResult.Routes,
+		DNS:        rawResult.DNS,
+	}
+
+	return nil
+}
+
+func safeUnmarshalIPConfig(data []byte, ip *current.IPConfig) error {
+	var aux struct {
+		Interface *int   `json:"interface"`
+		Address   string `json:"address"`
+		Gateway   net.IP `json:"gateway"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	ip.Interface = aux.Interface
+	ip.Gateway = aux.Gateway
+
+	if aux.Address != "" {
+		if _, ipNet, err := net.ParseCIDR(aux.Address); err == nil {
+			ip.Address = *ipNet
+		}
+	}
+	return nil
 }
 
 // Filter out kubeAuth, since it might contain sensitive information.
