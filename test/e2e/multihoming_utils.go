@@ -19,6 +19,7 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
+	utilsnet "k8s.io/utils/net"
 	"k8s.io/utils/ptr"
 
 	mnpapi "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/apis/k8s.cni.cncf.io/v1beta1"
@@ -29,24 +30,58 @@ func netCIDR(netCIDR string, netPrefixLengthPerNode int) string {
 	return fmt.Sprintf("%s/%d", netCIDR, netPrefixLengthPerNode)
 }
 
-// takes ipv4 and ipv6 cidrs and returns the correct type for the cluster under test
-func correctCIDRFamily(ipv4CIDR, ipv6CIDR string) string {
-	return strings.Join(selectCIDRs(ipv4CIDR, ipv6CIDR), ",")
+func joinCIDRs(cidrs ...string) string {
+	return strings.Join(cidrs, ",")
 }
 
-// takes ipv4 and ipv6 cidrs and returns the correct type for the cluster under test
-func selectCIDRs(ipv4CIDR, ipv6CIDR string) []string {
+func splitCIDRs(cidrs string) []string {
+	return strings.Split(cidrs, ",")
+}
+
+func filterJoinedCIDRsAndMerge(cs clientset.Interface, cidrs string) string {
+	return joinCIDRs(filterCIDRs(cs, splitCIDRs(cidrs)...)...)
+}
+
+func filterCIDRs(cs clientset.Interface, cidrs ...string) []string {
+	var ipv4CIDRs, ipv6CIDRs []string
+	for _, cidr := range cidrs {
+		if utilsnet.IsIPv6CIDRString(cidr) {
+			ipv6CIDRs = append(ipv6CIDRs, cidr)
+		} else {
+			ipv4CIDRs = append(ipv4CIDRs, cidr)
+		}
+	}
 	// dual stack cluster
-	if isIPv6Supported() && isIPv4Supported() {
-		return []string{ipv4CIDR, ipv6CIDR}
+	if isIPv6Supported(cs) && isIPv4Supported(cs) {
+		return append(ipv4CIDRs, ipv6CIDRs...)
 	}
 	// is an ipv6 only cluster
-	if isIPv6Supported() {
-		return []string{ipv6CIDR}
+	if isIPv6Supported(cs) {
+		return ipv6CIDRs
 	}
-
 	//ipv4 only cluster
-	return []string{ipv4CIDR}
+	return ipv4CIDRs
+}
+
+func filterCIDRsAndMerge(cs clientset.Interface, cidrs ...string) string {
+	var ipv4CIDRs, ipv6CIDRs []string
+	for _, cidr := range cidrs {
+		if utilsnet.IsIPv6CIDRString(cidr) {
+			ipv6CIDRs = append(ipv6CIDRs, cidr)
+		} else {
+			ipv4CIDRs = append(ipv4CIDRs, cidr)
+		}
+	}
+	// dual stack cluster
+	if isIPv6Supported(cs) && isIPv4Supported(cs) {
+		return strings.Join(append(ipv4CIDRs, ipv6CIDRs...), ",")
+	}
+	// is an ipv6 only cluster
+	if isIPv6Supported(cs) {
+		return strings.Join(ipv6CIDRs, ",")
+	}
+	//ipv4 only cluster
+	return strings.Join(ipv4CIDRs, ",")
 }
 
 func getNetCIDRSubnet(netCIDR string) (string, error) {
@@ -255,7 +290,7 @@ func inRange(cidr string, ip string) error {
 	return fmt.Errorf("ip [%s] is NOT in range %s", ip, cidr)
 }
 
-func connectToServer(clientPodConfig podConfiguration, serverIP string, port int, args ...string) error {
+func connectToServer(clientPodConfig podConfiguration, serverIP string, port uint16, args ...string) error {
 	target := net.JoinHostPort(serverIP, fmt.Sprintf("%d", port))
 	baseArgs := []string{
 		"exec",
@@ -629,7 +664,7 @@ func allowedTCPPortsForPolicy(allowPorts ...int) []mnpapi.MultiNetworkPolicyPort
 	return portAllowlist
 }
 
-func reachServerPodFromClient(cs clientset.Interface, serverConfig podConfiguration, clientConfig podConfiguration, serverIP string, serverPort int, args ...string) error {
+func reachServerPodFromClient(cs clientset.Interface, serverConfig podConfiguration, clientConfig podConfiguration, serverIP string, serverPort uint16, args ...string) error {
 	updatedPod, err := cs.CoreV1().Pods(serverConfig.namespace).Get(context.Background(), serverConfig.name, metav1.GetOptions{})
 	if err != nil {
 		return err
