@@ -424,6 +424,11 @@ func gatewayInitInternal(nodeName, gwIntf, egressGatewayIntf string, gwNextHops 
 		}
 	}
 
+	// Set static FDB entry for LOCAL port
+	if err := util.SetStaticFDBEntry(gatewayBridge.bridgeName, gatewayBridge.bridgeName, gatewayBridge.macAddress); err != nil {
+		return nil, nil, err
+	}
+
 	l3GwConfig := util.L3GatewayConfig{
 		Mode:           config.Gateway.Mode,
 		ChassisID:      chassisID,
