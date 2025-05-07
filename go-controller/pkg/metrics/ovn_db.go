@@ -1,17 +1,15 @@
 package metrics
 
 import (
-	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/prometheus/client_golang/prometheus"
-	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 )
 
@@ -319,17 +317,59 @@ var (
 	sbDbSchemaVersion string
 )
 
-func getNBDBSockPath() (string, error) {
-	paths := []string{"/var/run/openvswitch/", "/var/run/ovn/"}
+// getOVSRunDir returns OVS run directory from environment variable with default
+func getOVSRunDir() string {
+	ovsRunDir := os.Getenv("OVS_RUNDIR")
+	if ovsRunDir == "" {
+		ovsRunDir = "/var/run/openvswitch/"
+	}
+
+	// Ensure path ends with trailing slash
+	if !strings.HasSuffix(ovsRunDir, "/") {
+		ovsRunDir += "/"
+	}
+
+	return ovsRunDir
+}
+
+// getOVNRunDir returns OVN run directory from environment variable with default
+func getOVNRunDir() string {
+	ovnRunDir := os.Getenv("OVN_RUNDIR")
+	if ovnRunDir == "" {
+		ovnRunDir = "/var/run/ovn/"
+	}
+
+	// Ensure path ends with trailing slash
+	if !strings.HasSuffix(ovnRunDir, "/") {
+		ovnRunDir += "/"
+	}
+
+	return ovnRunDir
+}
+
+// getDBSockPath returns the full path to the specified database socket file
+func getDBSockPath(dbType string) (string, error) {
+	var sockFileName string
+	switch dbType {
+	case "nb":
+		sockFileName = "ovnnb_db.sock"
+	case "sb":
+		sockFileName = "ovnsb_db.sock"
+	default:
+		return "", fmt.Errorf("unsupported db type: %s", dbType)
+	}
+
+	paths := []string{getOVSRunDir(), getOVNRunDir()}
 	for _, basePath := range paths {
-		if _, err := os.Stat(basePath + "ovnnb_db.sock"); err == nil {
-			klog.Infof("ovnnb_db.sock found at %s", basePath)
-			return basePath, nil
+		sockPath := filepath.Join(basePath, sockFileName)
+		if _, err := os.Stat(sockPath); err == nil {
+			klog.Infof("%s found at %s", sockFileName, sockPath)
+			return sockPath, nil
 		} else {
-			klog.Infof("%sovnnb_db.sock getting info failed: %s", basePath, err)
+			klog.Infof("%s getting info failed: %s", sockPath, err)
 		}
 	}
-	return "", fmt.Errorf("ovn db sock files weren't found in %s", strings.Join(paths, " or "))
+	return "", fmt.Errorf("ovn %s db sock file wasn't found in %s", dbType, strings.Join(paths, " or "))
 }
 
 func getOvnDbVersionInfo() {
@@ -337,40 +377,42 @@ func getOvnDbVersionInfo() {
 	if err == nil && strings.HasPrefix(stdout, "ovsdb-server (Open vSwitch) ") {
 		ovnDbVersion = strings.Fields(stdout)[3]
 	}
-	basePath, err := getNBDBSockPath()
+
+	// Get NB schema version - resolve NB socket path independently
+	nbSockPath, err := getDBSockPath("nb")
 	if err != nil {
-		klog.Errorf("OVN db schema versions can't be fetched: %s", err)
-		return
-	}
-	sockPath := "unix:" + basePath + "ovnnb_db.sock"
-	stdout, _, err = util.RunOVSDBClient("get-schema-version", sockPath, "OVN_Northbound")
-	if err == nil {
-		nbDbSchemaVersion = strings.TrimSpace(stdout)
+		klog.Errorf("OVN NB db schema version can't be fetched - socket not found: %s", err)
 	} else {
-		klog.Errorf("OVN nbdb schema version can't be fetched: %s", err)
+		sockPath := "unix:" + nbSockPath
+		stdout, _, err = util.RunOVSDBClient("get-schema-version", sockPath, "OVN_Northbound")
+		if err == nil {
+			nbDbSchemaVersion = strings.TrimSpace(stdout)
+		} else {
+			klog.Errorf("OVN nbdb schema version can't be fetched: %s", err)
+		}
 	}
-	sockPath = "unix:" + basePath + "ovnsb_db.sock"
-	stdout, _, err = util.RunOVSDBClient("get-schema-version", sockPath, "OVN_Southbound")
-	if err == nil {
-		sbDbSchemaVersion = strings.TrimSpace(stdout)
+
+	// Get SB schema version - resolve SB socket path independently
+	sbSockPath, err := getDBSockPath("sb")
+	if err != nil {
+		klog.Errorf("OVN SB db schema version can't be fetched - socket not found: %s", err)
 	} else {
-		klog.Errorf("OVN sbdb schema version can't be fetched: %s", err)
+		sockPath := "unix:" + sbSockPath
+		stdout, _, err = util.RunOVSDBClient("get-schema-version", sockPath, "OVN_Southbound")
+		if err == nil {
+			sbDbSchemaVersion = strings.TrimSpace(stdout)
+		} else {
+			klog.Errorf("OVN sbdb schema version can't be fetched: %s", err)
+		}
 	}
 }
 
-func RegisterOvnDBMetrics(clientset kubernetes.Interface, k8sNodeName string, stopChan <-chan struct{}) {
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 300*time.Second, true, func(ctx context.Context) (bool, error) {
-		return checkPodRunsOnGivenNode(clientset, []string{"ovn-db-pod=true"}, k8sNodeName, false)
-	})
-	if err != nil {
-		if wait.Interrupted(err) {
-			klog.Errorf("Timed out while checking if OVN DB Pod runs on this %q K8s Node: %v. "+
-				"Not registering OVN DB Metrics on this Node.", k8sNodeName, err)
-		} else {
-			klog.Infof("Not registering OVN DB Metrics on this Node since OVN DBs are not running on this node.")
-		}
+// func RegisterOvnDBMetrics(clientset kubernetes.Interface, k8sNodeName string, stopChan <-chan struct{}) {
+func RegisterOvnDBMetrics(waitTimeoutFunc func() bool, stopChan <-chan struct{}) {
+	if ok := waitTimeoutFunc(); !ok {
 		return
 	}
+
 	klog.Info("Found OVN DB Pod running on this node. Registering OVN DB Metrics")
 
 	// get the ovsdb server version info
