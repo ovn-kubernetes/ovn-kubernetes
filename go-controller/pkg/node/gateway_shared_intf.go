@@ -2003,11 +2003,12 @@ func commonFlows(hostSubnets []*net.IPNet, bridge *bridgeConfiguration) ([]strin
 		}
 
 		if ofPortPhys != "" {
-			// table 0, packets coming from external. Send it through conntrack and
+			// table 0, packets coming from external or other localnet ports. Send it through conntrack and
 			// resubmit to table 1 to know the state and mark of the connection.
+			// Note, there are higher priority rules that take care of traffic coming from LOCAL and OVN ports.
 			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=50, in_port=%s, ip, "+
-					"actions=ct(zone=%d, nat, table=1)", defaultOpenFlowCookie, ofPortPhys, config.Default.ConntrackZone))
+				fmt.Sprintf("cookie=%s, priority=50, ip, actions=ct(zone=%d, nat, table=1)",
+					defaultOpenFlowCookie, config.Default.ConntrackZone))
 		}
 	}
 
