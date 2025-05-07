@@ -49,7 +49,7 @@ var _ = Describe("Network Segmentation: Localnet", func() {
 			Expect(teardownUnderlay(ovsPods, ovsBrName)).To(Succeed())
 		})
 		c := networkAttachmentConfig{networkAttachmentConfigParams: networkAttachmentConfigParams{networkName: physicalNetworkName, vlanID: vlan}}
-		Expect(setupUnderlay(ovsPods, ovsBrName, secondaryIfaceName, c)).To(Succeed())
+		Expect(setupUnderlay(ovsPods, ovsBrName, secondaryIfaceName, c.networkName, c.vlanID)).To(Succeed())
 
 		By("create test namespaces")
 		_, err := f.ClientSet.CoreV1().Namespaces().Create(context.Background(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: nsRed}}, metav1.CreateOptions{})
