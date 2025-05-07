@@ -171,6 +171,9 @@ func setUpGatewayFakeOVSCommands(fexec *ovntest.FakeExec) {
 		Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . other_config:hw-offload",
 		Output: "false",
 	})
+	fexec.AddFakeCmdsNoOutputNoError([]string{
+		"ovs-appctl --timeout=15 fdb/add breth0 breth0 0 00:00:00:55:66:99",
+	})
 	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 		Cmd:    "ovs-vsctl --timeout=15 get Interface patch-breth0_worker1-to-br-int ofport",
 		Output: "5",
