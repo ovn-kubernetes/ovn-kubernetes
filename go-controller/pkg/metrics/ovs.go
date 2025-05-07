@@ -5,6 +5,7 @@ package metrics
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -298,6 +299,21 @@ func getOvsVersionInfo(ovsDBClient libovsdbclient.Client) {
 		klog.Errorf("Failed to get ovs version information")
 		return
 	}
+}
+
+func pidPathFromEnv(envKey, def string) string {
+	if v := os.Getenv(envKey); v != "" {
+		return v
+	}
+	return def
+}
+
+func getOVSVSwitchPidPath() string {
+	return pidPathFromEnv("OVS_VSWITCHD_PID", "/var/run/openvswitch/ovs-vswitchd.pid")
+}
+
+func getOVSDbServerPidPath() string {
+	return pidPathFromEnv("OVSDB_SERVER_PID", "/var/run/openvswitch/ovsdb-server.pid")
 }
 
 // ovsDatapathLookupsMetrics obtains the ovs datapath
@@ -897,11 +913,11 @@ func registerOvsMetrics(ovsDBClient libovsdbclient.Client, metricsScrapeInterval
 		// and therefore it can monitor OVS running on the host using PID.
 		if !config.UnprivilegedMode {
 			registry.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{
-				PidFn:     prometheus.NewPidFileFn("/var/run/openvswitch/ovs-vswitchd.pid"),
+				PidFn:     prometheus.NewPidFileFn(getOVSVSwitchPidPath()),
 				Namespace: fmt.Sprintf("%s_%s", types.MetricOvsNamespace, types.MetricOvsSubsystemVswitchd),
 			}))
 			registry.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{
-				PidFn:     prometheus.NewPidFileFn("/var/run/openvswitch/ovsdb-server.pid"),
+				PidFn:     prometheus.NewPidFileFn(getOVSDbServerPidPath()),
 				Namespace: fmt.Sprintf("%s_%s", types.MetricOvsNamespace, types.MetricOvsSubsystemDB),
 			}))
 		}

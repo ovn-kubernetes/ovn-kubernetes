@@ -3,6 +3,10 @@ package metrics
 import (
 	"reflect"
 	"testing"
+
+	"k8s.io/client-go/kubernetes"
+
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 )
 
 func Test_parseStopwatchShowOutput(t *testing.T) {
@@ -132,4 +136,10 @@ Statistics for 'ovn-northd-loop'
 			}
 		})
 	}
+}
+
+func TestRegisterOvnMetricsSignature(_ *testing.T) {
+	// Compile-time assertion: will fail to compile if the signature changes.
+	var fn func(kubernetes.Interface, string, libovsdbclient.Client, int, <-chan struct{}) = RegisterOvnMetrics
+	_ = fn
 }
