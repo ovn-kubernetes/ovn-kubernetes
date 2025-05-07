@@ -499,10 +499,12 @@ func TestNADController(t *testing.T) {
 				},
 			}
 			fakeClient := util.GetOVNClientset().GetClusterManagerClientset()
+			wf, err := factory.NewClusterManagerWatchFactory(fakeClient)
+			g.Expect(err).NotTo(gomega.HaveOccurred())
 			nadController := &nadController{
 				nads:               map[string]string{},
 				primaryNADs:        map[string]string{},
-				networkController:  newNetworkController("", "", "", tcm, nil),
+				networkController:  newNetworkController("", "", "", tcm, wf),
 				networkIDAllocator: id.NewIDAllocator("NetworkIDs", MaxNetworks),
 				nadClient:          fakeClient.NetworkAttchDefClient,
 				namespaceLister:    &fakeNamespaceLister{},
