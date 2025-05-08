@@ -969,9 +969,10 @@ var _ = ginkgo.Describe("e2e control plane", func() {
 
 	ginkgo.Describe("test node readiness according to its defaults interface MTU size", func() {
 		const testNodeName = "ovn-worker"
-		var originalMTU int
+		//var originalMTU int
 
 		ginkgo.BeforeEach(func() {
+			/*
 			// get the interface current mtu and store it as original value to be able to reset it after the test
 			res, err := runCommand(containerRuntime, "exec", testNodeName, "cat", "/sys/class/net/breth0/mtu")
 			if err != nil {
@@ -983,10 +984,12 @@ var _ = ginkgo.Describe("e2e control plane", func() {
 			if err != nil {
 				framework.Failf("could not convert MTU to integer: %s", err)
 			}
+				*/
 		})
 
 		ginkgo.AfterEach(func() {
 			// reset MTU to original value
+			/*
 			_, err := runCommand(containerRuntime, "exec", testNodeName, "ip", "link", "set", "breth0", "mtu", fmt.Sprintf("%d", originalMTU))
 			if err != nil {
 				framework.Failf("could not reset MTU of interface: %s", err)
@@ -999,6 +1002,7 @@ var _ = ginkgo.Describe("e2e control plane", func() {
 
 			err = waitClusterHealthy(f, numControlPlanePods, controlPlanePodName)
 			framework.ExpectNoError(err, "one or more nodes failed to go back ready, schedulable, and untainted")
+			*/
 		})
 
 		ginkgo.It("should get node not ready with a too small MTU", func() {

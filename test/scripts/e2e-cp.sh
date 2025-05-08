@@ -33,6 +33,12 @@ queries to the hostNetworked server pod on another node shall work for UDP|\
 ipv4 pod"
 
 SKIPPED_TESTS=""
+skip() {
+  if [ "$SKIPPED_TESTS" != "" ]; then
+  	SKIPPED_TESTS+="|"
+  fi
+  SKIPPED_TESTS+=$@
+}
 
 if [ "$KIND_IPV4_SUPPORT" == true ]; then
     if  [ "$KIND_IPV6_SUPPORT" == true ]; then
@@ -167,13 +173,47 @@ if [[ "${WHAT}" != "${NETWORK_SEGMENTATION_TESTS}"* ]]; then
   SKIPPED_TESTS+=$NETWORK_SEGMENTATION_TESTS
 fi
 
-# Only run bgp tests if they are explicitly requested
 BGP_TESTS="BGP"
-if [[ "${WHAT}" != "${BGP_TESTS}"* ]]; then
+if [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then
   if [ "$SKIPPED_TESTS" != "" ]; then
 	SKIPPED_TESTS+="|"
   fi
   SKIPPED_TESTS+=$BGP_TESTS
+else
+  if [ "$ADVERTISE_DEFAULT_NETWORK" = true ]; then
+    # Some test don't work when the default network is advertised, either because
+    # the configuration that the test excercises does not make sense for an advertised network, or
+    # there is some bug or functional gap
+    # call out case by case
+
+    # pod reached from default network through secondary interface, asymetric, configuration does not make sense
+    # TODO: perhaps the secondary network attached pods should not be attached to default network
+    skip "Multi Homing A single pod with an OVN-K secondary network attached to a localnet network mapped to breth0 can be reached by a client pod in the default network on the same node"
+    skip "Multi Homing A single pod with an OVN-K secondary network attached to a localnet network mapped to breth0 can be reached by a client pod in the default network on a different node"
+  
+    # these tests require metallb but the configuration we do for it is not compatible with the configuration we do to advertise the default network
+    # TODO: consolidate configuration
+    skip "Load Balancer Service Tests with MetalLB"
+    skip "EgressService"
+
+    # tests that specifically expect the node SNAT to happen
+    # TODO: expect the pod IP where it makes sense
+    skip "e2e egress firewall policy validation with external containers"
+    skip "e2e egress IP validation Cluster Default Network \[OVN network\] Using different methods to disable a node's availability for egress Should validate the egress IP functionality against remote hosts"
+    skip "e2e egress IP validation Cluster Default Network \[OVN network\] Should validate the egress IP SNAT functionality against host-networked pods"
+    skip "e2e egress IP validation Cluster Default Network Should validate egress IP logic when one pod is managed by more than one egressIP object"
+    skip "e2e egress IP validation Cluster Default Network Should re-assign egress IPs when node readiness / reachability goes down/up"
+
+    # https://issues.redhat.com/browse/OCPBUGS-55028
+    skip "e2e egress IP validation Cluster Default Network \[secondary-host-eip\]"
+
+    # https://issues.redhat.com/browse/OCPBUGS-50636
+    skip "Services of type NodePort should listen on each host addresses"
+    skip "Services of type NodePort should work on secondary node interfaces for ETP=local and ETP=cluster when backend pods are also served by EgressIP"
+
+    # https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5240
+    skip "e2e control plane test node readiness according to its defaults interface MTU size should get node not ready with a too small MTU"
+  fi
 fi
 
 # setting these is required to make RuntimeClass tests work ... :/
@@ -187,15 +227,16 @@ FOCUS=$(echo ${@:1} | sed 's/ /\\s/g')
 pushd e2e
 
 go mod download
-go test -test.timeout 180m -v . \
+go test -test.timeout 200m -v . \
         -ginkgo.v \
         -ginkgo.focus ${FOCUS:-.} \
-        -ginkgo.timeout 3h \
+        -ginkgo.timeout 180m \
         -ginkgo.flake-attempts ${FLAKE_ATTEMPTS:-2} \
         -ginkgo.skip="${SKIPPED_TESTS}" \
         -ginkgo.junit-report=${E2E_REPORT_DIR}/junit_${E2E_REPORT_PREFIX}report.xml \
         -provider skeleton \
         -kubeconfig ${KUBECONFIG} \
         ${NUM_NODES:+"--num-nodes=${NUM_NODES}"} \
-        ${E2E_REPORT_DIR:+"--report-dir=${E2E_REPORT_DIR}"}
+        ${E2E_REPORT_DIR:+"--report-dir=${E2E_REPORT_DIR}"} \
+        -delete-namespace-on-failure=false
 popd
