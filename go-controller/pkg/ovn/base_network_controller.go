@@ -386,19 +386,13 @@ func (bnc *BaseNetworkController) syncNodeClusterRouterPort(node *corev1.Node, h
 		gwIfAddr := util.GetNodeGatewayIfAddr(hostSubnet)
 		lrpNetworks = append(lrpNetworks, gwIfAddr.String())
 	}
-
-	var lrpOptions map[string]string
-	enableGatewayMTU := util.ParseNodeGatewayMTUSupport(node)
-	if enableGatewayMTU {
-		lrpOptions = map[string]string{
-			"gateway_mtu": strconv.Itoa(config.Default.MTU),
-		}
-	}
 	logicalRouterPort := nbdb.LogicalRouterPort{
 		Name:     lrpName,
 		MAC:      nodeLRPMAC.String(),
 		Networks: lrpNetworks,
-		Options:  lrpOptions,
+		Options: map[string]string{
+			"gateway_mtu": strconv.Itoa(config.Default.MTU),
+		},
 	}
 	logicalRouter := nbdb.LogicalRouter{Name: logicalRouterName}
 	gatewayChassis := nbdb.GatewayChassis{
