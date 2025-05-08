@@ -23,6 +23,8 @@ type SubnetAllocator interface {
 	AllocateNetworks(string) ([]*net.IPNet, error)
 	AllocateIPv4Network(string) (*net.IPNet, error)
 	AllocateIPv6Network(string) (*net.IPNet, error)
+	ListAllIPv4Networks() []*net.IPNet
+	ListAllIPv6Networks() []*net.IPNet
 	// ReleaseNetworks releases the given networks if they are owned by the
 	// given owner
 	ReleaseNetworks(string, ...*net.IPNet) error
@@ -190,6 +192,22 @@ func (sna *BaseSubnetAllocator) AllocateIPv6Network(owner string) (*net.IPNet, e
 		}
 	}
 	return nil, ErrSubnetAllocatorFull
+}
+
+func (sna *BaseSubnetAllocator) ListAllIPv4Networks() []*net.IPNet {
+	var subnets []*net.IPNet
+	for _, snr := range sna.v4ranges {
+		subnets = append(subnets, snr.listAllNetworks()...)
+	}
+	return subnets
+}
+
+func (sna *BaseSubnetAllocator) ListAllIPv6Networks() []*net.IPNet {
+	var subnets []*net.IPNet
+	for _, snr := range sna.v6ranges {
+		subnets = append(subnets, snr.listAllNetworks()...)
+	}
+	return subnets
 }
 
 func (sna *BaseSubnetAllocator) ReleaseNetworks(owner string, subnets ...*net.IPNet) error {
@@ -455,4 +473,47 @@ func (snr *subnetAllocatorRange) releaseAllNetworks(owner string) {
 			snr.used--
 		}
 	}
+}
+
+// listAllNetworks returns all networks in the range
+func (snr *subnetAllocatorRange) listAllNetworks() []*net.IPNet {
+	var subnets []*net.IPNet
+	netMaskSize, addrLen := snr.network.Mask.Size()
+	numSubnets := uint32(1) << snr.subnetBits
+	if snr.subnetBits > 24 {
+		// We need to make sure that the uint32 math below won't overflow. If
+		// snr.subnetBits > 32 then numSubnets has already overflowed, but also if
+		// numSubnets is between 1<<24 and 1<<32 then "base << (snr.hostBits % 8)"
+		// below could overflow if snr.hostBits%8 is non-0. So we cap numSubnets
+		// at 1<<24. "16M subnets ought to be enough for anybody."
+		numSubnets = 1 << 24
+	}
+
+	var i uint32
+	for i = 0; i < numSubnets; i++ {
+		base := i % numSubnets
+		if snr.leftShift != 0 {
+			base = ((base << snr.leftShift) & snr.leftMask) | ((base >> snr.rightShift) & snr.rightMask)
+		} else if addrLen == 128 && snr.subnetBits >= 16 {
+			// Skip the 0 subnet (and other subnets with all 0s in the low word)
+			// since the extra 0 word will get compressed out and make the address
+			// look different from addresses on other subnets.
+			if (base & 0xFFFF) == 0 {
+				continue
+			}
+		}
+
+		genIP := append([]byte{}, []byte(snr.network.IP)...)
+		subnetBits := base << (snr.hostBits % 8)
+		b := (uint32(addrLen) - snr.hostBits - 1) / 8
+		for subnetBits != 0 {
+			genIP[b] |= byte(subnetBits)
+			subnetBits >>= 8
+			b--
+		}
+
+		genSubnet := &net.IPNet{IP: genIP, Mask: net.CIDRMask(int(snr.subnetBits)+netMaskSize, addrLen)}
+		subnets = append(subnets, genSubnet)
+	}
+	return subnets
 }
