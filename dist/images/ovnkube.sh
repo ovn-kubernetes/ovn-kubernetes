@@ -2327,7 +2327,6 @@ ovn-cluster-manager() {
     ${ovn_v6_transit_switch_subnet_opt} \
     ${network_qos_enabled_flag} \
     ${ovn_enable_dnsnameresolver_flag} \
-    --gateway-mode=${ovn_gateway_mode} \
     --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
     --host-network-namespace ${ovn_host_network_namespace} \
     --logfile-maxage=${ovnkube_logfile_maxage} \
