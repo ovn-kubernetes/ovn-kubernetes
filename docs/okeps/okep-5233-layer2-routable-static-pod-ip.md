@@ -1,34 +1,40 @@
-# OKEP-4368: OKEP Template
+# OKEP-5233: Pre-assigned network configuration for primary user defined networks workloads
 
-* Issue: [#4368](https://github.com/ovn-org/ovn-kubernetes/issues/4368)
-(Every OKEP must have an associated enhancement tracking issue that is
-added to the ovn-kubernetes repo, so please open one if you don't have one
-yet. Then use the Issue number xxxx as the unique number for the OKEP-xxxx
-number as well as use the same file naming convention as used in this template.
-So the OKEP file name must be `okep-xxxx-title.md` - The goal is that that
-github issue will have disucssion details about this feature - using meeting
-notes; slack threads for discussions is not desired as preserving history is
-hard)
+* Issue: [#5233](https://github.com/ovn-org/ovn-kubernetes/issues/5233)
 
 ## Problem Statement
 
-(1-2 sentence summary of the problem we are trying to solve here)
+Migrating workloads with pre-assigned network configurations (IP, MAC, default gateway)
+to OVN-Kubernetes is currently not possible. There is a need to import workloads, preserving 
+their network configuration, while also enabling non-NATed traffic to better integrate with
+existing infrastructures.
 
 ## Goals
 
-(Bullet list of Primary goals of this proposal.)
+- Enable pods on primary user defined network to use a pre-defined static network configuration 
+  including IP address, MAC address, and default gateway. 
+- Ensure it is possible to enable non-NATed traffic for pods with the static network 
+  configuration
+- Allow for excluding subnets from the dynamic IP allocation for primary User-Defined Networks
+  (UDNs) 
 
 ## Non-Goals
 
-(Bullet list of What is explicitly out of scope for this proposal.)
+- TBD: Enabling non-NATed Pod traffic without exposing the network through BGP
+- TBD: Secondary networks
+- Modifying a pod's pre-assigned network configuration after the pod was created
+- Persistent IPs for Layer3 networks
 
 ## Introduction
 
-(Can link to external doc -- but we should bias towards copying
-the content into the OKEP as online documents are easier to lose
--- e.g. owner messes up the permissions, accidental deletion)
-Give a good detailed introduction to the problem including the
-ecosystem information
+Legacy workloads, particularly virtual machines, are often set up with static
+network configurations. When migrating to OVN-Kubernetes UDNs,
+it should be possible to integrate these gradually to prevent disruptions. 
+
+Currently, OVN-Kubernetes allocates IP addresses dynamically and it generates the MAC 
+addresses from it. It sets the pod's default gateway to the first usable IP address of its subnet.
+It additionally reserves the second usable IP address for the internal management port which 
+excludes it from being available for workloads. 
 
 ## User-Stories/Use-Cases
 
