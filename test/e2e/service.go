@@ -1615,15 +1615,15 @@ metadata:
 		if !utilnet.IsIPv6String(svcLoadBalancerIP) {
 			ginkgo.By("Setting up external IPv4 client with an intermediate node")
 			defer func() {
-				cleanupIPv4NetworkForExternalClient(svcLoadBalancerIP)
+				cleanupIPv4NetworkForExternalClient(svcLoadBalancerIP, endpointHTTPPort)
 			}()
-			setupIPv4NetworkForExternalClient(svcLoadBalancerIP, nodeIP)
+			setupIPv4NetworkForExternalClient(svcLoadBalancerIP, endpointHTTPPort, nodeIP)
 		} else {
 			ginkgo.By("Setting up external IPv6 client with an intermediate node")
 			defer func() {
-				cleanupIPv6NetworkForExternalClient(svcLoadBalancerIP)
+				cleanupIPv6NetworkForExternalClient(svcLoadBalancerIP, endpointHTTPPort)
 			}()
-			setupIPv6NetworkForExternalClient(svcLoadBalancerIP, nodeIP)
+			setupIPv6NetworkForExternalClient(svcLoadBalancerIP, endpointHTTPPort, nodeIP)
 			svcIPforCurl = fmt.Sprintf("[%s]", svcLoadBalancerIP)
 		}
 
@@ -2225,7 +2225,7 @@ func getServiceLoadBalancerIP(c clientset.Interface, namespace, serviceName stri
 	return svc.Status.LoadBalancer.Ingress[0].IP, nil
 }
 
-func setupIPv4NetworkForExternalClient(svcLoadBalancerIP, nodeIP string) {
+func setupIPv4NetworkForExternalClient(svcLoadBalancerIP string, svcLoadBalancerPort int, nodeIP string) {
 	// The external client configuration done in install_metallb can not be used because routes for external client
 	// installed in K8s node https://github.com/ovn-org/ovn-kubernetes/blob/master/contrib/kind.sh#L1045-L1047
 	// are ignored in shared gateway mode and traffic coming back from pod is put on the docker bridge directly by
@@ -2248,6 +2248,7 @@ func setupIPv4NetworkForExternalClient(svcLoadBalancerIP, nodeIP string) {
 	//                   |                                  172.18.0.1                                  |
 	//                   |                                                     ip route add 192.168.223.0/24 via 192.168.222.2
 	//                   |                                                     ip route add <svc-ip> via|<endpoint-node-ip>
+	//                   |                                                     iptables -t filter -I FORWARD -d <svc-ip> -p tcp -m tcp --dport <svc-port> -j ACCEPT
 	//                   |                                                                              |
 	//                   |  vm                                    192.168.222.1                         |
 	//                   +----------------------------------------+-------------------------------------+
@@ -2278,17 +2279,21 @@ func setupIPv4NetworkForExternalClient(svcLoadBalancerIP, nodeIP string) {
 	err = buildAndRunCommand("sudo ip route add 192.168.223.0/24 via 192.168.222.2")
 	framework.ExpectNoError(err, "failed to add route for client to handle reverse service traffic")
 
+	err = buildAndRunCommand(fmt.Sprintf("sudo iptables -t filter -I FORWARD -d %s -p tcp -m tcp --dport %d -j ACCEPT", svcLoadBalancerIP, svcLoadBalancerPort))
+	framework.ExpectNoError(err, "failed to add iptables rule for service")
+
 	err = buildAndRunCommand(fmt.Sprintf("sudo ip route add %s via %s", svcLoadBalancerIP, nodeIP))
 	framework.ExpectNoError(err, "failed to add route for external load balancer service")
 }
 
-func cleanupIPv4NetworkForExternalClient(svcLoadBalancerIP string) {
+func cleanupIPv4NetworkForExternalClient(svcLoadBalancerIP string, svcLoadBalancerPort int) {
 	cleanupNetNamespace()
 	buildAndRunCommand("sudo ip route delete 192.168.223.0/24 via 192.168.222.2")
 	buildAndRunCommand(fmt.Sprintf("sudo ip route delete %s", svcLoadBalancerIP))
+	buildAndRunCommand(fmt.Sprintf("sudo iptables -t filter -D FORWARD -d %s -p tcp -m tcp --dport %d -j ACCEPT", svcLoadBalancerIP, svcLoadBalancerPort))
 }
 
-func setupIPv6NetworkForExternalClient(svcLoadBalancerIP, nodeIP string) {
+func setupIPv6NetworkForExternalClient(svcLoadBalancerIP string, svcLoadBalancerPort int, nodeIP string) {
 	// The external client configuration done in install_metallb can not be used because routes for external client
 	// installed in K8s node https://github.com/ovn-org/ovn-kubernetes/blob/master/contrib/kind.sh#L1045-L1047
 	// are ignored in shared gateway mode and traffic coming back from pod is put on the docker bridge directly by
@@ -2339,12 +2344,16 @@ func setupIPv6NetworkForExternalClient(svcLoadBalancerIP, nodeIP string) {
 
 	err = buildAndRunCommand(fmt.Sprintf("sudo ip -6 route add %s via %s", svcLoadBalancerIP, nodeIP))
 	framework.ExpectNoError(err, "failed to add route for external load balancer service")
+
+	err = buildAndRunCommand(fmt.Sprintf("sudo ip6tables -t filter -I FORWARD -d %s -p tcp -m tcp --dport %d -j ACCEPT", svcLoadBalancerIP, svcLoadBalancerPort))
+	framework.ExpectNoError(err, "failed to add iptables rule for service")
 }
 
-func cleanupIPv6NetworkForExternalClient(svcLoadBalancerIP string) {
+func cleanupIPv6NetworkForExternalClient(svcLoadBalancerIP string, svcLoadBalancerPort int) {
 	cleanupNetNamespace()
 	buildAndRunCommand("sudo ip -6 route delete fc00:f853:ccd:e223::2")
 	buildAndRunCommand(fmt.Sprintf("sudo ip -6 route delete %s", svcLoadBalancerIP))
+	buildAndRunCommand(fmt.Sprintf("sudo ip6tables -t filter -D FORWARD -d %s -p tcp -m tcp --dport %d -j ACCEPT", svcLoadBalancerIP, svcLoadBalancerPort))
 }
 
 func setupNetNamespaceAndLinks() {
