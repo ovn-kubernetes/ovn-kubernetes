@@ -1,6 +1,7 @@
 package node
 
 import (
+	"errors"
 	"fmt"
 	"net"
 
@@ -311,6 +312,29 @@ func (na *NodeAllocator) syncNodeNetworkAnnotations(node *corev1.Node) error {
 		// from each enabled IP family.
 		ipv4Mode, ipv6Mode := na.netInfo.IPMode()
 		validExistingSubnets, allocatedSubnets, err = na.allocateNodeSubnets(na.clusterSubnetAllocator, node.Name, existingSubnets, ipv4Mode, ipv6Mode)
+		if err != nil && errors.Is(err, ErrSubnetAllocatorFull) {
+			networkName := na.netInfo.GetNetworkName()
+			klog.Errorf("No subnets available for the network %s", na.netInfo.GetNetworkName())
+			resultErr := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+				// Informer cache should not be mutated, so get a copy of the object
+				node, err := na.nodeLister.Get(node.Name)
+				if err != nil {
+					return err
+				}
+				cnode := node.DeepCopy()
+				err = util.UpdateNoSubnetToAllocateAnnotationForNetwork(cnode.Annotations, networkName)
+				if err != nil {
+					return fmt.Errorf("failed to update node %q annotation for network %s with no subnet to allocate: %w",
+						node.Name, networkName, err)
+				}
+				// It is possible to update the node annotations using status subresource
+				// because changes to metadata via status subresource are not restricted for nodes.
+				return na.kube.UpdateNodeStatus(cnode)
+			})
+			if resultErr != nil {
+				return fmt.Errorf("failed to update node %s annotation: %w", node.Name, resultErr)
+			}
+		}
 		if err != nil {
 			return err
 		}
@@ -509,6 +533,12 @@ func (na *NodeAllocator) Cleanup() error {
 			return fmt.Errorf("failed to clear node %q subnet annotation for network %s",
 				node.Name, networkName)
 		}
+		annotator := kube.NewNodeAnnotator(na.kube, node.Name)
+		err = util.DeleteNetworkFromNoSubnetToAllocateAnnotation(annotator, node.Annotations, na.netInfo.GetNetworkName())
+		if err != nil {
+			return fmt.Errorf("failed to clear node %q no subnet annotation for network %s: %w",
+				node.Name, networkName, err)
+		}
 
 		na.clusterSubnetAllocator.ReleaseAllNetworks(node.Name)
 	}
@@ -583,7 +613,7 @@ func (na *NodeAllocator) allocateNodeSubnets(allocator SubnetAllocator, nodeName
 	// allocateOneSubnet is a helper to process the result of a subnet allocation
 	allocateOneSubnet := func(allocatedHostSubnet *net.IPNet, allocErr error) error {
 		if allocErr != nil {
-			return fmt.Errorf("error allocating network for node %s, network name %s: %v",
+			return fmt.Errorf("error allocating network for node %s, network name %s: %w",
 				nodeName, na.netInfo.GetNetworkName(), allocErr)
 		}
 		// the allocator returns nil if it can't provide a subnet

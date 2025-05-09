@@ -35,6 +35,7 @@ func newNetworkController(name, zone, node string, cm ControllerManager, wf watc
 		cm:                 cm,
 		networks:           map[string]util.MutableNetInfo{},
 		networkControllers: map[string]*networkControllerState{},
+		nodeLister:         wf.NodeCoreInformer().Lister(),
 	}
 
 	// this controller does not feed from an informer, networks are manually
@@ -54,7 +55,6 @@ func newNetworkController(name, zone, node string, cm ControllerManager, wf watc
 	if nc.hasRouteAdvertisements() {
 		nc.nadLister = wf.NADInformer().Lister()
 		nc.raLister = wf.RouteAdvertisementsInformer().Lister()
-		nc.nodeLister = wf.NodeCoreInformer().Lister()
 
 		// ra controller
 		raConfig := &controller.ControllerConfig[ratypes.RouteAdvertisements]{
@@ -274,6 +274,25 @@ func (c *networkController) syncNetwork(network string) error {
 	defer func() {
 		klog.V(4).Infof("%s: finished syncing network %s, took %v", c.name, network, time.Since(startTime))
 	}()
+
+	networkObj := c.getNetwork(network)
+	if networkObj != nil && c.node != "" && util.IsNetworkSegmentationSupportEnabled() && networkObj.IsPrimaryNetwork() &&
+		networkObj.TopologyType() == types.Layer3Topology {
+		node, err := c.nodeLister.Get(c.node)
+		if err != nil {
+			return fmt.Errorf("error retrieving node %s object while syncing network %s: %v",
+				c.node, network, err)
+		}
+		exists, err := util.NetworkExistsInNoSubnetAnnotation(node.Annotations, network)
+		if exists {
+			klog.Errorf("Host subnet is not allocated for the network %s on node %s", network, node.Name)
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("error parsing k8s.ovn.org/networks-no-subnet annotation on node %s while syncing network %s: %w",
+				c.node, network, err)
+		}
+	}
 
 	have, stoppedAndDeleting := c.getReconcilableNetworkState(network)
 	want := c.getNetwork(network)
