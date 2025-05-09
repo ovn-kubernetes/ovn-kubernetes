@@ -260,7 +260,7 @@ func (c *addressManager) handleNodePrimaryAddrChange() {
 	}
 	if nodePrimaryAddrChanged && config.Default.EncapIP == "" {
 		klog.Infof("Node primary address changed to %v. Updating OVN encap IP.", c.nodePrimaryAddr)
-		updateOVNEncapIPAndReconnect(c.nodePrimaryAddr)
+		c.updateOVNEncapIPAndReconnect(c.nodePrimaryAddr)
 	}
 }
 
@@ -544,7 +544,7 @@ func (c *addressManager) getPrimaryHostEgressIPs() (sets.Set[string], error) {
 }
 
 // updateOVNEncapIPAndReconnect updates encap IP to OVS when the node primary IP changed.
-func updateOVNEncapIPAndReconnect(newIP net.IP) {
+func (c *addressManager) updateOVNEncapIPAndReconnect(newIP net.IP) {
 	checkCmd := []string{
 		"get",
 		"Open_vSwitch",
@@ -582,6 +582,18 @@ func updateOVNEncapIPAndReconnect(newIP net.IP) {
 	_, stderr, err = util.RunOVNAppctlWithTimeout(5, "-t", "ovn-controller", "exit", "--restart")
 	if err != nil {
 		klog.Errorf("Failed to exit ovn-controller %v %q", err, stderr)
+		return
+	}
+
+	// Update node-encap-ips annotation
+	encapIPList := sets.New[string](config.Default.EffectiveEncapIP)
+	if err := util.SetNodeEncapIPs(c.nodeAnnotator, encapIPList); err != nil {
+		klog.Errorf("Failed to set node-encap-ips annotation for node %s: %v", c.nodeName, err)
+		return
+	}
+
+	if err := c.nodeAnnotator.Run(); err != nil {
+		klog.Errorf("Failed to set node %s annotations: %v", c.nodeName, err)
 		return
 	}
 }
