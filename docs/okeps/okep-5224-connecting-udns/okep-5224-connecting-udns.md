@@ -305,7 +305,7 @@ connect these three networks together.
 The below diagram shows the overlay part of the OVN Topology that OVN-Kubernetes
 creates for 3 UDN networks (blue, green and yellow) across two nodes.
 
-![3-isolated-l3-networks](l3-connecting-udns-0.png)
+![3-isolated-l3-networks](https://raw.githubusercontent.com/tssurya/ovn-kubernetes/connecting-udns-okep/docs/okeps/okep-5224-connecting-udns/images/l3-connecting-udns-0.png)
 
 Let’s take a look at how we can connect a blue network, green network and yellow network at the OVN layer.
 Currently there are two ideas that I am torn between, I will cover both
@@ -323,7 +323,7 @@ will make the following changes to the topology:
 * Connect the colored-enterprise_interconnect-switch to the ovn_cluster_router’s
   of the blue, green and yellow networks on each node using remote patch ports and tunnelkeys
 
-![blue-green-yellow-l3-connect-idea1](l3-connecting-udns-1.png)
+![blue-green-yellow-l3-connect-idea1](https://raw.githubusercontent.com/tssurya/ovn-kubernetes/connecting-udns-okep/docs/okeps/okep-5224-connecting-udns/images/l3-connecting-udns-1.png)
 
 So in this idea it will be 1 switch per connect API.
 
@@ -340,7 +340,7 @@ will make the following changes to the topology:
 These three ports will have their `peer` field set as each other to allow for direct
 connectivity.
 
-![blue-green-yellow-l3-connect-idea2](l3-connecting-udns-4.png)
+![blue-green-yellow-l3-connect-idea2](https://raw.githubusercontent.com/tssurya/ovn-kubernetes/connecting-udns-okep/docs/okeps/okep-5224-connecting-udns/images/l3-connecting-udns-4.png)
 
 The above diagram shows what happens when all 3 networks are connected together.
 
@@ -374,15 +374,15 @@ creates for 3 UDN networks (blue, green and yellow) across two nodes.
 NOTE: The topology representation is that of the new upcoming Layer2 topology.
 The dotted pieces in network colors represent the bits in design and not there yet.
 
-![3-isolated-l2-networks](l2-connecting-udns-0.png)
+![3-isolated-l2-networks](https://raw.githubusercontent.com/tssurya/ovn-kubernetes/connecting-udns-okep/docs/okeps/okep-5224-connecting-udns/images/l2-connecting-udns-0.png)
 
 **Idea1: Add a new transit switch between the two transit routers of the networks**
 
-![blue-green-yellow-l2-connect-idea1](l2-connecting-udns-1.png)
+![blue-green-yellow-l2-connect-idea1](https://raw.githubusercontent.com/tssurya/ovn-kubernetes/connecting-udns-okep/docs/okeps/okep-5224-connecting-udns/images/l2-connecting-udns-1.png)
 
 **Idea2: Connecting the ovn_cluster_routers directly**
 
-![blue-green-yellow-l2-connect-idea2](l2-connecting-udns-2.png)
+![blue-green-yellow-l2-connect-idea2](https://raw.githubusercontent.com/tssurya/ovn-kubernetes/connecting-udns-okep/docs/okeps/okep-5224-connecting-udns/images/l2-connecting-udns-2.png)
 
 [TBD] Check with OVN team transit router can indeed have routes and policies right?
 
@@ -393,15 +393,15 @@ creates for 3 UDN networks (blue(l3), green(l3) and yellow(l2)) across two nodes
 NOTE: The yellow topology representation is that of the new upcoming Layer2 topology.
 The dotted pieces in network colors represent the bits in design and not there yet.
 
-![3-isolated-mixed-networks](mixed-connecting-udns-0.png)
+![3-isolated-mixed-networks](https://raw.githubusercontent.com/tssurya/ovn-kubernetes/connecting-udns-okep/docs/okeps/okep-5224-connecting-udns/images/mixed-connecting-udns-0.png)
 
 **Idea1: Add a new transit switch between the two transit routers of the networks**
 
-![blue-green-yellow-l2-connect-idea1](mixed-connecting-udns-1.png)
+![blue-green-yellow-l2-connect-idea1](https://raw.githubusercontent.com/tssurya/ovn-kubernetes/connecting-udns-okep/docs/okeps/okep-5224-connecting-udns/images/mixed-connecting-udns-1.png)
 
 **Idea2: Connecting the ovn_cluster_routers directly**
 
-![blue-green-yellow-l2-connect-idea2](mixed-connecting-udns-2.png)
+![blue-green-yellow-l2-connect-idea2](https://raw.githubusercontent.com/tssurya/ovn-kubernetes/connecting-udns-okep/docs/okeps/okep-5224-connecting-udns/images/mixed-connecting-udns-2.png)
 
 #### Pods
 
