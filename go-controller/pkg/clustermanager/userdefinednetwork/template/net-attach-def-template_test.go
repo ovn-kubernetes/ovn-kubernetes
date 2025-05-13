@@ -341,6 +341,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 					IPAM: &udnv1.IPAMConfig{
 						Lifecycle: udnv1.IPAMLifecyclePersistent,
 					},
+					GatewayIP: "192.168.100.150/32",
 				},
 			},
 			`{
@@ -353,7 +354,8 @@ var _ = Describe("NetAttachDefTemplate", func() {
 			  "joinSubnets": "100.65.0.0/16,fd99::/64",
 			  "subnets": "192.168.100.0/24,2001:dbb::/64",
 			  "mtu": 1500,
-			  "allowPersistentIPs": true
+			  "allowPersistentIPs": true,
+			  "gatewayIP": "192.168.100.150/32"
         	}`,
 		),
 		Entry("primary network, should override join-subnets when specified",
