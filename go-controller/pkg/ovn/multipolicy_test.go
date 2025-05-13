@@ -454,91 +454,96 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 
-		ginkgo.It("correctly creates and deletes network policy and multi network policy with the same policy", func() {
-			app.Action = func(*cli.Context) error {
-				var err error
+		ginkgo.DescribeTable("correctly creates and deletes network policy and multi network policy with the same policy",
+			func(allowICMPNetworkPolicy bool) {
+				app.Action = func(*cli.Context) error {
+					var err error
 
-				topology := ovntypes.Layer2Topology
-				subnets := "10.1.0.0/24"
-				setUserDefinedNetworkTestData(topology, subnets)
+					config.OVNKubernetesFeature.AllowICMPNetworkPolicy = allowICMPNetworkPolicy
+					topology := ovntypes.Layer2Topology
+					subnets := "10.1.0.0/24"
+					setUserDefinedNetworkTestData(topology, subnets)
 
-				namespace1 := *newNamespace(namespaceName1)
-				nPodTest := getTestPod(namespace1.Name, nodeName)
-				nPodTest.addNetwork(userDefinedNetworkName, nadNamespacedName, "", "", "", "10.1.1.1", "0a:58:0a:01:01:01", "secondary", 1, nil)
-				networkPolicy := getPortNetworkPolicy(netPolicyName1, namespace1.Name, labelName, labelVal, portNum)
+					namespace1 := *newNamespace(namespaceName1)
+					nPodTest := getTestPod(namespace1.Name, nodeName)
+					nPodTest.addNetwork(userDefinedNetworkName, nadNamespacedName, "", "", "", "10.1.1.1", "0a:58:0a:01:01:01", "secondary", 1, nil)
+					networkPolicy := getPortNetworkPolicy(netPolicyName1, namespace1.Name, labelName, labelVal, portNum)
 
-				watchNodes := false
-				node := *newNode(nodeName, "192.168.126.202/24")
+					watchNodes := false
+					node := *newNode(nodeName, "192.168.126.202/24")
 
-				startOvn(initialDB, watchNodes, []corev1.Node{node}, []corev1.Namespace{namespace1}, nil, nil,
-					[]nettypes.NetworkAttachmentDefinition{*nad}, []testPod{nPodTest}, map[string]string{labelName: labelVal})
+					startOvn(initialDB, watchNodes, []corev1.Node{node}, []corev1.Namespace{namespace1}, nil, nil,
+						[]nettypes.NetworkAttachmentDefinition{*nad}, []testPod{nPodTest}, map[string]string{labelName: labelVal})
 
-				ginkgo.By("Creating networkPolicy applied to the pod")
-				_, err = fakeOvn.fakeClient.KubeClient.NetworkingV1().NetworkPolicies(networkPolicy.Namespace).
-					Create(context.TODO(), networkPolicy, metav1.CreateOptions{})
+					ginkgo.By("Creating networkPolicy applied to the pod")
+					_, err = fakeOvn.fakeClient.KubeClient.NetworkingV1().NetworkPolicies(networkPolicy.Namespace).
+						Create(context.TODO(), networkPolicy, metav1.CreateOptions{})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+					_, err = fakeOvn.fakeClient.KubeClient.NetworkingV1().NetworkPolicies(networkPolicy.Namespace).
+						Get(context.TODO(), networkPolicy.Name, metav1.GetOptions{})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					fakeOvn.asf.ExpectAddressSetWithAddresses(namespaceName1, []string{nPodTest.podIP})
+
+					dataParams := newNetpolDataParams(networkPolicy).
+						withLocalPortUUIDs(nPodTest.portUUID).
+						withTCPPeerPorts(portNum)
+					gressPolicyExpectedData1 := getPolicyData(dataParams)
+					defaultDenyExpectedData1 := getDefaultDenyData(dataParams)
+					initData := getUpdatedInitialDB([]testPod{nPodTest})
+					expectedData1 := append(initData, gressPolicyExpectedData1...)
+					expectedData1 = append(expectedData1, defaultDenyExpectedData1...)
+					gomega.Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData(expectedData1...))
+
+					ginkgo.By("Creating multi-networkPolicy applied to the pod")
+					mpolicy := convertNetPolicyToMultiNetPolicy(networkPolicy)
+					mpolicy.Annotations = map[string]string{PolicyForAnnotation: nadNamespacedName}
+
+					_, err = fakeOvn.fakeClient.MultiNetworkPolicyClient.K8sCniCncfIoV1beta1().MultiNetworkPolicies(mpolicy.Namespace).
+						Create(context.TODO(), mpolicy, metav1.CreateOptions{})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+					_, err = fakeOvn.fakeClient.MultiNetworkPolicyClient.K8sCniCncfIoV1beta1().MultiNetworkPolicies(mpolicy.Namespace).
+						Get(context.TODO(), mpolicy.Name, metav1.GetOptions{})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+					ocInfo := fakeOvn.userDefinedNetworkControllers[userDefinedNetworkName]
+					portInfo := nPodTest.getNetworkPortInfo(userDefinedNetworkName, nadNamespacedName)
+					gomega.Expect(portInfo).NotTo(gomega.BeNil())
+					ocInfo.asf.ExpectAddressSetWithAddresses(namespaceName1, []string{portInfo.podIP})
+
+					dataParams2 := newNetpolDataParams(networkPolicy).
+						withLocalPortUUIDs(portInfo.portUUID).
+						withTCPPeerPorts(portNum).
+						withNetInfo(netInfo)
+					gressPolicyExpectedData2 := getPolicyData(dataParams2)
+					defaultDenyExpectedData2 := getDefaultDenyData(dataParams2)
+					expectedData2 := append(expectedData1, gressPolicyExpectedData2...)
+					expectedData2 = append(expectedData2, defaultDenyExpectedData2...)
+					gomega.Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData(expectedData2...))
+
+					// Delete the multi network policy
+					ginkgo.By("Deleting the multi network policy")
+					err = fakeOvn.fakeClient.MultiNetworkPolicyClient.K8sCniCncfIoV1beta1().MultiNetworkPolicies(mpolicy.Namespace).
+						Delete(context.TODO(), mpolicy.Name, metav1.DeleteOptions{})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					gomega.Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData(expectedData1))
+
+					ginkgo.By("Deleting the network policy")
+					err = fakeOvn.fakeClient.KubeClient.NetworkingV1().NetworkPolicies(networkPolicy.Namespace).
+						Delete(context.TODO(), networkPolicy.Name, metav1.DeleteOptions{})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+					gomega.Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData(initData))
+					return nil
+				}
+
+				err := app.Run([]string{app.Name})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-				_, err = fakeOvn.fakeClient.KubeClient.NetworkingV1().NetworkPolicies(networkPolicy.Namespace).
-					Get(context.TODO(), networkPolicy.Name, metav1.GetOptions{})
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				fakeOvn.asf.ExpectAddressSetWithAddresses(namespaceName1, []string{nPodTest.podIP})
-
-				dataParams := newNetpolDataParams(networkPolicy).
-					withLocalPortUUIDs(nPodTest.portUUID).
-					withTCPPeerPorts(portNum)
-				gressPolicyExpectedData1 := getPolicyData(dataParams)
-				defaultDenyExpectedData1 := getDefaultDenyData(dataParams)
-				initData := getUpdatedInitialDB([]testPod{nPodTest})
-				expectedData1 := append(initData, gressPolicyExpectedData1...)
-				expectedData1 = append(expectedData1, defaultDenyExpectedData1...)
-				gomega.Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData(expectedData1...))
-
-				ginkgo.By("Creating multi-networkPolicy applied to the pod")
-				mpolicy := convertNetPolicyToMultiNetPolicy(networkPolicy)
-				mpolicy.Annotations = map[string]string{PolicyForAnnotation: nadNamespacedName}
-
-				_, err = fakeOvn.fakeClient.MultiNetworkPolicyClient.K8sCniCncfIoV1beta1().MultiNetworkPolicies(mpolicy.Namespace).
-					Create(context.TODO(), mpolicy, metav1.CreateOptions{})
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-				_, err = fakeOvn.fakeClient.MultiNetworkPolicyClient.K8sCniCncfIoV1beta1().MultiNetworkPolicies(mpolicy.Namespace).
-					Get(context.TODO(), mpolicy.Name, metav1.GetOptions{})
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-				ocInfo := fakeOvn.userDefinedNetworkControllers[userDefinedNetworkName]
-				portInfo := nPodTest.getNetworkPortInfo(userDefinedNetworkName, nadNamespacedName)
-				gomega.Expect(portInfo).NotTo(gomega.BeNil())
-				ocInfo.asf.ExpectAddressSetWithAddresses(namespaceName1, []string{portInfo.podIP})
-
-				dataParams2 := newNetpolDataParams(networkPolicy).
-					withLocalPortUUIDs(portInfo.portUUID).
-					withTCPPeerPorts(portNum).
-					withNetInfo(netInfo)
-				gressPolicyExpectedData2 := getPolicyData(dataParams2)
-				defaultDenyExpectedData2 := getDefaultDenyData(dataParams2)
-				expectedData2 := append(expectedData1, gressPolicyExpectedData2...)
-				expectedData2 = append(expectedData2, defaultDenyExpectedData2...)
-				gomega.Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData(expectedData2...))
-
-				// Delete the multi network policy
-				ginkgo.By("Deleting the multi network policy")
-				err = fakeOvn.fakeClient.MultiNetworkPolicyClient.K8sCniCncfIoV1beta1().MultiNetworkPolicies(mpolicy.Namespace).
-					Delete(context.TODO(), mpolicy.Name, metav1.DeleteOptions{})
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				gomega.Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData(expectedData1))
-
-				ginkgo.By("Deleting the network policy")
-				err = fakeOvn.fakeClient.KubeClient.NetworkingV1().NetworkPolicies(networkPolicy.Namespace).
-					Delete(context.TODO(), networkPolicy.Name, metav1.DeleteOptions{})
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-				gomega.Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData(initData))
-				return nil
-			}
-
-			err := app.Run([]string{app.Name})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		})
+			},
+			ginkgo.Entry("with allow ICMP network policy disabled", false),
+			ginkgo.Entry("with allow ICMP network policy enabled", true),
+		)
 
 		ginkgo.DescribeTable("correctly adds and deletes pod IPs from secondary network namespace address set",
 			func(topology string, remote bool) {
