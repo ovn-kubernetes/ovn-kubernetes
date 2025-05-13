@@ -78,6 +78,7 @@ type NetConf struct {
 		// see https://github.com/k8snetworkplumbingwg/device-info-spec
 		CNIDeviceInfoFile string `json:"CNIDeviceInfoFile,omitempty"`
 	} `json:"runtimeConfig,omitempty"`
+	GatewayIP string `json:"gatewayIP,omitempty"`
 }
 
 // NetworkSelectionElement represents one element of the JSON format
