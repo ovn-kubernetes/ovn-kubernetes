@@ -47,6 +47,7 @@ type NetInfo interface {
 	Vlan() uint
 	AllowsPersistentIPs() bool
 	PhysicalNetworkName() string
+	GatewayIP() *net.IPNet
 
 	// dynamic information, can change over time
 	GetNADs() []string
@@ -634,6 +635,8 @@ func (nInfo *DefaultNetInfo) PhysicalNetworkName() string {
 	return ""
 }
 
+func (nInfo *DefaultNetInfo) GatewayIP() *net.IPNet { return nil }
+
 // SecondaryNetInfo holds the network name information for secondary network if non-nil
 type secondaryNetInfo struct {
 	mutableNetInfo
@@ -653,6 +656,7 @@ type secondaryNetInfo struct {
 	joinSubnets        []*net.IPNet
 
 	physicalNetworkName string
+	gatewayIP           *net.IPNet
 }
 
 func (nInfo *secondaryNetInfo) GetNetInfo() NetInfo {
@@ -674,6 +678,10 @@ func (nInfo *secondaryNetInfo) IsDefault() bool {
 // to achieve native network segmentation
 func (nInfo *secondaryNetInfo) IsPrimaryNetwork() bool {
 	return nInfo.primaryNetwork
+}
+
+func (nInfo *secondaryNetInfo) GatewayIP() *net.IPNet {
+	return nInfo.gatewayIP
 }
 
 // IsSecondary returns if this network is secondary
@@ -913,6 +921,11 @@ func newLayer2NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 	if err != nil {
 		return nil, err
 	}
+	_, gateway, err := net.ParseCIDR(netconf.GatewayIP)
+	if err != nil && netconf.GatewayIP != "" {
+		return nil, err
+	}
+
 	ni := &secondaryNetInfo{
 		netName:            netconf.Name,
 		primaryNetwork:     netconf.Role == types.NetworkRolePrimary,
@@ -926,6 +939,7 @@ func newLayer2NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 			id:   types.InvalidID,
 			nads: sets.Set[string]{},
 		},
+		gatewayIP: gateway,
 	}
 	ni.ipv4mode, ni.ipv6mode = getIPMode(subnets)
 	return ni, nil
