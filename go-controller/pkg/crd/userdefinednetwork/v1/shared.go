@@ -132,6 +132,8 @@ type Layer2Config struct {
 	// IPAM section contains IPAM-related configuration for the network.
 	// +optional
 	IPAM *IPAMConfig `json:"ipam,omitempty"`
+
+	GatewayIP CIDR `json:"gatewayIP,omitempty"`
 }
 
 // +kubebuilder:validation:XValidation:rule="!has(self.lifecycle) || self.lifecycle != 'Persistent' || !has(self.mode) || self.mode == 'Enabled'", message="lifecycle Persistent is only supported when ipam.mode is Enabled"

@@ -42,6 +42,12 @@ spec:
               layer2:
                 description: Layer2 is the Layer2 topology configuration.
                 properties:
+                  gatewayIP:
+                    maxLength: 43
+                    type: string
+                    x-kubernetes-validations:
+                    - message: CIDR is invalid
+                      rule: isCIDR(self)
                   ipam:
                     description: IPAM section contains IPAM-related configuration
                       for the network.
