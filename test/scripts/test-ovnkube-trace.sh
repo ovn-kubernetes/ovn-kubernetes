@@ -237,6 +237,64 @@ EOF
   kubectl_wait_deployment ${namespace} ${name}
 }
 
+# Spawn a test deployment named 'pod-test' with 2 replicas in namespace
+# and use a layer3 user defined network. The namespace is
+# named 'ovn-kubetrace-pod-test-udn-layer3'.
+spawn_udn_layer3_deployment() {
+  local namespace="ovn-kubetrace-pod-test-udn-layer3"
+  local name="pod-test"
+  local replicas="2"
+
+  run_kubectl apply -f - <<EOF
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${namespace}
+  labels:
+    k8s.ovn.org/primary-user-defined-network: ""
+---
+apiVersion: k8s.ovn.org/v1
+kind: UserDefinedNetwork
+metadata:
+  name: ${name}
+  namespace: ${namespace}
+spec:
+  topology: Layer3
+  layer3:
+    role: Primary
+    subnets:
+      - cidr: 10.150.0.0/16
+        hostSubnet: 24
+      - cidr: 2001:db8::/60
+        hostSubnet: 64
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: ${name}
+  name: ${name}
+  namespace: ${namespace}
+spec:
+  replicas: ${replicas}
+  selector:
+    matchLabels:
+      app: ${name}
+  template:
+    metadata:
+      labels:
+        app: ${name}
+    spec:
+      containers:
+      - command:
+        - sleep
+        - "3600"
+        image: ${CONTAINER_IMAGE}
+        name: ${name}
+EOF
+  kubectl_wait_deployment ${namespace} ${name}
+}
 # Spawn a test service named 'service-test' with a test deployment named 'service-test'
 # with 1 replica in namespace named 'ovn-kubetrace-service-test'
 spawn_service() {
@@ -376,6 +434,7 @@ cleanup() {
   echo "Cleaning up namespaces"
   ${KUBECTL} delete ns ovn-kubetrace-pod-test             2>/dev/null || true
   ${KUBECTL} delete ns ovn-kubetrace-pod-test-hostnetwork 2>/dev/null || true
+  ${KUBECTL} delete ns ovn-kubetrace-pod-test-udn-layer3  2>/dev/null || true
   ${KUBECTL} delete ns ovn-kubetrace-service-test         2>/dev/null || true
   ${KUBECTL} delete ns egressip-kubetrace-pod-test        2>/dev/null || true
   ${KUBECTL} delete egressip egressip-pod-test            2>/dev/null || true
@@ -406,6 +465,7 @@ fi
 if [ ${SETUP} == true ]; then
   cleanup
   spawn_deployment
+  spawn_udn_layer3_deployment
   spawn_hostnetwork_deployment
   spawn_service
   spawn_egressip ${EGRESS_IP}
@@ -415,6 +475,8 @@ src_pods=()
 dst_pods=()
 src_pods_hostnetwork=()
 dst_pods_hostnetwork=()
+src_pods_udn_layer3=()
+dst_pods_udn_layer3=()
 egressip_src_pods=()
 dst_svc=( "-dst-namespace ovn-kubetrace-service-test -service service-test" )
 
@@ -441,6 +503,15 @@ for namespace in ovn-kubetrace-pod-test-hostnetwork; do
   done
 done
 
+for namespace in ovn-kubetrace-pod-test-udn-layer3; do
+  pods=$(${KUBECTL} get pods -o name -n $namespace | sed 's#pod/##')
+  for pod in ${pods}; do
+    src_pods_udn_layer3+=( "-src-namespace ${namespace} -src ${pod}" )
+    dst_pods_udn_layer3+=( "-dst-namespace ${namespace} -dst ${pod}" )
+  done
+done
+
+
 if [ $RUN_DEST_IP_TESTS == true ]; then
   echo "Run ovnkube-trace from all pod-test pods to 8.8.8.8"
   for ((i = 0; i < ${#src_pods[@]}; i++)); do
@@ -461,6 +532,13 @@ if [ $RUN_DEST_IP_TESTS == true ]; then
     echo "The result of this test should be a failure condition"
     exit 1
   fi
+
+  echo "Run ovnkube-trace from a pod-test-udn-layer3 pod to 8.8.8.8 - this should fail"
+  if ovnkube_trace ${src_pods_udn_layer3[0]} -dst-ip 8.8.8.8 -${protocol}; then
+    echo "The result of this test should be a failure condition"
+    exit 1
+  fi
+
 fi
 
 echo "Run ovnkube-trace from all pod-test pods to all other pod-test pods"
