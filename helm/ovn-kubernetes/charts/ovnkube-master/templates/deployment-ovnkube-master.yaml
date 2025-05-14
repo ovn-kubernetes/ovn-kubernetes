@@ -307,6 +307,8 @@ spec:
           value: {{ hasKey .Values.global "enablePersistentIPs" | ternary .Values.global.enablePersistentIPs false | quote }}
         - name: OVN_ENABLE_DNSNAMERESOLVER
           value: {{ hasKey .Values.global "enableDNSNameResolver" | ternary .Values.global.enableDNSNameResolver false | quote }}
+        - name: OVN_ALLOW_ICMP_NETPOL
+          value: {{ hasKey .Values.global "allowICMPNetworkPolicy" | ternary .Values.global.allowICMPNetworkPolicy false | quote }}
         - name: OVN_DISABLE_REQUESTEDCHASSIS
           value: {{ default "false" .Values.global.disableRequestedchassis | quote }}
       # end of container
