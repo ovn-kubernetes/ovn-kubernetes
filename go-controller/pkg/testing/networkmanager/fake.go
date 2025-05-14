@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
 )
@@ -70,7 +71,10 @@ func (fnm *FakeNetworkManager) GetNetwork(networkName string) util.NetInfo {
 			return ni
 		}
 	}
-	return &util.DefaultNetInfo{}
+	if networkName == types.DefaultNetworkName {
+		return &util.DefaultNetInfo{}
+	}
+	return nil
 }
 
 func (fnm *FakeNetworkManager) GetActiveNetworkNamespaces(networkName string) ([]string, error) {

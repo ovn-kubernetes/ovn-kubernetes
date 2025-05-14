@@ -40,6 +40,7 @@ import (
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	coreinformermocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/client-go/informers/core/v1"
 	v1mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/client-go/listers/core/v1"
+	testnm "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
@@ -2030,7 +2031,7 @@ func TestUserDefinedNetworkGateway_updateAdvertisedUDNIsolationRules(t *testing.
 			netInfo, err := util.ParseNADInfo(tt.nad)
 			g.Expect(err).NotTo(HaveOccurred())
 
-			err = configureAdvertisedUDNIsolationNFTables()
+			err = configureAdvertisedUDNIsolationNFTables(&testnm.FakeNetworkManager{}, "")
 			g.Expect(err).ToNot(HaveOccurred())
 			tx := nft.NewTransaction()
 			for _, element := range tt.initialElements {
