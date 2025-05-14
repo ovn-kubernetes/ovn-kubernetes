@@ -83,6 +83,7 @@ set_default_params() {
   export KIND_IPV4_SUPPORT=true
 
   export OVN_ENABLE_DNSNAMERESOLVER=${OVN_ENABLE_DNSNAMERESOLVER:-false}
+  export OVN_ENABLE_ICMP_NETPOL=${OVN_ENABLE_ICMP_NETPOL:-false}
 }
 
 usage() {
@@ -126,6 +127,7 @@ usage() {
     echo "-wk  | --num-workers                 Number of worker nodes. DEFAULT: 2 workers"
     echo "-cn  | --cluster-name                Configure the kind cluster's name"
     echo "-dns | --enable-dnsnameresolver      Enable DNSNameResolver for resolving the DNS names used in the DNS rules of EgressFirewall."
+    echo "--allow-icmp-netpol                   Allows ICMP and ICMPv6 traffic globally, regardless of network policy rules"
     echo "-ic  | --enable-interconnect         Enable interconnect with each node as a zone (only valid if OVN_HA is false)"
     echo "-npz | --nodes-per-zone              Specify number of nodes per zone (Default 0, which means global zone; >0 means interconnect zone, where 1 for single-node zone, >1 for multi-node zone). If this value > 1, then (total k8s nodes (workers + 1) / num of nodes per zone) should be zero."
     echo ""
@@ -188,6 +190,8 @@ parse_args() {
                                                   ;;
             -dns | --enable-dnsnameresolver )     OVN_ENABLE_DNSNAMERESOLVER=true
                                                   ;;
+            --allow-icmp-netpol )                 OVN_ENABLE_ICMP_NETPOL=true
+                                                  ;;
             -ic | --enable-interconnect )         OVN_ENABLE_INTERCONNECT=true
                                                   ;;
             -npz | --nodes-per-zone )             shift
@@ -228,6 +232,7 @@ print_params() {
      echo "KIND_NUM_MASTER = $KIND_NUM_MASTER"
      echo "KIND_NUM_WORKER = $KIND_NUM_WORKER"
      echo "OVN_ENABLE_DNSNAMERESOLVER= $OVN_ENABLE_DNSNAMERESOLVER"
+     echo "OVN_ENABLE_ICMP_NETPOL= $OVN_ENABLE_ICMP_NETPOL"
      echo "OVN_ENABLE_INTERCONNECT = $OVN_ENABLE_INTERCONNECT"
      if [[ $OVN_ENABLE_INTERCONNECT == true ]]; then
        echo "KIND_NUM_NODES_PER_ZONE = $KIND_NUM_NODES_PER_ZONE"
@@ -421,6 +426,7 @@ helm install ovn-kubernetes . -f "${value_file}" \
           --set global.emptyLbEvents=$(if [ "${OVN_EMPTY_LB_EVENTS}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableDNSNameResolver=$(if [ "${OVN_ENABLE_DNSNAMERESOLVER}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableNetworkQos=$(if [ "${OVN_NETWORK_QOS_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          --set global.allowICMPNetpol=$(if [ "${OVN_ENABLE_ICMP_NETPOL}" == "true" ]; then echo "true"; else echo "false"; fi) \
           ${ovnkube_db_options}
 EOF
        )
