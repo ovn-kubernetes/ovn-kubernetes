@@ -325,6 +325,10 @@ func (c *Controller) networkManagedByMe(networkSelectors crdtypes.NetworkSelecto
 		switch networkSelector.NetworkSelectionType {
 		case crdtypes.DefaultNetwork:
 			return c.IsDefault(), nil
+		case crdtypes.PrimaryUserDefinedNetworks:
+			return c.IsPrimaryNetwork(), nil
+		case crdtypes.SecondaryUserDefinedNetworks:
+			return c.IsSecondary(), nil
 		case crdtypes.ClusterUserDefinedNetworks:
 			if networkSelector.ClusterUserDefinedNetworkSelector == nil {
 				return false, fmt.Errorf("empty cluster user defined network selector")

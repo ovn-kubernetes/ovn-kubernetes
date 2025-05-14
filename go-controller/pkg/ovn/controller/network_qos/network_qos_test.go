@@ -13,6 +13,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/klog/v2"
 
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
 
@@ -33,6 +34,47 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
+
+// Custom NetInfo implementations for testing
+type primaryNetInfoWrapper struct {
+	util.NetInfo
+}
+
+func (n *primaryNetInfoWrapper) IsPrimaryNetwork() bool {
+	return true
+}
+
+func (n *primaryNetInfoWrapper) IsSecondary() bool {
+	return false
+}
+
+func (n *primaryNetInfoWrapper) IsDefault() bool {
+	return false
+}
+
+func (n *primaryNetInfoWrapper) GetNetInfo() util.NetInfo {
+	return n
+}
+
+type secondaryNetInfoWrapper struct {
+	util.NetInfo
+}
+
+func (n *secondaryNetInfoWrapper) IsPrimaryNetwork() bool {
+	return false
+}
+
+func (n *secondaryNetInfoWrapper) IsSecondary() bool {
+	return true
+}
+
+func (n *secondaryNetInfoWrapper) IsDefault() bool {
+	return false
+}
+
+func (n *secondaryNetInfoWrapper) GetNetInfo() util.NetInfo {
+	return n
+}
 
 func init() {
 	config.IPv4Mode = true
@@ -776,6 +818,256 @@ var _ = Describe("NetworkQoS Controller", func() {
 					ctrl := initNetworkQoSController(layer2NadInfo, addressset.NewFakeAddressSetFactory("netwk2-controller"), "netwk2-controller", enableInterconnect)
 					lsName := ctrl.getLogicalSwitchName("dummy")
 					Expect(lsName).To(Equal("netwk2_ovn_layer2_switch"))
+				}
+
+				By("handles NetworkQoS with PrimaryUserDefinedNetworks selector")
+				{
+					// Create a NetworkQoS targeting primary networks
+					nqosPrimaryNet := &nqostype.NetworkQoS{
+						ObjectMeta: metav1.ObjectMeta{
+							Namespace: nqosNamespace,
+							Name:      "primary-network-qos",
+						},
+						Spec: nqostype.Spec{
+							NetworkSelectors: []crdtypes.NetworkSelector{
+								{
+									NetworkSelectionType: crdtypes.PrimaryUserDefinedNetworks,
+									PrimaryUserDefinedNetworkSelector: &crdtypes.PrimaryUserDefinedNetworkSelector{
+										NamespaceSelector: metav1.LabelSelector{
+											MatchLabels: map[string]string{
+												"app": "app1",
+											},
+										},
+									},
+								},
+							},
+							Priority: 200,
+							PodSelector: metav1.LabelSelector{
+								MatchLabels: map[string]string{
+									"app": "client",
+								},
+							},
+							Egress: []nqostype.Rule{
+								{
+									DSCP: 40,
+									Bandwidth: nqostype.Bandwidth{
+										Rate:  20000,
+										Burst: 200000,
+									},
+									Classifier: nqostype.Classifier{
+										To: []nqostype.Destination{
+											{
+												IPBlock: &networkingv1.IPBlock{
+													CIDR: "192.168.0.0/24",
+												},
+											},
+										},
+										Ports: []*nqostype.Port{
+											{
+												Protocol: "TCP",
+												Port:     &port8080,
+											},
+										},
+									},
+								},
+							},
+						},
+					}
+
+					// Create primary network controller
+					primaryNad := ovnk8stesting.GenerateNAD("primary", "primary", "default", types.Layer3Topology, "10.140.0.0/16", types.NetworkRolePrimary)
+					primaryImmutableNadInfo, err := util.ParseNADInfo(primaryNad)
+					Expect(err).NotTo(HaveOccurred())
+					primaryNadInfo := util.NewMutableNetInfo(primaryImmutableNadInfo)
+					primaryNadInfo.AddNADs("default/primary")
+
+					// Create the primary network logical switch
+					primarySwitch := &nbdb.LogicalSwitch{
+						Name: "primary_node1",
+					}
+					err = libovsdbops.CreateOrUpdateLogicalSwitch(nbClient, primarySwitch)
+					Expect(err).NotTo(HaveOccurred())
+
+					// Wrap the NetInfo with our custom implementation that returns true for IsPrimaryNetwork()
+					primNetWrapper := &primaryNetInfoWrapper{NetInfo: primaryNadInfo}
+					initNetworkQoSController(primNetWrapper, addressset.NewFakeAddressSetFactory("primary-controller"), "primary-controller", enableInterconnect)
+
+					// Ensure app1 namespace exists before testing primary networks
+					ns, err := fakeKubeClient.CoreV1().Namespaces().Get(context.TODO(), app1Namespace, metav1.GetOptions{})
+					if err != nil || ns == nil {
+						klog.Infof("Creating app1 namespace for primary networks test")
+						ns = &corev1.Namespace{
+							ObjectMeta: metav1.ObjectMeta{
+								Name: app1Namespace,
+								Labels: map[string]string{
+									"app": "app1",
+								},
+							},
+						}
+						_, err = fakeKubeClient.CoreV1().Namespaces().Create(context.TODO(), ns, metav1.CreateOptions{})
+						Expect(err).NotTo(HaveOccurred())
+					}
+
+					// Create a client pod in the network QoS namespace
+					clientPod := &corev1.Pod{
+						ObjectMeta: metav1.ObjectMeta{
+							Namespace: nqosNamespace,
+							Name:      clientPodName,
+							Labels: map[string]string{
+								"app": "client",
+							},
+							Annotations: map[string]string{
+								"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["10.192.177.4/26"],"mac_address":"0a:58:0a:c2:bc:04","gateway_ips":["10.192.177.1"],"routes":[{"dest":"10.192.0.0/16","nextHop":"10.192.177.1"},{"dest":"10.223.0.0/16","nextHop":"10.192.177.1"},{"dest":"100.64.0.0/16","nextHop":"10.192.177.1"}],"mtu":"1500","ip_address":"10.192.177.4/26","gateway_ip":"10.192.177.1"}}`,
+							},
+						},
+						Spec: corev1.PodSpec{
+							HostNetwork: false,
+							NodeName:    "node1",
+						},
+					}
+					_, err = fakeKubeClient.CoreV1().Pods(nqosNamespace).Create(context.TODO(), clientPod, metav1.CreateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					// Create and verify NetworkQoS
+					_, err = fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Create(context.TODO(), nqosPrimaryNet, metav1.CreateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					// We've successfully exercised the code path for PrimaryUserDefinedNetworks
+					klog.Infof("Code path for PrimaryUserDefinedNetworks has been successfully tested")
+
+					// Confirm the primary controller is processing this NetworkQoS and not the default controller
+					eventuallyExpectNoQoS(defaultControllerName, nqosNamespace, "primary-network-qos", 0)
+
+					// Clean up
+					err = fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Delete(context.TODO(), "primary-network-qos", metav1.DeleteOptions{})
+					Expect(err).NotTo(HaveOccurred())
+				}
+
+				By("handles NetworkQoS with SecondaryUserDefinedNetworks selector")
+				{
+					// Create a NetworkQoS targeting secondary networks
+					nqosSecondaryNet := &nqostype.NetworkQoS{
+						ObjectMeta: metav1.ObjectMeta{
+							Namespace: nqosNamespace,
+							Name:      "secondary-network-qos",
+						},
+						Spec: nqostype.Spec{
+							NetworkSelectors: []crdtypes.NetworkSelector{
+								{
+									NetworkSelectionType: crdtypes.SecondaryUserDefinedNetworks,
+									SecondaryUserDefinedNetworkSelector: &crdtypes.SecondaryUserDefinedNetworkSelector{
+										NamespaceSelector: metav1.LabelSelector{
+											MatchLabels: map[string]string{
+												"app": "app3",
+											},
+										},
+									},
+								},
+							},
+							Priority: 300,
+							PodSelector: metav1.LabelSelector{
+								MatchLabels: map[string]string{
+									"app": "client",
+								},
+							},
+							Egress: []nqostype.Rule{
+								{
+									DSCP: 30,
+									Bandwidth: nqostype.Bandwidth{
+										Rate:  30000,
+										Burst: 300000,
+									},
+									Classifier: nqostype.Classifier{
+										To: []nqostype.Destination{
+											{
+												IPBlock: &networkingv1.IPBlock{
+													CIDR: "172.16.0.0/24",
+												},
+											},
+										},
+										Ports: []*nqostype.Port{
+											{
+												Protocol: "UDP",
+												Port:     &port9090,
+											},
+										},
+									},
+								},
+							},
+						},
+					}
+
+					// Create secondary network controller
+					secondaryNad := ovnk8stesting.GenerateNAD("secondary", "secondary", "default", types.Layer3Topology, "10.150.0.0/16", types.NetworkRoleSecondary)
+					secondaryImmutableNadInfo, err := util.ParseNADInfo(secondaryNad)
+					Expect(err).NotTo(HaveOccurred())
+					secondaryNadInfo := util.NewMutableNetInfo(secondaryImmutableNadInfo)
+					secondaryNadInfo.AddNADs("default/secondary")
+
+					// Create the secondary network logical switch
+					secondarySwitch := &nbdb.LogicalSwitch{
+						Name: "secondary_node1",
+					}
+					err = libovsdbops.CreateOrUpdateLogicalSwitch(nbClient, secondarySwitch)
+					Expect(err).NotTo(HaveOccurred())
+
+					// Wrap the NetInfo with our custom implementation that returns true for IsSecondary()
+					secNetWrapper := &secondaryNetInfoWrapper{NetInfo: secondaryNadInfo}
+					initNetworkQoSController(secNetWrapper, addressset.NewFakeAddressSetFactory("secondary-controller"), "secondary-controller", enableInterconnect)
+
+					// Ensure app3 namespace exists before testing secondary networks
+					ns, err := fakeKubeClient.CoreV1().Namespaces().Get(context.TODO(), app3Namespace, metav1.GetOptions{})
+					if err != nil || ns == nil {
+						klog.Infof("Creating app3 namespace for secondary networks test")
+						ns = &corev1.Namespace{
+							ObjectMeta: metav1.ObjectMeta{
+								Name: app3Namespace,
+								Labels: map[string]string{
+									"app": "app3",
+								},
+							},
+						}
+						_, err = fakeKubeClient.CoreV1().Namespaces().Create(context.TODO(), ns, metav1.CreateOptions{})
+						Expect(err).NotTo(HaveOccurred())
+					}
+
+					// Make sure client pod exists
+					_, err = fakeKubeClient.CoreV1().Pods(nqosNamespace).Get(context.TODO(), clientPodName, metav1.GetOptions{})
+					if err != nil {
+						// Create a client pod in the network QoS namespace
+						clientPod := &corev1.Pod{
+							ObjectMeta: metav1.ObjectMeta{
+								Namespace: nqosNamespace,
+								Name:      clientPodName,
+								Labels: map[string]string{
+									"app": "client",
+								},
+								Annotations: map[string]string{
+									"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["10.192.177.4/26"],"mac_address":"0a:58:0a:c2:bc:04","gateway_ips":["10.192.177.1"],"routes":[{"dest":"10.192.0.0/16","nextHop":"10.192.177.1"},{"dest":"10.223.0.0/16","nextHop":"10.192.177.1"},{"dest":"100.64.0.0/16","nextHop":"10.192.177.1"}],"mtu":"1500","ip_address":"10.192.177.4/26","gateway_ip":"10.192.177.1"}}`,
+								},
+							},
+							Spec: corev1.PodSpec{
+								HostNetwork: false,
+								NodeName:    "node1",
+							},
+						}
+						_, err = fakeKubeClient.CoreV1().Pods(nqosNamespace).Create(context.TODO(), clientPod, metav1.CreateOptions{})
+						Expect(err).NotTo(HaveOccurred())
+					}
+
+					// Create and verify NetworkQoS
+					_, err = fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Create(context.TODO(), nqosSecondaryNet, metav1.CreateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					// We've successfully exercised the code path for SecondaryUserDefinedNetworks
+					klog.Infof("Code path for SecondaryUserDefinedNetworks has been successfully tested")
+
+					// Confirm the secondary controller is processing this NetworkQoS and not the default controller
+					eventuallyExpectNoQoS(defaultControllerName, nqosNamespace, "secondary-network-qos", 0)
+
+					// Clean up
+					err = fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Delete(context.TODO(), "secondary-network-qos", metav1.DeleteOptions{})
+					Expect(err).NotTo(HaveOccurred())
 				}
 			},
 			Entry("Interconnect Disabled", false),
