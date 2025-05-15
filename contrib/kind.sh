@@ -504,6 +504,11 @@ check_dependencies() {
   	  echo "Dependency not met: Neither docker nor podman found"
   	  exit 1
   fi
+
+  if ! command_exists skopeo; then
+      echo "Dependency not met: skopeo not installed. Run the following command to install it: 'sudo dnf install skopeo'"
+      exit 1
+  fi
 }
 
 OPENSSL=""
@@ -822,7 +827,7 @@ set_ovn_image() {
 }
 
 build_ovn_image() {
-  local push_args
+  local push_args=""
   if [ "$OCI_BIN" == "podman" ]; then
     push_args="--tls-verify=false"
   fi
@@ -853,8 +858,9 @@ build_ovn_image() {
 create_ovn_kube_manifests() {
     local ovnkube_image=${OVN_IMAGE}
     if [ "$KIND_LOCAL_REGISTRY" == true ];then
-      # When updating with local registry we have to reference the sha
-      ovnkube_image=$($OCI_BIN inspect --format='{{index .RepoDigests 0}}' $OVN_IMAGE)
+      # When updating with local registry we have to reference the image digest (SHA)
+      # Check the image digest in the local registry because it might be different then the digest in the local container runtime
+      ovnkube_image=$(skopeo inspect --format "{{.Name}}@{{.Digest}}" --tls-verify=false  "docker://$OVN_IMAGE")
     fi
     pushd ${DIR}/../dist/images
     if [ "$OVN_ENABLE_INTERCONNECT" == true ]; then
