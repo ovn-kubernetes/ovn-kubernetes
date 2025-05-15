@@ -90,6 +90,28 @@ var metricEgressIPRebalanceCount = prometheus.NewCounter(prometheus.CounterOpts{
 
 /** EgressIP metrics recorded from cluster-manager ends**/
 
+var metricUDNCount = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+	Namespace: MetricOvnkubeNamespace,
+	Subsystem: MetricOvnkubeSubsystemClusterManager,
+	Name:      "user_defined_networks",
+	Help:      "The total number of UserDefinedNetworks in the cluster"},
+	[]string{
+		"role",
+		"topology",
+	},
+)
+
+var metricCUDNCount = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+	Namespace: MetricOvnkubeNamespace,
+	Subsystem: MetricOvnkubeSubsystemClusterManager,
+	Name:      "cluster_user_defined_networks",
+	Help:      "The total number of ClusterUserDefinedNetworks in the cluster"},
+	[]string{
+		"role",
+		"topology",
+	},
+)
+
 // RegisterClusterManagerBase registers ovnkube cluster manager base metrics with the Prometheus registry.
 // This function should only be called once.
 func RegisterClusterManagerBase() {
@@ -129,6 +151,8 @@ func RegisterClusterManagerFunctional() {
 		prometheus.MustRegister(metricEgressIPRebalanceCount)
 		prometheus.MustRegister(metricEgressIPCount)
 	}
+	prometheus.MustRegister(metricUDNCount)
+	prometheus.MustRegister(metricCUDNCount)
 	if err := prometheus.Register(MetricResourceRetryFailuresCount); err != nil {
 		if _, ok := err.(prometheus.AlreadyRegisteredError); !ok {
 			panic(err)
@@ -163,4 +187,24 @@ func RecordEgressIPRebalance(count int) {
 // This total may include multiple Egress IPs per EgressIP CR.
 func RecordEgressIPCount(count float64) {
 	metricEgressIPCount.Set(count)
+}
+
+// IncrementUDNCount increments the number of UserDefinedNetworks of the given type
+func IncrementUDNCount(role, topology string) {
+	metricUDNCount.WithLabelValues(role, topology).Inc()
+}
+
+// DecrementUDNCount decrements the number of UserDefinedNetworks of the given type
+func DecrementUDNCount(role, topology string) {
+	metricUDNCount.WithLabelValues(role, topology).Dec()
+}
+
+// IncrementCUDNCount increments the number of ClusterUserDefinedNetworks of the given type
+func IncrementCUDNCount(role, topology string) {
+	metricCUDNCount.WithLabelValues(role, topology).Inc()
+}
+
+// DecrementCUDNCount decrements the number of ClusterUserDefinedNetworks of the given type
+func DecrementCUDNCount(role, topology string) {
+	metricCUDNCount.WithLabelValues(role, topology).Dec()
 }
