@@ -871,6 +871,7 @@ func (nInfo *secondaryNetInfo) copy() *secondaryNetInfo {
 		excludeSubnets:      nInfo.excludeSubnets,
 		joinSubnets:         nInfo.joinSubnets,
 		physicalNetworkName: nInfo.physicalNetworkName,
+		gatewayIP:           nInfo.gatewayIP,
 	}
 	// copy mutables
 	c.mutableNetInfo.copyFrom(&nInfo.mutableNetInfo)
