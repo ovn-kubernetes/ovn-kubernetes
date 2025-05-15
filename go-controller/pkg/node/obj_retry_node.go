@@ -11,6 +11,7 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/managementport"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/retry"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -121,7 +122,7 @@ func (h *nodeEventHandler) AreResourcesEqual(obj1, obj2 interface{}) (bool, erro
 		if !ok {
 			return false, fmt.Errorf("could not cast obj2 of type %T to *kapi.Node", obj2)
 		}
-		return reflect.DeepEqual(node1.Status.Addresses, node2.Status.Addresses), nil
+		return reflect.DeepEqual(node1.Status.Addresses, node2.Status.Addresses) && reflect.DeepEqual(node1.Annotations, node2.Annotations), nil
 
 	default:
 		return false, fmt.Errorf("no object comparison for type %s", h.objType)
@@ -175,6 +176,13 @@ func (h *nodeEventHandler) AddResource(obj interface{}, _ bool) error {
 		node := obj.(*corev1.Node)
 		// if it's our node that is changing, then nothing to do as we dont add our own IP to the nftables rules
 		if node.Name == h.nc.name {
+			if util.NodeDontSNATSubnetAnnotationExist(node) {
+				err := managementport.UpdateNoSNATSubnetsSets(node, util.ParseNodeDontSNATSubnetsList)
+				if err != nil {
+					return fmt.Errorf("error updating no snat subnets sets: %w", err)
+				}
+			}
+
 			return nil
 		}
 		return h.nc.addOrUpdateNode(node)
@@ -218,6 +226,15 @@ func (h *nodeEventHandler) UpdateResource(oldObj, newObj interface{}, _ bool) er
 
 		// if it's our node that is changing, then nothing to do as we dont add our own IP to the nftables rules
 		if newNode.Name == h.nc.name {
+
+			// if node's dont SNAT subnet annotation changed sync nftables
+			if !reflect.DeepEqual(oldNode.Annotations, newNode.Annotations) &&
+				util.NodeDontSNATSubnetAnnotationChanged(oldNode, newNode) {
+				err := managementport.UpdateNoSNATSubnetsSets(newNode, util.ParseNodeDontSNATSubnetsList)
+				if err != nil {
+					return fmt.Errorf("error updating no snat subnets sets: %w", err)
+				}
+			}
 			return nil
 		}
 
@@ -273,6 +290,10 @@ func (h *nodeEventHandler) DeleteResource(obj, _ interface{}) error {
 
 	case factory.NodeType:
 		h.nc.deleteNode(obj.(*corev1.Node))
+		_ = managementport.UpdateNoSNATSubnetsSets(obj.(*corev1.Node), func(_ *corev1.Node) ([]string, error) {
+			return []string{}, nil
+		})
+
 		return nil
 
 	default:
