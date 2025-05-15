@@ -76,6 +76,37 @@ the result of the IP allocation, see [IPAMClaim API changes](#ipamclaim-api-chan
 It is important that OVN-Kubernetes tries to handle potential MAC and IP address conflicts within
 the realm of the overlay network in a clear and predictable fashion whenever possible.
 
+```mermaid
+sequenceDiagram
+actor User
+participant K8s_API_Server as "K8s API Server"
+participant OVN_K_Controller as "OVN-Kubernetes"
+
+note over User, K8s_API_Server: Pre-Step: User defines UDN <br> (Optional) with custom Default Gateway / Management IP
+
+User->>K8s_API_Server: Create Pod <br> metadata.annotations: <br> 'v1.multus-cni.io/default-network': <br> [{ IPRequest: ['...'], MacRequest: '...', IPAMClaimReference: 'my-claim' }]
+
+
+K8s_API_Server->>OVN_K_Controller: Notify: New Pod Spec
+
+OVN_K_Controller->>OVN_K_Controller: Parse 'v1.multus-cni.io/default-network' annotation <br>Perform IP/MAC conflict check within UDN <br> (Verify requested IP/MAC are not in use)
+
+
+alt "No IP/MAC Conflict"
+opt "IPAMClaimReference is specified in annotation"
+OVN_K_Controller->>K8s_API_Server: Update Status conditions and addresses of referenced IPAMClaim
+end
+
+OVN_K_Controller->>OVN_K_Controller: Configure Pod's Primary Network Interface
+note right of OVN_K_Controller: Pod provisioning succeeds
+else "IP/MAC Conflict Detected in UDN"
+opt "IPAMClaimReference is specified in annotation"
+OVN_K_Controller->>K8s_API_Server: Update Status conditions of referenced IPAMClaim
+end
+OVN_K_Controller->>K8s_API_Server: Emit IP/MAC Conflict error event
+note right of OVN_K_Controller: Pod provisioning fails
+end
+```
 
 ### API Details
 
