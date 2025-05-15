@@ -54,7 +54,7 @@ network identity of my imported workload is maintained.
 To support the migration of pre-configured workloads, the UDN and cluster UDN API has to
 be enhanced. The aim is to provide control over the IP addresses that OVN-Kubernetes
 consumes in the overlay network, this includes the default gateway and management IPs.
-The proposed changes are specified in the [User Defined Network API changes](#user-defined-network-api-changes) section.
+The proposed changes are specified in the [Layer2 User Defined Network API changes](#layer2-user-defined-network-api-changes) section.
 
 ### Pod network identity
 
@@ -110,11 +110,92 @@ end
 
 ### API Details
 
-#### User Defined Network API changes
+#### Layer2 User Defined Network API changes
 
-- TODO: (C)UDN CRD updates
-- TODO: Ensure backwards compatibility
-- TODO: Block day2 changes through CELs
+Proposed API change adds `nodeManagementIPs` and `defaultGatewayIPs` fields to the `Layer2Config` which is a part of both
+the [UDN](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/a3d0a2b238bef9b1399b3342228d75504afed18b/go-controller/pkg/crd/userdefinednetwork/v1/udn.go#L47)
+and [cluster UDN](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/a3d0a2b238bef9b1399b3342228d75504afed18b/go-controller/pkg/crd/userdefinednetwork/v1/cudn.go#L63) specs:
+```
+// +kubebuilder:validation:XValidation:rule="has(self.ipam) && has(self.ipam.mode) && self.ipam.mode != 'Enabled' || has(self.subnets)", message="Subnets is required with ipam.mode is Enabled or unset"
+// +kubebuilder:validation:XValidation:rule="!has(self.ipam) || !has(self.ipam.mode) || self.ipam.mode != 'Disabled' || !has(self.subnets)", message="Subnets must be unset when ipam.mode is Disabled"
+// +kubebuilder:validation:XValidation:rule="!has(self.ipam) || !has(self.ipam.mode) || self.ipam.mode != 'Disabled' || self.role == 'Secondary'", message="Disabled ipam.mode is only supported for Secondary network"
+// +kubebuilder:validation:XValidation:rule="!has(self.joinSubnets) || has(self.role) && self.role == 'Primary'", message="JoinSubnets is only supported for Primary network"
+// +kubebuilder:validation:XValidation:rule="!has(self.subnets) || !has(self.mtu) || !self.subnets.exists_one(i, isCIDR(i) && cidr(i).ip().family() == 6) || self.mtu >= 1280", message="MTU should be greater than or equal to 1280 when IPv6 subnet is used"
+// +kubebuilder:validation:XValidation:rule="!has(self.defaultGatewayIPs) || has(self.role) && self.role == 'Primary'", message="defaultGatewayIPs is only supported for Primary network"
+// +kubebuilder:validation:XValidation:rule="!has(self.nodeManagementIPs) || has(self.role) && self.role == 'Primary'", message="nodeManagementIPs is only supported for Primary network"
+// TODO: Add a CEL that checks that subnets contains defaultGatewayIPs/nodeManagementIPs if set
+type Layer2Config struct {
+// Role describes the network role in the pod.
+//
+// Allowed value is "Secondary".
+// Secondary network is only assigned to pods that use `k8s.v1.cni.cncf.io/networks` annotation to select given network.
+//
+// +kubebuilder:validation:Enum=Primary;Secondary
+// +kubebuilder:validation:Required
+// +required
+Role NetworkRole `json:"role"`
+
+// MTU is the maximum transmission unit for a network.
+// MTU is optional, if not provided, the globally configured value in OVN-Kubernetes (defaults to 1400) is used for the network.
+//
+// +kubebuilder:validation:Minimum=576
+// +kubebuilder:validation:Maximum=65536
+// +optional
+MTU int32 `json:"mtu,omitempty"`
+
+// Subnets are used for the pod network across the cluster.
+// Dual-stack clusters may set 2 subnets (one for each IP family), otherwise only 1 subnet is allowed.
+//
+// The format should match standard CIDR notation (for example, "10.128.0.0/16").
+// This field must be omitted if `ipam.mode` is `Disabled`.
+//
+// +optional
+Subnets DualStackCIDRs `json:"subnets,omitempty"`
+
+// JoinSubnets are used inside the OVN network topology.
+//
+// Dual-stack clusters may set 2 subnets (one for each IP family), otherwise only 1 subnet is allowed.
+// This field is only allowed for "Primary" network.
+// It is not recommended to set this field without explicit need and understanding of the OVN network topology.
+// When omitted, the platform will choose a reasonable default which is subject to change over time.
+//
+// +optional
+JoinSubnets DualStackCIDRs `json:"joinSubnets,omitempty"`
+
+// DefaultGatewayIPs are is the default gateway IP used in the internal OVN topology.
+//
+// Dual-stack clusters may set 2 IPs (one for each IP family), otherwise only 1 IP is allowed.
+// This field is only allowed for "Primary" network.
+// It is not recommended to set this field without explicit need and understanding of the OVN network topology.
+// When omitted, the platform will choose a reasonable default which is subject to change over time.
+//
+// +optional
+DefaultGatewayIPs DualStackIPs `json:"defaultGatewayIPs,omitempty"`
+
+// NodeManagementIPs are is the node management IP used in the internal OVN topology.
+//
+// Dual-stack clusters may set 2 IPs (one for each IP family), otherwise only 1 IP is allowed.
+// This field is only allowed for "Primary" network.
+// It is not recommended to set this field without explicit need and understanding of the OVN network topology.
+// When omitted, the platform will choose a reasonable default which is subject to change over time.
+//
+// +optional
+NodeManagementIPs DualStackIPs `json:"nodeManagementIPs,omitempty"`
+
+// IPAM section contains IPAM-related configuration for the network.
+// +optional
+IPAM *IPAMConfig `json:"ipam,omitempty"`
+}
+
+// +kubebuilder:validation:XValidation:rule="isIP(self)", message="IP is invalid"
+type IP string
+
+// +kubebuilder:validation:MinItems=1
+// +kubebuilder:validation:MaxItems=2
+// +kubebuilder:validation:XValidation:rule="size(self) != 2 || !isIP(self[0]) || !isIP(self[1]) || ip(self[0]).family() != ip(self[1]).family()", message="When 2 IPs are set, they must be from different IP families"
+type DualStackIPs []IP
+
+```
 
 #### IPAMClaim API changes
 
