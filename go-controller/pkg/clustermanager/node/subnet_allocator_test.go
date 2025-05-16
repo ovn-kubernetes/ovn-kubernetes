@@ -629,3 +629,47 @@ func TestAllocateSubnetSameOwner(t *testing.T) {
 		}
 	}
 }
+
+func TestListAllNetworks(t *testing.T) {
+	expectV4Subnets := []string{
+		"10.1.0.0/18",
+		"10.1.64.0/18",
+		"10.1.128.0/18",
+		"10.1.192.0/18",
+	}
+	expectV6Subnets := []string{
+		"fd01::/64",
+		"fd01:0:0:1::/64",
+		"fd01:0:0:2::/64",
+		"fd01:0:0:3::/64",
+	}
+
+	sna, err := newSubnetAllocator("10.1.0.0/16", 18)
+	if err != nil {
+		t.Fatal("Failed to initialize subnet allocator: ", err)
+	}
+	err = sna.AddNetworkRange(ovntest.MustParseIPNet("fd01::/62"), 64)
+	if err != nil {
+		t.Fatal("Failed to add network range: ", err)
+	}
+
+	v4Subnets := sna.ListAllIPv4Networks()
+	if len(v4Subnets) != len(expectV4Subnets) {
+		t.Fatalf("Expected %d subnets, got %d", len(expectV4Subnets), len(v4Subnets))
+	}
+	for i, sn := range v4Subnets {
+		if sn.String() != expectV4Subnets[i] {
+			t.Fatalf("Expected %s, got %s", expectV4Subnets[i], sn.String())
+		}
+	}
+
+	v6Subnets := sna.ListAllIPv6Networks()
+	if len(v6Subnets) != len(expectV6Subnets) {
+		t.Fatalf("Expected %d subnets, got %d", len(expectV6Subnets), len(v6Subnets))
+	}
+	for i, sn := range v6Subnets {
+		if sn.String() != expectV6Subnets[i] {
+			t.Fatalf("Expected %s, got %s", expectV6Subnets[i], sn.String())
+		}
+	}
+}
