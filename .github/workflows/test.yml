@@ -312,7 +312,7 @@ jobs:
 
     - name: Free up disk space
       run: |
-        sudo rm -rf /usr/local/lib/android/sdk
+        df -h
         sudo apt-get update
         sudo eatmydata apt-get purge --auto-remove -y \
           azure-cli aspnetcore-* dotnet-* ghc-* firefox \
@@ -320,6 +320,55 @@ jobs:
           llvm-* microsoft-edge-stable mono-* \
           msbuild mysql-server-core-* php-* php7* \
           powershell temurin-* zulu-*
+        # clean unused packages
+        sudo apt-get autoclean
+        sudo apt-get autoremove -y
+        # clean apt cache
+        sudo apt-get clean  
+        du -hsc /usr/local/*
+        sudo rm -rf \
+        /usr/local/aws-sam-cil \
+        /usr/local/julia*
+        du -hsc /usr/local/bin/*
+        sudo rm -rf \
+          /usr/local/bin/aliyun \
+          /usr/local/bin/azcopy \
+          /usr/local/bin/bicep \
+          /usr/local/bin/cmake-gui \
+          /usr/local/bin/cpack \
+          /usr/local/bin/hub \
+          /usr/local/bin/minikube \
+          /usr/local/bin/node \
+          /usr/local/bin/packer \
+          /usr/local/bin/pulumi* \
+          /usr/local/bin/sam \
+          /usr/local/bin/stack \
+          /usr/local/bin/terraform \
+          /usr/local/bin/oc
+        du -hsc /usr/local/share/*
+        sudo rm -rf /usr/local/share/chromium
+        sudo rm -rf /usr/local/share/powershell
+        du -hsc /usr/local/lib/*
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /usr/local/lib/heroku
+        sudo rm -rf /usr/local/lib/node_modules
+        du -hsc /opt/*
+        sudo rm -rf /opt/az
+        sudo rm -rf /opt/pipx
+        du -hsc /opt/microsoft/*
+        sudo rm -rf /opt/microsoft/powershell
+        du -hsc /opt/hostedtoolcache/*
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo rm -rf /opt/hostedtoolcache/node
+        sudo rm -rf /opt/hostedtoolcache/Python
+        sudo rm -rf /opt/hostedtoolcache/PyPy
+        sudo rm -rf /opt/hostedtoolcache/Ruby
+        sudo docker system prune -af --volumes
+        df -h
+        sudo swapon --show
+        sudo swapoff -a
+        sudo rm -f /mnt/swapfile
+        df -h
 
     - name: Download test-image-master
       uses: actions/download-artifact@v4
@@ -503,7 +552,7 @@ jobs:
 
     - name: Free up disk space
       run: |
-        sudo rm -rf /usr/local/lib/android/sdk
+        df -h
         sudo apt-get update
         sudo eatmydata apt-get purge --auto-remove -y \
           azure-cli aspnetcore-* dotnet-* ghc-* firefox \
@@ -511,7 +560,55 @@ jobs:
           llvm-* microsoft-edge-stable mono-* \
           msbuild mysql-server-core-* php-* php7* \
           powershell temurin-* zulu-*
-        sudo docker system prune -af
+        # clean unused packages
+        sudo apt-get autoclean
+        sudo apt-get autoremove -y
+        # clean apt cache
+        sudo apt-get clean  
+        du -hsc /usr/local/*
+        sudo rm -rf \
+        /usr/local/aws-sam-cil \
+        /usr/local/julia*
+        du -hsc /usr/local/bin/*
+        sudo rm -rf \
+          /usr/local/bin/aliyun \
+          /usr/local/bin/azcopy \
+          /usr/local/bin/bicep \
+          /usr/local/bin/cmake-gui \
+          /usr/local/bin/cpack \
+          /usr/local/bin/hub \
+          /usr/local/bin/minikube \
+          /usr/local/bin/node \
+          /usr/local/bin/packer \
+          /usr/local/bin/pulumi* \
+          /usr/local/bin/sam \
+          /usr/local/bin/stack \
+          /usr/local/bin/terraform \
+          /usr/local/bin/oc
+        du -hsc /usr/local/share/*
+        sudo rm -rf /usr/local/share/chromium
+        sudo rm -rf /usr/local/share/powershell
+        du -hsc /usr/local/lib/*
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /usr/local/lib/heroku
+        sudo rm -rf /usr/local/lib/node_modules
+        du -hsc /opt/*
+        sudo rm -rf /opt/az
+        sudo rm -rf /opt/pipx
+        du -hsc /opt/microsoft/*
+        sudo rm -rf /opt/microsoft/powershell
+        du -hsc /opt/hostedtoolcache/*
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo rm -rf /opt/hostedtoolcache/node
+        sudo rm -rf /opt/hostedtoolcache/Python
+        sudo rm -rf /opt/hostedtoolcache/PyPy
+        sudo rm -rf /opt/hostedtoolcache/Ruby
+        sudo docker system prune -af --volumes
+        df -h
+        sudo swapon --show
+        sudo swapoff -a
+        sudo rm -f /mnt/swapfile
+        df -h
 
     - name: Setup /mnt/runner directory
       run: |
@@ -723,7 +820,7 @@ jobs:
 
     - name: Free up disk space
       run: |
-        sudo rm -rf /usr/local/lib/android/sdk
+        df -h
         sudo apt-get update
         sudo eatmydata apt-get purge --auto-remove -y \
           azure-cli aspnetcore-* dotnet-* ghc-* firefox \
@@ -731,6 +828,55 @@ jobs:
           llvm-* microsoft-edge-stable mono-* \
           msbuild mysql-server-core-* php-* php7* \
           powershell temurin-* zulu-*
+        # clean unused packages
+        sudo apt-get autoclean
+        sudo apt-get autoremove -y
+        # clean apt cache
+        sudo apt-get clean  
+        du -hsc /usr/local/*
+        sudo rm -rf \
+        /usr/local/aws-sam-cil \
+        /usr/local/julia*
+        du -hsc /usr/local/bin/*
+        sudo rm -rf \
+          /usr/local/bin/aliyun \
+          /usr/local/bin/azcopy \
+          /usr/local/bin/bicep \
+          /usr/local/bin/cmake-gui \
+          /usr/local/bin/cpack \
+          /usr/local/bin/hub \
+          /usr/local/bin/minikube \
+          /usr/local/bin/node \
+          /usr/local/bin/packer \
+          /usr/local/bin/pulumi* \
+          /usr/local/bin/sam \
+          /usr/local/bin/stack \
+          /usr/local/bin/terraform \
+          /usr/local/bin/oc
+        du -hsc /usr/local/share/*
+        sudo rm -rf /usr/local/share/chromium
+        sudo rm -rf /usr/local/share/powershell
+        du -hsc /usr/local/lib/*
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /usr/local/lib/heroku
+        sudo rm -rf /usr/local/lib/node_modules
+        du -hsc /opt/*
+        sudo rm -rf /opt/az
+        sudo rm -rf /opt/pipx
+        du -hsc /opt/microsoft/*
+        sudo rm -rf /opt/microsoft/powershell
+        du -hsc /opt/hostedtoolcache/*
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo rm -rf /opt/hostedtoolcache/node
+        sudo rm -rf /opt/hostedtoolcache/Python
+        sudo rm -rf /opt/hostedtoolcache/PyPy
+        sudo rm -rf /opt/hostedtoolcache/Ruby
+        sudo docker system prune -af --volumes
+        df -h
+        sudo swapon --show
+        sudo swapoff -a
+        sudo rm -f /mnt/swapfile
+        df -h
 
     - name: Disable ufw
       # For IPv6 and Dualstack, ufw (Uncomplicated Firewall) should be disabled.
