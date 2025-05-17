@@ -15,13 +15,13 @@ import (
 	apitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
 	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	udnclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
+	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	utilnet "k8s.io/utils/net"
-
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
@@ -29,6 +29,7 @@ import (
 	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 	e2eservice "k8s.io/kubernetes/test/e2e/framework/service"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
+	utilnet "k8s.io/utils/net"
 )
 
 var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is advertised", func() {
@@ -36,7 +37,6 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 		serverContainerName    = "bgpserver"
 		routerContainerName    = "frr"
 		echoClientPodName      = "echo-client-pod"
-		primaryNetworkName     = "kind"
 		bgpExternalNetworkName = "bgpnet"
 	)
 	var serverContainerIPs []string
@@ -46,18 +46,23 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 
 	ginkgo.BeforeEach(func() {
 		serverContainerIPs = []string{}
-
-		bgpServerIPv4, bgpServerIPv6 := getContainerAddressesForNetwork(serverContainerName, bgpExternalNetworkName)
-		if isIPv4Supported() {
-			serverContainerIPs = append(serverContainerIPs, bgpServerIPv4)
+		bgpNetwork, err := infraprovider.Get().GetNetwork(bgpExternalNetworkName)
+		framework.ExpectNoError(err, "must get bgpnet network")
+		bgpServer := infraapi.ExternalContainer{Name: serverContainerName}
+		networkInterface, err := infraprovider.Get().GetExternalContainerNetworkInterface(bgpServer, bgpNetwork)
+		framework.ExpectNoError(err, "container %s attached to network %s must contain network info", serverContainerName, bgpExternalNetworkName)
+		if isIPv4Supported() && len(networkInterface.IPv4) > 0 {
+			serverContainerIPs = append(serverContainerIPs, networkInterface.IPv4)
 		}
-
-		if isIPv6Supported() {
-			serverContainerIPs = append(serverContainerIPs, bgpServerIPv6)
+		if isIPv6Supported() && len(networkInterface.IPv6) > 0 {
+			serverContainerIPs = append(serverContainerIPs, networkInterface.IPv6)
 		}
 		framework.Logf("The external server IPs are: %+v", serverContainerIPs)
-
-		frrContainerIPv4, frrContainerIPv6 = getContainerAddressesForNetwork(routerContainerName, primaryNetworkName)
+		providerPrimaryNetwork, err := infraprovider.Get().PrimaryNetwork()
+		framework.ExpectNoError(err, "provider primary network must be available")
+		externalContainerNetInf, err := infraprovider.Get().GetExternalContainerNetworkInterface(infraapi.ExternalContainer{Name: routerContainerName}, providerPrimaryNetwork)
+		framework.ExpectNoError(err, "external container %s network %s information must be available", routerContainerName, providerPrimaryNetwork.Name())
+		frrContainerIPv4, frrContainerIPv6 = externalContainerNetInf.IPv4, externalContainerNetInf.IPv6
 		framework.Logf("The frr router container IPs are: %s/%s", frrContainerIPv4, frrContainerIPv6)
 	})
 
@@ -108,16 +113,17 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 		// This test ensures the north-south connectivity is happening through podIP
 		ginkgo.It("tests are run towards the external agnhost echo server", func() {
 			ginkgo.By("routes from external bgp server are imported by nodes in the cluster")
-			externalServerV4CIDR, externalServerV6CIDR := getContainerNetworkCIDRs(bgpExternalNetworkName)
+			bgpNetwork, err := infraprovider.Get().GetNetwork(bgpExternalNetworkName)
+			framework.ExpectNoError(err, "network %s must be available and precreated before test run", bgpExternalNetworkName)
+			externalServerV4CIDR, externalServerV6CIDR, err := bgpNetwork.IPv4IPv6Subnets()
+			framework.ExpectNoError(err, "must get bgpnet subnets")
 			framework.Logf("the network cidrs to be imported are v4=%s and v6=%s", externalServerV4CIDR, externalServerV6CIDR)
 			for _, node := range nodes.Items {
 				ipVer := ""
-				cmd := []string{containerRuntime, "exec", node.Name}
 				bgpRouteCommand := strings.Split(fmt.Sprintf("ip%s route show %s", ipVer, externalServerV4CIDR), " ")
-				cmd = append(cmd, bgpRouteCommand...)
 				framework.Logf("Checking for server's route in node %s", node.Name)
 				gomega.Eventually(func() bool {
-					routes, err := runCommand(cmd...)
+					routes, err := infraprovider.Get().ExecK8NodeCommand(node.GetName(), bgpRouteCommand)
 					framework.ExpectNoError(err, "failed to get BGP routes from node")
 					framework.Logf("Routes in node %s", routes)
 					return strings.Contains(routes, frrContainerIPv4)
@@ -126,12 +132,10 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 					ipVer = " -6"
 					nodeIPv6LLA, err := GetNodeIPv6LinkLocalAddressForEth0(routerContainerName)
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
-					cmd := []string{containerRuntime, "exec", node.Name}
 					bgpRouteCommand := strings.Split(fmt.Sprintf("ip%s route show %s", ipVer, externalServerV6CIDR), " ")
-					cmd = append(cmd, bgpRouteCommand...)
 					framework.Logf("Checking for server's route in node %s", node.Name)
 					gomega.Eventually(func() bool {
-						routes, err := runCommand(cmd...)
+						routes, err := infraprovider.Get().ExecK8NodeCommand(node.GetName(), bgpRouteCommand)
 						framework.ExpectNoError(err, "failed to get BGP routes from node")
 						framework.Logf("Routes in node %s", routes)
 						return strings.Contains(routes, nodeIPv6LLA)
@@ -182,12 +186,11 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 					}
 					gomega.Expect(len(nodeIP)).To(gomega.BeNumerically(">", 0))
 					framework.Logf("the nodeIP for node %s is %+v", node.Name, nodeIP)
-					cmd := []string{containerRuntime, "exec", routerContainerName}
+					externalContainer := infraapi.ExternalContainer{Name: routerContainerName}
 					bgpRouteCommand := strings.Split(fmt.Sprintf("ip%s route show %s", ipVer, podCIDR), " ")
-					cmd = append(cmd, bgpRouteCommand...)
 					framework.Logf("Checking for node %s's route for pod subnet %s", node.Name, podCIDR)
 					gomega.Eventually(func() bool {
-						routes, err := runCommand(cmd...)
+						routes, err := infraprovider.Get().ExecExternalContainerCommand(externalContainer, bgpRouteCommand)
 						framework.ExpectNoError(err, "failed to get BGP routes from intermediary router")
 						framework.Logf("Routes in FRR %s", routes)
 						return strings.Contains(routes, nodeIP[0])
@@ -235,7 +238,6 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 		serverContainerName    = "bgpserver"
 		routerContainerName    = "frr"
 		echoClientPodName      = "echo-client-pod"
-		primaryNetworkName     = "kind"
 		bgpExternalNetworkName = "bgpnet"
 		placeholder            = "PLACEHOLDER_NAMESPACE"
 	)
@@ -258,17 +260,25 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 
 		serverContainerIPs = []string{}
 
-		bgpServerIPv4, bgpServerIPv6 := getContainerAddressesForNetwork(serverContainerName, bgpExternalNetworkName)
-		if isIPv4Supported() {
-			serverContainerIPs = append(serverContainerIPs, bgpServerIPv4)
+		bgpNetwork, err := infraprovider.Get().GetNetwork(bgpExternalNetworkName) // pre-created network
+		framework.ExpectNoError(err, "must get bgpnet network")
+		bgpServer := infraapi.ExternalContainer{Name: serverContainerName}
+		networkInterface, err := infraprovider.Get().GetExternalContainerNetworkInterface(bgpServer, bgpNetwork)
+		framework.ExpectNoError(err, "container %s attached to network %s must contain network info", serverContainerName, bgpExternalNetworkName)
+		if isIPv4Supported() && len(networkInterface.IPv4) > 0 {
+			serverContainerIPs = append(serverContainerIPs, networkInterface.IPv4)
 		}
-
-		if isIPv6Supported() {
-			serverContainerIPs = append(serverContainerIPs, bgpServerIPv6)
+		if isIPv6Supported() && len(networkInterface.IPv6) > 0 {
+			serverContainerIPs = append(serverContainerIPs, networkInterface.IPv6)
 		}
+		gomega.Expect(len(serverContainerIPs)).Should(gomega.BeNumerically(">", 0), "failed to find external container IPs")
 		framework.Logf("The external server IPs are: %+v", serverContainerIPs)
-
-		frrContainerIPv4, frrContainerIPv6 = getContainerAddressesForNetwork(routerContainerName, primaryNetworkName)
+		providerPrimaryNetwork, err := infraprovider.Get().PrimaryNetwork()
+		framework.ExpectNoError(err, "provider primary network must be available")
+		frrContainer := infraapi.ExternalContainer{Name: routerContainerName}
+		networkInterface, err = infraprovider.Get().GetExternalContainerNetworkInterface(frrContainer, providerPrimaryNetwork)
+		framework.ExpectNoError(err, "container %s attached to network %s must contain network info", routerContainerName, providerPrimaryNetwork.Name())
+		frrContainerIPv4, frrContainerIPv6 = networkInterface.IPv4, networkInterface.IPv6
 		framework.Logf("The frr router container IPs are: %s/%s", frrContainerIPv4, frrContainerIPv6)
 
 		// Select nodes here so they're available for all tests
@@ -356,16 +366,17 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 			// Advertisement will curl the external server container sitting outside the cluster via a FRR router
 			// This test ensures the north-south connectivity is happening through podIP
 			ginkgo.By("routes from external bgp server are imported by nodes in the cluster")
-			externalServerV4CIDR, externalServerV6CIDR := getContainerNetworkCIDRs(bgpExternalNetworkName)
+			bgpNetwork, err := infraprovider.Get().GetNetwork(bgpExternalNetworkName)
+			framework.ExpectNoError(err, "network %s must be available", bgpExternalNetworkName)
+			externalServerV4CIDR, externalServerV6CIDR, err := bgpNetwork.IPv4IPv6Subnets()
+			framework.ExpectNoError(err, "must get BGP network subnets")
 			framework.Logf("the network cidrs to be imported are v4=%s and v6=%s", externalServerV4CIDR, externalServerV6CIDR)
 			for _, node := range nodes.Items {
 				ipVer := ""
-				cmd := []string{containerRuntime, "exec", node.Name}
 				bgpRouteCommand := strings.Split(fmt.Sprintf("ip%s route show %s", ipVer, externalServerV4CIDR), " ")
-				cmd = append(cmd, bgpRouteCommand...)
 				framework.Logf("Checking for server's route in node %s", node.Name)
 				gomega.Eventually(func() bool {
-					routes, err := runCommand(cmd...)
+					routes, err := infraprovider.Get().ExecK8NodeCommand(node.GetName(), bgpRouteCommand)
 					framework.ExpectNoError(err, "failed to get BGP routes from node")
 					framework.Logf("Routes in node %s", routes)
 					return strings.Contains(routes, frrContainerIPv4)
@@ -374,12 +385,10 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 					ipVer = " -6"
 					nodeIPv6LLA, err := GetNodeIPv6LinkLocalAddressForEth0(routerContainerName)
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
-					cmd := []string{containerRuntime, "exec", node.Name}
 					bgpRouteCommand := strings.Split(fmt.Sprintf("ip%s route show %s", ipVer, externalServerV6CIDR), " ")
-					cmd = append(cmd, bgpRouteCommand...)
 					framework.Logf("Checking for server's route in node %s", node.Name)
 					gomega.Eventually(func() bool {
-						routes, err := runCommand(cmd...)
+						routes, err := infraprovider.Get().ExecK8NodeCommand(node.GetName(), bgpRouteCommand)
 						framework.ExpectNoError(err, "failed to get BGP routes from node")
 						framework.Logf("Routes in node %s", routes)
 						return strings.Contains(routes, nodeIPv6LLA)
@@ -730,9 +739,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 						}
 					} else {
 						framework.Logf("Attempting connectivity from node: %s -> %s", clientName, targetAddress)
-						nodeCmd := []string{containerRuntime, "exec", clientName}
-						nodeCmd = append(nodeCmd, curlCmd...)
-						out, err = runCommand(nodeCmd...)
+						out, err = infraprovider.Get().ExecK8NodeCommand(clientName, curlCmd)
 						if err != nil {
 							// out is empty on error and error contains out...
 							return err.Error(), fmt.Errorf("connectivity check failed from node %s to %s: %w", clientName, targetAddress, err)

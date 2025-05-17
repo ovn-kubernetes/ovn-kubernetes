@@ -17,7 +17,7 @@ kubectl_wait_pods() {
   # Check that everything is fine and running. IPv6 cluster seems to take a little
   # longer to come up, so extend the wait time.
   OVN_TIMEOUT=900s
-  if [ "$KIND_IPV6_SUPPORT" == true ]; then
+  if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     OVN_TIMEOUT=1400s
   fi
   if ! kubectl wait -n ovn-kubernetes --for=condition=ready pods --all --timeout=${OVN_TIMEOUT} ; then
@@ -58,7 +58,6 @@ kubectl_wait_daemonset(){
       exit 1
     fi
   done
-  
 }
 
 kubectl_wait_deployment(){
@@ -158,9 +157,9 @@ create_ovn_kube_manifests() {
 
 set_default_ovn_manifest_params() {
   # Set default values
-  # kind configs 
-  KIND_IPV4_SUPPORT=${KIND_IPV4_SUPPORT:-true}
-  KIND_IPV6_SUPPORT=${KIND_IPV6_SUPPORT:-false}
+  # kind configs
+  PLATFORM_IPV4_SUPPORT=${PLATFORM_IPV4_SUPPORT:-true}
+  PLATFORM_IPV6_SUPPORT=${PLATFORM_IPV6_SUPPORT:-false}
   OVN_HA=${OVN_HA:-false}
   OVN_ENABLE_OVNKUBE_IDENTITY=${OVN_ENABLE_OVNKUBE_IDENTITY:-true}
   # ovn configs 
@@ -210,8 +209,8 @@ set_default_ovn_manifest_params() {
 print_ovn_manifest_params() {
      echo "Using these parameters to build upgraded ovn-k manifests"
      echo ""
-     echo "KIND_IPV4_SUPPORT = $KIND_IPV4_SUPPORT"
-     echo "KIND_IPV6_SUPPORT = $KIND_IPV6_SUPPORT"
+     echo "PLATFORM_IPV4_SUPPORT = $PLATFORM_IPV4_SUPPORT"
+     echo "PLATFORM_IPV6_SUPPORT = $PLATFORM_IPV6_SUPPORT"
      echo "OVN_HA = $OVN_HA"
      echo "OVN_GATEWAY_MODE = $OVN_GATEWAY_MODE"
      echo "OVN_HYBRID_OVERLAY_ENABLE = $OVN_HYBRID_OVERLAY_ENABLE"
@@ -239,23 +238,23 @@ print_ovn_manifest_params() {
 }
 
 set_cluster_cidr_ip_families() {
-  if [ "$KIND_IPV4_SUPPORT" == true ] && [ "$KIND_IPV6_SUPPORT" == false ]; then
+  if [ "$PLATFORM_IPV4_SUPPORT" == true ] && [ "$PLATFORM_IPV6_SUPPORT" == false ]; then
     IP_FAMILY=""
     NET_CIDR=$NET_CIDR_IPV4
     SVC_CIDR=$SVC_CIDR_IPV4
     echo "IPv4 Only Support: API_IP=$API_IP --net-cidr=$NET_CIDR --svc-cidr=$SVC_CIDR"
-  elif [ "$KIND_IPV4_SUPPORT" == false ] && [ "$KIND_IPV6_SUPPORT" == true ]; then
+  elif [ "$PLATFORM_IPV4_SUPPORT" == false ] && [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     IP_FAMILY="ipv6"
     NET_CIDR=$NET_CIDR_IPV6
     SVC_CIDR=$SVC_CIDR_IPV6
     echo "IPv6 Only Support: API_IP=$API_IP --net-cidr=$NET_CIDR --svc-cidr=$SVC_CIDR"
-  elif [ "$KIND_IPV4_SUPPORT" == true ] && [ "$KIND_IPV6_SUPPORT" == true ]; then
+  elif [ "$PLATFORM_IPV4_SUPPORT" == true ] && [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     IP_FAMILY="dual"
     NET_CIDR=$NET_CIDR_IPV4,$NET_CIDR_IPV6
     SVC_CIDR=$SVC_CIDR_IPV4,$SVC_CIDR_IPV6
     echo "Dual Stack Support: API_IP=$API_IP --net-cidr=$NET_CIDR --svc-cidr=$SVC_CIDR"
   else
-    echo "Invalid setup. KIND_IPV4_SUPPORT and/or KIND_IPV6_SUPPORT must be true."
+    echo "Invalid setup. PLATFORM_IPV4_SUPPORT and/or PLATFORM_IPV6_SUPPORT must be true."
     exit 1
   fi
 }

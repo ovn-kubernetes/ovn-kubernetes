@@ -22,8 +22,11 @@ import (
 	crdtypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
 	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/diagnostics"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
+	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/kubevirt"
 
 	corev1 "k8s.io/api/core/v1"
@@ -107,6 +110,7 @@ var _ = Describe("Kubevirt Virtual Machines", func() {
 		httpServerTestPods  = []*corev1.Pod{}
 		iperfServerTestPods = []*corev1.Pod{}
 		clientSet           kubernetes.Interface
+		providerCtx         infraapi.Context
 		// Systemd resolvd prevent resolving kube api service by fqdn, so
 		// we replace it here with NetworkManager
 
@@ -203,8 +207,11 @@ var _ = Describe("Kubevirt Virtual Machines", func() {
 			return conn, nil
 		}
 
-		dialServiceNodePort = func(svc *corev1.Service) ([]*net.TCPConn, error) {
-			worker, err := fr.ClientSet.CoreV1().Nodes().Get(context.TODO(), "ovn-worker", metav1.GetOptions{})
+		dialServiceNodePort = func(client kubernetes.Interface, svc *corev1.Service) ([]*net.TCPConn, error) {
+			worker, err := e2enode.GetRandomReadySchedulableNode(context.TODO(), client)
+			if err != nil {
+				return nil, fmt.Errorf("failed to find ready and schedulable node: %v", err)
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -212,7 +219,7 @@ var _ = Describe("Kubevirt Virtual Machines", func() {
 			nodePort := fmt.Sprintf("%d", svc.Spec.Ports[0].NodePort)
 			port := fmt.Sprintf("%d", svc.Spec.Ports[0].Port)
 
-			d.TCPDumpDaemonSet([]string{"any", "eth0", "breth0"}, fmt.Sprintf("port %s or port %s", port, nodePort))
+			d.TCPDumpDaemonSet([]string{"any", deploymentconfig.Get().PrimaryInterfaceName(), deploymentconfig.Get().ExternalBridgeName()}, fmt.Sprintf("port %s or port %s", port, nodePort))
 			for _, address := range worker.Status.Addresses {
 				if address.Type != corev1.NodeHostName {
 					addr := net.JoinHostPort(address.Address, nodePort)
@@ -388,7 +395,7 @@ var _ = Describe("Kubevirt Virtual Machines", func() {
 		startNorthSouthIngressIperfTraffic = func(containerName string, addresses []string, port int32, stage string) error {
 			GinkgoHelper()
 			execFn := func(cmd string) (string, error) {
-				return runCommand(containerRuntime, "exec", "-i", containerName, "bash", "-c", cmd)
+				return infraprovider.Get().ExecExternalContainerCommand(infraapi.ExternalContainer{Name: containerName}, []string{"bash", "-c", cmd})
 			}
 			return startNorthSouthIperfTraffic(execFn, addresses, port, "ingress", stage)
 		}
@@ -407,7 +414,7 @@ var _ = Describe("Kubevirt Virtual Machines", func() {
 			for _, ip := range addresses {
 				iperfLogFile := fmt.Sprintf("/tmp/ingress_test_%s_%d_iperf3.log", ip, port)
 				execFn := func(cmd string) (string, error) {
-					return runCommand(containerRuntime, "exec", containerName, "bash", "-c", cmd)
+					return infraprovider.Get().ExecExternalContainerCommand(infraapi.ExternalContainer{Name: containerName}, []string{"bash", "-c", cmd})
 				}
 				checkIperfTraffic(iperfLogFile, execFn, stage)
 			}
@@ -1074,7 +1081,7 @@ passwd:
 			By("Wait some time for service to settle")
 			endpoints := []*net.TCPConn{}
 			Eventually(func() error {
-				endpoints, err = dialServiceNodePort(svc)
+				endpoints, err = dialServiceNodePort(clientSet, svc)
 				return err
 			}).WithPolling(3*time.Second).WithTimeout(60*time.Second).Should(Succeed(), "Should dial service port once service settled")
 
@@ -1192,7 +1199,7 @@ fi
 					if nse != nil {
 						pod.Annotations = networkSelectionElements(*nse)
 					}
-					pod.Spec.Containers[0].Image = iperf3Image
+					pod.Spec.Containers[0].Image = images.IPerf3()
 					pod.Spec.Containers[0].Args = []string{iperfServerScript + "\n sleep infinity"}
 
 				})
@@ -1237,8 +1244,9 @@ fi
 
 		removeImagesInNode = func(node, imageURL string) error {
 			By("Removing unused images in node " + node)
-			output, err := runCommand(containerRuntime, "exec", node,
-				"crictl", "images", "-o", "json")
+			output, err := infraprovider.Get().ExecK8NodeCommand(node, []string{
+				"crictl", "images", "-o", "json",
+			})
 			if err != nil {
 				return err
 			}
@@ -1250,13 +1258,15 @@ fi
 				return err
 			}
 			if imageID != "" {
-				_, err = runCommand(containerRuntime, "exec", node,
-					"crictl", "rmi", imageID)
+				_, err = infraprovider.Get().ExecK8NodeCommand(node, []string{
+					"crictl", "rmi", imageID,
+				})
 				if err != nil {
 					return err
 				}
-				_, err = runCommand(containerRuntime, "exec", node,
-					"crictl", "rmi", "--prune")
+				_, err = infraprovider.Get().ExecK8NodeCommand(node, []string{
+					"crictl", "rmi", "--prune",
+				})
 				if err != nil {
 					return err
 				}
@@ -1274,15 +1284,6 @@ fi
 				}
 			}
 			return nil
-		}
-
-		createIperfExternalContainer = func(name, network string) (string, string) {
-			return createClusterExternalContainer(
-				name,
-				iperf3Image,
-				[]string{"--network", network, "--privileged", "--entrypoint", "/bin/bash"},
-				[]string{"-c", "sleep infinity"},
-			)
 		}
 
 		createCUDN = func(cudn *udnv1.ClusterUserDefinedNetwork) {
@@ -1317,6 +1318,7 @@ fi
 	BeforeEach(func() {
 		// So we can use it at AfterEach, since fr.ClientSet is nil there
 		clientSet = fr.ClientSet
+		providerCtx = infraprovider.Get().NewTestContext()
 
 		var err error
 		crClient, err = newControllerRuntimeClient()
@@ -1742,24 +1744,47 @@ write_files:
 			iperfServerTestPods, err = createIperfServerPods(selectedNodes, cudn.Name, td.role, []string{})
 			Expect(err).NotTo(HaveOccurred())
 
+			network, err := infraprovider.Get().PrimaryNetwork()
+			Expect(err).ShouldNot(HaveOccurred(), "primary network must be available to attach containers")
+			if containerNetwork := containerNetwork(td); containerNetwork != network.Name() {
+				network, err = infraprovider.Get().GetNetwork(containerNetwork)
+				Expect(err).ShouldNot(HaveOccurred(), "must to get alternative network")
+			}
+			externalContainerPort := infraprovider.Get().GetExternalContainerPort()
 			externalContainerName := namespace + "-iperf"
-			externalContainerIPV4Address, externalContainerIPV6Address := createIperfExternalContainer(externalContainerName, containerNetwork(td))
-			DeferCleanup(func() {
-				if e2eframework.TestContext.DeleteNamespace && (e2eframework.TestContext.DeleteNamespaceOnFailure || !CurrentSpecReport().Failed()) {
-					deleteClusterExternalContainer(externalContainerName)
-				}
-			})
-			externalContainerIPs := []string{externalContainerIPV4Address, externalContainerIPV6Address}
+			externalContainerSpec := infraapi.ExternalContainer{
+				Name:    externalContainerName,
+				Image:   images.IPerf3(),
+				Network: network,
+				Args:    []string{"sleep infinity"},
+				ExtPort: externalContainerPort,
+			}
+			externalContainer, err := providerCtx.CreateExternalContainer(externalContainerSpec)
+			Expect(err).ShouldNot(HaveOccurred(), "creation of external container is test dependency")
+
+			var externalContainerIPs []string
+			if externalContainer.IsIPv4() {
+				externalContainerIPs = append(externalContainerIPs, externalContainer.IPv4)
+			}
+			if externalContainer.IsIPv6() {
+				externalContainerIPs = append(externalContainerIPs, externalContainer.IPv6)
+			}
+
 			if td.ingress == "routed" {
-				frrContainerIPv4, frrContainerIPv6 := getContainerAddressesForNetwork("frr", containerNetwork(td))
-				output, err := runCommand(containerRuntime, "exec", externalContainerName, "bash", "-c", fmt.Sprintf(`
+				// pre=created test dependency and therefore we dont delete
+				frrExternalContainer := infraapi.ExternalContainer{Name: "frr"}
+				frrNetwork, err := infraprovider.Get().GetNetwork(containerNetwork(td))
+				Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("failed to fetch network %q: %v", containerNetwork(td), err))
+				frrExternalContainerInterface, err := infraprovider.Get().GetExternalContainerNetworkInterface(frrExternalContainer, frrNetwork)
+				Expect(err).NotTo(HaveOccurred(), "must fetch FRR container network interface attached to secondary network")
+
+				output, err := infraprovider.Get().ExecExternalContainerCommand(externalContainer, []string{"bash", "-c", fmt.Sprintf(`
 set -xe
 dnf install -y iproute
 ip route add %[1]s via %[2]s
 ip route add %[3]s via %[4]s
-`, cidrIPv4, frrContainerIPv4, cidrIPv6, frrContainerIPv6))
+`, cidrIPv4, frrExternalContainerInterface.GetIPv4(), cidrIPv6, frrExternalContainerInterface.GetIPv6())})
 				Expect(err).NotTo(HaveOccurred(), output)
-
 			}
 
 			vmiName := td.resource.cmd()
@@ -1831,17 +1856,16 @@ ip route add %[3]s via %[4]s
 				checkNorthSouthIngressIperfTraffic(externalContainerName, serverIPs, serverPort, step)
 				checkNorthSouthEgressICMPTraffic(vmi, externalContainerIPs, step)
 				if td.ingress == "routed" {
-					_, err := runCommand(containerRuntime, "exec", externalContainerName, "bash", "-c", iperfServerScript)
+					_, err := infraprovider.Get().ExecExternalContainerCommand(externalContainer, []string{"bash", "-c", iperfServerScript})
 					Expect(err).NotTo(HaveOccurred(), step)
 					Expect(startNorthSouthEgressIperfTraffic(vmi, externalContainerIPs, iperf3DefaultPort, step)).To(Succeed())
 					By("Check egress src ip is not node IP on 'routed' ingress mode")
 					for _, vmAddress := range expectedAddreses {
-						output, err := runCommand(containerRuntime, "exec", externalContainerName, "bash", "-c",
-							fmt.Sprintf("grep 'connected to %s' /tmp/test_*", vmAddress))
+						output, err := infraprovider.Get().ExecExternalContainerCommand(externalContainer, []string{
+							"bash", "-c", fmt.Sprintf("grep 'connected to %s' /tmp/test_*", vmAddress)})
 						Expect(err).NotTo(HaveOccurred(), step+": "+output)
 					}
 					checkNorthSouthEgressIperfTraffic(vmi, externalContainerIPs, iperf3DefaultPort, step)
-
 				}
 			}
 
