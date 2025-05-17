@@ -1038,6 +1038,10 @@ func (npw *nodePortWatcher) SyncServices(services []interface{}) error {
 		}
 
 		netInfo, err := npw.networkManager.GetActiveNetworkForNamespace(service.Namespace)
+		// The InvalidPrimaryNetworkError is returned when the UDN is not found because it has already been deleted.
+		if util.IsInvalidPrimaryNetworkError(err) {
+			continue
+		}
 		if err != nil {
 			errors = append(errors, err)
 			continue
