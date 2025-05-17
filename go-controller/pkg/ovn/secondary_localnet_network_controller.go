@@ -94,6 +94,12 @@ func (h *secondaryLocalnetNetworkControllerEventHandler) IsResourceScheduled(obj
 	return h.baseHandler.isResourceScheduled(h.objType, obj)
 }
 
+// IsResourceScheduledOnTerminatedNamespace returns true if the given object has been scheduled.
+// Only applied to pods for now. Returns true for all other types.
+func (h *secondaryLocalnetNetworkControllerEventHandler) IsResourceScheduledOnTerminatedNamespace(obj interface{}) (bool, error) {
+	return h.baseHandler.isResourceScheduledOnTerminatedNamespace(h.objType, obj, h.watchFactory)
+}
+
 // AddResource adds the specified object to the cluster according to its type and returns the error,
 // if any, yielded during object creation.
 // Given an object to add and a boolean specifying if the function was executed from iterateRetryResources
