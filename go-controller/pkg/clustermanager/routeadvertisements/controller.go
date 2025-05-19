@@ -1035,6 +1035,40 @@ func (c *Controller) getSelectedNADs(networkSelectors apitypes.NetworkSelectors)
 				}
 				selected = append(selected, nad)
 			}
+		case apitypes.PrimaryUserDefinedNetworks:
+			namespaceSelector, err := metav1.LabelSelectorAsSelector(&networkSelector.PrimaryUserDefinedNetworkSelector.NamespaceSelector)
+			if err != nil {
+				return nil, err
+			}
+			namespaces, err := c.namespaceLister.List(namespaceSelector)
+			for _, namespace := range namespaces {
+				netInfo := c.nm.GetActiveNetworkForNamespaceFast(namespace.Name)
+				if netInfo.IsDefault() {
+					continue
+				}
+				netInfo.GetNetworkName()
+				nadList := netInfo.GetNADs()
+				for _, nadNamespacedName := range nadList {
+					_, nadName, err := cache.SplitMetaNamespaceKey(nadNamespacedName)
+					if err != nil {
+						return nil, err
+					}
+					nad, err := c.wf.GetNAD(namespace.Name, nadName)
+					if err != nil {
+						if apierrors.IsNotFound(err) {
+							continue
+						}
+						return nil, err
+					}
+					controller := metav1.GetControllerOfNoCopy(nad)
+					isCUDN := controller != nil && controller.Kind == cudnController.Kind && controller.APIVersion == cudnController.GroupVersion().String()
+					if isCUDN {
+						continue
+					}
+					selected = append(selected, nad)
+				}
+			}
+
 		default:
 			return nil, fmt.Errorf("%w: unsupported network selection type %s", errConfig, networkSelector.NetworkSelectionType)
 		}

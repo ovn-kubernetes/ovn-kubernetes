@@ -41,6 +41,7 @@ import (
 type testRA struct {
 	Name                     string
 	TargetVRF                string
+	NamespaceSelector        map[string]string
 	NetworkSelector          map[string]string
 	NodeSelector             map[string]string
 	FRRConfigurationSelector map[string]string
@@ -77,6 +78,18 @@ func (tra testRA) RouteAdvertisements() *ratypes.RouteAdvertisements {
 			},
 		})
 	}
+
+	if tra.NamespaceSelector != nil {
+		ra.Spec.NetworkSelectors = append(ra.Spec.NetworkSelectors, apitypes.NetworkSelector{
+			NetworkSelectionType: apitypes.PrimaryUserDefinedNetworks,
+			PrimaryUserDefinedNetworkSelector: &apitypes.PrimaryUserDefinedNetworkSelector{
+				NamespaceSelector: metav1.LabelSelector{
+					MatchLabels: tra.NamespaceSelector,
+				},
+			},
+		})
+	}
+
 	if tra.SelectsDefault {
 		ra.Spec.NetworkSelectors = append(ra.Spec.NetworkSelectors, apitypes.NetworkSelector{
 			NetworkSelectionType: apitypes.DefaultNetwork,
@@ -508,6 +521,56 @@ func TestController_reconcile(t *testing.T) {
 					}},
 			},
 			expectNADAnnotations: map[string]map[string]string{"red": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}, "blue": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}, "green": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}, "black": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
+		},
+		{
+			name: "reconciles pod RouteAdvertisement for a single FRR config, node, non default networks and default target VRF, with mix of PUDN and CUDN",
+			ra:   &testRA{Name: "ra", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}, NamespaceSelector: map[string]string{"kubernetes.io/metadata.name": "primary"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.1.1.0/24"}},
+						}},
+					},
+				},
+			},
+			namespaces: []*testNamespace{
+				{Name: "primary", Labels: map[string]string{
+					"primary-user-defined-network": "",
+					"kubernetes.io/metadata.name":  "primary",
+				}},
+			},
+			nads: []*testNAD{
+				{Name: "red", Namespace: "red", Network: util.GenerateCUDNNetworkName("red"), Topology: "layer3", Subnet: "1.2.0.0/16", Labels: map[string]string{"selected": "true"}},
+				{Name: "blue", Namespace: "blue", Network: util.GenerateCUDNNetworkName("blue"), Topology: "layer3", Subnet: "1.3.0.0/16", Labels: map[string]string{"selected": "true"}},
+				{Name: "green", Namespace: "green", Network: util.GenerateCUDNNetworkName("green"), Topology: "layer2", Subnet: "1.4.0.0/16", Labels: map[string]string{"selected": "true"}},
+				{Name: "black", Namespace: "black", Network: util.GenerateCUDNNetworkName("black"), Topology: "layer2", Subnet: "1.5.0.0/16", Labels: map[string]string{"selected": "true"}},
+				{Name: "pudn", Namespace: "primary", Network: util.GenerateUDNNetworkName("primary", "pudn"), Topology: "layer2", Subnet: "1.6.0.0/16"},
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\", \"cluster_udn_red\":\"1.2.0.0/24\", \"cluster_udn_blue\":\"1.3.0.0/24\"}"}},
+			eips:                 []*testEIP{{Name: "eip", EIPs: map[string]string{"node": "1.0.1.1"}}},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.2.0.0/24", "1.3.0.0/24", "1.4.0.0/16", "1.5.0.0/16", "1.6.0.0/16"}, Imports: []string{"black", "blue", "green", "red", "pudn"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.2.0.0/24", "1.3.0.0/24", "1.4.0.0/16", "1.5.0.0/16", "1.6.0.0/16"}, Receive: []string{"1.2.0.0/16/24", "1.3.0.0/16/24", "1.4.0.0/16", "1.5.0.0/16", "1.6.0.0/16"}},
+						}},
+						{ASN: 1, VRF: "black", Imports: []string{"default"}},
+						{ASN: 1, VRF: "blue", Imports: []string{"default"}},
+						{ASN: 1, VRF: "green", Imports: []string{"default"}},
+						{ASN: 1, VRF: "red", Imports: []string{"default"}},
+						{ASN: 1, VRF: "pudn", Imports: []string{"default"}},
+					}},
+			},
+			expectNADAnnotations: map[string]map[string]string{"red": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}, "blue": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}, "green": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}, "black": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"},
+				"pudn": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
 		},
 		{
 			name: "(layer3) reconciles eip RouteAdvertisement for a single FRR config, node, non default network and non default target VRF",
@@ -944,6 +1007,8 @@ func TestController_reconcile(t *testing.T) {
 			gMaxLength := format.MaxLength
 			format.MaxLength = 0
 			defer func() { format.MaxLength = gMaxLength }()
+			err := config.PrepareTestConfig()
+			g.Expect(err).NotTo(gomega.HaveOccurred())
 
 			config.Default.ClusterSubnets = []config.CIDRNetworkEntry{
 				{
@@ -973,6 +1038,16 @@ func TestController_reconcile(t *testing.T) {
 				g.Expect(err).ToNot(gomega.HaveOccurred())
 			}
 
+			for _, namespace := range tt.namespaces {
+				fmt.Printf("TROZET: added namespace %s with: %#v", namespace.Name, namespace.Namespace())
+				_, err := fakeClientset.KubeClient.CoreV1().Namespaces().Create(context.Background(), namespace.Namespace(), metav1.CreateOptions{})
+				g.Expect(err).ToNot(gomega.HaveOccurred())
+			}
+
+			nm := &nmtest.FakeNetworkManager{
+				PrimaryNetworks: map[string]util.NetInfo{},
+			}
+
 			var defaultNAD *nadtypes.NetworkAttachmentDefinition
 			for _, nad := range tt.nads {
 				n, err := fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nad.Namespace).Create(context.Background(), nad.NAD(), metav1.CreateOptions{})
@@ -980,15 +1055,15 @@ func TestController_reconcile(t *testing.T) {
 				if nad.Name == types.DefaultNetworkName && nad.Namespace == config.Kubernetes.OVNConfigNamespace {
 					defaultNAD = n
 				}
+				nadNetwork, err := util.ParseNADInfo(nad.NAD())
+				mutableNetInfo := util.NewMutableNetInfo(nadNetwork)
+				mutableNetInfo.AddNADs(util.GetNADName(nad.Namespace, nad.Name))
+				g.Expect(err).ToNot(gomega.HaveOccurred())
+				nm.PrimaryNetworks[nad.Namespace] = mutableNetInfo
 			}
 
 			for _, node := range tt.nodes {
 				_, err := fakeClientset.KubeClient.CoreV1().Nodes().Create(context.Background(), node.Node(), metav1.CreateOptions{})
-				g.Expect(err).ToNot(gomega.HaveOccurred())
-			}
-
-			for _, namespace := range tt.namespaces {
-				_, err := fakeClientset.KubeClient.CoreV1().Namespaces().Create(context.Background(), namespace.Namespace(), metav1.CreateOptions{})
 				g.Expect(err).ToNot(gomega.HaveOccurred())
 			}
 
@@ -1000,10 +1075,7 @@ func TestController_reconcile(t *testing.T) {
 			wf, err := factory.NewClusterManagerWatchFactory(fakeClientset)
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 
-			nm, err := networkmanager.NewForCluster(&nmtest.FakeControllerManager{}, wf, fakeClientset, nil)
-			g.Expect(err).ToNot(gomega.HaveOccurred())
-
-			c := NewController(nm.Interface(), wf, fakeClientset)
+			c := NewController(nm, wf, fakeClientset)
 
 			// prime the default network NAD
 			if defaultNAD == nil {
@@ -1031,6 +1103,7 @@ func TestController_reconcile(t *testing.T) {
 			// wait for caches to sync
 			cache.WaitForCacheSync(
 				context.Background().Done(),
+				wf.NamespaceInformer().Informer().HasSynced,
 				wf.RouteAdvertisementsInformer().Informer().HasSynced,
 				wf.FRRConfigurationsInformer().Informer().HasSynced,
 				wf.NADInformer().Informer().HasSynced,
