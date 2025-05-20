@@ -19,6 +19,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
 const (
@@ -438,6 +439,10 @@ func (zic *ZoneInterconnectHandler) createRemoteZoneNodeResources(node *corev1.N
 		return err
 	}
 
+	if err = zic.deleteStaleStaticRoutes(node); err != nil {
+		klog.Errorf("Could not remove stale static route %v", err)
+	}
+
 	if err := zic.addRemoteNodeStaticRoutes(node, nodeTransitSwitchPortIPs); err != nil {
 		return err
 	}
@@ -538,7 +543,9 @@ func (zic *ZoneInterconnectHandler) addRemoteNodeStaticRoutes(node *corev1.Node,
 	addRoute := func(prefix, nexthop string) error {
 		logicalRouterStaticRoute := nbdb.LogicalRouterStaticRoute{
 			ExternalIDs: map[string]string{
-				"ic-node": node.Name,
+				"ic-node":                node.Name,
+				types.NetworkExternalID:  zic.GetNetworkName(),
+				types.TopologyExternalID: zic.TopologyType(),
 			},
 			Nexthop:  nexthop,
 			IPPrefix: prefix,
@@ -612,9 +619,8 @@ func (zic *ZoneInterconnectHandler) addRemoteNodeStaticRoutes(node *corev1.Node,
 func (zic *ZoneInterconnectHandler) deleteLocalNodeStaticRoutes(node *corev1.Node, nodeTransitSwitchPortIPs []*net.IPNet) error {
 	deleteRoute := func(prefix, nexthop string) error {
 		p := func(lrsr *nbdb.LogicalRouterStaticRoute) bool {
-			return lrsr.IPPrefix == prefix &&
-				lrsr.Nexthop == nexthop &&
-				lrsr.ExternalIDs["ic-node"] == node.Name
+			return lrsr.IPPrefix == prefix && lrsr.Nexthop == nexthop && lrsr.ExternalIDs["ic-node"] == node.Name &&
+				lrsr.ExternalIDs[types.NetworkExternalID] == zic.GetNetworkName()
 		}
 		if err := libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicate(zic.nbClient, zic.networkClusterRouterName, p); err != nil {
 			return fmt.Errorf("failed to delete static route: %w", err)
@@ -705,6 +711,76 @@ func (zic *ZoneInterconnectHandler) getStaticRoutes(ipPrefixes []*net.IPNet, nex
 	}
 
 	return staticRoutes
+}
+
+// deleteStaleStaticRoutes removes static routes referencing old join or transit switch
+// IPs as either IPPrefix or NextHop for a remote zone node.
+func (zic *ZoneInterconnectHandler) deleteStaleStaticRoutes(node *corev1.Node) error {
+	var v4TransitSwitchIP, v6TransitSwitchIP, v4JoinIP, v6JoinIP *net.IPNet
+	var errorAggregate []error
+
+	nodeTransitSwitchPortIPs, err := util.ParseNodeTransitSwitchPortAddrs(node)
+	if err != nil || len(nodeTransitSwitchPortIPs) == 0 {
+		errorAggregate = append(errorAggregate, fmt.Errorf("failed to get the node transit switch port Ips : %v", err))
+	}
+	for _, ip := range nodeTransitSwitchPortIPs {
+		if utilnet.IsIPv6CIDR(ip) {
+			v6TransitSwitchIP = ip
+		} else if utilnet.IsIPv4CIDR(ip) {
+			v4TransitSwitchIP = ip
+		} else {
+			errorAggregate = append(errorAggregate, fmt.Errorf("invalid transit switch IP: %s", ip))
+		}
+	}
+
+	nodeGRPIPs, err := util.ParseNodeGatewayRouterJoinAddrs(node, zic.GetNetworkName())
+	if util.IsAnnotationNotSetError(err) {
+		var err1 error
+		// this is for backwards compatibility
+		nodeGRPIPs, err1 = util.ParseNodeGatewayRouterLRPAddrs(node)
+		if err1 != nil {
+			errorAggregate = append(errorAggregate, fmt.Errorf("failed to parse node %s Gateway router LRP Addrs annotation %w", node.Name, err1))
+		}
+	}
+	for _, ip := range nodeGRPIPs {
+		if utilnet.IsIPv6CIDR(ip) {
+			v6JoinIP = ip
+		} else if utilnet.IsIPv4CIDR(ip) {
+			v4JoinIP = ip
+		} else {
+			errorAggregate = append(errorAggregate, fmt.Errorf("invalid join switch IP: %s", ip))
+		}
+	}
+
+	nodeSubnetsAllIPFamily, err := util.ParseNodeHostSubnetAnnotation(node, zic.GetNetworkName())
+	if err != nil {
+		errorAggregate = append(errorAggregate, fmt.Errorf("failed to parse node %s subnets annotation %w", node.Name, err))
+	}
+	p := func(lrsr *nbdb.LogicalRouterStaticRoute) bool {
+		if utilnet.IsIPv6String(lrsr.Nexthop) {
+			nodeSubnets := util.MatchAllIPNetFamily(true, nodeSubnetsAllIPFamily)
+			for _, nodeSubnet := range nodeSubnets {
+				return lrsr.ExternalIDs["ic-node"] == node.Name && lrsr.ExternalIDs[types.NetworkExternalID] == zic.GetNetworkName() &&
+					(lrsr.Nexthop != v6TransitSwitchIP.IP.String() || (nodeSubnet != nil && lrsr.IPPrefix != nodeSubnet.String() &&
+						lrsr.IPPrefix != v6JoinIP.IP.String()+util.GetIPFullMaskString(v6JoinIP.IP.String())))
+			}
+		} else {
+			nodeSubnets := util.MatchAllIPNetFamily(false, nodeSubnetsAllIPFamily)
+			for _, nodeSubnet := range nodeSubnets {
+				return lrsr.ExternalIDs["ic-node"] == node.Name && lrsr.ExternalIDs[types.NetworkExternalID] == zic.GetNetworkName() &&
+					(lrsr.Nexthop != v4TransitSwitchIP.IP.String() || (nodeSubnet != nil && lrsr.IPPrefix != nodeSubnet.String() &&
+						lrsr.IPPrefix != v4JoinIP.IP.String()+util.GetIPFullMaskString(v4JoinIP.IP.String())))
+			}
+		}
+		return false
+	}
+	if err = libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicate(zic.nbClient, zic.networkClusterRouterName, p); err != nil {
+		errorAggregate = append(errorAggregate, fmt.Errorf("failed to delete static route from router %s: %v", zic.networkClusterRouterName, err))
+	}
+	if len(errorAggregate) > 0 {
+		return utilerrors.Join(errorAggregate...)
+	}
+	return nil
 }
 
 func getSecondaryNetTransitSwitchExtIDs(networkName, topology string, isPrimaryUDN bool) map[string]string {
