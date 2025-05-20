@@ -156,5 +156,6 @@ nav:
     - BGP: okeps/okep-5296-bgp.md
     - Layer2TransitRouter: okeps/okep-5094-layer2-transit-router.md
     - MCP for Troubleshooting: okeps/okep-5494-ovn-kubernetes-mcp-server.md
+    - No-Overlay Mode: okeps/okep-5259-no-overlay.md
   - Blog:
     - blog/index.md
