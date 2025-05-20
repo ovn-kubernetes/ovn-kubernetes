@@ -265,7 +265,11 @@ func (gw *GatewayManager) GatewayInit(
 		// one node per zone, since ARPs for .1 will not go beyond local switch.
 		// This is being done to add the ICMP SNATs for .1 podSubnet that OVN GR generates
 		for _, subnet := range hostSubnets {
-			gwLRPIPs = append(gwLRPIPs, util.GetNodeGatewayIfAddr(subnet).IP)
+			if gw.netInfo.GatewayIP() != nil {
+				gwLRPIPs = append(gwLRPIPs, gw.netInfo.GatewayIP().IP)
+			} else {
+				gwLRPIPs = append(gwLRPIPs, util.GetNodeGatewayIfAddr(subnet).IP)
+			}
 		}
 	}
 
@@ -418,7 +422,15 @@ func (gw *GatewayManager) GatewayInit(
 		// to configure here the .1 address, this will work only for IC with
 		// one node per zone, since ARPs for .1 will not go beyond local switch.
 		for _, subnet := range hostSubnets {
-			gwLRPNetworks = append(gwLRPNetworks, util.GetNodeGatewayIfAddr(subnet).String())
+			if gw.netInfo.GatewayIP() != nil {
+				gwIP := net.IPNet{
+					IP:   gw.netInfo.GatewayIP().IP,
+					Mask: subnet.Mask,
+				}
+				gwLRPNetworks = append(gwLRPNetworks, gwIP.String())
+			} else {
+				gwLRPNetworks = append(gwLRPNetworks, util.GetNodeGatewayIfAddr(subnet).String())
+			}
 		}
 	}
 
