@@ -146,12 +146,18 @@ func (b *bridgeConfiguration) delNetworkBridgeConfig(nInfo util.NetInfo) {
 	delete(b.netConfig, nInfo.GetNetworkName())
 }
 
-// getActiveNetworkBridgeConfig returns a shallow copy of the network configuration corresponding to the
+func (b *bridgeConfiguration) getNetworkBridgeConfig(networkName string) *bridgeUDNConfiguration {
+	b.Lock()
+	defer b.Unlock()
+	return b.netConfig[networkName]
+}
+
+// getActiveNetworkBridgeConfigCopy returns a shallow copy of the network configuration corresponding to the
 // provided netInfo.
 //
 // NOTE: if the network configuration can't be found or if the network is not patched by OVN
 // yet this returns nil.
-func (b *bridgeConfiguration) getActiveNetworkBridgeConfig(networkName string) *bridgeUDNConfiguration {
+func (b *bridgeConfiguration) getActiveNetworkBridgeConfigCopy(networkName string) *bridgeUDNConfiguration {
 	b.Lock()
 	defer b.Unlock()
 
@@ -917,9 +923,18 @@ func (udng *UserDefinedNetworkGateway) Reconcile() {
 func (udng *UserDefinedNetworkGateway) doReconcile() error {
 	klog.Infof("Reconciling gateway with updates for UDN %s", udng.GetNetworkName())
 
+	// shouldn't happen
+	if udng.openflowManager == nil || udng.openflowManager.defaultBridge == nil {
+		return fmt.Errorf("openflow manager with default bridge configuration has not been provided for network %s", udng.GetNetworkName())
+	}
+
 	// update bridge configuration
 	isNetworkAdvertised := util.IsPodNetworkAdvertisedAtNode(udng.NetInfo, udng.node.Name)
-	udng.openflowManager.defaultBridge.netConfig[udng.GetNetworkName()].advertised.Store(isNetworkAdvertised)
+	netConfig := udng.openflowManager.defaultBridge.getNetworkBridgeConfig(udng.GetNetworkName())
+	if netConfig == nil {
+		return fmt.Errorf("missing bridge configuration for network %s", udng.GetNetworkName())
+	}
+	netConfig.advertised.Store(isNetworkAdvertised)
 
 	if err := udng.updateUDNVRFIPRules(isNetworkAdvertised); err != nil {
 		return fmt.Errorf("error while updating ip rule for UDN %s: %s", udng.GetNetworkName(), err)
