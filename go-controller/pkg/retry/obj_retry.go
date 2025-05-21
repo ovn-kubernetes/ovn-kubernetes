@@ -56,6 +56,7 @@ type EventHandler interface {
 	AreResourcesEqual(obj1, obj2 interface{}) (bool, error)
 	GetInternalCacheEntry(obj interface{}) interface{}
 	IsResourceScheduled(obj interface{}) bool
+	IsResourceScheduledOnTerminatedNamespace(obj interface{}) (bool, error)
 	IsObjectInTerminalState(obj interface{}) bool
 
 	// functions related to metrics and events
@@ -80,6 +81,10 @@ func (h *DefaultEventHandler) AreResourcesEqual(_, _ interface{}) (bool, error) 
 func (h *DefaultEventHandler) GetInternalCacheEntry(_ interface{}) interface{} { return nil }
 
 func (h *DefaultEventHandler) IsResourceScheduled(_ interface{}) bool { return true }
+
+func (h *DefaultEventHandler) IsResourceScheduledOnTerminatedNamespace(_ interface{}) (bool, error) {
+	return false, nil
+}
 
 func (h *DefaultEventHandler) IsObjectInTerminalState(_ interface{}) bool { return false }
 
@@ -338,9 +343,21 @@ func (r *RetryFramework) resourceRetry(objKey string, now time.Time) {
 			if entry.oldObj != nil {
 				klog.Infof("Removing old object: %s %s (failed: %v)",
 					r.ResourceHandler.ObjType, objKey, entry.failedAttempts)
+				// If the pod resource is not yet scheduled we must retry only when
+				// the namespace in which it's scheduled is not being terminated
+				// if the namespace is in deleting state, then we can ignore that event and return
 				if !r.ResourceHandler.IsResourceScheduled(entry.oldObj) {
 					klog.V(5).Infof("Retry: %s %s not scheduled", r.ResourceHandler.ObjType, objKey)
-					entry.failedAttempts++
+					nsTerminating, err := r.ResourceHandler.IsResourceScheduledOnTerminatedNamespace(entry.oldObj)
+					if err != nil {
+						klog.Errorf("Could not fetch the status of the namespace for the resource %s %s: error %v", r.ResourceHandler.ObjType, objKey, err)
+					}
+					if !nsTerminating {
+						entry.failedAttempts++
+					} else {
+						klog.V(5).Infof("Ignoring retry event for the older object to be deleted %s %s as it was found not"+
+							" scheduled yet but on a terminating namespace", r.ResourceHandler.ObjType, objKey)
+					}
 					return
 				}
 				if err := r.ResourceHandler.DeleteResource(entry.oldObj, entry.config); err != nil {
@@ -362,9 +379,21 @@ func (r *RetryFramework) resourceRetry(objKey string, now time.Time) {
 			// create new object if needed
 			if entry.newObj != nil {
 				klog.Infof("Adding new object: %s %s", r.ResourceHandler.ObjType, objKey)
+				// If the pod resource is not yet scheduled we must retry only when
+				// the namespace in which it's scheduled is not being terminated
+				// if the namespace is in deleting state, then we can ignore that event and return
 				if !r.ResourceHandler.IsResourceScheduled(entry.newObj) {
 					klog.V(5).Infof("Retry: %s %s not scheduled", r.ResourceHandler.ObjType, objKey)
-					entry.failedAttempts++
+					nsTerminating, err := r.ResourceHandler.IsResourceScheduledOnTerminatedNamespace(entry.oldObj)
+					if err != nil {
+						klog.Errorf("Could not fetch the status of the namespace for the resource %s %s: error %v", r.ResourceHandler.ObjType, objKey, err)
+					}
+					if !nsTerminating {
+						entry.failedAttempts++
+					} else {
+						klog.V(5).Infof("Ignoring retry event for newer object to be added %s %s as it was found not"+
+							" scheduled yet but on a terminating namespace", r.ResourceHandler.ObjType, objKey)
+					}
 					return
 				}
 				if err := r.ResourceHandler.AddResource(entry.newObj, true); err != nil {
