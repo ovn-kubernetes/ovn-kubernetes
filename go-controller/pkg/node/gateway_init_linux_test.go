@@ -749,8 +749,11 @@ func shareGatewayInterfaceDPUHostTest(app *cli.App, testNS ns.NetNS, uplinkName,
 
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
+			k := &kube.Kube{KClient: kubeFakeClient}
 
-			err := nc.initGatewayDPUHost(net.ParseIP(hostIP))
+			nodeAnnotator := kube.NewNodeAnnotator(k, existingNode.Name)
+
+			err := nc.initGatewayDPUHost(net.ParseIP(hostIP), nodeAnnotator)
 			Expect(err).NotTo(HaveOccurred())
 
 			link, err := netlink.LinkByName(uplinkName)

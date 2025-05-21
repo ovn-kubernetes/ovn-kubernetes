@@ -94,8 +94,8 @@ func makeNodeRouterTargetIPs(node *nodeInfo, c *lbConfig, hostMasqueradeIPV4, ho
 
 	// Any targets local to the node need to have a special
 	// harpin IP added, but only for the router LB
-	targetIPsV4, v4Updated := util.UpdateIPsSlice(targetIPsV4, node.l3gatewayAddressesStr(), []string{hostMasqueradeIPV4})
-	targetIPsV6, v6Updated := util.UpdateIPsSlice(targetIPsV6, node.l3gatewayAddressesStr(), []string{hostMasqueradeIPV6})
+	targetIPsV4, v4Updated := util.UpdateIPsSlice(targetIPsV4, node.hostAddressesStr(), []string{hostMasqueradeIPV4})
+	targetIPsV6, v6Updated := util.UpdateIPsSlice(targetIPsV6, node.hostAddressesStr(), []string{hostMasqueradeIPV6})
 
 	// Local endpoints are a subset of cluster endpoints, so it is enough to compare their length
 	v4Changed = len(targetIPsV4) != len(c.clusterEndpoints.V4IPs) || v4Updated
