@@ -116,7 +116,7 @@ func NewController(
 			)
 		}
 
-		return c.updateRAStatus(ra, false, err)
+		return c.updateRAStatus(ra, false, errorstatus)
 	}
 
 	raConfig := &controllerutil.ControllerConfig[ratypes.RouteAdvertisements]{
