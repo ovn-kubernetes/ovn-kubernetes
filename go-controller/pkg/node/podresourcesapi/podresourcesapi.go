@@ -11,6 +11,8 @@ import (
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1"
 )
 
+const KubeletSocketPath = "/var/lib/kubelet/pod-resources/kubelet.sock"
+
 type PodResClient struct {
 	podresourcesapi.PodResourcesListerClient
 	conn *grpc.ClientConn
