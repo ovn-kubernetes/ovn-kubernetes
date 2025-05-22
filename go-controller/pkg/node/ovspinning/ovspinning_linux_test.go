@@ -41,7 +41,7 @@ func TestAlignCPUAffinity(t *testing.T) {
 	go func() {
 		// Be sure the system under test goroutine is finished before cleaning
 		defer wg.Done()
-		Run(stopCh)
+		Run(context.TODO(), stopCh)
 	}()
 
 	var initialCPUset unix.CPUSet
