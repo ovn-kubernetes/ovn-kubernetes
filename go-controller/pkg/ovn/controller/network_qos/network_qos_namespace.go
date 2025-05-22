@@ -91,19 +91,18 @@ func namespaceMatchesNetworkSelector(namespace *corev1.Namespace, nqos *nqosv1al
 				return true
 			}
 			nsSelector = &selector.NetworkAttachmentDefinitionSelector.NamespaceSelector
-			/*case selector.PrimaryUserDefinedNetworkSelector != nil:
-				if selector.PrimaryUserDefinedNetworkSelector.NamespaceSelector.Size() == 0 {
-					// namespace selector is empty, match all
-					return true
-				}
-				nsSelector = &selector.PrimaryUserDefinedNetworkSelector.NamespaceSelector
-			case selector.SecondaryUserDefinedNetworkSelector != nil:
-				if selector.SecondaryUserDefinedNetworkSelector.NamespaceSelector.Size() == 0 {
-					// namespace selector is empty, match all
-					return true
-				}
-				nsSelector = &selector.SecondaryUserDefinedNetworkSelector.NamespaceSelector
-			*/
+		case selector.PrimaryUserDefinedNetworkSelector != nil:
+			if selector.PrimaryUserDefinedNetworkSelector.NamespaceSelector.Size() == 0 {
+				// namespace selector is empty, match all
+				return true
+			}
+			nsSelector = &selector.PrimaryUserDefinedNetworkSelector.NamespaceSelector
+		case selector.SecondaryUserDefinedNetworkSelector != nil:
+			if selector.SecondaryUserDefinedNetworkSelector.NamespaceSelector.Size() == 0 {
+				// namespace selector is empty, match all
+				return true
+			}
+			nsSelector = &selector.SecondaryUserDefinedNetworkSelector.NamespaceSelector
 		}
 		if nsSelector == nil {
 			continue
@@ -139,7 +138,7 @@ func networkSelectionChanged(nqos *nqosv1alpha1.NetworkQoS, new *corev1.Namespac
 	for _, selector := range nqos.Spec.NetworkSelectors {
 		var nsSelector *metav1.LabelSelector
 		switch selector.NetworkSelectionType {
-		/*case crdtypes.PrimaryUserDefinedNetworks:
+		case crdtypes.PrimaryUserDefinedNetworks:
 			if selector.PrimaryUserDefinedNetworkSelector != nil {
 				nsSelector = &selector.PrimaryUserDefinedNetworkSelector.NamespaceSelector
 			}
@@ -147,7 +146,6 @@ func networkSelectionChanged(nqos *nqosv1alpha1.NetworkQoS, new *corev1.Namespac
 			if selector.SecondaryUserDefinedNetworkSelector != nil {
 				nsSelector = &selector.SecondaryUserDefinedNetworkSelector.NamespaceSelector
 			}
-		*/
 		case crdtypes.NetworkAttachmentDefinitions:
 			if selector.NetworkAttachmentDefinitionSelector != nil {
 				nsSelector = &selector.NetworkAttachmentDefinitionSelector.NamespaceSelector

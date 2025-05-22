@@ -325,6 +325,28 @@ func (c *Controller) networkManagedByMe(networkSelectors crdtypes.NetworkSelecto
 		switch networkSelector.NetworkSelectionType {
 		case crdtypes.DefaultNetwork:
 			return c.IsDefault(), nil
+		case crdtypes.PrimaryUserDefinedNetworks:
+			if !c.IsPrimaryNetwork() {
+				return false, nil
+			}
+			if networkSelector.PrimaryUserDefinedNetworkSelector == nil {
+				return false, fmt.Errorf("empty primary user defined network selector")
+			}
+			selectedNads, err = c.getNetAttachDefsByNamespace(&networkSelector.PrimaryUserDefinedNetworkSelector.NamespaceSelector)
+			if err != nil {
+				return false, err
+			}
+		case crdtypes.SecondaryUserDefinedNetworks:
+			if !c.IsSecondary() {
+				return false, nil
+			}
+			if networkSelector.SecondaryUserDefinedNetworkSelector == nil {
+				return false, fmt.Errorf("empty secondary user defined network selector")
+			}
+			selectedNads, err = c.getNetAttachDefsBySelectors(&networkSelector.SecondaryUserDefinedNetworkSelector.NamespaceSelector, &networkSelector.SecondaryUserDefinedNetworkSelector.NetworkSelector)
+			if err != nil {
+				return false, err
+			}
 		case crdtypes.ClusterUserDefinedNetworks:
 			if networkSelector.ClusterUserDefinedNetworkSelector == nil {
 				return false, fmt.Errorf("empty cluster user defined network selector")
@@ -386,6 +408,28 @@ func (c *Controller) getAllNetworkQoSes() ([]*networkqosapi.NetworkQoS, error) {
 		return nil, fmt.Errorf("failed to list NetworkQoS: %v", err)
 	}
 	return nqoses, nil
+}
+
+func (c *Controller) getNetAttachDefsByNamespace(namespaceSelector *metav1.LabelSelector) ([]*nadv1.NetworkAttachmentDefinition, error) {
+	var selectedNads []*nadv1.NetworkAttachmentDefinition
+	if namespaceSelector != nil && namespaceSelector.Size() > 0 {
+		nsSelector, err := metav1.LabelSelectorAsSelector(namespaceSelector)
+		if err != nil {
+			return nil, fmt.Errorf("invalid namespace selector %v: %v", namespaceSelector.String(), err)
+		}
+		namespaces, err := c.nqosNamespaceLister.List(nsSelector)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list namespaces: %v", err)
+		}
+		for _, ns := range namespaces {
+			nads, err := c.nadLister.NetworkAttachmentDefinitions(ns.Name).List(labels.Everything())
+			if err != nil {
+				return nil, fmt.Errorf("failed to list NADs in namespace %s: %v", ns.Name, err)
+			}
+			selectedNads = append(selectedNads, nads...)
+		}
+	}
+	return selectedNads, nil
 }
 
 func (c *Controller) getNetAttachDefsBySelectors(namespaceSelector, nadSelector *metav1.LabelSelector) ([]*nadv1.NetworkAttachmentDefinition, error) {
