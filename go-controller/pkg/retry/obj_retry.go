@@ -320,7 +320,11 @@ func (r *RetryFramework) resourceRetry(objKey string, now time.Time) {
 		}
 		if r.ResourceHandler.NeedsUpdateDuringRetry && entry.config != nil && entry.newObj != nil {
 			klog.Infof("%v retry: updating object %s", r.ResourceHandler.ObjType, objKey)
-			if err := r.ResourceHandler.UpdateResource(entry.config, entry.newObj, true); err != nil {
+			if !r.ResourceHandler.IsResourceScheduled(entry.newObj) {
+				// unscheduled resources (pods) will be retried again later we do not track these as failures, and should not retry.
+				// we should avoid queuing objects to the retry handler that are not scheduled. Thus treat this as an error.
+				klog.Errorf("%v retry: cannot update object that is not scheduled: %s", r.ResourceHandler.ObjType, objKey)
+			} else if err := r.ResourceHandler.UpdateResource(entry.config, entry.newObj, true); err != nil {
 				entry.timeStamp = time.Now()
 				entry.failedAttempts++
 				if entry.failedAttempts >= MaxFailedAttempts {
@@ -336,14 +340,12 @@ func (r *RetryFramework) resourceRetry(objKey string, now time.Time) {
 		} else {
 			// delete old object if needed
 			if entry.oldObj != nil {
-				klog.Infof("Removing old object: %s %s (failed: %v)",
-					r.ResourceHandler.ObjType, objKey, entry.failedAttempts)
+				klog.Infof("Removing old object: %s %s (failed: %v)", r.ResourceHandler.ObjType, objKey, entry.failedAttempts)
 				if !r.ResourceHandler.IsResourceScheduled(entry.oldObj) {
-					klog.V(5).Infof("Retry: %s %s not scheduled", r.ResourceHandler.ObjType, objKey)
-					entry.failedAttempts++
-					return
-				}
-				if err := r.ResourceHandler.DeleteResource(entry.oldObj, entry.config); err != nil {
+					// unscheduled resources (pods) will be retried again later we do not track these as failures, and should not retry.
+					// we should avoid queuing objects to the retry handler that are not scheduled. Thus treat this as an error.
+					klog.Errorf("%v retry: cannot delete object that was not scheduled %s", r.ResourceHandler.ObjType, objKey)
+				} else if err := r.ResourceHandler.DeleteResource(entry.oldObj, entry.config); err != nil {
 					entry.timeStamp = time.Now()
 					entry.failedAttempts++
 					if entry.failedAttempts >= MaxFailedAttempts {
@@ -363,11 +365,10 @@ func (r *RetryFramework) resourceRetry(objKey string, now time.Time) {
 			if entry.newObj != nil {
 				klog.Infof("Adding new object: %s %s", r.ResourceHandler.ObjType, objKey)
 				if !r.ResourceHandler.IsResourceScheduled(entry.newObj) {
-					klog.V(5).Infof("Retry: %s %s not scheduled", r.ResourceHandler.ObjType, objKey)
-					entry.failedAttempts++
-					return
-				}
-				if err := r.ResourceHandler.AddResource(entry.newObj, true); err != nil {
+					// unscheduled resources (pods) will be retried again later we do not track these as failures, and should not retry.
+					// we should avoid queuing objects to the retry handler that are not scheduled. Thus treat this as an error.
+					klog.Errorf("%v retry: cannot create object that is not scheduled %s", r.ResourceHandler.ObjType, objKey)
+				} else if err := r.ResourceHandler.AddResource(entry.newObj, true); err != nil {
 					entry.timeStamp = time.Now()
 					entry.failedAttempts++
 					if entry.failedAttempts >= MaxFailedAttempts {
