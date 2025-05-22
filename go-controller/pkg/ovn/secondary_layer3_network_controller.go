@@ -909,14 +909,13 @@ func (oc *SecondaryLayer3NetworkController) addNode(node *corev1.Node) ([]*net.I
 		if err := oc.addOrUpdateUDNNodeSubnetEgressSNAT(hostSubnets, node, isUDNAdvertised); err != nil {
 			return nil, err
 		}
-		if !isUDNAdvertised {
-			if util.IsRouteAdvertisementsEnabled() {
-				if err := oc.deleteAdvertisedNetworkIsolation(node.Name); err != nil {
-					return nil, err
-				}
+		shouldIsolate := isUDNAdvertised && config.OVNKubernetesFeature.RoutedUDNIsolation == config.RoutedUDNIsolationEnabled
+		if shouldIsolate {
+			if err = oc.addAdvertisedNetworkIsolation(node.Name); err != nil {
+				return nil, err
 			}
 		} else {
-			if err := oc.addAdvertisedNetworkIsolation(node.Name); err != nil {
+			if err = oc.deleteAdvertisedNetworkIsolation(node.Name); err != nil {
 				return nil, err
 			}
 		}
