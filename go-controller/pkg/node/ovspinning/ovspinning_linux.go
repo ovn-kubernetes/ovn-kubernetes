@@ -5,7 +5,9 @@ package ovspinning
 
 import (
 	"bytes"
+	"context"
 	"fmt"
+
 	"os"
 	"path/filepath"
 	"strconv"
@@ -29,7 +31,7 @@ var featureEnablerFile string = "/etc/openvswitch/enable_dynamic_cpu_affinity"
 // Run monitors OVS daemon's processes (ovs-vswitchd and ovsdb-server) and sets their CPU affinity
 // masks to that of the current process.
 // This feature is enabled by the presence of a non-empty file in the path `/etc/openvswitch/enable_dynamic_cpu_affinity`
-func Run(stopCh <-chan struct{}) {
+func Run(ctx context.Context, stopCh <-chan struct{}) {
 
 	// The file must be present at startup to enable the feature
 	isFeatureEnabled, err := isFileNotEmpty(featureEnablerFile)
