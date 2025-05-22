@@ -238,6 +238,7 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 		ginkgo.It("creates an address set for existing nodes when the host network traffic namespace is created", func() {
 			config.Gateway.Mode = config.GatewayModeShared
 			config.Gateway.NodeportEnable = true
+			config.Gateway.EphemeralPortRange = config.DefaultEphemeralPortRange
 			var err error
 			config.Default.ClusterSubnets, err = config.ParseClusterSubnetEntries(clusterCIDR)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())

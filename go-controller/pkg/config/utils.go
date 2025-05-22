@@ -3,7 +3,9 @@ package config
 import (
 	"fmt"
 	"net"
+	"os"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -327,4 +329,50 @@ func AllocateV6MasqueradeIPs(masqueradeSubnetNetworkAddress net.IP, masqueradeIP
 		return fmt.Errorf("error setting V6OVNServiceHairpinMasqueradeIP: %s", masqueradeIPs.V6DummyNextHopMasqueradeIP)
 	}
 	return nil
+}
+
+func isValidEphemeralPortRange(s string) bool {
+	// Regex to match "<number>-<number>" with no extra characters
+	re := regexp.MustCompile(`^(\d{1,5})-(\d{1,5})$`)
+	matches := re.FindStringSubmatch(s)
+	if matches == nil {
+		return false
+	}
+
+	minPort, err1 := strconv.Atoi(matches[1])
+	maxPort, err2 := strconv.Atoi(matches[2])
+	if err1 != nil || err2 != nil {
+		return false
+	}
+
+	// Port numbers must be in the 1-65535 range
+	if minPort < 1 || minPort > 65535 || maxPort < 0 || maxPort > 65535 {
+		return false
+	}
+
+	return maxPort > minPort
+}
+
+func getKernelEphemeralPortRange() (string, error) {
+	data, err := os.ReadFile("/proc/sys/net/ipv4/ip_local_port_range")
+	if err != nil {
+		return "", fmt.Errorf("failed to read port range: %w", err)
+	}
+
+	parts := strings.Fields(string(data))
+	if len(parts) != 2 {
+		return "", fmt.Errorf("unexpected format: %q", string(data))
+	}
+
+	minPort, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return "", fmt.Errorf("invalid min port: %w", err)
+	}
+
+	maxPort, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return "", fmt.Errorf("invalid max port: %w", err)
+	}
+
+	return fmt.Sprintf("%d-%d", minPort, maxPort), nil
 }

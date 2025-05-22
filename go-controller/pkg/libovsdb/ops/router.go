@@ -961,6 +961,10 @@ func buildNAT(
 		Match:       match,
 	}
 
+	if config.Gateway.Mode != config.GatewayModeDisabled {
+		nat.ExternalPortRange = config.Gateway.EphemeralPortRange
+	}
+
 	if logicalPort != "" {
 		nat.LogicalPort = &logicalPort
 	}
@@ -1061,7 +1065,7 @@ func isEquivalentNAT(existing *nbdb.NAT, searched *nbdb.NAT) bool {
 		return false
 	}
 
-	// Compre externalIP if its not empty.
+	// Compare externalIP if it's not empty.
 	if searched.ExternalIP != "" && searched.ExternalIP != existing.ExternalIP {
 		return false
 	}
