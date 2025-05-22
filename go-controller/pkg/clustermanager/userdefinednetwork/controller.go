@@ -37,6 +37,7 @@ import (
 	userdefinednetworkscheme "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/scheme"
 	userdefinednetworkinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/informers/externalversions/userdefinednetwork/v1"
 	userdefinednetworklister "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/listers/userdefinednetwork/v1"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -389,6 +390,14 @@ func (c *Controller) syncUserDefinedNetwork(udn *userdefinednetworkv1.UserDefine
 		return nil, nil
 	}
 
+	var role, topology string
+	if udn.Spec.Layer2 != nil {
+		role = string(udn.Spec.Layer2.Role)
+	} else if udn.Spec.Layer3 != nil {
+		role = string(udn.Spec.Layer3.Role)
+	}
+	topology = string(udn.Spec.Topology)
+
 	if !udn.DeletionTimestamp.IsZero() { // udn is being  deleted
 		if controllerutil.ContainsFinalizer(udn, template.FinalizerUserDefinedNetwork) {
 			if err := c.deleteNAD(udn, udn.Namespace); err != nil {
@@ -401,6 +410,7 @@ func (c *Controller) syncUserDefinedNetwork(udn *userdefinednetworkv1.UserDefine
 				return nil, fmt.Errorf("failed to remove finalizer to UserDefinedNetwork: %w", err)
 			}
 			klog.Infof("Finalizer removed from UserDefinedNetworks [%s/%s]", udn.Namespace, udn.Name)
+			metrics.DecrementUDNCount(role, topology)
 		}
 
 		return nil, nil
@@ -412,6 +422,7 @@ func (c *Controller) syncUserDefinedNetwork(udn *userdefinednetworkv1.UserDefine
 			return nil, fmt.Errorf("failed to add finalizer to UserDefinedNetwork: %w", err)
 		}
 		klog.Infof("Added Finalizer to UserDefinedNetwork [%s/%s]", udn.Namespace, udn.Name)
+		metrics.IncrementUDNCount(role, topology)
 	}
 
 	return c.updateNAD(udn, udn.Namespace)
@@ -539,6 +550,16 @@ func (c *Controller) syncClusterUDN(cudn *userdefinednetworkv1.ClusterUserDefine
 	cudnName := cudn.Name
 	affectedNamespaces := c.namespaceTracker[cudnName]
 
+	var role, topology string
+	if cudn.Spec.Network.Layer2 != nil {
+		role = string(cudn.Spec.Network.Layer2.Role)
+	} else if cudn.Spec.Network.Layer3 != nil {
+		role = string(cudn.Spec.Network.Layer3.Role)
+	} else if cudn.Spec.Network.Localnet != nil {
+		role = string(cudn.Spec.Network.Localnet.Role)
+	}
+	topology = string(cudn.Spec.Network.Topology)
+
 	if !cudn.DeletionTimestamp.IsZero() {
 		if controllerutil.ContainsFinalizer(cudn, template.FinalizerUserDefinedNetwork) {
 			var errs []error
@@ -564,6 +585,7 @@ func (c *Controller) syncClusterUDN(cudn *userdefinednetworkv1.ClusterUserDefine
 			}
 			klog.Infof("Finalizer removed from ClusterUserDefinedNetwork %q", cudn.Name)
 			delete(c.namespaceTracker, cudnName)
+			metrics.DecrementCUDNCount(role, topology)
 		}
 
 		return nil, nil
@@ -581,6 +603,7 @@ func (c *Controller) syncClusterUDN(cudn *userdefinednetworkv1.ClusterUserDefine
 			return nil, fmt.Errorf("failed to add finalizer to ClusterUserDefinedNetwork %q: %w", cudnName, err)
 		}
 		klog.Infof("Added Finalizer to ClusterUserDefinedNetwork %q", cudnName)
+		metrics.IncrementCUDNCount(role, topology)
 	}
 
 	selectedNamespaces, err := c.getSelectedNamespaces(cudn.Spec.NamespaceSelector)
