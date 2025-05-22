@@ -14,8 +14,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	knet "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/util/sets"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -241,7 +239,7 @@ func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed f
 	}
 
 	if reconcilePendingPods {
-		if err := ovnretry.RequeuePendingPods(oc.kube, oc.GetNetInfo(), oc.retryPods); err != nil {
+		if err := ovnretry.RequeuePendingPods(oc.watchFactory, oc.GetNetInfo(), oc.retryPods); err != nil {
 			klog.Errorf("Failed to requeue pending pods for network %s: %v", oc.GetNetworkName(), err)
 		}
 	}
@@ -579,18 +577,19 @@ func (bnc *BaseNetworkController) deleteNodeLogicalNetwork(nodeName string) erro
 
 func (bnc *BaseNetworkController) addAllPodsOnNode(nodeName string) []error {
 	errs := []error{}
-	pods, err := bnc.kube.GetPods(metav1.NamespaceAll, metav1.ListOptions{
-		FieldSelector: fields.OneTermEqualSelector("spec.nodeName", nodeName).String(),
-	})
+	pods, err := bnc.watchFactory.GetAllPods()
 	if err != nil {
 		errs = append(errs, err)
-		klog.Errorf("Unable to list existing pods on node: %s, existing pods on this node may not function",
+		klog.Errorf("Unable to list existing pods for synchronizing node: %s, existing pods on this node may not function",
 			nodeName)
 	} else {
 		klog.V(5).Infof("When adding node %s for network %s, found %d pods to add to retryPods", nodeName, bnc.GetNetworkName(), len(pods))
 		for _, pod := range pods {
 			pod := *pod
 			if util.PodCompleted(&pod) {
+				continue
+			}
+			if pod.Spec.NodeName != nodeName {
 				continue
 			}
 			klog.V(5).Infof("Adding pod %s/%s to retryPods for network %s", pod.Namespace, pod.Name, bnc.GetNetworkName())

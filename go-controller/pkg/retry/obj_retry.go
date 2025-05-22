@@ -9,14 +9,11 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/syncmap"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
@@ -771,38 +768,35 @@ func (r *RetryFramework) WatchResourceFiltered(namespaceForFilteredHandler strin
 	return handler, nil
 }
 
-// getPendingPods returns all pods that are in the Pending state
-func getPendingPods(kubeClient kube.InterfaceOVN) ([]*corev1.Pod, error) {
-	var allPods []*corev1.Pod
-
-	pods, err := kubeClient.GetPods(corev1.NamespaceAll, metav1.ListOptions{
-		FieldSelector: fields.OneTermEqualSelector("status.phase", string(corev1.PodPending)).String(),
-	})
-	if err != nil {
-		return nil, err
-	}
-	allPods = append(allPods, pods...)
-	return allPods, nil
-}
-
 // RequeuePendingPods enqueues all Pending pods into the retryPods associated with netInfo.
-func RequeuePendingPods(kubeClient kube.InterfaceOVN, netInfo util.NetInfo, retryPods *RetryFramework) error {
+func RequeuePendingPods(wf *factory.WatchFactory, netInfo util.NetInfo, retryPods *RetryFramework) error {
 	var errs []error
 
 	// NOTE: A pod may reference a NAD from a different namespace, so check all pending pods.
-	allPods, err := getPendingPods(kubeClient)
+	allPods, err := wf.GetAllPods()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get all pods: %w", err)
 	}
 
+	podsAdded := false
 	for _, pod := range allPods {
 		pod := *pod
+		if !util.PodScheduled(&pod) {
+			continue
+		}
+		if pod.Status.Phase != corev1.PodPending {
+			continue
+		}
 		klog.V(5).Infof("Adding pending pod %s/%s to retryPods for network %s", pod.Namespace, pod.Name, netInfo.GetNetworkName())
 		err := retryPods.AddRetryObjWithAddNoBackoff(&pod)
 		if err != nil {
 			errs = append(errs, err)
+			continue
 		}
+		podsAdded = true
 	}
-	retryPods.RequestRetryObjs()
+	if podsAdded {
+		retryPods.RequestRetryObjs()
+	}
 	return utilerrors.Join(errs...)
 }
