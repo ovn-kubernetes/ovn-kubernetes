@@ -6,4 +6,5 @@ type DeploymentConfig interface {
 	OVNKubernetesNamespace() string
 	ExternalBridgeName() string
 	PrimaryInterfaceName() string
+	SecondaryInterfaceName() string
 }
