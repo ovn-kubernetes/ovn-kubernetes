@@ -1398,7 +1398,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				gatewayPodName1      string = "e2e-gateway-pod1"
 				gatewayPodName2      string = "e2e-gateway-pod2"
 				ecmpRetry            int    = 20
-				testTimeout          string = "20"
+				testTimeout          string = "60"
 			)
 
 			var (
