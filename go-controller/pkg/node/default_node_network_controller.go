@@ -1263,7 +1263,7 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 	nc.wg.Add(1)
 	go func() {
 		defer nc.wg.Done()
-		ovspinning.Run(nc.stopChan)
+		ovspinning.Run(ctx, nc.stopChan)
 	}()
 
 	klog.Infof("Default node network controller initialized and ready.")
