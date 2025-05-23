@@ -93,6 +93,12 @@ var _ = ginkgo.Describe("e2e EgressQoS validation", func() {
 	ginkgo.DescribeTable("Should validate correct DSCP value on EgressQoS resource changes",
 		func(tcpDumpTpl string, dst1IP *string, prefix1 string, dst2IP *string, podBeforeQoS bool) {
 			dscpValue := 50
+
+			// Check if dst1IP is empty and skip the test if it is
+			if dst1IP == nil || *dst1IP == "" {
+				ginkgo.Skip("Skipping test because dst1IP is empty")
+			}
+
 			if podBeforeQoS {
 				_, err := createPod(f, srcPodName, srcNode, f.Namespace.Name, []string{}, map[string]string{"app": "test"})
 				framework.ExpectNoError(err)
@@ -179,6 +185,11 @@ spec:
 			dscpValue := 50
 			if *dst1IP == "" || *dst2IP == "" {
 				ginkgo.Skip("destination IP(s) are not available")
+			}
+
+			// Check if dst1IP is empty and skip the test if it is
+			if dst1IP == nil || *dst1IP == "" {
+				ginkgo.Skip("Skipping test because dst1IP is empty")
 			}
 
 			// create without labels, no packets should be marked
