@@ -46,6 +46,7 @@ func (fcm *FakeControllerManager) Reconcile(_ string, _, _ util.NetInfo) error {
 
 type FakeNetworkManager struct {
 	// namespace -> netInfo
+	// if netInfo is nil, it represents a namespace which contains the required UDN label but with no valid network. It will return invalid network error.
 	PrimaryNetworks map[string]util.NetInfo
 }
 
@@ -54,11 +55,15 @@ func (fnm *FakeNetworkManager) Start() error { return nil }
 func (fnm *FakeNetworkManager) Stop() {}
 
 func (fnm *FakeNetworkManager) GetActiveNetworkForNamespace(namespace string) (util.NetInfo, error) {
-	return fnm.GetActiveNetworkForNamespaceFast(namespace), nil
+	network := fnm.GetActiveNetworkForNamespaceFast(namespace)
+	if network == nil {
+		return nil, util.NewInvalidPrimaryNetworkError(namespace)
+	}
+	return network, nil
 }
 
 func (fnm *FakeNetworkManager) GetActiveNetworkForNamespaceFast(namespace string) util.NetInfo {
-	if primaryNetworks, ok := fnm.PrimaryNetworks[namespace]; ok && primaryNetworks != nil {
+	if primaryNetworks, ok := fnm.PrimaryNetworks[namespace]; ok {
 		return primaryNetworks
 	}
 	return &util.DefaultNetInfo{}

@@ -40,6 +40,7 @@ import (
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	coreinformermocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/client-go/informers/core/v1"
 	v1mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/client-go/listers/core/v1"
+	fakenetworkmanager "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
@@ -1553,6 +1554,34 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
+	})
+
+	It("should sync node port watcher successfully if a namespaces network is invalid", func() {
+		// create new gateway, add ns with primary UDN, pod, expose pod via Node port service, delete pod, delete udn, ensure sync should succeeds
+		namespace := util.NewNamespace("udn")
+		config.OVNKubernetesFeature.EnableMultiNetwork = true
+		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+		namespace.Labels[types.RequiredUDNNamespaceLabel] = ""
+		service := newService("udn-svc", namespace.Name, "10.96.0.10", []corev1.ServicePort{{NodePort: int32(30300),
+			Protocol: corev1.ProtocolTCP, Port: int32(8080)}}, corev1.ServiceTypeNodePort, []string{}, corev1.ServiceStatus{},
+			true, false)
+		fakeClient := util.GetOVNClientset(service, namespace)
+		wf, err := factory.NewNodeWatchFactory(fakeClient.GetNodeClientset(), "node")
+		Expect(err).ToNot(HaveOccurred(), "must get new node watch factory")
+		Expect(wf.Start()).NotTo(HaveOccurred(), "must start Node watch factory")
+		defer func() {
+			wf.Shutdown()
+		}()
+		iptV4, iptV6 := util.SetFakeIPTablesHelpers()
+		nodenft.SetFakeNFTablesHelper()
+		fNPW := initFakeNodePortWatcher(iptV4, iptV6)
+		fNPW.watchFactory = wf
+		// in-order to simulate a namespace with an Invalid UDN (when GetActiveNamespace is called), we add an entry
+		// to the fake network manager but no specified network. GetActiveNetwork will return the appropriate error of Invalid Network for namespace.
+		// network manager may have a different implementation that fake network manager but both will return the same error.
+		fNPW.networkManager = &fakenetworkmanager.FakeNetworkManager{PrimaryNetworks: map[string]util.NetInfo{namespace.Name: nil}}
+		services := append([]interface{}{}, service)
+		Expect(fNPW.SyncServices(services)).NotTo(HaveOccurred(), "must sync services")
 	})
 })
 

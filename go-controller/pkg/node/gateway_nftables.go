@@ -122,7 +122,12 @@ func recreateNFTSet(setName string, keepNFTElems []*knftables.Element) error {
 			tx.Add(elem)
 		}
 	}
-	return nft.Run(context.TODO(), tx)
+	err = nft.Run(context.TODO(), tx)
+	// no error if set is not created and we desire zero NFT elements
+	if knftables.IsNotFound(err) && len(keepNFTElems) == 0 {
+		return nil
+	}
+	return err
 }
 
 func recreateNFTMap(mapName string, keepNFTElems []*knftables.Element) error {
@@ -139,7 +144,12 @@ func recreateNFTMap(mapName string, keepNFTElems []*knftables.Element) error {
 			tx.Add(elem)
 		}
 	}
-	return nft.Run(context.TODO(), tx)
+	err = nft.Run(context.TODO(), tx)
+	// no error if set is not created and we desire zero NFT elements
+	if knftables.IsNotFound(err) && len(keepNFTElems) == 0 {
+		return nil
+	}
+	return err
 }
 
 // getGatewayNFTRules returns nftables rules for service. This must be used in conjunction
