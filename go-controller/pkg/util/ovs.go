@@ -34,6 +34,7 @@ const (
 	ovsdbClientCommand = "ovsdb-client"
 	ovsdbToolCommand   = "ovsdb-tool"
 	ipCommand          = "ip"
+	ipsecCommand       = "ipsec"
 	powershellCommand  = "powershell"
 	netshCommand       = "netsh"
 	routeCommand       = "route"
@@ -123,6 +124,7 @@ type execHelper struct {
 	ovsdbToolPath   string
 	ovnRunDir       string
 	ipPath          string
+	ipsecPath       string
 	powershellPath  string
 	netshPath       string
 	routePath       string
@@ -246,6 +248,10 @@ func SetExecWithoutOVS(exec kexec.Interface) error {
 		}
 	} else {
 		runner.ipPath, err = exec.LookPath(ipCommand)
+		if err != nil {
+			return err
+		}
+		runner.ipsecPath, err = exec.LookPath(ipsecCommand)
 		if err != nil {
 			return err
 		}
@@ -641,6 +647,12 @@ func RunNetsh(args ...string) (string, string, error) {
 // RunRoute runs a command via the Windows route utility
 func RunRoute(args ...string) (string, string, error) {
 	stdout, stderr, err := run(runner.routePath, args...)
+	return strings.TrimSpace(stdout.String()), stderr.String(), err
+}
+
+// RunIPsec runs a command via the Libreswan "ipsec" utility
+func RunIPsec(args ...string) (string, string, error) {
+	stdout, stderr, err := run(runner.ipsecPath, args...)
 	return strings.TrimSpace(stdout.String()), stderr.String(), err
 }
 
