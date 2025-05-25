@@ -14,6 +14,7 @@ The following tasks are performed:
 - Check out the Kubernetes source tree and compiles some dependencies
 - Install KIND
 - Run a matrix of End-To-End Tests using KIND
+- Ensure that documentation builds successfully
 
 The full matrix of e2e tests found [here](https://github.com/ovn-org/ovn-kubernetes/blob/master/.github/workflows/test.yml)
 are also run periodically (twice daily) using an OVN-Kubernetes build based on the currently merged code base.
@@ -119,7 +120,7 @@ and set the environmental variable `K8S_VERSION` to the same value. Also make su
 your go directory with `export GOPATH=(...)`.
 
 ```
-K8S_VERSION=v1.31.0
+K8S_VERSION=v1.32.3
 git clone --single-branch --branch $K8S_VERSION https://github.com/kubernetes/kubernetes.git $GOPATH/src/k8s.io/kubernetes/
 pushd $GOPATH/src/k8s.io/kubernetes/
 make WHAT="test/e2e/e2e.test vendor/github.com/onsi/ginkgo/ginkgo cmd/kubectl"
@@ -159,8 +160,8 @@ export OVN_EMPTY_LB_EVENTS=[true|false]
 export OVN_HA=[true|false]
 export OVN_DISABLE_SNAT_MULTIPLE_GWS=[true|false]
 export OVN_GATEWAY_MODE=["local"|"shared"]
-export KIND_IPV4_SUPPORT=[true|false]
-export KIND_IPV6_SUPPORT=[true|false]
+export PLATFORM_IPV4_SUPPORT=[true|false]
+export PLATFORM_IPV6_SUPPORT=[true|false]
 # not required for the OVN Kind installation script, but export this already for later
 OVN_SECOND_BRIDGE=[true|false]
 ```
@@ -180,8 +181,8 @@ export OVN_EMPTY_LB_EVENTS=true
 export OVN_HA=false
 export OVN_DISABLE_SNAT_MULTIPLE_GWS=false
 export OVN_GATEWAY_MODE="local"
-export KIND_IPV4_SUPPORT=true
-export KIND_IPV6_SUPPORT=false
+export PLATFORM_IPV4_SUPPORT=true
+export PLATFORM_IPV6_SUPPORT=false
 # not required for the OVN Kind installation script, but export this already for later
 export OVN_SECOND_BRIDGE=false
 ```
@@ -352,13 +353,13 @@ ok  	github.com/ovn-org/ovn-kubernetes/test/e2e	12.371s
 ### IPv6 tests
 
 To skip the IPv4 only tests (in a IPv6 only deployment), pass the
-`KIND_IPV6_SUPPORT=true` environmental variable to `make`:
+`PLATFORM_IPV6_SUPPORT=true` environmental variable to `make`:
 
 ```
 $ cd $GOPATH/src/github.com/ovn-org/ovn-kubernetes
 
 $ pushd test
-$ KIND_IPV6_SUPPORT=true make shard-conformance
+$ PLATFORM_IPV6_SUPPORT=true make shard-conformance
 $ popd
 ```
 
@@ -379,3 +380,12 @@ defined in https://github.com/kubernetes-sigs/network-policy-api/tree/master/con
 and then invoked from this repo. Any changes to the tests first have to be submitted
 upstream to `network-policy-api` repo and then brought downstream into the ovn-kubernetes repo
 through version bump.
+
+# Documentation Build Check
+
+To catch any potential documentation build breakages which would prevent any docs changes
+from being deployed to our GitHub Pages [site](https://github.com/ovn-org/ovn-kubernetes). The build check will produce the
+html docs and will be available in the job artifacts for review. There is a link printed
+in the job run logs inside the step "Upload Artifact". Download and unzip that locally 
+to view the resulting docs after they are built to see what would be deployed to github
+pages.

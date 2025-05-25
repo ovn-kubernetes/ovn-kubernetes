@@ -75,7 +75,7 @@ RUN git log -n 1
 # Stage to download OVN RPMs from koji #
 ########################################
 FROM fedora:41 AS kojidownloader
-ARG ovnver=ovn-24.09.1-10.fc41
+ARG ovnver=ovn-24.09.2-71.fc41
 
 USER root
 
@@ -97,6 +97,7 @@ RUN if [ "$TARGETPLATFORM" = "linux/amd64" ] || [ -z "$TARGETPLATFORM"] ; then k
 ######################################
 FROM fedora:41 AS source
 COPY --from=ovnbuilder /root/ovn/rpm/rpmbuild/RPMS/x86_64/*.rpm /
+COPY --from=ovnbuilder /root/ovs/rpm/rpmbuild/RPMS/x86_64/*.rpm /
 
 ####################################
 # Stage to copy OVN RPMs from koji #

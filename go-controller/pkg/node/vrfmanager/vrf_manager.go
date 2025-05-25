@@ -2,6 +2,7 @@ package vrfmanager
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -295,6 +296,54 @@ func (vrfm *Controller) AddVRFRoutes(name string, routes []netlink.Route) error 
 	vrfDev.routes = append(vrfDev.routes, routes...)
 
 	return vrfm.sync(vrfDev)
+}
+
+// DeleteVRFRoutes deletes a set of routes from a VRF
+func (vrfm *Controller) DeleteVRFRoutes(name string, routes []netlink.Route) error {
+	vrfm.mu.Lock()
+	defer vrfm.mu.Unlock()
+
+	vrfLink, err := util.GetNetLinkOps().LinkByName(name)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve VRF device %s, err: %v", name, err)
+	}
+
+	vrf, ok := vrfm.vrfs[vrfLink.Attrs().Index]
+	if !ok {
+		return fmt.Errorf("failed to find VRF %s", name)
+	}
+	type route struct {
+		LinkIndex int
+		Dst       string
+		Table     int
+	}
+	deleteRoutesRequested := sets.New[route]()
+	for _, r := range routes {
+		deleteRoutesRequested.Insert(route{
+			LinkIndex: r.LinkIndex,
+			Dst:       r.Dst.String(),
+			Table:     r.Table,
+		})
+	}
+
+	vrf.routes = slices.DeleteFunc(vrf.routes, func(r netlink.Route) bool {
+		if err != nil {
+			return false
+		}
+		delete := deleteRoutesRequested.Has(
+			route{
+				LinkIndex: r.LinkIndex,
+				Dst:       r.Dst.String(),
+				Table:     r.Table,
+			})
+		if !delete {
+			return false
+		}
+		err = vrfm.routeManager.Del(r)
+		return err == nil
+	})
+	vrfm.vrfs[vrfLink.Attrs().Index] = vrf
+	return err
 }
 
 // Repair deletes stale VRF device(s) on the host. This helps remove

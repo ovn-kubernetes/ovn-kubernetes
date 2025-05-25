@@ -49,6 +49,9 @@ func (oc *BaseSecondaryLayer2NetworkController) stop() {
 	if oc.namespaceHandler != nil {
 		oc.watchFactory.RemoveNamespaceHandler(oc.namespaceHandler)
 	}
+	if oc.routeImportManager != nil && config.Gateway.Mode == config.GatewayModeShared {
+		oc.routeImportManager.ForgetNetwork(oc.GetNetworkName())
+	}
 }
 
 // cleanup cleans up logical entities for the given network, called from net-attach-def routine
@@ -68,6 +71,22 @@ func (oc *BaseSecondaryLayer2NetworkController) cleanup() error {
 	ops, err = cleanupPolicyLogicalEntities(oc.nbClient, ops, oc.controllerName)
 	if err != nil {
 		return err
+	}
+
+	ops, err = libovsdbops.DeleteQoSesWithPredicateOps(oc.nbClient, ops,
+		func(item *nbdb.QoS) bool {
+			return item.ExternalIDs[types.NetworkExternalID] == netName
+		})
+	if err != nil {
+		return fmt.Errorf("failed to get ops for deleting QoSes of network %s: %v", netName, err)
+	}
+
+	ops, err = libovsdbops.DeleteAddressSetsWithPredicateOps(oc.nbClient, ops,
+		func(item *nbdb.AddressSet) bool {
+			return item.ExternalIDs[types.NetworkExternalID] == netName
+		})
+	if err != nil {
+		return fmt.Errorf("failed to get ops for deleting address sets of network %s: %v", netName, err)
 	}
 
 	_, err = libovsdbops.TransactAndCheck(oc.nbClient, ops)
@@ -118,6 +137,27 @@ func (oc *BaseSecondaryLayer2NetworkController) run() error {
 		}
 	}
 
+	// start NetworkQoS controller if feature is enabled
+	if config.OVNKubernetesFeature.EnableNetworkQoS {
+		err := oc.newNetworkQoSController()
+		if err != nil {
+			return fmt.Errorf("unable to create network qos controller, err: %w", err)
+		}
+		oc.wg.Add(1)
+		go func() {
+			defer oc.wg.Done()
+			// Until we have scale issues in future let's spawn only one thread
+			oc.nqosController.Run(1, oc.stopChan)
+		}()
+	}
+
+	// Add ourselves to the route import manager
+	if oc.routeImportManager != nil && config.Gateway.Mode == config.GatewayModeShared {
+		err := oc.routeImportManager.AddNetwork(oc.GetNetInfo())
+		if err != nil {
+			return fmt.Errorf("failed to add network %s to the route import manager: %v", oc.GetNetworkName(), err)
+		}
+	}
 	return nil
 }
 

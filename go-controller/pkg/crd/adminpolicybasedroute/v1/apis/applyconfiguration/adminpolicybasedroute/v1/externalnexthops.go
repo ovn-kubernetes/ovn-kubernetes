@@ -18,14 +18,14 @@ limitations under the License.
 package v1
 
 import (
-	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1"
+	adminpolicybasedroutev1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1"
 )
 
 // ExternalNextHopsApplyConfiguration represents a declarative configuration of the ExternalNextHops type for use
 // with apply.
 type ExternalNextHopsApplyConfiguration struct {
-	StaticHops  []*v1.StaticHop  `json:"static,omitempty"`
-	DynamicHops []*v1.DynamicHop `json:"dynamic,omitempty"`
+	StaticHops  []*adminpolicybasedroutev1.StaticHop  `json:"static,omitempty"`
+	DynamicHops []*adminpolicybasedroutev1.DynamicHop `json:"dynamic,omitempty"`
 }
 
 // ExternalNextHopsApplyConfiguration constructs a declarative configuration of the ExternalNextHops type for use with
@@ -37,7 +37,7 @@ func ExternalNextHops() *ExternalNextHopsApplyConfiguration {
 // WithStaticHops adds the given value to the StaticHops field in the declarative configuration
 // and returns the receiver, so that objects can be build by chaining "With" function invocations.
 // If called multiple times, values provided by each call will be appended to the StaticHops field.
-func (b *ExternalNextHopsApplyConfiguration) WithStaticHops(values ...**v1.StaticHop) *ExternalNextHopsApplyConfiguration {
+func (b *ExternalNextHopsApplyConfiguration) WithStaticHops(values ...**adminpolicybasedroutev1.StaticHop) *ExternalNextHopsApplyConfiguration {
 	for i := range values {
 		if values[i] == nil {
 			panic("nil value passed to WithStaticHops")
@@ -50,7 +50,7 @@ func (b *ExternalNextHopsApplyConfiguration) WithStaticHops(values ...**v1.Stati
 // WithDynamicHops adds the given value to the DynamicHops field in the declarative configuration
 // and returns the receiver, so that objects can be build by chaining "With" function invocations.
 // If called multiple times, values provided by each call will be appended to the DynamicHops field.
-func (b *ExternalNextHopsApplyConfiguration) WithDynamicHops(values ...**v1.DynamicHop) *ExternalNextHopsApplyConfiguration {
+func (b *ExternalNextHopsApplyConfiguration) WithDynamicHops(values ...**adminpolicybasedroutev1.DynamicHop) *ExternalNextHopsApplyConfiguration {
 	for i := range values {
 		if values[i] == nil {
 			panic("nil value passed to WithDynamicHops")

@@ -62,10 +62,14 @@ global:
   enableEgressFirewall: true
   # -- Configure to use EgressQoS CRD feature with ovn-kubernetes
   enableEgressQos: true
+  # -- Enables network QoS support from/to pods
+  enableNetworkQos: false
   # -- Enables multicast support between the pods within the same namespace
   enableMulticast: ""
   # -- Configure to use multiple NetworkAttachmentDefinition CRD feature with ovn-kubernetes
   enableMultiNetwork: false
+  # -- Configure to use user defined networks (UDN) feature with ovn-kubernetes
+  enableNetworkSegmentation: false
   # -- Configure to enable IPsec
   enableIpsec: false
   # -- Use SSL transport to NB/SB db and northd
@@ -164,10 +168,6 @@ global:
     registry: ghcr.io
     auth: blah_blah_blah
     create: false
-
-ovnkube-identity:
-    # -- number of ovnube-identity pods, co-located with kube-apiserver process, so need to be the same number of control plane nodes
-    replicas: 1
 
 ovnkube-master:
     # -- number of ovnkube-master pods

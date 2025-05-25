@@ -65,7 +65,7 @@ Some of the allowed annotations have additional checks; for instance, the IP add
 must match the node's [k8s.ovn.org/node-subnets](https://github.com/ovn-org/ovn-kubernetes/blob/5d56a53df520a085e629cdc71be092afed9c3f0f/go-controller/pkg/util/subnet_annotations.go#L15-L39) networks.
 
 
-## Deployment
+## DaemonSet
 
 In Kind,
 the feature is enabled by default and can be disabled with `--disable-ovnkube-identity` when creating the cluster.\

@@ -22,7 +22,28 @@ import (
 	logicalswitchmanager "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/ndp"
 )
+
+// DefaultGatewayReconciler is responsible for reconciling the default gateway
+// configuration of a virtual machine's network interface after a live migration.
+// It supports both IPv4 and IPv6 configurations.
+type DefaultGatewayReconciler struct {
+	watchFactory  *factory.WatchFactory
+	netInfo       util.NetInfo
+	interfaceName string
+}
+
+// NewDefaultGatewayReconciler creates a new instance of DefaultGatewayReconciler.
+// It takes a WatchFactory for managing resource watches, a NetInfo object for network information,
+// and the name of the network interface to send ARPs or RAs as parameters.
+func NewDefaultGatewayReconciler(watchFactory *factory.WatchFactory, netInfo util.NetInfo, interfaceName string) *DefaultGatewayReconciler {
+	return &DefaultGatewayReconciler{
+		watchFactory:  watchFactory,
+		netInfo:       netInfo,
+		interfaceName: interfaceName,
+	}
+}
 
 // IsPodLiveMigratable will return true if the pod belongs
 // to kubevirt and should use the live migration features
@@ -482,17 +503,20 @@ func DiscoverLiveMigrationStatus(client *factory.WatchFactory, pod *corev1.Pod) 
 	return &status, nil
 }
 
-func ReconcileIPv4DefaultGatewayAfterLiveMigration(watchFactory *factory.WatchFactory, netInfo util.NetInfo, liveMigrationStatus *LiveMigrationStatus, interfaceName string) error {
+// ReconcileIPv4AfterLiveMigration will send a GARP after live migration
+// to update the default gw mac address to the node where the VM is running
+// now.
+func (r *DefaultGatewayReconciler) ReconcileIPv4AfterLiveMigration(liveMigrationStatus *LiveMigrationStatus) error {
 	if liveMigrationStatus.State != LiveMigrationTargetDomainReady {
 		return nil
 	}
 
-	targetNode, err := watchFactory.GetNode(liveMigrationStatus.TargetPod.Spec.NodeName)
+	targetNode, err := r.watchFactory.GetNode(liveMigrationStatus.TargetPod.Spec.NodeName)
 	if err != nil {
 		return err
 	}
 
-	lrpJoinAddress, err := util.ParseNodeGatewayRouterJoinNetwork(targetNode, netInfo.GetNetworkName())
+	lrpJoinAddress, err := util.ParseNodeGatewayRouterJoinNetwork(targetNode, r.netInfo.GetNetworkName())
 	if err != nil {
 		return err
 	}
@@ -503,16 +527,104 @@ func ReconcileIPv4DefaultGatewayAfterLiveMigration(watchFactory *factory.WatchFa
 	}
 
 	lrpMAC := util.IPAddrToHWAddr(lrpJoinIPv4)
-	for _, subnet := range netInfo.Subnets() {
+	for _, subnet := range r.netInfo.Subnets() {
 		gwIP := util.GetNodeGatewayIfAddr(subnet.CIDR).IP.To4()
 		if gwIP == nil {
 			continue
 		}
 		garp := util.GARP{IP: gwIP, MAC: &lrpMAC}
-		if err := util.BroadcastGARP(interfaceName, garp); err != nil {
+		if err := util.BroadcastGARP(r.interfaceName, garp); err != nil {
 			return err
 		}
 	}
-
 	return nil
+}
+
+// ReconcileIPv6AfterLiveMigration will do two things at VM's:
+// - Remove ipv6 default gw path from VM's node before live migration
+// - Add ipv6 default gw path from VM's node after live migration
+// This is done by sending a pair of unsolicited RA's one with lifetime=0
+// (to remove the gateway path) another with lifetime=max to add the new
+// default gateway path
+func (r *DefaultGatewayReconciler) ReconcileIPv6AfterLiveMigration(liveMigration *LiveMigrationStatus) error {
+	if !liveMigration.IsTargetDomainReady() {
+		return nil
+	}
+	nodes, err := r.watchFactory.GetNodes()
+	if err != nil {
+		return err
+	}
+
+	targetPod := liveMigration.TargetPod
+	if len(r.netInfo.GetNADs()) != 1 {
+		return fmt.Errorf("expected only one nad for network %q, got %d", r.netInfo.GetNetworkName(), len(r.netInfo.GetNADs()))
+	}
+
+	targetPodAnnotation, err := util.UnmarshalPodAnnotation(targetPod.Annotations, r.netInfo.GetNADs()[0])
+	if err != nil {
+		return ovntypes.NewSuppressedError(fmt.Errorf("failed parsing ovn pod annotation for pod '%s/%s' and network %q: %w", targetPod.Namespace, targetPod.Name, r.netInfo.GetNetworkName(), err))
+	}
+
+	destinationIP, err := util.MatchFirstIPNetFamily(true /* ipv6 */, targetPodAnnotation.IPs)
+	if err != nil {
+		return err
+	}
+	destinationMAC := targetPodAnnotation.MAC
+
+	ras := make([]ndp.RouterAdvertisement, 0, len(nodes))
+	for _, node := range nodes {
+		if node.Name == liveMigration.TargetPod.Spec.NodeName {
+			// skip the target node since this is the proper gateway
+			continue
+		}
+		nodeJoinAddrs, err := util.ParseNodeGatewayRouterJoinAddrs(node, r.netInfo.GetNetworkName())
+		if err != nil {
+			return ovntypes.NewSuppressedError(fmt.Errorf("failed parsing join addresss from node %q and network %q to reconcile ipv6 gateway: %w", node.Name, r.netInfo.GetNetworkName(), err))
+		}
+		// During upgrades, nftables blocks Router Advertisements (RAs) from other nodes.
+		// However, Virtual Machines (VMs) may still retain old default gateway paths.
+		// To address this, we create a new Router Advertisement with a lifetime of 0
+		// to signal the removal of the old default gateway.
+		// NOTE: This is a workaround for the issue and may not be needed in the future, after
+		//       upgrading to a version that supports the new behavior.
+		ras = append(ras, newRouterAdvertisementFromJoinIPAndLifetime(nodeJoinAddrs[0].IP, destinationMAC, destinationIP.IP, 0))
+	}
+	targetNode, err := r.watchFactory.GetNode(liveMigration.TargetPod.Spec.NodeName)
+	if err != nil {
+		return fmt.Errorf("failed fetching node %q to reconcile ipv6 gateway: %w", liveMigration.TargetPod.Spec.NodeName, err)
+	}
+	targetNodeJoinAddrs, err := util.ParseNodeGatewayRouterJoinAddrs(targetNode, r.netInfo.GetNetworkName())
+	if err != nil {
+		return ovntypes.NewSuppressedError(fmt.Errorf("failed parsing join addresss from live migration target node %q and network %q to reconcile ipv6 gateway: %w", targetNode.Name, r.netInfo.GetNetworkName(), err))
+	}
+	ras = append(ras, newRouterAdvertisementFromJoinIPAndLifetime(targetNodeJoinAddrs[0].IP, destinationMAC, destinationIP.IP, 65535))
+	return ndp.SendRouterAdvertisements(r.interfaceName, ras...)
+}
+
+// newRouterAdvertisementFromJoinIPAndLifetime creates a new Router Advertisement (RA) message
+// using the provided join IP address, destination MAC, destination IP, and lifetime.
+//
+// This function performs the following:
+// - Derives the source MAC address from the given IP using util.IPAddrToHWAddr.
+// - Calculates the link-local address (LLA) from the source MAC using util.HWAddrToIPv6LLA.
+// - Configures the destination IP and MAC address to use the provided values.
+// - Sets the RA message's lifetime to the specified value.
+//
+// Parameters:
+// - ip: The join IP address used to derive the source MAC and LLA.
+// - destinationMAC: The MAC address to which the RA message will be sent.
+// - destinationIP: The IP address to which the RA message will be sent.
+// - lifetime: The lifetime value for the RA message, in seconds.
+//
+// Returns:
+// - An ndp.RouterAdvertisement object configured with the calculated source MAC, LLA, and the provided destination MAC, IP, and lifetime.
+func newRouterAdvertisementFromJoinIPAndLifetime(ip net.IP, destinationMAC net.HardwareAddr, destinationIP net.IP, lifetime uint16) ndp.RouterAdvertisement {
+	sourceMAC := util.IPAddrToHWAddr(ip)
+	return ndp.RouterAdvertisement{
+		SourceMAC:      sourceMAC,
+		SourceIP:       util.HWAddrToIPv6LLA(sourceMAC),
+		DestinationMAC: destinationMAC,
+		DestinationIP:  destinationIP,
+		Lifetime:       lifetime,
+	}
 }

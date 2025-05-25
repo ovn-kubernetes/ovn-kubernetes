@@ -112,6 +112,13 @@ func TestMarshalPodAnnotation(t *testing.T) {
 			},
 			expectedOutput: map[string]string{"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":null,"mac_address":"","routes":[{"dest":"192.168.1.0/24","nextHop":""}]}}`},
 		},
+		{
+			desc: "ipv6 LLA gateway ip is set",
+			inpPodAnnot: PodAnnotation{
+				GatewayIPv6LLA: ovntest.MustParseIP("fe80::"),
+			},
+			expectedOutput: map[string]string{"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":null,"mac_address":"","ipv6_lla_gateway_ip":"fe80::"}}`},
+		},
 	}
 
 	for i, tc := range tests {
@@ -137,6 +144,7 @@ func TestUnmarshalPodAnnotation(t *testing.T) {
 		inpAnnotMap map[string]string
 		errAssert   bool
 		errMatch    error
+		nadName     string
 	}{
 		{
 			desc:        "verify `OVN pod annotation not found` error thrown",
@@ -147,76 +155,108 @@ func TestUnmarshalPodAnnotation(t *testing.T) {
 			desc:        "verify json unmarshal error",
 			inpAnnotMap: map[string]string{"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":null,"mac_address":"}}`}, //removed a quote to force json unmarshal error
 			errMatch:    fmt.Errorf("failed to unmarshal ovn pod annotation"),
+			nadName:     "default",
 		},
 		{
 			desc:        "verify MAC error parse error",
 			inpAnnotMap: map[string]string{"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":null,"mac_address":""}}`},
 			errMatch:    fmt.Errorf("failed to parse pod MAC"),
+			nadName:     "default",
 		},
 		{
 			desc:        "test path when ip_addresses is empty and ip_address is set",
 			inpAnnotMap: map[string]string{"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":null,"mac_address":"0a:58:fd:98:00:01", "ip_address":"192.168.0.11/24"}}`},
+			nadName:     "default",
 		},
 		{
 			desc:        "verify error thrown when ip_address and ip_addresses are conflicted",
 			inpAnnotMap: map[string]string{"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["192.168.0.5/24"],"mac_address":"0a:58:fd:98:00:01","ip_address":"192.168.0.11/24"}}`},
 			errMatch:    fmt.Errorf("bad annotation data (ip_address and ip_addresses conflict)"),
+			nadName:     "default",
 		},
 		{
 			desc:        "verify error thrown when failed to parse pod IP",
 			inpAnnotMap: map[string]string{"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["192.168.0./24"],"mac_address":"0a:58:fd:98:00:01","ip_address":"192.168.0./24"}}`},
 			errMatch:    fmt.Errorf("failed to parse pod IP"),
+			nadName:     "default",
 		},
 		{
 			desc:        "verify error thrown when gateway_ip and gateway_ips are conflicted",
 			inpAnnotMap: map[string]string{"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["192.168.0.5/24"],"gateway_ips":["192.168.0.1"], "gateway_ip":"192.168.1.1","mac_address":"0a:58:fd:98:00:01","ip_address":"192.168.0.5/24"}}`},
 			errMatch:    fmt.Errorf("bad annotation data (gateway_ip and gateway_ips conflict)"),
+			nadName:     "default",
 		},
 		{
 			desc:        "test path when gateway_ips list is empty but gateway_ip is present",
 			inpAnnotMap: map[string]string{"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["192.168.0.5/24"],"gateway_ips":[], "gateway_ip":"192.168.0.1","mac_address":"0a:58:fd:98:00:01","ip_address":"192.168.0.5/24"}}`},
+			nadName:     "default",
 		},
 		{
 			desc:        "verify error thrown when failed to parse pod gateway",
 			inpAnnotMap: map[string]string{"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["192.168.0.5/24"],"gateway_ips":["192.168.0."], "gateway_ip":"192.168.0.","mac_address":"0a:58:fd:98:00:01","ip_address":"192.168.0.5/24"}}`},
 			errMatch:    fmt.Errorf("failed to parse pod gateway"),
+			nadName:     "default",
 		},
 		{
 			desc:        "verify error thrown when failed to parse pod route destination",
 			inpAnnotMap: map[string]string{"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["192.168.0.5/24"],"mac_address":"0a:58:fd:98:00:01","gateway_ips":["192.168.0.1"],"routes":[{"dest":"192.168.1./24"}],"ip_address":"192.168.0.5/24","gateway_ip":"192.168.0.1"}}`},
 			errMatch:    fmt.Errorf("failed to parse pod route dest"),
+			nadName:     "default",
 		},
 		{
 			desc:        "verify error thrown when default Route not specified as gateway",
 			inpAnnotMap: map[string]string{"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["192.168.0.5/24"],"mac_address":"0a:58:fd:98:00:01","gateway_ips":["192.168.0.1"],"routes":[{"dest":"0.0.0.0/0"}],"ip_address":"192.168.0.5/24","gateway_ip":"192.168.0.1"}}`},
 			errAssert:   true,
+			nadName:     "default",
 		},
 		{
 			desc:        "verify error thrown when failed to parse pod route next hop",
 			inpAnnotMap: map[string]string{"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["192.168.0.5/24"],"mac_address":"0a:58:fd:98:00:01","gateway_ips":["192.168.0.1"],"routes":[{"dest":"192.168.1.0/24","nextHop":"192.168.1."}],"ip_address":"192.168.0.5/24","gateway_ip":"192.168.0.1"}}`},
 			errMatch:    fmt.Errorf("failed to parse pod route next hop"),
+			nadName:     "default",
 		},
 		{
 			desc:        "verify error thrown where pod route has next hop of different family",
 			inpAnnotMap: map[string]string{"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["192.168.0.5/24"],"mac_address":"0a:58:fd:98:00:01","gateway_ips":["192.168.0.1"],"routes":[{"dest":"fd01::1234/64","nextHop":"192.168.1.1"}],"ip_address":"192.168.0.5/24","gateway_ip":"192.168.0.1"}}`},
 			errAssert:   true,
+			nadName:     "default",
 		},
 		{
 			desc:        "verify successful unmarshal of pod annotation",
 			inpAnnotMap: map[string]string{"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["192.168.0.5/24"],"mac_address":"0a:58:fd:98:00:01","gateway_ips":["192.168.0.1"],"routes":[{"dest":"192.168.1.0/24","nextHop":"192.168.1.1"}],"ip_address":"192.168.0.5/24","gateway_ip":"192.168.0.1"}}`},
+			nadName:     "default",
 		},
 		{
 			desc:        "verify successful unmarshal of pod annotation when role field is set",
 			inpAnnotMap: map[string]string{"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["192.168.0.5/24"],"mac_address":"0a:58:fd:98:00:01","gateway_ips":["192.168.0.1"],"routes":[{"dest":"192.168.1.0/24","nextHop":"192.168.1.1"}],"ip_address":"192.168.0.5/24","gateway_ip":"192.168.0.1","role":"primary"}}`},
+			nadName:     "default",
 		},
 		{
 			desc:        "verify successful unmarshal of pod annotation when *only* the MAC address is present",
 			inpAnnotMap: map[string]string{"k8s.ovn.org/pod-networks": `{"default":{"mac_address":"0a:58:fd:98:00:01"}}`},
+			nadName:     "default",
+		},
+		{
+			desc:        "verify successful unmarshal of pod annotation with ipv6 lla gateway ip",
+			inpAnnotMap: map[string]string{"k8s.ovn.org/pod-networks": `{"test_ns/l2":{"mac_address":"0a:58:fd:98:00:01","ipv6_lla_gateway_ip":"fe80::858:fdff:fe98:1"}}`},
+			nadName:     "test_ns/l2",
+		},
+		{
+			desc:        "verify error thrown when failed to unmarshal of pod annotation with non ipv6 lla gateway ip",
+			inpAnnotMap: map[string]string{"k8s.ovn.org/pod-networks": `{"test_ns/l2":{"mac_address":"0a:58:fd:98:00:01","ipv6_lla_gateway_ip":"2001:0db8::1"}}`},
+			errMatch:    fmt.Errorf(`failed to parse pod ipv6 lla gateway, or non ipv6 lla "2001:0db8::1"`),
+			nadName:     "test_ns/l2",
+		},
+		{
+			desc:        "verify error thrown when failed to unmarshal of pod annotation with ipv4 instead ipv6 lla gateway ip",
+			inpAnnotMap: map[string]string{"k8s.ovn.org/pod-networks": `{"test_ns/l2":{"mac_address":"0a:58:fd:98:00:01","ipv6_lla_gateway_ip":"192.168.0.5"}}`},
+			errMatch:    fmt.Errorf(`failed to parse pod ipv6 lla gateway, or non ipv6 lla "192.168.0.5"`),
+			nadName:     "test_ns/l2",
 		},
 	}
 	for i, tc := range tests {
 		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
-			res, e := UnmarshalPodAnnotation(tc.inpAnnotMap, types.DefaultNetworkName)
+			res, e := UnmarshalPodAnnotation(tc.inpAnnotMap, tc.nadName)
 			t.Log(res, e)
 			if tc.errAssert {
 				assert.Error(t, e)

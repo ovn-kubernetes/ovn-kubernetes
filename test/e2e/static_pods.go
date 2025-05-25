@@ -4,10 +4,14 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
 
 	v1 "k8s.io/api/core/v1"
 	clientset "k8s.io/client-go/kubernetes"
@@ -30,7 +34,15 @@ func waitForPodRunningInNamespaceTimeout(c clientset.Interface, podName, namespa
 	})
 }
 
-func createStaticPod(f *framework.Framework, nodeName string, podYaml string) {
+func createStaticPod(nodeName string, podYaml string) {
+	// FIXME; remove need to use a container runtime because its not portable
+	runCommand := func(cmd ...string) (string, error) {
+		output, err := exec.Command(cmd[0], cmd[1:]...).CombinedOutput()
+		if err != nil {
+			return "", fmt.Errorf("failed to run %q: %s (%s)", strings.Join(cmd, " "), err, output)
+		}
+		return string(output), nil
+	}
 	//create file
 	var podFile = "static-pod.yaml"
 	if err := os.WriteFile(podFile, []byte(podYaml), 0644); err != nil {
@@ -48,39 +60,36 @@ func createStaticPod(f *framework.Framework, nodeName string, podYaml string) {
 	if err != nil {
 		framework.Failf("failed to copy pod file to node %s", nodeName)
 	}
-
 }
 
 func removeStaticPodFile(nodeName string, podFile string) {
-	cmd := []string{"docker", "exec", nodeName, "bash", "-c", "rm /etc/kubernetes/manifests/static-pod.yaml"}
+	// FIXME; remove need to use a container runtime because its not portable
+	runCommand := func(cmd ...string) (string, error) {
+		output, err := exec.Command(cmd[0], cmd[1:]...).CombinedOutput()
+		if err != nil {
+			return "", fmt.Errorf("failed to run %q: %s (%s)", strings.Join(cmd, " "), err, output)
+		}
+		return string(output), nil
+	}
+
+	cmd := []string{"docker", "exec", nodeName, "bash", "-c", fmt.Sprintf("rm /etc/kubernetes/manifests/%s", podFile)}
 	framework.Logf("Running command %v", cmd)
 	_, err := runCommand(cmd...)
 	if err != nil {
 		framework.Failf("failed to remove pod file from node %s", nodeName)
 	}
-
 }
 
 // This test does the following
 // Applies a static-pod.yaml file to a nodes /etc/kubernetes/manifest dir
 // Expects the static pod to succeed
 var _ = ginkgo.Describe("Creating a static pod on a node", func() {
-
-	const (
-		podFile      string = "static-pod.yaml"
-		agnhostImage string = "registry.k8s.io/e2e-test-images/agnhost:2.26"
-	)
+	const podFile string = "static-pod.yaml"
 
 	f := wrappedTestFramework("staticpods")
 
-	var cs clientset.Interface
-
-	ginkgo.BeforeEach(func() {
-		cs = f.ClientSet
-	})
-
 	ginkgo.It("Should successfully create then remove a static pod", func() {
-		nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), cs, 3)
+		nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 3)
 		framework.ExpectNoError(err)
 		if len(nodes.Items) < 1 {
 			framework.Failf("Test requires 1 Ready node, but there are none")
@@ -88,8 +97,8 @@ var _ = ginkgo.Describe("Creating a static pod on a node", func() {
 		nodeName := nodes.Items[0].Name
 		podName := fmt.Sprintf("static-pod-%s", nodeName)
 
-		ginkgo.By("copying a pod.yaml file into the /etc/kubernetes/manifests dir of a node")
-		framework.Logf("creating %s on node %s", podName, nodeName)
+		ginkgo.By("creating static pod file")
+
 		var staticPodYaml = fmt.Sprintf(`apiVersion: v1
 kind: Pod
 metadata:
@@ -100,14 +109,14 @@ spec:
     - name: web 
       image: %s
       command: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
-`, f.Namespace.Name, agnhostImage)
-		createStaticPod(f, nodeName, staticPodYaml)
-		err = waitForPodRunningInNamespaceTimeout(f.ClientSet, podName, f.Namespace.Name, time.Second*30)
+`, f.Namespace.Name, images.AgnHost())
+		createStaticPod(nodeName, staticPodYaml)
+		err = waitForPodRunningInNamespaceTimeout(f.ClientSet, podName, f.Namespace.Name, time.Second*60)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		ginkgo.By("Removing the pod file from the nodes /etc/kubernetes/manifests")
 		framework.Logf("Removing %s from %s", podName, nodeName)
 		removeStaticPodFile(nodeName, podFile)
-		err = e2epod.WaitForPodNotFoundInNamespace(context.TODO(), f.ClientSet, podName, f.Namespace.Name, time.Second*30)
+		err = e2epod.WaitForPodNotFoundInNamespace(context.TODO(), f.ClientSet, podName, f.Namespace.Name, time.Second*60)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	})
 })

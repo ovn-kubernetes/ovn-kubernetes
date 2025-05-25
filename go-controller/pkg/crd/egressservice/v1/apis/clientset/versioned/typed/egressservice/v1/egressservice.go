@@ -18,10 +18,10 @@ limitations under the License.
 package v1
 
 import (
-	"context"
+	context "context"
 
-	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1"
-	egressservicev1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/applyconfiguration/egressservice/v1"
+	egressservicev1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1"
+	applyconfigurationegressservicev1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/applyconfiguration/egressservice/v1"
 	scheme "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/clientset/versioned/scheme"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
@@ -37,36 +37,37 @@ type EgressServicesGetter interface {
 
 // EgressServiceInterface has methods to work with EgressService resources.
 type EgressServiceInterface interface {
-	Create(ctx context.Context, egressService *v1.EgressService, opts metav1.CreateOptions) (*v1.EgressService, error)
-	Update(ctx context.Context, egressService *v1.EgressService, opts metav1.UpdateOptions) (*v1.EgressService, error)
+	Create(ctx context.Context, egressService *egressservicev1.EgressService, opts metav1.CreateOptions) (*egressservicev1.EgressService, error)
+	Update(ctx context.Context, egressService *egressservicev1.EgressService, opts metav1.UpdateOptions) (*egressservicev1.EgressService, error)
 	// Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-	UpdateStatus(ctx context.Context, egressService *v1.EgressService, opts metav1.UpdateOptions) (*v1.EgressService, error)
+	UpdateStatus(ctx context.Context, egressService *egressservicev1.EgressService, opts metav1.UpdateOptions) (*egressservicev1.EgressService, error)
 	Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error
 	DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error
-	Get(ctx context.Context, name string, opts metav1.GetOptions) (*v1.EgressService, error)
-	List(ctx context.Context, opts metav1.ListOptions) (*v1.EgressServiceList, error)
+	Get(ctx context.Context, name string, opts metav1.GetOptions) (*egressservicev1.EgressService, error)
+	List(ctx context.Context, opts metav1.ListOptions) (*egressservicev1.EgressServiceList, error)
 	Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error)
-	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.EgressService, err error)
-	Apply(ctx context.Context, egressService *egressservicev1.EgressServiceApplyConfiguration, opts metav1.ApplyOptions) (result *v1.EgressService, err error)
+	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *egressservicev1.EgressService, err error)
+	Apply(ctx context.Context, egressService *applyconfigurationegressservicev1.EgressServiceApplyConfiguration, opts metav1.ApplyOptions) (result *egressservicev1.EgressService, err error)
 	// Add a +genclient:noStatus comment above the type to avoid generating ApplyStatus().
-	ApplyStatus(ctx context.Context, egressService *egressservicev1.EgressServiceApplyConfiguration, opts metav1.ApplyOptions) (result *v1.EgressService, err error)
+	ApplyStatus(ctx context.Context, egressService *applyconfigurationegressservicev1.EgressServiceApplyConfiguration, opts metav1.ApplyOptions) (result *egressservicev1.EgressService, err error)
 	EgressServiceExpansion
 }
 
 // egressServices implements EgressServiceInterface
 type egressServices struct {
-	*gentype.ClientWithListAndApply[*v1.EgressService, *v1.EgressServiceList, *egressservicev1.EgressServiceApplyConfiguration]
+	*gentype.ClientWithListAndApply[*egressservicev1.EgressService, *egressservicev1.EgressServiceList, *applyconfigurationegressservicev1.EgressServiceApplyConfiguration]
 }
 
 // newEgressServices returns a EgressServices
 func newEgressServices(c *K8sV1Client, namespace string) *egressServices {
 	return &egressServices{
-		gentype.NewClientWithListAndApply[*v1.EgressService, *v1.EgressServiceList, *egressservicev1.EgressServiceApplyConfiguration](
+		gentype.NewClientWithListAndApply[*egressservicev1.EgressService, *egressservicev1.EgressServiceList, *applyconfigurationegressservicev1.EgressServiceApplyConfiguration](
 			"egressservices",
 			c.RESTClient(),
 			scheme.ParameterCodec,
 			namespace,
-			func() *v1.EgressService { return &v1.EgressService{} },
-			func() *v1.EgressServiceList { return &v1.EgressServiceList{} }),
+			func() *egressservicev1.EgressService { return &egressservicev1.EgressService{} },
+			func() *egressservicev1.EgressServiceList { return &egressservicev1.EgressServiceList{} },
+		),
 	}
 }

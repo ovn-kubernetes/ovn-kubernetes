@@ -16,7 +16,6 @@ limitations under the License.
 
 package v1
 
-// +kubebuilder:validation:Enum=Layer2;Layer3
 type NetworkTopology string
 
 const (
@@ -25,7 +24,7 @@ const (
 )
 
 // +kubebuilder:validation:XValidation:rule="!has(self.joinSubnets) || has(self.role) && self.role == 'Primary'", message="JoinSubnets is only supported for Primary network"
-// +kubebuilder:validation:XValidation:rule="!has(self.subnets) || !has(self.mtu) || !self.subnets.exists_one(i, isCIDR(i.cidr) && cidr(i.cidr).ip().family() == 6) || self.mtu >= 1280", message="MTU should be greater than or equal to 1280 when IPv6 subent is used"
+// +kubebuilder:validation:XValidation:rule="!has(self.subnets) || !has(self.mtu) || !self.subnets.exists_one(i, isCIDR(i.cidr) && cidr(i.cidr).ip().family() == 6) || self.mtu >= 1280", message="MTU should be greater than or equal to 1280 when IPv6 subnet is used"
 type Layer3Config struct {
 	// Role describes the network role in the pod.
 	//
@@ -33,6 +32,7 @@ type Layer3Config struct {
 	// Primary network is automatically assigned to every pod created in the same namespace.
 	// Secondary network is only assigned to pods that use `k8s.v1.cni.cncf.io/networks` annotation to select given network.
 	//
+	// +kubebuilder:validation:Enum=Primary;Secondary
 	// +kubebuilder:validation:Required
 	// +required
 	Role NetworkRole `json:"role"`
@@ -90,13 +90,14 @@ type Layer3Subnet struct {
 // +kubebuilder:validation:XValidation:rule="!has(self.ipam) || !has(self.ipam.mode) || self.ipam.mode != 'Disabled' || !has(self.subnets)", message="Subnets must be unset when ipam.mode is Disabled"
 // +kubebuilder:validation:XValidation:rule="!has(self.ipam) || !has(self.ipam.mode) || self.ipam.mode != 'Disabled' || self.role == 'Secondary'", message="Disabled ipam.mode is only supported for Secondary network"
 // +kubebuilder:validation:XValidation:rule="!has(self.joinSubnets) || has(self.role) && self.role == 'Primary'", message="JoinSubnets is only supported for Primary network"
-// +kubebuilder:validation:XValidation:rule="!has(self.subnets) || !has(self.mtu) || !self.subnets.exists_one(i, isCIDR(i) && cidr(i).ip().family() == 6) || self.mtu >= 1280", message="MTU should be greater than or equal to 1280 when IPv6 subent is used"
+// +kubebuilder:validation:XValidation:rule="!has(self.subnets) || !has(self.mtu) || !self.subnets.exists_one(i, isCIDR(i) && cidr(i).ip().family() == 6) || self.mtu >= 1280", message="MTU should be greater than or equal to 1280 when IPv6 subnet is used"
 type Layer2Config struct {
 	// Role describes the network role in the pod.
 	//
 	// Allowed value is "Secondary".
 	// Secondary network is only assigned to pods that use `k8s.v1.cni.cncf.io/networks` annotation to select given network.
 	//
+	// +kubebuilder:validation:Enum=Primary;Secondary
 	// +kubebuilder:validation:Required
 	// +required
 	Role NetworkRole `json:"role"`
@@ -150,7 +151,7 @@ type IPAMConfig struct {
 
 	// Lifecycle controls IP addresses management lifecycle.
 	//
-	// The only allowed value is Persistent. When set, OVN Kubernetes assigned IP addresses will be persisted in an
+	// The only allowed value is Persistent. When set, the IP addresses assigned by OVN Kubernetes will be persisted in an
 	// `ipamclaims.k8s.cni.cncf.io` object. These IP addresses will be reused by other pods if requested.
 	// Only supported when mode is `Enabled`.
 	//
@@ -166,7 +167,6 @@ const (
 	IPAMDisabled IPAMMode = "Disabled"
 )
 
-// +kubebuilder:validation:Enum=Primary;Secondary
 type NetworkRole string
 
 const (

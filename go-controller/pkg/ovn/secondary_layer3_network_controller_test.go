@@ -830,7 +830,14 @@ func expectedLayer3EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 			ExternalIDs:  standardNonDefaultNetworkExtIDs(netInfo),
 			Nat:          []string{masqSNATUUID1},
 		},
-		&nbdb.LogicalRouterPort{UUID: rtosLRPUUID, Name: rtosLRPName, Networks: []string{"192.168.1.1/24"}, MAC: "0a:58:c0:a8:01:01", GatewayChassis: []string{gatewayChassisUUID}},
+		&nbdb.LogicalRouterPort{
+			UUID:           rtosLRPUUID,
+			Name:           rtosLRPName,
+			Networks:       []string{"192.168.1.1/24"},
+			MAC:            "0a:58:c0:a8:01:01",
+			GatewayChassis: []string{gatewayChassisUUID},
+			Options:        map[string]string{"gateway_mtu": "1400"},
+		},
 		expectedGRStaticRoute(staticRouteUUID1, nodeSubnet.String(), lrsrNextHop, &nbdb.LogicalRouterStaticRoutePolicySrcIP, nil, netInfo),
 		expectedGRStaticRoute(staticRouteUUID2, gwRouterJoinIPAddress().IP.String(), gwRouterJoinIPAddress().IP.String(), nil, nil, netInfo),
 		expectedLogicalRouterPolicy(routerPolicyUUID1, netInfo, nodeName, nodeIP, managementPortIP(nodeSubnet).String()),
@@ -1044,7 +1051,7 @@ func newSecondaryLayer3NetworkController(
 	eIPController *EgressIPController,
 	portCache *PortCache,
 ) *SecondaryLayer3NetworkController {
-	layer3NetworkController, err := NewSecondaryLayer3NetworkController(cnci, netInfo, networkManager, eIPController, portCache)
+	layer3NetworkController, err := NewSecondaryLayer3NetworkController(cnci, netInfo, networkManager, nil, eIPController, portCache)
 	Expect(err).NotTo(HaveOccurred())
 	layer3NetworkController.gatewayManagers.Store(
 		nodeName,

@@ -402,7 +402,11 @@ func (oc *DefaultNetworkController) syncNodeGateway(node *corev1.Node, hostSubne
 			return fmt.Errorf("error creating gateway for node %s: %v", node.Name, err)
 		}
 	}
-	return nil
+
+	if util.IsPodNetworkAdvertisedAtNode(oc, node.Name) {
+		return oc.addAdvertisedNetworkIsolation(node.Name)
+	}
+	return oc.deleteAdvertisedNetworkIsolation(node.Name)
 }
 
 // gatewayChanged() compares old annotations to new and returns true if something has changed.
@@ -426,6 +430,10 @@ func nodeSubnetChanged(oldNode, node *corev1.Node, netName string) bool {
 
 func joinCIDRChanged(oldNode, node *corev1.Node, netName string) bool {
 	var oldCIDRs, newCIDRs map[string]json.RawMessage
+
+	if oldNode.Annotations[util.OVNNodeGRLRPAddrs] == node.Annotations[util.OVNNodeGRLRPAddrs] {
+		return false
+	}
 
 	if err := json.Unmarshal([]byte(oldNode.Annotations[util.OVNNodeGRLRPAddrs]), &oldCIDRs); err != nil {
 		klog.Errorf("Failed to unmarshal old node %s annotation: %v", oldNode.Name, err)
@@ -456,15 +464,15 @@ func nodeGatewayMTUSupportChanged(oldNode, node *corev1.Node) bool {
 // shouldUpdateNode() determines if the ovn-kubernetes plugin should update the state of the node.
 // ovn-kube should not perform an update if it does not assign a hostsubnet, or if you want to change
 // whether or not ovn-kubernetes assigns a hostsubnet
-func shouldUpdateNode(node, oldNode *corev1.Node) (bool, error) {
+func shouldUpdateNode(node, oldNode *corev1.Node) bool {
 	newNoHostSubnet := util.NoHostSubnet(node)
 	oldNoHostSubnet := util.NoHostSubnet(oldNode)
 
 	if oldNoHostSubnet && newNoHostSubnet {
-		return false, nil
+		return false
 	}
 
-	return true, nil
+	return true
 }
 
 func (oc *DefaultNetworkController) StartServiceController(wg *sync.WaitGroup, runRepair bool) error {

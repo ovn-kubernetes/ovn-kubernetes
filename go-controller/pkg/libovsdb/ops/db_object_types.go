@@ -19,6 +19,7 @@ const (
 	EgressQoSOwnerType                  ownerType = "EgressQoS"
 	AdminNetworkPolicyOwnerType         ownerType = "AdminNetworkPolicy"
 	BaselineAdminNetworkPolicyOwnerType ownerType = "BaselineAdminNetworkPolicy"
+	NetworkQoSOwnerType                 ownerType = "NetworkQoS"
 	// NetworkPolicyOwnerType is deprecated for address sets, should only be used for sync.
 	// New owner of network policy address sets, is PodSelectorOwnerType.
 	NetworkPolicyOwnerType ownerType = "NetworkPolicy"
@@ -35,6 +36,7 @@ const (
 	NetpolNamespaceOwnerType    ownerType = "NetpolNamespace"
 	VirtualMachineOwnerType     ownerType = "VirtualMachine"
 	UDNEnabledServiceOwnerType  ownerType = "UDNEnabledService"
+	AdvertisedNetworkOwnerType  ownerType = "AdvertisedNetwork"
 	// NetworkPolicyPortIndexOwnerType is the old version of NetworkPolicyOwnerType, kept for sync only
 	NetworkPolicyPortIndexOwnerType ownerType = "NetworkPolicyPortIndexOwnerType"
 	// ClusterOwnerType means the object is cluster-scoped and doesn't belong to any k8s objects
@@ -139,6 +141,28 @@ var AddressSetUDNEnabledService = newObjectIDsType(addressSet, UDNEnabledService
 	// cluster-wide address set name
 	ObjectNameKey,
 	IPFamilyKey,
+})
+
+var AddressSetNetworkQoS = newObjectIDsType(addressSet, NetworkQoSOwnerType, []ExternalIDKey{
+	// nqos namespace:name
+	ObjectNameKey,
+	// rule index
+	RuleIndex,
+	IpBlockIndexKey,
+	IPFamilyKey,
+})
+
+var AddressSetAdvertisedNetwork = newObjectIDsType(addressSet, AdvertisedNetworkOwnerType, []ExternalIDKey{
+	// cluster-wide address set name
+	ObjectNameKey,
+	IPFamilyKey,
+})
+
+var ACLAdvertisedNetwork = newObjectIDsType(acl, AdvertisedNetworkOwnerType, []ExternalIDKey{
+	// ACL name
+	ObjectNameKey,
+	// NetworkID
+	NetworkKey,
 })
 
 var ACLAdminNetworkPolicy = newObjectIDsType(acl, AdminNetworkPolicyOwnerType, []ExternalIDKey{
@@ -343,4 +367,10 @@ var QoSRuleEgressIP = newObjectIDsType(qos, EgressIPOwnerType, []ExternalIDKey{
 	ObjectNameKey,
 	// the IP Family for this policy, ip4 or ip6 or ip(dualstack)
 	IPFamilyKey,
+})
+
+var NetworkQoS = newObjectIDsType(qos, NetworkQoSOwnerType, []ExternalIDKey{
+	ObjectNameKey,
+	// rule index
+	RuleIndex,
 })

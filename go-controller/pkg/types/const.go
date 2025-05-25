@@ -25,6 +25,9 @@ const (
 	PhysicalNetworkName     = "physnet"
 	PhysicalNetworkExGwName = "exgwphysnet"
 
+	// LoopbackInterfaceIndex is the link index corresponding to loopback interface
+	LoopbackInterfaceIndex = 1
+
 	// LocalNetworkName is the name that maps to an OVS bridge that provides
 	// access to local service
 	LocalNetworkName = "locnet"
@@ -83,6 +86,10 @@ const (
 	DefaultAllowPriority = 1001
 	// Default deny acl rule priority
 	DefaultDenyPriority = 1000
+	// Pass priority for isolated advertised networks
+	AdvertisedNetworkPassPriority = 1100
+	// Deny priority for isolated advertised networks
+	AdvertisedNetworkDenyPriority = 1050
 
 	// ACL PlaceHolderACL Tier Priorities
 	PrimaryUDNAllowPriority = 1001
@@ -157,9 +164,6 @@ const (
 	// OVN-K8S annotation & taint constants
 	OvnK8sPrefix = "k8s.ovn.org"
 
-	// DefaultNetworkLabelSelector is the label that needs to be matched on a
-	// selector to select the default network
-	DefaultNetworkLabelSelector = OvnK8sPrefix + "/default-network"
 	// OvnNetworkNameAnnotation is the name of the network annotated on the NAD
 	// by cluster manager nad controller
 	OvnNetworkNameAnnotation = OvnK8sPrefix + "/network-name"
@@ -298,4 +302,15 @@ const (
 	// addressed to an `externalTrafficPolicy: Local` load balancer IP.
 	NFTMgmtPortNoSNATServicesV4 = "mgmtport-no-snat-services-v4"
 	NFTMgmtPortNoSNATServicesV6 = "mgmtport-no-snat-services-v6"
+
+	// CUDNPrefix of all CUDN network names
+	CUDNPrefix = "cluster_udn_"
+
+	// NFTNoPMTUDRemoteNodeIPsv4 is a set used to track remote node IPs that do not belong to
+	// the local node's subnet.
+	NFTNoPMTUDRemoteNodeIPsv4 = "no-pmtud-remote-node-ips-v4"
+
+	// NFTNoPMTUDRemoteNodeIPsv6 is a set used to track remote node IPs that do not belong to
+	// the local node's subnet.
+	NFTNoPMTUDRemoteNodeIPsv6 = "no-pmtud-remote-node-ips-v6"
 )

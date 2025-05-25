@@ -13,6 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -31,6 +32,7 @@ type SpecGetter interface {
 	GetTopology() userdefinednetworkv1.NetworkTopology
 	GetLayer3() *userdefinednetworkv1.Layer3Config
 	GetLayer2() *userdefinednetworkv1.Layer2Config
+	GetLocalnet() *userdefinednetworkv1.LocalnetConfig
 }
 
 func RenderNetAttachDefManifest(obj client.Object, targetNamespace string) (*netv1.NetworkAttachmentDefinition, error) {
@@ -109,7 +111,8 @@ func renderNADLabels(obj client.Object) map[string]string {
 
 func validateTopology(spec SpecGetter) error {
 	if spec.GetTopology() == userdefinednetworkv1.NetworkTopologyLayer3 && spec.GetLayer3() == nil ||
-		spec.GetTopology() == userdefinednetworkv1.NetworkTopologyLayer2 && spec.GetLayer2() == nil {
+		spec.GetTopology() == userdefinednetworkv1.NetworkTopologyLayer2 && spec.GetLayer2() == nil ||
+		spec.GetTopology() == userdefinednetworkv1.NetworkTopologyLocalnet && spec.GetLocalnet() == nil {
 		return fmt.Errorf("topology %[1]s is specified but %[1]s config is nil", spec.GetTopology())
 	}
 	return nil
@@ -138,17 +141,30 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter) (map[s
 		if err := validateIPAM(cfg.IPAM); err != nil {
 			return nil, err
 		}
-		netConfSpec.Role = strings.ToLower(string(cfg.Role))
-		netConfSpec.MTU = int(cfg.MTU)
-		netConfSpec.AllowPersistentIPs = cfg.IPAM != nil && cfg.IPAM.Lifecycle == userdefinednetworkv1.IPAMLifecyclePersistent
 		if ipamEnabled(cfg.IPAM) && len(cfg.Subnets) == 0 {
 			return nil, fmt.Errorf("subnets is required with ipam.mode is Enabled or unset")
 		}
 		if !ipamEnabled(cfg.IPAM) && len(cfg.Subnets) > 0 {
 			return nil, fmt.Errorf("subnets must be unset when ipam.mode is Disabled")
 		}
+
+		netConfSpec.Role = strings.ToLower(string(cfg.Role))
+		netConfSpec.MTU = int(cfg.MTU)
+		netConfSpec.AllowPersistentIPs = cfg.IPAM != nil && cfg.IPAM.Lifecycle == userdefinednetworkv1.IPAMLifecyclePersistent
 		netConfSpec.Subnets = cidrString(cfg.Subnets)
 		netConfSpec.JoinSubnet = cidrString(renderJoinSubnets(cfg.Role, cfg.JoinSubnets))
+	case userdefinednetworkv1.NetworkTopologyLocalnet:
+		cfg := spec.GetLocalnet()
+		netConfSpec.Role = strings.ToLower(string(cfg.Role))
+		netConfSpec.MTU = localnetMTU(cfg.MTU)
+		netConfSpec.AllowPersistentIPs = cfg.IPAM != nil && cfg.IPAM.Lifecycle == userdefinednetworkv1.IPAMLifecyclePersistent
+		netConfSpec.Subnets = cidrString(cfg.Subnets)
+		netConfSpec.ExcludeSubnets = cidrString(cfg.ExcludeSubnets)
+		netConfSpec.PhysicalNetworkName = cfg.PhysicalNetworkName
+
+		if cfg.VLAN != nil && cfg.VLAN.Access != nil {
+			netConfSpec.VLANID = int(cfg.VLAN.Access.ID)
+		}
 	}
 
 	if err := util.ValidateNetConf(nadName, netConfSpec); err != nil {
@@ -184,8 +200,27 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter) (map[s
 	if netConfSpec.AllowPersistentIPs {
 		cniNetConf["allowPersistentIPs"] = netConfSpec.AllowPersistentIPs
 	}
-
+	if netConfSpec.PhysicalNetworkName != "" {
+		cniNetConf["physicalNetworkName"] = netConfSpec.PhysicalNetworkName
+	}
+	if len(netConfSpec.ExcludeSubnets) > 0 {
+		cniNetConf["excludeSubnets"] = netConfSpec.ExcludeSubnets
+	}
+	if netConfSpec.VLANID != 0 {
+		cniNetConf["vlanID"] = netConfSpec.VLANID
+	}
 	return cniNetConf, nil
+}
+
+func localnetMTU(desiredMTU int32) int {
+	// The MTU for localnet topology should be as the default MTU (1500) because the underlay
+	// is not part of the SDN and compensating for the SDN overhead (100) is not required.
+	mtu := config.Default.MTU + 100
+	if desiredMTU > 0 {
+		mtu = int(desiredMTU)
+	}
+
+	return mtu
 }
 
 func ipamEnabled(ipam *userdefinednetworkv1.IPAMConfig) bool {

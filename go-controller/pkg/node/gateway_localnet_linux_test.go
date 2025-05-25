@@ -240,7 +240,7 @@ func addConntrackMocks(nlMock *mocks.NetLinkOps, filterDescs []ctFilterDesc) {
 	ctMocks := make([]ovntest.TestifyMockHelper, 0, len(filterDescs))
 	for _, ctf := range filterDescs {
 		ctMocks = append(ctMocks, ovntest.TestifyMockHelper{
-			OnCallMethodName: "ConntrackDeleteFilter",
+			OnCallMethodName: "ConntrackDeleteFilters",
 			OnCallMethodArgs: []interface{}{
 				netlink.ConntrackTableType(netlink.ConntrackTable),
 				netlink.InetFamily(netlink.FAMILY_V4),

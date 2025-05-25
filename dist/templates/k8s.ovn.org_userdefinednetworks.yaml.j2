@@ -51,7 +51,7 @@ spec:
                         description: |-
                           Lifecycle controls IP addresses management lifecycle.
 
-                          The only allowed value is Persistent. When set, OVN Kubernetes assigned IP addresses will be persisted in an
+                          The only allowed value is Persistent. When set, the IP addresses assigned by OVN Kubernetes will be persisted in an
                           `ipamclaims.k8s.cni.cncf.io` object. These IP addresses will be reused by other pods if requested.
                           Only supported when mode is `Enabled`.
                         enum:
@@ -155,7 +155,7 @@ spec:
                 - message: JoinSubnets is only supported for Primary network
                   rule: '!has(self.joinSubnets) || has(self.role) && self.role ==
                     ''Primary'''
-                - message: MTU should be greater than or equal to 1280 when IPv6 subent
+                - message: MTU should be greater than or equal to 1280 when IPv6 subnet
                     is used
                   rule: '!has(self.subnets) || !has(self.mtu) || !self.subnets.exists_one(i,
                     isCIDR(i) && cidr(i).ip().family() == 6) || self.mtu >= 1280'
@@ -255,7 +255,7 @@ spec:
                 - message: JoinSubnets is only supported for Primary network
                   rule: '!has(self.joinSubnets) || has(self.role) && self.role ==
                     ''Primary'''
-                - message: MTU should be greater than or equal to 1280 when IPv6 subent
+                - message: MTU should be greater than or equal to 1280 when IPv6 subnet
                     is used
                   rule: '!has(self.subnets) || !has(self.mtu) || !self.subnets.exists_one(i,
                     isCIDR(i.cidr) && cidr(i.cidr).ip().family() == 6) || self.mtu

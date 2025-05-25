@@ -15,14 +15,18 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes/fake"
 
+	"github.com/ovn-org/libovsdb/client"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
+	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	v1nadmocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
 	v1mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/client-go/listers/core/v1"
 	testnm "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/networkmanager"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/vswitchd"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -125,7 +129,10 @@ var _ = Describe("Network Segmentation", func() {
 		})
 		It("should not fail at cmdAdd", func() {
 			podNamespaceLister.On("Get", pr.PodName).Return(pod, nil)
-			Expect(pr.cmdAddWithGetCNIResultFunc(kubeAuth, clientSet, getCNIResultStub, networkmanager.Default().Interface())).NotTo(BeNil())
+
+			ovsClient, err := newOVSClientWithExternalIDs(map[string]string{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pr.cmdAddWithGetCNIResultFunc(kubeAuth, clientSet, getCNIResultStub, networkmanager.Default().Interface(), ovsClient)).NotTo(BeNil())
 			Expect(obtainedPodIterfaceInfos).ToNot(BeEmpty())
 		})
 		It("should not fail at cmdDel", func() {
@@ -155,7 +162,9 @@ var _ = Describe("Network Segmentation", func() {
 			})
 			It("should not fail at cmdAdd", func() {
 				podNamespaceLister.On("Get", pr.PodName).Return(pod, nil)
-				Expect(pr.cmdAddWithGetCNIResultFunc(kubeAuth, clientSet, getCNIResultStub, networkmanager.Default().Interface())).NotTo(BeNil())
+				ovsClient, err := newOVSClientWithExternalIDs(map[string]string{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(pr.cmdAddWithGetCNIResultFunc(kubeAuth, clientSet, getCNIResultStub, networkmanager.Default().Interface(), ovsClient)).NotTo(BeNil())
 				Expect(obtainedPodIterfaceInfos).ToNot(BeEmpty())
 			})
 			It("should not fail at cmdDel", func() {
@@ -240,7 +249,9 @@ var _ = Describe("Network Segmentation", func() {
 
 			It("should return the information of both the default net and the primary UDN in the result", func() {
 				podNamespaceLister.On("Get", pr.PodName).Return(pod, nil)
-				response, err := pr.cmdAddWithGetCNIResultFunc(kubeAuth, clientSet, getCNIResultStub, fakeNetworkManager)
+				ovsClient, err := newOVSClientWithExternalIDs(map[string]string{})
+				Expect(err).NotTo(HaveOccurred())
+				response, err := pr.cmdAddWithGetCNIResultFunc(kubeAuth, clientSet, getCNIResultStub, fakeNetworkManager, ovsClient)
 				Expect(err).NotTo(HaveOccurred())
 				// for every interface added, we return 2 interfaces; the host side of the
 				// veth, then the pod side of the veth.
@@ -325,4 +336,54 @@ func dummyPrimaryUDNConfig(ns, nadName string) string {
             "role": "primary"
     }
 `, namespacedName)
+}
+
+var _ = Describe("checkBridgeMapping", func() {
+	const networkName = "test-network"
+
+	Context("when topology is not localnet", func() {
+		It("should return nil without checking bridge mappings", func() {
+			ovsClient, err := newOVSClientWithExternalIDs(map[string]string{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(checkBridgeMapping(ovsClient, ovntypes.Layer2Topology, networkName)).To(Succeed())
+		})
+	})
+
+	Context("when using default network", func() {
+		It("should return nil without checking bridge mappings", func() {
+			ovsClient, err := newOVSClientWithExternalIDs(map[string]string{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(checkBridgeMapping(ovsClient, ovntypes.LocalnetTopology, ovntypes.DefaultNetworkName)).To(Succeed())
+		})
+	})
+
+	Context("when bridge mapping exists in external IDs", func() {
+		It("should return nil if the bridge mapping is found", func() {
+			ovsClient, err := newOVSClientWithExternalIDs(map[string]string{
+				"ovn-bridge-mappings": "test-network:br-int",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(checkBridgeMapping(ovsClient, ovntypes.LocalnetTopology, networkName)).To(Succeed())
+		})
+
+		It("should return error if the bridge mapping isn't found", func() {
+			ovsClient, err := newOVSClientWithExternalIDs(map[string]string{
+				"ovn-bridge-mappings": "other-network:br-int",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(checkBridgeMapping(ovsClient, ovntypes.LocalnetTopology, networkName).Error()).To(
+				Equal(`failed to find OVN bridge-mapping for network: "test-network"`))
+		})
+	})
+})
+
+func newOVSClientWithExternalIDs(externalIDs map[string]string) (client.Client, error) {
+	ovsClient, _, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
+		OVSData: []libovsdbtest.TestData{
+			&vswitchd.OpenvSwitch{
+				ExternalIDs: externalIDs,
+			},
+		},
+	})
+	return ovsClient, err
 }

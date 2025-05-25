@@ -909,7 +909,13 @@ func (bnc *BaseNetworkController) allocatePodAnnotation(pod *corev1.Pod, existin
 		return nil, false, fmt.Errorf("cannot retrieve subnet for assigning gateway routes for pod %s, switch: %s",
 			podDesc, switchName)
 	}
-	err = util.AddRoutesGatewayIP(bnc.GetNetInfo(), pod, podAnnotation, network)
+
+	node, err := bnc.watchFactory.GetNode(pod.Spec.NodeName)
+	if err != nil {
+		return nil, false, err
+	}
+
+	err = util.AddRoutesGatewayIP(bnc.GetNetInfo(), node, pod, podAnnotation, network)
 	if err != nil {
 		return nil, false, err
 	}
@@ -973,9 +979,14 @@ func (bnc *BaseNetworkController) allocatePodAnnotationForSecondaryNetwork(pod *
 	if bnc.doesNetworkRequireIPAM() {
 		ipAllocator = bnc.lsManager.ForSwitch(switchName)
 	}
-
+	node, err := bnc.watchFactory.GetNode(pod.Spec.NodeName)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to get pod %s/%s/%s node %q: %w",
+			nadName, pod.Namespace, pod.Name, pod.Spec.NodeName, err)
+	}
 	updatedPod, podAnnotation, err := bnc.podAnnotationAllocator.AllocatePodAnnotation(
 		ipAllocator,
+		node,
 		pod,
 		network,
 		reallocate,

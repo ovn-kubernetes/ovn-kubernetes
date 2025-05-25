@@ -66,6 +66,14 @@ a GitHub Action workflow that will automatically publish the changes to the webs
 
 ## How to test your documentation changes?
 
+### Option 1) Build and view docs with a PR
+
+Pushing docs changes to the ovn-kubernetes/ovn-kubernetes project as a pull request will
+run the job name "[Test and Deploy static content to Pages](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/.github/workflows/docs.yml)" which has a step to save the
+docs artifacts. You can download those as a .zip file, extract and view them locally.
+
+### Option 2) Build and serve docs locally
+
 In order to test changes locally to either mkdocs.yml or to files under docs/ folder,
 please follow the instructions below.
 

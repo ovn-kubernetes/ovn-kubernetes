@@ -7,6 +7,7 @@ extra_css:
   - stylesheets/extra.css
 site_dir: site
 docs_dir: docs
+copyright: The Linux Foundation® (TLF) has registered trademarks and uses trademarks. For a list of TLF trademarks, see <a href="https://www.linuxfoundation.org/legal/trademark-usage">Trademark Usage</a>.
 theme:
   name: material
   icon:
@@ -36,7 +37,7 @@ theme:
     - navigation.instant.preview
 plugins:
   - search
-  - awesome-nav
+  - awesome-pages
   - mike
   - macros:
       #include_dir: examples
@@ -120,6 +121,7 @@ nav:
       - MultiNetworkPolicies: features/multiple-networks/multi-network-policies.md
       - MultiNetworkRails: features/multiple-networks/multi-vtep.md
     - Multicast: features/multicast.md
+    - NetworkQoS: features/network-qos.md
     - LiveMigration: features/live-migration.md
     - HybridOverlay: features/hybrid-overlay.md
     - Hardware Acceleration:
@@ -136,5 +138,8 @@ nav:
   - Enhancement Proposals:
     # - FeatureName: okeps/<filename.md>
     - Template: okeps/okep-4368-template.md
+    - Localnet API: okeps/okep-5085-localnet-api.md
+    - Network QoS: okeps/okep-4380-network-qos.md
+    - User Defined Networks: okeps/okep-5193-user-defined-networks.md
   - Blog:
     - blog/index.md

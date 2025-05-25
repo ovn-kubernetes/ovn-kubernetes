@@ -59,6 +59,7 @@ rules:
       resources:
           - namespaces
           - nodes
+          - nodes/status
           - pods
           - services
           - endpoints
@@ -83,6 +84,9 @@ rules:
           - egressqoses
           - egressservices
           - adminpolicybasedexternalroutes
+          - userdefinednetworks
+          - clusteruserdefinednetworks
+          - networkqoses
       verbs: [ "get", "list", "watch" ]
     - apiGroups: ["k8s.cni.cncf.io"]
       resources:
@@ -92,7 +96,11 @@ rules:
     - apiGroups: ["k8s.cni.cncf.io"]
       resources:
           - network-attachment-definitions
-      verbs: ["patch"]
+      verbs: [ "patch", "update" ]
+    - apiGroups: [ "k8s.cni.cncf.io" ]
+      resources:
+      - network-attachment-definitions
+      verbs: [ "create", "delete" ]
     - apiGroups: ["policy.networking.k8s.io"]
       resources:
           - adminnetworkpolicies/status
@@ -103,9 +111,16 @@ rules:
           - egressfirewalls/status
           - egressips
           - egressqoses
+          - networkqoses
           - egressservices/status
           - adminpolicybasedexternalroutes/status
           - egressqoses/status
+          - userdefinednetworks
+          - userdefinednetworks/status
+          - clusteruserdefinednetworks
+          - clusteruserdefinednetworks/status
+          - clusteruserdefinednetworks/finalizers
+          - networkqoses/status
       verbs: [ "patch", "update" ]
     - apiGroups: [""]
       resources:

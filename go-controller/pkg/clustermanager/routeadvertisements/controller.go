@@ -19,7 +19,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	meta "k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -38,6 +38,8 @@ import (
 	raapply "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/applyconfiguration/routeadvertisements/v1"
 	raclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned"
 	ralisters "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/listers/routeadvertisements/v1"
+	apitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
+	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
@@ -51,8 +53,9 @@ const (
 )
 
 var (
-	errConfig  = errors.New("configuration error")
-	errPending = errors.New("configuration pending")
+	errConfig      = errors.New("configuration error")
+	errPending     = errors.New("configuration pending")
+	cudnController = userdefinednetworkv1.SchemeGroupVersion.WithKind("ClusterUserDefinedNetwork")
 )
 
 // Controller reconciles RouteAdvertisements
@@ -113,7 +116,7 @@ func NewController(
 			)
 		}
 
-		return c.updateRAStatus(ra, false, err)
+		return c.updateRAStatus(ra, false, errorstatus)
 	}
 
 	raConfig := &controllerutil.ControllerConfig[ratypes.RouteAdvertisements]{
@@ -219,7 +222,10 @@ func (c *Controller) ReconcileNetwork(_ string, old, new util.NetInfo) {
 	}
 	if new != nil && !newNamespaces.Equal(oldNamespaces) {
 		// we use one of the NADs of the network to reconcile it
-		c.nadController.Reconcile(new.GetNADs()[0])
+		nads := new.GetNADs()
+		if len(nads) > 0 {
+			c.nadController.Reconcile(nads[0])
+		}
 		// if the namespaces served by a network changed, it is possible that
 		// those namespaces are served or no longer served by the default
 		// network, so reconcile it as well
@@ -316,6 +322,8 @@ type selectedNetworks struct {
 	hostNetworkSubnets map[string][]string
 	// prefixLength is a map of selected network to their prefix length
 	prefixLength map[string]uint32
+	// networkType is a map of selected network to their topology
+	networkTopology map[string]string
 }
 
 // generateFRRConfigurations generates FRRConfigurations for the route
@@ -332,20 +340,7 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 
 	// if we are matching on the well known default network label, create an
 	// internal nad for it if it doesn't exist
-	if matchesDefaultNetworkLabel(ra.Spec.NetworkSelector) {
-		_, err := c.getOrCreateDefaultNetworkNAD()
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to get/create default network NAD: %w", err)
-		}
-	}
-
-	// gather selected networks
-	var nads []*nadtypes.NetworkAttachmentDefinition
-	nadSelector, err := metav1.LabelSelectorAsSelector(&ra.Spec.NetworkSelector)
-	if err != nil {
-		return nil, nil, err
-	}
-	nads, err = c.nadLister.List(nadSelector)
+	nads, err := c.getSelectedNADs(ra.Spec.NetworkSelectors)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -356,9 +351,10 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 	// validate and gather information about the networks
 	networkSet := sets.New[string]()
 	selectedNetworks := &selectedNetworks{
-		networkVRFs:    map[string]string{},
-		networkSubnets: map[string][]string{},
-		prefixLength:   map[string]uint32{},
+		networkVRFs:     map[string]string{},
+		networkSubnets:  map[string][]string{},
+		prefixLength:    map[string]uint32{},
+		networkTopology: map[string]string{},
 	}
 	for _, nad := range nads {
 		networkName := util.GetAnnotatedNetworkName(nad)
@@ -373,10 +369,18 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 		if !network.IsDefault() && !network.IsPrimaryNetwork() {
 			return nil, nil, fmt.Errorf("%w: selected network %q is not the default nor a primary network", errConfig, networkName)
 		}
-		if network.TopologyType() != types.Layer3Topology {
-			// TODO don't really know what to do with layer 2 topologies yet
+		if network.TopologyType() != types.Layer3Topology && network.TopologyType() != types.Layer2Topology {
 			return nil, nil, fmt.Errorf("%w: selected network %q has unsupported topology %q", errConfig, networkName, network.TopologyType())
 		}
+
+		if config.Gateway.Mode == config.GatewayModeLocal && network.TopologyType() == types.Layer2Topology {
+			return nil, nil, fmt.Errorf("%w: BGP is currently not supported for Layer2 networks in local gateway mode, network: %s", errConfig, network.GetNetworkName())
+		}
+
+		if advertisements.Has(ratypes.EgressIP) && network.TopologyType() == types.Layer2Topology {
+			return nil, nil, fmt.Errorf("%w: EgressIP advertisement is currently not supported for Layer2 networks, network: %s", errConfig, network.GetNetworkName())
+		}
+
 		vrf := util.GetNetworkVRFName(network)
 		if vfrNet, hasVFR := selectedNetworks.networkVRFs[vrf]; hasVFR && vfrNet != networkName {
 			return nil, nil, fmt.Errorf("%w: vrf %q found to be mapped to multiple networks %v", errConfig, vrf, []string{vfrNet, networkName})
@@ -384,6 +388,7 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 		networkSet.Insert(networkName)
 		selectedNetworks.vrfs = append(selectedNetworks.vrfs, vrf)
 		selectedNetworks.networkVRFs[vrf] = networkName
+		selectedNetworks.networkTopology[networkName] = network.TopologyType()
 		// TODO check overlaps?
 		for _, cidr := range network.Subnets() {
 			subnet := cidr.CIDR.String()
@@ -406,7 +411,7 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 		return nil, nil, err
 	}
 	if !nodeSelector.Empty() && advertisements.Has(ratypes.PodNetwork) {
-		return nil, nil, fmt.Errorf("%w: node selector cannot be specified if pod network is advertised", errConfig)
+		return nil, nil, fmt.Errorf("%w: node selector has to select all nodes if pod network is advertised", errConfig)
 	}
 	nodes, err := c.nodeLister.List(nodeSelector)
 	if err != nil {
@@ -490,14 +495,24 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 		return eipsByNodesByNetworks[nodeName], nil
 	}
 
-	// helper to gather host subnets and egress ips as prefixes
-	getPrefixes := func(nodeName string, network string) ([]string, error) {
+	// helper to gather the following prefixes:
+	//  - EgressIPs
+	//  - host subnets for networks with networkTopology layer3
+	//  - network subnets for networks with networkTopology layer2
+	getPrefixes := func(nodeName, network, networkTopology string, networkSubnets []string) ([]string, error) {
 		// gather host subnets
 		var subnets []string
 		if advertisements.Has(ratypes.PodNetwork) {
-			subnets, err = getHostSubnets(nodeName, network)
-			if err != nil || len(subnets) == 0 {
-				return nil, fmt.Errorf("%w: will wait for subnet annotation to be set for node %q and network %q: %w", errConfig, nodeName, network, err)
+			if networkTopology == types.Layer2Topology {
+				subnets = networkSubnets
+				if len(subnets) == 0 {
+					return nil, fmt.Errorf("%w: no layer2 subnets found", errConfig)
+				}
+			} else {
+				subnets, err = getHostSubnets(nodeName, network)
+				if err != nil || len(subnets) == 0 {
+					return nil, fmt.Errorf("%w: will wait for subnet annotation to be set for node %q and network %q: %w", errConfig, nodeName, network, err)
+				}
 			}
 
 		}
@@ -525,7 +540,8 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 
 		// gather node specific information
 		for _, network := range selectedNetworks.networks {
-			selectedNetworks.hostNetworkSubnets[network], err = getPrefixes(nodeName, network)
+			selectedNetworks.hostNetworkSubnets[network], err = getPrefixes(nodeName, network,
+				selectedNetworks.networkTopology[network], selectedNetworks.networkSubnets[network])
 			if err != nil {
 				return nil, nil, err
 			}
@@ -699,11 +715,6 @@ func (c *Controller) generateFRRConfiguration(
 
 		// VRFs are isolated in "auto" so no need to handle imports
 		if targetVRF == "auto" {
-			continue
-		}
-
-		// we won't do imports if the pod network is not advertised
-		if !advertisements.Has(ratypes.PodNetwork) {
 			continue
 		}
 
@@ -994,6 +1005,44 @@ func (c *Controller) updateRAStatus(ra *ratypes.RouteAdvertisements, hadUpdates 
 	return nil
 }
 
+func (c *Controller) getSelectedNADs(networkSelectors apitypes.NetworkSelectors) ([]*nadtypes.NetworkAttachmentDefinition, error) {
+	var selected []*nadtypes.NetworkAttachmentDefinition
+	for _, networkSelector := range networkSelectors {
+		switch networkSelector.NetworkSelectionType {
+		case apitypes.DefaultNetwork:
+			// if we are selecting the default networkdefault network label,
+			// make sure a NAD exists for it
+			nad, err := c.getOrCreateDefaultNetworkNAD()
+			if err != nil {
+				return nil, fmt.Errorf("failed to get/create default network NAD: %w", err)
+			}
+			selected = append(selected, nad)
+		case apitypes.ClusterUserDefinedNetworks:
+			nadSelector, err := metav1.LabelSelectorAsSelector(&networkSelector.ClusterUserDefinedNetworkSelector.NetworkSelector)
+			if err != nil {
+				return nil, err
+			}
+			nads, err := c.nadLister.List(nadSelector)
+			if err != nil {
+				return nil, err
+			}
+			for _, nad := range nads {
+				// check this NAD is controlled by a CUDN
+				controller := metav1.GetControllerOfNoCopy(nad)
+				isCUDN := controller != nil && controller.Kind == cudnController.Kind && controller.APIVersion == cudnController.GroupVersion().String()
+				if !isCUDN {
+					continue
+				}
+				selected = append(selected, nad)
+			}
+		default:
+			return nil, fmt.Errorf("%w: unsupported network selection type %s", errConfig, networkSelector.NetworkSelectionType)
+		}
+	}
+
+	return selected, nil
+}
+
 // getOrCreateDefaultNetworkNAD ensure that a well-known NAD exists for the
 // default network in ovn-k namespace.
 func (c *Controller) getOrCreateDefaultNetworkNAD() (*nadtypes.NetworkAttachmentDefinition, error) {
@@ -1010,7 +1059,6 @@ func (c *Controller) getOrCreateDefaultNetworkNAD() (*nadtypes.NetworkAttachment
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      types.DefaultNetworkName,
 				Namespace: config.Kubernetes.OVNConfigNamespace,
-				Labels:    map[string]string{types.DefaultNetworkLabelSelector: ""},
 			},
 			Spec: nadtypes.NetworkAttachmentDefinitionSpec{
 				Config: fmt.Sprintf("{\"cniVersion\": \"0.4.0\", \"name\": \"ovn-kubernetes\", \"type\": \"%s\"}", config.CNI.Plugin),
@@ -1121,7 +1169,8 @@ func nadNeedsUpdate(oldObj, newObj *nadtypes.NetworkAttachmentDefinition) bool {
 		if err != nil {
 			return true
 		}
-		return network.IsDefault() || (network.IsPrimaryNetwork() && network.TopologyType() == types.Layer3Topology)
+		return network.IsDefault() ||
+			(network.IsPrimaryNetwork() && (network.TopologyType() == types.Layer3Topology || network.TopologyType() == types.Layer2Topology))
 	}
 	// ignore if we don't support this NAD
 	if !nadSupported(oldObj) && !nadSupported(newObj) {
@@ -1235,17 +1284,4 @@ func (c *Controller) reconcileEgressIPs(string) error {
 	}
 
 	return nil
-}
-
-func matchesDefaultNetworkLabel(selector metav1.LabelSelector) bool {
-	_, matchesLabel := selector.MatchLabels[types.DefaultNetworkLabelSelector]
-	if matchesLabel {
-		return true
-	}
-	for _, expr := range selector.MatchExpressions {
-		if expr.Key == types.DefaultNetworkLabelSelector {
-			return true
-		}
-	}
-	return false
 }

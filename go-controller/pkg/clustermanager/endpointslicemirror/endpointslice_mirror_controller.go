@@ -434,7 +434,7 @@ func (c *Controller) mirrorEndpointSlice(mirroredEndpointSlice, defaultEndpointS
 	}
 	for i, endpoint := range defaultEndpointSlice.Endpoints {
 		if endpoint.TargetRef != nil && endpoint.TargetRef.Kind == "Pod" {
-			podIP, err := c.getPodIP(endpoint.TargetRef.Name, endpoint.TargetRef.Namespace, network.GetNADs()[0], isIPv6)
+			podIP, err := c.getPodIP(endpoint.TargetRef.Name, endpoint.TargetRef.Namespace, nadList[0], isIPv6)
 			if err != nil {
 				return nil, fmt.Errorf("failed to determine the Pod IP of: %s/%s: %v", endpoint.TargetRef.Namespace, endpoint.TargetRef.Name, err)
 			}

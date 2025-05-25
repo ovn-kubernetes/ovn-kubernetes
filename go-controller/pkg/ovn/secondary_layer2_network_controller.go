@@ -25,6 +25,7 @@ import (
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	svccontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/services"
 	lsm "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/routeimport"
 	zoneinterconnect "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/zone_interconnect"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/persistentips"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/retry"
@@ -292,6 +293,9 @@ type SecondaryLayer2NetworkController struct {
 
 	// EgressIP controller utilized only to initialize a network with OVN polices to support EgressIP functionality.
 	eIPController *EgressIPController
+
+	// reconcile the virtual machine default gateway sending GARPs and RAs
+	defaultGatewayReconciler *kubevirt.DefaultGatewayReconciler
 }
 
 // NewSecondaryLayer2NetworkController create a new OVN controller for the given secondary layer2 nad
@@ -299,9 +303,9 @@ func NewSecondaryLayer2NetworkController(
 	cnci *CommonNetworkControllerInfo,
 	netInfo util.NetInfo,
 	networkManager networkmanager.Interface,
-	eIPController *EgressIPController,
+	routeImportManager routeimport.Manager,
 	portCache *PortCache,
-) (*SecondaryLayer2NetworkController, error) {
+	eIPController *EgressIPController) (*SecondaryLayer2NetworkController, error) {
 
 	stopChan := make(chan struct{})
 
@@ -334,6 +338,7 @@ func NewSecondaryLayer2NetworkController(
 					localZoneNodes:              &sync.Map{},
 					cancelableCtx:               util.NewCancelableContext(),
 					networkManager:              networkManager,
+					routeImportManager:          routeImportManager,
 				},
 			},
 		},
@@ -361,6 +366,7 @@ func NewSecondaryLayer2NetworkController(
 		if err != nil {
 			return nil, fmt.Errorf("unable to create new service controller while creating new layer2 network controller: %w", err)
 		}
+		oc.defaultGatewayReconciler = kubevirt.NewDefaultGatewayReconciler(oc.watchFactory, oc.GetNetInfo(), util.GetNetworkScopedK8sMgmtHostIntfName(uint(oc.GetNetworkID())))
 	}
 
 	if oc.allocatesPodAnnotation() {
@@ -586,7 +592,18 @@ func (oc *SecondaryLayer2NetworkController) addUpdateLocalNodeEvent(node *corev1
 					errs = append(errs, err)
 					oc.gatewaysFailed.Store(node.Name, true)
 				} else {
-					if err := oc.addUDNClusterSubnetEgressSNAT(gwConfig.hostSubnets, gwManager.gwRouterName); err != nil {
+					if !util.IsPodNetworkAdvertisedAtNode(oc, node.Name) {
+						err = oc.addUDNClusterSubnetEgressSNAT(gwConfig.hostSubnets, gwManager.gwRouterName)
+						if err == nil && util.IsRouteAdvertisementsEnabled() {
+							err = oc.deleteAdvertisedNetworkIsolation(node.Name)
+						}
+					} else {
+						err = oc.deleteUDNClusterSubnetEgressSNAT(gwConfig.hostSubnets, gwManager.gwRouterName)
+						if err == nil {
+							err = oc.addAdvertisedNetworkIsolation(node.Name)
+						}
+					}
+					if err != nil {
 						errs = append(errs, err)
 						oc.gatewaysFailed.Store(node.Name, true)
 					} else {
@@ -758,6 +775,25 @@ func (oc *SecondaryLayer2NetworkController) addUDNClusterSubnetEgressSNAT(localP
 	return nil
 }
 
+func (oc *SecondaryLayer2NetworkController) deleteUDNClusterSubnetEgressSNAT(localPodSubnets []*net.IPNet, routerName string) error {
+	outputPort := types.GWRouterToJoinSwitchPrefix + routerName
+	nats, err := oc.buildUDNEgressSNAT(localPodSubnets, outputPort)
+	if err != nil {
+		return err
+	}
+	if len(nats) == 0 {
+		return nil // nothing to do
+	}
+	router := &nbdb.LogicalRouter{
+		Name: routerName,
+	}
+	if err := libovsdbops.DeleteNATs(oc.nbClient, router, nats...); err != nil {
+		return fmt.Errorf("failed to delete SNAT for cluster on router: %q for network %q, error: %w",
+			routerName, oc.GetNetworkName(), err)
+	}
+	return nil
+}
+
 type SecondaryL2GatewayConfig struct {
 	config       *util.L3GatewayConfig
 	hostSubnets  []*net.IPNet
@@ -882,15 +918,20 @@ func (oc *SecondaryLayer2NetworkController) updateLocalPodEvent(pod *corev1.Pod)
 }
 
 func (oc *SecondaryLayer2NetworkController) reconcileLiveMigrationTargetZone(kubevirtLiveMigrationStatus *kubevirt.LiveMigrationStatus) error {
-	// Only primary networks has a gateway to reconcile
-	if !oc.IsPrimaryNetwork() {
+	if oc.defaultGatewayReconciler == nil {
 		return nil
 	}
-	mgmtInterfaceName := util.GetNetworkScopedK8sMgmtHostIntfName(uint(oc.GetNetworkID()))
-
-	if hasIPv4Subnet, _ := oc.IPMode(); hasIPv4Subnet {
-		if err := kubevirt.ReconcileIPv4DefaultGatewayAfterLiveMigration(oc.watchFactory, oc.GetNetInfo(), kubevirtLiveMigrationStatus, mgmtInterfaceName); err != nil {
-			return err
+	hasIPv4Subnet, hasIPv6Subnet := oc.IPMode()
+	if hasIPv4Subnet {
+		if err := oc.defaultGatewayReconciler.ReconcileIPv4AfterLiveMigration(kubevirtLiveMigrationStatus); err != nil {
+			return fmt.Errorf("failed reconciling IPv4 default gw after live migration at target pod '%s/%s': %w",
+				kubevirtLiveMigrationStatus.TargetPod.Namespace, kubevirtLiveMigrationStatus.TargetPod.Name, err)
+		}
+	}
+	if hasIPv6Subnet {
+		if err := oc.defaultGatewayReconciler.ReconcileIPv6AfterLiveMigration(kubevirtLiveMigrationStatus); err != nil {
+			return fmt.Errorf("failed reconciling IPv6 default gw after live migration at target pod '%s/%s': %w",
+				kubevirtLiveMigrationStatus.TargetPod.Namespace, kubevirtLiveMigrationStatus.TargetPod.Name, err)
 		}
 	}
 	return nil

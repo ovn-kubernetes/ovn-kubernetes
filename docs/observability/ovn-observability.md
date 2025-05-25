@@ -45,8 +45,8 @@ As of Aug 2024, the kernel need to be built from the source, therefore to try th
 - rebuild the kernel with the current master branch from [Linus' tree](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git)
   - to rebuild on fedora: https://docs.fedoraproject.org/en-US/quick-docs/kernel-build-custom/#_building_a_vanilla_upstream_kernel
 - Build an ovn-kubernetes image that uses the latest OVS/OVN code:
-`OVS_BRANCH=main make -C dist/images fedora-dev`
-- Start kind with that image, use `-ov localhost/ovn-kube-fedora-dev:latest` flag with `kind.sh` script.
+`OVS_BRANCH=main make -C dist/images fedora-dev-local-gw-deployment`
+- Start kind with that image, use `-ov localhost/ovn-daemonset-fedora:latest` flag with `kind.sh` script.
 
 ## Workflow Description
 

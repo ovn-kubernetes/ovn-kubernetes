@@ -278,7 +278,7 @@ func (p *Plugin) CmdDel(args *skel.CmdArgs) error {
 	defer func() {
 		p.postMetrics(startTime, CNIDel, err)
 		if err != nil {
-			klog.Errorf(err.Error())
+			klog.Errorf("Error on CmdDel: %v", err)
 		}
 	}()
 
@@ -299,7 +299,7 @@ func (p *Plugin) CmdDel(args *skel.CmdArgs) error {
 	response := &Response{}
 	err = json.Unmarshal(body, response)
 	if err != nil {
-		err = fmt.Errorf("cmdDel: failed to unmarshal response '%s': %v", string(body), err)
+		err = fmt.Errorf("failed to unmarshal response '%s': %v", string(body), err)
 		return err
 	}
 

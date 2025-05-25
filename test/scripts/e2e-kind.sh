@@ -64,8 +64,18 @@ should prevent Ingress creation if more than 1 IngressClass marked as default
 # TODO: Figure out why the below test is failing and if we need to add support in OVN-K for them
 validates that there is no conflict between pods with same hostPort but different hostIP and protocol
 
-# Skip ServiceCidr tests as we dont currenly support this v1alpha feature
-should create Services and servce on different Service CIDRs
+# https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5119
+\[sig-network\] Services should implement NodePort and HealthCheckNodePort correctly when ExternalTrafficPolicy changes
+
+# Skip Alpha features in general
+\[Feature:Alpha\]
+\[Alpha\]
+
+# Skip Beta features by feature name for visibility
+\[FeatureGate:MultiCIDRServiceAllocator\] \[Beta\]
+
+# Skip unsupported GA features by feature name for visibility
+# TODO
 "
 
 IPV4_ONLY_TESTS="
@@ -119,18 +129,18 @@ RA_SKIPPED_TESTS="
 SKIPPED_TESTS=$SKIPPED_TESTS$IPV6_ONLY_TESTS
 
 # Either single stack IPV6 or dualstack
-if [ "$KIND_IPV6_SUPPORT" == true ]; then
+if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
   SKIPPED_TESTS=$SKIPPED_TESTS$SINGLESTACK_IPV4_ONLY_TESTS
 fi
 
 # IPv6 Only, skip any IPv4 Only Tests
-if [ "$KIND_IPV4_SUPPORT" == false ] && [ "$KIND_IPV6_SUPPORT" == true ]; then
+if [ "$PLATFORM_IPV4_SUPPORT" == false ] && [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
 	echo "IPv6 Only"
 	SKIPPED_TESTS=$SKIPPED_TESTS$IPV4_ONLY_TESTS
 fi
 
 # If not DualStack, skip DualStack tests
-if [ "$KIND_IPV4_SUPPORT" == false ] || [ "$KIND_IPV6_SUPPORT" == false ]; then
+if [ "$PLATFORM_IPV4_SUPPORT" == false ] || [ "$PLATFORM_IPV6_SUPPORT" == false ]; then
 	SKIPPED_TESTS=$SKIPPED_TESTS$DUALSTACK_ONLY_TESTS
 fi
 

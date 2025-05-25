@@ -169,7 +169,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 		),
 	)
 
-	DescribeTable("should fail to render NAD, given",
+	DescribeTable("should fail to render NAD manifest, given",
 		func(obj client.Object) {
 			_, err := RenderNetAttachDefManifest(obj, "test")
 			Expect(err).To(HaveOccurred())
@@ -223,9 +223,34 @@ var _ = Describe("NetAttachDefTemplate", func() {
 			&udnv1.ClusterUserDefinedNetwork{Spec: udnv1.ClusterUserDefinedNetworkSpec{Network: udnv1.NetworkSpec{
 				Topology: udnv1.NetworkTopologyLayer2, Layer3: &udnv1.Layer3Config{}}}},
 		),
+		Entry("CUDN, invalid topology: topology layer2 & localnet config",
+			&udnv1.ClusterUserDefinedNetwork{Spec: udnv1.ClusterUserDefinedNetworkSpec{Network: udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLayer2, Localnet: &udnv1.LocalnetConfig{}}}},
+		),
 		Entry("CUDN, invalid topology: topology layer3 & layer2 config",
 			&udnv1.ClusterUserDefinedNetwork{Spec: udnv1.ClusterUserDefinedNetworkSpec{Network: udnv1.NetworkSpec{
 				Topology: udnv1.NetworkTopologyLayer3, Layer2: &udnv1.Layer2Config{}}}},
+		),
+		Entry("CUDN, invalid topology: topology layer3 & localnet config",
+			&udnv1.ClusterUserDefinedNetwork{Spec: udnv1.ClusterUserDefinedNetworkSpec{Network: udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLayer3, Localnet: &udnv1.LocalnetConfig{}}}},
+		),
+		Entry("CUDN, invalid topology: topology localnet & layer2 config",
+			&udnv1.ClusterUserDefinedNetwork{Spec: udnv1.ClusterUserDefinedNetworkSpec{Network: udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLocalnet, Layer2: &udnv1.Layer2Config{}}}},
+		),
+		Entry("CUDN, invalid topology: topology localnet & layer3 config",
+			&udnv1.ClusterUserDefinedNetwork{Spec: udnv1.ClusterUserDefinedNetworkSpec{Network: udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLocalnet, Layer3: &udnv1.Layer3Config{}}}},
+		),
+		Entry("CUDN, localnet: excludeSubnets not in range of subnets",
+			&udnv1.ClusterUserDefinedNetwork{Spec: udnv1.ClusterUserDefinedNetworkSpec{Network: udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLocalnet,
+				Localnet: &udnv1.LocalnetConfig{Role: udnv1.NetworkRoleSecondary, PhysicalNetworkName: "localnet1",
+					Subnets:        udnv1.DualStackCIDRs{"192.168.0.0/16", "2001:dbb::/64"},
+					ExcludeSubnets: []udnv1.CIDR{"192.200.0.0/30", "2001:aaa::/127", "192.300.0.1/32", "2001:bbb::1/120"},
+				},
+			}}},
 		),
 	)
 
@@ -492,7 +517,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 			  "allowPersistentIPs": true
 			}`,
 		),
-		Entry("secondary network",
+		Entry("secondary network, layer2",
 			udnv1.NetworkSpec{
 				Topology: udnv1.NetworkTopologyLayer2,
 				Layer2: &udnv1.Layer2Config{
@@ -513,6 +538,65 @@ var _ = Describe("NetAttachDefTemplate", func() {
 			  "topology": "layer2",
 			  "subnets": "192.168.100.0/24,2001:dbb::/64",
 			  "mtu": 1500,
+			  "allowPersistentIPs": true
+			}`,
+		),
+		Entry("secondary network, localnet",
+			udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLocalnet,
+				Localnet: &udnv1.LocalnetConfig{
+					Role:                udnv1.NetworkRoleSecondary,
+					PhysicalNetworkName: "mylocalnet1",
+					MTU:                 1600,
+					VLAN:                &udnv1.VLANConfig{Mode: udnv1.VLANModeAccess, Access: &udnv1.AccessVLANConfig{ID: 200}},
+					Subnets:             udnv1.DualStackCIDRs{"192.168.100.0/24", "2001:dbb::/64"},
+					ExcludeSubnets:      []udnv1.CIDR{"192.168.100.1/32", "2001:dbb::0/128"},
+					IPAM: &udnv1.IPAMConfig{
+						Lifecycle: udnv1.IPAMLifecyclePersistent,
+					},
+				},
+			},
+			`{
+			  "cniVersion": "1.0.0",
+			  "type": "ovn-k8s-cni-overlay",
+			  "name": "cluster_udn_test-net",
+			  "netAttachDefName": "mynamespace/test-net",
+			  "role": "secondary",
+			  "topology": "localnet",
+		      "physicalNetworkName": "mylocalnet1",
+			  "subnets": "192.168.100.0/24,2001:dbb::/64",
+              "excludeSubnets": "192.168.100.1/32,2001:dbb::0/128",
+			  "mtu": 1600,
+              "vlanID": 200, 
+			  "allowPersistentIPs": true
+			}`,
+		),
+		Entry("secondary network, localnet, when MTU is unset it should set default MTU",
+			udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLocalnet,
+				Localnet: &udnv1.LocalnetConfig{
+					Role:                udnv1.NetworkRoleSecondary,
+					PhysicalNetworkName: "mylocalnet1",
+					VLAN:                &udnv1.VLANConfig{Mode: udnv1.VLANModeAccess, Access: &udnv1.AccessVLANConfig{ID: 200}},
+					Subnets:             udnv1.DualStackCIDRs{"192.168.100.0/24", "2001:dbb::/64"},
+					ExcludeSubnets:      []udnv1.CIDR{"192.168.100.1/32", "2001:dbb::0/128"},
+					IPAM: &udnv1.IPAMConfig{
+						Lifecycle: udnv1.IPAMLifecyclePersistent,
+					},
+				},
+			},
+			`{
+			  "cniVersion": "1.0.0",
+			  "type": "ovn-k8s-cni-overlay",
+			  "name": "cluster_udn_test-net",
+			  "netAttachDefName": "mynamespace/test-net",
+			  "role": "secondary",
+			  "topology": "localnet",
+		      "physicalNetworkName": "mylocalnet1",
+			  "subnets": "192.168.100.0/24,2001:dbb::/64",
+              "excludeSubnets": "192.168.100.1/32,2001:dbb::0/128",
+			  "mtu": 1500,
+              "vlanID": 200, 
 			  "allowPersistentIPs": true
 			}`,
 		),

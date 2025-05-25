@@ -137,7 +137,7 @@ func (bnnc *BaseNodeNetworkController) watchPodsDPU() (*factory.Handler, error) 
 				if dpuCD != nil {
 					err := bnnc.addDPUPodForNAD(pod, dpuCD, netName, nadName, clientSet)
 					if err != nil {
-						klog.Errorf(err.Error())
+						klog.Errorf("Error adding pod %s/%s for for network %s: %v", pod.Namespace, pod.Name, bnnc.GetNetworkName(), err)
 					} else {
 						nadToDPUCDMap[nadName] = dpuCD
 					}
@@ -169,7 +169,7 @@ func (bnnc *BaseNodeNetworkController) watchPodsDPU() (*factory.Handler, error) 
 						oldDPUCD, newDPUCD)
 					err := bnnc.delDPUPodForNAD(oldPod, oldDPUCD, nadName, false)
 					if err != nil {
-						klog.Errorf(err.Error())
+						klog.Errorf("Error deleting pod %s/%s for for network %s: %v", oldPod.Namespace, oldPod.Name, bnnc.GetNetworkName(), err)
 					}
 					nadToDPUCDMap[nadName] = nil
 				}
@@ -179,7 +179,7 @@ func (bnnc *BaseNodeNetworkController) watchPodsDPU() (*factory.Handler, error) 
 						"New connection details (%v)", oldDPUCD, newDPUCD)
 					err := bnnc.addDPUPodForNAD(newPod, newDPUCD, netName, nadName, clientSet)
 					if err != nil {
-						klog.Errorf(err.Error())
+						klog.Errorf("Error adding pod %s/%s for for network %s: %v", newPod.Namespace, newPod.Name, bnnc.GetNetworkName(), err)
 					} else {
 						nadToDPUCDMap[nadName] = newDPUCD
 					}
@@ -202,7 +202,7 @@ func (bnnc *BaseNodeNetworkController) watchPodsDPU() (*factory.Handler, error) 
 				if dpuCD != nil {
 					err := bnnc.delDPUPodForNAD(pod, dpuCD, nadName, true)
 					if err != nil {
-						klog.Errorf(err.Error())
+						klog.Errorf("Error deleting pod %s/%s for for network %s: %v", pod.Namespace, pod.Name, bnnc.GetNetworkName(), err)
 					}
 				}
 			}
@@ -293,7 +293,7 @@ func (bnnc *BaseNodeNetworkController) delRepPort(pod *corev1.Pod, dpuCD *util.D
 	klog.Infof("Delete VF representor %s for %s", vfRepName, podDesc)
 	ifExists, sandbox, expectedNADName, err := util.GetOVSPortPodInfo(vfRepName)
 	if err != nil {
-		return fmt.Errorf(err.Error())
+		return err
 	}
 	if !ifExists {
 		klog.Infof("VF representor %s for %s is not an OVS interface, nothing to do", vfRepName, podDesc)

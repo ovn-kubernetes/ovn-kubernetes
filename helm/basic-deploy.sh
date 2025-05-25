@@ -50,7 +50,7 @@ if [[ "$BUILD_IMAGE" == "true" ]]; then
   # Build image
   echo "Building Docker image..."
   pushd ../dist/images
-  make ubuntu
+  make ubuntu-image
   popd
   docker tag ovn-kube-ubuntu:latest $IMG
 else

@@ -1332,7 +1332,7 @@ func routeDifference(routesA, routesB []netlink.Route) []netlink.Route {
 	for _, routeA := range routesA {
 		found = false
 		for _, routeB := range routesB {
-			if routemanager.RoutePartiallyEqual(routeA, routeB) {
+			if util.RouteEqual(&routeA, &routeB) {
 				found = true
 				break
 			}

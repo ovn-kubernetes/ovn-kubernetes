@@ -67,7 +67,7 @@ var (
 		EncapIP:                      "",
 		EncapPort:                    DefaultEncapPort,
 		InactivityProbe:              100000, // in Milliseconds
-		OpenFlowProbe:                180,    // in Seconds
+		OpenFlowProbe:                0,      // in Milliseconds
 		OfctrlWaitBeforeClear:        0,      // in Milliseconds
 		MonitorAll:                   true,
 		OVSDBTxnTimeout:              DefaultDBTxnTimeout,
@@ -432,6 +432,7 @@ type OVNKubernetesFeatureConfig struct {
 	EnableDNSNameResolver        bool `gcfg:"enable-dns-name-resolver"`
 	EnableServiceTemplateSupport bool `gcfg:"enable-svc-template-support"`
 	EnableObservability          bool `gcfg:"enable-observability"`
+	EnableNetworkQoS             bool `gcfg:"enable-network-qos"`
 }
 
 // GatewayMode holds the node gateway mode
@@ -1140,6 +1141,12 @@ var OVNK8sFeatureFlags = []cli.Flag{
 		Usage:       "Configure to use OVN sampling with ovn-kubernetes.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnableObservability,
 		Value:       OVNKubernetesFeature.EnableObservability,
+	},
+	&cli.BoolFlag{
+		Name:        "enable-network-qos",
+		Usage:       "Configure to use NetworkQoS CRD feature with ovn-kubernetes.",
+		Destination: &cliConfig.OVNKubernetesFeature.EnableNetworkQoS,
+		Value:       OVNKubernetesFeature.EnableNetworkQoS,
 	},
 }
 

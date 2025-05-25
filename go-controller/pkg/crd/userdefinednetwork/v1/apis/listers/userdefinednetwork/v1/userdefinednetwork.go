@@ -18,10 +18,10 @@ limitations under the License.
 package v1
 
 import (
-	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/client-go/listers"
-	"k8s.io/client-go/tools/cache"
+	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	labels "k8s.io/apimachinery/pkg/labels"
+	listers "k8s.io/client-go/listers"
+	cache "k8s.io/client-go/tools/cache"
 )
 
 // UserDefinedNetworkLister helps list UserDefinedNetworks.
@@ -29,7 +29,7 @@ import (
 type UserDefinedNetworkLister interface {
 	// List lists all UserDefinedNetworks in the indexer.
 	// Objects returned here must be treated as read-only.
-	List(selector labels.Selector) (ret []*v1.UserDefinedNetwork, err error)
+	List(selector labels.Selector) (ret []*userdefinednetworkv1.UserDefinedNetwork, err error)
 	// UserDefinedNetworks returns an object that can list and get UserDefinedNetworks.
 	UserDefinedNetworks(namespace string) UserDefinedNetworkNamespaceLister
 	UserDefinedNetworkListerExpansion
@@ -37,17 +37,17 @@ type UserDefinedNetworkLister interface {
 
 // userDefinedNetworkLister implements the UserDefinedNetworkLister interface.
 type userDefinedNetworkLister struct {
-	listers.ResourceIndexer[*v1.UserDefinedNetwork]
+	listers.ResourceIndexer[*userdefinednetworkv1.UserDefinedNetwork]
 }
 
 // NewUserDefinedNetworkLister returns a new UserDefinedNetworkLister.
 func NewUserDefinedNetworkLister(indexer cache.Indexer) UserDefinedNetworkLister {
-	return &userDefinedNetworkLister{listers.New[*v1.UserDefinedNetwork](indexer, v1.Resource("userdefinednetwork"))}
+	return &userDefinedNetworkLister{listers.New[*userdefinednetworkv1.UserDefinedNetwork](indexer, userdefinednetworkv1.Resource("userdefinednetwork"))}
 }
 
 // UserDefinedNetworks returns an object that can list and get UserDefinedNetworks.
 func (s *userDefinedNetworkLister) UserDefinedNetworks(namespace string) UserDefinedNetworkNamespaceLister {
-	return userDefinedNetworkNamespaceLister{listers.NewNamespaced[*v1.UserDefinedNetwork](s.ResourceIndexer, namespace)}
+	return userDefinedNetworkNamespaceLister{listers.NewNamespaced[*userdefinednetworkv1.UserDefinedNetwork](s.ResourceIndexer, namespace)}
 }
 
 // UserDefinedNetworkNamespaceLister helps list and get UserDefinedNetworks.
@@ -55,15 +55,15 @@ func (s *userDefinedNetworkLister) UserDefinedNetworks(namespace string) UserDef
 type UserDefinedNetworkNamespaceLister interface {
 	// List lists all UserDefinedNetworks in the indexer for a given namespace.
 	// Objects returned here must be treated as read-only.
-	List(selector labels.Selector) (ret []*v1.UserDefinedNetwork, err error)
+	List(selector labels.Selector) (ret []*userdefinednetworkv1.UserDefinedNetwork, err error)
 	// Get retrieves the UserDefinedNetwork from the indexer for a given namespace and name.
 	// Objects returned here must be treated as read-only.
-	Get(name string) (*v1.UserDefinedNetwork, error)
+	Get(name string) (*userdefinednetworkv1.UserDefinedNetwork, error)
 	UserDefinedNetworkNamespaceListerExpansion
 }
 
 // userDefinedNetworkNamespaceLister implements the UserDefinedNetworkNamespaceLister
 // interface.
 type userDefinedNetworkNamespaceLister struct {
-	listers.ResourceIndexer[*v1.UserDefinedNetwork]
+	listers.ResourceIndexer[*userdefinednetworkv1.UserDefinedNetwork]
 }

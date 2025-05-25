@@ -21,6 +21,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	kexec "k8s.io/utils/exec"
+	"sigs.k8s.io/knftables"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/mocks"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
@@ -1259,7 +1260,7 @@ func TestPodRequest_deletePodConntrack(t *testing.T) {
 				IPs:        []*current.IPConfig{{Interface: &[]int{0}[0], Address: *ovntest.MustParseIPNet("192.168.1.15/24"), Gateway: ovntest.MustParseIP("192.168.1.1")}},
 			},
 			netLinkOpsMockHelper: []ovntest.TestifyMockHelper{
-				{OnCallMethodName: "ConntrackDeleteFilter", OnCallMethodArgType: []string{"netlink.ConntrackTableType", "netlink.InetFamily", "*netlink.ConntrackFilter"}, RetArgList: []interface{}{uint(1), fmt.Errorf("mock error")}},
+				{OnCallMethodName: "ConntrackDeleteFilters", OnCallMethodArgType: []string{"netlink.ConntrackTableType", "netlink.InetFamily", "*netlink.ConntrackFilter"}, RetArgList: []interface{}{uint(1), fmt.Errorf("mock error")}},
 			},
 		},
 	}
@@ -1649,6 +1650,21 @@ func TestConfigureOVS_getPfEncapIpWithError(t *testing.T) {
 			mockLink.AssertExpectations(t)
 		})
 	}
+}
+
+func TestSetupIngressFilter(t *testing.T) {
+	nft := knftables.NewFake(knftables.NetDevFamily, "ingress_filter")
+
+	gwLLA := "fe80::1"
+	err := setupIngressFilterWithTableAndLifetimeMatcher(nft, "test-iface-1", gwLLA, "mark")
+	require.NoError(t, err)
+	output := nft.Dump()
+
+	expectedDump := `add table netdev ingress_filter
+add chain netdev ingress_filter input { type filter hook ingress device "test-iface-1" priority 0 ; }
+add rule netdev ingress_filter input icmpv6 type nd-router-advert ip6 saddr != fe80::1 mark != 0 drop`
+
+	assert.Equal(t, expectedDump, strings.TrimRight(output, "\n"), "The nftables dump output does not match the expected output")
 }
 
 // TODO(leih): Below functions are copied from pkg/node/base_node_network_controller_dpu_test.go.

@@ -81,7 +81,6 @@ func InitReporter(kubeconfig, path string, namespaces []string) *k8sreporter.Kub
 		{Cr: &egressqosv1.EgressQoSList{}},
 		{Cr: &egressservicev1.EgressServiceList{}},
 		{Cr: &metallbv1beta1.IPAddressPoolList{}},
-		{Cr: &metallbv1beta1.AddressPoolList{}},
 		{Cr: &metallbv1beta2.BGPPeerList{}},
 		{Cr: &metallbv1beta1.L2AdvertisementList{}},
 		{Cr: &metallbv1beta1.BGPAdvertisementList{}},

@@ -84,7 +84,7 @@ kubelet.
 
 $ cd images && make
 builds the default centos based image from  Dockerfile
-$  make fedora
+$ make fedora-image
 builds the image with the fedora 
 
 Once the image is built it must be tagged and pushed to a docker image repo

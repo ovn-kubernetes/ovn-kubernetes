@@ -75,6 +75,12 @@ type PodAnnotation struct {
 	// Gateways are the pod's gateway IP addresses; note that there may be
 	// fewer Gateways than IPs.
 	Gateways []net.IP
+
+	// GatewayIPv6LLA is the IPv6 Link Local Address for the pod's gateway, that is the address
+	// that will be set as gateway with router advertisements
+	// generated from the gateway router from the node where the pod is running.
+	GatewayIPv6LLA net.IP
+
 	// Routes are additional routes to add to the pod's network namespace
 	Routes []PodRoute
 
@@ -117,8 +123,9 @@ type podAnnotation struct {
 	Gateways []string   `json:"gateway_ips,omitempty"`
 	Routes   []podRoute `json:"routes,omitempty"`
 
-	IP      string `json:"ip_address,omitempty"`
-	Gateway string `json:"gateway_ip,omitempty"`
+	IP             string `json:"ip_address,omitempty"`
+	Gateway        string `json:"gateway_ip,omitempty"`
+	GatewayIPv6LLA string `json:"ipv6_lla_gateway_ip,omitempty"`
 
 	TunnelID int    `json:"tunnel_id,omitempty"`
 	Role     string `json:"role,omitempty"`
@@ -192,6 +199,11 @@ func MarshalPodAnnotation(annotations map[string]string, podInfo *PodAnnotation,
 			NextHop: nh,
 		})
 	}
+
+	if podInfo.GatewayIPv6LLA != nil {
+		pa.GatewayIPv6LLA = podInfo.GatewayIPv6LLA.String()
+	}
+
 	podNetworks[nadName] = pa
 	bytes, err := json.Marshal(podNetworks)
 	if err != nil {
@@ -280,6 +292,14 @@ func UnmarshalPodAnnotation(annotations map[string]string, nadName string) (*Pod
 			}
 		}
 		podAnnotation.Routes = append(podAnnotation.Routes, route)
+	}
+
+	if a.GatewayIPv6LLA != "" {
+		llaGW := net.ParseIP(a.GatewayIPv6LLA)
+		if !isIPv6LLA(llaGW) {
+			return nil, fmt.Errorf("failed to parse pod ipv6 lla gateway, or non ipv6 lla %q", a.GatewayIPv6LLA)
+		}
+		podAnnotation.GatewayIPv6LLA = llaGW
 	}
 
 	return podAnnotation, nil
@@ -536,6 +556,7 @@ func hairpinMasqueradeIPToRoute(isIPv6 bool, gatewayIP net.IP) PodRoute {
 // with the gateways derived from the allocated IPs
 func AddRoutesGatewayIP(
 	netinfo NetInfo,
+	node *corev1.Node,
 	pod *corev1.Pod,
 	podAnnotation *PodAnnotation,
 	network *nadapi.NetworkSelectionElement) error {
@@ -569,6 +590,19 @@ func AddRoutesGatewayIP(
 				podAnnotation.Routes = append(podAnnotation.Routes, joinSubnetToRoute(netinfo, isIPv6, gatewayIPnet.IP))
 				if network != nil && len(network.GatewayRequest) == 0 { // if specific default route for pod was not requested then add gatewayIP
 					podAnnotation.Gateways = append(podAnnotation.Gateways, gatewayIPnet.IP)
+				}
+			}
+			// Until https://github.com/ovn-kubernetes/ovn-kubernetes/issues/4876 is fixed, it is limited to IC only
+			if config.OVNKubernetesFeature.EnableInterconnect {
+				if _, isIPv6Mode := netinfo.IPMode(); isIPv6Mode {
+					joinAddrs, err := ParseNodeGatewayRouterJoinAddrs(node, netinfo.GetNetworkName())
+					if err != nil {
+						if IsAnnotationNotSetError(err) {
+							return types.NewSuppressedError(err)
+						}
+						return fmt.Errorf("failed parsing node gateway router join addresses, network %q, %w", netinfo.GetNetworkName(), err)
+					}
+					podAnnotation.GatewayIPv6LLA = HWAddrToIPv6LLA(IPAddrToHWAddr(joinAddrs[0].IP))
 				}
 			}
 			return nil
@@ -693,4 +727,9 @@ func UnmarshalUDNOpenPortsAnnotation(annotations map[string]string) ([]*OpenPort
 		}
 	}
 	return result, nil
+}
+
+// Ensure the IP is a valid IPv6 LLA
+func isIPv6LLA(ip net.IP) bool {
+	return utilnet.IsIPv6(ip) && ip.IsLinkLocalUnicast()
 }

@@ -31,18 +31,22 @@ func netCIDR(netCIDR string, netPrefixLengthPerNode int) string {
 
 // takes ipv4 and ipv6 cidrs and returns the correct type for the cluster under test
 func correctCIDRFamily(ipv4CIDR, ipv6CIDR string) string {
+	return strings.Join(selectCIDRs(ipv4CIDR, ipv6CIDR), ",")
+}
+
+// takes ipv4 and ipv6 cidrs and returns the correct type for the cluster under test
+func selectCIDRs(ipv4CIDR, ipv6CIDR string) []string {
 	// dual stack cluster
 	if isIPv6Supported() && isIPv4Supported() {
-		return strings.Join([]string{ipv4CIDR, ipv6CIDR}, ",")
+		return []string{ipv4CIDR, ipv6CIDR}
 	}
 	// is an ipv6 only cluster
 	if isIPv6Supported() {
-		return ipv6CIDR
+		return []string{ipv6CIDR}
 	}
 
 	//ipv4 only cluster
-	return ipv4CIDR
-
+	return []string{ipv4CIDR}
 }
 
 func getNetCIDRSubnet(netCIDR string) (string, error) {
@@ -222,12 +226,12 @@ func podNetworkStatus(pod *v1.Pod, predicates ...func(nadapi.NetworkStatus) bool
 	return netStatusMeetingPredicates, nil
 }
 
-func podNetworkStatusByNetConfigPredicate(netConfig networkAttachmentConfig) func(nadapi.NetworkStatus) bool {
+func podNetworkStatusByNetConfigPredicate(namespace, name, role string) func(nadapi.NetworkStatus) bool {
 	return func(networkStatus nadapi.NetworkStatus) bool {
-		if netConfig.role == "primary" {
+		if role == "primary" {
 			return networkStatus.Default
 		} else {
-			return networkStatus.Name == netConfig.namespace+"/"+netConfig.name
+			return networkStatus.Name == namespace+"/"+name
 		}
 	}
 }
@@ -249,7 +253,7 @@ func inRange(cidr string, ip string) error {
 	return fmt.Errorf("ip [%s] is NOT in range %s", ip, cidr)
 }
 
-func connectToServer(clientPodConfig podConfiguration, serverIP string, port int) error {
+func connectToServer(clientPodConfig podConfiguration, serverIP string, port uint16) error {
 	_, err := e2ekubectl.RunKubectl(
 		clientPodConfig.namespace,
 		"exec",
@@ -606,7 +610,7 @@ func allowedTCPPortsForPolicy(allowPorts ...int) []mnpapi.MultiNetworkPolicyPort
 	return portAllowlist
 }
 
-func reachServerPodFromClient(cs clientset.Interface, serverConfig podConfiguration, clientConfig podConfiguration, serverIP string, serverPort int) error {
+func reachServerPodFromClient(cs clientset.Interface, serverConfig podConfiguration, clientConfig podConfiguration, serverIP string, serverPort uint16) error {
 	updatedPod, err := cs.CoreV1().Pods(serverConfig.namespace).Get(context.Background(), serverConfig.name, metav1.GetOptions{})
 	if err != nil {
 		return err

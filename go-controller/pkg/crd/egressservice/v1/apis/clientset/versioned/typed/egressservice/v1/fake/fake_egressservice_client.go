@@ -28,7 +28,7 @@ type FakeK8sV1 struct {
 }
 
 func (c *FakeK8sV1) EgressServices(namespace string) v1.EgressServiceInterface {
-	return &FakeEgressServices{c, namespace}
+	return newFakeEgressServices(c, namespace)
 }
 
 // RESTClient returns a RESTClient that is used to communicate

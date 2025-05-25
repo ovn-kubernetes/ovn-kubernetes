@@ -1,12 +1,12 @@
 Click
-htmlmin
+minify-html
 Jinja2
 jsmin
 livereload
 Markdown
 MarkupSafe
 mkdocs
-mkdocs-awesome-nav
+mkdocs-awesome-pages-plugin
 mkdocs-macros-plugin
 mkdocs-material
 mkdocs-material-extensions
