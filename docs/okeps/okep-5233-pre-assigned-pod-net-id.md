@@ -15,7 +15,6 @@ existing infrastructures.
   configuration including IP address, MAC address, and default gateway. 
 - Ensure it is possible to enable non-NATed traffic for pods with the static network 
   configuration by exposing the network through BGP.
-- TODO: Pre-configured IP/MAC addresses support for pods in Localnet UDNs?
 
 ## Non-Goals
 
@@ -24,6 +23,7 @@ existing infrastructures.
 - Non-NATed traffic support in secondary networks.
 - Pre-configured IP/MAC addresses support for pods in Layer3 UDNs.
 - Configurable default gateway and management address in Layer3 UDNs.
+- Pre-configured IP/MAC addresses support for pods in primary Localnet UDNs
 
 ## Introduction
 Legacy workloads, particularly virtual machines, are often set up with static
@@ -32,7 +32,7 @@ it should be possible to integrate these gradually to prevent disruptions.
 
 Currently, OVN-Kubernetes allocates IP addresses dynamically and it generates the MAC 
 addresses from it. It sets the pod's default gateway to the first usable IP address of its subnet.
-It additionally reserves the second usable IP address for the internal management port which 
+For primary UDNs, it additionally reserves the second usable IP address for the internal management port which
 excludes it from being available for workloads. 
 
 ## User-Stories/Use-Cases
@@ -254,7 +254,7 @@ type NetworkSelectionElement struct {
 
 Any other field set in the struct will be ignored by OVN-Kubernetes.
 
-When using the v`1.multus-cni.io/default-network` annotation, Multus strictly requires its value to reference an
+When using the `1.multus-cni.io/default-network` annotation, Multus strictly requires its value to reference an
 existing NAD. Multus then builds the CNI requests based on it.
 This proposal introduces a static default NAD object applied to the cluster. This object will serve as a
 stub to generate the CNI calls, preserving the current behavior:
