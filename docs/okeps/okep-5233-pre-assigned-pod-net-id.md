@@ -26,7 +26,6 @@ existing infrastructures.
 - Configurable default gateway and management address in Layer3 UDNs.
 
 ## Introduction
-
 Legacy workloads, particularly virtual machines, are often set up with static
 network configurations. When migrating to OVN-Kubernetes UDNs,
 it should be possible to integrate these gradually to prevent disruptions. 
@@ -236,22 +235,46 @@ The `NetworkSelectionElement` structure has an extensive list of fields, this en
 focuses only on the following:
 ```cgo
 type NetworkSelectionElement struct {
-	// IPRequest contains an optional requested IP addresses for this network
-	// attachment
-	IPRequest []string `json:"ips,omitempty"`
-	// MacRequest contains an optional requested MAC address for this
-	// network attachment
-	MacRequest string `json:"mac,omitempty"`
-	// IPAMClaimReference container the IPAMClaim name where the IPs for this
-	// attachment will be located.
-	IPAMClaimReference string `json:"ipam-claim-reference,omitempty"`
+    // Name contains the name of the Network object this element selects
+    Name string `json:"name"`
+    // Namespace contains the optional namespace that the network referenced
+    // by Name exists in
+    Namespace string `json:"namespace,omitempty"`
+    // IPRequest contains an optional requested IP addresses for this network
+    // attachment
+    IPRequest []string `json:"ips,omitempty"`
+    // MacRequest contains an optional requested MAC address for this
+    // network attachment
+    MacRequest string `json:"mac,omitempty"`
+    // IPAMClaimReference container the IPAMClaim name where the IPs for this
+    // attachment will be located.
+    IPAMClaimReference string `json:"ipam-claim-reference,omitempty"`
 }
 ```
 
 Any other field set in the struct will be ignored by OVN-Kubernetes.
-Both `Name` and `Namespace` are ignored as the primary UDN is known and cannot be changed.
-Note that `GatewayRequest` is not listed either, the default gateway is an attribute of the network is not going to be
-configurable per pod.
+
+When using the v`1.multus-cni.io/default-network` annotation, Multus strictly requires its value to reference an
+existing NAD. Multus then builds the CNI requests based on it.
+This proposal introduces a static default NAD object applied to the cluster. This object will serve as a
+stub to generate the CNI calls, preserving the current behavior:
+```yaml
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: default
+  namespace: ovn-kubernetes
+spec:
+  config: '{"cniVersion": "0.4.0", "name": "ovn-kubernetes", "type": "ovn-k8s-cni-overlay"}'
+```
+With this approach, users must configure the `Name` to `default` and the `Namespace` to `ovn-kubernetes`.
+This configuration ensures Multus still references the default network while OVN-Kubernetes will internally use the
+primary UDN to handle MAC/IP requests from the NSE.
+
+> The default NAD object specified above is already used when the default network is exposed through BGP as
+part of the route advertisement feature. The proposal is to have it available all the time. 
+
+
 With `k8s.ovn.org/primary-udn-ipamclaim` being deprecated in favor of the `IPAMClaimReference` field
 in the `NetworkSelectionElement` we have to define the expected behavior. To avoid conflicting 
 settings when `v1.multus-cni.io/default-network` is set the `k8s.ovn.org/primary-udn-ipamclaim` is 
@@ -261,6 +284,9 @@ Deprecation plan for the `k8s.ovn.org/primary-udn-ipamclaim` annotation:
 - release-N - emit a warning event stating that the annotation is deprecated and will be removed in a future release.
 - release-N+1 - fail to configure pods with the annotation set.
 - release-N+2 - remove any code handling the annotation, effectively ignoring it.
+
+Note that `GatewayRequest` is not listed, the default gateway is an attribute of the network is not going to be
+configurable per pod.
 
 ### Address allocation
 
@@ -333,11 +359,18 @@ If there is a requirement in the future another mechanism can be considered.
 
 ## Alternatives
 
-Instead of the [Pod network identity](#pod-network-identity) approach, we could expand the
+* Instead of the [Pod network identity](#pod-network-identity) approach, we could expand the
 IPAMClaim API. It currently lacks IP request capabilities, and using IPAMClaim for MAC addresses
 is confusing. Introducing a new API would mean deprecating the IPAMClaim, while managing
 upgrades and supporting both solutions for a period of time. This requires significant effort, which
 is not feasible at this time.
+
+* As described in the [NetworkSelectionElement annotation](#networkselectionelement-annotation) section, using the
+`v1.multus-cni.io/default-network` annotation means Multus strictly requires this annotation's value to reference an
+existing NAD. An alternative to the proposed approach would be to reference the NAD that defines the primary network.
+It was discarded as it would require OVN-Kubernetes to modify the CNI handling logic because multus
+would target the CNI requests towards the custom network. Additionally it would require users to determine the exact
+NAD name and namespace for every primary UDN pod needing custom MAC, IP, or IPAMClaim.
 
 ## References
 
