@@ -122,7 +122,8 @@ and [cluster UDN](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/a3d0a2b2
 // +kubebuilder:validation:XValidation:rule="!has(self.subnets) || !has(self.mtu) || !self.subnets.exists_one(i, isCIDR(i) && cidr(i).ip().family() == 6) || self.mtu >= 1280", message="MTU should be greater than or equal to 1280 when IPv6 subnet is used"
 // +kubebuilder:validation:XValidation:rule="!has(self.defaultGatewayIPs) || has(self.role) && self.role == 'Primary'", message="defaultGatewayIPs is only supported for Primary network"
 // +kubebuilder:validation:XValidation:rule="!has(self.nodeManagementIPs) || has(self.role) && self.role == 'Primary'", message="nodeManagementIPs is only supported for Primary network"
-// TODO: Add a CEL that checks that subnets contains defaultGatewayIPs/nodeManagementIPs if set
+// +kubebuilder:validation:XValidation:rule="!has(self.nodeManagementIPs) || self.nodeManagementIPs.all(ip, self.subnets.exists(subnet, cidr(subnet).containsIP(ip)))", message="nodeManagementIPs addresses be a part of the networks specified in the subnets field"
+// +kubebuilder:validation:XValidation:rule="!has(self.defaultGatewayIPs) || self.defaultGatewayIPs.all(ip, self.subnets.exists(subnet, cidr(subnet).containsIP(ip)))", message="defaultGatewayIPs addresses be a part of the networks specified in the subnets field"
 type Layer2Config struct {
 // Role describes the network role in the pod.
 //
@@ -166,7 +167,7 @@ JoinSubnets DualStackCIDRs `json:"joinSubnets,omitempty"`
 // Dual-stack clusters may set 2 IPs (one for each IP family), otherwise only 1 IP is allowed.
 // This field is only allowed for "Primary" network.
 // It is not recommended to set this field without explicit need and understanding of the OVN network topology.
-// When omitted, the platform will choose a reasonable default which is subject to change over time.
+// When omitted, the first IP address from the pod network subnet is used.
 //
 // +optional
 DefaultGatewayIPs DualStackIPs `json:"defaultGatewayIPs,omitempty"`
@@ -176,7 +177,7 @@ DefaultGatewayIPs DualStackIPs `json:"defaultGatewayIPs,omitempty"`
 // Dual-stack clusters may set 2 IPs (one for each IP family), otherwise only 1 IP is allowed.
 // This field is only allowed for "Primary" network.
 // It is not recommended to set this field without explicit need and understanding of the OVN network topology.
-// When omitted, the platform will choose a reasonable default which is subject to change over time.
+// When omitted, the second IP address from the pod network subnet is used.
 //
 // +optional
 NodeManagementIPs DualStackIPs `json:"nodeManagementIPs,omitempty"`
