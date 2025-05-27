@@ -2470,24 +2470,26 @@ func newGateway(
 		}
 
 		// resync flows on IP change
-		gw.nodeIPManager.OnChanged = func() {
-			klog.V(5).Info("Node addresses changed, re-syncing bridge flows")
-			if err := gw.openflowManager.updateBridgeFlowCache(gw.nodeIPManager.ListAddresses()); err != nil {
-				// very unlikely - somehow node has lost its IP address
-				klog.Errorf("Failed to re-generate gateway flows after address change: %v", err)
-			}
-			if gw.nodePortWatcher != nil {
-				npw, _ := gw.nodePortWatcher.(*nodePortWatcher)
-				npw.updateGatewayIPs(gw.nodeIPManager)
-			}
-			// Services create OpenFlow flows as well, need to update them all
-			if gw.servicesRetryFramework != nil {
-				if errs := gw.addAllServices(); len(errs) > 0 {
-					err := utilerrors.Join(errs...)
-					klog.Errorf("Failed to sync all services after node IP change: %v", err)
+		if gw.nodeIPManager != nil {
+			gw.nodeIPManager.OnChanged = func() {
+				klog.V(5).Info("Node addresses changed, re-syncing bridge flows")
+				if err := gw.openflowManager.updateBridgeFlowCache(gw.nodeIPManager.ListAddresses()); err != nil {
+					// very unlikely - somehow node has lost its IP address
+					klog.Errorf("Failed to re-generate gateway flows after address change: %v", err)
 				}
+				if gw.nodePortWatcher != nil {
+					npw, _ := gw.nodePortWatcher.(*nodePortWatcher)
+					npw.updateGatewayIPs(gw.nodeIPManager)
+				}
+				// Services create OpenFlow flows as well, need to update them all
+				if gw.servicesRetryFramework != nil {
+					if errs := gw.addAllServices(); len(errs) > 0 {
+						err := utilerrors.Join(errs...)
+						klog.Errorf("Failed to sync all services after node IP change: %v", err)
+					}
+				}
+				gw.openflowManager.requestFlowSync()
 			}
-			gw.openflowManager.requestFlowSync()
 		}
 
 		if config.Gateway.NodeportEnable {
