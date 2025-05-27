@@ -817,7 +817,7 @@ EOF
 
   rm -rf "${FRR_TMP_DIR}"
   # Add routes for pod networks dynamically into the github runner for return traffic to pass back
-  if [ -n "${JOB_NAME:-}" ] && [[ "$JOB_NAME" == *"shard-conformance"* ]] && [ "$ADVERTISE_DEFAULT_NETWORK" == "true" ]; then
+  if [ "$ADVERTISE_DEFAULT_NETWORK" = "true" ]; then
     echo "Adding routes for Kubernetes pod networks..."
     NODES=$(kubectl get nodes -o jsonpath='{.items[*].metadata.name}')
     echo "Found nodes: $NODES"
