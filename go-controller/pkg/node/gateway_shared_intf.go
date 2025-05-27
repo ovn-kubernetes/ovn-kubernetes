@@ -2445,6 +2445,9 @@ func newGateway(
 			gwBridge.eipMarkIPs = gw.bridgeEIPAddrManager.GetCache()
 		}
 		gw.nodeIPManager = newAddressManager(nodeName, kube, mgmtPort, watchFactory, gwBridge)
+		if gw.nodeIPManager == nil {
+			return fmt.Errorf("failed to allocate newAddressManager")
+		}
 
 		if config.OvnKubeNode.Mode == types.NodeModeFull {
 			// Delete stale masquerade resources if there are any. This is to make sure that there

@@ -563,26 +563,29 @@ func (b *bridgeConfiguration) getGatewayIface() string {
 func (b *bridgeConfiguration) updateInterfaceIPAddresses(node *corev1.Node) ([]*net.IPNet, error) {
 	b.Lock()
 	defer b.Unlock()
-	ifAddrs, err := getNetworkInterfaceIPAddresses(b.getGatewayIface())
-	if err != nil {
-		return nil, err
-	}
 
-	// For DPU, here we need to use the DPU host's IP address which is the tenant cluster's
-	// host internal IP address instead of the DPU's external bridge IP address.
-	if config.OvnKubeNode.Mode == types.NodeModeDPU {
-		nodeAddrStr, err := util.GetNodePrimaryIP(node)
+	var err error
+	var ifAddrs []*net.IPNet
+	if config.OvnKubeNode.Mode == types.NodeModeFull {
+		ifAddrs, err = getNetworkInterfaceIPAddresses(b.getGatewayIface())
+	} else {
+		// For DPU, here we need to use the DPU host's IP address which is the tenant cluster's
+		// host internal IP address instead of the DPU's external bridge IP address.
+		nodeAddrStr, err := util.GetDpuNodeIfAddrAnnotation(node)
 		if err != nil {
 			return nil, err
 		}
-		nodeAddr := net.ParseIP(nodeAddrStr)
-		if nodeAddr == nil {
+		nodeAddr, _, err := net.ParseCIDR(nodeAddrStr.IPv4)
+		if err != nil {
 			return nil, fmt.Errorf("failed to parse node IP address. %v", nodeAddrStr)
 		}
 		ifAddrs, err = getDPUHostPrimaryIPAddresses(nodeAddr, ifAddrs)
 		if err != nil {
 			return nil, err
 		}
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	b.ips = ifAddrs

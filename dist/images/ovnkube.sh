@@ -178,7 +178,13 @@ ovnkube_loglevel=${OVNKUBE_LOGLEVEL:-4}
 # two gateway modes that we support using `images/daemonset.sh` tool
 ovn_gateway_mode=${OVN_GATEWAY_MODE:-"shared"}
 ovn_gateway_opts=${OVN_GATEWAY_OPTS:-""}
+if [ -f /etc/init-output/ovn_gateway_opts ]; then
+   ovn_gateway_opts="${ovn_gateway_opts} $(cat /etc/init-output/ovn_gateway_opts)"
+fi
 ovn_gateway_router_subnet=${OVN_GATEWAY_ROUTER_SUBNET:-""}
+if [ -f /etc/init-output/ovn_gateway_router_subnet ]; then
+   ovn_gateway_router_subnet="$(cat /etc/init-output/ovn_gateway_router_subnet)"
+fi
 
 net_cidr=${OVN_NET_CIDR:-10.128.0.0/14/23}
 svc_cidr=${OVN_SVC_CIDR:-172.30.0.0/16}
@@ -323,6 +329,10 @@ ovn_nohostsubnet_label=${OVN_NOHOSTSUBNET_LABEL:-""}
 # OVN_DISABLE_REQUESTEDCHASSIS - disable requested-chassis option during pod creation
 # should be set to true when dpu nodes are in the cluster
 ovn_disable_requestedchassis=${OVN_DISABLE_REQUESTEDCHASSIS:-false}
+node_name=$(ovs-vsctl --if-exists get Open_vSwitch . external_ids:host-k8s-nodename | tr -d '\"')
+if [[ ! -z $node_name ]]; then
+  K8S_NODE=$node_name
+fi
 
 # Determine the ovn rundir.
 if [[ -f /usr/bin/ovn-appctl ]]; then
@@ -1356,6 +1366,7 @@ ovn-master() {
     ${network_qos_enabled_flag} \
     ${ovn_enable_dnsnameresolver_flag} \
     ${nohostsubnet_label_option} \
+    ${ovn_stateless_netpol_enable_flag} \
     ${ovn_disable_requestedchassis_flag} \
     --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
     --gateway-mode=${ovn_gateway_mode} ${ovn_gateway_opts} \
@@ -1625,6 +1636,21 @@ ovnkube-controller() {
     ovn_observ_enable_flag="--enable-observability"
   fi
   echo "ovn_observ_enable_flag=${ovn_observ_enable_flag}"
+
+
+  ovn_stateless_netpol_enable_flag=
+  if [[ ${ovn_stateless_netpol_enable} == "true" ]]; then
+          ovn_stateless_netpol_enable_flag="--enable-stateless-netpol"
+  fi
+  echo "ovn_stateless_netpol_enable_flag: ${ovn_stateless_netpol_enable_flag}"
+
+  if [[ ${ovnkube_node_mode} == "dpu" ]]; then
+    K8S_NODE=$(ovs-vsctl --if-exists get Open_vSwitch . external_ids:host-k8s-nodename | tr -d '\"')
+    if [[ ${K8S_NODE} == "" ]]; then
+      echo "Couldn't get the required Host K8s Nodename. Exiting..."
+      exit 1
+    fi
+  fi
 
   echo "=============== ovnkube-controller ========== MASTER ONLY"
   /usr/bin/ovnkube --init-ovnkube-controller ${K8S_NODE} \
@@ -2054,6 +2080,19 @@ ovnkube-controller-with-node() {
   fi
   echo "ovn_observ_enable_flag=${ovn_observ_enable_flag}"
 
+  if [[ ${ovnkube_node_mode} == "dpu" ]]; then
+    K8S_NODE=$(ovs-vsctl --if-exists get Open_vSwitch . external_ids:host-k8s-nodename | tr -d '\"')
+    if [[ ${K8S_NODE} == "" ]]; then
+      echo "Couldn't get the required Host K8s Nodename. Exiting..."
+      exit 1
+    fi
+  fi
+
+  ovn_stateless_netpol_enable_flag=
+  if [[ ${ovn_stateless_netpol_enable} == "true" ]]; then
+          ovn_stateless_netpol_enable_flag="--enable-stateless-netpol"
+  fi
+
   echo "=============== ovnkube-controller-with-node --init-ovnkube-controller-with-node=========="
   /usr/bin/ovnkube --init-ovnkube-controller ${K8S_NODE} --init-node ${K8S_NODE} \
     ${anp_enabled_flag} \
@@ -2355,7 +2394,10 @@ ovn-controller() {
   wait_for_event ovs_ready
 
   echo "=============== ovn-controller - (wait for ready_to_start_node)"
-  wait_for_event ready_to_start_node
+  if [[ ${ovnkube_node_mode} != "dpu-host" ]] && [[ ${ovn_enable_interconnect} != "true" ]]; then
+    echo "=============== ovn-node - (wait for ready_to_start_node)"
+    wait_for_event ready_to_start_node
+  fi
 
   echo "ovn_nbdb ${ovn_nbdb}   ovn_sbdb ${ovn_sbdb}"
   echo "ovn_nbdb_conn ${ovn_nbdb_conn}"
@@ -2400,7 +2442,10 @@ ovn-node() {
   fi
 
   echo "=============== ovn-node - (wait for ready_to_start_node)"
-  wait_for_event ready_to_start_node
+  if [[ ${ovnkube_node_mode} != "dpu-host" ]] && [[ ${ovn_enable_interconnect} != "true" ]]; then
+    echo "=============== ovn-node - (wait for ready_to_start_node)"
+    wait_for_event ready_to_start_node
+  fi
 
   echo "ovn_nbdb ${ovn_nbdb}   ovn_sbdb ${ovn_sbdb}  ovn_nbdb_conn ${ovn_nbdb_conn}"
 
