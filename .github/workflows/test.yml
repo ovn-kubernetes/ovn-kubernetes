@@ -614,7 +614,9 @@ jobs:
     - name: Run Tests
       # e2e tests take ~60 minutes normally, 120 should be more than enough
       # set 3 hours for control-plane tests as these might take a while
-      timeout-minutes: ${{ matrix.target == 'control-plane' && 180 || matrix.target == 'control-plane-helm' && 180 || matrix.target == 'external-gateway' && 180 || 120 }}
+      # give 10m extra to give ginkgo chance to timeout before github so that we
+      # get its output
+      timeout-minutes: ${{ matrix.target == 'bgp' && 190 || matrix.target == 'control-plane' && 190 || matrix.target == 'control-plane-helm' && 190 || matrix.target == 'external-gateway' && 190 || 130 }}
       run: |
         # used by e2e diagnostics package
         export OVN_IMAGE="ovn-daemonset-fedora:pr"
