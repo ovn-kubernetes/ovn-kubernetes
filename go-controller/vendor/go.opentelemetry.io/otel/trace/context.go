@@ -22,7 +22,11 @@ func ContextWithSpanContext(parent context.Context, sc SpanContext) context.Cont
 	return ContextWithSpan(parent, nonRecordingSpan{sc: sc})
 }
 
+<<<<<<< HEAD
 // ContextWithRemoteSpanContext returns a copy of parent with rsc set explicitly
+=======
+// ContextWithRemoteSpanContext returns a copy of parent with rsc set explicly
+>>>>>>> f04730a16 (ovspinning: detect reservedSystemCPUs)
 // as a remote SpanContext and as the current Span. The Span implementation
 // that wraps rsc is non-recording and performs no operations other than to
 // return rsc as the SpanContext from the SpanContext method.

@@ -260,6 +260,7 @@ func (ts TraceState) Get(key string) string {
 	return ""
 }
 
+<<<<<<< HEAD
 // Walk walks all key value pairs in the TraceState by calling f
 // Iteration stops if f returns false.
 func (ts TraceState) Walk(f func(key, value string) bool) {
@@ -270,6 +271,8 @@ func (ts TraceState) Walk(f func(key, value string) bool) {
 	}
 }
 
+=======
+>>>>>>> f04730a16 (ovspinning: detect reservedSystemCPUs)
 // Insert adds a new list-member defined by the key/value pair to the
 // TraceState. If a list-member already exists for the given key, that
 // list-member's value is updated. The new or updated list-member is always
