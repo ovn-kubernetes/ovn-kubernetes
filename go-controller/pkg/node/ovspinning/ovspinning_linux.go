@@ -16,7 +16,10 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"golang.org/x/sys/unix"
 
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/klog/v2"
+	kubeletconfigv1beta1 "k8s.io/kubelet/config/v1beta1"
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1"
 	"k8s.io/utils/cpuset"
 
@@ -28,6 +31,7 @@ var tickDuration time.Duration = 1 * time.Second
 var getOvsVSwitchdPIDFn func() (string, error) = util.GetOvsVSwitchdPID
 var getOvsDBServerPIDFn func() (string, error) = util.GetOvsDBServerPID
 var featureEnablerFile string = "/etc/openvswitch/enable_dynamic_cpu_affinity"
+var kubeletConfigFilePath = "/host/etc/kubernetes/kubelet.conf"
 
 // Run monitors OVS daemon's processes (ovs-vswitchd and ovsdb-server) and sets their CPU affinity
 // masks to that of the current process.
@@ -64,6 +68,16 @@ func Run(ctx context.Context, stopCh <-chan struct{}, podResCli podresourcesapi.
 		fsnotifyErrors = fileWatcher.Errors
 		defer fileWatcher.Close()
 	}
+
+	// we only need to check reservedSystemCPUs once at startup.
+	// any change to KubeletConfig file triggers a node reboot, which also restarts the ovnkube-node pod.
+	// as a result, this logic is re-executed automatically after every change.
+	reservedCPUs, err := getReservedCPUs(kubeletConfigFilePath)
+	if err != nil {
+		klog.Warningf("Failed to get reservedSystemCPUs: %v", err)
+		return
+	}
+	klog.Infof("OVS CPU dynamic pinning reservedSystemCPUs set: %s", reservedCPUs)
 
 	ticker := time.NewTicker(tickDuration)
 	defer ticker.Stop()
@@ -108,6 +122,8 @@ func Run(ctx context.Context, stopCh <-chan struct{}, podResCli podresourcesapi.
 			if err != nil {
 				klog.Warningf("Error while trying to get system non pinned CPUs: %v", err)
 			}
+			// add reservedSystemCPUs as well, because PodResourcesAPI does not count for them.
+			cpus = cpus.Union(reservedCPUs)
 			err = setOvsVSwitchdCPUAffinity(&cpus)
 			if err != nil {
 				klog.Warningf("Error while aligning ovs-vswitchd CPUs to current process: %v", err)
@@ -325,4 +341,36 @@ func convertInt64ToInt(int64s []int64) []int {
 		ints[i] = int(v)
 	}
 	return ints
+}
+
+func getReservedCPUs(path string) (cpuset.CPUSet, error) {
+	scheme := runtime.NewScheme()
+	codecs := serializer.NewCodecFactory(scheme)
+
+	if err := kubeletconfigv1beta1.AddToScheme(scheme); err != nil {
+		return cpuset.CPUSet{}, fmt.Errorf("failed to add kubelet config scheme: %w", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return cpuset.CPUSet{}, fmt.Errorf("failed to read file: %w", err)
+	}
+
+	obj, _, err := codecs.UniversalDecoder(kubeletconfigv1beta1.SchemeGroupVersion).Decode(data, nil, nil)
+	if err != nil {
+		return cpuset.CPUSet{}, fmt.Errorf("failed to decode kubelet config: %w", err)
+	}
+
+	kc, ok := obj.(*kubeletconfigv1beta1.KubeletConfiguration)
+	if !ok {
+		return cpuset.CPUSet{}, fmt.Errorf("decoded object is not a KubeletConfiguration")
+	}
+
+	// kc.ReservedSystemCPUs could be empty. it's not a desired state, but not considered as an error either.
+	cset, err := cpuset.Parse(kc.ReservedSystemCPUs)
+	if err != nil {
+		return cpuset.CPUSet{}, fmt.Errorf("failed to parse reservedSystemCPUs: %w", err)
+	}
+
+	return cset, nil
 }
