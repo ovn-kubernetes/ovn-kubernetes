@@ -751,6 +751,13 @@ deploy_bgp_external_server() {
     echo "FRR kind network IPv6: ${bgp_network_frr_v6}"
     $OCI_BIN exec bgpserver ip -6 route replace default via "$bgp_network_frr_v6"
   fi
+  # disable the default route to make sure the container only routes accross
+  # directly connected or learnt networks (doing this at the very end since
+  # docker changes the routing table when a new network is connected)
+  docker exec frr ip route delete default
+  docker exec frr ip route
+  docker exec frr ip -6 route delete default
+  docker exec frr ip -6 route
 }
 
 destroy_bgp() {
@@ -817,7 +824,7 @@ EOF
 
   rm -rf "${FRR_TMP_DIR}"
   # Add routes for pod networks dynamically into the github runner for return traffic to pass back
-  if [ -n "${JOB_NAME:-}" ] && [[ "$JOB_NAME" == *"shard-conformance"* ]] && [ "$ADVERTISE_DEFAULT_NETWORK" == "true" ]; then
+  if [ "$ADVERTISE_DEFAULT_NETWORK" = "true" ]; then
     echo "Adding routes for Kubernetes pod networks..."
     NODES=$(kubectl get nodes -o jsonpath='{.items[*].metadata.name}')
     echo "Found nodes: $NODES"
@@ -835,7 +842,7 @@ EOF
         # Add IPv4 route
         if [ -n "$ipv4_subnet" ] && [ -n "$node_ipv4" ]; then
           echo "Adding IPv4 route for $node ($node_ipv4): $ipv4_subnet"
-          sudo ip route add $ipv4_subnet via $node_ipv4
+          sudo ip route replace $ipv4_subnet via $node_ipv4
         fi
       fi
 
@@ -847,7 +854,7 @@ EOF
         
         if [ -n "$ipv6_subnet" ] && [ -n "$node_ipv6" ]; then
           echo "Adding IPv6 route for $node ($node_ipv6): $ipv6_subnet"
-          sudo ip -6 route add $ipv6_subnet via $node_ipv6
+          sudo ip -6 route replace $ipv6_subnet via $node_ipv6
         fi
       fi
     done
