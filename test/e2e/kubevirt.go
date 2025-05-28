@@ -1753,14 +1753,14 @@ write_files:
 
 			var externalContainer infraapi.ExternalContainer
 			if td.role == udnv1.NetworkRolePrimary {
-				primaryProviderNetwork, err := infraprovider.Get().PrimaryNetwork()
+				providerNetwork, err := infraprovider.Get().GetNetwork(containerNetwork(td))
 				Expect(err).ShouldNot(HaveOccurred(), "primary network must be available to attach containers")
 				externalContainerPort := infraprovider.Get().GetExternalContainerPort()
 				externalContainerName := namespace + "-iperf"
 				externalContainerSpec := infraapi.ExternalContainer{
 					Name:    externalContainerName,
 					Image:   images.IPerf3(),
-					Network: primaryProviderNetwork,
+					Network: providerNetwork,
 					Args:    []string{"sleep infinity"},
 					ExtPort: externalContainerPort,
 				}
