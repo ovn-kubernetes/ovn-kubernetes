@@ -515,7 +515,9 @@ func (zic *ZoneInterconnectHandler) cleanupNode(nodeName string) error {
 		return err
 	}
 
-	// Delete any static routes in the cluster router for this node
+	// Delete any static routes in the cluster router for this node.
+	// skip types.NetworkExternalID check in the predicate function as this static route may be deleted
+	// before types.NetworkExternalID external-ids is set correctly during upgrade.
 	p := func(lrsr *nbdb.LogicalRouterStaticRoute) bool {
 		return lrsr.ExternalIDs["ic-node"] == nodeName
 	}
@@ -573,11 +575,15 @@ func (zic *ZoneInterconnectHandler) addRemoteNodeStaticRoutes(node *corev1.Node,
 	addRoute := func(prefix, nexthop string) error {
 		logicalRouterStaticRoute := nbdb.LogicalRouterStaticRoute{
 			ExternalIDs: map[string]string{
-				"ic-node": node.Name,
+				"ic-node":               node.Name,
+				types.NetworkExternalID: zic.GetNetworkName(),
 			},
 			Nexthop:  nexthop,
 			IPPrefix: prefix,
 		}
+		// Note that because logical router static routes were originally created without types.NetworkExternalID
+		// external-ids, skip types.NetworkExternalID check in the predicate function to replace existing static route
+		// with correct external-ids on an upgrade scenario.
 		p := func(lrsr *nbdb.LogicalRouterStaticRoute) bool {
 			return lrsr.IPPrefix == prefix &&
 				lrsr.Nexthop == nexthop &&
@@ -613,6 +619,8 @@ func (zic *ZoneInterconnectHandler) addRemoteNodeStaticRoutes(node *corev1.Node,
 
 // deleteLocalNodeStaticRoutes deletes the static routes added by the function addRemoteNodeStaticRoutes
 func (zic *ZoneInterconnectHandler) deleteLocalNodeStaticRoutes(node *corev1.Node, nodeTransitSwitchPortIPs []*net.IPNet) error {
+	// skip types.NetworkExternalID check in the predicate function as this static route may be deleted
+	// before types.NetworkExternalID external-ids is set correctly during upgrade.
 	deleteRoute := func(prefix, nexthop string) error {
 		p := func(lrsr *nbdb.LogicalRouterStaticRoute) bool {
 			return lrsr.IPPrefix == prefix &&
