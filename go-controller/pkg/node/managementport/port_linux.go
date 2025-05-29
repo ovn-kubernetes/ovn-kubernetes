@@ -101,7 +101,7 @@ func NewManagementPortController(
 	}
 
 	// setup NFT sets early as gateway initialization depends on it
-	err = setupManagementPortNFTSets()
+	err = SetupManagementPortNFTSets()
 	if err != nil {
 		return nil, err
 	}
@@ -299,7 +299,7 @@ func setupManagementPortConfig(link netlink.Link, cfg *managementPortConfig, rou
 // setupManagementPortNFTSets sets up the NFT sets that the management port SNAR
 // rules rely on. These sets are written to by other componets so they are setup
 // independantly and as early as possible.
-func setupManagementPortNFTSets() error {
+func SetupManagementPortNFTSets() error {
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {
 		return err
