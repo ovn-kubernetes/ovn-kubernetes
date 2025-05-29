@@ -783,7 +783,7 @@ var _ = Describe("Management Port tests", func() {
 					ipv4:    &fakeMgmtPortIPFamilyConfig,
 					netInfo: netInfo,
 				}
-				err := setupManagementPortNFTSets()
+				err := SetupManagementPortNFTSets()
 				Expect(err).NotTo(HaveOccurred())
 				err = setupManagementPortNFTChain(types.K8sMgmtIntfName, &fakeMgmtPortConfig)
 				Expect(err).NotTo(HaveOccurred())

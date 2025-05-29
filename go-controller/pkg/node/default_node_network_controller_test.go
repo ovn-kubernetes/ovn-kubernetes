@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	adminpolicybasedrouteclient "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube/mocks"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/managementport"
 	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
@@ -1238,4 +1240,325 @@ add element inet ovn-kubernetes no-pmtud-remote-node-ips-v6 { 2002:db8:1::4 }
 
 	})
 
+	Describe("node ingress snat exclude subnets", func() {
+
+		var (
+			testNS ns.NetNS
+			nc     *DefaultNodeNetworkController
+			app    *cli.App
+		)
+
+		const (
+			nodeName = "my-node"
+		)
+
+		BeforeEach(func() {
+			var err error
+			testNS, err = testutils.NewNS()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(config.PrepareTestConfig()).To(Succeed())
+
+			app = cli.NewApp()
+			app.Name = "test"
+			app.Flags = config.Flags
+		})
+
+		AfterEach(func() {
+			util.ResetNetLinkOpMockInst() // other tests in this package rely directly on netlink (e.g. gateway_init_linux_test.go)
+			Expect(testNS.Close()).To(Succeed())
+		})
+
+		Context("with a cluster in IPv4 mode", func() {
+			const (
+				ethName string = "lo1337"
+				nodeIP  string = "169.254.254.60"
+				ethCIDR string = nodeIP + "/24"
+			)
+			var link netlink.Link
+
+			BeforeEach(func() {
+				config.IPv4Mode = true
+				config.IPv6Mode = false
+				config.Gateway.Mode = config.GatewayModeShared
+
+				// Note we must do this in default netNS because
+				// nc.WatchNodes() will spawn goroutines which we cannot lock to the testNS
+				ovntest.AddLink(ethName)
+
+				var err error
+				link, err = netlink.LinkByName(ethName)
+				Expect(err).NotTo(HaveOccurred())
+				err = netlink.LinkSetUp(link)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Add an IP address
+				addr, err := netlink.ParseAddr(ethCIDR)
+				Expect(err).NotTo(HaveOccurred())
+				addr.Scope = int(netlink.SCOPE_UNIVERSE)
+				err = netlink.AddrAdd(link, addr)
+				Expect(err).NotTo(HaveOccurred())
+
+			})
+
+			AfterEach(func() {
+				err := netlink.LinkDel(link)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			ovntest.OnSupportedPlatformsIt("empty annotation on startup", func() {
+
+				app.Action = func(_ *cli.Context) error {
+					node := corev1.Node{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:        nodeName,
+							Annotations: map[string]string{},
+						},
+						Status: corev1.NodeStatus{
+							Addresses: []corev1.NodeAddress{
+								{
+									Type:    corev1.NodeInternalIP,
+									Address: nodeIP,
+								},
+							},
+						},
+					}
+
+					nft := nodenft.SetFakeNFTablesHelper()
+
+					kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+						Items: []corev1.Node{node},
+					})
+					fakeClient := &util.OVNNodeClientset{
+						KubeClient:             kubeFakeClient,
+						AdminPolicyRouteClient: adminpolicybasedrouteclient.NewSimpleClientset(),
+						NetworkAttchDefClient:  nadfake.NewSimpleClientset(),
+					}
+
+					stop := make(chan struct{})
+					wf, err := factory.NewNodeWatchFactory(fakeClient, nodeName)
+					Expect(err).NotTo(HaveOccurred())
+					wg := &sync.WaitGroup{}
+					defer func() {
+						close(stop)
+						wg.Wait()
+						wf.Shutdown()
+					}()
+
+					err = wf.Start()
+					Expect(err).NotTo(HaveOccurred())
+					routeManager := routemanager.NewController()
+					cnnci := NewCommonNodeNetworkControllerInfo(kubeFakeClient, fakeClient.AdminPolicyRouteClient, wf, nil, nodeName, routeManager)
+					nc = newDefaultNodeNetworkController(cnnci, stop, wg, routeManager, nil)
+					nc.initRetryFrameworkForNode()
+					err = setupPMTUDNFTSets()
+					Expect(err).NotTo(HaveOccurred())
+					err = setupPMTUDNFTChain()
+					Expect(err).NotTo(HaveOccurred())
+					defaultNetConfig := &bridgeUDNConfiguration{
+						ofPortPatch: "patch-breth0_ov",
+					}
+					nc.Gateway = &gateway{
+						openflowManager: &openflowManager{
+							flowCache: map[string][]string{},
+							defaultBridge: &bridgeConfiguration{
+								netConfig: map[string]*bridgeUDNConfiguration{
+									types.DefaultNetworkName: defaultNetConfig,
+								},
+							},
+						},
+					}
+
+					err = managementport.SetupManagementPortNFTSets()
+					Expect(err).NotTo(HaveOccurred())
+
+					// must run route manager manually which is usually started with nc.Start()
+					wg.Add(1)
+					go func() {
+						defer GinkgoRecover()
+						defer wg.Done()
+						nc.routeManager.Run(stop, 10*time.Second)
+						Expect(err).NotTo(HaveOccurred())
+					}()
+					By("no nftables elements should present at startup")
+
+					err = nc.WatchNodes()
+					Expect(err).NotTo(HaveOccurred())
+					Expect(nft.Dump()).NotTo(ContainSubstring("add element inet ovn-kubernetes mgmtport-no-snat-subnets-v4 { 192.168.1.0/24 }"))
+					Expect(nft.Dump()).NotTo(ContainSubstring("add element inet ovn-kubernetes mgmtport-no-snat-subnets-v6 { fd00::/64 }"))
+
+					By("adding subnets to node annotation should update nftables elements")
+					node.Annotations[util.OvnNodeDontSNATSubnets] = `["192.167.1.0/24"]`
+
+					_, err = kubeFakeClient.CoreV1().Nodes().Update(context.TODO(), &node, metav1.UpdateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					Eventually(func() bool {
+						cleanDump := strings.ReplaceAll(nft.Dump(), "\r", "")
+						return strings.Contains(cleanDump, "add element inet ovn-kubernetes mgmtport-no-snat-subnets-v4 { 192.167.1.0/24 }") &&
+							!strings.Contains(cleanDump, "add element inet ovn-kubernetes mgmtport-no-snat-subnets-v4 { 192.168.1.0/24 }") &&
+							!strings.Contains(cleanDump, "add element inet ovn-kubernetes mgmtport-no-snat-subnets-v6 { fd00::/64 }")
+					}).WithTimeout(2 * time.Second).Should(BeTrue())
+
+					By("adding extra subnets to node annotation should update nftables elements")
+
+					node.Annotations[util.OvnNodeDontSNATSubnets] = `["192.167.1.0/24","fd00::/64","192.169.1.0/24","fd11::/64"]`
+
+					_, err = kubeFakeClient.CoreV1().Nodes().Update(context.TODO(), &node, metav1.UpdateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					Eventually(func() bool {
+						cleanDump := strings.ReplaceAll(nft.Dump(), "\r", "")
+						return strings.Contains(cleanDump, "add element inet ovn-kubernetes mgmtport-no-snat-subnets-v4 { 192.167.1.0/24 }") &&
+							strings.Contains(cleanDump, "add element inet ovn-kubernetes mgmtport-no-snat-subnets-v4 { 192.169.1.0/24 }") &&
+							strings.Contains(cleanDump, "add element inet ovn-kubernetes mgmtport-no-snat-subnets-v6 { fd00::/64 }")
+					}).WithTimeout(2 * time.Second).Should(BeTrue())
+
+					By("deleting node should remove nftables elements")
+					err = kubeFakeClient.CoreV1().Nodes().Delete(context.TODO(), nodeName, metav1.DeleteOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					Eventually(func() bool {
+						cleanDump := strings.ReplaceAll(nft.Dump(), "\r", "")
+						return !strings.Contains(cleanDump, "add element inet ovn-kubernetes mgmtport-no-snat-subnets-v4 { 192.167.1.0/24 }") &&
+							!strings.Contains(cleanDump, "add element inet ovn-kubernetes mgmtport-no-snat-subnets-v4 { 192.169.1.0/24 }") &&
+							!strings.Contains(cleanDump, "add element inet ovn-kubernetes mgmtport-no-snat-subnets-v6 { fd00::/64 }")
+
+					}).WithTimeout(2 * time.Second).Should(BeTrue())
+					return nil
+				}
+
+				err := app.Run([]string{app.Name})
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			ovntest.OnSupportedPlatformsIt("non-empty annotation on startup", func() {
+
+				app.Action = func(_ *cli.Context) error {
+					node := corev1.Node{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: nodeName,
+							Annotations: map[string]string{
+								util.OvnNodeDontSNATSubnets: `["192.168.1.0/24","fd00::/64"]`,
+							},
+						},
+						Status: corev1.NodeStatus{
+							Addresses: []corev1.NodeAddress{
+								{
+									Type:    corev1.NodeInternalIP,
+									Address: nodeIP,
+								},
+							},
+						},
+					}
+
+					nft := nodenft.SetFakeNFTablesHelper()
+
+					kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+						Items: []corev1.Node{node},
+					})
+					fakeClient := &util.OVNNodeClientset{
+						KubeClient:             kubeFakeClient,
+						AdminPolicyRouteClient: adminpolicybasedrouteclient.NewSimpleClientset(),
+						NetworkAttchDefClient:  nadfake.NewSimpleClientset(),
+					}
+
+					stop := make(chan struct{})
+					wf, err := factory.NewNodeWatchFactory(fakeClient, nodeName)
+					Expect(err).NotTo(HaveOccurred())
+					wg := &sync.WaitGroup{}
+					defer func() {
+						close(stop)
+						wg.Wait()
+						wf.Shutdown()
+					}()
+
+					err = wf.Start()
+					Expect(err).NotTo(HaveOccurred())
+					routeManager := routemanager.NewController()
+					cnnci := NewCommonNodeNetworkControllerInfo(kubeFakeClient, fakeClient.AdminPolicyRouteClient, wf, nil, nodeName, routeManager)
+					nc = newDefaultNodeNetworkController(cnnci, stop, wg, routeManager, nil)
+					nc.initRetryFrameworkForNode()
+					err = setupPMTUDNFTSets()
+					Expect(err).NotTo(HaveOccurred())
+					err = setupPMTUDNFTChain()
+					Expect(err).NotTo(HaveOccurred())
+					defaultNetConfig := &bridgeUDNConfiguration{
+						ofPortPatch: "patch-breth0_ov",
+					}
+					nc.Gateway = &gateway{
+						openflowManager: &openflowManager{
+							flowCache: map[string][]string{},
+							defaultBridge: &bridgeConfiguration{
+								netConfig: map[string]*bridgeUDNConfiguration{
+									types.DefaultNetworkName: defaultNetConfig,
+								},
+							},
+						},
+					}
+
+					err = managementport.SetupManagementPortNFTSets()
+					Expect(err).NotTo(HaveOccurred())
+
+					// must run route manager manually which is usually started with nc.Start()
+					wg.Add(1)
+					go func() {
+						defer GinkgoRecover()
+						defer wg.Done()
+						nc.routeManager.Run(stop, 10*time.Second)
+						Expect(err).NotTo(HaveOccurred())
+					}()
+					By("expected nftables elements should present at startup")
+
+					err = nc.WatchNodes()
+					Expect(err).NotTo(HaveOccurred())
+					Expect(nft.Dump()).To(ContainSubstring("add element inet ovn-kubernetes mgmtport-no-snat-subnets-v4 { 192.168.1.0/24 }"))
+					Expect(nft.Dump()).To(ContainSubstring("add element inet ovn-kubernetes mgmtport-no-snat-subnets-v6 { fd00::/64 }"))
+
+					By("editing subnets on node annotation should update nftables elements")
+					node.Annotations[util.OvnNodeDontSNATSubnets] = `["192.167.1.0/24"]`
+
+					_, err = kubeFakeClient.CoreV1().Nodes().Update(context.TODO(), &node, metav1.UpdateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					Eventually(func() bool {
+						cleanDump := strings.ReplaceAll(nft.Dump(), "\r", "")
+						return strings.Contains(cleanDump, "add element inet ovn-kubernetes mgmtport-no-snat-subnets-v4 { 192.167.1.0/24 }") &&
+							!strings.Contains(cleanDump, "add element inet ovn-kubernetes mgmtport-no-snat-subnets-v4 { 192.168.1.0/24 }") &&
+							!strings.Contains(cleanDump, "add element inet ovn-kubernetes mgmtport-no-snat-subnets-v6 { fd00::/64 }")
+					}).WithTimeout(2 * time.Second).Should(BeTrue())
+
+					By("adding extra subnets to node annotation should update nftables elements")
+
+					node.Annotations[util.OvnNodeDontSNATSubnets] = `["192.167.1.0/24","fd00::/64","192.169.1.0/24","fd11::/64"]`
+
+					_, err = kubeFakeClient.CoreV1().Nodes().Update(context.TODO(), &node, metav1.UpdateOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					Eventually(func() bool {
+						cleanDump := strings.ReplaceAll(nft.Dump(), "\r", "")
+						return strings.Contains(cleanDump, "add element inet ovn-kubernetes mgmtport-no-snat-subnets-v4 { 192.167.1.0/24 }") &&
+							strings.Contains(cleanDump, "add element inet ovn-kubernetes mgmtport-no-snat-subnets-v4 { 192.169.1.0/24 }") &&
+							strings.Contains(cleanDump, "add element inet ovn-kubernetes mgmtport-no-snat-subnets-v6 { fd00::/64 }")
+					}).WithTimeout(2 * time.Second).Should(BeTrue())
+
+					By("deleting node should remove nftables elements")
+					err = kubeFakeClient.CoreV1().Nodes().Delete(context.TODO(), nodeName, metav1.DeleteOptions{})
+					Expect(err).NotTo(HaveOccurred())
+
+					Eventually(func() bool {
+						cleanDump := strings.ReplaceAll(nft.Dump(), "\r", "")
+						return !strings.Contains(cleanDump, "add element inet ovn-kubernetes mgmtport-no-snat-subnets-v4 { 192.167.1.0/24 }") &&
+							!strings.Contains(cleanDump, "add element inet ovn-kubernetes mgmtport-no-snat-subnets-v4 { 192.169.1.0/24 }") &&
+							!strings.Contains(cleanDump, "add element inet ovn-kubernetes mgmtport-no-snat-subnets-v6 { fd00::/64 }")
+
+					}).WithTimeout(2 * time.Second).Should(BeTrue())
+					return nil
+				}
+
+				err := app.Run([]string{app.Name})
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+		})
+	})
 })
