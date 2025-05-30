@@ -388,30 +388,7 @@ install_kubevirt() {
 
     local kubevirt_stable_release_url=$(get_kubevirt_release_url "stable")
     kubectl -n kubevirt patch kubevirt kubevirt --type=json --patch '[{"op":"add","path":"/spec/configuration/network","value":{}},{"op":"add","path":"/spec/configuration/network/binding","value":{"l2bridge":{"domainAttachmentType":"managedTap","migration":{}}}}]'
-    
-    if [ ! -d "./bin" ]
-    then
-        mkdir -p ./bin
-        if_error_exit "Failed to create bin dir!"
-    fi
 
-    if [[ "$OSTYPE" == "linux-gnu" ]]; then
-        OS_TYPE="linux"
-    elif [[ "$OSTYPE" == "darwin"* ]]; then
-        OS_TYPE="darwin"
-    fi
-
-    pushd ./bin
-       if [ ! -f ./virtctl ]; then
-           kubevirt_stable_release_url=$(get_kubevirt_release_url "stable")
-           cli_name="virtctl-${kubevirt_stable_release_url##*/}-${OS_TYPE}-${ARCH}"
-           curl -LO "${kubevirt_stable_release_url}/${cli_name}"
-           mv ${cli_name} virtctl
-           if_error_exit "Failed to download virtctl!"
-       fi
-    popd
-
-    chmod +x ./bin/virtctl
 }
 
 install_cert_manager() {

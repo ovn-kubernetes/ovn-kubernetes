@@ -40,3 +40,7 @@ func (k kind) ExternalBridgeName() string {
 func (k kind) PrimaryInterfaceName() string {
 	return "eth0"
 }
+
+func (k kind) SecondaryInterfaceName() string {
+	return "eth1"
+}
