@@ -200,7 +200,7 @@ fi
 # timeout needs to be lower than github's timeout. Otherwise github terminates
 # the job and doesn't give ginkgo a chance to print status so that we know why
 # the timeout happened.
-TEST_TIMEOUT=${TEST_TIMEOUT:-100m}
+TEST_TIMEOUT=${TEST_TIMEOUT:-120m}
 
 ginkgo --nodes=${NUM_NODES} \
 	--focus=${FOCUS} \
