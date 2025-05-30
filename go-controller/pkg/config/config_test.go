@@ -229,6 +229,7 @@ enable-multi-networkpolicy=false
 enable-network-segmentation=false
 enable-preconfigured-udn-addresses=false
 enable-route-advertisements=false
+routed-udn-isolation=Disabled
 enable-interconnect=false
 enable-multi-external-gateway=false
 enable-admin-network-policy=false
@@ -601,6 +602,7 @@ var _ = Describe("Config Operations", func() {
 			"enable-network-segmentation=true",
 			"enable-preconfigured-udn-addresses=true",
 			"enable-route-advertisements=true",
+			"routed-udn-isolation=Enabled",
 			"enable-interconnect=true",
 			"enable-multi-external-gateway=true",
 			"enable-admin-network-policy=true",
@@ -692,6 +694,7 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(OVNKubernetesFeature.EnableNetworkSegmentation).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnablePreconfiguredUDNAddresses).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnableRouteAdvertisements).To(gomega.BeTrue())
+			gomega.Expect(OVNKubernetesFeature.RoutedUDNIsolation).To(gomega.Equal(RoutedUDNIsolationEnabled))
 			gomega.Expect(OVNKubernetesFeature.EnableInterconnect).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnableMultiExternalGateway).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnableAdminNetworkPolicy).To(gomega.BeTrue())
@@ -800,6 +803,7 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(OVNKubernetesFeature.EnableNetworkSegmentation).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnablePreconfiguredUDNAddresses).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnableRouteAdvertisements).To(gomega.BeTrue())
+			gomega.Expect(OVNKubernetesFeature.RoutedUDNIsolation).To(gomega.Equal(RoutedUDNIsolationEnabled))
 			gomega.Expect(OVNKubernetesFeature.EnableMultiNetworkPolicy).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnableInterconnect).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnableMultiExternalGateway).To(gomega.BeTrue())
@@ -876,6 +880,7 @@ var _ = Describe("Config Operations", func() {
 			"-enable-network-segmentation=true",
 			"-enable-preconfigured-udn-addresses=true",
 			"-enable-route-advertisements=true",
+			"-routed-udn-isolation=Enabled",
 			"-enable-interconnect=true",
 			"-enable-multi-external-gateway=true",
 			"-enable-admin-network-policy=true",
