@@ -483,7 +483,7 @@ func (zic *ZoneInterconnectHandler) cleanupNode(nodeName string) error {
 
 	// Delete any static routes in the cluster router for this node
 	p := func(lrsr *nbdb.LogicalRouterStaticRoute) bool {
-		return lrsr.ExternalIDs["ic-node"] == nodeName
+		return lrsr.ExternalIDs["ic-node"] == nodeName && lrsr.ExternalIDs[types.NetworkExternalID] == zic.GetNetworkName()
 	}
 	if err := libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicate(zic.nbClient, zic.networkClusterRouterName, p); err != nil {
 		return fmt.Errorf("failed to cleanup static routes for the node %s: %w", nodeName, err)
@@ -538,7 +538,8 @@ func (zic *ZoneInterconnectHandler) addRemoteNodeStaticRoutes(node *corev1.Node,
 	addRoute := func(prefix, nexthop string) error {
 		logicalRouterStaticRoute := nbdb.LogicalRouterStaticRoute{
 			ExternalIDs: map[string]string{
-				"ic-node": node.Name,
+				"ic-node":               node.Name,
+				types.NetworkExternalID: zic.GetNetworkName(),
 			},
 			Nexthop:  nexthop,
 			IPPrefix: prefix,
@@ -546,7 +547,8 @@ func (zic *ZoneInterconnectHandler) addRemoteNodeStaticRoutes(node *corev1.Node,
 		p := func(lrsr *nbdb.LogicalRouterStaticRoute) bool {
 			return lrsr.IPPrefix == prefix &&
 				lrsr.Nexthop == nexthop &&
-				lrsr.ExternalIDs["ic-node"] == node.Name
+				lrsr.ExternalIDs["ic-node"] == node.Name &&
+				lrsr.ExternalIDs[types.NetworkExternalID] == zic.GetNetworkName()
 		}
 		if err := libovsdbops.CreateOrReplaceLogicalRouterStaticRouteWithPredicate(zic.nbClient, zic.networkClusterRouterName, &logicalRouterStaticRoute, p); err != nil {
 			return fmt.Errorf("failed to create static route: %w", err)
@@ -614,7 +616,8 @@ func (zic *ZoneInterconnectHandler) deleteLocalNodeStaticRoutes(node *corev1.Nod
 		p := func(lrsr *nbdb.LogicalRouterStaticRoute) bool {
 			return lrsr.IPPrefix == prefix &&
 				lrsr.Nexthop == nexthop &&
-				lrsr.ExternalIDs["ic-node"] == node.Name
+				lrsr.ExternalIDs["ic-node"] == node.Name &&
+				lrsr.ExternalIDs[types.NetworkExternalID] == zic.GetNetworkName()
 		}
 		if err := libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicate(zic.nbClient, zic.networkClusterRouterName, p); err != nil {
 			return fmt.Errorf("failed to delete static route: %w", err)
