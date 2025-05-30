@@ -531,11 +531,25 @@ func (cm *ControllerManager) Reconcile(_ string, _, _ util.NetInfo) error {
 }
 
 func (cm *ControllerManager) configureAdvertisedNetworkIsolation() error {
-	if config.OVNKubernetesFeature.RoutedUDNIsolation == config.RoutedUDNIsolationDisabled {
-		klog.Infof("Skip creating global advertised networks addressset in loose UDN isolation mode")
+	addressSetFactory := addressset.NewOvnAddressSetFactory(cm.nbClient, config.IPv4Mode, config.IPv6Mode)
+	if config.OVNKubernetesFeature.RoutedUDNIsolation == config.RoutedUDNIsolationEnabled {
+		_, err := addressSetFactory.EnsureAddressSet(ovn.GetAdvertisedNetworkSubnetsAddressSetDBIDs())
+		return err
+	}
+	klog.Infof("Ensure global advertised networks addressset and tier-0 drop ACLs are removed in loose UDN isolation mode")
+	addrSet, _ := addressSetFactory.GetAddressSet(ovn.GetAdvertisedNetworkSubnetsAddressSetDBIDs())
+	if addrSet == nil {
 		return nil
 	}
-	addressSetFactory := addressset.NewOvnAddressSetFactory(cm.nbClient, config.IPv4Mode, config.IPv6Mode)
-	_, err := addressSetFactory.EnsureAddressSet(ovn.GetAdvertisedNetworkSubnetsAddressSetDBIDs())
-	return err
+	dropACLIDs := ovn.GetAdvertisedNetworkSubnetsDropACLdbIDs()
+	dropACLPredicate := libovsdbops.GetPredicate[*nbdb.ACL](dropACLIDs, nil)
+	dropACLs, _ := libovsdbops.FindACLsWithPredicate(cm.nbClient, dropACLPredicate)
+	if len(dropACLs) > 0 {
+		p := func(_ *nbdb.LogicalSwitch) bool { return true }
+		err := libovsdbops.RemoveACLsFromLogicalSwitchesWithPredicate(cm.nbClient, p, dropACLs...)
+		if err != nil {
+			return err
+		}
+	}
+	return addrSet.Destroy()
 }
