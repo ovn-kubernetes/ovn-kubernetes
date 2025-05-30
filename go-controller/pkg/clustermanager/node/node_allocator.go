@@ -195,27 +195,24 @@ func (na *NodeAllocator) NeedsNodeAllocation(node *corev1.Node) bool {
 	}
 
 	// ovn node check
-	// allocation is all or nothing, so if one field was allocated from:
-	// nodeSubnets, joinSubnet, layer 2 tunnel id, then all of them were
 	if na.hasNodeSubnetAllocation() {
-		if util.HasNodeHostSubnetAnnotation(node, na.netInfo.GetNetworkName()) {
-			return false
+		if !util.HasNodeHostSubnetAnnotation(node, na.netInfo.GetNetworkName()) {
+			return true
 		}
 	}
-
 	if na.hasJoinSubnetAllocation() {
-		if util.HasNodeGatewayRouterJoinNetwork(node, na.netInfo.GetNetworkName()) {
-			return false
+		if !util.HasNodeGatewayRouterJoinNetwork(node, na.netInfo.GetNetworkName()) {
+			return true
 		}
 	}
 
 	if util.IsNetworkSegmentationSupportEnabled() && na.netInfo.IsPrimaryNetwork() && util.DoesNetworkRequireTunnelIDs(na.netInfo) {
-		if util.HasUDNLayer2NodeGRLRPTunnelID(node, na.netInfo.GetNetworkName()) {
-			return false
+		if !util.HasUDNLayer2NodeGRLRPTunnelID(node, na.netInfo.GetNetworkName()) {
+			return true
 		}
 	}
 
-	return true
+	return false
 
 }
 
