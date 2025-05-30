@@ -38,6 +38,9 @@ const DefaultVXLANPort = 4789
 
 const DefaultDBTxnTimeout = time.Second * 100
 
+// DefaultEphemeralPortRange is used for unit testing only
+const DefaultEphemeralPortRange = "32768-60999"
+
 // The following are global config parameters that other modules may access directly
 var (
 	// Build information. Populated at build-time.
@@ -494,6 +497,10 @@ type GatewayConfig struct {
 	DisableForwarding bool `gcfg:"disable-forwarding"`
 	// AllowNoUplink (disabled by default) controls if the external gateway bridge without an uplink port is allowed in local gateway mode.
 	AllowNoUplink bool `gcfg:"allow-no-uplink"`
+	// EphemeralPortRange is the range of ports used by egress SNAT operations in OVN. Specifically for NAT where
+	// the source IP of the NAT will be a shared Node IP address. If unset, the value will be determined by sysctl lookup
+	// for the kernel's ephemeral range: net.ipv4.ip_local_port_range. Format is "<min port>-<max port>".
+	EphemeralPortRange string `gfcg:"ephemeral-port-range"`
 }
 
 // OvnAuthConfig holds client authentication and location details for
@@ -664,6 +671,9 @@ func PrepareTestConfig() error {
 	Kubernetes.DisableRequestedChassis = false
 	EnableMulticast = false
 	Default.OVSDBTxnTimeout = 5 * time.Second
+	if Gateway.Mode != GatewayModeDisabled {
+		Gateway.EphemeralPortRange = DefaultEphemeralPortRange
+	}
 
 	if err := completeConfig(); err != nil {
 		return err
@@ -1509,6 +1519,14 @@ var OVNGatewayFlags = []cli.Flag{
 		Usage:       "Allow the external gateway bridge without an uplink port in local gateway mode",
 		Destination: &cliConfig.Gateway.AllowNoUplink,
 	},
+	&cli.StringFlag{
+		Name: "ephemeral-port-range",
+		Usage: "The port range in '<min port>-<max port>' format for OVN to use when SNAT'ing to a node IP. " +
+			"This range should not collide with the node port range being used in Kubernetes. If not provided, " +
+			"the default value will be derived from checking the sysctl value of net.ipv4.ip_local_port_range on the node.",
+		Destination: &cliConfig.Gateway.EphemeralPortRange,
+		Value:       Gateway.EphemeralPortRange,
+	},
 	// Deprecated CLI options
 	&cli.BoolFlag{
 		Name:        "init-gateways",
@@ -1917,6 +1935,19 @@ func buildGatewayConfig(ctx *cli.Context, cli, file *config) error {
 		if !found {
 			return fmt.Errorf("invalid gateway mode %q: expect one of %s", string(Gateway.Mode), strings.Join(validModes, ","))
 		}
+
+		if len(Gateway.EphemeralPortRange) > 0 {
+			if !isValidEphemeralPortRange(Gateway.EphemeralPortRange) {
+				return fmt.Errorf("invalid ephemeral-port-range, should be in the format <min port>-<max port>")
+			}
+		} else {
+			// auto-detect ephermal range
+			portRange, err := getKernelEphemeralPortRange()
+			if err != nil {
+				return fmt.Errorf("unable to auto-detect ephemeral port range to use with OVN")
+			}
+			Gateway.EphemeralPortRange = portRange
+		}
 	}
 
 	// Options are only valid if Mode is not disabled
@@ -1926,6 +1957,9 @@ func buildGatewayConfig(ctx *cli.Context, cli, file *config) error {
 		}
 		if Gateway.NextHop != "" {
 			return fmt.Errorf("gateway next-hop option %q not allowed when gateway is disabled", Gateway.NextHop)
+		}
+		if len(Gateway.EphemeralPortRange) > 0 {
+			return fmt.Errorf("gateway ephemeral port range option not allowed when gateway is disabled")
 		}
 	}
 
