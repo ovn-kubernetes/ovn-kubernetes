@@ -316,6 +316,8 @@ parse_args() {
                                                   ;;
             -adv | --advertise-default-network) ADVERTISE_DEFAULT_NETWORK=true
                                                   ;;
+            -rnd | --routed-udn-isolation-disable)  ROUTED_UDN_ISOLATION=Disabled
+                                                  ;;
             -ce | --enable-central )              OVN_ENABLE_INTERCONNECT=false
                                                   CENTRAL_ARG_PROVIDED=true
                                                   ;;
@@ -417,6 +419,7 @@ print_params() {
      echo "ENABLE_MULTI_NET = $ENABLE_MULTI_NET"
      echo "ENABLE_NETWORK_SEGMENTATION= $ENABLE_NETWORK_SEGMENTATION"
      echo "ENABLE_ROUTE_ADVERTISEMENTS= $ENABLE_ROUTE_ADVERTISEMENTS"
+     echo "ROUTED_UDN_ISOLATION= $ROUTED_UDN_ISOLATION"
      echo "ADVERTISE_DEFAULT_NETWORK = $ADVERTISE_DEFAULT_NETWORK"
      echo "ENABLE_PRE_CONF_UDN_ADDR = $ENABLE_PRE_CONF_UDN_ADDR"
      echo "OVN_ENABLE_INTERCONNECT = $OVN_ENABLE_INTERCONNECT"
@@ -663,6 +666,7 @@ set_default_params() {
     echo "Preconfigured UDN addresses requires interconnect to be enabled (-ic)"
     exit 1
   fi
+  ROUTED_UDN_ISOLATION=${ROUTED_UDN_ISOLATION:-Enabled}
   ADVERTISE_DEFAULT_NETWORK=${ADVERTISE_DEFAULT_NETWORK:-false}
   OVN_COMPACT_MODE=${OVN_COMPACT_MODE:-false}
   if [ "$OVN_COMPACT_MODE" == true ]; then
@@ -916,6 +920,7 @@ create_ovn_kube_manifests() {
     --preconfigured-udn-addresses-enable="${ENABLE_PRE_CONF_UDN_ADDR}" \
     --route-advertisements-enable="${ENABLE_ROUTE_ADVERTISEMENTS}" \
     --advertise-default-network="${ADVERTISE_DEFAULT_NETWORK}" \
+    --routed-udn-isolation="${ROUTED_UDN_ISOLATION}" \
     --ovnkube-metrics-scale-enable="${OVN_METRICS_SCALE_ENABLE}" \
     --compact-mode="${OVN_COMPACT_MODE}" \
     --enable-interconnect="${OVN_ENABLE_INTERCONNECT}" \
