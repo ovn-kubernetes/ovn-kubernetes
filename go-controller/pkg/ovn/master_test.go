@@ -1233,6 +1233,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 	ginkgo.DescribeTable(
 		"reconciles pod network SNATs from syncGateway",
 		func(condition func(*DefaultNetworkController) error, expectedExtraNATs ...*nbdb.NAT) {
+			config.OVNKubernetesFeature.RoutedUDNIsolation = true
 			app.Action = func(ctx *cli.Context) error {
 				_, err := config.InitConfig(ctx, nil, nil)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())

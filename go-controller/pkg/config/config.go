@@ -421,6 +421,7 @@ type OVNKubernetesFeatureConfig struct {
 	EnableMultiNetwork              bool `gcfg:"enable-multi-network"`
 	EnableNetworkSegmentation       bool `gcfg:"enable-network-segmentation"`
 	EnableRouteAdvertisements       bool `gcfg:"enable-route-advertisements"`
+	RoutedUDNIsolation              bool `gcfg:"routed-udn-isolation"`
 	// This feature requires a kernel fix https://github.com/torvalds/linux/commit/7f3287db654395f9c5ddd246325ff7889f550286
 	// to work on a kind cluster. Flag allows to disable it for current CI, will be turned on when github runners have this fix.
 	DisableUDNHostIsolation      bool `gcfg:"disable-udn-host-isolation"`
@@ -1093,6 +1094,12 @@ var OVNK8sFeatureFlags = []cli.Flag{
 		Usage:       "Configure to use route advertisements feature with ovn-kubernetes.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnableRouteAdvertisements,
 		Value:       OVNKubernetesFeature.EnableRouteAdvertisements,
+	},
+	&cli.BoolFlag{
+		Name:        "routed-udn-isolation",
+		Usage:       "Configure to use pod isolation for BGP advertised UDN networks",
+		Destination: &cliConfig.OVNKubernetesFeature.RoutedUDNIsolation,
+		Value:       OVNKubernetesFeature.RoutedUDNIsolation,
 	},
 	&cli.BoolFlag{
 		Name:        "enable-stateless-netpol",
