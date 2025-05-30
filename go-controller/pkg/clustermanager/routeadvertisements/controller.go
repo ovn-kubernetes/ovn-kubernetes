@@ -684,21 +684,29 @@ func (c *Controller) generateFRRConfiguration(
 					Prefixes: advertisePrefixes,
 				},
 			}
-			neighbor.ToReceive = frrtypes.Receive{
-				Allowed: frrtypes.AllowedInPrefixes{
-					Mode: frrtypes.AllowRestricted,
-				},
-			}
-			if advertisements.Has(ratypes.PodNetwork) {
-				for _, prefix := range receivePrefixes {
-					neighbor.ToReceive.Allowed.Prefixes = append(neighbor.ToReceive.Allowed.Prefixes,
-						frrtypes.PrefixSelector{
-							Prefix: prefix,
-							LE:     selectedNetworks.prefixLength[prefix],
-							GE:     selectedNetworks.prefixLength[prefix],
-						},
-					)
+			if len(ra.Spec.NetworkSelectors) > 0 &&
+				ra.Spec.NetworkSelectors[0].NetworkSelectionType == apitypes.DefaultNetwork {
+				klog.Infof("Allow receiving prefixes from neighbor %s for default pod network RA %s",
+					neighbor.Address, ra.Name)
+				neighbor.ToReceive = frrtypes.Receive{
+					Allowed: frrtypes.AllowedInPrefixes{
+						Mode: frrtypes.AllowRestricted,
+					},
 				}
+				if advertisements.Has(ratypes.PodNetwork) {
+					for _, prefix := range receivePrefixes {
+						neighbor.ToReceive.Allowed.Prefixes = append(neighbor.ToReceive.Allowed.Prefixes,
+							frrtypes.PrefixSelector{
+								Prefix: prefix,
+								LE:     selectedNetworks.prefixLength[prefix],
+								GE:     selectedNetworks.prefixLength[prefix],
+							},
+						)
+					}
+				}
+			} else {
+				klog.Infof("Skip receiving prefixes from neighbor %s for non default pod network RA %s",
+					neighbor.Address, ra.Name)
 			}
 			targetRouter.Neighbors = append(targetRouter.Neighbors, neighbor)
 		}

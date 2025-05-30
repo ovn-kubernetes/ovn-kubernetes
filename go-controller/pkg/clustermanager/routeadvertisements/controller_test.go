@@ -499,7 +499,7 @@ func TestController_reconcile(t *testing.T) {
 					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
 					Routers: []*testRouter{
 						{ASN: 1, Prefixes: []string{"1.2.0.0/24", "1.3.0.0/24", "1.4.0.0/16", "1.5.0.0/16"}, Imports: []string{"black", "blue", "green", "red"}, Neighbors: []*testNeighbor{
-							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.2.0.0/24", "1.3.0.0/24", "1.4.0.0/16", "1.5.0.0/16"}, Receive: []string{"1.2.0.0/16/24", "1.3.0.0/16/24", "1.4.0.0/16", "1.5.0.0/16"}},
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.2.0.0/24", "1.3.0.0/24", "1.4.0.0/16", "1.5.0.0/16"}},
 						}},
 						{ASN: 1, VRF: "black", Imports: []string{"default"}},
 						{ASN: 1, VRF: "blue", Imports: []string{"default"}},
@@ -740,13 +740,13 @@ func TestController_reconcile(t *testing.T) {
 					NodeSelector: map[string]string{"kubernetes.io/hostname": "node1"},
 					Routers: []*testRouter{
 						{ASN: 1, Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
-							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.1.1.0/24"}, Receive: []string{"1.1.0.0/16/24"}},
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.1.1.0/24"}},
 						}},
 						{ASN: 1, VRF: "red", Prefixes: []string{"1.2.1.0/24"}, Neighbors: []*testNeighbor{
-							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.2.1.0/24"}, Receive: []string{"1.2.0.0/16/24"}},
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.2.1.0/24"}},
 						}},
 						{ASN: 1, VRF: "green", Prefixes: []string{"1.4.0.0/16"}, Neighbors: []*testNeighbor{
-							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.4.0.0/16"}, Receive: []string{"1.4.0.0/16"}},
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.4.0.0/16"}},
 						}},
 					},
 				},
@@ -756,7 +756,7 @@ func TestController_reconcile(t *testing.T) {
 					NodeSelector: map[string]string{"kubernetes.io/hostname": "node2"},
 					Routers: []*testRouter{
 						{ASN: 1, Prefixes: []string{"1.1.2.0/24"}, Neighbors: []*testNeighbor{
-							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.1.2.0/24"}, Receive: []string{"1.1.0.0/16/24"}},
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.1.2.0/24"}},
 						}},
 					},
 				},
@@ -766,10 +766,10 @@ func TestController_reconcile(t *testing.T) {
 					NodeSelector: map[string]string{"kubernetes.io/hostname": "node2"},
 					Routers: []*testRouter{
 						{ASN: 1, VRF: "red", Prefixes: []string{"1.2.2.0/24"}, Neighbors: []*testNeighbor{
-							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.2.2.0/24"}, Receive: []string{"1.2.0.0/16/24"}},
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.2.2.0/24"}},
 						}},
 						{ASN: 1, VRF: "green", Prefixes: []string{"1.4.0.0/16"}, Neighbors: []*testNeighbor{
-							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.4.0.0/16"}, Receive: []string{"1.4.0.0/16"}},
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.4.0.0/16"}},
 						}},
 					},
 				},
