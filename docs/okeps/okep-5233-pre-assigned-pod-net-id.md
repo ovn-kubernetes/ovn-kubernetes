@@ -219,7 +219,10 @@ type DualStackIPs []IP
 
 #### IPAMClaim API changes
 
-- TODO: Add status conditions to the IPAMClaim CRD, this will be an external enhancement in the network-plumbing group
+The following pull request is tracking the IPAMClaim API change that introduces the status conditions:
+https://github.com/k8snetworkplumbingwg/ipamclaims/pull/9
+
+[IPAMClaim CRD doc](https://docs.google.com/document/d/1OQIJIrCtsYpR5O44w0hpoJ2TyKBz1Du-KhRT4RtrAjk) - `IPAM allocation on behalf of other entities` section
 
 ### Implementation Details
 
@@ -444,4 +447,6 @@ NAD name and namespace for every primary UDN pod needing custom MAC, IP, or IPAM
 
 ## References
 
-TODO: IPAMClaim status conditions enhancement
+* [IPAMClaim CRD doc](https://docs.google.com/document/d/1OQIJIrCtsYpR5O44w0hpoJ2TyKBz1Du-KhRT4RtrAjk) - `IPAM allocation on behalf of other entities` section
+
+* IPAMClaim status conditions pull request: https://github.com/k8snetworkplumbingwg/ipamclaims/pull/9
