@@ -43,6 +43,9 @@ so that it matches the gateway IP used by the workload previously.
 - As a user, I want the ability to configure a new primary Layer2 UDN with a custom management IP
 address to prevent IP conflicts with the workloads I am importing.
 
+- As a user, I want to reserve a range of IP addresses within the primary Layer2 UDN network that OVN-Kubernetes
+avoids for automatic assignment, but from which I can still request specific IPs for my workloads.
+
 - As a user, I want to assign a predefined IP address and MAC address to a pod to ensure the
 network identity of my imported workload is maintained.
 
@@ -124,6 +127,9 @@ and [cluster UDN](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/a3d0a2b2
 // +kubebuilder:validation:XValidation:rule="!has(self.nodeManagementIPs) || has(self.role) && self.role == 'Primary'", message="nodeManagementIPs is only supported for Primary network"
 // +kubebuilder:validation:XValidation:rule="!has(self.nodeManagementIPs) || self.nodeManagementIPs.all(ip, self.subnets.exists(subnet, cidr(subnet).containsIP(ip)))", message="nodeManagementIPs addresses be a part of the networks specified in the subnets field"
 // +kubebuilder:validation:XValidation:rule="!has(self.defaultGatewayIPs) || self.defaultGatewayIPs.all(ip, self.subnets.exists(subnet, cidr(subnet).containsIP(ip)))", message="defaultGatewayIPs addresses be a part of the networks specified in the subnets field"
+// +kubebuilder:validation:XValidation:rule="!has(self.excludeSubnets) || has(self.excludeSubnets) && has(self.subnets)", message="excludeSubnets must be unset when subnets is unset"
+// +kubebuilder:validation:XValidation:rule="!has(self.excludeSubnets) || self.subnets.map(s, self.excludeSubnets.map(e, cidr(s).containCIDR(e)))", message="excludeSubnets should be in range of CIDRs specified in subnets"
+// +kubebuilder:validation:XValidation:rule="!has(self.excludeSubnets) || self.excludeSubnets.all(e, self.subnets.exists(s, cidr(s).containsCIDR(cidr(e))))",message="excludeSubnets must be subnetworks of the networks specified in the subnets field",fieldPath=".excludeSubnets"
 type Layer2Config struct {
 // Role describes the network role in the pod.
 //
@@ -151,6 +157,19 @@ MTU int32 `json:"mtu,omitempty"`
 //
 // +optional
 Subnets DualStackCIDRs `json:"subnets,omitempty"`
+
+// excludeSubnets list of CIDRs removed from the specified CIDRs in `subnets`.
+// excludeSubnets is optional. When omitted no IP address is excluded and all IP address specified by `subnets` subject to be automatically assigned.
+// Each item should be in range of the specified CIDR(s) in `subnets`.
+// The maximal exceptions allowed is 25.
+// The format should match standard CIDR notation (for example, "10.128.0.0/16").
+// This field must be omitted if `subnets` is unset or `ipam.mode` is `Disabled`.
+// For example:
+// Given: `subnets: "10.0.0.0/24"`, `excludeSubnets: "10.0.0.200/30", the following addresses will not be assigned to pods: `10.0.0.201`, `10.0.0.202`.
+// +optional
+// +kubebuilder:validation:MinItems=1
+// +kubebuilder:validation:MaxItems=25
+ExcludeSubnets []CIDR `json:"excludeSubnets,omitempty"`
 
 // JoinSubnets are used inside the OVN network topology.
 //
