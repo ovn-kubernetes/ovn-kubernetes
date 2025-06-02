@@ -322,6 +322,50 @@ address with the `0A:58` constant prefix(e.g. `0A:58:SHA[0]:SHA[1]:SHA[2]:SHA[3]
 Although unlikely, we need to implement logic that ensures that the MAC address requested through
 the `NetworkSelectionElement` does not conflict with any other configured address on the UDN
 (including addresses consumed by OVN-Kubernetes).
+
+OVN-Kubernetes already persists the IP and MAC addresses in the `k8s.ovn.org/pod-networks` annotation for each pod:
+```
+// PodAnnotation describes the assigned network details for a single pod network. (The
+// actual annotation may include the equivalent of multiple PodAnnotations.)
+type PodAnnotation struct {
+// IPs are the pod's assigned IP addresses/prefixes
+IPs []*net.IPNet
+// MAC is the pod's assigned MAC address
+MAC net.HardwareAddr
+// Gateways are the pod's gateway IP addresses; note that there may be
+// fewer Gateways than IPs.
+Gateways []net.IP
+
+// GatewayIPv6LLA is the IPv6 Link Local Address for the pod's gateway, that is the address
+// that will be set as gateway with router advertisements
+// generated from the gateway router from the node where the pod is running.
+GatewayIPv6LLA net.IP
+
+// Routes are additional routes to add to the pod's network namespace
+Routes []PodRoute
+
+// TunnelID assigned to each pod for layer2 secondary networks
+TunnelID int
+
+// Role defines what role this network plays for the given pod.
+// Expected values are:
+// (1) "primary" if this network is the primary network of the pod.
+//     The "default" network is the primary network of any pod usually
+//     unless user-defined-network-segmentation feature has been activated.
+//     If network segmentation feature is enabled then any user defined
+//     network can be the primary network of the pod.
+// (2) "secondary" if this network is the secondary network of the pod.
+//     Only user defined networks can be secondary networks for a pod.
+// (3) "infrastructure-locked" is applicable only to "default" network if
+//     a user defined network is the "primary" network for this pod. This
+//     signifies the "default" network is only used for probing and
+//     is otherwise locked for all intents and purposes.
+// At a given time a pod can have only 1 network with role:"primary"
+Role string
+}
+```
+This annotation will be used to build an initial cache of allocated addresses at startup, which will then be updated
+dynamically at runtime and used for conflict detection.
 A similar approach is required for IP address conflict detection.
 When a conflict is detected the pod should not start and an appropriate event should be emited.
 
