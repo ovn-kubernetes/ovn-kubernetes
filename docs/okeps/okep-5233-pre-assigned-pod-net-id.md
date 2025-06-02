@@ -340,6 +340,10 @@ The following scenarios should be covered in testing:
 * Imported VM workloads can live-migrate to another node without any additional traffic disruption.
 * 'v1.multus-cni.io/default-network' cannot be changed after the pod was created.
 * It should be possible to configure the pods MAC or the IP address without configuring the other.
+* When `excludeSubnets` is configured automatic IP allocation should not use addresses specified in it.
+* It should be possible to configure the pods IP address using the 'v1.multus-cni.io/default-network'
+even if the address is a part of the `excludeSubnets`.
+* Requesting an IP address that is not a part of the networks subnet should fail.
 * Detect MAC and IP address conflicts between the requested addresses for a newly created pods and the addresses that
 are already allocated in the network.
 * After configuring custom default gateway and management addresses on a Layer2 UDN the previous default
