@@ -79,6 +79,7 @@ It is important that OVN-Kubernetes tries to handle potential MAC and IP address
 the realm of the overlay network in a clear and predictable fashion whenever possible.
 
 ```mermaid
+%%{init: { 'sequence': {'messageAlign': 'left'} }}%%
 sequenceDiagram
 actor User
 participant K8s_API_Server as "K8s API Server"
@@ -86,7 +87,7 @@ participant OVN_K_Controller as "OVN-Kubernetes"
 
 note over User, K8s_API_Server: Pre-Step: User defines UDN <br> (Optional) with custom Default Gateway / Management IP
 
-User->>K8s_API_Server: Create Pod <br> metadata.annotations: <br> 'v1.multus-cni.io/default-network': <br> [{ IPRequest: ['...'], MacRequest: '...', IPAMClaimReference: 'my-claim' }]
+User->>K8s_API_Server: Create Pod with annotation: <br> 'v1.multus-cni.io/default-network': <br> [{ <br> name: 'default', <br> namespace: 'ovn-kubernetes',<br> ips: ['10.0.0.10'], <br> mac: '00:1A:2B:3C:4D:5E', <br> ipam-claim-reference: 'my-claim' <br> }]
 
 
 K8s_API_Server->>OVN_K_Controller: Notify: New Pod Spec
