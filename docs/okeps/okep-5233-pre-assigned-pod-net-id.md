@@ -231,9 +231,10 @@ is required to instruct OVN-Kubernetes on whether to process the annotation desc
 
 #### NetworkSelectionElement annotation
 
-The `v1.multus-cni.io/default-network` annotation should only be processed for new pods, 
-modifying it after the addresses were allocated won't be reflected in the pods network 
-configuration and this should be blocked through a
+Currently, the `v1.multus-cni.io/default-network` annotation is only processed for the cluster default network.
+This enhancement will this, allowing it to also be applied to pods created in the primary Layer2 UDN.
+The annotation should only be processed for new pods, modifying it after the addresses were allocated won't
+be reflected in the pods network configuration and this should be blocked through a
 [Validating Admission Policy](https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/):
 ```
 apiVersion: admissionregistration.k8s.io/v1
