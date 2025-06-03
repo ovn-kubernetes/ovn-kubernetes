@@ -194,7 +194,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 			framework.Logf("Annotating the external gateway test namespace to a container gw: %s ", exGWIpAlt1)
 			e2ekubectl.RunKubectlOrDie(f.Namespace.Name, annotateArgs...)
 
-			podCIDR, _, err := getNodePodCIDRs(node.Name)
+			podCIDR, _, err := getNodePodCIDRs(node.Name, "default")
 			if err != nil {
 				framework.Failf("Error retrieving the pod cidr from %s %v", node.Name, err)
 			}
@@ -401,7 +401,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 				nodeIP = primaryNetworkInf.IPv6
 			}
 			framework.Logf("the pod side node is %s and the source node ip is %s", workerNodeInfo.name, nodeIP)
-			podCIDR, _, err := getNodePodCIDRs(workerNodeInfo.name)
+			podCIDR, _, err := getNodePodCIDRs(workerNodeInfo.name, "default")
 			if err != nil {
 				framework.Failf("Error retrieving the pod cidr from %s %v", workerNodeInfo.name, err)
 			}
@@ -2072,7 +2072,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 				ginkgo.By("Check if conntrack entries for ECMP routes are removed for the deleted external gateway if traffic is UDP")
 
 				podConnEntriesWithMACLabelsSet = 0 //we don't have any remaining gateways left
-				totalPodConnEntries = 4
+				totalPodConnEntries = 2
 				gomega.Eventually(func() int {
 					n := pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, macAddressGW)
 					klog.Infof("Number of entries with macAddressGW %s:%d", macAddressGW, n)
