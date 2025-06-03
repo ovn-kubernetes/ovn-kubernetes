@@ -2051,7 +2051,7 @@ var _ = ginkgo.Describe("e2e br-int flow monitoring export validation", func() {
 
 })
 
-func getNodePodCIDRs(nodeName string) (string, string, error) {
+func getNodePodCIDRs(nodeName, netName string) (string, string, error) {
 	// retrieve the pod cidr for the worker node
 	jsonFlag := "jsonpath='{.metadata.annotations.k8s\\.ovn\\.org/node-subnets}'"
 	kubectlOut, err := e2ekubectl.RunKubectl("default", "get", "node", nodeName, "-o", jsonFlag)
@@ -2066,7 +2066,7 @@ func getNodePodCIDRs(nodeName string) (string, string, error) {
 	ssSubnets := make(map[string]string)
 	if err := json.Unmarshal([]byte(annotation), &ssSubnets); err == nil {
 		// If only one subnet, determine if it's v4 or v6
-		if subnet, ok := ssSubnets["default"]; ok {
+		if subnet, ok := ssSubnets[netName]; ok {
 			if strings.Contains(subnet, ":") {
 				ipv6CIDR = subnet
 			} else {
@@ -2078,7 +2078,7 @@ func getNodePodCIDRs(nodeName string) (string, string, error) {
 
 	dsSubnets := make(map[string][]string)
 	if err := json.Unmarshal([]byte(annotation), &dsSubnets); err == nil {
-		if subnets, ok := dsSubnets["default"]; ok && len(subnets) > 0 {
+		if subnets, ok := dsSubnets[netName]; ok && len(subnets) > 0 {
 			// Classify each subnet as IPv4 or IPv6
 			for _, subnet := range subnets {
 				if strings.Contains(subnet, ":") {
@@ -2091,7 +2091,7 @@ func getNodePodCIDRs(nodeName string) (string, string, error) {
 		}
 	}
 
-	return "", "", fmt.Errorf("could not parse annotation %q", annotation)
+	return "", "", fmt.Errorf("could not parse annotation %q for network %s", annotation, netName)
 }
 
 var _ = ginkgo.Describe("e2e delete databases", func() {
