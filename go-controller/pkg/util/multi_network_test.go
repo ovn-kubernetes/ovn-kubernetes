@@ -180,7 +180,7 @@ func TestParseNetconf(t *testing.T) {
             "netAttachDefName": "default/tenantred"
     }
 `,
-			expectedError: fmt.Errorf("error parsing Network Attachment Definition ns1/nad1: net-attach-def not managed by OVN"),
+			expectedError: fmt.Errorf("net-attach-def not managed by OVN"),
 		},
 		{
 			desc: "attachment definition with IPAM key defined, using a wrong type",
@@ -1153,6 +1153,16 @@ func TestSubnetOverlapCheck(t *testing.T) {
                     "netAttachDefName": "ns1/nad1"
                 }
 			`,
+		},
+		{
+			desc: "return error when the network is not ovnk",
+			inputNetAttachDefConfigSpec: `
+                {
+                    "name": "test",
+                    "type": "sriov-cni"
+                }
+			`,
+			expectedError: ErrorAttachDefNotOvnManaged,
 		},
 	}
 
