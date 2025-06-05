@@ -1810,8 +1810,9 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 				time.Sleep(100 * time.Millisecond)
 				goroutinesNumInit := runtime.NumGoroutine()
 				fmt.Printf("goroutinesNumInit %v", goroutinesNumInit)
-				// network policy will create 1 watchFactory for local pods selector, and 1 peer namespace selector
-				// that gives us 2 retryFrameworks, so 2 periodicallyRetryResources goroutines.
+				// network policy will create 1 watchFactory for local pods selector, 1 for peer addressset
+				// namespace pod selector that gives us 2 retryFrameworks, so 2 periodicallyRetryResources
+				// goroutines.
 				_, err := fakeOvn.fakeClient.KubeClient.NetworkingV1().NetworkPolicies(networkPolicy.Namespace).
 					Create(context.TODO(), networkPolicy, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
