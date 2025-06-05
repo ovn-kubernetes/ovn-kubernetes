@@ -715,7 +715,11 @@ func (oc *SecondaryLayer3NetworkController) addUpdateLocalNodeEvent(node *corev1
 		return nil
 	}
 
-	klog.Infof("Adding or Updating Node %q for network %s", node.Name, oc.GetNetworkName())
+	if !nodeNeedsSync(nSyncs) {
+		return nil
+	}
+
+	klog.Infof("Adding or Updating local node %q for network %q", node.Name, oc.GetNetworkName())
 	if nSyncs.syncNode {
 		if hostSubnets, err = oc.addNode(node); err != nil {
 			oc.addNodeFailed.Store(node.Name, true)

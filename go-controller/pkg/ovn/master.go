@@ -470,6 +470,16 @@ type nodeSyncs struct {
 	syncReroute           bool
 }
 
+func nodeNeedsSync(syncs *nodeSyncs) bool {
+	return syncs.syncNode ||
+		syncs.syncClusterRouterPort ||
+		syncs.syncMgmtPort ||
+		syncs.syncGw ||
+		syncs.syncHo ||
+		syncs.syncZoneIC ||
+		syncs.syncReroute
+}
+
 func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(node *corev1.Node, nSyncs *nodeSyncs) error {
 	var hostSubnets []*net.IPNet
 	var errs []error
@@ -492,7 +502,11 @@ func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(node *corev1.Node, n
 		return nil
 	}
 
-	klog.Infof("Adding or Updating Node %q", node.Name)
+	if !nodeNeedsSync(nSyncs) {
+		return nil
+	}
+
+	klog.Infof("Adding or Updating local node %q for network %q", node.Name, oc.GetNetworkName())
 	if nSyncs.syncNode {
 		if hostSubnets, err = oc.addNode(node); err != nil {
 			oc.addNodeFailed.Store(node.Name, true)
@@ -509,12 +523,10 @@ func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(node *corev1.Node, n
 	}
 
 	// since the nodeSync objects are created knowing if hybridOverlay is enabled this should work
-	if nSyncs.syncHo {
+	if nSyncs.syncHo && config.HybridOverlay.Enabled {
 		if err = oc.allocateHybridOverlayDRIP(node); err != nil {
 			errs = append(errs, err)
 			oc.hybridOverlayFailed.Store(node.Name, true)
-		} else {
-			oc.hybridOverlayFailed.Delete(node.Name)
 		}
 	}
 
@@ -551,26 +563,36 @@ func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(node *corev1.Node, n
 		}
 	}
 
-	annotator := kube.NewNodeAnnotator(oc.kube, node.Name)
-	if config.HybridOverlay.Enabled {
-		if err := oc.handleHybridOverlayPort(node, annotator); err != nil {
-			errs = append(errs, fmt.Errorf("failed to set up hybrid overlay logical switch port for %s: %v", node.Name, err))
+	if nSyncs.syncHo {
+		annotator := kube.NewNodeAnnotator(oc.kube, node.Name)
+		if config.HybridOverlay.Enabled {
+			if err := oc.handleHybridOverlayPort(node, annotator); err != nil {
+				errs = append(errs, fmt.Errorf("failed to set up hybrid overlay logical switch port for %s: %v", node.Name, err))
+				oc.hybridOverlayFailed.Store(node.Name, true)
+			} else {
+				oc.hybridOverlayFailed.Delete(node.Name)
+			}
+		} else {
+			// pedantic - node should never be stored in hybridOverlayFailed if HO is not enabled
+			oc.hybridOverlayFailed.Delete(node.Name)
+
+			// the node needs to cleanup Hybrid overlay annotations LogicalRouterPolicies and Hybrid overlay port
+			// if it has them and hybrid overlay is not enabled
+			if err := oc.deleteHybridOverlayPort(node); err != nil {
+				errs = append(errs, err)
+			} else {
+				// only clear annotations if tear down was successful
+				if _, exist := node.Annotations[hotypes.HybridOverlayDRMAC]; exist {
+					annotator.Delete(hotypes.HybridOverlayDRMAC)
+				}
+				if _, exist := node.Annotations[hotypes.HybridOverlayDRIP]; exist {
+					annotator.Delete(hotypes.HybridOverlayDRIP)
+				}
+			}
 		}
-	} else {
-		// the node needs to cleanup Hybrid overlay annotations LogicalRouterPolicies and Hybrid overlay port
-		// if it has them and hybrid overlay is not enabled
-		if err := oc.deleteHybridOverlayPort(node); err != nil {
-			errs = append(errs, err)
+		if err := annotator.Run(); err != nil {
+			errs = append(errs, fmt.Errorf("failed to set hybrid overlay annotations for node %s: %v", node.Name, err))
 		}
-		if _, exist := node.Annotations[hotypes.HybridOverlayDRMAC]; exist {
-			annotator.Delete(hotypes.HybridOverlayDRMAC)
-		}
-		if _, exist := node.Annotations[hotypes.HybridOverlayDRIP]; exist {
-			annotator.Delete(hotypes.HybridOverlayDRIP)
-		}
-	}
-	if err := annotator.Run(); err != nil {
-		errs = append(errs, fmt.Errorf("failed to set hybrid overlay annotations for node %s: %v", node.Name, err))
 	}
 
 	if nSyncs.syncGw {
@@ -653,8 +675,8 @@ func (oc *DefaultNetworkController) addUpdateRemoteNodeEvent(node *corev1.Node, 
 		} else {
 			oc.syncZoneICFailed.Delete(node.Name)
 		}
+		klog.V(5).Infof("Creating Interconnect resources for remote node %q on network %q took: %s", node.Name, oc.GetNetworkName(), time.Since(start))
 	}
-	klog.V(5).Infof("Creating Interconnect resources for node %v took: %s", node.Name, time.Since(start))
 	return err
 }
 
