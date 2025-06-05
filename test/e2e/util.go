@@ -1129,14 +1129,22 @@ func randStr(n int) string {
 	return string(b)
 }
 
-func isIPv4Supported() bool {
-	val, present := os.LookupEnv("PLATFORM_IPV4_SUPPORT")
-	return present && val == "true"
+func isIPv4Supported(cs clientset.Interface) bool {
+	v4, _ := getSupportedIPFamilies(cs)
+	return v4
 }
 
-func isIPv6Supported() bool {
-	val, present := os.LookupEnv("PLATFORM_IPV6_SUPPORT")
-	return present && val == "true"
+func isIPv6Supported(cs clientset.Interface) bool {
+	_, v6 := getSupportedIPFamilies(cs)
+	return v6
+}
+
+func getSupportedIPFamilies(cs clientset.Interface) (bool, bool) {
+	nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), cs, 1)
+	framework.ExpectNoError(err, "must fetch ")
+	v4NodeAddrs := e2enode.FirstAddressByTypeAndFamily(nodes, v1.NodeInternalIP, v1.IPv4Protocol)
+	v6NodeAddrs := e2enode.FirstAddressByTypeAndFamily(nodes, v1.NodeInternalIP, v1.IPv6Protocol)
+	return len(v4NodeAddrs) > 0, len(v6NodeAddrs) > 0
 }
 
 func isInterconnectEnabled() bool {
