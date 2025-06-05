@@ -306,3 +306,99 @@ func TestDeleteRoutersWithPredicateOps(t *testing.T) {
 		})
 	}
 }
+
+func TestDeleteLogicalRouterStaticRoutes(t *testing.T) {
+	fakeRouter1LRSR1 := &nbdb.LogicalRouterStaticRoute{
+		UUID:        buildNamedUUID(),
+		IPPrefix:    "192.168.1.0/24",
+		Nexthop:     "192.168.1.0",
+		ExternalIDs: map[string]string{"id": "v1"},
+	}
+
+	fakeRouter1LRSR2 := &nbdb.LogicalRouterStaticRoute{
+		UUID:        buildNamedUUID(),
+		IPPrefix:    "192.169.1.0/24",
+		Nexthop:     "192.169.1.0",
+		ExternalIDs: map[string]string{"id": "v2"},
+	}
+
+	fakeRouter2LRSR1 := &nbdb.LogicalRouterStaticRoute{
+		UUID:        buildNamedUUID(),
+		IPPrefix:    "192.170.1.0/24",
+		Nexthop:     "192.170.1.0",
+		ExternalIDs: map[string]string{"id": "v1"},
+	}
+
+	tests := []struct {
+		desc         string
+		expectErr    bool
+		routerName   string
+		lrsrs        []*nbdb.LogicalRouterStaticRoute
+		initialNbdb  libovsdbtest.TestSetup
+		expectedNbdb libovsdbtest.TestSetup
+	}{
+		{
+			desc: "delete logical router static route with predicate will only delete static route from the specified router",
+			initialNbdb: libovsdbtest.TestSetup{
+				NBData: []libovsdbtest.TestData{
+					fakeRouter1LRSR1,
+					fakeRouter1LRSR2,
+					fakeRouter2LRSR1,
+					&nbdb.LogicalRouter{
+						Name:         "rtr1",
+						UUID:         buildNamedUUID(),
+						StaticRoutes: []string{fakeRouter1LRSR1.UUID, fakeRouter1LRSR2.UUID},
+					},
+					&nbdb.LogicalRouter{
+						Name:         "rtr2",
+						UUID:         buildNamedUUID(),
+						StaticRoutes: []string{fakeRouter2LRSR1.UUID},
+					},
+				},
+			},
+			expectedNbdb: libovsdbtest.TestSetup{
+				NBData: []libovsdbtest.TestData{
+					fakeRouter1LRSR2,
+					fakeRouter2LRSR1,
+					&nbdb.LogicalRouter{
+						Name:         "rtr1",
+						UUID:         buildNamedUUID(),
+						StaticRoutes: []string{fakeRouter1LRSR2.UUID},
+					},
+					&nbdb.LogicalRouter{
+						Name:         "rtr2",
+						UUID:         buildNamedUUID(),
+						StaticRoutes: []string{fakeRouter2LRSR1.UUID},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(tt.initialNbdb, nil)
+			if err != nil {
+				t.Fatalf("test: \"%s\" failed to set up test harness: %v", tt.desc, err)
+			}
+			t.Cleanup(cleanup.Cleanup)
+
+			err = DeleteLogicalRouterStaticRoutesWithPredicate(nbClient, "rtr1", func(item *nbdb.LogicalRouterStaticRoute) bool {
+				return item.ExternalIDs["id"] == "v1"
+			})
+			if err != nil && !tt.expectErr {
+				t.Fatal(fmt.Errorf("DeleteLogicalRouterStaticRoutesWithPredicate() error = %v", err))
+			}
+
+			matcher := libovsdbtest.HaveData(tt.expectedNbdb.NBData)
+			success, err := matcher.Match(nbClient)
+
+			if !success {
+				t.Fatal(fmt.Errorf("test: \"%s\" didn't match expected with actual, err: %v", tt.desc, matcher.FailureMessage(nbClient)))
+			}
+			if err != nil {
+				t.Fatal(fmt.Errorf("test: \"%s\" encountered error: %v", tt.desc, err))
+			}
+		})
+	}
+}
