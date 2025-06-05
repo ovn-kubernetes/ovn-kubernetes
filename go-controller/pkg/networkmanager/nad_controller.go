@@ -155,7 +155,7 @@ func (c *nadController) Start() error {
 	}
 
 	err = c.networkController.Start()
-	if err != nil {
+	if err != nil && !util.IsAnnotationNotSetError(err) {
 		return err
 	}
 
