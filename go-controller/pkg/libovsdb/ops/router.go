@@ -761,8 +761,8 @@ func CreateOrReplaceLogicalRouterStaticRouteWithPredicateOps(
 }
 
 // DeleteLogicalRouterStaticRoutesWithPredicate looks up logical router static
-// routes from the cache based on a given predicate, deletes them and removes
-// them from the provided logical router
+// routes from the logical router of the specified name based on a given predicate,
+// deletes them and removes them from the provided logical router
 func DeleteLogicalRouterStaticRoutesWithPredicate(nbClient libovsdbclient.Client, routerName string, p logicalRouterStaticRoutePredicate) error {
 	var ops []ovsdb.Operation
 	var err error
@@ -775,32 +775,21 @@ func DeleteLogicalRouterStaticRoutesWithPredicate(nbClient libovsdbclient.Client
 }
 
 // DeleteLogicalRouterStaticRoutesWithPredicateOps looks up logical router static
-// routes from the cache based on a given predicate, and returns the ops to delete
-// them and remove them from the provided logical router
+// routes from the logical router of the specified name based on a given predicate,
+// and returns the ops to delete them and remove them from the provided logical router
 func DeleteLogicalRouterStaticRoutesWithPredicateOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, routerName string, p logicalRouterStaticRoutePredicate) ([]ovsdb.Operation, error) {
-	router := &nbdb.LogicalRouter{
-		Name: routerName,
+	lrsrs, err := GetRouterLogicalRouterStaticRoutesWithPredicate(nbClient, &nbdb.LogicalRouter{Name: routerName}, p)
+	if err != nil {
+		if errors.Is(err, libovsdbclient.ErrNotFound) {
+			return ops, nil
+		}
+		return nil, fmt.Errorf("unable to find logical router static routes with predicate on router %s: %w", routerName, err)
 	}
 
-	deleted := []*nbdb.LogicalRouterStaticRoute{}
-	opModels := []operationModel{
-		{
-			ModelPredicate: p,
-			ExistingResult: &deleted,
-			DoAfter:        func() { router.StaticRoutes = extractUUIDsFromModels(deleted) },
-			ErrNotFound:    false,
-			BulkOp:         true,
-		},
-		{
-			Model:            router,
-			OnModelMutations: []interface{}{&router.StaticRoutes},
-			ErrNotFound:      false,
-			BulkOp:           false,
-		},
+	if len(lrsrs) == 0 {
+		return ops, nil
 	}
-
-	m := newModelClient(nbClient)
-	return m.DeleteOps(ops, opModels...)
+	return DeleteLogicalRouterStaticRoutesOps(nbClient, ops, routerName, lrsrs...)
 }
 
 // DeleteLogicalRouterStaticRoutesOps deletes the logical router static routes and
