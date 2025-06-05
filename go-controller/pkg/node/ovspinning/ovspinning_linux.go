@@ -5,6 +5,7 @@ package ovspinning
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,7 +16,12 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"golang.org/x/sys/unix"
 
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/klog/v2"
+	kubeletconfigv1beta1 "k8s.io/kubelet/config/v1beta1"
+	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1"
+	"k8s.io/utils/cpuset"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -25,11 +31,13 @@ var tickDuration time.Duration = 1 * time.Second
 var getOvsVSwitchdPIDFn func() (string, error) = util.GetOvsVSwitchdPID
 var getOvsDBServerPIDFn func() (string, error) = util.GetOvsDBServerPID
 var featureEnablerFile string = "/etc/openvswitch/enable_dynamic_cpu_affinity"
+var kubeletConfigFilePath = "/host/etc/kubernetes/kubelet.conf"
 
 // Run monitors OVS daemon's processes (ovs-vswitchd and ovsdb-server) and sets their CPU affinity
 // masks to that of the current process.
 // This feature is enabled by the presence of a non-empty file in the path `/etc/openvswitch/enable_dynamic_cpu_affinity`
-func Run(stopCh <-chan struct{}) {
+// we're passing the podResCli from the caller, so we could support unit-tests
+func Run(ctx context.Context, stopCh <-chan struct{}, podResCli podresourcesapi.PodResourcesListerClient) {
 
 	// The file must be present at startup to enable the feature
 	isFeatureEnabled, err := isFileNotEmpty(featureEnablerFile)
@@ -60,6 +68,16 @@ func Run(stopCh <-chan struct{}) {
 		fsnotifyErrors = fileWatcher.Errors
 		defer fileWatcher.Close()
 	}
+
+	// we only need to check reservedSystemCPUs once at startup.
+	// any change to KubeletConfig file triggers a node reboot, which also restarts the ovnkube-node pod.
+	// as a result, this logic is re-executed automatically after every change.
+	reservedCPUs, err := getReservedCPUs(kubeletConfigFilePath)
+	if err != nil {
+		klog.Warningf("Failed to get reservedSystemCPUs: %v", err)
+		return
+	}
+	klog.Infof("OVS CPU dynamic pinning reservedSystemCPUs set: %s", reservedCPUs)
 
 	ticker := time.NewTicker(tickDuration)
 	defer ticker.Stop()
@@ -100,13 +118,18 @@ func Run(stopCh <-chan struct{}) {
 			if !isFeatureEnabled {
 				continue
 			}
-
-			err := setOvsVSwitchdCPUAffinity()
+			cpus, err := getNonPinnedCPUs(ctx, podResCli)
+			if err != nil {
+				klog.Warningf("Error while trying to get system non pinned CPUs: %v", err)
+			}
+			// add reservedSystemCPUs as well, because PodResourcesAPI does not count for them.
+			cpus = cpus.Union(reservedCPUs)
+			err = setOvsVSwitchdCPUAffinity(&cpus)
 			if err != nil {
 				klog.Warningf("Error while aligning ovs-vswitchd CPUs to current process: %v", err)
 			}
 
-			err = setOvsDBServerCPUAffinity()
+			err = setOvsDBServerCPUAffinity(&cpus)
 			if err != nil {
 				klog.Warningf("Error while aligning ovsdb-server CPUs to current process: %v", err)
 			}
@@ -141,7 +164,7 @@ func isFileNotEmpty(filename string) (bool, error) {
 	return f.Size() > 0, nil
 }
 
-func setOvsVSwitchdCPUAffinity() error {
+func setOvsVSwitchdCPUAffinity(set *cpuset.CPUSet) error {
 
 	ovsVSwitchdPID, err := getOvsVSwitchdPIDFn()
 	if err != nil {
@@ -149,10 +172,10 @@ func setOvsVSwitchdCPUAffinity() error {
 	}
 
 	klog.V(5).Infof("Managing ovs-vswitchd[%s] daemon CPU affinity", ovsVSwitchdPID)
-	return setProcessCPUAffinity(ovsVSwitchdPID)
+	return setProcessCPUAffinity(ovsVSwitchdPID, set)
 }
 
-func setOvsDBServerCPUAffinity() error {
+func setOvsDBServerCPUAffinity(set *cpuset.CPUSet) error {
 
 	ovsDBserverPID, err := getOvsDBServerPIDFn()
 	if err != nil {
@@ -160,21 +183,25 @@ func setOvsDBServerCPUAffinity() error {
 	}
 
 	klog.V(5).Infof("Managing ovsdb-server[%s] daemon CPU affinity", ovsDBserverPID)
-	return setProcessCPUAffinity(ovsDBserverPID)
+	return setProcessCPUAffinity(ovsDBserverPID, set)
 }
 
 // setProcessCPUAffinity sets the CPU affinity of the given process to the same affinity as the current process
-func setProcessCPUAffinity(targetPIDStr string) error {
+func setProcessCPUAffinity(targetPIDStr string, set *cpuset.CPUSet) error {
 
 	targetPID, err := strconv.Atoi(targetPIDStr)
 	if err != nil {
 		return fmt.Errorf("can't convert PID[%s] to integer: %w", targetPIDStr, err)
 	}
 
-	var currentProcessCPUs unix.CPUSet
-	err = unix.SchedGetaffinity(os.Getpid(), &currentProcessCPUs)
-	if err != nil {
-		return fmt.Errorf("can't get own CPU affinity")
+	desiredProcessCPUs := convertCPUSet(set)
+	if set.IsEmpty() {
+		selfPID := os.Getpid()
+		klog.V(4).InfoS("Given CPU set is empty, setting self CPU affinity", "selfPID", selfPID, "targetPID", targetPID)
+		err = unix.SchedGetaffinity(selfPID, &desiredProcessCPUs)
+		if err != nil {
+			return fmt.Errorf("can't get own CPU affinity")
+		}
 	}
 
 	var targetProcessCPUs unix.CPUSet
@@ -183,8 +210,8 @@ func setProcessCPUAffinity(targetPIDStr string) error {
 		return fmt.Errorf("can't get process (PID:%d) CPU affinity: %w", targetPID, err)
 	}
 
-	if currentProcessCPUs == targetProcessCPUs {
-		klog.V(5).Infof("Process[%d] CPU affinity already match current process's affinity %s", targetPID, printCPUSet(currentProcessCPUs))
+	if desiredProcessCPUs == targetProcessCPUs {
+		klog.V(5).Infof("Process[%d] CPU affinity already match desired process's affinity %s", targetPID, printCPUSet(desiredProcessCPUs))
 		return nil
 	}
 
@@ -193,12 +220,12 @@ func setProcessCPUAffinity(targetPIDStr string) error {
 		return fmt.Errorf("can't get tasks of PID(%d):%w", targetPID, err)
 	}
 
-	klog.Infof("Setting CPU affinity of PID(%d) (ntasks=%d) to %s, was %s", targetPID, len(taskIDs), printCPUSet(currentProcessCPUs), printCPUSet(targetProcessCPUs))
+	klog.Infof("Setting CPU affinity of PID(%d) (ntasks=%d) to %s, was %s", targetPID, len(taskIDs), printCPUSet(desiredProcessCPUs), printCPUSet(targetProcessCPUs))
 	for _, taskID := range taskIDs {
-		err = unix.SchedSetaffinity(taskID, &currentProcessCPUs)
+		err = unix.SchedSetaffinity(taskID, &desiredProcessCPUs)
 		if err != nil {
 			// The task may have been stopped, don't break the loop and continue setting CPU affinity on other tasks.
-			klog.Warningf("Error while setting CPU affinity of task(%d) PID(%d) to %s: %v", taskID, targetPID, printCPUSet(currentProcessCPUs), err)
+			klog.Warningf("Error while setting CPU affinity of task(%d) PID(%d) to %s: %v", taskID, targetPID, printCPUSet(desiredProcessCPUs), err)
 		}
 	}
 
@@ -269,4 +296,81 @@ func getThreadsOfProcess(pid int) ([]int, error) {
 	}
 
 	return ret, nil
+}
+
+func convertCPUSet(k8sSet *cpuset.CPUSet) unix.CPUSet {
+	var uSet unix.CPUSet
+	for _, cpu := range k8sSet.List() {
+		uSet.Set(cpu)
+	}
+	return uSet
+}
+
+// getNonPinnedCPUs calculates and returns all allocatable CPUs on the node which are not
+// exclusively pinned to any container. IOW it returns the CPUs that are dedicated for
+// Burstable and BestEffort QoS containers
+func getNonPinnedCPUs(ctx context.Context, podResCli podresourcesapi.PodResourcesListerClient) (cpuset.CPUSet, error) {
+	// Get allocatable CPUs
+	allocatableResp, err := podResCli.GetAllocatableResources(ctx, &podresourcesapi.AllocatableResourcesRequest{})
+	if err != nil {
+		return cpuset.CPUSet{}, fmt.Errorf("GetAllocatableResources failed: %w", err)
+	}
+	allocatableCPUs := cpuset.New(convertInt64ToInt(allocatableResp.CpuIds)...)
+
+	// List pod resources and collect used CPUs
+	listResp, err := podResCli.List(ctx, &podresourcesapi.ListPodResourcesRequest{})
+	if err != nil {
+		return cpuset.CPUSet{}, fmt.Errorf("ListPodResources failed: %w", err)
+	}
+
+	usedCPUs := cpuset.New()
+	for _, pod := range listResp.PodResources {
+		for _, container := range pod.Containers {
+			usedCPUs = usedCPUs.Union(cpuset.New(convertInt64ToInt(container.CpuIds)...))
+		}
+	}
+
+	// Calculate the difference
+	availableCPUs := allocatableCPUs.Difference(usedCPUs)
+	return availableCPUs, nil
+}
+
+func convertInt64ToInt(int64s []int64) []int {
+	ints := make([]int, len(int64s))
+	for i, v := range int64s {
+		ints[i] = int(v)
+	}
+	return ints
+}
+
+func getReservedCPUs(path string) (cpuset.CPUSet, error) {
+	scheme := runtime.NewScheme()
+	codecs := serializer.NewCodecFactory(scheme)
+
+	if err := kubeletconfigv1beta1.AddToScheme(scheme); err != nil {
+		return cpuset.CPUSet{}, fmt.Errorf("failed to add kubelet config scheme: %w", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return cpuset.CPUSet{}, fmt.Errorf("failed to read file: %w", err)
+	}
+
+	obj, _, err := codecs.UniversalDecoder(kubeletconfigv1beta1.SchemeGroupVersion).Decode(data, nil, nil)
+	if err != nil {
+		return cpuset.CPUSet{}, fmt.Errorf("failed to decode kubelet config: %w", err)
+	}
+
+	kc, ok := obj.(*kubeletconfigv1beta1.KubeletConfiguration)
+	if !ok {
+		return cpuset.CPUSet{}, fmt.Errorf("decoded object is not a KubeletConfiguration")
+	}
+
+	// kc.ReservedSystemCPUs could be empty. it's not a desired state, but not considered as an error either.
+	cset, err := cpuset.Parse(kc.ReservedSystemCPUs)
+	if err != nil {
+		return cpuset.CPUSet{}, fmt.Errorf("failed to parse reservedSystemCPUs: %w", err)
+	}
+
+	return cset, nil
 }
