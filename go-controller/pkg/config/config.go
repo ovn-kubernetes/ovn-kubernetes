@@ -41,6 +41,8 @@ const DefaultDBTxnTimeout = time.Second * 100
 // DefaultEphemeralPortRange is used for unit testing only
 const DefaultEphemeralPortRange = "32768-60999"
 
+const DefaultIPsecMetricPollInterval = time.Second * 10
+
 // The following are global config parameters that other modules may access directly
 var (
 	// Build information. Populated at build-time.
@@ -129,7 +131,9 @@ var (
 	}
 
 	// Metrics holds Prometheus metrics-related parameters.
-	Metrics MetricsConfig
+	Metrics = MetricsConfig{
+		IPsecMetricPollInterval: DefaultIPsecMetricPollInterval,
+	}
 
 	// OVNKubernetesFeatureConfig holds OVN-Kubernetes feature enhancement config file parameters and command-line overrides
 	OVNKubernetesFeature = OVNKubernetesFeatureConfig{
@@ -405,8 +409,9 @@ type MetricsConfig struct {
 	NodeServerCert        string `gcfg:"node-server-cert"`
 	// EnableConfigDuration holds the boolean flag to enable OVN-Kubernetes master to monitor OVN-Kubernetes master
 	// configuration duration and optionally, its application to all nodes
-	EnableConfigDuration bool `gcfg:"enable-config-duration"`
-	EnableScaleMetrics   bool `gcfg:"enable-scale-metrics"`
+	EnableConfigDuration    bool          `gcfg:"enable-config-duration"`
+	EnableScaleMetrics      bool          `gcfg:"enable-scale-metrics"`
+	IPsecMetricPollInterval time.Duration `gcfg:"ipsec-metric-poll-interval"`
 }
 
 // OVNKubernetesFeatureConfig holds OVN-Kubernetes feature enhancement config file parameters and command-line overrides
@@ -1326,6 +1331,12 @@ var MetricsFlags = []cli.Flag{
 		Name:        "metrics-enable-scale",
 		Usage:       "Enables metrics related to scaling",
 		Destination: &cliConfig.Metrics.EnableScaleMetrics,
+	},
+	&cli.DurationFlag{
+		Name:        "ipsec-metric-poll-interval",
+		Usage:       "Specifies an interval (default to 10 seconds) at which IPsec tunnel metrics can be queried",
+		Destination: &cliConfig.Metrics.IPsecMetricPollInterval,
+		Value:       Metrics.IPsecMetricPollInterval,
 	},
 }
 
