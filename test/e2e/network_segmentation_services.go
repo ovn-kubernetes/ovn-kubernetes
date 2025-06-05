@@ -14,6 +14,8 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
 	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
+	ginkgowrapper "github.com/ovn-org/ovn-kubernetes/test/e2e/ginkgo_wrapper"
 
 	kapi "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
@@ -30,7 +32,7 @@ import (
 	utilnet "k8s.io/utils/net"
 )
 
-var _ = Describe("Network Segmentation: services", func() {
+var _ = ginkgowrapper.Describe(feature.NetworkSegmentation, "services", func() {
 
 	f := wrappedTestFramework("udn-services")
 	f.SkipNamespaceCreation = true

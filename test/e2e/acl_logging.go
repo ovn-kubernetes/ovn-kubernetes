@@ -8,6 +8,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/ginkgo_wrapper"
 
 	v1 "k8s.io/api/core/v1"
 	knet "k8s.io/api/networking/v1"
@@ -25,7 +27,7 @@ const (
 	pokeInterval          = 1 * time.Second
 )
 
-var _ = Describe("ACL Logging for NetworkPolicy", func() {
+var _ = ginkgo_wrapper.Describe(feature.NetworkPolicy, "ACL Logging", func() {
 	const (
 		denyAllPolicyName       = "default-deny-all"
 		initialDenyACLSeverity  = "alert"
@@ -172,7 +174,7 @@ var _ = Describe("ACL Logging for NetworkPolicy", func() {
 	})
 })
 
-var _ = Describe("ACL Logging for AdminNetworkPolicy and BaselineAdminNetworkPolicy", func() {
+var _ = ginkgo_wrapper.Describe(feature.AdminNetworkPolicy, feature.BaselineNetworkPolicy, "ACL Logging", func() {
 	const (
 		initialDenyACLSeverity  = "alert"
 		initialAllowACLSeverity = "notice"
@@ -487,7 +489,7 @@ var _ = Describe("ACL Logging for AdminNetworkPolicy and BaselineAdminNetworkPol
 	})
 })
 
-var _ = Describe("ACL Logging for EgressFirewall", func() {
+var _ = ginkgo_wrapper.Describe(feature.EgressFirewall, "ACL Logging", func() {
 	const (
 		denyAllPolicyName        = "default-deny-all"
 		initialDenyACLSeverity   = "alert"
