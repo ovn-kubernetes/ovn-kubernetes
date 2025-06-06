@@ -130,6 +130,7 @@ type DefaultNetworkController struct {
 	syncZoneICFailed            sync.Map
 	syncHostNetAddrSetFailed    sync.Map
 	syncEIPNodeRerouteFailed    sync.Map
+	syncEIPNodeFailed           sync.Map
 
 	// variable to determine if all pods present on the node during startup have been processed
 	// updated atomically
@@ -833,8 +834,10 @@ func (h *defaultNetworkControllerEventHandler) AddResource(obj interface{}, from
 		h.oc.eIPC.nodeZoneState.UnlockKey(node.Name)
 
 		shouldSyncReroute := true
+		shouldSyncEIPNode := true
 		if fromRetryLoop {
 			_, shouldSyncReroute = h.oc.syncEIPNodeRerouteFailed.Load(node.Name)
+			_, shouldSyncEIPNode = h.oc.syncEIPNodeFailed.Load(node.Name)
 		}
 
 		if shouldSyncReroute {
@@ -852,10 +855,19 @@ func (h *defaultNetworkControllerEventHandler) AddResource(obj interface{}, from
 				h.oc.syncEIPNodeRerouteFailed.Store(node.Name, true)
 				return err
 			}
+			h.oc.syncEIPNodeRerouteFailed.Delete(node.Name)
 		}
-		// Add routing specific to Egress IP NOTE: GARP configuration that
-		// Egress IP depends on is added from the gateway reconciliation logic
-		return h.oc.eIPC.addEgressNode(node)
+		if shouldSyncEIPNode {
+			// Add routing specific to Egress IP NOTE: GARP configuration that
+			// Egress IP depends on is added from the gateway reconciliation logic
+			err := h.oc.eIPC.addEgressNode(node)
+			if err != nil {
+				h.oc.syncEIPNodeFailed.Store(node.Name, true)
+				return err
+			}
+			h.oc.syncEIPNodeFailed.Delete(node.Name)
+		}
+		return nil
 
 	case factory.NamespaceType:
 		ns, ok := obj.(*corev1.Namespace)
@@ -1019,24 +1031,34 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 		h.oc.eIPC.nodeZoneState.Store(newNode.Name, h.oc.isLocalZoneNode(newNode))
 		h.oc.eIPC.nodeZoneState.UnlockKey(newNode.Name)
 
-		_, failed := h.oc.syncEIPNodeRerouteFailed.Load(newNode.Name)
+		_, syncEIPNodeRerouteFailed := h.oc.syncEIPNodeRerouteFailed.Load(newNode.Name)
 
 		// node moved from remote -> local or previously failed reroute config
-		if (!h.oc.isLocalZoneNode(oldNode) || failed) && h.oc.isLocalZoneNode(newNode) {
+		if (!h.oc.isLocalZoneNode(oldNode) || syncEIPNodeRerouteFailed) && h.oc.isLocalZoneNode(newNode) {
 			if err := h.oc.eIPC.ensureDefaultNoRerouteQoSRules(newNode.Name); err != nil {
 				return err
 			}
 		}
 		// update the nodeIP in the default-reRoute (102 priority) destination address-set
-		if failed || util.NodeHostCIDRsAnnotationChanged(oldNode, newNode) {
+		if syncEIPNodeRerouteFailed || util.NodeHostCIDRsAnnotationChanged(oldNode, newNode) {
 			klog.Infof("Egress IP detected IP address change for node %s. Updating no re-route policies", newNode.Name)
 			err := h.oc.eIPC.ensureDefaultNoRerouteNodePolicies()
 			if err != nil {
 				return err
 			}
+			h.oc.syncEIPNodeRerouteFailed.Delete(newNode.Name)
 		}
-		h.oc.syncEIPNodeRerouteFailed.Delete(newNode.Name)
-		return h.oc.eIPC.addEgressNode(newNode)
+
+		_, syncEIPNodeFailed := h.oc.syncEIPNodeFailed.Load(newNode.Name)
+		// update only if the GR join IP changed for default network
+		if syncEIPNodeFailed || joinCIDRChanged(oldNode, newNode, h.oc.GetNetworkName()) {
+			err := h.oc.eIPC.addEgressNode(newNode)
+			if err != nil {
+				return err
+			}
+			h.oc.syncEIPNodeFailed.Delete(newNode.Name)
+		}
+		return nil
 
 	case factory.NamespaceType:
 		oldNs, newNs := oldObj.(*corev1.Namespace), newObj.(*corev1.Namespace)
@@ -1099,6 +1121,7 @@ func (h *defaultNetworkControllerEventHandler) DeleteResource(obj, cachedObj int
 		h.oc.eIPC.nodeZoneState.Delete(node.Name)
 		h.oc.eIPC.nodeZoneState.UnlockKey(node.Name)
 		h.oc.syncEIPNodeRerouteFailed.Delete(node.Name)
+		h.oc.syncEIPNodeFailed.Delete(node.Name)
 		return nil
 
 	case factory.NamespaceType:
