@@ -2051,8 +2051,12 @@ func (e *EgressIPController) addEgressNode(node *corev1.Node) error {
 			// on IC if the node is gone, then the ovn_cluster_router is also gone along with all
 			// the routes on it.
 			ni := e.networkManager.GetNetwork(types.DefaultNetworkName)
+			gatewayIPs, err := util.ParseNodeGatewayRouterJoinAddrs(node, types.DefaultNetworkName)
+			if err != nil {
+				return fmt.Errorf("failed to get default network gateway router join IPs for node %q: %w", node.Name, err)
+			}
 			if err := libovsdbutil.CreateDefaultRouteToExternal(e.nbClient, ni.GetNetworkScopedClusterRouterName(),
-				ni.GetNetworkScopedGWRouterName(node.Name), ni.Subnets()); err != nil {
+				ni.GetNetworkScopedGWRouterName(node.Name), ni.Subnets(), gatewayIPs); err != nil {
 				return fmt.Errorf("failed to create route to external for network %s: %v", ni.GetNetworkName(), err)
 			}
 		}
@@ -3121,7 +3125,7 @@ func createDefaultNoRerouteServicePolicies(nbClient libovsdbclient.Client, netwo
 	return nil
 }
 
-func (e *EgressIPController) ensureRouterPoliciesForNetwork(ni util.NetInfo) error {
+func (e *EgressIPController) ensureRouterPoliciesForNetwork(ni util.NetInfo, node *corev1.Node) error {
 	e.nodeUpdateMutex.Lock()
 	defer e.nodeUpdateMutex.Unlock()
 	subnetEntries := ni.Subnets()
@@ -3146,8 +3150,12 @@ func (e *EgressIPController) ensureRouterPoliciesForNetwork(ni util.NetInfo) err
 		return fmt.Errorf("failed to ensure no reroute node policies for network %s: %v", ni.GetNetworkName(), err)
 	}
 	if config.OVNKubernetesFeature.EnableInterconnect && ni.TopologyType() == types.Layer3Topology {
+		gatewayIPs, err := util.ParseNodeGatewayRouterJoinAddrs(node, ni.GetNetworkName())
+		if err != nil {
+			return fmt.Errorf("failed to get default network gateway router join IPs for node %q, err: %w", node.Name, err)
+		}
 		if err := libovsdbutil.CreateDefaultRouteToExternal(e.nbClient, routerName,
-			ni.GetNetworkScopedGWRouterName(localNode), subnetEntries); err != nil {
+			ni.GetNetworkScopedGWRouterName(localNode), subnetEntries, gatewayIPs); err != nil {
 			return fmt.Errorf("failed to create route to external for network %s: %v", ni.GetNetworkName(), err)
 		}
 	}

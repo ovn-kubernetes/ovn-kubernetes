@@ -31,6 +31,9 @@ func TestCreateDefaultRouteToExternal(t *testing.T) {
 	gwRouterPortName := types.GWRouterToJoinSwitchPrefix + gwRouterName
 	gwRouterIPAddressV4 := "100.64.0.3"
 	gwRouterIPAddressV6 := "fd98::3"
+	gwRouterIPAddressV4CIDR := fmt.Sprintf("%s/32", gwRouterIPAddressV4)
+	gwRouterIPAddressV6CIDR := fmt.Sprintf("%s/128", gwRouterIPAddressV6)
+	gatewayIPs := []*net.IPNet{ovntest.MustParseIPNet(gwRouterIPAddressV4CIDR), ovntest.MustParseIPNet(gwRouterIPAddressV6CIDR)}
 	gwRouterPort := &nbdb.LogicalRouterPort{
 		UUID:     gwRouterPortName + "-uuid",
 		Name:     gwRouterPortName,
@@ -228,7 +231,7 @@ func TestCreateDefaultRouteToExternal(t *testing.T) {
 				tc.preTestAction()
 			}
 
-			if err = CreateDefaultRouteToExternal(nbClient, ovnClusterRouterName, gwRouterName, config.Default.ClusterSubnets); err != nil {
+			if err = CreateDefaultRouteToExternal(nbClient, ovnClusterRouterName, gwRouterName, config.Default.ClusterSubnets, gatewayIPs); err != nil {
 				t.Fatal(fmt.Errorf("failed to run CreateDefaultRouteToExternal: %v", err))
 			}
 

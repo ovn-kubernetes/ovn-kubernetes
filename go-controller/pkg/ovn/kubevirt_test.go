@@ -665,6 +665,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 									Annotations: map[string]string{
 										"k8s.ovn.org/node-transit-switch-port-ifaddr": fmt.Sprintf(`{"ipv4": %q, "ipv6": %q}`, nodeByName[node1].transitSwitchPortIPv4, nodeByName[node1].transitSwitchPortIPv6),
 										"k8s.ovn.org/node-subnets":                    fmt.Sprintf(`{"default":[%q,%q]}`, nodeByName[node1].subnetIPv4, nodeByName[node1].subnetIPv6),
+										util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s", "ipv6":"%s"}}`, nodeByName[node1].lrpNetworkIPv4, nodeByName[node1].lrpNetworkIPv6),
 									},
 								},
 							},
@@ -674,6 +675,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 									Annotations: map[string]string{
 										"k8s.ovn.org/node-transit-switch-port-ifaddr": fmt.Sprintf(`{"ipv4": %q, "ipv6": %q}`, nodeByName[node2].transitSwitchPortIPv4, nodeByName[node2].transitSwitchPortIPv6),
 										"k8s.ovn.org/node-subnets":                    fmt.Sprintf(`{"default":[%q,%q]}`, nodeByName[node2].subnetIPv4, nodeByName[node2].subnetIPv6),
+										util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s", "ipv6":"%s"}}`, nodeByName[node2].lrpNetworkIPv4, nodeByName[node2].lrpNetworkIPv6),
 									},
 								},
 							},
@@ -683,6 +685,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 									Annotations: map[string]string{
 										"k8s.ovn.org/node-transit-switch-port-ifaddr": fmt.Sprintf(`{"ipv4": %q, "ipv6": %q}`, nodeByName[node3].transitSwitchPortIPv4, nodeByName[node3].transitSwitchPortIPv6),
 										"k8s.ovn.org/node-subnets":                    fmt.Sprintf(`{"default":[%q,%q]}`, nodeByName[node3].subnetIPv4, nodeByName[node3].subnetIPv6),
+										util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s", "ipv6":"%s"}}`, nodeByName[node3].lrpNetworkIPv4, nodeByName[node3].lrpNetworkIPv6),
 									},
 								},
 							},
