@@ -107,7 +107,6 @@ func (h *secondaryLayer3NetworkControllerEventHandler) AddResource(obj interface
 		if !ok {
 			return fmt.Errorf("could not cast %T object to *kapi.Node", obj)
 		}
-
 		if h.oc.isLocalZoneNode(node) {
 			var nodeParams *nodeSyncs
 			if fromRetryLoop {
@@ -704,7 +703,6 @@ func (oc *SecondaryLayer3NetworkController) addUpdateLocalNodeEvent(node *corev1
 	var hostSubnets []*net.IPNet
 	var errs []error
 	var err error
-
 	_, _ = oc.localZoneNodes.LoadOrStore(node.Name, true)
 
 	if noHostSubnet := util.NoHostSubnet(node); noHostSubnet {

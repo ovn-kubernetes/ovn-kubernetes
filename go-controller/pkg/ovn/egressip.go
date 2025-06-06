@@ -2050,28 +2050,10 @@ func (e *EgressIPController) addEgressNode(node *corev1.Node) error {
 			// NOTE3: When the node gets deleted we do not remove this route intentionally because
 			// on IC if the node is gone, then the ovn_cluster_router is also gone along with all
 			// the routes on it.
-			processNetworkFn := func(ni util.NetInfo) error {
-				if ni.TopologyType() == types.Layer2Topology || len(ni.Subnets()) == 0 {
-					return nil
-				}
-				if err := libovsdbutil.CreateDefaultRouteToExternal(e.nbClient, ni.GetNetworkScopedClusterRouterName(),
-					ni.GetNetworkScopedGWRouterName(node.Name), ni.Subnets()); err != nil {
-					return fmt.Errorf("failed to create route to external for network %s: %v", ni.GetNetworkName(), err)
-				}
-				return nil
-			}
 			ni := e.networkManager.GetNetwork(types.DefaultNetworkName)
-			if ni == nil {
-				return fmt.Errorf("failed to get default network from NAD controller")
-			}
-			if err := processNetworkFn(ni); err != nil {
-				return fmt.Errorf("failed to process default network: %v", err)
-			}
-			if !isEgressIPForUDNSupported() {
-				return nil
-			}
-			if err := e.networkManager.DoWithLock(processNetworkFn); err != nil {
-				return fmt.Errorf("failed to process all user defined networks route to external: %v", err)
+			if err := libovsdbutil.CreateDefaultRouteToExternal(e.nbClient, ni.GetNetworkScopedClusterRouterName(),
+				ni.GetNetworkScopedGWRouterName(node.Name), ni.Subnets()); err != nil {
+				return fmt.Errorf("failed to create route to external for network %s: %v", ni.GetNetworkName(), err)
 			}
 		}
 	}
