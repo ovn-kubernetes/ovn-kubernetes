@@ -429,6 +429,7 @@ type OVNKubernetesFeatureConfig struct {
 	DisableUDNHostIsolation      bool `gcfg:"disable-udn-host-isolation"`
 	EnableMultiNetworkPolicy     bool `gcfg:"enable-multi-networkpolicy"`
 	EnableStatelessNetPol        bool `gcfg:"enable-stateless-netpol"`
+	AllowICMPNetPol              bool `gcfg:"allow-icmp-netpol"`
 	EnableInterconnect           bool `gcfg:"enable-interconnect"`
 	EnableMultiExternalGateway   bool `gcfg:"enable-multi-external-gateway"`
 	EnablePersistentIPs          bool `gcfg:"enable-persistent-ips"`
@@ -1109,6 +1110,12 @@ var OVNK8sFeatureFlags = []cli.Flag{
 		Usage:       "Configure to use stateless network policy feature with ovn-kubernetes.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnableStatelessNetPol,
 		Value:       OVNKubernetesFeature.EnableStatelessNetPol,
+	},
+	&cli.BoolFlag{
+		Name:        "allow-icmp-netpol",
+		Usage:       "Configure to use enable ICMP and ICMPv6 traffic to not be denied by network policy.",
+		Destination: &cliConfig.OVNKubernetesFeature.AllowICMPNetPol,
+		Value:       OVNKubernetesFeature.AllowICMPNetPol,
 	},
 	&cli.BoolFlag{
 		Name:        "enable-interconnect",
