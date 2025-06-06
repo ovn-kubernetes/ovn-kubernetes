@@ -180,7 +180,8 @@ func (h *secondaryLayer2NetworkControllerEventHandler) UpdateResource(oldObj, ne
 					hostCIDRsChanged(oldNode, newNode) ||
 					nodeGatewayMTUSupportChanged(oldNode, newNode)
 				_, syncRerouteFailed := h.oc.syncEIPNodeRerouteFailed.Load(newNode.Name)
-				shouldSyncReroute := syncRerouteFailed || util.NodeHostCIDRsAnnotationChanged(oldNode, newNode)
+				shouldSyncReroute := syncRerouteFailed || util.NodeHostCIDRsAnnotationChanged(oldNode, newNode) ||
+					joinCIDRChanged(oldNode, newNode, h.oc.GetNetworkName())
 				nodeSyncsParam = &nodeSyncs{
 					syncMgmtPort: shouldSyncMgmtPort,
 					syncGw:       shouldSyncGW,

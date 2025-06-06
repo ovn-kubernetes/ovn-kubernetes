@@ -186,7 +186,8 @@ func (h *secondaryLayer3NetworkControllerEventHandler) UpdateResource(oldObj, ne
 					hostCIDRsChanged(oldNode, newNode) ||
 					nodeGatewayMTUSupportChanged(oldNode, newNode)
 				_, failed = h.oc.syncEIPNodeRerouteFailed.Load(newNode.Name)
-				syncReroute := failed || util.NodeHostCIDRsAnnotationChanged(oldNode, newNode)
+				syncReroute := failed || util.NodeHostCIDRsAnnotationChanged(oldNode, newNode) ||
+					joinCIDRChanged(oldNode, newNode, h.oc.GetNetworkName())
 				nodeSyncsParam = &nodeSyncs{
 					syncNode:              nodeSync,
 					syncClusterRouterPort: clusterRtrSync,
