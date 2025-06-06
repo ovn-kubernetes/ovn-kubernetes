@@ -465,7 +465,7 @@ docker_create_second_disconnected_interface() {
   fi
 
   # Create the network without subnets; ignore if already exists.
-  "$OCI_BIN" network create --driver=bridge ${podman_params-} "$bridge_name" || true
+  "$OCI_BIN" network create --ipv6 --driver=bridge ${podman_params-} "$bridge_name" || true
 
   KIND_NODES=$(kind_get_nodes)
   for n in $KIND_NODES; do
@@ -663,6 +663,8 @@ clone_frr() {
     # Change into the cloned repo directory before applying patches
     pushd frr-k8s
     git apply ../patches/*
+    sed -r -i 's#^NODE_IPS_V4=(.*)#NODE_IPS_V4=${NODE_IPS_V4:-\1}#' hack/demo/demo.sh
+    sed -r -i 's#^NODE_IPS_V6=(.*)#NODE_IPS_V6=${NODE_IPS_V6:-\1}#' hack/demo/demo.sh
     popd
 
     popd || exit 1
@@ -704,6 +706,10 @@ deploy_frr_external_container() {
     # Add route-reflector-client for IPv6 neighbors
     sed -i '/neighbor fc00.*remote-as 64512/a \ neighbor {{ . }} route-reflector-client' frr/frr.conf.tmpl
   fi
+
+  export NODE_IPS_V4=$(docker network inspect underlay |jq -r '.[0].Containers[] | select(.Name!="frr") | .IPv4Address' | sed s#/.*## | tr '\n' ' ')
+  export NODE_IPS_V6=$(docker network inspect underlay |jq -r '.[0].Containers[] | select(.Name!="frr") | .IPv6Address' | sed s#/.*## | tr '\n' ' ')
+
   ./demo.sh
   popd || exit 1
   if  [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
