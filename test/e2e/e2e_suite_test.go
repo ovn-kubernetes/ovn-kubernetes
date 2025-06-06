@@ -13,6 +13,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/diagnostics"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/ipalloc"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/label"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog"
@@ -88,5 +89,5 @@ func TestE2E(t *testing.T) {
 		}
 	}
 	gomega.RegisterFailHandler(framework.Fail)
-	ginkgo.RunSpecs(t, "E2E Suite")
+	ginkgo.RunSpecs(t, "E2E Suite", label.NewComponent("ovn-kubernetes").GinkgoLabel())
 }
