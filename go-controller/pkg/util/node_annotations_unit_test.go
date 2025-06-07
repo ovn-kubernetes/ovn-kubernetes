@@ -829,3 +829,174 @@ func TestParseUDNLayer2NodeGRLRPTunnelIDs(t *testing.T) {
 		})
 	}
 }
+
+func TestNodeDontSNATSubnetAnnotationChanged(t *testing.T) {
+	tests := []struct {
+		desc    string
+		oldNode *corev1.Node
+		newNode *corev1.Node
+		result  bool
+	}{
+		{
+			desc: "annotation added",
+			oldNode: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{},
+				},
+			},
+			newNode: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						OvnNodeDontSNATSubnets: `["192.168.1.0/24"]`,
+					},
+				},
+			},
+			result: true,
+		},
+		{
+			desc: "annotation removed",
+			oldNode: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						OvnNodeDontSNATSubnets: `["192.168.1.0/24"]`,
+					},
+				},
+			},
+			newNode: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{},
+				},
+			},
+			result: true,
+		},
+		{
+			desc: "annotation value changed",
+			oldNode: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						OvnNodeDontSNATSubnets: `["192.168.1.0/24"]`,
+					},
+				},
+			},
+			newNode: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						OvnNodeDontSNATSubnets: `["10.0.0.0/16"]`,
+					},
+				},
+			},
+			result: true,
+		},
+		{
+			desc: "false: annotation unchanged",
+			oldNode: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						OvnNodeDontSNATSubnets: `["192.168.1.0/24"]`,
+					},
+				},
+			},
+			newNode: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						OvnNodeDontSNATSubnets: `["192.168.1.0/24"]`,
+					},
+				},
+			},
+			result: false,
+		},
+		{
+			desc: "annotation absent in both",
+			oldNode: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{},
+				},
+			},
+			newNode: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{},
+				},
+			},
+			result: false,
+		},
+	}
+
+	for i, tc := range tests {
+		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
+			result := NodeDontSNATSubnetAnnotationChanged(tc.oldNode, tc.newNode)
+			assert.Equal(t, tc.result, result)
+		})
+	}
+}
+
+func TestParseNodeDontSNATSubnetsList(t *testing.T) {
+	tests := []struct {
+		desc        string
+		node        *corev1.Node
+		expected    []string
+		expectError bool
+	}{
+		{
+			desc: "no annotation present",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        "my-node",
+					Annotations: map[string]string{},
+				},
+			},
+			expected:    []string{},
+			expectError: false,
+		},
+		{
+			desc: "valid annotation list with IPv4 and IPv6 CIDRs",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "node2",
+					Annotations: map[string]string{
+						OvnNodeDontSNATSubnets: `["192.168.1.0/24", "fd00::/64", "10.0.0.0/16"]`,
+					},
+				},
+			},
+			expected:    []string{"192.168.1.0/24", "fd00::/64", "10.0.0.0/16"},
+			expectError: false,
+		},
+		{
+			desc: "invalid annotation value (not JSON)",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "node3",
+					Annotations: map[string]string{
+						OvnNodeDontSNATSubnets: `not-a-json`,
+					},
+				},
+			},
+			expected:    nil,
+			expectError: true,
+		},
+		{
+			desc: "empty JSON array annotation",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "node4",
+					Annotations: map[string]string{
+						OvnNodeDontSNATSubnets: `[]`,
+					},
+				},
+			},
+			expected:    []string{},
+			expectError: false,
+		},
+	}
+
+	for i, tc := range tests {
+		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
+			result, err := ParseNodeDontSNATSubnetsList(tc.node)
+			if tc.expectError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tc.expected, result)
+			}
+		})
+	}
+}

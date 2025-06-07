@@ -330,4 +330,10 @@ const (
 	MetricOvsNamespace                   = "ovs"
 	MetricOvsSubsystemVswitchd           = "vswitchd"
 	MetricOvsSubsystemDB                 = "db"
+
+	// "mgmtport-no-snat-subnets-v4" and "mgmtport-no-snat-subnets-v6" are sets containing
+	// subnets, indicating traffic that should not be SNATted when passing through the
+	// management port.
+	NFTMgmtPortNoSNATSubnetsV4 = "mgmtport-no-snat-subnets-v4"
+	NFTMgmtPortNoSNATSubnetsV6 = "mgmtport-no-snat-subnets-v6"
 )

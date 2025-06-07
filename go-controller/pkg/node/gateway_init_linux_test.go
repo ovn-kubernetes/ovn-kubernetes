@@ -56,11 +56,14 @@ add table inet ovn-kubernetes
 add set inet ovn-kubernetes mgmtport-no-snat-nodeports { type inet_proto . inet_service ; comment "NodePorts not subject to management port SNAT" ; }
 add set inet ovn-kubernetes mgmtport-no-snat-services-v4 { type ipv4_addr . inet_proto . inet_service ; comment "eTP:Local short-circuit not subject to management port SNAT (IPv4)" ; }
 add set inet ovn-kubernetes mgmtport-no-snat-services-v6 { type ipv6_addr . inet_proto . inet_service ; comment "eTP:Local short-circuit not subject to management port SNAT (IPv6)" ; }
+add set inet ovn-kubernetes mgmtport-no-snat-subnets-v4 { type ipv4_addr ; flags interval ; comment "subnets not subject to management port SNAT (IPv4)" ; }
+add set inet ovn-kubernetes mgmtport-no-snat-subnets-v6 { type ipv6_addr ; flags interval ; comment "subnets not subject to management port SNAT (IPv6)" ; }
 add chain inet ovn-kubernetes mgmtport-snat { type nat hook postrouting priority 100 ; comment "OVN SNAT to Management Port" ; }
 add rule inet ovn-kubernetes mgmtport-snat oifname != %s return
 add rule inet ovn-kubernetes mgmtport-snat meta nfproto ipv4 ip saddr 10.1.1.2 counter return
 add rule inet ovn-kubernetes mgmtport-snat meta l4proto . th dport @mgmtport-no-snat-nodeports counter return
 add rule inet ovn-kubernetes mgmtport-snat ip daddr . meta l4proto . th dport @mgmtport-no-snat-services-v4 counter return
+add rule inet ovn-kubernetes mgmtport-snat ip saddr @mgmtport-no-snat-subnets-v4 counter return
 add rule inet ovn-kubernetes mgmtport-snat counter snat ip to 10.1.1.2
 `
 
