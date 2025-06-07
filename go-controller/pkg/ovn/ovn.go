@@ -497,7 +497,7 @@ func (oc *DefaultNetworkController) InitEgressServiceZoneController() (*egresssv
 		return nil
 	}
 	// used only when IC=true
-	createDefaultNodeRouteToExternal := func(_ libovsdbclient.Client, _, _ string, _ []config.CIDRNetworkEntry) error {
+	createDefaultNodeRouteToExternal := func(_ libovsdbclient.Client, _, _ string, _ []config.CIDRNetworkEntry, _ []*net.IPNet) error {
 		return nil
 	}
 

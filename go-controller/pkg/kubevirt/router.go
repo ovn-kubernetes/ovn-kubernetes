@@ -95,7 +95,16 @@ func EnsureLocalZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory, 
 	if config.OVNKubernetesFeature.EnableInterconnect {
 		// NOTE: EIP & ESVC use same route and if this is already present thanks to those features,
 		// this will be a no-op
-		if err := libovsdbutil.CreateDefaultRouteToExternal(nbClient, types.OVNClusterRouter, types.GWRouterPrefix+pod.Spec.NodeName, clusterSubnets); err != nil {
+		node, err := watchFactory.GetNode(pod.Spec.NodeName)
+		if err != nil {
+			return fmt.Errorf("failed getting to list node %q for pod %s/%s: %w", pod.Spec.NodeName, pod.Namespace, pod.Name, err)
+		}
+		gatewayIPs, err := util.ParseNodeGatewayRouterJoinAddrs(node, types.DefaultNetworkName)
+		if err != nil {
+			return fmt.Errorf("failed to get default network gateway router join IPs for node %q: %w", node.Name, err)
+		}
+		if err := libovsdbutil.CreateDefaultRouteToExternal(nbClient, types.OVNClusterRouter,
+			types.GWRouterPrefix+pod.Spec.NodeName, clusterSubnets, gatewayIPs); err != nil {
 			return err
 		}
 	}

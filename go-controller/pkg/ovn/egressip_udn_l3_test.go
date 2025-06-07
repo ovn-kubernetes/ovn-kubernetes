@@ -17,6 +17,7 @@ import (
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
@@ -98,6 +99,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
 		config.Gateway.Mode = config.GatewayModeShared
 		config.OVNKubernetesFeature.EgressIPNodeHealthCheckPort = 1234
+		config.Gateway.V4MasqueradeSubnet = dummyMasqueradeSubnet().String()
 
 		app = cli.NewApp()
 		app.Name = "test"
@@ -159,6 +161,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					"k8s.ovn.org/node-transit-switch-port-ifaddr": fmt.Sprintf("{\"ipv4\":\"%s/16\"}", v4Node1Tsp),
 					"k8s.ovn.org/zone-name":                       node1Name,
 					util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
+					util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s/16"}, "%s":{"ipv4":"%s/16"}}`, nodeLogicalRouterIPv4[0], networkName1, nodeLogicalRouterIPv4[0]),
 				}
 				labels := map[string]string{
 					"k8s.ovn.org/egress-assignable": "",
@@ -170,6 +173,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					"k8s.ovn.org/node-transit-switch-port-ifaddr": fmt.Sprintf("{\"ipv4\":\"%s/16\"}", v4Node2Tsp),
 					"k8s.ovn.org/zone-name":                       node2Name,
 					util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node2IPv4CIDR),
+					util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s/16"}, "%s":{"ipv4":"%s/16"}}`, node2LogicalRouterIPv4[0], networkName1, node2LogicalRouterIPv4[0]),
 				}
 				node2 := getNodeObj(node2Name, node2Annotations, labels)
 				eIP := egressipv1.EgressIP{
@@ -295,7 +299,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				fakeOvn.controller.eIPC.nodeZoneState.Store(node2Name, false)
 				fakeOvn.controller.eIPC.zone = node1.Name
 				fakeOvn.controller.zone = node1.Name
-				err = fakeOvn.eIPController.ensureRouterPoliciesForNetwork(netInfo)
+				err = fakeOvn.eIPController.ensureRouterPoliciesForNetwork(netInfo, &node1)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.eIPController.ensureSwitchPoliciesForNode(netInfo, node1Name)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -535,6 +539,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					"k8s.ovn.org/zone-name":                       node1Name,
 					"k8s.ovn.org/remote-zone-migrated":            node1Name,
 					util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
+					util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s/16"}, "%s":{"ipv4":"%s/16"}}`, nodeLogicalRouterIPv4[0], networkName1, nodeLogicalRouterIPv4[0]),
 				}
 				labels := map[string]string{
 					"k8s.ovn.org/egress-assignable": "",
@@ -547,6 +552,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					"k8s.ovn.org/zone-name":                       node2Name,
 					"k8s.ovn.org/remote-zone-migrated":            node2Name,
 					util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node2IPv4CIDR),
+					util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s/16"}, "%s":{"ipv4":"%s/16"}}`, node2LogicalRouterIPv4[0], networkName1, node2LogicalRouterIPv4[0]),
 				}
 				node2 := getNodeObj(node2Name, node2Annotations, labels)
 				twoNodeStatus := []egressipv1.EgressIPStatusItem{
@@ -668,7 +674,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				defer fakeOvn.networkManager.Stop()
 				// simulate Start() of secondary network controller
-				err = fakeOvn.eIPController.ensureRouterPoliciesForNetwork(secConInfo.bnc.GetNetInfo())
+				err = fakeOvn.eIPController.ensureRouterPoliciesForNetwork(secConInfo.bnc.GetNetInfo(), &node1)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.eIPController.ensureSwitchPoliciesForNode(secConInfo.bnc.GetNetInfo(), node1Name)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1054,6 +1060,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					"k8s.ovn.org/zone-name":                       node1Name,
 					"k8s.ovn.org/remote-zone-migrated":            node1Name,
 					util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
+					util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s/16"}, "%s":{"ipv4":"%s/16"}}`, nodeLogicalRouterIPv4[0], networkName1, nodeLogicalRouterIPv4[0]),
 				}
 				labels := map[string]string{
 					"k8s.ovn.org/egress-assignable": "",
@@ -1066,6 +1073,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					"k8s.ovn.org/zone-name":                       node2Name,
 					"k8s.ovn.org/remote-zone-migrated":            node2Name,
 					util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node2IPv4CIDR),
+					util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s/16"}, "%s":{"ipv4":"%s/16"}}`, node2LogicalRouterIPv4[0], networkName1, node2LogicalRouterIPv4[0]),
 				}
 				node2 := getNodeObj(node2Name, node2Annotations, labels)
 				twoNodeStatus := []egressipv1.EgressIPStatusItem{
@@ -1195,9 +1203,11 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				// Add pod IPs to UDN cache
 				iUDN, nUDN, _ := net.ParseCIDR(v4Pod1IPNode1Net1 + "/23")
 				nUDN.IP = iUDN
+				secConInfo.bnc.zone = node1.Name
 				secConInfo.bnc.logicalPortCache.add(&egressPodUDNLocal, "", util.GetNADName(nad.Namespace, nad.Name), "", nil, []*net.IPNet{nUDN})
 				_, err = fakeOvn.fakeClient.EgressIPClient.K8sV1().EgressIPs().Create(context.TODO(), &eIP, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(secConInfo.bnc.WatchNodes()).To(gomega.Succeed())
 				egressSVCServedPodsASv4, _ := buildEgressServiceAddressSets(nil)
 				egressIPServedPodsASCDNv4, _ := buildEgressIPServedPodsAddressSets([]string{podV4IP}, ovntypes.DefaultNetworkName, DefaultNetworkControllerName)
 				egressNodeIPsASv4, _ := buildEgressIPNodeAddressSets([]string{node1IPv4, node2IPv4})
@@ -1325,6 +1335,19 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						Name:     ovntypes.GWRouterToJoinSwitchPrefix + ovntypes.GWRouterPrefix + networkName1_ + node1.Name,
 						Networks: []string{nodeLogicalRouterIfAddrV4},
 					},
+					&nbdb.NAT{
+						UUID: networkName1_ + node1Name + "-masqueradeNAT-UUID",
+						ExternalIDs: map[string]string{
+							"k8s.ovn.org/topology": "layer3",
+							"k8s.ovn.org/network":  networkName1,
+						},
+						ExternalIP:  "169.254.169.14",
+						LogicalIP:   node1UDNSubnet.String(),
+						LogicalPort: ptr.To("rtos-" + networkName1_ + node1Name),
+						Match:       "eth.dst == 0a:58:14:80:00:02",
+						Type:        nbdb.NATTypeSNAT,
+						Options:     map[string]string{"stateless": "false"},
+					},
 					&nbdb.LogicalRouter{
 						Name:        netInfo.GetNetworkScopedClusterRouterName(),
 						UUID:        netInfo.GetNetworkScopedClusterRouterName() + "-UUID",
@@ -1333,6 +1356,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 							fmt.Sprintf("%s-no-reroute-reply-traffic", netInfo.GetNetworkName()),
 							getReRoutePolicyUUID(eipNamespace2, podName2, IPFamilyValueV4, netInfo.GetNetworkName())},
 						StaticRoutes: []string{fmt.Sprintf("%s-reroute-static-route-UUID", netInfo.GetNetworkName())},
+						Nat:          []string{networkName1_ + node1Name + "-masqueradeNAT-UUID"},
 					},
 					&nbdb.LogicalRouter{
 						UUID:        netInfo.GetNetworkScopedGWRouterName(node1.Name) + "-UUID",
@@ -1345,14 +1369,57 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					&nbdb.LogicalSwitchPort{
 						UUID:      "k8s-" + networkName1_ + node1Name + "-UUID",
 						Name:      "k8s-" + networkName1_ + node1Name,
-						Addresses: []string{"fe:1a:b2:3f:0e:fb " + util.GetNodeManagementIfAddr(node1UDNSubnet).IP.String()},
+						Addresses: []string{"0a:58:14:80:00:02 " + util.GetNodeManagementIfAddr(node1UDNSubnet).IP.String()},
+					},
+					&nbdb.LogicalSwitchPort{
+						UUID:      "stor-" + networkName1_ + node1Name + "-UUID",
+						Name:      "stor-" + networkName1_ + node1Name,
+						Addresses: []string{"router"},
+						Options:   map[string]string{"router-port": "rtos-" + networkName1_ + node1Name},
+						Type:      "router",
+					},
+					&nbdb.ACL{
+						UUID:      netInfo.GetNetworkScopedSwitchName(node1.Name) + "-NetpolNode-UUID",
+						Direction: nbdb.ACLDirectionToLport,
+						Action:    nbdb.ACLActionAllowRelated,
+						ExternalIDs: map[string]string{
+							"k8s.ovn.org/name":             networkName1_ + node1Name,
+							"ip":                           util.GetNodeManagementIfAddr(node1UDNSubnet).IP.String(),
+							"k8s.ovn.org/id":               fmt.Sprintf("%s-network-controller:NetpolNode:%s:%s", networkName1, networkName1_+node1Name, util.GetNodeManagementIfAddr(node1UDNSubnet).IP.String()),
+							"k8s.ovn.org/owner-controller": networkName1 + "-network-controller",
+							"k8s.ovn.org/owner-type":       "NetpolNode",
+						},
+						Match:    fmt.Sprintf("ip4.src==%s", util.GetNodeManagementIfAddr(node1UDNSubnet).IP.String()),
+						Meter:    ptr.To(ovntypes.OvnACLLoggingMeter),
+						Priority: ovntypes.PrimaryUDNAllowPriority,
+						Tier:     ovntypes.DefaultACLTier,
 					},
 					&nbdb.LogicalSwitch{
 						UUID:        netInfo.GetNetworkScopedSwitchName(node1.Name) + "-UUID",
 						Name:        netInfo.GetNetworkScopedSwitchName(node1.Name),
-						Ports:       []string{"k8s-" + networkName1_ + node1Name + "-UUID"},
+						Ports:       []string{"k8s-" + networkName1_ + node1Name + "-UUID", "stor-" + networkName1_ + node1Name + "-UUID"},
 						ExternalIDs: map[string]string{ovntypes.NetworkExternalID: netInfo.GetNetworkName(), ovntypes.TopologyExternalID: ovntypes.Layer3Topology},
 						QOSRules:    []string{fmt.Sprintf("%s-QoS-UUID", netInfo.GetNetworkName())},
+						OtherConfig: map[string]string{
+							"exclude_ips": util.GetNodeManagementIfAddr(node1UDNSubnet).IP.String(),
+							"subnet":      node1UDNSubnet.String(),
+						},
+						ACLs: []string{netInfo.GetNetworkScopedSwitchName(node1.Name) + "-NetpolNode-UUID"},
+					},
+					&nbdb.LogicalSwitch{
+						UUID: netInfo.GetNetworkScopedSwitchName(node1.Name) + "TRANSIT-UUID",
+						Name: networkName1_ + ovntypes.TransitSwitch,
+						ExternalIDs: map[string]string{
+							ovntypes.NetworkExternalID:     netInfo.GetNetworkName(),
+							ovntypes.TopologyExternalID:    ovntypes.Layer3Topology,
+							ovntypes.NetworkRoleExternalID: ovntypes.NetworkRolePrimary},
+						OtherConfig: map[string]string{
+							"mcast_snoop":              "true",
+							"mcast_querier":            "false",
+							"mcast_flood_unregistered": "true",
+							"interconn-ts":             networkName1_ + ovntypes.TransitSwitch,
+							"requested-tnl-key":        "16711685",
+						},
 					},
 					getNoReRouteReplyTrafficPolicyForController(netInfo.GetNetworkName(), DefaultNetworkControllerName),
 					getDefaultQoSRule(false, netInfo.GetNetworkName(), DefaultNetworkControllerName),
@@ -1457,6 +1524,19 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						Name:     ovntypes.GWRouterToJoinSwitchPrefix + ovntypes.GWRouterPrefix + networkName1_ + node1.Name,
 						Networks: []string{nodeLogicalRouterIfAddrV4},
 					},
+					&nbdb.NAT{
+						UUID: networkName1_ + node1Name + "-masqueradeNAT-UUID",
+						ExternalIDs: map[string]string{
+							"k8s.ovn.org/topology": "layer3",
+							"k8s.ovn.org/network":  networkName1,
+						},
+						ExternalIP:  "169.254.169.14",
+						LogicalIP:   node1UDNSubnet.String(),
+						LogicalPort: ptr.To("rtos-" + networkName1_ + node1Name),
+						Match:       "eth.dst == 0a:58:14:80:00:02",
+						Type:        nbdb.NATTypeSNAT,
+						Options:     map[string]string{"stateless": "false"},
+					},
 					&nbdb.LogicalRouter{
 						Name:        netInfo.GetNetworkScopedClusterRouterName(),
 						UUID:        netInfo.GetNetworkScopedClusterRouterName() + "-UUID",
@@ -1465,6 +1545,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 							fmt.Sprintf("%s-no-reroute-reply-traffic", netInfo.GetNetworkName()),
 						},
 						StaticRoutes: []string{fmt.Sprintf("%s-reroute-static-route-UUID", netInfo.GetNetworkName())},
+						Nat:          []string{networkName1_ + node1Name + "-masqueradeNAT-UUID"},
 					},
 					&nbdb.LogicalRouter{
 						UUID:        netInfo.GetNetworkScopedGWRouterName(node1.Name) + "-UUID",
@@ -1475,14 +1556,57 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					&nbdb.LogicalSwitchPort{
 						UUID:      "k8s-" + networkName1_ + node1Name + "-UUID",
 						Name:      "k8s-" + networkName1_ + node1Name,
-						Addresses: []string{"fe:1a:b2:3f:0e:fb " + util.GetNodeManagementIfAddr(node1UDNSubnet).IP.String()},
+						Addresses: []string{"0a:58:14:80:00:02 " + util.GetNodeManagementIfAddr(node1UDNSubnet).IP.String()},
+					},
+					&nbdb.LogicalSwitchPort{
+						UUID:      "stor-" + networkName1_ + node1Name + "-UUID",
+						Name:      "stor-" + networkName1_ + node1Name,
+						Addresses: []string{"router"},
+						Options:   map[string]string{"router-port": "rtos-" + networkName1_ + node1Name},
+						Type:      "router",
+					},
+					&nbdb.ACL{
+						UUID:      netInfo.GetNetworkScopedSwitchName(node1.Name) + "-NetpolNode-UUID",
+						Direction: nbdb.ACLDirectionToLport,
+						Action:    nbdb.ACLActionAllowRelated,
+						ExternalIDs: map[string]string{
+							"k8s.ovn.org/name":             networkName1_ + node1Name,
+							"ip":                           util.GetNodeManagementIfAddr(node1UDNSubnet).IP.String(),
+							"k8s.ovn.org/id":               fmt.Sprintf("%s-network-controller:NetpolNode:%s:%s", networkName1, networkName1_+node1Name, util.GetNodeManagementIfAddr(node1UDNSubnet).IP.String()),
+							"k8s.ovn.org/owner-controller": networkName1 + "-network-controller",
+							"k8s.ovn.org/owner-type":       "NetpolNode",
+						},
+						Match:    fmt.Sprintf("ip4.src==%s", util.GetNodeManagementIfAddr(node1UDNSubnet).IP.String()),
+						Meter:    ptr.To(ovntypes.OvnACLLoggingMeter),
+						Priority: ovntypes.PrimaryUDNAllowPriority,
+						Tier:     ovntypes.DefaultACLTier,
 					},
 					&nbdb.LogicalSwitch{
 						UUID:        netInfo.GetNetworkScopedSwitchName(node1.Name) + "-UUID",
 						Name:        netInfo.GetNetworkScopedSwitchName(node1.Name),
-						Ports:       []string{"k8s-" + networkName1_ + node1Name + "-UUID"},
+						Ports:       []string{"k8s-" + networkName1_ + node1Name + "-UUID", "stor-" + networkName1_ + node1Name + "-UUID"},
 						ExternalIDs: map[string]string{ovntypes.NetworkExternalID: netInfo.GetNetworkName(), ovntypes.TopologyExternalID: ovntypes.Layer3Topology},
 						QOSRules:    []string{fmt.Sprintf("%s-QoS-UUID", netInfo.GetNetworkName())},
+						OtherConfig: map[string]string{
+							"exclude_ips": util.GetNodeManagementIfAddr(node1UDNSubnet).IP.String(),
+							"subnet":      node1UDNSubnet.String(),
+						},
+						ACLs: []string{netInfo.GetNetworkScopedSwitchName(node1.Name) + "-NetpolNode-UUID"},
+					},
+					&nbdb.LogicalSwitch{
+						UUID: netInfo.GetNetworkScopedSwitchName(node1.Name) + "TRANSIT-UUID",
+						Name: networkName1_ + ovntypes.TransitSwitch,
+						ExternalIDs: map[string]string{
+							ovntypes.NetworkExternalID:     netInfo.GetNetworkName(),
+							ovntypes.TopologyExternalID:    ovntypes.Layer3Topology,
+							ovntypes.NetworkRoleExternalID: ovntypes.NetworkRolePrimary},
+						OtherConfig: map[string]string{
+							"mcast_snoop":              "true",
+							"mcast_querier":            "false",
+							"mcast_flood_unregistered": "true",
+							"interconn-ts":             networkName1_ + ovntypes.TransitSwitch,
+							"requested-tnl-key":        "16711685",
+						},
 					},
 					getNoReRouteReplyTrafficPolicyForController(netInfo.GetNetworkName(), DefaultNetworkControllerName),
 					getDefaultQoSRule(false, netInfo.GetNetworkName(), DefaultNetworkControllerName),
@@ -1547,6 +1671,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					"k8s.ovn.org/zone-name":                       node1Name,
 					"k8s.ovn.org/remote-zone-migrated":            node1Name,
 					util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
+					util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s/16"}, "%s":{"ipv4":"%s/16"}}`, nodeLogicalRouterIPv4[0], networkName1, nodeLogicalRouterIPv4[0]),
 				}
 				labels := map[string]string{
 					"k8s.ovn.org/egress-assignable": "",
@@ -1559,6 +1684,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					"k8s.ovn.org/zone-name":                       node2Name,
 					"k8s.ovn.org/remote-zone-migrated":            node2Name,
 					util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node2IPv4CIDR),
+					util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s/16"}, "%s":{"ipv4":"%s/16"}}`, node2LogicalRouterIPv4[0], networkName1, node2LogicalRouterIPv4[0]),
 				}
 				node2 := getNodeObj(node2Name, node2Annotations, labels)
 				twoNodeStatus := []egressipv1.EgressIPStatusItem{
@@ -1680,7 +1806,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				err = fakeOvn.networkManager.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				defer fakeOvn.networkManager.Stop()
-				err = fakeOvn.eIPController.ensureRouterPoliciesForNetwork(netInfo)
+				err = fakeOvn.eIPController.ensureRouterPoliciesForNetwork(netInfo, &node1)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.eIPController.ensureSwitchPoliciesForNode(netInfo, node1Name)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1915,6 +2041,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					"k8s.ovn.org/zone-name":                       node1Name,
 					"k8s.ovn.org/remote-zone-migrated":            node1Name,
 					util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
+					util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s/16"}, "%s":{"ipv4":"%s/16"}}`, nodeLogicalRouterIPv4[0], networkName1, nodeLogicalRouterIPv4[0]),
 				}
 				labels := map[string]string{
 					"k8s.ovn.org/egress-assignable": "",
@@ -1927,6 +2054,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					"k8s.ovn.org/zone-name":                       node2Name,
 					"k8s.ovn.org/remote-zone-migrated":            node2Name,
 					util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node2IPv4CIDR),
+					util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s/16"}, "%s":{"ipv4":"%s/16"}}`, node2LogicalRouterIPv4[0], networkName1, node2LogicalRouterIPv4[0]),
 				}
 				node2 := getNodeObj(node2Name, node2Annotations, labels)
 				twoNodeStatus := []egressipv1.EgressIPStatusItem{
@@ -2052,7 +2180,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				err = fakeOvn.networkManager.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				defer fakeOvn.networkManager.Stop()
-				err = fakeOvn.eIPController.ensureRouterPoliciesForNetwork(netInfo)
+				err = fakeOvn.eIPController.ensureRouterPoliciesForNetwork(netInfo, &node1)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.eIPController.ensureSwitchPoliciesForNode(netInfo, node1Name)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -2274,6 +2402,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					"k8s.ovn.org/zone-name":                       node1Name,
 					"k8s.ovn.org/remote-zone-migrated":            node1Name,
 					util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
+					util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s/16"}, "%s":{"ipv4":"%s/16"}}`, nodeLogicalRouterIPv4[0], networkName1, nodeLogicalRouterIPv4[0]),
 				}
 				labels := map[string]string{
 					"k8s.ovn.org/egress-assignable": "",
@@ -2286,6 +2415,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					"k8s.ovn.org/zone-name":                       node2Name,
 					"k8s.ovn.org/remote-zone-migrated":            node2Name,
 					util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node2IPv4CIDR),
+					util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s/16"}, "%s":{"ipv4":"%s/16"}}`, node2LogicalRouterIPv4[0], networkName1, node2LogicalRouterIPv4[0]),
 				}
 				node2 := getNodeObj(node2Name, node2Annotations, labels)
 				twoNodeStatus := []egressipv1.EgressIPStatusItem{
@@ -2415,6 +2545,8 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				secConInfo, ok := fakeOvn.secondaryControllers[networkName1]
 				gomega.Expect(ok).To(gomega.BeTrue())
+				secConInfo.bnc.zone = node1.Name
+				gomega.Expect(secConInfo.bnc.WatchNodes()).To(gomega.Succeed())
 				// Add pod IPs to UDN cache
 				iUDN, nUDN, _ := net.ParseCIDR(v4Pod1IPNode1Net1 + "/23")
 				nUDN.IP = iUDN
@@ -2553,6 +2685,19 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						Name:     ovntypes.GWRouterToJoinSwitchPrefix + ovntypes.GWRouterPrefix + networkName1_ + node1.Name,
 						Networks: []string{nodeLogicalRouterIfAddrV4},
 					},
+					&nbdb.NAT{
+						UUID: networkName1_ + node1Name + "-masqueradeNAT-UUID",
+						ExternalIDs: map[string]string{
+							"k8s.ovn.org/topology": "layer3",
+							"k8s.ovn.org/network":  networkName1,
+						},
+						ExternalIP:  "169.254.169.14",
+						LogicalIP:   node1UDNSubnet.String(),
+						LogicalPort: ptr.To("rtos-" + networkName1_ + node1Name),
+						Match:       "eth.dst == 0a:58:14:80:00:02",
+						Type:        nbdb.NATTypeSNAT,
+						Options:     map[string]string{"stateless": "false"},
+					},
 					&nbdb.LogicalRouter{
 						Name:        netInfo.GetNetworkScopedClusterRouterName(),
 						UUID:        netInfo.GetNetworkScopedClusterRouterName() + "-UUID",
@@ -2561,6 +2706,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 							fmt.Sprintf("%s-no-reroute-reply-traffic", netInfo.GetNetworkName()),
 							getReRoutePolicyUUID(eipNamespace2, podName2, IPFamilyValueV4, netInfo.GetNetworkName())},
 						StaticRoutes: []string{fmt.Sprintf("%s-reroute-static-route-UUID", netInfo.GetNetworkName())},
+						Nat:          []string{networkName1_ + node1Name + "-masqueradeNAT-UUID"},
 					},
 					&nbdb.LogicalRouter{
 						UUID:        netInfo.GetNetworkScopedGWRouterName(node1.Name) + "-UUID",
@@ -2573,14 +2719,58 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					&nbdb.LogicalSwitchPort{
 						UUID:      "k8s-" + networkName1_ + node1Name + "-UUID",
 						Name:      "k8s-" + networkName1_ + node1Name,
-						Addresses: []string{"fe:1a:b2:3f:0e:fb " + util.GetNodeManagementIfAddr(node1UDNSubnet).IP.String()},
+						Addresses: []string{"0a:58:14:80:00:02 " + util.GetNodeManagementIfAddr(node1UDNSubnet).IP.String()},
+					},
+					&nbdb.LogicalSwitchPort{
+						UUID:      "stor-" + networkName1_ + node1Name + "-UUID",
+						Name:      "stor-" + networkName1_ + node1Name,
+						Addresses: []string{"router"},
+						Options:   map[string]string{"router-port": "rtos-" + networkName1_ + node1Name},
+						Type:      "router",
+					},
+					&nbdb.ACL{
+						UUID:      netInfo.GetNetworkScopedSwitchName(node1.Name) + "-NetpolNode-UUID",
+						Direction: nbdb.ACLDirectionToLport,
+						Action:    nbdb.ACLActionAllowRelated,
+						ExternalIDs: map[string]string{
+							"k8s.ovn.org/name":             networkName1_ + node1Name,
+							"ip":                           util.GetNodeManagementIfAddr(node1UDNSubnet).IP.String(),
+							"k8s.ovn.org/id":               fmt.Sprintf("%s-network-controller:NetpolNode:%s:%s", networkName1, networkName1_+node1Name, util.GetNodeManagementIfAddr(node1UDNSubnet).IP.String()),
+							"k8s.ovn.org/owner-controller": networkName1 + "-network-controller",
+							"k8s.ovn.org/owner-type":       "NetpolNode",
+						},
+						Match:    fmt.Sprintf("ip4.src==%s", util.GetNodeManagementIfAddr(node1UDNSubnet).IP.String()),
+						Meter:    ptr.To(ovntypes.OvnACLLoggingMeter),
+						Priority: ovntypes.PrimaryUDNAllowPriority,
+						Tier:     ovntypes.DefaultACLTier,
 					},
 					&nbdb.LogicalSwitch{
 						UUID:        netInfo.GetNetworkScopedSwitchName(node1.Name) + "-UUID",
 						Name:        netInfo.GetNetworkScopedSwitchName(node1.Name),
-						Ports:       []string{"k8s-" + networkName1_ + node1Name + "-UUID"},
+						Ports:       []string{"k8s-" + networkName1_ + node1Name + "-UUID", "stor-" + networkName1_ + node1Name + "-UUID"},
 						ExternalIDs: map[string]string{ovntypes.NetworkExternalID: netInfo.GetNetworkName(), ovntypes.TopologyExternalID: ovntypes.Layer3Topology},
 						QOSRules:    []string{fmt.Sprintf("%s-QoS-UUID", netInfo.GetNetworkName())},
+						OtherConfig: map[string]string{
+							"exclude_ips": util.GetNodeManagementIfAddr(node1UDNSubnet).IP.String(),
+							"subnet":      node1UDNSubnet.String(),
+						},
+						ACLs: []string{netInfo.GetNetworkScopedSwitchName(node1.Name) + "-NetpolNode-UUID"},
+					},
+					&nbdb.LogicalSwitch{
+						UUID: netInfo.GetNetworkScopedSwitchName(node1.Name) + "TRANSIT-UUID",
+						Name: networkName1_ + ovntypes.TransitSwitch,
+						ExternalIDs: map[string]string{
+							ovntypes.NetworkExternalID:     netInfo.GetNetworkName(),
+							ovntypes.TopologyExternalID:    ovntypes.Layer3Topology,
+							ovntypes.NetworkRoleExternalID: ovntypes.NetworkRolePrimary,
+						},
+						OtherConfig: map[string]string{
+							"mcast_snoop":              "true",
+							"mcast_querier":            "false",
+							"mcast_flood_unregistered": "true",
+							"interconn-ts":             networkName1_ + ovntypes.TransitSwitch,
+							"requested-tnl-key":        "16711685",
+						},
 					},
 					getNoReRouteReplyTrafficPolicyForController(netInfo.GetNetworkName(), DefaultNetworkControllerName),
 					getDefaultQoSRule(false, netInfo.GetNetworkName(), DefaultNetworkControllerName),
