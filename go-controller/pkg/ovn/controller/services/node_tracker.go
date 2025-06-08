@@ -70,14 +70,6 @@ func (ni *nodeInfo) hostAddressesStr() []string {
 	return out
 }
 
-func (ni *nodeInfo) l3gatewayAddressesStr() []string {
-	out := make([]string, 0, len(ni.l3gatewayAddresses))
-	for _, ip := range ni.l3gatewayAddresses {
-		out = append(out, ip.String())
-	}
-	return out
-}
-
 func newNodeTracker(zone string, resyncFn func(nodes []nodeInfo), netInfo util.NetInfo) *nodeTracker {
 
 	return &nodeTracker{
