@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"net"
 	"strings"
 
@@ -19,6 +20,7 @@ import (
 	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
 
 	corev1 "k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -532,7 +534,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 		var svcNetA, svcNetB, svcNetDefault *corev1.Service
 		var cudnA, cudnB *udnv1.ClusterUserDefinedNetwork
 		var ra *rav1.RouteAdvertisements
-
+		var hostNetworkPort int
 		ginkgo.BeforeEach(func() {
 			if cudnATemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer2 && isLocalGWModeEnabled() {
 				e2eskipper.Skipf("Advertising Layer2 UDNs is not currently supported in LGW")
@@ -584,6 +586,31 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 			nodes, err = e2enode.GetReadySchedulableNodes(context.TODO(), f.ClientSet)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			gomega.Expect(len(nodes.Items)).To(gomega.BeNumerically(">", 2))
+			// create host networked pod
+			ginkgo.By("Creating host network pods on each node")
+			// get random port in case the test retries and port is already in use on host node
+			rand.Seed(time.Now().UnixNano())
+			min := 25000
+			max := 25999
+			hostNetworkPort = rand.Intn(max-min+1) + min
+			framework.Logf("Random host networked port chosen: %d", hostNetworkPort)
+			for _, node := range nodes.Items {
+				// this creates a udp / http netexec listener which is able to receive the "hostname"
+				// command. We use this to validate that each endpoint is received at least once
+				args := []string{
+					"netexec",
+					fmt.Sprintf("--http-port=%d", hostNetworkPort),
+					fmt.Sprintf("--udp-port=%d", hostNetworkPort),
+				}
+
+				// create host networked Pods
+				_, err := createPod(f, node.Name+"-hostnet-ep", node.Name, f.Namespace.Name, []string{}, map[string]string{}, func(p *v1.Pod) {
+					p.Spec.Containers[0].Args = args
+					p.Spec.HostNetwork = true
+				})
+
+				framework.ExpectNoError(err)
+			}
 
 			ginkgo.By("Setting up pods and services")
 			podsNetA = []*corev1.Pod{}
@@ -900,6 +927,41 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					srvPodStatus, err := userDefinedNetworkStatus(srvPod, namespacedName(srvPod.Namespace, cudnATemplate.Name))
 					framework.ExpectNoError(err)
 					return clientNode, "", net.JoinHostPort(srvPodStatus.IPs[ipFamilyIndex].IP.String(), "8080") + "/clientip", curlConnectionTimeoutCode, true
+				}),
+			ginkgo.Entry("UDN pod to local node should not work",
+				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
+					clientPod := podsNetA[0]
+					node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), clientPod.Spec.NodeName, metav1.GetOptions{})
+					framework.ExpectNoError(err)
+					nodeIP := node.Status.Addresses[ipFamilyIndex].Address
+					// FIXME: add the host process scoket to the VRF for this test to work.
+					// This scenario is something that is not supported yet. So the test will continue to fail.
+					// This works the same on both normal UDNs and advertised UDNs.
+					// So because the process is bound to the VRF, packet reaches the host but kernel sends a RESET. So its not code 28 but code7.
+					// 10:59:55.351067 319594f193d4d_3 P   ifindex 191 0a:58:5d:5d:01:05 ethertype IPv4 (0x0800), length 80: (tos 0x0, ttl 64, id 57264,
+					//    offset 0, flags [DF], proto TCP (6), length 60)
+					// 93.93.1.5.36363 > 172.18.0.2.25022: Flags [S], cksum 0x0aa5 (incorrect -> 0xe0b7), seq 3879759281, win 65280,
+					//    options [mss 1360,sackOK,TS val 3006752321 ecr 0,nop,wscale 7], length 0
+					// 10:59:55.352404 ovn-k8s-mp87 In  ifindex 186 0a:58:5d:5d:01:01 ethertype IPv4 (0x0800), length 80: (tos 0x0, ttl 63, id 57264,
+					//    offset 0, flags [DF], proto TCP (6), length 60)
+					//    93.93.1.5.36363 > 172.18.0.2.25022: Flags [S], cksum 0xe0b7 (correct), seq 3879759281, win 65280,
+					//    options [mss 1360,sackOK,TS val 3006752321 ecr 0,nop,wscale 7], length 0
+					// 10:59:55.352461 ovn-k8s-mp87 Out ifindex 186 0a:58:5d:5d:01:02 ethertype IPv4 (0x0800), length 60: (tos 0x0, ttl 64, id 0,
+					//    offset 0, flags [DF], proto TCP (6), length 40)
+					//    172.18.0.2.25022 > 93.93.1.5.36363: Flags [R.], cksum 0x609d (correct), seq 0, ack 3879759282, win 0, length 0
+					//    10:59:55.352927 319594f193d4d_3 Out ifindex 191 0a:58:5d:5d:01:02 ethertype IPv4 (0x0800), length 60: (tos 0x0, ttl 64, id 0,
+					//    offset 0, flags [DF], proto TCP (6), length 40)
+					//    172.18.0.2.25022 > 93.93.1.5.36363: Flags [R.], cksum 0x609d (correct), seq 0, ack 1, win 0, length 0
+					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(hostNetworkPort)) + "/hostname", "", true
+				}),
+			ginkgo.Entry("UDN pod to a different node should work",
+				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
+					clientPod := podsNetA[0]
+					// podsNetA[0] and podsNetA[2] are on different nodes so we can pick the node of podsNetA[2] as the different node destination
+					node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), podsNetA[2].Spec.NodeName, metav1.GetOptions{})
+					framework.ExpectNoError(err)
+					nodeIP := node.Status.Addresses[ipFamilyIndex].Address
+					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(hostNetworkPort)) + "/hostname", "", false
 				}),
 		)
 
