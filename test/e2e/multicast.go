@@ -8,6 +8,7 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -24,7 +25,7 @@ type nodeInfo struct {
 	nodeIP string
 }
 
-var _ = ginkgo.Describe("Multicast", func() {
+var _ = ginkgo.Describe("Multicast", feature.Multicast, func() {
 
 	fr := wrappedTestFramework("multicast")
 

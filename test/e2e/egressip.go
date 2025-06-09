@@ -20,6 +20,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
 	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
@@ -377,7 +378,7 @@ type egressIPs struct {
 	Items []egressIP `json:"items"`
 }
 
-var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigParams networkAttachmentConfigParams) {
+var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", feature.EgressIP, func(netConfigParams networkAttachmentConfigParams) {
 	//FIXME: tests for CDN are designed for single stack clusters (IPv4 or IPv6) and must choose a single IP family for dual stack clusters.
 	// Remove this restriction and allow the tests to detect if an IP family support is available.
 	const (

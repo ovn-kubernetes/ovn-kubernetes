@@ -9,6 +9,7 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -87,7 +88,7 @@ func checkPodsInterconnectivity(clientPod, serverPod *v1.Pod, namespace string, 
 	return nil
 }
 
-var _ = ginkgo.Describe("Multi node zones interconnect", func() {
+var _ = ginkgo.Describe("Multi node zones interconnect", feature.Interconnect, func() {
 
 	const (
 		serverPodNodeName = "ovn-control-plane"
