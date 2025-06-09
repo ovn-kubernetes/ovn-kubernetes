@@ -1694,7 +1694,7 @@ metadata:
 		gomega.Expect(len(endpoints.Subsets[0].Addresses)).To(gomega.Equal(4))
 		endPointIP := endpoints.Subsets[0].Addresses[0].IP
 		nodeName := endpoints.Subsets[0].Addresses[0].NodeName
-		nodeIP, err := getNodeIP(f.ClientSet, *nodeName)
+		nodeIP, err := GetNodeIP(f.ClientSet, *nodeName)
 		framework.ExpectNoError(err, fmt.Sprintf("failed to get endpoint's %s node ip address", endPointIP))
 
 		svcIPforCurl := svcLoadBalancerIP
@@ -1790,9 +1790,9 @@ metadata:
 		bgpRouteCommand := strings.Split(fmt.Sprintf("ip%s route show %s", ipVer, svcLoadBalancerIP), " ")
 		cmd = append(cmd, bgpRouteCommand...)
 
-		backendNodeIP, err := getNodeIP(f.ClientSet, backendNodeName)
+		backendNodeIP, err := GetNodeIP(f.ClientSet, backendNodeName)
 		framework.ExpectNoError(err, fmt.Sprintf("failed to get node's %s node ip address", backendNodeName))
-		nonBackendNodeIP, err := getNodeIP(f.ClientSet, backendNodeName)
+		nonBackendNodeIP, err := GetNodeIP(f.ClientSet, backendNodeName)
 		framework.ExpectNoError(err, fmt.Sprintf("failed to get node's %s node ip address", backendNodeName))
 		frrExternalContainer := infraapi.ExternalContainer{Name: "frr", Network: primaryProviderNetwork}
 		gomega.Eventually(func() bool {
@@ -1838,7 +1838,7 @@ spec:
 			// ensure only this node's IP route is advertised correctly by metalb BGP routes
 			// sample:
 			// 192.168.10.0 nhid 31 via 172.19.0.4 dev eth0 proto bgp metric 20
-			nodeIP, err := getNodeIP(f.ClientSet, node)
+			nodeIP, err := GetNodeIP(f.ClientSet, node)
 			framework.ExpectNoError(err, fmt.Sprintf("failed to get nodes's %s node ip address", node))
 			framework.Logf("NodeIP of node %s is %s", node, nodeIP)
 			externalContainer := infraapi.ExternalContainer{Name: externalRouterContainerName, Network: primaryProviderNetwork}
@@ -2016,7 +2016,7 @@ spec:
 		// since ETP=local; ensure only this node's IP route is advertised correctly by metalb BGP routes
 		// sample:
 		// 192.168.10.0 nhid 31 via 172.19.0.4 dev eth0 proto bgp metric 20
-		nodeIP, err := getNodeIP(f.ClientSet, backendNodeName)
+		nodeIP, err := GetNodeIP(f.ClientSet, backendNodeName)
 		framework.ExpectNoError(err, fmt.Sprintf("failed to get nodes's %s node ip address", backendNodeName))
 		framework.Logf("NodeIP of node %s is %s", backendNodeName, nodeIP)
 		primaryProviderNetwork, err := infraprovider.Get().PrimaryNetwork()
@@ -2153,7 +2153,7 @@ spec:
 		// since ETP=local; ensure only this node's IP route is advertised correctly by metalb BGP routes
 		// sample:
 		// 192.168.10.0 nhid 31 via 172.19.0.4 dev eth0 proto bgp metric 20
-		nodeIP, err := getNodeIP(f.ClientSet, backendNodeName)
+		nodeIP, err := GetNodeIP(f.ClientSet, backendNodeName)
 		framework.ExpectNoError(err, fmt.Sprintf("failed to get nodes's %s node ip address", backendNodeName))
 		framework.Logf("NodeIP of node %s is %s", backendNodeName, nodeIP)
 		ipVer := ""
@@ -2304,7 +2304,7 @@ func getEndpointsForService(c clientset.Interface, namespace, serviceName string
 	return endpoints, nil
 }
 
-func getNodeIP(c clientset.Interface, nodeName string) (string, error) {
+func GetNodeIP(c clientset.Interface, nodeName string) (string, error) {
 	node, err := c.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
 	if err != nil {
 		return "", err
