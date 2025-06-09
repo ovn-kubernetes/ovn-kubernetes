@@ -109,16 +109,49 @@ var _ = Describe("Network Segmentation", func() {
 						Expect(udnNetStat[0].Interface).To(Equal(ovnUDNInterface))
 
 						cidrs := strings.Split(netConfig.cidr, ",")
-						for i, serverIP := range udnNetStat[0].IPs {
-							cidr := cidrs[i]
-							if cidr != "" {
-								By("asserting the server pod has an IP from the configured range")
-								const netPrefixLengthPerNode = 24
-								By(fmt.Sprintf("asserting the pod IP %s is from the configured range %s/%d", serverIP, cidr, netPrefixLengthPerNode))
-								subnet, err := getNetCIDRSubnet(cidr)
-								Expect(err).NotTo(HaveOccurred())
-								Expect(inRange(subnet, serverIP)).To(Succeed())
+						By("asserting at least one of the server pod IPs is from the configured ranges")
+						const netPrefixLengthPerNode = 24
+
+						// For each CIDR, check if at least one pod IP is within that range
+						for _, cidr := range cidrs {
+							if cidr == "" {
+								continue
 							}
+
+							By(fmt.Sprintf("checking for pod IP in CIDR %s", cidr))
+
+							// Parse CIDR to determine its family
+							_, ipNet, err := net.ParseCIDR(cidr)
+							Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("Failed to parse CIDR %s", cidr))
+
+							cidrIsIPv4 := ipNet.IP.To4() != nil
+
+							// Find IPs that match this CIDR's family
+							found := false
+							for _, serverIP := range udnNetStat[0].IPs {
+								ipObj := net.ParseIP(serverIP)
+								if ipObj == nil {
+									Fail(fmt.Sprintf("Invalid IP address: %s", serverIP))
+								}
+
+								isIPv4 := ipObj.To4() != nil
+
+								// Only check IP against CIDR if they are the same family
+								if cidrIsIPv4 == isIPv4 {
+									subnet, err := getNetCIDRSubnet(cidr)
+									Expect(err).NotTo(HaveOccurred())
+
+									// Check if this IP is in the subnet range
+									if inRange(subnet, serverIP) == nil {
+										By(fmt.Sprintf("found pod IP %s in configured range %s", serverIP, cidr))
+										found = true
+										break
+									}
+								}
+							}
+
+							// Expect at least one IP to be in this CIDR range
+							Expect(found).To(BeTrue(), fmt.Sprintf("No pod IP found in CIDR range %s", cidr))
 						}
 					},
 					Entry("L2 primary UDN",
