@@ -72,6 +72,7 @@ func RenderNetAttachDefManifest(obj client.Object, targetNamespace string) (*net
 			Name:            obj.GetName(),
 			OwnerReferences: []metav1.OwnerReference{ownerRef},
 			Labels:          renderNADLabels(obj),
+			Annotations:     renderNADAnnotations(obj),
 			Finalizers:      []string{FinalizerUserDefinedNetwork},
 		},
 		Spec: *nadSpec,
@@ -107,6 +108,21 @@ func renderNADLabels(obj client.Object) map[string]string {
 		maps.Copy(labels, udnLabels)
 	}
 	return labels
+}
+
+// renderNADAnnotations copies annotations from UDN to corresponding NAD
+func renderNADAnnotations(obj client.Object) map[string]string {
+	udnAnnotations := obj.GetAnnotations()
+	annotations := make(map[string]string)
+	for k, v := range udnAnnotations {
+		if !strings.HasPrefix(k, types.OvnK8sPrefix) {
+			annotations[k] = v
+		}
+	}
+	if len(annotations) == 0 {
+		return nil
+	}
+	return annotations
 }
 
 func validateTopology(spec SpecGetter) error {
