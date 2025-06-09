@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"k8s.io/client-go/tools/record"
@@ -23,15 +25,20 @@ import (
 	kexec "k8s.io/utils/exec"
 
 	"github.com/ovn-org/libovsdb/client"
+	"github.com/ovn-org/libovsdb/model"
+	"github.com/ovn-org/libovsdb/ovsdb"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controllermanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb"
+	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	ovnnode "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/sbdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
@@ -147,6 +154,77 @@ func delPidfile(pidfile string) {
 			}
 		}
 	}
+}
+
+// ovnkubeControllerSyncPostBootFilePath is located in storage that does not persist following a reboot. ovn-controller start
+// is predicated on the existence of this file.
+const ovnkubeControllerSyncPostBootFilePath = "/tmp/ovnkube-controller-sync-post-boot"
+
+func ensureOVNKubeControllerSyncPostBootFile() error {
+	if err := os.WriteFile(ovnkubeControllerSyncPostBootFilePath, []byte(time.Now().String()), 0o644); err != nil {
+		return fmt.Errorf("failed to write to file at path %q: %v", ovnkubeControllerSyncPostBootFilePath, err)
+	}
+	return nil
+}
+
+// doesOVNKubeControllerSyncPostBootFileExist checks if a sentinel file exists. File will not exist post Node restart. OVNKube controller creates the file post sync and after a reboot.
+func doesOVNKubeControllerSyncPostBootFileExist() (bool, error) {
+	exists := true
+	_, err := os.Stat(ovnkubeControllerSyncPostBootFilePath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return exists, fmt.Errorf("failed to stat file at path %q: %w", ovnkubeControllerSyncPostBootFilePath, err)
+		}
+		exists = false
+	}
+	return exists, nil
+}
+
+// waitUntilNorthdSyncOnce ensures northd has sync'd at least once by increments nb_cfg value in NB DB and waiting
+// for northd to copy it to SB DB. Poll SB DB until context is cancelled.
+// The expectation is that the data you wish to be sync'd to SB DB has already been written to NB DB so when we get the initial
+// nb_cfg value, we know that if we increment that by one and see that value or greater in SB DB, then the data has sync'd.
+// All other processes interacting with nb_cfg increment it. This function depends on other processes respecting that.
+// No guarantee of any changes in SB DB made after this func.
+func waitUntilNorthdSyncOnce(ctx context.Context, nbClient, sbClient client.Client) error {
+	// 1. Get value of nb_cfg
+	// 2. Increment value of nb_cfg
+	// 3. Wait until value appears in SB DB after northd copies it.
+	nbGlobal := &nbdb.NBGlobal{}
+	nbGlobal, err := libovsdbops.GetNBGlobal(nbClient, nbGlobal)
+	if err != nil {
+		return fmt.Errorf("failed to find OVN Northbound NB_Global table"+
+			" entry: %w", err)
+	}
+	// increment nb_cfg value by 1. When northd consumes updates from NB DB, it will copy this value to SB DBs SB_Global table nb_cfg field.
+	ops, err := nbClient.Where(nbGlobal).Mutate(nbGlobal, model.Mutation{
+		Field:   &nbGlobal.NbCfg,
+		Mutator: ovsdb.MutateOperationAdd,
+		Value:   1,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to generate ops to mutate nb_cfg: %w", err)
+	}
+	expectedNbCfgValue := nbGlobal.NbCfg + 1
+	if _, err = libovsdbops.TransactAndCheck(nbClient, ops); err != nil {
+		return fmt.Errorf("failed to transact to increment nb_cfg: %w", err)
+	}
+	sbGlobal := &sbdb.SBGlobal{}
+	// poll until we see the expected value in SB DB every 5 milliseconds until context is cancelled.
+	err = wait.PollUntilContextCancel(ctx, time.Millisecond*5, true, func(_ context.Context) (done bool, err error) {
+		if sbGlobal, err = libovsdbops.GetSBGlobal(sbClient, sbGlobal); err != nil {
+			// northd hasn't added an entry yet
+			if errors.Is(err, client.ErrNotFound) {
+				return false, nil
+			}
+			return false, fmt.Errorf("failed to get sb_global table entry from SB DB: %w", err)
+		}
+		return sbGlobal.NbCfg >= expectedNbCfgValue, nil // we only need to ensure it is greater than or equal to the expected value
+	})
+	if err != nil {
+		return fmt.Errorf("failed while waiting for nb_cfg value greater than or equal %d in sb db sb_global table: %w", expectedNbCfgValue, err)
+	}
+	return nil
 }
 
 func setupPIDFile(pidfile string) error {
@@ -485,6 +563,19 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 			defer cancel()
 			defer wg.Done()
 
+			// If IC mode, ovnkube controller will create a file in directory that will not persistent a Node reboot, therefore
+			// we can determine if the Node is rebooting or not. Post sync, ensure the file exists. ovn-controller start is
+			// predicated on the file existence because in IC mode, SB DB may contain stale data from before reboot and, we do
+			// not want ovn-controller to consume this stale control plane data.
+			var doesBootFileExist bool
+			if config.OVNKubernetesFeature.EnableInterconnect {
+				// no support for multiple Nodes per zone.
+				doesBootFileExist, err = doesOVNKubeControllerSyncPostBootFileExist()
+				if err != nil {
+					controllerErr = fmt.Errorf("failed to determine if Node restarted via sentinel file availability: %v", err)
+				}
+			}
+
 			libovsdbOvnNBClient, err := libovsdb.NewNBClient(ctx.Done())
 			if err != nil {
 				controllerErr = fmt.Errorf("failed to initialize libovsdb NB client: %w", err)
@@ -513,6 +604,19 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 			if err != nil {
 				controllerErr = fmt.Errorf("failed to start network controller: %w", err)
 				return
+			}
+
+			// if IC and a Node restart, block writing sentinel file until northd has sync'd once.
+			// external resources may predicate on this file availability and guaranteed ovnkube controller has sync'd once
+			// and changes propagated to SB DB.
+			if config.OVNKubernetesFeature.EnableInterconnect && !doesBootFileExist {
+				if err = waitUntilNorthdSyncOnce(ctx, libovsdbOvnNBClient, libovsdbOvnSBClient); err != nil {
+					controllerErr = fmt.Errorf("failed while waiting for northd to copy NB DB contents to SB DB: %w", err)
+					return
+				}
+				if err = ensureOVNKubeControllerSyncPostBootFile(); err != nil {
+					controllerErr = fmt.Errorf("failed to ensure ovnkube controller start file: %w", err)
+				}
 			}
 
 			// record delay until ready

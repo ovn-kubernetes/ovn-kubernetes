@@ -289,14 +289,23 @@ spec:
       - name: ovn-controller
         image: "{{ ovn_image | default('docker.io/ovnkube/ovn-daemonset:latest') }}"
         imagePullPolicy: "{{ ovn_image_pull_policy | default('IfNotPresent') }}"
-
-        command: ["/root/ovnkube.sh", "ovn-controller"]
-
+        command:
+          - "/bin/sh"
+          - "-c"
+          - |
+            {% if ovn_enable_interconnect == "true" -%}
+            echo "waiting for ovnkube-controller to sync once post reboot by ensuring a file exits..."
+            while [ ! -f /tmp/ovnkube-controller-sync-post-boot ]; do
+              echo "waiting for OVN Kubernetes ovnkube-controller to write a file to indicate it has sync'd post reboot before starting ovn-controller..."
+              sleep .1
+            done
+            {% endif %}
+            echo "starting ovn-controller"
+            /root/ovnkube.sh ovn-controller
         securityContext:
           runAsUser: 0
           capabilities:
             add: ["SYS_NICE"]
-
         terminationMessagePolicy: FallbackToLogsOnError
         volumeMounts:
         - mountPath: /var/run/dbus/
