@@ -200,6 +200,7 @@ jobs:
       if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
       run: |
         set -x
+        sudo apt-get update
         sudo apt-get install linux-modules-extra-$(uname -r) -y
         sudo modprobe vrf
 
