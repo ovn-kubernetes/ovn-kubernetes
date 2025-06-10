@@ -74,8 +74,12 @@ func Run(ctx context.Context, stopCh <-chan struct{}, podResCli podresourcesapi.
 	// as a result, this logic is re-executed automatically after every change.
 	reservedCPUs, err := getReservedCPUs(kubeletConfigFilePath)
 	if err != nil {
-		klog.Warningf("Failed to get reservedSystemCPUs: %v", err)
-		return
+		klog.Warningf("Failed to get reservedSystemCPUs from kubelet config file on: %q: err=%v\n.Falling back to detect reserved from system", kubeletConfigFilePath, err)
+		reservedCPUs, err = getReservedCPUsFallback(ctx, podResCli)
+		if err != nil {
+			klog.Warningf("Fallback method to obtain reservedSystemCPUs failed. err=%v", err)
+			return
+		}
 	}
 	klog.Infof("OVS CPU dynamic pinning reservedSystemCPUs set: %s", reservedCPUs)
 
@@ -310,12 +314,10 @@ func convertCPUSet(k8sSet *cpuset.CPUSet) unix.CPUSet {
 // exclusively pinned to any container. IOW it returns the CPUs that are dedicated for
 // Burstable and BestEffort QoS containers
 func getNonPinnedCPUs(ctx context.Context, podResCli podresourcesapi.PodResourcesListerClient) (cpuset.CPUSet, error) {
-	// Get allocatable CPUs
-	allocatableResp, err := podResCli.GetAllocatableResources(ctx, &podresourcesapi.AllocatableResourcesRequest{})
+	allocatableCPUs, err := getAllocatableCPUs(ctx, podResCli)
 	if err != nil {
-		return cpuset.CPUSet{}, fmt.Errorf("GetAllocatableResources failed: %w", err)
+		return cpuset.CPUSet{}, err
 	}
-	allocatableCPUs := cpuset.New(convertInt64ToInt(allocatableResp.CpuIds)...)
 
 	// List pod resources and collect used CPUs
 	listResp, err := podResCli.List(ctx, &podresourcesapi.ListPodResourcesRequest{})
@@ -373,4 +375,34 @@ func getReservedCPUs(path string) (cpuset.CPUSet, error) {
 	}
 
 	return cset, nil
+}
+
+func getReservedCPUsFallback(ctx context.Context, podResCli podresourcesapi.PodResourcesListerClient) (cpuset.CPUSet, error) {
+	onlineCPUs, err := getOnlineCPUs()
+	if err != nil {
+		return cpuset.CPUSet{}, fmt.Errorf("failed to get onlineCPUs CPUs %w", err)
+	}
+	allocatableCPUs, err := getAllocatableCPUs(ctx, podResCli)
+	if err != nil {
+		return cpuset.CPUSet{}, err
+	}
+	// online - allocatable is the reserved set
+	return onlineCPUs.Difference(allocatableCPUs), nil
+
+}
+
+func getOnlineCPUs() (cpuset.CPUSet, error) {
+	onlineCPUList, err := os.ReadFile("/sys/devices/system/cpu/online")
+	if err != nil {
+		return cpuset.CPUSet{}, err
+	}
+	return cpuset.Parse(strings.TrimSpace(string(onlineCPUList)))
+}
+
+func getAllocatableCPUs(ctx context.Context, podResCli podresourcesapi.PodResourcesListerClient) (cpuset.CPUSet, error) {
+	allocatableResp, err := podResCli.GetAllocatableResources(ctx, &podresourcesapi.AllocatableResourcesRequest{})
+	if err != nil {
+		return cpuset.CPUSet{}, fmt.Errorf("GetAllocatableResources failed: %w", err)
+	}
+	return cpuset.New(convertInt64ToInt(allocatableResp.CpuIds)...), nil
 }
