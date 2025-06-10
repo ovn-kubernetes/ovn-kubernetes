@@ -115,22 +115,22 @@ end
 
 #### Layer2 User Defined Network API changes
 
-Proposed API change adds `nodeManagementIPs` and `defaultGatewayIPs` fields to the `Layer2Config` which is a part of both
+Proposed API change adds `infrastructureSubnets` `excludeSubnets` and `defaultGatewayIPs` fields to the `Layer2Config` which is a part of both
 the [UDN](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/a3d0a2b238bef9b1399b3342228d75504afed18b/go-controller/pkg/crd/userdefinednetwork/v1/udn.go#L47)
 and [cluster UDN](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/a3d0a2b238bef9b1399b3342228d75504afed18b/go-controller/pkg/crd/userdefinednetwork/v1/cudn.go#L63) specs:
-```
+```diff
 // +kubebuilder:validation:XValidation:rule="has(self.ipam) && has(self.ipam.mode) && self.ipam.mode != 'Enabled' || has(self.subnets)", message="Subnets is required with ipam.mode is Enabled or unset"
 // +kubebuilder:validation:XValidation:rule="!has(self.ipam) || !has(self.ipam.mode) || self.ipam.mode != 'Disabled' || !has(self.subnets)", message="Subnets must be unset when ipam.mode is Disabled"
 // +kubebuilder:validation:XValidation:rule="!has(self.ipam) || !has(self.ipam.mode) || self.ipam.mode != 'Disabled' || self.role == 'Secondary'", message="Disabled ipam.mode is only supported for Secondary network"
 // +kubebuilder:validation:XValidation:rule="!has(self.joinSubnets) || has(self.role) && self.role == 'Primary'", message="JoinSubnets is only supported for Primary network"
 // +kubebuilder:validation:XValidation:rule="!has(self.subnets) || !has(self.mtu) || !self.subnets.exists_one(i, isCIDR(i) && cidr(i).ip().family() == 6) || self.mtu >= 1280", message="MTU should be greater than or equal to 1280 when IPv6 subnet is used"
-// +kubebuilder:validation:XValidation:rule="!has(self.defaultGatewayIPs) || has(self.role) && self.role == 'Primary'", message="defaultGatewayIPs is only supported for Primary network"
-// +kubebuilder:validation:XValidation:rule="!has(self.nodeManagementIPs) || has(self.role) && self.role == 'Primary'", message="nodeManagementIPs is only supported for Primary network"
-// +kubebuilder:validation:XValidation:rule="!has(self.nodeManagementIPs) || self.nodeManagementIPs.all(ip, self.subnets.exists(subnet, cidr(subnet).containsIP(ip)))", message="nodeManagementIPs addresses be a part of the networks specified in the subnets field"
-// +kubebuilder:validation:XValidation:rule="!has(self.defaultGatewayIPs) || self.defaultGatewayIPs.all(ip, self.subnets.exists(subnet, cidr(subnet).containsIP(ip)))", message="defaultGatewayIPs addresses be a part of the networks specified in the subnets field"
-// +kubebuilder:validation:XValidation:rule="!has(self.excludeSubnets) || has(self.excludeSubnets) && has(self.subnets)", message="excludeSubnets must be unset when subnets is unset"
-// +kubebuilder:validation:XValidation:rule="!has(self.excludeSubnets) || self.subnets.map(s, self.excludeSubnets.map(e, cidr(s).containCIDR(e)))", message="excludeSubnets should be in range of CIDRs specified in subnets"
-// +kubebuilder:validation:XValidation:rule="!has(self.excludeSubnets) || self.excludeSubnets.all(e, self.subnets.exists(s, cidr(s).containsCIDR(cidr(e))))",message="excludeSubnets must be subnetworks of the networks specified in the subnets field",fieldPath=".excludeSubnets"
++ // +kubebuilder:validation:XValidation:rule="!has(self.defaultGatewayIPs) || has(self.role) && self.role == 'Primary'", message="defaultGatewayIPs is only supported for Primary network"
++ // +kubebuilder:validation:XValidation:rule="!has(self.defaultGatewayIPs) || self.defaultGatewayIPs.all(ip, self.subnets.exists(subnet, cidr(subnet).containsIP(ip)))", message="defaultGatewayIPs addresses be a part of the networks specified in the subnets field"
++ // +kubebuilder:validation:XValidation:rule="!has(self.excludeSubnets) || has(self.excludeSubnets) && has(self.subnets)", message="excludeSubnets must be unset when subnets is unset"
++ // +kubebuilder:validation:XValidation:rule="!has(self.excludeSubnets) || self.excludeSubnets.all(e, self.subnets.exists(s, cidr(s).containsCIDR(cidr(e))))",message="excludeSubnets must be subnetworks of the networks specified in the subnets field",fieldPath=".excludeSubnets"
++ // +kubebuilder:validation:XValidation:rule="!has(self.infrastructureSubnets) || has(self.infrastructureSubnets) && has(self.subnets)", message="infrastructureSubnets must be unset when subnets is unset"
++ // +kubebuilder:validation:XValidation:rule="!has(self.infrastructureSubnets) || self.infrastructureSubnets.all(e, self.subnets.exists(s, cidr(s).containsCIDR(cidr(e))))",message="infrastructureSubnets must be subnetworks of the networks specified in the subnets field",fieldPath=".infrastructureSubnets"
++ // +kubebuilder:validation:XValidation:rule="!has(self.infrastructureSubnets) || !has(self.defaultGatewayIPs) || !self.defaultGatewayIPs.all(ip, self.infrastructureSubnets.exists(subnet, cidr(subnet).containsIP(ip)))", message="defaultGatewayIPs cannot be a part of infrastructureSubnets"
 type Layer2Config struct {
 // Role describes the network role in the pod.
 //
@@ -159,18 +159,17 @@ MTU int32 `json:"mtu,omitempty"`
 // +optional
 Subnets DualStackCIDRs `json:"subnets,omitempty"`
 
-// excludeSubnets list of CIDRs removed from the specified CIDRs in `subnets`.
-// excludeSubnets is optional. When omitted no IP address is excluded and all IP address specified by `subnets` subject to be automatically assigned.
-// Each item should be in range of the specified CIDR(s) in `subnets`.
-// The maximal exceptions allowed is 25.
-// The format should match standard CIDR notation (for example, "10.128.0.0/16").
-// This field must be omitted if `subnets` is unset or `ipam.mode` is `Disabled`.
-// For example:
-// Given: `subnets: "10.0.0.0/24"`, `excludeSubnets: "10.0.0.200/30", the following addresses will not be assigned to pods: `10.0.0.201`, `10.0.0.202`.
-// +optional
-// +kubebuilder:validation:MinItems=1
-// +kubebuilder:validation:MaxItems=25
-ExcludeSubnets []CIDR `json:"excludeSubnets,omitempty"`
++ // excludeSubnets specifies a list of CIDRs removed from the specified CIDRs in `subnets`.
++ // excludeSubnets is optional. When omitted no IP address is excluded and all IP address specified by `subnets` subject to be automatically assigned.
++ // It is still allowed to request IPs from this range through static IP assignment.
++ // Each item should be in range of the specified CIDR(s) in `subnets`.
++ // The maximal exceptions allowed is 25.
++ // The format should match standard CIDR notation (for example, "10.128.0.0/16").
++ // This field must be omitted if `subnets` is unset or `ipam.mode` is `Disabled`.
++ // +optional
++ // +kubebuilder:validation:MinItems=1
++ // +kubebuilder:validation:MaxItems=25
++ ExcludeSubnets []CIDR `json:"excludeSubnets,omitempty"`
 
 // JoinSubnets are used inside the OVN network topology.
 //
@@ -182,25 +181,29 @@ ExcludeSubnets []CIDR `json:"excludeSubnets,omitempty"`
 // +optional
 JoinSubnets DualStackCIDRs `json:"joinSubnets,omitempty"`
 
-// DefaultGatewayIPs are is the default gateway IP used in the internal OVN topology.
-//
-// Dual-stack clusters may set 2 IPs (one for each IP family), otherwise only 1 IP is allowed.
-// This field is only allowed for "Primary" network.
-// It is not recommended to set this field without explicit need and understanding of the OVN network topology.
-// When omitted, the first IP address from the pod network subnet is used.
-//
-// +optional
-DefaultGatewayIPs DualStackIPs `json:"defaultGatewayIPs,omitempty"`
++ // infrastructureSubnets specifies a list of internal CIDR ranges that OVN-Kubernetes will reserve for internal network infrastructure.
++ // Any IP addresses within these ranges cannot be assigned to workloads.
++ // When omitted, OVN-Kubernetes will automatically allocate IP addresses from `subnets` for its infrastructure needs.
++ // When `excludeSubnets` is also specified the CIDRs cannot overlap.
++ // When `defaultGatewayIPs` is also specified  the default gateway IPs cannot be a part of any of the CIDRs.
++ // Each item should be in range of the specified CIDR(s) in `subnets`.
++ // The maximal exceptions allowed is 10.
++ // The format should match standard CIDR notation (for example, "10.128.0.0/16").
++ // This field must be omitted if `subnets` is unset or `ipam.mode` is `Disabled`.
++ // +optional
++ // +kubebuilder:validation:MinItems=1
++ // +kubebuilder:validation:MaxItems=10
++ InfrastructureSubnets []CIDR `json:"infrastructureSubnets,omitempty"`
 
-// NodeManagementIPs are is the node management IP used in the internal OVN topology.
-//
-// Dual-stack clusters may set 2 IPs (one for each IP family), otherwise only 1 IP is allowed.
-// This field is only allowed for "Primary" network.
-// It is not recommended to set this field without explicit need and understanding of the OVN network topology.
-// When omitted, the second IP address from the pod network subnet is used.
-//
-// +optional
-NodeManagementIPs DualStackIPs `json:"nodeManagementIPs,omitempty"`
++ // defaultGatewayIPs specifies the default gateway IP used in the internal OVN topology.
++ //
++ // Dual-stack clusters may set 2 IPs (one for each IP family), otherwise only 1 IP is allowed.
++ // This field is only allowed for "Primary" network.
++ // It is not recommended to set this field without explicit need and understanding of the OVN network topology.
++ // When omitted, the first IP address from the pod network subnet is used.
++ //
++ // +optional
++ DefaultGatewayIPs DualStackIPs `json:"defaultGatewayIPs,omitempty"`
 
 // IPAM section contains IPAM-related configuration for the network.
 // +optional
