@@ -18,6 +18,7 @@ import (
 	"github.com/ovn-kubernetes/libovsdb/client"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -185,12 +186,15 @@ type ClientSet struct {
 	kclient   kubernetes.Interface
 	podLister corev1listers.PodLister
 	nadLister nadv1Listers.NetworkAttachmentDefinitionLister
+	kube      kube.Kube
 }
 
-func NewClientSet(kclient kubernetes.Interface, podLister corev1listers.PodLister) *ClientSet {
+func NewClientSet(kclient kubernetes.Interface, podLister corev1listers.PodLister, nadLister nadv1Listers.NetworkAttachmentDefinitionLister) *ClientSet {
 	return &ClientSet{
 		kclient:   kclient,
 		podLister: podLister,
+		nadLister: nadLister,
+		kube:      kube.Kube{KClient: kclient},
 	}
 }
 
