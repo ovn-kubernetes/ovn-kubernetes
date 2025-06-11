@@ -1698,6 +1698,10 @@ func IsNetworkSegmentationSupportEnabled() bool {
 	return config.OVNKubernetesFeature.EnableMultiNetwork && config.OVNKubernetesFeature.EnableNetworkSegmentation
 }
 
+func IsMultiVTEPEnabled() bool {
+	return config.OVNKubernetesFeature.EnableMultiVTEP
+}
+
 func IsNetworkConnectEnabled() bool {
 	return IsNetworkSegmentationSupportEnabled() && config.OVNKubernetesFeature.EnableNetworkConnect
 }

@@ -103,6 +103,9 @@ type PodAnnotation struct {
 	//     is otherwise locked for all intents and purposes.
 	// At a given time a pod can have only 1 network with role:"primary"
 	Role string
+
+	// EncapIP is the IP address for encapsulation the traffic on this interface
+	EncapIP string
 }
 
 // PodRoute describes any routes to be added to the pod's network namespace
@@ -129,6 +132,7 @@ type podAnnotation struct {
 	GatewayIPv6LLA string `json:"ipv6_lla_gateway_ip,omitempty"`
 
 	TunnelID int    `json:"tunnel_id,omitempty"`
+	EncapIP  string `json:"encap_ip,omitempty"`
 	Role     string `json:"role,omitempty"`
 }
 
@@ -159,6 +163,7 @@ func MarshalPodAnnotation(annotations map[string]string, podInfo *PodAnnotation,
 		Role:     podInfo.Role,
 	}
 
+	pa.EncapIP = podInfo.EncapIP
 	if len(podInfo.IPs) == 1 {
 		pa.IP = podInfo.IPs[0].String()
 		if len(podInfo.Gateways) == 1 {
@@ -303,6 +308,9 @@ func UnmarshalPodAnnotation(annotations map[string]string, nadKey string) (*PodA
 		podAnnotation.GatewayIPv6LLA = llaGW
 	}
 
+	if len(a.EncapIP) > 0 {
+		podAnnotation.EncapIP = a.EncapIP
+	}
 	return podAnnotation, nil
 }
 

@@ -142,6 +142,36 @@ func (pr *PodRequest) primaryDPUReady(primaryUDN *udn.UserDefinedPrimaryNetwork,
 	}
 }
 
+func (pr *PodRequest) ensureNetworkEncapIP(clientset *ClientSet, pod *corev1.Pod, podNADAnnotation *util.PodAnnotation) error {
+	if !util.IsMultiVTEPEnabled() {
+		return nil
+	}
+	if pr.CNIConf.DeviceID == "" {
+		return nil
+	}
+
+	if config.OvnKubeNode.Mode == types.NodeModeFull && config.OVNKubernetesFeature.EnableInterconnect {
+		// currently multi-vteps only works for SR-IOV VF case, the encap IP is derived
+		// from the VF Device ID.
+		encapIP, err := getPfEncapIP(pr.CNIConf.DeviceID)
+		if err != nil {
+			return err
+		}
+
+		if len(encapIP) > 0 {
+			klog.Infof("%s device ID %s use encap IP %s", pr, pr.CNIConf.DeviceID, encapIP)
+			// add encap IP to the pod annotation, so peer node can use it to update the
+			// remote Transit Switch port's Port_Binding.encap field.
+			podNADAnnotation.EncapIP = encapIP
+			err = util.UpdatePodAnnotationWithRetry(clientset.podLister, &clientset.kube, pod, podNADAnnotation, pr.nadName)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
 	kubeAuth *KubeAPIAuth,
 	clientset *ClientSet,
@@ -226,6 +256,10 @@ func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
 		if err != nil {
 			return nil, err
 		}
+		if err := primaryUDNPodRequest.ensureNetworkEncapIP(clientset, pod, primaryUDN.Annotation()); err != nil {
+			return nil, err
+		}
+
 		klog.V(4).Infof("Pod %s/%s primaryUDN podRequest %v podInfo %v", namespace, podName, primaryUDNPodRequest, primaryUDNPodInfo)
 	}
 
@@ -244,6 +278,10 @@ func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
 	}
 
 	podInterfaceInfo.SkipIPConfig = kubevirt.IsPodLiveMigratable(pod)
+
+	if err := pr.ensureNetworkEncapIP(clientset, pod, podNADAnnotation); err != nil {
+		return nil, err
+	}
 
 	response := &Response{KubeAuth: kubeAuth}
 	if !config.UnprivilegedMode {
