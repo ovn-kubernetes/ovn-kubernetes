@@ -10,6 +10,7 @@ mkdocs-awesome-pages-plugin
 mkdocs-macros-plugin
 mkdocs-material
 mkdocs-material-extensions
+mkdocs-mermaid2-plugin
 mike
 pep562
 Pygments
