@@ -141,5 +141,6 @@ nav:
     - Localnet API: okeps/okep-5085-localnet-api.md
     - Network QoS: okeps/okep-4380-network-qos.md
     - User Defined Networks: okeps/okep-5193-user-defined-networks.md
+    - Pre-assigned pod network identity: okeps/okep-5233-pre-configured-pod-net-id.md
   - Blog:
     - blog/index.md
