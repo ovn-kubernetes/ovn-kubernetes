@@ -315,6 +315,7 @@ jobs:
 
     - name: Free up disk space
       run: |
+        df -h
         sudo rm -rf /usr/local/lib/android/sdk
         sudo apt-get update
         sudo eatmydata apt-get purge --auto-remove -y \
@@ -323,6 +324,17 @@ jobs:
           llvm-* microsoft-edge-stable mono-* \
           msbuild mysql-server-core-* php-* php7* \
           powershell temurin-* zulu-*
+        # clean unused packages
+        sudo apt-get autoclean
+        sudo apt-get autoremove -y
+        # clean apt cache
+        sudo apt-get clean
+        sudo docker system prune -af --volumes
+        df -h
+        sudo swapon --show
+        sudo swapoff -a
+        sudo rm -f /mnt/swapfile
+        df -h
 
     - name: Download test-image-master
       uses: actions/download-artifact@v4
@@ -507,6 +519,7 @@ jobs:
 
     - name: Free up disk space
       run: |
+        df -h
         sudo rm -rf /usr/local/lib/android/sdk
         sudo apt-get update
         sudo eatmydata apt-get purge --auto-remove -y \
@@ -515,7 +528,17 @@ jobs:
           llvm-* microsoft-edge-stable mono-* \
           msbuild mysql-server-core-* php-* php7* \
           powershell temurin-* zulu-*
-        sudo docker system prune -af
+        # clean unused packages
+        sudo apt-get autoclean
+        sudo apt-get autoremove -y
+        # clean apt cache
+        sudo apt-get clean
+        sudo docker system prune -af --volumes
+        df -h
+        sudo swapon --show
+        sudo swapoff -a
+        sudo rm -f /mnt/swapfile
+        df -h
 
     - name: Setup /mnt/runner directory
       run: |
@@ -730,6 +753,7 @@ jobs:
 
     - name: Free up disk space
       run: |
+        df -h
         sudo rm -rf /usr/local/lib/android/sdk
         sudo apt-get update
         sudo eatmydata apt-get purge --auto-remove -y \
@@ -738,6 +762,17 @@ jobs:
           llvm-* microsoft-edge-stable mono-* \
           msbuild mysql-server-core-* php-* php7* \
           powershell temurin-* zulu-*
+        # clean unused packages
+        sudo apt-get autoclean
+        sudo apt-get autoremove -y
+        # clean apt cache
+        sudo apt-get clean
+        sudo docker system prune -af --volumes
+        df -h
+        sudo swapon --show
+        sudo swapoff -a
+        sudo rm -f /mnt/swapfile
+        df -h
 
     - name: Disable ufw
       # For IPv6 and Dualstack, ufw (Uncomplicated Firewall) should be disabled.
