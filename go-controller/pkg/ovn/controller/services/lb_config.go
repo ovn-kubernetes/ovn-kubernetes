@@ -77,6 +77,7 @@ func makeNodeSwitchTargetIPs(node string, c *lbConfig) (targetIPsV4, targetIPsV6
 func makeNodeRouterTargetIPs(node *nodeInfo, c *lbConfig, hostMasqueradeIPV4, hostMasqueradeIPV6 string) (targetIPsV4, targetIPsV6 []string, v4Changed, v6Changed bool) {
 	targetIPsV4 = c.clusterEndpoints.V4IPs
 	targetIPsV6 = c.clusterEndpoints.V6IPs
+	var v4Updated, v6Updated bool
 
 	if c.externalTrafficLocal {
 		// For ExternalTrafficPolicy=Local, remove non-local endpoints from the router/switch targets
@@ -93,8 +94,13 @@ func makeNodeRouterTargetIPs(node *nodeInfo, c *lbConfig, hostMasqueradeIPV4, ho
 
 	// Any targets local to the node need to have a special
 	// harpin IP added, but only for the router LB
-	targetIPsV4, v4Updated := util.UpdateIPsSlice(targetIPsV4, node.l3gatewayAddressesStr(), []string{hostMasqueradeIPV4})
-	targetIPsV6, v6Updated := util.UpdateIPsSlice(targetIPsV6, node.l3gatewayAddressesStr(), []string{hostMasqueradeIPV6})
+	if config.OvnKubeNode.Mode == types.NodeModeDPU {
+		targetIPsV4, v4Updated = util.UpdateIPsSlice(targetIPsV4, node.hostAddressesStr(), []string{hostMasqueradeIPV4})
+		targetIPsV6, v6Updated = util.UpdateIPsSlice(targetIPsV6, node.hostAddressesStr(), []string{hostMasqueradeIPV6})
+	} else {
+		targetIPsV4, v4Updated = util.UpdateIPsSlice(targetIPsV4, node.l3gatewayAddressesStr(), []string{hostMasqueradeIPV4})
+		targetIPsV6, v6Updated = util.UpdateIPsSlice(targetIPsV6, node.l3gatewayAddressesStr(), []string{hostMasqueradeIPV6})
+	}
 
 	// Local endpoints are a subset of cluster endpoints, so it is enough to compare their length
 	v4Changed = len(targetIPsV4) != len(c.clusterEndpoints.V4IPs) || v4Updated
