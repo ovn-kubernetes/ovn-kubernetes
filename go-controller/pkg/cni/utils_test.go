@@ -3,6 +3,7 @@ package cni
 import (
 	"context"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/stretchr/testify/mock"
@@ -12,6 +13,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
+
+	types100 "github.com/containernetworking/cni/pkg/types/100"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/client-go/listers/core/v1"
@@ -241,6 +244,40 @@ var _ = Describe("CNI Utils tests", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("timed out waiting for pod after 1s"))
 		})
+	})
+
+	FIt("marshall then unmarshall a CNI response", func() {
+		ifaceOne := 1
+		cniResp := Response{
+			Result: &types100.Result{
+				CNIVersion: "1.0.0",
+				Interfaces: []*types100.Interface{
+					&types100.Interface{
+						Name:    "eth0",
+						Mac:     "00:02:03:04:05:06",
+						Sandbox: "/abc/def",
+					},
+					&types100.Interface{
+						Name:    "net1",
+						Mac:     "02:03:04:05:06:07",
+						Sandbox: "/abc/def",
+					},
+				},
+				IPs: []*types100.IPConfig{
+					&types100.IPConfig{
+						Interface: &ifaceOne,
+						Gateway:   net.ParseIP("192.168.0.1"),
+					},
+				},
+			},
+		}
+
+		data, err := cniResp.Marshal()
+		Expect(err).ToNot(HaveOccurred())
+
+		var unmarshalledResp Response
+		Expect(unmarshalledResp.Unmarshal(data)).To(Succeed())
+		Expect(unmarshalledResp.Result).To(Equal(cniResp.Result))
 	})
 
 	Context("PodAnnotation2PodInfo", func() {
