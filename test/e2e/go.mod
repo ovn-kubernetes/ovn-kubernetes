@@ -6,16 +6,16 @@ toolchain go1.23.6
 
 require (
 	github.com/google/go-cmp v0.6.0
-	github.com/k8snetworkplumbingwg/ipamclaims v0.4.0-alpha
+	github.com/k8snetworkplumbingwg/ipamclaims v0.5.0-alpha
 	github.com/k8snetworkplumbingwg/multi-networkpolicy v1.0.1
 	github.com/k8snetworkplumbingwg/network-attachment-definition-client v1.6.0
 	github.com/onsi/ginkgo/v2 v2.22.0
 	github.com/onsi/gomega v1.36.1
 	github.com/pkg/errors v0.9.1
 	golang.org/x/sync v0.8.0
-	k8s.io/api v0.32.3
-	k8s.io/apimachinery v0.32.3
-	k8s.io/client-go v0.32.3
+	k8s.io/api v0.32.5
+	k8s.io/apimachinery v0.32.5
+	k8s.io/client-go v0.32.5
 	k8s.io/klog v1.0.0
 	k8s.io/kubernetes v1.32.3
 	k8s.io/pod-security-admission v0.32.3

@@ -1,5 +1,5 @@
 /*
-Copyright 2024 The Kubernetes Authors
+Copyright 2025 The Kubernetes Authors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,10 +19,10 @@ limitations under the License.
 package v1alpha1
 
 import (
-	v1alpha1 "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1"
-	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/client-go/tools/cache"
+	ipamclaimsv1alpha1 "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1"
+	labels "k8s.io/apimachinery/pkg/labels"
+	listers "k8s.io/client-go/listers"
+	cache "k8s.io/client-go/tools/cache"
 )
 
 // IPAMClaimLister helps list IPAMClaims.
@@ -30,7 +30,7 @@ import (
 type IPAMClaimLister interface {
 	// List lists all IPAMClaims in the indexer.
 	// Objects returned here must be treated as read-only.
-	List(selector labels.Selector) (ret []*v1alpha1.IPAMClaim, err error)
+	List(selector labels.Selector) (ret []*ipamclaimsv1alpha1.IPAMClaim, err error)
 	// IPAMClaims returns an object that can list and get IPAMClaims.
 	IPAMClaims(namespace string) IPAMClaimNamespaceLister
 	IPAMClaimListerExpansion
@@ -38,25 +38,17 @@ type IPAMClaimLister interface {
 
 // iPAMClaimLister implements the IPAMClaimLister interface.
 type iPAMClaimLister struct {
-	indexer cache.Indexer
+	listers.ResourceIndexer[*ipamclaimsv1alpha1.IPAMClaim]
 }
 
 // NewIPAMClaimLister returns a new IPAMClaimLister.
 func NewIPAMClaimLister(indexer cache.Indexer) IPAMClaimLister {
-	return &iPAMClaimLister{indexer: indexer}
-}
-
-// List lists all IPAMClaims in the indexer.
-func (s *iPAMClaimLister) List(selector labels.Selector) (ret []*v1alpha1.IPAMClaim, err error) {
-	err = cache.ListAll(s.indexer, selector, func(m interface{}) {
-		ret = append(ret, m.(*v1alpha1.IPAMClaim))
-	})
-	return ret, err
+	return &iPAMClaimLister{listers.New[*ipamclaimsv1alpha1.IPAMClaim](indexer, ipamclaimsv1alpha1.Resource("ipamclaim"))}
 }
 
 // IPAMClaims returns an object that can list and get IPAMClaims.
 func (s *iPAMClaimLister) IPAMClaims(namespace string) IPAMClaimNamespaceLister {
-	return iPAMClaimNamespaceLister{indexer: s.indexer, namespace: namespace}
+	return iPAMClaimNamespaceLister{listers.NewNamespaced[*ipamclaimsv1alpha1.IPAMClaim](s.ResourceIndexer, namespace)}
 }
 
 // IPAMClaimNamespaceLister helps list and get IPAMClaims.
@@ -64,36 +56,15 @@ func (s *iPAMClaimLister) IPAMClaims(namespace string) IPAMClaimNamespaceLister 
 type IPAMClaimNamespaceLister interface {
 	// List lists all IPAMClaims in the indexer for a given namespace.
 	// Objects returned here must be treated as read-only.
-	List(selector labels.Selector) (ret []*v1alpha1.IPAMClaim, err error)
+	List(selector labels.Selector) (ret []*ipamclaimsv1alpha1.IPAMClaim, err error)
 	// Get retrieves the IPAMClaim from the indexer for a given namespace and name.
 	// Objects returned here must be treated as read-only.
-	Get(name string) (*v1alpha1.IPAMClaim, error)
+	Get(name string) (*ipamclaimsv1alpha1.IPAMClaim, error)
 	IPAMClaimNamespaceListerExpansion
 }
 
 // iPAMClaimNamespaceLister implements the IPAMClaimNamespaceLister
 // interface.
 type iPAMClaimNamespaceLister struct {
-	indexer   cache.Indexer
-	namespace string
-}
-
-// List lists all IPAMClaims in the indexer for a given namespace.
-func (s iPAMClaimNamespaceLister) List(selector labels.Selector) (ret []*v1alpha1.IPAMClaim, err error) {
-	err = cache.ListAllByNamespace(s.indexer, s.namespace, selector, func(m interface{}) {
-		ret = append(ret, m.(*v1alpha1.IPAMClaim))
-	})
-	return ret, err
-}
-
-// Get retrieves the IPAMClaim from the indexer for a given namespace and name.
-func (s iPAMClaimNamespaceLister) Get(name string) (*v1alpha1.IPAMClaim, error) {
-	obj, exists, err := s.indexer.GetByKey(s.namespace + "/" + name)
-	if err != nil {
-		return nil, err
-	}
-	if !exists {
-		return nil, errors.NewNotFound(v1alpha1.Resource("ipamclaim"), name)
-	}
-	return obj.(*v1alpha1.IPAMClaim), nil
+	listers.ResourceIndexer[*ipamclaimsv1alpha1.IPAMClaim]
 }
