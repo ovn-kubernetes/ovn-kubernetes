@@ -178,7 +178,19 @@ ovnkube_loglevel=${OVNKUBE_LOGLEVEL:-4}
 # two gateway modes that we support using `images/daemonset.sh` tool
 ovn_gateway_mode=${OVN_GATEWAY_MODE:-"shared"}
 ovn_gateway_opts=${OVN_GATEWAY_OPTS:-""}
+
+# read and overwrite gateway options if set under /etc/init-output
+# this file can be written by an init container of the same pod
+if [ -f /etc/init-output/ovn_gateway_opts ]; then
+   ovn_gateway_opts="${ovn_gateway_opts} $(cat /etc/init-output/ovn_gateway_opts)"
+fi
+
+# read and overwrite gateway options if set under /etc/init-output
+# this file can be written by an init container of the same pod
 ovn_gateway_router_subnet=${OVN_GATEWAY_ROUTER_SUBNET:-""}
+if [ -f /etc/init-output/ovn_gateway_router_subnet ]; then
+   ovn_gateway_router_subnet="$(cat /etc/init-output/ovn_gateway_router_subnet)"
+fi
 
 net_cidr=${OVN_NET_CIDR:-10.128.0.0/14/23}
 svc_cidr=${OVN_SVC_CIDR:-172.30.0.0/16}
@@ -323,6 +335,17 @@ ovn_nohostsubnet_label=${OVN_NOHOSTSUBNET_LABEL:-""}
 # OVN_DISABLE_REQUESTEDCHASSIS - disable requested-chassis option during pod creation
 # should be set to true when dpu nodes are in the cluster
 ovn_disable_requestedchassis=${OVN_DISABLE_REQUESTEDCHASSIS:-false}
+
+# external_ids:host-k8s-nodename is set on an Open_vSwitch enabled system if the ovnkube pod
+# should function on behalf of a different host than external_ids:host
+# overwrite the K8S_NODE env var with the one found within the OVS metadata in this case
+if [[ ${ovnkube_node_mode} == "dpu" ]]; then
+  K8S_NODE=$(ovs-vsctl --if-exists get Open_vSwitch . external_ids:host-k8s-nodename | tr -d '\"')
+  if [[ ${K8S_NODE} == "" ]]; then
+    echo "Trying to run in DPU mode and couldn't get the required Host K8s Nodename. Exiting..."
+    exit 1
+  fi
+fi
 
 # Determine the ovn rundir.
 if [[ -f /usr/bin/ovn-appctl ]]; then
@@ -1356,6 +1379,7 @@ ovn-master() {
     ${network_qos_enabled_flag} \
     ${ovn_enable_dnsnameresolver_flag} \
     ${nohostsubnet_label_option} \
+    ${ovn_stateless_netpol_enable_flag} \
     ${ovn_disable_requestedchassis_flag} \
     --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
     --gateway-mode=${ovn_gateway_mode} ${ovn_gateway_opts} \
@@ -1625,6 +1649,13 @@ ovnkube-controller() {
     ovn_observ_enable_flag="--enable-observability"
   fi
   echo "ovn_observ_enable_flag=${ovn_observ_enable_flag}"
+
+
+  ovn_stateless_netpol_enable_flag=
+  if [[ ${ovn_stateless_netpol_enable} == "true" ]]; then
+          ovn_stateless_netpol_enable_flag="--enable-stateless-netpol"
+  fi
+  echo "ovn_stateless_netpol_enable_flag: ${ovn_stateless_netpol_enable_flag}"
 
   echo "=============== ovnkube-controller ========== MASTER ONLY"
   /usr/bin/ovnkube --init-ovnkube-controller ${K8S_NODE} \
@@ -2054,6 +2085,11 @@ ovnkube-controller-with-node() {
   fi
   echo "ovn_observ_enable_flag=${ovn_observ_enable_flag}"
 
+  ovn_stateless_netpol_enable_flag=
+  if [[ ${ovn_stateless_netpol_enable} == "true" ]]; then
+          ovn_stateless_netpol_enable_flag="--enable-stateless-netpol"
+  fi
+
   echo "=============== ovnkube-controller-with-node --init-ovnkube-controller-with-node=========="
   /usr/bin/ovnkube --init-ovnkube-controller ${K8S_NODE} --init-node ${K8S_NODE} \
     ${anp_enabled_flag} \
@@ -2399,8 +2435,13 @@ ovn-node() {
     wait_for_event ovs_ready
   fi
 
-  echo "=============== ovn-node - (wait for ready_to_start_node)"
-  wait_for_event ready_to_start_node
+  if [[ ${ovnkube_node_mode} != "dpu-host" ]] && [[ ${ovn_enable_interconnect} != "true" ]]; then
+    # ready_to_start_node checks for the NB/SB readiness state.
+    # This is not available on the DPU host when interconnect is enabled,
+    # because the DBs will run locally on the DPU
+    echo "=============== ovn-node - (wait for ready_to_start_node)"
+    wait_for_event ready_to_start_node
+  fi
 
   echo "ovn_nbdb ${ovn_nbdb}   ovn_sbdb ${ovn_sbdb}  ovn_nbdb_conn ${ovn_nbdb_conn}"
 
@@ -2578,12 +2619,6 @@ ovn-node() {
   fi
 
   if [[ ${ovnkube_node_mode} == "dpu" ]]; then
-    # in the case of dpu mode we want the host K8s Node Name and not the DPU K8s Node Name
-    K8S_NODE=$(ovs-vsctl --if-exists get Open_vSwitch . external_ids:host-k8s-nodename | tr -d '\"')
-    if [[ ${K8S_NODE} == "" ]]; then
-      echo "Couldn't get the required Host K8s Nodename. Exiting..."
-      exit 1
-    fi
     if [[ ${ovn_gateway_opts} == "" ]]; then
       # get the gateway interface
       gw_iface=$(ovs-vsctl --if-exists get Open_vSwitch . external_ids:ovn-gw-interface | tr -d \")
