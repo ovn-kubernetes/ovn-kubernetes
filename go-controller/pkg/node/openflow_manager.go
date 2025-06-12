@@ -245,7 +245,38 @@ func (c *openflowManager) updateBridgeFlowCache(hostIPs []net.IP, hostSubnets []
 	}
 	dftFlows = append(dftFlows, dftCommonFlows...)
 
-	c.updateFlowCacheEntry("NORMAL", []string{fmt.Sprintf("table=0,priority=0,actions=%s\n", util.NormalAction)})
+	if config.OvnKubeNode.Mode == types.NodeModeDPU {
+		// Retrieve the local_ip for the tunnel endpoint which will be used to create OpenFlow actions
+		checkCmd := []string{
+			"get",
+			"Open_vSwitch",
+			".",
+			"external_ids:ovn-encap-ip",
+		}
+		encapIP, _, err := util.RunOVSVsctl(checkCmd...)
+		if err != nil {
+			return err
+		}
+		encapIP = strings.TrimSpace(encapIP)
+
+		// The extra actions, compared to the full mode, are due to a DHCP server on the bridge.
+		// While not impacting the other flows negatively it implies something "custom"
+		// this could be a future feature to allow users to add custom flow actions on the managed ovnkube bridge via Kubernetes API.
+		c.updateFlowCacheEntry("NORMAL", []string{
+			// Add normal action on table 0 (act as a switch)
+			fmt.Sprintf("table=0,priority=0,actions=%s\n", util.NormalAction),
+			// Add OpenFlow action with high priority that allows a normal action for DHCP servers
+			// that are serving on the ovnkube managed bridge.
+			fmt.Sprintf("table=0,priority=999,udp,tp_dst=67,actions=%s\n", util.NormalAction),
+			// Add OpenFlow action with high priority that allows the PF (physical function) to the
+			// local_ip.
+			fmt.Sprintf("table=0,priority=998,ip,nw_dst=%s,actions=%s\n", encapIP, util.NormalAction),
+		})
+	} else {
+		c.updateFlowCacheEntry("NORMAL", []string{
+			fmt.Sprintf("table=0,priority=0,actions=%s\n", util.NormalAction),
+		})
+	}
 	c.updateFlowCacheEntry("DEFAULT", dftFlows)
 
 	// we consume ex gw bridge flows only if that is enabled
