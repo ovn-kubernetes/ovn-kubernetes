@@ -40,8 +40,16 @@ func newPodWithPhaseAndIP(podName, namespace string, phase corev1.PodPhase, podI
 	p := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: podName, Namespace: namespace,
 			Labels: labels},
-		Spec:   corev1.PodSpec{NodeName: "node"},
-		Status: corev1.PodStatus{Phase: phase},
+		Spec: corev1.PodSpec{NodeName: "node"},
+		Status: corev1.PodStatus{
+			Phase: phase,
+			Conditions: []corev1.PodCondition{
+				{
+					Type:   corev1.PodReady,
+					Status: corev1.ConditionTrue,
+				},
+			},
+		},
 	}
 	if len(podIP) > 0 {
 		p.Annotations = map[string]string{nettypes.NetworkStatusAnnot: fmt.Sprintf(network_status, podIP)}
