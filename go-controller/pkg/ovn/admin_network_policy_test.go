@@ -94,7 +94,7 @@ func getANPGressACL(action, anpName, direction string, rulePriority int32,
 	ruleIndex int32, ports *[]anpapi.AdminNetworkPolicyPort,
 	namedPorts map[string][]libovsdbutil.NamedNetworkPolicyPort, banp bool) []*nbdb.ACL {
 	retACLs := []*nbdb.ACL{}
-	// we are not using BuildACL and instead manually building it on purpose so that the code path for BuildACL is also tested
+	// we are not using BuildACLWithDefaultTier and instead manually building it on purpose so that the code path for BuildACLWithDefaultTier is also tested
 	acl := nbdb.ACL{}
 	acl.Action = action
 	acl.Severity = nil

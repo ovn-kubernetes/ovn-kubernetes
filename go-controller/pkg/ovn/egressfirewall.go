@@ -467,7 +467,7 @@ func (oc *DefaultNetworkController) addEgressFirewallRules(ef *egressFirewall, p
 func (oc *DefaultNetworkController) createEgressFirewallACLOps(ops []ovsdb.Operation, ruleIdx int, match, action, namespace, pgName string, aclLogging *libovsdbutil.ACLLoggingLevels) ([]ovsdb.Operation, error) {
 	aclIDs := oc.getEgressFirewallACLDbIDs(namespace, ruleIdx)
 	priority := types.EgressFirewallStartPriority - ruleIdx
-	egressFirewallACL := libovsdbutil.BuildACL(
+	egressFirewallACL := libovsdbutil.BuildACLWithDefaultTier(
 		aclIDs,
 		priority,
 		match,

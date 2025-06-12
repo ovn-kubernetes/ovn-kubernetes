@@ -246,11 +246,11 @@ func (bnc *BaseNetworkController) addHairpinAllowACL() error {
 	}
 
 	ingressACLIDs := bnc.getNetpolDefaultACLDbIDs(string(knet.PolicyTypeIngress))
-	ingressACL := libovsdbutil.BuildACL(ingressACLIDs, types.DefaultAllowPriority, match,
+	ingressACL := libovsdbutil.BuildACLWithDefaultTier(ingressACLIDs, types.DefaultAllowPriority, match,
 		nbdb.ACLActionAllowRelated, nil, libovsdbutil.LportIngress)
 
 	egressACLIDs := bnc.getNetpolDefaultACLDbIDs(string(knet.PolicyTypeEgress))
-	egressACL := libovsdbutil.BuildACL(egressACLIDs, types.DefaultAllowPriority, match,
+	egressACL := libovsdbutil.BuildACLWithDefaultTier(egressACLIDs, types.DefaultAllowPriority, match,
 		nbdb.ACLActionAllowRelated, nil, libovsdbutil.LportEgressAfterLB)
 
 	ops, err := libovsdbops.CreateOrUpdateACLsOps(bnc.nbClient, nil, nil, ingressACL, egressACL)
@@ -329,7 +329,7 @@ func (bnc *BaseNetworkController) addAllowACLFromNode(switchName string, mgmtPor
 	}
 	match := fmt.Sprintf("%s.src==%s", ipFamily, mgmtPortIP.String())
 	dbIDs := getAllowFromNodeACLDbIDs(switchName, mgmtPortIP.String(), bnc.controllerName)
-	nodeACL := libovsdbutil.BuildACL(dbIDs, types.DefaultAllowPriority, match,
+	nodeACL := libovsdbutil.BuildACLWithDefaultTier(dbIDs, types.DefaultAllowPriority, match,
 		nbdb.ACLActionAllowRelated, nil, libovsdbutil.LportIngress)
 
 	ops, err := libovsdbops.CreateOrUpdateACLsOps(bnc.nbClient, nil, bnc.GetSamplingConfig(), nodeACL)
@@ -382,9 +382,9 @@ func (bnc *BaseNetworkController) buildDenyACLs(namespace, pgName string, aclLog
 	allowMatch := libovsdbutil.GetACLMatch(pgName, arpAllowPolicyMatch, aclDir)
 	aclPipeline := libovsdbutil.ACLDirectionToACLPipeline(aclDir)
 
-	denyACL = libovsdbutil.BuildACL(bnc.getDefaultDenyPolicyACLIDs(namespace, aclDir, defaultDenyACL),
+	denyACL = libovsdbutil.BuildACLWithDefaultTier(bnc.getDefaultDenyPolicyACLIDs(namespace, aclDir, defaultDenyACL),
 		types.DefaultDenyPriority, denyMatch, nbdb.ACLActionDrop, aclLogging, aclPipeline)
-	allowACL = libovsdbutil.BuildACL(bnc.getDefaultDenyPolicyACLIDs(namespace, aclDir, arpAllowACL),
+	allowACL = libovsdbutil.BuildACLWithDefaultTier(bnc.getDefaultDenyPolicyACLIDs(namespace, aclDir, arpAllowACL),
 		types.DefaultAllowPriority, allowMatch, nbdb.ACLActionAllow, nil, aclPipeline)
 	return
 }
