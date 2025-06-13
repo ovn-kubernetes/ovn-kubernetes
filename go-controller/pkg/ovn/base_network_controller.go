@@ -214,6 +214,14 @@ func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed f
 	}
 	reconcileRoutes := oc.routeImportManager != nil && oc.routeImportManager.NeedsReconciliation(netInfo)
 	reconcilePendingPods := !oc.IsDefault() && !oc.ReconcilableNetInfo.EqualNADs(netInfo.GetNADs()...)
+	reconcileNamespaces := sets.NewString()
+	if oc.IsPrimaryNetwork() {
+		// since CanServeNamespace filters out namespace events for namespaces unknown
+		// to be served by this primary network, we need to reconcile namespaces once
+		// the network is reconfigured to serve a namespace.
+		reconcileNamespaces = sets.NewString(netInfo.GetNADNamespaces()...).Difference(
+			sets.NewString(oc.GetNADNamespaces()...))
+	}
 
 	// set the new NetInfo, point of no return
 	err = util.ReconcileNetInfo(oc.ReconcilableNetInfo, netInfo)
@@ -242,6 +250,23 @@ func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed f
 	if reconcilePendingPods {
 		if err := ovnretry.RequeuePendingPods(oc.watchFactory, oc.GetNetInfo(), oc.retryPods); err != nil {
 			klog.Errorf("Failed to requeue pending pods for network %s: %v", oc.GetNetworkName(), err)
+		}
+	}
+
+	for _, ns := range reconcileNamespaces.List() {
+		namespace, err := oc.watchFactory.GetNamespace(ns)
+		if err != nil {
+			klog.Infof("Failed to get namespace %s for reconciling network %s: %v", ns, oc.GetNetworkName(), err)
+			continue
+		}
+		err = oc.retryNamespaces.AddRetryObjWithAddNoBackoff(namespace)
+		if err != nil {
+			klog.Infof("Failed to retry namespace %s for network %s: %v", ns, oc.GetNetworkName(), err)
+			continue
+		}
+		err = oc.requeuePeerNamespace(namespace)
+		if err != nil {
+			klog.Infof("Failed to retry network policy peer namespace %s for network %s: %v", ns, oc.GetNetworkName(), err)
 		}
 	}
 

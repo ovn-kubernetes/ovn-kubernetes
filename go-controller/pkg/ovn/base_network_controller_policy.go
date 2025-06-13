@@ -23,6 +23,7 @@ import (
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/retry"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
@@ -162,6 +163,8 @@ type networkPolicy struct {
 	localPodHandler *factory.Handler
 	// peer namespace handlers
 	nsHandlerList []*factory.Handler
+	// peer namespace retry framework objects
+	retryPeerNamespaces []*retry.RetryFramework
 	// peerAddressSets stores PodSelectorAddressSet keys for peers that this network policy was successfully added to.
 	// Required for cleanup.
 	peerAddressSets []string
@@ -189,14 +192,15 @@ type networkPolicy struct {
 func NewNetworkPolicy(policy *knet.NetworkPolicy) *networkPolicy {
 	policyTypeIngress, policyTypeEgress := getPolicyType(policy)
 	np := &networkPolicy{
-		name:            policy.Name,
-		namespace:       policy.Namespace,
-		ingressPolicies: make([]*gressPolicy, 0),
-		egressPolicies:  make([]*gressPolicy, 0),
-		isIngress:       policyTypeIngress,
-		isEgress:        policyTypeEgress,
-		nsHandlerList:   make([]*factory.Handler, 0),
-		localPods:       sync.Map{},
+		name:                policy.Name,
+		namespace:           policy.Namespace,
+		ingressPolicies:     make([]*gressPolicy, 0),
+		egressPolicies:      make([]*gressPolicy, 0),
+		isIngress:           policyTypeIngress,
+		isEgress:            policyTypeEgress,
+		nsHandlerList:       make([]*factory.Handler, 0),
+		retryPeerNamespaces: make([]*retry.RetryFramework, 0),
+		localPods:           sync.Map{},
 	}
 	return np
 }
@@ -1490,6 +1494,39 @@ func (bnc *BaseNetworkController) peerNamespaceUpdate(np *networkPolicy, gp *gre
 	return err
 }
 
+// requeuePeerNamespace enqueues the namespace into network policy peer namespace
+// retry framework object(s) which need to be retried immediately with add event.
+func (bnc *BaseNetworkController) requeuePeerNamespace(namespace *corev1.Namespace) error {
+	if namespace == nil {
+		return nil
+	}
+	npKeys := bnc.networkPolicies.GetKeys()
+	var errors []error
+	for _, npKey := range npKeys {
+		err := bnc.networkPolicies.DoWithLock(npKey, func(npKey string) error {
+			np, ok := bnc.networkPolicies.Load(npKey)
+			if !ok {
+				return nil
+			}
+			np.RLock()
+			defer np.RUnlock()
+			var errors []error
+			for _, retryPeerNamespaces := range np.retryPeerNamespaces {
+				err := retryPeerNamespaces.AddRetryObjWithAddNoBackoff(namespace)
+				if err != nil {
+					errors = append(errors, err)
+				}
+			}
+			return utilerrors.Join(errors...)
+		})
+		if err != nil {
+			errors = append(errors, fmt.Errorf("failed to retry namespace %s for network policy %s on network %s: %w",
+				namespace.Name, npKey, bnc.GetNetworkName(), err))
+		}
+	}
+	return utilerrors.Join(errors...)
+}
+
 // addPeerNamespaceHandler starts a watcher for PeerNamespaceSelectorType.
 // Sync function and Add event for every existing namespace will be executed sequentially first, and an error will be
 // returned if something fails.
@@ -1522,7 +1559,14 @@ func (bnc *BaseNetworkController) addPeerNamespaceHandler(
 		klog.Errorf("WatchResource failed for addPeerNamespaceHandler: %v", err)
 		return err
 	}
-
+	// Add peer namespace retry framework object into np.retryPeerNamespaces list so that
+	// when a new peer namespace is newly created later under UDN network, it gets reconciled
+	// and network policy ACL is updated with namespace address set.
+	np.Lock()
+	if util.IsNetworkSegmentationSupportEnabled() && bnc.IsPrimaryNetwork() {
+		np.retryPeerNamespaces = append(np.retryPeerNamespaces, retryPeerNamespaces)
+	}
+	np.Unlock()
 	np.nsHandlerList = append(np.nsHandlerList, namespaceHandler)
 	return nil
 }
@@ -1540,6 +1584,7 @@ func (bnc *BaseNetworkController) shutdownHandlers(np *networkPolicy) {
 	for _, handler := range np.nsHandlerList {
 		bnc.watchFactory.RemoveNamespaceHandler(handler)
 	}
+	np.retryPeerNamespaces = make([]*retry.RetryFramework, 0)
 	np.nsHandlerList = make([]*factory.Handler, 0)
 }
 
