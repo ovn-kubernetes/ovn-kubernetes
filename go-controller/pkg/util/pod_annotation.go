@@ -496,6 +496,13 @@ func GetK8sPodAllNetworkSelections(pod *corev1.Pod) ([]*nadapi.NetworkSelectionE
 	return networks, nil
 }
 
+func PodAnnotationChanged(oldPod, newPod *corev1.Pod) bool {
+	if oldPod == nil {
+		return false
+	}
+	return oldPod.Annotations[OvnPodAnnotationName] != newPod.Annotations[OvnPodAnnotationName]
+}
+
 // UpdatePodAnnotationWithRetry updates the pod annotation on the pod retrying
 // on conflict
 func UpdatePodAnnotationWithRetry(podLister listers.PodLister, kube kube.Interface, pod *corev1.Pod, podAnnotation *PodAnnotation, nadKey string) error {

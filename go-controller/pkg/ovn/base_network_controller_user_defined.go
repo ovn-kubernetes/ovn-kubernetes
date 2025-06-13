@@ -402,6 +402,21 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod 
 	}
 	txOkCallBack()
 
+	// set remote layer 2 LSP's Port Binding's encap field according to encap ip in the pod annotation
+	if !isLocalPod && bsnc.isLayer2Interconnect() && podAnnotation.EncapIP != "" {
+		nodeObj, err := bsnc.watchFactory.GetNode(pod.Spec.NodeName)
+		if err != nil {
+			return fmt.Errorf("failed to fetch node %s: %w", pod.Spec.NodeName, err)
+		}
+		chassisID, err := util.ParseNodeChassisIDAnnotation(nodeObj)
+		if err != nil || chassisID == "" {
+			return fmt.Errorf("failed to parse chassis ID for node %s: %w", pod.Spec.NodeName, err)
+		}
+		if err = libovsdbops.UpdatePortBindingSetEncap(bsnc.sbClient, lsp.Name, chassisID, podAnnotation.EncapIP); err != nil {
+			return fmt.Errorf("failed to update port binding for %s: %w", lsp.Name, err)
+		}
+	}
+
 	if lsp != nil {
 		_ = bsnc.logicalPortCache.add(pod, switchName, nadKey, lsp.UUID, podAnnotation.MAC, podAnnotation.IPs)
 		if bsnc.requireDHCP(pod) {
@@ -1007,5 +1022,10 @@ func (bsnc *BaseUserDefinedNetworkController) enableSourceLSPFailedLiveMigration
 }
 
 func shouldAddPort(oldPod, newPod *corev1.Pod, inRetryCache bool) bool {
-	return inRetryCache || util.PodScheduled(oldPod) != util.PodScheduled(newPod)
+
+	// ovn-k8s-cni-overlay adds encap_ip to the pod annotation after ovnkube-controller
+	// initially creates it. Here need to check if the annotation is changed, if so,
+	// update the Port Binding accordingly to reflect the new encap_ip.
+
+	return inRetryCache || util.PodScheduled(oldPod) != util.PodScheduled(newPod) || util.PodAnnotationChanged(oldPod, newPod)
 }
