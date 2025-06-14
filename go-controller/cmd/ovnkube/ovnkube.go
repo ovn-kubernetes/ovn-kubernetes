@@ -515,6 +515,15 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 				return
 			}
 
+			// SB DB maybe stale if IC is enabled and ovn-controller will only be allowed to connect here.
+			if config.OVNKubernetesFeature.EnableInterconnect && config.OvnKubeNode.Mode != types.NodeModeDPUHost {
+				for _, auth := range []config.OvnAuthConfig{config.OvnNorth, config.OvnSouth} {
+					if err := auth.SetDBAuth(); err != nil {
+						controllerErr = fmt.Errorf("unable to set the authentication towards OVN local dbs")
+					}
+				}
+			}
+
 			// record delay until ready
 			metrics.MetricOVNKubeControllerReadyDuration.Set(time.Since(startTime).Seconds())
 

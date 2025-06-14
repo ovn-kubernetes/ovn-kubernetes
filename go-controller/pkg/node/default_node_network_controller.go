@@ -869,15 +869,6 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 			return fmt.Errorf("timed out waiting for the node zone %s to match the OVN Southbound db zone, err: %v, err1: %v", config.Default.Zone, err, err1)
 		}
 
-		// if its nonIC OR IC=true and if its phase1 OR if its IC to IC upgrades
-		if !config.OVNKubernetesFeature.EnableInterconnect || sbZone == types.OvnDefaultZone || util.HasNodeMigratedZone(node) { // if its nonIC or if its phase1
-			for _, auth := range []config.OvnAuthConfig{config.OvnNorth, config.OvnSouth} {
-				if err := auth.SetDBAuth(); err != nil {
-					return err
-				}
-			}
-		}
-
 		err = setupOVNNode(node)
 		if err != nil {
 			return err
@@ -953,8 +944,9 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 		return fmt.Errorf("failed to set node %s annotations: %w", nc.name, err)
 	}
 
-	// Connect ovn-controller to SBDB
-	if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
+	// If IC disabled, connect ovn-controller to SB/NB DB. If IC, OVNKube-controller will start it post sync to ensure
+	// ovn-controller doesn't consume stale SB DB data.
+	if !config.OVNKubernetesFeature.EnableInterconnect && config.OvnKubeNode.Mode != types.NodeModeDPUHost {
 		for _, auth := range []config.OvnAuthConfig{config.OvnNorth, config.OvnSouth} {
 			if err := auth.SetDBAuth(); err != nil {
 				return fmt.Errorf("unable to set the authentication towards OVN local dbs")
