@@ -197,8 +197,8 @@ github.com/juju/errors
 # github.com/k8snetworkplumbingwg/govdpa v0.1.5-0.20230926073613-07c1031aea47
 ## explicit; go 1.17
 github.com/k8snetworkplumbingwg/govdpa/pkg/kvdpa
-# github.com/k8snetworkplumbingwg/ipamclaims v0.4.0-alpha
-## explicit; go 1.20
+# github.com/k8snetworkplumbingwg/ipamclaims v0.5.0-alpha
+## explicit; go 1.23.0
 github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1
 github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1/apis/clientset/versioned
 github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1/apis/clientset/versioned/fake
@@ -676,7 +676,7 @@ gopkg.in/warnings.v0
 # gopkg.in/yaml.v3 v3.0.1
 ## explicit
 gopkg.in/yaml.v3
-# k8s.io/api v0.32.3
+# k8s.io/api v0.32.5
 ## explicit; go 1.23.0
 k8s.io/api/admission/v1
 k8s.io/api/admission/v1beta1
@@ -741,7 +741,7 @@ k8s.io/api/storagemigration/v1alpha1
 ## explicit; go 1.23.0
 k8s.io/apiextensions-apiserver/pkg/apis/apiextensions
 k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1
-# k8s.io/apimachinery v0.32.3
+# k8s.io/apimachinery v0.32.5
 ## explicit; go 1.23.0
 k8s.io/apimachinery/pkg/api/equality
 k8s.io/apimachinery/pkg/api/errors
@@ -806,7 +806,7 @@ k8s.io/apimachinery/pkg/watch
 k8s.io/apimachinery/third_party/forked/golang/json
 k8s.io/apimachinery/third_party/forked/golang/netutil
 k8s.io/apimachinery/third_party/forked/golang/reflect
-# k8s.io/client-go v0.32.3
+# k8s.io/client-go v0.32.5
 ## explicit; go 1.23.0
 k8s.io/client-go/applyconfigurations
 k8s.io/client-go/applyconfigurations/admissionregistration/v1

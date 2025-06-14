@@ -1,5 +1,5 @@
 /*
-Copyright 2024 The Kubernetes Authors
+Copyright 2025 The Kubernetes Authors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,13 +19,13 @@ limitations under the License.
 package v1alpha1
 
 import (
-	"context"
+	context "context"
 	time "time"
 
-	ipamclaimsv1alpha1 "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1"
+	crdipamclaimsv1alpha1 "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1"
 	versioned "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1/apis/clientset/versioned"
 	internalinterfaces "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1/apis/informers/externalversions/internalinterfaces"
-	v1alpha1 "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1/apis/listers/ipamclaims/v1alpha1"
+	ipamclaimsv1alpha1 "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1/apis/listers/ipamclaims/v1alpha1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	watch "k8s.io/apimachinery/pkg/watch"
@@ -36,7 +36,7 @@ import (
 // IPAMClaims.
 type IPAMClaimInformer interface {
 	Informer() cache.SharedIndexInformer
-	Lister() v1alpha1.IPAMClaimLister
+	Lister() ipamclaimsv1alpha1.IPAMClaimLister
 }
 
 type iPAMClaimInformer struct {
@@ -71,7 +71,7 @@ func NewFilteredIPAMClaimInformer(client versioned.Interface, namespace string, 
 				return client.K8sV1alpha1().IPAMClaims(namespace).Watch(context.TODO(), options)
 			},
 		},
-		&ipamclaimsv1alpha1.IPAMClaim{},
+		&crdipamclaimsv1alpha1.IPAMClaim{},
 		resyncPeriod,
 		indexers,
 	)
@@ -82,9 +82,9 @@ func (f *iPAMClaimInformer) defaultInformer(client versioned.Interface, resyncPe
 }
 
 func (f *iPAMClaimInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&ipamclaimsv1alpha1.IPAMClaim{}, f.defaultInformer)
+	return f.factory.InformerFor(&crdipamclaimsv1alpha1.IPAMClaim{}, f.defaultInformer)
 }
 
-func (f *iPAMClaimInformer) Lister() v1alpha1.IPAMClaimLister {
-	return v1alpha1.NewIPAMClaimLister(f.Informer().GetIndexer())
+func (f *iPAMClaimInformer) Lister() ipamclaimsv1alpha1.IPAMClaimLister {
+	return ipamclaimsv1alpha1.NewIPAMClaimLister(f.Informer().GetIndexer())
 }
