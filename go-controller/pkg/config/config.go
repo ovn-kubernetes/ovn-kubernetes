@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"net"
@@ -296,6 +297,9 @@ type DefaultConfig struct {
 	// UDNAllowedDefaultServices holds a list of namespaced names of
 	// default cluster network services accessible from primary user-defined networks
 	UDNAllowedDefaultServices []string
+
+	// OVNAuthLimit holds the maximum time before setting the OVN auth and allow ovn-controller to connect to OVN DBs. IC only.
+	OVNAuthLimit int `gcfg:"ovn-auth-limit"`
 }
 
 // LoggingConfig holds logging-related parsed config file parameters and command-line overrides
@@ -970,6 +974,12 @@ var CommonFlags = []cli.Flag{
 			"Only used when enable-network-segmentation is set",
 		Value:       Default.RawUDNAllowedDefaultServices,
 		Destination: &cliConfig.Default.RawUDNAllowedDefaultServices,
+	},
+	&cli.IntFlag{
+		Name:        "ovn-auth-limit",
+		Usage:       "Maximum limit to set OVN auth. IC only.",
+		Destination: &cliConfig.Default.OVNAuthLimit,
+		Value:       Default.OVNAuthLimit,
 	},
 }
 
@@ -2715,6 +2725,38 @@ func (a *OvnAuthConfig) SetDBAuth() error {
 	}
 
 	return nil
+}
+
+// ClearOVNRemote sets the value of ovn-remote to a space - ' ' for NB and SB DB. Field is not allowed to be empty.
+func (a *OvnAuthConfig) ClearOVNRemote() error {
+	if !a.northbound {
+		// store the Southbound Database address in an external id - "external_ids:ovn-remote"
+		if err := setOVSExternalID(a.exec, "ovn-remote", "\" \""); err != nil {
+			return fmt.Errorf("failed to clear ovn-remote: %v", err)
+		}
+	}
+	return nil
+}
+
+// SetOVNAuthAfterLimit sets the OVN DB auth after the timeout or when returned context cancel func is called. Exits if ctx is cancelled.
+func (a *OvnAuthConfig) SetOVNAuthAfterLimit(ctx context.Context, cancelFn context.CancelFunc, timeout time.Duration) context.CancelFunc {
+	ovnRemoteTimeout, ovnRemoteTimeoutCancelFn := context.WithTimeout(context.Background(), timeout)
+
+	go func() {
+		defer ovnRemoteTimeoutCancelFn()
+
+		select {
+		case <-ovnRemoteTimeout.Done(): // done channel is closed when timeout occurs or context cancelled
+			if err := a.SetDBAuth(); err != nil {
+				klog.Errorf("Failed to set ovn-remote when timeout exceeded: %v", err)
+				// call the cancelfn to signal failure
+				cancelFn()
+			}
+		case <-ctx.Done():
+			return
+		}
+	}()
+	return ovnRemoteTimeoutCancelFn
 }
 
 func (a *OvnAuthConfig) updateIP(newIPs []string, port string) {
