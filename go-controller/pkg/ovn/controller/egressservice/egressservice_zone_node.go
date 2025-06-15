@@ -39,13 +39,10 @@ func (c *Controller) onNodeUpdate(oldObj, newObj interface{}) {
 	}
 	oldNodeLabels := labels.Set(oldNode.Labels)
 	newNodeLabels := labels.Set(newNode.Labels)
-	oldNodeReady := nodeIsReady(oldNode)
-	newNodeReady := nodeIsReady(newNode)
 
 	// We only care about node updates that relate to readiness, labels or
 	// addresses
 	if labels.Equals(oldNodeLabels, newNodeLabels) &&
-		oldNodeReady == newNodeReady &&
 		!util.NodeHostCIDRsAnnotationChanged(oldNode, newNode) {
 		return
 	}
@@ -133,11 +130,12 @@ func (c *Controller) syncNode(key string) error {
 
 	state := c.nodes[nodeName]
 
-	if n == nil || !nodeIsReady(n) {
+	if n == nil {
 		if state != nil {
-			// The node hosting an egress service was deleted or is no longer ready.
-			// We mark it as draining and remove all the service configurations made for it,
-			// Services can't be configured for a node while it is in draining status.
+			// The node hosting an egress service was deleted. We mark it as
+			// draining and remove all the service configurations made for it,
+			// Services can't be configured for a node while it is in draining
+			// status.
 			state.draining = true
 			for svcKey, svcState := range c.services {
 				if svcState.node == state.name {
@@ -189,16 +187,6 @@ func (c *Controller) syncNode(key string) error {
 	}
 
 	return nil
-}
-
-// Returns if the given node is in "Ready" state.
-func nodeIsReady(n *corev1.Node) bool {
-	for _, condition := range n.Status.Conditions {
-		if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
-			return true
-		}
-	}
-	return false
 }
 
 // Returns a new nodeState for a node given its name.

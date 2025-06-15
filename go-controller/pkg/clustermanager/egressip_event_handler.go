@@ -8,7 +8,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	cache "k8s.io/client-go/tools/cache"
-	"k8s.io/klog/v2"
 
 	egressipv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
@@ -37,36 +36,7 @@ func (h *egressIPClusterControllerEventHandler) AddResource(obj interface{}, _ b
 	switch h.objType {
 	case factory.EgressNodeType:
 		node := obj.(*corev1.Node)
-		// EgressIP is not supported on hybrid overlay nodes
-		if util.NoHostSubnet(node) {
-			return nil
-		}
-
-		// Initialize the allocator on every update,
-		// ovnkube-node/cloud-network-config-controller will make sure to
-		// annotate the node with the egressIPConfig, but that might have
-		// happened after we processed the ADD for that object, hence keep
-		// retrying for all UPDATEs.
-		if err := h.eIPC.initEgressIPAllocator(node); err != nil {
-			klog.Warningf("Egress node initialization error: %v", err)
-		}
-		nodeEgressLabel := util.GetNodeEgressLabel()
-		nodeLabels := node.GetLabels()
-		_, hasEgressLabel := nodeLabels[nodeEgressLabel]
-		if hasEgressLabel {
-			h.eIPC.setNodeEgressAssignable(node.Name, true)
-		}
-		isReady := h.eIPC.isEgressNodeReady(node)
-		if isReady {
-			h.eIPC.setNodeEgressReady(node.Name, true)
-		}
-		isReachable := h.eIPC.isEgressNodeReachable(node)
-		if hasEgressLabel && isReachable && isReady {
-			h.eIPC.setNodeEgressReachable(node.Name, true)
-			if err := h.eIPC.addEgressNode(node.Name); err != nil {
-				return err
-			}
-		}
+		return h.eIPC.reconcileNode(node.Name)
 	case factory.EgressIPType:
 		eIP := obj.(*egressipv1.EgressIP)
 		return h.eIPC.reconcileEgressIP(nil, eIP)
@@ -76,7 +46,6 @@ func (h *egressIPClusterControllerEventHandler) AddResource(obj interface{}, _ b
 	default:
 		return fmt.Errorf("no add function for object type %s", h.objType)
 	}
-	return nil
 }
 
 // UpdateResource updates the specified object in the cluster to its version in newObj according
@@ -92,73 +61,21 @@ func (h *egressIPClusterControllerEventHandler) UpdateResource(oldObj, newObj in
 		oldNode := oldObj.(*corev1.Node)
 		newNode := newObj.(*corev1.Node)
 
-		// EgressIP is not supported on hybrid overlay nodes
-		if util.NoHostSubnet(newNode) {
-			return nil
-		}
+		isOldReady := h.eIPC.isEgressNodeReady(oldNode)
+		isNewReady := h.eIPC.isEgressNodeReady(newNode)
+		readinessChanged := isOldReady != isNewReady
 
-		// Initialize the allocator on every update,
-		// ovnkube-node/cloud-network-config-controller will make sure to
-		// annotate the node with the egressIPConfig, but that might have
-		// happened after we processed the ADD for that object, hence keep
-		// retrying for all UPDATEs.
-		if err := h.eIPC.initEgressIPAllocator(newNode); err != nil {
-			klog.Warningf("Egress node initialization error: %v", err)
-		}
 		nodeEgressLabel := util.GetNodeEgressLabel()
 		oldLabels := oldNode.GetLabels()
 		newLabels := newNode.GetLabels()
 		_, oldHadEgressLabel := oldLabels[nodeEgressLabel]
 		_, newHasEgressLabel := newLabels[nodeEgressLabel]
-		// If the node is not labeled for egress assignment, just return
-		// directly, we don't really need to set the ready / reachable
-		// status on this node if the user doesn't care about using it.
-		if !oldHadEgressLabel && !newHasEgressLabel {
-			return nil
-		}
-		h.eIPC.setNodeEgressAssignable(newNode.Name, newHasEgressLabel)
-		if oldHadEgressLabel && !newHasEgressLabel {
-			klog.Infof("Node: %s has been un-labeled, deleting it from egress assignment", newNode.Name)
-			return h.eIPC.deleteEgressNode(oldNode.Name)
-		}
-		isOldReady := h.eIPC.isEgressNodeReady(oldNode)
-		isNewReady := h.eIPC.isEgressNodeReady(newNode)
-		isNewReachable := h.eIPC.isEgressNodeReachable(newNode)
+		labelsChanged := oldHadEgressLabel != newHasEgressLabel
+
 		isHostCIDRsAltered := util.NodeHostCIDRsAnnotationChanged(oldNode, newNode)
-		h.eIPC.setNodeEgressReady(newNode.Name, isNewReady)
-		if !oldHadEgressLabel && newHasEgressLabel {
-			klog.Infof("Node: %s has been labeled, adding it for egress assignment", newNode.Name)
-			if isNewReady && isNewReachable {
-				h.eIPC.setNodeEgressReachable(newNode.Name, isNewReachable)
-				if err := h.eIPC.addEgressNode(newNode.Name); err != nil {
-					return err
-				}
-			} else {
-				klog.Warningf("Node: %s has been labeled, but node is not ready"+
-					" and reachable, cannot use it for egress assignment", newNode.Name)
-			}
-			return nil
-		}
-		if isOldReady == isNewReady && !isHostCIDRsAltered {
-			return nil
-		}
-		if !isNewReady {
-			klog.Warningf("Node: %s is not ready, deleting it from egress assignment", newNode.Name)
-			if err := h.eIPC.deleteEgressNode(newNode.Name); err != nil {
-				return err
-			}
-		} else if isNewReady && isNewReachable {
-			klog.Infof("Node: %s is ready and reachable, adding it for egress assignment", newNode.Name)
-			h.eIPC.setNodeEgressReachable(newNode.Name, isNewReachable)
-			if err := h.eIPC.addEgressNode(newNode.Name); err != nil {
-				return err
-			}
-		}
-		if isHostCIDRsAltered {
-			// we only need to consider EIPs that are assigned to networks that aren't managed by OVN
-			if err := h.eIPC.reconcileSecondaryHostNetworkEIPs(newNode); err != nil {
-				return fmt.Errorf("failed to reconsider egress IPs that are secondary host networks: %v", err)
-			}
+
+		if readinessChanged || labelsChanged || isHostCIDRsAltered {
+			return h.eIPC.reconcileNode(newNode.Name)
 		}
 		return nil
 	case factory.CloudPrivateIPConfigType:
@@ -179,20 +96,7 @@ func (h *egressIPClusterControllerEventHandler) DeleteResource(obj, _ interface{
 		return h.eIPC.reconcileEgressIP(eIP, nil)
 	case factory.EgressNodeType:
 		node := obj.(*corev1.Node)
-		// EgressIP is not supported on hybrid overlay nodes
-		if util.NoHostSubnet(node) {
-			return nil
-		}
-		h.eIPC.deleteNodeForEgress(node)
-		nodeEgressLabel := util.GetNodeEgressLabel()
-		nodeLabels := node.GetLabels()
-		_, hasEgressLabel := nodeLabels[nodeEgressLabel]
-		if hasEgressLabel {
-			if err := h.eIPC.deleteEgressNode(node.Name); err != nil {
-				return err
-			}
-		}
-		return nil
+		return h.eIPC.reconcileNode(node.Name)
 	case factory.CloudPrivateIPConfigType:
 		cloudPrivateIPConfig := obj.(*ocpcloudnetworkapi.CloudPrivateIPConfig)
 		return h.eIPC.reconcileCloudPrivateIPConfig(cloudPrivateIPConfig, nil)
@@ -212,7 +116,7 @@ func (h *egressIPClusterControllerEventHandler) SyncFunc(objs []interface{}) err
 		case factory.EgressIPType:
 			syncFunc = h.eIPC.syncEgressIPMarkAllocator
 		case factory.EgressNodeType:
-			syncFunc = h.eIPC.initEgressNodeReachability
+			syncFunc = nil
 		case factory.CloudPrivateIPConfigType:
 			syncFunc = h.eIPC.syncCloudPrivateIPConfigs
 
