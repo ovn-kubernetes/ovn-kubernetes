@@ -821,12 +821,12 @@ func addServiceRules(service *corev1.Service, netInfo util.NetInfo, localEndpoin
 				errors = append(errors, err)
 			}
 		}
-		nftElems := getGatewayNFTRules(service, localEndpoints, svcHasLocalHostNetEndPnt)
+		nftObjs := getGatewayNFTRules(service, localEndpoints, svcHasLocalHostNetEndPnt)
 		if netInfo.IsPrimaryNetwork() && activeNetwork != nil {
-			nftElems = append(nftElems, getUDNNFTRules(service, activeNetwork)...)
+			nftObjs = append(nftObjs, getUDNNFTRules(service, activeNetwork)...)
 		}
-		if len(nftElems) > 0 {
-			if err := nodenft.UpdateNFTElements(nftElems); err != nil {
+		if len(nftObjs) > 0 {
+			if err := nodenft.AddObjects(nftObjs); err != nil {
 				err = fmt.Errorf("failed to update nftables rules for service %s/%s: %v",
 					service.Namespace, service.Name, err)
 				errors = append(errors, err)
@@ -886,13 +886,13 @@ func delServiceRules(service *corev1.Service, localEndpoints util.PortToLBEndpoi
 				errors = append(errors, err)
 			}
 		}
-		nftElems := getGatewayNFTRules(service, localEndpoints, true)
-		nftElems = append(nftElems, getGatewayNFTRules(service, localEndpoints, false)...)
+		nftObjs := getGatewayNFTRules(service, localEndpoints, true)
+		nftObjs = append(nftObjs, getGatewayNFTRules(service, localEndpoints, false)...)
 		if util.IsNetworkSegmentationSupportEnabled() {
-			nftElems = append(nftElems, getUDNNFTRules(service, nil)...)
+			nftObjs = append(nftObjs, getUDNNFTRules(service, nil)...)
 		}
-		if len(nftElems) > 0 {
-			if err := nodenft.DeleteNFTElements(nftElems); err != nil {
+		if len(nftObjs) > 0 {
+			if err := nodenft.DeleteObjects(nftObjs); err != nil {
 				err = fmt.Errorf("failed to delete nftables rules for service %s/%s: %v",
 					service.Namespace, service.Name, err)
 				errors = append(errors, err)
@@ -1240,7 +1240,7 @@ func (npw *nodePortWatcher) SyncServices(services []interface{}) error {
 	var err error
 	var errors []error
 	var keepIPTRules []nodeipt.Rule
-	var keepNFTSetElems, keepNFTMapElems []*knftables.Element
+	var keepNFTSetElems, keepNFTMapElems []knftables.Object
 	for _, serviceInterface := range services {
 		name := ktypes.NamespacedName{Namespace: serviceInterface.(*corev1.Service).Namespace, Name: serviceInterface.(*corev1.Service).Name}
 
@@ -1677,7 +1677,7 @@ func (npwipt *nodePortWatcherIptables) SyncServices(services []interface{}) erro
 	var err error
 	var errors []error
 	keepIPTRules := []nodeipt.Rule{}
-	keepNFTElems := []*knftables.Element{}
+	keepNFTElems := []knftables.Object{}
 	for _, serviceInterface := range services {
 		service, ok := serviceInterface.(*corev1.Service)
 		if !ok {
