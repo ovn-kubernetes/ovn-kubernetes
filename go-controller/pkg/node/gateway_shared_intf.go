@@ -693,12 +693,12 @@ func addServiceRules(service *corev1.Service, netInfo util.NetInfo, localEndpoin
 				errors = append(errors, err)
 			}
 		}
-		nftElems := getGatewayNFTRules(service, localEndpoints, svcHasLocalHostNetEndPnt)
+		nftObjs := getGatewayNFTRules(service, localEndpoints, svcHasLocalHostNetEndPnt)
 		if netInfo.IsPrimaryNetwork() && activeNetwork != nil {
-			nftElems = append(nftElems, getUDNNFTRules(service, activeNetwork)...)
+			nftObjs = append(nftObjs, getUDNNFTRules(service, activeNetwork)...)
 		}
-		if len(nftElems) > 0 {
-			if err := nodenft.UpdateNFTElements(nftElems); err != nil {
+		if len(nftObjs) > 0 {
+			if err := nodenft.UpdateNFTElements(nftObjs); err != nil {
 				err = fmt.Errorf("failed to update nftables rules for service %s/%s: %v",
 					service.Namespace, service.Name, err)
 				errors = append(errors, err)
@@ -758,10 +758,10 @@ func delServiceRules(service *corev1.Service, localEndpoints []string, npw *node
 				errors = append(errors, err)
 			}
 		}
-		nftElems := getGatewayNFTRules(service, localEndpoints, true)
-		nftElems = append(nftElems, getGatewayNFTRules(service, localEndpoints, false)...)
-		if len(nftElems) > 0 {
-			if err := nodenft.DeleteNFTElements(nftElems); err != nil {
+		nftObjs := getGatewayNFTRules(service, localEndpoints, true)
+		nftObjs = append(nftObjs, getGatewayNFTRules(service, localEndpoints, false)...)
+		if len(nftObjs) > 0 {
+			if err := nodenft.DeleteNFTElements(nftObjs); err != nil {
 				err = fmt.Errorf("failed to delete nftables rules for service %s/%s: %v",
 					service.Namespace, service.Name, err)
 				errors = append(errors, err)
@@ -775,16 +775,16 @@ func delServiceRules(service *corev1.Service, localEndpoints []string, npw *node
 			// Attempt to delete the elements directly and handle the IsNotFound error.
 			//
 			// TODO: Switch to `nft destroy` when supported.
-			nftElems = getUDNNFTRules(service, nil)
-			if len(nftElems) > 0 {
+			nftObjs = getUDNNFTRules(service, nil)
+			if len(nftObjs) > 0 {
 				nft, err := nodenft.GetNFTablesHelper()
 				if err != nil {
 					return utilerrors.Join(append(errors, err)...)
 				}
 
 				tx := nft.NewTransaction()
-				for _, elem := range nftElems {
-					tx.Delete(elem)
+				for _, obj := range nftObjs {
+					tx.Delete(obj)
 				}
 
 				if err := nft.Run(context.TODO(), tx); err != nil && !knftables.IsNotFound(err) {
@@ -987,7 +987,7 @@ func (npw *nodePortWatcher) SyncServices(services []interface{}) error {
 	var err error
 	var errors []error
 	var keepIPTRules []nodeipt.Rule
-	var keepNFTSetElems, keepNFTMapElems []*knftables.Element
+	var keepNFTSetElems, keepNFTMapElems []knftables.Object
 	for _, serviceInterface := range services {
 		name := ktypes.NamespacedName{Namespace: serviceInterface.(*corev1.Service).Namespace, Name: serviceInterface.(*corev1.Service).Name}
 
@@ -1377,7 +1377,7 @@ func (npwipt *nodePortWatcherIptables) SyncServices(services []interface{}) erro
 	var err error
 	var errors []error
 	keepIPTRules := []nodeipt.Rule{}
-	keepNFTElems := []*knftables.Element{}
+	keepNFTElems := []knftables.Object{}
 	for _, serviceInterface := range services {
 		service, ok := serviceInterface.(*corev1.Service)
 		if !ok {
