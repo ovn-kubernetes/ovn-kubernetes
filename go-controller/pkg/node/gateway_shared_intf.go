@@ -1237,7 +1237,7 @@ func (npw *nodePortWatcher) SyncServices(services []interface{}) error {
 	var err error
 	var errors []error
 	var keepIPTRules []nodeipt.Rule
-	var keepNFTSetElems, keepNFTMapElems []knftables.Object
+	var keepNFTObjects, nftContainers []knftables.Object
 	for _, serviceInterface := range services {
 		name := ktypes.NamespacedName{Namespace: serviceInterface.(*corev1.Service).Namespace, Name: serviceInterface.(*corev1.Service).Name}
 
@@ -1292,13 +1292,13 @@ func (npw *nodePortWatcher) SyncServices(services []interface{}) error {
 		// Add correct netfilter rules only for Full mode
 		if !npw.dpuMode {
 			keepIPTRules = append(keepIPTRules, getGatewayIPTRules(service, localEndpoints, hasLocalHostNetworkEp)...)
-			keepNFTSetElems = append(keepNFTSetElems, getGatewayNFTRules(service, localEndpoints, hasLocalHostNetworkEp)...)
+			keepNFTObjects = append(keepNFTObjects, getGatewayNFTRules(service, localEndpoints, hasLocalHostNetworkEp)...)
 			if util.IsNetworkSegmentationSupportEnabled() && netInfo.IsPrimaryNetwork() {
 				netConfig := npw.ofm.getActiveNetwork(netInfo)
 				if netConfig == nil {
 					return fmt.Errorf("failed to get active network config for network %s", netInfo.GetNetworkName())
 				}
-				keepNFTMapElems = append(keepNFTMapElems, getUDNNFTRules(service, netConfig)...)
+				keepNFTObjects = append(keepNFTObjects, getUDNNFTRules(service, netConfig)...)
 			}
 		}
 	}
@@ -1317,17 +1317,12 @@ func (npw *nodePortWatcher) SyncServices(services []interface{}) error {
 			errors = append(errors, err)
 		}
 
-		for _, set := range getGatewayNFTSets() {
-			if err = recreateNFTSet(set, keepNFTSetElems); err != nil {
-				errors = append(errors, err)
-			}
-		}
+		nftContainers = append(nftContainers, getGatewayNFTContainerObjects()...)
 		if util.IsNetworkSegmentationSupportEnabled() {
-			for _, nftMap := range getUDNNFTMaps() {
-				if err = recreateNFTMap(nftMap, keepNFTMapElems); err != nil {
-					errors = append(errors, err)
-				}
-			}
+			nftContainers = append(nftContainers, getUDNNFTContainerObjects()...)
+		}
+		if err = nodenft.SyncObjects(nftContainers, keepNFTObjects); err != nil {
+			errors = append(errors, fmt.Errorf("failed to sync nftables rules for services: %w", err))
 		}
 	}
 	return utilerrors.Join(errors...)
@@ -1673,8 +1668,8 @@ func (npwipt *nodePortWatcherIptables) DeleteService(service *corev1.Service) er
 func (npwipt *nodePortWatcherIptables) SyncServices(services []interface{}) error {
 	var err error
 	var errors []error
-	keepIPTRules := []nodeipt.Rule{}
-	keepNFTElems := []knftables.Object{}
+	var keepIPTRules []nodeipt.Rule
+	var keepNFTObjects, nftContainers []knftables.Object
 	for _, serviceInterface := range services {
 		service, ok := serviceInterface.(*corev1.Service)
 		if !ok {
@@ -1704,7 +1699,7 @@ func (npwipt *nodePortWatcherIptables) SyncServices(services []interface{}) erro
 		// Add correct iptables rules.
 		// TODO: ETP and ITP is not implemented for smart NIC mode.
 		keepIPTRules = append(keepIPTRules, getGatewayIPTRules(service, nil, false)...)
-		keepNFTElems = append(keepNFTElems, getGatewayNFTRules(service, nil, false)...)
+		keepNFTObjects = append(keepNFTObjects, getGatewayNFTRules(service, nil, false)...)
 	}
 
 	// sync rules once
@@ -1714,10 +1709,9 @@ func (npwipt *nodePortWatcherIptables) SyncServices(services []interface{}) erro
 		}
 	}
 
-	for _, set := range getGatewayNFTSets() {
-		if err = recreateNFTSet(set, keepNFTElems); err != nil {
-			errors = append(errors, err)
-		}
+	nftContainers = append(nftContainers, getGatewayNFTContainerObjects()...)
+	if err = nodenft.SyncObjects(nftContainers, keepNFTObjects); err != nil {
+		errors = append(errors, fmt.Errorf("failed to sync nftables rules for services: %w", err))
 	}
 
 	return utilerrors.Join(errors...)
