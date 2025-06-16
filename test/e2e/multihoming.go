@@ -5,9 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
-	"os"
-	"os/exec"
-	"strconv"
 	"strings"
 	"time"
 
@@ -16,7 +13,6 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 
-	"github.com/docker/docker/client"
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -32,6 +28,7 @@ import (
 	ipgenerator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/ip"
 	util "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
 	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
 )
@@ -844,9 +841,9 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				expectedOriginalMTU        = 1200
 			)
 
-			var netConfig networkAttachmentConfig
-			var underlayBridgeName string
-			var cmdWebServer *exec.Cmd
+			var (
+				netConfig networkAttachmentConfig
+			)
 
 			underlayIP := underlayServiceIP + "/24"
 			Context("with a service running on the underlay", func() {
@@ -870,27 +867,22 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				})
 
 				BeforeEach(func() {
-					By("adding IP to the underlay docker bridge")
-					cli, err := client.NewClientWithOpts(client.FromEnv)
-					Expect(err).NotTo(HaveOccurred())
-
-					gatewayIP, err := getNetworkGateway(cli, dockerNetworkName)
-					Expect(err).NotTo(HaveOccurred())
-
-					underlayBridgeName, err = findInterfaceByIP(gatewayIP)
-					Expect(err).NotTo(HaveOccurred())
-
-					cmd := exec.Command("sudo", "ip", "addr", "add", underlayIP, "dev", underlayBridgeName)
-					cmd.Stderr = os.Stderr
-					err = cmd.Run()
-					Expect(err).NotTo(HaveOccurred())
-				})
-
-				BeforeEach(func() {
 					By("starting a service, connected to the underlay")
-					cmdWebServer = exec.Command("python3", "-m", "http.server", "--bind", underlayServiceIP, strconv.Itoa(int(servicePort)))
-					cmdWebServer.Stderr = os.Stderr
-					Expect(cmdWebServer.Start()).NotTo(HaveOccurred(), "failed to create web server, port might be busy")
+					providerCtx = infraprovider.Get().NewTestContext()
+
+					underlayNetwork, err := infraprovider.Get().GetNetwork(dockerNetworkName)
+					Expect(err).NotTo(HaveOccurred(), "must get underlay network")
+					externalContainerName := f.Namespace.Name + "-web-server"
+					serviceContainerSpec := infraapi.ExternalContainer{
+						Name:       externalContainerName,
+						Image:      images.AgnHost(),
+						Network:    underlayNetwork,
+						Entrypoint: "bash",
+						Args:       []string{"-c", fmt.Sprintf("ip a add %s/24 dev eth0 && ./agnhost netexec --http-port=%d", underlayServiceIP, servicePort)},
+						ExtPort:    servicePort,
+					}
+					_, err = providerCtx.CreateExternalContainer(serviceContainerSpec)
+					Expect(err).NotTo(HaveOccurred(), "must create external container 1")
 				})
 
 				BeforeEach(func() {
@@ -900,18 +892,6 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 						generateNAD(netConfig),
 						metav1.CreateOptions{},
 					)
-					Expect(err).NotTo(HaveOccurred())
-				})
-
-				AfterEach(func() {
-					err := cmdWebServer.Process.Kill()
-					Expect(err).NotTo(HaveOccurred())
-				})
-
-				AfterEach(func() {
-					cmd := exec.Command("sudo", "ip", "addr", "del", underlayIP, "dev", underlayBridgeName)
-					cmd.Stderr = os.Stderr
-					err := cmd.Run()
 					Expect(err).NotTo(HaveOccurred())
 				})
 
@@ -945,6 +925,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 
 					By("asserting the *client* pod can contact the underlay service")
 					Expect(connectToServer(clientPodConfig, underlayServiceIP, servicePort)).To(Succeed())
+
 				})
 
 				Context("and networkAttachmentDefinition is modified", func() {
@@ -1252,29 +1233,30 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 						VlanID:             netConfig.vlanID,
 					})).To(Succeed(), "configuring the OVS bridge")
 
-					By(fmt.Sprintf("creating a VLAN interface on top of the bridge connecting the cluster nodes with IP: %s", underlayIP))
-					cli, err := client.NewClientWithOpts(client.FromEnv)
-					Expect(err).NotTo(HaveOccurred())
+					By("starting a service, connected to the underlay over a VLAN")
+					providerCtx = infraprovider.Get().NewTestContext()
 
-					gatewayIP, err := getNetworkGateway(cli, dockerNetworkName)
-					Expect(err).NotTo(HaveOccurred())
+					ifName := "eth0"
+					vlanName := fmt.Sprintf("%s.%d", ifName, vlanID)
+					underlayNetwork, err := infraprovider.Get().GetNetwork(dockerNetworkName)
+					Expect(err).NotTo(HaveOccurred(), "must get underlay network")
+					externalContainerName := f.Namespace.Name + "-web-server"
+					serviceContainerSpec := infraapi.ExternalContainer{
+						Name:       externalContainerName,
+						Image:      images.AgnHost(),
+						Network:    underlayNetwork,
+						Entrypoint: "bash",
+						ExtPort:    servicePort,
+						Args: []string{"-c", fmt.Sprintf(`
+ip link add link %[1]s name %[2]s type vlan id %[3]d
+ip link set dev %[2]s up
+ip a add %[4]s/24 dev %[2]s
+./agnhost netexec --http-port=%[5]d
+`, ifName, vlanName, vlanID, underlayServiceIP, servicePort)},
+					}
+					_, err = providerCtx.CreateExternalContainer(serviceContainerSpec)
+					Expect(err).NotTo(HaveOccurred(), "must create external container 1")
 
-					underlayBridgeName, err = findInterfaceByIP(gatewayIP)
-					Expect(err).NotTo(HaveOccurred())
-					Expect(createVLANInterface(underlayBridgeName, strconv.Itoa(vlanID), &underlayIP)).To(
-						Succeed(),
-						"create a VLAN interface on the bridge interconnecting the cluster nodes",
-					)
-
-					By("starting a service, connected to the underlay")
-					cmdWebServer = exec.Command("python3", "-m", "http.server", "--bind", underlayServiceIP, strconv.Itoa(port))
-					cmdWebServer.Stderr = os.Stderr
-					Expect(cmdWebServer.Start()).NotTo(HaveOccurred(), "failed to create web server, port might be busy")
-				})
-
-				AfterEach(func() {
-					Expect(cmdWebServer.Process.Kill()).NotTo(HaveOccurred(), "kill the python webserver")
-					Expect(deleteVLANInterface(underlayBridgeName, strconv.Itoa(vlanID))).NotTo(HaveOccurred(), "remove the underlay physical configuration")
 				})
 
 				It("the same bridge mapping can be shared by a separate VLAN by using the physical network name attribute", func() {
@@ -1307,6 +1289,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 
 					By(fmt.Sprintf("asserting the *client* pod can contact the underlay service with IP %q on the separate vlan", underlayIP))
 					Expect(connectToServer(clientPodConfig, underlayServiceIP, servicePort)).To(Succeed())
+
 				})
 			})
 		})

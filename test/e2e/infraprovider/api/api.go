@@ -175,13 +175,14 @@ func (n NetworkInterface) GetMAC() string {
 }
 
 type ExternalContainer struct {
-	Name    string
-	Image   string
-	Network Network
-	Args    []string
-	ExtPort uint16
-	IPv4    string
-	IPv6    string
+	Name       string
+	Image      string
+	Network    Network
+	Entrypoint string
+	Args       []string
+	ExtPort    uint16
+	IPv4       string
+	IPv6       string
 }
 
 func (ec ExternalContainer) GetName() string {
