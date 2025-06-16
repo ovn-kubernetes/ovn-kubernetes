@@ -147,6 +147,9 @@ func (c *contextKind) createExternalContainer(container api.ExternalContainer) (
 		return container, fmt.Errorf("container %s already exists", container.Name)
 	}
 	cmd := []string{"run", "-itd", "--privileged", "--name", container.Name, "--network", container.Network.Name(), "--hostname", container.Name}
+	if container.Entrypoint != "" {
+		cmd = append(cmd, "--entrypoint", container.Entrypoint)
+	}
 	cmd = append(cmd, container.Image)
 	if len(container.Args) > 0 {
 		cmd = append(cmd, container.Args...)
