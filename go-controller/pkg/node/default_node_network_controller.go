@@ -1563,9 +1563,17 @@ func (nc *DefaultNodeNetworkController) deleteNode(node *corev1.Node) {
 	}
 }
 
+var pmtudSets = []knftables.Object{
+	&knftables.Set{
+		Name: types.NFTNoPMTUDRemoteNodeIPsv4,
+	},
+	&knftables.Set{
+		Name: types.NFTNoPMTUDRemoteNodeIPsv6,
+	},
+}
+
 func (nc *DefaultNodeNetworkController) syncNodes(objs []interface{}) error {
-	var keepNFTSetElemsV4, keepNFTSetElemsV6 []knftables.Object
-	var errors []error
+	var keepNFTSetElems []knftables.Object
 	klog.Infof("Starting node controller node sync")
 	start := time.Now()
 	for _, obj := range objs {
@@ -1588,27 +1596,22 @@ func (nc *DefaultNodeNetworkController) syncNodes(objs []interface{}) error {
 
 			// Remove IPs from NFT sets
 			if utilnet.IsIPv4(nodeIP) {
-				keepNFTSetElemsV4 = append(keepNFTSetElemsV4, &knftables.Element{
+				keepNFTSetElems = append(keepNFTSetElems, &knftables.Element{
 					Set: types.NFTNoPMTUDRemoteNodeIPsv4,
 					Key: []string{nodeIP.String()},
 				})
 			} else {
-				keepNFTSetElemsV6 = append(keepNFTSetElemsV6, &knftables.Element{
+				keepNFTSetElems = append(keepNFTSetElems, &knftables.Element{
 					Set: types.NFTNoPMTUDRemoteNodeIPsv6,
 					Key: []string{nodeIP.String()},
 				})
 			}
 		}
 	}
-	if err := recreateNFTSet(types.NFTNoPMTUDRemoteNodeIPsv4, keepNFTSetElemsV4); err != nil {
-		errors = append(errors, err)
-	}
-	if err := recreateNFTSet(types.NFTNoPMTUDRemoteNodeIPsv6, keepNFTSetElemsV6); err != nil {
-		errors = append(errors, err)
-	}
+	err := nodenft.SyncObjects(context.TODO(), pmtudSets, keepNFTSetElems)
 
 	klog.Infof("Node controller node sync done. Time taken: %s", time.Since(start))
-	return utilerrors.Join(errors...)
+	return err
 }
 
 // validateVTEPInterfaceMTU checks if the MTU of the interface that has ovn-encap-ip is big

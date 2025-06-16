@@ -251,3 +251,92 @@ func TestDeleteObjects(t *testing.T) {
 		})
 	}
 }
+
+func TestSyncObjects(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		initial    string
+		containers []knftables.Object
+		contents   []knftables.Object
+		final      string
+	}{
+		{
+			name:       "empty transaction",
+			initial:    "",
+			containers: []knftables.Object{},
+			contents:   []knftables.Object{},
+			final:      "add table inet ovn-kubernetes",
+		},
+		{
+			name: "start empty / end empty",
+			initial: `
+				add set inet ovn-kubernetes starts-empty { type ipv4_addr ; }
+				add set inet ovn-kubernetes becomes-empty { type ipv4_addr ; }
+				add element inet ovn-kubernetes becomes-empty { 1.1.1.1 }
+				add element inet ovn-kubernetes becomes-empty { 2.2.2.2 }
+				add element inet ovn-kubernetes becomes-empty { 3.3.3.3 }
+			`,
+			containers: []knftables.Object{
+				&knftables.Set{
+					Name: "starts-empty",
+				},
+				&knftables.Set{
+					Name: "becomes-empty",
+				},
+			},
+			contents: []knftables.Object{
+				&knftables.Element{
+					Set: "starts-empty",
+					Key: []string{"1.2.3.4"},
+				},
+				&knftables.Element{
+					Set: "starts-empty",
+					Key: []string{"5.6.7.8"},
+				},
+			},
+			final: `
+				add table inet ovn-kubernetes
+				add set inet ovn-kubernetes becomes-empty { type ipv4_addr ; }
+				add set inet ovn-kubernetes starts-empty { type ipv4_addr ; }
+				add element inet ovn-kubernetes starts-empty { 1.2.3.4 }
+				add element inet ovn-kubernetes starts-empty { 5.6.7.8 }
+			`,
+		},
+		{
+			name: "no changed sets",
+			initial: `
+				add set inet ovn-kubernetes starts-empty { type ipv4_addr ; }
+				add set inet ovn-kubernetes becomes-empty { type ipv4_addr ; }
+				add element inet ovn-kubernetes becomes-empty { 1.1.1.1 }
+				add element inet ovn-kubernetes becomes-empty { 2.2.2.2 }
+				add element inet ovn-kubernetes becomes-empty { 3.3.3.3 }
+			`,
+			containers: []knftables.Object{},
+			contents:   []knftables.Object{},
+			final: `
+				add table inet ovn-kubernetes
+				add set inet ovn-kubernetes becomes-empty { type ipv4_addr ; }
+				add set inet ovn-kubernetes starts-empty { type ipv4_addr ; }
+				add element inet ovn-kubernetes becomes-empty { 1.1.1.1 }
+				add element inet ovn-kubernetes becomes-empty { 2.2.2.2 }
+				add element inet ovn-kubernetes becomes-empty { 3.3.3.3 }
+			`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := SetFakeNFTablesHelper()
+			err := fake.ParseDump(tc.initial)
+			if err != nil {
+				t.Fatalf("unexpected error parsing initial state: %v", err)
+			}
+			err = SyncObjects(context.Background(), tc.containers, tc.contents)
+			if err != nil {
+				t.Fatalf("unexpected error syncing objects: %v", err)
+			}
+			err = MatchNFTRules(tc.final, fake.Dump())
+			if err != nil {
+				t.Fatalf("unexpected final result: %v", err)
+			}
+		})
+	}
+}
