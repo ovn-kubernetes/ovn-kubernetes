@@ -12,17 +12,17 @@ import (
 	"sigs.k8s.io/knftables"
 )
 
-func TestUpdateNFTElements(t *testing.T) {
+func TestAddObjects(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		initial string
-		elems   []*knftables.Element
+		objs    []knftables.Object
 		final   string
 	}{
 		{
 			name:    "empty transaction",
 			initial: "",
-			elems:   []*knftables.Element{},
+			objs:    []knftables.Object{},
 			final:   "add table inet ovn-kubernetes",
 		},
 		{
@@ -30,12 +30,12 @@ func TestUpdateNFTElements(t *testing.T) {
 			initial: `
 				add set inet ovn-kubernetes testset { type ipv4_addr ; }
 			`,
-			elems: []*knftables.Element{
-				{
+			objs: []knftables.Object{
+				&knftables.Element{
 					Set: "testset",
 					Key: []string{"1.2.3.4"},
 				},
-				{
+				&knftables.Element{
 					Set: "testset",
 					Key: []string{"5.6.7.8"},
 				},
@@ -53,12 +53,12 @@ func TestUpdateNFTElements(t *testing.T) {
 				add set inet ovn-kubernetes testset { type ipv4_addr ; }
 				add element inet ovn-kubernetes testset { 1.2.3.4 }
 			`,
-			elems: []*knftables.Element{
-				{
+			objs: []knftables.Object{
+				&knftables.Element{
 					Set: "testset",
 					Key: []string{"1.2.3.4"},
 				},
-				{
+				&knftables.Element{
 					Set: "testset",
 					Key: []string{"5.6.7.8"},
 				},
@@ -76,17 +76,17 @@ func TestUpdateNFTElements(t *testing.T) {
 				add set inet ovn-kubernetes testset { type ipv4_addr ; }
 				add map inet ovn-kubernetes testmap { type ipv4_addr : ipv4_addr ; }
 			`,
-			elems: []*knftables.Element{
-				{
+			objs: []knftables.Object{
+				&knftables.Element{
 					Set: "testset",
 					Key: []string{"1.2.3.4"},
 				},
-				{
+				&knftables.Element{
 					Map:   "testmap",
 					Key:   []string{"10.0.0.1"},
 					Value: []string{"9.9.9.9"},
 				},
-				{
+				&knftables.Element{
 					Set: "testset",
 					Key: []string{"5.6.7.8"},
 				},
@@ -107,9 +107,9 @@ func TestUpdateNFTElements(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error parsing initial state: %v", err)
 			}
-			err = UpdateNFTElements(tc.elems)
+			err = AddObjects(tc.objs)
 			if err != nil {
-				t.Fatalf("unexpected error updating elements: %v", err)
+				t.Fatalf("unexpected error adding objects: %v", err)
 			}
 			err = MatchNFTRules(tc.final, fake.Dump())
 			if err != nil {
@@ -119,17 +119,17 @@ func TestUpdateNFTElements(t *testing.T) {
 	}
 }
 
-func TestDeleteNFTElements(t *testing.T) {
+func TestDeleteObjects(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		initial string
-		elems   []*knftables.Element
+		objs    []knftables.Object
 		final   string
 	}{
 		{
 			name:    "empty transaction",
 			initial: "",
-			elems:   []*knftables.Element{},
+			objs:    []knftables.Object{},
 			final:   "add table inet ovn-kubernetes",
 		},
 		{
@@ -139,12 +139,12 @@ func TestDeleteNFTElements(t *testing.T) {
 				add element inet ovn-kubernetes testset { 1.2.3.4 }
 				add element inet ovn-kubernetes testset { 5.6.7.8 }
 			`,
-			elems: []*knftables.Element{
-				{
+			objs: []knftables.Object{
+				&knftables.Element{
 					Set: "testset",
 					Key: []string{"1.2.3.4"},
 				},
-				{
+				&knftables.Element{
 					Set: "testset",
 					Key: []string{"5.6.7.8"},
 				},
@@ -160,12 +160,12 @@ func TestDeleteNFTElements(t *testing.T) {
 				add set inet ovn-kubernetes testset { type ipv4_addr ; }
 				add element inet ovn-kubernetes testset { 1.2.3.4 }
 			`,
-			elems: []*knftables.Element{
-				{
+			objs: []knftables.Object{
+				&knftables.Element{
 					Set: "testset",
 					Key: []string{"1.2.3.4"},
 				},
-				{
+				&knftables.Element{
 					Set: "testset",
 					Key: []string{"5.6.7.8"},
 				},
@@ -184,17 +184,17 @@ func TestDeleteNFTElements(t *testing.T) {
 				add element inet ovn-kubernetes testset { 5.6.7.8 }
 				add element inet ovn-kubernetes testmap { 10.0.0.1 : 9.9.9.9 }
 			`,
-			elems: []*knftables.Element{
-				{
+			objs: []knftables.Object{
+				&knftables.Element{
 					Set: "testset",
 					Key: []string{"1.2.3.4"},
 				},
-				{
+				&knftables.Element{
 					Map:   "testmap",
 					Key:   []string{"10.0.0.1"},
 					Value: []string{"9.9.9.9"},
 				},
-				{
+				&knftables.Element{
 					Set: "testset",
 					Key: []string{"5.6.7.8"},
 				},
@@ -214,16 +214,16 @@ func TestDeleteNFTElements(t *testing.T) {
 				add element inet ovn-kubernetes testmap { 10.0.0.3 : 7.7.7.7 }
 				add element inet ovn-kubernetes testmap { 10.0.0.4 : 6.6.6.6 }
 			`,
-			elems: []*knftables.Element{
-				{
+			objs: []knftables.Object{
+				&knftables.Element{
 					Map: "testmap",
 					Key: []string{"10.0.0.1"},
 				},
-				{
+				&knftables.Element{
 					Map: "testmap",
 					Key: []string{"10.0.0.3"},
 				},
-				{
+				&knftables.Element{
 					Map: "testmap",
 					Key: []string{"10.0.0.5"},
 				},
@@ -242,7 +242,7 @@ func TestDeleteNFTElements(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error parsing initial state: %v", err)
 			}
-			err = DeleteNFTElements(tc.elems)
+			err = DeleteObjects(tc.objs)
 			if err != nil {
 				t.Fatalf("unexpected error deleting objects: %v", err)
 			}
