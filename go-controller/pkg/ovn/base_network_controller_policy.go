@@ -351,27 +351,6 @@ func (bnc *BaseNetworkController) addAllowACLFromNode(switchName string, mgmtPor
 	return nil
 }
 
-// deleteNetworkSubnetAllowACL removes stateless ACLs that allow traffic to and from subnets through the management port
-func (bnc *BaseNetworkController) deleteNetworkSubnetAllowACL(switchName string) error {
-	ingressACLIDs := bnc.getPodSubnetAllowACLDbIDs(string(knet.PolicyTypeIngress))
-	ingressACLPredicate := libovsdbops.GetPredicate[*nbdb.ACL](ingressACLIDs, nil)
-	ingressACLs, err := libovsdbops.FindACLsWithPredicate(bnc.nbClient, ingressACLPredicate)
-	if err != nil {
-		return fmt.Errorf("unable to find the ingress allow ACLs for network %s: %w", bnc.GetNetworkName(), err)
-	}
-
-	egressACLIDs := bnc.getPodSubnetAllowACLDbIDs(string(knet.PolicyTypeEgress))
-	egressACLPredicate := libovsdbops.GetPredicate[*nbdb.ACL](egressACLIDs, nil)
-	egressACLs, err := libovsdbops.FindACLsWithPredicate(bnc.nbClient, egressACLPredicate)
-	if err != nil {
-		return fmt.Errorf("unable to find the egress allow ACLs for network %s: %w", bnc.GetNetworkName(), err)
-	}
-
-	// ACLs referenced by the switch will be deleted by db if there are no other references
-	p := func(sw *nbdb.LogicalSwitch) bool { return sw.Name == switchName }
-	return libovsdbops.RemoveACLsFromLogicalSwitchesWithPredicate(bnc.nbClient, p, append(ingressACLs, egressACLs...)...)
-}
-
 // addNetworkSubnetAllowACL creates stateless ACLs that allow traffic to and from subnets through the management port
 func (bnc *BaseNetworkController) addNetworkSubnetAllowACL(nodeName, switchName string, subnets []*net.IPNet) error {
 	var matchesIngress, matchesEgress []string

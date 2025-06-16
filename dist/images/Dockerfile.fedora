@@ -54,8 +54,8 @@ ARG OVN_GITREF=main
 WORKDIR /root
 RUN mkdir ovn && pushd ovn && \
     git init && \
-    git remote add origin $OVN_REPO && \
-    git fetch origin ${OVN_GITREF} --depth 1 && \
+    git remote add origin https://github.com/ovn-org/ovn.git && \
+    git fetch origin main --depth 1 && \
     git reset --hard FETCH_HEAD && \
     popd
 
