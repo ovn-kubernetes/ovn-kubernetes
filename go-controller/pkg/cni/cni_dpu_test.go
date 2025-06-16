@@ -5,6 +5,7 @@ import (
 	"time"
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
+	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -43,10 +44,11 @@ var _ = Describe("cni_dpu tests", func() {
 				NetConf:  cnitypes.NetConf{},
 				DeviceID: "",
 			},
-			timestamp: time.Time{},
-			IsVFIO:    false,
-			netName:   ovntypes.DefaultNetworkName,
-			nadName:   ovntypes.DefaultNetworkName,
+			timestamp:  time.Time{},
+			IsVFIO:     false,
+			netName:    ovntypes.DefaultNetworkName,
+			nadName:    ovntypes.DefaultNetworkName,
+			deviceInfo: nadapi.DeviceInfo{},
 		}
 		pod = &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{

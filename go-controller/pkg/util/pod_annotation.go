@@ -227,7 +227,7 @@ func UnmarshalPodAnnotation(annotations map[string]string, nadName string) (*Pod
 
 	tempA, ok := podNetworks[nadName]
 	if !ok {
-		return nil, fmt.Errorf("no ovn pod annotation for network %s: %q",
+		return nil, newAnnotationNotSetError("no ovn pod annotation for NAD %s: %q",
 			nadName, ovnAnnotation)
 	}
 

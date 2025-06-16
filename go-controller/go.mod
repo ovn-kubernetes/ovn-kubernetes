@@ -56,6 +56,7 @@ require (
 	google.golang.org/protobuf v1.36.5
 	gopkg.in/fsnotify/fsnotify.v1 v1.4.7
 	gopkg.in/gcfg.v1 v1.2.3
+	gopkg.in/k8snetworkplumbingwg/multus-cni.v4 v4.0.2
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	k8s.io/api v0.33.3
 	k8s.io/apimachinery v0.33.3
@@ -146,6 +147,7 @@ require (
 	k8s.io/component-base v0.33.3 // indirect
 	k8s.io/controller-manager v0.33.3 // indirect
 	k8s.io/kube-openapi v0.0.0-20250318190949-c8a335a9a2ff // indirect
+	k8s.io/kubelet v0.22.8 // indirect
 	kubevirt.io/containerized-data-importer-api v1.55.0 // indirect
 	kubevirt.io/controller-lifecycle-operator-sdk/api v0.0.0-20220329064328-f3cc58c6ed90 // indirect
 	sigs.k8s.io/json v0.0.0-20241010143419-9aa6b5e7a4b3 // indirect

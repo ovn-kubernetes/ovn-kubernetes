@@ -8,6 +8,7 @@ import (
 
 	current "github.com/containernetworking/cni/pkg/types/100"
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	nadv1Listers "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
@@ -96,9 +97,11 @@ type CNIRequestMetrics struct {
 
 // Response sent to the OVN CNI plugin by the Server
 type Response struct {
-	Result    *current.Result
-	PodIFInfo *PodInterfaceInfo
-	KubeAuth  *KubeAPIAuth
+	Result            *current.Result
+	PodIFInfo         *PodInterfaceInfo
+	PrimaryUDNPodInfo *PodInterfaceInfo
+	PrimaryUDNPodReq  *PodRequest
+	KubeAuth          *KubeAPIAuth
 }
 
 func (response *Response) Marshal() ([]byte, error) {
@@ -181,6 +184,7 @@ type ClientSet struct {
 	PodInfoGetter
 	kclient   kubernetes.Interface
 	podLister corev1listers.PodLister
+	nadLister nadv1Listers.NetworkAttachmentDefinitionLister
 }
 
 func NewClientSet(kclient kubernetes.Interface, podLister corev1listers.PodLister) *ClientSet {

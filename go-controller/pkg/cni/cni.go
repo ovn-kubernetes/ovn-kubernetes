@@ -8,10 +8,10 @@ import (
 	"time"
 
 	current "github.com/containernetworking/cni/pkg/types/100"
-	v1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 
@@ -115,6 +115,32 @@ func (pr *PodRequest) cmdAdd(kubeAuth *KubeAPIAuth, clientset *ClientSet, networ
 	return pr.cmdAddWithGetCNIResultFunc(kubeAuth, clientset, getCNIResult, networkManager, ovsClient)
 }
 
+// primaryDPUReady makes sure previous annotation condition is ready, then if primary UDN interface is needed and it is
+// in the DPU-HOST/DPU setup, checks if DPU connection annotations for primary UDN interface are ready.
+func (pr *PodRequest) primaryDPUReady(primaryUDN *udn.UserDefinedPrimaryNetwork, k kube.Interface, podLister corev1listers.PodLister, annotCondFn podAnnotWaitCond) podAnnotWaitCond {
+	return func(pod *corev1.Pod, nadName string) (*util.PodAnnotation, bool, error) {
+		// First, check the original annotation condition
+		annotation, isReady, err := annotCondFn(pod, nadName)
+		if err != nil || !isReady {
+			return annotation, isReady, err
+		}
+		// primaryUDNPodRequest would be nil if no primary UDN interface is needed
+		primaryUDNPodRequest := pr.buildPrimaryUDNPodRequest(primaryUDN)
+		// DPU-Host: add DPU connection-details annotation to allow DPU performs the needed primary UDN interface plumbing.
+		if config.OvnKubeNode.Mode == types.NodeModeDPUHost &&
+			primaryUDNPodRequest != nil && primaryUDNPodRequest.CNIConf.DeviceID != "" {
+			netdevName := primaryUDN.NetworkDevice()
+			if err := primaryUDNPodRequest.addDPUConnectionDetailsAnnot(k, podLister, netdevName); err != nil {
+				return annotation, false, err
+			}
+			// Check if DPU status annotation is ready (passing nil as we've already checked annotation)
+			return isDPUReady(nil, primaryUDN.NADName())(pod, nadName)
+		}
+		// Non-DPU case: proceed normally
+		return annotation, true, nil
+	}
+}
+
 func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
 	kubeAuth *KubeAPIAuth,
 	clientset *ClientSet,
@@ -146,7 +172,7 @@ func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
 			if err = pr.addDPUConnectionDetailsAnnot(kubecli, clientset.podLister, netdevName); err != nil {
 				return nil, err
 			}
-			annotCondFn = isDPUReady
+			// Defer default-network DPU readiness gating so the primary UDN annotation/DPU readiness can progress in parallel when present.
 		}
 		// In the case of SmartNIC (CX5), we store the netdevname in the representor's
 		// OVS interface's external_id column. This is done in ConfigureInterface().
@@ -154,14 +180,34 @@ func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
 	// Get the IP address and MAC address of the pod
 	// for DPU, ensure connection-details is present
 
-	primaryUDN := udn.NewPrimaryNetwork(networkManager)
+	primaryUDN := udn.NewPrimaryNetwork(networkManager, clientset.nadLister)
 	if util.IsNetworkSegmentationSupportEnabled() {
-		annotCondFn = primaryUDN.WaitForPrimaryAnnotationFn(podName, namespace, annotCondFn)
+		annotCondFn = primaryUDN.WaitForPrimaryAnnotationFn(annotCondFn)
+		// checks for primary UDN network's DPU connections status
+		annotCondFn = pr.primaryDPUReady(primaryUDN, kubecli, clientset.podLister, annotCondFn)
+	}
+
+	// now checks for default network's DPU connection status
+	if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
+		if pr.CNIConf.DeviceID != "" {
+			annotCondFn = isDPUReady(annotCondFn, pr.nadName)
+		}
 	}
 	pod, annotations, podNADAnnotation, err := GetPodWithAnnotations(pr.ctx, clientset, namespace, podName, pr.nadName, annotCondFn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pod annotation: %v", err)
 	}
+
+	var primaryUDNPodInfo *PodInterfaceInfo
+	primaryUDNPodRequest := pr.buildPrimaryUDNPodRequest(primaryUDN)
+	if primaryUDNPodRequest != nil {
+		primaryUDNPodInfo, err = primaryUDNPodRequest.buildPodInterfaceInfo(annotations, primaryUDN.Annotation(), primaryUDN.NetworkDevice())
+		if err != nil {
+			return nil, err
+		}
+		klog.V(4).Infof("Pod %s/%s primaryUDN podRequest %v podInfo %v", namespace, podName, primaryUDNPodRequest, primaryUDNPodInfo)
+	}
+
 	if err = pr.checkOrUpdatePodUID(pod); err != nil {
 		return nil, err
 	}
@@ -175,9 +221,6 @@ func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
 
 	response := &Response{KubeAuth: kubeAuth}
 	if !config.UnprivilegedMode {
-		//TODO: There is nothing technical to run this at unprivileged mode but
-		//      we will tackle that later on.
-
 		netName := pr.netName
 		if pr.CNIConf.PhysicalNetworkName != "" {
 			netName = pr.CNIConf.PhysicalNetworkName
@@ -194,29 +237,10 @@ func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
 		if err != nil {
 			return nil, err
 		}
-		if primaryUDN.Found() {
-			primaryUDNPodRequest := pr.buildPrimaryUDNPodRequest(pod, primaryUDN)
-			primaryUDNPodInfo, err := primaryUDNPodRequest.buildPodInterfaceInfo(annotations, primaryUDN.Annotation(), primaryUDN.NetworkDevice())
+		if primaryUDNPodRequest != nil {
+			err = primaryUDNCmdAddGetCNIResultFunc(response, getCNIResultFn, primaryUDNPodRequest, clientset, primaryUDNPodInfo)
 			if err != nil {
 				return nil, err
-			}
-			primaryUDNResult, err := getCNIResultFn(primaryUDNPodRequest, clientset, primaryUDNPodInfo)
-			if err != nil {
-				return nil, err
-			}
-
-			response.Result.Routes = append(response.Result.Routes, primaryUDNResult.Routes...)
-			numOfInitialIPs := len(response.Result.IPs)
-			numOfInitialIfaces := len(response.Result.Interfaces)
-			response.Result.Interfaces = append(response.Result.Interfaces, primaryUDNResult.Interfaces...)
-			response.Result.IPs = append(response.Result.IPs, primaryUDNResult.IPs...)
-
-			// Offset the index of the default network IPs to correctly point to the default network interfaces
-			for i := numOfInitialIPs; i < len(response.Result.IPs); i++ {
-				ifaceIPConfig := response.Result.IPs[i].Copy()
-				if response.Result.IPs[i].Interface != nil {
-					response.Result.IPs[i].Interface = current.Int(*ifaceIPConfig.Interface + numOfInitialIfaces)
-				}
 			}
 		}
 	} else {
@@ -224,6 +248,29 @@ func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
 	}
 
 	return response, nil
+}
+
+func primaryUDNCmdAddGetCNIResultFunc(response *Response, getCNIResultFn getCNIResultFunc, primaryUDNPodRequest *PodRequest,
+	clientset PodInfoGetter, primaryUDNPodInfo *PodInterfaceInfo) error {
+	primaryUDNResult, err := getCNIResultFn(primaryUDNPodRequest, clientset, primaryUDNPodInfo)
+	if err != nil {
+		return err
+	}
+
+	response.Result.Routes = append(response.Result.Routes, primaryUDNResult.Routes...)
+	numOfInitialIPs := len(response.Result.IPs)
+	numOfInitialIfaces := len(response.Result.Interfaces)
+	response.Result.Interfaces = append(response.Result.Interfaces, primaryUDNResult.Interfaces...)
+	response.Result.IPs = append(response.Result.IPs, primaryUDNResult.IPs...)
+
+	// Offset the index of the default network IPs to correctly point to the default network interfaces
+	for i := numOfInitialIPs; i < len(response.Result.IPs); i++ {
+		ifaceIPConfig := response.Result.IPs[i].Copy()
+		if response.Result.IPs[i].Interface != nil {
+			response.Result.IPs[i].Interface = current.Int(*ifaceIPConfig.Interface + numOfInitialIfaces)
+		}
+	}
+	return nil
 }
 
 func (pr *PodRequest) cmdDel(clientset *ClientSet) (*Response, error) {
@@ -401,30 +448,38 @@ func getCNIResult(pr *PodRequest, getter PodInfoGetter, podInterfaceInfo *PodInt
 	}, nil
 }
 
+// buildPrimaryUDNPodRequest returns PodRequest for primary UDN interface,
+// it returns nil if primary UDN is not requested on the Pod
 func (pr *PodRequest) buildPrimaryUDNPodRequest(
-	pod *corev1.Pod,
 	primaryUDN *udn.UserDefinedPrimaryNetwork,
 ) *PodRequest {
+	if !primaryUDN.Found() {
+		// if primary UDN interface is not needed, return nil
+		return nil
+	}
+	deviceID, deviceInfo, isVFIO := primaryUDN.NetworkDeviceInfo()
 	req := &PodRequest{
 		Command:      pr.Command,
-		PodNamespace: pod.Namespace,
-		PodName:      pod.Name,
-		PodUID:       string(pod.UID),
+		PodNamespace: pr.PodNamespace,
+		PodName:      pr.PodName,
+		PodUID:       pr.PodUID,
 		SandboxID:    pr.SandboxID,
 		Netns:        pr.Netns,
 		IfName:       primaryUDN.InterfaceName(),
 		CNIConf: &ovncnitypes.NetConf{
 			// primary UDN MTU will be taken from config.Default.MTU
 			// if not specified at the NAD
-			MTU: primaryUDN.MTU(),
+			MTU:      primaryUDN.MTU(),
+			DeviceID: deviceID,
 		},
 		timestamp:  time.Now(),
-		IsVFIO:     pr.IsVFIO,
+		IsVFIO:     isVFIO,
 		netName:    primaryUDN.NetworkName(),
 		nadName:    primaryUDN.NADName(),
-		deviceInfo: v1.DeviceInfo{},
+		deviceInfo: *deviceInfo,
 	}
-	req.ctx, req.cancel = context.WithTimeout(context.Background(), 2*time.Minute)
+
+	req.ctx, req.cancel = context.WithCancel(pr.ctx)
 	return req
 }
 

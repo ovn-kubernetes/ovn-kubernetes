@@ -72,6 +72,9 @@ type BaseNodeNetworkController struct {
 	// network information
 	util.ReconcilableNetInfo
 
+	// networkManager used for getting network information
+	networkManager networkmanager.Interface
+
 	// podNADToDPUCDMap tracks the NAD/DPU_ConnectionDetails mapping for all NADs that each pod requests.
 	// Key is pod.UUID; value is nadToDPUCDMap (of map[string]*util.DPUConnectionDetails). Key of nadToDPUCDMap
 	// is nadName; value is DPU_ConnectionDetails when VF representor is successfully configured for that
@@ -126,8 +129,6 @@ type DefaultNodeNetworkController struct {
 
 	apbExternalRouteNodeController *apbroute.ExternalGatewayNodeController
 
-	networkManager networkmanager.Interface
-
 	cniServer *cni.Server
 
 	udnHostIsolationManager *UDNHostIsolationManager
@@ -139,12 +140,13 @@ type DefaultNodeNetworkController struct {
 }
 
 func newDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, stopChan chan struct{},
-	wg *sync.WaitGroup, routeManager *routemanager.Controller, ovsClient client.Client) *DefaultNodeNetworkController {
+	wg *sync.WaitGroup, routeManager *routemanager.Controller, networkManager networkmanager.Interface, ovsClient client.Client) *DefaultNodeNetworkController {
 
 	c := &DefaultNodeNetworkController{
 		BaseNodeNetworkController: BaseNodeNetworkController{
 			CommonNodeNetworkControllerInfo: *cnnci,
 			ReconcilableNetInfo:             &util.DefaultNetInfo{},
+			networkManager:                  networkManager,
 			stopChan:                        stopChan,
 			wg:                              wg,
 		},
@@ -164,7 +166,7 @@ func NewDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, net
 	var err error
 	stopChan := make(chan struct{})
 	wg := &sync.WaitGroup{}
-	nc := newDefaultNodeNetworkController(cnnci, stopChan, wg, cnnci.routeManager, ovsClient)
+	nc := newDefaultNodeNetworkController(cnnci, stopChan, wg, cnnci.routeManager, networkManager, ovsClient)
 
 	if len(config.Kubernetes.HealthzBindAddress) != 0 {
 		klog.Infof("Enable node proxy healthz server on %s", config.Kubernetes.HealthzBindAddress)
@@ -183,8 +185,6 @@ func NewDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, net
 	if err != nil {
 		return nil, err
 	}
-
-	nc.networkManager = networkManager
 
 	nc.initRetryFrameworkForNode()
 
