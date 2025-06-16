@@ -124,7 +124,6 @@ func (nt *nodeTracker) Start(nodeInformer coreinformers.NodeInformer) (cache.Res
 				oldObj.Name != newObj.Name ||
 				util.NodeHostCIDRsAnnotationChanged(oldObj, newObj) ||
 				util.NodeZoneAnnotationChanged(oldObj, newObj) ||
-				util.NodeMigratedZoneAnnotationChanged(oldObj, newObj) ||
 				util.NoHostSubnet(oldObj) != util.NoHostSubnet(newObj) {
 				nt.updateNode(newObj)
 			}
@@ -152,7 +151,7 @@ func (nt *nodeTracker) Start(nodeInformer coreinformers.NodeInformer) (cache.Res
 // updateNodeInfo updates the node info cache, and syncs all services
 // if it changed.
 func (nt *nodeTracker) updateNodeInfo(nodeName, switchName, routerName, chassisID string, l3gatewayAddresses,
-	hostAddresses []net.IP, podSubnets []*net.IPNet, zone string, nodePortDisabled, migrated bool) {
+	hostAddresses []net.IP, podSubnets []*net.IPNet, zone string, nodePortDisabled bool) {
 	ni := nodeInfo{
 		name:               nodeName,
 		l3gatewayAddresses: l3gatewayAddresses,
@@ -163,7 +162,6 @@ func (nt *nodeTracker) updateNodeInfo(nodeName, switchName, routerName, chassisI
 		chassisID:          chassisID,
 		nodePortDisabled:   nodePortDisabled,
 		zone:               zone,
-		migrated:           migrated,
 	}
 	for i := range podSubnets {
 		ni.podSubnets = append(ni.podSubnets, *podSubnets[i]) // de-pointer
@@ -266,7 +264,6 @@ func (nt *nodeTracker) updateNode(node *corev1.Node) {
 		hsn,
 		util.GetNodeZone(node),
 		!nodePortEnabled,
-		util.HasNodeMigratedZone(node),
 	)
 }
 
