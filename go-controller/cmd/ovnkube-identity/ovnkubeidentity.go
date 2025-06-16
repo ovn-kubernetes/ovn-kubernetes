@@ -329,7 +329,7 @@ func runWebhook(ctx context.Context, restCfg *rest.Config) error {
 	nodeWebhook := admission.WithCustomValidator(
 		scheme.Scheme,
 		&corev1.Node{},
-		ovnwebhook.NewNodeAdmissionWebhook(cliCfg.enableInterconnect, cliCfg.enableHybridOverlay, cliCfg.extraAllowedUsers.Value()...),
+		ovnwebhook.NewNodeAdmissionWebhook(cliCfg.enableHybridOverlay, cliCfg.extraAllowedUsers.Value()...),
 	).WithRecoverPanic(true)
 
 	nodeHandler, err := admission.StandaloneWebhook(

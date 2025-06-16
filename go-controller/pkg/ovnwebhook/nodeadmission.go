@@ -56,18 +56,6 @@ var commonNodeAnnotationChecks = map[string]checkNodeAnnot{
 	util.OVNNodeEncapIPs: nil,
 }
 
-// interconnectNodeAnnotationChecks holds annotations allowed for ovnkube-node:<nodeName> users in IC environments
-var interconnectNodeAnnotationChecks = map[string]checkNodeAnnot{
-	util.OvnNodeMigratedZoneName: func(v annotationChange, nodeName string) error {
-		// it is allowed for the annotation to be set to <nodeName>
-		if (v.action == added || v.action == changed) && v.value == nodeName {
-			return nil
-		}
-
-		return fmt.Errorf("%s can only be set to %s, it cannot be removed", util.OvnNodeMigratedZoneName, nodeName)
-	},
-}
-
 // hybridOverlayNodeAnnotationChecks holds annotations allowed for ovnkube-node:<nodeName> users hybrid overlay environments
 var hybridOverlayNodeAnnotationChecks = map[string]checkNodeAnnot{
 	hotypes.HybridOverlayDRMAC: nil,
@@ -80,12 +68,9 @@ type NodeAdmission struct {
 	extraAllowedUsers sets.Set[string]
 }
 
-func NewNodeAdmissionWebhook(enableInterconnect, enableHybridOverlay bool, extraAllowedUsers ...string) *NodeAdmission {
+func NewNodeAdmissionWebhook(enableHybridOverlay bool, extraAllowedUsers ...string) *NodeAdmission {
 	checks := make(map[string]checkNodeAnnot)
 	maps.Copy(checks, commonNodeAnnotationChecks)
-	if enableInterconnect {
-		maps.Copy(checks, interconnectNodeAnnotationChecks)
-	}
 	if enableHybridOverlay {
 		maps.Copy(checks, hybridOverlayNodeAnnotationChecks)
 	}
