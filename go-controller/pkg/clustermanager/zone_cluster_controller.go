@@ -144,6 +144,24 @@ func needsZoneAllocation(node *corev1.Node) bool {
 		if _, ok := node.Annotations[util.OvnTransitSwitchPortAddr]; !ok {
 			return true
 		}
+
+		if util.IsMultiVTEPEnabled() {
+			numEncapIPs := 0
+			if v, ok := node.Annotations[util.OVNNodeEncapIPs]; ok {
+				// k8s.ovn.org/node-encap-ips is a json list of encap ips, e.g. ["10.1.1.1", "10.1.1.2"]
+				numEncapIPs = util.GetJSONArrayLength(v)
+			}
+
+			numTunnelIds := 0
+			if v, ok := node.Annotations[util.OvnTransitSwitchPortTunnelIDs]; ok {
+				// k8s.ovn.org/node-transit-switch-port-tunnel-ids: [3, 4]
+				numTunnelIds = util.GetJSONArrayLength(v)
+			}
+
+			if numEncapIPs != numTunnelIds {
+				return true
+			}
+		}
 	}
 	return false
 }
@@ -188,6 +206,64 @@ func (zcc *zoneClusterController) handleAddUpdateNodeEvent(node *corev1.Node) er
 				node.Name, err)
 		}
 	}
+
+	if config.OVNKubernetesFeature.EnableInterconnect && util.IsMultiVTEPEnabled() {
+		updateMultiEncapAnnotation := func() error {
+			numEncapIPs := 0
+			if v, ok := node.Annotations[util.OVNNodeEncapIPs]; ok {
+				numEncapIPs = util.GetJSONArrayLength(v)
+			}
+
+			if numEncapIPs <= 1 {
+				// When node only has one encap IP, use k8s.ovn.org/node-id as tunnel id directly.
+				// Ensure annotation k8s.ovn.org/node-transit-switch-port-tunnel-ids is removed if present.
+				nodeAnnotations[util.OvnTransitSwitchPortTunnelIDs] = nil
+				return nil
+			}
+
+			// This node has multiple encap IPs, allocate tunnel IDs for each of them.
+			tunnelIds, _ := util.GetNodeTransitSwitchPortTunnelIDs(node)
+			if len(tunnelIds) == 0 {
+				// use the node ID as the first transit switch port tunnel id, which is always allocated.
+				tunnelIds = append(tunnelIds, allocatedNodeID)
+			}
+			tunnelIdsChanged := false
+			if numEncapIPs < len(tunnelIds) {
+				// release the tunnel ids that are not needed.
+				for i := numEncapIPs; i < len(tunnelIds); i++ {
+					zcc.nodeIDAllocator.ReleaseID(util.GetNodeIdName(node.Name, i))
+				}
+
+				tunnelIds = tunnelIds[:numEncapIPs]
+				tunnelIdsChanged = true
+			} else if numEncapIPs > len(tunnelIds) {
+				// allocate tunnel ids for the encap IPs
+				for i := len(tunnelIds); i < numEncapIPs; i++ {
+					tid, err := zcc.nodeIDAllocator.AllocateID(util.GetNodeIdName(node.Name, i))
+					if err != nil {
+						return fmt.Errorf("failed to allocate tunnel id for encap ip on node %s: err - %w", node.Name, err)
+					}
+					klog.Infof("Allocated tunnel id %d for encap ip on node %s", tid, node.Name)
+					tunnelIds = append(tunnelIds, tid)
+				}
+				tunnelIdsChanged = true
+			}
+
+			if tunnelIdsChanged {
+				nodeAnnotations, err = util.UpdateNodeTransitSwitchPortTunnelIDsAnnotation(nodeAnnotations, tunnelIds)
+				if err != nil {
+					klog.Errorf("Failed to update node %s transit switch port tunnel ids: %v", node.Name, err)
+					return err
+				}
+			}
+			return nil
+		}
+
+		if err := updateMultiEncapAnnotation(); err != nil {
+			return err
+		}
+	}
+
 	// TODO (numans)  If EnableInterconnect is false, clear the NodeTransitSwitchPortAddrAnnotation if set.
 
 	return zcc.kube.SetAnnotationsOnNode(node.Name, nodeAnnotations)
@@ -196,6 +272,17 @@ func (zcc *zoneClusterController) handleAddUpdateNodeEvent(node *corev1.Node) er
 // handleAddUpdateNodeEvent handles the delete node event
 func (zcc *zoneClusterController) handleDeleteNode(node *corev1.Node) error {
 	zcc.nodeIDAllocator.ReleaseID(node.Name)
+
+	if util.IsMultiVTEPEnabled() {
+		tunnelIds, _ := util.GetNodeTransitSwitchPortTunnelIDs(node)
+		for i := 1; i < len(tunnelIds); i++ {
+			tid := tunnelIds[i]
+			idName := util.GetNodeIdName(node.Name, i)
+			klog.Infof("Delete tunnel id %d on node %s", tid, node.Name)
+			zcc.nodeIDAllocator.ReleaseID(idName)
+		}
+	}
+
 	return nil
 }
 
@@ -214,11 +301,23 @@ func (zcc *zoneClusterController) syncNodeIDs(nodes []interface{}) error {
 
 		nodeID, _ := util.GetNodeID(node)
 		if nodeID != util.InvalidNodeID {
-			klog.Infof("Node %s has the id %d set", node.Name, nodeID)
 			if err := zcc.nodeIDAllocator.ReserveID(node.Name, nodeID); err != nil {
 				// The id set on this node is duplicate.
 				klog.Infof("Node %s has a duplicate id %d set", node.Name, nodeID)
 				duplicateIdNodes = append(duplicateIdNodes, node.Name)
+			}
+		}
+		if util.IsMultiVTEPEnabled() {
+			tunnelIds, _ := util.GetNodeTransitSwitchPortTunnelIDs(node)
+			for i := 1; i < len(tunnelIds); i++ {
+				tid := tunnelIds[i]
+				klog.V(5).Infof("Node %s has the id %d set", node.Name, tid)
+				idName := util.GetNodeIdName(node.Name, i)
+				if err := zcc.nodeIDAllocator.ReserveID(idName, tid); err != nil {
+					// The id set on this node is duplicate.
+					klog.V(5).Infof("Node %s has a duplicate id %d set", idName, tid)
+					duplicateIdNodes = append(duplicateIdNodes, idName)
+				}
 			}
 		}
 	}
@@ -361,6 +460,14 @@ func (h *zoneClusterControllerEventHandler) AreResourcesEqual(obj1, obj2 interfa
 		}
 		if util.NodeTransitSwitchPortAddrAnnotationChanged(node1, node2) {
 			return false, nil
+		}
+		if util.IsMultiVTEPEnabled() {
+			if util.NodeTransitSwitchPortTunnelIDsAnnotationChanged(node1, node2) {
+				return false, nil
+			}
+			if util.NodeEncapIPsChanged(node1, node2) {
+				return false, nil
+			}
 		}
 		// Check if a node is switched between ho node to ovn node
 		if util.NoHostSubnet(node1) != util.NoHostSubnet(node2) {

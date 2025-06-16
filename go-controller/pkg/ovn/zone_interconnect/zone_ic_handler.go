@@ -443,9 +443,9 @@ func (zic *ZoneInterconnectHandler) createLocalZoneNodeResources(node *corev1.No
 
 // createRemoteZoneNodeResources creates the remote zone node resources
 //   - creates Transit switch if it doesn't yet exit
-//   - creates a logical port of type "remote" in the transit switch with the name as - <network_name>.tstor.<node_name>
-//     Eg. if the node name is ovn-worker and the network is default, the name would be - tstor.ovn-worker
-//     if the node name is ovn-worker and the network name is blue, the logical port name would be - blue.tstor.ovn-worker
+//   - creates a logical port of type "remote" in the transit switch with the name as - <network_name>_tstor-<node_name>
+//     Eg. if the node name is ovn-worker and the network is default, the name would be - tstor-ovn-worker
+//     if the node name is ovn-worker and the network name is blue, the logical port name would be - blue_tstor-ovn-worker
 //   - binds the remote port to the node remote chassis in SBDB
 //   - adds static routes for the remote node via the remote port ip in the ovn_cluster_router
 func (zic *ZoneInterconnectHandler) createRemoteZoneNodeResources(node *corev1.Node, nodeID int, nodeTransitSwitchPortIPs, nodeSubnets, nodeGRPIPs []*net.IPNet) error {
