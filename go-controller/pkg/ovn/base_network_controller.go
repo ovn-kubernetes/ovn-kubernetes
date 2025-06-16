@@ -468,6 +468,7 @@ func (bnc *BaseNetworkController) createNodeLogicalSwitch(nodeName string, hostS
 	logicalSwitch.ExternalIDs = util.GenerateExternalIDsForSwitchOrRouter(bnc.GetNetInfo())
 	var v4Gateway, v6Gateway net.IP
 	logicalSwitch.OtherConfig = map[string]string{}
+	logicalSwitch.OtherConfig["enable-stateless-acl-with-lb"] = "true"
 	for _, hostSubnet := range hostSubnets {
 		gwIfAddr := util.GetNodeGatewayIfAddr(hostSubnet)
 		mgmtIfAddr := util.GetNodeManagementIfAddr(hostSubnet)
