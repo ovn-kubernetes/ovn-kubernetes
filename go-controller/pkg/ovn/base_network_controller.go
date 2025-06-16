@@ -747,17 +747,8 @@ func (bnc *BaseNetworkController) syncNodeManagementPort(node *corev1.Node, swit
 	addresses := macAddress.String()
 	mgmtPortIPs := []net.IP{}
 
-	if config.Gateway.Mode == config.GatewayModeLocal &&
-		bnc.TopologyType() == types.Layer2Topology {
-		if util.IsPodNetworkAdvertisedAtNode(bnc.GetNetInfo(), node.Name) {
-			if err := bnc.addNetworkSubnetAllowACL(node.Name, switchName, hostSubnets); err != nil {
-				return nil, err
-			}
-		} else if util.IsRouteAdvertisementsEnabled() {
-			if err := bnc.deleteNetworkSubnetAllowACL(switchName); err != nil {
-				return nil, err
-			}
-		}
+	if err := bnc.addNetworkSubnetAllowACL(node.Name, switchName, hostSubnets); err != nil {
+		return nil, err
 	}
 
 	for _, hostSubnet := range hostSubnets {
