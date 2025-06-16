@@ -1480,7 +1480,7 @@ func (nc *DefaultNodeNetworkController) WatchNodes() error {
 
 // addOrUpdateNode handles creating flows or nftables rules for each node to handle PMTUD
 func (nc *DefaultNodeNetworkController) addOrUpdateNode(node *corev1.Node) error {
-	var nftElems []*knftables.Element
+	var nftElems []knftables.Object
 	var addrs []string
 	for _, address := range node.Status.Addresses {
 		if address.Type != corev1.NodeInternalIP {
@@ -1519,7 +1519,7 @@ func (nc *DefaultNodeNetworkController) addOrUpdateNode(node *corev1.Node) error
 }
 
 func removePMTUDNodeNFTRules(nodeIPs []net.IP) error {
-	var nftElems []*knftables.Element
+	var nftElems []knftables.Object
 	for _, nodeIP := range nodeIPs {
 		// Remove IPs from NFT sets
 		if utilnet.IsIPv4(nodeIP) {
@@ -1564,7 +1564,7 @@ func (nc *DefaultNodeNetworkController) deleteNode(node *corev1.Node) {
 }
 
 func (nc *DefaultNodeNetworkController) syncNodes(objs []interface{}) error {
-	var keepNFTSetElemsV4, keepNFTSetElemsV6 []*knftables.Element
+	var keepNFTSetElemsV4, keepNFTSetElemsV6 []knftables.Object
 	var errors []error
 	klog.Infof("Starting node controller node sync")
 	start := time.Now()

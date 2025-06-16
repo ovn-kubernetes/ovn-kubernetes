@@ -11,7 +11,7 @@ import (
 
 // UpdateNFTElements adds/updates the given nftables set/map elements. The set or map must
 // already exist.
-func UpdateNFTElements(elements []*knftables.Element) error {
+func UpdateNFTElements(elements []knftables.Object) error {
 	nft, err := GetNFTablesHelper()
 	if err != nil {
 		return err
@@ -26,7 +26,7 @@ func UpdateNFTElements(elements []*knftables.Element) error {
 
 // DeleteNFTElements deletes the given nftables set/map elements. The set or map must
 // exist, but if the elements aren't already in the set/map, no error is returned.
-func DeleteNFTElements(elements []*knftables.Element) error {
+func DeleteNFTElements(elements []knftables.Object) error {
 	nft, err := GetNFTablesHelper()
 	if err != nil {
 		return err
