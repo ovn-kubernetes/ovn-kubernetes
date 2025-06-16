@@ -118,50 +118,6 @@ func getUDNExternalIPsMarkNFTRules(svcPort corev1.ServicePort, externalIPs []str
 	return nftRules
 }
 
-func recreateNFTSet(setName string, keepNFTElems []knftables.Object) error {
-	nft, err := nodenft.GetNFTablesHelper()
-	if err != nil {
-		return err
-	}
-	tx := nft.NewTransaction()
-	tx.Flush(&knftables.Set{
-		Name: setName,
-	})
-	for _, elem := range keepNFTElems {
-		if elem.(*knftables.Element).Set == setName {
-			tx.Add(elem)
-		}
-	}
-	err = nft.Run(context.TODO(), tx)
-	// no error if set is not created and we desire zero NFT elements
-	if knftables.IsNotFound(err) && len(keepNFTElems) == 0 {
-		return nil
-	}
-	return err
-}
-
-func recreateNFTMap(mapName string, keepNFTElems []knftables.Object) error {
-	nft, err := nodenft.GetNFTablesHelper()
-	if err != nil {
-		return err
-	}
-	tx := nft.NewTransaction()
-	tx.Flush(&knftables.Map{
-		Name: mapName,
-	})
-	for _, elem := range keepNFTElems {
-		if elem.(*knftables.Element).Map == mapName {
-			tx.Add(elem)
-		}
-	}
-	err = nft.Run(context.TODO(), tx)
-	// no error if set is not created and we desire zero NFT elements
-	if knftables.IsNotFound(err) && len(keepNFTElems) == 0 {
-		return nil
-	}
-	return err
-}
-
 // getGatewayNFTRules returns nftables rules for service. This must be used in conjunction
 // with getGatewayIPTRules.
 func getGatewayNFTRules(service *corev1.Service, localEndpoints []string, svcHasLocalHostNetEndPnt bool) []knftables.Object {
@@ -182,12 +138,21 @@ func getGatewayNFTRules(service *corev1.Service, localEndpoints []string, svcHas
 	return rules
 }
 
-// getGatewayNFTSets returns the names of all of the sets used by getGatewayNFTRules.
-func getGatewayNFTSets() []string {
-	return []string{
-		types.NFTMgmtPortNoSNATNodePorts,
-		types.NFTMgmtPortNoSNATServicesV4,
-		types.NFTMgmtPortNoSNATServicesV6,
+// getGatewayNFTContainerObjects returns all of the "container" objects (Sets/Maps/Chains)
+// used by getGatewayNFTRules. This is used (possibly along with
+// getUDNNFTContainerObjects) to determine the sets/maps/chains whose contents will be
+// synchronized by nodePortWatcher.SyncServices().
+func getGatewayNFTContainerObjects() []knftables.Object {
+	return []knftables.Object{
+		&knftables.Set{
+			Name: types.NFTMgmtPortNoSNATNodePorts,
+		},
+		&knftables.Set{
+			Name: types.NFTMgmtPortNoSNATServicesV4,
+		},
+		&knftables.Set{
+			Name: types.NFTMgmtPortNoSNATServicesV6,
+		},
 	}
 }
 
@@ -205,12 +170,21 @@ func getUDNNFTRules(service *corev1.Service, netConfig *bridgeconfig.BridgeUDNCo
 	return rules
 }
 
-// getUDNNFTMaps returns the names of all of the maps used by getUDNNFTRules.
-func getUDNNFTMaps() []string {
-	return []string{
-		nftablesUDNMarkNodePortsMap,
-		nftablesUDNMarkExternalIPsV4Map,
-		nftablesUDNMarkExternalIPsV6Map,
+// getUDNNFTContainerObjects returns all of the "container" objects (Sets/Maps/Chains)
+// used by getUDNNFTRules. This is used (possibly along with
+// getGatewayNFTContainerObjects) to determine the sets/maps/chains whose contents will be
+// synchronized by nodePortWatcher.SyncServices().
+func getUDNNFTContainerObjects() []knftables.Object {
+	return []knftables.Object{
+		&knftables.Map{
+			Name: nftablesUDNMarkNodePortsMap,
+		},
+		&knftables.Map{
+			Name: nftablesUDNMarkExternalIPsV4Map,
+		},
+		&knftables.Map{
+			Name: nftablesUDNMarkExternalIPsV6Map,
+		},
 	}
 }
 
