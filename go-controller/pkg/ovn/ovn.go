@@ -131,6 +131,14 @@ func (oc *DefaultNetworkController) ensurePod(oldPod, pod *corev1.Pod, addPort b
 		return oc.ensureRemotePodIP(oldPod, pod, addPort)
 	}
 
+	// If an external gateway pod is in terminating or not ready state then remove the
+	// routes for the external gateway pod
+	if util.PodTerminating(pod) || util.PodNotReady(pod) {
+		if err := oc.deletePodExternalGW(pod); err != nil {
+			return fmt.Errorf("ensurePod failed %s/%s: %w", pod.Namespace, pod.Name, err)
+		}
+	}
+
 	if oc.isPodScheduledinLocalZone(pod) {
 		klog.V(5).Infof("Ensuring zone local for Pod %s/%s in node %s", pod.Namespace, pod.Name, pod.Spec.NodeName)
 		return oc.ensureLocalZonePod(oldPod, pod, addPort)
