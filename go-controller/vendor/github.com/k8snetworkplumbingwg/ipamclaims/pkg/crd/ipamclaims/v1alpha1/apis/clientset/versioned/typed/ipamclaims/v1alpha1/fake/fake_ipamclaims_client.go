@@ -1,5 +1,5 @@
 /*
-Copyright 2024 The Kubernetes Authors
+Copyright 2025 The Kubernetes Authors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@ type FakeK8sV1alpha1 struct {
 }
 
 func (c *FakeK8sV1alpha1) IPAMClaims(namespace string) v1alpha1.IPAMClaimInterface {
-	return &FakeIPAMClaims{c, namespace}
+	return newFakeIPAMClaims(c, namespace)
 }
 
 // RESTClient returns a RESTClient that is used to communicate
