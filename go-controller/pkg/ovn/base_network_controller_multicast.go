@@ -119,13 +119,13 @@ func (bnc *BaseNetworkController) createMulticastAllowPolicy(ns string, nsInfo *
 	egressMatch := libovsdbutil.GetACLMatch(portGroupName, bnc.getMulticastACLEgrMatch(), aclDir)
 	dbIDs := getNamespaceMcastACLDbIDs(ns, aclDir, bnc.controllerName)
 	aclPipeline := libovsdbutil.ACLDirectionToACLPipeline(aclDir)
-	egressACL := libovsdbutil.BuildACL(dbIDs, types.DefaultMcastAllowPriority, egressMatch, nbdb.ACLActionAllow, nil, aclPipeline)
+	egressACL := libovsdbutil.BuildACLWithDefaultTier(dbIDs, types.DefaultMcastAllowPriority, egressMatch, nbdb.ACLActionAllow, nil, aclPipeline)
 
 	aclDir = libovsdbutil.ACLIngress
 	ingressMatch := libovsdbutil.GetACLMatch(portGroupName, bnc.getMulticastACLIgrMatch(nsInfo), aclDir)
 	dbIDs = getNamespaceMcastACLDbIDs(ns, aclDir, bnc.controllerName)
 	aclPipeline = libovsdbutil.ACLDirectionToACLPipeline(aclDir)
-	ingressACL := libovsdbutil.BuildACL(dbIDs, types.DefaultMcastAllowPriority, ingressMatch, nbdb.ACLActionAllow, nil, aclPipeline)
+	ingressACL := libovsdbutil.BuildACLWithDefaultTier(dbIDs, types.DefaultMcastAllowPriority, ingressMatch, nbdb.ACLActionAllow, nil, aclPipeline)
 
 	acls := []*nbdb.ACL{egressACL, ingressACL}
 	ops, err := libovsdbops.CreateOrUpdateACLsOps(bnc.nbClient, nil, bnc.GetSamplingConfig(), acls...)
@@ -186,7 +186,7 @@ func (bnc *BaseNetworkController) createDefaultDenyMulticastPolicy() error {
 	for _, aclDir := range []libovsdbutil.ACLDirection{libovsdbutil.ACLEgress, libovsdbutil.ACLIngress} {
 		dbIDs := getDefaultMcastACLDbIDs(mcastDefaultDenyID, aclDir, bnc.controllerName)
 		aclPipeline := libovsdbutil.ACLDirectionToACLPipeline(aclDir)
-		acl := libovsdbutil.BuildACL(dbIDs, types.DefaultMcastDenyPriority, match, nbdb.ACLActionDrop, nil, aclPipeline)
+		acl := libovsdbutil.BuildACLWithDefaultTier(dbIDs, types.DefaultMcastDenyPriority, match, nbdb.ACLActionDrop, nil, aclPipeline)
 		acls = append(acls, acl)
 	}
 	ops, err := libovsdbops.CreateOrUpdateACLsOps(bnc.nbClient, nil, bnc.GetSamplingConfig(), acls...)
@@ -228,7 +228,7 @@ func (bnc *BaseNetworkController) createDefaultAllowMulticastPolicy() error {
 		match := libovsdbutil.GetACLMatch(rtrPGName, mcastMatch, aclDir)
 		dbIDs := getDefaultMcastACLDbIDs(mcastAllowInterNodeID, aclDir, bnc.controllerName)
 		aclPipeline := libovsdbutil.ACLDirectionToACLPipeline(aclDir)
-		acl := libovsdbutil.BuildACL(dbIDs, types.DefaultMcastAllowPriority, match, nbdb.ACLActionAllow, nil, aclPipeline)
+		acl := libovsdbutil.BuildACLWithDefaultTier(dbIDs, types.DefaultMcastAllowPriority, match, nbdb.ACLActionAllow, nil, aclPipeline)
 		acls = append(acls, acl)
 	}
 
