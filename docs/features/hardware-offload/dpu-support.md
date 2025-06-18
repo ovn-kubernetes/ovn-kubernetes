@@ -17,3 +17,39 @@ on the embedded CPU.
 Any vendor that manufactures a DPU which supports the above model should work with current design.
 
 Design document can be found [here](https://docs.google.com/document/d/11IoMKiohK7hIyIE36FJmwJv46DEBx52a4fqvrpCBBcg/edit?usp=sharing).
+
+## OVN Kubernetes in a DPU-Accelerated Environment
+
+The **ovn-kubernetes** deployment will have two parts one on the host and another on the DPU side.
+
+
+These aforementioned parts are expected to be deployed also on two different Kubernetes clusters, one for the host and another for the DPUs.
+
+
+### Host Cluster
+---
+
+#### OVN Kubernetes control plane related component
+- ovn-cluster-manager
+
+#### OVN Kubernetes components on a Standard Host (Non-DPU)
+- local-nb-ovsdb
+- local-sb-ovsdb
+- run-ovn-northd
+- ovnkube-controller-with-node
+- ovn-controller
+- ovs-metrics
+
+#### OVN Kubernetes component on a DPU-Enabled Host
+- ovn-node
+
+### DPU Cluster
+---
+
+#### OVN Kubernetes components
+- local-nb-ovsdb 
+- local-sb-ovsdb
+- run-ovn-northd
+- ovnkube-controller-with-node
+- ovn-controller
+- ovs-metrics
