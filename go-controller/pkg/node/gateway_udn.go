@@ -90,10 +90,6 @@ type UserDefinedNetworkGateway struct {
 
 	// gwInterfaceIndex holds the link index of gateway interface
 	gwInterfaceIndex int
-
-	// save BGP state at the start of reconciliation loop run to handle it consistently throughout the run
-	isNetworkAdvertisedToDefaultVRF bool
-	isNetworkAdvertised             bool
 }
 
 // UTILS Needed for UDN (also leveraged for default netInfo) in bridgeConfiguration
@@ -371,18 +367,18 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 		return fmt.Errorf("could not add VRF %s routes for network %s, err: %v", vrfDeviceName, udng.GetNetworkName(), err)
 	}
 
-	udng.updateAdvertisementStatus()
+	isNetworkAdvertised := util.IsPodNetworkAdvertisedAtNode(udng.NetInfo, udng.node.Name)
 
 	// create the iprules for this network
-	if err = udng.updateUDNVRFIPRules(); err != nil {
+	if err = udng.updateUDNVRFIPRules(isNetworkAdvertised); err != nil {
 		return fmt.Errorf("failed to update IP rules for network %s: %w", udng.GetNetworkName(), err)
 	}
 
-	if err = udng.updateAdvertisedUDNIsolationRules(); err != nil {
+	if err = udng.updateAdvertisedUDNIsolationRules(isNetworkAdvertised); err != nil {
 		return fmt.Errorf("failed to update isolation rules for network %s: %w", udng.GetNetworkName(), err)
 	}
 
-	if err := udng.updateUDNVRFIPRoute(); err != nil {
+	if err := udng.updateUDNVRFIPRoute(isNetworkAdvertised); err != nil {
 		return fmt.Errorf("failed to update ip routes for network %s: %w", udng.GetNetworkName(), err)
 	}
 
@@ -460,16 +456,18 @@ func (udng *UserDefinedNetworkGateway) DelNetwork() error {
 		}
 	}
 
-	err := udng.deleteAdvertisedUDNIsolationRules()
-	if err != nil {
-		return fmt.Errorf("failed to remove advertised UDN isolation rules for network %s: %w", udng.GetNetworkName(), err)
+	if util.IsPodNetworkAdvertisedAtNode(udng.NetInfo, udng.node.Name) {
+		err := udng.updateAdvertisedUDNIsolationRules(false)
+		if err != nil {
+			return fmt.Errorf("failed to remove advertised UDN isolation rules for network %s: %w", udng.GetNetworkName(), err)
+		}
 	}
 
 	if err := udng.delMarkChain(); err != nil {
 		return err
 	}
 	// delete the management port interface for this network
-	err = udng.deleteUDNManagementPort()
+	err := udng.deleteUDNManagementPort()
 	if err != nil {
 		return err
 	}
@@ -627,7 +625,8 @@ func (udng *UserDefinedNetworkGateway) computeRoutesForUDN(mpLink netlink.Link) 
 
 	// Route2: Add default route: default via 172.18.0.1 dev breth0 mtu 1400
 	// necessary for UDN CNI and host-networked pods default traffic to go to node's gatewayIP
-	defaultRoute, err := udng.getDefaultRouteWithAdvertisedCheck()
+	isNetworkAdvertised := util.IsPodNetworkAdvertisedAtNode(udng.NetInfo, udng.node.Name)
+	defaultRoute, err := udng.getDefaultRoute(isNetworkAdvertised)
 	if err != nil {
 		return nil, fmt.Errorf("unable to add default route for network %s, err: %v", udng.GetNetworkName(), err)
 	}
@@ -728,7 +727,15 @@ func (udng *UserDefinedNetworkGateway) computeRoutesForUDN(mpLink netlink.Link) 
 	return retVal, nil
 }
 
-func (udng *UserDefinedNetworkGateway) getDefaultRoute() ([]netlink.Route, error) {
+func (udng *UserDefinedNetworkGateway) getDefaultRoute(isNetworkAdvertised bool) ([]netlink.Route, error) {
+	vrfs := udng.GetPodNetworkAdvertisedOnNodeVRFs(udng.node.Name)
+	// If the network is advertised on a non default VRF then we should only consider routes received from external BGP
+	// device and not send any traffic based on default route similar to one present in default VRF. This is more important
+	// for VRF-Lite usecase where we need traffic to leave from vlan device instead of default gateway interface.
+	if isNetworkAdvertised && !slices.Contains(vrfs, types.DefaultNetworkName) {
+		return nil, nil
+	}
+
 	networkMTU := udng.NetInfo.MTU()
 	if networkMTU == 0 {
 		networkMTU = config.Default.MTU
@@ -751,16 +758,6 @@ func (udng *UserDefinedNetworkGateway) getDefaultRoute() ([]netlink.Route, error
 		})
 	}
 	return retVal, nil
-}
-
-func (udng *UserDefinedNetworkGateway) getDefaultRouteWithAdvertisedCheck() ([]netlink.Route, error) {
-	// If the network is advertised on a non default VRF then we should only consider routes received from external BGP
-	// device and not send any traffic based on default route similar to one present in default VRF. This is more important
-	// for VRF-Lite usecase where we need traffic to leave from vlan device instead of default gateway interface.
-	if udng.isNetworkAdvertised && !udng.isNetworkAdvertisedToDefaultVRF {
-		return nil, nil
-	}
-	return udng.getDefaultRoute()
 }
 
 // getV4MasqueradeIP returns the V4 management port masqueradeIP for this network
@@ -795,15 +792,12 @@ func (udng *UserDefinedNetworkGateway) getV6MasqueradeIP() (*net.IPNet, error) {
 // 2000:   from all to 169.254.0.12 lookup 1007
 // 2000:   from all fwmark 0x1002 lookup 1009
 // 2000:   from all to 169.254.0.14 lookup 1009
-// If the network is advertised to the default VRF, an example of the rules we set for a network is:
+// If the network is advertised, an example of the rules we set for a network is:
 // 2000:	from all fwmark 0x1001 lookup 1007
 // 2000:	from all to 10.132.0.0/14 lookup 1007
 // 2000:	from all fwmark 0x1001 lookup 1009
 // 2000:	from all to 10.134.0.0/14 lookup 1009
-// If the network is advertised ot a non-default VRF, an example of the rules we set for a network is:
-// 2000:	from all fwmark 0x1001 lookup 1007
-// 2000:	from all fwmark 0x1001 lookup 1009
-func (udng *UserDefinedNetworkGateway) constructUDNVRFIPRules() ([]netlink.Rule, []netlink.Rule, error) {
+func (udng *UserDefinedNetworkGateway) constructUDNVRFIPRules(isNetworkAdvertised bool) ([]netlink.Rule, []netlink.Rule, error) {
 	var addIPRules []netlink.Rule
 	var delIPRules []netlink.Rule
 	var masqIPRules []netlink.Rule
@@ -836,18 +830,12 @@ func (udng *UserDefinedNetworkGateway) constructUDNVRFIPRules() ([]netlink.Rule,
 		}
 	}
 	switch {
-	case udng.isNetworkAdvertisedToDefaultVRF:
-		// the network is advertised to the default VRF
-		delIPRules = append(delIPRules, masqIPRules...)
-		addIPRules = append(addIPRules, subnetIPRules...)
-	case udng.isNetworkAdvertised:
-		// the network is advertised to a non-default VRF
-		delIPRules = append(delIPRules, masqIPRules...)
+	case !isNetworkAdvertised:
+		addIPRules = append(addIPRules, masqIPRules...)
 		delIPRules = append(delIPRules, subnetIPRules...)
 	default:
-		// the network is not advertised
-		delIPRules = append(delIPRules, subnetIPRules...)
-		addIPRules = append(addIPRules, masqIPRules...)
+		addIPRules = append(addIPRules, subnetIPRules...)
+		delIPRules = append(delIPRules, masqIPRules...)
 	}
 	return addIPRules, delIPRules, nil
 }
@@ -945,20 +933,19 @@ func (udng *UserDefinedNetworkGateway) doReconcile() error {
 		return fmt.Errorf("openflow manager with default bridge configuration has not been provided for network %s", udng.GetNetworkName())
 	}
 
-	udng.updateAdvertisementStatus()
-
 	// update bridge configuration
+	isNetworkAdvertised := util.IsPodNetworkAdvertisedAtNode(udng.NetInfo, udng.node.Name)
 	netConfig := udng.openflowManager.defaultBridge.getNetworkBridgeConfig(udng.GetNetworkName())
 	if netConfig == nil {
 		return fmt.Errorf("missing bridge configuration for network %s", udng.GetNetworkName())
 	}
-	netConfig.advertised.Store(udng.isNetworkAdvertised)
+	netConfig.advertised.Store(isNetworkAdvertised)
 
-	if err := udng.updateUDNVRFIPRules(); err != nil {
+	if err := udng.updateUDNVRFIPRules(isNetworkAdvertised); err != nil {
 		return fmt.Errorf("error while updating ip rule for UDN %s: %s", udng.GetNetworkName(), err)
 	}
 
-	if err := udng.updateUDNVRFIPRoute(); err != nil {
+	if err := udng.updateUDNVRFIPRoute(isNetworkAdvertised); err != nil {
 		return fmt.Errorf("error while updating ip route for UDN %s: %s", udng.GetNetworkName(), err)
 	}
 
@@ -972,16 +959,16 @@ func (udng *UserDefinedNetworkGateway) doReconcile() error {
 	// let's sync these flows immediately
 	udng.openflowManager.requestFlowSync()
 
-	if err := udng.updateAdvertisedUDNIsolationRules(); err != nil {
+	if err := udng.updateAdvertisedUDNIsolationRules(isNetworkAdvertised); err != nil {
 		return fmt.Errorf("error while updating advertised UDN isolation rules for network %s: %w", udng.GetNetworkName(), err)
 	}
 	return nil
 }
 
 // updateUDNVRFIPRules updates IP rules for a network depending on whether the
-// network is advertised to the default VRF or not
-func (udng *UserDefinedNetworkGateway) updateUDNVRFIPRules() error {
-	addIPRules, deleteIPRules, err := udng.constructUDNVRFIPRules()
+// network is advertised or not
+func (udng *UserDefinedNetworkGateway) updateUDNVRFIPRules(isNetworkAdvertised bool) error {
+	addIPRules, deleteIPRules, err := udng.constructUDNVRFIPRules(isNetworkAdvertised)
 	if err != nil {
 		return fmt.Errorf("unable to get iprules for network %s, err: %v", udng.GetNetworkName(), err)
 	}
@@ -1000,40 +987,30 @@ func (udng *UserDefinedNetworkGateway) updateUDNVRFIPRules() error {
 }
 
 // Add or remove default route from a vrf device based on the network is
-// advertised on its own network or the default network
-func (udng *UserDefinedNetworkGateway) updateUDNVRFIPRoute() error {
-	vrfName := util.GetNetworkVRFName(udng.NetInfo)
-
-	switch {
-	case udng.isNetworkAdvertised && !udng.isNetworkAdvertisedToDefaultVRF:
-		// Remove default route for networks advertised to non-default VRF
+// advertised on its own network or default network
+func (udng *UserDefinedNetworkGateway) updateUDNVRFIPRoute(isNetworkAdvertised bool) error {
+	vrfs := udng.GetPodNetworkAdvertisedOnNodeVRFs(udng.node.Name)
+	if isNetworkAdvertised && !slices.Contains(vrfs, types.DefaultNetworkName) {
 		if err := udng.removeDefaultRouteFromVRF(); err != nil {
-			return fmt.Errorf("failed to remove default route from VRF %s for network %s: %v",
-				vrfName, udng.GetNetworkName(), err)
+			return fmt.Errorf("error while removing default route from VRF %s corresponding to network %s: %s",
+				util.GetNetworkVRFName(udng.NetInfo), udng.GetNetworkName(), err)
 		}
-
-	default:
-		// Add default route for networks that are either:
-		// - not advertised
-		// - advertised to default VRF
-		defaultRoute, err := udng.getDefaultRouteWithAdvertisedCheck()
+	} else if !isNetworkAdvertised || slices.Contains(vrfs, types.DefaultNetworkName) {
+		defaultRoute, err := udng.getDefaultRoute(isNetworkAdvertised)
 		if err != nil {
-			return fmt.Errorf("failed to get default route for network %s: %v",
-				udng.GetNetworkName(), err)
+			return fmt.Errorf("unable to get default route for network %s, err: %v", udng.GetNetworkName(), err)
 		}
-
-		if err = udng.vrfManager.AddVRFRoutes(vrfName, defaultRoute); err != nil {
-			return fmt.Errorf("failed to add default route to VRF %s for network %s: %v",
-				vrfName, udng.GetNetworkName(), err)
+		if err = udng.vrfManager.AddVRFRoutes(util.GetNetworkVRFName(udng.NetInfo), defaultRoute); err != nil {
+			return fmt.Errorf("error while adding default route to VRF %s corresponding to network %s, err: %v",
+				util.GetNetworkVRFName(udng.NetInfo), udng.GetNetworkName(), err)
 		}
 	}
-
 	return nil
 }
 
 func (udng *UserDefinedNetworkGateway) removeDefaultRouteFromVRF() error {
 	vrfDeviceName := util.GetNetworkVRFName(udng.NetInfo)
-	defaultRoute, err := udng.getDefaultRoute()
+	defaultRoute, err := udng.getDefaultRoute(false)
 	if err != nil {
 		return fmt.Errorf("unable to get default route for network %s, err: %v", udng.GetNetworkName(), err)
 	}
@@ -1062,21 +1039,38 @@ func (udng *UserDefinedNetworkGateway) removeDefaultRouteFromVRF() error {
 //	   comment "advertised UDNs V4 subnets"
 //	   elements = { 10.10.0.0/16 comment "cluster_udn_l3network" }
 //	}
-func (udng *UserDefinedNetworkGateway) updateAdvertisedUDNIsolationRules() error {
-	switch {
-	case udng.isNetworkAdvertised:
-		return udng.addAdvertisedUDNIsolationRules()
-	default:
-		return udng.deleteAdvertisedUDNIsolationRules()
-	}
-}
-
-func (udng *UserDefinedNetworkGateway) addAdvertisedUDNIsolationRules() error {
+func (udng *UserDefinedNetworkGateway) updateAdvertisedUDNIsolationRules(isNetworkAdvertised bool) error {
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {
 		return fmt.Errorf("failed to get nftables helper: %v", err)
 	}
 	tx := nft.NewTransaction()
+
+	if !isNetworkAdvertised {
+		existingV4, err := nft.ListElements(context.TODO(), "set", nftablesAdvertisedUDNsSetV4)
+		if err != nil {
+			if !knftables.IsNotFound(err) {
+				return fmt.Errorf("could not list existing items in %s set: %w", nftablesAdvertisedUDNsSetV4, err)
+			}
+		}
+		existingV6, err := nft.ListElements(context.TODO(), "set", nftablesAdvertisedUDNsSetV6)
+		if err != nil {
+			if !knftables.IsNotFound(err) {
+				return fmt.Errorf("could not list existing items in %s set: %w", nftablesAdvertisedUDNsSetV6, err)
+			}
+		}
+
+		for _, elem := range append(existingV4, existingV6...) {
+			if elem.Comment != nil && *elem.Comment == udng.GetNetworkName() {
+				tx.Delete(elem)
+			}
+		}
+
+		if tx.NumOperations() == 0 {
+			return nil
+		}
+		return nft.Run(context.TODO(), tx)
+	}
 
 	for _, udnNet := range udng.Subnets() {
 		set := nftablesAdvertisedUDNsSetV4
@@ -1095,42 +1089,4 @@ func (udng *UserDefinedNetworkGateway) addAdvertisedUDNIsolationRules() error {
 		return nil
 	}
 	return nft.Run(context.TODO(), tx)
-}
-
-func (udng *UserDefinedNetworkGateway) deleteAdvertisedUDNIsolationRules() error {
-	nft, err := nodenft.GetNFTablesHelper()
-	if err != nil {
-		return fmt.Errorf("failed to get nftables helper: %v", err)
-	}
-	tx := nft.NewTransaction()
-
-	existingV4, err := nft.ListElements(context.TODO(), "set", nftablesAdvertisedUDNsSetV4)
-	if err != nil {
-		if !knftables.IsNotFound(err) {
-			return fmt.Errorf("could not list existing items in %s set: %w", nftablesAdvertisedUDNsSetV4, err)
-		}
-	}
-	existingV6, err := nft.ListElements(context.TODO(), "set", nftablesAdvertisedUDNsSetV6)
-	if err != nil {
-		if !knftables.IsNotFound(err) {
-			return fmt.Errorf("could not list existing items in %s set: %w", nftablesAdvertisedUDNsSetV6, err)
-		}
-	}
-
-	for _, elem := range append(existingV4, existingV6...) {
-		if elem.Comment != nil && *elem.Comment == udng.GetNetworkName() {
-			tx.Delete(elem)
-		}
-	}
-
-	if tx.NumOperations() == 0 {
-		return nil
-	}
-	return nft.Run(context.TODO(), tx)
-}
-
-func (udng *UserDefinedNetworkGateway) updateAdvertisementStatus() {
-	vrfs := udng.GetPodNetworkAdvertisedOnNodeVRFs(udng.node.Name)
-	udng.isNetworkAdvertised = len(vrfs) > 0
-	udng.isNetworkAdvertisedToDefaultVRF = slices.Contains(vrfs, types.DefaultNetworkName)
 }
