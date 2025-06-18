@@ -297,11 +297,6 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 				Values:   []string{f.Namespace.Name},
 			}}}
 
-			if IsGatewayModeLocal() && cudnTemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer2 {
-				e2eskipper.Skipf(
-					"BGP for L2 networks on LGW is currently unsupported",
-				)
-			}
 			// Create CUDN
 			ginkgo.By("create ClusterUserDefinedNetwork")
 			udnClient, err := udnclientset.NewForConfig(f.ClientConfig())
@@ -534,9 +529,6 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 		var ra *rav1.RouteAdvertisements
 
 		ginkgo.BeforeEach(func() {
-			if cudnATemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer2 && isLocalGWModeEnabled() {
-				e2eskipper.Skipf("Advertising Layer2 UDNs is not currently supported in LGW")
-			}
 			ginkgo.By("Configuring primary UDN namespaces")
 			var err error
 			udnNamespaceA, err = f.CreateNamespace(context.TODO(), f.BaseName, map[string]string{
@@ -674,9 +666,6 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 		})
 
 		ginkgo.AfterEach(func() {
-			if cudnATemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer2 && isLocalGWModeEnabled() {
-				return
-			}
 			gomega.Expect(f.ClientSet.CoreV1().Pods(udnNamespaceA.Name).DeleteCollection(context.Background(), metav1.DeleteOptions{}, metav1.ListOptions{})).To(gomega.Succeed())
 			gomega.Expect(f.ClientSet.CoreV1().Pods(udnNamespaceB.Name).DeleteCollection(context.Background(), metav1.DeleteOptions{}, metav1.ListOptions{})).To(gomega.Succeed())
 
