@@ -828,6 +828,9 @@ func (nInfo *secondaryNetInfo) canReconcile(other NetInfo) bool {
 	if nInfo.topology != other.TopologyType() {
 		return false
 	}
+	if nInfo.GetNetworkID() != other.GetNetworkID() {
+		return false
+	}
 	if nInfo.mtu != other.MTU() {
 		return false
 	}

@@ -432,7 +432,37 @@ func (c *nadController) GetActiveNetworkForNamespace(namespace string) (util.Net
 
 	network, nad := c.getActiveNetworkForNamespace(namespace)
 	if network != nil && network.IsPrimaryNetwork() {
-		// primary UDN found
+		_, name, err := cache.SplitMetaNamespaceKey(nad)
+		if err != nil {
+			return nil, fmt.Errorf("failed to split NAD %q: %w", nad, err)
+		}
+		// primary UDN found, check if network ID matches
+		n, err := c.nadLister.NetworkAttachmentDefinitions(namespace).Get(name)
+		if err != nil {
+			// we have a stale nad in our controller, it doesnt exist, we must be backed up
+			if apierrors.IsNotFound(err) {
+				return nil, util.NewInvalidPrimaryNetworkError(namespace)
+			}
+			// some transient informer problem
+			return nil, fmt.Errorf("failed to get network attachment definition %q: %w", nad, err)
+		}
+		networkIDMatch := false
+		if len(n.Annotations[types.OvnNetworkIDAnnotation]) > 0 {
+			nID, err := strconv.Atoi(n.Annotations[types.OvnNetworkIDAnnotation])
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse network ID from NAD %s/%s, ID %q: %w", namespace, nad, n.Annotations[types.OvnNetworkIDAnnotation], err)
+			}
+			if nID == network.GetNetworkID() {
+				networkIDMatch = true
+			}
+		} else {
+			return nil, fmt.Errorf("failed to get network ID from NAD %s/%s, ID: %s", namespace, nad, err)
+		}
+		if !networkIDMatch {
+			// we found the NAD in the informer, but the network ID doesn't match. Our controller is slow
+			// and we do not want to wire the pod to the old network, bail out for now
+			return nil, util.NewUnprocessedActiveNetworkError(namespace, network.GetNetworkName())
+		}
 		copy := util.NewMutableNetInfo(network)
 		copy.SetNADs(nad)
 		return copy, nil

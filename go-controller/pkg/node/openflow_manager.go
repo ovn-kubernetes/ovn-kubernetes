@@ -276,9 +276,8 @@ func checkPorts(netConfigs []*bridgeUDNConfiguration, physIntf, ofPortPhys strin
 		}
 		if netConfig.ofPortPatch != curOfportPatch {
 			if netConfig.isDefaultNetwork() || curOfportPatch != "" {
-				klog.Errorf("Fatal error: patch port %s ofport changed from %s to %s",
+				return fmt.Errorf("patch port %s ofport changed from %s to %s this will affect the network",
 					netConfig.patchPort, netConfig.ofPortPatch, curOfportPatch)
-				os.Exit(1)
 			} else {
 				klog.Warningf("Patch port %s removed for existing network", netConfig.patchPort)
 			}
