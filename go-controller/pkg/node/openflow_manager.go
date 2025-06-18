@@ -245,7 +245,29 @@ func (c *openflowManager) updateBridgeFlowCache(hostIPs []net.IP, hostSubnets []
 	}
 	dftFlows = append(dftFlows, dftCommonFlows...)
 
-	c.updateFlowCacheEntry("NORMAL", []string{fmt.Sprintf("table=0,priority=0,actions=%s\n", util.NormalAction)})
+	if config.OvnKubeNode.Mode == types.NodeModeDPU {
+		checkCmd := []string{
+			"get",
+			"Open_vSwitch",
+			".",
+			"external_ids:ovn-encap-ip",
+		}
+		encapIP, _, err := util.RunOVSVsctl(checkCmd...)
+		if err != nil {
+			return err
+		}
+		encapIP = strings.TrimSuffix(encapIP, "\n")
+		c.updateFlowCacheEntry("NORMAL", []string{
+			fmt.Sprintf("table=0,priority=0,actions=%s\n", util.NormalAction),
+			fmt.Sprintf("table=0,priority=999,udp,tp_dst=67,actions=%s\n", util.NormalAction),
+			fmt.Sprintf("table=0,priority=999,udp,nw_dst=%s,tp_dst=6081,actions=LOCAL\n", encapIP),
+			fmt.Sprintf("table=0,priority=998,ip,nw_dst=%s,actions=%s\n", encapIP, util.NormalAction),
+		})
+	} else {
+		c.updateFlowCacheEntry("NORMAL", []string{
+			fmt.Sprintf("table=0,priority=0,actions=%s\n", util.NormalAction),
+		})
+	}
 	c.updateFlowCacheEntry("DEFAULT", dftFlows)
 
 	// we consume ex gw bridge flows only if that is enabled
