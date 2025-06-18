@@ -373,10 +373,6 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 			return nil, nil, fmt.Errorf("%w: selected network %q has unsupported topology %q", errConfig, networkName, network.TopologyType())
 		}
 
-		if config.Gateway.Mode == config.GatewayModeLocal && network.TopologyType() == types.Layer2Topology {
-			return nil, nil, fmt.Errorf("%w: BGP is currently not supported for Layer2 networks in local gateway mode, network: %s", errConfig, network.GetNetworkName())
-		}
-
 		if advertisements.Has(ratypes.EgressIP) && network.TopologyType() == types.Layer2Topology {
 			return nil, nil, fmt.Errorf("%w: EgressIP advertisement is currently not supported for Layer2 networks, network: %s", errConfig, network.GetNetworkName())
 		}

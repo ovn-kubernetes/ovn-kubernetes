@@ -989,6 +989,7 @@ local-nb-ovsdb() {
 
   # Let ovn-northd sleep and not use so much CPU
   ovn-nbctl set NB_Global . options:northd-backoff-interval-ms=${ovn_northd_backoff_interval}
+  ovn-nbctl set NB_Global . options:use_ct_inv_match=false
   echo "=============== nb-ovsdb ========== reconfigured for northd backoff"
 
   ovn-nbctl set NB_Global . name=${K8S_NODE}
