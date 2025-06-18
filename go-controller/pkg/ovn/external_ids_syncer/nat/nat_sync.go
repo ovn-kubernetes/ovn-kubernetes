@@ -10,6 +10,7 @@ import (
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
 	"github.com/ovn-org/libovsdb/ovsdb"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
@@ -86,10 +87,10 @@ func (n *NATSyncer) syncEgressIPNATs() error {
 			klog.Errorf("Expected NAT %s to contain 'name' as a key within its external IDs", nat.UUID)
 			continue
 		}
-		podIP, _, err := net.ParseCIDR(nat.LogicalIP)
-		if err != nil {
-			klog.Errorf("Failed to process logical IP %q of NAT %s", nat.LogicalIP, nat.UUID)
-			continue
+		// for egress IP, the logicalIP does not contain a mask.
+		podIP := net.ParseIP(nat.LogicalIP)
+		if podIP == nil {
+			return fmt.Errorf("failed to process logical IP %q of NAT %s", nat.LogicalIP, nat.UUID)
 		}
 		isV6 := utilsnet.IsIPv6(podIP)
 		var ipFamily egressIPFamilyValue
@@ -103,15 +104,15 @@ func (n *NATSyncer) syncEgressIPNATs() error {
 			pod, found = v4PodCache.getPodByIP(podIP)
 		}
 		if !found {
-			klog.Errorf("Failed to find logical switch port that contains IP address %s", podIP.String())
-			continue
+			// set it to unknown and the egress IP controller syncer will take care of removing it.
+			pod = podNetInfo{namespace: "UNKNOWN", name: "UNKNOWN"}
+			ipFamily = getFirstSupportIPFamily()
 		}
 		nat.ExternalIDs = getEgressIPNATDbIDs(eIPName, pod.namespace, pod.name, ipFamily, n.controllerName).GetExternalIDs()
 		ops, err = libovsdbops.UpdateNATOps(n.nbClient, ops, nat)
 		if err != nil {
 			klog.Errorf("Failed to generate NAT ops for NAT %s: %v", nat.UUID, err)
 		}
-		klog.Infof("## martin found %d nats", len(ops))
 	}
 
 	_, err = libovsdbops.TransactAndCheck(n.nbClient, ops)
@@ -175,4 +176,11 @@ func getEgressIPNATDbIDs(eIPName, podNamespace, podName string, ipFamily egressI
 		libovsdbops.ObjectNameKey: fmt.Sprintf("%s_%s/%s", eIPName, podNamespace, podName),
 		libovsdbops.IPFamilyKey:   string(ipFamily),
 	})
+}
+
+func getFirstSupportIPFamily() egressIPFamilyValue {
+	if config.IPv4Mode {
+		return ipFamilyValueV4
+	}
+	return ipFamilyValueV6
 }
