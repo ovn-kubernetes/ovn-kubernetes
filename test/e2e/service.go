@@ -17,6 +17,7 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
 	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
@@ -52,7 +53,7 @@ var (
 	reportPath string
 )
 
-var _ = ginkgo.Describe("Services", func() {
+var _ = ginkgo.Describe("Services", feature.Service, func() {
 	const (
 		serviceName               = "testservice"
 		echoServerPodNameTemplate = "echo-server-pod-%d"
@@ -1424,7 +1425,7 @@ func getServiceBackendsFromPod(execPod *v1.Pod, serviceIP string, servicePort in
 // service ip; if the traffic was DNAT-ed to the same src pod (hairpin/loopback case) -
 // the srcIP of reply traffic is SNATed to the special masqurade IP 169.254.0.5
 // or "fd69::5"
-var _ = ginkgo.Describe("Service Hairpin SNAT", func() {
+var _ = ginkgo.Describe("Service Hairpin SNAT", feature.Service, func() {
 	const (
 		svcName                        = "service-hairpin-test"
 		backendName                    = "hairpin-backend-pod"
@@ -1522,7 +1523,7 @@ var _ = ginkgo.Describe("Service Hairpin SNAT", func() {
 
 })
 
-var _ = ginkgo.Describe("Load Balancer Service Tests with MetalLB", func() {
+var _ = ginkgo.Describe("Load Balancer Service Tests with MetalLB", feature.Service, func() {
 
 	const (
 		svcName                     = "lbservice-test"

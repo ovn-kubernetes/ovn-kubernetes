@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
 
 	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
@@ -23,7 +23,7 @@ import (
 	e2eservice "k8s.io/kubernetes/test/e2e/framework/service"
 )
 
-var _ = Describe("Network Segmentation EndpointSlices mirroring", func() {
+var _ = Describe("Network Segmentation EndpointSlices mirroring", feature.NetworkSegmentation, func() {
 	f := wrappedTestFramework("endpointslices-mirror")
 	f.SkipNamespaceCreation = true
 	Context("a user defined primary network", func() {
