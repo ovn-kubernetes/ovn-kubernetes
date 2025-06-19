@@ -1557,3 +1557,9 @@ func ParseNetworkName(networkName string) (udnNamespace, udnName string) {
 	}
 	return "", ""
 }
+
+// IsPrimaryNetworkCustomizationEnabled indicates if user defined IPs / MAC
+// addresses can be set in primary UDNs
+func IsPrimaryNetworkCustomizationEnabled() bool {
+	return IsNetworkSegmentationSupportEnabled() && config.OVNKubernetesFeature.EnableCustomNetworkConfig
+}
