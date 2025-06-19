@@ -166,7 +166,7 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 		})
 		if config.IPv4Mode {
 			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-				Cmd:    "sysctl -w net.ipv4.conf.breth0.forwarding=1",
+				Cmd:    "sysctl -w net/ipv4/conf/breth0/forwarding=1",
 				Output: "net.ipv4.conf.breth0.forwarding = 1",
 			})
 		}
@@ -595,7 +595,7 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 		})
 		if config.IPv4Mode {
 			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-				Cmd:    "sysctl -w net.ipv4.conf.brp0.forwarding=1",
+				Cmd:    "sysctl -w net/ipv4/conf/brp0/forwarding=1",
 				Output: "net.ipv4.conf.brp0.forwarding = 1",
 			})
 		}
@@ -1057,7 +1057,7 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 		})
 		if config.IPv4Mode {
 			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-				Cmd:    "sysctl -w net.ipv4.conf.breth0.forwarding=1",
+				Cmd:    "sysctl -w net/ipv4/conf/breth0/forwarding=1",
 				Output: "net.ipv4.conf.breth0.forwarding = 1",
 			})
 		}
