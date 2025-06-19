@@ -958,6 +958,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 		// Restore global default values before each testcase
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 		fakeOvn = NewFakeOVN(true)
+		config.OVNKubernetesFeature.EnableEgressIP = true
 
 		app = cli.NewApp()
 		app.Name = "test"
@@ -1038,6 +1039,19 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 		l3GatewayConfig = node1.gatewayConfig(config.GatewayModeLocal, uint(vlanID))
 		err = util.SetL3GatewayConfig(nodeAnnotator, l3GatewayConfig)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		if config.OVNKubernetesFeature.EnableEgressIP {
+			physicalIPs := []string{}
+			for _, ip := range l3GatewayConfig.IPAddresses {
+				physicalIPs = append(physicalIPs, ip.IP.String())
+			}
+			egressNodeIPsASv4, egressNodeIPsASv6 := buildEgressIPNodeAddressSets(physicalIPs)
+			if config.IPv4Mode {
+				dbSetup.NBData = append(dbSetup.NBData, egressNodeIPsASv4)
+			}
+			if config.IPv6Mode {
+				dbSetup.NBData = append(dbSetup.NBData, egressNodeIPsASv6)
+			}
+		}
 		err = util.UpdateNodeManagementPortMACAddresses(&testNode, nodeAnnotator,
 			ovntest.MustParseMAC(node1.NodeMgmtPortMAC), types.DefaultNetworkName)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1234,6 +1248,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 		"reconciles pod network SNATs from syncGateway",
 		func(condition func(*DefaultNetworkController) error, expectedExtraNATs ...*nbdb.NAT) {
 			app.Action = func(ctx *cli.Context) error {
+				// Initialize config from CLI flags (including --init-gateways)
 				_, err := config.InitConfig(ctx, nil, nil)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -1241,6 +1256,10 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 				ns := newNamespace("namespace-1")
 				pod := *newPodWithLabels(ns.Name, podName, node1.Name, "10.0.0.3", egressPodLabel)
 				_, err = fakeClient.KubeClient.CoreV1().Pods(ns.Name).Create(context.TODO(), &pod, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// generate specific test conditions (after base config is set)
+				err = condition(oc)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				// Let the real code run and ensure OVN database sync
@@ -1253,27 +1272,27 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 				err = libovsdbops.CreateOrUpdateNATs(nbClient, GR, extraNats...)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				// generate specific test conditions
-				err = condition(oc)
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
 				// ensure the stale SNAT's are cleaned up
 				gomega.Expect(oc.StartServiceController(wg, false)).To(gomega.Succeed())
 				subnet := ovntest.MustParseIPNet(node1.NodeSubnet)
 				err = oc.syncDefaultGatewayLogicalNetwork(&testNode, l3GatewayConfig, []*net.IPNet{subnet}, []string{node1.NodeIP})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				skipSnat := config.Gateway.DisableSNATMultipleGWs || oc.isPodNetworkAdvertisedAtNode(node1.Name)
+				skipSnat := config.Gateway.DisableSNATMultipleGWs && !oc.GetNetInfo().IsPrimaryNetwork()
 				var clusterSubnets []*net.IPNet
 				for _, clusterSubnet := range config.Default.ClusterSubnets {
 					clusterSubnets = append(clusterSubnets, clusterSubnet.CIDR)
 				}
-				expectedNBDatabaseState = generateGatewayInitExpectedNB(expectedNBDatabaseState, expectedOVNClusterRouter,
-					expectedNodeSwitch, node1.Name, clusterSubnets, []*net.IPNet{subnet}, l3GatewayConfig,
-					[]*net.IPNet{classBIPAddress(node1.LrpIP)}, []*net.IPNet{classBIPAddress(node1.DrLrpIP)},
-					skipSnat, node1.NodeMgmtPortIP, "1400")
-
-				if oc.isPodNetworkAdvertisedAtNode(node1.Name) {
+				if !oc.isPodNetworkAdvertisedAtNode(node1.Name) {
+					expectedNBDatabaseState = generateGatewayInitExpectedNB(expectedNBDatabaseState, expectedOVNClusterRouter,
+						expectedNodeSwitch, node1.Name, clusterSubnets, []*net.IPNet{subnet}, l3GatewayConfig,
+						[]*net.IPNet{classBIPAddress(node1.LrpIP)}, []*net.IPNet{classBIPAddress(node1.DrLrpIP)},
+						skipSnat, node1.NodeMgmtPortIP, "1400")
+				} else {
+					expectedNBDatabaseState = generateGatewayInitExpectedNBWithPodNetworkAdvertised(expectedNBDatabaseState, expectedOVNClusterRouter,
+						expectedNodeSwitch, node1.Name, clusterSubnets, []*net.IPNet{subnet}, l3GatewayConfig,
+						[]*net.IPNet{classBIPAddress(node1.LrpIP)}, []*net.IPNet{classBIPAddress(node1.DrLrpIP)},
+						skipSnat, node1.NodeMgmtPortIP, "1400", true)
 					addrSet, err := oc.addressSetFactory.GetAddressSet(GetAdvertisedNetworkSubnetsAddressSetDBIDs())
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					expectedNBDatabaseState = generateAdvertisedUDNIsolationExpectedNB(expectedNBDatabaseState, oc.GetNetworkName(), oc.GetNetworkID(), clusterSubnets, expectedNodeSwitch, addrSet)
@@ -1333,6 +1352,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			"When pod network is advertised and DisableSNATMultipleGWs is false",
 			func(oc *DefaultNetworkController) error {
 				config.Gateway.DisableSNATMultipleGWs = false
+				config.OVNKubernetesFeature.EnableEgressIP = true
 				mutableNetInfo := util.NewMutableNetInfo(oc.GetNetInfo())
 				mutableNetInfo.SetPodNetworkAdvertisedVRFs(map[string][]string{"node1": {"vrf"}})
 				return oc.Reconcile(mutableNetInfo)
