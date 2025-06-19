@@ -316,6 +316,7 @@ jobs:
     - name: Free up disk space
       run: |
         df -h
+        ls -R /mnt/ -lh
         sudo rm -rf /usr/local/lib/android/sdk
         sudo apt-get update
         sudo eatmydata apt-get purge --auto-remove -y \
@@ -520,6 +521,7 @@ jobs:
     - name: Free up disk space
       run: |
         df -h
+        ls -R /mnt/ -lh
         sudo rm -rf /usr/local/lib/android/sdk
         sudo apt-get update
         sudo eatmydata apt-get purge --auto-remove -y \
@@ -754,6 +756,7 @@ jobs:
     - name: Free up disk space
       run: |
         df -h
+        ls -R /mnt/ -lh
         sudo rm -rf /usr/local/lib/android/sdk
         sudo apt-get update
         sudo eatmydata apt-get purge --auto-remove -y \
