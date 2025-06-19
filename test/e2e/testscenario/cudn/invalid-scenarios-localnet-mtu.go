@@ -1,8 +1,8 @@
 package cudn
 
-import "github.com/ovn-org/ovn-kubernetes/test/e2e/testdata"
+import "github.com/ovn-org/ovn-kubernetes/test/e2e/testscenario"
 
-var LocalnetInvalidMTU = []testdata.ValidateCRScenario{
+var LocalnetInvalidMTU = []testscenario.ValidateCRScenario{
 	{
 		Description: "invalid MTU - higher than 65536",
 		ExpectedErr: `spec.network.localnet.mtu in body should be less than or equal to 65536`,
