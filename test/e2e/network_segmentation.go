@@ -1470,7 +1470,7 @@ spec:
 				Name:    externalContainerName,
 				Image:   images.AgnHost(),
 				Network: providerPrimaryNetwork,
-				Args:    httpServerContainerCmd(uint16(externalContainerPort)),
+				CmdArgs: httpServerContainerCmd(uint16(externalContainerPort)),
 				ExtPort: externalContainerPort,
 			}
 			externalContainer, err = providerCtx.CreateExternalContainer(externalContainerSpec)
