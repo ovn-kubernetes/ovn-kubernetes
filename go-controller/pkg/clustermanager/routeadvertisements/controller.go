@@ -597,13 +597,14 @@ func (c *Controller) generateFRRConfiguration(
 	matchedNetworks sets.Set[string],
 ) (*frrtypes.FRRConfiguration, error) {
 	routers := []frrtypes.Router{}
+	advertisements := sets.New(ra.Spec.Advertisements...)
 
 	// go over the source routers
 	for i, router := range source.Spec.BGP.Routers {
 
 		targetVRF := ra.Spec.TargetVRF
 		var matchedVRF, matchedNetwork string
-		var advertisePrefixes []string
+		var receivePrefixes, advertisePrefixes []string
 
 		// We will use the router if:
 		// - the router VRF matches the target VRF
@@ -611,25 +612,33 @@ func (c *Controller) generateFRRConfiguration(
 		// Prepare each scenario with a switch statement and check after that
 		switch {
 		case targetVRF == "auto" && router.VRF == "":
-			// match on default network/VRF, advertise node prefixes
+			// match on default network/VRF, advertise node prefixes and receive
+			// any prefix of default network.
 			matchedVRF = ""
 			matchedNetwork = types.DefaultNetworkName
 			advertisePrefixes = selectedNetworks.hostNetworkSubnets[matchedNetwork]
+			receivePrefixes = selectedNetworks.networkSubnets[matchedNetwork]
 		case targetVRF == "auto":
-			// match router.VRF to network.VRF, advertise node prefixes
+			// match router.VRF to network.VRF, advertise node prefixes and
+			// receive any prefix of the matched network
 			matchedVRF = router.VRF
 			matchedNetwork = selectedNetworks.networkVRFs[matchedVRF]
 			advertisePrefixes = selectedNetworks.hostNetworkSubnets[matchedNetwork]
+			receivePrefixes = selectedNetworks.networkSubnets[matchedNetwork]
 		case targetVRF == "":
-			// match on default network/VRF, advertise node prefixes
+			// match on default network/VRF, advertise node prefixes and
+			// receive any prefix of selected networks
 			matchedVRF = ""
 			matchedNetwork = types.DefaultNetworkName
 			advertisePrefixes = selectedNetworks.hostSubnets
+			receivePrefixes = selectedNetworks.subnets
 		default:
-			// match router.VRF to network.VRF, advertise node prefixes
+			// match router.VRF to network.VRF, advertise node prefixes and
+			// receive any prefix of selected networks
 			matchedVRF = targetVRF
 			matchedNetwork = selectedNetworks.networkVRFs[matchedVRF]
 			advertisePrefixes = selectedNetworks.hostSubnets
+			receivePrefixes = selectedNetworks.subnets
 		}
 		if matchedVRF != router.VRF || len(advertisePrefixes) == 0 {
 			// either this router VRF does not match the target VRF or we don't
@@ -664,6 +673,7 @@ func (c *Controller) generateFRRConfiguration(
 
 			isIPV6 := utilnet.IsIPv6String(neighbor.Address)
 			advertisePrefixes := util.MatchAllIPNetsStringFamily(isIPV6, advertisePrefixes)
+			receivePrefixes := util.MatchAllIPNetsStringFamily(isIPV6, receivePrefixes)
 			if len(advertisePrefixes) == 0 {
 				continue
 			}
@@ -673,6 +683,29 @@ func (c *Controller) generateFRRConfiguration(
 					Mode:     frrtypes.AllowRestricted,
 					Prefixes: advertisePrefixes,
 				},
+			}
+			if len(ra.Spec.NetworkSelectors) > 0 && ra.Spec.NetworkSelectors[0].NetworkSelectionType == apitypes.DefaultNetwork {
+				klog.Infof("Allow receiving prefixes from neighbor %s for default pod network RA %s",
+					neighbor.Address, ra.Name)
+				neighbor.ToReceive = frrtypes.Receive{
+					Allowed: frrtypes.AllowedInPrefixes{
+						Mode: frrtypes.AllowRestricted,
+					},
+				}
+				if advertisements.Has(ratypes.PodNetwork) {
+					for _, prefix := range receivePrefixes {
+						neighbor.ToReceive.Allowed.Prefixes = append(neighbor.ToReceive.Allowed.Prefixes,
+							frrtypes.PrefixSelector{
+								Prefix: prefix,
+								LE:     selectedNetworks.prefixLength[prefix],
+								GE:     selectedNetworks.prefixLength[prefix],
+							},
+						)
+					}
+				}
+			} else {
+				klog.Infof("Skip receiving prefixes from neighbor %s for user-defined pod network RA %s",
+					neighbor.Address, ra.Name)
 			}
 			targetRouter.Neighbors = append(targetRouter.Neighbors, neighbor)
 		}
