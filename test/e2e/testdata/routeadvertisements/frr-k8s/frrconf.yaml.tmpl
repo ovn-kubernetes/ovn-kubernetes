@@ -1,0 +1,46 @@
+{{- define "frrconf.yaml" -}}
+apiVersion: frrk8s.metallb.io/v1beta1
+kind: FRRConfiguration
+metadata:
+  name: {{ .Name }}
+{{- if .Labels }}
+  labels:
+{{- range $k, $v := .Labels }}
+    {{ $k }}: {{ $v }}
+{{- end }}
+{{- end }}
+spec:
+  bgp:
+    routers:
+{{- range $v := .Routers }}
+    - asn: 64512
+{{- if .VRF }}
+      vrf: {{ .VRF }}
+{{- end }}
+      neighbors:
+{{- range .NeighborsIPv4 }}
+      - address: {{ . }}
+        asn: 64512
+        disableMP: true
+        toReceive:
+          allowed:
+            mode: filtered
+            prefixes:
+{{- range $v.NetworksIPv4 }}
+            - prefix: {{ . }}
+{{- end }}
+{{- end }}
+{{- range .NeighborsIPv6 }}
+      - address: {{ . }}
+        asn: 64512
+        disableMP: true
+        toReceive:
+          allowed:
+            mode: filtered
+            prefixes:
+{{- range $v.NetworksIPv6 }}
+            - prefix: {{ . }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{ end }}

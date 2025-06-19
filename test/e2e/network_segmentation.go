@@ -1887,31 +1887,17 @@ func generateLayer3Subnets(cidrs string) []string {
 
 // userDefinedNetworkReadyFunc returns a function that checks for the NetworkCreated condition in the provided udn
 func userDefinedNetworkReadyFunc(client dynamic.Interface, namespace, name string) func() error {
-	return func() error {
-		udn, err := client.Resource(udnGVR).Namespace(namespace).Get(context.Background(), name, metav1.GetOptions{}, "status")
-		if err != nil {
-			return err
-		}
-		conditions, err := getConditions(udn)
-		if err != nil {
-			return err
-		}
-		if len(conditions) == 0 {
-			return fmt.Errorf("no conditions found in: %v", udn)
-		}
-		for _, condition := range conditions {
-			if condition.Type == "NetworkCreated" && condition.Status == metav1.ConditionTrue {
-				return nil
-			}
-		}
-		return fmt.Errorf("no NetworkCreated condition found in: %v", udn)
-	}
+	return networkReadyFunc(client.Resource(udnGVR).Namespace(namespace), name)
 }
 
 // userDefinedNetworkReadyFunc returns a function that checks for the NetworkCreated condition in the provided cluster udn
 func clusterUserDefinedNetworkReadyFunc(client dynamic.Interface, name string) func() error {
+	return networkReadyFunc(client.Resource(clusterUDNGVR), name)
+}
+
+func networkReadyFunc(client dynamic.ResourceInterface, name string) func() error {
 	return func() error {
-		cUDN, err := client.Resource(clusterUDNGVR).Get(context.Background(), name, metav1.GetOptions{}, "status")
+		cUDN, err := client.Get(context.Background(), name, metav1.GetOptions{}, "status")
 		if err != nil {
 			return err
 		}

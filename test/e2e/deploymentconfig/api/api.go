@@ -4,6 +4,7 @@ package api
 // Remove when OVN-Kubernetes exposes its config via an API.
 type DeploymentConfig interface {
 	OVNKubernetesNamespace() string
+	FRRK8sNamespace() string
 	ExternalBridgeName() string
 	PrimaryInterfaceName() string
 }
