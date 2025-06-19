@@ -1,8 +1,8 @@
 package cudn
 
-import "github.com/ovn-org/ovn-kubernetes/test/e2e/testdata"
+import "github.com/ovn-org/ovn-kubernetes/test/e2e/testscenario"
 
-var LocalnetInvalidSubnets = []testdata.ValidateCRScenario{
+var LocalnetInvalidSubnets = []testscenario.ValidateCRScenario{
 	{
 		Description: "unset subnets, and ipam.mode is unset",
 		ExpectedErr: `Subnets is required with ipam.mode is Enabled or unset, and forbidden otherwise`,
