@@ -76,6 +76,10 @@ func (h *Handler) OnDelete(obj interface{}) {
 	}
 }
 
+func (h *Handler) FilterFunc(obj interface{}) bool {
+	return h.base.FilterFunc(obj)
+}
+
 func (h *Handler) kill() bool {
 	return atomic.CompareAndSwapUint32(&h.tombstone, handlerAlive, handlerDead)
 }

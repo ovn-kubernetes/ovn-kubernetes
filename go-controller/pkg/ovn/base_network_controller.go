@@ -191,8 +191,7 @@ type BaseNetworkController struct {
 
 func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed func(string)) error {
 	// gather some information first
-	var err error
-	var retryNodes []*corev1.Node
+	var reconcileNodes []string
 	oc.localZoneNodes.Range(func(key, _ any) bool {
 		nodeName := key.(string)
 		wasAdvertised := util.IsPodNetworkAdvertisedAtNode(oc, nodeName)
@@ -201,41 +200,57 @@ func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed f
 			// noop
 			return true
 		}
-		var node *corev1.Node
-		node, err = oc.watchFactory.GetNode(nodeName)
-		if err != nil {
-			return false
-		}
-		retryNodes = append(retryNodes, node)
+		reconcileNodes = append(reconcileNodes, nodeName)
 		return true
 	})
-	if err != nil {
-		return fmt.Errorf("failed to reconcile network %s: %w", oc.GetNetworkName(), err)
-	}
 	reconcileRoutes := oc.routeImportManager != nil && oc.routeImportManager.NeedsReconciliation(netInfo)
 	reconcilePendingPods := !oc.IsDefault() && !oc.ReconcilableNetInfo.EqualNADs(netInfo.GetNADs()...)
+	reconcileNamespaces := sets.NewString()
+	if oc.IsPrimaryNetwork() {
+		// since CanServeNamespace filters out namespace events for namespaces unknown
+		// to be served by this primary network, we need to reconcile namespaces once
+		// the network is reconfigured to serve a namespace.
+		reconcileNamespaces = sets.NewString(netInfo.GetNADNamespaces()...).Difference(
+			sets.NewString(oc.GetNADNamespaces()...))
+	}
 
 	// set the new NetInfo, point of no return
-	err = util.ReconcileNetInfo(oc.ReconcilableNetInfo, netInfo)
+	err := util.ReconcileNetInfo(oc.ReconcilableNetInfo, netInfo)
 	if err != nil {
 		return fmt.Errorf("failed to reconcile network information for network %s: %v", oc.GetNetworkName(), err)
 	}
 
+	oc.doReconcile(reconcileRoutes, reconcilePendingPods, reconcileNodes, setNodeFailed, reconcileNamespaces.List())
+
+	return nil
+}
+
+// doReconcile performs the reconciliation after the controller NetInfo has already being
+// updated with the changes. What needs to be reconciled should already be known and
+// provided on the arguments of the method. This method returns no error and logs them
+// instead since once the controller NetInfo has been updated there is no point in retrying.
+func (oc *BaseNetworkController) doReconcile(reconcileRoutes, reconcilePendingPods bool,
+	reconcileNodes []string, setNodeFailed func(string), reconcileNamespaces []string) {
 	if reconcileRoutes {
-		err = oc.routeImportManager.ReconcileNetwork(oc.GetNetworkName())
+		err := oc.routeImportManager.ReconcileNetwork(oc.GetNetworkName())
 		if err != nil {
 			klog.Errorf("Failed to reconcile network %s on route import controller: %v", oc.GetNetworkName(), err)
 		}
 	}
 
-	for _, node := range retryNodes {
-		setNodeFailed(node.Name)
+	for _, nodeName := range reconcileNodes {
+		setNodeFailed(nodeName)
+		node, err := oc.watchFactory.GetNode(nodeName)
+		if err != nil {
+			klog.Infof("Failed to get node %s for reconciling network %s: %v", nodeName, oc.GetNetworkName(), err)
+			continue
+		}
 		err = oc.retryNodes.AddRetryObjWithAddNoBackoff(node)
 		if err != nil {
-			klog.Errorf("Failed to retry node %s for network %s: %v", node.Name, oc.GetNetworkName(), err)
+			klog.Errorf("Failed to retry node %s for network %s: %v", nodeName, oc.GetNetworkName(), err)
 		}
 	}
-	if len(retryNodes) > 0 {
+	if len(reconcileNodes) > 0 {
 		oc.retryNodes.RequestRetryObjs()
 	}
 
@@ -245,7 +260,28 @@ func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed f
 		}
 	}
 
-	return nil
+	namespaceAdded := false
+	for _, ns := range reconcileNamespaces {
+		namespace, err := oc.watchFactory.GetNamespace(ns)
+		if err != nil {
+			klog.Infof("Failed to get namespace %s for reconciling network %s: %v", ns, oc.GetNetworkName(), err)
+			continue
+		}
+		err = oc.retryNamespaces.AddRetryObjWithAddNoBackoff(namespace)
+		if err != nil {
+			klog.Infof("Failed to retry namespace %s for network %s: %v", ns, oc.GetNetworkName(), err)
+			continue
+		}
+		namespaceAdded = true
+	}
+	if namespaceAdded {
+		oc.retryNamespaces.RequestRetryObjs()
+	}
+
+	err := oc.requeuePeerNamespaces(reconcileNamespaces)
+	if err != nil {
+		klog.Infof("Failed to retry network policy peer namespaces for network %s: %v", oc.GetNetworkName(), err)
+	}
 }
 
 // BaseSecondaryNetworkController structure holds per-network fields and network specific

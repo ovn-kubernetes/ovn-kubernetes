@@ -209,6 +209,10 @@ func (gp *gressPolicy) addNamespaceAddressSet(name string, asf addressset.Addres
 		return false, fmt.Errorf("cannot add peer namespace %s: failed to get address set: %v", name, err)
 	}
 	v4HashName, v6HashName := as.GetASHashNames()
+	if v4HashName == "" && v6HashName == "" {
+		// This would happen when a namespace is not yet reconciled with UDN network.
+		return false, fmt.Errorf("cannot add peer namespace %s: address set has empty hashed name", name)
+	}
 	v4HashName = "$" + v4HashName
 	v6HashName = "$" + v6HashName
 
@@ -234,6 +238,9 @@ func (gp *gressPolicy) addNamespaceAddressSet(name string, asf addressset.Addres
 func (gp *gressPolicy) delNamespaceAddressSet(name string) bool {
 	dbIDs := getNamespaceAddrSetDbIDs(name, gp.controllerName)
 	v4HashName, v6HashName := addressset.GetHashNamesForAS(dbIDs)
+	if v4HashName == "" && v6HashName == "" {
+		return false
+	}
 	v4HashName = "$" + v4HashName
 	v6HashName = "$" + v6HashName
 

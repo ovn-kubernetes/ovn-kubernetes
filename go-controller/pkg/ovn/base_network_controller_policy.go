@@ -23,6 +23,7 @@ import (
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/retry"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
@@ -160,8 +161,8 @@ type networkPolicy struct {
 
 	// network policy owns only 1 local pod handler
 	localPodHandler *factory.Handler
-	// peer namespace handlers
-	nsHandlerList []*factory.Handler
+	// peer namespace reconcilers
+	reconcilePeerNamespaces []*peerNamespacesRetry
 	// peerAddressSets stores PodSelectorAddressSet keys for peers that this network policy was successfully added to.
 	// Required for cleanup.
 	peerAddressSets []string
@@ -186,17 +187,22 @@ type networkPolicy struct {
 	cancelableContext *util.CancelableContext
 }
 
+type peerNamespacesRetry struct {
+	retryFramework *retry.RetryFramework
+	handler        *factory.Handler
+}
+
 func NewNetworkPolicy(policy *knet.NetworkPolicy) *networkPolicy {
 	policyTypeIngress, policyTypeEgress := getPolicyType(policy)
 	np := &networkPolicy{
-		name:            policy.Name,
-		namespace:       policy.Namespace,
-		ingressPolicies: make([]*gressPolicy, 0),
-		egressPolicies:  make([]*gressPolicy, 0),
-		isIngress:       policyTypeIngress,
-		isEgress:        policyTypeEgress,
-		nsHandlerList:   make([]*factory.Handler, 0),
-		localPods:       sync.Map{},
+		name:                    policy.Name,
+		namespace:               policy.Namespace,
+		ingressPolicies:         make([]*gressPolicy, 0),
+		egressPolicies:          make([]*gressPolicy, 0),
+		isIngress:               policyTypeIngress,
+		isEgress:                policyTypeEgress,
+		reconcilePeerNamespaces: make([]*peerNamespacesRetry, 0),
+		localPods:               sync.Map{},
 	}
 	return np
 }
@@ -1490,6 +1496,56 @@ func (bnc *BaseNetworkController) peerNamespaceUpdate(np *networkPolicy, gp *gre
 	return err
 }
 
+// requeuePeerNamespaces enqueues the namespace into network policy peer namespace
+// retry framework object(s) which need to be retried immediately with add event.
+func (bnc *BaseNetworkController) requeuePeerNamespaces(namespaces []string) error {
+	npKeys := bnc.networkPolicies.GetKeys()
+	var errors []error
+	for _, npKey := range npKeys {
+		err := bnc.networkPolicies.DoWithLock(npKey, func(npKey string) error {
+			np, ok := bnc.networkPolicies.Load(npKey)
+			if !ok {
+				return nil
+			}
+			np.RLock()
+			defer np.RUnlock()
+			var errors []error
+			for _, reconcilePeerNamespace := range np.reconcilePeerNamespaces {
+				namespaceAdded := false
+				for _, ns := range namespaces {
+					namespace, err := bnc.watchFactory.GetNamespace(ns)
+					if err != nil {
+						errors = append(errors, fmt.Errorf("failed to retrieve peer namespace %s for network policy %s on network %s: %w",
+							ns, npKey, bnc.GetNetworkName(), err))
+						continue
+					}
+					// Filter out namespace when it's labels not matching with network policy peer namespace
+					// selector.
+					if !reconcilePeerNamespace.handler.FilterFunc(namespace) {
+						continue
+					}
+					err = reconcilePeerNamespace.retryFramework.AddRetryObjWithAddNoBackoff(namespace)
+					if err != nil {
+						errors = append(errors, fmt.Errorf("failed to retry peer namespace %s for network policy %s on network %s: %w",
+							ns, npKey, bnc.GetNetworkName(), err))
+						continue
+					}
+					namespaceAdded = true
+				}
+				if namespaceAdded {
+					reconcilePeerNamespace.retryFramework.RequestRetryObjs()
+				}
+			}
+			return utilerrors.Join(errors...)
+		})
+		if err != nil {
+			errors = append(errors, fmt.Errorf("failed to retry peer namespaces for network policy %s on network %s: %w",
+				npKey, bnc.GetNetworkName(), err))
+		}
+	}
+	return utilerrors.Join(errors...)
+}
+
 // addPeerNamespaceHandler starts a watcher for PeerNamespaceSelectorType.
 // Sync function and Add event for every existing namespace will be executed sequentially first, and an error will be
 // returned if something fails.
@@ -1523,7 +1579,16 @@ func (bnc *BaseNetworkController) addPeerNamespaceHandler(
 		return err
 	}
 
-	np.nsHandlerList = append(np.nsHandlerList, namespaceHandler)
+	// Add peer namespace retry framework object into np.reconcilePeerNamespaces so that when
+	// a new peer namespace is newly created later under UDN network, it gets reconciled and
+	// address set is created for the namespace. so we must reconcile it for network policy
+	// as well to update gress policy ACL with matching peer namespace address set.
+	np.Lock()
+	np.reconcilePeerNamespaces = append(np.reconcilePeerNamespaces,
+		&peerNamespacesRetry{retryFramework: retryPeerNamespaces,
+			handler: namespaceHandler})
+	np.Unlock()
+
 	return nil
 }
 
@@ -1537,10 +1602,10 @@ func (bnc *BaseNetworkController) shutdownHandlers(np *networkPolicy) {
 		bnc.watchFactory.RemovePodHandler(np.localPodHandler)
 		np.localPodHandler = nil
 	}
-	for _, handler := range np.nsHandlerList {
-		bnc.watchFactory.RemoveNamespaceHandler(handler)
+	for _, retry := range np.reconcilePeerNamespaces {
+		bnc.watchFactory.RemoveNamespaceHandler(retry.handler)
 	}
-	np.nsHandlerList = make([]*factory.Handler, 0)
+	np.reconcilePeerNamespaces = make([]*peerNamespacesRetry, 0)
 }
 
 // The following 2 functions should return the same key for network policy based on k8s on internal networkPolicy object
