@@ -1,0 +1,57 @@
+{{- define "frr.conf" -}}
+debug zebra events
+debug zebra nht detailed
+debug zebra kernel
+debug zebra rib detail
+debug zebra nexthop detail
+debug bgp keepalives
+debug bgp neighbor-events
+debug bgp nht
+debug bgp updates
+debug bgp zebra
+log stdout debugging
+log syslog debugging
+log file /etc/frr/frr.log debugging
+{{ range .Routers -}}
+router bgp 64512 {{ if .VRF }}vrf {{ .VRF }}{{ end }}
+ no bgp default ipv4-unicast
+ no bgp default ipv6-unicast
+ no bgp network import-check
+{{- range .NeighborsIPv4 }}
+ neighbor {{ . }} remote-as 64512
+ # zebra has been observed to fail to start for unknown reasons,
+ # reduce timers to try to minimize delay impact on tests
+ neighbor {{ . }} timers connect 10
+ neighbor {{ . }} timers 15 5
+{{- end }}
+{{- range .NeighborsIPv6 }}
+ neighbor {{ . }} remote-as 64512
+ neighbor {{ . }} timers connect 10
+ neighbor {{ . }} timers 15 5
+{{- end }}
+{{- if .NeighborsIPv4 }}
+ address-family ipv4 unicast
+{{- range .NeighborsIPv4 }}
+  neighbor {{ . }} route-reflector-client
+  neighbor {{ . }} activate
+  neighbor {{ . }} next-hop-self 
+{{- end }}
+{{- range .NetworksIPv4 }}
+  network {{ . }}
+{{- end }}
+ exit-address-family
+{{- end }}
+{{- if .NeighborsIPv6 }}
+ address-family ipv6 unicast
+{{- range .NeighborsIPv6 }}
+  neighbor {{ . }} route-reflector-client
+  neighbor {{ . }} activate
+  neighbor {{ . }} next-hop-self
+{{- end }}
+{{- range .NetworksIPv6 }}
+  network {{ . }}
+{{- end }}
+ exit-address-family
+{{- end }}
+{{ end }}
+{{ end }}
