@@ -193,19 +193,6 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			role: types.NetworkRoleSecondary,
 		},
 		{
-			// on networks with IPAM, expect error if static IP request present
-			// in the network selection annotation
-			name: "expect error, static ip request, IPAM",
-			ipam: true,
-			args: args{
-				network: &nadapi.NetworkSelectionElement{
-					IPRequest: []string{"192.168.0.3/24"},
-				},
-			},
-			wantUpdatedPod: true,
-			wantErr:        true,
-		},
-		{
 			// on networks with IPAM, expect a normal IP, MAC and gateway
 			// allocation
 			name: "expect new IP",
@@ -540,13 +527,14 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			wantReleasedIPs: ovntest.MustParseIPNets("192.168.0.3/24"),
 		},
 		{
-			// on networks with IPAM, honor a MAC request through the network
+			// on networks with IPAM, honor a IP and MAC request through the network
 			// selection element
-			name: "expect requested MAC",
+			name: "expect requested MAC and IP, IPAM",
 			ipam: true,
 			args: args{
 				network: &nadapi.NetworkSelectionElement{
 					MacRequest: requestedMAC,
+					IPRequest:  []string{"192.168.0.101/24"},
 				},
 				ipAllocator: &ipAllocatorStub{
 					nextIPs: ovntest.MustParseIPNets("192.168.0.3/24"),
@@ -554,7 +542,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			},
 			wantUpdatedPod: true,
 			wantPodAnnotation: &util.PodAnnotation{
-				IPs:      ovntest.MustParseIPNets("192.168.0.3/24"),
+				IPs:      ovntest.MustParseIPNets("192.168.0.101/24"),
 				MAC:      requestedMACParsed,
 				Gateways: []net.IP{ovntest.MustParseIP("192.168.0.1").To4()},
 				Routes: []util.PodRoute{
@@ -572,7 +560,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 				},
 				Role: types.NetworkRolePrimary,
 			},
-			wantReleasedIPsOnRollback: ovntest.MustParseIPNets("192.168.0.3/24"),
+			wantReleasedIPsOnRollback: ovntest.MustParseIPNets("192.168.0.101/24"),
 			role:                      types.NetworkRolePrimary, // has to be primary network for default routes to be set
 		},
 		{
