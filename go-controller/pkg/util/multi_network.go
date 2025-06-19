@@ -1344,18 +1344,34 @@ func GetPodNADToNetworkMappingWithActiveNetwork(pod *corev1.Pod, nInfo NetInfo, 
 	if len(networkSelections) == 0 {
 		networkSelections = map[string]*nettypes.NetworkSelectionElement{}
 	}
-	networkSelections[activeNetworkNADs[0]] = &nettypes.NetworkSelectionElement{
+
+	activeNSE := &nettypes.NetworkSelectionElement{
 		Namespace: activeNetworkNADKey[0],
 		Name:      activeNetworkNADKey[1],
+	}
+
+	// Limit the static ip and mac requests to the layer2 topology on primary networks
+	if activeNetwork.TopologyType() == types.Layer2Topology {
+		defaultNSE, err := GetK8sPodDefaultNetworkSelection(pod)
+		if err != nil {
+			return false, nil, fmt.Errorf("failed getting default-network annotation for pod %q: %w", pod.Namespace+"/"+pod.Name, err)
+		}
+
+		// If there are static IPs and MACs at the default NSE, override the active NSE with them
+		if defaultNSE != nil && defaultNSE.Namespace == config.Kubernetes.OVNConfigNamespace && defaultNSE.Name == types.DefaultNetworkName {
+			activeNSE.IPRequest = defaultNSE.IPRequest
+			activeNSE.MacRequest = defaultNSE.MacRequest
+		}
 	}
 
 	if nInfo.IsPrimaryNetwork() && AllowsPersistentIPs(nInfo) {
 		ipamClaimName, wasPersistentIPRequested := pod.Annotations[OvnUDNIPAMClaimName]
 		if wasPersistentIPRequested {
-			networkSelections[activeNetworkNADs[0]].IPAMClaimReference = ipamClaimName
+			activeNSE.IPAMClaimReference = ipamClaimName
 		}
 	}
 
+	networkSelections[activeNetworkNADs[0]] = activeNSE
 	return true, networkSelections, nil
 }
 
