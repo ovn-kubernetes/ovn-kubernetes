@@ -7,9 +7,11 @@ import (
 	"math/rand"
 	"net"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
@@ -30,7 +32,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
-	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
 	"k8s.io/kubernetes/test/e2e/framework/debug"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
@@ -167,7 +168,7 @@ func newAgnhostPodOnNode(name, nodeName string, labels map[string]string, comman
 }
 
 // IsIPv6Cluster returns true if the kubernetes default service is IPv6
-func IsIPv6Cluster(c clientset.Interface) bool {
+func IsIPv6Cluster(c kubernetes.Interface) bool {
 	// Get the ClusterIP of the kubernetes service created in the default namespace
 	svc, err := c.CoreV1().Services(metav1.NamespaceDefault).Get(context.Background(), "kubernetes", metav1.GetOptions{})
 	if err != nil {
@@ -656,7 +657,7 @@ func waitClusterHealthy(f *framework.Framework, numControlPlanePods int, control
 // successfully rolled out following an update.
 //
 // If allowedNotReadyNodes is -1, this method returns immediately without waiting.
-func waitForRollout(c clientset.Interface, ns string, resource string, allowedNotReadyNodes int32, timeout time.Duration) error {
+func waitForRollout(c kubernetes.Interface, ns string, resource string, allowedNotReadyNodes int32, timeout time.Duration) error {
 	if allowedNotReadyNodes == -1 {
 		return nil
 	}
@@ -1139,6 +1140,25 @@ func isIPv6Supported() bool {
 	return present && val == "true"
 }
 
+func isIPFamilySupported(family utilnet.IPFamily) bool {
+	switch family {
+	case utilnet.IPv4:
+		return isIPv4Supported()
+	case utilnet.IPv6:
+		return isIPv6Supported()
+	}
+	return false
+}
+
+func getSupportedIPFamilies() (families []utilnet.IPFamily) {
+	for _, family := range []utilnet.IPFamily{utilnet.IPv4, utilnet.IPv6} {
+		if isIPFamilySupported(family) {
+			families = append(families, family)
+		}
+	}
+	return
+}
+
 func isInterconnectEnabled() bool {
 	val, present := os.LookupEnv("OVN_ENABLE_INTERCONNECT")
 	return present && val == "true"
@@ -1271,7 +1291,7 @@ func GetNodeIPv6LinkLocalAddressForEth0(nodeName string) (string, error) {
 // right-most match of the provided regex. Returns a map of subexpression name
 // to subexpression capture. A zero string name `""` maps to the full expression
 // capture.
-func CaptureContainerOutput(ctx context.Context, c clientset.Interface, namespace, pod, container, regexpr string) (map[string]string, error) {
+func CaptureContainerOutput(ctx context.Context, c kubernetes.Interface, namespace, pod, container, regexpr string) (map[string]string, error) {
 	regex, err := regexp.Compile(regexpr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compile regexp %q: %w", regexpr, err)
@@ -1342,9 +1362,62 @@ func matchIPv6StringFamily(ipStrings []string) (string, error) {
 	return util.MatchIPStringFamily(true /*ipv6*/, ipStrings)
 }
 
+func matchCIDRStringsByIPFamily(cidrs []string, families ...utilnet.IPFamily) []string {
+	var r []string
+	familySet := sets.New(families...)
+	for _, cidr := range cidrs {
+		if familySet.Has(utilnet.IPFamilyOfCIDRString(cidr)) {
+			r = append(r, cidr)
+		}
+	}
+	return r
+}
+
+func splitCIDRStringsByIPFamily(cidrs []string) (ipv4 []string, ipv6 []string) {
+	for _, cidr := range cidrs {
+		switch {
+		case utilnet.IsIPv4CIDRString(cidr):
+			ipv4 = append(ipv4, cidr)
+		case utilnet.IsIPv6CIDRString(cidr):
+			ipv6 = append(ipv6, cidr)
+		}
+	}
+	return
+}
+
+func splitIPStringsByIPFamily(ips []string) (ipv4 []string, ipv6 []string) {
+	for _, ip := range ips {
+		switch {
+		case utilnet.IsIPv4String(ip):
+			ipv4 = append(ipv4, ip)
+		case utilnet.IsIPv6String(ip):
+			ipv6 = append(ipv6, ip)
+		}
+	}
+	return
+}
+
+func getFirstCIDROfFamily(family utilnet.IPFamily, ipnets []*net.IPNet) *net.IPNet {
+	for _, ipnet := range ipnets {
+		if utilnet.IPFamilyOfCIDR(ipnet) == family {
+			return ipnet
+		}
+	}
+	return nil
+}
+
+func getFirstIPStringOfFamily(family utilnet.IPFamily, ips []string) string {
+	for _, ip := range ips {
+		if utilnet.IPFamilyOfString(ip) == family {
+			return ip
+		}
+	}
+	return ""
+}
+
 // This is a replacement for e2epod.DeletePodWithWait(), which does not handle pods that
 // may be automatically restarted (https://issues.k8s.io/126785)
-func deletePodWithWait(ctx context.Context, c clientset.Interface, pod *v1.Pod) error {
+func deletePodWithWait(ctx context.Context, c kubernetes.Interface, pod *v1.Pod) error {
 	if pod == nil {
 		return nil
 	}
@@ -1372,7 +1445,7 @@ func deletePodWithWait(ctx context.Context, c clientset.Interface, pod *v1.Pod) 
 
 // This is a replacement for e2epod.DeletePodWithWaitByName(), which does not handle pods
 // that may be automatically restarted (https://issues.k8s.io/126785)
-func deletePodWithWaitByName(ctx context.Context, c clientset.Interface, podName, podNamespace string) error {
+func deletePodWithWaitByName(ctx context.Context, c kubernetes.Interface, podName, podNamespace string) error {
 	pod, err := c.CoreV1().Pods(podNamespace).Get(ctx, podName, metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -1390,7 +1463,7 @@ func deletePodWithWaitByName(ctx context.Context, c clientset.Interface, podName
 
 // This is an alternative version of e2epod.WaitForPodNotFoundInNamespace(), which takes
 // a UID as well.
-func waitForPodNotFoundInNamespace(ctx context.Context, c clientset.Interface, podName, ns string, uid types.UID, timeout time.Duration) error {
+func waitForPodNotFoundInNamespace(ctx context.Context, c kubernetes.Interface, podName, ns string, uid types.UID, timeout time.Duration) error {
 	err := framework.Gomega().Eventually(ctx, framework.HandleRetry(func(ctx context.Context) (*v1.Pod, error) {
 		pod, err := c.CoreV1().Pods(ns).Get(ctx, podName, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
@@ -1423,4 +1496,39 @@ func getAgnHostHTTPPortBindFullCMD(port uint16) []string {
 // getAgnHostHTTPPortBindCMDArgs returns the aruments for /agnhost binary
 func getAgnHostHTTPPortBindCMDArgs(port uint16) []string {
 	return []string{"netexec", fmt.Sprintf("--http-port=%d", port)}
+}
+
+// executeFileTemplate executes `name` template from the provided `templates`
+// using `data`as input and writes the results to `directory/name`
+func executeFileTemplate(templates *template.Template, directory, name string, data any) error {
+	f, err := os.OpenFile(filepath.Join(directory, name), os.O_WRONLY|os.O_CREATE, 0666)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	err = templates.ExecuteTemplate(f, name, data)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// podIPsForUserDefinedPrimaryNetwork returns the v4 or v6 IPs for a pod on the UDN
+func podIPOfFamilyOnPrimaryNetwork(k8sClient kubernetes.Interface, podNamespace string, podName string, networkName string, family utilnet.IPFamily) (string, error) {
+	pod, err := k8sClient.CoreV1().Pods(podNamespace).Get(context.Background(), podName, metav1.GetOptions{})
+	if err != nil {
+		return "", err
+	}
+	if networkName != "default" {
+		networkName = namespacedName(podNamespace, networkName)
+	}
+	netStatus, err := userDefinedNetworkStatus(pod, networkName)
+	if err != nil {
+		return "", err
+	}
+	ipnet := getFirstCIDROfFamily(family, netStatus.IPs)
+	if ipnet == nil {
+		return "", nil
+	}
+	return ipnet.IP.String(), nil
 }
