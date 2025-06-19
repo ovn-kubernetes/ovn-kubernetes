@@ -30,6 +30,7 @@ import (
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/defaultnetworkcustomization"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	controllerutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
 	eiptypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
@@ -1012,7 +1013,7 @@ func (c *Controller) getSelectedNADs(networkSelectors apitypes.NetworkSelectors)
 		case apitypes.DefaultNetwork:
 			// if we are selecting the default networkdefault network label,
 			// make sure a NAD exists for it
-			nad, err := c.getOrCreateDefaultNetworkNAD()
+			nad, err := defaultnetworkcustomization.EnsureDefaultNetworkNAD(c.nadLister, c.nadClient)
 			if err != nil {
 				return nil, fmt.Errorf("failed to get/create default network NAD: %w", err)
 			}
@@ -1041,34 +1042,6 @@ func (c *Controller) getSelectedNADs(networkSelectors apitypes.NetworkSelectors)
 	}
 
 	return selected, nil
-}
-
-// getOrCreateDefaultNetworkNAD ensure that a well-known NAD exists for the
-// default network in ovn-k namespace.
-func (c *Controller) getOrCreateDefaultNetworkNAD() (*nadtypes.NetworkAttachmentDefinition, error) {
-	nad, err := c.nadLister.NetworkAttachmentDefinitions(config.Kubernetes.OVNConfigNamespace).Get(types.DefaultNetworkName)
-	if err != nil && !apierrors.IsNotFound(err) {
-		return nil, err
-	}
-	if nad != nil {
-		return nad, nil
-	}
-	return c.nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(config.Kubernetes.OVNConfigNamespace).Create(
-		context.Background(),
-		&nadtypes.NetworkAttachmentDefinition{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      types.DefaultNetworkName,
-				Namespace: config.Kubernetes.OVNConfigNamespace,
-			},
-			Spec: nadtypes.NetworkAttachmentDefinitionSpec{
-				Config: fmt.Sprintf("{\"cniVersion\": \"0.4.0\", \"name\": \"ovn-kubernetes\", \"type\": \"%s\"}", config.CNI.Plugin),
-			},
-		},
-		// note we don't set ourselves as field manager for this create as we
-		// want to process the resulting event that would otherwise be filtered
-		// out in nadNeedsUpdate
-		metav1.CreateOptions{},
-	)
 }
 
 // getEgressIPsByNodesByNetworks iterates all existing egress IPs that apply to

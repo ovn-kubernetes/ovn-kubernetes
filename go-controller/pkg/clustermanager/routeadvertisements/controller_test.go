@@ -24,6 +24,7 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/utils/ptr"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/defaultnetworkcustomization"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	controllerutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
 	eiptypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
@@ -1007,7 +1008,7 @@ func TestController_reconcile(t *testing.T) {
 
 			// prime the default network NAD
 			if defaultNAD == nil {
-				defaultNAD, err = c.getOrCreateDefaultNetworkNAD()
+				defaultNAD, err = defaultnetworkcustomization.EnsureDefaultNetworkNAD(c.nadLister, c.nadClient)
 				g.Expect(err).ToNot(gomega.HaveOccurred())
 			}
 			// prime the default network NAD namespace

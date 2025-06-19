@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/defaultnetworkcustomization"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/notifier"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/template"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
@@ -671,6 +672,13 @@ func (c *Controller) updateClusterUDNStatus(cudn *userdefinednetworkv1.ClusterUs
 	}
 	klog.Infof("Updated status ClusterUserDefinedNetwork %q", cudn.Name)
 
+	return nil
+}
+
+func (c *Controller) EnsureDefaultNetworkNAD() error {
+	if _, err := defaultnetworkcustomization.EnsureDefaultNetworkNAD(c.nadLister, c.nadClient); err != nil {
+		return fmt.Errorf("failed to ensure default network nad exists: %w", err)
+	}
 	return nil
 }
 
