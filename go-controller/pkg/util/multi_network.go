@@ -1344,18 +1344,44 @@ func GetPodNADToNetworkMappingWithActiveNetwork(pod *corev1.Pod, nInfo NetInfo, 
 	if len(networkSelections) == 0 {
 		networkSelections = map[string]*nettypes.NetworkSelectionElement{}
 	}
-	networkSelections[activeNetworkNADs[0]] = &nettypes.NetworkSelectionElement{
+
+	activeNSE := &nettypes.NetworkSelectionElement{
 		Namespace: activeNetworkNADKey[0],
 		Name:      activeNetworkNADKey[1],
+	}
+
+	// Feature gate integration: EnableCustomNetworkConfig controls default network IP/MAC transfer to active network
+	if config.OVNKubernetesFeature.EnableCustomNetworkConfig {
+		// Limit the static ip and mac requests to the layer2 primary UDN when EnableCustomNetworkConfig is enabled, we
+		// don't need to explicitly check this is primary UDN since
+		// the "active network" concept is exactly that.
+		if activeNetwork.TopologyType() == types.Layer2Topology {
+			defaultNSE, err := GetK8sPodDefaultNetworkSelection(pod)
+			if err != nil {
+				return false, nil, fmt.Errorf("failed getting default-network annotation for pod %q: %w", pod.Namespace+"/"+pod.Name, err)
+			}
+			// If there are static IPs and MACs at the default NSE, override the active NSE with them
+			if defaultNSE != nil {
+				if defaultNSE.Namespace != config.Kubernetes.OVNConfigNamespace {
+					return false, nil, fmt.Errorf("unexpected default NSE namespace %q, expected %q", defaultNSE.Namespace, config.Kubernetes.OVNConfigNamespace)
+				}
+				if defaultNSE.Name != types.DefaultNetworkName {
+					return false, nil, fmt.Errorf("unexpected default NSE name %q, expected %q", defaultNSE.Name, types.DefaultNetworkName)
+				}
+				activeNSE.IPRequest = defaultNSE.IPRequest
+				activeNSE.MacRequest = defaultNSE.MacRequest
+			}
+		}
 	}
 
 	if nInfo.IsPrimaryNetwork() && AllowsPersistentIPs(nInfo) {
 		ipamClaimName, wasPersistentIPRequested := pod.Annotations[OvnUDNIPAMClaimName]
 		if wasPersistentIPRequested {
-			networkSelections[activeNetworkNADs[0]].IPAMClaimReference = ipamClaimName
+			activeNSE.IPAMClaimReference = ipamClaimName
 		}
 	}
 
+	networkSelections[activeNetworkNADs[0]] = activeNSE
 	return true, networkSelections, nil
 }
 
