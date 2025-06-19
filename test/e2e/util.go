@@ -1217,7 +1217,7 @@ func routeToNode(nodeName string, ips []string, mtu int, add bool) error {
 			cmd = []string{"ip", "-6"}
 		}
 		var err error
-		cmd = append(cmd, "route", ipOp, fmt.Sprintf("%s/%d", ip, mask), "dev", "breth0")
+		cmd = append(cmd, "route", ipOp, fmt.Sprintf("%s/%d", ip, mask), "dev", deploymentconfig.Get().ExternalBridgeName())
 		if mtu != 0 {
 			cmd = append(cmd, "mtu", strconv.Itoa(mtu))
 		}
