@@ -230,9 +230,6 @@ func (ec ExternalContainer) IsValidPreCreateContainer() (bool, error) {
 	if ec.Network.String() == "" {
 		errs = append(errs, errors.New("network is not set"))
 	}
-	if ec.ExtPort == 0 {
-		errs = append(errs, errors.New("port is not set"))
-	}
 	if len(errs) == 0 {
 		return true, nil
 	}
