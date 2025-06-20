@@ -672,7 +672,7 @@ func findOvnKubeControlPlaneNode(namespace, controlPlanePodName, leaseName strin
 	framework.ExpectNoError(err, fmt.Sprintf("Unable to retrieve leases (%s)"+
 		"from %s %v", leaseName, namespace, err))
 
-	framework.Logf(fmt.Sprintf("master instance of %s is running on node %s", controlPlanePodName, ovnkubeControlPlaneNode))
+	framework.Logf("master instance of %s is running on node %s", controlPlanePodName, ovnkubeControlPlaneNode)
 	// Strip leading and trailing quotes if present
 	if ovnkubeControlPlaneNode[0] == '\'' || ovnkubeControlPlaneNode[0] == '"' {
 		ovnkubeControlPlaneNode = ovnkubeControlPlaneNode[1 : len(ovnkubeControlPlaneNode)-1]
@@ -898,7 +898,7 @@ var _ = ginkgo.Describe("e2e control plane", func() {
 			}
 		}
 
-		framework.Logf(fmt.Sprintf("Killed all pods running on node %s", ovnKubeControlPlaneNode))
+		framework.Logf("Killed all pods running on node %s", ovnKubeControlPlaneNode)
 
 		framework.ExpectNoError(<-errChan)
 	})
@@ -2230,7 +2230,7 @@ var _ = ginkgo.Describe("e2e delete databases", func() {
 		for {
 			select {
 			case msg := <-syncChan:
-				framework.Logf(msg + ": finish connectivity test.")
+				framework.Logf("%s: finish connectivity test.", msg)
 				break L
 			default:
 				stdout, err := e2ekubectl.RunKubectl(f.Namespace.Name, "exec", pod1Name, "--", "curl", fmt.Sprintf("%s/hostname",
@@ -2280,7 +2280,7 @@ var _ = ginkgo.Describe("e2e delete databases", func() {
 			select {
 			case msg := <-syncChan:
 				// wait for the connectivity test pods to be ready
-				framework.Logf(msg + ": delete and restart db pods.")
+				framework.Logf("%s: delete and restart db pods.", msg)
 			case err := <-errChan:
 				// fail if error is returned before test pods are ready
 				framework.Fail(err.Error())

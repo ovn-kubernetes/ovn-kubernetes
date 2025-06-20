@@ -101,7 +101,7 @@ var _ = ginkgo.Describe("e2e EgressQoS validation", func() {
 				ginkgo.Skip("destination IP is not available from target. IP family may not be available")
 			}
 
-			egressQoSConfig := fmt.Sprintf(`
+			egressQoSConfig := `
 apiVersion: k8s.ovn.org/v1
 kind: EgressQoS
 metadata:
@@ -115,7 +115,7 @@ spec:
     podSelector:
       matchLabels:
         app: test
-`)
+`
 
 			if err := os.WriteFile(egressQoSYaml, []byte(egressQoSConfig), 0644); err != nil {
 				framework.Failf("Unable to write CRD config to disk: %v", err)
@@ -138,7 +138,7 @@ spec:
 
 			pingAndCheckDSCP(f, srcPodName, dstPod1Name, *dst1IP, dstPod2Name, *dst2IP, tcpDumpTpl, dscpValue-1, dscpValue-2)
 
-			egressQoSConfig = fmt.Sprintf(`
+			egressQoSConfig = `
 apiVersion: k8s.ovn.org/v1
 kind: EgressQoS
 metadata:
@@ -152,7 +152,7 @@ spec:
     podSelector:
       matchLabels:
         app: test
-`)
+`
 
 			if err := os.WriteFile(egressQoSYaml, []byte(egressQoSConfig), 0644); err != nil {
 				framework.Failf("Unable to write CRD config to disk: %v", err)
@@ -185,7 +185,7 @@ spec:
 			pod, err := createPod(f, srcPodName, srcNode, f.Namespace.Name, []string{}, nil)
 			framework.ExpectNoError(err)
 
-			egressQoSConfig := fmt.Sprintf(`
+			egressQoSConfig := `
 apiVersion: k8s.ovn.org/v1
 kind: EgressQoS
 metadata:
@@ -203,7 +203,7 @@ spec:
     podSelector:
       matchLabels:
         test2: test2
-`)
+`
 
 			if err := os.WriteFile(egressQoSYaml, []byte(egressQoSConfig), 0644); err != nil {
 				framework.Failf("Unable to write CRD config to disk: %v", err)
@@ -254,7 +254,7 @@ spec:
 
 	ginkgo.It("Should deny resources with bad values", func() {
 		ginkgo.By("Creating an EgressQoS not named default")
-		egressQoSConfig := fmt.Sprintf(`
+		egressQoSConfig := `
 apiVersion: k8s.ovn.org/v1
 kind: EgressQoS
 metadata:
@@ -263,7 +263,7 @@ metadata:
 spec:
   egress:
   - dscp: 50
-`)
+`
 
 		if err := os.WriteFile(egressQoSYaml, []byte(egressQoSConfig), 0644); err != nil {
 			framework.Failf("Unable to write CRD config to disk: %v", err)
@@ -279,7 +279,7 @@ spec:
 		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("Invalid value: \"not-default\"")))
 
 		ginkgo.By("Creating an EgressQoS with bad cidrs")
-		egressQoSConfig = fmt.Sprintf(`
+		egressQoSConfig = `
 apiVersion: k8s.ovn.org/v1
 kind: EgressQoS
 metadata:
@@ -295,7 +295,7 @@ spec:
     dstCIDR: abc&!ABC/24
   - dscp: 1
     dstCIDR: 2001:::::::7334/158
-`)
+`
 
 		if err := os.WriteFile(egressQoSYaml, []byte(egressQoSConfig), 0644); err != nil {
 			framework.Failf("Unable to write CRD config to disk: %v", err)
