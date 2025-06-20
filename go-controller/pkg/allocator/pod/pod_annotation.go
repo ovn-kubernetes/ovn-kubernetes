@@ -330,14 +330,6 @@ func allocatePodAnnotationWithRollback(
 		}
 		hasIPAMClaim = ipamClaim != nil && len(ipamClaim.Status.IPs) > 0
 	}
-	if hasIPAM && hasStaticIPRequest {
-		// for now we can't tell apart already allocated IPs from IPs excluded
-		// from allocation so we can't really honor static IP requests when
-		// there is IPAM as we don't really know if the requested IP should not
-		// be allocated or was already allocated by the same pod
-		err = fmt.Errorf("cannot allocate a static IP request with IPAM for pod %s", podDesc)
-		return
-	}
 
 	// we need to update the annotation if it is missing IPs or MAC
 	needsIPOrMAC := len(tentative.IPs) == 0 && (hasIPAM || hasIPRequest)
@@ -348,6 +340,7 @@ func allocatePodAnnotationWithRollback(
 		if hasIPRequest {
 			tentative.IPs, err = util.ParseIPNets(network.IPRequest)
 			if err != nil {
+				klog.Warningf("Failed parsing IPRequest %+v for pod %s: %v", network.IPRequest, podDesc, err)
 				return
 			}
 		} else if hasIPAMClaim {

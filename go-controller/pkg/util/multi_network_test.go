@@ -1011,6 +1011,34 @@ func TestGetPodNADToNetworkMappingWithActiveNetwork(t *testing.T) {
 				},
 			},
 		},
+		{
+			desc: "the network configuration for a primary layer2 UDN receive pod requesting IP and MAC on default network annotation for it",
+			inputNetConf: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: networkName},
+				Topology: ovntypes.Layer2Topology,
+				NADName:  GetNADName(namespaceName, attachmentName),
+				Role:     ovntypes.NetworkRolePrimary,
+			},
+			inputPrimaryUDNConfig: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: networkName},
+				Topology: ovntypes.Layer2Topology,
+				NADName:  GetNADName(namespaceName, attachmentName),
+				Role:     ovntypes.NetworkRolePrimary,
+			},
+			inputPodAnnotations: map[string]string{
+				nadv1.NetworkAttachmentAnnot: GetNADName(namespaceName, "another-network"),
+				DefNetworkAnnotation:         `[{"namespace": "ovn-kubernetes", "name": "default", "ips": ["192.168.0.3/24", "fda6::3/48"], "mac": "aa:bb:cc:dd:ee:ff"}]`,
+			},
+			expectedIsAttachmentRequested: true,
+			expectedNetworkSelectionElements: map[string]*nadv1.NetworkSelectionElement{
+				"ns1/attachment1": {
+					Name:       "attachment1",
+					Namespace:  "ns1",
+					IPRequest:  []string{"192.168.0.3/24", "fda6::3/48"},
+					MacRequest: "aa:bb:cc:dd:ee:ff",
+				},
+			},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.desc, func(t *testing.T) {
@@ -1049,6 +1077,7 @@ func TestGetPodNADToNetworkMappingWithActiveNetwork(t *testing.T) {
 			)
 
 			if err != nil {
+				g.Expect(test.expectedError).ToNot(gomega.HaveOccurred(), "unexpected error: %v", err)
 				g.Expect(err).To(gomega.MatchError(test.expectedError))
 			}
 			g.Expect(isAttachmentRequested).To(gomega.Equal(test.expectedIsAttachmentRequested))
@@ -1261,10 +1290,10 @@ func TestNewNetInfo(t *testing.T) {
 			config.IPv6Mode = test.ipv6Cluster
 			g := gomega.NewWithT(t)
 			_, err := NewNetInfo(inputNetConf)
-			if test.expectedError == nil {
-				g.Expect(err).ToNot(gomega.HaveOccurred())
+			if test.expectedError != nil {
+				g.Expect(err).To(gomega.MatchError(test.expectedError), "should return an error for invalid network configuration")
 			} else {
-				g.Expect(err).To(gomega.MatchError(test.expectedError.Error()))
+				g.Expect(err).NotTo(gomega.HaveOccurred(), "should not return an error for valid network configuration")
 			}
 		})
 	}
