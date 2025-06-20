@@ -671,7 +671,7 @@ func addOrUpdatePodSNATOps(nbClient libovsdbclient.Client, gwRouterName string, 
 	if err != nil {
 		return nil, err
 	}
-	if ops, err = libovsdbops.CreateOrUpdateNATsOps(nbClient, ops, router, nats...); err != nil {
+	if ops, err = libovsdbops.CreateOrUpdateNATsOps(nbClient, ops, router, libovsdbops.IsEquivalentNAT, nats...); err != nil {
 		return nil, fmt.Errorf("failed to update SNAT for pods of router: %s, error: %v", gwRouterName, err)
 	}
 	return ops, nil

@@ -78,7 +78,7 @@ func TestFindNATsUsingPredicate(t *testing.T) {
 			for _, nat := range tt.expectedRc {
 				foundMatch = false
 				for _, rcNat := range rc {
-					if isEquivalentNAT(rcNat, nat) {
+					if IsEquivalentNAT(rcNat, nat) {
 						foundMatch = true
 						break
 					}

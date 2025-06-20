@@ -1032,7 +1032,7 @@ func BuildDNATAndSNATWithMatch(
 		match)
 }
 
-// isEquivalentNAT checks if the `searched` NAT is equivalent to `existing`.
+// IsEquivalentNAT checks if the `searched` NAT is equivalent to `existing`.
 // Returns true if the UUID is set in `searched` and matches the UUID of `existing`.
 // Otherwise, perform the following checks:
 //   - Compare the Type and Match fields.
@@ -1040,17 +1040,34 @@ func BuildDNATAndSNATWithMatch(
 //   - Compare LogicalIP if the Type in `searched` is SNAT.
 //   - Compare LogicalPort if it is set in `searched`.
 //   - Ensure that all ExternalIDs of `searched` exist and have the same value in `existing`.
-func isEquivalentNAT(existing *nbdb.NAT, searched *nbdb.NAT) bool {
+func IsEquivalentNAT(existing *nbdb.NAT, searched *nbdb.NAT) bool {
+
+	if !IsEquivalentNATExceptMatch(existing, searched) {
+		return false
+	}
+
+	if searched.Match != existing.Match {
+		return false
+	}
+
+	return true
+}
+
+// IsEquivalentNATExceptMatch checks if the `searched` NAT is equivalent to `existing` except for the Match field.
+// Returns true if the UUID is set in `searched` and matches the UUID of `existing`.
+// Otherwise, perform the following checks:
+//   - Compare the Type
+//   - Compare ExternalIP if it is set in `searched`.
+//   - Compare LogicalIP if the Type in `searched` is SNAT.
+//   - Compare LogicalPort if it is set in `searched`.
+//   - Ensure that all ExternalIDs of `searched` exist and have the same value in `existing`.
+func IsEquivalentNATExceptMatch(existing *nbdb.NAT, searched *nbdb.NAT) bool {
 	// Simple case: uuid was provided.
 	if searched.UUID != "" && existing.UUID == searched.UUID {
 		return true
 	}
 
 	if searched.Type != existing.Type {
-		return false
-	}
-
-	if searched.Match != existing.Match {
 		return false
 	}
 
@@ -1088,7 +1105,7 @@ func GetNAT(nbClient libovsdbclient.Client, nat *nbdb.NAT) (*nbdb.NAT, error) {
 	found := []*nbdb.NAT{}
 	opModel := operationModel{
 		Model:          nat,
-		ModelPredicate: func(item *nbdb.NAT) bool { return isEquivalentNAT(item, nat) },
+		ModelPredicate: func(item *nbdb.NAT) bool { return IsEquivalentNAT(item, nat) },
 		ExistingResult: &found,
 		ErrNotFound:    true,
 		BulkOp:         false,
@@ -1137,7 +1154,8 @@ func GetRouterNATs(nbClient libovsdbclient.Client, router *nbdb.LogicalRouter) (
 
 // CreateOrUpdateNATsOps creates or updates the provided NATs, adds them to
 // the provided logical router and returns the corresponding ops
-func CreateOrUpdateNATsOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, router *nbdb.LogicalRouter, nats ...*nbdb.NAT) ([]ovsdb.Operation, error) {
+func CreateOrUpdateNATsOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, router *nbdb.LogicalRouter,
+	equivalentNATFunc func(*nbdb.NAT, *nbdb.NAT) bool, nats ...*nbdb.NAT) ([]ovsdb.Operation, error) {
 	routerNats, err := GetRouterNATs(nbClient, router)
 	if err != nil {
 		return ops, fmt.Errorf("unable to get NAT entries for router %+v: %w", router, err)
@@ -1149,7 +1167,7 @@ func CreateOrUpdateNATsOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation
 	for i := range nats {
 		inputNat := nats[i]
 		for _, routerNat := range routerNats {
-			if isEquivalentNAT(routerNat, inputNat) {
+			if equivalentNATFunc(routerNat, inputNat) {
 				inputNat.UUID = routerNat.UUID
 				break
 			}
@@ -1180,7 +1198,19 @@ func CreateOrUpdateNATsOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation
 // CreateOrUpdateNATs creates or updates the provided NATs and adds them to
 // the provided logical router
 func CreateOrUpdateNATs(nbClient libovsdbclient.Client, router *nbdb.LogicalRouter, nats ...*nbdb.NAT) error {
-	ops, err := CreateOrUpdateNATsOps(nbClient, nil, router, nats...)
+	ops, err := CreateOrUpdateNATsOps(nbClient, nil, router, IsEquivalentNAT, nats...)
+	if err != nil {
+		return err
+	}
+
+	_, err = TransactAndCheck(nbClient, ops)
+	return err
+}
+
+// CreateOrUpdateNATs creates or updates the provided NATs and adds them to
+// the provided logical router
+func CreateOrUpdateNATsWithMatch(nbClient libovsdbclient.Client, router *nbdb.LogicalRouter, nats ...*nbdb.NAT) error {
+	ops, err := CreateOrUpdateNATsOps(nbClient, nil, router, IsEquivalentNATExceptMatch, nats...)
 	if err != nil {
 		return err
 	}
@@ -1205,7 +1235,7 @@ func DeleteNATsOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, router
 	opModels := make([]operationModel, 0, len(routerNats)+1)
 	for _, routerNat := range routerNats {
 		for _, inputNat := range nats {
-			if isEquivalentNAT(routerNat, inputNat) {
+			if IsEquivalentNAT(routerNat, inputNat) {
 				router.Nat = append(router.Nat, routerNat.UUID)
 				opModel := operationModel{
 					Model:       routerNat,
