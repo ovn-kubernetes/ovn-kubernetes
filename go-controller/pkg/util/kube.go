@@ -738,6 +738,16 @@ func PodTerminating(pod *corev1.Pod) bool {
 	return pod.DeletionTimestamp != nil
 }
 
+// PodNotReady checks if the pod is not ready
+func PodNotReady(pod *corev1.Pod) bool {
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodReady {
+			return condition.Status == corev1.ConditionFalse
+		}
+	}
+	return false
+}
+
 // EventRecorder returns an EventRecorder type that can be
 // used to post Events to different object's lifecycles.
 func EventRecorder(kubeClient kubernetes.Interface) record.EventRecorder {
