@@ -915,20 +915,6 @@ func (bnc *BaseNetworkController) GetLocalZoneNodes() ([]*corev1.Node, error) {
 
 // isLocalZoneNode returns true if the node is part of the local zone.
 func (bnc *BaseNetworkController) isLocalZoneNode(node *corev1.Node) bool {
-	/** HACK BEGIN **/
-	// TODO(tssurya): Remove this HACK a few months from now. This has been added only to
-	// minimize disruption for upgrades when moving to interconnect=true.
-	// We want the legacy ovnkube-master to wait for remote ovnkube-node to
-	// signal it using "k8s.ovn.org/remote-zone-migrated" annotation before
-	// considering a node as remote when we upgrade from "global" (1 zone IC)
-	// zone to multi-zone. This is so that network disruption for the existing workloads
-	// is negligible and until the point where ovnkube-node flips the switch to connect
-	// to the new SBDB, it would continue talking to the legacy RAFT ovnkube-sbdb to ensure
-	// OVN/OVS flows are intact.
-	if bnc.zone == types.OvnDefaultZone {
-		return !util.HasNodeMigratedZone(node)
-	}
-	/** HACK END **/
 	return util.GetNodeZone(node) == bnc.zone
 }
 
