@@ -1,6 +1,7 @@
 package kubevirt
 
 import (
+	"encoding/json"
 	"fmt"
 
 	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
@@ -9,6 +10,10 @@ import (
 	"k8s.io/utils/ptr"
 
 	kubevirtv1 "kubevirt.io/api/core/v1"
+)
+
+const (
+	AddressesAnnotation = "network.kubevirt.io/addresses"
 )
 
 func GenerateFakeVirtLauncherPod(namespace, vmName string) *corev1.Pod {
@@ -47,4 +52,16 @@ kill -9 $pid
 		return fmt.Errorf("%s:%w", output, err)
 	}
 	return nil
+}
+
+func GenerateAddressesAnnotations(networkName string, addresses []string) (map[string]string, error) {
+	staticIPs, err := json.Marshal(map[string][]string{
+		networkName: addresses,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal static IPs: %w", err)
+	}
+	return map[string]string{
+		AddressesAnnotation: string(staticIPs),
+	}, nil
 }
