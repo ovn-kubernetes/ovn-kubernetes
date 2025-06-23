@@ -207,6 +207,28 @@ func allocatePodAnnotationWithTunnelID(
 	return pod, podAnnotation, nil
 }
 
+// validateStaticIPRequest checks if a static IP request can be honored when IPAM is enabled for the given network.
+func validateStaticIPRequest(netInfo util.NetInfo, podDesc string) error {
+	// Allow static IPs with IPAM only for primary networks with layer2 topology when EnablePreconfiguredUDNAddresses is enabled
+	// Feature gate integration: EnablePreconfiguredUDNAddresses controls static IP allocation with IPAM
+	if !util.IsPreconfiguredUDNAddressesEnabled() {
+		// Feature is disabled, reject static IPs with IPAM
+		return fmt.Errorf("cannot allocate a static IP request with IPAM for pod %s (custom network configuration disabled)", podDesc)
+	}
+	if !netInfo.IsPrimaryNetwork() {
+		// Static IP requests with IPAM are only supported on primary networks
+		return fmt.Errorf("cannot allocate a static IP request with IPAM for pod %s: only supported on primary networks", podDesc)
+	}
+	if netInfo.TopologyType() != types.Layer2Topology {
+		// Static IP requests with IPAM are only supported on layer2 topology networks.
+		// On other topologies, we cannot distinguish between already allocated IPs and
+		// IPs excluded from allocation, making it impossible to safely honor static IP
+		// requests when IPAM is enabled.
+		return fmt.Errorf("cannot allocate a static IP request with IPAM for pod %s: layer2 topology is required, but network has topology %q", podDesc, netInfo.TopologyType())
+	}
+	return nil
+}
+
 // allocatePodAnnotationWithRollback allocates the PodAnnotation which includes
 // IPs, a mac address, routes, gateways and an ID. Returns the allocated pod
 // annotation and a pod with that annotation set. Returns a nil pod and the existing
@@ -330,13 +352,11 @@ func allocatePodAnnotationWithRollback(
 		}
 		hasIPAMClaim = ipamClaim != nil && len(ipamClaim.Status.IPs) > 0
 	}
+
 	if hasIPAM && hasStaticIPRequest {
-		// for now we can't tell apart already allocated IPs from IPs excluded
-		// from allocation so we can't really honor static IP requests when
-		// there is IPAM as we don't really know if the requested IP should not
-		// be allocated or was already allocated by the same pod
-		err = fmt.Errorf("cannot allocate a static IP request with IPAM for pod %s", podDesc)
-		return
+		if err = validateStaticIPRequest(netInfo, podDesc); err != nil {
+			return
+		}
 	}
 
 	// we need to update the annotation if it is missing IPs or MAC
@@ -348,6 +368,7 @@ func allocatePodAnnotationWithRollback(
 		if hasIPRequest {
 			tentative.IPs, err = util.ParseIPNets(network.IPRequest)
 			if err != nil {
+				klog.Warningf("Failed parsing IPRequest %+v for pod %s: %v", network.IPRequest, podDesc, err)
 				return
 			}
 		} else if hasIPAMClaim {
