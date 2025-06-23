@@ -406,19 +406,11 @@ func (nc *DefaultNodeNetworkController) initGatewayPreStart(
 		return gw.initFunc()
 	}
 
-	readyGwFunc := func() (bool, error) {
-		controllerReady, err := isOVNControllerReady()
-		if err != nil || !controllerReady {
-			return false, err
-		}
-		return gw.readyFunc()
-	}
-
 	if err := nodeAnnotator.Run(); err != nil {
 		return nil, fmt.Errorf("failed to set node %s annotations: %w", nc.name, err)
 	}
 
-	waiter.AddWait(readyGwFunc, initGwFunc)
+	waiter.AddWait(gw.readyFunc, initGwFunc)
 	nc.Gateway = gw
 
 	// Wait for management port and gateway resources to be created by the master
