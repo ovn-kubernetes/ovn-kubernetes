@@ -499,7 +499,9 @@ spec:
         - mountPath: /ovn-cert
           name: host-ovn-cert
           readOnly: true
-
+        - mountPath: /var/run/ovn-kubernetes
+          name: host-var-run-ovn-kubernetes
+          readOnly: true
         resources:
           requests:
             cpu: 100m
@@ -520,12 +522,12 @@ spec:
               fieldPath: metadata.namespace
         - name: OVN_SSL_ENABLE
           value: "{{ ovn_ssl_en }}"
-
         - name: OVN_NORTH
           value: "local"
         - name: OVN_SOUTH
           value: "local"
-
+        - name: OVN_ENABLE_INTERCONNECT
+          value: "{{ ovn_enable_interconnect }}"
         readinessProbe:
           exec:
             command: ["/usr/bin/ovn-kube-util", "readiness-probe", "-t", "ovn-controller"]

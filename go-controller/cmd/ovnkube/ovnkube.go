@@ -29,6 +29,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controllermanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb"
+	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
 	ovnnode "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
@@ -514,6 +515,18 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 				controllerErr = fmt.Errorf("failed to start network controller: %w", err)
 				return
 			}
+			// wait until all changes in OVN NB DB have been sync'd to OVN SB DB. If context is cancelled, func returns.
+			if err = libovsdbutil.WaitUntilNorthdSyncOnce(ctx, libovsdbOvnNBClient, libovsdbOvnSBClient); err != nil {
+				klog.Errorf("Failed waiting for northd to sync OVN Northbound DB to Southbound: %v", err)
+			}
+			// ovnkube-controller writes a file when OVN SB DB contains the changes post sync. File is removed on exit.
+			const sbDBHotFileName = "/var/run/ovn-kubernetes/ovnkube-controller-sb-db-hot"
+			if err = os.WriteFile(sbDBHotFileName, []byte(time.Now().String()), 0o644); err != nil {
+				klog.Errorf("Failed to write ovnkube controller sb db hot file: %v", err)
+			}
+			defer func() {
+				os.Remove(sbDBHotFileName)
+			}()
 
 			// record delay until ready
 			metrics.MetricOVNKubeControllerReadyDuration.Set(time.Since(startTime).Seconds())

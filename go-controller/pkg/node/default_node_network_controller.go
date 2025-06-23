@@ -243,6 +243,12 @@ func (oc *DefaultNodeNetworkController) Reconcile(netInfo util.NetInfo) error {
 }
 
 func clearOVSFlowTargets() error {
+	// TODO: match on something more specific than just the existance of an error
+	// nothing to clear if the bridge doesnt exist
+	if _, _, err := util.RunOVSVsctl("br-exists", "br-int"); err != nil {
+		return nil
+	}
+
 	_, _, err := util.RunOVSVsctl(
 		"--",
 		"clear", "bridge", "br-int", "netflow",
@@ -506,44 +512,6 @@ func setEncapPort(ctx context.Context) error {
 		return fmt.Errorf("error setting OVS encap-port: %v\n  %q", errSet, stderr)
 	}
 	return nil
-}
-
-func isOVNControllerReady() (bool, error) {
-	// check node's connection status
-	runDir := util.GetOvnRunDir()
-	pid, err := os.ReadFile(runDir + "ovn-controller.pid")
-	if err != nil {
-		return false, fmt.Errorf("unknown pid for ovn-controller process: %v", err)
-	}
-	ctlFile := runDir + fmt.Sprintf("ovn-controller.%s.ctl", strings.TrimSuffix(string(pid), "\n"))
-	ret, _, err := util.RunOVSAppctl("-t", ctlFile, "connection-status")
-	if err != nil {
-		return false, fmt.Errorf("could not get connection status: %w", err)
-	}
-	klog.Infof("Node connection status = %s", ret)
-	if ret != "connected" {
-		return false, nil
-	}
-
-	// check whether br-int exists on node
-	_, _, err = util.RunOVSVsctl("--", "br-exists", "br-int")
-	if err != nil {
-		return false, nil
-	}
-
-	// check by dumping br-int flow entries
-	stdout, _, err := util.RunOVSOfctl("dump-aggregate", "br-int")
-	if err != nil {
-		klog.V(5).Infof("Error dumping aggregate flows: %v", err)
-		return false, nil
-	}
-	hasFlowCountZero := strings.Contains(stdout, "flow_count=0")
-	if hasFlowCountZero {
-		klog.V(5).Info("Got a flow count of 0 when dumping flows for node")
-		return false, nil
-	}
-
-	return true, nil
 }
 
 // getEnvNameFromResourceName gets the device plugin env variable from the device plugin resource name.

@@ -1701,11 +1701,6 @@ ovnkube-controller-with-node() {
   echo "=============== ovnkube-controller-with-node - (wait for ovs)"
   wait_for_event ovs_ready
 
-  if [[ ${ovnkube_node_mode} != "dpu-host" ]]; then
-    echo "=============== ovnkube-controller-with-node - (ovn-node  wait for ovn-controller.pid)"
-    wait_for_event process_ready ovn-controller
-  fi
-
   ovn_routable_mtu_flag=
   if [[ -n "${routable_mtu}" ]]; then
     routable_mtu_flag="--routable-mtu ${routable_mtu}"
@@ -2359,6 +2354,22 @@ ovn-controller() {
 
   echo "ovn_nbdb ${ovn_nbdb}   ovn_sbdb ${ovn_sbdb}"
   echo "ovn_nbdb_conn ${ovn_nbdb_conn}"
+
+  # if ovn IC, we do not support multi Node per Zone, therefore its safe to assume ovnkube-controller is local and ovn-controller
+  # has access to the file. Block starting on a file emitted by ovnkube-controller when SB DB is not stale.
+  if [[ ${ovn_enable_interconnect} == "true" ]]; then
+      echo "=============== time: $(date +%d-%m-%H:%M:%S:%N) ovn-controller - (wait for ovnkube-controller SB DB hot file for 5 minutes)"
+      retries=0
+      while [[ ${retries} -lt 3000 ]]; do
+          if [[ -f "/var/run/ovn-kubernetes/ovnkube-controller-sb-db-hot" ]]; then
+            echo "=============== time: $(date +%d-%m-%H:%M:%S:%N) ovn-controller - ovnkube-controller SB DB hot file found"
+            break
+          fi
+          echo "=============== time: $(date +%d-%m-%H:%M:%S:%N) ovn-controller - (wait for ovnkube-controller SB DB hot file)..."
+          sleep .1
+          ((retries += 1))
+        done
+  fi
 
   echo "=============== ovn-controller  start_controller"
   rm -f /var/run/ovn-kubernetes/cni/*
