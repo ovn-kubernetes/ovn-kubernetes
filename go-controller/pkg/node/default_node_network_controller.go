@@ -1028,7 +1028,7 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 
 	// Complete gateway initialization
 	if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
-		err = nc.initGatewayDPUHost(nc.nodeAddress)
+		err = nc.initGatewayDPUHost(nc.nodeAddress, nodeAnnotator)
 		if err != nil {
 			return err
 		}
@@ -1039,6 +1039,16 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 		}
 	}
 
+	if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
+		klog.Infof("Setting EncapIp %s in node annotation", config.Default.EncapIP)
+		if err = util.SetNodeEncapIp(nodeAnnotator, config.Default.EncapIP); err != nil {
+			return err
+		}
+	}
+	// Commit annotation changes
+	if err := nodeAnnotator.Run(); err != nil {
+		return fmt.Errorf("failed to set node %s annotations: %w", nc.name, err)
+	}
 	// If EncapPort is not the default tell sbdb to use specified port.
 	// We set the encap port after annotating the zone name so that ovnkube-controller has come up
 	// and configured the chassis in SBDB (ovnkube-controller waits for ovnkube-node to set annotation
