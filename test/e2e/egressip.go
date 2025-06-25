@@ -915,7 +915,7 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", func(netConfigPa
 				}
 				gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate new Node IP")
 
-				var egressIPConfig = fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
+				var egressIPConfig = `apiVersion: k8s.ovn.org/v1
 kind: EgressIP
 metadata:
     name: ` + egressIPName + `
@@ -929,7 +929,7 @@ spec:
     namespaceSelector:
         matchLabels:
             name: ` + f.Namespace.Name + `
-`)
+`
 
 				if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
 					framework.Failf("Unable to write CRD config to disk: %v", err)
@@ -1158,7 +1158,7 @@ spec:
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate new Node IP")
 
 		framework.Logf("Selected EgressIP %s", egressIP1.String())
-		var egressIPConfig = fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
+		var egressIPConfig = `apiVersion: k8s.ovn.org/v1
 kind: EgressIP
 metadata:
     name: ` + egressIPName + `
@@ -1171,7 +1171,7 @@ spec:
     namespaceSelector:
         matchLabels:
             name: ` + f.Namespace.Name + `
-`)
+`
 		if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
 			framework.Failf("Unable to write CRD config to disk: %v", err)
 		}
@@ -1301,7 +1301,7 @@ spec:
 		}
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate new Node IP")
 
-		var egressIPConfig = fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
+		var egressIPConfig = `apiVersion: k8s.ovn.org/v1
 kind: EgressIP
 metadata:
     name: ` + egressIPName + `
@@ -1314,7 +1314,7 @@ spec:
     namespaceSelector:
         matchLabels:
             name: ` + f.Namespace.Name + `
-`)
+`
 		if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
 			framework.Failf("Unable to write CRD config to disk: %v", err)
 		}
@@ -1428,7 +1428,7 @@ spec:
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate new IPv4 Node IP")
 		gomega.Expect(err2).ShouldNot(gomega.HaveOccurred(), "must allocate new IPv6 Node IP")
 
-		var egressIPConfig = fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
+		var egressIPConfig = `apiVersion: k8s.ovn.org/v1
 kind: EgressIP
 metadata:
     name: ` + egressIPName + `
@@ -1442,7 +1442,7 @@ spec:
     namespaceSelector:
         matchLabels:
             name: ` + f.Namespace.Name + `
-`)
+`
 		if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
 			framework.Failf("Unable to write CRD config to disk: %v", err)
 		}
@@ -1482,7 +1482,7 @@ spec:
 		}
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate new Node IP")
 
-		var egressIPConfig2 = fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
+		var egressIPConfig2 = `apiVersion: k8s.ovn.org/v1
 kind: EgressIP
 metadata:
     name: ` + egressIPName2 + `
@@ -1495,7 +1495,7 @@ spec:
     namespaceSelector:
         matchLabels:
             name: ` + f.Namespace.Name + `
-`)
+`
 		if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig2), 0644); err != nil {
 			framework.Failf("Unable to write CRD config to disk: %v", err)
 		}
@@ -1563,7 +1563,7 @@ spec:
 		framework.ExpectNoError(err, "Step 8. Check connectivity from pod to an external container and verify that the srcIP is the expected egressIP from object1, failed: %v", err)
 
 		ginkgo.By("9. Delete assigned egressIP1 from egressIP object1")
-		egressIPConfig = fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
+		egressIPConfig = `apiVersion: k8s.ovn.org/v1
 kind: EgressIP
 metadata:
     name: ` + egressIPName + `
@@ -1576,7 +1576,7 @@ spec:
     namespaceSelector:
         matchLabels:
             name: ` + f.Namespace.Name + `
-`)
+`
 		if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
 			framework.Failf("Unable to write CRD config to disk: %v", err)
 		}
@@ -1753,7 +1753,7 @@ spec:
 		}
 		updateNamespaceLabels(f, podNamespace, labels)
 
-		var egressIPConfig = fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
+		var egressIPConfig = `apiVersion: k8s.ovn.org/v1
 kind: EgressIP
 metadata:
     name: ` + egressIPName + `
@@ -1766,7 +1766,7 @@ spec:
     namespaceSelector:
         matchLabels:
             name: ` + f.Namespace.Name + `
-`)
+`
 		if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
 			framework.Failf("Unable to write CRD config to disk: %v", err)
 		}
@@ -1967,7 +1967,7 @@ spec:
 			firewallDenyAll = "0.0.0.0/0"
 		}
 
-		var egressFirewallConfig = fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
+		var egressFirewallConfig = `apiVersion: k8s.ovn.org/v1
 kind: EgressFirewall
 metadata:
   name: default
@@ -1980,7 +1980,7 @@ spec:
   - type: Deny
     to:
       cidrSelector: ` + firewallDenyAll + `
-`)
+`
 
 		if err := os.WriteFile(egressFirewallYaml, []byte(egressFirewallConfig), 0644); err != nil {
 			framework.Failf("Unable to write CRD config to disk: %v", err)
@@ -2077,7 +2077,7 @@ spec:
 		}
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate new Node IP")
 
-		var egressIPConfig = fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
+		var egressIPConfig = `apiVersion: k8s.ovn.org/v1
 kind: EgressIP
 metadata:
     name: ` + egressIPName + `
@@ -2090,7 +2090,7 @@ spec:
     namespaceSelector:
         matchLabels:
             name: ` + f.Namespace.Name + `
-`)
+`
 
 		if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
 			framework.Failf("Unable to write CRD config to disk: %v", err)
@@ -2247,7 +2247,7 @@ spec:
 		updateNamespaceLabels(f, podNamespace, labels)
 
 		ginkgo.By("1. Create an EgressIP object with two egress IPs - both hosted by the same secondary host network")
-		egressIPConfig := fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
+		egressIPConfig := `apiVersion: k8s.ovn.org/v1
 kind: EgressIP
 metadata:
     name: ` + egressIPName + `
@@ -2261,7 +2261,7 @@ spec:
     namespaceSelector:
         matchLabels:
             name: ` + f.Namespace.Name + `
-`)
+`
 		// IPv6 EIP statuses are represented as 'compressed' IPv6 strings. Switch to that for comparison.
 		if v6 {
 			egressIPIP1 = net.ParseIP(egressIPIP1).String()
@@ -2494,7 +2494,7 @@ spec:
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate new Node IP")
 		egressIPOVN := egressIP.String()
 		egressIPSecondaryHost := "10.10.10.200"
-		egressIPConfig := fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
+		egressIPConfig := `apiVersion: k8s.ovn.org/v1
 kind: EgressIP
 metadata:
     name: ` + egressIPName + `
@@ -2508,7 +2508,7 @@ spec:
     namespaceSelector:
         matchLabels:
             name: ` + f.Namespace.Name + `
-`)
+`
 
 		if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
 			framework.Failf("Unable to write CRD config to disk: %v", err)
@@ -2745,7 +2745,7 @@ spec:
 		updateNamespaceLabels(f, podNamespace, labels)
 
 		ginkgo.By("1. Create two EgressIP objects with one egress IP each - hosted by a secondary host network")
-		egressIPConfig := fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
+		egressIPConfig := `apiVersion: k8s.ovn.org/v1
 kind: EgressIP
 metadata:
     name: ` + egressIPName + `
@@ -2758,7 +2758,7 @@ spec:
     namespaceSelector:
         matchLabels:
             name: ` + f.Namespace.Name + `
-`)
+`
 
 		if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
 			framework.Failf("Unable to write CRD config to disk: %v", err)
@@ -2770,7 +2770,7 @@ spec:
 		}()
 		framework.Logf("Create the first EgressIP configuration")
 		e2ekubectl.RunKubectlOrDie("default", "create", "-f", egressIPYaml)
-		egressIPConfig = fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
+		egressIPConfig = `apiVersion: k8s.ovn.org/v1
 kind: EgressIP
 metadata:
     name: ` + egressIPName2 + `
@@ -2783,7 +2783,7 @@ spec:
     namespaceSelector:
         matchLabels:
             name: ` + f.Namespace.Name + `
-`)
+`
 		if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
 			framework.Failf("Unable to write CRD config to disk: %v", err)
 		}
@@ -2917,7 +2917,7 @@ spec:
 		updateNamespaceLabels(f, podNamespace, labels)
 
 		ginkgo.By("2. Create one EgressIP object with one egress IP hosted by a secondary host network")
-		egressIPConfig := fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
+		egressIPConfig := `apiVersion: k8s.ovn.org/v1
 kind: EgressIP
 metadata:
     name: ` + egressIPName + `
@@ -2930,7 +2930,7 @@ spec:
     namespaceSelector:
         matchLabels:
             name: ` + f.Namespace.Name + `
-`)
+`
 
 		if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
 			framework.Failf("Unable to write CRD config to disk: %v", err)
@@ -3002,7 +3002,7 @@ spec:
 		}
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate new Node IP")
 
-		var egressIPConfig = fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
+		var egressIPConfig = `apiVersion: k8s.ovn.org/v1
 kind: EgressIP
 metadata:
     name: ` + egressIPName + `
@@ -3015,7 +3015,7 @@ spec:
     namespaceSelector:
         matchLabels:
             wants: egress
-`)
+`
 		if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
 			framework.Failf("Unable to write CRD config to disk: %v", err)
 		}
@@ -3137,7 +3137,7 @@ spec:
 		}
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate new Node IP")
 
-		var egressIPConfig = fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
+		var egressIPConfig = `apiVersion: k8s.ovn.org/v1
 kind: EgressIP
 metadata:
     name: ` + egressIPName + `
@@ -3150,7 +3150,7 @@ spec:
     namespaceSelector:
         matchLabels:
             wants: egress
-`)
+`
 		if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
 			framework.Failf("Unable to write CRD config to disk: %v", err)
 		}

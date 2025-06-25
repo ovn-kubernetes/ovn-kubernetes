@@ -114,7 +114,7 @@ var _ = ginkgo.Describe("EgressService", func() {
 			framework.ExpectNoError(err, "failed to create backend pods")
 
 			ginkgo.By("Creating an egress service without node selectors")
-			egressServiceConfig := fmt.Sprintf(`
+			egressServiceConfig := `
 apiVersion: k8s.ovn.org/v1
 kind: EgressService
 metadata:
@@ -122,7 +122,7 @@ metadata:
   namespace: ` + f.Namespace.Name + `
 spec:
   sourceIPBy: "LoadBalancerIP"
-`)
+`
 
 			if err := os.WriteFile(egressServiceYAML, []byte(egressServiceConfig), 0644); err != nil {
 				framework.Failf("Unable to write CRD config to disk: %v", err)
@@ -166,7 +166,7 @@ spec:
 			setBlackholeRoutingTableOnNodes(providerCtx, nodes, externalContainer, blackholeRoutingTable, protocol == v1.IPv4Protocol)
 
 			ginkgo.By("Updating the resource to contain a Network")
-			egressServiceConfig = fmt.Sprintf(`
+			egressServiceConfig = `
 apiVersion: k8s.ovn.org/v1
 kind: EgressService
 metadata:
@@ -175,7 +175,7 @@ metadata:
 spec:
   sourceIPBy: "LoadBalancerIP"
   network: "100"
-`)
+`
 			if err := os.WriteFile(egressServiceYAML, []byte(egressServiceConfig), 0644); err != nil {
 				framework.Failf("Unable to write CRD config to disk: %v", err)
 			}
@@ -256,7 +256,7 @@ spec:
 			framework.ExpectNoError(err, "failed to create backend pods")
 
 			ginkgo.By("Creating an egress service with custom network without SNAT")
-			egressServiceConfig := fmt.Sprintf(`
+			egressServiceConfig := `
 apiVersion: k8s.ovn.org/v1
 kind: EgressService
 metadata:
@@ -265,7 +265,7 @@ metadata:
 spec:
   sourceIPBy: "Network"
   network: "100"
-`)
+`
 
 			if err := os.WriteFile(egressServiceYAML, []byte(egressServiceConfig), 0644); err != nil {
 				framework.Failf("Unable to write CRD config to disk: %v", err)
@@ -380,7 +380,7 @@ spec:
 			framework.ExpectNoError(err, "failed to create backend pods")
 
 			ginkgo.By("Creating an egress service without node selectors")
-			egressServiceConfig := fmt.Sprintf(`
+			egressServiceConfig := `
 apiVersion: k8s.ovn.org/v1
 kind: EgressService
 metadata:
@@ -388,7 +388,7 @@ metadata:
   namespace: ` + f.Namespace.Name + `
 spec:
   sourceIPBy: "LoadBalancerIP"
-`)
+`
 
 			if err := os.WriteFile(egressServiceYAML, []byte(egressServiceConfig), 0644); err != nil {
 				framework.Failf("Unable to write CRD config to disk: %v", err)
@@ -493,7 +493,7 @@ spec:
 
 			ginkgo.By("Creating an egress service selecting the first node")
 			firstNode := nodes[0].Name
-			egressServiceConfig := fmt.Sprintf(`
+			egressServiceConfig := `
 apiVersion: k8s.ovn.org/v1
 kind: EgressService
 metadata:
@@ -504,7 +504,7 @@ spec:
   nodeSelector:
     matchLabels:
       kubernetes.io/hostname: ` + firstNode + `
-`)
+`
 
 			if err := os.WriteFile(egressServiceYAML, []byte(egressServiceConfig), 0644); err != nil {
 				framework.Failf("Unable to write CRD config to disk: %v", err)
@@ -546,7 +546,7 @@ spec:
 
 			ginkgo.By("Updating the egress service to select the second node")
 			secondNode := nodes[1].Name
-			egressServiceConfig = fmt.Sprintf(`
+			egressServiceConfig = `
 apiVersion: k8s.ovn.org/v1
 kind: EgressService
 metadata:
@@ -557,7 +557,7 @@ spec:
   nodeSelector:
     matchLabels:
       kubernetes.io/hostname: ` + secondNode + `
-`)
+`
 			if err := os.WriteFile(egressServiceYAML, []byte(egressServiceConfig), 0644); err != nil {
 				framework.Failf("Unable to write CRD config to disk: %v", err)
 			}
@@ -593,7 +593,7 @@ spec:
 			reachAllServiceBackendsFromExternalContainer(externalContainer, svcIP, podHTTPPort, pods)
 
 			ginkgo.By("Updating the egress service selector to match no node")
-			egressServiceConfig = fmt.Sprintf(`
+			egressServiceConfig = `
 apiVersion: k8s.ovn.org/v1
 kind: EgressService
 metadata:
@@ -604,7 +604,7 @@ spec:
   nodeSelector:
     matchLabels:
       perfect: match
-`)
+`
 			if err := os.WriteFile(egressServiceYAML, []byte(egressServiceConfig), 0644); err != nil {
 				framework.Failf("Unable to write CRD config to disk: %v", err)
 			}
@@ -716,7 +716,7 @@ spec:
 			framework.ExpectNoError(err, "failed to create backend pods")
 
 			ginkgo.By("Creating an egress service with node selector")
-			egressServiceConfig := fmt.Sprintf(`
+			egressServiceConfig := `
 apiVersion: k8s.ovn.org/v1
 kind: EgressService
 metadata:
@@ -726,7 +726,7 @@ spec:
   sourceIPBy: "LoadBalancerIP"
   nodeSelector:
     matchLabels:
-      kubernetes.io/hostname: ` + nodes[1].Name)
+      kubernetes.io/hostname: ` + nodes[1].Name
 
 			if err := os.WriteFile(egressServiceYAML, []byte(egressServiceConfig), 0644); err != nil {
 				framework.Failf("Unable to write CRD config to disk: %v", err)
@@ -763,7 +763,7 @@ spec:
 			}
 			framework.ExpectNoError(err, "must allocate new primary network IP address")
 			egressIPYaml := "egressip.yaml"
-			egressIPConfig := fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
+			egressIPConfig := `apiVersion: k8s.ovn.org/v1
 kind: EgressIP
 metadata:
     name: egress-svc-test-eip
@@ -776,7 +776,7 @@ spec:
     namespaceSelector:
         matchLabels:
             kubernetes.io/metadata.name: ` + f.Namespace.Name + `
-`)
+`
 
 			if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
 				framework.Failf("Unable to write CRD config to disk: %v", err)
@@ -881,7 +881,7 @@ spec:
 			framework.ExpectNoError(err, "failed to create backend pods")
 
 			ginkgo.By("Creating an ETP=Local egress service selecting the first node")
-			egressServiceConfig := fmt.Sprintf(`
+			egressServiceConfig := `
 apiVersion: k8s.ovn.org/v1
 kind: EgressService
 metadata:
@@ -892,7 +892,7 @@ spec:
   nodeSelector:
     matchLabels:
       kubernetes.io/hostname: ` + firstNode + `
-`)
+`
 
 			if err := os.WriteFile(egressServiceYAML, []byte(egressServiceConfig), 0644); err != nil {
 				framework.Failf("Unable to write CRD config to disk: %v", err)
@@ -1303,7 +1303,7 @@ metadata:
 
 				ginkgo.By("Creating the EgressServices for the networks")
 				for _, net := range []*netSettings{net1, net2} {
-					egressServiceConfig := fmt.Sprintf(`
+					egressServiceConfig := `
 apiVersion: k8s.ovn.org/v1
 kind: EgressService
 metadata:
@@ -1312,7 +1312,7 @@ metadata:
 spec:
   sourceIPBy: "Network"
   network: ` + fmt.Sprintf("\"%s\"", net.routingTable) + `
-`)
+`
 
 					if err := os.WriteFile(net.egressServiceYAML, []byte(egressServiceConfig), 0644); err != nil {
 						framework.Failf("Unable to write CRD config to disk: %v", err)

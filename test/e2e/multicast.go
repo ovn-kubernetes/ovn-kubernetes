@@ -196,7 +196,7 @@ func testMulticastIGMPQuery(f *framework.Framework, clientNodeInfo, serverNodeIn
 	err = wait.PollUntilContextTimeout(context.Background(), retryInterval, retryTimeout, true /*immediate*/, func(context.Context) (bool, error) {
 		kubectlOut, err := e2ekubectl.RunKubectl(f.Namespace.Name, "exec", multicastListenerPod, "--", "/bin/bash", "-c", "ls")
 		if err != nil {
-			framework.Failf("failed to retrieve multicast IGMP query: " + err.Error())
+			framework.Failf("failed to retrieve multicast IGMP query: %v", err.Error())
 		}
 		if !strings.Contains(kubectlOut, tcpdumpFileName) {
 			return false, nil
@@ -204,7 +204,7 @@ func testMulticastIGMPQuery(f *framework.Framework, clientNodeInfo, serverNodeIn
 		return true, nil
 	})
 	if err != nil {
-		framework.Failf("failed to retrieve multicast IGMP query: " + err.Error())
+		framework.Failf("failed to retrieve multicast IGMP query: %v", err.Error())
 	}
 
 	ginkgo.By("verifying that the IGMP query has been received")
