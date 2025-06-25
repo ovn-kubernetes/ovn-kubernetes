@@ -259,9 +259,8 @@ spec:
                 maxItems: 20
                 type: array
               networkSelectors:
-                description: |-
-                  networkSelector selects the networks on which the pod IPs need to be added to the source address set.
-                  NetworkQoS controller currently supports `NetworkAttachmentDefinitions` type only.
+                description: networkSelector selects the networks on which the pod
+                  IPs need to be added to the source address set.
                 items:
                   description: NetworkSelector selects a set of networks.
                   properties:
@@ -635,11 +634,14 @@ spec:
                 - networkSelectionType
                 x-kubernetes-list-type: map
                 x-kubernetes-validations:
-                - message: networkSelector is immutable
+                - message: networkSelectors are immutable
                   rule: self == oldSelf
-                - message: Unsupported network selection type
-                  rule: self.all(sel, sel.networkSelectionType == 'ClusterUserDefinedNetworks'
-                    || sel.networkSelectionType == 'NetworkAttachmentDefinitions')
+                - message: networkAttachmentDefinitionSelector cannot have an empty
+                    networkSelector
+                  rule: self.filter(sel, sel.networkSelectionType == 'NetworkAttachmentDefinitions').all(sel,
+                    has(sel.networkAttachmentDefinitionSelector) && has(sel.networkAttachmentDefinitionSelector.networkSelector)
+                    && (has(sel.networkAttachmentDefinitionSelector.networkSelector.matchExpressions)
+                    || has(sel.networkAttachmentDefinitionSelector.networkSelector.matchLabels)))
               podSelector:
                 description: |-
                   podSelector applies the NetworkQoS rule only to the pods in the namespace whose label
@@ -698,6 +700,7 @@ spec:
                 type: integer
             required:
             - egress
+            - networkSelectors
             - priority
             type: object
           status:
