@@ -25,6 +25,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/diagnostics"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
 	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/kubevirt"
 
@@ -1660,11 +1661,11 @@ write_files:
 			ingress     string
 		}
 		var (
-			containerNetwork = func(td testData) string {
+			containerNetwork = func(td testData) (api.Network, error) {
 				if td.ingress == "routed" {
-					return "bgpnet"
+					return infraprovider.Get().GetNetwork("bgpnet")
 				}
-				return "kind"
+				return infraprovider.Get().PrimaryNetwork()
 			}
 			exposeVMIperfServer = func(td testData, vmi *kubevirtv1.VirtualMachineInstance, vmiAddresses []string) ([]string, int32) {
 				GinkgoHelper()
@@ -1743,7 +1744,7 @@ write_files:
 
 			var externalContainer infraapi.ExternalContainer
 			if td.role == udnv1.NetworkRolePrimary {
-				providerNetwork, err := infraprovider.Get().GetNetwork(containerNetwork(td))
+				providerNetwork, err := containerNetwork(td)
 				Expect(err).ShouldNot(HaveOccurred(), "primary network must be available to attach containers")
 				externalContainerPort := infraprovider.Get().GetExternalContainerPort()
 				externalContainerName := namespace + "-iperf"
@@ -1769,8 +1770,8 @@ write_files:
 			if td.ingress == "routed" {
 				// pre=created test dependency and therefore we dont delete
 				frrExternalContainer := infraapi.ExternalContainer{Name: "frr"}
-				frrNetwork, err := infraprovider.Get().GetNetwork(containerNetwork(td))
-				Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("failed to fetch network %q: %v", containerNetwork(td), err))
+				frrNetwork, err := containerNetwork(td)
+				Expect(err).NotTo(HaveOccurred())
 				frrExternalContainerInterface, err := infraprovider.Get().GetExternalContainerNetworkInterface(frrExternalContainer, frrNetwork)
 				Expect(err).NotTo(HaveOccurred(), "must fetch FRR container network interface attached to secondary network")
 
