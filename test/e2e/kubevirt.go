@@ -385,7 +385,7 @@ var _ = Describe("Kubevirt Virtual Machines", func() {
 				}
 
 				By(fmt.Sprintf("start from %s: %s", address, stage))
-				output, err = execFn(fmt.Sprintf("nohup iperf3 -t 0 -c %[1]s -p %[2]d --logfile %[3]s &", address, port, iperfLogFile))
+				output, err = execFn(fmt.Sprintf("setsid iperf3 -t 0 -c %[1]s -p %[2]d --logfile %[3]s", address, port, iperfLogFile))
 				if err != nil {
 					return fmt.Errorf("failed at starting iperf3 in background %s: %w", output, err)
 				}
