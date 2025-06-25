@@ -36,14 +36,22 @@ func (c *Controller) processNextNQOSWorkItem(wg *sync.WaitGroup) bool {
 		return false
 	}
 	defer c.nqosQueue.Done(nqosKey)
+	nqosNamespace, nqosName, err := cache.SplitMetaNamespaceKey(nqosKey)
+	if err != nil {
+		klog.Errorf("%s: Failed to split NetworkQoS key %s: %v", c.controllerName, nqosKey, err)
+		c.nqosQueue.Forget(nqosKey)
+		return true
+	}
 
 	if err := c.syncNetworkQoS(nqosKey); err != nil {
+		klog.Warningf("%s: Failed to reconcile NetworkQoS %s: %v", c.controllerName, nqosKey, err)
 		if c.nqosQueue.NumRequeues(nqosKey) < maxRetries {
 			c.nqosQueue.AddRateLimited(nqosKey)
 			return true
 		}
-		klog.Warningf("%s: Failed to reconcile NetworkQoS %s: %v", c.controllerName, nqosKey, err)
-		utilruntime.HandleError(fmt.Errorf("failed to reconcile NetworkQoS %s: %v", nqosKey, err))
+		c.updateNQOSStatusToNotReady(nqosNamespace, nqosName, "failed to reconcile", err)
+		klog.Errorf("%s: Stop reconciling NetworkQoS %s after %d retries", c.controllerName, nqosKey, maxRetries)
+		utilruntime.HandleError(err)
 	}
 	c.nqosQueue.Forget(nqosKey)
 	return true
@@ -82,8 +90,6 @@ func (c *Controller) syncNetworkQoS(key string) error {
 	klog.V(5).Infof("%s - Processing NetworkQoS %s/%s", c.controllerName, nqos.Namespace, nqos.Name)
 	if err := c.ensureNetworkQos(nqos); err != nil {
 		c.nqosCache.Delete(key)
-		// we can ignore the error if status update doesn't succeed; best effort
-		c.updateNQOSStatusToNotReady(nqos.Namespace, nqos.Name, "failed to reconcile", err)
 		return err
 	}
 	recordNetworkQoSReconcileDuration(c.controllerName, time.Since(startTime).Milliseconds())
@@ -215,9 +221,9 @@ func (c *Controller) updateNQOSStatusToReady(namespace, name string) error {
 }
 
 func (c *Controller) updateNQOSStatusToNotReady(namespace, name, reason string, err error) {
-	msg := reason
+	msg := fmt.Sprintf("%s: %s", types.NetworkQoSErrorMsg, reason)
 	if err != nil {
-		msg = fmt.Sprintf("NetworkQoS %s/%s - %s, error details: %v", namespace, name, reason, err)
+		msg = fmt.Sprintf("%s, error: %v", msg, err)
 	}
 	cond := metav1.Condition{
 		Type:    conditionTypeReady + c.zone,
@@ -376,9 +382,6 @@ func (c *Controller) networkManagedByMe(networkSelectors crdtypes.NetworkSelecto
 		default:
 			return false, fmt.Errorf("unsupported network selection type %s", networkSelector.NetworkSelectionType)
 		}
-	}
-	if len(selectedNads) == 0 {
-		return false, nil
 	}
 	for _, nad := range selectedNads {
 		networkName := util.GetAnnotatedNetworkName(nad)
