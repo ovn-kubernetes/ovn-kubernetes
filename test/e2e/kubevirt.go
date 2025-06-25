@@ -396,7 +396,7 @@ var _ = Describe("Kubevirt Virtual Machines", func() {
 		startNorthSouthIngressIperfTraffic = func(container infraapi.ExternalContainer, addresses []string, port int32, stage string) error {
 			GinkgoHelper()
 			execFn := func(cmd string) (string, error) {
-				return infraprovider.Get().ExecExternalContainerCommand(container, []string{"bash", "-c", cmd})
+				return infraprovider.Get().ExecExternalContainerCommand(container, []string{"bash", "-c", `"` + cmd + `"`})
 			}
 			return startNorthSouthIperfTraffic(execFn, addresses, port, "ingress", stage)
 		}
@@ -415,7 +415,7 @@ var _ = Describe("Kubevirt Virtual Machines", func() {
 			for _, ip := range addresses {
 				iperfLogFile := fmt.Sprintf("/tmp/ingress_test_%s_%d_iperf3.log", ip, port)
 				execFn := func(cmd string) (string, error) {
-					return infraprovider.Get().ExecExternalContainerCommand(container, []string{"bash", "-c", cmd})
+					return infraprovider.Get().ExecExternalContainerCommand(container, []string{"bash", "-c", `"` + cmd + `"`})
 				}
 				checkIperfTraffic(iperfLogFile, execFn, stage)
 			}
