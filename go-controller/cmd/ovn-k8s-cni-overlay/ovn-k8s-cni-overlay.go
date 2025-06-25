@@ -20,10 +20,12 @@ func main() {
 
 	p := cni.NewCNIPlugin("")
 	c.Action = func(_ *cli.Context) error {
-		skel.PluginMain(
-			p.CmdAdd,
-			p.CmdCheck,
-			p.CmdDel,
+		skel.PluginMainFuncs(
+			skel.CNIFuncs{
+				Add:   p.CmdAdd,
+				Check: p.CmdCheck,
+				Del:   p.CmdDel,
+			},
 			version.All,
 			bv.BuildString("ovn-k8s-cni-overlay"))
 		return nil
