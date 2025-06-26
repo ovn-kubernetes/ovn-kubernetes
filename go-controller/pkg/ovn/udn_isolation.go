@@ -30,6 +30,8 @@ const (
 	DenySecondaryACL      = "DenySecondary"
 	// OpenPortACLPrefix is used to build per-pod ACLs, pod name should be added to the prefix to build a unique name
 	OpenPortACLPrefix = "OpenPort-"
+	// the same tier is used for all UDN isolation ACLs
+	isolationTier = types.PrimaryACLTier
 )
 
 // setupUDNACLs should be called after the node's management port was configured
@@ -63,7 +65,8 @@ func (oc *DefaultNetworkController) setupUDNACLs(mgmtPortIPs []net.IP) error {
 	pgName := libovsdbutil.GetPortGroupName(pgIDs)
 	egressDenyIDs := oc.getUDNACLDbIDs(DenySecondaryACL, libovsdbutil.ACLEgress)
 	match := libovsdbutil.GetACLMatch(pgName, "", libovsdbutil.ACLEgress)
-	egressDenyACL := libovsdbutil.BuildACL(egressDenyIDs, types.PrimaryUDNDenyPriority, match, nbdb.ACLActionDrop, nil, libovsdbutil.LportEgress)
+	egressDenyACL := libovsdbutil.BuildACL(egressDenyIDs, types.PrimaryUDNDenyPriority, match, nbdb.ACLActionDrop,
+		nil, libovsdbutil.LportEgress, isolationTier)
 
 	getARPMatch := func(direction libovsdbutil.ACLDirection) string {
 		match := "("
@@ -89,15 +92,18 @@ func (oc *DefaultNetworkController) setupUDNACLs(mgmtPortIPs []net.IP) error {
 
 	egressARPIDs := oc.getUDNACLDbIDs(AllowHostARPACL, libovsdbutil.ACLEgress)
 	match = libovsdbutil.GetACLMatch(pgName, getARPMatch(libovsdbutil.ACLEgress), libovsdbutil.ACLEgress)
-	egressARPACL := libovsdbutil.BuildACL(egressARPIDs, types.PrimaryUDNAllowPriority, match, nbdb.ACLActionAllow, nil, libovsdbutil.LportEgress)
+	egressARPACL := libovsdbutil.BuildACL(egressARPIDs, types.PrimaryUDNAllowPriority, match, nbdb.ACLActionAllow,
+		nil, libovsdbutil.LportEgress, isolationTier)
 
 	ingressDenyIDs := oc.getUDNACLDbIDs(DenySecondaryACL, libovsdbutil.ACLIngress)
 	match = libovsdbutil.GetACLMatch(pgName, "", libovsdbutil.ACLIngress)
-	ingressDenyACL := libovsdbutil.BuildACL(ingressDenyIDs, types.PrimaryUDNDenyPriority, match, nbdb.ACLActionDrop, nil, libovsdbutil.LportIngress)
+	ingressDenyACL := libovsdbutil.BuildACL(ingressDenyIDs, types.PrimaryUDNDenyPriority, match, nbdb.ACLActionDrop,
+		nil, libovsdbutil.LportIngress, isolationTier)
 
 	ingressARPIDs := oc.getUDNACLDbIDs(AllowHostARPACL, libovsdbutil.ACLIngress)
 	match = libovsdbutil.GetACLMatch(pgName, getARPMatch(libovsdbutil.ACLIngress), libovsdbutil.ACLIngress)
-	ingressARPACL := libovsdbutil.BuildACL(ingressARPIDs, types.PrimaryUDNAllowPriority, match, nbdb.ACLActionAllow, nil, libovsdbutil.LportIngress)
+	ingressARPACL := libovsdbutil.BuildACL(ingressARPIDs, types.PrimaryUDNAllowPriority, match, nbdb.ACLActionAllow,
+		nil, libovsdbutil.LportIngress, isolationTier)
 
 	ingressAllowIDs := oc.getUDNACLDbIDs(AllowHostSecondaryACL, libovsdbutil.ACLIngress)
 	match = "("
@@ -114,7 +120,8 @@ func (oc *DefaultNetworkController) setupUDNACLs(mgmtPortIPs []net.IP) error {
 	}
 	match += ")"
 	match = libovsdbutil.GetACLMatch(pgName, match, libovsdbutil.ACLIngress)
-	ingressAllowACL := libovsdbutil.BuildACL(ingressAllowIDs, types.PrimaryUDNAllowPriority, match, nbdb.ACLActionAllowRelated, nil, libovsdbutil.LportIngress)
+	ingressAllowACL := libovsdbutil.BuildACL(ingressAllowIDs, types.PrimaryUDNAllowPriority, match, nbdb.ACLActionAllowRelated,
+		nil, libovsdbutil.LportIngress, isolationTier)
 
 	ops, err := libovsdbops.CreateOrUpdateACLsOps(oc.nbClient, nil, oc.GetSamplingConfig(), egressDenyACL, egressARPACL, ingressARPACL, ingressDenyACL, ingressAllowACL)
 	if err != nil {
@@ -200,11 +207,11 @@ func (oc *DefaultNetworkController) setUDNPodOpenPortsOps(podNamespacedName stri
 	// don't return on parseErr, as we need to cleanup potentially present ACLs from the previous config
 	ingressIDs := oc.getUDNOpenPortDbIDs(podNamespacedName, libovsdbutil.ACLIngress)
 	ingressACL := libovsdbutil.BuildACL(ingressIDs, types.PrimaryUDNAllowPriority,
-		ingressMatch, nbdb.ACLActionAllowRelated, nil, libovsdbutil.LportIngress)
+		ingressMatch, nbdb.ACLActionAllowRelated, nil, libovsdbutil.LportIngress, isolationTier)
 
 	egressIDs := oc.getUDNOpenPortDbIDs(podNamespacedName, libovsdbutil.ACLEgress)
 	egressACL := libovsdbutil.BuildACL(egressIDs, types.PrimaryUDNAllowPriority,
-		egressMatch, nbdb.ACLActionAllow, nil, libovsdbutil.LportEgress)
+		egressMatch, nbdb.ACLActionAllow, nil, libovsdbutil.LportEgress, isolationTier)
 
 	var err error
 	if ingressMatch == "" && egressMatch == "" || parseErr != nil {
@@ -288,8 +295,8 @@ func BuildAdvertisedNetworkSubnetsDropACL(advertisedNetworkSubnetsAddressSet add
 		strings.Join(dropMatches, " || "),
 		nbdb.ACLActionDrop,
 		nil,
-		libovsdbutil.LportEgressAfterLB)
-	dropACL.Tier = types.PrimaryACLTier
+		libovsdbutil.LportEgressAfterLB,
+		isolationTier)
 	return dropACL
 }
 
@@ -331,8 +338,8 @@ func (bnc *BaseNetworkController) addAdvertisedNetworkIsolation(nodeName string)
 			strings.Join(passMatches, " || "),
 			nbdb.ACLActionPass,
 			nil,
-			libovsdbutil.LportEgressAfterLB)
-		passACL.Tier = types.PrimaryACLTier
+			libovsdbutil.LportEgressAfterLB,
+			isolationTier)
 
 		ops, err = libovsdbops.CreateOrUpdateACLsOps(bnc.nbClient, ops, nil, passACL)
 		if err != nil {
