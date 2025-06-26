@@ -3042,7 +3042,9 @@ func getIPv(ipnet *net.IPNet) string {
 //	   type filter hook output priority filter; policy accept;
 //	   ct state new ip daddr @advertised-udn-subnets-v4 counter packets 0 bytes 0 drop
 //	   ct state new ip6 daddr @advertised-udn-subnets-v6 counter packets 0 bytes 0 drop
-//	 }
+// configureAdvertisedUDNIsolationNFTables sets up nftables rules to drop locally generated traffic in the "new" connection tracking state that is destined for advertised UDN (User Defined Network) subnets.
+// 
+// It creates an output chain and address sets for IPv4 and IPv6 advertised UDN subnets, then adds rules to drop new connections to these subnets. This helps enforce network isolation for advertised UDNs.
 func configureAdvertisedUDNIsolationNFTables() error {
 	counterIfDebug := ""
 	if config.Logging.Level > 4 {
