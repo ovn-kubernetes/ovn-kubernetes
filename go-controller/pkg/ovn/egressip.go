@@ -2451,7 +2451,8 @@ func (e *EgressIPController) deletePodEgressIPAssignment(ni util.NetInfo, egress
 		return err
 	}
 	var ops []ovsdb.Operation
-	if !loadedPodNode || isLocalZonePod { // node is deleted (we can't determine zone so we always try and nuke OR pod is local to zone)
+
+	if !loadedPodNode || isLocalZonePod || (isLocalZoneEgressNode && ni.IsSecondary() && ni.TopologyType() == types.Layer2Topology) { // node is deleted (we can't determine zone so we always try and nuke OR pod is local to zone)
 		ops, err = e.addExternalGWPodSNATOps(ni, nil, pod.Namespace, pod.Name, status)
 		if err != nil {
 			return err
