@@ -1897,7 +1897,7 @@ func commonFlows(hostSubnets []*net.IPNet, bridge *bridgeConfiguration) ([]strin
 		for _, netConfig := range bridge.patchedNetConfigs() {
 			actions += "output:" + netConfig.ofPortPatch + ","
 		}
-		actions += strip_vlan + "output:" + ofPortHost
+		actions += strip_vlan + "NORMAL"
 		dftFlows = append(dftFlows,
 			fmt.Sprintf("cookie=%s, priority=10, table=0, in_port=%s, %s dl_dst=%s, actions=%s",
 				defaultOpenFlowCookie, ofPortPhys, match_vlan, bridgeMacAddress, actions))
