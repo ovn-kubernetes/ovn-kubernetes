@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"k8s.io/kubernetes/test/e2e/framework"
 )
 
 // Provider represents the infrastructure provider
@@ -37,6 +39,14 @@ type Provider interface {
 	GetK8HostPort() uint16 // supported K8 host ports
 }
 
+type Underlay struct {
+	PhysicalNetworkName string
+	LogicalNetworkName  string
+	BridgeName          string
+	PortName            string
+	VlanID              int
+}
+
 type Context interface {
 	CreateExternalContainer(container ExternalContainer) (ExternalContainer, error)
 	DeleteExternalContainer(container ExternalContainer) error
@@ -46,6 +56,7 @@ type Context interface {
 	AttachNetwork(network Network, instance string) (NetworkInterface, error)
 	DetachNetwork(network Network, instance string) error
 	GetAttachedNetworks() (Networks, error)
+	SetupUnderlay(f *framework.Framework, underlay Underlay) error
 
 	AddCleanUpFn(func() error)
 }
@@ -164,13 +175,14 @@ func (n NetworkInterface) GetMAC() string {
 }
 
 type ExternalContainer struct {
-	Name    string
-	Image   string
-	Network Network
-	Args    []string
-	ExtPort uint16
-	IPv4    string
-	IPv6    string
+	Name       string
+	Image      string
+	Network    Network
+	Entrypoint string
+	Args       []string
+	ExtPort    uint16
+	IPv4       string
+	IPv6       string
 }
 
 func (ec ExternalContainer) GetName() string {
