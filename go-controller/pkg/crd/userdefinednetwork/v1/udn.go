@@ -39,6 +39,7 @@ type UserDefinedNetworkSpec struct {
 	Topology NetworkTopology `json:"topology"`
 
 	// Layer3 is the Layer3 topology configuration.
+	// +kubebuilder:validation:XValidation:rule="!has(self.encapsulation)", message="Setting layer3.encapsulation is not supported for UserDefinedNetworks"
 	// +optional
 	Layer3 *Layer3Config `json:"layer3,omitempty"`
 
