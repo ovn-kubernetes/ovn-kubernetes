@@ -260,6 +260,19 @@ spec:
               layer3:
                 description: Layer3 is the Layer3 topology configuration.
                 properties:
+                  encapsulation:
+                    allOf:
+                    - enum:
+                      - Geneve
+                      - None
+                    - enum:
+                      - Geneve
+                      - None
+                    description: |-
+                      Encapsulation specifies the encapsulation type used for the network.
+                      Allowed values are "Geneve", "None".
+                      When set to "None", the east-west traffic will not use encapsulation. When unset, the default value is "Geneve".
+                    type: string
                   joinSubnets:
                     description: |-
                       JoinSubnets are used inside the OVN network topology.
@@ -350,6 +363,8 @@ spec:
                 - subnets
                 type: object
                 x-kubernetes-validations:
+                - message: Setting layer3.encapsulation is not supported for UserDefinedNetworks
+                  rule: '!has(self.encapsulation)'
                 - message: JoinSubnets is only supported for Primary network
                   rule: '!has(self.joinSubnets) || has(self.role) && self.role ==
                     ''Primary'''
