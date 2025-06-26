@@ -178,6 +178,10 @@ func (oc *BaseSecondaryLayer2NetworkController) initializeLogicalSwitch(switchNa
 			logicalSwitch.OtherConfig = map[string]string{"subnet": subnet.String()}
 		}
 	}
+	if logicalSwitch.OtherConfig == nil {
+		logicalSwitch.OtherConfig = map[string]string{}
+	}
+	logicalSwitch.OtherConfig["enable-stateless-acl-with-lb"] = "true"
 
 	if oc.isLayer2Interconnect() {
 		err := oc.zoneICHandler.AddTransitSwitchConfig(&logicalSwitch)

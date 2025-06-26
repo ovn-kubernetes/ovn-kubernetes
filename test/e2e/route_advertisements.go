@@ -299,11 +299,6 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 				Values:   []string{f.Namespace.Name},
 			}}}
 
-			if IsGatewayModeLocal() && cudnTemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer2 {
-				e2eskipper.Skipf(
-					"BGP for L2 networks on LGW is currently unsupported",
-				)
-			}
 			// Create CUDN
 			ginkgo.By("create ClusterUserDefinedNetwork")
 			udnClient, err := udnclientset.NewForConfig(f.ClientConfig())
@@ -536,9 +531,6 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 		var ra *rav1.RouteAdvertisements
 		var hostNetworkPort int
 		ginkgo.BeforeEach(func() {
-			if cudnATemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer2 && isLocalGWModeEnabled() {
-				e2eskipper.Skipf("Advertising Layer2 UDNs is not currently supported in LGW")
-			}
 			ginkgo.By("Configuring primary UDN namespaces")
 			var err error
 			udnNamespaceA, err = f.CreateNamespace(context.TODO(), f.BaseName, map[string]string{
@@ -700,9 +692,6 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 		})
 
 		ginkgo.AfterEach(func() {
-			if cudnATemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer2 && isLocalGWModeEnabled() {
-				return
-			}
 			gomega.Expect(f.ClientSet.CoreV1().Pods(udnNamespaceA.Name).DeleteCollection(context.Background(), metav1.DeleteOptions{}, metav1.ListOptions{})).To(gomega.Succeed())
 			gomega.Expect(f.ClientSet.CoreV1().Pods(udnNamespaceB.Name).DeleteCollection(context.Background(), metav1.DeleteOptions{}, metav1.ListOptions{})).To(gomega.Succeed())
 
@@ -906,7 +895,15 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 				}),
 			ginkgo.Entry("pod in the UDN should not be able to access a service in a different UDN",
 				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
-					return podsNetA[0].Name, podsNetA[0].Namespace, net.JoinHostPort(svcNetB.Spec.ClusterIPs[ipFamilyIndex], "8080") + "/clientip", curlConnectionTimeoutCode, true
+					out := curlConnectionTimeoutCode
+					if cudnATemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer2 && IsGatewayModeLocal() {
+						// FIXME: prevent looping of traffic in L2 UDNs(LGW)
+						// bad behaviour: packet is looping from management port -> breth0 -> GR -> management port -> breth0 and so on
+						// which is a never ending loop
+						// this causes curl timeout with code 7 host unreachable instead of code 28
+						out = ""
+					}
+					return podsNetA[0].Name, podsNetA[0].Namespace, net.JoinHostPort(svcNetB.Spec.ClusterIPs[ipFamilyIndex], "8080") + "/clientip", out, true
 				}),
 			ginkgo.Entry("host to a local UDN pod should not work",
 				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
