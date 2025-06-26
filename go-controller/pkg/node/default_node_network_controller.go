@@ -243,6 +243,12 @@ func (oc *DefaultNodeNetworkController) Reconcile(netInfo util.NetInfo) error {
 }
 
 func clearOVSFlowTargets() error {
+	// TODO: match on something more specific than just the existance of an error
+	// nothing to clear if the bridge doesnt exist
+	if _, _, err := util.RunOVSVsctl("br-exists", "br-int"); err != nil {
+		return nil
+	}
+
 	_, _, err := util.RunOVSVsctl(
 		"--",
 		"clear", "bridge", "br-int", "netflow",
