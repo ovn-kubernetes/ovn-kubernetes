@@ -269,6 +269,8 @@ ovn_disable_ovn_iface_id_ver=${OVN_DISABLE_OVN_IFACE_ID_VER:-false}
 ovn_multi_network_enable=${OVN_MULTI_NETWORK_ENABLE:-false}
 #OVN_NETWORK_SEGMENTATION_ENABLE - enable user defined primary networks for ovn-kubernetes
 ovn_network_segmentation_enable=${OVN_NETWORK_SEGMENTATION_ENABLE:=false}
+#OVN_PRE_CONF_UDN_ADDR_ENABLE - enable connecting workloads with custom network configuration to UDNs
+ovn_pre_conf_udn_addr_enable=${OVN_PRE_CONF_UDN_ADDR_ENABLE:=false}
 #OVN_NROUTE_ADVERTISEMENTS_ENABLE - enable route advertisements for ovn-kubernetes
 ovn_route_advertisements_enable=${OVN_ROUTE_ADVERTISEMENTS_ENABLE:=false}
 ovn_acl_logging_rate_limit=${OVN_ACL_LOGGING_RATE_LIMIT:-"20"}
@@ -1236,6 +1238,12 @@ ovn-master() {
   fi
   echo "network_segmentation_enabled_flag=${network_segmentation_enabled_flag}"
 
+  pre_conf_udn_addr_enable_flag=
+  if [[ ${ovn_pre_conf_udn_addr_enable} == "true" ]]; then
+	  pre_conf_udn_addr_enable_flag="--enable-preconfigured-udn-addresses"
+  fi
+  echo "pre_conf_udn_addr_enable_flag=${pre_conf_udn_addr_enable_flag}"
+
   route_advertisements_enabled_flag=
   if [[ ${ovn_route_advertisements_enable} == "true" ]]; then
 	  route_advertisements_enabled_flag="--enable-route-advertisements"
@@ -1269,7 +1277,7 @@ ovn-master() {
     ovnkube_metrics_scale_enable_flag="--metrics-enable-scale --metrics-enable-pprof"
   fi
   echo "ovnkube_metrics_scale_enable_flag: ${ovnkube_metrics_scale_enable_flag}"
-  
+
   ovn_stateless_netpol_enable_flag=
   if [[ ${ovn_stateless_netpol_enable} == "true" ]]; then
           ovn_stateless_netpol_enable_flag="--enable-stateless-netpol"
@@ -1293,7 +1301,7 @@ ovn-master() {
     ovn_observ_enable_flag="--enable-observability"
   fi
   echo "ovn_observ_enable_flag=${ovn_observ_enable_flag}"
-  
+
   nohostsubnet_label_option=
   if [[ ${ovn_nohostsubnet_label} != "" ]]; then
 	  nohostsubnet_label_option="--no-hostsubnet-nodes=${ovn_nohostsubnet_label}"
@@ -1348,6 +1356,7 @@ ovn-master() {
     ${multicast_enabled_flag} \
     ${multi_network_enabled_flag} \
     ${network_segmentation_enabled_flag} \
+    ${ovn_pre_conf_udn_addr_enable_flag} \
     ${route_advertisements_enabled_flag} \
     ${ovn_acl_logging_rate_limit_flag} \
     ${ovn_enable_svc_template_support_flag} \
@@ -1539,6 +1548,12 @@ ovnkube-controller() {
   fi
   echo "network_segmentation_enabled_flag=${network_segmentation_enabled_flag}"
 
+  pre_conf_udn_addr_enable_flag=
+  if [[ ${ovn_pre_conf_udn_addr_enable} == "true" ]]; then
+	  pre_conf_udn_addr_enable_flag="--enable-preconfigured-udn-addresses"
+  fi
+  echo "pre_conf_udn_addr_enable_flag=${pre_conf_udn_addr_enable_flag}"
+
   route_advertisements_enabled_flag=
   if [[ ${ovn_route_advertisements_enable} == "true" ]]; then
 	  route_advertisements_enabled_flag="--enable-route-advertisements"
@@ -1659,6 +1674,7 @@ ovnkube-controller() {
     ${multicast_enabled_flag} \
     ${multi_network_enabled_flag} \
     ${network_segmentation_enabled_flag} \
+    ${ovn_pre_conf_udn_addr_enable_flag} \
     ${route_advertisements_enabled_flag} \
     ${ovn_acl_logging_rate_limit_flag} \
     ${ovn_dbs} \
@@ -1843,6 +1859,12 @@ ovnkube-controller-with-node() {
   fi
   echo "network_segmentation_enabled_flag=${network_segmentation_enabled_flag}"
 
+  pre_conf_udn_addr_enable_flag=
+  if [[ ${ovn_pre_conf_udn_addr_enable} == "true" ]]; then
+	  pre_conf_udn_addr_enable_flag="--enable-preconfigured-udn-addresses"
+  fi
+  echo "pre_conf_udn_addr_enable_flag=${pre_conf_udn_addr_enable_flag}"
+
   route_advertisements_enabled_flag=
   if [[ ${ovn_route_advertisements_enable} == "true" ]]; then
 	  route_advertisements_enabled_flag="--enable-route-advertisements"
@@ -1961,7 +1983,7 @@ ovnkube-controller-with-node() {
   if test -z "${OVN_UNPRIVILEGED_MODE+x}" -o "x${OVN_UNPRIVILEGED_MODE}" = xno; then
     ovn_unprivileged_flag=""
   fi
-  
+
   ovn_metrics_bind_address="${metrics_endpoint_ip}:${metrics_bind_port}"
   metrics_bind_address="${metrics_endpoint_ip}:${metrics_worker_port}"
   echo "ovn_metrics_bind_address=${ovn_metrics_bind_address}"
@@ -2102,6 +2124,7 @@ ovnkube-controller-with-node() {
     ${multicast_enabled_flag} \
     ${multi_network_enabled_flag} \
     ${network_segmentation_enabled_flag} \
+    ${ovn_pre_conf_udn_addr_enable_flag} \
     ${route_advertisements_enabled_flag} \
     ${netflow_targets} \
     ${ofctrl_wait_before_clear} \
@@ -2269,6 +2292,12 @@ ovn-cluster-manager() {
   fi
   echo "network_segmentation_enabled_flag=${network_segmentation_enabled_flag}"
 
+  pre_conf_udn_addr_enable_flag=
+  if [[ ${ovn_pre_conf_udn_addr_enable} == "true" ]]; then
+	  pre_conf_udn_addr_enable_flag="--enable-preconfigured-udn-addresses"
+  fi
+  echo "pre_conf_udn_addr_enable_flag=${pre_conf_udn_addr_enable_flag}"
+
   route_advertisements_enabled_flag=
   if [[ ${ovn_route_advertisements_enable} == "true" ]]; then
 	  route_advertisements_enabled_flag="--enable-route-advertisements"
@@ -2336,6 +2365,7 @@ ovn-cluster-manager() {
     ${multicast_enabled_flag} \
     ${multi_network_enabled_flag} \
     ${network_segmentation_enabled_flag} \
+    ${ovn_pre_conf_udn_addr_enable_flag} \
     ${route_advertisements_enabled_flag} \
     ${persistent_ips_enabled_flag} \
     ${ovnkube_enable_interconnect_flag} \
@@ -2511,6 +2541,11 @@ ovn-node() {
   network_segmentation_enabled_flag=
   if [[ ${ovn_network_segmentation_enable} == "true" ]]; then
 	  network_segmentation_enabled_flag="--enable-multi-network --enable-network-segmentation"
+  fi
+
+  pre_conf_udn_addr_enable_flag=
+  if [[ ${ovn_pre_conf_udn_addr_enable} == "true" ]]; then
+	  pre_conf_udn_addr_enable_flag="--enable-preconfigured-udn-addresses"
   fi
 
   route_advertisements_enabled_flag=
@@ -2748,6 +2783,7 @@ ovn-node() {
         ${multicast_enabled_flag} \
         ${multi_network_enabled_flag} \
         ${network_segmentation_enabled_flag} \
+        ${ovn_pre_conf_udn_addr_enable_flag} \
         ${route_advertisements_enabled_flag} \
         ${netflow_targets} \
         ${ofctrl_wait_before_clear} \

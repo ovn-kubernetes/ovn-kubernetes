@@ -227,6 +227,7 @@ egressip-node-healthcheck-port=1234
 enable-multi-network=false
 enable-multi-networkpolicy=false
 enable-network-segmentation=false
+enable-preconfigured-udn-addresses=false
 enable-route-advertisements=false
 enable-interconnect=false
 enable-multi-external-gateway=false
@@ -338,6 +339,7 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(OVNKubernetesFeature.EgressIPNodeHealthCheckPort).To(gomega.Equal(0))
 			gomega.Expect(OVNKubernetesFeature.EnableMultiNetwork).To(gomega.BeFalse())
 			gomega.Expect(OVNKubernetesFeature.EnableNetworkSegmentation).To(gomega.BeFalse())
+			gomega.Expect(OVNKubernetesFeature.EnablePreconfiguredUDNAddresses).To(gomega.BeFalse())
 			gomega.Expect(OVNKubernetesFeature.EnableRouteAdvertisements).To(gomega.BeFalse())
 			gomega.Expect(OVNKubernetesFeature.EnableMultiNetworkPolicy).To(gomega.BeFalse())
 			gomega.Expect(OVNKubernetesFeature.EnableInterconnect).To(gomega.BeFalse())
@@ -597,6 +599,7 @@ var _ = Describe("Config Operations", func() {
 			"enable-multi-network=true",
 			"enable-multi-networkpolicy=true",
 			"enable-network-segmentation=true",
+			"enable-preconfigured-udn-addresses=true",
 			"enable-route-advertisements=true",
 			"enable-interconnect=true",
 			"enable-multi-external-gateway=true",
@@ -687,6 +690,7 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(OVNKubernetesFeature.EgressIPNodeHealthCheckPort).To(gomega.Equal(1234))
 			gomega.Expect(OVNKubernetesFeature.EnableMultiNetwork).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnableNetworkSegmentation).To(gomega.BeTrue())
+			gomega.Expect(OVNKubernetesFeature.EnablePreconfiguredUDNAddresses).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnableRouteAdvertisements).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnableInterconnect).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnableMultiExternalGateway).To(gomega.BeTrue())
@@ -794,6 +798,7 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(OVNKubernetesFeature.EgressIPNodeHealthCheckPort).To(gomega.Equal(4321))
 			gomega.Expect(OVNKubernetesFeature.EnableMultiNetwork).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnableNetworkSegmentation).To(gomega.BeTrue())
+			gomega.Expect(OVNKubernetesFeature.EnablePreconfiguredUDNAddresses).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnableRouteAdvertisements).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnableMultiNetworkPolicy).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnableInterconnect).To(gomega.BeTrue())
@@ -869,6 +874,7 @@ var _ = Describe("Config Operations", func() {
 			"-enable-multi-network=true",
 			"-enable-multi-networkpolicy=true",
 			"-enable-network-segmentation=true",
+			"-enable-preconfigured-udn-addresses=true",
 			"-enable-route-advertisements=true",
 			"-enable-interconnect=true",
 			"-enable-multi-external-gateway=true",
