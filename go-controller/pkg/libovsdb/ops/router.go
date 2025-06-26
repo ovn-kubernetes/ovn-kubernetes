@@ -1039,7 +1039,7 @@ func BuildDNATAndSNATWithMatch(
 //   - Compare ExternalIP if it is set in `searched`.
 //   - Compare LogicalIP if the Type in `searched` is SNAT.
 //   - Compare LogicalPort if it is set in `searched`.
-//   - Ensure that all ExternalIDs of `searched` exist and have the same value in `existing`.
+// isEquivalentNAT determines whether two NAT objects are considered equivalent based on UUID, type, external IP, logical IP (for SNAT), logical port, and the presence and values of specified external IDs in the searched NAT.
 func isEquivalentNAT(existing *nbdb.NAT, searched *nbdb.NAT) bool {
 	// Simple case: uuid was provided.
 	if searched.UUID != "" && existing.UUID == searched.UUID {
@@ -1050,9 +1050,9 @@ func isEquivalentNAT(existing *nbdb.NAT, searched *nbdb.NAT) bool {
 		return false
 	}
 
-	if searched.Match != existing.Match {
+	/*if searched.Match != existing.Match {
 		return false
-	}
+	}*/
 
 	// Compare externalIP if it's not empty.
 	if searched.ExternalIP != "" && searched.ExternalIP != existing.ExternalIP {
