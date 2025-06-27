@@ -161,6 +161,7 @@ type podConfiguration struct {
 	isPrivileged                 bool
 	labels                       map[string]string
 	requiresExtraNamespace       bool
+	hostNetwork                  bool
 	needsIPRequestFromHostSubnet bool
 }
 
@@ -171,6 +172,7 @@ func generatePodSpec(config podConfiguration) *v1.Pod {
 	}
 	podSpec.Spec.NodeSelector = config.nodeSelector
 	podSpec.Labels = config.labels
+	podSpec.Spec.HostNetwork = config.hostNetwork
 	if config.isPrivileged {
 		podSpec.Spec.Containers[0].SecurityContext.Privileged = ptr.To(true)
 	} else {
@@ -253,17 +255,19 @@ func inRange(cidr string, ip string) error {
 	return fmt.Errorf("ip [%s] is NOT in range %s", ip, cidr)
 }
 
-func connectToServer(clientPodConfig podConfiguration, serverIP string, port uint16) error {
-	_, err := e2ekubectl.RunKubectl(
-		clientPodConfig.namespace,
+func connectToServer(clientPodConfig podConfiguration, serverIP string, port uint16, args ...string) error {
+	target := net.JoinHostPort(serverIP, fmt.Sprintf("%d", port))
+	baseArgs := []string{
 		"exec",
 		clientPodConfig.name,
 		"--",
 		"curl",
 		"--connect-timeout",
 		"2",
-		net.JoinHostPort(serverIP, fmt.Sprintf("%d", port)),
-	)
+	}
+	baseArgs = append(baseArgs, args...)
+
+	_, err := e2ekubectl.RunKubectl(clientPodConfig.namespace, append(baseArgs, target)...)
 	return err
 }
 
@@ -308,16 +312,19 @@ func getSecondaryInterfaceMTU(clientPodConfig podConfiguration) (int, error) {
 	return mtu, nil
 }
 
-func pingServer(clientPodConfig podConfiguration, serverIP string) error {
-	_, err := e2ekubectl.RunKubectl(
-		clientPodConfig.namespace,
+func pingServer(clientPodConfig podConfiguration, serverIP string, args ...string) error {
+	baseArgs := []string{
 		"exec",
 		clientPodConfig.name,
 		"--",
 		"ping",
 		"-c", "1", // send one ICMP echo request
 		"-W", "2", // timeout after 2 seconds if no response
-		serverIP)
+	}
+	baseArgs = append(baseArgs, args...)
+
+	_, err := e2ekubectl.RunKubectl(clientPodConfig.namespace, append(baseArgs, serverIP)...)
+
 	return err
 }
 
@@ -379,6 +386,18 @@ func podIPForAttachment(k8sClient clientset.Interface, podNamespace string, podN
 		return "", fmt.Errorf("no IP at index %d for attachment %s on pod %s", ipIndex, attachmentName, namespacedName(podNamespace, podName))
 	}
 	return ips[ipIndex], nil
+}
+
+func podIPsFromStatus(k8sClient clientset.Interface, podNamespace string, podName string) ([]string, error) {
+	pod, err := k8sClient.CoreV1().Pods(podNamespace).Get(context.Background(), podName, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	podIPs := make([]string, 0, len(pod.Status.PodIPs))
+	for _, podIP := range pod.Status.PodIPs {
+		podIPs = append(podIPs, podIP.IP)
+	}
+	return podIPs, nil
 }
 
 func allowedClient(podName string) string {
@@ -610,27 +629,27 @@ func allowedTCPPortsForPolicy(allowPorts ...int) []mnpapi.MultiNetworkPolicyPort
 	return portAllowlist
 }
 
-func reachServerPodFromClient(cs clientset.Interface, serverConfig podConfiguration, clientConfig podConfiguration, serverIP string, serverPort uint16) error {
+func reachServerPodFromClient(cs clientset.Interface, serverConfig podConfiguration, clientConfig podConfiguration, serverIP string, serverPort uint16, args ...string) error {
 	updatedPod, err := cs.CoreV1().Pods(serverConfig.namespace).Get(context.Background(), serverConfig.name, metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
 
 	if updatedPod.Status.Phase == v1.PodRunning {
-		return connectToServer(clientConfig, serverIP, serverPort)
+		return connectToServer(clientConfig, serverIP, serverPort, args...)
 	}
 
 	return fmt.Errorf("pod not running. /me is sad")
 }
 
-func pingServerPodFromClient(cs clientset.Interface, serverConfig podConfiguration, clientConfig podConfiguration, serverIP string) error {
+func pingServerPodFromClient(cs clientset.Interface, serverConfig podConfiguration, clientConfig podConfiguration, serverIP string, args ...string) error {
 	updatedPod, err := cs.CoreV1().Pods(serverConfig.namespace).Get(context.Background(), serverConfig.name, metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
 
 	if updatedPod.Status.Phase == v1.PodRunning {
-		return pingServer(clientConfig, serverIP)
+		return pingServer(clientConfig, serverIP, args...)
 	}
 
 	return fmt.Errorf("pod not running. /me is sad")

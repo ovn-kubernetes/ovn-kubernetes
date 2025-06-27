@@ -333,17 +333,31 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				kickstartPod(cs, clientPodConfig)
 
 				// Check that the client pod can reach the server pod on the server localnet interface
-				serverIPs, err := podIPsForAttachment(cs, f.Namespace.Name, serverPod.GetName(), netConfig.name)
+				var serverIPs []string
+				if serverPodConfig.hostNetwork {
+					serverIPs, err = podIPsFromStatus(cs, serverPodConfig.namespace, serverPodConfig.name)
+				} else {
+					serverIPs, err = podIPsForAttachment(cs, serverPod.Namespace, serverPod.Name, netConfig.name)
+
+				}
 				Expect(err).NotTo(HaveOccurred())
+
 				for _, serverIP := range serverIPs {
 					By(fmt.Sprintf("asserting the *client* can contact the server pod exposed endpoint: %q on port %q", serverIP, port))
+					curlArgs := []string{}
+					pingArgs := []string{}
+					if clientPodConfig.attachments != nil {
+						// When the client is attached to a localnet, send probes from the localnet interface
+						curlArgs = []string{"--interface", "net1"}
+						pingArgs = []string{"-I", "net1"}
+					}
 					Eventually(func() error {
-						return reachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
+						return reachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port, curlArgs...)
 					}, 2*time.Minute, 6*time.Second).Should(Succeed())
 
 					By(fmt.Sprintf("asserting the *client* can ping the server pod exposed endpoint: %q", serverIP))
 					Eventually(func() error {
-						return pingServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP)
+						return pingServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, pingArgs...)
 					}, 2*time.Minute, 6*time.Second).Should(Succeed())
 				}
 			},
@@ -390,6 +404,52 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					needsIPRequestFromHostSubnet: true,
 				},
 				Label("BUG", "OCPBUGS-43004"),
+			),
+			ginkgo.Entry(
+				"can reach a host-networked pod on a different node",
+				networkAttachmentConfigParams{
+					name:     secondaryNetworkName,
+					topology: "localnet",
+				},
+				podConfiguration{ // client on localnet
+					attachments: []nadapi.NetworkSelectionElement{{
+						Name: secondaryNetworkName,
+					}},
+					name:                         clientPodName,
+					nodeSelector:                 map[string]string{nodeHostnameKey: workerOneNodeName},
+					isPrivileged:                 true,
+					needsIPRequestFromHostSubnet: true,
+				},
+				podConfiguration{ // server on default network, pod is host-networked
+					name:         podName,
+					containerCmd: httpServerContainerCmd(port),
+					nodeSelector: map[string]string{nodeHostnameKey: workerTwoNodeName},
+					hostNetwork:  true,
+				},
+				Label("STORY", "SDN-5345"),
+			),
+			ginkgo.Entry(
+				"can reach a host-networked pod on the same node",
+				networkAttachmentConfigParams{
+					name:     secondaryNetworkName,
+					topology: "localnet",
+				},
+				podConfiguration{ // client on localnet
+					attachments: []nadapi.NetworkSelectionElement{{
+						Name: secondaryNetworkName,
+					}},
+					name:                         clientPodName,
+					nodeSelector:                 map[string]string{nodeHostnameKey: workerTwoNodeName},
+					isPrivileged:                 true,
+					needsIPRequestFromHostSubnet: true,
+				},
+				podConfiguration{ // server on default network, pod is host-networked
+					name:         podName,
+					containerCmd: httpServerContainerCmd(port),
+					nodeSelector: map[string]string{nodeHostnameKey: workerTwoNodeName},
+					hostNetwork:  true,
+				},
+				Label("STORY", "SDN-5345"),
 			),
 		)
 	})
