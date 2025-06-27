@@ -494,7 +494,7 @@ The below diagram shows the overlay part of the OVN Topology that
 OVN-Kubernetes creates for 3 UDN networks (blue, green and yellow)
 across two nodes.
 
-![3-isolated-l3-networks](images/l3-connecting-udns-0.png)
+![3-isolated-l3-networks](https://raw.githubusercontent.com/tssurya/ovn-kubernetes/connecting-udns-okep/docs/okeps/okep-5224-connecting-udns/images/l3-connecting-udns-0.png)
 
 Let's take a look at how we can connect a blue network, green network
 and yellow network at the OVN layer. NOTE: Besides the finalized
@@ -516,7 +516,7 @@ networks, the controller will make the following changes to the topology:
   networks on M nodes we would need 2×(N×M) IPs from the `connectSubnet`.
   See the controller design section for more details
 
-![blue-green-yellow-l3-connect-idea](images/l3-connecting-udns-v1.png)
+![blue-green-yellow-l3-connect-idea](https://raw.githubusercontent.com/tssurya/ovn-kubernetes/connecting-udns-okep/docs/okeps/okep-5224-connecting-udns/images/l3-connecting-udns-v1.png)
 
 So in this proposal it will be 1 new transit router per connect API.
 
@@ -531,7 +531,7 @@ topology] for more details on the new design.
 
 [new Layer2 topology]: https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5097
 
-![3-isolated-l2-networks](images/l2-connecting-udns-0.png)
+![3-isolated-l2-networks](https://raw.githubusercontent.com/tssurya/ovn-kubernetes/connecting-udns-okep/docs/okeps/okep-5224-connecting-udns/images/l2-connecting-udns-0.png)
 
 **Add a new transit router between the transit routers of the networks**
 
@@ -546,7 +546,7 @@ networks, the controller will make the following changes to the topology:
   we would need 2×(N×M) IPs from the `connectSubnet`. See the controller design section for
   more details
 
-![blue-green-yellow-l2-connect-idea](images/l2-connecting-udns-v1.png)
+![blue-green-yellow-l2-connect-idea](https://raw.githubusercontent.com/tssurya/ovn-kubernetes/connecting-udns-okep/docs/okeps/okep-5224-connecting-udns/images/l2-connecting-udns-v1.png)
 
 **Connecting mixed type (layer3 and/or layer2) networks together**
 
@@ -555,19 +555,9 @@ creates for 3 UDN networks (blue(l3), green(l3) and yellow(l2)) across two nodes
 NOTE: The yellow topology representation is that of the new upcoming Layer2 topology.
 The dotted pieces in network colors represent the bits in design and not there yet.
 
-![3-isolated-mixed-networks](images/mixed-connecting-udns-0.png)
+![3-isolated-mixed-networks](https://raw.githubusercontent.com/tssurya/ovn-kubernetes/connecting-udns-okep/docs/okeps/okep-5224-connecting-udns/images/mixed-connecting-udns-0.png)
 
 **Add a new transit router between the ovn_cluster_router's and transit-routers of the networks**
-
-<<<<<<< HEAD
-When the `AdminNetworkConnect` CR gets created selecting these three networks, the controller
-will make the following changes to the topology:
-* Create a distributed `colored-enterprise_interconnect-router` (basically a
-  transit-router type in OVN used for interconnection)
-* Connect the `colored-enterprise_interconnect-router` to the `transit-router`
-  of the yellow network and `ovn_cluster_router`'s of the blue and green networks on each nod
-  using patch ports and tunnelkeys
-=======
 
 When the `AdminNetworkConnect` CR gets created selecting these three
 networks, the controller will make the following changes to the topology:
@@ -576,13 +566,12 @@ networks, the controller will make the following changes to the topology:
 * Connect the `colored-enterprise_interconnect-router` to the
   `transit-router` of the yellow network and `ovn_cluster_router`'s of the
   blue and green networks on each node using patch ports and tunnelkeys
->>>>>>> 2339f5e68 (temp)
 * The port's will have IPs allocated from within the `connectSubnet`
   value provided on the CR (default=`192.168.0.0/10`). For connecting N
   networks on M nodes we would need 2×(N×M) IPs from the `connectSubnet`.
   See the controller design section for more details
 
-![blue-green-yellow-mixed-connect-idea](images/mixed-connecting-udns-v1.png)
+![blue-green-yellow-l2-connect-idea1](https://raw.githubusercontent.com/tssurya/ovn-kubernetes/connecting-udns-okep/docs/okeps/okep-5224-connecting-udns/images/mixed-connecting-udns-v1.png)
 
 ### Pods
 
@@ -886,7 +875,7 @@ connect UDNs when overlay is turned off.
   really encouraged.
 * The annotation: 
 
-![blue-green-yellow-l3-connect-scale](images/l3-connecting-udns-scale.png)
+![blue-green-yellow-l3-connect-scale](https://raw.githubusercontent.com/tssurya/ovn-kubernetes/connecting-udns-okep/docs/okeps/okep-5224-connecting-udns/images/l3-connecting-udns-scale.png)
 
 ## OVN Kubernetes Version Skew
 
