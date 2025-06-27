@@ -91,10 +91,8 @@ func checkPodsInterconnectivity(clientPod, serverPod *v1.Pod, namespace string, 
 var _ = ginkgo.Describe("Multi node zones interconnect", feature.Interconnect, func() {
 
 	const (
-		serverPodNodeName = "ovn-control-plane"
-		serverPodName     = "server-pod"
-		clientPodNodeName = "ovn-worker3"
-		clientPodName     = "client-pod"
+		serverPodName = "server-pod"
+		clientPodName = "client-pod"
 	)
 	fr := wrappedTestFramework("multi-node-zones")
 
@@ -120,13 +118,13 @@ var _ = ginkgo.Describe("Multi node zones interconnect", feature.Interconnect, f
 				len(nodes.Items))
 		}
 
-		serverPodNode, err = cs.CoreV1().Nodes().Get(context.TODO(), serverPodNodeName, metav1.GetOptions{})
+		serverPodNode, err = cs.CoreV1().Nodes().Get(context.TODO(), nodes.Items[0].Name, metav1.GetOptions{})
 		if err != nil {
 			e2eskipper.Skipf(
 				"Test requires node with the name %s", serverPodName,
 			)
 		}
-		clientPodNode, err = cs.CoreV1().Nodes().Get(context.TODO(), clientPodNodeName, metav1.GetOptions{})
+		clientPodNode, err = cs.CoreV1().Nodes().Get(context.TODO(), nodes.Items[1].Name, metav1.GetOptions{})
 		if err != nil {
 			e2eskipper.Skipf(
 				"Test requires node with the name %s", clientPodName,
@@ -141,7 +139,7 @@ var _ = ginkgo.Describe("Multi node zones interconnect", feature.Interconnect, f
 
 		if serverPodNodeZone == clientPodNodeZone {
 			e2eskipper.Skipf(
-				"Test requires nodes %s and %s are in different zones", serverPodNodeName, clientPodNodeName,
+				"Test requires nodes %s and %s are in different zones", nodes.Items[0].Name, nodes.Items[1].Name,
 			)
 		}
 	})
@@ -150,13 +148,13 @@ var _ = ginkgo.Describe("Multi node zones interconnect", feature.Interconnect, f
 		// Create a server pod on zone - zone-1
 		cmd := httpServerContainerCmd(8000)
 		serverPod := e2epod.NewAgnhostPod(fr.Namespace.Name, serverPodName, nil, nil, nil, cmd...)
-		serverPod.Spec.NodeName = serverPodNodeName
+		serverPod.Spec.NodeName = serverPodNode.Name
 		e2epod.NewPodClient(fr).CreateSync(context.TODO(), serverPod)
 
 		// Create a client pod on zone - zone-2
 		cmd = []string{}
 		clientPod := e2epod.NewAgnhostPod(fr.Namespace.Name, clientPodName, nil, nil, nil, cmd...)
-		clientPod.Spec.NodeName = clientPodNodeName
+		clientPod.Spec.NodeName = clientPodNode.Name
 		e2epod.NewPodClient(fr).CreateSync(context.TODO(), clientPod)
 
 		ginkgo.By("asserting the *client* pod can contact the server pod exposed endpoint")
@@ -164,7 +162,7 @@ var _ = ginkgo.Describe("Multi node zones interconnect", feature.Interconnect, f
 		framework.ExpectNoError(err, "failed to check pods interconnectivity")
 
 		// Change the zone of client-pod node to that of server-pod node
-		s := fmt.Sprintf("Changing the client-pod node %s zone from %s to %s", clientPodNodeName, clientPodNodeZone, serverPodNodeZone)
+		s := fmt.Sprintf("Changing the client-pod node %s zone from %s to %s", clientPodNode.Name, clientPodNodeZone, serverPodNodeZone)
 		ginkgo.By(s)
 		err = changeNodeZone(clientPodNode, serverPodNodeZone, cs)
 		framework.ExpectNoError(err, "failed to change node zone")
@@ -174,7 +172,7 @@ var _ = ginkgo.Describe("Multi node zones interconnect", feature.Interconnect, f
 		framework.ExpectNoError(err, "failed to check pods interconnectivity")
 
 		// Change back the zone of client-pod node
-		s = fmt.Sprintf("Changing back the client-pod node %s zone from %s to %s", clientPodNodeName, serverPodNodeZone, clientPodNodeZone)
+		s = fmt.Sprintf("Changing back the client-pod node %s zone from %s to %s", clientPodNode.Name, serverPodNodeZone, clientPodNodeZone)
 		ginkgo.By(s)
 		err = changeNodeZone(clientPodNode, clientPodNodeZone, cs)
 		framework.ExpectNoError(err, "failed to change node zone")
