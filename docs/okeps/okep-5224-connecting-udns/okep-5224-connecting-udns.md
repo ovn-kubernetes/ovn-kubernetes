@@ -584,7 +584,7 @@ The below diagram shows the overlay part of the OVN Topology that
 OVN-Kubernetes creates for 3 UDN networks (blue, green and yellow)
 across two nodes.
 
-![3-isolated-l3-networks](images/l3-connecting-udns-0.png)
+![3-isolated-l3-networks](https://raw.githubusercontent.com/tssurya/ovn-kubernetes/connecting-udns-okep/docs/okeps/okep-5224-connecting-udns/images/l3-connecting-udns-0.png)
 
 Let's take a look at how we can connect a blue network, green network
 and yellow network at the OVN layer.
@@ -604,7 +604,7 @@ networks, the controller will make the following changes to the topology:
   networks on M nodes we would need 2×(N×M) IPs from the `connectSubnet`.
   See the controller design section for more details
 
-![blue-green-yellow-l3-connect-idea](images/l3-connecting-udns-v1.png)
+![blue-green-yellow-l3-connect-idea](https://raw.githubusercontent.com/tssurya/ovn-kubernetes/connecting-udns-okep/docs/okeps/okep-5224-connecting-udns/images/l3-connecting-udns-v1.png)
 
 So in this proposal it will be 1 new transit router per ClusterNetworkConnect API.
 
@@ -733,7 +733,7 @@ topology] for more details on the new design.
 
 [new Layer2 topology]: https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5097
 
-![3-isolated-l2-networks](images/l2-connecting-udns-0.png)
+![3-isolated-l2-networks](https://raw.githubusercontent.com/tssurya/ovn-kubernetes/connecting-udns-okep/docs/okeps/okep-5224-connecting-udns/images/l2-connecting-udns-0.png)
 
 **Add a new transit router between the transit routers of the networks**
 
@@ -750,7 +750,7 @@ networks, the controller will make the following changes to the topology:
   See the controller design section for
   more details
 
-![blue-green-yellow-l2-connect-idea](images/l2-connecting-udns-v1.png)
+![blue-green-yellow-l2-connect-idea](https://raw.githubusercontent.com/tssurya/ovn-kubernetes/connecting-udns-okep/docs/okeps/okep-5224-connecting-udns/images/l2-connecting-udns-v1.png)
 
 **Connecting mixed type (layer3 and/or layer2) networks together**
 
@@ -762,7 +762,7 @@ topology.
 The dotted pieces in network colors represent the bits in design and not
 there yet.
 
-![3-isolated-mixed-networks](images/mixed-connecting-udns-0.png)
+![3-isolated-mixed-networks](https://raw.githubusercontent.com/tssurya/ovn-kubernetes/connecting-udns-okep/docs/okeps/okep-5224-connecting-udns/images/mixed-connecting-udns-0.png)
 
 **Add a new transit router between the ovn_cluster_router's and transit-routers of the networks**
 
@@ -778,7 +778,7 @@ networks, the controller will make the following changes to the topology:
   networks on M nodes we would need 2×(N×M) IPs from the `connectSubnet`.
   See the controller design section for more details
 
-![blue-green-yellow-mixed-connect-idea](images/mixed-connecting-udns-v1.png)
+![blue-green-yellow-l2-connect-idea1](https://raw.githubusercontent.com/tssurya/ovn-kubernetes/connecting-udns-okep/docs/okeps/okep-5224-connecting-udns/images/mixed-connecting-udns-v1.png)
 
 ### Pods
 
@@ -1228,7 +1228,7 @@ connect UDNs when overlay is turned off.
 * The annotations we add to the CNC has cost of marshall and unmarshall
   at each ovnkube-controller
 
-![blue-green-yellow-l3-connect-scale](images/l3-connecting-udns-scale.png)
+![blue-green-yellow-l3-connect-scale](https://raw.githubusercontent.com/tssurya/ovn-kubernetes/connecting-udns-okep/docs/okeps/okep-5224-connecting-udns/images/l3-connecting-udns-scale.png)
 
 ## OVN Kubernetes Version Skew
 
