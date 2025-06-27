@@ -11,6 +11,7 @@ DUALSTACK_CONVERSION?=false
 install-kind:
 	PLATFORM_IPV4_SUPPORT=$(PLATFORM_IPV4_SUPPORT) \
 	PLATFORM_IPV6_SUPPORT=$(PLATFORM_IPV6_SUPPORT) \
+	OVN_GITREF="main" \
 	./scripts/install-kind.sh
 
 .PHONY : upgrade-ovn
