@@ -1899,8 +1899,8 @@ func commonFlows(hostSubnets []*net.IPNet, bridge *bridgeConfiguration) ([]strin
 		}
 		actions += strip_vlan + "NORMAL"
 		dftFlows = append(dftFlows,
-			fmt.Sprintf("cookie=%s, priority=10, table=0, in_port=%s, %s dl_dst=%s, actions=%s",
-				defaultOpenFlowCookie, ofPortPhys, match_vlan, bridgeMacAddress, actions))
+			fmt.Sprintf("cookie=%s, priority=10, table=0, %s dl_dst=%s, actions=%s",
+				defaultOpenFlowCookie, match_vlan, bridgeMacAddress, actions))
 	}
 
 	// table 0, check packets coming from OVN have the correct mac address. Low priority flows that are a catch all
