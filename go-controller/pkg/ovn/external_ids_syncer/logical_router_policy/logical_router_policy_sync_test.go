@@ -122,7 +122,7 @@ var _ = ginkgo.Describe("OVN Logical Router Syncer", func() {
 					map[string]string{"name": egressIPName},
 					defaultNetworkControllerName)},
 				finalLRPs: []*nbdb.LogicalRouterPolicy{getReRouteLRP(podNamespace, podName, v4PodIPStr, 0, v4IPFamilyValue, v4PodNextHops,
-					map[string]string{"name": egressIPName},
+					getEgressIPLRPReRouteDbIDs(egressIPName, "UNKNOWN", "UNKNOWN", v4IPFamilyValue, defaultNetworkName, defaultNetworkControllerName).GetExternalIDs(),
 					defaultNetworkControllerName)},
 				v4ClusterSubnets: []*net.IPNet{v4PodClusterSubnet},
 				v4JoinSubnet:     v4JoinSubnet,

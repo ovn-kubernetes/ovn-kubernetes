@@ -101,7 +101,8 @@ func (syncer *LRPSyncer) syncEgressIPReRoutes() error {
 			podInfo, err := cache.getPod(podIP)
 			if err != nil {
 				klog.Infof("Failed to find Logical Switch Port cache entry for pod IP %s: %v", podIP.String(), err)
-				continue
+				// pod not found, add dummy metadata that will be cleaned up by EIP controller sync.
+				podInfo = podNetInfo{namespace: "UNKNOWN", name: "UNKNOWN"}
 			}
 			ipFamily := getIPFamily(isIPv6)
 			lrp.ExternalIDs = getEgressIPLRPReRouteDbIDs(eipName, podInfo.namespace, podInfo.name, ipFamily, defaultNetworkName, syncer.controllerName).GetExternalIDs()
