@@ -1083,7 +1083,7 @@ func (e *EgressIPController) deletePodEgressIPAssignments(ni util.NetInfo, name 
 func (e *EgressIPController) deletePreviousNetworkPodEgressIPAssignments(ni util.NetInfo, name string, statusesToRemove []egressipv1.EgressIPStatusItem, pod *corev1.Pod) {
 	cachedNetwork := e.getNetworkFromPodAssignment(getPodKey(pod))
 	if cachedNetwork != nil {
-		if util.AreNetworksCompatible(cachedNetwork, ni) {
+		if !util.AreNetworksCompatible(cachedNetwork, ni) {
 			if err := e.deletePodEgressIPAssignments(cachedNetwork, name, statusesToRemove, pod); err != nil {
 				// no error is returned because high probability network is deleted
 				klog.Errorf("Failed to delete EgressIP %s assignment for pod %s/%s attached to network %s: %v",
@@ -2451,7 +2451,8 @@ func (e *EgressIPController) deletePodEgressIPAssignment(ni util.NetInfo, egress
 		return err
 	}
 	var ops []ovsdb.Operation
-	if !loadedPodNode || isLocalZonePod { // node is deleted (we can't determine zone so we always try and nuke OR pod is local to zone)
+
+	if !loadedPodNode || isLocalZonePod || (isLocalZoneEgressNode && ni.IsSecondary() && ni.TopologyType() == types.Layer2Topology) { // node is deleted (we can't determine zone so we always try and nuke OR pod is local to zone)
 		ops, err = e.addExternalGWPodSNATOps(ni, nil, pod.Namespace, pod.Name, status)
 		if err != nil {
 			return err
