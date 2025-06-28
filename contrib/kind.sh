@@ -822,6 +822,12 @@ set_ovn_image() {
 }
 
 build_ovn_image() {
+  local push_args=""
+  if [ "$OCI_BIN" == "podman" ]; then
+    # docker doesn't perform tls check by default only podman does, hence we need to disable it for podman.
+    push_args="--tls-verify=false"
+  fi
+
   if [ "$OVN_IMAGE" == local ]; then
     set_ovn_image
 
@@ -834,22 +840,28 @@ build_ovn_image() {
     # store in local registry
     if [ "$KIND_LOCAL_REGISTRY" == true ];then
       echo "Pushing built image to local $OCI_BIN registry"
-      $OCI_BIN push "${OVN_IMAGE}"
+      $OCI_BIN push "${push_args}" "${OVN_IMAGE}"
     fi
   # We should push to local registry if image is not remote
   elif [ "${OVN_IMAGE}" != "" -a "${KIND_LOCAL_REGISTRY}" == true ] && (echo "$OVN_IMAGE" | grep / -vq); then
     local local_registry_ovn_image="localhost:5000/${OVN_IMAGE}"
     $OCI_BIN tag "$OVN_IMAGE" $local_registry_ovn_image
     OVN_IMAGE=$local_registry_ovn_image
-    $OCI_BIN push $OVN_IMAGE
+    $OCI_BIN push "${push_args}" "$OVN_IMAGE"
   fi
 }
 
 create_ovn_kube_manifests() {
     local ovnkube_image=${OVN_IMAGE}
     if [ "$KIND_LOCAL_REGISTRY" == true ];then
-      # When updating with local registry we have to reference the sha
-      ovnkube_image=$($OCI_BIN inspect --format='{{index .RepoDigests 0}}' $OVN_IMAGE)
+      # When updating with local registry we have to reference the image digest (SHA)
+      # Check the image digest in the local registry because it might be different then the digest in the local container runtime
+      if [ "$OCI_BIN" == "podman" ]; then
+        # due to differences how podman and docker persist images, for podman use skopeo to get the image and digest.
+        ovnkube_image=$(skopeo inspect --format "{{.Name}}@{{.Digest}}" --tls-verify=false  "docker://$OVN_IMAGE")
+      else
+        ovnkube_image=$($OCI_BIN inspect --format='{{index .RepoDigests 0}}' $OVN_IMAGE)
+      fi
     fi
     pushd ${DIR}/../dist/images
     if [ "$OVN_ENABLE_INTERCONNECT" == true ]; then
