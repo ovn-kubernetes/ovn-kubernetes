@@ -310,7 +310,9 @@ func (udng *UserDefinedNetworkGateway) delMarkChain() error {
 	chain := &knftables.Chain{
 		Name: GetUDNMarkChain(fmt.Sprintf("0x%x", udng.pktMark)),
 	}
-	tx.Flush(chain)
+	// Delete would return an error if we tried to delete a chain that didn't exist, so
+	// we do an Add first (which is a no-op if the chain already exists) and then Delete.
+	tx.Add(chain)
 	tx.Delete(chain)
 	return nft.Run(context.TODO(), tx)
 }
