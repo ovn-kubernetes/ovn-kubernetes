@@ -216,6 +216,12 @@ func (cm *ClusterManager) Start(ctx context.Context) error {
 		if err := cm.userDefinedNetworkController.Run(); err != nil {
 			return err
 		}
+
+		// TODO: this will depend on a feature configuration flag which does not exist yet.
+		// Before merging we MUST add this code.
+		if err := cm.userDefinedNetworkController.EnsureDefaultNetworkNAD(); err != nil {
+			return err
+		}
 	}
 
 	if cm.raController != nil {
