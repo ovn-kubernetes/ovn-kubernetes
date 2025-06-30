@@ -561,7 +561,7 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 		// exec Mocks
 		fexec := ovntest.NewLooseCompareFakeExec()
 		// gatewayInitInternal
-		// bridgeForInterface
+		// BridgeForInterface
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 			Cmd: "ovs-vsctl --timeout=15 port-to-br " + brphys,
 			Err: fmt.Errorf(""),

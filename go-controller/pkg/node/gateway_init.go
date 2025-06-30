@@ -22,57 +22,6 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
-// bridgedGatewayNodeSetup enables forwarding on bridge interface, sets up the physical network name mappings for the bridge,
-// and returns an ifaceID created from the bridge name and the node name
-func bridgedGatewayNodeSetup(nodeName, bridgeName, physicalNetworkName string) (string, error) {
-	// IPv6 forwarding is enabled globally
-	if config.IPv4Mode {
-		// we use forward slash as path separator to allow dotted bridgeName e.g. foo.200
-		stdout, stderr, err := util.RunSysctl("-w", fmt.Sprintf("net/ipv4/conf/%s/forwarding=1", bridgeName))
-		// systctl output enforces dot as path separator
-		if err != nil || stdout != fmt.Sprintf("net.ipv4.conf.%s.forwarding = 1", strings.ReplaceAll(bridgeName, ".", "/")) {
-			return "", fmt.Errorf("could not set the correct forwarding value for interface %s: stdout: %v, stderr: %v, err: %v",
-				bridgeName, stdout, stderr, err)
-		}
-	}
-
-	// ovn-bridge-mappings maps a physical network name to a local ovs bridge
-	// that provides connectivity to that network. It is in the form of physnet1:br1,physnet2:br2.
-	// Note that there may be multiple ovs bridge mappings, be sure not to override
-	// the mappings for the other physical network
-	stdout, stderr, err := util.RunOVSVsctl("--if-exists", "get", "Open_vSwitch", ".",
-		"external_ids:ovn-bridge-mappings")
-	if err != nil {
-		return "", fmt.Errorf("failed to get ovn-bridge-mappings stderr:%s (%v)", stderr, err)
-	}
-	// skip the existing mapping setting for the specified physicalNetworkName
-	mapString := ""
-	bridgeMappings := strings.Split(stdout, ",")
-	for _, bridgeMapping := range bridgeMappings {
-		m := strings.Split(bridgeMapping, ":")
-		if network := m[0]; network != physicalNetworkName {
-			if len(mapString) != 0 {
-				mapString += ","
-			}
-			mapString += bridgeMapping
-		}
-	}
-	if len(mapString) != 0 {
-		mapString += ","
-	}
-	mapString += physicalNetworkName + ":" + bridgeName
-
-	_, stderr, err = util.RunOVSVsctl("set", "Open_vSwitch", ".",
-		fmt.Sprintf("external_ids:ovn-bridge-mappings=%s", mapString))
-	if err != nil {
-		return "", fmt.Errorf("failed to set ovn-bridge-mappings for ovs bridge %s"+
-			", stderr:%s (%v)", bridgeName, stderr, err)
-	}
-
-	ifaceID := bridgeName + "_" + nodeName
-	return ifaceID, nil
-}
-
 // getNetworkInterfaceIPAddresses returns the IP addresses for the network interface 'iface'.
 func getNetworkInterfaceIPAddresses(iface string) ([]*net.IPNet, error) {
 	allIPs, err := util.GetFilteredInterfaceV4V6IPs(iface)
@@ -474,7 +423,7 @@ func (nc *DefaultNodeNetworkController) initGatewayMainStart(gw *gateway, waiter
 
 // interfaceForEXGW takes the interface requested to act as exgw bridge
 // and returns the name of the bridge if exists, or the interface itself
-// if the bridge needs to be created. In this last scenario, bridgeForInterface
+// if the bridge needs to be created. In this last scenario, BridgeForInterface
 // will create the bridge.
 func interfaceForEXGW(intfName string) string {
 	if _, _, err := util.RunOVSVsctl("br-exists", intfName); err == nil {
@@ -604,8 +553,8 @@ func CleanupClusterNode(name string) error {
 
 func (nc *DefaultNodeNetworkController) updateGatewayMAC(link netlink.Link) error {
 	// TBD-merge for dpu-host mode: if interface mac of the dpu-host interface that connects to the
-	// gateway bridge on the dpu changes, we need to update dpu's gatewayBridge.macAddress L3 gateway
-	// annotation (see bridgeForInterface)
+	// gateway bridge on the dpu changes, we need to update dpu's gatewayBridge.MacAddress L3 gateway
+	// annotation (see BridgeForInterface)
 	if config.OvnKubeNode.Mode != types.NodeModeFull {
 		return nil
 	}

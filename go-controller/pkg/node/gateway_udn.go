@@ -6,7 +6,6 @@ import (
 	"net"
 	"slices"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/vishvananda/netlink"
@@ -96,149 +95,6 @@ type UserDefinedNetworkGateway struct {
 	isNetworkAdvertised             bool
 }
 
-// UTILS Needed for UDN (also leveraged for default netInfo) in bridgeConfiguration
-
-// getBridgePortConfigurations returns a slice of Network port configurations along with the
-// uplinkName and physical port's ofport value
-func (b *bridgeConfiguration) getBridgePortConfigurations() ([]*bridgeUDNConfiguration, string, string) {
-	b.Lock()
-	defer b.Unlock()
-	var netConfigs []*bridgeUDNConfiguration
-	for _, netConfig := range b.netConfig {
-		netConfigs = append(netConfigs, netConfig.shallowCopy())
-	}
-	return netConfigs, b.uplinkName, b.ofPortPhys
-}
-
-// addNetworkBridgeConfig adds the patchport and ctMark value for the provided netInfo into the bridge configuration cache
-func (b *bridgeConfiguration) addNetworkBridgeConfig(
-	nInfo util.NetInfo,
-	nodeSubnets []*net.IPNet,
-	masqCTMark, pktMark uint,
-	v6MasqIPs, v4MasqIPs *udn.MasqueradeIPs) error {
-	b.Lock()
-	defer b.Unlock()
-
-	netName := nInfo.GetNetworkName()
-	patchPort := nInfo.GetNetworkScopedPatchPortName(b.bridgeName, b.nodeName)
-
-	_, found := b.netConfig[netName]
-	if !found {
-		netConfig := &bridgeUDNConfiguration{
-			patchPort:   patchPort,
-			masqCTMark:  fmt.Sprintf("0x%x", masqCTMark),
-			pktMark:     fmt.Sprintf("0x%x", pktMark),
-			v4MasqIPs:   v4MasqIPs,
-			v6MasqIPs:   v6MasqIPs,
-			subnets:     nInfo.Subnets(),
-			nodeSubnets: nodeSubnets,
-		}
-		netConfig.advertised.Store(util.IsPodNetworkAdvertisedAtNode(nInfo, b.nodeName))
-
-		b.netConfig[netName] = netConfig
-	} else {
-		klog.Warningf("Trying to update bridge config for network %s which already"+
-			"exists in cache...networks are not mutable...ignoring update", nInfo.GetNetworkName())
-	}
-	return nil
-}
-
-// delNetworkBridgeConfig deletes the provided netInfo from the bridge configuration cache
-func (b *bridgeConfiguration) delNetworkBridgeConfig(nInfo util.NetInfo) {
-	b.Lock()
-	defer b.Unlock()
-
-	delete(b.netConfig, nInfo.GetNetworkName())
-}
-
-func (b *bridgeConfiguration) getNetworkBridgeConfig(networkName string) *bridgeUDNConfiguration {
-	b.Lock()
-	defer b.Unlock()
-	return b.netConfig[networkName]
-}
-
-// getActiveNetworkBridgeConfigCopy returns a shallow copy of the network configuration corresponding to the
-// provided netInfo.
-//
-// NOTE: if the network configuration can't be found or if the network is not patched by OVN
-// yet this returns nil.
-func (b *bridgeConfiguration) getActiveNetworkBridgeConfigCopy(networkName string) *bridgeUDNConfiguration {
-	b.Lock()
-	defer b.Unlock()
-
-	if netConfig, found := b.netConfig[networkName]; found && netConfig.ofPortPatch != "" {
-		return netConfig.shallowCopy()
-	}
-	return nil
-}
-
-func (b *bridgeConfiguration) patchedNetConfigs() []*bridgeUDNConfiguration {
-	result := make([]*bridgeUDNConfiguration, 0, len(b.netConfig))
-	for _, netConfig := range b.netConfig {
-		if netConfig.ofPortPatch == "" {
-			continue
-		}
-		result = append(result, netConfig)
-	}
-	return result
-}
-
-// END UDN UTILs for bridgeConfiguration
-
-// bridgeUDNConfiguration holds the patchport and ctMark
-// information for a given network
-type bridgeUDNConfiguration struct {
-	patchPort   string
-	ofPortPatch string
-	masqCTMark  string
-	pktMark     string
-	v4MasqIPs   *udn.MasqueradeIPs
-	v6MasqIPs   *udn.MasqueradeIPs
-	subnets     []config.CIDRNetworkEntry
-	nodeSubnets []*net.IPNet
-	advertised  atomic.Bool
-}
-
-func (netConfig *bridgeUDNConfiguration) shallowCopy() *bridgeUDNConfiguration {
-	copy := &bridgeUDNConfiguration{
-		patchPort:   netConfig.patchPort,
-		ofPortPatch: netConfig.ofPortPatch,
-		masqCTMark:  netConfig.masqCTMark,
-		pktMark:     netConfig.pktMark,
-		v4MasqIPs:   netConfig.v4MasqIPs,
-		v6MasqIPs:   netConfig.v6MasqIPs,
-		subnets:     netConfig.subnets,
-		nodeSubnets: netConfig.nodeSubnets,
-	}
-	netConfig.advertised.Store(netConfig.advertised.Load())
-	return copy
-}
-
-func (netConfig *bridgeUDNConfiguration) isDefaultNetwork() bool {
-	return netConfig.masqCTMark == ctMarkOVN
-}
-
-func (netConfig *bridgeUDNConfiguration) setBridgeNetworkOfPortsInternal() error {
-	ofportPatch, stderr, err := util.GetOVSOfPort("get", "Interface", netConfig.patchPort, "ofport")
-	if err != nil {
-		return fmt.Errorf("failed while waiting on patch port %q to be created by ovn-controller and "+
-			"while getting ofport. stderr: %v, error: %v", netConfig.patchPort, stderr, err)
-	}
-	netConfig.ofPortPatch = ofportPatch
-	return nil
-}
-
-func setBridgeNetworkOfPorts(bridge *bridgeConfiguration, netName string) error {
-	bridge.Lock()
-	defer bridge.Unlock()
-
-	netConfig, found := bridge.netConfig[netName]
-	if !found {
-		return fmt.Errorf("failed to find network %s configuration on bridge %s", netName, bridge.bridgeName)
-	}
-	return netConfig.setBridgeNetworkOfPortsInternal()
-}
-
 func NewUserDefinedNetworkGateway(netInfo util.NetInfo, node *corev1.Node, nodeLister listers.NodeLister,
 	kubeInterface kube.Interface, vrfManager *vrfmanager.Controller, ruleManager *iprulemanager.Controller,
 	defaultNetworkGateway Gateway) (*UserDefinedNetworkGateway, error) {
@@ -272,7 +128,7 @@ func NewUserDefinedNetworkGateway(netInfo util.NetInfo, node *corev1.Node, nodeL
 	if gw.openflowManager == nil {
 		return nil, fmt.Errorf("openflow manager has not been provided for network: %s", netInfo.GetNetworkName())
 	}
-	intfName := gw.openflowManager.defaultBridge.getGatewayIface()
+	intfName := gw.openflowManager.defaultBridge.GetGatewayIface()
 	link, err := util.GetNetLinkOps().LinkByName(intfName)
 	if err != nil {
 		return nil, fmt.Errorf("unable to get link for %s, error: %v", intfName, err)
@@ -402,12 +258,12 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 
 	waiter := newStartupWaiterWithTimeout(waitForPatchPortTimeout)
 	readyFunc := func() (bool, error) {
-		if err := setBridgeNetworkOfPorts(udng.openflowManager.defaultBridge, udng.GetNetworkName()); err != nil {
+		if err := udng.openflowManager.defaultBridge.SetBridgeNetworkOfPorts(udng.GetNetworkName()); err != nil {
 			klog.V(3).Infof("Failed to set network %s's openflow ports for default bridge; error: %v", udng.GetNetworkName(), err)
 			return false, nil
 		}
 		if udng.openflowManager.externalGatewayBridge != nil {
-			if err := setBridgeNetworkOfPorts(udng.openflowManager.externalGatewayBridge, udng.GetNetworkName()); err != nil {
+			if err := udng.openflowManager.externalGatewayBridge.SetBridgeNetworkOfPorts(udng.GetNetworkName()); err != nil {
 				klog.V(3).Infof("Failed to set network %s's openflow ports for secondary bridge; error: %v", udng.GetNetworkName(), err)
 				return false, nil
 			}
@@ -736,7 +592,7 @@ func (udng *UserDefinedNetworkGateway) getDefaultRoute() ([]netlink.Route, error
 
 	var retVal []netlink.Route
 	var defaultAnyCIDR *net.IPNet
-	for _, nextHop := range udng.gateway.openflowManager.defaultBridge.nextHops {
+	for _, nextHop := range udng.gateway.openflowManager.defaultBridge.NextHops {
 		isV6 := utilnet.IsIPv6(nextHop)
 		_, defaultAnyCIDR, _ = net.ParseCIDR("0.0.0.0/0")
 		if isV6 {
@@ -948,11 +804,11 @@ func (udng *UserDefinedNetworkGateway) doReconcile() error {
 	udng.updateAdvertisementStatus()
 
 	// update bridge configuration
-	netConfig := udng.openflowManager.defaultBridge.getNetworkBridgeConfig(udng.GetNetworkName())
+	netConfig := udng.openflowManager.defaultBridge.GetNetworkBridgeConfig(udng.GetNetworkName())
 	if netConfig == nil {
 		return fmt.Errorf("missing bridge configuration for network %s", udng.GetNetworkName())
 	}
-	netConfig.advertised.Store(udng.isNetworkAdvertised)
+	netConfig.Advertised.Store(udng.isNetworkAdvertised)
 
 	if err := udng.updateUDNVRFIPRules(); err != nil {
 		return fmt.Errorf("error while updating ip rule for UDN %s: %s", udng.GetNetworkName(), err)
