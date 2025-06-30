@@ -5,50 +5,51 @@
 ## Problem Statement
 
 Migrating legacy workloads with a predefined network configurations (IP, MAC, default gateway)
-to OVN-Kubernetes is currently not possible. There is a need to import these workloads, preserving 
+to OVN-Kubernetes is currently not possible. There is a need to import these workloads, preserving
 their network configuration, while also enabling non-NATed traffic to better integrate with
 existing infrastructures.
 
 ## Goals
 
-- Enable pods on primary Layer2 User Defined Network (UDN) and Cluster UDN to use a predefined static network
-  configuration including IP address, MAC address, and default gateway. 
-- Ensure it is possible to enable non-NATed traffic for pods with predefined static network configuration
+* Enable pods on primary Layer2 User Defined Network (UDN) and Cluster UDN to use a predefined static network
+  configuration including IP address, MAC address, and default gateway.
+* Ensure it is possible to enable non-NATed traffic for pods with predefined static network configuration
   by exposing the Layer2 Cluster UDN through BGP (see [Risks, Known Limitations and Mitigations](#risks-known-limitations-and-mitigations) for current BGP support limitations).
 
 ## Non-Goals
 
-- Modifying the default gateway and management IPs of a primary UDN after it was created.
-- Modifying a pod's network configuration after the pod was created.
-- Non-NATed traffic support in secondary networks.
-- Predefined IP/MAC addresses support for pods in Layer3 UDNs.
-- Configurable default gateway and infrastructure addresses in Layer3 UDNs.
-- Predefined IP/MAC addresses support for pods in Localnet UDNs.
-- Configuring default gateway and infrastructure addresses in Layer2 (Cluster) UDNs that do not belong to the networks subnets.
-- No-downtime workload migration. 
+* Modifying the default gateway and management IPs of a primary UDN after it was created.
+* Modifying a pod's network configuration after the pod was created.
+* Non-NATed traffic support in secondary networks.
+* Predefined IP/MAC addresses support for pods in Layer3 UDNs.
+* Configurable default gateway and infrastructure addresses in Layer3 UDNs.
+* Predefined IP/MAC addresses support for pods in Localnet UDNs.
+* Configuring default gateway and infrastructure addresses in Layer2 (Cluster) UDNs that do not belong to the networks subnets.
+* No-downtime workload migration.
 
 ## Introduction
+
 Legacy workloads, particularly virtual machines, are often set up with static
 network configurations. When migrating to OVN-Kubernetes UDNs,
-it should be possible to integrate these gradually to prevent disruptions. 
+it should be possible to integrate these gradually to prevent disruptions.
 
-Currently, OVN-Kubernetes allocates IP addresses dynamically and it generates the MAC 
+Currently, OVN-Kubernetes allocates IP addresses dynamically and it generates the MAC
 addresses from it. It sets the pod's default gateway to the first usable IP address of its subnet.
 For primary UDNs, it additionally reserves the second usable IP address for the internal management port which
-excludes it from being available for workloads. 
+excludes it from being available for workloads.
 
 ## User-Stories/Use-Cases
 
-- As a user, I want to define a custom default gateway IP for a new primary Layer2 UDN
+* As a user, I want to define a custom default gateway IP for a new primary Layer2 UDN
 so that my migrated workloads can maintain their existing network configuration without disruption.
 
-- As a user, I want the ability to configure a new primary Layer2 UDN with a custom management IP
+* As a user, I want the ability to configure a new primary Layer2 UDN with a custom management IP
 address to prevent IP conflicts with the workloads I am importing.
 
-- As a user, I want to assign a predefined IP address and MAC address to a pod to ensure the
+* As a user, I want to assign a predefined IP address and MAC address to a pod to ensure the
 network identity of my imported workload is maintained.
 
-- As a user, I want to prevent OVN-Kubernetes from automatically assigning  IP addresses that are
+* As a user, I want to prevent OVN-Kubernetes from automatically assigning  IP addresses that are
 already in use by my existing infrastructure, so that I can migrate my services gradually without network conflicts.
 
 ## Proposed Solution
@@ -65,16 +66,16 @@ The proposed changes are specified in the [Layer2 User Defined Network API chang
 OVN-Kubernetes currently supports configuring pods' secondary network interfaces through
 the `k8s.v1.cni.cncf.io/networks` annotation, which contains a JSON array of
 [NetworkSelectionElement](https://github.com/k8snetworkplumbingwg/network-attachment-definition-client/blob/e12bd55d48a1f798a1720218819063f5903b72e3/pkg/apis/k8s.cni.cncf.io/v1/types.go#L136-L171)
-objects. Additionally, it is possible to modify the cluster's default network attachment by 
-setting the `v1.multus-cni.io/default-network` annotation to a singular NetworkSelectionElement 
+objects. Additionally, it is possible to modify the cluster's default network attachment by
+setting the `v1.multus-cni.io/default-network` annotation to a singular NetworkSelectionElement
 object.
 
 To enable using predefined MAC and IP addresses on pods attached to a primary UDN,
-the `v1.multus-cni.io/default-network` will be reused, as it is a well-known annotation for 
-configuring the pod's default network. The `k8s.v1.cni.cncf.io/networks` annotation is specific to 
+the `v1.multus-cni.io/default-network` will be reused, as it is a well-known annotation for
+configuring the pod's default network. The `k8s.v1.cni.cncf.io/networks` annotation is specific to
 secondary networks and expects a list of networks, which does not fit well with primary UDNs.
-With the proposed approach, the `k8s.ovn.org/primary-udn-ipamclaim` annotation, used to link a 
-pod with a matching claim, will be deprecated in favor of the `IPAMClaimReference` field in the 
+With the proposed approach, the `k8s.ovn.org/primary-udn-ipamclaim` annotation, used to link a
+pod with a matching claim, will be deprecated in favor of the `IPAMClaimReference` field in the
 NetworkSelectionElement. When `IPAMClaimReference` is specified we will update its status to reflect
 the result of the IP allocation, see [IPAMClaim API changes](#ipamclaim-api-changes).
 OVN-Kubernetes will keep track all allocated MAC and IP addresses to detect conflicts.
@@ -121,6 +122,7 @@ end
 Proposed API change adds `infrastructureSubnets` `reservedSubnets` and `defaultGatewayIPs` fields to the `Layer2Config` which is a part of both
 the [UDN](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/a3d0a2b238bef9b1399b3342228d75504afed18b/go-controller/pkg/crd/userdefinednetwork/v1/udn.go#L47)
 and [cluster UDN](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/a3d0a2b238bef9b1399b3342228d75504afed18b/go-controller/pkg/crd/userdefinednetwork/v1/cudn.go#L63) specs:
+
 ```diff
 // +kubebuilder:validation:XValidation:rule="has(self.ipam) && has(self.ipam.mode) && self.ipam.mode != 'Enabled' || has(self.subnets)", message="Subnets is required with ipam.mode is Enabled or unset"
 // +kubebuilder:validation:XValidation:rule="!has(self.ipam) || !has(self.ipam.mode) || self.ipam.mode != 'Disabled' || !has(self.subnets)", message="Subnets must be unset when ipam.mode is Disabled"
@@ -228,7 +230,7 @@ The API changes mentioned above will be carried to the `NetworkAttachmentDefinit
 #### IPAMClaim API changes
 
 The following pull request is tracking the IPAMClaim API change that introduces the status conditions:
-https://github.com/k8snetworkplumbingwg/ipamclaims/pull/9
+<https://github.com/k8snetworkplumbingwg/ipamclaims/pull/9>
 
 [IPAMClaim CRD doc](https://docs.google.com/document/d/1OQIJIrCtsYpR5O44w0hpoJ2TyKBz1Du-KhRT4RtrAjk) - `IPAM allocation on behalf of other entities` section
 
@@ -276,7 +278,7 @@ spec:
 #### Configurability
 
 The changes outlined in this enhancement should be configurable. This means a configuration knob
-is required to instruct OVN-Kubernetes on whether to process the annotation described in the 
+is required to instruct OVN-Kubernetes on whether to process the annotation described in the
 [Pod network identity](#pod-network-identity) section.
 
 #### NetworkSelectionElement annotation
@@ -286,7 +288,8 @@ This enhancement will this, allowing it to also be applied to pods created in th
 The annotation should only be processed for new pods, modifying it after the addresses were allocated won't
 be reflected in the pods network configuration and this should be blocked through a
 [Validating Admission Policy](https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/):
-```
+
+```yaml
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
@@ -303,8 +306,10 @@ spec:
     - expression: "('v1.multus-cni.io/default-network' in oldObject.metadata.annotations) == ('v1.multus-cni.io/default-network' in object.metadata.annotations)"
       message: "The 'v1.multus-cni.io/default-network' annotation cannot be changed after the pod was created"
 ```
-The `NetworkSelectionElement` structure has an extensive list of fields, this enhancement 
+
+The `NetworkSelectionElement` structure has an extensive list of fields, this enhancement
 focuses only on the following:
+
 ```cgo
 type NetworkSelectionElement struct {
     // Name contains the name of the Network object this element selects
@@ -330,6 +335,7 @@ When using the `1.multus-cni.io/default-network` annotation, Multus strictly req
 existing NAD. Multus then builds the CNI requests based on it.
 This proposal introduces a static default NAD object applied to the cluster. This object will serve as a
 stub to generate the CNI calls, preserving the current behavior:
+
 ```yaml
 apiVersion: k8s.cni.cncf.io/v1
 kind: NetworkAttachmentDefinition
@@ -339,23 +345,24 @@ metadata:
 spec:
   config: '{"cniVersion": "0.4.0", "name": "ovn-kubernetes", "type": "ovn-k8s-cni-overlay"}'
 ```
+
 With this approach, users must configure the `Name` to `default` and the `Namespace` to `ovn-kubernetes`.
 This configuration ensures Multus still references the default network while OVN-Kubernetes will internally use the
 primary UDN to handle MAC/IP requests from the NSE.
 
 > The default NAD object specified above is already used when the default network is exposed through BGP as
-part of the route advertisement feature. The proposal is to have it available all the time. 
-
+part of the route advertisement feature. The proposal is to have it available all the time.
 
 With `k8s.ovn.org/primary-udn-ipamclaim` being deprecated in favor of the `IPAMClaimReference` field
-in the `NetworkSelectionElement` we have to define the expected behavior. To avoid conflicting 
-settings when `v1.multus-cni.io/default-network` is set the `k8s.ovn.org/primary-udn-ipamclaim` is 
-going to be ignored, it will be reflected in the opposite scenario for backwards compatibility 
+in the `NetworkSelectionElement` we have to define the expected behavior. To avoid conflicting
+settings when `v1.multus-cni.io/default-network` is set the `k8s.ovn.org/primary-udn-ipamclaim` is
+going to be ignored, it will be reflected in the opposite scenario for backwards compatibility
 with a plan to remove it in a future release.
 Deprecation plan for the `k8s.ovn.org/primary-udn-ipamclaim` annotation:
-- release-N - emit a warning event stating that the annotation is deprecated and will be removed in a future release.
-- release-N+1 - fail to configure pods with the annotation set.
-- release-N+2 - remove any code handling the annotation, effectively ignoring it.
+
+* release-N - emit a warning event stating that the annotation is deprecated and will be removed in a future release.
+* release-N+1 - fail to configure pods with the annotation set.
+* release-N+2 - remove any code handling the annotation, effectively ignoring it.
 
 Note that `GatewayRequest` is not listed, the default gateway is an attribute of the network is not going to be
 configurable per pod.
@@ -365,9 +372,9 @@ configurable per pod.
 OVN-Kubernetes currently [generates](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/3ef29b9a32b04b7917a0afd6b0e9651d17242ed7/go-controller/pkg/util/net.go#L100-L113)
 the overlay MAC addresses from the IPs:
 
-- IPv4: It takes the four octets of the address (e.g `AA.BB.CC.DD`) and uses them to
+* IPv4: It takes the four octets of the address (e.g `AA.BB.CC.DD`) and uses them to
 create the MAC address with a constant prefix (e.g. `0A:58:AA:BB:CC:DD`).
-- IPv6: Computes a SHA256 checksum from the IPv6 string and uses the first four bytes for the MAC
+* IPv6: Computes a SHA256 checksum from the IPv6 string and uses the first four bytes for the MAC
 address with the `0A:58` constant prefix(e.g. `0A:58:SHA[0]:SHA[1]:SHA[2]:SHA[3]`).
 
 Although unlikely, we need to implement logic that ensures that the MAC address requested through
@@ -375,7 +382,8 @@ the `NetworkSelectionElement` does not conflict with any other configured addres
 (including addresses consumed by OVN-Kubernetes).
 
 OVN-Kubernetes already persists the IP and MAC addresses in the `k8s.ovn.org/pod-networks` annotation for each pod:
-```
+
+```cgo
 // PodAnnotation describes the assigned network details for a single pod network. (The
 // actual annotation may include the equivalent of multiple PodAnnotations.)
 type PodAnnotation struct {
@@ -415,6 +423,7 @@ TunnelID int
 Role string
 }
 ```
+
 This annotation will be used to build an initial cache of allocated addresses at startup, which will then be updated
 dynamically at runtime and used for conflict detection.
 A similar approach is required for IP address conflict detection.
@@ -427,7 +436,6 @@ In the opposite scenario where the `NetworkSelectionElement` does not specify th
 the IP allocation is not persisted when the pod is removed.
 
 ### Testing Details
-
 
 The following scenarios should be covered in testing:
 
@@ -447,7 +455,6 @@ IPs can be consumed by workloads(e.g. for 10.0.0.0/16 network create pods with 1
 was created.
 
 The scenarios mentioned above have to cover both IPv4 and IPv6 IP families.
-
 
 ### Documentation Details
 
@@ -496,4 +503,4 @@ NAD name and namespace for every primary UDN pod needing custom MAC, IP, or IPAM
 
 * [IPAMClaim CRD doc](https://docs.google.com/document/d/1OQIJIrCtsYpR5O44w0hpoJ2TyKBz1Du-KhRT4RtrAjk) - `IPAM allocation on behalf of other entities` section
 
-* IPAMClaim status conditions pull request: https://github.com/k8snetworkplumbingwg/ipamclaims/pull/9
+* IPAMClaim status conditions pull request: <https://github.com/k8snetworkplumbingwg/ipamclaims/pull/9>
