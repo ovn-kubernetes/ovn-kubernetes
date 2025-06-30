@@ -269,6 +269,9 @@ func (c *networkController) syncRunningNetworks() error {
 
 // syncNetwork must be called with nm mutex locked
 func (c *networkController) syncNetwork(network string) error {
+	//if len(c.node) > 0 {
+	//	time.Sleep(15 * time.Second)
+	//}
 	startTime := time.Now()
 	klog.V(5).Infof("%s: sync network %s", c.name, network)
 	defer func() {
