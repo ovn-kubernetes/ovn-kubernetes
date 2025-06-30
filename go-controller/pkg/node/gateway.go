@@ -48,7 +48,7 @@ type gateway struct {
 	// nodePortWatcherIptables is used in Shared GW mode to handle nodePort IPTable rules
 	nodePortWatcherIptables informer.ServiceEventHandler
 	// nodePortWatcher is used in Local+Shared GW modes to handle nodePort flows in shared OVS bridge
-	nodePortWatcher      informer.ServiceAndEndpointsEventHandler
+	nodePortWatcher      *nodePortWatcher
 	openflowManager      *openflowManager
 	nodeIPManager        *addressManager
 	bridgeEIPAddrManager *egressipgw.BridgeEIPAddrManager
