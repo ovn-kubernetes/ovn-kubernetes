@@ -337,10 +337,10 @@ func bootstrapOVSFlows(nodeName string) error {
 	// for non-IP packets that would normally be forwarded with NORMAL action (table 0, priority 0 flow).
 	dftFlows = append(dftFlows,
 		fmt.Sprintf("cookie=%s, priority=10, table=0, in_port=%s, dl_src=%s, actions=output:NORMAL",
-			defaultOpenFlowCookie, ofportPatch, bridgeMACAddress))
+			bridgeconfig.DefaultOpenFlowCookie, ofportPatch, bridgeMACAddress))
 	dftFlows = append(dftFlows,
 		fmt.Sprintf("cookie=%s, priority=9, table=0, in_port=%s, actions=drop",
-			defaultOpenFlowCookie, ofportPatch))
+			bridgeconfig.DefaultOpenFlowCookie, ofportPatch))
 	dftFlows = append(dftFlows, "priority=0, table=0, actions=output:NORMAL")
 
 	_, stderr, err = util.ReplaceOFFlows(bridge, dftFlows)

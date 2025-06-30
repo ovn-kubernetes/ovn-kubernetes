@@ -39,9 +39,6 @@ import (
 )
 
 const (
-	// defaultOpenFlowCookie identifies default open flow rules added to the host OVS bridge.
-	// The hex number 0xdeff105, aka defflos, is meant to sound like default flows.
-	defaultOpenFlowCookie = "0xdeff105"
 	// etpSvcOpenFlowCookie identifies constant open flow rules added to the host OVS
 	// bridge to move packets between host and external for etp=local traffic.
 	// The hex number 0xe745ecf105, represents etp(e74)-service(5ec)-flows which makes it easier for debugging.
@@ -51,9 +48,6 @@ const (
 	pmtudOpenFlowCookie = "0x0304"
 	// ovsLocalPort is the name of the OVS bridge local port
 	ovsLocalPort = "LOCAL"
-	// ovnKubeNodeSNATMark is used to mark packets that need to be SNAT-ed to nodeIP for
-	// traffic originating from egressIP and egressService controlled pods towards other nodes in the cluster.
-	ovnKubeNodeSNATMark = "0x3f0"
 
 	// nftablesUDNServicePreroutingChain is a base chain registered into the prerouting hook,
 	// and it contains one rule that jumps to nftablesUDNServiceMarkChain.
@@ -424,7 +418,7 @@ func (npw *nodePortWatcher) updateServiceFlowCache(service *corev1.Service, netI
 			// This flow is used for UDNs and advertised UDNs to be able to reach kapi and dns services alone on default network
 			flows := []string{fmt.Sprintf("cookie=%s, priority=300, table=2, %s, %s_dst=%s, "+
 				"actions=set_field:%s->eth_dst,output:%s",
-				defaultOpenFlowCookie, ipPrefix, ipPrefix, service.Spec.ClusterIP,
+				bridgeconfig.DefaultOpenFlowCookie, ipPrefix, ipPrefix, service.Spec.ClusterIP,
 				npw.ofm.getDefaultBridgeMAC().String(), defaultNetConfig.OfPortPatch)}
 			if util.IsRouteAdvertisementsEnabled() {
 				// if the network is advertised, then for the reply from kapi and dns services to go back
@@ -438,7 +432,7 @@ func (npw *nodePortWatcher) updateServiceFlowCache(service *corev1.Service, netI
 				// sample flow for non-advertised UDNs: cookie=0xdeff105, duration=684.087s, table=0, n_packets=0, n_bytes=0,
 				//				idle_age=684, priority=500,ip,in_port=2,nw_src=10.96.0.0/16,nw_dst=169.254.0.0/17 actions=ct(table=3,zone=64001,nat)
 				flows = append(flows, fmt.Sprintf("cookie=%s, priority=490, in_port=%s, ip, ip_src=%s,actions=ct(zone=%d,nat,table=3)",
-					defaultOpenFlowCookie, defaultNetConfig.OfPortPatch, service.Spec.ClusterIP, config.Default.HostMasqConntrackZone))
+					bridgeconfig.DefaultOpenFlowCookie, defaultNetConfig.OfPortPatch, service.Spec.ClusterIP, config.Default.HostMasqConntrackZone))
 			}
 			npw.ofm.updateFlowCacheEntry(key, flows)
 		}

@@ -38,6 +38,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/informer"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/bridgeconfig"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/controllers/egressip"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/controllers/egressservice"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/linkmanager"
@@ -1292,7 +1293,7 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 
 	if config.OVNKubernetesFeature.EnableEgressService {
 		wf := nc.watchFactory.(*factory.WatchFactory)
-		c, err := egressservice.NewController(nc.stopChan, ovnKubeNodeSNATMark, nc.name,
+		c, err := egressservice.NewController(nc.stopChan, bridgeconfig.OvnKubeNodeSNATMark, nc.name,
 			wf.EgressServiceInformer(), wf.ServiceInformer(), wf.EndpointSliceInformer())
 		if err != nil {
 			return err
