@@ -672,7 +672,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(udnGateway.openflowManager.defaultBridge.NetConfig).To(HaveLen(2)) // default network + UDN network
 			defaultUdnConfig := udnGateway.openflowManager.defaultBridge.NetConfig["default"]
 			bridgeUdnConfig := udnGateway.openflowManager.defaultBridge.NetConfig["bluenet"]
-			bridgeMAC := udnGateway.openflowManager.defaultBridge.MacAddress.String()
+			bridgeMAC := udnGateway.openflowManager.defaultBridge.GetBridgeMAC().String()
 			ofPortHost := udnGateway.openflowManager.defaultBridge.OfPortHost
 			for _, flows := range flowMap {
 				for _, flow := range flows {
@@ -903,7 +903,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(udnGateway.openflowManager.defaultBridge.NetConfig).To(HaveLen(2)) // default network + UDN network
 			defaultUdnConfig := udnGateway.openflowManager.defaultBridge.NetConfig["default"]
 			bridgeUdnConfig := udnGateway.openflowManager.defaultBridge.NetConfig["bluenet"]
-			bridgeMAC := udnGateway.openflowManager.defaultBridge.MacAddress.String()
+			bridgeMAC := udnGateway.openflowManager.defaultBridge.GetBridgeMAC().String()
 			ofPortHost := udnGateway.openflowManager.defaultBridge.OfPortHost
 			for _, flows := range flowMap {
 				for _, flow := range flows {
@@ -1144,7 +1144,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(udnGateway.openflowManager.defaultBridge.NetConfig).To(HaveLen(2)) // default network + UDN network
 			defaultUdnConfig := udnGateway.openflowManager.defaultBridge.NetConfig["default"]
 			bridgeUdnConfig := udnGateway.openflowManager.defaultBridge.NetConfig["bluenet"]
-			bridgeMAC := udnGateway.openflowManager.defaultBridge.MacAddress.String()
+			bridgeMAC := udnGateway.openflowManager.defaultBridge.GetBridgeMAC().String()
 			ofPortHost := udnGateway.openflowManager.defaultBridge.OfPortHost
 			for _, flows := range flowMap {
 				for _, flow := range flows {

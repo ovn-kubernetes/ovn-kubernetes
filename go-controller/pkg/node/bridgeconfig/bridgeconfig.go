@@ -35,19 +35,23 @@ const (
 )
 
 type BridgeConfiguration struct {
-	mutex       sync.Mutex
+	mutex sync.Mutex
+
+	// variables that are only set on init and then read
 	nodeName    string
 	BridgeName  string
 	UplinkName  string
 	gwIface     string
 	gwIfaceRep  string
-	IPs         []*net.IPNet
 	InterfaceID string
-	MacAddress  net.HardwareAddr
-	ofPortPhys  string
 	OfPortHost  string
-	NetConfig   map[string]*BridgeUDNConfiguration
-	EipMarkIPs  *egressipgw.MarkIPsCache
+
+	// variables that can be updated (read/write access should be done with mutex held)
+	ips        []*net.IPNet                       // updated by address manager
+	macAddress net.HardwareAddr                   // updated by openflow manager
+	ofPortPhys string                             // set on gateway init
+	eipMarkIPs *egressipgw.MarkIPsCache           // set on gateway init
+	NetConfig  map[string]*BridgeUDNConfiguration // updated by everyone, not touching for now
 }
 
 func BridgeForInterface(intfName, nodeName,
@@ -69,7 +73,7 @@ func BridgeForInterface(intfName, nodeName,
 		NetConfig: map[string]*BridgeUDNConfiguration{
 			types.DefaultNetworkName: defaultNetConfig,
 		},
-		EipMarkIPs: egressipgw.NewMarkIPsCache(),
+		eipMarkIPs: egressipgw.NewMarkIPsCache(),
 	}
 
 	res.NetConfig[types.DefaultNetworkName].Advertised.Store(advertised)
@@ -110,7 +114,7 @@ func BridgeForInterface(intfName, nodeName,
 		res.UplinkName = uplinkName
 		res.gwIfaceRep = intfRep
 		res.gwIface = gwIntf
-		res.MacAddress = link.Attrs().HardwareAddr
+		res.macAddress = link.Attrs().HardwareAddr
 	} else if bridgeName, _, err := util.RunOVSVsctl("port-to-br", intfName); err == nil {
 		// This is an OVS bridge's internal port
 		uplinkName, err := util.GetNicName(bridgeName)
@@ -150,18 +154,18 @@ func BridgeForInterface(intfName, nodeName,
 	// Now, we get IP addresses for the bridge
 	if len(gwIPs) > 0 {
 		// use gwIPs if provided
-		res.IPs = gwIPs
+		res.ips = gwIPs
 	} else {
 		// get IP addresses from OVS bridge. If IP does not exist,
 		// error out.
-		res.IPs, err = nodeutil.GetNetworkInterfaceIPAddresses(gwIntf)
+		res.ips, err = nodeutil.GetNetworkInterfaceIPAddresses(gwIntf)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get interface details for %s: %w", gwIntf, err)
 		}
 	}
 
 	if !isGWAcclInterface { // We do not have an accelerated device for Gateway interface
-		res.MacAddress, err = util.GetOVSPortMACAddress(gwIntf)
+		res.macAddress, err = util.GetOVSPortMACAddress(gwIntf)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get MAC address for ovs port %s: %w", gwIntf, err)
 		}
@@ -182,7 +186,7 @@ func BridgeForInterface(intfName, nodeName,
 		if err != nil {
 			return nil, err
 		}
-		res.MacAddress, err = util.GetSriovnetOps().GetRepresentorPeerMacAddress(hostRep)
+		res.macAddress, err = util.GetSriovnetOps().GetRepresentorPeerMacAddress(hostRep)
 		if err != nil {
 			return nil, err
 		}
@@ -283,13 +287,34 @@ func getIPv(ipnet *net.IPNet) string {
 	return prefix
 }
 
-func (bridge *BridgeConfiguration) CommonFlows(hostSubnets []*net.IPNet) ([]string, error) {
+func (bridge *BridgeConfiguration) DefaultBridgeFlows(hostSubnets []*net.IPNet, extraIPs []net.IP) ([]string, error) {
+	bridge.mutex.Lock()
+	defer bridge.mutex.Unlock()
+	dftFlows, err := bridge.flowsForDefaultNetwork(extraIPs)
+	if err != nil {
+		return nil, err
+	}
+	dftCommonFlows, err := bridge.commonFlows(hostSubnets)
+	if err != nil {
+		return nil, err
+	}
+	return append(dftFlows, dftCommonFlows...), nil
+}
+
+func (bridge *BridgeConfiguration) ExternalBridgeFlows(hostSubnets []*net.IPNet) ([]string, error) {
+	bridge.mutex.Lock()
+	defer bridge.mutex.Unlock()
+	return bridge.commonFlows(hostSubnets)
+}
+
+// must be called with bridge.mutex held
+func (bridge *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, error) {
 	// CAUTION: when adding new flows where the in_port is ofPortPatch and the out_port is ofPortPhys, ensure
 	// that dl_src is included in match criteria!
 	ofPortPhys := bridge.ofPortPhys
-	bridgeMacAddress := bridge.MacAddress.String()
+	bridgeMacAddress := bridge.macAddress.String()
 	ofPortHost := bridge.OfPortHost
-	bridgeIPs := bridge.IPs
+	bridgeIPs := bridge.ips
 
 	var dftFlows []string
 
@@ -346,9 +371,9 @@ func (bridge *BridgeConfiguration) CommonFlows(hostSubnets []*net.IPNet) ([]stri
 				// table 0, packets coming from egressIP pods only from user defined networks. If an egressIP is assigned to
 				// this node, then all networks get a flow even if no pods on that network were selected for by this egressIP.
 				if util.IsNetworkSegmentationSupportEnabled() && config.OVNKubernetesFeature.EnableInterconnect &&
-					config.Gateway.Mode != config.GatewayModeDisabled && bridge.EipMarkIPs != nil {
+					config.Gateway.Mode != config.GatewayModeDisabled && bridge.eipMarkIPs != nil {
 					if netConfig.masqCTMark != ctMarkOVN {
-						for mark, eip := range bridge.EipMarkIPs.GetIPv4() {
+						for mark, eip := range bridge.eipMarkIPs.GetIPv4() {
 							dftFlows = append(dftFlows,
 								fmt.Sprintf("cookie=%s, priority=105, in_port=%s, dl_src=%s, ip, pkt_mark=%d, "+
 									"actions=ct(commit, zone=%d, nat(src=%s), exec(set_field:%s->ct_mark)), output:%s",
@@ -443,9 +468,9 @@ func (bridge *BridgeConfiguration) CommonFlows(hostSubnets []*net.IPNet) ([]stri
 				// table 0, packets coming from egressIP pods only from user defined networks. If an egressIP is assigned to
 				// this node, then all networks get a flow even if no pods on that network were selected for by this egressIP.
 				if util.IsNetworkSegmentationSupportEnabled() && config.OVNKubernetesFeature.EnableInterconnect &&
-					config.Gateway.Mode != config.GatewayModeDisabled && bridge.EipMarkIPs != nil {
+					config.Gateway.Mode != config.GatewayModeDisabled && bridge.eipMarkIPs != nil {
 					if netConfig.masqCTMark != ctMarkOVN {
-						for mark, eip := range bridge.EipMarkIPs.GetIPv6() {
+						for mark, eip := range bridge.eipMarkIPs.GetIPv6() {
 							dftFlows = append(dftFlows,
 								fmt.Sprintf("cookie=%s, priority=105, in_port=%s, dl_src=%s, ipv6, pkt_mark=%d, "+
 									"actions=ct(commit, zone=%d, nat(src=%s), exec(set_field:%s->ct_mark)), output:%s",
@@ -645,252 +670,15 @@ func (bridge *BridgeConfiguration) CommonFlows(hostSubnets []*net.IPNet) ([]stri
 	return dftFlows, nil
 }
 
-// ovnToHostNetworkNormalActionFlows returns the flows that allow IP{v4,v6} traffic from the OVN network to the host network
-// when the destination is on the same node as the sender. This is necessary for pods in the default network to reach
-// localnet pods on the same node, when the localnet is mapped to breth0. The expected srcMAC is the MAC address of breth0
-// and the expected hostSubnets is the host subnets found on the node primary interface.
-func ovnToHostNetworkNormalActionFlows(netConfig *BridgeUDNConfiguration, srcMAC string, hostSubnets []*net.IPNet, isV6 bool) []string {
-	var inPort, ctMark, ipFamily, ipFamilyDest string
-	var flows []string
-
-	if config.Gateway.Mode == config.GatewayModeShared {
-		inPort = netConfig.OfPortPatch
-		ctMark = netConfig.masqCTMark
-	} else if config.Gateway.Mode == config.GatewayModeLocal {
-		inPort = "LOCAL"
-		ctMark = ctMarkHost
-	} else {
-		return nil
-	}
-
-	if isV6 {
-		ipFamily = "ipv6"
-		ipFamilyDest = "ipv6_dst"
-	} else {
-		ipFamily = "ip"
-		ipFamilyDest = "nw_dst"
-	}
-
-	for _, hostSubnet := range hostSubnets {
-		if (hostSubnet.IP.To4() == nil) != isV6 {
-			continue
-		}
-		// IP traffic from the OVN network to the host network should be handled normally by the bridge instead of
-		// being output directly to the NIC by the existing flow at prio=100.
-		flows = append(flows,
-			fmt.Sprintf("cookie=%s, priority=102, in_port=%s, dl_src=%s, %s, %s=%s, "+
-				"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:NORMAL",
-				defaultOpenFlowCookie,
-				inPort,
-				srcMAC,
-				ipFamily,
-				ipFamilyDest,
-				hostSubnet.String(),
-				config.Default.ConntrackZone,
-				ctMark))
-	}
-
-	if isV6 {
-		// Neighbor discovery in IPv6 happens through ICMPv6 messages to a special destination (ff02::1:ff00:0/104),
-		// which has nothing to do with the host subnets we're matching against in the flow above at prio=102.
-		// Let's allow neighbor discovery by matching against icmp type and in_port.
-		for _, icmpType := range []int{types.NeighborSolicitationICMPType, types.NeighborAdvertisementICMPType} {
-			flows = append(flows,
-				fmt.Sprintf("cookie=%s, priority=102, in_port=%s, dl_src=%s, icmp6, icmpv6_type=%d, "+
-					"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:NORMAL",
-					defaultOpenFlowCookie, inPort, srcMAC, icmpType,
-					config.Default.ConntrackZone, ctMark))
-		}
-	}
-
-	return flows
-}
-
-func (bridge *BridgeConfiguration) SetBridgeOfPorts() error {
-	bridge.mutex.Lock()
-	defer bridge.mutex.Unlock()
-	// Get ofport of patchPort
-	for _, netConfig := range bridge.NetConfig {
-		if err := netConfig.setBridgeNetworkOfPortsInternal(); err != nil {
-			return fmt.Errorf("error setting bridge openflow ports for network with patchport %v: err: %v", netConfig.PatchPort, err)
-		}
-	}
-
-	if bridge.UplinkName != "" {
-		// Get ofport of physical interface
-		ofportPhys, stderr, err := util.GetOVSOfPort("get", "interface", bridge.UplinkName, "ofport")
-		if err != nil {
-			return fmt.Errorf("failed to get ofport of %s, stderr: %q, error: %v",
-				bridge.UplinkName, stderr, err)
-		}
-		bridge.ofPortPhys = ofportPhys
-	}
-
-	// Get ofport representing the host. That is, host representor port in case of DPUs, ovsLocalPort otherwise.
-	if config.OvnKubeNode.Mode == types.NodeModeDPU {
-		var stderr string
-		hostRep, err := util.GetDPUHostInterface(bridge.BridgeName)
-		if err != nil {
-			return err
-		}
-
-		bridge.OfPortHost, stderr, err = util.RunOVSVsctl("get", "interface", hostRep, "ofport")
-		if err != nil {
-			return fmt.Errorf("failed to get ofport of host interface %s, stderr: %q, error: %v",
-				hostRep, stderr, err)
-		}
-	} else {
-		var err error
-		if bridge.gwIfaceRep != "" {
-			bridge.OfPortHost, _, err = util.RunOVSVsctl("get", "interface", bridge.gwIfaceRep, "ofport")
-			if err != nil {
-				return fmt.Errorf("failed to get ofport of bypass rep %s, error: %v", bridge.gwIfaceRep, err)
-			}
-		} else {
-			bridge.OfPortHost = ovsLocalPort
-		}
-	}
-
-	return nil
-}
-
-// UTILS Needed for UDN (also leveraged for default netInfo) in BridgeConfiguration
-
-// GetBridgePortConfigurations returns a slice of Network port configurations along with the
-// UplinkName and physical port's ofport value
-func (b *BridgeConfiguration) GetBridgePortConfigurations() ([]*BridgeUDNConfiguration, string, string) {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
-	var netConfigs []*BridgeUDNConfiguration
-	for _, netConfig := range b.NetConfig {
-		netConfigs = append(netConfigs, netConfig.shallowCopy())
-	}
-	return netConfigs, b.UplinkName, b.ofPortPhys
-}
-
-// AddNetworkBridgeConfig adds the patchport and ctMark value for the provided netInfo into the bridge configuration cache
-func (b *BridgeConfiguration) AddNetworkBridgeConfig(
-	nInfo util.NetInfo,
-	nodeSubnets []*net.IPNet,
-	masqCTMark, pktMark uint,
-	v6MasqIPs, v4MasqIPs *udn.MasqueradeIPs) error {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
-
-	netName := nInfo.GetNetworkName()
-	patchPort := nInfo.GetNetworkScopedPatchPortName(b.BridgeName, b.nodeName)
-
-	_, found := b.NetConfig[netName]
-	if !found {
-		netConfig := &BridgeUDNConfiguration{
-			PatchPort:   patchPort,
-			masqCTMark:  fmt.Sprintf("0x%x", masqCTMark),
-			PktMark:     fmt.Sprintf("0x%x", pktMark),
-			v4MasqIPs:   v4MasqIPs,
-			v6MasqIPs:   v6MasqIPs,
-			Subnets:     nInfo.Subnets(),
-			NodeSubnets: nodeSubnets,
-		}
-		netConfig.Advertised.Store(util.IsPodNetworkAdvertisedAtNode(nInfo, b.nodeName))
-
-		b.NetConfig[netName] = netConfig
-	} else {
-		klog.Warningf("Trying to update bridge config for network %s which already"+
-			"exists in cache...networks are not mutable...ignoring update", nInfo.GetNetworkName())
-	}
-	return nil
-}
-
-// DelNetworkBridgeConfig deletes the provided netInfo from the bridge configuration cache
-func (b *BridgeConfiguration) DelNetworkBridgeConfig(nInfo util.NetInfo) {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
-
-	delete(b.NetConfig, nInfo.GetNetworkName())
-}
-
-func (b *BridgeConfiguration) GetNetworkBridgeConfig(networkName string) *BridgeUDNConfiguration {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
-	return b.NetConfig[networkName]
-}
-
-// GetActiveNetworkBridgeConfigCopy returns a shallow copy of the network configuration corresponding to the
-// provided netInfo.
-//
-// NOTE: if the network configuration can't be found or if the network is not patched by OVN
-// yet this returns nil.
-func (b *BridgeConfiguration) GetActiveNetworkBridgeConfigCopy(networkName string) *BridgeUDNConfiguration {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
-
-	if netConfig, found := b.NetConfig[networkName]; found && netConfig.OfPortPatch != "" {
-		return netConfig.shallowCopy()
-	}
-	return nil
-}
-
-func (b *BridgeConfiguration) GetBridgeName() string {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
-	return b.BridgeName
-}
-
-func (b *BridgeConfiguration) GetBridgeMAC() net.HardwareAddr {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
-	return b.MacAddress
-}
-
-func (b *BridgeConfiguration) SetBridgeMAC(macAddr net.HardwareAddr) {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
-	b.MacAddress = macAddr
-}
-
-func (b *BridgeConfiguration) GetBridgeIPs() []*net.IPNet {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
-	return b.IPs
-}
-
-func (b *BridgeConfiguration) PatchedNetConfigs() []*BridgeUDNConfiguration {
-	result := make([]*BridgeUDNConfiguration, 0, len(b.NetConfig))
-	for _, netConfig := range b.NetConfig {
-		if netConfig.OfPortPatch == "" {
-			continue
-		}
-		result = append(result, netConfig)
-	}
-	return result
-}
-
-// END UDN UTILs for BridgeConfiguration
-
-func (bridge *BridgeConfiguration) SetBridgeNetworkOfPorts(netName string) error {
-	bridge.mutex.Lock()
-	defer bridge.mutex.Unlock()
-
-	netConfig, found := bridge.NetConfig[netName]
-	if !found {
-		return fmt.Errorf("failed to find network %s configuration on bridge %s", netName, bridge.BridgeName)
-	}
-	return netConfig.setBridgeNetworkOfPortsInternal()
-}
-
-// getMaxFrameLength returns the maximum frame size (ignoring VLAN header) that a gateway can handle
-func getMaxFrameLength() int {
-	return config.Default.MTU + 14
-}
-
-func (bridge *BridgeConfiguration) FlowsForDefaultNetwork(extraIPs []net.IP) ([]string, error) {
+// must be called with bridge.mutex held
+func (bridge *BridgeConfiguration) flowsForDefaultNetwork(extraIPs []net.IP) ([]string, error) {
 	// CAUTION: when adding new flows where the in_port is OfPortPatch and the out_port is ofPortPhys, ensure
 	// that dl_src is included in match criteria!
 
 	ofPortPhys := bridge.ofPortPhys
-	bridgeMacAddress := bridge.MacAddress.String()
+	bridgeMacAddress := bridge.macAddress.String()
 	ofPortHost := bridge.OfPortHost
-	bridgeIPs := bridge.IPs
+	bridgeIPs := bridge.ips
 
 	var dftFlows []string
 	// 14 bytes of overhead for ethernet header (does not include VLAN)
@@ -1304,6 +1092,256 @@ func (bridge *BridgeConfiguration) FlowsForDefaultNetwork(extraIPs []net.IP) ([]
 	return dftFlows, nil
 }
 
+// ovnToHostNetworkNormalActionFlows returns the flows that allow IP{v4,v6} traffic from the OVN network to the host network
+// when the destination is on the same node as the sender. This is necessary for pods in the default network to reach
+// localnet pods on the same node, when the localnet is mapped to breth0. The expected srcMAC is the MAC address of breth0
+// and the expected hostSubnets is the host subnets found on the node primary interface.
+func ovnToHostNetworkNormalActionFlows(netConfig *BridgeUDNConfiguration, srcMAC string, hostSubnets []*net.IPNet, isV6 bool) []string {
+	var inPort, ctMark, ipFamily, ipFamilyDest string
+	var flows []string
+
+	if config.Gateway.Mode == config.GatewayModeShared {
+		inPort = netConfig.OfPortPatch
+		ctMark = netConfig.masqCTMark
+	} else if config.Gateway.Mode == config.GatewayModeLocal {
+		inPort = "LOCAL"
+		ctMark = ctMarkHost
+	} else {
+		return nil
+	}
+
+	if isV6 {
+		ipFamily = "ipv6"
+		ipFamilyDest = "ipv6_dst"
+	} else {
+		ipFamily = "ip"
+		ipFamilyDest = "nw_dst"
+	}
+
+	for _, hostSubnet := range hostSubnets {
+		if (hostSubnet.IP.To4() == nil) != isV6 {
+			continue
+		}
+		// IP traffic from the OVN network to the host network should be handled normally by the bridge instead of
+		// being output directly to the NIC by the existing flow at prio=100.
+		flows = append(flows,
+			fmt.Sprintf("cookie=%s, priority=102, in_port=%s, dl_src=%s, %s, %s=%s, "+
+				"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:NORMAL",
+				defaultOpenFlowCookie,
+				inPort,
+				srcMAC,
+				ipFamily,
+				ipFamilyDest,
+				hostSubnet.String(),
+				config.Default.ConntrackZone,
+				ctMark))
+	}
+
+	if isV6 {
+		// Neighbor discovery in IPv6 happens through ICMPv6 messages to a special destination (ff02::1:ff00:0/104),
+		// which has nothing to do with the host subnets we're matching against in the flow above at prio=102.
+		// Let's allow neighbor discovery by matching against icmp type and in_port.
+		for _, icmpType := range []int{types.NeighborSolicitationICMPType, types.NeighborAdvertisementICMPType} {
+			flows = append(flows,
+				fmt.Sprintf("cookie=%s, priority=102, in_port=%s, dl_src=%s, icmp6, icmpv6_type=%d, "+
+					"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:NORMAL",
+					defaultOpenFlowCookie, inPort, srcMAC, icmpType,
+					config.Default.ConntrackZone, ctMark))
+		}
+	}
+
+	return flows
+}
+
+func (bridge *BridgeConfiguration) SetBridgeOfPorts() error {
+	bridge.mutex.Lock()
+	defer bridge.mutex.Unlock()
+	// Get ofport of patchPort
+	for _, netConfig := range bridge.NetConfig {
+		if err := netConfig.setBridgeNetworkOfPortsInternal(); err != nil {
+			return fmt.Errorf("error setting bridge openflow ports for network with patchport %v: err: %v", netConfig.PatchPort, err)
+		}
+	}
+
+	if bridge.UplinkName != "" {
+		// Get ofport of physical interface
+		ofportPhys, stderr, err := util.GetOVSOfPort("get", "interface", bridge.UplinkName, "ofport")
+		if err != nil {
+			return fmt.Errorf("failed to get ofport of %s, stderr: %q, error: %v",
+				bridge.UplinkName, stderr, err)
+		}
+		bridge.ofPortPhys = ofportPhys
+	}
+
+	// Get ofport representing the host. That is, host representor port in case of DPUs, ovsLocalPort otherwise.
+	if config.OvnKubeNode.Mode == types.NodeModeDPU {
+		var stderr string
+		hostRep, err := util.GetDPUHostInterface(bridge.BridgeName)
+		if err != nil {
+			return err
+		}
+
+		bridge.OfPortHost, stderr, err = util.RunOVSVsctl("get", "interface", hostRep, "ofport")
+		if err != nil {
+			return fmt.Errorf("failed to get ofport of host interface %s, stderr: %q, error: %v",
+				hostRep, stderr, err)
+		}
+	} else {
+		var err error
+		if bridge.gwIfaceRep != "" {
+			bridge.OfPortHost, _, err = util.RunOVSVsctl("get", "interface", bridge.gwIfaceRep, "ofport")
+			if err != nil {
+				return fmt.Errorf("failed to get ofport of bypass rep %s, error: %v", bridge.gwIfaceRep, err)
+			}
+		} else {
+			bridge.OfPortHost = ovsLocalPort
+		}
+	}
+
+	return nil
+}
+
+// UTILS Needed for UDN (also leveraged for default netInfo) in BridgeConfiguration
+
+// GetBridgePortConfigurations returns a slice of Network port configurations along with the
+// UplinkName and physical port's ofport value
+func (b *BridgeConfiguration) GetBridgePortConfigurations() ([]*BridgeUDNConfiguration, string, string) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	var netConfigs []*BridgeUDNConfiguration
+	for _, netConfig := range b.NetConfig {
+		netConfigs = append(netConfigs, netConfig.shallowCopy())
+	}
+	return netConfigs, b.UplinkName, b.ofPortPhys
+}
+
+// AddNetworkBridgeConfig adds the patchport and ctMark value for the provided netInfo into the bridge configuration cache
+func (b *BridgeConfiguration) AddNetworkBridgeConfig(
+	nInfo util.NetInfo,
+	nodeSubnets []*net.IPNet,
+	masqCTMark, pktMark uint,
+	v6MasqIPs, v4MasqIPs *udn.MasqueradeIPs) error {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	netName := nInfo.GetNetworkName()
+	patchPort := nInfo.GetNetworkScopedPatchPortName(b.BridgeName, b.nodeName)
+
+	_, found := b.NetConfig[netName]
+	if !found {
+		netConfig := &BridgeUDNConfiguration{
+			PatchPort:   patchPort,
+			masqCTMark:  fmt.Sprintf("0x%x", masqCTMark),
+			PktMark:     fmt.Sprintf("0x%x", pktMark),
+			v4MasqIPs:   v4MasqIPs,
+			v6MasqIPs:   v6MasqIPs,
+			Subnets:     nInfo.Subnets(),
+			NodeSubnets: nodeSubnets,
+		}
+		netConfig.Advertised.Store(util.IsPodNetworkAdvertisedAtNode(nInfo, b.nodeName))
+
+		b.NetConfig[netName] = netConfig
+	} else {
+		klog.Warningf("Trying to update bridge config for network %s which already"+
+			"exists in cache...networks are not mutable...ignoring update", nInfo.GetNetworkName())
+	}
+	return nil
+}
+
+// DelNetworkBridgeConfig deletes the provided netInfo from the bridge configuration cache
+func (b *BridgeConfiguration) DelNetworkBridgeConfig(nInfo util.NetInfo) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	delete(b.NetConfig, nInfo.GetNetworkName())
+}
+
+func (b *BridgeConfiguration) GetNetworkBridgeConfig(networkName string) *BridgeUDNConfiguration {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	return b.NetConfig[networkName]
+}
+
+// GetActiveNetworkBridgeConfigCopy returns a shallow copy of the network configuration corresponding to the
+// provided netInfo.
+//
+// NOTE: if the network configuration can't be found or if the network is not patched by OVN
+// yet this returns nil.
+func (b *BridgeConfiguration) GetActiveNetworkBridgeConfigCopy(networkName string) *BridgeUDNConfiguration {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	if netConfig, found := b.NetConfig[networkName]; found && netConfig.OfPortPatch != "" {
+		return netConfig.shallowCopy()
+	}
+	return nil
+}
+
+func (b *BridgeConfiguration) GetBridgeName() string {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	return b.BridgeName
+}
+
+func (b *BridgeConfiguration) GetBridgeMAC() net.HardwareAddr {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	return b.macAddress
+}
+
+func (b *BridgeConfiguration) SetBridgeMAC(macAddr net.HardwareAddr) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	b.macAddress = macAddr
+}
+
+func (b *BridgeConfiguration) GetBridgeIPs() []*net.IPNet {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	return b.ips
+}
+
+func (b *BridgeConfiguration) PatchedNetConfigs() []*BridgeUDNConfiguration {
+	result := make([]*BridgeUDNConfiguration, 0, len(b.NetConfig))
+	for _, netConfig := range b.NetConfig {
+		if netConfig.OfPortPatch == "" {
+			continue
+		}
+		result = append(result, netConfig)
+	}
+	return result
+}
+
+func (b *BridgeConfiguration) GetEIPMarkIPs() *egressipgw.MarkIPsCache {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	return b.eipMarkIPs
+}
+
+func (b *BridgeConfiguration) SetEIPMarkIPs(cache *egressipgw.MarkIPsCache) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	b.eipMarkIPs = cache
+}
+
+// END UDN UTILs for BridgeConfiguration
+
+func (bridge *BridgeConfiguration) SetBridgeNetworkOfPorts(netName string) error {
+	bridge.mutex.Lock()
+	defer bridge.mutex.Unlock()
+
+	netConfig, found := bridge.NetConfig[netName]
+	if !found {
+		return fmt.Errorf("failed to find network %s configuration on bridge %s", netName, bridge.BridgeName)
+	}
+	return netConfig.setBridgeNetworkOfPortsInternal()
+}
+
+// getMaxFrameLength returns the maximum frame size (ignoring VLAN header) that a gateway can handle
+func getMaxFrameLength() int {
+	return config.Default.MTU + 14
+}
+
 // generateIPFragmentReassemblyFlow adds flows in table 0 that send packets to a
 // specific conntrack zone for reassembly with the same priority as node port
 // flows that match on L4 fields. After reassembly packets are reinjected to
@@ -1360,7 +1398,7 @@ func (b *BridgeConfiguration) UpdateInterfaceIPAddresses(node *corev1.Node) ([]*
 		}
 	}
 
-	b.IPs = ifAddrs
+	b.ips = ifAddrs
 	return ifAddrs, nil
 }
 

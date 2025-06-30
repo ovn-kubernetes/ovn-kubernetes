@@ -433,30 +433,20 @@ func gatewayInitInternal(nodeName, gwIntf, egressGatewayIntf string, gwNextHops 
 		ChassisID:      chassisID,
 		BridgeID:       gatewayBridge.BridgeName,
 		InterfaceID:    gatewayBridge.InterfaceID,
-		MACAddress:     gatewayBridge.MacAddress,
-		IPAddresses:    gatewayBridge.IPs,
+		MACAddress:     gatewayBridge.GetBridgeMAC(),
+		IPAddresses:    gatewayBridge.GetBridgeIPs(),
 		NextHops:       gwNextHops,
 		NodePortEnable: config.Gateway.NodeportEnable,
 		VLANID:         &config.Gateway.VLANID,
 	}
 	if egressGWBridge != nil {
 		l3GwConfig.EgressGWInterfaceID = egressGWBridge.InterfaceID
-		l3GwConfig.EgressGWMACAddress = egressGWBridge.MacAddress
-		l3GwConfig.EgressGWIPAddresses = egressGWBridge.IPs
+		l3GwConfig.EgressGWMACAddress = egressGWBridge.GetBridgeMAC()
+		l3GwConfig.EgressGWIPAddresses = egressGWBridge.GetBridgeIPs()
 	}
 
 	err = util.SetL3GatewayConfig(nodeAnnotator, &l3GwConfig)
 	return gatewayBridge, egressGWBridge, err
-}
-
-func gatewayReady(patchPort string) (bool, error) {
-	// Get ofport of patchPort
-	ofport, _, err := util.GetOVSOfPort("--if-exists", "get", "interface", patchPort, "ofport")
-	if err != nil || len(ofport) == 0 {
-		return false, nil
-	}
-	klog.Info("Gateway is ready")
-	return true, nil
 }
 
 func (g *gateway) GetGatewayBridgeIface() string {
@@ -469,7 +459,7 @@ func (g *gateway) GetGatewayIface() string {
 
 // SetDefaultGatewayBridgeMAC updates the mac address for the OFM used to render flows with
 func (g *gateway) SetDefaultGatewayBridgeMAC(macAddr net.HardwareAddr) {
-	g.openflowManager.setDefaultBridgeMAC(macAddr)
+	g.openflowManager.defaultBridge.SetBridgeMAC(macAddr)
 	klog.Infof("Default gateway bridge MAC address updated to %s", macAddr)
 }
 

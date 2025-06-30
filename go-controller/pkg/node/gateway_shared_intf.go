@@ -1530,7 +1530,7 @@ func newGateway(
 		}
 		if util.IsNetworkSegmentationSupportEnabled() && config.OVNKubernetesFeature.EnableInterconnect && config.Gateway.Mode != config.GatewayModeDisabled {
 			gw.bridgeEIPAddrManager = egressipgw.NewBridgeEIPAddrManager(nodeName, gwBridge.BridgeName, linkManager, kube, watchFactory.EgressIPInformer(), watchFactory.NodeCoreInformer())
-			gwBridge.EipMarkIPs = gw.bridgeEIPAddrManager.GetCache()
+			gwBridge.SetEIPMarkIPs(gw.bridgeEIPAddrManager.GetCache())
 		}
 		gw.nodeIPManager = newAddressManager(nodeName, kube, mgmtPort, watchFactory, gwBridge)
 
@@ -1670,7 +1670,7 @@ func newNodePortWatcher(
 	}
 
 	// Get Physical IPs of Node, Can be IPV4 IPV6 or both
-	gatewayIPv4, gatewayIPv6 := getGatewayFamilyAddrs(gwBridge.IPs)
+	gatewayIPv4, gatewayIPv6 := getGatewayFamilyAddrs(gwBridge.GetBridgeIPs())
 
 	npw := &nodePortWatcher{
 		dpuMode:        dpuMode,

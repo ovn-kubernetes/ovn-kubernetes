@@ -58,7 +58,7 @@ func initFakeNodePortWatcher(iptV4, iptV6 util.IPTablesHelper) *nodePortWatcher 
 	gwMACParsed, _ := net.ParseMAC(gwMAC)
 
 	defaultBridge := bridgeconfig.TestDefaultBridgeConfig()
-	defaultBridge.MacAddress = gwMACParsed
+	defaultBridge.SetBridgeMAC(gwMACParsed)
 
 	fNPW := nodePortWatcher{
 		ofportPhys:  "eth0",
