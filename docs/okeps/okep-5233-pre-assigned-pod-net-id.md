@@ -1,29 +1,31 @@
-# OKEP-5233: Pre-assigned network configuration for primary user defined networks workloads
+# OKEP-5233: Predefined addresses for primary user defined networks workloads
 
 * Issue: [#5233](https://github.com/ovn-org/ovn-kubernetes/issues/5233)
 
 ## Problem Statement
 
-Migrating legacy workloads with pre-assigned network configurations (IP, MAC, default gateway)
+Migrating legacy workloads with a predefined network configurations (IP, MAC, default gateway)
 to OVN-Kubernetes is currently not possible. There is a need to import these workloads, preserving 
 their network configuration, while also enabling non-NATed traffic to better integrate with
 existing infrastructures.
 
 ## Goals
 
-- Enable pods on primary Layer2 User Defined Network (UDN) to use a pre-defined static network
+- Enable pods on primary Layer2 User Defined Network (UDN) and Cluster UDN to use a predefined static network
   configuration including IP address, MAC address, and default gateway. 
-- Ensure it is possible to enable non-NATed traffic for pods with the static network 
-  configuration by exposing the network through BGP.
+- Ensure it is possible to enable non-NATed traffic for pods with predefined static network configuration
+  by exposing the Layer2 Cluster UDN through BGP (see [Risks, Known Limitations and Mitigations](#risks-known-limitations-and-mitigations) for current BGP support limitations).
 
 ## Non-Goals
 
 - Modifying the default gateway and management IPs of a primary UDN after it was created.
 - Modifying a pod's network configuration after the pod was created.
 - Non-NATed traffic support in secondary networks.
-- Pre-configured IP/MAC addresses support for pods in Layer3 UDNs.
-- Configurable default gateway and management address in Layer3 UDNs.
-- Pre-configured IP/MAC addresses support for pods in primary Localnet UDNs
+- Predefined IP/MAC addresses support for pods in Layer3 UDNs.
+- Configurable default gateway and infrastructure addresses in Layer3 UDNs.
+- Predefined IP/MAC addresses support for pods in Localnet UDNs.
+- Configuring default gateway and infrastructure addresses in Layer2 (Cluster) UDNs that do not belong to the networks subnets.
+- No-downtime workload migration. 
 
 ## Introduction
 Legacy workloads, particularly virtual machines, are often set up with static
@@ -38,16 +40,16 @@ excludes it from being available for workloads.
 ## User-Stories/Use-Cases
 
 - As a user, I want to define a custom default gateway IP for a new primary Layer2 UDN
-so that it matches the gateway IP used by the workload previously.
+so that my migrated workloads can maintain their existing network configuration without disruption.
 
 - As a user, I want the ability to configure a new primary Layer2 UDN with a custom management IP
 address to prevent IP conflicts with the workloads I am importing.
 
-- As a user, I want to reserve a range of IP addresses within the primary Layer2 UDN network that OVN-Kubernetes
-avoids for automatic assignment, but from which I can still request specific IPs for my workloads.
-
 - As a user, I want to assign a predefined IP address and MAC address to a pod to ensure the
 network identity of my imported workload is maintained.
+
+- As a user, I want to prevent OVN-Kubernetes from automatically assigning  IP addresses that are
+already in use by my existing infrastructure, so that I can migrate my services gradually without network conflicts.
 
 ## Proposed Solution
 
@@ -67,7 +69,7 @@ objects. Additionally, it is possible to modify the cluster's default network at
 setting the `v1.multus-cni.io/default-network` annotation to a singular NetworkSelectionElement 
 object.
 
-To enable using pre-defined MAC and IP addresses on pods attached to a primary UDN,
+To enable using predefined MAC and IP addresses on pods attached to a primary UDN,
 the `v1.multus-cni.io/default-network` will be reused, as it is a well-known annotation for 
 configuring the pod's default network. The `k8s.v1.cni.cncf.io/networks` annotation is specific to 
 secondary networks and expects a list of networks, which does not fit well with primary UDNs.
@@ -75,8 +77,9 @@ With the proposed approach, the `k8s.ovn.org/primary-udn-ipamclaim` annotation, 
 pod with a matching claim, will be deprecated in favor of the `IPAMClaimReference` field in the 
 NetworkSelectionElement. When `IPAMClaimReference` is specified we will update its status to reflect
 the result of the IP allocation, see [IPAMClaim API changes](#ipamclaim-api-changes).
-It is important that OVN-Kubernetes tries to handle potential MAC and IP address conflicts within
-the realm of the overlay network in a clear and predictable fashion whenever possible.
+OVN-Kubernetes will keep track all allocated MAC and IP addresses to detect conflicts.
+When a conflict is detected, OVN-Kubernetes will emit a Kubernetes event to the pod indicating
+the specific conflict (IP or MAC address already in use) and prevent the pod from starting.
 
 ```mermaid
 %%{init: { 'sequence': {'messageAlign': 'left'} }}%%
@@ -115,7 +118,7 @@ end
 
 #### Layer2 User Defined Network API changes
 
-Proposed API change adds `infrastructureSubnets` `excludeSubnets` and `defaultGatewayIPs` fields to the `Layer2Config` which is a part of both
+Proposed API change adds `infrastructureSubnets` `reservedSubnets` and `defaultGatewayIPs` fields to the `Layer2Config` which is a part of both
 the [UDN](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/a3d0a2b238bef9b1399b3342228d75504afed18b/go-controller/pkg/crd/userdefinednetwork/v1/udn.go#L47)
 and [cluster UDN](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/a3d0a2b238bef9b1399b3342228d75504afed18b/go-controller/pkg/crd/userdefinednetwork/v1/cudn.go#L63) specs:
 ```diff
@@ -126,11 +129,11 @@ and [cluster UDN](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/a3d0a2b2
 // +kubebuilder:validation:XValidation:rule="!has(self.subnets) || !has(self.mtu) || !self.subnets.exists_one(i, isCIDR(i) && cidr(i).ip().family() == 6) || self.mtu >= 1280", message="MTU should be greater than or equal to 1280 when IPv6 subnet is used"
 + // +kubebuilder:validation:XValidation:rule="!has(self.defaultGatewayIPs) || has(self.role) && self.role == 'Primary'", message="defaultGatewayIPs is only supported for Primary network"
 + // +kubebuilder:validation:XValidation:rule="!has(self.defaultGatewayIPs) || self.defaultGatewayIPs.all(ip, self.subnets.exists(subnet, cidr(subnet).containsIP(ip)))", message="defaultGatewayIPs addresses be a part of the networks specified in the subnets field"
-+ // +kubebuilder:validation:XValidation:rule="!has(self.excludeSubnets) || has(self.excludeSubnets) && has(self.subnets)", message="excludeSubnets must be unset when subnets is unset"
-+ // +kubebuilder:validation:XValidation:rule="!has(self.excludeSubnets) || self.excludeSubnets.all(e, self.subnets.exists(s, cidr(s).containsCIDR(cidr(e))))",message="excludeSubnets must be subnetworks of the networks specified in the subnets field",fieldPath=".excludeSubnets"
++ // +kubebuilder:validation:XValidation:rule="!has(self.reservedSubnets) || has(self.reservedSubnets) && has(self.subnets)", message="reservedSubnets must be unset when subnets is unset"
++ // +kubebuilder:validation:XValidation:rule="!has(self.reservedSubnets) || self.reservedSubnets.all(e, self.subnets.exists(s, cidr(s).containsCIDR(cidr(e))))",message="reservedSubnets must be subnetworks of the networks specified in the subnets field",fieldPath=".reservedSubnets"
 + // +kubebuilder:validation:XValidation:rule="!has(self.infrastructureSubnets) || has(self.infrastructureSubnets) && has(self.subnets)", message="infrastructureSubnets must be unset when subnets is unset"
 + // +kubebuilder:validation:XValidation:rule="!has(self.infrastructureSubnets) || self.infrastructureSubnets.all(e, self.subnets.exists(s, cidr(s).containsCIDR(cidr(e))))",message="infrastructureSubnets must be subnetworks of the networks specified in the subnets field",fieldPath=".infrastructureSubnets"
-+ // +kubebuilder:validation:XValidation:rule="!has(self.infrastructureSubnets) || !has(self.defaultGatewayIPs) || !self.defaultGatewayIPs.all(ip, self.infrastructureSubnets.exists(subnet, cidr(subnet).containsIP(ip)))", message="defaultGatewayIPs cannot be a part of infrastructureSubnets"
++ // +kubebuilder:validation:XValidation:rule="!has(self.infrastructureSubnets) || !has(self.defaultGatewayIPs) || self.defaultGatewayIPs.all(ip, self.infrastructureSubnets.exists(subnet, cidr(subnet).containsIP(ip)))", message="defaultGatewayIPs have to belong to infrastructureSubnets"
 type Layer2Config struct {
 // Role describes the network role in the pod.
 //
@@ -159,9 +162,9 @@ MTU int32 `json:"mtu,omitempty"`
 // +optional
 Subnets DualStackCIDRs `json:"subnets,omitempty"`
 
-+ // excludeSubnets specifies a list of CIDRs removed from the specified CIDRs in `subnets`.
-+ // excludeSubnets is optional. When omitted no IP address is excluded and all IP address specified by `subnets` subject to be automatically assigned.
-+ // It is still allowed to request IPs from this range through static IP assignment.
++ // reservedSubnets specifies a list of CIDRs reserved for static IP assignment, excluded from automatic allocation.
++ // reservedSubnets is optional. When omitted, all IP addresses in `subnets` are available for automatic assignment.
++ // IPs from these ranges can still be requested through static IP assignment in pod annotations.
 + // Each item should be in range of the specified CIDR(s) in `subnets`.
 + // The maximal exceptions allowed is 25.
 + // The format should match standard CIDR notation (for example, "10.128.0.0/16").
@@ -169,7 +172,7 @@ Subnets DualStackCIDRs `json:"subnets,omitempty"`
 + // +optional
 + // +kubebuilder:validation:MinItems=1
 + // +kubebuilder:validation:MaxItems=25
-+ ExcludeSubnets []CIDR `json:"excludeSubnets,omitempty"`
++ ReservedSubnets []CIDR `json:"reservedSubnets,omitempty"`
 
 // JoinSubnets are used inside the OVN network topology.
 //
@@ -184,8 +187,8 @@ JoinSubnets DualStackCIDRs `json:"joinSubnets,omitempty"`
 + // infrastructureSubnets specifies a list of internal CIDR ranges that OVN-Kubernetes will reserve for internal network infrastructure.
 + // Any IP addresses within these ranges cannot be assigned to workloads.
 + // When omitted, OVN-Kubernetes will automatically allocate IP addresses from `subnets` for its infrastructure needs.
-+ // When `excludeSubnets` is also specified the CIDRs cannot overlap.
-+ // When `defaultGatewayIPs` is also specified  the default gateway IPs cannot be a part of any of the CIDRs.
++ // When `reservedSubnets` is also specified the CIDRs cannot overlap.
++ // When `defaultGatewayIPs` is also specified  the default gateway IPs must belong to one of the CIDRs.
 + // Each item should be in range of the specified CIDR(s) in `subnets`.
 + // The maximal exceptions allowed is 10.
 + // The format should match standard CIDR notation (for example, "10.128.0.0/16").
@@ -200,7 +203,7 @@ JoinSubnets DualStackCIDRs `json:"joinSubnets,omitempty"`
 + // Dual-stack clusters may set 2 IPs (one for each IP family), otherwise only 1 IP is allowed.
 + // This field is only allowed for "Primary" network.
 + // It is not recommended to set this field without explicit need and understanding of the OVN network topology.
-+ // When omitted, the first IP address from the pod network subnet is used.
++ // When omitted, an IP from network subnet is used.
 + //
 + // +optional
 + DefaultGatewayIPs DualStackIPs `json:"defaultGatewayIPs,omitempty"`
@@ -219,6 +222,8 @@ type IP string
 type DualStackIPs []IP
 
 ```
+
+The API changes mentioned above will be carried to the `NetworkAttachmentDefinition` JSON spec.
 
 #### IPAMClaim API changes
 
@@ -246,7 +251,7 @@ be reflected in the pods network configuration and this should be blocked throug
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
-  name: pre-assigned-network-identity
+  name: predefined-network-addresses
 spec:
   matchConstraints:
     resourceRules:
@@ -391,10 +396,10 @@ The following scenarios should be covered in testing:
 * Imported VM workloads can live-migrate to another node without any additional traffic disruption.
 * 'v1.multus-cni.io/default-network' cannot be changed after the pod was created.
 * It should be possible to configure the pods MAC or the IP address without configuring the other.
-* When `excludeSubnets` is configured automatic IP allocation should not use addresses specified in it.
+* When `reservedSubnets` is configured automatic IP allocation should not use addresses specified in it.
 * It should be possible to configure the pods IP address using the 'v1.multus-cni.io/default-network'
-even if the address is a part of the `excludeSubnets`.
-* Requesting an IP address that is not a part of the networks subnet should fail.
+even if the address is a part of the `reservedSubnets`.
+* Requesting an IP address and default gateway IP that is not a part of the networks subnet should fail.
 * Detect MAC and IP address conflicts between the requested addresses for a newly created pods and the addresses that
 are already allocated in the network.
 * After configuring custom default gateway and management addresses on a Layer2 UDN the previous default
@@ -422,7 +427,7 @@ what OVN-Kubernetes controls and can check.
 management IP, makes user-specified UDN gateway/management IPs and static pod IP/MAC assignments very complex. This
 enhancement will not support Layer3 UDNs.
 
-* BGP support today is limited to cluster UDNs, to ensure a non-NATed traffic for pods with pre-configured addresses
+* BGP support today is limited to cluster UDNs, to ensure a non-NATed traffic for pods with predefined addresses
 the user has to use a cluster UDN to configure the network. This is a limitation unrelated to this enhancement
 and it is possible it will be solved in the future.
 
