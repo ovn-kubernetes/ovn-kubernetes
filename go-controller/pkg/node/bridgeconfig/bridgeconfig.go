@@ -5,6 +5,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/egressipgw"
+	nodeutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	corev1 "k8s.io/api/core/v1"
@@ -153,7 +154,7 @@ func BridgeForInterface(intfName, nodeName,
 	} else {
 		// get IP addresses from OVS bridge. If IP does not exist,
 		// error out.
-		res.IPs, err = getNetworkInterfaceIPAddresses(gwIntf)
+		res.IPs, err = nodeutil.GetNetworkInterfaceIPAddresses(gwIntf)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get interface details for %s: %w", gwIntf, err)
 		}
@@ -255,42 +256,6 @@ func getIntfName(gatewayIntf string) (string, error) {
 			intfName, stderr, err)
 	}
 	return intfName, nil
-}
-
-// TODO copy
-// getNetworkInterfaceIPAddresses returns the IP addresses for the network interface 'iface'.
-func getNetworkInterfaceIPAddresses(iface string) ([]*net.IPNet, error) {
-	allIPs, err := util.GetFilteredInterfaceV4V6IPs(iface)
-	if err != nil {
-		return nil, fmt.Errorf("could not find IP addresses: %v", err)
-	}
-
-	var ips []*net.IPNet
-	var foundIPv4 bool
-	var foundIPv6 bool
-	for _, ip := range allIPs {
-		if utilnet.IsIPv6CIDR(ip) {
-			if config.IPv6Mode && !foundIPv6 {
-				// For IPv6 addresses with 128 prefix, let's try to find an appropriate subnet
-				// in the routing table
-				subnetIP, err := util.GetIPv6OnSubnet(iface, ip)
-				if err != nil {
-					return nil, fmt.Errorf("could not find IPv6 address on subnet: %v", err)
-				}
-				ips = append(ips, subnetIP)
-				foundIPv6 = true
-			}
-		} else if config.IPv4Mode && !foundIPv4 {
-			ips = append(ips, ip)
-			foundIPv4 = true
-		}
-	}
-	if config.IPv4Mode && !foundIPv4 {
-		return nil, fmt.Errorf("failed to find IPv4 address on interface %s", iface)
-	} else if config.IPv6Mode && !foundIPv6 {
-		return nil, fmt.Errorf("failed to find IPv6 address on interface %s", iface)
-	}
-	return ips, nil
 }
 
 func getRepresentor(intfName string) (string, error) {
@@ -1349,7 +1314,7 @@ func generateIPFragmentReassemblyFlow(ofPortPhys string) []string {
 func (b *BridgeConfiguration) UpdateInterfaceIPAddresses(node *corev1.Node) ([]*net.IPNet, error) {
 	b.Lock()
 	defer b.Unlock()
-	ifAddrs, err := getNetworkInterfaceIPAddresses(b.GetGatewayIface())
+	ifAddrs, err := nodeutil.GetNetworkInterfaceIPAddresses(b.GetGatewayIface())
 	if err != nil {
 		return nil, err
 	}
@@ -1365,8 +1330,7 @@ func (b *BridgeConfiguration) UpdateInterfaceIPAddresses(node *corev1.Node) ([]*
 		if nodeAddr == nil {
 			return nil, fmt.Errorf("failed to parse node IP address. %v", nodeAddrStr)
 		}
-		// TODO uncomment
-		//ifAddrs, err = getDPUHostPrimaryIPAddresses(nodeAddr, ifAddrs)
+		ifAddrs, err = nodeutil.GetDPUHostPrimaryIPAddresses(nodeAddr, ifAddrs)
 		if err != nil {
 			return nil, err
 		}

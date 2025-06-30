@@ -18,44 +18,10 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/managementport"
 	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
+	nodeutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
-
-// getNetworkInterfaceIPAddresses returns the IP addresses for the network interface 'iface'.
-func getNetworkInterfaceIPAddresses(iface string) ([]*net.IPNet, error) {
-	allIPs, err := util.GetFilteredInterfaceV4V6IPs(iface)
-	if err != nil {
-		return nil, fmt.Errorf("could not find IP addresses: %v", err)
-	}
-
-	var ips []*net.IPNet
-	var foundIPv4 bool
-	var foundIPv6 bool
-	for _, ip := range allIPs {
-		if utilnet.IsIPv6CIDR(ip) {
-			if config.IPv6Mode && !foundIPv6 {
-				// For IPv6 addresses with 128 prefix, let's try to find an appropriate subnet
-				// in the routing table
-				subnetIP, err := util.GetIPv6OnSubnet(iface, ip)
-				if err != nil {
-					return nil, fmt.Errorf("could not find IPv6 address on subnet: %v", err)
-				}
-				ips = append(ips, subnetIP)
-				foundIPv6 = true
-			}
-		} else if config.IPv4Mode && !foundIPv4 {
-			ips = append(ips, ip)
-			foundIPv4 = true
-		}
-	}
-	if config.IPv4Mode && !foundIPv4 {
-		return nil, fmt.Errorf("failed to find IPv4 address on interface %s", iface)
-	} else if config.IPv6Mode && !foundIPv6 {
-		return nil, fmt.Errorf("failed to find IPv6 address on interface %s", iface)
-	}
-	return ips, nil
-}
 
 func getGatewayNextHops() ([]net.IP, string, error) {
 	var gatewayNextHops []net.IP
@@ -167,52 +133,6 @@ func getGatewayNextHops() ([]net.IP, string, error) {
 	return gatewayNextHops, gatewayIntf, nil
 }
 
-// getDPUHostPrimaryIPAddresses returns the DPU host IP/Network based on K8s Node IP
-// and DPU IP subnet overriden by config config.Gateway.RouterSubnet
-func getDPUHostPrimaryIPAddresses(k8sNodeIP net.IP, ifAddrs []*net.IPNet) ([]*net.IPNet, error) {
-	// Note(adrianc): No Dual-Stack support at this point as we rely on k8s node IP to derive gateway information
-	// for each node.
-	var gwIps []*net.IPNet
-	isIPv4 := utilnet.IsIPv4(k8sNodeIP)
-
-	// override subnet mask via config
-	if config.Gateway.RouterSubnet != "" {
-		_, addr, err := net.ParseCIDR(config.Gateway.RouterSubnet)
-		if err != nil {
-			return nil, err
-		}
-		if utilnet.IsIPv4CIDR(addr) != isIPv4 {
-			return nil, fmt.Errorf("unexpected gateway router subnet provided (%s). "+
-				"does not match Node IP address format", config.Gateway.RouterSubnet)
-		}
-		if !addr.Contains(k8sNodeIP) {
-			return nil, fmt.Errorf("unexpected gateway router subnet provided (%s). "+
-				"subnet does not contain Node IP address (%s)", config.Gateway.RouterSubnet, k8sNodeIP)
-		}
-		addr.IP = k8sNodeIP
-		gwIps = append(gwIps, addr)
-	} else {
-		// Assume Host and DPU share the same subnet
-		// in this case just update the matching IPNet with the Host's IP address
-		for _, addr := range ifAddrs {
-			if utilnet.IsIPv4CIDR(addr) != isIPv4 {
-				continue
-			}
-			// expect k8s Node IP to be contained in the given subnet
-			if !addr.Contains(k8sNodeIP) {
-				continue
-			}
-			newAddr := *addr
-			newAddr.IP = k8sNodeIP
-			gwIps = append(gwIps, &newAddr)
-		}
-		if len(gwIps) == 0 {
-			return nil, fmt.Errorf("could not find subnet on DPU matching node IP %s", k8sNodeIP)
-		}
-	}
-	return gwIps, nil
-}
-
 // getInterfaceByIP retrieves Interface that has `ip` assigned to it
 func getInterfaceByIP(ip net.IP) (string, error) {
 	links, err := util.GetNetLinkOps().LinkList()
@@ -294,7 +214,7 @@ func (nc *DefaultNodeNetworkController) initGatewayPreStart(
 		egressGWInterface = interfaceForEXGW(config.Gateway.EgressGWInterface)
 	}
 
-	ifAddrs, err = getNetworkInterfaceIPAddresses(gatewayIntf)
+	ifAddrs, err = nodeutil.GetNetworkInterfaceIPAddresses(gatewayIntf)
 	if err != nil {
 		return nil, err
 	}
@@ -302,7 +222,7 @@ func (nc *DefaultNodeNetworkController) initGatewayPreStart(
 	// For DPU need to use the host IP addr which currently is assumed to be K8s Node cluster
 	// internal IP address.
 	if config.OvnKubeNode.Mode == types.NodeModeDPU {
-		ifAddrs, err = getDPUHostPrimaryIPAddresses(kubeNodeIP, ifAddrs)
+		ifAddrs, err = nodeutil.GetDPUHostPrimaryIPAddresses(kubeNodeIP, ifAddrs)
 		if err != nil {
 			return nil, err
 		}
@@ -459,7 +379,7 @@ func (nc *DefaultNodeNetworkController) initGatewayDPUHost(kubeNodeIP net.IP) er
 		return err
 	}
 
-	ifAddrs, err := getNetworkInterfaceIPAddresses(gatewayIntf)
+	ifAddrs, err := nodeutil.GetNetworkInterfaceIPAddresses(gatewayIntf)
 	if err != nil {
 		return err
 	}
