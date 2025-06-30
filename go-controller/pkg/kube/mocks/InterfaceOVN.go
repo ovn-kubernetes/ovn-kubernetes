@@ -181,7 +181,7 @@ func (_m *InterfaceOVN) GetEgressIPs() ([]*egressipv1.EgressIP, error) {
 	return r0, r1
 }
 
-// GetNode provides a mock function with given fields: name
+// GetNodeForWindows provides a mock function with given fields: name
 func (_m *InterfaceOVN) GetNodeForWindows(name string) (*apicorev1.Node, error) {
 	ret := _m.Called(name)
 
@@ -216,7 +216,7 @@ func (_m *InterfaceOVN) GetNodesForWindows() ([]*apicorev1.Node, error) {
 	ret := _m.Called()
 
 	if len(ret) == 0 {
-		panic("no return value specified for GetNodes")
+		panic("no return value specified for GetNodesForWindows")
 	}
 
 	var r0 []*apicorev1.Node
@@ -241,7 +241,7 @@ func (_m *InterfaceOVN) GetNodesForWindows() ([]*apicorev1.Node, error) {
 	return r0, r1
 }
 
-// GetPods provides a mock function with given fields: namespace, opts
+// GetPodsForDBChecker provides a mock function with given fields: namespace, opts
 func (_m *InterfaceOVN) GetPodsForDBChecker(namespace string, opts metav1.ListOptions) ([]*apicorev1.Pod, error) {
 	ret := _m.Called(namespace, opts)
 

@@ -37,7 +37,7 @@ func (_m *Interface) Events() v1.EventInterface {
 	return r0
 }
 
-// GetNode provides a mock function with given fields: name
+// GetNodeForWindows provides a mock function with given fields: name
 func (_m *Interface) GetNodeForWindows(name string) (*corev1.Node, error) {
 	ret := _m.Called(name)
 
@@ -97,7 +97,7 @@ func (_m *Interface) GetNodesForWindows() ([]*corev1.Node, error) {
 	return r0, r1
 }
 
-// GetPods provides a mock function with given fields: namespace, opts
+// GetPodsForDBChecker provides a mock function with given fields: namespace, opts
 func (_m *Interface) GetPodsForDBChecker(namespace string, opts metav1.ListOptions) ([]*corev1.Pod, error) {
 	ret := _m.Called(namespace, opts)
 

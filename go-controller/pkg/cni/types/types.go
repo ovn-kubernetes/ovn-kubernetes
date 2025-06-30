@@ -95,6 +95,11 @@ type NetConf struct {
 		// see https://github.com/k8snetworkplumbingwg/device-info-spec
 		CNIDeviceInfoFile string `json:"CNIDeviceInfoFile,omitempty"`
 	} `json:"runtimeConfig,omitempty"`
+
+	// Encapsulation specifies the encapsulation type for the network.
+	// The allowed values are "geneve" and "none". If not specified,
+	// the default value is "geneve".
+	Encapsulation string `json:"encapsulation,omitempty"`
 }
 
 // NetworkSelectionElement represents one element of the JSON format
