@@ -4,7 +4,7 @@
 
 ## Problem Statement
 
-Migrating legacy workloads with a predefined network configurations (IP, MAC, default gateway)
+Migrating legacy workloads with predefined network configurations (IP, MAC, default gateway)
 to OVN-Kubernetes is currently not possible. There is a need to import these workloads, preserving
 their network configuration, while also enabling non-NATed traffic to better integrate with
 existing infrastructures.
@@ -78,7 +78,7 @@ With the proposed approach, the `k8s.ovn.org/primary-udn-ipamclaim` annotation, 
 pod with a matching claim, will be deprecated in favor of the `IPAMClaimReference` field in the
 NetworkSelectionElement. When `IPAMClaimReference` is specified we will update its status to reflect
 the result of the IP allocation, see [IPAMClaim API changes](#ipamclaim-api-changes).
-OVN-Kubernetes will keep track all allocated MAC and IP addresses to detect conflicts.
+OVN-Kubernetes will keep track of all allocated MAC and IP addresses to detect conflicts.
 When a conflict is detected, OVN-Kubernetes will emit a Kubernetes event to the pod indicating
 the specific conflict (IP or MAC address already in use) and prevent the pod from starting.
 
@@ -130,13 +130,15 @@ and [cluster UDN](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/a3d0a2b2
 // +kubebuilder:validation:XValidation:rule="!has(self.joinSubnets) || has(self.role) && self.role == 'Primary'", message="JoinSubnets is only supported for Primary network"
 // +kubebuilder:validation:XValidation:rule="!has(self.subnets) || !has(self.mtu) || !self.subnets.exists_one(i, isCIDR(i) && cidr(i).ip().family() == 6) || self.mtu >= 1280", message="MTU should be greater than or equal to 1280 when IPv6 subnet is used"
 + // +kubebuilder:validation:XValidation:rule="!has(self.defaultGatewayIPs) || has(self.role) && self.role == 'Primary'", message="defaultGatewayIPs is only supported for Primary network"
-+ // +kubebuilder:validation:XValidation:rule="!has(self.defaultGatewayIPs) || self.defaultGatewayIPs.all(ip, self.subnets.exists(subnet, cidr(subnet).containsIP(ip)))", message="defaultGatewayIPs addresses be a part of the networks specified in the subnets field"
++ // +kubebuilder:validation:XValidation:rule="!has(self.defaultGatewayIPs) || self.defaultGatewayIPs.all(ip, self.subnets.exists(subnet, cidr(subnet).containsIP(ip)))", message="defaultGatewayIPs must belong to one of the subnets specified in the subnets field"
 + // +kubebuilder:validation:XValidation:rule="!has(self.reservedSubnets) || has(self.reservedSubnets) && has(self.subnets)", message="reservedSubnets must be unset when subnets is unset"
 + // +kubebuilder:validation:XValidation:rule="!has(self.reservedSubnets) || self.reservedSubnets.all(e, self.subnets.exists(s, cidr(s).containsCIDR(cidr(e))))",message="reservedSubnets must be subnetworks of the networks specified in the subnets field",fieldPath=".reservedSubnets"
 + // +kubebuilder:validation:XValidation:rule="!has(self.infrastructureSubnets) || has(self.infrastructureSubnets) && has(self.subnets)", message="infrastructureSubnets must be unset when subnets is unset"
 + // +kubebuilder:validation:XValidation:rule="!has(self.infrastructureSubnets) || self.infrastructureSubnets.all(e, self.subnets.exists(s, cidr(s).containsCIDR(cidr(e))))",message="infrastructureSubnets must be subnetworks of the networks specified in the subnets field",fieldPath=".infrastructureSubnets"
 + // +kubebuilder:validation:XValidation:rule="!has(self.infrastructureSubnets) || !has(self.defaultGatewayIPs) || self.defaultGatewayIPs.all(ip, self.infrastructureSubnets.exists(subnet, cidr(subnet).containsIP(ip)))", message="defaultGatewayIPs have to belong to infrastructureSubnets"
++ // +kubebuilder:validation:XValidation:rule="!has(self.infrastructureSubnets) || !has(self.reservedSubnets) || self.infrastructureSubnets.all(infra, !self.reservedSubnets.exists(reserved, cidr(infra).containsCIDR(reserved) || cidr(reserved).containsCIDR(infra)))", message="infrastructureSubnets and reservedSubnets must not overlap"
 type Layer2Config struct {
+
 // Role describes the network role in the pod.
 //
 // Allowed value is "Secondary".
@@ -284,7 +286,7 @@ is required to instruct OVN-Kubernetes on whether to process the annotation desc
 #### NetworkSelectionElement annotation
 
 Currently, the `v1.multus-cni.io/default-network` annotation is only processed for the cluster default network.
-This enhancement will this, allowing it to also be applied to pods created in the primary Layer2 UDN.
+This enhancement will extend this behavior, allowing it to be applied to pods created in the primary Layer2 UDN as well.
 The annotation should only be processed for new pods, modifying it after the addresses were allocated won't
 be reflected in the pods network configuration and this should be blocked through a
 [Validating Admission Policy](https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/):
@@ -331,7 +333,7 @@ type NetworkSelectionElement struct {
 
 Any other field set in the struct will be ignored by OVN-Kubernetes.
 
-When using the `1.multus-cni.io/default-network` annotation, Multus strictly requires its value to reference an
+When using the `v1.multus-cni.io/default-network` annotation, Multus strictly requires its value to reference an
 existing NAD. Multus then builds the CNI requests based on it.
 This proposal introduces a static default NAD object applied to the cluster. This object will serve as a
 stub to generate the CNI calls, preserving the current behavior:
@@ -427,7 +429,7 @@ Role string
 This annotation will be used to build an initial cache of allocated addresses at startup, which will then be updated
 dynamically at runtime and used for conflict detection.
 A similar approach is required for IP address conflict detection.
-When a conflict is detected the pod should not start and an appropriate event should be emited.
+When a conflict is detected the pod should not start and an appropriate event should be emitted.
 
 When the `NetworkSelectionElement` contains an `IPAMClaimReference` the referenced IPAMClaim should
 reflect the IP allocation status including error reporting through the newly introduced
