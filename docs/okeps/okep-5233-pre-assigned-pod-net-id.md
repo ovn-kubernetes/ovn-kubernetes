@@ -232,6 +232,45 @@ https://github.com/k8snetworkplumbingwg/ipamclaims/pull/9
 
 [IPAMClaim CRD doc](https://docs.google.com/document/d/1OQIJIrCtsYpR5O44w0hpoJ2TyKBz1Du-KhRT4RtrAjk) - `IPAM allocation on behalf of other entities` section
 
+### Usage Example
+
+A user migrating services wants to import a workload pod preserving it's original IP address.
+Workload data:
+
+```yaml
+IP: 192.168.100.205
+MAC: 00:1A:2B:3C:4D:5E
+Default Gateway: 192.168.100.2
+```
+
+```yaml
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  name: network-l2
+spec:
+  topology: "Layer2"
+  layer2:
+    role: Primary
+    subnets: ["192.168.100.0/24"]
+    infrastructureSubnets: ["192.168.100.0/30"]  # used for OVN-Kubernetes infrastructure
+    reservedSubnets: ["192.168.100.200/29"]      # reserved for workloads that will require predefined addresses
+    defaultGatewayIPs: ["192.168.100.2"]
+```
+
+With this configuration, OVN-Kubernetes automatically assigns IPs from `.4-.199` and `.208-.254` for new workloads, while pods can request specific IPs from the reserved range:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: migrated-app
+  annotations:
+    v1.multus-cni.io/default-network: |
+      {"name": "default", "namespace": "ovn-kubernetes", "ips": ["192.168.100.205"], "mac": "00:1A:2B:3C:4D:5E", "ipam-claim-reference": "my-claim"}
+spec:
+```
+
 ### Implementation Details
 
 #### Configurability
