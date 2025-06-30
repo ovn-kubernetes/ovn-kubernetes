@@ -152,6 +152,7 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter) (map[s
 		netConfSpec.MTU = int(cfg.MTU)
 		netConfSpec.Subnets = layer3SubnetsString(cfg.Subnets)
 		netConfSpec.JoinSubnet = cidrString(renderJoinSubnets(cfg.Role, cfg.JoinSubnets))
+		netConfSpec.Encapsulation = strings.ToLower(string(cfg.Encapsulation))
 	case userdefinednetworkv1.NetworkTopologyLayer2:
 		cfg := spec.GetLayer2()
 		if err := validateIPAM(cfg.IPAM); err != nil {
@@ -244,6 +245,9 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter) (map[s
 		if len(netConfSpec.DefaultGatewayIPs) > 0 {
 			cniNetConf["defaultGatewayIPs"] = netConfSpec.DefaultGatewayIPs
 		}
+	}
+	if netConfSpec.Encapsulation == config.NetworkEncapsulationNone {
+		cniNetConf["encapsulation"] = config.NetworkEncapsulationNone
 	}
 	return cniNetConf, nil
 }

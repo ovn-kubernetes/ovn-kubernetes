@@ -72,6 +72,8 @@ type NetInfo interface {
 	// GetEgressIPAdvertisedNodes return the nodes where egress IP are
 	// advertised.
 	GetEgressIPAdvertisedNodes() []string
+	// GetNetworkEncapsulation returns the encapsulation type used by this network.
+	GetNetworkEncapsulation() string
 
 	// derived information.
 	GetNADNamespaces() []string
@@ -372,6 +374,10 @@ func (nInfo *mutableNetInfo) GetEgressIPAdvertisedNodes() []string {
 	return maps.Keys(nInfo.eipAdvertisements)
 }
 
+func (nInfo *mutableNetInfo) GetNetworkEncapsulation() string {
+	return ""
+}
+
 // GetNADs returns all the NADs associated with this network
 func (nInfo *mutableNetInfo) GetNADs() []string {
 	nInfo.RLock()
@@ -652,6 +658,10 @@ func (nInfo *DefaultNetInfo) GetNodeManagementIP(hostSubnet *net.IPNet) *net.IPN
 	return GetNodeManagementIfAddr(hostSubnet)
 }
 
+func (nInfo *DefaultNetInfo) GetNetworkEncapsulation() string {
+	return config.Default.DefaultNetworkEncapsulation
+}
+
 // userDefinedNetInfo holds the network name information for a User Defined Network if non-nil
 type userDefinedNetInfo struct {
 	mutableNetInfo
@@ -664,6 +674,7 @@ type userDefinedNetInfo struct {
 	mtu                int
 	vlan               uint
 	allowPersistentIPs bool
+	encapsulation      string
 
 	ipv4mode, ipv6mode    bool
 	subnets               []config.CIDRNetworkEntry
@@ -862,6 +873,10 @@ func (nInfo *userDefinedNetInfo) JoinSubnetV6() *net.IPNet {
 // we need this util)
 func (nInfo *userDefinedNetInfo) JoinSubnets() []*net.IPNet {
 	return nInfo.joinSubnets
+}
+
+func (nInfo *userDefinedNetInfo) GetNetworkEncapsulation() string {
+	return nInfo.encapsulation
 }
 
 func (nInfo *userDefinedNetInfo) canReconcile(other NetInfo) bool {
