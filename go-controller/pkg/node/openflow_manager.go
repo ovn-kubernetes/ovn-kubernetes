@@ -107,10 +107,6 @@ func (c *openflowManager) requestFlowSync() {
 }
 
 func (c *openflowManager) syncFlows() {
-	// protect gwBridge config from being updated by gw.nodeIPManager
-	c.defaultBridge.Lock()
-	defer c.defaultBridge.Unlock()
-
 	c.flowMutex.Lock()
 	defer c.flowMutex.Unlock()
 
@@ -125,9 +121,6 @@ func (c *openflowManager) syncFlows() {
 	}
 
 	if c.externalGatewayBridge != nil {
-		c.externalGatewayBridge.Lock()
-		defer c.externalGatewayBridge.Unlock()
-
 		c.exGWFlowMutex.Lock()
 		defer c.exGWFlowMutex.Unlock()
 
@@ -202,15 +195,17 @@ func (c *openflowManager) Run(stopChan <-chan struct{}, doneWg *sync.WaitGroup) 
 }
 
 func (c *openflowManager) updateBridgePMTUDFlowCache(key string, ipAddrs []string) {
-	// protect defaultBridge config from being updated by gw.nodeIPManager
-	c.defaultBridge.Lock()
-	defer c.defaultBridge.Unlock()
+	// key is "nodeName_pmtud"
+	// TODO: do we need this? protect defaultBridge config from being updated by gw.nodeIPManager
+	//c.defaultBridge.Lock()
+	//defer c.defaultBridge.Unlock()
 
 	dftFlows := pmtudDropFlows(c.defaultBridge, ipAddrs)
 	c.updateFlowCacheEntry(key, dftFlows)
 	if c.externalGatewayBridge != nil {
-		c.externalGatewayBridge.Lock()
-		defer c.externalGatewayBridge.Unlock()
+		// TODO
+		//c.externalGatewayBridge.Lock()
+		//defer c.externalGatewayBridge.Unlock()
 		exGWBridgeDftFlows := pmtudDropFlows(c.externalGatewayBridge, ipAddrs)
 		c.updateExBridgeFlowCacheEntry(key, exGWBridgeDftFlows)
 	}
