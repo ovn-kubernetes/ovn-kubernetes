@@ -47,13 +47,11 @@ type BridgeConfiguration struct {
 	OfPortHost  string
 	NetConfig   map[string]*BridgeUDNConfiguration
 	EipMarkIPs  *egressipgw.MarkIPsCache
-	NextHops    []net.IP
 }
 
 func BridgeForInterface(intfName, nodeName,
 	physicalNetworkName string,
 	nodeSubnets, gwIPs []*net.IPNet,
-	gwNextHops []net.IP,
 	advertised bool) (*BridgeConfiguration, error) {
 	var intfRep string
 	var err error
@@ -72,9 +70,7 @@ func BridgeForInterface(intfName, nodeName,
 		},
 		EipMarkIPs: egressipgw.NewMarkIPsCache(),
 	}
-	if len(gwNextHops) > 0 {
-		res.NextHops = gwNextHops
-	}
+
 	res.NetConfig[types.DefaultNetworkName].Advertised.Store(advertised)
 
 	if config.Gateway.GatewayAcceleratedInterface != "" {
