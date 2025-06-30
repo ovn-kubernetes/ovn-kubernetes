@@ -66,21 +66,15 @@ func (c *openflowManager) getActiveNetwork(nInfo util.NetInfo) *bridgeconfig.Bri
 // END UDN UTILs
 
 func (c *openflowManager) getDefaultBridgeName() string {
-	c.defaultBridge.Lock()
-	defer c.defaultBridge.Unlock()
-	return c.defaultBridge.BridgeName
+	return c.defaultBridge.GetBridgeName()
 }
 
 func (c *openflowManager) getDefaultBridgeMAC() net.HardwareAddr {
-	c.defaultBridge.Lock()
-	defer c.defaultBridge.Unlock()
-	return c.defaultBridge.MacAddress
+	return c.defaultBridge.GetBridgeMAC()
 }
 
 func (c *openflowManager) setDefaultBridgeMAC(macAddr net.HardwareAddr) {
-	c.defaultBridge.Lock()
-	defer c.defaultBridge.Unlock()
-	c.defaultBridge.MacAddress = macAddr
+	c.defaultBridge.SetBridgeMAC(macAddr)
 }
 
 func (c *openflowManager) updateFlowCacheEntry(key string, flows []string) {

@@ -231,9 +231,7 @@ type cidrAndFlags struct {
 
 func (npw *nodePortWatcher) updateGatewayIPs(addressManager *addressManager) {
 	// Get Physical IPs of Node, Can be IPV4 IPV6 or both
-	addressManager.gatewayBridge.Lock()
-	gatewayIPv4, gatewayIPv6 := getGatewayFamilyAddrs(addressManager.gatewayBridge.IPs)
-	addressManager.gatewayBridge.Unlock()
+	gatewayIPv4, gatewayIPv6 := getGatewayFamilyAddrs(addressManager.gatewayBridge.GetBridgeIPs())
 
 	npw.gatewayIPLock.Lock()
 	defer npw.gatewayIPLock.Unlock()
@@ -1499,37 +1497,19 @@ func newGateway(
 
 	if exGwBridge != nil {
 		gw.readyFunc = func() (bool, error) {
-			gwBridge.Lock()
-			for _, netConfig := range gwBridge.NetConfig {
-				ready, err := gatewayReady(netConfig.PatchPort)
-				if err != nil || !ready {
-					gwBridge.Unlock()
-					return false, err
-				}
+			if err = gwBridge.WaitGatewayReady(); err != nil {
+				return false, err
 			}
-			gwBridge.Unlock()
-			exGwBridge.Lock()
-			for _, netConfig := range exGwBridge.NetConfig {
-				exGWReady, err := gatewayReady(netConfig.PatchPort)
-				if err != nil || !exGWReady {
-					exGwBridge.Unlock()
-					return false, err
-				}
+			if err = exGwBridge.WaitGatewayReady(); err != nil {
+				return false, err
 			}
-			exGwBridge.Unlock()
 			return true, nil
 		}
 	} else {
 		gw.readyFunc = func() (bool, error) {
-			gwBridge.Lock()
-			for _, netConfig := range gwBridge.NetConfig {
-				ready, err := gatewayReady(netConfig.PatchPort)
-				if err != nil || !ready {
-					gwBridge.Unlock()
-					return false, err
-				}
+			if err = gwBridge.WaitGatewayReady(); err != nil {
+				return false, err
 			}
-			gwBridge.Unlock()
 			return true, nil
 		}
 	}
