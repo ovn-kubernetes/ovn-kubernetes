@@ -835,6 +835,27 @@ var _ = Describe("User Defined Network Controller", func() {
 				}
 			})
 		})
+
+		Context("default network customization", func() {
+			It("a NAD for the cluster default network is provisioned when the controller runs", func() {
+				c = newTestController(renderNadStub(nil))
+				Expect(c.Run()).To(Succeed())
+
+				Expect(c.EnsureDefaultNetworkNAD()).To(Succeed())
+				nad, err := c.nadClient.
+					K8sCniCncfIoV1().
+					NetworkAttachmentDefinitions(config.Kubernetes.OVNConfigNamespace).
+					Get(
+						context.Background(),
+						"default",
+						metav1.GetOptions{},
+					)
+				Expect(err).NotTo(HaveOccurred())
+
+				const expectedNADContents = `{"cniVersion": "0.4.0", "name": "ovn-kubernetes", "type": "ovn-k8s-cni-overlay"}`
+				Expect(nad.Spec.Config).To(Equal(expectedNADContents))
+			})
+		})
 	})
 
 	Context("UserDefinedNetwork object sync", func() {

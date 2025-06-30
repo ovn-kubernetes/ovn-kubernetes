@@ -80,6 +80,7 @@ usage() {
     echo "                 [-is | --ipsec]"
     echo "                 [-cm | --compact-mode]"
     echo "                 [-ic | --enable-interconnect]"
+    echo "                 [-cnc | --custom-net-conf-enable]"
     echo "                 [-rae | --enable-route-advertisements]"
     echo "                 [-adv | --advertise-default-network]"
     echo "                 [-nqe | --network-qos-enable]"
@@ -152,6 +153,7 @@ usage() {
     echo "--add-nodes                           Adds nodes to an existing cluster. The number of nodes to be added is specified by --num-workers. Also use -ic if the cluster is using interconnect."
     echo "-dns | --enable-dnsnameresolver       Enable DNSNameResolver for resolving the DNS names used in the DNS rules of EgressFirewall."
     echo "-obs | --observability                Enable OVN Observability feature."
+    echo "-cnc | --custom-net-conf-enable       Enable connecting workloads with custom network configuration to user-defined networks"
     echo "-rae | --enable-route-advertisements  Enable route advertisements"
     echo "-adv | --advertise-default-network    Applies a RouteAdvertisements configuration to advertise the default network on all nodes"
     echo ""
@@ -337,6 +339,8 @@ parse_args() {
                                                 ;;
             -nse | --network-segmentation-enable) ENABLE_NETWORK_SEGMENTATION=true
                                                   ;;
+            -cnc | --custom-net-conf-enable) ENABLE_CUSTOM_NET_CONF=true
+                                                  ;;
             -rae | --route-advertisements-enable) ENABLE_ROUTE_ADVERTISEMENTS=true
                                                   ;;
             -adv | --advertise-default-network) ADVERTISE_DEFAULT_NETWORK=true
@@ -434,6 +438,7 @@ print_params() {
      echo "ENABLE_NETWORK_SEGMENTATION= $ENABLE_NETWORK_SEGMENTATION"
      echo "ENABLE_ROUTE_ADVERTISEMENTS= $ENABLE_ROUTE_ADVERTISEMENTS"
      echo "ADVERTISE_DEFAULT_NETWORK = $ADVERTISE_DEFAULT_NETWORK"
+     echo "ENABLE_CUSTOM_NET_CONF = $ENABLE_CUSTOM_NET_CONF"
      echo "OVN_ENABLE_INTERCONNECT = $OVN_ENABLE_INTERCONNECT"
      if [ "$OVN_ENABLE_INTERCONNECT" == true ]; then
        echo "KIND_NUM_NODES_PER_ZONE = $KIND_NUM_NODES_PER_ZONE"
@@ -656,6 +661,11 @@ set_default_params() {
   fi
   if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ] && [ "$OVN_ENABLE_INTERCONNECT" != true ]; then
     echo "Route advertisements requires interconnect to be enabled (-ic)"
+    exit 1
+  fi
+  ENABLE_CUSTOM_NET_CONF=${ENABLE_CUSTOM_NET_CONF:-false}
+  if [[ $ENABLE_CUSTOM_NET_CONF == true && $ENABLE_NETWORK_SEGMENTATION != true ]]; then
+    echo "Allowing connecting workloads with custom network configuration to UDNs, requires network-segmentation to be enabled (-nse)"
     exit 1
   fi
   ADVERTISE_DEFAULT_NETWORK=${ADVERTISE_DEFAULT_NETWORK:-false}
@@ -899,6 +909,7 @@ create_ovn_kube_manifests() {
     --ex-gw-network-interface="${OVN_EX_GW_NETWORK_INTERFACE}" \
     --multi-network-enable="${ENABLE_MULTI_NET}" \
     --network-segmentation-enable="${ENABLE_NETWORK_SEGMENTATION}" \
+    --custom-net-conf-enable="${ENABLE_CUSTOM_NET_CONF}" \
     --route-advertisements-enable="${ENABLE_ROUTE_ADVERTISEMENTS}" \
     --advertise-default-network="${ADVERTISE_DEFAULT_NETWORK}" \
     --ovnkube-metrics-scale-enable="${OVN_METRICS_SCALE_ENABLE}" \

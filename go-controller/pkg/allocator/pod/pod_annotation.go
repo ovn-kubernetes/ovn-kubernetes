@@ -330,12 +330,14 @@ func allocatePodAnnotationWithRollback(
 		}
 		hasIPAMClaim = ipamClaim != nil && len(ipamClaim.Status.IPs) > 0
 	}
-	if hasIPAM && hasStaticIPRequest {
+
+	// Allow static IPs with IPAM only for layer2 topology
+	if netInfo.TopologyType() != types.Layer2Topology && hasIPAM && hasStaticIPRequest {
 		// for now we can't tell apart already allocated IPs from IPs excluded
 		// from allocation so we can't really honor static IP requests when
 		// there is IPAM as we don't really know if the requested IP should not
 		// be allocated or was already allocated by the same pod
-		err = fmt.Errorf("cannot allocate a static IP request with IPAM for pod %s", podDesc)
+		err = fmt.Errorf("cannot allocate a static IP request with IPAM and topology %q for pod %s", netInfo.TopologyType(), podDesc)
 		return
 	}
 
@@ -348,6 +350,7 @@ func allocatePodAnnotationWithRollback(
 		if hasIPRequest {
 			tentative.IPs, err = util.ParseIPNets(network.IPRequest)
 			if err != nil {
+				klog.Warningf("Failed parsing IPRequest %+v for pod %s: %v", network.IPRequest, podDesc, err)
 				return
 			}
 		} else if hasIPAMClaim {

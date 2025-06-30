@@ -111,6 +111,9 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 	tests := []struct {
 		name                      string
 		args                      args
+		netConf                   *ovncnitypes.NetConf
+		netInfo                   util.NetInfo
+		nadName                   string
 		ipam                      bool
 		idAllocation              bool
 		persistentIPAllocation    bool
@@ -195,8 +198,9 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 		{
 			// on networks with IPAM, expect error if static IP request present
 			// in the network selection annotation
-			name: "expect error, static ip request, IPAM",
-			ipam: true,
+			name:    "expect error, static ip request, IPAM, non layer2",
+			netInfo: &util.DefaultNetInfo{},
+			nadName: types.DefaultNetworkName,
 			args: args{
 				network: &nadapi.NetworkSelectionElement{
 					IPRequest: []string{"192.168.0.3/24"},
@@ -540,9 +544,9 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			wantReleasedIPs: ovntest.MustParseIPNets("192.168.0.3/24"),
 		},
 		{
-			// on networks with IPAM, honor a MAC request through the network
+			// on networks with IPAM, honor a IP and MAC request through the network
 			// selection element
-			name: "expect requested MAC",
+			name: "expect requested MAC, IPAM",
 			ipam: true,
 			args: args{
 				network: &nadapi.NetworkSelectionElement{
@@ -574,6 +578,46 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			},
 			wantReleasedIPsOnRollback: ovntest.MustParseIPNets("192.168.0.3/24"),
 			role:                      types.NetworkRolePrimary, // has to be primary network for default routes to be set
+		},
+
+		{
+			// on networks with IPAM, honor a IP and MAC request through the network
+			// selection element
+			name: "expect requested MAC and IP, IPAM",
+			ipam: true,
+			role: types.NetworkRolePrimary, // has to be primary network for default routes to be set
+			netConf: &ovncnitypes.NetConf{
+				Topology: types.Layer2Topology,
+				NetConf: cnitypes.NetConf{
+					Name: "network",
+				},
+				NADName: util.GetNADName("namespac", "network"),
+				Subnets: "192.168.0.0/24,2001:db8::/64",
+				Role:    types.NetworkRolePrimary,
+			},
+			args: args{
+				network: &nadapi.NetworkSelectionElement{
+					MacRequest: requestedMAC,
+					IPRequest:  []string{"192.168.0.101/24"},
+				},
+				ipAllocator: &ipAllocatorStub{
+					nextIPs: ovntest.MustParseIPNets("192.168.0.3/24"),
+				},
+			},
+			wantUpdatedPod: true,
+			wantPodAnnotation: &util.PodAnnotation{
+				IPs:      ovntest.MustParseIPNets("192.168.0.101/24"),
+				MAC:      requestedMACParsed,
+				Gateways: []net.IP{ovntest.MustParseIP("192.168.0.1").To4()},
+				Routes: []util.PodRoute{
+					{
+						Dest:    ovntest.MustParseIPNet("100.65.0.0/16"),
+						NextHop: ovntest.MustParseIP("192.168.0.1").To4(),
+					},
+				},
+				Role: types.NetworkRolePrimary,
+			},
+			wantReleasedIPsOnRollback: ovntest.MustParseIPNets("192.168.0.101/24"),
 		},
 		{
 			// on networks with IPAM, expect error on an invalid network
@@ -785,32 +829,40 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			if tt.isSingleStackIPv4 {
 				config.IPv6Mode = false
 			}
-			var netInfo util.NetInfo
-			netInfo = &util.DefaultNetInfo{}
-			nadName := types.DefaultNetworkName
-			if !tt.ipam || tt.idAllocation || tt.persistentIPAllocation || tt.args.ipamClaim != nil {
-				nadName = util.GetNADName(network.Namespace, network.Name)
-				var subnets string
-				if tt.ipam {
-					subnets = "192.168.0.0/24,2001:db8::/64"
-					if tt.isSingleStackIPv4 {
-						subnets = "192.168.0.0/24"
-					} else if tt.isSingleStackIPv6 {
-						subnets = "2001:db8::/64"
-					}
-				}
-				netInfo, err = util.NewNetInfo(&ovncnitypes.NetConf{
-					Topology: types.Layer2Topology,
-					NetConf: cnitypes.NetConf{
-						Name: network.Name,
-					},
-					NADName:            nadName,
-					Subnets:            subnets,
-					AllowPersistentIPs: tt.persistentIPAllocation,
-					Role:               tt.role,
-				})
+			if tt.netConf != nil {
+				tt.netInfo, err = util.NewNetInfo(tt.netConf)
 				if err != nil {
 					t.Fatalf("failed to create NetInfo: %v", err)
+				}
+				tt.nadName = tt.netConf.NADName
+			}
+			if tt.netInfo == nil {
+				tt.netInfo = &util.DefaultNetInfo{}
+				tt.nadName = types.DefaultNetworkName
+				if !tt.ipam || tt.idAllocation || tt.persistentIPAllocation || tt.args.ipamClaim != nil {
+					tt.nadName = util.GetNADName(network.Namespace, network.Name)
+					var subnets string
+					if tt.ipam {
+						subnets = "192.168.0.0/24,2001:db8::/64"
+						if tt.isSingleStackIPv4 {
+							subnets = "192.168.0.0/24"
+						} else if tt.isSingleStackIPv6 {
+							subnets = "2001:db8::/64"
+						}
+					}
+					tt.netInfo, err = util.NewNetInfo(&ovncnitypes.NetConf{
+						Topology: types.Layer2Topology,
+						NetConf: cnitypes.NetConf{
+							Name: network.Name,
+						},
+						NADName:            tt.nadName,
+						Subnets:            subnets,
+						AllowPersistentIPs: tt.persistentIPAllocation,
+						Role:               tt.role,
+					})
+					if err != nil {
+						t.Fatalf("failed to create NetInfo: %v", err)
+					}
 				}
 			}
 
@@ -836,7 +888,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 				},
 			}
 			if tt.podAnnotation != nil {
-				pod.Annotations, err = util.MarshalPodAnnotation(nil, tt.podAnnotation, nadName)
+				pod.Annotations, err = util.MarshalPodAnnotation(nil, tt.podAnnotation, tt.nadName)
 				if err != nil {
 					t.Fatalf("failed to set pod annotations: %v", err)
 				}
@@ -862,7 +914,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			pod, podAnnotation, rollback, err := allocatePodAnnotationWithRollback(
 				tt.args.ipAllocator,
 				tt.args.idAllocator,
-				netInfo,
+				tt.netInfo,
 				node,
 				pod,
 				network,
@@ -870,6 +922,15 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 				tt.args.reallocate,
 				tt.role,
 			)
+
+			if tt.wantErr {
+				// check the expected error after we have checked above that the
+				// rollback has behaved as expected
+				g.Expect(err).To(gomega.HaveOccurred(), "Expected error")
+				return
+			} else {
+				g.Expect(err).ToNot(gomega.HaveOccurred(), "Expected no error")
+			}
 
 			if tt.args.ipAllocator != nil {
 				releasedIPs := tt.args.ipAllocator.(*ipAllocatorStub).releasedIPs
@@ -887,19 +948,12 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 
 			if tt.args.ipAllocator != nil {
 				releasedIPs := tt.args.ipAllocator.(*ipAllocatorStub).releasedIPs
-				g.Expect(releasedIPs).To(gomega.Equal(tt.wantReleasedIPsOnRollback), "Release IP on rollback behaved unexpectedly")
+				g.Expect(releasedIPs).To(gomega.Equal(tt.wantReleasedIPsOnRollback), "Release IP on rollback behaved unexpectedly: %s", tt.netInfo.TopologyType())
 			}
 
 			if tt.args.idAllocator != nil {
 				releasedID := tt.args.idAllocator.(*idAllocatorStub).releasedID
 				g.Expect(releasedID).To(gomega.Equal(tt.wantRelasedIDOnRollback), "Release ID on rollback behaved unexpectedly")
-			}
-
-			if tt.wantErr {
-				// check the expected error after we have checked above that the
-				// rollback has behaved as expected
-				g.Expect(err).To(gomega.HaveOccurred(), "Expected error")
-				return
 			}
 			g.Expect(err).NotTo(gomega.HaveOccurred(), "Did not expect error")
 
