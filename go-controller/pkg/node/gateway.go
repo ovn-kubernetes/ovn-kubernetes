@@ -464,11 +464,11 @@ func (g *gateway) SetDefaultGatewayBridgeMAC(macAddr net.HardwareAddr) {
 }
 
 func (g *gateway) SetDefaultPodNetworkAdvertised(isPodNetworkAdvertised bool) {
-	g.openflowManager.defaultBridge.NetConfig[types.DefaultNetworkName].Advertised.Store(isPodNetworkAdvertised)
+	g.openflowManager.defaultBridge.GetNetworkBridgeConfig(types.DefaultNetworkName).Advertised.Store(isPodNetworkAdvertised)
 }
 
 func (g *gateway) GetDefaultPodNetworkAdvertised() bool {
-	return g.openflowManager.defaultBridge.NetConfig[types.DefaultNetworkName].Advertised.Load()
+	return g.openflowManager.defaultBridge.GetNetworkBridgeConfig(types.DefaultNetworkName).Advertised.Load()
 }
 
 // Reconcile handles triggering updates to different components of a gateway, like OFM, Services

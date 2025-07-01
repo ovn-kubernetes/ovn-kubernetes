@@ -52,7 +52,7 @@ type BridgeConfiguration struct {
 	macAddress net.HardwareAddr                   // updated by openflow manager
 	ofPortPhys string                             // set on gateway init
 	eipMarkIPs *egressipgw.MarkIPsCache           // set on gateway init
-	NetConfig  map[string]*BridgeUDNConfiguration // updated by everyone, not touching for now
+	netConfig  map[string]*BridgeUDNConfiguration // used by everyone, updated by gateway, openflow_manager
 }
 
 func BridgeForInterface(intfName, nodeName,
@@ -71,13 +71,13 @@ func BridgeForInterface(intfName, nodeName,
 	}
 	res := BridgeConfiguration{
 		nodeName: nodeName,
-		NetConfig: map[string]*BridgeUDNConfiguration{
+		netConfig: map[string]*BridgeUDNConfiguration{
 			types.DefaultNetworkName: defaultNetConfig,
 		},
 		eipMarkIPs: egressipgw.NewMarkIPsCache(),
 	}
 
-	res.NetConfig[types.DefaultNetworkName].Advertised.Store(advertised)
+	res.netConfig[types.DefaultNetworkName].Advertised.Store(advertised)
 
 	if config.Gateway.GatewayAcceleratedInterface != "" {
 		// Try to get representor for the specified gateway device.
@@ -547,7 +547,7 @@ func (bridge *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]stri
 	// Due to the fact that ovn-controllers on different nodes apply the changes independently,
 	// there is a chance that the pod traffic will reach the egress node before it configures the SNAT flows.
 	// Drop pod traffic that is not SNATed, excluding local pods(required for ICNIv2)
-	defaultNetConfig := bridge.NetConfig[types.DefaultNetworkName]
+	defaultNetConfig := bridge.netConfig[types.DefaultNetworkName]
 	if config.OVNKubernetesFeature.EnableEgressIP {
 		for _, clusterEntry := range config.Default.ClusterSubnets {
 			cidr := clusterEntry.CIDR
@@ -977,7 +977,7 @@ func (bridge *BridgeConfiguration) flowsForDefaultNetwork(extraIPs []net.IP) ([]
 				DefaultOpenFlowCookie, match_vlan, bridgeMacAddress, strip_vlan, ofPortHost))
 	}
 
-	defaultNetConfig := bridge.NetConfig[types.DefaultNetworkName]
+	defaultNetConfig := bridge.netConfig[types.DefaultNetworkName]
 
 	// table 2, dispatch from Host -> OVN
 	dftFlows = append(dftFlows,
@@ -1154,11 +1154,12 @@ func ovnToHostNetworkNormalActionFlows(netConfig *BridgeUDNConfiguration, srcMAC
 	return flows
 }
 
+// used by gateway on newGateway initFunc
 func (bridge *BridgeConfiguration) SetBridgeOfPorts() error {
 	bridge.mutex.Lock()
 	defer bridge.mutex.Unlock()
 	// Get ofport of patchPort
-	for _, netConfig := range bridge.NetConfig {
+	for _, netConfig := range bridge.netConfig {
 		if err := netConfig.setBridgeNetworkOfPortsInternal(); err != nil {
 			return fmt.Errorf("error setting bridge openflow ports for network with patchport %v: err: %v", netConfig.PatchPort, err)
 		}
@@ -1210,13 +1211,14 @@ func (b *BridgeConfiguration) GetBridgePortConfigurations() ([]*BridgeUDNConfigu
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 	var netConfigs []*BridgeUDNConfiguration
-	for _, netConfig := range b.NetConfig {
+	for _, netConfig := range b.netConfig {
 		netConfigs = append(netConfigs, netConfig.shallowCopy())
 	}
 	return netConfigs, b.UplinkName, b.ofPortPhys
 }
 
 // AddNetworkBridgeConfig adds the patchport and ctMark value for the provided netInfo into the bridge configuration cache
+// used by openflow_manager on addNetwork
 func (b *BridgeConfiguration) AddNetworkBridgeConfig(
 	nInfo util.NetInfo,
 	nodeSubnets []*net.IPNet,
@@ -1228,7 +1230,7 @@ func (b *BridgeConfiguration) AddNetworkBridgeConfig(
 	netName := nInfo.GetNetworkName()
 	patchPort := nInfo.GetNetworkScopedPatchPortName(b.BridgeName, b.nodeName)
 
-	_, found := b.NetConfig[netName]
+	_, found := b.netConfig[netName]
 	if !found {
 		netConfig := &BridgeUDNConfiguration{
 			PatchPort:   patchPort,
@@ -1241,7 +1243,7 @@ func (b *BridgeConfiguration) AddNetworkBridgeConfig(
 		}
 		netConfig.Advertised.Store(util.IsPodNetworkAdvertisedAtNode(nInfo, b.nodeName))
 
-		b.NetConfig[netName] = netConfig
+		b.netConfig[netName] = netConfig
 	} else {
 		klog.Warningf("Trying to update bridge config for network %s which already"+
 			"exists in cache...networks are not mutable...ignoring update", nInfo.GetNetworkName())
@@ -1250,17 +1252,18 @@ func (b *BridgeConfiguration) AddNetworkBridgeConfig(
 }
 
 // DelNetworkBridgeConfig deletes the provided netInfo from the bridge configuration cache
+// used by openflow_manager on delNetwork
 func (b *BridgeConfiguration) DelNetworkBridgeConfig(nInfo util.NetInfo) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
-	delete(b.NetConfig, nInfo.GetNetworkName())
+	delete(b.netConfig, nInfo.GetNetworkName())
 }
 
 func (b *BridgeConfiguration) GetNetworkBridgeConfig(networkName string) *BridgeUDNConfiguration {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
-	return b.NetConfig[networkName]
+	return b.netConfig[networkName]
 }
 
 // GetActiveNetworkBridgeConfigCopy returns a shallow copy of the network configuration corresponding to the
@@ -1272,7 +1275,7 @@ func (b *BridgeConfiguration) GetActiveNetworkBridgeConfigCopy(networkName strin
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
-	if netConfig, found := b.NetConfig[networkName]; found && netConfig.OfPortPatch != "" {
+	if netConfig, found := b.netConfig[networkName]; found && netConfig.OfPortPatch != "" {
 		return netConfig.shallowCopy()
 	}
 	return nil
@@ -1303,8 +1306,10 @@ func (b *BridgeConfiguration) GetBridgeIPs() []*net.IPNet {
 }
 
 func (b *BridgeConfiguration) PatchedNetConfigs() []*BridgeUDNConfiguration {
-	result := make([]*BridgeUDNConfiguration, 0, len(b.NetConfig))
-	for _, netConfig := range b.NetConfig {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	result := make([]*BridgeUDNConfiguration, 0, len(b.netConfig))
+	for _, netConfig := range b.netConfig {
 		if netConfig.OfPortPatch == "" {
 			continue
 		}
@@ -1327,11 +1332,12 @@ func (b *BridgeConfiguration) SetEIPMarkIPs(cache *egressipgw.MarkIPsCache) {
 
 // END UDN UTILs for BridgeConfiguration
 
+// used by gateway_udn on AddNetwork
 func (bridge *BridgeConfiguration) SetBridgeNetworkOfPorts(netName string) error {
 	bridge.mutex.Lock()
 	defer bridge.mutex.Unlock()
 
-	netConfig, found := bridge.NetConfig[netName]
+	netConfig, found := bridge.netConfig[netName]
 	if !found {
 		return fmt.Errorf("failed to find network %s configuration on bridge %s", netName, bridge.BridgeName)
 	}
@@ -1403,10 +1409,11 @@ func (b *BridgeConfiguration) UpdateInterfaceIPAddresses(node *corev1.Node) ([]*
 	return ifAddrs, nil
 }
 
+// used by gateway on newGateway readyFunc
 func (b *BridgeConfiguration) WaitGatewayReady() error {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
-	for _, netConfig := range b.NetConfig {
+	for _, netConfig := range b.netConfig {
 		ready := gatewayReady(netConfig.PatchPort)
 		if !ready {
 			return fmt.Errorf("gateway patch port %s is not ready yet", netConfig.PatchPort)

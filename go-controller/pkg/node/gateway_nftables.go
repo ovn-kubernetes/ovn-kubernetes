@@ -174,7 +174,7 @@ func getGatewayNFTRules(service *corev1.Service, localEndpoints []string, svcHas
 }
 
 // getUDNNFTRules generates nftables rules for a UDN service.
-// If NetConfig is nil, the resulting map elements will have empty values,
+// If netConfig is nil, the resulting map elements will have empty values,
 // suitable only for entry removal.
 func getUDNNFTRules(service *corev1.Service, netConfig *bridgeconfig.BridgeUDNConfiguration) []*knftables.Element {
 	rules := make([]*knftables.Element, 0)
