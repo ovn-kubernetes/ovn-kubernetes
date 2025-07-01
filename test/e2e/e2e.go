@@ -17,6 +17,8 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/containerengine"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
@@ -558,16 +560,19 @@ func getApiAddress() string {
 }
 
 // IsGatewayModeLocal returns true if the gateway mode is local
-func IsGatewayModeLocal() bool {
-	anno, err := e2ekubectl.RunKubectl("default", "get", "node", "ovn-control-plane", "-o", "template", "--template={{.metadata.annotations}}")
-	if err != nil {
-		framework.Logf("Error getting annotations: %v", err)
-		return false
+func IsGatewayModeLocal(cs kubernetes.Interface) bool {
+	ginkgo.GinkgoHelper()
+	node, err := e2enode.GetRandomReadySchedulableNode(context.TODO(), cs)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	l3ConfigRaw, ok := node.Annotations[util.OvnNodeL3GatewayConfig]
+	if !ok {
+		framework.Failf("Failed to find L3 gateway config for Node %q", node.Name)
 	}
-	framework.Logf("Annotations received: %s", anno)
-	isLocal := strings.Contains(anno, "local")
-	framework.Logf("IsGatewayModeLocal returning: %v", isLocal)
-	return isLocal
+	var l3Config *util.L3GatewayConfig
+	if err = l3Config.UnmarshalJSON([]byte(l3ConfigRaw)); err != nil {
+		framework.Failf("Failed unmarshall Node %q L3 gateway config: %v", node.Name, err)
+	}
+	return l3Config.Mode == config.GatewayModeLocal
 }
 
 // restartOVNKubeNodePod restarts the ovnkube-node pod from namespace, running on nodeName
