@@ -10,6 +10,10 @@ import (
 )
 
 var _ = Describe("node util tests", func() {
+	BeforeEach(func() {
+		Expect(config.PrepareTestConfig()).To(Succeed())
+	})
+
 	Context("GetDPUHostPrimaryIPAddresses", func() {
 
 		It("returns Gateway IP/Subnet for kubernetes node IP", func() {
