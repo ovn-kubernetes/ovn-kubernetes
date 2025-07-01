@@ -25,7 +25,6 @@ require (
 require (
 	cel.dev/expr v0.18.0 // indirect
 	github.com/JeffAshton/win_pdh v0.0.0-20161109143554-76bb4ee9f0ab // indirect
-	github.com/Masterminds/semver/v3 v3.2.1 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/NYTimes/gziphandler v1.1.1 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.0 // indirect
@@ -208,6 +207,7 @@ require (
 )
 
 replace (
+	github.com/containernetworking/cni => github.com/containernetworking/cni v1.2.3
 	github.com/coreos/go-iptables => github.com/trozet/go-iptables v0.0.0-20240328221912-077e672b3808
 	github.com/ovn-org/ovn-kubernetes/go-controller => ../../go-controller
 	go.universe.tf/metallb => github.com/metallb/metallb v0.14.9
