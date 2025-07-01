@@ -164,6 +164,10 @@ func setUpGatewayFakeOVSCommands(fexec *ovntest.FakeExec) {
 		Output: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6",
 	})
 	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+		Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:hostname",
+		Output: "worker1",
+	})
+	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 		Cmd:    "ovs-appctl --timeout=15 dpif/show-dp-features breth0",
 		Output: "Check pkt length action: Yes",
 	})
@@ -675,12 +679,13 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		nodeAnnotatorMock.On("Delete", mock.Anything).Return(nil)
 		nodeAnnotatorMock.On("Set", mock.Anything, map[string]*util.L3GatewayConfig{
 			types.DefaultNetworkName: {
-				ChassisID:   "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6",
-				BridgeID:    "breth0",
-				InterfaceID: "breth0_worker1",
-				MACAddress:  ovntest.MustParseMAC("00:00:00:55:66:99"),
-				IPAddresses: ifAddrs,
-				VLANID:      ptr.To(uint(0)),
+				ChassisID:       "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6",
+				ChassisHostname: "worker1",
+				BridgeID:        "breth0",
+				InterfaceID:     "breth0_worker1",
+				MACAddress:      ovntest.MustParseMAC("00:00:00:55:66:99"),
+				IPAddresses:     ifAddrs,
+				VLANID:          ptr.To(uint(0)),
 			}}).Return(nil)
 		nodeAnnotatorMock.On("Set", mock.Anything, mock.Anything).Return(nil)
 		nodeAnnotatorMock.On("Run").Return(nil)
@@ -913,12 +918,13 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		nodeAnnotatorMock.On("Delete", mock.Anything).Return(nil)
 		nodeAnnotatorMock.On("Set", mock.Anything, map[string]*util.L3GatewayConfig{
 			types.DefaultNetworkName: {
-				ChassisID:   "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6",
-				BridgeID:    "breth0",
-				InterfaceID: "breth0_worker1",
-				MACAddress:  ovntest.MustParseMAC("00:00:00:55:66:99"),
-				IPAddresses: ifAddrs,
-				VLANID:      ptr.To(uint(0)),
+				ChassisID:       "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6",
+				ChassisHostname: "worker1",
+				BridgeID:        "breth0",
+				InterfaceID:     "breth0_worker1",
+				MACAddress:      ovntest.MustParseMAC("00:00:00:55:66:99"),
+				IPAddresses:     ifAddrs,
+				VLANID:          ptr.To(uint(0)),
 			}}).Return(nil)
 		nodeAnnotatorMock.On("Set", mock.Anything, mock.Anything).Return(nil)
 		nodeAnnotatorMock.On("Run").Return(nil)
@@ -1147,12 +1153,13 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		nodeAnnotatorMock.On("Delete", mock.Anything).Return(nil)
 		nodeAnnotatorMock.On("Set", mock.Anything, map[string]*util.L3GatewayConfig{
 			types.DefaultNetworkName: {
-				ChassisID:   "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6",
-				BridgeID:    "breth0",
-				InterfaceID: "breth0_worker1",
-				MACAddress:  ovntest.MustParseMAC("00:00:00:55:66:99"),
-				IPAddresses: ifAddrs,
-				VLANID:      ptr.To(uint(0)),
+				ChassisID:       "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6",
+				ChassisHostname: "worker1",
+				BridgeID:        "breth0",
+				InterfaceID:     "breth0_worker1",
+				MACAddress:      ovntest.MustParseMAC("00:00:00:55:66:99"),
+				IPAddresses:     ifAddrs,
+				VLANID:          ptr.To(uint(0)),
 			}}).Return(nil)
 		nodeAnnotatorMock.On("Set", mock.Anything, mock.Anything).Return(nil)
 		nodeAnnotatorMock.On("Run").Return(nil)

@@ -53,7 +53,8 @@ var commonNodeAnnotationChecks = map[string]checkNodeAnnot{
 
 		return fmt.Errorf("%s can only be set to %s or %s, it cannot be removed", util.OvnNodeZoneName, types.OvnDefaultZone, nodeName)
 	},
-	util.OVNNodeEncapIPs: nil,
+	util.OVNNodeEncapIPs:        nil,
+	util.OvnNodeChassisHostname: nil,
 }
 
 // interconnectNodeAnnotationChecks holds annotations allowed for ovnkube-node:<nodeName> users in IC environments

@@ -226,6 +226,22 @@ func GetNodeChassisID() (string, error) {
 	return chassisID, nil
 }
 
+// GetNodeChassisHostname returns the machine's OVN chassis Hostname
+func GetNodeChassisHostname() (string, error) {
+	chassisHostname, stderr, err := RunOVSVsctl("--if-exists", "get",
+		"Open_vSwitch", ".", "external_ids:hostname")
+	if err != nil {
+		klog.Errorf("No hostname configured on the local host, "+
+			"stderr: %q, error: %v", stderr, err)
+		return "", err
+	}
+	if chassisHostname == "" {
+		return "", fmt.Errorf("no hostname configured on the local host")
+	}
+
+	return chassisHostname, nil
+}
+
 // GetHybridOverlayPortName returns the name of the hybrid overlay switch port
 // for a given node
 func GetHybridOverlayPortName(nodeName string) string {

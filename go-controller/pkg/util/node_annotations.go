@@ -70,6 +70,9 @@ const (
 	// OvnNodeChassisID is the systemID of the node needed for creating L3 gateway
 	OvnNodeChassisID = "k8s.ovn.org/node-chassis-id"
 
+	// OvnNodeChassisHostname is the hostname set on a node's chassis needed for creating L3 gateway
+	OvnNodeChassisHostname = "k8s.ovn.org/node-chassis-hostname"
+
 	// OvnNodeIfAddr is the CIDR form representation of primary network interface's attached IP address (i.e: 192.168.126.31/24 or 0:0:0:0:0:feff:c0a8:8e0c/64)
 	OvnNodeIfAddr = "k8s.ovn.org/node-primary-ifaddr"
 
@@ -162,6 +165,7 @@ const (
 type L3GatewayConfig struct {
 	Mode                config.GatewayMode
 	ChassisID           string
+	ChassisHostname     string
 	BridgeID            string
 	InterfaceID         string
 	MACAddress          net.HardwareAddr
@@ -337,6 +341,11 @@ func SetL3GatewayConfig(nodeAnnotator kube.Annotator, cfg *L3GatewayConfig) erro
 			return err
 		}
 	}
+	if cfg.ChassisHostname != "" {
+		if err := nodeAnnotator.Set(OvnNodeChassisHostname, cfg.ChassisHostname); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -398,6 +407,15 @@ func ParseNodeChassisIDAnnotation(node *corev1.Node) (string, error) {
 
 func NodeChassisIDAnnotationChanged(oldNode, newNode *corev1.Node) bool {
 	return oldNode.Annotations[OvnNodeChassisID] != newNode.Annotations[OvnNodeChassisID]
+}
+
+// ParseNodeChassisHostnameAnnotation returns the node's ovnNodeChassisHostname annotation
+func ParseNodeChassisHostnameAnnotation(node *corev1.Node) (string, error) {
+	chassisHostname, ok := node.Annotations[OvnNodeChassisHostname]
+	if !ok {
+		return "", newAnnotationNotSetError("%s annotation not found for node %s", OvnNodeChassisHostname, node.Name)
+	}
+	return chassisHostname, nil
 }
 
 type ManagementPortDetails struct {

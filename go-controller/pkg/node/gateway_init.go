@@ -385,6 +385,7 @@ func (nc *DefaultNodeNetworkController) initGatewayPreStart(
 		)
 	case config.GatewayModeDisabled:
 		var chassisID string
+		var chassisHostname string
 		klog.Info("Gateway Mode is disabled")
 		gw = &gateway{
 			initFunc:     func() error { return nil },
@@ -395,9 +396,14 @@ func (nc *DefaultNodeNetworkController) initGatewayPreStart(
 		if err != nil {
 			return nil, err
 		}
+		chassisHostname, err = util.GetNodeChassisHostname()
+		if err != nil {
+			return nil, err
+		}
 		err = util.SetL3GatewayConfig(nodeAnnotator, &util.L3GatewayConfig{
-			Mode:      config.GatewayModeDisabled,
-			ChassisID: chassisID,
+			Mode:            config.GatewayModeDisabled,
+			ChassisID:       chassisID,
+			ChassisHostname: chassisHostname,
 		})
 	}
 	if err != nil {
