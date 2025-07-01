@@ -708,7 +708,7 @@ deploy_frr_external_container() {
   popd || exit 1
   if  [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     # Enable IPv6 forwarding in FRR
-    docker exec frr sysctl -w net.ipv6.conf.all.forwarding=1
+    $OCI_BIN exec frr sysctl -w net.ipv6.conf.all.forwarding=1
   fi
 }
 
@@ -735,40 +735,40 @@ deploy_bgp_external_server() {
     ip_family="ipv4"
     ipv6_network=""
   fi
-  docker rm -f bgpserver
-  docker network rm -f bgpnet
-  docker network create --subnet="${BGP_SERVER_NET_SUBNET_IPV4}" ${ipv6_network} --driver bridge bgpnet
-  docker network connect bgpnet frr
-  docker run  --cap-add NET_ADMIN --user 0  -d --network bgpnet  --rm  --name bgpserver -p 8080:8080  registry.k8s.io/e2e-test-images/agnhost:2.45 netexec
+  $OCI_BIN rm -f bgpserver
+  $OCI_BIN network rm -f bgpnet
+  $OCI_BIN network create --subnet="${BGP_SERVER_NET_SUBNET_IPV4}" ${ipv6_network} --driver bridge bgpnet
+  $OCI_BIN network connect bgpnet frr
+  $OCI_BIN run  --cap-add NET_ADMIN --user 0  -d --network bgpnet  --rm  --name bgpserver -p 8080:8080  registry.k8s.io/e2e-test-images/agnhost:2.45 netexec
   # let's make the bgp external server have its default route towards FRR router so that we don't need to add routes during tests back to the pods in the
   # cluster for return traffic
   local bgp_network_frr_v4 bgp_network_frr_v6
-  bgp_network_frr_v4=$($OCI_BIN inspect -f '{{index .NetworkSettings.Networks "bgpnet" "IPAddress"}}' frr)
+  bgp_network_frr_v4=$($OCI_BIN inspect -f '{{.NetworkSettings.Networks.bgpnet.IPAddress}}' frr)
   echo "FRR kind network IPv4: ${bgp_network_frr_v4}"
   $OCI_BIN exec bgpserver ip route replace default via "$bgp_network_frr_v4"
   if  [ "$PLATFORM_IPV6_SUPPORT" == true ] ; then
-    bgp_network_frr_v6=$($OCI_BIN inspect -f '{{index .NetworkSettings.Networks "bgpnet" "GlobalIPv6Address"}}' frr)
+    bgp_network_frr_v6=$($OCI_BIN inspect -f '{{.NetworkSettings.Networks.bgpnet.GlobalIPv6Address}}' frr)
     echo "FRR kind network IPv6: ${bgp_network_frr_v6}"
     $OCI_BIN exec bgpserver ip -6 route replace default via "$bgp_network_frr_v6"
   fi
   # disable the default route to make sure the container only routes accross
   # directly connected or learnt networks (doing this at the very end since
   # docker changes the routing table when a new network is connected)
-  docker exec frr ip route delete default
-  docker exec frr ip route
-  docker exec frr ip -6 route delete default
-  docker exec frr ip -6 route
+  $OCI_BIN exec frr ip route delete default
+  $OCI_BIN exec frr ip route
+  $OCI_BIN exec frr ip -6 route delete default
+  $OCI_BIN exec frr ip -6 route
 }
 
 destroy_bgp() {
-  if docker ps --format '{{.Names}}' | grep -Eq '^bgpserver$'; then
-      docker stop bgpserver
+  if $OCI_BIN ps --format '{{.Names}}' | grep -Eq '^bgpserver$'; then
+      $OCI_BIN stop bgpserver
   fi
-  if docker ps --format '{{.Names}}' | grep -Eq '^frr$'; then
-      docker stop frr
+  if $OCI_BIN ps --format '{{.Names}}' | grep -Eq '^frr$'; then
+      $OCI_BIN stop frr
   fi
-  if docker network ls --format '{{.Name}}' | grep -q '^bgpnet$'; then
-      docker network rm bgpnet
+  if $OCI_BIN network ls --format '{{.Name}}' | grep -q '^bgpnet$'; then
+      $OCI_BIN network rm bgpnet
   fi
 }
 
@@ -807,7 +807,7 @@ install_ffr_k8s() {
 echo "Attempting to reach frr-k8s webhook"
 kind export kubeconfig --name ovn
 while true; do
-docker exec ovn-control-plane curl -ksS --connect-timeout 0.1 https://$(kubectl get svc -n frr-k8s-system frr-k8s-webhook-service -o jsonpath='{.spec.clusterIP}')
+$OCI_BIN exec ovn-control-plane curl -ksS --connect-timeout 0.1 https://$(kubectl get svc -n frr-k8s-system frr-k8s-webhook-service -o jsonpath='{.spec.clusterIP}')
 [ \$? -eq 0 ] && exit 0
 echo "Couldn't reach frr-k8s webhook, trying in 1s..."
 sleep 1s
