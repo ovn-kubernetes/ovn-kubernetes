@@ -174,16 +174,16 @@ EOF
   # Override GOBIN until https://github.com/metallb/metallb/issues/2218 is fixed.
   GOBIN="" inv dev-env -n ovn -b frr -p bgp -i "${ip_family}"
 
-  docker network rm -f clientnet
-  docker network create --subnet="${METALLB_CLIENT_NET_SUBNET_IPV4}" ${ipv6_network} --driver bridge clientnet
-  docker network connect clientnet frr
+  $OCI_BIN network rm -f clientnet
+  $OCI_BIN network create --subnet="${METALLB_CLIENT_NET_SUBNET_IPV4}" ${ipv6_network} --driver bridge clientnet
+  $OCI_BIN network connect clientnet frr
   if  [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     # Enable IPv6 forwarding in FRR
-    docker exec frr sysctl -w net.ipv6.conf.all.forwarding=1
+    $OCI_BIN exec frr sysctl -w net.ipv6.conf.all.forwarding=1
   fi
   # Note: this image let's us use it also for creating load balancer backends that can send big packets
-  docker rm -f lbclient
-  docker run  --cap-add NET_ADMIN --user 0  -d --network clientnet  --rm  --name lbclient  quay.io/itssurya/dev-images:metallb-lbservice
+  $OCI_BIN rm -f lbclient
+  $OCI_BIN run  --cap-add NET_ADMIN --user 0  -d --network clientnet  --rm  --name lbclient  quay.io/itssurya/dev-images:metallb-lbservice
   popd
   delete_metallb_dir
 
@@ -197,18 +197,18 @@ EOF
     kubectl label node "$n" node.kubernetes.io/exclude-from-external-load-balancers-
   done
 
-  kind_network_v4=$(docker inspect -f '{{index .NetworkSettings.Networks "kind" "IPAddress"}}' frr)
+  kind_network_v4=$($OCI_BIN inspect -f '{{.NetworkSettings.Networks.kind.IPAddress}}' frr)
   echo "FRR kind network IPv4: ${kind_network_v4}"
-  kind_network_v6=$(docker inspect -f '{{index .NetworkSettings.Networks "kind" "GlobalIPv6Address"}}' frr)
+  kind_network_v6=$($OCI_BIN inspect -f '{{.NetworkSettings.Networks.kind.GlobalIPv6Address}}' frr)
   echo "FRR kind network IPv6: ${kind_network_v6}"
   local client_network_v4 client_network_v6
-  client_network_v4=$(docker inspect -f '{{index .NetworkSettings.Networks "clientnet" "IPAddress"}}' frr)
+  client_network_v4=$($OCI_BIN inspect -f '{{.NetworkSettings.Networks.clientnet.IPAddress}}' frr)
   echo "FRR client network IPv4: ${client_network_v4}"
-  client_network_v6=$(docker inspect -f '{{index .NetworkSettings.Networks "clientnet" "GlobalIPv6Address"}}' frr)
+  client_network_v6=$($OCI_BIN inspect -f '{{.NetworkSettings.Networks.clientnet.GlobalIPv6Address}}' frr)
   echo "FRR client network IPv6: ${client_network_v6}"
 
   local client_subnets
-  client_subnets=$(docker network inspect clientnet -f '{{range .IPAM.Config}}{{.Subnet}}#{{end}}')
+  client_subnets=$($OCI_BIN network inspect clientnet -f '{{range .IPAM.Config}}{{.Subnet}}#{{end}}')
   echo "${client_subnets}"
   local client_subnets_v4 client_subnets_v6
   client_subnets_v4=$(echo "${client_subnets}" | cut -d '#' -f 1)
@@ -219,10 +219,10 @@ EOF
   KIND_NODES=$(kind_get_nodes)
   for n in ${KIND_NODES}; do
     if [ "$PLATFORM_IPV4_SUPPORT" == true ]; then
-        docker exec "${n}" ip route add "${client_subnets_v4}" via "${kind_network_v4}"
+        $OCI_BIN exec "${n}" ip route add "${client_subnets_v4}" via "${kind_network_v4}"
     fi
     if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
-        docker exec "${n}" ip -6 route add "${client_subnets_v6}" via "${kind_network_v6}"
+        $OCI_BIN exec "${n}" ip -6 route add "${client_subnets_v6}" via "${kind_network_v6}"
     fi
   done
 
@@ -230,10 +230,10 @@ EOF
   # one svcVIP (192.168.10.0/fc00:f853:ccd:e799::) is more than enough since at a time we will only
   # have one load balancer service
   if [ "$PLATFORM_IPV4_SUPPORT" == true ]; then
-    docker exec lbclient ip route add 192.168.10.0 via "${client_network_v4}" dev eth0
+    $OCI_BIN exec lbclient ip route add 192.168.10.0 via "${client_network_v4}" dev eth0
   fi
   if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
-    docker exec lbclient ip -6 route add fc00:f853:ccd:e799:: via "${client_network_v6}" dev eth0
+    $OCI_BIN exec lbclient ip -6 route add fc00:f853:ccd:e799:: via "${client_network_v6}" dev eth0
   fi
   sleep 30
 }
@@ -254,14 +254,14 @@ install_plugins() {
 }
 
 destroy_metallb() {
-  if docker ps --format '{{.Names}}' | grep -Eq '^lbclient$'; then
-      docker stop lbclient
+  if $OCI_BIN ps --format '{{.Names}}' | grep -Eq '^lbclient$'; then
+      $OCI_BIN stop lbclient
   fi
-  if docker ps --format '{{.Names}}' | grep -Eq '^frr$'; then
-      docker stop frr
+  if $OCI_BIN ps --format '{{.Names}}' | grep -Eq '^frr$'; then
+      $OCI_BIN stop frr
   fi
-  if docker network ls --format '{{.Name}}' | grep -q '^clientnet$'; then
-      docker network rm clientnet
+  if $OCI_BIN network ls --format '{{.Name}}' | grep -q '^clientnet$'; then
+      $OCI_BIN network rm clientnet
   fi
   delete_metallb_dir
 }
