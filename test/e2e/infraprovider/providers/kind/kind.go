@@ -414,7 +414,6 @@ func (c *contextKind) cleanUp() error {
 
 const (
 	nameFormat                     = "{{.Name}}"
-	inspectNetworkIPAMJSON         = "{{json .IPAM.Config }}"
 	inspectNetworkIPv4GWKeyStr     = "{{ .NetworkSettings.Networks.%s.Gateway }}"
 	inspectNetworkIPv4AddrKeyStr   = "{{ .NetworkSettings.Networks.%s.IPAddress }}"
 	inspectNetworkIPv4PrefixKeyStr = "{{ .NetworkSettings.Networks.%s.IPPrefixLen }}"
@@ -437,7 +436,7 @@ func isNetworkAttachedToContainer(networkName, containerName string) bool {
 
 func doesContainerNameExist(name string) bool {
 	// check if it is present before retrieving logs
-	stdOut, err := exec.Command(containerengine.Get().String(), "ps", "-f", fmt.Sprintf("Name=^%s$", name), "-q").CombinedOutput()
+	stdOut, err := exec.Command(containerengine.Get().String(), "ps", "-f", fmt.Sprintf("name=^%s$", name), "-q").CombinedOutput()
 	if err != nil {
 		panic(fmt.Sprintf("failed to check if external container (%s) exists: %v (%s)", name, err, stdOut))
 	}
@@ -466,13 +465,16 @@ func getNetwork(networkName string) (containerEngineNetwork, error) {
 		return n, api.NotFound
 	}
 	configs := make([]containerEngineNetworkConfig, 0, 1)
-	dataBytes, err := exec.Command(containerengine.Get().String(), "network", "inspect", "-f", inspectNetworkIPAMJSON, networkName).CombinedOutput()
+
+	ce := containerengine.Get()
+	netConfFmt := ce.NetworkCIDRsFmt()
+	dataBytes, err := exec.Command(ce.String(), "network", "inspect", "-f", netConfFmt, networkName).CombinedOutput()
 	if err != nil {
 		return n, fmt.Errorf("failed to extract network %q data: %v", networkName, err)
 	}
 	dataBytes = []byte(strings.Trim(string(dataBytes), "\n"))
 	if err = json.Unmarshal(dataBytes, &configs); err != nil {
-		return n, fmt.Errorf("failed to unmarshall network %q configuration using network inspect -f %q: %v", networkName, inspectNetworkIPAMJSON, err)
+		return n, fmt.Errorf("failed to unmarshall network %q configuration using network inspect -f %q: %v", networkName, netConfFmt, err)
 	}
 	if len(configs) == 0 {
 		return n, fmt.Errorf("failed to find any IPAM configuration for network %s", networkName)
