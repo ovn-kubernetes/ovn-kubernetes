@@ -484,6 +484,12 @@ user won't be able to use it for configuring the cluster default network attachm
 currently no support for modifying the cluster default network through this annotation while using primary UDNs.
 If there is a requirement in the future another mechanism can be considered.
 
+* OVN-Kubernetes computes MAC addresses from pod IPs rather than allocating them, which creates potential
+MAC address conflicts in a potential scenario where a MAC address previously used by a stopped VM gets consumed by
+OVN-Kubernetes for a dynamically allocated IP. To mitigate these conflicts, users will have to use a different
+MAC address and recreate the workload. For importing workloads that already use this prefix, a future enhancement
+could add a field to the Layer2 spec allowing users to specify a custom MAC prefix for the UDN.
+
 ## OVN Kubernetes Version Skew
 
 ## Alternatives
