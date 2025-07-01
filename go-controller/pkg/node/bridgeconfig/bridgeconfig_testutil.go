@@ -2,9 +2,10 @@ package bridgeconfig
 
 import (
 	"fmt"
-	utilnet "k8s.io/utils/net"
 	"net"
 	"strings"
+
+	utilnet "k8s.io/utils/net"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"

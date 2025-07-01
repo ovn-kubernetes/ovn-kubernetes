@@ -93,7 +93,14 @@ clean:
 
 lint:
 ifeq ($(CONTAINER_RUNNABLE), 0)
-	@GOPATH=${GOPATH} ./hack/lint.sh $(CONTAINER_RUNTIME)
+	@GOPATH=${GOPATH} ./hack/lint.sh $(CONTAINER_RUNTIME) || echo "lint failed! Try running 'make lint-fix'"
+else
+	echo "linter can only be run within a container since it needs a specific golangci-lint version"
+endif
+
+lint-fix:
+ifeq ($(CONTAINER_RUNNABLE), 0)
+	@GOPATH=${GOPATH} ./hack/lint.sh $(CONTAINER_RUNTIME) fix
 else
 	echo "linter can only be run within a container since it needs a specific golangci-lint version"
 endif
