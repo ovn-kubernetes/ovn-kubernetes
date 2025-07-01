@@ -91,6 +91,19 @@ type Layer3Subnet struct {
 // +kubebuilder:validation:XValidation:rule="!has(self.ipam) || !has(self.ipam.mode) || self.ipam.mode != 'Disabled' || self.role == 'Secondary'", message="Disabled ipam.mode is only supported for Secondary network"
 // +kubebuilder:validation:XValidation:rule="!has(self.joinSubnets) || has(self.role) && self.role == 'Primary'", message="JoinSubnets is only supported for Primary network"
 // +kubebuilder:validation:XValidation:rule="!has(self.subnets) || !has(self.mtu) || !self.subnets.exists_one(i, isCIDR(i) && cidr(i).ip().family() == 6) || self.mtu >= 1280", message="MTU should be greater than or equal to 1280 when IPv6 subnet is used"
+// +kubebuilder:validation:XValidation:rule="!has(self.defaultGatewayIPs) || has(self.role) && self.role == 'Primary'", message="defaultGatewayIPs is only supported for Primary network"
+// +kubebuilder:validation:XValidation:rule="!has(self.defaultGatewayIPs) || self.defaultGatewayIPs.all(ip, self.subnets.exists(subnet, cidr(subnet).containsIP(ip)))", message="defaultGatewayIPs must belong to one of the subnets specified in the subnets field"
+// +kubebuilder:validation:XValidation:rule="!has(self.defaultGatewayIPs) || size(self.defaultGatewayIPs) == size(self.subnets)", message="defaultGatewayIPs must be specified for all IP families"
+// +kubebuilder:validation:XValidation:rule="!has(self.reservedSubnets) || has(self.subnets)", message="reservedSubnets must be unset when subnets is unset"
+// +kubebuilder:validation:XValidation:rule="!has(self.reservedSubnets) || has(self.role) && self.role == 'Primary'", message="reservedSubnets is only supported for Primary network"
+// +kubebuilder:validation:XValidation:rule="!has(self.infrastructureSubnets) || has(self.subnets)", message="infrastructureSubnets must be unset when subnets is unset"
+// +kubebuilder:validation:XValidation:rule="!has(self.infrastructureSubnets) || has(self.role) && self.role == 'Primary'", message="infrastructureSubnets is only supported for Primary network"
+// +kubebuilder:validation:XValidation:rule="!has(self.infrastructureSubnets) || !has(self.defaultGatewayIPs) || self.defaultGatewayIPs.all(ip, self.infrastructureSubnets.exists(subnet, cidr(subnet).containsIP(ip)))", message="defaultGatewayIPs have to belong to infrastructureSubnets"
+//
+// TODO: Re-enable when CEL validation is supported
+// // +kubebuilder:validation:XValidation:rule="!has(self.reservedSubnets) || self.reservedSubnets.all(e, self.subnets.exists(s, cidr(s).containsCIDR(cidr(e))))",message="reservedSubnets must be subnetworks of the networks specified in the subnets field",fieldPath=".reservedSubnets"
+// // +kubebuilder:validation:XValidation:rule="!has(self.infrastructureSubnets) || self.infrastructureSubnets.all(e, self.subnets.exists(s, cidr(s).containsCIDR(cidr(e))))",message="infrastructureSubnets must be subnetworks of the networks specified in the subnets field",fieldPath=".infrastructureSubnets"
+// // +kubebuilder:validation:XValidation:rule="!has(self.infrastructureSubnets) || !has(self.reservedSubnets) || self.infrastructureSubnets.all(infra, !self.reservedSubnets.exists(reserved, cidr(infra).containsCIDR(reserved) || cidr(reserved).containsCIDR(infra)))", message="infrastructureSubnets and reservedSubnets must not overlap"
 type Layer2Config struct {
 	// Role describes the network role in the pod.
 	//
@@ -118,6 +131,43 @@ type Layer2Config struct {
 	//
 	// +optional
 	Subnets DualStackCIDRs `json:"subnets,omitempty"`
+
+	// reservedSubnets specifies a list of CIDRs reserved for static IP assignment, excluded from automatic allocation.
+	// reservedSubnets is optional. When omitted, all IP addresses in `subnets` are available for automatic assignment.
+	// IPs from these ranges can still be requested through static IP assignment.
+	// Each item should be in range of the specified CIDR(s) in `subnets`.
+	// The maximum number of entries allowed is 25.
+	// The format should match standard CIDR notation (for example, "10.128.0.0/16").
+	// This field must be omitted if `subnets` is unset or `ipam.mode` is `Disabled`.
+	// +optional
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=25
+	ReservedSubnets []CIDR `json:"reservedSubnets,omitempty"`
+
+	// infrastructureSubnets specifies a list of internal CIDR ranges that OVN-Kubernetes will reserve for internal network infrastructure.
+	// Any IP addresses within these ranges cannot be assigned to workloads.
+	// When omitted, OVN-Kubernetes will automatically allocate IP addresses from `subnets` for its infrastructure needs.
+	// When there are not enough available IPs in the provided infrastructureSubnets, OVN-Kubernetes will automatically allocate IP addresses from subnets for its infrastructure needs.
+	// When `reservedSubnets` is also specified the CIDRs cannot overlap.
+	// When `defaultGatewayIPs` is also specified, the default gateway IPs must belong to one of the infrastructure subnet CIDRs.
+	// Each item should be in range of the specified CIDR(s) in `subnets`.
+	// The maximum number of entries allowed is 4.
+	// The format should match standard CIDR notation (for example, "10.128.0.0/16").
+	// This field must be omitted if `subnets` is unset or `ipam.mode` is `Disabled`.
+	// +optional
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=4
+	InfrastructureSubnets []CIDR `json:"infrastructureSubnets,omitempty"`
+
+	// defaultGatewayIPs specifies the default gateway IP used in the internal OVN topology.
+	//
+	// Dual-stack clusters may set 2 IPs (one for each IP family), otherwise only 1 IP is allowed.
+	// This field is only allowed for "Primary" network.
+	// It is not recommended to set this field without explicit need and understanding of the OVN network topology.
+	// When omitted, an IP from the subnets field is used.
+	//
+	// +optional
+	DefaultGatewayIPs DualStackIPs `json:"defaultGatewayIPs,omitempty"`
 
 	// JoinSubnets are used inside the OVN network topology.
 	//
@@ -187,3 +237,11 @@ type CIDR string
 // +kubebuilder:validation:MaxItems=2
 // +kubebuilder:validation:XValidation:rule="size(self) != 2 || !isCIDR(self[0]) || !isCIDR(self[1]) || cidr(self[0]).ip().family() != cidr(self[1]).ip().family()", message="When 2 CIDRs are set, they must be from different IP families"
 type DualStackCIDRs []CIDR
+
+// +kubebuilder:validation:XValidation:rule="isIP(self)", message="IP is invalid"
+type IP string
+
+// +kubebuilder:validation:MinItems=1
+// +kubebuilder:validation:MaxItems=2
+// +kubebuilder:validation:XValidation:rule="size(self) != 2 || !isIP(self[0]) || !isIP(self[1]) || ip(self[0]).family() != ip(self[1]).family()", message="When 2 IPs are set, they must be from different IP families"
+type DualStackIPs []IP
