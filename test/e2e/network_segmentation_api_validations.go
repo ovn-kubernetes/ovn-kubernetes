@@ -29,6 +29,7 @@ var _ = Describe("Network Segmentation: API validations", func() {
 		Entry("ClusterUserDefinedNetwork, localnet, invalid subnets", testdatacudn.LocalnetInvalidSubnets),
 		Entry("ClusterUserDefinedNetwork, localnet, invalid mtu", testdatacudn.LocalnetInvalidMTU),
 		Entry("ClusterUserDefinedNetwork, localnet, invalid vlan", testdatacudn.LocalnetInvalidVLAN),
+		Entry("ClusterUserDefinedNetwork, layer2", testdatacudn.Layer2Invalid),
 	)
 
 	DescribeTable("api-server should accept valid CRs",
@@ -43,6 +44,7 @@ var _ = Describe("Network Segmentation: API validations", func() {
 			}
 		},
 		Entry("ClusterUserDefinedNetwork, localnet", testdatacudn.LocalnetValid),
+		Entry("ClusterUserDefinedNetwork, layer2", testdatacudn.Layer2Valid),
 	)
 })
 
