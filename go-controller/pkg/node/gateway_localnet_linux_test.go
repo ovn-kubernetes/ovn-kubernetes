@@ -70,6 +70,7 @@ func initFakeNodePortWatcher(iptV4, iptV6 util.IPTablesHelper) *nodePortWatcher 
 			defaultBridge: defaultBridge,
 		},
 		networkManager: networkmanager.Default().Interface(),
+		gwBridge:       bridgeconfig.TestBridgeConfig(""),
 	}
 	return &fNPW
 }
