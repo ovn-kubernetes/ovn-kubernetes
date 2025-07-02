@@ -207,16 +207,10 @@ func (c *openflowManager) Run(stopChan <-chan struct{}, doneWg *sync.WaitGroup) 
 }
 
 func (c *openflowManager) updateBridgePMTUDFlowCache(key string, ipAddrs []string) {
-	// protect defaultBridge config from being updated by gw.nodeIPManager
-	c.defaultBridge.Mutex.Lock()
-	defer c.defaultBridge.Mutex.Unlock()
-
-	dftFlows := bridgeconfig.PmtudDropFlows(c.defaultBridge, ipAddrs)
+	dftFlows := c.defaultBridge.PmtudDropFlows(ipAddrs)
 	c.updateFlowCacheEntry(key, dftFlows)
 	if c.externalGatewayBridge != nil {
-		c.externalGatewayBridge.Mutex.Lock()
-		defer c.externalGatewayBridge.Mutex.Unlock()
-		exGWBridgeDftFlows := bridgeconfig.PmtudDropFlows(c.externalGatewayBridge, ipAddrs)
+		exGWBridgeDftFlows := c.externalGatewayBridge.PmtudDropFlows(ipAddrs)
 		c.updateExBridgeFlowCacheEntry(key, exGWBridgeDftFlows)
 	}
 }
@@ -224,35 +218,25 @@ func (c *openflowManager) updateBridgePMTUDFlowCache(key string, ipAddrs []strin
 // updateBridgeFlowCache generates the "static" per-bridge flows
 // note: this is shared between shared and local gateway modes
 func (c *openflowManager) updateBridgeFlowCache(hostIPs []net.IP, hostSubnets []*net.IPNet) error {
-	// protect defaultBridge config from being updated by gw.nodeIPManager
-	c.defaultBridge.Mutex.Lock()
-	defer c.defaultBridge.Mutex.Unlock()
-
 	// CAUTION: when adding new flows where the in_port is ofPortPatch and the out_port is ofPortPhys, ensure
 	// that dl_src is included in match criteria!
 
-	dftFlows, err := bridgeconfig.FlowsForDefaultBridge(c.defaultBridge, hostIPs)
+	dftFlows, err := c.defaultBridge.DefaultBridgeFlows(hostSubnets, hostIPs)
 	if err != nil {
 		return err
 	}
-	dftCommonFlows, err := bridgeconfig.CommonFlows(hostSubnets, c.defaultBridge)
-	if err != nil {
-		return err
-	}
-	dftFlows = append(dftFlows, dftCommonFlows...)
 
 	c.updateFlowCacheEntry("NORMAL", []string{fmt.Sprintf("table=0,priority=0,actions=%s\n", util.NormalAction)})
 	c.updateFlowCacheEntry("DEFAULT", dftFlows)
 
 	// we consume ex gw bridge flows only if that is enabled
 	if c.externalGatewayBridge != nil {
-		c.externalGatewayBridge.Mutex.Lock()
-		defer c.externalGatewayBridge.Mutex.Unlock()
-		c.updateExBridgeFlowCacheEntry("NORMAL", []string{fmt.Sprintf("table=0,priority=0,actions=%s\n", util.NormalAction)})
-		exGWBridgeDftFlows, err := bridgeconfig.CommonFlows(hostSubnets, c.externalGatewayBridge)
+		exGWBridgeDftFlows, err := c.externalGatewayBridge.ExternalBridgeFlows(hostSubnets)
 		if err != nil {
 			return err
 		}
+
+		c.updateExBridgeFlowCacheEntry("NORMAL", []string{fmt.Sprintf("table=0,priority=0,actions=%s\n", util.NormalAction)})
 		c.updateExBridgeFlowCacheEntry("DEFAULT", exGWBridgeDftFlows)
 	}
 	return nil
