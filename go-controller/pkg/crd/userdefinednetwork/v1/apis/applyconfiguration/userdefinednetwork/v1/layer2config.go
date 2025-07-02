@@ -29,6 +29,7 @@ type Layer2ConfigApplyConfiguration struct {
 	Subnets     *userdefinednetworkv1.DualStackCIDRs `json:"subnets,omitempty"`
 	JoinSubnets *userdefinednetworkv1.DualStackCIDRs `json:"joinSubnets,omitempty"`
 	IPAM        *IPAMConfigApplyConfiguration        `json:"ipam,omitempty"`
+	GatewayIP   *userdefinednetworkv1.CIDR           `json:"gatewayIP,omitempty"`
 }
 
 // Layer2ConfigApplyConfiguration constructs a declarative configuration of the Layer2Config type for use with
@@ -74,5 +75,13 @@ func (b *Layer2ConfigApplyConfiguration) WithJoinSubnets(value userdefinednetwor
 // If called multiple times, the IPAM field is set to the value of the last call.
 func (b *Layer2ConfigApplyConfiguration) WithIPAM(value *IPAMConfigApplyConfiguration) *Layer2ConfigApplyConfiguration {
 	b.IPAM = value
+	return b
+}
+
+// WithGatewayIP sets the GatewayIP field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the GatewayIP field is set to the value of the last call.
+func (b *Layer2ConfigApplyConfiguration) WithGatewayIP(value userdefinednetworkv1.CIDR) *Layer2ConfigApplyConfiguration {
+	b.GatewayIP = &value
 	return b
 }
