@@ -1228,7 +1228,10 @@ func newLayer2NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 		managementIPs:         managementIPs,
 		transport:             netconf.Transport,
 <<<<<<< HEAD
+<<<<<<< HEAD
 		evpn:                  netconf.EVPN,
+=======
+>>>>>>> afcfc64f2 (no-overlay: Implement no-overlay for the default network)
 =======
 >>>>>>> afcfc64f2 (no-overlay: Implement no-overlay for the default network)
 		mutableNetInfo: mutableNetInfo{
