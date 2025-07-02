@@ -77,7 +77,7 @@ func newManagementPortConfig(node *corev1.Node, hostSubnets []*net.IPNet, netInf
 			family = "IPv4"
 		}
 
-		cfg, err := newManagementPortIPFamilyConfig(hostSubnet, isIPv6)
+		cfg, err := newManagementPortIPFamilyConfig(hostSubnet, isIPv6, netInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -121,10 +121,10 @@ type managementPortIPFamilyConfig struct {
 	gwIP           net.IP
 }
 
-func newManagementPortIPFamilyConfig(hostSubnet *net.IPNet, isIPv6 bool) (*managementPortIPFamilyConfig, error) {
+func newManagementPortIPFamilyConfig(hostSubnet *net.IPNet, isIPv6 bool, netInfo util.NetInfo) (*managementPortIPFamilyConfig, error) {
 	cfg := &managementPortIPFamilyConfig{
 		ifAddr: util.GetNodeManagementIfAddr(hostSubnet),
-		gwIP:   util.GetNodeGatewayIfAddr(hostSubnet).IP,
+		gwIP:   netInfo.GetNodeGatewayIP(hostSubnet).IP,
 	}
 
 	// capture all the subnets for which we need to add routes through management port
