@@ -48,6 +48,7 @@ type NetInfo interface {
 	Vlan() uint
 	AllowsPersistentIPs() bool
 	PhysicalNetworkName() string
+	GetNodeGatewayIP(hostSubnet *net.IPNet) *net.IPNet
 
 	// dynamic information, can change over time
 	GetNADs() []string
@@ -635,6 +636,10 @@ func (nInfo *DefaultNetInfo) PhysicalNetworkName() string {
 	return ""
 }
 
+func (nInfo *DefaultNetInfo) GetNodeGatewayIP(hostSubnet *net.IPNet) *net.IPNet {
+	return GetNodeGatewayIfAddr(hostSubnet)
+}
+
 // SecondaryNetInfo holds the network name information for secondary network if non-nil
 type secondaryNetInfo struct {
 	mutableNetInfo
@@ -655,6 +660,7 @@ type secondaryNetInfo struct {
 	joinSubnets        []*net.IPNet
 
 	physicalNetworkName string
+	defaultGatewayIPs   []*net.IP
 }
 
 func (nInfo *secondaryNetInfo) GetNetInfo() NetInfo {
@@ -770,6 +776,21 @@ func (nInfo *secondaryNetInfo) PhysicalNetworkName() string {
 	return nInfo.physicalNetworkName
 }
 
+func (nInfo *secondaryNetInfo) GetNodeGatewayIP(hostSubnet *net.IPNet) *net.IPNet {
+	if nInfo.TopologyType() == types.Layer2Topology && nInfo.IsPrimaryNetwork() {
+		for _, ip := range nInfo.defaultGatewayIPs {
+			if (knet.IsIPv4CIDR(hostSubnet) && knet.IsIPv4(*ip)) ||
+				(knet.IsIPv6CIDR(hostSubnet) && knet.IsIPv6(*ip)) {
+				return &net.IPNet{
+					IP:   *ip,
+					Mask: hostSubnet.Mask,
+				}
+			}
+		}
+	}
+	return GetNodeGatewayIfAddr(hostSubnet)
+}
+
 // IPMode returns the ipv4/ipv6 mode
 func (nInfo *secondaryNetInfo) IPMode() (bool, bool) {
 	return nInfo.ipv4mode, nInfo.ipv6mode
@@ -880,6 +901,7 @@ func (nInfo *secondaryNetInfo) copy() *secondaryNetInfo {
 		reservedSubnets:     nInfo.reservedSubnets,
 		joinSubnets:         nInfo.joinSubnets,
 		physicalNetworkName: nInfo.physicalNetworkName,
+		defaultGatewayIPs:   nInfo.defaultGatewayIPs,
 	}
 	// copy mutables
 	c.mutableNetInfo.copyFrom(&nInfo.mutableNetInfo)
@@ -921,6 +943,24 @@ func newLayer2NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 	if err != nil {
 		return nil, err
 	}
+
+	// Parse default gateway IPs
+	var defaultGatewayIPs []*net.IP
+	if netconf.DefaultGatewayIPs != "" {
+		ipStrings := strings.Split(netconf.DefaultGatewayIPs, ",")
+		for _, ipStr := range ipStrings {
+			ipStr = strings.TrimSpace(ipStr)
+			if ipStr == "" {
+				continue
+			}
+			ip := net.ParseIP(ipStr)
+			if ip == nil {
+				return nil, fmt.Errorf("invalid default gateway IP %q", ipStr)
+			}
+			defaultGatewayIPs = append(defaultGatewayIPs, &ip)
+		}
+	}
+
 	ni := &secondaryNetInfo{
 		netName:            netconf.Name,
 		primaryNetwork:     netconf.Role == types.NetworkRolePrimary,
@@ -931,6 +971,7 @@ func newLayer2NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 		reservedSubnets:    reserved,
 		mtu:                netconf.MTU,
 		allowPersistentIPs: netconf.AllowPersistentIPs,
+		defaultGatewayIPs:  defaultGatewayIPs,
 		mutableNetInfo: mutableNetInfo{
 			id:   types.InvalidID,
 			nads: sets.Set[string]{},

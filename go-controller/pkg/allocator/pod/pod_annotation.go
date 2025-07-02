@@ -529,7 +529,7 @@ func AddRoutesGatewayIP(
 				if err != nil {
 					return err
 				}
-				gatewayIPnet := util.GetNodeGatewayIfAddr(nodeSubnet)
+				gatewayIPnet := netinfo.GetNodeGatewayIP(nodeSubnet)
 				// Ensure default service network traffic always goes to OVN
 				podAnnotation.Routes = append(podAnnotation.Routes, serviceCIDRToRoute(isIPv6, gatewayIPnet.IP)...)
 				// Ensure UDN join subnet traffic always goes to UDN LSP
@@ -559,7 +559,7 @@ func AddRoutesGatewayIP(
 				if err != nil {
 					return err
 				}
-				gatewayIPnet := util.GetNodeGatewayIfAddr(nodeSubnet)
+				gatewayIPnet := netinfo.GetNodeGatewayIP(nodeSubnet)
 				for _, clusterSubnet := range netinfo.Subnets() {
 					if isIPv6 == utilnet.IsIPv6CIDR(clusterSubnet.CIDR) {
 						podAnnotation.Routes = append(podAnnotation.Routes, util.PodRoute{
@@ -611,7 +611,7 @@ func AddRoutesGatewayIP(
 			return err
 		}
 
-		gatewayIPnet := util.GetNodeGatewayIfAddr(nodeSubnet)
+		gatewayIPnet := netinfo.GetNodeGatewayIP(nodeSubnet)
 
 		// Ensure default pod network traffic always goes to OVN
 		for _, clusterSubnet := range config.Default.ClusterSubnets {

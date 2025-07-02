@@ -170,6 +170,7 @@ func newDefaultNetworkControllerCommon(
 	eIPController *EgressIPController,
 	portCache *PortCache,
 ) (*DefaultNetworkController, error) {
+	defaultNetInfo := &util.DefaultNetInfo{}
 
 	if addressSetFactory == nil {
 		addressSetFactory = addressset.NewOvnAddressSetFactory(cnci.nbClient, config.IPv4Mode, config.IPv6Mode)
@@ -182,7 +183,7 @@ func newDefaultNetworkControllerCommon(
 		cnci.watchFactory.NodeCoreInformer(),
 		networkManager,
 		cnci.recorder,
-		&util.DefaultNetInfo{},
+		defaultNetInfo,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create new service controller while creating new default network controller: %w", err)
@@ -191,7 +192,7 @@ func newDefaultNetworkControllerCommon(
 	var zoneICHandler *zoneic.ZoneInterconnectHandler
 	var zoneChassisHandler *zoneic.ZoneChassisHandler
 	if config.OVNKubernetesFeature.EnableInterconnect {
-		zoneICHandler = zoneic.NewZoneInterconnectHandler(&util.DefaultNetInfo{}, cnci.nbClient, cnci.sbClient, cnci.watchFactory)
+		zoneICHandler = zoneic.NewZoneInterconnectHandler(defaultNetInfo, cnci.nbClient, cnci.sbClient, cnci.watchFactory)
 		zoneChassisHandler = zoneic.NewZoneChassisHandler(cnci.sbClient)
 	}
 	apbExternalRouteController, err := apbroutecontroller.NewExternalMasterController(
@@ -209,11 +210,12 @@ func newDefaultNetworkControllerCommon(
 	if err != nil {
 		return nil, fmt.Errorf("unable to create new admin policy based external route controller while creating new default network controller :%w", err)
 	}
+
 	oc := &DefaultNetworkController{
 		BaseNetworkController: BaseNetworkController{
 			CommonNetworkControllerInfo: *cnci,
 			controllerName:              DefaultNetworkControllerName,
-			ReconcilableNetInfo:         &util.DefaultNetInfo{},
+			ReconcilableNetInfo:         defaultNetInfo,
 			lsManager:                   lsm.NewLogicalSwitchManager(),
 			logicalPortCache:            portCache,
 			namespaces:                  make(map[string]*namespaceInfo),

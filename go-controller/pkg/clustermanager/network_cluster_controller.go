@@ -784,14 +784,10 @@ func newIPAllocatorForNetwork(netInfo util.NetInfo) (subnet.Allocator, error) {
 	excludeSubnets := netInfo.ExcludeSubnets()
 	for _, subnet := range subnets {
 		ipNets = append(ipNets, subnet.CIDR)
-		if isLayer2UserDefinedPrimaryNetwork(netInfo) {
-			excludeSubnets = append(
-				excludeSubnets,
-				autoExcludeCIDRs(subnet.CIDR)...,
-			)
-		}
 	}
-
+	if isLayer2UserDefinedPrimaryNetwork(netInfo) {
+		excludeSubnets = append(excludeSubnets, infrastructureExcludeCIDRs(netInfo)...)
+	}
 	if err := ipAllocator.AddOrUpdateSubnet(netInfo.GetNetworkName(), ipNets, netInfo.ReservedSubnets(), excludeSubnets...); err != nil {
 		return nil, err
 	}
@@ -803,11 +799,16 @@ func isLayer2UserDefinedPrimaryNetwork(netInfo util.NetInfo) bool {
 	return netInfo.IsPrimaryNetwork() && netInfo.TopologyType() == types.Layer2Topology
 }
 
-func autoExcludeCIDRs(subnet *net.IPNet) []*net.IPNet {
-	gwIP := util.GetNodeGatewayIfAddr(subnet).IP
-	mgmtPortIP := util.GetNodeManagementIfAddr(subnet).IP
-	return []*net.IPNet{
-		{IP: gwIP, Mask: util.GetIPFullMask(gwIP)},
-		{IP: mgmtPortIP, Mask: util.GetIPFullMask(mgmtPortIP)},
+func infrastructureExcludeCIDRs(netInfo util.NetInfo) []*net.IPNet {
+	var excludeCIDRs []*net.IPNet
+
+	for _, subnet := range netInfo.Subnets() {
+		gwIP := netInfo.GetNodeGatewayIP(subnet.CIDR).IP
+		mgmtPortIP := util.GetNodeManagementIfAddr(subnet.CIDR).IP
+		excludeCIDRs = append(excludeCIDRs,
+			&net.IPNet{IP: gwIP, Mask: util.GetIPFullMask(gwIP)},
+			&net.IPNet{IP: mgmtPortIP, Mask: util.GetIPFullMask(mgmtPortIP)},
+		)
 	}
+	return excludeCIDRs
 }

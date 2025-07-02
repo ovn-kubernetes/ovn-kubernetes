@@ -528,7 +528,7 @@ func (udng *UserDefinedNetworkGateway) computeRoutesForUDN(mpLink netlink.Link) 
 		return nil, err
 	}
 	for _, localSubnet := range networkLocalSubnets {
-		gwIP := util.GetNodeGatewayIfAddr(localSubnet)
+		gwIP := udng.GetNodeGatewayIP(localSubnet)
 		if gwIP == nil {
 			return nil, fmt.Errorf("unable to find gateway IP for network %s, subnet: %s", udng.GetNetworkName(), localSubnet)
 		}

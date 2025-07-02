@@ -389,8 +389,8 @@ func (gw *GatewayManager) createGWRouterPort(hostSubnets []*net.IPNet, gwLRPJoin
 		// one node per zone, since ARPs for .1 will not go beyond local switch.
 		// This is being done to add the ICMP SNATs for .1 podSubnet that OVN GR generates
 		for _, subnet := range hostSubnets {
-			gwLRPIPs = append(gwLRPIPs, util.GetNodeGatewayIfAddr(subnet).IP)
-			gwLRPNetworks = append(gwLRPNetworks, util.GetNodeGatewayIfAddr(subnet).String())
+			gwLRPIPs = append(gwLRPIPs, gw.netInfo.GetNodeGatewayIP(subnet).IP)
+			gwLRPNetworks = append(gwLRPNetworks, gw.netInfo.GetNodeGatewayIP(subnet).String())
 		}
 	}
 	gwLRPMAC := util.IPAddrToHWAddr(gwLRPIPs[0])
