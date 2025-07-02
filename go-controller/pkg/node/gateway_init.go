@@ -18,95 +18,10 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/managementport"
 	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
+	nodeutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
-
-// bridgedGatewayNodeSetup enables forwarding on bridge interface, sets up the physical network name mappings for the bridge,
-// and returns an ifaceID created from the bridge name and the node name
-func bridgedGatewayNodeSetup(nodeName, bridgeName, physicalNetworkName string) (string, error) {
-	// IPv6 forwarding is enabled globally
-	if config.IPv4Mode {
-		// we use forward slash as path separator to allow dotted bridgeName e.g. foo.200
-		stdout, stderr, err := util.RunSysctl("-w", fmt.Sprintf("net/ipv4/conf/%s/forwarding=1", bridgeName))
-		// systctl output enforces dot as path separator
-		if err != nil || stdout != fmt.Sprintf("net.ipv4.conf.%s.forwarding = 1", strings.ReplaceAll(bridgeName, ".", "/")) {
-			return "", fmt.Errorf("could not set the correct forwarding value for interface %s: stdout: %v, stderr: %v, err: %v",
-				bridgeName, stdout, stderr, err)
-		}
-	}
-
-	// ovn-bridge-mappings maps a physical network name to a local ovs bridge
-	// that provides connectivity to that network. It is in the form of physnet1:br1,physnet2:br2.
-	// Note that there may be multiple ovs bridge mappings, be sure not to override
-	// the mappings for the other physical network
-	stdout, stderr, err := util.RunOVSVsctl("--if-exists", "get", "Open_vSwitch", ".",
-		"external_ids:ovn-bridge-mappings")
-	if err != nil {
-		return "", fmt.Errorf("failed to get ovn-bridge-mappings stderr:%s (%v)", stderr, err)
-	}
-	// skip the existing mapping setting for the specified physicalNetworkName
-	mapString := ""
-	bridgeMappings := strings.Split(stdout, ",")
-	for _, bridgeMapping := range bridgeMappings {
-		m := strings.Split(bridgeMapping, ":")
-		if network := m[0]; network != physicalNetworkName {
-			if len(mapString) != 0 {
-				mapString += ","
-			}
-			mapString += bridgeMapping
-		}
-	}
-	if len(mapString) != 0 {
-		mapString += ","
-	}
-	mapString += physicalNetworkName + ":" + bridgeName
-
-	_, stderr, err = util.RunOVSVsctl("set", "Open_vSwitch", ".",
-		fmt.Sprintf("external_ids:ovn-bridge-mappings=%s", mapString))
-	if err != nil {
-		return "", fmt.Errorf("failed to set ovn-bridge-mappings for ovs bridge %s"+
-			", stderr:%s (%v)", bridgeName, stderr, err)
-	}
-
-	ifaceID := bridgeName + "_" + nodeName
-	return ifaceID, nil
-}
-
-// getNetworkInterfaceIPAddresses returns the IP addresses for the network interface 'iface'.
-func getNetworkInterfaceIPAddresses(iface string) ([]*net.IPNet, error) {
-	allIPs, err := util.GetFilteredInterfaceV4V6IPs(iface)
-	if err != nil {
-		return nil, fmt.Errorf("could not find IP addresses: %v", err)
-	}
-
-	var ips []*net.IPNet
-	var foundIPv4 bool
-	var foundIPv6 bool
-	for _, ip := range allIPs {
-		if utilnet.IsIPv6CIDR(ip) {
-			if config.IPv6Mode && !foundIPv6 {
-				// For IPv6 addresses with 128 prefix, let's try to find an appropriate subnet
-				// in the routing table
-				subnetIP, err := util.GetIPv6OnSubnet(iface, ip)
-				if err != nil {
-					return nil, fmt.Errorf("could not find IPv6 address on subnet: %v", err)
-				}
-				ips = append(ips, subnetIP)
-				foundIPv6 = true
-			}
-		} else if config.IPv4Mode && !foundIPv4 {
-			ips = append(ips, ip)
-			foundIPv4 = true
-		}
-	}
-	if config.IPv4Mode && !foundIPv4 {
-		return nil, fmt.Errorf("failed to find IPv4 address on interface %s", iface)
-	} else if config.IPv6Mode && !foundIPv6 {
-		return nil, fmt.Errorf("failed to find IPv6 address on interface %s", iface)
-	}
-	return ips, nil
-}
 
 func getGatewayNextHops() ([]net.IP, string, error) {
 	var gatewayNextHops []net.IP
@@ -218,52 +133,6 @@ func getGatewayNextHops() ([]net.IP, string, error) {
 	return gatewayNextHops, gatewayIntf, nil
 }
 
-// getDPUHostPrimaryIPAddresses returns the DPU host IP/Network based on K8s Node IP
-// and DPU IP subnet overriden by config config.Gateway.RouterSubnet
-func getDPUHostPrimaryIPAddresses(k8sNodeIP net.IP, ifAddrs []*net.IPNet) ([]*net.IPNet, error) {
-	// Note(adrianc): No Dual-Stack support at this point as we rely on k8s node IP to derive gateway information
-	// for each node.
-	var gwIps []*net.IPNet
-	isIPv4 := utilnet.IsIPv4(k8sNodeIP)
-
-	// override subnet mask via config
-	if config.Gateway.RouterSubnet != "" {
-		_, addr, err := net.ParseCIDR(config.Gateway.RouterSubnet)
-		if err != nil {
-			return nil, err
-		}
-		if utilnet.IsIPv4CIDR(addr) != isIPv4 {
-			return nil, fmt.Errorf("unexpected gateway router subnet provided (%s). "+
-				"does not match Node IP address format", config.Gateway.RouterSubnet)
-		}
-		if !addr.Contains(k8sNodeIP) {
-			return nil, fmt.Errorf("unexpected gateway router subnet provided (%s). "+
-				"subnet does not contain Node IP address (%s)", config.Gateway.RouterSubnet, k8sNodeIP)
-		}
-		addr.IP = k8sNodeIP
-		gwIps = append(gwIps, addr)
-	} else {
-		// Assume Host and DPU share the same subnet
-		// in this case just update the matching IPNet with the Host's IP address
-		for _, addr := range ifAddrs {
-			if utilnet.IsIPv4CIDR(addr) != isIPv4 {
-				continue
-			}
-			// expect k8s Node IP to be contained in the given subnet
-			if !addr.Contains(k8sNodeIP) {
-				continue
-			}
-			newAddr := *addr
-			newAddr.IP = k8sNodeIP
-			gwIps = append(gwIps, &newAddr)
-		}
-		if len(gwIps) == 0 {
-			return nil, fmt.Errorf("could not find subnet on DPU matching node IP %s", k8sNodeIP)
-		}
-	}
-	return gwIps, nil
-}
-
 // getInterfaceByIP retrieves Interface that has `ip` assigned to it
 func getInterfaceByIP(ip net.IP) (string, error) {
 	links, err := util.GetNetLinkOps().LinkList()
@@ -345,7 +214,7 @@ func (nc *DefaultNodeNetworkController) initGatewayPreStart(
 		egressGWInterface = interfaceForEXGW(config.Gateway.EgressGWInterface)
 	}
 
-	ifAddrs, err = getNetworkInterfaceIPAddresses(gatewayIntf)
+	ifAddrs, err = nodeutil.GetNetworkInterfaceIPAddresses(gatewayIntf)
 	if err != nil {
 		return nil, err
 	}
@@ -353,7 +222,7 @@ func (nc *DefaultNodeNetworkController) initGatewayPreStart(
 	// For DPU need to use the host IP addr which currently is assumed to be K8s Node cluster
 	// internal IP address.
 	if config.OvnKubeNode.Mode == types.NodeModeDPU {
-		ifAddrs, err = getDPUHostPrimaryIPAddresses(kubeNodeIP, ifAddrs)
+		ifAddrs, err = nodeutil.GetDPUHostPrimaryIPAddresses(kubeNodeIP, ifAddrs)
 		if err != nil {
 			return nil, err
 		}
@@ -474,7 +343,7 @@ func (nc *DefaultNodeNetworkController) initGatewayMainStart(gw *gateway, waiter
 
 // interfaceForEXGW takes the interface requested to act as exgw bridge
 // and returns the name of the bridge if exists, or the interface itself
-// if the bridge needs to be created. In this last scenario, bridgeForInterface
+// if the bridge needs to be created. In this last scenario, BridgeForInterface
 // will create the bridge.
 func interfaceForEXGW(intfName string) string {
 	if _, _, err := util.RunOVSVsctl("br-exists", intfName); err == nil {
@@ -510,7 +379,7 @@ func (nc *DefaultNodeNetworkController) initGatewayDPUHost(kubeNodeIP net.IP) er
 		return err
 	}
 
-	ifAddrs, err := getNetworkInterfaceIPAddresses(gatewayIntf)
+	ifAddrs, err := nodeutil.GetNetworkInterfaceIPAddresses(gatewayIntf)
 	if err != nil {
 		return err
 	}
@@ -605,7 +474,7 @@ func CleanupClusterNode(name string) error {
 func (nc *DefaultNodeNetworkController) updateGatewayMAC(link netlink.Link) error {
 	// TBD-merge for dpu-host mode: if interface mac of the dpu-host interface that connects to the
 	// gateway bridge on the dpu changes, we need to update dpu's gatewayBridge.macAddress L3 gateway
-	// annotation (see bridgeForInterface)
+	// annotation (see BridgeForInterface)
 	if config.OvnKubeNode.Mode != types.NodeModeFull {
 		return nil
 	}
