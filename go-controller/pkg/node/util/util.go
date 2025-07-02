@@ -10,6 +10,11 @@ import (
 	pkgutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
+const (
+	// OvsLocalPort is the name of the OVS bridge local port
+	OvsLocalPort = "LOCAL"
+)
+
 // GetNetworkInterfaceIPAddresses returns the IP addresses for the network interface 'iface'.
 func GetNetworkInterfaceIPAddresses(iface string) ([]*net.IPNet, error) {
 	allIPs, err := pkgutil.GetFilteredInterfaceV4V6IPs(iface)

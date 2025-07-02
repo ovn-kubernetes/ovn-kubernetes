@@ -363,6 +363,54 @@ func (b *BridgeConfiguration) WaitGatewayReady() error {
 	return nil
 }
 
+func (b *BridgeConfiguration) SetOfPorts() error {
+	b.Mutex.Lock()
+	defer b.Mutex.Unlock()
+	// Get ofport of patchPort
+	for _, netConfig := range b.NetConfig {
+		if err := netConfig.SetBridgeNetworkOfPortsInternal(); err != nil {
+			return fmt.Errorf("error setting bridge openflow ports for network with patchport %v: err: %v", netConfig.PatchPort, err)
+		}
+	}
+
+	if b.UplinkName != "" {
+		// Get ofport of physical interface
+		ofportPhys, stderr, err := util.GetOVSOfPort("get", "interface", b.UplinkName, "ofport")
+		if err != nil {
+			return fmt.Errorf("failed to get ofport of %s, stderr: %q, error: %v",
+				b.UplinkName, stderr, err)
+		}
+		b.OfPortPhys = ofportPhys
+	}
+
+	// Get ofport representing the host. That is, host representor port in case of DPUs, ovsLocalPort otherwise.
+	if config.OvnKubeNode.Mode == types.NodeModeDPU {
+		var stderr string
+		hostRep, err := util.GetDPUHostInterface(b.BridgeName)
+		if err != nil {
+			return err
+		}
+
+		b.OfPortHost, stderr, err = util.RunOVSVsctl("get", "interface", hostRep, "ofport")
+		if err != nil {
+			return fmt.Errorf("failed to get ofport of host interface %s, stderr: %q, error: %v",
+				hostRep, stderr, err)
+		}
+	} else {
+		var err error
+		if b.GwIfaceRep != "" {
+			b.OfPortHost, _, err = util.RunOVSVsctl("get", "interface", b.GwIfaceRep, "ofport")
+			if err != nil {
+				return fmt.Errorf("failed to get ofport of bypass rep %s, error: %v", b.GwIfaceRep, err)
+			}
+		} else {
+			b.OfPortHost = nodeutil.OvsLocalPort
+		}
+	}
+
+	return nil
+}
+
 func gatewayReady(patchPort string) bool {
 	// Get ofport of patchPort
 	ofport, _, err := util.GetOVSOfPort("--if-exists", "get", "interface", patchPort, "ofport")
