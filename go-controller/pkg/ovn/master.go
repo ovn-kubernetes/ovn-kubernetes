@@ -382,7 +382,7 @@ func (oc *DefaultNetworkController) syncNodes(kNodes []interface{}) error {
 		return fmt.Errorf("failed to sync chassis: error: %v", err)
 	}
 
-	if config.OVNKubernetesFeature.EnableInterconnect {
+	if config.OVNKubernetesFeature.EnableInterconnect && config.Default.Transport != config.TransportNoOverlay {
 		if err := oc.zoneChassisHandler.SyncNodes(kNodes); err != nil {
 			return fmt.Errorf("zoneChassisHandler failed to sync nodes: error: %w", err)
 		}
