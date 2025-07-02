@@ -59,6 +59,8 @@ linters-settings:
       # Other frequently used deps
       - pkg: github.com/ovn-org/libovsdb/ovsdb
         alias: ""
+      - pkg: github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/util
+        alias: nodeutil
   
   revive:
     rules:

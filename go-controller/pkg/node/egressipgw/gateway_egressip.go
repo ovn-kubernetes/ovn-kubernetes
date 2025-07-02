@@ -1,4 +1,4 @@
-package node
+package egressipgw
 
 import (
 	"encoding/json"
@@ -75,15 +75,15 @@ func (e markIPs) containsIP(ip net.IP) bool {
 	return false
 }
 
-type markIPsCache struct {
+type MarkIPsCache struct {
 	mu          sync.Mutex
 	hasSyncOnce bool
 	markToIPs   markIPs
 	IPToMark    map[string]int
 }
 
-func newMarkIPsCache() *markIPsCache {
-	return &markIPsCache{
+func NewMarkIPsCache() *MarkIPsCache {
+	return &MarkIPsCache{
 		mu: sync.Mutex{},
 		markToIPs: markIPs{
 			v4: make(map[int]string),
@@ -93,7 +93,7 @@ func newMarkIPsCache() *markIPsCache {
 	}
 }
 
-func (mic *markIPsCache) IsIPPresent(ip net.IP) bool {
+func (mic *MarkIPsCache) IsIPPresent(ip net.IP) bool {
 	mic.mu.Lock()
 	defer mic.mu.Unlock()
 	if ip == nil {
@@ -103,7 +103,7 @@ func (mic *markIPsCache) IsIPPresent(ip net.IP) bool {
 	return isFound
 }
 
-func (mic *markIPsCache) insertMarkIP(pktMark util.EgressIPMark, ip net.IP) {
+func (mic *MarkIPsCache) insertMarkIP(pktMark util.EgressIPMark, ip net.IP) {
 	mic.mu.Lock()
 	defer mic.mu.Unlock()
 	if ip == nil {
@@ -113,7 +113,7 @@ func (mic *markIPsCache) insertMarkIP(pktMark util.EgressIPMark, ip net.IP) {
 	mic.IPToMark[ip.String()] = pktMark.ToInt()
 }
 
-func (mic *markIPsCache) deleteMarkIP(pktMark util.EgressIPMark, ip net.IP) {
+func (mic *MarkIPsCache) deleteMarkIP(pktMark util.EgressIPMark, ip net.IP) {
 	mic.mu.Lock()
 	defer mic.mu.Unlock()
 	if ip == nil {
@@ -123,7 +123,7 @@ func (mic *markIPsCache) deleteMarkIP(pktMark util.EgressIPMark, ip net.IP) {
 	delete(mic.IPToMark, ip.String())
 }
 
-func (mic *markIPsCache) replaceAll(markIPs markIPs) {
+func (mic *MarkIPsCache) replaceAll(markIPs markIPs) {
 	mic.mu.Lock()
 	mic.markToIPs = markIPs
 	for mark, ipv4 := range markIPs.v4 {
@@ -135,7 +135,7 @@ func (mic *markIPsCache) replaceAll(markIPs markIPs) {
 	mic.mu.Unlock()
 }
 
-func (mic *markIPsCache) GetIPv4() map[int]string {
+func (mic *MarkIPsCache) GetIPv4() map[int]string {
 	mic.mu.Lock()
 	defer mic.mu.Unlock()
 	dupe := make(map[int]string)
@@ -148,7 +148,7 @@ func (mic *markIPsCache) GetIPv4() map[int]string {
 	return dupe
 }
 
-func (mic *markIPsCache) GetIPv6() map[int]string {
+func (mic *MarkIPsCache) GetIPv6() map[int]string {
 	mic.mu.Lock()
 	defer mic.mu.Unlock()
 	dupe := make(map[int]string)
@@ -161,19 +161,19 @@ func (mic *markIPsCache) GetIPv6() map[int]string {
 	return dupe
 }
 
-func (mic *markIPsCache) HasSyncdOnce() bool {
+func (mic *MarkIPsCache) HasSyncdOnce() bool {
 	mic.mu.Lock()
 	defer mic.mu.Unlock()
 	return mic.hasSyncOnce
 }
 
-func (mic *markIPsCache) setSyncdOnce() {
+func (mic *MarkIPsCache) setSyncdOnce() {
 	mic.mu.Lock()
 	mic.hasSyncOnce = true
 	mic.mu.Unlock()
 }
 
-type bridgeEIPAddrManager struct {
+type BridgeEIPAddrManager struct {
 	nodeName         string
 	bridgeName       string
 	nodeAnnotationMu sync.Mutex
@@ -182,18 +182,18 @@ type bridgeEIPAddrManager struct {
 	nodeLister       corev1listers.NodeLister
 	kube             kube.Interface
 	addrManager      *linkmanager.Controller
-	cache            *markIPsCache
+	cache            *MarkIPsCache
 }
 
-// newBridgeEIPAddrManager manages EgressIP IPs that must be added to ovs bridges to support EgressIP feature for user
+// NewBridgeEIPAddrManager manages EgressIP IPs that must be added to ovs bridges to support EgressIP feature for user
 // defined networks. It saves the assigned IPs to its respective Node annotation in-order to understand which IPs it assigned
 // prior to restarting.
 // It provides the assigned IPs info node IP handler. Node IP handler must not consider assigned EgressIP IPs as possible node IPs.
 // Openflow manager must generate the SNAT openflow conditional on packet marks and therefore needs access to EIP IPs and associated packet marks.
-// bridgeEIPAddrManager must be able to force Openflow manager to resync if EgressIP assignment for the node changes.
-func newBridgeEIPAddrManager(nodeName, bridgeName string, linkManager *linkmanager.Controller,
-	kube kube.Interface, eIPInformer egressipinformers.EgressIPInformer, nodeInformer corev1informers.NodeInformer) *bridgeEIPAddrManager {
-	return &bridgeEIPAddrManager{
+// BridgeEIPAddrManager must be able to force Openflow manager to resync if EgressIP assignment for the node changes.
+func NewBridgeEIPAddrManager(nodeName, bridgeName string, linkManager *linkmanager.Controller,
+	kube kube.Interface, eIPInformer egressipinformers.EgressIPInformer, nodeInformer corev1informers.NodeInformer) *BridgeEIPAddrManager {
+	return &BridgeEIPAddrManager{
 		nodeName:         nodeName,     // k8 node name
 		bridgeName:       bridgeName,   // bridge name for which EIP IPs are managed
 		nodeAnnotationMu: sync.Mutex{}, // mu for updating Node annotation
@@ -202,15 +202,15 @@ func newBridgeEIPAddrManager(nodeName, bridgeName string, linkManager *linkmanag
 		nodeLister:       nodeInformer.Lister(),
 		kube:             kube,
 		addrManager:      linkManager,
-		cache:            newMarkIPsCache(), // cache to store pkt mark -> EIP IP.
+		cache:            NewMarkIPsCache(), // cache to store pkt mark -> EIP IP.
 	}
 }
 
-func (g *bridgeEIPAddrManager) GetCache() *markIPsCache {
+func (g *BridgeEIPAddrManager) GetCache() *MarkIPsCache {
 	return g.cache
 }
 
-func (g *bridgeEIPAddrManager) addEgressIP(eip *egressipv1.EgressIP) (bool, error) {
+func (g *BridgeEIPAddrManager) AddEgressIP(eip *egressipv1.EgressIP) (bool, error) {
 	var isUpdated bool
 	if !util.IsEgressIPMarkSet(eip.Annotations) {
 		return isUpdated, nil
@@ -237,7 +237,7 @@ func (g *bridgeEIPAddrManager) addEgressIP(eip *egressipv1.EgressIP) (bool, erro
 	return isUpdated, nil
 }
 
-func (g *bridgeEIPAddrManager) updateEgressIP(oldEIP, newEIP *egressipv1.EgressIP) (bool, error) {
+func (g *BridgeEIPAddrManager) UpdateEgressIP(oldEIP, newEIP *egressipv1.EgressIP) (bool, error) {
 	var isUpdated bool
 	// at most, one status item for this node will be found.
 	for _, oldStatus := range oldEIP.Status.Items {
@@ -293,7 +293,7 @@ func (g *bridgeEIPAddrManager) updateEgressIP(oldEIP, newEIP *egressipv1.EgressI
 	return isUpdated, nil
 }
 
-func (g *bridgeEIPAddrManager) deleteEgressIP(eip *egressipv1.EgressIP) (bool, error) {
+func (g *BridgeEIPAddrManager) DeleteEgressIP(eip *egressipv1.EgressIP) (bool, error) {
 	var isUpdated bool
 	if !util.IsEgressIPMarkSet(eip.Annotations) {
 		return isUpdated, nil
@@ -322,7 +322,7 @@ func (g *bridgeEIPAddrManager) deleteEgressIP(eip *egressipv1.EgressIP) (bool, e
 	return isUpdated, nil
 }
 
-func (g *bridgeEIPAddrManager) syncEgressIP(objs []interface{}) error {
+func (g *BridgeEIPAddrManager) SyncEgressIP(objs []interface{}) error {
 	// caller must synchronise
 	annotIPs, err := g.getAnnotationIPs()
 	if err != nil {
@@ -380,7 +380,7 @@ func (g *bridgeEIPAddrManager) syncEgressIP(objs []interface{}) error {
 
 // addIPToAnnotation adds an address to the collection of existing addresses stored in the nodes annotation. Caller
 // may repeat addition of addresses without care for duplicate addresses being added.
-func (g *bridgeEIPAddrManager) addIPToAnnotation(candidateIP net.IP) error {
+func (g *BridgeEIPAddrManager) addIPToAnnotation(candidateIP net.IP) error {
 	g.nodeAnnotationMu.Lock()
 	defer g.nodeAnnotationMu.Unlock()
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -412,7 +412,7 @@ func (g *bridgeEIPAddrManager) addIPToAnnotation(candidateIP net.IP) error {
 
 // deleteIPsFromAnnotation deletes address from annotation. If multiple users, callers must synchronise.
 // deletion of address that doesn't exist will not cause an error.
-func (g *bridgeEIPAddrManager) deleteIPsFromAnnotation(candidateIPs ...net.IP) error {
+func (g *BridgeEIPAddrManager) deleteIPsFromAnnotation(candidateIPs ...net.IP) error {
 	g.nodeAnnotationMu.Lock()
 	defer g.nodeAnnotationMu.Unlock()
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -446,7 +446,7 @@ func (g *bridgeEIPAddrManager) deleteIPsFromAnnotation(candidateIPs ...net.IP) e
 	})
 }
 
-func (g *bridgeEIPAddrManager) addIPBridge(ip net.IP) error {
+func (g *BridgeEIPAddrManager) addIPBridge(ip net.IP) error {
 	link, err := util.GetNetLinkOps().LinkByName(g.bridgeName)
 	if err != nil {
 		return fmt.Errorf("failed to get link obj by name %s: %v", g.bridgeName, err)
@@ -454,7 +454,7 @@ func (g *bridgeEIPAddrManager) addIPBridge(ip net.IP) error {
 	return g.addrManager.AddAddress(getEIPBridgeNetlinkAddress(ip, link.Attrs().Index))
 }
 
-func (g *bridgeEIPAddrManager) deleteIPBridge(ip net.IP) error {
+func (g *BridgeEIPAddrManager) deleteIPBridge(ip net.IP) error {
 	link, err := util.GetNetLinkOps().LinkByName(g.bridgeName)
 	if err != nil {
 		return fmt.Errorf("failed to get link obj by name %s: %v", g.bridgeName, err)
@@ -464,7 +464,7 @@ func (g *bridgeEIPAddrManager) deleteIPBridge(ip net.IP) error {
 
 // getAnnotationIPs retrieves the egress IP annotation from the current node Nodes object. If multiple users, callers must synchronise.
 // if annotation isn't present, empty set is returned
-func (g *bridgeEIPAddrManager) getAnnotationIPs() ([]net.IP, error) {
+func (g *BridgeEIPAddrManager) getAnnotationIPs() ([]net.IP, error) {
 	node, err := g.nodeLister.Get(g.nodeName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get node %s from lister: %v", g.nodeName, err)
