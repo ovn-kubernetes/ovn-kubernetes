@@ -23,7 +23,6 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/bridgeconfig"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/iprulemanager"
 	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/vrfmanager"
@@ -90,21 +89,6 @@ type UserDefinedNetworkGateway struct {
 
 	// gwInterfaceIndex holds the link index of gateway interface
 	gwInterfaceIndex int
-}
-
-// UTILS Needed for UDN (also leveraged for default netInfo) in BridgeConfiguration
-
-// END UDN UTILs for BridgeConfiguration
-
-func setBridgeNetworkOfPorts(bridge *bridgeconfig.BridgeConfiguration, netName string) error {
-	bridge.Mutex.Lock()
-	defer bridge.Mutex.Unlock()
-
-	netConfig, found := bridge.NetConfig[netName]
-	if !found {
-		return fmt.Errorf("failed to find network %s configuration on bridge %s", netName, bridge.BridgeName)
-	}
-	return netConfig.SetBridgeNetworkOfPortsInternal()
 }
 
 func NewUserDefinedNetworkGateway(netInfo util.NetInfo, node *corev1.Node, nodeLister listers.NodeLister,
@@ -270,12 +254,12 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 
 	waiter := newStartupWaiterWithTimeout(waitForPatchPortTimeout)
 	readyFunc := func() (bool, error) {
-		if err := setBridgeNetworkOfPorts(udng.openflowManager.defaultBridge, udng.GetNetworkName()); err != nil {
+		if err := udng.openflowManager.defaultBridge.SetNetworkOfPatchPort(udng.GetNetworkName()); err != nil {
 			klog.V(3).Infof("Failed to set network %s's openflow ports for default bridge; error: %v", udng.GetNetworkName(), err)
 			return false, nil
 		}
 		if udng.openflowManager.externalGatewayBridge != nil {
-			if err := setBridgeNetworkOfPorts(udng.openflowManager.externalGatewayBridge, udng.GetNetworkName()); err != nil {
+			if err := udng.openflowManager.externalGatewayBridge.SetNetworkOfPatchPort(udng.GetNetworkName()); err != nil {
 				klog.V(3).Infof("Failed to set network %s's openflow ports for secondary bridge; error: %v", udng.GetNetworkName(), err)
 				return false, nil
 			}

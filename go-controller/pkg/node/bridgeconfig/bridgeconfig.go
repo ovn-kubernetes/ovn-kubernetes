@@ -56,7 +56,7 @@ func (netConfig *BridgeUDNConfiguration) IsDefaultNetwork() bool {
 	return netConfig.MasqCTMark == CtMarkOVN
 }
 
-func (netConfig *BridgeUDNConfiguration) SetBridgeNetworkOfPortsInternal() error {
+func (netConfig *BridgeUDNConfiguration) setOfPatchPort() error {
 	ofportPatch, stderr, err := util.GetOVSOfPort("get", "Interface", netConfig.PatchPort, "ofport")
 	if err != nil {
 		return fmt.Errorf("failed while waiting on patch port %q to be created by ovn-controller and "+
@@ -368,7 +368,7 @@ func (b *BridgeConfiguration) SetOfPorts() error {
 	defer b.Mutex.Unlock()
 	// Get ofport of patchPort
 	for _, netConfig := range b.NetConfig {
-		if err := netConfig.SetBridgeNetworkOfPortsInternal(); err != nil {
+		if err := netConfig.setOfPatchPort(); err != nil {
 			return fmt.Errorf("error setting bridge openflow ports for network with patchport %v: err: %v", netConfig.PatchPort, err)
 		}
 	}
@@ -409,6 +409,41 @@ func (b *BridgeConfiguration) SetOfPorts() error {
 	}
 
 	return nil
+}
+
+func (b *BridgeConfiguration) GetIPs() []*net.IPNet {
+	b.Mutex.Lock()
+	defer b.Mutex.Unlock()
+	return b.Ips
+}
+
+func (b *BridgeConfiguration) GetBridgeName() string {
+	b.Mutex.Lock()
+	defer b.Mutex.Unlock()
+	return b.BridgeName
+}
+
+func (b *BridgeConfiguration) GetMAC() net.HardwareAddr {
+	b.Mutex.Lock()
+	defer b.Mutex.Unlock()
+	return b.MacAddress
+}
+
+func (b *BridgeConfiguration) SetMAC(macAddr net.HardwareAddr) {
+	b.Mutex.Lock()
+	defer b.Mutex.Unlock()
+	b.MacAddress = macAddr
+}
+
+func (b *BridgeConfiguration) SetNetworkOfPatchPort(netName string) error {
+	b.Mutex.Lock()
+	defer b.Mutex.Unlock()
+
+	netConfig, found := b.NetConfig[netName]
+	if !found {
+		return fmt.Errorf("failed to find network %s configuration on bridge %s", netName, b.BridgeName)
+	}
+	return netConfig.setOfPatchPort()
 }
 
 func gatewayReady(patchPort string) bool {
