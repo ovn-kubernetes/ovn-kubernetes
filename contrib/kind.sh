@@ -154,6 +154,7 @@ usage() {
     echo "-obs | --observability                Enable OVN Observability feature."
     echo "-rae | --enable-route-advertisements  Enable route advertisements"
     echo "-adv | --advertise-default-network    Applies a RouteAdvertisements configuration to advertise the default network on all nodes"
+    echo "--allow-icmp-netpol                   Allows ICMP and ICMPv6 traffic globally, regardless of network policy rules"
     echo ""
 }
 
@@ -360,6 +361,8 @@ parse_args() {
                                                 ;;
             -dns | --enable-dnsnameresolver )   OVN_ENABLE_DNSNAMERESOLVER=true
                                                 ;;
+            --allow-icmp-netpol )               OVN_ENABLE_ICMP_NETPOL=true
+                                                ;;
             -h | --help )                       usage
                                                 exit
                                                 ;;
@@ -447,6 +450,7 @@ print_params() {
      echo "KIND_NUM_WORKER = $KIND_NUM_WORKER"
      echo "OVN_MTU= $OVN_MTU"
      echo "OVN_ENABLE_DNSNAMERESOLVER= $OVN_ENABLE_DNSNAMERESOLVER"
+     echo "OVN_ENABLE_ICMP_NETPOL= $OVN_ENABLE_ICMP_NETPOL"
      echo ""
 }
 
@@ -614,6 +618,7 @@ set_default_params() {
   OVN_ENABLE_INTERCONNECT=${OVN_ENABLE_INTERCONNECT:-false}
   OVN_ENABLE_OVNKUBE_IDENTITY=${OVN_ENABLE_OVNKUBE_IDENTITY:-true}
   OVN_NETWORK_QOS_ENABLE=${OVN_NETWORK_QOS_ENABLE:-false}
+  OVN_ENABLE_ICMP_NETPOL=${OVN_ENABLE_ICMP_NETPOL:-false}
 
 
   if [ "$OVN_COMPACT_MODE" == true ] && [ "$OVN_ENABLE_INTERCONNECT" != false ]; then
@@ -928,7 +933,8 @@ create_ovn_kube_manifests() {
     --mtu="${OVN_MTU}" \
     --enable-dnsnameresolver="${OVN_ENABLE_DNSNAMERESOLVER}" \
     --mtu="${OVN_MTU}" \
-    --enable-observ="${OVN_OBSERV_ENABLE}"
+    --enable-observ="${OVN_OBSERV_ENABLE}" \
+    --allow-icmp-netpol="${OVN_ENABLE_ICMP_NETPOL}"
   popd
 }
 
