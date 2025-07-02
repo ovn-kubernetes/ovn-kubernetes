@@ -80,7 +80,7 @@ func CheckAdvertisedUDNSvcIsolationOVSFlows(flows []string, netConfig *BridgeUDN
 		Expect(err).ToNot(HaveOccurred())
 		protoPrefix = "ip"
 	} else {
-		matchingIPFamilySubnet, err = util.MatchFirstIPNetFamily(false, udnAdvertisedSubnets)
+		matchingIPFamilySubnet, err = util.MatchFirstIPNetFamily(true, udnAdvertisedSubnets)
 		Expect(err).ToNot(HaveOccurred())
 		protoPrefix = "ip6"
 	}
