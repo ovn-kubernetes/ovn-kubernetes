@@ -66,20 +66,20 @@ func (c *openflowManager) getActiveNetwork(nInfo util.NetInfo) *bridgeconfig.Bri
 // END UDN UTILs
 
 func (c *openflowManager) getDefaultBridgeName() string {
-	c.defaultBridge.Lock()
-	defer c.defaultBridge.Unlock()
+	c.defaultBridge.Mutex.Lock()
+	defer c.defaultBridge.Mutex.Unlock()
 	return c.defaultBridge.BridgeName
 }
 
 func (c *openflowManager) getDefaultBridgeMAC() net.HardwareAddr {
-	c.defaultBridge.Lock()
-	defer c.defaultBridge.Unlock()
+	c.defaultBridge.Mutex.Lock()
+	defer c.defaultBridge.Mutex.Unlock()
 	return c.defaultBridge.MacAddress
 }
 
 func (c *openflowManager) setDefaultBridgeMAC(macAddr net.HardwareAddr) {
-	c.defaultBridge.Lock()
-	defer c.defaultBridge.Unlock()
+	c.defaultBridge.Mutex.Lock()
+	defer c.defaultBridge.Mutex.Unlock()
 	c.defaultBridge.MacAddress = macAddr
 }
 
@@ -118,8 +118,8 @@ func (c *openflowManager) requestFlowSync() {
 
 func (c *openflowManager) syncFlows() {
 	// protect gwBridge config from being updated by gw.nodeIPManager
-	c.defaultBridge.Lock()
-	defer c.defaultBridge.Unlock()
+	c.defaultBridge.Mutex.Lock()
+	defer c.defaultBridge.Mutex.Unlock()
 
 	c.flowMutex.Lock()
 	defer c.flowMutex.Unlock()
@@ -135,8 +135,8 @@ func (c *openflowManager) syncFlows() {
 	}
 
 	if c.externalGatewayBridge != nil {
-		c.externalGatewayBridge.Lock()
-		defer c.externalGatewayBridge.Unlock()
+		c.externalGatewayBridge.Mutex.Lock()
+		defer c.externalGatewayBridge.Mutex.Unlock()
 
 		c.exGWFlowMutex.Lock()
 		defer c.exGWFlowMutex.Unlock()
@@ -213,14 +213,14 @@ func (c *openflowManager) Run(stopChan <-chan struct{}, doneWg *sync.WaitGroup) 
 
 func (c *openflowManager) updateBridgePMTUDFlowCache(key string, ipAddrs []string) {
 	// protect defaultBridge config from being updated by gw.nodeIPManager
-	c.defaultBridge.Lock()
-	defer c.defaultBridge.Unlock()
+	c.defaultBridge.Mutex.Lock()
+	defer c.defaultBridge.Mutex.Unlock()
 
 	dftFlows := pmtudDropFlows(c.defaultBridge, ipAddrs)
 	c.updateFlowCacheEntry(key, dftFlows)
 	if c.externalGatewayBridge != nil {
-		c.externalGatewayBridge.Lock()
-		defer c.externalGatewayBridge.Unlock()
+		c.externalGatewayBridge.Mutex.Lock()
+		defer c.externalGatewayBridge.Mutex.Unlock()
 		exGWBridgeDftFlows := pmtudDropFlows(c.externalGatewayBridge, ipAddrs)
 		c.updateExBridgeFlowCacheEntry(key, exGWBridgeDftFlows)
 	}
@@ -230,8 +230,8 @@ func (c *openflowManager) updateBridgePMTUDFlowCache(key string, ipAddrs []strin
 // note: this is shared between shared and local gateway modes
 func (c *openflowManager) updateBridgeFlowCache(hostIPs []net.IP, hostSubnets []*net.IPNet) error {
 	// protect defaultBridge config from being updated by gw.nodeIPManager
-	c.defaultBridge.Lock()
-	defer c.defaultBridge.Unlock()
+	c.defaultBridge.Mutex.Lock()
+	defer c.defaultBridge.Mutex.Unlock()
 
 	// CAUTION: when adding new flows where the in_port is ofPortPatch and the out_port is ofPortPhys, ensure
 	// that dl_src is included in match criteria!
@@ -251,8 +251,8 @@ func (c *openflowManager) updateBridgeFlowCache(hostIPs []net.IP, hostSubnets []
 
 	// we consume ex gw bridge flows only if that is enabled
 	if c.externalGatewayBridge != nil {
-		c.externalGatewayBridge.Lock()
-		defer c.externalGatewayBridge.Unlock()
+		c.externalGatewayBridge.Mutex.Lock()
+		defer c.externalGatewayBridge.Mutex.Unlock()
 		c.updateExBridgeFlowCacheEntry("NORMAL", []string{fmt.Sprintf("table=0,priority=0,actions=%s\n", util.NormalAction)})
 		exGWBridgeDftFlows, err := commonFlows(hostSubnets, c.externalGatewayBridge)
 		if err != nil {
