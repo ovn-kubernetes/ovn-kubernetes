@@ -160,7 +160,7 @@ var _ = ginkgo.Describe("OVN Logical Switch Manager operations for layer2 user d
 	var lsManager *LogicalSwitchManager
 
 	ginkgo.BeforeEach(func() {
-		lsManager = NewL2SwitchManagerForUserDefinedPrimaryNetwork()
+		lsManager = NewL2SwitchManagerForUserDefinedPrimaryNetwork(nil)
 		gomega.Expect(lsManager.AddOrUpdateSwitch(
 			switchName,
 			ovntest.MustParseIPNets(ipv4Subnet, ipv6Subnet),

@@ -38,7 +38,7 @@ type NetConf struct {
 	ReservedSubnets string `json:"reservedSubnets,omitempty"`
 	// join subnet cidr is required for supporting
 	// services and ingress for user defined networks
-	// in case of dualstack cluster, please do a comma-seperated list
+	// in case of dualstack cluster, please do a comma-separated list
 	// expected format:
 	// 1) V4 single stack: "v4CIDR" (eg: "100.65.0.0/16")
 	// 2) V6 single stack: "v6CIDR" (eg: "fd99::/64")
@@ -46,6 +46,15 @@ type NetConf struct {
 	// valid for UDN layer3/layer2 network topology
 	// default value: 100.65.0.0/16,fd99::/64 if not provided
 	JoinSubnet string `json:"joinSubnet,omitempty"`
+	// comma-separated list of default gateway IPs for layer2 primary networks
+	// in case of dualstack cluster, please do a comma-separated list
+	// expected format:
+	// 1) V4 single stack: "10.128.0.1"
+	// 2) V6 single stack: "2001:db8::1"
+	// 3) dualstack: "10.128.0.1,2001:db8::1"
+	// valid for layer2 primary network topology only
+	// when omitted, the .1 address from the subnet is used
+	DefaultGatewayIPs string `json:"defaultGatewayIPs,omitempty"`
 	// VLANID, valid in localnet topology network only
 	VLANID int `json:"vlanID,omitempty"`
 	// AllowPersistentIPs is valid on both localnet / layer topologies.

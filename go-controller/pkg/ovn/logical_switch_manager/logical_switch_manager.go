@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net"
 
+	knet "k8s.io/utils/net"
+
 	ipam "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip/subnet"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -14,6 +16,7 @@ var SwitchNotFound = subnet.ErrSubnetNotFound
 // LogicalSwitchManager provides switch info management APIs including IPAM for the host subnets
 type LogicalSwitchManager struct {
 	allocator  subnet.Allocator
+	gatewayIPs []*net.IPNet
 	reserveIPs bool
 }
 
@@ -42,10 +45,12 @@ func NewL2SwitchManager() *LogicalSwitchManager {
 
 // NewL2SwitchManagerForUserDefinedPrimaryNetwork initializes a new logical
 // switch manager for L2 primary networks.
-// A user defined primary network auto-reserves the .1 and .2 IP addresses,
+// A user defined primary network auto-reserves the gateway and the node management IP addresses,
 // which are required for egressing the cluster over this user defined network.
-func NewL2SwitchManagerForUserDefinedPrimaryNetwork() *LogicalSwitchManager {
-	return NewLogicalSwitchManager()
+func NewL2SwitchManagerForUserDefinedPrimaryNetwork(gatewayIPs []*net.IPNet) *LogicalSwitchManager {
+	lsm := NewLogicalSwitchManager()
+	lsm.gatewayIPs = gatewayIPs
+	return lsm
 }
 
 // AddOrUpdateSwitch adds/updates a switch to the logical switch manager for subnet
@@ -53,7 +58,15 @@ func NewL2SwitchManagerForUserDefinedPrimaryNetwork() *LogicalSwitchManager {
 func (manager *LogicalSwitchManager) AddOrUpdateSwitch(switchName string, hostSubnets []*net.IPNet, excludeSubnets ...*net.IPNet) error {
 	if manager.reserveIPs {
 		for _, hostSubnet := range hostSubnets {
-			for _, ip := range []*net.IPNet{util.GetNodeGatewayIfAddr(hostSubnet), util.GetNodeManagementIfAddr(hostSubnet)} {
+			var gwIP *net.IPNet
+			if len(manager.gatewayIPs) > 0 {
+				gwIP, _ = util.MatchFirstIPNetFamily(knet.IsIPv6CIDR(hostSubnet), manager.gatewayIPs)
+			}
+			if gwIP == nil {
+				gwIP = util.GetNodeGatewayIfAddr(hostSubnet)
+			}
+
+			for _, ip := range []*net.IPNet{gwIP, util.GetNodeManagementIfAddr(hostSubnet)} {
 				excludeSubnets = append(excludeSubnets,
 					&net.IPNet{IP: ip.IP, Mask: util.GetIPFullMask(ip.IP)},
 				)
