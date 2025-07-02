@@ -950,6 +950,7 @@ func (nInfo *userDefinedNetInfo) copy() *userDefinedNetInfo {
 		physicalNetworkName:   nInfo.physicalNetworkName,
 		defaultGatewayIPs:     nInfo.defaultGatewayIPs,
 		managementIPs:         nInfo.managementIPs,
+		encapsulation:         nInfo.encapsulation,
 	}
 	// copy mutables
 	c.mutableNetInfo.copyFrom(&nInfo.mutableNetInfo)
@@ -973,6 +974,7 @@ func newLayer3NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 		subnets:        subnets,
 		joinSubnets:    joinSubnets,
 		mtu:            netconf.MTU,
+		encapsulation:  netconf.Encapsulation,
 		mutableNetInfo: mutableNetInfo{
 			id:   types.InvalidID,
 			nads: sets.Set[string]{},
@@ -1042,6 +1044,7 @@ func newLayer2NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 		allowPersistentIPs:    netconf.AllowPersistentIPs,
 		defaultGatewayIPs:     defaultGatewayIPs,
 		managementIPs:         managementIPs,
+		encapsulation:         netconf.Encapsulation,
 		mutableNetInfo: mutableNetInfo{
 			id:   types.InvalidID,
 			nads: sets.Set[string]{},
@@ -1075,6 +1078,7 @@ func newLocalnetNetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error
 		vlan:                uint(netconf.VLANID),
 		allowPersistentIPs:  netconf.AllowPersistentIPs,
 		physicalNetworkName: netconf.PhysicalNetworkName,
+		encapsulation:       netconf.Encapsulation,
 		mutableNetInfo: mutableNetInfo{
 			id:   types.InvalidID,
 			nads: sets.Set[string]{},
