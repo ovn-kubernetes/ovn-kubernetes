@@ -13,6 +13,18 @@ import (
 const (
 	// OvsLocalPort is the name of the OVS bridge local port
 	OvsLocalPort = "LOCAL"
+
+	// DefaultOpenFlowCookie identifies default open flow rules added to the host OVS bridge.
+	// The hex number 0xdeff105, aka defflos, is meant to sound like default flows.
+	DefaultOpenFlowCookie = "0xdeff105"
+
+	// OutputPortDrop is used to signify that there is no output port for an openflow action and the
+	// rendered action should result in a drop
+	OutputPortDrop = "output-port-drop"
+
+	// OvnKubeNodeSNATMark is used to mark packets that need to be SNAT-ed to nodeIP for
+	// traffic originating from egressIP and egressService controlled pods towards other nodes in the cluster.
+	OvnKubeNodeSNATMark = "0x3f0"
 )
 
 // GetNetworkInterfaceIPAddresses returns the IP addresses for the network interface 'iface'.
@@ -94,4 +106,29 @@ func GetDPUHostPrimaryIPAddresses(k8sNodeIP net.IP, ifAddrs []*net.IPNet) ([]*ne
 		}
 	}
 	return gwIps, nil
+}
+
+func GenerateICMPFragmentationFlow(ipAddr, outputPort, inPort, cookie string, priority int) string {
+	// we send any ICMP destination unreachable, fragmentation needed to the OVN pipeline too so that
+	// path MTU discovery continues to work.
+	icmpMatch := "icmp"
+	icmpType := 3
+	icmpCode := 4
+	nwDst := "nw_dst"
+	if net2.IsIPv6String(ipAddr) {
+		icmpMatch = "icmp6"
+		icmpType = 2
+		icmpCode = 0
+		nwDst = "ipv6_dst"
+	}
+
+	action := fmt.Sprintf("output:%s", outputPort)
+	if outputPort == OutputPortDrop {
+		action = "drop"
+	}
+
+	icmpFragmentationFlow := fmt.Sprintf("cookie=%s, priority=%d, in_port=%s, %s, %s=%s, icmp_type=%d, "+
+		"icmp_code=%d, actions=%s",
+		cookie, priority, inPort, icmpMatch, nwDst, ipAddr, icmpType, icmpCode, action)
+	return icmpFragmentationFlow
 }

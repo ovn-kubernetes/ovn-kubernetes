@@ -460,11 +460,6 @@ func (g *gateway) GetGatewayIface() string {
 	return g.openflowManager.defaultBridge.GetGatewayIface()
 }
 
-// getMaxFrameLength returns the maximum frame size (ignoring VLAN header) that a gateway can handle
-func getMaxFrameLength() int {
-	return config.Default.MTU + 14
-}
-
 // SetDefaultGatewayBridgeMAC updates the mac address for the OFM used to render flows with
 func (g *gateway) SetDefaultGatewayBridgeMAC(macAddr net.HardwareAddr) {
 	g.openflowManager.setDefaultBridgeMAC(macAddr)
