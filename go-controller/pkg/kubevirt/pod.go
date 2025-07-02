@@ -12,7 +12,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ktypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
-
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
@@ -528,7 +527,7 @@ func (r *DefaultGatewayReconciler) ReconcileIPv4AfterLiveMigration(liveMigration
 
 	lrpMAC := util.IPAddrToHWAddr(lrpJoinIPv4)
 	for _, subnet := range r.netInfo.Subnets() {
-		gwIP := util.GetNodeGatewayIfAddr(subnet.CIDR).IP.To4()
+		gwIP := r.netInfo.GetNodeGatewayIP(subnet.CIDR).IP.To4()
 		if gwIP == nil {
 			continue
 		}

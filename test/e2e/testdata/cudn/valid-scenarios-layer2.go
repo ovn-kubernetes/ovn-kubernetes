@@ -122,7 +122,7 @@ spec:
     layer2:
       role: Primary
       subnets: ["192.168.1.0/24", "2001:db8::/64"]
-      infrastructureSubnets: ["192.168.1.0/28", "2001:db8::/80"]
+      infrastructureSubnets: ["192.168.1.0/30", "2001:db8::/126"]
       reservedSubnets: ["192.168.1.16/28", "2001:db8::1000/120"]
       defaultGatewayIPs: ["192.168.1.1", "2001:db8::1"]
       ipam:

@@ -370,7 +370,7 @@ func (bnc *BaseNetworkController) syncNodeClusterRouterPort(node *corev1.Node, h
 	// logical router port MAC is based on IPv4 subnet if there is one, else IPv6
 	var nodeLRPMAC net.HardwareAddr
 	for _, hostSubnet := range hostSubnets {
-		gwIfAddr := util.GetNodeGatewayIfAddr(hostSubnet)
+		gwIfAddr := bnc.GetNodeGatewayIP(hostSubnet)
 		nodeLRPMAC = util.IPAddrToHWAddr(gwIfAddr.IP)
 		if !utilnet.IsIPv6CIDR(hostSubnet) {
 			break
@@ -382,7 +382,7 @@ func (bnc *BaseNetworkController) syncNodeClusterRouterPort(node *corev1.Node, h
 	lrpName := types.RouterToSwitchPrefix + switchName
 	lrpNetworks := []string{}
 	for _, hostSubnet := range hostSubnets {
-		gwIfAddr := util.GetNodeGatewayIfAddr(hostSubnet)
+		gwIfAddr := bnc.GetNodeGatewayIP(hostSubnet)
 		lrpNetworks = append(lrpNetworks, gwIfAddr.String())
 	}
 
@@ -454,7 +454,7 @@ func (bnc *BaseNetworkController) createNodeLogicalSwitch(nodeName string, hostS
 	var nodeLRPMAC net.HardwareAddr
 	switchName := bnc.GetNetworkScopedSwitchName(nodeName)
 	for _, hostSubnet := range hostSubnets {
-		gwIfAddr := util.GetNodeGatewayIfAddr(hostSubnet)
+		gwIfAddr := bnc.GetNodeGatewayIP(hostSubnet)
 		nodeLRPMAC = util.IPAddrToHWAddr(gwIfAddr.IP)
 		if !utilnet.IsIPv6CIDR(hostSubnet) {
 			break
@@ -469,7 +469,7 @@ func (bnc *BaseNetworkController) createNodeLogicalSwitch(nodeName string, hostS
 	var v4Gateway, v6Gateway net.IP
 	logicalSwitch.OtherConfig = map[string]string{}
 	for _, hostSubnet := range hostSubnets {
-		gwIfAddr := util.GetNodeGatewayIfAddr(hostSubnet)
+		gwIfAddr := bnc.GetNodeGatewayIP(hostSubnet)
 		mgmtIfAddr := util.GetNodeManagementIfAddr(hostSubnet)
 
 		if utilnet.IsIPv6CIDR(hostSubnet) {

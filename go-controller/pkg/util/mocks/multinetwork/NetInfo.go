@@ -16,6 +16,25 @@ type NetInfo struct {
 	mock.Mock
 }
 
+func (_m *NetInfo) GetNodeGatewayIP(hostSubnet *net.IPNet) *net.IPNet {
+	ret := _m.Called(hostSubnet)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetNodeGatewayIP")
+	}
+
+	var r0 *net.IPNet
+	if rf, ok := ret.Get(0).(func(*net.IPNet) *net.IPNet); ok {
+		r0 = rf(hostSubnet)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*net.IPNet)
+		}
+	}
+
+	return r0
+}
+
 // AllowsPersistentIPs provides a mock function with given fields:
 func (_m *NetInfo) AllowsPersistentIPs() bool {
 	ret := _m.Called()
