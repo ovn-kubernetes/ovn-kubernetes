@@ -599,7 +599,7 @@ func (udng *UserDefinedNetworkGateway) getDefaultRoute(isNetworkAdvertised bool)
 
 	var retVal []netlink.Route
 	var defaultAnyCIDR *net.IPNet
-	for _, nextHop := range udng.gateway.openflowManager.defaultBridge.GetNextHops() {
+	for _, nextHop := range udng.gateway.nextHops {
 		isV6 := utilnet.IsIPv6(nextHop)
 		_, defaultAnyCIDR, _ = net.ParseCIDR("0.0.0.0/0")
 		if isV6 {

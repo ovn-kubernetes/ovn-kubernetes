@@ -1424,7 +1424,9 @@ func newGateway(
 	gatewayMode config.GatewayMode,
 ) (*gateway, error) {
 	klog.Info("Creating new gateway")
-	gw := &gateway{}
+	gw := &gateway{
+		nextHops: gwNextHops,
+	}
 
 	if gatewayMode == config.GatewayModeLocal {
 		if err := initLocalGateway(subnets, mgmtPort); err != nil {
