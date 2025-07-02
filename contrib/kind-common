@@ -422,7 +422,7 @@ install_cert_manager() {
 }
 
 install_kubevirt_ipam_controller() {
-  local ipam_image=${KUBEVIRT_IPAM_IMAGE:-"ghcr.io/kubevirt/ipam-extensions:latest"}
+  local ipam_image=${KUBEVIRT_IPAM_IMAGE:-"quay.io/ellorent/kubevirt-ipam-controller:pr-105"}
   echo "Installing KubeVirt IPAM controller manager with image: $ipam_image ..."
   manifest="https://raw.githubusercontent.com/kubevirt/ipam-extensions/main/dist/install.yaml"
   run_kubectl apply -f "$manifest"
