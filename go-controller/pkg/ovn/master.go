@@ -383,12 +383,23 @@ func (oc *DefaultNetworkController) syncNodes(kNodes []interface{}) error {
 	}
 
 	if config.OVNKubernetesFeature.EnableInterconnect {
+		// Chassis cleanup should happen regardless of transport mode to cleanup
+		// any stale remote chassis entries (e.g., from overlay->no-overlay migration)
 		if err := oc.zoneChassisHandler.SyncNodes(kNodes); err != nil {
 			return fmt.Errorf("zoneChassisHandler failed to sync nodes: error: %w", err)
 		}
 
-		if err := oc.zoneICHandler.SyncNodes(kNodes); err != nil {
-			return fmt.Errorf("zoneICHandler failed to sync nodes: error: %w", err)
+		// Interconnect resource sync depends on transport mode:
+		// - For overlay: ensure transit switch exists and cleanup stale resources
+		// - For no-overlay: only cleanup stale resources without creating new infrastructure
+		if oc.GetNetworkTransport() == types.NetworkTransportNoOverlay {
+			if err := oc.zoneICHandler.CleanupStaleNodes(kNodes); err != nil {
+				return fmt.Errorf("zoneICHandler failed to cleanup stale nodes: error: %w", err)
+			}
+		} else {
+			if err := oc.zoneICHandler.SyncNodes(kNodes); err != nil {
+				return fmt.Errorf("zoneICHandler failed to sync nodes: error: %w", err)
+			}
 		}
 	}
 
@@ -638,20 +649,33 @@ func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(node *corev1.Node, n
 	}
 
 	if nSyncs.syncZoneIC && config.OVNKubernetesFeature.EnableInterconnect {
-		// Call zone chassis handler's AddLocalZoneNode function to mark
-		// this node's chassis record in Southbound db as a local zone chassis.
-		// This is required when a node moves from a remote zone to local zone
-		if err := oc.zoneChassisHandler.AddLocalZoneNode(node); err != nil {
-			errs = append(errs, err)
-			oc.syncZoneICFailed.Store(node.Name, true)
-		} else {
-			// Call zone IC handler's AddLocalZoneNode function to create
-			// interconnect resources in the OVN Northbound db for this local zone node.
-			if err := oc.zoneICHandler.AddLocalZoneNode(node); err != nil {
+		// For no-overlay transport, interconnect resources are not needed since pods have
+		// directly routable IPs. Skip creating chassis and interconnect resources, cleanup any existing ones.
+		// For overlay transport, create chassis and interconnect resources.
+		if oc.GetNetworkTransport() == types.NetworkTransportNoOverlay {
+			if err := oc.zoneICHandler.DeleteNode(node); err != nil {
+				err = fmt.Errorf("cleaning up IC resources for no-overlay local node %s failed, err - %w", node.Name, err)
 				errs = append(errs, err)
 				oc.syncZoneICFailed.Store(node.Name, true)
 			} else {
 				oc.syncZoneICFailed.Delete(node.Name)
+			}
+		} else {
+			// Call zone chassis handler's AddLocalZoneNode function to mark
+			// this node's chassis record in Southbound db as a local zone chassis.
+			// This is required when a node moves from a remote zone to local zone
+			if err := oc.zoneChassisHandler.AddLocalZoneNode(node); err != nil {
+				errs = append(errs, err)
+				oc.syncZoneICFailed.Store(node.Name, true)
+			} else {
+				// Call zone IC handler's AddLocalZoneNode function to create
+				// interconnect resources in the OVN Northbound db for this local zone node.
+				if err := oc.zoneICHandler.AddLocalZoneNode(node); err != nil {
+					errs = append(errs, err)
+					oc.syncZoneICFailed.Store(node.Name, true)
+				} else {
+					oc.syncZoneICFailed.Delete(node.Name)
+				}
 			}
 		}
 	}
@@ -680,25 +704,39 @@ func (oc *DefaultNetworkController) addUpdateRemoteNodeEvent(node *corev1.Node, 
 
 	var err error
 	if syncZoneIC && config.OVNKubernetesFeature.EnableInterconnect {
-		// Call zone chassis handler's AddRemoteZoneNode function to creates
-		// the remote chassis for the remote zone node in the SB DB or mark
-		// the entry as remote if it was local chassis earlier
-		if err = oc.zoneChassisHandler.AddRemoteZoneNode(node); err != nil {
-			err = fmt.Errorf("adding or updating remote node chassis %s failed, err - %w", node.Name, err)
-			oc.syncZoneICFailed.Store(node.Name, true)
-			return err
-		}
-
-		// Call zone IC handler's AddRemoteZoneNode function to create
-		// interconnect resources in the OVN NBDB for this remote zone node.
-		// Also, create the remote port binding in SBDB
-		if err = oc.zoneICHandler.AddRemoteZoneNode(node); err != nil {
-			err = fmt.Errorf("adding or updating remote node IC resources %s failed, err - %w", node.Name, err)
-			oc.syncZoneICFailed.Store(node.Name, true)
+		// For no-overlay transport, interconnect resources are not needed
+		// Skip creating remote chassis and cleanup any existing interconnect resources.
+		// For overlay transport, create remote chassis and interconnect resources in OVN NBDB/SBDB.
+		if oc.GetNetworkTransport() == types.NetworkTransportNoOverlay {
+			if err = oc.zoneICHandler.DeleteNode(node); err != nil {
+				err = fmt.Errorf("cleaning up IC resources for no-overlay remote node %s failed, err - %w", node.Name, err)
+				oc.syncZoneICFailed.Store(node.Name, true)
+			} else {
+				oc.syncZoneICFailed.Delete(node.Name)
+			}
+			klog.V(5).Infof("Cleaning up Interconnect resources for no-overlay remote node %q on network %q took: %s", node.Name, oc.GetNetworkName(), time.Since(start))
 		} else {
-			oc.syncZoneICFailed.Delete(node.Name)
+			// Create remote chassis entry with geneve encapsulation for overlay transport
+			// Call zone chassis handler's AddRemoteZoneNode function to creates
+			// the remote chassis for the remote zone node in the SB DB or mark
+			// the entry as remote if it was local chassis earlier
+			if err = oc.zoneChassisHandler.AddRemoteZoneNode(node); err != nil {
+				err = fmt.Errorf("adding or updating remote node chassis %s failed, err - %w", node.Name, err)
+				oc.syncZoneICFailed.Store(node.Name, true)
+				return err
+			}
+
+			// Call zone IC handler's AddRemoteZoneNode function to create
+			// interconnect resources in the OVN NBDB for this remote zone node.
+			// Also, create the remote port binding in SBDB
+			if err = oc.zoneICHandler.AddRemoteZoneNode(node); err != nil {
+				err = fmt.Errorf("adding or updating remote node IC resources %s failed, err - %w", node.Name, err)
+				oc.syncZoneICFailed.Store(node.Name, true)
+			} else {
+				oc.syncZoneICFailed.Delete(node.Name)
+			}
+			klog.V(5).Infof("Creating Interconnect resources for remote node %q on network %q took: %s", node.Name, oc.GetNetworkName(), time.Since(start))
 		}
-		klog.V(5).Infof("Creating Interconnect resources for remote node %q on network %q took: %s", node.Name, oc.GetNetworkName(), time.Since(start))
 	}
 	return err
 }

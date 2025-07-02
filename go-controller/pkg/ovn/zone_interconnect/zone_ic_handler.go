@@ -258,11 +258,11 @@ func (zic *ZoneInterconnectHandler) AddRemoteZoneNode(node *corev1.Node) error {
 	}
 
 	klog.Infof("Creating interconnect resources for remote zone node %s for the network %s", node.Name, zic.GetNetworkName())
-
 	if err := zic.createRemoteZoneNodeResources(node, nodeID, nodeTransitSwitchPortIPs, nodeSubnets, nodeGRPIPs); err != nil {
 		return fmt.Errorf("creating interconnect resources for remote zone node %s for the network %s failed : err - %w", node.Name, zic.GetNetworkName(), err)
 	}
 	klog.Infof("Creating Interconnect resources for node %q on network %q took: %s", node.Name, zic.GetNetworkName(), time.Since(start))
+
 	return nil
 }
 
@@ -273,43 +273,27 @@ func (zic *ZoneInterconnectHandler) DeleteNode(node *corev1.Node) error {
 	return zic.cleanupNode(node.Name)
 }
 
-// SyncNodes ensures a transit switch exists and cleans up the interconnect
-// resources present in the OVN Northbound db for the stale nodes
-func (zic *ZoneInterconnectHandler) SyncNodes(objs []interface{}) error {
+// cleanupStaleNodesFromTransitSwitch is a helper that performs the actual cleanup of stale nodes
+// given a transit switch. It finds all ports on the transit switch that reference nodes not in
+// the current node set and cleans them up.
+func (zic *ZoneInterconnectHandler) cleanupStaleNodesFromTransitSwitch(objs []interface{}, ts *nbdb.LogicalSwitch) error {
 	foundNodeNames := sets.New[string]()
-	foundNodes := make([]*corev1.Node, len(objs))
-	for i, obj := range objs {
+	for _, obj := range objs {
 		node, ok := obj.(*corev1.Node)
 		if !ok {
-			return fmt.Errorf("spurious object in syncNodes: %v", obj)
+			return fmt.Errorf("spurious object in cleanupStaleNodesFromTransitSwitch: %v", obj)
 		}
 		foundNodeNames.Insert(node.Name)
-		foundNodes[i] = node
 	}
 
-	// Get the transit switch. If its not present no cleanup to do
-	ts := &nbdb.LogicalSwitch{
-		Name: zic.networkTransitSwitchName,
-	}
-
-	ts, err := libovsdbops.GetLogicalSwitch(zic.nbClient, ts)
-	if err != nil {
-		if errors.Is(err, libovsdbclient.ErrNotFound) {
-			// This can happen for the first time when interconnect is enabled.
-			// Let's ensure the transit switch exists
-			return zic.ensureTransitSwitch(foundNodes)
-		}
-
-		return err
-	}
-
+	// Find stale nodes by checking transit switch ports
 	staleNodeNames := []string{}
 	for _, p := range ts.Ports {
 		lp := &nbdb.LogicalSwitchPort{
 			UUID: p,
 		}
 
-		lp, err = libovsdbops.GetLogicalSwitchPort(zic.nbClient, lp)
+		lp, err := libovsdbops.GetLogicalSwitchPort(zic.nbClient, lp)
 		if err != nil {
 			continue
 		}
@@ -324,6 +308,7 @@ func (zic *ZoneInterconnectHandler) SyncNodes(objs []interface{}) error {
 		}
 	}
 
+	// Cleanup stale interconnect resources
 	for _, staleNodeName := range staleNodeNames {
 		if err := zic.cleanupNode(staleNodeName); err != nil {
 			klog.Errorf("Failed to cleanup the interconnect resources from OVN Northbound db for the stale node %s: %v", staleNodeName, err)
@@ -331,6 +316,60 @@ func (zic *ZoneInterconnectHandler) SyncNodes(objs []interface{}) error {
 	}
 
 	return nil
+}
+
+// CleanupStaleNodes cleans up the interconnect resources for stale nodes.
+// This only performs cleanup - it will not create the transit switch if it doesn't exist.
+// Use this for no-overlay mode where we want to cleanup any leftover resources from
+// a previous overlay configuration, but don't want to create new interconnect infrastructure.
+func (zic *ZoneInterconnectHandler) CleanupStaleNodes(objs []interface{}) error {
+	// Get the transit switch. If it doesn't exist, there's nothing to cleanup.
+	ts := &nbdb.LogicalSwitch{
+		Name: zic.networkTransitSwitchName,
+	}
+
+	ts, err := libovsdbops.GetLogicalSwitch(zic.nbClient, ts)
+	if err != nil {
+		if errors.Is(err, libovsdbclient.ErrNotFound) {
+			// No transit switch exists, so no cleanup needed
+			return nil
+		}
+		return err
+	}
+
+	return zic.cleanupStaleNodesFromTransitSwitch(objs, ts)
+}
+
+// SyncNodes ensures a transit switch exists and cleans up the interconnect
+// resources present in the OVN Northbound db for the stale nodes.
+// This is used for overlay mode where we need to ensure interconnect infrastructure exists.
+func (zic *ZoneInterconnectHandler) SyncNodes(objs []interface{}) error {
+	foundNodes := make([]*corev1.Node, len(objs))
+	for i, obj := range objs {
+		node, ok := obj.(*corev1.Node)
+		if !ok {
+			return fmt.Errorf("spurious object in syncNodes: %v", obj)
+		}
+		foundNodes[i] = node
+	}
+
+	// Get the transit switch. If it doesn't exist, create it.
+	ts := &nbdb.LogicalSwitch{
+		Name: zic.networkTransitSwitchName,
+	}
+
+	ts, err := libovsdbops.GetLogicalSwitch(zic.nbClient, ts)
+	if err != nil {
+		if errors.Is(err, libovsdbclient.ErrNotFound) {
+			// This can happen for the first time when interconnect is enabled.
+			// Let's ensure the transit switch exists
+			return zic.ensureTransitSwitch(foundNodes)
+		}
+		return err
+	}
+
+	// Now cleanup stale nodes using the transit switch we just retrieved
+	return zic.cleanupStaleNodesFromTransitSwitch(objs, ts)
 }
 
 // Cleanup deletes the transit switch for the network
