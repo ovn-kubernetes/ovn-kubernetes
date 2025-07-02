@@ -415,13 +415,13 @@ func (c *contextKind) cleanUp() error {
 
 const (
 	nameFormat                     = "{{.Name}}"
-	inspectNetworkIPv4GWKeyStr     = "{{ .NetworkSettings.Networks.%s.Gateway }}"
-	inspectNetworkIPv4AddrKeyStr   = "{{ .NetworkSettings.Networks.%s.IPAddress }}"
-	inspectNetworkIPv4PrefixKeyStr = "{{ .NetworkSettings.Networks.%s.IPPrefixLen }}"
-	inspectNetworkIPv6GWKeyStr     = "{{ .NetworkSettings.Networks.%s.IPv6Gateway }}"
-	inspectNetworkIPv6AddrKeyStr   = "{{ .NetworkSettings.Networks.%s.GlobalIPv6Address }}"
-	inspectNetworkIPv6PrefixKeyStr = "{{ .NetworkSettings.Networks.%s.GlobalIPv6PrefixLen }}"
-	inspectNetworkMACKeyStr        = "{{ .NetworkSettings.Networks.%s.MacAddress }}"
+	inspectNetworkIPv4GWKeyStr     = "{{ with index .NetworkSettings.Networks %q }}{{ .Gateway }}{{ end }}"
+	inspectNetworkIPv4AddrKeyStr   = "{{ with index .NetworkSettings.Networks %q }}{{ .IPAddress }}{{ end }}"
+	inspectNetworkIPv4PrefixKeyStr = "{{ with index .NetworkSettings.Networks %q }}{{ .IPPrefixLen }}{{ end }}"
+	inspectNetworkIPv6GWKeyStr     = "{{ with index .NetworkSettings.Networks %q }}{{ .IPv6Gateway }}{{ end }}"
+	inspectNetworkIPv6AddrKeyStr   = "{{ with index .NetworkSettings.Networks %q }}{{ .GlobalIPv6Address }}{{ end }}"
+	inspectNetworkIPv6PrefixKeyStr = "{{ with index .NetworkSettings.Networks %q }}{{ .GlobalIPv6PrefixLen }}{{ end }}"
+	inspectNetworkMACKeyStr        = "{{ with index .NetworkSettings.Networks %q }}{{ .MacAddress }}{{ end }}"
 	inspectNetworkContainersKeyStr = "{{ range $key, $value := .Containers }}{{ printf \"%s\\n\" $value.Name}}{{ end }}'"
 	emptyValue                     = "<no value>"
 )
