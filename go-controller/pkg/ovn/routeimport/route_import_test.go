@@ -2,6 +2,7 @@ package routeimport
 
 import (
 	"errors"
+	"net"
 	"sync"
 	"testing"
 
@@ -13,6 +14,7 @@ import (
 
 	"k8s.io/client-go/util/workqueue"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	controllerutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	ovntesting "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
@@ -30,12 +32,23 @@ func Test_controller_syncNetwork(t *testing.T) {
 	defaultNetworkRouter := defaultNetwork.GetNetworkScopedGWRouterName(node)
 	defaultNetworkRouterPort := types.GWRouterToExtSwitchPrefix + defaultNetworkRouter
 
+	config.Default.ClusterSubnets = []config.CIDRNetworkEntry{
+		{
+			CIDR: &net.IPNet{
+				IP:   net.IPv4(10, 128, 0, 0),
+				Mask: net.CIDRMask(16, 32),
+			},
+			HostSubnetLength: 24,
+		},
+	}
+
 	udn := &multinetworkmocks.NetInfo{}
 	udn.On("IsDefault").Return(false)
 	udn.On("GetNetworkName").Return("udn")
 	udn.On("GetNetworkID").Return(1)
 	udn.On("Subnets").Return(nil)
 	udn.On("GetNetworkScopedGWRouterName", node).Return("router")
+	udn.On("GetNetworkEncapsulation").Return("")
 
 	cudn := &multinetworkmocks.NetInfo{}
 	cudn.On("IsDefault").Return(false)
@@ -43,6 +56,7 @@ func Test_controller_syncNetwork(t *testing.T) {
 	cudn.On("GetNetworkID").Return(2)
 	cudn.On("Subnets").Return(nil)
 	cudn.On("GetNetworkScopedGWRouterName", node).Return("router")
+	cudn.On("GetNetworkEncapsulation").Return("")
 
 	type fields struct {
 		networkIDs map[int]string
@@ -52,16 +66,17 @@ func Test_controller_syncNetwork(t *testing.T) {
 		network string
 	}
 	tests := []struct {
-		name      string
-		fields    fields
-		args      args
-		initial   []libovsdb.TestData
-		expected  []libovsdb.TestData
-		routes    []netlink.Route
-		link      netlink.Link
-		linkErr   bool
-		routesErr bool
-		wantErr   bool
+		name             string
+		fields           fields
+		args             args
+		initial          []libovsdb.TestData
+		expected         []libovsdb.TestData
+		routes           []netlink.Route
+		link             netlink.Link
+		noOverlayEnabled bool
+		linkErr          bool
+		routesErr        bool
+		wantErr          bool
 	}{
 		{
 			name: "ignored if network not known",
@@ -168,6 +183,50 @@ func Test_controller_syncNetwork(t *testing.T) {
 				&nbdb.LogicalRouterStaticRoute{UUID: "untouched-1", IPPrefix: "3.3.3.0/24", Nexthop: "3.3.3.2", ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
 			},
 		},
+		{
+			name: "ignores host subnet routes as necessary in overlay mode",
+			args: args{"default"},
+			fields: fields{
+				networkIDs: map[int]string{0: "default"},
+				networks:   map[string]util.NetInfo{"default": defaultNetwork},
+			},
+			link: &netlink.Vrf{Table: unix.RT_TABLE_MAIN},
+			initial: []libovsdb.TestData{
+				&nbdb.LogicalRouter{Name: defaultNetwork.GetNetworkScopedGWRouterName(node), StaticRoutes: []string{"keep-1"}},
+				&nbdb.LogicalRouterStaticRoute{UUID: "keep-1", IPPrefix: "1.1.1.0/24", Nexthop: "1.1.1.1", OutputPort: &defaultNetworkRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
+			},
+			routes: []netlink.Route{
+				{Dst: ovntesting.MustParseIPNet("1.1.1.0/24"), Gw: ovntesting.MustParseIP("1.1.1.1")},
+				{Dst: ovntesting.MustParseIPNet("10.128.1.0/24"), Gw: ovntesting.MustParseIP("2.2.2.1")},
+			},
+			expected: []libovsdb.TestData{
+				&nbdb.LogicalRouter{UUID: "router", Name: defaultNetwork.GetNetworkScopedGWRouterName(node), StaticRoutes: []string{"keep-1"}},
+				&nbdb.LogicalRouterStaticRoute{UUID: "keep-1", IPPrefix: "1.1.1.0/24", Nexthop: "1.1.1.1", OutputPort: &defaultNetworkRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
+			},
+		},
+		{
+			name:             "adds host subnet routes as necessary in no-overlay mode",
+			noOverlayEnabled: true,
+			args:             args{"default"},
+			fields: fields{
+				networkIDs: map[int]string{0: "default"},
+				networks:   map[string]util.NetInfo{"default": defaultNetwork},
+			},
+			link: &netlink.Vrf{Table: unix.RT_TABLE_MAIN},
+			initial: []libovsdb.TestData{
+				&nbdb.LogicalRouter{Name: defaultNetwork.GetNetworkScopedGWRouterName(node), StaticRoutes: []string{"keep-1"}},
+				&nbdb.LogicalRouterStaticRoute{UUID: "keep-1", IPPrefix: "1.1.1.0/24", Nexthop: "1.1.1.1", OutputPort: &defaultNetworkRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
+			},
+			routes: []netlink.Route{
+				{Dst: ovntesting.MustParseIPNet("1.1.1.0/24"), Gw: ovntesting.MustParseIP("1.1.1.1")},
+				{Dst: ovntesting.MustParseIPNet("10.128.1.0/24"), Gw: ovntesting.MustParseIP("2.2.2.1")},
+			},
+			expected: []libovsdb.TestData{
+				&nbdb.LogicalRouter{UUID: "router", Name: defaultNetwork.GetNetworkScopedGWRouterName(node), StaticRoutes: []string{"keep-1", "add-1"}},
+				&nbdb.LogicalRouterStaticRoute{UUID: "keep-1", IPPrefix: "1.1.1.0/24", Nexthop: "1.1.1.1", OutputPort: &defaultNetworkRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
+				&nbdb.LogicalRouterStaticRoute{UUID: "add-1", IPPrefix: "10.128.1.0/24", Nexthop: "2.2.2.1", OutputPort: &defaultNetworkRouterPort, ExternalIDs: map[string]string{controllerExternalIDKey: controllerName}},
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -209,6 +268,10 @@ func Test_controller_syncNetwork(t *testing.T) {
 				networks:   tt.fields.networks,
 				tables:     map[int]int{},
 				netlink:    nlmock,
+			}
+
+			if tt.noOverlayEnabled {
+				config.Default.DefaultNetworkEncapsulation = "none"
 			}
 
 			err = c.syncNetwork(tt.args.network)

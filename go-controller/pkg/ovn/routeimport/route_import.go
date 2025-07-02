@@ -18,6 +18,7 @@ import (
 	"github.com/ovn-kubernetes/libovsdb/client"
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	controllerutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
 	nbdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -343,11 +344,14 @@ func (c *controller) syncNetwork(network string) error {
 	c.setTableForNetworkUnlocked(info.GetNetworkID(), table)
 	c.Unlock()
 
-	// skip routes in the pod network
-	// TODO do not skip these routes in no overlay mode
-	ignoreSubnets := make([]*net.IPNet, len(info.Subnets()))
-	for i, subnet := range info.Subnets() {
-		ignoreSubnets[i] = subnet.CIDR
+	var ignoreSubnets []*net.IPNet
+	if info.GetNetworkEncapsulation() != config.NetworkEncapsulationNone {
+		// if the network is overlay mode, skip routes to the pod network
+		ignoreSubnets = make([]*net.IPNet, len(info.Subnets()))
+		for i, subnet := range info.Subnets() {
+			c.log.V(5).Info("Reconciled network", "network", info.GetNetworkName(), "ignore subnet", subnet.CIDR.String())
+			ignoreSubnets[i] = subnet.CIDR
+		}
 	}
 
 	expected, err := c.getBGPRoutes(table, ignoreSubnets)
@@ -431,6 +435,7 @@ func (c *controller) getBGPRoutes(table int, ignoreSubnets []*net.IPNet) (sets.S
 	routes := sets.New[route]()
 	for _, nlroute := range nlroutes {
 		if util.IsContainedInAnyCIDR(nlroute.Dst, ignoreSubnets...) {
+			c.log.V(5).Info("Ignore BGP route", "table", table, "route", stringer{nlroute})
 			continue
 		}
 		routes.Insert(routesFromNetlinkRoute(&nlroute)...)

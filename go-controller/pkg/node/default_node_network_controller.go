@@ -1125,7 +1125,7 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 	//        plumbing (takes 80ms based on what we saw in CI runs so we might still have that small window of disruption).
 	// NOTE: ovnkube-node in DPU host mode doesn't go through upgrades for OVN-IC and has no SBDB to connect to. Thus this part shall be skipped.
 	var syncNodes, syncServices, syncPods bool
-	if config.OvnKubeNode.Mode != types.NodeModeDPUHost && config.OVNKubernetesFeature.EnableInterconnect && nc.sbZone != types.OvnDefaultZone && !util.HasNodeMigratedZone(node) {
+	if config.OvnKubeNode.Mode != types.NodeModeDPUHost && config.OVNKubernetesFeature.EnableInterconnect && nc.sbZone != types.OvnDefaultZone && !util.HasNodeMigratedZone(node) && config.Default.DefaultNetworkEncapsulation != config.NetworkEncapsulationNone {
 		klog.Info("Upgrade Hack: Interconnect is enabled")
 		var err1 error
 		start := time.Now()
@@ -1690,7 +1690,7 @@ func (nc *DefaultNodeNetworkController) validateVTEPInterfaceMTU() error {
 
 		// calc required MTU
 		var requiredMTU int
-		if config.Gateway.SingleNode {
+		if config.Gateway.SingleNode || config.Default.DefaultNetworkEncapsulation == config.NetworkEncapsulationNone {
 			requiredMTU = config.Default.MTU
 		} else {
 			if config.IPv4Mode && !config.IPv6Mode {
