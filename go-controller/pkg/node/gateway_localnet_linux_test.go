@@ -57,9 +57,8 @@ func initFakeNodePortWatcher(iptV4, iptV6 util.IPTablesHelper) *nodePortWatcher 
 
 	gwMACParsed, _ := net.ParseMAC(gwMAC)
 
-	defaultNetConfig := &bridgeconfig.BridgeUDNConfiguration{
-		OfPortPatch: "patch-breth0_ov",
-	}
+	defaultBridge := bridgeconfig.TestDefaultBridgeConfig()
+	defaultBridge.MacAddress = gwMACParsed
 
 	fNPW := nodePortWatcher{
 		ofportPhys:  "eth0",
@@ -67,13 +66,8 @@ func initFakeNodePortWatcher(iptV4, iptV6 util.IPTablesHelper) *nodePortWatcher 
 		gatewayIPv6: v6localnetGatewayIP,
 		serviceInfo: make(map[k8stypes.NamespacedName]*serviceConfig),
 		ofm: &openflowManager{
-			flowCache: map[string][]string{},
-			defaultBridge: &bridgeconfig.BridgeConfiguration{
-				MacAddress: gwMACParsed,
-				NetConfig: map[string]*bridgeconfig.BridgeUDNConfiguration{
-					types.DefaultNetworkName: defaultNetConfig,
-				},
-			},
+			flowCache:     map[string][]string{},
+			defaultBridge: defaultBridge,
 		},
 		networkManager: networkmanager.Default().Interface(),
 	}

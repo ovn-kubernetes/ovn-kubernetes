@@ -810,17 +810,10 @@ var _ = Describe("Node", func() {
 					Expect(err).NotTo(HaveOccurred())
 					err = setupPMTUDNFTChain()
 					Expect(err).NotTo(HaveOccurred())
-					defaultNetConfig := &bridgeconfig.BridgeUDNConfiguration{
-						OfPortPatch: "patch-breth0_ov",
-					}
 					nc.Gateway = &gateway{
 						openflowManager: &openflowManager{
-							flowCache: map[string][]string{},
-							defaultBridge: &bridgeconfig.BridgeConfiguration{
-								NetConfig: map[string]*bridgeconfig.BridgeUDNConfiguration{
-									types.DefaultNetworkName: defaultNetConfig,
-								},
-							},
+							flowCache:     map[string][]string{},
+							defaultBridge: bridgeconfig.TestDefaultBridgeConfig(),
 						},
 					}
 
@@ -922,17 +915,10 @@ add element inet ovn-kubernetes no-pmtud-remote-node-ips-v4 { 169.254.254.61 }
 					Expect(err).NotTo(HaveOccurred())
 					err = setupPMTUDNFTChain()
 					Expect(err).NotTo(HaveOccurred())
-					defaultNetConfig := &bridgeconfig.BridgeUDNConfiguration{
-						OfPortPatch: "patch-breth0_ov",
-					}
 					nc.Gateway = &gateway{
 						openflowManager: &openflowManager{
-							flowCache: map[string][]string{},
-							defaultBridge: &bridgeconfig.BridgeConfiguration{
-								NetConfig: map[string]*bridgeconfig.BridgeUDNConfiguration{
-									types.DefaultNetworkName: defaultNetConfig,
-								},
-							},
+							flowCache:     map[string][]string{},
+							defaultBridge: bridgeconfig.TestDefaultBridgeConfig(),
 						},
 					}
 
@@ -1076,17 +1062,10 @@ add element inet ovn-kubernetes no-pmtud-remote-node-ips-v4 { 169.254.253.61 }
 					Expect(err).NotTo(HaveOccurred())
 					err = setupPMTUDNFTChain()
 					Expect(err).NotTo(HaveOccurred())
-					defaultNetConfig := &bridgeconfig.BridgeUDNConfiguration{
-						OfPortPatch: "patch-breth0_ov",
-					}
 					nc.Gateway = &gateway{
 						openflowManager: &openflowManager{
-							flowCache: map[string][]string{},
-							defaultBridge: &bridgeconfig.BridgeConfiguration{
-								NetConfig: map[string]*bridgeconfig.BridgeUDNConfiguration{
-									types.DefaultNetworkName: defaultNetConfig,
-								},
-							},
+							flowCache:     map[string][]string{},
+							defaultBridge: bridgeconfig.TestDefaultBridgeConfig(),
 						},
 					}
 
@@ -1187,17 +1166,10 @@ add element inet ovn-kubernetes no-pmtud-remote-node-ips-v6 { 2001:db8:1::4 }
 					Expect(err).NotTo(HaveOccurred())
 					err = setupPMTUDNFTChain()
 					Expect(err).NotTo(HaveOccurred())
-					defaultNetConfig := &bridgeconfig.BridgeUDNConfiguration{
-						OfPortPatch: "patch-breth0_ov",
-					}
 					nc.Gateway = &gateway{
 						openflowManager: &openflowManager{
-							flowCache: map[string][]string{},
-							defaultBridge: &bridgeconfig.BridgeConfiguration{
-								NetConfig: map[string]*bridgeconfig.BridgeUDNConfiguration{
-									types.DefaultNetworkName: defaultNetConfig,
-								},
-							},
+							flowCache:     map[string][]string{},
+							defaultBridge: bridgeconfig.TestDefaultBridgeConfig(),
 						},
 					}
 
@@ -1355,17 +1327,10 @@ add element inet ovn-kubernetes no-pmtud-remote-node-ips-v6 { 2002:db8:1::4 }
 					Expect(err).NotTo(HaveOccurred())
 					err = setupPMTUDNFTChain()
 					Expect(err).NotTo(HaveOccurred())
-					defaultNetConfig := &bridgeconfig.BridgeUDNConfiguration{
-						OfPortPatch: "patch-breth0_ov",
-					}
 					nc.Gateway = &gateway{
 						openflowManager: &openflowManager{
-							flowCache: map[string][]string{},
-							defaultBridge: &bridgeconfig.BridgeConfiguration{
-								NetConfig: map[string]*bridgeconfig.BridgeUDNConfiguration{
-									types.DefaultNetworkName: defaultNetConfig,
-								},
-							},
+							flowCache:     map[string][]string{},
+							defaultBridge: bridgeconfig.TestDefaultBridgeConfig(),
 						},
 					}
 
@@ -1483,17 +1448,10 @@ add element inet ovn-kubernetes no-pmtud-remote-node-ips-v6 { 2002:db8:1::4 }
 					Expect(err).NotTo(HaveOccurred())
 					err = setupPMTUDNFTChain()
 					Expect(err).NotTo(HaveOccurred())
-					defaultNetConfig := &bridgeconfig.BridgeUDNConfiguration{
-						OfPortPatch: "patch-breth0_ov",
-					}
 					nc.Gateway = &gateway{
 						openflowManager: &openflowManager{
-							flowCache: map[string][]string{},
-							defaultBridge: &bridgeconfig.BridgeConfiguration{
-								NetConfig: map[string]*bridgeconfig.BridgeUDNConfiguration{
-									types.DefaultNetworkName: defaultNetConfig,
-								},
-							},
+							flowCache:     map[string][]string{},
+							defaultBridge: bridgeconfig.TestDefaultBridgeConfig(),
 						},
 					}
 
