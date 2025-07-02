@@ -1227,7 +1227,10 @@ func newLayer2NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 		defaultGatewayIPs:     defaultGatewayIPs,
 		managementIPs:         managementIPs,
 		transport:             netconf.Transport,
+<<<<<<< HEAD
 		evpn:                  netconf.EVPN,
+=======
+>>>>>>> afcfc64f2 (no-overlay: Implement no-overlay for the default network)
 		mutableNetInfo: mutableNetInfo{
 			id:   types.InvalidID,
 			nads: sets.Set[string]{},
@@ -1261,6 +1264,7 @@ func newLocalnetNetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error
 		vlan:                uint(netconf.VLANID),
 		allowPersistentIPs:  netconf.AllowPersistentIPs,
 		physicalNetworkName: netconf.PhysicalNetworkName,
+		transport:           netconf.Transport,
 		mutableNetInfo: mutableNetInfo{
 			id:   types.InvalidID,
 			nads: sets.Set[string]{},
