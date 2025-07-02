@@ -382,7 +382,7 @@ func gatewayInitInternal(nodeName, gwIntf, egressGatewayIntf string, gwNextHops 
 			"IP fragmentation or large TCP/UDP payloads may not be forwarded correctly.")
 		enableGatewayMTU = false
 	} else {
-		chkPktLengthSupported, err := util.DetectCheckPktLengthSupport(gatewayBridge.BridgeName)
+		chkPktLengthSupported, err := util.DetectCheckPktLengthSupport(gatewayBridge.GetBridgeName())
 		if err != nil {
 			return nil, nil, err
 		}
@@ -416,9 +416,9 @@ func gatewayInitInternal(nodeName, gwIntf, egressGatewayIntf string, gwNextHops 
 	}
 
 	if config.Default.EnableUDPAggregation {
-		err = setupUDPAggregationUplink(gatewayBridge.UplinkName)
+		err = setupUDPAggregationUplink(gatewayBridge.GetUplinkName())
 		if err == nil && egressGWBridge != nil {
-			err = setupUDPAggregationUplink(egressGWBridge.UplinkName)
+			err = setupUDPAggregationUplink(egressGWBridge.GetUplinkName())
 		}
 		if err != nil {
 			klog.Warningf("Could not enable UDP packet aggregation on uplink interface (aggregation will be disabled): %v", err)
@@ -427,25 +427,25 @@ func gatewayInitInternal(nodeName, gwIntf, egressGatewayIntf string, gwNextHops 
 	}
 
 	// Set static FDB entry for LOCAL port
-	if err := util.SetStaticFDBEntry(gatewayBridge.bridgeName, gatewayBridge.bridgeName, gatewayBridge.macAddress); err != nil {
+	if err := util.SetStaticFDBEntry(gatewayBridge.GetBridgeName(), gatewayBridge.GetBridgeName(), gatewayBridge.GetMAC()); err != nil {
 		return nil, nil, err
 	}
 
 	l3GwConfig := util.L3GatewayConfig{
 		Mode:           config.Gateway.Mode,
 		ChassisID:      chassisID,
-		BridgeID:       gatewayBridge.BridgeName,
-		InterfaceID:    gatewayBridge.InterfaceID,
-		MACAddress:     gatewayBridge.MacAddress,
-		IPAddresses:    gatewayBridge.Ips,
+		BridgeID:       gatewayBridge.GetBridgeName(),
+		InterfaceID:    gatewayBridge.GetInterfaceID(),
+		MACAddress:     gatewayBridge.GetMAC(),
+		IPAddresses:    gatewayBridge.GetIPs(),
 		NextHops:       gwNextHops,
 		NodePortEnable: config.Gateway.NodeportEnable,
 		VLANID:         &config.Gateway.VLANID,
 	}
 	if egressGWBridge != nil {
-		l3GwConfig.EgressGWInterfaceID = egressGWBridge.InterfaceID
-		l3GwConfig.EgressGWMACAddress = egressGWBridge.MacAddress
-		l3GwConfig.EgressGWIPAddresses = egressGWBridge.Ips
+		l3GwConfig.EgressGWInterfaceID = egressGWBridge.GetInterfaceID()
+		l3GwConfig.EgressGWMACAddress = egressGWBridge.GetMAC()
+		l3GwConfig.EgressGWIPAddresses = egressGWBridge.GetIPs()
 	}
 
 	err = util.SetL3GatewayConfig(nodeAnnotator, &l3GwConfig)
@@ -467,11 +467,11 @@ func (g *gateway) SetDefaultGatewayBridgeMAC(macAddr net.HardwareAddr) {
 }
 
 func (g *gateway) SetDefaultPodNetworkAdvertised(isPodNetworkAdvertised bool) {
-	g.openflowManager.defaultBridge.NetConfig[types.DefaultNetworkName].Advertised.Store(isPodNetworkAdvertised)
+	g.openflowManager.defaultBridge.GetNetworkConfig(types.DefaultNetworkName).Advertised.Store(isPodNetworkAdvertised)
 }
 
 func (g *gateway) GetDefaultPodNetworkAdvertised() bool {
-	return g.openflowManager.defaultBridge.NetConfig[types.DefaultNetworkName].Advertised.Load()
+	return g.openflowManager.defaultBridge.GetNetworkConfig(types.DefaultNetworkName).Advertised.Load()
 }
 
 // Reconcile handles triggering updates to different components of a gateway, like OFM, Services

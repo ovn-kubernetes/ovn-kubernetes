@@ -46,10 +46,10 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 	// CAUTION: when adding new flows where the in_port is ofPortPatch and the out_port is ofPortPhys, ensure
 	// that dl_src is included in match criteria!
 
-	ofPortPhys := b.OfPortPhys
-	bridgeMacAddress := b.MacAddress.String()
-	ofPortHost := b.OfPortHost
-	bridgeIPs := b.Ips
+	ofPortPhys := b.ofPortPhys
+	bridgeMacAddress := b.macAddress.String()
+	ofPortHost := b.ofPortHost
+	bridgeIPs := b.ips
 
 	var dftFlows []string
 	// 14 bytes of overhead for ethernet header (does not include VLAN)
@@ -347,7 +347,7 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 				nodeutil.DefaultOpenFlowCookie, match_vlan, bridgeMacAddress, strip_vlan, ofPortHost))
 	}
 
-	defaultNetConfig := b.NetConfig[types.DefaultNetworkName]
+	defaultNetConfig := b.netConfig[types.DefaultNetworkName]
 
 	// table 2, dispatch from Host -> OVN
 	dftFlows = append(dftFlows,
@@ -502,10 +502,10 @@ func generateIPFragmentReassemblyFlow(ofPortPhys string) []string {
 func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, error) {
 	// CAUTION: when adding new flows where the in_port is ofPortPatch and the out_port is ofPortPhys, ensure
 	// that dl_src is included in match criteria!
-	ofPortPhys := b.OfPortPhys
-	bridgeMacAddress := b.MacAddress.String()
-	ofPortHost := b.OfPortHost
-	bridgeIPs := b.Ips
+	ofPortPhys := b.ofPortPhys
+	bridgeMacAddress := b.macAddress.String()
+	ofPortHost := b.ofPortHost
+	bridgeIPs := b.ips
 
 	var dftFlows []string
 
@@ -563,9 +563,9 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 				// table 0, packets coming from egressIP pods only from user defined networks. If an egressIP is assigned to
 				// this node, then all networks get a flow even if no pods on that network were selected for by this egressIP.
 				if util.IsNetworkSegmentationSupportEnabled() && config.OVNKubernetesFeature.EnableInterconnect &&
-					config.Gateway.Mode != config.GatewayModeDisabled && b.EipMarkIPs != nil {
+					config.Gateway.Mode != config.GatewayModeDisabled && b.eipMarkIPs != nil {
 					if netConfig.MasqCTMark != CtMarkOVN {
-						for mark, eip := range b.EipMarkIPs.GetIPv4() {
+						for mark, eip := range b.eipMarkIPs.GetIPv4() {
 							dftFlows = append(dftFlows,
 								fmt.Sprintf("cookie=%s, priority=105, in_port=%s, dl_src=%s, ip, pkt_mark=%d, "+
 									"actions=ct(commit, zone=%d, nat(src=%s), exec(set_field:%s->ct_mark)), output:%s",
@@ -660,9 +660,9 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 				// table 0, packets coming from egressIP pods only from user defined networks. If an egressIP is assigned to
 				// this node, then all networks get a flow even if no pods on that network were selected for by this egressIP.
 				if util.IsNetworkSegmentationSupportEnabled() && config.OVNKubernetesFeature.EnableInterconnect &&
-					config.Gateway.Mode != config.GatewayModeDisabled && b.EipMarkIPs != nil {
+					config.Gateway.Mode != config.GatewayModeDisabled && b.eipMarkIPs != nil {
 					if netConfig.MasqCTMark != CtMarkOVN {
-						for mark, eip := range b.EipMarkIPs.GetIPv6() {
+						for mark, eip := range b.eipMarkIPs.GetIPv6() {
 							dftFlows = append(dftFlows,
 								fmt.Sprintf("cookie=%s, priority=105, in_port=%s, dl_src=%s, ipv6, pkt_mark=%d, "+
 									"actions=ct(commit, zone=%d, nat(src=%s), exec(set_field:%s->ct_mark)), output:%s",
@@ -738,7 +738,7 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 	// Due to the fact that ovn-controllers on different nodes apply the changes independently,
 	// there is a chance that the pod traffic will reach the egress node before it configures the SNAT flows.
 	// Drop pod traffic that is not SNATed, excluding local pods(required for ICNIv2)
-	defaultNetConfig := b.NetConfig[types.DefaultNetworkName]
+	defaultNetConfig := b.netConfig[types.DefaultNetworkName]
 	if config.OVNKubernetesFeature.EnableEgressIP {
 		for _, clusterEntry := range config.Default.ClusterSubnets {
 			cidr := clusterEntry.CIDR

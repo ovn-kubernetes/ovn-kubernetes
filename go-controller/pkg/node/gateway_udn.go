@@ -599,7 +599,7 @@ func (udng *UserDefinedNetworkGateway) getDefaultRoute(isNetworkAdvertised bool)
 
 	var retVal []netlink.Route
 	var defaultAnyCIDR *net.IPNet
-	for _, nextHop := range udng.gateway.openflowManager.defaultBridge.NextHops {
+	for _, nextHop := range udng.gateway.openflowManager.defaultBridge.GetNextHops() {
 		isV6 := utilnet.IsIPv6(nextHop)
 		_, defaultAnyCIDR, _ = net.ParseCIDR("0.0.0.0/0")
 		if isV6 {
@@ -791,7 +791,7 @@ func (udng *UserDefinedNetworkGateway) doReconcile() error {
 
 	// update bridge configuration
 	isNetworkAdvertised := util.IsPodNetworkAdvertisedAtNode(udng.NetInfo, udng.node.Name)
-	netConfig := udng.openflowManager.defaultBridge.GetNetworkBridgeConfig(udng.GetNetworkName())
+	netConfig := udng.openflowManager.defaultBridge.GetNetworkConfig(udng.GetNetworkName())
 	if netConfig == nil {
 		return fmt.Errorf("missing bridge configuration for network %s", udng.GetNetworkName())
 	}

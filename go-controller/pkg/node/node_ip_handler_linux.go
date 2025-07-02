@@ -438,7 +438,8 @@ func (c *addressManager) isValidNodeIP(addr net.IP, linkIndex int) bool {
 		if util.IsNetworkSegmentationSupportEnabled() && config.OVNKubernetesFeature.EnableInterconnect && config.Gateway.Mode != config.GatewayModeDisabled {
 			// Two methods to lookup EIPs assigned to the gateway bridge. Fast path from a shared cache or slow path from node annotations.
 			// At startup, gateway bridge cache gets sync
-			if c.gatewayBridge.EipMarkIPs != nil && c.gatewayBridge.EipMarkIPs.HasSyncdOnce() && c.gatewayBridge.EipMarkIPs.IsIPPresent(addr) {
+			eipMarkIPs := c.gatewayBridge.GetEIPMarkIPs()
+			if eipMarkIPs != nil && eipMarkIPs.HasSyncdOnce() && eipMarkIPs.IsIPPresent(addr) {
 				return false
 			} else {
 				if eipAddresses, err := c.getPrimaryHostEgressIPs(); err != nil {
