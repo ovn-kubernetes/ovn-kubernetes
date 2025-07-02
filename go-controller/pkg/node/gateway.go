@@ -452,16 +452,6 @@ func gatewayInitInternal(nodeName, gwIntf, egressGatewayIntf string, gwNextHops 
 	return gatewayBridge, egressGWBridge, err
 }
 
-func gatewayReady(patchPort string) (bool, error) {
-	// Get ofport of patchPort
-	ofport, _, err := util.GetOVSOfPort("--if-exists", "get", "interface", patchPort, "ofport")
-	if err != nil || len(ofport) == 0 {
-		return false, nil
-	}
-	klog.Info("Gateway is ready")
-	return true, nil
-}
-
 func (g *gateway) GetGatewayBridgeIface() string {
 	return g.openflowManager.getDefaultBridgeName()
 }

@@ -349,6 +349,30 @@ func (b *BridgeConfiguration) PatchedNetConfigs() []*BridgeUDNConfiguration {
 	return result
 }
 
+// WaitGatewayReady waits for patch ports of every netConfig to be present
+// used by gateway on newGateway readyFunc
+func (b *BridgeConfiguration) WaitGatewayReady() error {
+	b.Mutex.Lock()
+	defer b.Mutex.Unlock()
+	for _, netConfig := range b.NetConfig {
+		ready := gatewayReady(netConfig.PatchPort)
+		if !ready {
+			return fmt.Errorf("gateway patch port %s is not ready yet", netConfig.PatchPort)
+		}
+	}
+	return nil
+}
+
+func gatewayReady(patchPort string) bool {
+	// Get ofport of patchPort
+	ofport, _, err := util.GetOVSOfPort("--if-exists", "get", "interface", patchPort, "ofport")
+	if err != nil || len(ofport) == 0 {
+		return false
+	}
+	klog.Info("Gateway is ready")
+	return true
+}
+
 func getIntfName(gatewayIntf string) (string, error) {
 	// The given (or autodetected) interface is an OVS bridge and this could be
 	// created by us using util.NicToBridge() or it was pre-created by the user.
