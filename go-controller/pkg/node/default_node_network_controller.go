@@ -1014,7 +1014,7 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 	//        plumbing (takes 80ms based on what we saw in CI runs so we might still have that small window of disruption).
 	// NOTE: ovnkube-node in DPU host mode doesn't go through upgrades for OVN-IC and has no SBDB to connect to. Thus this part shall be skipped.
 	var syncNodes, syncServices, syncPods bool
-	if config.OvnKubeNode.Mode != types.NodeModeDPUHost && config.OVNKubernetesFeature.EnableInterconnect && nc.sbZone != types.OvnDefaultZone && !util.HasNodeMigratedZone(node) {
+	if config.OvnKubeNode.Mode != types.NodeModeDPUHost && config.OVNKubernetesFeature.EnableInterconnect && nc.sbZone != types.OvnDefaultZone && !util.HasNodeMigratedZone(node) && config.Default.Transport != config.TransportNoOverlay {
 		klog.Info("Upgrade Hack: Interconnect is enabled")
 		var err1 error
 		start := time.Now()
@@ -1584,8 +1584,8 @@ func (nc *DefaultNodeNetworkController) syncNodes(objs []interface{}) error {
 }
 
 // validateVTEPInterfaceMTU checks if the MTU of the interface that has ovn-encap-ip is big
-// enough to carry the `config.Default.MTU` and the Geneve header. If the MTU is not big
-// enough, it will return an error
+// enough to carry the `config.Default.MTU` and the Geneve header (if overlay transport is used).
+// If the MTU is not big enough, it will return an error
 func (nc *DefaultNodeNetworkController) validateVTEPInterfaceMTU() error {
 	// OVN allows `external_ids:ovn-encap-ip` to be a list of IPs separated by comma
 	ovnEncapIps := strings.Split(config.Default.EffectiveEncapIP, ",")
@@ -1601,7 +1601,7 @@ func (nc *DefaultNodeNetworkController) validateVTEPInterfaceMTU() error {
 
 		// calc required MTU
 		var requiredMTU int
-		if config.Gateway.SingleNode {
+		if config.Gateway.SingleNode || config.Default.Transport == config.TransportNoOverlay {
 			requiredMTU = config.Default.MTU
 		} else {
 			if config.IPv4Mode && !config.IPv6Mode {
