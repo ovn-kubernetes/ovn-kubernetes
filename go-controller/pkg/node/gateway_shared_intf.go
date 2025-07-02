@@ -33,6 +33,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/managementport"
 	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
+	nodeutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
@@ -43,9 +44,7 @@ const (
 	// bridge to move packets between host and external for etp=local traffic.
 	// The hex number 0xe745ecf105, represents etp(e74)-service(5ec)-flows which makes it easier for debugging.
 	etpSvcOpenFlowCookie = "0xe745ecf105"
-	// pmtudOpenFlowCookie identifies the flows used to drop ICMP type (3) destination unreachable,
-	// fragmentation-needed (4)
-	pmtudOpenFlowCookie = "0x0304"
+
 	// ovsLocalPort is the name of the OVS bridge local port
 	ovsLocalPort = "LOCAL"
 
@@ -84,10 +83,6 @@ const (
 	// to the appropriate network.
 	nftablesUDNMarkExternalIPsV4Map = "udn-mark-external-ips-v4"
 	nftablesUDNMarkExternalIPsV6Map = "udn-mark-external-ips-v6"
-
-	// outputPortDrop is used to signify that there is no output port for an openflow action and the
-	// rendered action should result in a drop
-	outputPortDrop = "output-port-drop"
 )
 
 // configureUDNServicesNFTables configures the nftables chains, rules, and verdict maps
@@ -527,7 +522,7 @@ func (npw *nodePortWatcher) createLbAndExternalSvcFlows(service *corev1.Service,
 					etpSvcOpenFlowCookie, npw.ofportPhys))
 		} else if config.Gateway.Mode == config.GatewayModeShared {
 			// add the ICMP Fragmentation flow for shared gateway mode.
-			icmpFlow := generateICMPFragmentationFlow(externalIPOrLBIngressIP, netConfig.OfPortPatch, npw.ofportPhys, cookie, 110)
+			icmpFlow := nodeutil.GenerateICMPFragmentationFlow(externalIPOrLBIngressIP, netConfig.OfPortPatch, npw.ofportPhys, cookie, 110)
 			externalIPFlows = append(externalIPFlows, icmpFlow)
 			// case2 (see function description for details)
 			externalIPFlows = append(externalIPFlows,
@@ -591,31 +586,6 @@ func (npw *nodePortWatcher) generateARPBypassFlow(ofPorts []string, ofPortPatch,
 	}
 
 	return arpFlow
-}
-
-func generateICMPFragmentationFlow(ipAddr, outputPort, inPort, cookie string, priority int) string {
-	// we send any ICMP destination unreachable, fragmentation needed to the OVN pipeline too so that
-	// path MTU discovery continues to work.
-	icmpMatch := "icmp"
-	icmpType := 3
-	icmpCode := 4
-	nwDst := "nw_dst"
-	if utilnet.IsIPv6String(ipAddr) {
-		icmpMatch = "icmp6"
-		icmpType = 2
-		icmpCode = 0
-		nwDst = "ipv6_dst"
-	}
-
-	action := fmt.Sprintf("output:%s", outputPort)
-	if outputPort == outputPortDrop {
-		action = "drop"
-	}
-
-	icmpFragmentationFlow := fmt.Sprintf("cookie=%s, priority=%d, in_port=%s, %s, %s=%s, icmp_type=%d, "+
-		"icmp_code=%d, actions=%s",
-		cookie, priority, inPort, icmpMatch, nwDst, ipAddr, icmpType, icmpCode, action)
-	return icmpFragmentationFlow
 }
 
 // getAndDeleteServiceInfo returns the serviceConfig for a service and if it exists and then deletes the entry
@@ -1439,21 +1409,6 @@ func (npwipt *nodePortWatcherIptables) SyncServices(services []interface{}) erro
 	}
 
 	return utilerrors.Join(errors...)
-}
-
-func pmtudDropFlows(bridge *bridgeconfig.BridgeConfiguration, ipAddrs []string) []string {
-	var flows []string
-	if config.Gateway.Mode != config.GatewayModeShared {
-		return nil
-	}
-	for _, addr := range ipAddrs {
-		for _, netConfig := range bridge.PatchedNetConfigs() {
-			flows = append(flows,
-				generateICMPFragmentationFlow(addr, outputPortDrop, netConfig.OfPortPatch, pmtudOpenFlowCookie, 700))
-		}
-	}
-
-	return flows
 }
 
 func newGateway(

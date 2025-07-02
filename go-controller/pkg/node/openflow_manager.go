@@ -195,18 +195,10 @@ func (c *openflowManager) Run(stopChan <-chan struct{}, doneWg *sync.WaitGroup) 
 }
 
 func (c *openflowManager) updateBridgePMTUDFlowCache(key string, ipAddrs []string) {
-	// key is "nodeName_pmtud"
-	// TODO: do we need this? protect defaultBridge config from being updated by gw.nodeIPManager
-	//c.defaultBridge.Lock()
-	//defer c.defaultBridge.Unlock()
-
-	dftFlows := pmtudDropFlows(c.defaultBridge, ipAddrs)
+	dftFlows := c.defaultBridge.PmtudDropFlows(ipAddrs)
 	c.updateFlowCacheEntry(key, dftFlows)
 	if c.externalGatewayBridge != nil {
-		// TODO
-		//c.externalGatewayBridge.Lock()
-		//defer c.externalGatewayBridge.Unlock()
-		exGWBridgeDftFlows := pmtudDropFlows(c.externalGatewayBridge, ipAddrs)
+		exGWBridgeDftFlows := c.externalGatewayBridge.PmtudDropFlows(ipAddrs)
 		c.updateExBridgeFlowCacheEntry(key, exGWBridgeDftFlows)
 	}
 }

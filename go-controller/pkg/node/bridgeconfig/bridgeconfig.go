@@ -33,6 +33,9 @@ const (
 	ctMarkOVN = "0x1"
 	// ovsLocalPort is the name of the OVS bridge local port
 	ovsLocalPort = "LOCAL"
+	// pmtudOpenFlowCookie identifies the flows used to drop ICMP type (3) destination unreachable,
+	// fragmentation-needed (4)
+	pmtudOpenFlowCookie = "0x0304"
 )
 
 type BridgeConfiguration struct {
@@ -1093,6 +1096,23 @@ func (bridge *BridgeConfiguration) flowsForDefaultNetwork(extraIPs []net.IP) ([]
 	return dftFlows, nil
 }
 
+func (bridge *BridgeConfiguration) PmtudDropFlows(ipAddrs []string) []string {
+	bridge.mutex.Lock()
+	defer bridge.mutex.Unlock()
+	var flows []string
+	if config.Gateway.Mode != config.GatewayModeShared {
+		return nil
+	}
+	for _, addr := range ipAddrs {
+		for _, netConfig := range bridge.patchedNetConfigs() {
+			flows = append(flows,
+				nodeutil.GenerateICMPFragmentationFlow(addr, nodeutil.OutputPortDrop, netConfig.OfPortPatch, pmtudOpenFlowCookie, 700))
+		}
+	}
+
+	return flows
+}
+
 // ovnToHostNetworkNormalActionFlows returns the flows that allow IP{v4,v6} traffic from the OVN network to the host network
 // when the destination is on the same node as the sender. This is necessary for pods in the default network to reach
 // localnet pods on the same node, when the localnet is mapped to breth0. The expected srcMAC is the MAC address of breth0
@@ -1303,12 +1323,6 @@ func (bridge *BridgeConfiguration) GetBridgeIPs() []*net.IPNet {
 	bridge.mutex.Lock()
 	defer bridge.mutex.Unlock()
 	return bridge.ips
-}
-
-func (bridge *BridgeConfiguration) PatchedNetConfigs() []*BridgeUDNConfiguration {
-	bridge.mutex.Lock()
-	defer bridge.mutex.Unlock()
-	return bridge.patchedNetConfigs()
 }
 
 func (bridge *BridgeConfiguration) patchedNetConfigs() []*BridgeUDNConfiguration {

@@ -10,6 +10,12 @@ import (
 	ovnkutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
+const (
+	// OutputPortDrop is used to signify that there is no output port for an openflow action and the
+	// rendered action should result in a drop
+	OutputPortDrop = "output-port-drop"
+)
+
 // GetDPUHostPrimaryIPAddresses returns the DPU host IP/Network based on K8s Node IP
 // and DPU IP subnet overriden by config config.Gateway.RouterSubnet
 func GetDPUHostPrimaryIPAddresses(k8sNodeIP net.IP, ifAddrs []*net.IPNet) ([]*net.IPNet, error) {
@@ -89,4 +95,29 @@ func GetNetworkInterfaceIPAddresses(iface string) ([]*net.IPNet, error) {
 		return nil, fmt.Errorf("failed to find IPv6 address on interface %s", iface)
 	}
 	return ips, nil
+}
+
+func GenerateICMPFragmentationFlow(ipAddr, outputPort, inPort, cookie string, priority int) string {
+	// we send any ICMP destination unreachable, fragmentation needed to the OVN pipeline too so that
+	// path MTU discovery continues to work.
+	icmpMatch := "icmp"
+	icmpType := 3
+	icmpCode := 4
+	nwDst := "nw_dst"
+	if utilnet.IsIPv6String(ipAddr) {
+		icmpMatch = "icmp6"
+		icmpType = 2
+		icmpCode = 0
+		nwDst = "ipv6_dst"
+	}
+
+	action := fmt.Sprintf("output:%s", outputPort)
+	if outputPort == OutputPortDrop {
+		action = "drop"
+	}
+
+	icmpFragmentationFlow := fmt.Sprintf("cookie=%s, priority=%d, in_port=%s, %s, %s=%s, icmp_type=%d, "+
+		"icmp_code=%d, actions=%s",
+		cookie, priority, inPort, icmpMatch, nwDst, ipAddr, icmpType, icmpCode, action)
+	return icmpFragmentationFlow
 }
