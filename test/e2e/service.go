@@ -567,10 +567,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 		isHostMasqSrcIP := func(dst, masqIP string) bool {
 			output := getIPRouteGetOutput(dst)
 			// if its not included in the output of ip route get, its sufficient to say, its not being used as src ip
-			if strings.Contains(output, masqIP) {
-				return true
-			}
-			return false
+			return strings.Contains(output, masqIP)
 		}
 		explain := "host masquerade IP incorrectly used as source IP for external communication"
 		if v4NodeAddrs != "" { // v4 enabled

@@ -524,10 +524,7 @@ func nodePortsFromService(service *corev1.Service) (int32, int32) {
 // address or a hostname
 func addressIsIP(address corev1.NodeAddress) bool {
 	addr := net.ParseIP(address.Address)
-	if addr == nil {
-		return false
-	}
-	return true
+	return addr != nil
 }
 
 // addressIsIPv4 tells whether the given address is an
@@ -1315,10 +1312,7 @@ func isDisablePacketMTUCheckEnabled() bool {
 // annotation also get set to false
 func getGatewayMTUSupport(node *corev1.Node) bool {
 	_, ok := node.Annotations[ovnGatewayMTUSupport]
-	if !ok {
-		return true
-	}
-	return false
+	return !ok
 }
 
 func isKernelModuleLoaded(nodeName, kernelModuleName string) bool {

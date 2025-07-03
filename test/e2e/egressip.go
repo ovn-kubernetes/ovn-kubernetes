@@ -208,11 +208,7 @@ func getLastLogLine(data string) string {
 
 // checks if the given IP is found. If there are multiple lines, only consider the last line.
 func containsIPInLastEntry(data, ip string) bool {
-	if strings.Contains(getLastLogLine(data), ip) {
-
-		return true
-	}
-	return false
+	return strings.Contains(getLastLogLine(data), ip)
 }
 
 // support for agnhost image is limited to netexec command
@@ -589,10 +585,7 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", feature.EgressIP
 	}
 
 	isNodeInternalAddressesPresentForIPFamily := func(nodes *corev1.NodeList, ipFamily corev1.IPFamily) bool {
-		if len(getNodesInternalAddresses(nodes, ipFamily)) > 0 {
-			return true
-		}
-		return false
+		return len(getNodesInternalAddresses(nodes, ipFamily)) > 0
 	}
 
 	isNetworkSupported := func(nodes *corev1.NodeList, netConfigParams networkAttachmentConfigParams) (bool, string) {
@@ -679,17 +672,11 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", feature.EgressIP
 	}
 
 	isUserDefinedNetwork := func(netParams networkAttachmentConfigParams) bool {
-		if netParams.networkName == types.DefaultNetworkName {
-			return false
-		}
-		return true
+		return netParams.networkName != types.DefaultNetworkName
 	}
 
 	isClusterDefaultNetwork := func(netParams networkAttachmentConfigParams) bool {
-		if netParams.networkName == types.DefaultNetworkName {
-			return true
-		}
-		return false
+		return netParams.networkName == types.DefaultNetworkName
 	}
 
 	f := wrappedTestFramework(egressIPName)
@@ -2674,7 +2661,7 @@ spec:
 		framework.ExpectNoError(err, "20. Check connectivity from both pods (%s/%s) to an external \"node\" on the "+
 			"OVN network and verify that the src IP is the node IP %s, failed: %v", podNamespace, pod2Name, pod2Node.nodeIP, err)
 
-		ginkgo.By("21. Set a node (hosting secondary host network Egress IP) back as available for egress")
+		ginkgo.By("21. Set a node (hosting secondary host network EgressIP) back as available for egress")
 		egressNodeAvailabilityHandler.Enable(nodeNameHostingSecondaryHostEIP)
 
 		ginkgo.By("22. Check that the status is of length one")
