@@ -6846,11 +6846,12 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 				egressPod1 := *newPodWithLabels(eipNamespace, podName, node1Name, "", egressPodLabel)
 				egressNamespace := newNamespace(eipNamespace)
 				annotations := map[string]string{
-					"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\"}", node1IPv4CIDR),
-					"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
-					"k8s.ovn.org/l3-gateway-config":   `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"192.168.126.12/24", "next-hop":"192.168.126.1"}}`,
-					"k8s.ovn.org/node-chassis-id":     "79fdcfc4-6fe6-4cd3-8242-c0f85a4668ec",
-					util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
+					"k8s.ovn.org/node-primary-ifaddr":   fmt.Sprintf("{\"ipv4\": \"%s\"}", node1IPv4CIDR),
+					"k8s.ovn.org/node-subnets":          fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
+					"k8s.ovn.org/l3-gateway-config":     `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"192.168.126.12/24", "next-hop":"192.168.126.1"}}`,
+					"k8s.ovn.org/node-chassis-id":       "79fdcfc4-6fe6-4cd3-8242-c0f85a4668ec",
+					"k8s.ovn.org/node-chassis-hostname": node1Name,
+					util.OVNNodeHostCIDRs:               fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
 				}
 				labels := map[string]string{
 					"k8s.ovn.org/egress-assignable": "",
@@ -7202,11 +7203,12 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 				egressNamespace := newNamespace(eipNamespace)
 
 				annotations := map[string]string{
-					"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\"}", node1IPv4CIDR),
-					"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
-					"k8s.ovn.org/l3-gateway-config":   `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"192.168.126.12/24", "next-hop":"192.168.126.1"}}`,
-					"k8s.ovn.org/node-chassis-id":     "79fdcfc4-6fe6-4cd3-8242-c0f85a4668ec",
-					util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
+					"k8s.ovn.org/node-primary-ifaddr":   fmt.Sprintf("{\"ipv4\": \"%s\"}", node1IPv4CIDR),
+					"k8s.ovn.org/node-subnets":          fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
+					"k8s.ovn.org/l3-gateway-config":     `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"192.168.126.12/24", "next-hop":"192.168.126.1"}}`,
+					"k8s.ovn.org/node-chassis-id":       "79fdcfc4-6fe6-4cd3-8242-c0f85a4668ec",
+					"k8s.ovn.org/node-chassis-hostname": node1Name,
+					util.OVNNodeHostCIDRs:               fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
 				}
 				labels := map[string]string{
 					"k8s.ovn.org/egress-assignable": "",
@@ -7528,6 +7530,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						"k8s.ovn.org/node-subnets":                    fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
 						"k8s.ovn.org/l3-gateway-config":               `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"192.168.126.12/24", "next-hop":"192.168.126.1"}}`,
 						"k8s.ovn.org/node-chassis-id":                 "79fdcfc4-6fe6-4cd3-8242-c0f85a4668ec",
+						"k8s.ovn.org/node-chassis-hostname":           node1Name,
 						"k8s.ovn.org/node-transit-switch-port-ifaddr": "{\"ipv4\":\"100.88.0.2/16\"}", // used only for ic=true test
 						"k8s.ovn.org/zone-name":                       node1Zone,                      // used only for ic=true test
 						util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
@@ -7544,6 +7547,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						"k8s.ovn.org/node-subnets":                    fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
 						"k8s.ovn.org/l3-gateway-config":               `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:50", "ip-address":"192.168.126.13/24", "next-hop":"192.168.126.1"}}`,
 						"k8s.ovn.org/node-chassis-id":                 "79fdcfc4-6fe6-4cd3-8242-c0f85a4668ec",
+						"k8s.ovn.org/node-chassis-hostname":           node1Name,
 						"k8s.ovn.org/node-transit-switch-port-ifaddr": "{\"ipv4\":\"100.88.0.3/16\"}", // used only for ic=true test
 						"k8s.ovn.org/zone-name":                       node2Zone,                      // used only for ic=true test
 						util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node2IPv4CIDR),
@@ -9394,11 +9398,12 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 				egressNamespace := newNamespace(eipNamespace)
 
 				annotations := map[string]string{
-					"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\"}", node1IPv4CIDR),
-					"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
-					"k8s.ovn.org/l3-gateway-config":   `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"192.168.126.12/24", "next-hop":"192.168.126.1"}}`,
-					"k8s.ovn.org/node-chassis-id":     "79fdcfc4-6fe6-4cd3-8242-c0f85a4668ec",
-					util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
+					"k8s.ovn.org/node-primary-ifaddr":   fmt.Sprintf("{\"ipv4\": \"%s\"}", node1IPv4CIDR),
+					"k8s.ovn.org/node-subnets":          fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
+					"k8s.ovn.org/l3-gateway-config":     `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"192.168.126.12/24", "next-hop":"192.168.126.1"}}`,
+					"k8s.ovn.org/node-chassis-id":       "79fdcfc4-6fe6-4cd3-8242-c0f85a4668ec",
+					"k8s.ovn.org/node-chassis-hostname": node1Name,
+					util.OVNNodeHostCIDRs:               fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
 				}
 				labels := map[string]string{
 					"k8s.ovn.org/egress-assignable": "",
@@ -10369,11 +10374,12 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
-							"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\"}", node1IPv4CIDR),
-							"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
-							"k8s.ovn.org/l3-gateway-config":   `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"192.168.126.12/24", "next-hop":"192.168.126.1"}}`,
-							"k8s.ovn.org/node-chassis-id":     "79fdcfc4-6fe6-4cd3-8242-c0f85a4668ec",
-							util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
+							"k8s.ovn.org/node-primary-ifaddr":   fmt.Sprintf("{\"ipv4\": \"%s\"}", node1IPv4CIDR),
+							"k8s.ovn.org/node-subnets":          fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
+							"k8s.ovn.org/l3-gateway-config":     `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"192.168.126.12/24", "next-hop":"192.168.126.1"}}`,
+							"k8s.ovn.org/node-chassis-id":       "79fdcfc4-6fe6-4cd3-8242-c0f85a4668ec",
+							"k8s.ovn.org/node-chassis-hostname": node1Name,
+							util.OVNNodeHostCIDRs:               fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
 						},
 						Labels: map[string]string{
 							"k8s.ovn.org/egress-assignable": "",
@@ -10565,11 +10571,12 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 					ObjectMeta: metav1.ObjectMeta{
 						Name: node1Name,
 						Annotations: map[string]string{
-							"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\"}", node1IPv4CIDR),
-							"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
-							"k8s.ovn.org/l3-gateway-config":   `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"192.168.126.12/24", "next-hop":"192.168.126.1"}}`,
-							"k8s.ovn.org/node-chassis-id":     "79fdcfc4-6fe6-4cd3-8242-c0f85a4668ec",
-							util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
+							"k8s.ovn.org/node-primary-ifaddr":   fmt.Sprintf("{\"ipv4\": \"%s\"}", node1IPv4CIDR),
+							"k8s.ovn.org/node-subnets":          fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
+							"k8s.ovn.org/l3-gateway-config":     `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"192.168.126.12/24", "next-hop":"192.168.126.1"}}`,
+							"k8s.ovn.org/node-chassis-id":       "79fdcfc4-6fe6-4cd3-8242-c0f85a4668ec",
+							"k8s.ovn.org/node-chassis-hostname": node1Name,
+							util.OVNNodeHostCIDRs:               fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
 						},
 						Labels: map[string]string{
 							"k8s.ovn.org/egress-assignable": "",
@@ -10857,11 +10864,12 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						ObjectMeta: metav1.ObjectMeta{
 							Name: node1Name,
 							Annotations: map[string]string{
-								"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"fc00:f853:ccd:e793::13/64\"}", node1IPv4CIDR),
-								"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":[\"%s\", \"%s\"]}", v4Node1Subnet, v6Node1Subnet),
-								"k8s.ovn.org/l3-gateway-config":   "{\"default\":{\"mode\":\"shared\",\"bridge-id\":\"breth0\",\"interface-id\":\"breth0_ovn-worker\",\"mac-address\":\"3a:24:24:5d:85:aa\",\"ip-addresses\":[\"10.89.0.19/24\",\"fc00:f853:ccd:e793::13/64\"],\"next-hops\":[\"10.89.0.1\",\"fc00:f853:ccd:e793::1\"],\"node-port-enable\":\"true\",\"vlan-id\":\"0\"}}",
-								"k8s.ovn.org/node-chassis-id":     "79fdcfc4-6fe6-4cd3-8242-c0f85a4668ec",
-								util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\",\"%s\"]", node1IPv4CIDR, "fc00:f853:ccd:e793::13/64"),
+								"k8s.ovn.org/node-primary-ifaddr":   fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"fc00:f853:ccd:e793::13/64\"}", node1IPv4CIDR),
+								"k8s.ovn.org/node-subnets":          fmt.Sprintf("{\"default\":[\"%s\", \"%s\"]}", v4Node1Subnet, v6Node1Subnet),
+								"k8s.ovn.org/l3-gateway-config":     "{\"default\":{\"mode\":\"shared\",\"bridge-id\":\"breth0\",\"interface-id\":\"breth0_ovn-worker\",\"mac-address\":\"3a:24:24:5d:85:aa\",\"ip-addresses\":[\"10.89.0.19/24\",\"fc00:f853:ccd:e793::13/64\"],\"next-hops\":[\"10.89.0.1\",\"fc00:f853:ccd:e793::1\"],\"node-port-enable\":\"true\",\"vlan-id\":\"0\"}}",
+								"k8s.ovn.org/node-chassis-id":       "79fdcfc4-6fe6-4cd3-8242-c0f85a4668ec",
+								"k8s.ovn.org/node-chassis-hostname": node1Name,
+								util.OVNNodeHostCIDRs:               fmt.Sprintf("[\"%s\",\"%s\"]", node1IPv4CIDR, "fc00:f853:ccd:e793::13/64"),
 							},
 							Labels: map[string]string{
 								"k8s.ovn.org/egress-assignable": "",
@@ -11168,19 +11176,21 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 				egressPod2 := *newPodWithLabels(eipNamespace, "egress-pod2", node2Name, "10.128.0.16", egressPodLabel)
 				egressNamespace := newNamespace(eipNamespace)
 				annotations := map[string]string{
-					"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\"}", node1IPv4CIDR),
-					"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
-					"k8s.ovn.org/l3-gateway-config":   `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"192.168.126.12/24", "next-hop":"192.168.126.1"}}`,
-					"k8s.ovn.org/node-chassis-id":     "79fdcfc4-6fe6-4cd3-8242-c0f85a4668ec",
-					util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
+					"k8s.ovn.org/node-primary-ifaddr":   fmt.Sprintf("{\"ipv4\": \"%s\"}", node1IPv4CIDR),
+					"k8s.ovn.org/node-subnets":          fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
+					"k8s.ovn.org/l3-gateway-config":     `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"192.168.126.12/24", "next-hop":"192.168.126.1"}}`,
+					"k8s.ovn.org/node-chassis-id":       "79fdcfc4-6fe6-4cd3-8242-c0f85a4668ec",
+					"k8s.ovn.org/node-chassis-hostname": node1Name,
+					util.OVNNodeHostCIDRs:               fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
 				}
 				node1 := getNodeObj(node1Name, annotations, map[string]string{})
 				annotations = map[string]string{
-					"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\"}", node2IPv4CIDR),
-					"k8s.ovn.org/node-subnets":        fmt.Sprintf("{\"default\":\"%s\"}", v4Node2Subnet),
-					"k8s.ovn.org/l3-gateway-config":   `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"192.168.126.51/24", "next-hop":"192.168.126.1"}}`,
-					"k8s.ovn.org/node-chassis-id":     "89fdcfc4-6fe6-4cd3-8242-c0f85a4668ec",
-					util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", node2IPv4CIDR),
+					"k8s.ovn.org/node-primary-ifaddr":   fmt.Sprintf("{\"ipv4\": \"%s\"}", node2IPv4CIDR),
+					"k8s.ovn.org/node-subnets":          fmt.Sprintf("{\"default\":\"%s\"}", v4Node2Subnet),
+					"k8s.ovn.org/l3-gateway-config":     `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"192.168.126.51/24", "next-hop":"192.168.126.1"}}`,
+					"k8s.ovn.org/node-chassis-id":       "89fdcfc4-6fe6-4cd3-8242-c0f85a4668ec",
+					"k8s.ovn.org/node-chassis-hostname": node1Name,
+					util.OVNNodeHostCIDRs:               fmt.Sprintf("[\"%s\"]", node2IPv4CIDR),
 				}
 				node2 := getNodeObj(node2Name, annotations, map[string]string{})
 

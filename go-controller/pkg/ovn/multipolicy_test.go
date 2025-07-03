@@ -423,6 +423,7 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 
 				watchNodes := false
 				node := *newNode(nodeName, "192.168.126.202/24")
+				node.Annotations["k8s.ovn.org/node-chassis-hostname"] = nodeName
 
 				startOvn(initialDB, watchNodes, []corev1.Node{node}, []corev1.Namespace{namespace1, namespace2}, nil, nil,
 					[]nettypes.NetworkAttachmentDefinition{*nad, *nad2}, nil, nil)
@@ -467,6 +468,7 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 
 				watchNodes := false
 				node := *newNode(nodeName, "192.168.126.202/24")
+				node.Annotations["k8s.ovn.org/node-chassis-hostname"] = nodeName
 
 				startOvn(initialDB, watchNodes, []corev1.Node{node}, []corev1.Namespace{namespace1}, nil, nil,
 					[]nettypes.NetworkAttachmentDefinition{*nad}, []testPod{nPodTest}, map[string]string{labelName: labelVal})
@@ -554,6 +556,7 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 
 					watchNodes := true
 					node := *newNode(nodeName, "192.168.126.202/24")
+					node.Annotations["k8s.ovn.org/node-chassis-hostname"] = nodeName
 
 					// set L3 specific node annotations
 					if topology == ovntypes.Layer3Topology {
