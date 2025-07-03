@@ -256,7 +256,7 @@ func (ec ExternalContainer) IsValidPreDelete() (bool, error) {
 	return true, nil
 }
 
-var NotFound = fmt.Errorf("not found")
+var ErrNotFound = fmt.Errorf("not found")
 
 func condenseErrors(errs []error) error {
 	switch len(errs) {

@@ -10,7 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 )
 
 func composePeriodicCmd(cmd string, interval uint32) string {
@@ -50,7 +50,7 @@ func (d *Diagnostics) composeDiagnosticsDaemonSet(name, cmd, tool string) appsv1
 						Command:         []string{"bash", "-c"},
 						Args:            []string{cmd},
 						SecurityContext: &corev1.SecurityContext{
-							Privileged: pointer.Bool(true),
+							Privileged: ptr.To(true),
 						},
 						VolumeMounts: []corev1.VolumeMount{
 							{

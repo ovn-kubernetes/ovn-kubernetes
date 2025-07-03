@@ -532,7 +532,9 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", feature.EgressIP
 			framework.Logf("Error: failed to get the EgressIP object, err: %v", err)
 			return nil
 		}
-		json.Unmarshal([]byte(egressIPStdout), &egressIPs)
+		if err := json.Unmarshal([]byte(egressIPStdout), &egressIPs); err != nil {
+			framework.Failf("Error unmarshaling egress IP data: %v", err)
+		}
 		if len(egressIPs.Items) > 1 {
 			framework.Failf("Didn't expect to retrieve more than one egress IP during the execution of this test, saw: %v", len(egressIPs.Items))
 		}

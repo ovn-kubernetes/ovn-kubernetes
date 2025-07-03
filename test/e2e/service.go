@@ -2055,7 +2055,7 @@ spec:
 		cmd = []string{"bash", "-x", "-c", netcatCmd}
 		framework.Logf("netcat command %s", cmd)
 		clientNetNetwork, err := infraprovider.Get().GetNetwork("clientnet")
-		if errors.Is(err, infraapi.NotFound) {
+		if errors.Is(err, infraapi.ErrNotFound) {
 			ginkgo.Skip("clientnet network is not available. Skipping")
 		}
 		framework.ExpectNoError(err, "clientnet network must be available")
@@ -2189,7 +2189,7 @@ spec:
 		cmd := []string{"bash", "-x", "-c", netcatCmd}
 		framework.Logf("netcat command %s", cmd)
 		clientNetNetwork, err := infraprovider.Get().GetNetwork("clientnet")
-		if errors.Is(err, infraapi.NotFound) {
+		if errors.Is(err, infraapi.ErrNotFound) {
 			ginkgo.Skip("clientnet network is not available. Skipping")
 		}
 		framework.ExpectNoError(err, "clientnet network must be available")

@@ -1091,7 +1091,7 @@ func isCountUpdatedAfterPokeExternalHost(fr *framework.Framework, pokePod *corev
 		return false, err
 	}
 	pokeExternalHost(fr, pokePod, dstIP, dstPort)
-	endCount, _ := countACLLogs(
+	endCount, err := countACLLogs(
 		pokePod.Spec.NodeName,
 		generateEgressFwRegex(pokePod.Namespace),
 		aclVerdict,
@@ -1112,7 +1112,7 @@ func isCountUpdatedAfterPokePod(fr *framework.Framework, clientPod, pokedPod *co
 		return false, err
 	}
 	pokePod(fr, clientPod.GetName(), pokedPod.Status.PodIP)
-	endCount, _ := countACLLogs(
+	endCount, err := countACLLogs(
 		clientPod.Spec.NodeName,
 		regex,
 		aclVerdict,
@@ -1137,7 +1137,9 @@ func pokeExternalHost(fr *framework.Framework, pokePod *corev1.Pod, dstIP string
 		pokePod.GetName(),
 		pokePod.Spec.NodeName,
 	)
-	pokeExternalHostFromPod(fr, pokePod.Namespace, pokePod.GetName(), dstIP, dstPort)
+	if err := pokeExternalHostFromPod(fr, pokePod.Namespace, pokePod.GetName(), dstIP, dstPort); err != nil {
+		framework.Logf("Warning: failed to poke external host %s:%d from pod %s/%s: %v", dstIP, dstPort, pokePod.Namespace, pokePod.GetName(), err)
+	}
 }
 
 const (

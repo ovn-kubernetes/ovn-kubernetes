@@ -48,10 +48,7 @@ func (n containerEngineNetwork) IPv4IPv6Subnets() (string, string, error) {
 }
 
 func (n containerEngineNetwork) Equal(candidate api.Network) bool {
-	if n.name != candidate.Name() {
-		return false
-	}
-	return true
+	return n.name == candidate.Name()
 }
 
 func (n containerEngineNetwork) String() string {
