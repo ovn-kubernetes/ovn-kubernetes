@@ -340,7 +340,7 @@ func checkUDNSvcIsolationOVSFlows(flows []string, netConfig *bridgeUDNConfigurat
 
 func getDummyOpenflowManager() *openflowManager {
 	gwBridge := &bridgeConfiguration{
-		gwIface:    "",
+		gwIface:    "breth0",
 		bridgeName: "breth0",
 	}
 	ofm := &openflowManager{

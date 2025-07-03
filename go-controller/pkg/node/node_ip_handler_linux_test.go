@@ -401,7 +401,7 @@ func configureKubeOVNContext(nodeName string, useNetlink bool) *testCtx {
 	mpmock := &nodemocks.ManagementPort{}
 	mpmock.On("GetAddresses").Return([]*net.IPNet{tc.mgmtPortIP4, tc.mgmtPortIP6})
 
-	fakeBridgeConfiguration := &bridgeConfiguration{bridgeName: "breth0"}
+	fakeBridgeConfiguration := &bridgeConfiguration{bridgeName: "breth0", gwIface: "breth0"}
 
 	k := &kube.Kube{KClient: tc.fakeClient}
 	tc.ipManager = newAddressManagerInternal(nodeName, k, mpmock, tc.watchFactory, fakeBridgeConfiguration, useNetlink)
