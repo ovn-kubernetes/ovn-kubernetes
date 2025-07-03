@@ -8,9 +8,8 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -18,6 +17,8 @@ import (
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 )
 
 type nodeInfo struct {
@@ -41,7 +42,7 @@ var _ = ginkgo.Describe("Multicast", feature.Multicast, func() {
 				len(nodes.Items))
 		}
 
-		ips := e2enode.CollectAddresses(nodes, v1.NodeInternalIP)
+		ips := e2enode.CollectAddresses(nodes, corev1.NodeInternalIP)
 
 		clientNodeInfo = nodeInfo{
 			name:   nodes.Items[0].Name,
@@ -197,7 +198,7 @@ func testMulticastIGMPQuery(f *framework.Framework, clientNodeInfo, serverNodeIn
 	err = wait.PollUntilContextTimeout(context.Background(), retryInterval, retryTimeout, true /*immediate*/, func(context.Context) (bool, error) {
 		kubectlOut, err := e2ekubectl.RunKubectl(f.Namespace.Name, "exec", multicastListenerPod, "--", "/bin/bash", "-c", "ls")
 		if err != nil {
-			framework.Failf("failed to retrieve multicast IGMP query: " + err.Error())
+			framework.Failf("failed to retrieve multicast IGMP query: %v", err)
 		}
 		if !strings.Contains(kubectlOut, tcpdumpFileName) {
 			return false, nil
@@ -205,7 +206,7 @@ func testMulticastIGMPQuery(f *framework.Framework, clientNodeInfo, serverNodeIn
 		return true, nil
 	})
 	if err != nil {
-		framework.Failf("failed to retrieve multicast IGMP query: " + err.Error())
+		framework.Failf("failed to retrieve multicast IGMP query: %v", err)
 	}
 
 	ginkgo.By("verifying that the IGMP query has been received")

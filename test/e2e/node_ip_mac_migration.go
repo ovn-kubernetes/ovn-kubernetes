@@ -14,16 +14,7 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
-	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
-
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -34,6 +25,15 @@ import (
 	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 	e2eservice "k8s.io/kubernetes/test/e2e/framework/service"
 	utilnet "k8s.io/utils/net"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
+	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("Node IP and MAC address migration", feature.NodeIPMACMigration, func() {
@@ -69,18 +69,18 @@ spec:
 	var (
 		tmpDirIPMigration      string
 		workerNodeIPs          map[int]string
-		workerNode             v1.Node
+		workerNode             corev1.Node
 		workerNodeMAC          net.HardwareAddr
 		secondaryWorkerNodeIPs map[int]string
-		secondaryWorkerNode    v1.Node
+		secondaryWorkerNode    corev1.Node
 		externalContainerIPs   map[int]string
-		podWorkerNode          *v1.Pod
-		podSecondaryWorkerNode *v1.Pod
+		podWorkerNode          *corev1.Pod
+		podSecondaryWorkerNode *corev1.Pod
 		migrationWorkerNodeIP  string
 		rollbackNeeded         bool
 		egressIP               string
 		assignedNodePort       int32
-		ovnkPod                v1.Pod
+		ovnkPod                corev1.Pod
 		f                      = wrappedTestFramework(namespacePrefix)
 		providerCtx            infraapi.Context
 		externalContainer      infraapi.ExternalContainer
@@ -104,11 +104,11 @@ spec:
 		By("Selecting 2 random worker nodes from the list for IP address migration tests")
 		// Get the primary worker node for IP address migration.
 		// Get the secondary worker node to spawn another pod on for pod to pod reachability tests.
-		var workerNodes *v1.NodeList
+		var workerNodes *corev1.NodeList
 		Eventually(func(g Gomega) {
 			workerNodes, err = e2enode.GetReadySchedulableNodes(context.TODO(), f.ClientSet)
 			g.Expect(err).NotTo(HaveOccurred())
-			e2enode.Filter(workerNodes, func(node v1.Node) bool {
+			e2enode.Filter(workerNodes, func(node corev1.Node) bool {
 				_, ok1 := node.Labels["node-role.kubernetes.io/control-plane"]
 				_, ok2 := node.Labels["node-role.kubernetes.io/master"]
 				return !ok1 && !ok2
@@ -344,10 +344,16 @@ spec:
 
 				JustAfterEach(func() {
 					By("Deleting the gressip service")
-					e2ekubectl.RunKubectl("default", "delete", "eip", podLabels["app"])
+					_, err := e2ekubectl.RunKubectl("default", "delete", "eip", podLabels["app"])
+					if err != nil {
+						framework.Logf("Failed to delete eip: %v", err)
+					}
 
 					By(fmt.Sprintf("Removing the egress assignable label from node %s", workerNode.Name))
-					e2ekubectl.RunKubectl("default", "label", "node", workerNode.Name, "k8s.ovn.org/egress-assignable-")
+					_, err = e2ekubectl.RunKubectl("default", "label", "node", workerNode.Name, "k8s.ovn.org/egress-assignable-")
+					if err != nil {
+						framework.Logf("Failed to remove egress assignable label: %v", err)
+					}
 				})
 
 				for _, updateKubeletFirst := range []bool{true, false} {
@@ -420,25 +426,25 @@ spec:
 					jig := e2eservice.NewTestJig(f.ClientSet, f.Namespace.Name, serviceName)
 					udpPort := infraprovider.Get().GetK8HostPort()
 					serverPod := e2epod.NewAgnhostPod(f.Namespace.Name, podName, nil, nil,
-						[]v1.ContainerPort{{ContainerPort: int32(udpPort)}, {ContainerPort: int32(udpPort), Protocol: "UDP"}},
+						[]corev1.ContainerPort{{ContainerPort: int32(udpPort)}, {ContainerPort: int32(udpPort), Protocol: "UDP"}},
 						"netexec", fmt.Sprintf("--udp-port=%d", udpPort))
 					serverPod.Labels = jig.Labels
 					serverPod.Spec.HostNetwork = true
 					serverPod.Spec.NodeName = workerNode.Name
-					serverPod = e2epod.NewPodClient(f).CreateSync(context.TODO(), serverPod)
+					e2epod.NewPodClient(f).CreateSync(context.TODO(), serverPod)
 
 					By("Creating ETP local service")
-					svc, err := jig.CreateUDPService(context.TODO(), func(s *v1.Service) {
-						s.Spec.Ports = []v1.ServicePort{
+					svc, err := jig.CreateUDPService(context.TODO(), func(s *corev1.Service) {
+						s.Spec.Ports = []corev1.ServicePort{
 							{
 								Name:       serviceName,
-								Protocol:   v1.ProtocolUDP,
+								Protocol:   corev1.ProtocolUDP,
 								Port:       80,
 								TargetPort: intstr.FromInt(int(udpPort)),
 							},
 						}
-						s.Spec.ExternalTrafficPolicy = v1.ServiceExternalTrafficPolicyLocal
-						s.Spec.Type = v1.ServiceTypeNodePort
+						s.Spec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyLocal
+						s.Spec.Type = corev1.ServiceTypeNodePort
 					})
 					framework.ExpectNoError(err)
 
@@ -455,7 +461,7 @@ spec:
 					ovnkPod = pods.Items[0]
 
 					cmd := fmt.Sprintf("ovs-ofctl dump-flows %s table=0", deploymentconfig.Get().ExternalBridgeName())
-					err = wait.PollImmediate(framework.Poll, 30*time.Second, func() (bool, error) {
+					err = wait.PollUntilContextTimeout(context.Background(), framework.Poll, 30*time.Second, true, func(_ context.Context) (bool, error) {
 						stdout, err := e2epodoutput.RunHostCmdWithRetries(ovnkPod.Namespace, ovnkPod.Name, cmd, framework.Poll, 30*time.Second)
 						if err != nil {
 							return false, err
@@ -476,10 +482,16 @@ spec:
 
 				JustAfterEach(func() {
 					By("Deleting the service")
-					e2ekubectl.RunKubectl(f.Namespace.Name, "delete", "service", serviceName)
+					_, err := e2ekubectl.RunKubectl(f.Namespace.Name, "delete", "service", serviceName)
+					if err != nil {
+						framework.Logf("Failed to delete service %s: %v", serviceName, err)
+					}
 
 					By("Deleting host network backend pod")
-					e2ekubectl.RunKubectl(f.Namespace.Name, "delete", "pod", podName)
+					_, err = e2ekubectl.RunKubectl(f.Namespace.Name, "delete", "pod", podName)
+					if err != nil {
+						framework.Logf("Failed to delete pod %s: %v", podName, err)
+					}
 				})
 
 				for _, updateKubeletFirst := range []bool{true, false} {
@@ -516,7 +528,7 @@ spec:
 
 							By(fmt.Sprintf("Checking nodeport flows have been updated to use new IP: %s", migrationWorkerNodeIP))
 							cmd := fmt.Sprintf("ovs-ofctl dump-flows %s table=0", deploymentconfig.Get().ExternalBridgeName())
-							err = wait.PollImmediate(framework.Poll, 30*time.Second, func() (bool, error) {
+							err = wait.PollUntilContextTimeout(context.Background(), framework.Poll, 30*time.Second, true, func(_ context.Context) (bool, error) {
 								stdout, err := e2epodoutput.RunHostCmdWithRetries(ovnkPod.Namespace, ovnkPod.Name, cmd, framework.Poll, 30*time.Second)
 								if err != nil {
 									return false, err
@@ -573,16 +585,16 @@ spec:
 			BeforeEach(func() {
 				By("Creating service")
 				jig := e2eservice.NewTestJig(f.ClientSet, f.Namespace.Name, serviceName)
-				_, err := jig.CreateUDPService(context.TODO(), func(s *v1.Service) {
-					s.Spec.Ports = []v1.ServicePort{
+				_, err := jig.CreateUDPService(context.TODO(), func(s *corev1.Service) {
+					s.Spec.Ports = []corev1.ServicePort{
 						{
 							Name:       serviceName,
-							Protocol:   v1.ProtocolUDP,
+							Protocol:   corev1.ProtocolUDP,
 							Port:       80,
 							TargetPort: intstr.FromInt(8080),
 						},
 					}
-					s.Spec.Type = v1.ServiceTypeNodePort
+					s.Spec.Type = corev1.ServiceTypeNodePort
 				})
 				framework.ExpectNoError(err)
 
@@ -590,10 +602,13 @@ spec:
 
 			JustAfterEach(func() {
 				By("Deleting the service")
-				e2ekubectl.RunKubectl(f.Namespace.Name, "delete", "service", serviceName)
+				_, err := e2ekubectl.RunKubectl(f.Namespace.Name, "delete", "service", serviceName)
+				if err != nil {
+					framework.Logf("Failed to delete service %s: %v", serviceName, err)
+				}
 			})
 
-			It(fmt.Sprintf("Ensures flows are updated when MAC address changes"), func() {
+			It("Ensures flows are updated when MAC address changes", func() {
 				By(fmt.Sprintf("Updating the mac address to a new value: %s", migratedMAC))
 				framework.ExpectNoError(setMACAddress(ovnkPod, migratedMAC))
 				By("Checking flows are updated with the correct MAC address")
@@ -613,9 +628,9 @@ spec:
 	})
 })
 
-func checkFlowsForMACPeriodically(ovnkPod v1.Pod, addr net.HardwareAddr, duration time.Duration) error {
+func checkFlowsForMACPeriodically(ovnkPod corev1.Pod, addr net.HardwareAddr, duration time.Duration) error {
 	var endErr error
-	if err := wait.PollImmediate(framework.Poll, duration, func() (bool, error) {
+	if err := wait.PollUntilContextTimeout(context.Background(), framework.Poll, duration, true, func(_ context.Context) (bool, error) {
 		if err := checkFlowsForMAC(ovnkPod, addr); err != nil {
 			endErr = err
 			return false, nil
@@ -627,7 +642,7 @@ func checkFlowsForMACPeriodically(ovnkPod v1.Pod, addr net.HardwareAddr, duratio
 	return nil
 }
 
-func checkFlowsForMAC(ovnkPod v1.Pod, mac net.HardwareAddr) error {
+func checkFlowsForMAC(ovnkPod corev1.Pod, mac net.HardwareAddr) error {
 	cmd := fmt.Sprintf("ovs-ofctl dump-flows %s", deploymentconfig.Get().ExternalBridgeName())
 	flowOutput := e2epodoutput.RunHostCmdOrDie(ovnkPod.Namespace, ovnkPod.Name, cmd)
 	lines := strings.Split(flowOutput, "\n")
@@ -645,7 +660,7 @@ func checkFlowsForMAC(ovnkPod v1.Pod, mac net.HardwareAddr) error {
 	return nil
 }
 
-func setMACAddress(ovnkubePod v1.Pod, mac string) error {
+func setMACAddress(ovnkubePod corev1.Pod, mac string) error {
 	cmd := fmt.Sprintf("ovs-vsctl set bridge %s other-config:hwaddr=%s", deploymentconfig.Get().ExternalBridgeName(), mac)
 	_, err := e2epodoutput.RunHostCmd(ovnkubePod.Namespace, ovnkubePod.Name, cmd)
 	if err != nil {
@@ -654,14 +669,14 @@ func setMACAddress(ovnkubePod v1.Pod, mac string) error {
 	return nil
 }
 
-func getMACAddress(ovnkubePod v1.Pod) (net.HardwareAddr, error) {
+func getMACAddress(ovnkubePod corev1.Pod) (net.HardwareAddr, error) {
 	cmd := fmt.Sprintf("ip link show %s", deploymentconfig.Get().ExternalBridgeName())
 	output, err := e2epodoutput.RunHostCmd(ovnkubePod.Namespace, ovnkubePod.Name, cmd)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ip link output: %w", err)
 	}
 
-	re := regexp.MustCompile("([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})|([0-9a-fA-F]{4}\\.[0-9a-fA-F]{4}\\.[0-9a-fA-F]{4})")
+	re := regexp.MustCompile(`([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})|([0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\.[0-9a-fA-F]{4})`)
 	return net.ParseMAC(re.FindString(output))
 }
 
@@ -670,10 +685,10 @@ func getMACAddress(ovnkubePod v1.Pod) (net.HardwareAddr, error) {
 //
 //	Copied from: https://github.com/ovn-org/ovn-kubernetes/blob/\
 //	                              2cceeebd4f66ee8dd9e683551b883e549b5cd7da/go-controller/pkg/ovn/egressip.go#L2580
-func getNodeInternalAddresses(node *v1.Node) (string, string) {
+func getNodeInternalAddresses(node *corev1.Node) (string, string) {
 	var v4Addr, v6Addr string
 	for _, nodeAddr := range node.Status.Addresses {
-		if nodeAddr.Type == v1.NodeInternalIP {
+		if nodeAddr.Type == corev1.NodeInternalIP {
 			ip := nodeAddr.Address
 			if !utilnet.IsIPv6String(ip) && v4Addr == "" {
 				v4Addr = ip
@@ -761,17 +776,6 @@ func findIPAddressMaskInterfaceOnHost(containerName, containerIP string) (net.IP
 		return net.IPNet{}, "", err
 	}
 	return net.IPNet{IP: parsedNetIP, Mask: parsedNetCIDR.Mask}, iface, nil
-}
-
-// nextIP returns IP incremented by 1. If the incremented IP does not fit in the IPNet, it returns an error.
-func nextIP(ipNet net.IPNet) (net.IPNet, error) {
-	i := ipToInt(ipNet.IP)
-	newIP := intToIP(i.Add(i, big.NewInt(1)))
-	if !ipNet.Contains(newIP) {
-		return ipNet, fmt.Errorf("could not find a suitable IP address for the container")
-	}
-	nextIPNet := net.IPNet{IP: newIP, Mask: ipNet.Mask}
-	return nextIPNet, nil
 }
 
 // priorIP returns IP minus 1. If the decreased IP does not fit in the IPNet, it returns an error.
