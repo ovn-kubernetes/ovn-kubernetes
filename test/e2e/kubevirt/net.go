@@ -8,7 +8,6 @@ import (
 	"time"
 
 	kubevirtv1 "kubevirt.io/api/core/v1"
-	v1 "kubevirt.io/api/core/v1"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -46,7 +45,7 @@ func RetrieveCachedGatewayMAC(vmi *kubevirtv1.VirtualMachineInstance, dev, cidr 
 	return outputSplit[4], nil
 }
 
-func RetrieveIPv6Gateways(vmi *v1.VirtualMachineInstance) ([]string, error) {
+func RetrieveIPv6Gateways(vmi *kubevirtv1.VirtualMachineInstance) ([]string, error) {
 	routes := []struct {
 		Gateway string `json:"gateway"`
 	}{}
@@ -78,7 +77,7 @@ func GenerateGatewayMAC(node *corev1.Node, networkName string) (string, error) {
 	}
 
 	if lrpJoinIPString == "" {
-		return "", fmt.Errorf("missing lrp join ip at node %q with network %q", node.Name)
+		return "", fmt.Errorf("missing lrp join ip at node %q with network %q", node.Name, networkName)
 	}
 
 	lrpJoinIP, _, err := net.ParseCIDR(lrpJoinIPString)

@@ -581,7 +581,7 @@ func getNetworkInterface(containerName, networkName string) (api.NetworkInterfac
 	ni.IPv4Gateway, err = getContainerNetwork(inspectNetworkIPv4GWKeyStr)
 	if err != nil {
 		// may not be available
-		framework.Logf("failed to get network gateway IPv4 %s: %v", err)
+		framework.Logf("failed to get network gateway IPv4: %v", err)
 	}
 	ni.IPv4, err = getContainerNetwork(inspectNetworkIPv4AddrKeyStr)
 	if err != nil {
@@ -595,7 +595,7 @@ func getNetworkInterface(containerName, networkName string) (api.NetworkInterfac
 	}
 	ni.IPv6Gateway, err = getContainerNetwork(inspectNetworkIPv6GWKeyStr)
 	if err != nil {
-		framework.Logf("failed to get network gateway IPv6 %s: %v", err)
+		framework.Logf("failed to get network gateway IPv6: %v", err)
 	}
 	ni.IPv4Prefix, err = getContainerNetwork(inspectNetworkIPv4PrefixKeyStr)
 	if err != nil {

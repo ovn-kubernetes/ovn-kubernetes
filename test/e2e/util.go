@@ -480,7 +480,7 @@ func isNeighborEntryStable(externalContainer infraapi.ExternalContainer, targetH
 
 // wgetInExternalContainer issues a request to target host and port at endpoint.
 // Returns a pair of either result, nil or "", error in case of an error.
-func wgetInExternalContainer(externalContainer infraapi.ExternalContainer, targetHost string, targetPort int32, endPoint string, maxTime int) (string, error) {
+func wgetInExternalContainer(externalContainer infraapi.ExternalContainer, targetHost string, targetPort int32, endPoint string, _ int) (string, error) {
 	if utilnet.IsIPv6String(targetHost) {
 		targetHost = fmt.Sprintf("[%s]", targetHost)
 	}
@@ -855,7 +855,7 @@ func patchServiceBoolValue(c kubernetes.Interface, serviceName, serviceNamespace
 }
 
 // patchService patches service serviceName in namespace serviceNamespace.
-func patchService(c kubernetes.Interface, serviceName, serviceNamespace, jsonPath string, patchBytes []byte) error {
+func patchService(c kubernetes.Interface, serviceName, serviceNamespace, _ string, patchBytes []byte) error {
 	_, err := c.CoreV1().Services(serviceNamespace).Patch(
 		context.TODO(),
 		serviceName,
@@ -1010,7 +1010,7 @@ func wrappedTestFramework(basename string) *framework.Framework {
 func newPrivelegedTestFramework(basename string) *framework.Framework {
 	f := framework.NewDefaultFramework(basename)
 	f.NamespacePodSecurityEnforceLevel = admissionapi.LevelPrivileged
-	f.DumpAllNamespaceInfo = func(ctx context.Context, f *framework.Framework, namespace string) {
+	f.DumpAllNamespaceInfo = func(_ context.Context, f *framework.Framework, namespace string) {
 		debug.DumpAllNamespaceInfo(context.TODO(), f.ClientSet, namespace)
 	}
 	return f
