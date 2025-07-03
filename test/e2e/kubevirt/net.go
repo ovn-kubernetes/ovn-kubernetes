@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
-
 	kubevirtv1 "kubevirt.io/api/core/v1"
 	v1 "kubevirt.io/api/core/v1"
+
+	corev1 "k8s.io/api/core/v1"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"

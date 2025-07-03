@@ -2,8 +2,10 @@ package kind
 
 import (
 	"fmt"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
+
 	"k8s.io/utils/net"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
 )
 
 type containerEngineNetwork struct {

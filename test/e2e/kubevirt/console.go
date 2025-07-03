@@ -26,14 +26,12 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-
-	"google.golang.org/grpc/codes"
-
 	expect "github.com/google/goexpect"
-
+	"google.golang.org/grpc/codes"
 	kubevirtv1 "kubevirt.io/api/core/v1"
 	v1 "kubevirt.io/api/core/v1"
+
+	. "github.com/onsi/ginkgo/v2"
 )
 
 const (

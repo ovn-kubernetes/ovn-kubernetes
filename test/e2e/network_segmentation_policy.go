@@ -9,14 +9,15 @@ import (
 	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	knet "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/rand"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 )
 
 var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.NetworkSegmentation, func() {
@@ -64,7 +65,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 			for _, namespace := range []string{namespaceYellow, namespaceBlue,
 				namespaceRed, namespaceOrange} {
 				ginkgo.By("Creating namespace " + namespace)
-				ns, err := cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
+				ns, err := cs.CoreV1().Namespaces().Create(context.Background(), &corev1.Namespace{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:   namespace,
 						Labels: map[string]string{RequiredUDNNamespaceLabel: ""},

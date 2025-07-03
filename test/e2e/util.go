@@ -15,17 +15,11 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
-	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
-
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -39,6 +33,13 @@ import (
 	testutils "k8s.io/kubernetes/test/utils"
 	admissionapi "k8s.io/pod-security-admission/api"
 	utilnet "k8s.io/utils/net"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
+	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
 )
 
 const (
@@ -104,64 +105,64 @@ type annotationNotSetError struct {
 
 // newAgnhostPod returns a pod that uses the agnhost image. The image's binary supports various subcommands
 // that behave the same, no matter the underlying OS.
-func newAgnhostPod(namespace, name string, command ...string) *v1.Pod {
-	return &v1.Pod{
+func newAgnhostPod(namespace, name string, command ...string) *corev1.Pod {
+	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
 		},
-		Spec: v1.PodSpec{
-			Containers: []v1.Container{
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
 				{
 					Name:    name,
 					Image:   images.AgnHost(),
 					Command: command,
 				},
 			},
-			RestartPolicy: v1.RestartPolicyNever,
+			RestartPolicy: corev1.RestartPolicyNever,
 		},
 	}
 }
 
 // newLatestAgnhostPod returns a pod that uses the newer agnhost image. The image's binary supports various subcommands
 // that behave the same, no matter the underlying OS.
-func newLatestAgnhostPod(namespace, name string, command ...string) *v1.Pod {
-	return &v1.Pod{
+func newLatestAgnhostPod(namespace, name string, command ...string) *corev1.Pod {
+	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
 		},
-		Spec: v1.PodSpec{
-			Containers: []v1.Container{
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
 				{
 					Name:    name,
 					Image:   images.AgnHost(),
 					Command: command,
 				},
 			},
-			RestartPolicy: v1.RestartPolicyNever,
+			RestartPolicy: corev1.RestartPolicyNever,
 		},
 	}
 }
 
 // newAgnhostPod returns a pod that uses the agnhost image. The image's binary supports various subcommands
 // that behave the same, no matter the underlying OS.
-func newAgnhostPodOnNode(name, nodeName string, labels map[string]string, command ...string) *v1.Pod {
-	return &v1.Pod{
+func newAgnhostPodOnNode(name, nodeName string, labels map[string]string, command ...string) *corev1.Pod {
+	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   name,
 			Labels: labels,
 		},
-		Spec: v1.PodSpec{
+		Spec: corev1.PodSpec{
 			NodeName: nodeName,
-			Containers: []v1.Container{
+			Containers: []corev1.Container{
 				{
 					Name:    name,
 					Image:   images.AgnHost(),
 					Command: command,
 				},
 			},
-			RestartPolicy: v1.RestartPolicyNever,
+			RestartPolicy: corev1.RestartPolicyNever,
 		},
 	}
 }
@@ -265,16 +266,16 @@ func unmarshalPodAnnotation(annotations map[string]string, networkName string) (
 	return podAnnotation, nil
 }
 
-func nodePortServiceSpecFrom(svcName string, ipFamily v1.IPFamilyPolicyType, httpPort, updPort, clusterHTTPPort, clusterUDPPort int, selector map[string]string, local v1.ServiceExternalTrafficPolicyType) *v1.Service {
-	res := &v1.Service{
+func nodePortServiceSpecFrom(svcName string, ipFamily corev1.IPFamilyPolicyType, httpPort, updPort, clusterHTTPPort, clusterUDPPort int, selector map[string]string, local corev1.ServiceExternalTrafficPolicyType) *corev1.Service {
+	res := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: svcName,
 		},
-		Spec: v1.ServiceSpec{
-			Type: v1.ServiceTypeNodePort,
-			Ports: []v1.ServicePort{
-				{Port: int32(clusterHTTPPort), Name: "http", Protocol: v1.ProtocolTCP, TargetPort: intstr.FromInt(httpPort)},
-				{Port: int32(clusterUDPPort), Name: "udp", Protocol: v1.ProtocolUDP, TargetPort: intstr.FromInt(updPort)},
+		Spec: corev1.ServiceSpec{
+			Type: corev1.ServiceTypeNodePort,
+			Ports: []corev1.ServicePort{
+				{Port: int32(clusterHTTPPort), Name: "http", Protocol: corev1.ProtocolTCP, TargetPort: intstr.FromInt(httpPort)},
+				{Port: int32(clusterUDPPort), Name: "udp", Protocol: corev1.ProtocolUDP, TargetPort: intstr.FromInt(updPort)},
 			},
 			Selector:              selector,
 			IPFamilyPolicy:        &ipFamily,
@@ -285,17 +286,17 @@ func nodePortServiceSpecFrom(svcName string, ipFamily v1.IPFamilyPolicyType, htt
 	return res
 }
 
-func externalIPServiceSpecFrom(svcName string, httpPort, updPort, clusterHTTPPort, clusterUDPPort int, selector map[string]string, externalIps []string) *v1.Service {
-	preferDual := v1.IPFamilyPolicyPreferDualStack
+func externalIPServiceSpecFrom(svcName string, httpPort, updPort, clusterHTTPPort, clusterUDPPort int, selector map[string]string, externalIps []string) *corev1.Service {
+	preferDual := corev1.IPFamilyPolicyPreferDualStack
 
-	res := &v1.Service{
+	res := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: svcName,
 		},
-		Spec: v1.ServiceSpec{
-			Ports: []v1.ServicePort{
-				{Port: int32(clusterHTTPPort), Name: "http", Protocol: v1.ProtocolTCP, TargetPort: intstr.FromInt(httpPort)},
-				{Port: int32(clusterUDPPort), Name: "udp", Protocol: v1.ProtocolUDP, TargetPort: intstr.FromInt(updPort)},
+		Spec: corev1.ServiceSpec{
+			Ports: []corev1.ServicePort{
+				{Port: int32(clusterHTTPPort), Name: "http", Protocol: corev1.ProtocolTCP, TargetPort: intstr.FromInt(httpPort)},
+				{Port: int32(clusterUDPPort), Name: "udp", Protocol: corev1.ProtocolUDP, TargetPort: intstr.FromInt(updPort)},
 			},
 			Selector:       selector,
 			IPFamilyPolicy: &preferDual,
@@ -507,13 +508,13 @@ func parseNetexecResponse(response string) (string, error) {
 	return res.Responses[0], nil
 }
 
-func nodePortsFromService(service *v1.Service) (int32, int32) {
+func nodePortsFromService(service *corev1.Service) (int32, int32) {
 	var resTCP, resUDP int32
 	for _, p := range service.Spec.Ports {
-		if p.Protocol == v1.ProtocolTCP {
+		if p.Protocol == corev1.ProtocolTCP {
 			resTCP = p.NodePort
 		}
-		if p.Protocol == v1.ProtocolUDP {
+		if p.Protocol == corev1.ProtocolUDP {
 			resUDP = p.NodePort
 		}
 	}
@@ -522,7 +523,7 @@ func nodePortsFromService(service *v1.Service) (int32, int32) {
 
 // addressIsIP tells wether the given address is an
 // address or a hostname
-func addressIsIP(address v1.NodeAddress) bool {
+func addressIsIP(address corev1.NodeAddress) bool {
 	addr := net.ParseIP(address.Address)
 	if addr == nil {
 		return false
@@ -532,7 +533,7 @@ func addressIsIP(address v1.NodeAddress) bool {
 
 // addressIsIPv4 tells whether the given address is an
 // IPv4 address.
-func addressIsIPv4(address v1.NodeAddress) bool {
+func addressIsIPv4(address corev1.NodeAddress) bool {
 	addr := net.ParseIP(address.Address)
 	if addr == nil {
 		return false
@@ -542,7 +543,7 @@ func addressIsIPv4(address v1.NodeAddress) bool {
 
 // addressIsIPv6 tells whether the given address is an
 // IPv6 address.
-func addressIsIPv6(address v1.NodeAddress) bool {
+func addressIsIPv6(address corev1.NodeAddress) bool {
 	addr := net.ParseIP(address.Address)
 	if addr == nil {
 		return false
@@ -551,7 +552,7 @@ func addressIsIPv6(address v1.NodeAddress) bool {
 }
 
 // Returns pod's ipv4 and ipv6 addresses IN ORDER
-func getPodAddresses(pod *v1.Pod) (string, string) {
+func getPodAddresses(pod *corev1.Pod) (string, string) {
 	var ipv4Res, ipv6Res string
 	for _, a := range pod.Status.PodIPs {
 		if utilnet.IsIPv4String(a.IP) {
@@ -565,7 +566,7 @@ func getPodAddresses(pod *v1.Pod) (string, string) {
 }
 
 // Returns nodes's ipv4 and ipv6 addresses IN ORDER
-func getNodeAddresses(node *v1.Node) (string, string) {
+func getNodeAddresses(node *corev1.Node) (string, string) {
 	var ipv4Res, ipv6Res string
 	for _, a := range node.Status.Addresses {
 		if utilnet.IsIPv4String(a.Address) {
@@ -743,7 +744,7 @@ func pokePod(fr *framework.Framework, srcPodName string, dstPodIP string) error 
 
 // pokeAllPodIPs will either poke the single dstPod's PodIP or all IPs in the pod's PodIPs list. The returned error
 // will be an aggregate of the errors encountered poking all destination IPs.
-func pokeAllPodIPs(fr *framework.Framework, srcPodName string, dstPod *v1.Pod) error {
+func pokeAllPodIPs(fr *framework.Framework, srcPodName string, dstPod *corev1.Pod) error {
 	var errors []error
 	if len(dstPod.Status.PodIPs) > 0 {
 		for _, podIP := range dstPod.Status.PodIPs {
@@ -751,7 +752,7 @@ func pokeAllPodIPs(fr *framework.Framework, srcPodName string, dstPod *v1.Pod) e
 				errors = append(errors, err)
 			}
 		}
-		return utilerrors.NewAggregate(errors)
+		return kerrors.NewAggregate(errors)
 	}
 	return pokePod(fr, srcPodName, dstPod.Status.PodIP)
 }
@@ -936,7 +937,7 @@ func countNFTablesElements(nodeName, name string) int {
 }
 
 // isDualStackCluster returns 'true' if at least one of the nodes has more than one node subnet.
-func isDualStackCluster(nodes *v1.NodeList) bool {
+func isDualStackCluster(nodes *corev1.NodeList) bool {
 	for _, node := range nodes.Items {
 		annotation, ok := node.Annotations[ovnNodeSubnets]
 		if !ok {
@@ -1183,7 +1184,7 @@ func getNodeContainerName() string {
 }
 
 // getNodeZone returns the node's zone
-func getNodeZone(node *v1.Node) (string, error) {
+func getNodeZone(node *corev1.Node) (string, error) {
 	nodeZone, ok := node.Annotations[ovnNodeZoneNameAnnotation]
 	if !ok {
 		return "", fmt.Errorf("zone for the node %s not set in the annotation %s", node.Name, ovnNodeZoneNameAnnotation)
@@ -1313,7 +1314,7 @@ func isDisablePacketMTUCheckEnabled() bool {
 // getGatewayMTUSupport returns true if gateway-mtu-support annotataion
 // is not set on the node, otherwise it returns false as the value of the
 // annotation also get set to false
-func getGatewayMTUSupport(node *v1.Node) bool {
+func getGatewayMTUSupport(node *corev1.Node) bool {
 	_, ok := node.Annotations[ovnGatewayMTUSupport]
 	if !ok {
 		return true
@@ -1344,7 +1345,7 @@ func matchIPv6StringFamily(ipStrings []string) (string, error) {
 
 // This is a replacement for e2epod.DeletePodWithWait(), which does not handle pods that
 // may be automatically restarted (https://issues.k8s.io/126785)
-func deletePodWithWait(ctx context.Context, c clientset.Interface, pod *v1.Pod) error {
+func deletePodWithWait(ctx context.Context, c clientset.Interface, pod *corev1.Pod) error {
 	if pod == nil {
 		return nil
 	}
@@ -1391,7 +1392,7 @@ func deletePodWithWaitByName(ctx context.Context, c clientset.Interface, podName
 // This is an alternative version of e2epod.WaitForPodNotFoundInNamespace(), which takes
 // a UID as well.
 func waitForPodNotFoundInNamespace(ctx context.Context, c clientset.Interface, podName, ns string, uid types.UID, timeout time.Duration) error {
-	err := framework.Gomega().Eventually(ctx, framework.HandleRetry(func(ctx context.Context) (*v1.Pod, error) {
+	err := framework.Gomega().Eventually(ctx, framework.HandleRetry(func(ctx context.Context) (*corev1.Pod, error) {
 		pod, err := c.CoreV1().Pods(ns).Get(ctx, podName, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
 			return nil, nil
