@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"text/template"
@@ -17,21 +18,14 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
-	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
-
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/kubernetes"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
 	"k8s.io/kubernetes/test/e2e/framework/debug"
@@ -41,6 +35,13 @@ import (
 	testutils "k8s.io/kubernetes/test/utils"
 	admissionapi "k8s.io/pod-security-admission/api"
 	utilnet "k8s.io/utils/net"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
+	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
 )
 
 const (
@@ -54,8 +55,8 @@ const (
 var singleNodePerZoneResult *bool
 
 type IpNeighbor struct {
-	Dst    string `dst`
-	Lladdr string `lladdr`
+	Dst    string `json:"dst"`
+	Lladdr string `json:"lladdr"`
 }
 
 // PodAnnotation describes the assigned network details for a single pod network. (The
@@ -106,70 +107,70 @@ type annotationNotSetError struct {
 
 // newAgnhostPod returns a pod that uses the agnhost image. The image's binary supports various subcommands
 // that behave the same, no matter the underlying OS.
-func newAgnhostPod(namespace, name string, command ...string) *v1.Pod {
-	return &v1.Pod{
+func newAgnhostPod(namespace, name string, command ...string) *corev1.Pod {
+	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
 		},
-		Spec: v1.PodSpec{
-			Containers: []v1.Container{
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
 				{
 					Name:    name,
 					Image:   images.AgnHost(),
 					Command: command,
 				},
 			},
-			RestartPolicy: v1.RestartPolicyNever,
+			RestartPolicy: corev1.RestartPolicyNever,
 		},
 	}
 }
 
 // newLatestAgnhostPod returns a pod that uses the newer agnhost image. The image's binary supports various subcommands
 // that behave the same, no matter the underlying OS.
-func newLatestAgnhostPod(namespace, name string, command ...string) *v1.Pod {
-	return &v1.Pod{
+func newLatestAgnhostPod(namespace, name string, command ...string) *corev1.Pod {
+	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
 		},
-		Spec: v1.PodSpec{
-			Containers: []v1.Container{
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
 				{
 					Name:    name,
 					Image:   images.AgnHost(),
 					Command: command,
 				},
 			},
-			RestartPolicy: v1.RestartPolicyNever,
+			RestartPolicy: corev1.RestartPolicyNever,
 		},
 	}
 }
 
 // newAgnhostPod returns a pod that uses the agnhost image. The image's binary supports various subcommands
 // that behave the same, no matter the underlying OS.
-func newAgnhostPodOnNode(name, nodeName string, labels map[string]string, command ...string) *v1.Pod {
-	return &v1.Pod{
+func newAgnhostPodOnNode(name, nodeName string, labels map[string]string, command ...string) *corev1.Pod {
+	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   name,
 			Labels: labels,
 		},
-		Spec: v1.PodSpec{
+		Spec: corev1.PodSpec{
 			NodeName: nodeName,
-			Containers: []v1.Container{
+			Containers: []corev1.Container{
 				{
 					Name:    name,
 					Image:   images.AgnHost(),
 					Command: command,
 				},
 			},
-			RestartPolicy: v1.RestartPolicyNever,
+			RestartPolicy: corev1.RestartPolicyNever,
 		},
 	}
 }
 
 // IsIPv6Cluster returns true if the kubernetes default service is IPv6
-func IsIPv6Cluster(c kubernetes.Interface) bool {
+func IsIPv6Cluster(c clientset.Interface) bool {
 	// Get the ClusterIP of the kubernetes service created in the default namespace
 	svc, err := c.CoreV1().Services(metav1.NamespaceDefault).Get(context.Background(), "kubernetes", metav1.GetOptions{})
 	if err != nil {
@@ -186,7 +187,7 @@ func (anse annotationNotSetError) Error() string {
 }
 
 // newAnnotationNotSetError returns an error for an annotation that is not set
-func newAnnotationNotSetError(format string, args ...interface{}) error {
+func newAnnotationNotSetError(format string, args ...any) error {
 	return annotationNotSetError{msg: fmt.Sprintf(format, args...)}
 }
 
@@ -267,16 +268,16 @@ func unmarshalPodAnnotation(annotations map[string]string, networkName string) (
 	return podAnnotation, nil
 }
 
-func nodePortServiceSpecFrom(svcName string, ipFamily v1.IPFamilyPolicyType, httpPort, updPort, clusterHTTPPort, clusterUDPPort int, selector map[string]string, local v1.ServiceExternalTrafficPolicyType) *v1.Service {
-	res := &v1.Service{
+func nodePortServiceSpecFrom(svcName string, ipFamily corev1.IPFamilyPolicyType, httpPort, updPort, clusterHTTPPort, clusterUDPPort int, selector map[string]string, local corev1.ServiceExternalTrafficPolicyType) *corev1.Service {
+	res := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: svcName,
 		},
-		Spec: v1.ServiceSpec{
-			Type: v1.ServiceTypeNodePort,
-			Ports: []v1.ServicePort{
-				{Port: int32(clusterHTTPPort), Name: "http", Protocol: v1.ProtocolTCP, TargetPort: intstr.FromInt(httpPort)},
-				{Port: int32(clusterUDPPort), Name: "udp", Protocol: v1.ProtocolUDP, TargetPort: intstr.FromInt(updPort)},
+		Spec: corev1.ServiceSpec{
+			Type: corev1.ServiceTypeNodePort,
+			Ports: []corev1.ServicePort{
+				{Port: int32(clusterHTTPPort), Name: "http", Protocol: corev1.ProtocolTCP, TargetPort: intstr.FromInt(httpPort)},
+				{Port: int32(clusterUDPPort), Name: "udp", Protocol: corev1.ProtocolUDP, TargetPort: intstr.FromInt(updPort)},
 			},
 			Selector:              selector,
 			IPFamilyPolicy:        &ipFamily,
@@ -287,17 +288,17 @@ func nodePortServiceSpecFrom(svcName string, ipFamily v1.IPFamilyPolicyType, htt
 	return res
 }
 
-func externalIPServiceSpecFrom(svcName string, httpPort, updPort, clusterHTTPPort, clusterUDPPort int, selector map[string]string, externalIps []string) *v1.Service {
-	preferDual := v1.IPFamilyPolicyPreferDualStack
+func externalIPServiceSpecFrom(svcName string, httpPort, updPort, clusterHTTPPort, clusterUDPPort int, selector map[string]string, externalIps []string) *corev1.Service {
+	preferDual := corev1.IPFamilyPolicyPreferDualStack
 
-	res := &v1.Service{
+	res := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: svcName,
 		},
-		Spec: v1.ServiceSpec{
-			Ports: []v1.ServicePort{
-				{Port: int32(clusterHTTPPort), Name: "http", Protocol: v1.ProtocolTCP, TargetPort: intstr.FromInt(httpPort)},
-				{Port: int32(clusterUDPPort), Name: "udp", Protocol: v1.ProtocolUDP, TargetPort: intstr.FromInt(updPort)},
+		Spec: corev1.ServiceSpec{
+			Ports: []corev1.ServicePort{
+				{Port: int32(clusterHTTPPort), Name: "http", Protocol: corev1.ProtocolTCP, TargetPort: intstr.FromInt(httpPort)},
+				{Port: int32(clusterUDPPort), Name: "udp", Protocol: corev1.ProtocolUDP, TargetPort: intstr.FromInt(updPort)},
 			},
 			Selector:       selector,
 			IPFamilyPolicy: &preferDual,
@@ -375,8 +376,8 @@ func pokeEndpointViaNode(nodeName, protocol, targetHost string, localPort, targe
 
 // wrapper logic around pokeEndpoint
 // contact the ExternalIP service until each endpoint returns its hostname and return true, or false otherwise
-func pokeExternalIpService(externalContainer infraapi.ExternalContainer, protocol, externalAddress string, externalPort int32, maxTries int, nodesHostnames sets.String) bool {
-	responses := sets.NewString()
+func pokeExternalIpService(externalContainer infraapi.ExternalContainer, protocol, externalAddress string, externalPort int32, maxTries int, nodesHostnames sets.Set[string]) bool {
+	responses := sets.New[string]()
 
 	for i := 0; i < maxTries; i++ {
 		epHostname := pokeEndpointViaExternalContainer(externalContainer, protocol, externalAddress, externalPort, "hostname")
@@ -481,12 +482,12 @@ func isNeighborEntryStable(externalContainer infraapi.ExternalContainer, targetH
 
 // wgetInExternalContainer issues a request to target host and port at endpoint.
 // Returns a pair of either result, nil or "", error in case of an error.
-func wgetInExternalContainer(externalContainer infraapi.ExternalContainer, targetHost string, targetPort int32, endPoint string, maxTime int) (string, error) {
+func wgetInExternalContainer(externalContainer infraapi.ExternalContainer, targetHost string, targetPort int32, endPoint string, _ int) (string, error) {
 	if utilnet.IsIPv6String(targetHost) {
 		targetHost = fmt.Sprintf("[%s]", targetHost)
 	}
 	return infraprovider.Get().ExecExternalContainerCommand(externalContainer, []string{
-		"wget", fmt.Sprintf("http://%s:%d/%s", targetHost, targetPort, endPoint), "-O", "/dev/null",
+		"wget", "http://" + net.JoinHostPort(targetHost, strconv.Itoa(int(targetPort))) + "/" + endPoint, "-O", "/dev/null",
 	})
 }
 
@@ -509,13 +510,13 @@ func parseNetexecResponse(response string) (string, error) {
 	return res.Responses[0], nil
 }
 
-func nodePortsFromService(service *v1.Service) (int32, int32) {
+func nodePortsFromService(service *corev1.Service) (int32, int32) {
 	var resTCP, resUDP int32
 	for _, p := range service.Spec.Ports {
-		if p.Protocol == v1.ProtocolTCP {
+		if p.Protocol == corev1.ProtocolTCP {
 			resTCP = p.NodePort
 		}
-		if p.Protocol == v1.ProtocolUDP {
+		if p.Protocol == corev1.ProtocolUDP {
 			resUDP = p.NodePort
 		}
 	}
@@ -524,17 +525,14 @@ func nodePortsFromService(service *v1.Service) (int32, int32) {
 
 // addressIsIP tells wether the given address is an
 // address or a hostname
-func addressIsIP(address v1.NodeAddress) bool {
+func addressIsIP(address corev1.NodeAddress) bool {
 	addr := net.ParseIP(address.Address)
-	if addr == nil {
-		return false
-	}
-	return true
+	return addr != nil
 }
 
 // addressIsIPv4 tells whether the given address is an
 // IPv4 address.
-func addressIsIPv4(address v1.NodeAddress) bool {
+func addressIsIPv4(address corev1.NodeAddress) bool {
 	addr := net.ParseIP(address.Address)
 	if addr == nil {
 		return false
@@ -544,7 +542,7 @@ func addressIsIPv4(address v1.NodeAddress) bool {
 
 // addressIsIPv6 tells whether the given address is an
 // IPv6 address.
-func addressIsIPv6(address v1.NodeAddress) bool {
+func addressIsIPv6(address corev1.NodeAddress) bool {
 	addr := net.ParseIP(address.Address)
 	if addr == nil {
 		return false
@@ -553,7 +551,7 @@ func addressIsIPv6(address v1.NodeAddress) bool {
 }
 
 // Returns pod's ipv4 and ipv6 addresses IN ORDER
-func getPodAddresses(pod *v1.Pod) (string, string) {
+func getPodAddresses(pod *corev1.Pod) (string, string) {
 	var ipv4Res, ipv6Res string
 	for _, a := range pod.Status.PodIPs {
 		if utilnet.IsIPv4String(a.IP) {
@@ -567,7 +565,7 @@ func getPodAddresses(pod *v1.Pod) (string, string) {
 }
 
 // Returns nodes's ipv4 and ipv6 addresses IN ORDER
-func getNodeAddresses(node *v1.Node) (string, string) {
+func getNodeAddresses(node *corev1.Node) (string, string) {
 	var ipv4Res, ipv6Res string
 	for _, a := range node.Status.Addresses {
 		if utilnet.IsIPv4String(a.Address) {
@@ -591,7 +589,7 @@ func getNodeStatus(node string) string {
 // waitClusterHealthy ensures we have a given number of ovn-k worker and master nodes,
 // as well as all nodes are healthy
 func waitClusterHealthy(f *framework.Framework, numControlPlanePods int, controlPlanePodName string) error {
-	return wait.PollImmediate(2*time.Second, 120*time.Second, func() (bool, error) {
+	return wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 120*time.Second, true, func(_ context.Context) (bool, error) {
 		nodes, err := f.ClientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
 		if err != nil {
 			return false, fmt.Errorf("failed to list nodes: %w", err)
@@ -658,7 +656,7 @@ func waitClusterHealthy(f *framework.Framework, numControlPlanePods int, control
 // successfully rolled out following an update.
 //
 // If allowedNotReadyNodes is -1, this method returns immediately without waiting.
-func waitForRollout(c kubernetes.Interface, ns string, resource string, allowedNotReadyNodes int32, timeout time.Duration) error {
+func waitForRollout(c clientset.Interface, ns string, resource string, allowedNotReadyNodes int32, timeout time.Duration) error {
 	if allowedNotReadyNodes == -1 {
 		return nil
 	}
@@ -674,12 +672,12 @@ func waitForRollout(c kubernetes.Interface, ns string, resource string, allowedN
 	framework.Logf("Waiting up to %v for daemonset %s in namespace %s to update",
 		timeout, resource, ns)
 
-	return wait.Poll(framework.Poll, timeout, func() (bool, error) {
+	return wait.PollUntilContextTimeout(context.Background(), framework.Poll, timeout, false /*immediatge*/, func(ctx context.Context) (bool, error) {
 		var generation, observedGeneration int64
 		var updated, desired, available int32
 		switch resourceType {
 		case "daemonset", "daemonsets", "ds":
-			ds, err := c.AppsV1().DaemonSets(ns).Get(context.TODO(), resourceName, metav1.GetOptions{})
+			ds, err := c.AppsV1().DaemonSets(ns).Get(ctx, resourceName, metav1.GetOptions{})
 			if err != nil {
 				framework.Logf("Error getting resource %s in namespace: %s: %v", resource, ns, err)
 				return false, err
@@ -691,7 +689,7 @@ func waitForRollout(c kubernetes.Interface, ns string, resource string, allowedN
 			available = ds.Status.NumberAvailable
 
 		case "deployment", "deployments", "deploy":
-			dp, err := c.AppsV1().Deployments(ns).Get(context.TODO(), resourceName, metav1.GetOptions{})
+			dp, err := c.AppsV1().Deployments(ns).Get(ctx, resourceName, metav1.GetOptions{})
 			if err != nil {
 				framework.Logf("Error getting resource %s in namespace: %s: %v", resource, ns, err)
 				return false, err
@@ -745,7 +743,7 @@ func pokePod(fr *framework.Framework, srcPodName string, dstPodIP string) error 
 
 // pokeAllPodIPs will either poke the single dstPod's PodIP or all IPs in the pod's PodIPs list. The returned error
 // will be an aggregate of the errors encountered poking all destination IPs.
-func pokeAllPodIPs(fr *framework.Framework, srcPodName string, dstPod *v1.Pod) error {
+func pokeAllPodIPs(fr *framework.Framework, srcPodName string, dstPod *corev1.Pod) error {
 	var errors []error
 	if len(dstPod.Status.PodIPs) > 0 {
 		for _, podIP := range dstPod.Status.PodIPs {
@@ -753,7 +751,7 @@ func pokeAllPodIPs(fr *framework.Framework, srcPodName string, dstPod *v1.Pod) e
 				errors = append(errors, err)
 			}
 		}
-		return utilerrors.NewAggregate(errors)
+		return kerrors.NewAggregate(errors)
 	}
 	return pokePod(fr, srcPodName, dstPod.Status.PodIP)
 }
@@ -824,7 +822,7 @@ func assertACLLogs(targetNodeName string, policyNameRegex string, expectedACLVer
 }
 
 // patchServiceStringValue patches service serviceName in namespace serviceNamespace with provided string value.
-func patchServiceStringValue(c kubernetes.Interface, serviceName, serviceNamespace, jsonPath, value string) error {
+func patchServiceStringValue(c clientset.Interface, serviceName, serviceNamespace, jsonPath, value string) error {
 	patch := []struct {
 		Op    string `json:"op"`
 		Path  string `json:"path"`
@@ -840,7 +838,7 @@ func patchServiceStringValue(c kubernetes.Interface, serviceName, serviceNamespa
 }
 
 // patchServiceBoolValue patches service serviceName in namespace serviceNamespace with provided bool value.
-func patchServiceBoolValue(c kubernetes.Interface, serviceName, serviceNamespace, jsonPath string, value bool) error {
+func patchServiceBoolValue(c clientset.Interface, serviceName, serviceNamespace, jsonPath string, value bool) error {
 	patch := []struct {
 		Op    string `json:"op"`
 		Path  string `json:"path"`
@@ -856,7 +854,7 @@ func patchServiceBoolValue(c kubernetes.Interface, serviceName, serviceNamespace
 }
 
 // patchService patches service serviceName in namespace serviceNamespace.
-func patchService(c kubernetes.Interface, serviceName, serviceNamespace, jsonPath string, patchBytes []byte) error {
+func patchService(c clientset.Interface, serviceName, serviceNamespace, _ string, patchBytes []byte) error {
 	_, err := c.CoreV1().Services(serviceNamespace).Patch(
 		context.TODO(),
 		serviceName,
@@ -919,7 +917,6 @@ func countNFTablesElements(nodeName, name string) int {
 	//
 	// (Where the "elem" element will be omitted if the set is empty.)
 	// We just parse this optimistically and catch the panic if it fails.
-	count := -1
 	defer func() {
 		if recover() != nil {
 			framework.Logf("JSON parsing error!")
@@ -927,18 +924,21 @@ func countNFTablesElements(nodeName, name string) int {
 	}()
 
 	jsonResult := map[string][]map[string]map[string]any{}
-	json.Unmarshal([]byte(nftElements), &jsonResult)
+	if err := json.Unmarshal([]byte(nftElements), &jsonResult); err != nil {
+		framework.Logf("Error: failed to unmarshal nft elements JSON, err: %v", err)
+		return 0
+	}
 	elem := jsonResult["nftables"][1]["set"]["elem"]
 	if elem == nil {
 		return 0
 	}
 	elemArray := elem.([]any)
-	count = len(elemArray)
+	count := len(elemArray)
 	return count
 }
 
 // isDualStackCluster returns 'true' if at least one of the nodes has more than one node subnet.
-func isDualStackCluster(nodes *v1.NodeList) bool {
+func isDualStackCluster(nodes *corev1.NodeList) bool {
 	for _, node := range nodes.Items {
 		annotation, ok := node.Annotations[ovnNodeSubnets]
 		if !ok {
@@ -1011,7 +1011,7 @@ func wrappedTestFramework(basename string) *framework.Framework {
 func newPrivelegedTestFramework(basename string) *framework.Framework {
 	f := framework.NewDefaultFramework(basename)
 	f.NamespacePodSecurityEnforceLevel = admissionapi.LevelPrivileged
-	f.DumpAllNamespaceInfo = func(ctx context.Context, f *framework.Framework, namespace string) {
+	f.DumpAllNamespaceInfo = func(_ context.Context, f *framework.Framework, namespace string) {
 		debug.DumpAllNamespaceInfo(context.TODO(), f.ClientSet, namespace)
 	}
 	return f
@@ -1059,7 +1059,7 @@ func getTemplateContainerEnv(namespace, resource, container, key string) string 
 
 // setUnsetTemplateContainerEnv sets and unsets environment variables in a container
 // template and waits for the rollout
-func setUnsetTemplateContainerEnv(c kubernetes.Interface, namespace, resource, container string, set map[string]string, unset ...string) {
+func setUnsetTemplateContainerEnv(c clientset.Interface, namespace, resource, container string, set map[string]string, unset ...string) {
 	args := []string{"set", "env", resource, "-c", container}
 	env := make([]string, 0, len(set)+len(unset))
 	for k, v := range set {
@@ -1122,16 +1122,16 @@ func updateIPTablesRulesForNode(op, nodeName string, ipTablesArgs []string, ipv6
 }
 
 func randStr(n int) string {
-	rand.Seed(time.Now().UnixNano())
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	b := make([]byte, n)
 	for i := range b {
 		// randomly select 1 character from given charset
-		b[i] = charset[rand.Intn(len(charset))]
+		b[i] = charset[r.Intn(len(charset))]
 	}
 	return string(b)
 }
 
-func isCIDRIPFamilySupported(cs kubernetes.Interface, cidr string) bool {
+func isCIDRIPFamilySupported(cs clientset.Interface, cidr string) bool {
 	ginkgo.GinkgoHelper()
 	gomega.Expect(cidr).To(gomega.ContainSubstring("/"))
 	isIPv6 := utilnet.IsIPv6CIDRString(cidr)
@@ -1144,12 +1144,12 @@ func isIPFamilySupported(cs clientset.Interface, cidr string) bool {
 	return (isIPv4Supported(cs) && !isIPv6) || (isIPv6Supported(cs) && isIPv6)
 }
 
-func isIPv4Supported(cs kubernetes.Interface) bool {
+func isIPv4Supported(cs clientset.Interface) bool {
 	v4, _ := getSupportedIPFamilies(cs)
 	return v4
 }
 
-func isIPv6Supported(cs kubernetes.Interface) bool {
+func isIPv6Supported(cs clientset.Interface) bool {
 	_, v6 := getSupportedIPFamilies(cs)
 	return v6
 }
@@ -1165,15 +1165,15 @@ func filterIPs(cs clientset.Interface, cidrs ...string) []string {
 	return supportedCIDRs
 }
 
-func getSupportedIPFamilies(cs kubernetes.Interface) (bool, bool) {
+func getSupportedIPFamilies(cs clientset.Interface) (bool, bool) {
 	n, err := e2enode.GetRandomReadySchedulableNode(context.TODO(), cs)
 	framework.ExpectNoError(err, "must fetch a Ready Node")
-	v4NodeAddrs := e2enode.GetAddressesByTypeAndFamily(n, v1.NodeInternalIP, v1.IPv4Protocol)
-	v6NodeAddrs := e2enode.GetAddressesByTypeAndFamily(n, v1.NodeInternalIP, v1.IPv6Protocol)
+	v4NodeAddrs := e2enode.GetAddressesByTypeAndFamily(n, corev1.NodeInternalIP, corev1.IPv4Protocol)
+	v6NodeAddrs := e2enode.GetAddressesByTypeAndFamily(n, corev1.NodeInternalIP, corev1.IPv6Protocol)
 	return len(v4NodeAddrs) > 0, len(v6NodeAddrs) > 0
 }
 
-func getSupportedIPFamiliesSlice(cs kubernetes.Interface) []utilnet.IPFamily {
+func getSupportedIPFamiliesSlice(cs clientset.Interface) []utilnet.IPFamily {
 	v4, v6 := getSupportedIPFamilies(cs)
 	switch {
 	case v4 && v6:
@@ -1211,13 +1211,7 @@ func singleNodePerZone() bool {
 	if singleNodePerZoneResult == nil {
 		args := []string{"get", "pods", "--selector=app=ovnkube-node", "-o", "jsonpath={.items[0].spec.containers[*].name}"}
 		containerNames := e2ekubectl.RunKubectlOrDie(deploymentconfig.Get().OVNKubernetesNamespace(), args...)
-		result := true
-		for _, containerName := range strings.Split(containerNames, " ") {
-			if containerName == "ovnkube-node" {
-				result = false
-				break
-			}
-		}
+		result := !slices.Contains(strings.Split(containerNames, " "), "ovnkube-node")
 		singleNodePerZoneResult = &result
 	}
 	return *singleNodePerZoneResult
@@ -1231,7 +1225,7 @@ func getNodeContainerName() string {
 }
 
 // getNodeZone returns the node's zone
-func getNodeZone(node *v1.Node) (string, error) {
+func getNodeZone(node *corev1.Node) (string, error) {
 	nodeZone, ok := node.Annotations[ovnNodeZoneNameAnnotation]
 	if !ok {
 		return "", fmt.Errorf("zone for the node %s not set in the annotation %s", node.Name, ovnNodeZoneNameAnnotation)
@@ -1319,7 +1313,7 @@ func GetNodeIPv6LinkLocalAddressForEth0(nodeName string) (string, error) {
 // right-most match of the provided regex. Returns a map of subexpression name
 // to subexpression capture. A zero string name `""` maps to the full expression
 // capture.
-func CaptureContainerOutput(ctx context.Context, c kubernetes.Interface, namespace, pod, container, regexpr string) (map[string]string, error) {
+func CaptureContainerOutput(ctx context.Context, c clientset.Interface, namespace, pod, container, regexpr string) (map[string]string, error) {
 	regex, err := regexp.Compile(regexpr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compile regexp %q: %w", regexpr, err)
@@ -1361,12 +1355,9 @@ func isDisablePacketMTUCheckEnabled() bool {
 // getGatewayMTUSupport returns true if gateway-mtu-support annotataion
 // is not set on the node, otherwise it returns false as the value of the
 // annotation also get set to false
-func getGatewayMTUSupport(node *v1.Node) bool {
+func getGatewayMTUSupport(node *corev1.Node) bool {
 	_, ok := node.Annotations[ovnGatewayMTUSupport]
-	if !ok {
-		return true
-	}
-	return false
+	return !ok
 }
 
 func isKernelModuleLoaded(nodeName, kernelModuleName string) bool {
@@ -1445,7 +1436,7 @@ func getFirstIPStringOfFamily(family utilnet.IPFamily, ips []string) string {
 
 // This is a replacement for e2epod.DeletePodWithWait(), which does not handle pods that
 // may be automatically restarted (https://issues.k8s.io/126785)
-func deletePodWithWait(ctx context.Context, c kubernetes.Interface, pod *v1.Pod) error {
+func deletePodWithWait(ctx context.Context, c clientset.Interface, pod *corev1.Pod) error {
 	if pod == nil {
 		return nil
 	}
@@ -1473,7 +1464,7 @@ func deletePodWithWait(ctx context.Context, c kubernetes.Interface, pod *v1.Pod)
 
 // This is a replacement for e2epod.DeletePodWithWaitByName(), which does not handle pods
 // that may be automatically restarted (https://issues.k8s.io/126785)
-func deletePodWithWaitByName(ctx context.Context, c kubernetes.Interface, podName, podNamespace string) error {
+func deletePodWithWaitByName(ctx context.Context, c clientset.Interface, podName, podNamespace string) error {
 	pod, err := c.CoreV1().Pods(podNamespace).Get(ctx, podName, metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -1491,8 +1482,8 @@ func deletePodWithWaitByName(ctx context.Context, c kubernetes.Interface, podNam
 
 // This is an alternative version of e2epod.WaitForPodNotFoundInNamespace(), which takes
 // a UID as well.
-func waitForPodNotFoundInNamespace(ctx context.Context, c kubernetes.Interface, podName, ns string, uid types.UID, timeout time.Duration) error {
-	err := framework.Gomega().Eventually(ctx, framework.HandleRetry(func(ctx context.Context) (*v1.Pod, error) {
+func waitForPodNotFoundInNamespace(ctx context.Context, c clientset.Interface, podName, ns string, uid types.UID, timeout time.Duration) error {
+	err := framework.Gomega().Eventually(ctx, framework.HandleRetry(func(ctx context.Context) (*corev1.Pod, error) {
 		pod, err := c.CoreV1().Pods(ns).Get(ctx, podName, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
 			return nil, nil

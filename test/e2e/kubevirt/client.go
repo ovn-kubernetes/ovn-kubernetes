@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	retry "k8s.io/client-go/util/retry"
-
 	kubevirtv1 "kubevirt.io/api/core/v1"
+
+	retry "k8s.io/client-go/util/retry"
 )
 
 type Client struct {
@@ -92,7 +92,7 @@ func downloadVirtctlBinary() (io.ReadCloser, error) {
 
 func installVirtctl(cliDir string) error {
 	var virtctlBody io.ReadCloser
-	allErrors := func(err error) bool {
+	allErrors := func(_ error) bool {
 		return true
 	}
 	err := retry.OnError(retry.DefaultRetry, allErrors, func() error {
