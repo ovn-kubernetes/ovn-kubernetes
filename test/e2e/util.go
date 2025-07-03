@@ -23,7 +23,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/kubernetes"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
 	"k8s.io/kubernetes/test/e2e/framework/debug"
@@ -823,7 +822,7 @@ func assertACLLogs(targetNodeName string, policyNameRegex string, expectedACLVer
 }
 
 // patchServiceStringValue patches service serviceName in namespace serviceNamespace with provided string value.
-func patchServiceStringValue(c kubernetes.Interface, serviceName, serviceNamespace, jsonPath, value string) error {
+func patchServiceStringValue(c clientset.Interface, serviceName, serviceNamespace, jsonPath, value string) error {
 	patch := []struct {
 		Op    string `json:"op"`
 		Path  string `json:"path"`
@@ -839,7 +838,7 @@ func patchServiceStringValue(c kubernetes.Interface, serviceName, serviceNamespa
 }
 
 // patchServiceBoolValue patches service serviceName in namespace serviceNamespace with provided bool value.
-func patchServiceBoolValue(c kubernetes.Interface, serviceName, serviceNamespace, jsonPath string, value bool) error {
+func patchServiceBoolValue(c clientset.Interface, serviceName, serviceNamespace, jsonPath string, value bool) error {
 	patch := []struct {
 		Op    string `json:"op"`
 		Path  string `json:"path"`
@@ -855,7 +854,7 @@ func patchServiceBoolValue(c kubernetes.Interface, serviceName, serviceNamespace
 }
 
 // patchService patches service serviceName in namespace serviceNamespace.
-func patchService(c kubernetes.Interface, serviceName, serviceNamespace, _ string, patchBytes []byte) error {
+func patchService(c clientset.Interface, serviceName, serviceNamespace, _ string, patchBytes []byte) error {
 	_, err := c.CoreV1().Services(serviceNamespace).Patch(
 		context.TODO(),
 		serviceName,
@@ -1058,7 +1057,7 @@ func getTemplateContainerEnv(namespace, resource, container, key string) string 
 
 // setUnsetTemplateContainerEnv sets and unsets environment variables in a container
 // template and waits for the rollout
-func setUnsetTemplateContainerEnv(c kubernetes.Interface, namespace, resource, container string, set map[string]string, unset ...string) {
+func setUnsetTemplateContainerEnv(c clientset.Interface, namespace, resource, container string, set map[string]string, unset ...string) {
 	args := []string{"set", "env", resource, "-c", container}
 	env := make([]string, 0, len(set)+len(unset))
 	for k, v := range set {

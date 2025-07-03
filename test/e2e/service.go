@@ -27,7 +27,6 @@ import (
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
-	e2eoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 	e2erc "k8s.io/kubernetes/test/e2e/framework/rc"
 	e2eservice "k8s.io/kubernetes/test/e2e/framework/service"
@@ -147,7 +146,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 			net.JoinHostPort(service.Spec.ClusterIP, "80"))
 
 		err = wait.PollImmediate(framework.Poll, 30*time.Second, func() (bool, error) {
-			stdout, err := e2epodoutput.RunHostCmdWithRetries(clientPod.Namespace, clientPod.Name, cmd, framework.Poll, 30*time.Second)
+			stdout, err := e2epodoutput.RunHostCmd(clientPod.Namespace, clientPod.Name, cmd)
 			if err != nil {
 				return false, err
 			}
@@ -1406,7 +1405,7 @@ func getServiceBackendsFromPod(execPod *corev1.Pod, serviceIP string, servicePor
 	curl := fmt.Sprintf(`curl -q -s --connect-timeout 2 http://%s/`, serviceIPPort)
 	cmd := fmt.Sprintf("for i in $(seq 1 %d); do echo; %s ; done", connectionAttempts, curl)
 
-	stdout, err := e2eoutput.RunHostCmd(execPod.Namespace, execPod.Name, cmd)
+	stdout, err := e2epodoutput.RunHostCmdWithRetries(execPod.Namespace, execPod.Name, cmd, framework.Poll, 30*time.Second)
 	if err != nil {
 		framework.Logf("Failed to get response from %s. Retry until timeout", serviceIPPort)
 		return nil
