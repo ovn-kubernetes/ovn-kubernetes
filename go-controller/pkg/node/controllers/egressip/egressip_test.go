@@ -29,7 +29,6 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/cache"
 	utiliptables "k8s.io/kubernetes/pkg/util/iptables"
-	kexec "k8s.io/utils/exec"
 	utilnet "k8s.io/utils/net"
 
 	ovnconfig "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
@@ -170,8 +169,8 @@ func setupFakeNode(nodeInitialConfig nodeConfig) (ns.NetNS, error) {
 			}
 		}
 		// adding IPTable rules
-		ipTableV4Client := utiliptables.New(kexec.New(), utiliptables.ProtocolIPv4)
-		ipTableV6Client := utiliptables.New(kexec.New(), utiliptables.ProtocolIPv6)
+		ipTableV4Client := utiliptables.New(utiliptables.ProtocolIPv4)
+		ipTableV6Client := utiliptables.New(utiliptables.ProtocolIPv6)
 		var ipTableClient utiliptables.Interface
 		for _, iptableRule := range nodeInitialConfig.iptableRules {
 			if len(iptableRule.Args) != 0 {

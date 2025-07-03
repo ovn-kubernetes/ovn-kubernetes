@@ -67,8 +67,8 @@ func NewController() *Controller {
 	return &Controller{
 		store: make(map[rulesIndex]rules, 0),
 		mu:    &sync.Mutex{},
-		iptV4: iptables.New(kexec.New(), iptables.ProtocolIPv4),
-		iptV6: iptables.New(kexec.New(), iptables.ProtocolIPv6),
+		iptV4: iptables.New(iptables.ProtocolIPv4),
+		iptV6: iptables.New(iptables.ProtocolIPv6),
 	}
 }
 

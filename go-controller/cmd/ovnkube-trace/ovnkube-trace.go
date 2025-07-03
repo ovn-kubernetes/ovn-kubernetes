@@ -15,9 +15,11 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
+	discoveryv1client "k8s.io/client-go/kubernetes/typed/discovery/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/remotecommand"
@@ -44,7 +46,7 @@ const (
 const (
 	// nbdb and sbdb local socket file path and protocol string which are
 	// used by ovnkube-trace for establishing the connection when node
-	// runs on its own zone in an interconnect environment.
+	// runs on its own zone in an interconnect environment
 	nbdbServerSock = "unix:/var/run/ovn/ovnnb_db.sock"
 	sbdbServerSock = "unix:/var/run/ovn/ovnsb_db.sock"
 	sockProtocol   = "unix"
@@ -364,13 +366,20 @@ func getSvcInfo(coreclient *corev1client.CoreV1Client, restconfig *rest.Config, 
 		ClusterIP:    clusterIPStr,
 	}
 
-	ep, err := coreclient.Endpoints(namespace).Get(context.TODO(), svcName, metav1.GetOptions{})
+	discoveryClient, err := discoveryv1client.NewForConfig(restconfig)
 	if err != nil {
-		return nil, fmt.Errorf("endpoints for service %s in namespace %s not found, err: %v", svcName, namespace, err)
+		return nil, fmt.Errorf("failed to create discovery client: %v", err)
 	}
-	klog.V(5).Infof("==> Got Endpoint %v for service %s in namespace %s\n", ep, svcName, namespace)
 
-	err = extractSubsetInfo(coreclient, restconfig, ep.Subsets, svcInfo, ovnNamespace, addressFamily)
+	es, err := discoveryClient.EndpointSlices(namespace).List(context.TODO(), metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("kubernetes.io/service-name=%s", svcName),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("EndpointSlices for service %s in namespace %s not found, err: %v", svcName, namespace, err)
+	}
+	klog.V(5).Infof("==> Got EndpointSlices %v for service %s in namespace %s\n", es, svcName, namespace)
+
+	err = extractEndpointSliceInfo(coreclient, restconfig, es.Items, svcInfo, ovnNamespace, addressFamily)
 	if err != nil {
 		return nil, err
 	}
@@ -378,21 +387,23 @@ func getSvcInfo(coreclient *corev1client.CoreV1Client, restconfig *rest.Config, 
 	return svcInfo, err
 }
 
-// extractSubsetInfo copies information from the endpoint subsets into the SvcInfo object.
+// extractEndpointSliceInfo copies information from the endpoint slices into the SvcInfo object.
 // Modifies the svcInfo object the pointer of which is passed to it.
-func extractSubsetInfo(coreclient *corev1client.CoreV1Client, restconfig *rest.Config, subsets []corev1.EndpointSubset, svcInfo *SvcInfo, ovnNamespace, addressFamily string) error {
-	for _, subset := range subsets {
-		klog.V(5).Infof("==> Trying to extract information for service %s in namespace %s from subset %v",
-			svcInfo.SvcName, svcInfo.SvcNamespace, subset)
+// slice is *discoveryv1.EndpointSlice slices is
+func extractEndpointSliceInfo(coreclient *corev1client.CoreV1Client, restconfig *rest.Config, slices []discoveryv1.EndpointSlice, svcInfo *SvcInfo, ovnNamespace, addressFamily string) error {
+
+	for _, slice := range slices {
+		klog.V(5).Infof("==> Trying to extract information for service %s in namespace %s from slice %v",
+			svcInfo.SvcName, svcInfo.SvcNamespace, slice)
 
 		// Find a port for the subset.
 		var podPort string
-		for _, port := range subset.Ports {
-			podPort = strconv.Itoa(int(port.Port))
-			if podPort == "" {
+		for _, port := range slice.Ports {
+			if port.Port == nil {
 				klog.V(5).Infof("==> Could not parse port %v, skipping.", port)
 				continue // with the next port
 			}
+			podPort = strconv.Itoa(int(*port.Port))
 		}
 		// Continue with the next subset if podPort is empty.
 		if podPort == "" {
@@ -401,35 +412,40 @@ func extractSubsetInfo(coreclient *corev1client.CoreV1Client, restconfig *rest.C
 
 		// Parse pod information from the subset addresses. One of the subsets must have a valid address which does not belong
 		// to a host networked pod.
-		for _, epAddress := range subset.Addresses {
+		for _, endpoint := range slice.Endpoints {
+			epAddress := endpoint.Addresses
+			if len(epAddress) == 0 {
+				klog.V(5).Infof("Address is empty for endpoint. Skipping.")
+				continue
+			}
 			// This is nil for host networked services.
-			if epAddress.TargetRef == nil {
+			if endpoint.TargetRef == nil {
 				klog.V(5).Infof("Address %v belongs to a host networked pod. Skipping.", epAddress)
 				continue // with the next address
 			}
-			if epAddress.TargetRef.Name == "" || epAddress.TargetRef.Namespace == "" || epAddress.IP == "" {
+			if endpoint.TargetRef.Name == "" || endpoint.TargetRef.Namespace == "" {
 				klog.V(5).Infof("Address %v contains invalid data. podName %s, podNamespace %s, podIP %s. Skipping.",
-					epAddress, epAddress.TargetRef.Name, epAddress.TargetRef.Namespace, epAddress.IP)
+					epAddress, endpoint.TargetRef.Name, endpoint.TargetRef.Namespace, epAddress)
 				continue // with the next address
 			}
 
 			// Get info needed for the src Pod
-			svcPodInfo, err := getPodInfo(coreclient, restconfig, epAddress.TargetRef.Name, ovnNamespace, epAddress.TargetRef.Namespace, addressFamily)
+			svcPodInfo, err := getPodInfo(coreclient, restconfig, endpoint.TargetRef.Name, ovnNamespace, endpoint.TargetRef.Namespace, addressFamily)
 			if err != nil {
-				klog.Exitf("Failed to get information from pod %s: %v", epAddress.TargetRef.Name, err)
+				klog.Exitf("Failed to get information from pod %s: %v", endpoint.TargetRef.Name, err)
 			}
 			klog.V(5).Infof("svcPodInfo is %s\n", svcPodInfo)
 
 			// At this point, we should have found valid pod information + a port, so set them and return nil.
 			svcInfo.PodInfo = svcPodInfo
 			svcInfo.PodPort = podPort
-			klog.V(5).Infof("==> Got address and port information for service endpoint. podName: %s, podNamespace: %s, podIP: %s, podPort: %s, podNodeName: %s",
+			klog.V(5).Infof("==> Got address and port information for service endpoint slice. podName: %s, podNamespace: %s, podIP: %s, podPort: %s, podNodeName: %s",
 				svcInfo.PodInfo.PodName, svcInfo.PodInfo.PodNamespace, svcInfo.PodInfo.IP, svcInfo.PodPort, svcInfo.PodInfo.NodeName)
 			return nil
 		}
 	}
 
-	return fmt.Errorf("could not extract pod and port information from endpoints for service %s in namespace %s", svcInfo.SvcName, svcInfo.SvcNamespace)
+	return fmt.Errorf("could not extract pod and port information from endpointslice for service %s in namespace %s", svcInfo.SvcName, svcInfo.SvcNamespace)
 }
 
 // getPodInfo returns a pointer to a fully populated PodInfo struct, or error on failure.
@@ -1222,7 +1238,6 @@ func main() {
 	}
 
 	klog.V(5).Infof("OVN Kubernetes namespace is %s", ovnNamespace)
-
 	if *dumpVRFTableIDs {
 		nodesVRFTableIDs, err := findUserDefinedNetworkVRFTableIDs(coreclient, restconfig, ovnNamespace)
 		if err != nil {

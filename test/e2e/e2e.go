@@ -671,7 +671,7 @@ func findOvnKubeControlPlaneNode(namespace, controlPlanePodName, leaseName strin
 	framework.ExpectNoError(err, fmt.Sprintf("Unable to retrieve leases (%s)"+
 		"from %s %v", leaseName, namespace, err))
 
-	framework.Logf(fmt.Sprintf("master instance of %s is running on node %s", controlPlanePodName, ovnkubeControlPlaneNode))
+	framework.Logf("master instance of %s is running on node %s", controlPlanePodName, ovnkubeControlPlaneNode)
 	// Strip leading and trailing quotes if present
 	if ovnkubeControlPlaneNode[0] == '\'' || ovnkubeControlPlaneNode[0] == '"' {
 		ovnkubeControlPlaneNode = ovnkubeControlPlaneNode[1 : len(ovnkubeControlPlaneNode)-1]
@@ -897,7 +897,7 @@ var _ = ginkgo.Describe("e2e control plane", func() {
 			}
 		}
 
-		framework.Logf(fmt.Sprintf("Killed all pods running on node %s", ovnKubeControlPlaneNode))
+		framework.Logf("Killed all pods running on node %s", ovnKubeControlPlaneNode)
 
 		framework.ExpectNoError(<-errChan)
 	})
@@ -1298,7 +1298,11 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 			framework.ExpectNoError(err)
 
 			ginkgo.By("Waiting for the endpoints to pop up")
-			err = framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, f.Namespace.Name, serviceName, len(endPoints), time.Second, wait.ForeverTestTimeout)
+			expectedEndpointsNum :=  len(endPoints)
+			if isDualStack {
+				expectedEndpointsNum = expectedEndpointsNum * 2
+			}
+			err = framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, f.Namespace.Name, serviceName, expectedEndpointsNum, time.Second, wait.ForeverTestTimeout)
 			framework.ExpectNoError(err, "failed to validate endpoints for service %s in namespace: %s", serviceName, f.Namespace.Name)
 
 			for _, protocol := range []string{"http", "udp"} {
@@ -1494,7 +1498,11 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 			framework.ExpectNoError(err)
 
 			ginkgo.By("Waiting for the endpoints to pop up")
-			err = framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, f.Namespace.Name, serviceName, len(endPoints), time.Second, wait.ForeverTestTimeout)
+			expectedEndpointsNum :=  len(endPoints)
+			if isDualStack {
+				expectedEndpointsNum = expectedEndpointsNum * 2
+			}
+			err = framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, f.Namespace.Name, serviceName, expectedEndpointsNum, time.Second, wait.ForeverTestTimeout)
 			framework.ExpectNoError(err, "failed to validate endpoints for service %s in namespace: %s", serviceName, f.Namespace.Name)
 
 			for _, protocol := range []string{"http", "udp"} {
@@ -1578,7 +1586,11 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 			framework.ExpectNoError(err)
 
 			ginkgo.By("Waiting for the endpoints to pop up")
-			err = framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, f.Namespace.Name, serviceName, len(endPoints), time.Second, wait.ForeverTestTimeout)
+			expectedEndpointsNum :=  len(endPoints)
+			if isDualStack {
+				expectedEndpointsNum = expectedEndpointsNum * 2
+			}
+			err = framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, f.Namespace.Name, serviceName, expectedEndpointsNum, time.Second, wait.ForeverTestTimeout)
 			framework.ExpectNoError(err, "failed to validate endpoints for service %s in namespace: %s", serviceName, f.Namespace.Name)
 
 			for _, externalAddress := range addresses {
@@ -1725,7 +1737,11 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 			framework.ExpectNoError(err)
 
 			ginkgo.By("Waiting for the endpoints to pop up")
-			err = framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, f.Namespace.Name, serviceName, len(endPoints), time.Second, wait.ForeverTestTimeout)
+			expectedEndpointsNum :=  len(endPoints)
+			if isDualStack {
+				expectedEndpointsNum = expectedEndpointsNum * 2
+			}
+			err = framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, f.Namespace.Name, serviceName, expectedEndpointsNum, time.Second, wait.ForeverTestTimeout)
 			framework.ExpectNoError(err, "failed to validate endpoints for service %s in namespace: %s", serviceName, f.Namespace.Name)
 
 			for _, protocol := range []string{"http", "udp"} {
@@ -1773,6 +1789,7 @@ var _ = ginkgo.Describe("e2e ingress to host-networked pods traffic validation",
 	maxTries := 0
 	var nodes *v1.NodeList
 	var providerCtx infraapi.Context
+	var isDualStack bool
 
 	ginkgo.BeforeEach(func() {
 		providerCtx = infraprovider.Get().NewTestContext()
@@ -1802,6 +1819,8 @@ var _ = ginkgo.Describe("e2e ingress to host-networked pods traffic validation",
 					"Test requires >= 3 Ready nodes, but there are only %v nodes",
 					len(nodes.Items))
 			}
+
+			isDualStack = isDualStackCluster(nodes)
 
 			ginkgo.By("Creating the endpoints pod, one for each worker")
 			for _, node := range nodes.Items {
@@ -1855,7 +1874,11 @@ var _ = ginkgo.Describe("e2e ingress to host-networked pods traffic validation",
 			nodeTCPPort, nodeUDPPort := nodePortsFromService(np)
 
 			ginkgo.By("Waiting for the endpoints to pop up")
-			err = framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, f.Namespace.Name, serviceName, len(endPoints), time.Second, wait.ForeverTestTimeout)
+			expectedEndpointsNum :=  len(endPoints)
+			if isDualStack {
+				expectedEndpointsNum = expectedEndpointsNum * 2
+			}
+			err = framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, f.Namespace.Name, serviceName, expectedEndpointsNum, time.Second, wait.ForeverTestTimeout)
 			framework.ExpectNoError(err, "failed to validate endpoints for service %s in namespace: %s", serviceName, f.Namespace.Name)
 
 			for _, protocol := range []string{"http", "udp"} {
@@ -2229,7 +2252,7 @@ var _ = ginkgo.Describe("e2e delete databases", func() {
 		for {
 			select {
 			case msg := <-syncChan:
-				framework.Logf(msg + ": finish connectivity test.")
+				framework.Logf("%s: finish connectivity test.", msg)
 				break L
 			default:
 				stdout, err := e2ekubectl.RunKubectl(f.Namespace.Name, "exec", pod1Name, "--", "curl", fmt.Sprintf("%s/hostname",
@@ -2279,7 +2302,7 @@ var _ = ginkgo.Describe("e2e delete databases", func() {
 			select {
 			case msg := <-syncChan:
 				// wait for the connectivity test pods to be ready
-				framework.Logf(msg + ": delete and restart db pods.")
+				framework.Logf("%s: delete and restart db pods.", msg)
 			case err := <-errChan:
 				// fail if error is returned before test pods are ready
 				framework.Fail(err.Error())
