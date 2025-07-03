@@ -798,11 +798,18 @@ func (udng *UserDefinedNetworkGateway) getV6MasqueradeIP() (*net.IPNet, error) {
 // If the network is advertised to the default VRF, an example of the rules we set for a network is:
 // 2000:	from all fwmark 0x1001 lookup 1007
 // 2000:	from all to 10.132.0.0/14 lookup 1007
+// 2000:   from all to 169.254.0.12 lookup 1007
 // 2000:	from all fwmark 0x1001 lookup 1009
 // 2000:	from all to 10.134.0.0/14 lookup 1009
+// 2000:   from all to 169.254.0.14 lookup 1009
 // If the network is advertised ot a non-default VRF, an example of the rules we set for a network is:
 // 2000:	from all fwmark 0x1001 lookup 1007
+// 2000:   from all to 169.254.0.12 lookup 1007
 // 2000:	from all fwmark 0x1001 lookup 1009
+// 2000:   from all to 169.254.0.14 lookup 1009
+// NOTE: The reason why advertised networks have iprules for both podsubenet and masqueradeIP is because
+// corner case (pods to other nodes in the cluster uses masqueradeIP as source IP and so reply needs to go
+// back to the correct UDN)
 func (udng *UserDefinedNetworkGateway) constructUDNVRFIPRules() ([]netlink.Rule, []netlink.Rule, error) {
 	var addIPRules []netlink.Rule
 	var delIPRules []netlink.Rule
@@ -838,11 +845,11 @@ func (udng *UserDefinedNetworkGateway) constructUDNVRFIPRules() ([]netlink.Rule,
 	switch {
 	case udng.isNetworkAdvertisedToDefaultVRF:
 		// the network is advertised to the default VRF
-		delIPRules = append(delIPRules, masqIPRules...)
+		addIPRules = append(addIPRules, masqIPRules...)
 		addIPRules = append(addIPRules, subnetIPRules...)
 	case udng.isNetworkAdvertised:
 		// the network is advertised to a non-default VRF
-		delIPRules = append(delIPRules, masqIPRules...)
+		addIPRules = append(addIPRules, masqIPRules...)
 		delIPRules = append(delIPRules, subnetIPRules...)
 	default:
 		// the network is not advertised
