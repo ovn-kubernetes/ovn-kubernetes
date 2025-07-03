@@ -24,27 +24,9 @@ func ProcessTestContextAndSetupLogging() {
 	// to override them, but these defaults are still better for E2E than the
 	// ones from Gomega (1s timeout, 10ms interval).
 	var defaultTimeouts = framework.TimeoutContext{
-		Poll:                      2 * time.Second, // from the former e2e/framework/pod poll interval
-		PodStart:                  5 * time.Minute,
-		PodStartShort:             2 * time.Minute,
-		PodStartSlow:              15 * time.Minute,
-		PodDelete:                 5 * time.Minute,
-		ClaimProvision:            5 * time.Minute,
-		ClaimProvisionShort:       1 * time.Minute,
-		DataSourceProvision:       5 * time.Minute,
-		ClaimBound:                3 * time.Minute,
-		PVReclaim:                 3 * time.Minute,
-		PVBound:                   3 * time.Minute,
-		PVCreate:                  3 * time.Minute,
-		PVDelete:                  5 * time.Minute,
-		PVDeleteSlow:              20 * time.Minute,
-		SnapshotCreate:            5 * time.Minute,
-		SnapshotDelete:            5 * time.Minute,
-		SnapshotControllerMetrics: 5 * time.Minute,
-		SystemPodsStartup:         10 * time.Minute,
-		NodeSchedulable:           30 * time.Minute,
-		SystemDaemonsetStartup:    5 * time.Minute,
-		NodeNotReady:              3 * time.Minute,
+		Poll:          2 * time.Second, // from the former e2e/framework/pod poll interval
+		PodStart:      5 * time.Minute,
+		PodStartShort: 2 * time.Minute,
 	}
 	gomega.SetDefaultEventuallyPollingInterval(defaultTimeouts.Poll)
 	gomega.SetDefaultConsistentlyPollingInterval(defaultTimeouts.Poll)

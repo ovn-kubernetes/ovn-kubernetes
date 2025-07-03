@@ -9,12 +9,13 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 )
 
 var _ = ginkgo.Describe("Status manager validation", feature.EgressFirewall, func() {
@@ -64,7 +65,7 @@ spec:
 
 	ginkgo.It("Should validate the egress firewall status when adding an unknown zone", func() {
 		// add unknown node
-		newNode := &v1.Node{
+		newNode := &corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "new-node",
 			},
@@ -81,7 +82,7 @@ spec:
 
 	ginkgo.It("Should validate the egress firewall status when adding a new zone", func() {
 		// add node with new zone
-		newNode := &v1.Node{
+		newNode := &corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:        "new-node",
 				Annotations: map[string]string{"k8s.ovn.org/zone-name": "new-zone"},

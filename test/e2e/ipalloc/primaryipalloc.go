@@ -3,12 +3,14 @@ package ipalloc
 import (
 	"context"
 	"fmt"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"net"
+	"sync"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	v1 "k8s.io/client-go/kubernetes/typed/core/v1"
-	"net"
-	"sync"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 // primaryIPAllocator attempts to allocate an IP in the same subnet as a nodes primary network

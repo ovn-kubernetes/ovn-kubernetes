@@ -11,16 +11,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
-	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
-
 	"github.com/google/go-cmp/cmp"
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -31,6 +26,12 @@ import (
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	"k8s.io/kubernetes/test/e2e/framework/skipper"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
+	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
 )
 
 // This is the image used for the containers acting as externalgateways, built
@@ -3021,8 +3022,8 @@ func setupGatewayContainers(f *framework.Framework, providerCtx infraapi.Context
 				_, err = infraprovider.Get().ExecExternalContainerCommand(gwContainer, []string{"ip", "address", "add", address + "/32", "dev", "lo"})
 				framework.ExpectNoError(err, "failed to add the loopback ip to dev lo on the test container %s", gwContainer.Name)
 				providerCtx.AddCleanUpFn(func() error {
-					infraprovider.Get().ExecExternalContainerCommand(gwContainer, []string{"ip", "address", "del", address + "/32", "dev", "lo"})
-					return nil
+					_, err := infraprovider.Get().ExecExternalContainerCommand(gwContainer, []string{"ip", "address", "del", address + "/32", "dev", "lo"})
+					return err
 				})
 			}
 
@@ -3030,8 +3031,8 @@ func setupGatewayContainers(f *framework.Framework, providerCtx infraapi.Context
 			_, err = infraprovider.Get().ExecExternalContainerCommand(gwContainer, []string{"ip", "route", "add", addressesv4.srcPodIP, "via", addressesv4.nodeIP})
 			framework.ExpectNoError(err, "failed to add the pod host route on the test container %s", gwContainer.Name)
 			providerCtx.AddCleanUpFn(func() error {
-				infraprovider.Get().ExecExternalContainerCommand(gwContainer, []string{"ip", "route", "del", addressesv4.srcPodIP, "via", addressesv4.nodeIP})
-				return nil
+				_, err := infraprovider.Get().ExecExternalContainerCommand(gwContainer, []string{"ip", "route", "del", addressesv4.srcPodIP, "via", addressesv4.nodeIP})
+				return err
 			})
 
 			// cluster nodes don't know where to send ARP replies to requests
@@ -3052,8 +3053,8 @@ func setupGatewayContainers(f *framework.Framework, providerCtx infraapi.Context
 				_, err = infraprovider.Get().ExecExternalContainerCommand(gwContainer, []string{"ip", "address", "add", address + "/128", "dev", "lo"})
 				framework.ExpectNoError(err, "ipv6: failed to add the loopback ip to dev lo on the test container %s", gwContainer.Name)
 				providerCtx.AddCleanUpFn(func() error {
-					infraprovider.Get().ExecExternalContainerCommand(gwContainer, []string{"ip", "address", "del", address + "/128", "dev", "lo"})
-					return nil
+					_, err := infraprovider.Get().ExecExternalContainerCommand(gwContainer, []string{"ip", "address", "del", address + "/128", "dev", "lo"})
+					return err
 				})
 			}
 			ginkgo.By(fmt.Sprintf("Adding a route from %s to the src pod (ipv6)", gwContainer.Name))
@@ -3328,7 +3329,7 @@ spec:
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	gomega.Expect(stdout).To(gomega.Equal(fmt.Sprintf("adminpolicybasedexternalroute.k8s.ovn.org/%s created\n", policyName)))
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	gwIPs := sets.NewString(gateways...).List()
+	gwIPs := sets.List(sets.New[string](gateways...))
 	gomega.Eventually(func() string {
 		lastMsg, err := e2ekubectl.RunKubectl("", "get", "apbexternalroute", policyName, "-ojsonpath={.status.messages[-1:]}")
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -3349,7 +3350,7 @@ func checkAPBExternalRouteStatus(policyName string) {
 
 func createAPBExternalRouteCRWithStaticHop(policyName, namespaceName string, bfd bool, gateways ...string) {
 	createAPBExternalRouteCRWithStaticHopAndStatus(policyName, namespaceName, bfd, "Success", gateways...)
-	gwIPs := sets.NewString(gateways...).List()
+	gwIPs := sets.List(sets.New[string](gateways...))
 	gomega.Eventually(func() string {
 		lastMsg, err := e2ekubectl.RunKubectl("", "get", "apbexternalroute", policyName, "-ojsonpath={.status.messages[-1:]}")
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -3421,7 +3422,10 @@ spec:
 }
 
 func deleteAPBExternalRouteCR(policyName string) {
-	e2ekubectl.RunKubectl("", "delete", "apbexternalroute", policyName)
+	_, err := e2ekubectl.RunKubectl("", "delete", "apbexternalroute", policyName)
+	if err != nil {
+		framework.Logf("Failed to delete apbexternalroute %s: %v", policyName, err)
+	}
 }
 func formatStaticHops(bfd bool, gateways ...string) string {
 	b := strings.Builder{}

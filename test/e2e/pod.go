@@ -12,13 +12,7 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
-	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
-
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
@@ -29,6 +23,13 @@ import (
 	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 	e2eservice "k8s.io/kubernetes/test/e2e/framework/service"
 	e2eutilsnet "k8s.io/utils/net"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
+	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
 )
 
 var _ = ginkgo.Describe("Pod to external server PMTUD", func() {
@@ -68,7 +69,7 @@ var _ = ginkgo.Describe("Pod to external server PMTUD", func() {
 	ginkgo.When("a client ovnk pod targeting an external server is created", func() {
 		var externalContainer infraapi.ExternalContainer
 		var externalContainerIPs []string
-		var clientPod *v1.Pod
+		var clientPod *corev1.Pod
 		var clientPodNodeName string
 
 		var echoPayloads = map[string]string{
@@ -124,7 +125,7 @@ var _ = ginkgo.Describe("Pod to external server PMTUD", func() {
 		// The payload is transmitted to and echoed from the echo service for both HTTP and UDP tests.
 		ginkgo.When("tests are run towards the agnhost echo server", func() {
 			ginkgo.It("queries to the hostNetworked server pod on another node shall work for TCP", func() {
-				gomega.Expect(len(externalContainerIPs)).Should(gomega.BeNumerically(">", 0))
+				gomega.Expect(externalContainerIPs).ShouldNot(gomega.BeEmpty())
 				for _, size := range []string{"small", "large"} {
 					for _, externalContainerIP := range externalContainerIPs {
 						if externalContainerIP == "" {
@@ -165,7 +166,8 @@ var _ = ginkgo.Describe("Pod to external server PMTUD", func() {
 							// Flushing the IP route cache will remove any routes in the cache
 							// that are a result of receiving a "need to frag" packet.
 							ginkgo.By("Flushing the ip route cache")
-							stdout, err := infraprovider.Get().ExecExternalContainerCommand(externalContainer, []string{"ip", "route", "flush", "cache"})
+							var stdout string
+							_, err := infraprovider.Get().ExecExternalContainerCommand(externalContainer, []string{"ip", "route", "flush", "cache"})
 							framework.ExpectNoError(err, "Flushing the ip route cache failed")
 							framework.Logf("Flushed cache on %s", externalContainer.GetName())
 							// List the current IP route cache for informative purposes.
@@ -258,15 +260,15 @@ var _ = ginkgo.Describe("Pod to pod TCP with low MTU", func() {
 	})
 
 	ginkgo.When("a client ovnk pod targeting an ovnk pod server(running on another node) with low mtu", func() {
-		var serverPod *v1.Pod
+		var serverPod *corev1.Pod
 		var serverPodNodeName string
 		var serverPodName string
-		var serverNode v1.Node
-		var clientNode v1.Node
+		var serverNode corev1.Node
+		var clientNode corev1.Node
 		var serverNodeInternalIPs []string
 		var clientNodeInternalIPs []string
 
-		var clientPod *v1.Pod
+		var clientPod *corev1.Pod
 		var clientPodNodeName string
 
 		payload := fmt.Sprintf("%01360d", 1)
@@ -300,8 +302,8 @@ var _ = ginkgo.Describe("Pod to pod TCP with low MTU", func() {
 			serverPodName = fmt.Sprintf(echoServerPodNameTemplate, 8080)
 			serverPod = e2epod.NewAgnhostPod(f.Namespace.Name, serverPodName, nil, nil, nil,
 				"netexec",
-				"--http-port", fmt.Sprintf("8080"),
-				"--udp-port", fmt.Sprintf("8080"),
+				"--http-port", "8080",
+				"--udp-port", "8080",
 			)
 			serverPod.ObjectMeta.Labels = map[string]string{
 				"app": serverPodName,
@@ -310,12 +312,12 @@ var _ = ginkgo.Describe("Pod to pod TCP with low MTU", func() {
 			serverPod = e2epod.NewPodClient(f).CreateSync(context.TODO(), serverPod)
 
 			ginkgo.By("Getting all InternalIP addresses of the server node")
-			serverNodeInternalIPs = e2enode.GetAddresses(&serverNode, v1.NodeInternalIP)
-			gomega.Expect(len(serverNodeInternalIPs)).To(gomega.BeNumerically(">", 0))
+			serverNodeInternalIPs = e2enode.GetAddresses(&serverNode, corev1.NodeInternalIP)
+			gomega.Expect(serverNodeInternalIPs).ToNot(gomega.BeEmpty())
 
 			ginkgo.By("Getting all InternalIP addresses of the client node")
-			clientNodeInternalIPs = e2enode.GetAddresses(&clientNode, v1.NodeInternalIP)
-			gomega.Expect(len(serverNodeInternalIPs)).To(gomega.BeNumerically(">", 0))
+			clientNodeInternalIPs = e2enode.GetAddresses(&clientNode, corev1.NodeInternalIP)
+			gomega.Expect(serverNodeInternalIPs).ToNot(gomega.BeEmpty())
 
 			ginkgo.By("Lowering the MTU route from server -> client")
 			fmt.Println(clientNodeInternalIPs)
@@ -421,13 +423,13 @@ var _ = ginkgo.Describe("blocking ICMP needs frag", func() {
 	})
 
 	ginkgo.When("a client host networked pod with targets a proxy node nodeport service with ovnk networked backend", func() {
-		var serverPod *v1.Pod
+		var serverPod *corev1.Pod
 		var serverPodNodeName string
 		var serverPodName string
-		var clientNode v1.Node
-		var nodePortNode v1.Node
+		var clientNode corev1.Node
+		var nodePortNode corev1.Node
 
-		var clientPod *v1.Pod
+		var clientPod *corev1.Pod
 		var clientPodNodeName string
 		var nodePort int
 		payload := fmt.Sprintf("%01420d", 1)
@@ -456,9 +458,9 @@ var _ = ginkgo.Describe("blocking ICMP needs frag", func() {
 						"infinity",
 					}
 				}
-				clientPod.Spec.Containers[k].SecurityContext = &v1.SecurityContext{
-					Capabilities: &v1.Capabilities{
-						Add: []v1.Capability{"NET_ADMIN"},
+				clientPod.Spec.Containers[k].SecurityContext = &corev1.SecurityContext{
+					Capabilities: &corev1.Capabilities{
+						Add: []corev1.Capability{"NET_ADMIN"},
 					},
 				}
 			}
@@ -466,8 +468,8 @@ var _ = ginkgo.Describe("blocking ICMP needs frag", func() {
 
 			ginkgo.By(fmt.Sprintf("Creating nodeport service with port: %d", nodePort))
 			jig := e2eservice.NewTestJig(cs, f.Namespace.Name, serviceName)
-			_, err = jig.CreateUDPService(context.TODO(), func(svc *v1.Service) {
-				svc.Spec.Type = v1.ServiceTypeNodePort
+			_, err = jig.CreateUDPService(context.TODO(), func(svc *corev1.Service) {
+				svc.Spec.Type = corev1.ServiceTypeNodePort
 				svc.Spec.Ports[0].NodePort = int32(nodePort)
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -492,13 +494,13 @@ var _ = ginkgo.Describe("blocking ICMP needs frag", func() {
 			// that are a result of receiving a "need to frag" packet.
 			ginkgo.By("Flushing the ip route cache")
 			cmd := append(ipCmd, "route", "flush", "cache")
-			stdout, err := infraprovider.Get().ExecK8NodeCommand(clientNode.Name, cmd)
+			_, err := infraprovider.Get().ExecK8NodeCommand(clientNode.Name, cmd)
 			framework.ExpectNoError(err, "Flushing the ip route cache failed")
 			framework.Logf("Flushed cache on %s", clientNode.Name)
 			proxyIP := nodePortNode.Status.Addresses[0].Address
 			// List the current IP route cache for informative purposes.
 			cmd = append(ipCmd, "route", "get", proxyIP)
-			stdout, err = infraprovider.Get().ExecK8NodeCommand(clientNode.Name, cmd)
+			stdout, err := infraprovider.Get().ExecK8NodeCommand(clientNode.Name, cmd)
 			framework.ExpectNoError(err, "Listing IP route cache")
 			framework.Logf("%s: %s", cmd, stdout)
 
@@ -528,13 +530,13 @@ var _ = ginkgo.Describe("blocking ICMP needs frag", func() {
 	})
 
 	ginkgo.When("a client VM pod with 1500 MTU targets a host networked pod", func() {
-		var serverPod *v1.Pod
+		var serverPod *corev1.Pod
 		var serverPodNodeName string
 		var serverPodName string
-		var serverNode v1.Node
-		var clientNode v1.Node
+		var serverNode corev1.Node
+		var clientNode corev1.Node
 
-		var clientPod *v1.Pod
+		var clientPod *corev1.Pod
 		var clientPodNodeName string
 		payload := fmt.Sprintf("%01420d", 1)
 
@@ -560,9 +562,9 @@ var _ = ginkgo.Describe("blocking ICMP needs frag", func() {
 						"infinity",
 					}
 				}
-				clientPod.Spec.Containers[k].SecurityContext = &v1.SecurityContext{
-					Capabilities: &v1.Capabilities{
-						Add: []v1.Capability{"NET_ADMIN"},
+				clientPod.Spec.Containers[k].SecurityContext = &corev1.SecurityContext{
+					Capabilities: &corev1.Capabilities{
+						Add: []corev1.Capability{"NET_ADMIN"},
 					},
 				}
 			}
@@ -595,7 +597,7 @@ var _ = ginkgo.Describe("blocking ICMP needs frag", func() {
 			isV6 := IsIPv6Cluster(f.ClientSet)
 			clientPodIP, err = getPodIPWithRetry(f.ClientSet, isV6, f.Namespace.Name, clientPod.Name)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(len(clientPodIP)).To(gomega.BeNumerically(">", 0))
+			gomega.Expect(clientPodIP).ToNot(gomega.BeEmpty())
 			framework.Logf("Client pod IP is %s", clientPodIP)
 			prefix := "/24"
 			if isV6 {
@@ -669,14 +671,14 @@ var _ = ginkgo.Describe("blocking ICMP needs frag", func() {
 			// that are a result of receiving a "need to frag" packet.
 			ginkgo.By("Flushing the ip route cache")
 			flushCmd := append(ipCmd, "route", "flush", "cache")
-			stdout, err := infraprovider.Get().ExecK8NodeCommand(serverNode.Name, flushCmd)
+			_, err := infraprovider.Get().ExecK8NodeCommand(serverNode.Name, flushCmd)
 			framework.ExpectNoError(err, "Flushing the ip route cache failed")
 			framework.Logf("Flushed cache on %s", serverNode.Name)
 			clientNodeIP := clientNode.Status.Addresses[0].Address
 			serverIP := serverNode.Status.Addresses[0].Address
 			// List the current IP route cache for informative purposes.
 			routeCmd := append(ipCmd, "route", "get", clientNodeIP)
-			stdout, err = infraprovider.Get().ExecK8NodeCommand(serverNode.Name, routeCmd)
+			stdout, err := infraprovider.Get().ExecK8NodeCommand(serverNode.Name, routeCmd)
 			framework.ExpectNoError(err, "Listing IP route cache")
 			framework.Logf("%s: %s", routeCmd, stdout)
 
@@ -713,13 +715,13 @@ var _ = ginkgo.Describe("blocking ICMP needs frag", func() {
 	})
 
 	ginkgo.When("an ovnk pod targets a host networked pod with large UDP", func() {
-		var serverPod *v1.Pod
+		var serverPod *corev1.Pod
 		var serverPodNodeName string
 		var serverPodName string
-		var serverNode v1.Node
-		var clientNode v1.Node
+		var serverNode corev1.Node
+		var clientNode corev1.Node
 
-		var clientPod *v1.Pod
+		var clientPod *corev1.Pod
 		var clientPodNodeName string
 		payload := fmt.Sprintf("%01420d", 1)
 
@@ -745,9 +747,9 @@ var _ = ginkgo.Describe("blocking ICMP needs frag", func() {
 						"infinity",
 					}
 				}
-				clientPod.Spec.Containers[k].SecurityContext = &v1.SecurityContext{
-					Capabilities: &v1.Capabilities{
-						Add: []v1.Capability{"NET_ADMIN"},
+				clientPod.Spec.Containers[k].SecurityContext = &corev1.SecurityContext{
+					Capabilities: &corev1.Capabilities{
+						Add: []corev1.Capability{"NET_ADMIN"},
 					},
 				}
 			}
