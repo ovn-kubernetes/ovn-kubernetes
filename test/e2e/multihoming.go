@@ -16,6 +16,7 @@ import (
 	mnpclient "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1beta1"
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
+	"github.com/onsi/ginkgo/v2"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -29,7 +30,6 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 
-	"github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -283,7 +283,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 
 		ginkgo.DescribeTable("attached to a localnet network mapped to breth0",
 
-			func(netConfigParams networkAttachmentConfigParams, clientPodConfig, serverPodConfig podConfiguration) {
+			func(_ networkAttachmentConfigParams, clientPodConfig, serverPodConfig podConfiguration) {
 
 				netConfig := newNetworkAttachmentConfig(networkAttachmentConfigParams{
 					name:      secondaryNetworkName,
@@ -2079,8 +2079,8 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 			Expect(netStatus[0].IPs).To(HaveLen(1))
 			Expect(netStatus[1].IPs).To(HaveLen(1))
 			Expect(netStatus[0].IPs[0]).NotTo(Equal(netStatus[1].IPs[0]))
-			Expect(inRange(secondaryFlatL2NetworkCIDR, netStatus[0].IPs[0]))
-			Expect(inRange(secondaryFlatL2NetworkCIDR, netStatus[1].IPs[0]))
+			Expect(inRange(secondaryFlatL2NetworkCIDR, netStatus[0].IPs[0])).To(Succeed())
+			Expect(inRange(secondaryFlatL2NetworkCIDR, netStatus[1].IPs[0])).To(Succeed())
 		})
 	})
 })

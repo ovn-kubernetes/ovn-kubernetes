@@ -1081,7 +1081,7 @@ func waitForACLLoggingPod(f *framework.Framework, namespace string, podName stri
 	})
 }
 
-func isCountUpdatedAfterPokeExternalHost(fr *framework.Framework, pokePod *corev1.Pod, nsName, dstIP string, dstPort int, aclVerdict, aclSeverity string) (bool, error) {
+func isCountUpdatedAfterPokeExternalHost(fr *framework.Framework, pokePod *corev1.Pod, _, dstIP string, dstPort int, aclVerdict, aclSeverity string) (bool, error) {
 	startCount, err := countACLLogs(
 		pokePod.Spec.NodeName,
 		generateEgressFwRegex(pokePod.Namespace),

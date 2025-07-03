@@ -18,7 +18,6 @@ import (
 	butanecommon "github.com/coreos/butane/config/common"
 	ipamclaimsv1alpha1 "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1"
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
-	nadv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	"gopkg.in/yaml.v2"
 	kubevirtv1 "kubevirt.io/api/core/v1"
 	kvmigrationsv1alpha1 "kubevirt.io/api/migrations/v1alpha1"
@@ -78,7 +77,7 @@ func newControllerRuntimeClient() (crclient.Client, error) {
 	if err := ipamclaimsv1alpha1.AddToScheme(scheme); err != nil {
 		return nil, err
 	}
-	if err := nadv1.AddToScheme(scheme); err != nil {
+	if err := nadapi.AddToScheme(scheme); err != nil {
 		return nil, err
 	}
 	if err := corev1.AddToScheme(scheme); err != nil {

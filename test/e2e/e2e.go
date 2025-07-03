@@ -2141,7 +2141,7 @@ var _ = ginkgo.Describe("e2e delete databases", func() {
 		framework.ExpectNoError(err, "failed to delete pod "+podName)
 	}
 
-	fileExistsOnPod := func(f *framework.Framework, namespace string, pod *corev1.Pod, file string) bool {
+	fileExistsOnPod := func(_ *framework.Framework, namespace string, pod *corev1.Pod, file string) bool {
 		containerFlag := fmt.Sprintf("-c=%s", pod.Spec.Containers[0].Name)
 		_, err := e2ekubectl.RunKubectl(namespace, "exec", pod.Name, containerFlag, "--", "ls", file)
 		if err == nil {

@@ -259,7 +259,7 @@ var _ = ginkgo.Describe("Unidling", feature.Unidle, func() {
 			framework.ExpectNoError(err)
 			node = nodes.Items[0].Name
 			ginkgo.By("creating an annotated service with no endpoints and idle annotation")
-			service, err = jig.CreateTCPServiceWithPort(context.TODO(), func(svc *corev1.Service) {
+			service, err = jig.CreateTCPServiceWithPort(context.TODO(), func(_ *corev1.Service) {
 			}, int32(port))
 			framework.ExpectNoError(err)
 
