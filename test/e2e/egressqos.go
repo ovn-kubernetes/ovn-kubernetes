@@ -10,14 +10,15 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
-
 	"golang.org/x/sync/errgroup"
-	v1 "k8s.io/api/core/v1"
+
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 )
 
 var _ = ginkgo.Describe("e2e EgressQoS validation", feature.EgressQos, func() {
@@ -63,13 +64,13 @@ var _ = ginkgo.Describe("e2e EgressQoS validation", feature.EgressQos, func() {
 
 		srcNode = nodes.Items[0].Name
 
-		dstPod1, err := createPod(f, dstPod1Name, nodes.Items[1].Name, f.Namespace.Name, []string{"bash", "-c", "apk update; apk add tcpdump; sleep 20000"}, map[string]string{}, func(p *v1.Pod) {
+		dstPod1, err := createPod(f, dstPod1Name, nodes.Items[1].Name, f.Namespace.Name, []string{"bash", "-c", "apk update; apk add tcpdump; sleep 20000"}, map[string]string{}, func(p *corev1.Pod) {
 			p.Spec.HostNetwork = true
 		})
 		framework.ExpectNoError(err)
 		dstPod1IPv4, dstPod1IPv6 = getPodAddresses(dstPod1)
 
-		dstPod2, err := createPod(f, dstPod2Name, nodes.Items[2].Name, f.Namespace.Name, []string{"bash", "-c", "apk update; apk add tcpdump; sleep 20000"}, map[string]string{}, func(p *v1.Pod) {
+		dstPod2, err := createPod(f, dstPod2Name, nodes.Items[2].Name, f.Namespace.Name, []string{"bash", "-c", "apk update; apk add tcpdump; sleep 20000"}, map[string]string{}, func(p *corev1.Pod) {
 			p.Spec.HostNetwork = true
 		})
 		framework.ExpectNoError(err)

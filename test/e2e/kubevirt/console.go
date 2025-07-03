@@ -26,14 +26,11 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-
-	"google.golang.org/grpc/codes"
-
 	expect "github.com/google/goexpect"
-
+	"google.golang.org/grpc/codes"
 	kubevirtv1 "kubevirt.io/api/core/v1"
-	v1 "kubevirt.io/api/core/v1"
+
+	. "github.com/onsi/ginkgo/v2"
 )
 
 const (
@@ -58,7 +55,7 @@ var (
 // waiting `wait` seconds for the batch to return.
 // It validates that the commands arrive to the console.
 // NOTE: This functions heritage limitations from `expectBatchWithValidatedSend` refer to it to check them.
-func safeExpectBatch(vmi *v1.VirtualMachineInstance, expected []expect.Batcher, timeout time.Duration) error {
+func safeExpectBatch(vmi *kubevirtv1.VirtualMachineInstance, expected []expect.Batcher, timeout time.Duration) error {
 	_, err := safeExpectBatchWithResponse(vmi, expected, timeout)
 	return err
 }
@@ -67,7 +64,7 @@ func safeExpectBatch(vmi *v1.VirtualMachineInstance, expected []expect.Batcher, 
 // waiting `wait` seconds for the batch to return with a response.
 // It validates that the commands arrive to the console.
 // NOTE: This functions inherits limitations from `expectBatchWithValidatedSend`, refer to it for more information.
-func safeExpectBatchWithResponse(vmi *v1.VirtualMachineInstance, expected []expect.Batcher, timeout time.Duration) ([]expect.BatchRes, error) {
+func safeExpectBatchWithResponse(vmi *kubevirtv1.VirtualMachineInstance, expected []expect.Batcher, timeout time.Duration) ([]expect.BatchRes, error) {
 	expecter, _, err := newExpecter(vmi, consoleConnectionTimeout, expect.Verbose(true), expect.VerboseWriter(GinkgoWriter))
 	if err != nil {
 		return nil, err
@@ -81,7 +78,7 @@ func safeExpectBatchWithResponse(vmi *v1.VirtualMachineInstance, expected []expe
 	return resp, err
 }
 
-func RunCommand(vmi *v1.VirtualMachineInstance, command string, timeout time.Duration) (string, error) {
+func RunCommand(vmi *kubevirtv1.VirtualMachineInstance, command string, timeout time.Duration) (string, error) {
 	results, err := safeExpectBatchWithResponse(vmi, []expect.Batcher{
 		&expect.BSnd{S: "\n"},
 		&expect.BExp{R: PromptExpression},
@@ -114,9 +111,9 @@ func skipInput(scanner *bufio.Scanner) bool {
 
 // newExpecter will connect to an already logged in VMI console and return the generated expecter it will wait `timeout` for the connection.
 func newExpecter(
-	vmi *v1.VirtualMachineInstance,
+	vmi *kubevirtv1.VirtualMachineInstance,
 	timeout time.Duration,
-	opts ...expect.Option) (expect.Expecter, <-chan error, error) {
+	_ ...expect.Option) (expect.Expecter, <-chan error, error) {
 	virtctlCmd := []string{"virtctl", "console", "-n", vmi.Namespace, vmi.Name}
 	return expect.SpawnWithArgs(virtctlCmd, timeout, expect.SendTimeout(timeout), expect.Verbose(true), expect.VerboseWriter(GinkgoWriter))
 }

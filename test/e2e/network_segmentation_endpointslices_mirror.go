@@ -5,22 +5,25 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
-
 	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+
 	appsv1 "k8s.io/api/apps/v1"
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2edeployment "k8s.io/kubernetes/test/e2e/framework/deployment"
 	e2eservice "k8s.io/kubernetes/test/e2e/framework/service"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("Network Segmentation EndpointSlices mirroring", feature.NetworkSegmentation, func() {
@@ -80,7 +83,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", feature.Networ
 
 						By("creating the service")
 						svc := e2eservice.CreateServiceSpec("test-service", "", false, map[string]string{"app": "test"})
-						familyPolicy := v1.IPFamilyPolicyPreferDualStack
+						familyPolicy := corev1.IPFamilyPolicyPreferDualStack
 						svc.Spec.IPFamilyPolicy = &familyPolicy
 						_, err = cs.CoreV1().Services(f.Namespace.Name).Create(context.Background(), svc, metav1.CreateOptions{})
 						framework.ExpectNoError(err, "Failed creating service %v", err)
@@ -185,7 +188,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", feature.Networ
 						netConfig networkAttachmentConfigParams,
 					) {
 						By("creating default net namespace")
-						defaultNetNamespace := &v1.Namespace{
+						defaultNetNamespace := &corev1.Namespace{
 							ObjectMeta: metav1.ObjectMeta{
 								Name: f.Namespace.Name + "-default",
 							},
@@ -210,7 +213,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", feature.Networ
 
 						By("creating the service")
 						svc := e2eservice.CreateServiceSpec("test-service", "", false, map[string]string{"app": "test"})
-						familyPolicy := v1.IPFamilyPolicyPreferDualStack
+						familyPolicy := corev1.IPFamilyPolicyPreferDualStack
 						svc.Spec.IPFamilyPolicy = &familyPolicy
 						_, err = cs.CoreV1().Services(defaultNetNamespace.Name).Create(context.Background(), svc, metav1.CreateOptions{})
 						framework.ExpectNoError(err, "Failed creating service %v", err)

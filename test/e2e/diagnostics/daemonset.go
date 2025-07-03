@@ -7,10 +7,10 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 )
 
 func composePeriodicCmd(cmd string, interval uint32) string {
@@ -33,7 +33,7 @@ func (d *Diagnostics) composeDiagnosticsDaemonSet(name, cmd, tool string) appsv1
 					"app": name,
 				},
 			},
-			Template: v1.PodTemplateSpec{
+			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      name,
 					Namespace: d.fr.Namespace.Name,
@@ -42,17 +42,17 @@ func (d *Diagnostics) composeDiagnosticsDaemonSet(name, cmd, tool string) appsv1
 						"tool": tool,
 					},
 				},
-				Spec: v1.PodSpec{
-					Containers: []v1.Container{{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{
 						Name:            "ovn-kube",
 						Image:           ovnImage,
-						ImagePullPolicy: v1.PullIfNotPresent,
+						ImagePullPolicy: corev1.PullIfNotPresent,
 						Command:         []string{"bash", "-c"},
 						Args:            []string{cmd},
-						SecurityContext: &v1.SecurityContext{
-							Privileged: pointer.Bool(true),
+						SecurityContext: &corev1.SecurityContext{
+							Privileged: ptr.To(true),
 						},
-						VolumeMounts: []v1.VolumeMount{
+						VolumeMounts: []corev1.VolumeMount{
 							{
 								Name:      "host-run-ovs",
 								MountPath: "/run/openvswitch",
@@ -68,27 +68,27 @@ func (d *Diagnostics) composeDiagnosticsDaemonSet(name, cmd, tool string) appsv1
 						},
 					}},
 					HostNetwork: true,
-					Volumes: []v1.Volume{
+					Volumes: []corev1.Volume{
 						{
 							Name: "host-run-ovs",
-							VolumeSource: v1.VolumeSource{
-								HostPath: &v1.HostPathVolumeSource{
+							VolumeSource: corev1.VolumeSource{
+								HostPath: &corev1.HostPathVolumeSource{
 									Path: "/run/openvswitch",
 								},
 							},
 						},
 						{
 							Name: "host-var-run-ovs",
-							VolumeSource: v1.VolumeSource{
-								HostPath: &v1.HostPathVolumeSource{
+							VolumeSource: corev1.VolumeSource{
+								HostPath: &corev1.HostPathVolumeSource{
 									Path: "/var/run/openvswitch",
 								},
 							},
 						},
 						{
 							Name: "host",
-							VolumeSource: v1.VolumeSource{
-								HostPath: &v1.HostPathVolumeSource{
+							VolumeSource: corev1.VolumeSource{
+								HostPath: &corev1.HostPathVolumeSource{
 									Path: "/",
 								},
 							},

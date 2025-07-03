@@ -6,21 +6,12 @@ import (
 	"math/rand"
 	"net"
 	"strings"
-
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
-	rav1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
-	raclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned"
-	apitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
-	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
-	udnclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
-	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
 
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -32,6 +23,15 @@ import (
 	e2eservice "k8s.io/kubernetes/test/e2e/framework/service"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	utilnet "k8s.io/utils/net"
+
+	rav1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
+	raclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned"
+	apitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
+	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	udnclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
+	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
 )
 
 var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is advertised", func() {
@@ -101,7 +101,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 			}
 			e2epod.NewPodClient(f).CreateSync(context.TODO(), clientPod)
 
-			gomega.Expect(len(serverContainerIPs)).To(gomega.BeNumerically(">", 0))
+			gomega.Expect(serverContainerIPs).ToNot(gomega.BeEmpty())
 		})
 		// -----------------               ------------------                         ---------------------
 		// |               | 172.26.0.0/16 |                |       172.18.0.0/16     | ovn-control-plane |
@@ -186,7 +186,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 						gomega.Expect(err).NotTo(gomega.HaveOccurred())
 						nodeIP = []string{nodeIPv6LLA}
 					}
-					gomega.Expect(len(nodeIP)).To(gomega.BeNumerically(">", 0))
+					gomega.Expect(nodeIP).ToNot(gomega.BeEmpty())
 					framework.Logf("the nodeIP for node %s is %+v", node.Name, nodeIP)
 					externalContainer := infraapi.ExternalContainer{Name: routerContainerName}
 					bgpRouteCommand := strings.Split(fmt.Sprintf("ip%s route show %s", ipVer, podCIDR), " ")
@@ -273,7 +273,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 		if isIPv6Supported() && len(networkInterface.IPv6) > 0 {
 			serverContainerIPs = append(serverContainerIPs, networkInterface.IPv6)
 		}
-		gomega.Expect(len(serverContainerIPs)).Should(gomega.BeNumerically(">", 0), "failed to find external container IPs")
+		gomega.Expect(serverContainerIPs).ShouldNot(gomega.BeEmpty(), "failed to find external container IPs")
 		framework.Logf("The external server IPs are: %+v", serverContainerIPs)
 		providerPrimaryNetwork, err := infraprovider.Get().PrimaryNetwork()
 		framework.ExpectNoError(err, "provider primary network must be available")
@@ -355,7 +355,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 				return condition.Reason
 			}, 30*time.Second, time.Second).Should(gomega.Equal("Accepted"))
 
-			gomega.Expect(len(serverContainerIPs)).To(gomega.BeNumerically(">", 0))
+			gomega.Expect(serverContainerIPs).ToNot(gomega.BeEmpty())
 
 			// -----------------               ------------------                         ---------------------
 			// |               | 172.26.0.0/16 |                |       172.18.0.0/16     | ovn-control-plane |
@@ -603,7 +603,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 				}
 
 				// create host networked Pods
-				_, err := createPod(f, node.Name+"-hostnet-ep", node.Name, f.Namespace.Name, []string{}, map[string]string{}, func(p *v1.Pod) {
+				_, err := createPod(f, node.Name+"-hostnet-ep", node.Name, f.Namespace.Name, []string{}, map[string]string{}, func(p *corev1.Pod) {
 					p.Spec.Containers[0].Args = args
 					p.Spec.HostNetwork = true
 				})
@@ -649,7 +649,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 			pod.Labels = map[string]string{"network": "default"}
 			podNetDefault = e2epod.PodClientNS(f, "default").CreateSync(context.TODO(), pod)
 
-			svc.Name = fmt.Sprintf("service-default")
+			svc.Name = "service-default"
 			svc.Namespace = "default"
 			svc.Spec.Selector = pod.Labels
 			svcNetDefault, err = f.ClientSet.CoreV1().Services(pod.Namespace).Create(context.Background(), svc, metav1.CreateOptions{})

@@ -8,10 +8,8 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -20,9 +18,12 @@ import (
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 )
 
-func changeNodeZone(node *v1.Node, zone string, cs clientset.Interface) error {
+func changeNodeZone(node *corev1.Node, zone string, cs clientset.Interface) error {
 	node.Labels[ovnNodeZoneNameAnnotation] = zone
 
 	var err error
@@ -67,7 +68,7 @@ func changeNodeZone(node *v1.Node, zone string, cs clientset.Interface) error {
 	return nil
 }
 
-func checkPodsInterconnectivity(clientPod, serverPod *v1.Pod, namespace string, cs clientset.Interface) error {
+func checkPodsInterconnectivity(clientPod, serverPod *corev1.Pod, namespace string, cs clientset.Interface) error {
 	gomega.Eventually(func() error {
 		updatedPod, err := cs.CoreV1().Pods(namespace).Get(context.Background(), serverPod.GetName(), metav1.GetOptions{})
 		if err != nil {
@@ -78,7 +79,7 @@ func checkPodsInterconnectivity(clientPod, serverPod *v1.Pod, namespace string, 
 			name:      clientPod.Name,
 			namespace: namespace,
 		}
-		if updatedPod.Status.Phase == v1.PodRunning {
+		if updatedPod.Status.Phase == corev1.PodRunning {
 			return connectToServer(clientPodConfig, updatedPod.Status.PodIP, 8000)
 		}
 
@@ -101,8 +102,8 @@ var _ = ginkgo.Describe("Multi node zones interconnect", feature.Interconnect, f
 	var (
 		cs clientset.Interface
 
-		serverPodNode *v1.Node
-		clientPodNode *v1.Node
+		serverPodNode *corev1.Node
+		clientPodNode *corev1.Node
 
 		serverPodNodeZone string
 		clientPodNodeZone string

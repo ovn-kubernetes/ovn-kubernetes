@@ -6,18 +6,18 @@ import (
 	"os"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
-
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	knet "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 const (
@@ -43,7 +43,7 @@ var _ = Describe("ACL Logging for NetworkPolicy", feature.NetworkPolicy, func() 
 
 	var (
 		nsName string
-		pods   []v1.Pod
+		pods   []corev1.Pod
 	)
 
 	BeforeEach(func() {
@@ -186,7 +186,7 @@ var _ = Describe("ACL Logging for AdminNetworkPolicy and BaselineAdminNetworkPol
 	)
 	fr := wrappedTestFramework("anp-subject")
 	var (
-		pods    []v1.Pod
+		pods    []corev1.Pod
 		nsNames [4]string
 	)
 	BeforeEach(func() {
@@ -508,8 +508,8 @@ var _ = Describe("ACL Logging for EgressFirewall", feature.EgressFirewall, func(
 	var (
 		nsName           string
 		nsNameSecondary  string
-		pokePod          *v1.Pod
-		pokePodSecondary *v1.Pod
+		pokePod          *corev1.Pod
+		pokePodSecondary *corev1.Pod
 		allowedDstIP     string
 		deniedDstIP      string
 	)
@@ -570,7 +570,7 @@ var _ = Describe("ACL Logging for EgressFirewall", feature.EgressFirewall, func(
 			if err != nil {
 				return false, err
 			}
-			return pokePodSecondary.Status.Phase == v1.PodRunning, nil
+			return pokePodSecondary.Status.Phase == corev1.PodRunning, nil
 		}, 60, 5).Should(BeTrue())
 		Expect(waitForACLLoggingPod(fr, nsNameSecondary, pokePodSecondary.GetName())).To(Succeed())
 	})
@@ -1075,13 +1075,13 @@ spec:
 }
 
 func waitForACLLoggingPod(f *framework.Framework, namespace string, podName string) error {
-	return e2epod.WaitForPodCondition(context.TODO(), f.ClientSet, namespace, podName, "running", 5*time.Second, func(pod *v1.Pod) (bool, error) {
+	return e2epod.WaitForPodCondition(context.TODO(), f.ClientSet, namespace, podName, "running", 5*time.Second, func(pod *corev1.Pod) (bool, error) {
 		podIP := pod.Status.PodIP
-		return podIP != "" && pod.Status.Phase != v1.PodPending, nil
+		return podIP != "" && pod.Status.Phase != corev1.PodPending, nil
 	})
 }
 
-func isCountUpdatedAfterPokeExternalHost(fr *framework.Framework, pokePod *v1.Pod, nsName, dstIP string, dstPort int, aclVerdict, aclSeverity string) (bool, error) {
+func isCountUpdatedAfterPokeExternalHost(fr *framework.Framework, pokePod *corev1.Pod, _, dstIP string, dstPort int, aclVerdict, aclSeverity string) (bool, error) {
 	startCount, err := countACLLogs(
 		pokePod.Spec.NodeName,
 		generateEgressFwRegex(pokePod.Namespace),
@@ -1091,7 +1091,7 @@ func isCountUpdatedAfterPokeExternalHost(fr *framework.Framework, pokePod *v1.Po
 		return false, err
 	}
 	pokeExternalHost(fr, pokePod, dstIP, dstPort)
-	endCount, _ := countACLLogs(
+	endCount, err := countACLLogs(
 		pokePod.Spec.NodeName,
 		generateEgressFwRegex(pokePod.Namespace),
 		aclVerdict,
@@ -1102,7 +1102,7 @@ func isCountUpdatedAfterPokeExternalHost(fr *framework.Framework, pokePod *v1.Po
 	return startCount < endCount, nil
 }
 
-func isCountUpdatedAfterPokePod(fr *framework.Framework, clientPod, pokedPod *v1.Pod, regex, aclVerdict, aclSeverity string) (bool, error) {
+func isCountUpdatedAfterPokePod(fr *framework.Framework, clientPod, pokedPod *corev1.Pod, regex, aclVerdict, aclSeverity string) (bool, error) {
 	startCount, err := countACLLogs(
 		clientPod.Spec.NodeName,
 		regex,
@@ -1111,8 +1111,10 @@ func isCountUpdatedAfterPokePod(fr *framework.Framework, clientPod, pokedPod *v1
 	if err != nil {
 		return false, err
 	}
-	pokePod(fr, clientPod.GetName(), pokedPod.Status.PodIP)
-	endCount, _ := countACLLogs(
+	if err := pokePod(fr, clientPod.GetName(), pokedPod.Status.PodIP); err != nil {
+		framework.Logf("Warning: failed to poke pod %s from %s: %v", pokedPod.Status.PodIP, clientPod.GetName(), err)
+	}
+	endCount, err := countACLLogs(
 		clientPod.Spec.NodeName,
 		regex,
 		aclVerdict,
@@ -1127,7 +1129,7 @@ func generateEgressFwRegex(nsName string) string {
 	return fmt.Sprintf("EF:%s:.*", nsName)
 }
 
-func pokeExternalHost(fr *framework.Framework, pokePod *v1.Pod, dstIP string, dstPort int) {
+func pokeExternalHost(fr *framework.Framework, pokePod *corev1.Pod, dstIP string, dstPort int) {
 	framework.Logf("sending traffic outside to test triggering ACL logging")
 	framework.Logf(
 		"Poke destination %s:%d from pod %s/%s (on node %s)",
@@ -1137,7 +1139,9 @@ func pokeExternalHost(fr *framework.Framework, pokePod *v1.Pod, dstIP string, ds
 		pokePod.GetName(),
 		pokePod.Spec.NodeName,
 	)
-	pokeExternalHostFromPod(fr, pokePod.Namespace, pokePod.GetName(), dstIP, dstPort)
+	if err := pokeExternalHostFromPod(fr, pokePod.Namespace, pokePod.GetName(), dstIP, dstPort); err != nil {
+		framework.Logf("Warning: failed to poke external host %s:%d from pod %s/%s: %v", dstIP, dstPort, pokePod.Namespace, pokePod.GetName(), err)
+	}
 }
 
 const (

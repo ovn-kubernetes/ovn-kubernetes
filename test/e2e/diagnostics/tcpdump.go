@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"strings"
 
+	appsv1 "k8s.io/api/apps/v1"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
-	appsv1 "k8s.io/api/apps/v1"
 )
 
 func (d *Diagnostics) TCPDumpDaemonSet(ifaces []string, expression string) {

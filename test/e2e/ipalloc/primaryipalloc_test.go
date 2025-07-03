@@ -9,13 +9,13 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 	utilsnet "k8s.io/utils/net"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 func TestUtilSuite(t *testing.T) {
@@ -100,7 +100,7 @@ func TestIPAlloc(t *testing.T) {
 			cs := fake.NewSimpleClientset(getNodesWithIPs(tc.existingPrimaryNodeIPs))
 			pipa, err := newPrimaryIPAllocator(cs.CoreV1().Nodes())
 			if err != nil {
-				t.Errorf(err.Error())
+				t.Error(err.Error())
 				return
 			}
 			for _, expectedIPStr := range tc.expectedFromAllocateNext {

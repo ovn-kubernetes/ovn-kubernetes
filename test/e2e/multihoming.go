@@ -11,26 +11,27 @@ import (
 	"strings"
 	"time"
 
-	"github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
-
 	"github.com/docker/docker/client"
-	v1 "k8s.io/api/core/v1"
+	mnpapi "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/apis/k8s.cni.cncf.io/v1beta1"
+	mnpclient "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1beta1"
+	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
+
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 
-	mnpapi "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/apis/k8s.cni.cncf.io/v1beta1"
-	mnpclient "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1beta1"
-	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
-	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
-
 	ipgenerator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/ip"
 	util "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
+
+	"github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 const (
@@ -100,13 +101,13 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("asserting the pod gets to the `Ready` phase")
-			Eventually(func() v1.PodPhase {
+			Eventually(func() corev1.PodPhase {
 				updatedPod, err := cs.CoreV1().Pods(podConfig.namespace).Get(context.Background(), pod.GetName(), metav1.GetOptions{})
 				if err != nil {
-					return v1.PodFailed
+					return corev1.PodFailed
 				}
 				return updatedPod.Status.Phase
-			}, 2*time.Minute, 6*time.Second).Should(Equal(v1.PodRunning))
+			}, 2*time.Minute, 6*time.Second).Should(Equal(corev1.PodRunning))
 
 			if netConfig.excludeCIDRs != nil {
 				podIP, err := podIPForAttachment(cs, pod.GetNamespace(), pod.GetName(), secondaryNetworkName, 0)
@@ -282,7 +283,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 
 		ginkgo.DescribeTable("attached to a localnet network mapped to breth0",
 
-			func(netConfigParams networkAttachmentConfigParams, clientPodConfig, serverPodConfig podConfiguration) {
+			func(_ networkAttachmentConfigParams, clientPodConfig, serverPodConfig podConfiguration) {
 
 				netConfig := newNetworkAttachmentConfig(networkAttachmentConfigParams{
 					name:      secondaryNetworkName,
@@ -444,7 +445,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				if err != nil {
 					return false
 				}
-				if updatedPod.Status.Phase == v1.PodPending {
+				if updatedPod.Status.Phase == corev1.PodPending {
 					for _, containerStatus := range updatedPod.Status.ContainerStatuses {
 						// ensure that the container is trying to start
 						if containerStatus.State.Waiting != nil {
@@ -465,13 +466,13 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("asserting the pod reaches the `Ready` state")
-			Eventually(func() v1.PodPhase {
+			Eventually(func() corev1.PodPhase {
 				updatedPod, err := cs.CoreV1().Pods(createdNamespace.Name).Get(context.Background(), pod.GetName(), metav1.GetOptions{})
 				if err != nil {
-					return v1.PodFailed
+					return corev1.PodFailed
 				}
 				return updatedPod.Status.Phase
-			}, 2*time.Minute, 6*time.Second).Should(Equal(v1.PodRunning))
+			}, 2*time.Minute, 6*time.Second).Should(Equal(corev1.PodRunning))
 
 		})
 		ginkgo.DescribeTable(
@@ -520,13 +521,13 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				Expect(serverPod).NotTo(BeNil())
 
 				By("asserting the server pod reaches the `Ready` state")
-				Eventually(func() v1.PodPhase {
+				Eventually(func() corev1.PodPhase {
 					updatedPod, err := cs.CoreV1().Pods(f.Namespace.Name).Get(context.Background(), serverPod.GetName(), metav1.GetOptions{})
 					if err != nil {
-						return v1.PodFailed
+						return corev1.PodFailed
 					}
 					return updatedPod.Status.Phase
-				}, 2*time.Minute, 6*time.Second).Should(Equal(v1.PodRunning))
+				}, 2*time.Minute, 6*time.Second).Should(Equal(corev1.PodRunning))
 
 				By("instantiating the *client* pod")
 				clientPod, err := cs.CoreV1().Pods(clientPodConfig.namespace).Create(
@@ -537,13 +538,13 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				By("asserting the client pod reaches the `Ready` state")
-				Eventually(func() v1.PodPhase {
+				Eventually(func() corev1.PodPhase {
 					updatedPod, err := cs.CoreV1().Pods(f.Namespace.Name).Get(context.Background(), clientPod.GetName(), metav1.GetOptions{})
 					if err != nil {
-						return v1.PodFailed
+						return corev1.PodFailed
 					}
 					return updatedPod.Status.Phase
-				}, 2*time.Minute, 6*time.Second).Should(Equal(v1.PodRunning))
+				}, 2*time.Minute, 6*time.Second).Should(Equal(corev1.PodRunning))
 
 				serverIP := ""
 				if netConfig.cidr == "" {
@@ -848,7 +849,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 			)
 
 			var netConfig networkAttachmentConfig
-			var nodes []v1.Pod
+			var nodes []corev1.Pod
 			var underlayBridgeName string
 			var cmdWebServer *exec.Cmd
 
@@ -1322,12 +1323,12 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				generatedNamespaceNamePrefix = "pepe"
 				blockedServerStaticIP        = "192.168.200.30"
 			)
-			var extraNamespace *v1.Namespace
+			var extraNamespace *corev1.Namespace
 
 			BeforeEach(func() {
 				createdNamespace, err := cs.CoreV1().Namespaces().Create(
 					context.Background(),
-					&v1.Namespace{
+					&corev1.Namespace{
 						ObjectMeta: metav1.ObjectMeta{
 							Labels:       map[string]string{"role": "trusted"},
 							GenerateName: generatedNamespaceNamePrefix,
@@ -1839,7 +1840,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 						metav1.LabelSelector{},
 						[]mnpapi.MultiPolicyType{mnpapi.PolicyTypeIngress},
 						[]mnpapi.MultiNetworkPolicyIngressRule{
-							mnpapi.MultiNetworkPolicyIngressRule{},
+							{},
 						},
 						nil,
 					),
@@ -1906,7 +1907,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 						},
 						[]mnpapi.MultiPolicyType{mnpapi.PolicyTypeIngress, mnpapi.PolicyTypeEgress},
 						[]mnpapi.MultiNetworkPolicyIngressRule{
-							mnpapi.MultiNetworkPolicyIngressRule{},
+							{},
 						},
 						nil,
 					),
@@ -2014,7 +2015,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 	})
 
 	Context("A pod with multiple attachments to the same OVN-K networks", func() {
-		var pod *v1.Pod
+		var pod *corev1.Pod
 
 		BeforeEach(func() {
 			netAttachDefs := []networkAttachmentConfig{
@@ -2055,13 +2056,13 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("asserting the pod gets to the `Ready` phase")
-			Eventually(func() v1.PodPhase {
+			Eventually(func() corev1.PodPhase {
 				updatedPod, err := cs.CoreV1().Pods(podConfig.namespace).Get(context.Background(), pod.GetName(), metav1.GetOptions{})
 				if err != nil {
-					return v1.PodFailed
+					return corev1.PodFailed
 				}
 				return updatedPod.Status.Phase
-			}, 2*time.Minute, 6*time.Second).Should(Equal(v1.PodRunning))
+			}, 2*time.Minute, 6*time.Second).Should(Equal(corev1.PodRunning))
 		})
 
 		It("features two different IPs from the same subnet", func() {
@@ -2078,13 +2079,13 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 			Expect(netStatus[0].IPs).To(HaveLen(1))
 			Expect(netStatus[1].IPs).To(HaveLen(1))
 			Expect(netStatus[0].IPs[0]).NotTo(Equal(netStatus[1].IPs[0]))
-			Expect(inRange(secondaryFlatL2NetworkCIDR, netStatus[0].IPs[0]))
-			Expect(inRange(secondaryFlatL2NetworkCIDR, netStatus[1].IPs[0]))
+			Expect(inRange(secondaryFlatL2NetworkCIDR, netStatus[0].IPs[0])).To(Succeed())
+			Expect(inRange(secondaryFlatL2NetworkCIDR, netStatus[1].IPs[0])).To(Succeed())
 		})
 	})
 })
 
-func kickstartPod(cs clientset.Interface, configuration podConfiguration) *v1.Pod {
+func kickstartPod(cs clientset.Interface, configuration podConfiguration) *corev1.Pod {
 	podNamespacedName := fmt.Sprintf("%s/%s", configuration.namespace, configuration.name)
 	By(fmt.Sprintf("instantiating pod %q", podNamespacedName))
 	createdPod, err := cs.CoreV1().Pods(configuration.namespace).Create(
@@ -2095,18 +2096,18 @@ func kickstartPod(cs clientset.Interface, configuration podConfiguration) *v1.Po
 	Expect(err).WithOffset(1).NotTo(HaveOccurred())
 
 	By(fmt.Sprintf("asserting that pod %q reaches the `Ready` state", podNamespacedName))
-	EventuallyWithOffset(1, func() v1.PodPhase {
+	EventuallyWithOffset(1, func() corev1.PodPhase {
 		updatedPod, err := cs.CoreV1().Pods(configuration.namespace).Get(context.Background(), configuration.name, metav1.GetOptions{})
 		if err != nil {
-			return v1.PodFailed
+			return corev1.PodFailed
 		}
 		return updatedPod.Status.Phase
-	}, 2*time.Minute, 6*time.Second).Should(Equal(v1.PodRunning))
+	}, 2*time.Minute, 6*time.Second).Should(Equal(corev1.PodRunning))
 	return createdPod
 }
 
-func createNads(f *framework.Framework, nadClient nadclient.K8sCniCncfIoV1Interface, extraNamespace *v1.Namespace, netConfig networkAttachmentConfig) error {
-	for _, ns := range []*v1.Namespace{f.Namespace, extraNamespace} {
+func createNads(f *framework.Framework, nadClient nadclient.K8sCniCncfIoV1Interface, extraNamespace *corev1.Namespace, netConfig networkAttachmentConfig) error {
+	for _, ns := range []*corev1.Namespace{f.Namespace, extraNamespace} {
 		By(fmt.Sprintf("creating the nad for namespace %q", ns.Name))
 		netConfig.namespace = ns.Name
 		_, err := nadClient.NetworkAttachmentDefinitions(ns.Name).Create(
@@ -2126,7 +2127,7 @@ func createNads(f *framework.Framework, nadClient nadclient.K8sCniCncfIoV1Interf
 	return nil
 }
 
-func kickstartPodInNamespace(cs clientset.Interface, podConfig *podConfiguration, defaultNamespace string, extraNamespace string) *v1.Pod {
+func kickstartPodInNamespace(cs clientset.Interface, podConfig *podConfiguration, defaultNamespace string, extraNamespace string) *corev1.Pod {
 	if podConfig.requiresExtraNamespace {
 		podConfig.namespace = extraNamespace
 	} else {

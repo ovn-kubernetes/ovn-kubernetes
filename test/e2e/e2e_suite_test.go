@@ -9,17 +9,17 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/diagnostics"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/ipalloc"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/label"
-
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2econfig "k8s.io/kubernetes/test/e2e/framework/config"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/diagnostics"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/ipalloc"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/label"
 )
 
 // https://github.com/kubernetes/kubernetes/blob/v1.16.4/test/e2e/e2e_test.go#L62

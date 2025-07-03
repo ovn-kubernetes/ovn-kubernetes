@@ -9,14 +9,15 @@ import (
 	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	knet "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/rand"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 )
 
 var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.NetworkSegmentation, func() {
@@ -64,7 +65,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 			for _, namespace := range []string{namespaceYellow, namespaceBlue,
 				namespaceRed, namespaceOrange} {
 				ginkgo.By("Creating namespace " + namespace)
-				ns, err := cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
+				ns, err := cs.CoreV1().Namespaces().Create(context.Background(), &corev1.Namespace{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:   namespace,
 						Labels: map[string]string{RequiredUDNNamespaceLabel: ""},
@@ -289,14 +290,14 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 					metav1.CreateOptions{},
 				)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				gomega.Consistently(func() v1.PodPhase {
+				gomega.Consistently(func() corev1.PodPhase {
 					updatedPod, err := cs.CoreV1().Pods(clientPodConfig.namespace).Get(context.Background(),
 						clientPodConfig.name, metav1.GetOptions{})
 					if err != nil {
-						return v1.PodFailed
+						return corev1.PodFailed
 					}
 					return updatedPod.Status.Phase
-				}, 1*time.Minute, 6*time.Second).Should(gomega.Equal(v1.PodPending))
+				}, 1*time.Minute, 6*time.Second).Should(gomega.Equal(corev1.PodPending))
 
 				// The pod won't run and the namespace address set won't be created until the NAD for the network is added
 				// to the namespace and we test here that once that happens the policy is reconciled to account for it.
@@ -314,14 +315,14 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 					)
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				}
-				gomega.Eventually(func() v1.PodPhase {
+				gomega.Eventually(func() corev1.PodPhase {
 					updatedPod, err := cs.CoreV1().Pods(clientPodConfig.namespace).Get(context.Background(),
 						clientPodConfig.name, metav1.GetOptions{})
 					if err != nil {
-						return v1.PodFailed
+						return corev1.PodFailed
 					}
 					return updatedPod.Status.Phase
-				}, 1*time.Minute, 6*time.Second).Should(gomega.Equal(v1.PodRunning))
+				}, 1*time.Minute, 6*time.Second).Should(gomega.Equal(corev1.PodRunning))
 
 				ginkgo.By("asserting the *red client* pod can contact the allow server pod exposed endpoint")
 				gomega.Eventually(func() error {

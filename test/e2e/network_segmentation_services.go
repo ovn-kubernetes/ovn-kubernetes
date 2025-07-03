@@ -9,15 +9,8 @@ import (
 	"time"
 
 	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
-	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
 
-	kapi "k8s.io/api/core/v1"
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -29,6 +22,14 @@ import (
 	e2eservice "k8s.io/kubernetes/test/e2e/framework/service"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	utilnet "k8s.io/utils/net"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
+	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("Network Segmentation: services", feature.NetworkSegmentation, func() {
@@ -120,18 +121,18 @@ var _ = Describe("Network Segmentation: services", feature.NetworkSegmentation, 
 				)
 				Expect(err).NotTo(HaveOccurred())
 
-				By(fmt.Sprintf("Creating a UDN LoadBalancer service"))
-				policy := v1.IPFamilyPolicyPreferDualStack
-				udnService, err := jig.CreateUDPService(context.TODO(), func(s *v1.Service) {
-					s.Spec.Ports = []v1.ServicePort{
+				By("Creating a UDN LoadBalancer service")
+				policy := corev1.IPFamilyPolicyPreferDualStack
+				udnService, err := jig.CreateUDPService(context.TODO(), func(s *corev1.Service) {
+					s.Spec.Ports = []corev1.ServicePort{
 						{
 							Name:       "udp",
-							Protocol:   v1.ProtocolUDP,
+							Protocol:   corev1.ProtocolUDP,
 							Port:       servicePort,
 							TargetPort: intstr.FromInt(serviceTargetPort),
 						},
 					}
-					s.Spec.Type = v1.ServiceTypeLoadBalancer
+					s.Spec.Type = corev1.ServiceTypeLoadBalancer
 					s.Spec.IPFamilyPolicy = &policy
 				})
 				framework.ExpectNoError(err)
@@ -143,7 +144,7 @@ var _ = Describe("Network Segmentation: services", feature.NetworkSegmentation, 
 				By("Creating a UDN backend pod")
 				udnServerPod := e2epod.NewAgnhostPod(
 					namespace, "backend-pod", nil, nil,
-					[]v1.ContainerPort{
+					[]corev1.ContainerPort{
 						{ContainerPort: (serviceTargetPort), Protocol: "UDP"}},
 					"-c",
 					fmt.Sprintf(`
@@ -193,7 +194,7 @@ ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | 
 				// Default network -> UDN
 				// Check that it cannot connect
 				By(fmt.Sprintf("Create a client pod in the default network on node %s", clientNode))
-				defaultNetNamespace := &v1.Namespace{
+				defaultNetNamespace := &corev1.Namespace{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: f.Namespace.Name + "-default",
 					},
@@ -221,25 +222,25 @@ ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | 
 
 				defaultServerPod, err := createPod(f, "backend-pod-default", serverPodNodeName,
 					defaultNetNamespace.Name, []string{"/agnhost", "netexec", "--udp-port=" + fmt.Sprint(serviceTargetPort)}, defaultLabels,
-					func(pod *v1.Pod) {
-						pod.Spec.Containers[0].Ports = []v1.ContainerPort{{ContainerPort: (serviceTargetPort), Protocol: "UDP"}}
+					func(pod *corev1.Pod) {
+						pod.Spec.Containers[0].Ports = []corev1.ContainerPort{{ContainerPort: (serviceTargetPort), Protocol: "UDP"}}
 					})
 				Expect(err).NotTo(HaveOccurred())
 
 				By("create a node port service in the default network")
-				defaultService := &v1.Service{
+				defaultService := &corev1.Service{
 					ObjectMeta: metav1.ObjectMeta{Name: "service-default"},
-					Spec: v1.ServiceSpec{
-						Ports: []v1.ServicePort{
+					Spec: corev1.ServiceSpec{
+						Ports: []corev1.ServicePort{
 							{
 								Name:       "udp-port",
 								Port:       int32(servicePort),
-								Protocol:   v1.ProtocolUDP,
+								Protocol:   corev1.ProtocolUDP,
 								TargetPort: intstr.FromInt(serviceTargetPort),
 							},
 						},
 						Selector:       defaultLabels,
-						Type:           v1.ServiceTypeNodePort,
+						Type:           corev1.ServiceTypeNodePort,
 						IPFamilyPolicy: &policy,
 					},
 				}
@@ -298,7 +299,7 @@ type primaryIfAddrAnnotation struct {
 }
 
 // ParseNodeHostIPDropNetMask returns the parsed host IP addresses found on a node's host CIDR annotation. Removes the mask.
-func ParseNodeHostIPDropNetMask(node *kapi.Node) (sets.Set[string], error) {
+func ParseNodeHostIPDropNetMask(node *corev1.Node) (sets.Set[string], error) {
 	nodeIfAddrAnnotation, ok := node.Annotations[OvnNodeIfAddr]
 	if !ok {
 		return nil, newAnnotationNotSetError("%s annotation not found for node %q", OvnNodeIfAddr, node.Name)
@@ -329,7 +330,7 @@ func ParseNodeHostIPDropNetMask(node *kapi.Node) (sets.Set[string], error) {
 	return sets.New(cfg...), nil
 }
 
-func checkConnectionToAgnhostPod(f *framework.Framework, clientPod *v1.Pod, expectedOutput, cmd string) error {
+func checkConnectionToAgnhostPod(f *framework.Framework, clientPod *corev1.Pod, expectedOutput, cmd string) error {
 	return wait.PollImmediate(200*time.Millisecond, 5*time.Second, func() (bool, error) {
 		stdout, stderr, err2 := ExecShellInPodWithFullOutput(f, clientPod.Namespace, clientPod.Name, cmd)
 		fmt.Printf("stdout=%s\n", stdout)
@@ -347,7 +348,7 @@ func checkConnectionToAgnhostPod(f *framework.Framework, clientPod *v1.Pod, expe
 	})
 }
 
-func checkNoConnectionToAgnhostPod(f *framework.Framework, clientPod *v1.Pod, cmd string) error {
+func checkNoConnectionToAgnhostPod(f *framework.Framework, clientPod *corev1.Pod, cmd string) error {
 	err := wait.PollImmediate(500*time.Millisecond, 2*time.Second, func() (bool, error) {
 		stdout, stderr, err2 := ExecShellInPodWithFullOutput(f, clientPod.Namespace, clientPod.Name, cmd)
 		fmt.Printf("stdout=%s\n", stdout)
@@ -377,15 +378,15 @@ func checkNoConnectionToAgnhostPod(f *framework.Framework, clientPod *v1.Pod, cm
 	return fmt.Errorf("Error: %s/%s was able to connect (cmd=%s) ", clientPod.Namespace, clientPod.Name, cmd)
 }
 
-func checkConnectionToClusterIPs(f *framework.Framework, clientPod *v1.Pod, service *v1.Service, expectedOutput string) {
+func checkConnectionToClusterIPs(f *framework.Framework, clientPod *corev1.Pod, service *corev1.Service, expectedOutput string) {
 	checkConnectionOrNoConnectionToClusterIPs(f, clientPod, service, expectedOutput, true)
 }
 
-func checkNoConnectionToClusterIPs(f *framework.Framework, clientPod *v1.Pod, service *v1.Service) {
+func checkNoConnectionToClusterIPs(f *framework.Framework, clientPod *corev1.Pod, service *corev1.Service) {
 	checkConnectionOrNoConnectionToClusterIPs(f, clientPod, service, "", false)
 }
 
-func checkConnectionOrNoConnectionToClusterIPs(f *framework.Framework, clientPod *v1.Pod, service *v1.Service, expectedOutput string, shouldConnect bool) {
+func checkConnectionOrNoConnectionToClusterIPs(f *framework.Framework, clientPod *corev1.Pod, service *corev1.Service, expectedOutput string, shouldConnect bool) {
 	var err error
 	servicePort := service.Spec.Ports[0].Port
 	notStr := ""
@@ -409,15 +410,15 @@ func checkConnectionOrNoConnectionToClusterIPs(f *framework.Framework, clientPod
 	}
 }
 
-func checkConnectionToNodePort(f *framework.Framework, clientPod *v1.Pod, service *v1.Service, node *v1.Node, nodeRoleMsg, expectedOutput string) {
+func checkConnectionToNodePort(f *framework.Framework, clientPod *corev1.Pod, service *corev1.Service, node *corev1.Node, nodeRoleMsg, expectedOutput string) {
 	checkConnectionOrNoConnectionToNodePort(f, clientPod, service, node, nodeRoleMsg, expectedOutput, true)
 }
 
-func checkNoConnectionToNodePort(f *framework.Framework, clientPod *v1.Pod, service *v1.Service, node *v1.Node, nodeRoleMsg string) {
+func checkNoConnectionToNodePort(f *framework.Framework, clientPod *corev1.Pod, service *corev1.Service, node *corev1.Node, nodeRoleMsg string) {
 	checkConnectionOrNoConnectionToNodePort(f, clientPod, service, node, nodeRoleMsg, "", false)
 }
 
-func checkConnectionOrNoConnectionToNodePort(f *framework.Framework, clientPod *v1.Pod, service *v1.Service, node *v1.Node, nodeRoleMsg, expectedOutput string, shouldConnect bool) {
+func checkConnectionOrNoConnectionToNodePort(f *framework.Framework, clientPod *corev1.Pod, service *corev1.Service, node *corev1.Node, nodeRoleMsg, expectedOutput string, shouldConnect bool) {
 	var err error
 	nodePort := service.Spec.Ports[0].NodePort
 	notStr := ""
@@ -442,15 +443,15 @@ func checkConnectionOrNoConnectionToNodePort(f *framework.Framework, clientPod *
 	}
 }
 
-func checkConnectionToLoadBalancers(f *framework.Framework, clientPod *v1.Pod, service *v1.Service, expectedOutput string) {
+func checkConnectionToLoadBalancers(f *framework.Framework, clientPod *corev1.Pod, service *corev1.Service, expectedOutput string) {
 	checkConnectionOrNoConnectionToLoadBalancers(f, clientPod, service, expectedOutput, true)
 }
 
-func checkNoConnectionToLoadBalancers(f *framework.Framework, clientPod *v1.Pod, service *v1.Service) {
+func checkNoConnectionToLoadBalancers(f *framework.Framework, clientPod *corev1.Pod, service *corev1.Service) {
 	checkConnectionOrNoConnectionToLoadBalancers(f, clientPod, service, "", false)
 }
 
-func checkConnectionOrNoConnectionToLoadBalancers(f *framework.Framework, clientPod *v1.Pod, service *v1.Service, expectedOutput string, shouldConnect bool) {
+func checkConnectionOrNoConnectionToLoadBalancers(f *framework.Framework, clientPod *corev1.Pod, service *corev1.Service, expectedOutput string, shouldConnect bool) {
 	var err error
 	port := service.Spec.Ports[0].Port
 	notStr := ""
@@ -473,7 +474,7 @@ func checkConnectionOrNoConnectionToLoadBalancers(f *framework.Framework, client
 	}
 }
 
-func checkConnectionToNodePortFromExternalContainer(externalContainer infraapi.ExternalContainer, service *v1.Service, node *v1.Node, nodeRoleMsg, expectedOutput string) {
+func checkConnectionToNodePortFromExternalContainer(externalContainer infraapi.ExternalContainer, service *corev1.Service, node *corev1.Node, nodeRoleMsg, expectedOutput string) {
 	GinkgoHelper()
 	var err error
 	nodePort := service.Spec.Ports[0].NodePort
@@ -495,7 +496,7 @@ func checkConnectionToNodePortFromExternalContainer(externalContainer infraapi.E
 	}
 }
 
-func checkConnectionToLoadBalancersFromExternalContainer(f *framework.Framework, externalContainer infraapi.ExternalContainer, service *v1.Service, expectedOutput string) {
+func checkConnectionToLoadBalancersFromExternalContainer(f *framework.Framework, externalContainer infraapi.ExternalContainer, service *corev1.Service, expectedOutput string) {
 	GinkgoHelper()
 	port := service.Spec.Ports[0].Port
 
@@ -515,7 +516,7 @@ func checkConnectionToLoadBalancersFromExternalContainer(f *framework.Framework,
 	}
 }
 
-func filterLoadBalancerIngressByIPFamily(f *framework.Framework, service *v1.Service) []v1.LoadBalancerIngress {
+func filterLoadBalancerIngressByIPFamily(f *framework.Framework, service *corev1.Service) []corev1.LoadBalancerIngress {
 	GinkgoHelper()
 	// Work around two metallb v0.14.9 issues:
 	// Always refetch the LB IPs as they might be updated from under our feet
@@ -531,7 +532,7 @@ func filterLoadBalancerIngressByIPFamily(f *framework.Framework, service *v1.Ser
 	lbIngressIPs := slices.Clone(service.Status.LoadBalancer.Ingress)
 	if len(service.Spec.ClusterIPs) == 1 {
 		isIpv6 := utilnet.IsIPv6String(service.Spec.ClusterIPs[0])
-		lbIngressIPs = slices.DeleteFunc(lbIngressIPs, func(lbIngressIP v1.LoadBalancerIngress) bool {
+		lbIngressIPs = slices.DeleteFunc(lbIngressIPs, func(lbIngressIP corev1.LoadBalancerIngress) bool {
 			sameIPFamily := utilnet.IsIPv6String(lbIngressIP.IP) == isIpv6
 			return !sameIPFamily
 		})

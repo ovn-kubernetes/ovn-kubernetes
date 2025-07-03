@@ -2,8 +2,10 @@ package kind
 
 import (
 	"fmt"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
+
 	"k8s.io/utils/net"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
 )
 
 type containerEngineNetwork struct {
@@ -27,11 +29,11 @@ func (n containerEngineNetwork) IPv4IPv6Subnets() (string, string, error) {
 	var v4, v6 string
 	for _, config := range n.Configs {
 		if config.Subnet == "" {
-			panic(fmt.Sprintf("failed to get IPV4/V6 because network %s contains a config with an empty subnet", n.Name))
+			panic(fmt.Sprintf("failed to get IPV4/V6 because network %s contains a config with an empty subnet", n.Name()))
 		}
 		ip, _, err := net.ParseCIDRSloppy(config.Subnet)
 		if err != nil {
-			panic(fmt.Sprintf("failed to parse network %s subnet %q: %v", n.Name, config.Subnet, err))
+			panic(fmt.Sprintf("failed to parse network %s subnet %q: %v", n.Name(), config.Subnet, err))
 		}
 		if net.IsIPv4(ip) {
 			v4 = config.Subnet
@@ -40,16 +42,13 @@ func (n containerEngineNetwork) IPv4IPv6Subnets() (string, string, error) {
 		}
 	}
 	if v4 == "" && v6 == "" {
-		return "", "", fmt.Errorf("failed to find IPv4 and IPv6 addresses for network %s", n.Name)
+		return "", "", fmt.Errorf("failed to find IPv4 and IPv6 addresses for network %s", n.Name())
 	}
 	return v4, v6, nil
 }
 
 func (n containerEngineNetwork) Equal(candidate api.Network) bool {
-	if n.name != candidate.Name() {
-		return false
-	}
-	return true
+	return n.name == candidate.Name()
 }
 
 func (n containerEngineNetwork) String() string {
