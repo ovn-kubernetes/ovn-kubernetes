@@ -42,6 +42,8 @@ function setup_kubectl_bin() {
 # The root cause is unknown, this also can not be reproduced in Ubuntu 20.04 or
 # with Fedora32 Cloud, but it does not happen if we clean first the ovn-kubernetes resources.
 delete() {
+  OCI_BIN=${KIND_EXPERIMENTAL_PROVIDER:-docker}
+
   if [ "$KIND_INSTALL_METALLB" == true ]; then
     destroy_metallb
   fi

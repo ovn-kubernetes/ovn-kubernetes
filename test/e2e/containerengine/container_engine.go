@@ -12,6 +12,16 @@ func (ce ContainerEngine) String() string {
 	return string(ce)
 }
 
+func (ce ContainerEngine) NetworkCIDRsFmt() string {
+	if ce == Podman {
+		return "{{json .Subnets }}"
+	}
+	if ce == Docker {
+		return "{{json .IPAM.Config }}"
+	}
+	return ""
+}
+
 const (
 	Docker ContainerEngine = "docker"
 	Podman ContainerEngine = "podman"
