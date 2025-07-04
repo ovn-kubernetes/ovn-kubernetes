@@ -153,6 +153,7 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter) (map[s
 		netConfSpec.AllowPersistentIPs = cfg.IPAM != nil && cfg.IPAM.Lifecycle == userdefinednetworkv1.IPAMLifecyclePersistent
 		netConfSpec.Subnets = cidrString(cfg.Subnets)
 		netConfSpec.ReservedSubnets = cidrString(cfg.ReservedSubnets)
+		netConfSpec.InfrastructureSubnets = cidrString(cfg.InfrastructureSubnets)
 		netConfSpec.JoinSubnet = cidrString(renderJoinSubnets(cfg.Role, cfg.JoinSubnets))
 		netConfSpec.DefaultGatewayIPs = ipString(cfg.DefaultGatewayIPs)
 	case userdefinednetworkv1.NetworkTopologyLocalnet:
@@ -213,6 +214,9 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter) (map[s
 	}
 	if len(netConfSpec.ReservedSubnets) > 0 {
 		cniNetConf["reservedSubnets"] = netConfSpec.ReservedSubnets
+	}
+	if len(netConfSpec.InfrastructureSubnets) > 0 {
+		cniNetConf["infrastructureSubnets"] = netConfSpec.InfrastructureSubnets
 	}
 	if netConfSpec.VLANID != 0 {
 		cniNetConf["vlanID"] = netConfSpec.VLANID
