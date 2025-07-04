@@ -2162,7 +2162,12 @@ func commonFlows(hostSubnets []*net.IPNet, bridge *bridgeConfiguration) ([]strin
 			if output == netConfig.ofPortPatch {
 				// except node management traffic
 				for _, subnet := range netConfig.nodeSubnets {
-					mgmtIP := util.GetNodeManagementIfAddr(subnet)
+					mgmtIP, err := util.MatchFirstIPNetFamily(utilnet.IsIPv6CIDR(subnet), netConfig.mgmtIPs)
+					if err != nil {
+						klog.Errorf("Failed to find the management IP matching the IP family of the subnet %q", subnet)
+						continue
+					}
+
 					ipv := getIPv(mgmtIP)
 					dftFlows = append(dftFlows,
 						fmt.Sprintf("cookie=%s, priority=16, table=1, %s, %s_dst=%s, "+

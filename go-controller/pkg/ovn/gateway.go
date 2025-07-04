@@ -660,7 +660,7 @@ func (gw *GatewayManager) GatewayInit(
 			// If migrating from local to shared gateway, let's remove the static routes towards
 			// management port interface for the hostSubnet prefix before adding the routes
 			// towards join switch.
-			mgmtIfAddr := util.GetNodeManagementIfAddr(hostSubnet)
+			mgmtIfAddr := gw.netInfo.GetNodeManagementIP(hostSubnet)
 			gw.staticRouteCleanup([]net.IP{mgmtIfAddr.IP}, hostSubnet)
 
 			if err := libovsdbops.CreateOrReplaceLogicalRouterStaticRouteWithPredicate(
@@ -1301,7 +1301,7 @@ func (gw *GatewayManager) syncGatewayLogicalNetwork(
 		routerName = gw.gwRouterName
 	}
 	for _, subnet := range hostSubnets {
-		mgmtIfAddr := util.GetNodeManagementIfAddr(subnet)
+		mgmtIfAddr := gw.netInfo.GetNodeManagementIP(subnet)
 		if mgmtIfAddr == nil {
 			return fmt.Errorf("management interface address not found for subnet %q on network %q", subnet, gw.netInfo.GetNetworkName())
 		}
