@@ -74,7 +74,7 @@ const (
 	TransitSwitchToRouterPrefix = "tstor-"
 	RouterToTransitSwitchPrefix = "rtots-"
 
-	// ACL Default Tier Priorities
+	// DefaultACLTier Priorities
 
 	// Default routed multicast allow acl rule priority
 	DefaultRoutedMcastAllowPriority = 1013
@@ -91,7 +91,8 @@ const (
 	// Deny priority for isolated advertised networks
 	AdvertisedNetworkDenyPriority = 1050
 
-	// ACL PlaceHolderACL Tier Priorities
+	// PrimaryACLTier Priorities
+
 	PrimaryUDNAllowPriority = 1001
 	// Default deny acl rule priority
 	PrimaryUDNDenyPriority = 1000
@@ -99,8 +100,6 @@ const (
 	// ACL Tiers
 	// Tier 0 is called Primary as it is evaluated before any other feature-related Tiers.
 	// Currently used for User Defined Network Feature.
-	// NOTE: When we upgrade from an OVN version without tiers to the new version with
-	// tiers, all values in the new ACL.Tier column will be set to 0.
 	PrimaryACLTier = 0
 	// Default Tier for all ACLs
 	DefaultACLTier = 2

@@ -43,7 +43,7 @@ func generateAdvertisedUDNIsolationExpectedNB(testData []libovsdbtest.TestData, 
 		passMatches = append(passMatches, fmt.Sprintf("(%s.src == %s && %s.dst == %s)", ipPrefix, subnet, ipPrefix, subnet))
 
 	}
-	passACL := libovsdbutil.BuildACL(
+	passACL := libovsdbutil.BuildACLWithDefaultTier(
 		GetAdvertisedNetworkSubnetsPassACLdbIDs(DefaultNetworkControllerName, networkName, networkID),
 		types.AdvertisedNetworkPassPriority,
 		strings.Join(passMatches, " || "),
