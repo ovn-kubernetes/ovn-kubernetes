@@ -17,6 +17,7 @@ var SwitchNotFound = subnet.ErrSubnetNotFound
 type LogicalSwitchManager struct {
 	allocator  subnet.Allocator
 	gatewayIPs []*net.IPNet
+	mgmtIPs    []*net.IPNet
 	reserveIPs bool
 }
 
@@ -47,33 +48,37 @@ func NewL2SwitchManager() *LogicalSwitchManager {
 // switch manager for L2 primary networks.
 // A user defined primary network auto-reserves the gateway and the node management IP addresses,
 // which are required for egressing the cluster over this user defined network.
-func NewL2SwitchManagerForUserDefinedPrimaryNetwork(gatewayIPs []*net.IPNet) *LogicalSwitchManager {
+func NewL2SwitchManagerForUserDefinedPrimaryNetwork(gatewayIPs, mgmtIPs []*net.IPNet) *LogicalSwitchManager {
 	lsm := NewLogicalSwitchManager()
 	lsm.gatewayIPs = gatewayIPs
+	lsm.mgmtIPs = mgmtIPs
 	return lsm
 }
 
 // AddOrUpdateSwitch adds/updates a switch to the logical switch manager for subnet
 // and IPAM management.
-func (manager *LogicalSwitchManager) AddOrUpdateSwitch(switchName string, hostSubnets []*net.IPNet, excludeSubnets ...*net.IPNet) error {
+func (manager *LogicalSwitchManager) AddOrUpdateSwitch(switchName string, hostSubnets []*net.IPNet, reservedSubnets []*net.IPNet, excludeSubnets ...*net.IPNet) error {
 	if manager.reserveIPs {
 		for _, hostSubnet := range hostSubnets {
-			var gwIP *net.IPNet
-			if len(manager.gatewayIPs) > 0 {
-				gwIP, _ = util.MatchFirstIPNetFamily(knet.IsIPv6CIDR(hostSubnet), manager.gatewayIPs)
-			}
+			gwIP, _ := util.MatchFirstIPNetFamily(knet.IsIPv6CIDR(hostSubnet), manager.gatewayIPs)
 			if gwIP == nil {
 				gwIP = util.GetNodeGatewayIfAddr(hostSubnet)
 			}
 
-			for _, ip := range []*net.IPNet{gwIP, util.GetNodeManagementIfAddr(hostSubnet)} {
-				excludeSubnets = append(excludeSubnets,
-					&net.IPNet{IP: ip.IP, Mask: util.GetIPFullMask(ip.IP)},
-				)
+			mgmtIP, _ := util.MatchFirstIPNetFamily(knet.IsIPv6CIDR(hostSubnet), manager.mgmtIPs)
+			if mgmtIP == nil {
+				mgmtIP = util.GetNodeManagementIfAddr(hostSubnet)
+			}
+
+			for _, ip := range []*net.IPNet{gwIP, mgmtIP} {
+				excludeIP := &net.IPNet{IP: ip.IP, Mask: util.GetIPFullMask(ip.IP)}
+				if !util.IsContainedInAnyCIDR(excludeIP, excludeSubnets...) {
+					excludeSubnets = append(excludeSubnets, excludeIP)
+				}
 			}
 		}
 	}
-	return manager.allocator.AddOrUpdateSubnet(switchName, hostSubnets, nil, excludeSubnets...)
+	return manager.allocator.AddOrUpdateSubnet(switchName, hostSubnets, reservedSubnets, excludeSubnets...)
 }
 
 // AddNoHostSubnetSwitch adds/updates a switch without any host subnets

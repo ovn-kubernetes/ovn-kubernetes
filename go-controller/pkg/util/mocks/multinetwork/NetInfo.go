@@ -35,6 +35,25 @@ func (_m *NetInfo) GetNodeGatewayIP(hostSubnet *net.IPNet) *net.IPNet {
 	return r0
 }
 
+func (_m *NetInfo) GetNodeManagementIP(hostSubnet *net.IPNet) *net.IPNet {
+	ret := _m.Called(hostSubnet)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetNodeManagementIP")
+	}
+
+	var r0 *net.IPNet
+	if rf, ok := ret.Get(0).(func(*net.IPNet) *net.IPNet); ok {
+		r0 = rf(hostSubnet)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*net.IPNet)
+		}
+	}
+
+	return r0
+}
+
 // AllowsPersistentIPs provides a mock function with given fields:
 func (_m *NetInfo) AllowsPersistentIPs() bool {
 	ret := _m.Called()
@@ -83,6 +102,26 @@ func (_m *NetInfo) ExcludeSubnets() []*net.IPNet {
 
 	if len(ret) == 0 {
 		panic("no return value specified for ExcludeSubnets")
+	}
+
+	var r0 []*net.IPNet
+	if rf, ok := ret.Get(0).(func() []*net.IPNet); ok {
+		r0 = rf()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]*net.IPNet)
+		}
+	}
+
+	return r0
+}
+
+// InfrastructureSubnets provides a mock function with given fields:
+func (_m *NetInfo) InfrastructureSubnets() []*net.IPNet {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for InfrastructureSubnets")
 	}
 
 	var r0 []*net.IPNet

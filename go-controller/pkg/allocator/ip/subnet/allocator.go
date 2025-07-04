@@ -110,19 +110,19 @@ func (allocator *allocator) AddOrUpdateSubnet(name string, subnets []*net.IPNet,
 	}
 
 	// reservedSubnets is a subset of subnets, and it should not be used by automatic IPAM
-	for _, excludeSubnet := range append(reservedSubnets, excludeSubnets...) {
+	for _, excludeFromIPAM := range append(reservedSubnets, excludeSubnets...) {
 		var excluded bool
 		for i, subnet := range subnets {
-			if util.ContainsCIDR(subnet, excludeSubnet) {
-				err := reserveSubnets(excludeSubnet, ipams[i])
+			if util.ContainsCIDR(subnet, excludeFromIPAM) {
+				err := reserveSubnets(excludeFromIPAM, ipams[i])
 				if err != nil {
-					return fmt.Errorf("failed to exclude subnet %s for %s: %w", excludeSubnet, name, err)
+					return fmt.Errorf("failed to exclude subnet %s for %s: %w", excludeFromIPAM, name, err)
 				}
 			}
 			excluded = true
 		}
 		if !excluded {
-			return fmt.Errorf("failed to exclude subnet %s for %s: not contained in any of the subnets", excludeSubnet, name)
+			return fmt.Errorf("failed to exclude subnet %s for %s: not contained in any of the subnets", excludeFromIPAM, name)
 		}
 	}
 
@@ -228,14 +228,14 @@ func (allocator *allocator) AllocateIPPerSubnet(name string, ips []*net.IPNet) e
 		allocated := false
 
 		// Try static IPAMs first (for reserved subnets)
-		for idx, ipam := range subnetInfo.staticIPAMs {
-			cidr := ipam.CIDR()
+		for idx, staticIPAM := range subnetInfo.staticIPAMs {
+			cidr := staticIPAM.CIDR()
 			if cidr.Contains(ipnet.IP) {
 				if _, ok = allocatedStatic[idx]; ok {
 					err = fmt.Errorf("failed to allocate IP %s for %s: attempted to reserve multiple IPs in the same static IPAM instance", ipnet.IP, name)
 					return err
 				}
-				if err = ipam.Allocate(ipnet.IP); err != nil {
+				if err = staticIPAM.Allocate(ipnet.IP); err != nil {
 					return err
 				}
 				allocatedStatic[idx] = ipnet

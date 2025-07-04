@@ -505,7 +505,7 @@ func (bnc *BaseNetworkController) createNodeLogicalSwitch(nodeName string, hostS
 	logicalSwitch.OtherConfig = map[string]string{}
 	for _, hostSubnet := range hostSubnets {
 		gwIfAddr := bnc.GetNodeGatewayIP(hostSubnet)
-		mgmtIfAddr := util.GetNodeManagementIfAddr(hostSubnet)
+		mgmtIfAddr := bnc.GetNodeManagementIP(hostSubnet)
 
 		if utilnet.IsIPv6CIDR(hostSubnet) {
 			v6Gateway = gwIfAddr.IP
@@ -585,7 +585,7 @@ func (bnc *BaseNetworkController) createNodeLogicalSwitch(nodeName string, hostS
 		return fmt.Errorf("failed finding migratable pod IPs belonging to %s: %v", nodeName, err)
 	}
 
-	return bnc.lsManager.AddOrUpdateSwitch(logicalSwitch.Name, hostSubnets, migratableIPsByPod...)
+	return bnc.lsManager.AddOrUpdateSwitch(logicalSwitch.Name, hostSubnets, nil, migratableIPsByPod...)
 }
 
 // deleteNodeLogicalNetwork removes the logical switch and logical router port associated with the node
@@ -775,14 +775,14 @@ func (bnc *BaseNetworkController) syncNodeManagementPort(node *corev1.Node, swit
 		if len(hostSubnets) == 0 {
 			return nil, fmt.Errorf("unable to generate MAC address, no subnets provided for network: %s", bnc.GetNetworkName())
 		}
-		macAddress = util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(hostSubnets[0]).IP)
+		macAddress = util.IPAddrToHWAddr(bnc.GetNodeManagementIP(hostSubnets[0]).IP)
 	}
 
 	var v4Subnet *net.IPNet
 	addresses := macAddress.String()
 	mgmtPortIPs := []net.IP{}
 	for _, hostSubnet := range hostSubnets {
-		mgmtIfAddr := util.GetNodeManagementIfAddr(hostSubnet)
+		mgmtIfAddr := bnc.GetNodeManagementIP(hostSubnet)
 		addresses += " " + mgmtIfAddr.IP.String()
 		mgmtPortIPs = append(mgmtPortIPs, mgmtIfAddr.IP)
 
@@ -836,7 +836,7 @@ func (bnc *BaseNetworkController) syncNodeManagementPort(node *corev1.Node, swit
 	}
 
 	if v4Subnet != nil {
-		if err := libovsdbutil.UpdateNodeSwitchExcludeIPs(bnc.nbClient, bnc.GetNetworkScopedK8sMgmtIntfName(node.Name), bnc.GetNetworkScopedSwitchName(node.Name), node.Name, v4Subnet); err != nil {
+		if err := libovsdbutil.UpdateNodeSwitchExcludeIPs(bnc.nbClient, bnc.GetNetworkScopedK8sMgmtIntfName(node.Name), bnc.GetNetworkScopedSwitchName(node.Name), node.Name, v4Subnet, bnc.GetNodeManagementIP(v4Subnet)); err != nil {
 			return nil, err
 		}
 	}

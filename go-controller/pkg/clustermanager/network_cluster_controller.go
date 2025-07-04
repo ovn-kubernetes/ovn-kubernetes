@@ -781,14 +781,22 @@ func newIPAllocatorForNetwork(netInfo util.NetInfo) (subnet.Allocator, error) {
 
 	subnets := netInfo.Subnets()
 	ipNets := make([]*net.IPNet, 0, len(subnets))
-	excludeSubnets := netInfo.ExcludeSubnets()
+	excludeSubnets := append(netInfo.ExcludeSubnets(), netInfo.InfrastructureSubnets()...)
+
 	for _, subnet := range subnets {
 		ipNets = append(ipNets, subnet.CIDR)
 	}
-	if isLayer2UserDefinedPrimaryNetwork(netInfo) {
+
+	if isLayer2UserDefinedPrimaryNetwork(netInfo) && len(netInfo.InfrastructureSubnets()) == 0 {
 		excludeSubnets = append(excludeSubnets, infrastructureExcludeCIDRs(netInfo)...)
 	}
-	if err := ipAllocator.AddOrUpdateSubnet(netInfo.GetNetworkName(), ipNets, netInfo.ReservedSubnets(), excludeSubnets...); err != nil {
+
+	if err := ipAllocator.AddOrUpdateSubnet(
+		netInfo.GetNetworkName(),
+		ipNets,
+		netInfo.ReservedSubnets(),
+		excludeSubnets...,
+	); err != nil {
 		return nil, err
 	}
 
@@ -799,12 +807,13 @@ func isLayer2UserDefinedPrimaryNetwork(netInfo util.NetInfo) bool {
 	return netInfo.IsPrimaryNetwork() && netInfo.TopologyType() == types.Layer2Topology
 }
 
+// infrastructureExcludeCIDRs returns a list of IPs that should be excluded from IP allocation (gateway and management port IPs)
 func infrastructureExcludeCIDRs(netInfo util.NetInfo) []*net.IPNet {
 	var excludeCIDRs []*net.IPNet
 
 	for _, subnet := range netInfo.Subnets() {
 		gwIP := netInfo.GetNodeGatewayIP(subnet.CIDR).IP
-		mgmtPortIP := util.GetNodeManagementIfAddr(subnet.CIDR).IP
+		mgmtPortIP := netInfo.GetNodeManagementIP(subnet.CIDR).IP
 		excludeCIDRs = append(excludeCIDRs,
 			&net.IPNet{IP: gwIP, Mask: util.GetIPFullMask(gwIP)},
 			&net.IPNet{IP: mgmtPortIP, Mask: util.GetIPFullMask(mgmtPortIP)},

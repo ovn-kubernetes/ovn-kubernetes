@@ -802,7 +802,11 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 						"actions=output:%s",
 						nodetypes.DefaultOpenFlowCookie, ofPortPhys, ipv, ipv, subnet, output))
 				// except node management traffic
-				mgmtIP := util.GetNodeManagementIfAddr(subnet)
+				mgmtIP, err := util.MatchFirstIPNetFamily(utilnet.IsIPv6CIDR(subnet), netConfig.ManagementIPs)
+				if err != nil {
+					return nil, fmt.Errorf("failed to find the management IP matching the IP family of the subnet %q", subnet)
+				}
+
 				if mgmtIP == nil {
 					return nil, fmt.Errorf("unable to determine management IP for subnet %s", subnet.String())
 				}

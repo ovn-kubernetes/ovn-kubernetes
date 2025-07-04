@@ -371,7 +371,7 @@ func (oc *DefaultNetworkController) getHostNamespaceAddressesForNode(node *corev
 		return nil, err
 	}
 	for _, hostSubnet := range hostSubnets {
-		mgmtIfAddr := util.GetNodeManagementIfAddr(hostSubnet)
+		mgmtIfAddr := oc.GetNodeManagementIP(hostSubnet)
 		ips = append(ips, mgmtIfAddr.IP)
 	}
 	// for shared gateway mode we will use LRP IPs to SNAT host network traffic

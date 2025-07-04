@@ -161,8 +161,7 @@ func (oc *BaseSecondaryLayer2NetworkController) run() error {
 	return nil
 }
 
-func (oc *BaseSecondaryLayer2NetworkController) initializeLogicalSwitch(switchName string, clusterSubnets []config.CIDRNetworkEntry,
-	excludeSubnets []*net.IPNet, clusterLoadBalancerGroupUUID, switchLoadBalancerGroupUUID string) (*nbdb.LogicalSwitch, error) {
+func (oc *BaseSecondaryLayer2NetworkController) initializeLogicalSwitch(switchName string, clusterSubnets []config.CIDRNetworkEntry, excludeSubnets, reservedSubnets []*net.IPNet, clusterLoadBalancerGroupUUID, switchLoadBalancerGroupUUID string) (*nbdb.LogicalSwitch, error) {
 	logicalSwitch := nbdb.LogicalSwitch{
 		Name:        switchName,
 		ExternalIDs: util.GenerateExternalIDsForSwitchOrRouter(oc.GetNetInfo()),
@@ -195,7 +194,7 @@ func (oc *BaseSecondaryLayer2NetworkController) initializeLogicalSwitch(switchNa
 		return nil, fmt.Errorf("failed to create logical switch %+v: %v", logicalSwitch, err)
 	}
 
-	if err = oc.lsManager.AddOrUpdateSwitch(switchName, hostSubnets, excludeSubnets...); err != nil {
+	if err = oc.lsManager.AddOrUpdateSwitch(switchName, hostSubnets, reservedSubnets, excludeSubnets...); err != nil {
 		return nil, err
 	}
 

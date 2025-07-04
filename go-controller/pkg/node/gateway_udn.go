@@ -251,10 +251,14 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 	}
 
 	nodeSubnets, err := udng.getLocalSubnets()
+	var mgmtIPs []*net.IPNet
+	for _, subnet := range nodeSubnets {
+		mgmtIPs = append(mgmtIPs, udng.GetNodeManagementIP(subnet))
+	}
 	if err != nil {
 		return fmt.Errorf("failed to get node subnets for network %s: %w", udng.GetNetworkName(), err)
 	}
-	if err = udng.openflowManager.addNetwork(udng.NetInfo, nodeSubnets, udng.masqCTMark, udng.pktMark, udng.v6MasqIPs, udng.v4MasqIPs); err != nil {
+	if err = udng.openflowManager.addNetwork(udng.NetInfo, nodeSubnets, mgmtIPs, udng.masqCTMark, udng.pktMark, udng.v6MasqIPs, udng.v4MasqIPs); err != nil {
 		return fmt.Errorf("could not add network %s: %v", udng.GetNetworkName(), err)
 	}
 
@@ -353,7 +357,7 @@ func (udng *UserDefinedNetworkGateway) addUDNManagementPort() (netlink.Link, err
 	if len(networkLocalSubnets) == 0 {
 		return nil, fmt.Errorf("cannot determine subnets while configuring management port for network: %s", udng.GetNetworkName())
 	}
-	macAddr := util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(networkLocalSubnets[0]).IP)
+	macAddr := util.IPAddrToHWAddr(udng.GetNodeManagementIP(networkLocalSubnets[0]).IP)
 
 	// STEP1
 	stdout, stderr, err := util.RunOVSVsctl(
@@ -424,7 +428,7 @@ func (udng *UserDefinedNetworkGateway) addUDNManagementPortIPs(mpLink netlink.Li
 	// extract management port IP from subnets and add it to link
 	for _, subnet := range networkLocalSubnets {
 		if config.IPv6Mode && utilnet.IsIPv6CIDR(subnet) || config.IPv4Mode && utilnet.IsIPv4CIDR(subnet) {
-			ip := util.GetNodeManagementIfAddr(subnet)
+			ip := udng.GetNodeManagementIP(subnet)
 			var err error
 			var exists bool
 			if exists, err = util.LinkAddrExist(mpLink, ip); err == nil && !exists {

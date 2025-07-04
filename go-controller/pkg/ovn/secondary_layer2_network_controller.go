@@ -314,14 +314,17 @@ func NewSecondaryLayer2NetworkController(
 
 	lsManager := lsm.NewL2SwitchManager()
 	if netInfo.IsPrimaryNetwork() {
-		var gatewayIPs []*net.IPNet
+		var gatewayIPs, mgmtIPs []*net.IPNet
 		for _, subnet := range netInfo.Subnets() {
 			if gwIP := netInfo.GetNodeGatewayIP(subnet.CIDR); gwIP != nil {
 				gatewayIPs = append(gatewayIPs, gwIP)
 			}
+			if mgmtIP := netInfo.GetNodeManagementIP(subnet.CIDR); mgmtIP != nil {
+				mgmtIPs = append(mgmtIPs, mgmtIP)
+			}
 		}
 
-		lsManager = lsm.NewL2SwitchManagerForUserDefinedPrimaryNetwork(gatewayIPs)
+		lsManager = lsm.NewL2SwitchManagerForUserDefinedPrimaryNetwork(gatewayIPs, mgmtIPs)
 	}
 
 	oc := &SecondaryLayer2NetworkController{
@@ -488,11 +491,14 @@ func (oc *SecondaryLayer2NetworkController) init() error {
 	oc.clusterLoadBalancerGroupUUID = clusterLBGroupUUID
 	oc.switchLoadBalancerGroupUUID = switchLBGroupUUID
 	oc.routerLoadBalancerGroupUUID = routerLBGroupUUID
+	excludeSubnets := oc.ExcludeSubnets()
+	excludeSubnets = append(excludeSubnets, oc.InfrastructureSubnets()...)
 
 	_, err = oc.initializeLogicalSwitch(
 		oc.GetNetworkScopedSwitchName(types.OVNLayer2Switch),
 		oc.Subnets(),
-		oc.ExcludeSubnets(),
+		excludeSubnets,
+		oc.ReservedSubnets(),
 		oc.clusterLoadBalancerGroupUUID,
 		oc.switchLoadBalancerGroupUUID,
 	)

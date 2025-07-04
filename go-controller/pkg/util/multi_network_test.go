@@ -164,7 +164,7 @@ func TestParseSubnets(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.desc, func(t *testing.T) {
 			g := gomega.NewWithT(t)
-			subnets, excludes, reserved, err := parseSubnets(tc.subnets, tc.excludes, tc.reserved, tc.topology)
+			subnets, excludes, reserved, _, err := parseSubnets(tc.subnets, tc.excludes, tc.reserved, "", tc.topology)
 			if tc.expectError {
 				g.Expect(err).To(gomega.HaveOccurred())
 				return
@@ -1496,4 +1496,280 @@ func applyNADDefaults(nad *nadv1.NetworkAttachmentDefinition) *nadv1.NetworkAtta
 	nad.Name = name
 	nad.Namespace = namespace
 	return nad
+}
+
+func TestGetNodeManagementIP(t *testing.T) {
+	testCases := []struct {
+		name       string
+		netConf    *ovncnitypes.NetConf
+		hostSubnet string
+		expectedIP *net.IPNet
+	}{
+		{
+			name: "DefaultNetInfo should return traditional .2 address",
+			netConf: &ovncnitypes.NetConf{
+				NetConf: cnitypes.NetConf{Name: ovntypes.DefaultNetworkName},
+			},
+			hostSubnet: "10.0.0.0/24",
+			expectedIP: ovntest.MustParseIPNet("10.0.0.2/24"),
+		},
+		{
+			name: "Layer3 UDN should return traditional .2 address",
+			netConf: &ovncnitypes.NetConf{
+				NetConf:               cnitypes.NetConf{Name: "l3-network"},
+				Topology:              ovntypes.Layer3Topology,
+				Role:                  ovntypes.NetworkRolePrimary,
+				InfrastructureSubnets: "10.0.0.0/30",
+			},
+			hostSubnet: "10.0.0.0/24",
+			expectedIP: ovntest.MustParseIPNet("10.0.0.2/24"),
+		},
+		{
+			name: "Layer2 primary UDN without infrastructure subnets should return traditional .2 address",
+			netConf: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: "l2-network"},
+				Topology: ovntypes.Layer2Topology,
+				Role:     ovntypes.NetworkRolePrimary,
+				Subnets:  "10.0.0.0/24",
+			},
+			hostSubnet: "10.0.0.0/24",
+			expectedIP: ovntest.MustParseIPNet("10.0.0.2/24"),
+		},
+		{
+			name: "Layer2 primary UDN with infrastructure subnets should allocate the second usable IP from infrastructure subnet",
+			netConf: &ovncnitypes.NetConf{
+				NetConf:               cnitypes.NetConf{Name: "l2-network"},
+				Topology:              ovntypes.Layer2Topology,
+				Role:                  ovntypes.NetworkRolePrimary,
+				Subnets:               "10.0.0.0/24",
+				InfrastructureSubnets: "10.0.0.4/30",
+			},
+			hostSubnet: "10.0.0.0/24",
+			expectedIP: ovntest.MustParseIPNet("10.0.0.5/24"),
+		},
+		{
+			name: "Layer2 primary UDN with infrastructure subnets should allocate from infrastructure subnet skipping the broadcast IP",
+			netConf: &ovncnitypes.NetConf{
+				NetConf:               cnitypes.NetConf{Name: "l2-network"},
+				Topology:              ovntypes.Layer2Topology,
+				Role:                  ovntypes.NetworkRolePrimary,
+				DefaultGatewayIPs:     "10.0.0.5",
+				Subnets:               "10.0.0.0/24",
+				InfrastructureSubnets: "10.0.0.255/32, 10.0.0.100/32",
+			},
+			hostSubnet: "10.0.0.0/24",
+			expectedIP: ovntest.MustParseIPNet("10.0.0.100/24"),
+		},
+		{
+			name: "Layer2 primary UDN with infrastructure subnets should allocate from infrastructure subnet without conflicting with default gateway",
+			netConf: &ovncnitypes.NetConf{
+				NetConf:               cnitypes.NetConf{Name: "l2-network"},
+				Topology:              ovntypes.Layer2Topology,
+				Role:                  ovntypes.NetworkRolePrimary,
+				DefaultGatewayIPs:     "10.0.0.2",
+				Subnets:               "10.0.0.0/24",
+				InfrastructureSubnets: "10.0.0.0/30",
+			},
+			hostSubnet: "10.0.0.0/24",
+			expectedIP: ovntest.MustParseIPNet("10.0.0.1/24"),
+		},
+		{
+			name: "Layer2 primary UDN with infrastructure subnets should allocate from infrastructure subnet without conflicting with the default GW ip",
+			netConf: &ovncnitypes.NetConf{
+				NetConf:               cnitypes.NetConf{Name: "l2-network"},
+				Topology:              ovntypes.Layer2Topology,
+				Role:                  ovntypes.NetworkRolePrimary,
+				DefaultGatewayIPs:     "10.0.0.2",
+				Subnets:               "10.0.0.0/24",
+				InfrastructureSubnets: "10.0.0.0/30",
+			},
+			hostSubnet: "10.0.0.0/24",
+			expectedIP: ovntest.MustParseIPNet("10.0.0.1/24"),
+		},
+		{
+			name: "Layer2 primary UDN with infrastructure subnets IPv6",
+			netConf: &ovncnitypes.NetConf{
+				NetConf:               cnitypes.NetConf{Name: "l2-network"},
+				Topology:              ovntypes.Layer2Topology,
+				Role:                  ovntypes.NetworkRolePrimary,
+				Subnets:               "2001:db8::/64",
+				InfrastructureSubnets: "2001:db8::/126",
+			},
+			hostSubnet: "2001:db8::/64",
+			expectedIP: ovntest.MustParseIPNet("2001:db8::2/64"),
+		},
+		{
+			name: "Layer2 primary UDN with infrastructure subnets IPv6 - last available IP",
+			netConf: &ovncnitypes.NetConf{
+				NetConf:               cnitypes.NetConf{Name: "l2-network"},
+				Topology:              ovntypes.Layer2Topology,
+				Role:                  ovntypes.NetworkRolePrimary,
+				DefaultGatewayIPs:     "2001:db8::ffff:ffff:ffff:fffe",
+				Subnets:               "2001:db8::/64",
+				InfrastructureSubnets: "2001:db8::ffff:ffff:ffff:fffe/127",
+			},
+			hostSubnet: "2001:db8::/64",
+			expectedIP: ovntest.MustParseIPNet("2001:db8::ffff:ffff:ffff:ffff/64"),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			config.IPv4Mode = true
+			config.IPv6Mode = true
+
+			netInfo, err := NewNetInfo(tc.netConf)
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+
+			hostSubnet := ovntest.MustParseIPNet(tc.hostSubnet)
+
+			result := netInfo.GetNodeManagementIP(hostSubnet)
+			if result == nil {
+				t.Fatalf("GetNodeManagementIP returned nil")
+			}
+
+			if !result.IP.Equal(tc.expectedIP.IP) {
+				t.Errorf("Expected IP %s, got %s", tc.expectedIP.IP.String(), result.IP.String())
+			}
+
+			if result.Mask.String() != tc.expectedIP.Mask.String() {
+				t.Errorf("Expected mask %s, got %s", tc.expectedIP.Mask.String(), result.Mask.String())
+			}
+		})
+	}
+}
+
+func TestGetNodeGatewayIP(t *testing.T) {
+	testCases := []struct {
+		name       string
+		netConf    *ovncnitypes.NetConf
+		hostSubnet string
+		expectedIP *net.IPNet
+	}{
+		{
+			name: "DefaultNetInfo should return traditional .1 address",
+			netConf: &ovncnitypes.NetConf{
+				NetConf: cnitypes.NetConf{Name: ovntypes.DefaultNetworkName},
+			},
+			hostSubnet: "10.0.0.0/24",
+			expectedIP: ovntest.MustParseIPNet("10.0.0.1/24"),
+		},
+		{
+			name: "Layer3 UDN should return traditional .1 address",
+			netConf: &ovncnitypes.NetConf{
+				NetConf:               cnitypes.NetConf{Name: "l3-network"},
+				Topology:              ovntypes.Layer3Topology,
+				Role:                  ovntypes.NetworkRolePrimary,
+				InfrastructureSubnets: "10.0.0.0/30",
+			},
+			hostSubnet: "10.0.0.0/24",
+			expectedIP: ovntest.MustParseIPNet("10.0.0.1/24"),
+		},
+		{
+			name: "Layer2 primary UDN without infrastructure subnets should return traditional .1 address",
+			netConf: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: "l2-network"},
+				Topology: ovntypes.Layer2Topology,
+				Role:     ovntypes.NetworkRolePrimary,
+				Subnets:  "10.0.0.0/24",
+			},
+			hostSubnet: "10.0.0.0/24",
+			expectedIP: ovntest.MustParseIPNet("10.0.0.1/24"),
+		},
+		{
+			name: "Layer2 primary UDN with custom default gateway IP should return that custom IP",
+			netConf: &ovncnitypes.NetConf{
+				NetConf:           cnitypes.NetConf{Name: "l2-network"},
+				Topology:          ovntypes.Layer2Topology,
+				Role:              ovntypes.NetworkRolePrimary,
+				DefaultGatewayIPs: "10.0.0.5",
+				Subnets:           "10.0.0.0/24",
+			},
+			hostSubnet: "10.0.0.0/24",
+			expectedIP: ovntest.MustParseIPNet("10.0.0.5/24"),
+		},
+		{
+			name: "Layer2 primary UDN with infrastructure subnets should allocate the first usable IP from infrastructure subnet",
+			netConf: &ovncnitypes.NetConf{
+				NetConf:               cnitypes.NetConf{Name: "l2-network"},
+				Topology:              ovntypes.Layer2Topology,
+				Role:                  ovntypes.NetworkRolePrimary,
+				Subnets:               "10.0.0.0/24",
+				InfrastructureSubnets: "10.0.0.4/30",
+			},
+			hostSubnet: "10.0.0.0/24",
+			expectedIP: ovntest.MustParseIPNet("10.0.0.4/24"),
+		},
+		{
+			name: "Layer2 primary UDN with infrastructure subnets should allocate from infrastructure subnet skipping the network IP",
+			netConf: &ovncnitypes.NetConf{
+				NetConf:               cnitypes.NetConf{Name: "l2-network"},
+				Topology:              ovntypes.Layer2Topology,
+				Role:                  ovntypes.NetworkRolePrimary,
+				Subnets:               "10.0.0.0/24",
+				InfrastructureSubnets: "10.0.0.0/30",
+			},
+			hostSubnet: "10.0.0.0/24",
+			expectedIP: ovntest.MustParseIPNet("10.0.0.1/24"),
+		},
+		{
+			name: "Layer2 primary UDN with infrastructure subnets should allocate from infrastructure subnet skipping the broadcast IP",
+			netConf: &ovncnitypes.NetConf{
+				NetConf:               cnitypes.NetConf{Name: "l2-network"},
+				Topology:              ovntypes.Layer2Topology,
+				Role:                  ovntypes.NetworkRolePrimary,
+				Subnets:               "10.0.0.0/24",
+				InfrastructureSubnets: "10.0.0.255/32, 10.0.0.9/32",
+			},
+			hostSubnet: "10.0.0.0/24",
+			expectedIP: ovntest.MustParseIPNet("10.0.0.9/24"),
+		},
+		{
+			name: "Layer2 primary UDN with infrastructure subnets IPv6",
+			netConf: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: "l2-network"},
+				Topology: ovntypes.Layer2Topology,
+				Role:     ovntypes.NetworkRolePrimary,
+
+				Subnets:               "2001:db8::/64",
+				InfrastructureSubnets: "2001:db8::/126",
+			},
+			hostSubnet: "2001:db8::/64",
+			expectedIP: ovntest.MustParseIPNet("2001:db8::1/64"),
+		},
+		{
+			name: "Localnet topology should return traditional .1 address",
+			netConf: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: "localnet-network"},
+				Topology: ovntypes.LocalnetTopology,
+			},
+			hostSubnet: "10.0.0.0/24",
+			expectedIP: ovntest.MustParseIPNet("10.0.0.1/24"),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			netInfo, err := NewNetInfo(tc.netConf)
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			config.IPv4Mode = true
+			config.IPv6Mode = true
+			hostSubnet := ovntest.MustParseIPNet(tc.hostSubnet)
+
+			result := netInfo.GetNodeGatewayIP(hostSubnet)
+			if result == nil {
+				t.Fatalf("GetNodeGatewayIP returned nil")
+			}
+
+			if !result.IP.Equal(tc.expectedIP.IP) {
+				t.Errorf("Expected IP %s, got %s", tc.expectedIP.IP.String(), result.IP.String())
+			}
+
+			if result.Mask.String() != tc.expectedIP.Mask.String() {
+				t.Errorf("Expected mask %s, got %s", tc.expectedIP.Mask.String(), result.Mask.String())
+			}
+		})
+	}
 }

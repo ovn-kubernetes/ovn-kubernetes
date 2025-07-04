@@ -389,3 +389,45 @@ func RouteEqual(l, r *netlink.Route) bool {
 		l.Congctl == r.Congctl &&
 		l.FastOpenNoCookie == r.FastOpenNoCookie
 }
+
+// SubnetBroadcastIP returns the IP network's broadcast IP.
+func SubnetBroadcastIP(ipnet net.IPNet) net.IP {
+	ip := ipnet.IP
+	mask := ipnet.Mask
+
+	// Handle IPv4 addresses in 16-byte representation
+	if ip4 := ip.To4(); ip4 != nil {
+		ip = ip4
+	}
+
+	result := make(net.IP, len(ip))
+
+	// broadcastIP = (networkIP) | (inverted mask)
+	for i := range ip {
+		result[i] = (ip[i] & mask[i]) | (mask[i] ^ 0xff)
+	}
+	return result
+}
+
+// ParseIPList parses a comma-separated string of IP addresses ignoring spaces.
+// Returns an empty slice if the input string is empty.
+func ParseIPList(ipsStr string) ([]net.IP, error) {
+	if strings.TrimSpace(ipsStr) == "" {
+		return nil, nil
+	}
+
+	var ips []net.IP
+	ipStrings := strings.Split(ipsStr, ",")
+	for _, ipStr := range ipStrings {
+		ipStr = strings.TrimSpace(ipStr)
+		if ipStr == "" {
+			continue
+		}
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			return nil, fmt.Errorf("invalid IP address %q", ipStr)
+		}
+		ips = append(ips, ip)
+	}
+	return ips, nil
+}
