@@ -1116,7 +1116,8 @@ var _ = ginkgo.Describe("test e2e inter-node connectivity between worker nodes",
 		ginkgo.By(fmt.Sprintf("Creating a container on node %s and verifying connectivity to a pod on node %s", ciWorkerNodeSrc, ciWorkerNodeDst))
 
 		// Create the pod that will be used as the destination for the connectivity test
-		createGenericPod(f, dstPingPodName, ciWorkerNodeDst, f.Namespace.Name, command)
+		_, err = createGenericPod(f, dstPingPodName, ciWorkerNodeDst, f.Namespace.Name, command)
+		framework.ExpectNoError(err, "failed to create destination ping pod %s", dstPingPodName)
 
 		// There is a condition somewhere with e2e WaitForPodNotPending that returns ready
 		// before calling for the IP address will succeed. This simply adds some retries.

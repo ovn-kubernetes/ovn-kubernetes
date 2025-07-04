@@ -1508,7 +1508,9 @@ spec:
 			if err != nil {
 				return false, err
 			}
-			json.Unmarshal([]byte(egressIPStdout), &egressIPs)
+			if err := json.Unmarshal([]byte(egressIPStdout), &egressIPs); err != nil {
+				return false, err
+			}
 			if len(egressIPs.Items) != 2 {
 				return false, nil
 			}
@@ -1587,7 +1589,9 @@ spec:
 			if err != nil {
 				return false, err
 			}
-			json.Unmarshal([]byte(egressIPStdout), &egressIPs)
+			if err := json.Unmarshal([]byte(egressIPStdout), &egressIPs); err != nil {
+				return false, err
+			}
 			if len(egressIPs.Items) != 2 {
 				return false, nil
 			}
@@ -1626,7 +1630,9 @@ spec:
 			if err != nil {
 				return false, err
 			}
-			json.Unmarshal([]byte(egressIPStdout), &egressIPs)
+			if err := json.Unmarshal([]byte(egressIPStdout), &egressIPs); err != nil {
+				return false, err
+			}
 			if len(egressIPs.Items) != 2 {
 				return false, nil
 			}
@@ -2280,8 +2286,11 @@ spec:
 		gomega.Expect(verifyEgressIPStatusContainsIPs(statuses, []string{egressIPIP1, egressIPIP2})).Should(gomega.BeTrue())
 
 		ginkgo.By("4. Create two pods matching the EgressIP: one running on each of the egress nodes")
-		createGenericPodWithLabel(f, pod1Name, pod1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
-		createGenericPodWithLabel(f, pod2Name, pod2Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
+		var err error
+		_, err = createGenericPodWithLabel(f, pod1Name, pod1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
+		framework.ExpectNoError(err, "failed to create pod %s/%s", f.Namespace.Name, pod1Name)
+		_, err = createGenericPodWithLabel(f, pod2Name, pod2Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
+		framework.ExpectNoError(err, "failed to create pod %s/%s", f.Namespace.Name, pod2Name)
 		for _, podName := range []string{pod1Name, pod2Name} {
 			_, err := getPodIPWithRetry(f.ClientSet, isIPv6TestRun, f.Namespace.Name, podName)
 			framework.ExpectNoError(err, "Step 4. Create two pods matching an EgressIP - running pod(s) failed to get "+
@@ -2292,7 +2301,7 @@ spec:
 
 		ginkgo.By("5. Check connectivity from both pods to an external \"node\" hosted on the secondary host network " +
 			"and verify the expected IPs")
-		err := wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(secondaryTargetExternalContainer,
+		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(secondaryTargetExternalContainer,
 			podNamespace.Name, pod1Name, true, []string{egressIPIP1, egressIPIP2}))
 		framework.ExpectNoError(err, "Step 5. Check connectivity from pod (%s/%s) to an external container attached to "+
 			"a network that is a secondary host network and verify that the src IP is the expected egressIP, failed: %v",

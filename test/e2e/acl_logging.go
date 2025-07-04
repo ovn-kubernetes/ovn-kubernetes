@@ -1111,7 +1111,9 @@ func isCountUpdatedAfterPokePod(fr *framework.Framework, clientPod, pokedPod *co
 	if err != nil {
 		return false, err
 	}
-	pokePod(fr, clientPod.GetName(), pokedPod.Status.PodIP)
+	if err := pokePod(fr, clientPod.GetName(), pokedPod.Status.PodIP); err != nil {
+		framework.Logf("Warning: failed to poke pod %s from %s: %v", pokedPod.Status.PodIP, clientPod.GetName(), err)
+	}
 	endCount, err := countACLLogs(
 		clientPod.Spec.NodeName,
 		regex,

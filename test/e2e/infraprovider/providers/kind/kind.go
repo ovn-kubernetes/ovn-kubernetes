@@ -304,7 +304,7 @@ func (c *contextKind) DeleteNetwork(network api.Network) error {
 }
 
 func (c *contextKind) deleteNetwork(network api.Network) error {
-	return wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 10*time.Second, true, func(ctx context.Context) (done bool, err error) {
+	return wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 10*time.Second, true, func(_ context.Context) (done bool, err error) {
 		if !doesNetworkExist(network.Name()) {
 			return true, nil
 		}
