@@ -49,6 +49,13 @@ func (oc *DefaultNetworkController) addPodExternalGW(pod *corev1.Pod) error {
 
 	klog.Infof("External gateway pod: %s, detected for namespace(s) %s", pod.Name, podRoutingNamespaceAnno)
 
+	// If an external gateway pod is in terminating or not ready state then don't add the
+	// routes for the external gateway pod
+	if util.PodTerminating(pod) || util.PodNotReady(pod) {
+		klog.Warningf("External gateway pod cannot serve traffic; it's in terminating or not ready state: %s", pod.Name)
+		return nil
+	}
+
 	foundGws, err := getExGwPodIPs(pod)
 	if err != nil {
 		klog.Errorf("Error getting exgw IPs for pod: %s, error: %v", pod.Name, err)
