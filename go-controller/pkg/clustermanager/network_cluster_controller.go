@@ -778,9 +778,14 @@ func newIPAllocatorForNetwork(netInfo util.NetInfo) (subnet.Allocator, error) {
 	subnets := netInfo.Subnets()
 	ipNets := make([]*net.IPNet, 0, len(subnets))
 	excludeSubnets := netInfo.ExcludeSubnets()
+
+	if isLayer2UserDefinedPrimaryNetwork(netInfo) {
+		excludeSubnets = append(excludeSubnets, netInfo.InfrastructureSubnets()...)
+	}
 	for _, subnet := range subnets {
 		ipNets = append(ipNets, subnet.CIDR)
-		if isLayer2UserDefinedPrimaryNetwork(netInfo) {
+		// Exclude the default infrastructure IPs if necessary.
+		if isLayer2UserDefinedPrimaryNetwork(netInfo) && len(netInfo.InfrastructureSubnets()) == 0 {
 			excludeSubnets = append(
 				excludeSubnets,
 				autoExcludeCIDRs(subnet.CIDR, netInfo)...,
@@ -805,7 +810,7 @@ func isLayer2UserDefinedPrimaryNetwork(netInfo util.NetInfo) bool {
 
 func autoExcludeCIDRs(subnet *net.IPNet, netInfo util.NetInfo) []*net.IPNet {
 	gwIP := netInfo.GetNodeGatewayIP(subnet).IP
-	mgmtPortIP := util.GetNodeManagementIfAddr(subnet).IP
+	mgmtPortIP := netInfo.GetNodeManagementIP(subnet).IP
 	return []*net.IPNet{
 		{IP: gwIP, Mask: util.GetIPFullMask(gwIP)},
 		{IP: mgmtPortIP, Mask: util.GetIPFullMask(mgmtPortIP)},

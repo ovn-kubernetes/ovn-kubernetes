@@ -28,10 +28,14 @@ type NetConf struct {
 	// for secondary layer3 network, eg. 10.128.0.0/14/23
 	// for layer2 and localnet network, eg. 10.1.130.0/24
 	Subnets string `json:"subnets,omitempty"`
-	// comma-seperated list of IPs, expressed in the form of subnets, to be excluded from being allocated for Pod
+	// comma-seperated list, expressed in the form of subnets, to be excluded from being allocated for Pod
 	// valid for layer2 and localnet network topology
 	// eg. "10.1.130.0/27, 10.1.130.122/32"
 	ExcludeSubnets string `json:"excludeSubnets,omitempty"`
+	// comma-seperated list, expressed in the form of subnets, to be reserved for OVN-Kubernetes internal network infrastructure
+	// valid for layer2 network topology with primary role only
+	// eg. "10.1.130.0/30, 10.1.130.64/30"
+	InfrastructureSubnets string `json:"infrastructureSubnets,omitempty"`
 	// join subnet cidr is required for supporting
 	// services and ingress for user defined networks
 	// in case of dualstack cluster, please do a comma-separated list
