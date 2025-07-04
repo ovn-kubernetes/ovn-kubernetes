@@ -313,9 +313,19 @@ func NewSecondaryLayer2NetworkController(
 	ipv4Mode, ipv6Mode := netInfo.IPMode()
 	addressSetFactory := addressset.NewOvnAddressSetFactory(cnci.nbClient, ipv4Mode, ipv6Mode)
 
-	lsManagerFactoryFn := lsm.NewL2SwitchManager
+	lsManager := lsm.NewL2SwitchManager()
 	if netInfo.IsPrimaryNetwork() {
-		lsManagerFactoryFn = lsm.NewL2SwitchManagerForUserDefinedPrimaryNetwork
+		var gatewayIPs, mgmtIPs []*net.IPNet
+		for _, subnet := range netInfo.Subnets() {
+			if gwIP := netInfo.GetNodeGatewayIP(subnet.CIDR); gwIP != nil {
+				gatewayIPs = append(gatewayIPs, gwIP)
+			}
+			if mgmtIP := netInfo.GetNodeManagementIP(subnet.CIDR); mgmtIP != nil {
+				mgmtIPs = append(mgmtIPs, mgmtIP)
+			}
+		}
+
+		lsManager = lsm.NewL2SwitchManagerForUserDefinedPrimaryNetwork(gatewayIPs, mgmtIPs)
 	}
 
 	oc := &SecondaryLayer2NetworkController{
@@ -326,7 +336,7 @@ func NewSecondaryLayer2NetworkController(
 					CommonNetworkControllerInfo: *cnci,
 					controllerName:              getNetworkControllerName(netInfo.GetNetworkName()),
 					ReconcilableNetInfo:         util.NewReconcilableNetInfo(netInfo),
-					lsManager:                   lsManagerFactoryFn(),
+					lsManager:                   lsManager,
 					logicalPortCache:            portCache,
 					namespaces:                  make(map[string]*namespaceInfo),
 					namespacesMutex:             sync.Mutex{},

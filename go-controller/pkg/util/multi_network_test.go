@@ -118,7 +118,7 @@ func TestParseSubnets(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.desc, func(t *testing.T) {
 			g := gomega.NewWithT(t)
-			subnets, excludes, err := parseSubnets(tc.subnets, tc.excludes, tc.topology)
+			subnets, excludes, _, err := parseSubnets(tc.subnets, tc.excludes, "", tc.topology)
 			if tc.expectError {
 				g.Expect(err).To(gomega.HaveOccurred())
 				return
@@ -1306,4 +1306,232 @@ func applyNADDefaults(nad *nadv1.NetworkAttachmentDefinition) *nadv1.NetworkAtta
 	nad.Name = name
 	nad.Namespace = namespace
 	return nad
+}
+
+func TestGetNodeManagementIP(t *testing.T) {
+	testCases := []struct {
+		name       string
+		netInfo    NetInfo
+		hostSubnet string
+		expectedIP string
+	}{
+		{
+			name:       "DefaultNetInfo should return traditional .2 address",
+			netInfo:    &DefaultNetInfo{},
+			hostSubnet: "10.0.0.0/24",
+			expectedIP: "10.0.0.2",
+		},
+		{
+			name: "Layer3 UDN should return traditional .2 address",
+			netInfo: &secondaryNetInfo{
+				topology:              ovntypes.Layer3Topology,
+				primaryNetwork:        true,
+				infrastructureSubnets: []*net.IPNet{ovntest.MustParseIPNet("10.0.0.0/30")},
+			},
+			hostSubnet: "10.0.0.0/24",
+			expectedIP: "10.0.0.2",
+		},
+		{
+			name: "Layer2 primary UDN without infrastructure subnets should return traditional .2 address",
+			netInfo: &secondaryNetInfo{
+				topology:              ovntypes.Layer2Topology,
+				primaryNetwork:        true,
+				infrastructureSubnets: []*net.IPNet{},
+			},
+			hostSubnet: "10.0.0.0/24",
+			expectedIP: "10.0.0.2",
+		},
+		{
+			name: "Layer2 primary UDN with infrastructure subnets should allocate from infrastructure subnet",
+			netInfo: &secondaryNetInfo{
+				topology:              ovntypes.Layer2Topology,
+				primaryNetwork:        true,
+				infrastructureSubnets: []*net.IPNet{ovntest.MustParseIPNet("10.0.0.4/30")},
+			},
+			hostSubnet: "10.0.0.0/24",
+			expectedIP: "10.0.0.5",
+		},
+		{
+			name: "Layer2 primary UDN with infrastructure subnets should allocate from infrastructure subnet",
+			netInfo: &secondaryNetInfo{
+				topology:              ovntypes.Layer2Topology,
+				primaryNetwork:        true,
+				defaultGatewayIPs:     []net.IP{ovntest.MustParseIP("10.0.0.5")},
+				infrastructureSubnets: []*net.IPNet{ovntest.MustParseIPNet("10.0.0.255/32"), ovntest.MustParseIPNet("10.0.0.100/32")},
+			},
+			hostSubnet: "10.0.0.0/24",
+			expectedIP: "10.0.0.100",
+		},
+		{
+			name: "Layer2 primary UDN with infrastructure subnets should allocate from infrastructure subnet without conflicting with the default GW ip",
+			netInfo: &secondaryNetInfo{
+				topology:              ovntypes.Layer2Topology,
+				primaryNetwork:        true,
+				defaultGatewayIPs:     []net.IP{ovntest.MustParseIP("10.0.0.2")},
+				infrastructureSubnets: []*net.IPNet{ovntest.MustParseIPNet("10.0.0.0/30")},
+			},
+			hostSubnet: "10.0.0.0/24",
+			expectedIP: "10.0.0.1",
+		},
+		{
+			name: "Layer2 primary UDN with infrastructure subnets IPv6",
+			netInfo: &secondaryNetInfo{
+				topology:              ovntypes.Layer2Topology,
+				primaryNetwork:        true,
+				infrastructureSubnets: []*net.IPNet{ovntest.MustParseIPNet("2001:db8::/126")},
+			},
+			hostSubnet: "2001:db8::/64",
+			expectedIP: "2001:db8::2",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			hostSubnet := ovntest.MustParseIPNet(tc.hostSubnet)
+			expectedIPNet := ovntest.MustParseIPNet(tc.expectedIP + "/32")
+			if tc.expectedIP == "2001:db8::2" {
+				expectedIPNet = ovntest.MustParseIPNet(tc.expectedIP + "/128")
+			}
+
+			result := tc.netInfo.GetNodeManagementIP(hostSubnet)
+			if result == nil {
+				t.Fatalf("GetNodeManagementIP returned nil")
+			}
+
+			if !result.IP.Equal(expectedIPNet.IP) {
+				t.Errorf("Expected IP %s, got %s", expectedIPNet.IP.String(), result.IP.String())
+			}
+
+			if result.Mask.String() != hostSubnet.Mask.String() {
+				t.Errorf("Expected mask %s, got %s", hostSubnet.Mask.String(), result.Mask.String())
+			}
+		})
+	}
+}
+
+func TestGetNodeGatewayIP(t *testing.T) {
+	testCases := []struct {
+		name       string
+		netInfo    NetInfo
+		hostSubnet string
+		expectedIP string
+	}{
+		{
+			name:       "DefaultNetInfo should return traditional .1 address",
+			netInfo:    &DefaultNetInfo{},
+			hostSubnet: "10.0.0.0/24",
+			expectedIP: "10.0.0.1",
+		},
+		{
+			name: "Layer3 UDN should return traditional .1 address",
+			netInfo: &secondaryNetInfo{
+				topology:              ovntypes.Layer3Topology,
+				primaryNetwork:        true,
+				infrastructureSubnets: []*net.IPNet{ovntest.MustParseIPNet("10.0.0.0/30")},
+			},
+			hostSubnet: "10.0.0.0/24",
+			expectedIP: "10.0.0.1",
+		},
+		{
+			name: "Layer2 primary UDN without infrastructure subnets should return traditional .1 address",
+			netInfo: &secondaryNetInfo{
+				topology:              ovntypes.Layer2Topology,
+				primaryNetwork:        true,
+				infrastructureSubnets: []*net.IPNet{},
+			},
+			hostSubnet: "10.0.0.0/24",
+			expectedIP: "10.0.0.1",
+		},
+		{
+			name: "Layer2 primary UDN with custom default gateway IP should return that custom IP",
+			netInfo: &secondaryNetInfo{
+				topology:          ovntypes.Layer2Topology,
+				primaryNetwork:    true,
+				defaultGatewayIPs: []net.IP{ovntest.MustParseIP("10.0.0.5")},
+			},
+			hostSubnet: "10.0.0.0/24",
+			expectedIP: "10.0.0.5",
+		},
+		{
+			name: "Layer2 primary UDN with infrastructure subnets should allocate from infrastructure subnet",
+			netInfo: &secondaryNetInfo{
+				topology:              ovntypes.Layer2Topology,
+				primaryNetwork:        true,
+				infrastructureSubnets: []*net.IPNet{ovntest.MustParseIPNet("10.0.0.4/30")},
+			},
+			hostSubnet: "10.0.0.0/24",
+			expectedIP: "10.0.0.4",
+		},
+		{
+			name: "Layer2 primary UDN with infrastructure subnets should allocate from infrastructure subnet",
+			netInfo: &secondaryNetInfo{
+				topology:              ovntypes.Layer2Topology,
+				primaryNetwork:        true,
+				infrastructureSubnets: []*net.IPNet{ovntest.MustParseIPNet("10.0.0.0/30")},
+			},
+			hostSubnet: "10.0.0.0/24",
+			expectedIP: "10.0.0.1",
+		},
+		{
+			name: "Layer2 primary UDN with infrastructure subnets should allocate from infrastructure subnet",
+			netInfo: &secondaryNetInfo{
+				topology:              ovntypes.Layer2Topology,
+				primaryNetwork:        true,
+				infrastructureSubnets: []*net.IPNet{ovntest.MustParseIPNet("10.0.0.255/32"), ovntest.MustParseIPNet("10.0.0.9/32")},
+			},
+			hostSubnet: "10.0.0.0/24",
+			expectedIP: "10.0.0.9",
+		},
+		{
+			name: "Layer2 primary UDN with infrastructure subnets IPv6",
+			netInfo: &secondaryNetInfo{
+				topology:              ovntypes.Layer2Topology,
+				primaryNetwork:        true,
+				infrastructureSubnets: []*net.IPNet{ovntest.MustParseIPNet("2001:db8::/126")},
+			},
+			hostSubnet: "2001:db8::/64",
+			expectedIP: "2001:db8::1",
+		},
+		{
+			name: "Layer2 secondary UDN should return traditional .1 address",
+			netInfo: &secondaryNetInfo{
+				topology:       ovntypes.Layer2Topology,
+				primaryNetwork: false,
+			},
+			hostSubnet: "10.0.0.0/24",
+			expectedIP: "10.0.0.1",
+		},
+		{
+			name: "Localnet topology should return traditional .1 address",
+			netInfo: &secondaryNetInfo{
+				topology:       ovntypes.LocalnetTopology,
+				primaryNetwork: false,
+			},
+			hostSubnet: "10.0.0.0/24",
+			expectedIP: "10.0.0.1",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			hostSubnet := ovntest.MustParseIPNet(tc.hostSubnet)
+			expectedIPNet := ovntest.MustParseIPNet(tc.expectedIP + "/32")
+			if tc.expectedIP == "2001:db8::1" {
+				expectedIPNet = ovntest.MustParseIPNet(tc.expectedIP + "/128")
+			}
+
+			result := tc.netInfo.GetNodeGatewayIP(hostSubnet)
+			if result == nil {
+				t.Fatalf("GetNodeGatewayIP returned nil")
+			}
+
+			if !result.IP.Equal(expectedIPNet.IP) {
+				t.Errorf("Expected IP %s, got %s", expectedIPNet.IP.String(), result.IP.String())
+			}
+
+			if result.Mask.String() != hostSubnet.Mask.String() {
+				t.Errorf("Expected mask %s, got %s", hostSubnet.Mask.String(), result.Mask.String())
+			}
+		})
+	}
 }
