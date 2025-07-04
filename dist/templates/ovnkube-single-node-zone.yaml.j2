@@ -79,6 +79,10 @@ spec:
           value: "{{ ovn_loglevel_nb }}"
         - name: OVN_NORTHD_BACKOFF_INTERVAL
           value: "{{ ovn_northd_backoff_interval }}"
+        - name: OVN_GATEWAY_MODE
+          value: "{{ ovn_gateway_mode }}"
+        - name: OVN_ROUTE_ADVERTISEMENTS_ENABLE
+          value: "{{ ovn_route_advertisements_enable }}"
         - name: K8S_APISERVER
           valueFrom:
             configMapKeyRef:

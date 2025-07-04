@@ -299,11 +299,6 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 				Values:   []string{f.Namespace.Name},
 			}}}
 
-			if IsGatewayModeLocal() && cudnTemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer2 {
-				e2eskipper.Skipf(
-					"BGP for L2 networks on LGW is currently unsupported",
-				)
-			}
 			// Create CUDN
 			ginkgo.By("create ClusterUserDefinedNetwork")
 			udnClient, err := udnclientset.NewForConfig(f.ClientConfig())
@@ -521,6 +516,10 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks",
 	func(cudnATemplate, cudnBTemplate *udnv1.ClusterUserDefinedNetwork) {
 		const curlConnectionTimeoutCode = "28"
+		const (
+			ipFamilyV4 = iota
+			ipFamilyV6
+		)
 
 		f := wrappedTestFramework("bpp-network-isolation")
 		f.SkipNamespaceCreation = true
@@ -536,9 +535,6 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 		var ra *rav1.RouteAdvertisements
 		var hostNetworkPort int
 		ginkgo.BeforeEach(func() {
-			if cudnATemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer2 && isLocalGWModeEnabled() {
-				e2eskipper.Skipf("Advertising Layer2 UDNs is not currently supported in LGW")
-			}
 			ginkgo.By("Configuring primary UDN namespaces")
 			var err error
 			udnNamespaceA, err = f.CreateNamespace(context.TODO(), f.BaseName, map[string]string{
@@ -700,9 +696,6 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 		})
 
 		ginkgo.AfterEach(func() {
-			if cudnATemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer2 && isLocalGWModeEnabled() {
-				return
-			}
 			gomega.Expect(f.ClientSet.CoreV1().Pods(udnNamespaceA.Name).DeleteCollection(context.Background(), metav1.DeleteOptions{}, metav1.ListOptions{})).To(gomega.Succeed())
 			gomega.Expect(f.ClientSet.CoreV1().Pods(udnNamespaceB.Name).DeleteCollection(context.Background(), metav1.DeleteOptions{}, metav1.ListOptions{})).To(gomega.Succeed())
 
@@ -779,7 +772,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					framework.Logf("Connectivity check successful:'%s' -> %s", client, targetAddress)
 					return out, nil
 				}
-				clientName, clientNamespace, dst, expectedOutput, expectErr := connInfo(0)
+				clientName, clientNamespace, dst, expectedOutput, expectErr := connInfo(ipFamilyV4)
 
 				asyncAssertion := gomega.Eventually
 				timeout := time.Second * 30
@@ -800,7 +793,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					}
 					if isIPv6Supported() && isIPv4Supported() {
 						// use ipFamilyIndex of 1 to pick the IPv6 addresses
-						clientName, clientNamespace, dst, expectedOutput, expectErr := connInfo(1)
+						clientName, clientNamespace, dst, expectedOutput, expectErr := connInfo(ipFamilyV6)
 						out, err := checkConnectivity(clientName, clientNamespace, dst)
 						if expectErr != (err != nil) {
 							return fmt.Errorf("expected connectivity check to return error(%t), got %v, output %v", expectErr, err, out)
@@ -906,7 +899,16 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 				}),
 			ginkgo.Entry("pod in the UDN should not be able to access a service in a different UDN",
 				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
-					return podsNetA[0].Name, podsNetA[0].Namespace, net.JoinHostPort(svcNetB.Spec.ClusterIPs[ipFamilyIndex], "8080") + "/clientip", curlConnectionTimeoutCode, true
+					err := true
+					out := curlConnectionTimeoutCode
+					if cudnATemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer2 && isLocalGWModeEnabled() {
+						// FIXME: prevent looping of traffic in L2 UDNs
+						// bad behaviour: packet is looping from management port -> breth0 -> GR -> management port -> breth0 and so on
+						// which is a never ending loop
+						// this causes curl timeout with code 7 host unreachable instead of code 28
+						out = ""
+					}
+					return podsNetA[0].Name, podsNetA[0].Namespace, net.JoinHostPort(svcNetB.Spec.ClusterIPs[ipFamilyIndex], "8080") + "/clientip", out, err
 				}),
 			ginkgo.Entry("host to a local UDN pod should not work",
 				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
@@ -963,14 +965,20 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					errBool := false
 					out := ""
 					if cudnATemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer2 {
-						// FIXME: fix assymmetry in L2 UDNs
-						// bad behaviour: packet is coming from other node -> entering eth0 -> bretho and here kernel drops the packet since
-						// rp_filter is set to 1 in breth0 and there is an iprule that sends the packet to mpX interface so kernel sees the packet
-						// having return path different from the incoming interface.
-						// The SNAT to nodeIP should fix this.
-						// this causes curl timeout with code 28
-						errBool = true
-						out = curlConnectionTimeoutCode
+						// FIXME: this should be removed once we add the SNAT for pod->node traffic
+						// We now permit asymmetric traffic on LGW. This prevents the issue from occurring with IPv6.
+						// However, for IPv4 LGW rp_filter is still blocking the replies.
+						// The situation is different on SGW as we don't allow asymmetric traffic at all, which is why IPv6 traffic fails there too.
+						if ipFamilyIndex == ipFamilyV4 || !isLocalGWModeEnabled() {
+							// FIXME: fix assymmetry in L2 UDNs
+							// bad behaviour: packet is coming from other node -> entering eth0 -> bretho and here kernel drops the packet since
+							// rp_filter is set to 1 in breth0 and there is an iprule that sends the packet to mpX interface so kernel sees the packet
+							// having return path different from the incoming interface.
+							// The SNAT to nodeIP should fix this.
+							// this causes curl timeout with code 28
+							errBool = true
+							out = curlConnectionTimeoutCode
+						}
 					}
 					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(hostNetworkPort)) + "/hostname", out, errBool
 				}),
