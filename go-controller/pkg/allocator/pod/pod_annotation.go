@@ -14,6 +14,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip/subnet"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/persistentips"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
@@ -330,13 +331,28 @@ func allocatePodAnnotationWithRollback(
 		}
 		hasIPAMClaim = ipamClaim != nil && len(ipamClaim.Status.IPs) > 0
 	}
+
+	// Allow static IPs with IPAM only for primary networks with layer2 topology when EnableCustomNetworkConfig is enabled
+	// Feature gate integration: EnableCustomNetworkConfig controls static IP allocation with IPAM
 	if hasIPAM && hasStaticIPRequest {
-		// for now we can't tell apart already allocated IPs from IPs excluded
-		// from allocation so we can't really honor static IP requests when
-		// there is IPAM as we don't really know if the requested IP should not
-		// be allocated or was already allocated by the same pod
-		err = fmt.Errorf("cannot allocate a static IP request with IPAM for pod %s", podDesc)
-		return
+		if !config.OVNKubernetesFeature.EnableCustomNetworkConfig {
+			// Feature is disabled, reject static IPs with IPAM
+			err = fmt.Errorf("cannot allocate a static IP request with IPAM for pod %s (custom network configuration disabled)", podDesc)
+			return
+		}
+		if !netInfo.IsPrimaryNetwork() {
+			// Static IP requests with IPAM are only supported on primary networks
+			err = fmt.Errorf("cannot allocate a static IP request with IPAM for pod %s: only supported on primary networks", podDesc)
+			return
+		}
+		if netInfo.TopologyType() != types.Layer2Topology {
+			// Static IP requests with IPAM are only supported on layer2 topology networks.
+			// On other topologies, we cannot distinguish between already allocated IPs and
+			// IPs excluded from allocation, making it impossible to safely honor static IP
+			// requests when IPAM is enabled.
+			err = fmt.Errorf("cannot allocate a static IP request with IPAM for pod %s: layer2 topology is required, but network has topology %q", podDesc, netInfo.TopologyType())
+			return
+		}
 	}
 
 	// we need to update the annotation if it is missing IPs or MAC
@@ -348,6 +364,7 @@ func allocatePodAnnotationWithRollback(
 		if hasIPRequest {
 			tentative.IPs, err = util.ParseIPNets(network.IPRequest)
 			if err != nil {
+				klog.Warningf("Failed parsing IPRequest %+v for pod %s: %v", network.IPRequest, podDesc, err)
 				return
 			}
 		} else if hasIPAMClaim {
