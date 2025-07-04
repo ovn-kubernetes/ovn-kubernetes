@@ -134,7 +134,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 			}
 			externalContainerPort := infraprovider.Get().GetExternalContainerPort()
 			externalContainer := infraapi.ExternalContainer{Name: getContainerName(gwContainerNameTemplate, externalContainerPort),
-				Image: images.AgnHost(), Network: network, ExtPort: externalContainerPort, Args: []string{"pause"}}
+				Image: images.AgnHost(), Network: network, ExtPort: externalContainerPort, CmdArgs: []string{"pause"}}
 			externalContainer, err = providerCtx.CreateExternalContainer(externalContainer)
 			framework.ExpectNoError(err, "failed to start external gateway test container")
 			if network.Name() == "host" {
@@ -228,7 +228,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 			// start the container that will act as a new external gateway that the tests will be updated to use
 			externalContainer2Port := infraprovider.Get().GetExternalContainerPort()
 			externalContainer2 := infraapi.ExternalContainer{Name: getContainerName(gwContainerNameTemplate2, externalContainerPort),
-				Image: images.AgnHost(), Network: network, ExtPort: externalContainer2Port, Args: []string{"pause"}}
+				Image: images.AgnHost(), Network: network, ExtPort: externalContainer2Port, CmdArgs: []string{"pause"}}
 			externalContainer2, err = providerCtx.CreateExternalContainer(externalContainer2)
 			framework.ExpectNoError(err, "failed to start external gateway test container %s", getContainerName(gwContainerNameTemplate2, externalContainerPort))
 			if network.Name() == "host" {
@@ -355,7 +355,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 			}
 			externalContainerPort := infraprovider.Get().GetExternalContainerPort()
 			externalContainer := infraapi.ExternalContainer{Name: getContainerName(gwContainerTemplate, externalContainerPort), Image: images.AgnHost(), Network: network,
-				Args: getAgnHostHTTPPortBindCMDArgs(externalContainerPort), ExtPort: externalContainerPort}
+				CmdArgs: getAgnHostHTTPPortBindCMDArgs(externalContainerPort), ExtPort: externalContainerPort}
 			externalContainer, err = providerCtx.CreateExternalContainer(externalContainer)
 			framework.ExpectNoError(err, "failed to start external gateway test container %s", getContainerName(gwContainerTemplate, externalContainerPort))
 			if network.Name() == "host" {
@@ -2893,9 +2893,9 @@ func setupGatewayContainers(f *framework.Framework, providerCtx infraapi.Context
 
 	var err error
 	externalContainer1 := infraapi.ExternalContainer{Name: getContainerName(container1Template, uint16(gwTCPPort)),
-		Image: externalContainerImage, Network: network, Args: []string{}, ExtPort: uint16(gwTCPPort)}
+		Image: externalContainerImage, Network: network, CmdArgs: []string{}, ExtPort: uint16(gwTCPPort)}
 	externalContainer2 := infraapi.ExternalContainer{Name: getContainerName(container2Template, uint16(gwTCPPort)),
-		Image: externalContainerImage, Network: network, Args: []string{}, ExtPort: uint16(gwTCPPort)}
+		Image: externalContainerImage, Network: network, CmdArgs: []string{}, ExtPort: uint16(gwTCPPort)}
 
 	gwContainers := []infraapi.ExternalContainer{externalContainer1, externalContainer2}
 	addressesv4 := gatewayTestIPs{targetIPs: make([]string, 0)}
@@ -3146,12 +3146,12 @@ func setupGatewayContainersForConntrackTest(f *framework.Framework, providerCtx 
 	addressesv6 := gatewayTestIPs{gatewayIPs: make([]string, 2)}
 	ginkgo.By("Creating the gateway containers for the UDP test")
 	gwExternalContainer1 := infraapi.ExternalContainer{Name: getContainerName(gwContainer1Template, 12345),
-		Image: images.IPerf3(), Network: network, Args: []string{}, ExtPort: 12345}
+		Image: images.IPerf3(), Network: network, CmdArgs: []string{}, ExtPort: 12345}
 	gwExternalContainer1, err = providerCtx.CreateExternalContainer(gwExternalContainer1)
 	framework.ExpectNoError(err, "failed to create external container (%s)", gwExternalContainer1)
 
 	gwExternalContainer2 := infraapi.ExternalContainer{Name: getContainerName(gwContainer2Template, 12345),
-		Image: images.IPerf3(), Network: network, Args: []string{}, ExtPort: 12345}
+		Image: images.IPerf3(), Network: network, CmdArgs: []string{}, ExtPort: 12345}
 	gwExternalContainer2, err = providerCtx.CreateExternalContainer(gwExternalContainer2)
 	framework.ExpectNoError(err, "failed to create external container (%s)", gwExternalContainer2)
 	if network.Name() == "host" {

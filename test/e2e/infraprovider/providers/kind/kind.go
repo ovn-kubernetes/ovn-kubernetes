@@ -119,7 +119,18 @@ func (k *kind) GetK8HostPort() uint16 {
 
 func (k *kind) NewTestContext() api.Context {
 	ck := &contextKind{Mutex: sync.Mutex{}}
-	ginkgo.DeferCleanup(ck.CleanUp)
+	if !framework.TestContext.DeleteNamespace {
+
+	}
+	ginkgo.DeferCleanup(func() error {
+		if !framework.TestContext.DeleteNamespace {
+			return nil
+		}
+		if !framework.TestContext.DeleteNamespaceOnFailure && ginkgo.CurrentSpecReport().Failed() {
+			return nil
+		}
+		return ck.CleanUp()
+	})
 	return ck
 }
 
@@ -145,9 +156,10 @@ func (c *contextKind) createExternalContainer(container api.ExternalContainer) (
 		return container, fmt.Errorf("container %s already exists", container.Name)
 	}
 	cmd := []string{"run", "-itd", "--privileged", "--name", container.Name, "--network", container.Network.Name(), "--hostname", container.Name}
+	cmd = append(cmd, container.RuntimeArgs...)
 	cmd = append(cmd, container.Image)
-	if len(container.Args) > 0 {
-		cmd = append(cmd, container.Args...)
+	if len(container.CmdArgs) > 0 {
+		cmd = append(cmd, container.CmdArgs...)
 	} else {
 		if images.AgnHost() == container.Image {
 			cmd = append(cmd, "pause")
@@ -415,13 +427,13 @@ func (c *contextKind) cleanUp() error {
 const (
 	nameFormat                     = "{{.Name}}"
 	inspectNetworkIPAMJSON         = "{{json .IPAM.Config }}"
-	inspectNetworkIPv4GWKeyStr     = "{{ .NetworkSettings.Networks.%s.Gateway }}"
-	inspectNetworkIPv4AddrKeyStr   = "{{ .NetworkSettings.Networks.%s.IPAddress }}"
-	inspectNetworkIPv4PrefixKeyStr = "{{ .NetworkSettings.Networks.%s.IPPrefixLen }}"
-	inspectNetworkIPv6GWKeyStr     = "{{ .NetworkSettings.Networks.%s.IPv6Gateway }}"
-	inspectNetworkIPv6AddrKeyStr   = "{{ .NetworkSettings.Networks.%s.GlobalIPv6Address }}"
-	inspectNetworkIPv6PrefixKeyStr = "{{ .NetworkSettings.Networks.%s.GlobalIPv6PrefixLen }}"
-	inspectNetworkMACKeyStr        = "{{ .NetworkSettings.Networks.%s.MacAddress }}"
+	inspectNetworkIPv4GWKeyStr     = "{{ with index .NetworkSettings.Networks \"%s\" }}{{ .Gateway }}{{ end }}"
+	inspectNetworkIPv4AddrKeyStr   = "{{ with index .NetworkSettings.Networks \"%s\" }}{{ .IPAddress }}{{ end }}"
+	inspectNetworkIPv4PrefixKeyStr = "{{ with index .NetworkSettings.Networks \"%s\" }}{{ .IPPrefixLen }}{{ end }}"
+	inspectNetworkIPv6GWKeyStr     = "{{ with index .NetworkSettings.Networks \"%s\" }}{{ .IPv6Gateway }}{{ end }}"
+	inspectNetworkIPv6AddrKeyStr   = "{{ with index .NetworkSettings.Networks \"%s\" }}{{ .GlobalIPv6Address }}{{ end }}"
+	inspectNetworkIPv6PrefixKeyStr = "{{ with index .NetworkSettings.Networks \"%s\" }}{{ .GlobalIPv6PrefixLen }}{{ end }}"
+	inspectNetworkMACKeyStr        = "{{ with index .NetworkSettings.Networks \"%s\" }}{{ .MacAddress }}{{ end }}"
 	inspectNetworkContainersKeyStr = "{{ range $key, $value := .Containers }}{{ printf \"%s\\n\" $value.Name}}{{ end }}'"
 	emptyValue                     = "<no value>"
 )

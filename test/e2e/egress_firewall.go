@@ -197,7 +197,7 @@ var _ = ginkgo.Describe("e2e egress firewall policy validation", feature.EgressF
 				Name:    externalContainerName1,
 				Image:   images.AgnHost(),
 				Network: primaryProviderNetwork,
-				Args:    []string{"netexec", fmt.Sprintf("--http-port=%d", externalContainer1Port)},
+				CmdArgs: []string{"netexec", fmt.Sprintf("--http-port=%d", externalContainer1Port)},
 				ExtPort: externalContainer1Port,
 			}
 			externalContainer1, err = providerCtx.CreateExternalContainer(externalContainer1Spec)
@@ -210,7 +210,7 @@ var _ = ginkgo.Describe("e2e egress firewall policy validation", feature.EgressF
 				Name:    externalContainerName2,
 				Image:   images.AgnHost(),
 				Network: primaryProviderNetwork,
-				Args:    []string{"netexec", fmt.Sprintf("--http-port=%d", externalContainer2Port)},
+				CmdArgs: []string{"netexec", fmt.Sprintf("--http-port=%d", externalContainer2Port)},
 				ExtPort: externalContainer2Port,
 			}
 			externalContainer2, err = providerCtx.CreateExternalContainer(externalContainer2Spec)
