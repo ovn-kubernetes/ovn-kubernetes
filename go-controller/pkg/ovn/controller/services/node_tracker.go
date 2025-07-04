@@ -60,6 +60,9 @@ type nodeInfo struct {
 	// has the node migrated to remote?
 	migrated bool
 	/** HACK END **/
+
+	// The list of node's management IPs
+	mgmtIPs []net.IP
 }
 
 func (ni *nodeInfo) hostAddressesStr() []string {
@@ -151,13 +154,13 @@ func (nt *nodeTracker) Start(nodeInformer coreinformers.NodeInformer) (cache.Res
 
 // updateNodeInfo updates the node info cache, and syncs all services
 // if it changed.
-func (nt *nodeTracker) updateNodeInfo(nodeName, switchName, routerName, chassisID string, l3gatewayAddresses,
-	hostAddresses []net.IP, podSubnets []*net.IPNet, zone string, nodePortDisabled, migrated bool) {
+func (nt *nodeTracker) updateNodeInfo(nodeName, switchName, routerName, chassisID string, l3gatewayAddresses, hostAddresses []net.IP, podSubnets []*net.IPNet, mgmtIPs []net.IP, zone string, nodePortDisabled, migrated bool) {
 	ni := nodeInfo{
 		name:               nodeName,
 		l3gatewayAddresses: l3gatewayAddresses,
 		hostAddresses:      hostAddresses,
 		podSubnets:         make([]net.IPNet, 0, len(podSubnets)),
+		mgmtIPs:            mgmtIPs,
 		gatewayRouterName:  routerName,
 		switchName:         switchName,
 		chassisID:          chassisID,
@@ -256,6 +259,11 @@ func (nt *nodeTracker) updateNode(node *corev1.Node) {
 		hostAddressesIPs = append(hostAddressesIPs, ip)
 	}
 
+	mgmtIPs := make([]net.IP, 0, len(hsn))
+	for _, hostSubnet := range hsn {
+		mgmtIPs = append(mgmtIPs, nt.netInfo.GetNodeManagementIP(hostSubnet).IP)
+	}
+
 	nt.updateNodeInfo(
 		node.Name,
 		switchName,
@@ -264,6 +272,7 @@ func (nt *nodeTracker) updateNode(node *corev1.Node) {
 		l3gatewayAddresses,
 		hostAddressesIPs,
 		hsn,
+		mgmtIPs,
 		util.GetNodeZone(node),
 		!nodePortEnabled,
 		util.HasNodeMigratedZone(node),

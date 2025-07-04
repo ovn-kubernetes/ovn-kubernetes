@@ -821,7 +821,7 @@ func (bsnc *BaseSecondaryNetworkController) buildUDNEgressSNAT(localPodSubnets [
 	var err error
 	networkID := bsnc.GetNetworkID()
 	// calculate MAC
-	dstMac := util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(localPodSubnets[0]).IP)
+	dstMac := util.IPAddrToHWAddr(bsnc.GetNodeManagementIP(localPodSubnets[0]).IP)
 
 	extIDs := map[string]string{
 		types.NetworkExternalID:  bsnc.GetNetworkName(),

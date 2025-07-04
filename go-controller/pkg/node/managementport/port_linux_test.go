@@ -247,6 +247,7 @@ func testManagementPort(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.Net
 		nodeSubnetCIDRs[i] = cfg.GetNodeSubnetCIDR()
 		mgtPortAddrs[i] = cfg.GetMgtPortAddr()
 		netInfo.On("GetNodeGatewayIP", nodeSubnetCIDRs[i]).Return(util.GetNodeGatewayIfAddr(nodeSubnetCIDRs[i]))
+		netInfo.On("GetNodeManagementIP", nodeSubnetCIDRs[i]).Return(util.GetNodeManagementIfAddr(nodeSubnetCIDRs[i]))
 	}
 
 	existingNode := corev1.Node{ObjectMeta: metav1.ObjectMeta{
@@ -357,6 +358,7 @@ func testManagementPortDPU(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.
 	for i, cfg := range configs {
 		nodeSubnetCIDRs[i] = cfg.GetNodeSubnetCIDR()
 		netInfo.On("GetNodeGatewayIP", nodeSubnetCIDRs[i]).Return(util.GetNodeGatewayIfAddr(nodeSubnetCIDRs[i]))
+		netInfo.On("GetNodeManagementIP", nodeSubnetCIDRs[i]).Return(util.GetNodeManagementIfAddr(nodeSubnetCIDRs[i]))
 	}
 
 	existingNode := corev1.Node{ObjectMeta: metav1.ObjectMeta{
@@ -462,6 +464,7 @@ func testManagementPortDPUHost(ctx *cli.Context, fexec *ovntest.FakeExec, testNS
 		nodeSubnetCIDRs[i] = cfg.GetNodeSubnetCIDR()
 		mgtPortAddrs[i] = cfg.GetMgtPortAddr()
 		netInfo.On("GetNodeGatewayIP", nodeSubnetCIDRs[i]).Return(util.GetNodeGatewayIfAddr(nodeSubnetCIDRs[i]))
+		netInfo.On("GetNodeManagementIP", nodeSubnetCIDRs[i]).Return(util.GetNodeManagementIfAddr(nodeSubnetCIDRs[i]))
 	}
 
 	netInfo.On("GetPodNetworkAdvertisedOnNodeVRFs", nodeName).Return(nil)
@@ -776,6 +779,7 @@ var _ = Describe("Management Port tests", func() {
 
 				netInfo.On("GetPodNetworkAdvertisedOnNodeVRFs", "").Return(nil)
 				netInfo.On("GetNodeGatewayIP", nodeNet).Return(util.GetNodeGatewayIfAddr(nodeNet))
+				netInfo.On("GetNodeManagementIP", nodeNet).Return(util.GetNodeManagementIfAddr(nodeNet))
 				// Make a fake MgmtPortConfig with only the fields we care about
 				fakeMgmtPortIPFamilyConfig := managementPortIPFamilyConfig{
 					ifAddr: nodeNet,
@@ -1175,7 +1179,7 @@ var _ = Describe("Management Port tests", func() {
 		netInfo := &multinetworkmocks.NetInfo{}
 		netInfo.On("GetPodNetworkAdvertisedOnNodeVRFs", "worker-node").Return(nil)
 		netInfo.On("GetNodeGatewayIP", hostSubnets[0]).Return(util.GetNodeGatewayIfAddr(hostSubnets[0]))
-
+		netInfo.On("GetNodeManagementIP", hostSubnets[0]).Return(util.GetNodeManagementIfAddr(hostSubnets[0]))
 		It("Creates managementPort by default", func() {
 			mgmtPort, err := NewManagementPortController(node, hostSubnets, netdevName, rep, nil, netInfo)
 			Expect(err).NotTo(HaveOccurred())

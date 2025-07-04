@@ -49,7 +49,7 @@ func newManagementPortConfig(node *corev1.Node, hostSubnets []*net.IPNet, netInf
 		if len(hostSubnets) == 0 {
 			return nil, fmt.Errorf("cannot determine subnets while configuring management port for network: %s", types.DefaultNetworkName)
 		}
-		mpMAC = util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(hostSubnets[0]).IP)
+		mpMAC = util.IPAddrToHWAddr(netInfo.GetNodeManagementIP(hostSubnets[0]).IP)
 	}
 
 	mpcfg := &managementPortConfig{
@@ -123,7 +123,7 @@ type managementPortIPFamilyConfig struct {
 
 func newManagementPortIPFamilyConfig(hostSubnet *net.IPNet, isIPv6 bool, netInfo util.NetInfo) (*managementPortIPFamilyConfig, error) {
 	cfg := &managementPortIPFamilyConfig{
-		ifAddr: util.GetNodeManagementIfAddr(hostSubnet),
+		ifAddr: netInfo.GetNodeManagementIP(hostSubnet),
 		gwIP:   netInfo.GetNodeGatewayIP(hostSubnet).IP,
 	}
 

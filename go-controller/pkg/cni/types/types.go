@@ -36,6 +36,10 @@ type NetConf struct {
 	// valid for layer2 topology only
 	// eg. "10.1.130.0/27, 10.1.130.122/32"
 	ReservedSubnets string `json:"reservedSubnets,omitempty"`
+	// comma-seperated list of subnets, to be reserved for OVN-Kubernetes internal network infrastructure
+	// valid for layer2 network topology with primary role only
+	// eg. "10.1.130.0/30, 10.1.130.64/30"
+	InfrastructureSubnets string `json:"infrastructureSubnets,omitempty"`
 	// join subnet cidr is required for supporting
 	// services and ingress for user defined networks
 	// in case of dualstack cluster, please do a comma-separated list
