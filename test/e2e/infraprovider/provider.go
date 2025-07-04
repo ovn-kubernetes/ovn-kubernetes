@@ -2,10 +2,11 @@ package infraprovider
 
 import (
 	"fmt"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/providers/kind"
 
 	"k8s.io/client-go/rest"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/providers/kind"
 )
 
 type Name string

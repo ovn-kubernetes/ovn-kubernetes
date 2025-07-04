@@ -11,21 +11,21 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
-
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
 )
 
 // pulled from https://github.com/kubernetes/kubernetes/blob/v1.26.2/test/e2e/framework/pod/wait.go#L468
 // had to modify function due to restart policy on static pods being set to always, which caused function to fail
 func waitForPodRunningInNamespaceTimeout(c clientset.Interface, podName, namespace string, timeout time.Duration) error {
-	return e2epod.WaitForPodCondition(context.TODO(), c, namespace, podName, fmt.Sprintf("%s", v1.PodRunning), timeout, func(pod *v1.Pod) (bool, error) {
+	return e2epod.WaitForPodCondition(context.TODO(), c, namespace, podName, fmt.Sprintf("%s", corev1.PodRunning), timeout, func(pod *corev1.Pod) (bool, error) {
 		switch pod.Status.Phase {
-		case v1.PodRunning:
+		case corev1.PodRunning:
 			ginkgo.By("Saw pod running")
 			return true, nil
 		default:

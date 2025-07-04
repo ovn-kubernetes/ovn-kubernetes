@@ -7,11 +7,13 @@ import (
 	"net"
 	"strings"
 
-	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
-
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
-	v1 "k8s.io/api/core/v1"
+	mnpapi "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/apis/k8s.cni.cncf.io/v1beta1"
+	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
+
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kapitypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -20,9 +22,6 @@ import (
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	"k8s.io/utils/ptr"
-
-	mnpapi "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/apis/k8s.cni.cncf.io/v1beta1"
-	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 )
 
 func netCIDR(netCIDR string, netPrefixLengthPerNode int) string {
@@ -164,7 +163,7 @@ type podConfiguration struct {
 	needsIPRequestFromHostSubnet bool
 }
 
-func generatePodSpec(config podConfiguration) *v1.Pod {
+func generatePodSpec(config podConfiguration) *corev1.Pod {
 	podSpec := e2epod.NewAgnhostPod(config.namespace, config.name, nil, nil, nil, config.containerCmd...)
 	if len(config.attachments) > 0 {
 		podSpec.Annotations = networkSelectionElements(config.attachments...)
@@ -176,14 +175,14 @@ func generatePodSpec(config podConfiguration) *v1.Pod {
 	} else {
 		for _, container := range podSpec.Spec.Containers {
 			if container.SecurityContext.Capabilities == nil {
-				container.SecurityContext.Capabilities = &v1.Capabilities{}
+				container.SecurityContext.Capabilities = &corev1.Capabilities{}
 			}
-			container.SecurityContext.Capabilities.Drop = []v1.Capability{"ALL"}
+			container.SecurityContext.Capabilities.Drop = []corev1.Capability{"ALL"}
 			container.SecurityContext.Privileged = ptr.To(false)
 			container.SecurityContext.RunAsNonRoot = ptr.To(true)
 			container.SecurityContext.RunAsUser = ptr.To(int64(1000))
 			container.SecurityContext.AllowPrivilegeEscalation = ptr.To(false)
-			container.SecurityContext.SeccompProfile = &v1.SeccompProfile{Type: v1.SeccompProfileTypeRuntimeDefault}
+			container.SecurityContext.SeccompProfile = &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}
 		}
 	}
 	return podSpec
@@ -203,7 +202,7 @@ func httpServerContainerCmd(port uint16) []string {
 	return []string{"netexec", "--http-port", fmt.Sprintf("%d", port)}
 }
 
-func podNetworkStatus(pod *v1.Pod, predicates ...func(nadapi.NetworkStatus) bool) ([]nadapi.NetworkStatus, error) {
+func podNetworkStatus(pod *corev1.Pod, predicates ...func(nadapi.NetworkStatus) bool) ([]nadapi.NetworkStatus, error) {
 	podNetStatus, found := pod.Annotations[nadapi.NetworkStatusAnnot]
 	if !found {
 		return nil, fmt.Errorf("the pod must feature the `networks-status` annotation")
@@ -390,7 +389,7 @@ func blockedClient(podName string) string {
 }
 
 func multiNetPolicyPort(port int) mnpapi.MultiNetworkPolicyPort {
-	tcp := v1.ProtocolTCP
+	tcp := corev1.ProtocolTCP
 	p := intstr.FromInt32(int32(port))
 	return mnpapi.MultiNetworkPolicyPort{
 		Protocol: &tcp,
@@ -443,7 +442,7 @@ func multiNetIngressLimitingIPBlockPolicy(
 	var (
 		portAllowlist []mnpapi.MultiNetworkPolicyPort
 	)
-	tcp := v1.ProtocolTCP
+	tcp := corev1.ProtocolTCP
 	for _, port := range allowPorts {
 		p := intstr.FromInt(port)
 		portAllowlist = append(portAllowlist, mnpapi.MultiNetworkPolicyPort{
@@ -599,7 +598,7 @@ func allowedTCPPortsForPolicy(allowPorts ...int) []mnpapi.MultiNetworkPolicyPort
 	var (
 		portAllowlist []mnpapi.MultiNetworkPolicyPort
 	)
-	tcp := v1.ProtocolTCP
+	tcp := corev1.ProtocolTCP
 	for _, port := range allowPorts {
 		p := intstr.FromInt(port)
 		portAllowlist = append(portAllowlist, mnpapi.MultiNetworkPolicyPort{
@@ -616,7 +615,7 @@ func reachServerPodFromClient(cs clientset.Interface, serverConfig podConfigurat
 		return err
 	}
 
-	if updatedPod.Status.Phase == v1.PodRunning {
+	if updatedPod.Status.Phase == corev1.PodRunning {
 		return connectToServer(clientConfig, serverIP, serverPort)
 	}
 
@@ -629,7 +628,7 @@ func pingServerPodFromClient(cs clientset.Interface, serverConfig podConfigurati
 		return err
 	}
 
-	if updatedPod.Status.Phase == v1.PodRunning {
+	if updatedPod.Status.Phase == corev1.PodRunning {
 		return pingServer(clientConfig, serverIP)
 	}
 

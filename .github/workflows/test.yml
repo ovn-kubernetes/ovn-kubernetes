@@ -54,12 +54,17 @@ jobs:
         cache: false
       id: go
 
-    - name: Verify
+    - name: Verify go-controller
       uses: golangci/golangci-lint-action@v6
       with:
         version: v1.60.3
         working-directory: go-controller
         args: --modules-download-mode=vendor --timeout=15m0s --verbose
+
+    - name: Verify tests
+      run: |
+        cd test
+        make lint
 
   build-master:
     name: Build-master

@@ -1,11 +1,11 @@
 package kubevirt
 
 import (
+	kubevirtv1 "kubevirt.io/api/core/v1"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
-
-	kubevirtv1 "kubevirt.io/api/core/v1"
 )
 
 func GenerateFakeVirtLauncherPod(namespace, vmName string) *corev1.Pod {

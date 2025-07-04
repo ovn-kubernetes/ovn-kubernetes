@@ -1,13 +1,13 @@
 package e2e
 
 import (
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/testdata"
 	testdatacudn "github.com/ovn-org/ovn-kubernetes/test/e2e/testdata/cudn"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("Network Segmentation: API validations", func() {

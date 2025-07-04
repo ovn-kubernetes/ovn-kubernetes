@@ -12,14 +12,15 @@ import (
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/containerengine"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/portalloc"
 
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/kubernetes/test/e2e/framework"
 	utilnet "k8s.io/utils/net"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/containerengine"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/portalloc"
 )
 
 // IsProvider returns true if clusters provider is KinD
@@ -73,7 +74,7 @@ func (k *kind) GetK8NodeNetworkInterface(container string, network api.Network) 
 
 func (k *kind) ExecK8NodeCommand(nodeName string, cmd []string) (string, error) {
 	if !doesContainerNameExist(nodeName) {
-		return "", fmt.Errorf("cannot exec into container %q because it doesn't exist: %w", nodeName, api.NotFound)
+		return "", fmt.Errorf("cannot exec into container %q because it doesn't exist: %w", nodeName, api.ErrNotFound)
 	}
 	if len(cmd) == 0 {
 		panic("ExecK8NodeCommand(): insufficient command arguments")
@@ -88,7 +89,7 @@ func (k *kind) ExecK8NodeCommand(nodeName string, cmd []string) (string, error) 
 
 func (k *kind) ExecExternalContainerCommand(container api.ExternalContainer, cmd []string) (string, error) {
 	if !doesContainerNameExist(container.Name) {
-		return "", fmt.Errorf("cannot exec into container %q because it doesn't exist: %w", container.Name, api.NotFound)
+		return "", fmt.Errorf("cannot exec into container %q because it doesn't exist: %w", container.Name, api.ErrNotFound)
 	}
 	cmdArgs := append([]string{"exec", container.Name}, cmd...)
 	out, err := exec.Command(containerengine.Get().String(), cmdArgs...).CombinedOutput()
@@ -100,7 +101,7 @@ func (k *kind) ExecExternalContainerCommand(container api.ExternalContainer, cmd
 
 func (k *kind) GetExternalContainerLogs(container api.ExternalContainer) (string, error) {
 	if !doesContainerNameExist(container.Name) {
-		return "", fmt.Errorf("container %q doesn't exist, therefore no logs can be retrieved: %w", container.Name, api.NotFound)
+		return "", fmt.Errorf("container %q doesn't exist, therefore no logs can be retrieved: %w", container.Name, api.ErrNotFound)
 	}
 	stdOut, err := exec.Command(containerengine.Get().String(), "logs", container.Name).CombinedOutput()
 	if err != nil {
@@ -160,7 +161,7 @@ func (c *contextKind) createExternalContainer(container api.ExternalContainer) (
 	}
 	// fetch IPs for the attached container network. Host networked containers do not expose IP information.
 	if !isHostNetworked(container.Network.Name()) {
-		err = wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 360*time.Second, true, func(ctx context.Context) (done bool, err error) {
+		err = wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 360*time.Second, true, func(_ context.Context) (done bool, err error) {
 			ni, err := getNetworkInterface(container.Name, container.Network.Name())
 			if err != nil {
 				framework.Logf("attempt to get container %s network interface attached to network %s failed: %v, retrying...", container.Name, container.Network.Name(), err)
@@ -303,7 +304,7 @@ func (c *contextKind) DeleteNetwork(network api.Network) error {
 }
 
 func (c *contextKind) deleteNetwork(network api.Network) error {
-	return wait.PollImmediate(1*time.Second, 10*time.Second, func() (done bool, err error) {
+	return wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 10*time.Second, true, func(_ context.Context) (done bool, err error) {
 		if !doesNetworkExist(network.Name()) {
 			return true, nil
 		}
@@ -391,20 +392,20 @@ func (c *contextKind) cleanUp() error {
 	c.cleanUpFns = nil
 	// detach network(s) from nodes
 	for _, na := range c.cleanUpNetworkAttachments.List {
-		if err := c.detachNetwork(na.Network, na.Instance); err != nil && !errors.Is(err, api.NotFound) {
+		if err := c.detachNetwork(na.Network, na.Instance); err != nil && !errors.Is(err, api.ErrNotFound) {
 			errs = append(errs, err)
 		}
 	}
 	// remove containers
 	for _, container := range c.cleanUpContainers {
-		if err := c.deleteExternalContainer(container); err != nil && !errors.Is(err, api.NotFound) {
+		if err := c.deleteExternalContainer(container); err != nil && !errors.Is(err, api.ErrNotFound) {
 			errs = append(errs, err)
 		}
 	}
 	c.cleanUpContainers = nil
 	// delete secondary networks
 	for _, network := range c.cleanUpNetworks.List {
-		if err := c.deleteNetwork(network); err != nil && !errors.Is(err, api.NotFound) {
+		if err := c.deleteNetwork(network); err != nil && !errors.Is(err, api.ErrNotFound) {
 			errs = append(errs, err)
 		}
 	}
@@ -429,10 +430,7 @@ const (
 func isNetworkAttachedToContainer(networkName, containerName string) bool {
 	// error is returned if failed to find network attached to instance or no IPv4/IPv6 Ips.
 	_, err := getNetworkInterface(containerName, networkName)
-	if err != nil {
-		return false
-	}
-	return true
+	return err == nil
 }
 
 func doesContainerNameExist(name string) bool {
@@ -463,7 +461,7 @@ func doesNetworkExist(networkName string) bool {
 func getNetwork(networkName string) (containerEngineNetwork, error) {
 	n := containerEngineNetwork{name: networkName}
 	if !doesNetworkExist(networkName) {
-		return n, api.NotFound
+		return n, api.ErrNotFound
 	}
 	configs := make([]containerEngineNetworkConfig, 0, 1)
 	dataBytes, err := exec.Command(containerengine.Get().String(), "network", "inspect", "-f", inspectNetworkIPAMJSON, networkName).CombinedOutput()
@@ -506,10 +504,10 @@ func getContainerAttachedToNetwork(networkName string) ([]string, error) {
 func getNetworkInterface(containerName, networkName string) (api.NetworkInterface, error) {
 	var ni = api.NetworkInterface{}
 	if !doesNetworkExist(networkName) {
-		return ni, fmt.Errorf("failed to find network %q: %w", networkName, api.NotFound)
+		return ni, fmt.Errorf("failed to find network %q: %w", networkName, api.ErrNotFound)
 	}
 	if !doesContainerNameExist(containerName) {
-		return ni, fmt.Errorf("failed to find container %q: %w", containerName, api.NotFound)
+		return ni, fmt.Errorf("failed to find container %q: %w", containerName, api.ErrNotFound)
 	}
 	getContainerNetwork := func(inspectTemplate string) (string, error) {
 		value, err := exec.Command(containerengine.Get().String(), "inspect", "-f",
@@ -580,7 +578,7 @@ func getNetworkInterface(containerName, networkName string) (api.NetworkInterfac
 	ni.IPv4Gateway, err = getContainerNetwork(inspectNetworkIPv4GWKeyStr)
 	if err != nil {
 		// may not be available
-		framework.Logf("failed to get network gateway IPv4 %s: %v", err)
+		framework.Logf("failed to get network gateway IPv4: %v", err)
 	}
 	ni.IPv4, err = getContainerNetwork(inspectNetworkIPv4AddrKeyStr)
 	if err != nil {
@@ -594,7 +592,7 @@ func getNetworkInterface(containerName, networkName string) (api.NetworkInterfac
 	}
 	ni.IPv6Gateway, err = getContainerNetwork(inspectNetworkIPv6GWKeyStr)
 	if err != nil {
-		framework.Logf("failed to get network gateway IPv6 %s: %v", err)
+		framework.Logf("failed to get network gateway IPv6: %v", err)
 	}
 	ni.IPv4Prefix, err = getContainerNetwork(inspectNetworkIPv4PrefixKeyStr)
 	if err != nil {
