@@ -50,7 +50,7 @@ func genDeleteStaleRepPortCmd(iface string) string {
 
 func genFindInterfaceWithSandboxCmd() string {
 	return fmt.Sprintf("ovs-vsctl --timeout=15 --columns=name,external_ids --data=bare --no-headings " +
-		"--format=csv find Interface external_ids:sandbox!=\"\" external_ids:vf-netdev-name!=\"\"")
+		"--format=csv find Interface external_ids:sandbox!=\"\" external_ids:vf-netdev-name!=\"\" external_ids:bridge-name=br-int")
 }
 
 var _ = Describe("Healthcheck tests", func() {
@@ -144,7 +144,6 @@ var _ = Describe("Healthcheck tests", func() {
 
 		Context("bridge has stale representor ports", func() {
 			It("removes stale VF rep ports from bridge", func() {
-				// mock call to find OVS interfaces with non-empty external_ids:sandbox
 				execMock.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: genFindInterfaceWithSandboxCmd(),
 					Output: "pod-a-ifc,sandbox=123abcfaa iface-id=a-ns_a-pod iface-id-ver=pod-a-uuid-1 vf-netdev-name=blah\n" +
@@ -152,7 +151,26 @@ var _ = Describe("Healthcheck tests", func() {
 						"stale-pod-ifc,sandbox=123abcfaa iface-id=stale-ns_stale-pod iface-id-ver=pod-stale-uuid-3 vf-netdev-name=blah\n",
 					Err: nil,
 				})
-				// mock calls to remove only stale-port
+				execMock.AddFakeCmd(&ovntest.ExpectedCmd{
+					Cmd:    genDeleteStaleRepPortCmd("stale-pod-ifc"),
+					Output: "",
+					Err:    nil,
+				})
+				ncm.checkForStaleOVSRepresentorInterfaces()
+				Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc)
+			})
+
+			It("removes stale VF rep ports from non-default bridge", func() {
+				oldBridge := config.Default.BridgeName
+				config.Default.BridgeName = "br-test"
+				defer func() { config.Default.BridgeName = oldBridge }()
+
+				expectedCmd := "ovs-vsctl --timeout=15 --columns=name,external_ids --data=bare --no-headings --format=csv find Interface external_ids:sandbox!=\"\" external_ids:vf-netdev-name!=\"\" external_ids:bridge-name=br-test"
+				execMock.AddFakeCmd(&ovntest.ExpectedCmd{
+					Cmd:    expectedCmd,
+					Output: "stale-pod-ifc,sandbox=123abcfaa iface-id=stale-ns_stale-pod iface-id-ver=pod-stale-uuid-3 vf-netdev-name=blah\n",
+					Err:    nil,
+				})
 				execMock.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd:    genDeleteStaleRepPortCmd("stale-pod-ifc"),
 					Output: "",

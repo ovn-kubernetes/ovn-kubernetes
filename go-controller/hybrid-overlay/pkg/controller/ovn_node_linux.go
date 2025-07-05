@@ -555,7 +555,7 @@ func (n *NodeController) EnsureHybridOverlayBridge(node *corev1.Node) error {
 			"error: %v", stdout, stderr, err)
 	}
 
-	if _, err := util.LinkSetUp(util.GetOvnBridgeName()); err != nil {
+	if _, err := util.LinkSetUp(extBridgeName); err != nil {
 		return fmt.Errorf("failed to up %s: %v", extBridgeName, err)
 	}
 
