@@ -26,22 +26,22 @@ const (
 	egressIP                     = "10.10.10.10"
 	nat1UUID                     = "nat-1-UUID"
 	nat2UUID                     = "nat-2-UUID"
-	pod1V4CIDRStr                = "10.128.0.5/32"
-	pod1V6CIDRStr                = "2001:0000:130F:0000:0000:09C0:876A:130B/128"
+	pod1V4Str                    = "10.128.0.5"
+	pod1V6Str                    = "2001:0000:130F:0000:0000:09C0:876A:130B"
 	pod1Namespace                = "ns1"
 	pod1Name                     = "pod1"
-	pod2V4CIDRStr                = "10.128.0.6/32"
-	pod2V6CIDRStr                = "2001:0000:130F:0000:0000:09C0:876A:130A/128"
+	pod2V4Str                    = "10.128.0.6"
+	pod2V6Str                    = "2001:0000:130F:0000:0000:09C0:876A:130A"
 	pod2Namespace                = "ns1"
 	pod2Name                     = "pod2"
 	defaultNetworkControllerName = "default-network-controller"
 )
 
 var (
-	pod1V4IPNet  = testing.MustParseIPNet(pod1V4CIDRStr)
-	pod1V6IPNet  = testing.MustParseIPNet(pod1V6CIDRStr)
-	pod2V4IPNet  = testing.MustParseIPNet(pod2V4CIDRStr)
-	pod2V6IPNet  = testing.MustParseIPNet(pod2V6CIDRStr)
+	pod1V4IP     = testing.MustParseIP(pod1V4Str)
+	pod1V6IP     = testing.MustParseIP(pod1V6Str)
+	pod2V4IP     = testing.MustParseIP(pod2V4Str)
+	pod2V6IP     = testing.MustParseIP(pod2V6Str)
 	legacyExtIDs = map[string]string{legacyEIPNameExtIDKey: egressIPName}
 	pod1V4ExtIDs = getEgressIPNATDbIDs(egressIPName, pod1Namespace, pod1Name, ipFamilyValueV4, defaultNetworkControllerName).GetExternalIDs()
 	pod1V6ExtIDs = getEgressIPNATDbIDs(egressIPName, pod1Namespace, pod1Name, ipFamilyValueV6, defaultNetworkControllerName).GetExternalIDs()
@@ -54,64 +54,64 @@ var _ = ginkgo.Describe("NAT Syncer", func() {
 		ginkgo.DescribeTable("egress NATs", func(sync natSync) {
 			performTest(defaultNetworkControllerName, sync.initialNATs, sync.finalNATs, sync.pods)
 		}, ginkgo.Entry("converts legacy IPv4 NATs", natSync{
-			initialNATs: []*nbdb.NAT{getSNAT(nat1UUID, pod1V4CIDRStr, egressIP, legacyExtIDs)},
-			finalNATs:   []*nbdb.NAT{getSNAT(nat1UUID, pod1V4CIDRStr, egressIP, pod1V4ExtIDs)},
+			initialNATs: []*nbdb.NAT{getSNAT(nat1UUID, pod1V4Str, egressIP, legacyExtIDs)},
+			finalNATs:   []*nbdb.NAT{getSNAT(nat1UUID, pod1V4Str, egressIP, pod1V4ExtIDs)},
 			pods: podsNetInfo{
 				{
-					[]net.IP{pod1V4IPNet.IP},
+					[]net.IP{pod1V4IP},
 					pod1Namespace,
 					pod1Name,
 				},
 				{
-					[]net.IP{pod2V4IPNet.IP},
+					[]net.IP{pod2V4IP},
 					pod2Namespace,
 					pod2Name,
 				},
 			},
 		}),
 			ginkgo.Entry("converts legacy IPv6 NATs", natSync{
-				initialNATs: []*nbdb.NAT{getSNAT(nat1UUID, pod1V6CIDRStr, egressIP, legacyExtIDs)},
-				finalNATs:   []*nbdb.NAT{getSNAT(nat1UUID, pod1V6CIDRStr, egressIP, pod1V6ExtIDs)},
+				initialNATs: []*nbdb.NAT{getSNAT(nat1UUID, pod1V6Str, egressIP, legacyExtIDs)},
+				finalNATs:   []*nbdb.NAT{getSNAT(nat1UUID, pod1V6Str, egressIP, pod1V6ExtIDs)},
 				pods: podsNetInfo{
 					{
-						[]net.IP{pod1V6IPNet.IP},
+						[]net.IP{pod1V6IP},
 						pod1Namespace,
 						pod1Name,
 					},
 					{
-						[]net.IP{pod2V6IPNet.IP},
+						[]net.IP{pod2V6IP},
 						pod2Namespace,
 						pod2Name,
 					},
 				},
 			}),
 			ginkgo.Entry("converts legacy dual stack NATs", natSync{
-				initialNATs: []*nbdb.NAT{getSNAT(nat1UUID, pod1V4CIDRStr, egressIP, legacyExtIDs), getSNAT(nat2UUID, pod1V6CIDRStr, egressIP, legacyExtIDs)},
-				finalNATs:   []*nbdb.NAT{getSNAT(nat1UUID, pod1V4CIDRStr, egressIP, pod1V4ExtIDs), getSNAT(nat2UUID, pod1V6CIDRStr, egressIP, pod1V6ExtIDs)},
+				initialNATs: []*nbdb.NAT{getSNAT(nat1UUID, pod1V4Str, egressIP, legacyExtIDs), getSNAT(nat2UUID, pod1V6Str, egressIP, legacyExtIDs)},
+				finalNATs:   []*nbdb.NAT{getSNAT(nat1UUID, pod1V4Str, egressIP, pod1V4ExtIDs), getSNAT(nat2UUID, pod1V6Str, egressIP, pod1V6ExtIDs)},
 				pods: podsNetInfo{
 					{
-						[]net.IP{pod1V4IPNet.IP, pod1V6IPNet.IP},
+						[]net.IP{pod1V4IP, pod1V6IP},
 						pod1Namespace,
 						pod1Name,
 					},
 					{
-						[]net.IP{pod2V4IPNet.IP, pod2V6IPNet.IP},
+						[]net.IP{pod2V4IP, pod2V6IP},
 						pod2Namespace,
 						pod2Name,
 					},
 				},
 			}),
 			ginkgo.Entry("doesn't alter NAT with correct external IDs", natSync{
-				initialNATs: []*nbdb.NAT{getSNAT(nat1UUID, pod1V6CIDRStr, egressIP, pod1V6ExtIDs)},
-				finalNATs:   []*nbdb.NAT{getSNAT(nat1UUID, pod1V6CIDRStr, egressIP, pod1V6ExtIDs)},
+				initialNATs: []*nbdb.NAT{getSNAT(nat1UUID, pod1V6Str, egressIP, pod1V6ExtIDs)},
+				finalNATs:   []*nbdb.NAT{getSNAT(nat1UUID, pod1V6Str, egressIP, pod1V6ExtIDs)},
 				pods: podsNetInfo{
 					{
-						[]net.IP{pod1V4IPNet.IP, pod1V6IPNet.IP},
+						[]net.IP{pod1V4IP, pod1V6IP},
 						pod1Namespace,
 						pod1Name,
 					},
 					{
-						[]net.IP{pod2V4IPNet.IP, pod2V6IPNet.IP},
+						[]net.IP{pod2V4IP, pod2V6IP},
 						pod2Namespace,
 						pod2Name,
 					},
