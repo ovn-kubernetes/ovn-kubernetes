@@ -168,6 +168,11 @@ type Controller struct {
 	useTemplates bool
 
 	netInfo util.NetInfo
+
+	// handlers stored for shutdown
+	nodeHandler     cache.ResourceEventHandlerRegistration
+	svcHandler      cache.ResourceEventHandlerRegistration
+	endpointHandler cache.ResourceEventHandlerRegistration
 }
 
 // Run will not return until stopCh is closed. workers determines how many
@@ -180,15 +185,15 @@ func (c *Controller) Run(workers int, stopCh <-chan struct{}, wg *sync.WaitGroup
 		// wait until we're told to stop
 		<-stopCh
 
-		klog.Infof("Shutting down controller %s for network=%s", controllerName, c.netInfo.GetNetworkName())
-		c.queue.ShutDown()
+		c.Cleanup()
 	}()
 
 	c.useLBGroups = useLBGroups
 	c.useTemplates = useTemplates
 	klog.Infof("Starting controller %s for network=%s", controllerName, c.netInfo.GetNetworkName())
 
-	nodeHandler, err := c.nodeTracker.Start(c.nodeInformer)
+	var err error
+	c.nodeHandler, err = c.nodeTracker.Start(c.nodeInformer)
 	if err != nil {
 		return err
 	}
@@ -197,12 +202,12 @@ func (c *Controller) Run(workers int, stopCh <-chan struct{}, wg *sync.WaitGroup
 	c.startupDoneLock.Lock()
 	c.startupDone = false
 	c.startupDoneLock.Unlock()
-	if !util.WaitForHandlerSyncWithTimeout(nodeControllerName, stopCh, types.HandlerSyncTimeout, nodeHandler.HasSynced) {
+	if !util.WaitForHandlerSyncWithTimeout(nodeControllerName, stopCh, types.HandlerSyncTimeout, c.nodeHandler.HasSynced) {
 		return fmt.Errorf("error syncing node tracker handler")
 	}
 
 	klog.Infof("Setting up event handlers for services for network=%s", c.netInfo.GetNetworkName())
-	svcHandler, err := c.serviceInformer.Informer().AddEventHandler(factory.WithUpdateHandlingForObjReplace(cache.ResourceEventHandlerFuncs{
+	c.svcHandler, err = c.serviceInformer.Informer().AddEventHandler(factory.WithUpdateHandlingForObjReplace(cache.ResourceEventHandlerFuncs{
 		AddFunc:    c.onServiceAdd,
 		UpdateFunc: c.onServiceUpdate,
 		DeleteFunc: c.onServiceDelete,
@@ -212,7 +217,7 @@ func (c *Controller) Run(workers int, stopCh <-chan struct{}, wg *sync.WaitGroup
 	}
 
 	klog.Infof("Setting up event handlers for endpoint slices for network=%s", c.netInfo.GetNetworkName())
-	endpointHandler, err := c.endpointSliceInformer.Informer().AddEventHandler(factory.WithUpdateHandlingForObjReplace(
+	c.endpointHandler, err = c.endpointSliceInformer.Informer().AddEventHandler(factory.WithUpdateHandlingForObjReplace(
 		// Filter out endpointslices that don't belong to this network (i.e. keep only kube-generated endpointslices if
 		// on default network, keep only mirrored endpointslices for this network if on UDN)
 		util.GetEndpointSlicesEventHandlerForNetwork(
@@ -227,7 +232,7 @@ func (c *Controller) Run(workers int, stopCh <-chan struct{}, wg *sync.WaitGroup
 	}
 
 	klog.Infof("Waiting for service and endpoint handlers to sync for network=%s", c.netInfo.GetNetworkName())
-	if !util.WaitForHandlerSyncWithTimeout(controllerName, stopCh, types.HandlerSyncTimeout, svcHandler.HasSynced, endpointHandler.HasSynced) {
+	if !util.WaitForHandlerSyncWithTimeout(controllerName, stopCh, types.HandlerSyncTimeout, c.svcHandler.HasSynced, c.endpointHandler.HasSynced) {
 		return fmt.Errorf("error syncing service and endpoint handlers")
 	}
 
@@ -253,6 +258,27 @@ func (c *Controller) Run(workers int, stopCh <-chan struct{}, wg *sync.WaitGroup
 	}
 
 	return nil
+}
+
+func (c *Controller) Cleanup() {
+	klog.Infof("Shutting down controller %s for network=%s", controllerName, c.netInfo.GetNetworkName())
+	c.queue.ShutDown()
+
+	if c.nodeHandler != nil {
+		if err := c.nodeInformer.Informer().RemoveEventHandler(c.nodeHandler); err != nil {
+			klog.Errorf("Failed to remove node handler for network %s: %v", c.netInfo.GetNetworkName(), err)
+		}
+	}
+	if c.svcHandler != nil {
+		if err := c.serviceInformer.Informer().RemoveEventHandler(c.svcHandler); err != nil {
+			klog.Errorf("Failed to remove service handler for network %s: %v", c.netInfo.GetNetworkName(), err)
+		}
+	}
+	if c.endpointHandler != nil {
+		if err := c.endpointSliceInformer.Informer().RemoveEventHandler(c.endpointHandler); err != nil {
+			klog.Errorf("Failed to remove endpoint handler for network %s: %v", c.netInfo.GetNetworkName(), err)
+		}
+	}
 }
 
 // worker runs a worker thread that just dequeues items, processes them, and
