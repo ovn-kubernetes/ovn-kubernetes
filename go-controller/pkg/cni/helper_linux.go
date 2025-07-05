@@ -441,9 +441,9 @@ func ConfigureOVS(ctx context.Context, namespace, podName, hostIfaceName string,
 		ipStrs[i] = ip.String()
 	}
 
-	br_type, err := getDatapathType("br-int")
+	br_type, err := getDatapathType(util.GetOvnBridgeName())
 	if err != nil {
-		return fmt.Errorf("failed to get datapath type for bridge br-int : %v", err)
+		return fmt.Errorf("failed to get datapath type for bridge %s : %v", util.GetOvnBridgeName(), err)
 	}
 
 	klog.Infof("ConfigureOVS: namespace: %s, podName: %s, hostIfaceName: %s, network: %s, NAD %s, SandboxID: %q, PCI device ID: %s, UID: %q, MAC: %s, IPs: %v",
@@ -459,9 +459,9 @@ func ConfigureOVS(ctx context.Context, namespace, podName, hostIfaceName string,
 			// br-int for the same pod; do not delete port in this case.
 			continue
 		}
-		if out, err := ovsExec("--with-iface", "del-port", "br-int", name); err != nil {
-			klog.Warningf("Failed to delete stale OVS port %q with iface-id %q from br-int: %v\n %q",
-				name, ifaceID, err, out)
+		if out, err := ovsExec("--with-iface", "del-port", util.GetOvnBridgeName(), name); err != nil {
+			klog.Warningf("Failed to delete stale OVS port %q with iface-id %q from %s: %v\n %q",
+				name, ifaceID, util.GetOvnBridgeName(), err, out)
 		}
 	}
 
@@ -486,7 +486,7 @@ func ConfigureOVS(ctx context.Context, namespace, podName, hostIfaceName string,
 	// Add the new sandbox's OVS port, tag the port as transient so stale
 	// pod ports are scrubbed on hard reboot
 	ovsArgs := []string{
-		"--may-exist", "add-port", "br-int", hostIfaceName, "other_config:transient=true",
+		"--may-exist", "add-port", util.GetOvnBridgeName(), hostIfaceName, "other_config:transient=true",
 		"--", "set", "interface", hostIfaceName,
 		fmt.Sprintf("external_ids:attached_mac=%s", ifInfo.MAC),
 		fmt.Sprintf("external_ids:iface-id=%s", ifaceID),
@@ -809,7 +809,7 @@ func (pr *PodRequest) deletePodConntrack() {
 func (pr *PodRequest) deletePort(ifaceName, podNamespace, podName string) {
 	podDesc := fmt.Sprintf("%s/%s", podNamespace, podName)
 
-	out, err := ovsExec("del-port", "br-int", ifaceName)
+	out, err := ovsExec("del-port", util.GetOvnBridgeName(), ifaceName)
 	if err != nil && !strings.Contains(err.Error(), "no port named") {
 		// DEL should be idempotent; don't return an error just log it
 		klog.Warningf("Failed to delete pod %q OVS port %s: %v\n  %q", podDesc, ifaceName, err, string(out))

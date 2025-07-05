@@ -276,7 +276,8 @@ func NicToBridge(iface string) (string, error) {
 
 // BridgeToNic moves the IP address and routes of internal port of the bridge to
 // underlying NIC interface and deletes the OVS bridge.
-func BridgeToNic(bridge string) error {
+// 'bridge' is the bridge to delete. 'internalBridge' is the integration bridge (e.g., br-int) and must be provided explicitly.
+func BridgeToNic(bridge string, internalBridge string) error {
 	// Internal port is named same as the bridge
 	bridgeLink, err := netLinkOps.LinkByName(bridge)
 	if err != nil {
@@ -339,10 +340,10 @@ func BridgeToNic(bridge string) error {
 		}
 		// stdout has the peer interface, just delete it
 		peer := strings.TrimSpace(stdout)
-		_, stderr, err = RunOVSVsctl("--if-exists", "del-port", "br-int", peer)
+		_, stderr, err = RunOVSVsctl("--if-exists", "del-port", internalBridge, peer)
 		if err != nil {
-			klog.Warningf("Failed to delete patch port %q on br-int, "+
-				"stderr: %q, error: %v", peer, stderr, err)
+			klog.Warningf("Failed to delete patch port %q on %s, %s, error: %v",
+				peer, internalBridge, stderr, err)
 		}
 	}
 

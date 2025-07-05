@@ -663,14 +663,14 @@ ovn_debug() {
   echo "=========== ovs-vsctl show ============="
   ovs-vsctl show
   echo " "
-  echo "=========== ovs-ofctl -O OpenFlow13 dump-ports br-int ============="
-  ovs-ofctl -O OpenFlow13 dump-ports br-int
+  echo "=========== ovs-ofctl -O OpenFlow13 dump-ports ${OVN_BRIDGE_NAME} ============="
+  ovs-ofctl -O OpenFlow13 dump-ports ${OVN_BRIDGE_NAME}
   echo " "
-  echo "=========== ovs-ofctl -O OpenFlow13 dump-ports-desc br-int ============="
-  ovs-ofctl -O OpenFlow13 dump-ports-desc br-int
+  echo "=========== ovs-ofctl -O OpenFlow13 dump-ports-desc ${OVN_BRIDGE_NAME} ============="
+  ovs-ofctl -O OpenFlow13 dump-ports-desc ${OVN_BRIDGE_NAME}
   echo " "
-  echo "=========== ovs-ofctl dump-flows br-int ============="
-  ovs-ofctl dump-flows br-int
+  echo "=========== ovs-ofctl dump-flows ${OVN_BRIDGE_NAME} ============="
+  ovs-ofctl dump-flows ${OVN_BRIDGE_NAME}
   echo " "
   echo "=========== ovn-sbctl --db=${ovn_sbdb_conn} show ============="
   ovn-sbctl --db=${ovn_sbdb_conn} show

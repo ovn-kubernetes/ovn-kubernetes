@@ -158,7 +158,7 @@ func GetExtPortName(bridgeID, nodeName string) string {
 // GetPatchPortName determines the name of the patch port on the external
 // bridge, which connects to br-int
 func GetPatchPortName(bridgeID, nodeName string) string {
-	return types.PatchPortPrefix + GetExtPortName(bridgeID, nodeName) + types.PatchPortSuffix
+	return types.PatchPortPrefix + GetExtPortName(bridgeID, nodeName) + types.GetPatchPortSuffix(GetOvnBridgeName())
 }
 
 // GetNodeInternalAddrs returns the first IPv4 and/or IPv6 InternalIP defined
@@ -447,7 +447,7 @@ func GetIfaceId(podNamespace, podName string) string {
 // composePortName should be called both for LogicalPortName and iface-id
 // because ovn-nb man says:
 // Logical_Switch_Port.name must match external_ids:iface-id
-// in the Open_vSwitch database’s Interface table,
+// in the Open_vSwitch database's Interface table,
 // because hypervisors use external_ids:iface-id as a lookup key to
 // identify the network interface of that entity.
 func composePortName(podNamespace, podName string) string {
@@ -670,4 +670,9 @@ func GetMirroredEndpointSlices(controller, sourceName, namespace string, endpoin
 		}
 	}
 	return mirroredEndpointSlices, nil
+}
+
+// GetOvnBridgeName returns the name of the OVS integration bridge from config.Default.BridgeName
+func GetOvnBridgeName() string {
+	return config.Default.BridgeName
 }

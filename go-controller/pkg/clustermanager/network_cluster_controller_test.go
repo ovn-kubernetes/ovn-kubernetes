@@ -31,6 +31,12 @@ var _ = ginkgo.Describe("Network Cluster Controller", func() {
 	)
 
 	ginkgo.BeforeEach(func() {
+		fakeExec := ovntest.NewFakeExec()
+		fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:ovn-bridge",
+			Output: "br-int",
+		})
+
 		// Restore global default values before each testcase
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 
@@ -71,7 +77,7 @@ var _ = ginkgo.Describe("Network Cluster Controller", func() {
 					KubeClient: kubeFakeClient,
 				}
 
-				_, err := config.InitConfig(ctx, nil, nil)
+				_, err := config.InitConfig(ctx, fakeExec, nil)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 
@@ -122,7 +128,7 @@ var _ = ginkgo.Describe("Network Cluster Controller", func() {
 					KubeClient: kubeFakeClient,
 				}
 
-				_, err := config.InitConfig(ctx, nil, nil)
+				_, err := config.InitConfig(ctx, fakeExec, nil)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 
@@ -174,7 +180,7 @@ var _ = ginkgo.Describe("Network Cluster Controller", func() {
 					KubeClient: kubeFakeClient,
 				}
 
-				_, err := config.InitConfig(ctx, nil, nil)
+				_, err := config.InitConfig(ctx, fakeExec, nil)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 

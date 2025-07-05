@@ -35,9 +35,9 @@ func newManagementPortRepresentor(name, repDevName string, cfg *managementPortCo
 }
 
 func (mp *managementPortRepresentor) create() error {
-	br_type, err := util.GetDatapathType("br-int")
+	br_type, err := util.GetDatapathType(util.GetOvnBridgeName())
 	if err != nil {
-		return fmt.Errorf("failed to get datapath type for bridge br-int : %v", err)
+		return fmt.Errorf("failed to get datapath type for bridge %s : %v", util.GetOvnBridgeName(), err)
 	}
 
 	klog.V(5).Infof("Lookup representor link and existing management port for '%v'", mp.repDevName)
@@ -82,7 +82,7 @@ func (mp *managementPortRepresentor) create() error {
 	}
 
 	ovsArgs := []string{
-		"--", "--may-exist", "add-port", "br-int", mp.ifName,
+		"--", "--may-exist", "add-port", util.GetOvnBridgeName(), mp.ifName,
 		"--", "set", "interface", mp.ifName,
 		"external-ids:iface-id=" + types.K8sPrefix + mp.cfg.nodeName,
 	}
@@ -99,8 +99,8 @@ func (mp *managementPortRepresentor) create() error {
 	// Plug management port representor to OVS.
 	stdout, stderr, err := util.RunOVSVsctl(ovsArgs...)
 	if err != nil {
-		klog.Errorf("Failed to add port %q to br-int, stdout: %q, stderr: %q, error: %v",
-			mp.ifName, stdout, stderr, err)
+		klog.Errorf("Failed to add port %q to %s, stdout: %q, stderr: %q, error: %v",
+			mp.ifName, util.GetOvnBridgeName(), stdout, stderr, err)
 		return err
 	}
 

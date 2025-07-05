@@ -915,8 +915,9 @@ func podsInSameInterconnectZone(srcPodInfo, dstPodInfo *PodInfo) bool {
 // runOfprotoTraceToPod runs an ofproto/trace command from the src to the destination pod.
 func runOfprotoTraceToPod(coreclient *corev1client.CoreV1Client, restconfig *rest.Config, direction string, srcPodInfo, dstPodInfo *PodInfo, ovnNamespace, protocol, dstPort string) string {
 	protocolSelector, nwSrc, nwDst := getOfprotoIPFamilyArgs(protocol, net.ParseIP(dstPodInfo.IP))
-	cmd := fmt.Sprintf(`ovs-appctl ofproto/trace br-int `+
-		`"in_port=%[1]s, %[9]s, dl_src=%[3]s, dl_dst=%[4]s, %[10]s=%[5]s, %[11]s=%[6]s, nw_ttl=64, %[7]s_dst=%[8]s, %[7]s_src=12345"`,
+	cmd := fmt.Sprintf(`ovs-appctl ofproto/trace %s `+
+		util.GetOvnBridgeName()+
+		` "in_port=%[1]s, %[9]s, dl_src=%[3]s, dl_dst=%[4]s, %[10]s=%[5]s, %[11]s=%[6]s, nw_ttl=64, %[7]s_dst=%[8]s, %[7]s_src=12345"`,
 		srcPodInfo.VethName, // 1
 		protocol,            // 2
 		srcPodInfo.MAC,      // 3
@@ -963,8 +964,9 @@ func runOfprotoTraceToPod(coreclient *corev1client.CoreV1Client, restconfig *res
 // If egressBridgeName == "", then this is routingViaHost Gateway mode without an EgressIP / EgressGW.
 func runOfprotoTraceToIP(coreclient *corev1client.CoreV1Client, restconfig *rest.Config, srcPodInfo *PodInfo, dstIP net.IP, ovnNamespace, protocol, dstPort, egressNodeName, egressBridgeName string) string {
 	protocolSelector, nwSrc, nwDst := getOfprotoIPFamilyArgs(protocol, dstIP)
-	cmd := fmt.Sprintf(`ovs-appctl ofproto/trace br-int `+
-		`"in_port=%[1]s, %[8]s, dl_src=%[3]s, dl_dst=%[4]s, %[9]s=%[5]s, %[10]s=%[6]s, nw_ttl=64, %[2]s_dst=%[7]s, %[2]s_src=12345"`,
+	cmd := fmt.Sprintf(`ovs-appctl ofproto/trace %s `+
+		util.GetOvnBridgeName()+
+		` "in_port=%[1]s, %[8]s, dl_src=%[3]s, dl_dst=%[4]s, %[9]s=%[5]s, %[10]s=%[6]s, nw_ttl=64, %[2]s_dst=%[7]s, %[2]s_src=12345"`,
 		srcPodInfo.VethName, // 1
 		protocol,            // 2
 		srcPodInfo.MAC,      // 3

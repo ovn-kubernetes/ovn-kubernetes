@@ -555,7 +555,7 @@ func (n *NodeController) EnsureHybridOverlayBridge(node *corev1.Node) error {
 			"error: %v", stdout, stderr, err)
 	}
 
-	if _, err := util.LinkSetUp(extBridgeName); err != nil {
+	if _, err := util.LinkSetUp(util.GetOvnBridgeName()); err != nil {
 		return fmt.Errorf("failed to up %s: %v", extBridgeName, err)
 	}
 
@@ -564,7 +564,7 @@ func (n *NodeController) EnsureHybridOverlayBridge(node *corev1.Node) error {
 		rampExt string = "ext"
 	)
 	// Create the connection between OVN's br-int and our hybrid overlay bridge br-ext
-	_, stderr, err = util.RunOVSVsctl("--may-exist", "add-port", "br-int", rampInt,
+	_, stderr, err = util.RunOVSVsctl("--may-exist", "add-port", util.GetOvnBridgeName(), rampInt,
 		"--", "--may-exist", "add-port", extBridgeName, rampExt,
 		"--", "set", "Interface", rampInt, "type=patch", "options:peer="+rampExt, "external-ids:iface-id="+portName,
 		"--", "set", "Interface", rampExt, "type=patch", "options:peer="+rampInt)

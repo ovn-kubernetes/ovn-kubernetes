@@ -24,6 +24,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -854,7 +855,13 @@ func nodes() []corev1.Node {
 }
 
 func initConfig(ctx *cli.Context, ovkConfig config.OVNKubernetesFeatureConfig) error {
-	_, err := config.InitConfig(ctx, nil, nil)
+	// Use a fake exec to avoid nil pointer dereference and return 'br-int' for the bridge name
+	fakeExec := testing.NewFakeExec()
+	fakeExec.AddFakeCmd(&testing.ExpectedCmd{
+		Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:ovn-bridge",
+		Output: "br-int",
+	})
+	_, err := config.InitConfig(ctx, fakeExec, nil)
 	if err != nil {
 		return err
 	}

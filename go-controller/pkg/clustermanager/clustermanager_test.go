@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"strconv"
 	"sync"
+	"testing"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
@@ -20,6 +22,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
+	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -31,6 +34,18 @@ const (
 	// ovnTransitSwitchPortAddrAnnotation is the node annotation name to store the transit switch port ips.
 	ovnTransitSwitchPortAddrAnnotation = "k8s.ovn.org/node-transit-switch-port-ifaddr"
 )
+
+var fakeExec *ovntest.FakeExec
+
+func TestMain(m *testing.M) {
+	// Set up the global FakeExec for all OVS/OVN commands in this package's tests
+	fakeExec = ovntest.NewFakeExec()
+	_ = util.SetExec(fakeExec)
+
+	// Run the tests
+	code := m.Run()
+	os.Exit(code)
+}
 
 var _ = ginkgo.Describe("Cluster Manager", func() {
 	var (
@@ -48,6 +63,15 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 	)
 
 	ginkgo.BeforeEach(func() {
+		// Create and set a new FakeExec for each test
+		fakeExec = ovntest.NewFakeExec()
+		_ = util.SetExec(fakeExec)
+		// Add the expected OVS command for bridge name
+		fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:ovn-bridge",
+			Output: "br-int",
+		})
+
 		// Restore global default values before each testcase
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 
@@ -93,7 +117,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 					KubeClient: kubeFakeClient,
 				}
 
-				_, err := config.InitConfig(ctx, nil, nil)
+				_, err := config.InitConfig(ctx, fakeExec, nil)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 
@@ -159,7 +183,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 					KubeClient: kubeFakeClient,
 				}
 
-				_, err := config.InitConfig(ctx, nil, nil)
+				_, err := config.InitConfig(ctx, fakeExec, nil)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 
@@ -251,7 +275,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 					KubeClient: kubeFakeClient,
 				}
 
-				_, err := config.InitConfig(ctx, nil, nil)
+				_, err := config.InitConfig(ctx, fakeExec, nil)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 
@@ -323,7 +347,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 					KubeClient: kubeFakeClient,
 				}
 
-				_, err := config.InitConfig(ctx, nil, nil)
+				_, err := config.InitConfig(ctx, fakeExec, nil)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 
@@ -434,7 +458,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 					KubeClient: kubeFakeClient,
 				}
 
-				_, err := config.InitConfig(ctx, nil, nil)
+				_, err := config.InitConfig(ctx, fakeExec, nil)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 
@@ -507,7 +531,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 					KubeClient: kubeFakeClient,
 				}
 
-				_, err := config.InitConfig(ctx, nil, nil)
+				_, err := config.InitConfig(ctx, fakeExec, nil)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 
@@ -619,7 +643,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 					KubeClient: kubeFakeClient,
 				}
 
-				_, err := config.InitConfig(ctx, nil, nil)
+				_, err := config.InitConfig(ctx, fakeExec, nil)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 
@@ -746,7 +770,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 					KubeClient: kubeFakeClient,
 				}
 
-				_, err := config.InitConfig(ctx, nil, nil)
+				_, err := config.InitConfig(ctx, fakeExec, nil)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 
@@ -872,7 +896,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 					KubeClient: kubeFakeClient,
 				}
 
-				_, err := config.InitConfig(ctx, nil, nil)
+				_, err := config.InitConfig(ctx, fakeExec, nil)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 
@@ -944,7 +968,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 					KubeClient: kubeFakeClient,
 				}
 
-				_, err := config.InitConfig(ctx, nil, nil)
+				_, err := config.InitConfig(ctx, fakeExec, nil)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 
@@ -1047,7 +1071,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 					KubeClient: kubeFakeClient,
 				}
 
-				_, err := config.InitConfig(ctx, nil, nil)
+				_, err := config.InitConfig(ctx, fakeExec, nil)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 
@@ -1181,7 +1205,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 					KubeClient: kubeFakeClient,
 				}
 
-				_, err := config.InitConfig(ctx, nil, nil)
+				_, err := config.InitConfig(ctx, fakeExec, nil)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 
@@ -1278,7 +1302,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 					KubeClient: kubeFakeClient,
 				}
 
-				_, err := config.InitConfig(ctx, nil, nil)
+				_, err := config.InitConfig(ctx, fakeExec, nil)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 
@@ -1392,7 +1416,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 					KubeClient: kubeFakeClient,
 				}
 
-				_, err := config.InitConfig(ctx, nil, nil)
+				_, err := config.InitConfig(ctx, fakeExec, nil)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 

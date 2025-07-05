@@ -218,6 +218,10 @@ var _ = Describe("Node DPU tests", func() {
 				Output: "",
 			})
 			execMock.AddFakeCmd(&ovntest.ExpectedCmd{
+				Cmd:    genOVSGetCmd("Open_vSwitch", ".", "external_ids", "bridge-name"),
+				Output: "br-int",
+			})
+			execMock.AddFakeCmd(&ovntest.ExpectedCmd{
 				Cmd: genOVSAddPortCmd(vfRep, genIfaceID(pod.Namespace, pod.Name), "", "", "a8d09931", string(pod.UID)),
 				Err: fmt.Errorf("failed to run ovs command"),
 			})
@@ -249,6 +253,10 @@ var _ = Describe("Node DPU tests", func() {
 			execMock.AddFakeCmd(&ovntest.ExpectedCmd{
 				Cmd:    genOVSGetCmd("Open_vSwitch", ".", "external_ids", "ovn-pf-encap-ip-mapping"),
 				Output: "",
+			})
+			execMock.AddFakeCmd(&ovntest.ExpectedCmd{
+				Cmd:    genOVSGetCmd("Open_vSwitch", ".", "external_ids", "bridge-name"),
+				Output: "br-int",
 			})
 			execMock.AddFakeCmd(&ovntest.ExpectedCmd{
 				Cmd: genOVSAddPortCmd(vfRep, genIfaceID(pod.Namespace, pod.Name), "", "", "a8d09931", string(pod.UID)),
@@ -286,6 +294,10 @@ var _ = Describe("Node DPU tests", func() {
 				execMock.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd:    genOVSGetCmd("Open_vSwitch", ".", "external_ids", "ovn-pf-encap-ip-mapping"),
 					Output: "",
+				})
+				execMock.AddFakeCmd(&ovntest.ExpectedCmd{
+					Cmd:    genOVSGetCmd("Open_vSwitch", ".", "external_ids", "bridge-name"),
+					Output: "br-int",
 				})
 				execMock.AddFakeCmd(&ovntest.ExpectedCmd{
 					Cmd: genOVSAddPortCmd(vfRep, genIfaceID(pod.Namespace, pod.Name), "", "", "a8d09931", string(pod.UID)),

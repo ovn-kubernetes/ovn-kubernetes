@@ -245,11 +245,11 @@ func (oc *DefaultNodeNetworkController) Reconcile(netInfo util.NetInfo) error {
 func clearOVSFlowTargets() error {
 	_, _, err := util.RunOVSVsctl(
 		"--",
-		"clear", "bridge", "br-int", "netflow",
+		"clear", "bridge", util.GetOvnBridgeName(), "netflow",
 		"--",
-		"clear", "bridge", "br-int", "sflow",
+		"clear", "bridge", util.GetOvnBridgeName(), "sflow",
 		"--",
-		"clear", "bridge", "br-int", "ipfix",
+		"clear", "bridge", util.GetOvnBridgeName(), "ipfix",
 	)
 	if err != nil {
 		return err
@@ -300,7 +300,7 @@ func setOVSFlowTargets(node *corev1.Node) error {
 			fmt.Sprintf("targets=[%s]", collectors),
 			"active_timeout=60",
 			"--",
-			"set", "bridge", "br-int", "netflow=@netflow",
+			"set", "bridge", util.GetOvnBridgeName(), "netflow=@netflow",
 		)
 		if err != nil {
 			return fmt.Errorf("error setting NetFlow: %v\n  %q", err, stderr)
@@ -320,7 +320,7 @@ func setOVSFlowTargets(node *corev1.Node) error {
 			"agent="+types.SFlowAgent,
 			fmt.Sprintf("targets=[%s]", collectors),
 			"--",
-			"set", "bridge", "br-int", "sflow=@sflow",
+			"set", "bridge", util.GetOvnBridgeName(), "sflow=@sflow",
 		)
 		if err != nil {
 			return fmt.Errorf("error setting SFlow: %v\n  %q", err, stderr)
@@ -346,7 +346,7 @@ func setOVSFlowTargets(node *corev1.Node) error {
 		if config.IPFIX.Sampling != 0 {
 			args = append(args, fmt.Sprintf("sampling=%d", config.IPFIX.Sampling))
 		}
-		args = append(args, "--", "set", "bridge", "br-int", "ipfix=@ipfix")
+		args = append(args, "--", "set", "bridge", util.GetOvnBridgeName(), "ipfix=@ipfix")
 		_, stderr, err := util.RunOVSVsctl(args...)
 		if err != nil {
 			return fmt.Errorf("error setting IPFIX: %v\n  %q", err, stderr)
@@ -526,13 +526,13 @@ func isOVNControllerReady() (bool, error) {
 	}
 
 	// check whether br-int exists on node
-	_, _, err = util.RunOVSVsctl("--", "br-exists", "br-int")
+	_, _, err = util.RunOVSVsctl("--", "br-exists", util.GetOvnBridgeName())
 	if err != nil {
 		return false, nil
 	}
 
 	// check by dumping br-int flow entries
-	stdout, _, err := util.RunOVSOfctl("dump-aggregate", "br-int")
+	stdout, _, err := util.RunOVSOfctl("dump-aggregate", util.GetOvnBridgeName())
 	if err != nil {
 		klog.V(5).Infof("Error dumping aggregate flows: %v", err)
 		return false, nil
@@ -1220,9 +1220,9 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 		if err != nil {
 			klog.Errorf("Deletion of bridge br-ext failed: %v (%v)", err, stderr)
 		}
-		_, stderr, err = util.RunOVSVsctl("--if-exists", "del-port", "br-int", "int")
+		_, stderr, err = util.RunOVSVsctl("--if-exists", "del-port", util.GetOvnBridgeName(), "int")
 		if err != nil {
-			klog.Errorf("Deletion of port int on  br-int failed: %v (%v)", err, stderr)
+			klog.Errorf("Deletion of port int on  %s failed: %v (%v)", util.GetOvnBridgeName(), err, stderr)
 		}
 	}
 
