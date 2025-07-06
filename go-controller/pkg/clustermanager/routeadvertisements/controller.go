@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"reflect"
 	"slices"
 	"strings"
@@ -353,6 +354,10 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 	// validate and gather information about the networks
 	selectedNetworks, err := c.getSelectedNetworkInfoSorted(nads, advertisements)
 	if err != nil {
+		return nil, nil, err
+	}
+
+	if err = c.checkSubnetOverlaps(ra, selectedNetworks); err != nil {
 		return nil, nil, err
 	}
 
@@ -1258,4 +1263,89 @@ func (c *Controller) reconcileEgressIPs(string) error {
 	}
 
 	return nil
+}
+
+// vrfNetworkIPNet represents an IPNet associated with a specific network in a VRF
+type vrfNetworkIPNet struct {
+	network string
+	ipNet   *net.IPNet
+}
+
+// checkSubnetOverlaps validates that subnets from the current RA don't overlap
+// with any existing subnets in the same VRFs within the RA itself
+func (c *Controller) checkSubnetOverlaps(ra *ratypes.RouteAdvertisements, selectedNetworks *selectedNetworks) error {
+	networkVRFsIPNets, err := createNetworkVRFsIPNetsMap(ra.Spec.TargetVRF, selectedNetworks)
+	if err != nil {
+		return fmt.Errorf("error parsing subnets for RouteAdvertisement %q: %w", ra.Name, err)
+	}
+
+	// Check for overlaps within each VRF network
+	for vrf, vrfNetworkIPNets := range networkVRFsIPNets {
+		// Check for overlaps within current RA (only between different networks)
+		if overlappingSubnets := checkVRFNetworkIPNetSliceOverlaps(vrfNetworkIPNets); len(overlappingSubnets) > 0 {
+			slices.Sort(overlappingSubnets)
+			return fmt.Errorf("%w: overlapping CIDR detected within RouteAdvertisement %q in VRF %q: %v", errConfig, ra.Name, vrf, overlappingSubnets)
+		}
+	}
+
+	return nil
+}
+
+// createNetworkVRFsIPNetsMap creates a map of VRF -> vrfNetworkIPNet from selectedNetworks
+func createNetworkVRFsIPNetsMap(targetVRF string, selectedNetworks *selectedNetworks) (map[string][]vrfNetworkIPNet, error) {
+	networkVRFsIPNets := make(map[string][]vrfNetworkIPNet)
+	if targetVRF == "auto" {
+		for networkVRF, network := range selectedNetworks.networkVRFs {
+			subnets := selectedNetworks.networkSubnets[network]
+			ipNets, err := util.ParseIPNets(subnets)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse subnets for VRF %s: %w", networkVRF, err)
+			}
+			// Create vrfNetworkIPNet entries with network information
+			var vrfNetworkIPNets []vrfNetworkIPNet
+			for _, ipNet := range ipNets {
+				vrfNetworkIPNets = append(vrfNetworkIPNets, vrfNetworkIPNet{
+					network: network,
+					ipNet:   ipNet,
+				})
+			}
+			networkVRFsIPNets[networkVRF] = vrfNetworkIPNets
+		}
+	} else {
+		// For non-auto targetVRF, iterate over each network's subnets individually
+		var vrfNetworkIPNets []vrfNetworkIPNet
+		for network, networkSubnets := range selectedNetworks.networkSubnets {
+			ipNets, err := util.ParseIPNets(networkSubnets)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse subnets for network %s in VRF %s: %w", network, targetVRF, err)
+			}
+			// Create vrfNetworkIPNet entries with correct network information
+			for _, ipNet := range ipNets {
+				vrfNetworkIPNets = append(vrfNetworkIPNets, vrfNetworkIPNet{
+					network: network,
+					ipNet:   ipNet,
+				})
+			}
+		}
+		networkVRFsIPNets[targetVRF] = vrfNetworkIPNets
+	}
+	return networkVRFsIPNets, nil
+}
+
+// checkVRFNetworkIPNetSliceOverlaps checks for subnet overlap within a list of vrfNetworkIPNet,
+// but only reports conflicts if the overlapping subnets belong to different networks
+func checkVRFNetworkIPNetSliceOverlaps(vrfNetworkIPNets []vrfNetworkIPNet) []string {
+	for i, subnet1 := range vrfNetworkIPNets {
+		for j := i + 1; j < len(vrfNetworkIPNets); j++ {
+			subnet2 := vrfNetworkIPNets[j]
+			// Only check for overlap if the subnets belong to different networks
+			if subnet1.network != subnet2.network {
+				overlaps := util.IPNetOverlaps(subnet1.ipNet, subnet2.ipNet)
+				if len(overlaps) > 0 {
+					return []string{subnet1.ipNet.String(), subnet2.ipNet.String()}
+				}
+			}
+		}
+	}
+	return []string{}
 }

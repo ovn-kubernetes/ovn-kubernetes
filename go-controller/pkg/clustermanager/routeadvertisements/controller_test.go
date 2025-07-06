@@ -374,6 +374,7 @@ func TestController_reconcile(t *testing.T) {
 		reconcile            string
 		wantErr              bool
 		expectAcceptedStatus metav1.ConditionStatus
+		expectAcceptedMsg    string
 		expectFRRConfigs     []*testFRRConfig
 		expectNADAnnotations map[string]map[string]string
 	}{
@@ -629,6 +630,50 @@ func TestController_reconcile(t *testing.T) {
 				},
 			},
 			reconcile: "ra",
+		},
+		{
+			name: "successfully reconciles RouteAdvertisements with auto targetVRF and overlapping subnets across different networks",
+			ra:   &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, VRF: "net1", Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+						}},
+						{ASN: 1, VRF: "net2", Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "net1", Namespace: "ns1", Network: util.GenerateCUDNNetworkName("net1"), Topology: "layer3", Subnet: "30.100.0.0/16", Labels: map[string]string{"selected": "true"}},
+				{Name: "net2", Namespace: "ns2", Network: util.GenerateCUDNNetworkName("net2"), Topology: "layer3", Subnet: "30.100.0.0/16", Labels: map[string]string{"selected": "true"}},
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\", \"cluster_udn_net1\":\"30.100.0.0/24\", \"cluster_udn_net2\":\"30.100.0.0/24\"}"}},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					Routers: []*testRouter{
+						{ASN: 1, VRF: "net1", Prefixes: []string{"30.100.0.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"30.100.0.0/24"}},
+						}},
+						{ASN: 1, VRF: "net2", Prefixes: []string{"30.100.0.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"30.100.0.0/24"}},
+						}},
+					},
+				},
+			},
+			expectNADAnnotations: map[string]map[string]string{
+				"net1": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"},
+				"net2": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"},
+			},
 		},
 		{
 			name: "reconciles a RouteAdvertisement for multiple selected FRR configs, nodes and networks on auto target VRF",
@@ -942,6 +987,52 @@ func TestController_reconcile(t *testing.T) {
 			reconcile:            "ra",
 			expectAcceptedStatus: metav1.ConditionFalse,
 		},
+		{
+			name: "fails to reconcile RouteAdvertisements with fully overlapping subnets between different networks within same RA",
+			ra:   &testRA{Name: "ra", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "net1", Namespace: "ns1", Network: util.GenerateCUDNNetworkName("net1"), Topology: "layer3", Subnet: "30.100.0.0/16", Labels: map[string]string{"selected": "true"}},
+				{Name: "net2", Namespace: "ns2", Network: util.GenerateCUDNNetworkName("net2"), Topology: "layer3", Subnet: "30.100.0.0/16", Labels: map[string]string{"selected": "true"}},
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\", \"cluster_udn_net1\":\"30.100.0.0/24\", \"cluster_udn_net2\":\"30.100.0.0/24\"}"}},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionFalse,
+			expectAcceptedMsg:    "configuration error: overlapping CIDR detected within RouteAdvertisement \"ra\" in VRF \"\": [30.100.0.0/16 30.100.0.0/16]",
+		},
+		{
+			name: "fails to reconcile RouteAdvertisements with partial subnet overlap between different networks within same RA",
+			ra:   &testRA{Name: "ra", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "net1", Namespace: "ns1", Network: util.GenerateCUDNNetworkName("net1"), Topology: "layer3", Subnet: "10.1.0.0/18", Labels: map[string]string{"selected": "true"}},
+				{Name: "net2", Namespace: "ns2", Network: util.GenerateCUDNNetworkName("net2"), Topology: "layer3", Subnet: "10.1.0.0/16", Labels: map[string]string{"selected": "true"}},
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\", \"cluster_udn_net1\":\"10.1.0.0/24\", \"cluster_udn_net2\":\"10.1.0.0/24\"}"}},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionFalse,
+			expectAcceptedMsg:    "configuration error: overlapping CIDR detected within RouteAdvertisement \"ra\" in VRF \"\": [10.1.0.0/16 10.1.0.0/18]",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1064,6 +1155,9 @@ func TestController_reconcile(t *testing.T) {
 				accepted := meta.FindStatusCondition(ra.Status.Conditions, "Accepted")
 				g.Expect(accepted).NotTo(gomega.BeNil())
 				g.Expect(accepted.Status).To(gomega.Equal(tt.expectAcceptedStatus), accepted.Message)
+				if tt.expectAcceptedMsg != "" {
+					g.Expect(accepted.Message).To(gomega.Equal(tt.expectAcceptedMsg))
+				}
 			}
 
 			// verify FRRConfigurations have been created/updated/deleted as expected
