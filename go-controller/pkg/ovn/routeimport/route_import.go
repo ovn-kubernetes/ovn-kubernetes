@@ -15,8 +15,8 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
-	"github.com/ovn-org/libovsdb/client"
-	"github.com/ovn-org/libovsdb/ovsdb"
+	"github.com/ovn-kubernetes/libovsdb/client"
+	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
 	controllerutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
 	nbdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"

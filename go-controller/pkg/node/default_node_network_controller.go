@@ -28,7 +28,7 @@ import (
 	utilnet "k8s.io/utils/net"
 	"sigs.k8s.io/knftables"
 
-	"github.com/ovn-org/libovsdb/client"
+	"github.com/ovn-kubernetes/libovsdb/client"
 
 	honode "github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/controller"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni"

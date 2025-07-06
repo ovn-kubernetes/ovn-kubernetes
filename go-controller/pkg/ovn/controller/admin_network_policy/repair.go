@@ -9,7 +9,7 @@ import (
 	"k8s.io/klog/v2"
 	anpapi "sigs.k8s.io/network-policy-api/apis/v1alpha1"
 
-	libovsdbclient "github.com/ovn-org/libovsdb/client"
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"

@@ -385,19 +385,19 @@ github.com/openshift/client-go/network/listers/network/v1alpha1
 # github.com/openshift/custom-resource-status v1.1.2
 ## explicit; go 1.12
 github.com/openshift/custom-resource-status/conditions/v1
-# github.com/ovn-org/libovsdb v0.7.1-0.20240820095311-ce1951614a20
+# github.com/ovn-kubernetes/libovsdb v0.8.0
 ## explicit; go 1.18
-github.com/ovn-org/libovsdb/cache
-github.com/ovn-org/libovsdb/client
-github.com/ovn-org/libovsdb/database
-github.com/ovn-org/libovsdb/database/inmemory
-github.com/ovn-org/libovsdb/database/transaction
-github.com/ovn-org/libovsdb/mapper
-github.com/ovn-org/libovsdb/model
-github.com/ovn-org/libovsdb/ovsdb
-github.com/ovn-org/libovsdb/ovsdb/serverdb
-github.com/ovn-org/libovsdb/server
-github.com/ovn-org/libovsdb/updates
+github.com/ovn-kubernetes/libovsdb/cache
+github.com/ovn-kubernetes/libovsdb/client
+github.com/ovn-kubernetes/libovsdb/database
+github.com/ovn-kubernetes/libovsdb/database/inmemory
+github.com/ovn-kubernetes/libovsdb/database/transaction
+github.com/ovn-kubernetes/libovsdb/mapper
+github.com/ovn-kubernetes/libovsdb/model
+github.com/ovn-kubernetes/libovsdb/ovsdb
+github.com/ovn-kubernetes/libovsdb/ovsdb/serverdb
+github.com/ovn-kubernetes/libovsdb/server
+github.com/ovn-kubernetes/libovsdb/updates
 # github.com/pborman/uuid v1.2.0
 ## explicit
 github.com/pborman/uuid

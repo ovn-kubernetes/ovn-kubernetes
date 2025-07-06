@@ -9,7 +9,7 @@ import (
 	gomegaformat "github.com/onsi/gomega/format"
 	gomegatypes "github.com/onsi/gomega/types"
 
-	libovsdbclient "github.com/ovn-org/libovsdb/client"
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 )
 
 // isSetEqual compares a slice as an unordered set

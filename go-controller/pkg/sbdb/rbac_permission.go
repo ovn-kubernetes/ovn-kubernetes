@@ -3,7 +3,7 @@
 
 package sbdb
 
-import "github.com/ovn-org/libovsdb/model"
+import "github.com/ovn-kubernetes/libovsdb/model"
 
 const RBACPermissionTable = "RBAC_Permission"
 

@@ -10,8 +10,8 @@ import (
 
 	"k8s.io/klog/v2/textlogger"
 
-	"github.com/ovn-org/libovsdb/client"
-	"github.com/ovn-org/libovsdb/model"
+	"github.com/ovn-kubernetes/libovsdb/client"
+	"github.com/ovn-kubernetes/libovsdb/model"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/observability-lib/ovsdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"

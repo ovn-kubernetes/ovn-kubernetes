@@ -9,7 +9,7 @@ import (
 	ktypes "k8s.io/apimachinery/pkg/types"
 	utilnet "k8s.io/utils/net"
 
-	libovsdbclient "github.com/ovn-org/libovsdb/client"
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"

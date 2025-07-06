@@ -13,7 +13,7 @@ import (
 	ktypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 
-	"github.com/ovn-org/libovsdb/ovsdb"
+	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
 	hotypes "github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"

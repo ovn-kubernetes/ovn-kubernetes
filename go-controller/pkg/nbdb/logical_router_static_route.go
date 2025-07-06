@@ -3,7 +3,7 @@
 
 package nbdb
 
-import "github.com/ovn-org/libovsdb/model"
+import "github.com/ovn-kubernetes/libovsdb/model"
 
 const LogicalRouterStaticRouteTable = "Logical_Router_Static_Route"
 

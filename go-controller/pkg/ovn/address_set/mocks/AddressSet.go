@@ -3,7 +3,7 @@
 package mocks
 
 import (
-	ovsdb "github.com/ovn-org/libovsdb/ovsdb"
+	ovsdb "github.com/ovn-kubernetes/libovsdb/ovsdb"
 	mock "github.com/stretchr/testify/mock"
 )
 

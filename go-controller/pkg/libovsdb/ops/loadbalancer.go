@@ -3,8 +3,8 @@ package ops
 import (
 	"context"
 
-	libovsdbclient "github.com/ovn-org/libovsdb/client"
-	"github.com/ovn-org/libovsdb/ovsdb"
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -16,7 +16,7 @@ import (
 // The purpose is to prevent libovsdb interpreting non-nil empty maps/slices
 // as default and thus being filtered out of the update. The intention is to
 // use non-nil empty maps/slices to clear them out in the update.
-// See: https://github.com/ovn-org/libovsdb/issues/226
+// See: https://github.com/ovn-kubernetes/libovsdb/issues/226
 func getNonZeroLoadBalancerMutableFields(lb *nbdb.LoadBalancer) []interface{} {
 	fields := []interface{}{}
 	if lb.Name != "" {

@@ -5,11 +5,12 @@ This file aims to have information that is useful to the people contributing to 
 ## Generating ovsdb bindings using modelgen
 
 In order to generate the latest NBDB and SBDB bindings, we have a tool called `modelgen`
-which lives in the libovsdb repo: https://github.com/ovn-org/libovsdb#modelgen. It is a
+which lives in the libovsdb repo: https://github.com/ovn-kubernetes/libovsdb#modelgen. It is a
 [code generator](https://go.dev/blog/generate) that uses `pkg/nbdb/gen.go` and `pkg/sbdb/gen.go`
 files to auto-generate the models and additional code like deep-copy methods.
 
 In order to use this tool do the following:
+
 ```
 $ cd go-controller/
 $ make modelgen

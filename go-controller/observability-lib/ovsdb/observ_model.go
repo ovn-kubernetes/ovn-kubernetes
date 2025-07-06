@@ -1,6 +1,6 @@
 package ovsdb
 
-import "github.com/ovn-org/libovsdb/model"
+import "github.com/ovn-kubernetes/libovsdb/model"
 
 // ObservDatabaseModel returns the DatabaseModel object to be used by observability library.
 func ObservDatabaseModel() (model.ClientDBModel, error) {

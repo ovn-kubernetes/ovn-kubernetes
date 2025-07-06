@@ -13,7 +13,7 @@ import (
 	ktypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 
-	libovsdbclient "github.com/ovn-org/libovsdb/client"
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"

@@ -366,7 +366,7 @@ func (oc *DefaultNetworkController) init() error {
 	}
 	klog.V(5).Infof("Existing number of nodes: %d", len(existingNodes))
 
-	// FIXME: When https://github.com/ovn-org/libovsdb/issues/235 is fixed,
+	// FIXME: When https://github.com/ovn-kubernetes/libovsdb/issues/235 is fixed,
 	// use IsTableSupported(nbdb.LoadBalancerGroup).
 	if _, _, err := util.RunOVNNbctl("--columns=_uuid", "list", "Load_Balancer_Group"); err != nil {
 		klog.Warningf("Load Balancer Group support enabled, however version of OVN in use does not support Load Balancer Groups.")

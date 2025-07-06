@@ -12,7 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 
-	"github.com/ovn-org/libovsdb/ovsdb"
+	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/pod"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
@@ -684,7 +684,7 @@ func (oc *SecondaryLayer3NetworkController) init() error {
 		}
 	}
 
-	// FIXME: When https://github.com/ovn-org/libovsdb/issues/235 is fixed,
+	// FIXME: When https://github.com/ovn-kubernetes/libovsdb/issues/235 is fixed,
 	// use IsTableSupported(nbdb.LoadBalancerGroup).
 	if _, _, err := util.RunOVNNbctl("--columns=_uuid", "list", "Load_Balancer_Group"); err != nil {
 		klog.Warningf("Load Balancer Group support enabled, however version of OVN in use does not support Load Balancer Groups.")

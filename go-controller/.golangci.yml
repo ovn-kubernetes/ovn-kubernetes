@@ -33,6 +33,7 @@ linters-settings:
       - default
       - prefix(k8s.io,sigs.k8s.io)
       - prefix(github.com/ovn-org)
+      - prefix(github.com/ovn-kubernetes)
       - localmodule
       - dot
 
@@ -41,7 +42,7 @@ linters-settings:
     disable:
       - fieldalignment
       - shadow
-  
+
   importas:
     no-unaliased: true
     alias:
@@ -57,9 +58,9 @@ linters-settings:
       - pkg: sigs.k8s.io/controller-runtime
         alias: ctrl
       # Other frequently used deps
-      - pkg: github.com/ovn-org/libovsdb/ovsdb
+      - pkg: github.com/ovn-kubernetes/libovsdb/ovsdb
         alias: ""
-  
+
   revive:
     rules:
       # TODO: enable recommended (default) revive rules

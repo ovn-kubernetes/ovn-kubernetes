@@ -3,7 +3,7 @@
 
 package nbdb
 
-import "github.com/ovn-org/libovsdb/model"
+import "github.com/ovn-kubernetes/libovsdb/model"
 
 const LoadBalancerHealthCheckTable = "Load_Balancer_Health_Check"
 
