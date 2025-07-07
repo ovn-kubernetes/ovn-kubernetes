@@ -469,10 +469,18 @@ func newMultiHomedPod(testPod testPod, multiHomingConfigs ...secondaryNetInfo) *
 	if len(pod.Annotations) == 0 {
 		pod.Annotations = map[string]string{}
 	}
+	var defaultNSE []nadapi.NetworkSelectionElement
 	for _, multiHomingConf := range multiHomingConfigs {
 		if multiHomingConf.isPrimary {
 			if multiHomingConf.ipamClaimReference != "" {
-				pod.Annotations[util.OvnUDNIPAMClaimName] = multiHomingConf.ipamClaimReference
+				nadNsName := strings.Split(multiHomingConf.nadName, "/")
+				defaultNSE = []nadapi.NetworkSelectionElement{{
+					IPAMClaimReference: multiHomingConf.ipamClaimReference,
+					Namespace:          nadNsName[0],
+					Name:               nadNsName[1],
+				}}
+				serializedDefaultNetSelEle, _ := json.Marshal(defaultNSE)
+				pod.Annotations[util.DefNetworkAnnotation] = string(serializedDefaultNetSelEle)
 			}
 			continue // these will be automatically plugged in
 		}
