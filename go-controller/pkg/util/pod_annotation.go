@@ -55,9 +55,11 @@ const (
 	OvnPodAnnotationName = "k8s.ovn.org/pod-networks"
 	// DefNetworkAnnotation is the pod annotation for the cluster-wide default network
 	DefNetworkAnnotation = "v1.multus-cni.io/default-network"
-	// OvnUDNIPAMClaimName is used for workload owners to instruct OVN-K which
+	// OvnUDNIPAMClaimNameDeprecated
+	// Deprecated. Use v1.multus-cni.io/default-network annotation instead; by specifying ipam-claim-reference attribute with the appropriate CR name.
+	// is used for workload owners to instruct OVN-K which
 	// IPAMClaim will hold the allocation for the workload
-	OvnUDNIPAMClaimName = "k8s.ovn.org/primary-udn-ipamclaim"
+	OvnUDNIPAMClaimNameDeprecated = "k8s.ovn.org/primary-udn-ipamclaim"
 	// UDNOpenPortsAnnotationName is the pod annotation to open default network pods on UDN pods.
 	UDNOpenPortsAnnotationName = "k8s.ovn.org/open-default-ports"
 )

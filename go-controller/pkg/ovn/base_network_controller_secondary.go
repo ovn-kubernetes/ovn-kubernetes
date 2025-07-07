@@ -532,8 +532,20 @@ func (bsnc *BaseSecondaryNetworkController) hasIPAMClaim(pod *corev1.Pod, nadNam
 	var ipamClaimName string
 	var wasPersistentIPRequested bool
 	if bsnc.IsPrimaryNetwork() {
-		// primary network ipam reference claim is on the annotation
-		ipamClaimName, wasPersistentIPRequested = pod.Annotations[util.OvnUDNIPAMClaimName]
+		defNSE, err := util.GetK8sPodDefaultNetworkSelection(pod)
+		if err != nil {
+			return false, err
+		}
+		// primary network ipam claim reference is on the default network annotation
+		if defNSE != nil && defNSE.IPAMClaimReference != "" {
+			wasPersistentIPRequested = true
+			ipamClaimName = defNSE.IPAMClaimReference
+		} else {
+			// UDNIPAMClaimName annotation is deprecated, in order to maintain backward compatability, when the default-
+			// -network annotation does not contain IPAM claim name ref, fall back to UDNIPAMClaim annotation.
+			// TODO: UDNIPAMClaimName annotation is deprecated. Remove this snippet when support is dropped.
+			ipamClaimName, wasPersistentIPRequested = pod.Annotations[util.OvnUDNIPAMClaimNameDeprecated]
+		}
 	} else {
 		// secondary network the IPAM claim reference is on the network selection element
 		nadKeys := strings.Split(nadNamespacedName, "/")
