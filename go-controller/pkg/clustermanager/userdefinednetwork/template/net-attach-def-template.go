@@ -152,6 +152,7 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter) (map[s
 		netConfSpec.MTU = int(cfg.MTU)
 		netConfSpec.AllowPersistentIPs = cfg.IPAM != nil && cfg.IPAM.Lifecycle == userdefinednetworkv1.IPAMLifecyclePersistent
 		netConfSpec.Subnets = cidrString(cfg.Subnets)
+		netConfSpec.ReservedSubnets = cidrString(cfg.ReservedSubnets)
 		netConfSpec.JoinSubnet = cidrString(renderJoinSubnets(cfg.Role, cfg.JoinSubnets))
 	case userdefinednetworkv1.NetworkTopologyLocalnet:
 		cfg := spec.GetLocalnet()
@@ -208,6 +209,9 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter) (map[s
 	}
 	if len(netConfSpec.ExcludeSubnets) > 0 {
 		cniNetConf["excludeSubnets"] = netConfSpec.ExcludeSubnets
+	}
+	if len(netConfSpec.ReservedSubnets) > 0 {
+		cniNetConf["reservedSubnets"] = netConfSpec.ReservedSubnets
 	}
 	if netConfSpec.VLANID != 0 {
 		cniNetConf["vlanID"] = netConfSpec.VLANID

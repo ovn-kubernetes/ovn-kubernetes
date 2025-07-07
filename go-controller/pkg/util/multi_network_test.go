@@ -24,8 +24,10 @@ func TestParseSubnets(t *testing.T) {
 		topology         string
 		subnets          string
 		excludes         string
+		reserved         string
 		expectedSubnets  []config.CIDRNetworkEntry
 		expectedExcludes []*net.IPNet
+		expectedReserved []*net.IPNet
 		expectError      bool
 	}{
 		{
@@ -113,12 +115,56 @@ func TestParseSubnets(t *testing.T) {
 			excludes:    "192.168.2.38/32",
 			expectError: true,
 		},
+		{
+			desc:     "multiple subnets and reserved subnets layer 2 topology",
+			topology: ovntypes.Layer2Topology,
+			subnets:  "192.168.1.0/24, fda6::/64",
+			reserved: "192.168.1.0/28, fda6::0/80",
+			expectedSubnets: []config.CIDRNetworkEntry{
+				{
+					CIDR: ovntest.MustParseIPNet("192.168.1.0/24"),
+				},
+				{
+					CIDR: ovntest.MustParseIPNet("fda6::/64"),
+				},
+			},
+			expectedReserved: ovntest.MustParseIPNets("192.168.1.0/28", "fda6::0/80"),
+		},
+		{
+			desc:     "layer 2 with both excludes and reserved subnets",
+			topology: ovntypes.Layer2Topology,
+			subnets:  "192.168.1.0/24",
+			excludes: "192.168.1.200/29",
+			reserved: "192.168.1.0/28",
+			expectedSubnets: []config.CIDRNetworkEntry{
+				{
+					CIDR: ovntest.MustParseIPNet("192.168.1.0/24"),
+				},
+			},
+			expectedExcludes: ovntest.MustParseIPNets("192.168.1.200/29"),
+			expectedReserved: ovntest.MustParseIPNets("192.168.1.0/28"),
+		},
+		{
+			desc:     "dual-stack reserved subnets layer 2 topology",
+			topology: ovntypes.Layer2Topology,
+			subnets:  "192.168.1.0/24, 2001:db8::/64",
+			reserved: "192.168.1.0/28, 2001:db8::/80",
+			expectedSubnets: []config.CIDRNetworkEntry{
+				{
+					CIDR: ovntest.MustParseIPNet("192.168.1.0/24"),
+				},
+				{
+					CIDR: ovntest.MustParseIPNet("2001:db8::/64"),
+				},
+			},
+			expectedReserved: ovntest.MustParseIPNets("192.168.1.0/28", "2001:db8::/80"),
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.desc, func(t *testing.T) {
 			g := gomega.NewWithT(t)
-			subnets, excludes, err := parseSubnets(tc.subnets, tc.excludes, tc.topology)
+			subnets, excludes, reserved, err := parseSubnets(tc.subnets, tc.excludes, tc.reserved, tc.topology)
 			if tc.expectError {
 				g.Expect(err).To(gomega.HaveOccurred())
 				return
@@ -126,6 +172,7 @@ func TestParseSubnets(t *testing.T) {
 			g.Expect(err).NotTo(gomega.HaveOccurred())
 			g.Expect(subnets).To(gomega.ConsistOf(tc.expectedSubnets))
 			g.Expect(excludes).To(gomega.ConsistOf(tc.expectedExcludes))
+			g.Expect(reserved).To(gomega.ConsistOf(tc.expectedReserved))
 		})
 	}
 }

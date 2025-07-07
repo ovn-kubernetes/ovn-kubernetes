@@ -78,6 +78,26 @@ func (_m *NetInfo) ExcludeSubnets() []*net.IPNet {
 	return r0
 }
 
+// ReservedSubnets provides a mock function with given fields:
+func (_m *NetInfo) ReservedSubnets() []*net.IPNet {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for ReservedSubnets")
+	}
+
+	var r0 []*net.IPNet
+	if rf, ok := ret.Get(0).(func() []*net.IPNet); ok {
+		r0 = rf()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]*net.IPNet)
+		}
+	}
+
+	return r0
+}
+
 // GetEgressIPAdvertisedNodes provides a mock function with given fields:
 func (_m *NetInfo) GetEgressIPAdvertisedNodes() []string {
 	ret := _m.Called()
