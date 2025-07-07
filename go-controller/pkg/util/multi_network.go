@@ -67,6 +67,8 @@ type NetInfo interface {
 	// GetEgressIPAdvertisedNodes return the nodes where egress IP are
 	// advertised.
 	GetEgressIPAdvertisedNodes() []string
+	// GetNetworkEncapsulation returns the encapsulation type used by this network.
+	GetNetworkEncapsulation() string
 
 	// derived information.
 	GetNADNamespaces() []string
@@ -368,6 +370,10 @@ func (nInfo *mutableNetInfo) GetEgressIPAdvertisedNodes() []string {
 	return maps.Keys(nInfo.eipAdvertisements)
 }
 
+func (nInfo *mutableNetInfo) GetNetworkEncapsulation() string {
+	return ""
+}
+
 // GetNADs returns all the NADs associated with this network
 func (nInfo *mutableNetInfo) GetNADs() []string {
 	nInfo.RLock()
@@ -634,6 +640,10 @@ func (nInfo *DefaultNetInfo) PhysicalNetworkName() string {
 	return ""
 }
 
+func (nInfo *DefaultNetInfo) GetNetworkEncapsulation() string {
+	return config.Default.DefaultNetworkEncapsulation
+}
+
 // SecondaryNetInfo holds the network name information for secondary network if non-nil
 type secondaryNetInfo struct {
 	mutableNetInfo
@@ -646,6 +656,7 @@ type secondaryNetInfo struct {
 	mtu                int
 	vlan               uint
 	allowPersistentIPs bool
+	encapsulation      string
 
 	ipv4mode, ipv6mode bool
 	subnets            []config.CIDRNetworkEntry
@@ -815,6 +826,10 @@ func (nInfo *secondaryNetInfo) JoinSubnets() []*net.IPNet {
 	return nInfo.joinSubnets
 }
 
+func (nInfo *secondaryNetInfo) GetNetworkEncapsulation() string {
+	return nInfo.encapsulation
+}
+
 func (nInfo *secondaryNetInfo) canReconcile(other NetInfo) bool {
 	if (nInfo == nil) != (other == nil) {
 		return false
@@ -871,6 +886,7 @@ func (nInfo *secondaryNetInfo) copy() *secondaryNetInfo {
 		excludeSubnets:      nInfo.excludeSubnets,
 		joinSubnets:         nInfo.joinSubnets,
 		physicalNetworkName: nInfo.physicalNetworkName,
+		encapsulation:       nInfo.encapsulation,
 	}
 	// copy mutables
 	c.mutableNetInfo.copyFrom(&nInfo.mutableNetInfo)
@@ -894,6 +910,7 @@ func newLayer3NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 		subnets:        subnets,
 		joinSubnets:    joinSubnets,
 		mtu:            netconf.MTU,
+		encapsulation:  netconf.Encapsulation,
 		mutableNetInfo: mutableNetInfo{
 			id:   types.InvalidID,
 			nads: sets.Set[string]{},
@@ -921,6 +938,7 @@ func newLayer2NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 		excludeSubnets:     excludes,
 		mtu:                netconf.MTU,
 		allowPersistentIPs: netconf.AllowPersistentIPs,
+		encapsulation:      netconf.Encapsulation,
 		mutableNetInfo: mutableNetInfo{
 			id:   types.InvalidID,
 			nads: sets.Set[string]{},
@@ -945,6 +963,7 @@ func newLocalnetNetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error
 		vlan:                uint(netconf.VLANID),
 		allowPersistentIPs:  netconf.AllowPersistentIPs,
 		physicalNetworkName: netconf.PhysicalNetworkName,
+		encapsulation:       netconf.Encapsulation,
 		mutableNetInfo: mutableNetInfo{
 			id:   types.InvalidID,
 			nads: sets.Set[string]{},
