@@ -423,12 +423,12 @@ func setupOVNNode(node *corev1.Node) error {
 		"set",
 		"Open_vSwitch",
 		".",
-		fmt.Sprintf("external_ids:ovn-encap-type=%s", config.Default.EncapType),
-		fmt.Sprintf("external_ids:ovn-encap-ip=%s", config.Default.EffectiveEncapIP),
-		fmt.Sprintf("external_ids:ovn-remote-probe-interval=%d",
-			config.Default.InactivityProbe),
-		fmt.Sprintf("external_ids:ovn-bridge-remote-probe-interval=%d",
-			config.Default.OpenFlowProbe),
+		fmt.Sprintf("external_ids:ovn-encap-type%s=%s", util.GetOvnChassisNameSuffix(), config.Default.EncapType),
+		fmt.Sprintf("external_ids:ovn-encap-ip%s=%s", util.GetOvnChassisNameSuffix(), config.Default.EffectiveEncapIP),
+		fmt.Sprintf("external_ids:ovn-remote-probe-interval%s=%d",
+			util.GetOvnChassisNameSuffix(), config.Default.InactivityProbe),
+		fmt.Sprintf("external_ids:ovn-bridge-remote-probe-interval%s=%d",
+			util.GetOvnChassisNameSuffix(), config.Default.OpenFlowProbe),
 		// bundle-idle-timeout default value is 10s, it should be set
 		// as high as the ovn-bridge-remote-probe-interval to allow ovn-controller
 		// to finish computation specially with complex acl configuration with port range.
@@ -436,30 +436,30 @@ func setupOVNNode(node *corev1.Node) error {
 			config.Default.OpenFlowProbe),
 		// If Interconnect feature is enabled, we want to tell ovn-controller to
 		// make this node/chassis as an interconnect gateway.
-		fmt.Sprintf("external_ids:ovn-is-interconn=%s", strconv.FormatBool(config.OVNKubernetesFeature.EnableInterconnect)),
-		fmt.Sprintf("external_ids:ovn-monitor-all=%t", config.Default.MonitorAll),
-		fmt.Sprintf("external_ids:ovn-ofctrl-wait-before-clear=%d", config.Default.OfctrlWaitBeforeClear),
-		fmt.Sprintf("external_ids:ovn-enable-lflow-cache=%t", config.Default.LFlowCacheEnable),
+		fmt.Sprintf("external_ids:ovn-is-interconn%s=%s", util.GetOvnChassisNameSuffix(), strconv.FormatBool(config.OVNKubernetesFeature.EnableInterconnect)),
+		fmt.Sprintf("external_ids:ovn-monitor-all%s=%t", util.GetOvnChassisNameSuffix(), config.Default.MonitorAll),
+		fmt.Sprintf("external_ids:ovn-ofctrl-wait-before-clear%s=%d", util.GetOvnChassisNameSuffix(), config.Default.OfctrlWaitBeforeClear),
+		fmt.Sprintf("external_ids:ovn-enable-lflow-cache%s=%t", util.GetOvnChassisNameSuffix(), config.Default.LFlowCacheEnable),
 		// when creating tunnel ports set local_ip, helps ensures multiple interfaces and ipv6 will work
-		"external_ids:ovn-set-local-ip=\"true\"",
+		fmt.Sprintf("external_ids:ovn-set-local-ip%s=%s", util.GetOvnChassisNameSuffix(), "true"),
 	}
 
 	if config.Default.LFlowCacheLimit > 0 {
 		setExternalIdsCmd = append(setExternalIdsCmd,
-			fmt.Sprintf("external_ids:ovn-limit-lflow-cache=%d", config.Default.LFlowCacheLimit),
+			fmt.Sprintf("external_ids:ovn-limit-lflow-cache%s=%d", util.GetOvnChassisNameSuffix(), config.Default.LFlowCacheLimit),
 		)
 	}
 
 	if config.Default.LFlowCacheLimitKb > 0 {
 		setExternalIdsCmd = append(setExternalIdsCmd,
-			fmt.Sprintf("external_ids:ovn-memlimit-lflow-cache-kb=%d", config.Default.LFlowCacheLimitKb),
+			fmt.Sprintf("external_ids:ovn-memlimit-lflow-cache-kb%s=%d", util.GetOvnChassisNameSuffix(), config.Default.LFlowCacheLimitKb),
 		)
 	}
 
 	// In the case of DPU, the hostname should be that of the DPU and not
 	// the K8s Node's. So skip setting the incorrect hostname.
 	if config.OvnKubeNode.Mode != types.NodeModeDPU {
-		setExternalIdsCmd = append(setExternalIdsCmd, fmt.Sprintf("external_ids:hostname=\"%s\"", node.Name))
+		setExternalIdsCmd = append(setExternalIdsCmd, fmt.Sprintf("external_ids:hostname%s=%q", util.GetOvnChassisNameSuffix(), node.Name))
 	}
 
 	_, stderr, err := util.RunOVSVsctl(setExternalIdsCmd...)
@@ -647,7 +647,7 @@ func getManagementPortNetDev(netdevName string) (string, error) {
 		}
 		// this may not the first time invoked on the node after reboot
 		// netdev may have already been renamed to ovn-k8s-mp0.
-		link, err = util.GetNetLinkOps().LinkByName(types.K8sMgmtIntfName)
+		link, err = util.GetNetLinkOps().LinkByName(util.K8sMgmtIntfName())
 		if err != nil {
 			return "", fmt.Errorf("failed to get link device for %s. %v", netdevName, err)
 		}

@@ -159,7 +159,7 @@ type managementPortNetdev struct {
 // newManagementPortNetdev creates a new managementPortNetdev
 func newManagementPortNetdev(netdevDevName string, cfg *managementPortConfig, routeManager *routemanager.Controller) *managementPortNetdev {
 	return &managementPortNetdev{
-		ifName:        types.K8sMgmtIntfName,
+		ifName:        util.K8sMgmtIntfName(),
 		netdevDevName: netdevDevName,
 		cfg:           cfg,
 		routeManager:  routeManager,

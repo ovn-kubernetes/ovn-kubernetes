@@ -290,6 +290,9 @@ type DefaultConfig struct {
 	// Zone name to which ovnkube-node/ovnkube-controller belongs to
 	Zone string `gcfg:"zone"`
 
+	// OvnChassisName is the OVN Chassis name to be used for this ovn-kubernetes instance
+	OvnChassisName string `gcfg:"ovn-chassis-name"`
+
 	// RawUDNAllowedDefaultServices holds the unparsed UDNAllowedDefaultServices. Should only be
 	// used inside config module.
 	RawUDNAllowedDefaultServices string `gcfg:"udn-allowed-default-services"`
@@ -974,6 +977,12 @@ var CommonFlags = []cli.Flag{
 			"Only used when enable-network-segmentation is set",
 		Value:       Default.RawUDNAllowedDefaultServices,
 		Destination: &cliConfig.Default.RawUDNAllowedDefaultServices,
+	},
+	&cli.StringFlag{
+		Name:        "ovn-chassis-name",
+		Usage:       "The name of the OVN Chassis in the OVN DB",
+		Value:       "",
+		Destination: &cliConfig.Default.OvnChassisName,
 	},
 }
 
@@ -1728,6 +1737,9 @@ func runOVSVsctl(exec kexec.Interface, args ...string) (string, error) {
 }
 
 func getOVSExternalID(exec kexec.Interface, name string) string {
+	if Default.OvnChassisName != "" {
+		name = name + fmt.Sprintf("-%s", Default.OvnChassisName)
+	}
 	out, err := runOVSVsctl(exec,
 		"--if-exists",
 		"get",
@@ -1742,6 +1754,9 @@ func getOVSExternalID(exec kexec.Interface, name string) string {
 }
 
 func setOVSExternalID(exec kexec.Interface, key, value string) error {
+	if Default.OvnChassisName != "" {
+		key = key + fmt.Sprintf("-%s", Default.OvnChassisName)
+	}
 	out, err := runOVSVsctl(exec,
 		"set",
 		"Open_vSwitch",

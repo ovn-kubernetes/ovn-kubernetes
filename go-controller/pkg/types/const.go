@@ -17,9 +17,6 @@ const (
 	// UDNVRFDevicePrefix vrf device prefix associated with every user
 	UDNVRFDevicePrefix = "mp"
 
-	// K8sMgmtIntfName name to be used as an OVS internal port on the node
-	K8sMgmtIntfName = K8sMgmtIntfNamePrefix + "0"
-
 	// PhysicalNetworkName is the name that maps to an OVS bridge that provides
 	// access to physical/external network
 	PhysicalNetworkName     = "physnet"

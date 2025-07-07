@@ -352,7 +352,7 @@ func checkForStaleOVSInternalPorts() {
 	staleInterfaceArgs := []string{}
 	values := strings.Split(stdout, "\n\n")
 	for _, val := range values {
-		if val == ovntypes.K8sMgmtIntfName || val == ovntypes.K8sMgmtIntfName+"_0" {
+		if val == util.K8sMgmtIntfName() || val == util.K8sMgmtIntfName()+"_0" {
 			klog.Errorf("Management port %s is missing. Perhaps the host rebooted "+
 				"or SR-IOV VFs were disabled on the host.", val)
 			continue

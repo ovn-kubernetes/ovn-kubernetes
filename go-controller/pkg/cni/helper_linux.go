@@ -395,7 +395,7 @@ func setupSriovInterface(netns ns.NetNS, containerID, ifName string, ifInfo *Pod
 }
 
 func getPfEncapIP(deviceID string) (string, error) {
-	stdout, err := ovsGet("Open_vSwitch", ".", "external_ids", "ovn-pf-encap-ip-mapping")
+	stdout, err := ovsGet("Open_vSwitch", ".", "external_ids", fmt.Sprintf("ovn-pf-encap-ip-mapping%s", util.GetOvnChassisNameSuffix()))
 	if err != nil {
 		return "", fmt.Errorf("failed to get ovn-pf-encap-ip-mapping, error: %v", err)
 	}

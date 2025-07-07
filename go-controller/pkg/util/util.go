@@ -212,6 +212,9 @@ func GetNodeAddresses(ipv4, ipv6 bool, nodes ...*corev1.Node) (ipsv4 []net.IP, i
 
 // GetNodeChassisID returns the machine's OVN chassis ID
 func GetNodeChassisID() (string, error) {
+	if GetOvnChassisName() != "" {
+		return GetOvnChassisName(), nil
+	}
 	chassisID, stderr, err := RunOVSVsctl("--if-exists", "get",
 		"Open_vSwitch", ".", "external_ids:system-id")
 	if err != nil {
@@ -675,4 +678,29 @@ func GetMirroredEndpointSlices(controller, sourceName, namespace string, endpoin
 // GetOvnBridgeName returns the name of the OVS integration bridge from config.Default.BridgeName
 func GetOvnBridgeName() string {
 	return config.Default.BridgeName
+}
+
+// GetOvnChassisName returns the name of the OvnChassisName from config.Default.OvnChassisName
+func GetOvnChassisName() string {
+	return config.Default.OvnChassisName
+}
+
+// GetOvnChassisNameSuffix returns the name of the OvnChassisName from config.Default.OvnChassisName
+func GetOvnChassisNameSuffix() string {
+	if config.Default.OvnChassisName == "" {
+		return ""
+	}
+	return "-" + config.Default.OvnChassisName
+}
+
+// K8sMgmtIntfName returns the management port name with optional system-id suffix.
+// This provides unique naming when multiple OVN instances are running.
+// Returns "ovn-k8s-mp0" for empty OvnChassisName
+// or "ovn-k8s-mp10" when OvnChassisName is configured.
+// This allows to run 2 ovnks on the same host one with ChassisName defined and one without
+func K8sMgmtIntfName() string {
+	if config.Default.OvnChassisName == "" {
+		return types.K8sMgmtIntfNamePrefix + "0"
+	}
+	return types.K8sMgmtIntfNamePrefix + "1" + "0"
 }

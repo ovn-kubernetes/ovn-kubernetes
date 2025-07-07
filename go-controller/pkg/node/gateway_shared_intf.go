@@ -126,7 +126,7 @@ func configureUDNServicesNFTables() error {
 	tx.Add(&knftables.Rule{
 		Chain: nftablesUDNServicePreroutingChain,
 		Rule: knftables.Concat(
-			"iifname", "!=", types.K8sMgmtIntfName,
+			"iifname", "!=", util.K8sMgmtIntfName(),
 			"jump", nftablesUDNServiceMarkChain,
 		),
 	})

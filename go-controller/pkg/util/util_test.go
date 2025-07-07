@@ -25,3 +25,31 @@ func TestGetPatchPortNameWithCustomBridgeName(t *testing.T) {
 		}
 	}
 }
+
+func TestK8sMgmtIntfName(t *testing.T) {
+	tests := []struct {
+		name        string
+		chassisName string
+		expected    string
+	}{
+		{
+			name:        "without chassis name",
+			chassisName: "",
+			expected:    "ovn-k8s-mp0",
+		},
+		{
+			name:        "with chassis name",
+			chassisName: "test-chassis",
+			expected:    "ovn-k8s-mp10",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config.Default.OvnChassisName = tt.chassisName
+			if name := K8sMgmtIntfName(); name != tt.expected {
+				t.Errorf("K8sMgmtIntfName() = %q, want %q", name, tt.expected)
+			}
+		})
+	}
+}

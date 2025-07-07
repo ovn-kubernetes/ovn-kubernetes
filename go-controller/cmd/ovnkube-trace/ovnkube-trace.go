@@ -479,7 +479,7 @@ func getPodInfo(coreclient *corev1client.CoreV1Client, restconfig *rest.Config, 
 	// Get the pod's MAC address.
 	// If hostnetwork, use mp0 mac
 	if pod.Spec.HostNetwork {
-		podInfo.OvnK8sMp0PortName = types.K8sMgmtIntfName
+		podInfo.OvnK8sMp0PortName = util.K8sMgmtIntfName()
 		portCmd := fmt.Sprintf("ovs-vsctl get Interface %s mac_in_use", podInfo.OvnK8sMp0PortName)
 		localOutput, localError, err := execInPod(coreclient, restconfig, ovnNamespace, podInfo.OvnKubePodName, podInfo.OvnKubeContainerName, portCmd, "")
 		if err != nil {
@@ -511,7 +511,7 @@ func getPodInfo(coreclient *corev1client.CoreV1Client, restconfig *rest.Config, 
 
 	// Set information specific to ovn-k8s-mp0. This info is required for routingViaHost gateway mode traffic to an external IP
 	// destination.
-	podInfo.OvnK8sMp0PortName = types.K8sMgmtIntfName
+	podInfo.OvnK8sMp0PortName = util.K8sMgmtIntfName()
 	portCmd := fmt.Sprintf("ovs-vsctl get Interface %s ofport", podInfo.OvnK8sMp0PortName)
 	localOutput, localError, err := execInPod(coreclient, restconfig, ovnNamespace, podInfo.OvnKubePodName, podInfo.OvnKubeContainerName, portCmd, "")
 	if err != nil {
