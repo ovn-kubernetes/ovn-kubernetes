@@ -19,7 +19,7 @@ import (
 // Allocator manages the allocation of IP within specific set of subnets
 // identified by a name. Allocator should be threadsafe.
 type Allocator interface {
-	AddOrUpdateSubnet(name string, subnets []*net.IPNet, excludeSubnets ...*net.IPNet) error
+	AddOrUpdateSubnet(name string, subnets []*net.IPNet, reservedSubnets []*net.IPNet, excludeSubnets ...*net.IPNet) error
 	DeleteSubnet(name string)
 	GetSubnets(name string) ([]*net.IPNet, error)
 	AllocateUntilFull(name string) error
@@ -46,10 +46,14 @@ var ErrSubnetNotFound = errors.New("subnet not found")
 // of the managed subnets
 type subnetInfo struct {
 	subnets []*net.IPNet
-	ipams   []ipallocator.ContinuousAllocator
+	// ipams holds continuous IP allocators for dynamic IP allocation within the managed subnets.
+	ipams []ipallocator.ContinuousAllocator
+	// staticIPAMs holds static IP allocators for reserved subnets that support static IP allocation (currently only supported for Layer2 primary networks)
+	staticIPAMs []ipallocator.StaticAllocator
 }
 
-type ipamFactoryFunc func(*net.IPNet) (ipallocator.ContinuousAllocator, error)
+type continuousIPAMFactoryFunc func(*net.IPNet) (ipallocator.ContinuousAllocator, error)
+type staticIPAMFactoryFunc func(*net.IPNet) (ipallocator.StaticAllocator, error)
 
 // allocator provides IPAM for different sets of subnets. Each set is
 // identified with a subnet name.
@@ -57,7 +61,8 @@ type allocator struct {
 	cache map[string]subnetInfo
 	// A RW mutex which holds subnet information
 	sync.RWMutex
-	ipamFunc ipamFactoryFunc
+	ipamFunc         continuousIPAMFactoryFunc
+	reservedIPAMFunc staticIPAMFactoryFunc
 }
 
 // newIPAMAllocator provides an ipam interface which can be used for IPAM
@@ -70,17 +75,26 @@ func newIPAMAllocator(cidr *net.IPNet) (ipallocator.ContinuousAllocator, error) 
 	})
 }
 
+// newReservedIPAMAllocator provides an ipam interface which can be used for IPAM
+// allocations for a given cidr using static IP allocations only.
+func newReservedIPAMAllocator(cidr *net.IPNet) (ipallocator.StaticAllocator, error) {
+	return ipallocator.NewAllocatorCIDRRange(cidr, func(max int, rangeSpec string) (bitmapallocator.Interface, error) {
+		return bitmapallocator.NewRoundRobinAllocationMap(max, rangeSpec), nil
+	})
+}
+
 // Initializes a new subnet IP allocator
 func NewAllocator() *allocator {
 	return &allocator{
-		cache:    make(map[string]subnetInfo),
-		RWMutex:  sync.RWMutex{},
-		ipamFunc: newIPAMAllocator,
+		cache:            make(map[string]subnetInfo),
+		RWMutex:          sync.RWMutex{},
+		ipamFunc:         newIPAMAllocator,
+		reservedIPAMFunc: newReservedIPAMAllocator,
 	}
 }
 
 // AddOrUpdateSubnet set to the allocator for IPAM management, or update it.
-func (allocator *allocator) AddOrUpdateSubnet(name string, subnets []*net.IPNet, excludeSubnets ...*net.IPNet) error {
+func (allocator *allocator) AddOrUpdateSubnet(name string, subnets []*net.IPNet, reservedSubnets []*net.IPNet, excludeSubnets ...*net.IPNet) error {
 	allocator.Lock()
 	defer allocator.Unlock()
 	if subnetInfo, ok := allocator.cache[name]; ok && !reflect.DeepEqual(subnetInfo.subnets, subnets) {
@@ -94,12 +108,9 @@ func (allocator *allocator) AddOrUpdateSubnet(name string, subnets []*net.IPNet,
 		}
 		ipams = append(ipams, ipam)
 	}
-	allocator.cache[name] = subnetInfo{
-		subnets: subnets,
-		ipams:   ipams,
-	}
 
-	for _, excludeSubnet := range excludeSubnets {
+	// reservedSubnets is a subset of subnets, and it should not be used by automatic IPAM
+	for _, excludeSubnet := range append(reservedSubnets, excludeSubnets...) {
 		var excluded bool
 		for i, subnet := range subnets {
 			if util.ContainsCIDR(subnet, excludeSubnet) {
@@ -113,6 +124,20 @@ func (allocator *allocator) AddOrUpdateSubnet(name string, subnets []*net.IPNet,
 		if !excluded {
 			return fmt.Errorf("failed to exclude subnet %s for %s: not contained in any of the subnets", excludeSubnet, name)
 		}
+	}
+
+	var staticIPAMs []ipallocator.StaticAllocator
+	for _, reservedSubnet := range reservedSubnets {
+		ipam, err := allocator.reservedIPAMFunc(reservedSubnet)
+		if err != nil {
+			return fmt.Errorf("failed to initialize IPAM of reserved subnet %s for %s: %w", reservedSubnet, name, err)
+		}
+		staticIPAMs = append(staticIPAMs, ipam)
+	}
+	allocator.cache[name] = subnetInfo{
+		subnets:     subnets,
+		ipams:       ipams,
+		staticIPAMs: staticIPAMs,
 	}
 	return nil
 }
@@ -173,38 +198,68 @@ func (allocator *allocator) AllocateIPPerSubnet(name string, ips []*net.IPNet) e
 	subnetInfo, ok := allocator.cache[name]
 	if !ok {
 		return fmt.Errorf("failed to allocate IPs %v for %s: %w", util.StringSlice(ips), name, ErrSubnetNotFound)
-	} else if len(subnetInfo.ipams) == 0 {
+	} else if len(subnetInfo.ipams) == 0 && len(subnetInfo.staticIPAMs) == 0 {
 		return fmt.Errorf("failed to allocate IPs %v for subnet %s: has no IPAM", util.StringSlice(ips), name)
 	}
 
 	var err error
-	allocated := make(map[int]*net.IPNet)
+	allocatedContinuous := make(map[int]*net.IPNet)
+	allocatedStatic := make(map[int]*net.IPNet)
 	defer func() {
 		if err != nil {
 			// iterate over range of already allocated indices and release
 			// ips allocated before the error occurred.
-			for relIdx, relIPNet := range allocated {
+			for relIdx, relIPNet := range allocatedContinuous {
 				subnetInfo.ipams[relIdx].Release(relIPNet.IP)
 				if relIPNet.IP != nil {
-					klog.Warningf("Reserved IP %s was released for %s", relIPNet.IP, name)
+					klog.Warningf("Continuous IP %s was released for %s", relIPNet.IP, name)
+				}
+			}
+			for relIdx, relIPNet := range allocatedStatic {
+				subnetInfo.staticIPAMs[relIdx].Release(relIPNet.IP)
+				if relIPNet.IP != nil {
+					klog.Warningf("Static IP %s was released for %s", relIPNet.IP, name)
 				}
 			}
 		}
 	}()
 
 	for _, ipnet := range ips {
-		for idx, ipam := range subnetInfo.ipams {
+		allocated := false
+
+		// Try static IPAMs first (for reserved subnets)
+		for idx, ipam := range subnetInfo.staticIPAMs {
 			cidr := ipam.CIDR()
 			if cidr.Contains(ipnet.IP) {
-				if _, ok = allocated[idx]; ok {
-					err = fmt.Errorf("failed to allocate IP %s for %s: attempted to reserve multiple IPs in the same IPAM instance", ipnet.IP, name)
+				if _, ok = allocatedStatic[idx]; ok {
+					err = fmt.Errorf("failed to allocate IP %s for %s: attempted to reserve multiple IPs in the same static IPAM instance", ipnet.IP, name)
 					return err
 				}
 				if err = ipam.Allocate(ipnet.IP); err != nil {
 					return err
 				}
-				allocated[idx] = ipnet
+				allocatedStatic[idx] = ipnet
+				allocated = true
 				break
+			}
+		}
+
+		// If not found in static IPAMs, try continuous IPAMs
+		if !allocated {
+			for idx, ipam := range subnetInfo.ipams {
+				cidr := ipam.CIDR()
+				if cidr.Contains(ipnet.IP) {
+					if _, ok = allocatedContinuous[idx]; ok {
+						err = fmt.Errorf("failed to allocate IP %s for %s: attempted to reserve multiple IPs in the same continuous IPAM instance", ipnet.IP, name)
+						return err
+					}
+					if err = ipam.Allocate(ipnet.IP); err != nil {
+						return err
+					}
+					allocatedContinuous[idx] = ipnet
+					allocated = true
+					break
+				}
 			}
 		}
 	}
@@ -293,6 +348,20 @@ func (allocator *allocator) ReleaseIPs(name string, ips []*net.IPNet) error {
 	}
 
 	for _, ipnet := range ips {
+		released := false
+		for _, ipam := range subnetInfo.staticIPAMs {
+			cidr := ipam.CIDR()
+			if cidr.Contains(ipnet.IP) {
+				ipam.Release(ipnet.IP)
+				released = true
+				break
+			}
+		}
+		// Continue if the IP was released already
+		if released {
+			continue
+		}
+
 		for _, ipam := range subnetInfo.ipams {
 			cidr := ipam.CIDR()
 			if cidr.Contains(ipnet.IP) {
@@ -317,13 +386,23 @@ func (allocator *allocator) ConditionalIPRelease(name string, ips []*net.IPNet, 
 	if !ok {
 		return false, nil
 	}
-	if len(subnetInfo.ipams) == 0 {
+	if len(subnetInfo.ipams) == 0 && len(subnetInfo.staticIPAMs) == 0 {
 		return false, nil
 	}
 
 	// check if ipam has one of the ip addresses, and then execute the predicate function to determine
 	// if this IP should be released or not
 	for _, ipnet := range ips {
+		// Check static IPAMs first
+		for _, ipam := range subnetInfo.staticIPAMs {
+			cidr := ipam.CIDR()
+			if cidr.Contains(ipnet.IP) {
+				if ipam.Has(ipnet.IP) {
+					return predicate()
+				}
+			}
+		}
+		// Check continuous IPAMs
 		for _, ipam := range subnetInfo.ipams {
 			cidr := ipam.CIDR()
 			if cidr.Contains(ipnet.IP) {
@@ -352,6 +431,13 @@ func (allocator *allocator) GetSubnetName(subnets []*net.IPNet) (string, bool) {
 	defer allocator.RUnlock()
 	for _, subnet := range subnets {
 		for switchName, lsInfo := range allocator.cache {
+			for _, ipam := range lsInfo.staticIPAMs {
+				ipamCIDR := ipam.CIDR()
+				if ipamCIDR.Contains(subnet.IP) {
+					return switchName, true
+				}
+			}
+
 			for _, ipam := range lsInfo.ipams {
 				ipamCIDR := ipam.CIDR()
 				if ipamCIDR.Contains(subnet.IP) {
