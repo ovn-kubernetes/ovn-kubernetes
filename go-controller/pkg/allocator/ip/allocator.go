@@ -236,3 +236,39 @@ func (r *Range) contains(ip net.IP) (bool, int) {
 func calculateIPOffset(base *big.Int, ip net.IP) int {
 	return int(big.NewInt(0).Sub(utilnet.BigForIP(ip), base).Int64())
 }
+
+// ReservedRange is a wrapper around Range that restricts IP allocation behavior.
+// It allows allocation of specific IPs but prevents continuous allocation via AllocateNext.
+// Used for reserved IP ranges where only predetermined addresses should be allocated,
+// not arbitrary next available addresses.
+type ReservedRange struct {
+	*Range
+}
+
+func (r *ReservedRange) Allocate(ip net.IP) error {
+	return r.Range.Allocate(ip)
+}
+
+func (r *ReservedRange) AllocateNext() (net.IP, error) {
+	return nil, fmt.Errorf("reserved range does not support continuous allocation")
+}
+
+func (r *ReservedRange) Release(ip net.IP) {
+	r.Range.Release(ip)
+}
+
+func (r *ReservedRange) ForEach(f func(net.IP)) {
+	r.Range.ForEach(f)
+}
+
+func (r *ReservedRange) CIDR() net.IPNet {
+	return r.Range.CIDR()
+}
+
+func (r *ReservedRange) Has(ip net.IP) bool {
+	return r.Range.Has(ip)
+}
+
+func (r *ReservedRange) Reserved(ip net.IP) bool {
+	return r.Range.Reserved(ip)
+}

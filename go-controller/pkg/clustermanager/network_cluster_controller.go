@@ -788,11 +788,7 @@ func newIPAllocatorForNetwork(netInfo util.NetInfo) (subnet.Allocator, error) {
 		}
 	}
 
-	if err := ipAllocator.AddOrUpdateSubnet(
-		netInfo.GetNetworkName(),
-		ipNets,
-		excludeSubnets...,
-	); err != nil {
+	if err := ipAllocator.AddOrUpdateSubnet(netInfo.GetNetworkName(), ipNets, netInfo.ReservedSubnets(), excludeSubnets...); err != nil {
 		return nil, err
 	}
 
