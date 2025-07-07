@@ -41,6 +41,7 @@ type NetInfo interface {
 	IPMode() (bool, bool)
 	Subnets() []config.CIDRNetworkEntry
 	ExcludeSubnets() []*net.IPNet
+	ReservedSubnets() []*net.IPNet
 	JoinSubnetV4() *net.IPNet
 	JoinSubnetV6() *net.IPNet
 	JoinSubnets() []*net.IPNet
@@ -578,6 +579,11 @@ func (nInfo *DefaultNetInfo) ExcludeSubnets() []*net.IPNet {
 	return nil
 }
 
+// ReservedSubnets returns the defaultNetConfInfo's ReservedSubnets value
+func (nInfo *DefaultNetInfo) ReservedSubnets() []*net.IPNet {
+	return nil
+}
+
 // JoinSubnetV4 returns the defaultNetConfInfo's JoinSubnetV4 value
 // call when ipv4mode=true
 func (nInfo *DefaultNetInfo) JoinSubnetV4() *net.IPNet {
@@ -650,6 +656,7 @@ type secondaryNetInfo struct {
 	ipv4mode, ipv6mode bool
 	subnets            []config.CIDRNetworkEntry
 	excludeSubnets     []*net.IPNet
+	reservedSubnets    []*net.IPNet
 	joinSubnets        []*net.IPNet
 
 	physicalNetworkName string
@@ -790,6 +797,11 @@ func (nInfo *secondaryNetInfo) ExcludeSubnets() []*net.IPNet {
 	return nInfo.excludeSubnets
 }
 
+// ReservedSubnets returns the ReservedSubnets value
+func (nInfo *secondaryNetInfo) ReservedSubnets() []*net.IPNet {
+	return nInfo.reservedSubnets
+}
+
 // JoinSubnetV4 returns the defaultNetConfInfo's JoinSubnetV4 value
 // call when ipv4mode=true
 func (nInfo *secondaryNetInfo) JoinSubnetV4() *net.IPNet {
@@ -858,6 +870,9 @@ func (nInfo *secondaryNetInfo) canReconcile(other NetInfo) bool {
 	if !cmp.Equal(nInfo.excludeSubnets, other.ExcludeSubnets(), cmpopts.SortSlices(lessIPNet)) {
 		return false
 	}
+	if !cmp.Equal(nInfo.reservedSubnets, other.ReservedSubnets(), cmpopts.SortSlices(lessIPNet)) {
+		return false
+	}
 	return cmp.Equal(nInfo.joinSubnets, other.JoinSubnets(), cmpopts.SortSlices(lessIPNet))
 }
 
@@ -874,6 +889,7 @@ func (nInfo *secondaryNetInfo) copy() *secondaryNetInfo {
 		ipv6mode:            nInfo.ipv6mode,
 		subnets:             nInfo.subnets,
 		excludeSubnets:      nInfo.excludeSubnets,
+		reservedSubnets:     nInfo.reservedSubnets,
 		joinSubnets:         nInfo.joinSubnets,
 		physicalNetworkName: nInfo.physicalNetworkName,
 	}
@@ -884,7 +900,7 @@ func (nInfo *secondaryNetInfo) copy() *secondaryNetInfo {
 }
 
 func newLayer3NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) {
-	subnets, _, err := parseSubnets(netconf.Subnets, "", types.Layer3Topology)
+	subnets, _, _, err := parseSubnets(netconf.Subnets, "", "", types.Layer3Topology)
 	if err != nil {
 		return nil, err
 	}
@@ -909,7 +925,7 @@ func newLayer3NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 }
 
 func newLayer2NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) {
-	subnets, excludes, err := parseSubnets(netconf.Subnets, netconf.ExcludeSubnets, types.Layer2Topology)
+	subnets, excludes, reserved, err := parseSubnets(netconf.Subnets, netconf.ExcludeSubnets, netconf.ReservedSubnets, types.Layer2Topology)
 	if err != nil {
 		return nil, fmt.Errorf("invalid %s netconf %s: %v", netconf.Topology, netconf.Name, err)
 	}
@@ -924,6 +940,7 @@ func newLayer2NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 		subnets:            subnets,
 		joinSubnets:        joinSubnets,
 		excludeSubnets:     excludes,
+		reservedSubnets:    reserved,
 		mtu:                netconf.MTU,
 		allowPersistentIPs: netconf.AllowPersistentIPs,
 		mutableNetInfo: mutableNetInfo{
@@ -936,7 +953,7 @@ func newLayer2NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 }
 
 func newLocalnetNetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) {
-	subnets, excludes, err := parseSubnets(netconf.Subnets, netconf.ExcludeSubnets, types.LocalnetTopology)
+	subnets, excludes, _, err := parseSubnets(netconf.Subnets, netconf.ExcludeSubnets, "", types.LocalnetTopology)
 	if err != nil {
 		return nil, fmt.Errorf("invalid %s netconf %s: %v", netconf.Topology, netconf.Name, err)
 	}
@@ -959,7 +976,7 @@ func newLocalnetNetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error
 	return ni, nil
 }
 
-func parseSubnets(subnetsString, excludeSubnetsString, topology string) ([]config.CIDRNetworkEntry, []*net.IPNet, error) {
+func parseSubnets(subnetsString string, excludeSubnetsString string, reservedSubnetsString string, topology string) ([]config.CIDRNetworkEntry, []*net.IPNet, []*net.IPNet, error) {
 	var parseSubnets func(clusterSubnetCmd string) ([]config.CIDRNetworkEntry, error)
 	switch topology {
 	case types.Layer3Topology:
@@ -978,7 +995,7 @@ func parseSubnets(subnetsString, excludeSubnetsString, topology string) ([]confi
 		var err error
 		subnets, err = parseSubnets(subnetsString)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 	}
 
@@ -988,7 +1005,7 @@ func parseSubnets(subnetsString, excludeSubnetsString, topology string) ([]confi
 		// prefix length)
 		excludeSubnets, err := config.ParseClusterSubnetEntriesWithDefaults(excludeSubnetsString, 0, 0)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		excludeIPNets = make([]*net.IPNet, 0, len(excludeSubnets))
 		for _, excludeSubnet := range excludeSubnets {
@@ -1000,14 +1017,39 @@ func parseSubnets(subnetsString, excludeSubnetsString, topology string) ([]confi
 				}
 			}
 			if !found {
-				return nil, nil, fmt.Errorf("the provided network subnets %v do not contain exluded subnets %v",
+				return nil, nil, nil, fmt.Errorf("the provided network subnets %v do not contain exluded subnets %v",
 					subnets, excludeSubnet.CIDR)
 			}
 			excludeIPNets = append(excludeIPNets, excludeSubnet.CIDR)
 		}
 	}
 
-	return subnets, excludeIPNets, nil
+	var reservedIPNets []*net.IPNet
+	if strings.TrimSpace(reservedSubnetsString) != "" {
+		// For L2 topologies, host specific prefix length is ignored (using 0 as
+		// prefix length)
+		reservedSubnets, err := config.ParseClusterSubnetEntriesWithDefaults(reservedSubnetsString, 0, 0)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		reservedIPNets = make([]*net.IPNet, 0, len(reservedSubnets))
+		for _, reservedSubnet := range reservedSubnets {
+			found := false
+			for _, subnet := range subnets {
+				if ContainsCIDR(subnet.CIDR, reservedSubnet.CIDR) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return nil, nil, nil, fmt.Errorf("the provided network subnets %v do not contain reserved subnets %v",
+					subnets, reservedSubnet.CIDR)
+			}
+			reservedIPNets = append(reservedIPNets, reservedSubnet.CIDR)
+		}
+	}
+
+	return subnets, excludeIPNets, reservedIPNets, nil
 }
 
 func parseJoinSubnet(joinSubnet string) ([]*net.IPNet, error) {
