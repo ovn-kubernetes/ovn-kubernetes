@@ -57,12 +57,17 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 	)
 
 	const (
-		port                                = 9000
 		nodeHostnameKey                     = "kubernetes.io/hostname"
 		podClusterNetPort            uint16 = 9000
 		podClusterNetDefaultPort     uint16 = 8080
 		userDefinedNetworkIPv4Subnet        = "10.128.0.0/16"
 		userDefinedNetworkIPv6Subnet        = "2014:100:200::0/60"
+		customL2IPv4Gateway                 = "10.128.0.3"
+		customL2IPv6Gateway                 = "2014:100:200::3"
+		customL2IPv4ReservedCIDR            = "10.128.1.0/24"
+		customL2IPv6ReservedCIDR            = "2014:100:200::100/120"
+		customL2IPv4InfraCIDR               = "10.128.0.0/30"
+		customL2IPv6InfraCIDR               = "2014:100:200::/122"
 		userDefinedNetworkName              = "hogwarts"
 		nadName                             = "gryffindor"
 	)
@@ -130,6 +135,17 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 							topology: "layer2",
 							cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							role:     "primary",
+						},
+					),
+					Entry("L2 primary UDN with custom network",
+						&networkAttachmentConfigParams{
+							name:              nadName,
+							topology:          "layer2",
+							cidr:              joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							role:              "primary",
+							defaultGatewayIPs: joinStrings(customL2IPv4Gateway, customL2IPv6Gateway),
+							reservedCIDRs:     joinStrings(customL2IPv4ReservedCIDR, customL2IPv6ReservedCIDR),
+							infraCIDRs:        joinStrings(customL2IPv4InfraCIDR, customL2IPv6InfraCIDR),
 						},
 					),
 					Entry("L3 primary UDN",
@@ -203,6 +219,27 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 							topology: "layer2",
 							cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							role:     "primary",
+						},
+						*podConfig(
+							"client-pod",
+						),
+						*podConfig(
+							"server-pod",
+							withCommand(func() []string {
+								return httpServerContainerCmd(podClusterNetPort)
+							}),
+						),
+					),
+					Entry(
+						"two pods connected over a L2 primary UDN with custom network",
+						&networkAttachmentConfigParams{
+							name:              nadName,
+							topology:          "layer2",
+							cidr:              joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							role:              "primary",
+							defaultGatewayIPs: joinStrings(customL2IPv4Gateway, customL2IPv6Gateway),
+							reservedCIDRs:     joinStrings(customL2IPv4ReservedCIDR, customL2IPv6ReservedCIDR),
+							infraCIDRs:        joinStrings(customL2IPv4InfraCIDR, customL2IPv6InfraCIDR),
 						},
 						*podConfig(
 							"client-pod",
@@ -409,7 +446,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 								_, err := infraprovider.Get().ExecK8NodeCommand(nodeName, []string{
 									"curl", "--connect-timeout", "2",
 									net.JoinHostPort(destIP, fmt.Sprintf("%d", podClusterNetDefaultPort)),
-									})
+								})
 								return err == nil
 							}).Should(BeTrue())
 						}
@@ -429,7 +466,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 								_, err := infraprovider.Get().ExecK8NodeCommand(nodeName, []string{
 									"curl", "--connect-timeout", "2",
 									net.JoinHostPort(destIP, fmt.Sprintf("%d", podClusterNetPort)),
-									})
+								})
 								return err != nil
 							}, 5*time.Second).Should(BeTrue())
 						}
@@ -499,6 +536,24 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 							topology: "layer2",
 							cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							role:     "primary",
+						},
+						*podConfig(
+							"udn-pod",
+							withCommand(func() []string {
+								return httpServerContainerCmd(podClusterNetPort)
+							}),
+						),
+					),
+					Entry(
+						"with L2 primary UDN with custom network",
+						&networkAttachmentConfigParams{
+							name:              nadName,
+							topology:          "layer2",
+							cidr:              joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							role:              "primary",
+							defaultGatewayIPs: joinStrings(customL2IPv4Gateway, customL2IPv6Gateway),
+							reservedCIDRs:     joinStrings(customL2IPv4ReservedCIDR, customL2IPv6ReservedCIDR),
+							infraCIDRs:        joinStrings(customL2IPv4InfraCIDR, customL2IPv6InfraCIDR),
 						},
 						*podConfig(
 							"udn-pod",
@@ -859,6 +914,15 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 					cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 					role:     "primary",
 				}),
+				ginkgo.Entry("with primary layer2 UDN with custom network", networkAttachmentConfigParams{
+					name:              nadName,
+					topology:          "layer2",
+					cidr:              joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					role:              "primary",
+					defaultGatewayIPs: joinStrings(customL2IPv4Gateway, customL2IPv6Gateway),
+					reservedCIDRs:     joinStrings(customL2IPv4ReservedCIDR, customL2IPv6ReservedCIDR),
+					infraCIDRs:        joinStrings(customL2IPv4InfraCIDR, customL2IPv6InfraCIDR),
+				}),
 			)
 			DescribeTable("should be able to receive multicast IGMP query", func(netConfigParams networkAttachmentConfigParams) {
 				ginkgo.By("creating the attachment configuration")
@@ -885,6 +949,15 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 				//	topology: "layer2",
 				//	cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 				//	role:     "primary",
+				//}),
+				//ginkgo.Entry("with primary layer2 UDN with custom network", networkAttachmentConfigParams{
+				//	name:              nadName,
+				//	topology:          "layer2",
+				//	cidr:              joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+				//	role:              "primary",
+				//	defaultGatewayIPs: joinStrings(customL2IPv4Gateway, customL2IPv6Gateway),
+				//	reservedCIDRs:     joinStrings(customL2IPv4ReservedCIDR, customL2IPv6ReservedCIDR),
+				//	infraCIDRs:        joinStrings(customL2IPv4InfraCIDR, customL2IPv6InfraCIDR),
 				//}),
 			)
 		})
@@ -1537,6 +1610,18 @@ spec:
 						},
 						*podConfig("client-pod"),
 					),
+					Entry("by one pod over a layer2 network with custom network",
+						&networkAttachmentConfigParams{
+							name:              userDefinedNetworkName,
+							topology:          "layer2",
+							cidr:              joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							role:              "primary",
+							defaultGatewayIPs: joinStrings(customL2IPv4Gateway, customL2IPv6Gateway),
+							reservedCIDRs:     joinStrings(customL2IPv4ReservedCIDR, customL2IPv6ReservedCIDR),
+							infraCIDRs:        joinStrings(customL2IPv4InfraCIDR, customL2IPv6InfraCIDR),
+						},
+						*podConfig("client-pod"),
+					),
 					Entry("by one pod over a layer3 network",
 						&networkAttachmentConfigParams{
 							name:     userDefinedNetworkName,
@@ -1800,6 +1885,27 @@ spec:
 					}),
 				),
 			),
+			Entry(
+				"L2 with custom network",
+				networkAttachmentConfigParams{
+					name:              nadName,
+					topology:          "layer2",
+					cidr:              joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					role:              "primary",
+					defaultGatewayIPs: joinStrings(customL2IPv4Gateway, customL2IPv6Gateway),
+					reservedCIDRs:     joinStrings(customL2IPv4ReservedCIDR, customL2IPv6ReservedCIDR),
+					infraCIDRs:        joinStrings(customL2IPv4InfraCIDR, customL2IPv6InfraCIDR),
+				},
+				*podConfig(
+					"client-pod",
+				),
+				*podConfig(
+					"server-pod",
+					withCommand(func() []string {
+						return httpServerContainerCmd(podClusterNetPort)
+					}),
+				),
+			),
 		)
 	})
 })
@@ -1822,7 +1928,7 @@ func generateUserDefinedNetworkManifest(params *networkAttachmentConfigParams, c
 	filterSupportedNetworkConfig(client, params)
 
 	subnets := generateSubnetsYaml(params)
-	return `
+	manifest := `
 apiVersion: k8s.ovn.org/v1
 kind: UserDefinedNetwork
 metadata:
@@ -1831,15 +1937,29 @@ spec:
   topology: ` + nadToUdnParams[params.topology] + `
   ` + params.topology + `: 
     role: ` + nadToUdnParams[params.role] + `
-    subnets: ` + subnets + `
-`
+    subnets: ` + subnets + ``
+	if params.topology == "layer2" && params.role == "primary" {
+		if len(params.reservedCIDRs) > 0 {
+			manifest += `
+    reservedSubnets: [` + params.reservedCIDRs + `]`
+		}
+		if len(params.infraCIDRs) > 0 {
+			manifest += `
+    infrastructureSubnets: [` + params.infraCIDRs + `]`
+		}
+		if len(params.defaultGatewayIPs) > 0 {
+			manifest += `
+    defaultGatewayIPs: [` + params.defaultGatewayIPs + `]`
+		}
+	}
+	return manifest
 }
 
 func generateClusterUserDefinedNetworkManifest(params *networkAttachmentConfigParams, client clientset.Interface) string {
 	filterSupportedNetworkConfig(client, params)
 
 	subnets := generateSubnetsYaml(params)
-	return `
+	manifest := `
 apiVersion: k8s.ovn.org/v1
 kind: ClusterUserDefinedNetwork
 metadata:
@@ -1854,8 +1974,24 @@ spec:
     topology: ` + nadToUdnParams[params.topology] + `
     ` + params.topology + `: 
       role: ` + nadToUdnParams[params.role] + `
-      subnets: ` + subnets + `
-`
+      subnets: ` + subnets + ``
+
+	if params.topology == "layer2" && params.role == "primary" {
+		if len(params.reservedCIDRs) > 0 {
+			manifest += `
+      reservedSubnets: [` + params.reservedCIDRs + `]`
+		}
+		if len(params.infraCIDRs) > 0 {
+			manifest += `
+      infrastructureSubnets: [` + params.infraCIDRs + `]`
+		}
+		if len(params.defaultGatewayIPs) > 0 {
+			manifest += `
+      defaultGatewayIPs: [` + params.defaultGatewayIPs + `]`
+		}
+	}
+
+	return manifest
 }
 
 func generateSubnetsYaml(params *networkAttachmentConfigParams) string {
