@@ -1,0 +1,16 @@
+name: Self-hosted runner test
+on:
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+    runs-on: [self-hosted]
+    steps:
+      - name: Print info
+        id: print_info
+        run: |
+          set -x
+          cat /etc/os-release
+          cat log.txt
+          date > log.txt
