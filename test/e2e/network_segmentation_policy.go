@@ -28,6 +28,12 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 			nadName                      = "tenant-red"
 			userDefinedNetworkIPv4Subnet = "10.128.0.0/16"
 			userDefinedNetworkIPv6Subnet = "2014:100:200::0/60"
+			customL2IPv4Gateway                 = "10.128.0.3"
+			customL2IPv6Gateway                 = "2014:100:200::3"
+			customL2IPv4ReservedCIDR            = "10.128.1.0/24"
+			customL2IPv6ReservedCIDR            = "2014:100:200::100/120"
+			customL2IPv4InfraCIDR               = "10.128.0.0/30"
+			customL2IPv6InfraCIDR               = "2014:100:200::/122"
 			nodeHostnameKey              = "kubernetes.io/hostname"
 			workerOneNodeName            = "ovn-worker"
 			workerTwoNodeName            = "ovn-worker2"
@@ -140,6 +146,29 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 					topology: "layer2",
 					cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 					role:     "primary",
+				},
+				*podConfig(
+					"client-pod",
+					withNodeSelector(map[string]string{nodeHostnameKey: workerOneNodeName}),
+				),
+				*podConfig(
+					"server-pod",
+					withCommand(func() []string {
+						return httpServerContainerCmd(port)
+					}),
+					withNodeSelector(map[string]string{nodeHostnameKey: workerTwoNodeName}),
+				),
+			),
+			ginkgo.Entry(
+				"in L2 dualstack primary UDN with custom network",
+				networkAttachmentConfigParams{
+					name:     nadName,
+					topology: "layer2",
+					cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					role:     "primary",
+					defaultGatewayIPs: joinStrings(customL2IPv4Gateway, customL2IPv6Gateway),
+					reservedCIDRs:     joinStrings(customL2IPv4ReservedCIDR, customL2IPv6ReservedCIDR),
+					infraCIDRs:        joinStrings(customL2IPv4InfraCIDR, customL2IPv6InfraCIDR),
 				},
 				*podConfig(
 					"client-pod",
