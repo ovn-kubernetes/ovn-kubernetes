@@ -29,24 +29,29 @@ func netCIDR(netCIDR string, netPrefixLengthPerNode int) string {
 	return fmt.Sprintf("%s/%d", netCIDR, netPrefixLengthPerNode)
 }
 
-// takes ipv4 and ipv6 cidrs and returns the correct type for the cluster under test
-func correctCIDRFamily(ipv4CIDR, ipv6CIDR string) string {
-	return strings.Join(selectCIDRs(ipv4CIDR, ipv6CIDR), ",")
+// takes ipv4 and ipv6 ips and returns the correct type for the cluster under test
+func correctIPFamily(ipv4, ipv6 string) string {
+	return strings.Join(selectIPFamily(ipv4, ipv6), ",")
 }
 
 // takes ipv4 and ipv6 cidrs and returns the correct type for the cluster under test
-func selectCIDRs(ipv4CIDR, ipv6CIDR string) []string {
+func correctCIDRFamily(ipv4CIDR, ipv6CIDR string) string {
+	return strings.Join(selectIPFamily(ipv4CIDR, ipv6CIDR), ",")
+}
+
+// takes ipv4 and ipv6 cidrs/ips and returns the correct type for the cluster under test
+func selectIPFamily(ipv4, ipv6 string) []string {
 	// dual stack cluster
 	if isIPv6Supported() && isIPv4Supported() {
-		return []string{ipv4CIDR, ipv6CIDR}
+		return []string{ipv4, ipv6}
 	}
 	// is an ipv6 only cluster
 	if isIPv6Supported() {
-		return []string{ipv6CIDR}
+		return []string{ipv6}
 	}
 
 	//ipv4 only cluster
-	return []string{ipv4CIDR}
+	return []string{ipv4}
 }
 
 func getNetCIDRSubnet(netCIDR string) (string, error) {
@@ -62,6 +67,9 @@ func getNetCIDRSubnet(netCIDR string) (string, error) {
 type networkAttachmentConfigParams struct {
 	cidr                string
 	excludeCIDRs        []string
+	infraCIDRs          string
+	defaultGatewayIPs   string
+	reservedCIDRs       string
 	namespace           string
 	name                string
 	topology            string
@@ -105,6 +113,9 @@ func generateNADSpec(config networkAttachmentConfig) string {
         "topology":%q,
         "subnets": %q,
         "excludeSubnets": %q,
+        "reservedSubnets": %q,
+        "infrastructureSubnets": %q,
+		"defaultGatewayIPs": %q,
         "mtu": %d,
         "netAttachDefName": %q,
         "vlanID": %d,
@@ -117,6 +128,9 @@ func generateNADSpec(config networkAttachmentConfig) string {
 		config.topology,
 		config.cidr,
 		strings.Join(config.excludeCIDRs, ","),
+		config.reservedCIDRs,
+		config.infraCIDRs,
+		config.defaultGatewayIPs,
 		config.mtu,
 		namespacedName(config.namespace, config.name),
 		config.vlanID,

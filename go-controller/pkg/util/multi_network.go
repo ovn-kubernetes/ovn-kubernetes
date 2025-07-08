@@ -1015,7 +1015,7 @@ func newLayer2NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 					// Use the first available IP for the gateway (if not set already) and the next one for mgmt IP
 					if gwIP == nil {
 						gwIP = currentIP
-					} else {
+					} else if !gwIP.Equal(currentIP) {
 						mgmtIP = currentIP
 						return gwIP, mgmtIP // Both found, return early
 					}
