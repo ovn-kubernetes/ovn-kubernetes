@@ -23,6 +23,7 @@ import (
 
 	mnpapi "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/apis/k8s.cni.cncf.io/v1beta1"
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	utilnet "k8s.io/utils/net"
 )
 
 func netCIDR(netCIDR string, netPrefixLengthPerNode int) string {
@@ -54,6 +55,24 @@ func filterCIDRs(cs clientset.Interface, cidrs ...string) []string {
 func filterSupportedNetworkConfig(client clientset.Interface, config *networkAttachmentConfigParams) {
 	config.cidr = filterCIDRsAndJoin(client, config.cidr)
 	config.excludeCIDRs = filterCIDRs(client, config.excludeCIDRs...)
+	config.reservedCIDRs = filterCIDRsAndJoin(client, config.reservedCIDRs)
+	config.infraCIDRs = filterCIDRsAndJoin(client, config.infraCIDRs)
+	config.defaultGatewayIPs = filterIPsAndJoin(client, config.defaultGatewayIPs)
+}
+
+func filterIPs(cs clientset.Interface, ips ...string) []string {
+	var supportedIPs []string
+	for _, ip := range ips {
+		isIPv6 := utilnet.IsIPv6String(ip)
+		if (!isIPv6 && isIPv4Supported(cs)) || (isIPv6 && isIPv6Supported(cs)) {
+			supportedIPs = append(supportedIPs, ip)
+		}
+	}
+	return supportedIPs
+}
+
+func filterIPsAndJoin(cs clientset.Interface, ips string) string {
+	return joinStrings(filterIPs(cs,  strings.Split(ips, ",")...)...)
 }
 
 func getNetCIDRSubnet(netCIDR string) (string, error) {
@@ -69,6 +88,9 @@ func getNetCIDRSubnet(netCIDR string) (string, error) {
 type networkAttachmentConfigParams struct {
 	cidr                string
 	excludeCIDRs        []string
+	infraCIDRs          string
+	defaultGatewayIPs   string
+	reservedCIDRs       string
 	namespace           string
 	name                string
 	topology            string
@@ -112,6 +134,9 @@ func generateNADSpec(config networkAttachmentConfig) string {
         "topology":%q,
         "subnets": %q,
         "excludeSubnets": %q,
+        "reservedSubnets": %q,
+        "infrastructureSubnets": %q,
+		"defaultGatewayIPs": %q,
         "mtu": %d,
         "netAttachDefName": %q,
         "vlanID": %d,
@@ -124,6 +149,9 @@ func generateNADSpec(config networkAttachmentConfig) string {
 		config.topology,
 		config.cidr,
 		strings.Join(config.excludeCIDRs, ","),
+		config.reservedCIDRs,
+		config.infraCIDRs,
+		config.defaultGatewayIPs,
 		config.mtu,
 		namespacedName(config.namespace, config.name),
 		config.vlanID,
