@@ -88,11 +88,18 @@ func GetACLName(dbIDs *libovsdbops.DbObjectIDs) string {
 	return fmt.Sprintf("%.63s", aclName)
 }
 
+// BuildACLWithDefaultTier is used for the most ACL-related features with the default ACL tier.
+// That includes egress firewall, network policy, multicast.
+func BuildACLWithDefaultTier(dbIDs *libovsdbops.DbObjectIDs, priority int, match, action string, logLevels *ACLLoggingLevels,
+	aclT ACLPipelineType) *nbdb.ACL {
+	return BuildACL(dbIDs, priority, match, action, logLevels, aclT, types.DefaultACLTier)
+}
+
 // BuildACL should be used to build ACL instead of directly calling libovsdbops.BuildACL.
 // It can properly set and reset log settings for ACL based on ACLLoggingLevels, and
 // set acl.Name and acl.ExternalIDs based on given DbIDs
 func BuildACL(dbIDs *libovsdbops.DbObjectIDs, priority int, match, action string, logLevels *ACLLoggingLevels,
-	aclT ACLPipelineType) *nbdb.ACL {
+	aclT ACLPipelineType, tier int) *nbdb.ACL {
 	var options map[string]string
 	var direction string
 	switch aclT {
@@ -122,14 +129,13 @@ func BuildACL(dbIDs *libovsdbops.DbObjectIDs, priority int, match, action string
 		log,
 		externalIDs,
 		options,
-		types.DefaultACLTier,
+		tier,
 	)
 	return ACL
 }
 
 func BuildANPACL(dbIDs *libovsdbops.DbObjectIDs, priority int, match, action string, aclT ACLPipelineType, logLevels *ACLLoggingLevels) *nbdb.ACL {
-	anpACL := BuildACL(dbIDs, priority, match, action, logLevels, aclT)
-	anpACL.Tier = GetACLTier(dbIDs)
+	anpACL := BuildACL(dbIDs, priority, match, action, logLevels, aclT, GetACLTier(dbIDs))
 	return anpACL
 }
 

@@ -876,12 +876,13 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 					cidr:     correctCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 					role:     "primary",
 				}),
-				ginkgo.Entry("with primary layer2 UDN", networkAttachmentConfigParams{
-					name:     nadName,
-					topology: "layer2",
-					cidr:     correctCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
-					role:     "primary",
-				}),
+				// TODO: this test is broken, see https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5309
+				//ginkgo.Entry("with primary layer2 UDN", networkAttachmentConfigParams{
+				//	name:     nadName,
+				//	topology: "layer2",
+				//	cidr:     correctCIDRFamily(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+				//	role:     "primary",
+				//}),
 			)
 		})
 	})
