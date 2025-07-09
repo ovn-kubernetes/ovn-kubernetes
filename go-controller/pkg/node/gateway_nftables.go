@@ -6,12 +6,14 @@ package node
 import (
 	"context"
 	"fmt"
+	"net"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	utilnet "k8s.io/utils/net"
 	"sigs.k8s.io/knftables"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -25,6 +27,13 @@ import (
 // ordering dependency between two rules (especially, in any case where it's necessary to
 // use an "accept" rule to override a later "drop" rule), then those rules will need to
 // either both be iptables or both be nftables.
+
+// nftables chain names
+const (
+	nftablesLocalGatewayMasqChain = "ovn-kube-local-gw-masq"
+	nftablesPodSubnetMasqChain    = "ovn-kube-pod-subnet-masq"
+	nftablesUDNMasqChain          = "ovn-kube-udn-masq"
+)
 
 // getNoSNATNodePortRules returns elements to add to the "mgmtport-no-snat-nodeports"
 // set to prevent SNAT of sourceIP when passing through the management port, for an
@@ -184,4 +193,294 @@ func getUDNNFTRules(service *corev1.Service, netConfig *bridgeUDNConfiguration) 
 		rules = append(rules, getUDNExternalIPsMarkNFTRules(svcPort, util.GetExternalAndLBIPs(service), netConfig)...)
 	}
 	return rules
+}
+
+// getLocalGatewayPodSubnetMasqueradeNFTRule creates a rule for masquerading traffic from the pod subnet CIDR
+// in local gateway node in a seperate chain which is then called from local gateway masquerade chain.
+//
+//	chain ovn-kube-pod-subnet-masq {
+//		ip saddr 10.244.0.0/24 masquerade
+//		ip6 saddr fd00:10:244:1::/64 masquerade
+//	}
+func getLocalGatewayPodSubnetMasqueradeNFTRule(cidr *net.IPNet) (*knftables.Rule, error) {
+	// Create the rule for masquerading traffic from the CIDR
+	ipPrefix := "ip"
+	if utilnet.IsIPv6CIDR(cidr) {
+		ipPrefix = "ip6"
+	}
+
+	rule := &knftables.Rule{
+		Rule: knftables.Concat(
+			ipPrefix, "saddr", cidr,
+			"masquerade",
+		),
+		Chain: nftablesPodSubnetMasqChain,
+	}
+
+	return rule, nil
+}
+
+// getLocalGatewayNATNFTRules returns the nftables rules for local gateway NAT including masquerade IP rule,
+// pod subnet rules, and UDN masquerade rules (if network segmentation is enabled).
+// This function supports dual-stack by accepting multiple CIDRs and generating rules for all IP families.
+//
+//	chain ovn-kube-local-gw-masq {
+//		comment "OVN local gateway masquerade"
+//		type nat hook postrouting priority srcnat; policy accept;
+//		ip saddr 169.254.0.1 masquerade
+//		ip6 saddr fd69::1 masquerade
+//		jump ovn-kube-pod-subnet-masq
+//		jump ovn-kube-udn-masq
+//	}
+func getLocalGatewayNATNFTRules(cidrs ...*net.IPNet) ([]*knftables.Rule, error) {
+	var rules []*knftables.Rule
+
+	// Process each CIDR to support dual-stack
+	for _, cidr := range cidrs {
+		// Determine IP version and masquerade IP
+		isIPv6 := utilnet.IsIPv6CIDR(cidr)
+		var masqueradeIP net.IP
+		var ipPrefix string
+		if isIPv6 {
+			masqueradeIP = config.Gateway.MasqueradeIPs.V6OVNMasqueradeIP
+			ipPrefix = "ip6"
+		} else {
+			masqueradeIP = config.Gateway.MasqueradeIPs.V4OVNMasqueradeIP
+			ipPrefix = "ip"
+		}
+
+		// Rule1: Masquerade IP rule for the main chain
+		masqRule := &knftables.Rule{
+			Chain: nftablesLocalGatewayMasqChain,
+			Rule: knftables.Concat(
+				ipPrefix, "saddr", masqueradeIP,
+				"masquerade",
+			),
+		}
+		rules = append(rules, masqRule)
+
+		// Rule2: Pod subnet NAT rule for the pod subnet chain
+		podSubnetRule, err := getLocalGatewayPodSubnetMasqueradeNFTRule(cidr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create pod subnet masquerade rule: %w", err)
+		}
+		rules = append(rules, podSubnetRule)
+	}
+
+	// Rule 3: UDN masquerade rules (if network segmentation is enabled)
+	if util.IsNetworkSegmentationSupportEnabled() {
+		if config.IPv4Mode {
+			udnRules, err := getUDNMasqueradeNFTRules(utilnet.IPv4)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create IPv4 UDN masquerade rules: %w", err)
+			}
+			rules = append(rules, udnRules...)
+		}
+		if config.IPv6Mode {
+			udnRules, err := getUDNMasqueradeNFTRules(utilnet.IPv6)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create IPv6 UDN masquerade rules: %w", err)
+			}
+			rules = append(rules, udnRules...)
+		}
+	}
+
+	return rules, nil
+}
+
+// getUDNMasqueradeNFTRules returns the nftables rules for UDN masquerade.
+// Chain creation is handled separately by setupLocalGatewayNATNFTRules.
+//
+//	chain ovn-kube-udn-masq {
+//		comment "OVN UDN masquerade"
+//		ip saddr != 169.254.0.0/29 ip daddr != 10.96.0.0/16 ip saddr 169.254.0.0/17 masquerade
+//		ip6 saddr != fd69::/125 ip daddr != fd00:10:96::/112 ip6 saddr fd69::/112 masquerade
+//	}
+func getUDNMasqueradeNFTRules(ipFamily utilnet.IPFamily) ([]*knftables.Rule, error) {
+	var rules []*knftables.Rule
+
+	// Determine subnet and IP family
+	srcUDNMasqueradePrefix := config.Gateway.V4MasqueradeSubnet
+	ipPrefix := "ip"
+	if ipFamily == utilnet.IPv6 {
+		srcUDNMasqueradePrefix = config.Gateway.V6MasqueradeSubnet
+		ipPrefix = "ip6"
+	}
+
+	// Calculate reserved masquerade prefix (first 8 IPs)
+	_, ipnet, err := net.ParseCIDR(srcUDNMasqueradePrefix)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse UDN masquerade subnet: %w", err)
+	}
+	_, prefixLen := ipnet.Mask.Size()
+	defaultNetworkReservedMasqueradePrefix := fmt.Sprintf("%s/%d", ipnet.IP.String(), prefixLen-3)
+
+	// Rule: RETURN for reserved masquerade prefix and service CIDRs
+	// rest of the traffic is masqueraded
+
+	for _, svcCIDR := range config.Kubernetes.ServiceCIDRs {
+		if utilnet.IPFamilyOfCIDR(svcCIDR) != ipFamily {
+			continue
+		}
+		masqueradeRule := &knftables.Rule{
+			Chain: nftablesUDNMasqChain,
+			Rule: knftables.Concat(
+				ipPrefix, "saddr", "!=", defaultNetworkReservedMasqueradePrefix,
+				ipPrefix, "daddr", "!=", svcCIDR,
+				ipPrefix, "saddr", srcUDNMasqueradePrefix,
+				"masquerade",
+			),
+		}
+		rules = append(rules, masqueradeRule)
+	}
+
+	return rules, nil
+}
+
+// initLocalGatewayNFTNATRules sets up nftables rules for local gateway NAT functionality
+// This function supports dual-stack by accepting multiple CIDRs and generating rules for all IP families
+func initLocalGatewayNFTNATRules(cidrs ...*net.IPNet) error {
+	nft, err := nodenft.GetNFTablesHelper()
+	if err != nil {
+		return fmt.Errorf("failed to get nftables helper: %w", err)
+	}
+
+	// Create transaction and apply all chains and rules
+	tx := nft.NewTransaction()
+
+	// Create main local gateway masquerade chain
+	localGwMasqChain := &knftables.Chain{
+		Name:     nftablesLocalGatewayMasqChain,
+		Comment:  knftables.PtrTo("OVN local gateway masquerade"),
+		Type:     knftables.PtrTo(knftables.NATType),
+		Hook:     knftables.PtrTo(knftables.PostroutingHook),
+		Priority: knftables.PtrTo(knftables.SNATPriority),
+	}
+	tx.Add(localGwMasqChain)
+
+	// Create dedicated pod subnet masquerade chain
+	podSubnetMasqChain := &knftables.Chain{
+		Name: nftablesPodSubnetMasqChain,
+	}
+	tx.Add(podSubnetMasqChain)
+
+	// Create UDN masquerade chain only if network segmentation is enabled
+	var udnMasqChain *knftables.Chain
+	if util.IsNetworkSegmentationSupportEnabled() {
+		udnMasqChain = &knftables.Chain{
+			Name:    nftablesUDNMasqChain,
+			Comment: knftables.PtrTo("OVN UDN masquerade"),
+		}
+		tx.Add(udnMasqChain)
+	}
+
+	// Flush existing chains to ensure clean state
+	tx.Flush(localGwMasqChain)
+	tx.Flush(podSubnetMasqChain)
+	if util.IsNetworkSegmentationSupportEnabled() {
+		tx.Flush(udnMasqChain)
+	}
+
+	// Get the existing local gateway NAT rules
+	localGwRules, err := getLocalGatewayNATNFTRules(cidrs...)
+	if err != nil {
+		return fmt.Errorf("failed to get local gateway NAT rules: %w", err)
+	}
+
+	// Add the main local gateway NAT rules
+	for _, rule := range localGwRules {
+		tx.Add(rule)
+	}
+
+	// Add jump rule from main chain to pod subnet chain
+	jumpToPodSubnetRule := &knftables.Rule{
+		Chain: nftablesLocalGatewayMasqChain,
+		Rule: knftables.Concat(
+			"jump", nftablesPodSubnetMasqChain,
+		),
+	}
+	tx.Add(jumpToPodSubnetRule)
+
+	// Add jump rule to UDN chain only if network segmentation is enabled
+	if util.IsNetworkSegmentationSupportEnabled() {
+		jumpToUDNRule := &knftables.Rule{
+			Chain: nftablesLocalGatewayMasqChain,
+			Rule: knftables.Concat(
+				"jump", nftablesUDNMasqChain,
+			),
+		}
+		tx.Add(jumpToUDNRule)
+	}
+
+	err = nft.Run(context.TODO(), tx)
+	if err != nil {
+		return fmt.Errorf("failed to setup local gateway NAT nftables rules: %w", err)
+	}
+
+	return nil
+}
+
+// addLocalGatewayPodSubnetNFTRules adds nftables rules for pod subnet masquerading for multiple CIDRs
+// These rules are added to the dedicated pod subnet masquerade chain.
+func addLocalGatewayPodSubnetNFTRules(cidrs ...*net.IPNet) error {
+	nft, err := nodenft.GetNFTablesHelper()
+	if err != nil {
+		return fmt.Errorf("failed to get nftables helper: %w", err)
+	}
+
+	tx := nft.NewTransaction()
+
+	// Ensure the pod subnet chain exists
+	podSubnetChain := &knftables.Chain{
+		Name: nftablesPodSubnetMasqChain,
+	}
+	tx.Add(podSubnetChain)
+
+	// Flush the chain to remove all existing rules
+	tx.Flush(podSubnetChain)
+
+	for _, cidr := range cidrs {
+		rule, err := getLocalGatewayPodSubnetMasqueradeNFTRule(cidr)
+		if err != nil {
+			return fmt.Errorf("failed to create nftables rules for CIDR %s: %w", cidr.String(), err)
+		}
+
+		// Add the rule
+		tx.Add(rule)
+	}
+
+	if err := nft.Run(context.TODO(), tx); err != nil {
+		return fmt.Errorf("failed to add pod subnet NAT rules: %w", err)
+	}
+
+	return nil
+}
+
+// delLocalGatewayPodSubnetNFTRules removes nftables rules for pod subnet masquerading for multiple CIDRs
+// Since we use a separate chain, we can simply flush it to remove all pod subnet rules.
+func delLocalGatewayPodSubnetNFTRules() error {
+	nft, err := nodenft.GetNFTablesHelper()
+	if err != nil {
+		return fmt.Errorf("failed to get nftables helper: %w", err)
+	}
+
+	tx := nft.NewTransaction()
+
+	// In shared gateway mode, this chain might not exist if its
+	// not migration from local gateway mode. In that case, let's
+	// use the idiomatic way of adding the chain before trying to flush it.
+	// I anyways also have the knftables.IsNotFound() check in the caller later.
+	tx.Add(&knftables.Chain{
+		Name: nftablesPodSubnetMasqChain,
+	})
+
+	// Simply flush the dedicated pod subnet masquerade chain
+	// This removes all pod subnet masquerade rules at once
+	tx.Flush(&knftables.Chain{Name: nftablesPodSubnetMasqChain})
+
+	if err := nft.Run(context.TODO(), tx); err != nil && !knftables.IsNotFound(err) {
+		return fmt.Errorf("failed to delete pod subnet NAT rules: %w", err)
+	}
+
+	return nil
 }

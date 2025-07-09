@@ -533,10 +533,10 @@ func (g *gateway) updateSNATRules() error {
 	subnets := util.IPsToNetworkIPs(g.nodeIPManager.mgmtPort.GetAddresses()...)
 
 	if g.GetDefaultPodNetworkAdvertised() || config.Gateway.Mode != config.GatewayModeLocal {
-		return delLocalGatewayPodSubnetNATRules(subnets...)
+		return delLocalGatewayPodSubnetNFTRules()
 	}
 
-	return addLocalGatewayPodSubnetNATRules(subnets...)
+	return addLocalGatewayPodSubnetNFTRules(subnets...)
 }
 
 type bridgeConfiguration struct {
