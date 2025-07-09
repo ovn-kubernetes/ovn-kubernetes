@@ -289,13 +289,13 @@ ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | 
 			Entry(
 				"L2 primary UDN with custom network, cluster-networked pods, NodePort service",
 				networkAttachmentConfigParams{
-					name:              nadName,
-					topology:          "layer2",
-					cidr:              joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
-					role:              "primary",
-					defaultGatewayIPs: joinStrings(customL2IPv4Gateway, customL2IPv6Gateway),
-					reservedCIDRs:     joinStrings(customL2IPv4ReservedCIDR, customL2IPv6ReservedCIDR),
-					infraCIDRs:        joinStrings(customL2IPv4InfraCIDR, customL2IPv6InfraCIDR),
+					name:                nadName,
+					topology:            "layer2",
+					cidr:                joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					role:                "primary",
+					defaultGatewayIPs:   joinStrings(customL2IPv4Gateway, customL2IPv6Gateway),
+					reservedCIDRs:       joinStrings(customL2IPv4ReservedCIDR, customL2IPv6ReservedCIDR),
+					infrastructureCIDRs: joinStrings(customL2IPv4InfraCIDR, customL2IPv6InfraCIDR),
 				},
 			),
 		)

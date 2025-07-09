@@ -162,13 +162,13 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 			ginkgo.Entry(
 				"in L2 dualstack primary UDN with custom network",
 				networkAttachmentConfigParams{
-					name:     nadName,
-					topology: "layer2",
-					cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
-					role:     "primary",
-					defaultGatewayIPs: joinStrings(customL2IPv4Gateway, customL2IPv6Gateway),
-					reservedCIDRs:     joinStrings(customL2IPv4ReservedCIDR, customL2IPv6ReservedCIDR),
-					infraCIDRs:        joinStrings(customL2IPv4InfraCIDR, customL2IPv6InfraCIDR),
+					name:                nadName,
+					topology:            "layer2",
+					cidr:                joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					role:                "primary",
+					defaultGatewayIPs:   joinStrings(customL2IPv4Gateway, customL2IPv6Gateway),
+					reservedCIDRs:       joinStrings(customL2IPv4ReservedCIDR, customL2IPv6ReservedCIDR),
+					infrastructureCIDRs: joinStrings(customL2IPv4InfraCIDR, customL2IPv6InfraCIDR),
 				},
 				*podConfig(
 					"client-pod",

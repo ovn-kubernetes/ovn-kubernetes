@@ -153,7 +153,7 @@ var _ = Describe("Network Segmentation: Default network multus annotation", func
 			nse := []nadapi.NetworkSelectionElement{{
 				Name:       "default",
 				Namespace:  "ovn-kubernetes",
-				IPRequest:  []string{"103.0.0.3/16", "2014:100:200::3/60"},
+				IPRequest:  filterCIDRs(f.ClientSet, "103.0.0.3/16", "2014:100:200::3/60"),
 				MacRequest: "02:A1:B2:C3:D4:E5",
 			}}
 			marshalledNSE, err := json.Marshal(nse)

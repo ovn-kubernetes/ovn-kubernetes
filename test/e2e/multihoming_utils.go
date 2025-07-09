@@ -56,7 +56,7 @@ func filterSupportedNetworkConfig(client clientset.Interface, config *networkAtt
 	config.cidr = filterCIDRsAndJoin(client, config.cidr)
 	config.excludeCIDRs = filterCIDRs(client, config.excludeCIDRs...)
 	config.reservedCIDRs = filterCIDRsAndJoin(client, config.reservedCIDRs)
-	config.infraCIDRs = filterCIDRsAndJoin(client, config.infraCIDRs)
+	config.infrastructureCIDRs = filterCIDRsAndJoin(client, config.infrastructureCIDRs)
 	config.defaultGatewayIPs = filterIPsAndJoin(client, config.defaultGatewayIPs)
 }
 
@@ -88,7 +88,7 @@ func getNetCIDRSubnet(netCIDR string) (string, error) {
 type networkAttachmentConfigParams struct {
 	cidr                string
 	excludeCIDRs        []string
-	infraCIDRs          string
+	infrastructureCIDRs string
 	defaultGatewayIPs   string
 	reservedCIDRs       string
 	namespace           string
@@ -150,7 +150,7 @@ func generateNADSpec(config networkAttachmentConfig) string {
 		config.cidr,
 		strings.Join(config.excludeCIDRs, ","),
 		config.reservedCIDRs,
-		config.infraCIDRs,
+		config.infrastructureCIDRs,
 		config.defaultGatewayIPs,
 		config.mtu,
 		namespacedName(config.namespace, config.name),
