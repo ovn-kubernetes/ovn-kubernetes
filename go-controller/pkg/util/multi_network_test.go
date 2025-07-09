@@ -945,7 +945,66 @@ func TestGetPodNADToNetworkMappingWithActiveNetwork(t *testing.T) {
 			},
 			inputPodAnnotations: map[string]string{
 				nadv1.NetworkAttachmentAnnot: GetNADName(namespaceName, "another-network"),
-				OvnUDNIPAMClaimName:          "the-one-to-the-left-of-the-pony",
+				DefNetworkAnnotation:         `[{"namespace":"ns1","name":"attachment1","ipam-claim-reference":"the-one-to-the-left-of-the-pony"}]`,
+			},
+			expectedIsAttachmentRequested: true,
+			expectedNetworkSelectionElements: map[string]*nadv1.NetworkSelectionElement{
+				"ns1/attachment1": {
+					Name:               "attachment1",
+					Namespace:          "ns1",
+					IPAMClaimReference: "the-one-to-the-left-of-the-pony",
+				},
+			},
+		},
+		{
+			desc: "the network configuration for a primary layer2 UDN features allow persistent IPs, and the pod requests it. When IPAMClaim annotation is used",
+			inputNetConf: &ovncnitypes.NetConf{
+				NetConf:            cnitypes.NetConf{Name: networkName},
+				Topology:           ovntypes.Layer2Topology,
+				NADName:            GetNADName(namespaceName, attachmentName),
+				Role:               ovntypes.NetworkRolePrimary,
+				AllowPersistentIPs: true,
+			},
+			inputPrimaryUDNConfig: &ovncnitypes.NetConf{
+				NetConf:            cnitypes.NetConf{Name: networkName},
+				Topology:           ovntypes.Layer2Topology,
+				NADName:            GetNADName(namespaceName, attachmentName),
+				Role:               ovntypes.NetworkRolePrimary,
+				AllowPersistentIPs: true,
+			},
+			inputPodAnnotations: map[string]string{
+				nadv1.NetworkAttachmentAnnot:  GetNADName(namespaceName, "another-network"),
+				OvnUDNIPAMClaimNameDeprecated: "the-one-to-the-left-of-the-pony",
+			},
+			expectedIsAttachmentRequested: true,
+			expectedNetworkSelectionElements: map[string]*nadv1.NetworkSelectionElement{
+				"ns1/attachment1": {
+					Name:               "attachment1",
+					Namespace:          "ns1",
+					IPAMClaimReference: "the-one-to-the-left-of-the-pony",
+				},
+			},
+		},
+		{
+			desc: "the network configuration for a primary layer2 UDN features allow persistent IPs, and the pod requests it. When both default-NSE & IPAMClaim annotation are used",
+			inputNetConf: &ovncnitypes.NetConf{
+				NetConf:            cnitypes.NetConf{Name: networkName},
+				Topology:           ovntypes.Layer2Topology,
+				NADName:            GetNADName(namespaceName, attachmentName),
+				Role:               ovntypes.NetworkRolePrimary,
+				AllowPersistentIPs: true,
+			},
+			inputPrimaryUDNConfig: &ovncnitypes.NetConf{
+				NetConf:            cnitypes.NetConf{Name: networkName},
+				Topology:           ovntypes.Layer2Topology,
+				NADName:            GetNADName(namespaceName, attachmentName),
+				Role:               ovntypes.NetworkRolePrimary,
+				AllowPersistentIPs: true,
+			},
+			inputPodAnnotations: map[string]string{
+				nadv1.NetworkAttachmentAnnot:  GetNADName(namespaceName, "another-network"),
+				OvnUDNIPAMClaimNameDeprecated: "the-one-to-the-left-of-the-pony",
+				DefNetworkAnnotation:          `[{"namespace":"ns1","name":"attachment1","ipam-claim-reference":"the-one-to-the-left-of-the-pony"}]`,
 			},
 			expectedIsAttachmentRequested: true,
 			expectedNetworkSelectionElements: map[string]*nadv1.NetworkSelectionElement{
@@ -1000,8 +1059,8 @@ func TestGetPodNADToNetworkMappingWithActiveNetwork(t *testing.T) {
 				AllowPersistentIPs: true,
 			},
 			inputPodAnnotations: map[string]string{
-				nadv1.NetworkAttachmentAnnot: GetNADName(namespaceName, "another-network"),
-				OvnUDNIPAMClaimName:          "the-one-to-the-left-of-the-pony",
+				nadv1.NetworkAttachmentAnnot:  GetNADName(namespaceName, "another-network"),
+				OvnUDNIPAMClaimNameDeprecated: "the-one-to-the-left-of-the-pony",
 			},
 			expectedIsAttachmentRequested: true,
 			expectedNetworkSelectionElements: map[string]*nadv1.NetworkSelectionElement{
