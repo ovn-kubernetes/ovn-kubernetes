@@ -14,7 +14,7 @@ ARG OVN_FROM=koji
 #############################################
 # Stage to get OVN and OVS RPMs from source #
 #############################################
-FROM fedora:41 AS ovnbuilder
+FROM quay.io/fedora/fedora:41 AS ovnbuilder
 
 USER root
 
@@ -74,7 +74,7 @@ RUN git log -n 1
 ########################################
 # Stage to download OVN RPMs from koji #
 ########################################
-FROM fedora:41 AS kojidownloader
+FROM quay.io/fedora/fedora:41 AS kojidownloader
 ARG ovnver=ovn-24.09.2-71.fc41
 
 USER root
@@ -95,14 +95,14 @@ RUN if [ "$TARGETPLATFORM" = "linux/amd64" ] || [ -z "$TARGETPLATFORM"] ; then k
 ######################################
 # Stage to copy OVN RPMs from source #
 ######################################
-FROM fedora:41 AS source
+FROM quay.io/fedora/fedora:41 AS source
 COPY --from=ovnbuilder /root/ovn/rpm/rpmbuild/RPMS/x86_64/*.rpm /
 COPY --from=ovnbuilder /root/ovs/rpm/rpmbuild/RPMS/x86_64/*.rpm /
 
 ####################################
 # Stage to copy OVN RPMs from koji #
 ####################################
-FROM fedora:41 AS koji
+FROM quay.io/fedora/fedora:41 AS koji
 
 COPY --from=kojidownloader /*.rpm /
 
