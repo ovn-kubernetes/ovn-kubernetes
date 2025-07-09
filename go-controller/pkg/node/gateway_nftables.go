@@ -202,16 +202,32 @@ func getUDNNFTRules(service *corev1.Service, netConfig *bridgeUDNConfiguration) 
 //		ip saddr 10.244.0.0/24 masquerade
 //		ip6 saddr fd00:10:244:1::/64 masquerade
 //	}
-func getLocalGatewayPodSubnetMasqueradeNFTRule(cidr *net.IPNet) (*knftables.Rule, error) {
+//
+// If isAdvertisedNetwork is true, masquerade only when destination matches remote node IPs.
+// Rules look like:
+// ip saddr 10.244.0.0/24 ip daddr @remote-node-ips-v4 masquerade
+// ip6 saddr fd00:10:244:1::/64 ip6 daddr @remote-node-ips-v6 masquerade
+func getLocalGatewayPodSubnetMasqueradeNFTRule(cidr *net.IPNet, isAdvertisedNetwork bool) (*knftables.Rule, error) {
 	// Create the rule for masquerading traffic from the CIDR
-	ipPrefix := "ip"
+	var ipPrefix string
+	var remoteNodeSetName string
 	if utilnet.IsIPv6CIDR(cidr) {
 		ipPrefix = "ip6"
+		remoteNodeSetName = types.NFTRemoteNodeIPsv6
+	} else {
+		ipPrefix = "ip"
+		remoteNodeSetName = types.NFTRemoteNodeIPsv4
 	}
 
+	// If network is advertised, only masquerade if destination is a remote node IP
+	var optionalDestRules []string
+	if isAdvertisedNetwork {
+		optionalDestRules = []string{ipPrefix, "daddr", "@", remoteNodeSetName}
+	}
 	rule := &knftables.Rule{
 		Rule: knftables.Concat(
 			ipPrefix, "saddr", cidr,
+			optionalDestRules,
 			"masquerade",
 		),
 		Chain: nftablesPodSubnetMasqChain,
@@ -260,7 +276,7 @@ func getLocalGatewayNATNFTRules(cidrs ...*net.IPNet) ([]*knftables.Rule, error) 
 		rules = append(rules, masqRule)
 
 		// Rule2: Pod subnet NAT rule for the pod subnet chain
-		podSubnetRule, err := getLocalGatewayPodSubnetMasqueradeNFTRule(cidr)
+		podSubnetRule, err := getLocalGatewayPodSubnetMasqueradeNFTRule(cidr, false)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create pod subnet masquerade rule: %w", err)
 		}
@@ -420,9 +436,12 @@ func initLocalGatewayNFTNATRules(cidrs ...*net.IPNet) error {
 	return nil
 }
 
-// addLocalGatewayPodSubnetNFTRules adds nftables rules for pod subnet masquerading for multiple CIDRs
+// addOrUpdateLocalGatewayPodSubnetNFTRules adds nftables rules for pod subnet masquerading for multiple CIDRs
 // These rules are added to the dedicated pod subnet masquerade chain.
-func addLocalGatewayPodSubnetNFTRules(cidrs ...*net.IPNet) error {
+// If the rules already exist, they are updated.
+// If isAdvertisedNetwork is true, the masquerade rules also get a destination match
+// that matches the remote node IP set.
+func addOrUpdateLocalGatewayPodSubnetNFTRules(isAdvertisedNetwork bool, cidrs ...*net.IPNet) error {
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {
 		return fmt.Errorf("failed to get nftables helper: %w", err)
@@ -437,10 +456,12 @@ func addLocalGatewayPodSubnetNFTRules(cidrs ...*net.IPNet) error {
 	tx.Add(podSubnetChain)
 
 	// Flush the chain to remove all existing rules
+	// if network toggles between advertised and non-advertised, we need to flush the chain and re-add correct rules
 	tx.Flush(podSubnetChain)
 
+	// Add the new rules for each CIDR
 	for _, cidr := range cidrs {
-		rule, err := getLocalGatewayPodSubnetMasqueradeNFTRule(cidr)
+		rule, err := getLocalGatewayPodSubnetMasqueradeNFTRule(cidr, isAdvertisedNetwork)
 		if err != nil {
 			return fmt.Errorf("failed to create nftables rules for CIDR %s: %w", cidr.String(), err)
 		}
