@@ -187,7 +187,7 @@ func NewDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, net
 
 	nc.initRetryFrameworkForNode()
 
-	err = setupPMTUDNFTSets()
+	err = setupRemoteNodeNFTSets()
 	if err != nil {
 		return nil, fmt.Errorf("failed to setup PMTUD nftables sets: %w", err)
 	}
@@ -1495,12 +1495,12 @@ func (nc *DefaultNodeNetworkController) addOrUpdateNode(node *corev1.Node) error
 		klog.Infof("Adding remote node %q, IP: %s to PMTUD blocking rules", node.Name, nodeIP)
 		if utilnet.IsIPv4(nodeIP) {
 			nftElems = append(nftElems, &knftables.Element{
-				Set: types.NFTNoPMTUDRemoteNodeIPsv4,
+				Set: types.NFTRemoteNodeIPsv4,
 				Key: []string{nodeIP.String()},
 			})
 		} else {
 			nftElems = append(nftElems, &knftables.Element{
-				Set: types.NFTNoPMTUDRemoteNodeIPsv6,
+				Set: types.NFTRemoteNodeIPsv6,
 				Key: []string{nodeIP.String()},
 			})
 		}
@@ -1524,12 +1524,12 @@ func removePMTUDNodeNFTRules(nodeIPs []net.IP) error {
 		// Remove IPs from NFT sets
 		if utilnet.IsIPv4(nodeIP) {
 			nftElems = append(nftElems, &knftables.Element{
-				Set: types.NFTNoPMTUDRemoteNodeIPsv4,
+				Set: types.NFTRemoteNodeIPsv4,
 				Key: []string{nodeIP.String()},
 			})
 		} else {
 			nftElems = append(nftElems, &knftables.Element{
-				Set: types.NFTNoPMTUDRemoteNodeIPsv6,
+				Set: types.NFTRemoteNodeIPsv6,
 				Key: []string{nodeIP.String()},
 			})
 		}
@@ -1589,21 +1589,21 @@ func (nc *DefaultNodeNetworkController) syncNodes(objs []interface{}) error {
 			// Remove IPs from NFT sets
 			if utilnet.IsIPv4(nodeIP) {
 				keepNFTSetElemsV4 = append(keepNFTSetElemsV4, &knftables.Element{
-					Set: types.NFTNoPMTUDRemoteNodeIPsv4,
+					Set: types.NFTRemoteNodeIPsv4,
 					Key: []string{nodeIP.String()},
 				})
 			} else {
 				keepNFTSetElemsV6 = append(keepNFTSetElemsV6, &knftables.Element{
-					Set: types.NFTNoPMTUDRemoteNodeIPsv6,
+					Set: types.NFTRemoteNodeIPsv6,
 					Key: []string{nodeIP.String()},
 				})
 			}
 		}
 	}
-	if err := recreateNFTSet(types.NFTNoPMTUDRemoteNodeIPsv4, keepNFTSetElemsV4); err != nil {
+	if err := recreateNFTSet(types.NFTRemoteNodeIPsv4, keepNFTSetElemsV4); err != nil {
 		errors = append(errors, err)
 	}
-	if err := recreateNFTSet(types.NFTNoPMTUDRemoteNodeIPsv6, keepNFTSetElemsV6); err != nil {
+	if err := recreateNFTSet(types.NFTRemoteNodeIPsv6, keepNFTSetElemsV6); err != nil {
 		errors = append(errors, err)
 	}
 
