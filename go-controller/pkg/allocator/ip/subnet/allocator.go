@@ -19,7 +19,7 @@ import (
 // Allocator manages the allocation of IP within specific set of subnets
 // identified by a name. Allocator should be threadsafe.
 type Allocator interface {
-	AddOrUpdateSubnet(name string, subnets []*net.IPNet, excludeSubnets ...*net.IPNet) error
+	AddOrUpdateSubnet(name string, subnets []*net.IPNet, reservedSubnets []*net.IPNet, excludeSubnets ...*net.IPNet) error
 	DeleteSubnet(name string)
 	GetSubnets(name string) ([]*net.IPNet, error)
 	AllocateUntilFull(name string) error
@@ -57,7 +57,8 @@ type allocator struct {
 	cache map[string]subnetInfo
 	// A RW mutex which holds subnet information
 	sync.RWMutex
-	ipamFunc ipamFactoryFunc
+	ipamFunc         ipamFactoryFunc
+	reservedIPAMFunc ipamFactoryFunc
 }
 
 // newIPAMAllocator provides an ipam interface which can be used for IPAM
@@ -76,11 +77,20 @@ func NewAllocator() *allocator {
 		cache:    make(map[string]subnetInfo),
 		RWMutex:  sync.RWMutex{},
 		ipamFunc: newIPAMAllocator,
+		reservedIPAMFunc: func(ipNet *net.IPNet) (ipallocator.Interface, error) {
+			internalRange, err := ipallocator.NewAllocatorCIDRRange(ipNet, func(max int, rangeSpec string) (bitmapallocator.Interface, error) {
+				return bitmapallocator.NewRoundRobinAllocationMap(max, rangeSpec), nil
+			})
+			if err != nil {
+				return nil, err
+			}
+			return &ipallocator.ReservedRange{Range: internalRange}, nil
+		},
 	}
 }
 
 // AddOrUpdateSubnet set to the allocator for IPAM management, or update it.
-func (allocator *allocator) AddOrUpdateSubnet(name string, subnets []*net.IPNet, excludeSubnets ...*net.IPNet) error {
+func (allocator *allocator) AddOrUpdateSubnet(name string, subnets []*net.IPNet, reservedSubnets []*net.IPNet, excludeSubnets ...*net.IPNet) error {
 	allocator.Lock()
 	defer allocator.Unlock()
 	if subnetInfo, ok := allocator.cache[name]; ok && !reflect.DeepEqual(subnetInfo.subnets, subnets) {
@@ -94,12 +104,9 @@ func (allocator *allocator) AddOrUpdateSubnet(name string, subnets []*net.IPNet,
 		}
 		ipams = append(ipams, ipam)
 	}
-	allocator.cache[name] = subnetInfo{
-		subnets: subnets,
-		ipams:   ipams,
-	}
 
-	for _, excludeSubnet := range excludeSubnets {
+	// reservedSubnets is a subset of subnets, and it should not be used by automatic IPAM
+	for _, excludeSubnet := range append(reservedSubnets, excludeSubnets...) {
 		var excluded bool
 		for i, subnet := range subnets {
 			if util.ContainsCIDR(subnet, excludeSubnet) {
@@ -113,6 +120,19 @@ func (allocator *allocator) AddOrUpdateSubnet(name string, subnets []*net.IPNet,
 		if !excluded {
 			return fmt.Errorf("failed to exclude subnet %s for %s: not contained in any of the subnets", excludeSubnet, name)
 		}
+	}
+
+	var reservedIPAMs []ipallocator.Interface
+	for _, reservedSubnet := range reservedSubnets {
+		ipam, err := allocator.reservedIPAMFunc(reservedSubnet)
+		if err != nil {
+			return fmt.Errorf("failed to initialize IPAM of reserved subnet %s for %s: %w", reservedSubnet, name, err)
+		}
+		reservedIPAMs = append(reservedIPAMs, ipam)
+	}
+	allocator.cache[name] = subnetInfo{
+		subnets: append(reservedSubnets, subnets...),
+		ipams:   append(reservedIPAMs, ipams...),
 	}
 	return nil
 }
@@ -155,6 +175,10 @@ func (allocator *allocator) AllocateUntilFull(name string) error {
 	var err error
 	for err != ipallocator.ErrFull {
 		for _, ipam := range subnetInfo.ipams {
+			if _, ok := ipam.(*ipallocator.ReservedRange); ok {
+				// ReservedRange allocator is not usable for continuous allocation
+				continue
+			}
 			_, err = ipam.AllocateNext()
 		}
 	}
@@ -262,6 +286,10 @@ func (allocator *allocator) AllocateNextIPs(name string) ([]*net.IPNet, error) {
 	}()
 
 	for idx, ipam := range subnetInfo.ipams {
+		if _, ok := ipam.(*ipallocator.ReservedRange); ok {
+			// ReservedRange allocator is not usable for continuous allocation
+			continue
+		}
 		ip, err = ipam.AllocateNext()
 		if err != nil {
 			if errors.Is(err, ipallocator.ErrFull) {

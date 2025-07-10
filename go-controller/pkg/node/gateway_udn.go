@@ -107,11 +107,7 @@ func (b *bridgeConfiguration) getBridgePortConfigurations() ([]*bridgeUDNConfigu
 }
 
 // addNetworkBridgeConfig adds the patchport and ctMark value for the provided netInfo into the bridge configuration cache
-func (b *bridgeConfiguration) addNetworkBridgeConfig(
-	nInfo util.NetInfo,
-	nodeSubnets []*net.IPNet,
-	masqCTMark, pktMark uint,
-	v6MasqIPs, v4MasqIPs *udn.MasqueradeIPs) error {
+func (b *bridgeConfiguration) addNetworkBridgeConfig(nInfo util.NetInfo, nodeSubnets, mgmtIPs []*net.IPNet, masqCTMark, pktMark uint, v6MasqIPs, v4MasqIPs *udn.MasqueradeIPs) error {
 	b.Lock()
 	defer b.Unlock()
 
@@ -128,6 +124,7 @@ func (b *bridgeConfiguration) addNetworkBridgeConfig(
 			v6MasqIPs:   v6MasqIPs,
 			subnets:     nInfo.Subnets(),
 			nodeSubnets: nodeSubnets,
+			mgmtIPs:     mgmtIPs,
 		}
 		netConfig.advertised.Store(util.IsPodNetworkAdvertisedAtNode(nInfo, b.nodeName))
 
@@ -193,6 +190,7 @@ type bridgeUDNConfiguration struct {
 	subnets     []config.CIDRNetworkEntry
 	nodeSubnets []*net.IPNet
 	advertised  atomic.Bool
+	mgmtIPs     []*net.IPNet
 }
 
 func (netConfig *bridgeUDNConfiguration) shallowCopy() *bridgeUDNConfiguration {
@@ -389,10 +387,14 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 	}
 
 	nodeSubnets, err := udng.getLocalSubnets()
+	var mgmtIPs []*net.IPNet
+	for _, subnet := range nodeSubnets {
+		mgmtIPs = append(mgmtIPs, udng.GetNodeManagementIP(subnet))
+	}
 	if err != nil {
 		return fmt.Errorf("failed to get node subnets for network %s: %w", udng.GetNetworkName(), err)
 	}
-	if err = udng.openflowManager.addNetwork(udng.NetInfo, nodeSubnets, udng.masqCTMark, udng.pktMark, udng.v6MasqIPs, udng.v4MasqIPs); err != nil {
+	if err = udng.openflowManager.addNetwork(udng.NetInfo, nodeSubnets, mgmtIPs, udng.masqCTMark, udng.pktMark, udng.v6MasqIPs, udng.v4MasqIPs); err != nil {
 		return fmt.Errorf("could not add network %s: %v", udng.GetNetworkName(), err)
 	}
 
@@ -493,7 +495,7 @@ func (udng *UserDefinedNetworkGateway) addUDNManagementPort() (netlink.Link, err
 	if len(networkLocalSubnets) == 0 {
 		return nil, fmt.Errorf("cannot determine subnets while configuring management port for network: %s", udng.GetNetworkName())
 	}
-	macAddr := util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(networkLocalSubnets[0]).IP)
+	macAddr := util.IPAddrToHWAddr(udng.GetNodeManagementIP(networkLocalSubnets[0]).IP)
 
 	// STEP1
 	stdout, stderr, err := util.RunOVSVsctl(
@@ -564,7 +566,7 @@ func (udng *UserDefinedNetworkGateway) addUDNManagementPortIPs(mpLink netlink.Li
 	// extract management port IP from subnets and add it to link
 	for _, subnet := range networkLocalSubnets {
 		if config.IPv6Mode && utilnet.IsIPv6CIDR(subnet) || config.IPv4Mode && utilnet.IsIPv4CIDR(subnet) {
-			ip := util.GetNodeManagementIfAddr(subnet)
+			ip := udng.GetNodeManagementIP(subnet)
 			var err error
 			var exists bool
 			if exists, err = util.LinkAddrExist(mpLink, ip); err == nil && !exists {
@@ -669,7 +671,7 @@ func (udng *UserDefinedNetworkGateway) computeRoutesForUDN(mpLink netlink.Link) 
 		return nil, err
 	}
 	for _, localSubnet := range networkLocalSubnets {
-		gwIP := util.GetNodeGatewayIfAddr(localSubnet)
+		gwIP := udng.GetNodeGatewayIP(localSubnet)
 		if gwIP == nil {
 			return nil, fmt.Errorf("unable to find gateway IP for network %s, subnet: %s", udng.GetNetworkName(), localSubnet)
 		}
