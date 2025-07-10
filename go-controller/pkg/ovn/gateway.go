@@ -242,18 +242,7 @@ func (gw *GatewayManager) cleanupStalePodSNATs(nodeName string, nodeIPs []*net.I
 	return nil
 }
 
-// GatewayInit creates a gateway router for the local chassis.
-// enableGatewayMTU enables options:gateway_mtu for gateway routers.
-func (gw *GatewayManager) GatewayInit(
-	nodeName string,
-	clusterIPSubnet []*net.IPNet,
-	hostSubnets []*net.IPNet,
-	l3GatewayConfig *util.L3GatewayConfig,
-	gwLRPJoinIPs, drLRPIfAddrs []*net.IPNet,
-	externalIPs []net.IP,
-	enableGatewayMTU bool,
-) error {
-
+func (gw *GatewayManager) createGWRouter(l3GatewayConfig *util.L3GatewayConfig, gwLRPJoinIPs []*net.IPNet) (*nbdb.LogicalRouter, error) {
 	// Create a gateway router.
 	dynamicNeighRouters := "true"
 	if config.OVNKubernetesFeature.EnableInterconnect {
@@ -313,10 +302,33 @@ func (gw *GatewayManager) GatewayInit(
 		}
 	}
 
+	err := libovsdbops.CreateOrUpdateLogicalRouter(gw.nbClient, &gwRouter, &gwRouter.Options,
+		&gwRouter.ExternalIDs, &gwRouter.LoadBalancerGroup, &gwRouter.Copp)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create logical router %+v: %v", gwRouter, err)
+	}
+	return &gwRouter, nil
+}
+
+// GatewayInit creates a gateway router for the local chassis.
+// enableGatewayMTU enables options:gateway_mtu for gateway routers.
+func (gw *GatewayManager) GatewayInit(
+	nodeName string,
+	clusterIPSubnet []*net.IPNet,
+	hostSubnets []*net.IPNet,
+	l3GatewayConfig *util.L3GatewayConfig,
+	gwLRPJoinIPs, drLRPIfAddrs []*net.IPNet,
+	externalIPs []net.IP,
+	enableGatewayMTU bool,
+) error {
+
 	// If l3gatewayAnnotation.IPAddresses changed, we need to update the perPodSNATs,
 	// so let's save the old value before we update the router for later use
 	var oldExtIPs []net.IP
-	oldLogicalRouter, err := libovsdbops.GetLogicalRouter(gw.nbClient, &gwRouter)
+	oldLogicalRouter, err := libovsdbops.GetLogicalRouter(gw.nbClient,
+		&nbdb.LogicalRouter{
+			Name: gw.gwRouterName,
+		})
 	if err != nil && !errors.Is(err, libovsdbclient.ErrNotFound) {
 		return fmt.Errorf("failed in retrieving %s, error: %v", gw.gwRouterName, err)
 	}
@@ -336,10 +348,9 @@ func (gw *GatewayManager) GatewayInit(
 		}
 	}
 
-	err = libovsdbops.CreateOrUpdateLogicalRouter(gw.nbClient, &gwRouter, &gwRouter.Options,
-		&gwRouter.ExternalIDs, &gwRouter.LoadBalancerGroup, &gwRouter.Copp)
+	gwRouter, err := gw.createGWRouter(l3GatewayConfig, gwLRPJoinIPs)
 	if err != nil {
-		return fmt.Errorf("failed to create logical router %+v: %v", gwRouter, err)
+		return err
 	}
 
 	gwSwitchPort := types.JoinSwitchToGWRouterPrefix + gw.gwRouterName
@@ -441,7 +452,7 @@ func (gw *GatewayManager) GatewayInit(
 		}
 	}
 
-	err = libovsdbops.CreateOrUpdateLogicalRouterPort(gw.nbClient, &gwRouter,
+	err = libovsdbops.CreateOrUpdateLogicalRouterPort(gw.nbClient, gwRouter,
 		&logicalRouterPort, nil, &logicalRouterPort.MAC, &logicalRouterPort.Networks,
 		&logicalRouterPort.Options)
 	if err != nil {
@@ -464,7 +475,7 @@ func (gw *GatewayManager) GatewayInit(
 			// a better way to do it. Adding support for indirection in ModelClients
 			// opModel (being able to operate on thins pointed to from another model)
 			// would be a great way to simplify this.
-			updatedGWRouter, err := libovsdbops.GetLogicalRouter(gw.nbClient, &gwRouter)
+			updatedGWRouter, err := libovsdbops.GetLogicalRouter(gw.nbClient, gwRouter)
 			if err != nil {
 				return fmt.Errorf("unable to retrieve logical router %+v: %v", gwRouter, err)
 			}
@@ -742,7 +753,7 @@ func (gw *GatewayManager) GatewayInit(
 	}
 
 	if len(natsToUpdate) > 0 {
-		err = libovsdbops.CreateOrUpdateNATs(gw.nbClient, &gwRouter, natsToUpdate...)
+		err = libovsdbops.CreateOrUpdateNATs(gw.nbClient, gwRouter, natsToUpdate...)
 		if err != nil {
 			return fmt.Errorf("failed to update GW SNAT rule for pod on router %s error: %v", gw.gwRouterName, err)
 		}
@@ -770,7 +781,7 @@ func (gw *GatewayManager) GatewayInit(
 		nat := libovsdbops.BuildSNAT(&externalIP[0], joinIPNet, "", extIDs)
 		joinNATs = append(joinNATs, nat)
 	}
-	err = libovsdbops.CreateOrUpdateNATs(gw.nbClient, &gwRouter, joinNATs...)
+	err = libovsdbops.CreateOrUpdateNATs(gw.nbClient, gwRouter, joinNATs...)
 	if err != nil {
 		return fmt.Errorf("failed to create SNAT rule for join subnet on router %s error: %v", gw.gwRouterName, err)
 	}
@@ -790,7 +801,7 @@ func (gw *GatewayManager) GatewayInit(
 			nat = libovsdbops.BuildSNATWithMatch(&externalIP[0], entry, "", extIDs, gw.netInfo.GetNetworkScopedClusterSubnetSNATMatch(nodeName))
 			nats = append(nats, nat)
 		}
-		err := libovsdbops.CreateOrUpdateNATs(gw.nbClient, &gwRouter, nats...)
+		err := libovsdbops.CreateOrUpdateNATs(gw.nbClient, gwRouter, nats...)
 		if err != nil {
 			return fmt.Errorf("failed to update SNAT rule for pod on router %s error: %v", gw.gwRouterName, err)
 		}
@@ -800,7 +811,7 @@ func (gw *GatewayManager) GatewayInit(
 			nat = libovsdbops.BuildSNATWithMatch(nil, logicalSubnet, "", extIDs, gw.netInfo.GetNetworkScopedClusterSubnetSNATMatch(nodeName))
 			nats = append(nats, nat)
 		}
-		err := libovsdbops.DeleteNATs(gw.nbClient, &gwRouter, nats...)
+		err := libovsdbops.DeleteNATs(gw.nbClient, gwRouter, nats...)
 		if err != nil {
 			return fmt.Errorf("failed to delete GW SNAT rule for pod on router %s error: %v", gw.gwRouterName, err)
 		}
