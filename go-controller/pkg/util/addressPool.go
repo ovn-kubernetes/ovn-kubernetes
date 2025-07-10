@@ -1,11 +1,28 @@
 package util
 
 import (
+	"errors"
 	"net"
 	"sync"
 
 	"k8s.io/klog/v2"
 )
+
+// Address pool conflict errors
+var (
+	ErrIPConflict  = errors.New("IP address conflict detected")
+	ErrMACConflict = errors.New("MAC address conflict detected")
+)
+
+// IsErrIPConflict returns true if err is of type ErrIPConflict
+func IsErrIPConflict(err error) bool {
+	return errors.Is(err, ErrIPConflict)
+}
+
+// IsErrMACConflict returns true if err is of type ErrMACConflict
+func IsErrMACConflict(err error) bool {
+	return errors.Is(err, ErrMACConflict)
+}
 
 // NetworkPool tracks allocated IP and MAC addresses for a specific UDN network
 type NetworkPool struct {

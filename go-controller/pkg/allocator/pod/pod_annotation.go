@@ -12,6 +12,8 @@ import (
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 
+	kubevirtv1 "kubevirt.io/api/core/v1"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip/subnet"
@@ -99,6 +101,7 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotation(
 		pod,
 		network,
 		allocator.ipamClaimsReconciler,
+		allocator.addressPoolManager,
 		reallocateIP,
 		networkRole,
 	)
@@ -113,6 +116,7 @@ func allocatePodAnnotation(
 	pod *corev1.Pod,
 	network *nadapi.NetworkSelectionElement,
 	claimsReconciler persistentips.PersistentAllocations,
+	addressPoolManager *util.NetworkPoolManager,
 	reallocateIP bool,
 	networkRole string) (
 	updatedPod *corev1.Pod,
@@ -132,6 +136,7 @@ func allocatePodAnnotation(
 			pod,
 			network,
 			claimsReconciler,
+			addressPoolManager,
 			reallocateIP,
 			networkRole,
 		)
@@ -183,6 +188,7 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotationWithTunnelID(
 		pod,
 		network,
 		allocator.ipamClaimsReconciler,
+		allocator.addressPoolManager,
 		reallocateIP,
 		networkRole,
 	)
@@ -198,6 +204,7 @@ func allocatePodAnnotationWithTunnelID(
 	pod *corev1.Pod,
 	network *nadapi.NetworkSelectionElement,
 	claimsReconciler persistentips.PersistentAllocations,
+	addressPoolManager *util.NetworkPoolManager,
 	reallocateIP bool,
 	networkRole string) (
 	updatedPod *corev1.Pod,
@@ -214,6 +221,7 @@ func allocatePodAnnotationWithTunnelID(
 			pod,
 			network,
 			claimsReconciler,
+			addressPoolManager,
 			reallocateIP,
 			networkRole,
 		)
@@ -281,6 +289,7 @@ func allocatePodAnnotationWithRollback(
 	pod *corev1.Pod,
 	network *nadapi.NetworkSelectionElement,
 	claimsReconciler persistentips.PersistentAllocations,
+	addressPoolManager *util.NetworkPoolManager,
 	reallocateIP bool,
 	networkRole string) (
 	updatedPod *corev1.Pod,
@@ -300,11 +309,21 @@ func allocatePodAnnotationWithRollback(
 	// for defer to work correctly.
 	var releaseIPs []*net.IPNet
 	var releaseID int
+	var releaseMAC net.HardwareAddr
+	networkName := netInfo.GetNetworkName()
 	rollback = func() {
 		if releaseID != 0 {
 			idAllocator.ReleaseID()
 			klog.V(5).Infof("Released ID %d", releaseID)
 			releaseID = 0
+		}
+		if config.OVNKubernetesFeature.EnablePreconfiguredUDNAddresses &&
+			netInfo.IsPrimaryNetwork() &&
+			netInfo.TopologyType() == types.Layer2Topology &&
+			releaseMAC != nil {
+			addressPoolManager.RemoveMACFromPool(networkName, releaseMAC)
+			klog.V(5).Infof("Released MAC %s", releaseMAC.String())
+			releaseMAC = nil
 		}
 		if len(releaseIPs) == 0 {
 			return
@@ -315,7 +334,13 @@ func allocatePodAnnotationWithRollback(
 			releaseIPs = nil
 			return
 		}
+		if config.OVNKubernetesFeature.EnablePreconfiguredUDNAddresses &&
+			netInfo.IsPrimaryNetwork() &&
+			netInfo.TopologyType() == types.Layer2Topology {
+			addressPoolManager.RemoveIPsFromPool(networkName, releaseIPs)
+		}
 		klog.V(5).Infof("Released IPs %v", util.StringSlice(releaseIPs))
+
 		releaseIPs = nil
 	}
 	defer func() {
@@ -406,6 +431,7 @@ func allocatePodAnnotationWithRollback(
 		}
 	}
 
+	ownerID := getPoolAddressOwner(pod, netInfo)
 	if hasIPAM {
 		if len(tentative.IPs) > 0 {
 			if err = ipAllocator.AllocateIPs(tentative.IPs); err != nil && !ip.IsErrAllocated(err) {
@@ -438,6 +464,7 @@ func allocatePodAnnotationWithRollback(
 			// copy the IPs that would need to be released
 			releaseIPs = util.CopyIPNets(tentative.IPs)
 		}
+
 	}
 
 	if needsIPOrMAC {
@@ -458,6 +485,23 @@ func allocatePodAnnotationWithRollback(
 		if err != nil {
 			return
 		}
+	}
+
+	if config.OVNKubernetesFeature.EnablePreconfiguredUDNAddresses &&
+		netInfo.IsPrimaryNetwork() &&
+		netInfo.TopologyType() == types.Layer2Topology {
+		if conflictingIPs := addressPoolManager.CheckIPConflicts(networkName, tentative.IPs, ownerID); len(conflictingIPs) > 0 {
+			err = fmt.Errorf("%w: %v already allocated in network %s", util.ErrIPConflict, conflictingIPs, networkName)
+			return
+		}
+		addressPoolManager.AddIPsToPool(networkName, tentative.IPs, ownerID)
+
+		if addressPoolManager.IsMACConflict(networkName, tentative.MAC, ownerID) {
+			err = fmt.Errorf("%w: %s already allocated in network %s", util.ErrMACConflict, tentative.MAC.String(), networkName)
+			return
+		}
+		addressPoolManager.AddMACToPool(networkName, tentative.MAC, ownerID)
+		releaseMAC = tentative.MAC
 	}
 
 	needsAnnotationUpdate := needsIPOrMAC || needsID
@@ -508,4 +552,18 @@ func (allocator *PodAnnotationAllocator) ReleasePodAddressPoolResources(pod *cor
 	}
 
 	return nil
+}
+
+// getPoolAddressOwner constructs the owner identifier for IP/MAC pool tracking.
+// Returns "<ns>/<pod-name>" for regular pods and "<ns>/<vm-name>" for VMs with persistent IPs enabled.
+func getPoolAddressOwner(pod *corev1.Pod, netInfo util.NetInfo) string {
+	// Check if this is a VM pod and persistent IPs are enabled
+	if netInfo.AllowsPersistentIPs() {
+		if vmName, ok := pod.Labels[kubevirtv1.VirtualMachineNameLabel]; ok {
+			return fmt.Sprintf("%s/%s", pod.Namespace, vmName)
+		}
+	}
+
+	// Default to pod-based identifier
+	return fmt.Sprintf("%s/%s", pod.Namespace, pod.Name)
 }
