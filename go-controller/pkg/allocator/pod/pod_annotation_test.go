@@ -1117,6 +1117,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 				pod,
 				network,
 				claimsReconciler,
+				nil,
 				tt.args.reallocate,
 				tt.role,
 			)
