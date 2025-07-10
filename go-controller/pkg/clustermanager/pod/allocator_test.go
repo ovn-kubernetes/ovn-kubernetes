@@ -3,6 +3,7 @@ package pod
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -26,6 +27,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
 	ipallocator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip/subnet"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/mac"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/pod"
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
@@ -43,6 +45,7 @@ type testPod struct {
 	hostNetwork bool
 	completed   bool
 	network     *nadapi.NetworkSelectionElement
+	labels      map[string]string
 }
 
 func (p testPod) getPod(t *testing.T) *corev1.Pod {
@@ -53,6 +56,7 @@ func (p testPod) getPod(t *testing.T) *corev1.Pod {
 			UID:         apitypes.UID("pod"),
 			Namespace:   "namespace",
 			Annotations: map[string]string{},
+			Labels:      p.labels,
 		},
 		Spec: corev1.PodSpec{
 			HostNetwork: p.hostNetwork,
@@ -169,6 +173,22 @@ func (nas *namedAllocatorStub) ReleaseIPs([]*net.IPNet) error {
 	return nil
 }
 
+type macRegistryStub struct {
+	reservedMAC            net.HardwareAddr
+	ownerID                string
+	reserveErr, releaseErr error
+}
+
+func (m *macRegistryStub) Reserve(owner string, mac net.HardwareAddr) error {
+	m.ownerID = owner
+	m.reservedMAC = mac
+	return m.reserveErr
+}
+func (m *macRegistryStub) Release(owner string, _ net.HardwareAddr) error {
+	m.ownerID = owner
+	return m.releaseErr
+}
+
 func TestPodAllocator_reconcileForNAD(t *testing.T) {
 	type args struct {
 		old       *testPod
@@ -178,20 +198,23 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 		release   bool
 	}
 	tests := []struct {
-		name            string
-		args            args
-		ipam            bool
-		idAllocation    bool
-		tracked         bool
-		role            string
-		expectAllocate  bool
-		expectIPRelease bool
-		expectIDRelease bool
-		expectTracked   bool
-		fullIPPool      bool
-		expectEvents    []string
-		expectError     string
-		podAnnotation   *util.PodAnnotation
+		name             string
+		args             args
+		ipam             bool
+		idAllocation     bool
+		macRegistry      *macRegistryStub
+		tracked          bool
+		role             string
+		expectAllocate   bool
+		expectIPRelease  bool
+		expectIDRelease  bool
+		expectMACReserve *net.HardwareAddr
+		expectMACOwnerID string
+		expectTracked    bool
+		fullIPPool       bool
+		expectEvents     []string
+		expectError      string
+		podAnnotation    *util.PodAnnotation
 	}{
 		{
 			name: "Pod not scheduled",
@@ -541,6 +564,73 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 			expectEvents: []string{"Warning ErrorAllocatingPod failed to update pod namespace/pod: failed to ensure requested or annotated IPs [10.1.130.0/24] for namespace/nad/namespace/pod: subnet address pool exhausted"},
 			expectError:  "failed to update pod namespace/pod: failed to ensure requested or annotated IPs [10.1.130.0/24] for namespace/nad/namespace/pod: subnet address pool exhausted",
 		},
+
+		// podAllocator's macRegistry record mac on pod creation
+		{
+			name:        "macRegistry should record pod's MAC",
+			macRegistry: &macRegistryStub{},
+			args: args{
+				new: &testPod{
+					scheduled: true,
+					// use predictable MAC address for testing.
+					network: &nadapi.NetworkSelectionElement{Namespace: "namespace", Name: "nad", MacRequest: "0a:0a:0a:0a:0a:0a"},
+				},
+			},
+			expectMACReserve: &net.HardwareAddr{0x0a, 0x0a, 0x0a, 0x0a, 0x0a, 0x0a},
+			expectAllocate:   true,
+		},
+		{
+			name:        "should fail when macRegistry fail to reserve pod's MAC",
+			macRegistry: &macRegistryStub{reserveErr: errors.New("test reserve failure")},
+			args: args{
+				new: &testPod{
+					scheduled: true,
+					// use predictable MAC address for testing.
+					network: &nadapi.NetworkSelectionElement{Namespace: "namespace", Name: "nad", MacRequest: "0a:0a:0a:0a:0a:0a"},
+				},
+			},
+			expectError: `failed to update pod namespace/pod: failed to reserve MAC address "0a:0a:0a:0a:0a:0a" for owner "namespace/pod" on network attachment "namespace/nad": test reserve failure`,
+		},
+		{
+			name:        "should NOT fail when macRegistry gets repeated reserve requests (same mac and owner)",
+			macRegistry: &macRegistryStub{reserveErr: mac.ErrMACReserved},
+			args: args{
+				new: &testPod{
+					scheduled: true,
+					network:   &nadapi.NetworkSelectionElement{Namespace: "namespace", Name: "nad"},
+				},
+			},
+			expectAllocate: true,
+		},
+		// podAllocator compose MAC owner IDs as expected
+		{
+			name:        "should compose MAC owner ID from pod.namespace and pod.name",
+			macRegistry: &macRegistryStub{},
+			args: args{
+				new: &testPod{
+					network:   &nadapi.NetworkSelectionElement{Namespace: "namespace", Name: "nad"},
+					scheduled: true,
+				},
+			},
+			expectMACOwnerID: "namespace/pod",
+			expectAllocate:   true,
+		},
+		{
+			// In a scenario of VM migration, migration destination and source pods use the same network configuration,
+			// including MAC address. Given VM pods, composing the owner ID from the VM name relaxes MAC conflict errors,
+			// when VM is migrated (where migration source and destination pods share the same MAC).
+			name:             "Given pod with VM label, should compose MAC owner ID from pod.namespace and VM label",
+			expectMACOwnerID: "namespace/myvm",
+			macRegistry:      &macRegistryStub{},
+			args: args{
+				new: &testPod{
+					network:   &nadapi.NetworkSelectionElement{Namespace: "namespace", Name: "nad"},
+					scheduled: true,
+					labels:    map[string]string{"vm.kubevirt.io/name": "myvm"},
+				},
+			},
+			expectAllocate: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -606,11 +696,16 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 				})
 			}
 
+			var opts []pod.AllocatorOption
+			if tt.macRegistry != nil {
+				opts = append(opts, pod.WithMACRegistry(tt.macRegistry))
+			}
 			podAnnotationAllocator := pod.NewPodAnnotationAllocator(
 				netInfo,
 				podListerMock,
 				kubeMock,
 				ipamClaimsReconciler,
+				opts...,
 			)
 
 			testNs := "namespace"
@@ -666,9 +761,17 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 			}
 
 			if tt.podAnnotation != nil {
-				new.Annotations, err = util.MarshalPodAnnotation(new.Annotations, tt.podAnnotation, "namespace/nad")
-				if err != nil {
-					t.Fatalf("failed to set pod annotations: %v", err)
+				if new != nil {
+					new.Annotations, err = util.MarshalPodAnnotation(new.Annotations, tt.podAnnotation, "namespace/nad")
+					if err != nil {
+						t.Fatalf("failed to set pod annotations: %v", err)
+					}
+				}
+				if old != nil {
+					old.Annotations, err = util.MarshalPodAnnotation(old.Annotations, tt.podAnnotation, "namespace/nad")
+					if err != nil {
+						t.Fatalf("failed to set pod annotations: %v", err)
+					}
 				}
 			}
 
@@ -693,6 +796,12 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 
 			if tt.expectTracked != a.releasedPods["namespace/nad"].Has("pod") {
 				t.Errorf("expected pod tracked to be %v but it was %v", tt.expectTracked, a.releasedPods["namespace/nad"].Has("pod"))
+			}
+			if tt.expectMACReserve != nil && tt.macRegistry.reservedMAC.String() != tt.expectMACReserve.String() {
+				t.Errorf("expected pod MAC reserved to be %v but it was %v", tt.expectMACReserve, tt.macRegistry.reservedMAC)
+			}
+			if tt.expectMACOwnerID != "" && tt.expectMACOwnerID != tt.macRegistry.ownerID {
+				t.Errorf("expected pod MAC owner ID to be %v but it was %v", tt.expectMACOwnerID, tt.macRegistry.ownerID)
 			}
 
 			var obtainedEvents []string
