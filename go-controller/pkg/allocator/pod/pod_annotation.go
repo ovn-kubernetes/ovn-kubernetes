@@ -1,6 +1,7 @@
 package pod
 
 import (
+	"errors"
 	"fmt"
 	"net"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip/subnet"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/mac"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
@@ -30,19 +32,33 @@ type PodAnnotationAllocator struct {
 
 	netInfo              util.NetInfo
 	ipamClaimsReconciler persistentips.PersistentAllocations
+	macRegistry          mac.Register
 }
+
+type AllocatorOption func(*PodAnnotationAllocator)
 
 func NewPodAnnotationAllocator(
 	netInfo util.NetInfo,
 	podLister listers.PodLister,
 	kube kube.InterfaceOVN,
 	claimsReconciler persistentips.PersistentAllocations,
+	opts ...AllocatorOption,
 ) *PodAnnotationAllocator {
-	return &PodAnnotationAllocator{
+	p := &PodAnnotationAllocator{
 		podLister:            podLister,
 		kube:                 kube,
 		netInfo:              netInfo,
 		ipamClaimsReconciler: claimsReconciler,
+	}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p
+}
+
+func WithMACRegistry(m mac.Register) AllocatorOption {
+	return func(p *PodAnnotationAllocator) {
+		p.macRegistry = m
 	}
 }
 
@@ -75,6 +91,7 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotation(
 		pod,
 		network,
 		allocator.ipamClaimsReconciler,
+		allocator.macRegistry,
 		reallocateIP,
 		networkRole,
 	)
@@ -89,6 +106,7 @@ func allocatePodAnnotation(
 	pod *corev1.Pod,
 	network *nadapi.NetworkSelectionElement,
 	claimsReconciler persistentips.PersistentAllocations,
+	macRegistry mac.Register,
 	reallocateIP bool,
 	networkRole string) (
 	updatedPod *corev1.Pod,
@@ -108,6 +126,7 @@ func allocatePodAnnotation(
 			pod,
 			network,
 			claimsReconciler,
+			macRegistry,
 			reallocateIP,
 			networkRole,
 		)
@@ -159,6 +178,7 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotationWithTunnelID(
 		pod,
 		network,
 		allocator.ipamClaimsReconciler,
+		allocator.macRegistry,
 		reallocateIP,
 		networkRole,
 	)
@@ -174,6 +194,7 @@ func allocatePodAnnotationWithTunnelID(
 	pod *corev1.Pod,
 	network *nadapi.NetworkSelectionElement,
 	claimsReconciler persistentips.PersistentAllocations,
+	macRegistry mac.Register,
 	reallocateIP bool,
 	networkRole string) (
 	updatedPod *corev1.Pod,
@@ -190,6 +211,7 @@ func allocatePodAnnotationWithTunnelID(
 			pod,
 			network,
 			claimsReconciler,
+			macRegistry,
 			reallocateIP,
 			networkRole,
 		)
@@ -264,6 +286,7 @@ func allocatePodAnnotationWithRollback(
 	pod *corev1.Pod,
 	network *nadapi.NetworkSelectionElement,
 	claimsReconciler persistentips.PersistentAllocations,
+	macRegistry mac.Register,
 	reallocateIP bool,
 	networkRole string) (
 	updatedPod *corev1.Pod,
@@ -276,6 +299,8 @@ func allocatePodAnnotationWithRollback(
 		nadName = util.GetNADName(network.Namespace, network.Name)
 	}
 	podDesc := fmt.Sprintf("%s/%s/%s", nadName, pod.Namespace, pod.Name)
+	macOwnerID := macOwner(pod)
+	networkName := netInfo.GetNetworkName()
 
 	// the IPs we allocate in this function need to be released back to the IPAM
 	// pool if there is some error in any step past the point the IPs were
@@ -283,12 +308,23 @@ func allocatePodAnnotationWithRollback(
 	// for defer to work correctly.
 	var releaseIPs []*net.IPNet
 	var releaseID int
+	var releaseMAC net.HardwareAddr
 	rollback = func() {
 		if releaseID != 0 {
 			idAllocator.ReleaseID()
 			klog.V(5).Infof("Released ID %d", releaseID)
 			releaseID = 0
 		}
+
+		if len(releaseMAC) > 0 && macRegistry != nil {
+			if rerr := macRegistry.Release(macOwnerID, releaseMAC); rerr != nil {
+				klog.Errorf("Failed to release MAC %q on rollback, owner: %q, network: %q: %v", releaseMAC.String(), macOwnerID, networkName, rerr)
+			} else {
+				klog.V(5).Infof("Released MAC %q on rollback, owner: %q, network: %q", releaseMAC.String(), macOwnerID, networkName)
+			}
+			releaseMAC = nil
+		}
+
 		if len(releaseIPs) == 0 {
 			return
 		}
@@ -435,6 +471,21 @@ func allocatePodAnnotationWithRollback(
 		}
 		if err != nil {
 			return
+		}
+		if macRegistry != nil {
+			if rerr := macRegistry.Reserve(macOwnerID, tentative.MAC); rerr != nil {
+				// repeated requests are no-op because mac already recorded
+				if !errors.Is(rerr, mac.ErrMACReserved) {
+					// avoid leaking the network name because this error may reflect of a pod event, which is visible to non-admins.
+					err = fmt.Errorf("failed to reserve MAC address %q for owner %q on network attachment %q: %w",
+						tentative.MAC, macOwnerID, nadName, rerr)
+					klog.Errorf("%v, network-name: %q", err, networkName)
+					return
+				}
+			} else {
+				klog.V(5).Infof("Reserved MAC %q for owner %q on network %q nad %q", tentative.MAC, macOwnerID, networkName, nadName)
+				releaseMAC = tentative.MAC
+			}
 		}
 
 		// handle routes & gateways
