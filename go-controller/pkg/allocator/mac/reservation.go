@@ -6,6 +6,11 @@ import (
 	"sync"
 )
 
+type Register interface {
+	Reserve(owner string, mac net.HardwareAddr) error
+	Release(owner string, mac net.HardwareAddr) error
+}
+
 // ReservationManager tracks reserved MAC addresses requests of pods and detect MAC conflicts,
 // where one pod request static MAC address that is used by another pod.
 type ReservationManager struct {
