@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
@@ -1802,6 +1803,47 @@ spec:
 			),
 		)
 	})
+
+	Context("UDN exhausted subnet", func() {
+		It("check ovnkube-node pod restart when node is not assigned with UDN host subnet", func() {
+			nodes, err := e2enode.GetReadySchedulableNodes(context.TODO(), f.ClientSet)
+			framework.ExpectNoError(err)
+			if len(nodes.Items) < 3 {
+				ginkgo.Skip("requires at least 3 Nodes")
+			}
+
+			By("creating the network with limited host subnet configuration")
+			netConfig := networkAttachmentConfigParams{
+				name:     nadName,
+				topology: "layer3",
+				cidr:     correctCIDRFamily("192.168.100.0/25/26", "2014:100:200::/63/64"),
+				role:     "primary",
+			}
+			netConfig.namespace = f.Namespace.Name
+			udnManifest := generateUserDefinedNetworkManifest(&netConfig)
+			cleanup, err := createManifest(netConfig.namespace, udnManifest)
+			Expect(err).ShouldNot(HaveOccurred(), "creating udn network must succeed")
+			DeferCleanup(cleanup)
+			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, netConfig.namespace, netConfig.name), 5*time.Second, time.Second).Should(Succeed())
+
+			// Get the nodes again, it now updated with host subnet annotation
+			// for newly created UDN.
+			nodes, err = e2enode.GetReadySchedulableNodes(context.TODO(), cs)
+			framework.ExpectNoError(err)
+
+			restartpod := false
+			for i, node := range nodes.Items {
+				_, err = util.ParseNodeHostSubnetAnnotation(&nodes.Items[i], fmt.Sprintf("%s_%s", f.Namespace.Name, nadName))
+				if err != nil && util.IsAnnotationNotSetError(err) {
+					Expect(restartOVNKubeNodePod(cs, deploymentconfig.Get().OVNKubernetesNamespace(), node.Name)).ShouldNot(HaveOccurred(), "restart of OVNKube node pod must succeed")
+					restartpod = true
+					continue
+				}
+				Expect(err).ShouldNot(HaveOccurred(), "should not be other than host subnet annotation not set error")
+			}
+			Expect(restartpod).To(BeTrue())
+		})
+	})
 })
 
 // randomNetworkMetaName return pseudo random name for network related objects (NAD,UDN,CUDN).
@@ -1871,7 +1913,7 @@ func generateLayer3Subnets(cidrs string) []string {
 		case 2:
 			subnets = append(subnets, fmt.Sprintf(`{cidr: "%s/%s"}`, cidrSplit[0], cidrSplit[1]))
 		case 3:
-			subnets = append(subnets, fmt.Sprintf(`{cidr: "%s/%s", hostSubnet: %q }`, cidrSplit[0], cidrSplit[1], cidrSplit[2]))
+			subnets = append(subnets, fmt.Sprintf(`{cidr: "%s/%s", hostSubnet: %s }`, cidrSplit[0], cidrSplit[1], cidrSplit[2]))
 		default:
 			panic(fmt.Sprintf("invalid layer3 subnet: %v", cidr))
 		}
