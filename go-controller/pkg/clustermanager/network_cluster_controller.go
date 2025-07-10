@@ -245,6 +245,12 @@ func (ncc *networkClusterController) init() error {
 			ipamClaimsReconciler,
 		)
 
+		if config.OVNKubernetesFeature.EnablePreconfiguredUDNAddresses &&
+			ncc.IsPrimaryNetwork() &&
+			ncc.TopologyType() == types.Layer2Topology {
+			podAllocationAnnotator.InitializeAddressPool()
+		}
+
 		ncc.podAllocator = pod.NewPodAllocator(
 			ncc.GetNetInfo(),
 			podAllocationAnnotator,

@@ -10,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
+	utilnet "k8s.io/utils/net"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip"
@@ -28,6 +29,7 @@ type PodAnnotationAllocator struct {
 
 	netInfo              util.NetInfo
 	ipamClaimsReconciler persistentips.PersistentAllocations
+	addressPoolManager   *util.NetworkPoolManager
 }
 
 func NewPodAnnotationAllocator(
@@ -41,7 +43,31 @@ func NewPodAnnotationAllocator(
 		kube:                 kube,
 		netInfo:              netInfo,
 		ipamClaimsReconciler: claimsReconciler,
+		addressPoolManager:   util.NewNetworkPoolManager(),
 	}
+}
+
+// InitializeAddressPool initializes the address pool with reserved IPs for the network
+func (allocator *PodAnnotationAllocator) InitializeAddressPool() {
+	var reservedIPs []*net.IPNet
+
+	// Reserve gateway and management port IPs only for IPv4 subnets
+	for _, subnet := range allocator.netInfo.Subnets() {
+		if subnet.CIDR != nil && utilnet.IsIPv4CIDR(subnet.CIDR) {
+			// Reserve gateway IP
+			gwIP := util.GetNodeGatewayIfAddr(subnet.CIDR)
+			reservedIPs = append(reservedIPs, gwIP)
+
+			// Reserve management port IP
+			mgmtIP := util.GetNodeManagementIfAddr(subnet.CIDR)
+			reservedIPs = append(reservedIPs, mgmtIP)
+		}
+	}
+
+	// Add the reserved IPs to the pool
+	allocator.addressPoolManager.AddIPsToPool(allocator.netInfo.GetNetworkName(), reservedIPs, "OVNK-owned")
+	klog.V(5).Infof("Initialized address pool for Layer2 network %s with %d reserved IPs",
+		allocator.netInfo.GetNetworkName(), len(reservedIPs))
 }
 
 // AllocatePodAnnotation allocates the PodAnnotation which includes IPs, a mac
