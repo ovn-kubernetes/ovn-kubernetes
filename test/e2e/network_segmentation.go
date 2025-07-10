@@ -11,6 +11,7 @@ import (
 	"time"
 
 	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
@@ -739,7 +740,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 				return err
 			}),
 			Entry("UserDefinedNetwork", func(c *networkAttachmentConfigParams) error {
-				udnManifest := generateUserDefinedNetworkManifest(c, f.ClientSet)
+				udnManifest := generateUserDefinedNetworkManifestWithSupportedNetworkConfig(c, f.ClientSet)
 				cleanup, err := createManifest(c.namespace, udnManifest)
 				DeferCleanup(cleanup)
 				Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, c.namespace, c.name), 5*time.Second, time.Second).Should(Succeed())
@@ -809,7 +810,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 			}()
 
 			By(fmt.Sprintf("creating the network in namespace %s", netConfig1.namespace))
-			udnManifest := generateUserDefinedNetworkManifest(&netConfig1, f.ClientSet)
+			udnManifest := generateUserDefinedNetworkManifestWithSupportedNetworkConfig(&netConfig1, f.ClientSet)
 			cleanup, err := createManifest(netConfig1.namespace, udnManifest)
 			Expect(err).NotTo(HaveOccurred())
 			DeferCleanup(cleanup)
@@ -822,7 +823,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 			runUDNPod(cs, netConfig1.namespace, clientPodConfig, nil)
 
 			By(fmt.Sprintf("creating the network in namespace %s", netConfig2.namespace))
-			udnManifest = generateUserDefinedNetworkManifest(&netConfig2, f.ClientSet)
+			udnManifest = generateUserDefinedNetworkManifestWithSupportedNetworkConfig(&netConfig2, f.ClientSet)
 			cleanup2, err := createManifest(netConfig2.namespace, udnManifest)
 			Expect(err).NotTo(HaveOccurred())
 			DeferCleanup(cleanup2)
@@ -1640,7 +1641,7 @@ spec:
 				return err
 			}),
 			Entry("UserDefinedNetwork", func(c *networkAttachmentConfigParams) error {
-				udnManifest := generateUserDefinedNetworkManifest(c, f.ClientSet)
+				udnManifest := generateUserDefinedNetworkManifestWithSupportedNetworkConfig(c, f.ClientSet)
 				cleanup, err := createManifest(f.Namespace.Name, udnManifest)
 				DeferCleanup(cleanup)
 				Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, f.Namespace.Name, c.name), 5*time.Second, time.Second).Should(Succeed())
@@ -1816,7 +1817,7 @@ spec:
 				}
 				By("creating the network")
 				netConfig.namespace = f.Namespace.Name
-				udnManifest := generateUserDefinedNetworkManifest(&netConfig, f.ClientSet)
+				udnManifest := generateUserDefinedNetworkManifestWithSupportedNetworkConfig(&netConfig, f.ClientSet)
 				cleanup, err := createManifest(netConfig.namespace, udnManifest)
 				Expect(err).ShouldNot(HaveOccurred(), "creating manifest must succeed")
 				DeferCleanup(cleanup)
@@ -1908,6 +1909,53 @@ spec:
 			),
 		)
 	})
+
+	Context("UDN with limited host subnet", func() {
+		It("check ovnkube-node pod restart when node is not assigned a UDN host subnet", func() {
+			nodes, err := e2enode.GetReadySchedulableNodes(context.TODO(), f.ClientSet)
+			framework.ExpectNoError(err)
+			if len(nodes.Items) < 3 {
+				ginkgo.Skip("requires at least 3 Nodes")
+			}
+
+			// Create a UDN network with limited subnet configuration (i.e. a pod subnet
+			// of /25 to the cluster and of /26 to each node, similarly for ipv6CIDR)
+			// so that only two nodes get assigned with the host subnet from the network
+			// and the remaining node is not assigned with the host subnet for the network.
+			By("creating the network with limited host subnet configuration")
+			netConfig := networkAttachmentConfigParams{
+				name:     nadName,
+				topology: "layer3",
+				cidr:     correctCIDRFamily(cs, "192.168.100.0/25/26", "2014:100:200::/63/64"),
+				role:     "primary",
+			}
+			netConfig.namespace = f.Namespace.Name
+			udnManifest := generateUserDefinedNetworkManifest(&netConfig, f.ClientSet, false)
+			cleanup, err := createManifest(netConfig.namespace, udnManifest)
+			Expect(err).ShouldNot(HaveOccurred(), "creating udn network must succeed")
+			DeferCleanup(cleanup)
+			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, netConfig.namespace, netConfig.name), 5*time.Second, time.Second).Should(Succeed())
+
+			// Get the nodes again, it now updated with host subnet annotation
+			// for newly created UDN.
+			nodes, err = e2enode.GetReadySchedulableNodes(context.TODO(), cs)
+			framework.ExpectNoError(err)
+
+			var restartPodCount, hostsubnetAnnotationSetNodeCount int
+			for i, node := range nodes.Items {
+				_, err = util.ParseNodeHostSubnetAnnotation(&nodes.Items[i], fmt.Sprintf("%s_%s", f.Namespace.Name, nadName))
+				if err != nil && util.IsAnnotationNotSetError(err) {
+					Expect(restartOVNKubeNodePod(cs, deploymentconfig.Get().OVNKubernetesNamespace(), node.Name)).ShouldNot(HaveOccurred(), "restart of OVNKube node pod must succeed")
+					restartPodCount++
+					continue
+				}
+				Expect(err).ShouldNot(HaveOccurred(), "should not be other than host subnet annotation not set error")
+				hostsubnetAnnotationSetNodeCount++
+			}
+			Expect(restartPodCount).Should(BeNumerically(">=", 1))
+			Expect(hostsubnetAnnotationSetNodeCount).To(Equal(2))
+		})
+	})
 })
 
 // randomNetworkMetaName return pseudo random name for network related objects (NAD,UDN,CUDN).
@@ -1924,8 +1972,15 @@ var nadToUdnParams = map[string]string{
 	"layer3":    "Layer3",
 }
 
-func generateUserDefinedNetworkManifest(params *networkAttachmentConfigParams, client clientset.Interface) string {
-	filterSupportedNetworkConfig(client, params)
+func generateUserDefinedNetworkManifestWithSupportedNetworkConfig(params *networkAttachmentConfigParams, client clientset.Interface) string {
+	return generateUserDefinedNetworkManifest(params, client, true)
+}
+
+func generateUserDefinedNetworkManifest(params *networkAttachmentConfigParams, client clientset.Interface,
+	networkFilter bool) string {
+	if networkFilter {
+		filterSupportedNetworkConfig(client, params)
+	}
 
 	subnets := generateSubnetsYaml(params)
 	manifest := `
@@ -2011,7 +2066,7 @@ func generateLayer3Subnets(cidrs string) []string {
 		case 2:
 			subnets = append(subnets, fmt.Sprintf(`{cidr: "%s/%s"}`, cidrSplit[0], cidrSplit[1]))
 		case 3:
-			subnets = append(subnets, fmt.Sprintf(`{cidr: "%s/%s", hostSubnet: %q }`, cidrSplit[0], cidrSplit[1], cidrSplit[2]))
+			subnets = append(subnets, fmt.Sprintf(`{cidr: "%s/%s", hostSubnet: %s }`, cidrSplit[0], cidrSplit[1], cidrSplit[2]))
 		default:
 			panic(fmt.Sprintf("invalid layer3 subnet: %v", cidr))
 		}
@@ -2508,4 +2563,26 @@ func unmarshalPodAnnotationAllNetworks(annotations map[string]string) (map[strin
 		}
 	}
 	return podNetworks, nil
+}
+
+// takes ipv4 and ipv6 cidrs and returns the correct type for the cluster under test
+// this function is useful when cidr has both cluster and host subnets included.
+// example: "192.168.100.0/25/26", "2014:100:200::/63/64"
+func correctCIDRFamily(cs clientset.Interface, ipv4CIDR, ipv6CIDR string) string {
+	return strings.Join(selectCIDRs(cs, ipv4CIDR, ipv6CIDR), ",")
+}
+
+// takes ipv4 and ipv6 cidrs and returns the correct type for the cluster under test
+func selectCIDRs(cs clientset.Interface, ipv4CIDR, ipv6CIDR string) []string {
+	// dual stack cluster
+	if isIPv6Supported(cs) && isIPv4Supported(cs) {
+		return []string{ipv4CIDR, ipv6CIDR}
+	}
+	// is an ipv6 only cluster
+	if isIPv6Supported(cs) {
+		return []string{ipv6CIDR}
+	}
+
+	//ipv4 only cluster
+	return []string{ipv4CIDR}
 }
