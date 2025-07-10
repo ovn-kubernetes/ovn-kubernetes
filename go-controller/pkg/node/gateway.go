@@ -372,6 +372,11 @@ func gatewayInitInternal(nodeName, gwIntf, egressGatewayIntf string, gwNextHops 
 		return nil, nil, err
 	}
 
+	chassisHostname, err := util.GetNodeChassisHostname()
+	if err != nil {
+		return nil, nil, err
+	}
+
 	// Set annotation that determines if options:gateway_mtu shall be set for this node.
 	enableGatewayMTU := true
 	if config.Gateway.DisablePacketMTUCheck {
@@ -430,15 +435,16 @@ func gatewayInitInternal(nodeName, gwIntf, egressGatewayIntf string, gwNextHops 
 	}
 
 	l3GwConfig := util.L3GatewayConfig{
-		Mode:           config.Gateway.Mode,
-		ChassisID:      chassisID,
-		BridgeID:       gatewayBridge.bridgeName,
-		InterfaceID:    gatewayBridge.interfaceID,
-		MACAddress:     gatewayBridge.macAddress,
-		IPAddresses:    gatewayBridge.ips,
-		NextHops:       gwNextHops,
-		NodePortEnable: config.Gateway.NodeportEnable,
-		VLANID:         &config.Gateway.VLANID,
+		Mode:            config.Gateway.Mode,
+		ChassisID:       chassisID,
+		ChassisHostname: chassisHostname,
+		BridgeID:        gatewayBridge.bridgeName,
+		InterfaceID:     gatewayBridge.interfaceID,
+		MACAddress:      gatewayBridge.macAddress,
+		IPAddresses:     gatewayBridge.ips,
+		NextHops:        gwNextHops,
+		NodePortEnable:  config.Gateway.NodeportEnable,
+		VLANID:          &config.Gateway.VLANID,
 	}
 	if egressGWBridge != nil {
 		l3GwConfig.EgressGWInterfaceID = egressGWBridge.interfaceID
