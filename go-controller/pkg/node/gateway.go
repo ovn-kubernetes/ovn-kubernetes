@@ -465,7 +465,7 @@ func (g *gateway) GetGatewayBridgeIface() string {
 }
 
 func (g *gateway) GetGatewayIface() string {
-	return g.openflowManager.defaultBridge.getGatewayIface()
+	return g.openflowManager.defaultBridge.gwIface
 }
 
 // getMaxFrameLength returns the maximum frame size (ignoring VLAN header) that a gateway can handle
@@ -556,19 +556,11 @@ type bridgeConfiguration struct {
 	nextHops    []net.IP
 }
 
-func (b *bridgeConfiguration) getGatewayIface() string {
-	// If gwIface is set, then accelerated GW interface is present and we use it. If else use external bridge instead.
-	if b.gwIface != "" {
-		return b.gwIface
-	}
-	return b.bridgeName
-}
-
 // updateInterfaceIPAddresses sets and returns the bridge's current ips
 func (b *bridgeConfiguration) updateInterfaceIPAddresses(node *corev1.Node) ([]*net.IPNet, error) {
 	b.Lock()
 	defer b.Unlock()
-	ifAddrs, err := getNetworkInterfaceIPAddresses(b.getGatewayIface())
+	ifAddrs, err := getNetworkInterfaceIPAddresses(b.gwIface)
 	if err != nil {
 		return nil, err
 	}

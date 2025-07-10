@@ -268,7 +268,7 @@ func NewUserDefinedNetworkGateway(netInfo util.NetInfo, node *corev1.Node, nodeL
 	if gw.openflowManager == nil {
 		return nil, fmt.Errorf("openflow manager has not been provided for network: %s", netInfo.GetNetworkName())
 	}
-	intfName := gw.openflowManager.defaultBridge.getGatewayIface()
+	intfName := gw.openflowManager.defaultBridge.gwIface
 	link, err := util.GetNetLinkOps().LinkByName(intfName)
 	if err != nil {
 		return nil, fmt.Errorf("unable to get link for %s, error: %v", intfName, err)
