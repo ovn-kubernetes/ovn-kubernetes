@@ -68,9 +68,11 @@ No API changes were done.
 ### OVN sampling details
 
 OVN has 3 main db tables that are used for sampling:
-- `Sample_collector`: This table is used to define the sampling collector. It defines the sampling rate and collectorID, 
-which is used to set up collectors in the OVS. 
+- `Sample_collector`: This table is used to define the sampling collector. It defines the sampling rate via `Probability` field
+and collectorID via `SetID` field, which is used to set up collectors in the OVS. 
 - `Sampling_app`: This table is used to set `ID`s for existing OVN sampling applications, that are sent together with the samples.
+There is a supported set of `Sampling_app` types, for example `acl-new` app is used to sample new connections matched by an ACL.
+`Sampling_app.ID` is a way to identify the application that generated the sample.
 - `Sample`: This table is used to define required samples and point to the collectors. 
 Every sample has `Metadata` that is sent together with the sample.
 
@@ -84,14 +86,20 @@ that is decoded by `go-controller/observability-lib`.
 When one of the supported objects (for example, network policy) is created, ovn-kuberentes generates an nbdb `Sample` for it.
 
 To decode the samples into human-readable information, `go-controller/observability-lib` is used. It finds `Sample`
-by the attached `Sample.Metadata` and then gets corresponding db object based on `Sampling_add.ID` and `Sample.UUID`.
-The message is then constructed using db object `external_ids`.
-
-### Full stack architecture
+by the attached `Sample.Metadata` and then gets corresponding db object (e.g. ACL) based on `Sampling_app.ID` and `Sample.UUID`.
+The message is then constructed using db object (e.g. ACL) `external_ids`.
 
 ![ovnkube-observ](../images/ovnkube-observ.png)
 
 The diagram shows how all involved components (kernel, OVS, OVN, ovn-kubernetes) are connected.
+
+#### Enabling collectors
+
+Currently, we have only 1 default collector with hard-coded ID, which is set via the `Sample_collector.SetID` field.
+To make OVS start sending samples for an existing `Sample_collector`, a new OVSDB `Flow_Sample_Collector_Set` entry
+needs to be created with `Flow_Sample_Collector_Set.ID` value of `Sample_collector.SetID`. 
+This is done by the `go-controller/observability-lib` and it is important to note that only one `Flow_Sample_Collector_Set`
+should be created for a given `Sample_collector.SetID` value at a time. But if such entry already exists, it can be reused.
 
 ## Best Practices
 
@@ -125,6 +133,9 @@ This applies to
   - ANP + BANP 
   
   in both cases ANP will have only first-packet sample.
+
+Use caution when running the `ovnkube-observe` tool. Currently it has poor resource management and consumes a lot of 
+CPU when many packets are sent. Tracked here https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5203
 
 ## References
 
