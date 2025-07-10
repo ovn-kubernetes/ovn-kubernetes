@@ -8,11 +8,13 @@ import (
 	kubevirtv1 "kubevirt.io/api/core/v1"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/klog/v2"
 	k8snet "k8s.io/utils/net"
 
 	allocmac "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/mac"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kubevirt"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -72,6 +74,15 @@ func (allocator *PodAnnotationAllocator) InitializeMACRegistry() error {
 		return nil
 	}
 
+	pods, err := allocator.fetchNetworkPods()
+	if err != nil {
+		return err
+	}
+	podMACs, err := indexMACAddrByPodPrimaryUDN(pods)
+	if err != nil {
+		return err
+	}
+
 	// reserve MACs used by infra first, to prevent network disruptions to connected pods in case of conflict.
 	infraMACs := calculateSubnetsInfraMACAddresses(allocator.netInfo)
 	for owner, mac := range infraMACs {
@@ -80,6 +91,13 @@ func (allocator *PodAnnotationAllocator) InitializeMACRegistry() error {
 				mac, owner, networkName, err)
 		}
 		klog.V(5).Infof("Reserved MAC %q on initialization, for infra %q on network %q", mac, owner, networkName)
+	}
+	for owner, mac := range podMACs {
+		if rerr := allocator.macRegistry.Reserve(owner, mac); rerr != nil {
+			return fmt.Errorf("failed to reserve pod MAC %q for owner %q on network %q: %w",
+				mac, owner, networkName, rerr)
+		}
+		klog.V(5).Infof("Reserved MAC %q on initialization, for pod %q on network %q", mac, owner, networkName)
 	}
 
 	return nil
@@ -106,4 +124,53 @@ func calculateSubnetsInfraMACAddresses(netInfo util.NetInfo) map[string]net.Hard
 	}
 
 	return reservedMACs
+}
+
+// fetchNetworkPods fetch running pods in to the network NAD namespaces.
+func (allocator *PodAnnotationAllocator) fetchNetworkPods() ([]*corev1.Pod, error) {
+	var netPods []*corev1.Pod
+	for _, ns := range allocator.netInfo.GetNADNamespaces() {
+		pods, err := allocator.podLister.Pods(ns).List(labels.Everything())
+		if err != nil {
+			return nil, fmt.Errorf("failed to list pods for namespace %q: %v", ns, err)
+		}
+		for _, pod := range pods {
+			if pod == nil {
+				continue
+			}
+			if pod.Status.Phase != corev1.PodRunning ||
+				(!pod.DeletionTimestamp.IsZero() && len(pod.Finalizers) == 0) {
+				// skip non-running or about to dispose pods
+				continue
+			}
+			netPods = append(netPods, pod)
+		}
+	}
+	return netPods, nil
+}
+
+// indexMACAddrByPodPrimaryUDN indexes the MAC address of the primary UDN for each pod.
+// It returns a map where keys are the owner ID (composed by macOwner, e.g., "namespace/pod-name")
+// and the values are the corresponding MAC addresses.
+func indexMACAddrByPodPrimaryUDN(pods []*corev1.Pod) (map[string]net.HardwareAddr, error) {
+	indexedMACs := map[string]net.HardwareAddr{}
+	for _, pod := range pods {
+		podNetworks, err := util.UnmarshalPodAnnotationAllNetworks(pod.Annotations)
+		if err != nil {
+			return nil, fmt.Errorf(`failed to unmarshal pod-network annotation "%s/%s": %v`, pod.Namespace, pod.Name, err)
+		}
+		for _, network := range podNetworks {
+			if network.Role != types.NetworkRolePrimary {
+				// filter out default network and secondary user-defined networks
+				continue
+			}
+			mac, perr := net.ParseMAC(network.MAC)
+			if perr != nil {
+				return nil, fmt.Errorf(`failed to parse mac address "%s/%s": %v`, pod.Namespace, pod.Name, perr)
+			}
+			indexedMACs[macOwner(pod)] = mac
+		}
+	}
+
+	return indexedMACs, nil
 }
