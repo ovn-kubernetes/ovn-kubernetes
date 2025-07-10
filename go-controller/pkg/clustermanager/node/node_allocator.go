@@ -284,7 +284,13 @@ func (na *NodeAllocator) syncNodeNetworkAnnotations(node *corev1.Node) error {
 		}
 
 		if config.IPv4Mode {
-			joinV4Addr, err := na.nodeGWRouterLRPIPv4Generator.GenerateIP(nodeID)
+			var joinV4Addr *net.IPNet
+			var err error
+			if na.netInfo.TopologyType() == types.Layer2Topology {
+				joinV4Addr, err = na.nodeGWRouterLRPIPv4Generator.GenerateIPWithSubnet(nodeID)
+			} else {
+				joinV4Addr, err = na.nodeGWRouterLRPIPv4Generator.GenerateIP(nodeID)
+			}
 			if err != nil {
 				return fmt.Errorf("failed to generate gateway router port IPv4 address for node %s : err - %w", node.Name, err)
 			}
@@ -292,7 +298,13 @@ func (na *NodeAllocator) syncNodeNetworkAnnotations(node *corev1.Node) error {
 		}
 
 		if config.IPv6Mode {
-			joinV6Addr, err := na.nodeGWRouterLRPIPv6Generator.GenerateIP(nodeID)
+			var joinV6Addr *net.IPNet
+			var err error
+			if na.netInfo.TopologyType() == types.Layer2Topology {
+				joinV6Addr, err = na.nodeGWRouterLRPIPv6Generator.GenerateIPWithSubnet(nodeID)
+			} else {
+				joinV6Addr, err = na.nodeGWRouterLRPIPv6Generator.GenerateIP(nodeID)
+			}
 			if err != nil {
 				return fmt.Errorf("failed to generate gateway router port IPv6 address for node %s : err - %w", node.Name, err)
 			}

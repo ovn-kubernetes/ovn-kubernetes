@@ -40,3 +40,22 @@ func (ipGenerator *IPGenerator) GenerateIP(idx int) (*net.IPNet, error) {
 	}
 	return nil, fmt.Errorf("generated ip %s from the idx %d is out of range in the network %s", ip.String(), idx, ipGenerator.netCidr.String())
 }
+
+func (ipGenerator *IPGenerator) GenerateIPWithSubnet(idx int) (*net.IPNet, error) {
+	if utilnet.IsIPv4CIDR(ipGenerator.netCidr) {
+		// We need to reserver 4 IPs since two of them will be
+		// "network" aka .0 and "broadcast" aka .1,
+		// we use 2 more for GW and transit router ports
+		numberOfIPs := 4
+		v4Mask := net.CIDRMask(30, 32)
+		// nodeIDs start from 1, netIP is the first IP of the subnet
+		gwRouterIP := utilnet.AddIPOffset(ipGenerator.netBaseIP, (idx-1)*numberOfIPs+2)
+		return &net.IPNet{IP: gwRouterIP, Mask: v4Mask}, nil
+	} else {
+		numberOfIPs := 2
+		v6Mask := net.CIDRMask(127, 128)
+		// nodeIDs start from 1, netIP is the first IP of the subnet
+		gwRouterIP := utilnet.AddIPOffset(ipGenerator.netBaseIP, (idx-1)*numberOfIPs+1)
+		return &net.IPNet{IP: gwRouterIP, Mask: v6Mask}, nil
+	}
+}
