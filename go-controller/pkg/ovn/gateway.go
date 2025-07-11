@@ -73,7 +73,6 @@ func NewGatewayManagerForLayer2Topology(
 	return newGWManager(
 		nodeName,
 		netInfo.GetNetworkScopedClusterRouterName(),
-		netInfo.GetNetworkScopedGWRouterName(nodeName),
 		netInfo.GetNetworkScopedExtSwitchName(nodeName),
 		netInfo.GetNetworkScopedName(types.OVNLayer2Switch),
 		coopUUID,
@@ -97,7 +96,6 @@ func NewGatewayManager(
 	return newGWManager(
 		nodeName,
 		netInfo.GetNetworkScopedClusterRouterName(),
-		netInfo.GetNetworkScopedGWRouterName(nodeName),
 		netInfo.GetNetworkScopedExtSwitchName(nodeName),
 		netInfo.GetNetworkScopedJoinSwitchName(),
 		coopUUID,
@@ -110,7 +108,7 @@ func NewGatewayManager(
 }
 
 func newGWManager(
-	nodeName, clusterRouterName, gwRouterName, extSwitchName, joinSwitchName string,
+	nodeName, clusterRouterName, extSwitchName, joinSwitchName string,
 	coopUUID string,
 	kube kube.InterfaceOVN,
 	nbClient libovsdbclient.Client,
@@ -120,7 +118,7 @@ func newGWManager(
 	gwManager := &GatewayManager{
 		nodeName:          nodeName,
 		clusterRouterName: clusterRouterName,
-		gwRouterName:      gwRouterName,
+		gwRouterName:      netInfo.GetNetworkScopedGWRouterName(nodeName),
 		extSwitchName:     extSwitchName,
 		joinSwitchName:    joinSwitchName,
 		coppUUID:          coopUUID,
@@ -313,6 +311,18 @@ func (gw *GatewayManager) createGWRouter(l3GatewayConfig *util.L3GatewayConfig, 
 	return &gwRouter, nil
 }
 
+func GetGWRouterPortName(netInfo util.NetInfo, nodeName string) string {
+	// In Layer2 networks there is no join switch and the gw.joinSwitchName points to the cluster switch.
+	// Ensure that the ports are named appropriately, this is important for the logical router policies
+	// created for local node access.
+	// TODO(kyrtapz): Clean this up for clarity as part of https://github.com/ovn-org/ovn-kubernetes/issues/4689
+	gwRouterName := netInfo.GetNetworkScopedGWRouterName(nodeName)
+	if netInfo.TopologyType() == types.Layer2Topology {
+		return types.RouterToTransitRouterPrefix + gwRouterName
+	}
+	return types.GWRouterToJoinSwitchPrefix + gwRouterName
+}
+
 func (gw *GatewayManager) getGWRouterPeerPortName() string {
 	// In Layer2 networks there is no join switch and the gw.joinSwitchName points to the cluster switch.
 	// Ensure that the ports are named appropriately, this is important for the logical router policies
@@ -326,14 +336,7 @@ func (gw *GatewayManager) getGWRouterPeerPortName() string {
 }
 
 func (gw *GatewayManager) getGWRouterPortName() string {
-	// In Layer2 networks there is no join switch and the gw.joinSwitchName points to the cluster switch.
-	// Ensure that the ports are named appropriately, this is important for the logical router policies
-	// created for local node access.
-	// TODO(kyrtapz): Clean this up for clarity as part of https://github.com/ovn-org/ovn-kubernetes/issues/4689
-	if gw.netInfo.TopologyType() == types.Layer2Topology {
-		return types.RouterToTransitRouterPrefix + gw.gwRouterName
-	}
-	return types.GWRouterToJoinSwitchPrefix + gw.gwRouterName
+	return GetGWRouterPortName(gw.netInfo, gw.nodeName)
 }
 
 func (gw *GatewayManager) createGWRouterPeerSwitchPort() error {
