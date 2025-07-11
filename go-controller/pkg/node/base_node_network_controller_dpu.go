@@ -256,7 +256,7 @@ func (bnnc *BaseNodeNetworkController) addRepPort(pod *corev1.Pod, dpuCD *util.D
 		_ = bnnc.delRepPort(pod, dpuCD, vfRepName, nadName)
 		return err
 	}
-	klog.Infof("Port %s added to bridge br-int", vfRepName)
+	klog.Infof("Port %s added to bridge %s", vfRepName, util.GetOvnBridgeName())
 
 	link, err := util.GetNetLinkOps().LinkByName(vfRepName)
 	if err != nil {
@@ -317,11 +317,11 @@ func (bnnc *BaseNodeNetworkController) delRepPort(pod *corev1.Pod, dpuCD *util.D
 
 	// remove from br-int
 	return wait.PollUntilContextTimeout(context.Background(), 500*time.Millisecond, 60*time.Second, true, func(_ context.Context) (bool, error) {
-		_, _, err := util.RunOVSVsctl("--if-exists", "del-port", "br-int", vfRepName)
+		_, _, err := util.RunOVSVsctl("--if-exists", "del-port", util.GetOvnBridgeName(), vfRepName)
 		if err != nil {
 			return false, nil
 		}
-		klog.Infof("Port %s deleted from bridge br-int", vfRepName)
+		klog.Infof("Port %s deleted from bridge %s", vfRepName, util.GetOvnBridgeName())
 		return true, nil
 	})
 }

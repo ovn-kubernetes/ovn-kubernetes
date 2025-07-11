@@ -248,7 +248,7 @@ func (ncm *NodeControllerManager) Stop() {
 func (ncm *NodeControllerManager) checkForStaleOVSRepresentorInterfaces() {
 	// Get all representor interfaces. these are OVS interfaces that have their external_ids:sandbox and vf-netdev-name set.
 	out, stderr, err := util.RunOVSVsctl("--columns=name,external_ids", "--data=bare", "--no-headings",
-		"--format=csv", "find", "Interface", "external_ids:sandbox!=\"\"", "external_ids:vf-netdev-name!=\"\"")
+		"--format=csv", "find", "Interface", "external_ids:sandbox!=\"\"", "external_ids:vf-netdev-name!=\"\"", fmt.Sprintf("external_ids:bridge-name=%s", util.GetOvnBridgeName()))
 	if err != nil {
 		klog.Errorf("Failed to list ovn-k8s OVS interfaces:, stderr: %q, error: %v", stderr, err)
 		return
@@ -352,7 +352,7 @@ func checkForStaleOVSInternalPorts() {
 	staleInterfaceArgs := []string{}
 	values := strings.Split(stdout, "\n\n")
 	for _, val := range values {
-		if val == ovntypes.K8sMgmtIntfName || val == ovntypes.K8sMgmtIntfName+"_0" {
+		if val == util.K8sMgmtIntfName() || val == util.K8sMgmtIntfName()+"_0" {
 			klog.Errorf("Management port %s is missing. Perhaps the host rebooted "+
 				"or SR-IOV VFs were disabled on the host.", val)
 			continue

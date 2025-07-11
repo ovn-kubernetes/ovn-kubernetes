@@ -309,7 +309,7 @@ func bootstrapOVSFlows(nodeName string) error {
 	if portsOutput, stderr, err = util.RunOVSVsctl("--no-heading", "--data=bare", "--format=csv", "--columns",
 		"name", "list", "interface"); err != nil {
 		// bridge exists, but could not list ports
-		return fmt.Errorf("failed to list ports on existing bridge br-int: %s, %w", stderr, err)
+		return fmt.Errorf("failed to list ports on existing bridge %s: %s, %w", util.GetOvnBridgeName(), stderr, err)
 	}
 
 	bridge, patchPort := localnetPortInfo(nodeName, portsOutput)
@@ -384,7 +384,7 @@ func localnetPortInfo(nodeName string, portsOutput string) (string, string) {
 	// - user defined primary network: patch-<bridge name>_<network-name>_<node>-to-br-int
 	// - user defined secondary localnet network: patch-<bridge name>_<network-name>_ovn_localnet_port-to-br-int
 	// TODO: going forward, maybe it would preferable to just read the bridge name from the config.
-	r := regexp.MustCompile(fmt.Sprintf("^patch-([^_]*)_%s-to-br-int$", nodeName))
+	r := regexp.MustCompile(fmt.Sprintf("^patch-([^_]*)_%s-to-%s$", nodeName, util.GetOvnBridgeName()))
 	for _, line := range strings.Split(portsOutput, "\n") {
 		matches := r.FindStringSubmatch(line)
 		if len(matches) == 2 {

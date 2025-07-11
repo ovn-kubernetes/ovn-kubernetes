@@ -1,6 +1,10 @@
 package node
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+)
 
 func TestOpenFlowManagerDefaultNetOVSBridgeFinder(t *testing.T) {
 	const nodeName = "multi-homing-worker-0.maiqueb.org"
@@ -29,16 +33,16 @@ func TestOpenFlowManagerDefaultNetOVSBridgeFinder(t *testing.T) {
 			inputPortInfo: `
 port1
 port2
-patch-br-ex_multi-homing-worker-0.maiqueb.org-to-br-int`,
+patch-br-ex_multi-homing-worker-0.maiqueb.org` + types.GetPatchPortSuffix(types.DefaultBridgeName),
 			expectedBridgeName:    "br-ex",
-			expectedPatchPortName: "patch-br-ex_multi-homing-worker-0.maiqueb.org-to-br-int",
+			expectedPatchPortName: "patch-br-ex_multi-homing-worker-0.maiqueb.org" + types.GetPatchPortSuffix(types.DefaultBridgeName),
 		},
 		{
 			name: "input ports with a patch port for a localnet network",
 			inputPortInfo: `
 port1
 port2
-patch-vlan2003_ovn_localnet_port-to-br-int`,
+patch-vlan2003_ovn_localnet_port` + types.GetPatchPortSuffix(types.DefaultBridgeName),
 			expectedBridgeName:    "",
 			expectedPatchPortName: "",
 		},
@@ -47,21 +51,21 @@ patch-vlan2003_ovn_localnet_port-to-br-int`,
 			inputPortInfo: `
 port1
 port2
-patch-vlan2003_ovn_localnet_port-to-br-int
-patch-br-ex_multi-homing-worker-0.maiqueb.org-to-br-int`,
+patch-vlan2003_ovn_localnet_port` + types.GetPatchPortSuffix(types.DefaultBridgeName) +
+`patch-br-ex_multi-homing-worker-0.maiqueb.org` + types.GetPatchPortSuffix(types.DefaultBridgeName),
 			expectedBridgeName:    "br-ex",
-			expectedPatchPortName: "patch-br-ex_multi-homing-worker-0.maiqueb.org-to-br-int",
+			expectedPatchPortName: "patch-br-ex_multi-homing-worker-0.maiqueb.org" + types.GetPatchPortSuffix(types.DefaultBridgeName),
 		},
 		{
 			name: "input ports with a patch port for the default network, a localnet, and an extra primary UDN",
 			inputPortInfo: `
 port1
 port2
-patch-vlan2003_ovn_localnet_port-to-br-int
-patch-br-ex_tenant-blue_multi-homing-worker-0.maiqueb.org-to-br-int
-patch-br-ex_multi-homing-worker-0.maiqueb.org-to-br-int`,
+patch-vlan2003_ovn_localnet_port` + types.GetPatchPortSuffix(types.DefaultBridgeName) +
+`patch-br-ex_tenant-blue_multi-homing-worker-0.maiqueb.org" + types.GetPatchPortSuffix(types.DefaultBridgeName) + "
+patch-br-ex_multi-homing-worker-0.maiqueb.org` + types.GetPatchPortSuffix(types.DefaultBridgeName),
 			expectedBridgeName:    "br-ex",
-			expectedPatchPortName: "patch-br-ex_multi-homing-worker-0.maiqueb.org-to-br-int",
+			expectedPatchPortName: "patch-br-ex_multi-homing-worker-0.maiqueb.org" + types.GetPatchPortSuffix(types.DefaultBridgeName),
 		},
 	}
 

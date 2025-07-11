@@ -25,6 +25,7 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/mocks"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	cni_type_mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/containernetworking/cni/pkg/types"
 	cni_ns_mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/containernetworking/plugins/pkg/ns"
@@ -34,6 +35,7 @@ import (
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	util_mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/mocks"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 )
 
 func TestRenameLink(t *testing.T) {
@@ -1427,7 +1429,7 @@ func TestConfigureOVS(t *testing.T) {
 			})
 			tc.execMock.AddFakeCmd(&ovntest.ExpectedCmd{
 				Cmd: genOVSFindCmd("30", "Interface", "name",
-					"external-ids:iface-id=ns-foo_pod-bar"),
+					"external-ids:iface-id=ns-foo_pod-bar external_ids:bridge-name=br-int"),
 			})
 
 			tc.execMock.AddFakeCmd(&ovntest.ExpectedCmd{
@@ -1447,8 +1449,8 @@ func TestConfigureOVS(t *testing.T) {
 					"add-port br-int %s other_config:transient=true "+
 					"-- set interface %s external_ids:attached_mac=%s "+
 					"external_ids:iface-id=%s external_ids:iface-id-ver=%s "+
-					"external_ids:sandbox=%s ",
-				tc.vfRep, tc.vfRep, "", genIfaceID(tc.podNs, tc.podName), tc.ifInfo.PodUID, sandboxID)
+					"external_ids:sandbox=%s external_ids:bridge-name=%s ",
+				tc.vfRep, tc.vfRep, "", genIfaceID(tc.podNs, tc.podName), tc.ifInfo.PodUID, sandboxID, "br-int")
 			if tc.pfEncapIp != "" {
 				ovsAddPortCmd += fmt.Sprintf("external_ids:encap-ip=%s ", tc.pfEncapIp)
 			}
@@ -1513,8 +1515,141 @@ func TestConfigureOVS(t *testing.T) {
 
 			mockNetLinkOps.AssertExpectations(t)
 			mockLink.AssertExpectations(t)
+			// Additional assertion: ensure bridge-name is present in the executed command
+			assert.Contains(t, ovsAddPortCmd, "external_ids:bridge-name=br-int", "bridge-name external_id must be present in OVS add-port command")
 		})
 	}
+
+	// Test with a non-default bridge name
+	t.Run("non-default bridge name in OVS add-port", func(t *testing.T) {
+		oldBridge := config.Default.BridgeName
+		config.Default.BridgeName = "br-test"
+		defer func() { config.Default.BridgeName = oldBridge }()
+
+		ovntest.ProcessMockFnList(&mockNetLinkOps.Mock, nil)
+		ovntest.ProcessMockFnList(&mockSriovnetOps.Mock, nil)
+
+		execMock := ovntest.NewFakeExec()
+		err := util.SetExec(execMock)
+		require.NoError(t, err)
+		err = SetExec(execMock)
+		require.NoError(t, err)
+
+		vfRep := "enp1s0f0_1"
+		podNs := "ns-foo"
+		podName := "pod-bar"
+		podUID := "xyz"
+		fakeIP := "192.168.1.1/24"
+		ip, ipnet, _ := net.ParseCIDR(fakeIP)
+		ipnet.IP = ip
+		ifInfo := &PodInterfaceInfo{
+			PodAnnotation: util.PodAnnotation{
+				IPs: []*net.IPNet{ipnet},
+			},
+			IsDPUHostMode: false,
+			NetName:       ovntypes.DefaultNetworkName,
+			NetdevName:    "enp1s0f0v1",
+			PodUID:        podUID,
+		}
+		sandboxID := "deadbeef"
+		vfPciAddress := "0000:c5:03.1"
+
+		execMock.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd: genOVSGetCmd("bridge", "br-test", "datapath_type", ""),
+		})
+		execMock.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd: genOVSFindCmd("30", "Interface", "name", "external-ids:iface-id=ns-foo_pod-bar external_ids:bridge-name=br-test"),
+		})
+		execMock.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    genOVSFindCmd("30", "Interface", "external_ids", "name="+vfRep),
+			Output: "",
+		})
+		execMock.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    genOVSGetCmd("Open_vSwitch", ".", "external_ids", "ovn-pf-encap-ip-mapping"),
+			Output: "",
+		})
+		ovsAddPortCmd := fmt.Sprintf(
+			"ovs-vsctl --timeout=30 --may-exist "+
+				"add-port br-test %s other_config:transient=true "+
+				"-- set interface %s external_ids:attached_mac=%s "+
+				"external_ids:iface-id=%s external_ids:iface-id-ver=%s "+
+				"external_ids:sandbox=%s external_ids:bridge-name=%s ",
+			vfRep, vfRep, "", genIfaceID(podNs, podName), podUID, sandboxID, "br-test")
+		ovsAddPortCmd += fmt.Sprintf("external_ids:ip_addresses=%s external_ids:vf-netdev-name=%s "+
+			"-- --if-exists remove interface %s external_ids %s -- --if-exists remove interface %s external_ids %s",
+			fakeIP, ifInfo.NetdevName, vfRep, ovntypes.NetworkExternalID, vfRep, ovntypes.NADExternalID)
+		execMock.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd: ovsAddPortCmd,
+			Err: nil,
+		})
+		// clearPodBandwidth
+		execMock.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd: genOVSFindCmd("30", "interface", "name", fmt.Sprintf("external-ids:sandbox=%s", sandboxID)),
+		})
+		execMock.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd: genOVSFindCmd("30", "qos", "_uuid", fmt.Sprintf("external-ids:sandbox=%s", sandboxID)),
+		})
+		// waitForPodInterface
+		execMock.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    genOVSGetCmd("Interface", vfRep, "external-ids", "iface-id") + " " + "external-ids:ovn-installed",
+			Output: genIfaceID(podNs, podName) + "\n" + "true",
+		})
+		execMock.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    genOVSGetCmd("Interface", vfRep, "external-ids", "iface-id"),
+			Output: genIfaceID(podNs, podName),
+		})
+		execMock.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    genOfctlDumpFlowsCmd("table=8,dl_src="),
+			Output: "non-empty-output",
+		})
+		execMock.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    genOfctlDumpFlowsCmd("table=0,in_port=1"),
+			Output: "non-empty-output",
+		})
+		execMock.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    genOfctlDumpFlowsCmd("table=48,ip,ip_dst=" + strings.Split(fakeIP, "/")[0]),
+			Output: "non-empty-output",
+		})
+
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		var pod corev1.Pod
+		pod.UID = k8stypes.UID(podUID)
+		podNamespaceLister := v1mocks.PodNamespaceLister{}
+		podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(&pod, nil)
+		var podLister v1mocks.PodLister
+		podLister.On("Pods", mock.AnythingOfType("string")).Return(&podNamespaceLister)
+		fakeClient := fake.NewSimpleClientset(&corev1.PodList{Items: []corev1.Pod{pod}})
+		clientset := NewClientSet(fakeClient, &podLister)
+		err = ConfigureOVS(ctx, podNs, podName, vfRep, ifInfo, sandboxID, vfPciAddress, clientset)
+		require.NoError(t, err)
+		assert.Contains(t, ovsAddPortCmd, "external_ids:bridge-name=br-test", "bridge-name external_id must be present and correct in OVS add-port command")
+	})
+
+	// Test OVS port removal with bridge name
+	t.Run("OVS del-port uses correct bridge name", func(t *testing.T) {
+		oldBridge := config.Default.BridgeName
+		config.Default.BridgeName = "br-del"
+		defer func() { config.Default.BridgeName = oldBridge }()
+
+		ifaceName := "testiface"
+		execMock := ovntest.NewFakeExec()
+		err := util.SetExec(execMock)
+		require.NoError(t, err)
+		err = SetExec(execMock)
+		require.NoError(t, err)
+
+		delPortCmd := fmt.Sprintf("ovs-vsctl --timeout=30 del-port br-del %s", ifaceName)
+		execMock.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd: delPortCmd,
+			Err: nil,
+		})
+		// Call the function that triggers port removal
+		_, err = ovsExec("del-port", config.Default.BridgeName, ifaceName)
+		require.NoError(t, err)
+		assert.Contains(t, delPortCmd, "br-del", "del-port command must use the correct bridge name")
+	})
 }
 
 func TestConfigureOVS_getPfEncapIpWithError(t *testing.T) {
@@ -1567,7 +1702,7 @@ func TestConfigureOVS_getPfEncapIpWithError(t *testing.T) {
 				},
 				{
 					Cmd: genOVSFindCmd("30", "Interface", "name",
-						"external-ids:iface-id=ns-foo_pod-bar"),
+						"external-ids:iface-id=ns-foo_pod-bar external_ids:bridge-name=br-int"),
 				},
 				{
 					Cmd: genOVSFindCmd("30", "Interface", "external_ids", "name="+vfRep),
@@ -1601,7 +1736,7 @@ func TestConfigureOVS_getPfEncapIpWithError(t *testing.T) {
 				},
 				{
 					Cmd: genOVSFindCmd("30", "Interface", "name",
-						"external-ids:iface-id=ns-foo_pod-bar"),
+						"external-ids:iface-id=ns-foo_pod-bar external_ids:bridge-name=br-int"),
 				},
 				{
 					Cmd: genOVSFindCmd("30", "Interface", "external_ids", "name="+vfRep),

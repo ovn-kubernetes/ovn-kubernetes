@@ -34,7 +34,6 @@ type Cookie struct {
 }
 
 const CookieSize = 8
-const bridgeName = "br-int"
 
 var SampleEndian = getEndian()
 
@@ -254,10 +253,10 @@ func (d *SampleDecoder) AddCollector(collectorID, groupID int, ownerName string)
 	// find br-int UUID to attach collector
 	bridges := []*ovsdb.Bridge{}
 	err = d.ovsdbClient.WhereCache(func(item *ovsdb.Bridge) bool {
-		return item.Name == bridgeName
+		return item.Name == util.GetOvnBridgeName()
 	}).List(context.Background(), &bridges)
 	if err != nil || len(bridges) != 1 {
-		return fmt.Errorf("failed finding br-int: %w", err)
+		return fmt.Errorf("failed finding %s: %w", util.GetOvnBridgeName(), err)
 	}
 
 	ops, err := d.ovsdbClient.Create(&ovsdb.FlowSampleCollectorSet{

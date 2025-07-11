@@ -158,7 +158,7 @@ func GetExtPortName(bridgeID, nodeName string) string {
 // GetPatchPortName determines the name of the patch port on the external
 // bridge, which connects to br-int
 func GetPatchPortName(bridgeID, nodeName string) string {
-	return types.PatchPortPrefix + GetExtPortName(bridgeID, nodeName) + types.PatchPortSuffix
+	return types.PatchPortPrefix + GetExtPortName(bridgeID, nodeName) + types.GetPatchPortSuffix(GetOvnBridgeName())
 }
 
 // GetNodeInternalAddrs returns the first IPv4 and/or IPv6 InternalIP defined
@@ -212,6 +212,9 @@ func GetNodeAddresses(ipv4, ipv6 bool, nodes ...*corev1.Node) (ipsv4 []net.IP, i
 
 // GetNodeChassisID returns the machine's OVN chassis ID
 func GetNodeChassisID() (string, error) {
+	if GetOvnChassisName() != "" {
+		return GetOvnChassisName(), nil
+	}
 	chassisID, stderr, err := RunOVSVsctl("--if-exists", "get",
 		"Open_vSwitch", ".", "external_ids:system-id")
 	if err != nil {
@@ -447,7 +450,7 @@ func GetIfaceId(podNamespace, podName string) string {
 // composePortName should be called both for LogicalPortName and iface-id
 // because ovn-nb man says:
 // Logical_Switch_Port.name must match external_ids:iface-id
-// in the Open_vSwitch database’s Interface table,
+// in the Open_vSwitch database's Interface table,
 // because hypervisors use external_ids:iface-id as a lookup key to
 // identify the network interface of that entity.
 func composePortName(podNamespace, podName string) string {
@@ -670,4 +673,34 @@ func GetMirroredEndpointSlices(controller, sourceName, namespace string, endpoin
 		}
 	}
 	return mirroredEndpointSlices, nil
+}
+
+// GetOvnBridgeName returns the name of the OVS integration bridge from config.Default.BridgeName
+func GetOvnBridgeName() string {
+	return config.Default.BridgeName
+}
+
+// GetOvnChassisName returns the name of the OvnChassisName from config.Default.OvnChassisName
+func GetOvnChassisName() string {
+	return config.Default.OvnChassisName
+}
+
+// GetOvnChassisNameSuffix returns the name of the OvnChassisName from config.Default.OvnChassisName
+func GetOvnChassisNameSuffix() string {
+	if config.Default.OvnChassisName == "" {
+		return ""
+	}
+	return "-" + config.Default.OvnChassisName
+}
+
+// K8sMgmtIntfName returns the management port name with optional system-id suffix.
+// This provides unique naming when multiple OVN instances are running.
+// Returns "ovn-k8s-mp0" for empty OvnChassisName
+// or "ovn-k8s-mp10" when OvnChassisName is configured.
+// This allows to run 2 ovnks on the same host one with ChassisName defined and one without
+func K8sMgmtIntfName() string {
+	if config.Default.OvnChassisName == "" {
+		return types.K8sMgmtIntfNamePrefix + "0"
+	}
+	return types.K8sMgmtIntfNamePrefix + "1" + "0"
 }
