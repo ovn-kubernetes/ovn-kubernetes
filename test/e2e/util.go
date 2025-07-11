@@ -1144,11 +1144,6 @@ func isInterconnectEnabled() bool {
 	return present && val == "true"
 }
 
-func isUDNHostIsolationDisabled() bool {
-	val, present := os.LookupEnv("DISABLE_UDN_HOST_ISOLATION")
-	return present && val == "true"
-}
-
 func isNetworkSegmentationEnabled() bool {
 	val, present := os.LookupEnv("ENABLE_NETWORK_SEGMENTATION")
 	return present && val == "true"

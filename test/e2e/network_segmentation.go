@@ -385,52 +385,50 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 						}, 10*time.Second, 1*time.Second).Should(BeTrue())
 						Expect(udnPod.Status.ContainerStatuses[0].RestartCount).To(Equal(int32(0)))
 
-						if !isUDNHostIsolationDisabled() {
-							By("checking default network hostNetwork pod and non-kubelet host process can't reach the UDN pod")
-							hostNetPod, err := createPod(f, "host-net-pod", nodeName,
-								defaultNetNamespace, []string{}, nil, func(pod *v1.Pod) {
-									pod.Spec.HostNetwork = true
-								})
-							Expect(err).NotTo(HaveOccurred())
+						By("checking default network hostNetwork pod and non-kubelet host process can't reach the UDN pod")
+						hostNetPod, err := createPod(f, "host-net-pod", nodeName,
+							defaultNetNamespace, []string{}, nil, func(pod *v1.Pod) {
+								pod.Spec.HostNetwork = true
+							})
+						Expect(err).NotTo(HaveOccurred())
 
-							// positive check for reachable default network pod
-							for _, destIP := range []string{defaultIPv4, defaultIPv6} {
-								if destIP == "" {
-									continue
-								}
-								By("checking the default network hostNetwork can reach default pod on IP " + destIP)
-								Eventually(func() bool {
-									return connectToServer(podConfiguration{namespace: hostNetPod.Namespace, name: hostNetPod.Name}, destIP, podClusterNetDefaultPort) == nil
-								}).Should(BeTrue())
-								By("checking the non-kubelet host process can reach default pod on IP " + destIP)
-								Eventually(func() bool {
-									_, err := infraprovider.Get().ExecK8NodeCommand(nodeName, []string{
-										"curl", "--connect-timeout", "2",
-										net.JoinHostPort(destIP, fmt.Sprintf("%d", podClusterNetDefaultPort)),
-									})
-									return err == nil
-								}).Should(BeTrue())
+						// positive check for reachable default network pod
+						for _, destIP := range []string{defaultIPv4, defaultIPv6} {
+							if destIP == "" {
+								continue
 							}
-							// negative check for UDN pod
-							for _, destIP := range []string{udnIPv4, udnIPv6} {
-								if destIP == "" {
-									continue
-								}
-
-								By("checking the default network hostNetwork pod can't reach UDN pod on IP " + destIP)
-								Consistently(func() bool {
-									return connectToServer(podConfiguration{namespace: hostNetPod.Namespace, name: hostNetPod.Name}, destIP, podClusterNetPort) != nil
-								}, 5*time.Second).Should(BeTrue())
-
-								By("checking the non-kubelet host process can't reach UDN pod on IP " + destIP)
-								Consistently(func() bool {
-									_, err := infraprovider.Get().ExecK8NodeCommand(nodeName, []string{
-										"curl", "--connect-timeout", "2",
-										net.JoinHostPort(destIP, fmt.Sprintf("%d", podClusterNetPort)),
+							By("checking the default network hostNetwork can reach default pod on IP " + destIP)
+							Eventually(func() bool {
+								return connectToServer(podConfiguration{namespace: hostNetPod.Namespace, name: hostNetPod.Name}, destIP, podClusterNetDefaultPort) == nil
+							}).Should(BeTrue())
+							By("checking the non-kubelet host process can reach default pod on IP " + destIP)
+							Eventually(func() bool {
+								_, err := infraprovider.Get().ExecK8NodeCommand(nodeName, []string{
+									"curl", "--connect-timeout", "2",
+									net.JoinHostPort(destIP, fmt.Sprintf("%d", podClusterNetDefaultPort)),
 									})
-									return err != nil
-								}, 5*time.Second).Should(BeTrue())
+								return err == nil
+							}).Should(BeTrue())
+						}
+						// negative check for UDN pod
+						for _, destIP := range []string{udnIPv4, udnIPv6} {
+							if destIP == "" {
+								continue
 							}
+
+							By("checking the default network hostNetwork pod can't reach UDN pod on IP " + destIP)
+							Consistently(func() bool {
+								return connectToServer(podConfiguration{namespace: hostNetPod.Namespace, name: hostNetPod.Name}, destIP, podClusterNetPort) != nil
+							}, 5*time.Second).Should(BeTrue())
+
+							By("checking the non-kubelet host process can't reach UDN pod on IP " + destIP)
+							Consistently(func() bool {
+								_, err := infraprovider.Get().ExecK8NodeCommand(nodeName, []string{
+									"curl", "--connect-timeout", "2",
+									net.JoinHostPort(destIP, fmt.Sprintf("%d", podClusterNetPort)),
+									})
+								return err != nil
+							}, 5*time.Second).Should(BeTrue())
 						}
 
 						By("asserting UDN pod can reach the kapi service in the default network")
@@ -1645,12 +1643,10 @@ spec:
 					return connectToServer(podConfiguration{namespace: defaultClientPod.Namespace, name: defaultClientPod.Name}, destIP, podClusterNetPort) != nil
 				}, 5*time.Second).Should(BeTrue())
 
-				if !isUDNHostIsolationDisabled() {
-					By("checking the default hostNetwork pod can't reach UDN pod on IP " + destIP)
-					Consistently(func() bool {
-						return connectToServer(podConfiguration{namespace: hostNetPod.Namespace, name: hostNetPod.Name}, destIP, podClusterNetPort) != nil
-					}, 5*time.Second).Should(BeTrue())
-				}
+				By("checking the default hostNetwork pod can't reach UDN pod on IP " + destIP)
+				Consistently(func() bool {
+					return connectToServer(podConfiguration{namespace: hostNetPod.Namespace, name: hostNetPod.Name}, destIP, podClusterNetPort) != nil
+				}, 5*time.Second).Should(BeTrue())
 			}
 
 			By("Open UDN pod port")
@@ -1695,12 +1691,10 @@ spec:
 					return connectToServer(podConfiguration{namespace: defaultClientPod.Namespace, name: defaultClientPod.Name}, destIP, podClusterNetPort) != nil
 				}, 5*time.Second).Should(BeTrue())
 
-				if !isUDNHostIsolationDisabled() {
-					By("checking the default hostNetwork pod can't reach UDN pod on IP " + destIP)
-					Eventually(func() bool {
-						return connectToServer(podConfiguration{namespace: hostNetPod.Namespace, name: hostNetPod.Name}, destIP, podClusterNetPort) != nil
-					}, 5*time.Second).Should(BeTrue())
-				}
+				By("checking the default hostNetwork pod can't reach UDN pod on IP " + destIP)
+				Eventually(func() bool {
+					return connectToServer(podConfiguration{namespace: hostNetPod.Namespace, name: hostNetPod.Name}, destIP, podClusterNetPort) != nil
+				}, 5*time.Second).Should(BeTrue())
 			}
 			By("Verify syntax error is reported via event")
 			events, err := cs.CoreV1().Events(udnPod.Namespace).List(context.Background(), metav1.ListOptions{})
