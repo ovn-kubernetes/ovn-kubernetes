@@ -105,7 +105,7 @@ var _ = ginkgo.Describe("Pod to external server PMTUD", func() {
 			providerPrimaryNetwork, err := infraprovider.Get().PrimaryNetwork()
 			framework.ExpectNoError(err, "failed to get provider primary network")
 			externalContainer = infraapi.ExternalContainer{Name: externalContainerName, Image: images.AgnHost(), Network: providerPrimaryNetwork,
-				Args:    []string{"netexec", "--http-port", fmt.Sprintf("%d", externalContainerPort), "--udp-port", fmt.Sprintf("%d", externalContainerPort)},
+				CmdArgs: []string{"netexec", "--http-port", fmt.Sprintf("%d", externalContainerPort), "--udp-port", fmt.Sprintf("%d", externalContainerPort)},
 				ExtPort: externalContainerPort}
 			externalContainer, err = providerCtx.CreateExternalContainer(externalContainer)
 			framework.ExpectNoError(err, "failed to create external container (%s)", externalContainer)

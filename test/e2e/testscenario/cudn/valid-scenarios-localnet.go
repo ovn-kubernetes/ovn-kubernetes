@@ -1,8 +1,8 @@
 package cudn
 
-import "github.com/ovn-org/ovn-kubernetes/test/e2e/testdata"
+import "github.com/ovn-org/ovn-kubernetes/test/e2e/testscenario"
 
-var LocalnetValid = []testdata.ValidateCRScenario{
+var LocalnetValid = []testscenario.ValidateCRScenario{
 	{
 		Description: "should create localnet topology successfully - minimal",
 		Manifest: `

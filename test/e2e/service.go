@@ -812,7 +812,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 			framework.ExpectNoError(err, "failed to get primary network")
 			externalContainerPort := infraprovider.Get().GetExternalContainerPort()
 			externalContainer := infraapi.ExternalContainer{Name: clientContainerName, Image: images.AgnHost(), Network: primaryProviderNetwork,
-				Args: getAgnHostHTTPPortBindCMDArgs(externalContainerPort), ExtPort: externalContainerPort}
+				CmdArgs: getAgnHostHTTPPortBindCMDArgs(externalContainerPort), ExtPort: externalContainerPort}
 			externalContainer, err = providerCtx.CreateExternalContainer(externalContainer)
 			framework.ExpectNoError(err, "external container %s must be created", externalContainer.Name)
 
@@ -1011,7 +1011,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 				Name:    targetSecondaryContainerName,
 				Image:   images.AgnHost(),
 				Network: secondaryProviderNetwork,
-				Args:    getAgnHostHTTPPortBindCMDArgs(serverExternalContainerPort),
+				CmdArgs: getAgnHostHTTPPortBindCMDArgs(serverExternalContainerPort),
 				ExtPort: serverExternalContainerPort,
 			}
 			serverExternalContainer, err := providerCtx.CreateExternalContainer(serverExternalContainerSpec)
@@ -1315,7 +1315,7 @@ spec:
 
 			ginkgo.By("Creating an external client")
 			externalContainer := infraapi.ExternalContainer{Name: clientContainerName, Image: images.AgnHost(), Network: primaryProviderNetwork,
-				Args: []string{"pause"}, ExtPort: infraprovider.Get().GetExternalContainerPort()}
+				CmdArgs: []string{"pause"}, ExtPort: infraprovider.Get().GetExternalContainerPort()}
 			externalContainer, err = providerCtx.CreateExternalContainer(externalContainer)
 			framework.ExpectNoError(err, "failed to create external container", externalContainer)
 

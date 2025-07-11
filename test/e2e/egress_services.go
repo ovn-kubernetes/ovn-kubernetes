@@ -85,7 +85,7 @@ var _ = ginkgo.Describe("EgressService", feature.EgressService, func() {
 		framework.ExpectNoError(err, "failed to get primary provider network")
 		externalContainer = infraapi.ExternalContainer{Name: externalContainerName, Image: images.AgnHost(),
 			Network: primaryProviderNetwork, ExtPort: 8080,
-			Args: getAgnHostHTTPPortBindCMDArgs(8080)}
+			CmdArgs: getAgnHostHTTPPortBindCMDArgs(8080)}
 		externalContainer, err = providerCtx.CreateExternalContainer(externalContainer)
 		framework.ExpectNoError(err, "failed to create external container")
 	})
@@ -1239,7 +1239,7 @@ metadata:
 				ginkgo.By(fmt.Sprintf("Creating container %s", net.containerName))
 				// Setting the --hostname here is important since later we poke the container's /hostname endpoint
 				extContainerSecondaryNet := infraapi.ExternalContainer{Name: net.containerName, Image: images.AgnHost(), Network: network,
-					Args: []string{"netexec", "--http-port=8080"}, ExtPort: 8080}
+					CmdArgs: []string{"netexec", "--http-port=8080"}, ExtPort: 8080}
 				extContainerSecondaryNet, err = providerCtx.CreateExternalContainer(extContainerSecondaryNet)
 				ginkgo.By(fmt.Sprintf("Adding a listener for the shared IPv4 %s on %s", sharedIPv4, net.containerName))
 				out, err := infraprovider.Get().ExecExternalContainerCommand(extContainerSecondaryNet, []string{"ip", "address", "add", sharedIPv4 + "/32", "dev", "lo"})

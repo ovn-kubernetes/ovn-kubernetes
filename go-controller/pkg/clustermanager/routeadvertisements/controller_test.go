@@ -47,6 +47,7 @@ type testRA struct {
 	SelectsDefault           bool
 	AdvertisePods            bool
 	AdvertiseEgressIPs       bool
+	Status                   *metav1.ConditionStatus
 }
 
 func (tra testRA) RouteAdvertisements() *ratypes.RouteAdvertisements {
@@ -91,6 +92,9 @@ func (tra testRA) RouteAdvertisements() *ratypes.RouteAdvertisements {
 		ra.Spec.FRRConfigurationSelector = metav1.LabelSelector{
 			MatchLabels: tra.FRRConfigurationSelector,
 		}
+	}
+	if tra.Status != nil {
+		ra.Status.Conditions = []metav1.Condition{{Type: "Accepted", Status: *tra.Status}}
 	}
 	return ra
 }
@@ -777,6 +781,38 @@ func TestController_reconcile(t *testing.T) {
 			expectNADAnnotations: map[string]map[string]string{"default": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}, "red": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
 		},
 		{
+			name: "reconciles RouteAdvertisements status even when no other updates are required",
+			ra:   &testRA{Name: "ra", AdvertisePods: true, AdvertiseEgressIPs: true, SelectsDefault: true, Status: ptr.To(metav1.ConditionFalse)},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+						}},
+					},
+				},
+				{
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.0.1.1/32", "1.1.0.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"1.0.1.1/32", "1.1.0.0/24"}, Receive: []string{"1.1.0.0/16/24"}},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "default", Namespace: "ovn-kubernetes", Network: "default", Annotations: map[string]string{types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\"}"}},
+			eips:                 []*testEIP{{Name: "eip", EIPs: map[string]string{"node": "1.0.1.1"}}},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+		},
+		{
 			name: "fails to reconcile a secondary network",
 			ra:   &testRA{Name: "ra", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
 			nads: []*testNAD{
@@ -1005,11 +1041,6 @@ func TestController_reconcile(t *testing.T) {
 
 			c := NewController(nm.Interface(), wf, fakeClientset)
 
-			// prime the default network NAD
-			if defaultNAD == nil {
-				defaultNAD, err = c.getOrCreateDefaultNetworkNAD()
-				g.Expect(err).ToNot(gomega.HaveOccurred())
-			}
 			// prime the default network NAD namespace
 			namespace := &corev1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
@@ -1018,11 +1049,15 @@ func TestController_reconcile(t *testing.T) {
 			}
 			_, err = fakeClientset.KubeClient.CoreV1().Namespaces().Create(context.Background(), namespace, metav1.CreateOptions{})
 			g.Expect(err).ToNot(gomega.HaveOccurred())
-
-			// update it with the annotation that network manager would set
-			defaultNAD.Annotations = map[string]string{types.OvnNetworkNameAnnotation: types.DefaultNetworkName}
-			_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(defaultNAD.Namespace).Update(context.Background(), defaultNAD, metav1.UpdateOptions{})
-			g.Expect(err).ToNot(gomega.HaveOccurred())
+			// prime the default network NAD
+			if defaultNAD == nil {
+				defaultNAD, err = c.getOrCreateDefaultNetworkNAD()
+				g.Expect(err).ToNot(gomega.HaveOccurred())
+				// update it with the annotation that network manager would set
+				defaultNAD.Annotations = map[string]string{types.OvnNetworkNameAnnotation: types.DefaultNetworkName}
+				_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(defaultNAD.Namespace).Update(context.Background(), defaultNAD, metav1.UpdateOptions{})
+				g.Expect(err).ToNot(gomega.HaveOccurred())
+			}
 
 			err = wf.Start()
 			g.Expect(err).ToNot(gomega.HaveOccurred())
@@ -1039,7 +1074,13 @@ func TestController_reconcile(t *testing.T) {
 			)
 
 			err = nm.Start()
-			g.Expect(err).ToNot(gomega.HaveOccurred())
+			// some test cases start with a bad RA status, avoid asserting
+			// initial sync in this case as it will fail
+			if tt.ra == nil || tt.ra.Status == nil || *tt.ra.Status == metav1.ConditionTrue {
+				g.Expect(err).ToNot(gomega.HaveOccurred())
+			} else {
+				g.Expect(err).To(gomega.HaveOccurred())
+			}
 			// we just need the inital sync
 			nm.Stop()
 

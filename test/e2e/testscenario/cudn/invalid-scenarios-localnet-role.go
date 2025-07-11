@@ -1,8 +1,8 @@
 package cudn
 
-import "github.com/ovn-org/ovn-kubernetes/test/e2e/testdata"
+import "github.com/ovn-org/ovn-kubernetes/test/e2e/testscenario"
 
-var LocalnetInvalidRole = []testdata.ValidateCRScenario{
+var LocalnetInvalidRole = []testscenario.ValidateCRScenario{
 	{
 		Description: "role unset",
 		ExpectedErr: `spec.network.localnet.role: Required value`,
