@@ -202,6 +202,16 @@ spec:
           # Workaround for https://github.com/libreswan/libreswan/issues/373
           ulimit -n 1024
 
+          # Whenever ovn-ipsec pod is restarted, previous pluto process pid file
+          # is not removed timely. so not able to get new pluto daemon running
+          # again and throws "/run/pluto/pluto.pid" already exists error.
+          # So remove stale pluto.pid if no pluto process is running and then start new
+          # pluto process.
+          if [ -f /var/run/pluto/pluto.pid ] && ! pgrep -F /var/run/pluto/pluto.pid > /dev/null 2>&1; then
+            echo "Removing stale pluto.pid"
+            rm -f /var/run/pluto/pluto.pid
+          fi
+
           /usr/libexec/ipsec/addconn --config /etc/ipsec.conf --checkconfig
           # Check kernel modules
           /usr/libexec/ipsec/_stackmanager start
