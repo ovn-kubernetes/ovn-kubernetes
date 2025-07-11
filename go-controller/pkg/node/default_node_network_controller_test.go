@@ -22,6 +22,7 @@ import (
 	adminpolicybasedrouteclient "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube/mocks"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/bridgeconfig"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/managementport"
 	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
@@ -809,17 +810,10 @@ var _ = Describe("Node", func() {
 					Expect(err).NotTo(HaveOccurred())
 					err = setupPMTUDNFTChain()
 					Expect(err).NotTo(HaveOccurred())
-					defaultNetConfig := &bridgeUDNConfiguration{
-						ofPortPatch: "patch-breth0_ov",
-					}
 					nc.Gateway = &gateway{
 						openflowManager: &openflowManager{
-							flowCache: map[string][]string{},
-							defaultBridge: &bridgeConfiguration{
-								netConfig: map[string]*bridgeUDNConfiguration{
-									types.DefaultNetworkName: defaultNetConfig,
-								},
-							},
+							flowCache:     map[string][]string{},
+							defaultBridge: bridgeconfig.TestDefaultBridgeConfig(),
 						},
 					}
 
@@ -921,17 +915,10 @@ add element inet ovn-kubernetes no-pmtud-remote-node-ips-v4 { 169.254.254.61 }
 					Expect(err).NotTo(HaveOccurred())
 					err = setupPMTUDNFTChain()
 					Expect(err).NotTo(HaveOccurred())
-					defaultNetConfig := &bridgeUDNConfiguration{
-						ofPortPatch: "patch-breth0_ov",
-					}
 					nc.Gateway = &gateway{
 						openflowManager: &openflowManager{
-							flowCache: map[string][]string{},
-							defaultBridge: &bridgeConfiguration{
-								netConfig: map[string]*bridgeUDNConfiguration{
-									types.DefaultNetworkName: defaultNetConfig,
-								},
-							},
+							flowCache:     map[string][]string{},
+							defaultBridge: bridgeconfig.TestDefaultBridgeConfig(),
 						},
 					}
 
@@ -1075,17 +1062,10 @@ add element inet ovn-kubernetes no-pmtud-remote-node-ips-v4 { 169.254.253.61 }
 					Expect(err).NotTo(HaveOccurred())
 					err = setupPMTUDNFTChain()
 					Expect(err).NotTo(HaveOccurred())
-					defaultNetConfig := &bridgeUDNConfiguration{
-						ofPortPatch: "patch-breth0_ov",
-					}
 					nc.Gateway = &gateway{
 						openflowManager: &openflowManager{
-							flowCache: map[string][]string{},
-							defaultBridge: &bridgeConfiguration{
-								netConfig: map[string]*bridgeUDNConfiguration{
-									types.DefaultNetworkName: defaultNetConfig,
-								},
-							},
+							flowCache:     map[string][]string{},
+							defaultBridge: bridgeconfig.TestDefaultBridgeConfig(),
 						},
 					}
 
@@ -1186,17 +1166,10 @@ add element inet ovn-kubernetes no-pmtud-remote-node-ips-v6 { 2001:db8:1::4 }
 					Expect(err).NotTo(HaveOccurred())
 					err = setupPMTUDNFTChain()
 					Expect(err).NotTo(HaveOccurred())
-					defaultNetConfig := &bridgeUDNConfiguration{
-						ofPortPatch: "patch-breth0_ov",
-					}
 					nc.Gateway = &gateway{
 						openflowManager: &openflowManager{
-							flowCache: map[string][]string{},
-							defaultBridge: &bridgeConfiguration{
-								netConfig: map[string]*bridgeUDNConfiguration{
-									types.DefaultNetworkName: defaultNetConfig,
-								},
-							},
+							flowCache:     map[string][]string{},
+							defaultBridge: bridgeconfig.TestDefaultBridgeConfig(),
 						},
 					}
 
@@ -1354,17 +1327,10 @@ add element inet ovn-kubernetes no-pmtud-remote-node-ips-v6 { 2002:db8:1::4 }
 					Expect(err).NotTo(HaveOccurred())
 					err = setupPMTUDNFTChain()
 					Expect(err).NotTo(HaveOccurred())
-					defaultNetConfig := &bridgeUDNConfiguration{
-						ofPortPatch: "patch-breth0_ov",
-					}
 					nc.Gateway = &gateway{
 						openflowManager: &openflowManager{
-							flowCache: map[string][]string{},
-							defaultBridge: &bridgeConfiguration{
-								netConfig: map[string]*bridgeUDNConfiguration{
-									types.DefaultNetworkName: defaultNetConfig,
-								},
-							},
+							flowCache:     map[string][]string{},
+							defaultBridge: bridgeconfig.TestDefaultBridgeConfig(),
 						},
 					}
 
@@ -1482,17 +1448,10 @@ add element inet ovn-kubernetes no-pmtud-remote-node-ips-v6 { 2002:db8:1::4 }
 					Expect(err).NotTo(HaveOccurred())
 					err = setupPMTUDNFTChain()
 					Expect(err).NotTo(HaveOccurred())
-					defaultNetConfig := &bridgeUDNConfiguration{
-						ofPortPatch: "patch-breth0_ov",
-					}
 					nc.Gateway = &gateway{
 						openflowManager: &openflowManager{
-							flowCache: map[string][]string{},
-							defaultBridge: &bridgeConfiguration{
-								netConfig: map[string]*bridgeUDNConfiguration{
-									types.DefaultNetworkName: defaultNetConfig,
-								},
-							},
+							flowCache:     map[string][]string{},
+							defaultBridge: bridgeconfig.TestDefaultBridgeConfig(),
 						},
 					}
 
