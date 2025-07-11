@@ -498,6 +498,9 @@ func (oc *SecondaryLayer2NetworkController) Cleanup() error {
 }
 
 func (oc *SecondaryLayer2NetworkController) init() error {
+	if err := oc.staleTopoCleanup(); err != nil {
+		return err
+	}
 	// Create default Control Plane Protection (COPP) entry for routers
 	defaultCOPPUUID, err := EnsureDefaultCOPP(oc.nbClient)
 	if err != nil {
@@ -1056,7 +1059,7 @@ func (oc *SecondaryLayer2NetworkController) syncClusterRouterPorts(node *corev1.
 
 // syncNodes finds nodes that still have LRP on the transit router, but the node doesn't exist anymore
 // and clean it up.
-// TODO add tests
+// TODO add tests, make sure nothing else needs cleanup
 func (oc *SecondaryLayer2NetworkController) syncNodes(nodes []interface{}) error {
 	if err := oc.BaseSecondaryLayer2NetworkController.syncNodes(nodes); err != nil {
 		return err
@@ -1111,5 +1114,37 @@ func (oc *SecondaryLayer2NetworkController) syncNodes(nodes []interface{}) error
 			klog.Errorf("Failed to cleanup the transit router resources from OVN Northbound db for the stale node %s: %v", staleNodeName, err)
 		}
 	}
+	return nil
+}
+
+func (oc *SecondaryLayer2NetworkController) staleTopoCleanup() error {
+	// as we switched from direct GR <-> network switch connection to
+	// GR <-> transit router connection, we need to cleanup the old ports.
+	ls := &nbdb.LogicalSwitch{
+		Name: oc.GetNetworkScopedSwitchName(""),
+	}
+	ls, err := libovsdbops.GetLogicalSwitch(oc.nbClient, ls)
+	if err != nil {
+		if errors.Is(err, libovsdbclient.ErrNotFound) {
+			// new network, no cleanup needed
+			return nil
+		}
+		return err
+	}
+
+	// find all stale ports, which don't belong to the pods
+	ops, err := libovsdbops.DeleteLogicalSwitchPortsWithPredicateOps(oc.nbClient, nil, ls, func(port *nbdb.LogicalSwitchPort) bool {
+		return port.ExternalIDs[types.NetworkExternalID] == oc.GetNetworkName() &&
+			port.ExternalIDs["pod"] != "true"
+	})
+	if err != nil {
+		return fmt.Errorf("failed to get ops for deleting stale logical switch ports for network %s: %v", oc.GetNetworkName(), err)
+	}
+
+	_, err = libovsdbops.TransactAndCheck(oc.nbClient, ops)
+	if err != nil {
+		return fmt.Errorf("could not delete remote pod IPs from the namespace address set - %w", err)
+	}
+
 	return nil
 }
