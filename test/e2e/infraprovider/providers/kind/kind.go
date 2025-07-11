@@ -119,9 +119,6 @@ func (k *kind) GetK8HostPort() uint16 {
 
 func (k *kind) NewTestContext() api.Context {
 	ck := &contextKind{Mutex: sync.Mutex{}}
-	if !framework.TestContext.DeleteNamespace {
-
-	}
 	ginkgo.DeferCleanup(func() error {
 		if !framework.TestContext.DeleteNamespace {
 			return nil
