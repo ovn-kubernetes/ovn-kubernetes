@@ -72,8 +72,7 @@ func NewGatewayManagerForLayer2Topology(
 ) *GatewayManager {
 	return newGWManager(
 		nodeName,
-		// TODO put transit router name here
-		"",
+		netInfo.GetNetworkScopedClusterRouterName(),
 		netInfo.GetNetworkScopedGWRouterName(nodeName),
 		netInfo.GetNetworkScopedExtSwitchName(nodeName),
 		netInfo.GetNetworkScopedName(types.OVNLayer2Switch),
@@ -447,21 +446,6 @@ func (gw *GatewayManager) createGWRouterPort(gwLRPJoinIPs []*net.IPNet,
 		}
 		if gw.netInfo.TopologyType() == types.Layer2Topology {
 			gwRouterPort.Peer = ptr.To(gw.getGWRouterPeerPortName())
-		}
-
-		_, isNetIPv6 := gw.netInfo.IPMode()
-		// TODO move to transit router port
-		if gw.netInfo.TopologyType() == types.Layer2Topology && isNetIPv6 && config.IPv6Mode {
-			gwRouterPort.Ipv6RaConfigs = map[string]string{
-				"address_mode":      "dhcpv6_stateful",
-				"send_periodic":     "true",
-				"max_interval":      "900", // 15 minutes
-				"min_interval":      "300", // 5 minutes
-				"router_preference": "LOW", // The static gateway configured by CNI is MEDIUM, so make this SLOW so it has less effect for pods
-			}
-			if gw.netInfo.MTU() > 0 {
-				gwRouterPort.Ipv6RaConfigs["mtu"] = fmt.Sprintf("%d", gw.netInfo.MTU())
-			}
 		}
 	}
 
