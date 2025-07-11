@@ -980,7 +980,8 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					// pod -> node traffic should use the node's IP as the source for advertised UDNs.
 					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(hostNetworkPort)) + "/clientip", clientNodeIP, false
 				}),
-			ginkgo.Entry("UDN pod to the same node nodeport service in default network should work (should it? :)...)",
+			ginkgo.Entry("UDN pod to the same node nodeport service in default network should not work",
+				// FIXME: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5410
 				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
 					clientPod := podsNetA[0]
 					// podsNetA[0] is on nodes[0]. We need the same node. Let's hit the nodeport on nodes[0].
@@ -989,7 +990,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					nodeIP := node.Status.Addresses[ipFamilyIndex].Address
 					nodePort := svcNetDefault.Spec.Ports[0].NodePort
 
-					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePort)) + "/hostname", "", false
+					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePort)) + "/hostname", curlConnectionTimeoutCode, true
 				}),
 			ginkgo.Entry("UDN pod to a different node nodeport service in default network should work",
 				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
