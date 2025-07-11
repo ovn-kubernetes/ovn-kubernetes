@@ -148,5 +148,6 @@ nav:
     - Localnet API: okeps/okep-5085-localnet-api.md
     - Network QoS: okeps/okep-4380-network-qos.md
     - User Defined Networks: okeps/okep-5193-user-defined-networks.md
+    - Preconfigured UDN Addresses: okeps/okep-5233-preconfigured-udn-addresses.md
   - Blog:
     - blog/index.md
