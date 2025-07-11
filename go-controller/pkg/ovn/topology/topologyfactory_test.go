@@ -44,7 +44,7 @@ var _ = Describe("Topology factory", func() {
 				NBData: initialNBDB,
 				SBData: initialSBDB,
 			}
-			libovsdbNBClient, _, libovsdbCleanup, err := libovsdbtest.NewNBSBTestHarness(dbSetup)
+			_, libovsdbNBClient, _, libovsdbCleanup, err := libovsdbtest.NewNBSBTestHarness(dbSetup)
 			Expect(err).NotTo(HaveOccurred())
 			ovnDB = libovsdbCleanup
 			nbClient = libovsdbNBClient
@@ -134,7 +134,7 @@ var _ = Describe("Topology factory", func() {
 				NBData: initialNBDB,
 				SBData: initialSBDB,
 			}
-			libovsdbNBClient, _, libovsdbCleanup, err := libovsdbtest.NewNBSBTestHarness(dbSetup)
+			_, libovsdbNBClient, _, libovsdbCleanup, err := libovsdbtest.NewNBSBTestHarness(dbSetup)
 			Expect(err).NotTo(HaveOccurred())
 			ovnDB = libovsdbCleanup
 			nbClient = libovsdbNBClient

@@ -160,7 +160,23 @@ const (
 
 	// OvnNodeDontSNATSubnets is a user assigned source subnets that should avoid SNAT at ovn-k8s-mp0 interface
 	OvnNodeDontSNATSubnets = "k8s.ovn.org/node-ingress-snat-exclude-subnets"
+
+	// ovnNodeTrustZones is used to indicate which trust (transport) zones a node belongs to.
+	// This is useful to limit formation of tunnels between transport entities (chassis or their
+	// specific VTEPs). Each key represents a particular chassis that is related to the Node. A special
+	// `__default' key is used to represent the default trust zone for the node's chassis if none are
+	// specified. If no trust zones are specified, node's chassis are assumed to be in the default
+	// (implicit) trust zone shared by all other chassis without explicit trust zones set.
+	//
+	// "k8s.ovn.org/trust-zones": "{
+	//		"__default": ["tz-black"],
+	//		"chassis-id1": ["tz-blue"],
+	//		"chassis-id2": ["tz-red","tz-green"]
+	// }"
+	ovnNodeTrustZones = "k8s.ovn.org/trust-zones"
 )
+
+const trustZonesDefaultKey = "__default"
 
 type L3GatewayConfig struct {
 	Mode                config.GatewayMode
@@ -1011,6 +1027,68 @@ func parseNodeEgressIPConfig(egressIPConfig *nodeEgressIPConfiguration) (*Parsed
 // GetNodeEgressLabel returns label annotation needed for marking nodes as egress assignable
 func GetNodeEgressLabel() string {
 	return ovnNodeEgressLabel
+}
+
+// GetNodeChassisTrustZones returns trust zones assigned to the specified chassis of the given node.
+// The annotation format is expected to be a JSON object mapping chassis names to string arrays, e.g.:
+// {"chassis-name1": ["tz1", "tz2"], "chassis-name2": ["tz3"]}
+func GetNodeChassisTrustZones(node *corev1.Node, chassisID string) ([]string, error) {
+	value, ok := node.Annotations[ovnNodeTrustZones]
+	if !ok || value == "" {
+		return []string{}, nil
+	}
+
+	var byChassis map[string][]string
+	if err := json.Unmarshal([]byte(value), &byChassis); err == nil {
+		if zones, found := byChassis[chassisID]; found {
+			return zones, nil
+		}
+		if zones, found := byChassis[trustZonesDefaultKey]; found {
+			return zones, nil
+		}
+	}
+	return []string{}, nil
+}
+
+func GetNodeTrustZones(node *corev1.Node) ([]string, error) {
+	// TODO(ihar): We should have a way to distinguish between multiple chassis backed by the same Node.
+	// Assume node-chassis-id is the system-id for the current ovnkube-controller chassis for now.
+	primaryChassisID, err := ParseNodeChassisIDAnnotation(node)
+	if err != nil {
+		return nil, err
+	}
+	return GetNodeChassisTrustZones(node, primaryChassisID)
+}
+
+func NodeTrustZonesChanged(oldNode, newNode *corev1.Node) bool {
+	return oldNode.Annotations[ovnNodeTrustZones] != newNode.Annotations[ovnNodeTrustZones]
+}
+
+func NodesInSharedTrustZone(node *corev1.Node, other *corev1.Node) (bool, error) {
+	nodeTrustZones, err := GetNodeTrustZones(node)
+
+	if err != nil {
+		return false, fmt.Errorf("failed to get trust zones for a node %s: %v", node.Name, err)
+	}
+
+	otherTrustZones, err := GetNodeTrustZones(other)
+	if err != nil {
+		return false, fmt.Errorf("failed to get trust zones for the other node %s: %v", other.Name, err)
+	}
+
+	// Case 1: implicit membership in a "default" trust zone if no annotation was set.
+	if len(nodeTrustZones) == 0 && len(otherTrustZones) == 0 {
+		return true, nil
+	}
+
+	// Case 2: nodes have intersecting trust zones.
+	sharedTrustZones := sets.New(nodeTrustZones...).Intersection(sets.New(otherTrustZones...))
+	if len(sharedTrustZones) != 0 {
+		return true, nil
+	}
+
+	// Case 3: nodes do not share any trust zones. Bail out.
+	return false, nil
 }
 
 func SetNodeHostCIDRs(nodeAnnotator kube.Annotator, cidrs sets.Set[string]) error {

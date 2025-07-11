@@ -17,18 +17,22 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/sbdb"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
 
 // ZoneChassisHandler creates chassis records for the remote zone nodes
 // in the OVN Southbound DB. It also creates the encap records.
+// It also populates transport zones - either in SB (for remote) or in local ovsdb (for local).
 type ZoneChassisHandler struct {
-	sbClient libovsdbclient.Client
+	ovsdbClient libovsdbclient.Client
+	sbClient    libovsdbclient.Client
 }
 
 // NewZoneChassisHandler returns a new ZoneChassisHandler instance
-func NewZoneChassisHandler(sbClient libovsdbclient.Client) *ZoneChassisHandler {
+func NewZoneChassisHandler(ovsdbClient libovsdbclient.Client, sbClient libovsdbclient.Client) *ZoneChassisHandler {
 	return &ZoneChassisHandler{
-		sbClient: sbClient,
+		ovsdbClient: ovsdbClient,
+		sbClient:    sbClient,
 	}
 }
 
@@ -134,6 +138,13 @@ func (zch *ZoneChassisHandler) createOrUpdateNodeChassis(node *corev1.Node, isRe
 			node.Name, parsedErr)
 	}
 
+	// Get trust zones from node annotation.
+	trustZones, err := util.GetNodeChassisTrustZones(node, chassisID)
+	if err != nil {
+		return fmt.Errorf("failed to determine trust zones for node - %s, error: %w",
+			node.Name, err)
+	}
+
 	// Get the encap IPs.
 	encapIPs, err := util.ParseNodeEncapIPsAnnotation(node)
 	if err != nil {
@@ -165,6 +176,20 @@ func (zch *ZoneChassisHandler) createOrUpdateNodeChassis(node *corev1.Node, isRe
 		OtherConfig: map[string]string{
 			"is-remote": strconv.FormatBool(isRemote),
 		},
+	}
+	if isRemote {
+		chassis.TransportZones = trustZones
+	} else {
+		// Mark in local ovsdb and let ovn-controller set it in SBDB
+		vswitch := vswitchd.OpenvSwitch{
+			ExternalIDs: map[string]string{
+				"ovn-transport-zones": strings.Join(trustZones, ","),
+			},
+		}
+		err = libovsdbops.UpdateOpenvSwitchSetExternalIDs(zch.ovsdbClient, &vswitch)
+		if err != nil {
+			return fmt.Errorf("failed to set ovn-transport-zones for local node - %s, error: %w", node.Name, err)
+		}
 	}
 
 	return libovsdbops.CreateOrUpdateChassis(zch.sbClient, &chassis, encaps...)

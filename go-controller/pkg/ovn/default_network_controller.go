@@ -192,7 +192,7 @@ func newDefaultNetworkControllerCommon(
 	var zoneChassisHandler *zoneic.ZoneChassisHandler
 	if config.OVNKubernetesFeature.EnableInterconnect {
 		zoneICHandler = zoneic.NewZoneInterconnectHandler(&util.DefaultNetInfo{}, cnci.nbClient, cnci.sbClient, cnci.watchFactory)
-		zoneChassisHandler = zoneic.NewZoneChassisHandler(cnci.sbClient)
+		zoneChassisHandler = zoneic.NewZoneChassisHandler(cnci.ovsLocalClient, cnci.sbClient)
 	}
 	apbExternalRouteController, err := apbroutecontroller.NewExternalMasterController(
 		cnci.kube.APBRouteClient,
@@ -891,6 +891,29 @@ func (h *defaultNetworkControllerEventHandler) AddResource(obj interface{}, from
 	}
 }
 
+func (h *defaultNetworkControllerEventHandler) syncRemoteTrustZones(localNodes []*corev1.Node, remoteNodes []*corev1.Node) []error {
+	var aggregatedErrors []error
+	for _, localNode := range localNodes {
+		for _, remoteNode := range remoteNodes {
+			inSharedTrustZone, err := util.NodesInSharedTrustZone(localNode, remoteNode)
+			if err != nil {
+				aggregatedErrors = append(aggregatedErrors, fmt.Errorf("failed to check if node %s is in shared trust zone: %w", remoteNode.Name, err))
+				continue
+			}
+			if inSharedTrustZone {
+				if err := h.oc.addUpdateRemoteNodeEvent(remoteNode, config.OVNKubernetesFeature.EnableInterconnect); err != nil {
+					aggregatedErrors = append(aggregatedErrors, err)
+				}
+				continue
+			}
+			if err := h.oc.deleteNodeEvent(remoteNode); err != nil {
+				aggregatedErrors = append(aggregatedErrors, err)
+			}
+		}
+	}
+	return aggregatedErrors
+}
+
 // UpdateResource updates the specified object in the cluster to its version in newObj according to its
 // type and returns the error, if any, yielded during the object update.
 // Given an old and a new object; The inRetryCache boolean argument is to indicate if the given resource
@@ -950,6 +973,7 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 		nodeSubnetChange := nodeSubnetChanged(oldNode, newNode, types.DefaultNetworkName)
 		nodeEncapIPsChanged := util.NodeEncapIPsChanged(oldNode, newNode)
 		nodePrimaryDPUHostAddrChanged := util.NodePrimaryDPUHostAddrAnnotationChanged(oldNode, newNode)
+		nodeTrustZonesChanged := util.NodeTrustZonesChanged(oldNode, newNode)
 
 		var aggregatedErrors []error
 		if newNodeIsLocalZoneNode {
@@ -976,7 +1000,7 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 				}
 				_, hoSync := h.oc.hybridOverlayFailed.Load(newNode.Name)
 				_, syncZoneIC := h.oc.syncZoneICFailed.Load(newNode.Name)
-				syncZoneIC = syncZoneIC || zoneClusterChanged || primaryAddrChanged(oldNode, newNode)
+				syncZoneIC = syncZoneIC || zoneClusterChanged || nodeTrustZonesChanged || primaryAddrChanged(oldNode, newNode)
 				nodeSyncsParam = &nodeSyncs{
 					syncNode:              nodeSync,
 					syncClusterRouterPort: clusterRtrSync,
@@ -997,8 +1021,18 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 					syncHo:                true,
 					syncZoneIC:            config.OVNKubernetesFeature.EnableInterconnect}
 			}
+
 			if err := h.oc.addUpdateLocalNodeEvent(newNode, nodeSyncsParam); err != nil {
 				aggregatedErrors = append(aggregatedErrors, err)
+			}
+
+			if nodeTrustZonesChanged {
+				remoteNodes, err := h.oc.GetRemoteZoneNodes()
+				if err != nil {
+					aggregatedErrors = append(aggregatedErrors, fmt.Errorf("failed to get remote nodes: %w", err))
+				} else {
+					aggregatedErrors = append(aggregatedErrors, h.syncRemoteTrustZones([]*corev1.Node{newNode}, remoteNodes)...)
+				}
 			}
 		} else {
 			_, syncZoneIC := h.oc.syncZoneICFailed.Load(newNode.Name)
@@ -1007,7 +1041,7 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 			// Also check if node subnet changed, so static routes are properly set
 			// Also check if the node is used to be a hybrid overlay node
 			syncZoneIC = syncZoneIC || h.oc.isLocalZoneNode(oldNode) || nodeSubnetChange || zoneClusterChanged ||
-				switchToOvnNode || nodeEncapIPsChanged || nodePrimaryDPUHostAddrChanged
+				switchToOvnNode || nodeEncapIPsChanged || nodePrimaryDPUHostAddrChanged || nodeTrustZonesChanged
 			if syncZoneIC {
 				klog.Infof("Node %q in remote zone %q, network %q, needs interconnect zone sync up. Zone cluster changed: %v",
 					newNode.Name, util.GetNodeZone(newNode), h.oc.GetNetworkName(), zoneClusterChanged)
@@ -1019,8 +1053,14 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 				}
 				syncZoneIC = true
 			}
-			if err := h.oc.addUpdateRemoteNodeEvent(newNode, syncZoneIC); err != nil {
-				aggregatedErrors = append(aggregatedErrors, err)
+
+			if syncZoneIC {
+				localNodes, err := h.oc.GetLocalZoneNodes()
+				if err != nil {
+					aggregatedErrors = append(aggregatedErrors, fmt.Errorf("failed to get local nodes: %w", err))
+				} else {
+					aggregatedErrors = append(aggregatedErrors, h.syncRemoteTrustZones(localNodes, []*corev1.Node{newNode})...)
+				}
 			}
 		}
 		_, syncHostNetAddrSet := h.oc.syncHostNetAddrSetFailed.Load(newNode.Name)

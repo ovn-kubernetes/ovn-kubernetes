@@ -384,6 +384,6 @@ func newOVSClientWithExternalIDs(externalIDs map[string]string) (client.Client, 
 				ExternalIDs: externalIDs,
 			},
 		},
-	})
+	}, nil)
 	return ovsClient, err
 }

@@ -43,6 +43,8 @@ type ControllerManager struct {
 	podRecorder  *metrics.PodRecorder
 	// event recorder used to post events to k8s
 	recorder record.EventRecorder
+	// libovsdb local ovsdb client interface
+	ovsLocalClient libovsdbclient.Client
 	// libovsdb northbound client interface
 	nbClient libovsdbclient.Client
 	// libovsdb southbound client interface
@@ -222,7 +224,7 @@ func (cm *ControllerManager) CleanupStaleNetworks(validNetworks ...util.NetInfo)
 
 // NewControllerManager creates a new ovnkube controller manager to manage all the controller for all networks
 func NewControllerManager(ovnClient *util.OVNClientset, wf *factory.WatchFactory,
-	libovsdbOvnNBClient libovsdbclient.Client, libovsdbOvnSBClient libovsdbclient.Client,
+	libovsdbLocalClient libovsdbclient.Client, libovsdbOvnNBClient libovsdbclient.Client, libovsdbOvnSBClient libovsdbclient.Client,
 	recorder record.EventRecorder, wg *sync.WaitGroup) (*ControllerManager, error) {
 	podRecorder := metrics.NewPodRecorder()
 
@@ -244,6 +246,7 @@ func NewControllerManager(ovnClient *util.OVNClientset, wf *factory.WatchFactory
 		stopChan:         stopCh,
 		watchFactory:     wf,
 		recorder:         recorder,
+		ovsLocalClient:   libovsdbLocalClient,
 		nbClient:         libovsdbOvnNBClient,
 		sbClient:         libovsdbOvnSBClient,
 		podRecorder:      &podRecorder,
@@ -337,7 +340,7 @@ func (cm *ControllerManager) createACLLoggingMeter() error {
 
 // newCommonNetworkControllerInfo creates and returns the common networkController info
 func (cm *ControllerManager) newCommonNetworkControllerInfo(wf *factory.WatchFactory) (*ovn.CommonNetworkControllerInfo, error) {
-	return ovn.NewCommonNetworkControllerInfo(cm.client, cm.kube, wf, cm.recorder, cm.nbClient,
+	return ovn.NewCommonNetworkControllerInfo(cm.client, cm.kube, wf, cm.recorder, cm.ovsLocalClient, cm.nbClient,
 		cm.sbClient, cm.podRecorder, cm.SCTPSupport, cm.multicastSupport, cm.svcTemplateSupport)
 }
 

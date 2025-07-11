@@ -11,6 +11,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/sbdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
 
 func getUUID(model model.Model) string {
@@ -76,6 +77,8 @@ func getUUID(model model.Model) string {
 	case *nbdb.ChassisTemplateVar:
 		return t.UUID
 	case *nbdb.DHCPOptions:
+		return t.UUID
+	case *vswitchd.OpenvSwitch:
 		return t.UUID
 	default:
 		panic(fmt.Sprintf("getUUID: unknown model %T", t))
@@ -145,6 +148,8 @@ func setUUID(model model.Model, uuid string) {
 	case *nbdb.ChassisTemplateVar:
 		t.UUID = uuid
 	case *nbdb.DHCPOptions:
+		t.UUID = uuid
+	case *vswitchd.OpenvSwitch:
 		t.UUID = uuid
 	default:
 		panic(fmt.Sprintf("setUUID: unknown model %T", t))
@@ -312,6 +317,11 @@ func copyIndexes(model model.Model) model.Model {
 			UUID:        t.UUID,
 			ExternalIDs: copyExternalIDs(t.ExternalIDs, types.PrimaryIDKey),
 		}
+	case *vswitchd.OpenvSwitch:
+		return &vswitchd.OpenvSwitch{
+			UUID:        t.UUID,
+			ExternalIDs: copyExternalIDs(t.ExternalIDs, types.PrimaryIDKey),
+		}
 	default:
 		panic(fmt.Sprintf("copyIndexes: unknown model %T", t))
 	}
@@ -379,6 +389,8 @@ func getListFromModel(model model.Model) interface{} {
 		return &[]*nbdb.ChassisTemplateVar{}
 	case *nbdb.DHCPOptions:
 		return &[]nbdb.DHCPOptions{}
+	case *vswitchd.OpenvSwitch:
+		return &[]vswitchd.OpenvSwitch{}
 	default:
 		panic(fmt.Sprintf("getModelList: unknown model %T", t))
 	}

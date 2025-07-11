@@ -73,23 +73,24 @@ type secondaryControllerInfo struct {
 }
 
 type FakeOVN struct {
-	fakeClient     *util.OVNMasterClientset
-	watcher        *factory.WatchFactory
-	controller     *DefaultNetworkController
-	stopChan       chan struct{}
-	wg             *sync.WaitGroup
-	asf            *addressset.FakeAddressSetFactory
-	fakeRecorder   *record.FakeRecorder
-	nbClient       libovsdbclient.Client
-	sbClient       libovsdbclient.Client
-	dbSetup        libovsdbtest.TestSetup
-	nbsbCleanup    *libovsdbtest.Context
-	egressQoSWg    *sync.WaitGroup
-	egressSVCWg    *sync.WaitGroup
-	anpWg          *sync.WaitGroup
-	networkManager networkmanager.Controller
-	eIPController  *EgressIPController
-	portCache      *PortCache
+	fakeClient       *util.OVNMasterClientset
+	watcher          *factory.WatchFactory
+	controller       *DefaultNetworkController
+	stopChan         chan struct{}
+	wg               *sync.WaitGroup
+	asf              *addressset.FakeAddressSetFactory
+	fakeRecorder     *record.FakeRecorder
+	ovsdbLocalClient libovsdbclient.Client
+	nbClient         libovsdbclient.Client
+	sbClient         libovsdbclient.Client
+	dbSetup          libovsdbtest.TestSetup
+	nbsbCleanup      *libovsdbtest.Context
+	egressQoSWg      *sync.WaitGroup
+	egressSVCWg      *sync.WaitGroup
+	anpWg            *sync.WaitGroup
+	networkManager   networkmanager.Controller
+	eIPController    *EgressIPController
+	portCache        *PortCache
 
 	// information map of all secondary network controllers
 	secondaryControllers       map[string]secondaryControllerInfo
@@ -213,7 +214,7 @@ func (o *FakeOVN) init(nadList []nettypes.NetworkAttachmentDefinition) {
 	o.watcher, err = factory.NewMasterWatchFactory(o.fakeClient)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	o.nbClient, o.sbClient, o.nbsbCleanup, err = libovsdbtest.NewNBSBTestHarness(o.dbSetup)
+	o.ovsdbLocalClient, o.nbClient, o.sbClient, o.nbsbCleanup, err = libovsdbtest.NewNBSBTestHarness(o.dbSetup)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 	o.stopChan = make(chan struct{})
@@ -252,6 +253,7 @@ func (o *FakeOVN) init(nadList []nettypes.NetworkAttachmentDefinition) {
 		o.stopChan,
 		o.asf,
 		o.networkManager.Interface(),
+		o.ovsdbLocalClient,
 		o.nbClient,
 		o.sbClient,
 		o.fakeRecorder,
@@ -378,6 +380,7 @@ func NewOvnController(
 	stopChan chan struct{},
 	addressSetFactory addressset.AddressSetFactory,
 	networkManager networkmanager.Interface,
+	libovsdbLocalClient libovsdbclient.Client,
 	libovsdbOvnNBClient libovsdbclient.Client,
 	libovsdbOvnSBClient libovsdbclient.Client,
 	recorder record.EventRecorder,
@@ -417,6 +420,7 @@ func NewOvnController(
 		},
 		wf,
 		recorder,
+		libovsdbLocalClient,
 		libovsdbOvnNBClient,
 		libovsdbOvnSBClient,
 		&podRecorder,
@@ -533,6 +537,7 @@ func (o *FakeOVN) NewSecondaryNetworkController(netattachdef *nettypes.NetworkAt
 			},
 			o.watcher,
 			o.fakeRecorder,
+			o.ovsdbLocalClient,
 			o.nbClient,
 			o.sbClient,
 			&podRecorder,

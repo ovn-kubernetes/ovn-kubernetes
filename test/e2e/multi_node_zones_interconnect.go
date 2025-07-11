@@ -67,7 +67,7 @@ func changeNodeZone(node *v1.Node, zone string, cs clientset.Interface) error {
 	return nil
 }
 
-func checkPodsInterconnectivity(clientPod, serverPod *v1.Pod, namespace string, cs clientset.Interface) error {
+func checkPodsInterconnectivity(clientPod, serverPod *v1.Pod, namespace string, cs clientset.Interface, fail bool) error {
 	gomega.Eventually(func() error {
 		updatedPod, err := cs.CoreV1().Pods(namespace).Get(context.Background(), serverPod.GetName(), metav1.GetOptions{})
 		if err != nil {
@@ -79,7 +79,13 @@ func checkPodsInterconnectivity(clientPod, serverPod *v1.Pod, namespace string, 
 			namespace: namespace,
 		}
 		if updatedPod.Status.Phase == v1.PodRunning {
-			return connectToServer(clientPodConfig, updatedPod.Status.PodIP, 8000)
+			err := connectToServer(clientPodConfig, updatedPod.Status.PodIP, 8000)
+			if err != nil {
+				if fail {
+					return nil
+				}
+			}
+			return err
 		}
 
 		return fmt.Errorf("pod not running. /me is sad")
@@ -121,13 +127,13 @@ var _ = ginkgo.Describe("Multi node zones interconnect", feature.Interconnect, f
 		serverPodNode, err = cs.CoreV1().Nodes().Get(context.TODO(), nodes.Items[0].Name, metav1.GetOptions{})
 		if err != nil {
 			e2eskipper.Skipf(
-				"Test requires node with the name %s", serverPodName,
+				"Test requires node with the name %s", serverPodNode.Name,
 			)
 		}
 		clientPodNode, err = cs.CoreV1().Nodes().Get(context.TODO(), nodes.Items[1].Name, metav1.GetOptions{})
 		if err != nil {
 			e2eskipper.Skipf(
-				"Test requires node with the name %s", clientPodName,
+				"Test requires node with the name %s", clientPodNode.Name,
 			)
 		}
 
@@ -158,7 +164,7 @@ var _ = ginkgo.Describe("Multi node zones interconnect", feature.Interconnect, f
 		e2epod.NewPodClient(fr).CreateSync(context.TODO(), clientPod)
 
 		ginkgo.By("asserting the *client* pod can contact the server pod exposed endpoint")
-		err := checkPodsInterconnectivity(clientPod, serverPod, fr.Namespace.Name, cs)
+		err := checkPodsInterconnectivity(clientPod, serverPod, fr.Namespace.Name, cs, false)
 		framework.ExpectNoError(err, "failed to check pods interconnectivity")
 
 		// Change the zone of client-pod node to that of server-pod node
@@ -168,7 +174,7 @@ var _ = ginkgo.Describe("Multi node zones interconnect", feature.Interconnect, f
 		framework.ExpectNoError(err, "failed to change node zone")
 
 		ginkgo.By("Checking that the client-pod can connect to the server pod when they are in same zone")
-		err = checkPodsInterconnectivity(clientPod, serverPod, fr.Namespace.Name, cs)
+		err = checkPodsInterconnectivity(clientPod, serverPod, fr.Namespace.Name, cs, false)
 		framework.ExpectNoError(err, "failed to check pods interconnectivity")
 
 		// Change back the zone of client-pod node
@@ -178,7 +184,7 @@ var _ = ginkgo.Describe("Multi node zones interconnect", feature.Interconnect, f
 		framework.ExpectNoError(err, "failed to change node zone")
 
 		ginkgo.By("Checking again that the client-pod can connect to the server-pod when they are in different zone")
-		err = checkPodsInterconnectivity(clientPod, serverPod, fr.Namespace.Name, cs)
+		err = checkPodsInterconnectivity(clientPod, serverPod, fr.Namespace.Name, cs, false)
 		framework.ExpectNoError(err, "failed to check pods interconnectivity")
 	})
 })
