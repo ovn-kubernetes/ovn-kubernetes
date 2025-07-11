@@ -5,9 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
-	"os"
-	"os/exec"
-	"strconv"
 	"strings"
 	"time"
 
@@ -16,7 +13,6 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 
-	"github.com/docker/docker/client"
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -31,6 +27,10 @@ import (
 
 	ipgenerator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/ip"
 	util "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
+	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
 )
 
 const (
@@ -55,9 +55,10 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 	f := wrappedTestFramework("multi-homing")
 
 	var (
-		cs        clientset.Interface
-		nadClient nadclient.K8sCniCncfIoV1Interface
-		mnpClient mnpclient.K8sCniCncfIoV1beta1Interface
+		cs          clientset.Interface
+		nadClient   nadclient.K8sCniCncfIoV1Interface
+		mnpClient   mnpclient.K8sCniCncfIoV1beta1Interface
+		providerCtx infraapi.Context
 	)
 
 	BeforeEach(func() {
@@ -68,6 +69,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 		Expect(err).NotTo(HaveOccurred())
 		mnpClient, err = mnpclient.NewForConfig(f.ClientConfig())
 		Expect(err).NotTo(HaveOccurred())
+		providerCtx = infraprovider.Get().NewTestContext()
 	})
 
 	Context("A single pod with an OVN-K secondary network", func() {
@@ -79,8 +81,10 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 
 			if netConfig.topology == "localnet" {
 				By("applying ovs bridge mapping")
-				Expect(setBridgeMappings(cs, defaultNetworkBridgeMapping(), bridgeMapping(netConfig.networkName, secondaryBridge))).NotTo(HaveOccurred())
-				ginkgo.DeferCleanup(setBridgeMappings, cs, defaultNetworkBridgeMapping())
+				Expect(providerCtx.SetupUnderlay(f, infraapi.Underlay{
+					LogicalNetworkName: netConfig.networkName,
+					VlanID:             netConfig.vlanID,
+				})).To(Succeed())
 			}
 
 			By("creating the attachment configuration")
@@ -280,7 +284,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 			workerTwoNodeName = "ovn-worker2"
 		)
 
-		ginkgo.DescribeTable("attached to a localnet network mapped to breth0",
+		ginkgo.DescribeTable("attached to a localnet network mapped to external primary interface bridge", //nolint:lll
 
 			func(netConfigParams networkAttachmentConfigParams, clientPodConfig, serverPodConfig podConfiguration) {
 
@@ -297,13 +301,10 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				}
 
 				By("setting up the localnet underlay")
-				pods := ovsPods(cs)
-				Expect(pods).NotTo(BeEmpty())
-				defer func() {
-					By("tearing down the localnet underlay")
-					Expect(teardownUnderlay(pods, defaultOvsBridge)).To(Succeed())
-				}()
-				Expect(setupUnderlay(pods, defaultOvsBridge, "", netConfig.networkName, netConfig.vlanID)).To(Succeed())
+				Expect(providerCtx.SetupUnderlay(f, infraapi.Underlay{
+					BridgeName:         deploymentconfig.Get().ExternalBridgeName(),
+					LogicalNetworkName: netConfig.networkName,
+				})).To(Succeed())
 
 				nad := generateNAD(netConfig)
 				By(fmt.Sprintf("creating the attachment configuration: %v\n", nad))
@@ -336,7 +337,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				serverIPs, err := podIPsForAttachment(cs, f.Namespace.Name, serverPod.GetName(), netConfig.name)
 				Expect(err).NotTo(HaveOccurred())
 				for _, serverIP := range serverIPs {
-					By(fmt.Sprintf("asserting the *client* can contact the server pod exposed endpoint: %q on port %q", serverIP, port))
+					By(fmt.Sprintf("asserting the *client* can contact the server pod exposed endpoint: %q on port %d", serverIP, port))
 					Eventually(func() error {
 						return reachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
 					}, 2*time.Minute, 6*time.Second).Should(Succeed())
@@ -484,16 +485,10 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				serverPodConfig.namespace = f.Namespace.Name
 
 				if netConfig.topology == "localnet" {
-					By("setting up the localnet underlay")
-					nodes := ovsPods(cs)
-					Expect(nodes).NotTo(BeEmpty())
-					defer func() {
-						By("tearing down the localnet underlay")
-						Expect(teardownUnderlay(nodes, secondaryBridge)).To(Succeed())
-					}()
-
-					const secondaryInterfaceName = "eth1"
-					Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, netConfig.networkName, netConfig.vlanID)).To(Succeed())
+					Expect(providerCtx.SetupUnderlay(f, infraapi.Underlay{
+						LogicalNetworkName: netConfig.networkName,
+						VlanID:             netConfig.vlanID,
+					})).To(Succeed())
 				}
 
 				By("creating the attachment configuration")
@@ -838,19 +833,17 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 
 		Context("localnet OVN-K secondary network", func() {
 			const (
-				clientPodName                 = "client-pod"
-				nodeHostnameKey               = "kubernetes.io/hostname"
-				servicePort            uint16 = 9000
-				dockerNetworkName             = "underlay"
-				underlayServiceIP             = "60.128.0.1"
-				secondaryInterfaceName        = "eth1"
-				expectedOriginalMTU           = 1200
+				clientPodName              = "client-pod"
+				nodeHostnameKey            = "kubernetes.io/hostname"
+				servicePort         uint16 = 9000
+				dockerNetworkName          = "underlay"
+				underlayServiceIP          = "60.128.0.1"
+				expectedOriginalMTU        = 1200
 			)
 
-			var netConfig networkAttachmentConfig
-			var nodes []v1.Pod
-			var underlayBridgeName string
-			var cmdWebServer *exec.Cmd
+			var (
+				netConfig networkAttachmentConfig
+			)
 
 			underlayIP := underlayServiceIP + "/24"
 			Context("with a service running on the underlay", func() {
@@ -867,33 +860,29 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 						})
 
 					By("setting up the localnet underlay")
-					nodes = ovsPods(cs)
-					Expect(nodes).NotTo(BeEmpty())
-					Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, netConfig.networkName, netConfig.vlanID)).To(Succeed())
-				})
-
-				BeforeEach(func() {
-					By("adding IP to the underlay docker bridge")
-					cli, err := client.NewClientWithOpts(client.FromEnv)
-					Expect(err).NotTo(HaveOccurred())
-
-					gatewayIP, err := getNetworkGateway(cli, dockerNetworkName)
-					Expect(err).NotTo(HaveOccurred())
-
-					underlayBridgeName, err = findInterfaceByIP(gatewayIP)
-					Expect(err).NotTo(HaveOccurred())
-
-					cmd := exec.Command("sudo", "ip", "addr", "add", underlayIP, "dev", underlayBridgeName)
-					cmd.Stderr = os.Stderr
-					err = cmd.Run()
-					Expect(err).NotTo(HaveOccurred())
+					Expect(providerCtx.SetupUnderlay(f, infraapi.Underlay{
+						LogicalNetworkName: netConfig.networkName,
+						VlanID:             netConfig.vlanID,
+					})).To(Succeed())
 				})
 
 				BeforeEach(func() {
 					By("starting a service, connected to the underlay")
-					cmdWebServer = exec.Command("python3", "-m", "http.server", "--bind", underlayServiceIP, strconv.Itoa(int(servicePort)))
-					cmdWebServer.Stderr = os.Stderr
-					Expect(cmdWebServer.Start()).NotTo(HaveOccurred(), "failed to create web server, port might be busy")
+					providerCtx = infraprovider.Get().NewTestContext()
+
+					underlayNetwork, err := infraprovider.Get().GetNetwork(dockerNetworkName)
+					Expect(err).NotTo(HaveOccurred(), "must get underlay network")
+					externalContainerName := f.Namespace.Name + "-web-server"
+					serviceContainerSpec := infraapi.ExternalContainer{
+						Name:       externalContainerName,
+						Image:      images.AgnHost(),
+						Network:    underlayNetwork,
+						Entrypoint: "bash",
+						Args:       []string{"-c", fmt.Sprintf("ip a add %s/24 dev eth0 && ./agnhost netexec --http-port=%d", underlayServiceIP, servicePort)},
+						ExtPort:    servicePort,
+					}
+					_, err = providerCtx.CreateExternalContainer(serviceContainerSpec)
+					Expect(err).NotTo(HaveOccurred(), "must create external container 1")
 				})
 
 				BeforeEach(func() {
@@ -904,23 +893,6 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 						metav1.CreateOptions{},
 					)
 					Expect(err).NotTo(HaveOccurred())
-				})
-
-				AfterEach(func() {
-					err := cmdWebServer.Process.Kill()
-					Expect(err).NotTo(HaveOccurred())
-				})
-
-				AfterEach(func() {
-					cmd := exec.Command("sudo", "ip", "addr", "del", underlayIP, "dev", underlayBridgeName)
-					cmd.Stderr = os.Stderr
-					err := cmd.Run()
-					Expect(err).NotTo(HaveOccurred())
-				})
-
-				AfterEach(func() {
-					By("tearing down the localnet underlay")
-					Expect(teardownUnderlay(nodes, secondaryBridge)).To(Succeed())
 				})
 
 				It("correctly sets the MTU on the pod", func() {
@@ -953,6 +925,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 
 					By("asserting the *client* pod can contact the underlay service")
 					Expect(connectToServer(clientPodConfig, underlayServiceIP, servicePort)).To(Succeed())
+
 				})
 
 				Context("and networkAttachmentDefinition is modified", func() {
@@ -1050,7 +1023,10 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 
 					Context("and the service connected to the underlay is reconfigured to connect to the new VLAN-ID", func() {
 						BeforeEach(func() {
-							Expect(ovsRemoveSwitchPort(nodes, secondaryInterfaceName, newLocalnetVLANID)).To(Succeed())
+							Expect(providerCtx.SetupUnderlay(f, infraapi.Underlay{
+								LogicalNetworkName: netConfig.networkName,
+								VlanID:             newLocalnetVLANID,
+							})).To(Succeed(), "configuring the OVS bridge with new localnet vlan id")
 						})
 
 						It("can now communicate over a localnet secondary network from pod to the underlay service", func() {
@@ -1240,9 +1216,6 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 			Context("with a trunked configuration", func() {
 				const vlanID = 20
 				BeforeEach(func() {
-					nodes = ovsPods(cs)
-					Expect(nodes).NotTo(BeEmpty())
-
 					// we are setting up the bridge in trunked mode by not
 					// specifying a particular VLAN ID on the network conf
 					netConfig = newNetworkAttachmentConfig(
@@ -1255,32 +1228,35 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 						})
 
 					By("setting up the localnet underlay with a trunked configuration")
-					Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, netConfig.networkName, netConfig.vlanID)).To(Succeed(), "configuring the OVS bridge")
+					Expect(providerCtx.SetupUnderlay(f, infraapi.Underlay{
+						LogicalNetworkName: netConfig.networkName,
+						VlanID:             netConfig.vlanID,
+					})).To(Succeed(), "configuring the OVS bridge")
 
-					By(fmt.Sprintf("creating a VLAN interface on top of the bridge connecting the cluster nodes with IP: %s", underlayIP))
-					cli, err := client.NewClientWithOpts(client.FromEnv)
-					Expect(err).NotTo(HaveOccurred())
+					By("starting a service, connected to the underlay over a VLAN")
+					providerCtx = infraprovider.Get().NewTestContext()
 
-					gatewayIP, err := getNetworkGateway(cli, dockerNetworkName)
-					Expect(err).NotTo(HaveOccurred())
+					ifName := "eth0"
+					vlanName := fmt.Sprintf("%s.%d", ifName, vlanID)
+					underlayNetwork, err := infraprovider.Get().GetNetwork(dockerNetworkName)
+					Expect(err).NotTo(HaveOccurred(), "must get underlay network")
+					externalContainerName := f.Namespace.Name + "-web-server"
+					serviceContainerSpec := infraapi.ExternalContainer{
+						Name:       externalContainerName,
+						Image:      images.AgnHost(),
+						Network:    underlayNetwork,
+						Entrypoint: "bash",
+						ExtPort:    servicePort,
+						Args: []string{"-c", fmt.Sprintf(`
+ip link add link %[1]s name %[2]s type vlan id %[3]d
+ip link set dev %[2]s up
+ip a add %[4]s/24 dev %[2]s
+./agnhost netexec --http-port=%[5]d
+`, ifName, vlanName, vlanID, underlayServiceIP, servicePort)},
+					}
+					_, err = providerCtx.CreateExternalContainer(serviceContainerSpec)
+					Expect(err).NotTo(HaveOccurred(), "must create external container 1")
 
-					underlayBridgeName, err = findInterfaceByIP(gatewayIP)
-					Expect(err).NotTo(HaveOccurred())
-					Expect(createVLANInterface(underlayBridgeName, strconv.Itoa(vlanID), &underlayIP)).To(
-						Succeed(),
-						"create a VLAN interface on the bridge interconnecting the cluster nodes",
-					)
-
-					By("starting a service, connected to the underlay")
-					cmdWebServer = exec.Command("python3", "-m", "http.server", "--bind", underlayServiceIP, strconv.Itoa(port))
-					cmdWebServer.Stderr = os.Stderr
-					Expect(cmdWebServer.Start()).NotTo(HaveOccurred(), "failed to create web server, port might be busy")
-				})
-
-				AfterEach(func() {
-					Expect(cmdWebServer.Process.Kill()).NotTo(HaveOccurred(), "kill the python webserver")
-					Expect(deleteVLANInterface(underlayBridgeName, strconv.Itoa(vlanID))).NotTo(HaveOccurred(), "remove the underlay physical configuration")
-					Expect(teardownUnderlay(nodes, secondaryBridge)).To(Succeed(), "tear down the localnet underlay")
 				})
 
 				It("the same bridge mapping can be shared by a separate VLAN by using the physical network name attribute", func() {
@@ -1313,6 +1289,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 
 					By(fmt.Sprintf("asserting the *client* pod can contact the underlay service with IP %q on the separate vlan", underlayIP))
 					Expect(connectToServer(clientPodConfig, underlayServiceIP, servicePort)).To(Succeed())
+
 				})
 			})
 		})
@@ -1360,15 +1337,10 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 
 					if netConfig.topology == "localnet" {
 						By("setting up the localnet underlay")
-						nodes := ovsPods(cs)
-						Expect(nodes).NotTo(BeEmpty())
-						defer func() {
-							By("tearing down the localnet underlay")
-							Expect(teardownUnderlay(nodes, secondaryBridge)).To(Succeed())
-						}()
-
-						const secondaryInterfaceName = "eth1"
-						Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, netConfig.networkName, netConfig.vlanID)).To(Succeed())
+						Expect(providerCtx.SetupUnderlay(f, infraapi.Underlay{
+							LogicalNetworkName: netConfig.networkName,
+							VlanID:             netConfig.vlanID,
+						})).To(Succeed())
 					}
 
 					Expect(createNads(f, nadClient, extraNamespace, netConfig)).NotTo(HaveOccurred())
@@ -1787,14 +1759,10 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					netConfig := newNetworkAttachmentConfig(netConfigParams)
 
 					By("setting up the localnet underlay")
-					nodes := ovsPods(cs)
-					Expect(nodes).NotTo(BeEmpty())
-					defer func() {
-						By("tearing down the localnet underlay")
-						Expect(teardownUnderlay(nodes, secondaryBridge)).To(Succeed())
-					}()
-					const secondaryInterfaceName = "eth1"
-					Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, netConfig.networkName, netConfig.vlanID)).To(Succeed())
+					Expect(providerCtx.SetupUnderlay(f, infraapi.Underlay{
+						LogicalNetworkName: netConfig.networkName,
+						VlanID:             netConfig.vlanID,
+					})).To(Succeed())
 
 					Expect(createNads(f, nadClient, extraNamespace, netConfig)).NotTo(HaveOccurred())
 
@@ -1919,14 +1887,10 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					netConfig := newNetworkAttachmentConfig(netConfigParams)
 
 					By("setting up the localnet underlay")
-					nodes := ovsPods(cs)
-					Expect(nodes).NotTo(BeEmpty())
-					defer func() {
-						By("tearing down the localnet underlay")
-						Expect(teardownUnderlay(nodes, secondaryBridge)).To(Succeed())
-					}()
-					const secondaryInterfaceName = "eth1"
-					Expect(setupUnderlay(nodes, secondaryBridge, secondaryInterfaceName, netConfig.networkName, netConfig.vlanID)).To(Succeed())
+					Expect(providerCtx.SetupUnderlay(f, infraapi.Underlay{
+						LogicalNetworkName: netConfig.networkName,
+						VlanID:             netConfig.vlanID,
+					})).To(Succeed())
 
 					Expect(createNads(f, nadClient, extraNamespace, netConfig)).NotTo(HaveOccurred())
 
@@ -2219,20 +2183,5 @@ func addIPRequestToPodConfig(cs clientset.Interface, podConfig *podConfiguration
 	for i := range podConfig.attachments {
 		podConfig.attachments[i].IPRequest = IPsToRequest
 	}
-	return nil
-}
-
-func setBridgeMappings(cs clientset.Interface, mappings ...BridgeMapping) error {
-	pods := ovsPods(cs)
-	if len(pods) == 0 {
-		return fmt.Errorf("pods list is empty")
-	}
-
-	for _, pods := range pods {
-		if err := configureBridgeMappings(pods.Namespace, pods.Name, mappings...); err != nil {
-			return err
-		}
-	}
-
 	return nil
 }
