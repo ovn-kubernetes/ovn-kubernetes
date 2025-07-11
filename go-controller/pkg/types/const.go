@@ -66,6 +66,8 @@ const (
 	TransitRouter               = "transit_router"
 	TransitRouterToRouterPrefix = "trtor-"
 	RouterToTransitRouterPrefix = "rtotr-"
+	TransitRouterToSwitchPrefix = "trtos-"
+	SwitchToTransitRouterPrefix = "stotr-"
 	// ACL Default Tier Priorities
 
 	// Default routed multicast allow acl rule priority
