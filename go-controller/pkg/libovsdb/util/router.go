@@ -33,7 +33,8 @@ import (
 // (TODO: FIXME): With this route, we are officially breaking support for IC with zones that have multiple-nodes
 // NOTE: This route is exactly the same as what is added by pod-live-migration feature and we keep the route exactly
 // same across the 3 features so that if the route already exists on the node, this is just a no-op
-func CreateDefaultRouteToExternal(nbClient libovsdbclient.Client, clusterRouter, gwRouterName string, clusterSubnets []config.CIDRNetworkEntry, gatewayIPs []*net.IPNet) error {
+func CreateDefaultRouteToExternal(nbClient libovsdbclient.Client, clusterRouter, gwRouterName string,
+	clusterSubnets []config.CIDRNetworkEntry, gatewayIPs []*net.IPNet) error {
 	for _, clusterSubnet := range clusterSubnets {
 		isClusterSubnetIPV6 := utilnet.IsIPv6String(clusterSubnet.CIDR.IP.String())
 		gatewayIP, err := util.MatchFirstIPNetFamily(isClusterSubnetIPV6, gatewayIPs)
