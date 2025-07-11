@@ -59,6 +59,9 @@ type CommonNetworkControllerInfo struct {
 	// event recorder used to post events to k8s
 	recorder record.EventRecorder
 
+	// libovsdb local ovsdb client interface
+	ovsLocalClient libovsdbclient.Client
+
 	// libovsdb northbound client interface
 	nbClient libovsdbclient.Client
 
@@ -321,7 +324,7 @@ func getNetworkControllerName(netName string) string {
 
 // NewCommonNetworkControllerInfo creates CommonNetworkControllerInfo shared by controllers
 func NewCommonNetworkControllerInfo(client clientset.Interface, kube *kube.KubeOVN, wf *factory.WatchFactory,
-	recorder record.EventRecorder, nbClient libovsdbclient.Client, sbClient libovsdbclient.Client,
+	recorder record.EventRecorder, ovsLocalClient libovsdbclient.Client, nbClient libovsdbclient.Client, sbClient libovsdbclient.Client,
 	podRecorder *metrics.PodRecorder, SCTPSupport, multicastSupport, svcTemplateSupport bool) (*CommonNetworkControllerInfo, error) {
 	zone, err := libovsdbutil.GetNBZone(nbClient)
 	if err != nil {
@@ -332,6 +335,7 @@ func NewCommonNetworkControllerInfo(client clientset.Interface, kube *kube.KubeO
 		kube:               kube,
 		watchFactory:       wf,
 		recorder:           recorder,
+		ovsLocalClient:     ovsLocalClient,
 		nbClient:           nbClient,
 		sbClient:           sbClient,
 		podRecorder:        podRecorder,

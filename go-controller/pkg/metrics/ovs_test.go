@@ -114,7 +114,7 @@ var _ = ginkgo.Describe("OVS metrics", func() {
 	ginkgo.Context("On update of bridge metrics", func() {
 		ginkgo.It("sets bridge metrics when input valid", func() {
 
-			ovsClient, libovsdbCleanup, err := libovsdbtest.NewOVSTestHarness(dbSetup)
+			ovsClient, libovsdbCleanup, err := libovsdbtest.NewOVSTestHarness(dbSetup, nil)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			ovsOfctlOutput := []clientOutput{
 				{
@@ -146,7 +146,7 @@ var _ = ginkgo.Describe("OVS metrics", func() {
 		})
 
 		ginkgo.It("returns error when OVS appctl client returns an error", func() {
-			ovsClient, libovsdbCleanup, err := libovsdbtest.NewOVSTestHarness(dbSetup)
+			ovsClient, libovsdbCleanup, err := libovsdbtest.NewOVSTestHarness(dbSetup, nil)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			ovsAppctlOutput := []clientOutput{
 				{
@@ -162,7 +162,7 @@ var _ = ginkgo.Describe("OVS metrics", func() {
 		})
 
 		ginkgo.It("returns error when OVS appctl returns non-blank stderr", func() {
-			ovsClient, libovsdbCleanup, err := libovsdbtest.NewOVSTestHarness(dbSetup)
+			ovsClient, libovsdbCleanup, err := libovsdbtest.NewOVSTestHarness(dbSetup, nil)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			ovsAppctlOutput := []clientOutput{
 				{
@@ -178,7 +178,7 @@ var _ = ginkgo.Describe("OVS metrics", func() {
 		})
 
 		ginkgo.It("returns error when OVS appctl client returns a blank output", func() {
-			ovsClient, libovsdbCleanup, err := libovsdbtest.NewOVSTestHarness(dbSetup)
+			ovsClient, libovsdbCleanup, err := libovsdbtest.NewOVSTestHarness(dbSetup, nil)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			ovsAppctlOutput := []clientOutput{
 				{
@@ -212,7 +212,7 @@ var _ = ginkgo.Describe("OVS metrics", func() {
 		})
 
 		ginkgo.It("sets interface metrics when input is valid", func() {
-			ovsClient, libovsdbCleanup, err := libovsdbtest.NewOVSTestHarness(dbSetup)
+			ovsClient, libovsdbCleanup, err := libovsdbtest.NewOVSTestHarness(dbSetup, nil)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			err = updateOvsInterfaceMetrics(ovsClient)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
@@ -244,7 +244,7 @@ var _ = ginkgo.Describe("OVS metrics", func() {
 			dbSetup := libovsdbtest.TestSetup{
 				OVSData: testDB,
 			}
-			ovsClient, libovsdbCleanup, err := libovsdbtest.NewOVSTestHarness(dbSetup)
+			ovsClient, libovsdbCleanup, err := libovsdbtest.NewOVSTestHarness(dbSetup, nil)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			err = setOvsHwOffloadMetrics(ovsClient)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
@@ -258,7 +258,7 @@ var _ = ginkgo.Describe("OVS metrics", func() {
 			dbSetup := libovsdbtest.TestSetup{
 				OVSData: testDB,
 			}
-			ovsClient, libovsdbCleanup, err := libovsdbtest.NewOVSTestHarness(dbSetup)
+			ovsClient, libovsdbCleanup, err := libovsdbtest.NewOVSTestHarness(dbSetup, nil)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			err = setOvsHwOffloadMetrics(ovsClient)
 			gomega.Expect(err).To(gomega.HaveOccurred())

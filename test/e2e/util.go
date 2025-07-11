@@ -47,6 +47,8 @@ const (
 	ovnNodeZoneNameAnnotation = "k8s.ovn.org/zone-name"
 	// ovnGatewayMTUSupport annotation determines if options:gateway_mtu shall be set for a node's gateway router
 	ovnGatewayMTUSupport = "k8s.ovn.org/gateway-mtu-support"
+	// ovnNodeTransportZones determines transport zones for a node
+	ovnNodeTransportZones = "k8s.ovn.org/transport-zones"
 )
 
 var singleNodePerZoneResult *bool

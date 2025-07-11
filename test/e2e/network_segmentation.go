@@ -410,7 +410,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 								_, err := infraprovider.Get().ExecK8NodeCommand(nodeName, []string{
 									"curl", "--connect-timeout", "2",
 									net.JoinHostPort(destIP, fmt.Sprintf("%d", podClusterNetDefaultPort)),
-									})
+								})
 								return err == nil
 							}).Should(BeTrue())
 						}
@@ -430,7 +430,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 								_, err := infraprovider.Get().ExecK8NodeCommand(nodeName, []string{
 									"curl", "--connect-timeout", "2",
 									net.JoinHostPort(destIP, fmt.Sprintf("%d", podClusterNetPort)),
-									})
+								})
 								return err != nil
 							}, 5*time.Second).Should(BeTrue())
 						}
