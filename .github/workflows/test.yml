@@ -316,6 +316,10 @@ jobs:
     - name: Free up disk space
       run: |
         df -h
+        echo "=== Partition Layout ==="
+        lsblk
+        echo "=== Partition Table ==="
+        sudo fdisk -l
         sudo rm -rf /usr/local/lib/android/sdk
         sudo apt-get update
         sudo eatmydata apt-get purge --auto-remove -y \
@@ -520,6 +524,10 @@ jobs:
     - name: Free up disk space
       run: |
         df -h
+        echo "=== Partition Layout ==="
+        lsblk
+        echo "=== Partition Table ==="
+        sudo fdisk -l
         sudo rm -rf /usr/local/lib/android/sdk
         sudo apt-get update
         sudo eatmydata apt-get purge --auto-remove -y \
@@ -754,6 +762,10 @@ jobs:
     - name: Free up disk space
       run: |
         df -h
+        echo "=== Partition Layout ==="
+        lsblk
+        echo "=== Partition Table ==="
+        sudo fdisk -l
         sudo rm -rf /usr/local/lib/android/sdk
         sudo apt-get update
         sudo eatmydata apt-get purge --auto-remove -y \
