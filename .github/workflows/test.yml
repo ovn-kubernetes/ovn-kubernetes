@@ -339,6 +339,35 @@ jobs:
         sudo swapoff -a
         sudo rm -f /mnt/swapfile
         df -h
+        MOUNT_PATH="/mnt"
+        ROOT_RESERVE=10000
+        ROOT_LOOP_PATH="/loop-pv.img"
+        ROOT_RESERVE_KB=$(expr $ROOT_RESERVE \* 1024)
+        ROOT_FREE_KB=$(df --block-size=1024 --output=avail / | tail -1)
+        ROOT_LVM_SIZE_KB=$(expr $ROOT_FREE_KB - $ROOT_RESERVE_KB)
+        ROOT_LVM_SIZE_BYTES=$(expr $ROOT_LVM_SIZE_KB \* 1024)
+        sudo touch "${ROOT_LOOP_PATH}"
+        sudo fallocate -z -l "${ROOT_LVM_SIZE_BYTES}" "${ROOT_LOOP_PATH}"
+        export ROOT_LOOP_DEV=$(sudo losetup --find --show "${ROOT_LOOP_PATH}")
+        sudo pvcreate -f "${ROOT_LOOP_DEV}"
+
+        MNT_LOOP_PATH="/mnt/loop-pv.img"
+        TMP_LVM_SIZE_KB=$(df --block-size=1024 --output=avail /mnt | tail -1)
+        TMP_LVM_SIZE_BYTES=$(expr $TMP_LVM_SIZE_KB \* 1024)
+        sudo touch "${MNT_LOOP_PATH}"
+        sudo fallocate -z -l "${TMP_LVM_SIZE_BYTES}" "${MNT_LOOP_PATH}"
+        export TMP_LOOP_DEV=$(sudo losetup --find --show "${MNT_LOOP_PATH}")
+        sudo pvcreate -f "${TMP_LOOP_DEV}"
+        VG_NAME="docker"
+        sudo vgcreate "${VG_NAME}" "${TMP_LOOP_DEV}" "${ROOT_LOOP_DEV}"
+        echo "creating docker volume"
+        sudo lvcreate -l 100%FREE -n dockerlv "${VG_NAME}"
+        sudo mkfs.ext4 -Enodiscard -m0 "/dev/mapper/${VG_NAME}-dockerlv"
+        sudo mount "/dev/mapper/${VG_NAME}-dockerlv" "${MOUNT_PATH}"
+        sudo chown -R runner:runner "${MOUNT_PATH}"
+        
+        df -h
+        mount
 
     - name: Download test-image-master
       uses: actions/download-artifact@v4
@@ -546,7 +575,35 @@ jobs:
         sudo swapon --show
         sudo swapoff -a
         sudo rm -f /mnt/swapfile
+        MOUNT_PATH="/mnt/docker-data"
+        ROOT_RESERVE=10000
+        ROOT_LOOP_PATH="/loop-pv.img"
+        ROOT_RESERVE_KB=$(expr $ROOT_RESERVE \* 1024)
+        ROOT_FREE_KB=$(df --block-size=1024 --output=avail / | tail -1)
+        ROOT_LVM_SIZE_KB=$(expr $ROOT_FREE_KB - $ROOT_RESERVE_KB)
+        ROOT_LVM_SIZE_BYTES=$(expr $ROOT_LVM_SIZE_KB \* 1024)
+        sudo touch "${ROOT_LOOP_PATH}"
+        sudo fallocate -z -l "${ROOT_LVM_SIZE_BYTES}" "${ROOT_LOOP_PATH}"
+        export ROOT_LOOP_DEV=$(sudo losetup --find --show "${ROOT_LOOP_PATH}")
+        sudo pvcreate -f "${ROOT_LOOP_DEV}"
+
+        MNT_LOOP_PATH="/mnt/loop-pv.img"
+        TMP_LVM_SIZE_KB=$(df --block-size=1024 --output=avail /mnt | tail -1)
+        TMP_LVM_SIZE_BYTES=$(expr $TMP_LVM_SIZE_KB \* 1024)
+        sudo touch "${MNT_LOOP_PATH}"
+        sudo fallocate -z -l "${TMP_LVM_SIZE_BYTES}" "${MNT_LOOP_PATH}"
+        export TMP_LOOP_DEV=$(sudo losetup --find --show "${MNT_LOOP_PATH}")
+        sudo pvcreate -f "${TMP_LOOP_DEV}"
+        VG_NAME="docker"
+        sudo vgcreate "${VG_NAME}" "${TMP_LOOP_DEV}" "${ROOT_LOOP_DEV}"
+        echo "creating docker volume"
+        sudo lvcreate -l 100%FREE -n dockerlv "${VG_NAME}"
+        sudo mkfs.ext4 -Enodiscard -m0 "/dev/mapper/${VG_NAME}-dockerlv"
+        sudo mount "/dev/mapper/${VG_NAME}-dockerlv" "${MOUNT_PATH}"
+        sudo chown -R runner:runner "${MOUNT_PATH}"
+
         df -h
+        mount
 
     - name: Setup /mnt/runner directory
       run: |
@@ -785,6 +842,35 @@ jobs:
         sudo swapoff -a
         sudo rm -f /mnt/swapfile
         df -h
+        MOUNT_PATH="/mnt"
+        ROOT_RESERVE=10000
+        ROOT_LOOP_PATH="/loop-pv.img"
+        ROOT_RESERVE_KB=$(expr $ROOT_RESERVE \* 1024)
+        ROOT_FREE_KB=$(df --block-size=1024 --output=avail / | tail -1)
+        ROOT_LVM_SIZE_KB=$(expr $ROOT_FREE_KB - $ROOT_RESERVE_KB)
+        ROOT_LVM_SIZE_BYTES=$(expr $ROOT_LVM_SIZE_KB \* 1024)
+        sudo touch "${ROOT_LOOP_PATH}"
+        sudo fallocate -z -l "${ROOT_LVM_SIZE_BYTES}" "${ROOT_LOOP_PATH}"
+        export ROOT_LOOP_DEV=$(sudo losetup --find --show "${ROOT_LOOP_PATH}")
+        sudo pvcreate -f "${ROOT_LOOP_DEV}"
+
+        MNT_LOOP_PATH="/mnt/loop-pv.img"
+        TMP_LVM_SIZE_KB=$(df --block-size=1024 --output=avail /mnt | tail -1)
+        TMP_LVM_SIZE_BYTES=$(expr $TMP_LVM_SIZE_KB \* 1024)
+        sudo touch "${MNT_LOOP_PATH}"
+        sudo fallocate -z -l "${TMP_LVM_SIZE_BYTES}" "${MNT_LOOP_PATH}"
+        export TMP_LOOP_DEV=$(sudo losetup --find --show "${MNT_LOOP_PATH}")
+        sudo pvcreate -f "${TMP_LOOP_DEV}"
+        VG_NAME="docker"
+        sudo vgcreate "${VG_NAME}" "${TMP_LOOP_DEV}" "${ROOT_LOOP_DEV}"
+        echo "creating docker volume"
+        sudo lvcreate -l 100%FREE -n dockerlv "${VG_NAME}"
+        sudo mkfs.ext4 -Enodiscard -m0 "/dev/mapper/${VG_NAME}-dockerlv"
+        sudo mount "/dev/mapper/${VG_NAME}-dockerlv" "${MOUNT_PATH}"
+        sudo chown -R runner:runner "${MOUNT_PATH}"
+
+        df -h
+        mount
 
     - name: Disable ufw
       # For IPv6 and Dualstack, ufw (Uncomplicated Firewall) should be disabled.
