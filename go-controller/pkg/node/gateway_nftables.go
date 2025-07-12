@@ -366,12 +366,18 @@ func initLocalGatewayNFTNATRules(cidrs ...*net.IPNet) error {
 	tx := nft.NewTransaction()
 
 	// Create main local gateway masquerade chain
+	// Use priority 101 instead of defaultknftables.SNATPriority (100) to ensure
+	// iptables egress IP rules in OVN-KUBE-EGRESS-IP-MULTI-NIC chain run first
+	// this also ensure for egress-services, the
+	// 	chain egress-services {
+	//	type nat hook postrouting priority srcnat; policy accept;
+	// is called before the local gateway masquerade chain
 	localGwMasqChain := &knftables.Chain{
 		Name:     nftablesLocalGatewayMasqChain,
 		Comment:  knftables.PtrTo("OVN local gateway masquerade"),
 		Type:     knftables.PtrTo(knftables.NATType),
 		Hook:     knftables.PtrTo(knftables.PostroutingHook),
-		Priority: knftables.PtrTo(knftables.SNATPriority),
+		Priority: knftables.PtrTo(knftables.BaseChainPriority("101")),
 	}
 	tx.Add(localGwMasqChain)
 
