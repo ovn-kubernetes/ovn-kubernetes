@@ -272,18 +272,26 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 		)
 
 		const (
-			clientPodName     = "client-pod"
-			clientIPOffset    = 100
-			serverIPOffset    = 102
-			port              = 9000
-			workerOneNodeName = "ovn-worker"
-			workerTwoNodeName = "ovn-worker2"
+			clientPodName  = "client-pod"
+			clientIPOffset = 100
+			serverIPOffset = 102
+			port           = 9000
 		)
 
 		ginkgo.DescribeTable("attached to a localnet network mapped to breth0",
 
-			func(netConfigParams networkAttachmentConfigParams, clientPodConfig, serverPodConfig podConfiguration) {
-
+			func(netConfigParams networkAttachmentConfigParams, clientPodConfig, serverPodConfig podConfiguration, isCollocatedPods bool) {
+				By("Get two scheduable nodes and ensure client and server are located on distinct Nodes")
+				nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.Background(), f.ClientSet, 2)
+				framework.ExpectNoError(err, "2 scheduable nodes are required")
+				Expect(len(nodes.Items)).To(BeNumerically(">=", 1), "cluster should have at least 2 nodes")
+				if isCollocatedPods {
+					clientPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[0].GetName()}
+					serverPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[0].GetName()}
+				} else {
+					clientPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[0].GetName()}
+					serverPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[1].GetName()}
+				}
 				netConfig := newNetworkAttachmentConfig(networkAttachmentConfigParams{
 					name:      secondaryNetworkName,
 					namespace: f.Namespace.Name,
@@ -307,7 +315,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 
 				nad := generateNAD(netConfig)
 				By(fmt.Sprintf("creating the attachment configuration: %v\n", nad))
-				_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
+				_, err = nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
 					context.Background(),
 					nad,
 					metav1.CreateOptions{},
@@ -369,7 +377,6 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				},
 				podConfiguration{ // client on default network
 					name:         clientPodName,
-					nodeSelector: map[string]string{nodeHostnameKey: workerOneNodeName},
 					isPrivileged: true,
 				},
 				podConfiguration{ // server attached to localnet secondary network
@@ -378,9 +385,9 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					}},
 					name:                         podName,
 					containerCmd:                 httpServerContainerCmd(port),
-					nodeSelector:                 map[string]string{nodeHostnameKey: workerTwoNodeName},
 					needsIPRequestFromHostSubnet: true, // will override attachments above with an IPRequest
 				},
+				false, // scheduled on distinct Nodes
 				Label("BUG", "OCPBUGS-43004"),
 			),
 			ginkgo.Entry(
@@ -391,7 +398,6 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				},
 				podConfiguration{ // client on default network
 					name:         clientPodName + "-same-node",
-					nodeSelector: map[string]string{nodeHostnameKey: workerTwoNodeName},
 					isPrivileged: true,
 				},
 				podConfiguration{ // server attached to localnet secondary network
@@ -400,9 +406,9 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					}},
 					name:                         podName,
 					containerCmd:                 httpServerContainerCmd(port),
-					nodeSelector:                 map[string]string{nodeHostnameKey: workerTwoNodeName},
 					needsIPRequestFromHostSubnet: true,
 				},
+				true, // collocated on same Node
 				Label("BUG", "OCPBUGS-43004"),
 			),
 			ginkgo.Entry(
@@ -416,16 +422,15 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 						Name: secondaryNetworkName,
 					}},
 					name:                         clientPodName,
-					nodeSelector:                 map[string]string{nodeHostnameKey: workerOneNodeName},
 					isPrivileged:                 true,
 					needsIPRequestFromHostSubnet: true,
 				},
 				podConfiguration{ // server on default network, pod is host-networked
 					name:         podName,
 					containerCmd: httpServerContainerCmd(port),
-					nodeSelector: map[string]string{nodeHostnameKey: workerTwoNodeName},
 					hostNetwork:  true,
 				},
+				false, // not collocated on same node
 				Label("STORY", "SDN-5345"),
 			),
 			ginkgo.Entry(
@@ -439,16 +444,15 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 						Name: secondaryNetworkName,
 					}},
 					name:                         clientPodName,
-					nodeSelector:                 map[string]string{nodeHostnameKey: workerTwoNodeName},
 					isPrivileged:                 true,
 					needsIPRequestFromHostSubnet: true,
 				},
 				podConfiguration{ // server on default network, pod is host-networked
 					name:         podName,
 					containerCmd: httpServerContainerCmd(port),
-					nodeSelector: map[string]string{nodeHostnameKey: workerTwoNodeName},
 					hostNetwork:  true,
 				},
+				true, // collocated on same node
 				Label("STORY", "SDN-5345"),
 			),
 		)
@@ -456,13 +460,11 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 
 	Context("multiple pods connected to the same OVN-K secondary network", func() {
 		const (
-			workerOneNodeName = "ovn-worker"
-			workerTwoNodeName = "ovn-worker2"
-			clientPodName     = "client-pod"
-			nodeHostnameKey   = "kubernetes.io/hostname"
-			port              = 9000
-			clientIP          = "192.168.200.10/24"
-			staticServerIP    = "192.168.200.20/24"
+			clientPodName   = "client-pod"
+			nodeHostnameKey = "kubernetes.io/hostname"
+			port            = 9000
+			clientIP        = "192.168.200.10/24"
+			staticServerIP  = "192.168.200.20/24"
 		)
 
 		ginkgo.It("eventually configures pods that were added to an already existing network before the nad", func() {
@@ -567,6 +569,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				By("Get two scheduable nodes and schedule client and server to be on distinct Nodes")
 				nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.Background(), f.ClientSet, 2)
 				framework.ExpectNoError(err, "2 scheduable nodes are required")
+				Expect(len(nodes.Items)).To(BeNumerically(">=", 1), "cluster should have at least 2 nodes")
 				clientPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[0].GetName()}
 				serverPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[1].GetName()}
 
