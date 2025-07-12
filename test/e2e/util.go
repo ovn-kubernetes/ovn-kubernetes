@@ -1129,14 +1129,29 @@ func randStr(n int) string {
 	return string(b)
 }
 
-func isIPv4Supported() bool {
-	val, present := os.LookupEnv("PLATFORM_IPV4_SUPPORT")
-	return present && val == "true"
+func isCIDRIPFamilySupported(cs clientset.Interface, cidr string) bool {
+	ginkgo.GinkgoHelper()
+	gomega.Expect(cidr).To(gomega.ContainSubstring("/"))
+	isIPv6 := utilnet.IsIPv6CIDRString(cidr)
+	return (isIPv4Supported(cs) && !isIPv6) || (isIPv6Supported(cs) && isIPv6)
 }
 
-func isIPv6Supported() bool {
-	val, present := os.LookupEnv("PLATFORM_IPV6_SUPPORT")
-	return present && val == "true"
+func isIPv4Supported(cs clientset.Interface) bool {
+	v4, _ := getSupportedIPFamilies(cs)
+	return v4
+}
+
+func isIPv6Supported(cs clientset.Interface) bool {
+	_, v6 := getSupportedIPFamilies(cs)
+	return v6
+}
+
+func getSupportedIPFamilies(cs clientset.Interface) (bool, bool) {
+	n, err := e2enode.GetRandomReadySchedulableNode(context.TODO(), cs)
+	framework.ExpectNoError(err, "must fetch a Ready Node")
+	v4NodeAddrs := e2enode.GetAddressesByTypeAndFamily(n, v1.NodeInternalIP, v1.IPv4Protocol)
+	v6NodeAddrs := e2enode.GetAddressesByTypeAndFamily(n, v1.NodeInternalIP, v1.IPv6Protocol)
+	return len(v4NodeAddrs) > 0, len(v6NodeAddrs) > 0
 }
 
 func isInterconnectEnabled() bool {

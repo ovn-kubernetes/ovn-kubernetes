@@ -29,24 +29,27 @@ func netCIDR(netCIDR string, netPrefixLengthPerNode int) string {
 	return fmt.Sprintf("%s/%d", netCIDR, netPrefixLengthPerNode)
 }
 
-// takes ipv4 and ipv6 cidrs and returns the correct type for the cluster under test
-func correctCIDRFamily(ipv4CIDR, ipv6CIDR string) string {
-	return strings.Join(selectCIDRs(ipv4CIDR, ipv6CIDR), ",")
+func joinCIDRs(cidrs ...string) string {
+	return strings.Join(cidrs, ",")
 }
 
-// takes ipv4 and ipv6 cidrs and returns the correct type for the cluster under test
-func selectCIDRs(ipv4CIDR, ipv6CIDR string) []string {
-	// dual stack cluster
-	if isIPv6Supported() && isIPv4Supported() {
-		return []string{ipv4CIDR, ipv6CIDR}
-	}
-	// is an ipv6 only cluster
-	if isIPv6Supported() {
-		return []string{ipv6CIDR}
-	}
+func splitCIDRs(cidrs string) []string {
+	return strings.Split(cidrs, ",")
+}
 
-	//ipv4 only cluster
-	return []string{ipv4CIDR}
+func filterCIDRsAndJoin(cs clientset.Interface, cidrs string) string {
+	return joinCIDRs(filterCIDRs(cs, splitCIDRs(cidrs)...)...)
+}
+
+func filterCIDRs(cs clientset.Interface, cidrs ...string) []string {
+	var supportedCIDRs []string
+	for _, cidr := range cidrs {
+		if !isCIDRIPFamilySupported(cs, cidr) {
+			continue
+		}
+		supportedCIDRs = append(supportedCIDRs, cidr)
+	}
+	return supportedCIDRs
 }
 
 func getNetCIDRSubnet(netCIDR string) (string, error) {
