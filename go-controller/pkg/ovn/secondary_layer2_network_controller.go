@@ -593,14 +593,17 @@ func (oc *SecondaryLayer2NetworkController) addUpdateLocalNodeEvent(node *corev1
 					errs = append(errs, err)
 					oc.gatewaysFailed.Store(node.Name, true)
 				} else {
-					if !util.IsPodNetworkAdvertisedAtNode(oc, node.Name) {
-						err = oc.addUDNClusterSubnetEgressSNAT(gwConfig.hostSubnets, gwManager.gwRouterName)
-						if err == nil && util.IsRouteAdvertisementsEnabled() {
-							err = oc.deleteAdvertisedNetworkIsolation(node.Name)
-						}
+					isUDNAdvertised := util.IsPodNetworkAdvertisedAtNode(oc, node.Name)
+					err = oc.addOrUpdateUDNClusterSubnetEgressSNAT(gwConfig.hostSubnets, gwManager.gwRouterName, isUDNAdvertised)
+					if err != nil {
+						errs = append(errs, err)
+						oc.gatewaysFailed.Store(node.Name, true)
 					} else {
-						err = oc.deleteUDNClusterSubnetEgressSNAT(gwConfig.hostSubnets, gwManager.gwRouterName)
-						if err == nil {
+						if !isUDNAdvertised {
+							if util.IsRouteAdvertisementsEnabled() {
+								err = oc.deleteAdvertisedNetworkIsolation(node.Name)
+							}
+						} else {
 							err = oc.addAdvertisedNetworkIsolation(node.Name)
 						}
 					}
@@ -747,7 +750,8 @@ func (oc *SecondaryLayer2NetworkController) deleteNodeEvent(node *corev1.Node) e
 	return nil
 }
 
-// addUDNClusterSubnetEgressSNAT adds the SNAT on each node's GR in L2 networks
+// addOrUpdateUDNClusterSubnetEgressSNAT adds or updates the SNAT on each node's GR in L2 networks for each UDN
+// Based on the isUDNAdvertised flag, the SNAT matches are slightly different
 // snat eth.dst == d6:cf:fd:2c:a6:44 169.254.0.12 10.128.0.0/14
 // snat eth.dst == d6:cf:fd:2c:a6:44 169.254.0.12 2010:100:200::/64
 // these SNATs are required for pod2Egress traffic in LGW mode and pod2SameNode traffic in SGW mode to function properly on UDNs
@@ -757,39 +761,60 @@ func (oc *SecondaryLayer2NetworkController) deleteNodeEvent(node *corev1.Node) e
 // externalIP = "169.254.0.12"; which is the masqueradeIP for this L2 UDN
 // so all in all we want to condionally SNAT all packets that are coming from pods hosted on this node,
 // which are leaving via UDN's mpX interface to the UDN's masqueradeIP.
-func (oc *SecondaryLayer2NetworkController) addUDNClusterSubnetEgressSNAT(localPodSubnets []*net.IPNet, routerName string) error {
+// If isUDNAdvertised is true, then we want to SNAT all packets that are coming from pods on this network
+// leaving towards nodeIPs on the cluster to masqueradeIP. If network is advertise then the SNAT looks like this:
+// "eth.dst == 0a:58:5d:5d:00:02 && (ip4.dst == $a712973235162149816)" "169.254.0.36" "93.93.0.0/16"
+func (oc *SecondaryLayer2NetworkController) addOrUpdateUDNClusterSubnetEgressSNAT(localPodSubnets []*net.IPNet, routerName string, isUDNAdvertised bool) error {
 	outputPort := types.GWRouterToJoinSwitchPrefix + routerName
-	nats, err := oc.buildUDNEgressSNAT(localPodSubnets, outputPort)
+	nats, err := oc.buildUDNEgressSNAT(localPodSubnets, outputPort, isUDNAdvertised)
 	if err != nil {
 		return err
 	}
 	if len(nats) == 0 {
 		return nil // nothing to do
 	}
+	natsToCreateOrUpdate := []*nbdb.NAT{}
+	for _, nat := range nats {
+		// Given isEquivalentNATs util considers match to be a dealbreaker for a NAT's identity,
+		// we need to find the existing NATs with the same external IDs, logicalIP, exernalIP, logicalPort
+		// and update the "match" field alone if a NAT exists with remaining fields matching.
+		// Hence using a predicate to find existing NATs with all fields except match to be the same and then updating that NAT.
+		// If such a NAT does not exist, we create a new NAT.
+		// If it is a default network NAT, then match will be empty, so nothing to set.
+		p := func(item *nbdb.NAT) bool {
+			return item.ExternalIDs[types.NetworkExternalID] == nat.ExternalIDs[types.NetworkExternalID] &&
+				item.ExternalIDs[types.TopologyExternalID] == nat.ExternalIDs[types.TopologyExternalID] &&
+				// Note that given we have two conditional SNATs per UDN network,
+				// the externalIDs will be same but the externalIP will be different.
+				item.ExternalIP == nat.ExternalIP &&
+				item.LogicalIP == nat.LogicalIP &&
+				((item.LogicalPort == nil && nat.LogicalPort == nil) ||
+					(item.LogicalPort != nil && nat.LogicalPort != nil && *item.LogicalPort == *nat.LogicalPort))
+		}
+		existingNAT, err := libovsdbops.FindNATsWithPredicate(oc.nbClient, p)
+		if err != nil {
+			return fmt.Errorf("failed to fetch existing gateway NAT for network %q on router %q, err: %w",
+				oc.GetNetworkName(), routerName, err)
+		}
+		if len(existingNAT) > 0 {
+			if len(existingNAT) > 1 {
+				return fmt.Errorf("found multiple matching NATs for network %q on node %q, expected exactly one",
+					oc.GetNetworkName(), routerName)
+			}
+			// if a NAT exists with the same external IDs, logicalIP, exernalIP, logicalPort,
+			// update the "match" field alone and use that NAT.
+			existingNAT[0].Match = nat.Match
+			natsToCreateOrUpdate = append(natsToCreateOrUpdate, existingNAT[0])
+		} else {
+			// create a new NAT.
+			natsToCreateOrUpdate = append(natsToCreateOrUpdate, nat)
+		}
+	}
 	router := &nbdb.LogicalRouter{
 		Name: routerName,
 	}
-	if err := libovsdbops.CreateOrUpdateNATs(oc.nbClient, router, nats...); err != nil {
+	if err := libovsdbops.CreateOrUpdateNATs(oc.nbClient, router, natsToCreateOrUpdate...); err != nil {
 		return fmt.Errorf("failed to update SNAT for cluster on router: %q for network %q, error: %w",
-			routerName, oc.GetNetworkName(), err)
-	}
-	return nil
-}
-
-func (oc *SecondaryLayer2NetworkController) deleteUDNClusterSubnetEgressSNAT(localPodSubnets []*net.IPNet, routerName string) error {
-	outputPort := types.GWRouterToJoinSwitchPrefix + routerName
-	nats, err := oc.buildUDNEgressSNAT(localPodSubnets, outputPort)
-	if err != nil {
-		return err
-	}
-	if len(nats) == 0 {
-		return nil // nothing to do
-	}
-	router := &nbdb.LogicalRouter{
-		Name: routerName,
-	}
-	if err := libovsdbops.DeleteNATs(oc.nbClient, router, nats...); err != nil {
-		return fmt.Errorf("failed to delete SNAT for cluster on router: %q for network %q, error: %w",
 			routerName, oc.GetNetworkName(), err)
 	}
 	return nil
