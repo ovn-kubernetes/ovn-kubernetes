@@ -148,5 +148,6 @@ nav:
     - Localnet API: okeps/okep-5085-localnet-api.md
     - Network QoS: okeps/okep-4380-network-qos.md
     - User Defined Networks: okeps/okep-5193-user-defined-networks.md
+    - Multiple Primary UDNs: okeps/okep-5252-multiple-primary-udns.md
   - Blog:
     - blog/index.md
