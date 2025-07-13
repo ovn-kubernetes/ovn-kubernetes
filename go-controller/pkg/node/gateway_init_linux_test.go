@@ -115,6 +115,7 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 		const (
 			nodeName   string = "node1"
 			systemID   string = "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6"
+			hostname   string = "node1"
 			nodeSubnet string = "10.1.1.0/24"
 		)
 
@@ -186,6 +187,10 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 			Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:system-id",
 			Output: systemID,
+		})
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:hostname",
+			Output: hostname,
 		})
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 			Cmd:    "ovs-appctl --timeout=15 dpif/show-dp-features breth0",
@@ -550,6 +555,7 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 		const (
 			nodeName   string = "node1"
 			systemID   string = "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6"
+			hostname   string = "node1"
 			nodeSubnet string = "10.1.1.0/24"
 			uplinkPort string = "p0"
 			uplinkMAC  string = "11:22:33:44:55:66"
@@ -625,6 +631,11 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 			Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:system-id",
 			Output: systemID,
+		})
+		// GetNodeChassisHostname
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:hostname",
+			Output: hostname,
 		})
 		// DetectCheckPktLengthSupport
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
@@ -983,6 +994,7 @@ func localGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 		const (
 			nodeName   string = "node1"
 			systemID   string = "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6"
+			hostname   string = "node1"
 			nodeSubnet string = "10.1.1.0/24"
 		)
 
@@ -1083,6 +1095,10 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 			Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:system-id",
 			Output: systemID,
+		})
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:hostname",
+			Output: hostname,
 		})
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 			Cmd:    "ovs-appctl --timeout=15 dpif/show-dp-features breth0",
