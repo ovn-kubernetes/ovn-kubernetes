@@ -558,6 +558,10 @@ func (c *Controller) checkSubnetOverlaps(ra *ratypes.RouteAdvertisements, select
 		if len(overlappingSubnets) > 0 {
 			return fmt.Errorf("%w: overlapping CIDR detected within RouteAdvertisement %q in VRF %q: %v", errConfig, ra.Name, vrf, overlappingSubnets)
 		}
+		// Check for overlaps between current RA and other RAs in the same VRF
+		if err := c.checkCrossRAOverlaps(ra, vrf, subnets); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -594,6 +598,62 @@ func checkSubnetSliceOverlaps(subnets []string) ([]string, error) {
 		}
 	}
 	return []string{}, nil
+}
+
+// checkCrossRAOverlaps checks if subnets from current RA overlap with subnets from other RAs in the same VRF
+func (c *Controller) checkCrossRAOverlaps(ra *ratypes.RouteAdvertisements, targetVRF string, currentRASubnets []string) error {
+	allRAs, err := c.raLister.List(labels.Everything())
+	if err != nil {
+		return err
+	}
+
+	for _, otherRA := range allRAs {
+		if otherRA.Name == ra.Name {
+			continue
+		}
+
+		nads, err := c.getSelectedNADs(otherRA.Spec.NetworkSelectors)
+		if err != nil {
+			return err
+		}
+		if len(nads) == 0 {
+			return fmt.Errorf("%w: failed checking cross RA overlap with RouteAdvertisement %q: no networks selected", errPending, ra.Name)
+		}
+		otherRASelectedNetworks, err := c.getSelectedNetworkInfo(nads, sets.New(otherRA.Spec.Advertisements...))
+		if err != nil {
+			// If we can't get networks from another RA, log but don't fail
+			// This could happen if the other RA has configuration issues
+			klog.V(4).Infof("Failed to get selected networks from RouteAdvertisement %q for cross overlap check with RouteAdvertisement %q: %v", otherRA.Name, ra.Name, err)
+			continue
+		}
+
+		otherVRFSubnets := createNetworkVRFsSubnetsMap(otherRA.Spec.TargetVRF, otherRASelectedNetworks)
+		otherSubnets, hasMatchingVRF := otherVRFSubnets[targetVRF]
+		if !hasMatchingVRF || len(otherSubnets) == 0 {
+			continue
+		}
+
+		// Check for overlaps between current RA subnets and other RA subnets in the same VRF
+		for _, currentSubnet := range currentRASubnets {
+			for _, otherSubnet := range otherSubnets {
+				ipNets, err := util.ParseIPNets([]string{currentSubnet, otherSubnet})
+				if err != nil {
+					return fmt.Errorf("failed to check subnet overlap between %s and %s: %w", currentSubnet, otherSubnet, err)
+				}
+				if len(util.IPNetOverlaps(ipNets[0], ipNets[1])) == 0 {
+					continue
+				}
+
+				conflictErr := fmt.Errorf("%w: overlapping CIDR detected between RouteAdvertisements %q and %q in VRF %q: [%s %s]",
+					errConfig, ra.Name, otherRA.Name, targetVRF, currentSubnet, otherSubnet)
+				if err := c.updateRAStatus(otherRA, false, conflictErr); err != nil {
+					klog.Errorf("Failed to update status of conflicting RouteAdvertisements %q: %v", otherRA.Name, err)
+				}
+				return conflictErr
+			}
+		}
+	}
+	return nil
 }
 
 func (c *Controller) getSelectedNetworkInfo(nads []*nadtypes.NetworkAttachmentDefinition, advertisements sets.Set[ratypes.AdvertisementType]) (*selectedNetworks, error) {
