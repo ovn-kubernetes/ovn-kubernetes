@@ -1,0 +1,18 @@
+name: Self-hosted runner test
+on:
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+    runs-on: [oracle-vm-8cpu-32gb-x86-64]
+    steps:
+      - name: Print info
+        id: print_info
+        run: |
+          set -x
+          cat /etc/os-release
+          hostname
+          touch log.txt
+          cat log.txt
+          date > log.txt
