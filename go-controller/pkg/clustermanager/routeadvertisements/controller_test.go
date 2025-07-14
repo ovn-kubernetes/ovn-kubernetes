@@ -366,6 +366,7 @@ func TestController_reconcile(t *testing.T) {
 	tests := []struct {
 		name                 string
 		ra                   *testRA
+		otherRAs             []*testRA
 		frrConfigs           []*testFRRConfig
 		nads                 []*testNAD
 		nodes                []*testNode
@@ -674,6 +675,117 @@ func TestController_reconcile(t *testing.T) {
 				"net1": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"},
 				"net2": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"},
 			},
+		},
+		{
+			name: "successfully reconciles RouteAdvertisements with overlapping subnets in different VRFs",
+			ra:   &testRA{Name: "ra2", TargetVRF: "blue", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "blue"}},
+			otherRAs: []*testRA{
+				{Name: "ra1", TargetVRF: "red", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "red"}},
+			},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, VRF: "red", Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+						}},
+						{ASN: 1, VRF: "blue", Prefixes: []string{"1.1.2.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "net-red", Namespace: "ns-red", Network: util.GenerateCUDNNetworkName("net-red"), Topology: "layer3", Subnet: "30.1.0.0/16", Labels: map[string]string{"selected": "red"}},
+				{Name: "net-blue", Namespace: "ns-blue", Network: util.GenerateCUDNNetworkName("net-blue"), Topology: "layer3", Subnet: "30.1.0.0/16", Labels: map[string]string{"selected": "blue"}}, // different VRF, should not conflict
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\", \"cluster_udn_net-red\":\"30.1.0.0/24\", \"cluster_udn_net-blue\":\"30.1.0.0/24\"}"}},
+			reconcile:            "ra2",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra2"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra2/frrConfig/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					Routers: []*testRouter{
+						{ASN: 1, VRF: "blue", Prefixes: []string{"30.1.0.0/24"}, Imports: []string{"net-blue"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"30.1.0.0/24"}},
+						}},
+						{ASN: 1, VRF: "net-blue", Imports: []string{"blue"}},
+					}},
+			},
+			expectNADAnnotations: map[string]map[string]string{"net-blue": {types.OvnRouteAdvertisementsKey: "[\"ra2\"]"}},
+		},
+		{
+			name: "successfully reconciles RouteAdvertisements with auto targetVRF and overlapping subnets across different RAs",
+			ra:   &testRA{Name: "ra1", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"ra1": "true"}},
+			otherRAs: []*testRA{
+				{Name: "ra2", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"ra2": "true"}},
+			},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, VRF: "net1", Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+						}},
+						{ASN: 1, VRF: "net2", Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "net1", Namespace: "ns1", Network: util.GenerateCUDNNetworkName("net1"), Topology: "layer3", Subnet: "20.100.0.0/16", Labels: map[string]string{"ra1": "true"}},
+				{Name: "net2", Namespace: "ns2", Network: util.GenerateCUDNNetworkName("net2"), Topology: "layer3", Subnet: "20.100.50.0/24", Labels: map[string]string{"ra2": "true"}},
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\", \"cluster_udn_net1\":\"20.100.0.0/24\", \"cluster_udn_net2\":\"20.100.50.0/24\"}"}},
+			reconcile:            "ra1",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra1"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra1/frrConfig/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					Routers: []*testRouter{
+						{ASN: 1, VRF: "net1", Prefixes: []string{"20.100.0.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"20.100.0.0/24"}},
+						}},
+					},
+				},
+			},
+		},
+		{
+			name: "succeed to reconcile RouteAdvertisement while unrelated RouteAdvertisements with subnet overlaps exist",
+			ra:   &testRA{Name: "ra3", AdvertisePods: true, NetworkSelector: map[string]string{"ra3": "true"}},
+			otherRAs: []*testRA{
+				{Name: "ra1", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+				{Name: "ra2", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:         "frrConfig",
+					Namespace:    frrNamespace,
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra3"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra3/frrConfig-node/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "net1", Namespace: "ns1", Network: util.GenerateCUDNNetworkName("net1"), Topology: "layer3", Subnet: "20.100.0.0/16", Labels: map[string]string{"selected": "true"}},
+				{Name: "net2", Namespace: "ns2", Network: util.GenerateCUDNNetworkName("net2"), Topology: "layer3", Subnet: "20.100.0.0/16", Labels: map[string]string{"selected": "true"}}, // overlaps with net1 on default VRF
+				{Name: "net3", Namespace: "ns3", Network: util.GenerateCUDNNetworkName("net3"), Topology: "layer3", Subnet: "20.200.0.0/16", Labels: map[string]string{"ra3": "true"}},
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\", \"cluster_udn_net1\":\"20.100.0.0/24\", \"cluster_udn_net2\":\"20.100.0.0/24\", \"cluster_udn_net3\":\"20.200.0.0/24\"}"}},
+			reconcile:            "ra3",
+			expectAcceptedStatus: metav1.ConditionTrue,
 		},
 		{
 			name: "reconciles a RouteAdvertisement for multiple selected FRR configs, nodes and networks on auto target VRF",
@@ -1033,6 +1145,176 @@ func TestController_reconcile(t *testing.T) {
 			expectAcceptedStatus: metav1.ConditionFalse,
 			expectAcceptedMsg:    "configuration error: overlapping CIDR detected within RouteAdvertisement \"ra\" in VRF \"\": [10.1.0.0/16 10.1.0.0/18]",
 		},
+		{
+			name: "successfully reconciles RouteAdvertisements with same network and identical subnets",
+			ra:   &testRA{Name: "ra", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "net1", Namespace: "ns1", Network: util.GenerateCUDNNetworkName("shared-network"), Topology: "layer3", Subnet: "30.100.0.0/16", Labels: map[string]string{"selected": "true"}},
+				{Name: "net2", Namespace: "ns2", Network: util.GenerateCUDNNetworkName("shared-network"), Topology: "layer3", Subnet: "30.100.0.0/16", Labels: map[string]string{"selected": "true"}},
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\", \"cluster_udn_shared-network\":\"30.100.0.0/24\"}"}},
+			reconcile:            "ra",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfig/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"30.100.0.0/24"}, Imports: []string{"shared-network"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"30.100.0.0/24"}},
+						}},
+						{ASN: 1, VRF: "shared-network", Imports: []string{"default"}},
+					},
+				},
+			},
+			expectNADAnnotations: map[string]map[string]string{
+				"net1": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"},
+				"net2": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"},
+			},
+		},
+		{
+			name: "fails to reconcile RouteAdvertisements with overlapping subnets between different networks across different RAs (reconciling ra1)",
+			ra:   &testRA{Name: "ra1", AdvertisePods: true, NetworkSelector: map[string]string{"ra1": "true"}},
+			otherRAs: []*testRA{
+				{Name: "ra2", AdvertisePods: true, NetworkSelector: map[string]string{"ra2": "true"}},
+			},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "net1", Namespace: "ns1", Network: util.GenerateCUDNNetworkName("net1"), Topology: "layer3", Subnet: "20.100.0.0/16", Labels: map[string]string{"ra1": "true"}},
+				{Name: "net2", Namespace: "ns2", Network: util.GenerateCUDNNetworkName("net2"), Topology: "layer3", Subnet: "20.100.0.0/16", Labels: map[string]string{"ra2": "true"}},
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\", \"cluster_udn_net1\":\"20.100.0.0/24\", \"cluster_udn_net2\":\"20.100.0.0/24\"}"}},
+			reconcile:            "ra1",
+			expectAcceptedStatus: metav1.ConditionFalse,
+			expectAcceptedMsg:    "configuration error: overlapping CIDR detected between RouteAdvertisements \"ra1\" and \"ra2\" in VRF \"\": [20.100.0.0/16 20.100.0.0/16]",
+		},
+		{
+			name: "fails to reconcile RouteAdvertisements with overlapping subnets between different networks across different RAs (auto and fixed targetVRF)",
+			ra:   &testRA{Name: "ra1", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			otherRAs: []*testRA{
+				{Name: "ra2", TargetVRF: "net2", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, VRF: "net1", Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+						}},
+						{ASN: 1, VRF: "net2", Prefixes: []string{"1.1.2.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "net1", Namespace: "ns1", Network: util.GenerateCUDNNetworkName("net1"), Topology: "layer3", Subnet: "20.100.0.0/16", Labels: map[string]string{"selected": "true"}},
+				{Name: "net2", Namespace: "ns2", Network: util.GenerateCUDNNetworkName("net2"), Topology: "layer3", Subnet: "20.100.0.0/16", Labels: map[string]string{"selected": "true"}}, // overlaps with net1 on net2 VRF
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\", \"cluster_udn_net1\":\"20.100.0.0/24\", \"cluster_udn_net2\":\"20.100.0.0/24\"}"}},
+			reconcile:            "ra1",
+			expectAcceptedStatus: metav1.ConditionFalse,
+			expectAcceptedMsg:    "configuration error: overlapping CIDR detected between RouteAdvertisements \"ra1\" and \"ra2\" in VRF \"net2\": [20.100.0.0/16 20.100.0.0/16]",
+		},
+		{
+			name: "successfully reconciles two RouteAdvertisements selecting the same network and VRF",
+			ra:   &testRA{Name: "ra1", AdvertisePods: true, NetworkSelector: map[string]string{"shared": "true"}},
+			otherRAs: []*testRA{
+				{Name: "ra2", AdvertisePods: true, NetworkSelector: map[string]string{"shared": "true"}},
+			},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "shared-net", Namespace: "ns1", Network: util.GenerateCUDNNetworkName("shared-net"), Topology: "layer3", Subnet: "30.1.0.0/16", Labels: map[string]string{"shared": "true"}}, // same network selected by both RAs
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\", \"cluster_udn_shared-net\":\"30.1.0.0/24\"}"}},
+			reconcile:            "ra1",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra1"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra1/frrConfig/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"30.1.0.0/24"}, Imports: []string{"shared-net"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"30.1.0.0/24"}},
+						}},
+						{ASN: 1, VRF: "shared-net", Imports: []string{"default"}},
+					},
+				},
+			},
+			expectNADAnnotations: map[string]map[string]string{"shared-net": {types.OvnRouteAdvertisementsKey: "[\"ra1\"]"}},
+		},
+		{
+			name: "successfully reconciles different RouteAdvertisements selecting same network with overlapping subnets",
+			ra:   &testRA{Name: "ra2", AdvertisePods: true, NetworkSelector: map[string]string{"shared-net": "true"}},
+			otherRAs: []*testRA{
+				{Name: "ra1", AdvertisePods: true, NetworkSelector: map[string]string{"shared-net": "true"}},
+			},
+			frrConfigs: []*testFRRConfig{
+				{
+					Name:      "frrConfig",
+					Namespace: frrNamespace,
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"1.1.1.0/24"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100"},
+						}},
+					},
+				},
+			},
+			nads: []*testNAD{
+				{Name: "shared-net", Namespace: "ns1", Network: util.GenerateCUDNNetworkName("shared-net"), Topology: "layer3", Subnet: "30.1.0.0/16", Labels: map[string]string{"shared-net": "true"}},
+			},
+			nodes:                []*testNode{{Name: "node", SubnetsAnnotation: "{\"default\":\"1.1.0.0/24\", \"cluster_udn_shared-net\":\"30.1.0.0/24\"}"}},
+			reconcile:            "ra2",
+			expectAcceptedStatus: metav1.ConditionTrue,
+			expectFRRConfigs: []*testFRRConfig{
+				{
+					Labels:       map[string]string{types.OvnRouteAdvertisementsKey: "ra2"},
+					Annotations:  map[string]string{types.OvnRouteAdvertisementsKey: "ra2/frrConfig/node"},
+					NodeSelector: map[string]string{"kubernetes.io/hostname": "node"},
+					Routers: []*testRouter{
+						{ASN: 1, Prefixes: []string{"30.1.0.0/24"}, Imports: []string{"shared-net"}, Neighbors: []*testNeighbor{
+							{ASN: 1, Address: "1.0.0.100", Advertise: []string{"30.1.0.0/24"}},
+						}},
+						{ASN: 1, VRF: "shared-net", Imports: []string{"default"}},
+					},
+				},
+			},
+			expectNADAnnotations: map[string]map[string]string{"shared-net": {types.OvnRouteAdvertisementsKey: "[\"ra2\"]"}},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1061,6 +1343,10 @@ func TestController_reconcile(t *testing.T) {
 			// create test objects
 			if tt.ra != nil {
 				_, err := fakeClientset.RouteAdvertisementsClient.K8sV1().RouteAdvertisements().Create(context.Background(), tt.ra.RouteAdvertisements(), metav1.CreateOptions{})
+				g.Expect(err).ToNot(gomega.HaveOccurred())
+			}
+			for _, ra := range tt.otherRAs {
+				_, err := fakeClientset.RouteAdvertisementsClient.K8sV1().RouteAdvertisements().Create(context.Background(), ra.RouteAdvertisements(), metav1.CreateOptions{})
 				g.Expect(err).ToNot(gomega.HaveOccurred())
 			}
 

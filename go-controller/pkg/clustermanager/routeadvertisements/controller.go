@@ -1272,7 +1272,8 @@ type vrfNetworkIPNet struct {
 }
 
 // checkSubnetOverlaps validates that subnets from the current RA don't overlap
-// with any existing subnets in the same VRFs within the RA itself
+// with any existing subnets in the same VRFs, both within the RA itself and
+// across different RAs
 func (c *Controller) checkSubnetOverlaps(ra *ratypes.RouteAdvertisements, selectedNetworks *selectedNetworks) error {
 	networkVRFsIPNets, err := createNetworkVRFsIPNetsMap(ra.Spec.TargetVRF, selectedNetworks)
 	if err != nil {
@@ -1285,6 +1286,10 @@ func (c *Controller) checkSubnetOverlaps(ra *ratypes.RouteAdvertisements, select
 		if overlappingSubnets := checkVRFNetworkIPNetSliceOverlaps(vrfNetworkIPNets); len(overlappingSubnets) > 0 {
 			slices.Sort(overlappingSubnets)
 			return fmt.Errorf("%w: overlapping CIDR detected within RouteAdvertisement %q in VRF %q: %v", errConfig, ra.Name, vrf, overlappingSubnets)
+		}
+		// Check for overlaps between current RA and other RAs in the same VRF
+		if err := c.checkCrossRAOverlaps(ra, vrf, vrfNetworkIPNets); err != nil {
+			return err
 		}
 	}
 
@@ -1348,4 +1353,75 @@ func checkVRFNetworkIPNetSliceOverlaps(vrfNetworkIPNets []vrfNetworkIPNet) []str
 		}
 	}
 	return []string{}
+}
+
+// checkCrossRAOverlaps checks if subnets from current RA overlap with subnets from other RAs in the same VRF
+func (c *Controller) checkCrossRAOverlaps(ra *ratypes.RouteAdvertisements, targetVRF string, currentRAVRFNetworkIPNets []vrfNetworkIPNet) error {
+	allRAs, err := c.raLister.List(labels.Everything())
+	if err != nil {
+		return err
+	}
+
+	for _, otherRA := range allRAs {
+		if otherRA.Name == ra.Name {
+			continue
+		}
+
+		// Skip RAs that target different VRF and not auto
+		if otherRA.Spec.TargetVRF != targetVRF && otherRA.Spec.TargetVRF != "auto" {
+			continue
+		}
+
+		nads, err := c.getSelectedNADs(otherRA.Spec.NetworkSelectors)
+		if err != nil {
+			return err
+		}
+		if len(nads) == 0 {
+			continue
+		}
+		otherRASelectedNetworks, err := c.buildSelectedNetworkInfo(nads, sets.New(otherRA.Spec.Advertisements...))
+		if err != nil {
+			// If we can't get networks from another RA, log but don't fail
+			// This could happen if the other RA has configuration issues
+			klog.V(4).Infof("Failed to get selected networks from RouteAdvertisement %q for cross overlap check with RouteAdvertisement %q: %v", otherRA.Name, ra.Name, err)
+			continue
+		}
+
+		otherVRFSubnetsMap, err := createNetworkVRFsIPNetsMap(otherRA.Spec.TargetVRF, otherRASelectedNetworks)
+		if err != nil {
+			// If we can't get otherVRFSubnetsMap from another RA, log but don't fail
+			// This could happen if the other RA has configuration issues
+			klog.V(4).Infof("Failed to get other VRF Subnets from RouteAdvertisement %q for cross overlap check with RouteAdvertisement %q: %v", otherRA.Name, ra.Name, err)
+			continue
+		}
+		otherVRFNetworkIPNets, hasMatchingVRF := otherVRFSubnetsMap[targetVRF]
+		if !hasMatchingVRF || len(otherVRFNetworkIPNets) == 0 {
+			continue
+		}
+
+		// Check for overlaps between current RA subnets and other RA subnets in the same VRF
+		// Only report conflicts if the overlapping subnets belong to different networks
+		for _, currentRASubnet := range currentRAVRFNetworkIPNets {
+			for _, otherRASubnet := range otherVRFNetworkIPNets {
+				// Skip overlap check if both subnets belong to the same network
+				if currentRASubnet.network == otherRASubnet.network {
+					continue
+				}
+				hasOverlap := len(util.IPNetOverlaps(currentRASubnet.ipNet, otherRASubnet.ipNet)) > 0
+				if !hasOverlap {
+					continue
+				}
+
+				// Update otherRA only if status is accepted to avoid infinite reconciliation loops
+				if accepted := meta.FindStatusCondition(otherRA.Status.Conditions, "Accepted"); accepted == nil || accepted.Status == metav1.ConditionTrue {
+					// Enqueue otherRA for reconciliation
+					c.raController.Reconcile(otherRA.Name)
+				}
+
+				return fmt.Errorf("%w: overlapping CIDR detected between RouteAdvertisements %q and %q in VRF %q: [%s %s]",
+					errConfig, ra.Name, otherRA.Name, targetVRF, currentRASubnet.ipNet.String(), otherRASubnet.ipNet.String())
+			}
+		}
+	}
+	return nil
 }
