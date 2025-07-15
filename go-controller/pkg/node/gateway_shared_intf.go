@@ -1771,7 +1771,20 @@ func flowsForDefaultBridge(bridge *bridgeConfiguration, extraIPs []net.IP) ([]st
 			if netConfig.isDefaultNetwork() {
 				continue
 			}
-			srcIPOrSubnet := netConfig.v4MasqIPs.ManagementPort.IP.String()
+			// The following flow looks like this:
+			//  cookie=0xdeff105, table=2, n_packets=0, n_bytes=0, priority=200,ip,nw_src=169.254.0.12 actions=mod_dl_dst:ce:c1:a6:6d:38:f1,output:3
+			// this flow matches on the specific UDN masIP and sends it to the corresponding UDN's patch port
+			// this is also what ensures isolation stays intact when UDNs try to access services in other UDNs or default networks
+			// side-note: for l3 networks its these flows that guarantee udn pod to different network's services isolation for nodeports but
+			// in l2 networks the fact that for same nodeport service in different network, the destination IP it the same as on the GR, the drop happens in OVN itself
+			// and we don't rely on these flows to achieve the isolation.
+			// These flows are also added for advertised networks because pod->nodePort traffic is SNATed to masqIP in case of advertised networks
+			// and hence these flows must be in place for consistency.
+			dftFlows = append(dftFlows,
+				fmt.Sprintf("cookie=%s, priority=200, table=2, ip, ip_src=%s, "+
+					"actions=set_field:%s->eth_dst,output:%s",
+					defaultOpenFlowCookie, netConfig.v4MasqIPs.ManagementPort.IP.String(),
+					bridgeMacAddress, netConfig.ofPortPatch))
 			if util.IsRouteAdvertisementsEnabled() && netConfig.advertised.Load() {
 				var udnAdvertisedSubnets []*net.IPNet
 				for _, clusterEntry := range netConfig.subnets {
@@ -1784,17 +1797,17 @@ func flowsForDefaultBridge(bridge *bridgeConfiguration, extraIPs []net.IP) ([]st
 					klog.Infof("Unable to determine IPV4 UDN subnet for the provided family isIPV6: %v", err)
 					continue
 				}
-
-				// Use the filtered subnets for the flow compute instead of the masqueradeIP
-				srcIPOrSubnet = matchingIPFamilySubnet.String()
+				// In addition to the masqIP based flows, we also need the podsubnet based flows for
+				// advertised networks since UDN pod to clusterIP is unSNATed and we need this traffic to be taken into
+				// the correct patch port.
+				dftFlows = append(dftFlows,
+					fmt.Sprintf("cookie=%s, priority=200, table=2, ip, ip_src=%s, "+
+						"actions=set_field:%s->eth_dst,output:%s",
+						defaultOpenFlowCookie, matchingIPFamilySubnet.String(),
+						bridgeMacAddress, netConfig.ofPortPatch))
 			}
 			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=200, table=2, ip, ip_src=%s, "+
-					"actions=set_field:%s->eth_dst,output:%s",
-					defaultOpenFlowCookie, srcIPOrSubnet,
-					bridgeMacAddress, netConfig.ofPortPatch))
-			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=200, table=2, ip, pkt_mark=%s, "+
+				fmt.Sprintf("cookie=%s, priority=199, table=2, ip, pkt_mark=%s, "+
 					"actions=set_field:%s->eth_dst,output:%s",
 					defaultOpenFlowCookie, netConfig.pktMark,
 					bridgeMacAddress, netConfig.ofPortPatch))
@@ -1806,7 +1819,11 @@ func flowsForDefaultBridge(bridge *bridgeConfiguration, extraIPs []net.IP) ([]st
 			if netConfig.isDefaultNetwork() {
 				continue
 			}
-			srcIPOrSubnet := netConfig.v6MasqIPs.ManagementPort.IP.String()
+			dftFlows = append(dftFlows,
+				fmt.Sprintf("cookie=%s, priority=200, table=2, ip6, ipv6_src=%s, "+
+					"actions=set_field:%s->eth_dst,output:%s",
+					defaultOpenFlowCookie, netConfig.v6MasqIPs.ManagementPort.IP.String(),
+					bridgeMacAddress, netConfig.ofPortPatch))
 			if util.IsRouteAdvertisementsEnabled() && netConfig.advertised.Load() {
 				var udnAdvertisedSubnets []*net.IPNet
 				for _, clusterEntry := range netConfig.subnets {
@@ -1819,17 +1836,14 @@ func flowsForDefaultBridge(bridge *bridgeConfiguration, extraIPs []net.IP) ([]st
 					klog.Infof("Unable to determine IPV6 UDN subnet for the provided family isIPV6: %v", err)
 					continue
 				}
-
-				// Use the filtered subnets for the flow compute instead of the masqueradeIP
-				srcIPOrSubnet = matchingIPFamilySubnet.String()
+				dftFlows = append(dftFlows,
+					fmt.Sprintf("cookie=%s, priority=200, table=2, ip6, ipv6_src=%s, "+
+						"actions=set_field:%s->eth_dst,output:%s",
+						defaultOpenFlowCookie, matchingIPFamilySubnet.String(),
+						bridgeMacAddress, netConfig.ofPortPatch))
 			}
 			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=200, table=2, ip6, ipv6_src=%s, "+
-					"actions=set_field:%s->eth_dst,output:%s",
-					defaultOpenFlowCookie, srcIPOrSubnet,
-					bridgeMacAddress, netConfig.ofPortPatch))
-			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=200, table=2, ip6, pkt_mark=%s, "+
+				fmt.Sprintf("cookie=%s, priority=199, table=2, ip6, pkt_mark=%s, "+
 					"actions=set_field:%s->eth_dst,output:%s",
 					defaultOpenFlowCookie, netConfig.pktMark,
 					bridgeMacAddress, netConfig.ofPortPatch))

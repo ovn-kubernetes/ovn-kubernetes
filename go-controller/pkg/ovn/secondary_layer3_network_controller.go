@@ -863,7 +863,8 @@ func (oc *SecondaryLayer3NetworkController) addUpdateRemoteNodeEvent(node *corev
 	return err
 }
 
-// addNodeSubnetEgressSNAT adds the SNAT on each node's ovn-cluster-router in L3 networks
+// addOrUpdateUDNNodeSubnetEgressSNAT adds or updates the SNAT on each node's ovn-cluster-router in L3 networks for each UDN
+// Based on the isUDNAdvertised flag, the SNAT matches are slightly different
 // snat eth.dst == d6:cf:fd:2c:a6:44 169.254.0.12 10.128.0.0/24
 // snat eth.dst == d6:cf:fd:2c:a6:44 169.254.0.12 2010:100:200::/64
 // these SNATs are required for pod2Egress traffic in LGW mode and pod2SameNode traffic in SGW mode to function properly on UDNs
@@ -873,9 +874,12 @@ func (oc *SecondaryLayer3NetworkController) addUpdateRemoteNodeEvent(node *corev
 // externalIP = "169.254.0.12"; which is the masqueradeIP for this L3 UDN
 // so all in all we want to condionally SNAT all packets that are coming from pods hosted on this node,
 // which are leaving via UDN's mpX interface to the UDN's masqueradeIP.
-func (oc *SecondaryLayer3NetworkController) addUDNNodeSubnetEgressSNAT(localPodSubnets []*net.IPNet, node *corev1.Node) error {
+// If isUDNAdvertised is true, then we want to SNAT all packets that are coming from pods on this network
+// leaving towards nodeIPs on the cluster to masqueradeIP. If network is advertise then the SNAT looks like this:
+// "eth.dst == 0a:58:5d:5d:00:02 && (ip4.dst == $a712973235162149816)" "169.254.0.36" "93.93.0.0/24"
+func (oc *SecondaryLayer3NetworkController) addOrUpdateUDNNodeSubnetEgressSNAT(localPodSubnets []*net.IPNet, node *corev1.Node, isUDNAdvertised bool) error {
 	outputPort := types.RouterToSwitchPrefix + oc.GetNetworkScopedName(node.Name)
-	nats, err := oc.buildUDNEgressSNAT(localPodSubnets, outputPort)
+	nats, err := oc.buildUDNEgressSNAT(localPodSubnets, outputPort, isUDNAdvertised)
 	if err != nil {
 		return fmt.Errorf("failed to build UDN masquerade SNATs for network %q on node %q, err: %w",
 			oc.GetNetworkName(), node.Name, err)
@@ -883,33 +887,48 @@ func (oc *SecondaryLayer3NetworkController) addUDNNodeSubnetEgressSNAT(localPodS
 	if len(nats) == 0 {
 		return nil // nothing to do
 	}
+	natsToCreateOrUpdate := []*nbdb.NAT{}
+	for _, nat := range nats {
+		// Given isEquivalentNATs util considers match to be a dealbreaker for a NAT's identity,
+		// we need to find the existing NATs with the same external IDs, logicalIP, exernalIP, logicalPort
+		// and update the "match" field alone if a NAT exists with remaining fields matching.
+		// Hence using a predicate to find existing NATs with all fields except match to be the same and then updating that NAT.
+		// If such a NAT does not exist, we create a new NAT.
+		// If it is a default network NAT, then match will be empty, so nothing to set.
+		p := func(item *nbdb.NAT) bool {
+			return item.ExternalIDs[types.NetworkExternalID] == nat.ExternalIDs[types.NetworkExternalID] &&
+				item.ExternalIDs[types.TopologyExternalID] == nat.ExternalIDs[types.TopologyExternalID] &&
+				// Note that given we have two conditional SNATs per UDN network,
+				// the externalIDs will be same but the externalIP will be different.
+				item.ExternalIP == nat.ExternalIP &&
+				item.LogicalIP == nat.LogicalIP &&
+				((item.LogicalPort == nil && nat.LogicalPort == nil) ||
+					(item.LogicalPort != nil && nat.LogicalPort != nil && *item.LogicalPort == *nat.LogicalPort))
+		}
+		existingNAT, err := libovsdbops.FindNATsWithPredicate(oc.nbClient, p)
+		if err != nil {
+			return fmt.Errorf("failed to fetch existing gateway NAT for network %q on node %q, err: %w",
+				oc.GetNetworkName(), node.Name, err)
+		}
+		if len(existingNAT) > 0 {
+			if len(existingNAT) > 1 {
+				return fmt.Errorf("found multiple matching NATs for network %q on node %q, expected exactly one",
+					oc.GetNetworkName(), node.Name)
+			}
+			// if a NAT exists with the same external IDs, logicalIP, exernalIP, logicalPort,
+			// update the "match" field alone and use that NAT.
+			existingNAT[0].Match = nat.Match
+			natsToCreateOrUpdate = append(natsToCreateOrUpdate, existingNAT[0])
+		} else {
+			// create a new NAT.
+			natsToCreateOrUpdate = append(natsToCreateOrUpdate, nat)
+		}
+	}
 	router := &nbdb.LogicalRouter{
 		Name: oc.GetNetworkScopedClusterRouterName(),
 	}
-	if err := libovsdbops.CreateOrUpdateNATs(oc.nbClient, router, nats...); err != nil {
+	if err := libovsdbops.CreateOrUpdateNATs(oc.nbClient, router, natsToCreateOrUpdate...); err != nil {
 		return fmt.Errorf("failed to update SNAT for node subnet on router: %q for network %q, error: %w",
-			oc.GetNetworkScopedClusterRouterName(), oc.GetNetworkName(), err)
-	}
-	return nil
-}
-
-// deleteUDNNodeSubnetEgressSNAT deletes SNAT rule from network specific
-// ovn_cluster_router depending on whether the network is advertised or not
-func (oc *SecondaryLayer3NetworkController) deleteUDNNodeSubnetEgressSNAT(localPodSubnets []*net.IPNet, node *corev1.Node) error {
-	outputPort := types.RouterToSwitchPrefix + oc.GetNetworkScopedName(node.Name)
-	nats, err := oc.buildUDNEgressSNAT(localPodSubnets, outputPort)
-	if err != nil {
-		return fmt.Errorf("failed to build UDN masquerade SNATs for network %q on node %q, err: %w",
-			oc.GetNetworkName(), node.Name, err)
-	}
-	if len(nats) == 0 {
-		return nil // nothing to do
-	}
-	router := &nbdb.LogicalRouter{
-		Name: oc.GetNetworkScopedClusterRouterName(),
-	}
-	if err := libovsdbops.DeleteNATs(oc.nbClient, router, nats...); err != nil {
-		return fmt.Errorf("failed to delete SNAT for node subnet on router: %q for network %q, error: %w",
 			oc.GetNetworkScopedClusterRouterName(), oc.GetNetworkName(), err)
 	}
 	return nil
@@ -929,19 +948,17 @@ func (oc *SecondaryLayer3NetworkController) addNode(node *corev1.Node) ([]*net.I
 		return nil, err
 	}
 	if util.IsNetworkSegmentationSupportEnabled() && oc.IsPrimaryNetwork() {
-		if !util.IsPodNetworkAdvertisedAtNode(oc, node.Name) {
-			if err := oc.addUDNNodeSubnetEgressSNAT(hostSubnets, node); err != nil {
-				return nil, err
-			}
+		isUDNAdvertised := util.IsPodNetworkAdvertisedAtNode(oc, node.Name)
+		if err := oc.addOrUpdateUDNNodeSubnetEgressSNAT(hostSubnets, node, isUDNAdvertised); err != nil {
+			return nil, err
+		}
+		if !isUDNAdvertised {
 			if util.IsRouteAdvertisementsEnabled() {
 				if err := oc.deleteAdvertisedNetworkIsolation(node.Name); err != nil {
 					return nil, err
 				}
 			}
 		} else {
-			if err := oc.deleteUDNNodeSubnetEgressSNAT(hostSubnets, node); err != nil {
-				return nil, err
-			}
 			if err := oc.addAdvertisedNetworkIsolation(node.Name); err != nil {
 				return nil, err
 			}
