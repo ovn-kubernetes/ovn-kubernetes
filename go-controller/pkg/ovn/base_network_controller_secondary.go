@@ -812,7 +812,7 @@ func (oc *BaseSecondaryNetworkController) allowPersistentIPs() bool {
 
 // buildUDNEgressSNAT is used to build the conditional SNAT required on L3 and L2 UDNs to
 // steer traffic correctly via mp0 when leaving OVN to the host
-func (bsnc *BaseSecondaryNetworkController) buildUDNEgressSNAT(localPodSubnets []*net.IPNet, outputPort string) ([]*nbdb.NAT, error) {
+func (bsnc *BaseSecondaryNetworkController) buildUDNEgressSNAT(localPodSubnets []*net.IPNet, outputPort string, isUDNAdvertised bool) ([]*nbdb.NAT, error) {
 	if len(localPodSubnets) == 0 {
 		return nil, nil // nothing to do
 	}
@@ -839,10 +839,38 @@ func (bsnc *BaseSecondaryNetworkController) buildUDNEgressSNAT(localPodSubnets [
 		if masqIP == nil {
 			return nil, fmt.Errorf("masquerade IP cannot be empty network %s (%d): %v", bsnc.GetNetworkName(), networkID, err)
 		}
-		snats = append(snats, libovsdbops.BuildSNATWithMatch(&masqIP.ManagementPort.IP, localPodSubnet, outputPort,
-			extIDs, getMasqueradeManagementIPSNATMatch(dstMac.String())))
+		if !isUDNAdvertised {
+			snats = append(snats, libovsdbops.BuildSNATWithMatch(&masqIP.ManagementPort.IP, localPodSubnet, outputPort,
+				extIDs, getMasqueradeManagementIPSNATMatch(dstMac.String())))
+		} else {
+			// For advertised networks, we need to SNAT any traffic leaving the pods from these networks towards the node IPs
+			// in the cluster. In order to do such a conditional SNAT, we need an address set that contains the node IPs in the cluster.
+			// Given that egressIP feature already has an address set containing these nodeIPs owned by the default network controller, let's re-use it.
+			dbIDs := getEgressIPAddrSetDbIDs(NodeIPAddrSetName, types.DefaultNetworkName, DefaultNetworkControllerName)
+			addrSet, err := bsnc.addressSetFactory.GetAddressSet(dbIDs)
+			if err != nil {
+				return nil, fmt.Errorf("cannot ensure that addressSet %s exists: %w", NodeIPAddrSetName, err)
+			}
+			ipv4ClusterNodeIPAS, ipv6ClusterNodeIPAS := addrSet.GetASHashNames()
+			snats = append(snats, libovsdbops.BuildSNATWithMatch(&masqIP.ManagementPort.IP, localPodSubnet, outputPort,
+				extIDs, fmt.Sprintf("%s && (%s)", getMasqueradeManagementIPSNATMatch(dstMac.String()), getClusterNodesDestinationBasedSNATMatch(ipv4ClusterNodeIPAS, ipv6ClusterNodeIPAS))))
+		}
 	}
 	return snats, nil
+}
+
+func getMasqueradeManagementIPSNATMatch(dstMac string) string {
+	return fmt.Sprintf("eth.dst == %s", dstMac)
+}
+
+func getClusterNodesDestinationBasedSNATMatch(ipv4ClusterNodeIPAS, ipv6ClusterNodeIPAS string) string {
+	if config.IPv4Mode && config.IPv6Mode {
+		return fmt.Sprintf("ip4.dst == $%s || ip6.dst == $%s", ipv4ClusterNodeIPAS, ipv6ClusterNodeIPAS)
+	} else if config.IPv4Mode {
+		return fmt.Sprintf("ip4.dst == $%s", ipv4ClusterNodeIPAS)
+	} else {
+		return fmt.Sprintf("ip6.dst == $%s", ipv6ClusterNodeIPAS)
+	}
 }
 
 func (bsnc *BaseSecondaryNetworkController) ensureDHCP(pod *corev1.Pod, podAnnotation *util.PodAnnotation, lsp *nbdb.LogicalSwitchPort) error {
@@ -865,10 +893,6 @@ func (bsnc *BaseSecondaryNetworkController) ensureDHCP(pod *corev1.Pod, podAnnot
 	opts = append(opts, kubevirt.WithIPv4DNSServer(ipv4DNSServer), kubevirt.WithIPv6DNSServer(ipv6DNSServer))
 
 	return kubevirt.EnsureDHCPOptionsForLSP(bsnc.controllerName, bsnc.nbClient, pod, podAnnotation.IPs, lsp, opts...)
-}
-
-func getMasqueradeManagementIPSNATMatch(dstMac string) string {
-	return fmt.Sprintf("eth.dst == %s", dstMac)
 }
 
 func (bsnc *BaseSecondaryNetworkController) requireDHCP(pod *corev1.Pod) bool {

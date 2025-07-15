@@ -1765,13 +1765,12 @@ func flowsForDefaultBridge(bridge *bridgeConfiguration, extraIPs []net.IP) ([]st
 			bridgeMacAddress, mod_vlan_id, defaultNetConfig.ofPortPatch))
 
 	// table 2, priority 200, dispatch from UDN -> Host -> OVN. These packets have
-	// already been SNATed to the UDN's masq IP or have been marked with the UDN's packet mark.
+	// already been SNATed to the UDN's masqueradeIP or have been marked with the UDN's packet mark.
 	if config.IPv4Mode {
 		for _, netConfig := range bridge.patchedNetConfigs() {
 			if netConfig.isDefaultNetwork() {
 				continue
 			}
-			srcIPOrSubnet := netConfig.v4MasqIPs.ManagementPort.IP.String()
 			if util.IsRouteAdvertisementsEnabled() && netConfig.advertised.Load() {
 				var udnAdvertisedSubnets []*net.IPNet
 				for _, clusterEntry := range netConfig.subnets {
@@ -1784,17 +1783,23 @@ func flowsForDefaultBridge(bridge *bridgeConfiguration, extraIPs []net.IP) ([]st
 					klog.Infof("Unable to determine IPV4 UDN subnet for the provided family isIPV6: %v", err)
 					continue
 				}
-
-				// Use the filtered subnets for the flow compute instead of the masqueradeIP
-				srcIPOrSubnet = matchingIPFamilySubnet.String()
+				// In addition to the masqueradeIP based flows, we also need the podsubnet based flows for
+				// advertised networks since UDN pod to clusterIP is unSNATed and we need this traffic to be taken into
+				// the correct patch port of it's own network where it's a deadend if the clusterIP is not part of
+				// that UDN network and works if it is part of the UDN network.
+				dftFlows = append(dftFlows,
+					fmt.Sprintf("cookie=%s, priority=200, table=2, ip, ip_src=%s, "+
+						"actions=set_field:%s->eth_dst,output:%s",
+						defaultOpenFlowCookie, matchingIPFamilySubnet.String(),
+						bridgeMacAddress, netConfig.ofPortPatch))
 			}
 			dftFlows = append(dftFlows,
 				fmt.Sprintf("cookie=%s, priority=200, table=2, ip, ip_src=%s, "+
 					"actions=set_field:%s->eth_dst,output:%s",
-					defaultOpenFlowCookie, srcIPOrSubnet,
+					defaultOpenFlowCookie, netConfig.v4MasqIPs.ManagementPort.IP.String(),
 					bridgeMacAddress, netConfig.ofPortPatch))
 			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=200, table=2, ip, pkt_mark=%s, "+
+				fmt.Sprintf("cookie=%s, priority=199, table=2, ip, pkt_mark=%s, "+
 					"actions=set_field:%s->eth_dst,output:%s",
 					defaultOpenFlowCookie, netConfig.pktMark,
 					bridgeMacAddress, netConfig.ofPortPatch))
@@ -1806,7 +1811,6 @@ func flowsForDefaultBridge(bridge *bridgeConfiguration, extraIPs []net.IP) ([]st
 			if netConfig.isDefaultNetwork() {
 				continue
 			}
-			srcIPOrSubnet := netConfig.v6MasqIPs.ManagementPort.IP.String()
 			if util.IsRouteAdvertisementsEnabled() && netConfig.advertised.Load() {
 				var udnAdvertisedSubnets []*net.IPNet
 				for _, clusterEntry := range netConfig.subnets {
@@ -1819,17 +1823,19 @@ func flowsForDefaultBridge(bridge *bridgeConfiguration, extraIPs []net.IP) ([]st
 					klog.Infof("Unable to determine IPV6 UDN subnet for the provided family isIPV6: %v", err)
 					continue
 				}
-
-				// Use the filtered subnets for the flow compute instead of the masqueradeIP
-				srcIPOrSubnet = matchingIPFamilySubnet.String()
+				dftFlows = append(dftFlows,
+					fmt.Sprintf("cookie=%s, priority=200, table=2, ip6, ipv6_src=%s, "+
+						"actions=set_field:%s->eth_dst,output:%s",
+						defaultOpenFlowCookie, matchingIPFamilySubnet.String(),
+						bridgeMacAddress, netConfig.ofPortPatch))
 			}
 			dftFlows = append(dftFlows,
 				fmt.Sprintf("cookie=%s, priority=200, table=2, ip6, ipv6_src=%s, "+
 					"actions=set_field:%s->eth_dst,output:%s",
-					defaultOpenFlowCookie, srcIPOrSubnet,
+					defaultOpenFlowCookie, netConfig.v6MasqIPs.ManagementPort.IP.String(),
 					bridgeMacAddress, netConfig.ofPortPatch))
 			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=200, table=2, ip6, pkt_mark=%s, "+
+				fmt.Sprintf("cookie=%s, priority=199, table=2, ip6, pkt_mark=%s, "+
 					"actions=set_field:%s->eth_dst,output:%s",
 					defaultOpenFlowCookie, netConfig.pktMark,
 					bridgeMacAddress, netConfig.ofPortPatch))

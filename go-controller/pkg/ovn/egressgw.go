@@ -580,8 +580,13 @@ func (oc *DefaultNetworkController) deletePodSNAT(nodeName string, extIPs, podIP
 		klog.V(4).Infof("Node %s is not in the local zone %s", nodeName, oc.zone)
 		return nil
 	}
+	snatMatch, err := GetNetworkScopedClusterSubnetSNATMatch(oc.nbClient, oc.GetNetInfo(), nodeName, oc.isPodNetworkAdvertisedAtNode(nodeName))
+	if err != nil {
+		return fmt.Errorf("failed to get SNAT match on node %s for network %s: %w",
+			nodeName, oc.GetNetworkName(), err)
+	}
 	// Default network does not set any matches in Pod SNAT
-	ops, err := deletePodSNATOps(oc.nbClient, nil, oc.GetNetworkScopedGWRouterName(nodeName), extIPs, podIPNets, "")
+	ops, err := deletePodSNATOps(oc.nbClient, nil, oc.GetNetworkScopedGWRouterName(nodeName), extIPs, podIPNets, snatMatch)
 	if err != nil {
 		return err
 	}
@@ -671,7 +676,7 @@ func addOrUpdatePodSNATOps(nbClient libovsdbclient.Client, gwRouterName string, 
 	if err != nil {
 		return nil, err
 	}
-	if ops, err = libovsdbops.CreateOrUpdateNATsOps(nbClient, ops, router, nats...); err != nil {
+	if ops, err = libovsdbops.CreateOrUpdateNATsOps(nbClient, ops, router, libovsdbops.IsEquivalentNAT, nats...); err != nil {
 		return nil, fmt.Errorf("failed to update SNAT for pods of router: %s, error: %v", gwRouterName, err)
 	}
 	return ops, nil
