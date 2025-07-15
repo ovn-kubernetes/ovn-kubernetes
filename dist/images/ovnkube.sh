@@ -503,6 +503,50 @@ ovs_ready() {
   return 0
 }
 
+# get_bridge_name_for_physnet - Extract OVS bridge name for a given OVN physical network
+# Takes an OVN network name for physical networks (physnet) and returns the corresponding
+# OVS bridge name from the ovn-bridge-mappings configuration.
+# Return empty string if not found.
+get_bridge_name_for_physnet() {
+      local physnet="$1"
+      local mappings
+      mappings=$(ovs-vsctl get open_vswitch . external_ids:ovn-bridge-mappings 2>/dev/null)
+      # Extract bridge name after physnet: and before next comma (or end)
+      # regex matches zero or more non-comma characters
+      # cut on colon and return field number 2
+      echo "$mappings" | grep -o "$physnet:[^,]*" | cut -d: -f2
+}
+
+# Adds drop flows for ARP replies and IPv6 router advertisements on patch ports of specified bridge. If the bridge doesn't
+# exist, do nothing and return
+add_drop_flows_bridge_ports_arp_rpl_router_adv() {
+    local bridge="$1"
+    local cookie="0x0305"
+    local priority="499"
+    # nothing to do if the external bridge isn't created.
+    if ! ovs-vsctl br-exists "$bridge"; then
+      return 0
+    fi
+    # Get all patch ports and their port_name numbers and add drop flows for all IP families (v4/v6). gateway sync will clean any stale ports.
+    for port_name in $(ovs-vsctl list-ports $bridge); do
+        if ovs-vsctl get interface $port_name type 2>/dev/null | grep -q "patch-"; then
+            local of_port=$(ovs-vsctl get interface $port_name ofport)
+            ovs-ofctl add-flow $bridge "cookie=$cookie,table=0,priority=$priority,in_port=$of_port,arp,arp_op=2,actions=drop"
+            local ret1=$?
+            ovs-ofctl add-flow $bridge "cookie=$cookie,table=0,priority=$priority,in_port=$of_port,icmpv6_type=134,actions=drop"
+            local ret2=$?
+            if [[ $ret1 -ne 0 ]]; then
+              return $ret1
+            fi
+            if [[ $ret2 -ne 0 ]]; then
+              return $ret2
+            fi
+            echo "added drop flows for port name '$port_name' ofport '$of_port'"
+        fi
+    done
+    return 0
+}
+
 # Verify that the process is running either by checking for the PID in `ps` output
 # or by using `ovs-appctl` utility for the processes that support it.
 # $1 is the name of the process
@@ -1748,6 +1792,9 @@ ovnkube-controller-with-node() {
     echo "=============== ovnkube-controller-with-node - (ovn-node  wait for ovn-controller.pid)"
     wait_for_event process_ready ovn-controller
   fi
+
+  echo "=============== ovnkube-controller-with-node - (add drop flows for ARP reply / router advertisement if external bridge exists)"
+  wait_for_event add_drop_flows_bridge_ports_arp_rpl_router_adv "$(get_bridge_name_for_physnet 'physnet')"
 
   ovn_routable_mtu_flag=
   if [[ -n "${routable_mtu}" ]]; then

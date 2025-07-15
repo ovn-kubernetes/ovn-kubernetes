@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"text/tabwriter"
 	"text/template"
@@ -29,6 +30,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controllermanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb"
+	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
 	ovnnode "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
@@ -479,6 +481,8 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 		}()
 	}
 
+	ovnkubeControllerSynced := &atomic.Bool{}
+
 	if runMode.ovnkubeController {
 		wg.Add(1)
 		go func() {
@@ -514,9 +518,18 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 				controllerErr = fmt.Errorf("failed to start network controller: %w", err)
 				return
 			}
-
 			// record delay until ready
 			metrics.MetricOVNKubeControllerReadyDuration.Set(time.Since(startTime).Seconds())
+
+			// FIXME(mk): remove when ovn-controller has native support for telling it to wait for a specific version of sb db to appear before
+			// starting and consuming it then we wont need this work around.
+			// Fixed by https://issues.redhat.com/browse/FDP-1537
+			if err = libovsdbutil.WaitUntilNorthdSyncOnce(ctx, libovsdbOvnNBClient, libovsdbOvnSBClient); err != nil {
+				controllerErr = fmt.Errorf("failed waiting for northd to sync OVN Northbound DB to Southbound: %v", err)
+				return
+			} else {
+				ovnkubeControllerSynced.Store(true)
+			}
 
 			<-ctx.Done()
 			controllerManager.Stop()
@@ -561,7 +574,7 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 				return
 			}
 
-			err = nodeControllerManager.Start(ctx)
+			err = nodeControllerManager.Start(ctx, ovnkubeControllerSynced)
 			if err != nil {
 				nodeErr = fmt.Errorf("failed to start node network controller: %w", err)
 				return

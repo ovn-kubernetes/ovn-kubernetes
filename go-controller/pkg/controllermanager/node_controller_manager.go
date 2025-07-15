@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -147,7 +148,7 @@ func (ncm *NodeControllerManager) initDefaultNodeNetworkController(ctx context.C
 }
 
 // Start the node network controller manager
-func (ncm *NodeControllerManager) Start(ctx context.Context) (err error) {
+func (ncm *NodeControllerManager) Start(ctx context.Context, ovnkubeControllerStarted *atomic.Bool) (err error) {
 	klog.Infof("Starting the node network controller manager, Mode: %s", config.OvnKubeNode.Mode)
 
 	// Initialize OVS exec runner; find OVS binaries that the CNI code uses.
@@ -224,6 +225,30 @@ func (ncm *NodeControllerManager) Start(ctx context.Context) (err error) {
 			return fmt.Errorf("failed to own priority %d for IP rules: %v", node.UDNMasqueradeIPRulePriority, err)
 		}
 	}
+
+	// start temp fix: remove when ovn has native support for silencing GARPs / unsolicited router advertisements on startup
+	// for LRPs
+addDropFlowsLoop:
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+			if !ovnkubeControllerStarted.Load() {
+				klog.V(5).Infof("Waiting for ovnkube controller to start before removing drop flows for ARP reply / router advertisement")
+				time.Sleep(20 * time.Millisecond)
+				continue
+			}
+			klog.Infof("Removing flows to drop ARP reply and route advertisement")
+			ncm.defaultNodeNetworkController.Gateway.SetDefaultBridgeARPRplRouterAdvDropFlows(false)
+			if err := ncm.defaultNodeNetworkController.Gateway.Reconcile(); err != nil {
+				return fmt.Errorf("failed to reconcile gateway after removing arp reply / router advertisement drop flows for ext bridge: %v", err)
+			}
+			break addDropFlowsLoop
+		}
+	}
+	// end temp fix
+
 	return nil
 }
 

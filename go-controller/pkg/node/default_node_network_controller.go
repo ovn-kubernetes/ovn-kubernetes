@@ -1336,6 +1336,13 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 // Stop gracefully stops the controller
 // deleteLogicalEntities will never be true for default network
 func (nc *DefaultNodeNetworkController) Stop() {
+	// drop ARP replies or unsolicited router advertisements on shutdown to prevent leaking stale SB DB
+	if nc.Gateway != nil {
+		nc.Gateway.SetDefaultBridgeARPRplRouterAdvDropFlows(true)
+		if err := nc.Gateway.Reconcile(); err != nil {
+			klog.Errorf("Failed to reconcile gateway after attempting to add flows to the external bridge to drop ARP request / router advertisement: %v", err)
+		}
+	}
 	close(nc.stopChan)
 	nc.wg.Wait()
 }
