@@ -1183,6 +1183,11 @@ func isLocalGWModeEnabled() bool {
 	return present && val == "local"
 }
 
+func isPreconfigureUDNAddressesEnabled() bool {
+	val, present := os.LookupEnv("ENABLE_PRE_CONF_UDN_ADDR")
+	return present && val == "true"
+}
+
 func singleNodePerZone() bool {
 	if singleNodePerZoneResult == nil {
 		args := []string{"get", "pods", "--selector=app=ovnkube-node", "-o", "jsonpath={.items[0].spec.containers[*].name}"}

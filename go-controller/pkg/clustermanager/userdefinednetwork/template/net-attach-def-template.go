@@ -152,10 +152,12 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter) (map[s
 		netConfSpec.MTU = int(cfg.MTU)
 		netConfSpec.AllowPersistentIPs = cfg.IPAM != nil && cfg.IPAM.Lifecycle == userdefinednetworkv1.IPAMLifecyclePersistent
 		netConfSpec.Subnets = cidrString(cfg.Subnets)
-		netConfSpec.ReservedSubnets = cidrString(cfg.ReservedSubnets)
-		netConfSpec.InfrastructureSubnets = cidrString(cfg.InfrastructureSubnets)
+		if util.IsPreconfiguredUDNAddressesEnabled() {
+			netConfSpec.ReservedSubnets = cidrString(cfg.ReservedSubnets)
+			netConfSpec.InfrastructureSubnets = cidrString(cfg.InfrastructureSubnets)
+			netConfSpec.DefaultGatewayIPs = ipString(cfg.DefaultGatewayIPs)
+		}
 		netConfSpec.JoinSubnet = cidrString(renderJoinSubnets(cfg.Role, cfg.JoinSubnets))
-		netConfSpec.DefaultGatewayIPs = ipString(cfg.DefaultGatewayIPs)
 	case userdefinednetworkv1.NetworkTopologyLocalnet:
 		cfg := spec.GetLocalnet()
 		netConfSpec.Role = strings.ToLower(string(cfg.Role))
@@ -212,17 +214,20 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter) (map[s
 	if len(netConfSpec.ExcludeSubnets) > 0 {
 		cniNetConf["excludeSubnets"] = netConfSpec.ExcludeSubnets
 	}
-	if len(netConfSpec.ReservedSubnets) > 0 {
-		cniNetConf["reservedSubnets"] = netConfSpec.ReservedSubnets
-	}
-	if len(netConfSpec.InfrastructureSubnets) > 0 {
-		cniNetConf["infrastructureSubnets"] = netConfSpec.InfrastructureSubnets
-	}
+
 	if netConfSpec.VLANID != 0 {
 		cniNetConf["vlanID"] = netConfSpec.VLANID
 	}
-	if len(netConfSpec.DefaultGatewayIPs) > 0 {
-		cniNetConf["defaultGatewayIPs"] = netConfSpec.DefaultGatewayIPs
+	if util.IsPreconfiguredUDNAddressesEnabled() {
+		if len(netConfSpec.ReservedSubnets) > 0 {
+			cniNetConf["reservedSubnets"] = netConfSpec.ReservedSubnets
+		}
+		if len(netConfSpec.InfrastructureSubnets) > 0 {
+			cniNetConf["infrastructureSubnets"] = netConfSpec.InfrastructureSubnets
+		}
+		if len(netConfSpec.DefaultGatewayIPs) > 0 {
+			cniNetConf["defaultGatewayIPs"] = netConfSpec.DefaultGatewayIPs
+		}
 	}
 	return cniNetConf, nil
 }

@@ -803,7 +803,7 @@ func (nInfo *secondaryNetInfo) PhysicalNetworkName() string {
 }
 
 func (nInfo *secondaryNetInfo) GetNodeGatewayIP(hostSubnet *net.IPNet) *net.IPNet {
-	if nInfo.TopologyType() == types.Layer2Topology && nInfo.IsPrimaryNetwork() {
+	if IsPreconfiguredUDNAddressesEnabled() && nInfo.TopologyType() == types.Layer2Topology && nInfo.IsPrimaryNetwork() {
 		isIPV6 := knet.IsIPv6CIDR(hostSubnet)
 		gwIP, _ := MatchFirstIPFamily(isIPV6, nInfo.defaultGatewayIPs)
 		return &net.IPNet{
@@ -815,7 +815,7 @@ func (nInfo *secondaryNetInfo) GetNodeGatewayIP(hostSubnet *net.IPNet) *net.IPNe
 }
 
 func (nInfo *secondaryNetInfo) GetNodeManagementIP(hostSubnet *net.IPNet) *net.IPNet {
-	if nInfo.TopologyType() == types.Layer2Topology && nInfo.IsPrimaryNetwork() {
+	if IsPreconfiguredUDNAddressesEnabled() && nInfo.TopologyType() == types.Layer2Topology && nInfo.IsPrimaryNetwork() {
 		isIPV6 := knet.IsIPv6CIDR(hostSubnet)
 		mgmtIP, _ := MatchFirstIPFamily(isIPV6, nInfo.managementIPs)
 		return &net.IPNet{
@@ -991,7 +991,7 @@ func newLayer2NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 
 	// Allocate infrastructure IPs for primary networks
 	var defaultGatewayIPs, managementIPs []net.IP
-	if netconf.Role == types.NetworkRolePrimary {
+	if IsPreconfiguredUDNAddressesEnabled() && netconf.Role == types.NetworkRolePrimary {
 		defaultGatewayIPs, managementIPs, err = allocateInfrastructureIPs(netconf)
 		if err != nil {
 			return nil, err
@@ -1093,7 +1093,7 @@ func parseSubnets(subnetsString, excludeSubnetsString, reservedSubnetsString, in
 	}
 
 	var reservedIPNets []*net.IPNet
-	if strings.TrimSpace(reservedSubnetsString) != "" {
+	if IsPreconfiguredUDNAddressesEnabled() && strings.TrimSpace(reservedSubnetsString) != "" {
 		// For L2 topologies, host specific prefix length is ignored (using 0 as
 		// prefix length)
 		reservedSubnets, err := config.ParseClusterSubnetEntriesWithDefaults(reservedSubnetsString, 0, 0)
@@ -1118,7 +1118,7 @@ func parseSubnets(subnetsString, excludeSubnetsString, reservedSubnetsString, in
 	}
 
 	var infrastructureIPNets []*net.IPNet
-	if strings.TrimSpace(infrastructureSubnetsString) != "" {
+	if IsPreconfiguredUDNAddressesEnabled() && strings.TrimSpace(infrastructureSubnetsString) != "" {
 		// For L2 topologies, host specific prefix length is ignored (using 0 as
 		// prefix length)
 		infrastructureSubnets, err := config.ParseClusterSubnetEntriesWithDefaults(infrastructureSubnetsString, 0, 0)
