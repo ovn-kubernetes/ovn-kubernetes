@@ -134,6 +134,8 @@ nav:
     - Hardware Acceleration:
       - OVS Acceleration with kernel datapath: features/hardware-offload/ovs-kernel.md
       - OVS Acceleration with DOCA datapath: features/hardware-offload/ovs-doca.md
+    - BGP Integration:
+      - Route Advertisements: features/bgp-integration/route-advertisements.md
   - Troubleshooting:
     - Introduction: troubleshooting/debugging.md
     - OVNKube Trace: troubleshooting/ovnkube-trace.md
