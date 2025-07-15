@@ -17,6 +17,8 @@ const (
 	// PmtudOpenFlowCookie identifies the flows used to drop ICMP type (3) destination unreachable,
 	// fragmentation-needed (4)
 	PmtudOpenFlowCookie = "0x0304"
+	// DropGARPCookie identifies the flows used to drop GARPs
+	DropGARPCookie = "0x0305"
 	// CtMarkHost is the conntrack mark value for host traffic
 	CtMarkHost = "0x2"
 )

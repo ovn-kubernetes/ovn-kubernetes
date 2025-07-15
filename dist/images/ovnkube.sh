@@ -503,6 +503,36 @@ ovs_ready() {
   return 0
 }
 
+# get_bridge_name_for_physnet - Extract OVS bridge name for a given OVN physical network
+# Takes an OVN network name for physical networks (physnet) and returns the corresponding
+# OVS bridge name from the ovn-bridge-mappings configuration.
+# Return empty string if not found.
+get_bridge_name_for_physnet() {
+      local physnet="$1"
+      local mappings
+      mappings=$(ovs-vsctl --if-exists get open_vswitch . external_ids:ovn-bridge-mappings)
+      # Extract bridge name after physnet: and before next comma (or end)
+      # regex matches zero or more non-comma characters
+      # cut on colon and return field number 2
+      echo "$mappings" | tr -d "\"" | grep -o "$physnet:[^,]*" | cut -d: -f2
+}
+
+# Adds drop flows for GARPs on patch port to br-int for specified bridge.
+add_garp_drop_flow() {
+    local bridge="$1"
+    local cookie="0x0305"
+    local priority="499"
+    # if bridge exists, and the patch port is created, we expect to add at least one flow to a patch port ending in to-br-int.
+    # FIXME: can we generate the exact name. Its possible we add these flows to the incorrect port when selecting on substring
+    for port_name in $(ovs-vsctl list-ports $bridge); do
+        if [[ "$port_name" == *to-br-int ]]; then
+            local of_port=$(ovs-vsctl get interface $port_name ofport)
+            ovs-ofctl add-flow $bridge "cookie=$cookie,table=0,priority=$priority,in_port=$of_port,arp,arp_op=1,actions=drop" > /dev/null
+            break
+        fi
+    done
+}
+
 # Verify that the process is running either by checking for the PID in `ps` output
 # or by using `ovs-appctl` utility for the processes that support it.
 # $1 is the name of the process
@@ -1756,6 +1786,23 @@ ovnkube-controller-with-node() {
   if [[ ${ovnkube_node_mode} != "dpu-host" ]]; then
     echo "=============== ovnkube-controller-with-node - (ovn-node  wait for ovn-controller.pid)"
     wait_for_event process_ready ovn-controller
+  fi
+
+  # start temp work around
+  # remove when https://issues.redhat.com/browse/FDP-1537 is avilable
+  if [[ ${ovnkube_node_mode} == "full" && ${ovn_enable_interconnect} == "true" && ${ovn_egressip_enable} == "true" ]]; then
+    echo "=============== ovnkube-controller-with-node - (add GARP drop flows if external bridge exists)"
+    # bridge may not yet exist
+    local bridge_name="$(get_bridge_name_for_physnet 'physnet')"
+    if [[ "$bridge_name" != "" ]]; then
+      echo "=============== ovnkube-controller-with-node - found bridge mapping for physnet: $bridge_name"
+      # nothing to do if the external bridge isn't created.
+      if ovs-vsctl br-exists $bridge_name; then
+        echo "=============== ovnkube-controller-with-node - found bridge $bridge_name"
+        add_garp_drop_flow "$bridge_name"
+        echo "=============== ovnkube-controller-with-node - (finished adding GARP drop flows)"
+      fi
+    fi
   fi
 
   ovn_routable_mtu_flag=

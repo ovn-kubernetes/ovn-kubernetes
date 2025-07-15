@@ -81,6 +81,7 @@ type BridgeConfiguration struct {
 	ofPortPhys string
 	netConfig  map[string]*BridgeUDNConfiguration
 	eipMarkIPs *egressip.MarkIPsCache
+	dropGARP   bool
 }
 
 func NewBridgeConfiguration(intfName, nodeName,
@@ -105,6 +106,16 @@ func NewBridgeConfiguration(intfName, nodeName,
 		eipMarkIPs: egressip.NewMarkIPsCache(),
 	}
 	res.netConfig[types.DefaultNetworkName].Advertised.Store(advertised)
+
+	// temp workaround for https://issues.redhat.com/browse/FDP-1537
+	// we need to ensure we continue dropping GARPs for any new bridge config if the run mode is ovnkube controller + ovnkube node + IC + single zone node
+	// FIXME: only add if run mode is ovnkube controller + node in single process
+	if config.OVNKubernetesFeature.EnableEgressIP && config.OVNKubernetesFeature.EnableInterconnect && config.OvnKubeNode.Mode == types.NodeModeFull {
+		// drop by default - set to false later when ovnkube controller has sync'd and changes propagated to OVN southbound database
+		// we should also match on run mode here to ensure ovnkube controller + ovnkube node are running in the same process
+		res.dropGARP = true
+	}
+	// end temp work around
 
 	if config.Gateway.GatewayAcceleratedInterface != "" {
 		// Try to get representor for the specified gateway device.
@@ -470,6 +481,12 @@ func (b *BridgeConfiguration) SetEIPMarkIPs(eipMarkIPs *egressip.MarkIPsCache) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 	b.eipMarkIPs = eipMarkIPs
+}
+
+func (b *BridgeConfiguration) SetDropGARP(drop bool) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	b.dropGARP = drop
 }
 
 func gatewayReady(patchPort string) bool {
