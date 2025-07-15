@@ -42,6 +42,36 @@ func TestParseNetworkSubnets(t *testing.T) {
 			},
 		},
 		{
+			desc:     "multiple ipv4 subnets layer3 topology",
+			topology: ovntypes.Layer3Topology,
+			subnets:  "192.168.1.0/24/28, 192.168.2.0/24/28",
+			expectedSubnets: []config.CIDRNetworkEntry{
+				{
+					CIDR:             ovntest.MustParseIPNet("192.168.1.0/24"),
+					HostSubnetLength: 28,
+				},
+				{
+					CIDR:             ovntest.MustParseIPNet("192.168.2.0/24"),
+					HostSubnetLength: 28,
+				},
+			},
+		},
+		{
+			desc:     "multiple ipv6 subnets layer3 topology",
+			topology: ovntypes.Layer3Topology,
+			subnets:  "fda6::/48, fda7::/48",
+			expectedSubnets: []config.CIDRNetworkEntry{
+				{
+					CIDR:             ovntest.MustParseIPNet("fda6::/48"),
+					HostSubnetLength: 64,
+				},
+				{
+					CIDR:             ovntest.MustParseIPNet("fda7::/48"),
+					HostSubnetLength: 64,
+				},
+			},
+		},
+		{
 			desc:     "empty subnets layer 3 topology",
 			topology: ovntypes.Layer3Topology,
 		},

@@ -478,8 +478,50 @@ func (ncc *networkClusterController) Cleanup() error {
 	return nil
 }
 
+// getNewSubnets returns subnets that are in new but not in old
+func getNewSubnets(old, new []config.CIDRNetworkEntry) []config.CIDRNetworkEntry {
+	if len(old) == 0 {
+		return new
+	}
+
+	oldSubnetMap := make(map[string]bool)
+	for _, subnet := range old {
+		oldSubnetMap[subnet.CIDR.String()] = true
+	}
+
+	var ret []config.CIDRNetworkEntry
+	for _, newSubnet := range new {
+		if !oldSubnetMap[newSubnet.CIDR.String()] {
+			ret = append(ret, newSubnet)
+		}
+	}
+
+	return ret
+}
+
 func (ncc *networkClusterController) Reconcile(netInfo util.NetInfo) error {
 	reconcilePendingPods := !ncc.ReconcilableNetInfo.EqualNADs(netInfo.GetNADs()...)
+
+	if ncc.nodeAllocator != nil {
+		oldSubnets := ncc.GetNetInfo().Subnets()
+		newSubnets := netInfo.Subnets()
+
+		// Find subnets that are in newSubnets but not in oldSubnets
+		addedSubnets := getNewSubnets(oldSubnets, newSubnets)
+		if len(addedSubnets) > 0 {
+			if err := ncc.nodeAllocator.AddSubnets(addedSubnets); err != nil {
+				klog.Errorf("Failed to add new subnets to node allocator for network %s: %v", ncc.GetNetworkName(), err)
+			}
+
+			// if some nodes failed to allocate a subnet, they most likely
+			// dropped out of the retry loop by the time a new subnet is added. Trigger a
+			// full reconcile for all nodes to ensure they get updated.
+			if err := objretry.RequeueAllNodes(ncc.watchFactory, netInfo, ncc.retryNodes); err != nil {
+				klog.Errorf("Failed to requeue all nodes for network %s: %v", ncc.GetNetworkName(), err)
+			}
+		}
+	}
+
 	// update network information, point of no return
 	err := util.ReconcileNetInfo(ncc.ReconcilableNetInfo, netInfo)
 	if err != nil {
