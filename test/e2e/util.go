@@ -1516,23 +1516,3 @@ func executeFileTemplate(templates *template.Template, directory, name string, d
 	}
 	return nil
 }
-
-// podIPsForUserDefinedPrimaryNetwork returns the v4 or v6 IPs for a pod on the UDN
-func podIPOfFamilyOnPrimaryNetwork(k8sClient kubernetes.Interface, podNamespace string, podName string, networkName string, family utilnet.IPFamily) (string, error) {
-	pod, err := k8sClient.CoreV1().Pods(podNamespace).Get(context.Background(), podName, metav1.GetOptions{})
-	if err != nil {
-		return "", err
-	}
-	if networkName != "default" {
-		networkName = namespacedName(podNamespace, networkName)
-	}
-	netStatus, err := userDefinedNetworkStatus(pod, networkName)
-	if err != nil {
-		return "", err
-	}
-	ipnet := getFirstCIDROfFamily(family, netStatus.IPs)
-	if ipnet == nil {
-		return "", nil
-	}
-	return ipnet.IP.String(), nil
-}

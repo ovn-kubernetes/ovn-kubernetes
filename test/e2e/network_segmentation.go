@@ -175,7 +175,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 						for i, cidr := range strings.Split(netConfig.cidr, ",") {
 							if cidr != "" {
 								By("asserting the server pod has an IP from the configured range")
-								serverIP, err = podIPsForUserDefinedPrimaryNetwork(
+								serverIP, err = getPodAnnotationIPsForAttachmentByIndex(
 									cs,
 									f.Namespace.Name,
 									serverPodConfig.name,
@@ -610,7 +610,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 								By("creating pod " + podConfig.name + " in " + podConfig.namespace)
 								pod := runUDNPod(cs, podConfig.namespace, podConfig, nil)
 								pods = append(pods, pod)
-								podIP, err := podIPsForUserDefinedPrimaryNetwork(
+								podIP, err := getPodAnnotationIPsForAttachmentByIndex(
 									cs,
 									pod.Namespace,
 									pod.Name,
@@ -792,7 +792,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 				By(fmt.Sprintf("asserting network works in namespace %s", config.namespace))
 				for i, cidr := range strings.Split(config.cidr, ",") {
 					if cidr != "" {
-						serverIP, err = podIPsForUserDefinedPrimaryNetwork(
+						serverIP, err = getPodAnnotationIPsForAttachmentByIndex(
 							cs,
 							config.namespace,
 							serverPodConfig.name,
@@ -1756,7 +1756,7 @@ spec:
 				clientPodConfig.nodeSelector = map[string]string{nodeHostnameKey: node2Name}
 				runUDNPod(cs, f.Namespace.Name, serverPodConfig, nil)
 				runUDNPod(cs, f.Namespace.Name, clientPodConfig, nil)
-				serverIP, err := podIPsForUserDefinedPrimaryNetwork(cs, f.Namespace.Name, serverPodConfig.name, namespacedName(f.Namespace.Name, netConfig.name), 0)
+				serverIP, err := getPodAnnotationIPsForAttachmentByIndex(cs, f.Namespace.Name, serverPodConfig.name, namespacedName(f.Namespace.Name, netConfig.name), 0)
 				Expect(err).ShouldNot(HaveOccurred(), "UDN pod IP must be retrieved")
 				By("restart OVNKube node pods on client and server Nodes and ensure connectivity")
 				serverPod := getPod(f, serverPodConfig.name)
@@ -2275,26 +2275,6 @@ func withNetworkAttachment(networks []nadapi.NetworkSelectionElement) podOption 
 	}
 }
 
-// podIPsForUserDefinedPrimaryNetwork returns the v4 or v6 IPs for a pod on the UDN
-func podIPsForUserDefinedPrimaryNetwork(k8sClient clientset.Interface, podNamespace string, podName string, attachmentName string, index int) (string, error) {
-	pod, err := k8sClient.CoreV1().Pods(podNamespace).Get(context.Background(), podName, metav1.GetOptions{})
-	if err != nil {
-		return "", err
-	}
-	netStatus, err := userDefinedNetworkStatus(pod, attachmentName)
-	if err != nil {
-		return "", err
-	}
-
-	if len(netStatus.IPs) == 0 {
-		return "", fmt.Errorf("attachment for network %q without IPs", attachmentName)
-	}
-	if len(netStatus.IPs) > 2 {
-		return "", fmt.Errorf("attachment for network %q with more than two IPs", attachmentName)
-	}
-	return netStatus.IPs[index].IP.String(), nil
-}
-
 func podIPsForDefaultNetwork(k8sClient clientset.Interface, podNamespace string, podName string) (string, string, error) {
 	pod, err := k8sClient.CoreV1().Pods(podNamespace).Get(context.Background(), podName, metav1.GetOptions{})
 	if err != nil {
@@ -2302,15 +2282,6 @@ func podIPsForDefaultNetwork(k8sClient clientset.Interface, podNamespace string,
 	}
 	ipv4, ipv6 := getPodAddresses(pod)
 	return ipv4, ipv6, nil
-}
-
-func userDefinedNetworkStatus(pod *v1.Pod, networkName string) (PodAnnotation, error) {
-	netStatus, err := unmarshalPodAnnotation(pod.Annotations, networkName)
-	if err != nil {
-		return PodAnnotation{}, fmt.Errorf("failed to unmarshall annotations for pod %q: %v", pod.Name, err)
-	}
-
-	return *netStatus, nil
 }
 
 func runUDNPod(cs clientset.Interface, namespace string, serverPodConfig podConfiguration, podSpecTweak func(*v1.Pod)) *v1.Pod {

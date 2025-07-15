@@ -704,3 +704,39 @@ func getNetworkGateway(cli *client.Client, networkName string) (string, error) {
 
 	return "", fmt.Errorf("Gateway not found for network %q", networkName)
 }
+
+func getPodAnnotationForAttachment(pod *v1.Pod, attachmentName string) (PodAnnotation, error) {
+	podAnnotation, err := unmarshalPodAnnotation(pod.Annotations, attachmentName)
+	if err != nil {
+		return PodAnnotation{}, fmt.Errorf("failed to unmarshall annotations for pod %q: %v", pod.Name, err)
+	}
+
+	return *podAnnotation, nil
+}
+
+func getPodAnnotationIPsForAttachment(k8sClient clientset.Interface, podNamespace string, podName string, attachmentName string) ([]*net.IPNet, error) {
+	pod, err := k8sClient.CoreV1().Pods(podNamespace).Get(context.Background(), podName, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	podAnnotation, err := getPodAnnotationForAttachment(pod, attachmentName)
+	if err != nil {
+		return nil, err
+	}
+	return podAnnotation.IPs, nil
+}
+
+// podIPsForNetworkByIndex returns the v4 or v6 IPs for a pod on the UDN
+func getPodAnnotationIPsForAttachmentByIndex(k8sClient clientset.Interface, podNamespace string, podName string, attachmentName string, index int) (string, error) {
+	ipnets, err := getPodAnnotationIPsForAttachment(k8sClient, podNamespace, podName, attachmentName)
+	if err != nil {
+		return "", err
+	}
+	if index >= len(ipnets) {
+		return "", fmt.Errorf("no IP at index %d for attachment %s on pod %s", index, attachmentName, namespacedName(podNamespace, podName))
+	}
+	if len(ipnets) > 2 {
+		return "", fmt.Errorf("attachment for network %q with more than two IPs", attachmentName)
+	}
+	return ipnets[index].IP.String(), nil
+}
