@@ -13,6 +13,7 @@ import (
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -307,6 +308,23 @@ func BuildAdvertisedNetworkSubnetsDropACL(advertisedNetworkSubnetsAddressSet add
 // pass   "(ip[4|6].src == <UDN_SUBNET> && ip[4|6].dst == <UDN_SUBNET>)"                1100
 // drop   "(ip[4|6].src == $<ALL_ADV_SUBNETS> && ip[4|6].dst == $<ALL_ADV_SUBNETS>)"    1050
 func (bnc *BaseNetworkController) addAdvertisedNetworkIsolation(nodeName string) error {
+	if config.OVNKubernetesFeature.RoutedUDNIsolation == config.RoutedUDNIsolationDisabled {
+		klog.Infof("The network %s is configured with loose isolation mode, so delete tier-0 pass ACL rule if it exists",
+			bnc.GetNetworkName())
+		// It is okay to delete only pass ACLs here because drop ACLs for the network and global advertised
+		// networks addressset are already deleted in controller manager's configureAdvertisedNetworkIsolation
+		// method.
+		passACLs, _ := bnc.getPassACLsForAdvertisedNetwork()
+		if len(passACLs) == 0 {
+			return nil
+		}
+		p := func(sw *nbdb.LogicalSwitch) bool { return sw.Name == bnc.GetNetworkScopedSwitchName(nodeName) }
+		err := libovsdbops.RemoveACLsFromLogicalSwitchesWithPredicate(bnc.nbClient, p, passACLs...)
+		if err != nil {
+			return fmt.Errorf("failed to delete tier-0 pass ACLs for network %s: %w", bnc.GetNetworkName(), err)
+		}
+		return nil
+	}
 	var passMatches, cidrs []string
 	var ops []ovsdb.Operation
 
@@ -370,6 +388,11 @@ func (bnc *BaseNetworkController) addAdvertisedNetworkIsolation(nodeName string)
 // deleteAdvertisedNetworkIsolation deletes advertised network isolation rules from the given node switch.
 // It removes the network CIDRs from the global advertised networks addresset together with the ACLs on the node switch.
 func (bnc *BaseNetworkController) deleteAdvertisedNetworkIsolation(nodeName string) error {
+	if config.OVNKubernetesFeature.RoutedUDNIsolation == config.RoutedUDNIsolationDisabled {
+		klog.Infof("The network %s is configured with loose isolation mode, skip deleting tier-0 drop ACL rule",
+			bnc.GetNetworkName())
+		return nil
+	}
 	addrSet, err := bnc.addressSetFactory.GetAddressSet(GetAdvertisedNetworkSubnetsAddressSetDBIDs())
 	if err != nil {
 		return fmt.Errorf("failed to get advertised subnets addresset %s for network %s: %w", GetAdvertisedNetworkSubnetsAddressSetDBIDs(), bnc.GetNetworkName(), err)
@@ -384,9 +407,7 @@ func (bnc *BaseNetworkController) deleteAdvertisedNetworkIsolation(nodeName stri
 		return fmt.Errorf("failed to create ovsdb ops for deleting the addresses from %s addresset for network %s: %w", GetAdvertisedNetworkSubnetsAddressSetDBIDs(), bnc.GetNetworkName(), err)
 	}
 
-	passACLIDs := GetAdvertisedNetworkSubnetsPassACLdbIDs(bnc.controllerName, bnc.GetNetworkName(), bnc.GetNetworkID())
-	passACLPredicate := libovsdbops.GetPredicate[*nbdb.ACL](passACLIDs, nil)
-	passACLs, err := libovsdbops.FindACLsWithPredicate(bnc.nbClient, passACLPredicate)
+	passACLs, err := bnc.getPassACLsForAdvertisedNetwork()
 	if err != nil {
 		return fmt.Errorf("unable to find the pass ACL for advertised network %s: %w", bnc.GetNetworkName(), err)
 	}
@@ -407,4 +428,10 @@ func (bnc *BaseNetworkController) deleteAdvertisedNetworkIsolation(nodeName stri
 
 	_, err = libovsdbops.TransactAndCheck(bnc.nbClient, ops)
 	return err
+}
+
+func (bnc *BaseNetworkController) getPassACLsForAdvertisedNetwork() ([]*nbdb.ACL, error) {
+	passACLIDs := GetAdvertisedNetworkSubnetsPassACLdbIDs(bnc.controllerName, bnc.GetNetworkName(), bnc.GetNetworkID())
+	passACLPredicate := libovsdbops.GetPredicate[*nbdb.ACL](passACLIDs, nil)
+	return libovsdbops.FindACLsWithPredicate(bnc.nbClient, passACLPredicate)
 }

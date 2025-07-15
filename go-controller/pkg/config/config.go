@@ -416,15 +416,16 @@ type OVNKubernetesFeatureConfig struct {
 	// EgressIP feature is enabled
 	EnableEgressIP bool `gcfg:"enable-egress-ip"`
 	// EgressIP node reachability total timeout in seconds
-	EgressIPReachabiltyTotalTimeout int  `gcfg:"egressip-reachability-total-timeout"`
-	EnableEgressFirewall            bool `gcfg:"enable-egress-firewall"`
-	EnableEgressQoS                 bool `gcfg:"enable-egress-qos"`
-	EnableEgressService             bool `gcfg:"enable-egress-service"`
-	EgressIPNodeHealthCheckPort     int  `gcfg:"egressip-node-healthcheck-port"`
-	EnableMultiNetwork              bool `gcfg:"enable-multi-network"`
-	EnableNetworkSegmentation       bool `gcfg:"enable-network-segmentation"`
-	EnablePreconfiguredUDNAddresses bool `gcfg:"enable-preconfigured-udn-addresses"`
-	EnableRouteAdvertisements       bool `gcfg:"enable-route-advertisements"`
+	EgressIPReachabiltyTotalTimeout int    `gcfg:"egressip-reachability-total-timeout"`
+	EnableEgressFirewall            bool   `gcfg:"enable-egress-firewall"`
+	EnableEgressQoS                 bool   `gcfg:"enable-egress-qos"`
+	EnableEgressService             bool   `gcfg:"enable-egress-service"`
+	EgressIPNodeHealthCheckPort     int    `gcfg:"egressip-node-healthcheck-port"`
+	EnableMultiNetwork              bool   `gcfg:"enable-multi-network"`
+	EnableNetworkSegmentation       bool   `gcfg:"enable-network-segmentation"`
+	EnablePreconfiguredUDNAddresses bool   `gcfg:"enable-preconfigured-udn-addresses"`
+	EnableRouteAdvertisements       bool   `gcfg:"enable-route-advertisements"`
+	RoutedUDNIsolation              string `gcfg:"routed-udn-isolation"`
 	// This feature requires a kernel fix https://github.com/torvalds/linux/commit/7f3287db654395f9c5ddd246325ff7889f550286
 	// to work on a kind cluster. Flag allows to disable it for current CI, will be turned on when github runners have this fix.
 	DisableUDNHostIsolation      bool `gcfg:"disable-udn-host-isolation"`
@@ -449,6 +450,13 @@ const (
 	GatewayModeShared GatewayMode = "shared"
 	// GatewayModeLocal indicates OVN creates a local NAT-ed interface for the gateway
 	GatewayModeLocal GatewayMode = "local"
+)
+
+const (
+	// RoutedUDNIsolationEnabled pod isolation across advertised UDN networks is enabled.
+	RoutedUDNIsolationEnabled = "Enabled"
+	// RoutedUDNIsolationDisabled pod isolation across advertised UDN networks is disabled.
+	RoutedUDNIsolationDisabled = "Disabled"
 )
 
 // GatewayConfig holds node gateway-related parsed config file parameters and command-line overrides
@@ -1110,6 +1118,12 @@ var OVNK8sFeatureFlags = []cli.Flag{
 		Usage:       "Configure to use route advertisements feature with ovn-kubernetes.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnableRouteAdvertisements,
 		Value:       OVNKubernetesFeature.EnableRouteAdvertisements,
+	},
+	&cli.StringFlag{
+		Name:        "routed-udn-isolation",
+		Usage:       "Configure to use pod isolation for BGP advertised UDN networks",
+		Destination: &cliConfig.OVNKubernetesFeature.RoutedUDNIsolation,
+		Value:       OVNKubernetesFeature.RoutedUDNIsolation,
 	},
 	&cli.BoolFlag{
 		Name:        "enable-stateless-netpol",

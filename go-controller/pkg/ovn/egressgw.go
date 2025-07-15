@@ -580,8 +580,13 @@ func (oc *DefaultNetworkController) deletePodSNAT(nodeName string, extIPs, podIP
 		klog.V(4).Infof("Node %s is not in the local zone %s", nodeName, oc.zone)
 		return nil
 	}
+	snatMatch, err := GetNetworkScopedClusterSubnetSNATMatch(oc.nbClient, oc.GetNetInfo(), nodeName, oc.isPodNetworkAdvertisedAtNode(nodeName))
+	if err != nil {
+		return fmt.Errorf("failed to get SNAT match for podIPNets %v on node %s for network %s: %v",
+			podIPNets, nodeName, oc.GetNetworkName(), err)
+	}
 	// Default network does not set any matches in Pod SNAT
-	ops, err := deletePodSNATOps(oc.nbClient, nil, oc.GetNetworkScopedGWRouterName(nodeName), extIPs, podIPNets, "")
+	ops, err := deletePodSNATOps(oc.nbClient, nil, oc.GetNetworkScopedGWRouterName(nodeName), extIPs, podIPNets, snatMatch)
 	if err != nil {
 		return err
 	}
