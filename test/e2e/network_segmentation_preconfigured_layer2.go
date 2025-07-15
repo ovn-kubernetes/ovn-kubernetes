@@ -72,16 +72,18 @@ var _ = Describe("Network Segmentation: Preconfigured Layer2 UDN", feature.Netwo
 			podAnno, err := unmarshalPodAnnotation(pod.Annotations, pod.Namespace+"/"+netConfig.name)
 			Expect(err).NotTo(HaveOccurred())
 
-			var podGatewayIPs []string
-			for _, gw := range podAnno.Gateways {
-				podGatewayIPs = append(podGatewayIPs, gw.String())
+			if isPreConfiguredUdnAddressesEnabled() {
+				var podGatewayIPs []string
+
+				for _, gw := range podAnno.Gateways {
+					podGatewayIPs = append(podGatewayIPs, gw.String())
+				}
+				expectedGatewayIPs := filterIPs(f.ClientSet, config.expectedGatewayIPs...)
+				Expect(podGatewayIPs).To(ContainElements(expectedGatewayIPs), "Gateway IPs should be found in pod routes")
 			}
-			
-			expectedGatewayIPs := filterIPs(f.ClientSet, config.expectedGatewayIPs...)
-			Expect(podGatewayIPs).To(ContainElements(expectedGatewayIPs), "Gateway IPs should be found in pod routes")
 
 			// Check that pod IP is not in reserved CIDRs (if any are configured)
-			if len(udn.Spec.Layer2.ReservedSubnets) > 0 {
+			if isPreConfiguredUdnAddressesEnabled() && len(udn.Spec.Layer2.ReservedSubnets) > 0 {
 				By(fmt.Sprintf("validating pod %s is not in reserved subnet", pod.Name))
 				for _, ip := range podAnno.IPs {
 					podIP := ip.IP.String()

@@ -164,6 +164,10 @@ func TestParseSubnets(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.desc, func(t *testing.T) {
 			g := gomega.NewWithT(t)
+			config.OVNKubernetesFeature.EnableMultiNetwork = true
+			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+			config.OVNKubernetesFeature.EnablePreconfiguredUDNAddresses = true
+
 			subnets, excludes, reserved, _, err := parseSubnets(tc.subnets, tc.excludes, tc.reserved, "", tc.topology)
 			if tc.expectError {
 				g.Expect(err).To(gomega.HaveOccurred())
@@ -1618,6 +1622,9 @@ func TestGetNodeManagementIP(t *testing.T) {
 			g := gomega.NewWithT(t)
 			config.IPv4Mode = true
 			config.IPv6Mode = true
+			config.OVNKubernetesFeature.EnableMultiNetwork = true
+			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+			config.OVNKubernetesFeature.EnablePreconfiguredUDNAddresses = true
 
 			netInfo, err := NewNetInfo(tc.netConf)
 			g.Expect(err).ToNot(gomega.HaveOccurred())
@@ -1756,6 +1763,10 @@ func TestGetNodeGatewayIP(t *testing.T) {
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 			config.IPv4Mode = true
 			config.IPv6Mode = true
+			config.OVNKubernetesFeature.EnableMultiNetwork = true
+			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+			config.OVNKubernetesFeature.EnablePreconfiguredUDNAddresses = true
+
 			hostSubnet := ovntest.MustParseIPNet(tc.hostSubnet)
 
 			result := netInfo.GetNodeGatewayIP(hostSubnet)
