@@ -1245,7 +1245,8 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 
 			Expect(udnGateway.AddNetwork()).To(Succeed())
 			flowMap = udnGateway.gateway.openflowManager.flowCache
-			Expect(flowMap["DEFAULT"]).To(HaveLen(69))                                // 18 UDN Flows and 5 advertisedUDN flows are added by default
+
+			Expect(flowMap["DEFAULT"]).To(HaveLen(71))                                // 18 UDN Flows, 5 advertisedUDN flows, and 2 packet mark flows (IPv4+IPv6) are added by default
 			Expect(udnGateway.openflowManager.defaultBridge.netConfig).To(HaveLen(2)) // default network + UDN network
 			defaultUdnConfig := udnGateway.openflowManager.defaultBridge.netConfig["default"]
 			bridgeUdnConfig := udnGateway.openflowManager.defaultBridge.netConfig["bluenet"]
@@ -1268,7 +1269,9 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 				// Check flows for default network service CIDR.
 				checkDefaultSvcIsolationOVSFlows(flowMap["DEFAULT"], defaultUdnConfig, ofPortHost, bridgeMAC, svcCIDR)
 
-				// Expect exactly one flow per advertised UDN for table 2 and table 0 for service isolation.
+				// Expect exactly two flow per advertised UDN for table 2 and table 0 for service isolation.
+				// but one of the flows used by advertised UDNs is already tracked and used by default UDNs hence not
+				// counted here but in the check above for default svc isolation flows.
 				checkAdvertisedUDNSvcIsolationOVSFlows(flowMap["DEFAULT"], bridgeUdnConfig, "bluenet", bridgeMAC, svcCIDR, 2)
 			}
 
@@ -1727,7 +1730,6 @@ func TestConstructUDNVRFIPRules(t *testing.T) {
 			cidr := ""
 			if config.IPv4Mode {
 				cidr = "100.128.0.0/16/24"
-
 			}
 			if config.IPv4Mode && config.IPv6Mode {
 				cidr += ",ae70::/60/64"
@@ -1813,8 +1815,6 @@ func TestConstructUDNVRFIPRulesPodNetworkAdvertised(t *testing.T) {
 					table:    1007,
 					dst:      *ovntest.MustParseIPNet("100.128.0.0/16"),
 				},
-			},
-			deleteRules: []testRule{
 				{
 					priority: UDNMasqueradeIPRulePriority,
 					family:   netlink.FAMILY_V4,
@@ -1840,8 +1840,6 @@ func TestConstructUDNVRFIPRulesPodNetworkAdvertised(t *testing.T) {
 					table:    1009,
 					dst:      *ovntest.MustParseIPNet("ae70::/60"),
 				},
-			},
-			deleteRules: []testRule{
 				{
 					priority: UDNMasqueradeIPRulePriority,
 					family:   netlink.FAMILY_V6,
@@ -1879,8 +1877,6 @@ func TestConstructUDNVRFIPRulesPodNetworkAdvertised(t *testing.T) {
 					table:    1010,
 					dst:      *ovntest.MustParseIPNet("ae70::/60"),
 				},
-			},
-			deleteRules: []testRule{
 				{
 					priority: UDNMasqueradeIPRulePriority,
 					family:   netlink.FAMILY_V4,
@@ -1915,9 +1911,9 @@ func TestConstructUDNVRFIPRulesPodNetworkAdvertised(t *testing.T) {
 				cidr = "100.128.0.0/16/24"
 			}
 			if config.IPv4Mode && config.IPv6Mode {
-				cidr += ",ae70::/60"
+				cidr += ",ae70::/60/64"
 			} else if config.IPv6Mode {
-				cidr = "ae70::/60"
+				cidr = "ae70::/60/64"
 			}
 			nad := ovntest.GenerateNAD("bluenet", "rednad", "greenamespace",
 				types.Layer3Topology, cidr, types.NetworkRolePrimary)
@@ -1946,6 +1942,8 @@ func TestConstructUDNVRFIPRulesPodNetworkAdvertised(t *testing.T) {
 			udnGateway.vrfTableId = test.vrftableID
 			rules, delRules, err := udnGateway.constructUDNVRFIPRules(true)
 			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(rules).To(HaveLen(len(test.expectedRules)))
+			g.Expect(delRules).To(HaveLen(len(test.deleteRules)))
 			for i, rule := range rules {
 				g.Expect(rule.Priority).To(Equal(test.expectedRules[i].priority))
 				g.Expect(rule.Table).To(Equal(test.expectedRules[i].table))

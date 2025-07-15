@@ -310,12 +310,14 @@ func (oc *DefaultNetworkController) addLogicalPort(pod *corev1.Pod) (err error) 
 		if err != nil {
 			return err
 		}
-	} else if config.Gateway.DisableSNATMultipleGWs && !oc.isPodNetworkAdvertisedAtNode(pod.Spec.NodeName) {
+	} else if config.Gateway.DisableSNATMultipleGWs {
 		// Add NAT rules to pods if disable SNAT is set and does not have
 		// namespace annotations to go through external egress router
 		if extIPs, err := getExternalIPsGR(oc.watchFactory, pod.Spec.NodeName); err != nil {
 			return err
-		} else if ops, err = addOrUpdatePodSNATOps(oc.nbClient, oc.GetNetworkScopedGWRouterName(pod.Spec.NodeName), extIPs, podAnnotation.IPs, "", ops); err != nil {
+		} else if snatMatch, err := GetNetworkScopedClusterSubnetSNATMatch(oc.nbClient, oc.GetNetInfo(), pod.Spec.NodeName, oc.isPodNetworkAdvertisedAtNode(pod.Spec.NodeName)); err != nil {
+			return fmt.Errorf("failed to get SNAT match for node %s for network %s: %v", pod.Spec.NodeName, oc.GetNetworkName(), err)
+		} else if ops, err = addOrUpdatePodSNATOps(oc.nbClient, oc.GetNetworkScopedGWRouterName(pod.Spec.NodeName), extIPs, podAnnotation.IPs, snatMatch, ops); err != nil {
 			return err
 		}
 	}

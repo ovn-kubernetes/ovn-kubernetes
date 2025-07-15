@@ -37,18 +37,18 @@ import (
 
 const v4PMTUDNFTRules = `
 add table inet ovn-kubernetes
-add rule inet ovn-kubernetes no-pmtud ip daddr @no-pmtud-remote-node-ips-v4 meta l4proto icmp icmp type 3 icmp code 4 counter drop
+add rule inet ovn-kubernetes no-pmtud ip daddr @remote-node-ips-v4 meta l4proto icmp icmp type 3 icmp code 4 counter drop
 add chain inet ovn-kubernetes no-pmtud { type filter hook output priority 0 ; comment "Block egress needs frag/packet too big to remote k8s nodes" ; }
-add set inet ovn-kubernetes no-pmtud-remote-node-ips-v4 { type ipv4_addr ; comment "Block egress ICMP needs frag to remote Kubernetes nodes" ; }
-add set inet ovn-kubernetes no-pmtud-remote-node-ips-v6 { type ipv6_addr ; comment "Block egress ICMPv6 packet too big to remote Kubernetes nodes" ; }
+add set inet ovn-kubernetes remote-node-ips-v4 { type ipv4_addr ; comment "Block egress ICMP needs frag to remote Kubernetes nodes" ; }
+add set inet ovn-kubernetes remote-node-ips-v6 { type ipv6_addr ; comment "Block egress ICMPv6 packet too big to remote Kubernetes nodes" ; }
 `
 
 const v6PMTUDNFTRules = `
 add table inet ovn-kubernetes
-add rule inet ovn-kubernetes no-pmtud meta l4proto icmpv6 icmpv6 type 2 icmpv6 code 0 ip6 daddr @no-pmtud-remote-node-ips-v6 counter drop
+add rule inet ovn-kubernetes no-pmtud meta l4proto icmpv6 icmpv6 type 2 icmpv6 code 0 ip6 daddr @remote-node-ips-v6 counter drop
 add chain inet ovn-kubernetes no-pmtud { type filter hook output priority 0 ; comment "Block egress needs frag/packet too big to remote k8s nodes" ; }
-add set inet ovn-kubernetes no-pmtud-remote-node-ips-v4 { type ipv4_addr ; comment "Block egress ICMP needs frag to remote Kubernetes nodes" ; }
-add set inet ovn-kubernetes no-pmtud-remote-node-ips-v6 { type ipv6_addr ; comment "Block egress ICMPv6 packet too big to remote Kubernetes nodes" ; }
+add set inet ovn-kubernetes remote-node-ips-v4 { type ipv4_addr ; comment "Block egress ICMP needs frag to remote Kubernetes nodes" ; }
+add set inet ovn-kubernetes remote-node-ips-v6 { type ipv6_addr ; comment "Block egress ICMPv6 packet too big to remote Kubernetes nodes" ; }
 `
 
 var _ = Describe("Node", func() {
@@ -805,7 +805,7 @@ var _ = Describe("Node", func() {
 					cnnci := NewCommonNodeNetworkControllerInfo(kubeFakeClient, fakeClient.AdminPolicyRouteClient, wf, nil, nodeName, routeManager)
 					nc = newDefaultNodeNetworkController(cnnci, stop, wg, routeManager, nil)
 					nc.initRetryFrameworkForNode()
-					err = setupPMTUDNFTSets()
+					err = setupRemoteNodeNFTSets()
 					Expect(err).NotTo(HaveOccurred())
 					err = setupPMTUDNFTChain()
 					Expect(err).NotTo(HaveOccurred())
@@ -836,7 +836,7 @@ var _ = Describe("Node", func() {
 					err = nc.WatchNodes()
 					Expect(err).NotTo(HaveOccurred())
 					nftRules := v4PMTUDNFTRules + `
-add element inet ovn-kubernetes no-pmtud-remote-node-ips-v4 { 169.254.254.61 }
+add element inet ovn-kubernetes remote-node-ips-v4 { 169.254.254.61 }
 `
 					err = nodenft.MatchNFTRules(nftRules, nft.Dump())
 					Expect(err).NotTo(HaveOccurred())
@@ -917,7 +917,7 @@ add element inet ovn-kubernetes no-pmtud-remote-node-ips-v4 { 169.254.254.61 }
 					cnnci := NewCommonNodeNetworkControllerInfo(kubeFakeClient, fakeClient.AdminPolicyRouteClient, wf, nil, nodeName, routeManager)
 					nc = newDefaultNodeNetworkController(cnnci, stop, wg, routeManager, nil)
 					nc.initRetryFrameworkForNode()
-					err = setupPMTUDNFTSets()
+					err = setupRemoteNodeNFTSets()
 					Expect(err).NotTo(HaveOccurred())
 					err = setupPMTUDNFTChain()
 					Expect(err).NotTo(HaveOccurred())
@@ -948,7 +948,7 @@ add element inet ovn-kubernetes no-pmtud-remote-node-ips-v4 { 169.254.254.61 }
 					err = nc.WatchNodes()
 					Expect(err).NotTo(HaveOccurred())
 					nftRules := v4PMTUDNFTRules + `
-add element inet ovn-kubernetes no-pmtud-remote-node-ips-v4 { 169.254.253.61 }
+add element inet ovn-kubernetes remote-node-ips-v4 { 169.254.253.61 }
 `
 					err = nodenft.MatchNFTRules(nftRules, nft.Dump())
 					Expect(err).NotTo(HaveOccurred())
@@ -1071,7 +1071,7 @@ add element inet ovn-kubernetes no-pmtud-remote-node-ips-v4 { 169.254.253.61 }
 					cnnci := NewCommonNodeNetworkControllerInfo(kubeFakeClient, fakeClient.AdminPolicyRouteClient, wf, nil, nodeName, routeManager)
 					nc = newDefaultNodeNetworkController(cnnci, stop, wg, routeManager, nil)
 					nc.initRetryFrameworkForNode()
-					err = setupPMTUDNFTSets()
+					err = setupRemoteNodeNFTSets()
 					Expect(err).NotTo(HaveOccurred())
 					err = setupPMTUDNFTChain()
 					Expect(err).NotTo(HaveOccurred())
@@ -1102,7 +1102,7 @@ add element inet ovn-kubernetes no-pmtud-remote-node-ips-v4 { 169.254.253.61 }
 					err = nc.WatchNodes()
 					Expect(err).NotTo(HaveOccurred())
 					nftRules := v6PMTUDNFTRules + `
-add element inet ovn-kubernetes no-pmtud-remote-node-ips-v6 { 2001:db8:1::4 }
+add element inet ovn-kubernetes remote-node-ips-v6 { 2001:db8:1::4 }
 `
 					err = nodenft.MatchNFTRules(nftRules, nft.Dump())
 					Expect(err).NotTo(HaveOccurred())
@@ -1182,7 +1182,7 @@ add element inet ovn-kubernetes no-pmtud-remote-node-ips-v6 { 2001:db8:1::4 }
 					cnnci := NewCommonNodeNetworkControllerInfo(kubeFakeClient, fakeClient.AdminPolicyRouteClient, wf, nil, nodeName, routeManager)
 					nc = newDefaultNodeNetworkController(cnnci, stop, wg, routeManager, nil)
 					nc.initRetryFrameworkForNode()
-					err = setupPMTUDNFTSets()
+					err = setupRemoteNodeNFTSets()
 					Expect(err).NotTo(HaveOccurred())
 					err = setupPMTUDNFTChain()
 					Expect(err).NotTo(HaveOccurred())
@@ -1213,7 +1213,7 @@ add element inet ovn-kubernetes no-pmtud-remote-node-ips-v6 { 2001:db8:1::4 }
 					err = nc.WatchNodes()
 					Expect(err).NotTo(HaveOccurred())
 					nftRules := v6PMTUDNFTRules + `
-add element inet ovn-kubernetes no-pmtud-remote-node-ips-v6 { 2002:db8:1::4 }
+add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 `
 					err = nodenft.MatchNFTRules(nftRules, nft.Dump())
 					Expect(err).NotTo(HaveOccurred())
@@ -1350,7 +1350,7 @@ add element inet ovn-kubernetes no-pmtud-remote-node-ips-v6 { 2002:db8:1::4 }
 					cnnci := NewCommonNodeNetworkControllerInfo(kubeFakeClient, fakeClient.AdminPolicyRouteClient, wf, nil, nodeName, routeManager)
 					nc = newDefaultNodeNetworkController(cnnci, stop, wg, routeManager, nil)
 					nc.initRetryFrameworkForNode()
-					err = setupPMTUDNFTSets()
+					err = setupRemoteNodeNFTSets()
 					Expect(err).NotTo(HaveOccurred())
 					err = setupPMTUDNFTChain()
 					Expect(err).NotTo(HaveOccurred())
@@ -1478,7 +1478,7 @@ add element inet ovn-kubernetes no-pmtud-remote-node-ips-v6 { 2002:db8:1::4 }
 					cnnci := NewCommonNodeNetworkControllerInfo(kubeFakeClient, fakeClient.AdminPolicyRouteClient, wf, nil, nodeName, routeManager)
 					nc = newDefaultNodeNetworkController(cnnci, stop, wg, routeManager, nil)
 					nc.initRetryFrameworkForNode()
-					err = setupPMTUDNFTSets()
+					err = setupRemoteNodeNFTSets()
 					Expect(err).NotTo(HaveOccurred())
 					err = setupPMTUDNFTChain()
 					Expect(err).NotTo(HaveOccurred())
