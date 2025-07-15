@@ -416,6 +416,19 @@ wait_for_event() {
   done
 }
 
+# wait_ovnkube_controller_with_node_done - Wait for ovnkube-controller-with-node process to complete
+# Checks if the ovnkube-controller-with-node process is running by looking for its PID file.
+# If the PID file exists, waits for that process to finish before continuing.
+# If the PID file doesnt exist, it means the process has already exited.
+wait_ovnkube_controller_with_node_done() {
+  local pid_file=${OVN_RUNDIR}/ovnkube-controller-with-node.pid
+   if [[ -f ${pid_file} ]]; then
+     echo "info: waiting on ovnkube-controller-with-node process to end"
+     wait $(cat $pid_file)
+     echo "info: done waiting for ovn-controller-with-node to end"
+  fi
+}
+
 # The ovnkube-db kubernetes service must be populated with OVN DB service endpoints
 # before various OVN K8s containers can come up. This functions checks for that.
 # If OVN dbs are configured to listen only on unix sockets, then there will not be
@@ -1717,7 +1730,10 @@ ovnkube-controller() {
 }
 
 ovnkube-controller-with-node() {
-  trap 'kill $(jobs -p) ; rm -f /etc/cni/net.d/10-ovn-kubernetes.conf ; exit 0' TERM
+  # send sig term to background job (ovnkube-node process), remove CNI conf and resume background job until it ends.
+  # currently we only send ovnkube node process to background, therefore when using fg we are resuming this process and
+  # waiting for it to end.
+  trap 'kill $(jobs -p) ; rm -f /etc/cni/net.d/10-ovn-kubernetes.conf ; wait_ovnkube_controller_with_node_done; exit 0' TERM
   check_ovn_daemonset_version "1.1.0"
   rm -f ${OVN_RUNDIR}/ovnkube-controller-with-node.pid
 
