@@ -275,6 +275,7 @@ func (a *PodAllocator) releasePodOnNAD(pod *corev1.Pod, nad string, network *net
 		hasIPAMClaim = false
 	}
 	if hasIPAMClaim {
+		var err error
 		ipamClaim, err := a.ipamClaimsReconciler.FindIPAMClaim(network.IPAMClaimReference, network.Namespace)
 		hasIPAMClaim = ipamClaim != nil && len(ipamClaim.Status.IPs) > 0
 		if apierrors.IsNotFound(err) {
@@ -314,6 +315,13 @@ func (a *PodAllocator) releasePodOnNAD(pod *corev1.Pod, nad string, network *net
 			)
 		}
 		klog.V(5).Infof("Released IPs %v", util.StringSlice(podAnnotation.IPs))
+	}
+
+	if doRelease {
+		if err := a.podAnnotationAllocator.ReleasePodReservedMacAddress(pod, podAnnotation.MAC); err != nil {
+			return fmt.Errorf(`failed to release pod "%s/%s" mac %q: %v`,
+				pod.Namespace, pod.Name, podAnnotation.MAC, err)
+		}
 	}
 
 	if podDeleted {
