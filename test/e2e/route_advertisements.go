@@ -882,16 +882,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 				}),
 			ginkgo.Entry("pod in the UDN should not be able to access a default network service",
 				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
-					err := true
-					out := curlConnectionTimeoutCode
-					if cudnATemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer2 {
-						// FIXME: prevent looping of traffic in L2 UDNs
-						// bad behaviour: packet is looping from management port -> breth0 -> GR -> management port -> breth0 and so on
-						// which is a never ending loop
-						// this causes curl timeout with code 7 host unreachable instead of code 28
-						out = ""
-					}
-					return podsNetA[0].Name, podsNetA[0].Namespace, net.JoinHostPort(svcNetDefault.Spec.ClusterIPs[ipFamilyIndex], "8080") + "/clientip", out, err
+					return podsNetA[0].Name, podsNetA[0].Namespace, net.JoinHostPort(svcNetDefault.Spec.ClusterIPs[ipFamilyIndex], "8080") + "/clientip", curlConnectionTimeoutCode, true
 				}),
 			ginkgo.Entry("pod in the UDN should be able to access kapi in default network service",
 				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
@@ -899,16 +890,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 				}),
 			ginkgo.Entry("pod in the UDN should not be able to access a service in a different UDN",
 				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
-					err := true
-					out := curlConnectionTimeoutCode
-					if cudnATemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer2 && isLocalGWModeEnabled() {
-						// FIXME: prevent looping of traffic in L2 UDNs
-						// bad behaviour: packet is looping from management port -> breth0 -> GR -> management port -> breth0 and so on
-						// which is a never ending loop
-						// this causes curl timeout with code 7 host unreachable instead of code 28
-						out = ""
-					}
-					return podsNetA[0].Name, podsNetA[0].Namespace, net.JoinHostPort(svcNetB.Spec.ClusterIPs[ipFamilyIndex], "8080") + "/clientip", out, err
+					return podsNetA[0].Name, podsNetA[0].Namespace, net.JoinHostPort(svcNetB.Spec.ClusterIPs[ipFamilyIndex], "8080") + "/clientip", curlConnectionTimeoutCode, true
 				}),
 			ginkgo.Entry("host to a local UDN pod should not work",
 				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {

@@ -280,7 +280,7 @@ func checkDefaultSvcIsolationOVSFlows(flows []string, defaultConfig *bridgeUDNCo
 	Expect(nTable2Flows).To(Equal(1))
 }
 
-func checkAdvertisedUDNSvcIsolationOVSFlows(flows []string, netConfig *bridgeUDNConfiguration, netName, bridgeMAC string, svcCIDR *net.IPNet, expectedNFlows int) {
+func checkAdvertisedUDNSvcIsolationOVSFlows(flows []string, netConfig *bridgeUDNConfiguration, netName string, svcCIDR *net.IPNet, expectedNFlows int) {
 	By(fmt.Sprintf("Checking advertsised UDN %s service isolation flows for %s; expected %d flows",
 		netName, svcCIDR.String(), expectedNFlows))
 
@@ -303,8 +303,8 @@ func checkAdvertisedUDNSvcIsolationOVSFlows(flows []string, netConfig *bridgeUDN
 
 	var nFlows int
 	for _, flow := range flows {
-		if strings.Contains(flow, fmt.Sprintf("priority=200, table=2, %s, %s_src=%s, actions=set_field:%s->eth_dst,output:%s",
-			protoPrefix, protoPrefix, matchingIPFamilySubnet, bridgeMAC, netConfig.ofPortPatch)) {
+		if strings.Contains(flow, fmt.Sprintf("priority=200, table=2, %s, %s_src=%s, actions=drop",
+			protoPrefix, protoPrefix, matchingIPFamilySubnet)) {
 			nFlows++
 		}
 		if strings.Contains(flow, fmt.Sprintf("priority=550, in_port=LOCAL, %s, %s_src=%s, %s_dst=%s, actions=ct(commit,zone=64001,table=2)",
@@ -316,7 +316,7 @@ func checkAdvertisedUDNSvcIsolationOVSFlows(flows []string, netConfig *bridgeUDN
 	Expect(nFlows).To(Equal(expectedNFlows))
 }
 
-func checkUDNSvcIsolationOVSFlows(flows []string, netConfig *bridgeUDNConfiguration, netName, bridgeMAC string, svcCIDR *net.IPNet, expectedNFlows int) {
+func checkUDNSvcIsolationOVSFlows(flows []string, netConfig *bridgeUDNConfiguration, netName string, svcCIDR *net.IPNet, expectedNFlows int) {
 	By(fmt.Sprintf("Checking UDN %s service isolation flows for %s; expected %d flows",
 		netName, svcCIDR.String(), expectedNFlows))
 
@@ -332,8 +332,8 @@ func checkUDNSvcIsolationOVSFlows(flows []string, netConfig *bridgeUDNConfigurat
 
 	var nFlows int
 	for _, flow := range flows {
-		if strings.Contains(flow, fmt.Sprintf("priority=200, table=2, %s, %s_src=%s, actions=set_field:%s->eth_dst,output:%s",
-			protoPrefix, protoPrefix, mgmtMasqIP, bridgeMAC, netConfig.ofPortPatch)) {
+		if strings.Contains(flow, fmt.Sprintf("priority=200, table=2, %s, %s_src=%s, actions=drop",
+			protoPrefix, protoPrefix, mgmtMasqIP)) {
 			nFlows++
 		}
 	}
@@ -797,7 +797,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 				checkDefaultSvcIsolationOVSFlows(flowMap["DEFAULT"], defaultUdnConfig, ofPortHost, bridgeMAC, svcCIDR)
 
 				// Expect exactly one flow per UDN for table 2 for service isolation.
-				checkUDNSvcIsolationOVSFlows(flowMap["DEFAULT"], bridgeUdnConfig, "bluenet", bridgeMAC, svcCIDR, 1)
+				checkUDNSvcIsolationOVSFlows(flowMap["DEFAULT"], bridgeUdnConfig, "bluenet", svcCIDR, 1)
 			}
 
 			// The second call to checkPorts() will return no ofPort for the UDN - simulating a deletion that already was
@@ -827,7 +827,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 				checkDefaultSvcIsolationOVSFlows(flowMap["DEFAULT"], defaultUdnConfig, ofPortHost, bridgeMAC, svcCIDR)
 
 				// Expect no more flows per UDN for table 2 for service isolation.
-				checkUDNSvcIsolationOVSFlows(flowMap["DEFAULT"], bridgeUdnConfig, "bluenet", bridgeMAC, svcCIDR, 0)
+				checkUDNSvcIsolationOVSFlows(flowMap["DEFAULT"], bridgeUdnConfig, "bluenet", svcCIDR, 0)
 			}
 			return nil
 		})
@@ -1028,7 +1028,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 				checkDefaultSvcIsolationOVSFlows(flowMap["DEFAULT"], defaultUdnConfig, ofPortHost, bridgeMAC, svcCIDR)
 
 				// Expect exactly one flow per UDN for tables 0 and 2 for service isolation.
-				checkUDNSvcIsolationOVSFlows(flowMap["DEFAULT"], bridgeUdnConfig, "bluenet", bridgeMAC, svcCIDR, 1)
+				checkUDNSvcIsolationOVSFlows(flowMap["DEFAULT"], bridgeUdnConfig, "bluenet", svcCIDR, 1)
 			}
 
 			// The second call to checkPorts() will return no ofPort for the UDN - simulating a deletion that already was
@@ -1058,7 +1058,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 				checkDefaultSvcIsolationOVSFlows(flowMap["DEFAULT"], defaultUdnConfig, ofPortHost, bridgeMAC, svcCIDR)
 
 				// Expect no more flows per UDN for tables 0 and 2 for service isolation.
-				checkUDNSvcIsolationOVSFlows(flowMap["DEFAULT"], bridgeUdnConfig, "bluenet", bridgeMAC, svcCIDR, 0)
+				checkUDNSvcIsolationOVSFlows(flowMap["DEFAULT"], bridgeUdnConfig, "bluenet", svcCIDR, 0)
 			}
 			return nil
 		})
@@ -1269,7 +1269,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 				checkDefaultSvcIsolationOVSFlows(flowMap["DEFAULT"], defaultUdnConfig, ofPortHost, bridgeMAC, svcCIDR)
 
 				// Expect exactly one flow per advertised UDN for table 2 and table 0 for service isolation.
-				checkAdvertisedUDNSvcIsolationOVSFlows(flowMap["DEFAULT"], bridgeUdnConfig, "bluenet", bridgeMAC, svcCIDR, 2)
+				checkAdvertisedUDNSvcIsolationOVSFlows(flowMap["DEFAULT"], bridgeUdnConfig, "bluenet", svcCIDR, 2)
 			}
 
 			// The second call to checkPorts() will return no ofPort for the UDN - simulating a deletion that already was
@@ -1299,7 +1299,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 				checkDefaultSvcIsolationOVSFlows(flowMap["DEFAULT"], defaultUdnConfig, ofPortHost, bridgeMAC, svcCIDR)
 
 				// Expect no more flows per UDN for table 2 and table0 for service isolation.
-				checkAdvertisedUDNSvcIsolationOVSFlows(flowMap["DEFAULT"], bridgeUdnConfig, "bluenet", bridgeMAC, svcCIDR, 0)
+				checkAdvertisedUDNSvcIsolationOVSFlows(flowMap["DEFAULT"], bridgeUdnConfig, "bluenet", svcCIDR, 0)
 			}
 			return nil
 		})
