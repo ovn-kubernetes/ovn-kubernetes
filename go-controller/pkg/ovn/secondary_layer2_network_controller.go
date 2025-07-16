@@ -724,7 +724,7 @@ func (oc *SecondaryLayer2NetworkController) addUpdateRemoteNodeEvent(node *corev
 }
 
 func (oc *SecondaryLayer2NetworkController) ensureRemoteNodeGR(node *corev1.Node) error {
-	gatewayRouterTransitNetworks, clusterRouterTransitNeworks, err := layer2TransitNetworksPerNode(node)
+	gatewayRouterTransitNetworks, clusterRouterTransitNeworks, err := layer2TransitNetworksPerNode(node, oc.GetNetInfo())
 	if err != nil {
 		return nil
 	}
