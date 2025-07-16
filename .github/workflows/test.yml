@@ -314,26 +314,7 @@ jobs:
         echo "$GOPATH/bin" >> $GITHUB_PATH
 
     - name: Free up disk space
-      run: |
-        df -h
-        sudo rm -rf /usr/local/lib/android/sdk
-        sudo apt-get update
-        sudo eatmydata apt-get purge --auto-remove -y \
-          azure-cli firefox \
-          google-chrome-stable \
-          llvm-* microsoft-edge-stable \
-          powershell temurin-* zulu-*
-        # clean unused packages
-        sudo apt-get autoclean
-        sudo apt-get autoremove -y
-        # clean apt cache
-        sudo apt-get clean
-        sudo docker system prune -af --volumes
-        df -h
-        sudo swapon --show
-        sudo swapoff -a
-        sudo rm -f /mnt/swapfile
-        df -h
+      uses: ./.github/actions/free-disk-space
 
     - name: Download test-image-master
       uses: actions/download-artifact@v4
@@ -510,6 +491,12 @@ jobs:
       ENABLE_ROUTE_ADVERTISEMENTS: "${{ matrix.routeadvertisements != '' }}"
       ADVERTISE_DEFAULT_NETWORK:  "${{ matrix.routeadvertisements == 'advertise-default' }}"
     steps:
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v4
+
+    - name: Runner Diagnostics
+      if: always()
+      uses: ./.github/actions/diagnostics
 
     - name: Install VRF kernel module
       run: |
@@ -519,26 +506,7 @@ jobs:
         sudo modprobe vrf
 
     - name: Free up disk space
-      run: |
-        df -h
-        sudo rm -rf /usr/local/lib/android/sdk
-        sudo apt-get update
-        sudo eatmydata apt-get purge --auto-remove -y \
-          azure-cli firefox \
-          google-chrome-stable \
-          llvm-* microsoft-edge-stable \
-          powershell temurin-* zulu-*
-        # clean unused packages
-        sudo apt-get autoclean
-        sudo apt-get autoremove -y
-        # clean apt cache
-        sudo apt-get clean
-        sudo docker system prune -af --volumes
-        df -h
-        sudo swapon --show
-        sudo swapoff -a
-        sudo rm -f /mnt/swapfile
-        df -h
+      uses: ./.github/actions/free-disk-space
 
     - name: Setup /mnt/runner directory
       run: |
@@ -557,9 +525,6 @@ jobs:
         sudo mv -f /etc/docker/daemon.$$ /etc/docker/daemon.json
         sudo systemctl start docker docker.socket
         docker system info
-
-    - name: Check out code into the Go module directory
-      uses: actions/checkout@v4
 
     - name: Set up Go
       uses: actions/setup-go@v5
@@ -733,8 +698,13 @@ jobs:
       KIND_NUM_ZONES: "${{ matrix.num-zones }}"
       KIND_NUM_NODES_PER_ZONE: "${{ matrix.num-nodes-per-zone }}"
     steps:
+
     - name: Check out code into the Go module directory
       uses: actions/checkout@v4
+
+    - name: Runner Diagnostics
+      if: always()
+      uses: ./.github/actions/diagnostics
 
     - name: Set up Go
       uses: actions/setup-go@v5
@@ -754,26 +724,7 @@ jobs:
         echo "$GOPATH/bin" >> $GITHUB_PATH
 
     - name: Free up disk space
-      run: |
-        df -h
-        sudo rm -rf /usr/local/lib/android/sdk
-        sudo apt-get update
-        sudo eatmydata apt-get purge --auto-remove -y \
-          azure-cli firefox \
-          google-chrome-stable \
-          llvm-* microsoft-edge-stable \
-          powershell temurin-* zulu-*
-        # clean unused packages
-        sudo apt-get autoclean
-        sudo apt-get autoremove -y
-        # clean apt cache
-        sudo apt-get clean
-        sudo docker system prune -af --volumes
-        df -h
-        sudo swapon --show
-        sudo swapoff -a
-        sudo rm -f /mnt/swapfile
-        df -h
+      uses: ./.github/actions/free-disk-space
 
     - name: Disable ufw
       # For IPv6 and Dualstack, ufw (Uncomplicated Firewall) should be disabled.
