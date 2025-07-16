@@ -565,10 +565,14 @@ func (m *externalPolicyManager) onPodUpdate(oldObj, newObj interface{}) {
 		utilruntime.HandleError(errors.New("invalid Pod provided to onPodUpdate()"))
 		return
 	}
-	// if labels AND assigned Pod IPs AND the multus network status annotations are the same, skip processing changes to the pod.
+	// if labels AND assigned Pod IPs AND the multus network status annotations AND
+	// pod status conditions (PodReady) AND deletion timestamp (PodTerminating) are
+	// the same, skip processing changes to the pod.
 	if reflect.DeepEqual(o.Labels, n.Labels) &&
 		reflect.DeepEqual(o.Status.PodIPs, n.Status.PodIPs) &&
-		reflect.DeepEqual(o.Annotations[nettypes.NetworkStatusAnnot], n.Annotations[nettypes.NetworkStatusAnnot]) {
+		reflect.DeepEqual(o.Annotations[nettypes.NetworkStatusAnnot], n.Annotations[nettypes.NetworkStatusAnnot]) &&
+		reflect.DeepEqual(o.Status.Conditions, n.Status.Conditions) &&
+		reflect.DeepEqual(o.DeletionTimestamp, n.DeletionTimestamp) {
 		return
 	}
 	m.podQueue.Add(n)

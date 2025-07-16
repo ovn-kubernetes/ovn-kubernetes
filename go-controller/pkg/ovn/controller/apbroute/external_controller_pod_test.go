@@ -448,6 +448,163 @@ var _ = Describe("OVN External Gateway pod", func() {
 		})
 
 	})
+
+	var _ = Context("When pod goes into terminating or not ready state", func() {
+
+		DescribeTable("reconciles a pod gateway in terminating or not ready state that matches two policies", func(
+			terminating bool,
+		) {
+			initController([]runtime.Object{namespaceGW, namespaceTarget, namespaceTarget2, targetPod1, targetPod2, pod1},
+				[]runtime.Object{dynamicPolicy, dynamicPolicyDiffTargetNS})
+
+			expectedPolicy1, expectedRefs1 := expectedPolicyStateAndRefs(
+				[]*namespaceWithPods{namespaceTarget2WithPod},
+				nil,
+				[]*namespaceWithPods{namespaceGWWithPod}, false)
+
+			expectedPolicy2, expectedRefs2 := expectedPolicyStateAndRefs(
+				[]*namespaceWithPods{namespaceTargetWithPod},
+				nil,
+				[]*namespaceWithPods{namespaceGWWithPod}, false)
+
+			eventuallyExpectNumberOfPolicies(2)
+			eventuallyExpectConfig(dynamicPolicy.Name, expectedPolicy1, expectedRefs1)
+			eventuallyExpectConfig(dynamicPolicyDiffTargetNS.Name, expectedPolicy2, expectedRefs2)
+
+			if terminating {
+				By("Setting deletion timestamp for the ex gw pod")
+				setPodDeletionTimestamp(pod1, &metav1.Time{Time: time.Now().Add(1000 * time.Second)}, fakeClient)
+			} else {
+				By("Updating the ex gw pod status to mark it as not ready")
+				setPodConditionReady(pod1, corev1.ConditionFalse, fakeClient)
+			}
+
+			expectedPolicy1, expectedRefs1 = expectedPolicyStateAndRefs(
+				[]*namespaceWithPods{namespaceTarget2WithPod},
+				nil,
+				[]*namespaceWithPods{namespaceGWWithoutPod}, false)
+
+			expectedPolicy2, expectedRefs2 = expectedPolicyStateAndRefs(
+				[]*namespaceWithPods{namespaceTargetWithPod},
+				nil,
+				[]*namespaceWithPods{namespaceGWWithoutPod}, false)
+
+			eventuallyExpectNumberOfPolicies(2)
+			eventuallyExpectConfig(dynamicPolicy.Name, expectedPolicy1, expectedRefs1)
+			eventuallyExpectConfig(dynamicPolicyDiffTargetNS.Name, expectedPolicy2, expectedRefs2)
+		},
+			Entry("Gateway pod in terminating state", true),
+			Entry("Gateway pod in not ready state", false),
+		)
+
+		DescribeTable("reconciles a pod gateway in terminating or not ready state that does not match any policy", func(
+			terminating bool,
+		) {
+			noMatchPolicy := newPolicy(
+				"noMatchPolicy",
+				&metav1.LabelSelector{MatchLabels: targetNamespace1Match},
+				nil,
+				&metav1.LabelSelector{MatchLabels: gatewayNamespaceMatch},
+				&metav1.LabelSelector{MatchLabels: map[string]string{"key": "nomatch"}},
+				false,
+			)
+			initController([]runtime.Object{namespaceGW, namespaceTarget, pod1}, []runtime.Object{noMatchPolicy})
+
+			expectedPolicy, expectedRefs := expectedPolicyStateAndRefs(
+				[]*namespaceWithPods{namespaceTargetWithoutPod},
+				nil,
+				[]*namespaceWithPods{namespaceGWWithoutPod}, false)
+
+			eventuallyExpectNumberOfPolicies(1)
+			eventuallyExpectConfig(noMatchPolicy.Name, expectedPolicy, expectedRefs)
+
+			if terminating {
+				By("Setting deletion timestamp for the ex gw pod")
+				setPodDeletionTimestamp(pod1, &metav1.Time{Time: time.Now().Add(1000 * time.Second)}, fakeClient)
+			} else {
+				By("Updating the ex gw pod status to mark it as not ready")
+				setPodConditionReady(pod1, corev1.ConditionFalse, fakeClient)
+			}
+			//  make sure pod event is handled
+			time.Sleep(100 * time.Millisecond)
+
+			eventuallyExpectNumberOfPolicies(1)
+			eventuallyExpectConfig(noMatchPolicy.Name, expectedPolicy, expectedRefs)
+		},
+			Entry("Gateway pod in terminating state", true),
+			Entry("Gateway pod in not ready state", false),
+		)
+
+		DescribeTable("reconciles a pod gateway in terminating or not ready state that is one of two pods that matches two policies", func(
+			terminating bool,
+		) {
+			initController([]runtime.Object{namespaceGW, namespaceTarget, namespaceTarget2, targetPod1, targetPod2, pod1, pod2},
+				[]runtime.Object{dynamicPolicy, dynamicPolicyDiffTargetNS})
+			namespaceGWWith2Pods := newNamespaceWithPods(namespaceGW.Name, pod1, pod2)
+			expectedPolicy1, expectedRefs1 := expectedPolicyStateAndRefs(
+				[]*namespaceWithPods{namespaceTarget2WithPod},
+				nil,
+				[]*namespaceWithPods{namespaceGWWith2Pods}, false)
+
+			expectedPolicy2, expectedRefs2 := expectedPolicyStateAndRefs(
+				[]*namespaceWithPods{namespaceTargetWithPod},
+				nil,
+				[]*namespaceWithPods{namespaceGWWith2Pods}, false)
+
+			eventuallyExpectNumberOfPolicies(2)
+			eventuallyExpectConfig(dynamicPolicy.Name, expectedPolicy1, expectedRefs1)
+			eventuallyExpectConfig(dynamicPolicyDiffTargetNS.Name, expectedPolicy2, expectedRefs2)
+
+			if terminating {
+				By("Setting deletion timestamp for the ex gw pod")
+				setPodDeletionTimestamp(pod1, &metav1.Time{Time: time.Now().Add(1000 * time.Second)}, fakeClient)
+			} else {
+				By("Updating the ex gw pod status to mark it as not ready")
+				setPodConditionReady(pod1, corev1.ConditionFalse, fakeClient)
+			}
+
+			namespaceGWWith1Pod := newNamespaceWithPods(namespaceGW.Name, pod2)
+
+			expectedPolicy1, expectedRefs1 = expectedPolicyStateAndRefs(
+				[]*namespaceWithPods{namespaceTarget2WithPod},
+				nil,
+				[]*namespaceWithPods{namespaceGWWith1Pod}, false)
+
+			expectedPolicy2, expectedRefs2 = expectedPolicyStateAndRefs(
+				[]*namespaceWithPods{namespaceTargetWithPod},
+				nil,
+				[]*namespaceWithPods{namespaceGWWith1Pod}, false)
+
+			eventuallyExpectNumberOfPolicies(2)
+			eventuallyExpectConfig(dynamicPolicy.Name, expectedPolicy1, expectedRefs1)
+			eventuallyExpectConfig(dynamicPolicyDiffTargetNS.Name, expectedPolicy2, expectedRefs2)
+
+			if terminating {
+				By("Removing deletion timestamp for the ex gw pod")
+				setPodDeletionTimestamp(pod1, nil, fakeClient)
+			} else {
+				By("Updating the ex gw pod status to mark it as ready")
+				setPodConditionReady(pod1, corev1.ConditionTrue, fakeClient)
+			}
+
+			expectedPolicy1, expectedRefs1 = expectedPolicyStateAndRefs(
+				[]*namespaceWithPods{namespaceTarget2WithPod},
+				nil,
+				[]*namespaceWithPods{namespaceGWWith2Pods}, false)
+
+			expectedPolicy2, expectedRefs2 = expectedPolicyStateAndRefs(
+				[]*namespaceWithPods{namespaceTargetWithPod},
+				nil,
+				[]*namespaceWithPods{namespaceGWWith2Pods}, false)
+
+			eventuallyExpectNumberOfPolicies(2)
+			eventuallyExpectConfig(dynamicPolicy.Name, expectedPolicy1, expectedRefs1)
+			eventuallyExpectConfig(dynamicPolicyDiffTargetNS.Name, expectedPolicy2, expectedRefs2)
+		},
+			Entry("Gateway pod in terminating state", true),
+			Entry("Gateway pod in not ready state", false),
+		)
+	})
 })
 
 func deletePod(pod *corev1.Pod, fakeClient *fake.Clientset) {
@@ -474,6 +631,36 @@ func updatePodStatus(pod *corev1.Pod, podStatus corev1.PodStatus) {
 	Expect(err).NotTo(HaveOccurred())
 	incrementResourceVersion(p)
 	p.Status = podStatus
+	_, err = fakeClient.CoreV1().Pods(pod.Namespace).Update(context.Background(), p, metav1.UpdateOptions{})
+	Expect(err).NotTo(HaveOccurred())
+}
+
+func setPodDeletionTimestamp(pod *corev1.Pod, deletionTimestamp *metav1.Time, fakeClient *fake.Clientset) {
+	p, err := fakeClient.CoreV1().Pods(pod.Namespace).Get(context.TODO(), pod.Name, metav1.GetOptions{})
+	Expect(err).NotTo(HaveOccurred())
+	incrementResourceVersion(p)
+	p.DeletionTimestamp = deletionTimestamp
+	_, err = fakeClient.CoreV1().Pods(pod.Namespace).Update(context.Background(), p, metav1.UpdateOptions{})
+	Expect(err).NotTo(HaveOccurred())
+}
+
+func setPodConditionReady(pod *corev1.Pod, condStatus corev1.ConditionStatus, fakeClient *fake.Clientset) {
+	p, err := fakeClient.CoreV1().Pods(pod.Namespace).Get(context.TODO(), pod.Name, metav1.GetOptions{})
+	Expect(err).NotTo(HaveOccurred())
+	incrementResourceVersion(p)
+	if p.Status.Conditions != nil {
+		for i := range p.Status.Conditions {
+			if p.Status.Conditions[i].Type == corev1.PodReady {
+				p.Status.Conditions[i].Status = condStatus
+			}
+		}
+	} else {
+		notReadyCondition := corev1.PodCondition{
+			Type:   corev1.PodReady,
+			Status: corev1.ConditionFalse,
+		}
+		p.Status.Conditions = []corev1.PodCondition{notReadyCondition}
+	}
 	_, err = fakeClient.CoreV1().Pods(pod.Namespace).Update(context.Background(), p, metav1.UpdateOptions{})
 	Expect(err).NotTo(HaveOccurred())
 }

@@ -124,6 +124,12 @@ func newPod(namespace, name, node, podIP string) *corev1.Pod {
 			Phase:  corev1.PodRunning,
 			PodIP:  podIP,
 			PodIPs: podIPs,
+			Conditions: []corev1.PodCondition{
+				{
+					Type:   corev1.PodReady,
+					Status: corev1.ConditionTrue,
+				},
+			},
 		},
 	}
 }
