@@ -291,12 +291,20 @@ func startOvnKube(ctx *cli.Context, cancel context.CancelFunc) error {
 			return fmt.Errorf("failed to start the node certificate manager: %w", err)
 		}
 	}
-	ovnClientset, err := util.NewOVNClientset(&config.Kubernetes)
+
+	runMode, err := determineOvnkubeRunMode(ctx)
 	if err != nil {
 		return err
 	}
 
-	runMode, err := determineOvnkubeRunMode(ctx)
+	agentName := ""
+	if runMode.node {
+		agentName = "node"
+	} else if runMode.clusterManager {
+		agentName = "cluster-manager"
+	}
+
+	ovnClientset, err := util.NewOVNClientset(&config.Kubernetes, agentName)
 	if err != nil {
 		return err
 	}
