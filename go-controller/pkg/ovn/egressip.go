@@ -2648,7 +2648,7 @@ func ipFamilyName(isIPv6 bool) string {
 
 func (e *EgressIPController) getTransitIP(node *corev1.Node, wantsIPv6 bool, ni util.NetInfo) (string, error) {
 	if ni.TopologyType() == types.Layer2Topology {
-		gatewayRouterTransitNetworks, _, err := layer2TransitNetworksPerNode(node)
+		gatewayRouterTransitNetworks, _, err := layer2TransitNetworksPerNode(node, ni)
 		if err != nil {
 			return "", err
 		}
