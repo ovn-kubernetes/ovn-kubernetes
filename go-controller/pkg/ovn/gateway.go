@@ -1477,7 +1477,7 @@ func (gw *GatewayManager) initLayer2Info(nodeName string) error {
 	if err != nil {
 		return err
 	}
-	gatewayRouterTransitNetworks, clusterRouterTransitNetworks, err := layer2TransitNetworksPerNode(node)
+	gatewayRouterTransitNetworks, clusterRouterTransitNetworks, err := layer2TransitNetworksPerNode(node, gw.netInfo)
 	if err != nil {
 		return err
 	}
