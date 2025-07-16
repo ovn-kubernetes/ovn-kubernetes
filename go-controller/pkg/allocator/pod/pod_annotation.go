@@ -476,3 +476,36 @@ func allocatePodAnnotationWithRollback(
 
 	return
 }
+
+// ReleasePodAddressPoolResources releases the IP and MAC addresses from the address pool
+// when a pod is deleted. This should be called during pod deletion to clean up
+// the addresses from the pool to prevent conflicts.
+func (allocator *PodAnnotationAllocator) ReleasePodAddressPoolResources(pod *corev1.Pod, nadName string) error {
+	// Get the pod annotation to extract IP and MAC addresses
+	podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, nadName)
+	if err != nil {
+		if util.IsAnnotationNotSetError(err) {
+			// No annotation means no resources to clean up
+			return nil
+		}
+		return fmt.Errorf("failed to unmarshal pod annotation for %s/%s: %w", pod.Namespace, pod.Name, err)
+	}
+
+	networkName := allocator.netInfo.GetNetworkName()
+
+	// Remove IPs from the address pool
+	if len(podAnnotation.IPs) > 0 {
+		allocator.addressPoolManager.RemoveIPsFromPool(networkName, podAnnotation.IPs)
+		klog.V(5).Infof("Removed IPs %v from address pool for network %s during pod deletion: %s/%s",
+			util.StringSlice(podAnnotation.IPs), networkName, pod.Namespace, pod.Name)
+	}
+
+	// Remove MAC from the address pool
+	if len(podAnnotation.MAC) > 0 {
+		allocator.addressPoolManager.RemoveMACFromPool(networkName, podAnnotation.MAC)
+		klog.V(5).Infof("Removed MAC %s from address pool for network %s during pod deletion: %s/%s",
+			podAnnotation.MAC, networkName, pod.Namespace, pod.Name)
+	}
+
+	return nil
+}

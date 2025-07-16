@@ -313,6 +313,16 @@ func (a *PodAllocator) releasePodOnNAD(pod *corev1.Pod, nad string, network *net
 			)
 		}
 		klog.V(5).Infof("Released IPs %v", util.StringSlice(podAnnotation.IPs))
+
+		if config.OVNKubernetesFeature.EnablePreconfiguredUDNAddresses &&
+			a.netInfo.IsPrimaryNetwork() && a.netInfo.TopologyType() == types.Layer2Topology {
+			err = a.podAnnotationAllocator.ReleasePodAddressPoolResources(pod, nad)
+			if err != nil {
+				// Log the error but don't fail the deletion - the main IP/ID cleanup is more critical
+				klog.Errorf("Failed to release address pool resources for pod %s/%s and nad %s: %v",
+					pod.Namespace, pod.Name, nad, err)
+			}
+		}
 	}
 
 	if podDeleted {
