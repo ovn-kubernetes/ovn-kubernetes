@@ -197,23 +197,26 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 		release   bool
 	}
 	tests := []struct {
-		name             string
-		args             args
-		ipam             bool
-		idAllocation     bool
-		tracked          bool
-		role             string
-		expectAllocate   bool
-		expectIPRelease  bool
-		expectIDRelease  bool
-		expectMACReserve *net.HardwareAddr
-		expectMACOwnerID string
-		failReserveMAC   error
-		expectTracked    bool
-		fullIPPool       bool
-		expectEvents     []string
-		expectError      string
-		podAnnotation    *util.PodAnnotation
+		name              string
+		args              args
+		ipam              bool
+		idAllocation      bool
+		tracked           bool
+		role              string
+		expectAllocate    bool
+		expectIPRelease   bool
+		expectIDRelease   bool
+		expectMACRelease  net.HardwareAddr
+		expectMACReserve  *net.HardwareAddr
+		expectMACOwnerID  string
+		failReserveMAC    error
+		expectTracked     bool
+		fullIPPool        bool
+		expectEvents      []string
+		expectError       string
+		podAnnotation     *util.PodAnnotation
+		newPodCopyRunning bool
+		podListerErr      error
 	}{
 		{
 			name: "Pod not scheduled",
@@ -589,6 +592,74 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 			},
 			expectError: `failed to update pod namespace/pod: failed to reserve MAC address "0a:0a:0a:0a:0a:0a" for owner "namespace/pod" on network attachment "namespace/nad": test reserve failure`,
 		},
+		// podAllocator's macManager remove mac record on pod complete/deleted
+		{
+			name:          "Pod completed, macManager should release MAC",
+			ipam:          true,
+			podAnnotation: &util.PodAnnotation{MAC: net.HardwareAddr{0x0a, 0x0a, 0x0a, 0x0a, 0x0a, 0x0a}},
+			args: args{
+				release: true,
+				new: &testPod{
+					scheduled: true,
+					completed: true,
+					network:   &nadapi.NetworkSelectionElement{Namespace: "namespace", Name: "nad"},
+				},
+			},
+			expectMACRelease: net.HardwareAddr{0x0a, 0x0a, 0x0a, 0x0a, 0x0a, 0x0a},
+			expectIPRelease:  true,
+			expectTracked:    true,
+		},
+		{
+			name:          "Pod completed, macManager should release MAC when pod has VM label ",
+			ipam:          true,
+			podAnnotation: &util.PodAnnotation{MAC: net.HardwareAddr{0x0a, 0x0a, 0x0a, 0x0a, 0x0a, 0x0a}},
+			args: args{
+				release: true,
+				new: &testPod{
+					scheduled: true,
+					completed: true,
+					network:   &nadapi.NetworkSelectionElement{Namespace: "namespace", Name: "nad"},
+					labels:    map[string]string{"vm.kubevirt.io/name": "myvm"},
+				},
+			},
+			expectMACRelease: net.HardwareAddr{0x0a, 0x0a, 0x0a, 0x0a, 0x0a, 0x0a},
+			expectIPRelease:  true,
+			expectTracked:    true,
+		},
+		{
+			name:          "Pod completed, macManager should NOT release MAC when pod has VM label & not all VM pods completed",
+			ipam:          true,
+			podAnnotation: &util.PodAnnotation{MAC: net.HardwareAddr{0x0a, 0x0a, 0x0a, 0x0a, 0x0a, 0x0a}},
+			args: args{
+				release: true,
+				new: &testPod{
+					scheduled: true,
+					completed: true,
+					network:   &nadapi.NetworkSelectionElement{Namespace: "namespace", Name: "nad"},
+					labels:    map[string]string{"vm.kubevirt.io/name": ""},
+				},
+			},
+			newPodCopyRunning: true,
+			expectTracked:     true,
+			expectIPRelease:   true,
+		},
+		{
+			name:          "Pod completed, macManager should fail when fail checking all vm pods in complete state",
+			ipam:          true,
+			podAnnotation: &util.PodAnnotation{MAC: net.HardwareAddr{0x0a, 0x0a, 0x0a, 0x0a, 0x0a, 0x0a}},
+			args: args{
+				release: true,
+				new: &testPod{
+					scheduled: true,
+					completed: true,
+					network:   &nadapi.NetworkSelectionElement{Namespace: "namespace", Name: "nad"},
+					labels:    map[string]string{"vm.kubevirt.io/name": "myvm"},
+				},
+			},
+			podListerErr:    errors.New("test error"),
+			expectError:     `failed to release pod "namespace/pod" mac "0a:0a:0a:0a:0a:0a": failed checking all VM "namespace/myvm" pods are completed: failed finding related pods for pod namespace/pod when checking if they are completed: test error`,
+			expectIPRelease: true,
+		},
 		// podAllocator compose MAC owner IDs as expected
 		{
 			name: "should compose MAC owner ID from pod.namespace and pod.name",
@@ -602,6 +673,20 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 			expectAllocate:   true,
 		},
 		{
+			name: "Pod completed, should compose MAC owner ID from pod.namespace and pod.name",
+			ipam: true,
+			args: args{
+				release: true,
+				new: &testPod{
+					scheduled: true, completed: true,
+					network: &nadapi.NetworkSelectionElement{Namespace: "namespace", Name: "nad"},
+				},
+			},
+			expectMACOwnerID: "namespace/pod",
+			expectTracked:    true,
+			expectIPRelease:  true,
+		},
+		{
 			// verify mac conflict not raised on VM migration scenario
 			name:             "Given pod with VM label, should compose MAC owner ID from pod.namespace and VM label",
 			expectMACOwnerID: "namespace/myvm",
@@ -613,6 +698,22 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 				},
 			},
 			expectAllocate: true,
+		},
+		{
+			// verify mac conflict not raised on VM migration scenario
+			name: "Pod completed, given pod with VM label, should compose MAC owner ID from pod.namespace and VM label",
+			ipam: true,
+			args: args{
+				release: true,
+				new: &testPod{
+					scheduled: true, completed: true,
+					network: &nadapi.NetworkSelectionElement{Namespace: "namespace", Name: "nad"},
+					labels:  map[string]string{"vm.kubevirt.io/name": "myvm"},
+				},
+			},
+			expectMACOwnerID: "namespace/myvm",
+			expectTracked:    true,
+			expectIPRelease:  true,
 		},
 	}
 	for _, tt := range tests {
@@ -628,6 +729,10 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 			nodeListerMock := &v1mocks.NodeLister{}
 			kubeMock := &kubemocks.InterfaceOVN{}
 			podNamespaceLister := &v1mocks.PodNamespaceLister{}
+
+			if tt.podListerErr != nil {
+				podNamespaceLister.On("List", mock.AnythingOfType("labels.internalSelector")).Return(nil, errors.New("test error"))
+			}
 
 			podListerMock.On("Pods", mock.AnythingOfType("string")).Return(podNamespaceLister)
 
@@ -730,6 +835,15 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 			if tt.args.new != nil {
 				new = tt.args.new.getPod(t)
 				podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(new, nil)
+
+				pods := []*corev1.Pod{new}
+				if tt.newPodCopyRunning {
+					p1 := new.DeepCopy()
+					p1.Status.Phase = corev1.PodRunning
+					p1.UID = "copy"
+					pods = append(pods, p1)
+				}
+				podNamespaceLister.On("List", mock.AnythingOfType("labels.internalSelector")).Return(pods, nil)
 			}
 
 			if tt.tracked {
@@ -781,6 +895,9 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 			}
 			if tt.expectMACReserve != nil && macManager.reservedMAC.String() != tt.expectMACReserve.String() {
 				t.Errorf("expected pod MAC reserved to be %v but it was %v", tt.expectMACReserve, macManager.reservedMAC)
+			}
+			if tt.expectMACRelease.String() != macManager.releasedMAC.String() {
+				t.Errorf("expected pod MAC releaed to be %v but it was %v", tt.expectMACRelease, macManager.releasedMAC)
 			}
 			if tt.expectMACOwnerID != "" && tt.expectMACOwnerID != macManager.ownerID {
 				t.Errorf("expected pod MAC owner ID to be %v but it was %v", tt.expectMACOwnerID, macManager.ownerID)
