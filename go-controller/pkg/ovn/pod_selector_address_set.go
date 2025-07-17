@@ -21,6 +21,7 @@ import (
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
@@ -368,7 +369,7 @@ func (handlerInfo *PodSelectorAddrSetHandlerInfo) addPods(pods ...*corev1.Pod) e
 	}
 	ips := make([]net.IP, 0, len(pods)*podIPFactor)
 	for _, pod := range pods {
-		podIPs, err := util.GetPodIPsOfNetwork(pod, handlerInfo.netInfo)
+		podIPs, err := podannotation.GetPodIPsOfNetwork(pod, handlerInfo.netInfo)
 		if err != nil {
 			// not finding pod IPs on a remote pod is common until the other node wires the pod, suppress it
 			return ovntypes.NewSuppressedError(err)
@@ -380,7 +381,7 @@ func (handlerInfo *PodSelectorAddrSetHandlerInfo) addPods(pods ...*corev1.Pod) e
 
 // must be called with PodSelectorAddrSetHandlerInfo read lock
 func (handlerInfo *PodSelectorAddrSetHandlerInfo) deletePod(pod *corev1.Pod) error {
-	ips, err := util.GetPodIPsOfNetwork(pod, handlerInfo.netInfo)
+	ips, err := podannotation.GetPodIPsOfNetwork(pod, handlerInfo.netInfo)
 	if err != nil {
 		// if pod ips can't be fetched on delete, we don't expect that information about ips will ever be updated,
 		// therefore just log the error and return.
@@ -466,7 +467,7 @@ func (bnc *BaseNetworkController) podSelectorPodNeedsDelete(pod *corev1.Pod, pod
 	if !util.PodCompleted(pod) {
 		return "", nil
 	}
-	ips, err := util.GetPodIPsOfNetwork(pod, bnc.GetNetInfo())
+	ips, err := podannotation.GetPodIPsOfNetwork(pod, bnc.GetNetInfo())
 	if err != nil {
 		// if pod has no IP, nothing to do
 		klog.Warningf("Failed to get IPs of pod %s/%s during address_set pod selector removal: %v",
