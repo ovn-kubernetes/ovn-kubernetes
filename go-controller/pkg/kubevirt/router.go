@@ -12,6 +12,7 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -99,7 +100,7 @@ func EnsureLocalZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory, 
 		if err != nil {
 			return fmt.Errorf("failed getting to list node %q for pod %s/%s: %w", pod.Spec.NodeName, pod.Namespace, pod.Name, err)
 		}
-		gatewayIPs, err := util.ParseNodeGatewayRouterJoinAddrs(node, types.DefaultNetworkName)
+		gatewayIPs, err := udn.GetGWRouterIPs(node, &util.DefaultNetInfo{})
 		if err != nil {
 			return fmt.Errorf("failed to get default network gateway router join IPs for node %q: %w", node.Name, err)
 		}
