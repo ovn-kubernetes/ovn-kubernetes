@@ -16,6 +16,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip/subnet"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/persistentips"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -60,7 +61,7 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotation(
 	reallocateIP bool,
 	networkRole string) (
 	*corev1.Pod,
-	*util.PodAnnotation,
+	*podannotation.PodAnnotation,
 	error) {
 
 	return allocatePodAnnotation(
@@ -89,7 +90,7 @@ func allocatePodAnnotation(
 	reallocateIP bool,
 	networkRole string) (
 	updatedPod *corev1.Pod,
-	podAnnotation *util.PodAnnotation,
+	podAnnotation *podannotation.PodAnnotation,
 	err error) {
 
 	// no id allocation
@@ -143,7 +144,7 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotationWithTunnelID(
 	reallocateIP bool,
 	networkRole string) (
 	*corev1.Pod,
-	*util.PodAnnotation,
+	*podannotation.PodAnnotation,
 	error) {
 
 	return allocatePodAnnotationWithTunnelID(
@@ -174,7 +175,7 @@ func allocatePodAnnotationWithTunnelID(
 	reallocateIP bool,
 	networkRole string) (
 	updatedPod *corev1.Pod,
-	podAnnotation *util.PodAnnotation,
+	podAnnotation *podannotation.PodAnnotation,
 	err error) {
 
 	allocateToPodWithRollback := func(pod *corev1.Pod) (*corev1.Pod, func(), error) {
@@ -264,7 +265,7 @@ func allocatePodAnnotationWithRollback(
 	reallocateIP bool,
 	networkRole string) (
 	updatedPod *corev1.Pod,
-	podAnnotation *util.PodAnnotation,
+	podAnnotation *podannotation.PodAnnotation,
 	rollback func(),
 	err error) {
 
@@ -304,13 +305,13 @@ func allocatePodAnnotationWithRollback(
 		}
 	}()
 
-	podAnnotation, _ = util.UnmarshalPodAnnotation(pod.Annotations, nadName)
+	podAnnotation, _ = podannotation.UnmarshalPodAnnotation(pod.Annotations, nadName)
 	if podAnnotation == nil {
-		podAnnotation = &util.PodAnnotation{}
+		podAnnotation = &podannotation.PodAnnotation{}
 	}
 
 	// work on a tentative pod annotation based on the existing one
-	tentative := &util.PodAnnotation{
+	tentative := &podannotation.PodAnnotation{
 		IPs:      podAnnotation.IPs,
 		MAC:      podAnnotation.MAC,
 		TunnelID: podAnnotation.TunnelID,
@@ -434,7 +435,7 @@ func allocatePodAnnotationWithRollback(
 		}
 
 		// handle routes & gateways
-		err = util.AddRoutesGatewayIP(netInfo, node, pod, tentative, network)
+		err = podannotation.AddRoutesGatewayIP(netInfo, node, pod, tentative, network)
 		if err != nil {
 			return
 		}
@@ -444,7 +445,7 @@ func allocatePodAnnotationWithRollback(
 
 	if needsAnnotationUpdate {
 		updatedPod = pod
-		updatedPod.Annotations, err = util.MarshalPodAnnotation(updatedPod.Annotations, tentative, nadName)
+		updatedPod.Annotations, err = podannotation.MarshalPodAnnotation(updatedPod.Annotations, tentative, nadName)
 		podAnnotation = tentative
 	}
 

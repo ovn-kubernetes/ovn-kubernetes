@@ -25,6 +25,7 @@ import (
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/retry"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
@@ -35,7 +36,7 @@ import (
 func getPodAnnotations(fakeClient kubernetes.Interface, namespace, name string) string {
 	pod, err := fakeClient.CoreV1().Pods(namespace).Get(context.TODO(), name, metav1.GetOptions{})
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	return pod.Annotations[util.OvnPodAnnotationName]
+	return pod.Annotations[podannotation.OvnPodAnnotationName]
 }
 
 func newPodMeta(namespace, name string, additionalLabels map[string]string) metav1.ObjectMeta {
@@ -220,7 +221,7 @@ type testPod struct {
 	podMAC       string
 	namespace    string
 	portName     string
-	routes       []util.PodRoute
+	routes       []podannotation.PodRoute
 	noIfaceIdVer bool
 	networkRole  string
 
@@ -232,7 +233,7 @@ type secondaryPodInfo struct {
 	nodeMgtIP   string
 	nodeGWIP    string
 	role        string
-	routes      []util.PodRoute
+	routes      []podannotation.PodRoute
 	allportInfo map[string]portInfo
 }
 
@@ -317,7 +318,7 @@ func newTPod(nodeName, nodeSubnet, nodeMgtIP, nodeGWIP, podName, podIPs, podMAC,
 		if gwIP == nil {
 			continue
 		}
-		to.routes = append(to.routes, util.PodRoute{Dest: rs, NextHop: *gwIP})
+		to.routes = append(to.routes, podannotation.PodRoute{Dest: rs, NextHop: *gwIP})
 	}
 
 	return to
@@ -435,7 +436,7 @@ func setPodAnnotations(podObj *corev1.Pod, testPod testPod) {
 	if podObj.Annotations == nil {
 		podObj.Annotations = map[string]string{}
 	}
-	podObj.Annotations[util.OvnPodAnnotationName] = testPod.getAnnotationsJson()
+	podObj.Annotations[podannotation.OvnPodAnnotationName] = testPod.getAnnotationsJson()
 }
 
 func getDefaultNetExpectedPodsAndSwitches(pods []testPod, nodes []string) []libovsdbtest.TestData {
@@ -609,7 +610,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				pod, err := fakeOvn.fakeClient.KubeClient.CoreV1().Pods(t.namespace).Get(context.TODO(), t.podName, metav1.GetOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				_, ok := pod.Annotations[util.OvnPodAnnotationName]
+				_, ok := pod.Annotations[podannotation.OvnPodAnnotationName]
 				gomega.Expect(ok).To(gomega.BeFalse())
 
 				// Assign it and perform the update
@@ -932,7 +933,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				// sleep a small amount to ensure the event was processed
 				time.Sleep(time.Second)
 				// try to allocate the IP and it should not work
-				annotation, err := util.UnmarshalPodAnnotation(myPod2.Annotations, ovntypes.DefaultNetworkName)
+				annotation, err := podannotation.UnmarshalPodAnnotation(myPod2.Annotations, ovntypes.DefaultNetworkName)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.lsManager.AllocateIPs(t.nodeName, annotation.IPs)
 				gomega.Expect(err).To(gomega.Equal(ipallocator.ErrAllocated))
@@ -1819,7 +1820,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				pod, err := fakeOvn.fakeClient.KubeClient.CoreV1().Pods(t.namespace).Get(context.TODO(), t.podName, metav1.GetOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				_, ok := pod.Annotations[util.OvnPodAnnotationName]
+				_, ok := pod.Annotations[podannotation.OvnPodAnnotationName]
 				gomega.Expect(ok).To(gomega.BeFalse())
 
 				err = fakeOvn.controller.WatchNamespaces()
@@ -2006,11 +2007,11 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 					namespaceT.Name,
 				)
 				// add an outdated hybrid route for pod 3 to the hybrid overlay IF addr on the node
-				t3Route := util.PodRoute{}
+				t3Route := podannotation.PodRoute{}
 				_, t3Route.Dest, _ = net.ParseCIDR("10.132.0.0/14")
 				_, nodeSubnet, _ := net.ParseCIDR(t3.nodeSubnet)
 				t3Route.NextHop = util.GetNodeHybridOverlayIfAddr(nodeSubnet).IP
-				t3.routes = []util.PodRoute{t3Route}
+				t3.routes = []podannotation.PodRoute{t3Route}
 
 				initialDB = libovsdbtest.TestSetup{
 					NBData: []libovsdbtest.TestData{
@@ -2120,7 +2121,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				gomega.Expect(annotations).To(gomega.MatchJSON(t2.getAnnotationsJson()))
 				annotations = getPodAnnotations(fakeOvn.fakeClient.KubeClient, t3.namespace, t3.podName)
 				// remove the outdated route from pod t3
-				t3.routes = []util.PodRoute{}
+				t3.routes = []podannotation.PodRoute{}
 				gomega.Expect(annotations).To(gomega.MatchJSON(t3.getAnnotationsJson()))
 
 				return nil
@@ -2320,7 +2321,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				pod, err := fakeOvn.fakeClient.KubeClient.CoreV1().Pods(t.namespace).Get(context.TODO(), t.podName, metav1.GetOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				_, ok := pod.Annotations[util.OvnPodAnnotationName]
+				_, ok := pod.Annotations[podannotation.OvnPodAnnotationName]
 				gomega.Expect(ok).To(gomega.BeFalse())
 
 				err = fakeOvn.controller.WatchNamespaces()
@@ -2361,7 +2362,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 				// add HO route
 				t.routes = append(
 					t.routes,
-					util.PodRoute{
+					podannotation.PodRoute{
 						Dest:    ovntest.MustParseIPNet("10.128.10.0/24"),
 						NextHop: ovntest.MustParseIP("10.128.1.3"),
 					},

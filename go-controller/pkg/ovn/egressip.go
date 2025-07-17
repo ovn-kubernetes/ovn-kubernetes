@@ -43,6 +43,7 @@ import (
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	egresssvc "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/egressservice"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/udnenabledsvc"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/syncmap"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -2591,7 +2592,7 @@ func (e *EgressIPController) addExternalGWPodSNATOps(ni util.NetInfo, ops []ovsd
 			if err != nil {
 				return nil, err
 			}
-			podIPs, err := util.GetPodCIDRsWithFullMask(pod, &util.DefaultNetInfo{})
+			podIPs, err := podannotation.GetPodCIDRsWithFullMask(pod, &util.DefaultNetInfo{})
 			if err != nil {
 				return nil, err
 			}
@@ -3574,7 +3575,7 @@ func (e *EgressIPController) getPodIPs(ni util.NetInfo, pod *corev1.Pod, nadName
 		podIPs = getIPFromIPNetFn(logicalPort.ips)
 	} else { // means this is egress node's local master
 		if ni.IsDefault() {
-			podIPNets, err := util.GetPodCIDRsWithFullMask(pod, ni)
+			podIPNets, err := podannotation.GetPodCIDRsWithFullMask(pod, ni)
 			if err != nil {
 				return nil, fmt.Errorf("failed to get pod %s/%s IP: %v", pod.Namespace, pod.Name, err)
 			}
@@ -3583,7 +3584,7 @@ func (e *EgressIPController) getPodIPs(ni util.NetInfo, pod *corev1.Pod, nadName
 			}
 			podIPs = getIPFromIPNetFn(podIPNets)
 		} else if ni.IsSecondary() {
-			podIPNets := util.GetPodCIDRsWithFullMaskOfNetwork(pod, nadName)
+			podIPNets := podannotation.GetPodCIDRsWithFullMaskOfNetwork(pod, nadName)
 			if len(podIPNets) == 0 {
 				return nil, fmt.Errorf("failed to get pod %s/%s IPs", pod.Namespace, pod.Name)
 			}

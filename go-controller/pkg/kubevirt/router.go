@@ -17,6 +17,7 @@ import (
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	logicalswitchmanager "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -75,7 +76,7 @@ func EnsureLocalZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory, 
 	if !vmReady {
 		return nil
 	}
-	podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, nadName)
+	podAnnotation, err := podannotation.UnmarshalPodAnnotation(pod.Annotations, nadName)
 	if err != nil {
 		return fmt.Errorf("failed reading local pod annotation: %v", err)
 	}
@@ -189,7 +190,7 @@ func EnsureRemoteZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory,
 		return err
 	}
 
-	podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, nadName)
+	podAnnotation, err := podannotation.UnmarshalPodAnnotation(pod.Annotations, nadName)
 	if err != nil {
 		return fmt.Errorf("failed reading remote pod annotation: %v", err)
 	}

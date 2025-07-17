@@ -19,6 +19,7 @@ import (
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
 )
@@ -404,7 +405,7 @@ func (bnc *BaseNetworkController) getAllNamespacePodAddresses(ns string) []net.I
 		ips = make([]net.IP, 0, len(existingPods))
 		for _, pod := range existingPods {
 			if !util.PodWantsHostNetwork(pod) && !util.PodCompleted(pod) && util.PodScheduled(pod) {
-				podIPs, err := util.GetPodIPsOfNetwork(pod, bnc.GetNetInfo())
+				podIPs, err := podannotation.GetPodIPsOfNetwork(pod, bnc.GetNetInfo())
 				if err != nil {
 					klog.Warningf("Failed to get IPs for pod %s/%s: %v", pod.Namespace, pod.Name, err)
 					continue
@@ -448,12 +449,12 @@ func (bnc *BaseNetworkController) getNamespacePortGroupName(namespace string) st
 // failure indicates it should be retried later.
 func (bsnc *BaseNetworkController) removeRemoteZonePodFromNamespaceAddressSet(pod *corev1.Pod) error {
 	podDesc := fmt.Sprintf("pod %s/%s/%s", bsnc.GetNetworkName(), pod.Namespace, pod.Name)
-	podIfAddrs, err := util.GetPodCIDRsWithFullMask(pod, bsnc.GetNetInfo())
+	podIfAddrs, err := podannotation.GetPodCIDRsWithFullMask(pod, bsnc.GetNetInfo())
 	if err != nil {
 		// maybe the pod is not scheduled yet or addLSP has not happened yet, so it doesn't have IPs.
 		// let us ignore deletion failures for podIPs not found because
 		// there is nothing more we can do here.
-		if errors.Is(err, util.ErrNoPodIPFound) {
+		if errors.Is(err, podannotation.ErrNoPodIPFound) {
 			klog.Warningf("Unable to remove remote zone pod's %s/%s IP address from the "+
 				"namespace address-set, err: %v", pod.Namespace, pod.Name, err)
 			return nil

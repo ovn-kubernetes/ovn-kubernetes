@@ -363,7 +363,7 @@ func ParseNodeGatewayMTUSupport(node *corev1.Node) bool {
 func ParseNodeL3GatewayAnnotation(node *corev1.Node) (*L3GatewayConfig, error) {
 	l3GatewayAnnotation, ok := node.Annotations[OvnNodeL3GatewayConfig]
 	if !ok {
-		return nil, newAnnotationNotSetError("%s annotation not found for node %q", OvnNodeL3GatewayConfig, node.Name)
+		return nil, NewAnnotationNotSetError("%s annotation not found for node %q", OvnNodeL3GatewayConfig, node.Name)
 	}
 
 	var cfgs map[string]*L3GatewayConfig
@@ -393,7 +393,7 @@ func NodeL3GatewayAnnotationChanged(oldNode, newNode *corev1.Node) bool {
 func ParseNodeChassisIDAnnotation(node *corev1.Node) (string, error) {
 	chassisID, ok := node.Annotations[OvnNodeChassisID]
 	if !ok {
-		return "", newAnnotationNotSetError("%s annotation not found for node %s", OvnNodeChassisID, node.Name)
+		return "", NewAnnotationNotSetError("%s annotation not found for node %s", OvnNodeChassisID, node.Name)
 	}
 
 	return chassisID, nil
@@ -424,7 +424,7 @@ func SetNodeManagementPortAnnotation(nodeAnnotator kube.Annotator, PfId int, Fun
 func ParseNodeManagementPortAnnotation(node *corev1.Node) (int, int, error) {
 	mgmtPortAnnotation, ok := node.Annotations[OvnNodeManagementPort]
 	if !ok {
-		return -1, -1, newAnnotationNotSetError("%s annotation not found for node %q", OvnNodeManagementPort, node.Name)
+		return -1, -1, NewAnnotationNotSetError("%s annotation not found for node %q", OvnNodeManagementPort, node.Name)
 	}
 
 	cfg := ManagementPortDetails{}
@@ -461,7 +461,7 @@ func ParseNodeManagementPortMACAddresses(node *corev1.Node, netName string) (net
 	}
 	macAddress, ok := macAddressMap[netName]
 	if !ok {
-		return nil, newAnnotationNotSetError("node %q has no %q annotation for network %s", node.Name, OvnNodeManagementPortMacAddresses, netName)
+		return nil, NewAnnotationNotSetError("node %q has no %q annotation for network %s", node.Name, OvnNodeManagementPortMacAddresses, netName)
 	}
 	return net.ParseMAC(macAddress)
 }
@@ -492,7 +492,7 @@ func ParseUDNLayer2NodeGRLRPTunnelIDs(node *corev1.Node, netName string) (int, e
 
 	tunnelID, ok := tunnelIDsMap[netName]
 	if !ok {
-		return types.InvalidID, newAnnotationNotSetError("node %q has no %q annotation for network %s", node.Name, ovnUDNLayer2NodeGRLRPTunnelIDs, netName)
+		return types.InvalidID, NewAnnotationNotSetError("node %q has no %q annotation for network %s", node.Name, ovnUDNLayer2NodeGRLRPTunnelIDs, netName)
 	}
 
 	return strconv.Atoi(tunnelID)
@@ -602,7 +602,7 @@ type ParsedNodeEgressIPConfiguration struct {
 func GetNodeIfAddrAnnotation(node *corev1.Node) (*PrimaryIfAddrAnnotation, error) {
 	nodeIfAddrAnnotation, ok := node.Annotations[OvnNodeIfAddr]
 	if !ok {
-		return nil, newAnnotationNotSetError("%s annotation not found for node %q", OvnNodeIfAddr, node.Name)
+		return nil, NewAnnotationNotSetError("%s annotation not found for node %q", OvnNodeIfAddr, node.Name)
 	}
 	nodeIfAddr := &PrimaryIfAddrAnnotation{}
 	if err := json.Unmarshal([]byte(nodeIfAddrAnnotation), nodeIfAddr); err != nil {
@@ -640,7 +640,7 @@ func ParseNodePrimaryIfAddr(node *corev1.Node) (*ParsedNodeEgressIPConfiguration
 func ParseNodeGatewayRouterLRPAddr(node *corev1.Node) (net.IP, error) {
 	nodeIfAddrAnnotation, ok := node.Annotations[ovnNodeGRLRPAddr]
 	if !ok {
-		return nil, newAnnotationNotSetError("%s annotation not found for node %q", ovnNodeGRLRPAddr, node.Name)
+		return nil, NewAnnotationNotSetError("%s annotation not found for node %q", ovnNodeGRLRPAddr, node.Name)
 	}
 	nodeIfAddr := PrimaryIfAddrAnnotation{}
 	if err := json.Unmarshal([]byte(nodeIfAddrAnnotation), &nodeIfAddr); err != nil {
@@ -662,7 +662,7 @@ func ParseNodeGatewayRouterLRPAddr(node *corev1.Node) (net.IP, error) {
 func parsePrimaryIfAddrAnnotation(node *corev1.Node, annotationName string) ([]*net.IPNet, error) {
 	nodeIfAddrAnnotation, ok := node.Annotations[annotationName]
 	if !ok {
-		return nil, newAnnotationNotSetError("%s annotation not found for node %q", annotationName, node.Name)
+		return nil, NewAnnotationNotSetError("%s annotation not found for node %q", annotationName, node.Name)
 	}
 	nodeIfAddr := PrimaryIfAddrAnnotation{}
 	if err := json.Unmarshal([]byte(nodeIfAddrAnnotation), &nodeIfAddr); err != nil {
@@ -737,7 +737,7 @@ func GetNodeEIPConfig(node *corev1.Node) (*ParsedNodeEgressIPConfiguration, erro
 func ParseCloudEgressIPConfig(node *corev1.Node) (*ParsedNodeEgressIPConfiguration, error) {
 	egressIPConfigAnnotation, ok := node.Annotations[cloudEgressIPConfigAnnotationKey]
 	if !ok {
-		return nil, newAnnotationNotSetError("%s annotation not found for node %q", cloudEgressIPConfigAnnotationKey, node.Name)
+		return nil, NewAnnotationNotSetError("%s annotation not found for node %q", cloudEgressIPConfigAnnotationKey, node.Name)
 	}
 	nodeEgressIPConfig := []nodeEgressIPConfiguration{
 		{
@@ -828,7 +828,7 @@ func NodeHostCIDRsAnnotationChanged(oldNode, newNode *corev1.Node) bool {
 func ParseNodeHostCIDRs(node *corev1.Node) (sets.Set[string], error) {
 	addrAnnotation, ok := node.Annotations[OVNNodeHostCIDRs]
 	if !ok {
-		return nil, newAnnotationNotSetError("%s annotation not found for node %q", OVNNodeHostCIDRs, node.Name)
+		return nil, NewAnnotationNotSetError("%s annotation not found for node %q", OVNNodeHostCIDRs, node.Name)
 	}
 
 	var cfg []string
@@ -844,7 +844,7 @@ func ParseNodeHostCIDRs(node *corev1.Node) (sets.Set[string], error) {
 func ParseNodeHostIPDropNetMask(node *corev1.Node) (sets.Set[string], error) {
 	nodeIfAddrAnnotation, ok := node.Annotations[OvnNodeIfAddr]
 	if !ok {
-		return nil, newAnnotationNotSetError("%s annotation not found for node %q", OvnNodeIfAddr, node.Name)
+		return nil, NewAnnotationNotSetError("%s annotation not found for node %q", OvnNodeIfAddr, node.Name)
 	}
 	nodeIfAddr := &PrimaryIfAddrAnnotation{}
 	if err := json.Unmarshal([]byte(nodeIfAddrAnnotation), nodeIfAddr); err != nil {
@@ -876,7 +876,7 @@ func ParseNodeHostIPDropNetMask(node *corev1.Node) (sets.Set[string], error) {
 func ParseNodeHostCIDRsDropNetMask(node *corev1.Node) (sets.Set[string], error) {
 	addrAnnotation, ok := node.Annotations[OVNNodeHostCIDRs]
 	if !ok {
-		return nil, newAnnotationNotSetError("%s annotation not found for node %q", OVNNodeHostCIDRs, node.Name)
+		return nil, NewAnnotationNotSetError("%s annotation not found for node %q", OVNNodeHostCIDRs, node.Name)
 	}
 
 	var cfg []string
@@ -978,7 +978,7 @@ func IsNodeSecondaryHostEgressIPsAnnotationSet(node *corev1.Node) bool {
 func ParseNodeSecondaryHostEgressIPsAnnotation(node *corev1.Node) (sets.Set[string], error) {
 	addrAnnotation, ok := node.Annotations[OVNNodeSecondaryHostEgressIPs]
 	if !ok {
-		return nil, newAnnotationNotSetError("%s annotation not found for node %q", OVNNodeSecondaryHostEgressIPs, node.Name)
+		return nil, NewAnnotationNotSetError("%s annotation not found for node %q", OVNNodeSecondaryHostEgressIPs, node.Name)
 	}
 
 	var cfg []string
@@ -999,7 +999,7 @@ func IsNodeBridgeEgressIPsAnnotationSet(node *corev1.Node) bool {
 func ParseNodeBridgeEgressIPsAnnotation(node *corev1.Node) ([]string, error) {
 	addrAnnotation, ok := node.Annotations[OVNNodeBridgeEgressIPs]
 	if !ok {
-		return nil, newAnnotationNotSetError("%s annotation not found for node %q", OVNNodeBridgeEgressIPs, node.Name)
+		return nil, NewAnnotationNotSetError("%s annotation not found for node %q", OVNNodeBridgeEgressIPs, node.Name)
 	}
 
 	var cfg []string
@@ -1129,7 +1129,7 @@ func GetNodeID(node *corev1.Node) int {
 func GetNodeIDWithError(node *corev1.Node) (int, error) {
 	nodeID, ok := node.Annotations[OvnNodeID]
 	if !ok {
-		return InvalidNodeID, newAnnotationNotSetError("%s annotation not found for node %s", OvnNodeID, node.Name)
+		return InvalidNodeID, NewAnnotationNotSetError("%s annotation not found for node %s", OvnNodeID, node.Name)
 	}
 
 	id, err := strconv.Atoi(nodeID)
@@ -1190,7 +1190,7 @@ func NodeZoneAnnotationChanged(oldNode, newNode *corev1.Node) bool {
 func parseNetworkMapAnnotation(nodeAnnotations map[string]string, annotationName string) (map[string]string, error) {
 	annotation, ok := nodeAnnotations[annotationName]
 	if !ok {
-		return nil, newAnnotationNotSetError("could not find %q annotation", annotationName)
+		return nil, NewAnnotationNotSetError("could not find %q annotation", annotationName)
 	}
 
 	idsStrMap := map[string]string{}
@@ -1220,7 +1220,7 @@ func ParseNetworkIDAnnotation(node *corev1.Node, netName string) (int, error) {
 
 	networkID, ok := networkIDsMap[netName]
 	if !ok {
-		return types.InvalidID, newAnnotationNotSetError("node %q has no %q annotation for network %s", node.Name, ovnNetworkIDs, netName)
+		return types.InvalidID, NewAnnotationNotSetError("node %q has no %q annotation for network %s", node.Name, ovnNetworkIDs, netName)
 	}
 
 	return strconv.Atoi(networkID)
@@ -1342,7 +1342,7 @@ func SetNodeEncapIPs(nodeAnnotator kube.Annotator, encapips sets.Set[string]) er
 func ParseNodeEncapIPsAnnotation(node *corev1.Node) ([]string, error) {
 	encapIPsAnnotation, ok := node.Annotations[OVNNodeEncapIPs]
 	if !ok {
-		return nil, newAnnotationNotSetError("%s annotation not found for node %q", OVNNodeEncapIPs, node.Name)
+		return nil, NewAnnotationNotSetError("%s annotation not found for node %q", OVNNodeEncapIPs, node.Name)
 	}
 
 	var encapIPs []string
@@ -1382,7 +1382,7 @@ func NodePrimaryDPUHostAddrAnnotationChanged(oldNode, newNode *corev1.Node) bool
 func GetNodePrimaryDPUHostAddrAnnotation(node *corev1.Node) (*ifAddr, error) {
 	addrAnnotation, ok := node.Annotations[OVNNodePrimaryDPUHostAddr]
 	if !ok {
-		return nil, newAnnotationNotSetError("%s annotation not found for node %q", OVNNodePrimaryDPUHostAddr, node.Name)
+		return nil, NewAnnotationNotSetError("%s annotation not found for node %q", OVNNodePrimaryDPUHostAddr, node.Name)
 	}
 	nodeIfAddr := &ifAddr{}
 	if err := json.Unmarshal([]byte(addrAnnotation), nodeIfAddr); err != nil {

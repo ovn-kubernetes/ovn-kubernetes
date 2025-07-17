@@ -24,6 +24,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/apbroute/gateway_info"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -668,7 +669,7 @@ func GetHybridRouteAddrSetDbIDs(nodeName, controller string) *libovsdbops.DbObje
 
 func (c *conntrackClient) deleteGatewayIPs(podNsName ktypes.NamespacedName, _, toBeKept sets.Set[string]) error {
 	// loop through all the IPs on the annotations; ARP for their MACs and form an allowlist
-	return util.SyncConntrackForExternalGateways(toBeKept, nil, func() ([]*corev1.Pod, error) {
+	return podannotation.SyncConntrackForExternalGateways(toBeKept, nil, func() ([]*corev1.Pod, error) {
 		pod, err := c.podLister.Pods(podNsName.Namespace).Get(podNsName.Name)
 		return []*corev1.Pod{pod}, err
 	})

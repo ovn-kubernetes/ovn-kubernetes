@@ -11,6 +11,7 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -86,10 +87,10 @@ func (n *HONodeController) AddPod(pod *corev1.Pod) error {
 		return nil
 	}
 
-	_, ok := pod.Annotations[util.OvnPodAnnotationName]
+	_, ok := pod.Annotations[podannotation.OvnPodAnnotationName]
 	if ok {
 		klog.Infof("Remove the ovnkube pod annotation from pod %s", pod.Name)
-		delete(pod.Annotations, util.OvnPodAnnotationName)
+		delete(pod.Annotations, podannotation.OvnPodAnnotationName)
 		if err := n.kube.UpdatePodStatus(pod); err != nil {
 			return fmt.Errorf("failed to remove ovnkube pod annotation from pod %s: %v", pod.Name, err)
 		}

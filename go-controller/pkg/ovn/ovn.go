@@ -25,6 +25,7 @@ import (
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	anpcontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/admin_network_policy"
 	egresssvc_zone "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/egressservice"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -191,7 +192,7 @@ func (oc *DefaultNetworkController) ensureLocalZonePod(oldPod, pod *corev1.Pod, 
 	// update open ports for UDN pods on pod update.
 	if util.IsNetworkSegmentationSupportEnabled() && !util.PodWantsHostNetwork(pod) && !addPort &&
 		pod != nil && oldPod != nil &&
-		pod.Annotations[util.UDNOpenPortsAnnotationName] != oldPod.Annotations[util.UDNOpenPortsAnnotationName] {
+		pod.Annotations[podannotation.UDNOpenPortsAnnotationName] != oldPod.Annotations[podannotation.UDNOpenPortsAnnotationName] {
 		networkRole, err := oc.GetNetworkRole(pod)
 		if err != nil {
 			return err
@@ -216,7 +217,7 @@ func (oc *DefaultNetworkController) ensureLocalZonePod(oldPod, pod *corev1.Pod, 
 
 func (oc *DefaultNetworkController) ensureRemotePodIP(oldPod, pod *corev1.Pod, addPort bool) error {
 	if (addPort || (oldPod != nil && len(pod.Status.PodIPs) != len(oldPod.Status.PodIPs))) && !util.PodWantsHostNetwork(pod) {
-		podIfAddrs, err := util.GetPodCIDRsWithFullMask(pod, oc.GetNetInfo())
+		podIfAddrs, err := podannotation.GetPodCIDRsWithFullMask(pod, oc.GetNetInfo())
 		if err != nil {
 			// not finding pod IPs on a remote pod is common until the other node wires the pod, suppress it
 			return fmt.Errorf("failed to obtain IPs to add remote pod %s/%s: %w",
@@ -336,8 +337,8 @@ func (oc *DefaultNetworkController) removeRemoteZonePod(pod *corev1.Pod) error {
 	}
 
 	if kubevirt.IsPodLiveMigratable(pod) {
-		ips, err := util.GetPodCIDRsWithFullMask(pod, oc.GetNetInfo())
-		if err != nil && !errors.Is(err, util.ErrNoPodIPFound) {
+		ips, err := podannotation.GetPodCIDRsWithFullMask(pod, oc.GetNetInfo())
+		if err != nil && !errors.Is(err, podannotation.ErrNoPodIPFound) {
 			return fmt.Errorf("failed to get pod ips for the pod %s/%s: %w", pod.Namespace, pod.Name, err)
 		}
 		switchName, zoneContainsPodSubnet := kubevirt.ZoneContainsPodSubnet(oc.lsManager, ips)

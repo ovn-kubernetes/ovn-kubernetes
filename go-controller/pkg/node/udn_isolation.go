@@ -32,6 +32,7 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
 	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -461,8 +462,8 @@ func podNeedsUpdate(oldObj, newObj *corev1.Pod) bool {
 	}
 	// react to pod IP changes
 	return !reflect.DeepEqual(oldObj.Status, newObj.Status) ||
-		oldObj.Annotations[util.OvnPodAnnotationName] != newObj.Annotations[util.OvnPodAnnotationName] ||
-		oldObj.Annotations[util.UDNOpenPortsAnnotationName] != newObj.Annotations[util.UDNOpenPortsAnnotationName]
+		oldObj.Annotations[podannotation.OvnPodAnnotationName] != newObj.Annotations[podannotation.OvnPodAnnotationName] ||
+		oldObj.Annotations[podannotation.UDNOpenPortsAnnotationName] != newObj.Annotations[podannotation.UDNOpenPortsAnnotationName]
 }
 
 func (m *UDNHostIsolationManager) reconcilePod(key string) error {
@@ -526,13 +527,13 @@ func (m *UDNHostIsolationManager) getPodInfo(podKey string, pod *corev1.Pod) (*p
 	if !primaryUDN {
 		return nil, nil, nil
 	}
-	podIPs, err := util.DefaultNetworkPodIPs(pod)
+	podIPs, err := podannotation.DefaultNetworkPodIPs(pod)
 	if err != nil {
 		// update event should come later with ips
 		klog.V(5).Infof("Failed to get default network pod IPs for pod %s: %v", podKey, err)
 		return nil, nil, nil
 	}
-	openPorts, parseErr := util.UnmarshalUDNOpenPortsAnnotation(pod.Annotations)
+	openPorts, parseErr := podannotation.UnmarshalUDNOpenPortsAnnotation(pod.Annotations)
 	pi.ipsv4, pi.ipsv6 = splitIPsPerFamily(podIPs)
 	pi.icmpv4, pi.icmpv6, pi.openPortsv4, pi.openPortsv6 = m.getOpenPortSets(pi.ipsv4, pi.ipsv6, openPorts)
 	return pi, parseErr, nil
@@ -569,7 +570,7 @@ func (m *UDNHostIsolationManager) updateWithPodInfo(podKey string, pi *podInfo) 
 }
 
 func (m *UDNHostIsolationManager) isPodPrimaryUDN(pod *corev1.Pod) (bool, error) {
-	podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, types.DefaultNetworkName)
+	podAnnotation, err := podannotation.UnmarshalPodAnnotation(pod.Annotations, types.DefaultNetworkName)
 	if err != nil {
 		// pod IPs were not assigned yet, should be retried later
 		return false, err
@@ -578,7 +579,7 @@ func (m *UDNHostIsolationManager) isPodPrimaryUDN(pod *corev1.Pod) (bool, error)
 	return podAnnotation.Role == types.NetworkRoleInfrastructure, nil
 }
 
-func (m *UDNHostIsolationManager) getOpenPortSets(newV4IPs, newV6IPs sets.Set[string], openPorts []*util.OpenPort) (icmpv4, icmpv6, openPortsv4, openPortsv6 sets.Set[string]) {
+func (m *UDNHostIsolationManager) getOpenPortSets(newV4IPs, newV6IPs sets.Set[string], openPorts []*podannotation.OpenPort) (icmpv4, icmpv6, openPortsv4, openPortsv6 sets.Set[string]) {
 	icmpv4 = sets.New[string]()
 	icmpv6 = sets.New[string]()
 	openPortsv4 = sets.New[string]()

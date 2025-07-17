@@ -48,6 +48,7 @@ import (
 	nodetypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/apbroute"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/healthcheck"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/retry"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -1496,7 +1497,7 @@ func (nc *DefaultNodeNetworkController) syncConntrackForExternalGateways(newNs *
 	gatewayIPs = gatewayIPs.Insert(strings.Split(newNs.Annotations[util.ExternalGatewayPodIPsAnnotation], ",")...)
 	gatewayIPs = gatewayIPs.Insert(strings.Split(newNs.Annotations[util.RoutingExternalGWsAnnotation], ",")...)
 
-	return util.SyncConntrackForExternalGateways(gatewayIPs, nil, func() ([]*corev1.Pod, error) {
+	return podannotation.SyncConntrackForExternalGateways(gatewayIPs, nil, func() ([]*corev1.Pod, error) {
 		return nc.watchFactory.GetPods(newNs.Name)
 	})
 }

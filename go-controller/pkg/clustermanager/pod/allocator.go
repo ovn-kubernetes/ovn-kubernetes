@@ -23,6 +23,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/persistentips"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -118,7 +119,7 @@ func (a *PodAllocator) getActiveNetworkForPod(pod *corev1.Pod) (util.NetInfo, er
 
 // GetNetworkRole returns the role of this controller's network for the given pod
 func (a *PodAllocator) GetNetworkRole(pod *corev1.Pod) (string, error) {
-	role, err := util.GetNetworkRole(a.netInfo, a.networkManager.GetActiveNetworkForNamespace, pod)
+	role, err := podannotation.GetNetworkRole(a.netInfo, a.networkManager.GetActiveNetworkForNamespace, pod)
 	if err != nil {
 		if util.IsUnprocessedActiveNetworkError(err) {
 			a.recordPodErrorEvent(pod, err)
@@ -190,7 +191,7 @@ func (a *PodAllocator) reconcile(old, new *corev1.Pod, releaseFromAllocator bool
 		// is managed by the current allocator using pod annotations. If not, exit as there is nothing to do.
 		// There is no need to handle non-primary networks as they are already present in the network-selection
 		// annotations handled in GetPodNADToNetworkMappingWithActiveNetwork.
-		podNetworks, err := util.UnmarshalPodAnnotationAllNetworks(pod.Annotations)
+		podNetworks, err := podannotation.UnmarshalPodAnnotationAllNetworks(pod.Annotations)
 		if err != nil {
 			return err
 		}
@@ -206,7 +207,7 @@ func (a *PodAllocator) reconcile(old, new *corev1.Pod, releaseFromAllocator bool
 		}
 	}
 
-	onNetwork, networkMap, err := util.GetPodNADToNetworkMappingWithActiveNetwork(pod, a.netInfo, activeNetwork)
+	onNetwork, networkMap, err := podannotation.GetPodNADToNetworkMappingWithActiveNetwork(pod, a.netInfo, activeNetwork)
 	if err != nil {
 		a.recordPodErrorEvent(pod, err)
 		return fmt.Errorf("failed to get NAD to network mapping: %w", err)
@@ -250,11 +251,11 @@ func (a *PodAllocator) reconcileForNAD(old, new *corev1.Pod, nad string, network
 
 func (a *PodAllocator) releasePodOnNAD(pod *corev1.Pod, nad string, network *nettypes.NetworkSelectionElement,
 	podDeleted, releaseFromAllocator bool) error {
-	podAnnotation, _ := util.UnmarshalPodAnnotation(pod.Annotations, nad)
+	podAnnotation, _ := podannotation.UnmarshalPodAnnotation(pod.Annotations, nad)
 	if podAnnotation == nil {
 		// track release pods even if they have no annotation in case a user
 		// might have removed it manually
-		podAnnotation = &util.PodAnnotation{}
+		podAnnotation = &podannotation.PodAnnotation{}
 	}
 
 	uid := string(pod.UID)

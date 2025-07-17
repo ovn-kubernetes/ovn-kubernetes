@@ -98,7 +98,7 @@ func setSubnetAnnotation(nodeAnnotator kube.Annotator, annotationName string, de
 func parseSubnetAnnotation(nodeAnnotations map[string]string, annotationName string) (map[string][]*net.IPNet, error) {
 	annotation, ok := nodeAnnotations[annotationName]
 	if !ok {
-		return nil, newAnnotationNotSetError("could not find %q annotation", annotationName)
+		return nil, NewAnnotationNotSetError("could not find %q annotation", annotationName)
 	}
 	subnetsStrMap := map[string][]string{}
 	subnetsDual := make(map[string][]string)
@@ -202,14 +202,14 @@ func ParseNodeHostSubnetAnnotation(node *corev1.Node, netName string) ([]*net.IP
 	var ret []*net.IPNet
 	annotation, ok := node.Annotations[ovnNodeSubnets]
 	if !ok {
-		return nil, newAnnotationNotSetError("could not find %q annotation", ovnNodeSubnets)
+		return nil, NewAnnotationNotSetError("could not find %q annotation", ovnNodeSubnets)
 	}
 	if err := json.Unmarshal([]byte(annotation), &nodeSubnetMap); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal %q annotation on node %s: %v", ovnNodeSubnets, node.Name, err)
 	}
 	val, ok := nodeSubnetMap[netName]
 	if !ok {
-		return nil, newAnnotationNotSetError("node %q has no %q annotation for network %s", node.Name, ovnNodeSubnets, netName)
+		return nil, NewAnnotationNotSetError("node %q has no %q annotation for network %s", node.Name, ovnNodeSubnets, netName)
 	}
 
 	var subnets, subnetsDual []string

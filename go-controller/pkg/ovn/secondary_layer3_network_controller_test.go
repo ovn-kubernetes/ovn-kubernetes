@@ -23,6 +23,7 @@ import (
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	testnm "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/networkmanager"
@@ -169,7 +170,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				// pod exists, networks annotations don't
 				pod, err := fakeOvn.fakeClient.KubeClient.CoreV1().Pods(podInfo.namespace).Get(context.Background(), podInfo.podName, metav1.GetOptions{})
 				Expect(err).NotTo(HaveOccurred())
-				_, ok := pod.Annotations[util.OvnPodAnnotationName]
+				_, ok := pod.Annotations[podannotation.OvnPodAnnotationName]
 				Expect(ok).To(BeFalse())
 
 				Expect(fakeOvn.networkManager.Start()).NotTo(HaveOccurred())
@@ -382,7 +383,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				// pod exists, networks annotations don't
 				pod, err := fakeOvn.fakeClient.KubeClient.CoreV1().Pods(podInfo.namespace).Get(context.Background(), podInfo.podName, metav1.GetOptions{})
 				Expect(err).NotTo(HaveOccurred())
-				_, ok := pod.Annotations[util.OvnPodAnnotationName]
+				_, ok := pod.Annotations[podannotation.OvnPodAnnotationName]
 				Expect(ok).To(BeFalse())
 
 				Expect(fakeOvn.networkManager.Start()).NotTo(HaveOccurred())
@@ -453,11 +454,11 @@ func newPodWithPrimaryUDN(
 		pod.networkRole = "infrastructure-locked"
 		pod.routes = append(
 			pod.routes,
-			util.PodRoute{
+			podannotation.PodRoute{
 				Dest:    testing.MustParseIPNet("10.128.0.0/14"),
 				NextHop: testing.MustParseIP("10.128.1.1"),
 			},
-			util.PodRoute{
+			podannotation.PodRoute{
 				Dest:    testing.MustParseIPNet("100.64.0.0/16"),
 				NextHop: testing.MustParseIP("10.128.1.1"),
 			},
@@ -473,7 +474,7 @@ func newPodWithPrimaryUDN(
 		"0a:58:c0:a8:01:03",
 		"primary",
 		0,
-		[]util.PodRoute{
+		[]podannotation.PodRoute{
 			{
 				Dest:    testing.MustParseIPNet("192.168.0.0/16"),
 				NextHop: testing.MustParseIP("192.168.1.1"),
@@ -582,7 +583,7 @@ func dummyTestPod(nsName string, info secondaryNetInfo) testPod {
 		"0a:58:c0:a8:01:03",
 		"secondary",
 		0,
-		[]util.PodRoute{
+		[]podannotation.PodRoute{
 			{
 				Dest:    testing.MustParseIPNet(info.clustersubnets),
 				NextHop: testing.MustParseIP("192.168.1.1"),

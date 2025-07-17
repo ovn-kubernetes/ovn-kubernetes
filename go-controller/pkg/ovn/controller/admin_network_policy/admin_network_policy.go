@@ -23,6 +23,7 @@ import (
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -354,9 +355,9 @@ func (c *Controller) expandRulePeers(rule *gressRule) error {
 				if util.PodWantsHostNetwork(pod) || util.PodCompleted(pod) || !util.PodScheduled(pod) {
 					continue
 				}
-				podIPs, err := util.GetPodIPsOfNetwork(pod, &util.DefaultNetInfo{})
+				podIPs, err := podannotation.GetPodIPsOfNetwork(pod, &util.DefaultNetInfo{})
 				if err != nil {
-					if errors.Is(err, util.ErrNoPodIPFound) {
+					if errors.Is(err, podannotation.ErrNoPodIPFound) {
 						// we ignore podIPsNotFound error here because onANPPodUpdate
 						// will take care of this; no need to add nil podIPs to slice...
 						// move on to next item in the loop
@@ -472,9 +473,9 @@ func (c *Controller) convertANPSubjectToLSPs(anp *adminNetworkPolicyState) ([]*n
 				continue
 			}
 			// we need to collect podIP:cPort information
-			podIPs, err := util.GetPodIPsOfNetwork(pod, &util.DefaultNetInfo{})
+			podIPs, err := podannotation.GetPodIPsOfNetwork(pod, &util.DefaultNetInfo{})
 			if err != nil {
-				if errors.Is(err, util.ErrNoPodIPFound) {
+				if errors.Is(err, podannotation.ErrNoPodIPFound) {
 					// we ignore podIPsNotFound error here because onANPPodUpdate
 					// will take care of this; no need to add nil podIPs to slice...
 					// move on to next item in the loop

@@ -1,10 +1,11 @@
-package util
+package podannotation
 
 import (
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	nadutils "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/utils"
@@ -20,6 +21,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 // This handles the "k8s.ovn.org/pod-networks" annotation on Pods, used to pass
@@ -177,7 +179,7 @@ func MarshalPodAnnotation(annotations map[string]string, podInfo *PodAnnotation,
 			return nil, ErrOverridePodIPs
 		}
 		for _, ip := range pa.IPs {
-			if !SliceHasStringItem(existingPa.IPs, ip) {
+			if !util.SliceHasStringItem(existingPa.IPs, ip) {
 				return nil, ErrOverridePodIPs
 			}
 		}
@@ -219,7 +221,7 @@ func UnmarshalPodAnnotation(annotations map[string]string, nadName string) (*Pod
 	var err error
 	ovnAnnotation, ok := annotations[OvnPodAnnotationName]
 	if !ok {
-		return nil, newAnnotationNotSetError("could not find OVN pod annotation in %v", annotations)
+		return nil, util.NewAnnotationNotSetError("could not find OVN pod annotation in %v", annotations)
 	}
 
 	podNetworks, err := UnmarshalPodAnnotationAllNetworks(annotations)
@@ -320,7 +322,7 @@ func UnmarshalPodAnnotationAllNetworks(annotations map[string]string) (map[strin
 
 // GetPodCIDRsWithFullMask returns the pod's IP addresses in a CIDR with FullMask format
 // Internally it calls GetPodIPsOfNetwork
-func GetPodCIDRsWithFullMask(pod *corev1.Pod, nInfo NetInfo) ([]*net.IPNet, error) {
+func GetPodCIDRsWithFullMask(pod *corev1.Pod, nInfo util.NetInfo) ([]*net.IPNet, error) {
 	podIPs, err := GetPodIPsOfNetwork(pod, nInfo)
 	if err != nil {
 		return nil, err
@@ -329,7 +331,7 @@ func GetPodCIDRsWithFullMask(pod *corev1.Pod, nInfo NetInfo) ([]*net.IPNet, erro
 	for _, podIP := range podIPs {
 		ipNet := net.IPNet{
 			IP:   podIP,
-			Mask: GetIPFullMask(podIP),
+			Mask: util.GetIPFullMask(podIP),
 		}
 		ips = append(ips, &ipNet)
 	}
@@ -339,7 +341,7 @@ func GetPodCIDRsWithFullMask(pod *corev1.Pod, nInfo NetInfo) ([]*net.IPNet, erro
 // GetPodIPsOfNetwork returns the pod's IP addresses, first from the OVN annotation
 // and then falling back to the Pod Status IPs. This function is intended to
 // also return IPs for HostNetwork and other non-OVN-IPAM-ed pods.
-func GetPodIPsOfNetwork(pod *corev1.Pod, nInfo NetInfo) ([]net.IP, error) {
+func GetPodIPsOfNetwork(pod *corev1.Pod, nInfo util.NetInfo) ([]net.IP, error) {
 	if nInfo.IsSecondary() {
 		return SecondaryNetworkPodIPs(pod, nInfo)
 	}
@@ -354,7 +356,7 @@ func GetPodCIDRsWithFullMaskOfNetwork(pod *corev1.Pod, nadName string) []*net.IP
 	for _, ip := range ips {
 		ipNet := net.IPNet{
 			IP:   ip,
-			Mask: GetIPFullMask(ip),
+			Mask: util.GetIPFullMask(ip),
 		}
 		ipNets = append(ipNets, &ipNet)
 	}
@@ -392,7 +394,7 @@ func DefaultNetworkPodIPs(pod *corev1.Pod) ([]net.IP, error) {
 	return []net.IP{ip}, nil
 }
 
-func SecondaryNetworkPodIPs(pod *corev1.Pod, networkInfo NetInfo) ([]net.IP, error) {
+func SecondaryNetworkPodIPs(pod *corev1.Pod, networkInfo util.NetInfo) ([]net.IP, error) {
 	ips := []net.IP{}
 	podNadNames, err := PodNadNames(pod, networkInfo)
 	if err != nil {
@@ -408,7 +410,7 @@ func SecondaryNetworkPodIPs(pod *corev1.Pod, networkInfo NetInfo) ([]net.IP, err
 // If netinfo belongs to user defined primary network, then retrieve NAD names from
 // netinfo.GetNADs() which is serving pod's namespace.
 // For all other cases, retrieve NAD names for the pod based on NetworkSelectionElement.
-func PodNadNames(pod *corev1.Pod, netinfo NetInfo) ([]string, error) {
+func PodNadNames(pod *corev1.Pod, netinfo util.NetInfo) ([]string, error) {
 	if netinfo.IsPrimaryNetwork() {
 		return GetPrimaryNetworkNADNamesForNamespaceFromNetInfo(pod.Namespace, netinfo)
 	}
@@ -426,7 +428,7 @@ func PodNadNames(pod *corev1.Pod, netinfo NetInfo) ([]string, error) {
 	return nadNames, nil
 }
 
-func GetPrimaryNetworkNADNamesForNamespaceFromNetInfo(namespace string, netinfo NetInfo) ([]string, error) {
+func GetPrimaryNetworkNADNamesForNamespaceFromNetInfo(namespace string, netinfo util.NetInfo) ([]string, error) {
 	for _, nadName := range netinfo.GetNADs() {
 		ns, _, err := cache.SplitMetaNamespaceKey(nadName)
 		if err != nil {
@@ -500,7 +502,7 @@ func UpdatePodAnnotationWithRetry(podLister listers.PodLister, kube kube.Interfa
 		return pod, nil, nil
 	}
 
-	return UpdatePodWithRetryOrRollback(
+	return util.UpdatePodWithRetryOrRollback(
 		podLister,
 		kube,
 		pod,
@@ -515,7 +517,7 @@ func IsValidPodAnnotation(podAnnotation *PodAnnotation) bool {
 	return podAnnotation != nil && len(podAnnotation.MAC) > 0
 }
 
-func joinSubnetToRoute(netinfo NetInfo, isIPv6 bool, gatewayIP net.IP) PodRoute {
+func joinSubnetToRoute(netinfo util.NetInfo, isIPv6 bool, gatewayIP net.IP) PodRoute {
 	joinSubnet := netinfo.JoinSubnetV4()
 	if isIPv6 {
 		joinSubnet = netinfo.JoinSubnetV6()
@@ -547,7 +549,7 @@ func hairpinMasqueradeIPToRoute(isIPv6 bool, gatewayIP net.IP) PodRoute {
 	return PodRoute{
 		Dest: &net.IPNet{
 			IP:   ip,
-			Mask: GetIPFullMask(ip),
+			Mask: util.GetIPFullMask(ip),
 		},
 		NextHop: gatewayIP,
 	}
@@ -556,14 +558,14 @@ func hairpinMasqueradeIPToRoute(isIPv6 bool, gatewayIP net.IP) PodRoute {
 // addRoutesGatewayIP updates the provided pod annotation for the provided pod
 // with the gateways derived from the allocated IPs
 func AddRoutesGatewayIP(
-	netinfo NetInfo,
+	netinfo util.NetInfo,
 	node *corev1.Node,
 	pod *corev1.Pod,
 	podAnnotation *PodAnnotation,
 	network *nadapi.NetworkSelectionElement) error {
 
 	// generate the nodeSubnets from the allocated IPs
-	nodeSubnets := IPsToNetworkIPs(podAnnotation.IPs...)
+	nodeSubnets := util.IPsToNetworkIPs(podAnnotation.IPs...)
 
 	if netinfo.IsSecondary() {
 		// for secondary network, see if its network-attachment's annotation has default-route key.
@@ -575,16 +577,16 @@ func AddRoutesGatewayIP(
 			// no route needed for directly connected subnets
 			return nil
 		case types.Layer2Topology:
-			if !IsNetworkSegmentationSupportEnabled() || !netinfo.IsPrimaryNetwork() {
+			if !util.IsNetworkSegmentationSupportEnabled() || !netinfo.IsPrimaryNetwork() {
 				return nil
 			}
 			for _, podIfAddr := range podAnnotation.IPs {
 				isIPv6 := utilnet.IsIPv6CIDR(podIfAddr)
-				nodeSubnet, err := MatchFirstIPNetFamily(isIPv6, nodeSubnets)
+				nodeSubnet, err := util.MatchFirstIPNetFamily(isIPv6, nodeSubnets)
 				if err != nil {
 					return err
 				}
-				gatewayIPnet := GetNodeGatewayIfAddr(nodeSubnet)
+				gatewayIPnet := util.GetNodeGatewayIfAddr(nodeSubnet)
 				// Ensure default service network traffic always goes to OVN
 				podAnnotation.Routes = append(podAnnotation.Routes, serviceCIDRToRoute(isIPv6, gatewayIPnet.IP)...)
 				// Ensure UDN join subnet traffic always goes to UDN LSP
@@ -596,26 +598,25 @@ func AddRoutesGatewayIP(
 			// Until https://github.com/ovn-kubernetes/ovn-kubernetes/issues/4876 is fixed, it is limited to IC only
 			if config.OVNKubernetesFeature.EnableInterconnect {
 				if _, isIPv6Mode := netinfo.IPMode(); isIPv6Mode {
-					// TODO this doesn't work
 					joinAddrs, err := udn.GetGWRouterIPs(node, netinfo.GetNetInfo())
 					if err != nil {
-						if IsAnnotationNotSetError(err) {
+						if util.IsAnnotationNotSetError(err) {
 							return types.NewSuppressedError(err)
 						}
 						return fmt.Errorf("failed parsing node gateway router join addresses, network %q, %w", netinfo.GetNetworkName(), err)
 					}
-					podAnnotation.GatewayIPv6LLA = HWAddrToIPv6LLA(IPAddrToHWAddr(joinAddrs[0].IP))
+					podAnnotation.GatewayIPv6LLA = util.HWAddrToIPv6LLA(util.IPAddrToHWAddr(joinAddrs[0].IP))
 				}
 			}
 			return nil
 		case types.Layer3Topology:
 			for _, podIfAddr := range podAnnotation.IPs {
 				isIPv6 := utilnet.IsIPv6CIDR(podIfAddr)
-				nodeSubnet, err := MatchFirstIPNetFamily(isIPv6, nodeSubnets)
+				nodeSubnet, err := util.MatchFirstIPNetFamily(isIPv6, nodeSubnets)
 				if err != nil {
 					return err
 				}
-				gatewayIPnet := GetNodeGatewayIfAddr(nodeSubnet)
+				gatewayIPnet := util.GetNodeGatewayIfAddr(nodeSubnet)
 				for _, clusterSubnet := range netinfo.Subnets() {
 					if isIPv6 == utilnet.IsIPv6CIDR(clusterSubnet.CIDR) {
 						podAnnotation.Routes = append(podAnnotation.Routes, PodRoute{
@@ -624,7 +625,7 @@ func AddRoutesGatewayIP(
 						})
 					}
 				}
-				if !IsNetworkSegmentationSupportEnabled() || !netinfo.IsPrimaryNetwork() {
+				if !util.IsNetworkSegmentationSupportEnabled() || !netinfo.IsPrimaryNetwork() {
 					continue
 				}
 				// Ensure default service network traffic always goes to OVN
@@ -662,12 +663,12 @@ func AddRoutesGatewayIP(
 
 	for _, podIfAddr := range podAnnotation.IPs {
 		isIPv6 := utilnet.IsIPv6CIDR(podIfAddr)
-		nodeSubnet, err := MatchFirstIPNetFamily(isIPv6, nodeSubnets)
+		nodeSubnet, err := util.MatchFirstIPNetFamily(isIPv6, nodeSubnets)
 		if err != nil {
 			return err
 		}
 
-		gatewayIPnet := GetNodeGatewayIfAddr(nodeSubnet)
+		gatewayIPnet := util.GetNodeGatewayIfAddr(nodeSubnet)
 
 		// Ensure default pod network traffic always goes to OVN
 		for _, clusterSubnet := range config.Default.ClusterSubnets {
@@ -734,4 +735,207 @@ func UnmarshalUDNOpenPortsAnnotation(annotations map[string]string) ([]*OpenPort
 // Ensure the IP is a valid IPv6 LLA
 func isIPv6LLA(ip net.IP) bool {
 	return utilnet.IsIPv6(ip) && ip.IsLinkLocalUnicast()
+}
+
+// GetPodNADToNetworkMapping sees if the given pod needs to plumb over this given network specified by netconf,
+// and return the matching NetworkSelectionElement if any exists.
+//
+// Return value:
+//
+//	bool: if this Pod is on this Network; true or false
+//	map[string]*nadapi.NetworkSelectionElement: all NetworkSelectionElement that pod is requested
+//	    for the specified network, key is NADName. Note multiple NADs of the same network are allowed
+//	    on one pod, as long as they are of different NADName.
+//	error:  error in case of failure
+func GetPodNADToNetworkMapping(pod *corev1.Pod, nInfo util.NetInfo) (bool, map[string]*nadapi.NetworkSelectionElement, error) {
+	if pod.Spec.HostNetwork {
+		return false, nil, nil
+	}
+
+	networkSelections := map[string]*nadapi.NetworkSelectionElement{}
+	podDesc := fmt.Sprintf("%s/%s", pod.Namespace, pod.Name)
+	if !nInfo.IsSecondary() {
+		network, err := GetK8sPodDefaultNetworkSelection(pod)
+		if err != nil {
+			// multus won't add this Pod if this fails, should never happen
+			return false, nil, fmt.Errorf("error getting default-network's network-attachment for pod %s: %v", podDesc, err)
+		}
+		if network != nil {
+			networkSelections[util.GetNADName(network.Namespace, network.Name)] = network
+		}
+		return true, networkSelections, nil
+	}
+
+	// For non-default network controller, try to see if its name exists in the Pod's k8s.v1.cni.cncf.io/networks, if no,
+	// return false;
+	allNetworks, err := GetK8sPodAllNetworkSelections(pod)
+	if err != nil {
+		return false, nil, err
+	}
+
+	for _, network := range allNetworks {
+		nadName := util.GetNADName(network.Namespace, network.Name)
+		if nInfo.HasNAD(nadName) {
+			if nInfo.IsPrimaryNetwork() {
+				return false, nil, fmt.Errorf("unexpected primary network %q specified with a NetworkSelectionElement %+v", nInfo.GetNetworkName(), network)
+			}
+			if _, ok := networkSelections[nadName]; ok {
+				return false, nil, fmt.Errorf("unexpected error: more than one of the same NAD %s specified for pod %s",
+					nadName, podDesc)
+			}
+			networkSelections[nadName] = network
+		}
+	}
+
+	if len(networkSelections) == 0 {
+		return false, nil, nil
+	}
+
+	return true, networkSelections, nil
+}
+
+// overrideActiveNSEWithDefaultNSE overrides the provided active NetworkSelectionElement with the IP and MAC requests from
+// the default NetworkSelectionElement after validating its namespace and name.
+func overrideActiveNSEWithDefaultNSE(defaultNSE, activeNSE *nadapi.NetworkSelectionElement) error {
+	if defaultNSE.Namespace != config.Kubernetes.OVNConfigNamespace {
+		return fmt.Errorf("unexpected default NSE namespace %q, expected %q", defaultNSE.Namespace, config.Kubernetes.OVNConfigNamespace)
+	}
+	if defaultNSE.Name != types.DefaultNetworkName {
+		return fmt.Errorf("unexpected default NSE name %q, expected %q", defaultNSE.Name, types.DefaultNetworkName)
+	}
+	activeNSE.IPRequest = defaultNSE.IPRequest
+	activeNSE.MacRequest = defaultNSE.MacRequest
+	activeNSE.IPAMClaimReference = defaultNSE.IPAMClaimReference
+	return nil
+}
+
+// GetPodNADToNetworkMappingWithActiveNetwork will call `GetPodNADToNetworkMapping` passing "nInfo" which correspond
+// to the NetInfo representing the NAD, the resulting NetworkSelectingElements will be decorated with the ones
+// from found active network
+func GetPodNADToNetworkMappingWithActiveNetwork(pod *corev1.Pod, nInfo util.NetInfo, activeNetwork util.NetInfo) (bool, map[string]*nadapi.NetworkSelectionElement, error) {
+	on, networkSelections, err := GetPodNADToNetworkMapping(pod, nInfo)
+	if err != nil {
+		return false, nil, err
+	}
+
+	if activeNetwork == nil {
+		return on, networkSelections, nil
+	}
+
+	if activeNetwork.IsDefault() ||
+		activeNetwork.GetNetworkName() != nInfo.GetNetworkName() ||
+		nInfo.TopologyType() == types.LocalnetTopology {
+		return on, networkSelections, nil
+	}
+
+	// Add the active network to the NSE map if it is configured
+	activeNetworkNADs := activeNetwork.GetNADs()
+	if len(activeNetworkNADs) < 1 {
+		return false, nil, fmt.Errorf("missing NADs at active network %q for namespace %q", activeNetwork.GetNetworkName(), pod.Namespace)
+	}
+	activeNetworkNADKey := strings.Split(activeNetworkNADs[0], "/")
+	if len(networkSelections) == 0 {
+		networkSelections = map[string]*nadapi.NetworkSelectionElement{}
+	}
+
+	activeNSE := &nadapi.NetworkSelectionElement{
+		Namespace: activeNetworkNADKey[0],
+		Name:      activeNetworkNADKey[1],
+	}
+
+	// Feature gate integration: EnablePreconfiguredUDNAddresses controls default network IP/MAC transfer to active network
+	if util.IsPreconfiguredUDNAddressesEnabled() {
+		// Limit the static ip and mac requests to the layer2 primary UDN when EnablePreconfiguredUDNAddresses is enabled, we
+		// don't need to explicitly check this is primary UDN since
+		// the "active network" concept is exactly that.
+		if activeNetwork.TopologyType() == types.Layer2Topology {
+			defaultNSE, err := GetK8sPodDefaultNetworkSelection(pod)
+			if err != nil {
+				return false, nil, fmt.Errorf("failed getting default-network annotation for pod %q: %w", pod.Namespace+"/"+pod.Name, err)
+			}
+			// If there are static IPs and MACs at the default NSE, override the active NSE with them
+			if defaultNSE != nil {
+				if err := overrideActiveNSEWithDefaultNSE(defaultNSE, activeNSE); err != nil {
+					return false, nil, err
+				}
+			}
+		}
+	}
+
+	if nInfo.IsPrimaryNetwork() && util.AllowsPersistentIPs(nInfo) && activeNSE.IPAMClaimReference == "" {
+		ipamClaimName, wasPersistentIPRequested := pod.Annotations[OvnUDNIPAMClaimName]
+		if wasPersistentIPRequested {
+			activeNSE.IPAMClaimReference = ipamClaimName
+		}
+	}
+
+	networkSelections[activeNetworkNADs[0]] = activeNSE
+	return true, networkSelections, nil
+}
+
+// GetNetworkRole returns the role of this controller's
+// network for the given pod
+// Expected values are:
+// (1) "primary" if this network is the primary network of the pod.
+//
+//	The "default" network is the primary network of any pod usually
+//	unless user-defined-network-segmentation feature has been activated.
+//	If network segmentation feature is enabled then any user defined
+//	network can be the primary network of the pod.
+//
+// (2) "secondary" if this network is the secondary network of the pod.
+//
+//	Only user defined networks can be secondary networks for a pod.
+//
+// (3) "infrastructure-locked" is applicable only to "default" network if
+//
+//	a user defined network is the "primary" network for this pod. This
+//	signifies the "default" network is only used for probing and
+//	is otherwise locked for all intents and purposes.
+//
+// (4) "none" if the pod has no networks on this controller
+func GetNetworkRole(controllerNetInfo util.NetInfo, getActiveNetworkForNamespace func(namespace string) (util.NetInfo, error), pod *corev1.Pod) (string, error) {
+
+	// no network segmentation enabled, and is default controller, must be default network
+	if !util.IsNetworkSegmentationSupportEnabled() && controllerNetInfo.IsDefault() {
+		return types.NetworkRolePrimary, nil
+	}
+
+	var activeNetwork util.NetInfo
+	var err error
+	// controller is serving primary network or is default, we need to get the active network
+	if controllerNetInfo.IsPrimaryNetwork() || controllerNetInfo.IsDefault() {
+		activeNetwork, err = getActiveNetworkForNamespace(pod.Namespace)
+		if err != nil {
+			return "", err
+		}
+
+		// if active network for pod matches controller network, then primary interface is handled by this controller
+		if activeNetwork.GetNetworkName() == controllerNetInfo.GetNetworkName() {
+			return types.NetworkRolePrimary, nil
+		}
+
+		// otherwise, if this is the default controller, and the pod active network does not match the default network
+		// we know the role for this default controller is infra locked
+		if controllerNetInfo.IsDefault() {
+			return types.NetworkRoleInfrastructure, nil
+		}
+
+		// this is a primary network controller, and it does not match the pod's active network
+		// the controller must not be serving this pod
+		return types.NetworkRoleNone, nil
+	}
+
+	// at this point the controller must be a secondary network
+	on, _, err := GetPodNADToNetworkMapping(pod, controllerNetInfo.GetNetInfo())
+	if err != nil {
+		return "", fmt.Errorf("failed to get pod network mapping: %w", err)
+	}
+
+	if !on {
+		return types.NetworkRoleNone, nil
+	}
+
+	// must be secondary role
+	return types.NetworkRoleSecondary, nil
 }

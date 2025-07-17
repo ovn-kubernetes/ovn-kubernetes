@@ -26,6 +26,7 @@ import (
 	udnclient "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned"
 	udnfakeclient "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
@@ -370,7 +371,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				udn := testPrimaryUDN()
 				udn.SetDeletionTimestamp(&metav1.Time{Time: time.Now()})
 
-				testOVNPodAnnot := map[string]string{util.OvnPodAnnotationName: `{"default": {"role":"primary"}, "test/test": {"role": "secondary"}}`}
+				testOVNPodAnnot := map[string]string{podannotation.OvnPodAnnotationName: `{"default": {"role":"primary"}, "test/test": {"role": "secondary"}}`}
 				pod1 := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: udn.Namespace, Annotations: testOVNPodAnnot}}
 				pod2 := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod-2", Namespace: udn.Namespace, Annotations: testOVNPodAnnot}}
 
@@ -598,7 +599,7 @@ var _ = Describe("User Defined Network Controller", func() {
 						pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
 							Name:        "pod-0",
 							Namespace:   nsName,
-							Annotations: map[string]string{util.OvnPodAnnotationName: `{"default": {"role":"primary"}, "` + nsName + `/` + cudnName + `": {"role": "secondary"}}`}},
+							Annotations: map[string]string{podannotation.OvnPodAnnotationName: `{"default": {"role":"primary"}, "` + nsName + `/` + cudnName + `": {"role": "secondary"}}`}},
 						}
 						pod, err := cs.KubeClient.CoreV1().Pods(nsName).Create(context.Background(), pod, metav1.CreateOptions{})
 						Expect(err).NotTo(HaveOccurred())
@@ -929,7 +930,7 @@ var _ = Describe("User Defined Network Controller", func() {
 			pod := &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "pod1", Namespace: udn.Namespace,
-					Annotations: map[string]string{util.OvnPodAnnotationName: `{ 
+					Annotations: map[string]string{podannotation.OvnPodAnnotationName: `{ 
                           "default": {"role":"primary", "mac_address":"0a:58:0a:f4:02:03"},
 						  "test/another-network": {"role": "secondary","mac_address":"0a:58:0a:f4:02:01"} 
                          }`,
@@ -956,7 +957,7 @@ var _ = Describe("User Defined Network Controller", func() {
 				for podName, ovnAnnotValue := range podOvnAnnotations {
 					objs = append(objs, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
 						Name: podName, Namespace: udn.Namespace,
-						Annotations: map[string]string{util.OvnPodAnnotationName: ovnAnnotValue},
+						Annotations: map[string]string{podannotation.OvnPodAnnotationName: ovnAnnotValue},
 					}})
 				}
 				objs = append(objs, udn, nad)

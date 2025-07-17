@@ -15,7 +15,7 @@ import (
 	utilnet "k8s.io/utils/net"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 )
 
 var runner kexec.Interface
@@ -254,7 +254,7 @@ func checkCancelSandbox(mac string, getter PodInfoGetter, namespace, name, nadNa
 		return fmt.Errorf("canceled old pod sandbox")
 	}
 
-	ovnAnnot, err := util.UnmarshalPodAnnotation(pod.Annotations, nadName)
+	ovnAnnot, err := podannotation.UnmarshalPodAnnotation(pod.Annotations, nadName)
 	if err != nil {
 		return fmt.Errorf("pod OVN annotations deleted or invalid")
 	}

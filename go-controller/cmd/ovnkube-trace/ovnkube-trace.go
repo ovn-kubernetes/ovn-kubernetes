@@ -25,6 +25,7 @@ import (
 	utilnet "k8s.io/utils/net"
 	"k8s.io/utils/strings/slices"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	types "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	util "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -257,7 +258,7 @@ func isRoutingViaHost(coreclient *corev1client.CoreV1Client, nodeName string) (b
 
 // getPodMAC returns the pod's MAC address.
 func getPodMAC(pod *corev1.Pod) (podMAC string, err error) {
-	podAnnotation, err := util.UnmarshalPodAnnotation(pod.ObjectMeta.Annotations, types.DefaultNetworkName)
+	podAnnotation, err := podannotation.UnmarshalPodAnnotation(pod.ObjectMeta.Annotations, types.DefaultNetworkName)
 	if err != nil {
 		return "", err
 	}

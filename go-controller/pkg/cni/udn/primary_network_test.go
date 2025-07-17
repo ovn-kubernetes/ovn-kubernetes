@@ -8,6 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	v1nadmocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/networkmanager"
@@ -26,14 +27,14 @@ func TestWaitForPrimaryAnnotationFn(t *testing.T) {
 		description           string
 		namespace             string
 		nadName               string
-		annotationFromFn      *util.PodAnnotation
+		annotationFromFn      *podannotation.PodAnnotation
 		isReadyFromFn         bool
 		annotations           map[string]string
 		nads                  []*nadapi.NetworkAttachmentDefinition
 		getActiveNetworkError error
 		expectedIsReady       bool
 		expectedFound         bool
-		expectedAnnotation    *util.PodAnnotation
+		expectedAnnotation    *podannotation.PodAnnotation
 		expectedNADName       string
 		expectedNetworkName   string
 		expectedMTU           int
@@ -41,12 +42,12 @@ func TestWaitForPrimaryAnnotationFn(t *testing.T) {
 		{
 			description: "With non default nad should be ready",
 			nadName:     "red",
-			annotationFromFn: &util.PodAnnotation{
+			annotationFromFn: &podannotation.PodAnnotation{
 				Role: types.NetworkRoleSecondary,
 			},
 			isReadyFromFn:   true,
 			expectedIsReady: true,
-			expectedAnnotation: &util.PodAnnotation{
+			expectedAnnotation: &podannotation.PodAnnotation{
 				Role: types.NetworkRoleSecondary,
 			},
 		},
@@ -61,11 +62,11 @@ func TestWaitForPrimaryAnnotationFn(t *testing.T) {
 		{
 			description: "With primary default should be ready",
 			nadName:     types.DefaultNetworkName,
-			annotationFromFn: &util.PodAnnotation{
+			annotationFromFn: &podannotation.PodAnnotation{
 				Role: types.NetworkRolePrimary,
 			},
 			isReadyFromFn: true,
-			expectedAnnotation: &util.PodAnnotation{
+			expectedAnnotation: &podannotation.PodAnnotation{
 				Role: types.NetworkRolePrimary,
 			},
 			expectedIsReady: true,
@@ -73,11 +74,11 @@ func TestWaitForPrimaryAnnotationFn(t *testing.T) {
 		{
 			description: "With default network without role should be ready",
 			nadName:     types.DefaultNetworkName,
-			annotationFromFn: &util.PodAnnotation{
+			annotationFromFn: &podannotation.PodAnnotation{
 				Role: "",
 			},
 			isReadyFromFn: true,
-			expectedAnnotation: &util.PodAnnotation{
+			expectedAnnotation: &podannotation.PodAnnotation{
 				Role: types.NetworkRolePrimary,
 			},
 			expectedIsReady: true,
@@ -86,7 +87,7 @@ func TestWaitForPrimaryAnnotationFn(t *testing.T) {
 		{
 			description: "With missing primary annotation and active network should return not ready",
 			nadName:     types.DefaultNetworkName,
-			annotationFromFn: &util.PodAnnotation{
+			annotationFromFn: &podannotation.PodAnnotation{
 				Role: types.NetworkRoleInfrastructure,
 			},
 			isReadyFromFn:   true,
@@ -96,7 +97,7 @@ func TestWaitForPrimaryAnnotationFn(t *testing.T) {
 			description: "With primary network annotation and missing active network should return not ready",
 			namespace:   "ns1",
 			nadName:     types.DefaultNetworkName,
-			annotationFromFn: &util.PodAnnotation{
+			annotationFromFn: &podannotation.PodAnnotation{
 				Role: types.NetworkRoleInfrastructure,
 			},
 			isReadyFromFn: true,
@@ -111,7 +112,7 @@ func TestWaitForPrimaryAnnotationFn(t *testing.T) {
 		{
 			description: "With missing primary network annotation and active network should return not ready",
 			nadName:     types.DefaultNetworkName,
-			annotationFromFn: &util.PodAnnotation{
+			annotationFromFn: &podannotation.PodAnnotation{
 				Role: types.NetworkRoleInfrastructure,
 			},
 			isReadyFromFn: true,
@@ -125,7 +126,7 @@ func TestWaitForPrimaryAnnotationFn(t *testing.T) {
 			description: "With primary network annotation and active network should return ready",
 			namespace:   "ns1",
 			nadName:     types.DefaultNetworkName,
-			annotationFromFn: &util.PodAnnotation{
+			annotationFromFn: &podannotation.PodAnnotation{
 				Role: types.NetworkRoleInfrastructure,
 			},
 			isReadyFromFn: true,
@@ -143,7 +144,7 @@ func TestWaitForPrimaryAnnotationFn(t *testing.T) {
 			expectedFound:       true,
 			expectedNetworkName: "blue",
 			expectedNADName:     "ns1/nad1",
-			expectedAnnotation: &util.PodAnnotation{
+			expectedAnnotation: &podannotation.PodAnnotation{
 				Role: types.NetworkRoleInfrastructure,
 			},
 			expectedMTU: 1300,
@@ -152,7 +153,7 @@ func TestWaitForPrimaryAnnotationFn(t *testing.T) {
 			description: "With primary network annotation and active network and no MTU should return ready with default MTU",
 			namespace:   "ns1",
 			nadName:     types.DefaultNetworkName,
-			annotationFromFn: &util.PodAnnotation{
+			annotationFromFn: &podannotation.PodAnnotation{
 				Role: types.NetworkRoleInfrastructure,
 			},
 			isReadyFromFn: true,
@@ -170,7 +171,7 @@ func TestWaitForPrimaryAnnotationFn(t *testing.T) {
 			expectedFound:       true,
 			expectedNetworkName: "blue",
 			expectedNADName:     "ns1/nad1",
-			expectedAnnotation: &util.PodAnnotation{
+			expectedAnnotation: &podannotation.PodAnnotation{
 				Role: types.NetworkRoleInfrastructure,
 			},
 			expectedMTU: 1400,
@@ -186,7 +187,7 @@ func TestWaitForPrimaryAnnotationFn(t *testing.T) {
 			nadNamespaceLister := v1nadmocks.NetworkAttachmentDefinitionNamespaceLister{}
 			nadLister.On("NetworkAttachmentDefinitions", tt.namespace).Return(&nadNamespaceLister)
 			nadNamespaceLister.On("List", labels.Everything()).Return(tt.nads, nil)
-			waitCond := func(map[string]string, string) (*util.PodAnnotation, bool) {
+			waitCond := func(map[string]string, string) (*podannotation.PodAnnotation, bool) {
 				return tt.annotationFromFn, tt.isReadyFromFn
 			}
 

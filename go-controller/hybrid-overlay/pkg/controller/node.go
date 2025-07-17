@@ -16,6 +16,7 @@ import (
 	houtil "github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/informer"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -251,7 +252,7 @@ func getNodeDetails(node *corev1.Node) (*net.IPNet, net.IP, net.HardwareAddr, er
 }
 
 func getPodDetails(pod *corev1.Pod) ([]*net.IPNet, net.HardwareAddr, error) {
-	podInfo, err := util.UnmarshalPodAnnotation(pod.Annotations, ovntypes.DefaultNetworkName)
+	podInfo, err := podannotation.UnmarshalPodAnnotation(pod.Annotations, ovntypes.DefaultNetworkName)
 	if err != nil {
 		return nil, nil, err
 	}

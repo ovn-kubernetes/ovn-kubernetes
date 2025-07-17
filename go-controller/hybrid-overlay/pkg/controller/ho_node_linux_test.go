@@ -16,6 +16,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/informer"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/mocks"
@@ -193,7 +194,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 					return nil, err
 				}
 				return updatedPod.Annotations, nil
-			}, 2).ShouldNot(HaveKey(util.OvnPodAnnotationName))
+			}, 2).ShouldNot(HaveKey(podannotation.OvnPodAnnotationName))
 
 			Eventually(func() (map[string]string, error) {
 				updatedPod, err := fakeClient.CoreV1().Pods("default").Get(context.TODO(), "testpod-2", metav1.GetOptions{})
@@ -201,7 +202,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 					return nil, err
 				}
 				return updatedPod.Annotations, nil
-			}, 2).Should(HaveKey(util.OvnPodAnnotationName))
+			}, 2).Should(HaveKey(podannotation.OvnPodAnnotationName))
 			return nil
 		}
 		appHONRun(app)

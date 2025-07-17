@@ -10,6 +10,7 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/template"
 	cnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -21,7 +22,7 @@ func NetAttachDefNotInUse(nad *netv1.NetworkAttachmentDefinition, pods []*corev1
 	nadName := util.GetNADName(nad.Namespace, nad.Name)
 	var connectedPods []string
 	for _, pod := range pods {
-		podNetworks, err := util.UnmarshalPodAnnotationAllNetworks(pod.Annotations)
+		podNetworks, err := podannotation.UnmarshalPodAnnotationAllNetworks(pod.Annotations)
 		if err != nil && !util.IsAnnotationNotSetError(err) {
 			return fmt.Errorf("failed to verify NAD not in use [%[1]s/%[2]s]: failed to unmarshal pod annotation [%[1]s/%[3]s]: %[4]w",
 				nad.Namespace, nad.Name, pod.Name, err)

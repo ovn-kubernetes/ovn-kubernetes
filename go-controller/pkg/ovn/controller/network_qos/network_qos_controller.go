@@ -29,6 +29,7 @@ import (
 	networkqoslister "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/listers/networkqos/v1alpha1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/syncmap"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -485,8 +486,8 @@ func (c *Controller) onNQOSPodUpdate(oldObj, newObj interface{}) {
 	// zones. Rest of the cases we may return
 	oldPodLabels := labels.Set(oldPod.Labels)
 	newPodLabels := labels.Set(newPod.Labels)
-	oldPodIPs, _ := util.GetPodIPsOfNetwork(oldPod, c.NetInfo)
-	newPodIPs, _ := util.GetPodIPsOfNetwork(newPod, c.NetInfo)
+	oldPodIPs, _ := podannotation.GetPodIPsOfNetwork(oldPod, c.NetInfo)
+	newPodIPs, _ := podannotation.GetPodIPsOfNetwork(newPod, c.NetInfo)
 	oldPodCompleted := util.PodCompleted(oldPod)
 	newPodCompleted := util.PodCompleted(newPod)
 	if labels.Equals(oldPodLabels, newPodLabels) &&

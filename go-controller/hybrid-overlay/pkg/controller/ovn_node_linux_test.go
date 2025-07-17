@@ -22,6 +22,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/informer"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -155,7 +156,7 @@ func createPod(namespace, name, node, podIP, podMAC string) *corev1.Pod {
 	if podIP != "" || podMAC != "" {
 		ipn := ovntest.MustParseIPNet(podIP)
 		gatewayIP := iputils.NextIP(ipn.IP)
-		annotations[util.OvnPodAnnotationName] = `{"default": {"ip_address":"` + podIP + `", "mac_address":"` + podMAC + `", "gateway_ip": "` + gatewayIP.String() + `"}}`
+		annotations[podannotation.OvnPodAnnotationName] = `{"default": {"ip_address":"` + podIP + `", "mac_address":"` + podMAC + `", "gateway_ip": "` + gatewayIP.String() + `"}}`
 	}
 
 	return &corev1.Pod{

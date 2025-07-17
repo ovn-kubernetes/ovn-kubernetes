@@ -23,6 +23,7 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
@@ -357,7 +358,7 @@ func (c *Controller) getPodIP(name, namespace, network string, isIPv6 bool) (str
 	}
 
 	if pod.Spec.HostNetwork {
-		podIPs, err := util.DefaultNetworkPodIPs(pod)
+		podIPs, err := podannotation.DefaultNetworkPodIPs(pod)
 		if err != nil {
 			return "", err
 		}
@@ -370,7 +371,7 @@ func (c *Controller) getPodIP(name, namespace, network string, isIPv6 bool) (str
 
 		podIP = ipAddr.String()
 	} else {
-		net, err := util.UnmarshalPodAnnotation(pod.Annotations, network)
+		net, err := podannotation.UnmarshalPodAnnotation(pod.Annotations, network)
 		if err != nil {
 			return "", err
 		}
