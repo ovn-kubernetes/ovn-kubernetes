@@ -1,4 +1,4 @@
-package util
+package podannotation
 
 import (
 	"errors"
@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
+	"github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	"github.com/onsi/gomega"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -17,6 +19,7 @@ import (
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 func TestMarshalPodAnnotation(t *testing.T) {
@@ -279,7 +282,7 @@ func TestGetPodIPsOfNetwork(t *testing.T) {
 	tests := []struct {
 		desc        string
 		inpPod      *corev1.Pod
-		networkInfo NetInfo
+		networkInfo util.NetInfo
 		errAssert   bool
 		errMatch    error
 		outExp      []net.IP
@@ -297,13 +300,13 @@ func TestGetPodIPsOfNetwork(t *testing.T) {
 					Annotations: map[string]string{"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["192.168.0.1/24"],"mac_address":"0a:58:fd:98:00:01"}}`},
 				},
 			},
-			networkInfo: &DefaultNetInfo{},
+			networkInfo: &util.DefaultNetInfo{},
 			outExp:      []net.IP{ovntest.MustParseIP("192.168.0.1")},
 		},
 		{
 			desc:        "test when pod.status.PodIP is empty",
 			inpPod:      &corev1.Pod{},
-			networkInfo: &DefaultNetInfo{},
+			networkInfo: &util.DefaultNetInfo{},
 			errMatch:    ErrNoPodIPFound,
 		},
 		{
@@ -313,7 +316,7 @@ func TestGetPodIPsOfNetwork(t *testing.T) {
 					PodIP: "192.168.1.15",
 				},
 			},
-			networkInfo: &DefaultNetInfo{},
+			networkInfo: &util.DefaultNetInfo{},
 			outExp:      []net.IP{ovntest.MustParseIP("192.168.1.15")},
 		},
 		{
@@ -325,7 +328,7 @@ func TestGetPodIPsOfNetwork(t *testing.T) {
 					},
 				},
 			},
-			networkInfo: &DefaultNetInfo{},
+			networkInfo: &util.DefaultNetInfo{},
 			outExp:      []net.IP{ovntest.MustParseIP("192.168.1.15")},
 		},
 		{
@@ -337,7 +340,7 @@ func TestGetPodIPsOfNetwork(t *testing.T) {
 					},
 				},
 			},
-			networkInfo: &DefaultNetInfo{},
+			networkInfo: &util.DefaultNetInfo{},
 			errMatch:    ErrNoPodIPFound,
 		},
 		{
@@ -346,7 +349,7 @@ func TestGetPodIPsOfNetwork(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
 						"k8s.v1.cni.cncf.io/networks": fmt.Sprintf(`[{"name": %q, "namespace": %q}]`, secondaryNetworkName, namespace),
-						"k8s.ovn.org/pod-networks":    fmt.Sprintf(`{%q:{"ip_addresses":["%s/24"],"mac_address":"0a:58:fd:98:00:01"}}`, GetNADName(namespace, secondaryNetworkName), secondaryNetworkIPAddr),
+						"k8s.ovn.org/pod-networks":    fmt.Sprintf(`{%q:{"ip_addresses":["%s/24"],"mac_address":"0a:58:fd:98:00:01"}}`, util.GetNADName(namespace, secondaryNetworkName), secondaryNetworkIPAddr),
 					},
 				},
 			},
@@ -397,7 +400,7 @@ func TestGetPodIPsOfNetwork(t *testing.T) {
 					expectedIP := tc.outExp[0]
 					ipNet := net.IPNet{
 						IP:   expectedIP,
-						Mask: GetIPFullMask(expectedIP),
+						Mask: util.GetIPFullMask(expectedIP),
 					}
 					assert.Equal(t, []*net.IPNet{&ipNet}, res2)
 				}
@@ -406,12 +409,13 @@ func TestGetPodIPsOfNetwork(t *testing.T) {
 	}
 }
 
-func newDummyNetInfo(namespace, networkName string) NetInfo {
-	netInfo, _ := newLayer2NetConfInfo(&ovncnitypes.NetConf{
-		NetConf: cnitypes.NetConf{Name: networkName},
+func newDummyNetInfo(namespace, networkName string) util.NetInfo {
+	netInfo, _ := util.NewNetInfo(&ovncnitypes.NetConf{
+		NetConf:  cnitypes.NetConf{Name: networkName},
+		Topology: types.Layer2Topology,
 	})
-	mutableNetInfo := NewMutableNetInfo(netInfo)
-	mutableNetInfo.AddNADs(GetNADName(namespace, networkName))
+	mutableNetInfo := util.NewMutableNetInfo(netInfo)
+	mutableNetInfo.AddNADs(util.GetNADName(namespace, networkName))
 	return mutableNetInfo
 }
 
@@ -513,6 +517,315 @@ func TestUnmarshalUDNOpenPortsAnnotation(t *testing.T) {
 				require.NoError(t, err)
 				assert.Equal(t, tc.result, res)
 			}
+		})
+	}
+}
+
+func TestGetPodNADToNetworkMapping(t *testing.T) {
+	const (
+		attachmentName = "attachment1"
+		namespaceName  = "ns1"
+		networkName    = "l3-network"
+	)
+
+	type testConfig struct {
+		desc                          string
+		inputNamespace                string
+		inputNetConf                  *ovncnitypes.NetConf
+		inputPodAnnotations           map[string]string
+		expectedError                 error
+		expectedIsAttachmentRequested bool
+	}
+
+	tests := []testConfig{
+		{
+			desc:                "Looking for a network *not* present in the pod's attachment requests",
+			inputNamespace:      namespaceName,
+			inputPodAnnotations: map[string]string{v1.NetworkAttachmentAnnot: "[]"},
+			inputNetConf: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: networkName},
+				Topology: types.Layer3Topology,
+				NADName:  util.GetNADName(namespaceName, attachmentName),
+			},
+			expectedIsAttachmentRequested: false,
+		},
+		{
+			desc: "Looking for a network present in the pod's attachment requests",
+			inputNetConf: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: networkName},
+				Topology: types.Layer3Topology,
+				NADName:  util.GetNADName(namespaceName, attachmentName),
+			},
+			inputPodAnnotations: map[string]string{
+				v1.NetworkAttachmentAnnot: util.GetNADName(namespaceName, attachmentName),
+			},
+			expectedIsAttachmentRequested: true,
+		},
+		{
+			desc:           "Multiple attachments to the same network in the same pod are not supported",
+			inputNamespace: namespaceName,
+			inputNetConf: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: networkName},
+				Topology: types.Layer3Topology,
+				NADName:  util.GetNADName(namespaceName, attachmentName),
+			},
+			inputPodAnnotations: map[string]string{
+				v1.NetworkAttachmentAnnot: fmt.Sprintf("%[1]s,%[1]s", util.GetNADName(namespaceName, attachmentName)),
+			},
+			expectedError: fmt.Errorf("unexpected error: more than one of the same NAD ns1/attachment1 specified for pod ns1/test-pod"),
+		},
+		{
+			desc:           "Attaching to a secondary network to a user defined primary network is not supported",
+			inputNamespace: namespaceName,
+			inputNetConf: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: "l3-network"},
+				Topology: types.Layer3Topology,
+				Role:     types.NetworkRolePrimary,
+				NADName:  util.GetNADName(namespaceName, attachmentName),
+			},
+			inputPodAnnotations: map[string]string{
+				v1.NetworkAttachmentAnnot: util.GetNADName(namespaceName, attachmentName),
+			},
+			expectedError: fmt.Errorf("unexpected primary network \"l3-network\" specified with a NetworkSelectionElement &{Name:attachment1 Namespace:ns1 IPRequest:[] MacRequest: InfinibandGUIDRequest: InterfaceRequest: PortMappingsRequest:[] BandwidthRequest:<nil> CNIArgs:<nil> GatewayRequest:[] IPAMClaimReference:}"),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.desc, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			netInfo, err := util.NewNetInfo(test.inputNetConf)
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			if test.inputNetConf.NADName != "" {
+				mutableNetInfo := util.NewMutableNetInfo(netInfo)
+				mutableNetInfo.AddNADs(test.inputNetConf.NADName)
+				netInfo = mutableNetInfo
+			}
+
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        "test-pod",
+					Namespace:   test.inputNamespace,
+					Annotations: test.inputPodAnnotations,
+				},
+			}
+
+			isAttachmentRequested, _, err := GetPodNADToNetworkMapping(pod, netInfo)
+
+			if err != nil {
+				g.Expect(err).To(gomega.MatchError(test.expectedError))
+			}
+			g.Expect(isAttachmentRequested).To(gomega.Equal(test.expectedIsAttachmentRequested))
+		})
+	}
+}
+
+func TestGetPodNADToNetworkMappingWithActiveNetwork(t *testing.T) {
+	const (
+		attachmentName = "attachment1"
+		namespaceName  = "ns1"
+		networkName    = "l3-network"
+	)
+
+	type testConfig struct {
+		desc                             string
+		inputNamespace                   string
+		inputNetConf                     *ovncnitypes.NetConf
+		inputPrimaryUDNConfig            *ovncnitypes.NetConf
+		inputPodAnnotations              map[string]string
+		expectedError                    error
+		expectedIsAttachmentRequested    bool
+		expectedNetworkSelectionElements map[string]*v1.NetworkSelectionElement
+	}
+
+	tests := []testConfig{
+		{
+			desc: "there isn't a primary UDN",
+			inputNetConf: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: networkName},
+				Topology: types.Layer3Topology,
+				NADName:  util.GetNADName(namespaceName, attachmentName),
+			},
+			inputPodAnnotations: map[string]string{
+				v1.NetworkAttachmentAnnot: util.GetNADName(namespaceName, attachmentName),
+			},
+			expectedIsAttachmentRequested: true,
+			expectedNetworkSelectionElements: map[string]*v1.NetworkSelectionElement{
+				"ns1/attachment1": {
+					Name:      "attachment1",
+					Namespace: "ns1",
+				},
+			},
+		},
+		{
+			desc: "the netinfo is different from the active network",
+			inputNetConf: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: networkName},
+				Topology: types.Layer3Topology,
+				NADName:  util.GetNADName(namespaceName, attachmentName),
+			},
+			inputPrimaryUDNConfig: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: "another-network"},
+				Topology: types.Layer3Topology,
+				NADName:  util.GetNADName(namespaceName, "another-network"),
+			},
+			inputPodAnnotations: map[string]string{
+				v1.NetworkAttachmentAnnot: util.GetNADName(namespaceName, "another-network"),
+			},
+			expectedIsAttachmentRequested: false,
+		},
+		{
+			desc: "the network configuration for a primary layer2 UDN features allow persistent IPs but the pod does not request it",
+			inputNetConf: &ovncnitypes.NetConf{
+				NetConf:            cnitypes.NetConf{Name: networkName},
+				Topology:           types.Layer2Topology,
+				NADName:            util.GetNADName(namespaceName, attachmentName),
+				Role:               types.NetworkRolePrimary,
+				AllowPersistentIPs: true,
+			},
+			inputPrimaryUDNConfig: &ovncnitypes.NetConf{
+				NetConf:            cnitypes.NetConf{Name: networkName},
+				Topology:           types.Layer2Topology,
+				NADName:            util.GetNADName(namespaceName, attachmentName),
+				Role:               types.NetworkRolePrimary,
+				AllowPersistentIPs: true,
+			},
+			inputPodAnnotations: map[string]string{
+				v1.NetworkAttachmentAnnot: util.GetNADName(namespaceName, "another-network"),
+			},
+			expectedIsAttachmentRequested: true,
+			expectedNetworkSelectionElements: map[string]*v1.NetworkSelectionElement{
+				"ns1/attachment1": {
+					Name:      "attachment1",
+					Namespace: "ns1",
+				},
+			},
+		},
+		{
+			desc: "the network configuration for a primary layer2 UDN features allow persistent IPs, and the pod requests it",
+			inputNetConf: &ovncnitypes.NetConf{
+				NetConf:            cnitypes.NetConf{Name: networkName},
+				Topology:           types.Layer2Topology,
+				NADName:            util.GetNADName(namespaceName, attachmentName),
+				Role:               types.NetworkRolePrimary,
+				AllowPersistentIPs: true,
+			},
+			inputPrimaryUDNConfig: &ovncnitypes.NetConf{
+				NetConf:            cnitypes.NetConf{Name: networkName},
+				Topology:           types.Layer2Topology,
+				NADName:            util.GetNADName(namespaceName, attachmentName),
+				Role:               types.NetworkRolePrimary,
+				AllowPersistentIPs: true,
+			},
+			inputPodAnnotations: map[string]string{
+				v1.NetworkAttachmentAnnot: util.GetNADName(namespaceName, "another-network"),
+				OvnUDNIPAMClaimName:       "the-one-to-the-left-of-the-pony",
+			},
+			expectedIsAttachmentRequested: true,
+			expectedNetworkSelectionElements: map[string]*v1.NetworkSelectionElement{
+				"ns1/attachment1": {
+					Name:               "attachment1",
+					Namespace:          "ns1",
+					IPAMClaimReference: "the-one-to-the-left-of-the-pony",
+				},
+			},
+		},
+		{
+			desc: "the network configuration for a secondary layer2 UDN features allow persistent IPs and the pod requests it",
+			inputNetConf: &ovncnitypes.NetConf{
+				NetConf:            cnitypes.NetConf{Name: networkName},
+				Topology:           types.Layer2Topology,
+				NADName:            util.GetNADName(namespaceName, attachmentName),
+				Role:               types.NetworkRoleSecondary,
+				AllowPersistentIPs: true,
+			},
+			inputPrimaryUDNConfig: &ovncnitypes.NetConf{
+				NetConf:            cnitypes.NetConf{Name: networkName},
+				Topology:           types.Layer2Topology,
+				NADName:            util.GetNADName(namespaceName, attachmentName),
+				Role:               types.NetworkRoleSecondary,
+				AllowPersistentIPs: true,
+			},
+			inputPodAnnotations: map[string]string{
+				v1.NetworkAttachmentAnnot: util.GetNADName(namespaceName, "another-network"),
+			},
+			expectedIsAttachmentRequested: true,
+			expectedNetworkSelectionElements: map[string]*v1.NetworkSelectionElement{
+				"ns1/attachment1": {
+					Name:      "attachment1",
+					Namespace: "ns1",
+				},
+			},
+		},
+		{
+			desc: "the network configuration for a primary layer3 UDN features allow persistent IPs and the pod requests it",
+			inputNetConf: &ovncnitypes.NetConf{
+				NetConf:            cnitypes.NetConf{Name: networkName},
+				Topology:           types.Layer3Topology,
+				NADName:            util.GetNADName(namespaceName, attachmentName),
+				Role:               types.NetworkRolePrimary,
+				AllowPersistentIPs: true,
+			},
+			inputPrimaryUDNConfig: &ovncnitypes.NetConf{
+				NetConf:            cnitypes.NetConf{Name: networkName},
+				Topology:           types.Layer3Topology,
+				NADName:            util.GetNADName(namespaceName, attachmentName),
+				Role:               types.NetworkRolePrimary,
+				AllowPersistentIPs: true,
+			},
+			inputPodAnnotations: map[string]string{
+				v1.NetworkAttachmentAnnot: util.GetNADName(namespaceName, "another-network"),
+				OvnUDNIPAMClaimName:       "the-one-to-the-left-of-the-pony",
+			},
+			expectedIsAttachmentRequested: true,
+			expectedNetworkSelectionElements: map[string]*v1.NetworkSelectionElement{
+				"ns1/attachment1": {
+					Name:      "attachment1",
+					Namespace: "ns1",
+				},
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.desc, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			netInfo, err := util.NewNetInfo(test.inputNetConf)
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			if test.inputNetConf.NADName != "" {
+				mutableNetInfo := util.NewMutableNetInfo(netInfo)
+				mutableNetInfo.AddNADs(test.inputNetConf.NADName)
+				netInfo = mutableNetInfo
+			}
+
+			var primaryUDNNetInfo util.NetInfo
+			if test.inputPrimaryUDNConfig != nil {
+				primaryUDNNetInfo, err = util.NewNetInfo(test.inputPrimaryUDNConfig)
+				g.Expect(err).ToNot(gomega.HaveOccurred())
+				if test.inputPrimaryUDNConfig.NADName != "" {
+					mutableNetInfo := util.NewMutableNetInfo(primaryUDNNetInfo)
+					mutableNetInfo.AddNADs(test.inputPrimaryUDNConfig.NADName)
+					primaryUDNNetInfo = mutableNetInfo
+				}
+			}
+
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        "test-pod",
+					Namespace:   test.inputNamespace,
+					Annotations: test.inputPodAnnotations,
+				},
+			}
+
+			isAttachmentRequested, networkSelectionElements, err := GetPodNADToNetworkMappingWithActiveNetwork(
+				pod,
+				netInfo,
+				primaryUDNNetInfo,
+			)
+
+			if err != nil {
+				g.Expect(err).To(gomega.MatchError(test.expectedError))
+			}
+			g.Expect(isAttachmentRequested).To(gomega.Equal(test.expectedIsAttachmentRequested))
+			g.Expect(networkSelectionElements).To(gomega.Equal(test.expectedNetworkSelectionElements))
 		})
 	}
 }

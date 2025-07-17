@@ -21,6 +21,7 @@ import (
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/persistentips"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -115,11 +116,11 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 		idAllocation              bool
 		persistentIPAllocation    bool
 		role                      string
-		podAnnotation             *util.PodAnnotation
+		podAnnotation             *podannotation.PodAnnotation
 		invalidNetworkAnnotation  bool
 		wantUpdatedPod            bool
 		wantGeneratedMac          bool
-		wantPodAnnotation         *util.PodAnnotation
+		wantPodAnnotation         *podannotation.PodAnnotation
 		wantReleasedIPs           []*net.IPNet
 		wantReleasedIPsOnRollback []*net.IPNet
 		wantReleaseID             bool
@@ -140,11 +141,11 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			// on secondary L2 networks with no IPAM, if the pod is already
 			// annotated with a random MAC, we expect no further changes
 			name: "expect no updates, has mac, no IPAM",
-			podAnnotation: &util.PodAnnotation{
+			podAnnotation: &podannotation.PodAnnotation{
 				MAC:  randomMac,
 				Role: types.NetworkRolePrimary,
 			},
-			wantPodAnnotation: &util.PodAnnotation{
+			wantPodAnnotation: &podannotation.PodAnnotation{
 				MAC:  randomMac,
 				Role: types.NetworkRolePrimary,
 			},
@@ -162,7 +163,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 				},
 			},
 			wantUpdatedPod: true,
-			wantPodAnnotation: &util.PodAnnotation{
+			wantPodAnnotation: &podannotation.PodAnnotation{
 				IPs:  ovntest.MustParseIPNets("192.168.0.4/24"),
 				MAC:  util.IPAddrToHWAddr(ovntest.MustParseIPNets("192.168.0.4/24")[0].IP),
 				Role: types.NetworkRolePrimary,
@@ -184,7 +185,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 				},
 			},
 			wantUpdatedPod: true,
-			wantPodAnnotation: &util.PodAnnotation{
+			wantPodAnnotation: &podannotation.PodAnnotation{
 				IPs:      ovntest.MustParseIPNets("192.168.0.4/24"),
 				MAC:      util.IPAddrToHWAddr(ovntest.MustParseIPNets("192.168.0.4/24")[0].IP),
 				Gateways: ovntest.MustParseIPs("192.168.0.1"),
@@ -216,11 +217,11 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 				},
 			},
 			wantUpdatedPod: true,
-			wantPodAnnotation: &util.PodAnnotation{
+			wantPodAnnotation: &podannotation.PodAnnotation{
 				IPs:      ovntest.MustParseIPNets("192.168.0.3/24"),
 				MAC:      util.IPAddrToHWAddr(ovntest.MustParseIPNets("192.168.0.3/24")[0].IP),
 				Gateways: []net.IP{ovntest.MustParseIP("192.168.0.1").To4()},
-				Routes: []util.PodRoute{
+				Routes: []podannotation.PodRoute{
 					{
 						Dest: &net.IPNet{
 							IP:   ovntest.MustParseIP("169.254.169.5"),
@@ -252,12 +253,12 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 				},
 			},
 			wantUpdatedPod: true,
-			wantPodAnnotation: &util.PodAnnotation{
+			wantPodAnnotation: &podannotation.PodAnnotation{
 				IPs:            ovntest.MustParseIPNets("192.168.0.3/24", "2010:100:200::3/60"),
 				MAC:            util.IPAddrToHWAddr(ovntest.MustParseIPNets("192.168.0.3/24")[0].IP),
 				Gateways:       []net.IP{ovntest.MustParseIP("192.168.0.1").To4(), ovntest.MustParseIP("2010:100:200::1")},
 				GatewayIPv6LLA: util.HWAddrToIPv6LLA(util.IPAddrToHWAddr(ovntest.MustParseIP("100.65.0.4"))),
-				Routes: []util.PodRoute{
+				Routes: []podannotation.PodRoute{
 					{
 						Dest: &net.IPNet{
 							IP:   ovntest.MustParseIP("100.65.0.0").To4(),
@@ -292,12 +293,12 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 				},
 			},
 			wantUpdatedPod: true,
-			wantPodAnnotation: &util.PodAnnotation{
+			wantPodAnnotation: &podannotation.PodAnnotation{
 				IPs:            ovntest.MustParseIPNets("2010:100:200::3/60"),
 				MAC:            util.IPAddrToHWAddr(ovntest.MustParseIPNets("2010:100:200::3/60")[0].IP),
 				Gateways:       []net.IP{ovntest.MustParseIP("2010:100:200::1")},
 				GatewayIPv6LLA: util.HWAddrToIPv6LLA(util.IPAddrToHWAddr(ovntest.MustParseIP("fd99::4"))),
-				Routes: []util.PodRoute{
+				Routes: []podannotation.PodRoute{
 					{
 						Dest:    ovntest.MustParseIPNet("fd99::/64"),
 						NextHop: ovntest.MustParseIP("2010:100:200::1"),
@@ -325,11 +326,11 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 				},
 			},
 			wantUpdatedPod: true,
-			wantPodAnnotation: &util.PodAnnotation{
+			wantPodAnnotation: &podannotation.PodAnnotation{
 				IPs:      ovntest.MustParseIPNets("192.168.0.3/24"),
 				MAC:      util.IPAddrToHWAddr(ovntest.MustParseIPNets("192.168.0.3/24")[0].IP),
 				Gateways: []net.IP{ovntest.MustParseIP("192.168.0.1").To4()},
-				Routes: []util.PodRoute{
+				Routes: []podannotation.PodRoute{
 					{
 						Dest: &net.IPNet{
 							IP:   ovntest.MustParseIP("100.65.0.0").To4(),
@@ -350,14 +351,14 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			// further updates but do allocate the IP
 			name: "expect no updates, annotated, IPAM",
 			ipam: true,
-			podAnnotation: &util.PodAnnotation{
+			podAnnotation: &podannotation.PodAnnotation{
 				IPs: ovntest.MustParseIPNets("192.168.0.3/24"),
 				MAC: util.IPAddrToHWAddr(ovntest.MustParseIPNets("192.168.0.3/24")[0].IP),
 			},
 			args: args{
 				ipAllocator: &ipAllocatorStub{},
 			},
-			wantPodAnnotation: &util.PodAnnotation{
+			wantPodAnnotation: &podannotation.PodAnnotation{
 				IPs: ovntest.MustParseIPNets("192.168.0.3/24"),
 				MAC: util.IPAddrToHWAddr(ovntest.MustParseIPNets("192.168.0.3/24")[0].IP),
 			},
@@ -368,7 +369,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			// further updates and no error if the IP is already allocated
 			name: "expect no updates, annotated, already allocated, IPAM",
 			ipam: true,
-			podAnnotation: &util.PodAnnotation{
+			podAnnotation: &podannotation.PodAnnotation{
 				IPs: ovntest.MustParseIPNets("192.168.0.3/24"),
 				MAC: util.IPAddrToHWAddr(ovntest.MustParseIPNets("192.168.0.3/24")[0].IP),
 			},
@@ -377,7 +378,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 					allocateIPsError: ipam.ErrAllocated,
 				},
 			},
-			wantPodAnnotation: &util.PodAnnotation{
+			wantPodAnnotation: &podannotation.PodAnnotation{
 				IPs: ovntest.MustParseIPNets("192.168.0.3/24"),
 				MAC: util.IPAddrToHWAddr(ovntest.MustParseIPNets("192.168.0.3/24")[0].IP),
 			},
@@ -387,7 +388,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			// if allocation fails
 			name: "expect error, annotated, allocation fails, IPAM",
 			ipam: true,
-			podAnnotation: &util.PodAnnotation{
+			podAnnotation: &podannotation.PodAnnotation{
 				IPs: ovntest.MustParseIPNets("192.168.0.3/24"),
 				MAC: util.IPAddrToHWAddr(ovntest.MustParseIPNets("192.168.0.3/24")[0].IP),
 			},
@@ -413,11 +414,11 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 				},
 			},
 			wantUpdatedPod: true,
-			wantPodAnnotation: &util.PodAnnotation{
+			wantPodAnnotation: &podannotation.PodAnnotation{
 				IPs:      ovntest.MustParseIPNets("192.168.0.4/24"),
 				MAC:      util.IPAddrToHWAddr(ovntest.MustParseIPNets("192.168.0.4/24")[0].IP),
 				Gateways: []net.IP{ovntest.MustParseIP("192.168.0.1").To4()},
-				Routes: []util.PodRoute{
+				Routes: []podannotation.PodRoute{
 					{
 						Dest: &net.IPNet{
 							IP:   ovntest.MustParseIP("169.254.169.5"),
@@ -451,11 +452,11 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 				},
 			},
 			wantUpdatedPod: true,
-			wantPodAnnotation: &util.PodAnnotation{
+			wantPodAnnotation: &podannotation.PodAnnotation{
 				IPs:      ovntest.MustParseIPNets("192.168.0.4/24"),
 				MAC:      util.IPAddrToHWAddr(ovntest.MustParseIPNets("192.168.0.4/24")[0].IP),
 				Gateways: []net.IP{ovntest.MustParseIP("192.168.0.1").To4()},
-				Routes: []util.PodRoute{
+				Routes: []podannotation.PodRoute{
 					{
 						Dest: &net.IPNet{
 							IP:   ovntest.MustParseIP("169.254.169.5"),
@@ -488,11 +489,11 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 				},
 			},
 			wantUpdatedPod: true,
-			wantPodAnnotation: &util.PodAnnotation{
+			wantPodAnnotation: &podannotation.PodAnnotation{
 				IPs:      ovntest.MustParseIPNets("192.168.0.3/24"),
 				MAC:      util.IPAddrToHWAddr(ovntest.MustParseIPNets("192.168.0.3/24")[0].IP),
 				Gateways: []net.IP{ovntest.MustParseIP("192.168.0.1").To4()},
-				Routes: []util.PodRoute{
+				Routes: []podannotation.PodRoute{
 					{
 						Dest: &net.IPNet{
 							IP:   ovntest.MustParseIP("169.254.169.5"),
@@ -553,11 +554,11 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 				},
 			},
 			wantUpdatedPod: true,
-			wantPodAnnotation: &util.PodAnnotation{
+			wantPodAnnotation: &podannotation.PodAnnotation{
 				IPs:      ovntest.MustParseIPNets("192.168.0.3/24"),
 				MAC:      requestedMACParsed,
 				Gateways: []net.IP{ovntest.MustParseIP("192.168.0.1").To4()},
-				Routes: []util.PodRoute{
+				Routes: []podannotation.PodRoute{
 					{
 						Dest: &net.IPNet{
 							IP:   ovntest.MustParseIP("169.254.169.5"),
@@ -615,7 +616,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 				},
 			},
 			wantUpdatedPod: true,
-			wantPodAnnotation: &util.PodAnnotation{
+			wantPodAnnotation: &podannotation.PodAnnotation{
 				IPs: ovntest.MustParseIPNets("192.168.0.200/24"),
 				MAC: util.IPAddrToHWAddr(ovntest.MustParseIPNets("192.168.0.200/24")[0].IP),
 			},
@@ -644,7 +645,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			},
 			wantUpdatedPod:            true,
 			wantReleasedIPsOnRollback: ovntest.MustParseIPNets("192.168.0.3/24"),
-			wantPodAnnotation: &util.PodAnnotation{
+			wantPodAnnotation: &podannotation.PodAnnotation{
 				IPs: ovntest.MustParseIPNets("192.168.0.3/24"),
 				MAC: util.IPAddrToHWAddr(ovntest.MustParseIPNets("192.168.0.3/24")[0].IP),
 			},
@@ -670,7 +671,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 				},
 			},
 			wantUpdatedPod: true,
-			wantPodAnnotation: &util.PodAnnotation{
+			wantPodAnnotation: &podannotation.PodAnnotation{
 				IPs: ovntest.MustParseIPNets("192.168.0.3/24"),
 				MAC: util.IPAddrToHWAddr(ovntest.MustParseIPNets("192.168.0.3/24")[0].IP),
 			},
@@ -685,10 +686,10 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 					nextID: 100,
 				},
 			},
-			podAnnotation: &util.PodAnnotation{
+			podAnnotation: &podannotation.PodAnnotation{
 				MAC: randomMac,
 			},
-			wantPodAnnotation: &util.PodAnnotation{
+			wantPodAnnotation: &podannotation.PodAnnotation{
 				MAC:      randomMac,
 				TunnelID: 100,
 				Role:     types.NetworkRolePrimary,
@@ -705,11 +706,11 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			args: args{
 				idAllocator: &idAllocatorStub{},
 			},
-			podAnnotation: &util.PodAnnotation{
+			podAnnotation: &podannotation.PodAnnotation{
 				MAC:      randomMac,
 				TunnelID: 200,
 			},
-			wantPodAnnotation: &util.PodAnnotation{
+			wantPodAnnotation: &podannotation.PodAnnotation{
 				MAC:      randomMac,
 				TunnelID: 200,
 			},
@@ -724,7 +725,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 					reserveIDError: errors.New("ID allocation error"),
 				},
 			},
-			podAnnotation: &util.PodAnnotation{
+			podAnnotation: &podannotation.PodAnnotation{
 				MAC:      randomMac,
 				TunnelID: 200,
 			},
@@ -739,7 +740,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 					reserveIDError: errors.New("ID allocation error"),
 				},
 			},
-			podAnnotation: &util.PodAnnotation{
+			podAnnotation: &podannotation.PodAnnotation{
 				MAC:      randomMac,
 				TunnelID: 200,
 			},
@@ -836,7 +837,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 				},
 			}
 			if tt.podAnnotation != nil {
-				pod.Annotations, err = util.MarshalPodAnnotation(nil, tt.podAnnotation, nadName)
+				pod.Annotations, err = podannotation.MarshalPodAnnotation(nil, tt.podAnnotation, nadName)
 				if err != nil {
 					t.Fatalf("failed to set pod annotations: %v", err)
 				}

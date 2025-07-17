@@ -26,6 +26,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/udnenabledsvc"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -81,8 +82,8 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 	setPrimaryNetworkAnnot := func(pod *corev1.Pod, nadName, cidr string) {
 		var err error
 		hwAddr, _ := net.ParseMAC("00:00:5e:00:53:01")
-		pod.Annotations, err = util.MarshalPodAnnotation(pod.Annotations,
-			&util.PodAnnotation{
+		pod.Annotations, err = podannotation.MarshalPodAnnotation(pod.Annotations,
+			&podannotation.PodAnnotation{
 				IPs:  []*net.IPNet{getIPNetWithIP(cidr)},
 				MAC:  hwAddr,
 				Role: "primary",
