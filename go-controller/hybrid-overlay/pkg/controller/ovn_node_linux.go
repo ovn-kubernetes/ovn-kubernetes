@@ -21,7 +21,7 @@ import (
 
 	hotypes "github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
 	houtil "github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/util"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	config "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -208,9 +208,9 @@ func (n *NodeController) hybridOverlayNodeUpdate(node *corev1.Node) error {
 		// No static cluster subnet is provided in config. Try to detect the hybrid overlay node subnet dynamically
 		// Add a route via the hybrid overlay port IP through the management port
 		// interface for each hybrid overlay cluster subnet
-		mgmtPortLink, err := util.GetNetLinkOps().LinkByName(types.K8sMgmtIntfName)
+		mgmtPortLink, err := util.GetNetLinkOps().LinkByName(util.K8sMgmtIntfName())
 		if err != nil {
-			return fmt.Errorf("failed to lookup link %s: %v", types.K8sMgmtIntfName, err)
+			return fmt.Errorf("failed to lookup link %s: %v", util.K8sMgmtIntfName(), err)
 		}
 
 		n.RLock()
@@ -303,9 +303,9 @@ func (n *NodeController) DeleteNode(node *corev1.Node) error {
 		// No static cluster subnet is provided in config. Try to detect the hybrid overlay node subnet dynamically
 		// Add a route via the hybrid overlay port IP through the management port
 		// interface for each hybrid overlay cluster subnet
-		mgmtPortLink, err := util.GetNetLinkOps().LinkByName(types.K8sMgmtIntfName)
+		mgmtPortLink, err := util.GetNetLinkOps().LinkByName(util.K8sMgmtIntfName())
 		if err != nil {
-			return fmt.Errorf("failed to lookup link %s: %v", types.K8sMgmtIntfName, err)
+			return fmt.Errorf("failed to lookup link %s: %v", util.K8sMgmtIntfName(), err)
 		}
 		n.RLock()
 		defer n.RUnlock()
@@ -461,9 +461,9 @@ func (n *NodeController) handleHybridOverlayMACIPChange(node *corev1.Node) error
 			return fmt.Errorf("updated Hybrid Overlay Dristributed router IP annotation not a valid IP address %s", node.Annotations[hotypes.HybridOverlayDRIP])
 		}
 		n.drIP = newDRIP
-		mgmtPortLink, err := util.GetNetLinkOps().LinkByName(types.K8sMgmtIntfName)
+		mgmtPortLink, err := util.GetNetLinkOps().LinkByName(util.K8sMgmtIntfName())
 		if err != nil {
-			return fmt.Errorf("failed to lookup link %s: %v", types.K8sMgmtIntfName, err)
+			return fmt.Errorf("failed to lookup link %s: %v", util.K8sMgmtIntfName(), err)
 		}
 		err = n.createOrReplaceRoutes(mgmtPortLink, oldDRIP)
 		if err != nil {
@@ -564,7 +564,7 @@ func (n *NodeController) EnsureHybridOverlayBridge(node *corev1.Node) error {
 		rampExt string = "ext"
 	)
 	// Create the connection between OVN's br-int and our hybrid overlay bridge br-ext
-	_, stderr, err = util.RunOVSVsctl("--may-exist", "add-port", "br-int", rampInt,
+	_, stderr, err = util.RunOVSVsctl("--may-exist", "add-port", util.GetOvnBridgeName(), rampInt,
 		"--", "--may-exist", "add-port", extBridgeName, rampExt,
 		"--", "set", "Interface", rampInt, "type=patch", "options:peer="+rampExt, "external-ids:iface-id="+portName,
 		"--", "set", "Interface", rampExt, "type=patch", "options:peer="+rampInt)
@@ -633,9 +633,9 @@ func (n *NodeController) EnsureHybridOverlayBridge(node *corev1.Node) error {
 			"IN_PORT",
 			extVXLANName, subnet.String(), hotypes.HybridOverlayVNI, n.drMAC.String(), portMACRaw))
 
-	mgmtPortLink, err := util.GetNetLinkOps().LinkByName(types.K8sMgmtIntfName)
+	mgmtPortLink, err := util.GetNetLinkOps().LinkByName(util.K8sMgmtIntfName())
 	if err != nil {
-		return fmt.Errorf("failed to lookup link %s: %v", types.K8sMgmtIntfName, err)
+		return fmt.Errorf("failed to lookup link %s: %v", util.K8sMgmtIntfName(), err)
 	}
 
 	err = n.createOrReplaceRoutes(mgmtPortLink, nil)

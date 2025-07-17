@@ -1760,4 +1760,61 @@ add element inet ovn-kubernetes no-pmtud-remote-node-ips-v6 { 2002:db8:1::4 }
 			})
 		})
 	})
+
+	Describe("setupOVNNode", func() {
+		var (
+			execMock *ovntest.FakeExec
+		)
+
+		BeforeEach(func() {
+			execMock = ovntest.NewFakeExec()
+			Expect(util.SetExec(execMock)).To(Succeed())
+			config.PrepareTestConfig()
+			config.Default.OvnChassisName = "test-chassis"
+		})
+
+		It("should set external_ids with chassis suffix", func() {
+			node := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-node",
+				},
+				Status: corev1.NodeStatus{
+					Addresses: []corev1.NodeAddress{{
+						Type:    corev1.NodeInternalIP,
+						Address: "1.2.3.4",
+					}},
+				},
+			}
+
+			execMock.AddFakeCmd(&ovntest.ExpectedCmd{
+				Cmd: "ovs-vsctl --timeout=15 set Open_vSwitch . external_ids:ovn-encap-type-test-chassis=geneve external_ids:ovn-encap-ip-test-chassis=1.2.3.4 external_ids:ovn-remote-probe-interval-test-chassis=100000 external_ids:ovn-bridge-remote-probe-interval-test-chassis=5000 external_ids:ovn-is-interconn-test-chassis=false other_config:bundle-idle-timeout=5000 external_ids:ovn-monitor-all-test-chassis=true external_ids:ovn-ofctrl-wait-before-clear-test-chassis=1000 external_ids:ovn-enable-lflow-cache-test-chassis=true external_ids:ovn-set-local-ip-test-chassis=true external_ids:hostname-test-chassis=test-node",
+				Action: func() error {
+					return nil
+				},
+			})
+			// Clear stale flows
+			execMock.AddFakeCmd(&ovntest.ExpectedCmd{
+				Cmd:    "ovs-appctl --timeout=15 dpif/show-dp-features -m",
+				Action: func() error { return nil },
+			})
+			execMock.AddFakeCmd(&ovntest.ExpectedCmd{
+				Cmd:    "ovs-ofctl --timeout=15 -O OpenFlow13 dump-flows br-int table=0,cookie=0xde10000/0xfff0000",
+				Action: func() error { return nil },
+			})
+			execMock.AddFakeCmd(&ovntest.ExpectedCmd{
+				Cmd:    "ovs-ofctl --timeout=15 -O OpenFlow13 del-flows br-int table=0,cookie=0xde10000/0xfff0000",
+				Action: func() error { return nil },
+			})
+			// Set new flows
+			execMock.AddFakeCmd(&ovntest.ExpectedCmd{
+				Cmd: "ovs-ofctl --timeout=15 -O OpenFlow13 add-flow br-int " +
+					"table=0,priority=0,actions=NORMAL",
+				Action: func() error { return nil },
+			})
+
+			err := setupOVNNode(node)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc)
+		})
+	})
 })

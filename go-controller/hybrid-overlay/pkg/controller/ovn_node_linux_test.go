@@ -1112,4 +1112,59 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 		}
 		appRun(app)
 	})
+
+	Describe("createManagementPort", func() {
+		var (
+			fexec          *ovntest.FakeExec
+			netlinkOpsMock *mocks.NetLinkOps
+		)
+
+		BeforeEach(func() {
+			fexec = ovntest.NewFakeExec()
+			netlinkOpsMock = new(mocks.NetLinkOps)
+			Expect(util.SetExec(fexec)).To(Succeed())
+			util.SetNetLinkOpMockInst(netlinkOpsMock)
+			config.PrepareTestConfig()
+		})
+
+		AfterEach(func() {
+			util.ResetNetLinkOpMockInst()
+		})
+
+		It("should create management port with default name", func() {
+			config.Default.OvnChassisName = ""
+			expectedMPName := "ovn-k8s-mp0"
+
+			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+				Cmd:    fmt.Sprintf("ovs-vsctl --timeout=15 -- --if-exists del-port br-int %s -- --may-exist add-port br-int %s -- set interface %s type=internal mtu_request=1400 external-ids:iface-id=%s", expectedMPName, expectedMPName, expectedMPName, expectedMPName),
+				Action: func() error { return nil },
+			})
+			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+				Cmd:    fmt.Sprintf("sysctl -w net.ipv4.conf.%s.forwarding=1", expectedMPName),
+				Action: func() error { return nil },
+			})
+
+			_, err := createManagementPort()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
+		})
+
+		It("should create management port with chassis suffixed name", func() {
+			config.Default.OvnChassisName = "test-chassis"
+			expectedMPName := "ovn-k8s-mp10"
+
+			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+				Cmd:    fmt.Sprintf("ovs-vsctl --timeout=15 -- --if-exists del-port br-int %s -- --may-exist add-port br-int %s -- set interface %s type=internal mtu_request=1400 external-ids:iface-id=%s", expectedMPName, expectedMPName, expectedMPName, expectedMPName),
+				Action: func() error { return nil },
+			})
+			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+				Cmd:    fmt.Sprintf("sysctl -w net.ipv4.conf.%s.forwarding=1", expectedMPName),
+				Action: func() error { return nil },
+			})
+
+			_, err := createManagementPort()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
+		})
+	})
 })

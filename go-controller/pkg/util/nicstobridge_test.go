@@ -1153,7 +1153,7 @@ func TestBridgeToNic(t *testing.T) {
 			ovntest.ProcessMockFnList(&mockNetLinkOps.Mock, tc.onRetArgsNetLinkLibOpers)
 			ovntest.ProcessMockFnList(&mockLink.Mock, tc.onRetArgsLinkIfaceOpers)
 
-			err := BridgeToNic(tc.inpBridge)
+			err := BridgeToNic(tc.inpBridge, "br-int")
 			t.Log(err)
 			if tc.errExp {
 				require.Error(t, err)

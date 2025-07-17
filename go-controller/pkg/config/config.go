@@ -78,6 +78,7 @@ var (
 		RawClusterSubnets:            "10.128.0.0/14/23",
 		Zone:                         types.OvnDefaultZone,
 		RawUDNAllowedDefaultServices: "default/kubernetes,kube-system/kube-dns",
+		BridgeName:                   types.DefaultBridgeName,
 	}
 
 	// Logging holds logging-related parsed config file parameters and command-line overrides
@@ -289,6 +290,9 @@ type DefaultConfig struct {
 	// Zone name to which ovnkube-node/ovnkube-controller belongs to
 	Zone string `gcfg:"zone"`
 
+	// OvnChassisName is the OVN Chassis name to be used for this ovn-kubernetes instance
+	OvnChassisName string `gcfg:"ovn-chassis-name"`
+
 	// RawUDNAllowedDefaultServices holds the unparsed UDNAllowedDefaultServices. Should only be
 	// used inside config module.
 	RawUDNAllowedDefaultServices string `gcfg:"udn-allowed-default-services"`
@@ -296,6 +300,9 @@ type DefaultConfig struct {
 	// UDNAllowedDefaultServices holds a list of namespaced names of
 	// default cluster network services accessible from primary user-defined networks
 	UDNAllowedDefaultServices []string
+
+	// BridgeName is the name of the OVS integration bridge (default: br-int)
+	BridgeName string `gcfg:"bridge-name"`
 }
 
 // LoggingConfig holds logging-related parsed config file parameters and command-line overrides
@@ -968,6 +975,12 @@ var CommonFlags = []cli.Flag{
 			"Only used when enable-network-segmentation is set",
 		Value:       Default.RawUDNAllowedDefaultServices,
 		Destination: &cliConfig.Default.RawUDNAllowedDefaultServices,
+	},
+	&cli.StringFlag{
+		Name:        "ovn-chassis-name",
+		Usage:       "The name of the OVN Chassis in the OVN DB",
+		Value:       "",
+		Destination: &cliConfig.Default.OvnChassisName,
 	},
 }
 
@@ -1722,6 +1735,9 @@ func runOVSVsctl(exec kexec.Interface, args ...string) (string, error) {
 }
 
 func getOVSExternalID(exec kexec.Interface, name string) string {
+	if Default.OvnChassisName != "" {
+		name = name + fmt.Sprintf("-%s", Default.OvnChassisName)
+	}
 	out, err := runOVSVsctl(exec,
 		"--if-exists",
 		"get",
@@ -1736,6 +1752,9 @@ func getOVSExternalID(exec kexec.Interface, name string) string {
 }
 
 func setOVSExternalID(exec kexec.Interface, key, value string) error {
+	if Default.OvnChassisName != "" {
+		key = key + fmt.Sprintf("-%s", Default.OvnChassisName)
+	}
 	out, err := runOVSVsctl(exec,
 		"set",
 		"Open_vSwitch",
@@ -2179,7 +2198,7 @@ func completeClusterManagerConfig(allSubnets *ConfigSubnets) error {
 	return nil
 }
 
-func buildDefaultConfig(cli, file *config) error {
+func buildDefaultConfig(cli, file *config, exec kexec.Interface) error {
 	if err := overrideFields(&Default, &file.Default, &savedDefault); err != nil {
 		return err
 	}
@@ -2199,6 +2218,10 @@ func buildDefaultConfig(cli, file *config) error {
 	if Default.Zone == "" {
 		Default.Zone = types.OvnDefaultZone
 	}
+
+	// Always set BridgeName from OVS, default is br-int
+	Default.BridgeName = getOvnBridgeName(exec)
+
 	return nil
 }
 
@@ -2379,7 +2402,7 @@ func initConfigWithPath(ctx *cli.Context, exec kexec.Interface, saPath string, d
 		})
 	}
 
-	if err = buildDefaultConfig(&cliConfig, &cfg); err != nil {
+	if err = buildDefaultConfig(&cliConfig, &cfg, exec); err != nil {
 		return "", err
 	}
 
@@ -2788,4 +2811,14 @@ func buildOvnKubeNodeConfig(cli, file *config) error {
 		return fmt.Errorf("ovnkube-node-mgmt-port-netdev or ovnkube-node-mgmt-port-dp-resource-name must be provided")
 	}
 	return nil
+}
+
+// getOvnBridgeName queries OVS for external_ids:ovn-bridge and returns its value if set, otherwise returns the default bridge name (br-int).
+func getOvnBridgeName(exec kexec.Interface) string {
+	bridge := getOVSExternalID(exec, "ovn-bridge")
+	if bridge == "" {
+		return types.DefaultBridgeName
+	}
+
+	return bridge
 }

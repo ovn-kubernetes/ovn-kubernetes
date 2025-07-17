@@ -497,14 +497,14 @@ func (udng *UserDefinedNetworkGateway) addUDNManagementPort() (netlink.Link, err
 
 	// STEP1
 	stdout, stderr, err := util.RunOVSVsctl(
-		"--", "--may-exist", "add-port", "br-int", interfaceName,
+		"--", "--may-exist", "add-port", util.GetOvnBridgeName(), interfaceName,
 		"--", "set", "interface", interfaceName, fmt.Sprintf("mac=\"%s\"", macAddr.String()),
 		"type=internal", "mtu_request="+fmt.Sprintf("%d", udng.NetInfo.MTU()),
 		"external-ids:iface-id="+udng.GetNetworkScopedK8sMgmtIntfName(udng.node.Name),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to add port to br-int for network %s, stdout: %q, stderr: %q, error: %w",
-			udng.GetNetworkName(), stdout, stderr, err)
+		return nil, fmt.Errorf("failed to add port to %s for network %s, stdout: %q, stderr: %q, error: %w",
+			util.GetOvnBridgeName(), udng.GetNetworkName(), stdout, stderr, err)
 	}
 	klog.V(3).Infof("Added OVS management port interface %s for network %s", interfaceName, udng.GetNetworkName())
 
@@ -587,11 +587,11 @@ func (udng *UserDefinedNetworkGateway) deleteUDNManagementPort() error {
 	interfaceName := util.GetNetworkScopedK8sMgmtHostIntfName(uint(udng.GetNetworkID()))
 	// STEP1
 	stdout, stderr, err := util.RunOVSVsctl(
-		"--", "--if-exists", "del-port", "br-int", interfaceName,
+		"--", "--if-exists", "del-port", util.GetOvnBridgeName(), interfaceName,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to delete port from br-int for network %s, stdout: %q, stderr: %q, error: %v",
-			udng.GetNetworkName(), stdout, stderr, err)
+		return fmt.Errorf("failed to delete port from %s for network %s, stdout: %q, stderr: %q, error: %v",
+			util.GetOvnBridgeName(), udng.GetNetworkName(), stdout, stderr, err)
 	}
 	klog.V(3).Infof("Removed OVS management port interface %s for network %s", interfaceName, udng.GetNetworkName())
 	return nil

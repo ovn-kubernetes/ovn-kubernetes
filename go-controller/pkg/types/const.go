@@ -17,9 +17,6 @@ const (
 	// UDNVRFDevicePrefix vrf device prefix associated with every user
 	UDNVRFDevicePrefix = "mp"
 
-	// K8sMgmtIntfName name to be used as an OVS internal port on the node
-	K8sMgmtIntfName = K8sMgmtIntfNamePrefix + "0"
-
 	// PhysicalNetworkName is the name that maps to an OVS bridge that provides
 	// access to physical/external network
 	PhysicalNetworkName     = "physnet"
@@ -59,7 +56,6 @@ const (
 	GWRouterToExtSwitchPrefix    = "rtoe-"
 	EgressGWSwitchPrefix         = "exgw-"
 	PatchPortPrefix              = "patch-"
-	PatchPortSuffix              = "-to-br-int"
 
 	NodeLocalSwitch = "node_local_switch"
 
@@ -338,4 +334,12 @@ const (
 	// management port.
 	NFTMgmtPortNoSNATSubnetsV4 = "mgmtport-no-snat-subnets-v4"
 	NFTMgmtPortNoSNATSubnetsV6 = "mgmtport-no-snat-subnets-v6"
+
+	// DefaultBridgeName is the default name for the OVS integration bridge
+	DefaultBridgeName = "br-int"
 )
+
+// GetPatchPortSuffix returns the patch port suffix for the given bridge name.
+func GetPatchPortSuffix(bridgeName string) string {
+	return "-to-" + bridgeName
+}

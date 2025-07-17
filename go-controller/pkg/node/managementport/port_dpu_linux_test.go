@@ -31,7 +31,7 @@ import (
 func genOVSAddMgmtPortCmd(nodeName, repName string) string {
 	return fmt.Sprintf("ovs-vsctl --timeout=15 -- --may-exist add-port br-int %s -- set interface %s external-ids:iface-id=%s"+
 		" external-ids:ovn-orig-mgmt-port-rep-name=%s",
-		types.K8sMgmtIntfName+"_0", types.K8sMgmtIntfName+"_0", types.K8sPrefix+nodeName, repName)
+		util.K8sMgmtIntfName()+"_0", util.K8sMgmtIntfName()+"_0", types.K8sPrefix+nodeName, repName)
 }
 
 func mockOVSListInterfaceMgmtPortNotExistCmd(execMock *ovntest.FakeExec, mgmtPortName string) {

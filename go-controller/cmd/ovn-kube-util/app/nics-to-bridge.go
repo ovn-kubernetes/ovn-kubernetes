@@ -54,7 +54,7 @@ var BridgesToNicCommand = cli.Command{
 
 		var errorList []error
 		for _, bridge := range args.Slice() {
-			if err := util.BridgeToNic(bridge); err != nil {
+			if err := util.BridgeToNic(bridge, util.GetOvnBridgeName()); err != nil {
 				errorList = append(errorList, err)
 			}
 		}

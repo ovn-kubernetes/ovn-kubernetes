@@ -135,7 +135,7 @@ var ovnControllerCoverageShowMetricsMap = map[string]*metricDetails{
 	},
 	"rconn_queued": {
 		help: "Specifies the number of messages that have been " +
-			"queued because it couldn’t be sent using the " +
+			"queued because it couldn't be sent using the " +
 			"underlying virtual connection to OpenFlow devices.",
 	},
 	"rconn_discarded": {
@@ -332,10 +332,9 @@ func getPortCount(ovsDBClient libovsdbclient.Client, portType string) float64 {
 	}
 	if portType == "patch" {
 		for _, intf := range intfList {
-			if strings.Contains(intf.Name, "br-int") {
+			if strings.Contains(intf.Name, util.GetOvnBridgeName()) {
 				portCount++
 			}
-
 		}
 	} else {
 		portCount = float64(len(intfList))
@@ -429,10 +428,9 @@ func RegisterOvnControllerMetrics(ovsDBClient libovsdbclient.Client,
 			Name:      "integration_bridge_openflow_total",
 			Help:      "The total number of OpenFlow flows in the integration bridge.",
 		}, func() float64 {
-			stdout, stderr, err := util.RunOVSOfctl("-t", "5", "dump-aggregate", "br-int")
+			stdout, stderr, err := util.RunOVSOfctl("-t", "5", "dump-aggregate", util.GetOvnBridgeName())
 			if err != nil {
-				klog.Errorf("Failed to get flow count for br-int, stderr(%s): (%v)",
-					stderr, err)
+				klog.Errorf("Failed to get flow count for %s, stderr(%s): (%v)", util.GetOvnBridgeName(), stderr, err)
 				return 0
 			}
 			for _, kvPair := range strings.Fields(stdout) {

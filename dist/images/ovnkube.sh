@@ -103,6 +103,9 @@ fi
 # a cmd must be provided, there is no default
 cmd=${1:-""}
 
+OVN_CHASSIS_NAME=${OVN_CHASSIS_NAME:-"dpu-ovnk"}
+INSTANCE_TAG="-${OVN_CHASSIS_NAME}"
+
 # ovn daemon log levels
 ovn_loglevel_northd=${OVN_LOGLEVEL_NORTHD:-"-vconsole:info"}
 ovn_loglevel_nb=${OVN_LOGLEVEL_NB:-"-vconsole:info"}
@@ -665,14 +668,14 @@ ovn_debug() {
   echo "=========== ovs-vsctl show ============="
   ovs-vsctl show
   echo " "
-  echo "=========== ovs-ofctl -O OpenFlow13 dump-ports br-int ============="
-  ovs-ofctl -O OpenFlow13 dump-ports br-int
+  echo "=========== ovs-ofctl -O OpenFlow13 dump-ports ${OVN_BRIDGE_NAME} ============="
+  ovs-ofctl -O OpenFlow13 dump-ports ${OVN_BRIDGE_NAME}
   echo " "
-  echo "=========== ovs-ofctl -O OpenFlow13 dump-ports-desc br-int ============="
-  ovs-ofctl -O OpenFlow13 dump-ports-desc br-int
+  echo "=========== ovs-ofctl -O OpenFlow13 dump-ports-desc ${OVN_BRIDGE_NAME} ============="
+  ovs-ofctl -O OpenFlow13 dump-ports-desc ${OVN_BRIDGE_NAME}
   echo " "
-  echo "=========== ovs-ofctl dump-flows br-int ============="
-  ovs-ofctl dump-flows br-int
+  echo "=========== ovs-ofctl dump-flows ${OVN_BRIDGE_NAME} ============="
+  ovs-ofctl dump-flows ${OVN_BRIDGE_NAME}
   echo " "
   echo "=========== ovn-sbctl --db=${ovn_sbdb_conn} show ============="
   ovn-sbctl --db=${ovn_sbdb_conn} show
@@ -1958,7 +1961,7 @@ ovnkube-controller-with-node() {
 
   if [[ ${ovnkube_node_mode} != "dpu-host" && ! ${ovn_gateway_opts} =~ "gateway-vlanid" ]]; then
       # get the gateway vlanid
-      gw_vlanid=$(ovs-vsctl --if-exists get Open_vSwitch . external_ids:ovn-gw-vlanid | tr -d \")
+      gw_vlanid=$(ovs-vsctl --if-exists get Open_vSwitch . external_ids:ovn-gw-vlanid${INSTANCE_TAG} | tr -d \")
       if [[ -n ${gw_vlanid} ]]; then
         ovn_gateway_opts+="--gateway-vlanid=${gw_vlanid}"
       fi
@@ -2092,6 +2095,12 @@ ovnkube-controller-with-node() {
           ovn_stateless_netpol_enable_flag="--enable-stateless-netpol"
   fi
 
+  ovn_conntrack_zone_flag=
+  if [[ ${ovn_conntrack_zone} != "" ]]; then
+     ovn_conntrack_zone_flag="--conntrack-zone=${ovn_conntrack_zone}"
+  fi
+  echo "ovn_conntrack_zone_flag: ${ovn_conntrack_zone_flag}"
+
   echo "=============== ovnkube-controller-with-node --init-ovnkube-controller-with-node=========="
   /usr/bin/ovnkube --init-ovnkube-controller ${K8S_NODE} --init-node ${K8S_NODE} \
     ${anp_enabled_flag} \
@@ -2145,6 +2154,7 @@ ovnkube-controller-with-node() {
     ${ssl_opts} \
     ${network_qos_enabled_flag} \
     ${ovn_enable_dnsnameresolver_flag} \
+    ${ovn_conntrack_zone_flag} \
     --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
     --export-ovs-metrics \
     --gateway-mode=${ovn_gateway_mode} ${ovn_gateway_opts} \
@@ -2637,7 +2647,7 @@ ovn-node() {
   if [[ ${ovnkube_node_mode} == "dpu" ]]; then
     if [[ ${ovn_gateway_opts} == "" ]]; then
       # get the gateway interface
-      gw_iface=$(ovs-vsctl --if-exists get Open_vSwitch . external_ids:ovn-gw-interface | tr -d \")
+      gw_iface=$(ovs-vsctl --if-exists get Open_vSwitch . external_ids:ovn-gw-interface${INSTANCE_TAG} | tr -d \")
       if [[ ${gw_iface} == "" ]]; then
         echo "Couldn't get the required OVN Gateway Interface. Exiting..."
         exit 1
@@ -2645,7 +2655,7 @@ ovn-node() {
       ovn_gateway_opts="--gateway-interface=${gw_iface} "
 
       # get the gateway nexthop
-      gw_nexthop=$(ovs-vsctl --if-exists get Open_vSwitch . external_ids:ovn-gw-nexthop | tr -d \")
+      gw_nexthop=$(ovs-vsctl --if-exists get Open_vSwitch . external_ids:ovn-gw-nexthop${INSTANCE_TAG} | tr -d \")
       if [[ ${gw_nexthop} == "" ]]; then
         echo "Couldn't get the required OVN Gateway NextHop. Exiting..."
         exit 1
@@ -2656,14 +2666,14 @@ ovn-node() {
     # this is required if the DPU and DPU Host are in different subnets
     if [[ ${ovn_gateway_router_subnet} == "" ]]; then
       # get the gateway router subnet
-      ovn_gateway_router_subnet=$(ovs-vsctl --if-exists get Open_vSwitch . external_ids:ovn-gw-router-subnet | tr -d \")
+      ovn_gateway_router_subnet=$(ovs-vsctl --if-exists get Open_vSwitch . external_ids:ovn-gw-router-subnet${INSTANCE_TAG} | tr -d \")
     fi
 
   fi
 
   if [[ ${ovnkube_node_mode} != "dpu-host" && ! ${ovn_gateway_opts} =~ "gateway-vlanid" ]]; then
       # get the gateway vlanid
-      gw_vlanid=$(ovs-vsctl --if-exists get Open_vSwitch . external_ids:ovn-gw-vlanid | tr -d \")
+      gw_vlanid=$(ovs-vsctl --if-exists get Open_vSwitch . external_ids:ovn-gw-vlanid${INSTANCE_TAG} | tr -d \")
       if [[ -n ${gw_vlanid} ]]; then
         ovn_gateway_opts+="--gateway-vlanid=${gw_vlanid}"
       fi

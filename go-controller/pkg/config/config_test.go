@@ -365,6 +365,11 @@ var _ = Describe("Config Operations", func() {
 		app.Action = func(ctx *cli.Context) error {
 			fexec := ovntest.NewFakeExec()
 
+			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+				Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:ovn-bridge",
+				Output: "custom",
+			})
+
 			// k8s-api-server
 			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 				Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:k8s-api-server",
@@ -406,6 +411,7 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(fexec.CalledMatchesExpected()).To(gomega.BeTrue(), fexec.ErrorDesc)
 
 			gomega.Expect(Kubernetes.APIServer).To(gomega.Equal("https://somewhere.com:8081"))
+			gomega.Expect(Default.BridgeName).To(gomega.Equal("custom"))
 			gomega.Expect(Kubernetes.CACert).To(gomega.Equal(fname))
 			gomega.Expect(Kubernetes.CAData).To(gomega.Equal(fdata))
 			gomega.Expect(Kubernetes.Token).To(gomega.Equal("asadfasdfasrw3atr3r3rf33fasdaa3233"))
@@ -433,6 +439,12 @@ var _ = Describe("Config Operations", func() {
 	It("reads defaults (multiple master) from ovs-vsctl external IDs", func() {
 		app.Action = func(ctx *cli.Context) error {
 			fexec := ovntest.NewFakeExec()
+
+			// ovn-bridge name
+			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+				Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:ovn-bridge",
+				Output: "",
+			})
 
 			// k8s-api-server
 			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
@@ -477,9 +489,9 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			gomega.Expect(cfgPath).To(gomega.Equal(cfgFile.Name()))
 			gomega.Expect(fexec.CalledMatchesExpected()).To(gomega.BeTrue(), fexec.ErrorDesc)
-
-			gomega.Expect(Kubernetes.APIServer).To(gomega.Equal("https://somewhere.com:8081"))
 			gomega.Expect(Kubernetes.CACert).To(gomega.Equal(fname))
+			gomega.Expect(Default.BridgeName).To(gomega.Equal(types.DefaultBridgeName))
+			gomega.Expect(Kubernetes.APIServer).To(gomega.Equal("https://somewhere.com:8081"))
 			gomega.Expect(Kubernetes.CAData).To(gomega.Equal(fdata))
 			gomega.Expect(Kubernetes.Token).To(gomega.Equal("asadfasdfasrw3atr3r3rf33fasdaa3233"))
 			gomega.Expect(Kubernetes.TokenFile).To(gomega.Equal("/new/path/to/token"))
@@ -2039,3 +2051,34 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 		})
 	})
 })
+
+func TestGetOvnBridgeName(t *testing.T) {
+	gomega.RegisterTestingT(t)
+
+	// Case 1: OVS returns a custom bridge name
+	fakeExec := ovntest.NewFakeExec()
+	fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+		Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:ovn-bridge",
+		Output: "custom-bridge",
+	})
+	bridge := getOvnBridgeName(fakeExec)
+	gomega.Expect(bridge).To(gomega.Equal("custom-bridge"))
+
+	// Case 2: OVS returns empty
+	fakeExec = ovntest.NewFakeExec()
+	fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+		Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:ovn-bridge",
+		Output: "",
+	})
+	bridge = getOvnBridgeName(fakeExec)
+	gomega.Expect(bridge).To(gomega.Equal(types.DefaultBridgeName))
+
+	// Case 3: OVS returns error
+	fakeExec = ovntest.NewFakeExec()
+	fakeExec.AddFakeCmd(&ovntest.ExpectedCmd{
+		Cmd: "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external_ids:ovn-bridge",
+		Err: fmt.Errorf("error"),
+	})
+	bridge = getOvnBridgeName(fakeExec)
+	gomega.Expect(bridge).To(gomega.Equal(types.DefaultBridgeName))
+}
