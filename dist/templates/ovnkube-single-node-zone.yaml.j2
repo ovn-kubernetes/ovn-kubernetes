@@ -79,6 +79,8 @@ spec:
           value: "{{ ovn_loglevel_nb }}"
         - name: OVN_NORTHD_BACKOFF_INTERVAL
           value: "{{ ovn_northd_backoff_interval }}"
+        - name: ENABLE_IPSEC
+          value: "{{ enable_ipsec }}"
         - name: K8S_APISERVER
           valueFrom:
             configMapKeyRef:
@@ -299,6 +301,10 @@ spec:
           name: run-systemd
           subPath: private
           readOnly: true
+        {% if enable_ipsec=="true" -%}
+        - mountPath: /var/run/pluto
+          name: run-pluto
+        {% endif %}
 
         resources:
           requests:
@@ -635,6 +641,12 @@ spec:
       - name: run-systemd
         hostPath:
           path: /run/systemd
+      {% if enable_ipsec=="true" -%}
+      - name: run-pluto
+        hostPath:
+          path: /var/run/pluto
+          type: DirectoryOrCreate
+      {% endif %}
 
       tolerations:
       - operator: "Exists"
