@@ -17,6 +17,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 )
@@ -595,7 +596,8 @@ func AddRoutesGatewayIP(
 			// Until https://github.com/ovn-kubernetes/ovn-kubernetes/issues/4876 is fixed, it is limited to IC only
 			if config.OVNKubernetesFeature.EnableInterconnect {
 				if _, isIPv6Mode := netinfo.IPMode(); isIPv6Mode {
-					joinAddrs, err := ParseNodeGatewayRouterJoinAddrs(node, netinfo.GetNetworkName())
+					// TODO this doesn't work
+					joinAddrs, err := udn.GetGWRouterIPs(node, netinfo.GetNetInfo())
 					if err != nil {
 						if IsAnnotationNotSetError(err) {
 							return types.NewSuppressedError(err)
