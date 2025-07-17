@@ -46,10 +46,10 @@ var ErrSubnetNotFound = errors.New("subnet not found")
 // of the managed subnets
 type subnetInfo struct {
 	subnets []*net.IPNet
-	ipams   []ipallocator.Interface
+	ipams   []ipallocator.ContinuousAllocator
 }
 
-type ipamFactoryFunc func(*net.IPNet) (ipallocator.Interface, error)
+type ipamFactoryFunc func(*net.IPNet) (ipallocator.ContinuousAllocator, error)
 
 // allocator provides IPAM for different sets of subnets. Each set is
 // identified with a subnet name.
@@ -64,7 +64,7 @@ type allocator struct {
 // allocations for a given cidr using a contiguous allocation strategy.
 // It also pre-allocates certain special subnet IPs such as the .1, .2, and .3
 // addresses as reserved.
-func newIPAMAllocator(cidr *net.IPNet) (ipallocator.Interface, error) {
+func newIPAMAllocator(cidr *net.IPNet) (ipallocator.ContinuousAllocator, error) {
 	return ipallocator.NewAllocatorCIDRRange(cidr, func(max int, rangeSpec string) (bitmapallocator.Interface, error) {
 		return bitmapallocator.NewRoundRobinAllocationMap(max, rangeSpec), nil
 	})
@@ -86,7 +86,7 @@ func (allocator *allocator) AddOrUpdateSubnet(name string, subnets []*net.IPNet,
 	if subnetInfo, ok := allocator.cache[name]; ok && !reflect.DeepEqual(subnetInfo.subnets, subnets) {
 		klog.Warningf("Replacing subnets %v with %v for %s", util.StringSlice(subnetInfo.subnets), util.StringSlice(subnets), name)
 	}
-	var ipams []ipallocator.Interface
+	var ipams []ipallocator.ContinuousAllocator
 	for _, subnet := range subnets {
 		ipam, err := allocator.ipamFunc(subnet)
 		if err != nil {
@@ -212,7 +212,7 @@ func (allocator *allocator) AllocateIPPerSubnet(name string, ips []*net.IPNet) e
 }
 
 // reserveSubnets reserves subnet IPs
-func reserveSubnets(subnet *net.IPNet, ipam ipallocator.Interface) error {
+func reserveSubnets(subnet *net.IPNet, ipam ipallocator.ContinuousAllocator) error {
 	// FIXME: allocate IP ranges when https://github.com/ovn-org/ovn-kubernetes/issues/3369 is fixed
 	for ip := subnet.IP; subnet.Contains(ip); ip = iputils.NextIP(ip) {
 		if ipam.Reserved(ip) {
