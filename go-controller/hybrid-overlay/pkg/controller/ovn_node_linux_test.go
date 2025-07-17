@@ -396,7 +396,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 		app.Action = func(ctx *cli.Context) error {
 			annotations := createNodeAnnotationsForSubnet(thisNodeSubnet)
 			annotations[hotypes.HybridOverlayDRMAC] = thisNodeDRMAC
-			annotations[util.OVNNodeGRLRPAddrs] = "{\"default\":{\"ipv4\":\"100.64.0.3/16\"}}"
+			annotations[util.OvnNodeID] = "3"
 			annotations[hotypes.HybridOverlayDRIP] = thisNodeDRIP
 			node := createNode(thisNode, "linux", thisNodeIP, annotations)
 			fakeClient := fake.NewSimpleClientset(&corev1.NodeList{
@@ -462,13 +462,13 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 
 			annotations := createNodeAnnotationsForSubnet(thisNodeSubnet)
 			annotations[hotypes.HybridOverlayDRMAC] = thisNodeDRMAC
-			annotations[util.OVNNodeGRLRPAddrs] = "{\"default\":{\"ipv4\":\"100.64.0.3/16\"}}"
+			annotations[util.OvnNodeID] = "3"
 			annotations[hotypes.HybridOverlayDRIP] = thisNodeDRIP
 			node := createNode(thisNode, "linux", thisNodeIP, annotations)
 
 			remoteNodeAnnotations := createNodeAnnotationsForSubnet(remoteNodeSubnet)
 			remoteNodeAnnotations[hotypes.HybridOverlayDRMAC] = remoteNodeDRMAC
-			remoteNodeAnnotations[util.OVNNodeGRLRPAddrs] = "{\"default\":{\"ipv4\":\"100.65.0.3/16\"}}"
+			remoteNodeAnnotations[util.OvnNodeID] = "3"
 			remoteNodeAnnotations[hotypes.HybridOverlayDRIP] = "1.2.4.3"
 			remoteNode := createNode(remoteNodeName, "linux", "10.20.20.1", remoteNodeAnnotations)
 
@@ -565,7 +565,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 
 			annotations := createNodeAnnotationsForSubnet(thisNodeSubnet)
 			annotations[hotypes.HybridOverlayDRMAC] = thisNodeDRMAC
-			annotations[util.OVNNodeGRLRPAddrs] = "{\"default\":{\"ipv4\":\"100.64.0.3/16\"}}"
+			annotations[util.OvnNodeID] = "3"
 			annotations[hotypes.HybridOverlayDRIP] = thisNodeDRIP
 			node := createNode(thisNode, "linux", thisNodeIP, annotations)
 			testPod := createPod("test", "pod1", thisNode, pod1CIDR, pod1MAC)
@@ -649,7 +649,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 
 			annotations := createNodeAnnotationsForSubnet(thisNodeSubnet)
 			annotations[hotypes.HybridOverlayDRMAC] = thisNodeDRMAC
-			annotations[util.OVNNodeGRLRPAddrs] = "{\"default\":{\"ipv4\":\"100.64.0.3/16\"}}"
+			annotations[util.OvnNodeID] = "3"
 			annotations[hotypes.HybridOverlayDRIP] = thisNodeDRIP
 			node := createNode(thisNode, "linux", thisNodeIP, annotations)
 			fakeClient := fake.NewSimpleClientset(&corev1.NodeList{
@@ -749,7 +749,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 
 			annotations := createNodeAnnotationsForSubnet(thisNodeSubnet)
 			annotations[hotypes.HybridOverlayDRMAC] = thisNodeDRMAC
-			annotations[util.OVNNodeGRLRPAddrs] = "{\"default\":{\"ipv4\":\"100.64.0.3/16\"}}"
+			annotations[util.OvnNodeID] = "3"
 			annotations[hotypes.HybridOverlayDRIP] = thisNodeDRIP
 			node := createNode(thisNode, "linux", thisNodeIP, annotations)
 			fakeClient := fake.NewSimpleClientset(&corev1.NodeList{
@@ -889,7 +889,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 
 			annotations := createNodeAnnotationsForSubnet(thisNodeSubnet)
 			annotations[hotypes.HybridOverlayDRMAC] = thisNodeDRMAC
-			annotations[util.OVNNodeGRLRPAddrs] = "{\"default\":{\"ipv4\":\"100.64.0.3/16\"}}"
+			annotations[util.OvnNodeID] = "3"
 			annotations[hotypes.HybridOverlayDRIP] = thisNodeDRIP
 			node := createNode(thisNode, "linux", thisNodeIP, annotations)
 			fakeClient := fake.NewSimpleClientset(&corev1.NodeList{
@@ -1018,7 +1018,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 
 			annotations := createNodeAnnotationsForSubnet(thisNodeSubnet)
 			annotations[hotypes.HybridOverlayDRMAC] = thisNodeDRMAC
-			annotations[util.OVNNodeGRLRPAddrs] = "{\"default\":{\"ipv4\":\"100.64.0.3/16\"}}"
+			annotations[util.OvnNodeID] = "3"
 			annotations[hotypes.HybridOverlayDRIP] = thisNodeDRIP
 			node := createNode(thisNode, "linux", thisNodeIP, annotations)
 			fakeClient := fake.NewSimpleClientset(&corev1.NodeList{
