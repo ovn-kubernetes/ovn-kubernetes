@@ -402,7 +402,10 @@ func (bsnc *BaseSecondaryNetworkController) addLogicalPortToNetworkForNAD(pod *c
 
 	if lsp != nil {
 		_ = bsnc.logicalPortCache.add(pod, switchName, nadName, lsp.UUID, podAnnotation.MAC, podAnnotation.IPs)
-		if bsnc.requireDHCP(pod) {
+		ramsamsamMAC, _ := net.ParseMAC("00:AA:BB:CC:DD:EE")
+		if podAnnotation.MAC.String() == ramsamsamMAC.String() {
+			klog.Infof("RAM skipping DHCP configration")
+		} else if bsnc.requireDHCP(pod) {
 			if err := bsnc.ensureDHCP(pod, podAnnotation, lsp); err != nil {
 				return err
 			}
