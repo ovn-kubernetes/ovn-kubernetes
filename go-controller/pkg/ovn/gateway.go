@@ -262,19 +262,19 @@ func (gw *GatewayManager) createGWRouter(l3GatewayConfig *util.L3GatewayConfig, 
 	if gw.netInfo.GetNetworkName() == types.DefaultNetworkName {
 		logicalRouterOptions["snat-ct-zone"] = "0"
 	}
-	if gw.netInfo.TopologyType() == types.Layer2Topology {
-		// When multiple networks are set of the same logical-router-port
-		// the networks get lexicographically sorted; thus there is no
-		// ordering or telling on which IP will be chosen as the router-ip
-		// when it comes to SNATing traffic after load balancing.
-		// Hence for Layer2 UDPNs let's set the snat-ip explicitly to the
-		// joinsubnetIP
-		joinIPDualStack := make([]string, len(gwLRPJoinIPs))
-		for i, gwLRPJoinIP := range gwLRPJoinIPs {
-			joinIPDualStack[i] = gwLRPJoinIP.IP.String()
-		}
-		logicalRouterOptions["lb_force_snat_ip"] = strings.Join(joinIPDualStack, " ")
-	}
+	//if gw.netInfo.TopologyType() == types.Layer2Topology {
+	//	// When multiple networks are set of the same logical-router-port
+	//	// the networks get lexicographically sorted; thus there is no
+	//	// ordering or telling on which IP will be chosen as the router-ip
+	//	// when it comes to SNATing traffic after load balancing.
+	//	// Hence for Layer2 UDPNs let's set the snat-ip explicitly to the
+	//	// joinsubnetIP
+	//	joinIPDualStack := make([]string, len(gwLRPJoinIPs))
+	//	for i, gwLRPJoinIP := range gwLRPJoinIPs {
+	//		joinIPDualStack[i] = gwLRPJoinIP.IP.String()
+	//	}
+	//	logicalRouterOptions["lb_force_snat_ip"] = strings.Join(joinIPDualStack, " ")
+	//}
 	physicalIPs := make([]string, len(l3GatewayConfig.IPAddresses))
 	for i, ip := range l3GatewayConfig.IPAddresses {
 		physicalIPs[i] = ip.IP.String()
@@ -422,11 +422,11 @@ func (gw *GatewayManager) createGWRouterPort(gwLRPJoinIPs []*net.IPNet,
 		gwLRPIPs = append(gwLRPIPs, gwLRPJoinIP.IP)
 		gwLRPNetworks = append(gwLRPNetworks, gwLRPJoinIP.String())
 	}
-	if gw.netInfo.TopologyType() == types.Layer2Topology {
-		for _, gatewayRouterTransitNetwork := range gw.layer2GWInfo.gatewayRouterTransitNetworks {
-			gwLRPNetworks = append(gwLRPNetworks, gatewayRouterTransitNetwork.String())
-		}
-	}
+	//if gw.netInfo.TopologyType() == types.Layer2Topology {
+	//	for _, gatewayRouterTransitNetwork := range gw.layer2GWInfo.gatewayRouterTransitNetworks {
+	//		gwLRPNetworks = append(gwLRPNetworks, gatewayRouterTransitNetwork.String())
+	//	}
+	//}
 	gwLRPMAC := util.IPAddrToHWAddr(gwLRPIPs[0])
 
 	var options map[string]string
