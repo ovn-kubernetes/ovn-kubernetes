@@ -524,8 +524,6 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 		const (
 			curlConnectionTimeoutCode = "28"
 			curlConnectionRefusedCode = "7"
-			nodePortA                 = 32705
-			nodePortB                 = 32704
 		)
 		f := wrappedTestFramework("bpp-network-isolation")
 		f.SkipNamespaceCreation = true
@@ -540,6 +538,9 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 		var cudnA, cudnB *udnv1.ClusterUserDefinedNetwork
 		var ra *rav1.RouteAdvertisements
 		var hostNetworkPort int
+		var nodePortA int32 = int32(32700 + rand.Intn(10))
+		var nodePortB int32 = int32(32710 + rand.Intn(10))
+		//nodePortB := 32710 + rand.Intn(10)
 		ginkgo.BeforeEach(func() {
 			if cudnATemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer2 && isLocalGWModeEnabled() {
 				e2eskipper.Skipf("Advertising Layer2 UDNs is not currently supported in LGW")
@@ -1022,7 +1023,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), clientPod.Spec.NodeName, metav1.GetOptions{})
 					framework.ExpectNoError(err)
 					nodeIP := node.Status.Addresses[ipFamilyIndex].Address
-					return podsNetA[0].Name, podsNetA[0].Namespace, net.JoinHostPort(nodeIP, strconv.Itoa(nodePortA)), "", false
+					return podsNetA[0].Name, podsNetA[0].Namespace, net.JoinHostPort(nodeIP, strconv.Itoa(int(nodePortA))), "", false
 				}),
 			ginkgo.Entry("pod in the UDN should be able to access a nodePort service in the same network with externalTrafficPolicy=Local on different node with backend pod",
 				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
@@ -1030,12 +1031,12 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), clientPod.Spec.NodeName, metav1.GetOptions{})
 					framework.ExpectNoError(err)
 					nodeIP := node.Status.Addresses[ipFamilyIndex].Address
-					return podsNetA[0].Name, podsNetA[0].Namespace, net.JoinHostPort(nodeIP, strconv.Itoa(nodePortA)), "", false
+					return podsNetA[0].Name, podsNetA[0].Namespace, net.JoinHostPort(nodeIP, strconv.Itoa(int(nodePortA))), "", false
 				}),
 			ginkgo.Entry("pod in the UDN should not be able to access a nodePort service in the same network with externalTrafficPolicy=Local on node without backend pod",
 				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
 					node2IP := nodes.Items[2].Status.Addresses[ipFamilyIndex].Address
-					return podsNetA[0].Name, podsNetA[0].Namespace, net.JoinHostPort(node2IP, strconv.Itoa(nodePortA)), curlConnectionRefusedCode, true
+					return podsNetA[0].Name, podsNetA[0].Namespace, net.JoinHostPort(node2IP, strconv.Itoa(int(nodePortA))), curlConnectionRefusedCode, true
 				}),
 			ginkgo.Entry("pod in the UDN should not be able to access a nodePort service in the different network with externalTrafficPolicy=Local on same node",
 				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
@@ -1043,7 +1044,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), clientPod.Spec.NodeName, metav1.GetOptions{})
 					framework.ExpectNoError(err)
 					nodeIP := node.Status.Addresses[ipFamilyIndex].Address
-					return podNetB.Name, podNetB.Namespace, net.JoinHostPort(nodeIP, strconv.Itoa(nodePortA)), curlConnectionTimeoutCode, true
+					return podNetB.Name, podNetB.Namespace, net.JoinHostPort(nodeIP, strconv.Itoa(int(nodePortA))), curlConnectionTimeoutCode, true
 				}),
 			ginkgo.Entry("pod in the UDN should not be able to access a nodePort service in the different network with externalTrafficPolicy=Local on different node",
 				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
@@ -1051,7 +1052,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), clientPod.Spec.NodeName, metav1.GetOptions{})
 					framework.ExpectNoError(err)
 					nodeIP := node.Status.Addresses[ipFamilyIndex].Address
-					return podNetB.Name, podNetB.Namespace, net.JoinHostPort(nodeIP, strconv.Itoa(nodePortA)), curlConnectionTimeoutCode, true
+					return podNetB.Name, podNetB.Namespace, net.JoinHostPort(nodeIP, strconv.Itoa(int(nodePortA))), curlConnectionTimeoutCode, true
 				}),
 			ginkgo.Entry("pod in the default network should be able to access a nodePort service with externalTrafficPolicy=Local on same node",
 				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
@@ -1059,7 +1060,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), clientPod.Spec.NodeName, metav1.GetOptions{})
 					framework.ExpectNoError(err)
 					nodeIP := node.Status.Addresses[ipFamilyIndex].Address
-					return podNetDefault.Name, podNetDefault.Namespace, net.JoinHostPort(nodeIP, strconv.Itoa(nodePortB)), "", false
+					return podNetDefault.Name, podNetDefault.Namespace, net.JoinHostPort(nodeIP, strconv.Itoa(int(nodePortB))), "", false
 				}),
 			/*
 				// there is bug for this scenario https://issues.redhat.com/browse/OCPBUGS-50636
@@ -1069,13 +1070,13 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 											node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), clientPod.Spec.NodeName, metav1.GetOptions{})
 											framework.ExpectNoError(err)
 											nodeIP := node.Status.Addresses[ipFamilyIndex].Address
-											return podNetDefault.Name, podNetDefault.Namespace, net.JoinHostPort(nodeIP, strconv.Itoa(nodePortB)), "", false
+											return podNetDefault.Name, podNetDefault.Namespace, net.JoinHostPort(nodeIP, strconv.Itoa(int(nodePortB))), "", false
 										}),
 			*/
 			ginkgo.Entry("pod in the default network should not be able to access a nodePort service with externalTrafficPolicy=Local on different node without backend",
 				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
 					node0IP := nodes.Items[0].Status.Addresses[ipFamilyIndex].Address
-					return podNetDefault.Name, podNetDefault.Namespace, net.JoinHostPort(node0IP, strconv.Itoa(nodePortB)), curlConnectionRefusedCode, true
+					return podNetDefault.Name, podNetDefault.Namespace, net.JoinHostPort(node0IP, strconv.Itoa(int(nodePortB))), curlConnectionRefusedCode, true
 				}),
 			ginkgo.Entry("pod in the default network should not be able to access a nodePort service in the UDN network with externalTrafficPolicy=Local on same node",
 				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
@@ -1083,7 +1084,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), clientPod.Spec.NodeName, metav1.GetOptions{})
 					framework.ExpectNoError(err)
 					nodeIP := node.Status.Addresses[ipFamilyIndex].Address
-					return podNetDefault.Name, podNetDefault.Namespace, net.JoinHostPort(nodeIP, strconv.Itoa(nodePortA)), curlConnectionTimeoutCode, true
+					return podNetDefault.Name, podNetDefault.Namespace, net.JoinHostPort(nodeIP, strconv.Itoa(int(nodePortA))), curlConnectionTimeoutCode, true
 				}),
 			ginkgo.Entry("pod in the default network should not be able to access a nodePort service in the UDN network with externalTrafficPolicy=Local on different node",
 				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
@@ -1091,7 +1092,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					node, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), clientPod.Spec.NodeName, metav1.GetOptions{})
 					framework.ExpectNoError(err)
 					nodeIP := node.Status.Addresses[ipFamilyIndex].Address
-					return podNetDefault.Name, podNetDefault.Namespace, net.JoinHostPort(nodeIP, strconv.Itoa(nodePortA)), curlConnectionTimeoutCode, true
+					return podNetDefault.Name, podNetDefault.Namespace, net.JoinHostPort(nodeIP, strconv.Itoa(int(nodePortA))), curlConnectionTimeoutCode, true
 				}),
 		)
 
