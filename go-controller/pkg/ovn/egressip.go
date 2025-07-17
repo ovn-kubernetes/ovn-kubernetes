@@ -33,6 +33,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	egressipv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
@@ -2090,7 +2091,7 @@ func (e *EgressIPController) addEgressNode(node *corev1.Node) error {
 			// on IC if the node is gone, then the ovn_cluster_router is also gone along with all
 			// the routes on it.
 			ni := e.networkManager.GetNetwork(types.DefaultNetworkName)
-			gatewayIPs, err := util.ParseNodeGatewayRouterJoinAddrs(node, types.DefaultNetworkName)
+			gatewayIPs, err := udn.GetGWRouterIPs(node, &util.DefaultNetInfo{})
 			if err != nil {
 				return fmt.Errorf("failed to get default network gateway router join IPs for node %q: %w", node.Name, err)
 			}
@@ -2687,9 +2688,9 @@ func (e *EgressIPController) getGatewayNextHop(ni util.NetInfo, nodeName string,
 		// Node is remote
 		// fetch Node gateway routers 'router to switch' port IP
 		if isIPv6 {
-			return util.ParseNodeGatewayRouterJoinIPv6(node, ni.GetNetworkName())
+			return udn.GetGWRouterIPv6(node, ni)
 		}
-		return util.ParseNodeGatewayRouterJoinIPv4(node, ni.GetNetworkName())
+		return udn.GetGWRouterIPv4(node, ni)
 	}
 	return nil, fmt.Errorf("unsupported network topology %s", ni.TopologyType())
 }
@@ -3208,7 +3209,7 @@ func (e *EgressIPController) ensureRouterPoliciesForNetwork(ni util.NetInfo, nod
 		return fmt.Errorf("failed to ensure no reroute node policies for network %s: %v", ni.GetNetworkName(), err)
 	}
 	if config.OVNKubernetesFeature.EnableInterconnect && ni.TopologyType() == types.Layer3Topology {
-		gatewayIPs, err := util.ParseNodeGatewayRouterJoinAddrs(node, ni.GetNetworkName())
+		gatewayIPs, err := udn.GetGWRouterIPs(node, ni)
 		if err != nil {
 			return fmt.Errorf("failed to get %q network gateway router join IPs for node %q, err: %w", ni.GetNetworkName(), node.Name, err)
 		}

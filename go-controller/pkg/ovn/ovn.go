@@ -1,8 +1,6 @@
 package ovn
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -422,24 +420,6 @@ func nodeSubnetChanged(oldNode, node *corev1.Node, netName string) bool {
 	}
 
 	return util.NodeSubnetAnnotationChangedForNetwork(oldNode, node, netName)
-}
-
-func joinCIDRChanged(oldNode, node *corev1.Node, netName string) bool {
-	var oldCIDRs, newCIDRs map[string]json.RawMessage
-
-	if oldNode.Annotations[util.OVNNodeGRLRPAddrs] == node.Annotations[util.OVNNodeGRLRPAddrs] {
-		return false
-	}
-
-	if err := json.Unmarshal([]byte(oldNode.Annotations[util.OVNNodeGRLRPAddrs]), &oldCIDRs); err != nil {
-		klog.Errorf("Failed to unmarshal old node %s annotation: %v", oldNode.Name, err)
-		return false
-	}
-	if err := json.Unmarshal([]byte(node.Annotations[util.OVNNodeGRLRPAddrs]), &newCIDRs); err != nil {
-		klog.Errorf("Failed to unmarshal new node %s annotation: %v", node.Name, err)
-		return false
-	}
-	return !bytes.Equal(oldCIDRs[netName], newCIDRs[netName])
 }
 
 func primaryAddrChanged(oldNode, newNode *corev1.Node) bool {

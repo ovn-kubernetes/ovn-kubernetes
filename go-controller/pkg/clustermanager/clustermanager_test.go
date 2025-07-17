@@ -19,6 +19,7 @@ import (
 	hotypes "github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -893,7 +894,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 							return err
 						}
 
-						gwLRPAddrs, err := util.ParseNodeGatewayRouterJoinAddrs(updatedNode, ovntypes.DefaultNetworkName)
+						gwLRPAddrs, err := udn.GetGWRouterIPs(updatedNode, &util.DefaultNetInfo{})
 						if err != nil {
 							return err
 						}
@@ -966,7 +967,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 							return err
 						}
 
-						gwLRPAddrs, err := util.ParseNodeGatewayRouterJoinAddrs(updatedNode, ovntypes.DefaultNetworkName)
+						gwLRPAddrs, err := udn.GetGWRouterIPs(updatedNode, &util.DefaultNetInfo{})
 						if err != nil {
 							return err
 						}
@@ -1069,7 +1070,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 							return err
 						}
 
-						gwLRPAddrs, err := util.ParseNodeGatewayRouterJoinAddrs(updatedNode, ovntypes.DefaultNetworkName)
+						gwLRPAddrs, err := udn.GetGWRouterIPs(updatedNode, &util.DefaultNetInfo{})
 						if err != nil {
 							return err
 						}
@@ -1129,7 +1130,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 					node3UpdatedGWRPAnnotation := updatedNode.Annotations[util.OVNNodeGRLRPAddrs]
 					gomega.Expect(node3UpdatedGWRPAnnotation).NotTo(gomega.Equal(node3GWRPAnnotation))
 
-					gwLRPAddrs, err := util.ParseNodeGatewayRouterJoinAddrs(updatedNode, ovntypes.DefaultNetworkName)
+					gwLRPAddrs, err := udn.GetGWRouterIPs(updatedNode, &util.DefaultNetInfo{})
 					if err != nil {
 						return err
 					}
