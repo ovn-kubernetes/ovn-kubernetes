@@ -216,6 +216,12 @@ func (cm *ClusterManager) Start(ctx context.Context) error {
 		if err := cm.userDefinedNetworkController.Run(); err != nil {
 			return err
 		}
+
+		if util.IsPreconfiguredUDNAddressesEnabled() {
+			if err := cm.userDefinedNetworkController.EnsureDefaultNetworkNAD(); err != nil {
+				return err
+			}
+		}
 	}
 
 	if cm.raController != nil {
