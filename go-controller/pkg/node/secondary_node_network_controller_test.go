@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/containernetworking/plugins/pkg/netlinksafe"
 	"github.com/containernetworking/plugins/pkg/ns"
 	"github.com/containernetworking/plugins/pkg/testutils"
 	nadfake "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
@@ -451,7 +452,7 @@ var _ = Describe("SecondaryNodeNetworkController: UserDefinedPrimaryNetwork Gate
 			}).WithTimeout(120 * time.Second).Should(Succeed())
 
 			By("check iprules are created for the network")
-			rulesFound, err := netlink.RuleList(netlink.FAMILY_ALL)
+			rulesFound, err := netlinksafe.RuleList(netlink.FAMILY_ALL)
 			Expect(err).NotTo(HaveOccurred())
 			var udnRules []netlink.Rule
 			for _, rule := range rulesFound {
@@ -472,7 +473,7 @@ var _ = Describe("SecondaryNodeNetworkController: UserDefinedPrimaryNetwork Gate
 			}).WithTimeout(120 * time.Second).ShouldNot(Succeed())
 
 			By("check masquerade iprules are deleted for the network")
-			rulesFound, err = netlink.RuleList(netlink.FAMILY_ALL)
+			rulesFound, err = netlinksafe.RuleList(netlink.FAMILY_ALL)
 			Expect(err).NotTo(HaveOccurred())
 			udnRules = []netlink.Rule{} // reset
 			for _, rule := range rulesFound {
