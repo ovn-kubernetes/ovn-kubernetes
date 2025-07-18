@@ -73,7 +73,7 @@ var _ = Describe("Network Segmentation: Localnet", func() {
 			name:                cudnName,
 			physicalNetworkName: physicalNetworkName,
 			vlanID:              vlan,
-			cidr:                filterCIDRsAndJoin(f.ClientSet, joinCIDRs(subnetIPv4, subnetIPv6)),
+			cidr:                filterCIDRsAndJoin(f.ClientSet, joinStrings(subnetIPv4, subnetIPv6)),
 			excludeCIDRs:        filterCIDRs(f.ClientSet, excludeSubnetIPv4, excludeSubnetIPv6),
 		}
 
