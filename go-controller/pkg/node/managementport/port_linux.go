@@ -138,7 +138,7 @@ func (c *managementPortController) start(stopChan <-chan struct{}) error {
 	if config.Gateway.NodeportEnable {
 		if config.OvnKubeNode.Mode == types.NodeModeFull {
 			// (TODO): Internal Traffic Policy is not supported in DPU mode
-			if err := initMgmPortRoutingRules(c.cfg.hostSubnets); err != nil {
+			if err := initMgmPortRoutingRules(c.cfg); err != nil {
 				return err
 			}
 		}
@@ -696,11 +696,11 @@ func DelLegacyMgtPortIptRules() {
 // initMgmPortRoutingRules creates the routing table, routes and rules that
 // let's us forward service traffic to ovn-k8s-mp0 as opposed to the default
 // route towards breth0
-func initMgmPortRoutingRules(hostSubnets []*net.IPNet) error {
+func initMgmPortRoutingRules(mgmtCfg *managementPortConfig) error {
 	// create ovnkubeSvcViaMgmPortRT and service route towards ovn-k8s-mp0
-	for _, hostSubnet := range hostSubnets {
+	for _, hostSubnet := range mgmtCfg.hostSubnets {
 		isIPv6 := utilnet.IsIPv6CIDR(hostSubnet)
-		gatewayIP := util.GetNodeGatewayIfAddr(hostSubnet).IP.String()
+		gatewayIP := mgmtCfg.netInfo.GetNodeGatewayIP(hostSubnet).IP.String()
 		for _, svcCIDR := range config.Kubernetes.ServiceCIDRs {
 			if isIPv6 == utilnet.IsIPv6CIDR(svcCIDR) {
 				if stdout, stderr, err := util.RunIP("route", "replace", "table", ovnkubeSvcViaMgmPortRT, svcCIDR.String(), "via", gatewayIP, "dev", types.K8sMgmtIntfName); err != nil {

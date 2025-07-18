@@ -3,6 +3,7 @@ package util
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
@@ -388,4 +389,56 @@ func RouteEqual(l, r *netlink.Route) bool {
 		l.QuickACK == r.QuickACK &&
 		l.Congctl == r.Congctl &&
 		l.FastOpenNoCookie == r.FastOpenNoCookie
+}
+
+// SubnetBroadcastIP returns the IP network's broadcast IP.
+func SubnetBroadcastIP(ipnet net.IPNet) net.IP {
+	// For IPv4.
+	if ipnet.IP.To4() != nil {
+		// ip address in uint32
+		ipBits := binary.BigEndian.Uint32(ipnet.IP.To4())
+		// mask will give us all fixed bits of the subnet
+		maskBits := binary.BigEndian.Uint32(ipnet.Mask)
+		// inverted mask will give us all moving bits of the subnet
+		invertedMaskBits := maskBits ^ 0xffffffff // xor the mask
+		// network ip
+		networkIPBits := ipBits & maskBits
+		// broadcastIP = networkIP added to the inverted mask
+		broadcastIPBits := networkIPBits | invertedMaskBits
+		broadcastIP := make(net.IP, 4)
+		binary.BigEndian.PutUint32(broadcastIP, broadcastIPBits)
+		return broadcastIP
+	}
+	// For IPv6. This conversion is actually easier, it follows the same principle as above.
+	byteIP := []byte(ipnet.IP)                // []byte representation of IP
+	byteMask := []byte(ipnet.Mask)            // []byte representation of mask
+	byteTargetIP := make([]byte, len(byteIP)) // []byte holding target IP
+	for k := range byteIP {
+		invertedMask := byteMask[k] ^ 0xff // inverted mask byte
+		byteTargetIP[k] = byteIP[k]&byteMask[k] | invertedMask
+	}
+	return net.IP(byteTargetIP)
+}
+
+// ParseIPList parses a comma-separated string of IP addresses ignoring spaces.
+// Returns an empty slice if the input string is empty.
+func ParseIPList(ipsStr string) ([]net.IP, error) {
+	if strings.TrimSpace(ipsStr) == "" {
+		return nil, nil
+	}
+
+	var ips []net.IP
+	ipStrings := strings.Split(ipsStr, ",")
+	for _, ipStr := range ipStrings {
+		ipStr = strings.TrimSpace(ipStr)
+		if ipStr == "" {
+			continue
+		}
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			return nil, fmt.Errorf("invalid IP address %q", ipStr)
+		}
+		ips = append(ips, ip)
+	}
+	return ips, nil
 }
