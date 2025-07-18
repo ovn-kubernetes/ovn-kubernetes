@@ -126,7 +126,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", feature.Networ
 						networkAttachmentConfigParams{
 							name:     nadName,
 							topology: "layer2",
-							cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							role:     "primary",
 						},
 						false,
@@ -136,7 +136,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", feature.Networ
 						networkAttachmentConfigParams{
 							name:     nadName,
 							topology: "layer3",
-							cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							role:     "primary",
 						},
 						false,
@@ -146,7 +146,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", feature.Networ
 						networkAttachmentConfigParams{
 							name:     nadName,
 							topology: "layer2",
-							cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							role:     "primary",
 						},
 						true,
@@ -156,7 +156,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", feature.Networ
 						networkAttachmentConfigParams{
 							name:     nadName,
 							topology: "layer3",
-							cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							role:     "primary",
 						},
 						true,
@@ -235,7 +235,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", feature.Networ
 						networkAttachmentConfigParams{
 							name:     nadName,
 							topology: "layer2",
-							cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							role:     "secondary",
 						},
 					),
@@ -244,7 +244,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", feature.Networ
 						networkAttachmentConfigParams{
 							name:     nadName,
 							topology: "layer3",
-							cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							role:     "secondary",
 						},
 					),

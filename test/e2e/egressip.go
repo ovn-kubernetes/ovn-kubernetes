@@ -3194,13 +3194,13 @@ spec:
 		ginkgo.Entry("L3 Primary UDN", networkAttachmentConfigParams{
 			name:     "l3primary",
 			topology: types.Layer3Topology,
-			cidr:     joinCIDRs("30.10.0.0/16", "2014:100:200::0/60"),
+			cidr:     joinStrings("30.10.0.0/16", "2014:100:200::0/60"),
 			role:     "primary",
 		}),
 		ginkgo.Entry("L2 Primary UDN", networkAttachmentConfigParams{
 			name:     "l2primary",
 			topology: types.Layer2Topology,
-			cidr:     joinCIDRs("10.10.0.0/16", "2014:100:200::0/60"),
+			cidr:     joinStrings("10.10.0.0/16", "2014:100:200::0/60"),
 			role:     "primary",
 		}),
 	)
