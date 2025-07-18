@@ -82,6 +82,7 @@ func GenerateGatewayMAC(node *corev1.Node) (string, error) {
 }
 
 func GenerateGatewayIPv6RouterLLA(node *corev1.Node) (string, error) {
+	config.IPv4Mode = true
 	joinAddresses, err := GetDefaultUDNGWRouterIPs(node)
 	if err != nil {
 		return "", err
