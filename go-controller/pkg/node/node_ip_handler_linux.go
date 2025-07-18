@@ -318,12 +318,8 @@ func (c *addressManager) updateNodeAddressAnnotations() error {
 
 func (c *addressManager) updateHostCIDRs(ifAddrs []*net.IPNet) error {
 	if config.OvnKubeNode.Mode == types.NodeModeDPU {
-		// For DPU mode, here we need to use the DPU host's IP address which is the tenant cluster's
-		// host internal IP address instead.
-		// Currently we are only intentionally supporting IPv4 for DPU here.
-		nodeIPNetv4, _ := util.MatchFirstIPNetFamily(false, ifAddrs)
-		nodeAddrSet := sets.New[string](nodeIPNetv4.String())
-		return util.SetNodeHostCIDRs(c.nodeAnnotator, nodeAddrSet)
+		// For DPU mode, we don't need to update the host-cidrs annotation.
+		return nil
 	}
 
 	return util.SetNodeHostCIDRs(c.nodeAnnotator, c.cidrs)
