@@ -100,7 +100,7 @@ var _ = Describe("OVN External Gateway pod", func() {
 				},
 			},
 		}
-		nbClient, _, nbsbCleanup, err = libovsdbtest.NewNBSBTestHarness(initialDB)
+		_, nbClient, _, nbsbCleanup, err = libovsdbtest.NewNBSBTestHarness(initialDB)
 		Expect(err).NotTo(HaveOccurred())
 		stopChan = make(chan struct{})
 

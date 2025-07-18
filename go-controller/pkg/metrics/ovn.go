@@ -11,6 +11,7 @@ import (
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
+	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	ovsops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -256,7 +257,7 @@ var ovnControllerStopwatchShowMetricsMap = map[string]*stopwatchMetricDetails{
 // values (ovn-bridge-remote-probe-interval, ovn-remote-probe-interval, ovn-monitor-all,
 // ovn-encap-ip, ovn-encap-type, ovn-remote) obtained from Open_vSwitch entry updates
 func setOvnControllerConfigurationMetrics(ovsDBClient libovsdbclient.Client) (err error) {
-	openvSwitch, err := ovsops.GetOpenvSwitch(ovsDBClient)
+	openvSwitch, err := libovsdbops.GetOpenvSwitch(ovsDBClient)
 	if err != nil {
 		return fmt.Errorf("failed to get Open_vSwitch entry (%v)", err)
 	}

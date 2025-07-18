@@ -157,6 +157,13 @@ const (
 
 	// OvnNodeDontSNATSubnets is a user assigned source subnets that should avoid SNAT at ovn-k8s-mp0 interface
 	OvnNodeDontSNATSubnets = "k8s.ovn.org/node-ingress-snat-exclude-subnets"
+
+	// ovnNodeTransportZones is used to indicate which transport (trust) zones a node belongs to.
+	// This is useful to limit formation of VTEPs between nodes that, by design, host mutually isolated
+	// sets of ports and hence don't need interconnectivity.
+	//
+	// Note: This design constraint is enforced by CNI user, not CNI itself.
+	ovnNodeTransportZones = "k8s.ovn.org/transport-zones"
 )
 
 type L3GatewayConfig struct {
@@ -1010,6 +1017,28 @@ func GetNodeEgressLabel() string {
 	return ovnNodeEgressLabel
 }
 
+func parseAnnotationList(node *corev1.Node, name string, allowEmpty bool) ([]string, error) {
+	value, ok := node.Annotations[name]
+	if !ok {
+		if allowEmpty {
+			return []string{}, nil
+		}
+		return nil, newAnnotationNotSetError("%s annotation not found for node %q", name, node.Name)
+	}
+
+	var result []string
+	if err := json.Unmarshal([]byte(value), &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal annotation %s for node %q: %v",
+			name, node.Name, err)
+	}
+
+	return result, nil
+}
+
+func GetNodeTransportZones(node *corev1.Node) ([]string, error) {
+	return parseAnnotationList(node, ovnNodeTransportZones, true)
+}
+
 func SetNodeHostCIDRs(nodeAnnotator kube.Annotator, cidrs sets.Set[string]) error {
 	return nodeAnnotator.Set(OVNNodeHostCIDRs, sets.List(cidrs))
 }
@@ -1533,4 +1562,8 @@ func ParseNodeEncapIPsAnnotation(node *corev1.Node) ([]string, error) {
 
 func NodeEncapIPsChanged(oldNode, newNode *corev1.Node) bool {
 	return oldNode.Annotations[OVNNodeEncapIPs] != newNode.Annotations[OVNNodeEncapIPs]
+}
+
+func NodeTransportZonesChanged(oldNode, newNode *corev1.Node) bool {
+	return oldNode.Annotations[ovnNodeTransportZones] != newNode.Annotations[ovnNodeTransportZones]
 }

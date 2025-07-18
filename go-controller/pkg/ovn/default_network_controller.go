@@ -192,7 +192,7 @@ func newDefaultNetworkControllerCommon(
 	var zoneChassisHandler *zoneic.ZoneChassisHandler
 	if config.OVNKubernetesFeature.EnableInterconnect {
 		zoneICHandler = zoneic.NewZoneInterconnectHandler(&util.DefaultNetInfo{}, cnci.nbClient, cnci.sbClient, cnci.watchFactory)
-		zoneChassisHandler = zoneic.NewZoneChassisHandler(cnci.sbClient)
+		zoneChassisHandler = zoneic.NewZoneChassisHandler(cnci.ovsLocalClient, cnci.sbClient)
 	}
 	apbExternalRouteController, err := apbroutecontroller.NewExternalMasterController(
 		cnci.kube.APBRouteClient,
@@ -949,6 +949,7 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 		zoneClusterChanged := h.oc.nodeZoneClusterChanged(oldNode, newNode, newNodeIsLocalZoneNode, types.DefaultNetworkName)
 		nodeSubnetChange := nodeSubnetChanged(oldNode, newNode, types.DefaultNetworkName)
 		nodeEncapIPsChanged := util.NodeEncapIPsChanged(oldNode, newNode)
+		nodeTransportZonesChanged := util.NodeTransportZonesChanged(oldNode, newNode)
 
 		var aggregatedErrors []error
 		if newNodeIsLocalZoneNode {
@@ -975,7 +976,7 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 				}
 				_, hoSync := h.oc.hybridOverlayFailed.Load(newNode.Name)
 				_, syncZoneIC := h.oc.syncZoneICFailed.Load(newNode.Name)
-				syncZoneIC = syncZoneIC || zoneClusterChanged || primaryAddrChanged(oldNode, newNode)
+				syncZoneIC = syncZoneIC || zoneClusterChanged || nodeTransportZonesChanged || primaryAddrChanged(oldNode, newNode)
 				nodeSyncsParam = &nodeSyncs{
 					syncNode:              nodeSync,
 					syncClusterRouterPort: clusterRtrSync,
@@ -1006,7 +1007,7 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 			// Also check if node subnet changed, so static routes are properly set
 			// Also check if the node is used to be a hybrid overlay node
 			syncZoneIC = syncZoneIC || h.oc.isLocalZoneNode(oldNode) || nodeSubnetChange || zoneClusterChanged ||
-				switchToOvnNode || nodeEncapIPsChanged
+				switchToOvnNode || nodeEncapIPsChanged || nodeTransportZonesChanged
 			if syncZoneIC {
 				klog.Infof("Node %q in remote zone %q, network %q, needs interconnect zone sync up. Zone cluster changed: %v",
 					newNode.Name, util.GetNodeZone(newNode), h.oc.GetNetworkName(), zoneClusterChanged)
