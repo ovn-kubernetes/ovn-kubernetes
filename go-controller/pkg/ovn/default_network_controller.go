@@ -949,6 +949,7 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 		zoneClusterChanged := h.oc.nodeZoneClusterChanged(oldNode, newNode, newNodeIsLocalZoneNode, types.DefaultNetworkName)
 		nodeSubnetChange := nodeSubnetChanged(oldNode, newNode, types.DefaultNetworkName)
 		nodeEncapIPsChanged := util.NodeEncapIPsChanged(oldNode, newNode)
+		nodePrimaryDPUAddrChanged := util.NodePrimaryDPUAddrAnnotationChanged(oldNode, newNode)
 
 		var aggregatedErrors []error
 		if newNodeIsLocalZoneNode {
@@ -1006,10 +1007,16 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 			// Also check if node subnet changed, so static routes are properly set
 			// Also check if the node is used to be a hybrid overlay node
 			syncZoneIC = syncZoneIC || h.oc.isLocalZoneNode(oldNode) || nodeSubnetChange || zoneClusterChanged ||
-				switchToOvnNode || nodeEncapIPsChanged
+				switchToOvnNode || nodeEncapIPsChanged || nodePrimaryDPUAddrChanged
 			if syncZoneIC {
 				klog.Infof("Node %q in remote zone %q, network %q, needs interconnect zone sync up. Zone cluster changed: %v",
 					newNode.Name, util.GetNodeZone(newNode), h.oc.GetNetworkName(), zoneClusterChanged)
+			}
+			if nodeChassisChanged(oldNode, newNode) {
+				if err := h.oc.zoneChassisHandler.DeleteRemoteZoneNode(oldNode); err != nil {
+					aggregatedErrors = append(aggregatedErrors, err)
+				}
+				syncZoneIC = true
 			}
 			if err := h.oc.addUpdateRemoteNodeEvent(newNode, syncZoneIC); err != nil {
 				aggregatedErrors = append(aggregatedErrors, err)

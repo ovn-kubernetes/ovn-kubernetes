@@ -244,12 +244,16 @@ func (b *BridgeConfiguration) UpdateInterfaceIPAddresses(node *corev1.Node) ([]*
 	// For DPU, here we need to use the DPU host's IP address which is the tenant cluster's
 	// host internal IP address instead of the DPU's external bridge IP address.
 	if config.OvnKubeNode.Mode == types.NodeModeDPU {
-		nodeAddrStr, err := util.GetNodePrimaryIP(node)
+		nodeIfAddr, err := util.GetNodePrimaryDPUAddrAnnotation(node)
 		if err != nil {
 			return nil, err
 		}
-		nodeAddr := net.ParseIP(nodeAddrStr)
-		if nodeAddr == nil {
+		nodeAddrStr := nodeIfAddr.IPv4
+		if nodeAddrStr == "" {
+			nodeAddrStr = nodeIfAddr.IPv6
+		}
+		nodeAddr, _, err := net.ParseCIDR(nodeAddrStr)
+		if err != nil {
 			return nil, fmt.Errorf("failed to parse node IP address. %v", nodeAddrStr)
 		}
 		ifAddrs, err = nodeutil.GetDPUHostPrimaryIPAddresses(nodeAddr, ifAddrs)
