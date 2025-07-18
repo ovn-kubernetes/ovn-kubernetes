@@ -51,6 +51,11 @@ func filterCIDRs(cs clientset.Interface, cidrs ...string) []string {
 	return supportedCIDRs
 }
 
+func filterSupportedNetworkConfig(client clientset.Interface, config *networkAttachmentConfigParams) {
+	config.cidr = filterCIDRsAndJoin(client, config.cidr)
+	config.excludeCIDRs = filterCIDRs(client, config.excludeCIDRs...)
+}
+
 func getNetCIDRSubnet(netCIDR string) (string, error) {
 	subStrings := strings.Split(netCIDR, "/")
 	if len(subStrings) == 3 {
@@ -128,7 +133,9 @@ func generateNADSpec(config networkAttachmentConfig) string {
 	)
 }
 
-func generateNAD(config networkAttachmentConfig) *nadapi.NetworkAttachmentDefinition {
+func generateNAD(config networkAttachmentConfig, client clientset.Interface) *nadapi.NetworkAttachmentDefinition {
+	filterSupportedNetworkConfig(client, &config.networkAttachmentConfigParams)
+
 	nadSpec := generateNADSpec(config)
 	return generateNetAttachDef(config.namespace, config.name, nadSpec)
 }

@@ -88,7 +88,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				netConfig.cidr = filterCIDRsAndJoin(cs, netConfig.cidr)
 				_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
 					context.Background(),
-					generateNAD(netConfig),
+					generateNAD(netConfig, f.ClientSet),
 					metav1.CreateOptions{},
 				)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -191,25 +191,25 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 
 				nad := networkAttachmentConfigParams{
 					topology: topology,
-					cidr:     filterCIDRsAndJoin(cs, joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet)),
+					cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 					// The yellow, blue and red namespaces are going to served by green network.
 					// Use random suffix for the network name to avoid race between tests.
 					networkName: fmt.Sprintf("%s-%s", "green", rand.String(randomStringLength)),
 					role:        "primary",
 				}
+				filterSupportedNetworkConfig(f.ClientSet, &nad)
 
 				// Use random suffix in net conf name to avoid race between tests.
 				netConfName := fmt.Sprintf("sharednet-%s", rand.String(randomStringLength))
 				for _, namespace := range []string{namespaceYellow, namespaceBlue} {
 					ginkgo.By("creating the attachment configuration for " + netConfName + " in namespace " + namespace)
 					netConfig := newNetworkAttachmentConfig(nad)
-					netConfig.cidr = filterCIDRsAndJoin(cs, netConfig.cidr)
 					netConfig.namespace = namespace
 					netConfig.name = netConfName
 
 					_, err := nadClient.NetworkAttachmentDefinitions(namespace).Create(
 						context.Background(),
-						generateNAD(netConfig),
+						generateNAD(netConfig, f.ClientSet),
 						metav1.CreateOptions{},
 					)
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -311,7 +311,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 
 					_, err := nadClient.NetworkAttachmentDefinitions(namespace).Create(
 						context.Background(),
-						generateNAD(netConfig),
+						generateNAD(netConfig, f.ClientSet),
 						metav1.CreateOptions{},
 					)
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
