@@ -656,6 +656,36 @@ func (_m *NetLinkOps) RouteSubscribeWithOptions(ch chan<- netlink.RouteUpdate, d
 	return r0
 }
 
+// RuleList provides a mock function with given fields: family
+func (_m *NetLinkOps) RuleList(family int) ([]netlink.Rule, error) {
+	ret := _m.Called(family)
+
+	if len(ret) == 0 {
+		panic("no return value specified for RuleList")
+	}
+
+	var r0 []netlink.Rule
+	var r1 error
+	if rf, ok := ret.Get(0).(func(int) ([]netlink.Rule, error)); ok {
+		return rf(family)
+	}
+	if rf, ok := ret.Get(0).(func(int) []netlink.Rule); ok {
+		r0 = rf(family)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]netlink.Rule)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(int) error); ok {
+		r1 = rf(family)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // RuleListFiltered provides a mock function with given fields: family, filter, filterMask
 func (_m *NetLinkOps) RuleListFiltered(family int, filter *netlink.Rule, filterMask uint64) ([]netlink.Rule, error) {
 	ret := _m.Called(family, filter, filterMask)

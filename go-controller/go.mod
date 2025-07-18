@@ -5,20 +5,20 @@ go 1.23.0
 toolchain go1.23.6
 
 require (
-	github.com/Microsoft/hcsshim v0.9.6
-	github.com/alexflint/go-filemutex v1.2.0
+	github.com/Microsoft/hcsshim v0.12.9
+	github.com/alexflint/go-filemutex v1.3.0
 	github.com/asaskevich/govalidator v0.0.0-20210307081110-f21760c49a8d
 	github.com/bhendo/go-powershell v0.0.0-20190719160123-219e7fb4e41e
 	github.com/cenkalti/backoff/v4 v4.3.0
-	github.com/containernetworking/cni v1.1.2
-	github.com/containernetworking/plugins v1.2.0
-	github.com/coreos/go-iptables v0.6.0
+	github.com/containernetworking/cni v1.3.0
+	github.com/containernetworking/plugins v1.7.1
+	github.com/coreos/go-iptables v0.8.0
 	github.com/fsnotify/fsnotify v1.7.0
 	github.com/gaissmai/cidrtree v0.1.4
 	github.com/go-logr/logr v1.4.2
 	github.com/go-logr/stdr v1.2.2
 	github.com/godbus/dbus/v5 v5.1.0
-	github.com/google/go-cmp v0.6.0
+	github.com/google/go-cmp v0.7.0
 	github.com/google/gopacket v1.1.19
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.0
@@ -29,31 +29,31 @@ require (
 	github.com/k8snetworkplumbingwg/sriovnet v1.2.1-0.20230427090635-4929697df2dc
 	github.com/mdlayher/arp v0.0.0-20220512170110-6706a2966875
 	github.com/mdlayher/ndp v1.0.1
-	github.com/mdlayher/socket v0.2.1
+	github.com/mdlayher/socket v0.5.1
 	github.com/metallb/frr-k8s v0.0.15
 	github.com/miekg/dns v1.1.31
 	github.com/mitchellh/copystructure v1.2.0
 	github.com/moby/sys/userns v0.1.0
-	github.com/onsi/ginkgo/v2 v2.22.0
-	github.com/onsi/gomega v1.36.1
+	github.com/onsi/ginkgo/v2 v2.23.4
+	github.com/onsi/gomega v1.37.0
 	github.com/openshift/api v0.0.0-20231120222239-b86761094ee3
 	github.com/openshift/client-go v0.0.0-20231121143148-910ca30a1a9a
 	github.com/ovn-kubernetes/libovsdb v0.8.0
 	github.com/prometheus/client_golang v1.19.1
 	github.com/prometheus/client_model v0.6.1
-	github.com/safchain/ethtool v0.3.1-0.20231027162144-83e5e0097c91
+	github.com/safchain/ethtool v0.5.10
 	github.com/spf13/afero v1.9.5
 	github.com/stretchr/testify v1.9.0
 	github.com/urfave/cli/v2 v2.27.2
-	github.com/vishvananda/netlink v1.3.1-0.20250206174618-62fb240731fa
+	github.com/vishvananda/netlink v1.3.1-0.20250303224720-0e7078ed04c8
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56
 	golang.org/x/net v0.38.0
 	golang.org/x/sync v0.12.0
-	golang.org/x/sys v0.31.0
+	golang.org/x/sys v0.32.0
 	golang.org/x/time v0.7.0
-	google.golang.org/grpc v1.65.0
+	google.golang.org/grpc v1.67.0
 	google.golang.org/grpc/security/advancedtls v0.0.0-20240425232638-1e8b9b7fc655
-	google.golang.org/protobuf v1.35.1
+	google.golang.org/protobuf v1.36.5
 	gopkg.in/fsnotify/fsnotify.v1 v1.4.7
 	gopkg.in/gcfg.v1 v1.2.3
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
@@ -94,16 +94,16 @@ require (
 	github.com/google/btree v1.1.3 // indirect
 	github.com/google/gnostic-models v0.6.8 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
-	github.com/google/pprof v0.0.0-20241029153458-d1b30febd7db // indirect
+	github.com/google/pprof v0.0.0-20250403155104-27863c87afa6 // indirect
 	github.com/gorilla/websocket v1.5.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
-	github.com/josharian/native v1.0.0 // indirect
+	github.com/josharian/native v1.1.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/juju/errors v0.0.0-20200330140219-3fe23663418f // indirect
 	github.com/juju/testing v0.0.0-20200706033705-4c23f9c453cd // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mdlayher/ethernet v0.0.0-20220221185849-529eae5b6118 // indirect
-	github.com/mdlayher/packet v1.0.0 // indirect
+	github.com/mdlayher/packet v1.1.2 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	github.com/moby/spdystream v0.5.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
@@ -120,17 +120,18 @@ require (
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
-	github.com/vishvananda/netns v0.0.4 // indirect
+	github.com/vishvananda/netns v0.0.5 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xrash/smetrics v0.0.0-20240312152122-5f08fbb34913 // indirect
 	go.opencensus.io v0.24.0 // indirect
+	go.uber.org/automaxprocs v1.6.0 // indirect
 	golang.org/x/crypto v0.36.0 // indirect
 	golang.org/x/oauth2 v0.23.0 // indirect
 	golang.org/x/term v0.30.0 // indirect
 	golang.org/x/text v0.23.0 // indirect
-	golang.org/x/tools v0.26.0 // indirect
+	golang.org/x/tools v0.31.0 // indirect
 	gomodules.xyz/jsonpatch/v2 v2.4.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20240826202546-f6391c0de4c7 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20240903143218-8af14fe29dc1 // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.12.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
