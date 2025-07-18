@@ -702,7 +702,7 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", feature.EgressIP
 		if len(nodes.Items) < 3 {
 			framework.Failf("Test requires >= 3 Ready nodes, but there are only %v nodes", len(nodes.Items))
 		}
-		netConfigParams.cidr = filterCIDRsAndJoin(f.ClientSet, netConfigParams.cidr)
+		filterSupportedNetworkConfig(f.ClientSet, &netConfigParams)
 		if isSupported, reason := isNetworkSupported(nodes, netConfigParams); !isSupported {
 			ginkgo.Skip(reason)
 		}
@@ -827,7 +827,7 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", feature.EgressIP
 		netConfig.namespace = f.Namespace.Name
 		_, err = nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
 			context.Background(),
-			generateNAD(netConfig),
+			generateNAD(netConfig, f.ClientSet),
 			metav1.CreateOptions{},
 		)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -2978,7 +2978,7 @@ spec:
 		netConfig.namespace = otherNetworkNamespace.Name
 		_, err = nadClient.NetworkAttachmentDefinitions(otherNetworkNamespace.Name).Create(
 			context.Background(),
-			generateNAD(netConfig),
+			generateNAD(netConfig, f.ClientSet),
 			metav1.CreateOptions{},
 		)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -3100,7 +3100,7 @@ spec:
 			netConfig.namespace = otherNetworkNamespace.Name
 			_, err = nadClient.NetworkAttachmentDefinitions(otherNetworkNamespace.Name).Create(
 				context.Background(),
-				generateNAD(netConfig),
+				generateNAD(netConfig, f.ClientSet),
 				metav1.CreateOptions{},
 			)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
