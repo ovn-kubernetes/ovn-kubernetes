@@ -12,6 +12,7 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
@@ -575,7 +576,7 @@ var _ = ginkgo.Describe("blocking ICMP needs frag", func() {
 					if err != nil {
 						return false, err
 					}
-					ips, err := util.DefaultNetworkPodIPs(pod)
+					ips, err := podannotation.DefaultNetworkPodIPs(pod)
 					if err != nil {
 						return false, err
 					}
