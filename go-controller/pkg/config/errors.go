@@ -5,16 +5,18 @@ import "fmt"
 type ValidationErrorType string
 
 const (
-	ErrCIDRNotProperlyFormatted   ValidationErrorType = "CIDRNotProperlyFormatted"
-	ErrInvalidCIDRAddress         ValidationErrorType = "InvalidCIDRAddress"
-	ErrHostSubnetMask             ValidationErrorType = "HostSubnetMask"
-	ErrInvalidIPv4HostSubnet      ValidationErrorType = "InvalidIPv4HostSubnet"
-	ErrSubnetOverlap              ValidationErrorType = "SubnetOverlap"
-	ErrExcludedSubnetNotContained ValidationErrorType = "ExcludedSubnetNotContained"
-	ErrTopologyConfigMismatch     ValidationErrorType = "TopologyConfigMismatch"
-	ErrIPAMLifecycleNotSupported  ValidationErrorType = "IPAMLifecycleNotSupported"
-	ErrSubnetsRequired            ValidationErrorType = "SubnetsRequired"
-	ErrSubnetsMustBeUnset         ValidationErrorType = "SubnetsMustBeUnset"
+	ErrCIDRNotProperlyFormatted         ValidationErrorType = "CIDRNotProperlyFormatted"
+	ErrInvalidCIDRAddress               ValidationErrorType = "InvalidCIDRAddress"
+	ErrHostSubnetMask                   ValidationErrorType = "HostSubnetMask"
+	ErrInvalidIPv4HostSubnet            ValidationErrorType = "InvalidIPv4HostSubnet"
+	ErrSubnetOverlap                    ValidationErrorType = "SubnetOverlap"
+	ErrExcludedSubnetNotContained       ValidationErrorType = "ExcludedSubnetNotContained"
+	ErrReservedSubnetNotContained       ValidationErrorType = "ReservedSubnetNotContained"
+	ErrInfrastructureSubnetNotContained ValidationErrorType = "InfrastructureSubnetNotContained"
+	ErrTopologyConfigMismatch           ValidationErrorType = "TopologyConfigMismatch"
+	ErrIPAMLifecycleNotSupported        ValidationErrorType = "IPAMLifecycleNotSupported"
+	ErrSubnetsRequired                  ValidationErrorType = "SubnetsRequired"
+	ErrSubnetsMustBeUnset               ValidationErrorType = "SubnetsMustBeUnset"
 )
 
 type ValidationError struct {
@@ -70,6 +72,20 @@ func NewExcludedSubnetNotContainedError(excludeSubnet interface{}) *ValidationEr
 	return &ValidationError{
 		Type:    ErrExcludedSubnetNotContained,
 		Message: fmt.Sprintf("the provided network subnets do not contain excluded subnets %v", excludeSubnet),
+	}
+}
+
+func NewReservedSubnetNotContainedError(reservedSubnet interface{}) *ValidationError {
+	return &ValidationError{
+		Type:    ErrReservedSubnetNotContained,
+		Message: fmt.Sprintf("the provided network subnets do not contain reserved subnets %v", reservedSubnet),
+	}
+}
+
+func NewInfrastructureSubnetNotContainedError(infrastructureSubnet interface{}) *ValidationError {
+	return &ValidationError{
+		Type:    ErrInfrastructureSubnetNotContained,
+		Message: fmt.Sprintf("the provided network subnets do not contain infrastructure subnets %v", infrastructureSubnet),
 	}
 }
 

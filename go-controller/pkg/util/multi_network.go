@@ -943,7 +943,7 @@ func (nInfo *secondaryNetInfo) copy() *secondaryNetInfo {
 }
 
 func newLayer3NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) {
-	subnets, _, _, _, err := parseSubnets(netconf.Subnets, "", "", "", types.Layer3Topology)
+	subnets, err := parseNetworkSubnets(netconf.Subnets, types.Layer3Topology)
 	if err != nil {
 		return nil, err
 	}
@@ -968,10 +968,38 @@ func newLayer3NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 }
 
 func newLayer2NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) {
-	subnets, excludes, reserved, infra, err := parseSubnets(netconf.Subnets, netconf.ExcludeSubnets, netconf.ReservedSubnets, netconf.InfrastructureSubnets, types.Layer2Topology)
+	subnets, err := parseNetworkSubnets(netconf.Subnets, types.Layer2Topology)
 	if err != nil {
-		return nil, fmt.Errorf("invalid %s netconf %s: %v", netconf.Topology, netconf.Name, err)
+		return nil, fmt.Errorf("invalid network subnets for %s netconf %s: %v", netconf.Topology, netconf.Name, err)
 	}
+
+	excludes, err := parseSubnetList(netconf.ExcludeSubnets)
+	if err != nil {
+		return nil, fmt.Errorf("invalid exclude subnets for %s netconf %s: %v", netconf.Topology, netconf.Name, err)
+	}
+	if err := validateSubnetContainment(excludes, subnets, config.NewExcludedSubnetNotContainedError); err != nil {
+		return nil, err
+	}
+
+	var reserved, infra []*net.IPNet
+	if IsPreconfiguredUDNAddressesEnabled() {
+		reserved, err = parseSubnetList(netconf.ReservedSubnets)
+		if err != nil {
+			return nil, fmt.Errorf("invalid reserved subnets for %s netconf %s: %v", netconf.Topology, netconf.Name, err)
+		}
+		if err := validateSubnetContainment(reserved, subnets, config.NewReservedSubnetNotContainedError); err != nil {
+			return nil, err
+		}
+
+		infra, err = parseSubnetList(netconf.InfrastructureSubnets)
+		if err != nil {
+			return nil, fmt.Errorf("invalid infrastructure subnets for %s netconf %s: %v", netconf.Topology, netconf.Name, err)
+		}
+		if err := validateSubnetContainment(infra, subnets, config.NewInfrastructureSubnetNotContainedError); err != nil {
+			return nil, err
+		}
+	}
+
 	joinSubnets, err := parseJoinSubnet(netconf.JoinSubnet)
 	if err != nil {
 		return nil, err
@@ -1009,9 +1037,18 @@ func newLayer2NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 }
 
 func newLocalnetNetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) {
-	subnets, excludes, _, _, err := parseSubnets(netconf.Subnets, netconf.ExcludeSubnets, "", "", types.LocalnetTopology)
+	subnets, err := parseNetworkSubnets(netconf.Subnets, types.LocalnetTopology)
 	if err != nil {
 		return nil, fmt.Errorf("invalid %s netconf %s: %v", netconf.Topology, netconf.Name, err)
+	}
+
+	excludes, err := parseSubnetList(netconf.ExcludeSubnets)
+	if err != nil {
+		return nil, fmt.Errorf("invalid %s netconf %s: %v", netconf.Topology, netconf.Name, err)
+	}
+
+	if err := validateSubnetContainment(excludes, subnets, config.NewExcludedSubnetNotContainedError); err != nil {
+		return nil, err
 	}
 
 	ni := &secondaryNetInfo{
@@ -1032,111 +1069,60 @@ func newLocalnetNetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error
 	return ni, nil
 }
 
-func parseSubnets(networkSubnets, excludeSubnets, reservedSubnets, infrastructureSubnets, topology string) ([]config.CIDRNetworkEntry, []*net.IPNet, []*net.IPNet, []*net.IPNet, error) {
-	var parseSubnets func(clusterSubnetCmd string) ([]config.CIDRNetworkEntry, error)
+// parseNetworkSubnets parses network subnets based on the topology, returns nil if subnets is an empty string
+func parseNetworkSubnets(subnets, topology string) ([]config.CIDRNetworkEntry, error) {
+	if strings.TrimSpace(subnets) == "" {
+		return nil, nil
+	}
+
 	switch topology {
 	case types.Layer3Topology:
 		// For L3 topology, subnet is validated
-		parseSubnets = config.ParseClusterSubnetEntries
+		return config.ParseClusterSubnetEntries(subnets)
 	case types.LocalnetTopology, types.Layer2Topology:
-		// For L2 topologies, host specific prefix length is ignored (using 0 as
-		// prefix length)
-		parseSubnets = func(clusterSubnetCmd string) ([]config.CIDRNetworkEntry, error) {
-			return config.ParseClusterSubnetEntriesWithDefaults(clusterSubnetCmd, 0, 0)
-		}
+		// For L2 topologies, host specific prefix length is ignored (using 0 as prefix length)
+		return config.ParseClusterSubnetEntriesWithDefaults(subnets, 0, 0)
+	default:
+		return nil, fmt.Errorf("unsupported topology: %s", topology)
+	}
+}
+
+// parseSubnetList parses a list of subnets, returns nil if subnets is an empty string
+func parseSubnetList(subnets string) ([]*net.IPNet, error) {
+	if strings.TrimSpace(subnets) == "" {
+		return nil, nil
 	}
 
-	var subnets []config.CIDRNetworkEntry
-	if strings.TrimSpace(networkSubnets) != "" {
-		var err error
-		subnets, err = parseSubnets(networkSubnets)
-		if err != nil {
-			return nil, nil, nil, nil, err
-		}
+	// For subnet lists, host specific prefix length is ignored (using 0 as prefix length)
+	entries, err := config.ParseClusterSubnetEntriesWithDefaults(subnets, 0, 0)
+	if err != nil {
+		return nil, err
 	}
 
-	var excludeIPNets []*net.IPNet
-	if strings.TrimSpace(excludeSubnets) != "" {
-		// For L2 topologies, host specific prefix length is ignored (using 0 as
-		// prefix length)
-		excludeSubnets, err := config.ParseClusterSubnetEntriesWithDefaults(excludeSubnets, 0, 0)
-		if err != nil {
-			return nil, nil, nil, nil, err
+	nets := make([]*net.IPNet, 0, len(entries))
+	for _, entry := range entries {
+		nets = append(nets, entry.CIDR)
+	}
+	return nets, nil
+}
+
+// validateSubnetContainment checks if every subnet in subnets is contained in containerSubnets
+// and returns a typed error using the provided error constructor function
+func validateSubnetContainment(subnets []*net.IPNet, containerSubnets []config.CIDRNetworkEntry,
+	errorConstructor func(interface{}) *config.ValidationError) error {
+	for _, subnet := range subnets {
+		found := false
+		for _, containerSubnet := range containerSubnets {
+			if ContainsCIDR(containerSubnet.CIDR, subnet) {
+				found = true
+				break
+			}
 		}
-		excludeIPNets = make([]*net.IPNet, 0, len(excludeSubnets))
-		for _, excludeSubnet := range excludeSubnets {
-			found := false
-			for _, subnet := range subnets {
-				if ContainsCIDR(subnet.CIDR, excludeSubnet.CIDR) {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return nil, nil, nil, nil, config.NewExcludedSubnetNotContainedError(excludeSubnet.CIDR)
-			}
-			excludeIPNets = append(excludeIPNets, excludeSubnet.CIDR)
+		if !found {
+			return errorConstructor(subnet)
 		}
 	}
-
-	var reservedIPNets []*net.IPNet
-	if IsPreconfiguredUDNAddressesEnabled() && strings.TrimSpace(reservedSubnets) != "" {
-		// For L2 topologies, host specific prefix length is ignored (using 0 as
-		// prefix length)
-		reservedSubnets, err := config.ParseClusterSubnetEntriesWithDefaults(reservedSubnets, 0, 0)
-		if err != nil {
-			return nil, nil, nil, nil, err
-		}
-		reservedIPNets = make([]*net.IPNet, 0, len(reservedSubnets))
-		for _, reservedSubnet := range reservedSubnets {
-			found := false
-			for _, subnet := range subnets {
-				if ContainsCIDR(subnet.CIDR, reservedSubnet.CIDR) {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return nil, nil, nil, nil, fmt.Errorf("the provided network subnets %v do not contain reserved subnets %v",
-					subnets, reservedSubnet.CIDR)
-			}
-			reservedIPNets = append(reservedIPNets, reservedSubnet.CIDR)
-		}
-	}
-
-	var infrastructureIPNets []*net.IPNet
-	if IsPreconfiguredUDNAddressesEnabled() && strings.TrimSpace(infrastructureSubnets) != "" {
-		// For L2 topologies, host specific prefix length is ignored (using 0 as
-		// prefix length)
-		infrastructureSubnets, err := config.ParseClusterSubnetEntriesWithDefaults(infrastructureSubnets, 0, 0)
-		if err != nil {
-			return nil, nil, nil, nil, err
-		}
-		infrastructureIPNets = make([]*net.IPNet, 0, len(infrastructureSubnets))
-		for _, infrastructureSubnet := range infrastructureSubnets {
-			found := false
-			for _, subnet := range subnets {
-				if ContainsCIDR(subnet.CIDR, infrastructureSubnet.CIDR) {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return nil, nil, nil, nil, fmt.Errorf("the provided network subnets %v do not contain infrastructure subnets %v",
-					subnets, infrastructureSubnet.CIDR)
-			}
-			// Check for overlap with exclude subnets
-			for _, excludeSubnet := range excludeIPNets {
-				if ContainsCIDR(infrastructureSubnet.CIDR, excludeSubnet) || ContainsCIDR(excludeSubnet, infrastructureSubnet.CIDR) {
-					return nil, nil, nil, nil, fmt.Errorf("infrastructure subnet %v overlaps with excluded subnet %v",
-						infrastructureSubnet.CIDR, excludeSubnet)
-				}
-			}
-			infrastructureIPNets = append(infrastructureIPNets, infrastructureSubnet.CIDR)
-		}
-	}
-
-	return subnets, excludeIPNets, reservedIPNets, infrastructureIPNets, nil
+	return nil
 }
 
 func parseJoinSubnet(joinSubnet string) ([]*net.IPNet, error) {
@@ -1751,9 +1737,16 @@ func ParseNetworkName(networkName string) (udnNamespace, udnName string) {
 // available IP as gateway IP (if not already provided) and the second available IP as management IP.
 // If it isn't able to find the IPs in the infrastructure subnets it defers back to default values.
 func allocateInfrastructureIPs(netconf *ovncnitypes.NetConf) ([]net.IP, []net.IP, error) {
-	subnets, _, _, infra, err := parseSubnets(netconf.Subnets, netconf.ExcludeSubnets, netconf.ReservedSubnets, netconf.InfrastructureSubnets, types.Layer2Topology)
+	// Parse network subnets
+	subnets, err := parseNetworkSubnets(netconf.Subnets, types.Layer2Topology)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to parse subnets: %w", err)
+	}
+
+	// Parse infrastructure subnets
+	infra, err := parseSubnetList(netconf.InfrastructureSubnets)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to parse infrastructure subnets: %w", err)
 	}
 
 	// Parse default gateway IPs

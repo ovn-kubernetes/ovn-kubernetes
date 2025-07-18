@@ -18,17 +18,13 @@ import (
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 )
 
-func TestParseSubnets(t *testing.T) {
+func TestParseNetworkSubnets(t *testing.T) {
 	tests := []struct {
-		desc             string
-		topology         string
-		subnets          string
-		excludes         string
-		reserved         string
-		expectedSubnets  []config.CIDRNetworkEntry
-		expectedExcludes []*net.IPNet
-		expectedReserved []*net.IPNet
-		expectError      bool
+		desc            string
+		topology        string
+		subnets         string
+		expectedSubnets []config.CIDRNetworkEntry
+		expectError     bool
 	}{
 		{
 			desc:     "multiple subnets layer 3 topology",
@@ -50,10 +46,9 @@ func TestParseSubnets(t *testing.T) {
 			topology: ovntypes.Layer3Topology,
 		},
 		{
-			desc:     "multiple subnets and excludes layer 2 topology",
+			desc:     "multiple subnets layer 2 topology",
 			topology: ovntypes.Layer2Topology,
 			subnets:  "192.168.1.1/26, fda6::/48",
-			excludes: "192.168.1.38/32, fda6::38/128",
 			expectedSubnets: []config.CIDRNetworkEntry{
 				{
 					CIDR: ovntest.MustParseIPNet("192.168.1.0/26"),
@@ -62,31 +57,16 @@ func TestParseSubnets(t *testing.T) {
 					CIDR: ovntest.MustParseIPNet("fda6::/48"),
 				},
 			},
-			expectedExcludes: ovntest.MustParseIPNets("192.168.1.38/32", "fda6::38/128"),
 		},
 		{
 			desc:     "empty subnets layer 2 topology",
 			topology: ovntypes.Layer2Topology,
+			subnets:  "",
 		},
 		{
-			desc:        "invalid formatted excludes layer 2 topology",
-			topology:    ovntypes.Layer2Topology,
-			subnets:     "192.168.1.1/26",
-			excludes:    "192.168.1.1/26/32",
-			expectError: true,
-		},
-		{
-			desc:        "invalid not contained excludes layer 2 topology",
-			topology:    ovntypes.Layer2Topology,
-			subnets:     "fda6::/48",
-			excludes:    "fda7::38/128",
-			expectError: true,
-		},
-		{
-			desc:     "multiple subnets and excludes localnet topology",
+			desc:     "multiple subnets localnet topology",
 			topology: ovntypes.LocalnetTopology,
 			subnets:  "192.168.1.1/26, fda6::/48",
-			excludes: "192.168.1.38/32, fda6::38/128",
 			expectedSubnets: []config.CIDRNetworkEntry{
 				{
 					CIDR: ovntest.MustParseIPNet("192.168.1.0/26"),
@@ -95,88 +75,112 @@ func TestParseSubnets(t *testing.T) {
 					CIDR: ovntest.MustParseIPNet("fda6::/48"),
 				},
 			},
-			expectedExcludes: ovntest.MustParseIPNets("192.168.1.38/32", "fda6::38/128"),
 		},
 		{
 			desc:     "empty subnets localnet topology",
 			topology: ovntypes.LocalnetTopology,
+			subnets:  "",
 		},
 		{
-			desc:        "invalid formatted excludes localnet topology",
-			topology:    ovntypes.LocalnetTopology,
-			subnets:     "fda6::/48",
-			excludes:    "fda6::1/48/128",
-			expectError: true,
-		},
-		{
-			desc:        "invalid not contained excludes localnet topology",
-			topology:    ovntypes.LocalnetTopology,
+			desc:        "unsupported topology",
+			topology:    "unsupported",
 			subnets:     "192.168.1.1/26",
-			excludes:    "192.168.2.38/32",
 			expectError: true,
-		},
-		{
-			desc:     "multiple subnets and reserved subnets layer 2 topology",
-			topology: ovntypes.Layer2Topology,
-			subnets:  "192.168.1.0/24, fda6::/64",
-			reserved: "192.168.1.0/28, fda6::0/80",
-			expectedSubnets: []config.CIDRNetworkEntry{
-				{
-					CIDR: ovntest.MustParseIPNet("192.168.1.0/24"),
-				},
-				{
-					CIDR: ovntest.MustParseIPNet("fda6::/64"),
-				},
-			},
-			expectedReserved: ovntest.MustParseIPNets("192.168.1.0/28", "fda6::0/80"),
-		},
-		{
-			desc:     "layer 2 with both excludes and reserved subnets",
-			topology: ovntypes.Layer2Topology,
-			subnets:  "192.168.1.0/24",
-			excludes: "192.168.1.200/29",
-			reserved: "192.168.1.0/28",
-			expectedSubnets: []config.CIDRNetworkEntry{
-				{
-					CIDR: ovntest.MustParseIPNet("192.168.1.0/24"),
-				},
-			},
-			expectedExcludes: ovntest.MustParseIPNets("192.168.1.200/29"),
-			expectedReserved: ovntest.MustParseIPNets("192.168.1.0/28"),
-		},
-		{
-			desc:     "dual-stack reserved subnets layer 2 topology",
-			topology: ovntypes.Layer2Topology,
-			subnets:  "192.168.1.0/24, 2001:db8::/64",
-			reserved: "192.168.1.0/28, 2001:db8::/80",
-			expectedSubnets: []config.CIDRNetworkEntry{
-				{
-					CIDR: ovntest.MustParseIPNet("192.168.1.0/24"),
-				},
-				{
-					CIDR: ovntest.MustParseIPNet("2001:db8::/64"),
-				},
-			},
-			expectedReserved: ovntest.MustParseIPNets("192.168.1.0/28", "2001:db8::/80"),
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.desc, func(t *testing.T) {
 			g := gomega.NewWithT(t)
-			config.OVNKubernetesFeature.EnableMultiNetwork = true
-			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
-			config.OVNKubernetesFeature.EnablePreconfiguredUDNAddresses = true
 
-			subnets, excludes, reserved, _, err := parseSubnets(tc.subnets, tc.excludes, tc.reserved, "", tc.topology)
+			subnets, err := parseNetworkSubnets(tc.subnets, tc.topology)
 			if tc.expectError {
 				g.Expect(err).To(gomega.HaveOccurred())
 				return
 			}
 			g.Expect(err).NotTo(gomega.HaveOccurred())
 			g.Expect(subnets).To(gomega.ConsistOf(tc.expectedSubnets))
-			g.Expect(excludes).To(gomega.ConsistOf(tc.expectedExcludes))
-			g.Expect(reserved).To(gomega.ConsistOf(tc.expectedReserved))
+		})
+	}
+}
+
+func TestParseSubnetList(t *testing.T) {
+	tests := []struct {
+		desc            string
+		subnets         string
+		expectedSubnets []*net.IPNet
+		expectError     bool
+	}{
+		{
+			desc:            "multiple subnets",
+			subnets:         "192.168.1.38/32, fda6::38/128",
+			expectedSubnets: ovntest.MustParseIPNets("192.168.1.38/32", "fda6::38/128"),
+		},
+		{
+			desc: "empty subnets",
+		},
+		{
+			desc:        "invalid formatted subnets",
+			subnets:     "192.168.1.1/26/32",
+			expectError: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.desc, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+
+			subnets, err := parseSubnetList(tc.subnets)
+			if tc.expectError {
+				g.Expect(err).To(gomega.HaveOccurred())
+				return
+			}
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+			g.Expect(subnets).To(gomega.ConsistOf(tc.expectedSubnets))
+		})
+	}
+}
+
+func TestValidateSubnetContainment(t *testing.T) {
+	tests := []struct {
+		desc             string
+		subnets          []*net.IPNet
+		containerSubnets []config.CIDRNetworkEntry
+		expectError      bool
+	}{
+		{
+			desc:    "valid containment",
+			subnets: ovntest.MustParseIPNets("192.168.1.38/32", "fda6::38/128"),
+			containerSubnets: []config.CIDRNetworkEntry{
+				{CIDR: ovntest.MustParseIPNet("192.168.1.0/26")},
+				{CIDR: ovntest.MustParseIPNet("fda6::/48")},
+			},
+		},
+		{
+			desc:    "invalid containment",
+			subnets: ovntest.MustParseIPNets("fda7::38/128"),
+			containerSubnets: []config.CIDRNetworkEntry{
+				{CIDR: ovntest.MustParseIPNet("fda6::/48")},
+			},
+			expectError: true,
+		},
+		{
+			desc:             "empty subnets",
+			containerSubnets: []config.CIDRNetworkEntry{{CIDR: ovntest.MustParseIPNet("192.168.1.0/26")}},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.desc, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+
+			err := validateSubnetContainment(tc.subnets, tc.containerSubnets, config.NewExcludedSubnetNotContainedError)
+			if tc.expectError {
+				g.Expect(err).To(gomega.HaveOccurred())
+				g.Expect(err).To(gomega.BeAssignableToTypeOf(&config.ValidationError{}))
+			} else {
+				g.Expect(err).NotTo(gomega.HaveOccurred())
+			}
 		})
 	}
 }
@@ -509,12 +513,116 @@ func TestParseNetconf(t *testing.T) {
 }`,
 			expectedError: fmt.Errorf("the subnet attribute must be defined for layer2 primary user defined networks"),
 		},
+		{
+			desc: "invalid not contained excludes layer 2 topology",
+			inputNetAttachDefConfigSpec: `
+    {
+            "name": "tenantred",
+            "type": "ovn-k8s-cni-overlay",
+            "topology": "layer2",
+            "subnets": "fda6::/48",
+            "excludeSubnets": "fda7::38/128",
+            "netAttachDefName": "ns1/nad1"
+    }
+`,
+			expectedError: fmt.Errorf("invalid subnet configuration: error while parsing subnets: the provided network subnets do not contain excluded subnets fda7::38/128"),
+		},
+		{
+			desc: "multiple subnets and excludes localnet topology",
+			inputNetAttachDefConfigSpec: `
+    {
+            "name": "tenantred",
+            "type": "ovn-k8s-cni-overlay",
+            "topology": "localnet",
+            "subnets": "192.168.1.1/26, fda6::/48",
+            "excludeSubnets": "192.168.1.38/32, fda6::38/128",
+            "netAttachDefName": "ns1/nad1"
+    }
+`,
+			expectedNetConf: &ovncnitypes.NetConf{
+				Topology:       "localnet",
+				NADName:        "ns1/nad1",
+				MTU:            1400,
+				Subnets:        "192.168.1.1/26, fda6::/48",
+				ExcludeSubnets: "192.168.1.38/32, fda6::38/128",
+				NetConf:        cnitypes.NetConf{Name: "tenantred", Type: "ovn-k8s-cni-overlay"},
+			},
+		},
+		{
+			desc: "multiple subnets and reserved subnets layer 2 topology",
+			inputNetAttachDefConfigSpec: `
+    {
+            "name": "tenantred",
+            "type": "ovn-k8s-cni-overlay",
+            "topology": "layer2",
+            "subnets": "192.168.1.0/24, fda6::/64",
+            "reservedSubnets": "192.168.1.0/28, fda6::0/80",
+            "netAttachDefName": "ns1/nad1"
+    }
+`,
+			expectedNetConf: &ovncnitypes.NetConf{
+				Topology:        "layer2",
+				NADName:         "ns1/nad1",
+				MTU:             1400,
+				Subnets:         "192.168.1.0/24, fda6::/64",
+				ReservedSubnets: "192.168.1.0/28, fda6::0/80",
+				NetConf:         cnitypes.NetConf{Name: "tenantred", Type: "ovn-k8s-cni-overlay"},
+			},
+		},
+		{
+			desc: "layer 2 with both excludes and reserved subnets",
+			inputNetAttachDefConfigSpec: `
+    {
+            "name": "tenantred",
+            "type": "ovn-k8s-cni-overlay",
+            "topology": "layer2",
+            "subnets": "192.168.1.0/24",
+            "excludeSubnets": "192.168.1.200/29",
+            "reservedSubnets": "192.168.1.0/28",
+            "netAttachDefName": "ns1/nad1"
+    }
+`,
+			expectedNetConf: &ovncnitypes.NetConf{
+				Topology:        "layer2",
+				NADName:         "ns1/nad1",
+				MTU:             1400,
+				Subnets:         "192.168.1.0/24",
+				ExcludeSubnets:  "192.168.1.200/29",
+				ReservedSubnets: "192.168.1.0/28",
+				NetConf:         cnitypes.NetConf{Name: "tenantred", Type: "ovn-k8s-cni-overlay"},
+			},
+		},
+		{
+			desc: "dual-stack reserved subnets layer 2 topology",
+			inputNetAttachDefConfigSpec: `
+    {
+            "name": "tenantred",
+            "type": "ovn-k8s-cni-overlay",
+            "topology": "layer2",
+            "subnets": "192.168.1.0/24, 2001:db8::/64",
+            "reservedSubnets": "192.168.1.0/28, 2001:db8::/80",
+            "netAttachDefName": "ns1/nad1"
+    }
+`,
+			expectedNetConf: &ovncnitypes.NetConf{
+				Topology:        "layer2",
+				NADName:         "ns1/nad1",
+				MTU:             1400,
+				Subnets:         "192.168.1.0/24, 2001:db8::/64",
+				ReservedSubnets: "192.168.1.0/28, 2001:db8::/80",
+				NetConf:         cnitypes.NetConf{Name: "tenantred", Type: "ovn-k8s-cni-overlay"},
+			},
+		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.desc, func(t *testing.T) {
 			config.IPv4Mode = true
 			config.IPv6Mode = true
+			// Enable feature flags for reserved subnets tests
+			config.OVNKubernetesFeature.EnableMultiNetwork = true
+			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+			config.OVNKubernetesFeature.EnablePreconfiguredUDNAddresses = true
 			if test.unsupportedReason != "" {
 				t.Skip(test.unsupportedReason)
 			}
