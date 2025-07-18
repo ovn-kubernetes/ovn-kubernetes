@@ -4,6 +4,10 @@ on:
   merge_group:
   pull_request:
     branches: [ master ]
+    # Only run jobs if at least one non-doc file is changed
+    paths-ignore:
+      - '**/*.md'
+      - 'mkdocs.yml'
   schedule:
     - cron: '0 */12 * * *'
   workflow_dispatch:
