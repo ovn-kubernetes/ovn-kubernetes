@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	iputils "github.com/containernetworking/plugins/pkg/ip"
+
 	corev1 "k8s.io/api/core/v1"
 
 	kubevirtv1 "kubevirt.io/api/core/v1"
@@ -65,37 +67,54 @@ func RetrieveIPv6Gateways(cli *Client, vmi *v1.VirtualMachineInstance) ([]string
 	return paths, nil
 }
 
-func GenerateGatewayMAC(node *corev1.Node, networkName string) (string, error) {
+func GenerateGatewayMAC(node *corev1.Node) (string, error) {
 	config.IPv4Mode = true
-	lrpJoinAddress, err := util.ParseNodeGatewayRouterJoinNetwork(node, networkName)
+	lrpJoinAddress, err := GetDefaultUDNGWRouterIPs(node)
 	if err != nil {
 		return "", err
 	}
 
-	lrpJoinIPString := lrpJoinAddress.IPv4
-	if lrpJoinIPString == "" {
-		lrpJoinIPString = lrpJoinAddress.IPv6
+	if len(lrpJoinAddress) == 0 {
+		return "", fmt.Errorf("missing lrp join ip at node %q", node.Name)
 	}
 
-	if lrpJoinIPString == "" {
-		return "", fmt.Errorf("missing lrp join ip at node %q with network %q", node.Name)
-	}
-
-	lrpJoinIP, _, err := net.ParseCIDR(lrpJoinIPString)
-	if err != nil {
-		return "", err
-	}
-
-	return util.IPAddrToHWAddr(lrpJoinIP).String(), nil
+	return util.IPAddrToHWAddr(*lrpJoinAddress[0]).String(), nil
 }
 
-func GenerateGatewayIPv6RouterLLA(node *corev1.Node, networkName string) (string, error) {
-	joinAddresses, err := util.ParseNodeGatewayRouterJoinAddrs(node, networkName)
+func GenerateGatewayIPv6RouterLLA(node *corev1.Node) (string, error) {
+	config.IPv4Mode = true
+	joinAddresses, err := GetDefaultUDNGWRouterIPs(node)
 	if err != nil {
 		return "", err
 	}
 	if len(joinAddresses) == 0 {
-		return "", fmt.Errorf("missing join addresses at node %q for network %q", node.Name, networkName)
+		return "", fmt.Errorf("missing join addresses at node %q", node.Name)
 	}
-	return util.HWAddrToIPv6LLA(util.IPAddrToHWAddr(joinAddresses[0].IP)).String(), nil
+	return util.HWAddrToIPv6LLA(util.IPAddrToHWAddr(*joinAddresses[0])).String(), nil
+}
+
+func GetDefaultUDNGWRouterIPs(node *corev1.Node) ([]*net.IP, error) {
+	nodeID, err := util.GetNodeIDWithError(node)
+	if err != nil {
+		// Don't consider this node as cluster-manager has not allocated node id yet.
+		return nil, err
+	}
+	udnJoinNetv4 := "100.65.0.0/16"
+	udnJoinNetv6 := "fd99::/64"
+	res := []*net.IP{}
+	if config.IPv4Mode {
+		gwIP, _, _ := net.ParseCIDR(udnJoinNetv4)
+		for range nodeID {
+			gwIP = iputils.NextIP(gwIP)
+		}
+		res = append(res, &gwIP)
+	}
+	if config.IPv6Mode {
+		gwIP, _, _ := net.ParseCIDR(udnJoinNetv6)
+		for range nodeID {
+			gwIP = iputils.NextIP(gwIP)
+		}
+		res = append(res, &gwIP)
+	}
+	return res, nil
 }
