@@ -90,7 +90,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 			By("creating the attachment configuration")
 			_, err := nadClient.NetworkAttachmentDefinitions(netConfig.namespace).Create(
 				context.Background(),
-				generateNAD(netConfig),
+				generateNAD(netConfig, f.ClientSet),
 				metav1.CreateOptions{},
 			)
 			Expect(err).NotTo(HaveOccurred())
@@ -314,7 +314,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					LogicalNetworkName: netConfig.networkName,
 				})).To(Succeed())
 
-				nad := generateNAD(netConfig)
+				nad := generateNAD(netConfig, f.ClientSet)
 				By(fmt.Sprintf("creating the attachment configuration: %v\n", nad))
 				_, err = nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
 					context.Background(),
@@ -479,7 +479,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 			By("creating the attachment configuration")
 			_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
 				context.Background(),
-				generateNAD(netConfig),
+				generateNAD(netConfig, f.ClientSet),
 				metav1.CreateOptions{},
 			)
 			Expect(err).NotTo(HaveOccurred())
@@ -522,7 +522,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 			netConfig.namespace = createdNamespace.Name
 			_, err = nadClient.NetworkAttachmentDefinitions(createdNamespace.Name).Create(
 				context.Background(),
-				generateNAD(netConfig),
+				generateNAD(netConfig, f.ClientSet),
 				metav1.CreateOptions{},
 			)
 			Expect(err).NotTo(HaveOccurred())
@@ -556,7 +556,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				By("creating the attachment configuration")
 				_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
 					context.Background(),
-					generateNAD(netConfig),
+					generateNetAttachDef(netConfig.namespace, netConfig.name, generateNADSpec(netConfig)),
 					metav1.CreateOptions{},
 				)
 				Expect(err).NotTo(HaveOccurred())
@@ -952,7 +952,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					By("creating the attachment configuration")
 					_, err := nadClient.NetworkAttachmentDefinitions(netConfig.namespace).Create(
 						context.Background(),
-						generateNAD(netConfig),
+						generateNAD(netConfig, f.ClientSet),
 						metav1.CreateOptions{},
 					)
 					Expect(err).NotTo(HaveOccurred())
@@ -1338,7 +1338,7 @@ ip a add %[4]s/24 dev %[2]s
 					By("creating the attachment configuration for a separate VLAN")
 					_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
 						context.Background(),
-						generateNAD(vlan20NetConfig),
+						generateNAD(vlan20NetConfig, f.ClientSet),
 						metav1.CreateOptions{},
 					)
 					Expect(err).NotTo(HaveOccurred())
@@ -2054,7 +2054,7 @@ ip a add %[4]s/24 dev %[2]s
 				By("creating the attachment configuration")
 				_, err := nadClient.NetworkAttachmentDefinitions(netConfig.namespace).Create(
 					context.Background(),
-					generateNAD(netConfig),
+					generateNAD(netConfig, f.ClientSet),
 					metav1.CreateOptions{},
 				)
 				Expect(err).NotTo(HaveOccurred())
@@ -2138,7 +2138,7 @@ func createNads(f *framework.Framework, nadClient nadclient.K8sCniCncfIoV1Interf
 		netConfig.namespace = ns.Name
 		_, err := nadClient.NetworkAttachmentDefinitions(ns.Name).Create(
 			context.Background(),
-			generateNAD(netConfig),
+			generateNAD(netConfig, f.ClientSet),
 			metav1.CreateOptions{},
 		)
 		if err != nil {

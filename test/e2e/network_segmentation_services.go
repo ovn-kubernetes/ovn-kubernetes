@@ -113,10 +113,9 @@ var _ = Describe("Network Segmentation: services", feature.NetworkSegmentation, 
 				By("Creating the attachment configuration")
 				netConfig := newNetworkAttachmentConfig(netConfigParams)
 				netConfig.namespace = f.Namespace.Name
-				netConfig.cidr = filterCIDRsAndJoin(cs, netConfig.cidr)
 				_, err = nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
 					context.Background(),
-					generateNAD(netConfig),
+					generateNAD(netConfig, f.ClientSet),
 					metav1.CreateOptions{},
 				)
 				Expect(err).NotTo(HaveOccurred())
