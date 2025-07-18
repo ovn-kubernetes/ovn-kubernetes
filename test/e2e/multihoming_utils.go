@@ -29,22 +29,15 @@ func netCIDR(netCIDR string, netPrefixLengthPerNode int) string {
 	return fmt.Sprintf("%s/%d", netCIDR, netPrefixLengthPerNode)
 }
 
-func joinCIDRs(cidrs ...string) string {
-	return strings.Join(cidrs, ",")
-}
-
-func splitCIDRs(cidrs string) []string {
-	if cidrs == "" {
-		return []string{}
-	}
-	return strings.Split(cidrs, ",")
+func joinStrings(vals ...string) string {
+	return strings.Join(vals, ",")
 }
 
 func filterCIDRsAndJoin(cs clientset.Interface, cidrs string) string {
 	if cidrs == "" {
 		return "" // we may not always set CIDR - i.e. CDN
 	}
-	return joinCIDRs(filterCIDRs(cs, splitCIDRs(cidrs)...)...)
+	return joinStrings(filterCIDRs(cs, strings.Split(cidrs, ",")...)...)
 }
 
 func filterCIDRs(cs clientset.Interface, cidrs ...string) []string {

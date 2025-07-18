@@ -138,7 +138,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				networkAttachmentConfigParams{
 					name:     nadName,
 					topology: "layer2",
-					cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 					role:     "primary",
 				},
 				*podConfig(
@@ -158,7 +158,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				networkAttachmentConfigParams{
 					name:     nadName,
 					topology: "layer3",
-					cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 					role:     "primary",
 				},
 				*podConfig(
@@ -191,7 +191,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 
 				nad := networkAttachmentConfigParams{
 					topology: topology,
-					cidr:     filterCIDRsAndJoin(cs, joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet)),
+					cidr:     filterCIDRsAndJoin(cs, joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet)),
 					// The yellow, blue and red namespaces are going to served by green network.
 					// Use random suffix for the network name to avoid race between tests.
 					networkName: fmt.Sprintf("%s-%s", "green", rand.String(randomStringLength)),

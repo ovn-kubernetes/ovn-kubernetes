@@ -128,7 +128,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 						&networkAttachmentConfigParams{
 							name:     nadName,
 							topology: "layer2",
-							cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							role:     "primary",
 						},
 					),
@@ -136,7 +136,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 						&networkAttachmentConfigParams{
 							name:     nadName,
 							topology: "layer3",
-							cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							role:     "primary",
 						},
 					),
@@ -201,7 +201,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 						&networkAttachmentConfigParams{
 							name:     nadName,
 							topology: "layer2",
-							cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							role:     "primary",
 						},
 						*podConfig(
@@ -219,7 +219,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 						&networkAttachmentConfigParams{
 							name:     nadName,
 							topology: "layer3",
-							cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							role:     "primary",
 						},
 						*podConfig(
@@ -498,7 +498,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 						&networkAttachmentConfigParams{
 							name:     nadName,
 							topology: "layer2",
-							cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							role:     "primary",
 						},
 						*podConfig(
@@ -513,7 +513,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 						&networkAttachmentConfigParams{
 							name:     nadName,
 							topology: "layer3",
-							cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							role:     "primary",
 						},
 						*podConfig(
@@ -567,7 +567,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 
 							netConfig := &networkAttachmentConfigParams{
 								topology:  topology,
-								cidr:      joinCIDRs(userDefinedv4Subnet, userDefinedv6Subnet),
+								cidr:      joinStrings(userDefinedv4Subnet, userDefinedv6Subnet),
 								role:      "primary",
 								namespace: namespace,
 								name:      network,
@@ -717,7 +717,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 				name:      "tenant-blue",
 				namespace: f.Namespace.Name,
 				topology:  "layer2",
-				cidr:      joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+				cidr:      joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 				role:      "primary",
 			}
 			netConfig1.cidr = filterCIDRsAndJoin(f.ClientSet, netConfig1.cidr)
@@ -725,7 +725,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 				name:      "blue",
 				namespace: f.Namespace.Name + "-tenant",
 				topology:  "layer2",
-				cidr:      joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+				cidr:      joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 				role:      "primary",
 			}
 			netConfig2.cidr = filterCIDRsAndJoin(f.ClientSet, netConfig2.cidr)
@@ -854,13 +854,13 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 				ginkgo.Entry("with primary layer3 UDN", networkAttachmentConfigParams{
 					name:     nadName,
 					topology: "layer3",
-					cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 					role:     "primary",
 				}),
 				ginkgo.Entry("with primary layer2 UDN", networkAttachmentConfigParams{
 					name:     nadName,
 					topology: "layer2",
-					cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 					role:     "primary",
 				}),
 			)
@@ -880,14 +880,14 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 				ginkgo.Entry("with primary layer3 UDN", networkAttachmentConfigParams{
 					name:     nadName,
 					topology: "layer3",
-					cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 					role:     "primary",
 				}),
 				// TODO: this test is broken, see https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5309
 				//ginkgo.Entry("with primary layer2 UDN", networkAttachmentConfigParams{
 				//	name:     nadName,
 				//	topology: "layer2",
-				//	cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+				//	cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 				//	role:     "primary",
 				//}),
 			)
@@ -1134,7 +1134,7 @@ spec:
 			topology:    "layer3",
 			name:        primaryNadName,
 			networkName: primaryNadName,
-			cidr:        joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+			cidr:        joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 		}))
 		_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(context.Background(), primaryNetNad, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred())
@@ -1432,7 +1432,7 @@ spec:
 			topology:    "layer3",
 			name:        primaryNadName,
 			networkName: primaryNadName,
-			cidr:        joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+			cidr:        joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 		}))
 		_, err := nadClient.NetworkAttachmentDefinitions(primaryNetTenantNs).Create(context.Background(), primaryNetNad, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred())
@@ -1537,7 +1537,7 @@ spec:
 						&networkAttachmentConfigParams{
 							name:     userDefinedNetworkName,
 							topology: "layer2",
-							cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							role:     "primary",
 						},
 						*podConfig("client-pod"),
@@ -1546,7 +1546,7 @@ spec:
 						&networkAttachmentConfigParams{
 							name:     userDefinedNetworkName,
 							topology: "layer3",
-							cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+							cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 							role:     "primary",
 						},
 						*podConfig("client-pod"),
@@ -1775,7 +1775,7 @@ spec:
 				networkAttachmentConfigParams{
 					name:     nadName,
 					topology: "layer3",
-					cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 					role:     "primary",
 				},
 				*podConfig(
@@ -1793,7 +1793,7 @@ spec:
 				networkAttachmentConfigParams{
 					name:     nadName,
 					topology: "layer2",
-					cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 					role:     "primary",
 				},
 				*podConfig(
