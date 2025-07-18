@@ -1029,7 +1029,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 				egressIP = "2001:db8:abcd:1234:c001::" // secondary subnet as defined in EIP test suite
 			}
 
-			var egressIPConfig = fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
+			var egressIPConfig = `apiVersion: k8s.ovn.org/v1
 kind: EgressIP
 metadata:
     name: ` + "egressip" + `
@@ -1039,7 +1039,7 @@ spec:
     namespaceSelector:
         matchLabels:
             kubernetes.io/metadata.name: ` + f.Namespace.Name + `
-`)
+`
 			if err := os.WriteFile("egressip.yaml", []byte(egressIPConfig), 0644); err != nil {
 				framework.Failf("Unable to write CRD config to disk: %v", err)
 			}
@@ -1551,7 +1551,7 @@ var _ = ginkgo.Describe("Load Balancer Service Tests with MetalLB", feature.Serv
 		}
 		backendNodeName = nodes.Items[0].Name
 		nonBackendNodeName = nodes.Items[1].Name
-		var loadBalancerServiceConfig = fmt.Sprintf(`
+		var loadBalancerServiceConfig = `
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -1628,7 +1628,7 @@ spec:
   selector:
     app: nginx
   type: LoadBalancer
-`)
+`
 		if err := os.WriteFile(loadBalancerYaml, []byte(loadBalancerServiceConfig), 0644); err != nil {
 			framework.Failf("Unable to write CRD config to disk: %v", err)
 		}
@@ -1815,7 +1815,7 @@ metadata:
 		// test CASE A: traffic lands on the same node where backend lives
 		// test CASE B: traffic lands on different node than where the backend lives
 		for _, node := range []string{backendNodeName, nonBackendNodeName} {
-			var bgpConfig = fmt.Sprintf(`
+			var bgpConfig = `
 ---
 apiVersion: metallb.io/v1beta1
 kind: BGPAdvertisement
@@ -1828,7 +1828,7 @@ spec:
   nodeSelectors:
   - matchLabels:
       kubernetes.io/hostname: ` + node + `
-`)
+`
 			if err := os.WriteFile(bgpAddYaml, []byte(bgpConfig), 0644); err != nil {
 				framework.Failf("Unable to write CRD config to disk: %v", err)
 			}
@@ -2231,7 +2231,7 @@ spec:
 			egressIP1, err = ipalloc.NewPrimaryIPv4()
 		}
 		framework.ExpectNoError(err, "must allocate new Node IP for EgressIP IP")
-		var egressIPConfig = fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
+		var egressIPConfig = `apiVersion: k8s.ovn.org/v1
 kind: EgressIP
 metadata:
     name: ` + "egressip" + `
@@ -2244,7 +2244,7 @@ spec:
     namespaceSelector:
         matchLabels:
             kubernetes.io/metadata.name: ` + namespaceName + `
-`)
+`
 		if err := os.WriteFile("egressip.yaml", []byte(egressIPConfig), 0644); err != nil {
 			framework.Failf("Unable to write CRD config to disk: %v", err)
 		}
