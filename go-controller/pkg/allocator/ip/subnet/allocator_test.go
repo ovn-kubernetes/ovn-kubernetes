@@ -30,7 +30,10 @@ var _ = ginkgo.Describe("Subnet IP allocator operations", func() {
 
 			expectedIPs := []string{"10.1.1.1", "2000::1"}
 
-			err := allocator.AddOrUpdateSubnet(subnetName, ovntest.MustParseIPNets(subnets...), nil)
+			err := allocator.AddOrUpdateSubnet(SubnetConfig{
+				Name:    subnetName,
+				Subnets: ovntest.MustParseIPNets(subnets...),
+			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			ips, err := allocator.AllocateNextIPs(subnetName)
@@ -48,7 +51,10 @@ var _ = ginkgo.Describe("Subnet IP allocator operations", func() {
 
 			expectedIPs := []string{"10.1.1.1", "2000::1"}
 
-			err := allocator.AddOrUpdateSubnet(subnetName, ovntest.MustParseIPNets(subnets...), nil)
+			err := allocator.AddOrUpdateSubnet(SubnetConfig{
+				Name:    subnetName,
+				Subnets: ovntest.MustParseIPNets(subnets...),
+			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			ips, err := allocator.AllocateNextIPs(subnetName)
@@ -58,7 +64,10 @@ var _ = ginkgo.Describe("Subnet IP allocator operations", func() {
 			}
 			subnets = []string{"10.1.2.0/24"}
 			expectedIPs = []string{"10.1.2.1"}
-			err = allocator.AddOrUpdateSubnet(subnetName, ovntest.MustParseIPNets(subnets...), nil)
+			err = allocator.AddOrUpdateSubnet(SubnetConfig{
+				Name:    subnetName,
+				Subnets: ovntest.MustParseIPNets(subnets...),
+			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			ips, err = allocator.AllocateNextIPs(subnetName)
@@ -78,7 +87,11 @@ var _ = ginkgo.Describe("Subnet IP allocator operations", func() {
 
 			expectedIPs := []string{"10.1.1.8"}
 
-			err := allocator.AddOrUpdateSubnet(subnetName, ovntest.MustParseIPNets(subnets...), nil, ovntest.MustParseIPNets(excludes...)...)
+			err := allocator.AddOrUpdateSubnet(SubnetConfig{
+				Name:           subnetName,
+				Subnets:        ovntest.MustParseIPNets(subnets...),
+				ExcludeSubnets: ovntest.MustParseIPNets(excludes...),
+			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			ips, err := allocator.AllocateNextIPs(subnetName)
@@ -102,7 +115,10 @@ var _ = ginkgo.Describe("Subnet IP allocator operations", func() {
 				{"10.1.1.2", "2000::2"},
 			}
 
-			err := allocator.AddOrUpdateSubnet(subnetName, ovntest.MustParseIPNets(subnets...), nil)
+			err := allocator.AddOrUpdateSubnet(SubnetConfig{
+				Name:    subnetName,
+				Subnets: ovntest.MustParseIPNets(subnets...),
+			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			for _, expectedIPs := range expectedIPAllocations {
 				ips, err := allocator.AllocateNextIPs(subnetName)
@@ -122,8 +138,10 @@ var _ = ginkgo.Describe("Subnet IP allocator operations", func() {
 				{"10.1.1.1"},
 				{"10.1.1.2"},
 			}
-
-			err := allocator.AddOrUpdateSubnet(subnetName, ovntest.MustParseIPNets(subnets...), nil)
+			err := allocator.AddOrUpdateSubnet(SubnetConfig{
+				Name:    subnetName,
+				Subnets: ovntest.MustParseIPNets(subnets...),
+			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			for _, expectedIPs := range expectedIPAllocations {
 				ips, err := allocator.AllocateNextIPs(subnetName)
@@ -141,7 +159,11 @@ var _ = ginkgo.Describe("Subnet IP allocator operations", func() {
 		ginkgo.It("fails to allocate multiple IPs from the same subnet", func() {
 			subnets := []string{"10.1.1.0/24", "2000::/64"}
 
-			gomega.Expect(allocator.AddOrUpdateSubnet(subnetName, ovntest.MustParseIPNets(subnets...), nil)).To(gomega.Succeed())
+			err := allocator.AddOrUpdateSubnet(SubnetConfig{
+				Name:    subnetName,
+				Subnets: ovntest.MustParseIPNets(subnets...),
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			ips, err := util.ParseIPNets([]string{"10.1.1.1/24", "10.1.1.2/24"})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -164,7 +186,10 @@ var _ = ginkgo.Describe("Subnet IP allocator operations", func() {
 				{"10.1.1.5", "10.1.2.5"},
 			}
 
-			err := allocator.AddOrUpdateSubnet(subnetName, ovntest.MustParseIPNets(subnets...), nil)
+			err := allocator.AddOrUpdateSubnet(SubnetConfig{
+				Name:    subnetName,
+				Subnets: ovntest.MustParseIPNets(subnets...),
+			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			// exhaust valid ips in second subnet
 			for _, expectedIPs := range expectedIPAllocations {
@@ -202,7 +227,10 @@ var _ = ginkgo.Describe("Subnet IP allocator operations", func() {
 				"2000::1/64",
 			}
 
-			err := allocator.AddOrUpdateSubnet(subnetName, ovntest.MustParseIPNets(subnets...), nil)
+			err := allocator.AddOrUpdateSubnet(SubnetConfig{
+				Name:    subnetName,
+				Subnets: ovntest.MustParseIPNets(subnets...),
+			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			ips, err := allocator.AllocateNextIPs(subnetName)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -226,7 +254,11 @@ var _ = ginkgo.Describe("Subnet IP allocator operations", func() {
 		}
 		expectedIP := "10.1.1.16/24"
 
-		err := allocator.AddOrUpdateSubnet(subnetName, ovntest.MustParseIPNets(subnets...), ovntest.MustParseIPNets(reservedSubnets...))
+		err := allocator.AddOrUpdateSubnet(SubnetConfig{
+			Name:            subnetName,
+			Subnets:         ovntest.MustParseIPNets(subnets...),
+			ReservedSubnets: ovntest.MustParseIPNets(reservedSubnets...),
+		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 		ips, err := allocator.AllocateNextIPs(subnetName)
@@ -257,7 +289,12 @@ var _ = ginkgo.Describe("Subnet IP allocator operations", func() {
 		}
 		expectedIP := "10.1.1.16/24"
 
-		err := allocator.AddOrUpdateSubnet(subnetName, ovntest.MustParseIPNets(subnets...), ovntest.MustParseIPNets(reservedSubnets...), ovntest.MustParseIPNets(excludeSubnets...)...)
+		err := allocator.AddOrUpdateSubnet(SubnetConfig{
+			Name:            subnetName,
+			Subnets:         ovntest.MustParseIPNets(subnets...),
+			ExcludeSubnets:  ovntest.MustParseIPNets(excludeSubnets...),
+			ReservedSubnets: ovntest.MustParseIPNets(reservedSubnets...),
+		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 		ips, err := allocator.AllocateNextIPs(subnetName)
