@@ -791,12 +791,12 @@ func newIPAllocatorForNetwork(netInfo util.NetInfo) (subnet.Allocator, error) {
 		excludeSubnets = append(excludeSubnets, infrastructureExcludeCIDRs(netInfo)...)
 	}
 
-	if err := ipAllocator.AddOrUpdateSubnet(
-		netInfo.GetNetworkName(),
-		ipNets,
-		netInfo.ReservedSubnets(),
-		excludeSubnets...,
-	); err != nil {
+	if err := ipAllocator.AddOrUpdateSubnet(subnet.SubnetConfig{
+		Name:            netInfo.GetNetworkName(),
+		Subnets:         ipNets,
+		ReservedSubnets: netInfo.ReservedSubnets(),
+		ExcludeSubnets:  excludeSubnets,
+	}); err != nil {
 		return nil, err
 	}
 

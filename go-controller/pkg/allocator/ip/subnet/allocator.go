@@ -16,10 +16,18 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
+// SubnetConfig contains configuration parameters for adding or updating a subnet
+type SubnetConfig struct {
+	Name            string
+	Subnets         []*net.IPNet
+	ReservedSubnets []*net.IPNet
+	ExcludeSubnets  []*net.IPNet
+}
+
 // Allocator manages the allocation of IP within specific set of subnets
 // identified by a name. Allocator should be threadsafe.
 type Allocator interface {
-	AddOrUpdateSubnet(name string, subnets []*net.IPNet, reservedSubnets []*net.IPNet, excludeSubnets ...*net.IPNet) error
+	AddOrUpdateSubnet(config SubnetConfig) error
 	DeleteSubnet(name string)
 	GetSubnets(name string) ([]*net.IPNet, error)
 	AllocateUntilFull(name string) error
@@ -94,48 +102,48 @@ func NewAllocator() *allocator {
 }
 
 // AddOrUpdateSubnet set to the allocator for IPAM management, or update it.
-func (allocator *allocator) AddOrUpdateSubnet(name string, subnets []*net.IPNet, reservedSubnets []*net.IPNet, excludeSubnets ...*net.IPNet) error {
+func (allocator *allocator) AddOrUpdateSubnet(config SubnetConfig) error {
 	allocator.Lock()
 	defer allocator.Unlock()
-	if subnetInfo, ok := allocator.cache[name]; ok && !reflect.DeepEqual(subnetInfo.subnets, subnets) {
-		klog.Warningf("Replacing subnets %v with %v for %s", util.StringSlice(subnetInfo.subnets), util.StringSlice(subnets), name)
+	if subnetInfo, ok := allocator.cache[config.Name]; ok && !reflect.DeepEqual(subnetInfo.subnets, config.Subnets) {
+		klog.Warningf("Replacing subnets %v with %v for %s", util.StringSlice(subnetInfo.subnets), util.StringSlice(config.Subnets), config.Name)
 	}
 	var ipams []ipallocator.ContinuousAllocator
-	for _, subnet := range subnets {
+	for _, subnet := range config.Subnets {
 		ipam, err := allocator.ipamFunc(subnet)
 		if err != nil {
-			return fmt.Errorf("failed to initialize IPAM of subnet %s for %s: %w", subnet, name, err)
+			return fmt.Errorf("failed to initialize IPAM of subnet %s for %s: %w", subnet, config.Name, err)
 		}
 		ipams = append(ipams, ipam)
 	}
 
 	// reservedSubnets is a subset of subnets, and it should not be used by automatic IPAM
-	for _, excludeFromIPAM := range append(reservedSubnets, excludeSubnets...) {
+	for _, excludeFromIPAM := range append(config.ReservedSubnets, config.ExcludeSubnets...) {
 		var excluded bool
-		for i, subnet := range subnets {
+		for i, subnet := range config.Subnets {
 			if util.ContainsCIDR(subnet, excludeFromIPAM) {
 				err := reserveSubnets(excludeFromIPAM, ipams[i])
 				if err != nil {
-					return fmt.Errorf("failed to exclude subnet %s for %s: %w", excludeFromIPAM, name, err)
+					return fmt.Errorf("failed to exclude subnet %s for %s: %w", excludeFromIPAM, config.Name, err)
 				}
 			}
 			excluded = true
 		}
 		if !excluded {
-			return fmt.Errorf("failed to exclude subnet %s for %s: not contained in any of the subnets", excludeFromIPAM, name)
+			return fmt.Errorf("failed to exclude subnet %s for %s: not contained in any of the subnets", excludeFromIPAM, config.Name)
 		}
 	}
 
 	var staticIPAMs []ipallocator.StaticAllocator
-	for _, reservedSubnet := range reservedSubnets {
+	for _, reservedSubnet := range config.ReservedSubnets {
 		ipam, err := allocator.reservedIPAMFunc(reservedSubnet)
 		if err != nil {
-			return fmt.Errorf("failed to initialize IPAM of reserved subnet %s for %s: %w", reservedSubnet, name, err)
+			return fmt.Errorf("failed to initialize IPAM of reserved subnet %s for %s: %w", reservedSubnet, config.Name, err)
 		}
 		staticIPAMs = append(staticIPAMs, ipam)
 	}
-	allocator.cache[name] = subnetInfo{
-		subnets:     subnets,
+	allocator.cache[config.Name] = subnetInfo{
+		subnets:     config.Subnets,
 		ipams:       ipams,
 		staticIPAMs: staticIPAMs,
 	}
