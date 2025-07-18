@@ -1,8 +1,8 @@
 package cudn
 
-import "github.com/ovn-org/ovn-kubernetes/test/e2e/testdata"
+import "github.com/ovn-org/ovn-kubernetes/test/e2e/testscenario"
 
-var LocalnetInvalidVLAN = []testdata.ValidateCRScenario{
+var LocalnetInvalidVLAN = []testscenario.ValidateCRScenario{
 	{
 		Description: "invalid VLAN - invalid mode",
 		ExpectedErr: `spec.network.localnet.vlan.mode: Unsupported value: "Disabled": supported values: "Access`,

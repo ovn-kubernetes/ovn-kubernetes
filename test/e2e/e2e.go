@@ -712,7 +712,7 @@ var _ = ginkgo.Describe("e2e control plane", func() {
 		}
 		secondaryExternalContainerPort := infraprovider.Get().GetExternalContainerPort()
 		secondaryExternalContainerSpec := infraapi.ExternalContainer{Name: "e2e-ovn-k", Image: images.AgnHost(),
-			Network: secondaryProviderNetwork, Args: getAgnHostHTTPPortBindCMDArgs(secondaryExternalContainerPort), ExtPort: secondaryExternalContainerPort}
+			Network: secondaryProviderNetwork, CmdArgs: getAgnHostHTTPPortBindCMDArgs(secondaryExternalContainerPort), ExtPort: secondaryExternalContainerPort}
 		ginkgo.By("creating container on secondary provider network")
 		secondaryExternalContainer, err = providerCtx.CreateExternalContainer(secondaryExternalContainerSpec)
 		framework.ExpectNoError(err, "failed to create external container")
@@ -1275,7 +1275,7 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 			framework.ExpectNoError(err, "failed to get primary network")
 			externalContainerPort := infraprovider.Get().GetExternalContainerPort()
 			externalContainer = infraapi.ExternalContainer{Name: "e2e-ingress", Image: images.AgnHost(), Network: primaryProviderNetwork,
-				Args: getAgnHostHTTPPortBindCMDArgs(externalContainerPort), ExtPort: externalContainerPort}
+				CmdArgs: getAgnHostHTTPPortBindCMDArgs(externalContainerPort), ExtPort: externalContainerPort}
 			externalContainer, err = providerCtx.CreateExternalContainer(externalContainer)
 			framework.ExpectNoError(err, "failed to create external service", externalContainer.String())
 		})
@@ -1672,7 +1672,7 @@ var _ = ginkgo.Describe("e2e ingress traffic validation", func() {
 			framework.ExpectNoError(err, "failed to get primary network")
 			externalContainerPort := infraprovider.Get().GetExternalContainerPort()
 			externalContainer = infraapi.ExternalContainer{Name: "e2e-ingress-add-more", Image: images.AgnHost(), Network: primaryProviderNetwork,
-				Args: getAgnHostHTTPPortBindCMDArgs(externalContainerPort), ExtPort: externalContainerPort}
+				CmdArgs: getAgnHostHTTPPortBindCMDArgs(externalContainerPort), ExtPort: externalContainerPort}
 			externalContainer, err = providerCtx.CreateExternalContainer(externalContainer)
 			framework.ExpectNoError(err, "external container %s must be created successfully", externalContainer.Name)
 
@@ -1834,7 +1834,7 @@ var _ = ginkgo.Describe("e2e ingress to host-networked pods traffic validation",
 			framework.ExpectNoError(err, "failed to get primary network")
 			externalContainerPort := infraprovider.Get().GetExternalContainerPort()
 			externalContainer = infraapi.ExternalContainer{Name: clientContainerName, Image: images.AgnHost(), Network: primaryProviderNetwork,
-				Args: getAgnHostHTTPPortBindCMDArgs(externalContainerPort), ExtPort: externalContainerPort}
+				CmdArgs: getAgnHostHTTPPortBindCMDArgs(externalContainerPort), ExtPort: externalContainerPort}
 			externalContainer, err = providerCtx.CreateExternalContainer(externalContainer)
 			framework.ExpectNoError(err, "external container %s must be created successfully", externalContainer.Name)
 		})
@@ -1943,7 +1943,7 @@ var _ = ginkgo.Describe("e2e br-int flow monitoring export validation", func() {
 			primaryProviderNetwork, err := infraprovider.Get().PrimaryNetwork()
 			framework.ExpectNoError(err, "failed to get primary network")
 			collectorExternalContainer := infraapi.ExternalContainer{Name: getContainerName(collectorPort), Image: "cloudflare/goflow",
-				Network: primaryProviderNetwork, Args: []string{"-kafka=false"}, ExtPort: collectorPort}
+				Network: primaryProviderNetwork, CmdArgs: []string{"-kafka=false"}, ExtPort: collectorPort}
 			collectorExternalContainer, err = providerCtx.CreateExternalContainer(collectorExternalContainer)
 			if err != nil {
 				framework.Failf("failed to start flow collector container %s: %v", getContainerName(collectorPort), err)

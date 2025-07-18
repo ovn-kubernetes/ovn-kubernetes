@@ -33,6 +33,10 @@ func (k kind) OVNKubernetesNamespace() string {
 	return "ovn-kubernetes"
 }
 
+func (k kind) FRRK8sNamespace() string {
+	return "frr-k8s-system"
+}
+
 func (k kind) ExternalBridgeName() string {
 	return "breth0"
 }

@@ -103,7 +103,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				for i, cidr := range strings.Split(netConfig.cidr, ",") {
 					if cidr != "" {
 						ginkgo.By("asserting the server pod has an IP from the configured range")
-						serverIP, err = podIPsForUserDefinedPrimaryNetwork(
+						serverIP, err = getPodAnnotationIPsForAttachmentByIndex(
 							cs,
 							f.Namespace.Name,
 							serverPodConfig.name,
@@ -231,12 +231,12 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 					}
 					subnet, err := getNetCIDRSubnet(cidr)
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
-					allowServerPodIP, err = podIPsForUserDefinedPrimaryNetwork(cs, namespaceYellow, allowServerPodConfig.name,
+					allowServerPodIP, err = getPodAnnotationIPsForAttachmentByIndex(cs, namespaceYellow, allowServerPodConfig.name,
 						namespacedName(namespaceYellow, netConfName), i)
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					ginkgo.By(fmt.Sprintf("asserting the allow server pod IP %v is from the configured range %v", allowServerPodIP, cidr))
 					gomega.Expect(inRange(subnet, allowServerPodIP)).To(gomega.Succeed())
-					denyServerPodIP, err = podIPsForUserDefinedPrimaryNetwork(cs, namespaceYellow, denyServerPodConfig.name,
+					denyServerPodIP, err = getPodAnnotationIPsForAttachmentByIndex(cs, namespaceYellow, denyServerPodConfig.name,
 						namespacedName(namespaceYellow, netConfName), i)
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					ginkgo.By(fmt.Sprintf("asserting the deny server pod IP %v is from the configured range %v", denyServerPodIP, cidr))
