@@ -16,14 +16,8 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
-	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/ipalloc"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -33,7 +27,6 @@ import (
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
-	e2eoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 	e2erc "k8s.io/kubernetes/test/e2e/framework/rc"
 	e2eservice "k8s.io/kubernetes/test/e2e/framework/service"
@@ -41,7 +34,14 @@ import (
 	testutils "k8s.io/kubernetes/test/utils"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 	utilnet "k8s.io/utils/net"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
+	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/ipalloc"
 )
 
 const (
@@ -86,8 +86,8 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 		}
 		ginkgo.By("create node port service")
 		jig := e2eservice.NewTestJig(cs, f.Namespace.Name, serviceName)
-		_, err := jig.CreateTCPService(context.TODO(), func(svc *v1.Service) {
-			svc.Spec.Type = v1.ServiceTypeNodePort
+		_, err := jig.CreateTCPService(context.TODO(), func(svc *corev1.Service) {
+			svc.Spec.Type = corev1.ServiceTypeNodePort
 			svc.Spec.Ports[0].NodePort = nodePort
 		})
 		framework.ExpectNoError(err, "failed to create TCP node port service")
@@ -110,11 +110,11 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 
 		ginkgo.By("Creating a ClusterIP service")
 		targetPort := infraprovider.Get().GetK8HostPort()
-		service, err := jig.CreateUDPService(context.TODO(), func(s *v1.Service) {
-			s.Spec.Ports = []v1.ServicePort{
+		service, err := jig.CreateUDPService(context.TODO(), func(s *corev1.Service) {
+			s.Spec.Ports = []corev1.ServicePort{
 				{
 					Name:       "udp",
-					Protocol:   v1.ProtocolUDP,
+					Protocol:   corev1.ProtocolUDP,
 					Port:       80,
 					TargetPort: intstr.FromInt(int(targetPort)),
 				},
@@ -124,7 +124,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 
 		ginkgo.By("creating a host-network backend pod")
 
-		serverPod := e2epod.NewAgnhostPod(namespace, "backend", nil, nil, []v1.ContainerPort{{ContainerPort: (int32(targetPort))}, {ContainerPort: (int32(targetPort)), Protocol: "UDP"}},
+		serverPod := e2epod.NewAgnhostPod(namespace, "backend", nil, nil, []corev1.ContainerPort{{ContainerPort: (int32(targetPort))}, {ContainerPort: (int32(targetPort)), Protocol: "UDP"}},
 			"netexec", fmt.Sprintf("--udp-port=%d", targetPort))
 		serverPod.Labels = jig.Labels
 		serverPod.Spec.HostNetwork = true
@@ -146,7 +146,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 			net.JoinHostPort(service.Spec.ClusterIP, "80"))
 
 		err = wait.PollImmediate(framework.Poll, 30*time.Second, func() (bool, error) {
-			stdout, err := e2epodoutput.RunHostCmdWithRetries(clientPod.Namespace, clientPod.Name, cmd, framework.Poll, 30*time.Second)
+			stdout, err := e2epodoutput.RunHostCmd(clientPod.Namespace, clientPod.Name, cmd)
 			if err != nil {
 				return false, err
 			}
@@ -161,7 +161,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 		jig := e2eservice.NewTestJig(cs, namespace, serviceName)
 
 		ginkgo.By("Creating a session-affinity service")
-		var createdPods []*v1.Pod
+		var createdPods []*corev1.Pod
 		maxContainerFailures := 0
 		replicas := 3
 		targetPort := infraprovider.Get().GetK8HostPort()
@@ -180,16 +180,16 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 		}
 		err := e2erc.RunRC(context.TODO(), config)
 		gomega.Expect(err).ToNot(gomega.HaveOccurred())
-		gomega.Expect(len(createdPods)).To(gomega.Equal(replicas), fmt.Sprintf("incorrect number of running pods: %v", len(createdPods)))
+		gomega.Expect(createdPods).To(gomega.HaveLen(replicas), fmt.Sprintf("incorrect number of running pods: %v", len(createdPods)))
 
-		svc, err := jig.CreateTCPService(context.TODO(), func(s *v1.Service) {
+		svc, err := jig.CreateTCPService(context.TODO(), func(s *corev1.Service) {
 			s.Spec.SessionAffinity = "ClientIP"
-			s.Spec.Type = v1.ServiceTypeClusterIP
-			s.Spec.Ports = []v1.ServicePort{{
+			s.Spec.Type = corev1.ServiceTypeClusterIP
+			s.Spec.Ports = []corev1.ServicePort{{
 				Port: int32(servicePort),
 				// agnhost serve-hostname port
 				TargetPort: intstr.FromInt(int(targetPort)),
-				Protocol:   v1.ProtocolTCP,
+				Protocol:   corev1.ProtocolTCP,
 			}}
 		})
 		framework.ExpectNoError(err)
@@ -229,15 +229,15 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 	for _, hostNetwork := range []bool{true, false} {
 		hostNetwork := hostNetwork
 		ginkgo.When(fmt.Sprintf("a nodePort service targeting a pod with hostNetwork:%t is created", hostNetwork), func() {
-			var serverPod *v1.Pod
+			var serverPod *corev1.Pod
 			var serverPodNodeName string
 			var serverPodName string
 
-			var svc *v1.Service
-			var serviceNode v1.Node
+			var svc *corev1.Service
+			var serviceNode corev1.Node
 			var serviceNodeInternalIPs []string
 
-			var clientPod *v1.Pod
+			var clientPod *corev1.Pod
 			var clientPodNodeName string
 
 			var echoPayloads = map[string]string{
@@ -260,8 +260,8 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 				clientPodNodeName = nodes.Items[2].Name
 
 				ginkgo.By("Getting all InternalIP addresses of the service node")
-				serviceNodeInternalIPs = e2enode.GetAddresses(&serviceNode, v1.NodeInternalIP)
-				gomega.Expect(len(serviceNodeInternalIPs)).To(gomega.BeNumerically(">", 0))
+				serviceNodeInternalIPs = e2enode.GetAddresses(&serviceNode, corev1.NodeInternalIP)
+				gomega.Expect(serviceNodeInternalIPs).ToNot(gomega.BeEmpty())
 
 				ginkgo.By("Creating hostNetwork:true client pod")
 				clientPod = e2epod.NewAgnhostPod(f.Namespace.Name, echoClientPodName, nil, nil, nil)
@@ -273,7 +273,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 							"sleep",
 							"infinity",
 						}
-						clientPod.Spec.Containers[k].SecurityContext.Privileged = pointer.Bool(true)
+						clientPod.Spec.Containers[k].SecurityContext.Privileged = ptr.To(true)
 					}
 				}
 				e2epod.NewPodClient(f).CreateSync(context.TODO(), clientPod)
@@ -301,7 +301,10 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 
 					err := e2epod.WaitTimeoutForPodReadyInNamespace(context.TODO(), f.ClientSet, serverPod.Name, f.Namespace.Name, 1*time.Minute)
 					if err != nil {
-						e2epod.NewPodClient(f).Delete(context.TODO(), serverPod.Name, metav1.DeleteOptions{})
+						deleteErr := e2epod.NewPodClient(f).Delete(context.TODO(), serverPod.Name, metav1.DeleteOptions{})
+						if deleteErr != nil {
+							framework.Logf("Failed to delete pod %s: %v", serverPod.Name, deleteErr)
+						}
 						return err
 					}
 					serverPod, err = e2epod.NewPodClient(f).Get(context.TODO(), serverPod.Name, metav1.GetOptions{})
@@ -317,27 +320,27 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 					servicePortUDP := rand.Intn(32767-30000) + 30000
 
 					framework.Logf("Creating the nodePort service")
-					svc = &v1.Service{
+					svc = &corev1.Service{
 						ObjectMeta: metav1.ObjectMeta{Name: echoServiceName},
-						Spec: v1.ServiceSpec{
-							Ports: []v1.ServicePort{
+						Spec: corev1.ServiceSpec{
+							Ports: []corev1.ServicePort{
 								{
 									Name:       tcpPortName,
 									NodePort:   int32(servicePortTCP),
 									Port:       int32(serverPodPortTCP),
 									TargetPort: intstr.FromInt(int(serverPodPortTCP)),
-									Protocol:   v1.ProtocolTCP,
+									Protocol:   corev1.ProtocolTCP,
 								},
 								{
 									Name:       udpPortName,
 									NodePort:   int32(servicePortUDP),
 									Port:       int32(serverPodPortUDP),
 									TargetPort: intstr.FromInt(int(serverPodPortUDP)),
-									Protocol:   v1.ProtocolUDP,
+									Protocol:   corev1.ProtocolUDP,
 								},
 							},
 							Selector: map[string]string{"app": serverPodName},
-							Type:     v1.ServiceTypeNodePort},
+							Type:     corev1.ServiceTypeNodePort},
 					}
 					svc, err = f.ClientSet.CoreV1().Services(f.Namespace.Name).Create(context.TODO(), svc, metav1.CreateOptions{})
 					if err != nil {
@@ -547,9 +550,9 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 		)
 		nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), cs, e2eservice.MaxNodesForEndpointsTests)
 		framework.ExpectNoError(err)
-		gomega.Expect(len(nodes.Items)).To(gomega.BeNumerically(">", 0))
-		v4NodeAddrs := e2enode.FirstAddressByTypeAndFamily(nodes, v1.NodeInternalIP, v1.IPv4Protocol)
-		v6NodeAddrs := e2enode.FirstAddressByTypeAndFamily(nodes, v1.NodeInternalIP, v1.IPv6Protocol)
+		gomega.Expect(nodes.Items).ToNot(gomega.BeEmpty())
+		v4NodeAddrs := e2enode.FirstAddressByTypeAndFamily(nodes, corev1.NodeInternalIP, corev1.IPv4Protocol)
+		v6NodeAddrs := e2enode.FirstAddressByTypeAndFamily(nodes, corev1.NodeInternalIP, corev1.IPv6Protocol)
 		if v4NodeAddrs == "" && v6NodeAddrs == "" {
 			framework.Failf("unable to detect if cluster supports IPv4 or IPv6")
 		}
@@ -567,10 +570,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 		isHostMasqSrcIP := func(dst, masqIP string) bool {
 			output := getIPRouteGetOutput(dst)
 			// if its not included in the output of ip route get, its sufficient to say, its not being used as src ip
-			if strings.Contains(output, masqIP) {
-				return true
-			}
-			return false
+			return strings.Contains(output, masqIP)
 		}
 		explain := "host masquerade IP incorrectly used as source IP for external communication"
 		if v4NodeAddrs != "" { // v4 enabled
@@ -603,11 +603,11 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 
 		ginkgo.By("Creating an empty ClusterIP service")
 		udpHostNsPort := infraprovider.Get().GetK8HostPort()
-		service, err := jig.CreateUDPService(context.TODO(), func(s *v1.Service) {
-			s.Spec.Ports = []v1.ServicePort{
+		service, err := jig.CreateUDPService(context.TODO(), func(s *corev1.Service) {
+			s.Spec.Ports = []corev1.ServicePort{
 				{
 					Name:       "udp",
-					Protocol:   v1.ProtocolUDP,
+					Protocol:   corev1.ProtocolUDP,
 					Port:       80,
 					TargetPort: intstr.FromInt(int(udpHostNsPort)),
 				},
@@ -646,12 +646,12 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 		ginkgo.By("Starting a UDP server listening on the additional IP")
 		// now that 2.2.2.2 exists on the node's lo interface, let's start a server listening on it
 		// we use UDP here since agnhost lets us pick the listen address only for UDP
-		serverPod := e2epod.NewAgnhostPod(namespace, "backend", nil, nil, []v1.ContainerPort{{ContainerPort: int32(udpHostNsPort)}, {ContainerPort: int32(udpHostNsPort), Protocol: "UDP"}},
+		serverPod := e2epod.NewAgnhostPod(namespace, "backend", nil, nil, []corev1.ContainerPort{{ContainerPort: int32(udpHostNsPort)}, {ContainerPort: int32(udpHostNsPort), Protocol: "UDP"}},
 			"netexec", "--udp-port="+fmt.Sprintf("%d", udpHostNsPort), "--udp-listen-addresses="+extraIP)
 		serverPod.Labels = jig.Labels
 		serverPod.Spec.NodeName = nodeName
 		serverPod.Spec.HostNetwork = true
-		serverPod.Spec.Containers[0].TerminationMessagePolicy = v1.TerminationMessageFallbackToLogsOnError
+		serverPod.Spec.Containers[0].TerminationMessagePolicy = corev1.TerminationMessageFallbackToLogsOnError
 		e2epod.NewPodClient(f).CreateSync(context.TODO(), serverPod)
 
 		ginkgo.By("Ensuring the server is listening on the additional IP")
@@ -670,16 +670,16 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 
 		ginkgo.By("Adding this IP as a manual endpoint")
 		_, err = f.ClientSet.CoreV1().Endpoints(namespace).Create(context.TODO(),
-			&v1.Endpoints{
+			&corev1.Endpoints{
 				ObjectMeta: metav1.ObjectMeta{Name: service.Name},
-				Subsets: []v1.EndpointSubset{
+				Subsets: []corev1.EndpointSubset{
 					{
-						Addresses: []v1.EndpointAddress{
+						Addresses: []corev1.EndpointAddress{
 							{
 								IP: extraIP,
 							},
 						},
-						Ports: []v1.EndpointPort{
+						Ports: []corev1.EndpointPort{
 							{
 								Name:     "udp",
 								Port:     int32(udpHostNsPort),
@@ -707,7 +707,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 
 		ginkgo.By("Confirming that the service is accessible from the node's pod network")
 		// Now, spin up a pod-network pod on the same node, and ensure we can talk to the "local address" service
-		clientServerPod := e2epod.NewAgnhostPod(namespace, "client", nil, nil, []v1.ContainerPort{{ContainerPort: 12345}, {ContainerPort: 12345, Protocol: "UDP"}},
+		clientServerPod := e2epod.NewAgnhostPod(namespace, "client", nil, nil, []corev1.ContainerPort{{ContainerPort: 12345}, {ContainerPort: 12345, Protocol: "UDP"}},
 			"netexec")
 		clientServerPod.Spec.NodeName = nodeName
 		e2epod.NewPodClient(f).CreateSync(context.TODO(), clientServerPod)
@@ -732,7 +732,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 	})
 
 	ginkgo.Context("of type NodePort", func() {
-		var nodes *v1.NodeList
+		var nodes *corev1.NodeList
 		var err error
 		nodeIPs := make(map[string]map[int]string)
 		var egressNode string
@@ -778,9 +778,9 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 		})
 
 		ginkgo.It("should listen on each host addresses", func() {
-			endPoints := make([]*v1.Pod, 0)
+			endPoints := make([]*corev1.Pod, 0)
 			endpointsSelector := map[string]string{"servicebackend": "true"}
-			nodesHostnames := sets.NewString()
+			nodesHostnames := sets.New[string]()
 			nodes, err = e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 3)
 			framework.ExpectNoError(err)
 
@@ -798,7 +798,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 					fmt.Sprintf("--udp-port=%d", endpointUDPPort),
 				}
 				pod, err := createPod(f, node.Name+"-ep", node.Name, f.Namespace.Name, []string{},
-					endpointsSelector, func(p *v1.Pod) {
+					endpointsSelector, func(p *corev1.Pod) {
 						p.Spec.Containers[0].Args = args
 					})
 				framework.ExpectNoError(err)
@@ -824,7 +824,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 
 			ginkgo.By("Selecting additional IP addresses for each node")
 			// add new secondary IP from node subnet to all nodes, if the cluster is v6 add an ipv6 address
-			toCurlAddresses := sets.NewString()
+			toCurlAddresses := sets.New[string]()
 			primaryIPv4Subnet, ipv6, err := primaryProviderNetwork.IPv4IPv6Subnets()
 			framework.ExpectNoError(err, "must get primary provider network subnets")
 			primaryNetworkSubnet := primaryIPv4Subnet
@@ -900,17 +900,17 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 			ginkgo.By("Creating NodePort services")
 
 			etpLocalServiceName := "etp-local-svc"
-			etpLocalSvc := nodePortServiceSpecFrom(etpLocalServiceName, v1.IPFamilyPolicyPreferDualStack,
+			etpLocalSvc := nodePortServiceSpecFrom(etpLocalServiceName, corev1.IPFamilyPolicyPreferDualStack,
 				endpointHTTPPort, endpointUDPPort, clusterHTTPPort, clusterUDPPort, endpointsSelector,
-				v1.ServiceExternalTrafficPolicyTypeLocal)
+				corev1.ServiceExternalTrafficPolicyTypeLocal)
 			etpLocalSvc, err = f.ClientSet.CoreV1().Services(f.Namespace.Name).Create(context.Background(), etpLocalSvc,
 				metav1.CreateOptions{})
 			framework.ExpectNoError(err)
 
 			etpClusterServiceName := "etp-cluster-svc"
-			etpClusterSvc := nodePortServiceSpecFrom(etpClusterServiceName, v1.IPFamilyPolicyPreferDualStack,
+			etpClusterSvc := nodePortServiceSpecFrom(etpClusterServiceName, corev1.IPFamilyPolicyPreferDualStack,
 				endpointHTTPPort, endpointUDPPort, clusterHTTPPort, clusterUDPPort, endpointsSelector,
-				v1.ServiceExternalTrafficPolicyTypeCluster)
+				corev1.ServiceExternalTrafficPolicyTypeCluster)
 			etpClusterSvc, err = f.ClientSet.CoreV1().Services(f.Namespace.Name).Create(context.Background(),
 				etpClusterSvc, metav1.CreateOptions{})
 			framework.ExpectNoError(err)
@@ -927,7 +927,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 			framework.ExpectNoError(err, "failed to validate endpoints for service %s in namespace: %s",
 				etpClusterServiceName, f.Namespace.Name)
 
-			for _, serviceSpec := range []*v1.Service{etpLocalSvc, etpClusterSvc} {
+			for _, serviceSpec := range []*corev1.Service{etpLocalSvc, etpClusterSvc} {
 				tcpNodePort, udpNodePort := nodePortsFromService(serviceSpec)
 
 				for _, protocol := range []string{"http", "udp"} {
@@ -936,7 +936,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 						toCurlPort = int32(udpNodePort)
 					}
 
-					for _, address := range toCurlAddresses.List() {
+					for _, address := range sets.List(toCurlAddresses) {
 						if !isIPv6Cluster && utilnet.IsIPv6String(address) {
 							continue
 						}
@@ -954,9 +954,9 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 		})
 
 		ginkgo.It("should work on secondary node interfaces for ETP=local and ETP=cluster when backend pods are also served by EgressIP", func() {
-			endPoints := make([]*v1.Pod, 0)
+			endPoints := make([]*corev1.Pod, 0)
 			endpointsSelector := map[string]string{"servicebackend": "true"}
-			nodesHostnames := sets.NewString()
+			nodesHostnames := sets.New[string]()
 			isIPv6Cluster := IsIPv6Cluster(f.ClientSet)
 
 			nodes, err = e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 3)
@@ -976,7 +976,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 					fmt.Sprintf("--udp-port=%d", endpointUDPPort),
 				}
 				pod, err := createPod(f, node.Name+"-ep", node.Name, f.Namespace.Name, []string{},
-					endpointsSelector, func(p *v1.Pod) {
+					endpointsSelector, func(p *corev1.Pod) {
 						p.Spec.Containers[0].Args = args
 					})
 				framework.ExpectNoError(err)
@@ -1062,7 +1062,11 @@ spec:
 					framework.Logf("Error: failed to get the EgressIP object, err: %v", err)
 					return false, nil
 				}
-				json.Unmarshal([]byte(egressIPStdout), &egressIP)
+				err = json.Unmarshal([]byte(egressIPStdout), &egressIP)
+				if err != nil {
+					framework.Logf("Error: failed to unmarshal EgressIP JSON, err: %v", err)
+					return false, nil
+				}
 				if len(egressIP.Items) > 1 {
 					framework.Failf("Didn't expect to retrieve more than one egress IP during the execution of this test, saw: %v", len(egressIP.Items))
 				}
@@ -1091,7 +1095,7 @@ spec:
 			}
 			_, secondarySubnet, err := net.ParseCIDR(secondarySubnetStr)
 			framework.ExpectNoError(err, "must parse secondary subnet %q", secondarySubnetStr)
-			toCurlAddressesSecondary := sets.NewString()
+			toCurlAddressesSecondary := sets.New[string]()
 			for i, node := range nodes.Items {
 				addrAnnotation, ok := node.Annotations["k8s.ovn.org/host-cidrs"]
 				gomega.Expect(ok).To(gomega.BeTrue())
@@ -1153,17 +1157,17 @@ spec:
 			ginkgo.By("Creating NodePort services")
 
 			etpLocalServiceName := "etp-local-svc"
-			etpLocalSvc := nodePortServiceSpecFrom(etpLocalServiceName, v1.IPFamilyPolicyPreferDualStack,
+			etpLocalSvc := nodePortServiceSpecFrom(etpLocalServiceName, corev1.IPFamilyPolicyPreferDualStack,
 				endpointHTTPPort, endpointUDPPort, clusterHTTPPort, clusterUDPPort, endpointsSelector,
-				v1.ServiceExternalTrafficPolicyTypeLocal)
+				corev1.ServiceExternalTrafficPolicyTypeLocal)
 			etpLocalSvc, err = f.ClientSet.CoreV1().Services(f.Namespace.Name).Create(context.Background(), etpLocalSvc,
 				metav1.CreateOptions{})
 			framework.ExpectNoError(err)
 
 			etpClusterServiceName := "etp-cluster-svc"
-			etpClusterSvc := nodePortServiceSpecFrom(etpClusterServiceName, v1.IPFamilyPolicyPreferDualStack,
+			etpClusterSvc := nodePortServiceSpecFrom(etpClusterServiceName, corev1.IPFamilyPolicyPreferDualStack,
 				endpointHTTPPort, endpointUDPPort, clusterHTTPPort, clusterUDPPort, endpointsSelector,
-				v1.ServiceExternalTrafficPolicyTypeCluster)
+				corev1.ServiceExternalTrafficPolicyTypeCluster)
 			etpClusterSvc, err = f.ClientSet.CoreV1().Services(f.Namespace.Name).Create(context.Background(),
 				etpClusterSvc, metav1.CreateOptions{})
 			framework.ExpectNoError(err)
@@ -1188,8 +1192,8 @@ spec:
 				"a network that is a secondary host network and verify that the src IP is the expected egressIP %s, failed: %v",
 				egressPod.Namespace, egressPod.Name, egressIP, err)
 
-			externalSvcClientIPs := sets.NewString(serverExternalContainerIP)
-			for _, serviceSpec := range []*v1.Service{etpLocalSvc, etpClusterSvc} {
+			externalSvcClientIPs := sets.New[string](serverExternalContainerIP)
+			for _, serviceSpec := range []*corev1.Service{etpLocalSvc, etpClusterSvc} {
 				tcpNodePort, udpNodePort := nodePortsFromService(serviceSpec)
 
 				for _, protocol := range []string{"http", "udp"} {
@@ -1197,7 +1201,7 @@ spec:
 					if protocol == "udp" {
 						toCurlPort = int32(udpNodePort)
 					}
-					for _, address := range toCurlAddressesSecondary.List() {
+					for _, address := range sets.List(toCurlAddressesSecondary) {
 						if !isIPv6Cluster && utilnet.IsIPv6String(address) {
 							continue
 						}
@@ -1262,7 +1266,7 @@ spec:
 			ginkgo.By("Selecting a schedulable node")
 			nodes, err = e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 1)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(len(nodes.Items)).To(gomega.BeNumerically(">", 0))
+			gomega.Expect(nodes.Items).ToNot(gomega.BeEmpty())
 			nodeName := nodes.Items[0].Name
 			primaryProviderNetwork, err := infraprovider.Get().PrimaryNetwork()
 			framework.ExpectNoError(err, "failed to get primary network")
@@ -1279,7 +1283,7 @@ spec:
 			serverPodName := nodeName + "-ep"
 			var serverContainerName string
 			_, err = createPod(f, serverPodName, nodeName, f.Namespace.Name, []string{}, endpointsSelector,
-				func(p *v1.Pod) {
+				func(p *corev1.Pod) {
 					p.Spec.Containers[0].Args = args
 					serverContainerName = p.Spec.Containers[0].Name
 				},
@@ -1290,13 +1294,13 @@ spec:
 			serviceName := "service"
 			service := nodePortServiceSpecFrom(
 				serviceName,
-				v1.IPFamilyPolicyPreferDualStack,
+				corev1.IPFamilyPolicyPreferDualStack,
 				endpointHTTPPort,
 				endpointUDPPort,
 				clusterHTTPPort,
 				clusterUDPPort,
 				endpointsSelector,
-				v1.ServiceExternalTrafficPolicyTypeCluster,
+				corev1.ServiceExternalTrafficPolicyTypeCluster,
 			)
 			service, err = f.ClientSet.CoreV1().Services(f.Namespace.Name).Create(context.Background(), service, metav1.CreateOptions{})
 			framework.ExpectNoError(err)
@@ -1354,11 +1358,11 @@ spec:
 			})
 			var udpPort int32
 			for _, port := range service.Spec.Ports {
-				if port.Protocol == v1.ProtocolUDP {
+				if port.Protocol == corev1.ProtocolUDP {
 					udpPort = port.NodePort
 				}
 			}
-			gomega.Expect(udpPort).NotTo(gomega.Equal(0))
+			gomega.Expect(udpPort).NotTo(gomega.Equal(int32(0)))
 
 			// To check that forwarding did not happen via host, we send a
 			// non-fragmented packet first and then a fragmented one on the same
@@ -1399,13 +1403,13 @@ spec:
 	})
 })
 
-func getServiceBackendsFromPod(execPod *v1.Pod, serviceIP string, servicePort int) []string {
+func getServiceBackendsFromPod(execPod *corev1.Pod, serviceIP string, servicePort int) []string {
 	connectionAttempts := 15
 	serviceIPPort := net.JoinHostPort(serviceIP, strconv.Itoa(servicePort))
 	curl := fmt.Sprintf(`curl -q -s --connect-timeout 2 http://%s/`, serviceIPPort)
 	cmd := fmt.Sprintf("for i in $(seq 1 %d); do echo; %s ; done", connectionAttempts, curl)
 
-	stdout, err := e2eoutput.RunHostCmd(execPod.Namespace, execPod.Name, cmd)
+	stdout, err := e2epodoutput.RunHostCmdWithRetries(execPod.Namespace, execPod.Name, cmd, framework.Poll, 30*time.Second)
 	if err != nil {
 		framework.Logf("Failed to get response from %s. Retry until timeout", serviceIPPort)
 		return nil
@@ -1417,7 +1421,7 @@ func getServiceBackendsFromPod(execPod *v1.Pod, serviceIP string, servicePort in
 			nonEmptyHosts = append(nonEmptyHosts, strings.TrimSpace(host))
 		}
 	}
-	gomega.Expect(len(nonEmptyHosts)).To(gomega.Equal(connectionAttempts), fmt.Sprintf("Expected %v replies, got %v", connectionAttempts, nonEmptyHosts))
+	gomega.Expect(nonEmptyHosts).To(gomega.HaveLen(connectionAttempts), fmt.Sprintf("Expected %v replies, got %v", connectionAttempts, nonEmptyHosts))
 	return nonEmptyHosts
 }
 
@@ -1452,7 +1456,7 @@ var _ = ginkgo.Describe("Service Hairpin SNAT", feature.Service, func() {
 		if len(nodes.Items) < 2 {
 			framework.Failf("Test requires >= 2 Ready nodes, but there are only %v nodes", len(nodes.Items))
 		}
-		ips := e2enode.CollectAddresses(nodes, v1.NodeInternalIP)
+		ips := e2enode.CollectAddresses(nodes, corev1.NodeInternalIP)
 		namespaceName = f.Namespace.Name
 		backendNodeName = nodes.Items[0].Name
 		nodeIP = ips[1]
@@ -1495,7 +1499,7 @@ var _ = ginkgo.Describe("Service Hairpin SNAT", feature.Service, func() {
 		ginkgo.By("creating an host-network backend pod on " + backendNodeName)
 		// create hostNeworkedPods
 		hostNetPort := infraprovider.Get().GetK8HostPort()
-		_, err := createPod(f, backendName, backendNodeName, namespaceName, []string{}, hairpinPodSel, func(p *v1.Pod) {
+		_, err := createPod(f, backendName, backendNodeName, namespaceName, []string{}, hairpinPodSel, func(p *corev1.Pod) {
 			p.Spec.Containers[0].Command = getAgnHostHTTPPortBindFullCMD(hostNetPort)
 			p.Spec.HostNetwork = true
 		})
@@ -1661,14 +1665,14 @@ spec:
 			framework.ExpectNoError(err, "failed to reset MTU on intermediary router")
 			framework.Logf("Delete the custom BGP Advertisement configuration")
 			e2ekubectl.RunKubectlOrDie("metallb-system", "delete", "bgpadvertisement", "example", "--ignore-not-found=true")
-			var bgpEmptyConfig = fmt.Sprintf(`
+			var bgpEmptyConfig = `
 ---
 apiVersion: metallb.io/v1beta1
 kind: BGPAdvertisement
 metadata:
   name: empty
   namespace: metallb-system
-`)
+`
 			if err := os.WriteFile(bgpEmptyYaml, []byte(bgpEmptyConfig), 0644); err != nil {
 				framework.Failf("Unable to write CRD config to disk: %v", err)
 			}
@@ -1691,8 +1695,8 @@ metadata:
 		endpoints, err := getEndpointsForService(f.ClientSet, namespaceName, svcName)
 		framework.ExpectNoError(err, fmt.Sprintf("failed to get endpoints for service %s", svcName))
 		gomega.Expect(endpoints).NotTo(gomega.BeNil())
-		gomega.Expect(len(endpoints.Subsets)).To(gomega.Equal(1))
-		gomega.Expect(len(endpoints.Subsets[0].Addresses)).To(gomega.Equal(4))
+		gomega.Expect(endpoints.Subsets).To(gomega.HaveLen(1))
+		gomega.Expect(endpoints.Subsets[0].Addresses).To(gomega.HaveLen(4))
 		endPointIP := endpoints.Subsets[0].Addresses[0].IP
 		nodeName := endpoints.Subsets[0].Addresses[0].NodeName
 		nodeIP, err := getNodeIP(f.ClientSet, *nodeName)
@@ -1720,7 +1724,7 @@ metadata:
 		// with network namespaces.
 		gomega.Eventually(func() error {
 			return buildAndRunCommand(fmt.Sprintf("sudo ip netns exec client curl %s:%d/big.iso -o big.iso", svcIPforCurl, endpointHTTPPort))
-		}, 5*time.Second).Should(gomega.BeNil(), "failed to connect with external load balancer service")
+		}, 5*time.Second).Should(gomega.Succeed(), "failed to connect with external load balancer service")
 
 		// Change MTU size of vmtobridge veth pair and verify service connectivity still works.
 		// Set the value >=1280 so that it works for IPv6 as well.
@@ -1731,7 +1735,7 @@ metadata:
 		ginkgo.By("Test sevice connectivity after changing MTU on the intermediate node")
 		gomega.Eventually(func() error {
 			return buildAndRunCommand(fmt.Sprintf("sudo ip netns exec client curl %s:%d/big.iso -o big.iso", svcIPforCurl, endpointHTTPPort))
-		}, 5*time.Second).Should(gomega.BeNil(), "failed to connect with external load balancer service after changing mtu size")
+		}, 5*time.Second).Should(gomega.Succeed(), "failed to connect with external load balancer service after changing mtu size")
 	})
 
 	ginkgo.It("Should ensure load balancer service works with pmtud", func() {
@@ -2058,7 +2062,7 @@ spec:
 		cmd = []string{"bash", "-x", "-c", netcatCmd}
 		framework.Logf("netcat command %s", cmd)
 		clientNetNetwork, err := infraprovider.Get().GetNetwork("clientnet")
-		if errors.Is(err, infraapi.NotFound) {
+		if errors.Is(err, infraapi.ErrNotFound) {
 			ginkgo.Skip("clientnet network is not available. Skipping")
 		}
 		framework.ExpectNoError(err, "clientnet network must be available")
@@ -2192,7 +2196,7 @@ spec:
 		cmd := []string{"bash", "-x", "-c", netcatCmd}
 		framework.Logf("netcat command %s", cmd)
 		clientNetNetwork, err := infraprovider.Get().GetNetwork("clientnet")
-		if errors.Is(err, infraapi.NotFound) {
+		if errors.Is(err, infraapi.ErrNotFound) {
 			ginkgo.Skip("clientnet network is not available. Skipping")
 		}
 		framework.ExpectNoError(err, "clientnet network must be available")
@@ -2267,7 +2271,11 @@ spec:
 				framework.Logf("Error: failed to get the EgressIP object, err: %v", err)
 				return false, nil
 			}
-			json.Unmarshal([]byte(egressIPStdout), &egressIP)
+			err = json.Unmarshal([]byte(egressIPStdout), &egressIP)
+			if err != nil {
+				framework.Logf("Error: failed to unmarshal EgressIP JSON, err: %v", err)
+				return false, nil
+			}
 			if len(egressIP.Items) > 1 {
 				framework.Failf("Didn't expect to retrieve more than one egress IP during the execution of this test, saw: %v", len(egressIP.Items))
 			}
@@ -2297,7 +2305,7 @@ spec:
 	})
 })
 
-func getEndpointsForService(c clientset.Interface, namespace, serviceName string) (*v1.Endpoints, error) {
+func getEndpointsForService(c clientset.Interface, namespace, serviceName string) (*corev1.Endpoints, error) {
 	endpoints, err := c.CoreV1().Endpoints(namespace).Get(context.TODO(), serviceName, metav1.GetOptions{})
 	if err != nil {
 		return nil, err
@@ -2310,7 +2318,7 @@ func getNodeIP(c clientset.Interface, nodeName string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	ips := e2enode.GetAddresses(node, v1.NodeInternalIP)
+	ips := e2enode.GetAddresses(node, corev1.NodeInternalIP)
 	return ips[0], nil
 }
 
@@ -2384,7 +2392,9 @@ func setupIPv4NetworkForExternalClient(svcLoadBalancerIP string, svcLoadBalancer
 	err = buildAndRunCommand("sudo ip netns exec bridge ip route add default via 192.168.222.1")
 	framework.ExpectNoError(err, "failed to add default route on bridge netns")
 
-	buildAndRunCommand("sudo ip route delete 192.168.223.0/24")
+	if err := buildAndRunCommand("sudo ip route delete 192.168.223.0/24"); err != nil {
+		framework.Logf("Failed to delete existing route during setup: %v", err)
+	}
 	err = buildAndRunCommand("sudo ip route add 192.168.223.0/24 via 192.168.222.2")
 	framework.ExpectNoError(err, "failed to add route for client to handle reverse service traffic")
 
@@ -2397,9 +2407,15 @@ func setupIPv4NetworkForExternalClient(svcLoadBalancerIP string, svcLoadBalancer
 
 func cleanupIPv4NetworkForExternalClient(svcLoadBalancerIP string, svcLoadBalancerPort int) {
 	cleanupNetNamespace()
-	buildAndRunCommand("sudo ip route delete 192.168.223.0/24 via 192.168.222.2")
-	buildAndRunCommand(fmt.Sprintf("sudo ip route delete %s", svcLoadBalancerIP))
-	buildAndRunCommand(fmt.Sprintf("sudo iptables -t filter -D FORWARD -d %s -p tcp -m tcp --dport %d -j ACCEPT", svcLoadBalancerIP, svcLoadBalancerPort))
+	if err := buildAndRunCommand("sudo ip route delete 192.168.223.0/24 via 192.168.222.2"); err != nil {
+		framework.Logf("Failed to delete route during cleanup: %v", err)
+	}
+	if err := buildAndRunCommand(fmt.Sprintf("sudo ip route delete %s", svcLoadBalancerIP)); err != nil {
+		framework.Logf("Failed to delete route during cleanup: %v", err)
+	}
+	if err := buildAndRunCommand(fmt.Sprintf("sudo iptables -t filter -D FORWARD -d %s -p tcp -m tcp --dport %d -j ACCEPT", svcLoadBalancerIP, svcLoadBalancerPort)); err != nil {
+		framework.Logf("Failed to delete iptables rule during cleanup: %v", err)
+	}
 }
 
 func setupIPv6NetworkForExternalClient(svcLoadBalancerIP string, svcLoadBalancerPort int, nodeIP string) {
@@ -2460,9 +2476,15 @@ func setupIPv6NetworkForExternalClient(svcLoadBalancerIP string, svcLoadBalancer
 
 func cleanupIPv6NetworkForExternalClient(svcLoadBalancerIP string, svcLoadBalancerPort int) {
 	cleanupNetNamespace()
-	buildAndRunCommand("sudo ip -6 route delete fc00:f853:ccd:e223::2")
-	buildAndRunCommand(fmt.Sprintf("sudo ip -6 route delete %s", svcLoadBalancerIP))
-	buildAndRunCommand(fmt.Sprintf("sudo ip6tables -t filter -D FORWARD -d %s -p tcp -m tcp --dport %d -j ACCEPT", svcLoadBalancerIP, svcLoadBalancerPort))
+	if err := buildAndRunCommand("sudo ip -6 route delete fc00:f853:ccd:e223::2"); err != nil {
+		framework.Logf("Failed to delete IPv6 route during cleanup: %v", err)
+	}
+	if err := buildAndRunCommand(fmt.Sprintf("sudo ip -6 route delete %s", svcLoadBalancerIP)); err != nil {
+		framework.Logf("Failed to delete IPv6 route during cleanup: %v", err)
+	}
+	if err := buildAndRunCommand(fmt.Sprintf("sudo ip6tables -t filter -D FORWARD -d %s -p tcp -m tcp --dport %d -j ACCEPT", svcLoadBalancerIP, svcLoadBalancerPort)); err != nil {
+		framework.Logf("Failed to delete ip6tables rule during cleanup: %v", err)
+	}
 }
 
 func setupNetNamespaceAndLinks() {
@@ -2494,6 +2516,10 @@ func setupNetNamespaceAndLinks() {
 }
 
 func cleanupNetNamespace() {
-	buildAndRunCommand("sudo ip netns delete bridge")
-	buildAndRunCommand("sudo ip netns delete client")
+	if err := buildAndRunCommand("sudo ip netns delete bridge"); err != nil {
+		framework.Logf("Failed to delete bridge netns during cleanup: %v", err)
+	}
+	if err := buildAndRunCommand("sudo ip netns delete client"); err != nil {
+		framework.Logf("Failed to delete client netns during cleanup: %v", err)
+	}
 }

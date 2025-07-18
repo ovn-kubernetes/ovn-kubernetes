@@ -13,20 +13,11 @@ import (
 	"strings"
 	"time"
 
+	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/ginkgo/v2/dsl/table"
 	"github.com/onsi/gomega"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
-	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/ipalloc"
-
-	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -37,6 +28,16 @@ import (
 	"k8s.io/kubernetes/test/e2e/framework/pod"
 	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 	utilnet "k8s.io/utils/net"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
+	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/ipalloc"
 )
 
 const (
@@ -207,11 +208,7 @@ func getLastLogLine(data string) string {
 
 // checks if the given IP is found. If there are multiple lines, only consider the last line.
 func containsIPInLastEntry(data, ip string) bool {
-	if strings.Contains(getLastLogLine(data), ip) {
-
-		return true
-	}
-	return false
+	return strings.Contains(getLastLogLine(data), ip)
 }
 
 // support for agnhost image is limited to netexec command
@@ -357,11 +354,6 @@ func targetExternalContainerAndTest(externalContainer infraapi.ExternalContainer
 		}
 		return true, nil
 	}
-}
-
-func removeSliceElement(s []string, i int) []string {
-	s[i] = s[len(s)-1]
-	return s[:len(s)-1]
 }
 
 type egressIPStatus struct {
@@ -535,7 +527,9 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", feature.EgressIP
 			framework.Logf("Error: failed to get the EgressIP object, err: %v", err)
 			return nil
 		}
-		json.Unmarshal([]byte(egressIPStdout), &egressIPs)
+		if err := json.Unmarshal([]byte(egressIPStdout), &egressIPs); err != nil {
+			framework.Failf("Error unmarshaling egress IP data: %v", err)
+		}
 		if len(egressIPs.Items) > 1 {
 			framework.Failf("Didn't expect to retrieve more than one egress IP during the execution of this test, saw: %v", len(egressIPs.Items))
 		}
@@ -588,10 +582,7 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", feature.EgressIP
 	}
 
 	isNodeInternalAddressesPresentForIPFamily := func(nodes *corev1.NodeList, ipFamily corev1.IPFamily) bool {
-		if len(getNodesInternalAddresses(nodes, ipFamily)) > 0 {
-			return true
-		}
-		return false
+		return len(getNodesInternalAddresses(nodes, ipFamily)) > 0
 	}
 
 	isNetworkSupported := func(nodes *corev1.NodeList, netConfigParams networkAttachmentConfigParams) (bool, string) {
@@ -654,7 +645,7 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", feature.EgressIP
 		return getNodesInternalAddresses(nodes, ipFamily)
 	}
 
-	getPodIPWithRetry := func(clientSet clientset.Interface, v6 bool, namespace, name string) (net.IP, error) {
+	getPodIPWithRetry := func(clientSet clientset.Interface, _ bool, namespace, name string) (net.IP, error) {
 		var srcPodIP net.IP
 		err := wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
 			pod, err := clientSet.CoreV1().Pods(namespace).Get(context.Background(), name, metav1.GetOptions{})
@@ -678,17 +669,11 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", feature.EgressIP
 	}
 
 	isUserDefinedNetwork := func(netParams networkAttachmentConfigParams) bool {
-		if netParams.networkName == types.DefaultNetworkName {
-			return false
-		}
-		return true
+		return netParams.networkName != types.DefaultNetworkName
 	}
 
 	isClusterDefaultNetwork := func(netParams networkAttachmentConfigParams) bool {
-		if netParams.networkName == types.DefaultNetworkName {
-			return true
-		}
-		return false
+		return netParams.networkName == types.DefaultNetworkName
 	}
 
 	f := wrappedTestFramework(egressIPName)
@@ -910,9 +895,11 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", feature.EgressIP
 				var err error
 				if utilnet.IsIPv6String(egress1Node.nodeIP) {
 					egressIP1, err = ipalloc.NewPrimaryIPv6()
+					gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate new Node IP")
 					egressIP2, err = ipalloc.NewPrimaryIPv6()
 				} else {
 					egressIP1, err = ipalloc.NewPrimaryIPv4()
+					gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate new Node IP")
 					egressIP2, err = ipalloc.NewPrimaryIPv4()
 				}
 				gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate new Node IP")
@@ -1035,7 +1022,7 @@ spec:
 				usedEgressNodeAvailabilityHandler.Disable(egress2Node.name)
 
 				ginkgo.By("14. Check that the status is of length zero")
-				statuses = verifyEgressIPStatusLengthEquals(0, nil)
+				_ = verifyEgressIPStatusLengthEquals(0, nil)
 
 				ginkgo.By("15. Check connectivity from the remaining pod to an external \"node\" and verify that the IP is the node IP.")
 				err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer,
@@ -1102,6 +1089,7 @@ spec:
 		} else {
 			otherDstIP, err = ipalloc.NewPrimaryIPv4()
 		}
+		framework.ExpectNoError(err, "must allocate new Node IP")
 		otherDst := otherDstIP.String()
 		framework.Logf("Adding secondary IP %s to external bridge %s on Node %s", otherDst, deploymentconfig.Get().ExternalBridgeName(), egress2Node.name)
 		_, err = infraprovider.Get().ExecK8NodeCommand(egress2Node.name, []string{"ip", "addr", "add", otherDst, "dev", deploymentconfig.Get().ExternalBridgeName()})
@@ -1519,7 +1507,9 @@ spec:
 			if err != nil {
 				return false, err
 			}
-			json.Unmarshal([]byte(egressIPStdout), &egressIPs)
+			if err := json.Unmarshal([]byte(egressIPStdout), &egressIPs); err != nil {
+				return false, err
+			}
 			if len(egressIPs.Items) != 2 {
 				return false, nil
 			}
@@ -1598,7 +1588,9 @@ spec:
 			if err != nil {
 				return false, err
 			}
-			json.Unmarshal([]byte(egressIPStdout), &egressIPs)
+			if err := json.Unmarshal([]byte(egressIPStdout), &egressIPs); err != nil {
+				return false, err
+			}
 			if len(egressIPs.Items) != 2 {
 				return false, nil
 			}
@@ -1637,7 +1629,9 @@ spec:
 			if err != nil {
 				return false, err
 			}
-			json.Unmarshal([]byte(egressIPStdout), &egressIPs)
+			if err := json.Unmarshal([]byte(egressIPStdout), &egressIPs); err != nil {
+				return false, err
+			}
 			if len(egressIPs.Items) != 2 {
 				return false, nil
 			}
@@ -1797,7 +1791,7 @@ spec:
 		}
 		ginkgo.By(fmt.Sprintf("5. Check that egress IP has been moved to other node: %s with the \"k8s.ovn.org/egress-assignable\" label", otherNode))
 		var node2 string
-		statuses = verifyEgressIPStatusLengthEquals(1, func(statuses []egressIPStatus) bool {
+		_ = verifyEgressIPStatusLengthEquals(1, func(statuses []egressIPStatus) bool {
 			node2 = statuses[0].Node
 			return node2 == otherNode
 		})
@@ -1829,7 +1823,7 @@ spec:
 		setNodeReachable(node1, true)
 
 		ginkgo.By("12. Check that egress IP is assigned to node 1 again")
-		statuses = verifyEgressIPStatusLengthEquals(1, func(statuses []egressIPStatus) bool {
+		_ = verifyEgressIPStatusLengthEquals(1, func(statuses []egressIPStatus) bool {
 			testNode := statuses[0].Node
 			return testNode == node1
 		})
@@ -2148,7 +2142,7 @@ spec:
 			retryInterval,
 			retryTimeout,
 			true,
-			func(ctx context.Context) (bool, error) {
+			func(_ context.Context) (bool, error) {
 				curlErr := curlAgnHostClientIPFromPod(podNamespace.Name, pod1Name, egressIP1.String(), externalContainerPrimary.GetIPv4(), externalContainerPrimary.GetPortStr())
 				return curlErr == nil, nil
 			},
@@ -2291,8 +2285,11 @@ spec:
 		gomega.Expect(verifyEgressIPStatusContainsIPs(statuses, []string{egressIPIP1, egressIPIP2})).Should(gomega.BeTrue())
 
 		ginkgo.By("4. Create two pods matching the EgressIP: one running on each of the egress nodes")
-		createGenericPodWithLabel(f, pod1Name, pod1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
-		createGenericPodWithLabel(f, pod2Name, pod2Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
+		var err error
+		_, err = createGenericPodWithLabel(f, pod1Name, pod1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
+		framework.ExpectNoError(err, "failed to create pod %s/%s", f.Namespace.Name, pod1Name)
+		_, err = createGenericPodWithLabel(f, pod2Name, pod2Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
+		framework.ExpectNoError(err, "failed to create pod %s/%s", f.Namespace.Name, pod2Name)
 		for _, podName := range []string{pod1Name, pod2Name} {
 			_, err := getPodIPWithRetry(f.ClientSet, isIPv6TestRun, f.Namespace.Name, podName)
 			framework.ExpectNoError(err, "Step 4. Create two pods matching an EgressIP - running pod(s) failed to get "+
@@ -2303,7 +2300,7 @@ spec:
 
 		ginkgo.By("5. Check connectivity from both pods to an external \"node\" hosted on the secondary host network " +
 			"and verify the expected IPs")
-		err := wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(secondaryTargetExternalContainer,
+		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(secondaryTargetExternalContainer,
 			podNamespace.Name, pod1Name, true, []string{egressIPIP1, egressIPIP2}))
 		framework.ExpectNoError(err, "Step 5. Check connectivity from pod (%s/%s) to an external container attached to "+
 			"a network that is a secondary host network and verify that the src IP is the expected egressIP, failed: %v",
@@ -2534,8 +2531,10 @@ spec:
 		gomega.Expect(verifyEgressIPStatusContainsIPs(statuses, []string{egressIPOVN, egressIPSecondaryHost})).Should(gomega.BeTrue())
 
 		ginkgo.By("4. Create two pods matching the EgressIP: one running on each of the egress nodes")
-		createGenericPodWithLabel(f, pod1Name, pod1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
-		createGenericPodWithLabel(f, pod2Name, pod2Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
+		_, err = createGenericPodWithLabel(f, pod1Name, pod1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
+		framework.ExpectNoError(err, "Step 4. Failed to create pod %s: %v", pod1Name, err)
+		_, err = createGenericPodWithLabel(f, pod2Name, pod2Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
+		framework.ExpectNoError(err, "Step 4. Failed to create pod %s: %v", pod2Name, err)
 		for _, podName := range []string{pod1Name, pod2Name} {
 			_, err := getPodIPWithRetry(f.ClientSet, isIPv6TestRun, f.Namespace.Name, podName)
 			framework.ExpectNoError(err, "Step 4. Create two pods matching an EgressIP - running pod(s) failed to get "+
@@ -2674,7 +2673,7 @@ spec:
 		framework.ExpectNoError(err, "20. Check connectivity from both pods (%s/%s) to an external \"node\" on the "+
 			"OVN network and verify that the src IP is the node IP %s, failed: %v", podNamespace, pod2Name, pod2Node.nodeIP, err)
 
-		ginkgo.By("21. Set a node (hosting secondary host network Egress IP) back as available for egress")
+		ginkgo.By("21. Set a node (hosting secondary host network EgressIP) back as available for egress")
 		egressNodeAvailabilityHandler.Enable(nodeNameHostingSecondaryHostEIP)
 
 		ginkgo.By("22. Check that the status is of length one")
@@ -2797,10 +2796,12 @@ spec:
 
 		ginkgo.By("3. Create two pods - one matching each EgressIP")
 		_, err := createGenericPodWithLabel(f, pod1Name, pod1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
+		framework.ExpectNoError(err, "Step 3. Failed to create pod %s: %v", pod1Name, err)
 		podEgressLabel2 := map[string]string{
 			"wants": "egress2",
 		}
-		createGenericPodWithLabel(f, pod2Name, pod2Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel2)
+		_, err = createGenericPodWithLabel(f, pod2Name, pod2Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel2)
+		framework.ExpectNoError(err, "Step 3. Failed to create pod %s: %v", pod2Name, err)
 		for _, podName := range []string{pod1Name, pod2Name} {
 			_, err := getPodIPWithRetry(f.ClientSet, isIPv6TestRun, podNamespace.Name, podName)
 			framework.ExpectNoError(err, "Step 3. Create two pods - one matching each EgressIP, failed for pod %s, err: %v", podName, err)
@@ -2946,7 +2947,8 @@ spec:
 		ginkgo.By("3. Check that status of EgressIP object is of length one")
 		verifySpecificEgressIPStatusLengthEquals(egressIPName, 1, nil)
 		ginkgo.By("4. Create a pod matching the EgressIP")
-		createGenericPodWithLabel(f, pod1Name, pod1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
+		_, err = createGenericPodWithLabel(f, pod1Name, pod1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
+		framework.ExpectNoError(err, "Step 4. Failed to create pod %s: %v", pod1Name, err)
 		_, err = getPodIPWithRetry(f.ClientSet, isIPv6TestRun, f.Namespace.Name, pod1Name)
 		framework.ExpectNoError(err, "Step 4. Create a pod matching the EgressIP, failed, err: %v", err)
 		ginkgo.By("5. Check connectivity from a pod to an external \"node\" hosted on a secondary host network " +

@@ -4,33 +4,33 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/netip"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
-
 	"github.com/docker/docker/client"
-	v1 "k8s.io/api/core/v1"
+	mnpapi "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/apis/k8s.cni.cncf.io/v1beta1"
+	mnpclient "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1beta1"
+	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
+	"github.com/onsi/ginkgo/v2"
+
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 
-	mnpapi "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/apis/k8s.cni.cncf.io/v1beta1"
-	mnpclient "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1beta1"
-	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
-	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
-
 	ipgenerator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/ip"
 	util "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 const (
@@ -71,7 +71,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 	})
 
 	Context("A single pod with an OVN-K secondary network", func() {
-		ginkgo.DescribeTable("is able to get to the Running phase", func(netConfigParams networkAttachmentConfigParams, podConfig podConfiguration) {
+		DescribeTable("is able to get to the Running phase", func(netConfigParams networkAttachmentConfigParams, podConfig podConfiguration) {
 			netConfig := newNetworkAttachmentConfig(netConfigParams)
 
 			netConfig.namespace = f.Namespace.Name
@@ -80,7 +80,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 			if netConfig.topology == "localnet" {
 				By("applying ovs bridge mapping")
 				Expect(setBridgeMappings(cs, defaultNetworkBridgeMapping(), bridgeMapping(netConfig.networkName, secondaryBridge))).NotTo(HaveOccurred())
-				ginkgo.DeferCleanup(setBridgeMappings, cs, defaultNetworkBridgeMapping())
+				DeferCleanup(setBridgeMappings, cs, defaultNetworkBridgeMapping())
 			}
 
 			By("creating the attachment configuration")
@@ -100,13 +100,13 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("asserting the pod gets to the `Ready` phase")
-			Eventually(func() v1.PodPhase {
+			Eventually(func() corev1.PodPhase {
 				updatedPod, err := cs.CoreV1().Pods(podConfig.namespace).Get(context.Background(), pod.GetName(), metav1.GetOptions{})
 				if err != nil {
-					return v1.PodFailed
+					return corev1.PodFailed
 				}
 				return updatedPod.Status.Phase
-			}, 2*time.Minute, 6*time.Second).Should(Equal(v1.PodRunning))
+			}, 2*time.Minute, 6*time.Second).Should(Equal(corev1.PodRunning))
 
 			if netConfig.excludeCIDRs != nil {
 				podIP, err := podIPForAttachment(cs, pod.GetNamespace(), pod.GetName(), secondaryNetworkName, 0)
@@ -120,7 +120,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				}
 			}
 		},
-			ginkgo.Entry(
+			Entry(
 				"when attaching to an L3 - routed - network",
 				networkAttachmentConfigParams{
 					cidr:     netCIDR(secondaryNetworkCIDR, netPrefixLengthPerNode),
@@ -132,7 +132,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					name:        podName,
 				},
 			),
-			ginkgo.Entry(
+			Entry(
 				"when attaching to an L3 - routed - network with IPv6 network",
 				networkAttachmentConfigParams{
 					cidr:     netCIDR(secondaryIPv6CIDR, netPrefixLengthIPv6PerNode),
@@ -144,7 +144,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					name:        podName,
 				},
 			),
-			ginkgo.Entry(
+			Entry(
 				"when attaching to an L2 - switched - network",
 				networkAttachmentConfigParams{
 					cidr:     secondaryFlatL2NetworkCIDR,
@@ -156,7 +156,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					name:        podName,
 				},
 			),
-			ginkgo.Entry(
+			Entry(
 				"when attaching to an L2 - switched - network featuring `excludeCIDR`s",
 				networkAttachmentConfigParams{
 					cidr:         secondaryFlatL2NetworkCIDR,
@@ -169,7 +169,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					name:        podName,
 				},
 			),
-			ginkgo.Entry(
+			Entry(
 				"when attaching to an L2 - switched - network without IPAM",
 				networkAttachmentConfigParams{
 					name:     secondaryNetworkName,
@@ -180,7 +180,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					name:        podName,
 				},
 			),
-			ginkgo.Entry(
+			Entry(
 				"when attaching to an L2 - switched - network with an IPv6 subnet",
 				networkAttachmentConfigParams{
 					cidr:     secondaryIPv6CIDR,
@@ -192,7 +192,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					name:        podName,
 				},
 			),
-			ginkgo.Entry(
+			Entry(
 				"when attaching to an L2 - switched - network with a dual stack configuration",
 				networkAttachmentConfigParams{
 					cidr:     strings.Join([]string{secondaryFlatL2NetworkCIDR, secondaryIPv6CIDR}, ","),
@@ -204,7 +204,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					name:        podName,
 				},
 			),
-			ginkgo.Entry(
+			Entry(
 				"when attaching to a localnet - switched - network",
 				networkAttachmentConfigParams{
 					cidr:     secondaryLocalnetNetworkCIDR,
@@ -217,7 +217,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					name:        podName,
 				},
 			),
-			ginkgo.Entry(
+			Entry(
 				"when attaching to a localnet - switched - network featuring `excludeCIDR`s",
 				networkAttachmentConfigParams{
 					cidr:         secondaryLocalnetNetworkCIDR,
@@ -231,7 +231,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					name:        podName,
 				},
 			),
-			ginkgo.Entry(
+			Entry(
 				"when attaching to a localnet - switched - network without IPAM",
 				networkAttachmentConfigParams{
 					name:     secondaryNetworkName,
@@ -243,7 +243,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					name:        podName,
 				},
 			),
-			ginkgo.Entry(
+			Entry(
 				"when attaching to a localnet - switched - network with an IPv6 subnet",
 				networkAttachmentConfigParams{
 					cidr:     secondaryIPv6CIDR,
@@ -256,7 +256,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					name:        podName,
 				},
 			),
-			ginkgo.Entry(
+			Entry(
 				"when attaching to an L2 - switched - network with a dual stack configuration",
 				networkAttachmentConfigParams{
 					cidr:     strings.Join([]string{secondaryLocalnetNetworkCIDR, secondaryIPv6CIDR}, ","),
@@ -278,13 +278,13 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 			port           = 9000
 		)
 
-		ginkgo.DescribeTable("attached to a localnet network mapped to breth0",
+		DescribeTable("attached to a localnet network mapped to breth0",
 
-			func(netConfigParams networkAttachmentConfigParams, clientPodConfig, serverPodConfig podConfiguration, isCollocatedPods bool) {
+			func(_ networkAttachmentConfigParams, clientPodConfig, serverPodConfig podConfiguration, isCollocatedPods bool) {
 				By("Get two scheduable nodes and ensure client and server are located on distinct Nodes")
 				nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.Background(), f.ClientSet, 2)
 				framework.ExpectNoError(err, "2 scheduable nodes are required")
-				Expect(len(nodes.Items)).To(BeNumerically(">=", 1), "cluster should have at least 2 nodes")
+				Expect(nodes.Items).ToNot(BeEmpty(), "cluster should have at least 2 nodes")
 				if isCollocatedPods {
 					clientPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[0].GetName()}
 					serverPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[0].GetName()}
@@ -369,7 +369,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					}, 2*time.Minute, 6*time.Second).Should(Succeed())
 				}
 			},
-			ginkgo.Entry(
+			Entry(
 				"can be reached by a client pod in the default network on a different node",
 				networkAttachmentConfigParams{
 					name:     secondaryNetworkName,
@@ -390,7 +390,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				false, // scheduled on distinct Nodes
 				Label("BUG", "OCPBUGS-43004"),
 			),
-			ginkgo.Entry(
+			Entry(
 				"can be reached by a client pod in the default network on the same node",
 				networkAttachmentConfigParams{
 					name:     secondaryNetworkName,
@@ -467,7 +467,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 			staticServerIP  = "192.168.200.20/24"
 		)
 
-		ginkgo.It("eventually configures pods that were added to an already existing network before the nad", func() {
+		It("eventually configures pods that were added to an already existing network before the nad", func() {
 			netConfig := newNetworkAttachmentConfig(networkAttachmentConfigParams{
 				name:      secondaryNetworkName,
 				namespace: f.Namespace.Name,
@@ -506,7 +506,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				if err != nil {
 					return false
 				}
-				if updatedPod.Status.Phase == v1.PodPending {
+				if updatedPod.Status.Phase == corev1.PodPending {
 					for _, containerStatus := range updatedPod.Status.ContainerStatuses {
 						// ensure that the container is trying to start
 						if containerStatus.State.Waiting != nil {
@@ -527,16 +527,16 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("asserting the pod reaches the `Ready` state")
-			Eventually(func() v1.PodPhase {
+			Eventually(func() corev1.PodPhase {
 				updatedPod, err := cs.CoreV1().Pods(createdNamespace.Name).Get(context.Background(), pod.GetName(), metav1.GetOptions{})
 				if err != nil {
-					return v1.PodFailed
+					return corev1.PodFailed
 				}
 				return updatedPod.Status.Phase
-			}, 2*time.Minute, 6*time.Second).Should(Equal(v1.PodRunning))
+			}, 2*time.Minute, 6*time.Second).Should(Equal(corev1.PodRunning))
 
 		})
-		ginkgo.DescribeTable(
+		DescribeTable(
 			"can communicate over the secondary network",
 			func(netConfigParams networkAttachmentConfigParams, clientPodConfig podConfiguration, serverPodConfig podConfiguration) {
 				netConfig := newNetworkAttachmentConfig(netConfigParams)
@@ -569,7 +569,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				By("Get two scheduable nodes and schedule client and server to be on distinct Nodes")
 				nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.Background(), f.ClientSet, 2)
 				framework.ExpectNoError(err, "2 scheduable nodes are required")
-				Expect(len(nodes.Items)).To(BeNumerically(">=", 1), "cluster should have at least 2 nodes")
+				Expect(nodes.Items).ToNot(BeEmpty(), "cluster should have at least 2 nodes")
 				clientPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[0].GetName()}
 				serverPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[1].GetName()}
 
@@ -583,13 +583,13 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				Expect(serverPod).NotTo(BeNil())
 
 				By("asserting the server pod reaches the `Ready` state")
-				Eventually(func() v1.PodPhase {
+				Eventually(func() corev1.PodPhase {
 					updatedPod, err := cs.CoreV1().Pods(f.Namespace.Name).Get(context.Background(), serverPod.GetName(), metav1.GetOptions{})
 					if err != nil {
-						return v1.PodFailed
+						return corev1.PodFailed
 					}
 					return updatedPod.Status.Phase
-				}, 2*time.Minute, 6*time.Second).Should(Equal(v1.PodRunning))
+				}, 2*time.Minute, 6*time.Second).Should(Equal(corev1.PodRunning))
 
 				By("instantiating the *client* pod")
 				clientPod, err := cs.CoreV1().Pods(clientPodConfig.namespace).Create(
@@ -600,13 +600,13 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				By("asserting the client pod reaches the `Ready` state")
-				Eventually(func() v1.PodPhase {
+				Eventually(func() corev1.PodPhase {
 					updatedPod, err := cs.CoreV1().Pods(f.Namespace.Name).Get(context.Background(), clientPod.GetName(), metav1.GetOptions{})
 					if err != nil {
-						return v1.PodFailed
+						return corev1.PodFailed
 					}
 					return updatedPod.Status.Phase
-				}, 2*time.Minute, 6*time.Second).Should(Equal(v1.PodRunning))
+				}, 2*time.Minute, 6*time.Second).Should(Equal(corev1.PodRunning))
 
 				serverIP := ""
 				if netConfig.cidr == "" {
@@ -641,7 +641,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					}, 2*time.Minute, 6*time.Second).Should(Succeed())
 				}
 			},
-			ginkgo.Entry(
+			Entry(
 				"can communicate over an L2 secondary network when the pods are scheduled in different nodes",
 				networkAttachmentConfigParams{
 					name:     secondaryNetworkName,
@@ -658,7 +658,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					containerCmd: httpServerContainerCmd(port),
 				},
 			),
-			ginkgo.Entry(
+			Entry(
 				"can communicate over an L2 - switched - secondary network with `excludeCIDR`s",
 				networkAttachmentConfigParams{
 					name:         secondaryNetworkName,
@@ -676,7 +676,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					containerCmd: httpServerContainerCmd(port),
 				},
 			),
-			ginkgo.Entry(
+			Entry(
 				"can communicate over an L3 - routed - secondary network",
 				networkAttachmentConfigParams{
 					name:     secondaryNetworkName,
@@ -693,7 +693,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					containerCmd: httpServerContainerCmd(port),
 				},
 			),
-			ginkgo.Entry(
+			Entry(
 				"can communicate over an L3 - routed - secondary network with IPv6 subnet",
 				networkAttachmentConfigParams{
 					name:     secondaryNetworkName,
@@ -710,7 +710,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					containerCmd: httpServerContainerCmd(port),
 				},
 			),
-			ginkgo.Entry(
+			Entry(
 				"can communicate over an L3 - routed - secondary network with a dual stack configuration",
 				networkAttachmentConfigParams{
 					name:     secondaryNetworkName,
@@ -727,7 +727,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					containerCmd: httpServerContainerCmd(port),
 				},
 			),
-			ginkgo.Entry(
+			Entry(
 				"can communicate over an L2 - switched - secondary network without IPAM",
 				networkAttachmentConfigParams{
 					name:     secondaryNetworkName,
@@ -745,7 +745,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					isPrivileged: true,
 				},
 			),
-			ginkgo.Entry(
+			Entry(
 				"can communicate over an L2 secondary network without IPAM, with static IPs configured via network selection elements",
 				networkAttachmentConfigParams{
 					name:     secondaryNetworkName,
@@ -767,7 +767,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					containerCmd: httpServerContainerCmd(port),
 				},
 			),
-			ginkgo.Entry(
+			Entry(
 				"can communicate over an L2 secondary network with an IPv6 subnet when pods are scheduled in different nodes",
 				networkAttachmentConfigParams{
 					name:     secondaryNetworkName,
@@ -784,7 +784,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					containerCmd: httpServerContainerCmd(port),
 				},
 			),
-			ginkgo.Entry(
+			Entry(
 				"can communicate over an L2 secondary network with a dual stack configuration",
 				networkAttachmentConfigParams{
 					name:     secondaryNetworkName,
@@ -801,7 +801,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					containerCmd: httpServerContainerCmd(port),
 				},
 			),
-			ginkgo.Entry(
+			Entry(
 				"can communicate over a localnet secondary network when the pods are scheduled on different nodes",
 				networkAttachmentConfigParams{
 					name:     secondaryNetworkName,
@@ -819,7 +819,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					containerCmd: httpServerContainerCmd(port),
 				},
 			),
-			ginkgo.Entry(
+			Entry(
 				"can communicate over a localnet secondary network without IPAM when the pods are scheduled on different nodes",
 				networkAttachmentConfigParams{
 					name:     secondaryNetworkName,
@@ -838,7 +838,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					isPrivileged: true,
 				},
 			),
-			ginkgo.Entry(
+			Entry(
 				"can communicate over a localnet secondary network without IPAM when the pods are scheduled on different nodes, with static IPs configured via network selection elements",
 				networkAttachmentConfigParams{
 					name:     secondaryNetworkName,
@@ -861,7 +861,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					containerCmd: httpServerContainerCmd(port),
 				},
 			),
-			ginkgo.Entry(
+			Entry(
 				"can communicate over a localnet secondary network with an IPv6 subnet when pods are scheduled on different nodes",
 				networkAttachmentConfigParams{
 					name:     secondaryNetworkName,
@@ -879,7 +879,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					containerCmd: httpServerContainerCmd(port),
 				},
 			),
-			ginkgo.Entry(
+			Entry(
 				"can communicate over a localnet secondary network with a dual stack configuration when pods are scheduled on different nodes",
 				networkAttachmentConfigParams{
 					name:     secondaryNetworkName,
@@ -911,7 +911,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 			)
 
 			var netConfig networkAttachmentConfig
-			var nodes []v1.Pod
+			var nodes []corev1.Pod
 			var underlayBridgeName string
 			var cmdWebServer *exec.Cmd
 
@@ -1052,7 +1052,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 								return fmt.Errorf("failed to get MTU: %w", err)
 							}
 							if mtu != expectedChangedMTU {
-								err := fmt.Errorf("pod MTU is %d, but expected %d", mtu, expectedChangedMTU)
+								err = fmt.Errorf("pod MTU is %d, but expected %d", mtu, expectedChangedMTU)
 								if delErr := cs.CoreV1().Pods(clientPodConfig.namespace).Delete(context.Background(), clientPodConfig.name, metav1.DeleteOptions{}); delErr != nil {
 									err = errors.Join(err, fmt.Errorf("pod delete failed: %w", delErr))
 								}
@@ -1128,7 +1128,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 								By("asserting the *client* pod can contact the underlay service")
 								if err := connectToServer(clientPodConfig, underlayServiceIP, servicePort); err != nil {
 									if delErr := cs.CoreV1().Pods(clientPodConfig.namespace).Delete(context.Background(), clientPodConfig.name, metav1.DeleteOptions{}); delErr != nil {
-										err = errors.Join(err, fmt.Errorf("pod delete failed: %w", delErr))
+										return errors.Join(err, fmt.Errorf("pod delete failed: %w", delErr))
 									}
 									return err
 								}
@@ -1385,40 +1385,39 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				generatedNamespaceNamePrefix = "pepe"
 				blockedServerStaticIP        = "192.168.200.30"
 			)
-			var extraNamespace *v1.Namespace
 
-			BeforeEach(func() {
-				createdNamespace, err := cs.CoreV1().Namespaces().Create(
-					context.Background(),
-					&v1.Namespace{
-						ObjectMeta: metav1.ObjectMeta{
-							Labels:       map[string]string{"role": "trusted"},
-							GenerateName: generatedNamespaceNamePrefix,
-						},
-					},
-					metav1.CreateOptions{},
-				)
-				Expect(err).NotTo(HaveOccurred())
-				extraNamespace = createdNamespace
-			})
-
-			AfterEach(func() {
-				blockUntilEverythingIsGone := metav1.DeletePropagationForeground
-				Expect(cs.CoreV1().Namespaces().Delete(
-					context.Background(),
-					extraNamespace.Name,
-					metav1.DeleteOptions{PropagationPolicy: &blockUntilEverythingIsGone},
-				)).To(Succeed())
-				Eventually(func() bool {
-					_, err := cs.CoreV1().Namespaces().Get(context.Background(), extraNamespace.Name, metav1.GetOptions{})
-					nsPods, podCatchErr := cs.CoreV1().Pods(extraNamespace.Name).List(context.Background(), metav1.ListOptions{})
-					return podCatchErr == nil && apierrors.IsNotFound(err) && len(nsPods.Items) == 0
-				}, 2*time.Minute, 5*time.Second).Should(BeTrue())
-			})
-
-			ginkgo.DescribeTable(
+			DescribeTable(
 				"configure traffic allow lists",
 				func(netConfigParams networkAttachmentConfigParams, allowedClientPodConfig podConfiguration, blockedClientPodConfig podConfiguration, serverPodConfig podConfiguration, policy *mnpapi.MultiNetworkPolicy) {
+					var extraNamespace *corev1.Namespace
+					BeforeEach(func() {
+						createdNamespace, err := cs.CoreV1().Namespaces().Create(
+							context.Background(),
+							&corev1.Namespace{
+								ObjectMeta: metav1.ObjectMeta{
+									Labels:       map[string]string{"role": "trusted"},
+									GenerateName: "pepe",
+								},
+							},
+							metav1.CreateOptions{},
+						)
+						Expect(err).NotTo(HaveOccurred())
+						extraNamespace = createdNamespace
+					})
+
+					AfterEach(func() {
+						blockUntilEverythingIsGone := metav1.DeletePropagationForeground
+						Expect(cs.CoreV1().Namespaces().Delete(
+							context.Background(),
+							extraNamespace.Name,
+							metav1.DeleteOptions{PropagationPolicy: &blockUntilEverythingIsGone},
+						)).To(Succeed())
+						Eventually(func() bool {
+							_, err := cs.CoreV1().Namespaces().Get(context.Background(), extraNamespace.Name, metav1.GetOptions{})
+							nsPods, podCatchErr := cs.CoreV1().Pods(extraNamespace.Name).List(context.Background(), metav1.ListOptions{})
+							return podCatchErr == nil && apierrors.IsNotFound(err) && len(nsPods.Items) == 0
+						}, 2*time.Minute, 5*time.Second).Should(BeTrue())
+					})
 					netConfig := newNetworkAttachmentConfig(netConfigParams)
 
 					if netConfig.topology == "localnet" {
@@ -1462,7 +1461,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					By("asserting the *blocked-client* pod **cannot** contact the server pod exposed endpoint")
 					Expect(connectToServer(blockedClientPodConfig, serverIP, port)).To(MatchError(ContainSubstring("exit code 28")))
 				},
-				ginkgo.Entry(
+				Entry(
 					"using pod selectors for a pure L2 overlay",
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
@@ -1499,7 +1498,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 						multiNetPolicyPort(port),
 					),
 				),
-				ginkgo.Entry(
+				Entry(
 					"using pod selectors and port range for a pure L2 overlay",
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
@@ -1537,7 +1536,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 						multiNetPolicyPortRange(port-3, port+5),
 					),
 				),
-				ginkgo.Entry(
+				Entry(
 					"using pod selectors for a routed topology",
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
@@ -1574,7 +1573,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 						multiNetPolicyPort(port),
 					),
 				),
-				ginkgo.Entry(
+				Entry(
 					"using pod selectors for a localnet topology",
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
@@ -1611,7 +1610,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 						multiNetPolicyPort(port),
 					),
 				),
-				ginkgo.Entry(
+				Entry(
 					"using IPBlock for a pure L2 overlay",
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
@@ -1643,7 +1642,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 						port,
 					),
 				),
-				ginkgo.Entry(
+				Entry(
 					"using IPBlock for a routed topology",
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
@@ -1675,7 +1674,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 						port,
 					),
 				),
-				ginkgo.Entry(
+				Entry(
 					"using IPBlock for a localnet topology",
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
@@ -1707,7 +1706,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 						port,
 					),
 				),
-				ginkgo.Entry(
+				Entry(
 					"using namespace selectors for a pure L2 overlay",
 					networkAttachmentConfigParams{
 						name:        secondaryNetworkName,
@@ -1741,7 +1740,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 						port,
 					),
 				),
-				ginkgo.Entry(
+				Entry(
 					"using namespace selectors for a routed topology",
 					networkAttachmentConfigParams{
 						name:        secondaryNetworkName,
@@ -1775,7 +1774,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 						port,
 					),
 				),
-				ginkgo.Entry(
+				Entry(
 					"using namespace selectors for a localnet topology",
 					networkAttachmentConfigParams{
 						name:        secondaryNetworkName,
@@ -1810,7 +1809,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					),
 				),
 
-				ginkgo.Entry(
+				Entry(
 					"using IPBlock for an IPAMless pure L2 overlay",
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
@@ -1844,9 +1843,38 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				),
 			)
 
-			ginkgo.DescribeTable(
+			DescribeTable(
 				"allow all ingress",
 				func(netConfigParams networkAttachmentConfigParams, clientPodConfig podConfiguration, serverPodConfig podConfiguration, policy *mnpapi.MultiNetworkPolicy) {
+					var extraNamespace *corev1.Namespace
+					BeforeEach(func() {
+						createdNamespace, err := cs.CoreV1().Namespaces().Create(
+							context.Background(),
+							&corev1.Namespace{
+								ObjectMeta: metav1.ObjectMeta{
+									Labels:       map[string]string{"role": "trusted"},
+									GenerateName: "pepe",
+								},
+							},
+							metav1.CreateOptions{},
+						)
+						Expect(err).NotTo(HaveOccurred())
+						extraNamespace = createdNamespace
+					})
+
+					AfterEach(func() {
+						blockUntilEverythingIsGone := metav1.DeletePropagationForeground
+						Expect(cs.CoreV1().Namespaces().Delete(
+							context.Background(),
+							extraNamespace.Name,
+							metav1.DeleteOptions{PropagationPolicy: &blockUntilEverythingIsGone},
+						)).To(Succeed())
+						Eventually(func() bool {
+							_, err := cs.CoreV1().Namespaces().Get(context.Background(), extraNamespace.Name, metav1.GetOptions{})
+							nsPods, podCatchErr := cs.CoreV1().Pods(extraNamespace.Name).List(context.Background(), metav1.ListOptions{})
+							return podCatchErr == nil && apierrors.IsNotFound(err) && len(nsPods.Items) == 0
+						}, 2*time.Minute, 5*time.Second).Should(BeTrue())
+					})
 					netConfig := newNetworkAttachmentConfig(netConfigParams)
 
 					By("setting up the localnet underlay")
@@ -1875,7 +1903,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 						return reachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
 					}, 2*time.Minute, 6*time.Second).Should(Succeed())
 				},
-				ginkgo.Entry(
+				Entry(
 					"using ingress allow-all for a localnet topology",
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
@@ -1902,12 +1930,12 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 						metav1.LabelSelector{},
 						[]mnpapi.MultiPolicyType{mnpapi.PolicyTypeIngress},
 						[]mnpapi.MultiNetworkPolicyIngressRule{
-							mnpapi.MultiNetworkPolicyIngressRule{},
+							{},
 						},
 						nil,
 					),
 				),
-				ginkgo.XEntry(
+				XEntry(
 					"using egress deny-all for a localnet topology",
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
@@ -1940,7 +1968,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					),
 					Label("BUG", "OCPBUGS-25928"),
 				),
-				ginkgo.Entry(
+				Entry(
 					"using egress deny-all, ingress allow-all for a localnet topology",
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
@@ -1969,16 +1997,45 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 						},
 						[]mnpapi.MultiPolicyType{mnpapi.PolicyTypeIngress, mnpapi.PolicyTypeEgress},
 						[]mnpapi.MultiNetworkPolicyIngressRule{
-							mnpapi.MultiNetworkPolicyIngressRule{},
+							{},
 						},
 						nil,
 					),
 				),
 			)
 
-			ginkgo.DescribeTable(
+			DescribeTable(
 				"deny traffic",
 				func(netConfigParams networkAttachmentConfigParams, clientPodConfig podConfiguration, serverPodConfig podConfiguration, policy *mnpapi.MultiNetworkPolicy) {
+					var extraNamespace *corev1.Namespace
+					BeforeEach(func() {
+						createdNamespace, err := cs.CoreV1().Namespaces().Create(
+							context.Background(),
+							&corev1.Namespace{
+								ObjectMeta: metav1.ObjectMeta{
+									Labels:       map[string]string{"role": "trusted"},
+									GenerateName: "pepe",
+								},
+							},
+							metav1.CreateOptions{},
+						)
+						Expect(err).NotTo(HaveOccurred())
+						extraNamespace = createdNamespace
+					})
+
+					AfterEach(func() {
+						blockUntilEverythingIsGone := metav1.DeletePropagationForeground
+						Expect(cs.CoreV1().Namespaces().Delete(
+							context.Background(),
+							extraNamespace.Name,
+							metav1.DeleteOptions{PropagationPolicy: &blockUntilEverythingIsGone},
+						)).To(Succeed())
+						Eventually(func() bool {
+							_, err := cs.CoreV1().Namespaces().Get(context.Background(), extraNamespace.Name, metav1.GetOptions{})
+							nsPods, podCatchErr := cs.CoreV1().Pods(extraNamespace.Name).List(context.Background(), metav1.ListOptions{})
+							return podCatchErr == nil && apierrors.IsNotFound(err) && len(nsPods.Items) == 0
+						}, 2*time.Minute, 5*time.Second).Should(BeTrue())
+					})
 					netConfig := newNetworkAttachmentConfig(netConfigParams)
 
 					By("setting up the localnet underlay")
@@ -2007,7 +2064,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 						return reachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port)
 					}, 2*time.Minute, 6*time.Second).Should(Not(Succeed()))
 				},
-				ginkgo.Entry(
+				Entry(
 					"using ingress deny-all for a localnet topology",
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
@@ -2039,7 +2096,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 						nil,
 					),
 				),
-				ginkgo.Entry(
+				Entry(
 					"using pod selectors and wrong port range for a localnet topology",
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
@@ -2077,7 +2134,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 	})
 
 	Context("A pod with multiple attachments to the same OVN-K networks", func() {
-		var pod *v1.Pod
+		var pod *corev1.Pod
 
 		BeforeEach(func() {
 			netAttachDefs := []networkAttachmentConfig{
@@ -2118,13 +2175,13 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("asserting the pod gets to the `Ready` phase")
-			Eventually(func() v1.PodPhase {
+			Eventually(func() corev1.PodPhase {
 				updatedPod, err := cs.CoreV1().Pods(podConfig.namespace).Get(context.Background(), pod.GetName(), metav1.GetOptions{})
 				if err != nil {
-					return v1.PodFailed
+					return corev1.PodFailed
 				}
 				return updatedPod.Status.Phase
-			}, 2*time.Minute, 6*time.Second).Should(Equal(v1.PodRunning))
+			}, 2*time.Minute, 6*time.Second).Should(Equal(corev1.PodRunning))
 		})
 
 		It("features two different IPs from the same subnet", func() {
@@ -2141,13 +2198,13 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 			Expect(netStatus[0].IPs).To(HaveLen(1))
 			Expect(netStatus[1].IPs).To(HaveLen(1))
 			Expect(netStatus[0].IPs[0]).NotTo(Equal(netStatus[1].IPs[0]))
-			Expect(inRange(secondaryFlatL2NetworkCIDR, netStatus[0].IPs[0]))
-			Expect(inRange(secondaryFlatL2NetworkCIDR, netStatus[1].IPs[0]))
+			Expect(inRange(secondaryFlatL2NetworkCIDR, netStatus[0].IPs[0])).To(Succeed())
+			Expect(inRange(secondaryFlatL2NetworkCIDR, netStatus[1].IPs[0])).To(Succeed())
 		})
 	})
 })
 
-func kickstartPod(cs clientset.Interface, configuration podConfiguration) *v1.Pod {
+func kickstartPod(cs clientset.Interface, configuration podConfiguration) *corev1.Pod {
 	podNamespacedName := fmt.Sprintf("%s/%s", configuration.namespace, configuration.name)
 	By(fmt.Sprintf("instantiating pod %q", podNamespacedName))
 	createdPod, err := cs.CoreV1().Pods(configuration.namespace).Create(
@@ -2158,18 +2215,18 @@ func kickstartPod(cs clientset.Interface, configuration podConfiguration) *v1.Po
 	Expect(err).WithOffset(1).NotTo(HaveOccurred())
 
 	By(fmt.Sprintf("asserting that pod %q reaches the `Ready` state", podNamespacedName))
-	EventuallyWithOffset(1, func() v1.PodPhase {
+	EventuallyWithOffset(1, func() corev1.PodPhase {
 		updatedPod, err := cs.CoreV1().Pods(configuration.namespace).Get(context.Background(), configuration.name, metav1.GetOptions{})
 		if err != nil {
-			return v1.PodFailed
+			return corev1.PodFailed
 		}
 		return updatedPod.Status.Phase
-	}, 2*time.Minute, 6*time.Second).Should(Equal(v1.PodRunning))
+	}, 2*time.Minute, 6*time.Second).Should(Equal(corev1.PodRunning))
 	return createdPod
 }
 
-func createNads(f *framework.Framework, nadClient nadclient.K8sCniCncfIoV1Interface, extraNamespace *v1.Namespace, netConfig networkAttachmentConfig) error {
-	for _, ns := range []*v1.Namespace{f.Namespace, extraNamespace} {
+func createNads(f *framework.Framework, nadClient nadclient.K8sCniCncfIoV1Interface, extraNamespace *corev1.Namespace, netConfig networkAttachmentConfig) error {
+	for _, ns := range []*corev1.Namespace{f.Namespace, extraNamespace} {
 		By(fmt.Sprintf("creating the nad for namespace %q", ns.Name))
 		netConfig.namespace = ns.Name
 		_, err := nadClient.NetworkAttachmentDefinitions(ns.Name).Create(
@@ -2189,7 +2246,7 @@ func createNads(f *framework.Framework, nadClient nadclient.K8sCniCncfIoV1Interf
 	return nil
 }
 
-func kickstartPodInNamespace(cs clientset.Interface, podConfig *podConfiguration, defaultNamespace string, extraNamespace string) *v1.Pod {
+func kickstartPodInNamespace(cs clientset.Interface, podConfig *podConfiguration, defaultNamespace string, extraNamespace string) *corev1.Pod {
 	if podConfig.requiresExtraNamespace {
 		podConfig.namespace = extraNamespace
 	} else {
@@ -2214,24 +2271,6 @@ func createMultiNetworkPolicy(mnpClient mnpclient.K8sCniCncfIoV1beta1Interface, 
 		metav1.CreateOptions{},
 	)
 	return err
-}
-
-func computeIPWithOffset(baseAddr string, increment int) (string, error) {
-	addr, err := netip.ParsePrefix(baseAddr)
-	if err != nil {
-		return "", fmt.Errorf("Failed to parse CIDR %v", err)
-	}
-
-	ip := addr.Addr()
-
-	for i := 0; i < increment; i++ {
-		ip = ip.Next()
-		if !ip.IsValid() {
-			return "", fmt.Errorf("overflow: IP address exceeds bounds")
-		}
-	}
-
-	return netip.PrefixFrom(ip, addr.Bits()).String(), nil
 }
 
 // Given a node name and an offset, generateIPsFromNodePrimaryIfAddr returns an IPv4 and an IPv6 address

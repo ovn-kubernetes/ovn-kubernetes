@@ -10,13 +10,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
-
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
@@ -25,6 +22,9 @@ import (
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 	e2eservice "k8s.io/kubernetes/test/e2e/framework/service"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
 )
 
 type serviceStatus int
@@ -64,7 +64,7 @@ var _ = ginkgo.Describe("Unidling", feature.Unidle, func() {
 		nodeName := nodes.Items[0].Name
 
 		ginkgo.By("creating an annotated service with no endpoints and idle annotation")
-		_, err = jig.CreateTCPServiceWithPort(context.TODO(), func(svc *v1.Service) {
+		_, err = jig.CreateTCPServiceWithPort(context.TODO(), func(svc *corev1.Service) {
 			svc.Annotations = map[string]string{ovnServiceIdledAt: "true"}
 		}, int32(port))
 		framework.ExpectNoError(err)
@@ -72,7 +72,7 @@ var _ = ginkgo.Describe("Unidling", feature.Unidle, func() {
 		// Add a backend pod to the service in one node
 		ginkgo.By("creating a backend pod for the service " + serviceName)
 		serverPodPort := infraprovider.Get().GetK8HostPort()
-		serverPod := e2epod.NewAgnhostPod(namespace, "pod-backend", nil, nil, []v1.ContainerPort{{ContainerPort: int32(serverPodPort)}}, "serve-hostname")
+		serverPod := e2epod.NewAgnhostPod(namespace, "pod-backend", nil, nil, []corev1.ContainerPort{{ContainerPort: int32(serverPodPort)}}, "serve-hostname")
 		serverPod.Labels = jig.Labels
 		serverPod.Spec.NodeName = nodeName
 		e2epod.NewPodClient(f).CreateSync(context.TODO(), serverPod)
@@ -82,7 +82,7 @@ var _ = ginkgo.Describe("Unidling", feature.Unidle, func() {
 
 		// Create exec pod to test the PodEvent is generated if it receives traffic to the idled service
 		ginkgo.By(fmt.Sprintf("creating %v on node %v", podName, nodeName))
-		execPod := e2epod.CreateExecPodOrFail(context.TODO(), f.ClientSet, namespace, podName, func(pod *v1.Pod) {
+		execPod := e2epod.CreateExecPodOrFail(context.TODO(), f.ClientSet, namespace, podName, func(pod *corev1.Pod) {
 			pod.Spec.NodeName = nodeName
 		})
 
@@ -123,12 +123,12 @@ var _ = ginkgo.Describe("Unidling", feature.Unidle, func() {
 	// the right configuration is applied.
 	ginkgo.Context("With annotated service", func() {
 		var (
-			clientPod   *v1.Pod
+			clientPod   *corev1.Pod
 			node        string
 			cmd         string
 			namespace   string
 			serviceName string
-			service     *v1.Service
+			service     *corev1.Service
 			jig         *e2eservice.TestJig
 		)
 
@@ -140,13 +140,13 @@ var _ = ginkgo.Describe("Unidling", feature.Unidle, func() {
 			framework.ExpectNoError(err)
 			node = nodes.Items[0].Name
 			ginkgo.By("creating an annotated service with no endpoints and idle annotation")
-			service, err = jig.CreateTCPServiceWithPort(context.TODO(), func(svc *v1.Service) {
+			service, err = jig.CreateTCPServiceWithPort(context.TODO(), func(svc *corev1.Service) {
 				svc.Annotations = map[string]string{ovnServiceIdledAt: "true"}
 			}, int32(port))
 			framework.ExpectNoError(err)
 
 			ginkgo.By(fmt.Sprintf("creating %v on node %v", podName, node))
-			clientPod = e2epod.CreateExecPodOrFail(context.TODO(), f.ClientSet, namespace, podName, func(pod *v1.Pod) {
+			clientPod = e2epod.CreateExecPodOrFail(context.TODO(), f.ClientSet, namespace, podName, func(pod *corev1.Pod) {
 				pod.Spec.NodeName = node
 			})
 			serviceAddress := net.JoinHostPort(serviceName, strconv.Itoa(port))
@@ -161,13 +161,13 @@ var _ = ginkgo.Describe("Unidling", feature.Unidle, func() {
 
 			gomega.Eventually(func() bool {
 				return hittingGeneratesNewEvents(service, cs, clientPod, cmd)
-			}, 10*time.Second, 1*time.Second).Should(gomega.Equal(true), "New events are not generated")
+			}, 10*time.Second, 1*time.Second).Should(gomega.BeTrue(), "New events are not generated")
 		})
 
 		ginkgo.It("Should not generate a NeedPods event when removing the annotation", func() {
 			ginkgo.Skip("Not supported by OVN: Enable back when https://bugzilla.redhat.com/show_bug.cgi?id=2177173 is fixed")
 
-			_, err := jig.UpdateService(context.TODO(), func(service *v1.Service) {
+			_, err := jig.UpdateService(context.TODO(), func(service *corev1.Service) {
 				service.Annotations = nil
 			})
 			framework.ExpectNoError(err)
@@ -179,7 +179,7 @@ var _ = ginkgo.Describe("Unidling", feature.Unidle, func() {
 
 			gomega.Eventually(func() bool {
 				return hittingGeneratesNewEvents(service, cs, clientPod, cmd)
-			}, 10*time.Second, 1*time.Second).Should(gomega.Equal(false), "New events are generated")
+			}, 10*time.Second, 1*time.Second).Should(gomega.BeFalse(), "New events are generated")
 		})
 
 		ginkgo.It("Should not generate a NeedPods event when has backend", func() {
@@ -190,7 +190,7 @@ var _ = ginkgo.Describe("Unidling", feature.Unidle, func() {
 
 			gomega.Eventually(func() bool {
 				return hittingGeneratesNewEvents(service, cs, clientPod, cmd)
-			}, 10*time.Second, 1*time.Second).Should(gomega.Equal(false), "New events are generated")
+			}, 10*time.Second, 1*time.Second).Should(gomega.BeFalse(), "New events are generated")
 		})
 
 		ginkgo.It("Should generate a NeedPods event when backends were added and then removed", func() {
@@ -205,13 +205,13 @@ var _ = ginkgo.Describe("Unidling", feature.Unidle, func() {
 
 			gomega.Eventually(func() bool {
 				return hittingGeneratesNewEvents(service, cs, clientPod, cmd)
-			}, 10*time.Second, 1*time.Second).Should(gomega.Equal(true), "New events are not generated")
+			}, 10*time.Second, 1*time.Second).Should(gomega.BeTrue(), "New events are not generated")
 		})
 
 		ginkgo.It("Should connect to an unidled backend at the first attempt", func() {
 
 			// Simulate service unidling
-			_, err := jig.UpdateService(context.TODO(), func(service *v1.Service) {
+			_, err := jig.UpdateService(context.TODO(), func(service *corev1.Service) {
 				service.Annotations = nil
 			})
 			framework.ExpectNoError(err)
@@ -242,12 +242,12 @@ var _ = ginkgo.Describe("Unidling", feature.Unidle, func() {
 	// the right configuration is applied.
 	ginkgo.Context("With non annotated service", func() {
 		var (
-			clientPod   *v1.Pod
+			clientPod   *corev1.Pod
 			node        string
 			cmd         string
 			namespace   string
 			serviceName string
-			service     *v1.Service
+			service     *corev1.Service
 			jig         *e2eservice.TestJig
 		)
 
@@ -259,12 +259,12 @@ var _ = ginkgo.Describe("Unidling", feature.Unidle, func() {
 			framework.ExpectNoError(err)
 			node = nodes.Items[0].Name
 			ginkgo.By("creating an annotated service with no endpoints and idle annotation")
-			service, err = jig.CreateTCPServiceWithPort(context.TODO(), func(svc *v1.Service) {
+			service, err = jig.CreateTCPServiceWithPort(context.TODO(), func(_ *corev1.Service) {
 			}, int32(port))
 			framework.ExpectNoError(err)
 
 			ginkgo.By(fmt.Sprintf("creating %v on node %v", podName, node))
-			clientPod = e2epod.CreateExecPodOrFail(context.TODO(), f.ClientSet, namespace, podName, func(pod *v1.Pod) {
+			clientPod = e2epod.CreateExecPodOrFail(context.TODO(), f.ClientSet, namespace, podName, func(pod *corev1.Pod) {
 				pod.Spec.NodeName = node
 			})
 			serviceAddress := net.JoinHostPort(serviceName, strconv.Itoa(port))
@@ -279,11 +279,11 @@ var _ = ginkgo.Describe("Unidling", feature.Unidle, func() {
 
 			gomega.Eventually(func() bool {
 				return hittingGeneratesNewEvents(service, cs, clientPod, cmd)
-			}, 10*time.Second, 1*time.Second).Should(gomega.Equal(false), "New events are generated")
+			}, 10*time.Second, 1*time.Second).Should(gomega.BeFalse(), "New events are generated")
 		})
 
 		ginkgo.It("Should generate a NeedPods event when adding the annotation", func() {
-			_, err := jig.UpdateService(context.TODO(), func(service *v1.Service) {
+			_, err := jig.UpdateService(context.TODO(), func(service *corev1.Service) {
 				service.Annotations = map[string]string{ovnServiceIdledAt: "true"}
 			})
 			framework.ExpectNoError(err)
@@ -294,7 +294,7 @@ var _ = ginkgo.Describe("Unidling", feature.Unidle, func() {
 
 			gomega.Eventually(func() bool {
 				return hittingGeneratesNewEvents(service, cs, clientPod, cmd)
-			}, 10*time.Second, 1*time.Second).Should(gomega.Equal(true), "New events are not generated")
+			}, 10*time.Second, 1*time.Second).Should(gomega.BeTrue(), "New events are not generated")
 
 		})
 
@@ -306,7 +306,7 @@ var _ = ginkgo.Describe("Unidling", feature.Unidle, func() {
 
 			gomega.Eventually(func() bool {
 				return hittingGeneratesNewEvents(service, cs, clientPod, cmd)
-			}, 10*time.Second, 1*time.Second).Should(gomega.Equal(false), "New events are generated")
+			}, 10*time.Second, 1*time.Second).Should(gomega.BeFalse(), "New events are generated")
 		})
 
 		ginkgo.It("Should not generate a NeedPods event when backends were added and then removed", func() {
@@ -321,16 +321,16 @@ var _ = ginkgo.Describe("Unidling", feature.Unidle, func() {
 
 			gomega.Eventually(func() bool {
 				return hittingGeneratesNewEvents(service, cs, clientPod, cmd)
-			}, 10*time.Second, 1*time.Second).Should(gomega.Equal(false), "New events are generated")
+			}, 10*time.Second, 1*time.Second).Should(gomega.BeFalse(), "New events are generated")
 
 		})
 	})
 
 })
 
-func createBackend(f *framework.Framework, serviceName, namespace, node string, labels map[string]string, port int32) *v1.Pod {
+func createBackend(f *framework.Framework, serviceName, namespace, node string, labels map[string]string, port int32) *corev1.Pod {
 	ginkgo.By("creating a backend pod for the service " + serviceName)
-	serverPod := e2epod.NewAgnhostPod(namespace, "pod-backend", nil, nil, []v1.ContainerPort{{ContainerPort: port}}, "netexec", "--http-port=80")
+	serverPod := e2epod.NewAgnhostPod(namespace, "pod-backend", nil, nil, []corev1.ContainerPort{{ContainerPort: port}}, "netexec", "--http-port=80")
 	serverPod.Labels = labels
 	serverPod.Spec.NodeName = node
 	pod := e2epod.NewPodClient(f).CreateSync(context.TODO(), serverPod)
@@ -340,7 +340,7 @@ func createBackend(f *framework.Framework, serviceName, namespace, node string, 
 }
 
 // hittingGeneratesNewEvents tells if by hitting a service a brand new needPods event is generated
-func hittingGeneratesNewEvents(service *v1.Service, cs clientset.Interface, clientPod *v1.Pod, cmd string) bool {
+func hittingGeneratesNewEvents(service *corev1.Service, cs clientset.Interface, clientPod *corev1.Pod, cmd string) bool {
 	framework.Logf("checking if needPods events are emitted for service %s in namespace %s", service.Name, service.Namespace)
 	lastEventTime := lastIdlingEventForService(service, cs)
 	// the event time resolution is one second, which is what we use to check if there are new events
@@ -364,7 +364,7 @@ func hittingGeneratesNewEvents(service *v1.Service, cs clientset.Interface, clie
 
 // checkService tries to hit a service and tells the behaviour of the connection.
 // The connection can be refused, can timeout or can work.
-func checkService(clientPod *v1.Pod, cmd string) serviceStatus {
+func checkService(clientPod *corev1.Pod, cmd string) serviceStatus {
 	refusedError := "REFUSED"
 	stdout, stderr, err := e2epodoutput.RunHostCmdWithFullOutput(clientPod.Namespace, clientPod.Name, cmd)
 	framework.Logf("checking service with cmd \"%s\" from pod %s in ns %s returned stdout: %v stderr: %v", cmd,
@@ -379,10 +379,10 @@ func checkService(clientPod *v1.Pod, cmd string) serviceStatus {
 }
 
 // lastIdlingEventForService returns the most recent idling event for the given service
-func lastIdlingEventForService(service *v1.Service, cs clientset.Interface) metav1.Time {
+func lastIdlingEventForService(service *corev1.Service, cs clientset.Interface) metav1.Time {
 	// An event like this must be generated
 	// oc.recorder.Eventf(&serviceRef, kapi.EventTypeNormal, "NeedPods", "The service %s needs pods", serviceName.Name)
-	fieldSelector := fmt.Sprintf("reason=NeedPods")
+	fieldSelector := "reason=NeedPods"
 	events, err := cs.CoreV1().Events(service.Namespace).List(context.Background(), metav1.ListOptions{FieldSelector: fieldSelector})
 	framework.ExpectNoError(err)
 

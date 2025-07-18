@@ -10,21 +10,11 @@ import (
 	"strings"
 	"time"
 
-	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
-	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
-
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
-	"github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 
-	v1 "k8s.io/api/core/v1"
-	kerrors "k8s.io/apimachinery/pkg/api/errors"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -39,7 +29,18 @@ import (
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	utilnet "k8s.io/utils/net"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
+
+	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
+	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 const openDefaultPortsAnnotation = "k8s.ovn.org/open-default-ports"
@@ -153,7 +154,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 						nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), cs, 2)
 						framework.ExpectNoError(err)
 						if len(nodes.Items) < 2 {
-							ginkgo.Skip("requires at least 2 Nodes")
+							Skip("requires at least 2 Nodes")
 						}
 						node1Name, node2Name := nodes.Items[0].GetName(), nodes.Items[1].GetName()
 
@@ -258,7 +259,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 
 						By("Creating second namespace for default network pods")
 						defaultNetNamespace := f.Namespace.Name + "-default"
-						_, err = cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
+						_, err = cs.CoreV1().Namespaces().Create(context.Background(), &corev1.Namespace{
 							ObjectMeta: metav1.ObjectMeta{
 								Name: defaultNetNamespace,
 							},
@@ -277,10 +278,10 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 						udnPodConfig.namespace = f.Namespace.Name
 						udnPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[0].Name}
 
-						udnPod := runUDNPod(cs, f.Namespace.Name, udnPodConfig, func(pod *v1.Pod) {
-							pod.Spec.Containers[0].ReadinessProbe = &v1.Probe{
-								ProbeHandler: v1.ProbeHandler{
-									HTTPGet: &v1.HTTPGetAction{
+						udnPod := runUDNPod(cs, f.Namespace.Name, udnPodConfig, func(pod *corev1.Pod) {
+							pod.Spec.Containers[0].ReadinessProbe = &corev1.Probe{
+								ProbeHandler: corev1.ProbeHandler{
+									HTTPGet: &corev1.HTTPGetAction{
 										Path: "/healthz",
 										Port: intstr.FromInt(int(podClusterNetPort)),
 									},
@@ -289,9 +290,9 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 								PeriodSeconds:       1,
 								FailureThreshold:    1,
 							}
-							pod.Spec.Containers[0].LivenessProbe = &v1.Probe{
-								ProbeHandler: v1.ProbeHandler{
-									HTTPGet: &v1.HTTPGetAction{
+							pod.Spec.Containers[0].LivenessProbe = &corev1.Probe{
+								ProbeHandler: corev1.ProbeHandler{
+									HTTPGet: &corev1.HTTPGetAction{
 										Path: "/healthz",
 										Port: intstr.FromInt(int(podClusterNetPort)),
 									},
@@ -300,9 +301,9 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 								PeriodSeconds:       1,
 								FailureThreshold:    1,
 							}
-							pod.Spec.Containers[0].StartupProbe = &v1.Probe{
-								ProbeHandler: v1.ProbeHandler{
-									HTTPGet: &v1.HTTPGetAction{
+							pod.Spec.Containers[0].StartupProbe = &corev1.Probe{
+								ProbeHandler: corev1.ProbeHandler{
+									HTTPGet: &corev1.HTTPGetAction{
 										Path: "/healthz",
 										Port: intstr.FromInt(int(podClusterNetPort)),
 									},
@@ -312,9 +313,9 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 								FailureThreshold:    3,
 							}
 							// add NET_ADMIN to change pod routes
-							pod.Spec.Containers[0].SecurityContext = &v1.SecurityContext{
-								Capabilities: &v1.Capabilities{
-									Add: []v1.Capability{"NET_ADMIN"},
+							pod.Spec.Containers[0].SecurityContext = &corev1.SecurityContext{
+								Capabilities: &corev1.Capabilities{
+									Add: []corev1.Capability{"NET_ADMIN"},
 								},
 							}
 						})
@@ -391,7 +392,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 
 						By("checking default network hostNetwork pod and non-kubelet host process can't reach the UDN pod")
 						hostNetPod, err := createPod(f, "host-net-pod", nodeName,
-							defaultNetNamespace, []string{}, nil, func(pod *v1.Pod) {
+							defaultNetNamespace, []string{}, nil, func(pod *corev1.Pod) {
 								pod.Spec.HostNetwork = true
 							})
 						Expect(err).NotTo(HaveOccurred())
@@ -410,7 +411,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 								_, err := infraprovider.Get().ExecK8NodeCommand(nodeName, []string{
 									"curl", "--connect-timeout", "2",
 									net.JoinHostPort(destIP, fmt.Sprintf("%d", podClusterNetDefaultPort)),
-									})
+								})
 								return err == nil
 							}).Should(BeTrue())
 						}
@@ -430,7 +431,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 								_, err := infraprovider.Get().ExecK8NodeCommand(nodeName, []string{
 									"curl", "--connect-timeout", "2",
 									net.JoinHostPort(destIP, fmt.Sprintf("%d", podClusterNetPort)),
-									})
+								})
 								return err != nil
 							}, 5*time.Second).Should(BeTrue())
 						}
@@ -543,13 +544,13 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 						nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.Background(), f.ClientSet, 2)
 						framework.ExpectNoError(err, "two scheduable nodes are required")
 						if len(nodes.Items) < 2 {
-							ginkgo.Skip("requires at least 2 Nodes")
+							Skip("requires at least 2 Nodes")
 						}
 						node1Name, node2Name := nodes.Items[0].GetName(), nodes.Items[1].GetName()
 
 						for _, namespace := range []string{namespaceRed, namespaceBlue} {
 							By("Creating namespace " + namespace)
-							_, err := cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
+							_, err := cs.CoreV1().Namespaces().Create(context.Background(), &corev1.Namespace{
 								ObjectMeta: metav1.ObjectMeta{
 									Name:   namespace,
 									Labels: map[string]string{RequiredUDNNamespaceLabel: ""},
@@ -582,7 +583,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 						red = networkNamespaceMap[namespaceRed]
 						blue = networkNamespaceMap[namespaceBlue]
 
-						pods := []*v1.Pod{}
+						pods := []*corev1.Pod{}
 						podIPs := []string{}
 						redIPs := map[string]bool{}
 						blueIPs := map[string]bool{}
@@ -732,7 +733,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 			nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), cs, 2)
 			framework.ExpectNoError(err)
 			if len(nodes.Items) < 2 {
-				ginkgo.Skip("requires at least 2 Nodes")
+				Skip("requires at least 2 Nodes")
 			}
 			node1Name, node2Name := nodes.Items[0].Name, nodes.Items[1].Name
 			clientPodConfig := *podConfig(
@@ -745,7 +746,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 				}),
 			)
 			By("creating second namespace")
-			_, err = cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
+			_, err = cs.CoreV1().Namespaces().Create(context.Background(), &corev1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:   netConfig2.namespace,
 					Labels: map[string]string{RequiredUDNNamespaceLabel: ""},
@@ -824,7 +825,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 						len(nodes.Items))
 				}
 
-				ips := e2enode.CollectAddresses(nodes, v1.NodeInternalIP)
+				ips := e2enode.CollectAddresses(nodes, corev1.NodeInternalIP)
 
 				clientNodeInfo = nodeInfo{
 					name:   nodes.Items[0].Name,
@@ -839,7 +840,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 				enableMulticastForNamespace(f)
 			})
 			DescribeTable("should be able to send multicast UDP traffic between nodes", func(netConfigParams networkAttachmentConfigParams) {
-				ginkgo.By("creating the attachment configuration")
+				By("creating the attachment configuration")
 				netConfigParams.namespace = f.Namespace.Name
 				netConfigParams.cidr = filterCIDRsAndJoin(cs, netConfigParams.cidr)
 				netConfig := newNetworkAttachmentConfig(netConfigParams)
@@ -851,13 +852,13 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 				framework.ExpectNoError(err)
 				testMulticastUDPTraffic(f, clientNodeInfo, serverNodeInfo, udnPodInterface)
 			},
-				ginkgo.Entry("with primary layer3 UDN", networkAttachmentConfigParams{
+				Entry("with primary layer3 UDN", networkAttachmentConfigParams{
 					name:     nadName,
 					topology: "layer3",
 					cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
 					role:     "primary",
 				}),
-				ginkgo.Entry("with primary layer2 UDN", networkAttachmentConfigParams{
+				Entry("with primary layer2 UDN", networkAttachmentConfigParams{
 					name:     nadName,
 					topology: "layer2",
 					cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
@@ -865,7 +866,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 				}),
 			)
 			DescribeTable("should be able to receive multicast IGMP query", func(netConfigParams networkAttachmentConfigParams) {
-				ginkgo.By("creating the attachment configuration")
+				By("creating the attachment configuration")
 				netConfigParams.namespace = f.Namespace.Name
 				netConfigParams.cidr = filterCIDRsAndJoin(cs, netConfigParams.cidr)
 				netConfig := newNetworkAttachmentConfig(netConfigParams)
@@ -877,7 +878,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 				framework.ExpectNoError(err)
 				testMulticastIGMPQuery(f, clientNodeInfo, serverNodeInfo)
 			},
-				ginkgo.Entry("with primary layer3 UDN", networkAttachmentConfigParams{
+				Entry("with primary layer3 UDN", networkAttachmentConfigParams{
 					name:     nadName,
 					topology: "layer3",
 					cidr:     joinCIDRs(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
@@ -901,13 +902,13 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 		)
 
 		var (
-			defaultNetNamespace *v1.Namespace
+			defaultNetNamespace *corev1.Namespace
 		)
 
 		Context("for primary UDN without required namespace label", func() {
 			BeforeEach(func() {
 				// default cluster network namespace, for use when doing negative testing for UDNs/NADs
-				defaultNetNamespace = &v1.Namespace{
+				defaultNetNamespace = &corev1.Namespace{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: f.Namespace.Name + "-default",
 					},
@@ -929,7 +930,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 				pod := runUDNPod(cs, defaultNetNamespace.Name, podConfig, nil)
 				ovnPodAnnotation, err := unmarshalPodAnnotationAllNetworks(pod.Annotations)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(len(ovnPodAnnotation)).To(BeNumerically("==", 1))
+				Expect(ovnPodAnnotation).To(HaveLen(1))
 				Expect(ovnPodAnnotation).To(HaveKey("default"))
 			})
 
@@ -956,7 +957,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 		Context("for L2 secondary network", func() {
 			BeforeEach(func() {
 				// default cluster network namespace, for use when only testing secondary UDNs/NADs
-				defaultNetNamespace = &v1.Namespace{
+				defaultNetNamespace = &corev1.Namespace{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: f.Namespace.Name + "-default",
 					},
@@ -989,7 +990,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 				By("verify a NetworkAttachmentDefinition has been deleted")
 				Eventually(func() bool {
 					_, err := nadClient.NetworkAttachmentDefinitions(defaultNetNamespace.Name).Get(context.Background(), testUdnName, metav1.GetOptions{})
-					return err != nil && kerrors.IsNotFound(err)
+					return err != nil && apierrors.IsNotFound(err)
 				}, time.Second*3, time.Second*1).Should(BeTrue(),
 					"NetworkAttachmentDefinition should be deleted following UserDefinedNetwork deletion")
 			})
@@ -1049,7 +1050,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 					By("verify UserDefinedNetwork associated NetworkAttachmentDefinition has been deleted")
 					Eventually(func() bool {
 						_, err := nadClient.NetworkAttachmentDefinitions(defaultNetNamespace.Name).Get(context.Background(), testUdnName, metav1.GetOptions{})
-						return err != nil && kerrors.IsNotFound(err)
+						return err != nil && apierrors.IsNotFound(err)
 					}, deleteNetworkTimeout, deleteNetworkInterval).Should(BeTrue(),
 						"NetworkAttachmentDefinition should be deleted following UserDefinedNetwork deletion")
 				})
@@ -1163,7 +1164,7 @@ spec:
 		const clusterUserDefinedNetworkResource = "clusteruserdefinednetwork"
 
 		var testTenantNamespaces []string
-		var defaultNetNamespace *v1.Namespace
+		var defaultNetNamespace *corev1.Namespace
 
 		BeforeEach(func() {
 			testTenantNamespaces = []string{
@@ -1173,7 +1174,7 @@ spec:
 
 			By("Creating test tenants namespaces")
 			for _, nsName := range testTenantNamespaces {
-				_, err := cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
+				_, err := cs.CoreV1().Namespaces().Create(context.Background(), &corev1.Namespace{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:   nsName,
 						Labels: map[string]string{RequiredUDNNamespaceLabel: ""},
@@ -1185,7 +1186,7 @@ spec:
 				})
 			}
 			// default cluster network namespace, for use when only testing secondary UDNs/NADs
-			defaultNetNamespace = &v1.Namespace{
+			defaultNetNamespace = &corev1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: f.Namespace.Name + "-default",
 				},
@@ -1240,7 +1241,7 @@ spec:
 				By(fmt.Sprintf("verify a NAD has been deleted from namesapce %q", nsName))
 				Eventually(func() bool {
 					_, err := nadClient.NetworkAttachmentDefinitions(nsName).Get(context.Background(), testClusterUdnName, metav1.GetOptions{})
-					return err != nil && kerrors.IsNotFound(err)
+					return err != nil && apierrors.IsNotFound(err)
 				}, time.Second*3, time.Second*1).Should(BeTrue(),
 					"NADs in target namespaces should be deleted following ClusterUserDefinedNetwork deletion")
 			}
@@ -1258,7 +1259,7 @@ spec:
 			Expect(err).NotTo(HaveOccurred())
 
 			By("create the new target namespace")
-			_, err = cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
+			_, err = cs.CoreV1().Namespaces().Create(context.Background(), &corev1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:   testNewNs,
 					Labels: map[string]string{RequiredUDNNamespaceLabel: ""},
@@ -1287,7 +1288,7 @@ spec:
 				testNewNs := f.Namespace.Name + "green"
 
 				By("create new namespace")
-				_, err := cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
+				_, err := cs.CoreV1().Namespaces().Create(context.Background(), &corev1.Namespace{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:   testNewNs,
 						Labels: map[string]string{RequiredUDNNamespaceLabel: ""},
@@ -1332,7 +1333,7 @@ spec:
 				By("verify managed NAD not exist in removed target namespace")
 				Eventually(func() bool {
 					_, err := nadClient.NetworkAttachmentDefinitions(removedTenantNs).Get(context.Background(), testClusterUdnName, metav1.GetOptions{})
-					return err != nil && kerrors.IsNotFound(err)
+					return err != nil && apierrors.IsNotFound(err)
 				}, time.Second*300, time.Second*1).Should(BeTrue(),
 					"NAD in target namespaces should be deleted following CR namespace-selector mutation")
 			})
@@ -1397,7 +1398,7 @@ spec:
 				for _, nsName := range testTenantNamespaces {
 					Eventually(func() bool {
 						_, err := nadClient.NetworkAttachmentDefinitions(nsName).Get(context.Background(), testClusterUdnName, metav1.GetOptions{})
-						return err != nil && kerrors.IsNotFound(err)
+						return err != nil && apierrors.IsNotFound(err)
 					}, deleteNetworkTimeout, deleteNetworkInterval).Should(BeTrue(),
 						"NADs in target namespaces should be deleted following ClusterUserDefinedNetwork deletion")
 				}
@@ -1412,7 +1413,7 @@ spec:
 		}
 		By("Creating test tenants namespaces")
 		for _, nsName := range testTenantNamespaces {
-			_, err := cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
+			_, err := cs.CoreV1().Namespaces().Create(context.Background(), &corev1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:   nsName,
 					Labels: map[string]string{RequiredUDNNamespaceLabel: ""},
@@ -1514,14 +1515,14 @@ spec:
 						Expect(clientPod).NotTo(BeNil())
 
 						By("asserting the client pod reaches the `Ready` state")
-						var updatedPod *v1.Pod
-						Eventually(func() v1.PodPhase {
+						var updatedPod *corev1.Pod
+						Eventually(func() corev1.PodPhase {
 							updatedPod, err = cs.CoreV1().Pods(f.Namespace.Name).Get(context.Background(), clientPod.GetName(), metav1.GetOptions{})
 							if err != nil {
-								return v1.PodFailed
+								return corev1.PodFailed
 							}
 							return updatedPod.Status.Phase
-						}, 2*time.Minute, 6*time.Second).Should(Equal(v1.PodRunning))
+						}, 2*time.Minute, 6*time.Second).Should(Equal(corev1.PodRunning))
 						framework.Logf("Client pod was created on node %s", updatedPod.Spec.NodeName)
 
 						By("asserting UDN pod is connected to UDN network")
@@ -1589,7 +1590,7 @@ spec:
 			testPodName = "test-pod-udn"
 		)
 
-		var udnPod *v1.Pod
+		var udnPod *corev1.Pod
 
 		BeforeEach(func() {
 			By("create tests UserDefinedNetwork")
@@ -1610,12 +1611,12 @@ spec:
 			nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.Background(), f.ClientSet, 2)
 			framework.ExpectNoError(err, "two scheduleable Nodes must be available")
 			if len(nodes.Items) < 2 {
-				ginkgo.Skip("requires at least 2 Nodes")
+				Skip("requires at least 2 Nodes")
 			}
 			node1Name, node2Name := nodes.Items[0].GetName(), nodes.Items[1].GetName()
 			By("Creating second namespace for default network pod")
 			defaultNetNamespace := f.Namespace.Name + "-default"
-			_, err = cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
+			_, err = cs.CoreV1().Namespaces().Create(context.Background(), &corev1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: defaultNetNamespace,
 				},
@@ -1632,7 +1633,7 @@ spec:
 
 			By("creating default network hostNetwork client pod")
 			hostNetPod, err := createPod(f, "host-net-client-pod", node2Name,
-				defaultNetNamespace, []string{}, nil, func(pod *v1.Pod) {
+				defaultNetNamespace, []string{}, nil, func(pod *corev1.Pod) {
 					pod.Spec.HostNetwork = true
 				})
 			Expect(err).NotTo(HaveOccurred())
@@ -1746,7 +1747,7 @@ spec:
 				nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.Background(), f.ClientSet, 2)
 				Expect(err).ShouldNot(HaveOccurred(), "test requires at least two schedulable nodes")
 				if len(nodes.Items) < 2 {
-					ginkgo.Skip("requires at least 2 Nodes")
+					Skip("requires at least 2 Nodes")
 				}
 				node1Name, node2Name := nodes.Items[0].GetName(), nodes.Items[1].GetName()
 				Expect(len(nodes.Items)).Should(BeNumerically(">=", 2), "test requires >= 2 Ready nodes")
@@ -1761,7 +1762,7 @@ spec:
 				By("restart OVNKube node pods on client and server Nodes and ensure connectivity")
 				serverPod := getPod(f, serverPodConfig.name)
 				clientPod := getPod(f, clientPodConfig.name)
-				for _, testPod := range []*v1.Pod{clientPod, serverPod} {
+				for _, testPod := range []*corev1.Pod{clientPod, serverPod} {
 					By(fmt.Sprintf("asserting the server pod IP %v is reachable from client before restart of OVNKube node pod on Node %s", serverIP, testPod.Spec.Hostname))
 					Expect(reachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, podClusterNetPort)).ShouldNot(HaveOccurred(), "must have connectivity to server pre OVN Kube node Pod restart")
 					By(fmt.Sprintf("restarting OVNKube node Pod located on Node %s which hosts test Pod %s/%s", testPod.Spec.NodeName, testPod.Namespace, testPod.Name))
@@ -1959,8 +1960,8 @@ func assertL2SecondaryNetAttachDefManifest(nadClient nadclient.K8sCniCncfIoV1Int
 		Kind:               "UserDefinedNetwork",
 		Name:               "test-net",
 		UID:                types.UID(udnUID),
-		BlockOwnerDeletion: pointer.Bool(true),
-		Controller:         pointer.Bool(true),
+		BlockOwnerDeletion: ptr.To(true),
+		Controller:         ptr.To(true),
 	}}))
 	expectedNetworkName := namespace + "_" + udnName
 	expectedNadName := namespace + "/" + udnName
@@ -2021,8 +2022,8 @@ func assertClusterNADManifest(nadClient nadclient.K8sCniCncfIoV1Interface, names
 		Kind:               "ClusterUserDefinedNetwork",
 		Name:               udnName,
 		UID:                types.UID(udnUID),
-		BlockOwnerDeletion: pointer.Bool(true),
-		Controller:         pointer.Bool(true),
+		BlockOwnerDeletion: ptr.To(true),
+		Controller:         ptr.To(true),
 	}}))
 	ExpectWithOffset(1, nad.Labels).To(Equal(map[string]string{"k8s.ovn.org/user-defined-network": ""}))
 	ExpectWithOffset(1, nad.Finalizers).To(Equal([]string{"k8s.ovn.org/user-defined-network-protection"}))
@@ -2318,7 +2319,7 @@ func podIPsForDefaultNetwork(k8sClient clientset.Interface, podNamespace string,
 	return ipv4, ipv6, nil
 }
 
-func userDefinedNetworkStatus(pod *v1.Pod, networkName string) (PodAnnotation, error) {
+func userDefinedNetworkStatus(pod *corev1.Pod, networkName string) (PodAnnotation, error) {
 	netStatus, err := unmarshalPodAnnotation(pod.Annotations, networkName)
 	if err != nil {
 		return PodAnnotation{}, fmt.Errorf("failed to unmarshall annotations for pod %q: %v", pod.Name, err)
@@ -2327,7 +2328,7 @@ func userDefinedNetworkStatus(pod *v1.Pod, networkName string) (PodAnnotation, e
 	return *netStatus, nil
 }
 
-func runUDNPod(cs clientset.Interface, namespace string, serverPodConfig podConfiguration, podSpecTweak func(*v1.Pod)) *v1.Pod {
+func runUDNPod(cs clientset.Interface, namespace string, serverPodConfig podConfiguration, podSpecTweak func(*corev1.Pod)) *corev1.Pod {
 	By(fmt.Sprintf("instantiating the UDN pod %s", serverPodConfig.name))
 	podSpec := generatePodSpec(serverPodConfig)
 	if podSpecTweak != nil {
@@ -2342,33 +2343,19 @@ func runUDNPod(cs clientset.Interface, namespace string, serverPodConfig podConf
 	Expect(serverPod).NotTo(BeNil())
 
 	By(fmt.Sprintf("asserting the UDN pod %s reaches the `Ready` state", serverPodConfig.name))
-	var updatedPod *v1.Pod
-	Eventually(func() v1.PodPhase {
+	var updatedPod *corev1.Pod
+	Eventually(func() corev1.PodPhase {
 		updatedPod, err = cs.CoreV1().Pods(namespace).Get(context.Background(), serverPod.GetName(), metav1.GetOptions{})
 		if err != nil {
-			return v1.PodFailed
+			return corev1.PodFailed
 		}
 		return updatedPod.Status.Phase
-	}, 2*time.Minute, 6*time.Second).Should(Equal(v1.PodRunning))
+	}, 2*time.Minute, 6*time.Second).Should(Equal(corev1.PodRunning))
 	return updatedPod
 }
 
 // connectToServerViaDefaultNetwork sends the traffic via the pod's default interface
-func connectToServerViaDefaultNetwork(clientPodConfig podConfiguration, serverIP string, port int) error {
-	_, err := e2ekubectl.RunKubectl(
-		clientPodConfig.namespace,
-		"exec",
-		clientPodConfig.name,
-		"--",
-		"curl",
-		"--connect-timeout",
-		"2",
-		"--interface",
-		"eth0",
-		net.JoinHostPort(serverIP, fmt.Sprintf("%d", port)),
-	)
-	return err
-}
+
 
 // assertClientExternalConnectivity checks if the client can connect to an externally created IP outside the cluster
 func assertClientExternalConnectivity(cs clientset.Interface, clientPodConfig podConfiguration, externalIpv4 string, externalIpv6 string, port uint16) {

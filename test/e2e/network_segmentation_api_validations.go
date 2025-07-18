@@ -1,13 +1,14 @@
 package e2e
 
 import (
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-
+	"k8s.io/kubernetes/test/e2e/framework"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/testdata"
 	testdatacudn "github.com/ovn-org/ovn-kubernetes/test/e2e/testdata/cudn"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("Network Segmentation: API validations", func() {
@@ -54,7 +55,10 @@ func runKubectlInputWithFullOutput(namespace string, data string, args ...string
 
 func cleanupValidateCRsTest(scenarios []testdata.ValidateCRScenario) {
 	for _, s := range scenarios {
-		e2ekubectl.RunKubectlInput("", s.Manifest, "delete", "-f", "-")
+		_, err := e2ekubectl.RunKubectlInput("", s.Manifest, "delete", "-f", "-")
+		if err != nil {
+			framework.Logf("Failed to delete CR during cleanup: %v", err)
+		}
 	}
 	_, stderr, err := e2ekubectl.RunKubectlWithFullOutput("", "get", "clusteruserdefinednetworks")
 	Expect(err).NotTo(HaveOccurred())

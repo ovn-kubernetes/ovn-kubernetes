@@ -10,10 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/sync/errgroup"
-
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	"golang.org/x/sync/errgroup"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -398,7 +397,7 @@ spec:
 			dstPod2IPv4, dstPod2IPv6 = getPodAddresses(dstPod2)
 
 			bps := twoStreamIperf3Tests(f, srcPodName, *dst1IP, *dst2IP, 5201)
-			gomega.Expect(bps/1000 > float64(rate)*bandwidthFluctuation).To(gomega.BeTrue())
+			gomega.Expect(bps / 1000).To(gomega.BeNumerically(">", float64(rate)*bandwidthFluctuation))
 
 			// apply networkqos spec
 			networkQoSSpec := fmt.Sprintf(`
@@ -437,7 +436,7 @@ spec:
 			framework.Logf("NetworkQoS applied")
 			waitForNetworkQoSApplied(f.Namespace.Name)
 			bps = twoStreamIperf3Tests(f, srcPodName, *dst1IP, *dst2IP, 5201)
-			gomega.Expect(bps/1000 <= float64(rate)*bandwidthFluctuation).To(gomega.BeTrue())
+			gomega.Expect(bps / 1000).To(gomega.BeNumerically("<=", float64(rate)*bandwidthFluctuation))
 		},
 		ginkgo.Entry("ipv4", &skipIpv4, &dstPod1IPv4, &dstPod2IPv4),
 		ginkgo.Entry("ipv6", &skipIpv6, &dstPod1IPv6, &dstPod2IPv6),
@@ -461,7 +460,7 @@ spec:
 			}, 60*time.Second, 1*time.Second).ShouldNot(gomega.HaveOccurred())
 			dstPod1IPv4, dstPod1IPv6 = getPodAddresses(dstPod1)
 			bps := iperf3Test(f, srcPodName, *dst1IP, 5201)
-			gomega.Expect(bps/1000 > float64(rate)*bandwidthFluctuation).To(gomega.BeTrue())
+			gomega.Expect(bps / 1000).To(gomega.BeNumerically(">", float64(rate)*bandwidthFluctuation))
 			// apply networkqos spec
 			networkQoSSpec := fmt.Sprintf(`
 apiVersion: k8s.ovn.org/v1alpha1
@@ -501,7 +500,7 @@ spec:
 			framework.Logf("NetworkQoS applied")
 			waitForNetworkQoSApplied(f.Namespace.Name)
 			bps = iperf3Test(f, srcPodName, *dst1IP, 5201)
-			gomega.Expect(bps/1000 <= float64(rate)*bandwidthFluctuation).To(gomega.BeTrue())
+			gomega.Expect(bps / 1000).To(gomega.BeNumerically("<=", float64(rate)*bandwidthFluctuation))
 		},
 		ginkgo.Entry("ipv4", &skipIpv4, &dstPod1IPv4),
 		ginkgo.Entry("ipv6", &skipIpv6, &dstPod1IPv6),
@@ -525,7 +524,7 @@ spec:
 			}, 60*time.Second, 1*time.Second).ShouldNot(gomega.HaveOccurred())
 			dstPod1IPv4, dstPod1IPv6 = getPodAddresses(dstPod1)
 			bps := iperf3Test(f, srcPodName, *dst1IP, 80)
-			gomega.Expect(bps/1000 > float64(rate)*bandwidthFluctuation).To(gomega.BeTrue())
+			gomega.Expect(bps / 1000).To(gomega.BeNumerically(">", float64(rate)*bandwidthFluctuation))
 			// apply networkqos spec
 			networkQoSSpec := fmt.Sprintf(`
 apiVersion: k8s.ovn.org/v1alpha1
@@ -566,7 +565,7 @@ spec:
 			framework.Logf("NetworkQoS applied")
 			waitForNetworkQoSApplied(f.Namespace.Name)
 			bps = iperf3Test(f, srcPodName, *dst1IP, 80)
-			gomega.Expect(bps/1000 <= float64(rate)*bandwidthFluctuation).To(gomega.BeTrue())
+			gomega.Expect(bps / 1000).To(gomega.BeNumerically("<=", float64(rate)*bandwidthFluctuation))
 		},
 		ginkgo.Entry("ipv4", &skipIpv4, &dstPod1IPv4),
 		ginkgo.Entry("ipv6", &skipIpv6, &dstPod1IPv6),
@@ -702,68 +701,6 @@ func twoStreamIperf3Tests(f *framework.Framework, srcPod, dstPod1IP, dstPod2IP s
 	return bps1 + bps2
 }
 
-func pingExpectNoDscp(f *framework.Framework, srcPod, dstPodNamespace, dstPod, dstPodIP, tcpDumpTpl string, dscp int) {
-	tcpDumpSync := errgroup.Group{}
-	pingSync := errgroup.Group{}
 
-	checkDSCPOnPod := func(pod string, dscp int) error {
-		output, err := e2ekubectl.RunKubectl(dstPodNamespace, "exec", pod, "--", "timeout", "10",
-			"tcpdump", "-i", "any", "-c", "1", "-v", fmt.Sprintf(tcpDumpTpl, dscp))
-		if err != nil {
-			return err
-		}
-		if len(strings.TrimSpace(output)) == 0 {
-			return fmt.Errorf("no packets captured")
-		}
-		return nil
-	}
 
-	pingFromSrcPod := func(pod, dst string) error {
-		_, err := e2ekubectl.RunKubectl(f.Namespace.Name, "exec", pod, "--", "ping", "-c", "5", dst)
-		return err
-	}
 
-	tcpDumpSync.Go(func() error {
-		return checkDSCPOnPod(dstPod, dscp)
-	})
-	pingSync.Go(func() error {
-		return pingFromSrcPod(srcPod, dstPodIP)
-	})
-	err := pingSync.Wait()
-	gomega.Expect(err).To(gomega.BeNil())
-	err = tcpDumpSync.Wait()
-	gomega.Expect(err).To(gomega.HaveOccurred())
-}
-
-func netcatExpectNoDscp(f *framework.Framework, srcPod, dstPodNamespace, dstPod, dstPodIP, tcpDumpTpl string, port, dscp int) {
-	tcpDumpSync := errgroup.Group{}
-	netcatSync := errgroup.Group{}
-
-	checkDSCPOnPod := func(pod string, dscp int) error {
-		output, err := e2ekubectl.RunKubectl(dstPodNamespace, "exec", pod, "--", "timeout", "10",
-			"tcpdump", "-i", "any", "-c", "1", "-v", fmt.Sprintf(tcpDumpTpl, dscp))
-		if err != nil {
-			return err
-		}
-		if len(strings.TrimSpace(output)) == 0 {
-			return fmt.Errorf("no packets captured")
-		}
-		return nil
-	}
-
-	netcatFromSrcPod := func(pod, dst string) error {
-		_, err := e2ekubectl.RunKubectl(f.Namespace.Name, "exec", pod, "--", "bash", "-c", fmt.Sprintf("for i in {1..5}; do nc -vz -w 1 %s %d; sleep 1; done", dst, port))
-		return err
-	}
-
-	tcpDumpSync.Go(func() error {
-		return checkDSCPOnPod(dstPod, dscp)
-	})
-	netcatSync.Go(func() error {
-		return netcatFromSrcPod(srcPod, dstPodIP)
-	})
-	err := netcatSync.Wait()
-	framework.ExpectNoError(err, "Failed to connect to dst pod")
-	err = tcpDumpSync.Wait()
-	gomega.Expect(err).To(gomega.HaveOccurred())
-}

@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
-
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
 	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
 )
 
 const (
@@ -23,7 +23,7 @@ const (
 	del              = "del-br"
 )
 
-func setupUnderlay(ovsPods []v1.Pod, bridgeName, portName, networkName string, vlanID int) error {
+func setupUnderlay(ovsPods []corev1.Pod, bridgeName, portName, networkName string, vlanID int) error {
 	for _, ovsPod := range ovsPods {
 		if bridgeName != defaultOvsBridge {
 			if err := addOVSBridge(ovsPod.Namespace, ovsPod.Name, bridgeName); err != nil {
@@ -52,7 +52,7 @@ func setupUnderlay(ovsPods []v1.Pod, bridgeName, portName, networkName string, v
 	return nil
 }
 
-func ovsRemoveSwitchPort(ovsPods []v1.Pod, portName string, newVLANID int) error {
+func ovsRemoveSwitchPort(ovsPods []corev1.Pod, portName string, newVLANID int) error {
 	for _, ovsPod := range ovsPods {
 		if err := ovsRemoveVLANAccessPort(ovsPod.Namespace, ovsPod.Name, secondaryBridge, portName); err != nil {
 			return fmt.Errorf("failed to remove old VLAN port: %v", err)
@@ -66,7 +66,7 @@ func ovsRemoveSwitchPort(ovsPods []v1.Pod, portName string, newVLANID int) error
 	return nil
 }
 
-func teardownUnderlay(ovsPods []v1.Pod, bridgeName string) error {
+func teardownUnderlay(ovsPods []corev1.Pod, bridgeName string) error {
 	for _, ovsPod := range ovsPods {
 		if bridgeName != defaultOvsBridge {
 			if err := removeOVSBridge(ovsPod.Namespace, ovsPod.Name, bridgeName); err != nil {
@@ -85,7 +85,7 @@ func teardownUnderlay(ovsPods []v1.Pod, bridgeName string) error {
 	return nil
 }
 
-func ovsPods(clientSet clientset.Interface) []v1.Pod {
+func ovsPods(clientSet clientset.Interface) []corev1.Pod {
 	const (
 		ovsNodeLabel = "app=ovs-node"
 	)
