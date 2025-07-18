@@ -40,6 +40,7 @@ import (
 	ovniptables "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/iptables"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/linkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -552,7 +553,7 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 				}
 				for _, expectedPodConfig := range expectedEIPConfig.podConfigs {
 					pod := getPod(pods, expectedPodConfig.name)
-					ips, err := util.DefaultNetworkPodIPs(pod)
+					ips, err := podannotation.DefaultNetworkPodIPs(pod)
 					gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 					for _, ip := range ips {
 						expectedRules = append(expectedRules, generateIPRule(ip, utilnet.IsIPv6(ip), getLinkIndex(expectedEIPConfig.inf)))

@@ -12,10 +12,12 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	logicalswitchmanager "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -74,7 +76,7 @@ func EnsureLocalZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory, 
 	if !vmReady {
 		return nil
 	}
-	podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, nadName)
+	podAnnotation, err := podannotation.UnmarshalPodAnnotation(pod.Annotations, nadName)
 	if err != nil {
 		return fmt.Errorf("failed reading local pod annotation: %v", err)
 	}
@@ -99,7 +101,7 @@ func EnsureLocalZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory, 
 		if err != nil {
 			return fmt.Errorf("failed getting to list node %q for pod %s/%s: %w", pod.Spec.NodeName, pod.Namespace, pod.Name, err)
 		}
-		gatewayIPs, err := util.ParseNodeGatewayRouterJoinAddrs(node, types.DefaultNetworkName)
+		gatewayIPs, err := udn.GetGWRouterIPs(node, &util.DefaultNetInfo{})
 		if err != nil {
 			return fmt.Errorf("failed to get default network gateway router join IPs for node %q: %w", node.Name, err)
 		}
@@ -188,7 +190,7 @@ func EnsureRemoteZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory,
 		return err
 	}
 
-	podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, nadName)
+	podAnnotation, err := podannotation.UnmarshalPodAnnotation(pod.Annotations, nadName)
 	if err != nil {
 		return fmt.Errorf("failed reading remote pod annotation: %v", err)
 	}

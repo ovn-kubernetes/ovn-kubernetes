@@ -15,6 +15,7 @@ import (
 	factorymocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory/mocks"
 	kubemocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube/mocks"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	linkMock "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/vishvananda/netlink"
 	coreinformermocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/client-go/informers/core/v1"
@@ -153,7 +154,7 @@ var _ = Describe("Node DPU tests", func() {
 			vfPciAddress = "0000:03:00.0"
 			vfLink = &linkMock.Link{}
 			ifInfo = &cni.PodInterfaceInfo{
-				PodAnnotation: util.PodAnnotation{},
+				PodAnnotation: podannotation.PodAnnotation{},
 				MTU:           1500,
 				Ingress:       -1,
 				Egress:        -1,

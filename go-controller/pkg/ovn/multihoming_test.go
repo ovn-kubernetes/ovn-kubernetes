@@ -18,6 +18,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
@@ -27,7 +28,7 @@ import (
 func (p testPod) addNetwork(
 	netName, nadName, nodeSubnet, nodeMgtIP, nodeGWIP, podIP, podMAC, role string,
 	tunnelID int,
-	routes []util.PodRoute,
+	routes []podannotation.PodRoute,
 ) {
 	podInfo, ok := p.secondaryPodInfos[netName]
 	if !ok {
@@ -473,7 +474,7 @@ func newMultiHomedPod(testPod testPod, multiHomingConfigs ...secondaryNetInfo) *
 	for _, multiHomingConf := range multiHomingConfigs {
 		if multiHomingConf.isPrimary {
 			if multiHomingConf.ipamClaimReference != "" {
-				pod.Annotations[util.OvnUDNIPAMClaimName] = multiHomingConf.ipamClaimReference
+				pod.Annotations[podannotation.OvnUDNIPAMClaimName] = multiHomingConf.ipamClaimReference
 			}
 			continue // these will be automatically plugged in
 		}

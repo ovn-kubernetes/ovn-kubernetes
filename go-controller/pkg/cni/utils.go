@@ -11,22 +11,23 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 // wait on a certain pod annotation related condition
-type podAnnotWaitCond = func(map[string]string, string) (*util.PodAnnotation, bool)
+type podAnnotWaitCond = func(map[string]string, string) (*podannotation.PodAnnotation, bool)
 
 // isOvnReady is a wait condition for OVN master to set pod-networks annotation
-func isOvnReady(podAnnotation map[string]string, nadName string) (*util.PodAnnotation, bool) {
-	podNADAnnotation, err := util.UnmarshalPodAnnotation(podAnnotation, nadName)
+func isOvnReady(podAnnotation map[string]string, nadName string) (*podannotation.PodAnnotation, bool) {
+	podNADAnnotation, err := podannotation.UnmarshalPodAnnotation(podAnnotation, nadName)
 	return podNADAnnotation, err == nil
 }
 
 // isDPUReady is a wait condition which waits for OVN master to set pod-networks annotation and
 // ovnkube running on DPU to set connection-status pod annotation and its status is Ready
-func isDPUReady(podAnnotation map[string]string, nadName string) (*util.PodAnnotation, bool) {
+func isDPUReady(podAnnotation map[string]string, nadName string) (*podannotation.PodAnnotation, bool) {
 	podNADAnnotation, ready := isOvnReady(podAnnotation, nadName)
 	if ready {
 		// check DPU connection status
@@ -61,7 +62,7 @@ func (c *ClientSet) getPod(namespace, name string) (*corev1.Pod, error) {
 
 // GetPodAnnotations obtains the pod UID and annotation from the cache or apiserver
 func GetPodWithAnnotations(ctx context.Context, getter PodInfoGetter,
-	namespace, name, nadName string, annotCond podAnnotWaitCond) (*corev1.Pod, map[string]string, *util.PodAnnotation, error) {
+	namespace, name, nadName string, annotCond podAnnotWaitCond) (*corev1.Pod, map[string]string, *podannotation.PodAnnotation, error) {
 	var notFoundCount uint
 
 	for {
@@ -98,12 +99,12 @@ func GetPodWithAnnotations(ctx context.Context, getter PodInfoGetter,
 }
 
 // PodAnnotation2PodInfo creates PodInterfaceInfo from Pod annotations and additional attributes
-func PodAnnotation2PodInfo(podAnnotation map[string]string, podNADAnnotation *util.PodAnnotation, podUID,
+func PodAnnotation2PodInfo(podAnnotation map[string]string, podNADAnnotation *podannotation.PodAnnotation, podUID,
 	netdevname, nadName, netName string, mtu int) (*PodInterfaceInfo, error) {
 	var err error
 	// get pod's annotation of the given NAD if it is not available
 	if podNADAnnotation == nil {
-		podNADAnnotation, err = util.UnmarshalPodAnnotation(podAnnotation, nadName)
+		podNADAnnotation, err = podannotation.UnmarshalPodAnnotation(podAnnotation, nadName)
 		if err != nil {
 			return nil, err
 		}
