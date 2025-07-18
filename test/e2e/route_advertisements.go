@@ -1078,6 +1078,7 @@ var _ = ginkgo.Describe("BGP: For a VRF-Lite configured network", func() {
 		// long timeouts
 		timeout     = 240 * time.Second
 		timeoutNOK  = 10 * time.Second
+		pollingNOK  = 1 * time.Second
 		netexecPort = 8080
 	)
 	var netexecPortStr = fmt.Sprintf("%d", netexecPort)
@@ -1132,7 +1133,7 @@ var _ = ginkgo.Describe("BGP: For a VRF-Lite configured network", func() {
 			ip, _, err = net.SplitHostPort(ip)
 			g.Expect(err).NotTo(gomega.HaveOccurred())
 			g.Expect(ip).To(gomega.Equal(expect))
-		}).WithTimeout(timeout).WithPolling(framework.Poll).Should(gomega.Succeed())
+		}).WithTimeout(timeout).WithPolling(pollingNOK).Should(gomega.Succeed())
 	}
 	testPodToClientIPNOK := func(src *corev1.Pod, dstIP string) {
 		gomega.Consistently(func(g gomega.Gomega) {
@@ -1142,7 +1143,7 @@ var _ = ginkgo.Describe("BGP: For a VRF-Lite configured network", func() {
 				fmt.Sprintf("curl --max-time 2 -g -q -s http://%s/clientip", net.JoinHostPort(dstIP, netexecPortStr)),
 			)
 			g.Expect(err).To(gomega.HaveOccurred())
-		}).WithTimeout(timeoutNOK).WithPolling(framework.Poll).Should(gomega.Succeed())
+		}).WithTimeout(timeoutNOK).WithPolling(pollingNOK).Should(gomega.Succeed())
 	}
 	testContainerToClientIPNOK := func(src, dstIP string) {
 		gomega.Consistently(func(g gomega.Gomega) {
@@ -1151,7 +1152,7 @@ var _ = ginkgo.Describe("BGP: For a VRF-Lite configured network", func() {
 				[]string{"curl", "--max-time", "2", "-g", "-q", "-s", fmt.Sprintf("http://%s/clientip", net.JoinHostPort(dstIP, netexecPortStr))},
 			)
 			g.Expect(err).To(gomega.HaveOccurred())
-		}).WithTimeout(timeoutNOK).WithPolling(framework.Poll).Should(gomega.Succeed())
+		}).WithTimeout(timeoutNOK).WithPolling(pollingNOK).Should(gomega.Succeed())
 	}
 
 	const (
@@ -1202,6 +1203,13 @@ var _ = ginkgo.Describe("BGP: For a VRF-Lite configured network", func() {
 				Subnets: []udnv1.Layer3Subnet{{CIDR: cudnCIDRv4, HostSubnet: 24}, {CIDR: cudnCIDRv6, HostSubnet: 64}},
 			},
 		}
+		layer2NetworkSpec = &udnv1.NetworkSpec{
+			Topology: udnv1.NetworkTopologyLayer2,
+			Layer2: &udnv1.Layer2Config{
+				Role:    "Primary",
+				Subnets: udnv1.DualStackCIDRs{cudnCIDRv4, cudnCIDRv6},
+			},
+		}
 	)
 
 	matchL3SubnetsByIPFamilies := func(families sets.Set[utilnet.IPFamily], in ...udnv1.Layer3Subnet) (out []udnv1.Layer3Subnet) {
@@ -1223,6 +1231,7 @@ var _ = ginkgo.Describe("BGP: For a VRF-Lite configured network", func() {
 
 	networksToTest := []ginkgo.TableEntry{
 		ginkgo.Entry("Layer 3", layer3NetworkSpec),
+		ginkgo.Entry("Layer 2", layer2NetworkSpec),
 	}
 
 	ginkgo.DescribeTableSubtree("When the tested network is of type",
@@ -1248,7 +1257,13 @@ var _ = ginkgo.Describe("BGP: For a VRF-Lite configured network", func() {
 
 			ginkgo.BeforeEach(func() {
 				var err error
-				networkSpec.Layer3.Subnets = matchL3SubnetsByIPFamilies(ipFamilySet, networkSpec.Layer3.Subnets...)
+
+				switch {
+				case networkSpec.Layer3 != nil:
+					networkSpec.Layer3.Subnets = matchL3SubnetsByIPFamilies(ipFamilySet, networkSpec.Layer3.Subnets...)
+				case networkSpec.Layer2 != nil:
+					networkSpec.Layer2.Subnets = matchL2SubnetsByIPFamilies(ipFamilySet, networkSpec.Layer2.Subnets...)
+				}
 
 				ginkgo.By("Configuring the namespace and network")
 				testNamespace, err = createNamespaceWithPrimaryNetworkOfType(f, ictx, testBaseName, testNetworkName, cudnAdvertisedVRFLite, networkSpec)
@@ -1534,6 +1549,8 @@ var _ = ginkgo.Describe("BGP: For a VRF-Lite configured network", func() {
 						ginkgo.Entry("Layer 3 CUDN advertised", cudnAdvertised, otherLayer3NetworkSpec),
 						ginkgo.Entry("Layer 3 CUDN advertised VRF-Lite", cudnAdvertisedVRFLite, otherLayer3NetworkSpec),
 						ginkgo.Entry("Layer 2 UDN non advertised", udn, otherLayer2NetworkSpec),
+						ginkgo.Entry("Layer 2 CUDN advertised", cudnAdvertised, otherLayer2NetworkSpec),
+						ginkgo.Entry("Layer 2 CUDN advertised VRF-Lite", cudnAdvertisedVRFLite, otherLayer2NetworkSpec),
 					}
 
 					ginkgo.DescribeTableSubtree("Of type",
