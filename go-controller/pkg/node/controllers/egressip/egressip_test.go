@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/containernetworking/plugins/pkg/netlinksafe"
 	"github.com/containernetworking/plugins/pkg/ns"
 	"github.com/containernetworking/plugins/pkg/testutils"
 	nadfake "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
@@ -573,7 +574,7 @@ var _ = ginkgo.DescribeTable("EgressIP selectors",
 						if status.Node != node1Name {
 							continue
 						}
-						foundRules, err := netlink.RuleList(netlink.FAMILY_ALL)
+						foundRules, err := netlinksafe.RuleList(netlink.FAMILY_ALL)
 						if err != nil {
 							return err
 						}
