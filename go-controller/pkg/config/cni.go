@@ -74,21 +74,13 @@ func WriteCNIConfig() error {
 // ParseNetConf parses config in NAD spec
 func ParseNetConf(bytes []byte) (*ovncnitypes.NetConf, error) {
 	var netconf *ovncnitypes.NetConf
-
 	confList, err := libcni.ConfListFromBytes(bytes)
-	if err == nil {
-		netconf, err = parseNetConfList(confList)
-		if err == nil {
-			if _, singleErr := parseNetConfSingle(bytes); singleErr == nil {
-				return nil, fmt.Errorf("CNI config cannot have both a plugin list and a single config")
-			}
-		}
-	} else {
-		netconf, err = parseNetConfSingle(bytes)
-	}
-
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get netconf list from NAD spec: %w", err)
+	}
+	netconf, err = parseNetConfList(confList)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get netconf from netconf list %q: %w", confList.Name, err)
 	}
 
 	if netconf.Topology == "" {
@@ -99,32 +91,21 @@ func ParseNetConf(bytes []byte) (*ovncnitypes.NetConf, error) {
 	return netconf, nil
 }
 
-func parseNetConfSingle(bytes []byte) (*ovncnitypes.NetConf, error) {
-	netconf := &ovncnitypes.NetConf{MTU: Default.MTU}
-	err := json.Unmarshal(bytes, &netconf)
-	if err != nil {
-		return nil, err
-	}
-
-	// skip non-OVN NAD
-	if netconf.Type != "ovn-k8s-cni-overlay" {
-		return nil, ErrorAttachDefNotOvnManaged
-	}
-
-	err = ValidateNetConfNameFields(netconf)
-	if err != nil {
-		return nil, err
-	}
-
-	return netconf, nil
-}
-
+// parseNetConfList accepts a NetworkConfigList with at most one plugin specified.
+// If a single plugin exists, this NetConf is returned.
+// If it doesn't exist, return the NetConfig from the NetworkConfigList
+// FIXME: we dont respect LoadOnlyInlinedPlugins field and instead if a single plugin is specified, we use that.
 func parseNetConfList(confList *libcni.NetworkConfigList) (*ovncnitypes.NetConf, error) {
+	var bytes []byte
+	if len(confList.Plugins) > 0 {
+		bytes = confList.Plugins[0].Bytes
+	} else {
+		bytes = confList.Bytes
+	}
 	netconf := &ovncnitypes.NetConf{MTU: Default.MTU}
-	if err := json.Unmarshal(confList.Plugins[0].Bytes, netconf); err != nil {
+	if err := json.Unmarshal(bytes, netconf); err != nil {
 		return nil, err
 	}
-
 	// skip non-OVN NAD
 	if netconf.Type != "ovn-k8s-cni-overlay" {
 		return nil, ErrorAttachDefNotOvnManaged
