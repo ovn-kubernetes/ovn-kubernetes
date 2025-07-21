@@ -857,7 +857,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 				podConnEntriesWithMACLabelsSet := pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, macAddressGW)
 				gomega.Expect(podConnEntriesWithMACLabelsSet).To(gomega.Equal(2))
 				totalPodConnEntries := pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, nil)
-				gomega.Expect(totalPodConnEntries).To(gomega.Equal(6)) // total conntrack entries for this pod/protocol
+				gomega.Expect(totalPodConnEntries).To(gomega.Equal(4)) // total conntrack entries for this pod/protocol
 
 				ginkgo.By("Remove second external gateway IP from the app namespace annotation")
 				annotateNamespaceForGateway(f.Namespace.Name, false, addresses.gatewayIPs[0])
@@ -867,7 +867,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 				totalPodConnEntries = pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, nil)
 
 				gomega.Expect(podConnEntriesWithMACLabelsSet).To(gomega.Equal(1)) // we still have the conntrack entry for the remaining gateway
-				gomega.Expect(totalPodConnEntries).To(gomega.Equal(5))            // 6-1
+				gomega.Expect(totalPodConnEntries).To(gomega.Equal(3))            // 4-1
 
 				ginkgo.By("Remove first external gateway IP from the app namespace annotation")
 				annotateNamespaceForGateway(f.Namespace.Name, false, "")
@@ -877,7 +877,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 				totalPodConnEntries = pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, nil)
 
 				gomega.Expect(podConnEntriesWithMACLabelsSet).To(gomega.Equal(0)) // we don't have any remaining gateways left
-				gomega.Expect(totalPodConnEntries).To(gomega.Equal(4))            // 6-2
+				gomega.Expect(totalPodConnEntries).To(gomega.Equal(2))            // 4-2
 
 			},
 				ginkgo.Entry("IPV4 udp", &addressesv4, "udp"),
@@ -938,7 +938,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 				podConnEntriesWithMACLabelsSet := pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, macAddressGW)
 				gomega.Expect(podConnEntriesWithMACLabelsSet).To(gomega.Equal(2))
 				totalPodConnEntries := pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, nil)
-				gomega.Expect(totalPodConnEntries).To(gomega.Equal(6)) // total conntrack entries for this pod/protocol
+				gomega.Expect(totalPodConnEntries).To(gomega.Equal(4)) // total conntrack entries for this pod/protocol
 
 				cleanUpFn := handleGatewayPodRemoval(f, removalType, gatewayPodName2, servingNamespace, addresses.gatewayIPs[1], true)
 				if cleanUpFn != nil {
@@ -960,7 +960,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 				totalPodConnEntries = pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, nil)
 
 				gomega.Expect(podConnEntriesWithMACLabelsSet).To(gomega.Equal(1)) // we still have the conntrack entry for the remaining gateway
-				gomega.Expect(totalPodConnEntries).To(gomega.Equal(5))            // 6-1
+				gomega.Expect(totalPodConnEntries).To(gomega.Equal(3))            // 4-1
 
 				ginkgo.By("Remove first external gateway pod's routing-namespace annotation")
 				annotatePodForGateway(gatewayPodName1, servingNamespace, "", addresses.gatewayIPs[0], false)
@@ -980,7 +980,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 				totalPodConnEntries = pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, nil)
 
 				gomega.Expect(podConnEntriesWithMACLabelsSet).To(gomega.Equal(0)) // we don't have any remaining gateways left
-				gomega.Expect(totalPodConnEntries).To(gomega.Equal(4))            // 6-2
+				gomega.Expect(totalPodConnEntries).To(gomega.Equal(2))            // 4-2
 			},
 				ginkgo.Entry("IPV4 udp + pod annotation update", &addressesv4, "udp", GatewayUpdate),
 				ginkgo.Entry("IPV4 tcp + pod annotation update", &addressesv4, "tcp", GatewayUpdate),
@@ -1960,7 +1960,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 				ginkgo.By("Check if conntrack entries for ECMP routes are created for the 2 external gateways")
 				nodeName := getPod(f, srcPodName).Spec.NodeName
 				podConnEntriesWithMACLabelsSet := 2
-				totalPodConnEntries := 6
+				totalPodConnEntries := 4
 				gomega.Eventually(func() int {
 					return pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, macAddressGW)
 				}, time.Minute, 5).Should(gomega.Equal(podConnEntriesWithMACLabelsSet))
@@ -1970,7 +1970,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 				updateAPBExternalRouteCRWithStaticHop(defaultPolicyName, f.Namespace.Name, false, addresses.gatewayIPs[0])
 
 				podConnEntriesWithMACLabelsSet = 1 // we still have the conntrack entry for the remaining gateway
-				totalPodConnEntries = 5            // 6-1
+				totalPodConnEntries = 3            // 4-1
 
 				gomega.Eventually(func() int {
 					n := pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, macAddressGW)
@@ -1985,7 +1985,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 				ginkgo.By("Check if conntrack entries for ECMP routes are removed for the deleted external gateway if traffic is UDP")
 
 				podConnEntriesWithMACLabelsSet = 0 // we don't have any remaining gateways left
-				totalPodConnEntries = 4            // 6-2
+				totalPodConnEntries = 2            // 4-2
 
 				gomega.Eventually(func() int {
 					n := pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, macAddressGW)
@@ -2038,7 +2038,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 				ginkgo.By("Check if conntrack entries for ECMP routes are created for the 2 external gateways")
 				nodeName := getPod(f, srcPodName).Spec.NodeName
 				podConnEntriesWithMACLabelsSet := 2 // TCP
-				totalPodConnEntries := 6            // TCP
+				totalPodConnEntries := 4            // TCP
 
 				gomega.Eventually(func() int {
 					n := pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, macAddressGW)
@@ -2055,7 +2055,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 				ginkgo.By("Check if conntrack entries for ECMP routes are removed for the deleted external gateway if traffic is UDP")
 
 				podConnEntriesWithMACLabelsSet = 1 // we still have the conntrack entry for the remaining gateway
-				totalPodConnEntries = 5            // 6-1
+				totalPodConnEntries = 3            // 4-1
 
 				gomega.Eventually(func() int {
 					n := pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, macAddressGW)
@@ -2776,9 +2776,9 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 				}
 
 				nodeName := getPod(f, srcPodName).Spec.NodeName
-				expectedTotalEntries := 6
+				expectedTotalEntries := 4
 				expectedMACEntries := 2
-				ginkgo.By("Check to ensure initial conntrack entries are 2 mac address label, and 6 total entries")
+				ginkgo.By("Check to ensure initial conntrack entries are 2 mac address label, and 4 total entries")
 				gomega.Eventually(func() int {
 					n := pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, macAddressGW)
 					klog.Infof("Number of entries with macAddressGW %s:%d", macAddressGW, n)
@@ -2848,7 +2848,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 				podConnEntriesWithMACLabelsSet := pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, macAddressGW)
 				gomega.Expect(podConnEntriesWithMACLabelsSet).To(gomega.Equal(2))
 				totalPodConnEntries := pokeConntrackEntries(nodeName, addresses.srcPodIP, protocol, nil)
-				gomega.Expect(totalPodConnEntries).To(gomega.Equal(6)) // total conntrack entries for this pod/protocol
+				gomega.Expect(totalPodConnEntries).To(gomega.Equal(4)) // total conntrack entries for this pod/protocol
 				checkAPBExternalRouteStatus(defaultPolicyName)
 			},
 				ginkgo.Entry("IPV4 udp", &addressesv4, "udp"),
