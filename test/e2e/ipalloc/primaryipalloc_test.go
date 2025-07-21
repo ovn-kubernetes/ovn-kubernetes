@@ -15,11 +15,46 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	utilsnet "k8s.io/utils/net"
 )
 
 func TestUtilSuite(t *testing.T) {
 	gomega.RegisterFailHandler(ginkgo.Fail)
 	ginkgo.RunSpecs(t, "node ip alloc suite")
+}
+
+func TestAllocateNext(t *testing.T) {
+	tests := []struct {
+		desc   string
+		input  *net.IPNet
+		output []net.IP
+	}{
+		{
+			desc:   "increments IPv4 address",
+			input:  mustParseCIDRIncIP("192.168.1.5/16"), // mask /24 would fail
+			output: []net.IP{net.ParseIP("192.168.1.6"), net.ParseIP("192.168.1.7"), net.ParseIP("192.168.1.8")},
+		},
+		{
+			desc:   "increments IPv6 address",
+			input:  mustParseCIDRIncIP("fc00:f853:ccd:e793::6/64"),
+			output: []net.IP{net.ParseIP("fc00:f853:ccd:e793::7"), net.ParseIP("fc00:f853:ccd:e793::8"), net.ParseIP("fc00:f853:ccd:e793::9")},
+		},
+	}
+
+	for i, tc := range tests {
+		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
+			nodeIPAlloc := newIPAllocator(tc.input)
+			for _, expectedIP := range tc.output {
+				allocatedIP, err := nodeIPAlloc.AllocateNextIP()
+				if err != nil {
+					t.Errorf("failed to allocated next IP: %v", err)
+				}
+				if !allocatedIP.Equal(expectedIP) {
+					t.Errorf("Expected IP %q, but got %q", expectedIP.String(), allocatedIP.String())
+				}
+			}
+		})
+	}
 }
 
 // mustParseCIDRIncIP parses the IP and CIDR. It adds the IP to the returned IPNet.
@@ -43,19 +78,20 @@ type node struct {
 }
 
 func TestIPAlloc(t *testing.T) {
-	g := gomega.NewWithT(t)
-
 	tests := []struct {
-		desc                   string
-		existingPrimaryNodeIPs []node
+		desc                     string
+		existingPrimaryNodeIPs   []node
+		expectedFromAllocateNext []string
 	}{
 		{
-			desc:                   "IPv4",
-			existingPrimaryNodeIPs: []node{{v4: network{ip: "192.168.1.1", mask: "16"}}, {v4: network{ip: "192.168.1.2", mask: "16"}}},
+			desc:                     "IPv4",
+			existingPrimaryNodeIPs:   []node{{v4: network{ip: "192.168.1.1", mask: "16"}}, {v4: network{ip: "192.168.1.2", mask: "16"}}},
+			expectedFromAllocateNext: []string{"192.168.2.3", "192.168.2.4"},
 		},
 		{
-			desc:                   "IPv6",
-			existingPrimaryNodeIPs: []node{{v6: network{ip: "fc00:f853:ccd:e793::5", mask: "64"}}, {v6: network{ip: "fc00:f853:ccd:e793::6", mask: "64"}}},
+			desc:                     "IPv6",
+			existingPrimaryNodeIPs:   []node{{v4: network{ip: "fc00:f853:ccd:e793::5", mask: "64"}}, {v4: network{ip: "fc00:f853:ccd:e793::6", mask: "64"}}},
+			expectedFromAllocateNext: []string{"fc00:f853:ccd:e793::8", "fc00:f853:ccd:e793::9"},
 		},
 	}
 
@@ -67,32 +103,22 @@ func TestIPAlloc(t *testing.T) {
 				t.Errorf(err.Error())
 				return
 			}
-			existingIPv4IPs := []string{}
-			existingIPv6IPs := []string{}
-			allocatedIPv4IPs := []string{}
-			allocatedIPv6IPs := []string{}
-			for _, existingPrimaryNodeIP := range tc.existingPrimaryNodeIPs {
-				if existingPrimaryNodeIP.v4.ip != "" {
-					existingIPv4IPs = append(existingIPv4IPs, existingPrimaryNodeIP.v4.ip)
-					nextIPv4, err := pipa.AllocateNextV4()
-					g.Expect(err).ToNot(gomega.HaveOccurred(), "should succeed in allocating the next IPv4 address")
-					g.Expect(nextIPv4).ToNot(gomega.BeNil(), "should allocate next IPv4 address")
-					allocatedIPv4IPs = append(allocatedIPv4IPs, nextIPv4.String())
+			for _, expectedIPStr := range tc.expectedFromAllocateNext {
+				expectedIP := net.ParseIP(expectedIPStr)
+				var nextIP net.IP
+				var err error
+				if utilsnet.IsIPv6(expectedIP) {
+					nextIP, err = pipa.AllocateNextV6()
+				} else {
+					nextIP, err = pipa.AllocateNextV4()
 				}
-
-				if existingPrimaryNodeIP.v6.ip != "" {
-					existingIPv6IPs = append(existingIPv6IPs, existingPrimaryNodeIP.v6.ip)
-					nextIPv6, err := pipa.AllocateNextV6()
-					g.Expect(err).ToNot(gomega.HaveOccurred(), "should succeed in allocating the next IPv6 address")
-					g.Expect(nextIPv6).ToNot(gomega.BeNil(), "should allocate next IPv6 address")
-					allocatedIPv6IPs = append(allocatedIPv6IPs, nextIPv6.String())
+				if err != nil || nextIP == nil {
+					t.Errorf("failed to allocated next IPv4 or IPv6 address. err %v", err)
+					return
 				}
-			}
-			if len(existingIPv4IPs) > 0 {
-				g.Expect(allocatedIPv4IPs).NotTo(gomega.ContainElements(existingIPv4IPs))
-			}
-			if len(existingIPv6IPs) > 0 {
-				g.Expect(allocatedIPv6IPs).NotTo(gomega.ContainElements(existingIPv6IPs))
+				if !nextIP.Equal(expectedIP) {
+					t.Errorf("expected IP %q, but found %q", expectedIP, nextIP)
+				}
 			}
 		})
 	}
