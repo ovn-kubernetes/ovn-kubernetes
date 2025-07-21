@@ -755,6 +755,9 @@ var _ = Describe("Node", func() {
 					node := corev1.Node{
 						ObjectMeta: metav1.ObjectMeta{
 							Name: nodeName,
+							Annotations: map[string]string{
+								util.OVNNodeHostCIDRs: fmt.Sprintf("[\"%s\"]", nodeIP+"/24"),
+							},
 						},
 						Status: corev1.NodeStatus{
 							Addresses: []corev1.NodeAddress{
@@ -769,6 +772,9 @@ var _ = Describe("Node", func() {
 					otherNode := corev1.Node{
 						ObjectMeta: metav1.ObjectMeta{
 							Name: remoteNodeName,
+							Annotations: map[string]string{
+								util.OVNNodeHostCIDRs: fmt.Sprintf("[\"%s\"]", otherNodeIP+"/24"),
+							},
 						},
 						Status: corev1.NodeStatus{
 							Addresses: []corev1.NodeAddress{
@@ -860,6 +866,9 @@ add element inet ovn-kubernetes remote-node-ips-v4 { 169.254.254.61 }
 					node := corev1.Node{
 						ObjectMeta: metav1.ObjectMeta{
 							Name: nodeName,
+							Annotations: map[string]string{
+								util.OVNNodeHostCIDRs: fmt.Sprintf("[\"%s\"]", nodeIP+"/24"),
+							},
 						},
 						Status: corev1.NodeStatus{
 							Addresses: []corev1.NodeAddress{
@@ -874,6 +883,9 @@ add element inet ovn-kubernetes remote-node-ips-v4 { 169.254.254.61 }
 					otherNode := corev1.Node{
 						ObjectMeta: metav1.ObjectMeta{
 							Name: remoteNodeName,
+							Annotations: map[string]string{
+								util.OVNNodeHostCIDRs: fmt.Sprintf("[\"%s\"]", otherSubnetNodeIP+"/24"),
+							},
 						},
 						Status: corev1.NodeStatus{
 							Addresses: []corev1.NodeAddress{
@@ -1007,6 +1019,9 @@ add element inet ovn-kubernetes remote-node-ips-v4 { 169.254.253.61 }
 					node := corev1.Node{
 						ObjectMeta: metav1.ObjectMeta{
 							Name: nodeName,
+							Annotations: map[string]string{
+								util.OVNNodeHostCIDRs: fmt.Sprintf("[\"%s\"]", nodeIP+"/64"),
+							},
 						},
 						Status: corev1.NodeStatus{
 							Addresses: []corev1.NodeAddress{
@@ -1021,6 +1036,9 @@ add element inet ovn-kubernetes remote-node-ips-v4 { 169.254.253.61 }
 					otherNode := corev1.Node{
 						ObjectMeta: metav1.ObjectMeta{
 							Name: remoteNodeName,
+							Annotations: map[string]string{
+								util.OVNNodeHostCIDRs: fmt.Sprintf("[\"%s\"]", otherNodeIP+"/64"),
+							},
 						},
 						Status: corev1.NodeStatus{
 							Addresses: []corev1.NodeAddress{
@@ -1111,6 +1129,9 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2001:db8:1::4 }
 					node := corev1.Node{
 						ObjectMeta: metav1.ObjectMeta{
 							Name: nodeName,
+							Annotations: map[string]string{
+								util.OVNNodeHostCIDRs: fmt.Sprintf("[\"%s\"]", nodeIP+"/64"),
+							},
 						},
 						Status: corev1.NodeStatus{
 							Addresses: []corev1.NodeAddress{
@@ -1125,6 +1146,9 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2001:db8:1::4 }
 					otherNode := corev1.Node{
 						ObjectMeta: metav1.ObjectMeta{
 							Name: remoteNodeName,
+							Annotations: map[string]string{
+								util.OVNNodeHostCIDRs: fmt.Sprintf("[\"%s\"]", otherSubnetNodeIP+"/64"),
+							},
 						},
 						Status: corev1.NodeStatus{
 							Addresses: []corev1.NodeAddress{
