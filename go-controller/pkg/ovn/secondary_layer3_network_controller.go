@@ -1072,7 +1072,7 @@ func (oc *SecondaryLayer3NetworkController) nodeGatewayConfig(node *corev1.Node)
 		annoConfig:                 l3GatewayConfig,
 		hostSubnets:                hostSubnets,
 		clusterSubnets:             clusterSubnets,
-		gwLRPJoinIPs:               gwLRPJoinIPs,
+		gwRouterJoinNets:           gwLRPJoinIPs,
 		hostAddrs:                  hostAddrs,
 		externalIPs:                externalIPs,
 		ovnClusterLRPToJoinIfAddrs: oc.ovnClusterLRPToJoinIfAddrs,
