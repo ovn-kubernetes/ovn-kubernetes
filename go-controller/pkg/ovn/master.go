@@ -38,7 +38,7 @@ type GatewayConfig struct {
 	annoConfig                 *util.L3GatewayConfig
 	hostSubnets                []*net.IPNet
 	clusterSubnets             []*net.IPNet
-	gwLRPJoinIPs               []*net.IPNet
+	gwRouterJoinCIDRs          []*net.IPNet
 	hostAddrs                  []string
 	externalIPs                []net.IP
 	ovnClusterLRPToJoinIfAddrs []*net.IPNet
@@ -139,7 +139,7 @@ func (oc *DefaultNetworkController) nodeGatewayConfig(node *corev1.Node) (*Gatew
 		annoConfig:                 l3GatewayConfig,
 		hostSubnets:                hostSubnets,
 		clusterSubnets:             clusterSubnets,
-		gwLRPJoinIPs:               gwLRPIPs,
+		gwRouterJoinCIDRs:          gwLRPIPs,
 		hostAddrs:                  hostAddrs,
 		externalIPs:                externalIPs,
 		ovnClusterLRPToJoinIfAddrs: oc.ovnClusterLRPToJoinIfAddrs,

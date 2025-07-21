@@ -1059,7 +1059,7 @@ func (oc *Layer3UserDefinedNetworkController) nodeGatewayConfig(node *corev1.Nod
 		return nil, fmt.Errorf("failed to get node %q subnet annotation for network %q: %v", node.Name, oc.GetNetworkName(), err)
 	}
 
-	gwLRPJoinIPs, err := udn.GetGWRouterIPs(node, oc.GetNetInfo())
+	gwRouterJoinCIDRs, err := udn.GetGWRouterIPs(node, oc.GetNetInfo())
 	if err != nil {
 		return nil, fmt.Errorf("failed extracting node %q GW router join subnet IP for layer3 network %q: %w", node.Name, networkName, err)
 	}
@@ -1071,7 +1071,7 @@ func (oc *Layer3UserDefinedNetworkController) nodeGatewayConfig(node *corev1.Nod
 		annoConfig:                 l3GatewayConfig,
 		hostSubnets:                hostSubnets,
 		clusterSubnets:             clusterSubnets,
-		gwLRPJoinIPs:               gwLRPJoinIPs,
+		gwRouterJoinCIDRs:          gwRouterJoinCIDRs,
 		hostAddrs:                  hostAddrs,
 		externalIPs:                externalIPs,
 		ovnClusterLRPToJoinIfAddrs: oc.ovnClusterLRPToJoinIfAddrs,

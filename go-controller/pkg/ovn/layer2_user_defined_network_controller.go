@@ -822,7 +822,7 @@ func (oc *Layer2UserDefinedNetworkController) nodeGatewayConfig(node *corev1.Nod
 
 	// at layer2 the GR LRP should be different per node same we do for layer3
 	// since they should not collide at the distributed switch later on
-	gwLRPJoinIPs, err := udn.GetGWRouterIPs(node, oc.GetNetInfo())
+	gwRouterJoinCIDRs, err := udn.GetGWRouterIPs(node, oc.GetNetInfo())
 	if err != nil {
 		return nil, fmt.Errorf("failed composing LRP addresses for layer2 network %s: %w", oc.GetNetworkName(), err)
 	}
@@ -833,7 +833,7 @@ func (oc *Layer2UserDefinedNetworkController) nodeGatewayConfig(node *corev1.Nod
 		annoConfig:                 l3GatewayConfig,
 		hostSubnets:                hostSubnets,
 		clusterSubnets:             hostSubnets,
-		gwLRPJoinIPs:               gwLRPJoinIPs,
+		gwRouterJoinCIDRs:          gwRouterJoinCIDRs,
 		hostAddrs:                  nil,
 		externalIPs:                externalIPs,
 		ovnClusterLRPToJoinIfAddrs: nil,
