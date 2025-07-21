@@ -71,6 +71,7 @@ func (na *NodeAllocator) Init() error {
 	if !na.hasNodeSubnetAllocation() {
 		return nil
 	}
+	na.CleanupStaleAnnotation()
 
 	clusterSubnets := na.netInfo.Subnets()
 
@@ -94,6 +95,31 @@ func (na *NodeAllocator) Init() error {
 	na.recordSubnetCount()
 
 	return nil
+}
+
+// CleanupStaleAnnotation cleans up the stale annotations on all nodes.
+// If an error occurs, it logs the error and continues to the next node.
+func (na *NodeAllocator) CleanupStaleAnnotation() {
+	// only cleanup once with the default network NodeAllocator
+	if !na.netInfo.IsDefault() {
+		return
+	}
+	existingNodes, err := na.nodeLister.List(labels.Everything())
+	if err != nil {
+		klog.Errorf("Error in retrieving the nodes: %v", err)
+		return
+	}
+
+	for _, node := range existingNodes {
+		if _, ok := node.Annotations[util.OVNNodeGRLRPAddrs]; !ok {
+			continue
+		}
+		// to cleanup an annotation, set it to nil
+		if err = na.kube.SetAnnotationsOnNode(node.Name, map[string]interface{}{util.OVNNodeGRLRPAddrs: nil}); err != nil {
+			klog.Warningf("Failed to clear node %s annotation %s: %v",
+				node.Name, util.OVNNodeGRLRPAddrs, err)
+		}
+	}
 }
 
 func (na *NodeAllocator) hasHybridOverlayAllocation() bool {

@@ -85,7 +85,7 @@ const (
 	//		\"l2-network\":{\"ipv4\":\"100.65.0.4/16\",\"ipv6\":\"fd99::4/64\"},
 	//		\"l3-network\":{\"ipv4\":\"100.65.0.4/16\",\"ipv6\":\"fd99::4/64\"}
 	// }",
-	// TODO add cleanup code
+	// deprecated, only used for cleanup
 	OVNNodeGRLRPAddrs = "k8s.ovn.org/node-gateway-router-lrp-ifaddrs"
 
 	// OvnNodeMasqCIDR is the CIDR form representation of the masquerade subnet that is currently configured on this node (i.e. 169.254.169.0/29)
