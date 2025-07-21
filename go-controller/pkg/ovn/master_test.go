@@ -79,7 +79,6 @@ const (
 	// ovnNodeID is the id (of type integer) of a node. It is set by cluster-manager.
 	ovnNodeID            = "k8s.ovn.org/node-id"
 	ovnNodePrimaryIfAddr = "k8s.ovn.org/node-primary-ifaddr"
-	ovnNodeSubnets       = "k8s.ovn.org/node-subnets"
 )
 
 func (n tNode) k8sNode(nodeID string) corev1.Node {
@@ -87,10 +86,9 @@ func (n tNode) k8sNode(nodeID string) corev1.Node {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: n.Name,
 			Annotations: map[string]string{
-				ovnNodeID:              nodeID,
-				util.OVNNodeGRLRPAddrs: "{\"default\":{\"ipv4\": \"100.64.0." + nodeID + "/16\"}}",
-				util.OVNNodeHostCIDRs:  fmt.Sprintf("[\"%s\"]", fmt.Sprintf("%s/24", n.NodeIP)),
-				ovnNodePrimaryIfAddr:   fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", fmt.Sprintf("%s/24", n.NodeIP), ""),
+				ovnNodeID:             nodeID,
+				util.OVNNodeHostCIDRs: fmt.Sprintf("[\"%s\"]", fmt.Sprintf("%s/24", n.NodeIP)),
+				ovnNodePrimaryIfAddr:  fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", fmt.Sprintf("%s/24", n.NodeIP), ""),
 			},
 		},
 		Status: corev1.NodeStatus{
@@ -1716,7 +1714,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 					Annotations: map[string]string{
 						"k8s.ovn.org/node-subnets":    fmt.Sprintf("{\"default\":[\"%s\", \"fd02:0:0:2::2895/64\"]}", newNodeSubnet),
 						"k8s.ovn.org/node-chassis-id": "2",
-						util.OVNNodeGRLRPAddrs:        "{\"default\":{\"ipv4\":\"100.64.0.2/16\"}}",
+						util.OvnNodeID:                "2",
 					},
 				},
 			}

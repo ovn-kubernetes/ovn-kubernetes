@@ -36,6 +36,8 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 	var (
 		app     *cli.App
 		fakeOvn *FakeOVN
+
+		nodeUDNLogicalRouterIPv4 = []string{"100.65.0.2"}
 	)
 
 	const (
@@ -165,7 +167,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					"k8s.ovn.org/node-transit-switch-port-ifaddr": fmt.Sprintf("{\"ipv4\":\"%s/16\"}", v4Node1Tsp),
 					"k8s.ovn.org/zone-name":                       node1Name,
 					util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
-					util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s/16"}, "%s":{"ipv4":"%s/16"}}`, nodeLogicalRouterIPv4[0], networkName1, nodeLogicalRouterIPv4[0]),
+					util.OvnNodeID:                                "2",
 				}
 				labels := map[string]string{
 					"k8s.ovn.org/egress-assignable": "",
@@ -177,7 +179,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					"k8s.ovn.org/node-transit-switch-port-ifaddr": fmt.Sprintf("{\"ipv4\":\"%s/16\"}", v4Node2Tsp),
 					"k8s.ovn.org/zone-name":                       node2Name,
 					util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node2IPv4CIDR),
-					util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s/16"}, "%s":{"ipv4":"%s/16"}}`, node2LogicalRouterIPv4[0], networkName1, node2LogicalRouterIPv4[0]),
+					util.OvnNodeID:                                "3",
 				}
 				node2 := getNodeObj(node2Name, node2Annotations, labels)
 				eIP := egressipv1.EgressIP{
@@ -413,7 +415,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					egressNodeIPsASv4,
 
 					// UDN
-					getReRouteStaticRouteForController(v4Net1, nodeLogicalRouterIPv4[0], netInfo.GetNetworkName()),
+					getReRouteStaticRouteForController(v4Net1, nodeUDNLogicalRouterIPv4[0], netInfo.GetNetworkName()),
 					getReRoutePolicyForController(egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, eIP1Mark, IPFamilyValueV4, []string{nodeLogicalRouterIPv4[0], v4Node2Tsp}, netInfo.GetNetworkName(), DefaultNetworkControllerName),
 					getGWPktMarkLRPForController(eIP1Mark, egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, IPFamilyValueV4, netInfo.GetNetworkName(), DefaultNetworkControllerName),
 					getGWPktMarkLRPForController(eIP1Mark, egressIPName, eipNamespace2, podName4, v4Pod2IPNode2Net1, IPFamilyValueV4, netInfo.GetNetworkName(), DefaultNetworkControllerName),
@@ -543,7 +545,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					"k8s.ovn.org/zone-name":                       node1Name,
 					"k8s.ovn.org/remote-zone-migrated":            node1Name,
 					util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
-					util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s/16"}, "%s":{"ipv4":"%s/16"}}`, nodeLogicalRouterIPv4[0], networkName1, nodeLogicalRouterIPv4[0]),
+					util.OvnNodeID:                                "2",
 				}
 				labels := map[string]string{
 					"k8s.ovn.org/egress-assignable": "",
@@ -556,7 +558,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					"k8s.ovn.org/zone-name":                       node2Name,
 					"k8s.ovn.org/remote-zone-migrated":            node2Name,
 					util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node2IPv4CIDR),
-					util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s/16"}, "%s":{"ipv4":"%s/16"}}`, node2LogicalRouterIPv4[0], networkName1, node2LogicalRouterIPv4[0]),
+					util.OvnNodeID:                                "3",
 				}
 				node2 := getNodeObj(node2Name, node2Annotations, labels)
 				twoNodeStatus := []egressipv1.EgressIPStatusItem{
@@ -791,7 +793,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					egressNodeIPsASv4,
 
 					// UDN
-					getReRouteStaticRouteForController(v4Net1, nodeLogicalRouterIPv4[0], netInfo.GetNetworkName()),
+					getReRouteStaticRouteForController(v4Net1, nodeUDNLogicalRouterIPv4[0], netInfo.GetNetworkName()),
 					getReRoutePolicyForController(egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, eIP1Mark, IPFamilyValueV4, []string{nodeLogicalRouterIPv4[0], v4Node2Tsp}, netInfo.GetNetworkName(), DefaultNetworkControllerName),
 					getGWPktMarkLRPForController(eIP1Mark, egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, IPFamilyValueV4, netInfo.GetNetworkName(), DefaultNetworkControllerName),
 					getGWPktMarkLRPForController(eIP1Mark, egressIPName, eipNamespace2, podName4, v4Pod2IPNode2Net1, IPFamilyValueV4, netInfo.GetNetworkName(), DefaultNetworkControllerName),
@@ -933,7 +935,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					egressNodeIPsASv4,
 
 					// UDN
-					getReRouteStaticRouteForController(v4Net1, nodeLogicalRouterIPv4[0], netInfo.GetNetworkName()),
+					getReRouteStaticRouteForController(v4Net1, nodeUDNLogicalRouterIPv4[0], netInfo.GetNetworkName()),
 					getReRoutePolicyForController(egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, eIP1Mark, IPFamilyValueV4, []string{v4Node2Tsp}, netInfo.GetNetworkName(), DefaultNetworkControllerName),
 					getNoReRoutePolicyForUDNEnabledSvc(false, netInfo.GetNetworkName(), DefaultNetworkControllerName, egressIPServedPodsASUDNv4.Name, egressSVCServedPodsASv4.Name, udnEnabledSvcV4.Name),
 					&nbdb.LogicalRouterPolicy{
@@ -1064,7 +1066,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					"k8s.ovn.org/zone-name":                       node1Name,
 					"k8s.ovn.org/remote-zone-migrated":            node1Name,
 					util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
-					util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s/16"}, "%s":{"ipv4":"%s/16"}}`, nodeLogicalRouterIPv4[0], networkName1, nodeLogicalRouterIPv4[0]),
+					util.OvnNodeID:                                "2",
 				}
 				labels := map[string]string{
 					"k8s.ovn.org/egress-assignable": "",
@@ -1077,7 +1079,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					"k8s.ovn.org/zone-name":                       node2Name,
 					"k8s.ovn.org/remote-zone-migrated":            node2Name,
 					util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node2IPv4CIDR),
-					util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s/16"}, "%s":{"ipv4":"%s/16"}}`, node2LogicalRouterIPv4[0], networkName1, node2LogicalRouterIPv4[0]),
+					util.OvnNodeID:                                "3",
 				}
 				node2 := getNodeObj(node2Name, node2Annotations, labels)
 				twoNodeStatus := []egressipv1.EgressIPStatusItem{
@@ -1306,7 +1308,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					egressNodeIPsASv4,
 
 					// UDN
-					getReRouteStaticRouteForController(v4Net1, nodeLogicalRouterIPv4[0], netInfo.GetNetworkName()),
+					getReRouteStaticRouteForController(v4Net1, nodeUDNLogicalRouterIPv4[0], netInfo.GetNetworkName()),
 					getReRoutePolicyForController(egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, eIP1Mark, IPFamilyValueV4, []string{nodeLogicalRouterIPv4[0], v4Node2Tsp}, netInfo.GetNetworkName(), DefaultNetworkControllerName),
 					getGWPktMarkLRPForController(eIP1Mark, egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, IPFamilyValueV4, netInfo.GetNetworkName(), DefaultNetworkControllerName),
 					getGWPktMarkLRPForController(eIP1Mark, egressIPName, eipNamespace2, podName4, v4Pod2IPNode2Net1, IPFamilyValueV4, netInfo.GetNetworkName(), DefaultNetworkControllerName),
@@ -1498,7 +1500,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					egressNodeIPsASv4,
 
 					// UDN
-					getReRouteStaticRouteForController(v4Net1, nodeLogicalRouterIPv4[0], netInfo.GetNetworkName()),
+					getReRouteStaticRouteForController(v4Net1, nodeUDNLogicalRouterIPv4[0], netInfo.GetNetworkName()),
 					getNoReRoutePolicyForUDNEnabledSvc(false, netInfo.GetNetworkName(), DefaultNetworkControllerName, egressIPServedPodsASUDNv4.Name, egressSVCServedPodsASv4.Name, udnEnabledSvcV4.Name),
 					&nbdb.LogicalRouterPolicy{
 						Priority:    ovntypes.DefaultNoRereoutePriority,
@@ -1675,7 +1677,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					"k8s.ovn.org/zone-name":                       node1Name,
 					"k8s.ovn.org/remote-zone-migrated":            node1Name,
 					util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
-					util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s/16"}, "%s":{"ipv4":"%s/16"}}`, nodeLogicalRouterIPv4[0], networkName1, nodeLogicalRouterIPv4[0]),
+					util.OvnNodeID:                                "2",
 				}
 				labels := map[string]string{
 					"k8s.ovn.org/egress-assignable": "",
@@ -1688,7 +1690,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					"k8s.ovn.org/zone-name":                       node2Name,
 					"k8s.ovn.org/remote-zone-migrated":            node2Name,
 					util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node2IPv4CIDR),
-					util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s/16"}, "%s":{"ipv4":"%s/16"}}`, node2LogicalRouterIPv4[0], networkName1, node2LogicalRouterIPv4[0]),
+					util.OvnNodeID:                                "3",
 				}
 				node2 := getNodeObj(node2Name, node2Annotations, labels)
 				twoNodeStatus := []egressipv1.EgressIPStatusItem{
@@ -1922,7 +1924,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					egressNodeIPsASv4,
 
 					// UDN
-					getReRouteStaticRouteForController(v4Net1, nodeLogicalRouterIPv4[0], netInfo.GetNetworkName()),
+					getReRouteStaticRouteForController(v4Net1, nodeUDNLogicalRouterIPv4[0], netInfo.GetNetworkName()),
 					getReRoutePolicyForController(egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, eIP1Mark, IPFamilyValueV4, []string{nodeLogicalRouterIPv4[0], v4Node2Tsp}, netInfo.GetNetworkName(), DefaultNetworkControllerName),
 					getGWPktMarkLRPForController(eIP1Mark, egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, IPFamilyValueV4, netInfo.GetNetworkName(), DefaultNetworkControllerName),
 					getNoReRoutePolicyForUDNEnabledSvc(false, netInfo.GetNetworkName(), DefaultNetworkControllerName, egressIPServedPodsASUDNv4.Name, egressSVCServedPodsASv4.Name, udnEnabledSvcV4.Name),
@@ -2045,7 +2047,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					"k8s.ovn.org/zone-name":                       node1Name,
 					"k8s.ovn.org/remote-zone-migrated":            node1Name,
 					util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
-					util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s/16"}, "%s":{"ipv4":"%s/16"}}`, nodeLogicalRouterIPv4[0], networkName1, nodeLogicalRouterIPv4[0]),
+					util.OvnNodeID:                                "2",
 				}
 				labels := map[string]string{
 					"k8s.ovn.org/egress-assignable": "",
@@ -2058,7 +2060,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					"k8s.ovn.org/zone-name":                       node2Name,
 					"k8s.ovn.org/remote-zone-migrated":            node2Name,
 					util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node2IPv4CIDR),
-					util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s/16"}, "%s":{"ipv4":"%s/16"}}`, node2LogicalRouterIPv4[0], networkName1, node2LogicalRouterIPv4[0]),
+					util.OvnNodeID:                                "3",
 				}
 				node2 := getNodeObj(node2Name, node2Annotations, labels)
 				twoNodeStatus := []egressipv1.EgressIPStatusItem{
@@ -2280,7 +2282,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					egressNodeIPsASv4,
 
 					// UDN
-					getReRouteStaticRouteForController(v4Net1, nodeLogicalRouterIPv4[0], netInfo.GetNetworkName()),
+					getReRouteStaticRouteForController(v4Net1, nodeUDNLogicalRouterIPv4[0], netInfo.GetNetworkName()),
 					getReRoutePolicyForController(egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, eIP1Mark, IPFamilyValueV4, []string{nodeLogicalRouterIPv4[0], v4Node2Tsp}, netInfo.GetNetworkName(), DefaultNetworkControllerName),
 					getGWPktMarkLRPForController(eIP1Mark, egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, IPFamilyValueV4, netInfo.GetNetworkName(), DefaultNetworkControllerName),
 					getNoReRoutePolicyForUDNEnabledSvc(false, netInfo.GetNetworkName(), DefaultNetworkControllerName, egressIPServedPodsASUDNv4.Name, egressSVCServedPodsASv4.Name, udnEnabledSvcV4.Name),
@@ -2406,7 +2408,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					"k8s.ovn.org/zone-name":                       node1Name,
 					"k8s.ovn.org/remote-zone-migrated":            node1Name,
 					util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
-					util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s/16"}, "%s":{"ipv4":"%s/16"}}`, nodeLogicalRouterIPv4[0], networkName1, nodeLogicalRouterIPv4[0]),
+					util.OvnNodeID:                                "2",
 				}
 				labels := map[string]string{
 					"k8s.ovn.org/egress-assignable": "",
@@ -2419,7 +2421,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					"k8s.ovn.org/zone-name":                       node2Name,
 					"k8s.ovn.org/remote-zone-migrated":            node2Name,
 					util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node2IPv4CIDR),
-					util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s/16"}, "%s":{"ipv4":"%s/16"}}`, node2LogicalRouterIPv4[0], networkName1, node2LogicalRouterIPv4[0]),
+					util.OvnNodeID:                                "3",
 				}
 				node2 := getNodeObj(node2Name, node2Annotations, labels)
 				twoNodeStatus := []egressipv1.EgressIPStatusItem{
@@ -2656,7 +2658,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					egressNodeIPsASv4,
 
 					// UDN
-					getReRouteStaticRouteForController(v4Net1, nodeLogicalRouterIPv4[0], netInfo.GetNetworkName()),
+					getReRouteStaticRouteForController(v4Net1, nodeUDNLogicalRouterIPv4[0], netInfo.GetNetworkName()),
 					getReRoutePolicyForController(egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, eIP1Mark, IPFamilyValueV4, []string{nodeLogicalRouterIPv4[0], v4Node2Tsp}, netInfo.GetNetworkName(), DefaultNetworkControllerName),
 					getGWPktMarkLRPForController(eIP1Mark, egressIPName, eipNamespace2, podName2, v4Pod1IPNode1Net1, IPFamilyValueV4, netInfo.GetNetworkName(), DefaultNetworkControllerName),
 					getGWPktMarkLRPForController(eIP1Mark, egressIPName, eipNamespace2, podName4, v4Pod2IPNode2Net1, IPFamilyValueV4, netInfo.GetNetworkName(), DefaultNetworkControllerName),

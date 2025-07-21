@@ -850,7 +850,7 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 								"k8s.ovn.org/node-subnets":    fmt.Sprintf("{\"default\":[\"%s\", \"fd02:0:0:2::2895/64\"]}", v4NodeSubnet),
 								util.OVNNodeHostCIDRs:         fmt.Sprintf("[\"%s/24\",\"%s/24\",\"%s/64\"]", nodeIP, nodeIP2, nodeIP3),
 								"k8s.ovn.org/node-chassis-id": "2",
-								util.OVNNodeGRLRPAddrs:        "{\"default\":{\"ipv4\":\"100.64.0.2/16\"}}",
+								util.OvnNodeID:                "2",
 							},
 						},
 					}

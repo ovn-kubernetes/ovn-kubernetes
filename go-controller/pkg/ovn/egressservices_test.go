@@ -956,7 +956,7 @@ var _ = ginkgo.Describe("OVN Egress Service Operations", func() {
 				config.IPv6Mode = true
 				config.OVNKubernetesFeature.EnableInterconnect = interconnectEnabled
 				node1 := nodeFor(node1Name, node1IPv4, node1IPv6, node1IPv4Subnet, node1IPv6Subnet, node1transitIPv4, node1transitIPv6)
-				node1.Annotations[util.OVNNodeGRLRPAddrs] = `{"default":{"ipv4":"100.64.0.2/16", "ipv6":"fef0::56/16"}}`
+				node1.Annotations[util.OvnNodeID] = "2"
 				node2 := nodeFor(node2Name, node2IPv4, node2IPv6, node2IPv4Subnet, node2IPv6Subnet, node2transitIPv4, node2transitIPv6)
 
 				clusterRouter := &nbdb.LogicalRouter{

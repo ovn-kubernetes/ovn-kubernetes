@@ -937,17 +937,10 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 				}
 			}
 
-			ifaddrs := `{"network":{"ipv4":"100.65.0.4/16","ipv6":"fd99::4/64"}}`
-			if tt.isSingleStackIPv4 {
-				ifaddrs = `{"network":{"ipv4":"100.65.0.4/16"}}`
-			} else if tt.isSingleStackIPv6 {
-				ifaddrs = `{"network":{"ipv6":"fd99::4/64"}}`
-			}
-
 			node := &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
-						"k8s.ovn.org/node-gateway-router-lrp-ifaddrs": ifaddrs,
+						"k8s.ovn.org/node-id": "4",
 					},
 				},
 			}

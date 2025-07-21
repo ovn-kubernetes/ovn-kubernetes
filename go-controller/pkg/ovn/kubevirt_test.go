@@ -98,6 +98,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 		expectedStaticRoutes []testStaticRoute
 	}
 	type testNode struct {
+		nodeID                string
 		lrpNetworkIPv4        string
 		lrpNetworkIPv6        string
 		subnetIPv4            string
@@ -117,26 +118,29 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 		initialDB  libovsdb.TestSetup
 		nodeByName = map[string]testNode{
 			node1: {
+				nodeID:                "4",
 				subnetIPv4:            "10.128.1.0/24",
 				subnetIPv6:            "fd11::/64",
 				lrpNetworkIPv4:        "100.64.0.4/24",
-				lrpNetworkIPv6:        "fd12::4/64",
+				lrpNetworkIPv6:        "fd98::4/64",
 				transitSwitchPortIPv4: "100.65.0.4/24",
 				transitSwitchPortIPv6: "fd13::4/64",
 			},
 			node2: {
+				nodeID:                "5",
 				subnetIPv4:            "10.128.2.0/24",
 				subnetIPv6:            "fd12::/64",
 				lrpNetworkIPv4:        "100.64.0.5/24",
-				lrpNetworkIPv6:        "fd12::5/64",
+				lrpNetworkIPv6:        "fd98::5/64",
 				transitSwitchPortIPv4: "100.65.0.5/24",
 				transitSwitchPortIPv6: "fd13::5/64",
 			},
 			node3: {
+				nodeID:                "6",
 				subnetIPv4:            "10.128.3.0/24",
 				subnetIPv6:            "fd13::/64",
 				lrpNetworkIPv4:        "100.64.0.6/24",
-				lrpNetworkIPv6:        "fd12::6/64",
+				lrpNetworkIPv6:        "fd98::6/64",
 				transitSwitchPortIPv4: "100.65.0.6/24",
 				transitSwitchPortIPv6: "fd13::6/64",
 			},
@@ -668,7 +672,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 									Annotations: map[string]string{
 										"k8s.ovn.org/node-transit-switch-port-ifaddr": fmt.Sprintf(`{"ipv4": %q, "ipv6": %q}`, nodeByName[node1].transitSwitchPortIPv4, nodeByName[node1].transitSwitchPortIPv6),
 										"k8s.ovn.org/node-subnets":                    fmt.Sprintf(`{"default":[%q,%q]}`, nodeByName[node1].subnetIPv4, nodeByName[node1].subnetIPv6),
-										util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s", "ipv6":"%s"}}`, nodeByName[node1].lrpNetworkIPv4, nodeByName[node1].lrpNetworkIPv6),
+										util.OvnNodeID:                                nodeByName[node1].nodeID,
 									},
 								},
 							},
@@ -678,7 +682,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 									Annotations: map[string]string{
 										"k8s.ovn.org/node-transit-switch-port-ifaddr": fmt.Sprintf(`{"ipv4": %q, "ipv6": %q}`, nodeByName[node2].transitSwitchPortIPv4, nodeByName[node2].transitSwitchPortIPv6),
 										"k8s.ovn.org/node-subnets":                    fmt.Sprintf(`{"default":[%q,%q]}`, nodeByName[node2].subnetIPv4, nodeByName[node2].subnetIPv6),
-										util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s", "ipv6":"%s"}}`, nodeByName[node2].lrpNetworkIPv4, nodeByName[node2].lrpNetworkIPv6),
+										util.OvnNodeID:                                nodeByName[node2].nodeID,
 									},
 								},
 							},
@@ -688,7 +692,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 									Annotations: map[string]string{
 										"k8s.ovn.org/node-transit-switch-port-ifaddr": fmt.Sprintf(`{"ipv4": %q, "ipv6": %q}`, nodeByName[node3].transitSwitchPortIPv4, nodeByName[node3].transitSwitchPortIPv6),
 										"k8s.ovn.org/node-subnets":                    fmt.Sprintf(`{"default":[%q,%q]}`, nodeByName[node3].subnetIPv4, nodeByName[node3].subnetIPv6),
-										util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s", "ipv6":"%s"}}`, nodeByName[node3].lrpNetworkIPv4, nodeByName[node3].lrpNetworkIPv6),
+										util.OvnNodeID:                                nodeByName[node3].nodeID,
 									},
 								},
 							},
@@ -802,7 +806,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 							Name: "newNode1",
 							Annotations: map[string]string{
 								"k8s.ovn.org/node-subnets": fmt.Sprintf(`{"default":[%q,%q]}`, nodeByName[t.replaceNode].subnetIPv4, nodeByName[t.replaceNode].subnetIPv6),
-								util.OVNNodeGRLRPAddrs:     "{\"default\":{\"ipv4\":\"100.64.0.2/16\"}}",
+								util.OvnNodeID:             nodeByName[t.replaceNode].nodeID,
 							},
 						},
 					}
