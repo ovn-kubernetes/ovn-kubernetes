@@ -241,7 +241,7 @@ func (gw *GatewayManager) cleanupStalePodSNATs(nodeName string, nodeIPs []*net.I
 	return nil
 }
 
-func (gw *GatewayManager) createGWRouter(l3GatewayConfig *util.L3GatewayConfig, gwLRPJoinIPs []*net.IPNet) (*nbdb.LogicalRouter, error) {
+func (gw *GatewayManager) createGWRouter(gwConfig *GatewayConfig) (*nbdb.LogicalRouter, error) {
 	// Create a gateway router.
 	dynamicNeighRouters := "true"
 	if config.OVNKubernetesFeature.EnableInterconnect {
@@ -251,7 +251,7 @@ func (gw *GatewayManager) createGWRouter(l3GatewayConfig *util.L3GatewayConfig, 
 	logicalRouterOptions := map[string]string{
 		"always_learn_from_arp_request": "false",
 		"dynamic_neigh_routers":         dynamicNeighRouters,
-		"chassis":                       l3GatewayConfig.ChassisID,
+		"chassis":                       gwConfig.annoConfig.ChassisID,
 		"lb_force_snat_ip":              "router_ip",
 		"mac_binding_age_threshold":     types.GRMACBindingAgeThreshold,
 	}
@@ -267,14 +267,14 @@ func (gw *GatewayManager) createGWRouter(l3GatewayConfig *util.L3GatewayConfig, 
 		// when it comes to SNATing traffic after load balancing.
 		// Hence for Layer2 UDPNs let's set the snat-ip explicitly to the
 		// joinsubnetIP
-		joinIPDualStack := make([]string, len(gwLRPJoinIPs))
-		for i, gwLRPJoinIP := range gwLRPJoinIPs {
+		joinIPDualStack := make([]string, len(gwConfig.gwLRPJoinIPs))
+		for i, gwLRPJoinIP := range gwConfig.gwLRPJoinIPs {
 			joinIPDualStack[i] = gwLRPJoinIP.IP.String()
 		}
 		logicalRouterOptions["lb_force_snat_ip"] = strings.Join(joinIPDualStack, " ")
 	}
-	physicalIPs := make([]string, len(l3GatewayConfig.IPAddresses))
-	for i, ip := range l3GatewayConfig.IPAddresses {
+	physicalIPs := make([]string, len(gwConfig.annoConfig.IPAddresses))
+	for i, ip := range gwConfig.annoConfig.IPAddresses {
 		physicalIPs[i] = ip.IP.String()
 	}
 	logicalRouterExternalIDs := map[string]string{
@@ -295,7 +295,7 @@ func (gw *GatewayManager) createGWRouter(l3GatewayConfig *util.L3GatewayConfig, 
 
 	if gw.clusterLoadBalancerGroupUUID != "" {
 		gwRouter.LoadBalancerGroup = []string{gw.clusterLoadBalancerGroupUUID}
-		if l3GatewayConfig.NodePortEnable && gw.routerLoadBalancerGroupUUID != "" {
+		if gwConfig.annoConfig.NodePortEnable && gw.routerLoadBalancerGroupUUID != "" {
 			// add routerLoadBalancerGroupUUID to the gateway router only if nodePort is enabled
 			gwRouter.LoadBalancerGroup = append(gwRouter.LoadBalancerGroup, gw.routerLoadBalancerGroupUUID)
 		}
@@ -375,11 +375,11 @@ func (gw *GatewayManager) createGWRouterPeerPort(nodeName string) error {
 	return err
 }
 
-func (gw *GatewayManager) createGWRouterPort(hostSubnets []*net.IPNet, gwLRPJoinIPs []*net.IPNet,
+func (gw *GatewayManager) createGWRouterPort(gwConfig *GatewayConfig,
 	enableGatewayMTU bool, gwRouter *nbdb.LogicalRouter) ([]net.IP, error) {
 	gwLRPIPs := make([]net.IP, 0)
 	gwLRPNetworks := []string{}
-	for _, gwLRPJoinIP := range gwLRPJoinIPs {
+	for _, gwLRPJoinIP := range gwConfig.gwLRPJoinIPs {
 		gwLRPIPs = append(gwLRPIPs, gwLRPJoinIP.IP)
 		gwLRPNetworks = append(gwLRPNetworks, gwLRPJoinIP.String())
 	}
@@ -388,7 +388,7 @@ func (gw *GatewayManager) createGWRouterPort(hostSubnets []*net.IPNet, gwLRPJoin
 		// to configure here the .1 address, this will work only for IC with
 		// one node per zone, since ARPs for .1 will not go beyond local switch.
 		// This is being done to add the ICMP SNATs for .1 podSubnet that OVN GR generates
-		for _, subnet := range hostSubnets {
+		for _, subnet := range gwConfig.hostSubnets {
 			gwLRPIPs = append(gwLRPIPs, gw.netInfo.GetNodeGatewayIP(subnet).IP)
 			gwLRPNetworks = append(gwLRPNetworks, gw.netInfo.GetNodeGatewayIP(subnet).String())
 		}
@@ -437,11 +437,11 @@ func (gw *GatewayManager) createGWRouterPort(hostSubnets []*net.IPNet, gwLRPJoin
 	return gwLRPIPs, nil
 }
 
-func (gw *GatewayManager) updateGWRouterStaticRoutes(clusterIPSubnet, drLRPIfAddrs []*net.IPNet,
-	l3GatewayConfig *util.L3GatewayConfig, externalRouterPort string, gwRouter *nbdb.LogicalRouter) error {
-	if len(drLRPIfAddrs) > 0 {
-		for _, entry := range clusterIPSubnet {
-			drLRPIfAddr, err := util.MatchFirstIPNetFamily(utilnet.IsIPv6CIDR(entry), drLRPIfAddrs)
+func (gw *GatewayManager) updateGWRouterStaticRoutes(gwConfig *GatewayConfig, externalRouterPort string,
+	gwRouter *nbdb.LogicalRouter) error {
+	if len(gwConfig.ovnClusterLRPToJoinIfAddrs) > 0 {
+		for _, entry := range gwConfig.clusterSubnets {
+			drLRPIfAddr, err := util.MatchFirstIPNetFamily(utilnet.IsIPv6CIDR(entry), gwConfig.ovnClusterLRPToJoinIfAddrs)
 			if err != nil {
 				return fmt.Errorf("failed to add a static route in GR %s with distributed "+
 					"router as the nexthop: %v",
@@ -512,7 +512,7 @@ func (gw *GatewayManager) updateGWRouterStaticRoutes(clusterIPSubnet, drLRPIfAdd
 		}
 	}
 
-	nextHops := l3GatewayConfig.NextHops
+	nextHops := gwConfig.annoConfig.NextHops
 	// Add default gateway routes in GR
 	for _, nextHop := range nextHops {
 		var allIPs string
@@ -547,7 +547,7 @@ func (gw *GatewayManager) updateGWRouterStaticRoutes(clusterIPSubnet, drLRPIfAdd
 	return nil
 }
 
-func (gw *GatewayManager) updateClusterRouterStaticRoutes(hostSubnets []*net.IPNet, gwLRPIPs []net.IP) error {
+func (gw *GatewayManager) updateClusterRouterStaticRoutes(gwConfig *GatewayConfig, gwLRPIPs []net.IP) error {
 	// We need to add a route to the Gateway router's IP, on the
 	// cluster router, to ensure that the return traffic goes back
 	// to the same gateway router
@@ -581,7 +581,7 @@ func (gw *GatewayManager) updateClusterRouterStaticRoutes(hostSubnets []*net.IPN
 
 	// Add source IP address based routes in distributed router
 	// for this gateway router.
-	for _, hostSubnet := range hostSubnets {
+	for _, hostSubnet := range gwConfig.hostSubnets {
 		if gw.clusterRouterName == "" {
 			break
 		}
@@ -659,7 +659,7 @@ func (gw *GatewayManager) updateClusterRouterStaticRoutes(hostSubnets []*net.IPN
 // This function also updates SNAT created by `updateGWRouterNAT`, because NATs don't use ExternalIDs,
 // and their fields are used to find equivalent NATs. That means on gateway IPs change, instead of updating
 // the old NAT, we would create a new one. FIXME: add externalIDs to NATs
-func (gw *GatewayManager) syncNATsForGRIPChange(externalIPs, oldExtIPs, gwLRPIPs []net.IP,
+func (gw *GatewayManager) syncNATsForGRIPChange(gwConfig *GatewayConfig, oldExtIPs, gwLRPIPs []net.IP,
 	gwRouter, oldGWRouter *nbdb.LogicalRouter) error {
 	// if config.Gateway.DisabledSNATMultipleGWs is not set (by default it is not),
 	// the NAT rules for pods not having annotations to route through either external
@@ -685,7 +685,7 @@ func (gw *GatewayManager) syncNATsForGRIPChange(externalIPs, oldExtIPs, gwLRPIPs
 		}
 
 		// check external ip changed
-		for _, externalIP := range externalIPs {
+		for _, externalIP := range gwConfig.externalIPs {
 			oldExternalIP, err := util.MatchFirstIPFamily(utilnet.IsIPv6(externalIP), oldExtIPs)
 			if err != nil {
 				return fmt.Errorf("failed to update GW SNAT rule for pods on router %s error: %v", gw.gwRouterName, err)
@@ -732,8 +732,7 @@ func (gw *GatewayManager) syncNATsForGRIPChange(externalIPs, oldExtIPs, gwLRPIPs
 	return nil
 }
 
-func (gw *GatewayManager) updateGWRouterNAT(nodeName string, clusterIPSubnet []*net.IPNet, l3GatewayConfig *util.L3GatewayConfig,
-	externalIPs, gwLRPIPs []net.IP, gwRouter *nbdb.LogicalRouter) error {
+func (gw *GatewayManager) updateGWRouterNAT(nodeName string, gwConfig *GatewayConfig, gwLRPIPs []net.IP, gwRouter *nbdb.LogicalRouter) error {
 	// REMOVEME(trozet) workaround - create join subnet SNAT to handle ICMP needs frag return
 	var extIDs map[string]string
 	if gw.netInfo.IsUserDefinedNetwork() {
@@ -744,7 +743,7 @@ func (gw *GatewayManager) updateGWRouterNAT(nodeName string, clusterIPSubnet []*
 	}
 	joinNATs := make([]*nbdb.NAT, 0, len(gwLRPIPs))
 	for _, gwLRPIP := range gwLRPIPs {
-		externalIP, err := util.MatchIPFamily(utilnet.IsIPv6(gwLRPIP), externalIPs)
+		externalIP, err := util.MatchIPFamily(utilnet.IsIPv6(gwLRPIP), gwConfig.externalIPs)
 		if err != nil {
 			return fmt.Errorf("failed to find valid external IP family match for join subnet IP: %s on "+
 				"gateway router: %s", gwLRPIP, gw.gwRouterName)
@@ -761,15 +760,15 @@ func (gw *GatewayManager) updateGWRouterNAT(nodeName string, clusterIPSubnet []*
 		return fmt.Errorf("failed to create SNAT rule for join subnet on router %s error: %v", gw.gwRouterName, err)
 	}
 
-	nats := make([]*nbdb.NAT, 0, len(clusterIPSubnet))
+	nats := make([]*nbdb.NAT, 0, len(gwConfig.clusterSubnets))
 	var nat *nbdb.NAT
 	// DisableSNATMultipleGWs is only applicable to cluster default network and not to user defined networks.
 	// For user defined networks, we always add SNAT rules regardless of whether the network is advertised or not.
 	if !config.Gateway.DisableSNATMultipleGWs || gw.netInfo.IsPrimaryNetwork() {
 		// Default SNAT rules. DisableSNATMultipleGWs=false in LGW (traffic egresses via mp0) always.
 		// We are not checking for gateway mode to be shared explicitly to reduce topology differences.
-		for _, entry := range clusterIPSubnet {
-			externalIP, err := util.MatchIPFamily(utilnet.IsIPv6CIDR(entry), externalIPs)
+		for _, entry := range gwConfig.clusterSubnets {
+			externalIP, err := util.MatchIPFamily(utilnet.IsIPv6CIDR(entry), gwConfig.externalIPs)
 			if err != nil {
 				return fmt.Errorf("failed to create default SNAT rules for gateway router %s: %v",
 					gw.gwRouterName, err)
@@ -794,7 +793,7 @@ func (gw *GatewayManager) updateGWRouterNAT(nodeName string, clusterIPSubnet []*
 		}
 	} else {
 		// ensure we do not have any leftover SNAT entries after an upgrade
-		for _, logicalSubnet := range clusterIPSubnet {
+		for _, logicalSubnet := range gwConfig.clusterSubnets {
 			nat = libovsdbops.BuildSNAT(nil, logicalSubnet, "", extIDs)
 			nats = append(nats, nat)
 		}
@@ -804,7 +803,7 @@ func (gw *GatewayManager) updateGWRouterNAT(nodeName string, clusterIPSubnet []*
 		}
 	}
 
-	if err = gw.cleanupStalePodSNATs(nodeName, l3GatewayConfig.IPAddresses, gwLRPIPs); err != nil {
+	if err = gw.cleanupStalePodSNATs(nodeName, gwConfig.annoConfig.IPAddresses, gwLRPIPs); err != nil {
 		return fmt.Errorf("failed to sync stale SNATs on node %s: %v", nodeName, err)
 	}
 	return nil
@@ -844,7 +843,7 @@ func (gw *GatewayManager) gatewayInit(
 		}
 	}
 
-	gwRouter, err := gw.createGWRouter(gwConfig.annoConfig, gwConfig.gwLRPJoinIPs)
+	gwRouter, err := gw.createGWRouter(gwConfig)
 	if err != nil {
 		return err
 	}
@@ -853,7 +852,7 @@ func (gw *GatewayManager) gatewayInit(
 		return err
 	}
 
-	gwLRPIPs, err := gw.createGWRouterPort(gwConfig.hostSubnets, gwConfig.gwLRPJoinIPs, enableGatewayMTU, gwRouter)
+	gwLRPIPs, err := gw.createGWRouterPort(gwConfig, enableGatewayMTU, gwRouter)
 	if err != nil {
 		return err
 	}
@@ -890,20 +889,19 @@ func (gw *GatewayManager) gatewayInit(
 	}
 
 	externalRouterPort := types.GWRouterToExtSwitchPrefix + gw.gwRouterName
-	if err = gw.updateGWRouterStaticRoutes(gwConfig.clusterSubnets, gwConfig.ovnClusterLRPToJoinIfAddrs, gwConfig.annoConfig, externalRouterPort,
-		gwRouter); err != nil {
+	if err = gw.updateGWRouterStaticRoutes(gwConfig, externalRouterPort, gwRouter); err != nil {
 		return err
 	}
 
-	if err = gw.updateClusterRouterStaticRoutes(gwConfig.hostSubnets, gwLRPIPs); err != nil {
+	if err = gw.updateClusterRouterStaticRoutes(gwConfig, gwLRPIPs); err != nil {
 		return err
 	}
 
-	if err = gw.syncNATsForGRIPChange(gwConfig.externalIPs, oldExtIPs, gwLRPIPs, gwRouter, oldLogicalRouter); err != nil {
+	if err = gw.syncNATsForGRIPChange(gwConfig, oldExtIPs, gwLRPIPs, gwRouter, oldLogicalRouter); err != nil {
 		return err
 	}
 
-	if err = gw.updateGWRouterNAT(nodeName, gwConfig.clusterSubnets, gwConfig.annoConfig, gwConfig.externalIPs, gwLRPIPs, gwRouter); err != nil {
+	if err = gw.updateGWRouterNAT(nodeName, gwConfig, gwLRPIPs, gwRouter); err != nil {
 		return err
 	}
 
