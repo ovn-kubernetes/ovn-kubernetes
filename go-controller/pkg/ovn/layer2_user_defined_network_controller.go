@@ -833,7 +833,7 @@ func (oc *Layer2UserDefinedNetworkController) nodeGatewayConfig(node *corev1.Nod
 		annoConfig:                 l3GatewayConfig,
 		hostSubnets:                hostSubnets,
 		clusterSubnets:             hostSubnets,
-		gwLRPJoinIPs:               gwLRPJoinIPs,
+		gwRouterJoinNets:           gwLRPJoinIPs,
 		hostAddrs:                  nil,
 		externalIPs:                externalIPs,
 		ovnClusterLRPToJoinIfAddrs: nil,
