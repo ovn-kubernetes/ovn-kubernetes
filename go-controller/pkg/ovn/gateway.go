@@ -267,8 +267,8 @@ func (gw *GatewayManager) createGWRouter(gwConfig *GatewayConfig) (*nbdb.Logical
 		// when it comes to SNATing traffic after load balancing.
 		// Hence for Layer2 UDPNs let's set the snat-ip explicitly to the
 		// joinsubnetIP
-		joinIPDualStack := make([]string, len(gwConfig.gwLRPJoinIPs))
-		for i, gwLRPJoinIP := range gwConfig.gwLRPJoinIPs {
+		joinIPDualStack := make([]string, len(gwConfig.gwRouterJoinCIDRs))
+		for i, gwLRPJoinIP := range gwConfig.gwRouterJoinCIDRs {
 			joinIPDualStack[i] = gwLRPJoinIP.IP.String()
 		}
 		logicalRouterOptions["lb_force_snat_ip"] = strings.Join(joinIPDualStack, " ")
@@ -379,7 +379,7 @@ func (gw *GatewayManager) createGWRouterPort(gwConfig *GatewayConfig,
 	enableGatewayMTU bool, gwRouter *nbdb.LogicalRouter) ([]net.IP, error) {
 	gwLRPIPs := make([]net.IP, 0)
 	gwLRPNetworks := []string{}
-	for _, gwLRPJoinIP := range gwConfig.gwLRPJoinIPs {
+	for _, gwLRPJoinIP := range gwConfig.gwRouterJoinCIDRs {
 		gwLRPIPs = append(gwLRPIPs, gwLRPJoinIP.IP)
 		gwLRPNetworks = append(gwLRPNetworks, gwLRPJoinIP.String())
 	}
