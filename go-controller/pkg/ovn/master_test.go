@@ -1259,6 +1259,12 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 		newNodeSNAT("stale-nodeNAT-UUID-3", "10.0.0.3", Node1GatewayRouterIP),
 		newNodeSNAT("stale-nodeNAT-UUID-4", "10.0.0.3", "172.16.16.3"),
 	}
+	extraNatsWithMatch := []*nbdb.NAT{ // used for pod network advertised test
+		newNodeSNATWithMatch("stale-nodeNAT-UUID-1", "10.1.0.3", Node1GatewayRouterIP, "ip4.dst == $a712973235162149816"),
+		newNodeSNATWithMatch("stale-nodeNAT-UUID-2", "10.2.0.3", Node1GatewayRouterIP, "ip4.dst == $a712973235162149816"),
+		newNodeSNATWithMatch("stale-nodeNAT-UUID-3", "10.0.0.3", Node1GatewayRouterIP, "ip4.dst == $a712973235162149816"),
+		newNodeSNATWithMatch("stale-nodeNAT-UUID-4", "10.0.0.3", "172.16.16.3", "ip4.dst == $a712973235162149816"),
+	}
 	ginkgo.DescribeTable(
 		"reconciles pod network SNATs from syncGateway",
 		func(condition func(*DefaultNetworkController) error, expectedExtraNATs ...*nbdb.NAT) {
@@ -1284,7 +1290,11 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 				GR := &nbdb.LogicalRouter{
 					Name: types.GWRouterPrefix + node1.Name,
 				}
-				err = libovsdbops.CreateOrUpdateNATs(nbClient, GR, extraNats...)
+				if !oc.isPodNetworkAdvertisedAtNode(node1.Name) {
+					err = libovsdbops.CreateOrUpdateNATs(nbClient, GR, extraNats...)
+				} else {
+					err = libovsdbops.CreateOrUpdateNATs(nbClient, GR, extraNatsWithMatch...)
+				}
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				// ensure the stale SNAT's are cleaned up
@@ -1366,7 +1376,10 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 				mutableNetInfo.SetPodNetworkAdvertisedVRFs(map[string][]string{"node1": {"vrf"}})
 				return oc.Reconcile(mutableNetInfo)
 			},
-			newNodeSNAT("stale-nodeNAT-UUID-4", "10.0.0.3", "172.16.16.3"), // won't be deleted on this node but will be deleted on the node whose IP is 172.16.16.3 since this pod belongs to this node
+			// won't be deleted on this node since this pod belongs to node-1 and is advertised so we keep this SNAT
+			newNodeSNATWithMatch("stale-nodeNAT-UUID-3", "10.0.0.3", Node1GatewayRouterIP, "ip4.dst == $a712973235162149816"),
+			// won't be deleted on this node but will be deleted on the node whose IP is 172.16.16.3 since this pod belongs to node-1
+			newNodeSNATWithMatch("stale-nodeNAT-UUID-4", "10.0.0.3", "172.16.16.3", "ip4.dst == $a712973235162149816"),
 		),
 		ginkgo.Entry(
 			"When pod network is advertised and DisableSNATMultipleGWs is false",
@@ -1377,7 +1390,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 				mutableNetInfo.SetPodNetworkAdvertisedVRFs(map[string][]string{"node1": {"vrf"}})
 				return oc.Reconcile(mutableNetInfo)
 			},
-			newNodeSNAT("stale-nodeNAT-UUID-4", "10.0.0.3", "172.16.16.3"), // won't be deleted on this node but will be deleted on the node whose IP is 172.16.16.3 since this pod belongs to this node
+			newNodeSNATWithMatch("stale-nodeNAT-UUID-4", "10.0.0.3", "172.16.16.3", "ip4.dst == $a712973235162149816"), // won't be deleted on this node but will be deleted on the node whose IP is 172.16.16.3 since this pod belongs to this node
 		),
 	)
 
@@ -1980,6 +1993,12 @@ func newNodeSNAT(uuid, logicalIP, externalIP string) *nbdb.NAT {
 			"stateless": "false",
 		},
 	}
+}
+
+func newNodeSNATWithMatch(uuid, logicalIP, externalIP, match string) *nbdb.NAT {
+	nat := newNodeSNAT(uuid, logicalIP, externalIP)
+	nat.Match = match
+	return nat
 }
 
 func TestController_syncNodes(t *testing.T) {

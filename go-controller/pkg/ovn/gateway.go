@@ -143,8 +143,8 @@ func WithLoadBalancerGroups(routerLBGroup, clusterLBGroup, switchLBGroup string)
 }
 
 // cleanupStalePodSNATs removes pod SNATs against nodeIP for the given node if
-// the SNAT.logicalIP isn't an active podIP, the pod network is being advertised
-// on this node or disableSNATMultipleGWs=false. We don't have to worry about
+// the SNAT.logicalIP isn't an active podIP, or disableSNATMultipleGWs=false.
+// We don't have to worry about
 // missing SNATs that should be added because addLogicalPort takes care of this
 // for all pods when RequestRetryObjs is called for each node add.
 // Other non-pod SNATs like join subnet SNATs are ignored.
@@ -154,11 +154,11 @@ func WithLoadBalancerGroups(routerLBGroup, clusterLBGroup, switchLBGroup string)
 // pod->nodeSNATs which won't get cleared up unless explicitly deleted.
 // NOTE2: egressIP SNATs are synced in EIP controller.
 func (gw *GatewayManager) cleanupStalePodSNATs(nodeName string, nodeIPs []*net.IPNet, gwLRPIPs []net.IP) error {
-	// collect all the pod IPs for which we should be doing the SNAT; if the pod
-	// network is advertised or DisableSNATMultipleGWs==false we consider all
+	// collect all the pod IPs for which we should be doing the SNAT;
+	// if DisableSNATMultipleGWs==false we consider all
 	// the SNATs stale
 	podIPsWithSNAT := sets.New[string]()
-	if !gw.isRoutingAdvertised(nodeName) && config.Gateway.DisableSNATMultipleGWs {
+	if config.Gateway.DisableSNATMultipleGWs {
 		pods, err := gw.watchFactory.GetAllPods()
 		if err != nil {
 			return fmt.Errorf("unable to list existing pods on node: %s, %w",
@@ -231,7 +231,6 @@ func (gw *GatewayManager) cleanupStalePodSNATs(nodeName string, nodeIPs []*net.I
 		}
 		natsToDelete = append(natsToDelete, routerNat)
 	}
-
 	if len(natsToDelete) > 0 {
 		err := libovsdbops.DeleteNATs(gw.nbClient, gatewayRouter, natsToDelete...)
 		if err != nil {
