@@ -27,7 +27,7 @@ var _ = Describe("Observability Manager", func() {
 
 	startManager := func(data []libovsdbtest.TestData) {
 		var err error
-		nbClient, _, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(libovsdbtest.TestSetup{
+		_, nbClient, _, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(libovsdbtest.TestSetup{
 			NBData: data})
 		Expect(err).NotTo(HaveOccurred())
 		manager = NewManager(nbClient)
@@ -256,7 +256,7 @@ var _ = Describe("Observability Manager", func() {
 	When("non-default config is used", func() {
 		startManagerWithConfig := func(data []libovsdbtest.TestData, config *collectorConfig) {
 			var err error
-			nbClient, _, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(libovsdbtest.TestSetup{
+			_, nbClient, _, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(libovsdbtest.TestSetup{
 				NBData: data})
 			Expect(err).NotTo(HaveOccurred())
 			manager = NewManager(nbClient)
