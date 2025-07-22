@@ -154,6 +154,6 @@ nav:
     - User Defined Networks: okeps/okep-5193-user-defined-networks.md
     - Preconfigured UDN Addresses: okeps/okep-5233-preconfigured-udn-addresses.md
     - BGP: okeps/okep-5296-bgp.md
-    - Transport Zones: okeps/okep-5375-transport-zones.md
+    - Trust Zones for Interconnect: okeps/okep-5375-trust-zones.md
   - Blog:
     - blog/index.md
