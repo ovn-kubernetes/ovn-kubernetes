@@ -400,7 +400,7 @@ func (oc *DefaultNetworkController) syncNodeGateway(node *corev1.Node) error {
 	}
 
 	if util.IsPodNetworkAdvertisedAtNode(oc, node.Name) &&
-		config.OVNKubernetesFeature.RoutedUDNIsolation == config.RoutedUDNIsolationEnabled {
+		config.OVNKubernetesFeature.AdvertisedUDNIsolationMode == config.AdvertisedUDNIsolationModeStrict {
 		return oc.addAdvertisedNetworkIsolation(node.Name)
 	}
 	return oc.deleteAdvertisedNetworkIsolation(node.Name)

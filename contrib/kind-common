@@ -767,10 +767,10 @@ deploy_bgp_external_server() {
     echo "FRR bgp network IPv6: ${bgp_network_frr_v6}"
     $OCI_BIN exec bgpserver ip -6 route replace default via "$bgp_network_frr_v6"
   fi
-  if [ "$ROUTED_UDN_ISOLATION" == "Disabled" ]; then
+  if [ "$ADVERTISED_UDN_ISOLATION_MODE" == "loose" ]; then
     kind_network_frr_v4=$($OCI_BIN inspect -f '{{.NetworkSettings.Networks.kind.IPAddress}}' frr)
     echo "FRR kind network IPv4: ${kind_network_frr_v4}"
-    # If routed UDN isolation is disabled, we need to set the default gateway for the nodes in the cluster
+    # If UDN isolation is in loose disabled, we need to set the default gateway for the nodes in the cluster
     # to the FRR router so that cross-UDN traffic can be routed back to the pods in the cluster in the loose mode.
     echo "Setting default gateway for nodes in the cluster to FRR router IPv4: ${kind_network_frr_v4}"
     set_nodes_default_gw "$kind_network_frr_v4"

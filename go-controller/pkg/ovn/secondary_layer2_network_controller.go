@@ -591,7 +591,7 @@ func (oc *SecondaryLayer2NetworkController) addUpdateLocalNodeEvent(node *corev1
 				if err != nil {
 					return err
 				}
-				shouldIsolate := isUDNAdvertised && config.OVNKubernetesFeature.RoutedUDNIsolation == config.RoutedUDNIsolationEnabled
+				shouldIsolate := isUDNAdvertised && config.OVNKubernetesFeature.AdvertisedUDNIsolationMode == config.AdvertisedUDNIsolationModeStrict
 				if shouldIsolate {
 					if err = oc.addAdvertisedNetworkIsolation(node.Name); err != nil {
 						return err

@@ -1268,7 +1268,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 	ginkgo.DescribeTable(
 		"reconciles pod network SNATs from syncGateway",
 		func(condition func(*DefaultNetworkController) error, expectedExtraNATs ...*nbdb.NAT) {
-			config.OVNKubernetesFeature.RoutedUDNIsolation = config.RoutedUDNIsolationEnabled
+			config.OVNKubernetesFeature.AdvertisedUDNIsolationMode = config.AdvertisedUDNIsolationModeStrict
 			app.Action = func(ctx *cli.Context) error {
 				// Initialize config from CLI flags (including --init-gateways)
 				_, err := config.InitConfig(ctx, nil, nil)

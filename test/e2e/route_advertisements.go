@@ -20,10 +20,10 @@ import (
 	apitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
 	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	udnclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
 	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/label"
@@ -854,7 +854,10 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 						curlOutput string
 						curlErr    bool
 					)
-					if os.Getenv("ROUTED_UDN_ISOLATION") == "Disabled" {
+					// Test behavior depends on the ADVERTISED_UDN_ISOLATION_MODE environment variable:
+					// - "loose": Pod connectivity is allowed, test expects success
+					// - anything else (including unset): Treated as "strict", pod connectivity is blocked
+					if os.Getenv("ADVERTISED_UDN_ISOLATION_MODE") == "loose" {
 						clientPodStatus, err := getPodAnnotationForAttachment(clientPod, namespacedName(clientPod.Namespace, cudnATemplate.Name))
 						framework.ExpectNoError(err)
 
@@ -881,7 +884,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 						curlOutput string
 						curlErr    bool
 					)
-					if os.Getenv("ROUTED_UDN_ISOLATION") == "Disabled" {
+					if os.Getenv("ADVERTISED_UDN_ISOLATION_MODE") == "loose" {
 						clientPodStatus, err := getPodAnnotationForAttachment(clientPod, namespacedName(clientPod.Namespace, cudnATemplate.Name))
 						framework.ExpectNoError(err)
 
