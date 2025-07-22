@@ -531,10 +531,6 @@ func (cm *ControllerManager) Reconcile(_ string, _, _ util.NetInfo) error {
 }
 
 func (cm *ControllerManager) configureAdvertisedNetworkIsolation() error {
-	if config.OVNKubernetesFeature.RoutedUDNIsolation == config.RoutedUDNIsolationDisabled {
-		klog.Infof("Skip creating global advertised networks addressset in loose UDN isolation mode")
-		return nil
-	}
 	addressSetFactory := addressset.NewOvnAddressSetFactory(cm.nbClient, config.IPv4Mode, config.IPv6Mode)
 	_, err := addressSetFactory.EnsureAddressSet(ovn.GetAdvertisedNetworkSubnetsAddressSetDBIDs())
 	return err
