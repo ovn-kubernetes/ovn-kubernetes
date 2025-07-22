@@ -195,7 +195,7 @@ func (cm *ControllerManager) CleanupStaleNetworks(validNetworks ...util.NetInfo)
 		}
 	}
 
-	if util.IsRouteAdvertisementsEnabled() && config.OVNKubernetesFeature.RoutedUDNIsolation == config.RoutedUDNIsolationEnabled {
+	if util.IsRouteAdvertisementsEnabled() && config.OVNKubernetesFeature.UDNIsolationMode == config.UDNIsolationModeStrict {
 		// Remove stale subnets from the advertised networks address set used for isolation
 		// NOTE: network reconciliation will take care of removing the subnets for existing networks that are no longer
 		// advertised.
@@ -532,7 +532,7 @@ func (cm *ControllerManager) Reconcile(_ string, _, _ util.NetInfo) error {
 
 func (cm *ControllerManager) configureAdvertisedNetworkIsolation() error {
 	addressSetFactory := addressset.NewOvnAddressSetFactory(cm.nbClient, config.IPv4Mode, config.IPv6Mode)
-	if config.OVNKubernetesFeature.RoutedUDNIsolation == config.RoutedUDNIsolationEnabled {
+	if config.OVNKubernetesFeature.UDNIsolationMode == config.UDNIsolationModeStrict {
 		_, err := addressSetFactory.EnsureAddressSet(ovn.GetAdvertisedNetworkSubnetsAddressSetDBIDs())
 		return err
 	}

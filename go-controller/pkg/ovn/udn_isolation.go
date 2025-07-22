@@ -308,7 +308,7 @@ func BuildAdvertisedNetworkSubnetsDropACL(advertisedNetworkSubnetsAddressSet add
 // pass   "(ip[4|6].src == <UDN_SUBNET> && ip[4|6].dst == <UDN_SUBNET>)"                1100
 // drop   "(ip[4|6].src == $<ALL_ADV_SUBNETS> && ip[4|6].dst == $<ALL_ADV_SUBNETS>)"    1050
 func (bnc *BaseNetworkController) addAdvertisedNetworkIsolation(nodeName string) error {
-	if config.OVNKubernetesFeature.RoutedUDNIsolation == config.RoutedUDNIsolationDisabled {
+	if config.OVNKubernetesFeature.UDNIsolationMode == config.UDNIsolationModeLoose {
 		klog.Infof("The network %s is configured with loose isolation mode, so delete tier-0 pass ACL rule if it exists",
 			bnc.GetNetworkName())
 		// It is okay to delete only pass ACLs here because drop ACLs for the network and global advertised
@@ -388,7 +388,7 @@ func (bnc *BaseNetworkController) addAdvertisedNetworkIsolation(nodeName string)
 // deleteAdvertisedNetworkIsolation deletes advertised network isolation rules from the given node switch.
 // It removes the network CIDRs from the global advertised networks addresset together with the ACLs on the node switch.
 func (bnc *BaseNetworkController) deleteAdvertisedNetworkIsolation(nodeName string) error {
-	if config.OVNKubernetesFeature.RoutedUDNIsolation == config.RoutedUDNIsolationDisabled {
+	if config.OVNKubernetesFeature.UDNIsolationMode == config.UDNIsolationModeLoose {
 		klog.Infof("The network %s is configured with loose isolation mode, skip deleting tier-0 drop ACL rule",
 			bnc.GetNetworkName())
 		return nil
