@@ -932,6 +932,11 @@ func RemoveLoadBalancersFromLogicalRouterOps(nbClient libovsdbclient.Client, ops
 	return ops, err
 }
 
+func getNATMutableFields(nat *nbdb.NAT) []interface{} {
+	return []interface{}{&nat.Type, &nat.ExternalIP, &nat.LogicalIP, &nat.LogicalPort, &nat.ExternalMAC,
+		&nat.ExternalIDs, &nat.Match, &nat.Options, &nat.ExternalPortRange, &nat.GatewayPort, &nat.Priority}
+}
+
 func buildNAT(
 	natType nbdb.NATType,
 	externalIP string,
@@ -1152,7 +1157,7 @@ func CreateOrUpdateNATsOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation
 		}
 		opModel := operationModel{
 			Model:          inputNat,
-			OnModelUpdates: onModelUpdatesAllNonDefault(),
+			OnModelUpdates: getNATMutableFields(inputNat),
 			ErrNotFound:    false,
 			BulkOp:         false,
 			DoAfter:        func() { router.Nat = append(router.Nat, inputNat.UUID) },
@@ -1280,7 +1285,7 @@ func UpdateNATOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, nats ..
 		opModel := []operationModel{
 			{
 				Model:          nat,
-				OnModelUpdates: onModelUpdatesAllNonDefault(),
+				OnModelUpdates: getNATMutableFields(nat),
 				ErrNotFound:    true,
 				BulkOp:         false,
 			},
