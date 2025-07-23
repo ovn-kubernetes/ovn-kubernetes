@@ -364,7 +364,8 @@ func (a *PodAllocator) allocatePodOnNAD(pod *corev1.Pod, nad string, network *ne
 	)
 
 	if err != nil {
-		if errors.Is(err, ipallocator.ErrFull) {
+		if errors.Is(err, ipallocator.ErrFull) ||
+			errors.Is(err, ipallocator.ErrAllocated) {
 			a.recordPodErrorEvent(pod, err)
 		}
 		return err
