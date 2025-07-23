@@ -99,6 +99,10 @@ func newControllerRuntimeClient() (crclient.Client, error) {
 }
 
 var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, func() {
+	const (
+		defaultIPv4Subnet = "10.128.0.0/16"
+		defaultIPv6Subnet = "2010:100:200::0/60"
+	)
 	var (
 		fr                  = wrappedTestFramework("kv-live-migration")
 		d                   = diagnostics.New(fr)
@@ -1548,8 +1552,6 @@ fi
 			cudn       *udnv1.ClusterUserDefinedNetwork
 			vm         *kubevirtv1.VirtualMachine
 			vmi        *kubevirtv1.VirtualMachineInstance
-			cidrIPv4   = "10.128.0.0/24"
-			cidrIPv6   = "2010:100:200::0/60"
 			staticIPv4 = "10.128.0.101"
 			staticIPv6 = "2010:100:200::101"
 			staticMAC  = "02:00:00:00:00:01"
@@ -1711,6 +1713,8 @@ write_files:
 			ingress     string
 			ipRequests  []string
 			macRequest  string
+			ipv4Subnet  string
+			ipv6Subnet  string
 		}
 		var (
 			containerNetwork = func(td testData) (infraapi.Network, error) {
@@ -1736,6 +1740,12 @@ write_files:
 			}
 		)
 		DescribeTable("should keep ip", func(td testData) {
+			if td.ipv4Subnet == "" {
+				td.ipv4Subnet = defaultIPv4Subnet
+			}
+			if td.ipv6Subnet == "" {
+				td.ipv6Subnet = defaultIPv6Subnet
+			}
 			if td.role == "" {
 				td.role = udnv1.NetworkRoleSecondary
 			}
@@ -1758,7 +1768,7 @@ write_files:
 			namespace = fr.Namespace.Name
 
 			networkName := ""
-			dualCIDRs := filterDualStackCIDRs(fr.ClientSet, []udnv1.CIDR{udnv1.CIDR(cidrIPv4), udnv1.CIDR(cidrIPv6)})
+			dualCIDRs := filterDualStackCIDRs(fr.ClientSet, []udnv1.CIDR{udnv1.CIDR(td.ipv4Subnet), udnv1.CIDR(td.ipv6Subnet)})
 			cudn, networkName = kubevirt.GenerateCUDN(namespace, "net1", td.topology, td.role, dualCIDRs)
 
 			if td.topology == udnv1.NetworkTopologyLocalnet {
@@ -1832,7 +1842,7 @@ set -xe
 dnf install -y iproute
 ip route add %[1]s via %[2]s
 ip route add %[3]s via %[4]s
-`, cidrIPv4, frrExternalContainerInterface.GetIPv4(), cidrIPv6, frrExternalContainerInterface.GetIPv6())})
+`, td.ipv4Subnet, frrExternalContainerInterface.GetIPv4(), td.ipv6Subnet, frrExternalContainerInterface.GetIPv6())})
 				Expect(err).NotTo(HaveOccurred(), output)
 			}
 
@@ -1972,7 +1982,7 @@ ip route add %[3]s via %[4]s
 
 					Expect(err).NotTo(HaveOccurred(), step)
 					Eventually(kubevirt.RetrieveCachedGatewayMAC).
-						WithArguments(virtClient, vmi, "enp1s0", cidrIPv4).
+						WithArguments(virtClient, vmi, "enp1s0", td.ipv4Subnet).
 						WithTimeout(10*time.Second).
 						WithPolling(time.Second).
 						Should(Equal(expectedGatewayMAC), step)
@@ -1994,6 +2004,12 @@ ip route add %[3]s via %[4]s
 			}
 		},
 			func(td testData) string {
+				if td.ipv4Subnet == "" {
+					td.ipv4Subnet = defaultIPv4Subnet
+				}
+				if td.ipv6Subnet == "" {
+					td.ipv6Subnet = defaultIPv6Subnet
+				}
 				role := udnv1.NetworkRoleSecondary
 				if td.role != "" {
 					role = td.role
@@ -2002,7 +2018,7 @@ ip route add %[3]s via %[4]s
 				if td.ingress != "" {
 					ingress = td.ingress
 				}
-				return fmt.Sprintf("after %s of %s with %s/%s with %s ingress", td.test.description, td.resource.description, role, td.topology, ingress)
+				return fmt.Sprintf("after %s of %s with ipv4-subnet %s and ipv6-subnet %s, %s/%s with %s ingress", td.test.description, td.resource.description, td.ipv4Subnet, td.ipv6Subnet, role, td.topology, ingress)
 			},
 			Entry(nil, testData{
 				resource: virtualMachine,
@@ -2056,6 +2072,13 @@ ip route add %[3]s via %[4]s
 				ingress:  "routed",
 			}),
 			Entry(nil, testData{
+				resource:   virtualMachineWithUDN,
+				test:       liveMigrate,
+				topology:   udnv1.NetworkTopologyLayer2,
+				role:       udnv1.NetworkRolePrimary,
+				ipv4Subnet: "10.128.0.0/24",
+			}),
+			Entry(nil, testData{
 				resource: virtualMachineWithUDN,
 				test:     liveMigrate,
 				topology: udnv1.NetworkTopologyLayer2,
@@ -2094,7 +2117,7 @@ ip route add %[3]s via %[4]s
 	Context("with kubevirt VM using layer2 UDPN", Ordered, func() {
 		var (
 			podName                 = "virt-launcher-vm1"
-			cidrIPv4                = "10.128.0.0/24"
+			cidrIPv4                = "10.128.0.0/16"
 			cidrIPv6                = "2010:100:200::/60"
 			primaryUDNNetworkStatus nadapi.NetworkStatus
 			virtLauncherCommand     = func(command string) (string, error) {
@@ -2192,7 +2215,7 @@ ip route add %[3]s via %[4]s
 						fmt.Sprintf("routers = %s", expectedGateway),
 						fmt.Sprintf("interface_mtu = 1300"),
 					))
-				Expect(primaryUDNValueForConnection("IP4.ADDRESS")).To(ConsistOf(expectedIP + "/24"))
+				Expect(primaryUDNValueForConnection("IP4.ADDRESS")).To(ConsistOf(expectedIP + "/16"))
 				Expect(primaryUDNValueForConnection("IP4.GATEWAY")).To(ConsistOf(expectedGateway))
 				Expect(primaryUDNValueForConnection("IP4.DNS")).To(ConsistOf(expectedDNS))
 				Expect(primaryUDNValueForDevice("GENERAL.MTU")).To(ConsistOf("1300"))
@@ -2232,9 +2255,7 @@ ip route add %[3]s via %[4]s
 			Expect(removeImagesInNodes(kubevirt.FedoraContainerDiskImage)).To(Succeed())
 		})
 		var (
-			ipv4CIDR             = "10.128.0.0/24"
-			ipv6CIDR             = "2010:100:200::0/60"
-			vmiIPv4              = "10.128.0.100/24"
+			vmiIPv4              = "10.128.0.100/16"
 			vmiIPv6              = "2010:100:200::100/60"
 			vmiMAC               = "0A:58:0A:80:00:64"
 			staticIPsNetworkData = func(ips []string) (string, error) {
@@ -2275,7 +2296,7 @@ chpasswd: { expire: False }
 			selectedNodes = workerNodeList.Items
 			Expect(selectedNodes).NotTo(BeEmpty())
 
-			iperfServerTestPods, err = createIperfServerPods(selectedNodes, cudn.Name, cudn.Spec.Network.Localnet.Role, filterCIDRs(fr.ClientSet, ipv4CIDR, ipv6CIDR))
+			iperfServerTestPods, err = createIperfServerPods(selectedNodes, cudn.Name, cudn.Spec.Network.Localnet.Role, filterCIDRs(fr.ClientSet, defaultIPv4Subnet, defaultIPv6Subnet))
 			Expect(err).NotTo(HaveOccurred())
 
 			networkData, err := staticIPsNetworkData(filterCIDRs(fr.ClientSet, vmiIPv4, vmiIPv6))
