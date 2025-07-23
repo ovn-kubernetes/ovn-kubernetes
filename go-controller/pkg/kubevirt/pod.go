@@ -10,7 +10,9 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	ktypes "k8s.io/apimachinery/pkg/types"
+	listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/util/retry"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
@@ -447,13 +449,14 @@ func (lm LiveMigrationStatus) IsTargetDomainReady() bool {
 //
 // Note: The function assumes that the pod is part of a VirtualMachine resource managed
 // by KubeVirt.
-func DiscoverLiveMigrationStatus(client *factory.WatchFactory, pod *corev1.Pod) (*LiveMigrationStatus, error) {
+func DiscoverLiveMigrationStatus(podLister listers.PodLister, pod *corev1.Pod) (*LiveMigrationStatus, error) {
 	vmKey := ExtractVMNameFromPod(pod)
 	if vmKey == nil {
 		return nil, nil
 	}
 
-	vmPods, err := client.GetPodsBySelector(pod.Namespace, metav1.LabelSelector{MatchLabels: map[string]string{kubevirtv1.VirtualMachineNameLabel: vmKey.Name}})
+	selector := labels.SelectorFromSet(map[string]string{kubevirtv1.VirtualMachineNameLabel: vmKey.Name})
+	vmPods, err := podLister.Pods(pod.Namespace).List(selector)
 	if err != nil {
 		return nil, err
 	}
