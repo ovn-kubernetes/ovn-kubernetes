@@ -126,8 +126,8 @@ func (allocator *allocator) AddOrUpdateSubnet(config SubnetConfig) error {
 				if err != nil {
 					return fmt.Errorf("failed to exclude subnet %s for %s: %w", excludeFromIPAM, config.Name, err)
 				}
+				excluded = true
 			}
-			excluded = true
 		}
 		if !excluded {
 			return fmt.Errorf("failed to exclude subnet %s for %s: not contained in any of the subnets", excludeFromIPAM, config.Name)
