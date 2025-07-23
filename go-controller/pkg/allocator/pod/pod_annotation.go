@@ -15,6 +15,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip/subnet"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kubevirt"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/persistentips"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -98,6 +99,7 @@ func allocatePodAnnotation(
 	allocateToPodWithRollback := func(pod *corev1.Pod) (*corev1.Pod, func(), error) {
 		var rollback func()
 		pod, podAnnotation, rollback, err = allocatePodAnnotationWithRollback(
+			podLister,
 			ipAllocator,
 			idAllocator,
 			netInfo,
@@ -180,6 +182,7 @@ func allocatePodAnnotationWithTunnelID(
 	allocateToPodWithRollback := func(pod *corev1.Pod) (*corev1.Pod, func(), error) {
 		var rollback func()
 		pod, podAnnotation, rollback, err = allocatePodAnnotationWithRollback(
+			podLister,
 			ipAllocator,
 			idAllocator,
 			netInfo,
@@ -247,6 +250,7 @@ func validateStaticIPRequest(netInfo util.NetInfo, podDesc string) error {
 // implementations. Use an inlined implementation if you want to extract
 // information from it as a side-effect.
 func allocatePodAnnotationWithRollback(
+	podLister listers.PodLister,
 	ipAllocator subnet.NamedAllocator,
 	idAllocator id.NamedAllocator,
 	netInfo util.NetInfo,
@@ -298,6 +302,7 @@ func allocatePodAnnotationWithRollback(
 	}()
 
 	podAnnotation, _ = util.UnmarshalPodAnnotation(pod.Annotations, nadName)
+	nadNetworkPersisted := podAnnotation != nil
 	if podAnnotation == nil {
 		podAnnotation = &util.PodAnnotation{}
 	}
@@ -381,15 +386,18 @@ func allocatePodAnnotationWithRollback(
 
 	if hasIPAM {
 		if len(tentative.IPs) > 0 {
-			if err = ipAllocator.AllocateIPs(tentative.IPs); err != nil && !ip.IsErrAllocated(err) {
-				err = fmt.Errorf("failed to ensure requested or annotated IPs %v for %s: %w",
-					util.StringSlice(tentative.IPs), podDesc, err)
-				if !reallocateOnNonStaticIPRequest {
-					return
+			err = ipAllocator.AllocateIPs(tentative.IPs)
+			if err != nil {
+				if !ip.IsErrAllocated(err) || !shouldIgnoreDuplicateIPError(podLister, pod, nadNetworkPersisted) {
+					err = fmt.Errorf("failed to ensure requested or annotated IPs %v for %s: %w",
+						util.StringSlice(tentative.IPs), podDesc, err)
+					if !reallocateOnNonStaticIPRequest {
+						return
+					}
+					klog.Warning(err.Error())
+					needsIPOrMAC = true
+					tentative.IPs = nil
 				}
-				klog.Warning(err.Error())
-				needsIPOrMAC = true
-				tentative.IPs = nil
 			}
 
 			if err == nil && !hasIPAMClaim { // if we have persistentIPs, we should *not* release them on rollback
@@ -448,4 +456,31 @@ func allocatePodAnnotationWithRollback(
 	}
 
 	return
+}
+
+// shouldIgnoreDuplicateIPError determines if we should ignore "already allocated"
+// IP errors based on the pod context and network annotation persistence
+func shouldIgnoreDuplicateIPError(podLister listers.PodLister, pod *corev1.Pod, nadNetworkPersisted bool) bool {
+	// If PreconfiguredUDNAddressesEnabled is disabled, always ignore duplicate IP errors
+	if !util.IsPreconfiguredUDNAddressesEnabled() {
+		return true
+	}
+
+	// Always ignore if network annotation already persisted on pod
+	if nadNetworkPersisted {
+		return true
+	}
+
+	// For KubeVirt live migratable pods, also ignore during migration scenarios
+	// where multiple pods are temporarily allowed to share IPs during migration
+	if kubevirt.IsPodOwnedByVirtualMachine(pod) {
+		migrationStatus, err := kubevirt.DiscoverLiveMigrationStatus(podLister, pod)
+		if err == nil &&
+			migrationStatus != nil &&
+			migrationStatus.State != kubevirt.LiveMigrationFailed {
+			return true
+		}
+	}
+
+	return false
 }

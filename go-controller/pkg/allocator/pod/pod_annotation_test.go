@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"net"
 	"testing"
+	"time"
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 	"github.com/google/go-cmp/cmp"
 	ipamclaimsapi "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1"
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	"github.com/onsi/gomega"
+	"github.com/stretchr/testify/mock"
+	kubevirtv1 "kubevirt.io/api/core/v1"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -20,8 +23,10 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip/subnet"
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kubevirt"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/persistentips"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
+	v1mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/client-go/listers/core/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -89,6 +94,58 @@ func ipamClaimKey(namespace string, claimName string) string {
 	return fmt.Sprintf("%s/%s", namespace, claimName)
 }
 
+// createKubeVirtMigrationPods creates a pair of pods for testing different KubeVirt migration statuses
+func createKubeVirtMigrationPods(migrationStatus kubevirt.LiveMigrationState, vmName string) []*corev1.Pod {
+	baseTime := time.Now()
+
+	sourcePod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "vm-source-pod",
+			Namespace: "namespace",
+			Labels: map[string]string{
+				kubevirtv1.VirtualMachineNameLabel: vmName,
+			},
+			Annotations: map[string]string{
+				kubevirtv1.AllowPodBridgeNetworkLiveMigrationAnnotation: "true",
+			},
+			CreationTimestamp: metav1.NewTime(baseTime.Add(-2 * time.Minute)),
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+		},
+	}
+
+	targetPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pod", // This is the pod being tested
+			Namespace: "namespace",
+			Labels: map[string]string{
+				kubevirtv1.VirtualMachineNameLabel: vmName,
+			},
+			Annotations: map[string]string{
+				kubevirtv1.AllowPodBridgeNetworkLiveMigrationAnnotation: "true",
+			},
+			CreationTimestamp: metav1.NewTime(baseTime),
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+		},
+	}
+
+	switch migrationStatus {
+	case kubevirt.LiveMigrationTargetDomainReady:
+		targetPod.Annotations[kubevirtv1.MigrationTargetReadyTimestamp] = baseTime.Format(time.RFC3339)
+
+	case kubevirt.LiveMigrationFailed:
+		targetPod.Status.Phase = corev1.PodFailed
+
+	default:
+		// Default to InProgress
+	}
+
+	return []*corev1.Pod{sourcePod, targetPod}
+}
+
 func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 	randomMac, err := util.GenerateRandMAC()
 	if err != nil {
@@ -120,6 +177,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 		role                            string
 		podAnnotation                   *util.PodAnnotation
 		invalidNetworkAnnotation        bool
+		otherPods                       []*corev1.Pod
 		wantUpdatedPod                  bool
 		wantGeneratedMac                bool
 		wantPodAnnotation               *util.PodAnnotation
@@ -857,6 +915,144 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			wantErr:       true,
 			wantReleaseID: true,
 		},
+		{
+			// on networks with IPAM, existing pod annotation (not new pod) with already allocated IP
+			// should succeed and use the annotated IP (ignore ErrAllocated)
+			name:                            "expect static IP success with existing pod-network annotation, already allocated, IPAM",
+			ipam:                            true,
+			enablePreconfiguredUDNAddresses: true,
+			persistentIPAllocation:          true,
+			podAnnotation: &util.PodAnnotation{
+				IPs: ovntest.MustParseIPNets("192.168.0.4/24"),
+				MAC: util.IPAddrToHWAddr(ovntest.MustParseIPNets("192.168.0.4/24")[0].IP),
+			},
+			args: args{
+				reallocate: false,
+				network: &nadapi.NetworkSelectionElement{
+					IPRequest: []string{"192.168.0.4/24"},
+				},
+				ipAllocator: &ipAllocatorStub{
+					nextIPs:          ovntest.MustParseIPNets("192.168.0.3/24"),
+					allocateIPsError: ipam.ErrAllocated,
+				},
+			},
+			wantPodAnnotation: &util.PodAnnotation{
+				IPs:  ovntest.MustParseIPNets("192.168.0.4/24"),
+				MAC:  util.IPAddrToHWAddr(ovntest.MustParseIPNets("192.168.0.4/24")[0].IP),
+				Role: "",
+			},
+			role: types.NetworkRolePrimary,
+		},
+		{
+			// on networks with IPAM, static IP request with already allocated IP
+			// and no existing pod annotation (new pod) - should fail with error
+			name:                            "expect static IP error with no pod-network annotation, already allocated, IPAM",
+			ipam:                            true,
+			enablePreconfiguredUDNAddresses: true,
+			persistentIPAllocation:          true,
+			args: args{
+				reallocate: false,
+				network: &nadapi.NetworkSelectionElement{
+					IPRequest: []string{"192.168.0.4/24"},
+				},
+				ipAllocator: &ipAllocatorStub{
+					nextIPs:          ovntest.MustParseIPNets("192.168.0.3/24"),
+					allocateIPsError: ipam.ErrAllocated,
+				},
+			},
+			wantErr: true,
+			role:    types.NetworkRolePrimary,
+		},
+		{
+			// KubeVirt live migration scenario - InProgress should ignore duplicate IP error
+			name:                            "expect success, ignore duplicate IP error for KubeVirt migration InProgress",
+			ipam:                            true,
+			enablePreconfiguredUDNAddresses: true,
+			persistentIPAllocation:          true,
+			args: args{
+				reallocate: false,
+				network: &nadapi.NetworkSelectionElement{
+					IPRequest: []string{"192.168.0.4/24"},
+				},
+				ipAllocator: &ipAllocatorStub{
+					nextIPs:          ovntest.MustParseIPNets("192.168.0.3/24"),
+					allocateIPsError: ipam.ErrAllocated, // Duplicate IP error should be ignored
+				},
+			},
+			otherPods:      createKubeVirtMigrationPods(kubevirt.LiveMigrationInProgress, "test-vm"),
+			wantUpdatedPod: true,
+			wantPodAnnotation: &util.PodAnnotation{
+				IPs:      ovntest.MustParseIPNets("192.168.0.4/24"),
+				MAC:      util.IPAddrToHWAddr(ovntest.MustParseIPNets("192.168.0.4/24")[0].IP),
+				Gateways: []net.IP{ovntest.MustParseIP("192.168.0.1").To4()},
+				Routes: []util.PodRoute{
+					{
+						Dest: &net.IPNet{
+							IP:   ovntest.MustParseIP("100.65.0.0").To4(),
+							Mask: net.CIDRMask(16, 32),
+						},
+						NextHop: ovntest.MustParseIP("192.168.0.1").To4(),
+					},
+				},
+				Role: types.NetworkRolePrimary,
+			},
+			role: types.NetworkRolePrimary,
+		},
+		{
+			// KubeVirt live migration scenario - TargetDomainReady should ignore duplicate IP error
+			name:                            "expect success, ignore duplicate IP error for KubeVirt migration TargetDomainReady",
+			ipam:                            true,
+			enablePreconfiguredUDNAddresses: true,
+			persistentIPAllocation:          true,
+			args: args{
+				reallocate: false,
+				network: &nadapi.NetworkSelectionElement{
+					IPRequest: []string{"192.168.0.4/24"},
+				},
+				ipAllocator: &ipAllocatorStub{
+					nextIPs:          ovntest.MustParseIPNets("192.168.0.3/24"),
+					allocateIPsError: ipam.ErrAllocated, // Duplicate IP error should be ignored
+				},
+			},
+			otherPods:      createKubeVirtMigrationPods(kubevirt.LiveMigrationTargetDomainReady, "test-vm"),
+			wantUpdatedPod: true,
+			wantPodAnnotation: &util.PodAnnotation{
+				IPs:      ovntest.MustParseIPNets("192.168.0.4/24"),
+				MAC:      util.IPAddrToHWAddr(ovntest.MustParseIPNets("192.168.0.4/24")[0].IP),
+				Gateways: []net.IP{ovntest.MustParseIP("192.168.0.1").To4()},
+				Routes: []util.PodRoute{
+					{
+						Dest: &net.IPNet{
+							IP:   ovntest.MustParseIP("100.65.0.0").To4(),
+							Mask: net.CIDRMask(16, 32),
+						},
+						NextHop: ovntest.MustParseIP("192.168.0.1").To4(),
+					},
+				},
+				Role: types.NetworkRolePrimary,
+			},
+			role: types.NetworkRolePrimary,
+		},
+		{
+			// KubeVirt live migration scenario - Failed should NOT ignore duplicate IP error
+			name:                            "expect error, do NOT ignore duplicate IP error for KubeVirt migration Failed",
+			ipam:                            true,
+			enablePreconfiguredUDNAddresses: true,
+			persistentIPAllocation:          true,
+			args: args{
+				reallocate: false,
+				network: &nadapi.NetworkSelectionElement{
+					IPRequest: []string{"192.168.0.4/24"},
+				},
+				ipAllocator: &ipAllocatorStub{
+					nextIPs:          ovntest.MustParseIPNets("192.168.0.3/24"),
+					allocateIPsError: ipam.ErrAllocated, // Duplicate IP error should NOT be ignored
+				},
+			},
+			otherPods: createKubeVirtMigrationPods(kubevirt.LiveMigrationFailed, "test-vm"),
+			wantErr:   true, // Should fail because migration failed
+			role:      types.NetworkRolePrimary,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -958,7 +1154,20 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 				datastore: dummyDatastore,
 			}
 
+			// Create mock podLister for proper testing
+			var mockPodLister v1mocks.PodLister
+			var mockPodNamespaceLister v1mocks.PodNamespaceLister
+			mockPodLister.On("Pods", mock.AnythingOfType("string")).Return(&mockPodNamespaceLister)
+
+			// Set up mock pod lister to return additional pods if provided
+			if len(tt.otherPods) > 0 {
+				mockPodNamespaceLister.On("List", mock.Anything).Return(tt.otherPods, nil)
+			} else {
+				mockPodNamespaceLister.On("List", mock.Anything).Return([]*corev1.Pod{}, nil)
+			}
+
 			pod, podAnnotation, rollback, err := allocatePodAnnotationWithRollback(
+				&mockPodLister,
 				tt.args.ipAllocator,
 				tt.args.idAllocator,
 				tt.netInfo,
