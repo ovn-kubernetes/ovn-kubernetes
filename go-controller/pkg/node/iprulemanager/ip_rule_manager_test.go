@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/containernetworking/plugins/pkg/netlinksafe"
 	"github.com/containernetworking/plugins/pkg/ns"
 	"github.com/containernetworking/plugins/pkg/testutils"
 	"github.com/onsi/ginkgo/v2"
@@ -77,7 +78,7 @@ var _ = ginkgo.XDescribe("IP Rule Manager", func() {
 
 			gomega.Eventually(func() error {
 				return testNS.Do(func(ns.NetNS) error {
-					rules, err := netlink.RuleList(netlink.FAMILY_ALL)
+					rules, err := netlinksafe.RuleList(netlink.FAMILY_ALL)
 					if err != nil {
 						return err
 					}
@@ -98,7 +99,7 @@ var _ = ginkgo.XDescribe("IP Rule Manager", func() {
 
 			gomega.Eventually(func() error {
 				return testNS.Do(func(ns.NetNS) error {
-					rules, err := netlink.RuleList(netlink.FAMILY_ALL)
+					rules, err := netlinksafe.RuleList(netlink.FAMILY_ALL)
 					if err != nil {
 						return err
 					}
@@ -116,7 +117,7 @@ var _ = ginkgo.XDescribe("IP Rule Manager", func() {
 			// check that rule is restored
 			gomega.Eventually(func() error {
 				return testNS.Do(func(ns.NetNS) error {
-					rules, err := netlink.RuleList(netlink.FAMILY_ALL)
+					rules, err := netlinksafe.RuleList(netlink.FAMILY_ALL)
 					if err != nil {
 						return err
 					}
@@ -142,7 +143,7 @@ var _ = ginkgo.XDescribe("IP Rule Manager", func() {
 
 			gomega.Eventually(func() error {
 				return testNS.Do(func(ns.NetNS) error {
-					rules, err := netlink.RuleList(netlink.FAMILY_ALL)
+					rules, err := netlinksafe.RuleList(netlink.FAMILY_ALL)
 					if err != nil {
 						return err
 					}
@@ -163,7 +164,7 @@ var _ = ginkgo.XDescribe("IP Rule Manager", func() {
 
 			gomega.Eventually(func() error {
 				return testNS.Do(func(ns.NetNS) error {
-					rules, err := netlink.RuleList(netlink.FAMILY_ALL)
+					rules, err := netlinksafe.RuleList(netlink.FAMILY_ALL)
 					if err != nil {
 						return err
 					}
@@ -181,7 +182,7 @@ var _ = ginkgo.XDescribe("IP Rule Manager", func() {
 
 			gomega.Eventually(func() error {
 				return testNS.Do(func(ns.NetNS) error {
-					rules, err := netlink.RuleList(netlink.FAMILY_ALL)
+					rules, err := netlinksafe.RuleList(netlink.FAMILY_ALL)
 					if err != nil {
 						return err
 					}
@@ -218,7 +219,7 @@ var _ = ginkgo.XDescribe("IP Rule Manager", func() {
 
 			gomega.Eventually(func() error {
 				return testNS.Do(func(ns.NetNS) error {
-					rules, err := netlink.RuleList(netlink.FAMILY_ALL)
+					rules, err := netlinksafe.RuleList(netlink.FAMILY_ALL)
 					if err != nil {
 						return err
 					}

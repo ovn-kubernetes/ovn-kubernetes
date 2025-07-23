@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/containernetworking/plugins/pkg/netlinksafe"
 	"github.com/mdlayher/arp"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
@@ -48,6 +49,7 @@ type NetLinkOps interface {
 	RouteAdd(route *netlink.Route) error
 	RouteReplace(route *netlink.Route) error
 	RouteListFiltered(family int, filter *netlink.Route, filterMask uint64) ([]netlink.Route, error)
+	RuleList(family int) ([]netlink.Rule, error)
 	RuleListFiltered(family int, filter *netlink.Rule, filterMask uint64) ([]netlink.Rule, error)
 	NeighAdd(neigh *netlink.Neigh) error
 	NeighDel(neigh *netlink.Neigh) error
@@ -79,11 +81,11 @@ func GetNetLinkOps() NetLinkOps {
 }
 
 func (defaultNetLinkOps) LinkList() ([]netlink.Link, error) {
-	return netlink.LinkList()
+	return netlinksafe.LinkList()
 }
 
 func (defaultNetLinkOps) LinkByName(ifaceName string) (netlink.Link, error) {
-	return netlink.LinkByName(ifaceName)
+	return netlinksafe.LinkByName(ifaceName)
 }
 
 func (defaultNetLinkOps) LinkByIndex(index int) (netlink.Link, error) {
@@ -139,7 +141,7 @@ func (defaultNetLinkOps) IsLinkNotFoundError(err error) bool {
 }
 
 func (defaultNetLinkOps) AddrList(link netlink.Link, family int) ([]netlink.Addr, error) {
-	return netlink.AddrList(link, family)
+	return netlinksafe.AddrList(link, family)
 }
 
 func (defaultNetLinkOps) AddrDel(link netlink.Link, addr *netlink.Addr) error {
@@ -151,7 +153,7 @@ func (defaultNetLinkOps) AddrAdd(link netlink.Link, addr *netlink.Addr) error {
 }
 
 func (defaultNetLinkOps) RouteList(link netlink.Link, family int) ([]netlink.Route, error) {
-	return netlink.RouteList(link, family)
+	return netlinksafe.RouteList(link, family)
 }
 
 func (defaultNetLinkOps) RouteDel(route *netlink.Route) error {
@@ -168,6 +170,10 @@ func (defaultNetLinkOps) RouteReplace(route *netlink.Route) error {
 
 func (defaultNetLinkOps) RouteListFiltered(family int, filter *netlink.Route, filterMask uint64) ([]netlink.Route, error) {
 	return netlink.RouteListFiltered(family, filter, filterMask)
+}
+
+func (defaultNetLinkOps) RuleList(family int) ([]netlink.Rule, error) {
+	return netlinksafe.RuleList(family)
 }
 
 func (defaultNetLinkOps) RuleListFiltered(family int, filter *netlink.Rule, filterMask uint64) ([]netlink.Rule, error) {
@@ -187,7 +193,7 @@ func (defaultNetLinkOps) NeighList(linkIndex, family int) ([]netlink.Neigh, erro
 }
 
 func (defaultNetLinkOps) ConntrackDeleteFilters(table netlink.ConntrackTableType, family netlink.InetFamily, filters ...netlink.CustomConntrackFilter) (uint, error) {
-	return netlink.ConntrackDeleteFilters(table, family, filters...)
+	return netlinksafe.ConntrackDeleteFilters(table, family, filters...)
 }
 
 func (defaultNetLinkOps) RouteSubscribeWithOptions(ch chan<- netlink.RouteUpdate, done <-chan struct{}, options netlink.RouteSubscribeOptions) error {

@@ -9,6 +9,7 @@ import (
 
 	"k8s.io/klog/v2"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
@@ -145,8 +146,7 @@ func (rm *Controller) reconcile() error {
 	} else if rm.v6 {
 		family = netlink.FAMILY_V6
 	}
-
-	rulesFound, err := netlink.RuleList(family)
+	rulesFound, err := util.GetNetLinkOps().RuleList(family)
 	if err != nil {
 		return err
 	}
