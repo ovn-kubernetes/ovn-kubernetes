@@ -32,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
+	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
 	"k8s.io/kubernetes/test/e2e/framework/debug"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
@@ -1137,6 +1138,12 @@ func isCIDRIPFamilySupported(cs kubernetes.Interface, cidr string) bool {
 	return (isIPv4Supported(cs) && !isIPv6) || (isIPv6Supported(cs) && isIPv6)
 }
 
+func isIPFamilySupported(cs clientset.Interface, cidr string) bool {
+	ginkgo.GinkgoHelper()
+	isIPv6 := utilnet.IsIPv6String(cidr)
+	return (isIPv4Supported(cs) && !isIPv6) || (isIPv6Supported(cs) && isIPv6)
+}
+
 func isIPv4Supported(cs kubernetes.Interface) bool {
 	v4, _ := getSupportedIPFamilies(cs)
 	return v4
@@ -1145,6 +1152,17 @@ func isIPv4Supported(cs kubernetes.Interface) bool {
 func isIPv6Supported(cs kubernetes.Interface) bool {
 	_, v6 := getSupportedIPFamilies(cs)
 	return v6
+}
+
+func filterIPs(cs clientset.Interface, cidrs ...string) []string {
+	var supportedCIDRs []string
+	for _, cidr := range cidrs {
+		if !isIPFamilySupported(cs, cidr) {
+			continue
+		}
+		supportedCIDRs = append(supportedCIDRs, cidr)
+	}
+	return supportedCIDRs
 }
 
 func getSupportedIPFamilies(cs kubernetes.Interface) (bool, bool) {
@@ -1181,6 +1199,12 @@ func isNetworkSegmentationEnabled() bool {
 func isLocalGWModeEnabled() bool {
 	val, present := os.LookupEnv("OVN_GATEWAY_MODE")
 	return present && val == "local"
+}
+
+func isPreConfiguredUdnAddressesEnabled() bool {
+	ovnKubeNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+	val := getTemplateContainerEnv(ovnKubeNamespace, "daemonset/ovnkube-node", getNodeContainerName(), "OVN_PRE_CONF_UDN_ADDR_ENABLE")
+	return val == "true"
 }
 
 func singleNodePerZone() bool {

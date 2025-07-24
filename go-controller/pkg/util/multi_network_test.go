@@ -862,6 +862,7 @@ func TestGetPodNADToNetworkMappingWithActiveNetwork(t *testing.T) {
 		expectedError                    error
 		expectedIsAttachmentRequested    bool
 		expectedNetworkSelectionElements map[string]*nadv1.NetworkSelectionElement
+		enablePreconfiguredUDNAddresses  bool
 	}
 
 	tests := []testConfig{
@@ -1011,10 +1012,143 @@ func TestGetPodNADToNetworkMappingWithActiveNetwork(t *testing.T) {
 				},
 			},
 		},
+		{
+			desc: "the network configuration for a primary layer2 UDN receive pod requesting IP, MAC and IPAMClaimRef on default network annotation for it",
+			inputNetConf: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: networkName},
+				Topology: ovntypes.Layer2Topology,
+				NADName:  GetNADName(namespaceName, attachmentName),
+				Role:     ovntypes.NetworkRolePrimary,
+			},
+			inputPrimaryUDNConfig: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: networkName},
+				Topology: ovntypes.Layer2Topology,
+				NADName:  GetNADName(namespaceName, attachmentName),
+				Role:     ovntypes.NetworkRolePrimary,
+			},
+			inputPodAnnotations: map[string]string{
+				nadv1.NetworkAttachmentAnnot: GetNADName(namespaceName, "another-network"),
+				DefNetworkAnnotation:         `[{"namespace": "ovn-kubernetes", "name": "default", "ips": ["192.168.0.3/24", "fda6::3/48"], "mac": "aa:bb:cc:dd:ee:ff", "ipam-claim-reference": "my-ipam-claim"}]`,
+			},
+			expectedIsAttachmentRequested: true,
+			expectedNetworkSelectionElements: map[string]*nadv1.NetworkSelectionElement{
+				"ns1/attachment1": {
+					Name:               "attachment1",
+					Namespace:          "ns1",
+					IPRequest:          []string{"192.168.0.3/24", "fda6::3/48"},
+					MacRequest:         "aa:bb:cc:dd:ee:ff",
+					IPAMClaimReference: "my-ipam-claim",
+				},
+			},
+			enablePreconfiguredUDNAddresses: true,
+		},
+		{
+			desc: "the network configuration for a primary layer2 UDN receive pod requesting IP and MAC on default network annotation for it, but with unexpected namespace",
+			inputNetConf: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: networkName},
+				Topology: ovntypes.Layer2Topology,
+				NADName:  GetNADName(namespaceName, attachmentName),
+				Role:     ovntypes.NetworkRolePrimary,
+			},
+			inputPrimaryUDNConfig: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: networkName},
+				Topology: ovntypes.Layer2Topology,
+				NADName:  GetNADName(namespaceName, attachmentName),
+				Role:     ovntypes.NetworkRolePrimary,
+			},
+			inputPodAnnotations: map[string]string{
+				DefNetworkAnnotation: `[{"namespace": "other-namespace", "name": "default", "ips": ["192.168.0.3/24", "fda6::3/48"], "mac": "aa:bb:cc:dd:ee:ff"}]`,
+			},
+			enablePreconfiguredUDNAddresses: true,
+			expectedError:                   fmt.Errorf(`unexpected default NSE namespace "other-namespace", expected "ovn-kubernetes"`),
+		},
+		{
+			desc: "the network configuration for a primary layer2 UDN receive pod requesting IP and MAC on default network annotation for it, but with unexpected name",
+			inputNetConf: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: networkName},
+				Topology: ovntypes.Layer2Topology,
+				NADName:  GetNADName(namespaceName, attachmentName),
+				Role:     ovntypes.NetworkRolePrimary,
+			},
+			inputPrimaryUDNConfig: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: networkName},
+				Topology: ovntypes.Layer2Topology,
+				NADName:  GetNADName(namespaceName, attachmentName),
+				Role:     ovntypes.NetworkRolePrimary,
+			},
+			inputPodAnnotations: map[string]string{
+				DefNetworkAnnotation: `[{"namespace": "ovn-kubernetes", "name": "unexpected-name", "ips": ["192.168.0.3/24", "fda6::3/48"], "mac": "aa:bb:cc:dd:ee:ff"}]`,
+			},
+			enablePreconfiguredUDNAddresses: true,
+			expectedError:                   fmt.Errorf(`unexpected default NSE name "unexpected-name", expected "default"`),
+		},
+
+		{
+			desc: "default-network ips and mac is is ignored for Layer3 topology",
+			inputNetConf: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: networkName},
+				Topology: ovntypes.Layer3Topology,
+				NADName:  GetNADName(namespaceName, attachmentName),
+				Role:     ovntypes.NetworkRolePrimary,
+			},
+			inputPrimaryUDNConfig: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: networkName},
+				Topology: ovntypes.Layer3Topology,
+				NADName:  GetNADName(namespaceName, attachmentName),
+				Role:     ovntypes.NetworkRolePrimary,
+			},
+			inputPodAnnotations: map[string]string{
+				nadv1.NetworkAttachmentAnnot: GetNADName(namespaceName, "another-network"),
+				DefNetworkAnnotation:         `[{"namespace": "ovn-kubernetes", "name": "default", "ips": ["192.168.0.3/24", "fda6::3/48"], "mac": "aa:bb:cc:dd:ee:ff"}]`,
+			},
+			expectedIsAttachmentRequested: true,
+			expectedNetworkSelectionElements: map[string]*nadv1.NetworkSelectionElement{
+				"ns1/attachment1": {
+					Name:       "attachment1",
+					Namespace:  "ns1",
+					IPRequest:  nil,
+					MacRequest: "",
+				},
+			},
+			enablePreconfiguredUDNAddresses: true,
+		},
+		{
+			desc: "default-network with bad format",
+			inputNetConf: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: networkName},
+				Topology: ovntypes.Layer2Topology,
+				NADName:  GetNADName(namespaceName, attachmentName),
+				Role:     ovntypes.NetworkRolePrimary,
+			},
+			inputPrimaryUDNConfig: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: networkName},
+				Topology: ovntypes.Layer2Topology,
+				NADName:  GetNADName(namespaceName, attachmentName),
+				Role:     ovntypes.NetworkRolePrimary,
+			},
+			inputPodAnnotations: map[string]string{
+				nadv1.NetworkAttachmentAnnot: GetNADName(namespaceName, "another-network"),
+				DefNetworkAnnotation:         `[{"foo}`,
+			},
+			enablePreconfiguredUDNAddresses: true,
+			expectedError:                   fmt.Errorf(`failed getting default-network annotation for pod "/test-pod": %w`, fmt.Errorf(`GetK8sPodDefaultNetwork: failed to parse CRD object: parsePodNetworkAnnotation: failed to parse pod Network Attachment Selection Annotation JSON format: unexpected end of JSON input`)),
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.desc, func(t *testing.T) {
 			g := gomega.NewWithT(t)
+
+			t.Cleanup(func() {
+				_ = config.PrepareTestConfig()
+			})
+
+			// Set custom network config based on test requirements
+			config.OVNKubernetesFeature.EnablePreconfiguredUDNAddresses = test.enablePreconfiguredUDNAddresses
+			if test.enablePreconfiguredUDNAddresses {
+				config.OVNKubernetesFeature.EnableMultiNetwork = true
+				config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+			}
+
 			netInfo, err := NewNetInfo(test.inputNetConf)
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 			if test.inputNetConf.NADName != "" {
@@ -1048,11 +1182,14 @@ func TestGetPodNADToNetworkMappingWithActiveNetwork(t *testing.T) {
 				primaryUDNNetInfo,
 			)
 
-			if err != nil {
+			if test.expectedError != nil {
+				g.Expect(err).To(gomega.HaveOccurred(), "unexpected success operation, epecting error")
 				g.Expect(err).To(gomega.MatchError(test.expectedError))
+			} else {
+				g.Expect(err).ToNot(gomega.HaveOccurred())
+				g.Expect(isAttachmentRequested).To(gomega.Equal(test.expectedIsAttachmentRequested))
+				g.Expect(networkSelectionElements).To(gomega.Equal(test.expectedNetworkSelectionElements))
 			}
-			g.Expect(isAttachmentRequested).To(gomega.Equal(test.expectedIsAttachmentRequested))
-			g.Expect(networkSelectionElements).To(gomega.Equal(test.expectedNetworkSelectionElements))
 		})
 	}
 }
@@ -1261,10 +1398,10 @@ func TestNewNetInfo(t *testing.T) {
 			config.IPv6Mode = test.ipv6Cluster
 			g := gomega.NewWithT(t)
 			_, err := NewNetInfo(inputNetConf)
-			if test.expectedError == nil {
-				g.Expect(err).ToNot(gomega.HaveOccurred())
+			if test.expectedError != nil {
+				g.Expect(err).To(gomega.MatchError(test.expectedError), "should return an error for invalid network configuration")
 			} else {
-				g.Expect(err).To(gomega.MatchError(test.expectedError.Error()))
+				g.Expect(err).NotTo(gomega.HaveOccurred(), "should not return an error for valid network configuration")
 			}
 		})
 	}

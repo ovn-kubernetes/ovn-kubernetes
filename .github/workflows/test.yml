@@ -513,6 +513,7 @@ jobs:
       TRAFFIC_FLOW_TESTS: "${{ matrix.traffic-flow-tests }}"
       ENABLE_ROUTE_ADVERTISEMENTS: "${{ matrix.routeadvertisements != '' }}"
       ADVERTISE_DEFAULT_NETWORK:  "${{ matrix.routeadvertisements == 'advertise-default' }}"
+      ENABLE_PRE_CONF_UDN_ADDR: "${{ ( matrix.target == 'network-segmentation' || matrix.target == 'kv-live-migration' ) && matrix.ic == 'ic-single-node-zones' }}"
     steps:
 
     - name: Install VRF kernel module
