@@ -16,8 +16,10 @@ import (
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -238,7 +240,7 @@ func (zic *ZoneInterconnectHandler) AddRemoteZoneNode(node *corev1.Node) error {
 	// only primary networks have cluster router connected to join switch+GR
 	// used for adding routes to GR
 	if !zic.IsSecondary() || (util.IsNetworkSegmentationSupportEnabled() && zic.IsPrimaryNetwork()) {
-		nodeGRPIPs, err = util.ParseNodeGatewayRouterJoinAddrs(node, zic.GetNetworkName())
+		nodeGRPIPs, err = udn.GetGWRouterIPs(node, zic.GetNetInfo())
 		if err != nil {
 			if util.IsAnnotationNotSetError(err) {
 				// FIXME(tssurya): This is present for backwards compatibility
@@ -347,7 +349,7 @@ func (zic *ZoneInterconnectHandler) AddTransitSwitchConfig(sw *nbdb.LogicalSwitc
 	return nil
 }
 
-func (zic *ZoneInterconnectHandler) AddTransitPortConfig(remote bool, podAnnotation *util.PodAnnotation, port *nbdb.LogicalSwitchPort) error {
+func (zic *ZoneInterconnectHandler) AddTransitPortConfig(remote bool, podAnnotation *podannotation.PodAnnotation, port *nbdb.LogicalSwitchPort) error {
 	if zic.TopologyType() != types.Layer2Topology {
 		return nil
 	}
@@ -653,7 +655,7 @@ func (zic *ZoneInterconnectHandler) deleteLocalNodeStaticRoutes(node *corev1.Nod
 	}
 
 	// Clear the routes connecting to the GW Router for the default network
-	nodeGRPIPs, err := util.ParseNodeGatewayRouterJoinAddrs(node, zic.GetNetworkName())
+	nodeGRPIPs, err := udn.GetGWRouterIPs(node, zic.GetNetInfo())
 	if err != nil {
 		if util.IsAnnotationNotSetError(err) {
 			// FIXME(tssurya): This is present for backwards compatibility

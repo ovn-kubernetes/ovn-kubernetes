@@ -266,7 +266,7 @@ func newNodeWithNad(nad *nadapi.NetworkAttachmentDefinition, networkName, networ
 		n.Annotations["k8s.ovn.org/node-mgmt-port-mac-addresses"] = fmt.Sprintf("{\"default\":\"96:8f:e8:25:a2:e5\",\"%s\":\"d6:bc:85:32:30:fb\"}", networkName)
 		n.Annotations["k8s.ovn.org/node-chassis-id"] = "abdcef"
 		n.Annotations["k8s.ovn.org/l3-gateway-config"] = "{\"default\":{\"mac-address\":\"52:54:00:e2:ed:d0\",\"ip-addresses\":[\"10.1.1.10/24\"],\"ip-address\":\"10.1.1.10/24\",\"next-hops\":[\"10.1.1.1\"],\"next-hop\":\"10.1.1.1\"}}"
-		n.Annotations["k8s.ovn.org/node-gateway-router-lrp-ifaddrs"] = fmt.Sprintf("{\"default\":{\"ipv4\":\"100.64.0.4/16\"},\"%s\":{\"ipv4\":\"100.65.0.4/16\"}}", networkName)
+		n.Annotations[util.OvnNodeID] = "4"
 	}
 	return n
 }
