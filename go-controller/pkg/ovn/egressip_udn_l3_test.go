@@ -1338,19 +1338,6 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						Name:     ovntypes.GWRouterToJoinSwitchPrefix + ovntypes.GWRouterPrefix + networkName1_ + node1.Name,
 						Networks: []string{nodeLogicalRouterIfAddrV4},
 					},
-					&nbdb.NAT{
-						UUID: networkName1_ + node1Name + "-masqueradeNAT-UUID",
-						ExternalIDs: map[string]string{
-							"k8s.ovn.org/topology": "layer3",
-							"k8s.ovn.org/network":  networkName1,
-						},
-						ExternalIP:  "169.254.169.14",
-						LogicalIP:   node1UDNSubnet.String(),
-						LogicalPort: ptr.To("rtos-" + networkName1_ + node1Name),
-						Match:       "eth.dst == 0a:58:14:80:00:02",
-						Type:        nbdb.NATTypeSNAT,
-						Options:     map[string]string{"stateless": "false"},
-					},
 					&nbdb.LogicalRouter{
 						Name:        netInfo.GetNetworkScopedClusterRouterName(),
 						UUID:        netInfo.GetNetworkScopedClusterRouterName() + "-UUID",
@@ -1359,7 +1346,6 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 							fmt.Sprintf("%s-no-reroute-reply-traffic", netInfo.GetNetworkName()),
 							getReRoutePolicyUUID(eipNamespace2, podName2, IPFamilyValueV4, netInfo.GetNetworkName())},
 						StaticRoutes: []string{fmt.Sprintf("%s-reroute-static-route-UUID", netInfo.GetNetworkName())},
-						Nat:          []string{networkName1_ + node1Name + "-masqueradeNAT-UUID"},
 					},
 					&nbdb.LogicalRouter{
 						UUID:        netInfo.GetNetworkScopedGWRouterName(node1.Name) + "-UUID",
@@ -1527,19 +1513,6 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						Name:     ovntypes.GWRouterToJoinSwitchPrefix + ovntypes.GWRouterPrefix + networkName1_ + node1.Name,
 						Networks: []string{nodeLogicalRouterIfAddrV4},
 					},
-					&nbdb.NAT{
-						UUID: networkName1_ + node1Name + "-masqueradeNAT-UUID",
-						ExternalIDs: map[string]string{
-							"k8s.ovn.org/topology": "layer3",
-							"k8s.ovn.org/network":  networkName1,
-						},
-						ExternalIP:  "169.254.169.14",
-						LogicalIP:   node1UDNSubnet.String(),
-						LogicalPort: ptr.To("rtos-" + networkName1_ + node1Name),
-						Match:       "eth.dst == 0a:58:14:80:00:02",
-						Type:        nbdb.NATTypeSNAT,
-						Options:     map[string]string{"stateless": "false"},
-					},
 					&nbdb.LogicalRouter{
 						Name:        netInfo.GetNetworkScopedClusterRouterName(),
 						UUID:        netInfo.GetNetworkScopedClusterRouterName() + "-UUID",
@@ -1548,7 +1521,6 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 							fmt.Sprintf("%s-no-reroute-reply-traffic", netInfo.GetNetworkName()),
 						},
 						StaticRoutes: []string{fmt.Sprintf("%s-reroute-static-route-UUID", netInfo.GetNetworkName())},
-						Nat:          []string{networkName1_ + node1Name + "-masqueradeNAT-UUID"},
 					},
 					&nbdb.LogicalRouter{
 						UUID:        netInfo.GetNetworkScopedGWRouterName(node1.Name) + "-UUID",
@@ -2688,19 +2660,6 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 						Name:     ovntypes.GWRouterToJoinSwitchPrefix + ovntypes.GWRouterPrefix + networkName1_ + node1.Name,
 						Networks: []string{nodeLogicalRouterIfAddrV4},
 					},
-					&nbdb.NAT{
-						UUID: networkName1_ + node1Name + "-masqueradeNAT-UUID",
-						ExternalIDs: map[string]string{
-							"k8s.ovn.org/topology": "layer3",
-							"k8s.ovn.org/network":  networkName1,
-						},
-						ExternalIP:  "169.254.169.14",
-						LogicalIP:   node1UDNSubnet.String(),
-						LogicalPort: ptr.To("rtos-" + networkName1_ + node1Name),
-						Match:       "eth.dst == 0a:58:14:80:00:02",
-						Type:        nbdb.NATTypeSNAT,
-						Options:     map[string]string{"stateless": "false"},
-					},
 					&nbdb.LogicalRouter{
 						Name:        netInfo.GetNetworkScopedClusterRouterName(),
 						UUID:        netInfo.GetNetworkScopedClusterRouterName() + "-UUID",
@@ -2709,7 +2668,6 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 							fmt.Sprintf("%s-no-reroute-reply-traffic", netInfo.GetNetworkName()),
 							getReRoutePolicyUUID(eipNamespace2, podName2, IPFamilyValueV4, netInfo.GetNetworkName())},
 						StaticRoutes: []string{fmt.Sprintf("%s-reroute-static-route-UUID", netInfo.GetNetworkName())},
-						Nat:          []string{networkName1_ + node1Name + "-masqueradeNAT-UUID"},
 					},
 					&nbdb.LogicalRouter{
 						UUID:        netInfo.GetNetworkScopedGWRouterName(node1.Name) + "-UUID",

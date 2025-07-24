@@ -11,6 +11,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/pod"
@@ -297,6 +298,10 @@ type SecondaryLayer2NetworkController struct {
 
 	// reconcile the virtual machine default gateway sending GARPs and RAs
 	defaultGatewayReconciler *kubevirt.DefaultGatewayReconciler
+
+	// nftSNATNodes is used to track which node have switched to the nft-based SNAT.
+	// Once a node gets into this set, there is no way back.
+	nftSNATNodes sets.Set[string]
 }
 
 // NewSecondaryLayer2NetworkController create a new OVN controller for the given secondary layer2 nad
@@ -347,6 +352,7 @@ func NewSecondaryLayer2NetworkController(
 		syncZoneICFailed: sync.Map{},
 		gatewayManagers:  sync.Map{},
 		eIPController:    eIPController,
+		nftSNATNodes:     sets.New[string](),
 	}
 
 	if config.OVNKubernetesFeature.EnableInterconnect {
@@ -567,6 +573,15 @@ func (oc *SecondaryLayer2NetworkController) newRetryFramework(
 	)
 }
 
+func (oc *SecondaryLayer2NetworkController) syncNodes(nodes []interface{}) error {
+	var err error
+	if err = oc.BaseSecondaryLayer2NetworkController.syncNodes(nodes); err != nil {
+		return err
+	}
+	oc.nftSNATNodes, err = oc.findNodesWithoutEgressSNAT(nodes)
+	return err
+}
+
 func (oc *SecondaryLayer2NetworkController) addUpdateLocalNodeEvent(node *corev1.Node, nSyncs *nodeSyncs) error {
 	var errs []error
 
@@ -587,9 +602,24 @@ func (oc *SecondaryLayer2NetworkController) addUpdateLocalNodeEvent(node *corev1
 					return err
 				}
 				isUDNAdvertised := util.IsPodNetworkAdvertisedAtNode(oc, node.Name)
-				err = oc.addOrUpdateUDNClusterSubnetEgressSNAT(gwConfig.hostSubnets, gwManager.gwRouterName, isUDNAdvertised)
-				if err != nil {
-					return err
+				if !oc.nftSNATNodes.Has(node.Name) {
+					// this node had egress SNAT configured on startup, wait until it has no more pods
+					// to switch to nftables egress SNAT
+					hasPodsOnNetwork, err := oc.hasPodsOnNetwork(node.Name)
+					if err != nil {
+						return fmt.Errorf("failed to check for conditional snats: %w", err)
+					}
+					if hasPodsOnNetwork {
+						err = oc.addOrUpdateUDNClusterSubnetEgressSNAT(gwConfig.hostSubnets, gwManager.gwRouterName, isUDNAdvertised)
+						if err != nil {
+							return err
+						}
+					} else {
+						if err = oc.deleteUDNEgressSNAT(node.Name); err != nil {
+							return err
+						}
+						oc.nftSNATNodes.Insert(node.Name)
+					}
 				}
 				if !isUDNAdvertised {
 					if util.IsRouteAdvertisementsEnabled() {

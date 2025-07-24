@@ -213,6 +213,7 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
 		config.OVNKubernetesFeature.EnableMultiNetworkPolicy = true
+		config.Gateway.V4MasqueradeSubnet = "169.254.0.0/17"
 
 		app = cli.NewApp()
 		app.Name = "test"
@@ -260,6 +261,7 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 			netconf,
 		)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		nad.Annotations = map[string]string{ovntypes.OvnNetworkIDAnnotation: "2"}
 
 		netconf.NADName = util.GetNADName(namespaceName2, nadName)
 		nad2, err = newNetworkAttachmentDefinition(
