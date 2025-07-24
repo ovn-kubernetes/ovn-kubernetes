@@ -34,10 +34,9 @@ const (
 
 var _ = ginkgo.Describe("Cluster Manager", func() {
 	var (
-		app      *cli.App
-		f        *factory.WatchFactory
-		stopChan chan struct{}
-		wg       *sync.WaitGroup
+		app *cli.App
+		f   *factory.WatchFactory
+		wg  *sync.WaitGroup
 	)
 
 	const (
@@ -54,12 +53,10 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 		app = cli.NewApp()
 		app.Name = "test"
 		app.Flags = config.Flags
-		stopChan = make(chan struct{})
 		wg = &sync.WaitGroup{}
 	})
 
 	ginkgo.AfterEach(func() {
-		close(stopChan)
 		if f != nil {
 			f.Shutdown()
 		}
@@ -1436,4 +1433,102 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 		})
 	})
 
+	ginkgo.Context("starting the cluster manager", func() {
+		const networkName = "default"
+
+		var fakeClient *util.OVNClusterManagerClientset
+
+		ginkgo.BeforeEach(func() {
+			fakeClient = util.GetOVNClientset().GetClusterManagerClientset()
+		})
+
+		ginkgo.When("the required features are not enabled", func() {
+			ginkgo.It("does *not* automatically provision a NAD for the default network", func() {
+				app.Action = func(ctx *cli.Context) error {
+					_, err := config.InitConfig(ctx, nil, nil)
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+					f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+					clusterMngr, err := clusterManager(fakeClient, f)
+					gomega.Expect(clusterMngr).NotTo(gomega.BeNil())
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					gomega.Expect(clusterMngr.Start(ctx.Context)).To(gomega.Succeed())
+
+					_, err = fakeClient.NetworkAttchDefClient.
+						K8sCniCncfIoV1().
+						NetworkAttachmentDefinitions(config.Kubernetes.OVNConfigNamespace).
+						Get(
+							context.Background(),
+							networkName,
+							metav1.GetOptions{},
+						)
+					gomega.Expect(err).To(
+						gomega.MatchError("network-attachment-definitions.k8s.cni.cncf.io \"default\" not found"),
+					)
+
+					return nil
+				}
+				gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed())
+			})
+		})
+
+		ginkgo.When("the multi-network, network-segmentation, and preconfigured-udn-addresses features are enabled", func() {
+			ginkgo.BeforeEach(func() {
+				config.OVNKubernetesFeature.EnableMultiNetwork = true
+				config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+				config.OVNKubernetesFeature.EnablePreconfiguredUDNAddresses = true
+			})
+
+			ginkgo.It("automatically provisions a NAD for the default network", func() {
+				app.Action = func(ctx *cli.Context) error {
+					_, err := config.InitConfig(ctx, nil, nil)
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+					f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+					clusterMngr, err := clusterManager(fakeClient, f)
+					gomega.Expect(clusterMngr).NotTo(gomega.BeNil())
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+					c, cancel := context.WithCancel(ctx.Context)
+					defer cancel()
+					gomega.Expect(clusterMngr.Start(c)).To(gomega.Succeed())
+					defer clusterMngr.Stop()
+
+					nad, err := fakeClient.NetworkAttchDefClient.
+						K8sCniCncfIoV1().
+						NetworkAttachmentDefinitions(config.Kubernetes.OVNConfigNamespace).
+						Get(
+							context.Background(),
+							networkName,
+							metav1.GetOptions{},
+						)
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+					const expectedNADContents = `{"cniVersion": "0.4.0", "name": "ovn-kubernetes", "type": "ovn-k8s-cni-overlay"}`
+					gomega.Expect(nad.Spec.Config).To(gomega.Equal(expectedNADContents))
+
+					return nil
+				}
+				gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed())
+			})
+		})
+	})
+
 })
+
+func clusterManager(client *util.OVNClusterManagerClientset, f *factory.WatchFactory) (*ClusterManager, error) {
+	if err := f.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start the CM watch factory: %w", err)
+	}
+
+	clusterMngr, err := NewClusterManager(client, f, "identity", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to start the CM watch factory: %w", err)
+	}
+
+	return clusterMngr, nil
+}

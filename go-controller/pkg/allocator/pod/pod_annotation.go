@@ -15,6 +15,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip/subnet"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kubevirt"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/persistentips"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -98,6 +99,7 @@ func allocatePodAnnotation(
 	allocateToPodWithRollback := func(pod *corev1.Pod) (*corev1.Pod, func(), error) {
 		var rollback func()
 		pod, podAnnotation, rollback, err = allocatePodAnnotationWithRollback(
+			podLister,
 			ipAllocator,
 			idAllocator,
 			netInfo,
@@ -180,6 +182,7 @@ func allocatePodAnnotationWithTunnelID(
 	allocateToPodWithRollback := func(pod *corev1.Pod) (*corev1.Pod, func(), error) {
 		var rollback func()
 		pod, podAnnotation, rollback, err = allocatePodAnnotationWithRollback(
+			podLister,
 			ipAllocator,
 			idAllocator,
 			netInfo,
@@ -207,6 +210,28 @@ func allocatePodAnnotationWithTunnelID(
 	return pod, podAnnotation, nil
 }
 
+// validateStaticIPRequest checks if a static IP request can be honored when IPAM is enabled for the given network.
+func validateStaticIPRequest(netInfo util.NetInfo, podDesc string) error {
+	// Allow static IPs with IPAM only for primary networks with layer2 topology when EnablePreconfiguredUDNAddresses is enabled
+	// Feature gate integration: EnablePreconfiguredUDNAddresses controls static IP allocation with IPAM
+	if !util.IsPreconfiguredUDNAddressesEnabled() {
+		// Feature is disabled, reject static IPs with IPAM
+		return fmt.Errorf("cannot allocate a static IP request with IPAM for pod %s (custom network configuration disabled)", podDesc)
+	}
+	if !netInfo.IsPrimaryNetwork() {
+		// Static IP requests with IPAM are only supported on primary networks
+		return fmt.Errorf("cannot allocate a static IP request with IPAM for pod %s: only supported on primary networks", podDesc)
+	}
+	if netInfo.TopologyType() != types.Layer2Topology {
+		// Static IP requests with IPAM are only supported on layer2 topology networks.
+		// On other topologies, we cannot distinguish between already allocated IPs and
+		// IPs excluded from allocation, making it impossible to safely honor static IP
+		// requests when IPAM is enabled.
+		return fmt.Errorf("cannot allocate a static IP request with IPAM for pod %s: layer2 topology is required, but network has topology %q", podDesc, netInfo.TopologyType())
+	}
+	return nil
+}
+
 // allocatePodAnnotationWithRollback allocates the PodAnnotation which includes
 // IPs, a mac address, routes, gateways and an ID. Returns the allocated pod
 // annotation and a pod with that annotation set. Returns a nil pod and the existing
@@ -225,6 +250,7 @@ func allocatePodAnnotationWithTunnelID(
 // implementations. Use an inlined implementation if you want to extract
 // information from it as a side-effect.
 func allocatePodAnnotationWithRollback(
+	podLister listers.PodLister,
 	ipAllocator subnet.NamedAllocator,
 	idAllocator id.NamedAllocator,
 	netInfo util.NetInfo,
@@ -276,6 +302,7 @@ func allocatePodAnnotationWithRollback(
 	}()
 
 	podAnnotation, _ = util.UnmarshalPodAnnotation(pod.Annotations, nadName)
+	nadNetworkPersisted := podAnnotation != nil
 	if podAnnotation == nil {
 		podAnnotation = &util.PodAnnotation{}
 	}
@@ -330,13 +357,11 @@ func allocatePodAnnotationWithRollback(
 		}
 		hasIPAMClaim = ipamClaim != nil && len(ipamClaim.Status.IPs) > 0
 	}
+
 	if hasIPAM && hasStaticIPRequest {
-		// for now we can't tell apart already allocated IPs from IPs excluded
-		// from allocation so we can't really honor static IP requests when
-		// there is IPAM as we don't really know if the requested IP should not
-		// be allocated or was already allocated by the same pod
-		err = fmt.Errorf("cannot allocate a static IP request with IPAM for pod %s", podDesc)
-		return
+		if err = validateStaticIPRequest(netInfo, podDesc); err != nil {
+			return
+		}
 	}
 
 	// we need to update the annotation if it is missing IPs or MAC
@@ -348,6 +373,7 @@ func allocatePodAnnotationWithRollback(
 		if hasIPRequest {
 			tentative.IPs, err = util.ParseIPNets(network.IPRequest)
 			if err != nil {
+				klog.Warningf("Failed parsing IPRequest %+v for pod %s: %v", network.IPRequest, podDesc, err)
 				return
 			}
 		} else if hasIPAMClaim {
@@ -360,15 +386,18 @@ func allocatePodAnnotationWithRollback(
 
 	if hasIPAM {
 		if len(tentative.IPs) > 0 {
-			if err = ipAllocator.AllocateIPs(tentative.IPs); err != nil && !ip.IsErrAllocated(err) {
-				err = fmt.Errorf("failed to ensure requested or annotated IPs %v for %s: %w",
-					util.StringSlice(tentative.IPs), podDesc, err)
-				if !reallocateOnNonStaticIPRequest {
-					return
+			err = ipAllocator.AllocateIPs(tentative.IPs)
+			if err != nil {
+				if !ip.IsErrAllocated(err) || !shouldIgnoreDuplicateIPError(podLister, pod, nadNetworkPersisted) {
+					err = fmt.Errorf("failed to ensure requested or annotated IPs %v for %s: %w",
+						util.StringSlice(tentative.IPs), podDesc, err)
+					if !reallocateOnNonStaticIPRequest {
+						return
+					}
+					klog.Warning(err.Error())
+					needsIPOrMAC = true
+					tentative.IPs = nil
 				}
-				klog.Warning(err.Error())
-				needsIPOrMAC = true
-				tentative.IPs = nil
 			}
 
 			if err == nil && !hasIPAMClaim { // if we have persistentIPs, we should *not* release them on rollback
@@ -427,4 +456,31 @@ func allocatePodAnnotationWithRollback(
 	}
 
 	return
+}
+
+// shouldIgnoreDuplicateIPError determines if we should ignore "already allocated"
+// IP errors based on the pod context and network annotation persistence
+func shouldIgnoreDuplicateIPError(podLister listers.PodLister, pod *corev1.Pod, nadNetworkPersisted bool) bool {
+	// If PreconfiguredUDNAddressesEnabled is disabled, always ignore duplicate IP errors
+	if !util.IsPreconfiguredUDNAddressesEnabled() {
+		return true
+	}
+
+	// Always ignore if network annotation already persisted on pod
+	if nadNetworkPersisted {
+		return true
+	}
+
+	// For KubeVirt live migratable pods, also ignore during migration scenarios
+	// where multiple pods are temporarily allowed to share IPs during migration
+	if kubevirt.IsPodOwnedByVirtualMachine(pod) {
+		migrationStatus, err := kubevirt.DiscoverLiveMigrationStatus(podLister, pod)
+		if err == nil &&
+			migrationStatus != nil &&
+			migrationStatus.State != kubevirt.LiveMigrationFailed {
+			return true
+		}
+	}
+
+	return false
 }

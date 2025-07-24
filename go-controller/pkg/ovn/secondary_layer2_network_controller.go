@@ -895,7 +895,8 @@ func (oc *SecondaryLayer2NetworkController) StartServiceController(wg *sync.Wait
 
 func (oc *SecondaryLayer2NetworkController) updateLocalPodEvent(pod *corev1.Pod) error {
 	if kubevirt.IsPodAllowedForMigration(pod, oc.GetNetInfo()) {
-		kubevirtLiveMigrationStatus, err := kubevirt.DiscoverLiveMigrationStatus(oc.watchFactory, pod)
+		podLister := oc.watchFactory.PodCoreInformer().Lister()
+		kubevirtLiveMigrationStatus, err := kubevirt.DiscoverLiveMigrationStatus(podLister, pod)
 		if err != nil {
 			return err
 		}
