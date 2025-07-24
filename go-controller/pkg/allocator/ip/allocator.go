@@ -27,16 +27,22 @@ import (
 	allocator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/bitmap"
 )
 
-// Interface manages the allocation of IP addresses out of a range. Interface
-// should be threadsafe.
-type Interface interface {
+// StaticAllocator provides IP allocation functionality for explicit/static allocations only.
+type StaticAllocator interface {
 	Allocate(net.IP) error
-	AllocateNext() (net.IP, error)
 	Release(net.IP)
 	ForEach(func(net.IP))
 	CIDR() net.IPNet
 	Has(ip net.IP) bool
 	Reserved(ip net.IP) bool
+}
+
+// ContinuousAllocator extends StaticAllocator with next-available allocation support.
+// This is the primary interface for IP allocation that supports both explicit
+// allocation and continuous allocation.
+type ContinuousAllocator interface {
+	StaticAllocator
+	AllocateNext() (net.IP, error)
 }
 
 var (
