@@ -592,10 +592,8 @@ func (oc *SecondaryLayer2NetworkController) addUpdateLocalNodeEvent(node *corev1
 					return err
 				}
 				if !isUDNAdvertised {
-					if util.IsRouteAdvertisementsEnabled() {
-						if err = oc.deleteAdvertisedNetworkIsolation(node.Name); err != nil {
-							return err
-						}
+					if err = oc.deleteAdvertisedNetworkIsolation(node.Name); err != nil {
+						return err
 					}
 				} else {
 					if err = oc.addAdvertisedNetworkIsolation(node.Name); err != nil {

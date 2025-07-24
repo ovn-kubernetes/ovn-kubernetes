@@ -910,10 +910,8 @@ func (oc *SecondaryLayer3NetworkController) addNode(node *corev1.Node) ([]*net.I
 			return nil, err
 		}
 		if !isUDNAdvertised {
-			if util.IsRouteAdvertisementsEnabled() {
-				if err := oc.deleteAdvertisedNetworkIsolation(node.Name); err != nil {
-					return nil, err
-				}
+			if err := oc.deleteAdvertisedNetworkIsolation(node.Name); err != nil {
+				return nil, err
 			}
 		} else {
 			if err := oc.addAdvertisedNetworkIsolation(node.Name); err != nil {
