@@ -18,7 +18,7 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 )
 
 // ServerRunDir is the default directory for CNIServer runtime files
@@ -44,7 +44,7 @@ type KubeAPIAuth struct {
 
 // PodInterfaceInfo consists of interface info result from cni server if cni client configure's interface
 type PodInterfaceInfo struct {
-	util.PodAnnotation
+	podannotation.PodAnnotation
 
 	MTU                  int    `json:"mtu"`
 	RoutableMTU          int    `json:"routable-mtu"`

@@ -174,34 +174,9 @@ func (ncc *networkClusterController) init() error {
 	var err error
 	if util.DoesNetworkRequireTunnelIDs(ncc.GetNetInfo()) {
 		ncc.tunnelIDAllocator = id.NewIDAllocator(ncc.GetNetworkName(), types.MaxLogicalPortTunnelKey)
-		// Reserve the id 0. We don't want to assign this id to any of the pods or nodes.
+		// Reserve the id 0. We don't want to assign this id to any of the pods.
 		if err = ncc.tunnelIDAllocator.ReserveID("zero", types.NoTunnelID); err != nil {
 			return err
-		}
-		if util.IsNetworkSegmentationSupportEnabled() && ncc.IsPrimaryNetwork() {
-			// if the network is a primary L2 UDN network, then we need to reserve
-			// the IDs used by each node in this network's pod allocator
-			nodes, err := ncc.watchFactory.GetNodes()
-			if err != nil {
-				return fmt.Errorf("failed to list node objects: %w", err)
-			}
-			for _, node := range nodes {
-				tunnelID, err := util.ParseUDNLayer2NodeGRLRPTunnelIDs(node, ncc.GetNetworkName())
-				if err != nil {
-					if util.IsAnnotationNotSetError(err) {
-						klog.Warningf("tunnelID annotation does not exist for the node %s for network %s, err: %v; we need to allocate it...",
-							node.Name, ncc.GetNetworkName(), err)
-					} else {
-						return fmt.Errorf("failed to fetch tunnelID annotation from the node %s for network %s, err: %v",
-							node.Name, ncc.GetNetworkName(), err)
-					}
-				}
-				if tunnelID != types.InvalidID {
-					if err := ncc.tunnelIDAllocator.ReserveID(ncc.GetNetworkName()+"_"+node.Name, tunnelID); err != nil {
-						return fmt.Errorf("unable to reserve id for network %s, node %s: %w", ncc.GetNetworkName(), node.Name, err)
-					}
-				}
-			}
 		}
 	}
 

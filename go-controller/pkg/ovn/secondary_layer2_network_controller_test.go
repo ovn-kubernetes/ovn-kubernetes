@@ -21,6 +21,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	testnm "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/networkmanager"
@@ -423,7 +424,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 				// clustermanager to annotate the pod.
 				if !config.OVNKubernetesFeature.EnableInterconnect {
 					// pod exists, networks annotations don't
-					_, ok := pod.Annotations[util.OvnPodAnnotationName]
+					_, ok := pod.Annotations[podannotation.OvnPodAnnotationName]
 					Expect(ok).To(BeFalse())
 				}
 
@@ -494,11 +495,11 @@ func dummyL2TestPod(nsName string, info secondaryNetInfo, podIdx, secondaryNetId
 		pod.networkRole = "infrastructure-locked"
 		pod.routes = append(
 			pod.routes,
-			util.PodRoute{
+			podannotation.PodRoute{
 				Dest:    testing.MustParseIPNet("10.128.0.0/14"),
 				NextHop: testing.MustParseIP("10.128.1.1"),
 			},
-			util.PodRoute{
+			podannotation.PodRoute{
 				Dest:    testing.MustParseIPNet("100.64.0.0/16"),
 				NextHop: testing.MustParseIP("10.128.1.1"),
 			},
@@ -513,7 +514,7 @@ func dummyL2TestPod(nsName string, info secondaryNetInfo, podIdx, secondaryNetId
 			fmt.Sprintf("0a:58:64:c8:00:%0.2d", secondaryNetIdx+3),
 			"primary",
 			0,
-			[]util.PodRoute{
+			[]podannotation.PodRoute{
 				{
 					Dest:    testing.MustParseIPNet("172.16.1.0/24"),
 					NextHop: testing.MustParseIP("100.200.0.1"),
@@ -537,7 +538,7 @@ func dummyL2TestPod(nsName string, info secondaryNetInfo, podIdx, secondaryNetId
 		fmt.Sprintf("0a:58:64:c8:00:%0.2d", secondaryNetIdx+1),
 		"secondary",
 		0,
-		[]util.PodRoute{},
+		[]podannotation.PodRoute{},
 	)
 	return pod
 }
@@ -739,9 +740,9 @@ func setupFakeOvnForLayer2Topology(fakeOvn *FakeOVN, initialDB libovsdbtest.Test
 		if err != nil {
 			return err
 		}
-		_, ok := pod.Annotations[util.OvnPodAnnotationName]
+		_, ok := pod.Annotations[podannotation.OvnPodAnnotationName]
 		if ok {
-			return fmt.Errorf("expected pod annotation %q", util.OvnPodAnnotationName)
+			return fmt.Errorf("expected pod annotation %q", podannotation.OvnPodAnnotationName)
 		}
 	}
 	if err = fakeOvn.networkManager.Start(); err != nil {

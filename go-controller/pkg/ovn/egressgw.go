@@ -27,6 +27,7 @@ import (
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	apbroutecontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/apbroute"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -135,7 +136,7 @@ func (oc *DefaultNetworkController) addPodExternalGWForNamespace(namespace strin
 }
 
 func (oc *DefaultNetworkController) syncConntrackForExternalGateways(namespace string, gwIPsToKeep sets.Set[string]) error {
-	return util.SyncConntrackForExternalGateways(gwIPsToKeep, oc.isPodInLocalZone, func() ([]*corev1.Pod, error) {
+	return podannotation.SyncConntrackForExternalGateways(gwIPsToKeep, oc.isPodInLocalZone, func() ([]*corev1.Pod, error) {
 		return oc.watchFactory.GetPods(namespace)
 	})
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/onsi/ginkgo/v2/dsl/table"
 	"github.com/onsi/gomega"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
@@ -661,7 +662,7 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", feature.EgressIP
 			if err != nil {
 				return false, err
 			}
-			ips, err := util.DefaultNetworkPodIPs(pod)
+			ips, err := podannotation.DefaultNetworkPodIPs(pod)
 			if err != nil {
 				return false, err
 			}
