@@ -1378,6 +1378,12 @@ func IsRouteAdvertisementsEnabled() bool {
 	return config.OVNKubernetesFeature.EnableMultiNetwork && config.OVNKubernetesFeature.EnableRouteAdvertisements
 }
 
+// IsPreconfiguredUDNAddressesEnabled indicates if user defined IPs / MAC
+// addresses can be set in primary UDNs
+func IsPreconfiguredUDNAddressesEnabled() bool {
+	return IsNetworkSegmentationSupportEnabled() && config.OVNKubernetesFeature.EnablePreconfiguredUDNAddresses
+}
+
 func DoesNetworkRequireIPAM(netInfo NetInfo) bool {
 	return !((netInfo.TopologyType() == types.Layer2Topology || netInfo.TopologyType() == types.LocalnetTopology) && len(netInfo.Subnets()) == 0)
 }
