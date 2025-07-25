@@ -349,13 +349,12 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 			bridgeMacAddress, mod_vlan_id, defaultNetConfig.OfPortPatch))
 
 	// table 2, priority 200, dispatch from UDN -> Host -> OVN. These packets have
-	// already been SNATed to the UDN's masq IP or have been marked with the UDN's packet mark.
+	// already been SNATed to the UDN's masquerade IP or have been marked with the UDN's packet mark.
 	if config.IPv4Mode {
 		for _, netConfig := range b.patchedNetConfigs() {
 			if netConfig.IsDefaultNetwork() {
 				continue
 			}
-			srcIPOrSubnet := netConfig.V4MasqIPs.ManagementPort.IP.String()
 			if util.IsRouteAdvertisementsEnabled() && netConfig.Advertised.Load() {
 				var udnAdvertisedSubnets []*net.IPNet
 				for _, clusterEntry := range netConfig.Subnets {
@@ -368,9 +367,14 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 					klog.Infof("Unable to determine IPV4 UDN subnet for the provided family isIPV6: %v", err)
 					continue
 				}
-
-				// Use the filtered subnets for the flow compute instead of the masqueradeIP
-				srcIPOrSubnet = matchingIPFamilySubnet.String()
+				// In addition to the masqueradeIP based flows, we also need the podsubnet based flows for
+				// advertised networks since UDN pod to clusterIP is unSNATed and we need this traffic to be taken into
+				// the correct patch port of it's own network where it's a deadend if the clusterIP is not part of
+				// that UDN network and works if it is part of the UDN network.
+				dftFlows = append(dftFlows,
+					fmt.Sprintf("cookie=%s, priority=200, table=2, ip, ip_src=%s, "+
+						"actions=drop",
+						nodetypes.DefaultOpenFlowCookie, matchingIPFamilySubnet.String()))
 			}
 			// Drop traffic coming from the masquerade IP or the UDN subnet(for advertised UDNs) to ensure that
 			// isolation between networks is enforced. This handles the case where a pod on the UDN subnet is sending traffic to
@@ -378,7 +382,7 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 			dftFlows = append(dftFlows,
 				fmt.Sprintf("cookie=%s, priority=200, table=2, ip, ip_src=%s, "+
 					"actions=drop",
-					nodetypes.DefaultOpenFlowCookie, srcIPOrSubnet))
+					nodetypes.DefaultOpenFlowCookie, netConfig.V4MasqIPs.ManagementPort.IP.String()))
 
 			dftFlows = append(dftFlows,
 				fmt.Sprintf("cookie=%s, priority=250, table=2, ip, pkt_mark=%s, "+
@@ -393,7 +397,6 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 			if netConfig.IsDefaultNetwork() {
 				continue
 			}
-			srcIPOrSubnet := netConfig.V6MasqIPs.ManagementPort.IP.String()
 			if util.IsRouteAdvertisementsEnabled() && netConfig.Advertised.Load() {
 				var udnAdvertisedSubnets []*net.IPNet
 				for _, clusterEntry := range netConfig.Subnets {
@@ -407,13 +410,15 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 					continue
 				}
 
-				// Use the filtered subnets for the flow compute instead of the masqueradeIP
-				srcIPOrSubnet = matchingIPFamilySubnet.String()
+				dftFlows = append(dftFlows,
+					fmt.Sprintf("cookie=%s, priority=200, table=2, ip6, ipv6_src=%s, "+
+						"actions=drop",
+						nodetypes.DefaultOpenFlowCookie, matchingIPFamilySubnet.String()))
 			}
 			dftFlows = append(dftFlows,
 				fmt.Sprintf("cookie=%s, priority=200, table=2, ip6, ipv6_src=%s, "+
 					"actions=drop",
-					nodetypes.DefaultOpenFlowCookie, srcIPOrSubnet))
+					nodetypes.DefaultOpenFlowCookie, netConfig.V6MasqIPs.ManagementPort.IP.String()))
 			dftFlows = append(dftFlows,
 				fmt.Sprintf("cookie=%s, priority=250, table=2, ip6, pkt_mark=%s, "+
 					"actions=set_field:%s->eth_dst,output:%s",
@@ -732,44 +737,30 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 					"actions=ct(zone=%d, nat, table=1)", nodetypes.DefaultOpenFlowCookie, ofPortPhys, config.Default.ConntrackZone))
 		}
 	}
-	// Egress IP is often configured on a node different from the one hosting the affected pod.
-	// Due to the fact that ovn-controllers on different nodes apply the changes independently,
-	// there is a chance that the pod traffic will reach the egress node before it configures the SNAT flows.
-	// Drop pod traffic that is not SNATed, excluding local pods(required for ICNIv2)
-	defaultNetConfig := b.netConfig[types.DefaultNetworkName]
-	if config.OVNKubernetesFeature.EnableEgressIP {
-		for _, clusterEntry := range config.Default.ClusterSubnets {
-			cidr := clusterEntry.CIDR
-			ipv := getIPv(cidr)
-			// table 0, drop packets coming from pods headed externally that were not SNATed.
-			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=104, in_port=%s, %s, %s_src=%s, actions=drop",
-					nodetypes.DefaultOpenFlowCookie, defaultNetConfig.OfPortPatch, ipv, ipv, cidr))
-		}
-		for _, subnet := range defaultNetConfig.NodeSubnets {
-			ipv := getIPv(subnet)
-			if ofPortPhys != "" {
-				// table 0, commit connections from local pods.
-				// ICNIv2 requires that local pod traffic can leave the node without SNAT.
-				dftFlows = append(dftFlows,
-					fmt.Sprintf("cookie=%s, priority=109, in_port=%s, dl_src=%s, %s, %s_src=%s"+
-						"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:%s",
-						nodetypes.DefaultOpenFlowCookie, defaultNetConfig.OfPortPatch, bridgeMacAddress, ipv, ipv, subnet,
-						config.Default.ConntrackZone, nodetypes.CtMarkOVN, ofPortPhys))
-			}
-		}
-	}
-
 	if ofPortPhys != "" {
+		defaultNetConfig := b.netConfig[types.DefaultNetworkName]
+		// table 0, Ingress/Egress flows for MEG enabled pods and advertised UDNs
+		// priority 300: Ingress traffic to MEG pods and advertised UDNs
+		// priority 301: Ingress traffic to node management traffic
+		// priority 109: Egress traffic from advertised UDNs or MEG enabled pods
+		// priority 104: For egressIP, drop packets coming from pods from other nodes headed externally that were not SNATed.
+		// example flows:
+		// table=0, n_packets=0, n_bytes=0, priority=300,ip,in_port=eth0,nw_dst=23.100.0.0/16 actions=output:4
+		// table=0, n_packets=0, n_bytes=0, priority=301,ip,in_port=eth0,nw_dst=23.100.0.2 actions=output:LOCAL
+		// table=0, n_packets=0, n_bytes=0, priority=109,ip,in_port=4,dl_src=02:42:ac:12:00:03,nw_src=23.100.0.0/16 actions=output:eth0
+		// table=0, n_packets=0, n_bytes=0, priority=104,ip,in_port=4,nw_src=23.100.0.0/16 actions=drop
 		for _, netConfig := range b.patchedNetConfigs() {
 			isNetworkAdvertised := netConfig.Advertised.Load()
 			// disableSNATMultipleGWs only applies to default network
 			disableSNATMultipleGWs := netConfig.IsDefaultNetwork() && config.Gateway.DisableSNATMultipleGWs
+			// skip if MEG is disabled for the default network
+			// and the network (default or UDN) is not advertised
 			if !disableSNATMultipleGWs && !isNetworkAdvertised {
 				continue
 			}
 			output := netConfig.OfPortPatch
-			if isNetworkAdvertised && config.Gateway.Mode == config.GatewayModeLocal {
+			isAdvertisedLGW := isNetworkAdvertised && config.Gateway.Mode == config.GatewayModeLocal
+			if isAdvertisedLGW {
 				// except if advertised through BGP, go to kernel
 				// TODO: MEG enabled pods should still go through the patch port
 				// but holding this until
@@ -781,21 +772,35 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 				cidr := clusterEntry.CIDR
 				ipv := getIPv(cidr)
 				dftFlows = append(dftFlows,
-					fmt.Sprintf("cookie=%s, priority=15, table=1, %s, %s_dst=%s, "+
+					fmt.Sprintf("cookie=%s, priority=300, table=0, in_port=%s, %s, %s_dst=%s, "+
 						"actions=output:%s",
-						nodetypes.DefaultOpenFlowCookie, ipv, ipv, cidr, output))
-			}
-			if output == netConfig.OfPortPatch {
+						nodetypes.DefaultOpenFlowCookie, ofPortPhys, ipv, ipv, cidr, output))
 				// except node management traffic
-				for _, subnet := range netConfig.NodeSubnets {
-					mgmtIP := util.GetNodeManagementIfAddr(subnet)
-					ipv := getIPv(mgmtIP)
-					dftFlows = append(dftFlows,
-						fmt.Sprintf("cookie=%s, priority=16, table=1, %s, %s_dst=%s, "+
-							"actions=output:%s",
-							nodetypes.DefaultOpenFlowCookie, ipv, ipv, mgmtIP.IP, nodetypes.OvsLocalPort),
-					)
+				mgmtIP := util.GetNodeManagementIfAddr(cidr)
+				if mgmtIP == nil {
+					return nil, fmt.Errorf("unable to determine management IP for subnet %s.", cidr)
 				}
+				dftFlows = append(dftFlows,
+					fmt.Sprintf("cookie=%s, priority=301, table=0, in_port=%s, %s, %s_dst=%s, "+
+						"actions=output:%s",
+						nodetypes.DefaultOpenFlowCookie, ofPortPhys, ipv, ipv, mgmtIP.IP, nodetypes.OvsLocalPort),
+				)
+				if config.OVNKubernetesFeature.EnableEgressIP {
+					// table 0, drop packets coming from pods headed externally that were not SNATed.
+					dftFlows = append(dftFlows,
+						fmt.Sprintf("cookie=%s, priority=104, in_port=%s, %s, %s_src=%s, actions=drop",
+							nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, ipv, ipv, cidr))
+				}
+				// skip adding egress flow if the network is advertised in LGW mode
+				// and the network is not the default network
+				if isAdvertisedLGW && !netConfig.IsDefaultNetwork() {
+					continue
+				}
+				// ICNIv2 and advertised UDN networks requires that local pod traffic can leave the node without SNAT.
+				// We match on the pod subnets and forward the traffic to the physical interface
+				dftFlows = append(dftFlows, fmt.Sprintf("cookie=%s, priority=109, in_port=%s, dl_src=%s, %s, %s_src=%s, "+
+					"actions=output:%s",
+					nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, bridgeMacAddress, ipv, ipv, cidr, ofPortPhys))
 			}
 		}
 
