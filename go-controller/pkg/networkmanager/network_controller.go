@@ -339,6 +339,10 @@ func (c *networkController) ensureNetwork(network util.MutableNetInfo) error {
 	// otherwise setup & start the new network controller
 	nc, err := c.cm.NewNetworkController(network)
 	if err != nil {
+		if errors.Is(err, ErrNetworkControllerTopologyNotManaged) {
+			klog.Infof("Network %s of topology %s is not managed by %s, skipping it", networkName, network.TopologyType(), c.name)
+			return nil
+		}
 		return fmt.Errorf("failed to create network %s: %w", networkName, err)
 	}
 
