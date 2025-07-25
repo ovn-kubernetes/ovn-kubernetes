@@ -14,6 +14,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 	"k8s.io/utils/ptr"
@@ -812,7 +813,7 @@ func (oc *BaseSecondaryNetworkController) allowPersistentIPs() bool {
 
 // buildUDNEgressSNAT is used to build the conditional SNAT required on L3 and L2 UDNs to
 // steer traffic correctly via mp0 when leaving OVN to the host
-func (bsnc *BaseSecondaryNetworkController) buildUDNEgressSNAT(localPodSubnets []*net.IPNet, outputPort string) ([]*nbdb.NAT, error) {
+func (bsnc *BaseSecondaryNetworkController) buildUDNEgressSNAT(localPodSubnets []*net.IPNet, outputPort string, isUDNAdvertised bool) ([]*nbdb.NAT, error) {
 	if len(localPodSubnets) == 0 {
 		return nil, nil // nothing to do
 	}
@@ -828,10 +829,11 @@ func (bsnc *BaseSecondaryNetworkController) buildUDNEgressSNAT(localPodSubnets [
 		types.TopologyExternalID: bsnc.TopologyType(),
 	}
 	for _, localPodSubnet := range localPodSubnets {
+		ipFamily := utilnet.IPv4
+		masqIP, err = udn.AllocateV4MasqueradeIPs(networkID)
 		if utilnet.IsIPv6CIDR(localPodSubnet) {
 			masqIP, err = udn.AllocateV6MasqueradeIPs(networkID)
-		} else {
-			masqIP, err = udn.AllocateV4MasqueradeIPs(networkID)
+			ipFamily = utilnet.IPv6
 		}
 		if err != nil {
 			return nil, err
@@ -839,10 +841,125 @@ func (bsnc *BaseSecondaryNetworkController) buildUDNEgressSNAT(localPodSubnets [
 		if masqIP == nil {
 			return nil, fmt.Errorf("masquerade IP cannot be empty network %s (%d): %v", bsnc.GetNetworkName(), networkID, err)
 		}
-		snats = append(snats, libovsdbops.BuildSNATWithMatch(&masqIP.ManagementPort.IP, localPodSubnet, outputPort,
-			extIDs, getMasqueradeManagementIPSNATMatch(dstMac.String())))
+		if !isUDNAdvertised {
+			snats = append(snats, libovsdbops.BuildSNATWithMatch(&masqIP.ManagementPort.IP, localPodSubnet, outputPort,
+				extIDs, getMasqueradeManagementIPSNATMatch(dstMac.String())))
+		} else {
+			// For advertised networks, we need to SNAT any traffic leaving the pods from these networks towards the node IPs
+			// in the cluster. In order to do such a conditional SNAT, we need an address set that contains the node IPs in the cluster.
+			// Given that egressIP feature already has an address set containing these nodeIPs owned by the default network controller, let's re-use it.
+			dbIDs := getEgressIPAddrSetDbIDs(NodeIPAddrSetName, types.DefaultNetworkName, DefaultNetworkControllerName)
+			addrSet, err := bsnc.addressSetFactory.GetAddressSet(dbIDs)
+			if err != nil {
+				return nil, fmt.Errorf("cannot ensure that addressSet %s exists: %w", NodeIPAddrSetName, err)
+			}
+			ipv4ClusterNodeIPAS, ipv6ClusterNodeIPAS := addrSet.GetASHashNames()
+
+			snats = append(snats, libovsdbops.BuildSNATWithMatch(&masqIP.ManagementPort.IP, localPodSubnet, outputPort,
+				extIDs, fmt.Sprintf("%s && (%s)", getMasqueradeManagementIPSNATMatch(dstMac.String()),
+					getClusterNodesDestinationBasedSNATMatch(ipv4ClusterNodeIPAS, ipv6ClusterNodeIPAS, ipFamily))))
+		}
 	}
 	return snats, nil
+}
+
+// deleteUDNEgressSNAT removes the SNAT rules created by buildUDNEgressSNAT.
+// It is a bit hard to delete as there are no ExternalID specific for the NAT reason and node, but at least we
+// can filter on network name and make sure we don't break other networks. See predicate inside for more info.
+func (bsnc *BaseSecondaryNetworkController) deleteUDNEgressSNAT(nodeName string) error {
+	outputPort := bsnc.getEgressSNATPortName(nodeName)
+	natPred, err := bsnc.getEgressSNATPredicate(outputPort)
+	if err != nil {
+		return fmt.Errorf("failed to get egress SNAT predicate for network %s, error: %w", bsnc.GetNetworkName(), err)
+	}
+	ops, err := libovsdbops.DeleteNATsWithPredicateOps(bsnc.nbClient, nil, natPred)
+	if err != nil {
+		return fmt.Errorf("failed to delete egress SNATs on for network %q, error: %w",
+			bsnc.GetNetworkName(), err)
+	}
+	_, err = libovsdbops.TransactAndCheck(bsnc.nbClient, ops)
+	if err != nil {
+		return fmt.Errorf("error transacting ops %+v: %v", ops, err)
+	}
+	return nil
+}
+
+// findNodesWithoutEgressSNAT returns all nodes that don't have egress SNAT configured for this network.
+func (bsnc *BaseSecondaryNetworkController) findNodesWithoutEgressSNAT(nodes []interface{}) (sets.Set[string], error) {
+	nodesWithoutEgressSNAT := sets.New[string]()
+	nodePortNames := map[string]string{}
+	for _, tmp := range nodes {
+		node, ok := tmp.(*corev1.Node)
+		if !ok {
+			return nodesWithoutEgressSNAT, fmt.Errorf("spurious object in syncNodes: %v", tmp)
+		}
+		nodePortNames[bsnc.getEgressSNATPortName(node.Name)] = node.Name
+		nodesWithoutEgressSNAT.Insert(node.Name)
+	}
+	natPred, err := bsnc.getEgressSNATPredicate("")
+	if err != nil {
+		return nodesWithoutEgressSNAT, fmt.Errorf("failed to get egress SNAT predicate for network %s, error: %w", bsnc.GetNetworkName(), err)
+	}
+	nats, err := libovsdbops.FindNATsWithPredicate(bsnc.nbClient, natPred)
+	if err != nil {
+		return nodesWithoutEgressSNAT, fmt.Errorf("failed to find egress SNATs for network %s, error: %w", bsnc.GetNetworkName(), err)
+	}
+	for _, nat := range nats {
+		if nat.LogicalPort != nil {
+			if nodeWithNAT, ok := nodePortNames[*nat.LogicalPort]; ok {
+				nodesWithoutEgressSNAT.Delete(nodeWithNAT)
+			}
+		}
+	}
+	return nodesWithoutEgressSNAT, nil
+}
+
+func (bsnc *BaseSecondaryNetworkController) getEgressSNATPortName(nodeName string) string {
+	if bsnc.TopologyType() == types.Layer2Topology {
+		return types.GWRouterToJoinSwitchPrefix + bsnc.GetNetworkScopedGWRouterName(nodeName)
+	} else if bsnc.TopologyType() == types.Layer3Topology {
+		return types.RouterToSwitchPrefix + bsnc.GetNetworkScopedName(nodeName)
+	}
+	return ""
+}
+
+func (bsnc *BaseSecondaryNetworkController) getEgressSNATPredicate(outputPort string) (func(nat *nbdb.NAT) bool, error) {
+	networkID := bsnc.GetNetworkID()
+	masqIPv4, err := udn.AllocateV4MasqueradeIPs(networkID)
+	if err != nil {
+		return nil, err
+	}
+	masqIPv6, err := udn.AllocateV6MasqueradeIPs(networkID)
+	if err != nil {
+		return nil, err
+	}
+
+	masqIPv4Str := masqIPv4.ManagementPort.IP.String()
+	masqIPv6Str := masqIPv6.ManagementPort.IP.String()
+
+	// This is the only NAT with the ExternalIP = management port masq IP, so we will use that as a predicate.
+	// Also make sure to filter for the right node, fortunately NAT has the logical port specific to the node.
+	natPred := func(nat *nbdb.NAT) bool {
+		return nat.ExternalIDs[types.NetworkExternalID] == bsnc.GetNetworkName() &&
+			(nat.ExternalIP == masqIPv4Str || nat.ExternalIP == masqIPv6Str) &&
+			outputPort != "" && nat.LogicalPort != nil && *nat.LogicalPort == outputPort
+	}
+	return natPred, nil
+}
+
+func getMasqueradeManagementIPSNATMatch(dstMac string) string {
+	return fmt.Sprintf("eth.dst == %s", dstMac)
+}
+
+// getClusterNodesDestinationBasedSNATMatch creates destination-based SNAT match for the specified IP family
+func getClusterNodesDestinationBasedSNATMatch(ipv4ClusterNodeIPAS, ipv6ClusterNodeIPAS string, ipFamily utilnet.IPFamily) string {
+	var match string
+	if ipFamily == utilnet.IPv4 {
+		match = fmt.Sprintf("ip4.dst == $%s", ipv4ClusterNodeIPAS)
+	} else {
+		match = fmt.Sprintf("ip6.dst == $%s", ipv6ClusterNodeIPAS)
+	}
+	return match
 }
 
 func (bsnc *BaseSecondaryNetworkController) ensureDHCP(pod *corev1.Pod, podAnnotation *util.PodAnnotation, lsp *nbdb.LogicalSwitchPort) error {
@@ -865,10 +982,6 @@ func (bsnc *BaseSecondaryNetworkController) ensureDHCP(pod *corev1.Pod, podAnnot
 	opts = append(opts, kubevirt.WithIPv4DNSServer(ipv4DNSServer), kubevirt.WithIPv6DNSServer(ipv6DNSServer))
 
 	return kubevirt.EnsureDHCPOptionsForLSP(bsnc.controllerName, bsnc.nbClient, pod, podAnnotation.IPs, lsp, opts...)
-}
-
-func getMasqueradeManagementIPSNATMatch(dstMac string) string {
-	return fmt.Sprintf("eth.dst == %s", dstMac)
 }
 
 func (bsnc *BaseSecondaryNetworkController) requireDHCP(pod *corev1.Pod) bool {

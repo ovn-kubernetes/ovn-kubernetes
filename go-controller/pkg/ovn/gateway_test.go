@@ -65,6 +65,15 @@ func generateGatewayInitExpectedNB(testData []libovsdbtest.TestData, expectedOVN
 	expectedNodeSwitch *nbdb.LogicalSwitch, nodeName string, clusterIPSubnets []*net.IPNet, hostSubnets []*net.IPNet,
 	l3GatewayConfig *util.L3GatewayConfig, joinLRPIPs, defLRPIPs []*net.IPNet, skipSnat bool, nodeMgmtPortIP,
 	gatewayMTU string) []libovsdbtest.TestData {
+	return generateGatewayInitExpectedNBWithPodNetworkAdvertised(testData, expectedOVNClusterRouter, expectedNodeSwitch,
+		nodeName, clusterIPSubnets, hostSubnets, l3GatewayConfig, joinLRPIPs, defLRPIPs, skipSnat, nodeMgmtPortIP,
+		gatewayMTU, false) // Default to no pod network advertised
+}
+
+func generateGatewayInitExpectedNBWithPodNetworkAdvertised(testData []libovsdbtest.TestData, expectedOVNClusterRouter *nbdb.LogicalRouter,
+	expectedNodeSwitch *nbdb.LogicalSwitch, nodeName string, clusterIPSubnets []*net.IPNet, hostSubnets []*net.IPNet,
+	l3GatewayConfig *util.L3GatewayConfig, joinLRPIPs, defLRPIPs []*net.IPNet, skipSnat bool, nodeMgmtPortIP,
+	gatewayMTU string, isPodNetworkAdvertised bool) []libovsdbtest.TestData {
 
 	GRName := "GR_" + nodeName
 	gwSwitchPort := types.JoinSwitchToGWRouterPrefix + GRName
@@ -214,6 +223,16 @@ func generateGatewayInitExpectedNB(testData []libovsdbtest.TestData, expectedOVN
 		},
 		Networks: networks,
 	})
+	var egressNodeIPsASv4, egressNodeIPsASv6 *nbdb.AddressSet
+	if config.OVNKubernetesFeature.EnableEgressIP {
+		egressNodeIPsASv4, egressNodeIPsASv6 = buildEgressIPNodeAddressSets(physicalIPs)
+		if config.IPv4Mode {
+			testData = append(testData, egressNodeIPsASv4)
+		}
+		if config.IPv6Mode {
+			testData = append(testData, egressNodeIPsASv6)
+		}
+	}
 
 	natUUIDs := make([]string, 0, len(clusterIPSubnets))
 	if !skipSnat {
@@ -230,6 +249,19 @@ func generateGatewayInitExpectedNB(testData []libovsdbtest.TestData, expectedOVN
 			}
 			if config.Gateway.Mode != config.GatewayModeDisabled {
 				nat.ExternalPortRange = config.DefaultEphemeralPortRange
+			}
+			if isPodNetworkAdvertised {
+				// IPv6 pod network
+				if utilnet.IsIPv6CIDR(subnet) {
+					if egressNodeIPsASv6 != nil {
+						nat.Match = fmt.Sprintf("ip6.dst == $%s", egressNodeIPsASv6.Name)
+					}
+				} else {
+					// IPv4 pod network
+					if egressNodeIPsASv4 != nil {
+						nat.Match = fmt.Sprintf("ip4.dst == $%s", egressNodeIPsASv4.Name)
+					}
+				}
 			}
 			testData = append(testData, &nat)
 		}
