@@ -270,7 +270,7 @@ func adjustNodeName() string {
 // newKubernetesRestConfig create a Kubernetes rest config from either a kubeconfig,
 // TLS properties, or an apiserver URL. If the CA certificate data is passed in the
 // CAData in the KubernetesConfig, the CACert path is ignored.
-func newKubernetesRestConfig(conf *config.KubernetesConfig) (*rest.Config, error) {
+func newKubernetesRestConfig(conf *config.KubernetesConfig, agentargs ...string) (*rest.Config, error) {
 	var kconfig *rest.Config
 	var err error
 
@@ -315,8 +315,8 @@ func newKubernetesRestConfig(conf *config.KubernetesConfig) (*rest.Config, error
 	kconfig.Burst = 50
 	// if all the clients are behind HA-Proxy, then on the K8s API server side we only
 	// see the HAProxy's IP and we can't tell the actual client making the request.
-	kconfig.UserAgent = fmt.Sprintf("%s/%s@%s (%s/%s) kubernetes/%s",
-		adjustNodeName(), filepath.Base(os.Args[0]), adjustCommit(), runtime.GOOS, runtime.GOARCH,
+	kconfig.UserAgent = fmt.Sprintf("%s/%s-%s@%s (%s/%s) kubernetes/%s",
+		adjustNodeName(), filepath.Base(os.Args[0]), strings.Join(agentargs, "-"), adjustCommit(), runtime.GOOS, runtime.GOARCH,
 		version.Get().GitVersion)
 	return kconfig, nil
 }
@@ -443,8 +443,8 @@ func StartNodeCertificateManager(ctx context.Context, wg *sync.WaitGroup, nodeNa
 }
 
 // NewKubernetesClientset creates a Kubernetes clientset from a KubernetesConfig
-func NewKubernetesClientset(conf *config.KubernetesConfig) (*kubernetes.Clientset, error) {
-	kconfig, err := newKubernetesRestConfig(conf)
+func NewKubernetesClientset(conf *config.KubernetesConfig, agentargs ...string) (*kubernetes.Clientset, error) {
+	kconfig, err := newKubernetesRestConfig(conf, agentargs...)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create kubernetes rest config, err: %v", err)
 	}
@@ -459,12 +459,12 @@ func NewKubernetesClientset(conf *config.KubernetesConfig) (*kubernetes.Clientse
 }
 
 // NewOVNClientset creates a OVNClientset from a KubernetesConfig
-func NewOVNClientset(conf *config.KubernetesConfig) (*OVNClientset, error) {
+func NewOVNClientset(conf *config.KubernetesConfig, agentargs ...string) (*OVNClientset, error) {
 	kclientset, err := NewKubernetesClientset(conf)
 	if err != nil {
 		return nil, err
 	}
-	kconfig, err := newKubernetesRestConfig(conf)
+	kconfig, err := newKubernetesRestConfig(conf, agentargs...)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create kubernetes rest config, err: %v", err)
 	}
