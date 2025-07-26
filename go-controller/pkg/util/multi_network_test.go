@@ -1088,8 +1088,9 @@ func TestSubnetOverlapCheck(t *testing.T) {
                     "netAttachDefName": "ns1/nad1"
                 }
 			`,
-			expectedError: fmt.Errorf("invalid subnet configuration: pod or join subnet overlaps with already configured internal subnets: " +
-				"illegal network configuration: user defined subnet \"10.129.0.0/16\" overlaps cluster subnet \"10.128.0.0/14\""),
+			expectedError: config.NewSubnetOverlapError(
+				config.ConfigSubnet{SubnetType: config.UserDefinedSubnets, Subnet: MustParseCIDR("10.129.0.0/16")},
+				config.ConfigSubnet{SubnetType: config.ConfigSubnetCluster, Subnet: cidr4}),
 		},
 		{
 			desc: "return error when IPv4 join subnet in net-attach-def overlaps other subnets",
@@ -1104,8 +1105,9 @@ func TestSubnetOverlapCheck(t *testing.T) {
                     "netAttachDefName": "ns1/nad1"
                 }
 			`,
-			expectedError: fmt.Errorf("invalid subnet configuration: pod or join subnet overlaps with already configured internal subnets: " +
-				"illegal network configuration: user defined join subnet \"100.64.0.0/24\" overlaps built-in join subnet \"100.64.0.0/16\""),
+			expectedError: config.NewSubnetOverlapError(
+				config.ConfigSubnet{SubnetType: config.UserDefinedJoinSubnet, Subnet: MustParseCIDR("100.64.0.0/24")},
+				config.ConfigSubnet{SubnetType: config.ConfigSubnetJoin, Subnet: MustParseCIDR(config.Gateway.V4JoinSubnet)}),
 		},
 		{
 			desc: "return error when IPv6 POD subnet in net-attach-def overlaps other subnets",
@@ -1120,8 +1122,10 @@ func TestSubnetOverlapCheck(t *testing.T) {
                     "netAttachDefName": "ns1/nad1"
                 }
 			`,
-			expectedError: fmt.Errorf("invalid subnet configuration: pod or join subnet overlaps with already configured internal subnets: " +
-				"illegal network configuration: user defined subnet \"fe01::/24\" overlaps service subnet \"fe01::/16\""),
+			expectedError: config.NewSubnetOverlapError(
+				config.ConfigSubnet{SubnetType: config.UserDefinedSubnets, Subnet: MustParseCIDR("fe01::/24")},
+				config.ConfigSubnet{SubnetType: config.ConfigSubnetService, Subnet: svcCidr6},
+			),
 		},
 		{
 			desc: "return error when IPv6 join subnet in net-attach-def overlaps other subnets",
@@ -1136,8 +1140,10 @@ func TestSubnetOverlapCheck(t *testing.T) {
                     "netAttachDefName": "ns1/nad1"
                 }
 			`,
-			expectedError: fmt.Errorf("invalid subnet configuration: pod or join subnet overlaps with already configured internal subnets: " +
-				"illegal network configuration: user defined join subnet \"fd69::/112\" overlaps masquerade subnet \"fd69::/125\""),
+			expectedError: config.NewSubnetOverlapError(
+				config.ConfigSubnet{SubnetType: config.UserDefinedJoinSubnet, Subnet: MustParseCIDR("fd69::/112")},
+				config.ConfigSubnet{SubnetType: config.ConfigSubnetMasquerade, Subnet: MustParseCIDR(config.Gateway.V6MasqueradeSubnet)},
+			),
 		},
 		{
 			desc: "excluded subnet should not be considered for overlap check",
@@ -1177,7 +1183,7 @@ func TestSubnetOverlapCheck(t *testing.T) {
 				})
 			if test.expectedError != nil {
 				_, err := ParseNADInfo(networkAttachmentDefinition)
-				g.Expect(err).To(gomega.MatchError(test.expectedError.Error()))
+				g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring(test.expectedError.Error())))
 			} else {
 				_, err := ParseNADInfo(networkAttachmentDefinition)
 				g.Expect(err).NotTo(gomega.HaveOccurred())

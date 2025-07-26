@@ -671,3 +671,11 @@ func GetMirroredEndpointSlices(controller, sourceName, namespace string, endpoin
 	}
 	return mirroredEndpointSlices, nil
 }
+
+func MustParseCIDR(cidr string) *net.IPNet {
+	_, ipNet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		panic(fmt.Sprintf("failed to parse CIDR %q: %v", cidr, err))
+	}
+	return ipNet
+}

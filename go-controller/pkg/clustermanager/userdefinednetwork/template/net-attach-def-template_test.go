@@ -9,16 +9,24 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("NetAttachDefTemplate", func() {
+
+	// before each test, set the IPv4Mode and IPv6Mode to true
+	BeforeEach(func() {
+		config.IPv4Mode = true
+		config.IPv6Mode = true
+	})
+
 	DescribeTable("should fail to render NAD spec given",
-		func(spec *udnv1.UserDefinedNetworkSpec) {
+		func(spec *udnv1.UserDefinedNetworkSpec, expectedError string) {
 			_, err := RenderNADSpec("foo", "bar", spec)
-			Expect(err).To(HaveOccurred())
+			Expect(err).To(MatchError(ContainSubstring(expectedError)))
 		},
 		Entry("invalid layer2 subnets",
 			&udnv1.UserDefinedNetworkSpec{
@@ -27,6 +35,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 					Subnets: udnv1.DualStackCIDRs{"abc"},
 				},
 			},
+			config.NewCIDRNotProperlyFormattedError("abc").Error(),
 		),
 		Entry("invalid layer3 cluster-subnet",
 			&udnv1.UserDefinedNetworkSpec{
@@ -35,6 +44,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 					Subnets: []udnv1.Layer3Subnet{{CIDR: "!", HostSubnet: 16}},
 				},
 			},
+			config.NewInvalidCIDRAddressError().Error(),
 		),
 		Entry("invalid layer3 host-subnet mask",
 			&udnv1.UserDefinedNetworkSpec{
@@ -45,6 +55,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 					},
 				},
 			},
+			config.NewHostSubnetMaskError(24, 24).Error(), // -1 is not a valid host subnet mask, it's converted to 24
 		),
 		Entry("layer3 host-subnet mask is smaller then cluster-subnet mask",
 			&udnv1.UserDefinedNetworkSpec{
@@ -55,6 +66,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 					},
 				},
 			},
+			config.NewHostSubnetMaskError(16, 24).Error(),
 		),
 		Entry("layer3 host-subnet mask equal to cluster-subnet mask",
 			&udnv1.UserDefinedNetworkSpec{
@@ -65,16 +77,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 					},
 				},
 			},
-		),
-		Entry("layer3 host-subnet mask is smaller then cluster-subnet mask",
-			&udnv1.UserDefinedNetworkSpec{
-				Topology: udnv1.NetworkTopologyLayer3,
-				Layer3: &udnv1.Layer3Config{
-					Subnets: []udnv1.Layer3Subnet{
-						{CIDR: "10.10.0.0/16", HostSubnet: 8},
-					},
-				},
-			},
+			config.NewHostSubnetMaskError(24, 24).Error(),
 		),
 		Entry("invalid layer3 host-subnet; IPv4 mask is bigger then 32",
 			&udnv1.UserDefinedNetworkSpec{
@@ -85,102 +88,98 @@ var _ = Describe("NetAttachDefTemplate", func() {
 					},
 				},
 			},
+			config.NewInvalidIPv4HostSubnetError().Error(),
 		),
-		Entry("invalid join subnets",
+		Entry("invalid layer2 join subnets",
 			&udnv1.UserDefinedNetworkSpec{
 				Topology: udnv1.NetworkTopologyLayer2,
 				Layer2: &udnv1.Layer2Config{
 					Role:        udnv1.NetworkRolePrimary,
+					Subnets:     udnv1.DualStackCIDRs{"10.10.0.0/24"},
 					JoinSubnets: udnv1.DualStackCIDRs{"abc"},
 				},
 			},
+			config.NewCIDRNotProperlyFormattedError("abc").Error(),
 		),
-		Entry("invalid dual-stack join subnets, invalid IPv4 CIDR",
+		Entry("invalid layer2 dual-stack join subnets, invalid IPv4 CIDR",
 			&udnv1.UserDefinedNetworkSpec{
 				Topology: udnv1.NetworkTopologyLayer2,
 				Layer2: &udnv1.Layer2Config{
 					Role:        udnv1.NetworkRolePrimary,
-					JoinSubnets: udnv1.DualStackCIDRs{"!", "fd50::0/125"},
+					Subnets:     udnv1.DualStackCIDRs{"10.10.0.0/24"},
+					JoinSubnets: udnv1.DualStackCIDRs{"fd50::0/125", "!"},
 				},
 			},
+			config.NewCIDRNotProperlyFormattedError("!").Error(),
 		),
-		Entry("invalid dual-stack join subnets, invalid IPv6 CIDR",
+		Entry("invalid layer2 dual-stack join subnets, invalid IPv6 CIDR",
 			&udnv1.UserDefinedNetworkSpec{
 				Topology: udnv1.NetworkTopologyLayer2,
 				Layer2: &udnv1.Layer2Config{
 					Role:        udnv1.NetworkRolePrimary,
+					Subnets:     udnv1.DualStackCIDRs{"10.10.0.0/24"},
 					JoinSubnets: udnv1.DualStackCIDRs{"10.10.0.0/24", "!"},
 				},
 			},
+			config.NewCIDRNotProperlyFormattedError("!").Error(),
 		),
-		Entry("invalid dual-stack join subnets, multiple valid IPv4 CIDRs",
-			&udnv1.UserDefinedNetworkSpec{
-				Topology: udnv1.NetworkTopologyLayer2,
-				Layer2: &udnv1.Layer2Config{
-					Role:        udnv1.NetworkRolePrimary,
-					JoinSubnets: udnv1.DualStackCIDRs{"10.10.0.0/24", "10.20.0.0/24", "10.30.0.0/24"},
-				},
-			},
-		),
-		Entry("invalid dual-stack join subnets, multiple valid IPv6 CIDRs",
-			&udnv1.UserDefinedNetworkSpec{
-				Topology: udnv1.NetworkTopologyLayer2,
-				Layer2: &udnv1.Layer2Config{
-					Role:        udnv1.NetworkRolePrimary,
-					JoinSubnets: udnv1.DualStackCIDRs{"fd40::0/125", "fd10::0/125", "fd50::0/125"},
-				},
-			},
-		),
-		Entry("invalid dual-stack join subnets, multiple valid IPv4 & IPv6 CIDRs",
-			&udnv1.UserDefinedNetworkSpec{
-				Topology: udnv1.NetworkTopologyLayer2,
-				Layer2: &udnv1.Layer2Config{
-					Role:        udnv1.NetworkRolePrimary,
-					JoinSubnets: udnv1.DualStackCIDRs{"fd40::0/125", "10.10.0.0/24", "fd50::0/125", "10.20.0.0/24"},
-				},
-			},
-		),
+		// The validation for max number of subnets is moved to the CRD validation,
+		// no need to test it here.
 		Entry("invalid join subnets, overlapping with cluster-default join-subnet, IPv4",
 			&udnv1.UserDefinedNetworkSpec{
 				Topology: udnv1.NetworkTopologyLayer2,
 				Layer2: &udnv1.Layer2Config{
 					Role:        udnv1.NetworkRolePrimary,
+					Subnets:     udnv1.DualStackCIDRs{"10.10.0.0/24"},
 					JoinSubnets: udnv1.DualStackCIDRs{"100.64.10.0/24"},
 				},
 			},
+			config.NewSubnetOverlapError(
+				config.ConfigSubnet{SubnetType: config.UserDefinedJoinSubnet, Subnet: util.MustParseCIDR("100.64.10.0/24")},
+				config.ConfigSubnet{SubnetType: config.ConfigSubnetJoin, Subnet: util.MustParseCIDR("100.64.0.0/16")}).Error(),
 		),
 		Entry("invalid join subnets, overlapping with cluster-default join-subnet, IPv6",
 			&udnv1.UserDefinedNetworkSpec{
 				Topology: udnv1.NetworkTopologyLayer2,
 				Layer2: &udnv1.Layer2Config{
 					Role:        udnv1.NetworkRolePrimary,
+					Subnets:     udnv1.DualStackCIDRs{"10.10.0.0/24"},
 					JoinSubnets: udnv1.DualStackCIDRs{"fd98::4/127"},
 				},
 			},
+			config.NewSubnetOverlapError(
+				config.ConfigSubnet{SubnetType: config.UserDefinedJoinSubnet, Subnet: util.MustParseCIDR("fd98::4/127")},
+				config.ConfigSubnet{SubnetType: config.ConfigSubnetJoin, Subnet: util.MustParseCIDR("fd98::/64")}).Error(),
 		),
 		Entry("invalid join subnets, overlapping with cluster-default join-subnet, dual-stack",
 			&udnv1.UserDefinedNetworkSpec{
 				Topology: udnv1.NetworkTopologyLayer2,
 				Layer2: &udnv1.Layer2Config{
 					Role:        udnv1.NetworkRolePrimary,
+					Subnets:     udnv1.DualStackCIDRs{"10.10.0.0/24"},
 					JoinSubnets: udnv1.DualStackCIDRs{"100.64.10.0/24", "fd98::4/127"},
 				},
 			},
+			config.NewSubnetOverlapError(
+				config.ConfigSubnet{SubnetType: config.UserDefinedJoinSubnet, Subnet: util.MustParseCIDR("100.64.10.0/24")},
+				config.ConfigSubnet{SubnetType: config.ConfigSubnetJoin, Subnet: util.MustParseCIDR("100.64.0.0/16")}).Error(),
 		),
 	)
 
 	DescribeTable("should fail to render NAD manifest, given",
-		func(obj client.Object) {
+		func(obj client.Object, expectedError string) {
 			_, err := RenderNetAttachDefManifest(obj, "test")
-			Expect(err).To(HaveOccurred())
+			Expect(err).To(MatchError(ContainSubstring(expectedError)))
 		},
 		Entry("UDN, invalid topology: topology layer2 & layer3 config",
 			&udnv1.UserDefinedNetwork{Spec: udnv1.UserDefinedNetworkSpec{
 				Topology: udnv1.NetworkTopologyLayer2, Layer3: &udnv1.Layer3Config{}}},
+			config.NewTopologyConfigMismatchError(string(udnv1.NetworkTopologyLayer2)).Error(),
 		),
 		Entry("UDN, invalid topology: topology layer3 & layer2 config",
 			&udnv1.UserDefinedNetwork{Spec: udnv1.UserDefinedNetworkSpec{
 				Topology: udnv1.NetworkTopologyLayer3, Layer2: &udnv1.Layer2Config{}}},
+			config.NewTopologyConfigMismatchError(string(udnv1.NetworkTopologyLayer3)).Error(),
 		),
 		Entry("UDN, invalid IPAM config: IPAM lifecycle & disabled ipam mode",
 			&udnv1.UserDefinedNetwork{Spec: udnv1.UserDefinedNetworkSpec{
@@ -194,6 +193,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 					},
 				},
 			}},
+			config.NewIPAMLifecycleNotSupportedError().Error(),
 		),
 		Entry("UDN, invalid IPAM config: IPAM enabled & no subnet",
 			&udnv1.UserDefinedNetwork{Spec: udnv1.UserDefinedNetworkSpec{
@@ -206,6 +206,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 					},
 				},
 			}},
+			config.NewSubnetsRequiredError().Error(),
 		),
 		Entry("UDN, invalid IPAM config: IPAM disabled & subnet",
 			&udnv1.UserDefinedNetwork{Spec: udnv1.UserDefinedNetworkSpec{
@@ -218,39 +219,57 @@ var _ = Describe("NetAttachDefTemplate", func() {
 					},
 				},
 			}},
+			config.NewSubnetsMustBeUnsetError().Error(),
 		),
 		Entry("CUDN, invalid topology: topology layer2 & layer3 config",
 			&udnv1.ClusterUserDefinedNetwork{Spec: udnv1.ClusterUserDefinedNetworkSpec{Network: udnv1.NetworkSpec{
 				Topology: udnv1.NetworkTopologyLayer2, Layer3: &udnv1.Layer3Config{}}}},
+			config.NewTopologyConfigMismatchError(string(udnv1.NetworkTopologyLayer2)).Error(),
 		),
 		Entry("CUDN, invalid topology: topology layer2 & localnet config",
 			&udnv1.ClusterUserDefinedNetwork{Spec: udnv1.ClusterUserDefinedNetworkSpec{Network: udnv1.NetworkSpec{
 				Topology: udnv1.NetworkTopologyLayer2, Localnet: &udnv1.LocalnetConfig{}}}},
+			config.NewTopologyConfigMismatchError(string(udnv1.NetworkTopologyLayer2)).Error(),
 		),
 		Entry("CUDN, invalid topology: topology layer3 & layer2 config",
 			&udnv1.ClusterUserDefinedNetwork{Spec: udnv1.ClusterUserDefinedNetworkSpec{Network: udnv1.NetworkSpec{
 				Topology: udnv1.NetworkTopologyLayer3, Layer2: &udnv1.Layer2Config{}}}},
+			config.NewTopologyConfigMismatchError(string(udnv1.NetworkTopologyLayer3)).Error(),
 		),
 		Entry("CUDN, invalid topology: topology layer3 & localnet config",
 			&udnv1.ClusterUserDefinedNetwork{Spec: udnv1.ClusterUserDefinedNetworkSpec{Network: udnv1.NetworkSpec{
 				Topology: udnv1.NetworkTopologyLayer3, Localnet: &udnv1.LocalnetConfig{}}}},
+			config.NewTopologyConfigMismatchError(string(udnv1.NetworkTopologyLayer3)).Error(),
 		),
 		Entry("CUDN, invalid topology: topology localnet & layer2 config",
 			&udnv1.ClusterUserDefinedNetwork{Spec: udnv1.ClusterUserDefinedNetworkSpec{Network: udnv1.NetworkSpec{
 				Topology: udnv1.NetworkTopologyLocalnet, Layer2: &udnv1.Layer2Config{}}}},
+			config.NewTopologyConfigMismatchError(string(udnv1.NetworkTopologyLocalnet)).Error(),
 		),
 		Entry("CUDN, invalid topology: topology localnet & layer3 config",
 			&udnv1.ClusterUserDefinedNetwork{Spec: udnv1.ClusterUserDefinedNetworkSpec{Network: udnv1.NetworkSpec{
 				Topology: udnv1.NetworkTopologyLocalnet, Layer3: &udnv1.Layer3Config{}}}},
+			config.NewTopologyConfigMismatchError(string(udnv1.NetworkTopologyLocalnet)).Error(),
 		),
-		Entry("CUDN, localnet: excludeSubnets not in range of subnets",
+		Entry("CUDN, localnet: IPv4 excludeSubnets not in range of subnets",
 			&udnv1.ClusterUserDefinedNetwork{Spec: udnv1.ClusterUserDefinedNetworkSpec{Network: udnv1.NetworkSpec{
 				Topology: udnv1.NetworkTopologyLocalnet,
 				Localnet: &udnv1.LocalnetConfig{Role: udnv1.NetworkRoleSecondary, PhysicalNetworkName: "localnet1",
 					Subnets:        udnv1.DualStackCIDRs{"192.168.0.0/16", "2001:dbb::/64"},
-					ExcludeSubnets: []udnv1.CIDR{"192.200.0.0/30", "2001:aaa::/127", "192.300.0.1/32", "2001:bbb::1/120"},
+					ExcludeSubnets: []udnv1.CIDR{"192.200.0.0/30"},
 				},
 			}}},
+			config.NewExcludedSubnetNotContainedError("192.200.0.0/30").Error(),
+		),
+		Entry("CUDN, localnet: IPv6 excludeSubnets not in range of subnets",
+			&udnv1.ClusterUserDefinedNetwork{Spec: udnv1.ClusterUserDefinedNetworkSpec{Network: udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLocalnet,
+				Localnet: &udnv1.LocalnetConfig{Role: udnv1.NetworkRoleSecondary, PhysicalNetworkName: "localnet1",
+					Subnets:        udnv1.DualStackCIDRs{"192.168.0.0/16", "2001:dbb::/64"},
+					ExcludeSubnets: []udnv1.CIDR{"2001:aaa::/127"},
+				},
+			}}},
+			config.NewExcludedSubnetNotContainedError("2001:aaa::/127").Error(),
 		),
 	)
 
