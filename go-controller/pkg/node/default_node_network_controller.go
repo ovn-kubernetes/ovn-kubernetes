@@ -1362,7 +1362,7 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 		defer nc.wg.Done()
 		podResClient, err := podresourcesapi.New(podresourcesapi.KubeletSocketPath)
 		if err != nil {
-			klog.Warningf("Failed to initialize PodeResourceAPI client: %v", err)
+			klog.Errorf("Failed to initialize PodResourcesAPI client: %v", err)
 			return
 		}
 		ovspinning.Run(ctx, nc.stopChan, podResClient)

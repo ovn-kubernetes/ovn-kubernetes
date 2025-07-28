@@ -99,7 +99,7 @@ func TestAlignCPUAffinity(t *testing.T) {
 			go func() {
 				// Be sure the system under test goroutine is finished before cleaning
 				defer wg.Done()
-				Run(context.TODO(), stopCh, podresourcesapi.NewMock(tc.allocatableCPUs, tc.usedCPUs))
+				Run(context.Background(), stopCh, podresourcesapi.NewMock(tc.allocatableCPUs, tc.usedCPUs))
 			}()
 
 			expectedUnixCPUSet := convertCPUSet(&expectedCPUs)
@@ -446,7 +446,7 @@ func assertNeverPIDHasSchedAffinity(t *testing.T, pid int, targetCPUSet unix.CPU
 // convertUnixCPUSetToK8sCPUSet converts a unix.CPUSet to a k8s.io/utils/cpuset.CPUSet
 func convertUnixCPUSetToK8sCPUSet(unixSet unix.CPUSet) (cpuset.CPUSet, error) {
 	var cpus []int
-	const maxCPUs = 1024 // Current size of unix.CPUSet in Go implementation
+	const maxCPUs = 1024 // Maximum CPUs supported by unix.CPUSet (CPU_SETSIZE on Linux)
 	for i := 0; i < maxCPUs; i++ {
 		if unixSet.IsSet(i) {
 			cpus = append(cpus, i)
