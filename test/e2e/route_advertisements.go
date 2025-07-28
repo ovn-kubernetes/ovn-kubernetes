@@ -503,6 +503,9 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 						cmd,
 						framework.Poll,
 						60*time.Second)
+					framework.Logf("error: %v", err)
+					framework.Logf("stdout: %s", stdout)
+					time.Sleep(10 * time.Hour)
 					framework.ExpectNoError(err, fmt.Sprintf("Testing pod to external traffic failed (%s): %v", testDescription, err))
 
 					if isIPv6Supported(f.ClientSet) && utilnet.IsIPv6String(serverContainerIP) {
@@ -704,7 +707,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 			ipFamilyV6
 		)
 
-		f := wrappedTestFramework("bpp-network-isolation")
+		f := wrappedTestFramework("bgp-network-isolation")
 		f.SkipNamespaceCreation = true
 		var udnNamespaceA, udnNamespaceB *corev1.Namespace
 		var nodes *corev1.NodeList
@@ -953,6 +956,8 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 						stdout, stderr, err := e2epodoutput.RunHostCmdWithFullOutput(clientNamespace, clientName, strings.Join(curlCmd, " "))
 						out = stdout + "\n" + stderr
 						if err != nil {
+							framework.Logf("Connectivity check failed from Pod %s/%s to %s: %v", clientNamespace, clientName, targetAddress, err)
+							time.Sleep(time.Hour * 10)
 							return out, fmt.Errorf("connectivity check failed from Pod %s/%s to %s: %w", clientNamespace, clientName, targetAddress, err)
 						}
 					} else {
