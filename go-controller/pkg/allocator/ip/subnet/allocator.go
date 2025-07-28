@@ -10,6 +10,7 @@ import (
 	iputils "github.com/containernetworking/plugins/pkg/ip"
 
 	"k8s.io/klog/v2"
+	utilnet "k8s.io/utils/net"
 
 	bitmapallocator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/bitmap"
 	ipallocator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip"
@@ -84,9 +85,9 @@ func newIPAMAllocator(cidr *net.IPNet) (ipallocator.ContinuousAllocator, error) 
 }
 
 // newReservedIPAMAllocator provides an ipam interface which can be used for IPAM
-// allocations for a given cidr using static IP allocations only.
+// allocations for a given cidr using static IP allocations only. All IPs are available.
 func newReservedIPAMAllocator(cidr *net.IPNet) (ipallocator.StaticAllocator, error) {
-	return ipallocator.NewAllocatorCIDRRange(cidr, func(max int, rangeSpec string) (bitmapallocator.Interface, error) {
+	return ipallocator.NewAllocatorFullCIDRRange(cidr, func(max int, rangeSpec string) (bitmapallocator.Interface, error) {
 		return bitmapallocator.NewRoundRobinAllocationMap(max, rangeSpec), nil
 	})
 }
@@ -109,12 +110,20 @@ func (allocator *allocator) AddOrUpdateSubnet(config SubnetConfig) error {
 		klog.Warningf("Replacing subnets %v with %v for %s", util.StringSlice(subnetInfo.subnets), util.StringSlice(config.Subnets), config.Name)
 	}
 	var ipams []ipallocator.ContinuousAllocator
+
+	// subnetBoundaryIPs holds network and broadcast addresses for IPv4 subnets.
+	// These are automatically excluded from reserved subnet allocators to prevent allocation.
+	var subnetBoundaryIPs []net.IP
 	for _, subnet := range config.Subnets {
 		ipam, err := allocator.ipamFunc(subnet)
 		if err != nil {
 			return fmt.Errorf("failed to initialize IPAM of subnet %s for %s: %w", subnet, config.Name, err)
 		}
 		ipams = append(ipams, ipam)
+
+		if utilnet.IsIPv4CIDR(subnet) {
+			subnetBoundaryIPs = append(subnetBoundaryIPs, subnet.IP, util.SubnetBroadcastIP(*subnet))
+		}
 	}
 
 	// reservedSubnets is a subset of subnets, and it should not be used by automatic IPAM
@@ -141,6 +150,15 @@ func (allocator *allocator) AddOrUpdateSubnet(config SubnetConfig) error {
 			return fmt.Errorf("failed to initialize IPAM of reserved subnet %s for %s: %w", reservedSubnet, config.Name, err)
 		}
 		staticIPAMs = append(staticIPAMs, ipam)
+
+		// Exclude network and broadcast addresses from reserved subnet allocators
+		for _, excludedSubnetIP := range subnetBoundaryIPs {
+			if reservedSubnet.Contains(excludedSubnetIP) {
+				if err := ipam.Allocate(excludedSubnetIP); err != nil {
+					return fmt.Errorf("failed to exclude %s from reserved subnet allocator %s: %w", excludedSubnetIP, ipam.CIDR(), err)
+				}
+			}
+		}
 	}
 	allocator.cache[config.Name] = subnetInfo{
 		subnets:     config.Subnets,
@@ -243,6 +261,7 @@ func (allocator *allocator) AllocateIPPerSubnet(name string, ips []*net.IPNet) e
 					err = fmt.Errorf("failed to allocate IP %s for %s: attempted to reserve multiple IPs in the same static IPAM instance", ipnet.IP, name)
 					return err
 				}
+
 				if err = staticIPAM.Allocate(ipnet.IP); err != nil {
 					return err
 				}
