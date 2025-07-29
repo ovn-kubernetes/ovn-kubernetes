@@ -63,12 +63,20 @@ command_exists() {
 detect_apiserver_url() {
   # Detect API_URL used for in-cluster communication
   #
-  # Despite OVN run in pod they will only obtain the VIRTUAL apiserver address
-  # and since OVN has to provide the connectivity to service
-  # it can not be bootstrapped
-  #
-  # This is the address of the node with the control-plane
-  API_URL=$(kind get kubeconfig --internal --name "${KIND_CLUSTER_NAME}" | grep server | awk '{ print $2 }')
+  # This will return apiserver address in format https://<node-name>:<port>
+  DNS_NAME_URL=$(kind get kubeconfig --internal --name "${KIND_CLUSTER_NAME}" | grep server | awk '{ print $2 }')
+  # cut https:// from the URL
+  CP_NODE=${DNS_NAME_URL#*//}
+  # cut port from the URL
+  CP_NODE=${CP_NODE%:*}
+  # find node IP address in the kind network
+  if [ "$PLATFORM_IPV4_SUPPORT" == false ] && [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
+    NODE_IP="[$(docker inspect -f '{{.NetworkSettings.Networks.kind.GlobalIPv6Address}}' $CP_NODE)]"
+  else
+    NODE_IP=$(docker inspect -f '{{.NetworkSettings.Networks.kind.IPAddress}}' "$CP_NODE")
+  fi
+  # replace node name with node IP address
+  API_URL=${DNS_NAME_URL/$CP_NODE/$NODE_IP}
 }
 
 docker_disable_ipv6() {
