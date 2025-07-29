@@ -41,7 +41,7 @@ func (u ModelUpdates) GetUpdatedTables() []string {
 
 // ForEachModelUpdate processes each row update of a given table in model
 // notation
-func (u ModelUpdates) ForEachModelUpdate(table string, do func(uuid string, old, new model.Model) error) error {
+func (u ModelUpdates) ForEachModelUpdate(table string, do func(uuid string, old, newModel model.Model) error) error {
 	models := u.updates[table]
 	for uuid, model := range models {
 		err := do(uuid, model.old, model.new)
@@ -94,8 +94,8 @@ func (u ModelUpdates) GetRow(table, uuid string) *ovsdb.Row {
 }
 
 // Merge a set of updates with an earlier set of updates
-func (u *ModelUpdates) Merge(dbModel model.DatabaseModel, new ModelUpdates) error {
-	for table, models := range new.updates {
+func (u *ModelUpdates) Merge(dbModel model.DatabaseModel, newModel ModelUpdates) error {
+	for table, models := range newModel.updates {
 		for uuid, update := range models {
 			err := u.addUpdate(dbModel, table, uuid, update)
 			if err != nil {
@@ -132,18 +132,18 @@ func (u *ModelUpdates) AddOperation(dbModel model.DatabaseModel, table, uuid str
 func (u *ModelUpdates) AddRowUpdate(dbModel model.DatabaseModel, table, uuid string, current model.Model, ru ovsdb.RowUpdate) error {
 	switch {
 	case ru.Old == nil && ru.New != nil:
-		new, err := model.CreateModel(dbModel, table, ru.New, uuid)
+		newModel, err := model.CreateModel(dbModel, table, ru.New, uuid)
 		if err != nil {
 			return err
 		}
-		err = u.addUpdate(dbModel, table, uuid, modelUpdate{new: new, rowUpdate2: &rowUpdate2{New: ru.New}})
+		err = u.addUpdate(dbModel, table, uuid, modelUpdate{new: newModel, rowUpdate2: &rowUpdate2{New: ru.New}})
 		if err != nil {
 			return err
 		}
 	case ru.Old != nil && ru.New != nil:
 		old := current
-		new := model.Clone(current)
-		info, err := dbModel.NewModelInfo(new)
+		newModel := model.Clone(current)
+		info, err := dbModel.NewModelInfo(newModel)
 		if err != nil {
 			return err
 		}
@@ -151,7 +151,7 @@ func (u *ModelUpdates) AddRowUpdate(dbModel model.DatabaseModel, table, uuid str
 		if !changed || err != nil {
 			return err
 		}
-		err = u.addUpdate(dbModel, table, uuid, modelUpdate{old: old, new: new, rowUpdate2: &rowUpdate2{Old: ru.Old, New: ru.New}})
+		err = u.addUpdate(dbModel, table, uuid, modelUpdate{old: old, new: newModel, rowUpdate2: &rowUpdate2{Old: ru.Old, New: ru.New}})
 		if err != nil {
 			return err
 		}
@@ -175,18 +175,18 @@ func (u *ModelUpdates) AddRowUpdate2(dbModel model.DatabaseModel, table, uuid st
 		ru2.Insert = ru2.Initial
 		fallthrough
 	case ru2.Insert != nil:
-		new, err := model.CreateModel(dbModel, table, ru2.Insert, uuid)
+		newModel, err := model.CreateModel(dbModel, table, ru2.Insert, uuid)
 		if err != nil {
 			return err
 		}
-		err = u.addUpdate(dbModel, table, uuid, modelUpdate{new: new, rowUpdate2: &ru2})
+		err = u.addUpdate(dbModel, table, uuid, modelUpdate{new: newModel, rowUpdate2: &ru2})
 		if err != nil {
 			return err
 		}
 	case ru2.Modify != nil:
 		old := current
-		new := model.Clone(current)
-		info, err := dbModel.NewModelInfo(new)
+		newModel := model.Clone(current)
+		info, err := dbModel.NewModelInfo(newModel)
 		if err != nil {
 			return err
 		}
@@ -194,7 +194,7 @@ func (u *ModelUpdates) AddRowUpdate2(dbModel model.DatabaseModel, table, uuid st
 		if !changed || err != nil {
 			return err
 		}
-		err = u.addUpdate(dbModel, table, uuid, modelUpdate{old: old, new: new, rowUpdate2: &ru2})
+		err = u.addUpdate(dbModel, table, uuid, modelUpdate{old: old, new: newModel, rowUpdate2: &ru2})
 		if err != nil {
 			return err
 		}
@@ -296,8 +296,8 @@ func (u *ModelUpdates) addUpdateOperation(dbModel model.DatabaseModel, table, uu
 		return err
 	}
 
-	new := model.Clone(old)
-	newInfo, err := dbModel.NewModelInfo(new)
+	newModel := model.Clone(old)
+	newInfo, err := dbModel.NewModelInfo(newModel)
 	if err != nil {
 		return err
 	}
@@ -319,7 +319,7 @@ func (u *ModelUpdates) addUpdateOperation(dbModel model.DatabaseModel, table, uu
 	err = u.addUpdate(dbModel, table, uuid,
 		modelUpdate{
 			old: old,
-			new: new,
+			new: newModel,
 			rowUpdate2: &rowUpdate2{
 				Modify: &delta,
 				Old:    &oldRow,
@@ -345,20 +345,20 @@ func (u *ModelUpdates) addMutateOperation(dbModel model.DatabaseModel, table, uu
 		return err
 	}
 
-	new := model.Clone(old)
-	newInfo, err := dbModel.NewModelInfo(new)
+	newModel := model.Clone(old)
+	newInfo, err := dbModel.NewModelInfo(newModel)
 	if err != nil {
 		return err
 	}
 
-	differences := make(map[string]interface{})
+	differences := make(map[string]any)
 	for _, mutation := range op.Mutations {
 		column := schema.Column(mutation.Column)
 		if column == nil {
 			continue
 		}
 
-		var nativeValue interface{}
+		var nativeValue any
 		// Usually a mutation value is of the same type of the value being mutated
 		// except for delete mutation of maps where it can also be a list of same type of
 		// keys (rfc7047 5.1). Handle this special case here.
@@ -422,7 +422,7 @@ func (u *ModelUpdates) addMutateOperation(dbModel model.DatabaseModel, table, uu
 	err = u.addUpdate(dbModel, table, uuid,
 		modelUpdate{
 			old: old,
-			new: new,
+			new: newModel,
 			rowUpdate2: &rowUpdate2{
 				Modify: &delta,
 				Old:    &oldRow,
@@ -434,7 +434,7 @@ func (u *ModelUpdates) addMutateOperation(dbModel model.DatabaseModel, table, uu
 	return err
 }
 
-func (u *ModelUpdates) addDeleteOperation(dbModel model.DatabaseModel, table, uuid string, old model.Model, op *ovsdb.Operation) error {
+func (u *ModelUpdates) addDeleteOperation(dbModel model.DatabaseModel, table, uuid string, old model.Model, _ *ovsdb.Operation) error {
 	m := dbModel.Mapper
 
 	info, err := dbModel.NewModelInfo(old)

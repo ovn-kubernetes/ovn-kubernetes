@@ -11,12 +11,12 @@ type MonitorSelect struct {
 }
 
 // NewMonitorSelect returns a new MonitorSelect with the provided values
-func NewMonitorSelect(initial, insert, delete, modify bool) *MonitorSelect {
+func NewMonitorSelect(withInitialState, withInserts, withDeletes, withModifies bool) *MonitorSelect {
 	return &MonitorSelect{
-		initial: &initial,
-		insert:  &insert,
-		delete:  &delete,
-		modify:  &modify,
+		initial: &withInitialState,
+		insert:  &withInserts,
+		delete:  &withDeletes,
+		modify:  &withModifies,
 	}
 }
 

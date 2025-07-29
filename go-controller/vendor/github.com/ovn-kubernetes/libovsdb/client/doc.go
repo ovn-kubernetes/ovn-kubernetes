@@ -4,30 +4,29 @@ Package client connects to, monitors and interacts with OVSDB servers (RFC7047).
 This package uses structs, that contain the 'ovs' field tag to determine which field goes to
 which column in the database. We refer to pointers to this structs as Models. Example:
 
-   type MyLogicalSwitch struct {
-   	UUID   string            `ovsdb:"_uuid"` // _uuid tag is mandatory
-   	Name   string            `ovsdb:"name"`
-   	Ports  []string          `ovsdb:"ports"`
-   	Config map[string]string `ovsdb:"other_config"`
-   }
+	type MyLogicalSwitch struct {
+		UUID   string            `ovsdb:"_uuid"` // _uuid tag is mandatory
+		Name   string            `ovsdb:"name"`
+		Ports  []string          `ovsdb:"ports"`
+		Config map[string]string `ovsdb:"other_config"`
+	}
 
 Based on these Models a Database Model (see ClientDBModel type) is built to represent
 the entire OVSDB:
 
-   clientDBModel, _ := client.NewClientDBModel("OVN_Northbound",
-       map[string]client.Model{
-   	"Logical_Switch": &MyLogicalSwitch{},
-   })
-
+	clientDBModel, _ := client.NewClientDBModel("OVN_Northbound",
+	    map[string]client.Model{
+		"Logical_Switch": &MyLogicalSwitch{},
+	})
 
 The ClientDBModel represents the entire Database (or the part of it we're interested in).
 Using it, the libovsdb.client package is able to properly encode and decode OVSDB messages
 and store them in Model instances.
 A client instance is created by simply specifying the connection information and the database model:
 
-     ovs, _ := client.Connect(context.Background(), clientDBModel)
+	ovs, _ := client.Connect(context.Background(), clientDBModel)
 
-Main API
+# Main API
 
 After creating a OvsdbClient using the Connect() function, we can use a number of CRUD-like
 to interact with the database:
@@ -43,7 +42,7 @@ and passed to client.Transact().
 Others, such as List() and Get(), interact with the client's internal cache and are able to
 return Model instances (or a list thereof) directly.
 
-Conditions
+# Conditions
 
 Some API functions (Create() and Get()), can be run directly. Others, require us to use
 a ConditionalAPI. The ConditionalAPI injects RFC7047 Conditions into ovsdb Operations as well as
@@ -111,7 +110,7 @@ cache element, an operation will be created matching on the "_uuid" column. The 
 quite large depending on the cache size and the provided function. Most likely there is a way to express the
 same condition using Where() or WhereAll() which will be more efficient.
 
-Get
+# Get
 
 Get() operation is a simple operation capable of retrieving one Model based on some of its schema indexes. E.g:
 
@@ -119,7 +118,7 @@ Get() operation is a simple operation capable of retrieving one Model based on s
 	err := ovs.Get(ls)
 	fmt.Printf("Name of the switch is: &s", ls.Name)
 
-List
+# List
 
 List() searches the cache and populates a slice of Models. It can be used directly or using WhereCache()
 
@@ -131,7 +130,7 @@ List() searches the cache and populates a slice of Models. It can be used direct
 	    	return strings.HasPrefix(ls.Name, "ext_")
 	}).List(lsList)
 
-Create
+# Create
 
 Create returns a list of operations to create the models provided. E.g:
 
@@ -143,7 +142,7 @@ Update returns a list of operations to update the matching rows to match the val
 	ls := &LogicalSwitch{ExternalIDs: map[string]string {"foo": "bar"}}
 	ops, err := ovs.Where(...).Update(&ls, &ls.ExternalIDs}
 
-Mutate
+# Mutate
 
 Mutate returns a list of operations needed to mutate the matching rows as described by the list of Mutation objects. E.g:
 
@@ -154,11 +153,10 @@ Mutate returns a list of operations needed to mutate the matching rows as descri
 		Value:   map[string]string{"foo":"bar"},
 	})
 
-Delete
+# Delete
 
 Delete returns a list of operations needed to delete the matching rows. E.g:
 
 	ops, err := ovs.Where(...).Delete()
-
 */
 package client

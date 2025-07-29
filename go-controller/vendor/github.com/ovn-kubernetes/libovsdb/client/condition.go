@@ -176,7 +176,7 @@ func newExplicitConditional(table string, cache *cache.TableCache, matchAll bool
 // to match on models.
 type predicateConditional struct {
 	tableName string
-	predicate interface{}
+	predicate any
 	cache     *cache.TableCache
 }
 
@@ -215,7 +215,7 @@ func (c *predicateConditional) Generate() ([][]ovsdb.Condition, error) {
 }
 
 // newPredicateConditional creates a new predicateConditional
-func newPredicateConditional(table string, cache *cache.TableCache, predicate interface{}) (Conditional, error) {
+func newPredicateConditional(table string, cache *cache.TableCache, predicate any) (Conditional, error) {
 	return &predicateConditional{
 		tableName: table,
 		predicate: predicate,

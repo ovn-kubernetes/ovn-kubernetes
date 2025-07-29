@@ -68,7 +68,7 @@ type TableMonitor struct {
 	Fields []string
 }
 
-func newTableMonitor(o *ovsdbClient, m model.Model, conditions []model.Condition, fields []interface{}) (*TableMonitor, error) {
+func newTableMonitor(o *ovsdbClient, m model.Model, conditions []model.Condition, fields []any) (*TableMonitor, error) {
 	dbModel := o.primaryDB().model
 	tableName := dbModel.FindTable(reflect.TypeOf(m))
 	if tableName == "" {
@@ -113,7 +113,7 @@ func newTableMonitor(o *ovsdbClient, m model.Model, conditions []model.Condition
 	}, nil
 }
 
-func WithTable(m model.Model, fields ...interface{}) MonitorOption {
+func WithTable(m model.Model, fields ...any) MonitorOption {
 	return func(o *ovsdbClient, monitor *Monitor) error {
 		tableMonitor, err := newTableMonitor(o, m, []model.Condition{}, fields)
 		if err != nil {
@@ -124,7 +124,7 @@ func WithTable(m model.Model, fields ...interface{}) MonitorOption {
 	}
 }
 
-func WithConditionalTable(m model.Model, conditions []model.Condition, fields ...interface{}) MonitorOption {
+func WithConditionalTable(m model.Model, conditions []model.Condition, fields ...any) MonitorOption {
 	return func(o *ovsdbClient, monitor *Monitor) error {
 		tableMonitor, err := newTableMonitor(o, m, conditions, fields)
 		if err != nil {

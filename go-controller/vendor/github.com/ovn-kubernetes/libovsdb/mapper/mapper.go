@@ -12,12 +12,14 @@ import (
 // to what column in the database id through field a field tag.
 // The tag used is "ovsdb" and has the following structure
 // 'ovsdb:"${COLUMN_NAME}"'
+//
 //	where COLUMN_NAME is the name of the column and must match the schema
 //
-//Example:
-//  type MyObj struct {
-//  	Name string `ovsdb:"name"`
-//  }
+// Example:
+//
+//	type MyObj struct {
+//		Name string `ovsdb:"name"`
+//	}
 type Mapper struct {
 	Schema ovsdb.DatabaseSchema
 }
@@ -52,7 +54,7 @@ func (m Mapper) GetRowData(row *ovsdb.Row, result *Info) error {
 	return m.getData(*row, result)
 }
 
-// getData transforms a map[string]interface{} containing OvS types (e.g: a ResultRow
+// getData transforms a map[string]any containing OvS types (e.g: a ResultRow
 // has this format) to orm struct
 // The result object must be given as pointer to an object with the right tags
 func (m Mapper) getData(ovsData ovsdb.Row, result *Info) error {
@@ -81,16 +83,16 @@ func (m Mapper) getData(ovsData ovsdb.Row, result *Info) error {
 	return nil
 }
 
-// NewRow transforms an orm struct to a map[string] interface{} that can be used as libovsdb.Row
+// NewRow transforms an orm struct to a map[string] any that can be used as libovsdb.Row
 // By default, default or null values are skipped. This behavior can be modified by specifying
 // a list of fields (pointers to fields in the struct) to be added to the row
-func (m Mapper) NewRow(data *Info, fields ...interface{}) (ovsdb.Row, error) {
+func (m Mapper) NewRow(data *Info, fields ...any) (ovsdb.Row, error) {
 	columns := make(map[string]*ovsdb.ColumnSchema)
 	for k, v := range data.Metadata.TableSchema.Columns {
 		columns[k] = v
 	}
 	columns["_uuid"] = &ovsdb.UUIDColumn
-	ovsRow := make(map[string]interface{}, len(columns))
+	ovsRow := make(map[string]any, len(columns))
 	for name, column := range columns {
 		nativeElem, err := data.FieldByColumn(name)
 		if err != nil {
@@ -135,7 +137,7 @@ func (m Mapper) NewRow(data *Info, fields ...interface{}) (ovsdb.Row, error) {
 // object has valid data. The order in which they are traversed matches the order defined
 // in the schema.
 // By `valid data` we mean non-default data.
-func (m Mapper) NewEqualityCondition(data *Info, fields ...interface{}) ([]ovsdb.Condition, error) {
+func (m Mapper) NewEqualityCondition(data *Info, fields ...any) ([]ovsdb.Condition, error) {
 	var conditions []ovsdb.Condition
 	var condIndex [][]string
 
@@ -185,7 +187,7 @@ func (m Mapper) NewEqualityCondition(data *Info, fields ...interface{}) ([]ovsdb
 // EqualFields compares two mapped objects.
 // The indexes to use for comparison are, the _uuid, the table indexes and the columns that correspond
 // to the mapped fields pointed to by 'fields'. They must be pointers to fields on the first mapped element (i.e: one)
-func (m Mapper) EqualFields(one, other *Info, fields ...interface{}) (bool, error) {
+func (m Mapper) EqualFields(one, other *Info, fields ...any) (bool, error) {
 	indexes := []string{}
 	for _, f := range fields {
 		col, err := one.ColumnByPtr(f)
@@ -198,7 +200,7 @@ func (m Mapper) EqualFields(one, other *Info, fields ...interface{}) (bool, erro
 }
 
 // NewCondition returns a ovsdb.Condition based on the model
-func (m Mapper) NewCondition(data *Info, field interface{}, function ovsdb.ConditionFunction, value interface{}) (*ovsdb.Condition, error) {
+func (m Mapper) NewCondition(data *Info, field any, function ovsdb.ConditionFunction, value any) (*ovsdb.Condition, error) {
 	column, err := data.ColumnByPtr(field)
 	if err != nil {
 		return nil, err
@@ -226,7 +228,7 @@ func (m Mapper) NewCondition(data *Info, field interface{}, function ovsdb.Condi
 
 // NewMutation creates a RFC7047 mutation object based on an ORM object and the mutation fields (in native format)
 // It takes care of field validation against the column type
-func (m Mapper) NewMutation(data *Info, column string, mutator ovsdb.Mutator, value interface{}) (*ovsdb.Mutation, error) {
+func (m Mapper) NewMutation(data *Info, column string, mutator ovsdb.Mutator, value any) (*ovsdb.Mutation, error) {
 	// Check the column exists in the object
 	if !data.hasColumn(column) {
 		return nil, fmt.Errorf("mutation contains column %s that does not exist in object %v", column, data)
@@ -240,7 +242,7 @@ func (m Mapper) NewMutation(data *Info, column string, mutator ovsdb.Mutator, va
 		return nil, err
 	}
 
-	var ovsValue interface{}
+	var ovsValue any
 	var err error
 	// Usually a mutation value is of the same type of the value being mutated
 	// except for delete mutation of maps where it can also be a list of same type of
