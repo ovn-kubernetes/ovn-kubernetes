@@ -320,6 +320,9 @@ const (
 	// the local node's subnet.
 	NFTRemoteNodeIPsv6 = "remote-node-ips-v6"
 
+	NFTNodeIPsv4 = "node-ips-v4"
+	NFTNodeIPsv6 = "node-ips-v6"
+
 	// Metrics
 	MetricOvnkubeNamespace               = "ovnkube"
 	MetricOvnkubeSubsystemController     = "controller"

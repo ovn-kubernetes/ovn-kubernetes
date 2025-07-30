@@ -1533,6 +1533,10 @@ func (nc *DefaultNodeNetworkController) addOrUpdateNode(node *corev1.Node) error
 				Key: []string{nodeIP.String()},
 			})
 		}
+		nftElems = append(nftElems, &knftables.Element{
+			Set: types.NFTNodeIPsv4,
+			Key: []string{nodeIP.String()},
+		})
 	}
 
 	// Process IPv6 addresses
@@ -1546,6 +1550,10 @@ func (nc *DefaultNodeNetworkController) addOrUpdateNode(node *corev1.Node) error
 				Key: []string{nodeIP.String()},
 			})
 		}
+		nftElems = append(nftElems, &knftables.Element{
+			Set: types.NFTNodeIPsv6,
+			Key: []string{nodeIP.String()},
+		})
 	}
 
 	gw := nc.Gateway.(*gateway)
@@ -1569,9 +1577,17 @@ func removePMTUDNodeNFTRules(nodeIPs []net.IP) error {
 				Set: types.NFTRemoteNodeIPsv4,
 				Key: []string{nodeIP.String()},
 			})
+			nftElems = append(nftElems, &knftables.Element{
+				Set: types.NFTNodeIPsv4,
+				Key: []string{nodeIP.String()},
+			})
 		} else {
 			nftElems = append(nftElems, &knftables.Element{
 				Set: types.NFTRemoteNodeIPsv6,
+				Key: []string{nodeIP.String()},
+			})
+			nftElems = append(nftElems, &knftables.Element{
+				Set: types.NFTNodeIPsv6,
 				Key: []string{nodeIP.String()},
 			})
 		}
@@ -1607,6 +1623,7 @@ func (nc *DefaultNodeNetworkController) deleteNode(node *corev1.Node) {
 
 func (nc *DefaultNodeNetworkController) syncNodes(objs []interface{}) error {
 	var keepNFTSetElemsV4, keepNFTSetElemsV6 []*knftables.Element
+	var keepNFTSetElemsAllNodesV4, keepNFTSetElemsAllNodesV6 []*knftables.Element
 	var errors []error
 	klog.Infof("Starting node controller node sync")
 	start := time.Now()
@@ -1614,9 +1631,6 @@ func (nc *DefaultNodeNetworkController) syncNodes(objs []interface{}) error {
 		node, ok := obj.(*corev1.Node)
 		if !ok {
 			klog.Errorf("Spurious object in syncNodes: %v", obj)
-			continue
-		}
-		if node.Name == nc.name {
 			continue
 		}
 
@@ -1629,24 +1643,42 @@ func (nc *DefaultNodeNetworkController) syncNodes(objs []interface{}) error {
 
 		// Process IPv4 addresses
 		for _, nodeIP := range ipsv4 {
-			keepNFTSetElemsV4 = append(keepNFTSetElemsV4, &knftables.Element{
-				Set: types.NFTRemoteNodeIPsv4,
+			keepNFTSetElemsAllNodesV4 = append(keepNFTSetElemsAllNodesV4, &knftables.Element{
+				Set: types.NFTNodeIPsv4,
 				Key: []string{nodeIP.String()},
 			})
+			if node.Name != nc.name {
+				keepNFTSetElemsV4 = append(keepNFTSetElemsV4, &knftables.Element{
+					Set: types.NFTRemoteNodeIPsv4,
+					Key: []string{nodeIP.String()},
+				})
+			}
 		}
 
 		// Process IPv6 addresses
 		for _, nodeIP := range ipsv6 {
-			keepNFTSetElemsV6 = append(keepNFTSetElemsV6, &knftables.Element{
-				Set: types.NFTRemoteNodeIPsv6,
+			keepNFTSetElemsAllNodesV6 = append(keepNFTSetElemsAllNodesV6, &knftables.Element{
+				Set: types.NFTNodeIPsv6,
 				Key: []string{nodeIP.String()},
 			})
+			if node.Name != nc.name {
+				keepNFTSetElemsV6 = append(keepNFTSetElemsV6, &knftables.Element{
+					Set: types.NFTRemoteNodeIPsv6,
+					Key: []string{nodeIP.String()},
+				})
+			}
 		}
 	}
 	if err := recreateNFTSet(types.NFTRemoteNodeIPsv4, keepNFTSetElemsV4); err != nil {
 		errors = append(errors, err)
 	}
 	if err := recreateNFTSet(types.NFTRemoteNodeIPsv6, keepNFTSetElemsV6); err != nil {
+		errors = append(errors, err)
+	}
+	if err := recreateNFTSet(types.NFTNodeIPsv4, keepNFTSetElemsAllNodesV4); err != nil {
+		errors = append(errors, err)
+	}
+	if err := recreateNFTSet(types.NFTNodeIPsv6, keepNFTSetElemsAllNodesV6); err != nil {
 		errors = append(errors, err)
 	}
 

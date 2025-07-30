@@ -241,12 +241,12 @@ func (udng *UserDefinedNetworkGateway) addMasqChain() error {
 		ipPrefix := "ip"
 		nfproto := "ipv4"
 		var masqIP net.IP
-		remoteNodeSetName := types.NFTRemoteNodeIPsv4
+		remoteNodeSetName := types.NFTNodeIPsv4
 		if utilnet.IsIPv6CIDR(podSubnet) {
 			ipPrefix = "ip6"
 			nfproto = "ipv6"
 			masqIP = udng.v6MasqIPs.ManagementPort.IP
-			remoteNodeSetName = types.NFTRemoteNodeIPsv6
+			remoteNodeSetName = types.NFTNodeIPsv6
 		} else {
 			// udng.v4MasqIPs is nil for ipv6-only clusters
 			masqIP = udng.v4MasqIPs.ManagementPort.IP
@@ -999,6 +999,11 @@ func (udng *UserDefinedNetworkGateway) doReconcile() error {
 	if err := udng.updateAdvertisedUDNIsolationRules(isNetworkAdvertised); err != nil {
 		return fmt.Errorf("error while updating advertised UDN isolation rules for network %s: %w", udng.GetNetworkName(), err)
 	}
+
+	if err := udng.addMasqChain(); err != nil {
+		return fmt.Errorf("failed to add the UDN masquerade nftables chain: %w ", err)
+	}
+
 	return nil
 }
 

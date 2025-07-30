@@ -42,6 +42,9 @@ add rule inet ovn-kubernetes no-pmtud ip daddr @remote-node-ips-v4 meta l4proto 
 add chain inet ovn-kubernetes no-pmtud { type filter hook output priority 0 ; comment "Block egress needs frag/packet too big to remote k8s nodes" ; }
 add set inet ovn-kubernetes remote-node-ips-v4 { type ipv4_addr ; comment "Block egress ICMP needs frag to remote Kubernetes nodes" ; }
 add set inet ovn-kubernetes remote-node-ips-v6 { type ipv6_addr ; comment "Block egress ICMPv6 packet too big to remote Kubernetes nodes" ; }
+add set inet ovn-kubernetes node-ips-v6 { type ipv6_addr ; comment "Only SNAT advertised UDN pods for Kubernetes nodes" ; }
+add set inet ovn-kubernetes node-ips-v4 { type ipv4_addr ; comment "Only SNAT advertised UDN pods for Kubernetes nodes" ; }
+add element inet ovn-kubernetes node-ips-v4 { 169.254.254.60 }
 `
 
 const v6PMTUDNFTRules = `
@@ -50,6 +53,9 @@ add rule inet ovn-kubernetes no-pmtud meta l4proto icmpv6 icmpv6 type 2 icmpv6 c
 add chain inet ovn-kubernetes no-pmtud { type filter hook output priority 0 ; comment "Block egress needs frag/packet too big to remote k8s nodes" ; }
 add set inet ovn-kubernetes remote-node-ips-v4 { type ipv4_addr ; comment "Block egress ICMP needs frag to remote Kubernetes nodes" ; }
 add set inet ovn-kubernetes remote-node-ips-v6 { type ipv6_addr ; comment "Block egress ICMPv6 packet too big to remote Kubernetes nodes" ; }
+add set inet ovn-kubernetes node-ips-v6 { type ipv6_addr ; comment "Only SNAT advertised UDN pods for Kubernetes nodes" ; }
+add set inet ovn-kubernetes node-ips-v4 { type ipv4_addr ; comment "Only SNAT advertised UDN pods for Kubernetes nodes" ; }
+add element inet ovn-kubernetes node-ips-v6 { 2001:db8:1::3 }
 `
 
 var _ = Describe("Node", func() {
@@ -837,6 +843,7 @@ var _ = Describe("Node", func() {
 					Expect(err).NotTo(HaveOccurred())
 					nftRules := v4PMTUDNFTRules + `
 add element inet ovn-kubernetes remote-node-ips-v4 { 169.254.254.61 }
+add element inet ovn-kubernetes node-ips-v4 { 169.254.254.61 }
 `
 					err = nodenft.MatchNFTRules(nftRules, nft.Dump())
 					Expect(err).NotTo(HaveOccurred())
@@ -948,6 +955,7 @@ add element inet ovn-kubernetes remote-node-ips-v4 { 169.254.254.61 }
 					Expect(err).NotTo(HaveOccurred())
 					nftRules := v4PMTUDNFTRules + `
 add element inet ovn-kubernetes remote-node-ips-v4 { 169.254.253.61 }
+add element inet ovn-kubernetes node-ips-v4 { 169.254.253.61 }
 `
 					err = nodenft.MatchNFTRules(nftRules, nft.Dump())
 					Expect(err).NotTo(HaveOccurred())
@@ -1101,6 +1109,7 @@ add element inet ovn-kubernetes remote-node-ips-v4 { 169.254.253.61 }
 					Expect(err).NotTo(HaveOccurred())
 					nftRules := v6PMTUDNFTRules + `
 add element inet ovn-kubernetes remote-node-ips-v6 { 2001:db8:1::4 }
+add element inet ovn-kubernetes node-ips-v6 { 2001:db8:1::4 }
 `
 					err = nodenft.MatchNFTRules(nftRules, nft.Dump())
 					Expect(err).NotTo(HaveOccurred())
@@ -1211,6 +1220,7 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2001:db8:1::4 }
 					Expect(err).NotTo(HaveOccurred())
 					nftRules := v6PMTUDNFTRules + `
 add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
+add element inet ovn-kubernetes node-ips-v6 { 2002:db8:1::4 }
 `
 					err = nodenft.MatchNFTRules(nftRules, nft.Dump())
 					Expect(err).NotTo(HaveOccurred())

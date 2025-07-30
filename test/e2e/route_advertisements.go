@@ -1054,18 +1054,6 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					nodePort := svcNetB.Spec.Ports[0].NodePort
 					out := curlConnectionTimeoutCode
 					errBool := true
-					if ipFamilyIndex == ipFamilyV6 && cudnATemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer2 {
-						// For Layer2 networks, we have these flows we add on breth0:
-						// cookie=0xdeff105, duration=173.245s, table=1, n_packets=0, n_bytes=0, idle_age=173, priority=14,icmp6,icmp_type=134 actions=FLOOD
-						// cookie=0xdeff105, duration=173.245s, table=1, n_packets=8, n_bytes=640, idle_age=4, priority=14,icmp6,icmp_type=136 actions=FLOOD
-						// which floods the Router Advertisement (RA, type 134) and Neighbor Advertisement (NA, type 136)
-						// Given on Layer2 the GR has the SNATs for both masqueradeIPs this works perfectly well and
-						// the networks are able to NDP for the masqueradeIPs for the other networks.
-						// This doesn't work on Layer3 networks since masqueradeIP SNATs are present on the ovn-cluster-router in that case.
-						// See the tcpdump on the issue: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5410 for more details.
-						out = ""
-						errBool = false
-					}
 
 					// sourceIP will be joinSubnetIP for nodeports, so only using hostname endpoint
 					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePort)) + "/hostname", out, errBool
