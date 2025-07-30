@@ -37,10 +37,6 @@ const (
 	// pktMarkBase is the base value for packet mark assigned to user defined networks
 	// Each network has a packet mark equal to base + network-id
 	pktMarkBase = 4096
-	// masqCTMarkBase is the base value for conntrack mark assigned to user defined networks
-	// Each network has a masquerade conntrack mark equal to base + network-id
-	// It limits the amount of supported UDNs to 100000 and is used by nftables rules
-	masqMarkBase = pktMarkBase + 100000
 	// waitForPatchPortTimeout is the maximum time we wait for a UDN's patch
 	// port to be created by OVN.
 	waitForPatchPortTimeout = 30 * time.Second
@@ -69,9 +65,6 @@ type UserDefinedNetworkGateway struct {
 	// pktMark hold the packets mark value for this network
 	// which is used for directing traffic towards the UDN
 	pktMark uint
-	// masqPktMark holds the masquerade packets mark value for this network
-	// which used by nftables rules to mark packets that are going to be masqueraded
-	masqPktMark uint
 	// v4MasqIPs holds the IPv4 masquerade IPs for this network
 	v4MasqIPs *udn.MasqueradeIPs
 	// v6MasqIPs holds the IPv6 masquerade IPs for this network
@@ -110,7 +103,6 @@ func NewUserDefinedNetworkGateway(netInfo util.NetInfo, node *corev1.Node, nodeL
 	networkID := netInfo.GetNetworkID()
 	masqCTMark := ctMarkUDNBase + uint(networkID)
 	pktMark := pktMarkBase + uint(networkID)
-	masqPktMark := masqMarkBase + uint(networkID)
 	if config.IPv4Mode {
 		v4MasqIPs, err = udn.AllocateV4MasqueradeIPs(networkID)
 		if err != nil {
@@ -146,7 +138,6 @@ func NewUserDefinedNetworkGateway(netInfo util.NetInfo, node *corev1.Node, nodeL
 		vrfManager:       vrfManager,
 		masqCTMark:       masqCTMark,
 		pktMark:          pktMark,
-		masqPktMark:      masqPktMark,
 		v4MasqIPs:        v4MasqIPs,
 		v6MasqIPs:        v6MasqIPs,
 		gateway:          gw,
@@ -235,8 +226,11 @@ func (udng *UserDefinedNetworkGateway) addMasqChain() error {
 	if len(podSubnets) == 0 {
 		return fmt.Errorf("cannot determine pod subnets while configuring masquerade nftables chain for network: %s", udng.GetNetworkName())
 	}
-	// Use the masqCTMark as the CT mark for the UDN masquerade chain
-	mark := udng.masqPktMark
+	// reuse udn packet mark for masquerade.
+	// This mark is used to route external -> service in LGW to the right UDN.
+	// We can use the same mark that is already UDN-specific for masquerade, since these flows should never conflict.
+	// Aa a bonus there are already ip rules that forward traffic with this mark to the right VRF.
+	mark := udng.pktMark
 	for _, podSubnet := range podSubnets {
 		ipPrefix := "ip"
 		nfproto := "ipv4"
@@ -848,7 +842,6 @@ func (udng *UserDefinedNetworkGateway) constructUDNVRFIPRules(isNetworkAdvertise
 
 	if masqIPv4 != nil {
 		addIPRules = append(addIPRules, generateIPRuleForPacketMark(udng.pktMark, false, uint(udng.vrfTableId)))
-		addIPRules = append(addIPRules, generateIPRuleForPacketMark(udng.masqPktMark, false, uint(udng.vrfTableId)))
 		masqIPRules = append(masqIPRules, generateIPRuleForMasqIP(masqIPv4.IP, false, uint(udng.vrfTableId)))
 		for _, subnet := range udng.Subnets() {
 			if utilnet.IsIPv4CIDR(subnet.CIDR) {
@@ -858,7 +851,6 @@ func (udng *UserDefinedNetworkGateway) constructUDNVRFIPRules(isNetworkAdvertise
 	}
 	if masqIPv6 != nil {
 		addIPRules = append(addIPRules, generateIPRuleForPacketMark(udng.pktMark, true, uint(udng.vrfTableId)))
-		addIPRules = append(addIPRules, generateIPRuleForPacketMark(udng.masqPktMark, true, uint(udng.vrfTableId)))
 		masqIPRules = append(masqIPRules, generateIPRuleForMasqIP(masqIPv6.IP, true, uint(udng.vrfTableId)))
 		for _, subnet := range udng.Subnets() {
 			if utilnet.IsIPv6CIDR(subnet.CIDR) {

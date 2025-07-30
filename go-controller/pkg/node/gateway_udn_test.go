@@ -1526,12 +1526,6 @@ func TestConstructUDNVRFIPRules(t *testing.T) {
 					priority: UDNMasqueradeIPRulePriority,
 					family:   netlink.FAMILY_V4,
 					table:    1007,
-					mark:     100000 + 0x1003,
-				},
-				{
-					priority: UDNMasqueradeIPRulePriority,
-					family:   netlink.FAMILY_V4,
-					table:    1007,
 					dst:      *util.GetIPNetFullMaskFromIP(ovntest.MustParseIP("169.254.0.16")),
 				},
 			},
@@ -1554,12 +1548,6 @@ func TestConstructUDNVRFIPRules(t *testing.T) {
 					family:   netlink.FAMILY_V6,
 					table:    1009,
 					mark:     0x1003,
-				},
-				{
-					priority: UDNMasqueradeIPRulePriority,
-					family:   netlink.FAMILY_V6,
-					table:    1009,
-					mark:     100000 + 0x1003,
 				},
 				{
 					priority: UDNMasqueradeIPRulePriority,
@@ -1590,21 +1578,9 @@ func TestConstructUDNVRFIPRules(t *testing.T) {
 				},
 				{
 					priority: UDNMasqueradeIPRulePriority,
-					family:   netlink.FAMILY_V4,
-					table:    1010,
-					mark:     100000 + 0x1003,
-				},
-				{
-					priority: UDNMasqueradeIPRulePriority,
 					family:   netlink.FAMILY_V6,
 					table:    1010,
 					mark:     0x1003,
-				},
-				{
-					priority: UDNMasqueradeIPRulePriority,
-					family:   netlink.FAMILY_V6,
-					table:    1010,
-					mark:     100000 + 0x1003,
 				},
 				{
 					priority: UDNMasqueradeIPRulePriority,
@@ -1735,12 +1711,6 @@ func TestConstructUDNVRFIPRulesPodNetworkAdvertised(t *testing.T) {
 					priority: UDNMasqueradeIPRulePriority,
 					family:   netlink.FAMILY_V4,
 					table:    1007,
-					mark:     0x1003 + 100000,
-				},
-				{
-					priority: UDNMasqueradeIPRulePriority,
-					family:   netlink.FAMILY_V4,
-					table:    1007,
 					dst:      *ovntest.MustParseIPNet("100.128.0.0/16"),
 				},
 				{
@@ -1761,12 +1731,6 @@ func TestConstructUDNVRFIPRulesPodNetworkAdvertised(t *testing.T) {
 					family:   netlink.FAMILY_V6,
 					table:    1009,
 					mark:     0x1003,
-				},
-				{
-					priority: UDNMasqueradeIPRulePriority,
-					family:   netlink.FAMILY_V6,
-					table:    1009,
-					mark:     0x1003 + 100000,
 				},
 				{
 					priority: UDNMasqueradeIPRulePriority,
@@ -1795,21 +1759,9 @@ func TestConstructUDNVRFIPRulesPodNetworkAdvertised(t *testing.T) {
 				},
 				{
 					priority: UDNMasqueradeIPRulePriority,
-					family:   netlink.FAMILY_V4,
-					table:    1010,
-					mark:     0x1003 + 100000,
-				},
-				{
-					priority: UDNMasqueradeIPRulePriority,
 					family:   netlink.FAMILY_V6,
 					table:    1010,
 					mark:     0x1003,
-				},
-				{
-					priority: UDNMasqueradeIPRulePriority,
-					family:   netlink.FAMILY_V6,
-					table:    1010,
-					mark:     0x1003 + 100000,
 				},
 				{
 					priority: UDNMasqueradeIPRulePriority,

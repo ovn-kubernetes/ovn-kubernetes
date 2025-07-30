@@ -461,7 +461,7 @@ var _ = Describe("SecondaryNodeNetworkController: UserDefinedPrimaryNetwork Gate
 			}
 
 			// 3 rules per ip family: see constructUDNVRFIPRules for more details
-			Expect(udnRules).To(HaveLen(6))
+			Expect(udnRules).To(HaveLen(4))
 
 			By("delete the network and ensure its associated VRF device is also deleted")
 			cnode := node.DeepCopy()
