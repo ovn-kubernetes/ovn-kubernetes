@@ -109,6 +109,27 @@ spec:
                     type: object
                 type: object
                 x-kubernetes-map-type: atomic
+                x-kubernetes-validations:
+                - message: label keys must be valid qualified names (DNS subdomain
+                    + '/' + name)
+                  rule: self.matchLabels.all(key, key.matches(r'^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]/)?([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$'))
+                - message: label keys must be no more than 253 characters
+                  rule: self.matchLabels.all(key, key.size() <= 253)
+                - message: label key prefix must be ≤ 253 characters
+                  rule: self.matchLabels.all(key, !key.contains('/') || key.split('/')[0].size()
+                    <= 253)
+                - message: label key name must be ≤ 63 characters
+                  rule: self.matchLabels.all(key, !key.contains('/') || key.split('/')[1].size()
+                    <= 63)
+                - message: label key name-only must be ≤ 63 characters
+                  rule: self.matchLabels.all(key, key.contains('/') || key.size()
+                    <= 63)
+                - message: label values must be empty or valid strings that start
+                    and end with alphanumeric characters
+                  rule: self.matchLabels.all(key, self.matchLabels[key].matches(r'^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$'))
+                - message: label values must be no more than 63 characters
+                  rule: self.matchLabels.all(key, self.matchLabels[key].size() <=
+                    63)
               podSelector:
                 description: |-
                   PodSelector applies the egress IP only to the pods whose label
