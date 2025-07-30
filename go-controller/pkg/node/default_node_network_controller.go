@@ -188,7 +188,7 @@ func NewDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, net
 
 	nc.initRetryFrameworkForNode()
 
-	err = setupPMTUDNFTSets()
+	err = setupRemoteNodeNFTSets()
 	if err != nil {
 		return nil, fmt.Errorf("failed to setup PMTUD nftables sets: %w", err)
 	}
@@ -1515,25 +1515,34 @@ func (nc *DefaultNodeNetworkController) WatchNodes() error {
 func (nc *DefaultNodeNetworkController) addOrUpdateNode(node *corev1.Node) error {
 	var nftElems []*knftables.Element
 	var addrs []string
-	for _, address := range node.Status.Addresses {
-		if address.Type != corev1.NodeInternalIP {
-			continue
-		}
-		nodeIP := net.ParseIP(address.Address)
-		if nodeIP == nil {
-			continue
-		}
 
+	// Use GetNodeAddresses to get all node IPs (including current node for openflow)
+	ipsv4, ipsv6, err := util.GetNodeAddresses(config.IPv4Mode, config.IPv6Mode, node)
+	if err != nil {
+		return fmt.Errorf("failed to get node addresses for node %q: %w", node.Name, err)
+	}
+
+	// Process IPv4 addresses
+	for _, nodeIP := range ipsv4 {
 		addrs = append(addrs, nodeIP.String())
 		klog.Infof("Adding remote node %q, IP: %s to PMTUD blocking rules", node.Name, nodeIP)
-		if utilnet.IsIPv4(nodeIP) {
+		// Only add to nftables if this is remote node
+		if node.Name != nc.name {
 			nftElems = append(nftElems, &knftables.Element{
-				Set: types.NFTNoPMTUDRemoteNodeIPsv4,
+				Set: types.NFTRemoteNodeIPsv4,
 				Key: []string{nodeIP.String()},
 			})
-		} else {
+		}
+	}
+
+	// Process IPv6 addresses
+	for _, nodeIP := range ipsv6 {
+		addrs = append(addrs, nodeIP.String())
+		klog.Infof("Adding remote node %q, IP: %s to PMTUD blocking rules", node.Name, nodeIP)
+		// Only add to nftables if this is remote node
+		if node.Name != nc.name {
 			nftElems = append(nftElems, &knftables.Element{
-				Set: types.NFTNoPMTUDRemoteNodeIPsv6,
+				Set: types.NFTRemoteNodeIPsv6,
 				Key: []string{nodeIP.String()},
 			})
 		}
@@ -1557,12 +1566,12 @@ func removePMTUDNodeNFTRules(nodeIPs []net.IP) error {
 		// Remove IPs from NFT sets
 		if utilnet.IsIPv4(nodeIP) {
 			nftElems = append(nftElems, &knftables.Element{
-				Set: types.NFTNoPMTUDRemoteNodeIPsv4,
+				Set: types.NFTRemoteNodeIPsv4,
 				Key: []string{nodeIP.String()},
 			})
 		} else {
 			nftElems = append(nftElems, &knftables.Element{
-				Set: types.NFTNoPMTUDRemoteNodeIPsv6,
+				Set: types.NFTRemoteNodeIPsv6,
 				Key: []string{nodeIP.String()},
 			})
 		}
@@ -1578,17 +1587,17 @@ func removePMTUDNodeNFTRules(nodeIPs []net.IP) error {
 func (nc *DefaultNodeNetworkController) deleteNode(node *corev1.Node) {
 	gw := nc.Gateway.(*gateway)
 	gw.openflowManager.deleteFlowsByKey(getPMTUDKey(node.Name))
-	ipsToRemove := make([]net.IP, 0)
-	for _, address := range node.Status.Addresses {
-		if address.Type != corev1.NodeInternalIP {
-			continue
-		}
-		nodeIP := net.ParseIP(address.Address)
-		if nodeIP == nil {
-			continue
-		}
-		ipsToRemove = append(ipsToRemove, nodeIP)
+
+	// Use GetNodeAddresses to get node IPs
+	ipsv4, ipsv6, err := util.GetNodeAddresses(config.IPv4Mode, config.IPv6Mode, node)
+	if err != nil {
+		klog.Errorf("Failed to get node addresses for node %q: %v", node.Name, err)
+		return
 	}
+
+	ipsToRemove := make([]net.IP, 0, len(ipsv4)+len(ipsv6))
+	ipsToRemove = append(ipsToRemove, ipsv4...)
+	ipsToRemove = append(ipsToRemove, ipsv6...)
 
 	klog.Infof("Deleting NFT elements for node: %s", node.Name)
 	if err := removePMTUDNodeNFTRules(ipsToRemove); err != nil {
@@ -1610,33 +1619,34 @@ func (nc *DefaultNodeNetworkController) syncNodes(objs []interface{}) error {
 		if node.Name == nc.name {
 			continue
 		}
-		for _, address := range node.Status.Addresses {
-			if address.Type != corev1.NodeInternalIP {
-				continue
-			}
-			nodeIP := net.ParseIP(address.Address)
-			if nodeIP == nil {
-				continue
-			}
 
-			// Remove IPs from NFT sets
-			if utilnet.IsIPv4(nodeIP) {
-				keepNFTSetElemsV4 = append(keepNFTSetElemsV4, &knftables.Element{
-					Set: types.NFTNoPMTUDRemoteNodeIPsv4,
-					Key: []string{nodeIP.String()},
-				})
-			} else {
-				keepNFTSetElemsV6 = append(keepNFTSetElemsV6, &knftables.Element{
-					Set: types.NFTNoPMTUDRemoteNodeIPsv6,
-					Key: []string{nodeIP.String()},
-				})
-			}
+		// Use GetNodeAddresses to get node IPs
+		ipsv4, ipsv6, err := util.GetNodeAddresses(config.IPv4Mode, config.IPv6Mode, node)
+		if err != nil {
+			klog.Errorf("Failed to get node addresses for node %q: %v", node.Name, err)
+			continue
+		}
+
+		// Process IPv4 addresses
+		for _, nodeIP := range ipsv4 {
+			keepNFTSetElemsV4 = append(keepNFTSetElemsV4, &knftables.Element{
+				Set: types.NFTRemoteNodeIPsv4,
+				Key: []string{nodeIP.String()},
+			})
+		}
+
+		// Process IPv6 addresses
+		for _, nodeIP := range ipsv6 {
+			keepNFTSetElemsV6 = append(keepNFTSetElemsV6, &knftables.Element{
+				Set: types.NFTRemoteNodeIPsv6,
+				Key: []string{nodeIP.String()},
+			})
 		}
 	}
-	if err := recreateNFTSet(types.NFTNoPMTUDRemoteNodeIPsv4, keepNFTSetElemsV4); err != nil {
+	if err := recreateNFTSet(types.NFTRemoteNodeIPsv4, keepNFTSetElemsV4); err != nil {
 		errors = append(errors, err)
 	}
-	if err := recreateNFTSet(types.NFTNoPMTUDRemoteNodeIPsv6, keepNFTSetElemsV6); err != nil {
+	if err := recreateNFTSet(types.NFTRemoteNodeIPsv6, keepNFTSetElemsV6); err != nil {
 		errors = append(errors, err)
 	}
 

@@ -5,7 +5,7 @@ import (
 	"k8s.io/utils/net"
 )
 
-// podIPsForUserDefinedPrimaryNetwork returns the v4 or v6 IPs for a pod on the UDN
+// getPodAnnotationIPsForAttachmentByIndex returns the v4 or v6 IPs for a pod on the UDN
 func getPodAnnotationIPsForPrimaryNetworkByIPFamily(k8sClient kubernetes.Interface, podNamespace string, podName string, networkName string, family net.IPFamily) (string, error) {
 	if networkName != "default" {
 		networkName = namespacedName(podNamespace, networkName)

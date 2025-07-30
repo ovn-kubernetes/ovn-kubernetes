@@ -249,7 +249,7 @@ func NewEIPController(
 //	  CASE 3.4: Both Namespace && Pod Selectors on Spec changed
 //	}
 //
-// NOTE: `Spec.EgressIPs“ updates for EIP object are not processed here, that is the job of cluster manager
+// NOTE: `Spec.EgressIPs" updates for EIP object are not processed here, that is the job of cluster manager
 //
 //	We only care about `Spec.NamespaceSelector`, `Spec.PodSelector` and `Status` field
 func (e *EgressIPController) reconcileEgressIP(old, new *egressipv1.EgressIP) (err error) {
@@ -2594,9 +2594,21 @@ func (e *EgressIPController) addExternalGWPodSNATOps(ni util.NetInfo, ops []ovsd
 			if err != nil {
 				return nil, err
 			}
-			ops, err = addOrUpdatePodSNATOps(e.nbClient, ni.GetNetworkScopedGWRouterName(pod.Spec.NodeName), extIPs, podIPs, ops)
-			if err != nil {
-				return nil, err
+
+			// Handle each pod IP individually since each IP family needs its own SNAT match
+			for _, podIP := range podIPs {
+				ipFamily := utilnet.IPv4
+				if utilnet.IsIPv6CIDR(podIP) {
+					ipFamily = utilnet.IPv6
+				}
+				snatMatch, err := GetNetworkScopedClusterSubnetSNATMatch(e.nbClient, ni, pod.Spec.NodeName, util.IsPodNetworkAdvertisedAtNode(ni, pod.Spec.NodeName), ipFamily)
+				if err != nil {
+					return nil, fmt.Errorf("failed to get SNAT match for node %s for network %s: %w", pod.Spec.NodeName, ni.GetNetworkName(), err)
+				}
+				ops, err = addOrUpdatePodSNATOps(e.nbClient, ni.GetNetworkScopedGWRouterName(pod.Spec.NodeName), extIPs, []*net.IPNet{podIP}, snatMatch, ops)
+				if err != nil {
+					return nil, err
+				}
 			}
 			klog.V(5).Infof("Adding SNAT on %s since egress node managing %s/%s was the same: %s", pod.Spec.NodeName, pod.Namespace, pod.Name, status.Node)
 		}
@@ -2617,7 +2629,7 @@ func (e *EgressIPController) deleteExternalGWPodSNATOps(ni util.NetInfo, ops []o
 		if err != nil {
 			return nil, err
 		}
-		ops, err = deletePodSNATOps(e.nbClient, ops, ni.GetNetworkScopedGWRouterName(pod.Spec.NodeName), extIPs, affectedIPs, "")
+		ops, err = deletePodSNATOps(e.nbClient, ops, ni.GetNetworkScopedGWRouterName(pod.Spec.NodeName), extIPs, affectedIPs)
 		if err != nil {
 			return nil, err
 		}
