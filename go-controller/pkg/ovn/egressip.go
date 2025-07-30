@@ -493,6 +493,12 @@ func (e *EgressIPController) reconcileEgressIPNamespace(old, new *corev1.Namespa
 	// nil ones.
 	var namespaceName string
 	oldNamespace, newNamespace := &corev1.Namespace{}, &corev1.Namespace{}
+
+	// Check to skip if both are nil (due to retrieval errors like invalid selectors)
+	if old == nil && new == nil {
+		klog.V(4).Infof("Skipping reconciliation: both oldNS and newNS are nil")
+		return nil
+	}
 	if old != nil {
 		oldNamespace = old
 		namespaceName = old.Name

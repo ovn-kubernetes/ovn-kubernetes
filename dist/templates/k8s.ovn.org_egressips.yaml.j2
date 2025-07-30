@@ -109,6 +109,14 @@ spec:
                     type: object
                 type: object
                 x-kubernetes-map-type: atomic
+                x-kubernetes-validations:
+                - message: label keys must consist of alphanumeric characters, '-',
+                    '_' or '.', and must start and end with an alphanumeric character
+                  rule: self.matchLabels.all(key, key.matches('^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]/)?([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$'))
+                - message: label values must be an empty string or consist of alphanumeric
+                    characters, '-', '_' or '.', and must start and end with an alphanumeric
+                    character
+                  rule: self.matchLabels.all(key, self.matchLabels[key].matches('^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$'))
               podSelector:
                 description: |-
                   PodSelector applies the egress IP only to the pods whose label

@@ -50,6 +50,8 @@ type EgressIPSpec struct {
 	EgressIPs []string `json:"egressIPs"`
 	// NamespaceSelector applies the egress IP only to the namespace(s) whose label
 	// matches this definition. This field is mandatory.
+	// +kubebuilder:validation:XValidation:rule="self.matchLabels.all(key, key.matches('^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]/)?([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$'))",message="label keys must consist of alphanumeric characters, '-', '_' or '.', and must start and end with an alphanumeric character"
+	// +kubebuilder:validation:XValidation:rule="self.matchLabels.all(key, self.matchLabels[key].matches('^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$'))",message="label values must be an empty string or consist of alphanumeric characters, '-', '_' or '.', and must start and end with an alphanumeric character"
 	NamespaceSelector metav1.LabelSelector `json:"namespaceSelector"`
 	// PodSelector applies the egress IP only to the pods whose label
 	// matches this definition. This field is optional, and in case it is not set:
