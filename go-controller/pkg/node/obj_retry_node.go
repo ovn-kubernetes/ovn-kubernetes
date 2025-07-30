@@ -238,34 +238,43 @@ func (h *nodeEventHandler) UpdateResource(oldObj, newObj interface{}, _ bool) er
 			return nil
 		}
 
-		// remote node that is changing
-		ipsToKeep := map[string]bool{}
-		for _, address := range newNode.Status.Addresses {
-			if address.Type != corev1.NodeInternalIP {
-				continue
+		if util.NodeHostCIDRsAnnotationChanged(oldNode, newNode) {
+			// remote node that is changing
+			// Use GetNodeAddresses to get new node IPs
+			newIPsv4, newIPsv6, err := util.GetNodeAddresses(config.IPv4Mode, config.IPv6Mode, newNode)
+			if err != nil {
+				return fmt.Errorf("failed to get addresses for new node %q: %w", newNode.Name, err)
 			}
-			nodeIP := net.ParseIP(address.Address)
-			if nodeIP == nil {
-				continue
-			}
-			ipsToKeep[nodeIP.String()] = true
-		}
-		ipsToRemove := make([]net.IP, 0)
-		for _, address := range oldNode.Status.Addresses {
-			if address.Type != corev1.NodeInternalIP {
-				continue
-			}
-			nodeIP := net.ParseIP(address.Address)
-			if nodeIP == nil {
-				continue
-			}
-			if _, exists := ipsToKeep[nodeIP.String()]; !exists {
-				ipsToRemove = append(ipsToRemove, nodeIP)
-			}
-		}
 
-		if err := removePMTUDNodeNFTRules(ipsToRemove); err != nil {
-			return fmt.Errorf("error removing node %q stale NFT rules during update: %w", oldNode.Name, err)
+			ipsToKeep := map[string]bool{}
+			for _, nodeIP := range newIPsv4 {
+				ipsToKeep[nodeIP.String()] = true
+			}
+			for _, nodeIP := range newIPsv6 {
+				ipsToKeep[nodeIP.String()] = true
+			}
+
+			// Use GetNodeAddresses to get old node IPs
+			oldIPsv4, oldIPsv6, err := util.GetNodeAddresses(config.IPv4Mode, config.IPv6Mode, oldNode)
+			if err != nil {
+				return fmt.Errorf("failed to get addresses for old node %q: %w", oldNode.Name, err)
+			}
+
+			ipsToRemove := make([]net.IP, 0)
+			for _, nodeIP := range oldIPsv4 {
+				if _, exists := ipsToKeep[nodeIP.String()]; !exists {
+					ipsToRemove = append(ipsToRemove, nodeIP)
+				}
+			}
+			for _, nodeIP := range oldIPsv6 {
+				if _, exists := ipsToKeep[nodeIP.String()]; !exists {
+					ipsToRemove = append(ipsToRemove, nodeIP)
+				}
+			}
+
+			if err := removePMTUDNodeNFTRules(ipsToRemove); err != nil {
+				return fmt.Errorf("error removing node %q stale NFT rules during update: %w", oldNode.Name, err)
+			}
 		}
 		return h.nc.addOrUpdateNode(newNode)
 

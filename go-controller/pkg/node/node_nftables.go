@@ -13,8 +13,8 @@ import (
 
 const nftPMTUDChain = "no-pmtud"
 
-// setupPMTUDNFTSets sets up the NFT sets that contain remote Kubernetes node IPs
-func setupPMTUDNFTSets() error {
+// setupRemoteNodeNFTSets sets up the NFT sets that contain remote Kubernetes node IPs
+func setupRemoteNodeNFTSets() error {
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {
 		return fmt.Errorf("failed to get nftables helper: %w", err)
@@ -22,12 +22,12 @@ func setupPMTUDNFTSets() error {
 
 	tx := nft.NewTransaction()
 	tx.Add(&knftables.Set{
-		Name:    types.NFTNoPMTUDRemoteNodeIPsv4,
+		Name:    types.NFTRemoteNodeIPsv4,
 		Comment: knftables.PtrTo("Block egress ICMP needs frag to remote Kubernetes nodes"),
 		Type:    "ipv4_addr",
 	})
 	tx.Add(&knftables.Set{
-		Name:    types.NFTNoPMTUDRemoteNodeIPsv6,
+		Name:    types.NFTRemoteNodeIPsv6,
 		Comment: knftables.PtrTo("Block egress ICMPv6 packet too big to remote Kubernetes nodes"),
 		Type:    "ipv6_addr",
 	})
@@ -68,7 +68,7 @@ func setupPMTUDNFTChain() error {
 		tx.Add(&knftables.Rule{
 			Chain: nftPMTUDChain,
 			Rule: knftables.Concat(
-				"ip daddr @"+types.NFTNoPMTUDRemoteNodeIPsv4,
+				"ip daddr @"+types.NFTRemoteNodeIPsv4,
 				"meta l4proto icmp",
 				"icmp type 3", // type 3 == Destination Unreachable
 				"icmp code 4", // code 4 indicates fragmentation needed
@@ -85,7 +85,7 @@ func setupPMTUDNFTChain() error {
 				"meta l4proto icmpv6", // match on ICMPv6 packets
 				"icmpv6 type 2",       // type 2 == Packet Too Big (PMTUD)
 				"icmpv6 code 0",       // code 0 for that message
-				"ip6 daddr @"+types.NFTNoPMTUDRemoteNodeIPsv6,
+				"ip6 daddr @"+types.NFTRemoteNodeIPsv6,
 				counterIfDebug,
 				"drop", // drop the packet
 			),
