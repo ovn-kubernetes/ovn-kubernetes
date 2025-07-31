@@ -83,6 +83,8 @@ spec:
           value: "{{ ovn_gateway_mode }}"
         - name: OVN_ROUTE_ADVERTISEMENTS_ENABLE
           value: "{{ ovn_route_advertisements_enable }}"
+        - name: ENABLE_IPSEC
+          value: "{{ enable_ipsec }}"
         - name: K8S_APISERVER
           valueFrom:
             configMapKeyRef:
@@ -303,6 +305,10 @@ spec:
           name: run-systemd
           subPath: private
           readOnly: true
+        {% if enable_ipsec=="true" -%}
+        - mountPath: /var/run/pluto
+          name: run-pluto
+        {% endif %}
 
         resources:
           requests:
@@ -639,6 +645,12 @@ spec:
       - name: run-systemd
         hostPath:
           path: /run/systemd
+      {% if enable_ipsec=="true" -%}
+      - name: run-pluto
+        hostPath:
+          path: /var/run/pluto
+          type: DirectoryOrCreate
+      {% endif %}
 
       tolerations:
       - operator: "Exists"
