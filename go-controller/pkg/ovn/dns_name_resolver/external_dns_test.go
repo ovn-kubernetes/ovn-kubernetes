@@ -52,21 +52,15 @@ func newDNSNameResolverObject(name, namespace, dnsName string, addresses []strin
 }
 
 func expectDNSNameWithAddresses(extEgDNS *ExternalEgressDNS, dnsName string, expectedAddresses []string) {
-	var resolvedName *dnsResolvedName
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 5*time.Minute, true, func(context.Context) (done bool, err error) {
-		var exists bool
-		resolvedName, exists = extEgDNS.getResolvedName(dnsName)
+	gomega.Eventually(func() []string {
+		resolvedName, exists := extEgDNS.getResolvedName(dnsName)
 		if !exists {
-			return false, nil
+			return []string{}
 		}
-
-		return true, nil
-	})
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-	v4, v6 := resolvedName.dnsAddressSet.GetAddresses()
-	ipStrings := append(v4, v6...)
-	gomega.Expect(ipStrings).To(gomega.ConsistOf(expectedAddresses))
+		v4, v6 := resolvedName.dnsAddressSet.GetAddresses()
+		ipStrings := append(v4, v6...)
+		return ipStrings
+	}).Should(gomega.ConsistOf(expectedAddresses))
 }
 
 var _ = ginkgo.Describe("Egress Firewall External DNS Operations", func() {
@@ -224,6 +218,37 @@ var _ = ginkgo.Describe("Egress Firewall External DNS Operations", func() {
 				return true, nil
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+	})
+
+	ginkgo.Context("on dns name resolver resource update", func() {
+		ginkgo.It("Should update addresses for a dns name", func() {
+			start()
+
+			config.IPv4Mode = true
+			config.IPv6Mode = true
+
+			addresses := []string{"1.1.1.1", "2.2.2.2", "2001:0db8:85a3:0000:0000:8a2e:0370:7334"}
+			dnsNameResolver := newDNSNameResolverObject("dns-default", config.Kubernetes.OVNConfigNamespace, dnsName, addresses)
+
+			_, err := fakeClient.OCPNetworkClient.NetworkV1alpha1().DNSNameResolvers(dnsNameResolver.Namespace).
+				Create(context.TODO(), dnsNameResolver, metav1.CreateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			expectDNSNameWithAddresses(extEgDNS, dnsName, addresses)
+
+			addresses = []string{"2.2.2.2", "3.3.3.3", "2001:0db8:85a3:0000:0000:8a2e:0370:7334", "2001:0db8:85a3:0000:0000:8a2e:0370:7335"}
+			var resolvedAddresses []ocpnetworkapiv1alpha1.DNSNameResolverResolvedAddress
+			for _, address := range addresses {
+				resolvedAddresses = append(resolvedAddresses, ocpnetworkapiv1alpha1.DNSNameResolverResolvedAddress{IP: address})
+			}
+			dnsNameResolver.Status.ResolvedNames[0].ResolvedAddresses = resolvedAddresses
+
+			_, err = fakeClient.OCPNetworkClient.NetworkV1alpha1().DNSNameResolvers(dnsNameResolver.Namespace).
+				Update(context.TODO(), dnsNameResolver, metav1.UpdateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			expectDNSNameWithAddresses(extEgDNS, dnsName, addresses)
 		})
 	})
 

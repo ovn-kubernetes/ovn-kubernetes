@@ -1516,3 +1516,8 @@ func executeFileTemplate(templates *template.Template, directory, name string, d
 	}
 	return nil
 }
+
+func isDNSNameResolverEnabled() bool {
+	val, present := os.LookupEnv("OVN_ENABLE_DNSNAMERESOLVER")
+	return present && val == "true"
+}

@@ -59,8 +59,8 @@ func newDNSTracker(addressSetFactory addressset.AddressSetFactory, controllerNam
 	}
 }
 
-// addDNSName is called whenever a DNS name is needed to be added or updated.
-func (dnsTracker *dnsTracker) addDNSName(dnsName string, addresses []string) error {
+// addOrUpdateDNSName is called whenever a DNS name is needed to be added or updated.
+func (dnsTracker *dnsTracker) addOrUpdateDNSName(dnsName string, addresses []string) error {
 	dnsTracker.dnsLock.Lock()
 	defer dnsTracker.dnsLock.Unlock()
 
@@ -92,7 +92,7 @@ func (dnsTracker *dnsTracker) addDNSName(dnsName string, addresses []string) err
 		addresses = filteredIPs
 	}
 
-	if err := resolvedName.dnsAddressSet.AddAddresses(addresses); err != nil {
+	if err := resolvedName.dnsAddressSet.SetAddresses(addresses); err != nil {
 		return fmt.Errorf("cannot add IPs to AddressSet for DNS name %s: %v", dnsName, err)
 	}
 

@@ -29,6 +29,7 @@ import (
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
+	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	utilnet "k8s.io/utils/net"
 )
 
@@ -664,4 +665,103 @@ spec:
 		table.Entry("", false),
 		table.Entry("with chaos testing using many dnsNames", true),
 	)
+
+	ginkgo.Context("with DNS name resolver", func() {
+		ginkgo.BeforeEach(func() {
+			// DNS resolution for external DNS names does not work on IPv6 clusters. Skip
+			// the test if DNS name resolver is not enabled or IPv4 is not supported.
+			if !isDNSNameResolverEnabled() {
+				e2eskipper.Skipf("DNS name resolver is not enabled")
+				return
+			}
+			if !isIPv4Supported(f.ClientSet) {
+				e2eskipper.Skipf("IPv4 is not supported")
+				return
+			}
+		})
+
+		getMinTTLForDNSName := func(dnsName string, srcPodName string) int {
+			// Get the minimum TTL for the DNS name from the nslookup output.
+			// Ignore the error as it will always return an error because the
+			// cluster local DNS lookup will fail for the following DNS names:
+			// - <dnsName>.<namespace>.svc.<cluster-domain>
+			// - <dnsName>.svc.<cluster-domain>.
+			// - <dnsName>.<cluster-domain>
+			nslookupOutput, _ := e2ekubectl.RunKubectl(f.Namespace.Name, "exec", srcPodName, "--", "nslookup", "-debug", "-timeout=2", dnsName)
+			lines := strings.Split(nslookupOutput, "\n")
+			minTTL := -1
+			for i := 0; i < len(lines); i++ {
+				answerLine := strings.TrimSpace(lines[i])
+				// Skip lines until we find the answer line for the DNS name
+				if !strings.HasPrefix(answerLine, fmt.Sprintf("->  %s", dnsName)) {
+					continue
+				}
+				// Find the TTL line for the DNS name
+				for i++; i < len(lines); i++ {
+					ttlLine := strings.TrimSpace(lines[i])
+					if strings.HasPrefix(ttlLine, "ttl =") {
+						// Extract TTL value
+						ttlParts := strings.Split(ttlLine, "ttl =")
+						if len(ttlParts) == 2 {
+							ttlStr := strings.TrimSpace(ttlParts[1])
+							ttl, err := strconv.Atoi(ttlStr)
+							gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to parse TTL value '%s': %v", ttlStr, err)
+
+							// Update minimum TTL
+							if minTTL == -1 || ttl < minTTL {
+								minTTL = ttl
+							}
+						}
+						break
+					}
+				}
+			}
+			return minTTL
+		}
+
+		ginkgo.It("Should validate that egressfirewall policy functionality for allowed DNS name", func() {
+			dnsName := "www.google.com"
+			srcPodName := "e2e-egress-fw-src-pod"
+
+			// egress firewall crd yaml configuration
+			var egressFirewallConfig = fmt.Sprintf(`kind: EgressFirewall
+apiVersion: k8s.ovn.org/v1
+metadata:
+  name: default
+  namespace: %s
+spec:
+  egress:
+  - type: Allow
+    to:
+      dnsName: %s
+  - type: Deny
+    to:
+      cidrSelector: %s
+`, f.Namespace.Name, dnsName, denyAllCIDR)
+			applyEF(egressFirewallConfig, f.Namespace.Name)
+
+			// create the pod that will be used as the source for the connectivity test
+			createSrcPod(srcPodName, serverNodeInfo.name, retryInterval, retryTimeout, f)
+
+			ginkgo.By(fmt.Sprintf("Verifying connectivity to DNS name %s is permitted", dnsName))
+			url := fmt.Sprintf("https://%s", dnsName)
+			_, err := e2ekubectl.RunKubectl(f.Namespace.Name, "exec", srcPodName, "--", "curl", "-g", "--max-time", "5", url)
+			framework.ExpectNoError(err, "failed to curl DNS name %s", dnsName)
+
+			ginkgo.By(fmt.Sprintf("Getting the minimum TTL for DNS name %s", dnsName))
+			minTTL := getMinTTLForDNSName(dnsName, srcPodName)
+			gomega.Expect(minTTL).NotTo(gomega.Equal(-1), "failed to parse nslookup output for DNS name %s", dnsName)
+			framework.Logf("Minimum TTL for DNS name %s is %d", dnsName, minTTL)
+
+			ginkgo.By(fmt.Sprintf("Waiting for the minimum TTL + 5 seconds for IP addresses of DNS name %s to be refreshed", dnsName))
+			time.Sleep(time.Duration(minTTL+5) * time.Second)
+
+			ginkgo.By(fmt.Sprintf("Verifying connectivity to DNS name %s is still permitted", dnsName))
+			_, err = e2ekubectl.RunKubectl(f.Namespace.Name, "exec", srcPodName, "--", "curl", "-g", "--max-time", "5", url)
+			framework.ExpectNoError(err, "failed to curl DNS name %s", dnsName)
+
+			framework.Logf("Deleting EgressFirewall in namespace %s", f.Namespace.Name)
+			e2ekubectl.RunKubectlOrDie(f.Namespace.Name, "delete", "egressfirewall", "default")
+		})
+	})
 })
