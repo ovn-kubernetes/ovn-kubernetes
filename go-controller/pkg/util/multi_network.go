@@ -988,8 +988,7 @@ func parseSubnets(subnetsString, excludeSubnetsString, topology string) ([]confi
 				}
 			}
 			if !found {
-				return nil, nil, fmt.Errorf("the provided network subnets %v do not contain exluded subnets %v",
-					subnets, excludeSubnet.CIDR)
+				return nil, nil, config.NewExcludedSubnetNotContainedError(excludeSubnet.CIDR)
 			}
 			excludeIPNets = append(excludeIPNets, excludeSubnet.CIDR)
 		}
@@ -1246,7 +1245,7 @@ func subnetOverlapCheck(netconf *ovncnitypes.NetConf) error {
 	}
 	err = allSubnets.CheckForOverlaps()
 	if err != nil {
-		return fmt.Errorf("pod or join subnet overlaps with already configured internal subnets: %v", err)
+		return fmt.Errorf("pod or join subnet overlaps with already configured internal subnets: %w", err)
 	}
 
 	return nil

@@ -62,7 +62,7 @@ func ParseClusterSubnetEntriesWithDefaults(clusterSubnetCmd string, ipv4HostLeng
 		splitClusterEntry := strings.Split(clusterEntry, "/")
 
 		if len(splitClusterEntry) < 2 || len(splitClusterEntry) > 3 {
-			return nil, fmt.Errorf("CIDR %q not properly formatted", clusterEntry)
+			return nil, NewCIDRNotProperlyFormattedError(clusterEntry)
 		}
 
 		var err error
@@ -78,7 +78,7 @@ func ParseClusterSubnetEntriesWithDefaults(clusterSubnetCmd string, ipv4HostLeng
 		entryMaskLength, _ := parsedClusterEntry.CIDR.Mask.Size()
 		if len(splitClusterEntry) == 3 {
 			if !hostLengthAllowed {
-				return nil, fmt.Errorf("CIDR %q not properly formatted", clusterEntry)
+				return nil, NewCIDRNotProperlyFormattedError(clusterEntry)
 			}
 			tmp, err := strconv.Atoi(splitClusterEntry[2])
 			if err != nil {
@@ -100,12 +100,11 @@ func ParseClusterSubnetEntriesWithDefaults(clusterSubnetCmd string, ipv4HostLeng
 			}
 
 			if !ipv6 && parsedClusterEntry.HostSubnetLength > 32 {
-				return nil, fmt.Errorf("invalid host subnet, IPv4 subnet must be < 32")
+				return nil, NewInvalidIPv4HostSubnetError()
 			}
 
 			if parsedClusterEntry.HostSubnetLength <= entryMaskLength {
-				return nil, fmt.Errorf("cannot use a host subnet length mask shorter than or equal to the cluster subnet mask. "+
-					"host subnet length: %d, cluster subnet length: %d", parsedClusterEntry.HostSubnetLength, entryMaskLength)
+				return nil, NewHostSubnetMaskError(parsedClusterEntry.HostSubnetLength, entryMaskLength)
 			}
 		}
 
@@ -216,9 +215,7 @@ func (cs *ConfigSubnets) CheckForOverlaps() error {
 		for j := 0; j < i; j++ {
 			sj := cs.Subnets[j]
 			if si.Subnet.Contains(sj.Subnet.IP) || sj.Subnet.Contains(si.Subnet.IP) {
-				return fmt.Errorf("illegal network configuration: %s %q overlaps %s %q",
-					si.SubnetType, si.Subnet.String(),
-					sj.SubnetType, sj.Subnet.String())
+				return NewSubnetOverlapError(si, sj)
 			}
 		}
 	}
