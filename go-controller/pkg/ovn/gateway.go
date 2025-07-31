@@ -72,10 +72,13 @@ func NewGatewayManagerForLayer2Topology(
 	watchFactory *factory.WatchFactory,
 	opts ...GatewayOption,
 ) *GatewayManager {
+	routerName := ""
+	if netInfo.TopologyVariant() == types.Layer2RouterTopology {
+		routerName = netInfo.GetNetworkScopedClusterRouterName()
+	}
 	return newGWManager(
 		nodeName,
-		// TODO put transit router name here
-		"",
+		routerName,
 		netInfo.GetNetworkScopedGWRouterName(nodeName),
 		netInfo.GetNetworkScopedExtSwitchName(nodeName),
 		netInfo.GetNetworkScopedSwitchName(""),
@@ -464,7 +467,6 @@ func (gw *GatewayManager) createGWRouterPort(gwConfig *GatewayConfig,
 		}
 
 		_, isNetIPv6 := gw.netInfo.IPMode()
-		// TODO move to transit router port
 		if gw.netInfo.TopologyType() == types.Layer2Topology && isNetIPv6 && config.IPv6Mode && gw.transitRouterInfo == nil {
 			gwRouterPort.Ipv6RaConfigs = map[string]string{
 				"address_mode":      "dhcpv6_stateful",
