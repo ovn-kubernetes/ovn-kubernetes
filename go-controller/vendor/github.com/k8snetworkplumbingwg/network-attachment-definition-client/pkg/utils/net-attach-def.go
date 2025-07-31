@@ -122,6 +122,117 @@ func GetNetworkStatus(pod *corev1.Pod) ([]v1.NetworkStatus, error) {
 	return netStatuses, err
 }
 
+// gatewayInterfaceIndex determines the index of the first interface that has a gateway
+func gatewayInterfaceIndex(ips []*cni100.IPConfig) int {
+	for _, ipConfig := range ips {
+		if ipConfig.Gateway != nil && ipConfig.Interface != nil {
+			return *ipConfig.Interface
+		}
+	}
+	return -1
+}
+
+// CreateNetworkStatuses creates an array of NetworkStatus from CNI result
+// Not to be confused with CreateNetworkStatus (singular)
+// This is the preferred method and picks up when CNI ADD results contain multiple container interfaces
+func CreateNetworkStatuses(r cnitypes.Result, networkName string, defaultNetwork bool, dev *v1.DeviceInfo) ([]*v1.NetworkStatus, error) {
+	var networkStatuses []*v1.NetworkStatus
+	// indexMap is from original CNI result index to networkStatuses index
+	indexMap := make(map[int]int)
+
+	// Convert whatever the IPAM result was into the current Result type
+	result, err := cni100.NewResultFromResult(r)
+	if err != nil {
+		return nil, fmt.Errorf("error converting the type.Result to cni100.Result: %v", err)
+	}
+
+	if len(result.Interfaces) == 1 {
+		networkStatus, err := CreateNetworkStatus(r, networkName, defaultNetwork, dev)
+		return []*v1.NetworkStatus{networkStatus}, err
+	}
+
+	// Discover default routes upfront and reuse them if necessary.
+	var useDefaultRoute []string
+	for _, route := range result.Routes {
+		if isDefaultRoute(route) {
+			useDefaultRoute = append(useDefaultRoute, route.GW.String())
+		}
+	}
+
+	// Same for DNS
+	v1dns := convertDNS(result.DNS)
+
+	// Check for a gateway-associated interface, we'll use this later if we did to mark as the default.
+	gwInterfaceIdx := -1
+	if defaultNetwork {
+		gwInterfaceIdx = gatewayInterfaceIndex(result.IPs)
+	}
+
+	// Initialize NetworkStatus for each container interface (e.g. with sandbox present)
+	indexOfFoundPodInterface := 0
+	foundFirstSandboxIface := false
+	didSetDefault := false
+	for i, iface := range result.Interfaces {
+		if iface.Sandbox != "" {
+			isDefault := false
+
+			// If there's a gateway listed for this interface index found in the ips, we mark that interface as default
+			// notably, we use the first one we find.
+			if defaultNetwork && i == gwInterfaceIdx && !didSetDefault {
+				isDefault = true
+				didSetDefault = true
+			}
+
+			// Otherwise, if we didn't find it, we use the first sandbox interface.
+			if defaultNetwork && gwInterfaceIdx == -1 && !foundFirstSandboxIface {
+				isDefault = true
+				foundFirstSandboxIface = true
+			}
+
+			ns := &v1.NetworkStatus{
+				Name:       networkName,
+				Default:    isDefault,
+				Interface:  iface.Name,
+				Mac:        iface.Mac,
+				Mtu:        iface.Mtu,
+				IPs:        []string{},
+				Gateway:    useDefaultRoute,
+				DeviceInfo: dev,
+				DNS:        *v1dns,
+			}
+			networkStatuses = append(networkStatuses, ns)
+			// Map original index to the new slice index
+			indexMap[i] = indexOfFoundPodInterface
+			indexOfFoundPodInterface++
+		}
+	}
+
+	var defaultNetworkStatus *v1.NetworkStatus
+	if len(networkStatuses) > 0 {
+		// Set the default network status to the last network status.
+		defaultNetworkStatus = networkStatuses[len(networkStatuses)-1]
+	}
+
+	// Map IPs to network interface based on index
+	for _, ipConfig := range result.IPs {
+		if ipConfig.Interface != nil {
+			originalIndex := *ipConfig.Interface
+			if newIndex, ok := indexMap[originalIndex]; ok {
+				ns := networkStatuses[newIndex]
+				ns.IPs = append(ns.IPs, ipConfig.Address.IP.String())
+			}
+		} else {
+			// If the IPs don't specify the interface assign the IP to the default network status. This keeps the behaviour
+			// consistent with previous multus versions.
+			if defaultNetworkStatus != nil {
+				defaultNetworkStatus.IPs = append(defaultNetworkStatus.IPs, ipConfig.Address.IP.String())
+			}
+		}
+	}
+
+	return networkStatuses, nil
+}
+
 // CreateNetworkStatus create NetworkStatus from CNI result
 func CreateNetworkStatus(r cnitypes.Result, networkName string, defaultNetwork bool, dev *v1.DeviceInfo) (*v1.NetworkStatus, error) {
 	netStatus := &v1.NetworkStatus{}
@@ -139,6 +250,7 @@ func CreateNetworkStatus(r cnitypes.Result, networkName string, defaultNetwork b
 		if ifs.Sandbox != "" {
 			netStatus.Interface = ifs.Name
 			netStatus.Mac = ifs.Mac
+			netStatus.Mtu = ifs.Mtu
 		}
 	}
 
