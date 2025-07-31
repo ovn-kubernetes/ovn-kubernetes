@@ -23,6 +23,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	egresssvc "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/egressservice"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/retry"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/syncmap"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
@@ -32,8 +33,8 @@ import (
 )
 
 var (
-	nodeLogicalRouterIPv6      = []string{"fef0::56"}
-	node2LogicalRouterIPv6     = []string{"fef0::57"}
+	nodeLogicalRouterIPv6      = []string{"fd98::2"}
+	node2LogicalRouterIPv6     = []string{"fd98::3"}
 	nodeLogicalRouterIPv4      = []string{"100.64.0.2"}
 	node2LogicalRouterIPv4     = []string{"100.64.0.3"}
 	node3LogicalRouterIPv4     = []string{"100.64.0.4"}
@@ -5598,7 +5599,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						"k8s.ovn.org/node-transit-switch-port-ifaddr": "{\"ipv4\":\"100.88.0.2/16\"}", // used only for ic=true test
 						"k8s.ovn.org/zone-name":                       node1Zone,                      // used only for ic=true test
 						util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node1IPv4CIDR),
-						util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s/16"}}`, nodeLogicalRouterIPv4[0]),
+						util.OvnNodeID:                                "2",
 					}
 					if node1Zone != "global" {
 						annotations["k8s.ovn.org/remote-zone-migrated"] = node1Zone // used only for ic=true test
@@ -5613,7 +5614,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						"k8s.ovn.org/node-transit-switch-port-ifaddr": "{\"ipv4\":\"100.88.0.3/16\"}", // used only for ic=true test
 						"k8s.ovn.org/zone-name":                       node2Zone,                      // used only for ic=true test
 						util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", node2IPv4CIDR),
-						util.OVNNodeGRLRPAddrs:                        fmt.Sprintf(`{"default":{"ipv4":"%s/16"}}`, node2LogicalRouterIPv4[0]),
+						util.OvnNodeID:                                "3",
 					}
 					if node2Zone != "global" {
 						annotations["k8s.ovn.org/remote-zone-migrated"] = node2Zone // used only for ic=true test
@@ -7716,7 +7717,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					ePod, err := fakeOvn.fakeClient.KubeClient.CoreV1().Pods(egressPod1.Namespace).Get(context.TODO(), egressPod1.Name, metav1.GetOptions{})
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
-					egressPodIP, err := util.GetPodIPsOfNetwork(ePod, &util.DefaultNetInfo{})
+					egressPodIP, err := podannotation.GetPodIPsOfNetwork(ePod, &util.DefaultNetInfo{})
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					egressNetPodIP, _, err := net.ParseCIDR(egressPodPortInfo.ips[0].String())
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -9510,7 +9511,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				ePod, err := fakeOvn.fakeClient.KubeClient.CoreV1().Pods(egressPod.Namespace).Get(context.TODO(), egressPod.Name, metav1.GetOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				egressPodIP, err := util.GetPodIPsOfNetwork(ePod, &util.DefaultNetInfo{})
+				egressPodIP, err := podannotation.GetPodIPsOfNetwork(ePod, &util.DefaultNetInfo{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				egressNetPodIP, _, err := net.ParseCIDR(egressPodPortInfo.ips[0].String())
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -10482,7 +10483,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				ePod, err := fakeOvn.fakeClient.KubeClient.CoreV1().Pods(egressPod.Namespace).Get(context.TODO(), egressPod.Name, metav1.GetOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				egressPodIP, err := util.GetPodIPsOfNetwork(ePod, &util.DefaultNetInfo{})
+				egressPodIP, err := podannotation.GetPodIPsOfNetwork(ePod, &util.DefaultNetInfo{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				egressNetPodIP, _, err := net.ParseCIDR(egressPodPortInfo.ips[0].String())
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -10679,7 +10680,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				ePod, err := fakeOvn.fakeClient.KubeClient.CoreV1().Pods(egressPod.Namespace).Get(context.TODO(), egressPod.Name, metav1.GetOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				egressPodIP, err := util.GetPodIPsOfNetwork(ePod, &util.DefaultNetInfo{})
+				egressPodIP, err := podannotation.GetPodIPsOfNetwork(ePod, &util.DefaultNetInfo{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				egressNetPodIP, _, err := net.ParseCIDR(egressPodPortInfo.ips[0].String())
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -11006,7 +11007,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					ePod, err := fakeOvn.fakeClient.KubeClient.CoreV1().Pods(egressPod.Namespace).Get(context.TODO(), egressPod.Name, metav1.GetOptions{})
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
-					egressPodIP, err := util.GetPodIPsOfNetwork(ePod, &util.DefaultNetInfo{})
+					egressPodIP, err := podannotation.GetPodIPsOfNetwork(ePod, &util.DefaultNetInfo{})
 					index := 0 //ipv4 address at zero index
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					egressNetPodIP, _, err := net.ParseCIDR(egressPodPortInfo.ips[0].String())
@@ -11051,7 +11052,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						UUID:        "reroute-UUID1",
 					}
 					if isEgressIPv6 {
-						podReRoutePolicy.Nexthops = []string{"fef0::56"}
+						podReRoutePolicy.Nexthops = nodeLogicalRouterIPv6
 					}
 
 					node1GR.Nat = []string{"egressip-nat-UUID1", natToRemain.UUID}
@@ -12942,7 +12943,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 				_, node1IPV6Net, _ := net.ParseCIDR(v6Node1Subnet)
 				nodeAnnotations := map[string]string{
 					"k8s.ovn.org/l3-gateway-config":               `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"192.168.126.12/24", "next-hop":"192.168.126.1"}}`,
-					"k8s.ovn.org/node-gateway-router-lrp-ifaddrs": fmt.Sprintf("{\"default\":{\"ipv4\":\"%s\",\"ipv6\":\"%s\"}}", nodeLogicalRouterIfAddrV4, nodeLogicalRouterIfAddrV6),
+					util.OvnNodeID:                                "2",
 					"k8s.ovn.org/node-primary-ifaddr":             fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", Node1IPv4CIDR, node1IPv6CIDR),
 					"k8s.ovn.org/node-subnets":                    fmt.Sprintf("{\"default\":[\"%s\", \"%s\"]}", v4Node1Subnet, v6Node1Subnet),
 					"k8s.ovn.org/node-transit-switch-port-ifaddr": fmt.Sprintf("{\"ipv4\":\"%s\", \"ipv6\": \"%s\"}", node1TranSwitchIPv4CIDR, node1TranSwitchIPv6CIDR),
@@ -13185,7 +13186,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 				_, node1IPV6Net, _ := net.ParseCIDR(v6Node1Subnet)
 				nodeAnnotations := map[string]string{
 					"k8s.ovn.org/l3-gateway-config":               `{"default":{"mode":"local","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"192.168.126.12/24", "next-hop":"192.168.126.1"}}`,
-					"k8s.ovn.org/node-gateway-router-lrp-ifaddrs": fmt.Sprintf("{\"default\":{\"ipv4\":\"%s\",\"ipv6\":\"%s\"}}", nodeLogicalRouterIfAddrV4, nodeLogicalRouterIfAddrV6),
+					util.OvnNodeID:                                "2",
 					"k8s.ovn.org/node-primary-ifaddr":             fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", Node1IPv4CIDR, node1IPv6CIDR),
 					"k8s.ovn.org/node-subnets":                    fmt.Sprintf("{\"default\":[\"%s\", \"%s\"]}", v4Node1Subnet, v6Node1Subnet),
 					"k8s.ovn.org/node-transit-switch-port-ifaddr": fmt.Sprintf("{\"ipv4\":\"%s\", \"ipv6\": \"%s\"}", node1TranSwitchIPv4CIDR, node1TranSwitchIPv6CIDR),
@@ -13205,7 +13206,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 				_, node2IPV4Net, _ := net.ParseCIDR(v4Node2Subnet)
 				_, node2IPV6Net, _ := net.ParseCIDR(v6Node2Subnet)
 				nodeAnnotations = map[string]string{
-					"k8s.ovn.org/node-gateway-router-lrp-ifaddrs": fmt.Sprintf("{\"default\":{\"ipv4\":\"%s\",\"ipv6\":\"%s\"}}", node2LogicalRouterIfAddrV4, node2LogicalRouterIfAddrV6),
+					util.OvnNodeID:                                "3",
 					"k8s.ovn.org/node-primary-ifaddr":             fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", node2IPv4CIDR, node2IPv6CIDR),
 					"k8s.ovn.org/node-subnets":                    fmt.Sprintf("{\"default\":[\"%s\", \"%s\"]}", v4Node2Subnet, v6Node2Subnet),
 					"k8s.ovn.org/node-transit-switch-port-ifaddr": fmt.Sprintf("{\"ipv4\":\"%s\", \"ipv6\": \"%s\"}", node2TranSwitchIPv4CIDR, node2TranSwitchIPv6CIDR),

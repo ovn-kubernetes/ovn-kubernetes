@@ -17,6 +17,7 @@ import (
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
@@ -156,7 +157,7 @@ func getPortsMatches(podAnnotations map[string]string, lspName string) (string, 
 	if lspName == "" {
 		return "", "", nil
 	}
-	ports, err := util.UnmarshalUDNOpenPortsAnnotation(podAnnotations)
+	ports, err := podannotation.UnmarshalUDNOpenPortsAnnotation(podAnnotations)
 	if err != nil {
 		return "", "", err
 	}

@@ -34,6 +34,7 @@ import (
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
@@ -169,8 +170,8 @@ func (oc *DefaultNetworkController) createASForEgressQoSRule(podSelector metav1.
 	for _, pod := range pods {
 		// we don't handle HostNetworked or completed pods or not-scheduled pods or remote-zone pods
 		if !util.PodWantsHostNetwork(pod) && !util.PodCompleted(pod) && util.PodScheduled(pod) && oc.isPodScheduledinLocalZone(pod) {
-			podIPs, err := util.GetPodIPsOfNetwork(pod, oc.GetNetInfo())
-			if err != nil && !errors.Is(err, util.ErrNoPodIPFound) {
+			podIPs, err := podannotation.GetPodIPsOfNetwork(pod, oc.GetNetInfo())
+			if err != nil && !errors.Is(err, podannotation.ErrNoPodIPFound) {
 				return nil, nil, err
 			}
 			podsCache.Store(pod.Name, podIPs)
@@ -755,8 +756,8 @@ func (oc *DefaultNetworkController) syncEgressQoSPod(key string) error {
 		return nil
 	}
 
-	podIPs, err := util.GetPodIPsOfNetwork(pod, oc.GetNetInfo())
-	if errors.Is(err, util.ErrNoPodIPFound) {
+	podIPs, err := podannotation.GetPodIPsOfNetwork(pod, oc.GetNetInfo())
+	if errors.Is(err, podannotation.ErrNoPodIPFound) {
 		return nil // reprocess it when it is updated with an IP
 	}
 	if err != nil {
@@ -846,8 +847,8 @@ func (oc *DefaultNetworkController) onEgressQoSPodUpdate(oldObj, newObj interfac
 
 	oldPodLabels := labels.Set(oldPod.Labels)
 	newPodLabels := labels.Set(newPod.Labels)
-	oldPodIPs, _ := util.GetPodIPsOfNetwork(oldPod, oc.GetNetInfo())
-	newPodIPs, _ := util.GetPodIPsOfNetwork(newPod, oc.GetNetInfo())
+	oldPodIPs, _ := podannotation.GetPodIPsOfNetwork(oldPod, oc.GetNetInfo())
+	newPodIPs, _ := podannotation.GetPodIPsOfNetwork(newPod, oc.GetNetInfo())
 	isOldPodLocal := oc.isPodScheduledinLocalZone(oldPod)
 	isNewPodLocal := oc.isPodScheduledinLocalZone(newPod)
 	oldPodCompleted := util.PodCompleted(oldPod)

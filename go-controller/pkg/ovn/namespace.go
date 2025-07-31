@@ -13,7 +13,9 @@ import (
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
@@ -167,7 +169,7 @@ func (oc *DefaultNetworkController) updateNamespace(old, newer *corev1.Namespace
 					if util.PodWantsHostNetwork(pod) {
 						continue
 					}
-					podIPs, err := util.GetPodIPsOfNetwork(pod, oc.GetNetInfo())
+					podIPs, err := podannotation.GetPodIPsOfNetwork(pod, oc.GetNetInfo())
 					if err != nil {
 						errors = append(errors, fmt.Errorf("unable to get pod %q IPs for SNAT rule removal err (%v)", logicalPort, err))
 					}
@@ -232,7 +234,7 @@ func (oc *DefaultNetworkController) updateNamespace(old, newer *corev1.Namespace
 				if !oc.isPodScheduledinLocalZone(pod) && !util.PodNeedsSNAT(pod) {
 					continue
 				}
-				podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, types.DefaultNetworkName)
+				podAnnotation, err := podannotation.UnmarshalPodAnnotation(pod.Annotations, types.DefaultNetworkName)
 				if err != nil {
 					errors = append(errors, err)
 				} else {
@@ -375,7 +377,7 @@ func (oc *DefaultNetworkController) getHostNamespaceAddressesForNode(node *corev
 	}
 	// for shared gateway mode we will use LRP IPs to SNAT host network traffic
 	// so add these to the address set.
-	lrpIPs, err := util.ParseNodeGatewayRouterJoinAddrs(node, oc.GetNetworkName())
+	lrpIPs, err := udn.GetGWRouterIPs(node, oc.GetNetInfo())
 	if err != nil {
 		if util.IsAnnotationNotSetError(err) {
 			// FIXME(tssurya): This is present for backwards compatibility

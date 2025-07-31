@@ -240,8 +240,8 @@ func (anse *annotationNotSetError) Error() string {
 	return anse.msg
 }
 
-// newAnnotationNotSetError returns an error for an annotation that is not set
-func newAnnotationNotSetError(format string, args ...interface{}) error {
+// NewAnnotationNotSetError returns an error for an annotation that is not set
+func NewAnnotationNotSetError(format string, args ...interface{}) error {
 	return &annotationNotSetError{msg: fmt.Sprintf(format, args...)}
 }
 

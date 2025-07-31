@@ -28,6 +28,7 @@ import (
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/gateway"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/gatewayrouter"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -181,8 +182,8 @@ func (gw *GatewayManager) cleanupStalePodSNATs(nodeName string, nodeIPs []*net.I
 					continue
 				}
 			}
-			podIPs, err := util.GetPodIPsOfNetwork(&pod, gw.netInfo)
-			if err != nil && errors.Is(err, util.ErrNoPodIPFound) {
+			podIPs, err := podannotation.GetPodIPsOfNetwork(&pod, gw.netInfo)
+			if err != nil && errors.Is(err, podannotation.ErrNoPodIPFound) {
 				// It is possible that the pod is scheduled during this time, but the LSP add or
 				// IP Allocation has not happened and it is waiting for the WatchPods to start
 				// after WatchNodes completes (This function is called during syncNodes). So since
