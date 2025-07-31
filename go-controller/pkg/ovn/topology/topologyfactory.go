@@ -40,6 +40,15 @@ func (gtf *GatewayTopologyFactory) NewClusterRouterWithMulticastSupport(
 	return gtf.newClusterRouter(clusterRouterName, netInfo, coopUUID, routerOptions)
 }
 
+func (gtf *GatewayTopologyFactory) NewTransitRouter(
+	netInfo util.NetInfo,
+	coopUUID string,
+	tunnelKey string,
+) (*nbdb.LogicalRouter, error) {
+	routerOptions := map[string]string{libovsdbops.RequestedTnlKey: tunnelKey}
+	return gtf.newClusterRouter(netInfo.GetNetworkScopedClusterRouterName(), netInfo, coopUUID, routerOptions)
+}
+
 func (gtf *GatewayTopologyFactory) newClusterRouter(
 	clusterRouterName string,
 	netInfo util.NetInfo,

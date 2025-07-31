@@ -163,7 +163,7 @@ func (zic *ZoneInterconnectHandler) createOrUpdateTransitSwitch(networkID int) e
 		Name:        zic.networkTransitSwitchName,
 		ExternalIDs: externalIDs,
 	}
-	zic.addTransitSwitchConfig(ts, networkID)
+	zic.addTransitSwitchConfig(ts, BaseTransitSwitchTunnelKey+networkID)
 	// Create transit switch if it doesn't exist
 	if err := libovsdbops.CreateOrUpdateLogicalSwitch(zic.nbClient, ts); err != nil {
 		return fmt.Errorf("failed to create/update transit switch %s: %w", zic.networkTransitSwitchName, err)
@@ -339,12 +339,13 @@ func (zic *ZoneInterconnectHandler) Cleanup() error {
 	return libovsdbops.DeleteLogicalSwitch(zic.nbClient, zic.networkTransitSwitchName)
 }
 
-func (zic *ZoneInterconnectHandler) AddTransitSwitchConfig(sw *nbdb.LogicalSwitch) error {
+// AddTransitSwitchConfig is only used by the layer2 network controller
+func (zic *ZoneInterconnectHandler) AddTransitSwitchConfig(sw *nbdb.LogicalSwitch, tunnelKey int) error {
 	if zic.TopologyType() != types.Layer2Topology {
 		return nil
 	}
 
-	zic.addTransitSwitchConfig(sw, zic.GetNetworkID())
+	zic.addTransitSwitchConfig(sw, tunnelKey)
 	return nil
 }
 
@@ -370,13 +371,13 @@ func (zic *ZoneInterconnectHandler) AddTransitPortConfig(remote bool, podAnnotat
 	return nil
 }
 
-func (zic *ZoneInterconnectHandler) addTransitSwitchConfig(sw *nbdb.LogicalSwitch, networkID int) {
+func (zic *ZoneInterconnectHandler) addTransitSwitchConfig(sw *nbdb.LogicalSwitch, tunnelKey int) {
 	if sw.OtherConfig == nil {
 		sw.OtherConfig = map[string]string{}
 	}
 
 	sw.OtherConfig["interconn-ts"] = sw.Name
-	sw.OtherConfig[libovsdbops.RequestedTnlKey] = strconv.Itoa(BaseTransitSwitchTunnelKey + networkID)
+	sw.OtherConfig[libovsdbops.RequestedTnlKey] = strconv.Itoa(tunnelKey)
 	sw.OtherConfig["mcast_snoop"] = "true"
 	sw.OtherConfig["mcast_querier"] = "false"
 	sw.OtherConfig["mcast_flood_unregistered"] = "true"
