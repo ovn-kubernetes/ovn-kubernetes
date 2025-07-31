@@ -27,7 +27,7 @@ type Transaction interface {
 // Update abstracts an update that can be committed to a database
 type Update interface {
 	GetUpdatedTables() []string
-	ForEachModelUpdate(table string, do func(uuid string, old, new model.Model) error) error
+	ForEachModelUpdate(table string, do func(uuid string, old, newModel model.Model) error) error
 	ForEachRowUpdate(table string, do func(uuid string, row ovsdb.RowUpdate2) error) error
 	ForReferenceUpdates(do func(references References) error) error
 }

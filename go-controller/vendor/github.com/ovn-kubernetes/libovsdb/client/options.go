@@ -2,6 +2,7 @@ package client
 
 import (
 	"crypto/tls"
+	"errors"
 	"net/url"
 	"time"
 
@@ -120,6 +121,9 @@ func WithReconnect(timeout time.Duration, backoff backoff.BackOff) Option {
 func WithInactivityCheck(inactivityTimeout, reconnectTimeout time.Duration,
 	reconnectBackoff backoff.BackOff) Option {
 	return func(o *options) error {
+		if reconnectTimeout >= inactivityTimeout {
+			return errors.New("inactivity timeout value should be greater than reconnect timeout value")
+		}
 		o.reconnect = true
 		o.timeout = reconnectTimeout
 		o.backoff = reconnectBackoff

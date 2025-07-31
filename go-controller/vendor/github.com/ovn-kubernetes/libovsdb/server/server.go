@@ -4,10 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net"
-	"os"
 	"sync"
+	"time"
 
 	"github.com/cenkalti/rpc2"
 	"github.com/cenkalti/rpc2/jsonrpc"
@@ -32,8 +31,11 @@ type OvsdbServer struct {
 	modelsMutex  sync.RWMutex
 	monitors     map[*rpc2.Client]*connectionMonitors
 	monitorMutex sync.RWMutex
-	logger       logr.Logger
+	logger       *logr.Logger
 	txnMutex     sync.Mutex
+	// Test-only fields for inducing delays
+	transactionDelay time.Duration
+	echoDelay        time.Duration
 }
 
 func init() {
@@ -41,8 +43,14 @@ func init() {
 }
 
 // NewOvsdbServer returns a new OvsdbServer
-func NewOvsdbServer(db database.Database, models ...model.DatabaseModel) (*OvsdbServer, error) {
-	l := stdr.NewWithOptions(log.New(os.Stderr, "", log.LstdFlags), stdr.Options{LogCaller: stdr.All}).WithName("server")
+func NewOvsdbServer(db database.Database, logger *logr.Logger, models ...model.DatabaseModel) (*OvsdbServer, error) {
+	if logger == nil {
+		l := logr.Discard()
+		logger = &l
+	} else {
+		l := logger.WithName("ovsdb-server")
+		logger = &l
+	}
 	o := &OvsdbServer{
 		done:         make(chan struct{}, 1),
 		doEcho:       true,
@@ -51,7 +59,7 @@ func NewOvsdbServer(db database.Database, models ...model.DatabaseModel) (*Ovsdb
 		modelsMutex:  sync.RWMutex{},
 		monitors:     make(map[*rpc2.Client]*connectionMonitors),
 		monitorMutex: sync.RWMutex{},
-		logger:       l,
+		logger:       logger,
 	}
 	o.modelsMutex.Lock()
 	for _, model := range models {
@@ -91,6 +99,20 @@ func (o *OvsdbServer) OnDisConnect(f func(*rpc2.Client)) {
 func (o *OvsdbServer) DoEcho(ok bool) {
 	o.readyMutex.Lock()
 	o.doEcho = ok
+	o.readyMutex.Unlock()
+}
+
+// SetTransactionDelay sets an artificial delay for transaction processing (test-only)
+func (o *OvsdbServer) SetTransactionDelay(delay time.Duration) {
+	o.readyMutex.Lock()
+	o.transactionDelay = delay
+	o.readyMutex.Unlock()
+}
+
+// SetEchoDelay sets an artificial delay for echo responses (test-only)
+func (o *OvsdbServer) SetEchoDelay(delay time.Duration) {
+	o.readyMutex.Lock()
+	o.echoDelay = delay
 	o.readyMutex.Unlock()
 }
 
@@ -152,7 +174,7 @@ func (o *OvsdbServer) Ready() bool {
 }
 
 // ListDatabases lists the databases in the current system
-func (o *OvsdbServer) ListDatabases(client *rpc2.Client, args []interface{}, reply *[]string) error {
+func (o *OvsdbServer) ListDatabases(_ *rpc2.Client, _ []any, reply *[]string) error {
 	dbs := []string{}
 	o.modelsMutex.RLock()
 	for _, db := range o.models {
@@ -163,7 +185,7 @@ func (o *OvsdbServer) ListDatabases(client *rpc2.Client, args []interface{}, rep
 	return nil
 }
 
-func (o *OvsdbServer) GetSchema(client *rpc2.Client, args []interface{}, reply *ovsdb.DatabaseSchema,
+func (o *OvsdbServer) GetSchema(_ *rpc2.Client, args []any, reply *ovsdb.DatabaseSchema,
 ) error {
 	db, ok := args[0].(string)
 	if !ok {
@@ -180,12 +202,19 @@ func (o *OvsdbServer) GetSchema(client *rpc2.Client, args []interface{}, reply *
 }
 
 // Transact issues a new database transaction and returns the results
-func (o *OvsdbServer) Transact(client *rpc2.Client, args []json.RawMessage, reply *[]*ovsdb.OperationResult) error {
+func (o *OvsdbServer) Transact(_ *rpc2.Client, args []json.RawMessage, reply *[]*ovsdb.OperationResult) error {
 	// While allowing other rpc handlers to run in parallel, this ovsdb server expects transactions
 	// to be serialized. The following mutex ensures that.
 	// Ref: https://github.com/cenkalti/rpc2/blob/c1acbc6ec984b7ae6830b6a36b62f008d5aefc4c/client.go#L187
 	o.txnMutex.Lock()
 	defer o.txnMutex.Unlock()
+
+	o.readyMutex.RLock()
+	delay := o.transactionDelay
+	o.readyMutex.RUnlock()
+	if delay > 0 {
+		time.Sleep(delay)
+	}
 
 	if len(args) < 2 {
 		return fmt.Errorf("not enough args")
@@ -223,7 +252,7 @@ func (o *OvsdbServer) transact(name string, operations []ovsdb.Operation) ([]*ov
 }
 
 // Cancel cancels the last transaction
-func (o *OvsdbServer) Cancel(client *rpc2.Client, args []interface{}, reply *[]interface{}) error {
+func (o *OvsdbServer) Cancel(_ *rpc2.Client, _ []any, _ *[]any) error {
 	return fmt.Errorf("not implemented")
 }
 
@@ -366,33 +395,41 @@ func (o *OvsdbServer) MonitorCondSince(client *rpc2.Client, args []json.RawMessa
 }
 
 // MonitorCancel cancels a monitor on a given table
-func (o *OvsdbServer) MonitorCancel(client *rpc2.Client, args []interface{}, reply *[]interface{}) error {
+func (o *OvsdbServer) MonitorCancel(_ *rpc2.Client, _ []any, _ *[]any) error {
 	return fmt.Errorf("not implemented")
 }
 
 // Lock acquires a lock on a table for a the client
-func (o *OvsdbServer) Lock(client *rpc2.Client, args []interface{}, reply *[]interface{}) error {
+func (o *OvsdbServer) Lock(_ *rpc2.Client, _ []any, _ *[]any) error {
 	return fmt.Errorf("not implemented")
 }
 
 // Steal steals a lock for a client
-func (o *OvsdbServer) Steal(client *rpc2.Client, args []interface{}, reply *[]interface{}) error {
+func (o *OvsdbServer) Steal(_ *rpc2.Client, _ []any, _ *[]any) error {
 	return fmt.Errorf("not implemented")
 }
 
 // Unlock releases a lock for a client
-func (o *OvsdbServer) Unlock(client *rpc2.Client, args []interface{}, reply *[]interface{}) error {
+func (o *OvsdbServer) Unlock(_ *rpc2.Client, _ []any, _ *[]any) error {
 	return fmt.Errorf("not implemented")
 }
 
 // Echo tests the liveness of the connection
-func (o *OvsdbServer) Echo(client *rpc2.Client, args []interface{}, reply *[]interface{}) error {
+func (o *OvsdbServer) Echo(_ *rpc2.Client, args []any, reply *[]any) error {
 	o.readyMutex.Lock()
-	defer o.readyMutex.Unlock()
-	if !o.doEcho {
+	doEcho := o.doEcho
+	echoDelay := o.echoDelay
+	o.readyMutex.Unlock()
+
+	if !doEcho {
 		return fmt.Errorf("no echo reply")
 	}
-	echoReply := make([]interface{}, len(args))
+
+	if echoDelay > 0 {
+		time.Sleep(echoDelay)
+	}
+
+	echoReply := make([]any, len(args))
 	copy(echoReply, args)
 	*reply = echoReply
 	return nil

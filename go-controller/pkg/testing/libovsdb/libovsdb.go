@@ -368,7 +368,7 @@ func newOVSDBServer(cfg config.OvnAuthConfig, dbModel model.ClientDBModel, schem
 	db := inmemory.NewDatabase(map[string]model.ClientDBModel{
 		schema.Name:       dbModel,
 		serverSchema.Name: serverDBModel,
-	})
+	}, nil)
 
 	dbMod, errs := model.NewDatabaseModel(schema, dbModel)
 	if len(errs) > 0 {
@@ -380,7 +380,7 @@ func newOVSDBServer(cfg config.OvnAuthConfig, dbModel model.ClientDBModel, schem
 		log.Fatal(errs)
 	}
 
-	s, err := server.NewOvsdbServer(db, dbMod, servMod)
+	s, err := server.NewOvsdbServer(db, nil, dbMod, servMod)
 	if err != nil {
 		return nil, err
 	}

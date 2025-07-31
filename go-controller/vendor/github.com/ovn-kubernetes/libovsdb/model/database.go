@@ -106,7 +106,7 @@ func generateModelInfo(dbSchema ovsdb.DatabaseSchema, modelTypes map[string]refl
 }
 
 // NewModelInfo returns a mapper.Info object based on a provided model
-func (db DatabaseModel) NewModelInfo(obj interface{}) (*mapper.Info, error) {
+func (db DatabaseModel) NewModelInfo(obj any) (*mapper.Info, error) {
 	meta, ok := db.metadata[reflect.TypeOf(obj)]
 	if !ok {
 		return nil, ovsdb.NewErrWrongType("NewModelInfo", "type that is part of the DatabaseModel", obj)

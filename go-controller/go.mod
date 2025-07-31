@@ -15,10 +15,10 @@ require (
 	github.com/coreos/go-iptables v0.6.0
 	github.com/fsnotify/fsnotify v1.7.0
 	github.com/gaissmai/cidrtree v0.1.4
-	github.com/go-logr/logr v1.4.2
+	github.com/go-logr/logr v1.4.3
 	github.com/go-logr/stdr v1.2.2
 	github.com/godbus/dbus/v5 v5.1.0
-	github.com/google/go-cmp v0.6.0
+	github.com/google/go-cmp v0.7.0
 	github.com/google/gopacket v1.1.19
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.0
@@ -39,21 +39,21 @@ require (
 	github.com/openshift/api v0.0.0-20231120222239-b86761094ee3
 	github.com/openshift/client-go v0.0.0-20231121143148-910ca30a1a9a
 	github.com/ovn-kubernetes/libovsdb v0.8.0
-	github.com/prometheus/client_golang v1.19.1
+	github.com/prometheus/client_golang v1.22.0
 	github.com/prometheus/client_model v0.6.1
 	github.com/safchain/ethtool v0.3.1-0.20231027162144-83e5e0097c91
 	github.com/spf13/afero v1.9.5
-	github.com/stretchr/testify v1.9.0
+	github.com/stretchr/testify v1.10.0
 	github.com/urfave/cli/v2 v2.27.2
 	github.com/vishvananda/netlink v1.3.1-0.20250206174618-62fb240731fa
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56
-	golang.org/x/net v0.38.0
-	golang.org/x/sync v0.12.0
-	golang.org/x/sys v0.31.0
+	golang.org/x/net v0.41.0
+	golang.org/x/sync v0.16.0
+	golang.org/x/sys v0.33.0
 	golang.org/x/time v0.7.0
 	google.golang.org/grpc v1.65.0
 	google.golang.org/grpc/security/advancedtls v0.0.0-20240425232638-1e8b9b7fc655
-	google.golang.org/protobuf v1.35.1
+	google.golang.org/protobuf v1.36.5
 	gopkg.in/fsnotify/fsnotify.v1 v1.4.7
 	gopkg.in/gcfg.v1 v1.2.3
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
@@ -75,8 +75,8 @@ require (
 require (
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/cenkalti/hub v1.0.1 // indirect
-	github.com/cenkalti/rpc2 v0.0.0-20210604223624-c1acbc6ec984 // indirect
+	github.com/cenkalti/hub v1.0.2 // indirect
+	github.com/cenkalti/rpc2 v1.0.4 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/containerd/cgroups v1.1.0 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.4 // indirect
@@ -114,7 +114,7 @@ require (
 	github.com/pborman/uuid v1.2.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
-	github.com/prometheus/common v0.55.0 // indirect
+	github.com/prometheus/common v0.62.0 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
@@ -124,11 +124,11 @@ require (
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xrash/smetrics v0.0.0-20240312152122-5f08fbb34913 // indirect
 	go.opencensus.io v0.24.0 // indirect
-	golang.org/x/crypto v0.36.0 // indirect
+	golang.org/x/crypto v0.39.0 // indirect
 	golang.org/x/oauth2 v0.27.0 // indirect
-	golang.org/x/term v0.30.0 // indirect
-	golang.org/x/text v0.23.0 // indirect
-	golang.org/x/tools v0.26.0 // indirect
+	golang.org/x/term v0.32.0 // indirect
+	golang.org/x/text v0.27.0 // indirect
+	golang.org/x/tools v0.34.0 // indirect
 	gomodules.xyz/jsonpatch/v2 v2.4.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240826202546-f6391c0de4c7 // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.12.0 // indirect
@@ -148,4 +148,5 @@ replace (
 	github.com/coreos/go-iptables => github.com/trozet/go-iptables v0.0.0-20240328221912-077e672b3808
 	github.com/gogo/protobuf => github.com/gogo/protobuf v1.3.2
 	github.com/j-keck/arping => github.com/JacobTanenbaum/arping v0.0.0-20240209152419-3987db83bd51
+	github.com/ovn-kubernetes/libovsdb => github.com/dave-tucker/libovsdb v0.5.2-0.20250730090030-99d4c9732ada
 )

@@ -25,7 +25,7 @@ func insertToSlice(a, b reflect.Value) (reflect.Value, bool) {
 	return reflect.Append(a, b), true
 }
 
-func mutate(current interface{}, mutator ovsdb.Mutator, value interface{}) (interface{}, interface{}) {
+func mutate(current any, mutator ovsdb.Mutator, value any) (any, any) {
 	switch current.(type) {
 	case bool, string:
 		return current, value
@@ -38,26 +38,26 @@ func mutate(current interface{}, mutator ovsdb.Mutator, value interface{}) (inte
 		return mutateDelete(current, value)
 	case ovsdb.MutateOperationAdd:
 		// for add, the delta is the new value
-		new := mutateAdd(current, value)
-		return new, new
+		newValue := mutateAdd(current, value)
+		return newValue, newValue
 	case ovsdb.MutateOperationSubtract:
 		// for subtract, the delta is the new value
-		new := mutateSubtract(current, value)
-		return new, new
+		newValue := mutateSubtract(current, value)
+		return newValue, newValue
 	case ovsdb.MutateOperationMultiply:
-		new := mutateMultiply(current, value)
-		return new, new
+		newValue := mutateMultiply(current, value)
+		return newValue, newValue
 	case ovsdb.MutateOperationDivide:
-		new := mutateDivide(current, value)
-		return new, new
+		newValue := mutateDivide(current, value)
+		return newValue, newValue
 	case ovsdb.MutateOperationModulo:
-		new := mutateModulo(current, value)
-		return new, new
+		newValue := mutateModulo(current, value)
+		return newValue, newValue
 	}
 	return current, value
 }
 
-func mutateInsert(current, value interface{}) (interface{}, interface{}) {
+func mutateInsert(current, value any) (any, any) {
 	switch current.(type) {
 	case int, float64:
 		return current, current
@@ -66,7 +66,7 @@ func mutateInsert(current, value interface{}) (interface{}, interface{}) {
 	vv := reflect.ValueOf(value)
 	if vc.Kind() == reflect.Slice && vc.Type() == reflect.SliceOf(vv.Type()) {
 		v, ok := insertToSlice(vc, vv)
-		var diff interface{}
+		var diff any
 		if ok {
 			diff = value
 		}
@@ -114,7 +114,7 @@ func mutateInsert(current, value interface{}) (interface{}, interface{}) {
 	return current, nil
 }
 
-func mutateDelete(current, value interface{}) (interface{}, interface{}) {
+func mutateDelete(current, value any) (any, any) {
 	switch current.(type) {
 	case int, float64:
 		return current, nil
@@ -177,7 +177,7 @@ func mutateDelete(current, value interface{}) (interface{}, interface{}) {
 	return current, nil
 }
 
-func mutateAdd(current, value interface{}) interface{} {
+func mutateAdd(current, value any) any {
 	if i, ok := current.(int); ok {
 		v := value.(int)
 		return i + v
@@ -203,7 +203,7 @@ func mutateAdd(current, value interface{}) interface{} {
 	return current
 }
 
-func mutateSubtract(current, value interface{}) interface{} {
+func mutateSubtract(current, value any) any {
 	if i, ok := current.(int); ok {
 		v := value.(int)
 		return i - v
@@ -229,7 +229,7 @@ func mutateSubtract(current, value interface{}) interface{} {
 	return current
 }
 
-func mutateMultiply(current, value interface{}) interface{} {
+func mutateMultiply(current, value any) any {
 	if i, ok := current.(int); ok {
 		v := value.(int)
 		return i * v
@@ -255,7 +255,7 @@ func mutateMultiply(current, value interface{}) interface{} {
 	return current
 }
 
-func mutateDivide(current, value interface{}) interface{} {
+func mutateDivide(current, value any) any {
 	if i, ok := current.(int); ok {
 		v := value.(int)
 		return i / v
@@ -281,7 +281,7 @@ func mutateDivide(current, value interface{}) interface{} {
 	return current
 }
 
-func mutateModulo(current, value interface{}) interface{} {
+func mutateModulo(current, value any) any {
 	if i, ok := current.(int); ok {
 		v := value.(int)
 		return i % v

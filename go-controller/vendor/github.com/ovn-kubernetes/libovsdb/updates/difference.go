@@ -8,13 +8,13 @@ import "reflect"
 // The result is calculated in 'a' in-place and returned unless the
 // difference is 'b' in which case 'b' is returned unmodified. Also returns a
 // boolean indicating if there is an actual difference.
-func difference(a, b interface{}) (interface{}, bool) {
+func difference(a, b any) (any, bool) {
 	return mergeDifference(nil, a, b)
 }
 
 // applyDifference returns the result of applying difference 'd' to value 'v'
 // along with a boolean indicating if 'v' was changed.
-func applyDifference(v, d interface{}) (interface{}, bool) {
+func applyDifference(v, d any) (any, bool) {
 	if d == nil {
 		return v, false
 	}
@@ -48,7 +48,7 @@ func applyDifference(v, d interface{}) (interface{}, bool) {
 // The result is calculated in 'a' in-place and returned unless the result is
 // 'b' in which case 'b' is returned unmodified. Also returns a boolean
 // indicating if there is an actual difference.
-func mergeDifference(o, a, b interface{}) (interface{}, bool) {
+func mergeDifference(o, a, b any) (any, bool) {
 	kind := reflect.ValueOf(b).Kind()
 	if kind == reflect.Invalid {
 		kind = reflect.ValueOf(a).Kind()
@@ -74,7 +74,7 @@ func mergeDifference(o, a, b interface{}) (interface{}, bool) {
 // The result is calculated in 'a' in-place and returned unless the difference
 // is 'b' in which case 'b' is returned unmodified. Also returns a boolean
 // indicating if there is an actual difference.
-func setDifference(a, b interface{}) (interface{}, bool) {
+func setDifference(a, b any) (any, bool) {
 	av := reflect.ValueOf(a)
 	bv := reflect.ValueOf(b)
 
@@ -89,7 +89,7 @@ func setDifference(a, b interface{}) (interface{}, bool) {
 	// From https://docs.openvswitch.org/en/latest/ref/ovsdb-server.7/#update2-notification
 	// The difference between two sets are all elements that only belong to one
 	// of the sets.
-	difference := make(map[interface{}]struct{}, bv.Len())
+	difference := make(map[any]struct{}, bv.Len())
 	for i := 0; i < bv.Len(); i++ {
 		// supossedly we are working with comparable atomic types with no
 		// pointers so we can use the values as map key
@@ -135,7 +135,7 @@ func setDifference(a, b interface{}) (interface{}, bool) {
 // The result is calculated in 'a' in-place and returned unless the result is
 // 'b' in which case 'b' is returned unmodified.
 // Returns a boolean indicating if there is an actual difference.
-func mergeMapDifference(o, a, b interface{}) (interface{}, bool) {
+func mergeMapDifference(o, a, b any) (any, bool) {
 	av := reflect.ValueOf(a)
 	bv := reflect.ValueOf(b)
 
@@ -201,7 +201,7 @@ func mergeMapDifference(o, a, b interface{}) (interface{}, bool) {
 // This difference is calculated as described in
 // https://docs.openvswitch.org/en/latest/ref/ovsdb-server.7/#update2-notification
 // Returns a boolean indicating if there is an actual difference.
-func mergeAtomicDifference(o, a, b interface{}) (interface{}, bool) {
+func mergeAtomicDifference(o, a, b any) (any, bool) {
 	if o != nil {
 		return b, !reflect.DeepEqual(o, b)
 	}

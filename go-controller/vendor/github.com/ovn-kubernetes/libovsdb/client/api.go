@@ -19,12 +19,12 @@ type API interface {
 	// Models can be structs or pointers to structs
 	// If the slice is null, the entire cache will be copied into the slice
 	// If it has a capacity != 0, only 'capacity' elements will be filled in
-	List(ctx context.Context, result interface{}) error
+	List(ctx context.Context, result any) error
 
 	// Create a Conditional API from a Function that is used to filter cached data
 	// The function must accept a Model implementation and return a boolean. E.g:
 	// ConditionFromFunc(func(l *LogicalSwitch) bool { return l.Enabled })
-	WhereCache(predicate interface{}) ConditionalAPI
+	WhereCache(predicate any) ConditionalAPI
 
 	// Create a ConditionalAPI from a Model's index data, where operations
 	// apply to elements that match the values provided in one or more
@@ -61,7 +61,7 @@ type API interface {
 type ConditionalAPI interface {
 	// List uses the condition to search on the cache and populates
 	// the slice of Models objects based on their type
-	List(ctx context.Context, result interface{}) error
+	List(ctx context.Context, result any) error
 
 	// Mutate returns the operations needed to perform the mutation specified
 	// By the model and the list of Mutation objects
@@ -73,14 +73,14 @@ type ConditionalAPI interface {
 	// By default, all the non-default values contained in model will be updated.
 	// Optional fields can be passed (pointer to fields in the model) to select the
 	// the fields to be updated
-	Update(model.Model, ...interface{}) ([]ovsdb.Operation, error)
+	Update(model.Model, ...any) ([]ovsdb.Operation, error)
 
 	// Delete returns the Operations needed to delete the models selected via the condition
 	Delete() ([]ovsdb.Operation, error)
 
 	// Wait returns the operations needed to perform the wait specified
 	// by the until condition, timeout, row and columns based on provided parameters.
-	Wait(ovsdb.WaitCondition, *int, model.Model, ...interface{}) ([]ovsdb.Operation, error)
+	Wait(ovsdb.WaitCondition, *int, model.Model, ...any) ([]ovsdb.Operation, error)
 }
 
 // ErrWrongType is used to report the user provided parameter has the wrong type
@@ -105,7 +105,7 @@ type api struct {
 }
 
 // List populates a slice of Models given as parameter based on the configured Condition
-func (a api) List(ctx context.Context, result interface{}) error {
+func (a api) List(_ context.Context, result any) error {
 	resultPtr := reflect.ValueOf(result)
 	if resultPtr.Type().Kind() != reflect.Ptr {
 		return &ErrWrongType{resultPtr.Type(), "Expected pointer to slice of valid Models"}
@@ -194,13 +194,13 @@ func (a api) WhereAll(m model.Model, cond ...model.Condition) ConditionalAPI {
 }
 
 // WhereCache returns a conditionalAPI based a Predicate
-func (a api) WhereCache(predicate interface{}) ConditionalAPI {
+func (a api) WhereCache(predicate any) ConditionalAPI {
 	return newConditionalAPI(a.cache, a.conditionFromFunc(predicate), a.logger)
 }
 
 // Conditional interface implementation
 // FromFunc returns a Condition from a function
-func (a api) conditionFromFunc(predicate interface{}) Conditional {
+func (a api) conditionFromFunc(predicate any) Conditional {
 	table, err := a.getTableFromFunc(predicate)
 	if err != nil {
 		return newErrorConditional(err)
@@ -254,7 +254,7 @@ func (a api) conditionFromExplicitConditions(matchAll bool, m model.Model, cond 
 //
 // The way the cache is searched depends on the fields already populated in 'result'
 // Any table index (including _uuid) will be used for comparison
-func (a api) Get(ctx context.Context, m model.Model) error {
+func (a api) Get(_ context.Context, m model.Model) error {
 	table, err := a.getTableFromModel(m)
 	if err != nil {
 		return err
@@ -382,7 +382,7 @@ func (a api) Mutate(model model.Model, mutationObjs ...model.Mutation) ([]ovsdb.
 // Update is a generic function capable of updating any mutable field in any row in the database
 // Additional fields can be passed (variadic opts) to indicate fields to be updated
 // All immutable fields will be ignored
-func (a api) Update(model model.Model, fields ...interface{}) ([]ovsdb.Operation, error) {
+func (a api) Update(model model.Model, fields ...any) ([]ovsdb.Operation, error) {
 	var operations []ovsdb.Operation
 	table, err := a.getTableFromModel(model)
 	if err != nil {
@@ -462,7 +462,7 @@ func (a api) Delete() ([]ovsdb.Operation, error) {
 	return operations, nil
 }
 
-func (a api) Wait(untilConFun ovsdb.WaitCondition, timeout *int, model model.Model, fields ...interface{}) ([]ovsdb.Operation, error) {
+func (a api) Wait(untilConFun ovsdb.WaitCondition, timeout *int, model model.Model, fields ...any) ([]ovsdb.Operation, error) {
 	var operations []ovsdb.Operation
 
 	/*
@@ -538,7 +538,7 @@ func (a api) Wait(untilConFun ovsdb.WaitCondition, timeout *int, model model.Mod
 
 // getTableFromModel returns the table name from a Model object after performing
 // type verifications on the model
-func (a api) getTableFromModel(m interface{}) (string, error) {
+func (a api) getTableFromModel(m any) (string, error) {
 	if _, ok := m.(model.Model); !ok {
 		return "", &ErrWrongType{reflect.TypeOf(m), "Type does not implement Model interface"}
 	}
@@ -551,7 +551,7 @@ func (a api) getTableFromModel(m interface{}) (string, error) {
 
 // getTableFromModel returns the table name from a the predicate after performing
 // type verifications
-func (a api) getTableFromFunc(predicate interface{}) (string, error) {
+func (a api) getTableFromFunc(predicate any) (string, error) {
 	predType := reflect.TypeOf(predicate)
 	if predType == nil || predType.Kind() != reflect.Func {
 		return "", &ErrWrongType{predType, "Expected function"}
