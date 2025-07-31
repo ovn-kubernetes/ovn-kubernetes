@@ -469,6 +469,131 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 		),
 	)
 
+	DescribeTable("cleans up stale egress SNAT entries", func(staleSNATs, hasPorts bool) {
+		config.OVNKubernetesFeature.EnableMultiNetwork = true
+		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+		netInfo := dummyPrimaryLayer2UserDefinedNetwork("100.200.0.0/16")
+		netConf := netInfo.netconf()
+		networkConfig, err := util.NewNetInfo(netConf)
+		Expect(err).NotTo(HaveOccurred())
+		nad, err := newNetworkAttachmentDefinition(
+			ns,
+			nadName,
+			*netConf,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		nad.Annotations = map[string]string{ovntypes.OvnNetworkIDAnnotation: secondaryNetworkID}
+		mutableNetworkConfig := util.NewMutableNetInfo(networkConfig)
+		mutableNetworkConfig.SetNADs(util.GetNADName(nad.Namespace, nad.Name))
+		networkConfig = mutableNetworkConfig
+
+		testNode, err := newNodeWithSecondaryNets(nodeName, "192.168.126.202/24", netInfo)
+		Expect(err).NotTo(HaveOccurred())
+
+		gwConfig, err := util.ParseNodeL3GatewayAnnotation(testNode)
+		Expect(err).NotTo(HaveOccurred())
+
+		// save initial DB that is also expected in the end
+		expectedDB := append([]libovsdbtest.TestData(nil), initialDB.NBData...)
+
+		// now fill initialDB state that will be changed
+		Expect(netInfo.setupOVNDependencies(&initialDB)).To(Succeed())
+		networkSwitch := initialDB.NBData[len(initialDB.NBData)-1].(*nbdb.LogicalSwitch)
+		if hasPorts {
+			// mock a port as if a pod exists
+			podInfo := dummyTestPod(ns, netInfo)
+			podAddr := fmt.Sprintf("%s %s", podInfo.podMAC, podInfo.podIP)
+			lsp := newExpectedSwitchPort("pod-lsp-UUID", "pod-lsp", podAddr, podInfo, mutableNetworkConfig, nad.Name)
+
+			networkSwitch.Ports = append(networkSwitch.Ports, lsp.UUID)
+			initialDB.NBData = append(initialDB.NBData, lsp)
+			// add pod to the expected DB
+			expectedDB = append(expectedDB, lsp)
+		}
+
+		if staleSNATs {
+			initialDB.NBData = append(
+				initialDB.NBData,
+				expectedLayer2EgressStaleEntities(networkConfig, *gwConfig, nodeName)...)
+		} else {
+			initialDB.NBData = append(
+				initialDB.NBData,
+				expectedLayer2EgressEntities(networkConfig, *gwConfig, nodeName)...)
+		}
+
+		fakeOvn.startWithDBSetup(
+			initialDB,
+			&corev1.NamespaceList{
+				Items: []corev1.Namespace{
+					*newUDNNamespace(ns),
+				},
+			},
+			&corev1.NodeList{
+				Items: []corev1.Node{*testNode},
+			},
+			&nadapi.NetworkAttachmentDefinitionList{
+				Items: []nadapi.NetworkAttachmentDefinition{*nad},
+			},
+		)
+
+		secondaryNetController, ok := fakeOvn.secondaryControllers[secondaryNetworkName]
+		Expect(ok).To(BeTrue())
+		Expect(secondaryNetController.bnc.WatchNodes()).To(Succeed())
+
+		// build expected DB state
+		switchName := secondaryNetController.bnc.GetNetworkScopedName(ovntypes.OVNLayer2Switch)
+		_, hostSubnet, _ := net.ParseCIDR(netInfo.clustersubnets)
+		managementIP := managementPortIP(hostSubnet)
+		mgmtPortName := managementPortName(secondaryNetController.bnc.GetNetworkScopedName(nodeName))
+		mgmtPortUUID := mgmtPortName + "-UUID"
+
+		networkSwitchToGWRouterLSPName := ovntypes.SwitchToRouterPrefix + switchName
+		networkSwitchToGWRouterLSPUUID := networkSwitchToGWRouterLSPName + "-UUID"
+
+		expectedDB = append(expectedDB,
+			expectedManagementPort(mgmtPortName, managementIP),
+			&nbdb.LogicalSwitchPort{
+				UUID:      networkSwitchToGWRouterLSPUUID,
+				Name:      networkSwitchToGWRouterLSPName,
+				Addresses: []string{"router"},
+				ExternalIDs: map[string]string{
+					"k8s.ovn.org/topology": secondaryNetController.bnc.TopologyType(),
+					"k8s.ovn.org/network":  secondaryNetController.bnc.GetNetworkName(),
+				},
+				Options: map[string]string{
+					libovsdbops.RouterPort:      ovntypes.RouterToSwitchPrefix + switchName,
+					libovsdbops.RequestedTnlKey: "25",
+				},
+				Type: "router",
+			},
+			allowAllFromMgmtPort("acl1-UUID", managementIP.String(), switchName),
+			&nbdb.LogicalSwitch{
+				UUID:  switchName + "-UUID",
+				Name:  switchName,
+				Ports: append(networkSwitch.Ports, networkSwitchToGWRouterLSPUUID, mgmtPortUUID),
+				ExternalIDs: map[string]string{
+					ovntypes.NetworkExternalID:     secondaryNetController.bnc.GetNetworkName(),
+					ovntypes.NetworkRoleExternalID: util.GetUserDefinedNetworkRole(netInfo.isPrimary),
+				},
+				ACLs: []string{"acl1-UUID"},
+			})
+		if staleSNATs && hasPorts {
+			expectedDB = append(expectedDB, expectedLayer2EgressStaleEntities(networkConfig, *gwConfig, nodeName)...)
+		} else {
+			expectedDB = append(expectedDB, expectedLayer2EgressEntities(networkConfig, *gwConfig, nodeName)...)
+		}
+		Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedDB))
+	},
+		Entry("without stale SNAT, no pods",
+			false, false),
+		Entry("without stale SNAT, with pods",
+			false, true),
+		Entry("with stale SNAT, no pods",
+			true, false),
+		Entry("with stale SNAT, with pods",
+			true, true),
+	)
+
 })
 
 func dummySecondaryLayer2UserDefinedNetwork(subnets string) secondaryNetInfo {
@@ -547,22 +672,19 @@ func expectedLayer2EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 		nat1               = "nat1-UUID"
 		nat2               = "nat2-UUID"
 		nat3               = "nat3-UUID"
-		perPodSNAT         = "pod-snat-UUID"
 		sr1                = "sr1-UUID"
 		sr2                = "sr2-UUID"
 		lrsr1              = "lrsr1-UUID"
 		routerPolicyUUID1  = "lrp1-UUID"
 		hostCIDRPolicyUUID = "host-cidr-policy-UUID"
-		masqSNATUUID1      = "masq-snat1-UUID"
 	)
 	gwRouterName := fmt.Sprintf("GR_%s_test-node", netInfo.GetNetworkName())
 	staticRouteOutputPort := ovntypes.GWRouterToExtSwitchPrefix + gwRouterName
 	gwRouterToNetworkSwitchPortName := ovntypes.RouterToSwitchPrefix + netInfo.GetNetworkScopedName(ovntypes.OVNLayer2Switch)
 	gwRouterToExtSwitchPortName := fmt.Sprintf("%s%s", ovntypes.GWRouterToExtSwitchPrefix, gwRouterName)
-	masqSNAT := newMasqueradeManagementNATEntry(masqSNATUUID1, netInfo)
 
 	var nat []string
-	nat = append(nat, nat1, nat2, nat3, masqSNATUUID1)
+	nat = append(nat, nat1, nat2, nat3)
 	gr := &nbdb.LogicalRouter{
 		Name:         gwRouterName,
 		UUID:         gwRouterName + "-UUID",
@@ -580,7 +702,6 @@ func expectedLayer2EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 		expectedGRStaticRoute(sr1, dummyMasqueradeSubnet().String(), nextHopMasqueradeIP().String(), nil, &staticRouteOutputPort, netInfo),
 		expectedGRStaticRoute(sr2, ipv4DefaultRoute().String(), nodeGateway().IP.String(), nil, &staticRouteOutputPort, netInfo),
 		expectedGRToExternalSwitchLRP(gwRouterName, netInfo, nodePhysicalIPAddress(), udnGWSNATAddress()),
-		masqSNAT,
 		expectedLogicalRouterPolicy(routerPolicyUUID1, netInfo, nodeName, nodeIP().IP.String(), managementPortIP(layer2Subnet()).String()),
 	}
 
@@ -603,6 +724,26 @@ func expectedLayer2EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 	expectedEntities = append(expectedEntities, newNATEntry(nat2, dummyMasqueradeIP().IP.String(), layer2Subnet().String(), standardNonDefaultNetworkExtIDs(netInfo), fmt.Sprintf("outport == %q", gwRouterToExtSwitchPortName)))
 	expectedEntities = append(expectedEntities, newNATEntry(nat3, dummyMasqueradeIP().IP.String(), layer2SubnetGWAddr().IP.String(), standardNonDefaultNetworkExtIDs(netInfo), ""))
 	return expectedEntities
+}
+
+func expectedLayer2EgressStaleEntities(netInfo util.NetInfo, gwConfig util.L3GatewayConfig, nodeName string) []libovsdbtest.TestData {
+	expectedEntities := expectedLayer2EgressEntities(netInfo, gwConfig, nodeName)
+	gr := expectedEntities[0].(*nbdb.LogicalRouter)
+	gr.Nat = append(gr.Nat, "masq-snat1-UUID")
+	return append(expectedEntities,
+		newMasqueradeManagementNATEntry("masq-snat1-UUID", netInfo))
+}
+
+func newMasqueradeManagementNATEntry(uuid string, netInfo util.NetInfo) *nbdb.NAT {
+	masqSNAT := newNATEntry(
+		uuid,
+		"169.254.169.14",
+		layer2Subnet().String(),
+		standardNonDefaultNetworkExtIDs(netInfo),
+		getMasqueradeManagementIPSNATMatch(util.IPAddrToHWAddr(managementPortIP(layer2Subnet())).String()),
+	)
+	masqSNAT.LogicalPort = ptr.To(fmt.Sprintf("rtoj-GR_%s_%s", netInfo.GetNetworkName(), nodeName))
+	return masqSNAT
 }
 
 func expectedGWToNetworkSwitchRouterPort(name string, netInfo util.NetInfo, networks ...*net.IPNet) *nbdb.LogicalRouterPort {

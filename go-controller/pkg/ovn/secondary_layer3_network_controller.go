@@ -320,6 +320,10 @@ type SecondaryLayer3NetworkController struct {
 
 	// EgressIP controller utilized only to initialize a network with OVN polices to support EgressIP functionality.
 	eIPController *EgressIPController
+
+	// nftSNATNodes is used to track which node have switched to the nft-based SNAT.
+	// Once a node gets into this set, there is no way back.
+	nftSNATNodes sets.Set[string]
 }
 
 // NewSecondaryLayer3NetworkController create a new OVN controller for the given secondary layer3 NAD
@@ -367,6 +371,7 @@ func NewSecondaryLayer3NetworkController(
 		gatewayTopologyFactory:      topology.NewGatewayTopologyFactory(cnci.nbClient),
 		gatewayManagers:             sync.Map{},
 		eIPController:               eIPController,
+		nftSNATNodes:                sets.New[string](),
 	}
 
 	if config.OVNKubernetesFeature.EnableInterconnect {
@@ -906,8 +911,23 @@ func (oc *SecondaryLayer3NetworkController) addNode(node *corev1.Node) ([]*net.I
 	}
 	if util.IsNetworkSegmentationSupportEnabled() && oc.IsPrimaryNetwork() {
 		isUDNAdvertised := util.IsPodNetworkAdvertisedAtNode(oc, node.Name)
-		if err := oc.addOrUpdateUDNNodeSubnetEgressSNAT(hostSubnets, node, isUDNAdvertised); err != nil {
-			return nil, err
+		if !oc.nftSNATNodes.Has(node.Name) {
+			// this node had egress SNAT configured on startup, wait until it has no more pods
+			// to switch to nftables egress SNAT
+			hasPodsOnNetwork, err := oc.hasPodsOnNetwork(node.Name)
+			if err != nil {
+				return nil, fmt.Errorf("failed to check for conditional snats: %w", err)
+			}
+			if hasPodsOnNetwork {
+				if err = oc.addOrUpdateUDNNodeSubnetEgressSNAT(hostSubnets, node, isUDNAdvertised); err != nil {
+					return nil, err
+				}
+			} else {
+				if err = oc.deleteUDNEgressSNAT(node.Name); err != nil {
+					return nil, err
+				}
+				oc.nftSNATNodes.Insert(node.Name)
+			}
 		}
 		if !isUDNAdvertised {
 			if util.IsRouteAdvertisementsEnabled() {
@@ -1003,8 +1023,8 @@ func (oc *SecondaryLayer3NetworkController) syncNodes(nodes []interface{}) error
 			return fmt.Errorf("zoneICHandler failed to sync nodes: error: %w", err)
 		}
 	}
-
-	return nil
+	oc.nftSNATNodes, err = oc.findNodesWithoutEgressSNAT(nodes)
+	return err
 }
 
 func (oc *SecondaryLayer3NetworkController) gatherJoinSwitchIPs() error {

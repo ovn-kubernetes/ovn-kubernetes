@@ -294,6 +294,47 @@ type BaseSecondaryNetworkController struct {
 	multiNetPolicyHandler *factory.Handler
 }
 
+func hasPort(ports []string, port string) bool {
+	for _, p := range ports {
+		if p == port {
+			return true
+		}
+	}
+	return false
+}
+
+func (oc *BaseSecondaryNetworkController) hasPodsOnNetwork(nodeName string) (bool, error) {
+	switchName := oc.GetNetworkScopedSwitchName(nodeName)
+	ls := &nbdb.LogicalSwitch{
+		Name: switchName,
+	}
+	sw, err := libovsdbops.GetLogicalSwitch(oc.nbClient, ls)
+	if err != nil {
+		if errors.Is(err, libovsdbclient.ErrNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	if len(sw.Ports) == 0 {
+		return false, nil
+	}
+
+	ports, err := libovsdbops.FindLogicalSwitchPortWithPredicate(
+		oc.nbClient,
+		func(lsp *nbdb.LogicalSwitchPort) bool {
+			return lsp.Type == "" &&
+				lsp.ExternalIDs["pod"] == "true" &&
+				hasPort(sw.Ports, lsp.UUID)
+		})
+	if err != nil {
+		return false, err
+	}
+	if len(ports) > 0 {
+		return true, nil
+	}
+	return false, nil
+}
+
 func (oc *BaseSecondaryNetworkController) FilterOutResource(objType reflect.Type, obj interface{}) bool {
 	switch objType {
 	case factory.NamespaceType:

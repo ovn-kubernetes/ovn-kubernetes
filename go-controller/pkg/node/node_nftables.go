@@ -31,6 +31,16 @@ func setupRemoteNodeNFTSets() error {
 		Comment: knftables.PtrTo("Block egress ICMPv6 packet too big to remote Kubernetes nodes"),
 		Type:    "ipv6_addr",
 	})
+	tx.Add(&knftables.Set{
+		Name:    types.NFTNodeIPsv4,
+		Comment: knftables.PtrTo("Only SNAT advertised UDN pods for Kubernetes nodes"),
+		Type:    "ipv4_addr",
+	})
+	tx.Add(&knftables.Set{
+		Name:    types.NFTNodeIPsv6,
+		Comment: knftables.PtrTo("Only SNAT advertised UDN pods for Kubernetes nodes"),
+		Type:    "ipv6_addr",
+	})
 
 	err = nft.Run(context.TODO(), tx)
 	if err != nil {

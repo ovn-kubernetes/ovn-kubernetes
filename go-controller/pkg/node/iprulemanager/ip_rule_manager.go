@@ -204,7 +204,7 @@ func (rm *Controller) reconcile() error {
 }
 
 func areNetlinkRulesEqual(r1, r2 *netlink.Rule) bool {
-	return r1.String() == r2.String()
+	return r1.String() == r2.String() && r1.Mark == r2.Mark && r1.Family == r2.Family
 }
 
 func isNetlinkRuleInSlice(rules []netlink.Rule, candidate *netlink.Rule) (bool, *netlink.Rule) {
