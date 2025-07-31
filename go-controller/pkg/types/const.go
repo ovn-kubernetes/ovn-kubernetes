@@ -32,10 +32,6 @@ const (
 	// access to local service
 	LocalNetworkName = "locnet"
 
-	// Local Bridge used for DGP access
-	LocalBridgeName            = "br-local"
-	LocalnetGatewayNextHopPort = "ovn-k8s-gw0"
-
 	// OVS Bridge Datapath types
 	DatapathUserspace = "netdev"
 
@@ -43,25 +39,19 @@ const (
 	OVNClusterRouter = "ovn_cluster_router"
 	OVNJoinSwitch    = "join"
 
-	JoinSwitchPrefix             = "join_"
-	ExternalSwitchPrefix         = "ext_"
-	GWRouterPrefix               = "GR_"
-	GWRouterLocalLBPostfix       = "_local"
-	RouterToSwitchPrefix         = "rtos-"
-	InterPrefix                  = "inter-"
-	HybridSubnetPrefix           = "hybrid-subnet-"
-	SwitchToRouterPrefix         = "stor-"
-	JoinSwitchToGWRouterPrefix   = "jtor-"
-	GWRouterToJoinSwitchPrefix   = "rtoj-"
-	DistRouterToJoinSwitchPrefix = "dtoj-"
-	JoinSwitchToDistRouterPrefix = "jtod-"
-	EXTSwitchToGWRouterPrefix    = "etor-"
-	GWRouterToExtSwitchPrefix    = "rtoe-"
-	EgressGWSwitchPrefix         = "exgw-"
-	PatchPortPrefix              = "patch-"
-	PatchPortSuffix              = "-to-br-int"
-
-	NodeLocalSwitch = "node_local_switch"
+	JoinSwitchPrefix           = "join_"
+	ExternalSwitchPrefix       = "ext_"
+	GWRouterPrefix             = "GR_"
+	RouterToSwitchPrefix       = "rtos-"
+	HybridSubnetPrefix         = "hybrid-subnet-"
+	SwitchToRouterPrefix       = "stor-"
+	JoinSwitchToGWRouterPrefix = "jtor-"
+	GWRouterToJoinSwitchPrefix = "rtoj-"
+	EXTSwitchToGWRouterPrefix  = "etor-"
+	GWRouterToExtSwitchPrefix  = "rtoe-"
+	EgressGWSwitchPrefix       = "exgw-"
+	PatchPortPrefix            = "patch-"
+	PatchPortSuffix            = "-to-br-int"
 
 	// types.OVNLayer2Switch is the name of layer2 topology switch
 	OVNLayer2Switch = "ovn_layer2_switch"
@@ -74,6 +64,8 @@ const (
 	TransitSwitchToRouterPrefix = "tstor-"
 	RouterToTransitSwitchPrefix = "rtots-"
 	TransitRouter               = "transit_router"
+	TransitRouterToRouterPrefix = "trtor-"
+	RouterToTransitRouterPrefix = "rtotr-"
 
 	// DefaultACLTier Priorities
 
