@@ -1343,9 +1343,17 @@ func GetPodNADToNetworkMappingWithActiveNetwork(pod *corev1.Pod, nInfo NetInfo, 
 	}
 
 	if nInfo.IsPrimaryNetwork() && AllowsPersistentIPs(nInfo) {
-		ipamClaimName, wasPersistentIPRequested := pod.Annotations[OvnUDNIPAMClaimName]
-		if wasPersistentIPRequested {
-			networkSelections[activeNetworkNADs[0]].IPAMClaimReference = ipamClaimName
+		defaultNSE, err := GetK8sPodDefaultNetworkSelection(pod)
+		if err != nil {
+			return false, nil, err
+		}
+		if defaultNSE != nil {
+			networkSelections[activeNetworkNADs[0]].IPAMClaimReference = defaultNSE.IPAMClaimReference
+		} else {
+			// UDNIPAMClaimName annotation is deprecated, in order to maintain backward compatability, when the default-
+			// network annotation does not contain IPAM claim name ref, fall back to UDNIPAMClaim annotation.
+			// TODO: UDNIPAMClaimName annotation is deprecated. Remove this snippet when support is dropped.
+			networkSelections[activeNetworkNADs[0]].IPAMClaimReference = pod.Annotations[OvnUDNIPAMClaimNameDeprecated]
 		}
 	}
 
