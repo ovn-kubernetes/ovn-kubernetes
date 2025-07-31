@@ -15,6 +15,7 @@ import (
 	utilnet "k8s.io/utils/net"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -151,7 +152,7 @@ func (c *Controller) syncNode(key string) error {
 		return nil
 	}
 
-	gatewayIPs, err := util.ParseNodeGatewayRouterJoinAddrs(n, types.DefaultNetworkName)
+	gatewayIPs, err := udn.GetGWRouterIPs(n, &network)
 	if err != nil {
 		return fmt.Errorf("failed to get default network gateway router join IPs for node %q: %w", n.Name, err)
 	}

@@ -43,6 +43,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/routeimport"
 	zoneic "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/zone_interconnect"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/persistentips"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	ovnretry "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/retry"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/syncmap"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
@@ -383,6 +384,13 @@ func (bnc *BaseNetworkController) getOVNClusterRouterPortToJoinSwitchIfAddrs() (
 	return gwLRPIPs, nil
 }
 
+func (bnc *BaseNetworkController) getClusterRouterPortName(switchName string) string {
+	if bnc.TopologyType() == types.Layer2Topology {
+		return types.TransitRouterToSwitchPrefix + switchName
+	}
+	return types.RouterToSwitchPrefix + switchName
+}
+
 // syncNodeClusterRouterPort ensures a node's LS to the cluster router's LRP is created.
 // NOTE: We could have created the router port in createNodeLogicalSwitch() instead of here,
 // but chassis ID is not available at that moment. We need the chassis ID to set the
@@ -412,9 +420,9 @@ func (bnc *BaseNetworkController) syncNodeClusterRouterPort(node *corev1.Node, h
 		}
 	}
 
-	switchName := bnc.GetNetworkScopedName(node.Name)
+	switchName := bnc.GetNetworkScopedSwitchName(node.Name)
 	logicalRouterName := bnc.GetNetworkScopedClusterRouterName()
-	lrpName := types.RouterToSwitchPrefix + switchName
+	lrpName := bnc.getClusterRouterPortName(switchName)
 	lrpNetworks := []string{}
 	for _, hostSubnet := range hostSubnets {
 		gwIfAddr := util.GetNodeGatewayIfAddr(hostSubnet)
@@ -440,6 +448,22 @@ func (bnc *BaseNetworkController) syncNodeClusterRouterPort(node *corev1.Node, h
 		ChassisName: chassisID,
 		Priority:    1,
 	}
+	_, isNetIPv6 := bnc.IPMode()
+	if bnc.TopologyType() == types.Layer2Topology &&
+		isNetIPv6 &&
+		util.IsNetworkSegmentationSupportEnabled() &&
+		bnc.IsPrimaryNetwork() {
+		logicalRouterPort.Ipv6RaConfigs = map[string]string{
+			"address_mode":      "dhcpv6_stateful",
+			"send_periodic":     "true",
+			"max_interval":      "900", // 15 minutes
+			"min_interval":      "300", // 5 minutes
+			"router_preference": "LOW", // The static gateway configured by CNI is MEDIUM, so make this SLOW so it has less effect for pods
+		}
+		if bnc.MTU() > 0 {
+			logicalRouterPort.Ipv6RaConfigs["mtu"] = fmt.Sprintf("%d", bnc.MTU())
+		}
+	}
 
 	err = libovsdbops.CreateOrUpdateLogicalRouterPort(bnc.nbClient, &logicalRouter, &logicalRouterPort,
 		&gatewayChassis, &logicalRouterPort.MAC, &logicalRouterPort.Networks, &logicalRouterPort.Options)
@@ -450,7 +474,8 @@ func (bnc *BaseNetworkController) syncNodeClusterRouterPort(node *corev1.Node, h
 
 	if util.IsNetworkSegmentationSupportEnabled() &&
 		bnc.IsPrimaryNetwork() && !config.OVNKubernetesFeature.EnableInterconnect &&
-		bnc.TopologyType() == types.Layer3Topology {
+		(bnc.TopologyType() == types.Layer3Topology ||
+			bnc.TopologyType() == types.Layer2Topology) {
 		// since in nonIC the ovn_cluster_router is distributed, we must specify the gatewayPort for the
 		// conditional SNATs to signal OVN which gatewayport should be chosen if there are mutiple distributed
 		// gateway ports. Now that the LRP is created, let's update the NATs to reflect that.
@@ -911,7 +936,7 @@ func (bnc *BaseNetworkController) getPodNADNames(pod *corev1.Pod) []string {
 	if !bnc.IsSecondary() {
 		return []string{types.DefaultNetworkName}
 	}
-	podNadNames, _ := util.PodNadNames(pod, bnc.GetNetInfo())
+	podNadNames, _ := podannotation.PodNadNames(pod, bnc.GetNetInfo())
 	return podNadNames
 }
 
@@ -970,7 +995,7 @@ func (bnc *BaseNetworkController) isLocalZoneNode(node *corev1.Node) bool {
 // GetNetworkRole returns the role of this controller's network for the given pod
 func (bnc *BaseNetworkController) GetNetworkRole(pod *corev1.Pod) (string, error) {
 
-	role, err := util.GetNetworkRole(bnc.GetNetInfo(), bnc.networkManager.GetActiveNetworkForNamespace, pod)
+	role, err := podannotation.GetNetworkRole(bnc.GetNetInfo(), bnc.networkManager.GetActiveNetworkForNamespace, pod)
 	if err != nil {
 		if util.IsUnprocessedActiveNetworkError(err) {
 			bnc.recordPodErrorEvent(pod, err)
@@ -985,7 +1010,7 @@ func (bnc *BaseNetworkController) isLayer2Interconnect() bool {
 	return config.OVNKubernetesFeature.EnableInterconnect && bnc.TopologyType() == types.Layer2Topology
 }
 
-func (bnc *BaseNetworkController) nodeZoneClusterChanged(oldNode, newNode *corev1.Node, newNodeIsLocalZone bool, netName string) bool {
+func (bnc *BaseNetworkController) nodeZoneClusterChanged(oldNode, newNode *corev1.Node) bool {
 	// Check if the annotations have changed. Use network topology and local params to skip unnecessary checks
 
 	// NodeIDAnnotationChanged and NodeTransitSwitchPortAddrAnnotationChanged affects local and remote nodes
@@ -996,12 +1021,6 @@ func (bnc *BaseNetworkController) nodeZoneClusterChanged(oldNode, newNode *corev
 	if util.NodeTransitSwitchPortAddrAnnotationChanged(oldNode, newNode) {
 		return true
 	}
-
-	// NodeGatewayRouterLRPAddrsAnnotationChanged would not affect local, nor localnet secondary network
-	if !newNodeIsLocalZone && bnc.TopologyType() != types.LocalnetTopology && joinCIDRChanged(oldNode, newNode, netName) {
-		return true
-	}
-
 	return false
 }
 
@@ -1029,7 +1048,7 @@ func (bnc *BaseNetworkController) findMigratablePodIPsForSubnets(subnets []*net.
 		if isMigratedSourcePodStale {
 			continue
 		}
-		podAnnotation, err := util.UnmarshalPodAnnotation(liveMigratablePod.Annotations, bnc.GetNetworkName())
+		podAnnotation, err := podannotation.UnmarshalPodAnnotation(liveMigratablePod.Annotations, bnc.GetNetworkName())
 		if err != nil {
 			// even though it can be normal to not have an annotation now, live
 			// migration is a sensible process that might be used when draining
