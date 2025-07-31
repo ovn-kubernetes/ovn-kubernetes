@@ -329,7 +329,7 @@ func (p testPod) populateControllerLogicalSwitchCache(bnc *BaseNetworkController
 	for _, subnet := range strings.Split(p.nodeSubnet, " ") {
 		subnets = append(subnets, ovntest.MustParseIPNet(subnet))
 	}
-	err := bnc.lsManager.AddOrUpdateSwitch(bnc.GetNetworkScopedSwitchName(p.nodeName), subnets)
+	err := bnc.lsManager.AddOrUpdateSwitch(bnc.GetNetworkScopedSwitchName(p.nodeName), subnets, nil)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 }
 
@@ -1944,7 +1944,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 					},
 				)
 
-				err := fakeOvn.controller.lsManager.AddOrUpdateSwitch(testNode.Name, []*net.IPNet{ovntest.MustParseIPNet(v4Node1Subnet)})
+				err := fakeOvn.controller.lsManager.AddOrUpdateSwitch(testNode.Name, []*net.IPNet{ovntest.MustParseIPNet(v4Node1Subnet)}, nil)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchNamespaces()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -2176,7 +2176,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 						Items: []corev1.Pod{},
 					},
 				)
-				err := fakeOvn.controller.lsManager.AddOrUpdateSwitch(testNodeWithLS.Name, []*net.IPNet{ovntest.MustParseIPNet(v4Node1Subnet)})
+				err := fakeOvn.controller.lsManager.AddOrUpdateSwitch(testNodeWithLS.Name, []*net.IPNet{ovntest.MustParseIPNet(v4Node1Subnet)}, nil)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -2623,7 +2623,7 @@ var _ = ginkgo.Describe("OVN Pod Operations", func() {
 						Items: []corev1.Pod{*myPod},
 					},
 				)
-				err := fakeOvn.controller.lsManager.AddOrUpdateSwitch(myPod.Spec.NodeName, nil)
+				err := fakeOvn.controller.lsManager.AddOrUpdateSwitch(myPod.Spec.NodeName, nil, nil)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = fakeOvn.controller.WatchPods()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())

@@ -792,11 +792,11 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 				nadName = util.GetNADName(network.Namespace, network.Name)
 				var subnets string
 				if tt.ipam {
-					subnets = "192.168.0.0/24,2001:db8::/64"
+					subnets = "192.168.0.0/24,2010:100:200::/60"
 					if tt.isSingleStackIPv4 {
 						subnets = "192.168.0.0/24"
 					} else if tt.isSingleStackIPv6 {
-						subnets = "2001:db8::/64"
+						subnets = "2010:100:200::/60"
 					}
 				}
 				netInfo, err = util.NewNetInfo(&ovncnitypes.NetConf{

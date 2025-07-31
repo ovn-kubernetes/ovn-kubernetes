@@ -532,7 +532,7 @@ func (r *DefaultGatewayReconciler) ReconcileIPv4AfterLiveMigration(liveMigration
 
 	lrpMAC := util.IPAddrToHWAddr(lrpJoinIPv4)
 	for _, subnet := range r.netInfo.Subnets() {
-		gwIP := util.GetNodeGatewayIfAddr(subnet.CIDR).IP.To4()
+		gwIP := r.netInfo.GetNodeGatewayIP(subnet.CIDR).IP.To4()
 		if gwIP == nil {
 			continue
 		}

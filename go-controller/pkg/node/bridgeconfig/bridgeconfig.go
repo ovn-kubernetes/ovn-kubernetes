@@ -22,15 +22,16 @@ import (
 // BridgeUDNConfiguration holds the patchport and ctMark
 // information for a given network
 type BridgeUDNConfiguration struct {
-	PatchPort   string
-	OfPortPatch string
-	MasqCTMark  string
-	PktMark     string
-	V4MasqIPs   *udn.MasqueradeIPs
-	V6MasqIPs   *udn.MasqueradeIPs
-	Subnets     []config.CIDRNetworkEntry
-	NodeSubnets []*net.IPNet
-	Advertised  atomic.Bool
+	PatchPort     string
+	OfPortPatch   string
+	MasqCTMark    string
+	PktMark       string
+	V4MasqIPs     *udn.MasqueradeIPs
+	V6MasqIPs     *udn.MasqueradeIPs
+	Subnets       []config.CIDRNetworkEntry
+	NodeSubnets   []*net.IPNet
+	Advertised    atomic.Bool
+	ManagementIPs []*net.IPNet
 }
 
 func (netConfig *BridgeUDNConfiguration) ShallowCopy() *BridgeUDNConfiguration {
@@ -96,6 +97,9 @@ func NewBridgeConfiguration(intfName, nodeName,
 		MasqCTMark:  nodetypes.CtMarkOVN,
 		Subnets:     config.Default.ClusterSubnets,
 		NodeSubnets: nodeSubnets,
+	}
+	for _, subnet := range nodeSubnets {
+		defaultNetConfig.ManagementIPs = append(defaultNetConfig.ManagementIPs, util.GetNodeManagementIfAddr(subnet))
 	}
 	res := BridgeConfiguration{
 		nodeName: nodeName,
@@ -278,11 +282,7 @@ func (b *BridgeConfiguration) GetPortConfigurations() ([]*BridgeUDNConfiguration
 }
 
 // AddNetworkConfig adds the patchport and ctMark value for the provided netInfo into the bridge configuration cache
-func (b *BridgeConfiguration) AddNetworkConfig(
-	nInfo util.NetInfo,
-	nodeSubnets []*net.IPNet,
-	masqCTMark, pktMark uint,
-	v6MasqIPs, v4MasqIPs *udn.MasqueradeIPs) error {
+func (b *BridgeConfiguration) AddNetworkConfig(nInfo util.NetInfo, nodeSubnets, mgmtIPs []*net.IPNet, masqCTMark, pktMark uint, v6MasqIPs, v4MasqIPs *udn.MasqueradeIPs) error {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
@@ -292,13 +292,14 @@ func (b *BridgeConfiguration) AddNetworkConfig(
 	_, found := b.netConfig[netName]
 	if !found {
 		netConfig := &BridgeUDNConfiguration{
-			PatchPort:   patchPort,
-			MasqCTMark:  fmt.Sprintf("0x%x", masqCTMark),
-			PktMark:     fmt.Sprintf("0x%x", pktMark),
-			V4MasqIPs:   v4MasqIPs,
-			V6MasqIPs:   v6MasqIPs,
-			Subnets:     nInfo.Subnets(),
-			NodeSubnets: nodeSubnets,
+			PatchPort:     patchPort,
+			MasqCTMark:    fmt.Sprintf("0x%x", masqCTMark),
+			PktMark:       fmt.Sprintf("0x%x", pktMark),
+			V4MasqIPs:     v4MasqIPs,
+			V6MasqIPs:     v6MasqIPs,
+			ManagementIPs: mgmtIPs,
+			Subnets:       nInfo.Subnets(),
+			NodeSubnets:   nodeSubnets,
 		}
 		netConfig.Advertised.Store(util.IsPodNetworkAdvertisedAtNode(nInfo, b.nodeName))
 
