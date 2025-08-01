@@ -50,6 +50,41 @@ type EgressIPSpec struct {
 	EgressIPs []string `json:"egressIPs"`
 	// NamespaceSelector applies the egress IP only to the namespace(s) whose label
 	// matches this definition. This field is mandatory.
+	// +kubebuilder:validation:Required
+	// -------------------------------
+	// Label Key Validations (matchLabels)
+	// -------------------------------
+	// Regex explanation:
+	// '^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]/)?([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$'
+	//
+	// This allows:
+	// - An optional DNS prefix ending with '/'
+	// - A label name:
+	//   • Starts and ends with alphanumeric
+	//   • Contains '-', '_', '.' in between
+	// +kubebuilder:validation:XValidation:rule="self.matchLabels.all(key, key.matches(r'^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]/)?([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$'))",message="label keys must be valid qualified names (DNS subdomain + '/' + name)"
+	// Total key length must be ≤ 253 characters
+	// +kubebuilder:validation:XValidation:rule="self.matchLabels.all(key, key.size() <= 253)",message="label keys must be no more than 253 characters"
+	// If prefix exists (qualified name), ensure prefix is ≤ 253
+	// +kubebuilder:validation:XValidation:rule="self.matchLabels.all(key, !key.contains('/') || key.split('/')[0].size() <= 253)",message="label key prefix must be ≤ 253 characters"
+	// If prefix exists, ensure name part is ≤ 63
+	// +kubebuilder:validation:XValidation:rule="self.matchLabels.all(key, !key.contains('/') || key.split('/')[1].size() <= 63)",message="label key name must be ≤ 63 characters"
+	// If no prefix, the full key (name-only) must be ≤ 63
+	// +kubebuilder:validation:XValidation:rule="self.matchLabels.all(key, key.contains('/') || key.size() <= 63)",message="label key name-only must be ≤ 63 characters"
+	// -------------------------------
+	// Label Value Validations (matchLabels values)
+	// -------------------------------
+	// Regex explanation:
+	// '^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$'
+	//
+	// This allows:
+	// - Empty string
+	// - Or a string:
+	//   • Starts and ends with alphanumeric
+	//   • Contains '-', '_', '.' in between
+	// +kubebuilder:validation:XValidation:rule="self.matchLabels.all(key, self.matchLabels[key].matches(r'^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$'))",message="label values must be empty or valid strings that start and end with alphanumeric characters"
+	// Label values must be ≤ 63 characters
+	// +kubebuilder:validation:XValidation:rule="self.matchLabels.all(key, self.matchLabels[key].size() <= 63)",message="label values must be no more than 63 characters"
 	NamespaceSelector metav1.LabelSelector `json:"namespaceSelector"`
 	// PodSelector applies the egress IP only to the pods whose label
 	// matches this definition. This field is optional, and in case it is not set:

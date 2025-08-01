@@ -489,6 +489,10 @@ func (e *EgressIPController) reconcileEgressIP(old, new *egressipv1.EgressIP) (e
 // based on received namespace objects.
 // NOTE: we only care about namespace label updates
 func (e *EgressIPController) reconcileEgressIPNamespace(old, new *corev1.Namespace) error {
+	// Add nil checks to prevent panic on dereference
+	if old == nil && new == nil {
+		return nil // Nothing to reconcile
+	}
 	// Same as for reconcileEgressIP: labels play nicely with empty object, not
 	// nil ones.
 	var namespaceName string
