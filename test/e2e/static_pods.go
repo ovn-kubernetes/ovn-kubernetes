@@ -34,6 +34,19 @@ func waitForPodRunningInNamespaceTimeout(c clientset.Interface, podName, namespa
 	})
 }
 
+func waitForPodSucceededInNamespaceTimeout(c clientset.Interface, podName, namespace string, timeout time.Duration) error {
+	return e2epod.WaitForPodCondition(context.TODO(), c, namespace, podName, fmt.Sprintf("%s", v1.PodSucceeded), timeout, func(pod *v1.Pod) (bool, error) {
+		switch pod.Status.Phase {
+		case v1.PodSucceeded:
+			return true, nil
+		case v1.PodFailed:
+			return false, fmt.Errorf("pod %s/%s is in state Failed", namespace, podName)
+		default:
+			return false, nil
+		}
+	})
+}
+
 func createStaticPod(nodeName string, podYaml string) {
 	// FIXME; remove need to use a container runtime because its not portable
 	runCommand := func(cmd ...string) (string, error) {
