@@ -25,10 +25,12 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
 	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/ipalloc"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/iperf3helper"
 
 	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
@@ -725,6 +727,31 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", feature.EgressIP
 		return false
 	}
 
+	getOVNKubeNodePodNameOnNode := func(ctx context.Context, client clientset.Interface, nodeName string) (string, error) {
+		// get the egress nodes ovnkube-node and restart it
+		var ovnKubeNodePodName string
+		timeout := 5 * time.Second
+		err := wait.PollUntilContextTimeout(ctx, 10*time.Millisecond, timeout, true, func(ctx context.Context) (done bool, err error) {
+			ovnkubeNodePods, err := client.CoreV1().Pods(deploymentconfig.Get().OVNKubernetesNamespace()).List(ctx, metav1.ListOptions{
+				LabelSelector: "app=ovnkube-node",
+				FieldSelector: fmt.Sprintf("spec.nodeName=%s", nodeName),
+			})
+			if err != nil {
+				return false, fmt.Errorf("failed to list ovnkube node pods in namespace %q and selecting node %q: %w",
+					deploymentconfig.Get().OVNKubernetesNamespace(), nodeName, err)
+			}
+			if len(ovnkubeNodePods.Items) == 0 {
+				return false, nil
+			}
+			ovnKubeNodePodName = ovnkubeNodePods.Items[0].GetName()
+			return true, nil
+		})
+		if err != nil {
+			return "", fmt.Errorf("failed to find ovnkube node pod on node %q after %s", nodeName, timeout.String())
+		}
+		return ovnKubeNodePodName, nil
+	}
+
 	f := wrappedTestFramework(egressIPName)
 	f.SkipNamespaceCreation = true
 
@@ -1091,6 +1118,222 @@ spec:
 			ginkgo.Entry("disabling egress nodes impeding GRCP health check", &egressNodeAvailabilityHandlerViaHealthCheck{F: f, Legacy: false}),
 			ginkgo.Entry("disabling egress nodes impeding Legacy health check", &egressNodeAvailabilityHandlerViaHealthCheck{F: f, Legacy: true}),
 		)
+	})
+
+	ginkgo.It("should maintain tcp network connectivity without packet loss while ovnkube-node is restarted", func() {
+		// Goal of the test is to test an EIP selected Pod traffic while we restart ovnkube control plane on the egress node
+		// and the pod node. Test will fail if there's tcp disruption (packet data lost).
+
+		// FIXME when [1] lands: this test cannot work currently with the gRPC implementation of EIP Healthcheck because the EIP is prone
+		// to move to a different Node and therefore that will interrupt the tcp connection
+		// The gRPC server which helps implement the Egress IP healthcheck is removed when ovnkube node is shutdown / restarted,
+		// and there's a possibility the node is no longer assigned as an egress node by cluster manager, and today that will break
+		// the tcp connection if the eip is unassigned or reassigned to another node
+		// switch back to gRPC when https://github.com/ovn-kubernetes/ovn-kubernetes/pull/4286 [1] is merged
+		eNodeHandler := &egressNodeAvailabilityHandlerViaHealthCheck{F: f, Legacy: true} // discard port 9 health check implementation
+
+		ginkgo.By("0. enable node as an egress node and use legacy healthcheck")
+		ginkgo.DeferCleanup(func() {
+			eNodeHandler.Restore(egress1Node.name)
+		})
+		eNodeHandler.Enable(egress1Node.name)
+		framework.Logf("Added egress-assignable label to node %s", egress1Node.name)
+		labels := map[string]string{
+			"name": f.Namespace.Name,
+		}
+		updateNamespaceLabels(f, f.Namespace, labels)
+
+		ginkgo.By("1. Create an external container to act as a server attached to the primary infra network")
+		network, err := infraprovider.Get().PrimaryNetwork()
+		framework.ExpectNoError(err, "failed to get primary network information")
+		externalServerContainerPort := infraprovider.Get().GetExternalContainerPort()
+		externalServerContainerPortStr := fmt.Sprintf("%d", externalServerContainerPort)
+		externalServerContainer := infraapi.ExternalContainer{Name: getContainerName("e2e-eip-connectivity-%d", externalServerContainerPort),
+			Image: images.IPerf3(), Network: network, RuntimeArgs: []string{}, ExtPort: externalServerContainerPort}
+		externalServerContainer, err = providerCtx.CreateExternalContainer(externalServerContainer)
+		framework.ExpectNoError(err, "failed to create external container (%s)", externalServerContainer)
+
+		framework.Logf("Start external containers iperf daemon")
+		logFilePath := "/tmp/iperf-results.json"
+		out, err := infraprovider.Get().ExecExternalContainerCommand(externalServerContainer, []string{
+			"iperf3",
+			"--daemon",
+			"--server",
+			"--verbose",
+			"--port", externalServerContainerPortStr,
+			"--logfile", logFilePath,
+		})
+		framework.ExpectNoError(err, "must start iperf daemon on external container, stdout/stderr:\n%q", out)
+
+		ginkgo.By("2. Create an EgressIP object1 with a single egress IP")
+		var egressIPIP net.IP
+		var externalContainerIP string
+		if utilnet.IsIPv6String(egress1Node.nodeIP) {
+			egressIPIP, err = ipalloc.NewPrimaryIPv6()
+			externalContainerIP = externalServerContainer.GetIPv6()
+		} else {
+			egressIPIP, err = ipalloc.NewPrimaryIPv4()
+			externalContainerIP = externalServerContainer.GetIPv4()
+		}
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate new IP Node IP")
+		gomega.Expect(net.ParseIP(externalContainerIP)).ShouldNot(gomega.BeNil())
+
+		var egressIPConfig = `apiVersion: k8s.ovn.org/v1
+kind: EgressIP
+metadata:
+    name: ` + egressIPName + `
+spec:
+    egressIPs:
+    - ` + egressIPIP.String() + `
+    podSelector:
+        matchLabels:
+            wants: egress
+    namespaceSelector:
+        matchLabels:
+            name: ` + f.Namespace.Name + `
+`
+		if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
+			framework.Failf("Unable to write CRD config to disk: %v", err)
+		}
+		defer func() {
+			if err := os.Remove(egressIPYaml); err != nil {
+				framework.Logf("Unable to remove the CRD config from disk: %v", err)
+			}
+		}()
+
+		framework.Logf("Create the EgressIP configuration")
+		e2ekubectl.RunKubectlOrDie("default", "create", "-f", egressIPYaml)
+
+		ginkgo.By("3. Check that the status is of length one and that one of them is assigned to the correct node")
+		statuses := verifyEgressIPStatusLengthEquals(1, nil)
+		assignedEIPNode := statuses[0].Node
+		// unusedEIPNode is the node that is egress-able but currently no EgressIP is assigned to it. The pod will be
+		// created on this node.
+		unusedEIPNode := egress1Node.name
+		if assignedEIPNode == egress1Node.name {
+			unusedEIPNode = egress2Node.name
+		}
+		framework.Logf("EgressIP %s is assigned to Node %q", egressIPIP.String(), assignedEIPNode)
+
+		framework.Logf("Get baseline network performance with no disruption")
+		clientPodName := "iperfclient-baseline-" + f.Namespace.Name
+		clientPod, err := createPod(f, clientPodName, unusedEIPNode, f.Namespace.Name, []string{"iperf3",
+			"--client", externalContainerIP,
+			"--port", externalServerContainerPortStr,
+			"--time", "2",
+			"--interval", ".1",
+			"--bitrate", "50M",
+			"--parallel", "1",
+			"--json",
+		}, podEgressLabel, func(pod *corev1.Pod) {
+			pod.Spec.Containers[0].Image = images.IPerf3()
+		})
+		framework.ExpectNoError(err, "Create one client pod matching the EgressIP, failed, err: %v", err)
+		framework.Logf("Fetch the baseline pods logs to get the test results")
+		clientPodContainerName := clientPodName + "-container"
+		err = wait.PollUntilContextTimeout(context.Background(), 100*time.Millisecond, 20*time.Second, true, func(ctx context.Context) (done bool, err error) {
+			testResultsStr, err := pod.GetPodLogs(ctx, f.ClientSet, clientPod.Namespace, clientPod.Name, clientPodContainerName)
+			if err != nil {
+				framework.Logf("Failed to get pod %s/%s logs (will retry) from container %q: %v",
+					clientPod.Namespace, clientPod.Name, clientPodContainerName, err)
+				return false, nil
+			}
+			if testResultsStr == "" {
+				return false, nil
+			}
+			testResults, err := iperf3helper.ParseIperf3JSON(testResultsStr)
+			if err != nil {
+				framework.Logf("Failed to parse JSON from pod %s/%s and container %s: %v", clientPod.Namespace, clientPod.Name, clientPodContainerName, err)
+				return false, nil
+			}
+			if testResults.SumReceived.Bytes == 0 || testResults.SumSent.Bytes == 0 {
+				framework.Failf("No bytes send / received when we expect at least one byte or more sent or received")
+			}
+			framework.Logf("Baseline results for 2 seconds and interval .1 seconds are:\ndata loss: %d\nretransmissions: %d",
+				testResults.GetSendReceivedBytesDifference(), testResults.GetRetransmissions())
+			return true, nil
+		})
+		// FIXME: replace with a test "monitor" for EgressIP feature instead of a specific serial and disruptive test
+		clientTestDuration := 200 * time.Second // changes to 200s
+		ginkgo.By("4. Create one client pod located on the unused egress node matching the EgressIP and testing connectivity for " + clientTestDuration.String())
+		clientPodName = "iperfclient-" + f.Namespace.Name
+		clientPod, err = createPod(f, clientPodName, unusedEIPNode, f.Namespace.Name, []string{"iperf3",
+			"--client", externalContainerIP,
+			"--port", externalServerContainerPortStr,
+			"--time", fmt.Sprintf("%d", int(clientTestDuration.Seconds())),
+			"--interval", ".1",
+			"--bitrate", "50M",
+			"--parallel", "1",
+			"--json",
+		}, podEgressLabel, func(pod *corev1.Pod) {
+			pod.Spec.Containers[0].Image = images.IPerf3()
+		})
+		framework.ExpectNoError(err, "Step 4. Create one client pod matching the EgressIP, failed, err: %v", err)
+		framework.Logf("Created pod %s/%s on node %s", clientPod.Namespace, clientPod.Name, unusedEIPNode)
+
+		ovnKubeNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+		// expected total mac time for ovnkube node to come back up
+		ovnKubeNodeRestartDuration := 200 * time.Second
+
+		for _, node := range sets.New(assignedEIPNode, clientPod.Spec.NodeName).UnsortedList() {
+			framework.Logf("Starting on Node %s and deleting ovnkube node pod on this node", node)
+			// get the egress nodes ovnkube-node and restart it
+			ovnKubeNodePodName, err := getOVNKubeNodePodNameOnNode(context.Background(), f.ClientSet, node)
+			framework.ExpectNoError(err, "must get ovnkube node pod on Node %q", node)
+			framework.Logf("Ensuring pod %s/%s is Running", ovnKubeNamespace, ovnKubeNodePodName)
+			err = waitForPodRunningInNamespaceTimeout(f.ClientSet, ovnKubeNodePodName, ovnKubeNamespace, ovnKubeNodeRestartDuration)
+			framework.ExpectNoError(err, "ovnkube Node pod %s must be Running", ovnKubeNodePodName)
+			err = waitForAllContainersReadyInNamespaceTimeout(f.ClientSet, ovnKubeNodePodName, ovnKubeNamespace, ovnKubeNodeRestartDuration)
+			framework.ExpectNoError(err, "all container(s) for pod %s/%s must Ready on Node %s", ovnKubeNamespace, ovnKubeNodePodName, node)
+			framework.Logf("Deleting ovnkube node pod %s/%s", ovnKubeNamespace, ovnKubeNodePodName)
+			err = deletePodWithWaitByName(context.Background(), f.ClientSet, ovnKubeNodePodName, ovnKubeNamespace)
+			framework.ExpectNoError(err, "failed to delete ovnkube node pod %s", ovnKubeNodePodName)
+			framework.Logf("Waiting for new ovnkube node pod %s/%s to come up", ovnKubeNamespace, ovnKubeNodePodName)
+			ovnKubeNodePodName, err = getOVNKubeNodePodNameOnNode(context.Background(), f.ClientSet, node)
+			framework.ExpectNoError(err, "must get newly created ovnkube node pod %s/%s on Node %s", ovnKubeNamespace, ovnKubeNodePodName, node)
+			err = waitForPodRunningInNamespaceTimeout(f.ClientSet, ovnKubeNodePodName, ovnKubeNamespace, ovnKubeNodeRestartDuration)
+			framework.ExpectNoError(err, "failed waiting for new ovnkube node pod %s/%s to be Running", ovnKubeNamespace, ovnKubeNodePodName)
+			framework.Logf("Waiting for all containers for pod %s/%s to become Ready", ovnKubeNamespace, ovnKubeNodePodName)
+			err = waitForAllContainersReadyInNamespaceTimeout(f.ClientSet, ovnKubeNodePodName, ovnKubeNamespace, ovnKubeNodeRestartDuration)
+			framework.ExpectNoError(err, "all container(s) for pod %s/%s must be ready on Node %s", ovnKubeNamespace, ovnKubeNodePodName, node)
+			framework.Logf("Finished Node %s", node)
+		}
+		framework.Logf("Waiting for client pod to complete testing..")
+		err = waitForPodSucceededOrFailedInNamespaceTimeout(f.ClientSet, clientPod.Name, clientPod.Namespace, clientTestDuration*2)
+		framework.ExpectNoError(err, "expected client pod to terminate (completed)")
+
+		framework.Logf("Client pod completed - get test results from client pod logs")
+		var testResults *iperf3helper.Iperf3Result
+		clientPodContainerName = fmt.Sprintf("%s-container", clientPodName)
+		err = wait.PollUntilContextTimeout(context.Background(), 100*time.Millisecond, 20*time.Second,
+			true, func(ctx context.Context) (done bool, err error) {
+
+				testResultsStr, err := pod.GetPodLogs(ctx, f.ClientSet, clientPod.Namespace, clientPod.Name, clientPodContainerName)
+				if err != nil {
+					framework.Logf("Failed to get pod %s/%s logs (will retry) from container %q: %v",
+						clientPod.Namespace, clientPod.Name, clientPodContainerName, err)
+					return false, nil
+				}
+				if testResultsStr == "" {
+					return false, nil
+				}
+				testResults, err = iperf3helper.ParseIperf3JSON(testResultsStr)
+				if err != nil {
+					framework.Logf("Failed to parse JSON from pod %s/%s and container %s, err: %v, output iperf: %q",
+						clientPod.Namespace, clientPod.Name, clientPodContainerName, err, testResultsStr)
+					return false, nil
+				}
+				return true, nil
+			})
+		framework.ExpectNoError(err, "must get logs which contain only JSON from client iperf container %s/%s", clientPod.Namespace, clientPod.Name)
+		gomega.Expect(testResults).NotTo(gomega.BeNil(), "programming error: testResults should have been set")
+		ginkgo.By("Analysing test results from iperf")
+		gomega.Expect(testResults.SumSent.Bytes).NotTo(gomega.BeZero(), "no bytes sent during test run, iperf test result: %q", testResults)
+		gomega.Expect(testResults.SumReceived.Bytes).NotTo(gomega.BeZero(), "no bytes received during test run, iperf test result: %q", testResults)
+		gomega.Expect(testResults.IsSendReceivedBytesEqual()).Should(gomega.BeTrue(), "%d lost bytes occurred during test run\nPod logs:\n%s",
+			testResults.GetSendReceivedBytesDifference(), testResults)
+		framework.Logf("Results for %s and interval .1 seconds are:\ndata loss: %d\nretransmissions: %d",
+			clientTestDuration.String(), testResults.GetSendReceivedBytesDifference(), testResults.GetRetransmissions())
 	})
 
 	// Validate the egress IP by creating a httpd container on the kind
