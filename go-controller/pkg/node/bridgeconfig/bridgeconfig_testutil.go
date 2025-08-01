@@ -50,7 +50,7 @@ func CheckUDNSvcIsolationOVSFlows(flows []string, netConfig *BridgeUDNConfigurat
 		protoPrefix = "ip"
 	} else {
 		mgmtMasqIP = netConfig.V6MasqIPs.ManagementPort.IP.String()
-		protoPrefix = "ip6"
+		protoPrefix = "ipv6"
 	}
 
 	var nFlows int
@@ -82,7 +82,7 @@ func CheckAdvertisedUDNSvcIsolationOVSFlows(flows []string, netConfig *BridgeUDN
 	} else {
 		matchingIPFamilySubnet, err = util.MatchFirstIPNetFamily(true, udnAdvertisedSubnets)
 		Expect(err).ToNot(HaveOccurred())
-		protoPrefix = "ip6"
+		protoPrefix = "ipv6"
 	}
 
 	var nFlows int
@@ -111,7 +111,7 @@ func CheckDefaultSvcIsolationOVSFlows(flows []string, defaultConfig *BridgeUDNCo
 		masqIP = config.Gateway.MasqueradeIPs.V4HostMasqueradeIP.String()
 		masqSubnet = config.Gateway.V4MasqueradeSubnet
 	} else {
-		protoPrefix = "ip6"
+		protoPrefix = "ipv6"
 		masqIP = config.Gateway.MasqueradeIPs.V6HostMasqueradeIP.String()
 		masqSubnet = config.Gateway.V6MasqueradeSubnet
 	}

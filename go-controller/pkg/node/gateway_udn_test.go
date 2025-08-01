@@ -101,6 +101,12 @@ func setManagementPortFakeCommands(fexec *ovntest.FakeExec, nodeName string) {
 		Cmd:    "ip route replace table 7 172.16.1.0/24 via 100.128.0.1 dev ovn-k8s-mp0",
 		Output: "0",
 	})
+	if config.IPv6Mode {
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ip route replace table 7 fd02::/112 via ae70::1 dev ovn-k8s-mp0",
+			Output: "0",
+		})
+	}
 	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 		Cmd:    "ip -4 rule",
 		Output: "0",
@@ -276,6 +282,10 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		// Restore global default values before each testcase
 		err := config.PrepareTestConfig()
 		Expect(err).NotTo(HaveOccurred())
+
+		// Set dual-stack service CIDRs directly after PrepareTestConfig
+		config.Kubernetes.ServiceCIDRs = ovntest.MustParseIPNets("172.16.1.0/24", "fd02::/112")
+
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
 		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 		// Use a larger masq subnet to allow OF manager to allocate IPs for UDNs.
@@ -653,7 +663,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 				&kubeMock, vrf, ipRulesManager, localGw)
 			Expect(err).NotTo(HaveOccurred())
 			flowMap := udnGateway.gateway.openflowManager.flowCache
-			Expect(flowMap["DEFAULT"]).To(HaveLen(46))
+			Expect(flowMap["DEFAULT"]).To(HaveLen(50))
 
 			Expect(udnGateway.masqCTMark).To(Equal(udnGateway.masqCTMark))
 			var udnFlows int
@@ -671,7 +681,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 
 			Expect(udnGateway.AddNetwork()).To(Succeed())
 			flowMap = udnGateway.gateway.openflowManager.flowCache
-			Expect(flowMap["DEFAULT"]).To(HaveLen(64))                                      // 18 UDN Flows are added by default
+			Expect(flowMap["DEFAULT"]).To(HaveLen(70))                                      // 18 UDN Flows are added by default
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(2)) // default network + UDN network
 			defaultUdnConfig := udnGateway.openflowManager.defaultBridge.GetNetworkConfig("default")
 			bridgeUdnConfig := udnGateway.openflowManager.defaultBridge.GetNetworkConfig("bluenet")
@@ -687,7 +697,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 					}
 				}
 			}
-			Expect(udnFlows).To(Equal(14))
+			Expect(udnFlows).To(Equal(16))
 			openflowManagerCheckPorts(udnGateway.openflowManager)
 
 			for _, svcCIDR := range config.Kubernetes.ServiceCIDRs {
@@ -707,7 +717,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			kubeMock.On("UpdateNodeStatus", cnode).Return(nil) // check if network key gets deleted from annotation
 			Expect(udnGateway.DelNetwork()).To(Succeed())
 			flowMap = udnGateway.gateway.openflowManager.flowCache
-			Expect(flowMap["DEFAULT"]).To(HaveLen(46))                                      // only default network flows are present
+			Expect(flowMap["DEFAULT"]).To(HaveLen(50))                                      // only default network flows are present
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // default network only
 			udnFlows = 0
 			for _, flows := range flowMap {
@@ -885,7 +895,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 				&kubeMock, vrf, ipRulesManager, localGw)
 			Expect(err).NotTo(HaveOccurred())
 			flowMap := udnGateway.gateway.openflowManager.flowCache
-			Expect(flowMap["DEFAULT"]).To(HaveLen(46))
+			Expect(flowMap["DEFAULT"]).To(HaveLen(50))
 			Expect(udnGateway.masqCTMark).To(Equal(udnGateway.masqCTMark))
 			var udnFlows int
 			for _, flows := range flowMap {
@@ -902,7 +912,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 
 			Expect(udnGateway.AddNetwork()).To(Succeed())
 			flowMap = udnGateway.gateway.openflowManager.flowCache
-			Expect(flowMap["DEFAULT"]).To(HaveLen(64))                                      // 18 UDN Flows are added by default
+			Expect(flowMap["DEFAULT"]).To(HaveLen(70))                                      // 18 UDN Flows are added by default
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(2)) // default network + UDN network
 			defaultUdnConfig := udnGateway.openflowManager.defaultBridge.GetNetworkConfig("default")
 			bridgeUdnConfig := udnGateway.openflowManager.defaultBridge.GetNetworkConfig("bluenet")
@@ -918,7 +928,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 					}
 				}
 			}
-			Expect(udnFlows).To(Equal(14))
+			Expect(udnFlows).To(Equal(16))
 			openflowManagerCheckPorts(udnGateway.openflowManager)
 
 			for _, svcCIDR := range config.Kubernetes.ServiceCIDRs {
@@ -938,7 +948,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			kubeMock.On("UpdateNodeStatus", cnode).Return(nil) // check if network key gets deleted from annotation
 			Expect(udnGateway.DelNetwork()).To(Succeed())
 			flowMap = udnGateway.gateway.openflowManager.flowCache
-			Expect(flowMap["DEFAULT"]).To(HaveLen(46))                                      // only default network flows are present
+			Expect(flowMap["DEFAULT"]).To(HaveLen(50))                                      // only default network flows are present
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // default network only
 			udnFlows = 0
 			for _, flows := range flowMap {
@@ -1125,7 +1135,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 				&kubeMock, vrf, ipRulesManager, localGw)
 			Expect(err).NotTo(HaveOccurred())
 			flowMap := udnGateway.gateway.openflowManager.flowCache
-			Expect(flowMap["DEFAULT"]).To(HaveLen(46))
+			Expect(flowMap["DEFAULT"]).To(HaveLen(50))
 
 			Expect(udnGateway.masqCTMark).To(Equal(udnGateway.masqCTMark))
 			var udnFlows int
@@ -1143,7 +1153,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 
 			Expect(udnGateway.AddNetwork()).To(Succeed())
 			flowMap = udnGateway.gateway.openflowManager.flowCache
-			Expect(flowMap["DEFAULT"]).To(HaveLen(73))                                      // 18 UDN Flows, 5 advertisedUDN flows, and 2 packet mark flows (IPv4+IPv6) are added by default
+			Expect(flowMap["DEFAULT"]).To(HaveLen(80))                                      // 18 UDN Flows, 5 advertisedUDN flows, and 2 packet mark flows (IPv4+IPv6) are added by default
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(2)) // default network + UDN network
 			defaultUdnConfig := udnGateway.openflowManager.defaultBridge.GetNetworkConfig("default")
 			bridgeUdnConfig := udnGateway.openflowManager.defaultBridge.GetNetworkConfig("bluenet")
@@ -1159,7 +1169,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 					}
 				}
 			}
-			Expect(udnFlows).To(Equal(16))
+			Expect(udnFlows).To(Equal(18))
 			openflowManagerCheckPorts(udnGateway.openflowManager)
 
 			for _, svcCIDR := range config.Kubernetes.ServiceCIDRs {
@@ -1181,7 +1191,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			kubeMock.On("UpdateNodeStatus", cnode).Return(nil) // check if network key gets deleted from annotation
 			Expect(udnGateway.DelNetwork()).To(Succeed())
 			flowMap = udnGateway.gateway.openflowManager.flowCache
-			Expect(flowMap["DEFAULT"]).To(HaveLen(46))                                      // only default network flows are present
+			Expect(flowMap["DEFAULT"]).To(HaveLen(50))                                      // only default network flows are present
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // default network only
 			udnFlows = 0
 			for _, flows := range flowMap {
@@ -1237,39 +1247,44 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 
 			routes, err := udnGateway.computeRoutesForUDN(mplink)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(routes).To(HaveLen(9))
-			Expect(err).NotTo(HaveOccurred())
+			Expect(routes).To(HaveLen(10))
+
 			Expect(*routes[0].Dst).To(Equal(*ovntest.MustParseIPNet("172.16.1.0/24"))) // default service subnet
 			Expect(routes[0].LinkIndex).To(Equal(bridgelink.Attrs().Index))
 			Expect(routes[0].Gw).To(Equal(config.Gateway.MasqueradeIPs.V4DummyNextHopMasqueradeIP))
+
+			Expect(*routes[1].Dst).To(Equal(*ovntest.MustParseIPNet("fd02::/112"))) // default service subnet
+			Expect(routes[1].LinkIndex).To(Equal(bridgelink.Attrs().Index))
+			Expect(routes[1].Gw).To(Equal(config.Gateway.MasqueradeIPs.V6DummyNextHopMasqueradeIP))
+
 			cidr, err := util.GetIPNetFullMask("169.254.0.16")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(*routes[1].Dst).To(Equal(*cidr))
-			Expect(routes[1].LinkIndex).To(Equal(mplink.Attrs().Index))
-			cidr, err = util.GetIPNetFullMask("fd69::10")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(*routes[2].Dst).To(Equal(*cidr))
 			Expect(routes[2].LinkIndex).To(Equal(mplink.Attrs().Index))
+			cidr, err = util.GetIPNetFullMask("fd69::10")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(*routes[3].Dst).To(Equal(*cidr))
+			Expect(routes[3].LinkIndex).To(Equal(mplink.Attrs().Index))
 
 			// IPv4 ETP=Local service masquerade IP route
-			Expect(*routes[3].Dst).To(Equal(*ovntest.MustParseIPNet("169.254.169.3/32"))) // ETP=Local svc masq IP
-			Expect(routes[3].LinkIndex).To(Equal(mplink.Attrs().Index))
-			Expect(routes[3].Gw.Equal(ovntest.MustParseIP("100.128.0.1"))).To(BeTrue())
-
-			// IPv4 cluster subnet route
-			Expect(*routes[4].Dst).To(Equal(*ovntest.MustParseIPNet("100.128.0.0/16"))) // cluster subnet route
+			Expect(*routes[4].Dst).To(Equal(*ovntest.MustParseIPNet("169.254.169.3/32"))) // ETP=Local svc masq IP
 			Expect(routes[4].LinkIndex).To(Equal(mplink.Attrs().Index))
 			Expect(routes[4].Gw.Equal(ovntest.MustParseIP("100.128.0.1"))).To(BeTrue())
 
-			// IPv6 ETP=Local service masquerade IP route
-			Expect(*routes[5].Dst).To(Equal(*ovntest.MustParseIPNet("fd69::3/128"))) // ETP=Local svc masq IP
+			// IPv4 cluster subnet route
+			Expect(*routes[5].Dst).To(Equal(*ovntest.MustParseIPNet("100.128.0.0/16"))) // cluster subnet route
 			Expect(routes[5].LinkIndex).To(Equal(mplink.Attrs().Index))
-			Expect(routes[5].Gw.Equal(ovntest.MustParseIP("ae70::1"))).To(BeTrue())
+			Expect(routes[5].Gw.Equal(ovntest.MustParseIP("100.128.0.1"))).To(BeTrue())
 
-			// IPv6 cluster subnet route
-			Expect(*routes[6].Dst).To(Equal(*ovntest.MustParseIPNet("ae70::/60"))) // cluster subnet route
+			// IPv6 ETP=Local service masquerade IP route
+			Expect(*routes[6].Dst).To(Equal(*ovntest.MustParseIPNet("fd69::3/128"))) // ETP=Local svc masq IP
 			Expect(routes[6].LinkIndex).To(Equal(mplink.Attrs().Index))
 			Expect(routes[6].Gw.Equal(ovntest.MustParseIP("ae70::1"))).To(BeTrue())
+
+			// IPv6 cluster subnet route
+			Expect(*routes[7].Dst).To(Equal(*ovntest.MustParseIPNet("ae70::/60"))) // cluster subnet route
+			Expect(routes[7].LinkIndex).To(Equal(mplink.Attrs().Index))
+			Expect(routes[7].Gw.Equal(ovntest.MustParseIP("ae70::1"))).To(BeTrue())
 			return nil
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -1394,11 +1409,11 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 
 			routes, err := udnGateway.computeRoutesForUDN(mplink)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(routes).To(HaveLen(10))
+			Expect(routes).To(HaveLen(11))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(*routes[1].Dst).To(Equal(*ovntest.MustParseIPNet("0.0.0.0/0")))
-			Expect(routes[1].LinkIndex).To(Equal(bridgelink.Attrs().Index))
-			Expect(routes[1].Gw.Equal(ovntest.MustParseIP(config.Gateway.NextHop))).To(BeTrue())
+			Expect(*routes[2].Dst).To(Equal(*ovntest.MustParseIPNet("0.0.0.0/0")))
+			Expect(routes[2].LinkIndex).To(Equal(bridgelink.Attrs().Index))
+			Expect(routes[2].Gw.Equal(ovntest.MustParseIP(config.Gateway.NextHop))).To(BeTrue())
 			return nil
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -1437,7 +1452,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 
 			routes, err := udnGateway.computeRoutesForUDN(mplink)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(routes).To(HaveLen(9))
+			Expect(routes).To(HaveLen(10))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(*routes[1].Dst).To(Not(Equal(*ovntest.MustParseIPNet("0.0.0.0/0"))))
 			Expect(routes[1].Gw.Equal(ovntest.MustParseIP(config.Gateway.NextHop))).To(BeFalse())
