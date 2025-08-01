@@ -46,6 +46,7 @@ deepcopy-gen \
   --bounding-dirs github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types \
   github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types
 
+crds="userdefinednetwork"
 for crd in ${crds}; do
 
   # for types we already generated deepcopy above which is all we need

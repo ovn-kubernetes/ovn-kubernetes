@@ -27,6 +27,9 @@ type secondaryNetworkClusterManager struct {
 	recorder record.EventRecorder
 
 	errorReporter NetworkStatusReporter
+
+	// Track created network controllers for reconciliation
+	networkControllers map[string]networkmanager.NetworkController
 }
 
 func newSecondaryNetworkClusterManager(
@@ -37,10 +40,11 @@ func newSecondaryNetworkClusterManager(
 ) (*secondaryNetworkClusterManager, error) {
 	klog.Infof("Creating secondary network cluster manager")
 	sncm := &secondaryNetworkClusterManager{
-		ovnClient:      ovnClient,
-		watchFactory:   wf,
-		networkManager: networkManager,
-		recorder:       recorder,
+		ovnClient:          ovnClient,
+		watchFactory:       wf,
+		networkManager:     networkManager,
+		recorder:           recorder,
+		networkControllers: make(map[string]networkmanager.NetworkController),
 	}
 	return sncm, nil
 }
@@ -50,6 +54,21 @@ func (sncm *secondaryNetworkClusterManager) SetNetworkStatusReporter(errorReport
 }
 
 func (sncm *secondaryNetworkClusterManager) GetDefaultNetworkController() networkmanager.ReconcilableNetworkController {
+	return nil
+}
+
+// Reconcile implements the networkmanager.ControllerManager interface
+// It reconciles existing network controllers when network configuration changes
+func (sncm *secondaryNetworkClusterManager) Reconcile(name string, _, new util.NetInfo) error {
+	if new == nil {
+		return nil
+	}
+
+	if controller, exists := sncm.networkControllers[name]; exists {
+		if reconcilable, ok := controller.(networkmanager.ReconcilableNetworkController); ok {
+			return reconcilable.Reconcile(new)
+		}
+	}
 	return nil
 }
 
@@ -70,6 +89,9 @@ func (sncm *secondaryNetworkClusterManager) NewNetworkController(nInfo util.NetI
 		sncm.networkManager,
 		sncm.errorReporter,
 	)
+
+	sncm.networkControllers[nInfo.GetNetworkName()] = sncc
+
 	return sncc, nil
 }
 
