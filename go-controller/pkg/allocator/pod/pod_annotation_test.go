@@ -109,25 +109,28 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 		reallocate  bool
 	}
 	tests := []struct {
-		name                      string
-		args                      args
-		ipam                      bool
-		idAllocation              bool
-		persistentIPAllocation    bool
-		role                      string
-		podAnnotation             *util.PodAnnotation
-		invalidNetworkAnnotation  bool
-		wantUpdatedPod            bool
-		wantGeneratedMac          bool
-		wantPodAnnotation         *util.PodAnnotation
-		wantReleasedIPs           []*net.IPNet
-		wantReleasedIPsOnRollback []*net.IPNet
-		wantReleaseID             bool
-		wantRelasedIDOnRollback   bool
-		wantErr                   bool
-		isSingleStackIPv4         bool
-		isSingleStackIPv6         bool
-		multiNetworkDisabled      bool
+		name                            string
+		args                            args
+		netInfo                         util.NetInfo
+		nadName                         string
+		ipam                            bool
+		idAllocation                    bool
+		persistentIPAllocation          bool
+		enablePreconfiguredUDNAddresses bool
+		role                            string
+		podAnnotation                   *util.PodAnnotation
+		invalidNetworkAnnotation        bool
+		wantUpdatedPod                  bool
+		wantGeneratedMac                bool
+		wantPodAnnotation               *util.PodAnnotation
+		wantReleasedIPs                 []*net.IPNet
+		wantReleasedIPsOnRollback       []*net.IPNet
+		wantReleaseID                   bool
+		wantRelasedIDOnRollback         bool
+		wantErr                         bool
+		isSingleStackIPv4               bool
+		isSingleStackIPv6               bool
+		multiNetworkDisabled            bool
 	}{
 		{
 			// on secondary L2 networks with no IPAM, we expect to generate a
@@ -195,8 +198,9 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 		{
 			// on networks with IPAM, expect error if static IP request present
 			// in the network selection annotation
-			name: "expect error, static ip request, IPAM",
-			ipam: true,
+			name:    "expect error, static ip request, IPAM, non layer2",
+			netInfo: &util.DefaultNetInfo{},
+			nadName: types.DefaultNetworkName,
 			args: args{
 				network: &nadapi.NetworkSelectionElement{
 					IPRequest: []string{"192.168.0.3/24"},
@@ -540,9 +544,9 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			wantReleasedIPs: ovntest.MustParseIPNets("192.168.0.3/24"),
 		},
 		{
-			// on networks with IPAM, honor a MAC request through the network
+			// on networks with IPAM, honor a IP and MAC request through the network
 			// selection element
-			name: "expect requested MAC",
+			name: "expect requested MAC, IPAM",
 			ipam: true,
 			args: args{
 				network: &nadapi.NetworkSelectionElement{
@@ -574,6 +578,122 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			},
 			wantReleasedIPsOnRollback: ovntest.MustParseIPNets("192.168.0.3/24"),
 			role:                      types.NetworkRolePrimary, // has to be primary network for default routes to be set
+		},
+		{
+			// on primary networks with IPAM and layer2 topology, expect success when EnablePreconfiguredUDNAddresses is enabled
+			name:                            "expect success, static IP and MAC with IPAM on primary network when EnablePreconfiguredUDNAddresses is enabled",
+			ipam:                            true,
+			enablePreconfiguredUDNAddresses: true,
+			role:                            types.NetworkRolePrimary, // has to be primary network for default routes to be set
+			persistentIPAllocation:          true,
+			args: args{
+				network: &nadapi.NetworkSelectionElement{
+					MacRequest: requestedMAC,
+					IPRequest:  []string{"192.168.0.101/24"},
+				},
+				ipAllocator: &ipAllocatorStub{
+					nextIPs: ovntest.MustParseIPNets("192.168.0.3/24"),
+				},
+			},
+			wantUpdatedPod: true,
+			wantPodAnnotation: &util.PodAnnotation{
+				IPs:      ovntest.MustParseIPNets("192.168.0.101/24"),
+				MAC:      requestedMACParsed,
+				Gateways: []net.IP{ovntest.MustParseIP("192.168.0.1").To4()},
+				Routes: []util.PodRoute{
+					{
+						Dest:    ovntest.MustParseIPNet("100.65.0.0/16"),
+						NextHop: ovntest.MustParseIP("192.168.0.1").To4(),
+					},
+				},
+				Role: types.NetworkRolePrimary,
+			},
+			wantReleasedIPsOnRollback: ovntest.MustParseIPNets("192.168.0.101/24"),
+		},
+		{
+			// on primary networks with IPAM and layer2 topology, expect success when EnablePreconfiguredUDNAddresses is enabled
+			name:                            "expect success, just static IP with IPAM on primary network when EnablePreconfiguredUDNAddresses is enabled",
+			ipam:                            true,
+			enablePreconfiguredUDNAddresses: true,
+			persistentIPAllocation:          true,
+			role:                            types.NetworkRolePrimary,
+			args: args{
+				network: &nadapi.NetworkSelectionElement{
+					IPRequest: []string{"192.168.0.101/24"},
+				},
+				ipAllocator: &ipAllocatorStub{
+					nextIPs: ovntest.MustParseIPNets("192.168.0.101/24"),
+				},
+			},
+			wantUpdatedPod: true,
+			wantPodAnnotation: &util.PodAnnotation{
+				IPs:      ovntest.MustParseIPNets("192.168.0.101/24"),
+				MAC:      util.IPAddrToHWAddr(ovntest.MustParseIPNets("192.168.0.101/24")[0].IP),
+				Gateways: []net.IP{ovntest.MustParseIP("192.168.0.1").To4()},
+				Routes: []util.PodRoute{
+					{
+						Dest: &net.IPNet{
+							IP:   ovntest.MustParseIP("100.65.0.0").To4(),
+							Mask: net.CIDRMask(16, 32),
+						},
+						NextHop: ovntest.MustParseIP("192.168.0.1").To4(),
+					},
+				},
+				Role: types.NetworkRolePrimary,
+			},
+			wantReleasedIPsOnRollback: ovntest.MustParseIPNets("192.168.0.101/24"),
+		},
+
+		{
+			// on networks with IPAM and layer2 topology, expect error when EnablePreconfiguredUDNAddresses is false
+			name:                   "expect error, static IP with IPAM on layer2 when EnablePreconfiguredUDNAddresses is false",
+			ipam:                   true,
+			role:                   types.NetworkRolePrimary,
+			persistentIPAllocation: true,
+			// enablePreconfiguredUDNAddresses defaults to false
+			args: args{
+				network: &nadapi.NetworkSelectionElement{
+					IPRequest: []string{"192.168.0.101/24"},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			// on networks with IPAM and layer2 topology, expect error when IPAMClaims status IPs do not match requested IPs
+			name:                            "expect error, static IP with IPAM on layer2 when IPAMClaims status IPs do not match requested IPs",
+			ipam:                            true,
+			role:                            types.NetworkRolePrimary,
+			persistentIPAllocation:          true,
+			enablePreconfiguredUDNAddresses: true,
+			args: args{
+				network: &nadapi.NetworkSelectionElement{
+					IPRequest:          []string{"192.168.0.101/24"},
+					IPAMClaimReference: "my-ipam-claim",
+				},
+				ipamClaim: &ipamclaimsapi.IPAMClaim{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "my-ipam-claim",
+					},
+					Status: ipamclaimsapi.IPAMClaimStatus{
+						IPs: []string{"192.168.0.200/24"},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			// with preconfigured UDN address feature enabled still continue failing with secondary layer2 with ipam + static IPs
+			name:                            "expect error, static IP with IPAM on secondary network when EnablePreconfiguredUDNAddresses is enabled",
+			ipam:                            true,
+			enablePreconfiguredUDNAddresses: true,
+			persistentIPAllocation:          true,
+			args: args{
+				network: &nadapi.NetworkSelectionElement{
+					IPRequest: []string{"192.168.0.101/24"},
+				},
+			},
+			role:    types.NetworkRoleSecondary,
+			wantErr: true,
 		},
 		{
 			// on networks with IPAM, expect error on an invalid network
@@ -777,6 +897,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			config.OVNKubernetesFeature.EnableInterconnect = tt.idAllocation
 			config.OVNKubernetesFeature.EnableMultiNetwork = !tt.multiNetworkDisabled
 			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+			config.OVNKubernetesFeature.EnablePreconfiguredUDNAddresses = tt.enablePreconfiguredUDNAddresses
 			config.IPv4Mode = true
 			if tt.isSingleStackIPv6 {
 				config.IPv4Mode = false
@@ -785,32 +906,33 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			if tt.isSingleStackIPv4 {
 				config.IPv6Mode = false
 			}
-			var netInfo util.NetInfo
-			netInfo = &util.DefaultNetInfo{}
-			nadName := types.DefaultNetworkName
-			if !tt.ipam || tt.idAllocation || tt.persistentIPAllocation || tt.args.ipamClaim != nil {
-				nadName = util.GetNADName(network.Namespace, network.Name)
-				var subnets string
-				if tt.ipam {
-					subnets = "192.168.0.0/24,2001:db8::/64"
-					if tt.isSingleStackIPv4 {
-						subnets = "192.168.0.0/24"
-					} else if tt.isSingleStackIPv6 {
-						subnets = "2001:db8::/64"
+			if tt.netInfo == nil {
+				tt.netInfo = &util.DefaultNetInfo{}
+				tt.nadName = types.DefaultNetworkName
+				if !tt.ipam || tt.idAllocation || tt.persistentIPAllocation || tt.args.ipamClaim != nil {
+					tt.nadName = util.GetNADName(network.Namespace, network.Name)
+					var subnets string
+					if tt.ipam {
+						subnets = "192.168.0.0/24,2001:db8::/64"
+						if tt.isSingleStackIPv4 {
+							subnets = "192.168.0.0/24"
+						} else if tt.isSingleStackIPv6 {
+							subnets = "2001:db8::/64"
+						}
 					}
-				}
-				netInfo, err = util.NewNetInfo(&ovncnitypes.NetConf{
-					Topology: types.Layer2Topology,
-					NetConf: cnitypes.NetConf{
-						Name: network.Name,
-					},
-					NADName:            nadName,
-					Subnets:            subnets,
-					AllowPersistentIPs: tt.persistentIPAllocation,
-					Role:               tt.role,
-				})
-				if err != nil {
-					t.Fatalf("failed to create NetInfo: %v", err)
+					tt.netInfo, err = util.NewNetInfo(&ovncnitypes.NetConf{
+						Topology: types.Layer2Topology,
+						NetConf: cnitypes.NetConf{
+							Name: network.Name,
+						},
+						NADName:            tt.nadName,
+						Subnets:            subnets,
+						AllowPersistentIPs: tt.persistentIPAllocation,
+						Role:               tt.role,
+					})
+					if err != nil {
+						t.Fatalf("failed to create NetInfo: %v", err)
+					}
 				}
 			}
 
@@ -836,7 +958,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 				},
 			}
 			if tt.podAnnotation != nil {
-				pod.Annotations, err = util.MarshalPodAnnotation(nil, tt.podAnnotation, nadName)
+				pod.Annotations, err = util.MarshalPodAnnotation(nil, tt.podAnnotation, tt.nadName)
 				if err != nil {
 					t.Fatalf("failed to set pod annotations: %v", err)
 				}
@@ -862,7 +984,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			pod, podAnnotation, rollback, err := allocatePodAnnotationWithRollback(
 				tt.args.ipAllocator,
 				tt.args.idAllocator,
-				netInfo,
+				tt.netInfo,
 				node,
 				pod,
 				network,
@@ -887,7 +1009,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 
 			if tt.args.ipAllocator != nil {
 				releasedIPs := tt.args.ipAllocator.(*ipAllocatorStub).releasedIPs
-				g.Expect(releasedIPs).To(gomega.Equal(tt.wantReleasedIPsOnRollback), "Release IP on rollback behaved unexpectedly")
+				g.Expect(releasedIPs).To(gomega.Equal(tt.wantReleasedIPsOnRollback), "Release IP on rollback behaved unexpectedly: %s", tt.netInfo.TopologyType())
 			}
 
 			if tt.args.idAllocator != nil {

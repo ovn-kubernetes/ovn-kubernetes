@@ -53,7 +53,7 @@ import (
 const (
 	// OvnPodAnnotationName is the constant string representing the POD annotation key
 	OvnPodAnnotationName = "k8s.ovn.org/pod-networks"
-	// DefNetworkAnnotation is the pod annotation for the cluster-wide default network
+	// DefNetworkAnnotation is the pod annotation for the cluster-wide active network
 	DefNetworkAnnotation = "v1.multus-cni.io/default-network"
 	// OvnUDNIPAMClaimName is used for workload owners to instruct OVN-K which
 	// IPAMClaim will hold the allocation for the workload

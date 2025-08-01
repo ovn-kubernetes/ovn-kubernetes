@@ -10,7 +10,7 @@ require (
 	github.com/asaskevich/govalidator v0.0.0-20210307081110-f21760c49a8d
 	github.com/bhendo/go-powershell v0.0.0-20190719160123-219e7fb4e41e
 	github.com/cenkalti/backoff/v4 v4.3.0
-	github.com/containernetworking/cni v1.1.2
+	github.com/containernetworking/cni v1.2.3
 	github.com/containernetworking/plugins v1.2.0
 	github.com/coreos/go-iptables v0.6.0
 	github.com/fsnotify/fsnotify v1.7.0
@@ -25,7 +25,7 @@ require (
 	github.com/k8snetworkplumbingwg/govdpa v0.1.5-0.20230926073613-07c1031aea47
 	github.com/k8snetworkplumbingwg/ipamclaims v0.5.0-alpha
 	github.com/k8snetworkplumbingwg/multi-networkpolicy v1.0.1
-	github.com/k8snetworkplumbingwg/network-attachment-definition-client v1.6.0
+	github.com/k8snetworkplumbingwg/network-attachment-definition-client v1.7.7
 	github.com/k8snetworkplumbingwg/sriovnet v1.2.1-0.20230427090635-4929697df2dc
 	github.com/mdlayher/arp v0.0.0-20220512170110-6706a2966875
 	github.com/mdlayher/ndp v1.0.1
