@@ -411,16 +411,16 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 				}
 
 				dftFlows = append(dftFlows,
-					fmt.Sprintf("cookie=%s, priority=200, table=2, ip6, ipv6_src=%s, "+
+					fmt.Sprintf("cookie=%s, priority=200, table=2, ipv6, ipv6_src=%s, "+
 						"actions=drop",
 						nodetypes.DefaultOpenFlowCookie, matchingIPFamilySubnet.String()))
 			}
 			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=200, table=2, ip6, ipv6_src=%s, "+
+				fmt.Sprintf("cookie=%s, priority=200, table=2, ipv6, ipv6_src=%s, "+
 					"actions=drop",
 					nodetypes.DefaultOpenFlowCookie, netConfig.V6MasqIPs.ManagementPort.IP.String()))
 			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=250, table=2, ip6, pkt_mark=%s, "+
+				fmt.Sprintf("cookie=%s, priority=250, table=2, ipv6, pkt_mark=%s, "+
 					"actions=set_field:%s->eth_dst,output:%s",
 					nodetypes.DefaultOpenFlowCookie, netConfig.PktMark,
 					bridgeMacAddress, netConfig.OfPortPatch))
