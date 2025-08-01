@@ -12,25 +12,16 @@ import (
 	"sync"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	iputils "github.com/containernetworking/plugins/pkg/ip"
+	butaneconfig "github.com/coreos/butane/config"
+	butanecommon "github.com/coreos/butane/config/common"
+	ipamclaimsv1alpha1 "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1"
+	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	"gopkg.in/yaml.v2"
-
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	rav1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
-	crdtypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
-	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/diagnostics"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
-	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/kubevirt"
+	kubevirtv1 "kubevirt.io/api/core/v1"
+	kvmigrationsv1alpha1 "kubevirt.io/api/migrations/v1alpha1"
 
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -52,17 +43,22 @@ import (
 	"k8s.io/utils/ptr"
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	butaneconfig "github.com/coreos/butane/config"
-	butanecommon "github.com/coreos/butane/config/common"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	rav1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
+	crdtypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
+	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
-	ipamclaimsv1alpha1 "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1"
-	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
-	nadv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/diagnostics"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
+	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/kubevirt"
 
-	iputils "github.com/containernetworking/plugins/pkg/ip"
-
-	kubevirtv1 "kubevirt.io/api/core/v1"
-	kvmigrationsv1alpha1 "kubevirt.io/api/migrations/v1alpha1"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 func newControllerRuntimeClient() (crclient.Client, error) {
@@ -80,7 +76,7 @@ func newControllerRuntimeClient() (crclient.Client, error) {
 	if err := ipamclaimsv1alpha1.AddToScheme(scheme); err != nil {
 		return nil, err
 	}
-	if err := nadv1.AddToScheme(scheme); err != nil {
+	if err := nadapi.AddToScheme(scheme); err != nil {
 		return nil, err
 	}
 	if err := corev1.AddToScheme(scheme); err != nil {
@@ -310,7 +306,7 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 			}
 		}
 
-		startEastWestIperfTraffic = func(vmi *kubevirtv1.VirtualMachineInstance, serverPodIPsByName map[string][]string, stage string) error {
+		startEastWestIperfTraffic = func(vmi *kubevirtv1.VirtualMachineInstance, serverPodIPsByName map[string][]string, _ string) error {
 			GinkgoHelper()
 			Expect(serverPodIPsByName).NotTo(BeEmpty())
 			polling := 15 * time.Second
@@ -438,7 +434,7 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 			}
 		}
 
-		checkNorthSouthEgressICMPTraffic = func(vmi *kubevirtv1.VirtualMachineInstance, addresses []string, stage string) {
+		checkNorthSouthEgressICMPTraffic = func(vmi *kubevirtv1.VirtualMachineInstance, addresses []string, _ string) {
 			GinkgoHelper()
 			Expect(addresses).NotTo(BeEmpty())
 			for _, ip := range addresses {
@@ -475,9 +471,7 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 					WithTimeout(15 * time.Second).
 					WithPolling(200 * time.Millisecond).
 					Should(HaveLen(1))
-				for _, ip := range networkStatuses[0].IPs {
-					ips[pod.Name] = append(ips[pod.Name], ip)
-				}
+				ips[pod.Name] = append(ips[pod.Name], networkStatuses[0].IPs...)
 			}
 			return ips
 		}
@@ -961,6 +955,9 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 					FilesDir: workingDirectory,
 				},
 			})
+			if err != nil {
+				return nil, err
+			}
 			cloudInitVolumeSource := kubevirtv1.VolumeSource{
 				CloudInitConfigDrive: &kubevirtv1.CloudInitConfigDriveSource{
 					UserData: string(ignition),
@@ -1187,7 +1184,7 @@ fi
 				if err != nil {
 					return nil, err
 				}
-				for _ = range idx {
+				for range idx {
 					ip = iputils.NextIP(ip)
 				}
 				ipNet.IP = ip
@@ -1292,7 +1289,7 @@ fi
 		removeImagesInNodes = func(imageURL string) error {
 			nodesList, err := fr.ClientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
 			Expect(err).NotTo(HaveOccurred())
-			for nodeIdx, _ := range nodesList.Items {
+			for nodeIdx := range nodesList.Items {
 				err = removeImagesInNode(nodesList.Items[nodeIdx].Name, imageURL)
 				if err != nil {
 					return err
@@ -1307,7 +1304,10 @@ fi
 			Expect(crClient.Create(context.Background(), cudn)).To(Succeed())
 			DeferCleanup(func() {
 				if e2eframework.TestContext.DeleteNamespace && (e2eframework.TestContext.DeleteNamespaceOnFailure || !CurrentSpecReport().Failed()) {
-					crClient.Delete(context.Background(), cudn)
+					err := crClient.Delete(context.Background(), cudn)
+					if err != nil {
+						e2eframework.Logf("Failed to delete ClusterUserDefinedNetwork: %v", err)
+					}
 				}
 			})
 			Eventually(clusterUserDefinedNetworkReadyFunc(fr.DynamicClient, cudn.Name), 5*time.Second, time.Second).Should(Succeed())
@@ -1319,12 +1319,15 @@ fi
 			Expect(crClient.Create(context.Background(), ra)).To(Succeed())
 			DeferCleanup(func() {
 				if e2eframework.TestContext.DeleteNamespace && (e2eframework.TestContext.DeleteNamespaceOnFailure || !CurrentSpecReport().Failed()) {
-					crClient.Delete(context.Background(), ra)
+					err := crClient.Delete(context.Background(), ra)
+					if err != nil {
+						e2eframework.Logf("Failed to delete RouteAdvertisements: %v", err)
+					}
 				}
 			})
 
 			By("ensure route advertisement matching CUDN was created successfully")
-			Eventually(func(g Gomega) string {
+			Eventually(func() string {
 				Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(ra), ra)).To(Succeed())
 				return ra.Status.Status
 			}, 30*time.Second, time.Second).Should(Equal("Accepted"))
@@ -1349,6 +1352,7 @@ fi
 			ns, err := fr.CreateNamespace(context.TODO(), fr.BaseName, map[string]string{
 				"e2e-framework": fr.BaseName,
 			})
+			Expect(err).NotTo(HaveOccurred())
 			fr.Namespace = ns
 			namespace = fr.Namespace.Name
 			workerNodeList, err := fr.ClientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{LabelSelector: labels.FormatLabels(map[string]string{"node-role.kubernetes.io/worker": ""})})
@@ -1663,7 +1667,7 @@ write_files:
 			}
 		)
 		type testData struct {
-			description string
+			description string //nolint:unused
 			resource    resourceCommand
 			test        testCommand
 			topology    udnv1.NetworkTopology
@@ -1685,11 +1689,11 @@ write_files:
 				step := by(vmi.Name, "Expose VM iperf server as a service")
 				svc, err := fr.ClientSet.CoreV1().Services(namespace).Create(context.TODO(), composeService("iperf3-vm-server", vmi.Name, iperf3DefaultPort), metav1.CreateOptions{})
 				Expect(err).ToNot(HaveOccurred())
-				Expect(svc.Spec.Ports[0].NodePort).NotTo(Equal(0), step)
+				Expect(svc.Spec.Ports[0].NodePort).NotTo(Equal(int32(0)), step)
 				serverPort := svc.Spec.Ports[0].NodePort
 				nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), fr.ClientSet, 1)
 				Expect(err).NotTo(HaveOccurred())
-				serverIPs := e2enode.CollectAddresses(nodes, v1.NodeInternalIP)
+				serverIPs := e2enode.CollectAddresses(nodes, corev1.NodeInternalIP)
 				return serverIPs, serverPort
 			}
 		)
@@ -2059,6 +2063,7 @@ ip route add %[3]s via %[4]s
 				"e2e-framework":           fr.BaseName,
 				RequiredUDNNamespaceLabel: "",
 			})
+			Expect(err).NotTo(HaveOccurred())
 			fr.Namespace = ns
 			namespace = fr.Namespace.Name
 			dualCIDRs := filterDualStackCIDRs(fr.ClientSet, []udnv1.CIDR{udnv1.CIDR(cidrIPv4), udnv1.CIDR(cidrIPv6)})
@@ -2123,7 +2128,7 @@ ip route add %[3]s via %[4]s
 						fmt.Sprintf("ip_address = %s", expectedIP),
 						fmt.Sprintf("domain_name_servers = %s", expectedDNS),
 						fmt.Sprintf("routers = %s", expectedGateway),
-						fmt.Sprintf("interface_mtu = 1300"),
+						"interface_mtu = 1300",
 					))
 				Expect(primaryUDNValueForConnection("IP4.ADDRESS")).To(ConsistOf(expectedIP + "/24"))
 				Expect(primaryUDNValueForConnection("IP4.GATEWAY")).To(ConsistOf(expectedGateway))
@@ -2267,10 +2272,10 @@ chpasswd: { expire: False }
 			output, err = virtClient.RunCommand(vmi, "killall iperf3", 5*time.Second)
 			Expect(err).ToNot(HaveOccurred(), output)
 
-			step = by(vmi.Name, fmt.Sprintf("Force kill qemu at node %q where VM is running on", vmi.Status.NodeName))
+			_ = by(vmi.Name, fmt.Sprintf("Force kill qemu at node %q where VM is running on", vmi.Status.NodeName))
 			Expect(kubevirt.ForceKillVirtLauncherAtNode(infraprovider.Get(), vmi.Status.NodeName, vmi.Namespace, vmi.Name)).To(Succeed())
 
-			step = by(vmi.Name, "Waiting for failed restarted VMI to reach ready state")
+			_ = by(vmi.Name, "Waiting for failed restarted VMI to reach ready state")
 			waitVirtualMachineInstanceFailed(vmi)
 			waitVirtualMachineInstanceReadiness(vmi)
 			Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
