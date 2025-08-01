@@ -78,7 +78,6 @@ func NewGatewayManagerForLayer2Topology(
 	return newGWManager(
 		nodeName,
 		routerName,
-		netInfo.GetNetworkScopedGWRouterName(nodeName),
 		netInfo.GetNetworkScopedExtSwitchName(nodeName),
 		netInfo.GetNetworkScopedSwitchName(""),
 		coopUUID,
@@ -102,7 +101,6 @@ func NewGatewayManager(
 	return newGWManager(
 		nodeName,
 		netInfo.GetNetworkScopedClusterRouterName(),
-		netInfo.GetNetworkScopedGWRouterName(nodeName),
 		netInfo.GetNetworkScopedExtSwitchName(nodeName),
 		netInfo.GetNetworkScopedJoinSwitchName(),
 		coopUUID,
@@ -115,7 +113,7 @@ func NewGatewayManager(
 }
 
 func newGWManager(
-	nodeName, clusterRouterName, gwRouterName, extSwitchName, joinSwitchName string,
+	nodeName, clusterRouterName, extSwitchName, joinSwitchName string,
 	coopUUID string,
 	kube kube.InterfaceOVN,
 	nbClient libovsdbclient.Client,
@@ -125,7 +123,7 @@ func newGWManager(
 	gwManager := &GatewayManager{
 		nodeName:          nodeName,
 		clusterRouterName: clusterRouterName,
-		gwRouterName:      gwRouterName,
+		gwRouterName:      netInfo.GetNetworkScopedGWRouterName(nodeName),
 		extSwitchName:     extSwitchName,
 		joinSwitchName:    joinSwitchName,
 		coppUUID:          coopUUID,
@@ -1054,10 +1052,6 @@ func GetNetworkScopedClusterSubnetSNATMatch(nbClient libovsdbclient.Client, netI
 		return destinationMatch, nil
 	}
 	return fmt.Sprintf("outport == %q && %s", types.GWRouterToExtSwitchPrefix+netInfo.GetNetworkScopedGWRouterName(nodeName), destinationMatch), nil
-}
-
-func Layer2NoRouterTopology(nbClient libovsdbclient.Client, netInfo util.NetInfo) bool {
-	return netInfo.TopologyType() == types.Layer2Topology && !Layer2TransitRouterTopology(nbClient, netInfo)
 }
 
 // addExternalSwitch creates a switch connected to the external bridge and connects it to
