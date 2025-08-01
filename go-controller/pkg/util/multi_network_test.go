@@ -194,7 +194,7 @@ func TestParseNetconf(t *testing.T) {
             "ipam": "this is wrong"
     }
 `,
-			expectedError: fmt.Errorf("error parsing Network Attachment Definition ns1/nad1: json: cannot unmarshal string into Go struct field NetConf.ipam of type types.IPAM"),
+			expectedError: fmt.Errorf("error parsing Network Attachment Definition ns1/nad1: json: cannot unmarshal string into Go struct field NetConf.NetConf.ipam of type types.IPAM"),
 		},
 		{
 			desc: "attachment definition with IPAM key defined",

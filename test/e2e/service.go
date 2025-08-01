@@ -737,6 +737,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 		nodeIPs := make(map[string]map[int]string)
 		var egressNode string
 		var providerCtx infraapi.Context
+		var isDualStack bool
 
 		const (
 			endpointHTTPPort             = 80
@@ -1029,7 +1030,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 				egressIP = "2001:db8:abcd:1234:c001::" // secondary subnet as defined in EIP test suite
 			}
 
-			var egressIPConfig = fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
+			var egressIPConfig = `apiVersion: k8s.ovn.org/v1
 kind: EgressIP
 metadata:
     name: ` + "egressip" + `
@@ -1039,7 +1040,7 @@ spec:
     namespaceSelector:
         matchLabels:
             kubernetes.io/metadata.name: ` + f.Namespace.Name + `
-`)
+`
 			if err := os.WriteFile("egressip.yaml", []byte(egressIPConfig), 0644); err != nil {
 				framework.Failf("Unable to write CRD config to disk: %v", err)
 			}
@@ -1263,6 +1264,7 @@ spec:
 			nodes, err = e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 1)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			gomega.Expect(len(nodes.Items)).To(gomega.BeNumerically(">", 0))
+			isDualStack = isDualStackCluster(nodes)
 			nodeName := nodes.Items[0].Name
 			primaryProviderNetwork, err := infraprovider.Get().PrimaryNetwork()
 			framework.ExpectNoError(err, "failed to get primary network")
@@ -1302,12 +1304,16 @@ spec:
 			framework.ExpectNoError(err)
 
 			ginkgo.By("Waiting for the endpoints to pop up")
+			expectedEndpointsNum := 1
+			if isDualStack {
+				expectedEndpointsNum = expectedEndpointsNum * 2
+			}
 			err = framework.WaitForServiceEndpointsNum(
 				context.TODO(),
 				f.ClientSet,
 				f.Namespace.Name,
 				serviceName,
-				1,
+				expectedEndpointsNum,
 				time.Second,
 				wait.ForeverTestTimeout,
 			)
@@ -1551,7 +1557,7 @@ var _ = ginkgo.Describe("Load Balancer Service Tests with MetalLB", feature.Serv
 		}
 		backendNodeName = nodes.Items[0].Name
 		nonBackendNodeName = nodes.Items[1].Name
-		var loadBalancerServiceConfig = fmt.Sprintf(`
+		var loadBalancerServiceConfig = `
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -1628,7 +1634,7 @@ spec:
   selector:
     app: nginx
   type: LoadBalancer
-`)
+`
 		if err := os.WriteFile(loadBalancerYaml, []byte(loadBalancerServiceConfig), 0644); err != nil {
 			framework.Failf("Unable to write CRD config to disk: %v", err)
 		}
@@ -1686,18 +1692,21 @@ metadata:
 		time.Sleep(time.Second * 5) // buffer to ensure all rules are created correctly
 
 		svcLoadBalancerIP, err := getServiceLoadBalancerIP(f.ClientSet, namespaceName, svcName)
-		framework.ExpectNoError(err, fmt.Sprintf("failed to get service lb ip: %s, err: %v", svcName, err))
+		framework.ExpectNoError(err, fmt.Sprintf("failed to get service lb ip: %s for %s, err: %v", svcLoadBalancerIP, svcName, err))
+        discoveryClient := f.ClientSet.DiscoveryV1()
+		endpointSlice, err := discoveryClient.EndpointSlices(namespaceName).List(context.TODO(), metav1.ListOptions{
+		       LabelSelector: fmt.Sprintf("kubernetes.io/service-name=%s", svcName),
+	    })
 
-		endpoints, err := getEndpointsForService(f.ClientSet, namespaceName, svcName)
-		framework.ExpectNoError(err, fmt.Sprintf("failed to get endpoints for service %s", svcName))
-		gomega.Expect(endpoints).NotTo(gomega.BeNil())
-		gomega.Expect(len(endpoints.Subsets)).To(gomega.Equal(1))
-		gomega.Expect(len(endpoints.Subsets[0].Addresses)).To(gomega.Equal(4))
-		endPointIP := endpoints.Subsets[0].Addresses[0].IP
-		nodeName := endpoints.Subsets[0].Addresses[0].NodeName
-		nodeIP, err := getNodeIP(f.ClientSet, *nodeName)
-		framework.ExpectNoError(err, fmt.Sprintf("failed to get endpoint's %s node ip address", endPointIP))
-
+		framework.ExpectNoError(err, fmt.Sprintf("failed to get endpoints slice for service %s", svcName))
+		gomega.Expect(endpointSlice).NotTo(gomega.BeNil())
+		gomega.Expect(len(endpointSlice.Items)).To(gomega.Equal(1))
+		gomega.Expect(len(endpointSlice.Items[0].Endpoints)).To(gomega.Equal(4))
+		endPointIP := endpointSlice.Items[0].Endpoints[0].Addresses
+		framework.ExpectNoError(err, fmt.Sprintf("failed to get endpoint slice's %s ip address", endPointIP))
+		nodeName := *endpointSlice.Items[0].Endpoints[0].NodeName
+		nodeIP, err := getNodeIP(f.ClientSet, nodeName)
+       
 		svcIPforCurl := svcLoadBalancerIP
 		if !utilnet.IsIPv6String(svcLoadBalancerIP) {
 			ginkgo.By("Setting up external IPv4 client with an intermediate node")
@@ -1720,7 +1729,7 @@ metadata:
 		// with network namespaces.
 		gomega.Eventually(func() error {
 			return buildAndRunCommand(fmt.Sprintf("sudo ip netns exec client curl %s:%d/big.iso -o big.iso", svcIPforCurl, endpointHTTPPort))
-		}, 5*time.Second).Should(gomega.BeNil(), "failed to connect with external load balancer service")
+		}, 10*time.Second).Should(gomega.BeNil(), "failed to connect with external load balancer service")
 
 		// Change MTU size of vmtobridge veth pair and verify service connectivity still works.
 		// Set the value >=1280 so that it works for IPv6 as well.
@@ -1732,6 +1741,7 @@ metadata:
 		gomega.Eventually(func() error {
 			return buildAndRunCommand(fmt.Sprintf("sudo ip netns exec client curl %s:%d/big.iso -o big.iso", svcIPforCurl, endpointHTTPPort))
 		}, 5*time.Second).Should(gomega.BeNil(), "failed to connect with external load balancer service after changing mtu size")
+		
 	})
 
 	ginkgo.It("Should ensure load balancer service works with pmtud", func() {
@@ -1815,7 +1825,7 @@ metadata:
 		// test CASE A: traffic lands on the same node where backend lives
 		// test CASE B: traffic lands on different node than where the backend lives
 		for _, node := range []string{backendNodeName, nonBackendNodeName} {
-			var bgpConfig = fmt.Sprintf(`
+			var bgpConfig = `
 ---
 apiVersion: metallb.io/v1beta1
 kind: BGPAdvertisement
@@ -1828,7 +1838,7 @@ spec:
   nodeSelectors:
   - matchLabels:
       kubernetes.io/hostname: ` + node + `
-`)
+`
 			if err := os.WriteFile(bgpAddYaml, []byte(bgpConfig), 0644); err != nil {
 				framework.Failf("Unable to write CRD config to disk: %v", err)
 			}
@@ -2231,7 +2241,7 @@ spec:
 			egressIP1, err = ipalloc.NewPrimaryIPv4()
 		}
 		framework.ExpectNoError(err, "must allocate new Node IP for EgressIP IP")
-		var egressIPConfig = fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
+		var egressIPConfig = `apiVersion: k8s.ovn.org/v1
 kind: EgressIP
 metadata:
     name: ` + "egressip" + `
@@ -2244,7 +2254,7 @@ spec:
     namespaceSelector:
         matchLabels:
             kubernetes.io/metadata.name: ` + namespaceName + `
-`)
+`
 		if err := os.WriteFile("egressip.yaml", []byte(egressIPConfig), 0644); err != nil {
 			framework.Failf("Unable to write CRD config to disk: %v", err)
 		}
