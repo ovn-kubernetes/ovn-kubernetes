@@ -368,7 +368,7 @@ func (npw *nodePortWatcher) updateServiceFlowCache(service *corev1.Service, netI
 		var ofPorts []string
 		// don't get the ports unless we need to as it is a costly operation
 		if (len(extParsedIPs) > 0 || len(ingParsedIPs) > 0) && add {
-			ofPorts, err = util.GetOpenFlowPorts(npw.gwBridge.GetGatewayIface(), false)
+			ofPorts, err = util.GetOpenFlowPorts(npw.gwBridge.GetBridgeName(), false)
 			if err != nil {
 				// in the odd case that getting all ports from the bridge should not work,
 				// simply output to LOCAL (this should work well in the vast majority of cases, anyway)
