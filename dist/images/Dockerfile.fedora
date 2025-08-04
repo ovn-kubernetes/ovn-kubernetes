@@ -93,7 +93,7 @@ RUN echo "Running on $BUILDPLATFORM, building for $TARGETPLATFORM"
 # Final stage
 RUN dnf install --best --refresh -y --setopt=tsflags=nodocs koji 
 
-RUN if [ "$TARGETPLATFORM" = "linux/amd64" ] || [ -z "$TARGETPLATFORM"] ; then koji download-build $ovnver --arch=x86_64  ; \
+RUN if [ "$TARGETPLATFORM" = "linux/amd64" ] || [ -z "$TARGETPLATFORM" ] ; then koji download-build $ovnver --arch=x86_64  ; \
     else koji download-build $ovnver --arch=aarch64 ; fi
 
 ######################################
