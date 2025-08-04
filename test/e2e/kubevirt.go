@@ -2071,13 +2071,13 @@ ip route add %[3]s via %[4]s
 				role:     udnv1.NetworkRolePrimary,
 				ingress:  "routed",
 			}),
-			Entry(nil, testData{
+			XEntry(nil, testData{
 				resource:   virtualMachineWithUDN,
 				test:       liveMigrate,
 				topology:   udnv1.NetworkTopologyLayer2,
 				role:       udnv1.NetworkRolePrimary,
 				ipv4Subnet: "10.128.0.0/24",
-			}),
+			}), Label("BUG", "OCPBUGS-59644" /*https://issues.redhat.com/browse/OCPBUGS-59644*/),
 			Entry(nil, testData{
 				resource: virtualMachineWithUDN,
 				test:     liveMigrate,
