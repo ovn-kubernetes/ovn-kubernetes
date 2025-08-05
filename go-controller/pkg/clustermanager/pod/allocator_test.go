@@ -82,7 +82,7 @@ type ipAllocatorStub struct {
 	fullIPPool bool
 }
 
-func (a *ipAllocatorStub) AddOrUpdateSubnet(string, []*net.IPNet, ...*net.IPNet) error {
+func (a *ipAllocatorStub) AddOrUpdateSubnet(_ subnet.SubnetConfig) error {
 	panic("not implemented") // TODO: Implement
 }
 

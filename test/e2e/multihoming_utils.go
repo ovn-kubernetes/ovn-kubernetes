@@ -23,28 +23,22 @@ import (
 
 	mnpapi "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/apis/k8s.cni.cncf.io/v1beta1"
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	utilnet "k8s.io/utils/net"
 )
 
 func netCIDR(netCIDR string, netPrefixLengthPerNode int) string {
 	return fmt.Sprintf("%s/%d", netCIDR, netPrefixLengthPerNode)
 }
 
-func joinCIDRs(cidrs ...string) string {
-	return strings.Join(cidrs, ",")
-}
-
-func splitCIDRs(cidrs string) []string {
-	if cidrs == "" {
-		return []string{}
-	}
-	return strings.Split(cidrs, ",")
+func joinStrings(vals ...string) string {
+	return strings.Join(vals, ",")
 }
 
 func filterCIDRsAndJoin(cs clientset.Interface, cidrs string) string {
 	if cidrs == "" {
 		return "" // we may not always set CIDR - i.e. CDN
 	}
-	return joinCIDRs(filterCIDRs(cs, splitCIDRs(cidrs)...)...)
+	return joinStrings(filterCIDRs(cs, strings.Split(cidrs, ",")...)...)
 }
 
 func filterCIDRs(cs clientset.Interface, cidrs ...string) []string {
@@ -56,6 +50,29 @@ func filterCIDRs(cs clientset.Interface, cidrs ...string) []string {
 		supportedCIDRs = append(supportedCIDRs, cidr)
 	}
 	return supportedCIDRs
+}
+
+func filterSupportedNetworkConfig(client clientset.Interface, config *networkAttachmentConfigParams) {
+	config.cidr = filterCIDRsAndJoin(client, config.cidr)
+	config.excludeCIDRs = filterCIDRs(client, config.excludeCIDRs...)
+	config.reservedCIDRs = filterCIDRsAndJoin(client, config.reservedCIDRs)
+	config.infraCIDRs = filterCIDRsAndJoin(client, config.infraCIDRs)
+	config.defaultGatewayIPs = filterIPsAndJoin(client, config.defaultGatewayIPs)
+}
+
+func filterIPs(cs clientset.Interface, ips ...string) []string {
+	var supportedIPs []string
+	for _, ip := range ips {
+		isIPv6 := utilnet.IsIPv6String(ip)
+		if (!isIPv6 && isIPv4Supported(cs)) || (isIPv6 && isIPv6Supported(cs)) {
+			supportedIPs = append(supportedIPs, ip)
+		}
+	}
+	return supportedIPs
+}
+
+func filterIPsAndJoin(cs clientset.Interface, ips string) string {
+	return joinStrings(filterIPs(cs,  strings.Split(ips, ",")...)...)
 }
 
 func getNetCIDRSubnet(netCIDR string) (string, error) {
@@ -71,6 +88,9 @@ func getNetCIDRSubnet(netCIDR string) (string, error) {
 type networkAttachmentConfigParams struct {
 	cidr                string
 	excludeCIDRs        []string
+	infraCIDRs          string
+	defaultGatewayIPs   string
+	reservedCIDRs       string
 	namespace           string
 	name                string
 	topology            string
@@ -114,6 +134,9 @@ func generateNADSpec(config networkAttachmentConfig) string {
         "topology":%q,
         "subnets": %q,
         "excludeSubnets": %q,
+        "reservedSubnets": %q,
+        "infrastructureSubnets": %q,
+		"defaultGatewayIPs": %q,
         "mtu": %d,
         "netAttachDefName": %q,
         "vlanID": %d,
@@ -126,6 +149,9 @@ func generateNADSpec(config networkAttachmentConfig) string {
 		config.topology,
 		config.cidr,
 		strings.Join(config.excludeCIDRs, ","),
+		config.reservedCIDRs,
+		config.infraCIDRs,
+		config.defaultGatewayIPs,
 		config.mtu,
 		namespacedName(config.namespace, config.name),
 		config.vlanID,
@@ -135,7 +161,9 @@ func generateNADSpec(config networkAttachmentConfig) string {
 	)
 }
 
-func generateNAD(config networkAttachmentConfig) *nadapi.NetworkAttachmentDefinition {
+func generateNAD(config networkAttachmentConfig, client clientset.Interface) *nadapi.NetworkAttachmentDefinition {
+	filterSupportedNetworkConfig(client, &config.networkAttachmentConfigParams)
+
 	nadSpec := generateNADSpec(config)
 	return generateNetAttachDef(config.namespace, config.name, nadSpec)
 }

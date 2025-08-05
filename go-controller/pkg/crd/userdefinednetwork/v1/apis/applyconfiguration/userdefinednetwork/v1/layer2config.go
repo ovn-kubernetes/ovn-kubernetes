@@ -24,11 +24,14 @@ import (
 // Layer2ConfigApplyConfiguration represents a declarative configuration of the Layer2Config type for use
 // with apply.
 type Layer2ConfigApplyConfiguration struct {
-	Role        *userdefinednetworkv1.NetworkRole    `json:"role,omitempty"`
-	MTU         *int32                               `json:"mtu,omitempty"`
-	Subnets     *userdefinednetworkv1.DualStackCIDRs `json:"subnets,omitempty"`
-	JoinSubnets *userdefinednetworkv1.DualStackCIDRs `json:"joinSubnets,omitempty"`
-	IPAM        *IPAMConfigApplyConfiguration        `json:"ipam,omitempty"`
+	Role                  *userdefinednetworkv1.NetworkRole    `json:"role,omitempty"`
+	MTU                   *int32                               `json:"mtu,omitempty"`
+	Subnets               *userdefinednetworkv1.DualStackCIDRs `json:"subnets,omitempty"`
+	ReservedSubnets       []userdefinednetworkv1.CIDR          `json:"reservedSubnets,omitempty"`
+	InfrastructureSubnets []userdefinednetworkv1.CIDR          `json:"infrastructureSubnets,omitempty"`
+	DefaultGatewayIPs     *userdefinednetworkv1.DualStackIPs   `json:"defaultGatewayIPs,omitempty"`
+	JoinSubnets           *userdefinednetworkv1.DualStackCIDRs `json:"joinSubnets,omitempty"`
+	IPAM                  *IPAMConfigApplyConfiguration        `json:"ipam,omitempty"`
 }
 
 // Layer2ConfigApplyConfiguration constructs a declarative configuration of the Layer2Config type for use with
@@ -58,6 +61,34 @@ func (b *Layer2ConfigApplyConfiguration) WithMTU(value int32) *Layer2ConfigApply
 // If called multiple times, the Subnets field is set to the value of the last call.
 func (b *Layer2ConfigApplyConfiguration) WithSubnets(value userdefinednetworkv1.DualStackCIDRs) *Layer2ConfigApplyConfiguration {
 	b.Subnets = &value
+	return b
+}
+
+// WithReservedSubnets adds the given value to the ReservedSubnets field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the ReservedSubnets field.
+func (b *Layer2ConfigApplyConfiguration) WithReservedSubnets(values ...userdefinednetworkv1.CIDR) *Layer2ConfigApplyConfiguration {
+	for i := range values {
+		b.ReservedSubnets = append(b.ReservedSubnets, values[i])
+	}
+	return b
+}
+
+// WithInfrastructureSubnets adds the given value to the InfrastructureSubnets field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the InfrastructureSubnets field.
+func (b *Layer2ConfigApplyConfiguration) WithInfrastructureSubnets(values ...userdefinednetworkv1.CIDR) *Layer2ConfigApplyConfiguration {
+	for i := range values {
+		b.InfrastructureSubnets = append(b.InfrastructureSubnets, values[i])
+	}
+	return b
+}
+
+// WithDefaultGatewayIPs sets the DefaultGatewayIPs field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the DefaultGatewayIPs field is set to the value of the last call.
+func (b *Layer2ConfigApplyConfiguration) WithDefaultGatewayIPs(value userdefinednetworkv1.DualStackIPs) *Layer2ConfigApplyConfiguration {
+	b.DefaultGatewayIPs = &value
 	return b
 }
 

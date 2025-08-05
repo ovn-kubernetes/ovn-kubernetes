@@ -27,16 +27,22 @@ import (
 	allocator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/bitmap"
 )
 
-// Interface manages the allocation of IP addresses out of a range. Interface
-// should be threadsafe.
-type Interface interface {
+// StaticAllocator provides IP allocation functionality for explicit/static allocations only.
+type StaticAllocator interface {
 	Allocate(net.IP) error
-	AllocateNext() (net.IP, error)
 	Release(net.IP)
 	ForEach(func(net.IP))
 	CIDR() net.IPNet
 	Has(ip net.IP) bool
 	Reserved(ip net.IP) bool
+}
+
+// ContinuousAllocator extends StaticAllocator with next-available allocation support.
+// This is the primary interface for IP allocation that supports both explicit
+// allocation and continuous allocation.
+type ContinuousAllocator interface {
+	StaticAllocator
+	AllocateNext() (net.IP, error)
 }
 
 var (
@@ -84,7 +90,30 @@ type Range struct {
 }
 
 // NewAllocatorCIDRRange creates a Range over a net.IPNet, calling allocatorFactory to construct the backing store.
+// It excludes the network address (.0) and broadcast address (IPv4 only) from allocation.
 func NewAllocatorCIDRRange(cidr *net.IPNet, allocatorFactory allocator.AllocatorFactory) (*Range, error) {
+	r, err := NewAllocatorFullCIDRRange(cidr, allocatorFactory)
+	if err != nil {
+		return nil, err
+	}
+
+	if utilnet.IsIPv4CIDR(cidr) {
+		// Don't use the IPv4 network's broadcast address.
+		r.max--
+	}
+	// Don't use the network's ".0" address.
+	r.base.Add(r.base, big.NewInt(1))
+	r.max--
+
+	r.max = maximum(0, r.max)
+	// Reconfigure the allocator to use the new max value
+	r.alloc, err = allocatorFactory(r.max, r.net.String())
+	return r, err
+}
+
+// NewAllocatorFullCIDRRange creates a Range over a net.IPNet without excluding any IPs,
+// calling allocatorFactory to construct the backing store.
+func NewAllocatorFullCIDRRange(cidr *net.IPNet, allocatorFactory allocator.AllocatorFactory) (*Range, error) {
 	max := utilnet.RangeSize(cidr)
 	base := utilnet.BigForIP(cidr.IP)
 	rangeSpec := cidr.String()
@@ -94,19 +123,11 @@ func NewAllocatorCIDRRange(cidr *net.IPNet, allocatorFactory allocator.Allocator
 		if max > 65536 {
 			max = 65536
 		}
-	} else {
-		// Don't use the IPv4 network's broadcast address.
-		max--
 	}
-
-	// Don't use the network's ".0" address.
-	base.Add(base, big.NewInt(1))
-	max--
-
 	r := Range{
 		net:  cidr,
 		base: base,
-		max:  maximum(0, int(max)),
+		max:  int(max),
 	}
 	var err error
 	r.alloc, err = allocatorFactory(r.max, rangeSpec)
@@ -207,14 +228,37 @@ func (r *Range) Has(ip net.IP) bool {
 }
 
 // Reserved returns true if the provided IP can't be allocated. This is *only*
-// true for the network and broadcast addresses.
+// true for the network and broadcast addresses of the original CIDR.
 func (r *Range) Reserved(ip net.IP) bool {
 	if !r.net.Contains(ip) {
 		return false
 	}
 
-	offset := calculateIPOffset(r.base, ip)
-	return offset == -1 || offset == r.max
+	// For IPv4, reserve network (.0) and broadcast addresses
+	if utilnet.IsIPv4CIDR(r.net) {
+		// Network address is the base IP of the original CIDR
+		networkAddr := r.net.IP
+		if ip.Equal(networkAddr) {
+			return true
+		}
+
+		// Broadcast address is the last IP in the original CIDR
+		rangeSize := utilnet.RangeSize(r.net)
+		broadcastAddr, _ := utilnet.GetIndexedIP(r.net, int(rangeSize)-1)
+		if ip.Equal(broadcastAddr) {
+			return true
+		}
+	}
+
+	// For IPv6, only reserve the network address (no broadcast concept)
+	if utilnet.IsIPv6CIDR(r.net) {
+		networkAddr := r.net.IP
+		if ip.Equal(networkAddr) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // contains returns true and the offset if the ip is in the range, and false
