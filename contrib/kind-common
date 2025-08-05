@@ -35,6 +35,7 @@ if_error_exit() {
 set_common_default_params() {
   KIND_IMAGE=${KIND_IMAGE:-kindest/node}
   K8S_VERSION=${K8S_VERSION:-v1.33.1}
+  KIND_SETTLE_DURATION=${KIND_SETTLE_DURATION:-30}
 }
 
 run_kubectl() {
@@ -369,8 +370,8 @@ calculate_timeout() {
 }
 
 sleep_until_pods_settle() {
-  echo "Pods are all up, allowing things settle for 30 seconds..."
-  sleep 30
+  echo "Pods are all up, allowing things settle for ${KIND_SETTLE_DURATION} seconds..."
+  sleep ${KIND_SETTLE_DURATION}
 }
 
 is_nested_virt_enabled() {
