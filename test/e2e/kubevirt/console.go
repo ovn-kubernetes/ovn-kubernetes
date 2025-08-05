@@ -94,12 +94,12 @@ func runCommand(virtctlPath string, vmi *v1.VirtualMachineInstance, command stri
 			},
 		}},
 	}, timeout)
-	if err != nil {
-		return "", fmt.Errorf("failed to run [%s] at VMI %s, error: %v", command, vmi.Name, err)
-	}
 	outputLines := strings.Split(results[1].Output, "\n")
 	output := strings.Join(outputLines[1:len(outputLines)-1], "\n")
 	output = strings.ReplaceAll(output, "\x1b[?2004l", "")
+	if err != nil {
+		return output, fmt.Errorf("failed to run [%s] at VMI %s, error: %v", command, vmi.Name, err)
+	}
 	return output, err
 }
 
