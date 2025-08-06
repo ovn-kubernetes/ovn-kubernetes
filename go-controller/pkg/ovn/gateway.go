@@ -935,8 +935,7 @@ func GetNetworkScopedClusterSubnetSNATMatch(nbClient libovsdbclient.Client, netI
 		if err != nil {
 			return "", fmt.Errorf("cannot ensure that addressSet %s exists %v", NodeIPAddrSetName, err)
 		}
-		ipv4ClusterNodeIPAS, ipv6ClusterNodeIPAS := addrSet.GetASHashNames()
-		destinationMatch := getClusterNodesDestinationBasedSNATMatch(ipv4ClusterNodeIPAS, ipv6ClusterNodeIPAS, ipFamily)
+		destinationMatch := getClusterNodesDestinationBasedSNATMatch(ipFamily, addrSet)
 		if netInfo.TopologyType() != types.Layer2Topology {
 			return destinationMatch, nil
 		}
