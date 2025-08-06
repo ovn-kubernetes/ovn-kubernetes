@@ -18,7 +18,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 	ctesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
@@ -1822,4 +1824,319 @@ func TestUpdates(t *testing.T) {
 			g.Consistently(matchReconciledRAs).WithArguments(tt.expectedReconcile).Should(gomega.Succeed())
 		})
 	}
+}
+
+// BenchmarkCrossRASubnetConflictCheck benchmarks the performance of RouteAdvertisements
+// sync when checking for cross-RA subnet conflicts with varying numbers of existing RAs/CUDNs.
+// This tests the scenario with no overlaps and compares how much more time it takes to sync
+// an RA for a CUDN when no other RAs/CUDNs exist vs an increased number of other RAs/CUDNs existing.
+func BenchmarkCrossRASubnetConflictCheck(b *testing.B) {
+	// Define different scales for benchmarking
+	scales := []struct {
+		name        string
+		numExisting int // number of existing RAs/CUDNs (1:1 ratio)
+	}{
+		{"NoExistingRAs", 0},
+		{"With10ExistingRAs", 10},
+		{"With50ExistingRAs", 50},
+		{"With100ExistingRAs", 100},
+		{"With500ExistingRAs", 500},
+	}
+
+	for _, scale := range scales {
+		b.Run(scale.name, func(b *testing.B) {
+			// Setup benchmark environment
+			benchmarkEnv := setupBenchmarkEnvironment(b, scale.numExisting)
+
+			for b.Loop() {
+				err := benchmarkEnv.controller.checkSubnetOverlaps(benchmarkEnv.targetRAObj, benchmarkEnv.selectedNetworks)
+				if err != nil {
+					b.Errorf("Subnet overlap check failed: %v", err)
+				}
+				benchmarkEnv.controller.raNetworkCache = make(map[string]*raNetworkCacheEntry)
+			}
+		})
+	}
+}
+
+// BenchmarkCrossRASubnetConflictCheck_WarmCache benchmarks the cross-RA subnet conflict check with pre-warmed cache.
+// This measures pure cache hit + conflict checking performance, excluding cache building overhead.
+// Compare with BenchmarkCrossRASubnetConflictCheck to see the cache effectiveness.
+func BenchmarkCrossRASubnetConflictCheck_WarmCache(b *testing.B) {
+	// Define different scales for benchmarking
+	scales := []struct {
+		name        string
+		numExisting int // number of existing RAs/CUDNs (1:1 ratio)
+	}{
+		{"NoExistingRAs", 0},
+		{"With10ExistingRAs", 10},
+		{"With50ExistingRAs", 50},
+		{"With100ExistingRAs", 100},
+		{"With500ExistingRAs", 500},
+	}
+
+	for _, scale := range scales {
+		b.Run(scale.name, func(b *testing.B) {
+			// Setup benchmark environment
+			benchmarkEnv := setupBenchmarkEnvironment(b, scale.numExisting)
+
+			// Pre-warm the cache by building cache entries for all existing RAs
+			warmBenchmarkCache(b, benchmarkEnv)
+
+			for b.Loop() {
+				err := benchmarkEnv.controller.checkSubnetOverlaps(benchmarkEnv.targetRAObj, benchmarkEnv.selectedNetworks)
+				if err != nil {
+					b.Errorf("Subnet overlap check failed: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// benchmarkSetup sets up the test environment for the benchmark and returns the necessary objects
+type benchmarkSetup struct {
+	controller       *Controller
+	targetRAObj      *ratypes.RouteAdvertisements
+	selectedNetworks *selectedNetworks
+}
+
+// warmBenchmarkCache pre-warms the cache by building cache entries for all existing RAs.
+// This allows measuring pure cache hit + conflict checking performance.
+func warmBenchmarkCache(tb testing.TB, benchmarkEnv *benchmarkSetup) {
+	tb.Helper()
+
+	allRAs, err := benchmarkEnv.controller.raLister.List(labels.Everything())
+	if err != nil {
+		tb.Fatalf("Failed to list RAs for cache warming: %v", err)
+	}
+
+	for _, ra := range allRAs {
+		if ra.Name == benchmarkEnv.targetRAObj.Name {
+			continue // Skip the target RA itself
+		}
+		_, err := benchmarkEnv.controller.updateCachedRANetworkInfoEntry(ra)
+		if err != nil {
+			// Log but don't fail - some RAs might not have NADs
+			tb.Logf("Failed to warm cache for RA %s: %v", ra.Name, err)
+		}
+	}
+}
+
+func setupBenchmarkEnvironment(tb testing.TB, numExistingRAs int) *benchmarkSetup {
+	tb.Helper()
+	fakeClientset := util.GetOVNClientset().GetClusterManagerClientset()
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	config.OVNKubernetesFeature.EnableRouteAdvertisements = true
+	config.Kubernetes.OVNConfigNamespace = "ovn-kubernetes"
+
+	// Configure cluster for dual-stack (IPv4 + IPv6)
+	config.IPv4Mode = true
+	config.IPv6Mode = true
+
+	config.Default.ClusterSubnets = []config.CIDRNetworkEntry{
+		{
+			CIDR:             ovntest.MustParseIPNet("10.128.0.0/14"),
+			HostSubnetLength: 24,
+		},
+		{
+			CIDR:             ovntest.MustParseIPNet("fd01::/48"),
+			HostSubnetLength: 64,
+		},
+	}
+
+	// Create default namespace
+	namespace := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: config.Kubernetes.OVNConfigNamespace,
+		},
+	}
+	_, err := fakeClientset.KubeClient.CoreV1().Namespaces().Create(context.Background(), namespace, metav1.CreateOptions{})
+	if err != nil {
+		tb.Fatalf("Failed to create namespace: %v", err)
+	}
+
+	topology := types.Layer2Topology
+	defaultNAD := &testNAD{
+		Name:      types.DefaultNetworkName,
+		Namespace: config.Kubernetes.OVNConfigNamespace,
+		Network:   types.DefaultNetworkName,
+		Topology:  topology,
+	}
+	_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(defaultNAD.Namespace).Create(context.Background(), defaultNAD.NAD(), metav1.CreateOptions{})
+	if err != nil {
+		tb.Fatalf("Failed to create default NAD: %v", err)
+	}
+
+	node := &testNode{
+		Name:              "benchmark-node",
+		SubnetsAnnotation: generateNodeSubnetsAnnotation(numExistingRAs + 1), // +1 for the RA being benchmarked
+	}
+	_, err = fakeClientset.KubeClient.CoreV1().Nodes().Create(context.Background(), node.Node(), metav1.CreateOptions{})
+	if err != nil {
+		tb.Fatalf("Failed to create node: %v", err)
+	}
+
+	// Create existing RAs and CUDNs (1:1 ratio, dualstack)
+	for i := 0; i < numExistingRAs; i++ {
+		ns := &testNamespace{
+			Name: fmt.Sprintf("existing-ns-%d", i),
+		}
+		_, err = fakeClientset.KubeClient.CoreV1().Namespaces().Create(context.Background(), ns.Namespace(), metav1.CreateOptions{})
+		if err != nil {
+			tb.Fatalf("Failed to create existing namespace %d: %v", i, err)
+		}
+
+		nad := &testNAD{
+			Name:      fmt.Sprintf("existing-net-%d", i),
+			Namespace: fmt.Sprintf("existing-ns-%d", i),
+			Network:   util.GenerateCUDNNetworkName(fmt.Sprintf("existing-net-%d", i)),
+			Topology:  topology,
+			Subnet:    generateNonOverlappingSubnet(i),
+			Labels:    map[string]string{fmt.Sprintf("existing-ra-%d", i): "true"},
+		}
+		_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nad.Namespace).Create(context.Background(), nad.NAD(), metav1.CreateOptions{})
+		if err != nil {
+			tb.Fatalf("Failed to create existing NAD %d: %v", i, err)
+		}
+
+		ra := &testRA{
+			Name:            fmt.Sprintf("existing-ra-%d", i),
+			AdvertisePods:   true,
+			NetworkSelector: map[string]string{fmt.Sprintf("existing-ra-%d", i): "true"},
+		}
+		_, err = fakeClientset.RouteAdvertisementsClient.K8sV1().RouteAdvertisements().Create(context.Background(), ra.RouteAdvertisements(), metav1.CreateOptions{})
+		if err != nil {
+			tb.Fatalf("Failed to create existing RA %d: %v", i, err)
+		}
+	}
+
+	targetNS := &testNamespace{
+		Name: "benchmark-ns",
+	}
+	_, err = fakeClientset.KubeClient.CoreV1().Namespaces().Create(context.Background(), targetNS.Namespace(), metav1.CreateOptions{})
+	if err != nil {
+		tb.Fatalf("Failed to create target namespace: %v", err)
+	}
+
+	targetNAD := &testNAD{
+		Name:      "benchmark-net",
+		Namespace: "benchmark-ns",
+		Network:   util.GenerateCUDNNetworkName("benchmark-net"),
+		Topology:  topology,
+		Subnet:    generateNonOverlappingSubnet(numExistingRAs),
+		Labels:    map[string]string{"benchmark": "true"},
+	}
+	_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(targetNAD.Namespace).Create(context.Background(), targetNAD.NAD(), metav1.CreateOptions{})
+	if err != nil {
+		tb.Fatalf("Failed to create target NAD: %v", err)
+	}
+
+	targetRA := &testRA{
+		Name:            "benchmark-ra",
+		AdvertisePods:   true,
+		NetworkSelector: map[string]string{"benchmark": "true"},
+	}
+	_, err = fakeClientset.RouteAdvertisementsClient.K8sV1().RouteAdvertisements().Create(context.Background(), targetRA.RouteAdvertisements(), metav1.CreateOptions{})
+	if err != nil {
+		tb.Fatalf("Failed to create target RA: %v", err)
+	}
+
+	// Create a simplified controller setup for benchmarking
+	wf, err := factory.NewClusterManagerWatchFactory(fakeClientset)
+	if err != nil {
+		tb.Fatalf("Failed to create watch factory: %v", err)
+	}
+
+	if err := wf.Start(); err != nil {
+		tb.Fatalf("Failed to start watch factory: %v", err)
+	}
+	cache.WaitForCacheSync(
+		context.Background().Done(),
+		wf.RouteAdvertisementsInformer().Informer().HasSynced,
+		wf.NADInformer().Informer().HasSynced,
+		wf.NodeCoreInformer().Informer().HasSynced,
+	)
+
+	nm, err := networkmanager.NewForCluster(&nmtest.FakeControllerManager{}, wf, fakeClientset, nil)
+	if err != nil {
+		tb.Fatalf("Failed to create network manager: %v", err)
+	}
+
+	if err := nm.Start(); err != nil {
+		tb.Fatalf("Failed to start network manager: %v", err)
+	}
+
+	// Wait for network manager to process NADs
+	time.Sleep(50 * time.Millisecond)
+
+	controller := NewController(nm.Interface(), wf, fakeClientset)
+
+	targetRAObj := targetRA.RouteAdvertisements()
+	selectedNADs := []*nadtypes.NetworkAttachmentDefinition{targetNAD.NAD()}
+
+	selectedNetworks, err := controller.buildSelectedNetworkInfo(selectedNADs, sets.New(targetRAObj.Spec.Advertisements...))
+	if err != nil {
+		tb.Fatalf("Failed to build selected network info: %v", err)
+	}
+
+	// Ensure we have subnets for meaningful benchmarking
+	if len(selectedNetworks.subnets) == 0 {
+		tb.Fatalf("No subnets found in selected networks - network manager may not have processed NADs")
+	}
+
+	return &benchmarkSetup{
+		controller:       controller,
+		targetRAObj:      targetRAObj,
+		selectedNetworks: selectedNetworks,
+	}
+}
+
+// generateNodeSubnetsAnnotation generates a node subnets annotation for the given number of networks
+func generateNodeSubnetsAnnotation(numNetworks int) string {
+	subnets := make(map[string][]string)
+	subnets["default"] = []string{"10.128.0.0/24", "fd01::/64"}
+
+	for i := 0; i < numNetworks-1; i++ {
+		networkName := util.GenerateCUDNNetworkName(fmt.Sprintf("existing-net-%d", i))
+		dualStackSubnet := generateNonOverlappingNodeSubnet(i)
+		subnetParts := strings.Split(dualStackSubnet, ",")
+		subnets[networkName] = subnetParts
+	}
+
+	benchmarkNetworkName := util.GenerateCUDNNetworkName("benchmark-net")
+	dualStackSubnet := generateNonOverlappingNodeSubnet(numNetworks - 1)
+	subnetParts := strings.Split(dualStackSubnet, ",")
+	subnets[benchmarkNetworkName] = subnetParts
+
+	var pairs []string
+	for network, subnetList := range subnets {
+		subnetJSON := "[\"" + strings.Join(subnetList, "\",\"") + "\"]"
+		pairs = append(pairs, fmt.Sprintf("\"%s\":%s", network, subnetJSON))
+	}
+	return fmt.Sprintf("{%s}", strings.Join(pairs, ", "))
+}
+
+// generateNonOverlappingSubnet generates a unique dualstack subnet for the given index to avoid overlaps
+// Returns both IPv4 and IPv6 subnets separated by comma
+func generateNonOverlappingSubnet(index int) string {
+	// Use 10.x.y.0/24 to support larger ranges
+	// This allows for up to 65536 different subnets (256 * 256)
+	thirdOctet := index / 256
+	fourthOctet := index % 256
+	ipv4 := fmt.Sprintf("10.%d.%d.0/24", thirdOctet, fourthOctet)
+
+	ipv6 := fmt.Sprintf("fd00:%x::/64", index)
+
+	return fmt.Sprintf("%s,%s", ipv4, ipv6)
+}
+
+// generateNonOverlappingNodeSubnet generates a unique dualstack node subnet (smaller than the network subnet)
+func generateNonOverlappingNodeSubnet(index int) string {
+	thirdOctet := index / 256
+	fourthOctet := index % 256
+	ipv4 := fmt.Sprintf("10.%d.%d.0/26", thirdOctet, fourthOctet)
+
+	ipv6 := fmt.Sprintf("fd00:%x::/66", index)
+
+	return fmt.Sprintf("%s,%s", ipv4, ipv6)
 }
