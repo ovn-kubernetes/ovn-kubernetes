@@ -3,6 +3,7 @@ package userdefinednetwork
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	netv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
@@ -31,6 +32,8 @@ func NetAttachDefNotInUse(nad *netv1.NetworkAttachmentDefinition, pods []*corev1
 		}
 	}
 	if len(connectedPods) > 0 {
+		// Sort the connected pods to ensure a consistent error
+		slices.Sort(connectedPods)
 		return fmt.Errorf("network in use by the following pods: %v", connectedPods)
 	}
 	return nil

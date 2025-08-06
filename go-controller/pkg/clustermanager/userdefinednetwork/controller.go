@@ -15,6 +15,7 @@ import (
 	netv1lister "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -87,8 +88,6 @@ type Controller struct {
 	eventRecorder               record.EventRecorder
 }
 
-const defaultNetworkInUseCheckInterval = 1 * time.Minute
-
 func New(
 	nadClient netv1clientset.Interface,
 	nadInfomer netv1infomer.NetworkAttachmentDefinitionInformer,
@@ -104,18 +103,17 @@ func New(
 	udnLister := udnInformer.Lister()
 	cudnLister := cudnInformer.Lister()
 	c := &Controller{
-		nadClient:                   nadClient,
-		nadLister:                   nadInfomer.Lister(),
-		udnClient:                   udnClient,
-		udnLister:                   udnLister,
-		cudnLister:                  cudnLister,
-		renderNadFn:                 renderNadFn,
-		podInformer:                 podInformer,
-		namespaceInformer:           namespaceInformer,
-		networkManager:              networkManager,
-		networkInUseRequeueInterval: defaultNetworkInUseCheckInterval,
-		namespaceTracker:            map[string]sets.Set[string]{},
-		eventRecorder:               eventRecorder,
+		nadClient:         nadClient,
+		nadLister:         nadInfomer.Lister(),
+		udnClient:         udnClient,
+		udnLister:         udnLister,
+		cudnLister:        cudnLister,
+		renderNadFn:       renderNadFn,
+		podInformer:       podInformer,
+		namespaceInformer: namespaceInformer,
+		networkManager:    networkManager,
+		namespaceTracker:  map[string]sets.Set[string]{},
+		eventRecorder:     eventRecorder,
 	}
 	udnCfg := &controller.ControllerConfig[userdefinednetworkv1.UserDefinedNetwork]{
 		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
@@ -389,7 +387,8 @@ func (c *Controller) reconcileUDN(key string) error {
 
 	var networkInUse *networkInUseError
 	if errors.As(syncErr, &networkInUse) {
-		c.udnController.ReconcileAfter(key, c.networkInUseRequeueInterval)
+		// Call ReconcileRateLimited directly to ensure retries without the default limits
+		c.udnController.ReconcileRateLimited(key)
 		return updateStatusErr
 	}
 
@@ -452,34 +451,34 @@ func (c *Controller) updateUserDefinedNetworkStatus(udn *userdefinednetworkv1.Us
 
 	networkCreatedCondition := newNetworkCreatedCondition(nad, syncError)
 
-	conditions, updated := updateCondition(udn.Status.Conditions, networkCreatedCondition)
-
-	if updated {
-		var err error
-		conditionsApply := make([]*metaapplyv1.ConditionApplyConfiguration, len(conditions))
-		for i := range conditions {
-			conditionsApply[i] = &metaapplyv1.ConditionApplyConfiguration{
-				Type:               &conditions[i].Type,
-				Status:             &conditions[i].Status,
-				LastTransitionTime: &conditions[i].LastTransitionTime,
-				Reason:             &conditions[i].Reason,
-				Message:            &conditions[i].Message,
-			}
-		}
-		udnApplyConf := udnapplyconfkv1.UserDefinedNetwork(udn.Name, udn.Namespace).
-			WithStatus(udnapplyconfkv1.UserDefinedNetworkStatus().
-				WithConditions(conditionsApply...))
-		opts := metav1.ApplyOptions{FieldManager: "user-defined-network-controller"}
-		udn, err = c.udnClient.K8sV1().UserDefinedNetworks(udn.Namespace).ApplyStatus(context.Background(), udnApplyConf, opts)
-		if err != nil {
-			if apierrors.IsNotFound(err) {
-				return nil
-			}
-			return fmt.Errorf("failed to update UserDefinedNetwork status: %w", err)
-		}
-		klog.Infof("Updated status UserDefinedNetwork [%s/%s]", udn.Namespace, udn.Name)
+	updated := meta.SetStatusCondition(&udn.Status.Conditions, *networkCreatedCondition)
+	if !updated {
+		return nil
 	}
 
+	var err error
+	conditionsApply := make([]*metaapplyv1.ConditionApplyConfiguration, len(udn.Status.Conditions))
+	for i, condition := range udn.Status.Conditions {
+		conditionsApply[i] = &metaapplyv1.ConditionApplyConfiguration{
+			Type:               &condition.Type,
+			Status:             &condition.Status,
+			LastTransitionTime: &condition.LastTransitionTime,
+			Reason:             &condition.Reason,
+			Message:            &condition.Message,
+		}
+	}
+	udnApplyConf := udnapplyconfkv1.UserDefinedNetwork(udn.Name, udn.Namespace).
+		WithStatus(udnapplyconfkv1.UserDefinedNetworkStatus().
+			WithConditions(conditionsApply...))
+	opts := metav1.ApplyOptions{FieldManager: "user-defined-network-controller"}
+	udn, err = c.udnClient.K8sV1().UserDefinedNetworks(udn.Namespace).ApplyStatus(context.Background(), udnApplyConf, opts)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to update UserDefinedNetwork status: %w", err)
+	}
+	klog.Infof("Updated status UserDefinedNetwork [%s/%s]", udn.Namespace, udn.Name)
 	return nil
 }
 
@@ -505,21 +504,6 @@ func newNetworkCreatedCondition(nad *netv1.NetworkAttachmentDefinition, syncErro
 	}
 
 	return networkCreatedCondition
-}
-
-func updateCondition(conditions []metav1.Condition, cond *metav1.Condition) ([]metav1.Condition, bool) {
-	if len(conditions) == 0 {
-		return append(conditions, *cond), true
-	}
-
-	idx := slices.IndexFunc(conditions, func(c metav1.Condition) bool {
-		return (c.Type == cond.Type) &&
-			(c.Status != cond.Status || c.Reason != cond.Reason || c.Message != cond.Message)
-	})
-	if idx != -1 {
-		return slices.Replace(conditions, idx, idx+1, *cond), true
-	}
-	return conditions, false
 }
 
 func (c *Controller) cudnNeedUpdate(_ *userdefinednetworkv1.ClusterUserDefinedNetwork, _ *userdefinednetworkv1.ClusterUserDefinedNetwork) bool {
@@ -549,7 +533,8 @@ func (c *Controller) reconcileCUDN(key string) error {
 
 	var networkInUse *networkInUseError
 	if errors.As(syncErr, &networkInUse) {
-		c.cudnController.ReconcileAfter(key, c.networkInUseRequeueInterval)
+		// Call ReconcileRateLimited directly to ensure retries without the default limits
+		c.cudnController.ReconcileRateLimited(key)
 		return updateStatusErr
 	}
 
@@ -688,18 +673,18 @@ func (c *Controller) updateClusterUDNStatus(cudn *userdefinednetworkv1.ClusterUs
 
 	networkCreatedCondition := newClusterNetworCreatedCondition(nads, syncError)
 
-	conditions, updated := updateCondition(cudn.Status.Conditions, networkCreatedCondition)
+	updated := meta.SetStatusCondition(&cudn.Status.Conditions, networkCreatedCondition)
 	if !updated {
 		return nil
 	}
-	conditionsApply := make([]*metaapplyv1.ConditionApplyConfiguration, len(conditions))
-	for i := range conditions {
+	conditionsApply := make([]*metaapplyv1.ConditionApplyConfiguration, len(cudn.Status.Conditions))
+	for i, condition := range cudn.Status.Conditions {
 		conditionsApply[i] = &metaapplyv1.ConditionApplyConfiguration{
-			Type:               &conditions[i].Type,
-			Status:             &conditions[i].Status,
-			LastTransitionTime: &conditions[i].LastTransitionTime,
-			Reason:             &conditions[i].Reason,
-			Message:            &conditions[i].Message,
+			Type:               &condition.Type,
+			Status:             &condition.Status,
+			LastTransitionTime: &condition.LastTransitionTime,
+			Reason:             &condition.Reason,
+			Message:            &condition.Message,
 		}
 	}
 	var err error
@@ -720,7 +705,7 @@ func (c *Controller) updateClusterUDNStatus(cudn *userdefinednetworkv1.ClusterUs
 	return nil
 }
 
-func newClusterNetworCreatedCondition(nads []netv1.NetworkAttachmentDefinition, syncError error) *metav1.Condition {
+func newClusterNetworCreatedCondition(nads []netv1.NetworkAttachmentDefinition, syncError error) metav1.Condition {
 	var namespaces []string
 	for _, nad := range nads {
 		namespaces = append(namespaces, nad.Namespace)
@@ -728,7 +713,7 @@ func newClusterNetworCreatedCondition(nads []netv1.NetworkAttachmentDefinition, 
 	affectedNamespaces := strings.Join(namespaces, ", ")
 
 	now := metav1.Now()
-	condition := &metav1.Condition{
+	condition := metav1.Condition{
 		Type:               conditionTypeNetworkCreated,
 		Status:             metav1.ConditionTrue,
 		Reason:             "NetworkAttachmentDefinitionCreated",

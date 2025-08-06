@@ -27,6 +27,7 @@ const (
 // to reconcile through its Reconcile method
 type Reconciler interface {
 	Reconcile(key string)
+	ReconcileRateLimited(key string)
 	ReconcileAfter(key string, duration time.Duration)
 	addHandler() error
 	startWorkers() error
@@ -270,6 +271,10 @@ func (c *controller[T]) processNextQueueItem() bool {
 
 func (c *controller[T]) Reconcile(key string) {
 	c.queue.Add(key)
+}
+
+func (c *controller[T]) ReconcileRateLimited(key string) {
+	c.queue.AddRateLimited(key)
 }
 
 func (c *controller[T]) ReconcileAfter(key string, duration time.Duration) {
