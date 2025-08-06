@@ -39,6 +39,11 @@ type Interface interface {
 	// GetNetwork returns the network of the given name or nil if unknown
 	GetNetwork(name string) util.NetInfo
 
+	// GetActiveNetwork returns the NetInfo currently held by the controller for the given network.
+	// This may differ from the NetInfo returned by GetNetwork which reflects the API state.
+	// Returns nil if there is no running controller for the provided network.
+	GetActiveNetwork(network string) util.NetInfo
+
 	// DoWithLock takes care of locking and unlocking while iterating over all role primary user defined networks.
 	DoWithLock(f func(network util.NetInfo) error) error
 	GetActiveNetworkNamespaces(networkName string) ([]string, error)
@@ -202,6 +207,13 @@ func (nm defaultNetworkManager) DoWithLock(f func(network util.NetInfo) error) e
 
 func (nm defaultNetworkManager) GetActiveNetworkNamespaces(_ string) ([]string, error) {
 	return []string{"default"}, nil
+}
+
+func (nm defaultNetworkManager) GetActiveNetwork(network string) util.NetInfo {
+	if network != types.DefaultNetworkName {
+		return nil
+	}
+	return &util.DefaultNetInfo{}
 }
 
 var def Controller = &defaultNetworkManager{}
