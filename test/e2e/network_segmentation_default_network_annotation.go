@@ -103,4 +103,92 @@ var _ = Describe("Network Segmentation: Default network multus annotation", func
 			mac: "02:A1:B2:C3:D4:E5",
 		}),
 	)
+
+	Context("ValidatingAdmissionPolicy protection", func() {
+		It("should prevent adding, modifying and removing the default-network annotation on existing pods", func() {
+			if !isPreConfiguredUdnAddressesEnabled() {
+				Skip("ENABLE_PRE_CONF_UDN_ADDR not configured")
+			}
+
+			namespace, err := f.CreateNamespace(context.TODO(), f.BaseName, map[string]string{
+				"e2e-framework":           f.BaseName,
+				RequiredUDNNamespaceLabel: "",
+			})
+			Expect(err).NotTo(HaveOccurred(), "Should create namespace for test")
+			f.Namespace = namespace
+
+			udnClient, err := udnclientset.NewForConfig(f.ClientConfig())
+			Expect(err).NotTo(HaveOccurred(), "Should create UDN client")
+
+			// Create a UserDefinedNetwork for the test
+			udn := &udnv1.UserDefinedNetwork{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-network",
+					Namespace: f.Namespace.Name,
+				},
+				Spec: udnv1.UserDefinedNetworkSpec{
+					Topology: udnv1.NetworkTopologyLayer2,
+					Layer2: &udnv1.Layer2Config{
+						Role: udnv1.NetworkRolePrimary,
+						Subnets: filterDualStackCIDRs(f.ClientSet, []udnv1.CIDR{
+							"103.0.0.0/16",
+							"2014:100:200::0/60",
+						}),
+					},
+				},
+			}
+
+			By("Creating a UserDefinedNetwork")
+			udn, err = udnClient.K8sV1().UserDefinedNetworks(f.Namespace.Name).Create(context.TODO(), udn, metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred(), "Should create UserDefinedNetwork")
+			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, udn.Namespace, udn.Name), 5*time.Second, time.Second).Should(Succeed())
+
+			By("Creating a pod without the default-network annotation")
+			podWithoutAnnotation := e2epod.NewAgnhostPod(f.Namespace.Name, "pod-without-annotation", nil, nil, nil)
+			podWithoutAnnotation.Spec.Containers[0].Command = []string{"sleep", "infinity"}
+			podWithoutAnnotation = e2epod.NewPodClient(f).CreateSync(context.TODO(), podWithoutAnnotation)
+
+			By("Creating a pod with the default-network annotation")
+
+			nse := []nadapi.NetworkSelectionElement{{
+				Name:       "default",
+				Namespace:  "ovn-kubernetes",
+				IPRequest:  []string{"103.0.0.3/16", "2014:100:200::3/60"},
+				MacRequest: "02:A1:B2:C3:D4:E5",
+			}}
+			marshalledNSE, err := json.Marshal(nse)
+			Expect(err).NotTo(HaveOccurred(), "Should marshal network selection element")
+
+			podWithAnnotation := e2epod.NewAgnhostPod(f.Namespace.Name, "pod-with-annotation", nil, nil, nil)
+			podWithAnnotation.Annotations = map[string]string{
+				"v1.multus-cni.io/default-network": string(marshalledNSE),
+			}
+			podWithAnnotation.Spec.Containers[0].Command = []string{"sleep", "infinity"}
+			podWithAnnotation = e2epod.NewPodClient(f).CreateSync(context.TODO(), podWithAnnotation)
+
+			By("Attempting to add the default-network annotation to the pod without annotation")
+			podWithoutAnnotation.Annotations = map[string]string{
+				"v1.multus-cni.io/default-network": string(marshalledNSE),
+			}
+
+			_, err = f.ClientSet.CoreV1().Pods(f.Namespace.Name).Update(context.TODO(), podWithoutAnnotation, metav1.UpdateOptions{})
+			Expect(err).To(HaveOccurred(), "Should fail to add default-network annotation to existing pod")
+			Expect(err).To(MatchError(ContainSubstring("The 'v1.multus-cni.io/default-network' annotation cannot be changed after the pod was created")))
+
+			By("Attempting to modify the default-network annotation from the pod with annotation")
+			updatedPodWithAnnotation := podWithAnnotation.DeepCopy()
+			updatedPodWithAnnotation.Annotations["v1.multus-cni.io/default-network"] = `[{}]`
+
+			_, err = f.ClientSet.CoreV1().Pods(f.Namespace.Name).Update(context.TODO(), updatedPodWithAnnotation, metav1.UpdateOptions{})
+			Expect(err).To(HaveOccurred(), "Should fail to modify default-network annotation from existing pod")
+			Expect(err).To(MatchError(ContainSubstring("The 'v1.multus-cni.io/default-network' annotation cannot be changed after the pod was created")))
+
+			By("Attempting to remove the default-network annotation from the pod with annotation")
+			delete(podWithAnnotation.Annotations, "v1.multus-cni.io/default-network")
+
+			_, err = f.ClientSet.CoreV1().Pods(f.Namespace.Name).Update(context.TODO(), podWithAnnotation, metav1.UpdateOptions{})
+			Expect(err).To(HaveOccurred(), "Should fail to remove default-network annotation from existing pod")
+			Expect(err).To(MatchError(ContainSubstring("The 'v1.multus-cni.io/default-network' annotation cannot be changed after the pod was created")))
+		})
+	})
 })

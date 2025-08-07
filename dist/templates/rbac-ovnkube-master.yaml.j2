@@ -191,3 +191,42 @@ spec:
         apiVersions: ["v1"]
         operations:  ["UPDATE"]
         resources:   ["namespaces"]
+
+{% if ovn_pre_conf_udn_addr_enable == "true" -%}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: default-network-annotation
+spec:
+  matchConstraints:
+    resourceRules:
+      - apiGroups:   [""]
+        apiVersions: ["v1"]
+        operations:  ["UPDATE"]
+        resources:   ["pods"]
+  failurePolicy: Fail
+  validations:
+    # Prevent any changes to the default-network annotation after pod creation:
+    # - If annotation exists in old pod: new pod must have same annotation with identical value
+    # - If annotation doesn't exist in old pod: new pod must also not have it
+    - expression: >
+        ('v1.multus-cni.io/default-network' in oldObject.metadata.annotations)
+        ? ('v1.multus-cni.io/default-network' in object.metadata.annotations) && oldObject.metadata.annotations['v1.multus-cni.io/default-network'] == object.metadata.annotations['v1.multus-cni.io/default-network']
+        : !('v1.multus-cni.io/default-network' in object.metadata.annotations)
+      message: "The 'v1.multus-cni.io/default-network' annotation cannot be changed after the pod was created"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: default-network-annotation-binding
+spec:
+  policyName: default-network-annotation
+  validationActions: [Deny]
+  matchResources:
+    resourceRules:
+      - apiGroups:   [""]
+        apiVersions: ["v1"]
+        operations:  ["UPDATE"]
+        resources:   ["pods"]
+{%- endif %}
