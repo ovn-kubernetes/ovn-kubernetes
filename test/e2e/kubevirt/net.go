@@ -99,8 +99,8 @@ func GetDefaultUDNGWRouterIPs(node *corev1.Node) ([]*net.IP, error) {
 		// Don't consider this node as cluster-manager has not allocated node id yet.
 		return nil, err
 	}
-	udnJoinNetv4 := "100.65.0.0/16"
-	udnJoinNetv6 := "fd99::/64"
+	udnJoinNetv4 := "100.88.0.0/16"
+	udnJoinNetv6 := "fd97::/64"
 	res := []*net.IP{}
 	if config.IPv4Mode {
 		gwIP, _, _ := net.ParseCIDR(udnJoinNetv4)
