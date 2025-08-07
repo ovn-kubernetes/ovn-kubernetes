@@ -91,7 +91,11 @@ func (in *IPAMClaimStatus) DeepCopyInto(out *IPAMClaimStatus) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
-	out.OwnerPod = in.OwnerPod
+	if in.OwnerPod != nil {
+		in, out := &in.OwnerPod, &out.OwnerPod
+		*out = new(OwnerPod)
+		**out = **in
+	}
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
 		*out = make([]v1.Condition, len(*in))

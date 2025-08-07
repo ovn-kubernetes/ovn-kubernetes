@@ -421,7 +421,7 @@ install_mpolicy_crd() {
 
 install_ipamclaim_crd() {
   echo "Installing IPAMClaim CRD ..."
-  ipamclaims_manifest="https://raw.githubusercontent.com/k8snetworkplumbingwg/ipamclaims/v0.4.0-alpha/artifacts/k8s.cni.cncf.io_ipamclaims.yaml"
+  ipamclaims_manifest="https://raw.githubusercontent.com/k8snetworkplumbingwg/ipamclaims/v0.5.1-alpha/artifacts/k8s.cni.cncf.io_ipamclaims.yaml"
   run_kubectl apply -f "$ipamclaims_manifest"
 }
 

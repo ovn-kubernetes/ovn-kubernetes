@@ -40,7 +40,7 @@ type IPAMClaimStatus struct {
 	// The list of IP addresses (v4, v6) that were allocated for the pod interface
 	IPs []string `json:"ips"`
 	// The name of the pod holding the IPAMClaim
-	OwnerPod OwnerPod `json:"ownerPod,omitempty"`
+	OwnerPod *OwnerPod `json:"ownerPod,omitempty"`
 	// Conditions contains details for one aspect of the current state of this API Resource
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
@@ -54,5 +54,5 @@ type IPAMClaimList struct {
 }
 
 type OwnerPod struct {
-	Name string `json:"name"`
+	Name string `json:"name,omitempty"`
 }
