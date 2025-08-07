@@ -262,6 +262,10 @@ func (allocator *allocator) AllocateNextIPs(name string) ([]*net.IPNet, error) {
 	}()
 
 	for idx, ipam := range subnetInfo.ipams {
+		if subnetInfo.subnets[idx].String() == "10.0.0.0/24" {
+			klog.Warningf("RAM samsam not asigning IP!")
+			continue
+		}
 		ip, err = ipam.AllocateNext()
 		if err != nil {
 			if errors.Is(err, ipallocator.ErrFull) {
