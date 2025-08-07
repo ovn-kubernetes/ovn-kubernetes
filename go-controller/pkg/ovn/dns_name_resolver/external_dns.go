@@ -159,7 +159,7 @@ func (extEgDNS *ExternalEgressDNS) reconcileDNSNameResolver(key string) error {
 			addresses = append(addresses, resolvedAddress.IP)
 		}
 	}
-	err = extEgDNS.dnsTracker.addDNSName(dnsName, addresses)
+	err = extEgDNS.dnsTracker.addOrUpdateDNSName(dnsName, addresses)
 	return err
 }
 
