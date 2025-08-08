@@ -168,7 +168,8 @@ const (
 	OvnNetworkNameAnnotation = OvnK8sPrefix + "/network-name"
 	// OvnNetworkIDAnnotation is a unique network identifier annotated on the
 	// NAD by cluster manager nad controller
-	OvnNetworkIDAnnotation = OvnK8sPrefix + "/network-id"
+	OvnNetworkIDAnnotation         = OvnK8sPrefix + "/network-id"
+	Layer2RouterTopologyAnnotation = OvnK8sPrefix + "/layer2-router-topology"
 
 	// Deprecated: we used to set topology version as an annotation on the node. We don't do this anymore.
 	OvnK8sTopoAnno            = OvnK8sPrefix + "/" + "topology-version"
@@ -229,6 +230,8 @@ const (
 	Layer3Topology   = "layer3"
 	Layer2Topology   = "layer2"
 	LocalnetTopology = "localnet"
+
+	Layer2RouterTopology = "layer2-router"
 
 	// different types of network roles
 	// defined in CNI netconf as a user defined network

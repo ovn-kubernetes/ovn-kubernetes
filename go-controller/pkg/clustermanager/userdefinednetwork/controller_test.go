@@ -1544,7 +1544,7 @@ func failRenderNadStub(err error) RenderNetAttachDefManifest {
 }
 
 func newRenderNadStub(nad *netv1.NetworkAttachmentDefinition, err error) RenderNetAttachDefManifest {
-	return func(client.Object, string) (*netv1.NetworkAttachmentDefinition, error) {
+	return func(client.Object, string, bool) (*netv1.NetworkAttachmentDefinition, error) {
 		return nad, err
 	}
 }

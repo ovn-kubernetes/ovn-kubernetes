@@ -35,7 +35,7 @@ type SpecGetter interface {
 	GetLocalnet() *userdefinednetworkv1.LocalnetConfig
 }
 
-func RenderNetAttachDefManifest(obj client.Object, targetNamespace string) (*netv1.NetworkAttachmentDefinition, error) {
+func RenderNetAttachDefManifest(obj client.Object, targetNamespace string, nadExists bool) (*netv1.NetworkAttachmentDefinition, error) {
 	if obj == nil {
 		return nil, nil
 	}
@@ -62,7 +62,7 @@ func RenderNetAttachDefManifest(obj client.Object, targetNamespace string) (*net
 
 	nadName := util.GetNADName(targetNamespace, obj.GetName())
 
-	nadSpec, err := RenderNADSpec(networkName, nadName, spec)
+	nadSpec, err := RenderNADSpec(networkName, nadName, spec, nadExists)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +78,7 @@ func RenderNetAttachDefManifest(obj client.Object, targetNamespace string) (*net
 	}, nil
 }
 
-func RenderNADSpec(networkName, nadName string, spec SpecGetter) (*netv1.NetworkAttachmentDefinitionSpec, error) {
+func RenderNADSpec(networkName, nadName string, spec SpecGetter, nadExists bool) (*netv1.NetworkAttachmentDefinitionSpec, error) {
 	if err := validateTopology(spec); err != nil {
 		return nil, fmt.Errorf("invalid topology specified: %w", err)
 	}
@@ -86,6 +86,9 @@ func RenderNADSpec(networkName, nadName string, spec SpecGetter) (*netv1.Network
 	cniNetConf, err := renderCNINetworkConfig(networkName, nadName, spec)
 	if err != nil {
 		return nil, fmt.Errorf("failed to render CNI network config: %w", err)
+	}
+	if cniNetConf["topology"].(string) == types.Layer2Topology && !nadExists {
+		cniNetConf["topologyVariant"] = types.Layer2RouterTopology
 	}
 	cniNetConfRaw, err := json.Marshal(cniNetConf)
 	if err != nil {

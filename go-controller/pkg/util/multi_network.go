@@ -36,6 +36,7 @@ type NetInfo interface {
 	IsPrimaryNetwork() bool
 	IsSecondary() bool
 	TopologyType() string
+	TopologyVariant() string
 	MTU() int
 	IPMode() (bool, bool)
 	Subnets() []config.CIDRNetworkEntry
@@ -552,6 +553,11 @@ func (nInfo *DefaultNetInfo) TopologyType() string {
 	return types.Layer3Topology
 }
 
+func (nInfo *DefaultNetInfo) TopologyVariant() string {
+	// TODO(trozet): optimize other checks using this function after changing default network type from "" -> L3
+	return types.Layer3Topology
+}
+
 // MTU returns the defaultNetConfInfo's MTU value
 func (nInfo *DefaultNetInfo) MTU() int {
 	return config.Default.MTU
@@ -635,8 +641,12 @@ type secondaryNetInfo struct {
 	netName string
 	// Should this secondary network be used
 	// as the pod's primary network?
-	primaryNetwork     bool
-	topology           string
+	primaryNetwork bool
+	topology       string
+	// topoVariant is the topology variant of the secondary network, in most cases equals to topology.
+	// Only used for Layer2 topology now: we support legacy Layer2Topology and new Layer2RouterTopology.
+	// While both of them are Layer2 topologies, specific controllers may need to know which variant is used.
+	topoVariant        string
 	mtu                int
 	vlan               uint
 	allowPersistentIPs bool
@@ -740,6 +750,10 @@ func (nInfo *secondaryNetInfo) getPrefix() string {
 // TopologyType returns the topology type
 func (nInfo *secondaryNetInfo) TopologyType() string {
 	return nInfo.topology
+}
+
+func (nInfo *secondaryNetInfo) TopologyVariant() string {
+	return nInfo.topoVariant
 }
 
 // MTU returns the layer3NetConfInfo's MTU value
@@ -854,6 +868,7 @@ func (nInfo *secondaryNetInfo) copy() *secondaryNetInfo {
 		netName:             nInfo.netName,
 		primaryNetwork:      nInfo.primaryNetwork,
 		topology:            nInfo.topology,
+		topoVariant:         nInfo.topoVariant,
 		mtu:                 nInfo.mtu,
 		vlan:                nInfo.vlan,
 		allowPersistentIPs:  nInfo.allowPersistentIPs,
@@ -883,6 +898,7 @@ func newLayer3NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 		netName:        netconf.Name,
 		primaryNetwork: netconf.Role == types.NetworkRolePrimary,
 		topology:       types.Layer3Topology,
+		topoVariant:    types.Layer3Topology,
 		subnets:        subnets,
 		joinSubnets:    joinSubnets,
 		mtu:            netconf.MTU,
@@ -904,10 +920,15 @@ func newLayer2NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 	if err != nil {
 		return nil, err
 	}
+	topoVariant := types.Layer2Topology
+	if netconf.TopologyVariant != "" {
+		topoVariant = netconf.TopologyVariant
+	}
 	ni := &secondaryNetInfo{
 		netName:            netconf.Name,
 		primaryNetwork:     netconf.Role == types.NetworkRolePrimary,
 		topology:           types.Layer2Topology,
+		topoVariant:        topoVariant,
 		subnets:            subnets,
 		joinSubnets:        joinSubnets,
 		excludeSubnets:     excludes,
@@ -931,6 +952,7 @@ func newLocalnetNetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error
 	ni := &secondaryNetInfo{
 		netName:             netconf.Name,
 		topology:            types.LocalnetTopology,
+		topoVariant:         types.LocalnetTopology,
 		subnets:             subnets,
 		excludeSubnets:      excludes,
 		mtu:                 netconf.MTU,
