@@ -6,7 +6,7 @@ toolchain go1.23.6
 
 require (
 	github.com/google/go-cmp v0.6.0
-	github.com/k8snetworkplumbingwg/ipamclaims v0.5.0-alpha
+	github.com/k8snetworkplumbingwg/ipamclaims v0.5.1-alpha
 	github.com/k8snetworkplumbingwg/multi-networkpolicy v1.0.1
 	github.com/k8snetworkplumbingwg/network-attachment-definition-client v1.7.7
 	github.com/onsi/ginkgo/v2 v2.22.0
