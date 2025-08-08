@@ -55,6 +55,37 @@ run_kubectl() {
   done
 }
 
+setup_kubectl_bin() {
+    ###########################################################################
+    # Description:                                                            #
+    # setup kubectl for querying the cluster                                  #
+    #                                                                         #
+    # Arguments:                                                              #
+    #   $1 - error message if not provided, it will just exit                 #
+    ###########################################################################
+    if [ ! -d "./bin" ]
+    then
+        mkdir -p ./bin
+        if_error_exit "Failed to create bin dir!"
+    fi
+
+    if [[ "$OSTYPE" == "linux-gnu" ]]; then
+        OS_TYPE="linux"
+    elif [[ "$OSTYPE" == "darwin"* ]]; then
+        OS_TYPE="darwin"
+    fi
+
+    pushd ./bin
+       if [ ! -f ./kubectl ]; then
+           curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/${OS_TYPE}/${ARCH}/kubectl"
+           if_error_exit "Failed to download kubectl failed!"
+       fi
+    popd
+
+    chmod +x ./bin/kubectl
+    export PATH=${PATH}:$(pwd)/bin
+}
+
 command_exists() {
   cmd="$1"
   command -v ${cmd} >/dev/null 2>&1
@@ -843,5 +874,11 @@ EOF
         fi
       fi
     done
+  fi
+}
+
+interconnect_arg_check() {
+  if [ "${IC_ARG_PROVIDED:-}" = "true" ]; then
+    echo "INFO: Interconnect mode is now the default mode, you do not need to use pass -ic or --enable-interconnect anymore"
   fi
 }

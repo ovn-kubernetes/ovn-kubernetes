@@ -62,7 +62,7 @@ set_default_params() {
     KIND_NUM_MASTER=3
   fi
 
-  OVN_ENABLE_INTERCONNECT=${OVN_ENABLE_INTERCONNECT:-false}
+  OVN_ENABLE_INTERCONNECT=${OVN_ENABLE_INTERCONNECT:-true}
   if [ "$OVN_COMPACT_MODE" == true ] && [ "$OVN_ENABLE_INTERCONNECT" != false ]; then
      echo "Compact mode cannot be used together with Interconnect"
      exit 1
@@ -129,7 +129,7 @@ usage() {
     echo "-wk  | --num-workers                          Number of worker nodes. DEFAULT: 2 workers"
     echo "-cn  | --cluster-name                         Configure the kind cluster's name"
     echo "-dns | --enable-dnsnameresolver               Enable DNSNameResolver for resolving the DNS names used in the DNS rules of EgressFirewall."
-    echo "-ic  | --enable-interconnect                  Enable interconnect with each node as a zone (only valid if OVN_HA is false)"
+    echo "-ce  | --enable-central                       Deploy with OVN Central (Legacy Architecture)"
     echo "-npz | --nodes-per-zone                       Specify number of nodes per zone (Default 0, which means global zone; >0 means interconnect zone, where 1 for single-node zone, >1 for multi-node zone). If this value > 1, then (total k8s nodes (workers + 1) / num of nodes per zone) should be zero."
     echo ""
 
@@ -193,7 +193,11 @@ parse_args() {
                                                   ;;
             -dns | --enable-dnsnameresolver )     OVN_ENABLE_DNSNAMERESOLVER=true
                                                   ;;
+            -ce | --enable-central )              OVN_ENABLE_INTERCONNECT=false
+                                                  CENTRAL_ARG_PROVIDED=true
+                                                  ;;
             -ic | --enable-interconnect )         OVN_ENABLE_INTERCONNECT=true
+                                                  IC_ARG_PROVIDED=true
                                                   ;;
             -npz | --nodes-per-zone )             shift
                                                   if ! [[ "$1" =~ ^[0-9]+$ ]]; then
@@ -208,6 +212,11 @@ parse_args() {
         esac
         shift
     done
+
+    if [[ -n "${CENTRAL_ARG_PROVIDED:-}" && -n "${IC_ARG_PROVIDED:-}" ]]; then
+      echo "Cannot specify both --enable-central and --enable-interconnect" >&2
+      exit 1
+    fi
 }
 
 print_params() {
@@ -246,15 +255,23 @@ print_params() {
 }
 
 check_dependencies() {
-    for cmd in $OCI_BIN kubectl kind helm go ; do \
-         if ! command_exists $cmd ; then
-           2&>1 echo "Dependency not met: $cmd"
+    if ! command_exists kubectl ; then
+      echo "'kubectl' not found, installing"
+      setup_kubectl_bin
+    fi
+
+    for cmd in "$OCI_BIN" kind helm go ; do \
+         if ! command_exists "$cmd" ; then
+           echo "Dependency not met: $cmd"
            exit 1
         fi
     done
 
     # check for currently unsupported features
-    [ "${PLATFORM_IPV6_SUPPORT}" == "true" ] && { &>1 echo "Fatal: PLATFORM_IPV6_SUPPORT support not implemented yet"; exit 1; } ||:
+    if [ "${PLATFORM_IPV6_SUPPORT:-}" = "true" ]; then
+        echo "Fatal: PLATFORM_IPV6_SUPPORT support not implemented yet"
+        exit 1
+    fi
 }
 
 helm_prereqs() {
@@ -405,7 +422,7 @@ create_ovn_kubernetes() {
       label_ovn_single_node_zones
       value_file="values-single-node-zone.yaml"
       ovnkube_db_options=""
-    elif [[ $KIND_NUM_NODES_PER_ZONE > 1 ]]; then
+    elif [[ $KIND_NUM_NODES_PER_ZONE -gt 1 ]]; then
       label_ovn_multiple_nodes_zones
       value_file="values-multi-node-zone.yaml"
       ovnkube_db_options=""
@@ -506,3 +523,5 @@ fi
 if [ "$KIND_INSTALL_KUBEVIRT" == true ]; then
   install_kubevirt
 fi
+
+interconnect_arg_check
