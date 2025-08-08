@@ -11,17 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
-	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
-
 	"github.com/onsi/ginkgo/extensions/table"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -30,6 +24,12 @@ import (
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	utilnet "k8s.io/utils/net"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
+	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
 )
 
 // Validate the egress firewall policies by applying a policy and verify
@@ -99,7 +99,7 @@ var _ = ginkgo.Describe("e2e egress firewall policy validation", feature.EgressF
 				len(nodes.Items))
 		}
 
-		ips := e2enode.CollectAddresses(nodes, v1.NodeInternalIP)
+		ips := e2enode.CollectAddresses(nodes, corev1.NodeInternalIP)
 
 		serverNodeInfo = nodeInfo{
 			name:   nodes.Items[1].Name,
@@ -540,11 +540,11 @@ spec:
 					len(nodes.Items))
 			}
 			ginkgo.By("Creating host network pods on each node")
-			// get random port in case the test retries and port is already in use on host node
-			rand.Seed(time.Now().UnixNano())
+			// get random port in case the test retries and port is already in use on host nodefor _, node := range nodes.Items {
+			// Use a new rand.Rand instance to avoid the deprecated rand.Seed
 			min := 9900
 			max := 9999
-			hostNetworkPort := rand.Intn(max-min+1) + min
+			hostNetworkPort := rand.New(rand.NewSource(time.Now().UnixNano())).Intn(max-min+1) + min
 			framework.Logf("Random host networked port chosen: %d", hostNetworkPort)
 			for _, node := range nodes.Items {
 				// this creates a udp / http netexec listener which is able to receive the "hostname"
@@ -556,7 +556,7 @@ spec:
 				}
 
 				// create host networked Pods
-				_, err := createPod(f, node.Name+"-hostnet-ep", node.Name, f.Namespace.Name, []string{}, map[string]string{}, func(p *v1.Pod) {
+				_, err := createPod(f, node.Name+"-hostnet-ep", node.Name, f.Namespace.Name, []string{}, map[string]string{}, func(p *corev1.Pod) {
 					p.Spec.Containers[0].Args = args
 					p.Spec.HostNetwork = true
 				})
@@ -567,7 +567,7 @@ spec:
 			ginkgo.By("Selecting additional IP addresses for serverNode on which source pod lives (networking routing to secondaryIP address on other nodes is harder to achieve)")
 			// add new secondary IP from node subnet to the node where the source pod lives on,
 			// if the cluster is v6 add an ipv6 address
-			toCurlSecondaryNodeIPAddresses := sets.NewString()
+			toCurlSecondaryNodeIPAddresses := sets.New[string]()
 			// node2ndaryIPs holds the nodeName as the key and the value is
 			// a map with ipFamily(v4 or v6) as the key and the secondaryIP as the value
 			node2ndaryIPs := make(map[string]map[int]string)
@@ -575,7 +575,7 @@ spec:
 			if node2ndaryIPs[serverNodeInfo.name] == nil {
 				node2ndaryIPs[serverNodeInfo.name] = make(map[int]string)
 			}
-			if utilnet.IsIPv6String(e2enode.GetAddresses(&nodes.Items[1], v1.NodeInternalIP)[0]) {
+			if utilnet.IsIPv6String(e2enode.GetAddresses(&nodes.Items[1], corev1.NodeInternalIP)[0]) {
 				newIP = "fc00:f853:ccd:e794::" + strconv.Itoa(12)
 				framework.Logf("Secondary nodeIP %s for node %s", serverNodeInfo.name, newIP)
 				node2ndaryIPs[serverNodeInfo.name][6] = newIP
@@ -615,7 +615,7 @@ spec:
 			}
 
 			ginkgo.By("Should NOT be able to reach each secondary hostIP via node selector")
-			for _, address := range toCurlSecondaryNodeIPAddresses.List() {
+			for _, address := range sets.List(toCurlSecondaryNodeIPAddresses) {
 				if !IsIPv6Cluster(f.ClientSet) && utilnet.IsIPv6String(address) || IsIPv6Cluster(f.ClientSet) && !utilnet.IsIPv6String(address) {
 					continue
 				}
@@ -637,7 +637,8 @@ spec:
 			for _, node := range nodes.Items {
 				patchData, err := json.Marshal(&patch)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				f.ClientSet.CoreV1().Nodes().Patch(context.TODO(), node.Name, types.MergePatchType, patchData, metav1.PatchOptions{})
+				_, err = f.ClientSet.CoreV1().Nodes().Patch(context.TODO(), node.Name, types.MergePatchType, patchData, metav1.PatchOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			}
 
 			ginkgo.By("Should be able to reach each host networked pod via node selector")
@@ -650,7 +651,7 @@ spec:
 			}
 
 			ginkgo.By("Should be able to reach secondary hostIP via node selector")
-			for _, address := range toCurlSecondaryNodeIPAddresses.List() {
+			for _, address := range sets.List(toCurlSecondaryNodeIPAddresses) {
 				if !IsIPv6Cluster(f.ClientSet) && utilnet.IsIPv6String(address) || IsIPv6Cluster(f.ClientSet) && !utilnet.IsIPv6String(address) {
 					continue
 				}

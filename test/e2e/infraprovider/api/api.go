@@ -166,7 +166,7 @@ func (n NetworkInterface) GetIPv4Prefix() string {
 }
 
 func (n NetworkInterface) GetIPv6Gateway() string {
-	return n.IPv4Gateway
+	return n.IPv6Gateway
 }
 
 func (n NetworkInterface) GetIPv6() string {
@@ -273,7 +273,7 @@ func (ec ExternalContainer) IsValidPreDelete() (bool, error) {
 	return true, nil
 }
 
-var NotFound = fmt.Errorf("not found")
+var ErrNotFound = fmt.Errorf("not found")
 
 func condenseErrors(errs []error) error {
 	switch len(errs) {

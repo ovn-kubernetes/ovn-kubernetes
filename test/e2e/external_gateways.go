@@ -11,16 +11,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
-	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
-
 	"github.com/google/go-cmp/cmp"
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -31,6 +26,12 @@ import (
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	"k8s.io/kubernetes/test/e2e/framework/skipper"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
+	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
 )
 
 // This is the image used for the containers acting as externalgateways, built
@@ -207,7 +208,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 			_, err = createGenericPod(f, srcPingPodName, node.Name, f.Namespace.Name, command)
 			framework.ExpectNoError(err, "failed to create pod %s/%s", f.Namespace.Name, srcPingPodName)
 			// wait for pod setup to return a valid address
-			err = wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
+			err = wait.PollUntilContextTimeout(context.Background(), retryInterval, retryTimeout, true, func(_ context.Context) (bool, error) {
 				pingSrc = getPodAddress(srcPingPodName, f.Namespace.Name)
 				validIP = net.ParseIP(pingSrc)
 				if validIP == nil {
@@ -411,7 +412,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 			_, err = createGenericPod(f, dstPingPodName, workerNodeInfo.name, f.Namespace.Name, command)
 			framework.ExpectNoError(err, "failed to create pod %s/%s", f.Namespace.Name, dstPingPodName)
 			// wait for the pod setup to return a valid address
-			err = wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
+			err = wait.PollUntilContextTimeout(context.Background(), retryInterval, retryTimeout, true, func(_ context.Context) (bool, error) {
 				pingDstPod = getPodAddress(dstPingPodName, f.Namespace.Name)
 				validIP := net.ParseIP(pingDstPod)
 				if validIP == nil {
@@ -906,7 +907,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 				// ensure the conntrack deletion tracker annotation is updated
 				if !isInterconnectEnabled() {
 					ginkgo.By("Check if the k8s.ovn.org/external-gw-pod-ips got updated for the app namespace")
-					err := wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
+					err := wait.PollUntilContextTimeout(context.Background(), retryInterval, retryTimeout, true, func(_ context.Context) (bool, error) {
 						ns := getNamespace(f, f.Namespace.Name)
 						return (ns.Annotations[externalGatewayPodIPsAnnotation] == fmt.Sprintf("%s,%s", addresses.gatewayIPs[0], addresses.gatewayIPs[1])), nil
 					})
@@ -948,7 +949,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 				// ensure the conntrack deletion tracker annotation is updated
 				if !isInterconnectEnabled() {
 					ginkgo.By("Check if the k8s.ovn.org/external-gw-pod-ips got updated for the app namespace")
-					err = wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
+					err = wait.PollUntilContextTimeout(context.Background(), retryInterval, retryTimeout, true, func(_ context.Context) (bool, error) {
 						ns := getNamespace(f, f.Namespace.Name)
 						return (ns.Annotations[externalGatewayPodIPsAnnotation] == addresses.gatewayIPs[0]), nil
 					})
@@ -968,7 +969,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 				// ensure the conntrack deletion tracker annotation is updated
 				if !isInterconnectEnabled() {
 					ginkgo.By("Check if the k8s.ovn.org/external-gw-pod-ips got updated for the app namespace")
-					err = wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
+					err = wait.PollUntilContextTimeout(context.Background(), retryInterval, retryTimeout, true, func(_ context.Context) (bool, error) {
 						ns := getNamespace(f, f.Namespace.Name)
 						return (ns.Annotations[externalGatewayPodIPsAnnotation] == ""), nil
 					})
@@ -2822,7 +2823,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 				// ensure the conntrack deletion tracker annotation is updated
 				if !isInterconnectEnabled() {
 					ginkgo.By("Check if the k8s.ovn.org/external-gw-pod-ips got updated for the app namespace")
-					err := wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
+					err := wait.PollUntilContextTimeout(context.Background(), retryInterval, retryTimeout, true, func(_ context.Context) (bool, error) {
 						ns := getNamespace(f, f.Namespace.Name)
 						return ns.Annotations[externalGatewayPodIPsAnnotation] == fmt.Sprintf("%s,%s", addresses.gatewayIPs[0], addresses.gatewayIPs[1]), nil
 					})
@@ -3050,7 +3051,7 @@ func setupGatewayContainers(f *framework.Framework, providerCtx infraapi.Context
 				_, err = infraprovider.Get().ExecExternalContainerCommand(gwContainer, []string{"ip", "address", "add", address + "/32", "dev", "lo"})
 				framework.ExpectNoError(err, "failed to add the loopback ip to dev lo on the test container %s", gwContainer.Name)
 				providerCtx.AddCleanUpFn(func() error {
-					infraprovider.Get().ExecExternalContainerCommand(gwContainer, []string{"ip", "address", "del", address + "/32", "dev", "lo"})
+					_, _ = infraprovider.Get().ExecExternalContainerCommand(gwContainer, []string{"ip", "address", "del", address + "/32", "dev", "lo"})
 					return nil
 				})
 			}
@@ -3059,7 +3060,7 @@ func setupGatewayContainers(f *framework.Framework, providerCtx infraapi.Context
 			_, err = infraprovider.Get().ExecExternalContainerCommand(gwContainer, []string{"ip", "route", "add", addressesv4.srcPodIP, "via", addressesv4.nodeIP})
 			framework.ExpectNoError(err, "failed to add the pod host route on the test container %s", gwContainer.Name)
 			providerCtx.AddCleanUpFn(func() error {
-				infraprovider.Get().ExecExternalContainerCommand(gwContainer, []string{"ip", "route", "del", addressesv4.srcPodIP, "via", addressesv4.nodeIP})
+				_, _ = infraprovider.Get().ExecExternalContainerCommand(gwContainer, []string{"ip", "route", "del", addressesv4.srcPodIP, "via", addressesv4.nodeIP})
 				return nil
 			})
 
@@ -3081,7 +3082,7 @@ func setupGatewayContainers(f *framework.Framework, providerCtx infraapi.Context
 				_, err = infraprovider.Get().ExecExternalContainerCommand(gwContainer, []string{"ip", "address", "add", address + "/128", "dev", "lo"})
 				framework.ExpectNoError(err, "ipv6: failed to add the loopback ip to dev lo on the test container %s", gwContainer.Name)
 				providerCtx.AddCleanUpFn(func() error {
-					infraprovider.Get().ExecExternalContainerCommand(gwContainer, []string{"ip", "address", "del", address + "/128", "dev", "lo"})
+					_, _ = infraprovider.Get().ExecExternalContainerCommand(gwContainer, []string{"ip", "address", "del", address + "/128", "dev", "lo"})
 					return nil
 				})
 			}
@@ -3357,7 +3358,7 @@ spec:
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	gomega.Expect(stdout).To(gomega.Equal(fmt.Sprintf("adminpolicybasedexternalroute.k8s.ovn.org/%s created\n", policyName)))
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	gwIPs := sets.NewString(gateways...).List()
+	gwIPs := sets.List(sets.New[string](gateways...))
 	gomega.Eventually(func() string {
 		lastMsg, err := e2ekubectl.RunKubectl("", "get", "apbexternalroute", policyName, "-ojsonpath={.status.messages[-1:]}")
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -3378,7 +3379,7 @@ func checkAPBExternalRouteStatus(policyName string) {
 
 func createAPBExternalRouteCRWithStaticHop(policyName, namespaceName string, bfd bool, gateways ...string) {
 	createAPBExternalRouteCRWithStaticHopAndStatus(policyName, namespaceName, bfd, "Success", gateways...)
-	gwIPs := sets.NewString(gateways...).List()
+	gwIPs := sets.List(sets.New[string](gateways...))
 	gomega.Eventually(func() string {
 		lastMsg, err := e2ekubectl.RunKubectl("", "get", "apbexternalroute", policyName, "-ojsonpath={.status.messages[-1:]}")
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -3450,7 +3451,10 @@ spec:
 }
 
 func deleteAPBExternalRouteCR(policyName string) {
-	e2ekubectl.RunKubectl("", "delete", "apbexternalroute", policyName)
+	_, err := e2ekubectl.RunKubectl("", "delete", "apbexternalroute", policyName)
+	if err != nil {
+		framework.Logf("Failed to delete apbexternalroute %s: %v", policyName, err)
+	}
 }
 func formatStaticHops(bfd bool, gateways ...string) string {
 	b := strings.Builder{}
@@ -3675,7 +3679,7 @@ func recreatePodWithReadinessProbe(f *framework.Framework, podName, nodeSelector
 			}
 		}
 		return false
-	}).Should(gomega.Equal(true), fmt.Sprintf("Readiness probe for second external gateway pod %s from ns %s, failed: %v", podName, namespace, err))
+	}).Should(gomega.BeTrue(), fmt.Sprintf("Readiness probe for second external gateway pod %s from ns %s, failed: %v", podName, namespace, err))
 }
 
 func handleGatewayPodRemoval(f *framework.Framework, removalType GatewayRemovalType, gatewayPodName, servingNamespace, gatewayIP string, isAnnotated bool) func() {
@@ -3709,7 +3713,7 @@ func handleGatewayPodRemoval(f *framework.Framework, removalType GatewayRemovalT
 				return false
 			}
 			return strings.Contains(strings.Join(p.GetFinalizers(), ","), "k8s.ovn.org/external-gw-pod-finalizer")
-		}).Should(gomega.Equal(true), fmt.Sprintf("Update second external gateway pod %s from ns %s with finalizer, failed: %v", gatewayPodName, servingNamespace, err))
+		}).Should(gomega.BeTrue(), fmt.Sprintf("Update second external gateway pod %s from ns %s with finalizer, failed: %v", gatewayPodName, servingNamespace, err))
 
 		p = getGatewayPod(f, servingNamespace, gatewayPodName)
 		err = e2epod.DeletePodWithGracePeriod(context.Background(), f.ClientSet, p, 1000)
@@ -3747,7 +3751,7 @@ func handleGatewayPodRemoval(f *framework.Framework, removalType GatewayRemovalT
 				}
 			}
 			return podReadyStatus == corev1.ConditionFalse
-		}).WithTimeout(5*time.Minute).Should(gomega.Equal(true), fmt.Sprintf("Mark second external gateway pod %s from ns %s not ready, failed: %v", gatewayPodName, servingNamespace, err))
+		}).WithTimeout(5*time.Minute).Should(gomega.BeTrue(), fmt.Sprintf("Mark second external gateway pod %s from ns %s not ready, failed: %v", gatewayPodName, servingNamespace, err))
 		return nil
 	default:
 		framework.Failf("unexpected GatewayRemovalType passed: %s", removalType)

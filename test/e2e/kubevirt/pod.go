@@ -4,12 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 
-	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
+	kubevirtv1 "kubevirt.io/api/core/v1"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 
-	kubevirtv1 "kubevirt.io/api/core/v1"
+	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
 )
 
 const (

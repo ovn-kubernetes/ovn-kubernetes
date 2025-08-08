@@ -5,9 +5,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
-
 	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
 )
 
 const (
@@ -33,7 +33,7 @@ func removeOVSBridge(podNamespace, podName string, bridgeName string) error {
 func ovsAttachPortToBridge(podNamespace, podName string, bridgeName string, portName string) error {
 	cmd := fmt.Sprintf("ovs-vsctl list port %[2]s || ovs-vsctl add-port %[1]s %[2]s", bridgeName, portName)
 	if _, err := e2epodoutput.RunHostCmdWithRetries(podNamespace, podName, cmd, time.Second, time.Second*5); err != nil {
-		return fmt.Errorf("failed to addadd  port %s from OVS bridge %s: %v", portName, bridgeName, err)
+		return fmt.Errorf("failed to add  port %s from OVS bridge %s: %v", portName, bridgeName, err)
 	}
 	return nil
 }
