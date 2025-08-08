@@ -17,6 +17,7 @@ import (
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	ovsops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -287,7 +288,7 @@ func convertToFloat64(val *int) float64 {
 }
 
 func getOvsVersionInfo(ovsDBClient libovsdbclient.Client) {
-	openvSwitch, err := ovsops.GetOpenvSwitch(ovsDBClient)
+	openvSwitch, err := libovsdbops.GetOpenvSwitch(ovsDBClient)
 	if err != nil {
 		klog.Errorf("Failed to get ovsdb openvswitch entry :(%v)", err)
 		return
@@ -625,7 +626,7 @@ func ovsMemoryMetricsUpdater(ovsVswitchdAppctl ovsClient, metricsScrapeInterval 
 // setOvsHwOffloadMetrics updates the hw-offload, tc-policy metrics
 // obtained from Open_vSwitch table updates
 func setOvsHwOffloadMetrics(ovsDBClient libovsdbclient.Client) (err error) {
-	openvSwitch, err := ovsops.GetOpenvSwitch(ovsDBClient)
+	openvSwitch, err := libovsdbops.GetOpenvSwitch(ovsDBClient)
 	if err != nil {
 		return fmt.Errorf("failed to get ovsdb openvswitch entry :(%v)", err)
 	}

@@ -28,7 +28,7 @@ func TestNewEgressDNS(t *testing.T) {
 	testCh := make(chan struct{})
 	dbSetup := libovsdbtest.TestSetup{}
 
-	libovsdbOvnNBClient, _, libovsdbCleanup, err := libovsdbtest.NewNBSBTestHarness(dbSetup)
+	_, libovsdbOvnNBClient, _, libovsdbCleanup, err := libovsdbtest.NewNBSBTestHarness(dbSetup)
 	require.NoError(t, err)
 	t.Cleanup(libovsdbCleanup.Cleanup)
 
