@@ -23,6 +23,7 @@ import (
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	testnm "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/networkmanager"
@@ -169,7 +170,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				// pod exists, networks annotations don't
 				pod, err := fakeOvn.fakeClient.KubeClient.CoreV1().Pods(podInfo.namespace).Get(context.Background(), podInfo.podName, metav1.GetOptions{})
 				Expect(err).NotTo(HaveOccurred())
-				_, ok := pod.Annotations[util.OvnPodAnnotationName]
+				_, ok := pod.Annotations[podannotation.OvnPodAnnotationName]
 				Expect(ok).To(BeFalse())
 
 				Expect(fakeOvn.networkManager.Start()).NotTo(HaveOccurred())
@@ -382,7 +383,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				// pod exists, networks annotations don't
 				pod, err := fakeOvn.fakeClient.KubeClient.CoreV1().Pods(podInfo.namespace).Get(context.Background(), podInfo.podName, metav1.GetOptions{})
 				Expect(err).NotTo(HaveOccurred())
-				_, ok := pod.Annotations[util.OvnPodAnnotationName]
+				_, ok := pod.Annotations[podannotation.OvnPodAnnotationName]
 				Expect(ok).To(BeFalse())
 
 				Expect(fakeOvn.networkManager.Start()).NotTo(HaveOccurred())
@@ -453,11 +454,11 @@ func newPodWithPrimaryUDN(
 		pod.networkRole = "infrastructure-locked"
 		pod.routes = append(
 			pod.routes,
-			util.PodRoute{
+			podannotation.PodRoute{
 				Dest:    testing.MustParseIPNet("10.128.0.0/14"),
 				NextHop: testing.MustParseIP("10.128.1.1"),
 			},
-			util.PodRoute{
+			podannotation.PodRoute{
 				Dest:    testing.MustParseIPNet("100.64.0.0/16"),
 				NextHop: testing.MustParseIP("10.128.1.1"),
 			},
@@ -473,7 +474,7 @@ func newPodWithPrimaryUDN(
 		"0a:58:c0:a8:01:03",
 		"primary",
 		0,
-		[]util.PodRoute{
+		[]podannotation.PodRoute{
 			{
 				Dest:    testing.MustParseIPNet("192.168.0.0/16"),
 				NextHop: testing.MustParseIP("192.168.1.1"),
@@ -582,7 +583,7 @@ func dummyTestPod(nsName string, info secondaryNetInfo) testPod {
 		"0a:58:c0:a8:01:03",
 		"secondary",
 		0,
-		[]util.PodRoute{
+		[]podannotation.PodRoute{
 			{
 				Dest:    testing.MustParseIPNet(info.clustersubnets),
 				NextHop: testing.MustParseIP("192.168.1.1"),
@@ -635,14 +636,14 @@ func newNodeWithSecondaryNets(nodeName string, nodeIPv4CIDR string, netInfos ...
 		ObjectMeta: metav1.ObjectMeta{
 			Name: nodeName,
 			Annotations: map[string]string{
-				"k8s.ovn.org/node-primary-ifaddr":                           fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", nodeIPv4CIDR, ""),
-				"k8s.ovn.org/node-subnets":                                  parsedNodeSubnets,
-				util.OVNNodeHostCIDRs:                                       fmt.Sprintf("[\"%s\"]", nodeIPv4CIDR),
-				"k8s.ovn.org/zone-name":                                     "global",
-				"k8s.ovn.org/l3-gateway-config":                             fmt.Sprintf("{\"default\":{\"mode\":\"shared\",\"bridge-id\":\"breth0\",\"interface-id\":\"breth0_ovn-worker\",\"mac-address\":%q,\"ip-addresses\":[%[2]q],\"ip-address\":%[2]q,\"next-hops\":[%[3]q],\"next-hop\":%[3]q,\"node-port-enable\":\"true\",\"vlan-id\":\"0\"}}", util.IPAddrToHWAddr(nodeIP), nodeCIDR, nextHopIP),
-				util.OvnNodeChassisID:                                       "abdcef",
-				"k8s.ovn.org/network-ids":                                   fmt.Sprintf("{\"default\":\"0\",\"isolatednet\":\"%s\"}", secondaryNetworkID),
-				util.OVNNodeGRLRPAddrs:                                      fmt.Sprintf("{\"default\":{\"ipv4\":\"100.64.0.2/16\"},\"isolatednet\":{\"ipv4\":%q}}", gwRouterJoinIPAddress()),
+				"k8s.ovn.org/node-primary-ifaddr": fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", nodeIPv4CIDR, ""),
+				"k8s.ovn.org/node-subnets":        parsedNodeSubnets,
+				util.OVNNodeHostCIDRs:             fmt.Sprintf("[\"%s\"]", nodeIPv4CIDR),
+				"k8s.ovn.org/zone-name":           "global",
+				"k8s.ovn.org/l3-gateway-config":   fmt.Sprintf("{\"default\":{\"mode\":\"shared\",\"bridge-id\":\"breth0\",\"interface-id\":\"breth0_ovn-worker\",\"mac-address\":%q,\"ip-addresses\":[%[2]q],\"ip-address\":%[2]q,\"next-hops\":[%[3]q],\"next-hop\":%[3]q,\"node-port-enable\":\"true\",\"vlan-id\":\"0\"}}", util.IPAddrToHWAddr(nodeIP), nodeCIDR, nextHopIP),
+				util.OvnNodeChassisID:             "abdcef",
+				"k8s.ovn.org/network-ids":         fmt.Sprintf("{\"default\":\"0\",\"isolatednet\":\"%s\"}", secondaryNetworkID),
+				util.OvnNodeID:                    "4",
 				"k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids": "{\"isolatednet\":\"25\"}",
 			},
 			Labels: map[string]string{

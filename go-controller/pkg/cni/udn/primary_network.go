@@ -6,16 +6,17 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 // wait on a certain pod annotation related condition
-type podAnnotWaitCond = func(map[string]string, string) (*util.PodAnnotation, bool)
+type podAnnotWaitCond = func(map[string]string, string) (*podannotation.PodAnnotation, bool)
 
 type UserDefinedPrimaryNetwork struct {
 	networkManager networkmanager.Interface
-	annotation     *util.PodAnnotation
+	annotation     *podannotation.PodAnnotation
 	activeNetwork  util.NetInfo
 }
 
@@ -34,7 +35,7 @@ func (p *UserDefinedPrimaryNetwork) NetworkDevice() string {
 	return ""
 }
 
-func (p *UserDefinedPrimaryNetwork) Annotation() *util.PodAnnotation {
+func (p *UserDefinedPrimaryNetwork) Annotation() *podannotation.PodAnnotation {
 	return p.annotation
 }
 
@@ -68,7 +69,7 @@ func (p *UserDefinedPrimaryNetwork) Found() bool {
 }
 
 func (p *UserDefinedPrimaryNetwork) WaitForPrimaryAnnotationFn(podName, namespace string, annotCondFn podAnnotWaitCond) podAnnotWaitCond {
-	return func(annotations map[string]string, nadName string) (*util.PodAnnotation, bool) {
+	return func(annotations map[string]string, nadName string) (*podannotation.PodAnnotation, bool) {
 		annotation, isReady := annotCondFn(annotations, nadName)
 		if annotation == nil {
 			return nil, false
@@ -85,7 +86,7 @@ func (p *UserDefinedPrimaryNetwork) Ensure(namespace string, annotations map[str
 	return p.ensure(namespace, annotations, nadName, nil /* parse annotation */)
 }
 
-func (p *UserDefinedPrimaryNetwork) ensure(namespace string, annotations map[string]string, nadName string, annotation *util.PodAnnotation) error {
+func (p *UserDefinedPrimaryNetwork) ensure(namespace string, annotations map[string]string, nadName string, annotation *podannotation.PodAnnotation) error {
 	// non default network is not related to primary UDNs
 	if nadName != types.DefaultNetworkName {
 		return nil
@@ -93,7 +94,7 @@ func (p *UserDefinedPrimaryNetwork) ensure(namespace string, annotations map[str
 
 	if annotation == nil {
 		var err error
-		annotation, err = util.UnmarshalPodAnnotation(annotations, nadName)
+		annotation, err = podannotation.UnmarshalPodAnnotation(annotations, nadName)
 		if err != nil {
 			return fmt.Errorf("failed looking for ovn pod annotations: %w", err)
 		}
@@ -138,7 +139,7 @@ func (p *UserDefinedPrimaryNetwork) ensureAnnotation(annotations map[string]stri
 	if p.annotation != nil {
 		return nil
 	}
-	podNetworks, err := util.UnmarshalPodAnnotationAllNetworks(annotations)
+	podNetworks, err := podannotation.UnmarshalPodAnnotationAllNetworks(annotations)
 	if err != nil {
 		return err
 	}
@@ -146,7 +147,7 @@ func (p *UserDefinedPrimaryNetwork) ensureAnnotation(annotations map[string]stri
 		if podNetwork.Role != types.NetworkRolePrimary {
 			continue
 		}
-		p.annotation, err = util.UnmarshalPodAnnotation(annotations, nadName)
+		p.annotation, err = podannotation.UnmarshalPodAnnotation(annotations, nadName)
 		if err != nil {
 			return err
 		}

@@ -23,13 +23,14 @@ import (
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
 func (oc *DefaultNetworkController) syncPods(pods []interface{}) error {
-	annotatedLocalPods := map[*corev1.Pod]map[string]*util.PodAnnotation{}
+	annotatedLocalPods := map[*corev1.Pod]map[string]*podannotation.PodAnnotation{}
 	var allHostSubnets []*net.IPNet
 
 	// get the list of logical switch ports (equivalent to pods). Reserve all existing Pod IPs to
@@ -47,7 +48,7 @@ func (oc *DefaultNetworkController) syncPods(pods []interface{}) error {
 		}
 
 		expectedLogicalPortName := ""
-		var annotations *util.PodAnnotation
+		var annotations *podannotation.PodAnnotation
 		if kubevirt.IsPodLiveMigratable(pod) {
 			vms, expectedLogicalPortName, annotations, err = oc.allocateSyncMigratablePodIPsOnZone(vms, pod)
 			if err != nil {
@@ -95,7 +96,7 @@ func (oc *DefaultNetworkController) syncPods(pods []interface{}) error {
 		if kubevirt.IsPodLiveMigratable(pod) && !zoneContainsPodSubnetOrUntracked {
 			continue
 		}
-		annotatedLocalPods[pod] = map[string]*util.PodAnnotation{types.DefaultNetworkName: annotations}
+		annotatedLocalPods[pod] = map[string]*podannotation.PodAnnotation{types.DefaultNetworkName: annotations}
 
 		if expectedLogicalPortName != "" {
 			expectedLogicalPorts[expectedLogicalPortName] = true
@@ -104,7 +105,7 @@ func (oc *DefaultNetworkController) syncPods(pods []interface{}) error {
 		// only update annotations for pods belonging to my zone
 		if oc.isPodScheduledinLocalZone(pod) {
 			// delete the outdated hybrid overlay subnet route if it exists
-			newRoutes := []util.PodRoute{}
+			newRoutes := []podannotation.PodRoute{}
 			// HO is IPv4 only
 			ipv4Subnets := util.MatchAllIPNetFamily(false, oc.lsManager.GetSwitchSubnets(pod.Spec.NodeName))
 			for _, route := range annotations.Routes {
@@ -228,7 +229,7 @@ func (oc *DefaultNetworkController) addLogicalPort(pod *corev1.Pod) (err error) 
 		return nil
 	}
 
-	_, networkMap, err := util.GetPodNADToNetworkMapping(pod, oc.GetNetInfo())
+	_, networkMap, err := podannotation.GetPodNADToNetworkMapping(pod, oc.GetNetInfo())
 	if err != nil {
 		// multus won't add this Pod if this fails, should never happen
 		return fmt.Errorf("error getting default-network's network-attachment for pod %s/%s: %v", pod.Namespace, pod.Name, err)
@@ -246,7 +247,7 @@ func (oc *DefaultNetworkController) addLogicalPort(pod *corev1.Pod) (err error) 
 	var libovsdbExecuteTime time.Duration
 	var lsp *nbdb.LogicalSwitchPort
 	var ops []ovsdb.Operation
-	var podAnnotation *util.PodAnnotation
+	var podAnnotation *podannotation.PodAnnotation
 	var newlyCreatedPort bool
 	// Keep track of how long syncs take.
 	start := time.Now()
@@ -376,8 +377,8 @@ func (oc *DefaultNetworkController) addLogicalPort(pod *corev1.Pod) (err error) 
 	return nil
 }
 
-func (oc *DefaultNetworkController) allocateSyncPodsIPs(pod *corev1.Pod) (string, *util.PodAnnotation, error) {
-	annotations, err := util.UnmarshalPodAnnotation(pod.Annotations, types.DefaultNetworkName)
+func (oc *DefaultNetworkController) allocateSyncPodsIPs(pod *corev1.Pod) (string, *podannotation.PodAnnotation, error) {
+	annotations, err := podannotation.UnmarshalPodAnnotation(pod.Annotations, types.DefaultNetworkName)
 	if err != nil {
 		return "", nil, nil
 	}
@@ -388,8 +389,8 @@ func (oc *DefaultNetworkController) allocateSyncPodsIPs(pod *corev1.Pod) (string
 	return expectedLogicalPortName, annotations, nil
 }
 
-func (oc *DefaultNetworkController) allocateSyncMigratablePodIPsOnZone(vms map[ktypes.NamespacedName]bool, pod *corev1.Pod) (map[ktypes.NamespacedName]bool, string, *util.PodAnnotation, error) {
-	allocatePodIPsOnSwitchWrapFn := func(liveMigratablePod *corev1.Pod, liveMigratablePodAnnotation *util.PodAnnotation, switchName, nadName string) (string, error) {
+func (oc *DefaultNetworkController) allocateSyncMigratablePodIPsOnZone(vms map[ktypes.NamespacedName]bool, pod *corev1.Pod) (map[ktypes.NamespacedName]bool, string, *podannotation.PodAnnotation, error) {
+	allocatePodIPsOnSwitchWrapFn := func(liveMigratablePod *corev1.Pod, liveMigratablePodAnnotation *podannotation.PodAnnotation, switchName, nadName string) (string, error) {
 		return oc.allocatePodIPsOnSwitch(liveMigratablePod, liveMigratablePodAnnotation, switchName, nadName)
 	}
 	vmKey, expectedLogicalPortName, podAnnotation, err := kubevirt.AllocateSyncMigratablePodIPsOnZone(oc.watchFactory, oc.lsManager, oc.GetNetworkName(), pod, allocatePodIPsOnSwitchWrapFn)

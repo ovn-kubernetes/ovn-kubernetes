@@ -11,6 +11,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
@@ -93,7 +94,7 @@ var _ = Describe("BaseSecondaryNetworkController", func() {
 		}
 		ips, err := util.ParseIPNets(t.ips)
 		Expect(err).ToNot(HaveOccurred())
-		podAnnotation := &util.PodAnnotation{
+		podAnnotation := &podannotation.PodAnnotation{
 			IPs: ips,
 		}
 		Expect(controller.bnc.ensureDHCP(pod, podAnnotation, lsp)).To(Succeed())

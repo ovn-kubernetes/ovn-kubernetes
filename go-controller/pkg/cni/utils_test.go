@@ -14,6 +14,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/client-go/listers/core/v1"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -65,7 +66,7 @@ var _ = Describe("CNI Utils tests", func() {
 
 	Context("isOvnReady", func() {
 		It("Returns true if OVN pod network annotation exists", func() {
-			podAnnot := map[string]string{util.OvnPodAnnotationName: defaultPodAnnotation}
+			podAnnot := map[string]string{podannotation.OvnPodAnnotationName: defaultPodAnnotation}
 			_, ready := isOvnReady(podAnnot, ovntypes.DefaultNetworkName)
 			Expect(ready).To(BeTrue())
 		})
@@ -80,30 +81,30 @@ var _ = Describe("CNI Utils tests", func() {
 	Context("isDPUReady", func() {
 		It("Returns true if dpu.connection-status is present and Status is Ready", func() {
 			podAnnot := map[string]string{
-				util.OvnPodAnnotationName:     defaultPodAnnotation,
-				util.DPUConnectionStatusAnnot: `{"Status":"Ready"}`}
+				podannotation.OvnPodAnnotationName: defaultPodAnnotation,
+				util.DPUConnectionStatusAnnot:      `{"Status":"Ready"}`}
 			_, ready := isDPUReady(podAnnot, ovntypes.DefaultNetworkName)
 			Expect(ready).To(BeTrue())
 		})
 
 		It("Returns false if dpu.connection-status is present and Status is not Ready", func() {
 			podAnnot := map[string]string{
-				util.OvnPodAnnotationName:     defaultPodAnnotation,
-				util.DPUConnectionStatusAnnot: `{"Status":"NotReady"}`}
+				podannotation.OvnPodAnnotationName: defaultPodAnnotation,
+				util.DPUConnectionStatusAnnot:      `{"Status":"NotReady"}`}
 			_, ready := isDPUReady(podAnnot, ovntypes.DefaultNetworkName)
 			Expect(ready).To(BeFalse())
 		})
 
 		It("Returns false if dpu.connection-status Status is not present", func() {
 			podAnnot := map[string]string{
-				util.OvnPodAnnotationName:     defaultPodAnnotation,
-				util.DPUConnectionStatusAnnot: `{"Foo":"Bar"}`}
+				podannotation.OvnPodAnnotationName: defaultPodAnnotation,
+				util.DPUConnectionStatusAnnot:      `{"Foo":"Bar"}`}
 			_, ready := isDPUReady(podAnnot, ovntypes.DefaultNetworkName)
 			Expect(ready).To(BeFalse())
 		})
 
 		It("Returns false if dpu.connection-status is not present", func() {
-			podAnnot := map[string]string{util.OvnPodAnnotationName: defaultPodAnnotation}
+			podAnnot := map[string]string{podannotation.OvnPodAnnotationName: defaultPodAnnotation}
 			_, ready := isDPUReady(podAnnot, ovntypes.DefaultNetworkName)
 			Expect(ready).To(BeFalse())
 		})
@@ -135,7 +136,7 @@ var _ = Describe("CNI Utils tests", func() {
 			ctx, cancelFunc := context.WithTimeout(context.Background(), 20*time.Millisecond)
 			defer cancelFunc()
 
-			cond := func(podAnnotation map[string]string, _ string) (*util.PodAnnotation, bool) {
+			cond := func(podAnnotation map[string]string, _ string) (*podannotation.PodAnnotation, bool) {
 				if _, ok := podAnnotation["foo"]; ok {
 					return nil, true
 				}
@@ -154,7 +155,7 @@ var _ = Describe("CNI Utils tests", func() {
 		It("Returns with Error if context is canceled", func() {
 			ctx, cancelFunc := context.WithCancel(context.Background())
 
-			cond := func(map[string]string, string) (*util.PodAnnotation, bool) {
+			cond := func(map[string]string, string) (*podannotation.PodAnnotation, bool) {
 				return nil, false
 			}
 
@@ -175,7 +176,7 @@ var _ = Describe("CNI Utils tests", func() {
 			defer cancelFunc()
 
 			calledOnce := false
-			cond := func(map[string]string, string) (*util.PodAnnotation, bool) {
+			cond := func(map[string]string, string) (*podannotation.PodAnnotation, bool) {
 				if calledOnce {
 					return nil, true
 				}
@@ -194,7 +195,7 @@ var _ = Describe("CNI Utils tests", func() {
 			ctx, cancelFunc := context.WithTimeout(context.Background(), 1*time.Second)
 			defer cancelFunc()
 
-			cond := func(map[string]string, string) (*util.PodAnnotation, bool) {
+			cond := func(map[string]string, string) (*podannotation.PodAnnotation, bool) {
 				return nil, false
 			}
 
@@ -211,7 +212,7 @@ var _ = Describe("CNI Utils tests", func() {
 			defer cancelFunc()
 
 			calledOnce := false
-			cond := func(map[string]string, string) (*util.PodAnnotation, bool) {
+			cond := func(map[string]string, string) (*podannotation.PodAnnotation, bool) {
 				if calledOnce {
 					return nil, true
 				}
@@ -230,7 +231,7 @@ var _ = Describe("CNI Utils tests", func() {
 			ctx, cancelFunc := context.WithTimeout(context.Background(), 1*time.Second)
 			defer cancelFunc()
 
-			cond := func(map[string]string, string) (*util.PodAnnotation, bool) {
+			cond := func(map[string]string, string) (*podannotation.PodAnnotation, bool) {
 				return nil, false
 			}
 
@@ -245,7 +246,7 @@ var _ = Describe("CNI Utils tests", func() {
 
 	Context("PodAnnotation2PodInfo", func() {
 		podAnnot := map[string]string{
-			util.OvnPodAnnotationName: `{
+			podannotation.OvnPodAnnotationName: `{
 "default":{"ip_addresses":["192.168.2.3/24"],
 "mac_address":"0a:58:c0:a8:02:03",
 "gateway_ips":["192.168.2.1"],

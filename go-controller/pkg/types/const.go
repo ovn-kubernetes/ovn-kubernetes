@@ -32,10 +32,6 @@ const (
 	// access to local service
 	LocalNetworkName = "locnet"
 
-	// Local Bridge used for DGP access
-	LocalBridgeName            = "br-local"
-	LocalnetGatewayNextHopPort = "ovn-k8s-gw0"
-
 	// OVS Bridge Datapath types
 	DatapathUserspace = "netdev"
 
@@ -43,25 +39,19 @@ const (
 	OVNClusterRouter = "ovn_cluster_router"
 	OVNJoinSwitch    = "join"
 
-	JoinSwitchPrefix             = "join_"
-	ExternalSwitchPrefix         = "ext_"
-	GWRouterPrefix               = "GR_"
-	GWRouterLocalLBPostfix       = "_local"
-	RouterToSwitchPrefix         = "rtos-"
-	InterPrefix                  = "inter-"
-	HybridSubnetPrefix           = "hybrid-subnet-"
-	SwitchToRouterPrefix         = "stor-"
-	JoinSwitchToGWRouterPrefix   = "jtor-"
-	GWRouterToJoinSwitchPrefix   = "rtoj-"
-	DistRouterToJoinSwitchPrefix = "dtoj-"
-	JoinSwitchToDistRouterPrefix = "jtod-"
-	EXTSwitchToGWRouterPrefix    = "etor-"
-	GWRouterToExtSwitchPrefix    = "rtoe-"
-	EgressGWSwitchPrefix         = "exgw-"
-	PatchPortPrefix              = "patch-"
-	PatchPortSuffix              = "-to-br-int"
-
-	NodeLocalSwitch = "node_local_switch"
+	JoinSwitchPrefix           = "join_"
+	ExternalSwitchPrefix       = "ext_"
+	GWRouterPrefix             = "GR_"
+	RouterToSwitchPrefix       = "rtos-"
+	HybridSubnetPrefix         = "hybrid-subnet-"
+	SwitchToRouterPrefix       = "stor-"
+	JoinSwitchToGWRouterPrefix = "jtor-"
+	GWRouterToJoinSwitchPrefix = "rtoj-"
+	EXTSwitchToGWRouterPrefix  = "etor-"
+	GWRouterToExtSwitchPrefix  = "rtoe-"
+	EgressGWSwitchPrefix       = "exgw-"
+	PatchPortPrefix            = "patch-"
+	PatchPortSuffix            = "-to-br-int"
 
 	// types.OVNLayer2Switch is the name of layer2 topology switch
 	OVNLayer2Switch = "ovn_layer2_switch"
@@ -73,6 +63,11 @@ const (
 	TransitSwitch               = "transit_switch"
 	TransitSwitchToRouterPrefix = "tstor-"
 	RouterToTransitSwitchPrefix = "rtots-"
+	TransitRouter               = "transit_router"
+	TransitRouterToRouterPrefix = "trtor-"
+	RouterToTransitRouterPrefix = "rtotr-"
+	TransitRouterToSwitchPrefix = "trtos-"
+	SwitchToTransitRouterPrefix = "stotr-"
 
 	// DefaultACLTier Priorities
 
@@ -168,7 +163,8 @@ const (
 	OvnNetworkNameAnnotation = OvnK8sPrefix + "/network-name"
 	// OvnNetworkIDAnnotation is a unique network identifier annotated on the
 	// NAD by cluster manager nad controller
-	OvnNetworkIDAnnotation = OvnK8sPrefix + "/network-id"
+	OvnNetworkIDAnnotation         = OvnK8sPrefix + "/network-id"
+	Layer2RouterTopologyAnnotation = OvnK8sPrefix + "/layer2-router-topology"
 
 	// Deprecated: we used to set topology version as an annotation on the node. We don't do this anymore.
 	OvnK8sTopoAnno            = OvnK8sPrefix + "/" + "topology-version"
@@ -229,6 +225,8 @@ const (
 	Layer3Topology   = "layer3"
 	Layer2Topology   = "layer2"
 	LocalnetTopology = "localnet"
+
+	Layer2RouterTopology = "layer2-router"
 
 	// different types of network roles
 	// defined in CNI netconf as a user defined network

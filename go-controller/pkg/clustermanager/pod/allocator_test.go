@@ -31,6 +31,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	kubemocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube/mocks"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/persistentips"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	v1mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/client-go/listers/core/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/networkmanager"
@@ -191,7 +192,7 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 		fullIPPool      bool
 		expectEvents    []string
 		expectError     string
-		podAnnotation   *util.PodAnnotation
+		podAnnotation   *podannotation.PodAnnotation
 	}{
 		{
 			name: "Pod not scheduled",
@@ -532,7 +533,7 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 					},
 				},
 			},
-			podAnnotation: &util.PodAnnotation{
+			podAnnotation: &podannotation.PodAnnotation{
 				IPs: ovntest.MustParseIPNets("10.1.130.0/24"),
 				MAC: util.IPAddrToHWAddr(ovntest.MustParseIPNets("10.1.130.0/24")[0].IP),
 			},
@@ -666,7 +667,7 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 			}
 
 			if tt.podAnnotation != nil {
-				new.Annotations, err = util.MarshalPodAnnotation(new.Annotations, tt.podAnnotation, "namespace/nad")
+				new.Annotations, err = podannotation.MarshalPodAnnotation(new.Annotations, tt.podAnnotation, "namespace/nad")
 				if err != nil {
 					t.Fatalf("failed to set pod annotations: %v", err)
 				}
