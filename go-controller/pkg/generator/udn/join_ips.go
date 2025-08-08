@@ -9,6 +9,7 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	ipgenerator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/ip"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -57,28 +58,37 @@ func GetGWRouterIPs(node *corev1.Node, netInfo util.NetInfo) ([]*net.IPNet, erro
 	if !(netInfo.IsDefault() || (util.IsNetworkSegmentationSupportEnabled() && netInfo.IsPrimaryNetwork())) {
 		return gwRouterAddrs, nil
 	}
-	// Allocate the IP address(es) for the node Gateway router port connecting
-	// to the Join switch
-	nodeID, err := util.GetNodeIDWithError(node)
-	if err != nil {
-		// Don't consider this node as cluster-manager has not allocated node id yet.
-		return nil, fmt.Errorf("failed to generate gateway router port addressed for node %s: %w", node.Name, err)
-	}
-	if config.IPv4Mode {
-		gwRouterAddr, err := getGWRouterIP(netInfo.JoinSubnetV4().String(), nodeID)
+	if netInfo.TopologyType() == types.Layer3Topology || netInfo.TopologyVariant() == types.Layer2Topology {
+		// Allocate the IP address(es) for the node Gateway router port connecting
+		// to the Join switch
+		nodeID, err := util.GetNodeIDWithError(node)
 		if err != nil {
-			return nil, fmt.Errorf("failed to generate gateway router port ipv4 address for node %s : err - %w", node.Name, err)
+			// Don't consider this node as cluster-manager has not allocated node id yet.
+			return nil, fmt.Errorf("failed to generate gateway router port addressed for node %s: %w", node.Name, err)
 		}
-		gwRouterAddrs = append(gwRouterAddrs, gwRouterAddr)
-	}
-	if config.IPv6Mode {
-		gwRouterAddr, err := getGWRouterIP(netInfo.JoinSubnetV6().String(), nodeID)
+		if config.IPv4Mode {
+			gwRouterAddr, err := getGWRouterIP(netInfo.JoinSubnetV4().String(), nodeID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to generate gateway router port ipv4 address for node %s : err - %w", node.Name, err)
+			}
+			gwRouterAddrs = append(gwRouterAddrs, gwRouterAddr)
+		}
+		if config.IPv6Mode {
+			gwRouterAddr, err := getGWRouterIP(netInfo.JoinSubnetV6().String(), nodeID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to generate gateway router port ipv6 address for node %s : err - %w", node.Name, err)
+			}
+			gwRouterAddrs = append(gwRouterAddrs, gwRouterAddr)
+		}
+		return gwRouterAddrs, nil
+	} else {
+		// Layer2Router topology uses transitSubnet only
+		routerInfo, err := GetTransitRouterInfo(node)
 		if err != nil {
-			return nil, fmt.Errorf("failed to generate gateway router port ipv6 address for node %s : err - %w", node.Name, err)
+			return gwRouterAddrs, err
 		}
-		gwRouterAddrs = append(gwRouterAddrs, gwRouterAddr)
+		return routerInfo.GatewayRouterNets, nil
 	}
-	return gwRouterAddrs, nil
 }
 
 func getGWRouterIP(subnet string, nodeID int) (*net.IPNet, error) {

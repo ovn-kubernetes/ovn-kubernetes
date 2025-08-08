@@ -5,6 +5,8 @@ import (
 	"math/big"
 	"net"
 
+	iputils "github.com/containernetworking/plugins/pkg/ip"
+
 	utilnet "k8s.io/utils/net"
 )
 
@@ -39,4 +41,23 @@ func (ipGenerator *IPGenerator) GenerateIP(idx int) (*net.IPNet, error) {
 		return &net.IPNet{IP: ip, Mask: ipGenerator.netCidr.Mask}, nil
 	}
 	return nil, fmt.Errorf("generated ip %s from the idx %d is out of range in the network %s", ip.String(), idx, ipGenerator.netCidr.String())
+}
+
+func (ipGenerator *IPGenerator) GenerateIPPair(idx int) (*net.IPNet, *net.IPNet, error) {
+	if utilnet.IsIPv4CIDR(ipGenerator.netCidr) {
+		// We need to reserver 4 IPs since two of them will be
+		// "network" aka first network IP and "broadcast" aka last network IP,
+		// we use 2 more for GW and transit router ports
+		numberOfIPs := 4
+		v4Mask := net.CIDRMask(30, 32)
+		// nodeIDs start from 1, netIP is the first IP of the subnet
+		firstIP := utilnet.AddIPOffset(ipGenerator.netBaseIP, (idx-1)*numberOfIPs+1)
+		return &net.IPNet{IP: firstIP, Mask: v4Mask}, &net.IPNet{IP: iputils.NextIP(firstIP), Mask: v4Mask}, nil
+	} else {
+		numberOfIPs := 2
+		v6Mask := net.CIDRMask(127, 128)
+		// nodeIDs start from 1, netIP is the first IP of the subnet
+		firstIP := utilnet.AddIPOffset(ipGenerator.netBaseIP, (idx-1)*numberOfIPs)
+		return &net.IPNet{IP: firstIP, Mask: v6Mask}, &net.IPNet{IP: iputils.NextIP(firstIP), Mask: v6Mask}, nil
+	}
 }
