@@ -1,6 +1,7 @@
 package node
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"reflect"
@@ -10,11 +11,13 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -288,6 +291,7 @@ func TestController_allocateNodeSubnets(t *testing.T) {
 			na := &NodeAllocator{
 				netInfo:                netInfo,
 				clusterSubnetAllocator: NewSubnetAllocator(),
+				nodeLister:             newFakeNodeLister([]*corev1.Node{}),
 			}
 
 			if err := na.Init(); err != nil {
@@ -402,4 +406,45 @@ func newFakeNodeLister(nodes []*corev1.Node) v1.NodeLister {
 		_ = indexer.Add(node)
 	}
 	return v1.NewNodeLister(indexer)
+}
+
+func TestController_CleanupStaleAnnotation(t *testing.T) {
+	// create a node with an annotation that shouldn't be changed and one that should be cleaned up.
+	newNode := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "node1",
+			Annotations: map[string]string{"leave-me": "value", util.OVNNodeGRLRPAddrs: "remove-me"},
+		},
+	}
+	fakeClient := fake.NewClientset(newNode)
+	kube := &kube.Kube{
+		KClient: fakeClient,
+	}
+
+	netInfo, err := util.NewNetInfo(
+		&ovncnitypes.NetConf{
+			NetConf: cnitypes.NetConf{Name: types.DefaultNetworkName},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	na := &NodeAllocator{
+		nodeLister: newFakeNodeLister([]*corev1.Node{newNode}),
+		kube:       kube,
+		netInfo:    netInfo,
+	}
+	na.CleanupStaleAnnotation()
+	nodes, err := fakeClient.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes.Items) != 1 {
+		t.Fatalf("Expected 1 node, got %d", len(nodes.Items))
+	}
+	// check that unrelated annotation is not changed, and stale one is cleaned up
+	if !reflect.DeepEqual(nodes.Items[0].Annotations, map[string]string{"leave-me": "value"}) {
+		t.Fatalf("Expected annotation %s to be cleaned up, got %v", util.OVNNodeGRLRPAddrs, nodes.Items[0].Annotations)
+	}
 }

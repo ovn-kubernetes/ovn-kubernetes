@@ -14,6 +14,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
@@ -113,7 +114,7 @@ func (bnnc *BaseNodeNetworkController) watchPodsDPU() (*factory.Handler, error) 
 			// For default network, NAD name is DefaultNetworkName.
 			nadToDPUCDMap := map[string]*util.DPUConnectionDetails{}
 			if bnnc.IsSecondary() {
-				on, networkMap, err := util.GetPodNADToNetworkMapping(pod, bnnc.GetNetInfo())
+				on, networkMap, err := podannotation.GetPodNADToNetworkMapping(pod, bnnc.GetNetInfo())
 				if err != nil || !on {
 					if err != nil {
 						// configuration error, no need to retry, do not return error

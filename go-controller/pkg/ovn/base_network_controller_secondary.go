@@ -29,6 +29,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/persistentips"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
@@ -265,7 +266,7 @@ func (bsnc *BaseSecondaryNetworkController) ensurePodForSecondaryNetwork(pod *co
 		}
 	}
 
-	on, networkMap, err := util.GetPodNADToNetworkMappingWithActiveNetwork(pod, bsnc.GetNetInfo(), activeNetwork)
+	on, networkMap, err := podannotation.GetPodNADToNetworkMappingWithActiveNetwork(pod, bsnc.GetNetInfo(), activeNetwork)
 	if err != nil {
 		bsnc.recordPodErrorEvent(pod, err)
 		// configuration error, no need to retry, do not return error
@@ -310,7 +311,7 @@ func (bsnc *BaseSecondaryNetworkController) addLogicalPortToNetworkForNAD(pod *c
 	}()
 
 	var err error
-	var podAnnotation *util.PodAnnotation
+	var podAnnotation *podannotation.PodAnnotation
 	var ops []ovsdb.Operation
 	var lsp *nbdb.LogicalSwitchPort
 	var newlyCreated bool
@@ -366,7 +367,7 @@ func (bsnc *BaseSecondaryNetworkController) addLogicalPortToNetworkForNAD(pod *c
 	}
 
 	if podAnnotation == nil {
-		podAnnotation, err = util.UnmarshalPodAnnotation(pod.Annotations, nadName)
+		podAnnotation, err = podannotation.UnmarshalPodAnnotation(pod.Annotations, nadName)
 		if err != nil {
 			return err
 		}
@@ -436,7 +437,7 @@ func (bsnc *BaseSecondaryNetworkController) removePodForSecondaryNetwork(pod *co
 	// for a specific NAD belongs to this network, Pod's logical port might already be created half-way
 	// without its lpInfo cache being created; need to deleted resources created for that NAD as well.
 	// So, first get all nadNames from pod annotation, but handle NADs belong to this network only.
-	podNetworks, err := util.UnmarshalPodAnnotationAllNetworks(pod.Annotations)
+	podNetworks, err := podannotation.UnmarshalPodAnnotationAllNetworks(pod.Annotations)
 	if err != nil {
 		return err
 	}
@@ -533,7 +534,7 @@ func (bsnc *BaseSecondaryNetworkController) hasIPAMClaim(pod *corev1.Pod, nadNam
 	var wasPersistentIPRequested bool
 	if bsnc.IsPrimaryNetwork() {
 		// primary network ipam reference claim is on the annotation
-		ipamClaimName, wasPersistentIPRequested = pod.Annotations[util.OvnUDNIPAMClaimName]
+		ipamClaimName, wasPersistentIPRequested = pod.Annotations[podannotation.OvnUDNIPAMClaimName]
 	} else {
 		// secondary network the IPAM claim reference is on the network selection element
 		nadKeys := strings.Split(nadNamespacedName, "/")
@@ -542,7 +543,7 @@ func (bsnc *BaseSecondaryNetworkController) hasIPAMClaim(pod *corev1.Pod, nadNam
 		}
 		nadNamespace := nadKeys[0]
 		nadName := nadKeys[1]
-		allNetworks, err := util.GetK8sPodAllNetworkSelections(pod)
+		allNetworks, err := podannotation.GetK8sPodAllNetworkSelections(pod)
 		if err != nil {
 			return false, err
 		}
@@ -576,7 +577,7 @@ func (bsnc *BaseSecondaryNetworkController) hasIPAMClaim(pod *corev1.Pod, nadNam
 }
 
 func (bsnc *BaseSecondaryNetworkController) syncPodsForSecondaryNetwork(pods []interface{}) error {
-	annotatedLocalPods := map[*corev1.Pod]map[string]*util.PodAnnotation{}
+	annotatedLocalPods := map[*corev1.Pod]map[string]*podannotation.PodAnnotation{}
 	// get the list of logical switch ports (equivalent to pods). Reserve all existing Pod IPs to
 	// avoid subsequent new Pods getting the same duplicate Pod IP.
 	expectedLogicalPorts := make(map[string]bool)
@@ -602,7 +603,7 @@ func (bsnc *BaseSecondaryNetworkController) syncPodsForSecondaryNetwork(pods []i
 			}
 		}
 
-		on, networkMap, err := util.GetPodNADToNetworkMappingWithActiveNetwork(pod, bsnc.GetNetInfo(), activeNetwork)
+		on, networkMap, err := podannotation.GetPodNADToNetworkMappingWithActiveNetwork(pod, bsnc.GetNetInfo(), activeNetwork)
 		if err != nil || !on {
 			if err != nil {
 				bsnc.recordPodErrorEvent(pod, err)
@@ -616,7 +617,7 @@ func (bsnc *BaseSecondaryNetworkController) syncPodsForSecondaryNetwork(pods []i
 		hasRemotePort := !isLocalPod || bsnc.isLayer2Interconnect()
 
 		for nadName := range networkMap {
-			annotations, err := util.UnmarshalPodAnnotation(pod.Annotations, nadName)
+			annotations, err := podannotation.UnmarshalPodAnnotation(pod.Annotations, nadName)
 			if err != nil {
 				if !util.IsAnnotationNotSetError(err) {
 					klog.Errorf("Failed to get pod annotation of pod %s/%s for NAD %s", pod.Namespace, pod.Name, nadName)
@@ -636,7 +637,7 @@ func (bsnc *BaseSecondaryNetworkController) syncPodsForSecondaryNetwork(pods []i
 				}
 
 				if annotatedLocalPods[pod] == nil {
-					annotatedLocalPods[pod] = map[string]*util.PodAnnotation{}
+					annotatedLocalPods[pod] = map[string]*podannotation.PodAnnotation{}
 				}
 				annotatedLocalPods[pod][nadName] = annotations
 			} else if hasRemotePort {
@@ -877,7 +878,7 @@ func getClusterNodesDestinationBasedSNATMatch(ipv4ClusterNodeIPAS, ipv6ClusterNo
 	return match
 }
 
-func (bsnc *BaseSecondaryNetworkController) ensureDHCP(pod *corev1.Pod, podAnnotation *util.PodAnnotation, lsp *nbdb.LogicalSwitchPort) error {
+func (bsnc *BaseSecondaryNetworkController) ensureDHCP(pod *corev1.Pod, podAnnotation *podannotation.PodAnnotation, lsp *nbdb.LogicalSwitchPort) error {
 	opts := []kubevirt.DHCPConfigsOpt{}
 
 	ipv4DNSServer, ipv6DNSServer, err := kubevirt.RetrieveDNSServiceClusterIPs(bsnc.watchFactory)

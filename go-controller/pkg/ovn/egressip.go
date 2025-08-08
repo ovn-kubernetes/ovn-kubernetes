@@ -33,6 +33,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	egressipv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
@@ -42,6 +43,7 @@ import (
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	egresssvc "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/egressservice"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/udnenabledsvc"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/syncmap"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -2090,7 +2092,7 @@ func (e *EgressIPController) addEgressNode(node *corev1.Node) error {
 			// on IC if the node is gone, then the ovn_cluster_router is also gone along with all
 			// the routes on it.
 			ni := e.networkManager.GetNetwork(types.DefaultNetworkName)
-			gatewayIPs, err := util.ParseNodeGatewayRouterJoinAddrs(node, types.DefaultNetworkName)
+			gatewayIPs, err := udn.GetGWRouterIPs(node, &util.DefaultNetInfo{})
 			if err != nil {
 				return fmt.Errorf("failed to get default network gateway router join IPs for node %q: %w", node.Name, err)
 			}
@@ -2590,7 +2592,7 @@ func (e *EgressIPController) addExternalGWPodSNATOps(ni util.NetInfo, ops []ovsd
 			if err != nil {
 				return nil, err
 			}
-			podIPs, err := util.GetPodCIDRsWithFullMask(pod, &util.DefaultNetInfo{})
+			podIPs, err := podannotation.GetPodCIDRsWithFullMask(pod, &util.DefaultNetInfo{})
 			if err != nil {
 				return nil, err
 			}
@@ -2687,9 +2689,9 @@ func (e *EgressIPController) getGatewayNextHop(ni util.NetInfo, nodeName string,
 		// Node is remote
 		// fetch Node gateway routers 'router to switch' port IP
 		if isIPv6 {
-			return util.ParseNodeGatewayRouterJoinIPv6(node, ni.GetNetworkName())
+			return udn.GetGWRouterIPv6(node, ni)
 		}
-		return util.ParseNodeGatewayRouterJoinIPv4(node, ni.GetNetworkName())
+		return udn.GetGWRouterIPv4(node, ni)
 	}
 	return nil, fmt.Errorf("unsupported network topology %s", ni.TopologyType())
 }
@@ -3208,7 +3210,7 @@ func (e *EgressIPController) ensureRouterPoliciesForNetwork(ni util.NetInfo, nod
 		return fmt.Errorf("failed to ensure no reroute node policies for network %s: %v", ni.GetNetworkName(), err)
 	}
 	if config.OVNKubernetesFeature.EnableInterconnect && ni.TopologyType() == types.Layer3Topology {
-		gatewayIPs, err := util.ParseNodeGatewayRouterJoinAddrs(node, ni.GetNetworkName())
+		gatewayIPs, err := udn.GetGWRouterIPs(node, ni)
 		if err != nil {
 			return fmt.Errorf("failed to get %q network gateway router join IPs for node %q, err: %w", ni.GetNetworkName(), node.Name, err)
 		}
@@ -3573,7 +3575,7 @@ func (e *EgressIPController) getPodIPs(ni util.NetInfo, pod *corev1.Pod, nadName
 		podIPs = getIPFromIPNetFn(logicalPort.ips)
 	} else { // means this is egress node's local master
 		if ni.IsDefault() {
-			podIPNets, err := util.GetPodCIDRsWithFullMask(pod, ni)
+			podIPNets, err := podannotation.GetPodCIDRsWithFullMask(pod, ni)
 			if err != nil {
 				return nil, fmt.Errorf("failed to get pod %s/%s IP: %v", pod.Namespace, pod.Name, err)
 			}
@@ -3582,7 +3584,7 @@ func (e *EgressIPController) getPodIPs(ni util.NetInfo, pod *corev1.Pod, nadName
 			}
 			podIPs = getIPFromIPNetFn(podIPNets)
 		} else if ni.IsSecondary() {
-			podIPNets := util.GetPodCIDRsWithFullMaskOfNetwork(pod, nadName)
+			podIPNets := podannotation.GetPodCIDRsWithFullMaskOfNetwork(pod, nadName)
 			if len(podIPNets) == 0 {
 				return nil, fmt.Errorf("failed to get pod %s/%s IPs", pod.Namespace, pod.Name)
 			}
