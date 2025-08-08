@@ -1,12 +1,14 @@
 package testing
 
 import (
+	"encoding/json"
 	"fmt"
 
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 )
 
@@ -68,4 +70,21 @@ func GenerateNADWithConfig(name, namespace, config string) *nadapi.NetworkAttach
 		},
 		Spec: nadapi.NetworkAttachmentDefinitionSpec{Config: config},
 	}
+}
+
+func BuildNAD(name, namespace string, network *ovncnitypes.NetConf) (*nadapi.NetworkAttachmentDefinition, error) {
+	config, err := json.Marshal(network)
+	if err != nil {
+		return nil, err
+	}
+	nad := &nadapi.NetworkAttachmentDefinition{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: nadapi.NetworkAttachmentDefinitionSpec{
+			Config: string(config),
+		},
+	}
+	return nad, nil
 }

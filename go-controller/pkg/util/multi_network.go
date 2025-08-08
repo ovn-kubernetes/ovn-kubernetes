@@ -222,8 +222,10 @@ type mutableNetInfo struct {
 	podNetworkAdvertisements map[string][]string
 	eipAdvertisements        map[string][]string
 
-	// information generated from previous fields, not used in comparisons
+	// subnets can be added for Layer3 networks
+	subnets []config.CIDRNetworkEntry
 
+	// information generated from previous fields, not used in comparisons
 	// namespaces from nads
 	namespaces sets.Set[string]
 }
@@ -258,10 +260,13 @@ func (l *mutableNetInfo) equals(r *mutableNetInfo) bool {
 	defer l.RUnlock()
 	r.RLock()
 	defer r.RUnlock()
+
+	lessCIDR := func(a, b config.CIDRNetworkEntry) bool { return a.String() < b.String() }
 	return reflect.DeepEqual(l.id, r.id) &&
 		reflect.DeepEqual(l.nads, r.nads) &&
 		reflect.DeepEqual(l.podNetworkAdvertisements, r.podNetworkAdvertisements) &&
-		reflect.DeepEqual(l.eipAdvertisements, r.eipAdvertisements)
+		reflect.DeepEqual(l.eipAdvertisements, r.eipAdvertisements) &&
+		cmp.Equal(l.subnets, r.subnets, cmpopts.SortSlices(lessCIDR))
 }
 
 func (l *mutableNetInfo) copyFrom(r *mutableNetInfo) {
@@ -274,6 +279,7 @@ func (l *mutableNetInfo) copyFrom(r *mutableNetInfo) {
 	aux.nads = r.nads.Clone()
 	aux.setPodNetworkAdvertisedOnVRFs(r.podNetworkAdvertisements)
 	aux.setEgressIPAdvertisedAtNodes(r.eipAdvertisements)
+	aux.subnets = append([]config.CIDRNetworkEntry(nil), r.subnets...)
 	aux.namespaces = r.namespaces.Clone()
 	r.RUnlock()
 	l.Lock()
@@ -282,6 +288,7 @@ func (l *mutableNetInfo) copyFrom(r *mutableNetInfo) {
 	l.nads = aux.nads
 	l.podNetworkAdvertisements = aux.podNetworkAdvertisements
 	l.eipAdvertisements = aux.eipAdvertisements
+	l.subnets = aux.subnets
 	l.namespaces = aux.namespaces
 }
 
@@ -803,6 +810,15 @@ func (nInfo *secondaryNetInfo) JoinSubnets() []*net.IPNet {
 	return nInfo.joinSubnets
 }
 
+func (nInfo *secondaryNetInfo) reconcile(other NetInfo) {
+	nInfo.mutableNetInfo.reconcile(other)
+
+	// For Layer3 topology, also update the static subnets field to keep them in sync
+	if nInfo.topology == types.Layer3Topology {
+		nInfo.subnets = other.Subnets()
+	}
+}
+
 func (nInfo *secondaryNetInfo) canReconcile(other NetInfo) bool {
 	if (nInfo == nil) != (other == nil) {
 		return false
@@ -839,7 +855,11 @@ func (nInfo *secondaryNetInfo) canReconcile(other NetInfo) bool {
 
 	lessCIDRNetworkEntry := func(a, b config.CIDRNetworkEntry) bool { return a.String() < b.String() }
 	if !cmp.Equal(nInfo.subnets, other.Subnets(), cmpopts.SortSlices(lessCIDRNetworkEntry)) {
-		return false
+		// For Layer3 topology, adding subnets is considered compatible and reconcilable
+		// CRD validation ensures only subnet additions are allowed
+		if nInfo.topology != types.Layer3Topology {
+			return false
+		}
 	}
 
 	lessIPNet := func(a, b net.IPNet) bool { return a.String() < b.String() }
@@ -888,8 +908,9 @@ func newLayer3NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 		joinSubnets:    joinSubnets,
 		mtu:            netconf.MTU,
 		mutableNetInfo: mutableNetInfo{
-			id:   types.InvalidID,
-			nads: sets.Set[string]{},
+			id:      types.InvalidID,
+			nads:    sets.Set[string]{},
+			subnets: append([]config.CIDRNetworkEntry(nil), subnets...),
 		},
 	}
 	ni.ipv4mode, ni.ipv6mode = getIPMode(subnets)

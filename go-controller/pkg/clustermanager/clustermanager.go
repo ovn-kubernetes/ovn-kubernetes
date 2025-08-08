@@ -272,5 +272,13 @@ func (cm *ClusterManager) Reconcile(name string, old, new util.NetInfo) error {
 	if cm.raController != nil {
 		cm.raController.ReconcileNetwork(name, old, new)
 	}
+
+	if cm.secondaryNetClusterManager != nil {
+		err := cm.secondaryNetClusterManager.Reconcile(name, old, new)
+		if err != nil {
+			return fmt.Errorf("failed to reconcile secondary network cluster manager for network %s: %w", name, err)
+		}
+	}
+
 	return nil
 }

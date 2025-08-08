@@ -25,6 +25,9 @@ const (
 
 // +kubebuilder:validation:XValidation:rule="!has(self.joinSubnets) || has(self.role) && self.role == 'Primary'", message="JoinSubnets is only supported for Primary network"
 // +kubebuilder:validation:XValidation:rule="!has(self.subnets) || !has(self.mtu) || !self.subnets.exists_one(i, isCIDR(i.cidr) && cidr(i.cidr).ip().family() == 6) || self.mtu >= 1280", message="MTU should be greater than or equal to 1280 when IPv6 subnet is used"
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.subnets) || oldSelf.subnets.all(old, self.subnets.exists(new, new.cidr == old.cidr))", message="Removing existing subnets is not allowed"
+// +kubebuilder:validation:XValidation:rule="!has(self.subnets) || self.subnets.size() == 1 || !self.subnets.exists(i, self.subnets.exists(j, i != j && cidr(i.cidr).containsCIDR(j.cidr)))", message="Subnets must not overlap or contain each other"
+// +kubebuilder:validation:XValidation:rule="!has(self.subnets) || self.subnets.size() == 1 || self.subnets.all(i, i.hostSubnet == self.subnets[0].hostSubnet)", message="All subnets must use the same hostSubnet value"
 type Layer3Config struct {
 	// Role describes the network role in the pod.
 	//
@@ -34,6 +37,7 @@ type Layer3Config struct {
 	//
 	// +kubebuilder:validation:Enum=Primary;Secondary
 	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="role is immutable"
 	// +required
 	Role NetworkRole `json:"role"`
 
@@ -43,18 +47,18 @@ type Layer3Config struct {
 	//
 	// +kubebuilder:validation:Minimum=576
 	// +kubebuilder:validation:Maximum=65536
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="mtu is immutable"
 	// +optional
 	MTU int32 `json:"mtu,omitempty"`
 
 	// Subnets are used for the pod network across the cluster.
 	//
-	// Dual-stack clusters may set 2 subnets (one for each IP family), otherwise only 1 subnet is allowed.
-	// Given subnet is split into smaller subnets for every node.
+	// Each IP family can have multiple subnets.
+	// For each IP family, every node allocates a smaller subnet from the provided subnets.
 	//
 	// +kubebuilder:validation:MinItems=1
-	// +kubebuilder:validation:MaxItems=2
+	// +kubebuilder:validation:MaxItems=400
 	// +required
-	// +kubebuilder:validation:XValidation:rule="size(self) != 2 || !isCIDR(self[0].cidr) || !isCIDR(self[1].cidr) || cidr(self[0].cidr).ip().family() != cidr(self[1].cidr).ip().family()", message="When 2 CIDRs are set, they must be from different IP families"
 	Subnets []Layer3Subnet `json:"subnets,omitempty"`
 
 	// JoinSubnets are used inside the OVN network topology.
@@ -64,6 +68,7 @@ type Layer3Config struct {
 	// It is not recommended to set this field without explicit need and understanding of the OVN network topology.
 	// When omitted, the platform will choose a reasonable default which is subject to change over time.
 	//
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="joinSubnets is immutable"
 	// +optional
 	JoinSubnets DualStackCIDRs `json:"joinSubnets,omitempty"`
 }
