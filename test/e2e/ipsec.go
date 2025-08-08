@@ -80,7 +80,7 @@ var _ = ginkgo.Describe("IPSec", func() {
 				gomega.Expect(err).Should(gomega.BeNil())
 				gomega.Expect(int(ipsecMetricValue)).Should(gomega.Equal(1))
 
-				ginkgo.By(fmt.Sprintf("Verify ipsec tunnel metrics reflecting up from ovn pod %s. ", ovnPod.Name))
+				ginkgo.By(fmt.Sprintf("Verify ipsec tunnel metrics reflecting up from ovn pod %s ", ovnPod.Name))
 				ipsecTunnelMetricValue, err := GetMetricValue(metricsOutput, ipsecTunnelMetricName)
 				gomega.Expect(err).Should(gomega.BeNil())
 				gomega.Expect(int(ipsecTunnelMetricValue)).Should(gomega.Equal(1))
@@ -107,7 +107,7 @@ var _ = ginkgo.Describe("IPSec", func() {
 			for _, ovnPod := range ovnPods.Items {
 				metricsOutput := getIPSecRawMetricsFromPod(f, ovnPod.Name, ovnKubernetesNamespace, ovnContainerName)
 
-				ginkgo.By(fmt.Sprintf("Verify ipsec tunnel metrics reflecting down from ovn pod %s. ", ovnPod.Name))
+				ginkgo.By(fmt.Sprintf("Verify ipsec tunnel metrics reflecting down from ovn pod %s ", ovnPod.Name))
 				ipsecTunnelMetricValue, err := GetMetricValue(metricsOutput, ipsecTunnelMetricName)
 				gomega.Expect(err).Should(gomega.BeNil())
 				gomega.Expect(int(ipsecTunnelMetricValue)).Should(gomega.Equal(0))
@@ -128,8 +128,6 @@ var _ = ginkgo.Describe("IPSec", func() {
 					metricsOutput := getIPSecRawMetricsFromPod(f, ovnPod.Name, ovnKubernetesNamespace, ovnContainerName)
 					ipsecTunnelMetricValue, err := GetMetricValue(metricsOutput, ipsecTunnelMetricName)
 					gomega.Expect(err).Should(gomega.BeNil())
-
-					ginkgo.By(fmt.Sprintf("Verify ipsec tunnel metrics reflecting up again from pod %s.", ovnPod.Name))
 					if int(ipsecTunnelMetricValue) != 1 {
 						return false
 					}
@@ -144,6 +142,7 @@ var _ = ginkgo.Describe("IPSec", func() {
 
 // getIPSecRawMetricsFromPod retrieves IPSec metrics from the specified pod
 func getIPSecRawMetricsFromPod(f *framework.Framework, podName string, nameSpace string, containerName string) string {
+	ginkgo.GinkgoHelper()
 	pod, err := f.ClientSet.CoreV1().Pods(nameSpace).Get(context.TODO(), podName, metav1.GetOptions{})
 	if err != nil {
 		framework.Failf("failed to get pod %s in namespace %s: %v", podName, nameSpace, err)
@@ -165,6 +164,7 @@ func getIPSecRawMetricsFromPod(f *framework.Framework, podName string, nameSpace
 
 // PromToJSON converts Prometheus metrics format to JSON
 func PromToJSON(metricsOutput string) (string, error) {
+	ginkgo.GinkgoHelper()
 	var metrics []PromMetric
 	lines := strings.Split(metricsOutput, "\n")
 
@@ -228,6 +228,7 @@ func PromToJSON(metricsOutput string) (string, error) {
 
 // GetMetricValueFromJSON extracts a specific metric value from JSON output by name
 func GetMetricValue(metricRawOutput string, metricName string) (float64, error) {
+	ginkgo.GinkgoHelper()
 	var metrics []PromMetric
 	var metricValue float64
 
