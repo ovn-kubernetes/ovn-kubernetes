@@ -44,6 +44,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/managementport"
 	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/ovspinning"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/podresourcesapi"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	nodetypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/apbroute"
@@ -1359,7 +1360,12 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 	nc.wg.Add(1)
 	go func() {
 		defer nc.wg.Done()
-		ovspinning.Run(nc.stopChan)
+		podResClient, err := podresourcesapi.New(podresourcesapi.KubeletSocketPath)
+		if err != nil {
+			klog.Errorf("Failed to initialize PodResourcesAPI client: %v", err)
+			return
+		}
+		ovspinning.Run(ctx, nc.stopChan, podResClient)
 	}()
 
 	klog.Infof("Default node network controller initialized and ready.")

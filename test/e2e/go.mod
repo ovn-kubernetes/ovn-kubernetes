@@ -13,9 +13,9 @@ require (
 	github.com/onsi/gomega v1.36.1
 	github.com/pkg/errors v0.9.1
 	golang.org/x/sync v0.12.0
-	k8s.io/api v0.32.5
-	k8s.io/apimachinery v0.32.5
-	k8s.io/client-go v0.32.5
+	k8s.io/api v0.32.6
+	k8s.io/apimachinery v0.32.6
+	k8s.io/client-go v0.32.6
 	k8s.io/klog v1.0.0
 	k8s.io/kubernetes v1.32.6
 	k8s.io/pod-security-admission v0.32.3
@@ -166,19 +166,19 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	gotest.tools/v3 v3.5.0 // indirect
 	k8s.io/apiextensions-apiserver v0.32.3 // indirect
-	k8s.io/apiserver v0.32.3 // indirect
+	k8s.io/apiserver v0.32.6 // indirect
 	k8s.io/cloud-provider v0.32.3 // indirect
-	k8s.io/component-base v0.32.3 // indirect
+	k8s.io/component-base v0.32.6 // indirect
 	k8s.io/component-helpers v0.32.3 // indirect
 	k8s.io/controller-manager v0.32.3 // indirect
-	k8s.io/cri-api v0.32.3 // indirect
+	k8s.io/cri-api v0.32.6 // indirect
 	k8s.io/cri-client v0.32.3 // indirect
 	k8s.io/csi-translation-lib v0.32.3 // indirect
 	k8s.io/dynamic-resource-allocation v0.32.3 // indirect
-	k8s.io/kms v0.32.3 // indirect
+	k8s.io/kms v0.32.6 // indirect
 	k8s.io/kube-openapi v0.0.0-20241105132330-32ad38e42d3f // indirect
 	k8s.io/kube-scheduler v0.32.3 // indirect
-	k8s.io/kubelet v0.32.3 // indirect
+	k8s.io/kubelet v0.32.6 // indirect
 	k8s.io/mount-utils v0.32.3 // indirect
 	kubevirt.io/containerized-data-importer-api v1.57.0-alpha1 // indirect
 	kubevirt.io/controller-lifecycle-operator-sdk/api v0.0.0-20220329064328-f3cc58c6ed90 // indirect
