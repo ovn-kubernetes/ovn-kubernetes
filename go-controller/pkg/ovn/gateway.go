@@ -79,7 +79,6 @@ func NewGatewayManagerForLayer2Topology(
 	return newGWManager(
 		nodeName,
 		routerName,
-		netInfo.GetNetworkScopedGWRouterName(nodeName),
 		netInfo.GetNetworkScopedExtSwitchName(nodeName),
 		netInfo.GetNetworkScopedSwitchName(""),
 		coopUUID,
@@ -103,7 +102,6 @@ func NewGatewayManager(
 	return newGWManager(
 		nodeName,
 		netInfo.GetNetworkScopedClusterRouterName(),
-		netInfo.GetNetworkScopedGWRouterName(nodeName),
 		netInfo.GetNetworkScopedExtSwitchName(nodeName),
 		netInfo.GetNetworkScopedJoinSwitchName(),
 		coopUUID,
@@ -116,7 +114,7 @@ func NewGatewayManager(
 }
 
 func newGWManager(
-	nodeName, clusterRouterName, gwRouterName, extSwitchName, joinSwitchName string,
+	nodeName, clusterRouterName, extSwitchName, joinSwitchName string,
 	coopUUID string,
 	kube kube.InterfaceOVN,
 	nbClient libovsdbclient.Client,
@@ -126,7 +124,7 @@ func newGWManager(
 	gwManager := &GatewayManager{
 		nodeName:          nodeName,
 		clusterRouterName: clusterRouterName,
-		gwRouterName:      gwRouterName,
+		gwRouterName:      netInfo.GetNetworkScopedGWRouterName(nodeName),
 		extSwitchName:     extSwitchName,
 		joinSwitchName:    joinSwitchName,
 		coppUUID:          coopUUID,
@@ -314,6 +312,17 @@ func (gw *GatewayManager) createGWRouter(gwConfig *GatewayConfig) (*nbdb.Logical
 	return &gwRouter, nil
 }
 
+func GetGWRouterPortName(netInfo util.NetInfo, nodeName string) string {
+	gwRouterName := netInfo.GetNetworkScopedGWRouterName(nodeName)
+	if netInfo.TopologyType() == types.Layer2Topology {
+		if netInfo.TopologyVariant() == types.Layer2RouterTopology {
+			return types.RouterToTransitRouterPrefix + gwRouterName
+		}
+		return types.RouterToSwitchPrefix + netInfo.GetNetworkScopedSwitchName("")
+	}
+	return types.GWRouterToJoinSwitchPrefix + gwRouterName
+}
+
 func (gw *GatewayManager) getGWRouterPeerRouterPortName() string {
 	return types.TransitRouterToRouterPrefix + gw.gwRouterName
 }
@@ -326,13 +335,7 @@ func (gw *GatewayManager) getGWRouterPeerSwitchPortName() string {
 }
 
 func (gw *GatewayManager) getGWRouterPortName() string {
-	if gw.netInfo.TopologyType() == types.Layer2Topology {
-		if gw.transitRouterInfo != nil {
-			return types.RouterToTransitRouterPrefix + gw.gwRouterName
-		}
-		return types.RouterToSwitchPrefix + gw.joinSwitchName
-	}
-	return types.GWRouterToJoinSwitchPrefix + gw.gwRouterName
+	return GetGWRouterPortName(gw.netInfo, gw.nodeName)
 }
 
 func (gw *GatewayManager) createGWRouterPeerSwitchPort(nodeName string) error {

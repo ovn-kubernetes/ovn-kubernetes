@@ -1507,14 +1507,9 @@ func (e *EgressIPController) syncPodAssignmentCache(egressIPCache egressIPCache)
 			if ni == nil {
 				return fmt.Errorf("failed to get active network for network name %q", networkName)
 			}
-			routerName := ni.GetNetworkScopedClusterRouterName()
-			if ni.TopologyType() == types.Layer2Topology {
-				// no support for multiple Nodes per OVN zone, therefore pick the first local zone node
-				localNodeName, err := e.getALocalZoneNodeName()
-				if err != nil {
-					return err
-				}
-				routerName = ni.GetNetworkScopedGWRouterName(localNodeName)
+			routerName, err := e.getTopologyScopedLocalZoneRouterName(ni)
+			if err != nil {
+				return err
 			}
 			reRoutePolicies, err := libovsdbops.FindALogicalRouterPoliciesWithPredicate(e.nbClient, routerName, p1)
 			if err != nil {
@@ -1856,7 +1851,7 @@ func (e *EgressIPController) generateCacheForEgressIP() (egressIPCache, error) {
 		if localZoneNodes.Len() > 0 {
 			localNodeName = localZoneNodes.UnsortedList()[0]
 		}
-		routerName, err := getTopologyScopedRouterName(ni, localNodeName)
+		routerName, err := e.getTopologyScopedRouterName(ni, localNodeName)
 		if err != nil {
 			klog.Errorf("Failed to get network topology scoped router name for network %s attached to namespace %s, stale objects may remain: %v",
 				ni.GetNetworkName(), namespace.Name, err)
@@ -1895,14 +1890,14 @@ func (e *EgressIPController) generateCacheForEgressIP() (egressIPCache, error) {
 
 			if localZoneNodes.Has(node.Name) {
 				if e.v4 {
-					if gatewayRouterIP, err := e.getGatewayNextHop(ni, node.Name, false); err != nil {
+					if gatewayRouterIP, err := e.getGatewayNextHop(ni, node, false); err != nil {
 						klog.V(5).Infof("Unable to retrieve gateway IP for node: %s, protocol is IPv4: err: %v", node.Name, err)
 					} else {
 						r.v4Gateway = gatewayRouterIP.String()
 					}
 				}
 				if e.v6 {
-					if gatewayRouterIP, err := e.getGatewayNextHop(ni, node.Name, true); err != nil {
+					if gatewayRouterIP, err := e.getGatewayNextHop(ni, node, true); err != nil {
 						klog.V(5).Infof("Unable to retrieve gateway IP for node: %s, protocol is IPv6: err: %v", node.Name, err)
 					} else {
 						r.v6Gateway = gatewayRouterIP.String()
@@ -1910,19 +1905,19 @@ func (e *EgressIPController) generateCacheForEgressIP() (egressIPCache, error) {
 				}
 			} else {
 				if e.v4 {
-					nextHopIP, err := e.getTransitIP(node.Name, false)
+					nextHopIP, err := e.getTransitIP(node, false, ni)
 					if err != nil {
 						klog.V(5).Infof("Unable to fetch transit switch IPv4 for node %s: %v", node.Name, err)
 					} else {
-						r.v4TransitSwitch = nextHopIP
+						r.v4TransitSwitch = nextHopIP.String()
 					}
 				}
 				if e.v6 {
-					nextHopIP, err := e.getTransitIP(node.Name, true)
+					nextHopIP, err := e.getTransitIP(node, true, ni)
 					if err != nil {
 						klog.V(5).Infof("Unable to fetch transit switch IPv6 for node %s: %v", node.Name, err)
 					} else {
-						r.v6TransitSwitch = nextHopIP
+						r.v6TransitSwitch = nextHopIP.String()
 					}
 				}
 			}
@@ -2133,7 +2128,7 @@ func (e *EgressIPController) initClusterEgressPolicies(_ []interface{}) error {
 		if len(subnets) == 0 {
 			return nil
 		}
-		routerName, err := getTopologyScopedRouterName(network, localNodeName)
+		routerName, err := e.getTopologyScopedRouterName(network, localNodeName)
 		if err != nil {
 			return err
 		}
@@ -2392,8 +2387,8 @@ func (e *EgressIPController) addPodEgressIPAssignment(ni util.NetInfo, egressIPN
 					return fmt.Errorf("unable to create NAT rule ops for status: %v, err: %v", status, err)
 				}
 
-			} else if ni.IsSecondary() && ni.TopologyType() == types.Layer3Topology {
-				// not required for L2 because we always have LRPs using reroute action to pkt mark
+			} else if ni.IsSecondary() && (ni.TopologyType() == types.Layer3Topology ||
+				ni.TopologyVariant() == types.Layer2RouterTopology) {
 				ops, err = e.createGWMarkPolicyOps(ni, ops, podIPs, status, mark, pod.Namespace, pod.Name, egressIPName)
 				if err != nil {
 					return fmt.Errorf("unable to create GW router LRP ops to packet mark pod %s/%s: %v", pod.Namespace, pod.Name, err)
@@ -2403,7 +2398,7 @@ func (e *EgressIPController) addPodEgressIPAssignment(ni util.NetInfo, egressIPN
 		if config.OVNKubernetesFeature.EnableInterconnect && ni.IsDefault() && !isOVNNetwork && (loadedPodNode && !isLocalZonePod) {
 			// For CDNs, configure LRP with reroute action for non-local-zone pods on egress nodes to support redirect to local management port
 			// when the egress IP is assigned to a host secondary interface
-			routerName, err := getTopologyScopedRouterName(ni, pod.Spec.NodeName)
+			routerName, err := e.getTopologyScopedRouterName(ni, pod.Spec.NodeName)
 			if err != nil {
 				return err
 			}
@@ -2416,10 +2411,11 @@ func (e *EgressIPController) addPodEgressIPAssignment(ni util.NetInfo, egressIPN
 
 	// For L2, we always attach an LRP with reroute action to the Nodes gateway router. If the pod is remote, use the local zone Node name to generate the GW router name.
 	nodeName := pod.Spec.NodeName
-	if loadedEgressNode && loadedPodNode && !isLocalZonePod && isLocalZoneEgressNode && ni.IsSecondary() && ni.TopologyType() == types.Layer2Topology {
+	if loadedEgressNode && loadedPodNode && !isLocalZonePod && isLocalZoneEgressNode && ni.IsSecondary() &&
+		ni.TopologyVariant() == types.Layer2Topology {
 		nodeName = status.Node
 	}
-	routerName, err := getTopologyScopedRouterName(ni, nodeName)
+	routerName, err := e.getTopologyScopedRouterName(ni, nodeName)
 	if err != nil {
 		return err
 	}
@@ -2427,7 +2423,7 @@ func (e *EgressIPController) addPodEgressIPAssignment(ni util.NetInfo, egressIPN
 	// exec when node is local OR when pods are local or L2 UDN
 	// don't add a reroute policy if the egress node towards which we are adding this doesn't exist
 	if loadedEgressNode && loadedPodNode {
-		if isLocalZonePod || (isLocalZoneEgressNode && ni.IsSecondary() && ni.TopologyType() == types.Layer2Topology) {
+		if isLocalZonePod || (isLocalZoneEgressNode && ni.IsSecondary() && ni.TopologyVariant() == types.Layer2Topology) {
 			ops, err = e.createReroutePolicyOps(ni, ops, podIPs, status, mark, egressIPName, nextHopIP, routerName, pod.Namespace, pod.Name)
 			if err != nil {
 				return fmt.Errorf("unable to create logical router policy ops, err: %v", err)
@@ -2484,10 +2480,10 @@ func (e *EgressIPController) deletePodEgressIPAssignment(ni util.NetInfo, egress
 	}
 	// For L2, we always attach an LRP with reroute action to the Nodes gateway router. If the pod is remote, use the local zone Node name to generate the GW router name.
 	nodeName := pod.Spec.NodeName
-	if !isLocalZonePod && isLocalZoneEgressNode && ni.IsSecondary() && ni.TopologyType() == types.Layer2Topology {
+	if !isLocalZonePod && isLocalZoneEgressNode && ni.IsSecondary() && ni.TopologyVariant() == types.Layer2Topology {
 		nodeName = status.Node
 	}
-	routerName, err := getTopologyScopedRouterName(ni, nodeName)
+	routerName, err := e.getTopologyScopedRouterName(ni, nodeName)
 	if err != nil {
 		return err
 	}
@@ -2503,7 +2499,7 @@ func (e *EgressIPController) deletePodEgressIPAssignment(ni util.NetInfo, egress
 	// Case 1 - node where pod is hosted is not known
 	// Case 2 - pod is within the local zone
 	// case 3 - a local zone node is egress node and pod is attached to layer 2. For layer2, there is always an LRP attached to the egress Node GW router
-	if !loadedPodNode || isLocalZonePod || (isLocalZoneEgressNode && ni.IsSecondary() && ni.TopologyType() == types.Layer2Topology) {
+	if !loadedPodNode || isLocalZonePod || (isLocalZoneEgressNode && ni.IsSecondary() && ni.TopologyVariant() == types.Layer2Topology) {
 		ops, err = e.deleteReroutePolicyOps(ni, ops, status, egressIPName, nextHopIP, routerName, pod.Namespace, pod.Name)
 		if errors.Is(err, libovsdbclient.ErrNotFound) {
 			// if the gateway router join IP setup is already gone, then don't count it as error.
@@ -2526,7 +2522,7 @@ func (e *EgressIPController) deletePodEgressIPAssignment(ni util.NetInfo, egress
 			if err != nil {
 				return fmt.Errorf("unable to delete NAT rule for status: %v, err: %v", status, err)
 			}
-		} else if ni.IsSecondary() && ni.TopologyType() == types.Layer3Topology {
+		} else if ni.IsSecondary() && ni.TopologyType() == types.Layer3Topology || ni.TopologyVariant() == types.Layer2RouterTopology {
 			ops, err = e.deleteGWMarkPolicyOps(ni, ops, status, pod.Namespace, pod.Name, egressIPName)
 			if err != nil {
 				return fmt.Errorf("unable to create GW router packet mark LRPs delete ops for pod %s/%s: %v", pod.Namespace, pod.Name, err)
@@ -2645,29 +2641,29 @@ func (e *EgressIPController) deleteExternalGWPodSNATOps(ni util.NetInfo, ops []o
 // getGatewayNextHop determines the next hop for a given Node considering the network topology type
 // For layer 3, next hop is gateway routers 'router to join' port IP
 // For layer 2, it's the callers responsibility to ensure that the egress node is remote because a LRP should not be created
-func (e *EgressIPController) getGatewayNextHop(ni util.NetInfo, nodeName string, isIPv6 bool) (net.IP, error) {
-	// fetch gateway router 'router to join' port IP
+func (e *EgressIPController) getGatewayNextHop(ni util.NetInfo, node *corev1.Node, isIPv6 bool) (net.IP, error) {
 	if ni.TopologyType() == types.Layer3Topology {
-		return e.getRouterPortIP(types.GWRouterToJoinSwitchPrefix+ni.GetNetworkScopedGWRouterName(nodeName), isIPv6)
-	}
-
-	// If egress node is local, retrieve the external default gateway next hops from the Node L3 gateway annotation.
-	// We must pick one of the next hops to add to the LRP reroute next hops to not break ECMP.
-	// If an egress node is remote, retrieve the remote Nodes gateway router 'router to switch' port IP
-	// from the Node annotation.
-	// FIXME: remove gathering the required information from a Node annotations as this approach does not scale
-	// FIXME: we do not respect multiple default gateway next hops and instead pick the first IP that matches the IP family of the EIP
-	if ni.TopologyType() == types.Layer2Topology {
-		node, err := e.watchFactory.GetNode(nodeName)
+		return e.getRouterPortIP(GetGWRouterPortName(ni, node.Name), isIPv6)
+	} else if ni.TopologyType() == types.Layer2Topology {
+		if ni.TopologyVariant() == types.Layer2RouterTopology {
+			return e.getTransitIP(node, isIPv6, ni)
+		}
+		// If egress node is local, retrieve the external default gateway next hops from the Node L3 gateway annotation.
+		// We must pick one of the next hops to add to the LRP reroute next hops to not break ECMP.
+		// If an egress node is remote, retrieve the remote Nodes gateway router 'router to switch' port IP
+		// from the Node annotation.
+		// FIXME: remove gathering the required information from a Node annotations as this approach does not scale
+		// FIXME: we do not respect multiple default gateway next hops and instead pick the first IP that matches the IP family of the EIP
+		node, err := e.watchFactory.GetNode(node.Name)
 		if err != nil {
-			return nil, fmt.Errorf("failed to retrive node %s: %w", nodeName, err)
+			return nil, fmt.Errorf("failed to retrive node %s: %w", node.Name, err)
 		}
 		localNode, err := e.getALocalZoneNodeName()
 		if err != nil {
 			return nil, err
 		}
 		// Node is local
-		if localNode == nodeName {
+		if localNode == node.Name {
 			nextHopIPs, err := util.ParseNodeL3GatewayAnnotation(node)
 			if err != nil {
 				if util.IsAnnotationNotSetError(err) {
@@ -2749,21 +2745,28 @@ func ipFamilyName(isIPv6 bool) string {
 	return string(IPFamilyValueV4)
 }
 
-func (e *EgressIPController) getTransitIP(nodeName string, wantsIPv6 bool) (string, error) {
-	// fetch node annotation of the egress node
-	node, err := e.watchFactory.GetNode(nodeName)
-	if err != nil {
-		return "", fmt.Errorf("failed to get node %s: %w", nodeName, err)
+func (e *EgressIPController) getTransitIP(node *corev1.Node, wantsIPv6 bool, ni util.NetInfo) (net.IP, error) {
+	if ni.TopologyVariant() == types.Layer2RouterTopology {
+		transitRouterInfo, err := udn.GetTransitRouterInfo(node)
+		if err != nil {
+			return nil, err
+		}
+		nodeTransitIP, err := util.MatchFirstIPNetFamily(wantsIPv6, transitRouterInfo.GatewayRouterNets)
+		if err != nil {
+			return nil, fmt.Errorf("could not find transit router IP of node %v for this family %v: %v", node, wantsIPv6, err)
+		}
+		return nodeTransitIP.IP, nil
+	} else {
+		nodeTransitIPs, err := util.ParseNodeTransitSwitchPortAddrs(node)
+		if err != nil {
+			return nil, fmt.Errorf("unable to fetch transit switch IP for node %s: %w", node.Name, err)
+		}
+		nodeTransitIP, err := util.MatchFirstIPNetFamily(wantsIPv6, nodeTransitIPs)
+		if err != nil {
+			return nil, fmt.Errorf("could not find transit switch IP of node %v for this family %v: %v", node, wantsIPv6, err)
+		}
+		return nodeTransitIP.IP, nil
 	}
-	nodeTransitIPs, err := util.ParseNodeTransitSwitchPortAddrs(node)
-	if err != nil {
-		return "", fmt.Errorf("unable to fetch transit switch IP for node %s: %w", nodeName, err)
-	}
-	nodeTransitIP, err := util.MatchFirstIPNetFamily(wantsIPv6, nodeTransitIPs)
-	if err != nil {
-		return "", fmt.Errorf("could not find transit switch IP of node %v for this family %v: %v", node, wantsIPv6, err)
-	}
-	return nodeTransitIP.IP.String(), nil
 }
 
 // getNextHop attempts to determine whether an egress IP should be routed through the Nodes primary network interface (isOVNetwork = true)
@@ -2772,11 +2775,15 @@ func (e *EgressIPController) getTransitIP(nodeName string, wantsIPv6 bool) (stri
 // and no error returned. This means we searched successfully but could not find the information required to generate the next hop IP.
 func (e *EgressIPController) getNextHop(ni util.NetInfo, egressNodeName, egressIP, egressIPName string, isLocalZoneEgressNode, isOVNNetwork bool) (string, error) {
 	isEgressIPv6 := utilnet.IsIPv6String(egressIP)
-	if isLocalZoneEgressNode || ni.TopologyType() == types.Layer2Topology {
+	egressNode, err := e.watchFactory.GetNode(egressNodeName)
+	if err != nil {
+		return "", err
+	}
+	if isLocalZoneEgressNode || ni.TopologyVariant() == types.Layer2Topology {
 		// isOVNNetwork is true when an EgressIP is "assigned" to the Nodes primary interface (breth0). Ext traffic will egress breth0.
 		// is OVNNetwork is false when the EgressIP is assigned to a host secondary interface (not breth0). Ext traffic will egress this interface.
 		if isOVNNetwork {
-			gatewayRouterIP, err := e.getGatewayNextHop(ni, egressNodeName, isEgressIPv6)
+			gatewayRouterIP, err := e.getGatewayNextHop(ni, egressNode, isEgressIPv6)
 			// return error only when we failed to retrieve the gateway IP. Do not return error when we can never get this IP (gw deleted)
 			if err != nil && !errors.Is(err, libovsdbclient.ErrNotFound) {
 				return "", fmt.Errorf("unable to retrieve gateway IP for node: %s, protocol is IPv6: %v, err: %w",
@@ -2797,7 +2804,7 @@ func (e *EgressIPController) getNextHop(ni util.NetInfo, egressNodeName, egressI
 	}
 
 	if config.OVNKubernetesFeature.EnableInterconnect {
-		nextHopIP, err := e.getTransitIP(egressNodeName, isEgressIPv6)
+		nextHopIP, err := e.getTransitIP(egressNode, isEgressIPv6, ni)
 		if err != nil && !errors.Is(err, libovsdbclient.ErrNotFound) {
 			return "", fmt.Errorf("unable to fetch transit switch IP for node %s: %v", egressNodeName, err)
 		} else if err != nil {
@@ -2805,7 +2812,7 @@ func (e *EgressIPController) getNextHop(ni util.NetInfo, egressNodeName, egressI
 				egressIPName, egressIP, err)
 			return "", nil
 		}
-		return nextHopIP, nil
+		return nextHopIP.String(), nil
 	}
 	return "", nil
 }
@@ -2995,13 +3002,9 @@ func (e *EgressIPController) deleteEgressIPStatusSetup(ni util.NetInfo, name str
 	}
 
 	if nextHopIP != "" {
-		router := ni.GetNetworkScopedClusterRouterName()
-		if ni.TopologyType() == types.Layer2Topology {
-			nodeName, err := e.getALocalZoneNodeName()
-			if err != nil {
-				return err
-			}
-			router = ni.GetNetworkScopedGWRouterName(nodeName)
+		router, err := e.getTopologyScopedLocalZoneRouterName(ni)
+		if err != nil {
+			return err
 		}
 		ops, err = libovsdbops.DeleteNextHopFromLogicalRouterPoliciesWithPredicateOps(e.nbClient, ops, router, policyPredNextHop, nextHopIP)
 		if err != nil {
@@ -3050,7 +3053,7 @@ func (e *EgressIPController) ensureOnlyValidNextHops(ni util.NetInfo, name, node
 			strings.HasPrefix(item.ExternalIDs[libovsdbops.ObjectNameKey.String()], name+dbIDEIPNamePodDivider) &&
 			item.ExternalIDs[libovsdbops.NetworkKey.String()] == ni.GetNetworkName()
 	}
-	routerName, err := getTopologyScopedRouterName(ni, nodeName)
+	routerName, err := e.getTopologyScopedRouterName(ni, nodeName)
 	if err != nil {
 		return ops, err
 	}
@@ -3197,7 +3200,7 @@ func (e *EgressIPController) ensureRouterPoliciesForNetwork(ni util.NetInfo, nod
 	if err != nil {
 		return err
 	}
-	routerName, err := getTopologyScopedRouterName(ni, localNode)
+	routerName, err := e.getTopologyScopedRouterName(ni, localNode)
 	if err != nil {
 		return err
 	}
@@ -3437,14 +3440,9 @@ func (e *EgressIPController) ensureDefaultNoRerouteNodePolicies() error {
 		if network.GetNetworkName() == types.DefaultNetworkName {
 			return nil
 		}
-		routerName := network.GetNetworkScopedClusterRouterName()
-		if network.TopologyType() == types.Layer2Topology {
-			// assume one node per zone only. Multi nodes per zone not supported.
-			nodeName, err := e.getALocalZoneNodeName()
-			if err != nil {
-				return err
-			}
-			routerName = network.GetNetworkScopedGWRouterName(nodeName)
+		routerName, err := e.getTopologyScopedLocalZoneRouterName(network)
+		if err != nil {
+			return err
 		}
 		err = ensureDefaultNoRerouteNodePolicies(e.nbClient, e.addressSetFactory, network.GetNetworkName(), routerName,
 			e.controllerName, nodeLister, e.v4, e.v6)
@@ -3814,14 +3812,27 @@ func addPktMarkToLRPOptions(options map[string]string, mark string) {
 
 // getTopologyScopedRouterName returns the router name that we attach polices to support EgressIP depending on network topology
 // For Layer 3, we return the network scoped OVN "cluster router" name. For layer 2, we return a Nodes network scoped OVN gateway router name.
-func getTopologyScopedRouterName(ni util.NetInfo, nodeName string) (string, error) {
-	if ni.TopologyType() == types.Layer2Topology {
+func (e *EgressIPController) getTopologyScopedRouterName(ni util.NetInfo, nodeName string) (string, error) {
+	if ni.TopologyVariant() == types.Layer2Topology {
 		if nodeName == "" {
 			return "", fmt.Errorf("node name is required to determine the Nodes gateway router name")
 		}
 		return ni.GetNetworkScopedGWRouterName(nodeName), nil
 	}
 	return ni.GetNetworkScopedClusterRouterName(), nil
+}
+
+func (e *EgressIPController) getTopologyScopedLocalZoneRouterName(ni util.NetInfo) (string, error) {
+	routerName := ni.GetNetworkScopedClusterRouterName()
+	if ni.TopologyVariant() == types.Layer2Topology {
+		// no support for multiple Nodes per OVN zone, therefore pick the first local zone node
+		localNodeName, err := e.getALocalZoneNodeName()
+		if err != nil {
+			return "", err
+		}
+		routerName = ni.GetNetworkScopedGWRouterName(localNodeName)
+	}
+	return routerName, nil
 }
 
 func isEgressIPForUDNSupported() bool {
