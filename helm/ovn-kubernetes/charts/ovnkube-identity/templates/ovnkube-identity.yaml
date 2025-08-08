@@ -58,7 +58,7 @@ spec:
             name: webhook-cert
         env:
           - name: OVN_DAEMONSET_VERSION
-            value: "1.0.0"
+            value: "1.1.0"
           - name: K8S_APISERVER
             valueFrom:
               configMapKeyRef:
