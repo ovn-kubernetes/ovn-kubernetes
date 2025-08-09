@@ -37,7 +37,7 @@ const (
 type Condition struct {
 	Column   string
 	Function ConditionFunction
-	Value    interface{}
+	Value    any
 }
 
 func (c Condition) String() string {
@@ -45,7 +45,7 @@ func (c Condition) String() string {
 }
 
 // NewCondition returns a new condition
-func NewCondition(column string, function ConditionFunction, value interface{}) Condition {
+func NewCondition(column string, function ConditionFunction, value any) Condition {
 	return Condition{
 		Column:   column,
 		Function: function,
@@ -55,13 +55,13 @@ func NewCondition(column string, function ConditionFunction, value interface{}) 
 
 // MarshalJSON marshals a condition to a 3 element JSON array
 func (c Condition) MarshalJSON() ([]byte, error) {
-	v := []interface{}{c.Column, c.Function, c.Value}
+	v := []any{c.Column, c.Function, c.Value}
 	return json.Marshal(v)
 }
 
 // UnmarshalJSON converts a 3 element JSON array to a Condition
 func (c *Condition) UnmarshalJSON(b []byte) error {
-	var v []interface{}
+	var v []any
 	err := json.Unmarshal(b, &v)
 	if err != nil {
 		return err
@@ -95,7 +95,7 @@ func (c *Condition) UnmarshalJSON(b []byte) error {
 // Evaluate will evaluate the condition on the two provided values
 // The conditions operately differently depending on the type of
 // the provided values. The behavior is as described in RFC7047
-func (c ConditionFunction) Evaluate(a interface{}, b interface{}) (bool, error) {
+func (c ConditionFunction) Evaluate(a any, b any) (bool, error) {
 	x := reflect.ValueOf(a)
 	y := reflect.ValueOf(b)
 	if x.Kind() != y.Kind() {

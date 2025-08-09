@@ -169,9 +169,9 @@ func (t *Transaction) Transact(operations ...ovsdb.Operation) ([]*ovsdb.Operatio
 func (t *Transaction) applyReferenceUpdates(update updates.ModelUpdates) error {
 	tables := update.GetUpdatedTables()
 	for _, table := range tables {
-		err := update.ForEachModelUpdate(table, func(uuid string, old, new model.Model) error {
+		err := update.ForEachModelUpdate(table, func(uuid string, old, newModel model.Model) error {
 			// track deleted rows due to reference updates
-			if old != nil && new == nil {
+			if old != nil && newModel == nil {
 				t.DeletedRows[uuid] = struct{}{}
 			}
 			// warm the cache with updated and deleted rows due to reference
@@ -302,7 +302,7 @@ func (t *Transaction) Insert(op *ovsdb.Operation) (ovsdb.OperationResult, *updat
 	return result, &update
 }
 
-func (t *Transaction) Select(table string, where []ovsdb.Condition, columns []string) ovsdb.OperationResult {
+func (t *Transaction) Select(table string, where []ovsdb.Condition, _ []string) ovsdb.OperationResult {
 	var results []ovsdb.Row
 	dbModel := t.Model
 
@@ -479,7 +479,7 @@ Loop:
 	return ovsdb.ResultFromError(&ovsdb.TimedOut{})
 }
 
-func (t *Transaction) Commit(durable bool) ovsdb.OperationResult {
+func (t *Transaction) Commit(_ bool) ovsdb.OperationResult {
 	return ovsdb.ResultFromError(&ovsdb.NotSupported{})
 }
 
@@ -487,10 +487,10 @@ func (t *Transaction) Abort() ovsdb.OperationResult {
 	return ovsdb.ResultFromError(&ovsdb.NotSupported{})
 }
 
-func (t *Transaction) Comment(comment string) ovsdb.OperationResult {
+func (t *Transaction) Comment(_ string) ovsdb.OperationResult {
 	return ovsdb.ResultFromError(&ovsdb.NotSupported{})
 }
 
-func (t *Transaction) Assert(lock string) ovsdb.OperationResult {
+func (t *Transaction) Assert(_ string) ovsdb.OperationResult {
 	return ovsdb.ResultFromError(&ovsdb.NotSupported{})
 }

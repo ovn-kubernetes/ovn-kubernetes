@@ -82,7 +82,7 @@ func ExpandNamedUUIDs(ops []Operation, schema *DatabaseSchema) ([]Operation, err
 	return ops, nil
 }
 
-func expandColumnNamedUUIDs(tableSchema *TableSchema, tableName, columnName string, value interface{}, uuidMap map[string]string) (interface{}, error) {
+func expandColumnNamedUUIDs(tableSchema *TableSchema, tableName, columnName string, value any, uuidMap map[string]string) (any, error) {
 	column := tableSchema.Column(columnName)
 	if column == nil {
 		return nil, fmt.Errorf("column %q not found in table %q", columnName, tableName)
@@ -90,7 +90,7 @@ func expandColumnNamedUUIDs(tableSchema *TableSchema, tableName, columnName stri
 	return expandNamedUUID(column, value, uuidMap), nil
 }
 
-func expandNamedUUID(column *ColumnSchema, value interface{}, namedUUIDs map[string]string) interface{} {
+func expandNamedUUID(column *ColumnSchema, value any, namedUUIDs map[string]string) any {
 	var keyType, valType ExtendedType
 
 	switch column.Type {
@@ -149,7 +149,7 @@ func expandNamedUUID(column *ColumnSchema, value interface{}, namedUUIDs map[str
 	return value
 }
 
-func expandNamedUUIDAtomic(valueType ExtendedType, value interface{}, namedUUIDs map[string]string) (interface{}, bool) {
+func expandNamedUUIDAtomic(valueType ExtendedType, value any, namedUUIDs map[string]string) (any, bool) {
 	if valueType == TypeUUID {
 		if uuid, ok := value.(UUID); ok {
 			if newUUID, ok := namedUUIDs[uuid.GoUUID]; ok {

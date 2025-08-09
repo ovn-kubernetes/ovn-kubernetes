@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math"
 	"os"
 	"strings"
@@ -75,7 +74,7 @@ func (schema DatabaseSchema) Print(w io.Writer) {
 
 // SchemaFromFile returns a DatabaseSchema from a file
 func SchemaFromFile(f *os.File) (DatabaseSchema, error) {
-	data, err := ioutil.ReadAll(f)
+	data, err := io.ReadAll(f)
 	if err != nil {
 		return DatabaseSchema{}, err
 	}
@@ -197,7 +196,7 @@ const (
 // BaseType is a base-type structure as per RFC7047
 type BaseType struct {
 	Type       string
-	Enum       []interface{}
+	Enum       []any
 	minReal    *float64
 	maxReal    *float64
 	minInteger *int
@@ -325,16 +324,16 @@ func (b *BaseType) UnmarshalJSON(data []byte) error {
 	}
 	// temporary type to avoid recursive call to unmarshal
 	var bt struct {
-		Type       string      `json:"type"`
-		Enum       interface{} `json:"enum,omitempty"`
-		MinReal    *float64    `json:"minReal,omitempty"`
-		MaxReal    *float64    `json:"maxReal,omitempty"`
-		MinInteger *int        `json:"minInteger,omitempty"`
-		MaxInteger *int        `json:"maxInteger,omitempty"`
-		MinLength  *int        `json:"minLength,omitempty"`
-		MaxLength  *int        `json:"maxLength,omitempty"`
-		RefTable   *string     `json:"refTable,omitempty"`
-		RefType    *RefType    `json:"refType,omitempty"`
+		Type       string   `json:"type"`
+		Enum       any      `json:"enum,omitempty"`
+		MinReal    *float64 `json:"minReal,omitempty"`
+		MaxReal    *float64 `json:"maxReal,omitempty"`
+		MinInteger *int     `json:"minInteger,omitempty"`
+		MaxInteger *int     `json:"maxInteger,omitempty"`
+		MinLength  *int     `json:"minLength,omitempty"`
+		MaxLength  *int     `json:"maxLength,omitempty"`
+		RefTable   *string  `json:"refTable,omitempty"`
+		RefType    *RefType `json:"refType,omitempty"`
 	}
 	err := json.Unmarshal(data, &bt)
 	if err != nil {
@@ -344,14 +343,14 @@ func (b *BaseType) UnmarshalJSON(data []byte) error {
 	if bt.Enum != nil {
 		// 'enum' is a list or a single element representing a list of exactly one element
 		switch bt.Enum.(type) {
-		case []interface{}:
+		case []any:
 			// it's an OvsSet
-			oSet := bt.Enum.([]interface{})
-			innerSet := oSet[1].([]interface{})
-			b.Enum = make([]interface{}, len(innerSet))
+			oSet := bt.Enum.([]any)
+			innerSet := oSet[1].([]any)
+			b.Enum = make([]any, len(innerSet))
 			copy(b.Enum, innerSet)
 		default:
-			b.Enum = []interface{}{bt.Enum}
+			b.Enum = []any{bt.Enum}
 		}
 	}
 	b.Type = bt.Type
@@ -440,10 +439,10 @@ func (c *ColumnType) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 	var colType struct {
-		Key   *BaseType   `json:"key"`
-		Value *BaseType   `json:"value"`
-		Min   *int        `json:"min"`
-		Max   interface{} `json:"max"`
+		Key   *BaseType `json:"key"`
+		Value *BaseType `json:"value"`
+		Min   *int      `json:"min"`
+		Max   any       `json:"max"`
 	}
 	err := json.Unmarshal(data, &colType)
 	if err != nil {

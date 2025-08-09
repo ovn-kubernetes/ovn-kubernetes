@@ -2,6 +2,7 @@ package client
 
 import (
 	"crypto/tls"
+	"errors"
 	"net/url"
 	"time"
 
@@ -21,6 +22,7 @@ type options struct {
 	tlsConfig             *tls.Config
 	reconnect             bool
 	leaderOnly            bool
+	validateModel         bool
 	timeout               time.Duration
 	backoff               backoff.BackOff
 	logger                *logr.Logger
@@ -120,6 +122,9 @@ func WithReconnect(timeout time.Duration, backoff backoff.BackOff) Option {
 func WithInactivityCheck(inactivityTimeout, reconnectTimeout time.Duration,
 	reconnectBackoff backoff.BackOff) Option {
 	return func(o *options) error {
+		if reconnectTimeout >= inactivityTimeout {
+			return errors.New("inactivity timeout value should be greater than reconnect timeout value")
+		}
 		o.reconnect = true
 		o.timeout = reconnectTimeout
 		o.backoff = reconnectBackoff
@@ -159,6 +164,18 @@ func WithMetricsRegistryNamespaceSubsystem(r prometheus.Registerer, namespace, s
 		o.shouldRegisterMetrics = (r != nil)
 		o.metricNamespace = namespace
 		o.metricSubsystem = subsystem
+		return nil
+	}
+}
+
+// WithValidateModel allows for client-side tag-based schema validation on API.Create(), API.Mutate() and API.Update()
+// including following constraints
+// - Integer/Real Ranges: Checks if a number is within the defined minInteger/maxInteger or minReal/maxReal bounds.
+// - Length/Size Constraints: Verifies that strings, sets, and maps adhere to minLength and maxLength requirements.
+// - Enumerations: Ensures that a value is one of the predefined choices in a schema enum.
+func WithValidateModel() Option {
+	return func(o *options) error {
+		o.validateModel = true
 		return nil
 	}
 }

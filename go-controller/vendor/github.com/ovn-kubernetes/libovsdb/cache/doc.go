@@ -3,7 +3,7 @@ Package cache provides a cache of model.Model elements that can be used in an OV
 
 The cache can be accessed using a simple API:
 
-    cache.Table("Open_vSwitch").Row("<ovs-uuid>")
+	cache.Table("Open_vSwitch").Row("<ovs-uuid>")
 
 It implements the ovsdb.NotificationHandler interface
 such that it can be populated automatically by
