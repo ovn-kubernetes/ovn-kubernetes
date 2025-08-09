@@ -57,6 +57,17 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 		mod_vlan_id = fmt.Sprintf("mod_vlan_vid:%d,", config.Gateway.VLANID)
 	}
 
+	// Problem: ovn-controller connects to SB DB and then GARPs for any EIPs configured however for IC, SB DB maybe stale if
+	// ovnkube-controller is not processing.
+	// Solution: add a logical flow to drop GARPs on startup and remove when ovnkube-controller has sync and changes
+	// propagated to OVN SB DB.
+	// remove when ovn contains native support for logical router ports to contain an option to silence garp
+	// https://issues.redhat.com/browse/FDP-1537
+	if b.dropGARP {
+		// priority 499 flows
+		dftFlows = append(dftFlows, b.garpDropFlows()...)
+	}
+
 	if config.IPv4Mode {
 		// table0, Geneve packets coming from external. Skip conntrack and go directly to host
 		// if dest mac is the shared mac send directly to host.
@@ -498,6 +509,15 @@ func generateIPFragmentReassemblyFlow(ofPortPhys string) []string {
 	return flows
 }
 
+func generateGratuitousARPDropFlow(inPort string, priority int) string {
+	// set to op code 1 - see rfc5227 particularly section:
+	// Why Are ARP Announcements Performed Using ARP Request Packets and Not ARP Reply Packets?
+	// ovn follows this practise of using op code 1
+	// TODO: match on dst mac ?
+	return fmt.Sprintf("cookie=%s,table=0,priority=%d,in_port=%s,arp,arp_op=1,actions=drop",
+		nodetypes.DropGARPCookie, priority, inPort)
+}
+
 // must be called with bridge.mutex held
 func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, error) {
 	// CAUTION: when adding new flows where the in_port is ofPortPatch and the out_port is ofPortPhys, ensure
@@ -879,6 +899,27 @@ func (b *BridgeConfiguration) PMTUDDropFlows(ipAddrs []string) []string {
 		}
 	}
 
+	return flows
+}
+
+// garpDropFlows generates the ovs flows for dropping gratuitous ARPs for cluster default network traffic only.
+// bridgeConfiguration lock must be held by caller
+func (b *BridgeConfiguration) garpDropFlows() []string {
+	if config.Gateway.Mode != config.GatewayModeShared || !config.IPv4Mode {
+		return nil
+	}
+	const priority = 499
+	var flows []string
+
+	defaultNetInfo := util.DefaultNetInfo{}
+	defaultNetPatchPortName := defaultNetInfo.GetNetworkScopedPatchPortName(b.bridgeName, b.nodeName)
+
+	for _, netConfig := range b.patchedNetConfigs() {
+		if netConfig.PatchPort != defaultNetPatchPortName {
+			continue
+		}
+		flows = append(flows, generateGratuitousARPDropFlow(netConfig.OfPortPatch, priority))
+	}
 	return flows
 }
 
