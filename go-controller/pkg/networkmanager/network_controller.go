@@ -35,6 +35,7 @@ func newNetworkController(name, zone, node string, cm ControllerManager, wf watc
 		cm:                 cm,
 		networks:           map[string]util.MutableNetInfo{},
 		networkControllers: map[string]*networkControllerState{},
+		nodeLister:         wf.NodeCoreInformer().Lister(),
 	}
 
 	// this controller does not feed from an informer, networks are manually
@@ -54,7 +55,6 @@ func newNetworkController(name, zone, node string, cm ControllerManager, wf watc
 	if nc.hasRouteAdvertisements() {
 		nc.nadLister = wf.NADInformer().Lister()
 		nc.raLister = wf.RouteAdvertisementsInformer().Lister()
-		nc.nodeLister = wf.NodeCoreInformer().Lister()
 
 		// ra controller
 		raConfig := &controller.ControllerConfig[ratypes.RouteAdvertisements]{
@@ -245,13 +245,32 @@ func (c *networkController) syncAll() error {
 	start := time.Now()
 	klog.Infof("%s: syncing all networks", c.name)
 	for _, network := range validNetworks {
-		err := c.syncNetwork(network.GetNetworkName())
+		// Ensure node is allocated with host subnet for the network, When subnet is not allocated
+		// for the node then skip syncing the network and proceed with syncing remaining network.
+		// Return the error at the end when k8s.ovn.org/node-subnets annotation is not set for a
+		// network and let the caller to decide on what to do with it.
+		networkName := network.GetNetworkName()
+		if c.node != "" && util.IsNetworkSegmentationSupportEnabled() && network.IsPrimaryNetwork() &&
+			network.TopologyType() == types.Layer3Topology {
+			node, err := c.nodeLister.Get(c.node)
+			if err != nil {
+				return fmt.Errorf("error retrieving node %s object while syncing network %s: %w",
+					c.node, networkName, err)
+			}
+			_, err = util.ParseNodeHostSubnetAnnotation(node, networkName)
+			if err != nil && util.IsAnnotationNotSetError(err) {
+				klog.Errorf("Ignoring syncing network %s because k8s.ovn.org/node-subnets annotation is not set on node %s",
+					networkName, c.node)
+				continue
+			}
+		}
+		err := c.syncNetwork(networkName)
 		if errors.Is(err, ErrNetworkControllerTopologyNotManaged) {
-			klog.V(5).Infof("Ignoring network %q since %q does not manage it", network.GetNetworkName(), c.name)
+			klog.V(5).Infof("Ignoring network %q since %q does not manage it", networkName, c.name)
 			continue
 		}
 		if err != nil {
-			return fmt.Errorf("failed to sync network %s: %w", network.GetNetworkName(), err)
+			return fmt.Errorf("failed to sync network %s: %w", networkName, err)
 		}
 	}
 	klog.Infof("%s: finished syncing all networks. Time taken: %s", c.name, time.Since(start))
