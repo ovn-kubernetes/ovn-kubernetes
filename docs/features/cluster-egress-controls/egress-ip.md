@@ -204,11 +204,11 @@ Due to the fact that ovn-controllers on different nodes apply the changes indepe
 there is a chance that some pod traffic will reach the egress node before it configures the SNAT rules.
 The following flows are added on breth0 to address this scenario:
 ```shell
-# Commit connections from local pods so they are not affected by the drop rule below, this is required for ICNIv2
-priority=109,ip,in_port=2,nw_src=<nodeSubnet> actions=ct(commit,zone=64000,exec(set_field:0x1->ct_mark)),output:1
+# Output traffic from local pods so they are not affected by the drop rule below, this is required for ICNIv2 and advertised UDNs
+priority=104,ip,in_port=2,nw_src=<nodeSubnet> actions=output:eth0
 
 # Drop non SNATed egress traffic coming from non-local pods
-priority=104,ip,in_port=2,nw_src=<clusterSubnet> actions=drop
+priority=103,ip,in_port=2,nw_src=<clusterSubnet> actions=drop
 
 # Commit connections coming from IPs not in cluster network
 priority=100,ip,in_port=2 actions=ct(commit,zone=64000,exec(set_field:0x1->ct_mark)),output:1
