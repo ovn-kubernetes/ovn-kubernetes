@@ -236,6 +236,10 @@ func (b *BridgeConfiguration) GetGatewayIface() string {
 	return b.gwIface
 }
 
+func (b *BridgeConfiguration) GetGatewayIfaceRep() string {
+	return b.gwIfaceRep
+}
+
 // UpdateInterfaceIPAddresses sets and returns the bridge's current ips
 func (b *BridgeConfiguration) UpdateInterfaceIPAddresses(node *corev1.Node) ([]*net.IPNet, error) {
 	b.mutex.Lock()
