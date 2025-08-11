@@ -96,11 +96,7 @@ can embed the API interface directly.
 
 This option is not recommended. It will lead to publishing packages that
 contain runtime panics when users update to newer versions of
-<<<<<<< HEAD
 [go.opentelemetry.io/otel/trace], which may be done with a transitive
-=======
-[go.opentelemetry.io/otel/trace], which may be done with a trasitive
->>>>>>> f04730a16 (ovspinning: detect reservedSystemCPUs)
 dependency.
 
 Finally, an author can embed another implementation in theirs. The embedded

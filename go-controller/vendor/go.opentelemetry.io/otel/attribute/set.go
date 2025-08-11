@@ -347,7 +347,6 @@ func computeDistinct(kvs []KeyValue) Distinct {
 func computeDistinctFixed(kvs []KeyValue) interface{} {
 	switch len(kvs) {
 	case 1:
-<<<<<<< HEAD
 		return [1]KeyValue(kvs)
 	case 2:
 		return [2]KeyValue(kvs)
@@ -367,47 +366,6 @@ func computeDistinctFixed(kvs []KeyValue) interface{} {
 		return [9]KeyValue(kvs)
 	case 10:
 		return [10]KeyValue(kvs)
-=======
-		ptr := new([1]KeyValue)
-		copy((*ptr)[:], kvs)
-		return *ptr
-	case 2:
-		ptr := new([2]KeyValue)
-		copy((*ptr)[:], kvs)
-		return *ptr
-	case 3:
-		ptr := new([3]KeyValue)
-		copy((*ptr)[:], kvs)
-		return *ptr
-	case 4:
-		ptr := new([4]KeyValue)
-		copy((*ptr)[:], kvs)
-		return *ptr
-	case 5:
-		ptr := new([5]KeyValue)
-		copy((*ptr)[:], kvs)
-		return *ptr
-	case 6:
-		ptr := new([6]KeyValue)
-		copy((*ptr)[:], kvs)
-		return *ptr
-	case 7:
-		ptr := new([7]KeyValue)
-		copy((*ptr)[:], kvs)
-		return *ptr
-	case 8:
-		ptr := new([8]KeyValue)
-		copy((*ptr)[:], kvs)
-		return *ptr
-	case 9:
-		ptr := new([9]KeyValue)
-		copy((*ptr)[:], kvs)
-		return *ptr
-	case 10:
-		ptr := new([10]KeyValue)
-		copy((*ptr)[:], kvs)
-		return *ptr
->>>>>>> f04730a16 (ovspinning: detect reservedSystemCPUs)
 	default:
 		return nil
 	}

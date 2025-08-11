@@ -49,20 +49,11 @@ func AsBoolSlice(v interface{}) []bool {
 	if rv.Type().Kind() != reflect.Array {
 		return nil
 	}
-<<<<<<< HEAD
 	cpy := make([]bool, rv.Len())
 	if len(cpy) > 0 {
 		_ = reflect.Copy(reflect.ValueOf(cpy), rv)
 	}
 	return cpy
-=======
-	var zero bool
-	correctLen := rv.Len()
-	correctType := reflect.ArrayOf(correctLen, reflect.TypeOf(zero))
-	cpy := reflect.New(correctType)
-	_ = reflect.Copy(cpy.Elem(), rv)
-	return cpy.Elem().Slice(0, correctLen).Interface().([]bool)
->>>>>>> f04730a16 (ovspinning: detect reservedSystemCPUs)
 }
 
 // AsInt64Slice converts an int64 array into a slice into with same elements as array.
@@ -71,20 +62,11 @@ func AsInt64Slice(v interface{}) []int64 {
 	if rv.Type().Kind() != reflect.Array {
 		return nil
 	}
-<<<<<<< HEAD
 	cpy := make([]int64, rv.Len())
 	if len(cpy) > 0 {
 		_ = reflect.Copy(reflect.ValueOf(cpy), rv)
 	}
 	return cpy
-=======
-	var zero int64
-	correctLen := rv.Len()
-	correctType := reflect.ArrayOf(correctLen, reflect.TypeOf(zero))
-	cpy := reflect.New(correctType)
-	_ = reflect.Copy(cpy.Elem(), rv)
-	return cpy.Elem().Slice(0, correctLen).Interface().([]int64)
->>>>>>> f04730a16 (ovspinning: detect reservedSystemCPUs)
 }
 
 // AsFloat64Slice converts a float64 array into a slice into with same elements as array.
@@ -93,20 +75,11 @@ func AsFloat64Slice(v interface{}) []float64 {
 	if rv.Type().Kind() != reflect.Array {
 		return nil
 	}
-<<<<<<< HEAD
 	cpy := make([]float64, rv.Len())
 	if len(cpy) > 0 {
 		_ = reflect.Copy(reflect.ValueOf(cpy), rv)
 	}
 	return cpy
-=======
-	var zero float64
-	correctLen := rv.Len()
-	correctType := reflect.ArrayOf(correctLen, reflect.TypeOf(zero))
-	cpy := reflect.New(correctType)
-	_ = reflect.Copy(cpy.Elem(), rv)
-	return cpy.Elem().Slice(0, correctLen).Interface().([]float64)
->>>>>>> f04730a16 (ovspinning: detect reservedSystemCPUs)
 }
 
 // AsStringSlice converts a string array into a slice into with same elements as array.
@@ -115,18 +88,9 @@ func AsStringSlice(v interface{}) []string {
 	if rv.Type().Kind() != reflect.Array {
 		return nil
 	}
-<<<<<<< HEAD
 	cpy := make([]string, rv.Len())
 	if len(cpy) > 0 {
 		_ = reflect.Copy(reflect.ValueOf(cpy), rv)
 	}
 	return cpy
-=======
-	var zero string
-	correctLen := rv.Len()
-	correctType := reflect.ArrayOf(correctLen, reflect.TypeOf(zero))
-	cpy := reflect.New(correctType)
-	_ = reflect.Copy(cpy.Elem(), rv)
-	return cpy.Elem().Slice(0, correctLen).Interface().([]string)
->>>>>>> f04730a16 (ovspinning: detect reservedSystemCPUs)
 }

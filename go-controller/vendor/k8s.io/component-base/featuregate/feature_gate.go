@@ -268,10 +268,6 @@ func NewVersionedFeatureGate(emulationVersion *version.Version) *featureGate {
 	f.enabledRaw.Store(map[string]bool{})
 	f.emulationVersion.Store(emulationVersion)
 	f.queriedFeatures.Store(sets.Set[Feature]{})
-<<<<<<< HEAD
-=======
-	klog.V(1).Infof("new feature gate with emulationVersion=%s", f.emulationVersion.Load().String())
->>>>>>> f04730a16 (ovspinning: detect reservedSystemCPUs)
 	return f
 }
 
@@ -322,10 +318,6 @@ func (f *featureGate) unsafeSetFromMap(enabled map[Feature]bool, m map[string]bo
 	// Copy existing state
 	known := map[Feature]VersionedSpecs{}
 	for k, v := range f.known.Load().(map[Feature]VersionedSpecs) {
-<<<<<<< HEAD
-=======
-		sort.Sort(v)
->>>>>>> f04730a16 (ovspinning: detect reservedSystemCPUs)
 		known[k] = v
 	}
 
@@ -428,27 +420,16 @@ func (f *featureGate) AddVersioned(features map[Feature]VersionedSpecs) error {
 	if f.closed {
 		return fmt.Errorf("cannot add a feature gate after adding it to the flag set")
 	}
-<<<<<<< HEAD
-=======
-
->>>>>>> f04730a16 (ovspinning: detect reservedSystemCPUs)
 	// Copy existing state
 	known := f.GetAllVersioned()
 
 	for name, specs := range features {
-<<<<<<< HEAD
 		if existingSpec, found := known[name]; found {
-=======
-		sort.Sort(specs)
-		if existingSpec, found := known[name]; found {
-			sort.Sort(existingSpec)
->>>>>>> f04730a16 (ovspinning: detect reservedSystemCPUs)
 			if reflect.DeepEqual(existingSpec, specs) {
 				continue
 			}
 			return fmt.Errorf("feature gate %q with different spec already exists: %v", name, existingSpec)
 		}
-<<<<<<< HEAD
 		// Validate new specs are well-formed
 		var lastVersion *version.Version
 		var wasBeta, wasGA, wasDeprecated bool
@@ -485,8 +466,6 @@ func (f *featureGate) AddVersioned(features map[Feature]VersionedSpecs) error {
 			wasGA = wasGA || spec.PreRelease == GA
 			wasDeprecated = wasDeprecated || spec.PreRelease == Deprecated
 		}
-=======
->>>>>>> f04730a16 (ovspinning: detect reservedSystemCPUs)
 		known[name] = specs
 	}
 

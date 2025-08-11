@@ -5,10 +5,7 @@ package codes // import "go.opentelemetry.io/otel/codes"
 
 import (
 	"encoding/json"
-<<<<<<< HEAD
 	"errors"
-=======
->>>>>>> f04730a16 (ovspinning: detect reservedSystemCPUs)
 	"fmt"
 	"strconv"
 )
@@ -67,11 +64,7 @@ func (c *Code) UnmarshalJSON(b []byte) error {
 		return nil
 	}
 	if c == nil {
-<<<<<<< HEAD
 		return errors.New("nil receiver passed to UnmarshalJSON")
-=======
-		return fmt.Errorf("nil receiver passed to UnmarshalJSON")
->>>>>>> f04730a16 (ovspinning: detect reservedSystemCPUs)
 	}
 
 	var x interface{}
@@ -91,11 +84,7 @@ func (c *Code) UnmarshalJSON(b []byte) error {
 				return fmt.Errorf("invalid code: %q", ci)
 			}
 
-<<<<<<< HEAD
 			*c = Code(ci) // nolint: gosec  // Bit size of 32 check above.
-=======
-			*c = Code(ci)
->>>>>>> f04730a16 (ovspinning: detect reservedSystemCPUs)
 			return nil
 		}
 		return fmt.Errorf("invalid code: %q", string(b))
