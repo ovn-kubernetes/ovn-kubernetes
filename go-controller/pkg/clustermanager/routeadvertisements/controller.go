@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"reflect"
 	"slices"
 	"strings"
@@ -306,6 +307,8 @@ func (c *Controller) reconcileRouteAdvertisements(name string, ra *ratypes.Route
 // that have been selected by a RouteAdvertisements. It is important that prefix
 // lists are ordered to generate consistent FRRConfigurations.
 type selectedNetworks struct {
+	// networkSet is a set of selected network names
+	networkSet sets.Set[string]
 	// networks is an ordered list of selected network names
 	networks []string
 	// vrfs is an ordered list of selected networks VRF's
@@ -349,57 +352,14 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 	}
 
 	// validate and gather information about the networks
-	networkSet := sets.New[string]()
-	selectedNetworks := &selectedNetworks{
-		networkVRFs:     map[string]string{},
-		networkSubnets:  map[string][]string{},
-		prefixLength:    map[string]uint32{},
-		networkTopology: map[string]string{},
+	selectedNetworks, err := c.getSelectedNetworkInfoSorted(nads, advertisements)
+	if err != nil {
+		return nil, nil, err
 	}
-	for _, nad := range nads {
-		networkName := util.GetAnnotatedNetworkName(nad)
-		network := c.nm.GetNetwork(networkName)
-		if network == nil {
-			// network not yet known by network manager, skip
-			continue
-		}
-		if networkSet.Has(networkName) {
-			continue
-		}
-		if !network.IsDefault() && !network.IsPrimaryNetwork() {
-			return nil, nil, fmt.Errorf("%w: selected network %q is not the default nor a primary network", errConfig, networkName)
-		}
-		if network.TopologyType() != types.Layer3Topology && network.TopologyType() != types.Layer2Topology {
-			return nil, nil, fmt.Errorf("%w: selected network %q has unsupported topology %q", errConfig, networkName, network.TopologyType())
-		}
 
-		if advertisements.Has(ratypes.EgressIP) && network.TopologyType() == types.Layer2Topology {
-			return nil, nil, fmt.Errorf("%w: EgressIP advertisement is currently not supported for Layer2 networks, network: %s", errConfig, network.GetNetworkName())
-		}
-
-		vrf := util.GetNetworkVRFName(network)
-		if vfrNet, hasVFR := selectedNetworks.networkVRFs[vrf]; hasVFR && vfrNet != networkName {
-			return nil, nil, fmt.Errorf("%w: vrf %q found to be mapped to multiple networks %v", errConfig, vrf, []string{vfrNet, networkName})
-		}
-		networkSet.Insert(networkName)
-		selectedNetworks.vrfs = append(selectedNetworks.vrfs, vrf)
-		selectedNetworks.networkVRFs[vrf] = networkName
-		selectedNetworks.networkTopology[networkName] = network.TopologyType()
-		// TODO check overlaps?
-		for _, cidr := range network.Subnets() {
-			subnet := cidr.CIDR.String()
-			len := uint32(cidr.HostSubnetLength)
-			selectedNetworks.networkSubnets[networkName] = append(selectedNetworks.networkSubnets[networkName], subnet)
-			selectedNetworks.subnets = append(selectedNetworks.subnets, subnet)
-			selectedNetworks.prefixLength[subnet] = len
-		}
-		// ordered
-		slices.Sort(selectedNetworks.networkSubnets[networkName])
+	if err = c.checkSubnetOverlaps(ra, selectedNetworks); err != nil {
+		return nil, nil, err
 	}
-	// ordered
-	slices.Sort(selectedNetworks.vrfs)
-	slices.Sort(selectedNetworks.subnets)
-	selectedNetworks.networks = sets.List(networkSet)
 
 	// gather selected nodes
 	nodeSelector, err := metav1.LabelSelectorAsSelector(&ra.Spec.NodeSelector)
@@ -483,7 +443,7 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 	var eipsByNodesByNetworks map[string]map[string]sets.Set[string]
 	getEgressIPsByNode := func(nodeName string) (map[string]sets.Set[string], error) {
 		if eipsByNodesByNetworks == nil {
-			eipsByNodesByNetworks, err = c.getEgressIPsByNodesByNetworks(networkSet)
+			eipsByNodesByNetworks, err = c.getEgressIPsByNodesByNetworks(selectedNetworks.networkSet)
 			if err != nil {
 				return nil, err
 			}
@@ -580,6 +540,200 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 	}
 
 	return generated, nads, nil
+}
+
+// checkSubnetOverlaps validates that subnets from the current RA don't overlap
+// with any existing subnets in the same VRFs, both within the RA itself and
+// across different RAs
+func (c *Controller) checkSubnetOverlaps(ra *ratypes.RouteAdvertisements, selectedNetworks *selectedNetworks) error {
+	networkVRFsSubnets := createNetworkVRFsSubnetsMap(ra.Spec.TargetVRF, selectedNetworks)
+
+	// Check for overlaps within each VRF network
+	for vrf, subnets := range networkVRFsSubnets {
+		var err error
+		var overlappingSubnets []string
+		// Parse subnet strings to IPNets for efficient overlap checking
+		ipNets, err := util.ParseIPNets(subnets)
+		if err != nil {
+			return fmt.Errorf("error parsing subnets for RouteAdvertisement %q in VRF %q: %w", ra.Name, vrf, err)
+		}
+		// Check for overlaps within current RA
+		if overlappingSubnets, err = checkSubnetSliceOverlaps(ipNets); err != nil {
+			return fmt.Errorf("error checking subnet overlap within RouteAdvertisement %q in VRF %q: %w", ra.Name, vrf, err)
+		}
+		if len(overlappingSubnets) > 0 {
+			return fmt.Errorf("%w: overlapping CIDR detected within RouteAdvertisement %q in VRF %q: %v", errConfig, ra.Name, vrf, overlappingSubnets)
+		}
+		// Check for overlaps between current RA and other RAs in the same VRF
+		if err := c.checkCrossRAOverlaps(ra, vrf, subnets); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// createNetworkVRFsSubnetsMap creates a map of VRF -> subnets from selectedNetworks
+func createNetworkVRFsSubnetsMap(targetVRF string, selectedNetworks *selectedNetworks) map[string][]string {
+	networkVRFsSubnets := make(map[string][]string)
+	if targetVRF == "auto" {
+		for networkVRF, network := range selectedNetworks.networkVRFs {
+			subnets := selectedNetworks.networkSubnets[network]
+			networkVRFsSubnets[networkVRF] = subnets
+		}
+	} else {
+		networkVRFsSubnets[targetVRF] = selectedNetworks.subnets
+	}
+	return networkVRFsSubnets
+}
+
+// checkSubnetSliceOverlaps checks for subnets overlap within a list of subnets
+func checkSubnetSliceOverlaps(subnets []*net.IPNet) ([]string, error) {
+	for i, subnet := range subnets {
+		overlaps := util.IPNetOverlaps(subnet, subnets[i+1:]...)
+		if len(overlaps) > 0 {
+			return []string{subnet.String(), overlaps[0].String()}, nil
+		}
+	}
+	return []string{}, nil
+}
+
+// checkCrossRAOverlaps checks if subnets from current RA overlap with subnets from other RAs in the same VRF
+func (c *Controller) checkCrossRAOverlaps(ra *ratypes.RouteAdvertisements, targetVRF string, currentRASubnets []string) error {
+	allRAs, err := c.raLister.List(labels.Everything())
+	if err != nil {
+		return err
+	}
+
+	for _, otherRA := range allRAs {
+		if otherRA.Name == ra.Name {
+			continue
+		}
+
+		// Skip RAs that target different VRF and not auto
+		if otherRA.Spec.TargetVRF != targetVRF && otherRA.Spec.TargetVRF != "auto" {
+			continue
+		}
+
+		nads, err := c.getSelectedNADs(otherRA.Spec.NetworkSelectors)
+		if err != nil {
+			return err
+		}
+		if len(nads) == 0 {
+			continue
+		}
+		otherRASelectedNetworks, err := c.buildSelectedNetworkInfo(nads, sets.New(otherRA.Spec.Advertisements...))
+		if err != nil {
+			// If we can't get networks from another RA, log but don't fail
+			// This could happen if the other RA has configuration issues
+			klog.V(4).Infof("Failed to get selected networks from RouteAdvertisement %q for cross overlap check with RouteAdvertisement %q: %v", otherRA.Name, ra.Name, err)
+			continue
+		}
+
+		otherVRFSubnets := createNetworkVRFsSubnetsMap(otherRA.Spec.TargetVRF, otherRASelectedNetworks)
+		otherSubnets, hasMatchingVRF := otherVRFSubnets[targetVRF]
+		if !hasMatchingVRF || len(otherSubnets) == 0 {
+			continue
+		}
+
+		// Check for overlaps between current RA subnets and other RA subnets in the same VRF
+		for _, currentSubnet := range currentRASubnets {
+			currentIPNet, err := util.ParseIPNets([]string{currentSubnet})
+			if err != nil {
+				return fmt.Errorf("failed to parse current subnet %s: %w", currentSubnet, err)
+			}
+			for _, otherSubnet := range otherSubnets {
+				otherIPNet, err := util.ParseIPNets([]string{otherSubnet})
+				if err != nil {
+					return fmt.Errorf("failed to parse other subnet %s: %w", otherSubnet, err)
+				}
+				hasOverlap := len(util.IPNetOverlaps(currentIPNet[0], otherIPNet[0])) > 0
+				if !hasOverlap {
+					continue
+				}
+
+				// Update otherRA only if status is accepted to avoid infinite reconciliation loops
+				if accepted := meta.FindStatusCondition(otherRA.Status.Conditions, "Accepted"); accepted == nil || accepted.Status == metav1.ConditionTrue {
+					// Enqueue otherRA for reconciliation
+					c.raController.Reconcile(otherRA.Name)
+				}
+
+				return fmt.Errorf("%w: overlapping CIDR detected between RouteAdvertisements %q and %q in VRF %q: [%s %s]",
+					errConfig, ra.Name, otherRA.Name, targetVRF, currentSubnet, otherSubnet)
+			}
+		}
+	}
+	return nil
+}
+
+func (c *Controller) buildSelectedNetworkInfo(nads []*nadtypes.NetworkAttachmentDefinition, advertisements sets.Set[ratypes.AdvertisementType]) (*selectedNetworks, error) {
+	networkSet := sets.New[string]()
+	selectedNetworks := &selectedNetworks{
+		networkVRFs:     map[string]string{},
+		networkSubnets:  map[string][]string{},
+		prefixLength:    map[string]uint32{},
+		networkTopology: map[string]string{},
+	}
+	for _, nad := range nads {
+		networkName := util.GetAnnotatedNetworkName(nad)
+		network := c.nm.GetNetwork(networkName)
+		if network == nil {
+			// network not yet known by network manager, skip
+			continue
+		}
+		if networkSet.Has(networkName) {
+			continue
+		}
+		if !network.IsDefault() && !network.IsPrimaryNetwork() {
+			return nil, fmt.Errorf("%w: selected network %q is not the default nor a primary network", errConfig, networkName)
+		}
+		if network.TopologyType() != types.Layer3Topology && network.TopologyType() != types.Layer2Topology {
+			return nil, fmt.Errorf("%w: selected network %q has unsupported topology %q", errConfig, networkName, network.TopologyType())
+		}
+
+		if advertisements.Has(ratypes.EgressIP) && network.TopologyType() == types.Layer2Topology {
+			return nil, fmt.Errorf("%w: EgressIP advertisement is currently not supported for Layer2 networks, network: %s", errConfig, network.GetNetworkName())
+		}
+
+		vrf := util.GetNetworkVRFName(network)
+		if vfrNet, hasVFR := selectedNetworks.networkVRFs[vrf]; hasVFR && vfrNet != networkName {
+			return nil, fmt.Errorf("%w: vrf %q found to be mapped to multiple networks %v", errConfig, vrf, []string{vfrNet, networkName})
+		}
+		networkSet.Insert(networkName)
+		selectedNetworks.vrfs = append(selectedNetworks.vrfs, vrf)
+		selectedNetworks.networkVRFs[vrf] = networkName
+		selectedNetworks.networkTopology[networkName] = network.TopologyType()
+		for _, cidr := range network.Subnets() {
+			subnet := cidr.CIDR.String()
+			len := uint32(cidr.HostSubnetLength)
+			selectedNetworks.networkSubnets[networkName] = append(selectedNetworks.networkSubnets[networkName], subnet)
+			selectedNetworks.subnets = append(selectedNetworks.subnets, subnet)
+			selectedNetworks.prefixLength[subnet] = len
+		}
+	}
+
+	selectedNetworks.networkSet = networkSet
+	selectedNetworks.networks = sets.List(networkSet)
+	return selectedNetworks, nil
+}
+
+func (c *Controller) getSelectedNetworkInfoSorted(nads []*nadtypes.NetworkAttachmentDefinition, advertisements sets.Set[ratypes.AdvertisementType]) (*selectedNetworks, error) {
+	selectedNetworks, err := c.buildSelectedNetworkInfo(nads, advertisements)
+	if err != nil {
+		return nil, err
+	}
+
+	// Apply sorting
+	for networkName := range selectedNetworks.networkSubnets {
+		// ordered
+		slices.Sort(selectedNetworks.networkSubnets[networkName])
+	}
+
+	// ordered
+	slices.Sort(selectedNetworks.vrfs)
+	slices.Sort(selectedNetworks.subnets)
+
+	return selectedNetworks, nil
 }
 
 // generateFRRConfiguration generates a FRRConfiguration from a source for a
