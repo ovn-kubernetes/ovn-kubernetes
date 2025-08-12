@@ -285,19 +285,30 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 			}
 
 			if config.IPv4Mode {
-				// table 1, established and related connections in zone 64000 with ct_mark CtMarkOVN go to OVN
+				// table 1, established and related connections in zone 64000 with ct_mark CtMarkOVN and the bridge MAC
+				// as destination MAC go to OVN
 				dftFlows = append(dftFlows,
-					fmt.Sprintf("cookie=%s, priority=100, table=1, ip, ct_state=+trk+est, ct_mark=%s, "+
-						"actions=%s", nodetypes.DefaultOpenFlowCookie, netConfig.MasqCTMark, actions))
+					fmt.Sprintf("cookie=%s, priority=100, table=1, dl_dst=%s, ip, ct_state=+trk+est, ct_mark=%s, "+
+						"actions=%s", nodetypes.DefaultOpenFlowCookie, bridgeMacAddress, netConfig.MasqCTMark, actions))
 
 				dftFlows = append(dftFlows,
-					fmt.Sprintf("cookie=%s, priority=100, table=1, ip, ct_state=+trk+rel, ct_mark=%s, "+
-						"actions=%s", nodetypes.DefaultOpenFlowCookie, netConfig.MasqCTMark, actions))
+					fmt.Sprintf("cookie=%s, priority=100, table=1, dl_dst=%s, ip, ct_state=+trk+rel, ct_mark=%s, "+
+						"actions=%s", nodetypes.DefaultOpenFlowCookie, bridgeMacAddress, netConfig.MasqCTMark, actions))
+
 
 			}
 
 			if config.IPv6Mode {
-				// table 1, established and related connections in zone 64000 with ct_mark CtMarkOVN go to OVN
+				// table 1, established and related connections in zone 64000 with ct_mark CtMarkOVN and the bridge MAC
+				// as destination MAC go to OVN
+				dftFlows = append(dftFlows,
+					fmt.Sprintf("cookie=%s, priority=100, table=1, dl_dst=%s, ipv6, ct_state=+trk+est, ct_mark=%s, "+
+						"actions=%s", nodetypes.DefaultOpenFlowCookie, bridgeMacAddress, netConfig.MasqCTMark, actions))
+
+				dftFlows = append(dftFlows,
+					fmt.Sprintf("cookie=%s, priority=100, table=1, dl_dst=%s, ipv6, ct_state=+trk+rel, ct_mark=%s, "+
+						"actions=%s", nodetypes.DefaultOpenFlowCookie, bridgeMacAddress, netConfig.MasqCTMark, actions))
+
 				dftFlows = append(dftFlows,
 					fmt.Sprintf("cookie=%s, priority=100, table=1, ipv6, ct_state=+trk+est, ct_mark=%s, "+
 						"actions=%s", nodetypes.DefaultOpenFlowCookie, netConfig.MasqCTMark, actions))
@@ -308,29 +319,33 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 			}
 		}
 		if config.IPv4Mode {
-			// table 1, established and related connections in zone 64000 with ct_mark CtMarkHost go to host
+			// table 1, established and related connections in zone 64000 with ct_mark CtMarkHost and the bridge MAC
+			// as destination MAC go to host
 			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=100, table=1, %s ip, ct_state=+trk+est, ct_mark=%s, "+
+				fmt.Sprintf("cookie=%s, priority=100, table=1, %s dl_dst=%s, ip, ct_state=+trk+est, ct_mark=%s, "+
 					"actions=%soutput:%s",
-					nodetypes.DefaultOpenFlowCookie, match_vlan, nodetypes.CtMarkHost, strip_vlan, ofPortHost))
+					nodetypes.DefaultOpenFlowCookie, match_vlan, bridgeMacAddress, nodetypes.CtMarkHost, strip_vlan, ofPortHost))
 
 			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=100, table=1, %s ip, ct_state=+trk+rel, ct_mark=%s, "+
+				fmt.Sprintf("cookie=%s, priority=100, table=1, %s dl_dst=%s, ip, ct_state=+trk+rel, ct_mark=%s, "+
 					"actions=%soutput:%s",
-					nodetypes.DefaultOpenFlowCookie, match_vlan, nodetypes.CtMarkHost, strip_vlan, ofPortHost))
+					nodetypes.DefaultOpenFlowCookie, match_vlan, bridgeMacAddress, nodetypes.CtMarkHost, strip_vlan, ofPortHost))
+
 
 		}
 		if config.IPv6Mode {
-			// table 1, established and related connections in zone 64000 with ct_mark CtMarkHost go to host
+			// table 1, established and related connections in zone 64000 with ct_mark CtMarkHost and the bridge MAC
+			// as destination MAC go to host
 			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=100, table=1, %s ip6, ct_state=+trk+est, ct_mark=%s, "+
+				fmt.Sprintf("cookie=%s, priority=100, table=1, %s dl_dst=%s, ip6, ct_state=+trk+est, ct_mark=%s, "+
 					"actions=%soutput:%s",
-					nodetypes.DefaultOpenFlowCookie, match_vlan, nodetypes.CtMarkHost, strip_vlan, ofPortHost))
+					nodetypes.DefaultOpenFlowCookie, match_vlan, bridgeMacAddress, nodetypes.CtMarkHost, strip_vlan, ofPortHost))
 
 			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=100, table=1, %s ip6, ct_state=+trk+rel, ct_mark=%s, "+
+				fmt.Sprintf("cookie=%s, priority=100, table=1, %s dl_dst=%s, ip6, ct_state=+trk+rel, ct_mark=%s, "+
 					"actions=%soutput:%s",
-					nodetypes.DefaultOpenFlowCookie, match_vlan, nodetypes.CtMarkHost, strip_vlan, ofPortHost))
+					nodetypes.DefaultOpenFlowCookie, match_vlan, bridgeMacAddress, nodetypes.CtMarkHost, strip_vlan, ofPortHost))
+
 
 		}
 
@@ -834,11 +849,12 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 			}
 		}
 
-		// packets larger than known acceptable MTU need to go to kernel for
-		// potential fragmentation
-		// introduced specifically for replies to egress traffic not routed
-		// through the host
+		// Table 11: packets larger than known acceptable MTU need to go to kernel for
+		// potential fragmentation.
+		// Introduced specifically for replies to egress traffic not routed through the host
 		if config.Gateway.Mode == config.GatewayModeLocal && !config.Gateway.DisablePacketMTUCheck {
+			// Table 11, packets larger than MTU size had their reg0 set in table=1 by the priority=100 flow:
+			// send them to the host for fragmentation.
 			dftFlows = append(dftFlows,
 				fmt.Sprintf("cookie=%s, priority=10, table=11, reg0=0x1, "+
 					"actions=output:%s", nodetypes.DefaultOpenFlowCookie, ofPortHost))
@@ -852,9 +868,10 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 				}
 			}
 
+			// Table=11, packets that don't need fragmentation and have the bridge as next hop, send to OVN
 			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=1, table=11, "+
-					"actions=output:%s", nodetypes.DefaultOpenFlowCookie, defaultNetConfig.OfPortPatch))
+				fmt.Sprintf("cookie=%s, priority=5, table=11, dl_dst=%s, "+
+					"actions=output:%s", nodetypes.DefaultOpenFlowCookie, bridgeMacAddress, defaultNetConfig.OfPortPatch))
 		}
 
 		// table 1, all other connections do normal processing
