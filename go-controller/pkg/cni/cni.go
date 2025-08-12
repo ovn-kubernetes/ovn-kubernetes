@@ -24,6 +24,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kubevirt"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -428,7 +429,7 @@ func (pr *PodRequest) buildPrimaryUDNPodRequest(
 	return req
 }
 
-func (pr *PodRequest) buildPodInterfaceInfo(annotations map[string]string, podAnnotation *util.PodAnnotation, netDevice string) (*PodInterfaceInfo, error) {
+func (pr *PodRequest) buildPodInterfaceInfo(annotations map[string]string, podAnnotation *podannotation.PodAnnotation, netDevice string) (*PodInterfaceInfo, error) {
 	return PodAnnotation2PodInfo(
 		annotations,
 		podAnnotation,

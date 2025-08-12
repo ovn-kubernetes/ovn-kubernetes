@@ -354,6 +354,22 @@ func IPNetsIPToStringSlice(ips []*net.IPNet) []string {
 	return ipAddrs
 }
 
+func IPNetsToStringSlice(ips []*net.IPNet) []string {
+	ipNets := make([]string, 0)
+	for _, ip := range ips {
+		ipNets = append(ipNets, ip.String())
+	}
+	return ipNets
+}
+
+func IPNetsToIPs(ipNets []*net.IPNet) []net.IP {
+	ips := make([]net.IP, 0)
+	for _, ipNet := range ipNets {
+		ips = append(ips, ipNet.IP)
+	}
+	return ips
+}
+
 // CalculateRouteTableID will calculate route table ID based on the network
 // interface index
 func CalculateRouteTableID(ifIndex int) int {

@@ -19,7 +19,8 @@ type NetConf struct {
 	Role string `json:"role,omitempty"`
 	// specifies the OVN topology for this network configuration
 	// when not specified, by default it is Layer3AttachDefTopoType
-	Topology string `json:"topology,omitempty"`
+	Topology        string `json:"topology,omitempty"`
+	TopologyVariant string `json:"topologyVariant,omitempty"`
 	// captures net-attach-def name in the form of namespace/name
 	NADName string `json:"netAttachDefName,omitempty"`
 	// Network MTU

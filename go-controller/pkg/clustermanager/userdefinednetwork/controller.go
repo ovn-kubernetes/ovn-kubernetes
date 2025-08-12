@@ -41,9 +41,13 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
-const conditionTypeNetworkCreated = "NetworkCreated"
+const (
+	conditionTypeNetworkCreated = "NetworkCreated"
+	// TODO put this condition on (C)UDN
+	conditionTypeLayer2RouterTopology = "Layer2RouterTopology"
+)
 
-type RenderNetAttachDefManifest func(obj client.Object, targetNamespace string) (*netv1.NetworkAttachmentDefinition, error)
+type RenderNetAttachDefManifest func(obj client.Object, targetNamespace string, nadExists bool) (*netv1.NetworkAttachmentDefinition, error)
 
 type networkInUseError struct {
 	err error

@@ -780,7 +780,7 @@ func (c *Controller) cleanupUDNEnabledServiceRoute(key string) error {
 
 	var ops []ovsdb.Operation
 	var err error
-	if c.netInfo.TopologyType() == types.Layer2Topology {
+	if c.netInfo.TopologyVariant() == types.Layer2Topology {
 		for _, node := range c.nodeInfos {
 			if ops, err = libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicateOps(c.nbClient, ops, c.netInfo.GetNetworkScopedGWRouterName(node.name), delPredicate); err != nil {
 				return err
@@ -829,9 +829,11 @@ func (c *Controller) configureUDNEnabledServiceRoute(service *corev1.Service) er
 			ExternalIDs: extIDs,
 		}
 		routerName := c.netInfo.GetNetworkScopedClusterRouterName()
-		if c.netInfo.TopologyType() == types.Layer2Topology {
+		if c.netInfo.TopologyVariant() == types.Layer2Topology {
 			routerName = nodeInfo.gatewayRouterName
 		}
+		// TODO check whether this needs cleanup, it could just be pointing to the same route from 2 routers
+		// It will never be matched on the old GR, because all matched traffic will be sent to the mgmtPort from the transit router
 		ops, err = libovsdbops.CreateOrUpdateLogicalRouterStaticRoutesWithPredicateOps(c.nbClient, nil, routerName, &staticRoute, func(item *nbdb.LogicalRouterStaticRoute) bool {
 			return routesEqual(item, &staticRoute)
 		})

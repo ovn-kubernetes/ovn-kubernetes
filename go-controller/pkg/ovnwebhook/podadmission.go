@@ -16,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kubevirt"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -25,7 +26,7 @@ type checkPodAnnot func(nodeLister listers.NodeLister, v annotationChange, pod *
 
 // interconnectPodAnnotationChecks holds annotations allowed for ovnkube-node:<nodeName> users in IC environments
 var interconnectPodAnnotations = map[string]checkPodAnnot{
-	util.OvnPodAnnotationName: func(nodeLister listers.NodeLister, v annotationChange, pod *corev1.Pod, nodeName string) error {
+	podannotation.OvnPodAnnotationName: func(nodeLister listers.NodeLister, v annotationChange, pod *corev1.Pod, nodeName string) error {
 		// Ignore kubevirt pods with live migration, the IP can cross node-subnet boundaries
 		if kubevirt.IsPodLiveMigratable(pod) {
 			return nil
@@ -35,7 +36,7 @@ var interconnectPodAnnotations = map[string]checkPodAnnot{
 			return fmt.Errorf("the annotation is not allowed on host networked pods")
 		}
 
-		podAnnot, err := util.UnmarshalPodAnnotation(map[string]string{util.OvnPodAnnotationName: v.value}, types.DefaultNetworkName)
+		podAnnot, err := podannotation.UnmarshalPodAnnotation(map[string]string{podannotation.OvnPodAnnotationName: v.value}, types.DefaultNetworkName)
 		if err != nil {
 			return err
 		}

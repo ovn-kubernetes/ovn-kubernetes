@@ -20,6 +20,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	testnm "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
@@ -85,7 +86,7 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 					ObjectMeta: metav1.ObjectMeta{
 						Name:        "test-pod",
 						Namespace:   namespaceT.Name,
-						Annotations: map[string]string{util.OvnPodAnnotationName: `{"default":{"mac_address":"0a:58:0a:f4:02:03","ip_address":"10.244.2.3/24","role":"infrastructure-locked"},"testns/l3-network":{"mac_address":"0a:58:0a:84:02:04","ip_address":"10.132.2.4/24","role":"primary"}}`},
+						Annotations: map[string]string{podannotation.OvnPodAnnotationName: `{"default":{"mac_address":"0a:58:0a:f4:02:03","ip_address":"10.244.2.3/24","role":"infrastructure-locked"},"testns/l3-network":{"mac_address":"0a:58:0a:84:02:04","ip_address":"10.132.2.4/24","role":"primary"}}`},
 					},
 					Status: corev1.PodStatus{Phase: corev1.PodRunning},
 				}
@@ -193,7 +194,7 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 					ObjectMeta: metav1.ObjectMeta{
 						Name:        "test-pod",
 						Namespace:   namespaceT.Name,
-						Annotations: map[string]string{util.OvnPodAnnotationName: `{"default":{"mac_address":"0a:58:0a:f4:02:03","ip_address":"10.244.2.3/24","role":"primary"},"testns/l3-network":{"mac_address":"0a:58:0a:84:02:04","ip_address":"10.132.2.4/24","role":"secondary}}`},
+						Annotations: map[string]string{podannotation.OvnPodAnnotationName: `{"default":{"mac_address":"0a:58:0a:f4:02:03","ip_address":"10.244.2.3/24","role":"primary"},"testns/l3-network":{"mac_address":"0a:58:0a:84:02:04","ip_address":"10.132.2.4/24","role":"secondary}}`},
 					},
 					Status: corev1.PodStatus{Phase: corev1.PodRunning},
 				}
@@ -286,7 +287,7 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 					ObjectMeta: metav1.ObjectMeta{
 						Name:        "test-pod",
 						Namespace:   namespaceT.Name,
-						Annotations: map[string]string{util.OvnPodAnnotationName: `{"default":{"mac_address":"0a:58:0a:f4:02:03","ip_address":"10.244.2.3/24","role":"infrastructure-locked"},"testns/l3-network":{"mac_address":"0a:58:0a:84:02:04","ip_address":"10.132.2.4/24","role":"primary"}}`},
+						Annotations: map[string]string{podannotation.OvnPodAnnotationName: `{"default":{"mac_address":"0a:58:0a:f4:02:03","ip_address":"10.244.2.3/24","role":"infrastructure-locked"},"testns/l3-network":{"mac_address":"0a:58:0a:84:02:04","ip_address":"10.132.2.4/24","role":"primary"}}`},
 					},
 					Status: corev1.PodStatus{Phase: corev1.PodRunning},
 				}
@@ -376,7 +377,7 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 					ObjectMeta: metav1.ObjectMeta{
 						Name:        "test-pod-new",
 						Namespace:   namespaceT.Name,
-						Annotations: map[string]string{util.OvnPodAnnotationName: `{"default":{"mac_address":"0a:58:0a:f4:02:04","ip_address":"10.244.2.4/24","primary":false},"testns/l3-network":{"mac_address":"0a:58:0a:84:02:05","ip_address":"10.132.2.5/24","primary":true}}`},
+						Annotations: map[string]string{podannotation.OvnPodAnnotationName: `{"default":{"mac_address":"0a:58:0a:f4:02:04","ip_address":"10.244.2.4/24","primary":false},"testns/l3-network":{"mac_address":"0a:58:0a:84:02:05","ip_address":"10.132.2.5/24","primary":true}}`},
 					},
 					Status: corev1.PodStatus{Phase: corev1.PodRunning},
 				}
@@ -455,7 +456,7 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 					ObjectMeta: metav1.ObjectMeta{
 						Name:        "test-pod",
 						Namespace:   namespaceT.Name,
-						Annotations: map[string]string{util.OvnPodAnnotationName: `{"default":{"mac_address":"0a:58:0a:f4:02:03","ip_address":"10.244.2.3/24","role":"infrastructure-locked"},"testns/l3-network":{"mac_address":"0a:58:0a:84:02:04","ip_address":"10.132.2.4/24","role":"primary"}}`},
+						Annotations: map[string]string{podannotation.OvnPodAnnotationName: `{"default":{"mac_address":"0a:58:0a:f4:02:03","ip_address":"10.244.2.3/24","role":"infrastructure-locked"},"testns/l3-network":{"mac_address":"0a:58:0a:84:02:04","ip_address":"10.132.2.4/24","role":"primary"}}`},
 					},
 					Status: corev1.PodStatus{Phase: corev1.PodRunning},
 				}

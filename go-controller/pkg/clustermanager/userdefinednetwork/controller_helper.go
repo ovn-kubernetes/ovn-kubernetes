@@ -34,15 +34,16 @@ func (c *Controller) updateNAD(obj client.Object, namespace string) (*netv1.Netw
 		}
 	}
 
-	desiredNAD, err := c.renderNadFn(obj, namespace)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate NetworkAttachmentDefinition: %w", err)
-	}
-
 	nad, err := c.nadLister.NetworkAttachmentDefinitions(namespace).Get(obj.GetName())
 	if err != nil && !apierrors.IsNotFound(err) {
 		return nil, fmt.Errorf("failed to get NetworkAttachmentDefinition %s/%s from cache: %v", namespace, obj.GetName(), err)
 	}
+
+	desiredNAD, err := c.renderNadFn(obj, namespace, nad != nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate NetworkAttachmentDefinition: %w", err)
+	}
+
 	nadCopy := nad.DeepCopy()
 
 	if nadCopy == nil {

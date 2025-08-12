@@ -946,7 +946,7 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 		// |                    |                   |                                                 |
 		// |--------------------+-------------------+-------------------------------------------------+
 		newNodeIsLocalZoneNode := h.oc.isLocalZoneNode(newNode)
-		zoneClusterChanged := h.oc.nodeZoneClusterChanged(oldNode, newNode, newNodeIsLocalZoneNode, types.DefaultNetworkName)
+		zoneClusterChanged := h.oc.nodeZoneClusterChanged(oldNode, newNode)
 		nodeSubnetChange := nodeSubnetChanged(oldNode, newNode, types.DefaultNetworkName)
 		nodeEncapIPsChanged := util.NodeEncapIPsChanged(oldNode, newNode)
 		nodePrimaryDPUHostAddrChanged := util.NodePrimaryDPUHostAddrAnnotationChanged(oldNode, newNode)
@@ -1078,8 +1078,7 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 		}
 
 		_, syncEIPNodeFailed := h.oc.syncEIPNodeFailed.Load(newNode.Name)
-		// update only if the GR join IP changed for default network
-		if syncEIPNodeFailed || joinCIDRChanged(oldNode, newNode, h.oc.GetNetworkName()) {
+		if syncEIPNodeFailed {
 			err := h.oc.eIPC.addEgressNode(newNode)
 			if err != nil {
 				h.oc.syncEIPNodeFailed.Store(newNode.Name, true)

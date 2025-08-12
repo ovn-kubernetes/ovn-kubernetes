@@ -11,19 +11,19 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/podannotation"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 func TestBaseNetworkController_trackPodsReleasedBeforeStartup(t *testing.T) {
 	tests := []struct {
 		name           string
-		podAnnotations map[*corev1.Pod]map[string]*util.PodAnnotation
+		podAnnotations map[*corev1.Pod]map[string]*podannotation.PodAnnotation
 		expected       map[string]sets.Set[string]
 	}{
 		{
 			name: "a scheduled/running annotated pod should not be considered released",
-			podAnnotations: map[*corev1.Pod]map[string]*util.PodAnnotation{
+			podAnnotations: map[*corev1.Pod]map[string]*podannotation.PodAnnotation{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						UID: "running",
@@ -38,7 +38,7 @@ func TestBaseNetworkController_trackPodsReleasedBeforeStartup(t *testing.T) {
 		},
 		{
 			name: "a completed annotated pod should not be considered released",
-			podAnnotations: map[*corev1.Pod]map[string]*util.PodAnnotation{
+			podAnnotations: map[*corev1.Pod]map[string]*podannotation.PodAnnotation{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						UID: "running",
@@ -65,7 +65,7 @@ func TestBaseNetworkController_trackPodsReleasedBeforeStartup(t *testing.T) {
 			//   pair to be released while the other is not. This is based on the fact
 			//   that both IPs are released in block.
 			name: "a completed pod sharing at least one IP with a running Pod should be considered released",
-			podAnnotations: map[*corev1.Pod]map[string]*util.PodAnnotation{
+			podAnnotations: map[*corev1.Pod]map[string]*podannotation.PodAnnotation{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						UID: "completed",
@@ -100,7 +100,7 @@ func TestBaseNetworkController_trackPodsReleasedBeforeStartup(t *testing.T) {
 		},
 		{
 			name: "only the last completed pod of multiple completed pods sharing at least one IP should not be considered released",
-			podAnnotations: map[*corev1.Pod]map[string]*util.PodAnnotation{
+			podAnnotations: map[*corev1.Pod]map[string]*podannotation.PodAnnotation{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						UID: "completed-third",
@@ -177,7 +177,7 @@ func TestBaseNetworkController_trackPodsReleasedBeforeStartup(t *testing.T) {
 		},
 		{
 			name: "a completed pod sharing at least one IP from nad1 with a running Pod on nad2 should be considered released on nad1",
-			podAnnotations: map[*corev1.Pod]map[string]*util.PodAnnotation{
+			podAnnotations: map[*corev1.Pod]map[string]*podannotation.PodAnnotation{
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						UID: "completed",
