@@ -245,6 +245,10 @@ func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
 		}
 	} else {
 		response.PodIFInfo = podInterfaceInfo
+		if primaryUDNPodRequest != nil {
+			response.PrimaryUDNPodInfo = primaryUDNPodInfo
+			response.PrimaryUDNPodReq = primaryUDNPodRequest
+		}
 	}
 
 	return response, nil
