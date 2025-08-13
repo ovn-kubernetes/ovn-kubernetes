@@ -398,7 +398,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					topology: "localnet",
 				},
 				podConfiguration{ // client on default network
-					name:         clientPodName + "-same-node",
+					name:         clientPodName,
 					isPrivileged: true,
 				},
 				podConfiguration{ // server attached to localnet secondary network
@@ -431,7 +431,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					containerCmd: httpServerContainerCmd(port),
 					hostNetwork:  true,
 				},
-				false, // not collocated on same node
+				false, // not collocated on the same node
 				Label("STORY", "SDN-5345"),
 			),
 			ginkgo.Entry(
@@ -453,7 +453,51 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					containerCmd: httpServerContainerCmd(port),
 					hostNetwork:  true,
 				},
-				true, // collocated on same node
+				true, // collocated on the same node
+				Label("STORY", "SDN-5345"),
+			),
+			ginkgo.Entry(
+				"can be reached by a host-networked pod on a different node",
+				networkAttachmentConfigParams{
+					name:     secondaryNetworkName,
+					topology: "localnet",
+				},
+				podConfiguration{ // client on default network, pod is host-networked
+					name:         clientPodName,
+					hostNetwork:  true,
+					isPrivileged: true,
+				},
+				podConfiguration{ // server on localnet
+					attachments: []nadapi.NetworkSelectionElement{{
+						Name: secondaryNetworkName,
+					}},
+					containerCmd:                 httpServerContainerCmd(port),
+					name:                         podName,
+					needsIPRequestFromHostSubnet: true,
+				},
+				false, // collocated on different nodes
+				Label("STORY", "SDN-5345"),
+			),
+			ginkgo.Entry(
+				"can be reached by a host-networked pod on the same node",
+				networkAttachmentConfigParams{
+					name:     secondaryNetworkName,
+					topology: "localnet",
+				},
+				podConfiguration{ // client on default network, pod is host-networked
+					name:         clientPodName,
+					hostNetwork:  true,
+					isPrivileged: true,
+				},
+				podConfiguration{ // server on localnet
+					attachments: []nadapi.NetworkSelectionElement{{
+						Name: secondaryNetworkName,
+					}},
+					containerCmd:                 httpServerContainerCmd(port),
+					name:                         podName,
+					needsIPRequestFromHostSubnet: true,
+				},
+				true, // collocated on the same node
 				Label("STORY", "SDN-5345"),
 			),
 		)
