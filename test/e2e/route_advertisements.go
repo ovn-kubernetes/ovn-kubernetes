@@ -917,6 +917,27 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
 					return podsNetA[0].Name, podsNetA[0].Namespace, "https://kubernetes.default/healthz", "", false
 				}),
+			ginkgo.Entry("pod in the UDN should be able to access kapi service cluster IP directly",
+				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
+					// Get kubernetes service from default namespace
+					kubernetesService, err := f.ClientSet.CoreV1().Services("default").Get(context.TODO(), "kubernetes", metav1.GetOptions{})
+					framework.ExpectNoError(err, "should be able to get kubernetes service")
+
+					// Convert ipFamilyIndex to utilnet.IPFamily
+					var family utilnet.IPFamily
+					if ipFamilyIndex == ipFamilyV4 {
+						family = utilnet.IPv4
+					} else {
+						family = utilnet.IPv6
+					}
+
+					// Get the cluster IP for the specified IP family
+					clusterIP := getFirstIPStringOfFamily(family, kubernetesService.Spec.ClusterIPs)
+					gomega.Expect(clusterIP).NotTo(gomega.BeEmpty(), fmt.Sprintf("no cluster IP available for IP family %v", family))
+
+					// Access the kubernetes API at the cluster IP directly on port 443
+					return podsNetA[0].Name, podsNetA[0].Namespace, fmt.Sprintf("https://%s/healthz", net.JoinHostPort(clusterIP, "443")), "", false
+				}),
 			ginkgo.Entry("pod in the UDN should not be able to access a service in a different UDN",
 				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
 					return podsNetA[0].Name, podsNetA[0].Namespace, net.JoinHostPort(svcNetB.Spec.ClusterIPs[ipFamilyIndex], "8080") + "/clientip", curlConnectionTimeoutCode, true
