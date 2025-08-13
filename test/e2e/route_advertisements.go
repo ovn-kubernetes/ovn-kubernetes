@@ -941,6 +941,32 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
 					return podsNetA[0].Name, podsNetA[0].Namespace, "https://kubernetes.default/healthz", "", false
 				}),
+			ginkgo.Entry("pod in the UDN should be able to access kapi service cluster IP directly",
+				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
+					// Get kubernetes service from default namespace
+					kubernetesService, err := f.ClientSet.CoreV1().Services("default").Get(context.TODO(), "kubernetes", metav1.GetOptions{})
+					framework.ExpectNoError(err, "should be able to get kubernetes service")
+
+					// NOTE: See https://github.com/kubernetes/enhancements/tree/master/keps/sig-network/2438-dual-stack-apiserver
+					// Today the kubernetes.default service is single-stack and cannot be dual-stack.
+					if isDualStackCluster(nodes) && ipFamilyIndex == ipFamilyV6 {
+						e2eskipper.Skipf("Dual stack kubernetes.default service is not supported in kubernetes")
+					}
+					// Convert ipFamilyIndex to utilnet.IPFamily
+					var family utilnet.IPFamily
+					if ipFamilyIndex == ipFamilyV4 {
+						family = utilnet.IPv4
+					} else {
+						family = utilnet.IPv6
+					}
+
+					// Get the cluster IP for the specified IP family
+					clusterIP := getFirstIPStringOfFamily(family, kubernetesService.Spec.ClusterIPs)
+					gomega.Expect(clusterIP).NotTo(gomega.BeEmpty(), fmt.Sprintf("no cluster IP available for IP family %v", family))
+
+					// Access the kubernetes API at the cluster IP directly on port 443
+					return podsNetA[0].Name, podsNetA[0].Namespace, fmt.Sprintf("https://%s/healthz", net.JoinHostPort(clusterIP, "443")), "", false
+				}),
 			ginkgo.Entry("pod in the UDN should not be able to access a service in a different UDN",
 				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
 					return podsNetA[0].Name, podsNetA[0].Namespace, net.JoinHostPort(svcNetB.Spec.ClusterIPs[ipFamilyIndex], "8080") + "/clientip", curlConnectionTimeoutCode, true
@@ -2366,8 +2392,8 @@ func checkL3NodePodRoute(node corev1.Node, serverContainerIP, routerContainerNam
 	if isIPv6 {
 		podCIDR = podv6CIDR
 	}
-    gomega.Expect(podCIDR).NotTo(gomega.BeEmpty(),
-        "pod CIDR for family (isIPv6=%t) missing for node %s on network %s", isIPv6, node.Name, netName)
+	gomega.Expect(podCIDR).NotTo(gomega.BeEmpty(),
+		"pod CIDR for family (isIPv6=%t) missing for node %s on network %s", isIPv6, node.Name, netName)
 
 	checkRouteInFRR(node, podCIDR, routerContainerName, isIPv6)
 }
