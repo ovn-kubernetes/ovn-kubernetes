@@ -162,16 +162,16 @@ func patchNADSpec(nadClient nadclient.K8sCniCncfIoV1Interface, name, namespace s
 }
 
 type podConfiguration struct {
-	attachments                  []nadapi.NetworkSelectionElement
-	containerCmd                 []string
-	name                         string
-	namespace                    string
-	nodeSelector                 map[string]string
-	isPrivileged                 bool
-	labels                       map[string]string
-	requiresExtraNamespace       bool
-	hostNetwork                  bool
-	needsIPRequestFromHostSubnet bool
+	attachments            []nadapi.NetworkSelectionElement
+	containerCmd           []string
+	name                   string
+	namespace              string
+	nodeSelector           map[string]string
+	isPrivileged           bool
+	labels                 map[string]string
+	requiresExtraNamespace bool
+	hostNetwork            bool
+	ipRequestFromSubnet    string
 }
 
 func generatePodSpec(config podConfiguration) *v1.Pod {

@@ -33,8 +33,9 @@ import (
 )
 
 const (
-	PolicyForAnnotation = "k8s.v1.cni.cncf.io/policy-for"
-	nodeHostnameKey     = "kubernetes.io/hostname"
+	PolicyForAnnotation     = "k8s.v1.cni.cncf.io/policy-for"
+	nodeHostnameKey         = "kubernetes.io/hostname"
+	fromHostSubnet          = "host" // tells the test to generate IPs from the host subnet.
 )
 
 var _ = Describe("Multi Homing", feature.MultiHoming, func() {
@@ -322,13 +323,13 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				)
 				Expect(err).NotTo(HaveOccurred())
 
-				if serverPodConfig.attachments != nil && serverPodConfig.needsIPRequestFromHostSubnet {
+				if serverPodConfig.attachments != nil && serverPodConfig.ipRequestFromSubnet != "" {
 					By("finalizing the server pod IP configuration")
 					err = addIPRequestToPodConfig(cs, &serverPodConfig, serverIPOffset)
 					Expect(err).NotTo(HaveOccurred())
 				}
 
-				if clientPodConfig.attachments != nil && clientPodConfig.needsIPRequestFromHostSubnet {
+				if clientPodConfig.attachments != nil && clientPodConfig.ipRequestFromSubnet != "" {
 					By("finalizing the client pod IP configuration")
 					err = addIPRequestToPodConfig(cs, &clientPodConfig, clientIPOffset)
 					Expect(err).NotTo(HaveOccurred())
@@ -383,9 +384,9 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					attachments: []nadapi.NetworkSelectionElement{{
 						Name: secondaryNetworkName,
 					}},
-					name:                         podName,
-					containerCmd:                 httpServerContainerCmd(port),
-					needsIPRequestFromHostSubnet: true, // will override attachments above with an IPRequest
+					name:                podName,
+					containerCmd:        httpServerContainerCmd(port),
+					ipRequestFromSubnet: fromHostSubnet, // override attachments with an IPRequest from host subnet
 				},
 				false, // scheduled on distinct Nodes
 				Label("BUG", "OCPBUGS-43004"),
@@ -404,9 +405,9 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					attachments: []nadapi.NetworkSelectionElement{{
 						Name: secondaryNetworkName,
 					}},
-					name:                         podName,
-					containerCmd:                 httpServerContainerCmd(port),
-					needsIPRequestFromHostSubnet: true,
+					name:                podName,
+					containerCmd:        httpServerContainerCmd(port),
+					ipRequestFromSubnet: fromHostSubnet,
 				},
 				true, // collocated on same Node
 				Label("BUG", "OCPBUGS-43004"),
@@ -421,9 +422,9 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					attachments: []nadapi.NetworkSelectionElement{{
 						Name: secondaryNetworkName,
 					}},
-					name:                         clientPodName,
-					isPrivileged:                 true,
-					needsIPRequestFromHostSubnet: true,
+					name:                clientPodName,
+					isPrivileged:        true,
+					ipRequestFromSubnet: fromHostSubnet,
 				},
 				podConfiguration{ // server on default network, pod is host-networked
 					name:         podName,
@@ -443,9 +444,9 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					attachments: []nadapi.NetworkSelectionElement{{
 						Name: secondaryNetworkName,
 					}},
-					name:                         clientPodName,
-					isPrivileged:                 true,
-					needsIPRequestFromHostSubnet: true,
+					name:                clientPodName,
+					isPrivileged:        true,
+					ipRequestFromSubnet: fromHostSubnet,
 				},
 				podConfiguration{ // server on default network, pod is host-networked
 					name:         podName,
@@ -470,9 +471,9 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					attachments: []nadapi.NetworkSelectionElement{{
 						Name: secondaryNetworkName,
 					}},
-					containerCmd:                 httpServerContainerCmd(port),
-					name:                         podName,
-					needsIPRequestFromHostSubnet: true,
+					containerCmd:        httpServerContainerCmd(port),
+					name:                podName,
+					ipRequestFromSubnet: fromHostSubnet,
 				},
 				false, // collocated on different nodes
 				Label("STORY", "SDN-5345"),
@@ -492,9 +493,9 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					attachments: []nadapi.NetworkSelectionElement{{
 						Name: secondaryNetworkName,
 					}},
-					containerCmd:                 httpServerContainerCmd(port),
-					name:                         podName,
-					needsIPRequestFromHostSubnet: true,
+					containerCmd:        httpServerContainerCmd(port),
+					name:                podName,
+					ipRequestFromSubnet: fromHostSubnet,
 				},
 				true, // collocated on the same node
 				Label("STORY", "SDN-5345"),
@@ -2263,17 +2264,9 @@ func generateIPsFromNodePrimaryIfAddr(cs clientset.Interface, nodeName string, o
 		nodeAddresses = append(nodeAddresses, nodeIfAddr.IPv6)
 	}
 	for _, nodeAddress := range nodeAddresses {
-		ipGen, err := ipgenerator.NewIPGenerator(nodeAddress)
-		if err != nil {
-			return nil, err
-		}
-		newIP, err := ipGen.GenerateIP(offset)
-		if err != nil {
-			return nil, err
-		}
-		newAddresses = append(newAddresses, newIP.String())
+		newAddresses = append(newAddresses, nodeAddress)
 	}
-	return newAddresses, nil
+	return generateIPsFromSubnets(newAddresses, offset)
 }
 
 func addIPRequestToPodConfig(cs clientset.Interface, podConfig *podConfiguration, offset int) error {
@@ -2282,7 +2275,18 @@ func addIPRequestToPodConfig(cs clientset.Interface, podConfig *podConfiguration
 		return fmt.Errorf("No node selector found on podConfig")
 	}
 
-	IPsToRequest, err := generateIPsFromNodePrimaryIfAddr(cs, nodeName, offset)
+	var (
+		IPsToRequest []string
+		err          error
+	)
+
+	switch podConfig.ipRequestFromSubnet {
+	case fromHostSubnet:
+		IPsToRequest, err = generateIPsFromNodePrimaryIfAddr(cs, nodeName, offset)
+	default:
+		return fmt.Errorf("unknown or unimplemented subnet source: %q", podConfig.ipRequestFromSubnet)
+	}
+
 	if err != nil {
 		return err
 	}
@@ -2290,4 +2294,27 @@ func addIPRequestToPodConfig(cs clientset.Interface, podConfig *podConfiguration
 		podConfig.attachments[i].IPRequest = IPsToRequest
 	}
 	return nil
+}
+
+func generateIPsFromSubnets(subnets []string, offset int) ([]string, error) {
+	var addrs []string
+	for _, s := range subnets {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		ipGen, err := ipgenerator.NewIPGenerator(s)
+		if err != nil {
+			return nil, err
+		}
+		ip, err := ipGen.GenerateIP(offset)
+		if err != nil {
+			return nil, err
+		}
+		addrs = append(addrs, ip.String())
+	}
+	if len(addrs) == 0 {
+		return nil, fmt.Errorf("no valid subnets provided")
+	}
+	return addrs, nil
 }
