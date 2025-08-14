@@ -80,6 +80,9 @@ type UserDefinedNetworkGateway struct {
 	// all UDNs. Must be accessed with a lock
 	ruleManager *iprulemanager.Controller
 
+	// management port controller
+	mgmtPortController *managementport.UDNManagementPortController
+
 	// reconcile channel to signal reconciliation of the gateway on network
 	// configuration changes
 	reconcile chan struct{}
@@ -207,13 +210,34 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 	if udng.openflowManager == nil {
 		return fmt.Errorf("openflow manager has not been provided for network: %s", udng.NetInfo.GetNetworkName())
 	}
-	// port is created first and its MAC address configured. The IP(s) on that link are added after enslaving to a VRF device (addUDNManagementPortIPs)
-	// because IPv6 addresses are removed by the kernel (if not link local) when enslaved to a VRF device.
-	// Add the routes(AddVRFRoutes) after setting the IP(s) to ensure that the default subnet route towards the mgmt network exists.
-	mplink, err := udng.addUDNManagementPort()
+
+	nodeSubnets, err := udng.getLocalSubnets()
 	if err != nil {
-		return fmt.Errorf("could not create management port netdevice for network %s: %w", udng.GetNetworkName(), err)
+		return fmt.Errorf("could not create management port for network %s, cannot determine subnets: %v",
+			udng.GetNetworkName(), err)
 	}
+
+	udng.mgmtPortController, err = managementport.NewUDNManagementPortController(udng.node, nodeSubnets, udng.NetInfo)
+	if err != nil {
+		return fmt.Errorf("could not create management port for network %s, UDN management port controller init failure: %v",
+			udng.GetNetworkName(), err)
+	}
+
+	err = udng.mgmtPortController.Create()
+	if err != nil {
+		return fmt.Errorf("could not create management port for network %s, management port creation failure: %v",
+			udng.GetNetworkName(), err)
+	}
+
+	mgmtPortName := util.GetNetworkScopedK8sMgmtHostIntfName(uint(udng.GetNetworkID()))
+	mplink, err := util.LinkByName(mgmtPortName)
+	if err != nil {
+		return err
+	}
+
+	vrfTableId := util.CalculateRouteTableID(mplink.Attrs().Index)
+	udng.vrfTableId = vrfTableId
+
 	vrfDeviceName := util.GetNetworkVRFName(udng.NetInfo)
 	routes, err := udng.computeRoutesForUDN(mplink)
 	if err != nil {
@@ -245,15 +269,10 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 	}
 
 	// add loose mode for rp filter on management port
-	mgmtPortName := util.GetNetworkScopedK8sMgmtHostIntfName(uint(udng.GetNetworkID()))
 	if err = util.SetRPFilterLooseModeForInterface(mgmtPortName); err != nil {
 		return fmt.Errorf("could not set loose mode for reverse path filtering on management port %s: %v", mgmtPortName, err)
 	}
 
-	nodeSubnets, err := udng.getLocalSubnets()
-	if err != nil {
-		return fmt.Errorf("failed to get node subnets for network %s: %w", udng.GetNetworkName(), err)
-	}
 	var mgmtIPs []*net.IPNet
 	for _, subnet := range nodeSubnets {
 		mgmtIPs = append(mgmtIPs, udng.GetNodeManagementIP(subnet))
@@ -287,7 +306,6 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 	if err := waiter.Wait(); err != nil {
 		return err
 	}
-
 	if err := udng.addMarkChain(); err != nil {
 		return fmt.Errorf("failed to add the service masquerade chain: %w", err)
 	}
@@ -332,7 +350,7 @@ func (udng *UserDefinedNetworkGateway) DelNetwork() error {
 		return err
 	}
 	// delete the management port interface for this network
-	err = udng.deleteUDNManagementPort()
+	err = udng.mgmtPortController.Delete()
 	if err != nil {
 		return err
 	}
@@ -341,57 +359,6 @@ func (udng *UserDefinedNetworkGateway) DelNetwork() error {
 	// on failure
 	close(udng.reconcile)
 	return nil
-}
-
-// addUDNManagementPort does the following:
-// STEP1: creates the (netdevice) OVS interface on br-int for the UDN's management port
-// STEP2: sets up the management port link on the host
-// STEP3: enables IPv4 forwarding on the interface if the network has a v4 subnet
-// Returns a netlink Link which is the UDN management port interface along with its MAC address
-func (udng *UserDefinedNetworkGateway) addUDNManagementPort() (netlink.Link, error) {
-	var err error
-	interfaceName := util.GetNetworkScopedK8sMgmtHostIntfName(uint(udng.GetNetworkID()))
-	networkLocalSubnets, err := udng.getLocalSubnets()
-	if err != nil {
-		return nil, err
-	}
-	if len(networkLocalSubnets) == 0 {
-		return nil, fmt.Errorf("cannot determine subnets while configuring management port for network: %s", udng.GetNetworkName())
-	}
-	macAddr := util.IPAddrToHWAddr(udng.GetNodeManagementIP(networkLocalSubnets[0]).IP)
-
-	// STEP1
-	stdout, stderr, err := util.RunOVSVsctl(
-		"--", "--may-exist", "add-port", "br-int", interfaceName,
-		"--", "set", "interface", interfaceName, fmt.Sprintf("mac=\"%s\"", macAddr.String()),
-		"type=internal", "mtu_request="+fmt.Sprintf("%d", udng.NetInfo.MTU()),
-		"external-ids:iface-id="+udng.GetNetworkScopedK8sMgmtIntfName(udng.node.Name),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to add port to br-int for network %s, stdout: %q, stderr: %q, error: %w",
-			udng.GetNetworkName(), stdout, stderr, err)
-	}
-	klog.V(3).Infof("Added OVS management port interface %s for network %s", interfaceName, udng.GetNetworkName())
-
-	// STEP2
-	mplink, err := util.LinkSetUp(interfaceName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to set the link up for interface %s while plumbing network %s, err: %v",
-			interfaceName, udng.GetNetworkName(), err)
-	}
-	vrfTableId := util.CalculateRouteTableID(mplink.Attrs().Index)
-	udng.vrfTableId = vrfTableId
-	klog.V(3).Infof("Setup management port link %s for network %s succeeded", interfaceName, udng.GetNetworkName())
-
-	// STEP3
-	// IPv6 forwarding is enabled globally
-	if ipv4, _ := udng.IPMode(); ipv4 {
-		err = util.SetforwardingModeForInterface(interfaceName)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return mplink, nil
 }
 
 // getLocalSubnets returns pod subnets used by the current node.
@@ -423,6 +390,9 @@ func (udng *UserDefinedNetworkGateway) addUDNManagementPortIPs(mpLink netlink.Li
 		return err
 	}
 
+	klog.V(5).Infof("Add management port IPs on interface %s for network %s subnets %+v",
+		mpLink.Attrs().Name, udng.GetNetworkName(), networkLocalSubnets)
+
 	// extract management port IP from subnets and add it to link
 	for _, subnet := range networkLocalSubnets {
 		if config.IPv6Mode && utilnet.IsIPv6CIDR(subnet) || config.IPv4Mode && utilnet.IsIPv4CIDR(subnet) {
@@ -438,19 +408,6 @@ func (udng *UserDefinedNetworkGateway) addUDNManagementPortIPs(mpLink netlink.Li
 			}
 		}
 	}
-	return nil
-}
-
-// deleteUDNManagementPort does the following:
-// STEP1: deletes the OVS interface on br-int for the UDN's management port interface
-// STEP2: deletes the mac address from the annotation
-func (udng *UserDefinedNetworkGateway) deleteUDNManagementPort() error {
-	interfaceName := util.GetNetworkScopedK8sMgmtHostIntfName(uint(udng.GetNetworkID()))
-	err := managementport.DeleteManagementPortOVSInterface(udng.GetNetworkName(), interfaceName)
-	if err != nil {
-		return err
-	}
-	klog.V(3).Infof("Removed OVS management port interface %s for network %s", interfaceName, udng.GetNetworkName())
 	return nil
 }
 

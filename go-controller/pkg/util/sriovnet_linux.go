@@ -258,3 +258,19 @@ func GetUplinkRepresentorName(deviceID string) (string, error) {
 
 	return uplink, err
 }
+
+func GetNetworkDeviceDetails(deviceID string) (*NetworkDeviceDetails, error) {
+	vfindex, err := GetSriovnetOps().GetVfIndexByPciAddress(deviceID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get VF index for device %s: %v", deviceID, err)
+	}
+	pfindex, err := GetSriovnetOps().GetPfIndexByVfPciAddress(deviceID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get PF index for device %s: %v", deviceID, err)
+	}
+	return &NetworkDeviceDetails{
+		DeviceId: deviceID,
+		PfId:     pfindex,
+		FuncId:   vfindex,
+	}, nil
+}

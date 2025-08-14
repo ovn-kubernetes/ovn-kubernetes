@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/containernetworking/plugins/pkg/ip"
-	v1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	"github.com/vishvananda/netlink"
 
 	corev1 "k8s.io/api/core/v1"
@@ -547,89 +546,6 @@ func isOVNControllerReady() (bool, error) {
 	return true, nil
 }
 
-// getEnvNameFromResourceName gets the device plugin env variable from the device plugin resource name.
-func getEnvNameFromResourceName(resource string) string {
-	res1 := strings.ReplaceAll(resource, ".", "_")
-	res2 := strings.ReplaceAll(res1, "/", "_")
-	return "PCIDEVICE_" + strings.ToUpper(res2)
-}
-
-// getDeviceIdsFromEnv gets the list of device IDs from the device plugin env variable.
-func getDeviceIdsFromEnv(envName string) ([]string, error) {
-	envVar := os.Getenv(envName)
-	if len(envVar) == 0 {
-		return nil, fmt.Errorf("unexpected empty env variable: %s", envName)
-	}
-	deviceIds := strings.Split(envVar, ",")
-	return deviceIds, nil
-}
-
-// handleDevicePluginResources tries to retrieve any device plugin resources passed in via arguments and device plugin env variables.
-func handleDevicePluginResources() error {
-	mgmtPortEnvName := getEnvNameFromResourceName(config.OvnKubeNode.MgmtPortDPResourceName)
-	deviceIds, err := getDeviceIdsFromEnv(mgmtPortEnvName)
-	if err != nil {
-		return err
-	}
-	// The reason why we want to store the Device Ids in a map is prepare for various features that
-	// require network resources such as the Management Port or Bypass Port. It is likely that these
-	// features share the same device pool.
-	config.OvnKubeNode.DPResourceDeviceIdsMap = make(map[string][]string)
-	config.OvnKubeNode.DPResourceDeviceIdsMap[config.OvnKubeNode.MgmtPortDPResourceName] = deviceIds
-	klog.V(5).Infof("Setting DPResourceDeviceIdsMap for %s using env %s with device IDs %v",
-		config.OvnKubeNode.MgmtPortDPResourceName, mgmtPortEnvName, deviceIds)
-	return nil
-}
-
-// reserveDeviceId takes the first device ID from a list of device IDs
-// This function will not execute during runtime, only once at startup thus there
-// is no undesirable side-effects of multiple allocations (causing pressure on the
-// garbage collector)
-func reserveDeviceId(deviceIds []string) (string, []string) {
-	ret := deviceIds[0]
-	deviceIds = deviceIds[1:]
-	return ret, deviceIds
-}
-
-// handleNetdevResources tries to retrieve any device plugin interfaces to be used by the system such as the management port.
-func handleNetdevResources(resourceName string) (string, error) {
-	var deviceId string
-	deviceIdsMap := &config.OvnKubeNode.DPResourceDeviceIdsMap
-	if len((*deviceIdsMap)[resourceName]) > 0 {
-		deviceId, (*deviceIdsMap)[resourceName] = reserveDeviceId((*deviceIdsMap)[resourceName])
-	} else {
-		return "", fmt.Errorf("insufficient device IDs for resource: %s", resourceName)
-	}
-	netdevice, err := util.GetNetdevNameFromDeviceId(deviceId, v1.DeviceInfo{})
-	if err != nil {
-		return "", err
-	}
-	return netdevice, nil
-}
-
-// configureMgmtPortNetdevFromResource uses device plugin resources to determine and set
-// the management port netdevice if a DP resource name is provided via configuration.
-func configureMgmtPortNetdevFromResource() error {
-	if config.OvnKubeNode.MgmtPortDPResourceName == "" {
-		return nil
-	}
-	if err := handleDevicePluginResources(); err != nil {
-		return err
-	}
-	netdevice, err := handleNetdevResources(config.OvnKubeNode.MgmtPortDPResourceName)
-	if err != nil {
-		return err
-	}
-	if config.OvnKubeNode.MgmtPortNetdev != "" {
-		klog.Warningf("MgmtPortNetdev is set explicitly (%s), overriding with resource...",
-			config.OvnKubeNode.MgmtPortNetdev)
-	}
-	config.OvnKubeNode.MgmtPortNetdev = netdevice
-	klog.V(5).Infof("Using MgmtPortNetdev (Netdev %s) passed via resource %s",
-		config.OvnKubeNode.MgmtPortNetdev, config.OvnKubeNode.MgmtPortDPResourceName)
-	return nil
-}
-
 // Resolve gateway interface from PCI address when configured as "derive-from-mgmt-port"
 // configureGatewayInterfaceFromMgmtPort resolves and sets the gateway interface derived
 // from the management port's PF when `config.Gateway.Interface` is set to derive-from-mgmt-port.
@@ -661,7 +577,7 @@ func configureGatewayInterfaceFromMgmtPort() error {
 }
 
 func exportManagementPortAnnotation(netdevName string, nodeAnnotator kube.Annotator) error {
-	klog.Infof("Exporting management port annotation for netdev '%v'", netdevName)
+	klog.Infof("Exporting management port annotation for default network: netdev '%v'", netdevName)
 	deviceID, err := util.GetDeviceIDFromNetdevice(netdevName)
 	if err != nil {
 		return err
@@ -674,20 +590,15 @@ func exportManagementPortAnnotation(netdevName string, nodeAnnotator kube.Annota
 	if err != nil {
 		return err
 	}
-
-	return util.SetNodeManagementPortAnnotation(nodeAnnotator, pfindex, vfindex)
-}
-
-func importManagementPortAnnotation(node *corev1.Node) (string, error) {
-	klog.Infof("Import management port annotation on node '%v'", node.Name)
-	pfId, vfId, err := util.ParseNodeManagementPortAnnotation(node)
-
-	if err != nil {
-		return "", err
+	cfgs := map[string]*util.NetworkDeviceDetails{
+		types.DefaultNetworkName: {
+			DeviceId: deviceID,
+			PfId:     pfindex,
+			FuncId:   vfindex,
+		},
 	}
-	klog.Infof("Imported pfId '%v' and FuncId '%v' for node '%v'", pfId, vfId, node.Name)
 
-	return util.GetSriovnetOps().GetVfRepresentorDPU(fmt.Sprintf("%d", pfId), fmt.Sprintf("%d", vfId))
+	return util.UpdateNodeManagementPortAnnotation(nodeAnnotator, cfgs)
 }
 
 // Take care of alternative names for the netdevName by making sure we
@@ -735,10 +646,15 @@ func getMgmtPortAndRepNameModeFull() (string, string, error) {
 // In DPU mode, read the annotation from the host side which should have been
 // exported by ovn-k running in DPU host mode.
 func getMgmtPortAndRepNameModeDPU(node *corev1.Node) (string, string, error) {
-	rep, err := importManagementPortAnnotation(node)
+	cfgs, err := util.ParseNodeManagementPortAnnotation(node)
 	if err != nil {
 		return "", "", err
 	}
+	cfg, ok := cfgs[types.DefaultNetworkName]
+	if !ok {
+		return "", "", fmt.Errorf("failed to find management port defails for %s network", types.DefaultNetworkName)
+	}
+	rep, err := util.GetSriovnetOps().GetVfRepresentorDPU(fmt.Sprintf("%d", cfg.PfId), fmt.Sprintf("%d", cfg.FuncId))
 	return "", rep, err
 }
 
@@ -775,7 +691,10 @@ func createNodeManagementPortController(
 		return nil, err
 	}
 
-	if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
+	// if config.OvnKubeNode.MgmtPortDPResourceName is not empty, management port annotation is already set
+	// by node controller manage. Also, in full mode, above getMgmtPortAndRepName() function already returns
+	// the representor interface. So only set the default network management port annotation in dpu-host mode.
+	if config.OvnKubeNode.MgmtPortDPResourceName == "" && config.OvnKubeNode.Mode == types.NodeModeDPUHost {
 		err := exportManagementPortAnnotation(netdevName, nodeAnnotator)
 		if err != nil {
 			return nil, err
@@ -979,11 +898,6 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 	}
 
 	nodeAnnotator := kube.NewNodeAnnotator(nc.Kube, node.Name)
-
-	// Use the device from environment when the DP resource name is specified.
-	if err := configureMgmtPortNetdevFromResource(); err != nil {
-		return err
-	}
 
 	if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
 		if err := configureGatewayInterfaceFromMgmtPort(); err != nil {

@@ -367,6 +367,7 @@ var _ = Describe("SecondaryNodeNetworkController: UserDefinedPrimaryNetwork Gate
 			})
 			setManagementPortFakeCommands(fexec, nodeName)
 			setUpGatewayFakeOVSCommands(fexec)
+			deleteStaleManagementPortFakeCommands(fexec, mgtPort)
 			getCreationFakeCommands(fexec, mgtPort, mgtPortMAC, netName, nodeName, NetInfo.MTU())
 			getRPFilterLooseModeFakeCommands(fexec)
 			setUpUDNOpenflowManagerFakeOVSCommands(fexec)
