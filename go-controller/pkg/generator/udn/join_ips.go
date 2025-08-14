@@ -2,6 +2,7 @@ package udn
 
 import (
 	"fmt"
+	"math/big"
 	"net"
 
 	corev1 "k8s.io/api/core/v1"
@@ -87,4 +88,27 @@ func getGWRouterIP(subnet string, nodeID int) (*net.IPNet, error) {
 		return nil, fmt.Errorf("error creating IP Generator for subnet %s: %w", subnet, err)
 	}
 	return nodeGWRouterLRPIPGenerator.GenerateIP(nodeID)
+}
+
+func GetLastIPsFromJoinSubnet(netInfo util.NetInfo) []*net.IPNet {
+	var gwRouterAddrs []*net.IPNet
+	if config.IPv4Mode {
+		gwRouterAddrs = append(gwRouterAddrs, getLastIPOfSubnet(netInfo.JoinSubnetV4()))
+	}
+	if config.IPv6Mode {
+		gwRouterAddrs = append(gwRouterAddrs, getLastIPOfSubnet(netInfo.JoinSubnetV6()))
+	}
+	return gwRouterAddrs
+}
+
+func getLastIPOfSubnet(subnet *net.IPNet) *net.IPNet {
+	mask, total := subnet.Mask.Size()
+	base := big.NewInt(1)
+	totalIPs := new(big.Int).Lsh(base, uint(total-mask))
+	lastIPIndex := totalIPs.Sub(totalIPs, big.NewInt(int64(2)))
+	// this is copied form utilnet.AddIPOffset but to allow big.Int offset
+	r := big.NewInt(0).Add(utilnet.BigForIP(subnet.IP), lastIPIndex).Bytes()
+	r = append(make([]byte, 16), r...)
+	lastIP := net.IP(r[len(r)-16:])
+	return &net.IPNet{IP: lastIP, Mask: subnet.Mask}
 }
