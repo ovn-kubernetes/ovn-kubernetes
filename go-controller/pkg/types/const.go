@@ -219,6 +219,8 @@ const (
 	LoadBalancerOwnerExternalID = OvnK8sPrefix + "/" + "owner"
 	// key for UDN enabled services routes
 	UDNEnabledServiceExternalID = OvnK8sPrefix + "/" + "udn-enabled-default-service"
+	// key for management port name, indicating the netdev link name associated with the given management port representor OVS interface
+	OvnManagementPortNameExternalID = OvnK8sPrefix + "/management-port-name"
 	// RequiredUDNNamespaceLabel is the required namespace label for enabling primary UDNs
 	RequiredUDNNamespaceLabel = "k8s.ovn.org/primary-user-defined-network"
 

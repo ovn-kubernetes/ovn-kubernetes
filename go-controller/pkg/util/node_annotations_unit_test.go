@@ -880,3 +880,89 @@ func TestParseNodeDontSNATSubnetsList(t *testing.T) {
 		})
 	}
 }
+
+func TestParseNodeManagementPortAnnotation(t *testing.T) {
+	tests := []struct {
+		desc           string
+		node           *corev1.Node
+		expectedOutput NetworkDeviceDetailsMap
+		expectError    error
+	}{
+		{
+			desc: "if management port annotation is nil",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        "my-node",
+					Annotations: nil,
+				},
+			},
+			expectedOutput: nil,
+			expectError:    newAnnotationNotSetError("%s annotation not found for node %q", OvnNodeManagementPort, "my-node"),
+		},
+		{
+			desc: "if management port annotation has no fields set",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        "my-node",
+					Annotations: map[string]string{},
+				},
+			},
+			expectedOutput: nil,
+			expectError:    newAnnotationNotSetError("%s annotation not found for node %q", OvnNodeManagementPort, "my-node"),
+		},
+		{
+			desc: "if management port annotation only has default network device information",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{"k8s.ovn.org/node-mgmt-port": `{"default":{"DeviceId":"0000:01:00.6","PfId":0,"FuncId":4}}`},
+				},
+			},
+			expectedOutput: NetworkDeviceDetailsMap{"default": &NetworkDeviceDetails{DeviceId: "0000:01:00.6", PfId: 0, FuncId: 4}},
+			expectError:    nil,
+		},
+		{
+			desc: "if management port annotation only has legacy default network device information",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{"k8s.ovn.org/node-mgmt-port": `{"PfId":0,"FuncId":4}`},
+				},
+			},
+			expectedOutput: NetworkDeviceDetailsMap{"default": &NetworkDeviceDetails{PfId: 0, FuncId: 4}},
+			expectError:    nil,
+		},
+		{
+			desc: "if management port annotation has device information for two different networks",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{"k8s.ovn.org/node-mgmt-port": `{"default":{"DeviceId":"0000:01:00.6","PfId":0,"FuncId":4}, "bluenet":{"DeviceId":"0000:01:00.8","PfId":1,"FuncId":6}}`},
+				},
+			},
+			expectedOutput: NetworkDeviceDetailsMap{"default": &NetworkDeviceDetails{DeviceId: "0000:01:00.6", PfId: 0, FuncId: 4}, "bluenet": &NetworkDeviceDetails{DeviceId: "0000:01:00.8", PfId: 1, FuncId: 6}},
+			expectError:    nil,
+		},
+		{
+			desc: "if management port annotation has malformed device information",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{"k8s.ovn.org/node-mgmt-port": `{"default":{}`},
+				},
+			},
+			expectedOutput: nil,
+			expectError:    fmt.Errorf("failed to unmarshal management port annotation {\"default\":{} for node \"\": unexpected end of JSON input"),
+		},
+	}
+
+	for i, tc := range tests {
+		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
+			mpDetails, err := ParseNodeManagementPortAnnotation(tc.node)
+			t.Log(mpDetails, err)
+			if tc.expectError != nil {
+				require.Error(t, err)
+				assert.EqualError(t, err, tc.expectError.Error())
+			} else {
+				require.NoError(t, err)
+				assert.True(t, reflect.DeepEqual(mpDetails, tc.expectedOutput))
+			}
+		})
+	}
+}

@@ -25,7 +25,10 @@ type managementPortRepresentor struct {
 	link       netlink.Link
 }
 
-// newManagementPortRepresentor creates a new managementPortRepresentor
+// newManagementPortRepresentor creates a new managementPort representor
+// For management port representor only.
+// name is types.K8sMgmtIntfName (on dpu mode node) or types.K8sMgmtIntfName+"_0" (on full mode)
+// repDevName is the representor VF device name
 func newManagementPortRepresentor(name, repDevName string, cfg *managementPortConfig) *managementPortRepresentor {
 	return &managementPortRepresentor{
 		cfg:        cfg,
@@ -49,13 +52,14 @@ func (mp *managementPortRepresentor) create() error {
 	}
 
 	klog.V(5).Infof("Setup representor management port: %s", link.Attrs().Name)
-	// configure management port: rename, set MTU and set link up
+	// configure management port: rename representor device to specified management port name, set MTU and bring the link up
 	err = bringupManagementPortLink(types.DefaultNetworkName, link, nil, mp.ifName, config.Default.MTU)
 	if err != nil {
 		return fmt.Errorf("update management port for default network failed: %v", err)
 	}
-	// connect representor port to br-int
-	externalIDs := []string{}
+	// connect representor port to br-int, set OvnManagementPortNameExternalID external-id to indicate its
+	// associated network name and management port device name
+	externalIDs := []string{fmt.Sprintf("%s=%s", types.OvnManagementPortNameExternalID, types.K8sMgmtIntfName)}
 	if mp.repDevName != mp.ifName {
 		externalIDs = append(externalIDs, fmt.Sprintf("ovn-orig-mgmt-port-rep-name=%s", mp.repDevName))
 	}

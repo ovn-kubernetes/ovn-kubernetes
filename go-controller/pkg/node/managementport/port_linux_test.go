@@ -341,8 +341,8 @@ func testManagementPortDPU(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.
 		"ovs-vsctl --timeout=15 --no-headings --data bare --format csv --columns type,name find Interface name=" + mgtPort,
 		"ovs-vsctl --timeout=15 --if-exists get bridge br-int datapath_type",
 		fmt.Sprintf("ovs-vsctl --timeout=15 -- --may-exist add-port br-int %s -- set interface %s "+
-			"external-ids:iface-id=%s external-ids:ovn-orig-mgmt-port-rep-name=%s",
-			mgtPort, mgtPort, "k8s-"+nodeName, mgmtPortNetdev),
+			"external-ids:iface-id=%s external-ids:%s=%s external-ids:ovn-orig-mgmt-port-rep-name=%s",
+			mgtPort, mgtPort, "k8s-"+nodeName, types.OvnManagementPortNameExternalID, types.K8sMgmtIntfName, mgmtPortNetdev),
 	})
 
 	err := util.SetExec(fexec)
