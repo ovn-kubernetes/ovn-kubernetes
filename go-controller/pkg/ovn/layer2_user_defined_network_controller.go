@@ -1116,7 +1116,146 @@ func (oc *Layer2UserDefinedNetworkController) syncClusterRouterPorts(node *corev
 		return err
 	}
 
-	return oc.syncNodeClusterRouterPort(node, hostSubnets)
+	if err = oc.syncNodeClusterRouterPort(node, hostSubnets); err != nil {
+		return err
+	}
+
+	// now add upgrade-only connection using IP-less port
+	if err = oc.ensureUpgradeTopology(node); err != nil {
+		return fmt.Errorf("failed to ensure upgrade topology for node %s: %w", node.Name, err)
+	}
+	return oc.setUDNLayer2NodeUsesTransitRouter(node.Name, oc.GetNetworkName(), false)
+}
+
+func (oc *SecondaryLayer2NetworkController) ensureUpgradeTopology(node *corev1.Node) error {
+	switchName := oc.GetNetworkScopedSwitchName("")
+	sw := nbdb.LogicalSwitch{Name: switchName}
+
+	// create switch to router connection with GR MAC and dummy join IPs
+	upgradeRouterPortName := types.TransitRouterToSwitchPrefix + switchName + "-upgrade"
+	// create switch port
+	upgradeSwitchPort := nbdb.LogicalSwitchPort{
+		Name:      types.SwitchToTransitRouterPrefix + switchName + "-upgrade",
+		Type:      "router",
+		Addresses: []string{"router"},
+		Options: map[string]string{
+			libovsdbops.RouterPort: upgradeRouterPortName,
+		},
+		ExternalIDs: map[string]string{
+			types.NetworkExternalID:  oc.GetNetworkName(),
+			types.TopologyExternalID: oc.TopologyType(),
+		},
+	}
+	tunnelID, err := util.ParseUDNLayer2NodeGRLRPTunnelIDs(node, oc.GetNetworkName())
+	if err != nil {
+		if util.IsAnnotationNotSetError(err) {
+			// wait for the annotation to be assigned
+			return types.NewSuppressedError(err)
+		}
+		return fmt.Errorf("failed to fetch tunnelID annotation from the node %s for network %s, err: %w",
+			node.Name, oc.GetNetworkName(), err)
+	}
+	upgradeSwitchPort.Options[libovsdbops.RequestedTnlKey] = strconv.Itoa(tunnelID)
+
+	err = libovsdbops.CreateOrUpdateLogicalSwitchPortsOnSwitch(oc.nbClient, &sw, &upgradeSwitchPort)
+	if err != nil {
+		klog.Errorf("Failed to add logical port %+v to switch %s: %v", upgradeSwitchPort, switchName, err)
+		return err
+	}
+	// create router port
+	// find GW MAC
+	gwRouterJoinNets, err := udn.GetGWRouterIPs(node, oc.GetNetInfo())
+	if err != nil {
+		return fmt.Errorf("failed composing LRP addresses for layer2 network %s: %w", oc.GetNetworkName(), err)
+	}
+	// add fake joinIPs
+	fakeJoinIPs, err := oc.getLastJoinIPs()
+	if err != nil {
+		return fmt.Errorf("failed to get fake join IPs for network %s: %w", oc.GetNetworkName(), err)
+	}
+
+	gwLRPMAC := util.IPAddrToHWAddr(gwRouterJoinNets[0].IP)
+	logicalRouterPort := nbdb.LogicalRouterPort{
+		Name:     upgradeRouterPortName,
+		MAC:      gwLRPMAC.String(),
+		Networks: util.IPNetsToStringSlice(fakeJoinIPs),
+	}
+	logicalRouter := nbdb.LogicalRouter{Name: oc.GetNetworkScopedClusterRouterName()}
+
+	err = libovsdbops.CreateOrUpdateLogicalRouterPort(oc.nbClient, &logicalRouter, &logicalRouterPort,
+		nil, &logicalRouterPort.MAC, &logicalRouterPort.Networks, &logicalRouterPort.Options)
+	if err != nil {
+		klog.Errorf("Failed to add logical router port %s, error: %v", upgradeRouterPortName, err)
+		return err
+	}
+
+	// now add masq subnet to the router port, this ensures that only one port respond to the
+	// ARP/NDP requests for the masq IPs
+	lrpName := oc.getCRToSwitchPortName(switchName)
+	trRouterPort, err := libovsdbops.GetLogicalRouterPort(oc.nbClient, &nbdb.LogicalRouterPort{Name: lrpName})
+	if err != nil {
+		return fmt.Errorf("failed to get logical router port %s: %w", lrpName, err)
+	}
+	masqSubnets, err := udn.GetUDNMgmtPortMasqueradeIPs(oc.GetNetworkID())
+	if err != nil {
+		return fmt.Errorf("failed to get masquerade IPs, network %s (%d): %w", oc.GetNetworkName(), oc.GetNetworkID(), err)
+	}
+
+	existingNetworkSet := sets.New[string](trRouterPort.Networks...)
+	newNetworksSet := sets.New[string](util.IPNetsToStringSlice(masqSubnets)...)
+	// Only add masq IPs if they are not already present
+	if existingNetworkSet.IsSuperset(newNetworksSet) {
+		return nil
+	}
+	trRouterPort.Networks = append(trRouterPort.Networks, newNetworksSet.UnsortedList()...)
+	err = libovsdbops.CreateOrUpdateLogicalRouterPort(oc.nbClient, &logicalRouter, trRouterPort, nil, &trRouterPort.Networks)
+	if err != nil {
+		return fmt.Errorf("failed to update logical router port %s with masq IPs: %w", lrpName, err)
+	}
+	return nil
+}
+
+// getLastJoinIPs checks if the last IP of the join subnet is already allocated to any of the nodes
+// if it is, then we cannot use it as fake join IP, and we return an error
+// if it is not, then we return the last IPs of the join subnets
+func (oc *Layer2UserDefinedNetworkController) getLastJoinIPs() ([]*net.IPNet, error) {
+	// we want to make sure that our fake IP, which is the last IP of the join subnet
+	// is not already allocated to any of the nodes.
+	// If there is at least one small subnet (that has little IPs), we need to check all existing nodeIDs to make sure
+	// the last IP is not allocated.
+	// This is expensive operation, so we avoid it if we can with the smallestSubnetZeroes check.
+	// smallestSubnetZeroes is the number of zeroes in the mask of the smallest subnet
+	smallestSubnetZeroes := 128
+	for _, joinSubnet := range oc.JoinSubnets() {
+		maskLength, totalSize := joinSubnet.Mask.Size()
+		zeroes := totalSize - maskLength
+		if zeroes < smallestSubnetZeroes {
+			smallestSubnetZeroes = zeroes
+		}
+	}
+	// The IP allocation is based on the nodeID, so we assume that if the joinSubnet has >= 12 zeroes in the mask
+	// then it is impossible/difficult to reach the last IP. For that you would need to have 4096 (=2^12) nodes.
+	if smallestSubnetZeroes < 12 {
+		// subnet is small, we have to check nodeIDs
+		nodes, err := oc.watchFactory.GetNodes()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get nodes when checking for fake join IPs for network %s: %v", oc.GetNetworkName(), err)
+		}
+		lastIPNodeID := (1 << smallestSubnetZeroes) - 2 // -1 for broadcast
+		for _, node := range nodes {
+			nodeID, err := util.GetNodeID(node)
+			if err != nil {
+				// Don't consider this node as cluster-manager has not allocated node id yet.
+				continue
+			}
+			if nodeID == lastIPNodeID {
+				// we have a collision, we cannot use the last IP
+				return nil, fmt.Errorf("cannot use the last IP of the join subnet as fake join IP, node %s has nodeID %d", node.Name, nodeID)
+			}
+		}
+		// we checked all nodes, and none of them have the last IP, so we can use it
+	}
+	return udn.GetLastIPsFromJoinSubnet(oc.GetNetInfo()), nil
 }
 
 // syncNodes finds nodes that still have LRP on the transit router, but the node doesn't exist anymore

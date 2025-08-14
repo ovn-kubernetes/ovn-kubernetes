@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	cnitypes "github.com/containernetworking/cni/pkg/types"
 	ipamclaimsapi "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1"
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	"github.com/urfave/cli/v2"
@@ -18,6 +19,7 @@ import (
 	knet "k8s.io/utils/net"
 	"k8s.io/utils/ptr"
 
+	ovnkcnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -469,6 +471,60 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 		),
 	)
 
+	It("controller should correctly assigns dummy joinSubnet IPs", func() {
+		config.IPv6Mode = true
+		// add a fake node with last-joinIP nodeID to make sure that large subnets don't check for nodeIDs at all
+		testNode := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test",
+				Annotations: map[string]string{
+					ovnNodeID: "65534",
+				},
+			},
+		}
+		fakeOvn.startWithDBSetup(initialDB, &corev1.NodeList{Items: []corev1.Node{*testNode}})
+		controller := &Layer2UserDefinedNetworkController{}
+		controller.watchFactory = fakeOvn.watcher
+		// this network won't invoke nodeID check, so it should pass
+		netInfo, err := util.NewNetInfo(&ovnkcnitypes.NetConf{
+			NetConf:    cnitypes.NetConf{Name: "test"},
+			Topology:   ovntypes.Layer2Topology,
+			JoinSubnet: "100.65.0.0/16,fd99::/64",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		controller.ReconcilableNetInfo = util.NewReconcilableNetInfo(netInfo)
+		res, err := controller.getLastJoinIPs()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res).To(HaveLen(2))
+		Expect(res).To(Equal([]*net.IPNet{
+			{IP: net.ParseIP("100.65.255.254"), Mask: net.CIDRMask(16, 32)},
+			{IP: net.ParseIP("fd99::ffff:ffff:ffff:fffe"), Mask: net.CIDRMask(64, 128)},
+		}))
+		// this network has a small subnet, it will do the nodeID check
+		// it will fail if there is a node with nodeID 1022, which doesn't exist for now
+		netInfo, err = util.NewNetInfo(&ovnkcnitypes.NetConf{
+			NetConf:    cnitypes.NetConf{Name: "test"},
+			Topology:   ovntypes.Layer2Topology,
+			JoinSubnet: "100.65.0.0/22",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		controller.ReconcilableNetInfo = util.NewReconcilableNetInfo(netInfo)
+		res, err = controller.getLastJoinIPs()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(res).To(Equal([]*net.IPNet{
+			{IP: net.ParseIP("100.65.3.254"), Mask: net.CIDRMask(22, 32)},
+			{IP: net.ParseIP("fd99::ffff:ffff:ffff:fffe"), Mask: net.CIDRMask(64, 128)},
+		}))
+		// now update the node to have a last-IP nodeID
+		testNode.Annotations[ovnNodeID] = "1022"
+		_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Nodes().Update(context.TODO(), testNode, metav1.UpdateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		// wait for node update to be propagated to the watchFactory
+		time.Sleep(10 * time.Millisecond)
+		_, err = controller.getLastJoinIPs()
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("cannot use the last IP of the join subnet"))
+	})
 })
 
 func dummySecondaryLayer2UserDefinedNetwork(subnets string) userDefinedNetInfo {
