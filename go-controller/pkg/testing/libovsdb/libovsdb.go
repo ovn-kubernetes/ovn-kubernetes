@@ -85,19 +85,23 @@ func (c *Context) Cleanup() {
 	c.serverWg.Wait()
 }
 
-// NewNBSBTestHarness runs NB & SB OVSDB servers and returns corresponding clients
-func NewNBSBTestHarness(setup TestSetup) (libovsdbclient.Client, libovsdbclient.Client, *Context, error) {
+// NewNBSBTestHarness runs local, NB & SB OVSDB servers and returns corresponding clients
+func NewNBSBTestHarness(setup TestSetup) (libovsdbclient.Client, libovsdbclient.Client, libovsdbclient.Client, *Context, error) {
 	testCtx := newContext()
 
+	localClient, _, err := NewOVSTestHarness(setup, testCtx)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
 	nbClient, _, err := NewNBTestHarness(setup, testCtx)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	sbClient, _, err := NewSBTestHarness(setup, testCtx)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
-	return nbClient, sbClient, testCtx, nil
+	return localClient, nbClient, sbClient, testCtx, nil
 }
 
 // NewNBTestHarness runs NB server and returns corresponding client
@@ -131,8 +135,11 @@ func NewSBTestHarness(setup TestSetup, testCtx *Context) (libovsdbclient.Client,
 }
 
 // NewOVSTestHarness runs OVSDB server and returns corresponding client
-func NewOVSTestHarness(setup TestSetup) (libovsdbclient.Client, *Context, error) {
-	testCtx := newContext()
+func NewOVSTestHarness(setup TestSetup, testCtx *Context) (libovsdbclient.Client, *Context, error) {
+	if testCtx == nil {
+		testCtx = newContext()
+	}
+
 	randBytes := make([]byte, 16)
 	cryptorand.Read(randBytes)
 	tmpOVSSocketPath := filepath.Join(os.TempDir(), "ovs-"+hex.EncodeToString(randBytes))

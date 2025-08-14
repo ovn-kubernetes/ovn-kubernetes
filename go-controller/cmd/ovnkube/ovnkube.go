@@ -485,6 +485,12 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 			defer cancel()
 			defer wg.Done()
 
+			libovsdbLocalClient, err := libovsdb.NewOVSClient(ctx.Done())
+			if err != nil {
+				controllerErr = fmt.Errorf("failed to initialize libovsdb local client: %w", err)
+				return
+			}
+
 			libovsdbOvnNBClient, err := libovsdb.NewNBClient(ctx.Done())
 			if err != nil {
 				controllerErr = fmt.Errorf("failed to initialize libovsdb NB client: %w", err)
@@ -500,6 +506,7 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 			controllerManager, err := controllermanager.NewControllerManager(
 				ovnClientset,
 				watchFactory,
+				libovsdbLocalClient,
 				libovsdbOvnNBClient,
 				libovsdbOvnSBClient,
 				eventRecorder,
