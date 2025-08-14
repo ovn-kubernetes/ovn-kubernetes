@@ -8,6 +8,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	v1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+
+	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/record"
@@ -16,6 +19,7 @@ import (
 
 	"github.com/ovn-kubernetes/libovsdb/client"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/deviceresource"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
@@ -23,6 +27,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/iprulemanager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/managementport"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/vrfmanager"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
@@ -38,6 +43,13 @@ type NodeControllerManager struct {
 	stopChan      chan struct{}
 	wg            *sync.WaitGroup
 	recorder      record.EventRecorder
+
+	// management port device manager
+	mpdm *managementport.MgmtPortDeviceManager
+
+	// manages default and primary network management ports VF allocation,
+	// it will be nil if no VF resource is defined
+	deviceAllocator *deviceresource.DeviceResourceAllocator
 
 	defaultNodeNetworkController *node.DefaultNodeNetworkController
 
@@ -55,13 +67,19 @@ type NodeControllerManager struct {
 
 // NewNetworkController create node user-defined network controllers for the given NetInfo
 func (ncm *NodeControllerManager) NewNetworkController(nInfo util.NetInfo) (networkmanager.NetworkController, error) {
+	if ncm.mpdm != nil && util.IsNetworkSegmentationSupportEnabled() && nInfo.IsPrimaryNetwork() {
+		if err := ncm.mpdm.AllocateDeviceIDForNetwork(nInfo.GetNetworkName()); err != nil {
+			return nil, err
+		}
+	}
+
 	topoType := nInfo.TopologyType()
 	switch topoType {
 	case ovntypes.Layer3Topology, ovntypes.Layer2Topology, ovntypes.LocalnetTopology:
 		// Pass a shallow clone of the watch factory, this allows multiplexing
 		// informers for UDNs.
 		return node.NewUserDefinedNodeNetworkController(ncm.newCommonNetworkControllerInfo(ncm.watchFactory.(*factory.WatchFactory).ShallowClone()),
-			nInfo, ncm.networkManager.Interface(), ncm.vrfManager, ncm.ruleManager, ncm.defaultNodeNetworkController.Gateway)
+			nInfo, ncm.networkManager.Interface(), ncm.vrfManager, ncm.ruleManager, ncm.mpdm, ncm.defaultNodeNetworkController.Gateway)
 	}
 	return nil, fmt.Errorf("topology type %s not supported", topoType)
 }
@@ -70,11 +88,130 @@ func (ncm *NodeControllerManager) GetDefaultNetworkController() networkmanager.R
 	return ncm.defaultNodeNetworkController
 }
 
+// syncManagementPorts deletes stale management port entities for networks that deleted during reboot.
+func (ncm *NodeControllerManager) syncManagementPorts(validNetworks ...util.NetInfo) error {
+	var errs []error
+	// Delete management ports for delete networks
+	// first try to find all expected primary UDN mgmtPortIfName (types.K8sMgmtIntfNamePrefix + <networkID>)
+	expectedMgmtPortIfNames := map[string]struct{}{}
+	for _, network := range validNetworks {
+		if !network.IsPrimaryNetwork() {
+			continue
+		}
+		expectedMgmtPortIfNames[util.GetNetworkScopedK8sMgmtHostIntfName(uint(network.GetNetworkID()))] = struct{}{}
+	}
+	// add management port name for default networks to expected name map
+	expectedMgmtPortIfNames[ovntypes.K8sMgmtIntfName] = struct{}{}
+	expectedMgmtPortIfNames[ovntypes.K8sMgmtIntfName+"_0"] = struct{}{}
+
+	if config.OvnKubeNode.Mode != ovntypes.NodeModeDPUHost {
+		// then get all existing management ports for primary UDNs
+		// internal management port map, key is managementPortIfName (types.K8sMgmtIntfNamePrefix + <networkID>), value is management port OVS interface name
+		internalMgmtPorts := make(map[string]string)
+
+		// representor management port map, key is managementPortIfName (types.K8sMgmtIntfNamePrefix + <networkID>), value is management port OVS interface name and network name
+		type repInfo struct {
+			name    string // name of OVS interface name
+			netName string // network name
+		}
+		repMgmtPorts := make(map[string]repInfo)
+
+		// first internal management port OVS interface
+		stdout, _, _ := util.RunOVSVsctl("--no-headings",
+			"--data", "bare",
+			"--format", "csv",
+			"--columns", "name",
+			"find", "Interface", "type=internal")
+		if stdout != "" {
+			mgmtPortNames := strings.Split(stdout, "\n")
+			for _, mgmtPortIfName := range mgmtPortNames {
+				if strings.HasPrefix(mgmtPortIfName, ovntypes.K8sMgmtIntfNamePrefix) {
+					internalMgmtPorts[mgmtPortIfName] = mgmtPortIfName
+				}
+			}
+		}
+		// then management port OVS interface for representor
+		stdout, _, _ = util.RunOVSVsctl("--no-headings",
+			"--data", "bare",
+			"--format", "csv",
+			"--columns", "name,external_ids",
+			"find", "Interface", fmt.Sprintf("external_ids:%s!=\"\"", ovntypes.OvnManagementPortNameExternalId))
+		if stdout != "" {
+			nameAndAllExternalIDs := strings.Split(stdout, "\n")
+			for _, nameAndAllExternalID := range nameAndAllExternalIDs {
+				fields := strings.Split(nameAndAllExternalID, ",")
+				name := fields[0]
+				externalIDs := fields[1]
+				repMgmtPorts[util.GetExternalIDValByKey(externalIDs, ovntypes.OvnManagementPortNameExternalId)] =
+					repInfo{name: name, netName: util.GetExternalIDValByKey(externalIDs, ovntypes.NetworkExternalID)}
+			}
+		}
+
+		// delete stale internal management port OVS interface
+		for mgmtPortIfName, mgmtPortOVSIfName := range internalMgmtPorts {
+			if _, ok := expectedMgmtPortIfNames[mgmtPortIfName]; !ok {
+				err := managementport.DeleteManagementPortOVSInterface("unknownNetwork", mgmtPortOVSIfName)
+				if err != nil {
+					errs = append(errs, fmt.Errorf("failed to delete stale OVS management port %s for unknown network", mgmtPortOVSIfName))
+				}
+			}
+		}
+
+		// delete stale representor management port OVS interface
+		for mgmtPortIfName, repInfo := range repMgmtPorts {
+			if _, ok := expectedMgmtPortIfNames[mgmtPortIfName]; !ok {
+				err := managementport.DeleteManagementPortRepInterface(repInfo.netName, mgmtPortIfName, "")
+				if err != nil {
+					errs = append(errs, fmt.Errorf("failed to delete stale OVS representor management port %s", mgmtPortIfName))
+				}
+			}
+		}
+	}
+
+	// cleanup stale management port netdev
+	if config.OvnKubeNode.Mode != ovntypes.NodeModeDPU {
+		links, err := util.GetNetLinkOps().LinkList()
+		if err == nil {
+			for _, link := range links {
+				linkName := link.Attrs().Name
+				if !strings.HasPrefix(linkName, ovntypes.K8sMgmtIntfNamePrefix) {
+					continue
+				}
+				if _, ok := expectedMgmtPortIfNames[linkName]; ok {
+					continue
+				}
+				err = managementport.TearDownManagementPortLink("unknownNetwork", link, "")
+				if err != nil {
+					errs = append(errs, fmt.Errorf("failed to tear down stale management port intrface %s for unknown interface", linkName))
+				}
+			}
+		}
+	}
+
+	// best efforts, log error if failed to delete/tear down stale management ports
+	if len(errs) > 0 {
+		klog.Error(kerrors.NewAggregate(errs))
+	}
+
+	// delete stale management port reservation during reboot.
+	if ncm.mpdm == nil {
+		return nil
+	}
+
+	return ncm.mpdm.SyncManagementPorts(validNetworks...)
+}
+
 // CleanupStaleNetworks cleans up all stale entities giving list of all existing node UDN controllers
 func (ncm *NodeControllerManager) CleanupStaleNetworks(validNetworks ...util.NetInfo) error {
 	if !util.IsNetworkSegmentationSupportEnabled() {
 		return nil
 	}
+
+	err := ncm.syncManagementPorts(validNetworks...)
+	if err != nil {
+		return err
+	}
+
 	// in DPU mode, vrfManager would be nil
 	if ncm.vrfManager != nil {
 		validVRFDevices := make(sets.Set[string])
@@ -83,6 +220,7 @@ func (ncm *NodeControllerManager) CleanupStaleNetworks(validNetworks ...util.Net
 				continue
 			}
 			validVRFDevices.Insert(util.GetNetworkVRFName(network))
+
 		}
 		return ncm.vrfManager.Repair(validVRFDevices)
 	}
@@ -124,12 +262,28 @@ func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatch
 	// need to start NAD controller on node side for VRF awareness with BGP
 	var err error
 	ncm.networkManager = networkmanager.Default()
+
 	if isNetworkManagerRequiredForNode() {
 		ncm.networkManager, err = networkmanager.NewForNode(name, ncm, wf)
 		if err != nil {
 			return nil, err
 		}
 	}
+
+	if config.OvnKubeNode.MgmtPortDPResourceName != "" && config.OvnKubeNode.Mode != ovntypes.NodeModeDPU {
+		ncm.deviceAllocator, err = deviceresource.DeviceResourceManager().GetDeviceResourceAllocator(config.OvnKubeNode.MgmtPortDPResourceName)
+		if err != nil {
+			if err.Error() != deviceresource.ErrorResourceNotDefined.Error() {
+				return nil, fmt.Errorf("failed to create manage port resources manager for resource %s: %v",
+					config.OvnKubeNode.MgmtPortDPResourceName, err)
+			}
+			// the MgmtPortDPResourceName is not associated with any VF resources
+			config.OvnKubeNode.MgmtPortDPResourceName = ""
+		} else {
+			klog.Infof("Allocated management port resource devices: %v", ncm.deviceAllocator.DeviceIDs())
+		}
+	}
+
 	if util.IsNetworkSegmentationSupportEnabled() && config.OvnKubeNode.Mode != ovntypes.NodeModeDPU {
 		ncm.vrfManager = vrfmanager.NewController(ncm.routeManager)
 		ncm.ruleManager = iprulemanager.NewController(config.IPv4Mode, config.IPv6Mode)
@@ -139,10 +293,30 @@ func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatch
 
 // initDefaultNodeNetworkController creates the controller for default network
 func (ncm *NodeControllerManager) initDefaultNodeNetworkController(ctx context.Context) error {
+	if ncm.mpdm != nil {
+		mgmtPortDetails, err := ncm.mpdm.AllocateDeviceIDForDefaultNetwork()
+		if err != nil {
+			return err
+		}
+		netdevice, err := util.GetNetdevNameFromDeviceId(mgmtPortDetails.DeviceId, v1.DeviceInfo{})
+		if err != nil {
+			return fmt.Errorf("failed to get netdev name for device %s allocated for default network: %v", mgmtPortDetails.DeviceId, err)
+		}
+
+		if config.OvnKubeNode.MgmtPortNetdev != "" && config.OvnKubeNode.MgmtPortNetdev != netdevice {
+			klog.Warningf("MgmtPortNetdev is set explicitly (%s), overriding with resource...",
+				config.OvnKubeNode.MgmtPortNetdev)
+		}
+		config.OvnKubeNode.MgmtPortNetdev = netdevice
+		klog.V(5).Infof("Using MgmtPortNetdev (Netdev %s) passed via resource %s",
+			config.OvnKubeNode.MgmtPortNetdev, ncm.deviceAllocator.ResourceName())
+	}
+
 	defaultNodeNetworkController, err := node.NewDefaultNodeNetworkController(ncm.newCommonNetworkControllerInfo(ncm.watchFactory), ncm.networkManager.Interface(), ncm.ovsClient)
 	if err != nil {
 		return err
 	}
+
 	// Make sure we only set defaultNodeNetworkController in case of no error,
 	// otherwise we would initialize the interface with a nil implementation
 	// which is not the same as nil interface.
@@ -189,6 +363,19 @@ func (ncm *NodeControllerManager) Start(ctx context.Context, isOVNKubeController
 		defer ncm.wg.Done()
 		ncm.routeManager.Run(ncm.stopChan, 2*time.Minute)
 	}()
+
+	if config.OvnKubeNode.MgmtPortDPResourceName != "" && config.OvnKubeNode.Mode != ovntypes.NodeModeDPU {
+		node, err := ncm.watchFactory.GetNode(ncm.name)
+		if err != nil {
+			return fmt.Errorf("get node %s failed: %v", ncm.name, err)
+		}
+
+		ncm.mpdm = managementport.NewMgmtPortDeviceManager(ncm.Kube, node, ncm.deviceAllocator)
+		err = ncm.mpdm.Init()
+		if err != nil {
+			return err
+		}
+	}
 
 	err = ncm.initDefaultNodeNetworkController(ctx)
 	if err != nil {

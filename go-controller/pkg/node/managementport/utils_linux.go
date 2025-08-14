@@ -6,6 +6,8 @@ package managementport
 import (
 	"fmt"
 	"net"
+	"strings"
+	"time"
 
 	"github.com/vishvananda/netlink"
 
@@ -51,10 +53,14 @@ func bringupManagementPortLink(netName string, link netlink.Link, macAddr *net.H
 			if err != nil {
 				return fmt.Errorf("failed to rename management port name from %s to %s for network %s: %v", oldIfName, ifName, netName, err)
 			}
-			// when creating the management port, set the old link name as alias, it can then be used to renamed the link back.
-			err = util.GetNetLinkOps().LinkSetAlias(link, oldIfName)
-			if err != nil {
-				return fmt.Errorf("failed to set alias %s on the renamed link %s for network %s: %v", oldIfName, ifName, netName, err)
+			// the management port interface may be owned by another network and may not be renamed back last time, do not set alias to avoid conflict
+			// when it tries to rename back in the future
+			if !strings.HasPrefix(oldIfName, types.K8sMgmtIntfNamePrefix) {
+				// when creating the management port, set the old link name as alias, it can then be used to rename the link back.
+				err = util.GetNetLinkOps().LinkSetAlias(link, oldIfName)
+				if err != nil {
+					return fmt.Errorf("failed to set alias %s on the renamed link %s for network %s: %v", oldIfName, ifName, netName, err)
+				}
 			}
 		}
 
@@ -82,6 +88,10 @@ func TearDownManagementPortLink(netName string, link netlink.Link, originalIfNam
 	if savedName == "" {
 		if originalIfName != "" {
 			savedName = originalIfName
+		} else {
+			// rename to "net" + "ddmmyyHHMMSS"
+			savedName = time.Now().Format("net010206150405")
+			klog.Warningf("No saved management port for netdevice %s network %s, renaming to %s", attrs.Name, netName, savedName)
 		}
 	}
 	ifName := attrs.Name
