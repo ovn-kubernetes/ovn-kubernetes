@@ -1165,9 +1165,16 @@ func (oc *Layer2UserDefinedNetworkController) syncClusterRouterPorts(node *corev
 		return err
 	}
 
-	// now add upgrade-only connection using IP-less port
-	if err = oc.ensureUpgradeTopology(node); err != nil {
-		return fmt.Errorf("failed to ensure upgrade topology for node %s: %w", node.Name, err)
+	if len(oc.remoteNodesNoRouter) > 0 {
+		// now add upgrade-only connection using IP-less port
+		if err = oc.ensureUpgradeTopology(node); err != nil {
+			return fmt.Errorf("failed to ensure upgrade topology for node %s: %w", node.Name, err)
+		}
+	} else {
+		// cleanup upgrade topology if it exists
+		if err = oc.cleanupUpgradeTopology(); err != nil {
+			return fmt.Errorf("failed to cleanup upgrade topology for network %s: %w", oc.GetNetworkName(), err)
+		}
 	}
 	return nil
 }
@@ -1227,8 +1234,7 @@ func (oc *Layer2UserDefinedNetworkController) ensureUpgradeTopology(node *corev1
 	err = libovsdbops.CreateOrUpdateLogicalRouterPort(oc.nbClient, &logicalRouter, &logicalRouterPort,
 		nil, &logicalRouterPort.MAC, &logicalRouterPort.Networks, &logicalRouterPort.Options)
 	if err != nil {
-		klog.Errorf("Failed to add logical router port %s, error: %v", upgradeRouterPortName, err)
-		return err
+		return fmt.Errorf("failed to add logical router port %s, error: %v", upgradeRouterPortName, err)
 	}
 
 	// now add masq subnet to the router port, this ensures that only one port respond to the
@@ -1250,6 +1256,47 @@ func (oc *Layer2UserDefinedNetworkController) ensureUpgradeTopology(node *corev1
 		return nil
 	}
 	trRouterPort.Networks = append(trRouterPort.Networks, newNetworksSet.UnsortedList()...)
+	err = libovsdbops.CreateOrUpdateLogicalRouterPort(oc.nbClient, &logicalRouter, trRouterPort, nil, &trRouterPort.Networks)
+	if err != nil {
+		return fmt.Errorf("failed to update logical router port %s with masq IPs: %w", lrpName, err)
+	}
+	return nil
+}
+
+func (oc *Layer2UserDefinedNetworkController) cleanupUpgradeTopology() error {
+	// 1. Delete switch to router connection with GR MAC and dummy join IPs
+	switchName := oc.GetNetworkScopedSwitchName("")
+	sw := nbdb.LogicalSwitch{Name: switchName}
+	logicalRouter := nbdb.LogicalRouter{Name: oc.GetNetworkScopedClusterRouterName()}
+
+	upgradeRouterPortName := types.TransitRouterToSwitchPrefix + switchName + "-upgrade"
+	upgradeSwitchPortName := types.SwitchToTransitRouterPrefix + switchName + "-upgrade"
+	if err := libovsdbops.DeleteLogicalSwitchPorts(oc.nbClient, &sw, &nbdb.LogicalSwitchPort{Name: upgradeSwitchPortName}); err != nil {
+		return fmt.Errorf("failed to delete logical switch port %s: %w", upgradeSwitchPortName, err)
+	}
+	if err := libovsdbops.DeleteLogicalRouterPorts(oc.nbClient, &logicalRouter, &nbdb.LogicalRouterPort{Name: upgradeRouterPortName}); err != nil {
+		return fmt.Errorf("failed to delete logical router port %s: %w", upgradeRouterPortName, err)
+	}
+	// 2. Delete masq IPs from the router port as it is no longer needed
+	lrpName := oc.getCRToSwitchPortName(switchName)
+	masqSubnets, err := udn.GetUDNMgmtPortMasqueradeIPs(oc.GetNetworkID())
+	if err != nil {
+		return fmt.Errorf("failed to get masquerade IPs, network %s (%d): %w", oc.GetNetworkName(), oc.GetNetworkID(), err)
+	}
+	trRouterPort, err := libovsdbops.GetLogicalRouterPort(oc.nbClient, &nbdb.LogicalRouterPort{Name: lrpName})
+	if err != nil {
+		return fmt.Errorf("failed to get logical router port %s: %w", lrpName, err)
+	}
+	updatedNetworks := sets.New(trRouterPort.Networks...)
+	staleNetworksSet := sets.New[string](util.IPNetsToStringSlice(masqSubnets)...)
+	if updatedNetworks.Intersection(staleNetworksSet).Len() == 0 {
+		// No masq IPs to remove, nothing to do
+		return nil
+	}
+	for network := range staleNetworksSet {
+		updatedNetworks.Delete(network)
+	}
+	trRouterPort.Networks = updatedNetworks.UnsortedList()
 	err = libovsdbops.CreateOrUpdateLogicalRouterPort(oc.nbClient, &logicalRouter, trRouterPort, nil, &trRouterPort.Networks)
 	if err != nil {
 		return fmt.Errorf("failed to update logical router port %s with masq IPs: %w", lrpName, err)
