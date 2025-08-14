@@ -318,7 +318,8 @@ func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefin
 	case util.AreNetworksCompatible(currentNetwork, nadNetwork):
 		// the NAD refers to an existing compatible network, ensure that
 		// existing network holds a reference to this NAD
-		ensureNetwork = currentNetwork
+		ensureNetwork = util.NewMutableNetInfo(nadNetwork)
+		ensureNetwork.AddNADs(currentNetwork.GetNADs()...)
 	case sets.New(key).HasAll(currentNetwork.GetNADs()...):
 		// the NAD is the only NAD referring to an existing incompatible
 		// network, remove the reference from the old network and ensure that
@@ -408,11 +409,12 @@ func (c *nadController) nadNeedsUpdate(oldNAD, newNAD *nettypes.NetworkAttachmen
 		return false
 	}
 
+	specChanged := !reflect.DeepEqual(oldNAD.Spec, newNAD.Spec)
 	// also reconcile the network in case its route advertisements changed
-	return !reflect.DeepEqual(oldNAD.Spec, newNAD.Spec) ||
-		oldNAD.Annotations[types.OvnRouteAdvertisementsKey] != newNAD.Annotations[types.OvnRouteAdvertisementsKey] ||
+	annotationsChanged := oldNAD.Annotations[types.OvnRouteAdvertisementsKey] != newNAD.Annotations[types.OvnRouteAdvertisementsKey] ||
 		oldNAD.Annotations[types.OvnNetworkIDAnnotation] != newNAD.Annotations[types.OvnNetworkIDAnnotation] ||
 		oldNAD.Annotations[types.OvnNetworkNameAnnotation] != newNAD.Annotations[types.OvnNetworkNameAnnotation]
+	return specChanged || annotationsChanged
 }
 
 func (c *nadController) GetActiveNetworkForNamespace(namespace string) (util.NetInfo, error) {

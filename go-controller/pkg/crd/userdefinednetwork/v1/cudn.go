@@ -33,7 +33,6 @@ type ClusterUserDefinedNetworkSpec struct {
 	// +kubebuilder:validation:XValidation:rule="has(self.topology) && self.topology == 'Layer3' ? has(self.layer3): !has(self.layer3)", message="spec.layer3 is required when topology is Layer3 and forbidden otherwise"
 	// +kubebuilder:validation:XValidation:rule="has(self.topology) && self.topology == 'Layer2' ? has(self.layer2): !has(self.layer2)", message="spec.layer2 is required when topology is Layer2 and forbidden otherwise"
 	// +kubebuilder:validation:XValidation:rule="has(self.topology) && self.topology == 'Localnet' ? has(self.localnet): !has(self.localnet)", message="spec.localnet is required when topology is Localnet and forbidden otherwise"
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="Network spec is immutable"
 	// +required
 	Network NetworkSpec `json:"network"`
 }
@@ -50,6 +49,7 @@ type NetworkSpec struct {
 	//
 	// +kubebuilder:validation:Enum=Layer2;Layer3;Localnet
 	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="Network spec is immutable"
 	// +required
 	// +unionDiscriminator
 	Topology NetworkTopology `json:"topology"`
@@ -59,10 +59,12 @@ type NetworkSpec struct {
 	Layer3 *Layer3Config `json:"layer3,omitempty"`
 
 	// Layer2 is the Layer2 topology configuration.
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="Network spec is immutable"
 	// +optional
 	Layer2 *Layer2Config `json:"layer2,omitempty"`
 
 	// Localnet is the Localnet topology configuration.
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="Network spec is immutable"
 	// +optional
 	Localnet *LocalnetConfig `json:"localnet,omitempty"`
 }
