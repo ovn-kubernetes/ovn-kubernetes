@@ -493,7 +493,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 							name:                podName,
 							containerCmd:        httpServerContainerCmd(port),
 							ipRequestFromSubnet: fromBGPAdvertisedVLANSubnet,
-							isPrivileged:        true, // TODO: Remove this
+							isPrivileged:        true,
 						},
 						false, // scheduled on distinct Nodes
 						Label("BUG", "OCPBUGS-59657"),
@@ -516,7 +516,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 							name:                podName,
 							containerCmd:        httpServerContainerCmd(port),
 							ipRequestFromSubnet: fromBGPAdvertisedVLANSubnet,
-							isPrivileged:        true, // TODO: Remove this
+							isPrivileged:        true,
 						},
 						true, // scheduled on the same node
 						Label("BUG", "OCPBUGS-59657"),
