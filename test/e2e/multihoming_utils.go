@@ -358,7 +358,7 @@ func pingServer(clientPodConfig podConfiguration, serverIP string, args ...strin
 		clientPodConfig.name,
 		"--",
 		"ping",
-		"-c", "1", // send one ICMP echo request
+		"-c", "3", // send three ICMP echo requests
 		"-W", "2", // timeout after 2 seconds if no response
 	}
 	baseArgs = append(baseArgs, args...)
