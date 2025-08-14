@@ -823,6 +823,77 @@ func assertACLLogs(targetNodeName string, policyNameRegex string, expectedACLVer
 	return false, nil
 }
 
+// getExternalContainerInterfaceIPsOnNetwork returns the IPv4 and IPv6 addresses (if any)
+// of the given external container on the specified provider network.
+func getExternalContainerInterfaceIPsOnNetwork(containerName, networkName string) (string, string, error) {
+	netw, err := infraprovider.Get().GetNetwork(networkName)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get provider network %q: %w", networkName, err)
+	}
+	ni, err := infraprovider.Get().GetExternalContainerNetworkInterface(
+		infraapi.ExternalContainer{Name: containerName},
+		netw,
+	)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get network interface for container %q on network %q: %w", containerName, netw.Name(), err)
+	}
+	return ni.IPv4, ni.IPv6, nil
+}
+
+// getExternalContainerVLANInterfaceIPs returns IPv4 and IPv6 addresses configured
+// on the VLAN subinterface <baseIfName>.<vlanID> inside the given external container.
+func getExternalContainerVLANInterfaceIPs(containerName, baseIfName string, vlanID int) ([]string, []string, error) {
+	ifaceName := fmt.Sprintf("%s.%d", baseIfName, vlanID)
+	container := infraapi.ExternalContainer{Name: containerName}
+
+	type addrInfo struct {
+		Local string `json:"local"`
+	}
+	type ipAddrJSON struct {
+		AddrInfo []addrInfo `json:"addr_info"`
+	}
+
+	fetch := func(ipFamilyFlag string) ([]string, error) {
+		cmd := []string{"sh", "-c", fmt.Sprintf("ip -j %s addr show dev %s", ipFamilyFlag, ifaceName)}
+		out, err := infraprovider.Get().ExecExternalContainerCommand(container, cmd)
+		if err != nil {
+			return nil, fmt.Errorf("failed to exec on container %q: %w", containerName, err)
+		}
+		var parsed []ipAddrJSON
+		if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+			return nil, fmt.Errorf("failed to parse ip -j output: %w", err)
+		}
+		var addrs []string
+		for _, entry := range parsed {
+			for _, ai := range entry.AddrInfo {
+				if ai.Local != "" {
+					addrs = append(addrs, ai.Local)
+				}
+			}
+		}
+		return addrs, nil
+	}
+
+	v4, err := fetch("-4")
+	if err != nil {
+		return nil, nil, err
+	}
+	v6, err := fetch("-6")
+	if err != nil {
+		return nil, nil, err
+	}
+	// normalize: ensure no CIDR suffixes are returned
+	norm := func(ins []string) []string {
+		outs := make([]string, 0, len(ins))
+		for _, a := range ins {
+			parts := strings.SplitN(strings.TrimSpace(a), "/", 2)
+			outs = append(outs, parts[0])
+		}
+		return outs
+	}
+	return norm(v4), norm(v6), nil
+}
+
 // patchServiceStringValue patches service serviceName in namespace serviceNamespace with provided string value.
 func patchServiceStringValue(c kubernetes.Interface, serviceName, serviceNamespace, jsonPath, value string) error {
 	patch := []struct {
@@ -1544,4 +1615,37 @@ func executeFileTemplate(templates *template.Template, directory, name string, d
 func isDNSNameResolverEnabled() bool {
 	val, present := os.LookupEnv("OVN_ENABLE_DNSNAMERESOLVER")
 	return present && val == "true"
+}
+
+// Given a node name, returns the host subnets (IPv4/IPv6) of the node primary interface
+// as annotated by OVN-Kubernetes. The returned slice may contain zero, one, or two CIDRs.
+func getHostSubnetsForNode(cs clientset.Interface, nodeName string) ([]string, error) {
+	node, err := cs.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get node %s: %v", nodeName, err)
+	}
+
+	nodeIfAddr, err := util.GetNodeIfAddrAnnotation(node)
+	if err != nil {
+		return nil, err
+	}
+
+	hostSubnets := []string{}
+	if nodeIfAddr.IPv4 != "" {
+		ip, ipNet, err := net.ParseCIDR(nodeIfAddr.IPv4)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse IPv4 address %s: %v", nodeIfAddr.IPv4, err)
+		}
+		ipNet.IP = ip.Mask(ipNet.Mask)
+		hostSubnets = append(hostSubnets, ipNet.String())
+	}
+	if nodeIfAddr.IPv6 != "" {
+		ip, ipNet, err := net.ParseCIDR(nodeIfAddr.IPv6)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse IPv6 address %s: %v", nodeIfAddr.IPv6, err)
+		}
+		ipNet.IP = ip.Mask(ipNet.Mask)
+		hostSubnets = append(hostSubnets, ipNet.String())
+	}
+	return hostSubnets, nil
 }

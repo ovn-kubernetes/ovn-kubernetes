@@ -162,16 +162,16 @@ func patchNADSpec(nadClient nadclient.K8sCniCncfIoV1Interface, name, namespace s
 }
 
 type podConfiguration struct {
-	attachments                  []nadapi.NetworkSelectionElement
-	containerCmd                 []string
-	name                         string
-	namespace                    string
-	nodeSelector                 map[string]string
-	isPrivileged                 bool
-	labels                       map[string]string
-	requiresExtraNamespace       bool
-	hostNetwork                  bool
-	needsIPRequestFromHostSubnet bool
+	attachments            []nadapi.NetworkSelectionElement
+	containerCmd           []string
+	name                   string
+	namespace              string
+	nodeSelector           map[string]string
+	isPrivileged           bool
+	labels                 map[string]string
+	requiresExtraNamespace bool
+	hostNetwork            bool
+	ipRequestFromSubnet    string
 }
 
 func generatePodSpec(config podConfiguration) *v1.Pod {
@@ -327,7 +327,7 @@ func pingServer(clientPodConfig podConfiguration, serverIP string, args ...strin
 		clientPodConfig.name,
 		"--",
 		"ping",
-		"-c", "1", // send one ICMP echo request
+		"-c", "3", // send three ICMP echo request
 		"-W", "2", // timeout after 2 seconds if no response
 	}
 	baseArgs = append(baseArgs, args...)

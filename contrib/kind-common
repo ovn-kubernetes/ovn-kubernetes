@@ -698,11 +698,17 @@ deploy_frr_external_container() {
   pushd "${FRR_TMP_DIR}"/frr-k8s/hack/demo || exit 1
   # modify config template to configure neighbors as route reflector clients
   # First check if IPv4 network already exists
-  grep -q 'network '"${BGP_SERVER_NET_SUBNET_IPV4}" frr/frr.conf.tmpl || \
-    sed -i '/address-family ipv4 unicast/a \ \ network '"${BGP_SERVER_NET_SUBNET_IPV4}"'' frr/frr.conf.tmpl
+  grep -q "network ${BGP_SERVER_NET_SUBNET_IPV4}" frr/frr.conf.tmpl || \
+    sed -i "/address-family ipv4 unicast/a \\ \ \ network ${BGP_SERVER_NET_SUBNET_IPV4}" frr/frr.conf.tmpl
+
+  # Also advertise an optional VLAN IPv4 subnet if provided
+  if [ -n "${BGP_SERVER_VLAN_NET_SUBNET_IPV4:-}" ]; then
+    grep -q "network ${BGP_SERVER_VLAN_NET_SUBNET_IPV4}" frr/frr.conf.tmpl || \
+      sed -i "/address-family ipv4 unicast/a \\ \ \ network ${BGP_SERVER_VLAN_NET_SUBNET_IPV4}" frr/frr.conf.tmpl
+  fi
 
   # Add route reflector client config
-  sed -i '/remote-as 64512/a \ neighbor {{ . }} route-reflector-client' frr/frr.conf.tmpl
+  sed -i '/remote-as 64512/a \\ neighbor {{ . }} route-reflector-client' frr/frr.conf.tmpl
 
   if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     # Check if IPv6 address-family section exists
@@ -722,6 +728,8 @@ deploy_frr_external_container() {
   fi
   ./demo.sh
   popd || exit 1
+  # let's install tcpdump as it's very useful for debugging
+  $OCI_BIN exec frr apk add --no-cache tcpdump
   if  [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     # Enable IPv6 forwarding in FRR
     $OCI_BIN exec frr sysctl -w net.ipv6.conf.all.forwarding=1
@@ -756,6 +764,67 @@ deploy_bgp_external_server() {
   $OCI_BIN network create --subnet="${BGP_SERVER_NET_SUBNET_IPV4}" ${ipv6_network} --driver bridge bgpnet
   $OCI_BIN network connect bgpnet frr
   $OCI_BIN run  --cap-add NET_ADMIN --user 0  -d --network bgpnet  --rm  --name bgpserver -p 8080:8080  registry.k8s.io/e2e-test-images/agnhost:2.45 netexec
+  # Optionally configure a VLAN subinterface for VLAN testing
+  if [ -n "${BGP_SERVER_VLAN_NET_SUBNET_IPV4:-}" ]; then
+    # Compute a host IP within the provided VLAN subnet and configure VLAN on the bgpnet-facing NIC (eth0)
+    $OCI_BIN exec -e BGP_SERVER_VLAN_NET_SUBNET_IPV4="$BGP_SERVER_VLAN_NET_SUBNET_IPV4" -e BGP_SERVER_VLAN_ID="${BGP_SERVER_VLAN_ID:-100}" bgpserver sh -lc '
+set -e
+VLAN_ID=${BGP_SERVER_VLAN_ID:-100}
+CIDR=${BGP_SERVER_VLAN_NET_SUBNET_IPV4}
+[ -n "$CIDR" ] || { echo "BGP_SERVER_VLAN_NET_SUBNET_IPV4 is empty" >&2; exit 1; }
+# Derive a .6 host IP from the provided subnet
+MASK=${CIDR#*/}
+NET=${CIDR%/*}
+[ "$MASK" -ge 8 ] 2>/dev/null || { echo "Invalid mask in $CIDR" >&2; exit 1; }
+O1=$(echo "$NET" | cut -d. -f1)
+O2=$(echo "$NET" | cut -d. -f2)
+O3=$(echo "$NET" | cut -d. -f3)
+[ -n "$O1" ] || { echo "Invalid network in $CIDR" >&2; exit 1; }
+if [ "$MASK" -ge 24 ]; then
+  HOST_IP="${O1}.${O2}.${O3}.6/${MASK}"
+elif [ "$MASK" -ge 16 ]; then
+  HOST_IP="${O1}.${O2}.0.6/${MASK}"
+else
+  HOST_IP="${O1}.0.0.6/${MASK}"
+fi
+# bgpserver runs single-homed on bgpnet: eth0
+IFACE=eth0
+ip link add link "$IFACE" name "${IFACE}."$VLAN_ID type vlan id "$VLAN_ID"
+ip addr add "$HOST_IP" dev "${IFACE}."$VLAN_ID
+ip link set "${IFACE}."$VLAN_ID up
+'
+    # Configure FRR to bridge VLAN across kind<->bgpnet so tagged frames traverse via FRR
+    $OCI_BIN exec frr sh -lc '
+ set -e
+ VID=${BGP_SERVER_VLAN_ID:-100}
+ # FRR topology is fixed: eth0 -> kind (172.18/16), eth1 -> bgpnet (172.26/16)
+ KIND_IF=eth0
+ BGP_IF=eth1
+ ip link add br0 type bridge vlan_filtering 1 2>/dev/null || true
+ ip link set br0 up
+ ip link set "$KIND_IF" master br0
+ ip link set "$BGP_IF" master br0
+ ip link set "$KIND_IF" up
+ ip link set "$BGP_IF" up
+ # Allow untagged traffic (default VLAN 1) across both ports
+ bridge vlan add dev "$KIND_IF" vid 1 pvid untagged 2>/dev/null || true
+ bridge vlan add dev "$BGP_IF" vid 1 pvid untagged 2>/dev/null || true
+ # Trunk the VLAN used for localnet
+ bridge vlan add dev "$KIND_IF" vid "$VID" 2>/dev/null || true
+ bridge vlan add dev "$BGP_IF" vid "$VID" 2>/dev/null || true
+ # Move IPv4 addresses from slave interfaces to br0 so ARP/L3 terminate on the bridge
+ ETH0_IP4=$(ip -o -4 addr show dev "$KIND_IF" | awk "{print \$4}")
+ ETH1_IP4=$(ip -o -4 addr show dev "$BGP_IF"  | awk "{print \$4}")
+ if [ -n "$ETH0_IP4" ]; then ip addr del "$ETH0_IP4" dev "$KIND_IF" 2>/dev/null || true; ip addr add "$ETH0_IP4" dev br0 2>/dev/null || true; fi
+ if [ -n "$ETH1_IP4" ]; then ip addr del "$ETH1_IP4" dev "$BGP_IF" 2>/dev/null || true; ip addr add "$ETH1_IP4" dev br0 2>/dev/null || true; fi
+ # Enable IP forwarding
+ sysctl -w net.ipv4.ip_forward=1 >/dev/null
+ '
+    # Program FRR to route the VLAN subnet via bgpserver's bgpnet IP
+    bgpserver_bgpnet_v4=$($OCI_BIN inspect -f '{{.NetworkSettings.Networks.bgpnet.IPAddress}}' bgpserver)
+    echo "bgpserver bgpnet IPv4: ${bgpserver_bgpnet_v4}"
+    $OCI_BIN exec frr sh -lc "ip route replace ${BGP_SERVER_VLAN_NET_SUBNET_IPV4} via ${bgpserver_bgpnet_v4} dev br0"
+  fi
   # let's make the bgp external server have its default route towards FRR router so that we don't need to add routes during tests back to the pods in the
   # cluster for return traffic
   local bgp_network_frr_v4 bgp_network_frr_v6
@@ -770,9 +839,9 @@ deploy_bgp_external_server() {
   # disable the default route to make sure the container only routes accross
   # directly connected or learnt networks (doing this at the very end since
   # docker changes the routing table when a new network is connected)
-  $OCI_BIN exec frr ip route delete default
+  $OCI_BIN exec frr sh -lc 'ip route delete default || true'
   $OCI_BIN exec frr ip route
-  $OCI_BIN exec frr ip -6 route delete default
+  $OCI_BIN exec frr sh -lc 'ip -6 route delete default || true'
   $OCI_BIN exec frr ip -6 route
 }
 
@@ -803,6 +872,13 @@ install_ffr_k8s() {
   sed 's/mode: all/mode: filtered/g' receive_all.yaml > receive_filtered.yaml
   # Allow receiving the bgp external server's prefix
   sed -i '/mode: filtered/a\            prefixes:\n            - prefix: '"${BGP_SERVER_NET_SUBNET_IPV4}"'' receive_filtered.yaml
+  # Optionally allow receiving the VLAN IPv4 prefix as well
+  if [ -n "${BGP_SERVER_VLAN_NET_SUBNET_IPV4:-}" ]; then
+    # Insert the BGP_SERVER_VLAN_NET_SUBNET_IPV4 after each matching IPv4 prefix block
+    for LINE_NUM in $(grep -n "prefix: ${BGP_SERVER_NET_SUBNET_IPV4}" receive_filtered.yaml | cut -d ':' -f 1); do
+      sed -i "${LINE_NUM}a\\            - prefix: ${BGP_SERVER_VLAN_NET_SUBNET_IPV4}" receive_filtered.yaml
+    done
+  fi
   # If IPv6 is enabled, add the IPv6 prefix as well
   if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     # Find all line numbers where the IPv4 prefix is defined
