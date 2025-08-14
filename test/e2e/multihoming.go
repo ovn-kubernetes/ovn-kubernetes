@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"os"
 	"strings"
 	"time"
 
@@ -36,6 +37,7 @@ const (
 	PolicyForAnnotation     = "k8s.v1.cni.cncf.io/policy-for"
 	nodeHostnameKey         = "kubernetes.io/hostname"
 	fromHostSubnet          = "host" // tells the test to generate IPs from the host subnet.
+	fromBGPAdvertisedSubnet = "bgp-advertised-subnet"
 )
 
 var _ = Describe("Multi Homing", feature.MultiHoming, func() {
@@ -282,94 +284,8 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 			port           = 9000
 		)
 
-		DescribeTable("attached to a localnet network mapped to external primary interface bridge", //nolint:lll
-
-			func(netConfigParams networkAttachmentConfigParams, clientPodConfig, serverPodConfig podConfiguration, isCollocatedPods bool) {
-				By("Get two schedulable nodes and ensure client and server are located on distinct Nodes")
-				nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.Background(), f.ClientSet, 2)
-				framework.ExpectNoError(err, "2 scheduable nodes are required")
-				Expect(len(nodes.Items)).To(BeNumerically(">=", 1), "cluster should have at least 2 nodes")
-				if isCollocatedPods {
-					clientPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[0].GetName()}
-					serverPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[0].GetName()}
-				} else {
-					clientPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[0].GetName()}
-					serverPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[1].GetName()}
-				}
-				netConfig := newNetworkAttachmentConfig(networkAttachmentConfigParams{
-					name:      secondaryNetworkName,
-					namespace: f.Namespace.Name,
-					topology:  "localnet",
-				})
-				if clientPodConfig.namespace == "" {
-					clientPodConfig.namespace = f.Namespace.Name
-				}
-				if serverPodConfig.namespace == "" {
-					serverPodConfig.namespace = f.Namespace.Name
-				}
-
-				By("setting up the localnet underlay")
-				Expect(providerCtx.SetupUnderlay(f, infraapi.Underlay{
-					BridgeName:         deploymentconfig.Get().ExternalBridgeName(),
-					LogicalNetworkName: netConfig.networkName,
-				})).To(Succeed())
-
-				nad := generateNAD(netConfig)
-				By(fmt.Sprintf("creating the attachment configuration: %v\n", nad))
-				_, err = nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
-					context.Background(),
-					nad,
-					metav1.CreateOptions{},
-				)
-				Expect(err).NotTo(HaveOccurred())
-
-				if serverPodConfig.attachments != nil && serverPodConfig.ipRequestFromSubnet != "" {
-					By("finalizing the server pod IP configuration")
-					err = addIPRequestToPodConfig(cs, &serverPodConfig, serverIPOffset)
-					Expect(err).NotTo(HaveOccurred())
-				}
-
-				if clientPodConfig.attachments != nil && clientPodConfig.ipRequestFromSubnet != "" {
-					By("finalizing the client pod IP configuration")
-					err = addIPRequestToPodConfig(cs, &clientPodConfig, clientIPOffset)
-					Expect(err).NotTo(HaveOccurred())
-				}
-
-				By("instantiating the server pod")
-				serverPod := kickstartPod(cs, serverPodConfig)
-
-				By("instantiating the client pod")
-				kickstartPod(cs, clientPodConfig)
-
-				// Check that the client pod can reach the server pod on the server localnet interface
-				var serverIPs []string
-				if serverPodConfig.hostNetwork {
-					serverIPs, err = podIPsFromStatus(cs, serverPodConfig.namespace, serverPodConfig.name)
-				} else {
-					serverIPs, err = podIPsForAttachment(cs, serverPod.Namespace, serverPod.Name, netConfig.name)
-
-				}
-				Expect(err).NotTo(HaveOccurred())
-
-				for _, serverIP := range serverIPs {
-					By(fmt.Sprintf("asserting the *client* can contact the server pod exposed endpoint: %q on port %q", serverIP, port))
-					curlArgs := []string{}
-					pingArgs := []string{}
-					if clientPodConfig.attachments != nil {
-						// When the client is attached to a localnet, send probes from the localnet interface
-						curlArgs = []string{"--interface", "net1"}
-						pingArgs = []string{"-I", "net1"}
-					}
-					Eventually(func() error {
-						return reachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port, curlArgs...)
-					}, 2*time.Minute, 6*time.Second).Should(Succeed())
-
-					By(fmt.Sprintf("asserting the *client* can ping the server pod exposed endpoint: %q", serverIP))
-					Eventually(func() error {
-						return pingServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, pingArgs...)
-					}, 2*time.Minute, 6*time.Second).Should(Succeed())
-				}
-			},
+		// Define entries upfront before DescribeTable, because according to what is enabled in the CI lane some entries are to be skipped.
+		entries := []TableEntry{
 			Entry(
 				"can be reached by a client pod in the default network on a different node, when the localnet uses an IP in the host subnet",
 				networkAttachmentConfigParams{
@@ -500,6 +416,146 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				true, // collocated on the same node
 				Label("STORY", "SDN-5345"),
 			),
+		}
+
+		// Conditionally add BGP related tests
+		if os.Getenv("ENABLE_ROUTE_ADVERTISEMENTS") == "true" {
+			if os.Getenv("BGP_SERVER_NET_SUBNET_IPV4") != "" {
+				entries = append(entries,
+					Entry(
+						"can be reached by a client pod in the default network on a different node, when the localnet uses an IP in a BGP-advertised subnet",
+						networkAttachmentConfigParams{
+							name:     secondaryNetworkName,
+							topology: "localnet",
+						},
+						podConfiguration{ // client on default network
+							name:         clientPodName,
+							isPrivileged: true,
+						},
+						podConfiguration{ // server attached to localnet secondary network
+							attachments: []nadapi.NetworkSelectionElement{{
+								Name: secondaryNetworkName,
+							}},
+							name:                podName,
+							containerCmd:        httpServerContainerCmd(port),
+							ipRequestFromSubnet: fromBGPAdvertisedSubnet,
+						},
+						false, // scheduled on distinct Nodes
+						Label("BUG", "OCPBUGS-59657"),
+					),
+					Entry(
+						"can be reached by a client pod in the default network on the same node, when the localnet uses an IP in the BGP-advertised subnet",
+						networkAttachmentConfigParams{
+							name:     secondaryNetworkName,
+							topology: "localnet",
+						},
+						podConfiguration{ // client on default network
+							name:         clientPodName,
+							isPrivileged: true,
+						},
+						podConfiguration{ // server attached to localnet secondary network
+							attachments: []nadapi.NetworkSelectionElement{{
+								Name: secondaryNetworkName,
+							}},
+							name:                podName,
+							containerCmd:        httpServerContainerCmd(port),
+							ipRequestFromSubnet: fromBGPAdvertisedSubnet,
+						},
+						true, // scheduled on the same node
+						Label("BUG", "OCPBUGS-59657"),
+					),
+				)
+			}
+		}
+
+		DescribeTable("attached to a localnet network mapped to external primary interface bridge", //nolint:lll
+			func(netConfigParams networkAttachmentConfigParams, clientPodConfig, serverPodConfig podConfiguration, isCollocatedPods bool) {
+				By("Get two schedulable nodes and ensure client and server are located on distinct Nodes")
+				nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.Background(), f.ClientSet, 2)
+				framework.ExpectNoError(err, "2 scheduable nodes are required")
+				Expect(len(nodes.Items)).To(BeNumerically(">=", 1), "cluster should have at least 2 nodes")
+				if isCollocatedPods {
+					clientPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[0].GetName()}
+					serverPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[0].GetName()}
+				} else {
+					clientPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[0].GetName()}
+					serverPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[1].GetName()}
+				}
+				netConfig := newNetworkAttachmentConfig(networkAttachmentConfigParams{
+					name:      secondaryNetworkName,
+					namespace: f.Namespace.Name,
+					topology:  "localnet",
+				})
+				if clientPodConfig.namespace == "" {
+					clientPodConfig.namespace = f.Namespace.Name
+				}
+				if serverPodConfig.namespace == "" {
+					serverPodConfig.namespace = f.Namespace.Name
+				}
+
+				By("setting up the localnet underlay")
+				Expect(providerCtx.SetupUnderlay(f, infraapi.Underlay{
+					BridgeName:         deploymentconfig.Get().ExternalBridgeName(),
+					LogicalNetworkName: netConfig.networkName,
+				})).To(Succeed())
+
+				nad := generateNAD(netConfig)
+				By(fmt.Sprintf("creating the attachment configuration: %v\n", nad))
+				_, err = nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
+					context.Background(),
+					nad,
+					metav1.CreateOptions{},
+				)
+				Expect(err).NotTo(HaveOccurred())
+
+				if serverPodConfig.attachments != nil && serverPodConfig.ipRequestFromSubnet != "" {
+					By("finalizing the server pod IP configuration")
+					err = addIPRequestToPodConfig(cs, &serverPodConfig, serverIPOffset)
+					Expect(err).NotTo(HaveOccurred())
+				}
+
+				if clientPodConfig.attachments != nil && clientPodConfig.ipRequestFromSubnet != "" {
+					By("finalizing the client pod IP configuration")
+					err = addIPRequestToPodConfig(cs, &clientPodConfig, clientIPOffset)
+					Expect(err).NotTo(HaveOccurred())
+				}
+
+				By("instantiating the server pod")
+				serverPod := kickstartPod(cs, serverPodConfig)
+
+				By("instantiating the client pod")
+				kickstartPod(cs, clientPodConfig)
+
+				// Check that the client pod can reach the server pod on the server localnet interface
+				var serverIPs []string
+				if serverPodConfig.hostNetwork {
+					serverIPs, err = podIPsFromStatus(cs, serverPodConfig.namespace, serverPodConfig.name)
+				} else {
+					serverIPs, err = podIPsForAttachment(cs, serverPod.Namespace, serverPod.Name, netConfig.name)
+
+				}
+				Expect(err).NotTo(HaveOccurred())
+
+				for _, serverIP := range serverIPs {
+					By(fmt.Sprintf("asserting the *client* can contact the server pod exposed endpoint: %q on port %q", serverIP, port))
+					curlArgs := []string{}
+					pingArgs := []string{}
+					if clientPodConfig.attachments != nil {
+						// When the client is attached to a localnet, send probes from the localnet interface
+						curlArgs = []string{"--interface", "net1"}
+						pingArgs = []string{"-I", "net1"}
+					}
+					Eventually(func() error {
+						return reachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port, curlArgs...)
+					}, 2*time.Minute, 6*time.Second).Should(Succeed())
+
+					By(fmt.Sprintf("asserting the *client* can ping the server pod exposed endpoint: %q", serverIP))
+					Eventually(func() error {
+						return pingServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, pingArgs...)
+					}, 2*time.Minute, 6*time.Second).Should(Succeed())
+				}
+			},
+			entries,
 		)
 	})
 
@@ -2283,6 +2339,9 @@ func addIPRequestToPodConfig(cs clientset.Interface, podConfig *podConfiguration
 	switch podConfig.ipRequestFromSubnet {
 	case fromHostSubnet:
 		IPsToRequest, err = generateIPsFromNodePrimaryIfAddr(cs, nodeName, offset)
+	case fromBGPAdvertisedSubnet:
+		subnets := os.Getenv("BGP_SERVER_NET_SUBNET_IPV4")
+		IPsToRequest, err = generateIPsFromSubnets(strings.Split(subnets, ","), offset)
 	default:
 		return fmt.Errorf("unknown or unimplemented subnet source: %q", podConfig.ipRequestFromSubnet)
 	}
