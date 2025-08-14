@@ -722,6 +722,8 @@ deploy_frr_external_container() {
   fi
   ./demo.sh
   popd || exit 1
+  # let's install tcpdump as it's very useful for debugging
+  $OCI_BIN exec frr apk add --no-cache tcpdump
   if  [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     # Enable IPv6 forwarding in FRR
     $OCI_BIN exec frr sysctl -w net.ipv6.conf.all.forwarding=1
