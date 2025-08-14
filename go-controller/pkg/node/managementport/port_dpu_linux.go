@@ -55,7 +55,7 @@ func (mp *managementPortRepresentor) create() error {
 		return fmt.Errorf("update management port for default network failed: %v", err)
 	}
 	// connect representor port to br-int
-	externalIDs := []string{}
+	externalIDs := []string{fmt.Sprintf("%s=%s", types.OvnManagementPortNameExternalId, types.K8sMgmtIntfName)}
 	if mp.repDevName != mp.ifName {
 		externalIDs = append(externalIDs, fmt.Sprintf("ovn-orig-mgmt-port-rep-name=%s", mp.repDevName))
 	}

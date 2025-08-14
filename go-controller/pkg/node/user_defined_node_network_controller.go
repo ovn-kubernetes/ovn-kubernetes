@@ -11,6 +11,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/iprulemanager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/managementport"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/vrfmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -24,6 +25,8 @@ type UserDefinedNodeNetworkController struct {
 	podHandler *factory.Handler
 	// responsible for programing gateway elements for this network
 	gateway *UserDefinedNetworkGateway
+	// management port device manager
+	mpdm *managementport.MgmtPortDeviceManager
 }
 
 // NewUserDefinedNodeNetworkController creates a new OVN controller for creating logical network
@@ -35,6 +38,7 @@ func NewUserDefinedNodeNetworkController(
 	networkManager networkmanager.Interface,
 	vrfManager *vrfmanager.Controller,
 	ruleManager *iprulemanager.Controller,
+	mpdm *managementport.MgmtPortDeviceManager,
 	defaultNetworkGateway Gateway,
 ) (*UserDefinedNodeNetworkController, error) {
 
@@ -46,6 +50,7 @@ func NewUserDefinedNodeNetworkController(
 			wg:                              &sync.WaitGroup{},
 			networkManager:                  networkManager,
 		},
+		mpdm: mpdm,
 	}
 	if util.IsNetworkSegmentationSupportEnabled() && snnc.IsPrimaryNetwork() {
 		node, err := snnc.watchFactory.GetNode(snnc.name)
@@ -98,7 +103,14 @@ func (nc *UserDefinedNodeNetworkController) Stop() {
 // Cleanup cleans up node entities for the given user-defined network
 func (nc *UserDefinedNodeNetworkController) Cleanup() error {
 	if nc.gateway != nil {
-		return nc.gateway.DelNetwork()
+		if err := nc.gateway.DelNetwork(); err != nil {
+			return fmt.Errorf("deleting network gateway for network %s failed: %v", nc.GetNetworkName(), err)
+		}
+	}
+	if nc.mpdm != nil {
+		if err := nc.mpdm.ReleaseDeviceIDForNetwork(nc.GetNetworkName()); err != nil {
+			return fmt.Errorf("deleting device ID for network %s failed: %v", nc.GetNetworkName(), err)
+		}
 	}
 	return nil
 }
