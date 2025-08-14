@@ -914,8 +914,12 @@ func (gw *GatewayManager) gatewayInit(
 		// layer2 network uses transit router, so we need to set the transit router info
 		// in all the other operations we can use both `gw.clusterRouterName == ""` and `gw.transitRouterInfo == nil`
 		// as an indicator of the old topology.
-		if err := gw.setTransitRouterInfo(nodeName); err != nil {
+		err := gw.setTransitRouterInfo(nodeName)
+		if err != nil {
 			return fmt.Errorf("failed to initialize layer2 info for gateway on node %s: %v", nodeName, err)
+		}
+		if err = gw.oldLayer2TopoCleanup(); err != nil {
+			return fmt.Errorf("failed to cleanup old layer2 topology for gateway on node %s: %v", nodeName, err)
 		}
 	}
 	// If l3gatewayAnnotation.IPAddresses changed, we need to update the perPodSNATs,
@@ -1026,7 +1030,6 @@ func (gw *GatewayManager) gatewayInit(
 // If the network is advertised:
 // - For Layer2 topology, the match is the output port of the GR to the join switch and the destination must be a nodeIP in the cluster.
 // - For Layer3 topology, the match is the destination must be a nodeIP in the cluster.
-// TODO this SNAT change requires cleanup
 func GetNetworkScopedClusterSubnetSNATMatch(nbClient libovsdbclient.Client, netInfo util.NetInfo, nodeName string,
 	isNetworkAdvertised bool, ipFamily utilnet.IPFamily) (string, error) {
 	layer2OldTopo := netInfo.TopologyType() == types.Layer2Topology && !config.Layer2UsesTransitRouter
@@ -1551,6 +1554,38 @@ func (gw *GatewayManager) setTransitRouterInfo(nodeName string) error {
 	gw.transitRouterInfo, err = getTransitRouterInfo(node)
 	if err != nil {
 		return err
+	}
+	return nil
+}
+
+// oldLayer2TopoCleanup cleans up the old layer2 topology for the gateway on the node.
+// Idempotent, will check if nbdb needs cleanup.
+func (gw *GatewayManager) oldLayer2TopoCleanup() error {
+	// Check if the stale gateway router port exists.
+	// We delete GR a last operation in this cleanup, hence if it doesn't exist, we can skip the cleanup.
+	gwRouterPort := &nbdb.LogicalRouterPort{
+		Name: types.RouterToSwitchPrefix + gw.joinSwitchName,
+	}
+	var err error
+	gwRouterPort, err = libovsdbops.GetLogicalRouterPort(gw.nbClient, gwRouterPort)
+	if err != nil && errors.Is(err, libovsdbclient.ErrNotFound) {
+		// cleanup not needed, old port does not exist
+		return nil
+	}
+
+	// 1. Delete old port from the switch
+	if err := gw.deleteGWRouterPeerSwitchPort(); err != nil {
+		return fmt.Errorf("failed to delete peer switch port %s: %v", gw.getGWRouterPeerSwitchPortName(), err)
+	}
+	// 2. Remove the static mac bindings of the gateway router (otherwise you can't delete the router)
+	err = gateway.DeleteDummyGWMacBindings(gw.nbClient, gw.gwRouterName, gw.netInfo)
+	if err != nil {
+		return fmt.Errorf("failed to delete GR dummy mac bindings for node %s: %w", gw.nodeName, err)
+	}
+
+	// 3. Delete stale GR, this will remove stale ports, NATs, routes and routing policies
+	if err := libovsdbops.DeleteLogicalRouter(gw.nbClient, &nbdb.LogicalRouter{Name: gw.gwRouterName}); err != nil {
+		return fmt.Errorf("failed to delete GR port %s: %v", gwRouterPort.Name, err)
 	}
 	return nil
 }

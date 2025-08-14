@@ -1117,7 +1117,100 @@ func (oc *Layer2UserDefinedNetworkController) syncClusterRouterPorts(node *corev
 		return err
 	}
 
-	return oc.syncNodeClusterRouterPort(node, hostSubnets)
+	if err = oc.syncNodeClusterRouterPort(node, hostSubnets); err != nil {
+		return err
+	}
+
+	// now add upgrade-only connection using IP-less port
+	if err = oc.ensureUpgradeTopology(node); err != nil {
+		return fmt.Errorf("failed to ensure upgrade topology for node %s: %w", node.Name, err)
+	}
+	return oc.setUDNLayer2NodeUsesTransitRouter(node.Name, oc.GetNetworkName(), false)
+}
+
+func (oc *SecondaryLayer2NetworkController) ensureUpgradeTopology(node *corev1.Node) error {
+	switchName := oc.GetNetworkScopedSwitchName("")
+	sw := nbdb.LogicalSwitch{Name: switchName}
+
+	// create switch to router connection with GR MAC and dummy join IPs
+	upgradeRouterPortName := types.TransitRouterToSwitchPrefix + switchName + "-upgrade"
+	// create switch port
+	upgradeSwitchPort := nbdb.LogicalSwitchPort{
+		Name:      types.SwitchToTransitRouterPrefix + switchName + "-upgrade",
+		Type:      "router",
+		Addresses: []string{"router"},
+		Options: map[string]string{
+			libovsdbops.RouterPort: upgradeRouterPortName,
+		},
+		ExternalIDs: map[string]string{
+			types.NetworkExternalID:  oc.GetNetworkName(),
+			types.TopologyExternalID: oc.TopologyType(),
+		},
+	}
+	tunnelID, err := util.ParseUDNLayer2NodeGRLRPTunnelIDs(node, oc.GetNetworkName())
+	if err != nil {
+		if util.IsAnnotationNotSetError(err) {
+			// wait for the annotation to be assigned
+			return types.NewSuppressedError(err)
+		}
+		return fmt.Errorf("failed to fetch tunnelID annotation from the node %s for network %s, err: %w",
+			node.Name, oc.GetNetworkName(), err)
+	}
+	upgradeSwitchPort.Options[libovsdbops.RequestedTnlKey] = strconv.Itoa(tunnelID)
+
+	err = libovsdbops.CreateOrUpdateLogicalSwitchPortsOnSwitch(oc.nbClient, &sw, &upgradeSwitchPort)
+	if err != nil {
+		klog.Errorf("Failed to add logical port %+v to switch %s: %v", upgradeSwitchPort, switchName, err)
+		return err
+	}
+	// create router port
+	// find GW MAC
+	gwRouterJoinNets, err := udn.GetGWRouterIPs(node, oc.GetNetInfo())
+	if err != nil {
+		return fmt.Errorf("failed composing LRP addresses for layer2 network %s: %w", oc.GetNetworkName(), err)
+	}
+	// add fake joinIPs
+	fakeJoinIPs := udn.GetLastIPsFromJoinSubnet(oc.GetNetInfo())
+
+	gwLRPMAC := util.IPAddrToHWAddr(gwRouterJoinNets[0].IP)
+	logicalRouterPort := nbdb.LogicalRouterPort{
+		Name:     upgradeRouterPortName,
+		MAC:      gwLRPMAC.String(),
+		Networks: util.IPNetsToStringSlice(fakeJoinIPs),
+	}
+	logicalRouter := nbdb.LogicalRouter{Name: oc.GetNetworkScopedClusterRouterName()}
+
+	err = libovsdbops.CreateOrUpdateLogicalRouterPort(oc.nbClient, &logicalRouter, &logicalRouterPort,
+		nil, &logicalRouterPort.MAC, &logicalRouterPort.Networks, &logicalRouterPort.Options)
+	if err != nil {
+		klog.Errorf("Failed to add logical router port %s, error: %v", upgradeRouterPortName, err)
+		return err
+	}
+
+	// now add masq subnet to the router port, this ensures that only one port respond to the
+	// ARP/NDP requests for the masq IPs
+	lrpName := oc.getCRToSwitchPortName(switchName)
+	trRouterPort, err := libovsdbops.GetLogicalRouterPort(oc.nbClient, &nbdb.LogicalRouterPort{Name: lrpName})
+	if err != nil {
+		return fmt.Errorf("failed to get logical router port %s: %w", lrpName, err)
+	}
+	masqSubnets, err := udn.GetUDNMgmtPortMasqueradeIPs(oc.GetNetworkID())
+	if err != nil {
+		return fmt.Errorf("failed to get masquerade IPs, network %s (%d): %w", oc.GetNetworkName(), oc.GetNetworkID(), err)
+	}
+
+	existingNetworkSet := sets.New[string](trRouterPort.Networks...)
+	newNetworksSet := sets.New[string](util.IPNetsToStringSlice(masqSubnets)...)
+	// Only add masq IPs if they are not already present
+	if existingNetworkSet.IsSuperset(newNetworksSet) {
+		return nil
+	}
+	trRouterPort.Networks = append(trRouterPort.Networks, newNetworksSet.UnsortedList()...)
+	err = libovsdbops.CreateOrUpdateLogicalRouterPort(oc.nbClient, &logicalRouter, trRouterPort, nil, &trRouterPort.Networks)
+	if err != nil {
+		return fmt.Errorf("failed to update logical router port %s with masq IPs: %w", lrpName, err)
+	}
+	return nil
 }
 
 // syncNodes finds nodes that still have LRP on the transit router, but the node doesn't exist anymore
