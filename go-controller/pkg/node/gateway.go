@@ -428,8 +428,16 @@ func gatewayInitInternal(nodeName, gwIntf, egressGatewayIntf string, gwNextHops 
 		}
 	}
 
-	// Set static FDB entry for LOCAL port
-	if err := util.SetStaticFDBEntry(gatewayBridge.GetBridgeName(), gatewayBridge.GetBridgeName(), gatewayBridge.GetMAC()); err != nil {
+	// Set static FDB entry for sharedGW MAC.
+	// Uses `GatewayIfaceRep` port when GatewayAcceleratedInterface is used else LOCAL.
+	gwport := gatewayBridge.GetBridgeName()               // Default is LOCAL port for the bridge.
+	if config.Gateway.GatewayAcceleratedInterface != "" { // We have an accelerated switchdev device for GW.
+		if repPort := gatewayBridge.GetGatewayIfaceRep(); repPort != "" {
+			gwport = repPort
+		}
+	}
+
+	if err := util.SetStaticFDBEntry(gatewayBridge.GetBridgeName(), gwport, gatewayBridge.GetMAC()); err != nil {
 		return nil, nil, err
 	}
 
