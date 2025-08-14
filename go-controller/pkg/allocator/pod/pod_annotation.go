@@ -305,6 +305,7 @@ func allocatePodAnnotationWithRollback(
 	}()
 
 	podAnnotation, _ = util.UnmarshalPodAnnotation(pod.Annotations, nadName)
+	isNetworkAllocated := podAnnotation != nil
 	if podAnnotation == nil {
 		podAnnotation = &util.PodAnnotation{}
 	}
@@ -388,7 +389,7 @@ func allocatePodAnnotationWithRollback(
 
 	if hasIPAM {
 		if len(tentative.IPs) > 0 {
-			if err = ipAllocator.AllocateIPs(tentative.IPs); err != nil && !ip.IsErrAllocated(err) {
+			if err = ipAllocator.AllocateIPs(tentative.IPs); err != nil && !shouldSkipAllocateIPsError(err, isNetworkAllocated, ipamClaim) {
 				err = fmt.Errorf("failed to ensure requested or annotated IPs %v for %s: %w",
 					util.StringSlice(tentative.IPs), podDesc, err)
 				if !reallocateOnNonStaticIPRequest {
@@ -399,7 +400,7 @@ func allocatePodAnnotationWithRollback(
 				tentative.IPs = nil
 			}
 
-			if err == nil && !hasIPAMClaim { // if we have persistentIPs, we should *not* release them on rollback
+			if err == nil && (!hasIPAMClaim || !isNetworkAllocated) {
 				// copy the IPs that would need to be released
 				releaseIPs = util.CopyIPNets(tentative.IPs)
 			}
@@ -455,4 +456,28 @@ func allocatePodAnnotationWithRollback(
 	}
 
 	return
+}
+
+func shouldSkipAllocateIPsError(err error, networkAllocated bool, ipamClaim *ipamclaimsapi.IPAMClaim) bool {
+	// Only skip if it's an "already allocated" error
+	if !ip.IsErrAllocated(err) {
+		return false
+	}
+
+	// If PreconfiguredUDNAddressesEnabled is disabled, always skip ErrAllocated
+	if !util.IsPreconfiguredUDNAddressesEnabled() {
+		return true
+	}
+
+	// Always skip ErrAllocated if network annotation already persisted on pod
+	if networkAllocated {
+		return true
+	}
+
+	// For persistent IP VM/Pods, if IPAMClaim already has IPs allocated, then ip already allocated, skip ErrAllocated
+	if ipamClaim != nil && len(ipamClaim.Status.IPs) > 0 {
+		return true
+	}
+
+	return false
 }
