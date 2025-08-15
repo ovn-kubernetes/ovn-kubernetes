@@ -463,6 +463,50 @@ router's MAC address (e.g., `fe80::858:cbff:fecb:1`). This LLA
 remains stable as a default gateway, independent of the virtual
 machine's hosting node.
 
+#### Tunnel keys for the transit switches/routers
+
+Every OVN switch and router has a unique tunnel key. It has to be manually allocated for all transit switches and routers,
+but "regular" (non-transit) switches and routers currently use automatic allocation by the northd.
+OVN has a reserved range of 2^16 for the transit switches and routers https://github.com/ovn-org/ovn/commit/969f7f54ea3868172f99119991d8d875bb8f240c
+that won't be assigned by the northd for the regular switches and routers to avoid conflict.
+
+We already use this key for the Layer3 transit switches and Layer2 switches. 
+So currently we can support not more than 2^16 (65K) UDNs or to be more precise, NADs, of any topology type
+(since the tunnel-key is allocated based on the network-id, which in turn is also allocated for Localnet networks). 
+Now we need more transit routers for the layer2 topology, but the allowed tunnel key range for all transit switches and routers stays the same.
+The same problem will arise when we get to UDN interconnect, because it will use even more transit routers.
+
+For this enhancement we have 3 options:
+1. We could just split the range into 3 equal parts, use the first part for transit switches, the second part for layer2 transit routers,
+and the third part for UDN interconnect transit routers. That means we could support up to 21K UDNs (NADs) and
+up to 21K UDN interconnects. If we ever hit the scale limit, we can proceed with option 4. For backwards-compatability, 
+the first 21K keys for transit switches/routers will be allocated in the old range, and the new keys will use the new range.
+This option doesn't allow adding more features that require tunnel keys in the future since the whole range will be already consumed.
+2. Second option is to use tunnel-keys outside the protected range. Current range is split into [0, 2^24-2^16-1] for northd
+allocation and [2^24-2^16, 2^24-1] for interconnect. Northd does sequential key allocation, that means
+(for single-node-zone) it will only use `(<Number of UDNs> + 1)*5` keys, so the following range `[(<Number of UDNs> + 1)*5; 2^24-2^16-1]`
+will be unused, and we could start allocating transit router keys from `2^24-2^16-1` going down. This is kind of dangerous
+as it only relies on the current northd behaviour.
+3. Another option (centralized) is to add ID allocation from the transit tunnel key range. There is no way to migrate existing transit 
+switches to the new tunnel key, because all nodes need to do that at the same time, and rolling upgrade won't help here.
+Since current limit for networkIDs is `4096` https://github.com/ovn-kubernetes/ovn-kubernetes/blob/8f6e3ee9883bb6eb2230cea5c1c138d6098c95b0/go-controller/pkg/networkmanager/api.go#L17
+we can consider [`first-interconnect-key`, `first-interconnect-key`+4095] to be reserved for the legacy transit switch keys,
+and use a new centralized transit keys allocation in the range [`first-interconnect-key`+4095, 2^24-1]. This option
+requires up to 2 new annotations on NADs, and makes the number of supported UDNs dependent on the number of UDN interconnects.
+4. Fourth approach (distributed) is to start assigning all datapath keys ourselves (for all switches and routers, currently it is done by the northd),
+then we could use the full tunnel-key range of `2^24` (16M). Every regular (non-transit) switch or router only has to use
+unique key within its zone (that is within node for single-node-zone IC). That means that every node could
+re-use the same keys for regular datapaths (but it won't work for multi-node zones, the question is whether we need to support it).
+Currently, every Layer3 topology (the most switches/routers) needs 7 keys (node switch, cluster router, join switch, 
+gw router, transit router, transit switch, ext switch), so we could reserve 20 keys per network (just to be safe).
+These keys could be derived from the network-id, and then we could support e.g. 100K UDNs (2M keys) + 1M UDN interconnects (1M keys),
+and still have 12M keys left.
+
+We have agreed that we want to avoid implementing option 4 for as long as possible, which means we need to use
+tunnel keys in the most efficient way, which means option 3 is the way to go.
+We will add error handling in case we run out of tunnel keys and document the dependency on supported number of UDNs
+vs UDN interconnects (e.g. we can support 65K Layer3 UDNs or 32K Layer2 UDNs).
+
 #### NAT configuration
 As much as possible everything related to conntrack should not be modified since doing so can affect tcp connections.
 
@@ -470,7 +514,7 @@ The only nat rule that needs to be moved from GR to ovn_cluster_router is the on
 there are plans to move the management port SNAT from OVN to iptables, so there were no issue here.
 
 ```
-llowed_ext_ips     : []
+allowed_ext_ips     : []
 exempted_ext_ips    : []
 external_ids        : {"k8s.ovn.org/network"=test12_namespace-scoped, "k8s.ovn.org/topology"=layer2}
 external_ip         : "169.254.0.12"
@@ -571,7 +615,7 @@ status              : {}
 
 #### Transit router specifics
 
-For transit router to work the LRPs referencing the same gateway router peer should have an unique tunnel key and if they are remote also a
+For transit router to work the LRPs referencing the same gateway router peer should have a unique tunnel key and if they are remote also a
 requested chassis pointing to the gateway router node.
 
 Also in the case we still need to support conditional SNAT, the transit router port connected to the switch needs to be configured as gateway router port.
@@ -640,23 +684,28 @@ flowchart TD
     class node1,node2 nodeStyle;
 ```
 
+### Egress IP changes (TBD)
 
+### Transit subnet conflict
+
+Before this change Layer2 networks using Subnet overlapping with the `transitSubnet` were allowed to be created (and would be working just fine).
+Now it is not possible anymore, and we need to decide what to do in this case:
+1. Before upgrading to the new topology, check that no Layer2 networks with overlapping subnet are present.
+If they are, block the upgrade and inform the user to fix the issue. This option prevents the user from getting new topology
+for all networks until the next upgrade.
+2. Upgrade all nodes, but leave old topology for networks with overlapping subnet. Report an event/warning for the user to fix the issue.
+When the network is upgraded/re-created with non-overlapping subnet, it will get the new topology. Other networks will be
+properly upgraded.
+3. Simply upgrade all networks, and let the overlapping UDNs break, informing the user to fix the issue afterwards.
+
+Options 1 and 2 will require one more release of supporting the old topology (and in the next release we break the 
+networks if they were not upgraded).
 
 ### API Details
 
-Similar to layer3 topology node annotation
-```yaml
-k8s.ovn.org/node-transit-switch-port-ifaddr: '{"ipv4":"100.88.0.4/16","ipv6":"fd97::4/64"}'
-```
-
-The layer2 transit router topology will need an annotation to define at least the transit router node peers subnet to derive
-the peer ip addresses from:
-
-```yaml
-k8s.ovn.org/node-transit-peer-ports-subnet: '{"ipv4":"100.88.0.12/30","ipv6":"fd97::8/127"}'
-```
-
-Since these subnet can be shared between user defined layer2 networks they don't need to be qualified by network name, same as layer3 swith port ifaddr.
+Every node will get a temporary annotation "k8s.ovn.org/layer2-topology-version: 2.0" that will be removed in the next
+ovn-k version (1.3 is the feature gets in 1.2).
+Every Layer2 and Layer3 NAD will get new annotations for tunnel keys distribution.
 
 ### Implementation Details
 
@@ -699,11 +748,27 @@ To calculate the peer node subnet we have two options:
     - Need to maintain the allocator lifecycle
     - Use more memory
 
+We will go with the first option to avoid polluting already overloaded node annotations.
+
 ### Rolling upgrade and traffic disruption
 
-During rolling upgrades, nodes are upgraded sequentially. This results in a
-transitional cluster state where some nodes retain the previous non-transit
-router topology, while others adopt the new transit router topology.
+OpenShift upgrades work as follows: first the ovn-k pods are upgraded while the 
+workload pods are still running. We can't upgrade topology at this point, 
+because it includes SNAT for the management port move from the GR to the transit router, which is disruptive 
+for existing connections. Some time after that the node is drained (no more workload pods are left) 
+and rebooted, at this point ovn-k is restarted with no workload pods, which is the time 
+when we can make the topology upgrade.
+
+From the ovn-k side we need to figure out when is that time with no workload pods, so we will 
+introduce a function similar to https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5416/commits/8adda434a35831c49e9bd19b86888bfb074be89f#diff-214cf3919602fd060047b8d15fd6c0ca9d3ed3d42c47fff4b181a072c182b673R306 
+that will check whether a given network has already been updated and if not if it has running pods, 
+and only upgrade the topology when it doesn't.
+This means that we will have to leave the code for the previous topology version in place for one more release, 
+and only cleanup afterwards.
+
+This means, we don't need to worry about existing connections disruption (since the topology upgrade happens
+after the node reboot, so there are no running connections), but we need to make sure that new connections
+created when some nodes are upgraded and some are not will work and won't be disrupted.
 
 #### Remote pod traffic
 
@@ -718,26 +783,8 @@ At normal egress without an egress IP, traffic exits through the node
 hosting the pod/VM. Therefore, a partial cluster upgrade does not impact
 the logical network topology.
 
-However, the pod/VM will continue to use outdated gateway values:
-- **IPv4**: Gateway router LRP MAC address.
-- **IPv6**: Gateway router LRP MAC and LLA address.
-
-To sync this at VMs the following must be done by ovn-kubernetes
-- **IPv4**::
-    - Send a GARP with the new gateway IP mac address,
-- **IPv6**::
-    - Send one unsolicited RA to configure the ovn_cluster_router gateway
-    - Send one unsolicited RA per node with lifetime 0 to remove the gateways from GRs.
-
-Implementation-wise, this can be achieved by repurposing the existing code
-that synchronizes gateways in the layer 2 topology following VM live
-migration.
-
-For pods, OVN-Kubernetes can directly modify the network namespace
-to configure appropriate gateway values.
-
-Similar downtime to live migration at VMs since we are also reconciling
-the gateway ther so < 2 seconds.
+During the upgrade all the VMs are evicted from the node, hence, they'll be migrated to another node - 
+and the GR MACs will be updated via the VM migration process.
 
 #### Egress/Ingress traffic over remote node
 
@@ -749,7 +796,7 @@ this introduces problematic scenarios that can happen during an upgrade:
 The following diagram show a possible topology to support those two scenarios:
 
 ```mermaid
-%%{init: {"nodeSpacing": 50, "rankSpacing": 100}}%%
+%%{init: {"nodeSpacing": 20, "rankSpacing": 100}}%%
 flowchart TD
     classDef nodeStyle fill:orange,stroke:none,rx:10px,ry:10px,font-size:25px;
     classDef vmStyle fill:blue,stroke:none,color:white,rx:10px,ry:10px,font-size:25px;
@@ -757,95 +804,170 @@ flowchart TD
     classDef routerStyle fill:brown,color:white,stroke:none,rx:10px,ry:10px,font-size:25px;
     classDef switchStyle fill:brown,color:white,stroke:none,rx:10px,ry:10px,font-size:25px;
     classDef termStyle font-family:monospace,fill:black,stroke:none,color:white;
-
-    subgraph node1["node1"]
-        subgraph GR-node1
-            rtotr-GR-node1["trtor-GR-node1<br>100.65.0.2/16 100.88.0.6/30 (0a:58:64:41:00:02)"]
-
-        end
-        subgraph ovn_cluster_router_node1["ovn_cluster_router"]
-            trtor-GR-node1_ovn["trtor-GR-node1<br>100.88.0.5/30"]
-            rtos-layer2-switch["rtos-layer2-switch<br>203.203.0.1 (0a:58:CB:CB:00:01)"]
-            rtos-GR-node1["rtos-GR-node1<br>100.65.0.2/16 (0a:58:64:41:00:02)"]
-        end
-        subgraph layer2-switch_node1["layer2-switch"]
-            stor-GR-node1["stor-GR-node1<br>type: <b>router</b><br>requested-tnl-key: <b>4</b>"]
-            stor-ovn_cluster_router["stor-ovn_cluster_router<br>type: <b>router</b>"]
-            stor-GR-node1-node2["stor-GR-node2<br>type: <b>remote</b><br>requested-tnl-key: <b>5</b><br>100.65.0.3/16 (0a:58:64:41:00:03)"]
-        end
-    end
-
     subgraph node2
         subgraph GR-node2
-            rtos-GR-node2["rtos-GR-node2<br>100.65.0.3/16 (0a:58:64:41:00:03)"]
+            rtos-GR-node2["rtos-GR-node2 100.65.0.3/16<br>203.203.0.1 (0a:58:64:41:00:03)"]
         end
         subgraph layer2-switch_node2["layer2-switch"]
-            stor-GR-node2["stor-GR-node2<br>type: <b>router</b><br>requested-tnl-key: <b>5</b>"]
-            stor-GR-node1-remote["stor-GR-node1<br>type: <b>remote</b><br>requested-tnl-key: <b>4</b><br>100.65.0.2/16 (0a:58:64:41:00:02)"]
+            stor-GR-node1["stor-GR-node1
+            type: remote<br>requested-tnl-key: 4<br>100.65.0.2/16 (0a:58:64:41:00:02)"]
+            stor-GR-node2["stor-GR-node2
+            type: router<br>requested-tnl-key: 5"]
+        end
+    end
+    subgraph node1["node1"]
+        subgraph GR-node1
+            rtotr-GR-node1["rtotr-GR-node1
+            100.65.0.2/16 100.88.0.6/30 (0a:58:64:41:00:02)"]
+        end
+        subgraph transit_router_node1["transit_router "]
+            trtor-GR-node1["trtor-GR-node1 100.88.0.5/30"]
+            rtos-layer2-switch["trtos-layer2-switch 203.203.0.1 169.254.0.22/17 (0a:58:CB:CB:00:01)"]
+            trtos-layer2-switch-upgrade["<b>trtos-layer2-switch-upgrade</b> 100.65.255.254 (0a:58:64:41:00:02)"]
+        end
+        subgraph layer2-switch_node1["layer2-switch"]
+            stotr-layer2-switch["stotr-layer2-switch
+            type: router"]
+            stotr-layer2-switch-upgrade["<b>stotr-layer2-switch-upgrade</b>
+            type: router<br>requested-tnl-key: 4"]
+            stor-GR-node1-node2["stor-GR-node2
+            type: remote<br>requested-tnl-key: 5<br>100.65.0.3/16 (0a:58:64:41:00:03)"]
         end
     end
 
-    %% Connections - Grouped by logical flow %%
-    rtotr-GR-node1 <--> trtor-GR-node1_ovn
-    rtos-GR-node1 <--> stor-GR-node1
-
-    rtos-layer2-switch <--> stor-ovn_cluster_router
-
+    rtotr-GR-node1 <--> trtor-GR-node1
+    rtos-layer2-switch <--> stotr-layer2-switch
+    stotr-layer2-switch-upgrade <--> stor-GR-node1
+    stor-GR-node2 <--> rtos-GR-node2
     stor-GR-node1-node2 <--> stor-GR-node2
-    rtos-GR-node2 <--> stor-GR-node2
-
-    stor-GR-node1-remote <--> stor-GR-node1
+    trtos-layer2-switch-upgrade <--> stotr-layer2-switch-upgrade
 
     class VM vmStyle;
-    class rtos-GR-node1 portStyle;
     class rtotr-GR-node1 portStyle;
     class rtos-GR-node2 portStyle;
     class stor-GR-node2 portStyle;
     class stor-GR-node1-node2 portStyle;
     class stor-GR-node1 portStyle;
-    class stor-GR-node1-remote portStyle;
-    class trtor-GR-node1_ovn portStyle;
+    class trtor-GR-node1 portStyle;
     class trtor-GR-node2 portStyle;
-    class stor-ovn_cluster_router portStyle;
+    class stotr-layer2-switch portStyle;
+    class stotr-layer2-switch-upgrade portStyle;
     class rtos-layer2-switch portStyle;
+    class trtos-layer2-switch-upgrade portStyle;
     class GR-node1 routerStyle;
     class GR-node2 routerStyle;
-    class ovn_cluster_router_node1 routerStyle;
+    class transit_router_node1 routerStyle;
     class layer2-switch_node1 switchStyle;
     class layer2-switch_node2 switchStyle;
     class term termStyle;
     class node1,node2 nodeStyle;
 ```
 
+The intermediate upgrade topology parts are bold, and will be removed once all nodes finish the upgrade.
 Nodes using the new topology must perform the following actions:
 - At the distributed switch:
     - Retain `remote` type stor-GR LSPs from nodes still using the
       old topology.
-    - Retain `router` type stor-GR LSP with `router-port` pointing
-      to rtos-GR.
-- Move the rtos-GR LRP controller from the gateway router to the
-  ovn_cluster_router.
-- Adjust ovn_cluster_router routing/policies for transitory traffic.
-- Maintain node IP masquerading SNAT at gateway router for ongoing
-  conntrack.
+    - Create a tmp `router` type stotr-upgrade LSP with `router-port` and same tunnel key as before
+      pointing to rtos-GR.
+  - Create a tmp transit router port `trtos-layer2-switch-upgrade` with the GR MAC address
+  - Add a dummy IP from the join subnet to the `trtos-layer2-switch-upgrade` port to enable pod on node1 -> remote GR traffic.
+  - Add `trasit_router` routes to steer joinIP traffic for the ole nodes to the `trtos-layer2-switch-upgrade` port.
+    These routes look silly, but they work, like `100.65.0.3 100.65.0.3 dst-ip` for every joinIP of the old nodes.
 
-Keeping the 5-tuple ensures that TCP conntrack connections remain
-unbroken. Theoretically, downtime should be minimal, as the old path is
-preserved.
+We need to make sure joinSubnet works between upgraded and non-upgraded nodes, as this is the only network that both topologies
+understand:
+- We need to make sure pod2 on node2 -> `100.65.0.2` works (it is used e.g. for service reply traffic that came from node1 to pod2)
+  - pod2(`203.203.0.3`) -> default GW (`203.203.0.1`)
+  - GR will ARP for `100.65.0.2` and hit layer2-switch -> will use remote port `stor-GR-node1` config and ARP reply with `0a:58:64:41:00:02`
+  - `layer2-switch` sends packet to `0a:58:64:41:00:02` via `stor-GR-node1` with `tunnel-key=4`
+  - now we cross interconnect to node1 `stotr-layer2-switch-upgrade` 
+  - it sends packet to `trtos-layer2-switch-upgrade` on the `transit_router` via direct peer connection
+  - MAC address `0a:58:64:41:00:02` is owned by the port and will be accepted by the transit_router
+  - dst IP=`100.65.0.2` => route lookup => choose between old joinIP routes via port `trtos-layer2-switch-upgrade`
+  and new transit route `100.65.0.2/32` via `100.88.0.6`
+  - `transit_router` will choose `100.65.0.2/32` with the longest-prefix match and send it to the `GR-node1`
+- We need to make sure pod 1 on node1 -> `100.65.0.3` works (it is used e.g. for service reply traffic that came from node2 to pod1)
+  - pod1(`203.203.0.2`) -> default GW (`203.203.0.1`)
+  - `transit_router` will do route lookup and use `100.65.0.3/32` via `trtos-layer2-switch-upgrade` since it has the dummy IP
+    from the same subnet
+  - `transit_router` will ARP for `100.65.0.3` and go to the `layer2-switch`, which will use the remote port `stor-GR-node2` config
+    and ARP reply with `0a:58:64:41:00:03`
+  - `transit_router` sends packet to dst MAC `0a:58:64:41:00:03` via `trtos-layer2-switch-upgrade`
+  - `layer2-switch` sends it out via `stor-GR-node2` with `tunnel-key=5`
+  - `node2` handles the packet exactly as with the old topology
 
-#### After upgrade cleanups
+For comparison, fully upgraded scenario for ingress service via node1 to local pod1 `203.203.0.2` looks like this:
+- incoming packet gets DNAT'ed to the `serviceIP` and SNAT'ed to the node masq IP (src=`169.254.0.2`), then comes to the GR
+- GR does its usual DNAT to the backend pod IP (dst=`203.203.0.2`) and SNAT to the joinIP (src=`100.65.0.2`)
+- GR sends the packet via `rtotr-GR-node1` to the `transit_router`
+- `transit_router` sends the packet (dst=`203.203.0.2`) directly to the `layer2-switch`, done
+Now reply:
+- pod1 (`203.203.0.2`) replies to `100.65.0.2` -> default GW (`203.203.0.1`)
+- `transit_router` will ARP for `100.65.0.2` and get a reply from `GR-node1` via port `rtotr-GR-node1` with `0a:58:64:41:00:02`
+- `transit_router` will do route lookup and choose `100.65.0.2/32` via `100.88.0.6` with the longest-prefix match 
+  and send it to the `GR-node1`
+- the usual un-DNAT (dst=`169.254.0.2`), un-SNAT (src=`serviceIP`) happens here before being sent out
 
-The implementation should handle cleaning up the ports, routes, policies and NAT that are no longer
-configured on the gateway router or layer2 switch and remove them so there is no stale
-configuration from the previous.
+Some of the scenarios that we care about:
+- Ingress traffic coming to GR via service
+  - upgraded GR -> non-upgraded node pod: we SNAT to the same joinIP as before, reply traffic comes back to the 
+    `transit_router` because `trtos-layer2-switch-upgrade` port is configured with the GW MAC.
+  - non-upgraded GR -> upgraded node pod: uses the same joinIP as before. Reply uses the newly assigned dummyIP
+    from the join subnet, to enable routing from the upgraded node pod to the joinIP subnet. Without the dummy IP
+    transit_router doesn't know what to do with the `dst: 100.65.0.3` traffic.
+- Egress IP traffic: uses the same joinIP to route as before, works similar to service traffic.
+
+The same GR MAC address is used on the GR port (`rtotr-GR-node1`) and the transit router port (`trtos-layer2-switch-upgrade`).
+That's fine because they're different L2 domains.
+
+Dummy IP can be resued on all nodes, since it is never used as a source or destination IP, it is only used for the routing decision.
+You may wonder why we need per-joinIP routes if dummyIP should be enough for routing decision based on the connected route.
+It is about longest prefix match algorithm that OVN uses. Without `/32` routes for every joinIP, we have 2 fighting routes for
+pod1->joinIP traffic, one with dummy IP `ip4.dst == 100.65.0.0/16` and another one for pod subnet `ip4.src == <podSubnet>` 
+(this one sends everything to the GR). So which route wins currently depends on the `podSubnet` netmask: 
+if it is `/16` or larger, dummy IP wins and everything works, otherwise pod subnet route wins and the traffic is blackholed.
+
+joinIP is not really needed in the new topology, but we will have to keep it during the upgrade, and we can't
+remove it after the upgrade is done, because there will be conntrack entries using it. Not too big of a deal,
+but a side effect of supporting the upgrade.
+There is a way to remove joinIPs eventually (not a part of this enhancement, but leaving here for future reference), 
+which requires 2 more upgrades:
+1. On the next upgrade replace all NATs using joinIPs with the transitIPs (at this point the new topology is used and all nodes understand
+transit IPs). This can only be done in the same manner as this upgrade (i.e. after the node reboots) to avoid disruption.
+2. On the next-after-next upgrade we can safely remove joinIPs from the topology, since they shouldn't be used anymore.
+
+#### Upgrade Details
+
+1. every node has to identify when it starts using new topology (so that the other nodes can switch from the switch 
+remote ports to the router remote ports). This can be done with annotations, but it either will have to be per-network 
+(which is a lot of updates) or it needs to check that absolutely no pods are present on the node for all layer2 networks, 
+and use node-scope annotation. The only downside of per-node annotation is that if any layer2 network for whatever (buggy)
+reason still has a local pod, none of the networks will be upgraded.
+Since the whole upgrade procedure relies on pod eviction before node reboot, it is ok to use per-node annotation. 
+The node will check that it has no running pods, and set the annotation "k8s.ovn.org/layer2-topology-version: 2.0".
+2. every node will need to upgrade to the intermediate topology, when it has no running pods (when the node has been drained and rebooted)
+  - ovnkube is updated on each node, no upgrade action is taken for the layer 2 topology. Networks continue to function as before.
+  - Once network has rolled out, OpenShift Machine Config Operator (MCO) will start draining and rebooting nodes to update the host OS.
+  - As each upgraded node comes up, it will modify its layer 2 networks as shown in [the upgrade topology](#egressingress-traffic-over-remote-node), 
+    the upgraded node will refuse to bring up any ovn-networked pods while the topology is updating.
+  - Other ovnkube pods will see this ovnkube pod's node event, and then reconfigure their remote port to directly connect to the router.
+  - After all nodes have added their annotation, the nodes will then remove the backwards compatible upgrade topology 
+    ("stotr-layer2-switch-upgrade" port, and the local join subnet address 100.65.255.254)
+  - During topology upgrade we also need to cleanup/remove old topology parts, like GR-switch ports, old GR routes and NATs, 
+    and these cleanups need to be idempotent and spread across multiple controllers.
+3. remove the upgrade topology artifacts (like extra ports or IPs) when all nodes finished upgrading.
 
 ### Testing Details
 
 * Unit test checking topology will need to be adapted.
 * E2e tests should be the same and pass since this is a refactoring not adding or removing features.
-* Scale tests to check if adding the transit router affects it
-* Upgrade tests are the most important in this case. The tests should perform an upgrade
-  while using all the ovn-kuberntes layer2 topology featues and check that these continue working.
+* Upgrade tests are the most difficult part in this case.
+  * Perform an upgrade while using all the ovn-kubernetes layer2 topology features and check that these continue working.
+  * Make sure old layer2 topology is preserved and keeps working until all pods are removed from the node
+  * We don't have such upgrade tests yet, and they don't make sense after this upgrade is done, so the suggestion is to
+    do this testing manually.
+  * Make sure VM live migration works during the upgrade.
 
 ### Documentation Details
 
