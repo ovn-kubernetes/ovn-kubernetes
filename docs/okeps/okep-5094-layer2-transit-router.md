@@ -701,9 +701,23 @@ To calculate the peer node subnet we have two options:
 
 ### Rolling upgrade and traffic disruption
 
-During rolling upgrades, nodes are upgraded sequentially. This results in a
-transitional cluster state where some nodes retain the previous non-transit
-router topology, while others adopt the new transit router topology.
+Openshift upgrades work as follows: first the ovn-k pods are upgraded while the 
+workload pods are still running. We can't upgrade topology at this point, 
+because it includes SNAT move from the GR to the transit router, which is disruptive 
+for existing connections. Some time after that the node is drained (no more workload pods are left) 
+and rebooted, at this point ovn-k is restarted with no workload pods, which is the time 
+when we can make the topology upgrade.
+
+From the ovn-k side we need to figure out when is that time with no worklaod pods, so we will 
+introduce a function similar to https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5416/commits/8adda434a35831c49e9bd19b86888bfb074be89f#diff-214cf3919602fd060047b8d15fd6c0ca9d3ed3d42c47fff4b181a072c182b673R306 
+that will check whether a given network has already been updated and if not if it has running pods, 
+and only upgrade the topology when it doesn't.
+This means that we will have to leave the code for the previous topology version in place for one more release, 
+and only cleanup afterwards.
+
+This means, we don't need to worry about existing connections disruption (since the topology upgrade happens
+after the node reboot, so there are no running connections), but we need to make sure that new connections
+created when some nodes are upgraded and some are not will work and won't be disrupted.
 
 #### Remote pod traffic
 
@@ -749,7 +763,7 @@ this introduces problematic scenarios that can happen during an upgrade:
 The following diagram show a possible topology to support those two scenarios:
 
 ```mermaid
-%%{init: {"nodeSpacing": 50, "rankSpacing": 100}}%%
+%%{init: {"nodeSpacing": 20, "rankSpacing": 100}}%%
 flowchart TD
     classDef nodeStyle fill:orange,stroke:none,rx:10px,ry:10px,font-size:25px;
     classDef vmStyle fill:blue,stroke:none,color:white,rx:10px,ry:10px,font-size:25px;
@@ -757,95 +771,110 @@ flowchart TD
     classDef routerStyle fill:brown,color:white,stroke:none,rx:10px,ry:10px,font-size:25px;
     classDef switchStyle fill:brown,color:white,stroke:none,rx:10px,ry:10px,font-size:25px;
     classDef termStyle font-family:monospace,fill:black,stroke:none,color:white;
-
-    subgraph node1["node1"]
-        subgraph GR-node1
-            rtotr-GR-node1["trtor-GR-node1<br>100.65.0.2/16 100.88.0.6/30 (0a:58:64:41:00:02)"]
-
-        end
-        subgraph ovn_cluster_router_node1["ovn_cluster_router"]
-            trtor-GR-node1_ovn["trtor-GR-node1<br>100.88.0.5/30"]
-            rtos-layer2-switch["rtos-layer2-switch<br>203.203.0.1 (0a:58:CB:CB:00:01)"]
-            rtos-GR-node1["rtos-GR-node1<br>100.65.0.2/16 (0a:58:64:41:00:02)"]
-        end
-        subgraph layer2-switch_node1["layer2-switch"]
-            stor-GR-node1["stor-GR-node1<br>type: <b>router</b><br>requested-tnl-key: <b>4</b>"]
-            stor-ovn_cluster_router["stor-ovn_cluster_router<br>type: <b>router</b>"]
-            stor-GR-node1-node2["stor-GR-node2<br>type: <b>remote</b><br>requested-tnl-key: <b>5</b><br>100.65.0.3/16 (0a:58:64:41:00:03)"]
-        end
-    end
-
     subgraph node2
         subgraph GR-node2
-            rtos-GR-node2["rtos-GR-node2<br>100.65.0.3/16 (0a:58:64:41:00:03)"]
+            rtos-GR-node2["rtos-GR-node2 100.65.0.3/16 (0a:58:64:41:00:03)"]
         end
         subgraph layer2-switch_node2["layer2-switch"]
-            stor-GR-node2["stor-GR-node2<br>type: <b>router</b><br>requested-tnl-key: <b>5</b>"]
-            stor-GR-node1-remote["stor-GR-node1<br>type: <b>remote</b><br>requested-tnl-key: <b>4</b><br>100.65.0.2/16 (0a:58:64:41:00:02)"]
+            stor-GR-node1["stor-GR-node1
+            type: remote<br>requested-tnl-key: 4<br>100.65.0.2/16 (0a:58:64:41:00:02)"]
+            stor-GR-node2["stor-GR-node2
+            type: router<br>requested-tnl-key: 5"]
+        end
+    end
+    subgraph node1["node1"]
+        subgraph GR-node1
+            rtotr-GR-node1["rtotr-GR-node1
+            100.65.0.2/16 100.88.0.6/30 (0a:58:64:41:00:02)"]
+        end
+        subgraph transit_router_node1["transit_router "]
+            trtor-GR-node1["trtor-GR-node1 100.88.0.5/30"]
+            rtos-layer2-switch["trtos-layer2-switch 203.203.0.1 <b>100.65.255.254</b> (0a:58:CB:CB:00:01)"]
+            trtos-layer2-switch-upgrade["<b>trtos-layer2-switch-upgrade</b> (0a:58:64:41:00:02)"]
+        end
+        subgraph layer2-switch_node1["layer2-switch"]
+            stotr-layer2-switch["stotr-layer2-switch
+            type: router"]
+            stotr-layer2-switch-upgrade["<b>stotr-layer2-switch-upgrade</b>
+            type: router<br>requested-tnl-key: 4"]
+            stor-GR-node1-node2["stor-GR-node2
+            type: remote<br>requested-tnl-key: 5"]
         end
     end
 
-    %% Connections - Grouped by logical flow %%
-    rtotr-GR-node1 <--> trtor-GR-node1_ovn
-    rtos-GR-node1 <--> stor-GR-node1
 
-    rtos-layer2-switch <--> stor-ovn_cluster_router
 
+    rtotr-GR-node1 <--> trtor-GR-node1
+    rtos-layer2-switch <--> stotr-layer2-switch
+    stotr-layer2-switch-upgrade <--> stor-GR-node1
+    stor-GR-node2 <--> rtos-GR-node2
     stor-GR-node1-node2 <--> stor-GR-node2
-    rtos-GR-node2 <--> stor-GR-node2
-
-    stor-GR-node1-remote <--> stor-GR-node1
+    trtos-layer2-switch-upgrade <--> stotr-layer2-switch-upgrade
 
     class VM vmStyle;
-    class rtos-GR-node1 portStyle;
     class rtotr-GR-node1 portStyle;
     class rtos-GR-node2 portStyle;
     class stor-GR-node2 portStyle;
     class stor-GR-node1-node2 portStyle;
     class stor-GR-node1 portStyle;
-    class stor-GR-node1-remote portStyle;
-    class trtor-GR-node1_ovn portStyle;
+    class trtor-GR-node1 portStyle;
     class trtor-GR-node2 portStyle;
-    class stor-ovn_cluster_router portStyle;
+    class stotr-layer2-switch portStyle;
+    class stotr-layer2-switch-upgrade portStyle;
     class rtos-layer2-switch portStyle;
+    class trtos-layer2-switch-upgrade portStyle;
     class GR-node1 routerStyle;
     class GR-node2 routerStyle;
-    class ovn_cluster_router_node1 routerStyle;
+    class transit_router_node1 routerStyle;
     class layer2-switch_node1 switchStyle;
     class layer2-switch_node2 switchStyle;
     class term termStyle;
     class node1,node2 nodeStyle;
 ```
 
+The intermediate upgrade topology parts are bold, and will be removed once all nodes finish the upgrade.
 Nodes using the new topology must perform the following actions:
 - At the distributed switch:
     - Retain `remote` type stor-GR LSPs from nodes still using the
       old topology.
-    - Retain `router` type stor-GR LSP with `router-port` pointing
-      to rtos-GR.
-- Move the rtos-GR LRP controller from the gateway router to the
-  ovn_cluster_router.
-- Adjust ovn_cluster_router routing/policies for transitory traffic.
-- Maintain node IP masquerading SNAT at gateway router for ongoing
-  conntrack.
+    - Create a tmp `router` type stotr-upgrade LSP with `router-port` and same tunnel key as before
+      pointing to rtos-GR.
+  - Create a tmp transit router port `trtos-layer2-switch-upgrade` with the GR MAC address
+  - Add a dummy IP from the join subnet to the `trtos-layer2-switch` port to enable pod on node1 -> remote GR traffic.
 
-Keeping the 5-tuple ensures that TCP conntrack connections remain
-unbroken. Theoretically, downtime should be minimal, as the old path is
-preserved.
+Some of the scenarios that we care about:
+- Ingress traffic coming to GR via service
+  - upgraded GR -> non-upgraded node pod: we SNAT to the same joinIP as before, reply traffic comes back to the 
+    `transit_router` because `trtos-layer2-switch-upgrade` port is configured with the GW MAC.
+  - non-upgraded GR -> upgraded node pod: uses the same joinIP as before. Reply uses the newly assigned dummyIP
+    from the join subnet, to enable routing from the upgraded node pod to the joinIP subnet. Without the dummy IP
+    transit_router doesn't know what to do with the `dst: 100.65.0.3` traffic.
+- Egress IP traffic: uses the same joinIP to route as before, works similar to service traffic.
 
-#### After upgrade cleanups
+joinIP is not really needed in the new topology, but we will have to keep it during the upgrade, and we can't
+remove it after the upgrade is done, because there will be conntrack entries using it. Not too big of a deal,
+but a side effect of supporting the upgrade.
 
-The implementation should handle cleaning up the ports, routes, policies and NAT that are no longer
-configured on the gateway router or layer2 switch and remove them so there is no stale
-configuration from the previous.
+#### Upgrade Details
+
+1. every node has to identify when it starts using new topology (so that the other nodes can switch from the switch 
+remote ports to the router remote ports). This can be done with annotations, but it either will have to be per-network (which is a lot of updates) 
+or it needs to check that absolutely no pods are present on the node for all layer2 networks, and use node-scope annotation.
+2. every node will need to upgrade to the intermediate topology, keep watching for other node updates. 
+During topology upgrade we also need to cleanup/remove old topology parts, like GR-switch ports, old GR routes and NATs, 
+and these cleanups need to be idempotent and spread across multiple controllers.
+3. remove the upgrade topology artifacts (like extra ports or IPs) when all nodes finished upgrading. Remove upgrade annotations too.
 
 ### Testing Details
 
 * Unit test checking topology will need to be adapted.
 * E2e tests should be the same and pass since this is a refactoring not adding or removing features.
 * Scale tests to check if adding the transit router affects it
-* Upgrade tests are the most important in this case. The tests should perform an upgrade
-  while using all the ovn-kuberntes layer2 topology featues and check that these continue working.
+* Upgrade tests are the most important in this case. 
+  * Perform an upgrade while using all the ovn-kubernetes layer2 topology features and check that these continue working.
+  * Make sure old layer2 topology is preserved and keeps working until all pods are removed from the node
+  * We don't have such upgrade tests yet, so it may be a lot of work to implement them fully automatically, a part
+    of it may be tested manually.
 
 ### Documentation Details
 
