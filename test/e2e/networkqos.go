@@ -185,6 +185,8 @@ metadata:
   namespace: %s
   name: %s
 spec:
+  networkSelectors:
+  - networkSelectionType: DefaultNetwork
   podSelector:
     matchLabels:
       component: nqos-test-src
@@ -315,6 +317,8 @@ metadata:
   namespace: %s
   name: %s
 spec:
+  networkSelectors:
+  - networkSelectionType: DefaultNetwork
   podSelector:
     matchLabels:
       component: nqos-test-src
@@ -408,6 +412,8 @@ metadata:
   namespace: %s
   name: %s
 spec:
+  networkSelectors:
+  - networkSelectionType: DefaultNetwork
   podSelector:
     matchLabels:
       component: nqos-test-src
@@ -470,6 +476,8 @@ metadata:
   namespace: %s
   name: %s
 spec:
+  networkSelectors:
+  - networkSelectionType: DefaultNetwork
   podSelector:
     matchLabels:
       component: nqos-test-src
@@ -534,6 +542,8 @@ metadata:
   namespace: %s
   name: %s
 spec:
+  networkSelectors:
+  - networkSelectionType: DefaultNetwork
   podSelector:
     matchLabels:
       component: nqos-test-src
