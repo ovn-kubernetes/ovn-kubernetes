@@ -371,38 +371,45 @@ func (bnc *BaseNetworkController) addAdvertisedNetworkIsolation(nodeName string)
 // It removes the network CIDRs from the global advertised networks addresset together with the ACLs on the node switch.
 func (bnc *BaseNetworkController) deleteAdvertisedNetworkIsolation(nodeName string) error {
 	addrSet, err := bnc.addressSetFactory.GetAddressSet(GetAdvertisedNetworkSubnetsAddressSetDBIDs())
-	if err != nil {
+	if err != nil && !errors.Is(err, libovsdbclient.ErrNotFound) {
 		return fmt.Errorf("failed to get advertised subnets addresset %s for network %s: %w", GetAdvertisedNetworkSubnetsAddressSetDBIDs(), bnc.GetNetworkName(), err)
 	}
 
-	var cidrs []string
-	for _, subnet := range bnc.Subnets() {
-		cidrs = append(cidrs, subnet.CIDR.String())
-	}
-	ops, err := addrSet.DeleteAddressesReturnOps(cidrs)
-	if err != nil {
-		return fmt.Errorf("failed to create ovsdb ops for deleting the addresses from %s addresset for network %s: %w", GetAdvertisedNetworkSubnetsAddressSetDBIDs(), bnc.GetNetworkName(), err)
+	var ops []ovsdb.Operation
+	if addrSet != nil {
+		var cidrs []string
+		for _, subnet := range bnc.Subnets() {
+			cidrs = append(cidrs, subnet.CIDR.String())
+		}
+		ops, err = addrSet.DeleteAddressesReturnOps(cidrs)
+		if err != nil {
+			return fmt.Errorf("failed to create ovsdb ops for deleting the addresses from %s addresset for network %s: %w", GetAdvertisedNetworkSubnetsAddressSetDBIDs(), bnc.GetNetworkName(), err)
+		}
 	}
 
 	passACLIDs := GetAdvertisedNetworkSubnetsPassACLdbIDs(bnc.controllerName, bnc.GetNetworkName(), bnc.GetNetworkID())
-	passACLPredicate := libovsdbops.GetPredicate[*nbdb.ACL](passACLIDs, nil)
-	passACLs, err := libovsdbops.FindACLsWithPredicate(bnc.nbClient, passACLPredicate)
-	if err != nil {
-		return fmt.Errorf("unable to find the pass ACL for advertised network %s: %w", bnc.GetNetworkName(), err)
+	dropACLIDs := GetAdvertisedNetworkSubnetsDropACLdbIDs()
+	// Create a combined predicate to find both ACLs in a single lookup
+	combinedACLPredicate := func(acl *nbdb.ACL) bool {
+		// Check if ACL matches either pass or drop ACL IDs
+		passMatch := libovsdbops.GetPredicate[*nbdb.ACL](passACLIDs, nil)(acl)
+		dropMatch := libovsdbops.GetPredicate[*nbdb.ACL](dropACLIDs, nil)(acl)
+		return passMatch || dropMatch
 	}
 
-	dropACLIDs := GetAdvertisedNetworkSubnetsDropACLdbIDs()
-	dropACLPredicate := libovsdbops.GetPredicate[*nbdb.ACL](dropACLIDs, nil)
-	dropACLs, err := libovsdbops.FindACLsWithPredicate(bnc.nbClient, dropACLPredicate)
+	// Find both ACLs in a single lookup
+	allACLsToRemove, err := libovsdbops.FindACLsWithPredicate(bnc.nbClient, combinedACLPredicate)
 	if err != nil {
-		return fmt.Errorf("unable to find the drop ACL for advertised network %s: %w", bnc.GetNetworkName(), err)
+		return fmt.Errorf("unable to find pass and/or drop ACLs for advertised network %s: %w", bnc.GetNetworkName(), err)
 	}
 
 	// ACLs referenced by the switch will be deleted by db if there are no other references
 	p := func(sw *nbdb.LogicalSwitch) bool { return sw.Name == bnc.GetNetworkScopedSwitchName(nodeName) }
-	ops, err = libovsdbops.RemoveACLsFromLogicalSwitchesWithPredicateOps(bnc.nbClient, ops, p, append(passACLs, dropACLs...)...)
-	if err != nil {
-		return fmt.Errorf("failed to create ovsdb ops for removing network isolation ACLs from the %s switch for network %s: %w", bnc.GetNetworkScopedSwitchName(nodeName), bnc.GetNetworkName(), err)
+	if len(allACLsToRemove) > 0 {
+		ops, err = libovsdbops.RemoveACLsFromLogicalSwitchesWithPredicateOps(bnc.nbClient, ops, p, allACLsToRemove...)
+		if err != nil {
+			return fmt.Errorf("failed to create ovsdb ops for removing network isolation ACLs from the %s switch for network %s: %w", bnc.GetNetworkScopedSwitchName(nodeName), bnc.GetNetworkName(), err)
+		}
 	}
 
 	_, err = libovsdbops.TransactAndCheck(bnc.nbClient, ops)

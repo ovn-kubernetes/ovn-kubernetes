@@ -128,6 +128,8 @@ spec:
           value: {{ default "" .Values.global.enableNetworkSegmentation | quote }}
         - name: OVN_PRE_CONF_UDN_ADDR_ENABLE
           value: {{ default "" .Values.global.enablePreconfiguredUDNAddresses | quote }}
+        - name: OVN_ADVERTISED_UDN_ISOLATION_MODE
+          value: {{ default "strict" .Values.global.advertisedUDNIsolationMode | quote }}
         - name: OVN_HYBRID_OVERLAY_NET_CIDR
           value: {{ default "" .Values.global.hybridOverlayNetCidr | quote }}
         - name: OVN_DISABLE_SNAT_MULTIPLE_GWS

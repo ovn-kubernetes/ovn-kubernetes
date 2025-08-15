@@ -758,22 +758,52 @@ deploy_bgp_external_server() {
   $OCI_BIN run  --cap-add NET_ADMIN --user 0  -d --network bgpnet  --rm  --name bgpserver -p 8080:8080  registry.k8s.io/e2e-test-images/agnhost:2.45 netexec
   # let's make the bgp external server have its default route towards FRR router so that we don't need to add routes during tests back to the pods in the
   # cluster for return traffic
-  local bgp_network_frr_v4 bgp_network_frr_v6
+  local bgp_network_frr_v4 bgp_network_frr_v6 kind_network_frr_v4 kind_network_frr_v6
   bgp_network_frr_v4=$($OCI_BIN inspect -f '{{.NetworkSettings.Networks.bgpnet.IPAddress}}' frr)
-  echo "FRR kind network IPv4: ${bgp_network_frr_v4}"
+  echo "FRR bgp network IPv4: ${bgp_network_frr_v4}"
   $OCI_BIN exec bgpserver ip route replace default via "$bgp_network_frr_v4"
   if  [ "$PLATFORM_IPV6_SUPPORT" == true ] ; then
     bgp_network_frr_v6=$($OCI_BIN inspect -f '{{.NetworkSettings.Networks.bgpnet.GlobalIPv6Address}}' frr)
-    echo "FRR kind network IPv6: ${bgp_network_frr_v6}"
+    echo "FRR bgp network IPv6: ${bgp_network_frr_v6}"
     $OCI_BIN exec bgpserver ip -6 route replace default via "$bgp_network_frr_v6"
   fi
-  # disable the default route to make sure the container only routes accross
-  # directly connected or learnt networks (doing this at the very end since
-  # docker changes the routing table when a new network is connected)
-  $OCI_BIN exec frr ip route delete default
-  $OCI_BIN exec frr ip route
-  $OCI_BIN exec frr ip -6 route delete default
-  $OCI_BIN exec frr ip -6 route
+  if [ "$ADVERTISED_UDN_ISOLATION_MODE" == "loose" ]; then
+    kind_network_frr_v4=$($OCI_BIN inspect -f '{{.NetworkSettings.Networks.kind.IPAddress}}' frr)
+    echo "FRR kind network IPv4: ${kind_network_frr_v4}"
+    # If UDN isolation is in loose disabled, we need to set the default gateway for the nodes in the cluster
+    # to the FRR router so that cross-UDN traffic can be routed back to the pods in the cluster in the loose mode.
+    echo "Setting default gateway for nodes in the cluster to FRR router IPv4: ${kind_network_frr_v4}"
+    set_nodes_default_gw "$kind_network_frr_v4"
+    if  [ "$PLATFORM_IPV6_SUPPORT" == true ] ; then
+      kind_network_frr_v6=$($OCI_BIN inspect -f '{{.NetworkSettings.Networks.kind.GlobalIPv6Address}}' frr)
+      echo "FRR kind network IPv6: ${kind_network_frr_v6}"
+      set_nodes_default_gw "$kind_network_frr_v6"
+    fi
+  else
+    # disable the default route to make sure the container only routes accross
+    # directly connected or learnt networks (doing this at the very end since
+    # docker changes the routing table when a new network is connected)
+    $OCI_BIN exec frr ip route delete default
+    $OCI_BIN exec frr ip route
+    $OCI_BIN exec frr ip -6 route delete default
+    $OCI_BIN exec frr ip -6 route
+  fi
+}
+
+set_nodes_default_gw() {
+  local gw="$1"
+  local ip_cmd="ip"
+  local route_cmd="route replace default via"
+
+  # Check if $gw is IPv6 (contains ':')
+  if [[ "$gw" == *:* ]]; then
+    ip_cmd="ip -6"
+  fi
+
+  KIND_NODES=$(kind_get_nodes)
+  for node in $KIND_NODES; do
+    $OCI_BIN exec "$node" $ip_cmd $route_cmd "$gw"
+  done
 }
 
 destroy_bgp() {

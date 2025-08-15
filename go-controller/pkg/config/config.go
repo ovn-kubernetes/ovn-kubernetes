@@ -134,6 +134,7 @@ var (
 	// OVNKubernetesFeatureConfig holds OVN-Kubernetes feature enhancement config file parameters and command-line overrides
 	OVNKubernetesFeature = OVNKubernetesFeatureConfig{
 		EgressIPReachabiltyTotalTimeout: 1,
+		AdvertisedUDNIsolationMode:      AdvertisedUDNIsolationModeStrict,
 	}
 
 	// OvnNorth holds northbound OVN database client and server authentication and location details
@@ -434,6 +435,9 @@ type OVNKubernetesFeatureConfig struct {
 	EnableServiceTemplateSupport    bool `gcfg:"enable-svc-template-support"`
 	EnableObservability             bool `gcfg:"enable-observability"`
 	EnableNetworkQoS                bool `gcfg:"enable-network-qos"`
+	// This feature requires a kernel fix https://github.com/torvalds/linux/commit/7f3287db654395f9c5ddd246325ff7889f550286
+	// to work on a kind cluster. Flag allows to disable it for current CI, will be turned on when github runners have this fix.
+	AdvertisedUDNIsolationMode string `gcfg:"advertised-udn-isolation-mode"`
 }
 
 // GatewayMode holds the node gateway mode
@@ -446,6 +450,13 @@ const (
 	GatewayModeShared GatewayMode = "shared"
 	// GatewayModeLocal indicates OVN creates a local NAT-ed interface for the gateway
 	GatewayModeLocal GatewayMode = "local"
+)
+
+const (
+	// AdvertisedUDNIsolationModeStrict pod isolation across advertised UDN networks is enabled.
+	AdvertisedUDNIsolationModeStrict = "strict"
+	// AdvertisedUDNIsolationModeLoose pod isolation across advertised UDN networks is disabled.
+	AdvertisedUDNIsolationModeLoose = "loose"
 )
 
 // GatewayConfig holds node gateway-related parsed config file parameters and command-line overrides
@@ -498,7 +509,7 @@ type GatewayConfig struct {
 	// EphemeralPortRange is the range of ports used by egress SNAT operations in OVN. Specifically for NAT where
 	// the source IP of the NAT will be a shared Node IP address. If unset, the value will be determined by sysctl lookup
 	// for the kernel's ephemeral range: net.ipv4.ip_local_port_range. Format is "<min port>-<max port>".
-	EphemeralPortRange string `gfcg:"ephemeral-port-range"`
+	EphemeralPortRange string `gcfg:"ephemeral-port-range"`
 }
 
 // OvnAuthConfig holds client authentication and location details for
@@ -1101,6 +1112,12 @@ var OVNK8sFeatureFlags = []cli.Flag{
 		Usage:       "Configure to use route advertisements feature with ovn-kubernetes.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnableRouteAdvertisements,
 		Value:       OVNKubernetesFeature.EnableRouteAdvertisements,
+	},
+	&cli.StringFlag{
+		Name:        "advertised-udn-isolation-mode",
+		Usage:       "Configure to use pod isolation for BGP advertised UDN networks. Valid values are 'strict' or 'loose'.",
+		Destination: &cliConfig.OVNKubernetesFeature.AdvertisedUDNIsolationMode,
+		Value:       OVNKubernetesFeature.AdvertisedUDNIsolationMode,
 	},
 	&cli.BoolFlag{
 		Name:        "enable-stateless-netpol",
@@ -2013,6 +2030,10 @@ func buildOVNKubernetesFeatureConfig(cli, file *config) error {
 	// And CLI overrides over config file and default values
 	if err := overrideFields(&OVNKubernetesFeature, &cli.OVNKubernetesFeature, &savedOVNKubernetesFeature); err != nil {
 		return err
+	}
+	if OVNKubernetesFeature.AdvertisedUDNIsolationMode != AdvertisedUDNIsolationModeStrict && OVNKubernetesFeature.AdvertisedUDNIsolationMode != AdvertisedUDNIsolationModeLoose {
+		return fmt.Errorf("invalid advertised-udn-isolation-mode %q: expect one of %s or %s",
+			OVNKubernetesFeature.AdvertisedUDNIsolationMode, AdvertisedUDNIsolationModeStrict, AdvertisedUDNIsolationModeLoose)
 	}
 	return nil
 }

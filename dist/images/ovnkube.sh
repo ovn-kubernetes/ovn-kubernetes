@@ -273,6 +273,8 @@ ovn_network_segmentation_enable=${OVN_NETWORK_SEGMENTATION_ENABLE:=false}
 ovn_pre_conf_udn_addr_enable=${OVN_PRE_CONF_UDN_ADDR_ENABLE:=false}
 #OVN_NROUTE_ADVERTISEMENTS_ENABLE - enable route advertisements for ovn-kubernetes
 ovn_route_advertisements_enable=${OVN_ROUTE_ADVERTISEMENTS_ENABLE:=false}
+#OVN_ADVERTISED_UDN_ISOLATION_MODE - pod network isolation between advertised UDN networks.
+ovn_advertised_udn_isolation_mode=${OVN_ADVERTISED_UDN_ISOLATION_MODE:=strict}
 ovn_acl_logging_rate_limit=${OVN_ACL_LOGGING_RATE_LIMIT:-"20"}
 ovn_netflow_targets=${OVN_NETFLOW_TARGETS:-}
 ovn_sflow_targets=${OVN_SFLOW_TARGETS:-}
@@ -1253,6 +1255,11 @@ ovn-master() {
   fi
   echo "route_advertisements_enabled_flag=${route_advertisements_enabled_flag}"
 
+  advertised_udn_isolation_flag=
+  if [[ -n ${ovn_advertised_udn_isolation_mode} ]]; then
+      advertised_udn_isolation_flag="--advertised-udn-isolation-mode=${ovn_advertised_udn_isolation_mode}"
+  fi
+
   egressservice_enabled_flag=
   if [[ ${ovn_egressservice_enable} == "true" ]]; then
 	  egressservice_enabled_flag="--enable-egress-service"
@@ -1360,6 +1367,7 @@ ovn-master() {
     ${multi_network_enabled_flag} \
     ${network_segmentation_enabled_flag} \
     ${route_advertisements_enabled_flag} \
+    ${advertised_udn_isolation_flag} \
     ${ovn_acl_logging_rate_limit_flag} \
     ${ovn_enable_svc_template_support_flag} \
     ${ovn_observ_enable_flag} \
@@ -1562,6 +1570,12 @@ ovnkube-controller() {
   fi
   echo "route_advertisements_enabled_flag=${route_advertisements_enabled_flag}"
 
+  advertised_udn_isolation_flag=
+  if [[ -n ${ovn_advertised_udn_isolation_mode} ]]; then
+      advertised_udn_isolation_flag="--advertised-udn-isolation-mode=${ovn_advertised_udn_isolation_mode}"
+  fi
+  echo "advertised_udn_isolation_flag=${advertised_udn_isolation_flag}"
+
   egressservice_enabled_flag=
   if [[ ${ovn_egressservice_enable} == "true" ]]; then
 	  egressservice_enabled_flag="--enable-egress-service"
@@ -1678,6 +1692,7 @@ ovnkube-controller() {
     ${network_segmentation_enabled_flag} \
     ${pre_conf_udn_addr_enable_flag} \
     ${route_advertisements_enabled_flag} \
+    ${advertised_udn_isolation_flag} \
     ${ovn_acl_logging_rate_limit_flag} \
     ${ovn_dbs} \
     ${ovn_enable_svc_template_support_flag} \
@@ -1873,6 +1888,12 @@ ovnkube-controller-with-node() {
   fi
   echo "route_advertisements_enabled_flag=${route_advertisements_enabled_flag}"
 
+  advertised_udn_isolation_flag=
+  if [[ -n ${ovn_advertised_udn_isolation_mode} ]]; then
+      advertised_udn_isolation_flag="--advertised-udn-isolation-mode=${ovn_advertised_udn_isolation_mode}"
+  fi
+  echo "advertised_udn_isolation_flag=${advertised_udn_isolation_flag}"
+
   egressservice_enabled_flag=
   if [[ ${ovn_egressservice_enable} == "true" ]]; then
 	  egressservice_enabled_flag="--enable-egress-service"
@@ -2057,6 +2078,7 @@ ovnkube-controller-with-node() {
     ovnkube_metrics_scale_enable_flag="--metrics-enable-scale --metrics-enable-pprof"
   fi
   echo "ovnkube_metrics_scale_enable_flag: ${ovnkube_metrics_scale_enable_flag}"
+
   ovnkube_local_cert_flags=
   if [[ ${ovn_enable_ovnkube_identity} == "true" ]]; then
     bootstrap_kubeconfig="/host-kubernetes/kubelet.conf"
@@ -2134,6 +2156,7 @@ ovnkube-controller-with-node() {
     ${network_segmentation_enabled_flag} \
     ${pre_conf_udn_addr_enable_flag} \
     ${route_advertisements_enabled_flag} \
+    ${advertised_udn_isolation_flag} \
     ${netflow_targets} \
     ${ofctrl_wait_before_clear} \
     ${ovn_acl_logging_rate_limit_flag} \
@@ -2312,6 +2335,11 @@ ovn-cluster-manager() {
   fi
   echo "route_advertisements_enabled_flag=${route_advertisements_enabled_flag}"
 
+  advertised_udn_isolation_flag=
+  if [[ -n ${ovn_advertised_udn_isolation_mode} ]]; then
+      advertised_udn_isolation_flag="--advertised-udn-isolation-mode=${ovn_advertised_udn_isolation_mode}"
+  fi
+
   persistent_ips_enabled_flag=
   if [[ ${ovn_enable_persistent_ips} == "true" ]]; then
 	  persistent_ips_enabled_flag="--enable-persistent-ips"
@@ -2375,6 +2403,7 @@ ovn-cluster-manager() {
     ${network_segmentation_enabled_flag} \
     ${pre_conf_udn_addr_enable_flag} \
     ${route_advertisements_enabled_flag} \
+    ${advertised_udn_isolation_flag} \
     ${persistent_ips_enabled_flag} \
     ${ovnkube_enable_interconnect_flag} \
     ${ovnkube_enable_multi_external_gateway_flag} \
@@ -2559,6 +2588,11 @@ ovn-node() {
   route_advertisements_enabled_flag=
   if [[ ${ovn_route_advertisements_enable} == "true" ]]; then
 	  route_advertisements_enabled_flag="--enable-route-advertisements"
+  fi
+
+  advertised_udn_isolation_flag=
+  if [[ -n ${ovn_advertised_udn_isolation_mode} ]]; then
+      advertised_udn_isolation_flag="--advertised-udn-isolation-mode=${ovn_advertised_udn_isolation_mode}"
   fi
 
   netflow_targets=
@@ -2793,6 +2827,7 @@ ovn-node() {
         ${network_segmentation_enabled_flag} \
         ${pre_conf_udn_addr_enable_flag} \
         ${route_advertisements_enabled_flag} \
+        ${advertised_udn_isolation_flag} \
         ${netflow_targets} \
         ${ofctrl_wait_before_clear} \
         ${ovn_dbs} \
