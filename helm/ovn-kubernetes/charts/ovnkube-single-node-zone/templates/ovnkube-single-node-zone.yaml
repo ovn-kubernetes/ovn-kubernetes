@@ -281,6 +281,9 @@ spec:
           name: run-systemd
           subPath: private
           readOnly: true
+        - mountPath: /var/run/k8s.cni.cncf.io/devinfo/dp
+          name: host-devinfo-dp
+          readOnly: true
         resources:
           requests:
             cpu: 100m
@@ -600,5 +603,8 @@ spec:
       - name: run-systemd
         hostPath:
           path: /run/systemd
+      - name: host-devinfo-dp
+        hostPath:
+          path: /var/run/k8s.cni.cncf.io/devinfo/dp
       tolerations:
       - operator: "Exists"

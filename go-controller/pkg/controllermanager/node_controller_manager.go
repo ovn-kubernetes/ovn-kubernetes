@@ -60,7 +60,7 @@ func (ncm *NodeControllerManager) NewNetworkController(nInfo util.NetInfo) (netw
 		// Pass a shallow clone of the watch factory, this allows multiplexing
 		// informers for secondary networks.
 		return node.NewSecondaryNodeNetworkController(ncm.newCommonNetworkControllerInfo(ncm.watchFactory.(*factory.WatchFactory).ShallowClone()),
-			nInfo, ncm.vrfManager, ncm.ruleManager, ncm.defaultNodeNetworkController.Gateway)
+			nInfo, ncm.networkManager.Interface(), ncm.vrfManager, ncm.ruleManager, ncm.defaultNodeNetworkController.Gateway)
 	}
 	return nil, fmt.Errorf("topology type %s not supported", topoType)
 }

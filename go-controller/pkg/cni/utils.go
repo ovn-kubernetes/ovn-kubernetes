@@ -16,27 +16,44 @@ import (
 )
 
 // wait on a certain pod annotation related condition
-type podAnnotWaitCond = func(map[string]string, string) (*util.PodAnnotation, bool)
+// return error to abort the retry attempt
+type podAnnotWaitCond = func(*corev1.Pod, string) (*util.PodAnnotation, bool, error)
 
 // isOvnReady is a wait condition for OVN master to set pod-networks annotation
-func isOvnReady(podAnnotation map[string]string, nadName string) (*util.PodAnnotation, bool) {
-	podNADAnnotation, err := util.UnmarshalPodAnnotation(podAnnotation, nadName)
-	return podNADAnnotation, err == nil
+func isOvnReady(pod *corev1.Pod, nadName string) (*util.PodAnnotation, bool, error) {
+	podNADAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, nadName)
+	if err != nil {
+		if util.IsAnnotationNotSetError(err) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	return podNADAnnotation, true, nil
 }
 
 // isDPUReady is a wait condition which waits for OVN master to set pod-networks annotation and
 // ovnkube running on DPU to set connection-status pod annotation and its status is Ready
-func isDPUReady(podAnnotation map[string]string, nadName string) (*util.PodAnnotation, bool) {
-	podNADAnnotation, ready := isOvnReady(podAnnotation, nadName)
-	if ready {
-		// check DPU connection status
-		if status, err := util.UnmarshalPodDPUConnStatus(podAnnotation, nadName); err == nil {
-			if status.Status == util.DPUConnectionStatusReady {
-				return podNADAnnotation, true
+func isDPUReady(annotCondFn podAnnotWaitCond, nadName string) podAnnotWaitCond {
+	return func(pod *corev1.Pod, nad string) (annotation *util.PodAnnotation, ready bool, err error) {
+		if annotCondFn != nil {
+			annotation, ready, err = annotCondFn(pod, nad)
+			if err != nil || !ready {
+				return
 			}
 		}
+		// check DPU connection status of the given nad name
+		status, err := util.UnmarshalPodDPUConnStatus(pod.Annotations, nadName)
+		if err != nil {
+			if util.IsAnnotationNotSetError(err) {
+				return annotation, false, nil
+			}
+			return annotation, false, err
+		}
+		if status.Status == util.DPUConnectionStatusReady {
+			return annotation, true, nil
+		}
+		return annotation, false, fmt.Errorf("DPU plumb failed: connection status is %v", status.Status)
 	}
-	return nil, false
 }
 
 // getPod tries to read a Pod object from the informer cache, or if the pod
@@ -85,8 +102,10 @@ func GetPodWithAnnotations(ctx context.Context, getter PodInfoGetter,
 				}
 				// drop through to try again
 			} else if pod != nil {
-				podNADAnnotation, ready := annotCond(pod.Annotations, nadName)
-				if ready {
+				podNADAnnotation, ready, err := annotCond(pod, nadName)
+				if err != nil {
+					return nil, nil, nil, err
+				} else if ready {
 					return pod, pod.Annotations, podNADAnnotation, nil
 				}
 			}

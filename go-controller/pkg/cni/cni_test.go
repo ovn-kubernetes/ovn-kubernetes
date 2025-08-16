@@ -8,11 +8,9 @@ import (
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 	current "github.com/containernetworking/cni/pkg/types/100"
-	nadv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/ovn-kubernetes/libovsdb/client"
@@ -20,6 +18,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	v1nadmocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
 	v1mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/client-go/listers/core/v1"
@@ -96,6 +95,7 @@ var _ = Describe("Network Segmentation", func() {
 		nadLister = v1nadmocks.NetworkAttachmentDefinitionLister{}
 		clientSet = &ClientSet{
 			podLister: &podLister,
+			nadLister: &nadLister,
 			kclient:   fakeClientset,
 		}
 		kubeAuth = &KubeAPIAuth{
@@ -222,28 +222,20 @@ var _ = Describe("Network Segmentation", func() {
 						Name:      pr.PodName,
 						Namespace: pr.PodNamespace,
 						Annotations: map[string]string{
-							"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["100.10.10.3/24","fd44::33/64"],"mac_address":"0a:58:fd:98:00:01", "role":"infrastructure-locked"}, "meganet":{"ip_addresses":["10.10.10.30/24","fd10::3/64"],"mac_address":"02:03:04:05:06:07", "role":"primary"}}`,
+							"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["100.10.10.3/24","fd44::33/64"],"mac_address":"0a:58:fd:98:00:01", "role":"infrastructure-locked"}, "foo-ns/meganet":{"ip_addresses":["10.10.10.30/24","fd10::3/64"],"mac_address":"02:03:04:05:06:07", "role":"primary"}}`,
 						},
 					},
 				}
-				nad := &nadv1.NetworkAttachmentDefinition{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      nadName,
-						Namespace: namespace,
-					},
-					Spec: nadv1.NetworkAttachmentDefinitionSpec{
-						Config: dummyPrimaryUDNConfig(namespace, nadName),
-					},
-				}
+				nadMegaNet := testing.GenerateNADWithConfig("meganet", namespace, dummyPrimaryUDNConfig(namespace, "meganet"))
 				nadNamespaceLister := &v1nadmocks.NetworkAttachmentDefinitionNamespaceLister{}
-				nadNamespaceLister.On("List", labels.Everything()).Return([]*nadv1.NetworkAttachmentDefinition{nad}, nil)
 				nadLister.On("NetworkAttachmentDefinitions", "foo-ns").Return(nadNamespaceLister)
-				nadNetwork, err := util.ParseNADInfo(nad)
+				nadNamespaceLister.On("Get", "meganet").Return(nadMegaNet, nil)
+				nadNetwork, err := util.ParseNADInfo(nadMegaNet)
 				Expect(err).NotTo(HaveOccurred())
 				fakeNetworkManager = &testnm.FakeNetworkManager{
 					PrimaryNetworks: make(map[string]util.NetInfo),
 				}
-				fakeNetworkManager.PrimaryNetworks[nad.Namespace] = nadNetwork
+				fakeNetworkManager.PrimaryNetworks[nadMegaNet.Namespace] = nadNetwork
 				getCNIResultStub = dummyGetCNIResult
 			})
 

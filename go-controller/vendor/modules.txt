@@ -701,6 +701,12 @@ gopkg.in/gcfg.v1/types
 # gopkg.in/inf.v0 v0.9.1
 ## explicit
 gopkg.in/inf.v0
+# gopkg.in/k8snetworkplumbingwg/multus-cni.v4 v4.0.2
+## explicit; go 1.18
+gopkg.in/k8snetworkplumbingwg/multus-cni.v4/pkg/checkpoint
+gopkg.in/k8snetworkplumbingwg/multus-cni.v4/pkg/kubeletclient
+gopkg.in/k8snetworkplumbingwg/multus-cni.v4/pkg/logging
+gopkg.in/k8snetworkplumbingwg/multus-cni.v4/pkg/types
 # gopkg.in/natefinch/lumberjack.v2 v2.2.1
 ## explicit; go 1.13
 gopkg.in/natefinch/lumberjack.v2
@@ -1228,6 +1234,9 @@ k8s.io/kube-openapi/pkg/schemaconv
 k8s.io/kube-openapi/pkg/spec3
 k8s.io/kube-openapi/pkg/util/proto
 k8s.io/kube-openapi/pkg/validation/spec
+# k8s.io/kubelet v0.22.8
+## explicit; go 1.16
+k8s.io/kubelet/pkg/apis/podresources/v1
 # k8s.io/kubernetes v1.33.3
 ## explicit; go 1.24.0
 k8s.io/kubernetes/pkg/api/v1/pod
