@@ -46,6 +46,7 @@ import (
 	e2eservice "k8s.io/kubernetes/test/e2e/framework/service"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	utilnet "k8s.io/utils/net"
+	"k8s.io/utils/ptr"
 )
 
 const (
@@ -53,6 +54,7 @@ const (
 	routerContainerName    = "frr"
 	echoClientPodName      = "echo-client-pod"
 	bgpExternalNetworkName = "bgpnet"
+	netexecPort            = 8080
 )
 
 var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is advertised", feature.RouteAdvertisements, func() {
@@ -74,7 +76,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 
 	ginkgo.When("a client ovnk pod targeting an external server is created", func() {
 
-		var clientPod *corev1.Pod
+		var clientPod, hostNetworkedPod *corev1.Pod
 		var clientPodNodeName string
 		var err error
 
@@ -117,7 +119,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 		// The client pod inside the KIND cluster on the default network exposed using default network Router
 		// Advertisement will curl the external server container sitting outside the cluster via a FRR router
 		// This test ensures the north-south connectivity is happening through podIP
-		ginkgo.It("tests are run towards the external agnhost echo server", func() {
+		ginkgo.It("default network toggle tests that are run towards the external agnhost echo server and another cluster node", func() {
 			ginkgo.By("routes from external bgp server are imported by nodes in the cluster")
 			bgpNetwork, err := infraprovider.Get().GetNetwork(bgpExternalNetworkName)
 			framework.ExpectNoError(err, "network %s must be available and precreated before test run", bgpExternalNetworkName)
@@ -180,37 +182,199 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 				}
 			}
 
-			ginkgo.By("queries to the external server are not SNATed (uses podIP)")
+			// Get client pod IPs and its host's nodeIPs, get the nodeIPs for the node where the host networked pod is running
+			var clientPodIPs, clientPodNodeIPs, hostNetworkedPodNodeIPs []string
+
 			podv4IP, podv6IP, err := podIPsForDefaultNetwork(f.ClientSet, f.Namespace.Name, clientPod.Name)
 			framework.ExpectNoError(err, fmt.Sprintf("Getting podIPs for pod %s failed: %v", clientPod.Name, err))
 			framework.Logf("Client pod IP address v4=%s, v6=%s", podv4IP, podv6IP)
-			for _, serverContainerIP := range serverContainerIPs {
-				ginkgo.By(fmt.Sprintf("Sending request to node IP %s "+
-					"and expecting to receive the same payload", serverContainerIP))
-				cmd := fmt.Sprintf("curl --max-time 10 -g -q -s http://%s/clientip",
-					net.JoinHostPort(serverContainerIP, "8080"),
-				)
-				framework.Logf("Testing pod to external traffic with command %q", cmd)
-				stdout, err := e2epodoutput.RunHostCmdWithRetries(
-					clientPod.Namespace,
-					clientPod.Name,
-					cmd,
-					framework.Poll,
-					60*time.Second)
-				framework.ExpectNoError(err, fmt.Sprintf("Testing pod to external traffic failed: %v", err))
-				expectedPodIP := podv4IP
-				if isIPv6Supported(f.ClientSet) && utilnet.IsIPv6String(serverContainerIP) {
-					expectedPodIP = podv6IP
-					// For IPv6 addresses, need to handle the brackets in the output
-					outputIP := strings.TrimPrefix(strings.Split(stdout, "]:")[0], "[")
-					gomega.Expect(outputIP).To(gomega.Equal(expectedPodIP),
-						fmt.Sprintf("Testing pod %s to external traffic failed while analysing output %v", echoClientPodName, stdout))
-				} else {
-					// Original IPv4 handling
-					gomega.Expect(strings.Split(stdout, ":")[0]).To(gomega.Equal(expectedPodIP),
-						fmt.Sprintf("Testing pod %s to external traffic failed while analysing output %v", echoClientPodName, stdout))
+			if podv4IP != "" {
+				clientPodIPs = append(clientPodIPs, podv4IP)
+			}
+			if podv6IP != "" {
+				clientPodIPs = append(clientPodIPs, podv6IP)
+			}
+
+			clientNode, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), clientPod.Spec.NodeName, metav1.GetOptions{})
+			framework.ExpectNoError(err)
+
+			// Get the nodeIPs for the node where the client pod is running
+			var nodeIPv4, nodeIPv6 string
+			if isIPv4Supported(f.ClientSet) {
+				v4Addrs := e2enode.GetAddressesByTypeAndFamily(clientNode, corev1.NodeInternalIP, corev1.IPv4Protocol)
+				if len(v4Addrs) > 0 {
+					nodeIPv4 = v4Addrs[0]
 				}
 			}
+			if isIPv6Supported(f.ClientSet) {
+				v6Addrs := e2enode.GetAddressesByTypeAndFamily(clientNode, corev1.NodeInternalIP, corev1.IPv6Protocol)
+				if len(v6Addrs) > 0 {
+					nodeIPv6 = v6Addrs[0]
+				}
+			}
+			if nodeIPv4 != "" {
+				clientPodNodeIPs = append(clientPodNodeIPs, nodeIPv4)
+			}
+			if nodeIPv6 != "" {
+				clientPodNodeIPs = append(clientPodNodeIPs, nodeIPv6)
+			}
+			framework.Logf("clientPodNodeIPs: %v", clientPodNodeIPs)
+
+			ginkgo.By("Creating a host networked pod on a second node")
+			// Add labels so the service can select this pod
+			podLabels := map[string]string{
+				"app": "internal-server-pod",
+			}
+
+			// Create host networked pod on another cluster node using createPod function
+			// Use a random high port to avoid collisions on the host
+			min, max := 25000, 25999
+			hostNetPort := rand.Intn(max-min+1) + min
+			framework.Logf("host-networked netexec port: %d", hostNetPort)
+			hostNetworkedPod, err = createPod(f, "internal-server-pod", nodes.Items[2].Name, f.Namespace.Name,
+				[]string{}, podLabels, func(p *corev1.Pod) {
+					// Set host networking
+					p.Spec.HostNetwork = true
+					// Run netexec on the chosen port
+					p.Spec.Containers[0].Args = []string{"netexec", fmt.Sprintf("--http-port=%d", hostNetPort)}
+
+					// Add required security context to comply with PodSecurity "restricted" policy
+					for i := range p.Spec.Containers {
+						if p.Spec.Containers[i].SecurityContext == nil {
+							p.Spec.Containers[i].SecurityContext = &corev1.SecurityContext{}
+						}
+
+						// Set required security context fields
+						p.Spec.Containers[i].SecurityContext.AllowPrivilegeEscalation = ptr.To(false)
+						p.Spec.Containers[i].SecurityContext.RunAsNonRoot = ptr.To(true)
+						p.Spec.Containers[i].SecurityContext.RunAsUser = ptr.To(int64(1000))
+						p.Spec.Containers[i].SecurityContext.Capabilities = &corev1.Capabilities{
+							Drop: []corev1.Capability{"ALL"},
+						}
+						p.Spec.Containers[i].SecurityContext.SeccompProfile = &corev1.SeccompProfile{
+							Type: corev1.SeccompProfileTypeRuntimeDefault,
+						}
+					}
+				})
+			framework.ExpectNoError(err)
+
+			hostNetworkedPodNode, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), hostNetworkedPod.Spec.NodeName, metav1.GetOptions{})
+			framework.ExpectNoError(err)
+
+			// reset before collecting for a different node
+			nodeIPv4, nodeIPv6 = "", ""
+
+			if isIPv4Supported(f.ClientSet) {
+				v4Addrs := e2enode.GetAddressesByTypeAndFamily(hostNetworkedPodNode, corev1.NodeInternalIP, corev1.IPv4Protocol)
+				if len(v4Addrs) > 0 {
+					nodeIPv4 = v4Addrs[0]
+				}
+			}
+			if isIPv6Supported(f.ClientSet) {
+				v6Addrs := e2enode.GetAddressesByTypeAndFamily(hostNetworkedPodNode, corev1.NodeInternalIP, corev1.IPv6Protocol)
+				if len(v6Addrs) > 0 {
+					nodeIPv6 = v6Addrs[0]
+				}
+			}
+			if nodeIPv4 != "" {
+				hostNetworkedPodNodeIPs = append(hostNetworkedPodNodeIPs, nodeIPv4)
+			}
+			if nodeIPv6 != "" {
+				hostNetworkedPodNodeIPs = append(hostNetworkedPodNodeIPs, nodeIPv6)
+			}
+			framework.Logf("hostNetworkedPodNodeIPs: %v", hostNetworkedPodNodeIPs)
+
+			ginkgo.By("With default network being advertised, queries to the external server are not SNATed (uses podIP)")
+			gomega.Eventually(func() bool {
+				return TestClientPodToServerConnectivity(clientPod, serverContainerIPs, netexecPort, clientPodIPs, "external server pod")
+			}, 30*time.Second, 2*time.Second).Should(gomega.BeTrue(), "With default network being advertised initially, pod to external server test failed")
+
+			ginkgo.By("With default network being advertised, queries to the second node are SNATed (uses nodeIP)")
+			gomega.Eventually(func() bool {
+				return TestClientPodToServerConnectivity(clientPod, hostNetworkedPodNodeIPs, hostNetPort, clientPodNodeIPs, "client pod to second node")
+			}, 30*time.Second, 2*time.Second).Should(gomega.BeTrue(), "With default network being advertised initially, pod to second node test failed")
+
+			// defer add default network RA back to restore to the original test setup
+			ra := &rav1.RouteAdvertisements{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "default",
+				},
+				Spec: rav1.RouteAdvertisementsSpec{
+					NetworkSelectors: apitypes.NetworkSelectors{
+						apitypes.NetworkSelector{
+							NetworkSelectionType: apitypes.DefaultNetwork,
+						},
+					},
+					NodeSelector:             metav1.LabelSelector{},
+					FRRConfigurationSelector: metav1.LabelSelector{},
+					Advertisements: []rav1.AdvertisementType{
+						rav1.PodNetwork,
+					},
+				},
+			}
+			raClient, err := raclientset.NewForConfig(f.ClientConfig())
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			defer func() {
+				ra, err = raClient.K8sV1().RouteAdvertisements().Create(context.TODO(), ra, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Wait for RouteAdvertisement to be accepted, but don't fail the test if it times out
+				// We'll handle the failure with AbortSuite instead
+				accepted := false
+				err = wait.PollUntilContextTimeout(context.TODO(), time.Second, 30*time.Second, true, func(ctx context.Context) (bool, error) {
+					ra, err := raClient.K8sV1().RouteAdvertisements().Get(ctx, ra.Name, metav1.GetOptions{})
+					if err != nil {
+						return false, nil // Continue polling on error
+					}
+					condition := meta.FindStatusCondition(ra.Status.Conditions, "Accepted")
+					if condition == nil {
+						return false, nil // Continue polling if condition not found
+					}
+					if condition.Reason == "Accepted" {
+						accepted = true
+						return true, nil // Success - stop polling
+					}
+					return false, nil // Continue polling if not accepted yet
+				})
+				// Note: we ignore the error from PollImmediate since we handle timeout via the accepted variable
+
+				// Abort suite if default RA failed to reach Accepted state in defer restore
+				if !accepted {
+					ginkgo.AbortSuite("CRITICAL: Default route advertisement failed to reach Accepted state in defer cleanup - test environment is corrupted")
+				}
+
+				// repeat pod to external and pod to second node tests
+				ginkgo.By("With default network being advertised again, queries to the external server are not SNATed (uses podIP)")
+				gomega.Eventually(func() bool {
+					return TestClientPodToServerConnectivity(clientPod, serverContainerIPs, netexecPort, clientPodIPs, "external server pod")
+				}, 30*time.Second, 2*time.Second).Should(gomega.BeTrue(), "With default network being advertised again, pod to external server test failed, test environment may be corrupted")
+
+				ginkgo.By("With default network being advertised again, queries to the second node are SNATed (uses nodeIP)")
+				gomega.Eventually(func() bool {
+					return TestClientPodToServerConnectivity(clientPod, hostNetworkedPodNodeIPs, hostNetPort, clientPodNodeIPs, "client pod to second node")
+				}, 30*time.Second, 2*time.Second).Should(gomega.BeTrue(), "With default network being advertised again, pod to second node test failed, test environment may be corrupted")
+
+			}()
+
+			ginkgo.By("Delete route advertisement")
+			_, err = e2ekubectl.RunKubectl("", "delete", "ra", "default")
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Make sure default RA is deleted
+			_, err = e2ekubectl.RunKubectl("", "get", "ra", "default")
+			gomega.Expect(err).To(gomega.HaveOccurred())
+
+			ginkgo.By("After default network is toggled to unadvertised, run test towards the external agnhost echo server from client podagain, egressing packets should be SNATed to pod's host nodeIP")
+			gomega.Eventually(func() bool {
+				return TestClientPodToServerConnectivity(clientPod, serverContainerIPs, netexecPort, clientPodNodeIPs, "external server container")
+			}, 30*time.Second, 2*time.Second).Should(gomega.BeTrue(), "After default network is toggled to unadvertised, pod to external server test failed")
+
+			ginkgo.By("After default network is toggled to unadvertised, run test towards the second node from client pod, egressing packets should be SNATed to pod's host nodeIP")
+			gomega.Eventually(func() bool {
+				return TestClientPodToServerConnectivity(clientPod, hostNetworkedPodNodeIPs, hostNetPort, clientPodNodeIPs, "client pod to second node")
+			}, 30*time.Second, 2*time.Second).Should(gomega.BeTrue(), "After default network is toggled to unadvertised, pod to second node test failed")
+
 		})
 	})
 })
