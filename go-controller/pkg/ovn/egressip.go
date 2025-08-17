@@ -1885,28 +1885,37 @@ func (e *EgressIPController) generateCacheForEgressIP() (egressIPCache, error) {
 			r := redirectIPs{}
 			mgmtPort := &nbdb.LogicalSwitchPort{Name: ni.GetNetworkScopedK8sMgmtIntfName(node.Name)}
 			mgmtPort, err := libovsdbops.GetLogicalSwitchPort(e.nbClient, mgmtPort)
-			if err != nil {
-				// if switch port isnt created, we can assume theres nothing to sync
-				if errors.Is(err, libovsdbclient.ErrNotFound) {
-					continue
-				}
+			// return if error is anything other than not found to allow retry
+			if err != nil && !errors.Is(err, libovsdbclient.ErrNotFound) {
 				return cache, fmt.Errorf("failed to find management port for node %s: %v", node.Name, err)
 			}
-			mgmtPortAddresses := mgmtPort.GetAddresses()
-			if len(mgmtPortAddresses) == 0 {
-				return cache, fmt.Errorf("management switch port %s for node %s does not contain any addresses", ni.GetNetworkScopedK8sMgmtIntfName(node.Name), node.Name)
-			}
-			// assuming only one IP per IP family
-			for _, mgmtPortAddress := range mgmtPortAddresses {
-				mgmtPortAddressesStr := strings.Fields(mgmtPortAddress)
-				mgmtPortIP := net.ParseIP(mgmtPortAddressesStr[1])
-				if utilnet.IsIPv6(mgmtPortIP) {
-					if ip := mgmtPortIP.To16(); ip != nil {
-						r.v6MgtPort = ip.String()
+			// if management port is available, gather the data. If it's not available, OVN constructs that depend on a deleted
+			// management port IP will fail and be cleaned up in sync LRPs func.
+			if mgmtPort != nil {
+				mgmtPortAddresses := mgmtPort.GetAddresses()
+				if len(mgmtPortAddresses) == 0 {
+					return cache, fmt.Errorf("management switch port %s for node %s does not contain any addresses", ni.GetNetworkScopedK8sMgmtIntfName(node.Name), node.Name)
+				}
+				// Extract at most one IP per family; entries are "MAC IP [IP ...]"
+				for _, macPlusIPs := range mgmtPortAddresses {
+					parts := strings.Fields(macPlusIPs)
+					if len(parts) < 2 {
+						continue // no IPs
 					}
-				} else {
-					if ip := mgmtPortIP.To4(); ip != nil {
-						r.v4MgtPort = ip.String()
+					for _, ipStr := range parts[1:] {
+						ip := net.ParseIP(ipStr)
+						if ip == nil {
+							continue
+						}
+						if utilnet.IsIPv6(ip) {
+							if r.v6MgtPort == "" && ip.To16() != nil {
+								r.v6MgtPort = ip.String()
+							}
+						} else {
+							if r.v4MgtPort == "" && ip.To4() != nil {
+								r.v4MgtPort = ip.String()
+							}
+						}
 					}
 				}
 			}
