@@ -1603,6 +1603,21 @@ func (e *EgressIPController) syncPodAssignmentCache(egressIPCache egressIPCache)
 // It also removes stale nexthops from router policies used by EgressIPs.
 // Upon failure, it may be invoked multiple times in order to avoid a pod restart.
 func (e *EgressIPController) syncStaleEgressReroutePolicy(cache egressIPCache) error {
+	// limit Nodes only to egress node(s) for the EgressIP name
+	limitToValidEgressNodes := func(eipName string, nodeRedirectCache map[string]redirectIPs) map[string]redirectIPs {
+		filteredEgressNodesRedirectsCache := make(map[string]redirectIPs, 0)
+		egressNodeNames, ok := cache.egressIPNameToAssignedNodes[eipName]
+		if !ok {
+			return filteredEgressNodesRedirectsCache
+		}
+		for _, egressNode := range egressNodeNames {
+			if nodeRedirect, ok := nodeRedirectCache[egressNode]; ok {
+				filteredEgressNodesRedirectsCache[egressNode] = nodeRedirect
+			}
+		}
+		return filteredEgressNodesRedirectsCache
+	}
+
 	for eipName, networkCache := range cache.egressIPNameToPods {
 		for networkName, data := range networkCache {
 			logicalRouterPolicyStaleNexthops := []*nbdb.LogicalRouterPolicy{}
@@ -1610,11 +1625,6 @@ func (e *EgressIPController) syncStaleEgressReroutePolicy(cache egressIPCache) e
 			p := func(item *nbdb.LogicalRouterPolicy) bool {
 				if item.Priority != types.EgressIPReroutePriority || item.ExternalIDs[libovsdbops.NetworkKey.String()] != networkName {
 					return false
-				}
-				networkNodeRedirectCache, ok := cache.egressNodeRedirectsCache.cache[networkName]
-				if !ok || len(networkNodeRedirectCache) == 0 {
-					klog.Infof("syncStaleEgressReroutePolicy found invalid logical router policy (UUID: %s) because no assigned Nodes for EgressIP %s", item.UUID, eipName)
-					return true
 				}
 				extractedEgressIPName, _ := getEIPLRPObjK8MetaData(item.ExternalIDs)
 				if extractedEgressIPName == "" {
@@ -1625,6 +1635,17 @@ func (e *EgressIPController) syncStaleEgressReroutePolicy(cache egressIPCache) e
 					// remove if there's no reference to this EIP name
 					_, ok := cache.egressIPNameToPods[extractedEgressIPName]
 					return !ok
+				}
+				allNetworkNodeRedirectCache, ok := cache.egressNodeRedirectsCache.cache[networkName]
+				if !ok || len(allNetworkNodeRedirectCache) == 0 {
+					klog.Infof("syncStaleEgressReroutePolicy found invalid logical router policy (UUID: %s) because no assigned Nodes for EgressIP %s", item.UUID, eipName)
+					return true
+				}
+				networkNodeRedirectCache := limitToValidEgressNodes(eipName, allNetworkNodeRedirectCache)
+				if len(networkNodeRedirectCache) == 0 {
+					klog.Errorf("syncStaleEgressReroutePolicy could not find at least one node in the redirects "+
+						"cache after filtering for egress ip %q, UUID %q, programming error, removing logical router policy", eipName, item.UUID)
+					return true
 				}
 				splitMatch := strings.Split(item.Match, " ")
 				podIPStr := splitMatch[len(splitMatch)-1]
