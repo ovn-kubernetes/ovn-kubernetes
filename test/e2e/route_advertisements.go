@@ -214,37 +214,107 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 				}
 			}
 
-			ginkgo.By("queries to the external server are not SNATed (uses podIP)")
+			// Helper function to test pod to server connectivity and verify source IP
+			testClientPodToServerConnectivity := func(serverIPs []string, expectedIPs []string, serverDesc string) {
+				for idx, serverIP := range serverIPs {
+					ginkgo.By(fmt.Sprintf("Sending request to node IP %s "+
+						"and expecting to receive the same payload", serverIP))
+					cmd := fmt.Sprintf("curl --max-time 10 -g -q -s http://%s/clientip",
+						net.JoinHostPort(serverIP, "8080"),
+					)
+					framework.Logf("Testing pod to %s traffic with command %q", serverDesc, cmd)
+					stdout, err := e2epodoutput.RunHostCmdWithRetries(
+						clientPod.Namespace,
+						clientPod.Name,
+						cmd,
+						framework.Poll,
+						60*time.Second)
+					framework.ExpectNoError(err, fmt.Sprintf("Testing pod to %s traffic failed: %v", serverDesc, err))
+					if utilnet.IsIPv6String(expectedIPs[idx]) {
+						// For IPv6 addresses, need to handle the brackets in the output
+						outputIP := strings.TrimPrefix(strings.Split(stdout, "]:")[0], "[")
+						gomega.Expect(outputIP).To(gomega.Equal(expectedIPs[idx]),
+							fmt.Sprintf("Testing client pod to %s traffic failed while analysing output %v", serverDesc, stdout))
+					} else {
+						// Original IPv4 handling
+						gomega.Expect(strings.Split(stdout, ":")[0]).To(gomega.Equal(expectedIPs[idx]),
+							fmt.Sprintf("Testing client pod to %s traffic failed while analysing output %v", serverDesc, stdout))
+					}
+				}
+
+			}
+
+			// Get client pod IPs and node IPs
+			var clientPodIPs []string
+			var clientNodeIPs []string
+
 			podv4IP, podv6IP, err := podIPsForDefaultNetwork(f.ClientSet, f.Namespace.Name, clientPod.Name)
 			framework.ExpectNoError(err, fmt.Sprintf("Getting podIPs for pod %s failed: %v", clientPod.Name, err))
 			framework.Logf("Client pod IP address v4=%s, v6=%s", podv4IP, podv6IP)
-			for _, serverContainerIP := range serverContainerIPs {
-				ginkgo.By(fmt.Sprintf("Sending request to node IP %s "+
-					"and expecting to receive the same payload", serverContainerIP))
-				cmd := fmt.Sprintf("curl --max-time 10 -g -q -s http://%s/clientip",
-					net.JoinHostPort(serverContainerIP, "8080"),
-				)
-				framework.Logf("Testing pod to external traffic with command %q", cmd)
-				stdout, err := e2epodoutput.RunHostCmdWithRetries(
-					clientPod.Namespace,
-					clientPod.Name,
-					cmd,
-					framework.Poll,
-					60*time.Second)
-				framework.ExpectNoError(err, fmt.Sprintf("Testing pod to external traffic failed: %v", err))
-				expectedPodIP := podv4IP
-				if isIPv6Supported(f.ClientSet) && utilnet.IsIPv6String(serverContainerIP) {
-					expectedPodIP = podv6IP
-					// For IPv6 addresses, need to handle the brackets in the output
-					outputIP := strings.TrimPrefix(strings.Split(stdout, "]:")[0], "[")
-					gomega.Expect(outputIP).To(gomega.Equal(expectedPodIP),
-						fmt.Sprintf("Testing pod %s to external traffic failed while analysing output %v", echoClientPodName, stdout))
-				} else {
-					// Original IPv4 handling
-					gomega.Expect(strings.Split(stdout, ":")[0]).To(gomega.Equal(expectedPodIP),
-						fmt.Sprintf("Testing pod %s to external traffic failed while analysing output %v", echoClientPodName, stdout))
-				}
+			clientPodIPs = append(clientPodIPs, podv4IP)
+			clientPodIPs = append(clientPodIPs, podv6IP)
+
+			clientNode, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), clientPod.Spec.NodeName, metav1.GetOptions{})
+			framework.ExpectNoError(err)
+
+			var nodeIPv4, nodeIPv6 string
+			if isIPv6Supported(f.ClientSet) && utilnet.IsIPv6String(serverContainerIPs[0]) {
+				nodeIPv6 = e2enode.GetAddressesByTypeAndFamily(clientNode, corev1.NodeInternalIP, corev1.IPv6Protocol)[0]
+			} else {
+				nodeIPv4 = e2enode.GetAddressesByTypeAndFamily(clientNode, corev1.NodeInternalIP, corev1.IPv4Protocol)[0]
 			}
+			clientNodeIPs = append(clientNodeIPs, nodeIPv4)
+			clientNodeIPs = append(clientNodeIPs, nodeIPv6)
+
+			ginkgo.By("With default network being advertised, queries to the external server are not SNATed (uses podIP)")
+			testClientPodToServerConnectivity(serverContainerIPs, clientPodIPs, "external server pod")
+
+			ginkgo.By("Delete route advertisement")
+			_, err = e2ekubectl.RunKubectl("default", "delete", "ra", "default")
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Make sure default RA is deleted
+			_, err = e2ekubectl.RunKubectl("default", "get", "ra", "default")
+			gomega.Expect(err).To(gomega.HaveOccurred())
+
+			ginkgo.By("After default network is toggled to unadvertised, run test towards the external agnhost echo server again, egressing packets should be SNATed to pod's host nodeIP")
+			testClientPodToServerConnectivity(serverContainerIPs, clientNodeIPs, "external server container")
+
+			ginkgo.By("Add the default RA back to restore the original test setup")
+			ra := &rav1.RouteAdvertisements{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "default",
+				},
+				Spec: rav1.RouteAdvertisementsSpec{
+					NetworkSelectors: apitypes.NetworkSelectors{
+						apitypes.NetworkSelector{
+							NetworkSelectionType: apitypes.DefaultNetwork,
+						},
+					},
+					NodeSelector:             metav1.LabelSelector{},
+					FRRConfigurationSelector: metav1.LabelSelector{},
+					Advertisements: []rav1.AdvertisementType{
+						rav1.PodNetwork,
+					},
+				},
+			}
+
+			raClient, err := raclientset.NewForConfig(f.ClientConfig())
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			ra, err = raClient.K8sV1().RouteAdvertisements().Create(context.TODO(), ra, metav1.CreateOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			gomega.Eventually(func() string {
+				ra, err := raClient.K8sV1().RouteAdvertisements().Get(context.TODO(), ra.Name, metav1.GetOptions{})
+				if err != nil {
+					return ""
+				}
+				condition := meta.FindStatusCondition(ra.Status.Conditions, "Accepted")
+				if condition == nil {
+					return ""
+				}
+				return condition.Reason
+			}, 30*time.Second, time.Second).Should(gomega.Equal("Accepted"))
 		})
 	})
 })
