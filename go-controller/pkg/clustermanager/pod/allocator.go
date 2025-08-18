@@ -100,6 +100,11 @@ func (a *PodAllocator) Init() error {
 		)
 	}
 
+	klog.Infof("Initializing network %s pod annotation allocator MAC registry", a.netInfo.GetNetworkName())
+	if err := a.podAnnotationAllocator.InitializeMACRegistry(); err != nil {
+		return fmt.Errorf("failed to initialize MAC addresses registry: %w", err)
+	}
+
 	return nil
 }
 
