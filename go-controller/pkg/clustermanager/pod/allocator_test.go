@@ -592,6 +592,19 @@ func TestPodAllocator_reconcileForNAD(t *testing.T) {
 			expectError: `failed to update pod namespace/pod: failed to reserve MAC address "0a:0a:0a:0a:0a:0a" for owner "namespace/pod" on network attachment "namespace/nad": test reserve failure`,
 		},
 		{
+			name:        "should emit pod event when macRegistry fail to reserve pod's MAC due to MAC conflict",
+			macRegistry: &macRegistryStub{reserveErr: mac.ErrReserveMACConflict},
+			args: args{
+				new: &testPod{
+					scheduled: true,
+					// use predictable MAC address for testing.
+					network: &nadapi.NetworkSelectionElement{Namespace: "namespace", Name: "nad", MacRequest: "0a:0a:0a:0a:0a:0a"},
+				},
+			},
+			expectError:  `failed to update pod namespace/pod: failed to reserve MAC address "0a:0a:0a:0a:0a:0a" for owner "namespace/pod" on network attachment "namespace/nad": MAC address already in use`,
+			expectEvents: []string{`Warning ErrorAllocatingPod failed to update pod namespace/pod: failed to reserve MAC address "0a:0a:0a:0a:0a:0a" for owner "namespace/pod" on network attachment "namespace/nad": MAC address already in use`},
+		},
+		{
 			name:        "should NOT fail when macRegistry gets repeated reserve requests (same mac and owner)",
 			macRegistry: &macRegistryStub{reserveErr: mac.ErrMACReserved},
 			args: args{

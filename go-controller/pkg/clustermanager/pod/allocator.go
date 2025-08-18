@@ -19,6 +19,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
 	ipallocator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip/subnet"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/mac"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/pod"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
@@ -365,7 +366,8 @@ func (a *PodAllocator) allocatePodOnNAD(pod *corev1.Pod, nad string, network *ne
 
 	if err != nil {
 		if errors.Is(err, ipallocator.ErrFull) ||
-			errors.Is(err, ipallocator.ErrAllocated) {
+			errors.Is(err, ipallocator.ErrAllocated) ||
+			errors.Is(err, mac.ErrReserveMACConflict) {
 			a.recordPodErrorEvent(pod, err)
 		}
 		return err
