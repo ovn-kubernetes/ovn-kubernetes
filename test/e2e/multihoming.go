@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/netip"
 	"strings"
 	"time"
 
@@ -24,8 +23,6 @@ import (
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
 
-	ipgenerator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/ip"
-	util "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
@@ -35,8 +32,57 @@ import (
 const (
 	PolicyForAnnotation = "k8s.v1.cni.cncf.io/policy-for"
 	nodeHostnameKey     = "kubernetes.io/hostname"
-	fromHostSubnet      = "host" // tells the test to generate IPs from the host subnet.
+
+	externalNetworkSubnetV4 = "172.20.0.0/16"
+	externalNetworkSubnetV6 = "fd00:20::/64"
+
+	fromHostSubnet      = "from-host-subnet"      // the test will generate an IP from the host subnet.
+	fromExternalNetwork = "from-external-network" // the test will generate an IP from a subnet that the cluster is not aware of
 )
+
+// getNetworkInterfaceName extracts the interface name from a pod's network-status annotation
+// If the pod is host-networked, it returns eth0.
+// If the pod has attachments, it finds the interface for the specified network
+// If the pod has no attachments, it returns the default network interface
+func getNetworkInterfaceName(pod *v1.Pod, podConfig podConfiguration, netConfigName string) (string, error) {
+	var predicate func(nadapi.NetworkStatus) bool
+
+	if podConfig.hostNetwork {
+		return "eth0", nil
+	}
+
+	if len(podConfig.attachments) > 0 {
+		// Pod has attachments - find the specific network interface
+		expectedNetworkName := fmt.Sprintf("%s/%s", podConfig.namespace, netConfigName)
+		predicate = func(status nadapi.NetworkStatus) bool {
+			return status.Name == expectedNetworkName
+		}
+	} else {
+		// Pod has no attachments - find the default network interface
+		predicate = func(status nadapi.NetworkStatus) bool {
+			return status.Name == "ovn-kubernetes" || status.Default
+		}
+	}
+
+	networkStatuses, err := podNetworkStatus(pod, predicate)
+	if err != nil {
+		return "", fmt.Errorf("failed to get network status from pod %v: %w", pod, err)
+	}
+
+	if len(networkStatuses) == 0 {
+		if len(podConfig.attachments) > 0 {
+			return "", fmt.Errorf("no network interface found for network %s/%s", podConfig.namespace, netConfigName)
+		} else {
+			return "", fmt.Errorf("no default network interface found")
+		}
+	}
+
+	if len(networkStatuses) > 1 {
+		return "", fmt.Errorf("multiple network interfaces found matching criteria")
+	}
+
+	return networkStatuses[0].Interface, nil
+}
 
 var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 	const (
@@ -276,10 +322,11 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 		)
 
 		const (
-			clientPodName  = "client-pod"
-			clientIPOffset = 100
-			serverIPOffset = 102
-			port           = 9000
+			clientPodName          = "client-pod"
+			clientIPOffset         = 100
+			serverIPOffset         = 102
+			externalRouterIPOffset = 55
+			port                   = 9000
 		)
 
 		DescribeTable("attached to a localnet network mapped to external primary interface bridge", //nolint:lll
@@ -295,11 +342,9 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					clientPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[0].GetName()}
 					serverPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[1].GetName()}
 				}
-				netConfig := newNetworkAttachmentConfig(networkAttachmentConfigParams{
-					name:      secondaryNetworkName,
-					namespace: f.Namespace.Name,
-					topology:  "localnet",
-				})
+
+				netConfigParams.namespace = f.Namespace.Name
+				netConfig := newNetworkAttachmentConfig(netConfigParams)
 				if clientPodConfig.namespace == "" {
 					clientPodConfig.namespace = f.Namespace.Name
 				}
@@ -338,27 +383,46 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				serverPod := kickstartPod(cs, serverPodConfig)
 
 				By("instantiating the client pod")
-				kickstartPod(cs, clientPodConfig)
+				clientPod := kickstartPod(cs, clientPodConfig)
+
+				serverInterface, err := getNetworkInterfaceName(serverPod, serverPodConfig, netConfig.name)
+				Expect(err).NotTo(HaveOccurred(), "failed to extract server pod interface name")
+
+				clientInterface, err := getNetworkInterfaceName(clientPod, clientPodConfig, netConfig.name)
+				Expect(err).NotTo(HaveOccurred(), "failed to extract client pod interface name")
+
+				// Add external container that will act as external router for the localnet
+				if clientPodConfig.usesExternalRouter && clientPodConfig.attachments != nil ||
+					serverPodConfig.usesExternalRouter && serverPodConfig.attachments != nil {
+					By("instantiating the external container")
+					externalRouterName, err := createExternalRouter(providerCtx, cs, f, netConfig.vlanID, externalRouterIPOffset)
+					Expect(err).NotTo(HaveOccurred())
+
+					By("injecting routes via the external container")
+					err = injectStaticRoutesViaExternalContainer(f, cs, clientPodConfig, serverPodConfig,
+						clientInterface, serverInterface, externalRouterName, netConfig.vlanID)
+					Expect(err).NotTo(HaveOccurred())
+				}
 
 				// Check that the client pod can reach the server pod on the server localnet interface
 				var serverIPs []string
-				if serverPodConfig.hostNetwork {
-					serverIPs, err = podIPsFromStatus(cs, serverPodConfig.namespace, serverPodConfig.name)
-				} else {
+				if serverPodConfig.attachments != nil {
 					serverIPs, err = podIPsForAttachment(cs, serverPod.Namespace, serverPod.Name, netConfig.name)
-
+				} else {
+					serverIPs, err = podIPsFromStatus(cs, serverPodConfig.namespace, serverPodConfig.name)
 				}
 				Expect(err).NotTo(HaveOccurred())
 
 				for _, serverIP := range serverIPs {
-					By(fmt.Sprintf("asserting the *client* can contact the server pod exposed endpoint: %q on port %q", serverIP, port))
 					curlArgs := []string{}
 					pingArgs := []string{}
 					if clientPodConfig.attachments != nil {
 						// When the client is attached to a localnet, send probes from the localnet interface
-						curlArgs = []string{"--interface", "net1"}
-						pingArgs = []string{"-I", "net1"}
+						curlArgs = []string{"--interface", clientInterface}
+						pingArgs = []string{"-I", clientInterface}
 					}
+
+					By(fmt.Sprintf("asserting the *client* can contact the server pod exposed endpoint: %q on port %q", serverIP, port))
 					Eventually(func() error {
 						return reachServerPodFromClient(cs, serverPodConfig, clientPodConfig, serverIP, port, curlArgs...)
 					}, 2*time.Minute, 6*time.Second).Should(Succeed())
@@ -369,7 +433,8 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 					}, 2*time.Minute, 6*time.Second).Should(Succeed())
 				}
 			},
-			// We test here a setup with a localnet that uses IPs in the host subnet:
+
+			// The first setup we test is that of a localnet that uses IPs in the host subnet:
 			//                         +-----------------------+
 			//                         |     Kubernetes Node   |
 			//                         |       ovn-worker2     |
@@ -382,7 +447,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 			//                         |           |           |
 			//                         |           |           |
 			//                         |   podL (172.18.0.4)   |
-			//                         |       (localnet)      |
+			//                         |      (localnet)       |
 			//                         +-----------|-----------+
 			//                                     |
 			//                               host network
@@ -524,6 +589,92 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				},
 				true, // collocated on the same node
 				Label("STORY", "SDN-5345"),
+			),
+			// The second setup we test configures: a localnet that uses a VLAN, an external router
+			// that acts as gateway for the localnet pod for traffic destined to the host network.
+			// We implement the external router as an external container, where we create a VLAN interface
+			// on top of eth0 and assign to it an IP in the subnet in use by the localnet.
+			//
+			//                            +-----------------------+
+			//                            |     Kubernetes Node   |
+			//                            |       ovn-worker2     |
+			//                            |                       |
+			//    podA (10.244.1.10/24)---+-------[ br-int ]------+--- podL (172.20.0.4/16, net1)
+			//    (default net)           |           |           |     (localnet, VLAN 10)
+			//                            |       [ br-ex ]       |
+			//                            |        172.18.0.2     |
+			//                            +-----------|-----------+
+			//                                        |
+			//                                  host network
+			//                                  172.18.0.0/16
+			//                                        |
+			//                           +------------------------+
+			//                           |     external router    |
+			//                           |                        |
+			//                           |  eth0: 172.18.x.x      |
+			//                           |  eth0.10: 172.20.0.55  |
+			//                           +------------------------+
+			//
+			// Packet path (ping podA → podL):
+			//   podA (10.244.1.10)
+			//     → br-int
+			//       → br-ex (172.18.0.2, SNAT to node IP)
+			//         → eth0 (external router, 172.18.x.x)
+			//           → eth0.10 (external router, 172.20.0.55)
+			//             → eth0 (external router)
+			//               → br-ex (172.18.0.2)
+			//                 → br-int
+			//                   → podL (172.20.0.4)
+			//
+			// Reply traffic follows the reverse path.
+
+			Entry(
+				"can be reached by a client pod in the default network on a different node, when the localnet uses a VLAN and an external router",
+				networkAttachmentConfigParams{
+					name:     secondaryNetworkName,
+					topology: "localnet",
+					vlanID:   localnetVLANID,
+				},
+				podConfiguration{ // client on default network
+					name:         clientPodName,
+					isPrivileged: true,
+				},
+				podConfiguration{ // server attached to localnet secondary network
+					attachments: []nadapi.NetworkSelectionElement{{
+						Name: secondaryNetworkName,
+					}},
+					name:                podName,
+					containerCmd:        httpServerContainerCmd(port),
+					ipRequestFromSubnet: fromExternalNetwork,
+					isPrivileged:        true,
+					usesExternalRouter:  true,
+				},
+				false, // scheduled on distinct Nodes
+				Label("BUG", "OCPBUGS-59657"),
+			),
+			Entry(
+				"can be reached by a client pod in the default network on the same node, when the localnet uses a VLAN and an external router",
+				networkAttachmentConfigParams{
+					name:     secondaryNetworkName,
+					topology: "localnet",
+					vlanID:   localnetVLANID,
+				},
+				podConfiguration{ // client on default network
+					name:         clientPodName,
+					isPrivileged: true,
+				},
+				podConfiguration{ // server attached to localnet secondary network
+					attachments: []nadapi.NetworkSelectionElement{{
+						Name: secondaryNetworkName,
+					}},
+					name:                podName,
+					containerCmd:        httpServerContainerCmd(port),
+					ipRequestFromSubnet: fromExternalNetwork,
+					isPrivileged:        true,
+					usesExternalRouter:  true,
+				},
+				true, // scheduled on the same node
+				Label("BUG", "OCPBUGS-59657"),
 			),
 		)
 	})
@@ -2182,8 +2333,10 @@ ip a add %[4]s/24 dev %[2]s
 
 func kickstartPod(cs clientset.Interface, configuration podConfiguration) *v1.Pod {
 	podNamespacedName := fmt.Sprintf("%s/%s", configuration.namespace, configuration.name)
+	var pod *v1.Pod
+	var err error
 	By(fmt.Sprintf("instantiating pod %q", podNamespacedName))
-	createdPod, err := cs.CoreV1().Pods(configuration.namespace).Create(
+	_, err = cs.CoreV1().Pods(configuration.namespace).Create(
 		context.Background(),
 		generatePodSpec(configuration),
 		metav1.CreateOptions{},
@@ -2192,13 +2345,13 @@ func kickstartPod(cs clientset.Interface, configuration podConfiguration) *v1.Po
 
 	By(fmt.Sprintf("asserting that pod %q reaches the `Ready` state", podNamespacedName))
 	EventuallyWithOffset(1, func() v1.PodPhase {
-		updatedPod, err := cs.CoreV1().Pods(configuration.namespace).Get(context.Background(), configuration.name, metav1.GetOptions{})
+		pod, err = cs.CoreV1().Pods(configuration.namespace).Get(context.Background(), configuration.name, metav1.GetOptions{})
 		if err != nil {
 			return v1.PodFailed
 		}
-		return updatedPod.Status.Phase
+		return pod.Status.Phase
 	}, 2*time.Minute, 6*time.Second).Should(Equal(v1.PodRunning))
-	return createdPod
+	return pod // return the updated pod
 }
 
 func createNads(f *framework.Framework, nadClient nadclient.K8sCniCncfIoV1Interface, extraNamespace *v1.Namespace, netConfig networkAttachmentConfig) error {
@@ -2249,65 +2402,37 @@ func createMultiNetworkPolicy(mnpClient mnpclient.K8sCniCncfIoV1beta1Interface, 
 	return err
 }
 
-func computeIPWithOffset(baseAddr string, increment int) (string, error) {
-	addr, err := netip.ParsePrefix(baseAddr)
-	if err != nil {
-		return "", fmt.Errorf("Failed to parse CIDR %v", err)
-	}
-
-	ip := addr.Addr()
-
-	for i := 0; i < increment; i++ {
-		ip = ip.Next()
-		if !ip.IsValid() {
-			return "", fmt.Errorf("overflow: IP address exceeds bounds")
-		}
-	}
-
-	return netip.PrefixFrom(ip, addr.Bits()).String(), nil
-}
-
-// Given a node name and an offset, generateIPsFromNodePrimaryIfAddr returns an IPv4 and an IPv6 address
-// at the provided offset from the primary interface addresses found on the node.
-func generateIPsFromNodePrimaryIfAddr(cs clientset.Interface, nodeName string, offset int) ([]string, error) {
-	var newAddresses []string
-
-	node, err := cs.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("Failed to get node %s: %v", nodeName, err)
-	}
-
-	nodeIfAddr, err := util.GetNodeIfAddrAnnotation(node)
+// generateIPsFromNodePrimaryNetworkAddresses returns IPv4 and IPv6 addresses at the provided offset from the primary interface network addresses found on the node
+func generateIPsFromNodePrimaryNetworkAddresses(cs clientset.Interface, nodeName string, offset int) ([]string, error) {
+	hostSubnets, err := getHostSubnetsForNode(cs, nodeName)
 	if err != nil {
 		return nil, err
 	}
-	nodeAddresses := []string{}
-	if nodeIfAddr.IPv4 != "" {
-		nodeAddresses = append(nodeAddresses, nodeIfAddr.IPv4)
-	}
-	if nodeIfAddr.IPv6 != "" {
-		nodeAddresses = append(nodeAddresses, nodeIfAddr.IPv6)
-	}
-	for _, nodeAddress := range nodeAddresses {
-		newAddresses = append(newAddresses, nodeAddress)
-	}
-	return generateIPsFromSubnets(newAddresses, offset)
+	return generateIPsFromSubnets(hostSubnets, offset)
 }
 
 func addIPRequestToPodConfig(cs clientset.Interface, podConfig *podConfiguration, offset int) error {
 	nodeName, ok := podConfig.nodeSelector[nodeHostnameKey]
 	if !ok {
-		return fmt.Errorf("No node selector found on podConfig")
+		return fmt.Errorf("no node selector found on podConfig")
 	}
 
 	var (
-		IPsToRequest []string
+		ipsToRequest []string
 		err          error
 	)
 
 	switch podConfig.ipRequestFromSubnet {
 	case fromHostSubnet:
-		IPsToRequest, err = generateIPsFromNodePrimaryIfAddr(cs, nodeName, offset)
+		ipsToRequest, err = generateIPsFromNodePrimaryNetworkAddresses(cs, nodeName, offset)
+
+	case fromExternalNetwork:
+		subnets := filterCIDRs(cs, externalNetworkSubnetV4, externalNetworkSubnetV6)
+		if len(subnets) == 0 {
+			return fmt.Errorf("no external network subnets available for IP family support")
+		}
+		ipsToRequest, err = generateIPsFromSubnets(subnets, offset)
+
 	default:
 		return fmt.Errorf("unknown or unimplemented subnet source: %q", podConfig.ipRequestFromSubnet)
 	}
@@ -2316,30 +2441,7 @@ func addIPRequestToPodConfig(cs clientset.Interface, podConfig *podConfiguration
 		return err
 	}
 	for i := range podConfig.attachments {
-		podConfig.attachments[i].IPRequest = IPsToRequest
+		podConfig.attachments[i].IPRequest = ipsToRequest
 	}
 	return nil
-}
-
-func generateIPsFromSubnets(subnets []string, offset int) ([]string, error) {
-	var addrs []string
-	for _, s := range subnets {
-		s = strings.TrimSpace(s)
-		if s == "" {
-			continue
-		}
-		ipGen, err := ipgenerator.NewIPGenerator(s)
-		if err != nil {
-			return nil, err
-		}
-		ip, err := ipGen.GenerateIP(offset)
-		if err != nil {
-			return nil, err
-		}
-		addrs = append(addrs, ip.String())
-	}
-	if len(addrs) == 0 {
-		return nil, fmt.Errorf("no valid subnets provided")
-	}
-	return addrs, nil
 }

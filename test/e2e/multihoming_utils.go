@@ -24,6 +24,8 @@ import (
 	mnpapi "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/apis/k8s.cni.cncf.io/v1beta1"
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	utilnet "k8s.io/utils/net"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/ip"
 )
 
 func netCIDR(netCIDR string, netPrefixLengthPerNode int) string {
@@ -72,7 +74,7 @@ func filterIPs(cs clientset.Interface, ips ...string) []string {
 }
 
 func filterIPsAndJoin(cs clientset.Interface, ips string) string {
-	return joinStrings(filterIPs(cs,  strings.Split(ips, ",")...)...)
+	return joinStrings(filterIPs(cs, strings.Split(ips, ",")...)...)
 }
 
 func getNetCIDRSubnet(netCIDR string) (string, error) {
@@ -200,6 +202,7 @@ type podConfiguration struct {
 	requiresExtraNamespace bool
 	hostNetwork            bool
 	ipRequestFromSubnet    string
+	usesExternalRouter     bool
 }
 
 func generatePodSpec(config podConfiguration) *v1.Pod {
@@ -405,7 +408,11 @@ func podIPsForAttachment(k8sClient clientset.Interface, podNamespace string, pod
 	if err != nil {
 		return nil, err
 	}
-	if len(netStatus) != 1 {
+
+	if len(netStatus) == 0 {
+		return nil, fmt.Errorf("no status entry for attachment %s on pod %s", attachmentName, namespacedName(podNamespace, podName))
+	}
+	if len(netStatus) > 1 {
 		return nil, fmt.Errorf("more than one status entry for attachment %s on pod %s", attachmentName, namespacedName(podNamespace, podName))
 	}
 	if len(netStatus[0].IPs) == 0 {
@@ -767,4 +774,28 @@ func getPodAnnotationIPsForAttachmentByIndex(k8sClient clientset.Interface, podN
 		return "", fmt.Errorf("attachment for network %q with more than two IPs", attachmentName)
 	}
 	return ipnets[index].IP.String(), nil
+}
+
+// generateIPsFromSubnets generates IP addresses from the given subnets with the specified offset
+func generateIPsFromSubnets(subnets []string, offset int) ([]string, error) {
+	var addrs []string
+	for _, s := range subnets {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		ipGen, err := ip.NewIPGenerator(s)
+		if err != nil {
+			return nil, err
+		}
+		ip, err := ipGen.GenerateIP(offset)
+		if err != nil {
+			return nil, err
+		}
+		addrs = append(addrs, ip.String())
+	}
+	if len(addrs) == 0 {
+		return nil, fmt.Errorf("no valid subnets provided")
+	}
+	return addrs, nil
 }
