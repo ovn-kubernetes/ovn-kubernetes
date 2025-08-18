@@ -44,9 +44,6 @@ service.kubernetes.io/headless
 # TO BE FIXED BY https://github.com/kubernetes/kubernetes/pull/95351
 should resolve connection reset issue #74839
 
-# TO BE FIXED BY https://github.com/kubernetes/kubernetes/pull/129049
-Services should be able to switch session affinity for NodePort service
-
 # api flakes
 sig-api-machinery
 
