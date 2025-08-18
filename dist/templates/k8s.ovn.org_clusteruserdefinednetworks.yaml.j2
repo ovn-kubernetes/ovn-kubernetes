@@ -298,6 +298,21 @@ spec:
                       rule: '!has(self.infrastructureSubnets) || !has(self.defaultGatewayIPs)
                         || self.defaultGatewayIPs.all(ip, self.infrastructureSubnets.exists(subnet,
                         cidr(subnet).containsIP(ip)))'
+                    - fieldPath: .reservedSubnets
+                      message: reservedSubnets must be subnetworks of the networks
+                        specified in the subnets field
+                      rule: '!has(self.reservedSubnets) || self.reservedSubnets.all(e,
+                        self.subnets.exists(s, cidr(s).containsCIDR(cidr(e))))'
+                    - fieldPath: .infrastructureSubnets
+                      message: infrastructureSubnets must be subnetworks of the networks
+                        specified in the subnets field
+                      rule: '!has(self.infrastructureSubnets) || self.infrastructureSubnets.all(e,
+                        self.subnets.exists(s, cidr(s).containsCIDR(cidr(e))))'
+                    - message: infrastructureSubnets and reservedSubnets must not
+                        overlap
+                      rule: '!has(self.infrastructureSubnets) || !has(self.reservedSubnets)
+                        || self.infrastructureSubnets.all(infra, !self.reservedSubnets.exists(reserved,
+                        cidr(infra).containsCIDR(reserved) || cidr(reserved).containsCIDR(infra)))'
                   layer3:
                     description: Layer3 is the Layer3 topology configuration.
                     properties:

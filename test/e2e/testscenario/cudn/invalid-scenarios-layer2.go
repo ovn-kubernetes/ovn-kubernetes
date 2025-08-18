@@ -115,100 +115,98 @@ spec:
         mode: Disabled
 `,
 	},
-	// TODO: enable the below test case once the following issue is resolved https://github.com/kubernetes/kubernetes/issues/130441 and the validation is enabled
-	// 	{
-	// 		Description: "infrastructureSubnets and reservedSubnets must not overlap",
-	// 		ExpectedErr: `infrastructureSubnets and reservedSubnets must not overlap`,
-	// 		Manifest: `
-	// apiVersion: k8s.ovn.org/v1
-	// kind: ClusterUserDefinedNetwork
-	// metadata:
-	//   name: infra-reserved-overlap-fail
-	// spec:
-	//   namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
-	//   network:
-	//     topology: Layer2
-	//     layer2:
-	//       role: Primary
-	//       subnets: ["192.168.1.0/24"]
-	//       infrastructureSubnets: ["192.168.1.0/28"]
-	//       reservedSubnets: ["192.168.1.8/29"]
-	// `,
-	// 	},
-	// 	{
-	// 		Description: "dual-stack infrastructureSubnets and reservedSubnets overlap",
-	// 		ExpectedErr: `infrastructureSubnets and reservedSubnets must not overlap`,
-	// 		Manifest: `
-	// apiVersion: k8s.ovn.org/v1
-	// kind: ClusterUserDefinedNetwork
-	// metadata:
-	//   name: dual-stack-overlap-fail
-	// spec:
-	//   namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
-	//   network:
-	//     topology: Layer2
-	//     layer2:
-	//       role: Primary
-	//       subnets: ["192.168.1.0/24", "2001:db8::/64"]
-	//       infrastructureSubnets: ["192.168.1.0/28", "2001:db8::/80"]
-	//       reservedSubnets: ["192.168.1.8/29", "2001:db8::/80"]
-	// `,
-	// 	},
-	//	{
-	//		Description: "reservedSubnets must be subnetworks of subnets",
-	//		ExpectedErr: `reservedSubnets must be subnetworks of the networks specified in the subnets field`,
-	//		Manifest: `
-	//apiVersion: k8s.ovn.org/v1
-	//kind: ClusterUserDefinedNetwork
-	//metadata:
-	//  name: reserved-subnets-outside-fail
-	//spec:
-	//  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
-	//  network:
-	//    topology: Layer2
-	//    layer2:
-	//      role: Secondary
-	//      subnets: ["192.168.1.0/24"]
-	//      reservedSubnets: ["10.0.0.0/28"]
-	//`,
-	//	},
-	//	{
-	//		Description: "infrastructureSubnets must be subnetworks of subnets",
-	//		ExpectedErr: `infrastructureSubnets must be subnetworks of the networks specified in the subnets field`,
-	//		Manifest: `
-	//apiVersion: k8s.ovn.org/v1
-	//kind: ClusterUserDefinedNetwork
-	//metadata:
-	//  name: infra-subnets-outside-fail
-	//spec:
-	//  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
-	//  network:
-	//    topology: Layer2
-	//    layer2:
-	//      role: Primary
-	//      subnets: ["192.168.1.0/24"]
-	//      infrastructureSubnets: ["10.0.0.0/28"]
-	//`,
-	//	},
-	//	{
-	//		Description: "IPv6 reservedSubnet outside main subnet",
-	//		ExpectedErr: `reservedSubnets must be subnetworks of the networks specified in the subnets field`,
-	//		Manifest: `
-	//apiVersion: k8s.ovn.org/v1
-	//kind: ClusterUserDefinedNetwork
-	//metadata:
-	//  name: ipv6-reserved-subnet-fail
-	//spec:
-	//  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
-	//  network:
-	//    topology: Layer2
-	//    layer2:
-	//      role: Secondary
-	//      subnets: ["2001:db8::/64"]
-	//      reservedSubnets: ["2001:db9::/80"]
-	//`,
-	//	},
-
+	{
+		Description: "infrastructureSubnets and reservedSubnets must not overlap",
+		ExpectedErr: `infrastructureSubnets and reservedSubnets must not overlap`,
+		Manifest: `
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  name: infra-reserved-overlap-fail
+spec:
+  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
+  network:
+    topology: Layer2
+    layer2:
+      role: Primary
+      subnets: ["192.168.1.0/24"]
+      infrastructureSubnets: ["192.168.1.0/28"]
+      reservedSubnets: ["192.168.1.8/29"]
+`,
+	},
+	{
+		Description: "dual-stack infrastructureSubnets and reservedSubnets overlap",
+		ExpectedErr: `infrastructureSubnets and reservedSubnets must not overlap`,
+		Manifest: `
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  name: dual-stack-overlap-fail
+spec:
+  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
+  network:
+    topology: Layer2
+    layer2:
+      role: Primary
+      subnets: ["192.168.1.0/24", "2001:db8::/64"]
+      infrastructureSubnets: ["192.168.1.0/28", "2001:db8::/80"]
+      reservedSubnets: ["192.168.1.8/29", "2001:db8::/80"]
+`,
+	},
+	{
+		Description: "reservedSubnets must be subnetworks of subnets",
+		ExpectedErr: `reservedSubnets must be subnetworks of the networks specified in the subnets field`,
+		Manifest: `
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  name: reserved-subnets-outside-fail
+spec:
+  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
+  network:
+    topology: Layer2
+    layer2:
+      role: Secondary
+      subnets: ["192.168.1.0/24"]
+      reservedSubnets: ["10.0.0.0/28"]
+`,
+	},
+	{
+		Description: "infrastructureSubnets must be subnetworks of subnets",
+		ExpectedErr: `infrastructureSubnets must be subnetworks of the networks specified in the subnets field`,
+		Manifest: `
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  name: infra-subnets-outside-fail
+spec:
+  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
+  network:
+    topology: Layer2
+    layer2:
+      role: Primary
+      subnets: ["192.168.1.0/24"]
+      infrastructureSubnets: ["10.0.0.0/28"]
+`,
+	},
+	{
+		Description: "IPv6 reservedSubnet outside main subnet",
+		ExpectedErr: `reservedSubnets must be subnetworks of the networks specified in the subnets field`,
+		Manifest: `
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  name: ipv6-reserved-subnet-fail
+spec:
+  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
+  network:
+    topology: Layer2
+    layer2:
+      role: Secondary
+      subnets: ["2001:db8::/64"]
+      reservedSubnets: ["2001:db9::/80"]
+`,
+	},
 	{
 		Description: "IPv6 defaultGatewayIP outside subnet",
 		ExpectedErr: `defaultGatewayIPs must belong to one of the subnets specified in the subnets field`,
