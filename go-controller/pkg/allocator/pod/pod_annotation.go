@@ -524,6 +524,8 @@ func AddRoutesGatewayIP(
 			if !util.IsNetworkSegmentationSupportEnabled() || !netinfo.IsPrimaryNetwork() {
 				return nil
 			}
+			var nodeLRPMAC net.HardwareAddr
+			var hasV4 bool
 			for _, podIfAddr := range podAnnotation.IPs {
 				isIPv6 := utilnet.IsIPv6CIDR(podIfAddr)
 				nodeSubnet, err := util.MatchFirstIPNetFamily(isIPv6, nodeSubnets)
@@ -538,18 +540,30 @@ func AddRoutesGatewayIP(
 				if network != nil && len(network.GatewayRequest) == 0 { // if specific default route for pod was not requested then add gatewayIP
 					podAnnotation.Gateways = append(podAnnotation.Gateways, gatewayIPnet.IP)
 				}
+				if !isIPv6 {
+					hasV4 = true
+					nodeLRPMAC = util.IPAddrToHWAddr(gatewayIPnet.IP)
+				} else if !hasV4 {
+					nodeLRPMAC = util.IPAddrToHWAddr(gatewayIPnet.IP)
+				}
 			}
 			// Until https://github.com/ovn-kubernetes/ovn-kubernetes/issues/4876 is fixed, it is limited to IC only
 			if config.OVNKubernetesFeature.EnableInterconnect {
 				if _, isIPv6Mode := netinfo.IPMode(); isIPv6Mode {
-					joinAddrs, err := udn.GetGWRouterIPs(node, netinfo.GetNetInfo())
-					if err != nil {
-						if util.IsAnnotationNotSetError(err) {
-							return types.NewSuppressedError(err)
+					var routerPortMac net.HardwareAddr
+					if !util.UDNLayer2NodeUsesTransitRouter(node) {
+						joinAddrs, err := udn.GetGWRouterIPs(node, netinfo.GetNetInfo())
+						if err != nil {
+							if util.IsAnnotationNotSetError(err) {
+								return types.NewSuppressedError(err)
+							}
+							return fmt.Errorf("failed parsing node gateway router join addresses, network %q, %w", netinfo.GetNetworkName(), err)
 						}
-						return fmt.Errorf("failed parsing node gateway router join addresses, network %q, %w", netinfo.GetNetworkName(), err)
+						routerPortMac = util.IPAddrToHWAddr(joinAddrs[0].IP)
+					} else {
+						routerPortMac = nodeLRPMAC
 					}
-					podAnnotation.GatewayIPv6LLA = util.HWAddrToIPv6LLA(util.IPAddrToHWAddr(joinAddrs[0].IP))
+					podAnnotation.GatewayIPv6LLA = util.HWAddrToIPv6LLA(routerPortMac)
 				}
 			}
 			return nil
