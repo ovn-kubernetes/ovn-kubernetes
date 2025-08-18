@@ -9,9 +9,11 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
+	k8snet "k8s.io/utils/net"
 
 	allocmac "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/mac"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kubevirt"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 // macOwner compose the owner identifier reserved for MAC addresses management.
@@ -60,4 +62,48 @@ func (allocator *PodAnnotationAllocator) ReleasePodReservedMacAddress(pod *corev
 	}
 
 	return nil
+}
+
+// InitializeMACRegistry initializes MAC reservation tracker with MAC addresses in use in the network.
+func (allocator *PodAnnotationAllocator) InitializeMACRegistry() error {
+	networkName := allocator.netInfo.GetNetworkName()
+	if allocator.macRegistry == nil {
+		klog.V(5).Infof("No MAC registry defined for network %s, skipping initialization", networkName)
+		return nil
+	}
+
+	// reserve MACs used by infra first, to prevent network disruptions to connected pods in case of conflict.
+	infraMACs := calculateSubnetsInfraMACAddresses(allocator.netInfo)
+	for owner, mac := range infraMACs {
+		if err := allocator.macRegistry.Reserve(owner, mac); err != nil {
+			return fmt.Errorf("failed to reserve infra MAC %q for owner %q on network %q: %w",
+				mac, owner, networkName, err)
+		}
+		klog.V(5).Infof("Reserved MAC %q on initialization, for infra %q on network %q", mac, owner, networkName)
+	}
+
+	return nil
+}
+
+// calculateSubnetsInfraMACAddresses return map of the network infrastructure mac addresses and owner name.
+// It calculates the gateway and management ports MAC addresses from their IP address.
+func calculateSubnetsInfraMACAddresses(netInfo util.NetInfo) map[string]net.HardwareAddr {
+	reservedMACs := map[string]net.HardwareAddr{}
+	for _, subnet := range netInfo.Subnets() {
+		if subnet.CIDR == nil {
+			continue
+		}
+
+		gwIP := netInfo.GetNodeGatewayIP(subnet.CIDR)
+		gwMAC := util.IPAddrToHWAddr(gwIP.IP)
+		gwKey := fmt.Sprintf("gw-v%s", k8snet.IPFamilyOf(gwIP.IP))
+		reservedMACs[gwKey] = gwMAC
+
+		mgmtIP := netInfo.GetNodeManagementIP(subnet.CIDR)
+		mgmtMAC := util.IPAddrToHWAddr(mgmtIP.IP)
+		mgmtKey := fmt.Sprintf("mgmt-v%s", k8snet.IPFamilyOf(mgmtIP.IP))
+		reservedMACs[mgmtKey] = mgmtMAC
+	}
+
+	return reservedMACs
 }
