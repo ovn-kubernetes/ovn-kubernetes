@@ -55,11 +55,9 @@ var _ = Describe("Network Segmentation: Default network multus annotation", func
 			Spec: udnv1.UserDefinedNetworkSpec{
 				Topology: udnv1.NetworkTopologyLayer2,
 				Layer2: &udnv1.Layer2Config{
-					Role: udnv1.NetworkRolePrimary,
-					Subnets: filterDualStackCIDRs(f.ClientSet, []udnv1.CIDR{
-						udnv1.CIDR("103.0.0.0/16"),
-						udnv1.CIDR("2014:100:200::0/60"),
-					}),
+					Role:    udnv1.NetworkRolePrimary,
+					Subnets: filterDualStackCIDRs(f.ClientSet, []udnv1.CIDR{"103.0.0.0/16", "2014:100:200::0/60"}),
+					IPAM:    &udnv1.IPAMConfig{Mode: udnv1.IPAMEnabled, Lifecycle: udnv1.IPAMLifecyclePersistent},
 				},
 			},
 		}
