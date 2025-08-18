@@ -11,7 +11,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/scheme"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 
 	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
@@ -97,6 +99,26 @@ var _ = Describe("Network Segmentation: Default network multus annotation", feat
 		Expect(netStatus[0].IPs).To(ConsistOf(exposedIPs), "Should have the IPs specified in the default network annotation")
 		Expect(strings.ToLower(netStatus[0].Mac)).To(Equal(strings.ToLower(tc.mac)), "Should have the MAC specified in the default network annotation")
 
+		By("Create second pod with default network annotation requesting the same MAC request")
+		pod2 := e2epod.NewAgnhostPod(f.Namespace.Name, "pod-mac-conflict", nil, nil, nil)
+		pod2.Annotations = map[string]string{"v1.multus-cni.io/default-network": fmt.Sprintf(`[{"name":"default", "namespace":"ovn-kubernetes", "mac":%q}]`, tc.mac)}
+		pod2.Spec.Containers[0].Command = []string{"sleep", "infinity"}
+		pod2, err = f.ClientSet.CoreV1().Pods(f.Namespace.Name).Create(context.Background(), pod2, metav1.CreateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+
+		By("Asserting second pod has event attached reflecting MAC conflict error")
+		Eventually(func(g Gomega) []corev1.Event {
+			events, err := f.ClientSet.CoreV1().Events(pod2.Namespace).SearchWithContext(context.Background(), scheme.Scheme, pod2)
+			g.Expect(err).NotTo(HaveOccurred())
+			return events.Items
+		}).WithTimeout(time.Minute * 1).WithPolling(time.Second * 3).Should(ContainElement(SatisfyAll(
+			HaveField("Type", "Warning"),
+			HaveField("Reason", "ErrorAllocatingPod"),
+			HaveField("Message", ContainSubstring("MAC address already in use")),
+		)))
+
+		By("Assert second pod not running")
+		Expect(pod2.Status.Phase).ToNot(Equal(corev1.PodRunning))
 	},
 
 		Entry("should create the pod with the specified static IP and MAC address", testCase{
