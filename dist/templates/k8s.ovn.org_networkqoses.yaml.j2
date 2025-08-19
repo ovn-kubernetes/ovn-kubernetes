@@ -635,11 +635,17 @@ spec:
                 - networkSelectionType
                 x-kubernetes-list-type: map
                 x-kubernetes-validations:
-                - message: networkSelector is immutable
+                - message: networkSelectors are immutable
                   rule: self == oldSelf
                 - message: Unsupported network selection type
                   rule: self.all(sel, sel.networkSelectionType == 'ClusterUserDefinedNetworks'
                     || sel.networkSelectionType == 'NetworkAttachmentDefinitions')
+                - message: networkSelector of networkAttachmentDefinitionSelector
+                    is required
+                  rule: self.filter(sel, sel.networkSelectionType == 'NetworkAttachmentDefinitions').all(sel,
+                    has(sel.networkAttachmentDefinitionSelector) && has(sel.networkAttachmentDefinitionSelector.networkSelector)
+                    && (has(sel.networkAttachmentDefinitionSelector.networkSelector.matchExpressions)
+                    || has(sel.networkAttachmentDefinitionSelector.networkSelector.matchLabels)))
               podSelector:
                 description: |-
                   podSelector applies the NetworkQoS rule only to the pods in the namespace whose label
@@ -698,6 +704,7 @@ spec:
                 type: integer
             required:
             - egress
+            - networkSelectors
             - priority
             type: object
           status:
