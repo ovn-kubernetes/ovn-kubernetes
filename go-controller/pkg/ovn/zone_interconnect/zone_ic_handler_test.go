@@ -371,7 +371,7 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				config.Kubernetes.HostNetworkNamespace = ""
 
 				var libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
-				libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+				_, libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				err = createTransitSwitchPortBindings(libovsdbOvnSBClient, types.DefaultNetworkName, &testNode1, &testNode2, &testNode3)
@@ -412,7 +412,7 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				config.Kubernetes.HostNetworkNamespace = ""
 
 				var libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
-				libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+				_, libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				gomega.Expect(libovsdbOvnSBClient.Connected()).To(gomega.BeTrue())
 				gomega.Expect(libovsdbOvnNBClient.Connected()).To(gomega.BeTrue())
@@ -496,7 +496,7 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				config.Kubernetes.HostNetworkNamespace = ""
 
 				var libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
-				libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+				_, libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				err = createTransitSwitchPortBindings(libovsdbOvnSBClient, types.DefaultNetworkName, &testNode1, &testNode2, &testNode3)
@@ -548,7 +548,7 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				config.Kubernetes.HostNetworkNamespace = ""
 
 				var libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
-				libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+				_, libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				err = createTransitSwitchPortBindings(libovsdbOvnSBClient, types.DefaultNetworkName, &testNode1, &testNode2, &testNode3)
@@ -662,7 +662,7 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				config.Kubernetes.HostNetworkNamespace = ""
 
 				var libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
-				libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+				_, libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				err = createTransitSwitchPortBindings(libovsdbOvnSBClient, "blue", &testNode1, &testNode2, &testNode3)
@@ -702,7 +702,7 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				config.Kubernetes.HostNetworkNamespace = ""
 
 				var libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
-				libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+				_, libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				err = createTransitSwitchPortBindings(libovsdbOvnSBClient, "blue", &testNode1, &testNode2, &testNode3)
@@ -826,7 +826,7 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				config.Kubernetes.HostNetworkNamespace = ""
 
 				var libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
-				libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+				_, libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				zoneICHandler := map[string]*ZoneInterconnectHandler{}
@@ -881,7 +881,7 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				config.Kubernetes.HostNetworkNamespace = ""
 
 				var libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
-				libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+				_, libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				testNode4 := corev1.Node{
@@ -964,7 +964,7 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				config.Kubernetes.HostNetworkNamespace = ""
 
 				var libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
-				libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+				_, libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				testNode4 := corev1.Node{

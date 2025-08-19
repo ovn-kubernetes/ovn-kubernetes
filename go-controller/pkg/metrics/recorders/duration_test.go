@@ -53,7 +53,7 @@ func getKubeClient(nodeCount int) *kube.Kube {
 }
 
 func setupOvn(nbData libovsdbtest.TestSetup) (client.Client, client.Client, *libovsdbtest.Context) {
-	nbClient, sbClient, cleanup, err := libovsdbtest.NewNBSBTestHarness(nbData)
+	_, nbClient, sbClient, cleanup, err := libovsdbtest.NewNBSBTestHarness(nbData)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	return sbClient, nbClient, cleanup
 }

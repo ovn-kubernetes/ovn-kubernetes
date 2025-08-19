@@ -922,9 +922,10 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 		stopChan chan struct{}
 		wg       *sync.WaitGroup
 
-		nbClient        libovsdbclient.Client
-		sbClient        libovsdbclient.Client
-		libovsdbCleanup *libovsdbtest.Context
+		ovsdbLocalClient libovsdbclient.Client
+		nbClient         libovsdbclient.Client
+		sbClient         libovsdbclient.Client
+		libovsdbCleanup  *libovsdbtest.Context
 
 		dbSetup        libovsdbtest.TestSetup
 		node1          tNode
@@ -1067,7 +1068,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 		err = nodeAnnotator.Run()
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-		nbClient, sbClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+		ovsdbLocalClient, nbClient, sbClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 		f, err = factory.NewMasterWatchFactory(fakeClient)
@@ -1082,6 +1083,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			stopChan,
 			nil,
 			networkmanager.Default().Interface(),
+			ovsdbLocalClient,
 			nbClient,
 			sbClient,
 			recorder,
@@ -2162,7 +2164,7 @@ func TestController_syncNodes(t *testing.T) {
 				NBData: tt.initialNBDB,
 				SBData: tt.initialSBDB,
 			}
-			nbClient, sbClient, libovsdbCleanup, err := libovsdbtest.NewNBSBTestHarness(dbSetup)
+			ovsdbLocalClient, nbClient, sbClient, libovsdbCleanup, err := libovsdbtest.NewNBSBTestHarness(dbSetup)
 			if err != nil {
 				t.Fatalf("Error creating libovsdb test harness: %v", err)
 			}
@@ -2174,6 +2176,7 @@ func TestController_syncNodes(t *testing.T) {
 				stopChan,
 				nil,
 				networkmanager.Default().Interface(),
+				ovsdbLocalClient,
 				nbClient,
 				sbClient,
 				record.NewFakeRecorder(0),
@@ -2267,7 +2270,7 @@ func TestController_deleteStaleNodeChassis(t *testing.T) {
 			dbSetup := libovsdbtest.TestSetup{
 				SBData: tt.initialSBDB,
 			}
-			nbClient, sbClient, libovsdbCleanup, err := libovsdbtest.NewNBSBTestHarness(dbSetup)
+			ovsdbLocalClient, nbClient, sbClient, libovsdbCleanup, err := libovsdbtest.NewNBSBTestHarness(dbSetup)
 			if err != nil {
 				t.Fatalf("Error creating libovsdb test harness: %v", err)
 			}
@@ -2279,6 +2282,7 @@ func TestController_deleteStaleNodeChassis(t *testing.T) {
 				stopChan,
 				nil,
 				networkmanager.Default().Interface(),
+				ovsdbLocalClient,
 				nbClient,
 				sbClient,
 				record.NewFakeRecorder(0),

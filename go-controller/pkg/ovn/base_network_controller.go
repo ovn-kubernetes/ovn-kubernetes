@@ -59,6 +59,9 @@ type CommonNetworkControllerInfo struct {
 	// event recorder used to post events to k8s
 	recorder record.EventRecorder
 
+	// libovsdb local ovsdb client interface
+	ovsLocalClient libovsdbclient.Client
+
 	// libovsdb northbound client interface
 	nbClient libovsdbclient.Client
 
@@ -321,7 +324,7 @@ func getNetworkControllerName(netName string) string {
 
 // NewCommonNetworkControllerInfo creates CommonNetworkControllerInfo shared by controllers
 func NewCommonNetworkControllerInfo(client clientset.Interface, kube *kube.KubeOVN, wf *factory.WatchFactory,
-	recorder record.EventRecorder, nbClient libovsdbclient.Client, sbClient libovsdbclient.Client,
+	recorder record.EventRecorder, ovsLocalClient libovsdbclient.Client, nbClient libovsdbclient.Client, sbClient libovsdbclient.Client,
 	podRecorder *metrics.PodRecorder, SCTPSupport, multicastSupport, svcTemplateSupport bool) (*CommonNetworkControllerInfo, error) {
 	zone, err := libovsdbutil.GetNBZone(nbClient)
 	if err != nil {
@@ -332,6 +335,7 @@ func NewCommonNetworkControllerInfo(client clientset.Interface, kube *kube.KubeO
 		kube:               kube,
 		watchFactory:       wf,
 		recorder:           recorder,
+		ovsLocalClient:     ovsLocalClient,
 		nbClient:           nbClient,
 		sbClient:           sbClient,
 		podRecorder:        podRecorder,
@@ -933,6 +937,23 @@ func (bnc *BaseNetworkController) getClusterPortGroupName(base string) string {
 // set in the node's annotation matches with the zone name
 // set in the OVN Northbound database (to which this controller is connected to).
 func (bnc *BaseNetworkController) GetLocalZoneNodes() ([]*corev1.Node, error) {
+	return bnc.GetNodes(func(node *corev1.Node) bool {
+		return bnc.isLocalZoneNode(node)
+	})
+}
+
+// GetRemoteZoneNodes returns the list of remote zone nodes
+// A node is considered a remote zone node if the zone name
+// set in the node's annotation does not match with the zone name
+// set in the OVN Northbound database (to which this controller is connected to).
+func (bnc *BaseNetworkController) GetRemoteZoneNodes() ([]*corev1.Node, error) {
+	return bnc.GetNodes(func(node *corev1.Node) bool {
+		return !bnc.isLocalZoneNode(node)
+	})
+}
+
+// GetNodes returns the list of nodes that match the given predicate function.
+func (bnc *BaseNetworkController) GetNodes(predicate func(*corev1.Node) bool) ([]*corev1.Node, error) {
 	nodes, err := bnc.watchFactory.GetNodes()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get nodes: %v", err)
@@ -940,7 +961,7 @@ func (bnc *BaseNetworkController) GetLocalZoneNodes() ([]*corev1.Node, error) {
 
 	var zoneNodes []*corev1.Node
 	for _, n := range nodes {
-		if bnc.isLocalZoneNode(n) {
+		if predicate(n) {
 			zoneNodes = append(zoneNodes, n)
 		}
 	}

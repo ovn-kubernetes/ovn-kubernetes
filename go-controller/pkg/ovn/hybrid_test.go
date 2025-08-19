@@ -206,8 +206,8 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			err = f.Start()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			var libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
-			libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+			var libovsdbLocalClient, libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
+			libovsdbLocalClient, libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			clusterController, err := NewOvnController(
@@ -216,6 +216,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				stopChan,
 				nil,
 				networkmanager.Default().Interface(),
+				libovsdbLocalClient,
 				libovsdbOvnNBClient,
 				libovsdbOvnSBClient,
 				record.NewFakeRecorder(10),
@@ -368,8 +369,8 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 					expectedRouterLBGroup,
 				},
 			}
-			var libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
-			libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+			var libovsdbLocalClient, libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
+			libovsdbLocalClient, libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			expectedDatabaseState := []libovsdbtest.TestData{ovnClusterRouterLRP}
@@ -381,6 +382,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				stopChan,
 				nil,
 				networkmanager.Default().Interface(),
+				libovsdbLocalClient,
 				libovsdbOvnNBClient,
 				libovsdbOvnSBClient,
 				record.NewFakeRecorder(10),
@@ -675,8 +677,8 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			dbSetup := libovsdbtest.TestSetup{
 				NBData: expectedDatabaseStateWithHybridNode,
 			}
-			var libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
-			libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+			var libovsdbLocalClient, libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
+			libovsdbLocalClient, libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			clusterController, err := NewOvnController(
@@ -685,6 +687,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				stopChan,
 				nil,
 				networkmanager.Default().Interface(),
+				libovsdbLocalClient,
 				libovsdbOvnNBClient,
 				libovsdbOvnSBClient,
 				record.NewFakeRecorder(10),
@@ -851,8 +854,8 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 					expectedRouterLBGroup,
 				},
 			}
-			var libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
-			libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+			var libovsdbLocalClient, libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
+			libovsdbLocalClient, libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			expectedDatabaseState := []libovsdbtest.TestData{ovnClusterRouterLRP}
@@ -864,6 +867,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				stopChan,
 				nil,
 				networkmanager.Default().Interface(),
+				libovsdbLocalClient,
 				libovsdbOvnNBClient,
 				libovsdbOvnSBClient,
 				record.NewFakeRecorder(10),
@@ -1145,8 +1149,8 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 					expectedRouterLBGroup,
 				},
 			}
-			var libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
-			libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+			var libovsdbLocalClient, libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
+			libovsdbLocalClient, libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			clusterController, err := NewOvnController(
@@ -1155,6 +1159,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				stopChan,
 				nil,
 				networkmanager.Default().Interface(),
+				libovsdbLocalClient,
 				libovsdbOvnNBClient,
 				libovsdbOvnSBClient,
 				record.NewFakeRecorder(10),
@@ -1353,8 +1358,8 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 					expectedRouterLBGroup,
 				},
 			}
-			var libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
-			libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+			var libovsdbLocalClient, libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
+			libovsdbLocalClient, libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			clusterController, err := NewOvnController(
@@ -1363,6 +1368,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				stopChan,
 				nil,
 				networkmanager.Default().Interface(),
+				libovsdbLocalClient,
 				libovsdbOvnNBClient,
 				libovsdbOvnSBClient,
 				record.NewFakeRecorder(10),
@@ -1567,8 +1573,8 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 					expectedStaticMACBinding,
 				},
 			}
-			var libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
-			libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+			var libovsdbLocalClient, libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
+			libovsdbLocalClient, libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			clusterController, err := NewOvnController(
@@ -1577,6 +1583,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 				stopChan,
 				nil,
 				networkmanager.Default().Interface(),
+				libovsdbLocalClient,
 				libovsdbOvnNBClient,
 				libovsdbOvnSBClient,
 				record.NewFakeRecorder(10),
