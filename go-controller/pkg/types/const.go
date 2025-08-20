@@ -73,6 +73,7 @@ const (
 	TransitSwitch               = "transit_switch"
 	TransitSwitchToRouterPrefix = "tstor-"
 	RouterToTransitSwitchPrefix = "rtots-"
+	TransitRouter               = "transit_router"
 
 	// DefaultACLTier Priorities
 
