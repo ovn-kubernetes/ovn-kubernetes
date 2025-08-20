@@ -155,7 +155,7 @@ const (
 	// }",
 	ovnUDNLayer2NodeGRLRPTunnelIDs = "k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids"
 
-	OvnUDNLayer2NodeUsesTransitRouter = "k8s.ovn.org/udn-layer2-node-uses-transit-router"
+	Layer2TopologyVersion = "k8s.ovn.org/layer2-topology-version"
 
 	// ovnNodeEncapIPs is used to indicate encap IPs set on the node
 	OVNNodeEncapIPs = "k8s.ovn.org/node-encap-ips"
@@ -510,6 +510,10 @@ func UpdateUDNLayer2NodeGRLRPTunnelIDs(annotations map[string]string, netName st
 		return nil, err
 	}
 	return annotations, nil
+}
+
+func UDNLayer2NodeUsesTransitRouter(node *corev1.Node) bool {
+	return node.Annotations[Layer2TopologyVersion] == "2.0"
 }
 
 // PrimaryIfAddrAnnotation represents IPv4 and/or IPv6 addresses stored in node annotations.
