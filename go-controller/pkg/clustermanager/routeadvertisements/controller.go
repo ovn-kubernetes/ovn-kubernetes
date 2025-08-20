@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	nadtypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
@@ -82,6 +83,9 @@ type Controller struct {
 	nsController   controllerutil.Controller
 
 	nm networkmanager.Interface
+
+	raCacheMutex   sync.RWMutex
+	raNetworkCache map[string]*raNetworkCacheEntry
 }
 
 // NewController builds a controller that reconciles RouteAdvertisements
@@ -102,6 +106,7 @@ func NewController(
 		nadClient:       ovnClient.NetworkAttchDefClient,
 		raClient:        ovnClient.RouteAdvertisementsClient,
 		nm:              nm,
+		raNetworkCache:  make(map[string]*raNetworkCacheEntry),
 	}
 
 	handleError := func(key string, errorstatus error) error {
@@ -282,6 +287,7 @@ func (c *Controller) reconcile(name string) error {
 }
 
 func (c *Controller) reconcileRouteAdvertisements(name string, ra *ratypes.RouteAdvertisements) (bool, error) {
+	c.invalidateRACache(name)
 	// generate FRRConfigurations
 	frrConfigs, nads, cfgErr := c.generateFRRConfigurations(ra)
 	if cfgErr != nil && !errors.Is(cfgErr, errPending) {
@@ -1215,6 +1221,7 @@ func (c *Controller) reconcileFRRConfiguration(key string) error {
 }
 
 func (c *Controller) reconcileNAD(key string) error {
+	c.invalidateCacheForNAD(key)
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
 		klog.Errorf("Failed spliting NAD reconcile key %q: %v", key, err)
@@ -1355,6 +1362,73 @@ func checkVRFNetworkIPNetSliceOverlaps(vrfNetworkIPNets []vrfNetworkIPNet) []str
 	return []string{}
 }
 
+type raNetworkCacheEntry struct {
+	vrfSubnetsMap map[string][]vrfNetworkIPNet
+	dependentNADs sets.Set[string]
+}
+
+func (c *Controller) getCachedRANetworkInfo(raName string) (*raNetworkCacheEntry, bool) {
+	c.raCacheMutex.RLock()
+	defer c.raCacheMutex.RUnlock()
+	entry, exists := c.raNetworkCache[raName]
+	return entry, exists
+}
+
+func (c *Controller) setCachedRANetworkInfo(raName string, entry *raNetworkCacheEntry) {
+	c.raCacheMutex.Lock()
+	defer c.raCacheMutex.Unlock()
+	c.raNetworkCache[raName] = entry
+}
+
+func (c *Controller) invalidateRACache(raName string) {
+	c.raCacheMutex.Lock()
+	defer c.raCacheMutex.Unlock()
+	delete(c.raNetworkCache, raName)
+}
+
+func (c *Controller) invalidateCacheForNAD(nadName string) {
+	c.raCacheMutex.Lock()
+	defer c.raCacheMutex.Unlock()
+	for raName, entry := range c.raNetworkCache {
+		if entry.dependentNADs.Has(nadName) {
+			delete(c.raNetworkCache, raName)
+		}
+	}
+}
+
+// updateCachedRANetworkInfoEntry builds and caches network info for an RA.
+func (c *Controller) updateCachedRANetworkInfoEntry(ra *ratypes.RouteAdvertisements) (*raNetworkCacheEntry, error) {
+	nads, err := c.getSelectedNADs(ra.Spec.NetworkSelectors)
+	if err != nil {
+		return nil, err
+	}
+	if len(nads) == 0 {
+		return nil, nil
+	}
+
+	selectedNetworks, err := c.buildSelectedNetworkInfo(nads, sets.New(ra.Spec.Advertisements...))
+	if err != nil {
+		return nil, err
+	}
+
+	dependentNADs := sets.New[string]()
+	for _, nad := range nads {
+		dependentNADs.Insert(nad.Namespace + "/" + nad.Name)
+	}
+
+	vrfIPNetsMap, err := createNetworkVRFsIPNetsMap(ra.Spec.TargetVRF, selectedNetworks)
+	if err != nil {
+		return nil, err
+	}
+
+	cache := &raNetworkCacheEntry{
+		vrfSubnetsMap: vrfIPNetsMap,
+		dependentNADs: dependentNADs,
+	}
+	c.setCachedRANetworkInfo(ra.Name, cache)
+	return cache, nil
+}
+
 // checkCrossRAOverlaps checks if subnets from current RA overlap with subnets from other RAs in the same VRF
 func (c *Controller) checkCrossRAOverlaps(ra *ratypes.RouteAdvertisements, targetVRF string, currentRAVRFNetworkIPNets []vrfNetworkIPNet) error {
 	allRAs, err := c.raLister.List(labels.Everything())
@@ -1372,29 +1446,24 @@ func (c *Controller) checkCrossRAOverlaps(ra *ratypes.RouteAdvertisements, targe
 			continue
 		}
 
-		nads, err := c.getSelectedNADs(otherRA.Spec.NetworkSelectors)
-		if err != nil {
-			return err
-		}
-		if len(nads) == 0 {
-			continue
-		}
-		otherRASelectedNetworks, err := c.buildSelectedNetworkInfo(nads, sets.New(otherRA.Spec.Advertisements...))
-		if err != nil {
-			// If we can't get networks from another RA, log but don't fail
-			// This could happen if the other RA has configuration issues
-			klog.V(4).Infof("Failed to get selected networks from RouteAdvertisement %q for cross overlap check with RouteAdvertisement %q: %v", otherRA.Name, ra.Name, err)
-			continue
+		cache, exists := c.getCachedRANetworkInfo(otherRA.Name)
+		if !exists {
+			var err error
+			// We build cache entries on-demand rather than amortizing the cost across RA reconciliations.
+			// This ensures deterministic conflict detection during startup scenarios where RAs may be reconciled
+			// in any order. The trade-off is that cache invalidation events (e.g., NAD, node changes) cause the
+			// next RA reconciliation to pay a higher cost rebuilding multiple cache entries.
+			cache, err = c.updateCachedRANetworkInfoEntry(otherRA)
+			if err != nil {
+				klog.V(4).Infof("Failed to get selected networks from RouteAdvertisement %q for cross overlap check with RouteAdvertisement %q: %v", otherRA.Name, ra.Name, err)
+				continue
+			}
+			if cache == nil {
+				continue
+			}
 		}
 
-		otherVRFSubnetsMap, err := createNetworkVRFsIPNetsMap(otherRA.Spec.TargetVRF, otherRASelectedNetworks)
-		if err != nil {
-			// If we can't get otherVRFSubnetsMap from another RA, log but don't fail
-			// This could happen if the other RA has configuration issues
-			klog.V(4).Infof("Failed to get other VRF Subnets from RouteAdvertisement %q for cross overlap check with RouteAdvertisement %q: %v", otherRA.Name, ra.Name, err)
-			continue
-		}
-		otherVRFNetworkIPNets, hasMatchingVRF := otherVRFSubnetsMap[targetVRF]
+		otherVRFNetworkIPNets, hasMatchingVRF := cache.vrfSubnetsMap[targetVRF]
 		if !hasMatchingVRF || len(otherVRFNetworkIPNets) == 0 {
 			continue
 		}
