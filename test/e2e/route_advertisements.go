@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/template"
 
@@ -35,6 +36,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/dynamic"
@@ -46,6 +48,7 @@ import (
 	e2eservice "k8s.io/kubernetes/test/e2e/framework/service"
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	utilnet "k8s.io/utils/net"
+	"k8s.io/utils/ptr"
 )
 
 const (
@@ -74,7 +77,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 
 	ginkgo.When("a client ovnk pod targeting an external server is created", func() {
 
-		var clientPod *corev1.Pod
+		var clientPod, nodePortServicePod *corev1.Pod
 		var clientPodNodeName string
 		var err error
 
@@ -179,12 +182,12 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 			}
 
 			// Helper function to test pod to server connectivity and verify source IP
-			testClientPodToServerConnectivity := func(serverIPs []string, expectedIPs []string, serverDesc string) {
+			testClientPodToServerConnectivity := func(serverIPs []string, portNumber string, expectedIPs []string, serverDesc string) {
 				for idx, serverIP := range serverIPs {
 					ginkgo.By(fmt.Sprintf("Sending request to node IP %s "+
 						"and expecting to receive the same payload", serverIP))
 					cmd := fmt.Sprintf("curl --max-time 10 -g -q -s http://%s/clientip",
-						net.JoinHostPort(serverIP, "8080"),
+						net.JoinHostPort(serverIP, portNumber),
 					)
 					framework.Logf("Testing pod to %s traffic with command %q", serverDesc, cmd)
 					stdout, err := e2epodoutput.RunHostCmdWithRetries(
@@ -208,9 +211,8 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 
 			}
 
-			// Get client pod IPs and node IPs
-			var clientPodIPs []string
-			var clientNodeIPs []string
+			// Get client pod IPs and its host's nodeIPs, get the nodeIPs for the node where the nodePort service is running
+			var clientPodIPs, clientNodeIPs, NodePortServiceNodeIPs []string
 
 			podv4IP, podv6IP, err := podIPsForDefaultNetwork(f.ClientSet, f.Namespace.Name, clientPod.Name)
 			framework.ExpectNoError(err, fmt.Sprintf("Getting podIPs for pod %s failed: %v", clientPod.Name, err))
@@ -230,21 +232,73 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 			clientNodeIPs = append(clientNodeIPs, nodeIPv4)
 			clientNodeIPs = append(clientNodeIPs, nodeIPv6)
 
+			ginkgo.By("Creating a pod on a second node")
+			// Add labels so the service can select this pod
+			podLabels := map[string]string{
+				"app": "internal-server-pod",
+			}
+			nodePortServicePod, err = createGenericPodWithLabel(f, "interal-server-pod", nodes.Items[2].Name, f.Namespace.Name,
+				[]string{"/agnhost", "netexec", "--http-port=8080"}, podLabels)
+			framework.ExpectNoError(err)
+
+			// Add required security context to comply with PodSecurity "restricted" policy
+			for i := range nodePortServicePod.Spec.Containers {
+				if nodePortServicePod.Spec.Containers[i].SecurityContext == nil {
+					nodePortServicePod.Spec.Containers[i].SecurityContext = &v1.SecurityContext{}
+				}
+
+				// Set required security context fields
+				nodePortServicePod.Spec.Containers[i].SecurityContext.AllowPrivilegeEscalation = ptr.To(false)
+				nodePortServicePod.Spec.Containers[i].SecurityContext.RunAsNonRoot = ptr.To(true)
+				nodePortServicePod.Spec.Containers[i].SecurityContext.RunAsUser = ptr.To(int64(1000))
+				nodePortServicePod.Spec.Containers[i].SecurityContext.Capabilities = &v1.Capabilities{
+					Drop: []v1.Capability{"ALL"},
+				}
+				nodePortServicePod.Spec.Containers[i].SecurityContext.SeccompProfile = &v1.SeccompProfile{
+					Type: v1.SeccompProfileTypeRuntimeDefault,
+				}
+			}
+
+			ginkgo.By("Creating the nodePort service")
+			servicePortTCP := rand.Intn(32767-30000) + 30000
+			echoServiceName := "internal-echo-service"
+			svc := &v1.Service{
+				ObjectMeta: metav1.ObjectMeta{Name: echoServiceName},
+				Spec: v1.ServiceSpec{
+					Ports: []v1.ServicePort{
+						{
+							Name:       "tcp-port",
+							NodePort:   int32(servicePortTCP), // External port on ALL nodes
+							Port:       8080,                  // Service port (same as pod port)
+							TargetPort: intstr.FromInt(8080),  // Pod port
+							Protocol:   v1.ProtocolTCP,
+						},
+					},
+					Selector: map[string]string{"app": "internal-server-pod"}, // ✅ Match the test pod labels
+					Type:     v1.ServiceTypeNodePort,
+				},
+			}
+			svc, err = f.ClientSet.CoreV1().Services(f.Namespace.Name).Create(context.TODO(), svc, metav1.CreateOptions{})
+			framework.ExpectNoError(err)
+
+			NodePortServiceNode, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), nodePortServicePod.Spec.NodeName, metav1.GetOptions{})
+			framework.ExpectNoError(err)
+
+			if isIPv6Supported(f.ClientSet) && utilnet.IsIPv6String(serverContainerIPs[0]) {
+				nodeIPv6 = e2enode.GetAddressesByTypeAndFamily(NodePortServiceNode, corev1.NodeInternalIP, corev1.IPv6Protocol)[0]
+			} else {
+				nodeIPv4 = e2enode.GetAddressesByTypeAndFamily(NodePortServiceNode, corev1.NodeInternalIP, corev1.IPv4Protocol)[0]
+			}
+			NodePortServiceNodeIPs = append(NodePortServiceNodeIPs, nodeIPv4)
+			NodePortServiceNodeIPs = append(NodePortServiceNodeIPs, nodeIPv6)
+
 			ginkgo.By("With default network being advertised, queries to the external server are not SNATed (uses podIP)")
-			testClientPodToServerConnectivity(serverContainerIPs, clientPodIPs, "external server pod")
+			testClientPodToServerConnectivity(serverContainerIPs, "8080", clientPodIPs, "external server pod")
 
-			ginkgo.By("Delete route advertisement")
-			_, err = e2ekubectl.RunKubectl("default", "delete", "ra", "default")
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			ginkgo.By("With default network being advertised, queries to nodeport service are SNATed (uses nodeIP)")
+			testClientPodToServerConnectivity(NodePortServiceNodeIPs, strconv.Itoa(servicePortTCP), clientNodeIPs, "client pod to nodeport service")
 
-			// Make sure default RA is deleted
-			_, err = e2ekubectl.RunKubectl("default", "get", "ra", "default")
-			gomega.Expect(err).To(gomega.HaveOccurred())
-
-			ginkgo.By("After default network is toggled to unadvertised, run test towards the external agnhost echo server again, egressing packets should be SNATed to pod's host nodeIP")
-			testClientPodToServerConnectivity(serverContainerIPs, clientNodeIPs, "external server container")
-
-			ginkgo.By("Add the default RA back to restore the original test setup")
+			// defer add default network RA back to restore to the original test setup
 			ra := &rav1.RouteAdvertisements{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "default",
@@ -262,23 +316,39 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 					},
 				},
 			}
-
 			raClient, err := raclientset.NewForConfig(f.ClientConfig())
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			ra, err = raClient.K8sV1().RouteAdvertisements().Create(context.TODO(), ra, metav1.CreateOptions{})
+
+			defer func() {
+				ra, err = raClient.K8sV1().RouteAdvertisements().Create(context.TODO(), ra, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Eventually(func() string {
+					ra, err := raClient.K8sV1().RouteAdvertisements().Get(context.TODO(), ra.Name, metav1.GetOptions{})
+					if err != nil {
+						return ""
+					}
+					condition := meta.FindStatusCondition(ra.Status.Conditions, "Accepted")
+					if condition == nil {
+						return ""
+					}
+					return condition.Reason
+				}, 30*time.Second, time.Second).Should(gomega.Equal("Accepted"))
+			}()
+
+			ginkgo.By("Delete route advertisement")
+			_, err = e2ekubectl.RunKubectl("default", "delete", "ra", "default")
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			gomega.Eventually(func() string {
-				ra, err := raClient.K8sV1().RouteAdvertisements().Get(context.TODO(), ra.Name, metav1.GetOptions{})
-				if err != nil {
-					return ""
-				}
-				condition := meta.FindStatusCondition(ra.Status.Conditions, "Accepted")
-				if condition == nil {
-					return ""
-				}
-				return condition.Reason
-			}, 30*time.Second, time.Second).Should(gomega.Equal("Accepted"))
+			// Make sure default RA is deleted
+			_, err = e2ekubectl.RunKubectl("default", "get", "ra", "default")
+			gomega.Expect(err).To(gomega.HaveOccurred())
+
+			ginkgo.By("After default network is toggled to unadvertised, run test towards the external agnhost echo server from client podagain, egressing packets should be SNATed to pod's host nodeIP")
+			testClientPodToServerConnectivity(serverContainerIPs, "8080", clientNodeIPs, "external server container")
+
+			ginkgo.By("After default network is toggled to unadvertised, run test towards nodeport service from client pod, egressing packets should be SNATed to pod's host nodeIP")
+			testClientPodToServerConnectivity(NodePortServiceNodeIPs, strconv.Itoa(servicePortTCP), clientNodeIPs, "client pod to nodeport service")
+
 		})
 	})
 })
