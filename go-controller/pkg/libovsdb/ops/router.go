@@ -443,6 +443,42 @@ func CreateOrAddNextHopsToLogicalRouterPolicyWithPredicateOps(nbClient libovsdbc
 	return m.CreateOrUpdateOps(ops, opModels...)
 }
 
+func ReplaceNextHopsForLogicalRouterPolicyWithPredicateOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, p logicalRouterPolicyPredicate,
+	oldNextHop, newNextHop string) ([]ovsdb.Operation, error) {
+	lrps, err := FindLogicalRouterPoliciesWithPredicate(nbClient, p)
+	if err != nil {
+		return nil, err
+	}
+	for _, lrp := range lrps {
+		lrp.Nexthops = []string{oldNextHop}
+		opModel := operationModel{
+			Model:            lrp,
+			OnModelMutations: []interface{}{&lrp.Nexthops},
+			ErrNotFound:      false,
+			BulkOp:           false,
+		}
+
+		m := newModelClient(nbClient)
+		var err error
+		ops, err = m.DeleteOps(ops, opModel)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get delete old nexthop %s ops: %w", oldNextHop, err)
+		}
+		lrp.Nexthops = []string{newNextHop}
+		opModel = operationModel{
+			Model:            lrp,
+			OnModelMutations: []interface{}{&lrp.Nexthops},
+			ErrNotFound:      false,
+			BulkOp:           true,
+		}
+		ops, err = m.CreateOrUpdateOps(ops, opModel)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get delete old nexthop %s ops: %w", oldNextHop, err)
+		}
+	}
+	return ops, nil
+}
+
 // DeleteNextHopsFromLogicalRouterPolicyOps removes the Nexthops from the
 // provided logical router policies.
 func DeleteNextHopsFromLogicalRouterPolicyOps(nbClient libovsdbclient.Client, ops []ovsdb.Operation, routerName string, lrps []*nbdb.LogicalRouterPolicy, nextHops ...string) ([]ovsdb.Operation, error) {
