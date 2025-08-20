@@ -174,13 +174,14 @@ type EgressIPController struct {
 	// used as a locking mechanism to serialize egress IP processing on a per egress IP basis
 	// the order of locking should always be egressIPCache, then podAssignment, then nodeZoneState
 	egressIPCache *syncmap.SyncMap[bool]
-	// nodeUpdateMutex is used for two reasons:
+	// nodeUpdateMutex is used for three reasons:
 	// (1) to ensure safe handling of node ip address updates. VIP addresses are
 	// dynamic and might move across nodes.
 	// (2) used in ensureDefaultNoRerouteQoSRules function to ensure
 	// creating QoS rules is thread safe since otherwise when two nodes are added
 	// at the same time by two different threads we end up creating duplicate
 	// QoS rules in database due to libovsdb cache race
+	// (3) to update nextHop during layer2 topology upgrade
 	nodeUpdateMutex *sync.Mutex
 	// podAssignment is a cache used for keeping track of which egressIP status
 	// has been set up for each pod. The key is defined by getPodKey
@@ -3247,6 +3248,56 @@ func (e *EgressIPController) ensureRouterPoliciesForNetwork(ni util.NetInfo, nod
 		if err := libovsdbutil.CreateDefaultRouteToExternal(e.nbClient, routerName,
 			ni.GetNetworkScopedGWRouterName(localNode), subnetEntries, gatewayIPs); err != nil {
 			return fmt.Errorf("failed to create route to external for network %s: %v", ni.GetNetworkName(), err)
+		}
+	}
+	return nil
+}
+
+// updateNodeNextHop updates the next hop IP for reroute policies on the node's logical router.
+// Only used during layer2 topology upgrade to change gwIP to the transit routerIP
+func (e *EgressIPController) updateNodeNextHop(ni util.NetInfo, node *corev1.Node) error {
+	e.nodeUpdateMutex.Lock()
+	defer e.nodeUpdateMutex.Unlock()
+	transitRouterInfo, err := getTransitRouterInfo(node)
+	if err != nil {
+		return err
+	}
+	gwIPs, err := udn.GetGWRouterIPs(node, ni)
+	if err != nil {
+		return fmt.Errorf("failed to get gateway router IPs for node %s: %w", node.Name, err)
+	}
+	for _, transitIP := range transitRouterInfo.gatewayRouterNets {
+		gwIP, err := util.MatchFirstIPNetFamily(utilnet.IsIPv6(transitIP.IP), gwIPs)
+		if err != nil {
+			return fmt.Errorf("failed to find a gateway router IP for node %s that matches the transit IP %v family: %w",
+				node.Name, transitIP, err)
+		}
+		// replace reroute policies with the new next hop IP
+		ops, err := libovsdbops.ReplaceNextHopForLogicalRouterPolicyWithPredicateOps(
+			e.nbClient, nil, func(policy *nbdb.LogicalRouterPolicy) bool {
+				if policy.Priority != types.EgressIPReroutePriority {
+					return false
+				}
+				// Restrict to this network and controller
+				if policy.ExternalIDs[libovsdbops.NetworkKey.String()] != ni.GetNetworkName() ||
+					policy.ExternalIDs[libovsdbops.OwnerControllerKey.String()] != e.controllerName ||
+					policy.ExternalIDs[libovsdbops.OwnerTypeKey.String()] != libovsdbops.EgressIPOwnerType {
+					return false
+				}
+				for _, nextHop := range policy.Nexthops {
+					if nextHop == gwIP.IP.String() {
+						return true
+					}
+				}
+				return false
+			}, gwIP.IP.String(), transitIP.IP.String())
+		if err != nil {
+			return fmt.Errorf("failed to build update reroute policies ops for node %s with transit IP %s: %v",
+				node.Name, transitIP.IP.String(), err)
+		}
+		if _, err = libovsdbops.TransactAndCheck(e.nbClient, ops); err != nil {
+			return fmt.Errorf("failed to update reroute policies for node %s with transit IP %s: %v",
+				node.Name, transitIP.IP.String(), err)
 		}
 	}
 	return nil
