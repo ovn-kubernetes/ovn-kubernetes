@@ -155,6 +155,9 @@ const (
 	// }",
 	ovnUDNLayer2NodeGRLRPTunnelIDs = "k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids"
 
+	Layer2TopologyVersion    = "k8s.ovn.org/layer2-topology-version"
+	TransitRouterTopoVersion = "2.0"
+
 	// ovnNodeEncapIPs is used to indicate encap IPs set on the node
 	OVNNodeEncapIPs = "k8s.ovn.org/node-encap-ips"
 

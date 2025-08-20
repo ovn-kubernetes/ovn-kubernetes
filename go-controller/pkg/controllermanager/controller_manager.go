@@ -9,6 +9,8 @@ import (
 
 	"github.com/containernetworking/cni/pkg/types"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
@@ -252,8 +254,8 @@ func NewControllerManager(ovnClient *util.OVNClientset, wf *factory.WatchFactory
 		wg:               wg,
 		multicastSupport: config.EnableMulticast,
 	}
-
 	var err error
+
 	cm.networkManager = networkmanager.Default()
 	if config.OVNKubernetesFeature.EnableMultiNetwork {
 		cm.networkManager, err = networkmanager.NewForZone(config.Default.Zone, cm, wf)
@@ -422,6 +424,10 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 	}
 	klog.Infof("Waiting for node in zone sync took: %s", time.Since(start))
 
+	if err = cm.setTopologyType(); err != nil {
+		return fmt.Errorf("failed to set layer2 topology type: %w", err)
+	}
+
 	cm.configureMetrics(cm.stopChan)
 
 	err = cm.configureSCTPSupport()
@@ -535,4 +541,91 @@ func (cm *ControllerManager) configureAdvertisedNetworkIsolation() error {
 	addressSetFactory := addressset.NewOvnAddressSetFactory(cm.nbClient, config.IPv4Mode, config.IPv6Mode)
 	_, err := addressSetFactory.EnsureAddressSet(ovn.GetAdvertisedNetworkSubnetsAddressSetDBIDs())
 	return err
+}
+
+func (cm *ControllerManager) setTopologyType() error {
+	nodes, err := cm.kube.KClient.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("unable to get nodes from informer while waiting for node zone sync")
+	}
+	// set it to true and check if all the nodes in the zone already have annotation
+	config.Layer2UsesTransitRouter = true
+	for _, node := range nodes.Items {
+		if util.GetNodeZone(&node) == config.Default.Zone && node.Annotations[util.Layer2TopologyVersion] != util.TransitRouterTopoVersion {
+			// at least one node doesn't have the annotation
+			config.Layer2UsesTransitRouter = false
+		}
+	}
+	if config.Layer2UsesTransitRouter {
+		// all nodes are already using new topology, no need to do anything extra
+		return nil
+	}
+
+	// Transit router is not used yet, check if we can switch to the new topology now.
+	// Find all layer2 switches and check if they have any running pods.
+	layer2Switches, err := libovsdbops.FindLogicalSwitchesWithPredicate(cm.nbClient, func(ls *nbdb.LogicalSwitch) bool {
+		return ls.ExternalIDs[ovntypes.TopologyExternalID] == ovntypes.Layer2Topology
+	})
+	if err != nil {
+		return fmt.Errorf("failed to find layer2 switches: %w", err)
+	}
+	for _, sw := range layer2Switches {
+		hasRunningPods, err := cm.hasLocalPodsOnSwitch(sw)
+		if err != nil {
+			return fmt.Errorf("failed to check if there are running pods on switch %s: %w", sw.Name, err)
+		}
+		if hasRunningPods {
+			klog.Infof("Network %s has running pods, not switching to transit router topology yet", sw.Name)
+			return nil
+		}
+	}
+	klog.Infof("Switching to transit router for layer2 networks")
+	// we checked all layer2 switches and none of them has running pods, so we can switch to the new topology
+	config.Layer2UsesTransitRouter = true
+	return cm.setUDNLayer2NodeUsesTransitRouter(nodes)
+}
+
+func hasPort(ports []string, port string) bool {
+	for _, p := range ports {
+		if p == port {
+			return true
+		}
+	}
+	return false
+}
+
+func (cm *ControllerManager) hasLocalPodsOnSwitch(sw *nbdb.LogicalSwitch) (bool, error) {
+	if len(sw.Ports) == 0 {
+		return false, nil
+	}
+
+	ports, err := libovsdbops.FindLogicalSwitchPortWithPredicate(
+		cm.nbClient,
+		func(lsp *nbdb.LogicalSwitchPort) bool {
+			return lsp.Type == "" &&
+				lsp.ExternalIDs["pod"] == "true" &&
+				hasPort(sw.Ports, lsp.UUID)
+		})
+	if err != nil {
+		return false, err
+	}
+	if len(ports) > 0 {
+		return true, nil
+	}
+	return false, nil
+}
+
+func (cm *ControllerManager) setUDNLayer2NodeUsesTransitRouter(nodeList *corev1.NodeList) error {
+	for _, node := range nodeList.Items {
+		if util.GetNodeZone(&node) == config.Default.Zone {
+			annotator := kube.NewNodeAnnotator(cm.kube, node.Name)
+			if err := annotator.Set(util.Layer2TopologyVersion, util.TransitRouterTopoVersion); err != nil {
+				return fmt.Errorf("failed to set node %s annotation %s: %w", node.Name, util.Layer2TopologyVersion, err)
+			}
+			if err := annotator.Run(); err != nil {
+				return fmt.Errorf("failed to run node %s annotator: %w", node.Name, err)
+			}
+		}
+	}
+	return nil
 }
