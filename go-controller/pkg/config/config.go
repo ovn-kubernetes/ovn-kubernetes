@@ -206,6 +206,8 @@ var (
 		V4TransitSwitchSubnet: "100.88.0.0/16",
 		V6TransitSwitchSubnet: "fd97::/64",
 	}
+
+	Layer2UsesTransitRouter bool
 )
 
 const (
