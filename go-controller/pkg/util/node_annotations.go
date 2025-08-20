@@ -513,6 +513,10 @@ func UpdateUDNLayer2NodeGRLRPTunnelIDs(annotations map[string]string, netName st
 	return annotations, nil
 }
 
+func UDNLayer2NodeUsesTransitRouter(node *corev1.Node) bool {
+	return node.Annotations[Layer2TopologyVersion] == TransitRouterTopoVersion
+}
+
 // PrimaryIfAddrAnnotation represents IPv4 and/or IPv6 addresses stored in node annotations.
 // It is used for JSON marshalling/unmarshalling of node interface address information,
 // including primary interface addresses and other node IP configurations.
