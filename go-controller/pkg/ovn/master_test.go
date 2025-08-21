@@ -1566,45 +1566,62 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	})
 
-	ginkgo.It("doesn't retry deleting a node that doesn't have a node-subnet annotation", func() {
-		app.Action = func(ctx *cli.Context) error {
-			_, err := config.InitConfig(ctx, nil, nil)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			startFakeController(oc, wg)
-			newNode := &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:        "newNode",
-					Annotations: map[string]string{},
-				},
+	ginkgo.DescribeTable("doesn't retry deleting a node that is missing annotation",
+		func(node *corev1.Node) {
+			app.Action = func(ctx *cli.Context) error {
+				_, err := config.InitConfig(ctx, nil, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				startFakeController(oc, wg)
+				ginkgo.By("create new node with no annotation defined and ensure there's a retry entry")
+				_, err = kubeFakeClient.CoreV1().Nodes().Create(context.TODO(), node, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				retry.CheckRetryObjectMultipleFieldsEventually(
+					node.Name,
+					oc.retryNodes,
+					gomega.BeNil(),             // oldObj should be nil
+					gomega.Not(gomega.BeNil()), // newObj should not be nil
+				)
+				keyExists := true
+				retry.CheckRetryObjectEventually(node.Name, keyExists, oc.retryNodes)
+				ginkgo.By("delete node and check that there are no retries for the deleted node")
+				err = kubeFakeClient.CoreV1().Nodes().Delete(context.TODO(), node.Name, metav1.DeleteOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				retry.CheckRetryObjectEventually(node.Name, !keyExists, oc.retryNodes)
+				ginkgo.By("ensure failures for sync host network address or adding nodes are cleared")
+				gomega.Eventually(func() bool {
+					_, foundSyncHostNetAddrSetFailed := oc.syncHostNetAddrSetFailed.Load(node.Name)
+					_, foundAddNodeFailed := oc.addNodeFailed.Load(node.Name)
+					return foundSyncHostNetAddrSetFailed || foundAddNodeFailed
+				}).Should(gomega.BeFalse())
+				return nil
 			}
-			ginkgo.By("create new node with no host-subnet annotation defined and ensure theres a retry entry")
-			_, err = kubeFakeClient.CoreV1().Nodes().Create(context.TODO(), newNode, metav1.CreateOptions{})
+			err := app.Run([]string{
+				app.Name,
+			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			retry.CheckRetryObjectMultipleFieldsEventually(
-				newNode.Name,
-				oc.retryNodes,
-				gomega.BeNil(),             // oldObj should be nil
-				gomega.Not(gomega.BeNil()), // newObj should not be nil
-			)
-			keyExists := true
-			retry.CheckRetryObjectEventually(newNode.Name, keyExists, oc.retryNodes)
-			ginkgo.By("delete node and check that there are no retries for the deleted node")
-			err = kubeFakeClient.CoreV1().Nodes().Delete(context.TODO(), newNode.Name, metav1.DeleteOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			retry.CheckRetryObjectEventually(newNode.Name, !keyExists, oc.retryNodes)
-			ginkgo.By("ensure failures for sync host network address or adding nodes are cleared")
-			gomega.Eventually(func() bool {
-				_, foundSyncHostNetAddrSetFailed := oc.syncHostNetAddrSetFailed.Load(newNode.Name)
-				_, foundAddNodeFailed := oc.addNodeFailed.Load(newNode.Name)
-				return foundSyncHostNetAddrSetFailed || foundAddNodeFailed
-			}).Should(gomega.BeFalse())
-			return nil
-		}
-		err := app.Run([]string{
-			app.Name,
-		})
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	})
+
+		},
+		ginkgo.Entry("k8s.ovn.org/node-subnets",
+			&corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "newNode",
+					Annotations: map[string]string{
+						"k8s.ovn.org/node-id": "2",
+					},
+				},
+			},
+		),
+		ginkgo.Entry("k8s.ovn.org/node-id",
+			&corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "newNode",
+					Annotations: map[string]string{
+						"k8s.ovn.org/node-subnets": "{\"default\": [\"10.130.0.0/23\", \"fd01:0:0:2::/64\"]}",
+					},
+				},
+			},
+		),
+	)
 
 	ginkgo.It("delete a partially constructed node", func() {
 		app.Action = func(ctx *cli.Context) error {
