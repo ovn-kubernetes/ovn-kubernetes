@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"testing"
@@ -18,6 +19,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"k8s.io/klog/v2"
+	"k8s.io/utils/cpuset"
 )
 
 func TestAlignCPUAffinity(t *testing.T) {
@@ -157,6 +159,100 @@ func TestPrintCPUSetRanges(t *testing.T) {
 		"2-3,6-8,14",
 		printCPUSet(x),
 	)
+}
+
+func TestGetReservedCPUs(t *testing.T) {
+	tests := []struct {
+		name            string
+		yamlContent     string
+		expectError     bool
+		expectedCPUSet  string
+		expectedIsEmpty bool
+	}{
+		{
+			name: "valid config",
+			yamlContent: `
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+reservedSystemCPUs: "0-1,3"
+`,
+			expectError:    false,
+			expectedCPUSet: "0-1,3",
+		},
+		{
+			name: "empty reservedSystemCPUs",
+			yamlContent: `
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+`,
+			expectError:     false,
+			expectedIsEmpty: true,
+		},
+		{
+			name: "invalid cpuset string",
+			yamlContent: `
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+reservedSystemCPUs: "not-a-valid-range"
+`,
+			expectError: true,
+		},
+		{
+			name: "invalid YAML format",
+			yamlContent: `
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+reservedSystemCPUs: [0,1
+`,
+			expectError: true,
+		},
+		{
+			name:        "file not found",
+			yamlContent: "",
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var path string
+			if tt.name == "file not found" {
+				path = "/nonexistent/path.yaml"
+			} else {
+				path = writeTempFile(t, tt.yamlContent)
+			}
+
+			cset, err := getReservedCPUs(path)
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("expected error, got none")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if tt.expectedIsEmpty && !cset.IsEmpty() {
+				t.Errorf("expected empty cpuset, got %s", cset.String())
+			} else if tt.expectedCPUSet != "" {
+				expected, _ := cpuset.Parse(tt.expectedCPUSet)
+				if !cset.Equals(expected) {
+					t.Errorf("expected cpuset %s, got %s", expected.String(), cset.String())
+				}
+			}
+		})
+	}
+}
+
+func writeTempFile(t *testing.T, content string) string {
+	t.Helper()
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "kubelet-config.yaml")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write temp file: %v", err)
+	}
+	return path
 }
 
 func mockOvsdbProcess(t *testing.T) (int, func()) {
