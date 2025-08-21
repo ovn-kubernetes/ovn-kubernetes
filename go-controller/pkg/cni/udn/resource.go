@@ -20,12 +20,11 @@ func getPodResourceInfo(pod *corev1.Pod, resourceName string) (*types.ResourceIn
 	if err != nil {
 		return nil, fmt.Errorf("failed to get resources allocated for pod %s from ResourceClient: %v", podDesc, err)
 	}
-	klog.V(5).Infof("ResourceMap for pod %s: %+v", pod, resourceMap)
-
 	entry, ok := resourceMap[resourceName]
 	if !ok {
 		return nil, fmt.Errorf("failed to get resources allocated for pod %s: no resources for resource %s", podDesc, resourceName)
 	}
+	klog.V(5).Infof("ResourceMap for pod %s resource %s: %+v", podDesc, resourceName, entry)
 	return entry, nil
 }
 

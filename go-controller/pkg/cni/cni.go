@@ -238,7 +238,7 @@ func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
 			return nil, err
 		}
 		if primaryUDNPodRequest != nil {
-			err = primaryUDNCmdAddGetCNIResultFunc(response, getCNIResultFn, primaryUDNPodRequest, clientset, primaryUDNPodInfo)
+			err = primaryUDNCmdAddGetCNIResultFunc(response.Result, getCNIResultFn, primaryUDNPodRequest, clientset, primaryUDNPodInfo)
 			if err != nil {
 				return nil, err
 			}
@@ -254,24 +254,24 @@ func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
 	return response, nil
 }
 
-func primaryUDNCmdAddGetCNIResultFunc(response *Response, getCNIResultFn getCNIResultFunc, primaryUDNPodRequest *PodRequest,
+func primaryUDNCmdAddGetCNIResultFunc(result *current.Result, getCNIResultFn getCNIResultFunc, primaryUDNPodRequest *PodRequest,
 	clientset PodInfoGetter, primaryUDNPodInfo *PodInterfaceInfo) error {
 	primaryUDNResult, err := getCNIResultFn(primaryUDNPodRequest, clientset, primaryUDNPodInfo)
 	if err != nil {
 		return err
 	}
 
-	response.Result.Routes = append(response.Result.Routes, primaryUDNResult.Routes...)
-	numOfInitialIPs := len(response.Result.IPs)
-	numOfInitialIfaces := len(response.Result.Interfaces)
-	response.Result.Interfaces = append(response.Result.Interfaces, primaryUDNResult.Interfaces...)
-	response.Result.IPs = append(response.Result.IPs, primaryUDNResult.IPs...)
+	result.Routes = append(result.Routes, primaryUDNResult.Routes...)
+	numOfInitialIPs := len(result.IPs)
+	numOfInitialIfaces := len(result.Interfaces)
+	result.Interfaces = append(result.Interfaces, primaryUDNResult.Interfaces...)
+	result.IPs = append(result.IPs, primaryUDNResult.IPs...)
 
 	// Offset the index of the default network IPs to correctly point to the default network interfaces
-	for i := numOfInitialIPs; i < len(response.Result.IPs); i++ {
-		ifaceIPConfig := response.Result.IPs[i].Copy()
-		if response.Result.IPs[i].Interface != nil {
-			response.Result.IPs[i].Interface = current.Int(*ifaceIPConfig.Interface + numOfInitialIfaces)
+	for i := numOfInitialIPs; i < len(result.IPs); i++ {
+		ifaceIPConfig := result.IPs[i].Copy()
+		if result.IPs[i].Interface != nil {
+			result.IPs[i].Interface = current.Int(*ifaceIPConfig.Interface + numOfInitialIfaces)
 		}
 	}
 	return nil
