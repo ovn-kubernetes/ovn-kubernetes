@@ -30,6 +30,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/label"
 
 	corev1 "k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -251,11 +252,11 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 				nodePortServicePod.Spec.Containers[i].SecurityContext.AllowPrivilegeEscalation = ptr.To(false)
 				nodePortServicePod.Spec.Containers[i].SecurityContext.RunAsNonRoot = ptr.To(true)
 				nodePortServicePod.Spec.Containers[i].SecurityContext.RunAsUser = ptr.To(int64(1000))
-				nodePortServicePod.Spec.Containers[i].SecurityContext.Capabilities = &v1.Capabilities{
-					Drop: []v1.Capability{"ALL"},
+				nodePortServicePod.Spec.Containers[i].SecurityContext.Capabilities = &corev1.Capabilities{
+					Drop: []corev1.Capability{"ALL"},
 				}
-				nodePortServicePod.Spec.Containers[i].SecurityContext.SeccompProfile = &v1.SeccompProfile{
-					Type: v1.SeccompProfileTypeRuntimeDefault,
+				nodePortServicePod.Spec.Containers[i].SecurityContext.SeccompProfile = &corev1.SeccompProfile{
+					Type: corev1.SeccompProfileTypeRuntimeDefault,
 				}
 			}
 
@@ -2506,8 +2507,8 @@ func checkL3NodePodRoute(node corev1.Node, serverContainerIP, routerContainerNam
 	if isIPv6 {
 		podCIDR = podv6CIDR
 	}
-    gomega.Expect(podCIDR).NotTo(gomega.BeEmpty(),
-        "pod CIDR for family (isIPv6=%t) missing for node %s on network %s", isIPv6, node.Name, netName)
+	gomega.Expect(podCIDR).NotTo(gomega.BeEmpty(),
+		"pod CIDR for family (isIPv6=%t) missing for node %s on network %s", isIPv6, node.Name, netName)
 
 	checkRouteInFRR(node, podCIDR, routerContainerName, isIPv6)
 }
