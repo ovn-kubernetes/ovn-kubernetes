@@ -165,3 +165,8 @@ monitoring:
   # in defining that.
   commonServiceMonitorSelectorLabels:
     release: kube-prometheus-stack
+  # -- deploy ServiceMonitors for service discovery using the Prometheus Operator
+  enableServiceMonitor: false
+  # -- deploy PrometheusRules for specific metric collection using the Prometheus Operator
+  enablePrometheusRule: false
+

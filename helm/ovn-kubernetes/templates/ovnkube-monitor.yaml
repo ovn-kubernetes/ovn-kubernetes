@@ -1,6 +1,10 @@
-# define ServiceMontior and Service resources for ovnkube-cluster-manager,
+# define ServiceMonitor and Service resources for ovnkube-cluster-manager,
 # ovnkube-master (or ovnkube-controller), ovnkube-node and ovnkube-db (required for prometheus monitoring)
+{{- if and .Values.monitoring.enableServiceMonitor (not (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1/ServiceMonitor")) }}
+  {{ fail "Prometheus Operator must be installed to enable ServiceMonitor" }}
+{{- end }}
 
+{{ if .Values.monitoring.enableServiceMonitor }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -25,6 +29,63 @@ spec:
     matchLabels:
       k8s-app: ovnkube-master
 ---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  labels:
+    k8s-app: ovnkube-node
+    {{- with .Values.monitoring.commonServiceMonitorSelectorLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  name: monitor-ovnkube-node
+  namespace: ovn-kubernetes
+spec:
+  endpoints:
+    - interval: 30s
+      port: ovnkube-node-metrics
+      path: /metrics
+      scheme: http
+    - interval: 30s
+      port: ovs-metrics
+      path: /metrics
+      scheme: http
+    - interval: 30s
+      port: ovn-metrics
+      path: /metrics
+      scheme: http
+  jobLabel: k8s-app
+  namespaceSelector:
+    matchNames:
+      - ovn-kubernetes
+  selector:
+    matchLabels:
+      k8s-app: ovnkube-node
+---
+
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  labels:
+    k8s-app: ovnkube-cluster-manager
+    {{- with .Values.monitoring.commonServiceMonitorSelectorLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  name: monitor-ovnkube-cluster-manager
+  namespace: ovn-kubernetes
+spec:
+  endpoints:
+    - interval: 30s
+      port: http-metrics
+      scheme: http
+      path: /metrics
+  jobLabel: k8s-app
+  namespaceSelector:
+    matchNames:
+      - ovn-kubernetes
+  selector:
+    matchLabels:
+      k8s-app: ovnkube-cluster-manager
+---
 apiVersion: v1
 kind: Service
 metadata:
@@ -45,38 +106,6 @@ spec:
     targetPort: 9409
 ---
 
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  labels:
-    k8s-app: ovnkube-node
-    {{- with .Values.monitoring.commonServiceMonitorSelectorLabels }}
-    {{- toYaml . | nindent 4 }}
-    {{- end }}
-  name: monitor-ovnkube-node
-  namespace: ovn-kubernetes
-spec:
-  endpoints:
-  - interval: 30s
-    port: ovnkube-node-metrics
-    path: /metrics
-    scheme: http
-  - interval: 30s
-    port: ovs-metrics
-    path: /metrics
-    scheme: http
-  - interval: 30s
-    port: ovn-metrics
-    path: /metrics
-    scheme: http
-  jobLabel: k8s-app
-  namespaceSelector:
-    matchNames:
-    - ovn-kubernetes
-  selector:
-    matchLabels:
-      k8s-app: ovnkube-node
----
 apiVersion: v1
 kind: Service
 metadata:
@@ -104,31 +133,6 @@ spec:
     protocol: TCP
     targetPort: 9310
 ---
-
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  labels:
-    k8s-app: ovnkube-cluster-manager
-    {{- with .Values.monitoring.commonServiceMonitorSelectorLabels }}
-    {{- toYaml . | nindent 4 }}
-    {{- end }}
-  name: monitor-ovnkube-cluster-manager
-  namespace: ovn-kubernetes
-spec:
-  endpoints:
-  - interval: 30s
-    port: http-metrics
-    scheme: http
-    path: /metrics
-  jobLabel: k8s-app
-  namespaceSelector:
-    matchNames:
-    - ovn-kubernetes
-  selector:
-    matchLabels:
-      k8s-app: ovnkube-cluster-manager
----
 apiVersion: v1
 kind: Service
 metadata:
@@ -148,3 +152,4 @@ spec:
     protocol: TCP
     targetPort: 9411
 ---
+{{ end }}
