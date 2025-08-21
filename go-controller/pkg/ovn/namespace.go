@@ -376,16 +376,17 @@ func (oc *DefaultNetworkController) getHostNamespaceAddressesForNode(node *corev
 	}
 	// for shared gateway mode we will use LRP IPs to SNAT host network traffic
 	// so add these to the address set.
-	lrpIPs, err := udn.GetGWRouterIPs(node, oc.GetNetInfo())
-	if err != nil {
-		if util.IsAnnotationNotSetError(err) {
-			// FIXME(tssurya): This is present for backwards compatibility
-			// Remove me a few months from now
-			var err1 error
-			lrpIPs, err1 = util.ParseNodeGatewayRouterLRPAddrs(node)
-			if err1 != nil {
-				return nil, fmt.Errorf("failed to get join switch port IP address for node %s: %v/%v", node.Name, err, err1)
-			}
+	lrpIPs, gwIPsErr := udn.GetGWRouterIPs(node, oc.GetNetInfo())
+	if gwIPsErr != nil {
+		if !util.IsAnnotationNotSetError(gwIPsErr) {
+			return nil, gwIPsErr
+		}
+		// FIXME(tssurya): This is present for backwards compatibility
+		// Remove me a few months from now
+		var lrpAddrsErr error
+		lrpIPs, lrpAddrsErr = util.ParseNodeGatewayRouterLRPAddrs(node)
+		if lrpAddrsErr != nil {
+			return nil, fmt.Errorf("failed to fallback to annotations after error %q: %w", gwIPsErr, lrpAddrsErr)
 		}
 	}
 
