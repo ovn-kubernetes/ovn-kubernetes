@@ -25,6 +25,7 @@ import (
 
 	"github.com/ovn-kubernetes/libovsdb/client"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -83,7 +84,10 @@ func TestCNIServer(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 	socketPath := filepath.Join(tmpDir, serverSocketName)
 	fakeClient := fake.NewSimpleClientset()
-
+	err = config.PrepareTestConfig()
+	if err != nil {
+		t.Fatalf("failed to prepare test config: %v", err)
+	}
 	fakeClientset := &util.OVNNodeClientset{
 		KubeClient: fakeClient,
 	}

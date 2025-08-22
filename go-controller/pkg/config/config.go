@@ -679,6 +679,7 @@ func PrepareTestConfig() error {
 	ClusterManager = savedClusterManager
 	Kubernetes.DisableRequestedChassis = false
 	EnableMulticast = false
+	UnprivilegedMode = false
 	Default.OVSDBTxnTimeout = 5 * time.Second
 	if Gateway.Mode != GatewayModeDisabled {
 		Gateway.EphemeralPortRange = DefaultEphemeralPortRange
