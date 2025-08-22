@@ -39,6 +39,7 @@ import (
 // functions to use it
 type Plugin struct {
 	socketPath string
+	doCNIFunc  func(url string, req interface{}) ([]byte, error)
 }
 
 // NewCNIPlugin creates the internal Plugin object
@@ -46,7 +47,9 @@ func NewCNIPlugin(socketPath string) *Plugin {
 	if len(socketPath) == 0 {
 		socketPath = serverSocketPath
 	}
-	return &Plugin{socketPath: socketPath}
+	p := &Plugin{socketPath: socketPath}
+	p.doCNIFunc = p.doCNI
+	return p
 }
 
 // Create and fill a Request with this Plugin's environment and stdin which
@@ -209,7 +212,7 @@ func (p *Plugin) CmdAdd(args *skel.CmdArgs) error {
 
 	req := newCNIRequest(args, deviceInfo)
 
-	body, errB := p.doCNI("http://dummy/", req)
+	body, errB := p.doCNIFunc("http://dummy/", req)
 	if errB != nil {
 		err = errB
 		klog.Error(err.Error())
@@ -301,7 +304,7 @@ func (p *Plugin) CmdDel(args *skel.CmdArgs) error {
 
 	var deviceInfo = nadapi.DeviceInfo{}
 	req := newCNIRequest(args, deviceInfo)
-	body, err = p.doCNI("http://dummy/", req)
+	body, err = p.doCNIFunc("http://dummy/", req)
 	if err != nil {
 		return err
 	}
