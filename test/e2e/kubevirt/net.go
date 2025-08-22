@@ -9,8 +9,6 @@ import (
 
 	iputils "github.com/containernetworking/plugins/pkg/ip"
 
-	corev1 "k8s.io/api/core/v1"
-
 	kubevirtv1 "kubevirt.io/api/core/v1"
 	v1 "kubevirt.io/api/core/v1"
 
@@ -67,61 +65,51 @@ func RetrieveIPv6Gateways(cli *Client, vmi *v1.VirtualMachineInstance) ([]string
 	return paths, nil
 }
 
-func GenerateGatewayMAC(node *corev1.Node, joinSubnets []string) (string, error) {
+func GenerateGatewayMAC(subnets []string) (string, error) {
 	config.IPv4Mode = true
-	lrpJoinAddress, err := GetDefaultUDNGWRouterIPs(node, joinSubnets)
+	defaultGWIPs, err := GetLayer2UDNDefaultGWIPs(subnets)
 	if err != nil {
 		return "", err
 	}
 
-	if len(lrpJoinAddress) == 0 {
-		return "", fmt.Errorf("missing lrp join ip at node %q", node.Name)
+	if len(defaultGWIPs) == 0 {
+		return "", fmt.Errorf("can't find default GW IP for subnets %v", subnets)
 	}
 
-	return util.IPAddrToHWAddr(*lrpJoinAddress[0]).String(), nil
+	return util.IPAddrToHWAddr(*defaultGWIPs[0]).String(), nil
 }
 
-func GenerateGatewayIPv6RouterLLA(node *corev1.Node, joinSubnets []string) (string, error) {
+func GenerateGatewayIPv6RouterLLA(subnets []string) (string, error) {
 	config.IPv4Mode = true
-	joinAddresses, err := GetDefaultUDNGWRouterIPs(node, joinSubnets)
+	defaultGWIPs, err := GetLayer2UDNDefaultGWIPs(subnets)
 	if err != nil {
 		return "", err
 	}
-	if len(joinAddresses) == 0 {
-		return "", fmt.Errorf("missing join addresses at node %q", node.Name)
+	if len(defaultGWIPs) == 0 {
+		return "", fmt.Errorf("can't find default GW IP for subnets %v", subnets)
 	}
-	return util.HWAddrToIPv6LLA(util.IPAddrToHWAddr(*joinAddresses[0])).String(), nil
+	return util.HWAddrToIPv6LLA(util.IPAddrToHWAddr(*defaultGWIPs[0])).String(), nil
 }
 
-func GetDefaultUDNGWRouterIPs(node *corev1.Node, joinSubnets []string) ([]*net.IP, error) {
-	nodeID, err := util.GetNodeID(node)
-	if err != nil {
-		// Don't consider this node as cluster-manager has not allocated node id yet.
-		return nil, err
-	}
+// GetLayer2UDNDefaultGWIPs returns the default gateway IPs (.1) for a Layer2 UDN subnet
+func GetLayer2UDNDefaultGWIPs(subnets []string) ([]*net.IP, error) {
 	var udnJoinNetv4, udnJoinNetv6 net.IP
-	for _, subnet := range joinSubnets {
+	for _, subnet := range subnets {
 		ip, _, err := net.ParseCIDR(subnet)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse CIDR %q: %v", subnet, err)
 		}
 		if ip.To4() != nil {
-			udnJoinNetv4 = ip
+			udnJoinNetv4 = iputils.NextIP(ip)
 		} else {
-			udnJoinNetv6 = ip
+			udnJoinNetv6 = iputils.NextIP(ip)
 		}
 	}
 	res := []*net.IP{}
 	if config.IPv4Mode {
-		for range nodeID {
-			udnJoinNetv4 = iputils.NextIP(udnJoinNetv4)
-		}
 		res = append(res, &udnJoinNetv4)
 	}
 	if config.IPv6Mode {
-		for range nodeID {
-			udnJoinNetv6 = iputils.NextIP(udnJoinNetv6)
-		}
 		res = append(res, &udnJoinNetv6)
 	}
 	return res, nil
