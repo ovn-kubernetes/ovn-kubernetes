@@ -270,8 +270,9 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 						NextHop: ovntest.MustParseIP("192.168.0.1").To4(),
 					},
 					{
-						Dest:    ovntest.MustParseIPNet("fd99::/64"),
-						NextHop: ovntest.MustParseIP("2010:100:200::1"),
+						Dest:     ovntest.MustParseIPNet("fd99::/64"),
+						NextHop:  ovntest.MustParseIP("2010:100:200::1"),
+						Priority: 128,
 					},
 				},
 				Role:     types.NetworkRolePrimary,
@@ -303,8 +304,9 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 				GatewayIPv6LLA: util.HWAddrToIPv6LLA(util.IPAddrToHWAddr(ovntest.MustParseIP("fd99::4"))),
 				Routes: []util.PodRoute{
 					{
-						Dest:    ovntest.MustParseIPNet("fd99::/64"),
-						NextHop: ovntest.MustParseIP("2010:100:200::1"),
+						Dest:     ovntest.MustParseIPNet("fd99::/64"),
+						NextHop:  ovntest.MustParseIP("2010:100:200::1"),
+						Priority: 128,
 					},
 				},
 				Role:     types.NetworkRolePrimary,

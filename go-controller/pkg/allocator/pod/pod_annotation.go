@@ -533,7 +533,12 @@ func AddRoutesGatewayIP(
 				// Ensure default service network traffic always goes to OVN
 				podAnnotation.Routes = append(podAnnotation.Routes, serviceCIDRToRoute(isIPv6, gatewayIPnet.IP)...)
 				// Ensure UDN join subnet traffic always goes to UDN LSP
-				podAnnotation.Routes = append(podAnnotation.Routes, joinSubnetToRoute(netinfo, isIPv6, gatewayIPnet.IP))
+				joinRoute := joinSubnetToRoute(netinfo, isIPv6, gatewayIPnet.IP)
+				if isIPv6 {
+					// this is a hack for layer2 topology upgrade, can be removed in the next version
+					joinRoute.Priority = 128
+				}
+				podAnnotation.Routes = append(podAnnotation.Routes, joinRoute)
 				if network != nil && len(network.GatewayRequest) == 0 { // if specific default route for pod was not requested then add gatewayIP
 					podAnnotation.Gateways = append(podAnnotation.Gateways, gatewayIPnet.IP)
 				}
