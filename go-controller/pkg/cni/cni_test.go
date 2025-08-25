@@ -66,7 +66,7 @@ var _ = Describe("Network Segmentation", func() {
 			obtainedPodIterfaceInfos = append(obtainedPodIterfaceInfos, podInterfaceInfo)
 			return &current.Result{}, nil
 		}
-		prInterfaceOpsStub = &podRequestInterfaceOpsStub{}
+		prInterfaceOpsStub *podRequestInterfaceOpsStub
 	)
 
 	BeforeEach(func() {
@@ -74,6 +74,7 @@ var _ = Describe("Network Segmentation", func() {
 		config.IPv4Mode = true
 		config.IPv6Mode = true
 
+		prInterfaceOpsStub = &podRequestInterfaceOpsStub{}
 		podRequestInterfaceOps = prInterfaceOpsStub
 		obtainedPodIterfaceInfos = []*PodInterfaceInfo{}
 
@@ -131,20 +132,19 @@ var _ = Describe("Network Segmentation", func() {
 				},
 			}
 		})
-		It("should not fail at cmdAdd", func() {
+		It("should not fail at cmdAdd or cmdDel", func() {
 			podNamespaceLister.On("Get", pr.PodName).Return(pod, nil)
 
 			ovsClient, err := newOVSClientWithExternalIDs(map[string]string{})
 			Expect(err).NotTo(HaveOccurred())
+			By("cmdAdd primary pod interface should be added")
 			Expect(pr.cmdAddWithGetCNIResultFunc(kubeAuth, clientSet, getCNIResultStub, networkmanager.Default().Interface(), ovsClient)).NotTo(BeNil())
 			Expect(obtainedPodIterfaceInfos).ToNot(BeEmpty())
-		})
-		It("should not fail at cmdDel", func() {
+			By("cmdDel primary pod interface should be removed")
 			podNamespaceLister.On("Get", pr.PodName).Return(pod, nil)
 			Expect(pr.cmdDel(clientSet)).NotTo(BeNil())
 			Expect(prInterfaceOpsStub.unconfiguredInterfaces).To(HaveLen(1))
 		})
-
 	})
 	Context("with network segmentation fg enabled and annotation with role field", func() {
 		BeforeEach(func() {
@@ -166,21 +166,21 @@ var _ = Describe("Network Segmentation", func() {
 			})
 
 			Context("with CNI Privileged Mode", func() {
-				It("should not fail at cmdAdd", func() {
+				It("should not fail at cmdAdd or cmdDel", func() {
 					podNamespaceLister.On("Get", pr.PodName).Return(pod, nil)
 					ovsClient, err := newOVSClientWithExternalIDs(map[string]string{})
 					Expect(err).NotTo(HaveOccurred())
+					By("cmdAdd primary pod interface should be added")
 					response, err := pr.cmdAddWithGetCNIResultFunc(kubeAuth, clientSet, getCNIResultStub, networkmanager.Default().Interface(), ovsClient)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(response.Result).NotTo(BeNil())
 					Expect(obtainedPodIterfaceInfos).ToNot(BeEmpty())
 					Expect(response.PrimaryUDNPodInfo).To(BeNil())
 					Expect(response.PrimaryUDNPodReq).To(BeNil())
-				})
-				It("should not fail at cmdDel", func() {
+					By("cmdDel primary pod interface should be removed")
 					podNamespaceLister.On("Get", pr.PodName).Return(pod, nil)
 					Expect(pr.cmdDel(clientSet)).NotTo(BeNil())
-					Expect(prInterfaceOpsStub.unconfiguredInterfaces).To(HaveLen(2))
+					Expect(prInterfaceOpsStub.unconfiguredInterfaces).To(HaveLen(1))
 				})
 			})
 
