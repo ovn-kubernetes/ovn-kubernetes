@@ -552,17 +552,14 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 // with any existing subnets in the same VRFs, both within the RA itself and
 // across different RAs
 func (c *Controller) checkSubnetOverlaps(ra *ratypes.RouteAdvertisements, selectedNetworks *selectedNetworks) error {
-	networkVRFsSubnets := createNetworkVRFsSubnetsMap(ra.Spec.TargetVRF, selectedNetworks)
+	networkVRFsIPNets, err := createNetworkVRFsIPNetsMap(ra.Spec.TargetVRF, selectedNetworks)
+	if err != nil {
+		return fmt.Errorf("error parsing subnets for RouteAdvertisement %q: %w", ra.Name, err)
+	}
 
 	// Check for overlaps within each VRF network
-	for vrf, subnets := range networkVRFsSubnets {
-		var err error
+	for vrf, ipNets := range networkVRFsIPNets {
 		var overlappingSubnets []string
-		// Parse subnet strings to IPNets for efficient overlap checking
-		ipNets, err := util.ParseIPNets(subnets)
-		if err != nil {
-			return fmt.Errorf("error parsing subnets for RouteAdvertisement %q in VRF %q: %w", ra.Name, vrf, err)
-		}
 		// Check for overlaps within current RA
 		if overlappingSubnets, err = checkSubnetSliceOverlaps(ipNets); err != nil {
 			return fmt.Errorf("error checking subnet overlap within RouteAdvertisement %q in VRF %q: %w", ra.Name, vrf, err)
@@ -571,7 +568,7 @@ func (c *Controller) checkSubnetOverlaps(ra *ratypes.RouteAdvertisements, select
 			return fmt.Errorf("%w: overlapping CIDR detected within RouteAdvertisement %q in VRF %q: %v", errConfig, ra.Name, vrf, overlappingSubnets)
 		}
 		// Check for overlaps between current RA and other RAs in the same VRF
-		if err := c.checkCrossRAOverlaps(ra, vrf, subnets); err != nil {
+		if err := c.checkCrossRAOverlaps(ra, vrf, ipNets); err != nil {
 			return err
 		}
 	}
@@ -579,18 +576,26 @@ func (c *Controller) checkSubnetOverlaps(ra *ratypes.RouteAdvertisements, select
 	return nil
 }
 
-// createNetworkVRFsSubnetsMap creates a map of VRF -> subnets from selectedNetworks
-func createNetworkVRFsSubnetsMap(targetVRF string, selectedNetworks *selectedNetworks) map[string][]string {
-	networkVRFsSubnets := make(map[string][]string)
+// createNetworkVRFsIPNetsMap creates a map of VRF -> parsed IPNets from selectedNetworks
+func createNetworkVRFsIPNetsMap(targetVRF string, selectedNetworks *selectedNetworks) (map[string][]*net.IPNet, error) {
+	networkVRFsIPNets := make(map[string][]*net.IPNet)
 	if targetVRF == "auto" {
 		for networkVRF, network := range selectedNetworks.networkVRFs {
 			subnets := selectedNetworks.networkSubnets[network]
-			networkVRFsSubnets[networkVRF] = subnets
+			ipNets, err := util.ParseIPNets(subnets)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse subnets for VRF %s: %w", networkVRF, err)
+			}
+			networkVRFsIPNets[networkVRF] = ipNets
 		}
 	} else {
-		networkVRFsSubnets[targetVRF] = selectedNetworks.subnets
+		ipNets, err := util.ParseIPNets(selectedNetworks.subnets)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse subnets for VRF %s: %w", targetVRF, err)
+		}
+		networkVRFsIPNets[targetVRF] = ipNets
 	}
-	return networkVRFsSubnets
+	return networkVRFsIPNets, nil
 }
 
 // checkSubnetSliceOverlaps checks for subnets overlap within a list of subnets
@@ -605,7 +610,7 @@ func checkSubnetSliceOverlaps(subnets []*net.IPNet) ([]string, error) {
 }
 
 type raNetworkCacheEntry struct {
-	vrfSubnetsMap map[string][]string
+	vrfSubnetsMap map[string][]*net.IPNet
 	dependentNADs sets.Set[string]
 }
 
@@ -658,8 +663,13 @@ func (c *Controller) updateCachedRANetworkInfoEntry(ra *ratypes.RouteAdvertiseme
 		dependentNADs.Insert(nad.Namespace + "/" + nad.Name)
 	}
 
+	vrfIPNetsMap, err := createNetworkVRFsIPNetsMap(ra.Spec.TargetVRF, selectedNetworks)
+	if err != nil {
+		return nil, err
+	}
+
 	cache := &raNetworkCacheEntry{
-		vrfSubnetsMap: createNetworkVRFsSubnetsMap(ra.Spec.TargetVRF, selectedNetworks),
+		vrfSubnetsMap: vrfIPNetsMap,
 		dependentNADs: dependentNADs,
 	}
 	c.setCachedRANetworkInfo(ra.Name, cache)
@@ -667,7 +677,7 @@ func (c *Controller) updateCachedRANetworkInfoEntry(ra *ratypes.RouteAdvertiseme
 }
 
 // checkCrossRAOverlaps checks if subnets from current RA overlap with subnets from other RAs in the same VRF
-func (c *Controller) checkCrossRAOverlaps(ra *ratypes.RouteAdvertisements, targetVRF string, currentRASubnets []string) error {
+func (c *Controller) checkCrossRAOverlaps(ra *ratypes.RouteAdvertisements, targetVRF string, currentRAIPNets []*net.IPNet) error {
 	allRAs, err := c.raLister.List(labels.Everything())
 	if err != nil {
 		return err
@@ -700,23 +710,15 @@ func (c *Controller) checkCrossRAOverlaps(ra *ratypes.RouteAdvertisements, targe
 			}
 		}
 
-		otherSubnets, hasMatchingVRF := cache.vrfSubnetsMap[targetVRF]
-		if !hasMatchingVRF || len(otherSubnets) == 0 {
+		otherIPNets, hasMatchingVRF := cache.vrfSubnetsMap[targetVRF]
+		if !hasMatchingVRF || len(otherIPNets) == 0 {
 			continue
 		}
 
 		// Check for overlaps between current RA subnets and other RA subnets in the same VRF
-		for _, currentSubnet := range currentRASubnets {
-			currentIPNet, err := util.ParseIPNets([]string{currentSubnet})
-			if err != nil {
-				return fmt.Errorf("failed to parse current subnet %s: %w", currentSubnet, err)
-			}
-			for _, otherSubnet := range otherSubnets {
-				otherIPNet, err := util.ParseIPNets([]string{otherSubnet})
-				if err != nil {
-					return fmt.Errorf("failed to parse other subnet %s: %w", otherSubnet, err)
-				}
-				hasOverlap := len(util.IPNetOverlaps(currentIPNet[0], otherIPNet[0])) > 0
+		for _, currentIPNet := range currentRAIPNets {
+			for _, otherIPNet := range otherIPNets {
+				hasOverlap := len(util.IPNetOverlaps(currentIPNet, otherIPNet)) > 0
 				if !hasOverlap {
 					continue
 				}
@@ -728,7 +730,7 @@ func (c *Controller) checkCrossRAOverlaps(ra *ratypes.RouteAdvertisements, targe
 				}
 
 				return fmt.Errorf("%w: overlapping CIDR detected between RouteAdvertisements %q and %q in VRF %q: [%s %s]",
-					errConfig, ra.Name, otherRA.Name, targetVRF, currentSubnet, otherSubnet)
+					errConfig, ra.Name, otherRA.Name, targetVRF, currentIPNet.String(), otherIPNet.String())
 			}
 		}
 	}
