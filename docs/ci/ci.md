@@ -22,6 +22,30 @@ are also run periodically (twice daily) using an OVN-Kubernetes build based on t
 The following sections should help you understand (and if needed modify) the set of tests that run and how to run these
 tests locally.
 
+## CI fails: what do I do?
+
+Some tests are known to be flaky, see [`kind/ci-flake` issues.](https://github.com/ovn-kubernetes/ovn-kubernetes/issues?q=is%3Aissue%20state%3Aopen%20label%3Akind%2Fci-flake)
+At the end of your failed test run, you will see something like:
+
+```
+Summarizing 1 Failure:
+  [FAIL] e2e egress firewall policy validation with external containers [It] Should validate the egress firewall policy functionality for allowed IP
+  /home/runner/work/ovn-kubernetes/ovn-kubernetes/test/e2e/egress_firewall.go:130
+```
+then search for "e2e egress firewall policy validation" in the open issues. 
+
+If you find an issue that matches your failure, update the issue with your job link. 
+If the issue doesn't exist, it either means the failure is introduced in your PR or it is a new flake. 
+Try to run the same test locally multiple times, and if doesn't fail, report a new flake.
+Reporting a new flake is fairly straightforward, but you can use already open issues as an example.
+It may also be useful sometimes to search through the closed issues to see if the flake was reported
+previously and (not really) fixed, then reopening it with the new job failure.
+
+Only after following these steps ^, you can comment `/retest-failed` on your PR to trigger a retest of the failed tests.
+A rocket emoji reaction on your comment should apper when the retest is triggered.
+
+Before running this command, please reference existing or newly opened issues to justify the retest request.
+
 ## Understanding the CI Test Suite
 
 The tests are broken into 2 categories, `shard` tests which execute tests from the Kubernetes E2E test suite and the
