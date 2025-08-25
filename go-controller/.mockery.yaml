@@ -13,7 +13,6 @@ packages:
   github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni:
     interfaces:
       CNIPluginLibOps:
-      NetNS:
     config:
       dir: pkg/cni/mocks
   github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube:
@@ -24,9 +23,9 @@ packages:
     config:
       all: true
       dir: pkg/kube/mocks
-  github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node:
+  github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/managementport:
     interfaces:
-      ManagementPort:
+      Interface:
   github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set:
     config:
       all: true
