@@ -726,6 +726,56 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				true, // scheduled on the same node
 				Label("BUG", "OCPBUGS-59657"),
 			),
+			Entry(
+				"can reach a client pod in the host network on a different node, when the localnet uses a VLAN and an external router",
+				networkAttachmentConfigParams{
+					name:     secondaryNetworkName,
+					topology: "localnet",
+					vlanID:   localnetVLANID,
+				},
+				podConfiguration{ // client attached to localnet secondary network
+					attachments: []nadapi.NetworkSelectionElement{{
+						Name: secondaryNetworkName,
+					}},
+					name:                clientPodName,
+					ipRequestFromSubnet: fromExternalNetwork,
+					isPrivileged:        true,
+					usesExternalRouter:  true,
+				},
+				podConfiguration{ // server on host network
+					name:         podName,
+					containerCmd: httpServerContainerCmd(port),
+					hostNetwork:  true,
+					isPrivileged: true,
+				},
+				false, // scheduled on distinct Nodes
+				Label("BUG", "OCPBUGS-59657"),
+			),
+			Entry(
+				"can reach a client pod in the host network on the same node, when the localnet uses a VLAN and an external router",
+				networkAttachmentConfigParams{
+					name:     secondaryNetworkName,
+					topology: "localnet",
+					vlanID:   localnetVLANID,
+				},
+				podConfiguration{ // client attached to localnet secondary network
+					attachments: []nadapi.NetworkSelectionElement{{
+						Name: secondaryNetworkName,
+					}},
+					name:                clientPodName,
+					ipRequestFromSubnet: fromExternalNetwork,
+					isPrivileged:        true,
+					usesExternalRouter:  true,
+				},
+				podConfiguration{ // server on host network
+					name:         podName,
+					containerCmd: httpServerContainerCmd(port),
+					hostNetwork:  true,
+					isPrivileged: true,
+				},
+				true, // scheduled on the same node
+				Label("BUG", "OCPBUGS-59657"),
+			),
 		)
 	})
 
