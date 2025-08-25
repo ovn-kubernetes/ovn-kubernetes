@@ -3,6 +3,8 @@ package metrics
 import (
 	"reflect"
 	"testing"
+
+	"k8s.io/client-go/kubernetes"
 )
 
 func Test_parseStopwatchShowOutput(t *testing.T) {
@@ -132,4 +134,10 @@ Statistics for 'ovn-northd-loop'
 			}
 		})
 	}
+}
+
+func TestRegisterOvnMetricsSignature(t *testing.T) {
+	// Compile-time assertion: will fail to compile if the signature changes.
+	var fn func(kubernetes.Interface, string, <-chan struct{}) = RegisterOvnMetrics
+	_ = fn
 }

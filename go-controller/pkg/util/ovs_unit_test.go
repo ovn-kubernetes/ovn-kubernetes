@@ -16,6 +16,25 @@ import (
 	kexec "k8s.io/utils/exec"
 )
 
+// withEnv sets key to val (or unsets when val == "") for the duration of f, restoring previous state.
+func withEnv(t *testing.T, key, val string, f func()) {
+	t.Helper()
+	prev, had := os.LookupEnv(key)
+	if val == "" {
+		os.Unsetenv(key)
+	} else {
+		os.Setenv(key, val)
+	}
+	defer func() {
+		if !had {
+			os.Unsetenv(key)
+		} else {
+			os.Setenv(key, prev)
+		}
+	}()
+	f()
+}
+
 func TestRunningPlatform(t *testing.T) {
 	// Below is defined in ovs.go file
 	AppFs = afero.NewMemMapFs()
@@ -1820,6 +1839,128 @@ func TestDetectSCTPSupport(t *testing.T) {
 			}
 			mockExecRunner.AssertExpectations(t)
 			mockKexecIface.AssertExpectations(t)
+		})
+	}
+}
+
+func TestGetOVSRunDirFromEnv(t *testing.T) {
+	tests := []struct {
+		desc     string
+		envValue string
+		expected string
+	}{
+		{
+			desc:     "default path when env not set",
+			envValue: "",
+			expected: "/var/run/openvswitch/",
+		},
+		{
+			desc:     "custom path with trailing slash",
+			envValue: "/custom/ovs/path/",
+			expected: "/custom/ovs/path/",
+		},
+		{
+			desc:     "custom path without trailing slash",
+			envValue: "/custom/ovs/path",
+			expected: "/custom/ovs/path/",
+		},
+	}
+
+	for i, tc := range tests {
+		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
+			withEnv(t, "OVS_RUNDIR", tc.envValue, func() {
+				result := getOVSRunDirFromEnv()
+				assert.Equal(t, tc.expected, result)
+			})
+		})
+	}
+}
+
+func TestGetOVNRunDirFromEnv(t *testing.T) {
+	tests := []struct {
+		desc     string
+		envValue string
+		expected string
+	}{
+		{
+			desc:     "default path when env not set",
+			envValue: "",
+			expected: "/var/run/ovn/",
+		},
+		{
+			desc:     "custom path with trailing slash",
+			envValue: "/custom/ovn/path/",
+			expected: "/custom/ovn/path/",
+		},
+		{
+			desc:     "custom path without trailing slash",
+			envValue: "/custom/ovn/path",
+			expected: "/custom/ovn/path/",
+		},
+	}
+
+	for i, tc := range tests {
+		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
+			withEnv(t, "OVN_RUNDIR", tc.envValue, func() {
+				result := getOVNRunDirFromEnv()
+				assert.Equal(t, tc.expected, result)
+			})
+		})
+	}
+}
+
+func TestGetOVNNbdbLocationFromEnv(t *testing.T) {
+	tests := []struct {
+		desc     string
+		envValue string
+		expected string
+	}{
+		{
+			desc:     "default location when env not set",
+			envValue: "",
+			expected: "/var/lib/openvswitch/ovnnb_db.db",
+		},
+		{
+			desc:     "custom location",
+			envValue: "/custom/path/ovnnb_db.db",
+			expected: "/custom/path/ovnnb_db.db",
+		},
+	}
+
+	for i, tc := range tests {
+		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
+			withEnv(t, "OVN_NBDB_LOCATION", tc.envValue, func() {
+				result := getOVNNbdbLocationFromEnv()
+				assert.Equal(t, tc.expected, result)
+			})
+		})
+	}
+}
+
+func TestGetOVNSbdbLocationFromEnv(t *testing.T) {
+	tests := []struct {
+		desc     string
+		envValue string
+		expected string
+	}{
+		{
+			desc:     "default location when env not set",
+			envValue: "",
+			expected: "/var/lib/openvswitch/ovnsb_db.db",
+		},
+		{
+			desc:     "custom location",
+			envValue: "/custom/path/ovnsb_db.db",
+			expected: "/custom/path/ovnsb_db.db",
+		},
+	}
+
+	for i, tc := range tests {
+		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
+			withEnv(t, "OVN_SBDB_LOCATION", tc.envValue, func() {
+				result := getOVNSbdbLocationFromEnv()
+				assert.Equal(t, tc.expected, result)
+			})
 		})
 	}
 }
