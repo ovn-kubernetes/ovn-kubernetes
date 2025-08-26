@@ -213,7 +213,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 
 			}
 
-			// Get client pod IPs and its host's nodeIPs, get the nodeIPs for the node where the nodePort service is running
+			// Get client pod IPs and its host's nodeIPs, get the nodeIPs for the node where the host networked pod is running
 			var clientPodIPs, clientNodeIPs, hostNetworkedPodNodeIPs []string
 
 			podv4IP, podv6IP, err := podIPsForDefaultNetwork(f.ClientSet, f.Namespace.Name, clientPod.Name)
@@ -282,9 +282,9 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 			ginkgo.By("With default network being advertised, queries to the external server are not SNATed (uses podIP)")
 			testClientPodToServerConnectivity(serverContainerIPs, "8080", clientPodIPs, "external server pod")
 
-			ginkgo.By("With default network being advertised, queries to nodeport service are SNATed (uses nodeIP)")
+			ginkgo.By("With default network being advertised, queries to the second node are SNATed (uses nodeIP)")
 			// testClientPodToServerConnectivity(NodePortServiceNodeIPs, strconv.Itoa(8080), clientNodeIPs, "client pod to nodeport service")
-			testClientPodToServerConnectivity(hostNetworkedPodNodeIPs, strconv.Itoa(8080), clientPodIPs, "client pod to nodeport service")
+			testClientPodToServerConnectivity(hostNetworkedPodNodeIPs, strconv.Itoa(8080), clientPodIPs, "client pod to second node")
 
 			// defer add default network RA back to restore to the original test setup
 			ra := &rav1.RouteAdvertisements{
@@ -334,8 +334,8 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 			ginkgo.By("After default network is toggled to unadvertised, run test towards the external agnhost echo server from client podagain, egressing packets should be SNATed to pod's host nodeIP")
 			testClientPodToServerConnectivity(serverContainerIPs, "8080", clientNodeIPs, "external server container")
 
-			ginkgo.By("After default network is toggled to unadvertised, run test towards nodeport service from client pod, egressing packets should be SNATed to pod's host nodeIP")
-			testClientPodToServerConnectivity(hostNetworkedPodNodeIPs, strconv.Itoa(8080), clientNodeIPs, "client pod to nodeport service")
+			ginkgo.By("After default network is toggled to unadvertised, run test towards the second node from client pod, egressing packets should be SNATed to pod's host nodeIP")
+			testClientPodToServerConnectivity(hostNetworkedPodNodeIPs, strconv.Itoa(8080), clientNodeIPs, "client pod to second node")
 
 		})
 	})
