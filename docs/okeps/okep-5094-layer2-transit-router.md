@@ -4,10 +4,11 @@
 
 ## Problem Statement
 
-The primary UDN layer2 topology present some problems related to VM's live migration that are being addressed by
-ovn-kubernetes sending GARPs or unsolicited router advertisement and blocking some OVN router advertisement, although this fixes the issue, is not the most robust way to address the problem and adds complexity to ovn-kubernetes live migration mechanism.
+The primary UDN layer2 topology presents some problems related to VM's live migration that are being addressed by
+ovn-kubernetes sending GARPs or unsolicited router advertisement and blocking some OVN router advertisements, although this fixes the issue, is not the most robust way to address the problem and adds complexity to ovn-kubernetes live migration mechanism.
 
-There are other layer2 egressip [limitations](https://issues.redhat.com/browse/OCPBUGS-48301) introduced by this topology, EIP for L2 UDN depends on a single external GW IP therefore we dont respect multiple ext gws and forward all traffic to one GW.
+There is another layer2 egressip [limitation](https://issues.redhat.com/browse/OCPBUGS-48301) introduced by this topology, 
+EIP for L2 UDN depends on a single external GW IP therefore we dont respect multiple ext gws and forward all traffic to one GW.
 
 We can make use of the [new transit router OVN topology entity](https://github.com/ovn-org/ovn/blob/c24b1aa3c724de1aa9fd2461f07e4127a6bfa190/NEWS#L42-L44) to fix these issues and changing the topology for primary UDN layer2.
 
@@ -16,7 +17,7 @@ We can make use of the [new transit router OVN topology entity](https://github.c
 1. For layer2 topology advertise default gw with same IP and MAC address independently of the node where
    the vm is running.
 2. Keep all the layer2 topology features at current topology.
-3. Cover the missing egressip features from current topology.
+3. Fix the egressip limitation from current topology.
 4. Make the new topology upgradable with minor disruption.
 
 ## Non-Goals
@@ -155,11 +156,11 @@ With that scenario in mind, after VM has live migrated:
 To fix that for IPv4, ovn-kubernetes sends a GARP after live migration to
 reconcile the default gw mac to the new node where the VM is running [Pull Request 4964](https://github.com/ovn-kubernetes/ovn-kubernetes/pull/4964).
 
-For ipv6 there are a change to do something similar by blocking external gateway
+For ipv6 there are changes to do something similar by blocking external gateway
 routers RAs [Pull Request 4852](https://github.com/ovn-kubernetes/ovn-kubernetes/pull/4852) and reconciling gateways with unsolicited router advertisements
 [Pull Request 4847](https://github.com/ovn-kubernetes/ovn-kubernetes/pull/4847).
 
-Although these fixes works, they are not very robust since messages can be lost
+Although these fixes work, they are not very robust since messages can be lost
 or blocked so gateway do not get reconciled.
 
 This is how the topology will look after the virtual machine has being live migrated from node1 to node2
@@ -249,19 +250,17 @@ As an EIP L2 UDN user, new connections from a pod should be balanced correctly o
 
 ## Proposed Solution
 
-The OVN team did introduce a new network topology element [**transit router**](https://www.ovn.org/support/dist-docs/ovn-nb.5.html) that allows logical routers that are shared between OVN availability zones, this make possible to use a cluster router similar to layer3 topology ovn_cluster_router for layer2
+The OVN community did introduce a new network topology element [**transit router**](https://www.ovn.org/support/dist-docs/ovn-nb.5.html) that allows logical routers that are shared between OVN availability zones, this make possible to use a cluster router similar to layer3 topology ovn_cluster_router for layer2
 so the logical router port that is connected to the layer2 switch will have just the .1 address and mac and ipv6 lla generated
 with it.
 
-There is a [PoC PR](https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5067), with passing CI. implementing the proposed solution.
-
 ### Ports, switches and routers topology
 
-This is a an overview of the topology with the transit subnet used to connect the ovn_cluster_router and gateway routers directly (without a new logical switch - direct router port connections using the NB.Logical_Router_Port.peer field between the GR and the new ovn_cluster_router).
-using the Peer field.
+This is an overview of the topology with the transit subnet used to connect the transit_router and gateway routers directly (without a new logical switch - direct router port connections using the NB.Logical_Router_Port.peer field between the GR and the new transit_router).
 
-OVN routers cannot have multiple ports in the same subnet, so the trtor (transit router to router) ports of the ovn_cluster_router need to have the minimal possible subnet, to accommodate at least 2 IPs one per peer, from the
-transit switch subnet to connect the two peers, trtor (ovn_cluster_router) <-> rtotr (GR).
+
+OVN routers cannot have multiple ports in the same subnet, so the trtor (transit router to gateway router) ports of the transit_router need to have the minimal possible subnet, to accommodate at least 2 IPs one per peer, from the
+transit switch subnet to connect the two peers, trtor (transit_router) <-> rtotr (GR).
 
 #### IPv4
 
@@ -271,28 +270,15 @@ subnet: 203.203.0.0/24
 join-subnet: 100.65.0.0/16
 transit-subnet: 100.88.0.0/16
 transit-peers-node-subnet:
-  node1: 100.88.0.4/30
-  node2: 100.88.0.12/30
-  node3: 100.88.0.8/30
+  node1: 100.88.0.4/31
+  node2: 100.88.0.8/31
+  node3: 100.88.0.6/31
 ```
 
-In the case of ipv4 the transit per node subnet has to reserve 4 addresses since broadcast address is reserved, this means that
-we need 2 bits so the CIDR size should be `32 - 2 = 30` to have 4 addresses. Every node should reserve non colliding 4 address subnet
-from the transit subnet.
+The transit per node subnet has to reserve 2 addresses for the transit router side and gateway router side. 
 
-Let's inspect node1 transit-peers-node-subnet with the command `ipcalc`:
-```bash
-$ ipcalc 100.88.0.4/30
-Network:	100.88.0.4/30
-Netmask:	255.255.255.252 = 30
-Broadcast:	100.88.0.7
-
-Address space:	Shared Address Space
-HostMin:	100.88.0.5
-HostMax:	100.88.0.6
-Hosts/Net:	2
-```
-So in this case the network ip is `100.88.0.4` and the broadcast `100.88.0.7` so GR and ovn_cluster_router peers ports should use `100.88.0.5` and `100.88.0.6`.
+Let's inspect node1 transit-peers-node-subnet with the `100.88.0.4/31` subnet: 
+GR and transit_router peers ports should use `100.88.0.4` and `100.88.0.5`.
 
 ```mermaid
 %%{init: {"nodeSpacing": 20, "rankSpacing": 100}}%%
@@ -306,7 +292,7 @@ flowchart TD
     subgraph node1["node1"]
         subgraph GR-node1
             rtotr-GR-node1["trtor-GR-node1
-            100.65.0.2/16 100.88.0.6/30 (0a:58:64:41:00:02)"]
+            100.65.0.2/16 100.88.0.5/31 (0a:58:64:41:00:02)"]
         end
         subgraph VM["Virtual Machine"]
             class VM vmStyle;
@@ -317,29 +303,29 @@ flowchart TD
     end
     subgraph node2
         subgraph GR-node2
-            rtotr-GR-node2["rtotr-GR-node2 100.65.0.3/16 100.88.0.14/30 (0a:58:64:41:00:03)"]
+            rtotr-GR-node2["rtotr-GR-node2 100.65.0.3/16 100.88.0.9/31 (0a:58:64:41:00:03)"]
         end
     end
     subgraph node3
         subgraph GR-node3
-            rtotr-GR-node3["rtotr-GR-node3 100.65.0.4/16 100.88.0.10/30 (0a:58:64:41:00:04)"]
+            rtotr-GR-node3["rtotr-GR-node3 100.65.0.4/16 100.88.0.7/31 (0a:58:64:41:00:04)"]
         end
     end
     subgraph layer2-switch
-        stor-ovn_cluster_router["stor-ovn_cluster_router
+        stor-transit_router["stor-transit_router
         type: router"]
     end
-    subgraph ovn_cluster_router["ovn_cluster_router "]
-        trtor-GR-node1["trtor-GR-node1 100.88.0.5/30"]
-        trtor-GR-node2["trtor-GR-node2 100.88.0.13/30"]
-        trtor-GR-node3["trtor-GR-node3 100.88.0.9/30"]
+    subgraph transit_router["transit_router "]
+        trtor-GR-node1["trtor-GR-node1 100.88.0.4/31"]
+        trtor-GR-node2["trtor-GR-node2 100.88.0.8/31"]
+        trtor-GR-node3["trtor-GR-node3 100.88.0.6/31"]
         rtos-layer2-switch["rtos-layer2-switch 203.203.0.1 (0a:58:CB:CB:00:01)"]
     end
     rtotr-GR-node1 <--> trtor-GR-node1
     rtotr-GR-node2 <--> trtor-GR-node2
     rtotr-GR-node3 <--> trtor-GR-node3
     VM <-->layer2-switch
-    rtos-layer2-switch <--> stor-ovn_cluster_router
+    rtos-layer2-switch <--> stor-transit_router
 
     class VM vmStyle;
     class rtotr-GR-node1 portStyle;
@@ -348,12 +334,12 @@ flowchart TD
     class trtor-GR-node1 portStyle;
     class trtor-GR-node2 portStyle;
     class trtor-GR-node3 portStyle;
-    class stor-ovn_cluster_router portStyle;
+    class stor-transit_router portStyle;
     class rtos-layer2-switch portStyle;
     class GR-node1 routerStyle;
     class GR-node2 routerStyle;
     class GR-node3 routerStyle;
-    class ovn_cluster_router routerStyle;
+    class transit_router routerStyle;
     class layer2-switch switchStyle
     class term termStyle;
     class node1,node2,node3 nodeStyle;
@@ -424,10 +410,10 @@ flowchart TD
         end
     end
     subgraph layer2-switch
-        stor-ovn_cluster_router["stor-ovn_cluster_router
+        stor-transit_router["stor-transit_router
         type: router"]
     end
-    subgraph ovn_cluster_router["ovn_cluster_router "]
+    subgraph transit_router["transit_router "]
         trtor-GR-node1["trtor-GR-node1 fd97::8/127"]
         trtor-GR-node2["trtor-GR-node2 fd97::6/127"]
         trtor-GR-node3["trtor-GR-node3 fd97::4/127"]
@@ -437,7 +423,7 @@ flowchart TD
     rtotr-GR-node2 <--> trtor-GR-node2
     rtotr-GR-node3 <--> trtor-GR-node3
     VM <-->layer2-switch
-    rtos-layer2-switch <--> stor-ovn_cluster_router
+    rtos-layer2-switch <--> stor-transit_router
 
     class VM vmStyle;
     class rtotr-GR-node1 portStyle;
@@ -446,12 +432,12 @@ flowchart TD
     class trtor-GR-node1 portStyle;
     class trtor-GR-node2 portStyle;
     class trtor-GR-node3 portStyle;
-    class stor-ovn_cluster_router portStyle;
+    class stor-transit_router portStyle;
     class rtos-layer2-switch portStyle;
     class GR-node1 routerStyle;
     class GR-node2 routerStyle;
     class GR-node3 routerStyle;
-    class ovn_cluster_router routerStyle;
+    class transit_router routerStyle;
     class layer2-switch switchStyle
     class term termStyle;
     class node1,node2,node3 nodeStyle;
@@ -510,8 +496,7 @@ vs UDN interconnects (e.g. we can support 65K Layer3 UDNs or 32K Layer2 UDNs).
 #### NAT configuration
 As much as possible everything related to conntrack should not be modified since doing so can affect tcp connections.
 
-The only nat rule that needs to be moved from GR to ovn_cluster_router is the one SNATing the traffic from the network subnet that goes to the mgmt port. This is needed because now ovn_custer_router is the router directly connected to the layer2 switch (instead of the GR). The rest of the NAT configurations can stay unchanged on the GR, not also that
-there are plans to move the management port SNAT from OVN to iptables, so there were no issue here.
+The only nat rule that needs to be moved from GR to transit_router is the one SNATing the traffic from the network subnet that goes to the management port. This is needed because now ovn_custer_router is the router directly connected to the layer2 switch (instead of the GR). The rest of the NAT configurations can stay unchanged on the GR.
 
 ```
 allowed_ext_ips     : []
@@ -531,11 +516,11 @@ type                : snat
 
 Also the fact that join IP at gateway router is kept allow to maintain all the NATing done with it at gateway router to define OVN load balancers to implement k8s services.
 
-#### Static Routes and Logical Route Policies
+#### Static Routes and Logical Router Policies
 Changing where routes and policies are configured does not affect TCP connections on upgrade so we can move some routes and policies from gateway router
-to ovn_cluster_router without issues. In general it will be similar to the layer3 routes and policies.
+to transit_router without issues. In general it will be similar to the layer3 routes and policies.
 
-These will be the routes and policies configured on the new ovn_cluster_router
+These will be the routes and policies configured on the new transit_router
 ```
 IPv4 Routes
 Route Table <main>:
@@ -565,18 +550,18 @@ And these will be the gateway router configured routes (no policies needed):
 IPv4 Routes
 Route Table <main>:
            169.254.0.0/17               169.254.0.4 dst-ip rtoe-GR_test12_namespace.scoped_ovn-control-plane
-           203.203.0.0/16               100.88.0.13 dst-ip rtotr-GR_test12_namespace.scoped_ovn-control-plane <-- cluster ingress or egress reply traffic going towards the pod network via ovn_cluster_router peer IP.
+           203.203.0.0/16               100.88.0.13 dst-ip rtotr-GR_test12_namespace.scoped_ovn-control-plane <-- cluster ingress or egress reply traffic going towards the pod network via transit_router peer IP.
                 0.0.0.0/0                172.18.0.1 dst-ip rtoe-GR_test12_namespace.scoped_ovn-control-plane
 ```
 
-For the routes related to EIP, they are moved from gateway router to ovn_cluster_router and the redirect action is changed to point to the transit node peer ip.
+For the routes related to EIP, they are moved from gateway router to transit_router and the redirect action is changed to point to the transit node peer ip.
 
 #### Router to router direct connection without a switch
 
-To connect the ovn_cluster_router to the local gateway router instead of using a join switch like the layer3 topology those ports can be connected each other directly
+To connect the transit_router to the local gateway router instead of using a join switch like the layer3 topology those ports can be connected each other directly
 using the `peer` field.
 
-This is how it looks the `trtor` port at ovn_cluster_router:
+This is how it looks the `trtor` port at transit_router:
 ```
 _uuid               : f697bce1-dac7-442d-9355-e298e1735c7b
 dhcp_relay          : []
@@ -588,7 +573,7 @@ ipv6_prefix         : []
 ipv6_ra_configs     : {}
 mac                 : "0a:58:64:58:00:0d"
 name                : trtor-GR_test12_namespace.scoped_ovn-control-plane
-networks            : ["100.88.0.13/30", "fd97::8/127"]
+networks            : ["100.88.0.8/31", "fd97::8/127"]
 options             : {requested-tnl-key="4"}
 peer                : rtotr-GR_test12_namespace.scoped_ovn-control-plane <------------- peer field
 status              : {}
@@ -606,7 +591,7 @@ ipv6_prefix         : []
 ipv6_ra_configs     : {}
 mac                 : "0a:58:64:41:00:04"
 name                : rtotr-GR_test12_namespace.scoped_ovn-control-plane
-networks            : ["100.65.0.4/16", "100.88.0.14/30", "fd97::9/127", "fd99::4/64"]
+networks            : ["100.65.0.4/16", "100.88.0.9/31", "fd97::9/127", "fd99::4/64"]
 options             : {gateway_mtu="1400"}
 peer                : trtor-GR_test12_namespace.scoped_ovn-control-plane <-------------- peer field
 status              : {}
@@ -643,14 +628,14 @@ flowchart TD
     subgraph node1["node1"]
         subgraph GR-node1
             rtotr-GR-node1["trtor-GR-node1
-            100.65.0.2/16 100.88.0.6/30 (0a:58:64:41:00:02)"]
+            100.65.0.2/16 100.88.0.5/31 (0a:58:64:41:00:02)"]
         end
-        subgraph ovn_cluster_router_node1["ovn_cluster_router "]
-            trtor-GR-node1["trtor-GR-node1 100.88.0.5/30"]
+        subgraph transit_router_node1["transit_router "]
+            trtor-GR-node1["trtor-GR-node1 100.88.0.4/31"]
             rtos-layer2-switch["rtos-layer2-switch 203.203.0.1 (0a:58:CB:CB:00:01)"]
         end
         subgraph layer2-switch_node1["layer2-switch"]
-            stor-ovn_cluster_router["stor-ovn_cluster_router
+            stor-transit_router["stor-transit_router
             type: <b>router</b><br>requested-tnl-key: <b>4</b>"]
             stor-GR-node1-node2["stor-GR-node2
             type: <b>remote</b><br>requested-tnl-key: <b>5</b>"]
@@ -660,8 +645,8 @@ flowchart TD
 
 
     rtotr-GR-node1 <--> trtor-GR-node1
-    rtos-layer2-switch <--> stor-ovn_cluster_router
-    stor-GR-node1 <--> stor-ovn_cluster_router
+    rtos-layer2-switch <--> stor-transit_router
+    stor-GR-node1 <--> stor-transit_router
     stor-GR-node2 <--> rtos-GR-node2
     stor-GR-node1-node2 <--> stor-GR-node2
 
@@ -673,11 +658,11 @@ flowchart TD
     class stor-GR-node1 portStyle;
     class trtor-GR-node1 portStyle;
     class trtor-GR-node2 portStyle;
-    class stor-ovn_cluster_router portStyle;
+    class stor-transit_router portStyle;
     class rtos-layer2-switch portStyle;
     class GR-node1 routerStyle;
     class GR-node2 routerStyle;
-    class ovn_cluster_router_node1 routerStyle;
+    class transit_router_node1 routerStyle;
     class layer2-switch_node1 switchStyle;
     class layer2-switch_node2 switchStyle;
     class term termStyle;
@@ -709,21 +694,18 @@ Every Layer2 and Layer3 NAD will get new annotations for tunnel keys distributio
 
 ### Implementation Details
 
-A [PoC PR](https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5067) exists with basic implementation to make all CI pass and as input
-for this document.
-
 #### At ovnkube-node
 
 Create a helper that is able to derive the peer IPs from the node annotation
 for the transit peers node subnet.
 
 The layer2 controller should do the following:
-- Adapt and call the syncNodeClusterRouterPort from layer3 that creates the LRP that connectes to the switch at ovn_cluster_router
-- Pass ovn_cluster_router as cluster_name to the gateway init functions
+- Adapt and call the syncNodeClusterRouterPort from layer3 that creates the LRP that connects to the switch at transit_router
+- Pass transit_router as cluster_name to the gateway init functions
 - Remove from gateway.go the code that was attaching GR to layer2 switch
-- Add to gateway.go the code that connects GR to ovn_cluster_router using the peer ports
-- Change egressip.go so routes are configured at ovn_cluster_router instead of gateway router.
-- Change the ZoneInterConnect handler to be able to add the transit router remote ports to ovn_cluster_router
+- Add to gateway.go the code that connects GR to transit_router using the peer ports
+- Change egressip.go so routes are configured at transit_router instead of gateway router.
+- Change the ZoneInterConnect handler to be able to add the transit router remote ports to transit_router
 - In general re-use as much Layer3 code as possible since these makes Layer2 topology similar to it.
 
 #### At ovnkube-control-plane
@@ -731,8 +713,8 @@ The layer2 controller should do the following:
 At cluster manager at the zoneCluster controller calculate the peers node subnet
 and annotate the node.
 
-To calculate the peer node subnet we have two options:
-- Derive it from the node-id (same we do for transit switch addrs):
+To calculate the transit router subnet for each node we have two options:
+- Derive it from the node-id (same we do for transit switch addrs. `offset := 2 * nodeID; subnet := 100.88.0.0 + offset /31`):
   - good:
     - No need to maintain the allocator lifecycle
     - It's possible to entertain the idea of not annotating the node since the source of truth is the node-id
@@ -743,7 +725,7 @@ To calculate the peer node subnet we have two options:
   the subnet with it:
   - good:
     - Is simpler since it's matter of a new subnet allocator
-    - The transit peers node subnet is no longer dependant on node-id
+    - The transit peers node subnet is no longer dependent on node-id
   - bad:
     - Need to maintain the allocator lifecycle
     - Use more memory
@@ -818,10 +800,10 @@ flowchart TD
     subgraph node1["node1"]
         subgraph GR-node1
             rtotr-GR-node1["rtotr-GR-node1
-            100.65.0.2/16 100.88.0.6/30 (0a:58:64:41:00:02)"]
+            100.65.0.2/16 100.88.0.5/31 (0a:58:64:41:00:02)"]
         end
         subgraph transit_router_node1["transit_router "]
-            trtor-GR-node1["trtor-GR-node1 100.88.0.5/30"]
+            trtor-GR-node1["trtor-GR-node1 100.88.0.4/31"]
             rtos-layer2-switch["trtos-layer2-switch 203.203.0.1 169.254.0.22/17 (0a:58:CB:CB:00:01)"]
             trtos-layer2-switch-upgrade["<b>trtos-layer2-switch-upgrade</b> 100.65.255.254 (0a:58:64:41:00:02)"]
         end
@@ -976,7 +958,7 @@ N/A
 ## Risks, Known Limitations and Mitigations
 
 This topology repositions the NAT, which masquerades management port
-traffic, from the gateway router to the `ovn_cluster_router`. This change
+traffic, from the gateway router to the `transit_router`. This change
 might disrupt name resolution (DNS service access) and local gateway
 access to external traffic.
 
