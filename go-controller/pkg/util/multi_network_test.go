@@ -1022,6 +1022,7 @@ func TestGetPodNADToNetworkMappingWithActiveNetwork(t *testing.T) {
 		expectedIsAttachmentRequested    bool
 		expectedNetworkSelectionElements map[string]*nadv1.NetworkSelectionElement
 		enablePreconfiguredUDNAddresses  bool
+		injectPrimaryUDNNADs             []string
 	}
 
 	tests := []testConfig{
@@ -1241,6 +1242,53 @@ func TestGetPodNADToNetworkMappingWithActiveNetwork(t *testing.T) {
 			enablePreconfiguredUDNAddresses: true,
 			expectedError:                   fmt.Errorf(`unexpected default NSE name "unexpected-name", expected "default"`),
 		},
+		{
+			desc:           "should fail when no nad of the active network found on the pod namespace",
+			inputNamespace: "non-existent-ns",
+			expectedError:  fmt.Errorf(`no active NAD found for namespace "non-existent-ns"`),
+			inputNetConf: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: networkName},
+				NADName:  GetNADName(namespaceName, attachmentName),
+				Topology: ovntypes.Layer2Topology,
+				Role:     ovntypes.NetworkRolePrimary,
+			},
+			inputPrimaryUDNConfig: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: networkName},
+				Topology: ovntypes.Layer2Topology,
+				NADName:  GetNADName(namespaceName, attachmentName),
+				Role:     ovntypes.NetworkRolePrimary,
+			},
+		},
+		{
+			desc: "primary l2 CUDN (replicated NADs), should return the correct active network according to pod namespace",
+			inputNetConf: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: "cluster_udn_l2p"},
+				NADName:  GetNADName("red", "l2p"),
+				Topology: ovntypes.Layer2Topology,
+				Role:     ovntypes.NetworkRolePrimary,
+			},
+			inputPrimaryUDNConfig: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: "cluster_udn_l2p"},
+				NADName:  GetNADName("red", "l2p"),
+				Topology: ovntypes.Layer2Topology,
+				Role:     ovntypes.NetworkRolePrimary,
+			},
+			injectPrimaryUDNNADs: []string{"blue/l2p", "green/l2p"},
+			inputNamespace:       "blue",
+			inputPodAnnotations: map[string]string{
+				DefNetworkAnnotation: `[{"namespace": "ovn-kubernetes", "name": "default", "ips": ["192.168.0.3/24", "fda6::3/48"], "mac": "aa:bb:cc:dd:ee:ff"}]`,
+			},
+			enablePreconfiguredUDNAddresses: true,
+			expectedIsAttachmentRequested:   true,
+			expectedNetworkSelectionElements: map[string]*nadv1.NetworkSelectionElement{
+				"blue/l2p": {
+					Name:       "l2p",
+					Namespace:  "blue",
+					IPRequest:  []string{"192.168.0.3/24", "fda6::3/48"},
+					MacRequest: "aa:bb:cc:dd:ee:ff",
+				},
+			},
+		},
 
 		{
 			desc: "default-network ips and mac is is ignored for Layer3 topology",
@@ -1290,7 +1338,7 @@ func TestGetPodNADToNetworkMappingWithActiveNetwork(t *testing.T) {
 				DefNetworkAnnotation:         `[{"foo}`,
 			},
 			enablePreconfiguredUDNAddresses: true,
-			expectedError:                   fmt.Errorf(`failed getting default-network annotation for pod "/test-pod": %w`, fmt.Errorf(`GetK8sPodDefaultNetwork: failed to parse CRD object: parsePodNetworkAnnotation: failed to parse pod Network Attachment Selection Annotation JSON format: unexpected end of JSON input`)),
+			expectedError:                   fmt.Errorf(`failed getting default-network annotation for pod "ns1/test-pod": %w`, fmt.Errorf(`GetK8sPodDefaultNetwork: failed to parse CRD object: parsePodNetworkAnnotation: failed to parse pod Network Attachment Selection Annotation JSON format: unexpected end of JSON input`)),
 		},
 	}
 	for _, test := range tests {
@@ -1323,6 +1371,9 @@ func TestGetPodNADToNetworkMappingWithActiveNetwork(t *testing.T) {
 				if test.inputPrimaryUDNConfig.NADName != "" {
 					mutableNetInfo := NewMutableNetInfo(primaryUDNNetInfo)
 					mutableNetInfo.AddNADs(test.inputPrimaryUDNConfig.NADName)
+					if len(test.injectPrimaryUDNNADs) > 0 {
+						mutableNetInfo.AddNADs(test.injectPrimaryUDNNADs...)
+					}
 					primaryUDNNetInfo = mutableNetInfo
 				}
 			}
@@ -1330,9 +1381,12 @@ func TestGetPodNADToNetworkMappingWithActiveNetwork(t *testing.T) {
 			pod := &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:        "test-pod",
-					Namespace:   test.inputNamespace,
+					Namespace:   namespaceName,
 					Annotations: test.inputPodAnnotations,
 				},
+			}
+			if test.inputNamespace != "" {
+				pod.Namespace = test.inputNamespace
 			}
 
 			isAttachmentRequested, networkSelectionElements, err := GetPodNADToNetworkMappingWithActiveNetwork(
