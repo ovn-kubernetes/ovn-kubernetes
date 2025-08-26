@@ -16,6 +16,7 @@ import (
 	"golang.org/x/exp/maps"
 
 	corev1 "k8s.io/api/core/v1"
+	k8sapitypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	knet "k8s.io/utils/net"
 
@@ -1487,14 +1488,19 @@ func GetPodNADToNetworkMappingWithActiveNetwork(pod *corev1.Pod, nInfo NetInfo, 
 	if len(activeNetworkNADs) < 1 {
 		return false, nil, fmt.Errorf("missing NADs at active network %q for namespace %q", activeNetwork.GetNetworkName(), pod.Namespace)
 	}
-	activeNetworkNADKey := strings.Split(activeNetworkNADs[0], "/")
+
+	activeNADKey := getNADWithNamespace(activeNetworkNADs, pod.Namespace)
+	if activeNADKey == nil {
+		return false, nil, fmt.Errorf("no active NAD found for namespace %q", pod.Namespace)
+	}
+
 	if len(networkSelections) == 0 {
 		networkSelections = map[string]*nettypes.NetworkSelectionElement{}
 	}
 
 	activeNSE := &nettypes.NetworkSelectionElement{
-		Namespace: activeNetworkNADKey[0],
-		Name:      activeNetworkNADKey[1],
+		Namespace: activeNADKey.Namespace,
+		Name:      activeNADKey.Name,
 	}
 
 	// Feature gate integration: EnablePreconfiguredUDNAddresses controls default network IP/MAC transfer to active network
@@ -1523,8 +1529,24 @@ func GetPodNADToNetworkMappingWithActiveNetwork(pod *corev1.Pod, nInfo NetInfo, 
 		}
 	}
 
-	networkSelections[activeNetworkNADs[0]] = activeNSE
+	networkSelections[activeNADKey.String()] = activeNSE
 	return true, networkSelections, nil
+}
+
+// getNADWithNamespace returns the first occurrence of NAD key with the given namespace name.
+func getNADWithNamespace(nads []string, targetNamespace string) *k8sapitypes.NamespacedName {
+	for _, nad := range nads {
+		nsName := strings.Split(nad, "/")
+		if len(nsName) != 2 {
+			continue
+		}
+		ns, name := nsName[0], nsName[1]
+		if ns != targetNamespace {
+			continue
+		}
+		return &k8sapitypes.NamespacedName{Namespace: ns, Name: name}
+	}
+	return nil
 }
 
 func IsMultiNetworkPoliciesSupportEnabled() bool {
