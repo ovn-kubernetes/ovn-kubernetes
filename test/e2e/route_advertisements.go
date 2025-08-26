@@ -120,7 +120,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 		// The client pod inside the KIND cluster on the default network exposed using default network Router
 		// Advertisement will curl the external server container sitting outside the cluster via a FRR router
 		// This test ensures the north-south connectivity is happening through podIP
-		ginkgo.It("tests are run towards the external agnhost echo server", func() {
+		ginkgo.It("default network toggle tests that are run towards the external agnhost echo server and another cluster node", func() {
 			ginkgo.By("routes from external bgp server are imported by nodes in the cluster")
 			bgpNetwork, err := infraprovider.Get().GetNetwork(bgpExternalNetworkName)
 			framework.ExpectNoError(err, "network %s must be available and precreated before test run", bgpExternalNetworkName)
@@ -240,7 +240,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 				"app": "internal-server-pod",
 			}
 
-			// Create host networked pod using createPod function
+			// Create host networked pod on another cluster node using createPod function
 			hostNetworkedPod, err = createPod(f, "internal-server-pod", nodes.Items[2].Name, f.Namespace.Name,
 				[]string{"/agnhost", "netexec", "--http-port=8080"}, podLabels, func(p *corev1.Pod) {
 					// Set host networking
@@ -283,8 +283,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 			testClientPodToServerConnectivity(serverContainerIPs, "8080", clientPodIPs, "external server pod")
 
 			ginkgo.By("With default network being advertised, queries to the second node are SNATed (uses nodeIP)")
-			// testClientPodToServerConnectivity(NodePortServiceNodeIPs, strconv.Itoa(8080), clientNodeIPs, "client pod to nodeport service")
-			testClientPodToServerConnectivity(hostNetworkedPodNodeIPs, strconv.Itoa(8080), clientPodIPs, "client pod to second node")
+			testClientPodToServerConnectivity(hostNetworkedPodNodeIPs, strconv.Itoa(8080), clientNodeIPs, "client pod to second node")
 
 			// defer add default network RA back to restore to the original test setup
 			ra := &rav1.RouteAdvertisements{
