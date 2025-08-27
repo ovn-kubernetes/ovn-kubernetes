@@ -274,9 +274,9 @@ func setupManagementPortIPFamilyConfig(link netlink.Link, mpcfg *managementPortC
 
 	// IPv6 forwarding is enabled globally
 	if protocol == iptables.ProtocolIPv4 {
-		stdout, stderr, err := util.RunSysctl("-w", fmt.Sprintf("net.ipv4.conf.%s.forwarding=1", types.K8sMgmtIntfName))
-		if err != nil || stdout != fmt.Sprintf("net.ipv4.conf.%s.forwarding = 1", types.K8sMgmtIntfName) {
-			klog.Warningf("Could not set the correct forwarding value for interface %s: stdout: %s, stderr: %s, err: %v", types.K8sMgmtIntfName, stdout, stderr, err)
+		err := util.SetforwardingModeForInterface(types.K8sMgmtIntfName)
+		if err != nil {
+			klog.Warning(err)
 		}
 	}
 
@@ -578,10 +578,10 @@ func syncMgmtPortInterface(mgmtPortName string, isExpectedToBeInternal bool) err
 			return nil
 		}
 
-		klog.Infof("Found OVS internal port. Removing it")
-		_, stderr, err := util.RunOVSVsctl("del-port", "br-int", mgmtPortName)
+		klog.Infof("Found OVS internal port %s. Removing it", mgmtPortName)
+		err := DeleteManagementPortOVSInterface(types.DefaultNetworkName, mgmtPortName)
 		if err != nil {
-			return fmt.Errorf("failed to remove OVS internal port: %s", stderr)
+			return err
 		}
 		return nil
 	}
@@ -605,9 +605,9 @@ func unconfigureMgmtRepresentorPort(mgmtPortName string) error {
 		klog.Warningf("No saved management port representor name for %s, renaming to %s", mgmtPortName, savedName)
 	}
 
-	_, stderr, err = util.RunOVSVsctl("--if-exists", "del-port", "br-int", mgmtPortName)
+	err = DeleteManagementPortOVSInterface(types.DefaultNetworkName, mgmtPortName)
 	if err != nil {
-		return fmt.Errorf("failed to remove OVS port: %s", stderr)
+		return err
 	}
 
 	link, err := util.GetNetLinkOps().LinkByName(mgmtPortName)
@@ -615,14 +615,7 @@ func unconfigureMgmtRepresentorPort(mgmtPortName string) error {
 		return fmt.Errorf("failed to lookup %s link: %v", mgmtPortName, err)
 	}
 
-	if err := util.GetNetLinkOps().LinkSetDown(link); err != nil {
-		return fmt.Errorf("failed to set link down: %v", err)
-	}
-
-	if err := util.GetNetLinkOps().LinkSetName(link, savedName); err != nil {
-		return fmt.Errorf("failed to rename %s link to %s: %v", mgmtPortName, savedName, err)
-	}
-	return nil
+	return TearDownManagementPortLink(types.DefaultNetworkName, link, savedName)
 }
 
 func unconfigureMgmtNetdevicePort(mgmtPortName string) error {
@@ -635,7 +628,7 @@ func unconfigureMgmtNetdevicePort(mgmtPortName string) error {
 		return nil
 	}
 
-	klog.Infof("Found existing management interface. Unconfiguring it")
+	klog.Infof("Found existing management interface %s. Unconfiguring it", mgmtPortName)
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {
 		return fmt.Errorf("failed to get nftables: %v", err)
@@ -643,10 +636,6 @@ func unconfigureMgmtNetdevicePort(mgmtPortName string) error {
 
 	if err := tearDownManagementPortConfig(link, nft); err != nil {
 		return fmt.Errorf("teardown failed: %v", err)
-	}
-
-	if err := util.GetNetLinkOps().LinkSetDown(link); err != nil {
-		return fmt.Errorf("failed to set %s link down: %v", mgmtPortName, err)
 	}
 
 	savedName := ""
@@ -665,11 +654,7 @@ func unconfigureMgmtNetdevicePort(mgmtPortName string) error {
 		klog.Warningf("No saved management port netdevice name for %s, renaming to %s", mgmtPortName, savedName)
 	}
 
-	// rename to PortName + "-ddmmyyHHMMSS"
-	if err := util.GetNetLinkOps().LinkSetName(link, savedName); err != nil {
-		return fmt.Errorf("failed to rename %s link to %s: %v", mgmtPortName, savedName, err)
-	}
-	return nil
+	return TearDownManagementPortLink(types.DefaultNetworkName, link, savedName)
 }
 
 // DelLegacyMgtPortIptRules deletes legacy iptables rules for the management port; this is
@@ -738,14 +723,8 @@ func initMgmPortRoutingRules(mgmtCfg *managementPortConfig) error {
 
 	// lastly update the reverse path filtering options for ovn-k8s-mp0 interface to avoid dropping return packets
 	// NOTE: v6 doesn't have rp_filter strict mode block
-	rpFilterLooseMode := "2"
-	// TODO: Convert testing framework to mock golang module utilities. Example:
-	// result, err := sysctl.Sysctl(fmt.Sprintf("net/ipv4/conf/%s/rp_filter", types.K8sMgmtIntfName), rpFilterLooseMode)
-	stdout, stderr, err := util.RunSysctl("-w", fmt.Sprintf("net.ipv4.conf.%s.rp_filter=%s", types.K8sMgmtIntfName, rpFilterLooseMode))
-	if err != nil || stdout != fmt.Sprintf("net.ipv4.conf.%s.rp_filter = %s", types.K8sMgmtIntfName, rpFilterLooseMode) {
-		return fmt.Errorf("could not set the correct rp_filter value for interface %s: stdout: %v, stderr: %v, err: %v",
-			types.K8sMgmtIntfName, stdout, stderr, err)
+	if config.IPv4Mode {
+		return util.SetRPFilterLooseModeForInterface(types.K8sMgmtIntfName)
 	}
-
 	return nil
 }
