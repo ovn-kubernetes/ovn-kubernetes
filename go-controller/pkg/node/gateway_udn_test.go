@@ -73,7 +73,7 @@ func getRPFilterLooseModeFakeCommands(fexec *ovntest.FakeExec) {
 
 func getDeletionFakeOVSCommands(fexec *ovntest.FakeExec, mgtPort string) {
 	fexec.AddFakeCmdsNoOutputNoError([]string{
-		"ovs-vsctl --timeout=15 -- --if-exists del-port br-int " + mgtPort,
+		"ovs-vsctl --timeout=15 --if-exists del-port br-int " + mgtPort,
 	})
 }
 
@@ -94,7 +94,7 @@ func setManagementPortFakeCommands(fexec *ovntest.FakeExec, nodeName string) {
 		"ovs-vsctl --timeout=15 -- --if-exists del-port br-int " + mpPortLegacyName + " -- --may-exist add-port br-int " + mpPortName + " -- set interface " + mpPortName + " mac=\"0a:58:64:80:00:02\" type=internal mtu_request=1400 external-ids:iface-id=" + mpPortLegacyName,
 	})
 	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "sysctl -w net.ipv4.conf.ovn-k8s-mp0.forwarding=1",
+		Cmd:    "sysctl -w net/ipv4/conf/ovn-k8s-mp0/forwarding=1",
 		Output: "net.ipv4.conf.ovn-k8s-mp0.forwarding = 1",
 	})
 	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
@@ -124,7 +124,7 @@ func setManagementPortFakeCommands(fexec *ovntest.FakeExec, nodeName string) {
 		Output: "0",
 	})
 	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "sysctl -w net.ipv4.conf.ovn-k8s-mp0.rp_filter=2",
+		Cmd:    "sysctl -w net/ipv4/conf/ovn-k8s-mp0/rp_filter=2",
 		Output: "net.ipv4.conf.ovn-k8s-mp0.rp_filter = 2",
 	})
 }
@@ -1662,7 +1662,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		getRPFilterLooseModeFakeCommands(fexec)
 		err := testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
-			err := addRPFilterLooseModeForManagementPort(mgtPort)
+			err := util.SetRPFilterLooseModeForInterface(mgtPort)
 			Expect(err).NotTo(HaveOccurred())
 			return nil
 		})

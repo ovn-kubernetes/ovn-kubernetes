@@ -31,6 +31,7 @@ type NetLinkOps interface {
 	LinkSetDown(link netlink.Link) error
 	LinkAdd(link netlink.Link) error
 	LinkDelete(link netlink.Link) error
+	LinkSetAlias(link netlink.Link, name string) error
 	LinkSetName(link netlink.Link, newName string) error
 	LinkSetUp(link netlink.Link) error
 	LinkSetNsFd(link netlink.Link, fd int) error
@@ -96,6 +97,10 @@ func (defaultNetLinkOps) LinkSetDown(link netlink.Link) error {
 
 func (defaultNetLinkOps) LinkAdd(link netlink.Link) error {
 	return netlink.LinkAdd(link)
+}
+
+func (defaultNetLinkOps) LinkSetAlias(link netlink.Link, name string) error {
+	return netlink.LinkSetAlias(link, name)
 }
 
 func (defaultNetLinkOps) LinkDelete(link netlink.Link) error {
@@ -851,4 +856,33 @@ func ipAddrExistsAtInterface(ipAddr net.IP, iface net.Interface) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// SetforwardingModeForInterface update the forwarding options for the specified interface
+func SetforwardingModeForInterface(ifName string) error {
+	// we use forward slash as path separator to allow dotted interfaceName e.g. foo.200
+	stdout, stderr, err := RunSysctl("-w", fmt.Sprintf("net/ipv4/conf/%s/forwarding=1", ifName))
+	// systctl output enforces dot as path separator
+	if err != nil || stdout != fmt.Sprintf("net.ipv4.conf.%s.forwarding = 1", strings.ReplaceAll(ifName, ".", "/")) {
+		return fmt.Errorf("could not set the correct forwarding value for interface %s: stdout: %v, stderr: %v, err: %v",
+			ifName, stdout, stderr, err)
+	}
+	return nil
+}
+
+// SetRPFilterLooseModeForInterface update the reverse path filtering options for the specified interface
+func SetRPFilterLooseModeForInterface(ifName string) error {
+	// update the reverse path filtering options for the specified interface to avoid dropping packets with masqueradeIP
+	// coming out of managementport interface
+	// NOTE: v6 doesn't have rp_filter strict mode block
+	rpFilterLooseMode := "2"
+	// TODO: Convert testing framework to mock golang module utilities. Example:
+	// we use forward slash as path separator to allow dotted mgmtPortName e.g. foo.200
+	stdout, stderr, err := RunSysctl("-w", fmt.Sprintf("net/ipv4/conf/%s/rp_filter=%s", ifName, rpFilterLooseMode))
+	// systctl output enforces dot as path separator
+	if err != nil || stdout != fmt.Sprintf("net.ipv4.conf.%s.rp_filter = %s", strings.ReplaceAll(ifName, ".", "/"), rpFilterLooseMode) {
+		return fmt.Errorf("could not set the correct rp_filter value for interface %s: stdout: %v, stderr: %v, err: %v",
+			ifName, stdout, stderr, err)
+	}
+	return nil
 }

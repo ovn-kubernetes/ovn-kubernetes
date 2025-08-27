@@ -291,7 +291,7 @@ var _ = Describe("Healthcheck tests", func() {
 			Expect(util.SetExec(fexec)).To(Succeed())
 			fexec.AddFakeCmdsNoOutputNoError([]string{
 				"ovs-vsctl --timeout=15" +
-					" -- --if-exists del-port br-int " + staleMgtPort,
+					" --if-exists del-port br-int " + staleMgtPort,
 			})
 			factoryMock := factoryMocks.NodeWatchFactory{}
 			netInfo, err := util.ParseNADInfo(nad)

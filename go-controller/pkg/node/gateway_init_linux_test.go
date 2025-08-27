@@ -151,7 +151,7 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 			"ovs-vsctl --timeout=15 -- --if-exists del-port br-int " + mpPortLegacyName + " -- --may-exist add-port br-int " + mpPortName + " -- set interface " + mpPortName + " mac=\"0a:58:0a:01:01:02\" type=internal mtu_request=" + mtu + " external-ids:iface-id=" + mpPortLegacyName,
 		})
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd:    "sysctl -w net.ipv4.conf.ovn-k8s-mp0.forwarding=1",
+			Cmd:    "sysctl -w net/ipv4/conf/ovn-k8s-mp0/forwarding=1",
 			Output: "net.ipv4.conf.ovn-k8s-mp0.forwarding = 1",
 		})
 
@@ -245,7 +245,7 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 			Output: "0",
 		})
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd:    "sysctl -w net.ipv4.conf.ovn-k8s-mp0.rp_filter=2",
+			Cmd:    "sysctl -w net/ipv4/conf/ovn-k8s-mp0/rp_filter=2",
 			Output: "net.ipv4.conf.ovn-k8s-mp0.rp_filter = 2",
 		})
 		fexec.AddFakeCmdsNoOutputNoError([]string{
@@ -624,7 +624,7 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 		}
 		if config.IPv6Mode {
 			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-				Cmd:    "sysctl -w net.ipv6.conf.brp0.forwarding=1",
+				Cmd:    "sysctl -w net/ipv6/conf/brp0/forwarding=1",
 				Output: "net.ipv6.conf.brp0.forwarding = 1",
 			})
 		}
@@ -1056,7 +1056,7 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 			"ovs-vsctl --timeout=15 -- --if-exists del-port br-int " + mpPortLegacyName + " -- --may-exist add-port br-int " + mpPortName + " -- set interface " + mpPortName + " mac=\"0a:58:0a:01:01:02\" type=internal mtu_request=" + mtu + " external-ids:iface-id=" + mpPortLegacyName,
 		})
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd:    "sysctl -w net.ipv4.conf.ovn-k8s-mp0.forwarding=1",
+			Cmd:    "sysctl -w net/ipv4/conf/ovn-k8s-mp0/forwarding=1",
 			Output: "net.ipv4.conf.ovn-k8s-mp0.forwarding = 1",
 		})
 
@@ -1153,7 +1153,7 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 			Output: "0",
 		})
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd:    "sysctl -w net.ipv4.conf.ovn-k8s-mp0.rp_filter=2",
+			Cmd:    "sysctl -w net/ipv4/conf/ovn-k8s-mp0/rp_filter=2",
 			Output: "net.ipv4.conf.ovn-k8s-mp0.rp_filter = 2",
 		})
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
