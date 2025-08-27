@@ -159,16 +159,32 @@ func ovnKubeLogFileSizeMetricsUpdater(ovnKubeLogFileMetric *prometheus.GaugeVec,
 	defer ticker.Stop()
 
 	logfile := config.Logging.File
+	// only start the file watcher if the log file directory is valid
+	if logfile == "" {
+		klog.Infof("OVN Kube log file not specified in config, therefore not starting the log file metric monitor")
+		return
+	}
+	logFileDirectoryPath := path.Dir(logfile)
+	if _, err := os.Stat(logFileDirectoryPath); err != nil && os.IsNotExist(err) {
+		klog.Errorf("OVNKube log file directory (%q) doesn't exist, file path: %q", logFileDirectoryPath, logfile)
+		return
+	}
 	fileName := path.Base(logfile)
+
 	for {
 		select {
 		case <-ticker.C:
+			var fileSize float64
 			fileInfo, err := os.Stat(logfile)
 			if err != nil {
-				klog.Errorf("Failed to get the logfile size for %s: %v", fileName, err)
+				// file may not yet exist. Metric will be updated to zero when file doesn't exist.
+				if !os.IsNotExist(err) {
+					klog.Errorf("Failed to get the logfile size for %s: %v", fileName, err)
+				}
 			} else {
-				ovnKubeLogFileMetric.WithLabelValues(fileName).Set(float64(fileInfo.Size()))
+				fileSize = float64(fileInfo.Size())
 			}
+			ovnKubeLogFileMetric.WithLabelValues(fileName).Set(fileSize)
 		case <-stopChan:
 			return
 		}
