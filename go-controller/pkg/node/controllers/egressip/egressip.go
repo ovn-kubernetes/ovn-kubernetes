@@ -566,7 +566,7 @@ func (c *Controller) processEIP(eip *eipv1.EgressIP) (*eIPConfig, sets.Set[strin
 			if err != nil {
 				return nil, selectedNamespaces, selectedPods, selectedNamespacesPodIPs, fmt.Errorf("failed to get active network for namespace %s: %v", namespace.Name, err)
 			}
-			if netInfo.IsSecondary() {
+			if netInfo.IsUserDefinedNetwork() {
 				// EIP for secondary host interfaces is not supported for secondary networks
 				continue
 			}
@@ -1035,7 +1035,7 @@ func (c *Controller) repairNode() error {
 					if err != nil {
 						return fmt.Errorf("failed to get active network for namespace %s: %v", namespace.Name, err)
 					}
-					if netInfo.IsSecondary() {
+					if netInfo.IsUserDefinedNetwork() {
 						// EIP for secondary host interfaces is not supported for secondary networks
 						continue
 					}

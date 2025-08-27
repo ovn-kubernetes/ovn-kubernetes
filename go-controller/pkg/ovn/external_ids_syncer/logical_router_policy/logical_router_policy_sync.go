@@ -139,7 +139,7 @@ func (ps podsNetInfo) getPod(ip net.IP) (podNetInfo, error) {
 
 func (syncer *LRPSyncer) buildCDNPodCache() (podsNetInfo, podsNetInfo, error) {
 	p := func(item *nbdb.LogicalSwitchPort) bool {
-		return item.ExternalIDs["pod"] == "true" && item.ExternalIDs[ovntypes.NADExternalID] == "" // ignore secondary network LSPs
+		return item.ExternalIDs["pod"] == "true" && item.ExternalIDs[ovntypes.NADExternalID] == "" // ignore UDN LSPs
 	}
 	lsps, err := libovsdbops.FindLogicalSwitchPortWithPredicate(syncer.nbClient, p)
 	if err != nil {

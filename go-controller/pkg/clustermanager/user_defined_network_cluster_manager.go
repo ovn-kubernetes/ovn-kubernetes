@@ -14,10 +14,10 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
-// secondaryNetworkClusterManager object manages the multi net-attach-def controllers.
+// userDefinedNetworkClusterManager object manages the multi net-attach-def controllers.
 // It implements networkmanager.ControllerManager interface and can be used
 // by network manager to create and delete network controllers.
-type secondaryNetworkClusterManager struct {
+type userDefinedNetworkClusterManager struct {
 	// networkManager creates and deletes network controllers
 	networkManager networkmanager.Interface
 	ovnClient      *util.OVNClusterManagerClientset
@@ -29,14 +29,14 @@ type secondaryNetworkClusterManager struct {
 	errorReporter NetworkStatusReporter
 }
 
-func newSecondaryNetworkClusterManager(
+func newUserDefinedNetworkClusterManager(
 	ovnClient *util.OVNClusterManagerClientset,
 	wf *factory.WatchFactory,
 	networkManager networkmanager.Interface,
 	recorder record.EventRecorder,
-) (*secondaryNetworkClusterManager, error) {
-	klog.Infof("Creating secondary network cluster manager")
-	sncm := &secondaryNetworkClusterManager{
+) (*userDefinedNetworkClusterManager, error) {
+	klog.Infof("Creating user-defined network cluster manager")
+	sncm := &userDefinedNetworkClusterManager{
 		ovnClient:      ovnClient,
 		watchFactory:   wf,
 		networkManager: networkManager,
@@ -45,17 +45,17 @@ func newSecondaryNetworkClusterManager(
 	return sncm, nil
 }
 
-func (sncm *secondaryNetworkClusterManager) SetNetworkStatusReporter(errorReporter NetworkStatusReporter) {
+func (sncm *userDefinedNetworkClusterManager) SetNetworkStatusReporter(errorReporter NetworkStatusReporter) {
 	sncm.errorReporter = errorReporter
 }
 
-func (sncm *secondaryNetworkClusterManager) GetDefaultNetworkController() networkmanager.ReconcilableNetworkController {
+func (sncm *userDefinedNetworkClusterManager) GetDefaultNetworkController() networkmanager.ReconcilableNetworkController {
 	return nil
 }
 
 // NewNetworkController implements the networkmanager.ControllerManager
 // interface called by network manager to create or delete a network controller.
-func (sncm *secondaryNetworkClusterManager) NewNetworkController(nInfo util.NetInfo) (networkmanager.NetworkController, error) {
+func (sncm *userDefinedNetworkClusterManager) NewNetworkController(nInfo util.NetInfo) (networkmanager.NetworkController, error) {
 	if !sncm.isTopologyManaged(nInfo) {
 		return nil, networkmanager.ErrNetworkControllerTopologyNotManaged
 	}
@@ -73,7 +73,7 @@ func (sncm *secondaryNetworkClusterManager) NewNetworkController(nInfo util.NetI
 	return sncc, nil
 }
 
-func (sncm *secondaryNetworkClusterManager) isTopologyManaged(nInfo util.NetInfo) bool {
+func (sncm *userDefinedNetworkClusterManager) isTopologyManaged(nInfo util.NetInfo) bool {
 	switch nInfo.TopologyType() {
 	case ovntypes.Layer3Topology:
 		// we need to allocate subnets to each node regardless of configuration
@@ -93,7 +93,7 @@ func (sncm *secondaryNetworkClusterManager) isTopologyManaged(nInfo util.NetInfo
 // CleanupStaleNetworks cleans of stale data from the OVN database
 // corresponding to networks not included in validNetworks, which are considered
 // stale.
-func (sncm *secondaryNetworkClusterManager) CleanupStaleNetworks(validNetworks ...util.NetInfo) error {
+func (sncm *userDefinedNetworkClusterManager) CleanupStaleNetworks(validNetworks ...util.NetInfo) error {
 	existingNetworksMap := map[string]struct{}{}
 	for _, network := range validNetworks {
 		existingNetworksMap[network.GetNetworkName()] = struct{}{}
@@ -147,7 +147,7 @@ func (sncm *secondaryNetworkClusterManager) CleanupStaleNetworks(validNetworks .
 }
 
 // newDummyNetworkController creates a dummy network controller used to clean up specific network
-func (sncm *secondaryNetworkClusterManager) newDummyLayer3NetworkController(netName string) (networkmanager.NetworkController, error) {
+func (sncm *userDefinedNetworkClusterManager) newDummyLayer3NetworkController(netName string) (networkmanager.NetworkController, error) {
 	netInfo, _ := util.NewNetInfo(&ovncnitypes.NetConf{NetConf: types.NetConf{Name: netName}, Topology: ovntypes.Layer3Topology})
 	nc := newNetworkClusterController(
 		netInfo,

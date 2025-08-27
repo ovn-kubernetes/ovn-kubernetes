@@ -34,7 +34,7 @@ const (
 /*
  * ZoneInterconnectHandler manages OVN resources required for interconnecting
  * multiple zones. This handler exposes functions which a network controller
- * (default and secondary) is expected to call on different events.
+ * (default and UDN) is expected to call on different events.
 
  * For routed topologies:
  *
@@ -118,7 +118,7 @@ const (
  */
 
 // ZoneInterconnectHandler creates the OVN resources required for interconnecting
-// multiple zones for a network (default or secondary layer 3)
+// multiple zones for a network (default or layer 3) UDN
 type ZoneInterconnectHandler struct {
 	watchFactory *factory.WatchFactory
 	// network which is inter-connected
@@ -156,8 +156,8 @@ func getTransitSwitchName(nInfo util.NetInfo) string {
 
 func (zic *ZoneInterconnectHandler) createOrUpdateTransitSwitch(networkID int) error {
 	externalIDs := make(map[string]string)
-	if zic.IsSecondary() {
-		externalIDs = getSecondaryNetTransitSwitchExtIDs(zic.GetNetworkName(), zic.TopologyType(), zic.IsPrimaryNetwork())
+	if zic.IsUserDefinedNetwork() {
+		externalIDs = getUserDefinedNetTransitSwitchExtIDs(zic.GetNetworkName(), zic.TopologyType(), zic.IsPrimaryNetwork())
 	}
 	ts := &nbdb.LogicalSwitch{
 		Name:        zic.networkTransitSwitchName,
@@ -238,7 +238,7 @@ func (zic *ZoneInterconnectHandler) AddRemoteZoneNode(node *corev1.Node) error {
 	var nodeGRPIPs []*net.IPNet
 	// only primary networks have cluster router connected to join switch+GR
 	// used for adding routes to GR
-	if !zic.IsSecondary() || (util.IsNetworkSegmentationSupportEnabled() && zic.IsPrimaryNetwork()) {
+	if !zic.IsUserDefinedNetwork() || (util.IsNetworkSegmentationSupportEnabled() && zic.IsPrimaryNetwork()) {
 		nodeGRPIPs, err = udn.GetGWRouterIPs(node, zic.GetNetInfo())
 		if err != nil {
 			if util.IsAnnotationNotSetError(err) {
@@ -647,8 +647,8 @@ func (zic *ZoneInterconnectHandler) deleteLocalNodeStaticRoutes(node *corev1.Nod
 		}
 	}
 
-	if zic.IsSecondary() {
-		// Secondary network cluster router doesn't connect to a join switch
+	if zic.IsUserDefinedNetwork() {
+		// UDN cluster router doesn't connect to a join switch
 		// or to a Gateway router.
 		return nil
 	}
@@ -719,7 +719,7 @@ func (zic *ZoneInterconnectHandler) getStaticRoutes(ipPrefixes []*net.IPNet, nex
 	return staticRoutes
 }
 
-func getSecondaryNetTransitSwitchExtIDs(networkName, topology string, isPrimaryUDN bool) map[string]string {
+func getUserDefinedNetTransitSwitchExtIDs(networkName, topology string, isPrimaryUDN bool) map[string]string {
 	return map[string]string{
 		types.NetworkExternalID:     networkName,
 		types.NetworkRoleExternalID: util.GetUserDefinedNetworkRole(isPrimaryUDN),

@@ -44,7 +44,7 @@ func (n *primaryNetInfoWrapper) IsPrimaryNetwork() bool {
 	return true
 }
 
-func (n *primaryNetInfoWrapper) IsSecondary() bool {
+func (n *primaryNetInfoWrapper) IsUserDefinedNetwork() bool {
 	return false
 }
 
@@ -64,7 +64,7 @@ func (n *secondaryNetInfoWrapper) IsPrimaryNetwork() bool {
 	return false
 }
 
-func (n *secondaryNetInfoWrapper) IsSecondary() bool {
+func (n *secondaryNetInfoWrapper) IsUserDefinedNetwork() bool {
 	return true
 }
 
@@ -1011,7 +1011,7 @@ var _ = Describe("NetworkQoS Controller", func() {
 					err = libovsdbops.CreateOrUpdateLogicalSwitch(nbClient, secondarySwitch)
 					Expect(err).NotTo(HaveOccurred())
 
-					// Wrap the NetInfo with our custom implementation that returns true for IsSecondary()
+					// Wrap the NetInfo with our custom implementation that returns true for IsUserDefinedNetwork()
 					secNetWrapper := &secondaryNetInfoWrapper{NetInfo: secondaryNadInfo}
 					initNetworkQoSController(secNetWrapper, addressset.NewFakeAddressSetFactory("secondary-controller"), "secondary-controller", enableInterconnect)
 

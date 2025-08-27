@@ -433,7 +433,7 @@ func ConfigureOVS(ctx context.Context, namespace, podName, hostIfaceName string,
 
 	ifaceID := util.GetIfaceId(namespace, podName)
 	if ifInfo.NetName != types.DefaultNetworkName {
-		ifaceID = util.GetSecondaryNetworkIfaceId(namespace, podName, ifInfo.NADName)
+		ifaceID = util.GetUDNIfaceId(namespace, podName, ifInfo.NADName)
 	}
 	initialPodUID := ifInfo.PodUID
 	ipStrs := make([]string, len(ifInfo.IPs))

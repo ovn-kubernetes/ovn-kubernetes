@@ -854,8 +854,8 @@ func portExists(namespace, name string) bool {
 /** HACK END **/
 
 // Init executes the first steps to start the DefaultNodeNetworkController.
-// It is split from Start() and executed before SecondaryNodeNetworkController (SNNC),
-// to allow SNNC to reference the openflow manager created in Init.
+// It is split from Start() and executed before UserDefinedNodeNetworkController (UDNNC)
+// to allow UDNNC to reference the openflow manager created in Init.
 func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 	klog.Infof("Initializing the default node network controller")
 

@@ -115,7 +115,7 @@ func (bnnc *BaseNodeNetworkController) watchPodsDPU() (*factory.Handler, error) 
 			// add all the Pod's NADs into Pod's nadToDPUCDMap
 			// For default network, NAD name is DefaultNetworkName.
 			nadToDPUCDMap := map[string]*util.DPUConnectionDetails{}
-			if bnnc.IsSecondary() {
+			if bnnc.IsUserDefinedNetwork() {
 				if bnnc.IsPrimaryNetwork() {
 					activeNetwork, err = bnnc.networkManager.GetActiveNetworkForNamespace(pod.Namespace)
 					if err != nil {

@@ -33,7 +33,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-type secondaryNetInfo struct {
+type userDefinedNetInfo struct {
 	netName            string
 	nadName            string
 	clustersubnets     string
@@ -45,12 +45,12 @@ type secondaryNetInfo struct {
 }
 
 const (
-	nadName              = "blue-net"
-	ns                   = "namespace1"
-	secondaryNetworkName = "isolatednet"
-	secondaryNetworkID   = "2"
-	denyPolicyName       = "deny-all-policy"
-	denyPG               = "deny-port-group"
+	nadName                = "blue-net"
+	ns                     = "namespace1"
+	userDefinedNetworkName = "isolatednet"
+	userDefinedNetworkID   = "2"
+	denyPolicyName         = "deny-all-policy"
+	denyPG                 = "deny-port-group"
 )
 
 type testConfiguration struct {
@@ -92,7 +92,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 
 	DescribeTable(
 		"reconciles a new",
-		func(netInfo secondaryNetInfo, testConfig testConfiguration, gwMode config.GatewayMode) {
+		func(netInfo userDefinedNetInfo, testConfig testConfiguration, gwMode config.GatewayMode) {
 			podInfo := dummyTestPod(ns, netInfo)
 			if testConfig.configToOverride != nil {
 				config.OVNKubernetesFeature = *testConfig.configToOverride
@@ -113,7 +113,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 					*netInfo.netconf(),
 				)
 				Expect(err).NotTo(HaveOccurred())
-				nad.Annotations = map[string]string{types.OvnNetworkIDAnnotation: secondaryNetworkID}
+				nad.Annotations = map[string]string{types.OvnNetworkIDAnnotation: userDefinedNetworkID}
 				Expect(netInfo.setupOVNDependencies(&initialDB)).To(Succeed())
 				n := newNamespace(ns)
 				if netInfo.isPrimary {
@@ -139,7 +139,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				}
 
 				const nodeIPv4CIDR = "192.168.126.202/24"
-				testNode, err := newNodeWithSecondaryNets(nodeName, nodeIPv4CIDR, netInfo)
+				testNode, err := newNodeWithUserDefinedNetworks(nodeName, nodeIPv4CIDR, netInfo)
 				Expect(err).NotTo(HaveOccurred())
 				networkPolicy := getMatchLabelsNetworkPolicy(denyPolicyName, ns, "", "", false, false)
 				fakeOvn.startWithDBSetup(
@@ -180,16 +180,16 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				if netInfo.isPrimary {
 					Expect(fakeOvn.controller.WatchNetworkPolicy()).NotTo(HaveOccurred())
 				}
-				secondaryNetController, ok := fakeOvn.secondaryControllers[secondaryNetworkName]
+				userDefinedNetController, ok := fakeOvn.userDefinedNetworkControllers[userDefinedNetworkName]
 				Expect(ok).To(BeTrue())
 
-				secondaryNetController.bnc.ovnClusterLRPToJoinIfAddrs = dummyJoinIPs()
-				podInfo.populateSecondaryNetworkLogicalSwitchCache(secondaryNetController)
-				Expect(secondaryNetController.bnc.WatchNodes()).To(Succeed())
-				Expect(secondaryNetController.bnc.WatchPods()).To(Succeed())
+				userDefinedNetController.bnc.ovnClusterLRPToJoinIfAddrs = dummyJoinIPs()
+				podInfo.populateUserDefinedNetworkLogicalSwitchCache(userDefinedNetController)
+				Expect(userDefinedNetController.bnc.WatchNodes()).To(Succeed())
+				Expect(userDefinedNetController.bnc.WatchPods()).To(Succeed())
 
 				if netInfo.isPrimary {
-					Expect(secondaryNetController.bnc.WatchNetworkPolicy()).To(Succeed())
+					Expect(userDefinedNetController.bnc.WatchNetworkPolicy()).To(Succeed())
 					ninfo, err := fakeOvn.networkManager.Interface().GetActiveNetworkForNamespace(ns)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(ninfo.GetNetworkName()).To(Equal(netInfo.netName))
@@ -211,24 +211,24 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 					if testConfig.configToOverride != nil && testConfig.configToOverride.EnableEgressFirewall {
 						defaultNetExpectations = append(defaultNetExpectations,
 							buildNamespacedPortGroup(podInfo.namespace, DefaultNetworkControllerName))
-						secNetPG := buildNamespacedPortGroup(podInfo.namespace, secondaryNetController.bnc.controllerName)
-						portName := util.GetSecondaryNetworkLogicalPortName(podInfo.namespace, podInfo.podName, netInfo.nadName) + "-UUID"
+						secNetPG := buildNamespacedPortGroup(podInfo.namespace, userDefinedNetController.bnc.controllerName)
+						portName := util.GetUserDefinedNetworkLogicalPortName(podInfo.namespace, podInfo.podName, netInfo.nadName) + "-UUID"
 						secNetPG.Ports = []string{portName}
 						defaultNetExpectations = append(defaultNetExpectations, secNetPG)
 					}
 					networkConfig, err := util.NewNetInfo(netInfo.netconf())
 					Expect(err).NotTo(HaveOccurred())
 					// Add NetPol hairpin ACLs and PGs for the validation.
-					mgmtPortName := managementPortName(secondaryNetController.bnc.GetNetworkScopedName(nodeName))
+					mgmtPortName := managementPortName(userDefinedNetController.bnc.GetNetworkScopedName(nodeName))
 					mgmtPortUUID := mgmtPortName + "-UUID"
 					defaultNetExpectations = append(defaultNetExpectations, getHairpinningACLsV4AndPortGroup()...)
 					defaultNetExpectations = append(defaultNetExpectations, getHairpinningACLsV4AndPortGroupForNetwork(networkConfig,
 						[]string{mgmtPortUUID})...)
 					// Add Netpol deny policy ACLs and PGs for the validation.
-					podLPortName := util.GetSecondaryNetworkLogicalPortName(podInfo.namespace, podInfo.podName, netInfo.nadName) + "-UUID"
+					podLPortName := util.GetUserDefinedNetworkLogicalPortName(podInfo.namespace, podInfo.podName, netInfo.nadName) + "-UUID"
 					dataParams := newNetpolDataParams(networkPolicy).withLocalPortUUIDs(podLPortName).withNetInfo(networkConfig)
 					defaultDenyExpectedData := getDefaultDenyData(dataParams)
-					pgDbIDs := getNetworkPolicyPortGroupDbIDs(ns, secondaryNetController.bnc.controllerName, denyPolicyName)
+					pgDbIDs := getNetworkPolicyPortGroupDbIDs(ns, userDefinedNetController.bnc.controllerName, denyPolicyName)
 					ingressPG := libovsdbutil.BuildPortGroup(pgDbIDs, nil, nil)
 					ingressPG.UUID = denyPG
 					ingressPG.Ports = []string{podLPortName}
@@ -239,7 +239,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 					libovsdbtest.HaveData(
 						append(
 							defaultNetExpectations,
-							newSecondaryNetworkExpectationMachine(
+							newUserDefinedNetworkExpectationMachine(
 								fakeOvn,
 								[]testPod{podInfo},
 								expectationOptions...,
@@ -293,7 +293,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 
 	DescribeTable(
 		"the gateway is properly cleaned up",
-		func(netInfo secondaryNetInfo, testConfig testConfiguration) {
+		func(netInfo userDefinedNetInfo, testConfig testConfiguration) {
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
 			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 			podInfo := dummyTestPod(ns, netInfo)
@@ -314,7 +314,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 					*netConf,
 				)
 				Expect(err).NotTo(HaveOccurred())
-				nad.Annotations = map[string]string{types.OvnNetworkIDAnnotation: secondaryNetworkID}
+				nad.Annotations = map[string]string{types.OvnNetworkIDAnnotation: userDefinedNetworkID}
 
 				mutableNetworkConfig := util.NewMutableNetInfo(networkConfig)
 				mutableNetworkConfig.SetNADs(util.GetNADName(nad.Namespace, nad.Name))
@@ -326,7 +326,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				fakeNetworkManager.PrimaryNetworks[ns] = networkConfig
 
 				const nodeIPv4CIDR = "192.168.126.202/24"
-				testNode, err := newNodeWithSecondaryNets(nodeName, nodeIPv4CIDR, netInfo)
+				testNode, err := newNodeWithUserDefinedNetworks(nodeName, nodeIPv4CIDR, netInfo)
 				Expect(err).NotTo(HaveOccurred())
 
 				nbZone := &nbdb.NBGlobal{Name: types.OvnDefaultZone, UUID: types.OvnDefaultZone}
@@ -390,16 +390,16 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 
 				Expect(fakeOvn.controller.WatchNamespaces()).To(Succeed())
 				Expect(fakeOvn.controller.WatchPods()).To(Succeed())
-				secondaryNetController, ok := fakeOvn.secondaryControllers[secondaryNetworkName]
+				userDefinedNetController, ok := fakeOvn.userDefinedNetworkControllers[userDefinedNetworkName]
 				Expect(ok).To(BeTrue())
 
-				secondaryNetController.bnc.ovnClusterLRPToJoinIfAddrs = dummyJoinIPs()
-				podInfo.populateSecondaryNetworkLogicalSwitchCache(secondaryNetController)
-				Expect(secondaryNetController.bnc.WatchNodes()).To(Succeed())
-				Expect(secondaryNetController.bnc.WatchPods()).To(Succeed())
+				userDefinedNetController.bnc.ovnClusterLRPToJoinIfAddrs = dummyJoinIPs()
+				podInfo.populateUserDefinedNetworkLogicalSwitchCache(userDefinedNetController)
+				Expect(userDefinedNetController.bnc.WatchNodes()).To(Succeed())
+				Expect(userDefinedNetController.bnc.WatchPods()).To(Succeed())
 
 				if netInfo.isPrimary {
-					Expect(secondaryNetController.bnc.WatchNetworkPolicy()).To(Succeed())
+					Expect(userDefinedNetController.bnc.WatchNetworkPolicy()).To(Succeed())
 				}
 
 				Expect(fakeOvn.fakeClient.KubeClient.CoreV1().Pods(pod.Namespace).Delete(context.Background(), pod.Name, metav1.DeleteOptions{})).To(Succeed())
@@ -407,8 +407,8 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 
 				// we must access the layer3 controller to be able to issue its cleanup function (to remove the GW related stuff).
 				Expect(
-					newSecondaryLayer3NetworkController(
-						&secondaryNetController.bnc.CommonNetworkControllerInfo,
+					newLayer3UserDefinedNetworkController(
+						&userDefinedNetController.bnc.CommonNetworkControllerInfo,
 						networkConfig,
 						nodeName,
 						fakeNetworkManager,
@@ -446,7 +446,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 
 func newPodWithPrimaryUDN(
 	nodeName, nodeSubnet, nodeMgtIP, nodeGWIP, podName, podIPs, podMAC, namespace string,
-	primaryUDNConfig secondaryNetInfo,
+	primaryUDNConfig userDefinedNetInfo,
 ) testPod {
 	pod := newTPod(nodeName, nodeSubnet, nodeMgtIP, "", podName, podIPs, podMAC, namespace)
 	if primaryUDNConfig.isPrimary {
@@ -493,7 +493,7 @@ func newPodWithPrimaryUDN(
 
 func namespacedName(ns, name string) string { return fmt.Sprintf("%s/%s", ns, name) }
 
-func (sni *secondaryNetInfo) getNetworkRole() string {
+func (sni *userDefinedNetInfo) getNetworkRole() string {
 	return util.GetUserDefinedNetworkRole(sni.isPrimary)
 }
 
@@ -501,7 +501,7 @@ func getNetworkRole(netInfo util.NetInfo) string {
 	return util.GetUserDefinedNetworkRole(netInfo.IsPrimaryNetwork())
 }
 
-func (sni *secondaryNetInfo) setupOVNDependencies(dbData *libovsdbtest.TestSetup) error {
+func (sni *userDefinedNetInfo) setupOVNDependencies(dbData *libovsdbtest.TestSetup) error {
 	netInfo, err := util.NewNetInfo(sni.netconf())
 	if err != nil {
 		return err
@@ -536,7 +536,7 @@ func (sni *secondaryNetInfo) setupOVNDependencies(dbData *libovsdbtest.TestSetup
 	return nil
 }
 
-func (sni *secondaryNetInfo) netconf() *ovncnitypes.NetConf {
+func (sni *userDefinedNetInfo) netconf() *ovncnitypes.NetConf {
 	const plugin = "ovn-k8s-cni-overlay"
 
 	role := types.NetworkRoleSecondary
@@ -556,7 +556,7 @@ func (sni *secondaryNetInfo) netconf() *ovncnitypes.NetConf {
 	}
 }
 
-func dummyTestPod(nsName string, info secondaryNetInfo) testPod {
+func dummyTestPod(nsName string, info userDefinedNetInfo) testPod {
 	const nodeSubnet = "10.128.1.0/24"
 	if info.isPrimary {
 		return newPodWithPrimaryUDN(
@@ -592,9 +592,9 @@ func dummyTestPod(nsName string, info secondaryNetInfo) testPod {
 	return pod
 }
 
-func dummySecondaryLayer3UserDefinedNetwork(clustersubnets, hostsubnets string) secondaryNetInfo {
-	return secondaryNetInfo{
-		netName:        secondaryNetworkName,
+func dummySecondaryLayer3UserDefinedNetwork(clustersubnets, hostsubnets string) userDefinedNetInfo {
+	return userDefinedNetInfo{
+		netName:        userDefinedNetworkName,
 		nadName:        namespacedName(ns, nadName),
 		topology:       types.Layer3Topology,
 		clustersubnets: clustersubnets,
@@ -602,18 +602,18 @@ func dummySecondaryLayer3UserDefinedNetwork(clustersubnets, hostsubnets string) 
 	}
 }
 
-func dummyPrimaryLayer3UserDefinedNetwork(clustersubnets, hostsubnets string) secondaryNetInfo {
+func dummyPrimaryLayer3UserDefinedNetwork(clustersubnets, hostsubnets string) userDefinedNetInfo {
 	secondaryNet := dummySecondaryLayer3UserDefinedNetwork(clustersubnets, hostsubnets)
 	secondaryNet.isPrimary = true
 	return secondaryNet
 }
 
 // This util is returning a network-name/hostSubnet for the node's node-subnets annotation
-func (sni *secondaryNetInfo) String() string {
+func (sni *userDefinedNetInfo) String() string {
 	return fmt.Sprintf("%q: %q", sni.netName, sni.hostsubnets)
 }
 
-func newNodeWithSecondaryNets(nodeName string, nodeIPv4CIDR string, netInfos ...secondaryNetInfo) (*corev1.Node, error) {
+func newNodeWithUserDefinedNetworks(nodeName string, nodeIPv4CIDR string, netInfos ...userDefinedNetInfo) (*corev1.Node, error) {
 	var nodeSubnetInfo []string
 	for _, info := range netInfos {
 		nodeSubnetInfo = append(nodeSubnetInfo, info.String())
@@ -641,7 +641,7 @@ func newNodeWithSecondaryNets(nodeName string, nodeIPv4CIDR string, netInfos ...
 				"k8s.ovn.org/zone-name":           "global",
 				"k8s.ovn.org/l3-gateway-config":   fmt.Sprintf("{\"default\":{\"mode\":\"shared\",\"bridge-id\":\"breth0\",\"interface-id\":\"breth0_ovn-worker\",\"mac-address\":%q,\"ip-addresses\":[%[2]q],\"ip-address\":%[2]q,\"next-hops\":[%[3]q],\"next-hop\":%[3]q,\"node-port-enable\":\"true\",\"vlan-id\":\"0\"}}", util.IPAddrToHWAddr(nodeIP), nodeCIDR, nextHopIP),
 				util.OvnNodeChassisID:             "abdcef",
-				"k8s.ovn.org/network-ids":         fmt.Sprintf("{\"default\":\"0\",\"isolatednet\":\"%s\"}", secondaryNetworkID),
+				"k8s.ovn.org/network-ids":         fmt.Sprintf("{\"default\":\"0\",\"isolatednet\":\"%s\"}", userDefinedNetworkID),
 				util.OvnNodeID:                    "4",
 				"k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids": "{\"isolatednet\":\"25\"}",
 			},
@@ -1043,15 +1043,15 @@ func standardNonDefaultNetworkExtIDsForLogicalSwitch(netInfo util.NetInfo) map[s
 	return externalIDs
 }
 
-func newSecondaryLayer3NetworkController(
+func newLayer3UserDefinedNetworkController(
 	cnci *CommonNetworkControllerInfo,
 	netInfo util.NetInfo,
 	nodeName string,
 	networkManager networkmanager.Interface,
 	eIPController *EgressIPController,
 	portCache *PortCache,
-) *SecondaryLayer3NetworkController {
-	layer3NetworkController, err := NewSecondaryLayer3NetworkController(cnci, netInfo, networkManager, nil, eIPController, portCache)
+) *Layer3UserDefinedNetworkController {
+	layer3NetworkController, err := NewLayer3UserDefinedNetworkController(cnci, netInfo, networkManager, nil, eIPController, portCache)
 	Expect(err).NotTo(HaveOccurred())
 	layer3NetworkController.gatewayManagers.Store(
 		nodeName,

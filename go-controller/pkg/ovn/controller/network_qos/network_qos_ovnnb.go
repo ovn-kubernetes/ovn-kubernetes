@@ -45,7 +45,7 @@ func (c *Controller) addQoSToLogicalSwitch(qosState *networkQoSState, switchName
 			Match:       generateNetworkQoSMatch(qosState, rule, ipv4Enabled, ipv6Enabled),
 			Priority:    rule.Priority,
 		}
-		if c.IsSecondary() {
+		if c.IsUserDefinedNetwork() {
 			qos.ExternalIDs[types.NetworkExternalID] = c.GetNetworkName()
 		}
 		if rule.Dscp >= 0 {

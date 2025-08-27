@@ -47,7 +47,7 @@ func (c *PortCache) get(pod *corev1.Pod, nadName string) (*lpInfo, error) {
 	if nadName == types.DefaultNetworkName {
 		logicalPort = util.GetLogicalPortName(pod.Namespace, pod.Name)
 	} else {
-		logicalPort = util.GetSecondaryNetworkLogicalPortName(pod.Namespace, pod.Name, nadName)
+		logicalPort = util.GetUserDefinedNetworkLogicalPortName(pod.Namespace, pod.Name, nadName)
 	}
 	c.RLock()
 	defer c.RUnlock()
@@ -82,7 +82,7 @@ func (c *PortCache) add(pod *corev1.Pod, logicalSwitch, nadName, uuid string, ma
 	if nadName == types.DefaultNetworkName {
 		logicalPort = util.GetLogicalPortName(pod.Namespace, pod.Name)
 	} else {
-		logicalPort = util.GetSecondaryNetworkLogicalPortName(pod.Namespace, pod.Name, nadName)
+		logicalPort = util.GetUserDefinedNetworkLogicalPortName(pod.Namespace, pod.Name, nadName)
 	}
 	c.Lock()
 	defer c.Unlock()
@@ -112,7 +112,7 @@ func (c *PortCache) remove(pod *corev1.Pod, nadName string) {
 	if nadName == types.DefaultNetworkName {
 		logicalPort = util.GetLogicalPortName(pod.Namespace, pod.Name)
 	} else {
-		logicalPort = util.GetSecondaryNetworkLogicalPortName(pod.Namespace, pod.Name, nadName)
+		logicalPort = util.GetUserDefinedNetworkLogicalPortName(pod.Namespace, pod.Name, nadName)
 	}
 
 	c.Lock()

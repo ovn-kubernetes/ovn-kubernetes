@@ -154,7 +154,7 @@ func (ncc *networkClusterController) hasNodeAllocation() bool {
 		return config.OVNKubernetesFeature.EnableInterconnect
 	default:
 		// we need to allocate network IDs and subnets
-		return !ncc.IsSecondary()
+		return !ncc.IsUserDefinedNetwork()
 	}
 }
 
@@ -452,10 +452,10 @@ func (ncc *networkClusterController) newRetryFramework(objectType reflect.Type, 
 	return objretry.NewRetryFramework(ncc.stopChan, ncc.wg, ncc.watchFactory, resourceHandler)
 }
 
-// Cleanup the subnet annotations from the node for the secondary networks
+// Cleanup the subnet annotations from the node for the User Defined Networks
 func (ncc *networkClusterController) Cleanup() error {
-	if !ncc.IsSecondary() {
-		return fmt.Errorf("default network can't be cleaned up")
+	if !ncc.IsUserDefinedNetwork() {
+		return fmt.Errorf("default network cannot be cleaned up")
 	}
 
 	if ncc.hasNodeAllocation() {

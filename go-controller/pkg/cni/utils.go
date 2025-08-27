@@ -139,7 +139,7 @@ func PodAnnotation2PodInfo(podAnnotation map[string]string, podNADAnnotation *ut
 	podInterfaceInfo := &PodInterfaceInfo{
 		PodAnnotation:        *podNADAnnotation,
 		MTU:                  mtu,
-		RoutableMTU:          config.Default.RoutableMTU, // TBD, configurable for secondary network?
+		RoutableMTU:          config.Default.RoutableMTU, // TBD, configurable for UDNs?
 		Ingress:              ingress,
 		Egress:               egress,
 		IsDPUHostMode:        config.OvnKubeNode.Mode == types.NodeModeDPUHost,

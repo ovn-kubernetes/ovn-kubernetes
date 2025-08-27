@@ -338,7 +338,7 @@ func GetPodCIDRsWithFullMask(pod *corev1.Pod, nInfo NetInfo) ([]*net.IPNet, erro
 // and then falling back to the Pod Status IPs. This function is intended to
 // also return IPs for HostNetwork and other non-OVN-IPAM-ed pods.
 func GetPodIPsOfNetwork(pod *corev1.Pod, nInfo NetInfo) ([]net.IP, error) {
-	if nInfo.IsSecondary() {
+	if nInfo.IsUserDefinedNetwork() {
 		return SecondaryNetworkPodIPs(pod, nInfo)
 	}
 	return DefaultNetworkPodIPs(pod)

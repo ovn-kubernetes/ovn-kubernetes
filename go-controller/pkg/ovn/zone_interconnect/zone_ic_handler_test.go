@@ -72,7 +72,7 @@ func getNetworkScopedName(netName, name string) string {
 	if netName == types.DefaultNetworkName {
 		return name
 	}
-	return fmt.Sprintf("%s%s", util.GetSecondaryNetworkPrefix(netName), name)
+	return fmt.Sprintf("%s%s", util.GetUserDefinedNetworkPrefix(netName), name)
 }
 
 func invokeICHandlerAddNodeFunction(zone string, icHandler *ZoneInterconnectHandler, nodes ...*corev1.Node) error {

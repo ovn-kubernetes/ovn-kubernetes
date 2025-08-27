@@ -1582,8 +1582,8 @@ func TestAreNetworksCompatible(t *testing.T) {
 	}{
 		{
 			desc:                   "physical network name update",
-			aNetwork:               &secondaryNetInfo{physicalNetworkName: "A"},
-			anotherNetwork:         &secondaryNetInfo{physicalNetworkName: "B"},
+			aNetwork:               &userDefinedNetInfo{physicalNetworkName: "A"},
+			anotherNetwork:         &userDefinedNetInfo{physicalNetworkName: "B"},
 			expectedResult:         false,
 			expectationDescription: "we should reconcile on physical network name updates",
 		},

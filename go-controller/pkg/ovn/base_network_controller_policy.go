@@ -786,7 +786,7 @@ func (bnc *BaseNetworkController) denyPGDeletePorts(np *networkPolicy, portNames
 
 // handleLocalPodSelectorAddFunc adds a new pod to an existing NetworkPolicy, should be retriable.
 func (bnc *BaseNetworkController) handleLocalPodSelectorAddFunc(np *networkPolicy, objs ...interface{}) error {
-	if !bnc.IsSecondary() && config.Metrics.EnableScaleMetrics {
+	if !bnc.IsUserDefinedNetwork() && config.Metrics.EnableScaleMetrics {
 		start := time.Now()
 		defer func() {
 			duration := time.Since(start)
@@ -832,7 +832,7 @@ func (bnc *BaseNetworkController) handleLocalPodSelectorAddFunc(np *networkPolic
 
 // handleLocalPodSelectorDelFunc handles delete event for local pod, should be retriable
 func (bnc *BaseNetworkController) handleLocalPodSelectorDelFunc(np *networkPolicy, objs ...interface{}) error {
-	if !bnc.IsSecondary() && config.Metrics.EnableScaleMetrics {
+	if !bnc.IsUserDefinedNetwork() && config.Metrics.EnableScaleMetrics {
 		start := time.Now()
 		defer func() {
 			duration := time.Since(start)
@@ -1177,7 +1177,7 @@ func (bnc *BaseNetworkController) setupGressPolicy(np *networkPolicy, gp *gressP
 // if addNetworkPolicy fails, create or delete operation can be retried
 func (bnc *BaseNetworkController) addNetworkPolicy(policy *knet.NetworkPolicy) error {
 	klog.Infof("Adding network policy %s for network %s", getPolicyKey(policy), bnc.GetNetworkName())
-	if !bnc.IsSecondary() && config.Metrics.EnableScaleMetrics {
+	if !bnc.IsUserDefinedNetwork() && config.Metrics.EnableScaleMetrics {
 		start := time.Now()
 		defer func() {
 			duration := time.Since(start)
@@ -1384,7 +1384,7 @@ type NetworkPolicyExtraParameters struct {
 }
 
 func (bnc *BaseNetworkController) handlePeerNamespaceSelectorAdd(np *networkPolicy, gp *gressPolicy, objs ...interface{}) error {
-	if !bnc.IsSecondary() && config.Metrics.EnableScaleMetrics {
+	if !bnc.IsUserDefinedNetwork() && config.Metrics.EnableScaleMetrics {
 		start := time.Now()
 		defer func() {
 			duration := time.Since(start)
@@ -1421,7 +1421,7 @@ func (bnc *BaseNetworkController) handlePeerNamespaceSelectorAdd(np *networkPoli
 }
 
 func (bnc *BaseNetworkController) handlePeerNamespaceSelectorDel(np *networkPolicy, gp *gressPolicy, objs ...interface{}) error {
-	if !bnc.IsSecondary() && config.Metrics.EnableScaleMetrics {
+	if !bnc.IsUserDefinedNetwork() && config.Metrics.EnableScaleMetrics {
 		start := time.Now()
 		defer func() {
 			duration := time.Since(start)

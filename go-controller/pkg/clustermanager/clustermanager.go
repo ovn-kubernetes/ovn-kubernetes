@@ -27,13 +27,13 @@ import (
 
 // ClusterManager structure is the object which manages the cluster nodes.
 // It creates a default network controller for the default network and a
-// secondary network cluster controller manager to manage the multi networks.
+// user-defined network cluster controller manager to manage the multi networks.
 type ClusterManager struct {
 	client                      clientset.Interface
 	defaultNetClusterController *networkClusterController
 	zoneClusterController       *zoneClusterController
 	wf                          *factory.WatchFactory
-	secondaryNetClusterManager  *secondaryNetworkClusterManager
+	udnClusterManager           *userDefinedNetworkClusterManager
 	// Controller used for programming node allocation for egress IP
 	// The OVN DB setup is handled by egressIPZoneController that runs in ovnkube-controller
 	eIPC                          *egressIPClusterController
@@ -90,7 +90,7 @@ func NewClusterManager(
 			return nil, err
 		}
 
-		cm.secondaryNetClusterManager, err = newSecondaryNetworkClusterManager(ovnClient, wf, cm.networkManager.Interface(), recorder)
+		cm.udnClusterManager, err = newUserDefinedNetworkClusterManager(ovnClient, wf, cm.networkManager.Interface(), recorder)
 		if err != nil {
 			return nil, err
 		}
@@ -152,8 +152,8 @@ func NewClusterManager(
 			cm.recorder,
 		)
 		cm.userDefinedNetworkController = udnController
-		if cm.secondaryNetClusterManager != nil {
-			cm.secondaryNetClusterManager.SetNetworkStatusReporter(udnController.UpdateSubsystemCondition)
+		if cm.udnClusterManager != nil {
+			cm.udnClusterManager.SetNetworkStatusReporter(udnController.UpdateSubsystemCondition)
 		}
 	}
 
@@ -258,7 +258,7 @@ func (cm *ClusterManager) Stop() {
 }
 
 func (cm *ClusterManager) NewNetworkController(netInfo util.NetInfo) (networkmanager.NetworkController, error) {
-	return cm.secondaryNetClusterManager.NewNetworkController(netInfo)
+	return cm.udnClusterManager.NewNetworkController(netInfo)
 }
 
 func (cm *ClusterManager) GetDefaultNetworkController() networkmanager.ReconcilableNetworkController {
@@ -266,7 +266,7 @@ func (cm *ClusterManager) GetDefaultNetworkController() networkmanager.Reconcila
 }
 
 func (cm *ClusterManager) CleanupStaleNetworks(validNetworks ...util.NetInfo) error {
-	return cm.secondaryNetClusterManager.CleanupStaleNetworks(validNetworks...)
+	return cm.udnClusterManager.CleanupStaleNetworks(validNetworks...)
 }
 
 func (cm *ClusterManager) Reconcile(name string, old, new util.NetInfo) error {

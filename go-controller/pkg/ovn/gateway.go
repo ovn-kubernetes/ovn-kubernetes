@@ -282,7 +282,7 @@ func (gw *GatewayManager) createGWRouter(l3GatewayConfig *util.L3GatewayConfig, 
 		"physical_ips": strings.Join(physicalIPs, ","),
 	}
 
-	if gw.netInfo.IsSecondary() {
+	if gw.netInfo.IsUserDefinedNetwork() {
 		maps.Copy(logicalRouterExternalIDs, util.GenerateExternalIDsForSwitchOrRouter(gw.netInfo))
 	}
 
@@ -344,7 +344,7 @@ func (gw *GatewayManager) createGWRouterPeerPort(nodeName string) error {
 			libovsdbops.RouterPort: gwRouterPortName,
 		},
 	}
-	if gw.netInfo.IsSecondary() {
+	if gw.netInfo.IsUserDefinedNetwork() {
 		logicalSwitchPort.ExternalIDs = map[string]string{
 			types.NetworkExternalID:  gw.netInfo.GetNetworkName(),
 			types.TopologyExternalID: gw.netInfo.TopologyType(),
@@ -408,7 +408,7 @@ func (gw *GatewayManager) createGWRouterPort(hostSubnets []*net.IPNet, gwLRPJoin
 		Networks: gwLRPNetworks,
 		Options:  options,
 	}
-	if gw.netInfo.IsSecondary() {
+	if gw.netInfo.IsUserDefinedNetwork() {
 		gwRouterPort.ExternalIDs = map[string]string{
 			types.NetworkExternalID:  gw.netInfo.GetNetworkName(),
 			types.TopologyExternalID: gw.netInfo.TopologyType(),
@@ -465,7 +465,7 @@ func (gw *GatewayManager) updateGWRouterStaticRoutes(clusterIPSubnet, drLRPIfAdd
 				IPPrefix: entry.String(),
 				Nexthop:  drLRPIfAddr.IP.String(),
 			}
-			if gw.netInfo.IsSecondary() {
+			if gw.netInfo.IsUserDefinedNetwork() {
 				lrsr.ExternalIDs = map[string]string{
 					types.NetworkExternalID:  gw.netInfo.GetNetworkName(),
 					types.TopologyExternalID: gw.netInfo.TopologyType(),
@@ -495,7 +495,7 @@ func (gw *GatewayManager) updateGWRouterStaticRoutes(clusterIPSubnet, drLRPIfAdd
 			OutputPort:  &externalRouterPort,
 			ExternalIDs: map[string]string{util.OvnNodeMasqCIDR: ""},
 		}
-		if gw.netInfo.IsSecondary() {
+		if gw.netInfo.IsUserDefinedNetwork() {
 			lrsr.ExternalIDs = map[string]string{
 				types.NetworkExternalID:  gw.netInfo.GetNetworkName(),
 				types.TopologyExternalID: gw.netInfo.TopologyType(),
@@ -527,7 +527,7 @@ func (gw *GatewayManager) updateGWRouterStaticRoutes(clusterIPSubnet, drLRPIfAdd
 			Nexthop:    nextHop.String(),
 			OutputPort: &externalRouterPort,
 		}
-		if gw.netInfo.IsSecondary() {
+		if gw.netInfo.IsUserDefinedNetwork() {
 			lrsr.ExternalIDs = map[string]string{
 				types.NetworkExternalID:  gw.netInfo.GetNetworkName(),
 				types.TopologyExternalID: gw.netInfo.TopologyType(),
@@ -559,7 +559,7 @@ func (gw *GatewayManager) updateClusterRouterStaticRoutes(hostSubnets []*net.IPN
 			IPPrefix: gwLRPIP.String(),
 			Nexthop:  gwLRPIP.String(),
 		}
-		if gw.netInfo.IsSecondary() {
+		if gw.netInfo.IsUserDefinedNetwork() {
 			lrsr.ExternalIDs = map[string]string{
 				types.NetworkExternalID:  gw.netInfo.GetNetworkName(),
 				types.TopologyExternalID: gw.netInfo.TopologyType(),
@@ -599,7 +599,7 @@ func (gw *GatewayManager) updateClusterRouterStaticRoutes(hostSubnets []*net.IPN
 		}
 
 		if config.Gateway.Mode != config.GatewayModeLocal {
-			if gw.netInfo.IsSecondary() {
+			if gw.netInfo.IsUserDefinedNetwork() {
 				lrsr.ExternalIDs = map[string]string{
 					types.NetworkExternalID:  gw.netInfo.GetNetworkName(),
 					types.TopologyExternalID: gw.netInfo.TopologyType(),
@@ -651,8 +651,8 @@ func (gw *GatewayManager) updateClusterRouterStaticRoutes(hostSubnets []*net.IPN
 // - DefaultNetworkController.updateNamespace
 // - EgressIPController.addExternalGWPodSNATOps
 // - EgressIPController.addPodEgressIPAssignment
-// - SecondaryLayer2NetworkController.buildUDNEgressSNAT
-// - SecondaryLayer3NetworkController.addUDNNodeSubnetEgressSNAT
+// - Layer2UserDefinedNetworkController.buildUDNEgressSNAT
+// - Layer3UserDefinedNetworkController.addUDNNodeSubnetEgressSNAT
 // use gateway config parameters to create SNAT rules on the gateway router, but some of them (not all) don't watch
 // gateway config changes and rely on the GatewayManager to update their SNAT rules.
 // Is it racy? Yes!
@@ -736,7 +736,7 @@ func (gw *GatewayManager) updateGWRouterNAT(nodeName string, clusterIPSubnet []*
 	externalIPs, gwLRPIPs []net.IP, gwRouter *nbdb.LogicalRouter) error {
 	// REMOVEME(trozet) workaround - create join subnet SNAT to handle ICMP needs frag return
 	var extIDs map[string]string
-	if gw.netInfo.IsSecondary() {
+	if gw.netInfo.IsUserDefinedNetwork() {
 		extIDs = map[string]string{
 			types.NetworkExternalID:  gw.netInfo.GetNetworkName(),
 			types.TopologyExternalID: gw.netInfo.TopologyType(),
@@ -967,7 +967,7 @@ func (gw *GatewayManager) addExternalSwitch(prefix, interfaceID, gatewayRouter, 
 		Networks: externalRouterPortNetworks,
 		Name:     externalRouterPort,
 	}
-	if gw.netInfo.IsSecondary() {
+	if gw.netInfo.IsUserDefinedNetwork() {
 		externalLogicalRouterPort.ExternalIDs = map[string]string{
 			types.NetworkExternalID:  gw.netInfo.GetNetworkName(),
 			types.TopologyExternalID: gw.netInfo.TopologyType(),
@@ -996,7 +996,7 @@ func (gw *GatewayManager) addExternalSwitch(prefix, interfaceID, gatewayRouter, 
 		},
 		Name: interfaceID,
 	}
-	if gw.netInfo.IsSecondary() {
+	if gw.netInfo.IsUserDefinedNetwork() {
 		externalLogicalSwitchPort.ExternalIDs = map[string]string{
 			types.NetworkExternalID:  gw.netInfo.GetNetworkName(),
 			types.TopologyExternalID: gw.netInfo.TopologyType(),
@@ -1033,14 +1033,14 @@ func (gw *GatewayManager) addExternalSwitch(prefix, interfaceID, gatewayRouter, 
 		Addresses: []string{macAddress},
 	}
 
-	if gw.netInfo.IsSecondary() {
+	if gw.netInfo.IsUserDefinedNetwork() {
 		externalLogicalSwitchPortToRouter.ExternalIDs = map[string]string{
 			types.NetworkExternalID:  gw.netInfo.GetNetworkName(),
 			types.TopologyExternalID: gw.netInfo.TopologyType(),
 		}
 	}
 	sw := nbdb.LogicalSwitch{Name: externalSwitch}
-	if gw.netInfo.IsSecondary() {
+	if gw.netInfo.IsUserDefinedNetwork() {
 		sw.ExternalIDs = util.GenerateExternalIDsForSwitchOrRouter(gw.netInfo)
 	}
 
@@ -1281,8 +1281,8 @@ func (gw *GatewayManager) staticRouteCleanup(nextHops []net.IP, ipPrefix *net.IP
 		ips.Insert(nextHop.String())
 	}
 	p := func(item *nbdb.LogicalRouterStaticRoute) bool {
-		networkName, isSecondaryNetwork := item.ExternalIDs[types.NetworkExternalID]
-		if !isSecondaryNetwork {
+		networkName, isUserDefinedNetwork := item.ExternalIDs[types.NetworkExternalID]
+		if !isUserDefinedNetwork {
 			networkName = types.DefaultNetworkName
 		}
 		if networkName != gw.netInfo.GetNetworkName() {
@@ -1309,8 +1309,8 @@ func (gw *GatewayManager) policyRouteCleanup(nextHops []net.IP) {
 	for _, nextHop := range nextHops {
 		gwIP := nextHop.String()
 		policyPred := func(item *nbdb.LogicalRouterPolicy) bool {
-			networkName, isSecondaryNetwork := item.ExternalIDs[types.NetworkExternalID]
-			if !isSecondaryNetwork {
+			networkName, isUserDefinedNetwork := item.ExternalIDs[types.NetworkExternalID]
+			if !isUserDefinedNetwork {
 				networkName = types.DefaultNetworkName
 			}
 			if networkName != gw.netInfo.GetNetworkName() {
@@ -1343,8 +1343,8 @@ func (gw *GatewayManager) removeLRPolicies(nodeName string) {
 
 	managedNetworkName := gw.netInfo.GetNetworkName()
 	p := func(item *nbdb.LogicalRouterPolicy) bool {
-		networkName, isSecondaryNetwork := item.ExternalIDs[types.NetworkExternalID]
-		if !isSecondaryNetwork {
+		networkName, isUserDefinedNetwork := item.ExternalIDs[types.NetworkExternalID]
+		if !isUserDefinedNetwork {
 			networkName = types.DefaultNetworkName
 		}
 		if networkName != managedNetworkName {

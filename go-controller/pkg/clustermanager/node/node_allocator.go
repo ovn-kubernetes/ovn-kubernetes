@@ -124,11 +124,11 @@ func (na *NodeAllocator) CleanupStaleAnnotation() {
 
 func (na *NodeAllocator) hasHybridOverlayAllocation() bool {
 	// When config.HybridOverlay.ClusterSubnets is empty, assume the subnet allocation will be managed by an external component.
-	return config.HybridOverlay.Enabled && !na.netInfo.IsSecondary() && len(config.HybridOverlay.ClusterSubnets) > 0
+	return config.HybridOverlay.Enabled && !na.netInfo.IsUserDefinedNetwork() && len(config.HybridOverlay.ClusterSubnets) > 0
 }
 
 func (na *NodeAllocator) hasHybridOverlayAllocationUnmanaged() bool {
-	return config.HybridOverlay.Enabled && !na.netInfo.IsSecondary() && len(config.HybridOverlay.ClusterSubnets) == 0
+	return config.HybridOverlay.Enabled && !na.netInfo.IsUserDefinedNetwork() && len(config.HybridOverlay.ClusterSubnets) == 0
 }
 
 func (na *NodeAllocator) recordSubnetCount() {
@@ -595,7 +595,7 @@ func (na *NodeAllocator) allocateNodeSubnets(allocator SubnetAllocator, nodeName
 
 func (na *NodeAllocator) hasNodeSubnetAllocation() bool {
 	// we only allocate subnets for L3 secondary network or default network
-	return na.netInfo.TopologyType() == types.Layer3Topology || !na.netInfo.IsSecondary()
+	return na.netInfo.TopologyType() == types.Layer3Topology || !na.netInfo.IsUserDefinedNetwork()
 }
 
 func (na *NodeAllocator) markAllocatedNetworksForUnmanagedHONode(node *corev1.Node) error {

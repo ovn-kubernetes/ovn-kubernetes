@@ -164,7 +164,7 @@ type PodRequest struct {
 	// network name, for default network, this will be types.DefaultNetworkName
 	netName string
 
-	// for ovs interfaces plumbed for secondary networks, their iface-id's prefix is derived from the specific nadName;
+	// for ovs interfaces plumbed for UDNs, their iface-id's prefix is derived from the specific nadName;
 	// also, need to find the pod annotation, dpu pod connection/status annotations of the given NAD ("default"
 	// for default network).
 	nadName string

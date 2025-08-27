@@ -27,15 +27,15 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
-type secondaryLocalnetNetworkControllerEventHandler struct {
+type LocalnetUserDefinedNetworkControllerEventHandler struct {
 	baseHandler  baseNetworkControllerEventHandler
 	watchFactory *factory.WatchFactory
 	objType      reflect.Type
-	oc           *SecondaryLocalnetNetworkController
+	oc           *LocalnetUserDefinedNetworkController
 	syncFunc     func([]interface{}) error
 }
 
-func (h *secondaryLocalnetNetworkControllerEventHandler) FilterOutResource(obj interface{}) bool {
+func (h *LocalnetUserDefinedNetworkControllerEventHandler) FilterOutResource(obj interface{}) bool {
 	return h.oc.FilterOutResource(h.objType, obj)
 }
 
@@ -43,24 +43,24 @@ func (h *secondaryLocalnetNetworkControllerEventHandler) FilterOutResource(obj i
 // type considers them equal and therefore no update is needed. It returns false when the two objects are not considered
 // equal and an update needs be executed. This is regardless of how the update is carried out (whether with a dedicated update
 // function or with a delete on the old obj followed by an add on the new obj).
-func (h *secondaryLocalnetNetworkControllerEventHandler) AreResourcesEqual(obj1, obj2 interface{}) (bool, error) {
+func (h *LocalnetUserDefinedNetworkControllerEventHandler) AreResourcesEqual(obj1, obj2 interface{}) (bool, error) {
 	return h.baseHandler.areResourcesEqual(h.objType, obj1, obj2)
 }
 
 // GetInternalCacheEntry returns the internal cache entry for this object, given an object and its type.
 // This is now used only for pods, which will get their the logical port cache entry.
-func (h *secondaryLocalnetNetworkControllerEventHandler) GetInternalCacheEntry(obj interface{}) interface{} {
-	return h.oc.GetInternalCacheEntryForSecondaryNetwork(h.objType, obj)
+func (h *LocalnetUserDefinedNetworkControllerEventHandler) GetInternalCacheEntry(obj interface{}) interface{} {
+	return h.oc.GetInternalCacheEntryForUserDefinedNetwork(h.objType, obj)
 }
 
 // GetResourceFromInformerCache returns the latest state of the object, given an object key and its type.
 // from the informers cache.
-func (h *secondaryLocalnetNetworkControllerEventHandler) GetResourceFromInformerCache(key string) (interface{}, error) {
+func (h *LocalnetUserDefinedNetworkControllerEventHandler) GetResourceFromInformerCache(key string) (interface{}, error) {
 	return h.baseHandler.getResourceFromInformerCache(h.objType, h.watchFactory, key)
 }
 
 // RecordAddEvent records the add event on this given object.
-func (h *secondaryLocalnetNetworkControllerEventHandler) RecordAddEvent(obj interface{}) {
+func (h *LocalnetUserDefinedNetworkControllerEventHandler) RecordAddEvent(obj interface{}) {
 	switch h.objType {
 	case factory.MultiNetworkPolicyType:
 		mnp := obj.(*mnpapi.MultiNetworkPolicy)
@@ -70,34 +70,34 @@ func (h *secondaryLocalnetNetworkControllerEventHandler) RecordAddEvent(obj inte
 }
 
 // RecordUpdateEvent records the udpate event on this given object.
-func (h *secondaryLocalnetNetworkControllerEventHandler) RecordUpdateEvent(obj interface{}) {
+func (h *LocalnetUserDefinedNetworkControllerEventHandler) RecordUpdateEvent(obj interface{}) {
 	h.baseHandler.recordAddEvent(h.objType, obj)
 }
 
 // RecordDeleteEvent records the delete event on this given object.
-func (h *secondaryLocalnetNetworkControllerEventHandler) RecordDeleteEvent(obj interface{}) {
+func (h *LocalnetUserDefinedNetworkControllerEventHandler) RecordDeleteEvent(obj interface{}) {
 	h.baseHandler.recordAddEvent(h.objType, obj)
 }
 
 // RecordSuccessEvent records the success event on this given object.
-func (h *secondaryLocalnetNetworkControllerEventHandler) RecordSuccessEvent(obj interface{}) {
+func (h *LocalnetUserDefinedNetworkControllerEventHandler) RecordSuccessEvent(obj interface{}) {
 	h.baseHandler.recordAddEvent(h.objType, obj)
 }
 
 // RecordErrorEvent records the error event on this given object.
-func (h *secondaryLocalnetNetworkControllerEventHandler) RecordErrorEvent(_ interface{}, _ string, _ error) {
+func (h *LocalnetUserDefinedNetworkControllerEventHandler) RecordErrorEvent(_ interface{}, _ string, _ error) {
 }
 
 // IsResourceScheduled returns true if the given object has been scheduled.
 // Only applied to pods for now. Returns true for all other types.
-func (h *secondaryLocalnetNetworkControllerEventHandler) IsResourceScheduled(obj interface{}) bool {
+func (h *LocalnetUserDefinedNetworkControllerEventHandler) IsResourceScheduled(obj interface{}) bool {
 	return h.baseHandler.isResourceScheduled(h.objType, obj)
 }
 
 // AddResource adds the specified object to the cluster according to its type and returns the error,
 // if any, yielded during object creation.
 // Given an object to add and a boolean specifying if the function was executed from iterateRetryResources
-func (h *secondaryLocalnetNetworkControllerEventHandler) AddResource(obj interface{}, _ bool) error {
+func (h *LocalnetUserDefinedNetworkControllerEventHandler) AddResource(obj interface{}, _ bool) error {
 	switch h.objType {
 	case factory.NodeType:
 		node, ok := obj.(*corev1.Node)
@@ -106,7 +106,7 @@ func (h *secondaryLocalnetNetworkControllerEventHandler) AddResource(obj interfa
 		}
 		return h.oc.addUpdateNodeEvent(node)
 	default:
-		return h.oc.AddSecondaryNetworkResourceCommon(h.objType, obj)
+		return h.oc.AddUserDefinedNetworkResourceCommon(h.objType, obj)
 	}
 }
 
@@ -114,7 +114,7 @@ func (h *secondaryLocalnetNetworkControllerEventHandler) AddResource(obj interfa
 // type and returns the error, if any, yielded during the object update.
 // Given an old and a new object; The inRetryCache boolean argument is to indicate if the given resource
 // is in the retryCache or not.
-func (h *secondaryLocalnetNetworkControllerEventHandler) UpdateResource(oldObj, newObj interface{}, inRetryCache bool) error {
+func (h *LocalnetUserDefinedNetworkControllerEventHandler) UpdateResource(oldObj, newObj interface{}, inRetryCache bool) error {
 	switch h.objType {
 	case factory.NodeType:
 		node, ok := newObj.(*corev1.Node)
@@ -123,14 +123,14 @@ func (h *secondaryLocalnetNetworkControllerEventHandler) UpdateResource(oldObj, 
 		}
 		return h.oc.addUpdateNodeEvent(node)
 	default:
-		return h.oc.UpdateSecondaryNetworkResourceCommon(h.objType, oldObj, newObj, inRetryCache)
+		return h.oc.UpdateUserDefinedNetworkResourceCommon(h.objType, oldObj, newObj, inRetryCache)
 	}
 }
 
 // DeleteResource deletes the object from the cluster according to the delete logic of its resource type.
 // Given an object and optionally a cachedObj; cachedObj is the internal cache entry for this object,
 // used for now for pods and network policies.
-func (h *secondaryLocalnetNetworkControllerEventHandler) DeleteResource(obj, cachedObj interface{}) error {
+func (h *LocalnetUserDefinedNetworkControllerEventHandler) DeleteResource(obj, cachedObj interface{}) error {
 	switch h.objType {
 	case factory.NodeType:
 		node, ok := obj.(*corev1.Node)
@@ -139,11 +139,11 @@ func (h *secondaryLocalnetNetworkControllerEventHandler) DeleteResource(obj, cac
 		}
 		return h.oc.deleteNodeEvent(node)
 	default:
-		return h.oc.DeleteSecondaryNetworkResourceCommon(h.objType, obj, cachedObj)
+		return h.oc.DeleteUserDefinedNetworkResourceCommon(h.objType, obj, cachedObj)
 	}
 }
 
-func (h *secondaryLocalnetNetworkControllerEventHandler) SyncFunc(objs []interface{}) error {
+func (h *LocalnetUserDefinedNetworkControllerEventHandler) SyncFunc(objs []interface{}) error {
 	var syncFunc func([]interface{}) error
 
 	if h.syncFunc != nil {
@@ -155,7 +155,7 @@ func (h *secondaryLocalnetNetworkControllerEventHandler) SyncFunc(objs []interfa
 			syncFunc = h.oc.syncNodes
 
 		case factory.PodType:
-			syncFunc = h.oc.syncPodsForSecondaryNetwork
+			syncFunc = h.oc.syncPodsForUserDefinedNetwork
 
 		case factory.NamespaceType:
 			syncFunc = h.oc.syncNamespaces
@@ -178,30 +178,30 @@ func (h *secondaryLocalnetNetworkControllerEventHandler) SyncFunc(objs []interfa
 
 // IsObjectInTerminalState returns true if the given object is a in terminal state.
 // This is used now for pods that are either in a PodSucceeded or in a PodFailed state.
-func (h *secondaryLocalnetNetworkControllerEventHandler) IsObjectInTerminalState(obj interface{}) bool {
+func (h *LocalnetUserDefinedNetworkControllerEventHandler) IsObjectInTerminalState(obj interface{}) bool {
 	return h.baseHandler.isObjectInTerminalState(h.objType, obj)
 }
 
-// SecondaryLocalnetNetworkController is created for logical network infrastructure and policy
-// for a secondary localnet network
-type SecondaryLocalnetNetworkController struct {
-	BaseSecondaryLayer2NetworkController
+// LocalnetUserDefinedNetworkController is created for logical network infrastructure and policy
+// for a localnet user-defined network
+type LocalnetUserDefinedNetworkController struct {
+	BaseLayer2UserDefinedNetworkController
 }
 
-// NewSecondaryLocalnetNetworkController create a new OVN controller for the given secondary localnet NAD
-func NewSecondaryLocalnetNetworkController(
+// NewLocalnetUserDefinedNetworkController create a new OVN controller for the given localnet NAD
+func NewLocalnetUserDefinedNetworkController(
 	cnci *CommonNetworkControllerInfo,
 	netInfo util.NetInfo,
 	networkManager networkmanager.Interface,
-) *SecondaryLocalnetNetworkController {
+) *LocalnetUserDefinedNetworkController {
 
 	stopChan := make(chan struct{})
 
 	ipv4Mode, ipv6Mode := netInfo.IPMode()
 	addressSetFactory := addressset.NewOvnAddressSetFactory(cnci.nbClient, ipv4Mode, ipv6Mode)
-	oc := &SecondaryLocalnetNetworkController{
-		BaseSecondaryLayer2NetworkController{
-			BaseSecondaryNetworkController: BaseSecondaryNetworkController{
+	oc := &LocalnetUserDefinedNetworkController{
+		BaseLayer2UserDefinedNetworkController{
+			BaseUserDefinedNetworkController: BaseUserDefinedNetworkController{
 				BaseNetworkController: BaseNetworkController{
 					CommonNetworkControllerInfo: *cnci,
 					controllerName:              getNetworkControllerName(netInfo.GetNetworkName()),
@@ -242,21 +242,21 @@ func NewSecondaryLocalnetNetworkController(
 			claimsReconciler)
 	}
 
-	// disable multicast support for secondary networks
-	// TBD: changes needs to be made to support multicast in secondary networks
+	// disable multicast support for UDNs
+	// TBD: changes needs to be made to support multicast in UDNs
 	oc.multicastSupport = false
 
 	oc.initRetryFramework()
 	return oc
 }
 
-// Start starts the secondary localnet controller, handles all events and creates all needed logical entities
-func (oc *SecondaryLocalnetNetworkController) Start(_ context.Context) error {
-	klog.Infof("Starting controller for secondary network network %s", oc.GetNetworkName())
+// Start starts the localnet UDN controller, handles all events and creates all needed logical entities
+func (oc *LocalnetUserDefinedNetworkController) Start(_ context.Context) error {
+	klog.Infof("Starting controller for UDN %s", oc.GetNetworkName())
 
 	start := time.Now()
 	defer func() {
-		klog.Infof("Starting controller for secondary network network %s took %v", oc.GetNetworkName(), time.Since(start))
+		klog.Infof("Starting controller for UDN %s took %v", oc.GetNetworkName(), time.Since(start))
 	}()
 
 	if err := oc.init(); err != nil {
@@ -266,17 +266,17 @@ func (oc *SecondaryLocalnetNetworkController) Start(_ context.Context) error {
 	return oc.run()
 }
 
-func (oc *SecondaryLocalnetNetworkController) run() error {
-	return oc.BaseSecondaryLayer2NetworkController.run()
+func (oc *LocalnetUserDefinedNetworkController) run() error {
+	return oc.BaseLayer2UserDefinedNetworkController.run()
 }
 
 // Cleanup cleans up logical entities for the given network, called from net-attach-def routine
 // could be called from a dummy Controller (only has CommonNetworkControllerInfo set)
-func (oc *SecondaryLocalnetNetworkController) Cleanup() error {
-	return oc.BaseSecondaryLayer2NetworkController.cleanup()
+func (oc *LocalnetUserDefinedNetworkController) Cleanup() error {
+	return oc.BaseLayer2UserDefinedNetworkController.cleanup()
 }
 
-func (oc *SecondaryLocalnetNetworkController) init() error {
+func (oc *LocalnetUserDefinedNetworkController) init() error {
 	switchName := oc.GetNetworkScopedSwitchName(types.OVNLocalnetSwitch)
 
 	logicalSwitch, err := oc.initializeLogicalSwitch(switchName, oc.Subnets(), oc.ExcludeSubnets(), oc.ReservedSubnets(), "", "")
@@ -307,19 +307,19 @@ func (oc *SecondaryLocalnetNetworkController) init() error {
 	return nil
 }
 
-func (oc *SecondaryLocalnetNetworkController) Stop() {
-	klog.Infof("Stoping controller for secondary network %s", oc.GetNetworkName())
-	oc.BaseSecondaryLayer2NetworkController.stop()
+func (oc *LocalnetUserDefinedNetworkController) Stop() {
+	klog.Infof("Stoping controller for UDN %s", oc.GetNetworkName())
+	oc.BaseLayer2UserDefinedNetworkController.stop()
 }
 
-func (oc *SecondaryLocalnetNetworkController) Reconcile(netInfo util.NetInfo) error {
+func (oc *LocalnetUserDefinedNetworkController) Reconcile(netInfo util.NetInfo) error {
 	return oc.BaseNetworkController.reconcile(
 		netInfo,
 		func(_ string) {},
 	)
 }
 
-func (oc *SecondaryLocalnetNetworkController) initRetryFramework() {
+func (oc *LocalnetUserDefinedNetworkController) initRetryFramework() {
 	oc.retryNodes = oc.newRetryFramework(factory.NodeType)
 	oc.retryPods = oc.newRetryFramework(factory.PodType)
 	if oc.allocatesPodAnnotation() && oc.AllowsPersistentIPs() {
@@ -336,9 +336,9 @@ func (oc *SecondaryLocalnetNetworkController) initRetryFramework() {
 }
 
 // newRetryFramework builds and returns a retry framework for the input resource type;
-func (oc *SecondaryLocalnetNetworkController) newRetryFramework(
+func (oc *LocalnetUserDefinedNetworkController) newRetryFramework(
 	objectType reflect.Type) *retry.RetryFramework {
-	eventHandler := &secondaryLocalnetNetworkControllerEventHandler{
+	eventHandler := &LocalnetUserDefinedNetworkControllerEventHandler{
 		baseHandler:  baseNetworkControllerEventHandler{},
 		objType:      objectType,
 		watchFactory: oc.watchFactory,
@@ -359,7 +359,7 @@ func (oc *SecondaryLocalnetNetworkController) newRetryFramework(
 	)
 }
 
-func (oc *SecondaryLocalnetNetworkController) localnetPortNetworkNameOptions() map[string]string {
+func (oc *LocalnetUserDefinedNetworkController) localnetPortNetworkNameOptions() map[string]string {
 	localnetLSPOptions := map[string]string{
 		"network_name": oc.GetNetworkName(),
 	}

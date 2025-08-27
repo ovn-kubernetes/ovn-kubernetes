@@ -36,7 +36,7 @@ type NetInfo interface {
 	GetNetworkID() int
 	IsDefault() bool
 	IsPrimaryNetwork() bool
-	IsSecondary() bool
+	IsUserDefinedNetwork() bool
 	TopologyType() string
 	MTU() int
 	IPMode() (bool, bool)
@@ -197,7 +197,7 @@ func copyNetInfo(netInfo NetInfo) any {
 	switch t := netInfo.GetNetInfo().(type) {
 	case *DefaultNetInfo:
 		return t.copy()
-	case *secondaryNetInfo:
+	case *userDefinedNetInfo:
 		return t.copy()
 	default:
 		panic(fmt.Errorf("unrecognized type %T", t))
@@ -208,7 +208,7 @@ func reconcilable(netInfo NetInfo) ReconcilableNetInfo {
 	switch t := netInfo.GetNetInfo().(type) {
 	case *DefaultNetInfo:
 		return t
-	case *secondaryNetInfo:
+	case *userDefinedNetInfo:
 		return t
 	default:
 		panic(fmt.Errorf("unrecognized type %T", t))
@@ -237,7 +237,7 @@ func mutable(netInfo NetInfo) *mutableNetInfo {
 	switch t := netInfo.GetNetInfo().(type) {
 	case *DefaultNetInfo:
 		return &t.mutableNetInfo
-	case *secondaryNetInfo:
+	case *userDefinedNetInfo:
 		return &t.mutableNetInfo
 	default:
 		panic(fmt.Errorf("unrecognized type %T", t))
@@ -482,16 +482,16 @@ func (nInfo *DefaultNetInfo) IsDefault() bool {
 }
 
 // IsPrimaryNetwork always returns false for default network.
-// The boolean indicates if this secondary network is
+// The boolean indicates if the default network is
 // meant to be the primary network for the pod. Since default
-// network is never a secondary network this is always false.
-// This cannot be true if IsSecondary() is not true.
+// network is never a User Defined Network this is always false.
+// This cannot be true if IsUserDefinedNetwork() is not true.
 func (nInfo *DefaultNetInfo) IsPrimaryNetwork() bool {
 	return false
 }
 
-// IsSecondary returns if this network is secondary
-func (nInfo *DefaultNetInfo) IsSecondary() bool {
+// IsUserDefinedNetwork returns if this network is secondary
+func (nInfo *DefaultNetInfo) IsUserDefinedNetwork() bool {
 	return false
 }
 
@@ -610,7 +610,7 @@ func (nInfo *DefaultNetInfo) JoinSubnetV6() *net.IPNet {
 	return cidr
 }
 
-// JoinSubnets returns the secondaryNetInfo's joinsubnet values (both v4&v6)
+// JoinSubnets returns the userDefinedNetInfo's joinsubnet values (both v4&v6)
 // used from Equals
 func (nInfo *DefaultNetInfo) JoinSubnets() []*net.IPNet {
 	var defaultJoinSubnets []*net.IPNet
@@ -652,12 +652,12 @@ func (nInfo *DefaultNetInfo) GetNodeManagementIP(hostSubnet *net.IPNet) *net.IPN
 	return GetNodeManagementIfAddr(hostSubnet)
 }
 
-// SecondaryNetInfo holds the network name information for secondary network if non-nil
-type secondaryNetInfo struct {
+// userDefinedNetInfo holds the network name information for a User Defined Network if non-nil
+type userDefinedNetInfo struct {
 	mutableNetInfo
 
 	netName string
-	// Should this secondary network be used
+	// Should this User Defined Network be used
 	// as the pod's primary network?
 	primaryNetwork     bool
 	topology           string
@@ -677,58 +677,58 @@ type secondaryNetInfo struct {
 	managementIPs       []net.IP
 }
 
-func (nInfo *secondaryNetInfo) GetNetInfo() NetInfo {
+func (nInfo *userDefinedNetInfo) GetNetInfo() NetInfo {
 	return nInfo
 }
 
 // GetNetworkName returns the network name
-func (nInfo *secondaryNetInfo) GetNetworkName() string {
+func (nInfo *userDefinedNetInfo) GetNetworkName() string {
 	return nInfo.netName
 }
 
-// IsDefault always returns false for all secondary networks.
-func (nInfo *secondaryNetInfo) IsDefault() bool {
+// IsDefault always returns false for all User Defined Networks.
+func (nInfo *userDefinedNetInfo) IsDefault() bool {
 	return false
 }
 
-// IsPrimaryNetwork returns if this secondary network
+// IsPrimaryNetwork returns if this User Defined Network
 // should be used as the primaryNetwork for the pod
 // to achieve native network segmentation
-func (nInfo *secondaryNetInfo) IsPrimaryNetwork() bool {
+func (nInfo *userDefinedNetInfo) IsPrimaryNetwork() bool {
 	return nInfo.primaryNetwork
 }
 
-// IsSecondary returns if this network is secondary
-func (nInfo *secondaryNetInfo) IsSecondary() bool {
+// IsUserDefinedNetwork returns if this network is a User Defined Network
+func (nInfo *userDefinedNetInfo) IsUserDefinedNetwork() bool {
 	return true
 }
 
 // GetNetworkScopedName returns a network scoped name from the provided one
 // appropriate to use globally.
-func (nInfo *secondaryNetInfo) GetNetworkScopedName(name string) string {
+func (nInfo *userDefinedNetInfo) GetNetworkScopedName(name string) string {
 	return fmt.Sprintf("%s%s", nInfo.getPrefix(), name)
 }
 
 // RemoveNetworkScopeFromName removes the name without the network scope added
 // by a previous call to GetNetworkScopedName
-func (nInfo *secondaryNetInfo) RemoveNetworkScopeFromName(name string) string {
+func (nInfo *userDefinedNetInfo) RemoveNetworkScopeFromName(name string) string {
 	// for the default network, names are not scoped
-	return strings.Trim(name, nInfo.getPrefix())
+	return strings.TrimPrefix(name, nInfo.getPrefix())
 }
 
-func (nInfo *secondaryNetInfo) GetNetworkScopedK8sMgmtIntfName(nodeName string) string {
+func (nInfo *userDefinedNetInfo) GetNetworkScopedK8sMgmtIntfName(nodeName string) string {
 	return GetK8sMgmtIntfName(nInfo.GetNetworkScopedName(nodeName))
 }
 
-func (nInfo *secondaryNetInfo) GetNetworkScopedClusterRouterName() string {
+func (nInfo *userDefinedNetInfo) GetNetworkScopedClusterRouterName() string {
 	return nInfo.GetNetworkScopedName(types.OVNClusterRouter)
 }
 
-func (nInfo *secondaryNetInfo) GetNetworkScopedGWRouterName(nodeName string) string {
+func (nInfo *userDefinedNetInfo) GetNetworkScopedGWRouterName(nodeName string) string {
 	return GetGatewayRouterFromNode(nInfo.GetNetworkScopedName(nodeName))
 }
 
-func (nInfo *secondaryNetInfo) GetNetworkScopedSwitchName(nodeName string) string {
+func (nInfo *userDefinedNetInfo) GetNetworkScopedSwitchName(nodeName string) string {
 	// In Layer2Topology there is just one global switch
 	if nInfo.TopologyType() == types.Layer2Topology {
 		return nInfo.GetNetworkScopedName(types.OVNLayer2Switch)
@@ -736,61 +736,61 @@ func (nInfo *secondaryNetInfo) GetNetworkScopedSwitchName(nodeName string) strin
 	return nInfo.GetNetworkScopedName(nodeName)
 }
 
-func (nInfo *secondaryNetInfo) GetNetworkScopedJoinSwitchName() string {
+func (nInfo *userDefinedNetInfo) GetNetworkScopedJoinSwitchName() string {
 	return nInfo.GetNetworkScopedName(types.OVNJoinSwitch)
 }
 
-func (nInfo *secondaryNetInfo) GetNetworkScopedExtSwitchName(nodeName string) string {
+func (nInfo *userDefinedNetInfo) GetNetworkScopedExtSwitchName(nodeName string) string {
 	return GetExtSwitchFromNode(nInfo.GetNetworkScopedName(nodeName))
 }
 
-func (nInfo *secondaryNetInfo) GetNetworkScopedPatchPortName(bridgeID, nodeName string) string {
+func (nInfo *userDefinedNetInfo) GetNetworkScopedPatchPortName(bridgeID, nodeName string) string {
 	return GetPatchPortName(bridgeID, nInfo.GetNetworkScopedName(nodeName))
 }
 
-func (nInfo *secondaryNetInfo) GetNetworkScopedExtPortName(bridgeID, nodeName string) string {
+func (nInfo *userDefinedNetInfo) GetNetworkScopedExtPortName(bridgeID, nodeName string) string {
 	return GetExtPortName(bridgeID, nInfo.GetNetworkScopedName(nodeName))
 }
 
-func (nInfo *secondaryNetInfo) GetNetworkScopedLoadBalancerName(lbName string) string {
+func (nInfo *userDefinedNetInfo) GetNetworkScopedLoadBalancerName(lbName string) string {
 	return nInfo.GetNetworkScopedName(lbName)
 }
 
-func (nInfo *secondaryNetInfo) GetNetworkScopedLoadBalancerGroupName(lbGroupName string) string {
+func (nInfo *userDefinedNetInfo) GetNetworkScopedLoadBalancerGroupName(lbGroupName string) string {
 	return nInfo.GetNetworkScopedName(lbGroupName)
 }
 
 // getPrefix returns if the logical entities prefix for this network
-func (nInfo *secondaryNetInfo) getPrefix() string {
-	return GetSecondaryNetworkPrefix(nInfo.netName)
+func (nInfo *userDefinedNetInfo) getPrefix() string {
+	return GetUserDefinedNetworkPrefix(nInfo.netName)
 }
 
 // TopologyType returns the topology type
-func (nInfo *secondaryNetInfo) TopologyType() string {
+func (nInfo *userDefinedNetInfo) TopologyType() string {
 	return nInfo.topology
 }
 
 // MTU returns the layer3NetConfInfo's MTU value
-func (nInfo *secondaryNetInfo) MTU() int {
+func (nInfo *userDefinedNetInfo) MTU() int {
 	return nInfo.mtu
 }
 
 // Vlan returns the Vlan value
-func (nInfo *secondaryNetInfo) Vlan() uint {
+func (nInfo *userDefinedNetInfo) Vlan() uint {
 	return nInfo.vlan
 }
 
 // AllowsPersistentIPs returns the defaultNetConfInfo's AllowPersistentIPs value
-func (nInfo *secondaryNetInfo) AllowsPersistentIPs() bool {
+func (nInfo *userDefinedNetInfo) AllowsPersistentIPs() bool {
 	return nInfo.allowPersistentIPs
 }
 
 // PhysicalNetworkName returns the user provided physical network name value
-func (nInfo *secondaryNetInfo) PhysicalNetworkName() string {
+func (nInfo *userDefinedNetInfo) PhysicalNetworkName() string {
 	return nInfo.physicalNetworkName
 }
 
-func (nInfo *secondaryNetInfo) GetNodeGatewayIP(hostSubnet *net.IPNet) *net.IPNet {
+func (nInfo *userDefinedNetInfo) GetNodeGatewayIP(hostSubnet *net.IPNet) *net.IPNet {
 	if IsPreconfiguredUDNAddressesEnabled() && nInfo.TopologyType() == types.Layer2Topology && nInfo.IsPrimaryNetwork() {
 		isIPV6 := knet.IsIPv6CIDR(hostSubnet)
 		gwIP, _ := MatchFirstIPFamily(isIPV6, nInfo.defaultGatewayIPs)
@@ -802,7 +802,7 @@ func (nInfo *secondaryNetInfo) GetNodeGatewayIP(hostSubnet *net.IPNet) *net.IPNe
 	return GetNodeGatewayIfAddr(hostSubnet)
 }
 
-func (nInfo *secondaryNetInfo) GetNodeManagementIP(hostSubnet *net.IPNet) *net.IPNet {
+func (nInfo *userDefinedNetInfo) GetNodeManagementIP(hostSubnet *net.IPNet) *net.IPNet {
 	if IsPreconfiguredUDNAddressesEnabled() && nInfo.TopologyType() == types.Layer2Topology && nInfo.IsPrimaryNetwork() {
 		isIPV6 := knet.IsIPv6CIDR(hostSubnet)
 		mgmtIP, _ := MatchFirstIPFamily(isIPV6, nInfo.managementIPs)
@@ -815,56 +815,56 @@ func (nInfo *secondaryNetInfo) GetNodeManagementIP(hostSubnet *net.IPNet) *net.I
 }
 
 // IPMode returns the ipv4/ipv6 mode
-func (nInfo *secondaryNetInfo) IPMode() (bool, bool) {
+func (nInfo *userDefinedNetInfo) IPMode() (bool, bool) {
 	return nInfo.ipv4mode, nInfo.ipv6mode
 }
 
 // Subnets returns the Subnets value
-func (nInfo *secondaryNetInfo) Subnets() []config.CIDRNetworkEntry {
+func (nInfo *userDefinedNetInfo) Subnets() []config.CIDRNetworkEntry {
 	return nInfo.subnets
 }
 
 // ExcludeSubnets returns the ExcludeSubnets value
-func (nInfo *secondaryNetInfo) ExcludeSubnets() []*net.IPNet {
+func (nInfo *userDefinedNetInfo) ExcludeSubnets() []*net.IPNet {
 	return nInfo.excludeSubnets
 }
 
 // ReservedSubnets returns the ReservedSubnets value
-func (nInfo *secondaryNetInfo) ReservedSubnets() []*net.IPNet {
+func (nInfo *userDefinedNetInfo) ReservedSubnets() []*net.IPNet {
 	return nInfo.reservedSubnets
 }
 
 // InfrastructureSubnets returns the InfrastructureSubnets value
-func (nInfo *secondaryNetInfo) InfrastructureSubnets() []*net.IPNet {
+func (nInfo *userDefinedNetInfo) InfrastructureSubnets() []*net.IPNet {
 	return nInfo.infrastructureSubnets
 }
 
 // JoinSubnetV4 returns the defaultNetConfInfo's JoinSubnetV4 value
 // call when ipv4mode=true
-func (nInfo *secondaryNetInfo) JoinSubnetV4() *net.IPNet {
+func (nInfo *userDefinedNetInfo) JoinSubnetV4() *net.IPNet {
 	if len(nInfo.joinSubnets) == 0 {
 		return nil // localnet topology
 	}
 	return nInfo.joinSubnets[0]
 }
 
-// JoinSubnetV6 returns the secondaryNetInfo's JoinSubnetV6 value
+// JoinSubnetV6 returns the userDefinedNetInfo's JoinSubnetV6 value
 // call when ipv6mode=true
-func (nInfo *secondaryNetInfo) JoinSubnetV6() *net.IPNet {
+func (nInfo *userDefinedNetInfo) JoinSubnetV6() *net.IPNet {
 	if len(nInfo.joinSubnets) <= 1 {
 		return nil // localnet topology
 	}
 	return nInfo.joinSubnets[1]
 }
 
-// JoinSubnets returns the secondaryNetInfo's joinsubnet values (both v4&v6)
+// JoinSubnets returns the userDefinedNetInfo's joinsubnet values (both v4&v6)
 // used from Equals (since localnet doesn't have joinsubnets to compare nil v/s nil
 // we need this util)
-func (nInfo *secondaryNetInfo) JoinSubnets() []*net.IPNet {
+func (nInfo *userDefinedNetInfo) JoinSubnets() []*net.IPNet {
 	return nInfo.joinSubnets
 }
 
-func (nInfo *secondaryNetInfo) canReconcile(other NetInfo) bool {
+func (nInfo *userDefinedNetInfo) canReconcile(other NetInfo) bool {
 	if (nInfo == nil) != (other == nil) {
 		return false
 	}
@@ -916,9 +916,9 @@ func (nInfo *secondaryNetInfo) canReconcile(other NetInfo) bool {
 	return cmp.Equal(nInfo.joinSubnets, other.JoinSubnets(), cmpopts.SortSlices(lessIPNet))
 }
 
-func (nInfo *secondaryNetInfo) copy() *secondaryNetInfo {
+func (nInfo *userDefinedNetInfo) copy() *userDefinedNetInfo {
 	// everything here is immutable
-	c := &secondaryNetInfo{
+	c := &userDefinedNetInfo{
 		netName:               nInfo.netName,
 		primaryNetwork:        nInfo.primaryNetwork,
 		topology:              nInfo.topology,
@@ -951,7 +951,7 @@ func newLayer3NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 	if err != nil {
 		return nil, err
 	}
-	ni := &secondaryNetInfo{
+	ni := &userDefinedNetInfo{
 		netName:        netconf.Name,
 		primaryNetwork: netconf.Role == types.NetworkRolePrimary,
 		topology:       types.Layer3Topology,
@@ -1014,7 +1014,7 @@ func newLayer2NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 		}
 	}
 
-	ni := &secondaryNetInfo{
+	ni := &userDefinedNetInfo{
 		netName:               netconf.Name,
 		primaryNetwork:        netconf.Role == types.NetworkRolePrimary,
 		topology:              types.Layer2Topology,
@@ -1051,7 +1051,7 @@ func newLocalnetNetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error
 		return nil, err
 	}
 
-	ni := &secondaryNetInfo{
+	ni := &userDefinedNetInfo{
 		netName:             netconf.Name,
 		topology:            types.LocalnetTopology,
 		subnets:             subnets,
@@ -1175,12 +1175,12 @@ func GetNADName(namespace, name string) string {
 	return fmt.Sprintf("%s/%s", namespace, name)
 }
 
-// GetSecondaryNetworkPrefix gets the string used as prefix of the logical entities
-// of the secondary network of the given network name, in the form of <netName>_.
+// GetUserDefinedNetworkPrefix gets the string used as prefix of the logical entities
+// of the User Defined Network of the given network name, in the form of <netName>_.
 //
 // Note that for port_group and address_set, it does not allow the '-' character,
 // which will be replaced with ".". Also replace "/" in the nadName with "."
-func GetSecondaryNetworkPrefix(netName string) string {
+func GetUserDefinedNetworkPrefix(netName string) string {
 	name := strings.ReplaceAll(netName, "-", ".")
 	name = strings.ReplaceAll(name, "/", ".")
 	return name + "_"
@@ -1210,7 +1210,7 @@ func newNetInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	if ni.IsPrimaryNetwork() && ni.IsSecondary() {
+	if ni.IsPrimaryNetwork() && ni.IsUserDefinedNetwork() {
 		ipv4Mode, ipv6Mode := ni.IPMode()
 		if ipv4Mode && !config.IPv4Mode {
 			return nil, fmt.Errorf("network %s is attempting to use ipv4 subnets but the cluster does not support ipv4", ni.GetNetworkName())
@@ -1234,7 +1234,7 @@ func GetAnnotatedNetworkName(netattachdef *nettypes.NetworkAttachmentDefinition)
 	return netattachdef.Annotations[types.OvnNetworkNameAnnotation]
 }
 
-// ParseNADInfo parses config in NAD spec and return a NetAttachDefInfo object for secondary networks
+// ParseNADInfo parses config in NAD spec and return a NetAttachDefInfo object for User Defined Networks
 func ParseNADInfo(nad *nettypes.NetworkAttachmentDefinition) (NetInfo, error) {
 	netconf, err := ParseNetConf(nad)
 	if err != nil {
@@ -1267,7 +1267,7 @@ func ParseNADInfo(nad *nettypes.NetworkAttachmentDefinition) (NetInfo, error) {
 	return n, nil
 }
 
-// ParseNetConf parses config in NAD spec for secondary networks
+// ParseNetConf parses config in NAD spec for User Defined Networks
 func ParseNetConf(netattachdef *nettypes.NetworkAttachmentDefinition) (*ovncnitypes.NetConf, error) {
 	netconf, err := config.ParseNetConf([]byte(netattachdef.Spec.Config))
 	if err != nil {
@@ -1408,7 +1408,7 @@ func GetPodNADToNetworkMapping(pod *corev1.Pod, nInfo NetInfo) (bool, map[string
 
 	networkSelections := map[string]*nettypes.NetworkSelectionElement{}
 	podDesc := fmt.Sprintf("%s/%s", pod.Namespace, pod.Name)
-	if !nInfo.IsSecondary() {
+	if !nInfo.IsUserDefinedNetwork() {
 		network, err := GetK8sPodDefaultNetworkSelection(pod)
 		if err != nil {
 			// multus won't add this Pod if this fails, should never happen
@@ -1561,7 +1561,7 @@ func AllowsPersistentIPs(netInfo NetInfo) bool {
 	case netInfo.IsPrimaryNetwork():
 		return netInfo.TopologyType() == types.Layer2Topology && netInfo.AllowsPersistentIPs()
 
-	case netInfo.IsSecondary():
+	case netInfo.IsUserDefinedNetwork():
 		return (netInfo.TopologyType() == types.Layer2Topology || netInfo.TopologyType() == types.LocalnetTopology) &&
 			netInfo.AllowsPersistentIPs()
 
@@ -1702,8 +1702,8 @@ func GetNetworkRole(controllerNetInfo NetInfo, getActiveNetworkForNamespace func
 
 // (C)UDN network name generation functions must ensure the absence of name conflicts between all (C)UDNs.
 // We use underscore as a separator as it is not allowed in k8s namespaces and names.
-// Network name is then used by GetSecondaryNetworkPrefix function to generate db object names.
-// GetSecondaryNetworkPrefix replaces some characters in the network name to ensure correct db object names,
+// Network name is then used by GetUserDefinedNetworkPrefix function to generate db object names.
+// GetUserDefinedNetworkPrefix replaces some characters in the network name to ensure correct db object names,
 // so the network name must be also unique after these replacements.
 
 func GenerateUDNNetworkName(namespace, name string) string {

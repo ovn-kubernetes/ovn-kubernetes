@@ -75,7 +75,7 @@ func (bnc *BaseNetworkController) shouldWatchNamespaces() bool {
 	// - The network is secondary, and multi NetworkPolicies are enabled.
 	return bnc.IsDefault() ||
 		bnc.IsPrimaryNetwork() && util.IsNetworkSegmentationSupportEnabled() ||
-		bnc.IsSecondary() && util.IsMultiNetworkPoliciesSupportEnabled()
+		bnc.IsUserDefinedNetwork() && util.IsMultiNetworkPoliciesSupportEnabled()
 }
 
 // WatchNamespaces starts the watching of namespace resource and calls
@@ -466,7 +466,7 @@ func (bsnc *BaseNetworkController) removeRemoteZonePodFromNamespaceAddressSet(po
 	// tracked within the zone, nodeName will be empty which will force
 	// canReleasePodIPs to lookup all nodes.
 	nodeName := pod.Spec.NodeName
-	if !bsnc.IsSecondary() && kubevirt.IsPodLiveMigratable(pod) {
+	if !bsnc.IsUserDefinedNetwork() && kubevirt.IsPodLiveMigratable(pod) {
 		nodeName, _ = bsnc.lsManager.GetSubnetName(podIfAddrs)
 	}
 

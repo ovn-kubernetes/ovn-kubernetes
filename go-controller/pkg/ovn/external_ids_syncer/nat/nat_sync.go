@@ -124,7 +124,7 @@ func (n *NATSyncer) syncEgressIPNATs() error {
 
 func (n *NATSyncer) buildPodCache() (podsNetInfo, podsNetInfo, error) {
 	p := func(item *nbdb.LogicalSwitchPort) bool {
-		return item.ExternalIDs["pod"] == "true" && item.ExternalIDs[ovntypes.NADExternalID] == "" // ignore secondary network LSPs
+		return item.ExternalIDs["pod"] == "true" && item.ExternalIDs[ovntypes.NADExternalID] == "" // ignore UDN LSPs
 	}
 	lsps, err := libovsdbops.FindLogicalSwitchPortWithPredicate(n.nbClient, p)
 	if err != nil {

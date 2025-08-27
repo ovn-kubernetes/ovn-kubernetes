@@ -337,7 +337,7 @@ func (c *Controller) networkManagedByMe(networkSelectors crdtypes.NetworkSelecto
 				return false, err
 			}
 		case crdtypes.SecondaryUserDefinedNetworks:
-			if !c.IsSecondary() {
+			if !c.IsUserDefinedNetwork() {
 				return false, nil
 			}
 			if networkSelector.SecondaryUserDefinedNetworkSelector == nil {
@@ -395,7 +395,7 @@ func (c *Controller) getLogicalSwitchName(nodeName string) string {
 		return c.GetNetworkScopedSwitchName(types.OVNLayer2Switch)
 	case c.TopologyType() == types.LocalnetTopology:
 		return c.GetNetworkScopedSwitchName(types.OVNLocalnetSwitch)
-	case !c.IsSecondary() || c.TopologyType() == types.Layer3Topology:
+	case !c.IsUserDefinedNetwork() || c.TopologyType() == types.Layer3Topology:
 		return c.GetNetworkScopedSwitchName(nodeName)
 	default:
 		return ""

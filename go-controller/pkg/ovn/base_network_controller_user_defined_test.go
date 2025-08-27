@@ -20,7 +20,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-var _ = Describe("BaseSecondaryNetworkController", func() {
+var _ = Describe("BaseUserDefinedNetworkController", func() {
 	var (
 		nad = ovntest.GenerateNAD("bluenet", "rednad", "greenamespace",
 			types.Layer3Topology, "100.128.0.0/16", types.NetworkRolePrimary)
@@ -79,8 +79,8 @@ var _ = Describe("BaseSecondaryNetworkController", func() {
 		)
 		defer fakeOVN.shutdown()
 
-		Expect(fakeOVN.NewSecondaryNetworkController(layer2NAD)).To(Succeed())
-		controller, ok := fakeOVN.secondaryControllers["bluenet"]
+		Expect(fakeOVN.NewUserDefinedNetworkController(layer2NAD)).To(Succeed())
+		controller, ok := fakeOVN.userDefinedNetworkControllers["bluenet"]
 		Expect(ok).To(BeTrue())
 		pod := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
@@ -221,8 +221,8 @@ var _ = Describe("BaseSecondaryNetworkController", func() {
 				},
 			},
 		)
-		Expect(fakeOVN.NewSecondaryNetworkController(nad)).To(Succeed())
-		controller, ok := fakeOVN.secondaryControllers["bluenet"]
+		Expect(fakeOVN.NewUserDefinedNetworkController(nad)).To(Succeed())
+		controller, ok := fakeOVN.userDefinedNetworkControllers["bluenet"]
 		Expect(ok).To(BeTrue())
 		// inject a real networkManager instead of a fake one, so getActiveNetworkForNamespace will get called
 		nadController, err := networkmanager.NewForZone("dummyZone", nil, fakeOVN.watcher)
@@ -240,7 +240,7 @@ var _ = Describe("BaseSecondaryNetworkController", func() {
 		var initialPodList []interface{}
 		initialPodList = append(initialPodList, podWithNoNamespace)
 
-		err = controller.bnc.syncPodsForSecondaryNetwork(initialPodList)
+		err = controller.bnc.syncPodsForUserDefinedNetwork(initialPodList)
 		Expect(err).NotTo(HaveOccurred())
 	})
 

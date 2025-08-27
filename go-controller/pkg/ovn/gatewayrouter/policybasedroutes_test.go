@@ -47,7 +47,7 @@ func (n network) generateTestData(nodeName string) []libovsdbtest.TestData {
 	for _, lrp := range n.initialLRPs {
 		lrpUUIDs = append(lrpUUIDs, lrp.UUID)
 		var extID map[string]string
-		if n.info.IsSecondary() {
+		if n.info.IsUserDefinedNetwork() {
 			extID = map[string]string{
 				types.NetworkExternalID:  n.info.GetNetworkName(),
 				types.TopologyExternalID: n.info.TopologyType(),

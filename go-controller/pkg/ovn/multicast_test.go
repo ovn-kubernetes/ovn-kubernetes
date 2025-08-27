@@ -320,8 +320,8 @@ func startBaseNetworkController(fakeOvn *FakeOVN, nad *nadapi.NetworkAttachmentD
 	if nad != nil {
 		netInfo, err := util.ParseNADInfo(nad)
 		Expect(err).ToNot(HaveOccurred())
-		Expect(fakeOvn.NewSecondaryNetworkController(nad)).To(Succeed())
-		controller, ok := fakeOvn.secondaryControllers[netInfo.GetNetworkName()]
+		Expect(fakeOvn.NewUserDefinedNetworkController(nad)).To(Succeed())
+		controller, ok := fakeOvn.userDefinedNetworkControllers[netInfo.GetNetworkName()]
 		Expect(ok).To(BeTrue())
 		return &controller.bnc.BaseNetworkController, controller.asf
 	} else {

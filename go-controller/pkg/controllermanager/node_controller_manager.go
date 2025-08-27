@@ -40,7 +40,7 @@ type NodeControllerManager struct {
 
 	defaultNodeNetworkController *node.DefaultNodeNetworkController
 
-	// networkManager creates and deletes secondary network controllers
+	// networkManager creates and deletes user-defined network controllers
 	networkManager networkmanager.Controller
 	// vrf manager that creates and manages vrfs for all UDNs
 	vrfManager *vrfmanager.Controller
@@ -52,14 +52,14 @@ type NodeControllerManager struct {
 	ovsClient client.Client
 }
 
-// NewNetworkController create secondary node network controllers for the given NetInfo
+// NewNetworkController create node user-defined network controllers for the given NetInfo
 func (ncm *NodeControllerManager) NewNetworkController(nInfo util.NetInfo) (networkmanager.NetworkController, error) {
 	topoType := nInfo.TopologyType()
 	switch topoType {
 	case ovntypes.Layer3Topology, ovntypes.Layer2Topology, ovntypes.LocalnetTopology:
 		// Pass a shallow clone of the watch factory, this allows multiplexing
-		// informers for secondary networks.
-		return node.NewSecondaryNodeNetworkController(ncm.newCommonNetworkControllerInfo(ncm.watchFactory.(*factory.WatchFactory).ShallowClone()),
+		// informers for UDNs.
+		return node.NewUserDefinedNodeNetworkController(ncm.newCommonNetworkControllerInfo(ncm.watchFactory.(*factory.WatchFactory).ShallowClone()),
 			nInfo, ncm.networkManager.Interface(), ncm.vrfManager, ncm.ruleManager, ncm.defaultNodeNetworkController.Gateway)
 	}
 	return nil, fmt.Errorf("topology type %s not supported", topoType)
@@ -69,7 +69,7 @@ func (ncm *NodeControllerManager) GetDefaultNetworkController() networkmanager.R
 	return ncm.defaultNodeNetworkController
 }
 
-// CleanupStaleNetworks cleans up all stale entities giving list of all existing secondary network controllers
+// CleanupStaleNetworks cleans up all stale entities giving list of all existing node UDN controllers
 func (ncm *NodeControllerManager) CleanupStaleNetworks(validNetworks ...util.NetInfo) error {
 	if !util.IsNetworkSegmentationSupportEnabled() {
 		return nil
@@ -91,8 +91,8 @@ func (ncm *NodeControllerManager) newCommonNetworkControllerInfo(wf factory.Node
 
 // isNetworkManagerRequiredForNode checks if network manager should be started
 // on the node side, which requires any of the following conditions:
-// (1) dpu mode is enabled when secondary networks feature is enabled
-// (2) primary user defined networks is enabled (all modes)
+// (1) dpu mode is enabled when multiple networks feature is enabled
+// (2) primary user-defined networks is enabled (all modes)
 func isNetworkManagerRequiredForNode() bool {
 	return (config.OVNKubernetesFeature.EnableMultiNetwork && config.OvnKubeNode.Mode == ovntypes.NodeModeDPU) ||
 		util.IsNetworkSegmentationSupportEnabled() ||
@@ -114,7 +114,7 @@ func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatch
 		ovsClient:     ovsClient,
 	}
 
-	// need to configure OVS interfaces for Pods on secondary networks in the DPU mode
+	// need to configure OVS interfaces for Pods on UDNs in the DPU mode
 	// need to start NAD controller on node side for programming gateway pieces for UDNs
 	// need to start NAD controller on node side for VRF awareness with BGP
 	var err error

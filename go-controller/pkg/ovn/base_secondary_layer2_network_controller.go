@@ -18,14 +18,14 @@ import (
 
 // method/structure shared by all layer 2 network controller, including localnet and layer2 network controllres.
 
-// BaseSecondaryLayer2NetworkController structure holds per-network fields and network specific
+// BaseLayer2UserDefinedNetworkController structure holds per-network fields and network specific
 // configuration for secondary layer2/localnet network controller
-type BaseSecondaryLayer2NetworkController struct {
-	BaseSecondaryNetworkController
+type BaseLayer2UserDefinedNetworkController struct {
+	BaseUserDefinedNetworkController
 }
 
 // stop gracefully stops the controller, and delete all logical entities for this network if requested
-func (oc *BaseSecondaryLayer2NetworkController) stop() {
+func (oc *BaseLayer2UserDefinedNetworkController) stop() {
 	klog.Infof("Stop secondary %s network controller of network %s", oc.TopologyType(), oc.GetNetworkName())
 	close(oc.stopChan)
 	oc.cancelableCtx.Cancel()
@@ -56,7 +56,7 @@ func (oc *BaseSecondaryLayer2NetworkController) stop() {
 
 // cleanup cleans up logical entities for the given network, called from net-attach-def routine
 // could be called from a dummy Controller (only has CommonNetworkControllerInfo set)
-func (oc *BaseSecondaryLayer2NetworkController) cleanup() error {
+func (oc *BaseLayer2UserDefinedNetworkController) cleanup() error {
 	netName := oc.GetNetworkName()
 	klog.Infof("Delete OVN logical entities for network %s", netName)
 	// delete layer 2 logical switches
@@ -97,7 +97,7 @@ func (oc *BaseSecondaryLayer2NetworkController) cleanup() error {
 	return nil
 }
 
-func (oc *BaseSecondaryLayer2NetworkController) run() error {
+func (oc *BaseLayer2UserDefinedNetworkController) run() error {
 	// WatchNamespaces() should be started first because it has no other
 	// dependencies, and WatchNodes() depends on it
 	if err := oc.WatchNamespaces(); err != nil {
@@ -161,7 +161,7 @@ func (oc *BaseSecondaryLayer2NetworkController) run() error {
 	return nil
 }
 
-func (oc *BaseSecondaryLayer2NetworkController) initializeLogicalSwitch(switchName string, clusterSubnets []config.CIDRNetworkEntry, excludeSubnets, reservedSubnets []*net.IPNet, clusterLoadBalancerGroupUUID, switchLoadBalancerGroupUUID string) (*nbdb.LogicalSwitch, error) {
+func (oc *BaseLayer2UserDefinedNetworkController) initializeLogicalSwitch(switchName string, clusterSubnets []config.CIDRNetworkEntry, excludeSubnets, reservedSubnets []*net.IPNet, clusterLoadBalancerGroupUUID, switchLoadBalancerGroupUUID string) (*nbdb.LogicalSwitch, error) {
 	logicalSwitch := nbdb.LogicalSwitch{
 		Name:        switchName,
 		ExternalIDs: util.GenerateExternalIDsForSwitchOrRouter(oc.GetNetInfo()),
@@ -201,14 +201,14 @@ func (oc *BaseSecondaryLayer2NetworkController) initializeLogicalSwitch(switchNa
 	return &logicalSwitch, nil
 }
 
-func (oc *BaseSecondaryLayer2NetworkController) addUpdateNodeEvent(node *corev1.Node) error {
+func (oc *BaseLayer2UserDefinedNetworkController) addUpdateNodeEvent(node *corev1.Node) error {
 	if oc.isLocalZoneNode(node) {
 		return oc.addUpdateLocalNodeEvent(node)
 	}
 	return oc.addUpdateRemoteNodeEvent(node)
 }
 
-func (oc *BaseSecondaryLayer2NetworkController) addUpdateLocalNodeEvent(node *corev1.Node) error {
+func (oc *BaseLayer2UserDefinedNetworkController) addUpdateLocalNodeEvent(node *corev1.Node) error {
 	_, present := oc.localZoneNodes.LoadOrStore(node.Name, true)
 
 	if !present {
@@ -223,7 +223,7 @@ func (oc *BaseSecondaryLayer2NetworkController) addUpdateLocalNodeEvent(node *co
 	return nil
 }
 
-func (oc *BaseSecondaryLayer2NetworkController) addUpdateRemoteNodeEvent(node *corev1.Node) error {
+func (oc *BaseLayer2UserDefinedNetworkController) addUpdateRemoteNodeEvent(node *corev1.Node) error {
 	_, present := oc.localZoneNodes.Load(node.Name)
 
 	if present {
@@ -243,12 +243,12 @@ func (oc *BaseSecondaryLayer2NetworkController) addUpdateRemoteNodeEvent(node *c
 	return nil
 }
 
-func (oc *BaseSecondaryLayer2NetworkController) deleteNodeEvent(node *corev1.Node) error {
+func (oc *BaseLayer2UserDefinedNetworkController) deleteNodeEvent(node *corev1.Node) error {
 	oc.localZoneNodes.Delete(node.Name)
 	return nil
 }
 
-func (oc *BaseSecondaryLayer2NetworkController) syncNodes(nodes []interface{}) error {
+func (oc *BaseLayer2UserDefinedNetworkController) syncNodes(nodes []interface{}) error {
 	for _, tmp := range nodes {
 		node, ok := tmp.(*corev1.Node)
 		if !ok {
@@ -264,7 +264,7 @@ func (oc *BaseSecondaryLayer2NetworkController) syncNodes(nodes []interface{}) e
 	return nil
 }
 
-func (oc *BaseSecondaryLayer2NetworkController) syncIPAMClaims(ipamClaims []interface{}) error {
+func (oc *BaseLayer2UserDefinedNetworkController) syncIPAMClaims(ipamClaims []interface{}) error {
 	switchName, err := oc.getExpectedSwitchName(dummyPod())
 	if err != nil {
 		return err

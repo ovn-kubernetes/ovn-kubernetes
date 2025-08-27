@@ -199,7 +199,7 @@ func (bnc *BaseNetworkController) createDefaultDenyMulticastPolicy() error {
 		return err
 	}
 
-	if !bnc.IsSecondary() {
+	if !bnc.IsUserDefinedNetwork() {
 		// Remove old multicastDefaultDeny port group now that all ports
 		// have been added to the clusterPortGroup by WatchPods()
 		ops, err = libovsdbops.DeletePortGroupsOps(bnc.nbClient, ops, legacyMulticastDefaultDenyPortGroup)

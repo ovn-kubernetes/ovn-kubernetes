@@ -416,7 +416,7 @@ func GetUserDefinedNetworkRole(isPrimary bool) string {
 // when on the default cluster network, for backward compatibility.
 func GenerateExternalIDsForSwitchOrRouter(netInfo NetInfo) map[string]string {
 	externalIDs := make(map[string]string)
-	if netInfo.IsSecondary() {
+	if netInfo.IsUserDefinedNetwork() {
 		externalIDs[types.NetworkExternalID] = netInfo.GetNetworkName()
 		externalIDs[types.NetworkRoleExternalID] = GetUserDefinedNetworkRole(netInfo.IsPrimaryNetwork())
 		externalIDs[types.TopologyExternalID] = netInfo.TopologyType()
@@ -424,8 +424,8 @@ func GenerateExternalIDsForSwitchOrRouter(netInfo NetInfo) map[string]string {
 	return externalIDs
 }
 
-func GetSecondaryNetworkLogicalPortName(podNamespace, podName, nadName string) string {
-	return GetSecondaryNetworkPrefix(nadName) + composePortName(podNamespace, podName)
+func GetUserDefinedNetworkLogicalPortName(podNamespace, podName, nadName string) string {
+	return GetUserDefinedNetworkPrefix(nadName) + composePortName(podNamespace, podName)
 }
 
 func GetLogicalPortName(podNamespace, podName string) string {
@@ -436,8 +436,8 @@ func GetNamespacePodFromCDNPortName(portName string) (string, string) {
 	return decomposePortName(portName)
 }
 
-func GetSecondaryNetworkIfaceId(podNamespace, podName, nadName string) string {
-	return GetSecondaryNetworkPrefix(nadName) + composePortName(podNamespace, podName)
+func GetUDNIfaceId(podNamespace, podName, nadName string) string {
+	return GetUserDefinedNetworkPrefix(nadName) + composePortName(podNamespace, podName)
 }
 
 func GetIfaceId(podNamespace, podName string) string {

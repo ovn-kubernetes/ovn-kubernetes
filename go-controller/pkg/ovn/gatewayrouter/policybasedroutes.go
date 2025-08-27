@@ -238,7 +238,7 @@ func (pbr *PolicyBasedRoutesManager) createPolicyBasedRoutes(match, priority, ne
 		Nexthops: []string{nexthops},
 		Action:   nbdb.LogicalRouterPolicyActionReroute,
 	}
-	if pbr.netInfo.IsSecondary() {
+	if pbr.netInfo.IsUserDefinedNetwork() {
 		lrp.ExternalIDs = map[string]string{
 			ovntypes.NetworkExternalID:  pbr.netInfo.GetNetworkName(),
 			ovntypes.TopologyExternalID: pbr.netInfo.TopologyType(),

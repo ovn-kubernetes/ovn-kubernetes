@@ -58,11 +58,11 @@ This feature is enabled by default on all OVN-Kubernetes clusters.
 You don't need to do anything extra to start using this feature.
 There is a Feature Config option `--enable-network-segmentation` under
 `OVNKubernetesFeatureConfig` config that can be used to disable this
-feature. However note that disabling the feature will not remove
+feature. However, note that disabling the feature will not remove
 existing CRs in the cluster. This feature has to be enabled along with
 the flag for multiple-networks `--enable-multi-network` since UDNs
 use Network Attachment Definitions as underlying implementation detail
-construct and reuse the secondary network controllers.
+construct and reuse the user-defined network controllers.
 
 ## Workflow Description
 
@@ -339,7 +339,7 @@ default `eth0` interface of the pods:
 _uuid               : 1278b0f4-0a14-4637-9d05-83ba9df6ec03
 action              : allow
 direction           : from-lport
-external_ids        : {direction=Egress, "k8s.ovn.org/id"="default-network-controller:UDNIsolation:AllowHostARPSecondary:Egress", "k8s.ovn.org/name"=AllowHostARPSecondary, "k8s.ovn.org/owner-controller"=default-network-controller, "k8s.ovn.org/owner-type"=UDNIsolation}
+external_ids        : {direction=Egress, "k8s.ovn.org/id"="default-network-controller:UDNIsolation:AllowHostARPPrimaryUDN:Egress", "k8s.ovn.org/name"=AllowHostARPPrimaryUDN, "k8s.ovn.org/owner-controller"=default-network-controller, "k8s.ovn.org/owner-type"=UDNIsolation}
 label               : 0
 log                 : false
 match               : "inport == @a8747502060113802905 && (( arp && arp.tpa == 10.244.2.2 ) || ( nd && nd.target == fd00:10:244:3::2 ))"
@@ -355,7 +355,7 @@ tier                : 0
 _uuid               : 489ae95b-ae9d-47d0-bf1d-b2477a9ed6a2
 action              : allow
 direction           : to-lport
-external_ids        : {direction=Ingress, "k8s.ovn.org/id"="default-network-controller:UDNIsolation:AllowHostARPSecondary:Ingress", "k8s.ovn.org/name"=AllowHostARPSecondary, "k8s.ovn.org/owner-controller"=default-network-controller, "k8s.ovn.org/owner-type"=UDNIsolation}
+external_ids        : {direction=Ingress, "k8s.ovn.org/id"="default-network-controller:UDNIsolation:AllowHostARPPrimaryUDN:Ingress", "k8s.ovn.org/name"=AllowHostARPPrimaryUDN, "k8s.ovn.org/owner-controller"=default-network-controller, "k8s.ovn.org/owner-type"=UDNIsolation}
 label               : 0
 log                 : false
 match               : "outport == @a8747502060113802905 && (( arp && arp.spa == 10.244.2.2 ) || ( nd && nd.target == fd00:10:244:3::2 ))"
@@ -372,7 +372,7 @@ tier                : 0
 _uuid               : 980be3e4-75af-45f7-bce3-3bb08ecd8b3a
 action              : drop
 direction           : to-lport
-external_ids        : {direction=Ingress, "k8s.ovn.org/id"="default-network-controller:UDNIsolation:DenySecondary:Ingress", "k8s.ovn.org/name"=DenySecondary, "k8s.ovn.org/owner-controller"=default-network-controller, "k8s.ovn.org/owner-type"=UDNIsolation}
+external_ids        : {direction=Ingress, "k8s.ovn.org/id"="default-network-controller:UDNIsolation:DenyPrimaryUDN:Ingress", "k8s.ovn.org/name"=DenyPrimaryUDN, "k8s.ovn.org/owner-controller"=default-network-controller, "k8s.ovn.org/owner-type"=UDNIsolation}
 label               : 0
 log                 : false
 match               : "outport == @a8747502060113802905"
@@ -388,7 +388,7 @@ tier                : 0
 _uuid               : cca19dca-1fde-4a14-841d-7e2cce804de4
 action              : drop
 direction           : from-lport
-external_ids        : {direction=Egress, "k8s.ovn.org/id"="default-network-controller:UDNIsolation:DenySecondary:Egress", "k8s.ovn.org/name"=DenySecondary, "k8s.ovn.org/owner-controller"=default-network-controller, "k8s.ovn.org/owner-type"=UDNIsolation}
+external_ids        : {direction=Egress, "k8s.ovn.org/id"="default-network-controller:UDNIsolation:DenyPrimaryUDN:Egress", "k8s.ovn.org/name"=DenyPrimaryUDN, "k8s.ovn.org/owner-controller"=default-network-controller, "k8s.ovn.org/owner-type"=UDNIsolation}
 label               : 0
 log                 : false
 match               : "inport == @a8747502060113802905"

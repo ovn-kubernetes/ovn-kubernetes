@@ -512,8 +512,8 @@ func RunTimestamp(stopChan <-chan struct{}, sbClient, nbClient libovsdbclient.Cl
 // RecordPodCreated extracts the scheduled timestamp and records how long it took
 // us to notice this and set up the pod's scheduling.
 func RecordPodCreated(pod *corev1.Pod, netInfo util.NetInfo) {
-	if netInfo.IsSecondary() {
-		// TBD: no op for secondary network for now, TBD
+	if netInfo.IsUserDefinedNetwork() {
+		// TBD: noop for UDN for now
 		return
 	}
 	t := time.Now()
@@ -761,8 +761,8 @@ func (pr *PodRecorder) CleanPod(podUID kapimtypes.UID) {
 }
 
 func (pr *PodRecorder) AddLSP(podUID kapimtypes.UID, netInfo util.NetInfo) {
-	if netInfo.IsSecondary() {
-		// TBD: no op for secondary network for now, TBD
+	if netInfo.IsUserDefinedNetwork() {
+		// TBD: noop for UDN for now
 		return
 	}
 	if pr.queue != nil && !pr.queueFull() {

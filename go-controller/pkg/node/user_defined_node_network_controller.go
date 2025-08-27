@@ -16,9 +16,9 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
-// SecondaryNodeNetworkController structure is the object which holds the controls for starting
-// and reacting upon the watched resources (e.g. pods, endpoints) for secondary network
-type SecondaryNodeNetworkController struct {
+// UserDefinedNodeNetworkController structure is the object which holds the controls for starting
+// and reacting upon the watched resources (e.g. pods, endpoints) for user-defined networks
+type UserDefinedNodeNetworkController struct {
 	BaseNodeNetworkController
 	// pod events factory handler
 	podHandler *factory.Handler
@@ -26,19 +26,19 @@ type SecondaryNodeNetworkController struct {
 	gateway *UserDefinedNetworkGateway
 }
 
-// NewSecondaryNodeNetworkController creates a new OVN controller for creating logical network
+// NewUserDefinedNodeNetworkController creates a new OVN controller for creating logical network
 // infrastructure and policy for the given secondary network. It supports layer3, layer2 and
 // localnet topology types.
-func NewSecondaryNodeNetworkController(
+func NewUserDefinedNodeNetworkController(
 	cnnci *CommonNodeNetworkControllerInfo,
 	netInfo util.NetInfo,
 	networkManager networkmanager.Interface,
 	vrfManager *vrfmanager.Controller,
 	ruleManager *iprulemanager.Controller,
 	defaultNetworkGateway Gateway,
-) (*SecondaryNodeNetworkController, error) {
+) (*UserDefinedNodeNetworkController, error) {
 
-	snnc := &SecondaryNodeNetworkController{
+	snnc := &UserDefinedNodeNetworkController{
 		BaseNodeNetworkController: BaseNodeNetworkController{
 			CommonNodeNetworkControllerInfo: *cnnci,
 			ReconcilableNetInfo:             util.NewReconcilableNetInfo(netInfo),
@@ -64,10 +64,10 @@ func NewSecondaryNodeNetworkController(
 }
 
 // Start starts the default controller; handles all events and creates all needed logical entities
-func (nc *SecondaryNodeNetworkController) Start(_ context.Context) error {
-	klog.Infof("Start secondary node network controller of network %s", nc.GetNetworkName())
+func (nc *UserDefinedNodeNetworkController) Start(_ context.Context) error {
+	klog.Infof("Starting UDN node network controller for network %s", nc.GetNetworkName())
 
-	// enable adding ovs ports for dpu pods in both primary and secondary user defined networks
+	// enable adding ovs ports for dpu pods in both primary and secondary user-defined networks
 	if (config.OVNKubernetesFeature.EnableMultiNetwork || util.IsNetworkSegmentationSupportEnabled()) && config.OvnKubeNode.Mode == types.NodeModeDPU {
 		handler, err := nc.watchPodsDPU()
 		if err != nil {
@@ -85,8 +85,8 @@ func (nc *SecondaryNodeNetworkController) Start(_ context.Context) error {
 }
 
 // Stop gracefully stops the controller
-func (nc *SecondaryNodeNetworkController) Stop() {
-	klog.Infof("Stop secondary node network controller of network %s", nc.GetNetworkName())
+func (nc *UserDefinedNodeNetworkController) Stop() {
+	klog.Infof("Stopping UDN node network controller for network %s", nc.GetNetworkName())
 	close(nc.stopChan)
 	nc.wg.Wait()
 
@@ -95,15 +95,15 @@ func (nc *SecondaryNodeNetworkController) Stop() {
 	}
 }
 
-// Cleanup cleans up node entities for the given secondary network
-func (nc *SecondaryNodeNetworkController) Cleanup() error {
+// Cleanup cleans up node entities for the given user-defined network
+func (nc *UserDefinedNodeNetworkController) Cleanup() error {
 	if nc.gateway != nil {
 		return nc.gateway.DelNetwork()
 	}
 	return nil
 }
 
-func (nc *SecondaryNodeNetworkController) shouldReconcileNetworkChange(old, new util.NetInfo) bool {
+func (nc *UserDefinedNodeNetworkController) shouldReconcileNetworkChange(old, new util.NetInfo) bool {
 	wasUDNNetworkAdvertisedAtNode := util.IsPodNetworkAdvertisedAtNode(old, nc.name)
 	isUDNNetworkAdvertisedAtNode := util.IsPodNetworkAdvertisedAtNode(new, nc.name)
 	return wasUDNNetworkAdvertisedAtNode != isUDNNetworkAdvertisedAtNode
@@ -113,7 +113,7 @@ func (nc *SecondaryNodeNetworkController) shouldReconcileNetworkChange(old, new 
 // and the gateway mode:
 // 1. IP rules
 // 2. OpenFlows on br-ex bridge to forward traffic to correct ofports
-func (nc *SecondaryNodeNetworkController) Reconcile(netInfo util.NetInfo) error {
+func (nc *UserDefinedNodeNetworkController) Reconcile(netInfo util.NetInfo) error {
 	reconcilePodNetwork := nc.shouldReconcileNetworkChange(nc.ReconcilableNetInfo, netInfo)
 
 	err := util.ReconcileNetInfo(nc.ReconcilableNetInfo, netInfo)

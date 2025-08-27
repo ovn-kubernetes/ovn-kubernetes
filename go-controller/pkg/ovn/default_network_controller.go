@@ -312,9 +312,14 @@ func (oc *DefaultNetworkController) syncDb() error {
 	}
 
 	// NAT syncer must only be run once. It performs OVN NAT updates.
-	nadSyncer := nat.NewNATSyncer(oc.nbClient, oc.controllerName)
-	if err = nadSyncer.Sync(); err != nil {
+	natSyncer := nat.NewNATSyncer(oc.nbClient, oc.controllerName)
+	if err = natSyncer.Sync(); err != nil {
 		return fmt.Errorf("failed to sync NATs: %v", err)
+	}
+
+	// Find ACLs with legacy DBIDs and update them from secondary -> user-defined
+	if err := oc.syncUDNIsolation(); err != nil {
+		return err
 	}
 	return nil
 }

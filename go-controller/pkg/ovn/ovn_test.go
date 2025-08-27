@@ -67,8 +67,8 @@ const (
 	ovnClusterPortGroupUUID     = fakePgUUID
 )
 
-type secondaryControllerInfo struct {
-	bnc *BaseSecondaryNetworkController
+type userDefinedNetworkControllerInfo struct {
+	bnc *BaseUserDefinedNetworkController
 	asf *addressset.FakeAddressSetFactory
 }
 
@@ -91,9 +91,9 @@ type FakeOVN struct {
 	eIPController  *EgressIPController
 	portCache      *PortCache
 
-	// information map of all secondary network controllers
-	secondaryControllers       map[string]secondaryControllerInfo
-	fullSecondaryL2Controllers map[string]*SecondaryLayer2NetworkController
+	// information map of all UDN controllers
+	userDefinedNetworkControllers map[string]userDefinedNetworkControllerInfo
+	fullL2UDNControllers          map[string]*Layer2UserDefinedNetworkController
 }
 
 // NOTE: the FakeAddressSetFactory is no longer needed and should no longer be used. starting to phase out FakeAddressSetFactory
@@ -109,8 +109,8 @@ func NewFakeOVN(useFakeAddressSet bool) *FakeOVN {
 		egressSVCWg:  &sync.WaitGroup{},
 		anpWg:        &sync.WaitGroup{},
 
-		secondaryControllers:       map[string]secondaryControllerInfo{},
-		fullSecondaryL2Controllers: map[string]*SecondaryLayer2NetworkController{},
+		userDefinedNetworkControllers: map[string]userDefinedNetworkControllerInfo{},
+		fullL2UDNControllers:          map[string]*Layer2UserDefinedNetworkController{},
 	}
 }
 
@@ -196,7 +196,7 @@ func (o *FakeOVN) shutdown() {
 	o.egressSVCWg.Wait()
 	o.anpWg.Wait()
 	o.nbsbCleanup.Cleanup()
-	for _, ocInfo := range o.secondaryControllers {
+	for _, ocInfo := range o.userDefinedNetworkControllers {
 		close(ocInfo.bnc.stopChan)
 		ocInfo.bnc.cancelableCtx.Cancel()
 		ocInfo.bnc.wg.Wait()
@@ -266,7 +266,7 @@ func (o *FakeOVN) init(nadList []nettypes.NetworkAttachmentDefinition) {
 	setupCOPP := false
 	setupClusterController(o.controller, setupCOPP)
 	for _, n := range nadList {
-		err := o.NewSecondaryNetworkController(&n)
+		err := o.NewUserDefinedNetworkController(&n)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	}
 
@@ -280,9 +280,9 @@ func (o *FakeOVN) init(nadList []nettypes.NetworkAttachmentDefinition) {
 	if err == nil {
 		for _, node := range existingNodes {
 			o.controller.localZoneNodes.Store(node.Name, true)
-			for _, secondaryController := range o.secondaryControllers {
-				if secondaryController.bnc.localZoneNodes != nil {
-					secondaryController.bnc.localZoneNodes.Store(node.Name, true)
+			for _, udnController := range o.userDefinedNetworkControllers {
+				if udnController.bnc.localZoneNodes != nil {
+					udnController.bnc.localZoneNodes.Store(node.Name, true)
 				}
 			}
 		}
@@ -497,9 +497,9 @@ func newNetworkAttachmentDefinition(namespace, name string, netconf ovncnitypes.
 	}, nil
 }
 
-func (o *FakeOVN) NewSecondaryNetworkController(netattachdef *nettypes.NetworkAttachmentDefinition) error {
-	var ocInfo secondaryControllerInfo
-	var secondaryController *BaseSecondaryNetworkController
+func (o *FakeOVN) NewUserDefinedNetworkController(netattachdef *nettypes.NetworkAttachmentDefinition) error {
+	var ocInfo userDefinedNetworkControllerInfo
+	var userDefinedNetworkController *BaseUserDefinedNetworkController
 	var ok bool
 
 	nadName := util.GetNADName(netattachdef.Namespace, netattachdef.Name)
@@ -509,7 +509,7 @@ func (o *FakeOVN) NewSecondaryNetworkController(netattachdef *nettypes.NetworkAt
 	}
 	netName := nInfo.GetNetworkName()
 	topoType := nInfo.TopologyType()
-	ocInfo, ok = o.secondaryControllers[netName]
+	ocInfo, ok = o.userDefinedNetworkControllers[netName]
 	if !ok {
 		nbZoneFailed := false
 		// Try to get the NBZone.  If there is an error, create NB_Global record.
@@ -548,31 +548,31 @@ func (o *FakeOVN) NewSecondaryNetworkController(netattachdef *nettypes.NetworkAt
 
 		switch topoType {
 		case types.Layer3Topology:
-			l3Controller, err := NewSecondaryLayer3NetworkController(cnci, nInfo, o.networkManager.Interface(), nil, o.eIPController, o.portCache)
+			l3Controller, err := NewLayer3UserDefinedNetworkController(cnci, nInfo, o.networkManager.Interface(), nil, o.eIPController, o.portCache)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			if o.asf != nil { // use fake asf only when enabled
 				l3Controller.addressSetFactory = asf
 			}
-			secondaryController = &l3Controller.BaseSecondaryNetworkController
+			userDefinedNetworkController = &l3Controller.BaseUserDefinedNetworkController
 		case types.Layer2Topology:
-			l2Controller, err := NewSecondaryLayer2NetworkController(cnci, nInfo, o.networkManager.Interface(), nil, o.portCache, o.eIPController)
+			l2Controller, err := NewLayer2UserDefinedNetworkController(cnci, nInfo, o.networkManager.Interface(), nil, o.portCache, o.eIPController)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			if o.asf != nil { // use fake asf only when enabled
 				l2Controller.addressSetFactory = asf
 			}
-			secondaryController = &l2Controller.BaseSecondaryNetworkController
-			o.fullSecondaryL2Controllers[netName] = l2Controller
+			userDefinedNetworkController = &l2Controller.BaseUserDefinedNetworkController
+			o.fullL2UDNControllers[netName] = l2Controller
 		case types.LocalnetTopology:
-			localnetController := NewSecondaryLocalnetNetworkController(cnci, nInfo, o.networkManager.Interface())
+			localnetController := NewLocalnetUserDefinedNetworkController(cnci, nInfo, o.networkManager.Interface())
 			if o.asf != nil { // use fake asf only when enabled
 				localnetController.addressSetFactory = asf
 			}
-			secondaryController = &localnetController.BaseSecondaryNetworkController
+			userDefinedNetworkController = &localnetController.BaseUserDefinedNetworkController
 		default:
 			return fmt.Errorf("topology type %s not supported", topoType)
 		}
-		ocInfo = secondaryControllerInfo{bnc: secondaryController, asf: asf}
-		o.secondaryControllers[netName] = ocInfo
+		ocInfo = userDefinedNetworkControllerInfo{bnc: userDefinedNetworkController, asf: asf}
+		o.userDefinedNetworkControllers[netName] = ocInfo
 
 		if nbZoneFailed {
 			// Delete the NBGlobal row as this function created it.  Otherwise many tests would fail while
@@ -581,13 +581,14 @@ func (o *FakeOVN) NewSecondaryNetworkController(netattachdef *nettypes.NetworkAt
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		}
 	} else {
-		secondaryController = ocInfo.bnc
+		userDefinedNetworkController = ocInfo.bnc
 	}
 
-	ginkgo.By(fmt.Sprintf("OVN test init: add NAD %s to secondary network controller of %s network %s", nadName, topoType, netName))
-	mutableNetInfo := util.NewMutableNetInfo(secondaryController.GetNetInfo())
+	ginkgo.By(fmt.Sprintf("OVN test init: add NAD %s to user-defined network controller of %s network %s", nadName, topoType, netName))
+	mutableNetInfo := util.NewMutableNetInfo(userDefinedNetworkController.GetNetInfo())
 	mutableNetInfo.AddNADs(nadName)
-	_ = util.ReconcileNetInfo(secondaryController.ReconcilableNetInfo, mutableNetInfo)
+	err = util.ReconcileNetInfo(userDefinedNetworkController.ReconcilableNetInfo, mutableNetInfo)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	return nil
 }
 

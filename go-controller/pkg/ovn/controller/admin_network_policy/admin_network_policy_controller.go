@@ -43,7 +43,6 @@ const (
 // taken from k8s controller guidelines
 type Controller struct {
 	// name of the controller that starts the ANP controller
-	// (values are default-network-controller, secondary-network-controller etc..)
 	controllerName string
 	sync.RWMutex
 	anpClientSet anpclientset.Interface

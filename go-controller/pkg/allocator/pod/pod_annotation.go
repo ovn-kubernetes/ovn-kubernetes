@@ -272,7 +272,7 @@ func allocatePodAnnotationWithRollback(
 	err error) {
 
 	nadName := types.DefaultNetworkName
-	if netInfo.IsSecondary() {
+	if netInfo.IsUserDefinedNetwork() {
 		nadName = util.GetNADName(network.Namespace, network.Name)
 	}
 	podDesc := fmt.Sprintf("%s/%s/%s", nadName, pod.Namespace, pod.Name)
@@ -510,7 +510,7 @@ func AddRoutesGatewayIP(
 	// generate the nodeSubnets from the allocated IPs
 	nodeSubnets := util.IPsToNetworkIPs(podAnnotation.IPs...)
 
-	if netinfo.IsSecondary() {
+	if netinfo.IsUserDefinedNetwork() {
 		// for secondary network, see if its network-attachment's annotation has default-route key.
 		// If present, then we need to add default route for it
 		podAnnotation.Gateways = append(podAnnotation.Gateways, network.GatewayRequest...)

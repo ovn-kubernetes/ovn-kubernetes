@@ -651,11 +651,11 @@ func (_m *NetInfo) IsPrimaryNetwork() bool {
 }
 
 // IsSecondary provides a mock function with given fields:
-func (_m *NetInfo) IsSecondary() bool {
+func (_m *NetInfo) IsUserDefinedNetwork() bool {
 	ret := _m.Called()
 
 	if len(ret) == 0 {
-		panic("no return value specified for IsSecondary")
+		panic("no return value specified for IsUserDefinedNetwork")
 	}
 
 	var r0 bool

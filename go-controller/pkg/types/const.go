@@ -225,19 +225,19 @@ const (
 	// RequiredUDNNamespaceLabel is the required namespace label for enabling primary UDNs
 	RequiredUDNNamespaceLabel = "k8s.ovn.org/primary-user-defined-network"
 
-	// different secondary network topology type defined in CNI netconf
+	// different user-defined network topology types defined in CNI netconf
 	Layer3Topology   = "layer3"
 	Layer2Topology   = "layer2"
 	LocalnetTopology = "localnet"
 
 	// different types of network roles
-	// defined in CNI netconf as a user defined network
+	// defined in CNI netconf as a user-defined network
 	NetworkRolePrimary   = "primary"
 	NetworkRoleSecondary = "secondary"
 	NetworkRoleDefault   = "default"
 	// NetworkRoleInfrastructure is defined internally by ovnkube to recognize "default"
 	// network's role as an "infrastructure-locked" network
-	// when a user defined network is the primary network for
+	// when a user-defined network is the primary network for
 	// the pod which makes "default" network neither primary
 	// nor secondary
 	NetworkRoleInfrastructure = "infrastructure-locked"

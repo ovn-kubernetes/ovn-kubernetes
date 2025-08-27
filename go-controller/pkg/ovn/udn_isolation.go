@@ -19,19 +19,31 @@ import (
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/batching"
 	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
 const (
 	// UDN ACL names, should be unique across all controllers
 	// Default network-only ACLs:
-	AllowHostARPACL       = "AllowHostARPSecondary"
-	AllowHostSecondaryACL = "AllowHostSecondary"
-	DenySecondaryACL      = "DenySecondary"
+	allowHostARPACL        = "AllowHostARPPrimaryUDN"
+	allowHostPrimaryUDNACL = "AllowHostPrimaryUDN"
+	denyPrimaryUDNACL      = "DenyPrimaryUDN"
 	// OpenPortACLPrefix is used to build per-pod ACLs, pod name should be added to the prefix to build a unique name
 	OpenPortACLPrefix = "OpenPort-"
 	// the same tier is used for all UDN isolation ACLs
 	isolationTier = types.PrimaryACLTier
+
+	// Port Group ID for pods with primary UDN
+	// Note, this is left with wording "Secondary" because we do not currently allow
+	// mutating a port group's name. ACL match criteria may reference this name, so it
+	// is unsafe to update. Therefore we keep the legacy name for now.
+	legacySecondaryPodPGName = "SecondaryPods"
+
+	// deprecated Legacy versions
+	allowHostSecondaryACL = "AllowHostSecondary"
+	denySecondaryACL      = "DenySecondary"
+	legacyAllowHostARPACL = "AllowHostARPSecondary"
 )
 
 // setupUDNACLs should be called after the node's management port was configured
@@ -40,7 +52,7 @@ func (oc *DefaultNetworkController) setupUDNACLs(mgmtPortIPs []net.IP) error {
 	if !util.IsNetworkSegmentationSupportEnabled() {
 		return nil
 	}
-	// add port group to track secondary pods
+	// add port group to track UDN primary pods
 	pgIDs := oc.getSecondaryPodsPortGroupDbIDs()
 	pg := &nbdb.PortGroup{
 		Name: libovsdbutil.GetPortGroupName(pgIDs),
@@ -63,7 +75,7 @@ func (oc *DefaultNetworkController) setupUDNACLs(mgmtPortIPs []net.IP) error {
 	// - ingress -> allow-related all from mgmtPort
 	// - egress+ingress -> deny everything else
 	pgName := libovsdbutil.GetPortGroupName(pgIDs)
-	egressDenyIDs := oc.getUDNACLDbIDs(DenySecondaryACL, libovsdbutil.ACLEgress)
+	egressDenyIDs := oc.getUDNACLDbIDs(denyPrimaryUDNACL, libovsdbutil.ACLEgress)
 	match := libovsdbutil.GetACLMatch(pgName, "", libovsdbutil.ACLEgress)
 	egressDenyACL := libovsdbutil.BuildACL(egressDenyIDs, types.PrimaryUDNDenyPriority, match, nbdb.ACLActionDrop,
 		nil, libovsdbutil.LportEgress, isolationTier)
@@ -90,22 +102,22 @@ func (oc *DefaultNetworkController) setupUDNACLs(mgmtPortIPs []net.IP) error {
 		return match
 	}
 
-	egressARPIDs := oc.getUDNACLDbIDs(AllowHostARPACL, libovsdbutil.ACLEgress)
+	egressARPIDs := oc.getUDNACLDbIDs(allowHostARPACL, libovsdbutil.ACLEgress)
 	match = libovsdbutil.GetACLMatch(pgName, getARPMatch(libovsdbutil.ACLEgress), libovsdbutil.ACLEgress)
 	egressARPACL := libovsdbutil.BuildACL(egressARPIDs, types.PrimaryUDNAllowPriority, match, nbdb.ACLActionAllow,
 		nil, libovsdbutil.LportEgress, isolationTier)
 
-	ingressDenyIDs := oc.getUDNACLDbIDs(DenySecondaryACL, libovsdbutil.ACLIngress)
+	ingressDenyIDs := oc.getUDNACLDbIDs(denyPrimaryUDNACL, libovsdbutil.ACLIngress)
 	match = libovsdbutil.GetACLMatch(pgName, "", libovsdbutil.ACLIngress)
 	ingressDenyACL := libovsdbutil.BuildACL(ingressDenyIDs, types.PrimaryUDNDenyPriority, match, nbdb.ACLActionDrop,
 		nil, libovsdbutil.LportIngress, isolationTier)
 
-	ingressARPIDs := oc.getUDNACLDbIDs(AllowHostARPACL, libovsdbutil.ACLIngress)
+	ingressARPIDs := oc.getUDNACLDbIDs(allowHostARPACL, libovsdbutil.ACLIngress)
 	match = libovsdbutil.GetACLMatch(pgName, getARPMatch(libovsdbutil.ACLIngress), libovsdbutil.ACLIngress)
 	ingressARPACL := libovsdbutil.BuildACL(ingressARPIDs, types.PrimaryUDNAllowPriority, match, nbdb.ACLActionAllow,
 		nil, libovsdbutil.LportIngress, isolationTier)
 
-	ingressAllowIDs := oc.getUDNACLDbIDs(AllowHostSecondaryACL, libovsdbutil.ACLIngress)
+	ingressAllowIDs := oc.getUDNACLDbIDs(allowHostPrimaryUDNACL, libovsdbutil.ACLIngress)
 	match = "("
 	for i, mgmtPortIP := range mgmtPortIPs {
 		ipFamily := "ip4"
@@ -140,7 +152,7 @@ func (oc *DefaultNetworkController) setupUDNACLs(mgmtPortIPs []net.IP) error {
 func (oc *DefaultNetworkController) getSecondaryPodsPortGroupDbIDs() *libovsdbops.DbObjectIDs {
 	return libovsdbops.NewDbObjectIDs(libovsdbops.PortGroupUDN, oc.controllerName,
 		map[libovsdbops.ExternalIDKey]string{
-			libovsdbops.ObjectNameKey: "SecondaryPods",
+			libovsdbops.ObjectNameKey: legacySecondaryPodPGName,
 		})
 }
 
@@ -414,4 +426,44 @@ func (bnc *BaseNetworkController) deleteAdvertisedNetworkIsolation(nodeName stri
 
 	_, err = libovsdbops.TransactAndCheck(bnc.nbClient, ops)
 	return err
+}
+
+func (oc *DefaultNetworkController) syncUDNIsolation() error {
+	// Find ACLs with old "secondary" naming IDs, update them
+	type aclUpdate struct {
+		old *libovsdbops.DbObjectIDs
+		new *libovsdbops.DbObjectIDs
+	}
+	updates := []*aclUpdate{
+		{oc.getUDNACLDbIDs(denySecondaryACL, libovsdbutil.ACLEgress), oc.getUDNACLDbIDs(denyPrimaryUDNACL, libovsdbutil.ACLEgress)},
+		{oc.getUDNACLDbIDs(legacyAllowHostARPACL, libovsdbutil.ACLEgress), oc.getUDNACLDbIDs(allowHostARPACL, libovsdbutil.ACLEgress)},
+		{oc.getUDNACLDbIDs(denySecondaryACL, libovsdbutil.ACLIngress), oc.getUDNACLDbIDs(denyPrimaryUDNACL, libovsdbutil.ACLIngress)},
+		{oc.getUDNACLDbIDs(legacyAllowHostARPACL, libovsdbutil.ACLIngress), oc.getUDNACLDbIDs(allowHostARPACL, libovsdbutil.ACLIngress)},
+		{oc.getUDNACLDbIDs(allowHostSecondaryACL, libovsdbutil.ACLIngress), oc.getUDNACLDbIDs(allowHostPrimaryUDNACL, libovsdbutil.ACLIngress)},
+	}
+
+	aclsToUpdate := make([]*nbdb.ACL, 0)
+	for _, update := range updates {
+		legacyACLs, err := libovsdbops.FindACLsWithPredicate(oc.nbClient, libovsdbops.GetPredicate[*nbdb.ACL](update.old, nil))
+		if err != nil {
+			return fmt.Errorf("unable to find ACLs for UDN Isolation sync: %w", err)
+		}
+		for _, acl := range legacyACLs {
+			externalIDs := update.new.GetExternalIDs()
+			acl.ExternalIDs = externalIDs
+			aclName := libovsdbutil.GetACLName(update.new)
+			acl.Name = &aclName
+			aclsToUpdate = append(aclsToUpdate, acl)
+		}
+	}
+	if len(aclsToUpdate) > 0 {
+		err := batching.Batch[*nbdb.ACL](20000, aclsToUpdate, func(batchACLs []*nbdb.ACL) error {
+			return libovsdbops.CreateOrUpdateACLs(oc.nbClient, oc.GetSamplingConfig(), batchACLs...)
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create or update UDN ACLs: %w", err)
+		}
+	}
+
+	return nil
 }

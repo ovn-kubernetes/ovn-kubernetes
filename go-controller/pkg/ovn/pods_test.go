@@ -224,10 +224,10 @@ type testPod struct {
 	noIfaceIdVer bool
 	networkRole  string
 
-	secondaryPodInfos map[string]*secondaryPodInfo
+	udnPodInfos map[string]*udnPodInfo
 }
 
-type secondaryPodInfo struct {
+type udnPodInfo struct {
 	nodeSubnet  string
 	nodeMgtIP   string
 	nodeGWIP    string
@@ -248,18 +248,18 @@ type portInfo struct {
 func newTPod(nodeName, nodeSubnet, nodeMgtIP, nodeGWIP, podName, podIPs, podMAC, namespace string) testPod {
 	portName := util.GetLogicalPortName(namespace, podName)
 	to := testPod{
-		portUUID:          portName + "-UUID",
-		nodeSubnet:        nodeSubnet,
-		nodeMgtIP:         nodeMgtIP,
-		nodeGWIP:          nodeGWIP,
-		podIP:             podIPs,
-		podMAC:            podMAC,
-		portName:          portName,
-		nodeName:          nodeName,
-		podName:           podName,
-		namespace:         namespace,
-		secondaryPodInfos: map[string]*secondaryPodInfo{},
-		networkRole:       ovntypes.NetworkRolePrimary, // all tests here run with network-segmentation disabled by default by default
+		portUUID:    portName + "-UUID",
+		nodeSubnet:  nodeSubnet,
+		nodeMgtIP:   nodeMgtIP,
+		nodeGWIP:    nodeGWIP,
+		podIP:       podIPs,
+		podMAC:      podMAC,
+		portName:    portName,
+		nodeName:    nodeName,
+		podName:     podName,
+		namespace:   namespace,
+		udnPodInfos: map[string]*udnPodInfo{},
+		networkRole: ovntypes.NetworkRolePrimary, // all tests here run with network-segmentation disabled by default by default
 	}
 
 	var routeSources []*net.IPNet
@@ -393,11 +393,11 @@ func (p testPod) getAnnotationsJson() string {
 		},
 	}
 
-	for _, portInfos := range p.secondaryPodInfos {
-		var secondaryIfaceRoutes []podRoute
+	for _, portInfos := range p.udnPodInfos {
+		var udnIfaceRoutes []podRoute
 		for _, route := range portInfos.routes {
-			secondaryIfaceRoutes = append(
-				secondaryIfaceRoutes,
+			udnIfaceRoutes = append(
+				udnIfaceRoutes,
 				podRoute{Dest: route.Dest.String(), NextHop: route.NextHop.String()},
 			)
 		}
@@ -416,7 +416,7 @@ func (p testPod) getAnnotationsJson() string {
 				IPs:      []string{ip},
 				TunnelID: portInfo.tunnelID,
 				Role:     portInfos.role,
-				Routes:   secondaryIfaceRoutes,
+				Routes:   udnIfaceRoutes,
 			}
 			if portInfos.nodeGWIP != "" {
 				podAnnotation.Gateway = portInfos.nodeGWIP
@@ -458,7 +458,7 @@ func getExpectedDataPodsSwitchesPortGroup(netInfo util.NetInfo, pods []testPod, 
 		if netInfo.IsDefault() {
 			portName = util.GetLogicalPortName(pod.namespace, pod.podName)
 		} else {
-			portName = util.GetSecondaryNetworkLogicalPortName(pod.namespace, pod.podName, netInfo.GetNADs()[0])
+			portName = util.GetUserDefinedNetworkLogicalPortName(pod.namespace, pod.podName, netInfo.GetNADs()[0])
 		}
 		var lspUUID string
 		if len(pod.portUUID) == 0 {
