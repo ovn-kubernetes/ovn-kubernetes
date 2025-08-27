@@ -6,6 +6,7 @@ import (
 	"net"
 	"reflect"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -794,24 +795,105 @@ func (bnc *BaseNetworkController) syncNodeManagementPort(node *corev1.Node, swit
 			v4Subnet = hostSubnet
 		}
 		if config.Gateway.Mode == config.GatewayModeLocal {
-			lrsr := nbdb.LogicalRouterStaticRoute{
-				Policy:   &nbdb.LogicalRouterStaticRoutePolicySrcIP,
-				IPPrefix: hostSubnet.String(),
-				Nexthop:  mgmtIfAddr.IP.String(),
-			}
-			if bnc.IsSecondary() {
-				lrsr.ExternalIDs = map[string]string{
-					types.NetworkExternalID:  bnc.GetNetworkName(),
-					types.TopologyExternalID: bnc.TopologyType(),
+			// For Layer2 UDNs, use logical router policy instead of static routes
+			if bnc.IsSecondary() && bnc.TopologyType() == types.Layer2Topology {
+				ipPrefix := "ip4"
+				var masqueradeSubnet, joinSubnet *net.IPNet
+				if utilnet.IsIPv6CIDR(hostSubnet) {
+					ipPrefix = "ip6"
+					_, masqueradeSubnet, _ = net.ParseCIDR(config.Gateway.V6MasqueradeSubnet)
+					joinSubnet = bnc.JoinSubnetV6()
+				} else {
+					_, masqueradeSubnet, _ = net.ParseCIDR(config.Gateway.V4MasqueradeSubnet)
+					joinSubnet = bnc.JoinSubnetV4()
 				}
-			}
-			p := func(item *nbdb.LogicalRouterStaticRoute) bool {
-				return item.IPPrefix == lrsr.IPPrefix && libovsdbops.PolicyEqualPredicate(lrsr.Policy, item.Policy)
-			}
-			err := libovsdbops.CreateOrReplaceLogicalRouterStaticRouteWithPredicate(bnc.nbClient, routerName,
-				&lrsr, p, &lrsr.Nexthop)
-			if err != nil {
-				return nil, fmt.Errorf("error creating static route %+v on router %s: %v", lrsr, routerName, err)
+
+				// Create higher priority rule to allow traffic to masquerade and join subnets
+				allowPriority := 1006 // Higher than MGMTPortPolicyPriority (1005)
+
+				// Build match condition for destinations (masquerade OR join subnet)
+				var allowMatchConditions []string
+				if masqueradeSubnet != nil {
+					allowMatchConditions = append(allowMatchConditions, fmt.Sprintf("%s.dst == %s", ipPrefix, masqueradeSubnet.String()))
+				}
+				if joinSubnet != nil {
+					allowMatchConditions = append(allowMatchConditions, fmt.Sprintf("%s.dst == %s", ipPrefix, joinSubnet.String()))
+				}
+
+				if len(allowMatchConditions) > 0 {
+					allowMatch := fmt.Sprintf("%s.src == %s && (%s)", ipPrefix, hostSubnet.String(),
+						strings.Join(allowMatchConditions, " || "))
+
+					allowLrp := nbdb.LogicalRouterPolicy{
+						Priority: allowPriority,
+						Match:    allowMatch,
+						Action:   nbdb.LogicalRouterPolicyActionAllow,
+						ExternalIDs: map[string]string{
+							types.NetworkExternalID:  bnc.GetNetworkName(),
+							types.TopologyExternalID: bnc.TopologyType(),
+						},
+					}
+
+					allowP := func(item *nbdb.LogicalRouterPolicy) bool {
+						return item.Priority == allowLrp.Priority && item.Match == allowLrp.Match &&
+							item.ExternalIDs[types.NetworkExternalID] == bnc.GetNetworkName()
+					}
+
+					err = libovsdbops.CreateOrUpdateLogicalRouterPolicyWithPredicate(bnc.nbClient, routerName,
+						&allowLrp, allowP, &allowLrp.Action)
+					if err != nil {
+						return nil, fmt.Errorf("error creating allow logical router policy %+v on router %s: %v", allowLrp, routerName, err)
+					}
+				}
+
+				// Create reroute policy for other traffic from hostSubnet
+				reroutePriority, err := strconv.Atoi(types.MGMTPortPolicyPriority)
+				if err != nil {
+					return nil, fmt.Errorf("failed to convert priority %s to int: %v", types.MGMTPortPolicyPriority, err)
+				}
+
+				rerouteLrp := nbdb.LogicalRouterPolicy{
+					Priority: reroutePriority,
+					Match:    fmt.Sprintf("%s.src == %s", ipPrefix, hostSubnet.String()),
+					Nexthops: []string{mgmtIfAddr.IP.String()},
+					Action:   nbdb.LogicalRouterPolicyActionReroute,
+					ExternalIDs: map[string]string{
+						types.NetworkExternalID:  bnc.GetNetworkName(),
+						types.TopologyExternalID: bnc.TopologyType(),
+					},
+				}
+
+				rerouteP := func(item *nbdb.LogicalRouterPolicy) bool {
+					return item.Priority == rerouteLrp.Priority && item.Match == rerouteLrp.Match &&
+						item.ExternalIDs[types.NetworkExternalID] == bnc.GetNetworkName()
+				}
+
+				err = libovsdbops.CreateOrUpdateLogicalRouterPolicyWithPredicate(bnc.nbClient, routerName,
+					&rerouteLrp, rerouteP, &rerouteLrp.Nexthops, &rerouteLrp.Action)
+				if err != nil {
+					return nil, fmt.Errorf("error creating reroute logical router policy %+v on router %s: %v", rerouteLrp, routerName, err)
+				}
+			} else {
+				// Use static routes for non-Layer2 topologies
+				lrsr := nbdb.LogicalRouterStaticRoute{
+					Policy:   &nbdb.LogicalRouterStaticRoutePolicySrcIP,
+					IPPrefix: hostSubnet.String(),
+					Nexthop:  mgmtIfAddr.IP.String(),
+				}
+				if bnc.IsSecondary() {
+					lrsr.ExternalIDs = map[string]string{
+						types.NetworkExternalID:  bnc.GetNetworkName(),
+						types.TopologyExternalID: bnc.TopologyType(),
+					}
+				}
+				p := func(item *nbdb.LogicalRouterStaticRoute) bool {
+					return item.IPPrefix == lrsr.IPPrefix && libovsdbops.PolicyEqualPredicate(lrsr.Policy, item.Policy)
+				}
+				err := libovsdbops.CreateOrReplaceLogicalRouterStaticRouteWithPredicate(bnc.nbClient, routerName,
+					&lrsr, p, &lrsr.Nexthop)
+				if err != nil {
+					return nil, fmt.Errorf("error creating static route %+v on router %s: %v", lrsr, routerName, err)
+				}
 			}
 		}
 	}
