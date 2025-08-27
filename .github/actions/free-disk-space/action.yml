@@ -1,0 +1,43 @@
+name: Free Disk Space
+description: Reclaims disk space on GitHub-hosted runners
+
+runs:
+  using: "composite"
+  steps:
+    - shell: bash
+      run: |
+        echo "=== Disk usage before cleanup ==="
+        df -h
+
+        echo "=== Remove Android SDK ==="
+        sudo rm -rf /usr/local/lib/android/sdk
+
+        echo "=== Apt cleanup ==="
+        sudo apt-get update
+        if command -v eatmydata >/dev/null 2>&1; then
+          SUDO_EAT="sudo eatmydata"
+        else
+          echo "eatmydata not found – falling back to plain apt-get"
+          SUDO_EAT="sudo"
+        fi
+        $SUDO_EAT apt-get purge --auto-remove -y \
+          azure-cli firefox google-chrome-stable 'llvm-*' microsoft-edge-stable powershell 'temurin-*' 'zulu-*' || true
+
+        sudo apt-get autoclean
+        sudo apt-get autoremove -y
+        sudo apt-get clean
+
+        echo "=== Docker cleanup ==="
+        sudo docker system prune -af --volumes
+
+        echo "=== Disable and remove swap ==="
+        sudo swapon --show
+        sudo swapoff -a || true    # ignore error when no swap is present
+        sudo rm -f /mnt/swapfile
+
+        echo "=== Remove potential leftover PV setup image ==="
+        sudo rm -f /mnt/tmp-pv.img
+
+        echo "=== Disk usage after cleanup ==="
+        df -h
+
