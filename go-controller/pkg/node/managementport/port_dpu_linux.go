@@ -35,11 +35,6 @@ func newManagementPortRepresentor(name, repDevName string, cfg *managementPortCo
 }
 
 func (mp *managementPortRepresentor) create() error {
-	br_type, err := util.GetDatapathType("br-int")
-	if err != nil {
-		return fmt.Errorf("failed to get datapath type for bridge br-int : %v", err)
-	}
-
 	klog.V(5).Infof("Lookup representor link and existing management port for '%v'", mp.repDevName)
 	// Get management port representor netdevice
 	link, err := util.GetNetLinkOps().LinkByName(mp.repDevName)
@@ -53,54 +48,19 @@ func (mp *managementPortRepresentor) create() error {
 		}
 	}
 
-	// configure management port: rename, set MTU and set link up and connect representor port to br-int
 	klog.V(5).Infof("Setup representor management port: %s", link.Attrs().Name)
-
-	setName := link.Attrs().Name != mp.ifName
-	setMTU := link.Attrs().MTU != config.Default.MTU
-
-	if setName || setMTU {
-		if err = util.GetNetLinkOps().LinkSetDown(link); err != nil {
-			return fmt.Errorf("failed to set link down for device %s. %v", mp.repDevName, err)
-		}
-
-		if setName {
-			if err = util.GetNetLinkOps().LinkSetName(link, mp.ifName); err != nil {
-				return fmt.Errorf("failed to set link name for device %s. %v", mp.repDevName, err)
-			}
-		}
-
-		if setMTU {
-			if err = util.GetNetLinkOps().LinkSetMTU(link, config.Default.MTU); err != nil {
-				return fmt.Errorf("failed to set link MTU for device %s. %v", link.Attrs().Name, err)
-			}
-		}
-	}
-
-	if err = util.GetNetLinkOps().LinkSetUp(link); err != nil {
-		return fmt.Errorf("failed to set link up for device %s. %v", link.Attrs().Name, err)
-	}
-
-	ovsArgs := []string{
-		"--", "--may-exist", "add-port", "br-int", mp.ifName,
-		"--", "set", "interface", mp.ifName,
-		"external-ids:iface-id=" + types.K8sPrefix + mp.cfg.nodeName,
-	}
-	if mp.repDevName != mp.ifName {
-		ovsArgs = append(ovsArgs, "external-ids:ovn-orig-mgmt-port-rep-name="+mp.repDevName)
-	}
-
-	if br_type == types.DatapathUserspace {
-		dpdkArgs := []string{"type=dpdk"}
-		ovsArgs = append(ovsArgs, dpdkArgs...)
-		ovsArgs = append(ovsArgs, fmt.Sprintf("mtu_request=%v", config.Default.MTU))
-	}
-
-	// Plug management port representor to OVS.
-	stdout, stderr, err := util.RunOVSVsctl(ovsArgs...)
+	// configure management port: rename, set MTU and set link up
+	err = bringupManagementPortLink(types.DefaultNetworkName, link, nil, mp.ifName, config.Default.MTU)
 	if err != nil {
-		klog.Errorf("Failed to add port %q to br-int, stdout: %q, stderr: %q, error: %v",
-			mp.ifName, stdout, stderr, err)
+		return fmt.Errorf("update management port for default network failed: %v", err)
+	}
+	// connect representor port to br-int
+	externalIDs := []string{}
+	if mp.repDevName != mp.ifName {
+		externalIDs = append(externalIDs, fmt.Sprintf("ovn-orig-mgmt-port-rep-name=%s", mp.repDevName))
+	}
+	err = createManagementPortOVSRepresentor(types.DefaultNetworkName, mp.ifName, types.K8sPrefix+mp.cfg.nodeName, config.Default.MTU, externalIDs)
+	if err != nil {
 		return err
 	}
 
@@ -118,19 +78,9 @@ func (mp *managementPortRepresentor) checkRepresentorPortHealth() error {
 		if err != nil {
 			return fmt.Errorf("failed to get link device %s: %w", mp.repDevName, err)
 		}
-		if err = util.GetNetLinkOps().LinkSetDown(link); err != nil {
-			return fmt.Errorf("failed to set link down for device %s: %w", mp.repDevName, err)
-		}
-		if err = util.GetNetLinkOps().LinkSetName(link, mp.ifName); err != nil {
-			return fmt.Errorf("failed to rename link from %s to %s: %w", mp.repDevName, mp.ifName, err)
-		}
-		if link.Attrs().MTU != config.Default.MTU {
-			if err = util.GetNetLinkOps().LinkSetMTU(link, config.Default.MTU); err != nil {
-				return fmt.Errorf("failed to set link MTU for device %s: %w", mp.ifName, err)
-			}
-		}
-		if err = util.GetNetLinkOps().LinkSetUp(link); err != nil {
-			return fmt.Errorf("failed to set link up for device %s: %w", mp.ifName, err)
+		err = bringupManagementPortLink(types.DefaultNetworkName, link, nil, mp.ifName, config.Default.MTU)
+		if err != nil {
+			return err
 		}
 		mp.link = link
 	} else if (link.Attrs().Flags & net.FlagUp) != net.FlagUp {
@@ -184,36 +134,9 @@ func (mp *managementPortNetdev) create() error {
 	// mac addr, derived from the first entry in host subnets using the .2 address as mac with a fixed prefix.
 	klog.V(5).Infof("Setup netdevice management port: %s", link.Attrs().Name)
 	mgmtPortMac := util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(mp.cfg.hostSubnets[0]).IP)
-	setMac := link.Attrs().HardwareAddr.String() != mgmtPortMac.String()
-	setName := link.Attrs().Name != mp.ifName
-	setMTU := link.Attrs().MTU != config.Default.MTU
-
-	if setMac || setName || setMTU {
-		err := util.GetNetLinkOps().LinkSetDown(link)
-		if err != nil {
-			return fmt.Errorf("failed to set link down for %s. %v", mp.netdevDevName, err)
-		}
-
-		if setMac {
-			err := util.GetNetLinkOps().LinkSetHardwareAddr(link, mgmtPortMac)
-			if err != nil {
-				return fmt.Errorf("failed to set management port MAC address. %v", err)
-			}
-		}
-
-		if setName {
-			err := util.GetNetLinkOps().LinkSetName(link, mp.ifName)
-			if err != nil {
-				return fmt.Errorf("failed to set management port name. %v", err)
-			}
-		}
-
-		if setMTU {
-			err := util.GetNetLinkOps().LinkSetMTU(link, config.Default.MTU)
-			if err != nil {
-				return fmt.Errorf("failed to set management port MTU. %v", err)
-			}
-		}
+	err = bringupManagementPortLink(types.DefaultNetworkName, link, &mgmtPortMac, mp.ifName, config.Default.MTU)
+	if err != nil {
+		return err
 	}
 
 	if mp.netdevDevName != mp.ifName && config.OvnKubeNode.Mode != types.NodeModeDPUHost {
@@ -222,12 +145,6 @@ func (mp *managementPortNetdev) create() error {
 			"external-ids:ovn-orig-mgmt-port-netdev-name="+mp.netdevDevName); err != nil {
 			return fmt.Errorf("failed to store original mgmt port interface name: %s", stderr)
 		}
-	}
-
-	// Set link up
-	err = util.GetNetLinkOps().LinkSetUp(link)
-	if err != nil {
-		return fmt.Errorf("failed to set link up for %s. %v", mp.ifName, err)
 	}
 
 	// Setup Iptable and routes
