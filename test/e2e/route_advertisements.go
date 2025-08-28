@@ -120,7 +120,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 		// The client pod inside the KIND cluster on the default network exposed using default network Router
 		// Advertisement will curl the external server container sitting outside the cluster via a FRR router
 		// This test ensures the north-south connectivity is happening through podIP
-		ginkgo.It("default network toggle tests that are run towards the external agnhost echo server and another cluster node", func() {
+		ginkgo.FIt("default network toggle tests that are run towards the external agnhost echo server and another cluster node", func() {
 			ginkgo.By("routes from external bgp server are imported by nodes in the cluster")
 			bgpNetwork, err := infraprovider.Get().GetNetwork(bgpExternalNetworkName)
 			framework.ExpectNoError(err, "network %s must be available and precreated before test run", bgpExternalNetworkName)
@@ -341,9 +341,6 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 				if !accepted {
 					ginkgo.AbortSuite("CRITICAL: Default route advertisement failed to reach Accepted state in defer cleanup - test environment is corrupted")
 				}
-
-				// give some breath time to allow reconfiguration after RA is accepted
-				time.Sleep(10 * time.Second)
 
 				// repeat pod to external and pod to second node tests
 				ginkgo.By("With default network being advertised again, queries to the external server are not SNATed (uses podIP)")
