@@ -182,7 +182,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 			}
 
 			// Helper function to test pod to server connectivity and verify source IP
-			testClientPodToServerConnectivity := func(serverIPs []string, portNumber string, expectedIPs []string, serverDesc string) {
+			testClientPodToServerConnectivity := func(serverIPs []string, portNumber string, expectedIPs []string, serverDesc string) bool {
 				for idx, serverIP := range serverIPs {
 					if serverIP != "" {
 						ginkgo.By(fmt.Sprintf("Sending request to node IP %s "+
@@ -201,17 +201,21 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 						if utilnet.IsIPv6String(expectedIPs[idx]) {
 							// For IPv6 addresses, need to handle the brackets in the output
 							outputIP := strings.TrimPrefix(strings.Split(stdout, "]:")[0], "[")
-							gomega.Expect(outputIP).To(gomega.Equal(expectedIPs[idx]),
-								fmt.Sprintf("Testing client pod to %s traffic failed while analysing output %v", serverDesc, stdout))
+							if !gomega.Expect(outputIP).To(gomega.Equal(expectedIPs[idx])) {
+								framework.Logf("Testing client pod to %s traffic failed while analysing output %v", serverDesc, stdout)
+								return false
+							}
 						} else {
 							// Original IPv4 handling
 							outputIP := strings.Split(stdout, ":")[0]
-							gomega.Expect(outputIP).To(gomega.Equal(expectedIPs[idx]),
-								fmt.Sprintf("Testing client pod to %s traffic failed while analysing output %v", serverDesc, stdout))
+							if !gomega.Expect(outputIP).To(gomega.Equal(expectedIPs[idx])) {
+								framework.Logf("Testing client pod to %s traffic failed while analysing output %v", serverDesc, stdout)
+								return false
+							}
 						}
 					}
 				}
-
+				return true
 			}
 
 			// Get client pod IPs and its host's nodeIPs, get the nodeIPs for the node where the host networked pod is running
@@ -283,10 +287,16 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 			framework.Logf("hostNetworkedPodNodeIPs: %v", hostNetworkedPodNodeIPs)
 
 			ginkgo.By("With default network being advertised, queries to the external server are not SNATed (uses podIP)")
-			testClientPodToServerConnectivity(serverContainerIPs, "8080", clientPodIPs, "external server pod")
+			success := testClientPodToServerConnectivity(serverContainerIPs, "8080", clientPodIPs, "external server pod")
+			if !success {
+				ginkgo.Fail("With default network being advertised initially, pod to external server test failed")
+			}
 
 			ginkgo.By("With default network being advertised, queries to the second node are SNATed (uses nodeIP)")
-			testClientPodToServerConnectivity(hostNetworkedPodNodeIPs, strconv.Itoa(8080), clientPodNodeIPs, "client pod to second node")
+			success = testClientPodToServerConnectivity(hostNetworkedPodNodeIPs, strconv.Itoa(8080), clientPodNodeIPs, "client pod to second node")
+			if !success {
+				ginkgo.Fail("With default network being advertised initially, pod to second node test failed")
+			}
 
 			// defer add default network RA back to restore to the original test setup
 			ra := &rav1.RouteAdvertisements{
@@ -312,17 +322,44 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 			defer func() {
 				ra, err = raClient.K8sV1().RouteAdvertisements().Create(context.TODO(), ra, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				gomega.Eventually(func() string {
+
+				var accepted bool
+				gomega.Eventually(func() bool {
 					ra, err := raClient.K8sV1().RouteAdvertisements().Get(context.TODO(), ra.Name, metav1.GetOptions{})
 					if err != nil {
-						return ""
+						return false
 					}
 					condition := meta.FindStatusCondition(ra.Status.Conditions, "Accepted")
 					if condition == nil {
-						return ""
+						return false
 					}
-					return condition.Reason
-				}, 30*time.Second, time.Second).Should(gomega.Equal("Accepted"))
+					accepted = (condition.Reason == "Accepted")
+					return accepted
+				}, 30*time.Second, time.Second).Should(gomega.BeTrue())
+
+				time.Sleep(10 * time.Second) // to allow reconfiguration to occur after RA is accepted
+
+				// Abort suite if default RA failed to reach Accepted state in defer restore
+				if !accepted {
+					ginkgo.AbortSuite("CRITICAL: Default route advertisement failed to reach Accepted state in defer cleanup - test environment is corrupted")
+				}
+
+				// give some breath time to allow reconfiguration after RA is accepted
+				time.Sleep(10 * time.Second)
+
+				// repeat pod to external and pod to second node tests
+				ginkgo.By("With default network being advertised again, queries to the external server are not SNATed (uses podIP)")
+				success = testClientPodToServerConnectivity(serverContainerIPs, "8080", clientPodIPs, "external server pod")
+				if !success {
+					ginkgo.AbortSuite("With default network being advertised again, pod to external server test failed, test environment may be corrupted")
+				}
+
+				ginkgo.By("With default network being advertised again, queries to the second node are SNATed (uses nodeIP)")
+				success = testClientPodToServerConnectivity(hostNetworkedPodNodeIPs, strconv.Itoa(8080), clientPodNodeIPs, "client pod to second node")
+				if !success {
+					ginkgo.AbortSuite("With default network being advertised again, pod to second node test failed, test environment may be corrupted")
+				}
+
 			}()
 
 			ginkgo.By("Delete route advertisement")
@@ -334,10 +371,16 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 			gomega.Expect(err).To(gomega.HaveOccurred())
 
 			ginkgo.By("After default network is toggled to unadvertised, run test towards the external agnhost echo server from client podagain, egressing packets should be SNATed to pod's host nodeIP")
-			testClientPodToServerConnectivity(serverContainerIPs, "8080", clientPodNodeIPs, "external server container")
+			success = testClientPodToServerConnectivity(serverContainerIPs, "8080", clientPodNodeIPs, "external server container")
+			if !success {
+				ginkgo.Fail("After default network is toggled to unadvertised, pod to external server test failed")
+			}
 
 			ginkgo.By("After default network is toggled to unadvertised, run test towards the second node from client pod, egressing packets should be SNATed to pod's host nodeIP")
-			testClientPodToServerConnectivity(hostNetworkedPodNodeIPs, strconv.Itoa(8080), clientPodNodeIPs, "client pod to second node")
+			success = testClientPodToServerConnectivity(hostNetworkedPodNodeIPs, strconv.Itoa(8080), clientPodNodeIPs, "client pod to second node")
+			if !success {
+				ginkgo.Fail("After default network is toggled to unadvertised, pod to second node test failed")
+			}
 
 		})
 	})
