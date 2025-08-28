@@ -337,8 +337,6 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 					return accepted
 				}, 30*time.Second, time.Second).Should(gomega.BeTrue())
 
-				time.Sleep(10 * time.Second) // to allow reconfiguration to occur after RA is accepted
-
 				// Abort suite if default RA failed to reach Accepted state in defer restore
 				if !accepted {
 					ginkgo.AbortSuite("CRITICAL: Default route advertisement failed to reach Accepted state in defer cleanup - test environment is corrupted")
