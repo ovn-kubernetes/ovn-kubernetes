@@ -120,7 +120,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 		// The client pod inside the KIND cluster on the default network exposed using default network Router
 		// Advertisement will curl the external server container sitting outside the cluster via a FRR router
 		// This test ensures the north-south connectivity is happening through podIP
-		ginkgo.FIt("default network toggle tests that are run towards the external agnhost echo server and another cluster node", func() {
+		ginkgo.It("default network toggle tests that are run towards the external agnhost echo server and another cluster node", func() {
 			ginkgo.By("routes from external bgp server are imported by nodes in the cluster")
 			bgpNetwork, err := infraprovider.Get().GetNetwork(bgpExternalNetworkName)
 			framework.ExpectNoError(err, "network %s must be available and precreated before test run", bgpExternalNetworkName)
@@ -224,21 +224,36 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 			podv4IP, podv6IP, err := podIPsForDefaultNetwork(f.ClientSet, f.Namespace.Name, clientPod.Name)
 			framework.ExpectNoError(err, fmt.Sprintf("Getting podIPs for pod %s failed: %v", clientPod.Name, err))
 			framework.Logf("Client pod IP address v4=%s, v6=%s", podv4IP, podv6IP)
-			clientPodIPs = append(clientPodIPs, podv4IP)
-			clientPodIPs = append(clientPodIPs, podv6IP)
+			if podv4IP != "" {
+				clientPodIPs = append(clientPodIPs, podv4IP)
+			}
+			if podv6IP != "" {
+				clientPodIPs = append(clientPodIPs, podv6IP)
+			}
 
 			clientNode, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), clientPod.Spec.NodeName, metav1.GetOptions{})
 			framework.ExpectNoError(err)
 
+			// Get the nodeIPs for the node where the client pod is running
 			var nodeIPv4, nodeIPv6 string
-			if isIPv6Supported(f.ClientSet) {
-				nodeIPv6 = e2enode.GetAddressesByTypeAndFamily(clientNode, corev1.NodeInternalIP, corev1.IPv6Protocol)[0]
-			}
 			if isIPv4Supported(f.ClientSet) {
-				nodeIPv4 = e2enode.GetAddressesByTypeAndFamily(clientNode, corev1.NodeInternalIP, corev1.IPv4Protocol)[0]
+				v4Addrs := e2enode.GetAddressesByTypeAndFamily(clientNode, corev1.NodeInternalIP, corev1.IPv4Protocol)
+				if len(v4Addrs) > 0 {
+					nodeIPv4 = v4Addrs[0]
+				}
 			}
-			clientPodNodeIPs = append(clientPodNodeIPs, nodeIPv4)
-			clientPodNodeIPs = append(clientPodNodeIPs, nodeIPv6)
+			if isIPv6Supported(f.ClientSet) {
+				v6Addrs := e2enode.GetAddressesByTypeAndFamily(clientNode, corev1.NodeInternalIP, corev1.IPv6Protocol)
+				if len(v6Addrs) > 0 {
+					nodeIPv6 = v6Addrs[0]
+				}
+			}
+			if nodeIPv4 != "" {
+				clientPodNodeIPs = append(clientPodNodeIPs, nodeIPv4)
+			}
+			if nodeIPv6 != "" {
+				clientPodNodeIPs = append(clientPodNodeIPs, nodeIPv6)
+			}
 			framework.Logf("clientPodNodeIPs: %v", clientPodNodeIPs)
 
 			ginkgo.By("Creating a host networked pod on a second node")
@@ -358,11 +373,11 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 			}()
 
 			ginkgo.By("Delete route advertisement")
-			_, err = e2ekubectl.RunKubectl("default", "delete", "ra", "default")
+			_, err = e2ekubectl.RunKubectl("", "delete", "ra", "default")
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			// Make sure default RA is deleted
-			_, err = e2ekubectl.RunKubectl("default", "get", "ra", "default")
+			_, err = e2ekubectl.RunKubectl("", "get", "ra", "default")
 			gomega.Expect(err).To(gomega.HaveOccurred())
 
 			ginkgo.By("After default network is toggled to unadvertised, run test towards the external agnhost echo server from client podagain, egressing packets should be SNATed to pod's host nodeIP")
