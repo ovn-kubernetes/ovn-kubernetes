@@ -207,23 +207,20 @@ func (em *userDefinedNetworkExpectationMachine) expectedLogicalSwitchesAndPortsW
 						data = append(data, mgmtPort)
 						nodeslsps[switchName] = append(nodeslsps[switchName], mgmtPortUUID)
 
-						networkSwitchToGWRouterLSPName := ovntypes.SwitchToRouterPrefix + switchName
-						networkSwitchToGWRouterLSPUUID := networkSwitchToGWRouterLSPName + "-UUID"
+						networkSwitchToTransitRouterLSPName := ovntypes.SwitchToTransitRouterPrefix + switchName
+						networkSwitchToGWRouterLSPUUID := networkSwitchToTransitRouterLSPName + "-UUID"
 						lsp := &nbdb.LogicalSwitchPort{
 							UUID:      networkSwitchToGWRouterLSPUUID,
-							Name:      networkSwitchToGWRouterLSPName,
+							Name:      networkSwitchToTransitRouterLSPName,
 							Addresses: []string{"router"},
 							ExternalIDs: map[string]string{
 								"k8s.ovn.org/topology": ocInfo.bnc.TopologyType(),
 								"k8s.ovn.org/network":  ocInfo.bnc.GetNetworkName(),
 							},
-							Options: map[string]string{libovsdbops.RouterPort: ovntypes.RouterToSwitchPrefix + switchName},
+							Options: map[string]string{libovsdbops.RouterPort: ovntypes.TransitRouterToSwitchPrefix + switchName},
 							Type:    "router",
 						}
 						data = append(data, lsp)
-						if util.IsNetworkSegmentationSupportEnabled() && ocInfo.bnc.IsPrimaryNetwork() {
-							lsp.Options[libovsdbops.RequestedTnlKey] = "25"
-						}
 						nodeslsps[switchName] = append(nodeslsps[switchName], networkSwitchToGWRouterLSPUUID)
 
 						const aclUUID = "acl1-UUID"
@@ -277,7 +274,8 @@ func (em *userDefinedNetworkExpectationMachine) expectedLogicalSwitchesAndPortsW
 					data = append(data, expectedGWEntities(pod.nodeName, ocInfo.bnc, *em.gatewayConfig)...)
 					data = append(data, expectedLayer3EgressEntities(ocInfo.bnc, *em.gatewayConfig, subnet)...)
 				} else {
-					data = append(data, expectedLayer2EgressEntities(ocInfo.bnc, *em.gatewayConfig, pod.nodeName)...)
+					data = append(data, expectedGWEntitiesLayer2(pod.nodeName, ocInfo.bnc, *em.gatewayConfig)...)
+					data = append(data, expectedLayer2EgressEntities(ocInfo.bnc, *em.gatewayConfig, subnet)...)
 				}
 			}
 			if _, alreadyAdded := alreadyAddedManagementElements[pod.nodeName]; !alreadyAdded &&

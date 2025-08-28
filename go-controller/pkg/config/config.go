@@ -686,6 +686,7 @@ func PrepareTestConfig() error {
 	if Gateway.Mode != GatewayModeDisabled {
 		Gateway.EphemeralPortRange = DefaultEphemeralPortRange
 	}
+	Layer2UsesTransitRouter = true
 
 	if err := completeConfig(); err != nil {
 		return err
