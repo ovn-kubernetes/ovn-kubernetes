@@ -544,6 +544,9 @@ func (cm *ControllerManager) configureAdvertisedNetworkIsolation() error {
 }
 
 func (cm *ControllerManager) setTopologyType() error {
+	if config.Default.Zone == "ovn-worker" {
+		return nil
+	}
 	routers, err := libovsdbops.FindLogicalRoutersWithPredicate(cm.nbClient, func(lr *nbdb.LogicalRouter) bool {
 		return strings.Contains(lr.Name, ovntypes.TransitRouter)
 	})
