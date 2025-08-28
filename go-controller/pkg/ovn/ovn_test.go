@@ -489,8 +489,13 @@ func newNetworkAttachmentDefinition(namespace, name string, netconf ovncnitypes.
 	if err != nil {
 		return nil, fmt.Errorf("failed marshaling podNetworks map %v", netconf)
 	}
+	meta := newObjectMeta(name, namespace)
+	meta.Annotations = map[string]string{types.OvnNetworkIDAnnotation: userDefinedNetworkID}
+	if netconf.Topology == types.Layer2Topology && netconf.Role == types.NetworkRolePrimary {
+		meta.Annotations[types.OvnNetworkTunnelKeysAnnotation] = "[16711685,16715780]"
+	}
 	return &nettypes.NetworkAttachmentDefinition{
-		ObjectMeta: newObjectMeta(name, namespace),
+		ObjectMeta: meta,
 		Spec: nettypes.NetworkAttachmentDefinitionSpec{
 			Config: string(bytes),
 		},
