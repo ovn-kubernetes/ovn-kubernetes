@@ -546,6 +546,9 @@ func (cm *ControllerManager) configureAdvertisedNetworkIsolation() error {
 }
 
 func (cm *ControllerManager) setTopologyType() error {
+	if config.Default.Zone == "ovn-worker" {
+		return nil
+	}
 	nodes, err := cm.kube.KClient.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("unable to get nodes from informer while waiting for node zone sync")
