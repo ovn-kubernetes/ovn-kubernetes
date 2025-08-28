@@ -733,8 +733,8 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 			// table 0, packets coming from external. Send it through conntrack and
 			// resubmit to table 1 to know the state and mark of the connection.
 			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=50, ipv6, "+
-					"actions=ct(zone=%d, nat, table=1)", nodetypes.DefaultOpenFlowCookie, config.Default.ConntrackZone))
+				fmt.Sprintf("cookie=%s, priority=50, ipv6, dl_dst=%s, actions=ct(zone=%d, nat, table=1)",
+					nodetypes.DefaultOpenFlowCookie, bridgeMacAddress, config.Default.ConntrackZone))
 		}
 	}
 	if ofPortPhys != "" {
