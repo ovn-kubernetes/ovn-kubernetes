@@ -30,7 +30,6 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/label"
 
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -271,7 +270,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 					// Add required security context to comply with PodSecurity "restricted" policy
 					for i := range p.Spec.Containers {
 						if p.Spec.Containers[i].SecurityContext == nil {
-							p.Spec.Containers[i].SecurityContext = &v1.SecurityContext{}
+							p.Spec.Containers[i].SecurityContext = &corev1.SecurityContext{}
 						}
 
 						// Set required security context fields
