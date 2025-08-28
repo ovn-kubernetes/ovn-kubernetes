@@ -113,7 +113,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 					*netInfo.netconf(),
 				)
 				Expect(err).NotTo(HaveOccurred())
-				nad.Annotations = map[string]string{types.OvnNetworkIDAnnotation: userDefinedNetworkID}
 				Expect(netInfo.setupOVNDependencies(&initialDB)).To(Succeed())
 				n := newNamespace(ns)
 				if netInfo.isPrimary {
@@ -314,7 +313,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 					*netConf,
 				)
 				Expect(err).NotTo(HaveOccurred())
-				nad.Annotations = map[string]string{types.OvnNetworkIDAnnotation: userDefinedNetworkID}
 
 				mutableNetworkConfig := util.NewMutableNetInfo(networkConfig)
 				mutableNetworkConfig.SetNADs(util.GetNADName(nad.Namespace, nad.Name))
@@ -703,12 +701,10 @@ func expectedGWRouterPlusNATAndStaticRoutes(
 	gwConfig util.L3GatewayConfig,
 ) []libovsdbtest.TestData {
 	gwRouterToExtLRPUUID := fmt.Sprintf("%s%s-UUID", types.GWRouterToExtSwitchPrefix, gwRouterName)
-	gwRouterToJoinLRPUUID := fmt.Sprintf("%s%s-UUID", types.GWRouterToJoinSwitchPrefix, gwRouterName)
 
 	const (
 		nat1             = "abc-UUID"
 		nat2             = "cba-UUID"
-		perPodSNAT       = "pod-snat-UUID"
 		staticRoute1     = "srA-UUID"
 		staticRoute2     = "srB-UUID"
 		staticRoute3     = "srC-UUID"
@@ -716,6 +712,16 @@ func expectedGWRouterPlusNATAndStaticRoutes(
 	)
 
 	staticRouteOutputPort := types.GWRouterToExtSwitchPrefix + netInfo.GetNetworkScopedGWRouterName(nodeName)
+	gwRouterLRPUUID := fmt.Sprintf("%s%s-UUID", types.GWRouterToJoinSwitchPrefix, gwRouterName)
+	grOptions := gwRouterOptions(gwConfig)
+	sr1 := expectedGRStaticRoute(staticRoute1, netInfo.Subnets()[0].CIDR.String(), dummyMasqueradeIP().IP.String(), nil, nil, netInfo)
+	if netInfo.TopologyType() == types.Layer2Topology {
+		gwRouterLRPUUID = fmt.Sprintf("%s%s-UUID", types.RouterToTransitRouterPrefix, gwRouterName)
+		grOptions["lb_force_snat_ip"] = gwRouterJoinIPAddress().IP.String()
+		transitRouteOutputPort := types.RouterToTransitRouterPrefix + netInfo.GetNetworkScopedGWRouterName(nodeName)
+		trInfo := getTestTransitRouterInfo()
+		sr1 = expectedGRStaticRoute(staticRoute1, netInfo.Subnets()[0].CIDR.String(), trInfo.transitRouterNets[0].IP.String(), nil, &transitRouteOutputPort, netInfo)
+	}
 	nextHopIP := gwConfig.NextHops[0].String()
 	nextHopMasqIP := nextHopMasqueradeIP().String()
 	masqSubnet := config.Gateway.V4MasqueradeSubnet
@@ -726,12 +732,12 @@ func expectedGWRouterPlusNATAndStaticRoutes(
 			Name:         gwRouterName,
 			UUID:         gwRouterName + "-UUID",
 			ExternalIDs:  gwRouterExternalIDs(netInfo, gwConfig),
-			Options:      gwRouterOptions(gwConfig),
-			Ports:        []string{gwRouterToJoinLRPUUID, gwRouterToExtLRPUUID},
+			Options:      grOptions,
+			Ports:        []string{gwRouterLRPUUID, gwRouterToExtLRPUUID},
 			Nat:          nat,
 			StaticRoutes: []string{staticRoute1, staticRoute2, staticRoute3},
 		},
-		expectedGRStaticRoute(staticRoute1, netInfo.Subnets()[0].CIDR.String(), dummyMasqueradeIP().IP.String(), nil, nil, netInfo),
+		sr1,
 		expectedGRStaticRoute(staticRoute2, ipv4DefaultRoute, nextHopIP, nil, &staticRouteOutputPort, netInfo),
 		expectedGRStaticRoute(staticRoute3, masqSubnet, nextHopMasqIP, nil, &staticRouteOutputPort, netInfo),
 	}
@@ -800,7 +806,6 @@ func expectedLayer3EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 		routerPolicyUUID2 = "lrpol2-UUID"
 		staticRouteUUID1  = "sr1-UUID"
 		staticRouteUUID2  = "sr2-UUID"
-		staticRouteUUID3  = "sr3-UUID"
 		masqSNATUUID1     = "masq-snat1-UUID"
 	)
 	masqIPAddr := dummyMasqueradeIP().IP.String()
@@ -911,18 +916,6 @@ func udnGWSNATAddress() *net.IPNet {
 		IP:   net.ParseIP("169.254.169.13"),
 		Mask: net.CIDRMask(24, 32),
 	}
-}
-
-func newMasqueradeManagementNATEntry(uuid string, netInfo util.NetInfo) *nbdb.NAT {
-	masqSNAT := newNATEntry(
-		uuid,
-		"169.254.169.14",
-		layer2Subnet().String(),
-		standardNonDefaultNetworkExtIDs(netInfo),
-		getMasqueradeManagementIPSNATMatch(util.IPAddrToHWAddr(managementPortIP(layer2Subnet())).String()),
-	)
-	masqSNAT.LogicalPort = ptr.To(fmt.Sprintf("rtoj-GR_%s_%s", netInfo.GetNetworkName(), nodeName))
-	return masqSNAT
 }
 
 func newNATEntry(uuid string, externalIP string, logicalIP string, extIDs map[string]string, match string) *nbdb.NAT {
