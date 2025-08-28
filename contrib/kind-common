@@ -413,8 +413,18 @@ install_kubevirt() {
       if ! is_nested_virt_enabled; then
         kubectl -n kubevirt patch kubevirt kubevirt --type=merge --patch '{"spec":{"configuration":{"developerConfiguration":{"useEmulation":true}}}}'
       fi
-      kubectl -n kubevirt patch kubevirt kubevirt --type=merge --patch '{"spec":{"configuration":{"virtualMachineOptions":{"disableSerialConsoleLog":{}}}}}'
     fi
+
+    kubectl -n kubevirt patch kubevirt kubevirt --type=json --patch '[
+        {"op":"add","path":"/spec/configuration/virtualMachineOptions","value":{}},
+        {"op":"add","path":"/spec/configuration/virtualMachineOptions/disableSerialConsoleLog","value":{}},
+        {"op":"add","path":"/spec/configuration/developerConfiguration","value":{"featureGates":[]}},
+        {"op":"add","path":"/spec/configuration/developerConfiguration/featureGates/-","value":"NetworkBindingPlugins"},
+        {"op":"add","path":"/spec/configuration/developerConfiguration/featureGates/-","value":"DynamicPodInterfaceNaming"},
+        {"op":"add","path":"/spec/configuration/network","value":{}},
+        {"op":"add","path":"/spec/configuration/network/binding","value":{"l2bridge":{"domainAttachmentType":"managedTap","migration":{}}}}
+    ]'
+
     if ! kubectl wait -n kubevirt kv kubevirt --for condition=Available --timeout 15m; then
         kubectl get pod -n kubevirt -l || true
         kubectl describe pod -n kubevirt -l || true
@@ -423,12 +433,6 @@ install_kubevirt() {
             kubectl logs --all-containers=true -n kubevirt $p || true
         done
     fi
-
-    kubectl -n kubevirt patch kubevirt kubevirt --type=json --patch '[{"op":"add","path":"/spec/configuration/developerConfiguration","value":{"featureGates":[]}},{"op":"add","path":"/spec/configuration/developerConfiguration/featureGates/-","value":"NetworkBindingPlugins"},{"op":"add","path":"/spec/configuration/developerConfiguration/featureGates/-","value":"DynamicPodInterfaceNaming"}]'
-
-    local kubevirt_stable_release_url=$(get_kubevirt_release_url "stable")
-    kubectl -n kubevirt patch kubevirt kubevirt --type=json --patch '[{"op":"add","path":"/spec/configuration/network","value":{}},{"op":"add","path":"/spec/configuration/network/binding","value":{"l2bridge":{"domainAttachmentType":"managedTap","migration":{}}}}]'
-
 }
 
 install_cert_manager() {
