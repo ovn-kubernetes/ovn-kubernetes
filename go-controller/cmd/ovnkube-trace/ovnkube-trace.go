@@ -1241,7 +1241,7 @@ func main() {
 		klog.Exitf(" Unexpected error: %v", err)
 	}
 
-	klog.V(5).Infof("OVN Kubernetes namespace is %s", ovnNamespace)
+	klog.V(5).Infof("OVN-Kubernetes namespace is %s", ovnNamespace)
 	if *dumpVRFTableIDs {
 		nodesVRFTableIDs, err := findUserDefinedNetworkVRFTableIDs(coreclient, restconfig, ovnNamespace)
 		if err != nil {

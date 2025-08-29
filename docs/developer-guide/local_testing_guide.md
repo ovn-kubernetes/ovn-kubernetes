@@ -105,7 +105,7 @@ Kubernetes in Docker (KIND) is used to deploy Kubernetes locally where a docker 
 container is created per Kubernetes node. The CI tests run on this Kubernetes
 deployment. Therefore, KIND will need to be installed locally.
 
-Generic instructions for installing and running OVN Kubernetes with KIND can be found at:
+Generic instructions for installing and running OVN-Kubernetes with KIND can be found at:
 [https://github.com/ovn-org/ovn-kubernetes/blob/master/docs/kind.md](https://github.com/ovn-org/ovn-kubernetes/blob/master/docs/kind.md)
 
 Make sure to set the required environment variables first (see section above). Then, deploy kind:

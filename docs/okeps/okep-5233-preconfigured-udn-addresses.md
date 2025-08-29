@@ -490,7 +490,7 @@ OVN-Kubernetes for a dynamically allocated IP. To mitigate these conflicts, user
 MAC address and recreate the workload. For importing workloads that already use this prefix, a future enhancement
 could add a field to the Layer2 spec allowing users to specify a custom MAC prefix for the UDN.
 
-## OVN Kubernetes Version Skew
+## OVN-Kubernetes Version Skew
 
 ## Alternatives
 

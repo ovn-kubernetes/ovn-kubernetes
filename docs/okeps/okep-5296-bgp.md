@@ -623,7 +623,7 @@ leak routes to the pod subnets from each user-defined VRF into the default VRF r
 ### Testing Details
 
 * E2E upstream with a framework (potentially [containerlab.dev](containerlab.dev) to simulate a routed spine and leaf
-  topology with integration using OVN Kubernetes.
+  topology with integration using OVN-Kubernetes.
 * Testing using transport none for some networks, and Geneve for non-BGP enabled networks.
 * Testing to cover BGP functionality including MEG, Egress IP, Egress QoS, etc.
 * Scale testing to determine impact of FRR-K8S footprint on large scale deployments.
@@ -656,7 +656,7 @@ default environment without enabling these extra options/features.
 
 Reliance on FRR is another minor risk, with no presence from the OVN-Kubernetes team involved in that project.
 
-## OVN Kubernetes Version Skew
+## OVN-Kubernetes Version Skew
 
 BGP will be delivered in version 1.1.0.
 

@@ -18,7 +18,7 @@ Any vendor that manufactures a DPU which supports the above model should work wi
 
 Design document can be found [here](https://docs.google.com/document/d/11IoMKiohK7hIyIE36FJmwJv46DEBx52a4fqvrpCBBcg/edit?usp=sharing).
 
-## OVN Kubernetes in a DPU-Accelerated Environment
+## OVN-Kubernetes in a DPU-Accelerated Environment
 
 The **ovn-kubernetes** deployment will have two parts one on the host and another on the DPU side.
 
@@ -29,10 +29,10 @@ These aforementioned parts are expected to be deployed also on two different Kub
 ### Host Cluster
 ---
 
-#### OVN Kubernetes control plane related component
+#### OVN-Kubernetes control plane related component
 - ovn-cluster-manager
 
-#### OVN Kubernetes components on a Standard Host (Non-DPU)
+#### OVN-Kubernetes components on a Standard Host (Non-DPU)
 - local-nb-ovsdb
 - local-sb-ovsdb
 - run-ovn-northd
@@ -40,7 +40,7 @@ These aforementioned parts are expected to be deployed also on two different Kub
 - ovn-controller
 - ovs-metrics
 
-#### OVN Kubernetes component on a DPU-Enabled Host
+#### OVN-Kubernetes component on a DPU-Enabled Host
 - ovn-node
 
 For detailed configuration of gateway interfaces in DPU host mode, see [DPU Gateway Interface Configuration](dpu-gateway-interface.md).
@@ -48,7 +48,7 @@ For detailed configuration of gateway interfaces in DPU host mode, see [DPU Gate
 ### DPU Cluster
 ---
 
-#### OVN Kubernetes components
+#### OVN-Kubernetes components
 - local-nb-ovsdb 
 - local-sb-ovsdb
 - run-ovn-northd

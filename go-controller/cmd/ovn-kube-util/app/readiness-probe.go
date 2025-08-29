@@ -156,7 +156,7 @@ func ovnNodeReadiness(_ string) error {
 	confFile := "/etc/cni/net.d/10-ovn-kubernetes.conf"
 	_, err := os.Stat(confFile)
 	if os.IsNotExist(err) {
-		return fmt.Errorf("OVN Kubernetes config file %q doesn't exist", confFile)
+		return fmt.Errorf("OVN-Kubernetes config file %q doesn't exist", confFile)
 	}
 	return nil
 }

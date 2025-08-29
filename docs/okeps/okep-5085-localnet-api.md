@@ -90,7 +90,7 @@ spec:
 5. `vlanID` - VLAN tag assigned to traffic.
 6. `mtu` - maximum transmission unit for a network
 7. `allowPersistentIPs`
-   persist the OVN Kubernetes assigned IP addresses in a `ipamclaims.k8s.cni.cncf.io` object. These IP addresses will be
+   persist the OVN-Kubernetes assigned IP addresses in a `ipamclaims.k8s.cni.cncf.io` object. These IP addresses will be
    reused by other pods if requested. Useful for [KubeVirt](https://kubevirt.io/) VMs.
 
 #### Extend ClusterUserDefinedNetwork CRD
@@ -588,7 +588,7 @@ To mitigate this, the mentioned validation should be done by the CUDN CRD contro
 In a scenario where a CUDN CR has at least one exclude-subnet that is not within the range of the topology subnet,
 the controller will not create the corresponding NAD and will report an error in the status.
 
-## OVN Kubernetes Version Skew
+## OVN-Kubernetes Version Skew
 
 ## Alternatives
 
