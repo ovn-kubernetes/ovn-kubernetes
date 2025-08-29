@@ -268,11 +268,15 @@ func (c *networkController) syncRunningNetworks() error {
 }
 
 // syncNetwork must be called with nm mutex locked
-func (c *networkController) syncNetwork(network string) error {
+func (c *networkController) syncNetwork(network string) (err error) {
 	startTime := time.Now()
 	klog.V(5).Infof("%s: sync network %s", c.name, network)
 	defer func() {
-		klog.V(4).Infof("%s: finished syncing network %s, took %v", c.name, network, time.Since(startTime))
+		if err == nil {
+			klog.V(4).Infof("%s: finished syncing network %s, took %v", c.name, network, time.Since(startTime))
+		} else {
+			klog.V(4).Infof("%s: failed syncing network %s: %v, took %v", c.name, network, err, time.Since(startTime))
+		}
 	}()
 
 	have, stoppedAndDeleting := c.getReconcilableNetworkState(network)
@@ -284,7 +288,7 @@ func (c *networkController) syncNetwork(network string) error {
 	// non-reconcilable configuration changed
 	dispose := stoppedAndDeleting || !compatible
 	if dispose {
-		err := c.deleteNetwork(network)
+		err = c.deleteNetwork(network)
 		if err != nil {
 			return err
 		}
@@ -292,7 +296,7 @@ func (c *networkController) syncNetwork(network string) error {
 	}
 
 	// fetch other relevant network information
-	err := c.gatherNetwork(want)
+	err = c.gatherNetwork(want)
 	if err != nil {
 		return fmt.Errorf("failed to fetch other network information for network %s: %w", network, err)
 	}
