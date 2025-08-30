@@ -2,8 +2,11 @@ package virtualprivatenetworkconnect
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
+	"strconv"
+	"sync"
 	"time"
 
 	nadlisters "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
@@ -26,6 +29,11 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+)
+
+const (
+	// VPNCNodeNetworkSubnetsAnnotation is the annotation key for storing node-network subnet allocations
+	VPNCNodeNetworkSubnetsAnnotation = "k8s.ovn.org/vpc-node-network-subnets"
 )
 
 // DiscoveredNetwork represents a network discovered from network selectors
@@ -67,6 +75,10 @@ type Controller struct {
 
 	// cudnLister for listing cluster user defined networks
 	cudnLister udnlisters.ClusterUserDefinedNetworkLister
+
+	// subnetAllocators tracks subnet allocators per VPNC object
+	subnetAllocators      map[string]VPNCSubnetAllocator
+	subnetAllocatorsMutex sync.RWMutex
 }
 
 // NewController builds a controller that reconciles VirtualPrivateNetworkConnect objects
@@ -76,14 +88,16 @@ func NewController(
 	ovnClient *util.OVNClusterManagerClientset,
 ) *Controller {
 	c := &Controller{
-		wf:         wf,
-		vpncClient: ovnClient.VirtualPrivateNetworkConnectClient,
-		vpncLister: wf.VirtualPrivateNetworkConnectInformer().Lister(),
-		nm:         nm,
-		nodeLister: wf.NodeCoreInformer().Lister(),
-		nadLister:  wf.NADInformer().Lister(),
-		udnLister:  wf.UserDefinedNetworkInformer().Lister(),
-		cudnLister: wf.ClusterUserDefinedNetworkInformer().Lister(),
+		wf:                    wf,
+		vpncClient:            ovnClient.VirtualPrivateNetworkConnectClient,
+		vpncLister:            wf.VirtualPrivateNetworkConnectInformer().Lister(),
+		nm:                    nm,
+		nodeLister:            wf.NodeCoreInformer().Lister(),
+		nadLister:             wf.NADInformer().Lister(),
+		udnLister:             wf.UserDefinedNetworkInformer().Lister(),
+		cudnLister:            wf.ClusterUserDefinedNetworkInformer().Lister(),
+		subnetAllocators:      make(map[string]VPNCSubnetAllocator),
+		subnetAllocatorsMutex: sync.RWMutex{},
 	}
 
 	handleError := func(key string, errorstatus error) error {
@@ -228,14 +242,37 @@ func (c *Controller) processVirtualPrivateNetworkConnect(vpnc *vpnctypes.Virtual
 		return c.updateVirtualPrivateNetworkConnectStatus(vpnc, "Warning", "No ready nodes found")
 	}
 
-	// 4. Update status conditions
-	klog.V(2).Infof("Successfully processed VirtualPrivateNetworkConnect %s: discovered %d networks and %d nodes", vpnc.Name, len(discoveredNetworks), len(nodes))
-	return c.updateVirtualPrivateNetworkConnectStatus(vpnc, "Ready", fmt.Sprintf("Discovered %d networks and %d nodes", len(discoveredNetworks), len(nodes)))
+	// 4. Allocate /31 point-to-point subnets for each node-network pair
+	allocations, err := c.allocateSubnets(vpnc, nodes, discoveredNetworks)
+	if err != nil {
+		klog.Errorf("Failed to allocate subnets for VirtualPrivateNetworkConnect %s: %v", vpnc.Name, err)
+		return c.updateVirtualPrivateNetworkConnectStatus(vpnc, "Error", fmt.Sprintf("Subnet allocation failed: %v", err))
+	}
+
+	// 5. Update annotations on the VirtualPrivateNetworkConnect object
+	if err := c.updateVPNCAnnotations(vpnc, allocations); err != nil {
+		klog.Errorf("Failed to update annotations for VirtualPrivateNetworkConnect %s: %v", vpnc.Name, err)
+		return c.updateVirtualPrivateNetworkConnectStatus(vpnc, "Error", fmt.Sprintf("Failed to update annotations: %v", err))
+	}
+
+	// 6. Update status conditions
+	klog.V(2).Infof("Successfully processed VirtualPrivateNetworkConnect %s: allocated subnets for %d node-network pairs", vpnc.Name, len(allocations))
+	return c.updateVirtualPrivateNetworkConnectStatus(vpnc, "Ready", fmt.Sprintf("Allocated subnets for %d node-network pairs", len(allocations)))
 }
 
 // handleVirtualPrivateNetworkConnectDeletion handles the deletion of a VirtualPrivateNetworkConnect
 func (c *Controller) handleVirtualPrivateNetworkConnectDeletion(name string) error {
 	klog.V(2).Infof("Handling deletion of VirtualPrivateNetworkConnect %s", name)
+
+	// Clean up subnet allocator for this VPNC
+	c.subnetAllocatorsMutex.Lock()
+	defer c.subnetAllocatorsMutex.Unlock()
+
+	if _, exists := c.subnetAllocators[name]; exists {
+		delete(c.subnetAllocators, name)
+		klog.V(4).Infof("Cleaned up subnet allocator for VirtualPrivateNetworkConnect %s", name)
+	}
+
 	return nil
 }
 
@@ -486,4 +523,118 @@ func (c *Controller) isNodeReady(node *corev1.Node) bool {
 		}
 	}
 	return false
+}
+
+// allocateSubnets allocates /31 subnets for each node-network pair
+func (c *Controller) allocateSubnets(vpnc *vpnctypes.VirtualPrivateNetworkConnect, nodes []*corev1.Node, networks []DiscoveredNetwork) (map[string]*net.IPNet, error) {
+	// Get or create subnet allocator for this VPNC
+	allocator, err := c.getOrCreateSubnetAllocator(vpnc)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get subnet allocator: %w", err)
+	}
+
+	allocations := make(map[string]*net.IPNet)
+
+	// Allocate /31 subnet for each node-network pair
+	for _, node := range nodes {
+		for _, network := range networks {
+			// All networks (UDNs, CUDNs, NADs) have corresponding NADs - get network ID from NAD annotation
+			nad, nadErr := c.nadLister.NetworkAttachmentDefinitions(network.NADNamespace).Get(network.NADName)
+			if nadErr != nil {
+				klog.Warningf("Failed to get NAD %s/%s for network %s: %v", network.NADNamespace, network.NADName, network.NetworkName, nadErr)
+				continue
+			}
+
+			if nad.Annotations == nil || nad.Annotations[ovntypes.OvnNetworkIDAnnotation] == "" {
+				klog.V(2).Infof("Network ID annotation not set for NAD %s/%s (network %s), skipping", network.NADNamespace, network.NADName, network.NetworkName)
+				continue
+			}
+
+			networkID, err := strconv.Atoi(nad.Annotations[ovntypes.OvnNetworkIDAnnotation])
+			if err != nil {
+				klog.Warningf("Failed to parse network ID from NAD %s/%s: %v", network.NADNamespace, network.NADName, err)
+				continue
+			}
+
+			// Skip invalid network IDs
+			if networkID == ovntypes.InvalidID {
+				klog.V(2).Infof("Invalid network ID for network %s on node %s, skipping", network.NetworkName, node.Name)
+				continue
+			}
+
+			owner := fmt.Sprintf("%s-Network%d", node.Name, networkID)
+
+			subnet, err := allocator.AllocateSubnet(owner)
+			if err != nil {
+				return nil, fmt.Errorf("failed to allocate subnet for %s: %w", owner, err)
+			}
+
+			allocations[owner] = subnet
+			klog.V(4).Infof("Allocated subnet %s for %s (network: %s)", subnet, owner, network.NetworkName)
+		}
+	}
+
+	return allocations, nil
+}
+
+// getOrCreateSubnetAllocator gets or creates a subnet allocator for the given VPNC
+func (c *Controller) getOrCreateSubnetAllocator(vpnc *vpnctypes.VirtualPrivateNetworkConnect) (VPNCSubnetAllocator, error) {
+	c.subnetAllocatorsMutex.Lock()
+	defer c.subnetAllocatorsMutex.Unlock()
+
+	allocator, exists := c.subnetAllocators[vpnc.Name]
+	if !exists {
+		allocator = NewVPNCPointToPointAllocator()
+		c.subnetAllocators[vpnc.Name] = allocator
+	}
+
+	// Add connect subnets to the allocator
+	for _, subnetCIDR := range vpnc.Spec.ConnectSubnets {
+		_, subnet, err := net.ParseCIDR(string(subnetCIDR))
+		if err != nil {
+			return nil, fmt.Errorf("invalid connect subnet %q: %w", string(subnetCIDR), err)
+		}
+
+		if err := allocator.AddConnectSubnet(subnet); err != nil {
+			return nil, fmt.Errorf("failed to add connect subnet %s: %w", string(subnetCIDR), err)
+		}
+	}
+
+	return allocator, nil
+}
+
+// updateVPNCAnnotations updates the VPNC annotations with subnet allocations
+func (c *Controller) updateVPNCAnnotations(vpnc *vpnctypes.VirtualPrivateNetworkConnect, allocations map[string]*net.IPNet) error {
+	// Create the subnet allocation map
+	subnetMap := make(map[string]string)
+	for owner, subnet := range allocations {
+		subnetMap[owner] = subnet.String()
+	}
+
+	// Marshal to JSON
+	subnetJSON, err := json.Marshal(subnetMap)
+	if err != nil {
+		return fmt.Errorf("failed to marshal subnet allocations: %w", err)
+	}
+
+	// Create a copy to modify
+	vpncCopy := vpnc.DeepCopy()
+	if vpncCopy.Annotations == nil {
+		vpncCopy.Annotations = make(map[string]string)
+	}
+
+	vpncCopy.Annotations[VPNCNodeNetworkSubnetsAnnotation] = string(subnetJSON)
+
+	// Update the object
+	_, err = c.vpncClient.K8sV1().VirtualPrivateNetworkConnects().Update(
+		context.TODO(),
+		vpncCopy,
+		metav1.UpdateOptions{},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update VirtualPrivateNetworkConnect %s annotations: %w", vpnc.Name, err)
+	}
+
+	klog.V(4).Infof("Updated annotations for VirtualPrivateNetworkConnect %s with %d subnet allocations", vpnc.Name, len(allocations))
+	return nil
 }
