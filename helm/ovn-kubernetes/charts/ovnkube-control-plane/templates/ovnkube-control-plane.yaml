@@ -126,6 +126,8 @@ spec:
           value: {{ hasKey .Values.global "enableMultiNetwork" | ternary .Values.global.enableMultiNetwork false | quote }}
         - name: OVN_NETWORK_SEGMENTATION_ENABLE
           value: {{ default "" .Values.global.enableNetworkSegmentation | quote }}
+        - name: OVN_VIRTUAL_PRIVATE_NETWORK_CONNECT_ENABLE
+          value: {{ default "" .Values.global.enableVirtualPrivateNetworkConnect | quote }}
         - name: OVN_PRE_CONF_UDN_ADDR_ENABLE
           value: {{ default "" .Values.global.enablePreconfiguredUDNAddresses | quote }}
         - name: OVN_ADVERTISED_UDN_ISOLATION_MODE

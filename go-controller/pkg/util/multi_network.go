@@ -1624,6 +1624,12 @@ func IsRouteAdvertisementsEnabled() bool {
 	return config.OVNKubernetesFeature.EnableMultiNetwork && config.OVNKubernetesFeature.EnableRouteAdvertisements
 }
 
+func IsVirtualPrivateNetworkConnectEnabled() bool {
+	// require network segmentation to be enabled because VirtualPrivateNetworkConnect
+	// relies on user defined networks
+	return IsNetworkSegmentationSupportEnabled() && config.OVNKubernetesFeature.EnableVirtualPrivateNetworkConnect
+}
+
 // IsPreconfiguredUDNAddressesEnabled indicates if user defined IPs / MAC
 // addresses can be set in primary UDNs
 func IsPreconfiguredUDNAddressesEnabled() bool {

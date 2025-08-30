@@ -27,6 +27,7 @@ set_default_params() {
   export KIND_REMOVE_TAINT=${KIND_REMOVE_TAINT:-true}
   export ENABLE_MULTI_NET=${ENABLE_MULTI_NET:-false}
   export ENABLE_NETWORK_SEGMENTATION=${ENABLE_NETWORK_SEGMENTATION:-false}
+  export ENABLE_VIRTUAL_PRIVATE_NETWORK_CONNECT=${ENABLE_VIRTUAL_PRIVATE_NETWORK_CONNECT:-false}
   export ENABLE_PRE_CONF_UDN_ADDR=${ENABLE_PRE_CONF_UDN_ADDR:-false}
   export OVN_NETWORK_QOS_ENABLE=${OVN_NETWORK_QOS_ENABLE:-false}
   export KIND_NUM_WORKER=${KIND_NUM_WORKER:-2}
@@ -100,6 +101,7 @@ usage() {
     echo "       [ -ikv | --install-kubevirt ]"
     echo "       [ -mne | --multi-network-enable ]"
     echo "       [ -nse | --network-segmentation-enable ]"
+    echo "       [ -vpnc | --virtual-private-network-connect-enable ]"
     echo "       [ -uae | --preconfigured-udn-addresses-enable ]"
     echo "       [ -nqe | --network-qos-enable ]"
     echo "       [ -wk  | --num-workers <num> ]"
@@ -123,6 +125,7 @@ usage() {
     echo "-ikv | --install-kubevirt                     Install kubevirt"
     echo "-mne | --multi-network-enable                 Enable multi networks. DEFAULT: Disabled"
     echo "-nse | --network-segmentation-enable          Enable network segmentation. DEFAULT: Disabled"
+    echo "-vpnc | --virtual-private-network-connect-enable Enable VirtualPrivateNetworkConnect controller (requires network segmentation). DEFAULT: Disabled"
     echo "-uae | --preconfigured-udn-addresses-enable   Enable connecting workloads with preconfigured network to user-defined networks. DEFAULT: Disabled"
     echo "-nqe | --network-qos-enable                   Enable network QoS. DEFAULT: Disabled"
     echo "-ha  | --ha-enabled                           Enable high availability. DEFAULT: HA Disabled"
@@ -170,6 +173,8 @@ parse_args() {
             -mne | --multi-network-enable )       ENABLE_MULTI_NET=true
                                                   ;;
             -nse | --network-segmentation-enable) ENABLE_NETWORK_SEGMENTATION=true
+                                                  ;;
+            -vpnc | --virtual-private-network-connect-enable )             ENABLE_VIRTUAL_PRIVATE_NETWORK_CONNECT=true
                                                   ;;
             -uae | --preconfigured-udn-addresses-enable)    ENABLE_PRE_CONF_UDN_ADDR=true
                                                   ;;
@@ -237,6 +242,7 @@ print_params() {
      echo "KIND_REMOVE_TAINT = $KIND_REMOVE_TAINT"
      echo "ENABLE_MULTI_NET = $ENABLE_MULTI_NET"
      echo "ENABLE_NETWORK_SEGMENTATION = $ENABLE_NETWORK_SEGMENTATION"
+     echo "ENABLE_VIRTUAL_PRIVATE_NETWORK_CONNECT = $ENABLE_VIRTUAL_PRIVATE_NETWORK_CONNECT"
      echo "ENABLE_PRE_CONF_UDN_ADDR = $ENABLE_PRE_CONF_UDN_ADDR"
      echo "OVN_NETWORK_QOS_ENABLE = $OVN_NETWORK_QOS_ENABLE"
      echo "OVN_IMAGE = $OVN_IMAGE"
@@ -444,6 +450,7 @@ helm install ovn-kubernetes . -f "${value_file}" \
           --set global.enableMulticast=$(if [ "${OVN_MULTICAST_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableMultiNetwork=$(if [ "${ENABLE_MULTI_NET}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableNetworkSegmentation=$(if [ "${ENABLE_NETWORK_SEGMENTATION}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          --set global.enableVirtualPrivateNetworkConnect=$(if [ "${ENABLE_VIRTUAL_PRIVATE_NETWORK_CONNECT}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enablePreconfiguredUDNAddresses=$(if [ "${ENABLE_PRE_CONF_UDN_ADDR}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableHybridOverlay=$(if [ "${OVN_HYBRID_OVERLAY_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableObservability=$(if [ "${OVN_OBSERV_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
