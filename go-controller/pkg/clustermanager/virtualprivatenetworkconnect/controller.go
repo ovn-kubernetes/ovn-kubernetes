@@ -418,9 +418,11 @@ func (c *Controller) discoverNetworksFromSelector(selector types.NetworkSelector
 			return nil, fmt.Errorf("failed to list ClusterUserDefinedNetworks: %w", err)
 		}
 
+		klog.V(4).Infof("Found %d CUDNs matching selector for VPNC", len(cudns))
 		for _, cudn := range cudns {
 			// Generate the network name that would be used in node annotations
 			networkName := util.GenerateCUDNNetworkName(cudn.Name)
+			klog.V(4).Infof("Looking for NADs with network name '%s' for CUDN '%s'", networkName, cudn.Name)
 
 			// CUDNs create NADs in each selected namespace, but we need to discover which namespaces
 			// For now, we'll need to find the NADs created by this CUDN across all namespaces
@@ -431,7 +433,9 @@ func (c *Controller) discoverNetworksFromSelector(selector types.NetworkSelector
 			}
 
 			// Find NADs owned by this CUDN
+			nadCount := 0
 			for _, nad := range nads {
+				klog.V(5).Infof("Checking NAD %s/%s: networkName annotation = '%s'", nad.Namespace, nad.Name, nad.Annotations[ovntypes.OvnNetworkNameAnnotation])
 				if nad.Annotations != nil && nad.Annotations[ovntypes.OvnNetworkNameAnnotation] == networkName {
 					discovered := DiscoveredNetwork{
 						NetworkName:  networkName,
@@ -440,7 +444,12 @@ func (c *Controller) discoverNetworksFromSelector(selector types.NetworkSelector
 						NADNamespace: nad.Namespace,
 					}
 					discoveredNetworks = append(discoveredNetworks, discovered)
+					nadCount++
+					klog.V(4).Infof("Discovered NAD %s/%s for CUDN %s", nad.Namespace, nad.Name, cudn.Name)
 				}
+			}
+			if nadCount == 0 {
+				klog.Warningf("No NADs found with network name '%s' for CUDN '%s' - CUDN may not be fully processed yet", networkName, cudn.Name)
 			}
 		}
 
@@ -460,6 +469,11 @@ func (c *Controller) discoverNetworksFromSelector(selector types.NetworkSelector
 			return nil, fmt.Errorf("failed to list namespaces: %w", err)
 		}
 
+		klog.V(4).Infof("Found %d namespaces matching selector for PrimaryUserDefinedNetworks", len(namespaces))
+		for _, ns := range namespaces {
+			klog.V(4).Infof("Looking for UDNs in namespace %s", ns.Name)
+		}
+
 		// For primary UDNs, we look for them in each matching namespace
 		for _, ns := range namespaces {
 			udns, err := c.udnLister.UserDefinedNetworks(ns.Name).List(labels.Everything())
@@ -468,6 +482,7 @@ func (c *Controller) discoverNetworksFromSelector(selector types.NetworkSelector
 				continue
 			}
 
+			klog.V(4).Infof("Found %d UDNs in namespace %s", len(udns), ns.Name)
 			for _, udn := range udns {
 				// Generate the network name that would be used in node annotations
 				networkName := util.GenerateUDNNetworkName(udn.Namespace, udn.Name)
@@ -480,6 +495,11 @@ func (c *Controller) discoverNetworksFromSelector(selector types.NetworkSelector
 					NADNamespace: udn.Namespace, // In same namespace as UDN
 				}
 				discoveredNetworks = append(discoveredNetworks, discovered)
+				klog.V(4).Infof("Discovered UDN %s in namespace %s", udn.Name, udn.Namespace)
+			}
+
+			if len(udns) == 0 {
+				klog.V(4).Infof("No UDNs found in namespace %s - NADs in this namespace may have been created by CUDNs instead", ns.Name)
 			}
 		}
 
