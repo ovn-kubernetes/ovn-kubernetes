@@ -19,6 +19,7 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
 	controllerutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
 	udnlisters "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/listers/userdefinednetwork/v1"
@@ -34,6 +35,13 @@ import (
 const (
 	// VPNCNodeNetworkSubnetsAnnotation is the annotation key for storing node-network subnet allocations
 	VPNCNodeNetworkSubnetsAnnotation = "k8s.ovn.org/vpc-node-network-subnets"
+	// VPNCNodeTunnelKeysAnnotation is the annotation key for storing per-node tunnel keys
+	VPNCNodeTunnelKeysAnnotation = "k8s.ovn.org/vpnc-node-tunnel-keys"
+
+	// VPNCTunnelKeyStartID is the starting ID for VPNC tunnel key allocation (after network IDs)
+	VPNCTunnelKeyStartID = 5000
+	// VPNCTunnelKeyMaxID is the maximum ID for VPNC tunnel key allocation
+	VPNCTunnelKeyMaxID = 10000
 )
 
 // DiscoveredNetwork represents a network discovered from network selectors
@@ -79,6 +87,9 @@ type Controller struct {
 	// subnetAllocators tracks subnet allocators per VPNC object
 	subnetAllocators      map[string]VPNCSubnetAllocator
 	subnetAllocatorsMutex sync.RWMutex
+
+	// tunnelKeyAllocator allocates global tunnel keys for VPNC interconnect transit routers
+	tunnelKeyAllocator id.Allocator
 }
 
 // NewController builds a controller that reconciles VirtualPrivateNetworkConnect objects
@@ -87,6 +98,18 @@ func NewController(
 	wf *factory.WatchFactory,
 	ovnClient *util.OVNClusterManagerClientset,
 ) *Controller {
+	// Create a SINGLE GLOBAL tunnel key allocator for VPNC interconnect transit routers
+	// This allocator is shared by ALL VPNCs to ensure globally unique tunnel keys
+	// across the entire cluster (required by OVN)
+	// Allocate tunnel keys in the range 5000-10000 (after network IDs, up to 10K)
+	tunnelKeyAllocator := id.NewIDAllocator("vpnc-tunnelkey", VPNCTunnelKeyMaxID)
+	// Reserve IDs 0-4999 (used by network IDs and other allocations)
+	for i := 0; i < VPNCTunnelKeyStartID; i++ {
+		if err := tunnelKeyAllocator.ReserveID(fmt.Sprintf("reserved-%d", i), i); err != nil {
+			klog.Errorf("Failed to reserve tunnel key ID %d: %v", i, err)
+		}
+	}
+
 	c := &Controller{
 		wf:                    wf,
 		vpncClient:            ovnClient.VirtualPrivateNetworkConnectClient,
@@ -98,6 +121,7 @@ func NewController(
 		cudnLister:            wf.ClusterUserDefinedNetworkInformer().Lister(),
 		subnetAllocators:      make(map[string]VPNCSubnetAllocator),
 		subnetAllocatorsMutex: sync.RWMutex{},
+		tunnelKeyAllocator:    tunnelKeyAllocator,
 	}
 
 	handleError := func(key string, errorstatus error) error {
@@ -249,15 +273,22 @@ func (c *Controller) processVirtualPrivateNetworkConnect(vpnc *vpnctypes.Virtual
 		return c.updateVirtualPrivateNetworkConnectStatus(vpnc, "Error", fmt.Sprintf("Subnet allocation failed: %v", err))
 	}
 
-	// 5. Update annotations on the VirtualPrivateNetworkConnect object
-	if err := c.updateVPNCAnnotations(vpnc, allocations); err != nil {
+	// 5. Allocate tunnel keys for each node (one per VPNC-node pair)
+	tunnelKeyAllocations, err := c.allocateTunnelKeys(vpnc, nodes)
+	if err != nil {
+		klog.Errorf("Failed to allocate tunnel keys for VirtualPrivateNetworkConnect %s: %v", vpnc.Name, err)
+		return c.updateVirtualPrivateNetworkConnectStatus(vpnc, "Error", fmt.Sprintf("Tunnel key allocation failed: %v", err))
+	}
+
+	// 6. Update annotations on the VirtualPrivateNetworkConnect object
+	if err := c.updateVPNCAnnotations(vpnc, allocations, tunnelKeyAllocations); err != nil {
 		klog.Errorf("Failed to update annotations for VirtualPrivateNetworkConnect %s: %v", vpnc.Name, err)
 		return c.updateVirtualPrivateNetworkConnectStatus(vpnc, "Error", fmt.Sprintf("Failed to update annotations: %v", err))
 	}
 
-	// 6. Update status conditions
-	klog.V(2).Infof("Successfully processed VirtualPrivateNetworkConnect %s: allocated subnets for %d node-network pairs", vpnc.Name, len(allocations))
-	return c.updateVirtualPrivateNetworkConnectStatus(vpnc, "Ready", fmt.Sprintf("Allocated subnets for %d node-network pairs", len(allocations)))
+	// 7. Update status conditions
+	klog.V(2).Infof("Successfully processed VirtualPrivateNetworkConnect %s: allocated subnets for %d node-network pairs and tunnel keys for %d nodes", vpnc.Name, len(allocations), len(tunnelKeyAllocations))
+	return c.updateVirtualPrivateNetworkConnectStatus(vpnc, "Ready", fmt.Sprintf("Allocated subnets for %d node-network pairs and tunnel keys for %d nodes", len(allocations), len(tunnelKeyAllocations)))
 }
 
 // handleVirtualPrivateNetworkConnectDeletion handles the deletion of a VirtualPrivateNetworkConnect
@@ -271,6 +302,20 @@ func (c *Controller) handleVirtualPrivateNetworkConnectDeletion(name string) err
 	if _, exists := c.subnetAllocators[name]; exists {
 		delete(c.subnetAllocators, name)
 		klog.V(4).Infof("Cleaned up subnet allocator for VirtualPrivateNetworkConnect %s", name)
+	}
+
+	// Release tunnel keys allocated for this VPNC
+	// We need to iterate through all nodes and release tunnel keys for this VPNC
+	nodes, err := c.nodeLister.List(labels.Everything())
+	if err != nil {
+		klog.Errorf("Failed to list nodes during VPNC %s deletion: %v", name, err)
+		// Continue with cleanup even if node listing fails
+	} else {
+		for _, node := range nodes {
+			owner := fmt.Sprintf("%s-%s", name, node.Name)
+			c.tunnelKeyAllocator.ReleaseID(owner)
+			klog.V(4).Infof("Released tunnel key for node %s in VPNC %s", node.Name, name)
+		}
 	}
 
 	return nil
@@ -603,18 +648,50 @@ func (c *Controller) getOrCreateSubnetAllocator(vpnc *vpnctypes.VirtualPrivateNe
 	return allocator, nil
 }
 
-// updateVPNCAnnotations updates the VPNC annotations with subnet allocations
-func (c *Controller) updateVPNCAnnotations(vpnc *vpnctypes.VirtualPrivateNetworkConnect, allocations map[string]*net.IPNet) error {
+// allocateTunnelKeys allocates tunnel keys for each node
+// Tunnel keys are GLOBALLY UNIQUE across all VPNCs and nodes in the cluster.
+// This is achieved by using a single shared tunnelKeyAllocator for all VPNCs,
+// with unique owner strings per VPNC-node combination.
+func (c *Controller) allocateTunnelKeys(vpnc *vpnctypes.VirtualPrivateNetworkConnect, nodes []*corev1.Node) (map[string]int, error) {
+	tunnelKeyAllocations := make(map[string]int)
+
+	// Allocate one tunnel key per node for this VPNC
+	// Each VPNC-node pair gets a globally unique tunnel key
+	for _, node := range nodes {
+		// Create unique owner string: VPNC1-node1, VPNC2-node1, etc.
+		// This ensures tunnel keys are unique across ALL VPNCs and nodes
+		owner := fmt.Sprintf("%s-%s", vpnc.Name, node.Name)
+
+		tunnelKey, err := c.tunnelKeyAllocator.AllocateID(owner)
+		if err != nil {
+			return nil, fmt.Errorf("failed to allocate tunnel key for node %s in VPNC %s: %w", node.Name, vpnc.Name, err)
+		}
+
+		tunnelKeyAllocations[node.Name] = tunnelKey
+		klog.V(4).Infof("Allocated globally unique tunnel key %d for node %s in VPNC %s", tunnelKey, node.Name, vpnc.Name)
+	}
+
+	return tunnelKeyAllocations, nil
+}
+
+// updateVPNCAnnotations updates the VPNC annotations with subnet and tunnel key allocations
+func (c *Controller) updateVPNCAnnotations(vpnc *vpnctypes.VirtualPrivateNetworkConnect, allocations map[string]*net.IPNet, tunnelKeyAllocations map[string]int) error {
 	// Create the subnet allocation map
 	subnetMap := make(map[string]string)
 	for owner, subnet := range allocations {
 		subnetMap[owner] = subnet.String()
 	}
 
-	// Marshal to JSON
+	// Marshal subnet allocations to JSON
 	subnetJSON, err := json.Marshal(subnetMap)
 	if err != nil {
 		return fmt.Errorf("failed to marshal subnet allocations: %w", err)
+	}
+
+	// Marshal tunnel key allocations to JSON
+	tunnelKeyJSON, err := json.Marshal(tunnelKeyAllocations)
+	if err != nil {
+		return fmt.Errorf("failed to marshal tunnel key allocations: %w", err)
 	}
 
 	// Create a copy to modify
@@ -624,6 +701,7 @@ func (c *Controller) updateVPNCAnnotations(vpnc *vpnctypes.VirtualPrivateNetwork
 	}
 
 	vpncCopy.Annotations[VPNCNodeNetworkSubnetsAnnotation] = string(subnetJSON)
+	vpncCopy.Annotations[VPNCNodeTunnelKeysAnnotation] = string(tunnelKeyJSON)
 
 	// Update the object
 	_, err = c.vpncClient.K8sV1().VirtualPrivateNetworkConnects().Update(
@@ -635,6 +713,6 @@ func (c *Controller) updateVPNCAnnotations(vpnc *vpnctypes.VirtualPrivateNetwork
 		return fmt.Errorf("failed to update VirtualPrivateNetworkConnect %s annotations: %w", vpnc.Name, err)
 	}
 
-	klog.V(4).Infof("Updated annotations for VirtualPrivateNetworkConnect %s with %d subnet allocations", vpnc.Name, len(allocations))
+	klog.V(4).Infof("Updated annotations for VirtualPrivateNetworkConnect %s with %d subnet allocations and %d tunnel key allocations", vpnc.Name, len(allocations), len(tunnelKeyAllocations))
 	return nil
 }
