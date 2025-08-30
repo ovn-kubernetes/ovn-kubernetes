@@ -20,6 +20,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/status_manager"
 	udncontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork"
 	udntemplate "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/template"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/virtualprivatenetworkconnect"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
@@ -60,6 +61,8 @@ type ClusterManager struct {
 	networkManager networkmanager.Controller
 
 	raController *routeadvertisements.Controller
+
+	vpncController *virtualprivatenetworkconnect.Controller
 }
 
 // NewClusterManager creates a new cluster manager to manage the cluster nodes.
@@ -175,6 +178,10 @@ func NewClusterManager(
 		cm.raController = routeadvertisements.NewController(cm.networkManager.Interface(), wf, ovnClient)
 	}
 
+	if util.IsVirtualPrivateNetworkConnectEnabled() {
+		cm.vpncController = virtualprivatenetworkconnect.NewController(cm.networkManager.Interface(), wf, ovnClient)
+	}
+
 	return cm, nil
 }
 
@@ -240,6 +247,13 @@ func (cm *ClusterManager) Start(ctx context.Context) error {
 		}
 	}
 
+	if cm.vpncController != nil {
+		err := cm.vpncController.Start()
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -268,6 +282,10 @@ func (cm *ClusterManager) Stop() {
 	if cm.raController != nil {
 		cm.raController.Stop()
 		cm.raController = nil
+	}
+	if cm.vpncController != nil {
+		cm.vpncController.Stop()
+		cm.vpncController = nil
 	}
 }
 
