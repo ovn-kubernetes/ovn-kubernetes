@@ -566,6 +566,19 @@ func (oc *DefaultNetworkController) run(_ context.Context) error {
 		}()
 	}
 
+	if util.IsVirtualPrivateNetworkConnectEnabled() {
+		err := oc.newVPNCController()
+		if err != nil {
+			return fmt.Errorf("unable to create vpnc controller, err: %w", err)
+		}
+		oc.wg.Add(1)
+		go func() {
+			defer oc.wg.Done()
+			// Until we have scale issues in future let's spawn only one thread
+			oc.vpncController.Start(1)
+		}()
+	}
+
 	end := time.Since(start)
 	klog.Infof("Completing all the Watchers took %v", end)
 	metrics.MetricOVNKubeControllerSyncDuration.WithLabelValues("all watchers").Set(end.Seconds())
