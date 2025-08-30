@@ -260,6 +260,8 @@ spec:
         {% if ovnkube_app_name!="ovnkube-node-dpu" and ovnkube_app_name!="ovnkube-node-dpu-host" -%}
         - name: OVN_PRE_CONF_UDN_ADDR_ENABLE
           value: "{{ ovn_pre_conf_udn_addr_enable }}"
+        - name: OVN_VIRTUAL_PRIVATE_NETWORK_CONNECT_ENABLE
+          value: "{{ ovn_virtual_private_network_connect_enable }}"
         {% endif -%}
         - name: OVNKUBE_NODE_MGMT_PORT_NETDEV
           value: "{{ ovnkube_node_mgmt_port_netdev }}"
