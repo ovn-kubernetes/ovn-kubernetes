@@ -94,6 +94,10 @@ import (
 	userdefinednetworkscheme "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/scheme"
 	userdefinednetworkapiinformerfactory "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/informers/externalversions"
 	userdefinednetworkinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/informers/externalversions/userdefinednetwork/v1"
+	virtualprivatenetworkconnectapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/virtualprivatenetworkconnect/v1"
+	virtualprivatenetworkconnectscheme "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/virtualprivatenetworkconnect/v1/apis/clientset/versioned/scheme"
+	virtualprivatenetworkconnectinformerfactory "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/virtualprivatenetworkconnect/v1/apis/informers/externalversions"
+	virtualprivatenetworkconnectinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/virtualprivatenetworkconnect/v1/apis/informers/externalversions/virtualprivatenetworkconnect/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -122,6 +126,7 @@ type WatchFactory struct {
 	nadFactory           nadinformerfactory.SharedInformerFactory
 	udnFactory           userdefinednetworkapiinformerfactory.SharedInformerFactory
 	raFactory            routeadvertisementsinformerfactory.SharedInformerFactory
+	vpncFactory          virtualprivatenetworkconnectinformerfactory.SharedInformerFactory
 	frrFactory           frrinformerfactory.SharedInformerFactory
 	networkQoSFactory    networkqosinformerfactory.SharedInformerFactory
 	informers            map[reflect.Type]*informer
@@ -150,6 +155,7 @@ func (wf *WatchFactory) ShallowClone() *WatchFactory {
 		nadFactory:           wf.nadFactory,
 		udnFactory:           wf.udnFactory,
 		raFactory:            wf.raFactory,
+		vpncFactory:          wf.vpncFactory,
 		frrFactory:           wf.frrFactory,
 		networkQoSFactory:    wf.networkQoSFactory,
 		informers:            wf.informers,
@@ -247,6 +253,7 @@ var (
 	UserDefinedNetworkType                reflect.Type = reflect.TypeOf(&userdefinednetworkapi.UserDefinedNetwork{})
 	ClusterUserDefinedNetworkType         reflect.Type = reflect.TypeOf(&userdefinednetworkapi.ClusterUserDefinedNetwork{})
 	NetworkQoSType                        reflect.Type = reflect.TypeOf(&networkqosapi.NetworkQoS{})
+	VirtualPrivateNetworkConnectType      reflect.Type = reflect.TypeOf(&virtualprivatenetworkconnectapi.VirtualPrivateNetworkConnect{})
 
 	// Resource types used in ovnk node
 	NamespaceExGwType                         reflect.Type = reflect.TypeOf(&namespaceExGw{})
@@ -633,6 +640,14 @@ func (wf *WatchFactory) Start() error {
 			return err
 		}
 	}
+
+	if util.IsVirtualPrivateNetworkConnectEnabled() && wf.vpncFactory != nil {
+		wf.vpncFactory.Start(wf.stopChan)
+		if err := waitForCacheSyncWithTimeout(wf.vpncFactory, wf.stopChan); err != nil {
+			return err
+		}
+	}
+
 	klog.Infof("Watch Factory start up complete, took: %s", time.Since(start))
 	return nil
 }
@@ -686,6 +701,10 @@ func (wf *WatchFactory) Stop() {
 
 	if wf.networkQoSFactory != nil {
 		wf.networkQoSFactory.Shutdown()
+	}
+
+	if wf.vpncFactory != nil {
+		wf.vpncFactory.Shutdown()
 	}
 }
 
@@ -874,6 +893,7 @@ func NewClusterManagerWatchFactory(ovnClientset *util.OVNClusterManagerClientset
 		apbRouteFactory:      adminbasedpolicyinformerfactory.NewSharedInformerFactory(ovnClientset.AdminPolicyRouteClient, resyncInterval),
 		egressQoSFactory:     egressqosinformerfactory.NewSharedInformerFactory(ovnClientset.EgressQoSClient, resyncInterval),
 		networkQoSFactory:    networkqosinformerfactory.NewSharedInformerFactory(ovnClientset.NetworkQoSClient, resyncInterval),
+		vpncFactory:          virtualprivatenetworkconnectinformerfactory.NewSharedInformerFactory(ovnClientset.VirtualPrivateNetworkConnectClient, resyncInterval),
 		informers:            make(map[reflect.Type]*informer),
 		stopChan:             make(chan struct{}),
 	}
@@ -904,6 +924,9 @@ func NewClusterManagerWatchFactory(ovnClientset *util.OVNClusterManagerClientset
 		return nil, err
 	}
 	if err := frrapi.AddToScheme(frrscheme.Scheme); err != nil {
+		return nil, err
+	}
+	if err := virtualprivatenetworkconnectapi.AddToScheme(virtualprivatenetworkconnectscheme.Scheme); err != nil {
 		return nil, err
 	}
 
@@ -1048,6 +1071,17 @@ func NewClusterManagerWatchFactory(ovnClientset *util.OVNClusterManagerClientset
 		wf.iFactory.Core().V1().Pods().Informer()
 	}
 
+	// Initialize VPNC informer when feature is enabled
+	if util.IsVirtualPrivateNetworkConnectEnabled() {
+		wf.informers[VirtualPrivateNetworkConnectType], err = newQueuedInformer(eventQueueSize,
+			VirtualPrivateNetworkConnectType,
+			wf.vpncFactory.K8s().V1().VirtualPrivateNetworkConnects().Informer(),
+			wf.stopChan, minNumEventQueues)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	if util.IsRouteAdvertisementsEnabled() {
 		wf.informers[NamespaceType], err = newQueuedInformer(eventQueueSize, NamespaceType, wf.iFactory.Core().V1().Namespaces().Informer(),
 			wf.stopChan, defaultNumEventQueues)
@@ -1155,6 +1189,10 @@ func getObjectMeta(objType reflect.Type, obj interface{}) (*metav1.ObjectMeta, e
 	case NetworkQoSType:
 		if networkQoS, ok := obj.(*networkqosapi.NetworkQoS); ok {
 			return &networkQoS.ObjectMeta, nil
+		}
+	case VirtualPrivateNetworkConnectType:
+		if vpnc, ok := obj.(*virtualprivatenetworkconnectapi.VirtualPrivateNetworkConnect); ok {
+			return &vpnc.ObjectMeta, nil
 		}
 	}
 
@@ -1773,6 +1811,10 @@ func (wf *WatchFactory) DNSNameResolverInformer() ocpnetworkinformerv1alpha1.DNS
 
 func (wf *WatchFactory) RouteAdvertisementsInformer() routeadvertisementsinformer.RouteAdvertisementsInformer {
 	return wf.raFactory.K8s().V1().RouteAdvertisements()
+}
+
+func (wf *WatchFactory) VirtualPrivateNetworkConnectInformer() virtualprivatenetworkconnectinformer.VirtualPrivateNetworkConnectInformer {
+	return wf.vpncFactory.K8s().V1().VirtualPrivateNetworkConnects()
 }
 
 func (wf *WatchFactory) FRRConfigurationsInformer() frrinformer.FRRConfigurationInformer {
