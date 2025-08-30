@@ -39,6 +39,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/observability"
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	nqoscontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/network_qos"
+	vpnccontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/virtualprivatenetworkconnect"
 	lsm "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/routeimport"
 	zoneic "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/zone_interconnect"
@@ -187,6 +188,9 @@ type BaseNetworkController struct {
 
 	// Controller used for programming OVN for Network QoS
 	nqosController *nqoscontroller.Controller
+
+	// Controller used for programming OVN VirtualPrivateNetworkConnect
+	vpncController *vpnccontroller.Controller
 }
 
 func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed func(string)) error {
@@ -1147,6 +1151,17 @@ func (bnc *BaseNetworkController) newNetworkQoSController() error {
 		nadInformer,
 		bnc.addressSetFactory,
 		bnc.isPodScheduledinLocalZone,
+		bnc.zone,
+	)
+	return err
+}
+
+// newVPNCController creates a new VirtualPrivateNetworkConnect controller
+func (bnc *BaseNetworkController) newVPNCController() error {
+	var err error
+	bnc.vpncController = vpnccontroller.NewController(
+		bnc.nbClient,
+		bnc.watchFactory,
 		bnc.zone,
 	)
 	return err
