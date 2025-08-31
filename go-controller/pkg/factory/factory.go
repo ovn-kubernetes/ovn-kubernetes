@@ -660,13 +660,6 @@ func (wf *WatchFactory) Start() error {
 		}
 	}
 
-	if util.IsVirtualPrivateNetworkConnectEnabled() && wf.vpncFactory != nil {
-		wf.vpncFactory.Start(wf.stopChan)
-		if err := waitForCacheSyncWithTimeout(wf.vpncFactory, wf.stopChan); err != nil {
-			return err
-		}
-	}
-
 	klog.Infof("Watch Factory start up complete, took: %s", time.Since(start))
 	return nil
 }
@@ -1090,17 +1083,6 @@ func NewClusterManagerWatchFactory(ovnClientset *util.OVNClusterManagerClientset
 		wf.iFactory.Core().V1().Pods().Informer()
 	}
 
-	// Initialize VPNC informer when feature is enabled
-	if util.IsVirtualPrivateNetworkConnectEnabled() {
-		wf.informers[VirtualPrivateNetworkConnectType], err = newQueuedInformer(eventQueueSize,
-			VirtualPrivateNetworkConnectType,
-			wf.vpncFactory.K8s().V1().VirtualPrivateNetworkConnects().Informer(),
-			wf.stopChan, minNumEventQueues)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	if util.IsRouteAdvertisementsEnabled() {
 		wf.informers[NamespaceType], err = newQueuedInformer(eventQueueSize, NamespaceType, wf.iFactory.Core().V1().Namespaces().Informer(),
 			wf.stopChan, defaultNumEventQueues)
@@ -1115,6 +1097,17 @@ func NewClusterManagerWatchFactory(ovnClientset *util.OVNClusterManagerClientset
 		wf.frrFactory = frrinformerfactory.NewSharedInformerFactory(ovnClientset.FRRClient, resyncInterval)
 		// make sure shared informer is created for a factory, so on wf.frrFactory.Start() it is initialized and caches are synced.
 		wf.frrFactory.Api().V1beta1().FRRConfigurations().Informer()
+	}
+
+	// Initialize VPNC informer when feature is enabled
+	if util.IsVirtualPrivateNetworkConnectEnabled() {
+		wf.informers[VirtualPrivateNetworkConnectType], err = newQueuedInformer(eventQueueSize,
+			VirtualPrivateNetworkConnectType,
+			wf.vpncFactory.K8s().V1().VirtualPrivateNetworkConnects().Informer(),
+			wf.stopChan, minNumEventQueues)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return wf, nil
