@@ -702,8 +702,9 @@ func (c *Controller) createNetworkRoutingPolicies(config *vpncConfig, currentNet
 
 			// Create routing policies for each destination subnet (IPv4 and IPv6)
 			for _, destSubnet := range destSubnets {
-				// Generate the inport name - this is the router-to-switch port name
-				inportName := fmt.Sprintf("%s%s_%s", ovntypes.RouterToSwitchPrefix, currentNetwork, nodeName)
+				// Generate the inport name using NetInfo utilities - this is the router-to-switch port name
+				switchName := currentNetInfo.GetNetworkScopedName(nodeName)
+				inportName := ovntypes.RouterToSwitchPrefix + switchName
 
 				// Create match expression for traffic from this node to the other network
 				// Choose appropriate IP version based on subnet family
