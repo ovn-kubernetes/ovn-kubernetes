@@ -99,20 +99,21 @@ type OVNMasterClientset struct {
 
 // OVNKubeControllerClientset
 type OVNKubeControllerClientset struct {
-	KubeClient                kubernetes.Interface
-	ANPClient                 anpclientset.Interface
-	EgressIPClient            egressipclientset.Interface
-	EgressFirewallClient      egressfirewallclientset.Interface
-	OCPNetworkClient          ocpnetworkclientset.Interface
-	EgressQoSClient           egressqosclientset.Interface
-	MultiNetworkPolicyClient  multinetworkpolicyclientset.Interface
-	EgressServiceClient       egressserviceclientset.Interface
-	AdminPolicyRouteClient    adminpolicybasedrouteclientset.Interface
-	IPAMClaimsClient          ipamclaimssclientset.Interface
-	NetworkAttchDefClient     networkattchmentdefclientset.Interface
-	UserDefinedNetworkClient  userdefinednetworkclientset.Interface
-	RouteAdvertisementsClient routeadvertisementsclientset.Interface
-	NetworkQoSClient          networkqosclientset.Interface
+	KubeClient                         kubernetes.Interface
+	ANPClient                          anpclientset.Interface
+	EgressIPClient                     egressipclientset.Interface
+	EgressFirewallClient               egressfirewallclientset.Interface
+	OCPNetworkClient                   ocpnetworkclientset.Interface
+	EgressQoSClient                    egressqosclientset.Interface
+	MultiNetworkPolicyClient           multinetworkpolicyclientset.Interface
+	EgressServiceClient                egressserviceclientset.Interface
+	AdminPolicyRouteClient             adminpolicybasedrouteclientset.Interface
+	IPAMClaimsClient                   ipamclaimssclientset.Interface
+	NetworkAttchDefClient              networkattchmentdefclientset.Interface
+	UserDefinedNetworkClient           userdefinednetworkclientset.Interface
+	RouteAdvertisementsClient          routeadvertisementsclientset.Interface
+	NetworkQoSClient                   networkqosclientset.Interface
+	VirtualPrivateNetworkConnectClient virtualprivatenetworkconnectclientset.Interface
 }
 
 type OVNNodeClientset struct {
@@ -196,20 +197,21 @@ func (cs *OVNMasterClientset) GetOVNKubeControllerClientset() *OVNKubeController
 
 func (cs *OVNClientset) GetOVNKubeControllerClientset() *OVNKubeControllerClientset {
 	return &OVNKubeControllerClientset{
-		KubeClient:                cs.KubeClient,
-		ANPClient:                 cs.ANPClient,
-		EgressIPClient:            cs.EgressIPClient,
-		EgressFirewallClient:      cs.EgressFirewallClient,
-		OCPNetworkClient:          cs.OCPNetworkClient,
-		EgressQoSClient:           cs.EgressQoSClient,
-		MultiNetworkPolicyClient:  cs.MultiNetworkPolicyClient,
-		EgressServiceClient:       cs.EgressServiceClient,
-		AdminPolicyRouteClient:    cs.AdminPolicyRouteClient,
-		IPAMClaimsClient:          cs.IPAMClaimsClient,
-		NetworkAttchDefClient:     cs.NetworkAttchDefClient,
-		UserDefinedNetworkClient:  cs.UserDefinedNetworkClient,
-		RouteAdvertisementsClient: cs.RouteAdvertisementsClient,
-		NetworkQoSClient:          cs.NetworkQoSClient,
+		KubeClient:                         cs.KubeClient,
+		ANPClient:                          cs.ANPClient,
+		EgressIPClient:                     cs.EgressIPClient,
+		EgressFirewallClient:               cs.EgressFirewallClient,
+		OCPNetworkClient:                   cs.OCPNetworkClient,
+		EgressQoSClient:                    cs.EgressQoSClient,
+		MultiNetworkPolicyClient:           cs.MultiNetworkPolicyClient,
+		EgressServiceClient:                cs.EgressServiceClient,
+		AdminPolicyRouteClient:             cs.AdminPolicyRouteClient,
+		IPAMClaimsClient:                   cs.IPAMClaimsClient,
+		NetworkAttchDefClient:              cs.NetworkAttchDefClient,
+		UserDefinedNetworkClient:           cs.UserDefinedNetworkClient,
+		RouteAdvertisementsClient:          cs.RouteAdvertisementsClient,
+		NetworkQoSClient:                   cs.NetworkQoSClient,
+		VirtualPrivateNetworkConnectClient: cs.VirtualPrivateNetworkConnectClient,
 	}
 }
 
