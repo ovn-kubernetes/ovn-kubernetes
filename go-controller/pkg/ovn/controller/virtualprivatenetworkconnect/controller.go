@@ -1,7 +1,6 @@
 package virtualprivatenetworkconnect
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -125,14 +124,14 @@ func NewController(
 }
 
 // Start begins the controller workers
-func (c *Controller) Start(workers int) {
+func (c *Controller) Start(workers int, stopCh <-chan struct{}) {
 	defer utilruntime.HandleCrash()
 	defer c.queue.ShutDown()
 
 	klog.Infof("Starting %s with %d workers", controllerName, workers)
 
 	// Wait for caches to sync
-	if !cache.WaitForCacheSync(context.Background().Done(),
+	if !cache.WaitForCacheSync(stopCh,
 		c.wf.VirtualPrivateNetworkConnectInformer().Informer().HasSynced,
 		c.wf.NodeCoreInformer().Informer().HasSynced,
 	) {
@@ -142,10 +141,12 @@ func (c *Controller) Start(workers int) {
 
 	// Start worker goroutines
 	for i := 0; i < workers; i++ {
-		go wait.Until(c.runWorker, c.workerLoopPeriod, context.Background().Done())
+		go wait.Until(c.runWorker, c.workerLoopPeriod, stopCh)
 	}
 
 	klog.Infof("%s started", controllerName)
+	<-stopCh
+	klog.Infof("Shutting down %s", controllerName)
 }
 
 // Stop shuts down the controller

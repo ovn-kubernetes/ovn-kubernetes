@@ -575,7 +575,7 @@ func (oc *DefaultNetworkController) run(_ context.Context) error {
 		go func() {
 			defer oc.wg.Done()
 			// Until we have scale issues in future let's spawn only one thread
-			oc.vpncController.Start(1)
+			oc.vpncController.Start(1, oc.stopChan)
 		}()
 	}
 
