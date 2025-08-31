@@ -87,6 +87,7 @@ rules:
           - userdefinednetworks
           - clusteruserdefinednetworks
           - networkqoses
+          - virtualprivatenetworkconnects
       verbs: [ "get", "list", "watch" ]
     - apiGroups: ["k8s.cni.cncf.io"]
       resources:
