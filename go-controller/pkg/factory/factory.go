@@ -322,6 +322,7 @@ func NewOVNKubeControllerWatchFactory(ovnClientset *util.OVNKubeControllerClient
 		egressServiceFactory: egressserviceinformerfactory.NewSharedInformerFactory(ovnClientset.EgressServiceClient, resyncInterval),
 		apbRouteFactory:      adminbasedpolicyinformerfactory.NewSharedInformerFactory(ovnClientset.AdminPolicyRouteClient, resyncInterval),
 		networkQoSFactory:    networkqosinformerfactory.NewSharedInformerFactory(ovnClientset.NetworkQoSClient, resyncInterval),
+		vpncFactory:          virtualprivatenetworkconnectinformerfactory.NewSharedInformerFactory(ovnClientset.VirtualPrivateNetworkConnectClient, resyncInterval),
 		informers:            make(map[reflect.Type]*informer),
 		stopChan:             make(chan struct{}),
 	}
@@ -529,6 +530,17 @@ func NewOVNKubeControllerWatchFactory(ovnClientset *util.OVNKubeControllerClient
 		}
 	}
 
+	// Initialize VPNC informer when feature is enabled
+	if util.IsVirtualPrivateNetworkConnectEnabled() {
+		wf.informers[VirtualPrivateNetworkConnectType], err = newQueuedInformer(eventQueueSize,
+			VirtualPrivateNetworkConnectType,
+			wf.vpncFactory.K8s().V1().VirtualPrivateNetworkConnects().Informer(),
+			wf.stopChan, minNumEventQueues)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return wf, nil
 }
 
@@ -616,6 +628,13 @@ func (wf *WatchFactory) Start() error {
 	if config.OVNKubernetesFeature.EnableNetworkQoS && wf.networkQoSFactory != nil {
 		wf.networkQoSFactory.Start(wf.stopChan)
 		if err := waitForCacheSyncWithTimeout(wf.networkQoSFactory, wf.stopChan); err != nil {
+			return err
+		}
+	}
+
+	if util.IsVirtualPrivateNetworkConnectEnabled() && wf.vpncFactory != nil {
+		wf.vpncFactory.Start(wf.stopChan)
+		if err := waitForCacheSyncWithTimeout(wf.vpncFactory, wf.stopChan); err != nil {
 			return err
 		}
 	}
