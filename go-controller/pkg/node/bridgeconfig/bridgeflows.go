@@ -399,9 +399,9 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 
 			dftFlows = append(dftFlows,
 				fmt.Sprintf("cookie=%s, priority=250, table=2, ip, pkt_mark=%s, "+
-					"actions=set_field:%s->eth_dst,output:%s",
+					"actions=set_field:%s->eth_dst,%soutput:%s",
 					nodetypes.DefaultOpenFlowCookie, netConfig.PktMark,
-					bridgeMacAddress, netConfig.OfPortPatch))
+					bridgeMacAddress, mod_vlan_id, netConfig.OfPortPatch))
 		}
 	}
 
@@ -434,9 +434,9 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 					nodetypes.DefaultOpenFlowCookie, netConfig.V6MasqIPs.ManagementPort.IP.String()))
 			dftFlows = append(dftFlows,
 				fmt.Sprintf("cookie=%s, priority=250, table=2, ip6, pkt_mark=%s, "+
-					"actions=set_field:%s->eth_dst,output:%s",
+					"actions=set_field:%s->eth_dst,%soutput:%s",
 					nodetypes.DefaultOpenFlowCookie, netConfig.PktMark,
-					bridgeMacAddress, netConfig.OfPortPatch))
+					bridgeMacAddress, mod_vlan_id, netConfig.OfPortPatch))
 		}
 	}
 
