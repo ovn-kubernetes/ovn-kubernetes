@@ -154,5 +154,6 @@ nav:
     - User Defined Networks: okeps/okep-5193-user-defined-networks.md
     - Preconfigured UDN Addresses: okeps/okep-5233-preconfigured-udn-addresses.md
     - BGP: okeps/okep-5296-bgp.md
+    - Support multi-NIC and multi-VTEP in IC mode: okeps/okep-5535-support-multi-nic-and-multi-vtep-in-ic-mode.md
   - Blog:
     - blog/index.md
