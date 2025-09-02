@@ -155,5 +155,6 @@ nav:
     - Preconfigured UDN Addresses: okeps/okep-5233-preconfigured-udn-addresses.md
     - BGP: okeps/okep-5296-bgp.md
     - Layer2TransitRouter: okeps/okep-5094-layer2-transit-router.md
+    - Dynamic UDN Node Allocation: okeps/okep-5552-dynamic-udn-node-allocation.md
   - Blog:
     - blog/index.md
