@@ -1583,8 +1583,7 @@ func newNodePortWatcher(
 	// on the OVS bridge in the host. These flows act only on the packets coming in from outside
 	// of the node. If someone on the node is trying to access the NodePort service, those packets
 	// will not be processed by the OpenFlow flows, so we need to add iptable rules that DNATs the
-	// NodePortIP:NodePort to ClusterServiceIP:Port. We don't need to do this while
-	// running on DPU or on DPU-Host.
+	// NodePortIP:NodePort to ClusterServiceIP:Port. We don't need to do this on DPU.
 	if config.OvnKubeNode.Mode == types.NodeModeFull {
 		if config.Gateway.Mode == config.GatewayModeLocal {
 			if err := initLocalGatewayIPTables(); err != nil {

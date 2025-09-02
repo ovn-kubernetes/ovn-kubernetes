@@ -466,26 +466,46 @@ func (g *gateway) GetGatewayBridgeIface() string {
 }
 
 func (g *gateway) GetGatewayIface() string {
-	return g.openflowManager.defaultBridge.GetGatewayIface()
+	if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
+		if g.openflowManager == nil {
+			return ""
+		}
+		return g.openflowManager.defaultBridge.GetGatewayIface()
+	} else {
+		return config.Gateway.Interface
+	}
 }
 
 // SetDefaultGatewayBridgeMAC updates the mac address for the OFM used to render flows with
 func (g *gateway) SetDefaultGatewayBridgeMAC(macAddr net.HardwareAddr) {
+	if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
+		return
+	}
 	g.openflowManager.setDefaultBridgeMAC(macAddr)
 	klog.Infof("Default gateway bridge MAC address updated to %s", macAddr)
 }
 
 func (g *gateway) SetDefaultPodNetworkAdvertised(isPodNetworkAdvertised bool) {
+	if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
+		return
+	}
 	g.openflowManager.defaultBridge.GetNetworkConfig(types.DefaultNetworkName).Advertised.Store(isPodNetworkAdvertised)
 }
 
 func (g *gateway) GetDefaultPodNetworkAdvertised() bool {
+	if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
+		return false
+	}
 	return g.openflowManager.defaultBridge.GetNetworkConfig(types.DefaultNetworkName).Advertised.Load()
 }
 
 // SetDefaultBridgeGARPDropFlows will enable flows to drop GARPs if the openflow
 // manager has been initialized.
 func (g *gateway) SetDefaultBridgeGARPDropFlows(isDropped bool) {
+	if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
+		return
+	}
+
 	if g.openflowManager == nil {
 		return
 	}
@@ -495,14 +515,20 @@ func (g *gateway) SetDefaultBridgeGARPDropFlows(isDropped bool) {
 // Reconcile handles triggering updates to different components of a gateway, like OFM, Services
 func (g *gateway) Reconcile() error {
 	klog.Info("Reconciling gateway with updates")
-	if err := g.openflowManager.updateBridgeFlowCache(g.nodeIPManager.ListAddresses()); err != nil {
-		return err
+	if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
+		if err := g.openflowManager.updateBridgeFlowCache(g.nodeIPManager.ListAddresses()); err != nil {
+			return err
+		}
+		// let's sync these flows immediately
+		g.openflowManager.requestFlowSync()
 	}
-	// let's sync these flows immediately
-	g.openflowManager.requestFlowSync()
-	err := g.updateSNATRules()
-	if err != nil {
-		return err
+	// TBD updateSNATRules() gets node host-cidr by accessing gateway.nodeIPManager, which does not
+	// exist in dpu-host mode
+	if config.Gateway.Mode == types.NodeModeFull {
+		err := g.updateSNATRules()
+		if err != nil {
+			return err
+		}
 	}
 	// Services create OpenFlow flows as well, need to update them all
 	if g.servicesRetryFramework != nil {
