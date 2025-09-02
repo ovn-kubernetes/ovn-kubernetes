@@ -1226,7 +1226,7 @@ func (oc *Layer2UserDefinedNetworkController) ensureUpgradeTopology(node *corev1
 		return err
 	}
 
-	// now add fake join IPs to the router port
+	// now add fake join IPs AND masq subnet to the router port
 	lrpName := oc.getCRToSwitchPortName(switchName)
 	trRouterPort, err := libovsdbops.GetLogicalRouterPort(oc.nbClient, &nbdb.LogicalRouterPort{Name: lrpName})
 	if err != nil {
@@ -1234,13 +1234,19 @@ func (oc *Layer2UserDefinedNetworkController) ensureUpgradeTopology(node *corev1
 	}
 	fakeJoinIPs := udn.GetLastIPsFromJoinSubnet(oc.GetNetInfo())
 
+	masqSubnets, err := udn.GetUDNGatewayMasqueradeIPs(oc.GetNetworkID())
+	if err != nil {
+		return fmt.Errorf("failed to get masquerade IPs, network %s (%d): %w", oc.GetNetworkName(), oc.GetNetworkID(), err)
+	}
+
 	existingNetworkSet := sets.New[string](trRouterPort.Networks...)
 	newNetworksSet := sets.New[string](util.IPNetsToStringSlice(fakeJoinIPs)...)
+	newNetworksSet.Insert(util.IPNetsToStringSlice(masqSubnets)...)
 	// Only add fake join IPs if they are not already present
 	if existingNetworkSet.IsSuperset(newNetworksSet) {
 		return nil
 	}
-	trRouterPort.Networks = append(trRouterPort.Networks, util.IPNetsToStringSlice(fakeJoinIPs)...)
+	trRouterPort.Networks = append(trRouterPort.Networks, newNetworksSet.UnsortedList()...)
 	err = libovsdbops.CreateOrUpdateLogicalRouterPort(oc.nbClient, &logicalRouter, trRouterPort, nil, &trRouterPort.Networks)
 	if err != nil {
 		return fmt.Errorf("failed to update logical router port %s with fake join IPs: %w", lrpName, err)
@@ -1265,18 +1271,23 @@ func (oc *Layer2UserDefinedNetworkController) cleanupUpgradeTopology() error {
 	// 2. Delete fake join IPs from the router port
 	lrpName := oc.getCRToSwitchPortName(switchName)
 	fakeJoinIPs := udn.GetLastIPsFromJoinSubnet(oc.GetNetInfo())
+	masqSubnets, err := udn.GetUDNGatewayMasqueradeIPs(oc.GetNetworkID())
+	if err != nil {
+		return fmt.Errorf("failed to get masquerade IPs, network %s (%d): %w", oc.GetNetworkName(), oc.GetNetworkID(), err)
+	}
 	trRouterPort, err := libovsdbops.GetLogicalRouterPort(oc.nbClient, &nbdb.LogicalRouterPort{Name: lrpName})
 	if err != nil {
 		return fmt.Errorf("failed to get logical router port %s: %w", lrpName, err)
 	}
 	updatedNetworks := sets.New(trRouterPort.Networks...)
 	staleNetworksSet := sets.New[string](util.IPNetsToStringSlice(fakeJoinIPs)...)
+	staleNetworksSet.Insert(util.IPNetsToStringSlice(masqSubnets)...)
 	if updatedNetworks.Intersection(staleNetworksSet).Len() == 0 {
 		// No fake join IPs to remove, nothing to do
 		return nil
 	}
-	for _, network := range fakeJoinIPs {
-		updatedNetworks.Delete(network.String())
+	for network := range staleNetworksSet {
+		updatedNetworks.Delete(network)
 	}
 	trRouterPort.Networks = updatedNetworks.UnsortedList()
 	err = libovsdbops.CreateOrUpdateLogicalRouterPort(oc.nbClient, &logicalRouter, trRouterPort, nil, &trRouterPort.Networks)
