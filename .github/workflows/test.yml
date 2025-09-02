@@ -159,8 +159,15 @@ jobs:
         path: ${{ env.CI_IMAGE_MASTER_TAR }}
 
   build-pr:
-    name: Build-PR
-    runs-on: ubuntu-24.04
+    name: Build-PR (${{ matrix.arch }})
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest # x86_64
+            arch: amd64
+          - runner: ubuntu-24.04-arm # arm64
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
     steps:
     # Create a cache for the build PR image
     - name: Restore PR image cache
@@ -200,6 +207,17 @@ jobs:
         cache: false
       id: go
 
+    - name: Set up QEMU
+      if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
+      uses: docker/setup-qemu-action@v3
+      with:
+        platforms: all
+
+    - name: Set up Docker Buildx
+      if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
+      id: buildx
+      uses: docker/setup-buildx-action@v3
+
     - name: Install VRF kernel module
       if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
       run: |
@@ -221,18 +239,21 @@ jobs:
            COVERALLS=1 CONTAINER_RUNNABLE=1 make check
         popd
 
-    - name: Build docker image - from current pr branch
+    - name: Build multi-arch docker image - from current pr branch
       if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
       run: |
-        pushd dist/images
-          IMAGE=ovn-daemonset-fedora:pr
-          make IMAGE=${IMAGE} \
-            OVN_REPO=${{ env.OVN_REPO }} \
-            OVN_GITREF=${{ env.OVN_GITREF }} \
-            fedora-image
-          mkdir _output
-          docker save ${IMAGE} > _output/${CI_IMAGE_PR_TAR}
-        popd
+        IMAGE=ovn-daemonset-fedora:pr
+        docker buildx build \
+          --builder ${{ steps.buildx.outputs.name }} \
+          --build-arg OVN_REPO=${{ env.OVN_REPO }} \
+          --build-arg OVN_GITREF=${{ env.OVN_GITREF }} \
+          --build-arg BUILDER_IMAGE=quay.io/lib/golang:1.24 \
+          --platform linux/amd64,linux/arm64 \
+          --load \
+          -t ${IMAGE} \
+          -f dist/images/Dockerfile.fedora .
+        mkdir _output
+        docker save ${IMAGE} > _output/${CI_IMAGE_PR_TAR}
 
     - name: Submit code coverage to Coveralls
       if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
