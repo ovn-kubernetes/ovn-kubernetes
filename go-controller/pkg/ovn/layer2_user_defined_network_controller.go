@@ -1212,10 +1212,13 @@ func (oc *Layer2UserDefinedNetworkController) ensureUpgradeTopology(node *corev1
 	if err != nil {
 		return fmt.Errorf("failed composing LRP addresses for layer2 network %s: %w", oc.GetNetworkName(), err)
 	}
+	fakeJoinIPs := udn.GetLastIPsFromJoinSubnet(oc.GetNetInfo())
+
 	gwLRPMAC := util.IPAddrToHWAddr(gwLRPJoinIPs[0].IP)
 	logicalRouterPort := nbdb.LogicalRouterPort{
-		Name: upgradeRouterPortName,
-		MAC:  gwLRPMAC.String(),
+		Name:     upgradeRouterPortName,
+		MAC:      gwLRPMAC.String(),
+		Networks: util.IPNetsToStringSlice(fakeJoinIPs),
 	}
 	logicalRouter := nbdb.LogicalRouter{Name: oc.GetNetworkScopedClusterRouterName()}
 
@@ -1232,7 +1235,6 @@ func (oc *Layer2UserDefinedNetworkController) ensureUpgradeTopology(node *corev1
 	if err != nil {
 		return fmt.Errorf("failed to get logical router port %s: %w", lrpName, err)
 	}
-	fakeJoinIPs := udn.GetLastIPsFromJoinSubnet(oc.GetNetInfo())
 
 	masqSubnets, err := udn.GetUDNGatewayMasqueradeIPs(oc.GetNetworkID())
 	if err != nil {
@@ -1240,8 +1242,8 @@ func (oc *Layer2UserDefinedNetworkController) ensureUpgradeTopology(node *corev1
 	}
 
 	existingNetworkSet := sets.New[string](trRouterPort.Networks...)
-	newNetworksSet := sets.New[string](util.IPNetsToStringSlice(fakeJoinIPs)...)
-	newNetworksSet.Insert(util.IPNetsToStringSlice(masqSubnets)...)
+	newNetworksSet := sets.New[string](util.IPNetsToStringSlice(masqSubnets)...)
+	//newNetworksSet.Insert(util.IPNetsToStringSlice(masqSubnets)...)
 	// Only add fake join IPs if they are not already present
 	if existingNetworkSet.IsSuperset(newNetworksSet) {
 		return nil
@@ -1270,7 +1272,7 @@ func (oc *Layer2UserDefinedNetworkController) cleanupUpgradeTopology() error {
 	}
 	// 2. Delete fake join IPs from the router port
 	lrpName := oc.getCRToSwitchPortName(switchName)
-	fakeJoinIPs := udn.GetLastIPsFromJoinSubnet(oc.GetNetInfo())
+	//fakeJoinIPs := udn.GetLastIPsFromJoinSubnet(oc.GetNetInfo())
 	masqSubnets, err := udn.GetUDNGatewayMasqueradeIPs(oc.GetNetworkID())
 	if err != nil {
 		return fmt.Errorf("failed to get masquerade IPs, network %s (%d): %w", oc.GetNetworkName(), oc.GetNetworkID(), err)
@@ -1280,8 +1282,8 @@ func (oc *Layer2UserDefinedNetworkController) cleanupUpgradeTopology() error {
 		return fmt.Errorf("failed to get logical router port %s: %w", lrpName, err)
 	}
 	updatedNetworks := sets.New(trRouterPort.Networks...)
-	staleNetworksSet := sets.New[string](util.IPNetsToStringSlice(fakeJoinIPs)...)
-	staleNetworksSet.Insert(util.IPNetsToStringSlice(masqSubnets)...)
+	staleNetworksSet := sets.New[string](util.IPNetsToStringSlice(masqSubnets)...)
+	//staleNetworksSet.Insert(util.IPNetsToStringSlice(masqSubnets)...)
 	if updatedNetworks.Intersection(staleNetworksSet).Len() == 0 {
 		// No fake join IPs to remove, nothing to do
 		return nil
