@@ -832,7 +832,15 @@ func (oc *Layer2UserDefinedNetworkController) addRouterSetupForRemoteNodeGR(node
 			oc.remoteNodesNoRouter.Delete(node.Name)
 		} else {
 			// node is still using old topology
-			return oc.addSwitchPortForRemoteNodeGR(node)
+			if err := oc.addSwitchPortForRemoteNodeGR(node); err != nil {
+				return err
+			}
+			gwRouterJoinIPs, err := udn.GetGWRouterIPs(node, oc.GetNetInfo())
+			if err != nil {
+				return err
+			}
+			// create joinIP via joinIP routes to send traffic via the switch port
+			return oc.addTransitRouterRoutes(node, gwRouterJoinIPs)
 		}
 	}
 	transitRouterInfo, err := getTransitRouterInfo(node)
@@ -859,12 +867,16 @@ func (oc *Layer2UserDefinedNetworkController) addRouterSetupForRemoteNodeGR(node
 		&transitPort.Options, &transitPort.ExternalIDs); err != nil {
 		return fmt.Errorf("failed to create remote port %+v on router %+v: %v", transitPort, transitRouter, err)
 	}
+	return oc.addTransitRouterRoutes(node, transitRouterInfo.gatewayRouterNets)
+}
+
+func (oc *Layer2UserDefinedNetworkController) addTransitRouterRoutes(node *corev1.Node, nextHops []*net.IPNet) error {
 	gwRouterJoinIPs, err := udn.GetGWRouterIPs(node, oc.GetNetInfo())
 	if err != nil {
 		return err
 	}
 	for _, gwRouterJoinIP := range gwRouterJoinIPs {
-		nexthop, err := util.MatchFirstIPNetFamily(utilnet.IsIPv6CIDR(gwRouterJoinIP), transitRouterInfo.gatewayRouterNets)
+		nexthop, err := util.MatchFirstIPNetFamily(utilnet.IsIPv6CIDR(gwRouterJoinIP), nextHops)
 		if err != nil {
 			return fmt.Errorf("failed to add remote node join ip based "+
 				"routes in distributed router %s: %v",
