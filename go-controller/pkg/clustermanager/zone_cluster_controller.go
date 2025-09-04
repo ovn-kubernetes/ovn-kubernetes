@@ -66,16 +66,16 @@ func newZoneClusterController(ovnClient *util.OVNClusterManagerClientset, wf *fa
 	var err error
 	if config.OVNKubernetesFeature.EnableInterconnect {
 		if config.IPv4Mode {
-			transitSwitchIPv4Generator, err = ipgenerator.NewIPGenerator(config.ClusterManager.V4TransitSwitchSubnet)
+			transitSwitchIPv4Generator, err = ipgenerator.NewIPGenerator(config.ClusterManager.V4TransitSubnet)
 			if err != nil {
-				return nil, fmt.Errorf("error creating IP Generator for v4 transit switch subnet %s: %w", config.ClusterManager.V4TransitSwitchSubnet, err)
+				return nil, fmt.Errorf("error creating IP Generator for v4 transit subnet %s: %w", config.ClusterManager.V4TransitSubnet, err)
 			}
 		}
 
 		if config.IPv6Mode {
-			transitSwitchIPv6Generator, err = ipgenerator.NewIPGenerator(config.ClusterManager.V6TransitSwitchSubnet)
+			transitSwitchIPv6Generator, err = ipgenerator.NewIPGenerator(config.ClusterManager.V6TransitSubnet)
 			if err != nil {
-				return nil, fmt.Errorf("error creating IP Generator for v6 transit switch subnet %s: %w", config.ClusterManager.V4TransitSwitchSubnet, err)
+				return nil, fmt.Errorf("error creating IP Generator for v6 transit subnet %s: %w", config.ClusterManager.V6TransitSubnet, err)
 			}
 		}
 	}

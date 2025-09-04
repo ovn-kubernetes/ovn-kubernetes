@@ -919,8 +919,8 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 
 	ginkgo.Context("Transit switch port IP allocations", func() {
 		ginkgo.It("Interconnect enabled", func() {
-			config.ClusterManager.V4TransitSwitchSubnet = "100.89.0.0/16"
-			config.ClusterManager.V6TransitSwitchSubnet = "fd99::/64"
+			config.ClusterManager.V4TransitSubnet = "100.89.0.0/16"
+			config.ClusterManager.V6TransitSubnet = "fd99::/64"
 			app.Action = func(ctx *cli.Context) error {
 				nodes := []corev1.Node{
 					{
@@ -984,12 +984,12 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 							return fmt.Errorf("transit switch ips for node %s not allocated", n.Name)
 						}
 
-						_, transitSwitchV4Subnet, err := net.ParseCIDR(config.ClusterManager.V4TransitSwitchSubnet)
+						_, transitSwitchV4Subnet, err := net.ParseCIDR(config.ClusterManager.V4TransitSubnet)
 						if err != nil {
 							return fmt.Errorf("could not parse IPv4 transit switch subnet %v", err)
 						}
 
-						_, transitSwitchV6Subnet, err := net.ParseCIDR(config.ClusterManager.V6TransitSwitchSubnet)
+						_, transitSwitchV6Subnet, err := net.ParseCIDR(config.ClusterManager.V6TransitSubnet)
 						if err != nil {
 							return fmt.Errorf("could not parse IPv6 transit switch subnet %v", err)
 						}
