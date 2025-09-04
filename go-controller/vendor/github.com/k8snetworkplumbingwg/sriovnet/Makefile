@@ -11,7 +11,7 @@ GCOV2LCOV := $(BIN_DIR)/gcov2lcov
 # golangci-lint version should be updated periodically
 # we keep it fixed to avoid it from unexpectedly failing on the project
 # in case of a version bump
-GOLANGCI_LINT_VER := v1.49.0
+GOLANGCI_LINT_VER := v2.3.0
 
 Q = $(if $(filter 1,$V),,@)
 
@@ -32,7 +32,7 @@ lint: | $(GOLANGCI_LINT) ; $(info  running golangci-lint...) @ ## Run lint tests
 
 .PHONY: test tests
 test: ; $(info  running unit tests...) ## Run unit tests
-	$Q go test ./...
+	$Q go test -race ./...
 
 tests: test lint ; ## Run all tests
 
@@ -41,11 +41,11 @@ COVERAGE_MODE = count
 test-coverage-tools: $(GCOV2LCOV)
 test-coverage: | test-coverage-tools; $(info  running coverage tests...) @ ## Run coverage tests
 	$Q go test -covermode=$(COVERAGE_MODE) -coverprofile=sriovnet.cover ./...
-	$Q $(GCOV2LCOV) -infile sriovnet.cover -outfile sriovnet.info
+	$Q $(GCOV2LCOV) -infile sriovnet.cover -outfile sriovnet.lcov
 
 # Tools
 $(GOLANGCI_LINT): | $(BIN_DIR) ; $(info  building golangci-lint...)
-	$Q GOBIN=$(BIN_DIR) go install github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_LINT_VER)
+	$Q GOBIN=$(BIN_DIR) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VER)
 
 $(GCOV2LCOV):  | $(BIN_DIR) ; $(info  building gocov2lcov...)
 	$Q GOBIN=$(BIN_DIR) go install github.com/jandelgado/gcov2lcov@v1.0.5
@@ -55,7 +55,7 @@ $(GCOV2LCOV):  | $(BIN_DIR) ; $(info  building gocov2lcov...)
 clean: ; $(info  Cleaning...) @ ## Cleanup everything
 	@rm -rf  $(BIN_DIR)
 	@rm sriovnet.cover
-	@rm sriovnet.info
+	@rm sriovnet.lcov
 
 .PHONY: help
 help: ; @ ## Show this message

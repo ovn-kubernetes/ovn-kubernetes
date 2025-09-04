@@ -121,7 +121,6 @@ func (n tNode) logicalSwitch(loadBalancerGroupUUIDs []string) *nbdb.LogicalSwitc
 	return &nbdb.LogicalSwitch{
 		UUID:              n.Name + "-UUID",
 		Name:              n.Name,
-		OtherConfig:       map[string]string{"subnet": n.NodeSubnet},
 		LoadBalancerGroup: loadBalancerGroupUUIDs,
 	}
 }
@@ -1816,17 +1815,8 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			// Ensure that the node's switch is eventually created once the annotations
 			// are reconciled by the network cluster controller
 			gomega.Eventually(func() bool {
-				newNodeLS, err := libovsdbops.GetLogicalSwitch(nbClient, &nbdb.LogicalSwitch{Name: newNode.Name})
-				if err != nil {
-					return false
-				}
-				if newNodeLS.OtherConfig["subnet"] != newNodeIpv4Subnet {
-					return false
-				}
-				if newNodeLS.OtherConfig["ipv6_prefix"] != newNodeIpv6SubnetPrefix {
-					return false
-				}
-				return true
+				_, err = libovsdbops.GetLogicalSwitch(nbClient, &nbdb.LogicalSwitch{Name: newNode.Name})
+				return err == nil
 			}, 10).Should(gomega.BeTrue())
 
 			return nil

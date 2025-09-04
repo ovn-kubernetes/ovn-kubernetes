@@ -2403,6 +2403,12 @@ func withLabels(labels map[string]string) podOption {
 	}
 }
 
+func withAnnotations(annotations map[string]string) podOption {
+	return func(pod *podConfiguration) {
+		pod.annotations = annotations
+	}
+}
+
 func withNetworkAttachment(networks []nadapi.NetworkSelectionElement) podOption {
 	return func(pod *podConfiguration) {
 		pod.attachments = networks

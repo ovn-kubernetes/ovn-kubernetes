@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"text/tabwriter"
 	"text/template"
@@ -29,6 +30,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controllermanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb"
+	libovsdbutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
 	ovnnode "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
@@ -478,6 +480,14 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 			clusterManager.Stop()
 		}()
 	}
+	// when ovnkube is running in ovnkube-controller and ovnkube node mode in the same process, bool is used to inform ovnkube-node that ovnkube-controller
+	// has sync'd once and changes have propagated to SB DB. ovnkube-node will then remove flows for dropping GARPs.
+	// Remove when OVN supports native silencing of GARPs on startup: https://issues.redhat.com/browse/FDP-1537
+	// isOVNKubeControllerSyncd is true when ovnkube controller has sync and changes are in OVN Southbound database.
+	var isOVNKubeControllerSyncd *atomic.Bool
+	if runMode.ovnkubeController && runMode.node && config.OVNKubernetesFeature.EnableEgressIP && config.OVNKubernetesFeature.EnableInterconnect && config.OvnKubeNode.Mode == types.NodeModeFull {
+		isOVNKubeControllerSyncd = &atomic.Bool{}
+	}
 
 	if runMode.ovnkubeController {
 		wg.Add(1)
@@ -514,9 +524,19 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 				controllerErr = fmt.Errorf("failed to start network controller: %w", err)
 				return
 			}
-
 			// record delay until ready
 			metrics.MetricOVNKubeControllerReadyDuration.Set(time.Since(startTime).Seconds())
+
+			if isOVNKubeControllerSyncd != nil {
+				klog.Infof("Waiting for OVN northbound database changes to sync to OVN Southbound database")
+				if err = libovsdbutil.WaitUntilNorthdSyncOnce(ctx, libovsdbOvnNBClient, libovsdbOvnSBClient); err != nil {
+					controllerErr = fmt.Errorf("failed waiting for northd to sync OVN Northbound DB to Southbound: %v", err)
+					return
+				} else {
+					klog.Infof("OVN northbound database changes synced to OVN Southbound database")
+					isOVNKubeControllerSyncd.Store(true)
+				}
+			}
 
 			<-ctx.Done()
 			controllerManager.Stop()
@@ -561,7 +581,7 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 				return
 			}
 
-			err = nodeControllerManager.Start(ctx)
+			err = nodeControllerManager.Start(ctx, isOVNKubeControllerSyncd)
 			if err != nil {
 				nodeErr = fmt.Errorf("failed to start node network controller: %w", err)
 				return
@@ -571,7 +591,7 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 			metrics.MetricNodeReadyDuration.Set(time.Since(startTime).Seconds())
 
 			<-ctx.Done()
-			nodeControllerManager.Stop()
+			nodeControllerManager.Stop(isOVNKubeControllerSyncd)
 		}()
 	}
 

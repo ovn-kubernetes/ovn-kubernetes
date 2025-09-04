@@ -37,7 +37,7 @@ func NewFakeFs(fakeFsRoot string) (Filesystem, func(), error) {
 
 	return &FakeFs{a: afero.Afero{Fs: afero.NewBasePathFs(afero.NewOsFs(), fakeFsRoot)}},
 		func() {
-			os.RemoveAll(fakeFsRoot)
+			_ = os.RemoveAll(fakeFsRoot)
 		},
 		nil
 }

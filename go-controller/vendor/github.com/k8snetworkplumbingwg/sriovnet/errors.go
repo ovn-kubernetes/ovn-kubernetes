@@ -17,26 +17,9 @@ limitations under the License.
 package sriovnet
 
 import (
-	"fmt"
-	"strings"
-
-	utilfs "github.com/k8snetworkplumbingwg/sriovnet/pkg/utils/filesystem"
+	"errors"
 )
 
-func getFileNamesFromPath(dir string) ([]string, error) {
-	_, err := utilfs.Fs.Stat(dir)
-	if err != nil {
-		return nil, fmt.Errorf("could not stat the directory %s: %v", dir, err)
-	}
-
-	files, err := utilfs.Fs.ReadDir(dir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read directory %s: %v", dir, err)
-	}
-
-	netDevices := make([]string, 0, len(files))
-	for _, netDeviceFile := range files {
-		netDevices = append(netDevices, strings.TrimSpace(netDeviceFile.Name()))
-	}
-	return netDevices, nil
-}
+var (
+	ErrDeviceNotFound = errors.New("device not found")
+)

@@ -57,6 +57,19 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 		mod_vlan_id = fmt.Sprintf("mod_vlan_vid:%d,", config.Gateway.VLANID)
 	}
 
+	// Problem: ovn-controller connects to SB DB and then GARPs for any EIPs configured however for IC, SB DB maybe stale if
+	// ovnkube-controller is not processing.
+	// Solution: add a logical flow on startup to allow GARPs from Node IPs but drop other GARPs and remove when ovnkube-controller
+	// has sync'd and changes propagated to OVN SB DB.
+	// remove when ovn contains native support for logical router ports to contain an option to silence GARPs on startup of ovn-controller.
+	// https://issues.redhat.com/browse/FDP-1537
+	if b.dropGARP {
+		// priority 499 flows to allow GARP pkts when src IP is a Node IP
+		dftFlows = append(dftFlows, b.allowNodeIPGARPFlows(extraIPs)...)
+		// priority 498 flows to drop GARP pkts with no regards to src IP
+		dftFlows = append(dftFlows, b.dropGARPFlows()...)
+	}
+
 	if config.IPv4Mode {
 		// table0, Geneve packets coming from external. Skip conntrack and go directly to host
 		// if dest mac is the shared mac send directly to host.
@@ -498,6 +511,26 @@ func generateIPFragmentReassemblyFlow(ofPortPhys string) []string {
 	return flows
 }
 
+// generateGratuitousARPDropFlow returns a single flow to drop GARPs
+// Remove when https://issues.redhat.com/browse/FDP-1537 available
+func generateGratuitousARPDropFlow(inPort string, priority int) string {
+	// set to op code 1 - see rfc5227 particularly section:
+	// Why Are ARP Announcements Performed Using ARP Request Packets and Not ARP Reply Packets?
+	// ovn follows this practise of using op code 1
+	return fmt.Sprintf("cookie=%s,table=0,priority=%d,in_port=%s,dl_dst=ff:ff:ff:ff:ff:ff,arp,arp_op=1,actions=drop",
+		nodetypes.GARPCookie, priority, inPort)
+}
+
+// generateGratuitousARPAllowFlow returns a single flow to allow GARP only for a specific source IP.
+// Remove when https://issues.redhat.com/browse/FDP-1537 available
+func generateGratuitousARPAllowFlow(inPort string, ip net.IP, priority int) string {
+	// set to op code 1 - see rfc5227 particularly section:
+	// Why Are ARP Announcements Performed Using ARP Request Packets and Not ARP Reply Packets?
+	// ovn follows this practise of using op code 1
+	return fmt.Sprintf("cookie=%s,table=0,priority=%d,in_port=%s,dl_dst=ff:ff:ff:ff:ff:ff,arp,arp_op=1,arp_spa=%s,actions=output:NORMAL",
+		nodetypes.GARPCookie, priority, inPort, ip)
+}
+
 // must be called with bridge.mutex held
 func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, error) {
 	// CAUTION: when adding new flows where the in_port is ofPortPatch and the out_port is ofPortPhys, ensure
@@ -632,12 +665,12 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 		}
 
 		if ofPortPhys != "" {
-			// table 0, packets coming from external or other localnet ports. Send it through conntrack and
-			// resubmit to table 1 to know the state and mark of the connection.
+			// table 0, packets coming from external or other localnet ports and destined to OVN or LOCAL.
+			// Send it through conntrack and resubmit to table 1 to know the state and mark of the connection.
 			// Note, there are higher priority rules that take care of traffic coming from LOCAL and OVN ports.
 			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=50, ip, actions=ct(zone=%d, nat, table=1)",
-					nodetypes.DefaultOpenFlowCookie, config.Default.ConntrackZone))
+				fmt.Sprintf("cookie=%s, priority=50, ip, dl_dst=%s, actions=ct(zone=%d, nat, table=1)",
+					nodetypes.DefaultOpenFlowCookie, bridgeMacAddress, config.Default.ConntrackZone))
 		}
 	}
 
@@ -733,8 +766,8 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 			// table 0, packets coming from external. Send it through conntrack and
 			// resubmit to table 1 to know the state and mark of the connection.
 			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=50, in_port=%s, ipv6, "+
-					"actions=ct(zone=%d, nat, table=1)", nodetypes.DefaultOpenFlowCookie, ofPortPhys, config.Default.ConntrackZone))
+				fmt.Sprintf("cookie=%s, priority=50, ipv6, dl_dst=%s, actions=ct(zone=%d, nat, table=1)",
+					nodetypes.DefaultOpenFlowCookie, bridgeMacAddress, config.Default.ConntrackZone))
 		}
 	}
 	if ofPortPhys != "" {
@@ -907,6 +940,55 @@ func (b *BridgeConfiguration) PMTUDDropFlows(ipAddrs []string) []string {
 		}
 	}
 
+	return flows
+}
+
+// dropGARPFlows generates the ovs flows for dropping gratuitous ARPs for cluster default network traffic only.
+// bridgeConfiguration lock must be held by caller
+func (b *BridgeConfiguration) dropGARPFlows() []string {
+	if config.Gateway.Mode != config.GatewayModeShared || !config.IPv4Mode {
+		return nil
+	}
+	const priority = 498
+	var flows []string
+
+	defaultNetInfo := util.DefaultNetInfo{}
+	defaultNetPatchPortName := defaultNetInfo.GetNetworkScopedPatchPortName(b.bridgeName, b.nodeName)
+
+	for _, netConfig := range b.patchedNetConfigs() {
+		if netConfig.PatchPort != defaultNetPatchPortName {
+			continue
+		}
+		flows = append(flows, generateGratuitousARPDropFlow(netConfig.OfPortPatch, priority))
+	}
+	return flows
+}
+
+// allowNodeIPGARPFlows generates the OVS flows to allow gratuitous ARPs for Node IP(s) for the cluster default network traffic only.
+// bridgeConfiguration lock must be held by caller.
+// Remove when https://issues.redhat.com/browse/FDP-1537 is available
+func (b *BridgeConfiguration) allowNodeIPGARPFlows(nodeIPs []net.IP) []string {
+	if config.Gateway.Mode != config.GatewayModeShared || !config.IPv4Mode {
+		return nil
+	}
+	const priority = 499
+	var flows []string
+
+	defaultNetInfo := util.DefaultNetInfo{}
+	defaultNetPatchPortName := defaultNetInfo.GetNetworkScopedPatchPortName(b.bridgeName, b.nodeName)
+
+	for _, netConfig := range b.patchedNetConfigs() {
+		if netConfig.PatchPort != defaultNetPatchPortName {
+			continue
+		}
+		for _, nodeIP := range nodeIPs {
+			if nodeIP == nil || nodeIP.IsUnspecified() || utilnet.IsIPv6(nodeIP) {
+				continue
+			}
+			flows = append(flows, generateGratuitousARPAllowFlow(netConfig.OfPortPatch, nodeIP, priority))
+		}
+
+	}
 	return flows
 }
 

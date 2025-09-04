@@ -12,14 +12,14 @@ GOPATH ?= $(shell go env GOPATH)
 TEST_REPORT_DIR?=$(CURDIR)/_artifacts
 export TEST_REPORT_DIR
 GO_VERSION ?= 1.24
-GO_DOCKER_IMG = quay.io/lib/golang:${GO_VERSION}
+GO_DOCKER_IMG = quay.io/projectquay/golang:${GO_VERSION}
 # CONTAINER_RUNNABLE determines if the tests can be run inside a container. It checks to see if
 # podman/docker is installed on the system.
 PODMAN ?= $(shell podman -v > /dev/null 2>&1; echo $$?)
 ifeq ($(PODMAN), 0)
-CONTAINER_RUNTIME=podman
+CONTAINER_RUNTIME?=podman
 else
-CONTAINER_RUNTIME=docker
+CONTAINER_RUNTIME?=docker
 endif
 CONTAINER_RUNNABLE ?= $(shell $(CONTAINER_RUNTIME) -v > /dev/null 2>&1; echo $$?)
 OVN_SCHEMA_VERSION ?= v25.03.1

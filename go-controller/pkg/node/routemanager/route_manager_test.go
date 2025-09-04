@@ -369,6 +369,7 @@ var _ = ginkgo.Describe("Route Manager", func() {
 			"Destination":   &netlink.Via{Addr: ovntest.MustParseIP("10.0.0.0")},
 			"Encap":         &netlink.IP6tnlEncap{Src: ovntest.MustParseIP("10.0.0.0")},
 			"string":        "test",
+			"bool":          true,
 		}
 		keys := map[string]bool{
 			"Dst":      true,
