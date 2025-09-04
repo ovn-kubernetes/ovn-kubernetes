@@ -203,8 +203,8 @@ var (
 	}
 
 	ClusterManager = ClusterManagerConfig{
-		V4TransitSwitchSubnet: "100.88.0.0/16",
-		V6TransitSwitchSubnet: "fd97::/64",
+		V4TransitSubnet: "100.88.0.0/16",
+		V6TransitSubnet: "fd97::/64",
 	}
 )
 
@@ -561,10 +561,10 @@ type OvnKubeNodeConfig struct {
 
 // ClusterManagerConfig holds configuration for ovnkube-cluster-manager
 type ClusterManagerConfig struct {
-	// V4TransitSwitchSubnet to be used in the cluster for interconnecting multiple zones
-	V4TransitSwitchSubnet string `gcfg:"v4-transit-switch-subnet"`
-	// V6TransitSwitchSubnet to be used in the cluster for interconnecting multiple zones
-	V6TransitSwitchSubnet string `gcfg:"v6-transit-switch-subnet"`
+	// V4TransitSubnet to be used in the cluster for interconnecting multiple zones
+	V4TransitSubnet string `gcfg:"v4-transit-subnet"`
+	// V6TransitSubnet to be used in the cluster for interconnecting multiple zones
+	V6TransitSubnet string `gcfg:"v6-transit-subnet"`
 }
 
 // OvnDBScheme describes the OVN database connection transport method
@@ -1659,16 +1659,16 @@ var OvnKubeNodeFlags = []cli.Flag{
 // ClusterManagerFlags captures ovnkube-cluster-manager specific configurations
 var ClusterManagerFlags = []cli.Flag{
 	&cli.StringFlag{
-		Name:        "cluster-manager-v4-transit-switch-subnet",
-		Usage:       "The v4 transit switch subnet used for assigning transit switch IPv4 addresses for interconnect",
-		Destination: &cliConfig.ClusterManager.V4TransitSwitchSubnet,
-		Value:       ClusterManager.V4TransitSwitchSubnet,
+		Name:        "cluster-manager-v4-transit-subnet",
+		Usage:       "The v4 transit subnet used for assigning transit switch and transit router IPv4 addresses for interconnect",
+		Destination: &cliConfig.ClusterManager.V4TransitSubnet,
+		Value:       ClusterManager.V4TransitSubnet,
 	},
 	&cli.StringFlag{
-		Name:        "cluster-manager-v6-transit-switch-subnet",
-		Usage:       "The v6 transit switch subnet used for assigning transit switch IPv6 addresses for interconnect",
-		Destination: &cliConfig.ClusterManager.V6TransitSwitchSubnet,
-		Value:       ClusterManager.V6TransitSwitchSubnet,
+		Name:        "cluster-manager-v6-transit-subnet",
+		Usage:       "The v6 transit switch subnet used for assigning transit switch and transit router IPv6 addresses for interconnect",
+		Destination: &cliConfig.ClusterManager.V6TransitSubnet,
+		Value:       ClusterManager.V6TransitSubnet,
 	},
 }
 
@@ -2187,14 +2187,14 @@ func buildClusterManagerConfig(cli, file *config) error {
 // into their final form.
 func completeClusterManagerConfig(allSubnets *ConfigSubnets) error {
 	// Validate v4 and v6 transit switch subnets
-	v4IP, v4TransitCIDR, err := net.ParseCIDR(ClusterManager.V4TransitSwitchSubnet)
+	v4IP, v4TransitCIDR, err := net.ParseCIDR(ClusterManager.V4TransitSubnet)
 	if err != nil || utilnet.IsIPv6(v4IP) {
-		return fmt.Errorf("invalid transit switch v4 subnet specified, subnet: %s: error: %v", ClusterManager.V4TransitSwitchSubnet, err)
+		return fmt.Errorf("invalid transit switch v4 subnet specified, subnet: %s: error: %v", ClusterManager.V4TransitSubnet, err)
 	}
 
-	v6IP, v6TransitCIDR, err := net.ParseCIDR(ClusterManager.V6TransitSwitchSubnet)
+	v6IP, v6TransitCIDR, err := net.ParseCIDR(ClusterManager.V6TransitSubnet)
 	if err != nil || !utilnet.IsIPv6(v6IP) {
-		return fmt.Errorf("invalid transit switch v6 subnet specified, subnet: %s: error: %v", ClusterManager.V6TransitSwitchSubnet, err)
+		return fmt.Errorf("invalid transit switch v6 subnet specified, subnet: %s: error: %v", ClusterManager.V6TransitSubnet, err)
 	}
 	allSubnets.Append(ConfigSubnetTransit, v4TransitCIDR)
 	allSubnets.Append(ConfigSubnetTransit, v6TransitCIDR)
