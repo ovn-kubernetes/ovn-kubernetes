@@ -1548,9 +1548,9 @@ fi
 			cudn       *udnv1.ClusterUserDefinedNetwork
 			vm         *kubevirtv1.VirtualMachine
 			vmi        *kubevirtv1.VirtualMachineInstance
-			cidrIPv4   = "10.128.0.0/24"
+			cidrIPv4   = "172.31.0.0/24" // subnet in private range 172.16.0.0/12 (rfc1918)
 			cidrIPv6   = "2010:100:200::0/60"
-			staticIPv4 = "10.128.0.101"
+			staticIPv4 = "172.31.0.101"
 			staticIPv6 = "2010:100:200::101"
 			staticMAC  = "02:00:00:00:00:01"
 			restart    = testCommand{
@@ -2094,7 +2094,7 @@ ip route add %[3]s via %[4]s
 	Context("with kubevirt VM using layer2 UDPN", Ordered, func() {
 		var (
 			podName                 = "virt-launcher-vm1"
-			cidrIPv4                = "10.128.0.0/24"
+			cidrIPv4                = "172.31.0.0/24"
 			cidrIPv6                = "2010:100:200::/60"
 			primaryUDNNetworkStatus nadapi.NetworkStatus
 			virtLauncherCommand     = func(command string) (string, error) {
@@ -2232,9 +2232,9 @@ ip route add %[3]s via %[4]s
 			Expect(removeImagesInNodes(kubevirt.FedoraContainerDiskImage)).To(Succeed())
 		})
 		var (
-			ipv4CIDR             = "10.128.0.0/24"
+			ipv4CIDR             = "172.31.0.0/24"
 			ipv6CIDR             = "2010:100:200::0/60"
-			vmiIPv4              = "10.128.0.100/24"
+			vmiIPv4              = "172.31.0.100/24"
 			vmiIPv6              = "2010:100:200::100/60"
 			vmiMAC               = "0A:58:0A:80:00:64"
 			staticIPsNetworkData = func(ips []string) (string, error) {
