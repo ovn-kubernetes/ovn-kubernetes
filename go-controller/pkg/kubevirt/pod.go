@@ -609,10 +609,24 @@ func (r *DefaultGatewayReconciler) ReconcileIPv6AfterLiveMigration(liveMigration
 		if len(targetPodAnnotation.Gateways) == 0 {
 			return fmt.Errorf("missing gateways to calculate ipv6 gateway reconciler RA")
 		}
-
 		// The LRP mac is calculated from the first address on the list.
 		gwIP := targetPodAnnotation.Gateways[0]
-		ras = append(ras, newRouterAdvertisementFromIPAndLifetime(gwIP, destinationMAC, destinationIP.IP, 65535))
+
+		// Create Prefix Information Option with IPv6 join subnet
+		prefixNet := r.netInfo.JoinSubnetV6()
+		if prefixNet == nil {
+			return fmt.Errorf("no IPv6 join subnet available for network %q", r.netInfo.GetNetworkName())
+		}
+
+		prefixInfo := ndp.PrefixInformation{
+			Prefix:            *prefixNet,
+			ValidLifetime:     0,
+			PreferredLifetime: 0, // IP lifetime 0 as requested
+			OnLink:            true,
+			Autonomous:        true,
+		}
+
+		ras = append(ras, newRouterAdvertisementWithPrefixInfos(gwIP, destinationMAC, destinationIP.IP, 65535, []ndp.PrefixInformation{prefixInfo}))
 	}
 
 	return ndp.SendRouterAdvertisements(r.interfaceName, ras...)
@@ -643,5 +657,17 @@ func newRouterAdvertisementFromIPAndLifetime(ip net.IP, destinationMAC net.Hardw
 		DestinationMAC: destinationMAC,
 		DestinationIP:  destinationIP,
 		Lifetime:       lifetime,
+	}
+}
+
+func newRouterAdvertisementWithPrefixInfos(ip net.IP, destinationMAC net.HardwareAddr, destinationIP net.IP, lifetime uint16, prefixInfos []ndp.PrefixInformation) ndp.RouterAdvertisement {
+	sourceMAC := util.IPAddrToHWAddr(ip)
+	return ndp.RouterAdvertisement{
+		SourceMAC:      sourceMAC,
+		SourceIP:       util.HWAddrToIPv6LLA(sourceMAC),
+		DestinationMAC: destinationMAC,
+		DestinationIP:  destinationIP,
+		Lifetime:       lifetime,
+		PrefixInfos:    prefixInfos,
 	}
 }
