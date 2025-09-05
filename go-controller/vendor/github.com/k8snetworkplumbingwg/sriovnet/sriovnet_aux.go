@@ -1,21 +1,18 @@
-/*----------------------------------------------------
- *
- *  2022 NVIDIA CORPORATION & AFFILIATES
- *
- *  Licensed under the Apache License, Version 2.0 (the License);
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an AS IS BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
- *
- *----------------------------------------------------
- */
+/*
+Copyright 2023 NVIDIA CORPORATION & AFFILIATES
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package sriovnet
 
@@ -28,7 +25,11 @@ import (
 	utilfs "github.com/k8snetworkplumbingwg/sriovnet/pkg/utils/filesystem"
 )
 
-// GetNetDeviceFromAux gets auxiliary device name (e.g 'mlx5_core.sf.2') and
+const (
+	u32Mask uint32 = 0xffffffff
+)
+
+// GetNetDevicesFromAux gets auxiliary device name (e.g 'mlx5_core.sf.2') and
 // returns the correlate netdevice
 func GetNetDevicesFromAux(auxDev string) ([]string, error) {
 	auxDir := filepath.Join(AuxSysDir, auxDev, "net")
@@ -103,9 +104,39 @@ func GetAuxNetDevicesFromPci(pciAddr string) ([]string, error) {
 
 	auxDevs := make([]string, 0)
 	for _, file := range files {
+		if !file.IsDir() {
+			// auxiliary devices appear as directory here.
+			continue
+		}
 		if auxiliaryDeviceRe.MatchString(file.Name()) {
 			auxDevs = append(auxDevs, file.Name())
 		}
 	}
 	return auxDevs, nil
+}
+
+// GetAuxSFDevByPciAndSFIndex returns auxiliary SF device name which is associated with the given parent PCI address
+// and SF index. returns error if an error occurred. returns ErrDeviceNotFound error if device is not found.
+func GetAuxSFDevByPciAndSFIndex(pciAddress string, sfIndex uint32) (string, error) {
+	devs, err := GetAuxNetDevicesFromPci(pciAddress)
+	if err != nil {
+		return "", err
+	}
+
+	for _, dev := range devs {
+		// skip non sf devices
+		if !strings.Contains(dev, ".sf.") {
+			continue
+		}
+
+		idx, err := GetSfIndexByAuxDev(dev)
+		if err != nil || idx < 0 {
+			continue
+		}
+
+		if uint32(idx)&u32Mask == sfIndex {
+			return dev, nil
+		}
+	}
+	return "", ErrDeviceNotFound
 }

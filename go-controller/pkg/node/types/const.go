@@ -17,6 +17,10 @@ const (
 	// PmtudOpenFlowCookie identifies the flows used to drop ICMP type (3) destination unreachable,
 	// fragmentation-needed (4)
 	PmtudOpenFlowCookie = "0x0304"
+	// GARPCookie identifies the flows used to allow node IPs and drop other GARPs from CDN.
+	// Temp workaround until OVN has native supported for silencing GARPs on startup.
+	// https://issues.redhat.com/browse/FDP-1537
+	GARPCookie = "0x0305"
 	// CtMarkHost is the conntrack mark value for host traffic
 	CtMarkHost = "0x2"
 )

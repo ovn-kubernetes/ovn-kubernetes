@@ -1,3 +1,19 @@
+/*
+Copyright 2023 NVIDIA CORPORATION & AFFILIATES
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package sriovnet
 
 import (
@@ -285,9 +301,11 @@ func setDefaultHwAddr(handle *PfNetdevHandle, vf *VfObj) error {
 	var err error
 
 	ethAttr := handle.pfLinkHandle.Attrs()
-	if ethAttr.EncapType == etherEncapType {
+
+	switch ethAttr.EncapType {
+	case etherEncapType:
 		err = SetVfDefaultMacAddress(handle, vf)
-	} else if ethAttr.EncapType == ibEncapType {
+	case ibEncapType:
 		err = SetVfDefaultGUID(handle, vf)
 	}
 	return err
@@ -387,7 +405,7 @@ func AllocateVfByMacAddress(handle *PfNetdevHandle, vfMacAddress string) (*VfObj
 		handle.PfNetdevName, vfMacAddress)
 }
 
-func FreeVf(handle *PfNetdevHandle, vf *VfObj) {
+func FreeVf(_ *PfNetdevHandle, vf *VfObj) {
 	vf.Allocated = false
 	log.Printf("Free vf = %v\n", *vf)
 }
@@ -433,7 +451,7 @@ func GetVfIndexByPciAddress(vfPciAddress string) (int, error) {
 	return -1, fmt.Errorf("vf index for %s not found", vfPciAddress)
 }
 
-// gets the PF index that's associated with a VF PCI address (e.g '0000:03:00.4')
+// GetPfIndexByVfPciAddress gets the PF index that's associated with a VF PCI address (e.g '0000:03:00.4')
 func GetPfIndexByVfPciAddress(vfPciAddress string) (int, error) {
 	const pciParts = 4
 	pfPciAddress, err := GetPfPciFromVfPci(vfPciAddress)
@@ -503,4 +521,29 @@ func GetPciFromNetDevice(name string) (string, error) {
 		return "", fmt.Errorf("device %s is not a PCI device: %s", name, realPath)
 	}
 	return base, nil
+}
+
+// GetPKeyByIndexFromPci returns the PKey stored under given index for the IB PCI device
+func GetPKeyByIndexFromPci(pciAddress string, index int) (string, error) {
+	pciDir := filepath.Join(PciSysDir, pciAddress, "infiniband")
+	dirEntries, err := utilfs.Fs.ReadDir(pciDir)
+	if err != nil {
+		return "", fmt.Errorf("failed to read infiniband directory: %v", err)
+	}
+	if len(dirEntries) == 0 {
+		return "", fmt.Errorf("infiniband directory is empty for device: %s", pciAddress)
+	}
+
+	indexFilePath := filepath.Join(pciDir, dirEntries[0].Name(), "ports", "1", "pkeys", strconv.Itoa(index))
+	pKeyBytes, err := utilfs.Fs.ReadFile(indexFilePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read PKey file: %v", err)
+	}
+
+	return strings.TrimSpace(string(pKeyBytes)), nil
+}
+
+// GetDefaultPKeyFromPci returns the index0 PKey for the IB PCI device
+func GetDefaultPKeyFromPci(pciAddress string) (string, error) {
+	return GetPKeyByIndexFromPci(pciAddress, 0)
 }

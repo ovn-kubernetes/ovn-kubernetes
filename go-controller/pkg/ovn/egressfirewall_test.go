@@ -857,14 +857,6 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 					_, err = fakeOVN.fakeClient.KubeClient.CoreV1().Nodes().Create(context.TODO(), node, metav1.CreateOptions{})
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-					// check switch subnet is not set
-					newNodeLS := &nbdb.LogicalSwitch{Name: node.Name}
-					gomega.Consistently(func() bool {
-						sw, err := libovsdbops.GetLogicalSwitch(fakeOVN.nbClient, newNodeLS)
-						gomega.Expect(err).NotTo(gomega.HaveOccurred())
-						return sw.OtherConfig["subnet"] == v4NodeSubnet
-					}).WithTimeout(500 * time.Millisecond).Should(gomega.BeFalse())
-
 					ginkgo.By("Updating node network and labels")
 					// update the node to match the selector and to fix node-subnets
 					// fixing node-subnets will cause switch add
@@ -875,14 +867,6 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 
 					_, err = fakeOVN.fakeClient.KubeClient.CoreV1().Nodes().Update(context.TODO(), newNode, metav1.UpdateOptions{})
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-					ginkgo.By("Check node handler was called on update")
-					// check switch subnet is set, meaning the node handler was called
-					gomega.Eventually(func() bool {
-						sw, err := libovsdbops.GetLogicalSwitch(fakeOVN.nbClient, newNodeLS)
-						gomega.Expect(err).NotTo(gomega.HaveOccurred())
-						return sw.OtherConfig["subnet"] == v4NodeSubnet
-					}).WithTimeout(500 * time.Millisecond).Should(gomega.BeTrue())
 
 					// make sure egress firewall acl was not updated as we are still holding a lock
 					getACLs := func() int {

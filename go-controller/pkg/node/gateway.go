@@ -37,6 +37,7 @@ type Gateway interface {
 	GetGatewayIface() string
 	SetDefaultGatewayBridgeMAC(addr net.HardwareAddr)
 	SetDefaultPodNetworkAdvertised(bool)
+	SetDefaultBridgeGARPDropFlows(bool)
 	Reconcile() error
 }
 
@@ -480,6 +481,15 @@ func (g *gateway) SetDefaultPodNetworkAdvertised(isPodNetworkAdvertised bool) {
 
 func (g *gateway) GetDefaultPodNetworkAdvertised() bool {
 	return g.openflowManager.defaultBridge.GetNetworkConfig(types.DefaultNetworkName).Advertised.Load()
+}
+
+// SetDefaultBridgeGARPDropFlows will enable flows to drop GARPs if the openflow
+// manager has been initialized.
+func (g *gateway) SetDefaultBridgeGARPDropFlows(isDropped bool) {
+	if g.openflowManager == nil {
+		return
+	}
+	g.openflowManager.setDefaultBridgeGARPDrop(isDropped)
 }
 
 // Reconcile handles triggering updates to different components of a gateway, like OFM, Services

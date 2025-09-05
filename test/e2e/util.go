@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -14,6 +15,7 @@ import (
 	"text/template"
 	"time"
 
+	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
@@ -823,6 +825,71 @@ func assertACLLogs(targetNodeName string, policyNameRegex string, expectedACLVer
 	return false, nil
 }
 
+// getExternalContainerInterfaceIPsOnNetwork returns the IPv4 and IPv6 addresses (if any)
+// of the given external container on the specified provider network.
+func getExternalContainerInterfaceIPsOnNetwork(containerName, networkName string) (string, string, error) {
+	netw, err := infraprovider.Get().GetNetwork(networkName)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get provider network %q: %w", networkName, err)
+	}
+	ni, err := infraprovider.Get().GetExternalContainerNetworkInterface(
+		infraapi.ExternalContainer{Name: containerName},
+		netw,
+	)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get network interface for container %q on network %q: %w", containerName, netw.Name(), err)
+	}
+	return ni.IPv4, ni.IPv6, nil
+}
+
+// getExternalContainerInterfaceIPs returns IPv4 and IPv6 addresses configured
+// on the given interface inside the given external container. This is useful
+// for manually-configured interfaces like VLAN interfaces.
+func getExternalContainerInterfaceIPs(containerName, ifaceName string) ([]string, []string, error) {
+	container := infraapi.ExternalContainer{Name: containerName}
+
+	// Replicates the relevant fields from the json output by "ip -j addr show"
+	type addrInfo struct {
+		Family string `json:"family"`
+		Local  string `json:"local"`
+		Scope  string `json:"scope"`
+	}
+	type ipAddrJSON struct {
+		AddrInfo []addrInfo `json:"addr_info"`
+	}
+
+	out, err := infraprovider.Get().ExecExternalContainerCommand(
+		container, []string{"ip", "-j", "addr", "show", "dev", ifaceName})
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to exec on container %q: %w", containerName, err)
+	}
+	var parsed []ipAddrJSON
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		return nil, nil, fmt.Errorf("failed to parse ip -j output: %w", err)
+	}
+
+	var v4, v6 []string
+	for _, entry := range parsed {
+		for _, ai := range entry.AddrInfo {
+			if ai.Local == "" {
+				continue
+			}
+			// Skip link-local/host-scoped addresses
+			if ai.Scope == "link" || ai.Scope == "host" {
+				continue
+			}
+			switch ai.Family {
+			case "inet":
+				v4 = append(v4, ai.Local)
+			case "inet6":
+				v6 = append(v6, ai.Local)
+			}
+		}
+	}
+
+	return v4, v6, nil
+}
+
 // patchServiceStringValue patches service serviceName in namespace serviceNamespace with provided string value.
 func patchServiceStringValue(c kubernetes.Interface, serviceName, serviceNamespace, jsonPath, value string) error {
 	patch := []struct {
@@ -1533,4 +1600,152 @@ func executeFileTemplate(templates *template.Template, directory, name string, d
 func isDNSNameResolverEnabled() bool {
 	val, present := os.LookupEnv("OVN_ENABLE_DNSNAMERESOLVER")
 	return present && val == "true"
+}
+
+// Given a node name, returns the host subnets (IPv4/IPv6) of the node primary interface
+// as annotated by OVN-Kubernetes. The returned slice may contain zero, one, or two CIDRs.
+func getHostSubnetsForNode(cs clientset.Interface, nodeName string) ([]string, error) {
+	node, err := cs.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get node %s: %v", nodeName, err)
+	}
+	nodeIfAddr, err := util.GetNodeIfAddrAnnotation(node)
+	if err != nil {
+		return nil, err
+	}
+	hostSubnets := []string{}
+	if nodeIfAddr.IPv4 != "" {
+		ip, ipNet, err := net.ParseCIDR(nodeIfAddr.IPv4)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse IPv4 address %s: %v", nodeIfAddr.IPv4, err)
+		}
+		ipNet.IP = ip.Mask(ipNet.Mask)
+		hostSubnets = append(hostSubnets, ipNet.String())
+	}
+	if nodeIfAddr.IPv6 != "" {
+		ip, ipNet, err := net.ParseCIDR(nodeIfAddr.IPv6)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse IPv6 address %s: %v", nodeIfAddr.IPv6, err)
+		}
+		ipNet.IP = ip.Mask(ipNet.Mask)
+		hostSubnets = append(hostSubnets, ipNet.String())
+	}
+	return hostSubnets, nil
+}
+
+// normalizeIP removes CIDR notation from an IP address if present and validates/normalizes the IP format.
+// For example, "10.0.0.2/24" becomes "10.0.0.2".
+func normalizeIP(s string) (string, error) {
+	if s == "" {
+		return s, nil
+	}
+	if p, err := netip.ParsePrefix(s); err == nil {
+		return p.Addr().String(), nil
+	}
+	if a, err := netip.ParseAddr(s); err == nil {
+		return a.String(), nil
+	}
+	return "", fmt.Errorf("invalid IP address: %s", s)
+}
+
+func normalizeIPAddresses(ips []string) ([]string, error) {
+	normalized := make([]string, len(ips))
+	for i, ip := range ips {
+		normalizedIP, err := normalizeIP(ip)
+		if err != nil {
+			return nil, fmt.Errorf("failed to normalize IP addresses: %w", err)
+		}
+		normalized[i] = normalizedIP
+	}
+	return normalized, nil
+}
+
+// getNetworkInterfaceName extracts the interface name from a pod's network-status annotation
+// If the pod is host-networked, it returns eth0.
+// If the pod has attachments, it finds the interface for the specified network
+// If the pod has no attachments, it returns the default network interface
+func getNetworkInterfaceName(pod *v1.Pod, podConfig podConfiguration, netConfigName string) (string, error) {
+	var predicate func(nadapi.NetworkStatus) bool
+	if podConfig.hostNetwork {
+		return "eth0", nil
+	}
+	if len(podConfig.attachments) > 0 {
+		// Pod has attachments - find the specific network interface
+		expectedNetworkName := fmt.Sprintf("%s/%s", podConfig.namespace, netConfigName)
+		predicate = func(status nadapi.NetworkStatus) bool {
+			return status.Name == expectedNetworkName
+		}
+	} else {
+		// Pod has no attachments - find the default network interface
+		predicate = func(status nadapi.NetworkStatus) bool {
+			return status.Name == "ovn-kubernetes" || status.Default
+		}
+	}
+	networkStatuses, err := podNetworkStatus(pod, predicate)
+	if err != nil {
+		return "", fmt.Errorf("failed to get network status from pod %s/%s: %w", pod.Namespace, pod.Name, err)
+	}
+	if len(networkStatuses) == 0 {
+		if len(podConfig.attachments) > 0 {
+			return "", fmt.Errorf("no network interface found for network %s/%s", podConfig.namespace, netConfigName)
+		}
+		return "", fmt.Errorf("no default network interface found")
+	}
+	if len(networkStatuses) > 1 {
+		return "", fmt.Errorf("multiple network interfaces found matching criteria")
+	}
+	iface := networkStatuses[0].Interface
+	// Multus may omit Interface for the default network; default to eth0.
+	if iface == "" && len(podConfig.attachments) == 0 {
+		return "eth0", nil
+	}
+	return iface, nil
+}
+
+// findOVNDBLeaderPod finds the ovnkube-db pod that is currently the northbound database leader
+func findOVNDBLeaderPod(f *framework.Framework, cs clientset.Interface, namespace string) (*v1.Pod, error) {
+	dbPods, err := cs.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{LabelSelector: "ovn-db-pod=true"})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list ovnkube-db pods: %v", err)
+	}
+
+	if len(dbPods.Items) == 0 {
+		return nil, fmt.Errorf("no ovnkube-db pods found")
+	}
+
+	if len(dbPods.Items) == 1 {
+		return &dbPods.Items[0], nil
+	}
+
+	for i := range dbPods.Items {
+		pod := &dbPods.Items[i]
+		if pod.Status.Phase != v1.PodRunning {
+			continue
+		}
+
+		stdout, stderr, err := ExecCommandInContainerWithFullOutput(f, namespace, pod.Name, "nb-ovsdb",
+			"ovsdb-client", "query", "unix:/var/run/openvswitch/ovnnb_db.sock",
+			`["_Server", {"op":"select", "table":"Database", "where":[["name", "==", "OVN_Northbound"]], "columns": ["leader"]}]`)
+
+		if err != nil {
+			framework.Logf("Warning: Failed to query leader status on pod %s: %v, stderr: %s", pod.Name, err, stderr)
+			continue
+		}
+
+		// Parse the JSON response to check if this pod is the leader
+		// Expected: [{"rows":[{"leader":true}]}]
+		type dbResp struct {
+			Rows []struct {
+				Leader bool `json:"leader"`
+			} `json:"rows"`
+		}
+		var resp []dbResp
+		if err := json.Unmarshal([]byte(stdout), &resp); err == nil &&
+			len(resp) > 0 && len(resp[0].Rows) > 0 && resp[0].Rows[0].Leader {
+			framework.Logf("Found nbdb leader pod: %s", pod.Name)
+			return pod, nil
+		}
+	}
+
+	return nil, fmt.Errorf("no nbdb leader pod found among %d ovnkube-db pods", len(dbPods.Items))
 }

@@ -137,12 +137,10 @@ func (em *userDefinedNetworkExpectationMachine) expectedLogicalSwitchesAndPortsW
 			}
 			subnets := podInfo.nodeSubnet
 			var (
-				subnet     *net.IPNet
-				hasSubnets bool
+				subnet *net.IPNet
 			)
 			if len(subnets) > 0 {
 				subnet = testing.MustParseIPNet(subnets)
-				hasSubnets = true
 			}
 
 			for nad, portInfo := range podInfo.allportInfo {
@@ -237,28 +235,6 @@ func (em *userDefinedNetworkExpectationMachine) expectedLogicalSwitchesAndPortsW
 				nodeslsps[switchName] = append(nodeslsps[switchName], lspUUID)
 			}
 
-			var otherConfig map[string]string
-			if hasSubnets {
-				otherConfig = map[string]string{
-					"subnet": subnet.String(),
-				}
-				if !ocInfo.bnc.IsPrimaryNetwork() {
-					// FIXME: This is weird that for secondary networks that don't have
-					// management ports these tests are expecting managementportIP to be
-					// excluded for no reason.
-					// FIXME2: Why are we setting exclude_ips on OVN switches when we don't
-					// even use OVN IPAMs.
-					otherConfig["exclude_ips"] = managementPortIP(subnet).String()
-				}
-			}
-
-			// TODO: once we start the "full" Layer2UserDefinedNetworkController (instead of just Base)
-			// we can drop this, and compare all objects created by the controller (right now we're
-			// missing all the meters, and the COPP)
-			if ocInfo.bnc.TopologyType() == ovntypes.Layer2Topology {
-				otherConfig = nil
-			}
-
 			switchNodeMap[switchName] = &nbdb.LogicalSwitch{
 				UUID:  switchName + "-UUID",
 				Name:  switchName,
@@ -267,8 +243,7 @@ func (em *userDefinedNetworkExpectationMachine) expectedLogicalSwitchesAndPortsW
 					ovntypes.NetworkExternalID:     ocInfo.bnc.GetNetworkName(),
 					ovntypes.NetworkRoleExternalID: util.GetUserDefinedNetworkRole(isPrimary),
 				},
-				OtherConfig: otherConfig,
-				ACLs:        acls[switchName],
+				ACLs: acls[switchName],
 			}
 
 			if _, alreadyAdded := alreadyAddedManagementElements[pod.nodeName]; !alreadyAdded &&

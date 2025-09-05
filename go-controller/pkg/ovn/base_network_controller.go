@@ -505,22 +505,11 @@ func (bnc *BaseNetworkController) createNodeLogicalSwitch(nodeName string, hostS
 	logicalSwitch.OtherConfig = map[string]string{}
 	for _, hostSubnet := range hostSubnets {
 		gwIfAddr := bnc.GetNodeGatewayIP(hostSubnet)
-		mgmtIfAddr := bnc.GetNodeManagementIP(hostSubnet)
 
 		if utilnet.IsIPv6CIDR(hostSubnet) {
 			v6Gateway = gwIfAddr.IP
-
-			logicalSwitch.OtherConfig["ipv6_prefix"] =
-				hostSubnet.IP.String()
 		} else {
 			v4Gateway = gwIfAddr.IP
-			excludeIPs := mgmtIfAddr.IP.String()
-			if config.HybridOverlay.Enabled {
-				hybridOverlayIfAddr := util.GetNodeHybridOverlayIfAddr(hostSubnet)
-				excludeIPs += ".." + hybridOverlayIfAddr.IP.String()
-			}
-			logicalSwitch.OtherConfig["subnet"] = hostSubnet.String()
-			logicalSwitch.OtherConfig["exclude_ips"] = excludeIPs
 		}
 	}
 

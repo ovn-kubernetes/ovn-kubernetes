@@ -351,7 +351,9 @@ func routePartiallyEqualWantedToExisting(w, e *netlink.Route) bool {
 		equalOrLeftZero(w.InitRwnd, e.InitRwnd, z.InitRwnd) &&
 		equalOrLeftZero(w.QuickACK, e.QuickACK, z.QuickACK) &&
 		equalOrLeftZero(w.Congctl, e.Congctl, z.Congctl) &&
-		equalOrLeftZero(w.FastOpenNoCookie, e.FastOpenNoCookie, z.FastOpenNoCookie)
+		equalOrLeftZero(w.FastOpenNoCookie, e.FastOpenNoCookie, z.FastOpenNoCookie) &&
+		equalOrLeftZero(w.MTULock, e.MTULock, z.MTULock) &&
+		equalOrLeftZero(w.RtoMinLock, e.RtoMinLock, z.RtoMinLock)
 }
 
 func isRouteNotFoundError(err error) bool {

@@ -1,3 +1,19 @@
+/*
+Copyright 2023 NVIDIA CORPORATION & AFFILIATES
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package sriovnet
 
 import (
@@ -39,19 +55,22 @@ const (
 // Regex that matches on the physical/upling port name
 var physPortRepRegex = regexp.MustCompile(`^p(\d+)$`)
 
-// Regex that matches on PF representor port name. These ports exists on DPUs.
+// Regex that matches on PF representor port name. These ports exists on DPUs and represents ports on Host.
 var pfPortRepRegex = regexp.MustCompile(`^(?:c\d+)?pf(\d+)$`)
 
-// Regex that matches on VF representor port name
-var vfPortRepRegex = regexp.MustCompile(`^(?:c\d+)?pf(\d+)vf(\d+)$`)
+// Regex that matches on VF representor port name for a local VF.
+var vfPortRepRegex = regexp.MustCompile(`^pf(\d+)vf(\d+)$`)
+
+// Regex that matches on VF representor port name with controller index. These ports exists on DPUs. and represent VFs on Host.
+var vfPortRepRegexWithControllerIndex = regexp.MustCompile(`^c\d+pf(\d+)vf(\d+)$`)
 
 // Regex that matches on SF representor port name
-var sfPortRepRegex = regexp.MustCompile(`^(?:c\d+)?pf(\d+)sf(\d+)$`)
+var sfPortRepRegex = regexp.MustCompile(`^pf(\d+)sf(\d+)$`)
+
+// Regex that matches on SF representor port name with controller index. These ports exists on DPUs. and represent SFs on Host.
+var sfPortRepRegexWithControllerIndex = regexp.MustCompile(`^c\d+pf(\d+)sf(\d+)$`)
 
 func parseIndexFromPhysPortName(portName string, regex *regexp.Regexp) (pfRepIndex, vfRepIndex int, err error) {
-	pfRepIndex = -1
-	vfRepIndex = -1
-
 	matches := regex.FindStringSubmatch(portName)
 	//nolint:gomnd
 	if len(matches) != 3 {
@@ -65,22 +84,14 @@ func parseIndexFromPhysPortName(portName string, regex *regexp.Regexp) (pfRepInd
 	return pfRepIndex, vfRepIndex, err
 }
 
-func parsePortName(physPortName string) (pfRepIndex, vfRepIndex int, err error) {
-	// old kernel syntax of phys_port_name is vf index
-	physPortName = strings.TrimSpace(physPortName)
-	physPortNameInt, err := strconv.Atoi(physPortName)
-	if err == nil {
-		vfRepIndex = physPortNameInt
-	} else {
-		pfRepIndex, vfRepIndex, err = parseIndexFromPhysPortName(physPortName, vfPortRepRegex)
+func parseVFPortName(physPortName string) (pfRepIndex, vfRepIndex int, err error) {
+	for _, regex := range []*regexp.Regexp{vfPortRepRegex, vfPortRepRegexWithControllerIndex} {
+		if regex.MatchString(physPortName) {
+			return parseIndexFromPhysPortName(physPortName, regex)
+		}
 	}
-	return pfRepIndex, vfRepIndex, err
-}
 
-func sfIndexFromPortName(physPortName string) (int, error) {
-	//nolint:gomnd
-	_, sfRepIndex, err := parseIndexFromPhysPortName(physPortName, sfPortRepRegex)
-	return sfRepIndex, err
+	return pfRepIndex, vfRepIndex, fmt.Errorf("failed to parse vf port name %s", physPortName)
 }
 
 func isSwitchdev(netdevice string) bool {
@@ -110,12 +121,14 @@ func GetUplinkRepresentor(pciAddress string) (string, error) {
 	}
 	for _, device := range devices {
 		if isSwitchdev(device.Name()) {
-			// Try to get the phys port name, if not exists then fallback to check without it
+			devicePhysPortName, err := getNetDevPhysPortName(device.Name())
+			if err != nil {
+				continue
+			}
+
 			// phys_port_name should be in formant p<port-num> e.g p0,p1,p2 ...etc.
-			if devicePhysPortName, err := getNetDevPhysPortName(device.Name()); err == nil {
-				if !physPortRepRegex.MatchString(devicePhysPortName) {
-					continue
-				}
+			if !physPortRepRegex.MatchString(devicePhysPortName) {
+				continue
 			}
 
 			return device.Name(), nil
@@ -124,11 +137,23 @@ func GetUplinkRepresentor(pciAddress string) (string, error) {
 	return "", fmt.Errorf("uplink for %s not found", pciAddress)
 }
 
+// GetVfRepresentor returns the VF representor netdev name for a given uplink netdev and vfIndex.
 func GetVfRepresentor(uplink string, vfIndex int) (string, error) {
 	swIDFile := filepath.Join(NetSysDir, uplink, netdevPhysSwitchID)
 	physSwitchID, err := utilfs.Fs.ReadFile(swIDFile)
 	if err != nil || len(physSwitchID) == 0 {
 		return "", fmt.Errorf("cant get uplink %s switch id", uplink)
+	}
+
+	// get uplink pci address and pci function number
+	pfPCIAddress, err := getPCIFromDeviceName(uplink)
+	if err != nil {
+		return "", fmt.Errorf("failed to get pci address for uplink %s: %v", uplink, err)
+	}
+	PCIFuncAddress, err := strconv.Atoi(string((pfPCIAddress[len(pfPCIAddress)-1])))
+	if err != nil {
+		return "", fmt.Errorf("failed to get pci function number for uplink %s, pfPCIAddress %s: %w",
+			uplink, pfPCIAddress, err)
 	}
 
 	pfSubsystemPath := filepath.Join(NetSysDir, uplink, "subsystem")
@@ -143,29 +168,28 @@ func GetVfRepresentor(uplink string, vfIndex int) (string, error) {
 		if err != nil || !bytes.Equal(deviceSwID, physSwitchID) {
 			continue
 		}
+
 		physPortNameStr, err := getNetDevPhysPortName(device.Name())
 		if err != nil {
 			continue
 		}
-		pfRepIndex, vfRepIndex, _ := parsePortName(physPortNameStr)
-		if pfRepIndex != -1 {
-			pfPCIAddress, err := getPCIFromDeviceName(uplink)
-			if err != nil {
-				continue
-			}
-			PCIFuncAddress, err := strconv.Atoi(string((pfPCIAddress[len(pfPCIAddress)-1])))
-			if pfRepIndex != PCIFuncAddress || err != nil {
-				continue
-			}
+
+		pfRepIndex, vfRepIndex, err := parseIndexFromPhysPortName(physPortNameStr, vfPortRepRegex)
+		if err != nil {
+			continue
 		}
-		// At this point we're confident we have a representor.
-		if vfRepIndex == vfIndex {
+
+		// check pfRepIndex matches the uplink PF function number (e.g. 0000:03:00.0 -> 0) and
+		// vfRepIndex matches the vfIndex
+		if pfRepIndex == PCIFuncAddress && vfRepIndex == vfIndex {
+			// At this point we're confident we have a representor.
 			return device.Name(), nil
 		}
 	}
 	return "", fmt.Errorf("failed to find VF representor for uplink %s", uplink)
 }
 
+// GetSfRepresentor returns the SF representor netdev name for a given uplink netdev and sfIndex.
 func GetSfRepresentor(uplink string, sfNum int) (string, error) {
 	pfNetPath := filepath.Join(NetSysDir, uplink, "device", "net")
 	devices, err := utilfs.Fs.ReadDir(pfNetPath)
@@ -178,7 +202,7 @@ func GetSfRepresentor(uplink string, sfNum int) (string, error) {
 		if err != nil {
 			continue
 		}
-		sfRepIndex, err := sfIndexFromPortName(physPortNameStr)
+		_, sfRepIndex, err := parseIndexFromPhysPortName(physPortNameStr, sfPortRepRegex)
 		if err != nil {
 			continue
 		}
@@ -248,17 +272,24 @@ func GetPortIndexFromRepresentor(repNetDev string) (int, error) {
 		return 0, fmt.Errorf("failed to get device %s physical port name: %v", repNetDev, err)
 	}
 
-	typeToRegex := map[PortFlavour]*regexp.Regexp{
-		PORT_FLAVOUR_PCI_VF: vfPortRepRegex,
-		PORT_FLAVOUR_PCI_SF: sfPortRepRegex,
+	typeToRegex := map[PortFlavour][]*regexp.Regexp{
+		PORT_FLAVOUR_PCI_VF: {vfPortRepRegex, vfPortRepRegexWithControllerIndex},
+		PORT_FLAVOUR_PCI_SF: {sfPortRepRegex, sfPortRepRegexWithControllerIndex},
 	}
 
-	_, repIndex, err := parseIndexFromPhysPortName(physPortName, typeToRegex[flavor])
-	if err != nil {
-		return 0, fmt.Errorf("failed to parse the physical port name of device %s: %v", repNetDev, err)
+	for _, regex := range typeToRegex[flavor] {
+		if regex.MatchString(physPortName) {
+			_, repIndex, err := parseIndexFromPhysPortName(physPortName, regex)
+			if err != nil {
+				return 0, fmt.Errorf("failed to parse the physical port name of device %s: %v", repNetDev, err)
+			}
+
+			return repIndex, nil
+		}
 	}
 
-	return repIndex, nil
+	return 0, fmt.Errorf("failed to get port index for representor %s. no matching regex found for phys_port_name %s",
+		repNetDev, physPortName)
 }
 
 // GetVfRepresentorDPU returns VF representor on DPU for a host VF identified by pfID and vfIndex
@@ -276,25 +307,29 @@ func GetVfRepresentorDPU(pfID, vfIndex string) (string, error) {
 		return "", fmt.Errorf("unexpected vfIndex(%s). It should be an unsigned decimal number", vfIndex)
 	}
 
-	// map for easy search of expected VF rep port name.
-	// Note: no support for Multi-Chassis DPUs
-	expectedPhysPortNames := map[string]interface{}{
-		fmt.Sprintf("pf%svf%s", pfID, vfIndex):   nil,
-		fmt.Sprintf("c1pf%svf%s", pfID, vfIndex): nil,
-	}
-
+	// match port name with external controller index
+	// NOTE: no support for Multi-Chassis DPUs
+	expectedPhysPortName := fmt.Sprintf("c1pf%svf%s", pfID, vfIndex)
 	netdev, err := findNetdevWithPortNameCriteria(func(portName string) bool {
-		// if phys port name == pf<pfIndex>vf<vfIndex> or c1pf<pfIndex>vf<vfIndex> we have a match
-		if _, ok := expectedPhysPortNames[portName]; ok {
-			return true
-		}
-		return false
+		return portName == expectedPhysPortName
 	})
 
-	if err != nil {
-		return "", fmt.Errorf("vf representor for pfID:%s, vfIndex:%s not found", pfID, vfIndex)
+	if err == nil {
+		return netdev, nil
 	}
-	return netdev, nil
+
+	// match port name without controller index (legacy)
+	// NOTE: here we assume the only VF representors on the DPU are for host VFs (and not for local VFs).
+	expectedPhysPortName = fmt.Sprintf("pf%svf%s", pfID, vfIndex)
+	netdev, err = findNetdevWithPortNameCriteria(func(portName string) bool {
+		return portName == expectedPhysPortName
+	})
+
+	if err == nil {
+		return netdev, nil
+	}
+
+	return "", fmt.Errorf("vf representor for pfID: %s, vfIndex: %s not found", pfID, vfIndex)
 }
 
 // GetSfRepresentorDPU returns SF representor on DPU for a host SF identified by pfID and sfIndex
@@ -309,25 +344,49 @@ func GetSfRepresentorDPU(pfID, sfIndex string) (string, error) {
 		return "", fmt.Errorf("unexpected sfIndex(%s). It should be an unsigned decimal number", sfIndex)
 	}
 
-	// map for easy search of expected VF rep port name.
-	// Note: no support for Multi-Chassis DPUs
-	expectedPhysPortNames := map[string]interface{}{
-		fmt.Sprintf("pf%ssf%s", pfID, sfIndex):   nil,
-		fmt.Sprintf("c1pf%ssf%s", pfID, sfIndex): nil,
-	}
-
+	// match port name with external controller index
+	// NOTE: no support for Multi-Chassis DPUs
+	expectedPhysPortName := fmt.Sprintf("c1pf%ssf%s", pfID, sfIndex)
 	netdev, err := findNetdevWithPortNameCriteria(func(portName string) bool {
-		// if phys port name == pf<pfIndex>sf<sfIndex> or c1pf<pfIndex>sf<sfIndex> we have a match
-		if _, ok := expectedPhysPortNames[portName]; ok {
-			return true
-		}
-		return false
+		return portName == expectedPhysPortName
 	})
 
-	if err != nil {
-		return "", fmt.Errorf("sf representor for pfID:%s, sfIndex:%s not found", pfID, sfIndex)
+	if err == nil {
+		return netdev, nil
 	}
-	return netdev, nil
+
+	return "", fmt.Errorf("sf representor for pfID: %s, sfIndex: %s not found", pfID, sfIndex)
+}
+
+// GetPfRepresentorDPU returns PF representor on DPU for a host PF identified by its ID.
+func GetPfRepresentorDPU(pfID string) (string, error) {
+	// pfID should be 0 or 1
+	if pfID != "0" && pfID != "1" {
+		return "", fmt.Errorf("unexpected pfID(%s). It should be 0 or 1", pfID)
+	}
+
+	// match port name with external controller index
+	// NOTE: no support for Multi-Chassis DPUs
+	expectedPhysPortName := fmt.Sprintf("c1pf%s", pfID)
+	netdev, err := findNetdevWithPortNameCriteria(func(portName string) bool {
+		return portName == expectedPhysPortName
+	})
+
+	if err == nil {
+		return netdev, nil
+	}
+
+	// match port name without controller index (legacy)
+	expectedPhysPortName = fmt.Sprintf("pf%s", pfID)
+	netdev, err = findNetdevWithPortNameCriteria(func(portName string) bool {
+		return portName == expectedPhysPortName
+	})
+
+	if err == nil {
+		return netdev, nil
+	}
+
+	return "", fmt.Errorf("pf representor for pfID: %s not found", pfID)
 }
 
 // GetRepresentorPortFlavour returns the representor port flavour
@@ -351,15 +410,17 @@ func GetRepresentorPortFlavour(netdev string) (PortFlavour, error) {
 		return PORT_FLAVOUR_UNKNOWN, err
 	}
 
-	typeToRegex := map[PortFlavour]*regexp.Regexp{
-		PORT_FLAVOUR_PHYSICAL: physPortRepRegex,
-		PORT_FLAVOUR_PCI_PF:   pfPortRepRegex,
-		PORT_FLAVOUR_PCI_VF:   vfPortRepRegex,
-		PORT_FLAVOUR_PCI_SF:   sfPortRepRegex,
+	typeToRegex := map[PortFlavour][]*regexp.Regexp{
+		PORT_FLAVOUR_PHYSICAL: {physPortRepRegex},
+		PORT_FLAVOUR_PCI_PF:   {pfPortRepRegex},
+		PORT_FLAVOUR_PCI_VF:   {vfPortRepRegex, vfPortRepRegexWithControllerIndex},
+		PORT_FLAVOUR_PCI_SF:   {sfPortRepRegex, sfPortRepRegexWithControllerIndex},
 	}
-	for flavour, regex := range typeToRegex {
-		if regex.MatchString(portName) {
-			return flavour, nil
+	for flavour, regexs := range typeToRegex {
+		for _, regex := range regexs {
+			if regex.MatchString(portName) {
+				return flavour, nil
+			}
 		}
 	}
 	return PORT_FLAVOUR_UNKNOWN, nil
@@ -473,7 +534,7 @@ func SetRepresentorPeerMacAddress(netdev string, mac net.HardwareAddr) error {
 	if err != nil {
 		return fmt.Errorf("failed to get phys_port_name for netdev %s: %v", netdev, err)
 	}
-	pfID, vfIndex, err := parsePortName(physPortNameStr)
+	pfID, vfIndex, err := parseVFPortName(physPortNameStr)
 	if err != nil {
 		return fmt.Errorf("failed to get the pf and vf index for netdev %s "+
 			"with phys_port_name %s: %v", netdev, physPortNameStr, err)
