@@ -1043,6 +1043,11 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 			return err
 		}
 		nc.Gateway = gw
+	} else {
+		err = nc.initGatewayDPUHostPreStart(nc.nodeAddress, nodeAnnotator)
+		if err != nil {
+			return err
+		}
 	}
 
 	if err := level.Set(strconv.Itoa(config.Logging.Level)); err != nil {
@@ -1081,7 +1086,7 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 
 	// Complete gateway initialization
 	if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
-		err = nc.initGatewayDPUHost(nc.nodeAddress, nodeAnnotator)
+		err = nc.initGatewayDPUHost()
 		if err != nil {
 			return err
 		}

@@ -409,10 +409,15 @@ func (npw *nodePortWatcher) updateServiceFlowCache(service *corev1.Service, netI
 			// sample flow: cookie=0xdeff105, duration=2319.685s, table=2, n_packets=496, n_bytes=67111, priority=300,
 			//              ip,nw_dst=10.96.0.1 actions=mod_dl_dst:02:42:ac:12:00:03,output:"patch-breth0_ov"
 			// This flow is used for UDNs and advertised UDNs to be able to reach kapi and dns services alone on default network
+			outputActions := fmt.Sprintf("output:%s", defaultNetConfig.OfPortPatch)
+			if config.Gateway.VLANID != 0 {
+				outputActions = fmt.Sprintf("mod_vlan_vid:%d,%s", config.Gateway.VLANID, outputActions)
+			}
+
 			flows := []string{fmt.Sprintf("cookie=%s, priority=300, table=2, %s, %s_dst=%s, "+
-				"actions=set_field:%s->eth_dst,output:%s",
+				"actions=set_field:%s->eth_dst,%s",
 				nodetypes.DefaultOpenFlowCookie, ipPrefix, ipPrefix, service.Spec.ClusterIP,
-				npw.ofm.getDefaultBridgeMAC().String(), defaultNetConfig.OfPortPatch)}
+				npw.ofm.getDefaultBridgeMAC().String(), outputActions)}
 			if util.IsRouteAdvertisementsEnabled() {
 				// if the network is advertised, then for the reply from kapi and dns services to go back
 				// into the UDN's VRF we need flows that statically send this to the local port

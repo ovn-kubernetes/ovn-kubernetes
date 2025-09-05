@@ -75,14 +75,18 @@ func (ncm *NodeControllerManager) CleanupStaleNetworks(validNetworks ...util.Net
 	if !util.IsNetworkSegmentationSupportEnabled() {
 		return nil
 	}
-	validVRFDevices := make(sets.Set[string])
-	for _, network := range validNetworks {
-		if !network.IsPrimaryNetwork() {
-			continue
+	// in DPU mode, vrfManager would be nil
+	if ncm.vrfManager != nil {
+		validVRFDevices := make(sets.Set[string])
+		for _, network := range validNetworks {
+			if !network.IsPrimaryNetwork() {
+				continue
+			}
+			validVRFDevices.Insert(util.GetNetworkVRFName(network))
 		}
-		validVRFDevices.Insert(util.GetNetworkVRFName(network))
+		return ncm.vrfManager.Repair(validVRFDevices)
 	}
-	return ncm.vrfManager.Repair(validVRFDevices)
+	return nil
 }
 
 // newCommonNetworkControllerInfo creates and returns the base node network controller info
@@ -126,7 +130,7 @@ func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatch
 			return nil, err
 		}
 	}
-	if util.IsNetworkSegmentationSupportEnabled() {
+	if util.IsNetworkSegmentationSupportEnabled() && config.OvnKubeNode.Mode != ovntypes.NodeModeDPU {
 		ncm.vrfManager = vrfmanager.NewController(ncm.routeManager)
 		ncm.ruleManager = iprulemanager.NewController(config.IPv4Mode, config.IPv6Mode)
 	}
