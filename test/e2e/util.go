@@ -25,6 +25,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
 	infraapi "github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider/api"
 
+	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -40,6 +41,7 @@ import (
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
+	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 	testutils "k8s.io/kubernetes/test/utils"
 	admissionapi "k8s.io/pod-security-admission/api"
 	utilnet "k8s.io/utils/net"
@@ -1748,4 +1750,43 @@ func findOVNDBLeaderPod(f *framework.Framework, cs clientset.Interface, namespac
 	}
 
 	return nil, fmt.Errorf("no nbdb leader pod found among %d ovnkube-db pods", len(dbPods.Items))
+}
+
+// TestClientPodToServerConnectivity tests connectivity from a client pod to multiple server IPs
+// and verifies that the source IP seen by the server matches the expected IPs.
+// Returns true if all connectivity tests pass, false otherwise.
+func TestClientPodToServerConnectivity(clientPod *corev1.Pod, serverIPs []string, portNumber int, expectedIPs []string, serverDesc string) bool {
+	for idx, serverIP := range serverIPs {
+		if serverIP != "" {
+			ginkgo.By(fmt.Sprintf("Sending request to server IP %s "+
+				"and expecting to receive %s in the payload", serverIP, expectedIPs[idx]))
+			cmd := fmt.Sprintf("curl --max-time 30 -g -q -s http://%s/clientip",
+				net.JoinHostPort(serverIP, strconv.Itoa(portNumber)),
+			)
+			framework.Logf("Testing pod %s to %s traffic with command %q", clientPod.Name, serverDesc, cmd)
+			stdout, err := e2epodoutput.RunHostCmdWithRetries(
+				clientPod.Namespace,
+				clientPod.Name,
+				cmd,
+				framework.Poll,
+				60*time.Second)
+			framework.ExpectNoError(err, fmt.Sprintf("Testing pod to %s traffic failed: %v", serverDesc, err))
+			if utilnet.IsIPv6String(expectedIPs[idx]) {
+				// For IPv6 addresses, need to handle the brackets in the output
+				outputIP := strings.TrimPrefix(strings.Split(stdout, "]:")[0], "[")
+				if !gomega.Expect(outputIP).To(gomega.Equal(expectedIPs[idx])) {
+					framework.Logf("Testing client pod to %s traffic failed while analysing output %v", serverDesc, stdout)
+					return false
+				}
+			} else {
+				// Original IPv4 handling
+				outputIP := strings.Split(stdout, ":")[0]
+				if !gomega.Expect(outputIP).To(gomega.Equal(expectedIPs[idx])) {
+					framework.Logf("Testing client pod to %s traffic failed while analysing output %v", serverDesc, stdout)
+					return false
+				}
+			}
+		}
+	}
+	return true
 }
