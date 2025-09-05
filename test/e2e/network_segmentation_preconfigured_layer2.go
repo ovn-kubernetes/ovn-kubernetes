@@ -59,7 +59,7 @@ var _ = Describe("Network Segmentation: Preconfigured Layer2 UDN", feature.Netwo
 			By("creating the L2 network")
 
 			netConfig.namespace = f.Namespace.Name
-			udnManifest := generateUserDefinedNetworkManifest(netConfig, f.ClientSet)
+			udnManifest := generateUserDefinedNetworkManifestWithSupportedNetworkConfig(netConfig, f.ClientSet)
 			cleanup, err := createManifest(netConfig.namespace, udnManifest)
 			Expect(err).NotTo(HaveOccurred())
 			DeferCleanup(cleanup)
