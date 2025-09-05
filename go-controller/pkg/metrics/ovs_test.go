@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"fmt"
+	"os"
 	"sync/atomic"
 
 	"github.com/onsi/ginkgo/v2"
@@ -13,6 +14,24 @@ import (
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
+
+// withEnv sets key to val (or unsets when val == "") for the duration of f, restoring previous state.
+func withEnv(key, val string, f func()) {
+	prev, had := os.LookupEnv(key)
+	if val == "" {
+		os.Unsetenv(key)
+	} else {
+		os.Setenv(key, val)
+	}
+	defer func() {
+		if !had {
+			os.Unsetenv(key)
+		} else {
+			os.Setenv(key, prev)
+		}
+	}()
+	f()
+}
 
 type clientOutput struct {
 	stdout string
@@ -263,6 +282,40 @@ var _ = ginkgo.Describe("OVS metrics", func() {
 			err = setOvsHwOffloadMetrics(ovsClient)
 			gomega.Expect(err).To(gomega.HaveOccurred())
 			libovsdbCleanup.Cleanup()
+		})
+	})
+
+	ginkgo.Context("OVS environment variable functions", func() {
+		ginkgo.Context("getOVSVSwitchPidPath", func() {
+			ginkgo.It("returns default path when env not set", func() {
+				withEnv("OVS_VSWITCHD_PID", "", func() {
+					result := getOVSVSwitchPidPath()
+					gomega.Expect(result).To(gomega.Equal("/var/run/openvswitch/ovs-vswitchd.pid"))
+				})
+			})
+
+			ginkgo.It("returns custom path when env is set", func() {
+				withEnv("OVS_VSWITCHD_PID", "/custom/path/ovs-vswitchd.pid", func() {
+					result := getOVSVSwitchPidPath()
+					gomega.Expect(result).To(gomega.Equal("/custom/path/ovs-vswitchd.pid"))
+				})
+			})
+		})
+
+		ginkgo.Context("getOVSDbServerPidPath", func() {
+			ginkgo.It("returns default path when env not set", func() {
+				withEnv("OVSDB_SERVER_PID", "", func() {
+					result := getOVSDbServerPidPath()
+					gomega.Expect(result).To(gomega.Equal("/var/run/openvswitch/ovsdb-server.pid"))
+				})
+			})
+
+			ginkgo.It("returns custom path when env is set", func() {
+				withEnv("OVSDB_SERVER_PID", "/custom/path/ovsdb-server.pid", func() {
+					result := getOVSDbServerPidPath()
+					gomega.Expect(result).To(gomega.Equal("/custom/path/ovsdb-server.pid"))
+				})
+			})
 		})
 	})
 })
