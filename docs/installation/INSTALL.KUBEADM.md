@@ -1,4 +1,4 @@
-The following is a walkthrough for an installation in an environment with 4 virtual machines, and a cluster deployed with `kubeadm`. This shall serve as a guide for people who are curious enough to deploy OVN Kubernetes on a manually created cluster and to play around with the components. 
+The following is a walkthrough for an installation in an environment with 4 virtual machines, and a cluster deployed with `kubeadm`. This shall serve as a guide for people who are curious enough to deploy OVN-Kubernetes on a manually created cluster and to play around with the components. 
 
 Note that the resulting environment might be highly unstable.
 
@@ -8,7 +8,7 @@ If your goal is to set up an environment quickly or to set up a development envi
 
 ### Overview
 
-The environment consists of 4 libvirt/qemu virtual machines, all deployed with Rocky Linux 8 or CentOS 8. `node1` will serve as the sole master node and nodes `node2` and `node3` as the worker nodes. `gw1` will be the default gateway for the cluster via the `Isolated Network`. It will also host an HTTP registry to store the OVN Kubernetes images.
+The environment consists of 4 libvirt/qemu virtual machines, all deployed with Rocky Linux 8 or CentOS 8. `node1` will serve as the sole master node and nodes `node2` and `node3` as the worker nodes. `gw1` will be the default gateway for the cluster via the `Isolated Network`. It will also host an HTTP registry to store the OVN-Kubernetes images.
 
 ~~~
        to hypervisor         to hypervisor         to hypervisor
@@ -135,7 +135,7 @@ reboot
 
 ### node1 through node3 base setup
 
-You must install Open vSwitch on `node1` through `node3`. You will then connect `enp7s0` to an OVS bridge called `br-ex`. This bridge will be used later by OVN Kubernetes.
+You must install Open vSwitch on `node1` through `node3`. You will then connect `enp7s0` to an OVS bridge called `br-ex`. This bridge will be used later by OVN-Kubernetes.
 Furthermore, you  must assign IP addresses to `br-ex` and point the nodes' default route via `br-ex` to `gw1`. 
 
 #### Set hostnames
@@ -155,7 +155,7 @@ reboot
 
 #### Remove firewalld
 
-Make sure to uninstall firewalld. Otherwise, it will block the kubernetes management ports (that can easily be fixed by configuration) and it will also preempt and block the OVN Kubernetes installed NAT and FORWARD rules (this is more difficult to remediate). The easiest fix is hence not to use firewalld at all:
+Make sure to uninstall firewalld. Otherwise, it will block the kubernetes management ports (that can easily be fixed by configuration) and it will also preempt and block the OVN-Kubernetes installed NAT and FORWARD rules (this is more difficult to remediate). The easiest fix is hence not to use firewalld at all:
 ~~~
 systemctl disable --now firewalld
 yum remove -y firewalld
@@ -377,7 +377,7 @@ sudo yum install -y kubelet kubeadm kubectl --disableexcludes=kubernetes
 sudo systemctl enable --now kubelet
 ~~~
 
-## Deploying a cluster with OVN Kubernetes
+## Deploying a cluster with OVN-Kubernetes
 
 Execute the following instructions **only** on the master node, `node1`.
 
@@ -406,9 +406,9 @@ kube-system   kube-proxy-vm44k                1/1     Running             0     
 kube-system   kube-scheduler-node1            1/1     Running             3          28s   192.168.122.205   node1   <none>           <none>
 ~~~
 
-Now, deploy OVN Kubernetes - see below.
+Now, deploy OVN-Kubernetes - see below.
 
-### Deploying OVN Kubernetes on node1
+### Deploying OVN-Kubernetes on node1
 
 Install build dependencies and create a softlink for `pip` to `pip3`:
 ~~~
@@ -425,7 +425,7 @@ source ~/.bashrc
 go version
 ~~~
 
-Now, clone the OVN Kubernetes repository:
+Now, clone the OVN-Kubernetes repository:
 ~~~
 mkdir -p $HOME/work/src/github.com/ovn-org
 cd $HOME/work/src/github.com/ovn-org
@@ -599,7 +599,7 @@ Installed:
 Complete!
 ~~~
 
-### Uninstalling OVN Kubernetes
+### Uninstalling OVN-Kubernetes
 
 In order to uninstall OVN kubernetes:
 ~~~
@@ -616,7 +616,7 @@ br-int might be added by OVN, but the files for it are not created in /var/run/o
 2021-08-24T12:42:43.810Z|00025|rconn|WARN|unix:/var/run/openvswitch/br-int.mgmt: connection failed (No such file or directory)
 ~~~
 
-The best workaroud is to pre-create br-int before the OVN Kubernetes installation:
+The best workaroud is to pre-create br-int before the OVN-Kubernetes installation:
 ~~~
 ovs-vsctl add-br br-int
 ~~~
