@@ -15,6 +15,7 @@ import (
 	"github.com/vishvananda/netlink"
 
 	corev1 "k8s.io/api/core/v1"
+	discovery "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
@@ -1742,5 +1743,127 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 				})
 			})
 		})
+	})
+
+	Describe("reconcileConntrackUponEndpointSliceEvents", func() {
+		const (
+			namespace = "default"
+			svcName   = "my-service"
+		)
+
+		var (
+			port        = int32(8080)
+			nodePort    = int32(30000)
+			udpProtocol = corev1.ProtocolUDP
+		)
+
+		DescribeTable("correctly reconciles conntrack entries on endpointslice events for", func(svc *corev1.Service) {
+
+			kubeFakeClient := fake.NewSimpleClientset(svc)
+			fakeClient := &util.OVNNodeClientset{
+				KubeClient:             kubeFakeClient,
+				AdminPolicyRouteClient: adminpolicybasedrouteclient.NewSimpleClientset(),
+				NetworkAttchDefClient:  nadfake.NewSimpleClientset(),
+			}
+
+			stop := make(chan struct{})
+			wf, err := factory.NewNodeWatchFactory(fakeClient, "my-node")
+			Expect(err).NotTo(HaveOccurred())
+			wg := &sync.WaitGroup{}
+			defer func() {
+				close(stop)
+				wg.Wait()
+				wf.Shutdown()
+			}()
+
+			err = wf.Start()
+			Expect(err).NotTo(HaveOccurred())
+			routeManager := routemanager.NewController()
+			cnnci := NewCommonNodeNetworkControllerInfo(kubeFakeClient, fakeClient.AdminPolicyRouteClient, wf, nil, "my-node", routeManager)
+			nc := newDefaultNodeNetworkController(cnnci, stop, wg, routeManager, nil, nil)
+			netlinkOpsMock := &utilMocks.NetLinkOps{}
+			util.SetNetLinkOpMockInst(netlinkOpsMock)
+			defer util.ResetNetLinkOpMockInst()
+
+			oldEndpointIP := "10.128.0.1"
+			newEndpointIP := "10.128.0.2"
+
+			oldEndpointSlice := &discovery.EndpointSlice{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "slice1",
+					Namespace: namespace,
+					Labels:    map[string]string{discovery.LabelServiceName: svcName},
+				},
+				Ports: []discovery.EndpointPort{{Port: &port, Protocol: &udpProtocol}},
+				Endpoints: []discovery.Endpoint{{
+					Addresses: []string{oldEndpointIP},
+				}},
+			}
+
+			newEndpointSlice := &discovery.EndpointSlice{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "slice1",
+					Namespace: namespace,
+					Labels:    map[string]string{discovery.LabelServiceName: svcName},
+				},
+				Ports: []discovery.EndpointPort{{Port: &port, Protocol: &udpProtocol}},
+				Endpoints: []discovery.Endpoint{{
+					Addresses: []string{newEndpointIP},
+				}},
+			}
+
+			filters := []ctFilterDesc{{oldEndpointIP, int(port), udpProtocol, netlink.ConntrackReplyAnyIP}}
+			if svc.Spec.Type == corev1.ServiceTypeNodePort {
+				filters = append(filters, ctFilterDesc{oldEndpointIP, int(nodePort), udpProtocol, netlink.ConntrackReplyAnyIP})
+			}
+
+			// Test update: endpoint IP changes
+			addConntrackMocks(netlinkOpsMock, filters)
+			err = nc.reconcileConntrackUponEndpointSliceEvents(oldEndpointSlice, newEndpointSlice)
+			Expect(err).NotTo(HaveOccurred())
+			netlinkOpsMock.AssertExpectations(GinkgoT())
+
+			// Test delete: endpoint is removed
+			addConntrackMocks(netlinkOpsMock, filters)
+			err = nc.reconcileConntrackUponEndpointSliceEvents(oldEndpointSlice, nil)
+			Expect(err).NotTo(HaveOccurred())
+			netlinkOpsMock.AssertExpectations(GinkgoT())
+
+			// Test add: new endpoint, no old endpoint slice
+			err = nc.reconcileConntrackUponEndpointSliceEvents(nil, newEndpointSlice)
+			Expect(err).NotTo(HaveOccurred())
+			netlinkOpsMock.AssertExpectations(GinkgoT())
+		},
+			Entry("ClusterIP service", &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{Name: svcName, Namespace: namespace},
+				Spec: corev1.ServiceSpec{
+					Type: corev1.ServiceTypeClusterIP,
+					Ports: []corev1.ServicePort{
+						{
+							Port:     port,
+							Protocol: corev1.ProtocolUDP,
+						},
+					},
+				},
+			}),
+			Entry("NodePort service", &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{Name: svcName, Namespace: namespace},
+				Spec: corev1.ServiceSpec{
+					Type: corev1.ServiceTypeNodePort,
+					Ports: []corev1.ServicePort{
+						{
+							Port:     port,
+							Protocol: corev1.ProtocolUDP,
+							NodePort: nodePort,
+						},
+						{
+							Port:     port,
+							Protocol: corev1.ProtocolTCP,
+							NodePort: nodePort,
+						},
+					},
+				},
+			}),
+		)
 	})
 })

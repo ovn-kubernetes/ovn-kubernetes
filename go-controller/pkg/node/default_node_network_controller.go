@@ -1434,8 +1434,12 @@ func (nc *DefaultNodeNetworkController) reconcileConntrackUponEndpointSliceEvent
 	}
 	svc, err := nc.watchFactory.GetService(namespacedName.Namespace, namespacedName.Name)
 	if err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("error while retrieving service for endpointslice %s/%s when reconciling conntrack: %v",
-			newEndpointSlice.Namespace, newEndpointSlice.Name, err)
+		return fmt.Errorf("error while retrieving service for endpointslice %s/%s when reconciling conntrack: %w",
+			oldEndpointSlice.Namespace, oldEndpointSlice.Name, err)
+	}
+	if svc == nil {
+		// service doesn't exist, or was deleted. Nothing to do.
+		return nil
 	}
 	for _, oldPort := range oldEndpointSlice.Ports {
 		if *oldPort.Protocol != corev1.ProtocolUDP { // flush conntrack only for UDP
@@ -1453,6 +1457,23 @@ func (nc *DefaultNodeNetworkController) reconcileConntrackUponEndpointSliceEvent
 				if err := util.DeleteConntrackServicePort(oldIPStr, *oldPort.Port, *oldPort.Protocol,
 					netlink.ConntrackReplyAnyIP, nil); err != nil {
 					klog.Errorf("Failed to delete conntrack entry for %s: %v", oldIPStr, err)
+				}
+
+				// Delete conntrack entries for NodePort when the node is on a remote node, using nodePort for --orig-port-src match
+				// In the following example, the first entry will be matched/cleared by the previous DeleteConntrackServicePort call, but not the second one.
+				//  udp      17 88 src=172.18.0.2 dst=10.244.0.8 sport=50713 dport=8080 src=10.244.0.8 dst=100.64.0.4 sport=8080 dport=50713 [ASSURED] mark=0 secctx=system_u:object_r:unlabeled_t:s0 use=1
+				//  udp      17 88 src=172.18.0.2 dst=172.18.0.4 sport=50713 dport=31832 src=10.244.0.8 dst=172.18.0.2 sport=8080 dport=50713 [ASSURED] mark=10 secctx=system_u:object_r:unlabeled_t:s0 zone=16 use=1
+				// TODO: Once vishvananda/netlink support ConntrackFilterType '--reply-port-src', we can use oldPort.Port directly.
+				if svc.Spec.Type == corev1.ServiceTypeNodePort {
+					for _, port := range svc.Spec.Ports {
+						if port.Protocol != *oldPort.Protocol {
+							continue
+						}
+						if err := util.DeleteConntrackServicePort(oldIPStr, port.NodePort, *oldPort.Protocol,
+							netlink.ConntrackReplyAnyIP, nil); err != nil {
+							klog.Errorf("Failed to delete conntrack entry for NodePort %d: %v", port.NodePort, err)
+						}
+					}
 				}
 			}
 		}
