@@ -15,6 +15,7 @@ import (
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
@@ -515,24 +516,29 @@ func (r *DefaultGatewayReconciler) ReconcileIPv4AfterLiveMigration(liveMigration
 	if liveMigrationStatus.State != LiveMigrationTargetDomainReady {
 		return nil
 	}
+	var gwMAC net.HardwareAddr
+	if !config.Layer2UsesTransitRouter {
+		targetNode, err := r.watchFactory.GetNode(liveMigrationStatus.TargetPod.Spec.NodeName)
+		if err != nil {
+			return err
+		}
 
-	targetNode, err := r.watchFactory.GetNode(liveMigrationStatus.TargetPod.Spec.NodeName)
-	if err != nil {
-		return err
+		lrpJoinAddress, err := udn.GetGWRouterIPv4(targetNode, r.netInfo)
+		if err != nil {
+			return err
+		}
+
+		gwMAC = util.IPAddrToHWAddr(lrpJoinAddress)
 	}
-
-	lrpJoinAddress, err := udn.GetGWRouterIPv4(targetNode, r.netInfo)
-	if err != nil {
-		return err
-	}
-
-	lrpMAC := util.IPAddrToHWAddr(lrpJoinAddress)
 	for _, subnet := range r.netInfo.Subnets() {
 		gwIP := r.netInfo.GetNodeGatewayIP(subnet.CIDR).IP.To4()
 		if gwIP == nil {
 			continue
 		}
-		garp := util.GARP{IP: gwIP, MAC: &lrpMAC}
+		if config.Layer2UsesTransitRouter {
+			gwMAC = util.IPAddrToHWAddr(gwIP)
+		}
+		garp := util.GARP{IP: gwIP, MAC: &gwMAC}
 		if err := util.BroadcastGARP(r.interfaceName, garp); err != nil {
 			return err
 		}
@@ -573,7 +579,7 @@ func (r *DefaultGatewayReconciler) ReconcileIPv6AfterLiveMigration(liveMigration
 
 	ras := make([]ndp.RouterAdvertisement, 0, len(nodes))
 	for _, node := range nodes {
-		if node.Name == liveMigration.TargetPod.Spec.NodeName {
+		if !config.Layer2UsesTransitRouter && node.Name == liveMigration.TargetPod.Spec.NodeName {
 			// skip the target node since this is the proper gateway
 			continue
 		}
@@ -587,22 +593,33 @@ func (r *DefaultGatewayReconciler) ReconcileIPv6AfterLiveMigration(liveMigration
 		// to signal the removal of the old default gateway.
 		// NOTE: This is a workaround for the issue and may not be needed in the future, after
 		//       upgrading to a version that supports the new behavior.
-		ras = append(ras, newRouterAdvertisementFromJoinIPAndLifetime(nodeJoinAddrs[0].IP, destinationMAC, destinationIP.IP, 0))
+		ras = append(ras, newRouterAdvertisementFromIPAndLifetime(nodeJoinAddrs[0].IP, destinationMAC, destinationIP.IP, 0))
 	}
-	targetNode, err := r.watchFactory.GetNode(liveMigration.TargetPod.Spec.NodeName)
-	if err != nil {
-		return fmt.Errorf("failed fetching node %q to reconcile ipv6 gateway: %w", liveMigration.TargetPod.Spec.NodeName, err)
+	if !config.Layer2UsesTransitRouter {
+		targetNode, err := r.watchFactory.GetNode(liveMigration.TargetPod.Spec.NodeName)
+		if err != nil {
+			return fmt.Errorf("failed fetching node %q to reconcile ipv6 gateway: %w", liveMigration.TargetPod.Spec.NodeName, err)
+		}
+		targetNodeJoinAddrs, err := udn.GetGWRouterIPs(targetNode, r.netInfo)
+		if err != nil {
+			return ovntypes.NewSuppressedError(fmt.Errorf("failed parsing join addresss from live migration target node %q and network %q to reconcile ipv6 gateway: %w", targetNode.Name, r.netInfo.GetNetworkName(), err))
+		}
+		ras = append(ras, newRouterAdvertisementFromIPAndLifetime(targetNodeJoinAddrs[0].IP, destinationMAC, destinationIP.IP, 65535))
+	} else {
+		if len(targetPodAnnotation.Gateways) == 0 {
+			return fmt.Errorf("missing gateways to calculate ipv6 gateway reconciler RA")
+		}
+
+		// The LRP mac is calculated from the first address on the list.
+		gwIP := targetPodAnnotation.Gateways[0]
+		ras = append(ras, newRouterAdvertisementFromIPAndLifetime(gwIP, destinationMAC, destinationIP.IP, 65535))
 	}
-	targetNodeJoinAddrs, err := udn.GetGWRouterIPs(targetNode, r.netInfo)
-	if err != nil {
-		return ovntypes.NewSuppressedError(fmt.Errorf("failed parsing join addresss from live migration target node %q and network %q to reconcile ipv6 gateway: %w", targetNode.Name, r.netInfo.GetNetworkName(), err))
-	}
-	ras = append(ras, newRouterAdvertisementFromJoinIPAndLifetime(targetNodeJoinAddrs[0].IP, destinationMAC, destinationIP.IP, 65535))
+
 	return ndp.SendRouterAdvertisements(r.interfaceName, ras...)
 }
 
-// newRouterAdvertisementFromJoinIPAndLifetime creates a new Router Advertisement (RA) message
-// using the provided join IP address, destination MAC, destination IP, and lifetime.
+// newRouterAdvertisementFromIPAndLifetime creates a new Router Advertisement (RA) message
+// using the provided IP address, destination MAC, destination IP, and lifetime.
 //
 // This function performs the following:
 // - Derives the source MAC address from the given IP using util.IPAddrToHWAddr.
@@ -611,14 +628,14 @@ func (r *DefaultGatewayReconciler) ReconcileIPv6AfterLiveMigration(liveMigration
 // - Sets the RA message's lifetime to the specified value.
 //
 // Parameters:
-// - ip: The join IP address used to derive the source MAC and LLA.
+// - ip: The IP address used to derive the source MAC and LLA.
 // - destinationMAC: The MAC address to which the RA message will be sent.
 // - destinationIP: The IP address to which the RA message will be sent.
 // - lifetime: The lifetime value for the RA message, in seconds.
 //
 // Returns:
 // - An ndp.RouterAdvertisement object configured with the calculated source MAC, LLA, and the provided destination MAC, IP, and lifetime.
-func newRouterAdvertisementFromJoinIPAndLifetime(ip net.IP, destinationMAC net.HardwareAddr, destinationIP net.IP, lifetime uint16) ndp.RouterAdvertisement {
+func newRouterAdvertisementFromIPAndLifetime(ip net.IP, destinationMAC net.HardwareAddr, destinationIP net.IP, lifetime uint16) ndp.RouterAdvertisement {
 	sourceMAC := util.IPAddrToHWAddr(ip)
 	return ndp.RouterAdvertisement{
 		SourceMAC:      sourceMAC,
