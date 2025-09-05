@@ -109,6 +109,8 @@ type PodRoute struct {
 	Dest *net.IPNet
 	// NextHop is the IP address of the next hop for traffic destined for Dest
 	NextHop net.IP
+	// Priority is used to create routes with higher metric
+	Priority int
 }
 
 func (r PodRoute) String() string {
@@ -132,8 +134,9 @@ type podAnnotation struct {
 
 // Internal struct used to marshal PodRoute to the pod annotation
 type podRoute struct {
-	Dest    string `json:"dest"`
-	NextHop string `json:"nextHop"`
+	Dest     string `json:"dest"`
+	NextHop  string `json:"nextHop"`
+	Priority int    `json:"priority,omitempty"`
 }
 
 type OpenPort struct {
@@ -189,14 +192,16 @@ func MarshalPodAnnotation(annotations map[string]string, podInfo *PodAnnotation,
 		if r.Dest.IP.IsUnspecified() {
 			return nil, fmt.Errorf("bad podNetwork data: default route %v should be specified as gateway", r)
 		}
-		var nh string
-		if r.NextHop != nil {
-			nh = r.NextHop.String()
+		route := podRoute{
+			Dest: r.Dest.String(),
 		}
-		pa.Routes = append(pa.Routes, podRoute{
-			Dest:    r.Dest.String(),
-			NextHop: nh,
-		})
+		if r.NextHop != nil {
+			route.NextHop = r.NextHop.String()
+		}
+		if r.Priority > 0 {
+			route.Priority = r.Priority
+		}
+		pa.Routes = append(pa.Routes, route)
 	}
 
 	if podInfo.GatewayIPv6LLA != nil {
@@ -290,6 +295,7 @@ func UnmarshalPodAnnotation(annotations map[string]string, nadName string) (*Pod
 				return nil, fmt.Errorf("pod route %s has next hop %s of different family", r.Dest, r.NextHop)
 			}
 		}
+		route.Priority = r.Priority
 		podAnnotation.Routes = append(podAnnotation.Routes, route)
 	}
 

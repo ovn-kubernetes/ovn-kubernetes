@@ -339,8 +339,9 @@ func (p testPod) populateLogicalSwitchCache(fakeOvn *FakeOVN) {
 
 func (p testPod) getAnnotationsJson() string {
 	type podRoute struct {
-		Dest    string `json:"dest"`
-		NextHop string `json:"nextHop"`
+		Dest     string `json:"dest"`
+		NextHop  string `json:"nextHop"`
+		Priority int    `json:"priority,omitempty"`
 	}
 	type podAnnotation struct {
 		MAC      string     `json:"mac_address"`
@@ -378,7 +379,12 @@ func (p testPod) getAnnotationsJson() string {
 
 	var routes []podRoute
 	for _, route := range p.routes {
-		routes = append(routes, podRoute{Dest: route.Dest.String(), NextHop: route.NextHop.String()})
+		pr := podRoute{Dest: route.Dest.String(), NextHop: route.NextHop.String()}
+		// only joinIP routes get a higher priority
+		if route.Dest.String() == "fd99::/64" {
+			pr.Priority = 128
+		}
+		routes = append(routes, pr)
 	}
 
 	podAnnotations := map[string]podAnnotation{

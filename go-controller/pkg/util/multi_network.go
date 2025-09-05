@@ -721,6 +721,9 @@ func (nInfo *userDefinedNetInfo) GetNetworkScopedK8sMgmtIntfName(nodeName string
 }
 
 func (nInfo *userDefinedNetInfo) GetNetworkScopedClusterRouterName() string {
+	if nInfo.TopologyType() == types.Layer2Topology {
+		return nInfo.GetNetworkScopedName(types.TransitRouter)
+	}
 	return nInfo.GetNetworkScopedName(types.OVNClusterRouter)
 }
 
