@@ -159,8 +159,15 @@ jobs:
         path: ${{ env.CI_IMAGE_MASTER_TAR }}
 
   build-pr:
-    name: Build-PR
-    runs-on: ubuntu-24.04
+    name: Build-PR (${{ matrix.arch }})
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest # x86_64
+            arch: amd64
+          - runner: ubuntu-24.04-arm # arm64
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
     steps:
     # Create a cache for the build PR image
     - name: Restore PR image cache
@@ -229,6 +236,7 @@ jobs:
           make IMAGE=${IMAGE} \
             OVN_REPO=${{ env.OVN_REPO }} \
             OVN_GITREF=${{ env.OVN_GITREF }} \
+            ARCH=${{ matrix.arch }} \
             fedora-image
           mkdir _output
           docker save ${IMAGE} > _output/${CI_IMAGE_PR_TAR}
