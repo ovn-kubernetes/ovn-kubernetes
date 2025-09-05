@@ -1700,13 +1700,13 @@ func (e *EgressIPController) syncStaleEgressReroutePolicy(cache egressIPCache) e
 			// Update Logical Router Policies that have stale nexthops. Notice that we must do this separately
 			// because logicalRouterPolicyStaleNexthops must be populated first
 			for _, staleNextHopLogicalRouterPolicy := range logicalRouterPolicyStaleNexthops {
-				if staleNextHopLogicalRouterPolicy.Nexthop == nil {
-					continue
-				}
-				klog.Infof("syncStaleEgressReroutePolicy will remove stale nexthops for LRP %q for network %s: %s",
-					staleNextHopLogicalRouterPolicy.UUID, networkName, *staleNextHopLogicalRouterPolicy.Nexthop)
+				klog.Infof("syncStaleEgressReroutePolicy will remove stale nexthops for LRP %q for network %s: %v",
+					staleNextHopLogicalRouterPolicy.UUID, networkName, staleNextHopLogicalRouterPolicy.Nexthops)
 			}
-
+			// nothing to do if there's no stale next hops
+			if len(logicalRouterPolicyStaleNexthops) == 0 {
+				continue
+			}
 			err = libovsdbops.DeleteNextHopsFromLogicalRouterPolicies(e.nbClient, cache.networkToRouter[networkName], logicalRouterPolicyStaleNexthops...)
 			if err != nil {
 				return fmt.Errorf("unable to remove stale next hops from logical router policies for network %s: %v", networkName, err)
