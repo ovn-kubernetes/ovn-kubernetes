@@ -25,6 +25,7 @@ var (
 	OVSCPUPin             = New("OVSCPUPin")
 	RouteAdvertisements   = New("RouteAdvertisements")
 	Unidle                = New("Unidle")
+	NetworkQos            = New("NetworkQos")
 )
 
 func New(name string) ginkgo.Labels {

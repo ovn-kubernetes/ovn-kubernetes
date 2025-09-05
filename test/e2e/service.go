@@ -515,7 +515,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 							// TODO: Revisit this once https://bugzilla.redhat.com/show_bug.cgi?id=2169839 is fixed.
 							ovnKubernetesNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
 							ovnKubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnKubernetesNamespace).List(context.TODO(), metav1.ListOptions{
-								LabelSelector: "name=ovnkube-node",
+								LabelSelector: "app=ovnkube-node",
 							})
 							if err != nil {
 								framework.Failf("could not get ovnkube-node pods: %v", err)
@@ -1693,10 +1693,10 @@ metadata:
 
 		svcLoadBalancerIP, err := getServiceLoadBalancerIP(f.ClientSet, namespaceName, svcName)
 		framework.ExpectNoError(err, fmt.Sprintf("failed to get service lb ip: %s for %s, err: %v", svcLoadBalancerIP, svcName, err))
-        discoveryClient := f.ClientSet.DiscoveryV1()
+		discoveryClient := f.ClientSet.DiscoveryV1()
 		endpointSlice, err := discoveryClient.EndpointSlices(namespaceName).List(context.TODO(), metav1.ListOptions{
-		       LabelSelector: fmt.Sprintf("kubernetes.io/service-name=%s", svcName),
-	    })
+			LabelSelector: fmt.Sprintf("kubernetes.io/service-name=%s", svcName),
+		})
 		framework.ExpectNoError(err, fmt.Sprintf("failed to get endpoints slice for service %s", svcName))
 		gomega.Expect(endpointSlice).NotTo(gomega.BeNil())
 		gomega.Expect(len(endpointSlice.Items)).To(gomega.Equal(1))
@@ -1706,7 +1706,7 @@ metadata:
 		nodeName := *endpointSlice.Items[0].Endpoints[0].NodeName
 		nodeIP, err := getNodeIP(f.ClientSet, nodeName)
 		framework.ExpectNoError(err, fmt.Sprintf("failed to get endpoint's %s node ip address", nodeIP))
-       
+
 		svcIPforCurl := svcLoadBalancerIP
 		if !utilnet.IsIPv6String(svcLoadBalancerIP) {
 			ginkgo.By("Setting up external IPv4 client with an intermediate node")
@@ -1728,7 +1728,7 @@ metadata:
 		// Use Eventually because IPv6 takes a while to finish its network configuration
 		// with network namespaces.
 		// TODO: Figure out why keeping this at 5seconds is causing CI flakes after K8s 1.33 rebase
-        // See: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5455
+		// See: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5455
 		gomega.Eventually(func() error {
 			return buildAndRunCommand(fmt.Sprintf("sudo ip netns exec client curl %s:%d/big.iso -o big.iso", svcIPforCurl, endpointHTTPPort))
 		}, 10*time.Second).Should(gomega.BeNil(), "failed to connect with external load balancer service")
@@ -1743,7 +1743,6 @@ metadata:
 		gomega.Eventually(func() error {
 			return buildAndRunCommand(fmt.Sprintf("sudo ip netns exec client curl %s:%d/big.iso -o big.iso", svcIPforCurl, endpointHTTPPort))
 		}, 5*time.Second).Should(gomega.BeNil(), "failed to connect with external load balancer service after changing mtu size")
-		
 	})
 
 	ginkgo.It("Should ensure load balancer service works with pmtud", func() {
