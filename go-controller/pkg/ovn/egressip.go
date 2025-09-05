@@ -1603,6 +1603,21 @@ func (e *EgressIPController) syncPodAssignmentCache(egressIPCache egressIPCache)
 // It also removes stale nexthops from router policies used by EgressIPs.
 // Upon failure, it may be invoked multiple times in order to avoid a pod restart.
 func (e *EgressIPController) syncStaleEgressReroutePolicy(cache egressIPCache) error {
+	// limit Nodes only to egress node(s) for the EgressIP name
+	limitToValidEgressNodes := func(eipName string, nodeRedirectCache map[string]redirectIPs) map[string]redirectIPs {
+		filteredEgressNodesRedirectsCache := make(map[string]redirectIPs, 0)
+		egressNodeNames, ok := cache.egressIPNameToAssignedNodes[eipName]
+		if !ok {
+			return filteredEgressNodesRedirectsCache
+		}
+		for _, egressNode := range egressNodeNames {
+			if nodeRedirect, ok := nodeRedirectCache[egressNode]; ok {
+				filteredEgressNodesRedirectsCache[egressNode] = nodeRedirect
+			}
+		}
+		return filteredEgressNodesRedirectsCache
+	}
+
 	for eipName, networkCache := range cache.egressIPNameToPods {
 		for networkName, data := range networkCache {
 			logicalRouterPolicyStaleNexthops := []*nbdb.LogicalRouterPolicy{}
@@ -1610,11 +1625,6 @@ func (e *EgressIPController) syncStaleEgressReroutePolicy(cache egressIPCache) e
 			p := func(item *nbdb.LogicalRouterPolicy) bool {
 				if item.Priority != types.EgressIPReroutePriority || item.ExternalIDs[libovsdbops.NetworkKey.String()] != networkName {
 					return false
-				}
-				networkNodeRedirectCache, ok := cache.egressNodeRedirectsCache.cache[networkName]
-				if !ok || len(networkNodeRedirectCache) == 0 {
-					klog.Infof("syncStaleEgressReroutePolicy found invalid logical router policy (UUID: %s) because no assigned Nodes for EgressIP %s", item.UUID, eipName)
-					return true
 				}
 				extractedEgressIPName, _ := getEIPLRPObjK8MetaData(item.ExternalIDs)
 				if extractedEgressIPName == "" {
@@ -1625,6 +1635,17 @@ func (e *EgressIPController) syncStaleEgressReroutePolicy(cache egressIPCache) e
 					// remove if there's no reference to this EIP name
 					_, ok := cache.egressIPNameToPods[extractedEgressIPName]
 					return !ok
+				}
+				allNetworkNodeRedirectCache, ok := cache.egressNodeRedirectsCache.cache[networkName]
+				if !ok || len(allNetworkNodeRedirectCache) == 0 {
+					klog.Infof("syncStaleEgressReroutePolicy found invalid logical router policy (UUID: %s) because no assigned Nodes for EgressIP %s", item.UUID, eipName)
+					return true
+				}
+				networkNodeRedirectCache := limitToValidEgressNodes(eipName, allNetworkNodeRedirectCache)
+				if len(networkNodeRedirectCache) == 0 {
+					klog.Errorf("syncStaleEgressReroutePolicy could not find at least one node in the redirects "+
+						"cache after filtering for egress ip %q, UUID %q, programming error, removing logical router policy", eipName, item.UUID)
+					return true
 				}
 				splitMatch := strings.Split(item.Match, " ")
 				podIPStr := splitMatch[len(splitMatch)-1]
@@ -1681,13 +1702,16 @@ func (e *EgressIPController) syncStaleEgressReroutePolicy(cache egressIPCache) e
 			// Update Logical Router Policies that have stale nexthops. Notice that we must do this separately
 			// because logicalRouterPolicyStaleNexthops must be populated first
 			for _, staleNextHopLogicalRouterPolicy := range logicalRouterPolicyStaleNexthops {
-				if staleNextHopLogicalRouterPolicy.Nexthop == nil {
+				if len(staleNextHopLogicalRouterPolicy.Nexthops) == 0 {
 					continue
 				}
-				klog.Infof("syncStaleEgressReroutePolicy will remove stale nexthops for LRP %q for network %s: %s",
-					staleNextHopLogicalRouterPolicy.UUID, networkName, *staleNextHopLogicalRouterPolicy.Nexthop)
+				klog.Infof("syncStaleEgressReroutePolicy will remove stale nexthops for LRP %q for network %s: %v",
+					staleNextHopLogicalRouterPolicy.UUID, networkName, staleNextHopLogicalRouterPolicy.Nexthops)
 			}
-
+			// nothing to do if there's no stale next hops
+			if len(logicalRouterPolicyStaleNexthops) == 0 {
+				continue
+			}
 			err = libovsdbops.DeleteNextHopsFromLogicalRouterPolicies(e.nbClient, cache.networkToRouter[networkName], logicalRouterPolicyStaleNexthops...)
 			if err != nil {
 				return fmt.Errorf("unable to remove stale next hops from logical router policies for network %s: %v", networkName, err)
@@ -1866,28 +1890,37 @@ func (e *EgressIPController) generateCacheForEgressIP() (egressIPCache, error) {
 			r := redirectIPs{}
 			mgmtPort := &nbdb.LogicalSwitchPort{Name: ni.GetNetworkScopedK8sMgmtIntfName(node.Name)}
 			mgmtPort, err := libovsdbops.GetLogicalSwitchPort(e.nbClient, mgmtPort)
-			if err != nil {
-				// if switch port isnt created, we can assume theres nothing to sync
-				if errors.Is(err, libovsdbclient.ErrNotFound) {
-					continue
-				}
+			// return if error is anything other than not found to allow retry
+			if err != nil && !errors.Is(err, libovsdbclient.ErrNotFound) {
 				return cache, fmt.Errorf("failed to find management port for node %s: %v", node.Name, err)
 			}
-			mgmtPortAddresses := mgmtPort.GetAddresses()
-			if len(mgmtPortAddresses) == 0 {
-				return cache, fmt.Errorf("management switch port %s for node %s does not contain any addresses", ni.GetNetworkScopedK8sMgmtIntfName(node.Name), node.Name)
-			}
-			// assuming only one IP per IP family
-			for _, mgmtPortAddress := range mgmtPortAddresses {
-				mgmtPortAddressesStr := strings.Fields(mgmtPortAddress)
-				mgmtPortIP := net.ParseIP(mgmtPortAddressesStr[1])
-				if utilnet.IsIPv6(mgmtPortIP) {
-					if ip := mgmtPortIP.To16(); ip != nil {
-						r.v6MgtPort = ip.String()
+			// if management port is available, gather the data. If it's not available, OVN constructs that depend on a deleted
+			// management port IP will fail and be cleaned up in sync LRPs func.
+			if mgmtPort != nil {
+				mgmtPortAddresses := mgmtPort.GetAddresses()
+				if len(mgmtPortAddresses) == 0 {
+					return cache, fmt.Errorf("management switch port %s for node %s does not contain any addresses", ni.GetNetworkScopedK8sMgmtIntfName(node.Name), node.Name)
+				}
+				// Extract at most one IP per family; entries are "MAC IP [IP ...]"
+				for _, macPlusIPs := range mgmtPortAddresses {
+					parts := strings.Fields(macPlusIPs)
+					if len(parts) < 2 {
+						continue // no IPs
 					}
-				} else {
-					if ip := mgmtPortIP.To4(); ip != nil {
-						r.v4MgtPort = ip.String()
+					for _, ipStr := range parts[1:] {
+						ip := net.ParseIP(ipStr)
+						if ip == nil {
+							continue
+						}
+						if utilnet.IsIPv6(ip) {
+							if r.v6MgtPort == "" && ip.To16() != nil {
+								r.v6MgtPort = ip.String()
+							}
+						} else {
+							if r.v4MgtPort == "" && ip.To4() != nil {
+								r.v4MgtPort = ip.String()
+							}
+						}
 					}
 				}
 			}
