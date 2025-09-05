@@ -299,11 +299,14 @@ func (cm *ControllerManager) configureSvcTemplateSupport() {
 	}
 }
 
-func (cm *ControllerManager) configureMetrics(stopChan <-chan struct{}) {
+func (cm *ControllerManager) configureMetrics(stopChan <-chan struct{}) error {
 	metrics.RegisterOVNKubeControllerPerformance(cm.nbClient)
 	metrics.RegisterOVNKubeControllerFunctional(stopChan)
 	metrics.RunTimestamp(stopChan, cm.sbClient, cm.nbClient)
 	metrics.MonitorIPSec(cm.nbClient)
+	err := metrics.MonitorIPsecTunnelsState(stopChan, cm.wg,
+		util.RunOVSVsctl, util.RunIPsec)
+	return err
 }
 
 func (cm *ControllerManager) createACLLoggingMeter() error {
@@ -422,7 +425,10 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 	}
 	klog.Infof("Waiting for node in zone sync took: %s", time.Since(start))
 
-	cm.configureMetrics(cm.stopChan)
+	err = cm.configureMetrics(cm.stopChan)
+	if err != nil {
+		return err
+	}
 
 	err = cm.configureSCTPSupport()
 	if err != nil {
