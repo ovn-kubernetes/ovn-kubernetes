@@ -21,6 +21,7 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip/subnet"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/mac"
 	annotationalloc "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/pod"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/node"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/pod"
@@ -239,11 +240,20 @@ func (ncc *networkClusterController) init() error {
 			ipamClaimsReconciler = ncc.ipamClaimReconciler
 		}
 
+		var podAllocOpts []annotationalloc.AllocatorOption
+		if config.OVNKubernetesFeature.EnablePreconfiguredUDNAddresses &&
+			ncc.IsPrimaryNetwork() &&
+			ncc.AllowsPersistentIPs() &&
+			ncc.TopologyType() == types.Layer2Topology {
+			podAllocOpts = append(podAllocOpts, annotationalloc.WithMACManager(mac.NewManager()))
+		}
+
 		podAllocationAnnotator = annotationalloc.NewPodAnnotationAllocator(
 			ncc.GetNetInfo(),
 			ncc.watchFactory.PodCoreInformer().Lister(),
 			ncc.kube,
 			ipamClaimsReconciler,
+			podAllocOpts...,
 		)
 
 		ncc.podAllocator = pod.NewPodAllocator(

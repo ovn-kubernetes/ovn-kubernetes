@@ -11,6 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ktypes "k8s.io/apimachinery/pkg/types"
+	v1 "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/util/retry"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
@@ -53,14 +54,24 @@ func IsPodLiveMigratable(pod *corev1.Pod) bool {
 	return ok
 }
 
+// TODO: remove adapter once all findVMRelatedPods usages transition to use PodLister
+type listPodsFn func(vmName string) ([]*corev1.Pod, error)
+
 // findVMRelatedPods will return pods belong to the same vm annotated at pod and
 // filter out the one at the function argument
 func findVMRelatedPods(client *factory.WatchFactory, pod *corev1.Pod) ([]*corev1.Pod, error) {
+	f := func(vmName string) ([]*corev1.Pod, error) {
+		return client.GetPodsBySelector(pod.Namespace, metav1.LabelSelector{MatchLabels: map[string]string{kubevirtv1.VirtualMachineNameLabel: vmName}})
+	}
+	return findVMRelatedPodsWithListerFn(f, pod)
+}
+
+func findVMRelatedPodsWithListerFn(listPodsFn listPodsFn, pod *corev1.Pod) ([]*corev1.Pod, error) {
 	vmName, ok := pod.Labels[kubevirtv1.VirtualMachineNameLabel]
 	if !ok {
 		return nil, nil
 	}
-	vmPods, err := client.GetPodsBySelector(pod.Namespace, metav1.LabelSelector{MatchLabels: map[string]string{kubevirtv1.VirtualMachineNameLabel: vmName}})
+	vmPods, err := listPodsFn(vmName)
 	if err != nil {
 		return nil, err
 	}
@@ -148,17 +159,27 @@ func EnsurePodAnnotationForVM(watchFactory *factory.WatchFactory, kube *kube.Kub
 	return podAnnotation, nil
 }
 
+// TODO: remove adapter once all allVMPodsAreCompleted usages transition to use PodLister
 // AllVMPodsAreCompleted return true if all the vm pods are completed
-func AllVMPodsAreCompleted(client *factory.WatchFactory, pod *corev1.Pod) (bool, error) {
-	if !IsPodLiveMigratable(pod) {
-		return false, nil
-	}
+func allVMPodsAreCompleted(client *factory.WatchFactory, pod *corev1.Pod) (bool, error) {
+	return AllVMPodsAreCompleted(client.PodCoreInformer().Lister(), pod)
+}
 
+// AllVMPodsAreCompleted return true if all the vm pods are completed
+func AllVMPodsAreCompleted(podLister v1.PodLister, pod *corev1.Pod) (bool, error) {
 	if !util.PodCompleted(pod) {
 		return false, nil
 	}
 
-	vmPods, err := findVMRelatedPods(client, pod)
+	f := func(vmName string) ([]*corev1.Pod, error) {
+		labels := map[string]string{kubevirtv1.VirtualMachineNameLabel: vmName}
+		selector, err := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{MatchLabels: labels})
+		if err != nil {
+			return nil, err
+		}
+		return podLister.Pods(pod.Namespace).List(selector)
+	}
+	vmPods, err := findVMRelatedPodsWithListerFn(f, pod)
 	if err != nil {
 		return false, fmt.Errorf("failed finding related pods for pod %s/%s when checking if they are completed: %v", pod.Namespace, pod.Name, err)
 	}
@@ -241,7 +262,7 @@ func CleanUpLiveMigratablePod(nbClient libovsdbclient.Client, watchFactory *fact
 		return nil
 	}
 
-	allVMPodsCompleted, err := AllVMPodsAreCompleted(watchFactory, pod)
+	allVMPodsCompleted, err := allVMPodsAreCompleted(watchFactory, pod)
 	if err != nil {
 		return fmt.Errorf("failed cleaning up VM when checking if pod is leftover: %v", err)
 	}
