@@ -14,6 +14,11 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
+const (
+	protoPrefixV4 = "ip"
+	protoPrefixV6 = "ipv6"
+)
+
 func (b *BridgeConfiguration) DefaultBridgeFlows(hostSubnets []*net.IPNet, extraIPs []net.IP) ([]string, error) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
@@ -95,9 +100,10 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 		for _, netConfig := range b.patchedNetConfigs() {
 			// table 0, SVC Hairpin from OVN destined to local host, DNAT and go to table 4
 			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=500, in_port=%s, ip, ip_dst=%s, ip_src=%s,"+
+				fmt.Sprintf("cookie=%s, priority=500, in_port=%s, %s, %s_dst=%s, %s_src=%s,"+
 					"actions=ct(commit,zone=%d,nat(dst=%s),table=4)",
-					nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, config.Gateway.MasqueradeIPs.V4HostMasqueradeIP.String(), physicalIP.IP,
+					nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, protoPrefixV4, protoPrefixV4,
+					config.Gateway.MasqueradeIPs.V4HostMasqueradeIP.String(), protoPrefixV4, physicalIP.IP,
 					config.Default.HostMasqConntrackZone, physicalIP.IP))
 		}
 
@@ -118,18 +124,20 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 
 			for _, netConfig := range b.patchedNetConfigs() {
 				dftFlows = append(dftFlows,
-					fmt.Sprintf("cookie=%s, priority=500, in_port=%s, ip, ip_dst=%s, ip_src=%s,"+
+					fmt.Sprintf("cookie=%s, priority=500, in_port=%s, %s, %s_dst=%s, %s_src=%s,"+
 						"actions=ct(commit,zone=%d,table=4)",
-						nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, ip.String(), physicalIP.IP,
+						nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, protoPrefixV4,
+						protoPrefixV4, ip.String(), protoPrefixV4, physicalIP.IP,
 						config.Default.HostMasqConntrackZone))
 			}
 		}
 
 		// table 0, Reply SVC traffic from Host -> OVN, unSNAT and goto table 5
 		dftFlows = append(dftFlows,
-			fmt.Sprintf("cookie=%s, priority=500, in_port=%s, ip, ip_dst=%s,"+
+			fmt.Sprintf("cookie=%s, priority=500, in_port=%s, %s, %s_dst=%s,"+
 				"actions=ct(zone=%d,nat,table=5)",
-				nodetypes.DefaultOpenFlowCookie, ofPortHost, config.Gateway.MasqueradeIPs.V4OVNMasqueradeIP.String(), config.Default.OVNMasqConntrackZone))
+				nodetypes.DefaultOpenFlowCookie, ofPortHost, protoPrefixV4, protoPrefixV4,
+				config.Gateway.MasqueradeIPs.V4OVNMasqueradeIP.String(), config.Default.OVNMasqConntrackZone))
 	}
 	if config.IPv6Mode {
 		if ofPortPhys != "" {
@@ -157,9 +165,10 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 		// table 0, SVC Hairpin from OVN destined to local host, DNAT to host, send to table 4
 		for _, netConfig := range b.patchedNetConfigs() {
 			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=500, in_port=%s, ipv6, ipv6_dst=%s, ipv6_src=%s,"+
+				fmt.Sprintf("cookie=%s, priority=500, in_port=%s, %s, %s_dst=%s, %s_src=%s,"+
 					"actions=ct(commit,zone=%d,nat(dst=%s),table=4)",
-					nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, config.Gateway.MasqueradeIPs.V6HostMasqueradeIP.String(), physicalIP.IP,
+					nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, protoPrefixV6, protoPrefixV6,
+					config.Gateway.MasqueradeIPs.V6HostMasqueradeIP.String(), protoPrefixV6, physicalIP.IP,
 					config.Default.HostMasqConntrackZone, physicalIP.IP))
 		}
 
@@ -180,18 +189,20 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 
 			for _, netConfig := range b.patchedNetConfigs() {
 				dftFlows = append(dftFlows,
-					fmt.Sprintf("cookie=%s, priority=500, in_port=%s, ipv6, ipv6_dst=%s, ipv6_src=%s,"+
+					fmt.Sprintf("cookie=%s, priority=500, in_port=%s, %s, %s_dst=%s, %s_src=%s,"+
 						"actions=ct(commit,zone=%d,table=4)",
-						nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, ip.String(), physicalIP.IP,
+						nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, protoPrefixV6, protoPrefixV6,
+						ip.String(), protoPrefixV6, physicalIP.IP,
 						config.Default.HostMasqConntrackZone))
 			}
 		}
 
 		// table 0, Reply SVC traffic from Host -> OVN, unSNAT and goto table 5
 		dftFlows = append(dftFlows,
-			fmt.Sprintf("cookie=%s, priority=500, in_port=%s, ipv6, ipv6_dst=%s,"+
+			fmt.Sprintf("cookie=%s, priority=500, in_port=%s, %s, %s_dst=%s,"+
 				"actions=ct(zone=%d,nat,table=5)",
-				nodetypes.DefaultOpenFlowCookie, ofPortHost, config.Gateway.MasqueradeIPs.V6OVNMasqueradeIP.String(), config.Default.OVNMasqConntrackZone))
+				nodetypes.DefaultOpenFlowCookie, ofPortHost, protoPrefixV6, protoPrefixV6,
+				config.Gateway.MasqueradeIPs.V6OVNMasqueradeIP.String(), config.Default.OVNMasqConntrackZone))
 	}
 
 	var protoPrefix, masqIP, masqSubnet string
@@ -199,11 +210,11 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 	// table 0, packets coming from Host -> Service
 	for _, svcCIDR := range config.Kubernetes.ServiceCIDRs {
 		if utilnet.IsIPv4CIDR(svcCIDR) {
-			protoPrefix = "ip"
+			protoPrefix = protoPrefixV4
 			masqIP = config.Gateway.MasqueradeIPs.V4HostMasqueradeIP.String()
 			masqSubnet = config.Gateway.V4MasqueradeSubnet
 		} else {
-			protoPrefix = "ipv6"
+			protoPrefix = protoPrefixV6
 			masqIP = config.Gateway.MasqueradeIPs.V6HostMasqueradeIP.String()
 			masqSubnet = config.Gateway.V6MasqueradeSubnet
 		}
@@ -300,50 +311,50 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 			if config.IPv4Mode {
 				// table 1, established and related connections in zone 64000 with ct_mark CtMarkOVN go to OVN
 				dftFlows = append(dftFlows,
-					fmt.Sprintf("cookie=%s, priority=100, table=1, ip, ct_state=+trk+est, ct_mark=%s, "+
-						"actions=%s", nodetypes.DefaultOpenFlowCookie, netConfig.MasqCTMark, actions))
+					fmt.Sprintf("cookie=%s, priority=100, table=1, %s, ct_state=+trk+est, ct_mark=%s, "+
+						"actions=%s", nodetypes.DefaultOpenFlowCookie, protoPrefixV4, netConfig.MasqCTMark, actions))
 
 				dftFlows = append(dftFlows,
-					fmt.Sprintf("cookie=%s, priority=100, table=1, ip, ct_state=+trk+rel, ct_mark=%s, "+
-						"actions=%s", nodetypes.DefaultOpenFlowCookie, netConfig.MasqCTMark, actions))
+					fmt.Sprintf("cookie=%s, priority=100, table=1, %s, ct_state=+trk+rel, ct_mark=%s, "+
+						"actions=%s", nodetypes.DefaultOpenFlowCookie, protoPrefixV4, netConfig.MasqCTMark, actions))
 
 			}
 
 			if config.IPv6Mode {
 				// table 1, established and related connections in zone 64000 with ct_mark CtMarkOVN go to OVN
 				dftFlows = append(dftFlows,
-					fmt.Sprintf("cookie=%s, priority=100, table=1, ipv6, ct_state=+trk+est, ct_mark=%s, "+
-						"actions=%s", nodetypes.DefaultOpenFlowCookie, netConfig.MasqCTMark, actions))
+					fmt.Sprintf("cookie=%s, priority=100, table=1, %s, ct_state=+trk+est, ct_mark=%s, "+
+						"actions=%s", nodetypes.DefaultOpenFlowCookie, protoPrefixV6, netConfig.MasqCTMark, actions))
 
 				dftFlows = append(dftFlows,
-					fmt.Sprintf("cookie=%s, priority=100, table=1, ipv6, ct_state=+trk+rel, ct_mark=%s, "+
-						"actions=%s", nodetypes.DefaultOpenFlowCookie, netConfig.MasqCTMark, actions))
+					fmt.Sprintf("cookie=%s, priority=100, table=1, %s, ct_state=+trk+rel, ct_mark=%s, "+
+						"actions=%s", nodetypes.DefaultOpenFlowCookie, protoPrefixV6, netConfig.MasqCTMark, actions))
 			}
 		}
 		if config.IPv4Mode {
 			// table 1, established and related connections in zone 64000 with ct_mark CtMarkHost go to host
 			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=100, table=1, %s ip, ct_state=+trk+est, ct_mark=%s, "+
+				fmt.Sprintf("cookie=%s, priority=100, table=1, %s %s, ct_state=+trk+est, ct_mark=%s, "+
 					"actions=%soutput:%s",
-					nodetypes.DefaultOpenFlowCookie, match_vlan, nodetypes.CtMarkHost, strip_vlan, ofPortHost))
+					nodetypes.DefaultOpenFlowCookie, match_vlan, protoPrefixV4, nodetypes.CtMarkHost, strip_vlan, ofPortHost))
 
 			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=100, table=1, %s ip, ct_state=+trk+rel, ct_mark=%s, "+
+				fmt.Sprintf("cookie=%s, priority=100, table=1, %s %s, ct_state=+trk+rel, ct_mark=%s, "+
 					"actions=%soutput:%s",
-					nodetypes.DefaultOpenFlowCookie, match_vlan, nodetypes.CtMarkHost, strip_vlan, ofPortHost))
+					nodetypes.DefaultOpenFlowCookie, match_vlan, protoPrefixV4, nodetypes.CtMarkHost, strip_vlan, ofPortHost))
 
 		}
 		if config.IPv6Mode {
 			// table 1, established and related connections in zone 64000 with ct_mark CtMarkHost go to host
 			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=100, table=1, %s ip6, ct_state=+trk+est, ct_mark=%s, "+
+				fmt.Sprintf("cookie=%s, priority=100, table=1, %s %s, ct_state=+trk+est, ct_mark=%s, "+
 					"actions=%soutput:%s",
-					nodetypes.DefaultOpenFlowCookie, match_vlan, nodetypes.CtMarkHost, strip_vlan, ofPortHost))
+					nodetypes.DefaultOpenFlowCookie, match_vlan, protoPrefixV6, nodetypes.CtMarkHost, strip_vlan, ofPortHost))
 
 			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=100, table=1, %s ip6, ct_state=+trk+rel, ct_mark=%s, "+
+				fmt.Sprintf("cookie=%s, priority=100, table=1, %s %s, ct_state=+trk+rel, ct_mark=%s, "+
 					"actions=%soutput:%s",
-					nodetypes.DefaultOpenFlowCookie, match_vlan, nodetypes.CtMarkHost, strip_vlan, ofPortHost))
+					nodetypes.DefaultOpenFlowCookie, match_vlan, protoPrefixV6, nodetypes.CtMarkHost, strip_vlan, ofPortHost))
 
 		}
 
@@ -385,22 +396,23 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 				// the correct patch port of it's own network where it's a deadend if the clusterIP is not part of
 				// that UDN network and works if it is part of the UDN network.
 				dftFlows = append(dftFlows,
-					fmt.Sprintf("cookie=%s, priority=200, table=2, ip, ip_src=%s, "+
+					fmt.Sprintf("cookie=%s, priority=200, table=2, %s, %s_src=%s, "+
 						"actions=drop",
-						nodetypes.DefaultOpenFlowCookie, matchingIPFamilySubnet.String()))
+						nodetypes.DefaultOpenFlowCookie, protoPrefixV4, protoPrefixV4, matchingIPFamilySubnet.String()))
 			}
 			// Drop traffic coming from the masquerade IP or the UDN subnet(for advertised UDNs) to ensure that
 			// isolation between networks is enforced. This handles the case where a pod on the UDN subnet is sending traffic to
 			// a service in another UDN.
 			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=200, table=2, ip, ip_src=%s, "+
+				fmt.Sprintf("cookie=%s, priority=200, table=2, %s, %s_src=%s, "+
 					"actions=drop",
-					nodetypes.DefaultOpenFlowCookie, netConfig.V4MasqIPs.ManagementPort.IP.String()))
+					nodetypes.DefaultOpenFlowCookie, protoPrefixV4, protoPrefixV4,
+					netConfig.V4MasqIPs.ManagementPort.IP.String()))
 
 			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=250, table=2, ip, pkt_mark=%s, "+
+				fmt.Sprintf("cookie=%s, priority=250, table=2, %s, pkt_mark=%s, "+
 					"actions=set_field:%s->eth_dst,output:%s",
-					nodetypes.DefaultOpenFlowCookie, netConfig.PktMark,
+					nodetypes.DefaultOpenFlowCookie, protoPrefixV4, netConfig.PktMark,
 					bridgeMacAddress, netConfig.OfPortPatch))
 		}
 	}
@@ -424,18 +436,20 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 				}
 
 				dftFlows = append(dftFlows,
-					fmt.Sprintf("cookie=%s, priority=200, table=2, ipv6, ipv6_src=%s, "+
+					fmt.Sprintf("cookie=%s, priority=200, table=2, %s, %s_src=%s, "+
 						"actions=drop",
-						nodetypes.DefaultOpenFlowCookie, matchingIPFamilySubnet.String()))
+						nodetypes.DefaultOpenFlowCookie, protoPrefixV6, protoPrefixV6,
+						matchingIPFamilySubnet.String()))
 			}
 			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=200, table=2, ipv6, ipv6_src=%s, "+
+				fmt.Sprintf("cookie=%s, priority=200, table=2, %s, %s_src=%s, "+
 					"actions=drop",
-					nodetypes.DefaultOpenFlowCookie, netConfig.V6MasqIPs.ManagementPort.IP.String()))
+					nodetypes.DefaultOpenFlowCookie, protoPrefixV6, protoPrefixV6,
+					netConfig.V6MasqIPs.ManagementPort.IP.String()))
 			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=250, table=2, ipv6, pkt_mark=%s, "+
+				fmt.Sprintf("cookie=%s, priority=250, table=2, %s, pkt_mark=%s, "+
 					"actions=set_field:%s->eth_dst,output:%s",
-					nodetypes.DefaultOpenFlowCookie, netConfig.PktMark,
+					nodetypes.DefaultOpenFlowCookie, protoPrefixV6, netConfig.PktMark,
 					bridgeMacAddress, netConfig.OfPortPatch))
 		}
 	}
@@ -450,28 +464,28 @@ func (b *BridgeConfiguration) flowsForDefaultBridge(extraIPs []net.IP) ([]string
 	// We need to SNAT and masquerade OVN GR IP, send to table 3 for dispatch to Host
 	if config.IPv4Mode {
 		dftFlows = append(dftFlows,
-			fmt.Sprintf("cookie=%s, table=4,ip,"+
+			fmt.Sprintf("cookie=%s, table=4,%s,"+
 				"actions=ct(commit,zone=%d,nat(src=%s),table=3)",
-				nodetypes.DefaultOpenFlowCookie, config.Default.OVNMasqConntrackZone, config.Gateway.MasqueradeIPs.V4OVNMasqueradeIP.String()))
+				nodetypes.DefaultOpenFlowCookie, protoPrefixV4, config.Default.OVNMasqConntrackZone, config.Gateway.MasqueradeIPs.V4OVNMasqueradeIP.String()))
 	}
 	if config.IPv6Mode {
 		dftFlows = append(dftFlows,
-			fmt.Sprintf("cookie=%s, table=4,ipv6, "+
+			fmt.Sprintf("cookie=%s, table=4,%s, "+
 				"actions=ct(commit,zone=%d,nat(src=%s),table=3)",
-				nodetypes.DefaultOpenFlowCookie, config.Default.OVNMasqConntrackZone, config.Gateway.MasqueradeIPs.V6OVNMasqueradeIP.String()))
+				nodetypes.DefaultOpenFlowCookie, protoPrefixV6, config.Default.OVNMasqConntrackZone, config.Gateway.MasqueradeIPs.V6OVNMasqueradeIP.String()))
 	}
 	// table 5, Host Reply traffic to hairpinned svc, need to unDNAT, send to table 2
 	if config.IPv4Mode {
 		dftFlows = append(dftFlows,
-			fmt.Sprintf("cookie=%s, table=5, ip, "+
+			fmt.Sprintf("cookie=%s, table=5, %s, "+
 				"actions=ct(commit,zone=%d,nat,table=2)",
-				nodetypes.DefaultOpenFlowCookie, config.Default.HostMasqConntrackZone))
+				nodetypes.DefaultOpenFlowCookie, protoPrefixV4, config.Default.HostMasqConntrackZone))
 	}
 	if config.IPv6Mode {
 		dftFlows = append(dftFlows,
-			fmt.Sprintf("cookie=%s, table=5, ipv6, "+
+			fmt.Sprintf("cookie=%s, table=5, %s, "+
 				"actions=ct(commit,zone=%d,nat,table=2)",
-				nodetypes.DefaultOpenFlowCookie, config.Default.HostMasqConntrackZone))
+				nodetypes.DefaultOpenFlowCookie, protoPrefixV6, config.Default.HostMasqConntrackZone))
 	}
 	return dftFlows, nil
 }
@@ -491,18 +505,20 @@ func generateIPFragmentReassemblyFlow(ofPortPhys string) []string {
 	flows := make([]string, 0, 2)
 	if config.IPv4Mode {
 		flows = append(flows,
-			fmt.Sprintf("cookie=%s, priority=110, table=0, in_port=%s, ip, nw_frag=yes, actions=ct(table=0,zone=%d)",
+			fmt.Sprintf("cookie=%s, priority=110, table=0, in_port=%s, %s, nw_frag=yes, actions=ct(table=0,zone=%d)",
 				nodetypes.DefaultOpenFlowCookie,
 				ofPortPhys,
+				protoPrefixV4,
 				config.Default.ReassemblyConntrackZone,
 			),
 		)
 	}
 	if config.IPv6Mode {
 		flows = append(flows,
-			fmt.Sprintf("cookie=%s, priority=110, table=0, in_port=%s, ipv6, nw_frag=yes, actions=ct(table=0,zone=%d)",
+			fmt.Sprintf("cookie=%s, priority=110, table=0, in_port=%s, %s, nw_frag=yes, actions=ct(table=0,zone=%d)",
 				nodetypes.DefaultOpenFlowCookie,
 				ofPortPhys,
+				protoPrefixV6,
 				config.Default.ReassemblyConntrackZone,
 			),
 		)
@@ -588,10 +604,10 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 				// egressService pods will also undergo this SNAT to nodeIP since these features are tied
 				// together at the OVN policy level on the distributed router.
 				dftFlows = append(dftFlows,
-					fmt.Sprintf("cookie=%s, priority=105, in_port=%s, dl_src=%s, ip, pkt_mark=%s "+
+					fmt.Sprintf("cookie=%s, priority=105, in_port=%s, dl_src=%s, %s, pkt_mark=%s "+
 						"actions=ct(commit, zone=%d, nat(src=%s), exec(set_field:%s->ct_mark)),output:%s",
-						nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, bridgeMacAddress, nodetypes.OvnKubeNodeSNATMark,
-						config.Default.ConntrackZone, physicalIP.IP, netConfig.MasqCTMark, ofPortPhys))
+						nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, bridgeMacAddress, protoPrefixV4,
+						nodetypes.OvnKubeNodeSNATMark, config.Default.ConntrackZone, physicalIP.IP, netConfig.MasqCTMark, ofPortPhys))
 
 				// table 0, packets coming from egressIP pods only from user defined networks. If an egressIP is assigned to
 				// this node, then all networks get a flow even if no pods on that network were selected for by this egressIP.
@@ -600,9 +616,9 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 					if netConfig.MasqCTMark != nodetypes.CtMarkOVN {
 						for mark, eip := range b.eipMarkIPs.GetIPv4() {
 							dftFlows = append(dftFlows,
-								fmt.Sprintf("cookie=%s, priority=105, in_port=%s, dl_src=%s, ip, pkt_mark=%d, "+
+								fmt.Sprintf("cookie=%s, priority=105, in_port=%s, dl_src=%s, %s, pkt_mark=%d, "+
 									"actions=ct(commit, zone=%d, nat(src=%s), exec(set_field:%s->ct_mark)), output:%s",
-									nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, bridgeMacAddress, mark,
+									nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, bridgeMacAddress, protoPrefixV4, mark,
 									config.Default.ConntrackZone, eip, netConfig.MasqCTMark, ofPortPhys))
 						}
 					}
@@ -612,10 +628,10 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 				// so that reverse direction goes back to the pods.
 				if netConfig.IsDefaultNetwork() {
 					dftFlows = append(dftFlows,
-						fmt.Sprintf("cookie=%s, priority=100, in_port=%s, dl_src=%s, ip, "+
+						fmt.Sprintf("cookie=%s, priority=100, in_port=%s, dl_src=%s, %s, "+
 							"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:%s",
-							nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, bridgeMacAddress, config.Default.ConntrackZone,
-							netConfig.MasqCTMark, ofPortPhys))
+							nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, bridgeMacAddress, protoPrefixV4,
+							config.Default.ConntrackZone, netConfig.MasqCTMark, ofPortPhys))
 
 					// Allow (a) OVN->host traffic on the same node
 					// (b) host->host traffic on the same node
@@ -625,9 +641,10 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 				} else {
 					//  for UDN we additionally SNAT the packet from masquerade IP -> node IP
 					dftFlows = append(dftFlows,
-						fmt.Sprintf("cookie=%s, priority=100, in_port=%s, dl_src=%s, ip, ip_src=%s, "+
+						fmt.Sprintf("cookie=%s, priority=100, in_port=%s, dl_src=%s, %s, %s_src=%s, "+
 							"actions=ct(commit, zone=%d, nat(src=%s), exec(set_field:%s->ct_mark)), output:%s",
-							nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, bridgeMacAddress, netConfig.V4MasqIPs.GatewayRouter.IP, config.Default.ConntrackZone,
+							nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, bridgeMacAddress, protoPrefixV4, protoPrefixV4,
+							netConfig.V4MasqIPs.GatewayRouter.IP, config.Default.ConntrackZone,
 							physicalIP.IP, netConfig.MasqCTMark, ofPortPhys))
 				}
 			}
@@ -635,9 +652,10 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 			// table 0, packets coming from host Commit connections with ct_mark CtMarkHost
 			// so that reverse direction goes back to the host.
 			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=100, in_port=%s, ip, "+
+				fmt.Sprintf("cookie=%s, priority=100, in_port=%s, %s, "+
 					"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), %soutput:%s",
-					nodetypes.DefaultOpenFlowCookie, ofPortHost, config.Default.ConntrackZone, nodetypes.CtMarkHost, mod_vlan_id, ofPortPhys))
+					nodetypes.DefaultOpenFlowCookie, ofPortHost, protoPrefixV4, config.Default.ConntrackZone,
+					nodetypes.CtMarkHost, mod_vlan_id, ofPortPhys))
 		}
 		if config.Gateway.Mode == config.GatewayModeLocal {
 			for _, netConfig := range b.patchedNetConfigs() {
@@ -669,8 +687,8 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 			// Send it through conntrack and resubmit to table 1 to know the state and mark of the connection.
 			// Note, there are higher priority rules that take care of traffic coming from LOCAL and OVN ports.
 			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=50, ip, dl_dst=%s, actions=ct(zone=%d, nat, table=1)",
-					nodetypes.DefaultOpenFlowCookie, bridgeMacAddress, config.Default.ConntrackZone))
+				fmt.Sprintf("cookie=%s, priority=50, %s, dl_dst=%s, actions=ct(zone=%d, nat, table=1)",
+					nodetypes.DefaultOpenFlowCookie, protoPrefixV4, bridgeMacAddress, config.Default.ConntrackZone))
 		}
 	}
 
@@ -687,9 +705,9 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 				// egressService pods will also undergo this SNAT to nodeIP since these features are tied
 				// together at the OVN policy level on the distributed router.
 				dftFlows = append(dftFlows,
-					fmt.Sprintf("cookie=%s, priority=105, in_port=%s, dl_src=%s, ipv6, pkt_mark=%s "+
+					fmt.Sprintf("cookie=%s, priority=105, in_port=%s, dl_src=%s, %s, pkt_mark=%s "+
 						"actions=ct(commit, zone=%d, nat(src=%s), exec(set_field:%s->ct_mark)),output:%s",
-						nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, bridgeMacAddress, nodetypes.OvnKubeNodeSNATMark,
+						nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, bridgeMacAddress, protoPrefixV6, nodetypes.OvnKubeNodeSNATMark,
 						config.Default.ConntrackZone, physicalIP.IP, netConfig.MasqCTMark, ofPortPhys))
 
 				// table 0, packets coming from egressIP pods only from user defined networks. If an egressIP is assigned to
@@ -699,9 +717,9 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 					if netConfig.MasqCTMark != nodetypes.CtMarkOVN {
 						for mark, eip := range b.eipMarkIPs.GetIPv6() {
 							dftFlows = append(dftFlows,
-								fmt.Sprintf("cookie=%s, priority=105, in_port=%s, dl_src=%s, ipv6, pkt_mark=%d, "+
+								fmt.Sprintf("cookie=%s, priority=105, in_port=%s, dl_src=%s, %s, pkt_mark=%d, "+
 									"actions=ct(commit, zone=%d, nat(src=%s), exec(set_field:%s->ct_mark)), output:%s",
-									nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, bridgeMacAddress, mark,
+									nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, bridgeMacAddress, protoPrefixV6, mark,
 									config.Default.ConntrackZone, eip, netConfig.MasqCTMark, ofPortPhys))
 						}
 					}
@@ -711,9 +729,10 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 				// so that reverse direction goes back to the pods.
 				if netConfig.IsDefaultNetwork() {
 					dftFlows = append(dftFlows,
-						fmt.Sprintf("cookie=%s, priority=100, in_port=%s, dl_src=%s, ipv6, "+
+						fmt.Sprintf("cookie=%s, priority=100, in_port=%s, dl_src=%s, %s, "+
 							"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:%s",
-							nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, bridgeMacAddress, config.Default.ConntrackZone, netConfig.MasqCTMark, ofPortPhys))
+							nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, bridgeMacAddress, protoPrefixV6,
+							config.Default.ConntrackZone, netConfig.MasqCTMark, ofPortPhys))
 
 					// Allow (a) OVN->host traffic on the same node
 					// (b) host->host traffic on the same node
@@ -723,9 +742,10 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 				} else {
 					//  for UDN we additionally SNAT the packet from masquerade IP -> node IP
 					dftFlows = append(dftFlows,
-						fmt.Sprintf("cookie=%s, priority=100, in_port=%s, dl_src=%s, ipv6, ipv6_src=%s, "+
+						fmt.Sprintf("cookie=%s, priority=100, in_port=%s, dl_src=%s, %s, %s_src=%s, "+
 							"actions=ct(commit, zone=%d, nat(src=%s), exec(set_field:%s->ct_mark)), output:%s",
-							nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, bridgeMacAddress, netConfig.V6MasqIPs.GatewayRouter.IP, config.Default.ConntrackZone,
+							nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, bridgeMacAddress, protoPrefixV6, protoPrefixV6,
+							netConfig.V6MasqIPs.GatewayRouter.IP, config.Default.ConntrackZone,
 							physicalIP.IP, netConfig.MasqCTMark, ofPortPhys))
 				}
 			}
@@ -733,9 +753,10 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 			// table 0, packets coming from host. Commit connections with ct_mark CtMarkHost
 			// so that reverse direction goes back to the host.
 			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=100, in_port=%s, ipv6, "+
+				fmt.Sprintf("cookie=%s, priority=100, in_port=%s, %s, "+
 					"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), %soutput:%s",
-					nodetypes.DefaultOpenFlowCookie, ofPortHost, config.Default.ConntrackZone, nodetypes.CtMarkHost, mod_vlan_id, ofPortPhys))
+					nodetypes.DefaultOpenFlowCookie, ofPortHost, protoPrefixV6,
+					config.Default.ConntrackZone, nodetypes.CtMarkHost, mod_vlan_id, ofPortPhys))
 
 		}
 		if config.Gateway.Mode == config.GatewayModeLocal {
@@ -743,17 +764,17 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 				// table 0, any packet coming from OVN send to host in LGW mode, host will take care of sending it outside if needed.
 				// exceptions are traffic for egressIP and egressGW features and ICMP related traffic which will hit the priority 100 flow instead of this.
 				dftFlows = append(dftFlows,
-					fmt.Sprintf("cookie=%s, priority=175, in_port=%s, tcp6, ipv6_src=%s, "+
+					fmt.Sprintf("cookie=%s, priority=175, in_port=%s, tcp6, %s_src=%s, "+
 						"actions=ct(table=4,zone=%d)",
-						nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, physicalIP.IP, config.Default.HostMasqConntrackZone))
+						nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, protoPrefixV6, physicalIP.IP, config.Default.HostMasqConntrackZone))
 				dftFlows = append(dftFlows,
-					fmt.Sprintf("cookie=%s, priority=175, in_port=%s, udp6, ipv6_src=%s, "+
+					fmt.Sprintf("cookie=%s, priority=175, in_port=%s, udp6, %s_src=%s, "+
 						"actions=ct(table=4,zone=%d)",
-						nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, physicalIP.IP, config.Default.HostMasqConntrackZone))
+						nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, protoPrefixV6, physicalIP.IP, config.Default.HostMasqConntrackZone))
 				dftFlows = append(dftFlows,
-					fmt.Sprintf("cookie=%s, priority=175, in_port=%s, sctp6, ipv6_src=%s, "+
+					fmt.Sprintf("cookie=%s, priority=175, in_port=%s, sctp6, %s_src=%s, "+
 						"actions=ct(table=4,zone=%d)",
-						nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, physicalIP.IP, config.Default.HostMasqConntrackZone))
+						nodetypes.DefaultOpenFlowCookie, netConfig.OfPortPatch, protoPrefixV6, physicalIP.IP, config.Default.HostMasqConntrackZone))
 				if ofPortPhys != "" {
 					// We send BFD traffic coming from OVN to outside directly using a higher priority flow
 					dftFlows = append(dftFlows,
@@ -766,8 +787,8 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 			// table 0, packets coming from external. Send it through conntrack and
 			// resubmit to table 1 to know the state and mark of the connection.
 			dftFlows = append(dftFlows,
-				fmt.Sprintf("cookie=%s, priority=50, ipv6, dl_dst=%s, actions=ct(zone=%d, nat, table=1)",
-					nodetypes.DefaultOpenFlowCookie, bridgeMacAddress, config.Default.ConntrackZone))
+				fmt.Sprintf("cookie=%s, priority=50, %s, dl_dst=%s, actions=ct(zone=%d, nat, table=1)",
+					nodetypes.DefaultOpenFlowCookie, protoPrefixV6, bridgeMacAddress, config.Default.ConntrackZone))
 		}
 	}
 	if ofPortPhys != "" {
@@ -993,9 +1014,9 @@ func (b *BridgeConfiguration) allowNodeIPGARPFlows(nodeIPs []net.IP) []string {
 }
 
 func getIPv(ipnet *net.IPNet) string {
-	prefix := "ip"
+	prefix := protoPrefixV4
 	if utilnet.IsIPv6CIDR(ipnet) {
-		prefix = "ipv6"
+		prefix = protoPrefixV6
 	}
 	return prefix
 }
@@ -1011,10 +1032,10 @@ func hostNetworkNormalActionFlows(netConfig *BridgeUDNConfiguration, srcMAC stri
 	var ipFamily, ipFamilyDest string
 
 	if isV6 {
-		ipFamily = "ipv6"
-		ipFamilyDest = "ipv6_dst"
+		ipFamily = protoPrefixV6
+		ipFamilyDest = protoPrefixV6 + "_dst"
 	} else {
-		ipFamily = "ip"
+		ipFamily = protoPrefixV4
 		ipFamilyDest = "nw_dst"
 	}
 
