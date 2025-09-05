@@ -40,14 +40,14 @@ global:
   v4JoinSubnet: "100.64.0.0/16"
   # -- The v4 masquerade subnet used for assigning masquerade IPv4 addresses
   v4MasqueradeSubnet: "169.254.0.0/17"
-  # -- The v4 subnet for transit switch
-  v4TransitSwitchSubnet: "100.88.0.0/16"
+  # -- The v4 subnet for transit switches and routers
+  v4TransitSubnet: "100.88.0.0/16"
   # -- The v6 join subnet used for assigning join switch IPv6 addresses
   v6JoinSubnet: "fd98::/64"
   # -- The v6 masquerade subnet used for assigning masquerade IPv6 addresses
   v6MasqueradeSubnet: "fd69::/112"
-  # -- The v6 subnet for transit switch
-  v6TransitSwitchSubnet: "fd97::/64"
+  # -- The v6 subnet for transit switches and routers
+  v6TransitSubnet: "fd97::/64"
   # -- Whether or not enable ovnkube identity webhook
   enableOvnKubeIdentity: false
   # -- Indicate if ovnkube run master and node in one process
