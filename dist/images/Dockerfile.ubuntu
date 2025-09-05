@@ -8,6 +8,25 @@
 #
 # So this file will change over time.
 
+ARG BUILDER_IMAGE
+
+#############################################
+# Stage to build OVN Kubernetes from Source #
+#############################################
+
+FROM --platform=${BUILDPLATFORM} ${BUILDER_IMAGE} AS ovnkube-builder
+
+ARG TARGETARCH
+
+WORKDIR /workspace
+COPY ${OVN_KUBERNETES_DIR} ovn-kubernetes
+RUN cd ovn-kubernetes/dist/images && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} make bld
+
+#################################
+# Main Ubuntu Image Stage      #
+#################################
+
 FROM ubuntu:25.04
 
 USER root
@@ -17,7 +36,7 @@ RUN apt-get update && apt-get install -y iproute2 curl software-properties-commo
 # Install OVS and OVN packages.
 RUN apt-get update && apt-get install -y openvswitch-switch openvswitch-common ovn-central ovn-common ovn-host
 
-RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
+RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/${TARGETARCH}/kubectl" \
     && install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
 
 RUN mkdir -p /var/run/openvswitch
@@ -25,26 +44,26 @@ RUN mkdir -p /var/run/openvswitch
 # Built in ../../go_controller, then the binaries are copied here.
 # put things where they are in the pkg
 RUN mkdir -p /usr/libexec/cni/
-COPY ovnkube ovn-kube-util ovndbchecker hybrid-overlay-node ovnkube-identity ovnkube-observ /usr/bin/
-COPY ovn-k8s-cni-overlay /usr/libexec/cni/ovn-k8s-cni-overlay
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/ovnkube /workspace/ovn-kubernetes/dist/images/ovn-kube-util /workspace/ovn-kubernetes/dist/images/ovndbchecker /workspace/ovn-kubernetes/dist/images/hybrid-overlay-node /workspace/ovn-kubernetes/dist/images/ovnkube-identity /workspace/ovn-kubernetes/dist/images/ovnkube-observ /usr/bin/
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/ovn-k8s-cni-overlay /usr/libexec/cni/ovn-k8s-cni-overlay
 
 # ovnkube.sh is the entry point. This script examines environment
 # variables to direct operation and configure ovn
-COPY ovnkube.sh /root/
-COPY ovndb-raft-functions.sh /root/
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/ovnkube.sh /root/
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/ovndb-raft-functions.sh /root/
 # override the pkg's ovn_k8s.conf with this local copy
-COPY ovn_k8s.conf /etc/openvswitch/ovn_k8s.conf
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/ovn_k8s.conf /etc/openvswitch/ovn_k8s.conf
 
 # copy git commit number into image
-COPY git_info /root
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/git_info /root
 
 # iptables wrappers
-COPY ./iptables-scripts/iptables /usr/sbin/
-COPY ./iptables-scripts/iptables-save /usr/sbin/
-COPY ./iptables-scripts/iptables-restore /usr/sbin/
-COPY ./iptables-scripts/ip6tables /usr/sbin/
-COPY ./iptables-scripts/ip6tables-save /usr/sbin/
-COPY ./iptables-scripts/ip6tables-restore /usr/sbin/
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/iptables-scripts/iptables /usr/sbin/
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/iptables-scripts/iptables-save /usr/sbin/
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/iptables-scripts/iptables-restore /usr/sbin/
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/iptables-scripts/ip6tables /usr/sbin/
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/iptables-scripts/ip6tables-save /usr/sbin/
+COPY --from=ovnkube-builder /workspace/ovn-kubernetes/dist/images/iptables-scripts/ip6tables-restore /usr/sbin/
 
 LABEL io.k8s.display-name="ovn-kubernetes" \
       io.k8s.description="ovnkube ubuntu image" 

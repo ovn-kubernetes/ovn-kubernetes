@@ -101,7 +101,7 @@ jobs:
       uses: docker/build-push-action@v5
       with:
         builder: ${{ steps.buildx.outputs.name }}
-        context: ./dist/images
+        context: .
         file: ./dist/images/Dockerfile.ubuntu
         push: true
         platforms: linux/amd64,linux/arm64
