@@ -125,17 +125,19 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 			framework.ExpectNoError(err, "must get bgpnet subnets")
 			framework.Logf("the network cidrs to be imported are v4=%s and v6=%s", externalServerV4CIDR, externalServerV6CIDR)
 			for _, node := range nodes.Items {
-				ipVer := ""
-				bgpRouteCommand := strings.Split(fmt.Sprintf("ip%s route show %s", ipVer, externalServerV4CIDR), " ")
-				framework.Logf("Checking for server's route in node %s", node.Name)
-				gomega.Eventually(func() bool {
-					routes, err := infraprovider.Get().ExecK8NodeCommand(node.GetName(), bgpRouteCommand)
-					framework.ExpectNoError(err, "failed to get BGP routes from node")
-					framework.Logf("Routes in node %s", routes)
-					return strings.Contains(routes, frrContainerIPv4)
-				}, 30*time.Second).Should(gomega.BeTrue())
-				if isDualStackCluster(nodes) {
-					ipVer = " -6"
+				if isIPv4Supported(f.ClientSet) {
+					ipVer := ""
+					bgpRouteCommand := strings.Split(fmt.Sprintf("ip%s route show %s", ipVer, externalServerV4CIDR), " ")
+					framework.Logf("Checking for server's route in node %s", node.Name)
+					gomega.Eventually(func() bool {
+						routes, err := infraprovider.Get().ExecK8NodeCommand(node.GetName(), bgpRouteCommand)
+						framework.ExpectNoError(err, "failed to get BGP routes from node")
+						framework.Logf("Routes in node %s", routes)
+						return strings.Contains(routes, frrContainerIPv4)
+					}, 30*time.Second).Should(gomega.BeTrue())
+				}
+				if isIPv6Supported(f.ClientSet) || isDualStackCluster(nodes) {
+					ipVer := " -6"
 					nodeIPv6LLA, err := GetNodeIPv6LinkLocalAddressForEth0(routerContainerName)
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					bgpRouteCommand := strings.Split(fmt.Sprintf("ip%s route show %s", ipVer, externalServerV6CIDR), " ")
@@ -352,17 +354,19 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			}
 			for _, node := range nodes.Items {
-				ipVer := ""
-				bgpRouteCommand := strings.Split(fmt.Sprintf("ip%s route show %s", ipVer, externalServerV4CIDR), " ")
-				framework.Logf("Checking for server's route in node %s", node.Name)
-				gomega.Eventually(func() bool {
-					routes, err := infraprovider.Get().ExecK8NodeCommand(node.GetName(), bgpRouteCommand)
-					framework.ExpectNoError(err, "failed to get BGP routes from node")
-					framework.Logf("Routes in node %s", routes)
-					return strings.Contains(routes, frrContainerIPv4)
-				}, 30*time.Second).Should(gomega.BeTrue())
-				if isDualStackCluster(nodes) {
-					ipVer = " -6"
+				if isIPv4Supported(f.ClientSet) {
+					ipVer := ""
+					bgpRouteCommand := strings.Split(fmt.Sprintf("ip%s route show %s", ipVer, externalServerV4CIDR), " ")
+					framework.Logf("Checking for server's route in node %s", node.Name)
+					gomega.Eventually(func() bool {
+						routes, err := infraprovider.Get().ExecK8NodeCommand(node.GetName(), bgpRouteCommand)
+						framework.ExpectNoError(err, "failed to get BGP routes from node")
+						framework.Logf("Routes in node %s", routes)
+						return strings.Contains(routes, frrContainerIPv4)
+					}, 30*time.Second).Should(gomega.BeTrue())
+				}
+				if isIPv6Supported(f.ClientSet) || isDualStackCluster(nodes) {
+					ipVer := " -6"
 					bgpRouteCommand := strings.Split(fmt.Sprintf("ip%s route show %s", ipVer, externalServerV6CIDR), " ")
 					framework.Logf("Checking for server's route in node %s", node.Name)
 					gomega.Eventually(func() bool {
@@ -497,9 +501,9 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks", feature.RouteAdvertisements,
 	func(cudnATemplate, cudnBTemplate *udnv1.ClusterUserDefinedNetwork) {
 		const curlConnectionTimeoutCode = "28"
-		const (
-			ipFamilyV4 = iota
-			ipFamilyV6
+		var (
+			ipFamilyV4 = 0
+			ipFamilyV6 = 1
 		)
 
 		f := wrappedTestFramework("bgp-network-isolation")
@@ -516,6 +520,10 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 		var ra *rav1.RouteAdvertisements
 		var hostNetworkPort int
 		ginkgo.BeforeEach(func() {
+			// Adjust IP family constants based on cluster support
+			if !isIPv4Supported(f.ClientSet) && isIPv6Supported(f.ClientSet) {
+				ipFamilyV6 = ipFamilyV4
+			}
 			ginkgo.By("Configuring primary UDN namespaces")
 			var err error
 			udnNamespaceA, err = f.CreateNamespace(context.TODO(), f.BaseName, map[string]string{
@@ -783,8 +791,13 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					framework.Logf("Connectivity check successful:'%s' -> %s", client, targetAddress)
 					return out, nil
 				}
-				clientName, clientNamespace, dst, expectedOutput, expectErr := connInfo(ipFamilyV4)
-
+				var clientName, clientNamespace, dst, expectedOutput string
+				var expectErr bool
+				if isIPv4Supported(f.ClientSet) {
+					clientName, clientNamespace, dst, expectedOutput, expectErr = connInfo(ipFamilyV4)
+				} else if isIPv6Supported(f.ClientSet) {
+					clientName, clientNamespace, dst, expectedOutput, expectErr = connInfo(ipFamilyV6)
+				}
 				asyncAssertion := gomega.Eventually
 				timeout := time.Second * 30
 				if expectErr {
@@ -940,6 +953,32 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 			ginkgo.Entry("pod in the UDN should be able to access kapi in default network service",
 				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
 					return podsNetA[0].Name, podsNetA[0].Namespace, "https://kubernetes.default/healthz", "", false
+				}),
+			ginkgo.Entry("pod in the UDN should be able to access kapi service cluster IP directly",
+				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
+					// Get kubernetes service from default namespace
+					kubernetesService, err := f.ClientSet.CoreV1().Services("default").Get(context.TODO(), "kubernetes", metav1.GetOptions{})
+					framework.ExpectNoError(err, "should be able to get kubernetes service")
+
+					// NOTE: See https://github.com/kubernetes/enhancements/tree/master/keps/sig-network/2438-dual-stack-apiserver
+					// Today the kubernetes.default service is single-stack and cannot be dual-stack.
+					if isDualStackCluster(nodes) && ipFamilyIndex == ipFamilyV6 {
+						e2eskipper.Skipf("Dual stack kubernetes.default service is not supported in kubernetes")
+					}
+					// Convert ipFamilyIndex to utilnet.IPFamily
+					var family utilnet.IPFamily
+					if ipFamilyIndex == ipFamilyV4 {
+						family = utilnet.IPv4
+					} else {
+						family = utilnet.IPv6
+					}
+
+					// Get the cluster IP for the specified IP family
+					clusterIP := getFirstIPStringOfFamily(family, kubernetesService.Spec.ClusterIPs)
+					gomega.Expect(clusterIP).NotTo(gomega.BeEmpty(), fmt.Sprintf("no cluster IP available for IP family %v", family))
+
+					// Access the kubernetes API at the cluster IP directly on port 443
+					return podsNetA[0].Name, podsNetA[0].Namespace, fmt.Sprintf("https://%s/healthz", net.JoinHostPort(clusterIP, "443")), "", false
 				}),
 			ginkgo.Entry("pod in the UDN should not be able to access a service in a different UDN",
 				func(ipFamilyIndex int) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
@@ -2366,8 +2405,8 @@ func checkL3NodePodRoute(node corev1.Node, serverContainerIP, routerContainerNam
 	if isIPv6 {
 		podCIDR = podv6CIDR
 	}
-    gomega.Expect(podCIDR).NotTo(gomega.BeEmpty(),
-        "pod CIDR for family (isIPv6=%t) missing for node %s on network %s", isIPv6, node.Name, netName)
+	gomega.Expect(podCIDR).NotTo(gomega.BeEmpty(),
+		"pod CIDR for family (isIPv6=%t) missing for node %s on network %s", isIPv6, node.Name, netName)
 
 	checkRouteInFRR(node, podCIDR, routerContainerName, isIPv6)
 }
