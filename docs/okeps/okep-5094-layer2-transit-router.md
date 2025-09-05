@@ -7,8 +7,48 @@
 The primary UDN layer2 topology presents some problems related to VM's live migration that are being addressed by
 ovn-kubernetes sending GARPs or unsolicited router advertisement and blocking some OVN router advertisements, although this fixes the issue, is not the most robust way to address the problem and adds complexity to ovn-kubernetes live migration mechanism.
 
-There is another layer2 egressip [limitation](https://issues.redhat.com/browse/OCPBUGS-48301) introduced by this topology, 
-EIP for L2 UDN depends on a single external GW IP therefore we dont respect multiple ext gws and forward all traffic to one GW.
+EgressIP logical router policies (LRP) for layer2 networks are applied on the gateway router, compared to the cluster router for layer3 networks.
+To ensure proper traffic load balancing for EgressIPs with multiple IPs defined, especially for pods running on the EgressIP nodes themselves, a workaround was introduced.
+This workaround configures the LRP for a pod on one of the EgressIP nodes to use the external gateway IP as one of the next hops to achieve proper load balancing.
+
+For the following EgressIP:
+
+```yaml
+apiVersion: k8s.ovn.org/v1
+kind: EgressIP
+  metadata:
+    annotations:
+      k8s.ovn.org/egressip-mark: "50000"
+  name: egressip-1
+...
+  spec:
+    egressIPs:
+    - 172.18.0.100
+    - 172.18.0.101
+...
+  status:
+    items:
+    - egressIP: 172.18.0.100
+      node: ovn-worker
+    - egressIP: 172.18.0.101
+      node: ovn-worker2
+```
+
+The following LRP is present on ovn-worker for a local pod with IP `10.10.0.8`:
+
+```bash
+ovn-nbctl lr-policy-list GR_cluster_udn_l2network_ovn-worker
+Routing Policies
+       100                               ip4.src == 10.10.0.8         reroute                100.65.0.3, 172.18.0.1               pkt_mark=50000
+```
+
+This policy redirects traffic the local external gateway `172.18.0.1`, or  to the join IP of the second egress node (ovn-worker2) `100.65.0.3`.
+
+While this approach works in most cases, it has the following limitations:
+
+* Does not work when there's no default gateway.
+* [Does not work on platforms that use `/32` per node](https://issues.redhat.com/browse/OCPBUGS-48301).
+* Does not respect multiple gateways and always sends traffic to one of the gateways.
 
 We can make use of the [new transit router OVN topology entity](https://github.com/ovn-org/ovn/blob/c24b1aa3c724de1aa9fd2461f07e4127a6bfa190/NEWS#L42-L44) to fix these issues and changing the topology for primary UDN layer2.
 
@@ -17,7 +57,7 @@ We can make use of the [new transit router OVN topology entity](https://github.c
 1. For layer2 topology advertise default gw with same IP and MAC address independently of the node where
    the vm is running.
 2. Keep all the layer2 topology features at current topology.
-3. Fix the egressip limitation from current topology.
+3. Eliminate the dependency on external gateway IPs from layer2 EgressIP implementation.
 4. Make the new topology upgradable with minor disruption.
 
 ## Non-Goals
@@ -554,7 +594,13 @@ Route Table <main>:
                 0.0.0.0/0                172.18.0.1 dst-ip rtoe-GR_test12_namespace.scoped_ovn-control-plane
 ```
 
-For the routes related to EIP, they are moved from gateway router to transit_router and the redirect action is changed to point to the transit node peer ip.
+The logical router policies for EgressIP will be present on the transit router, using transit node peer ip as the next hop:
+
+```
+100                               ip4.src == 10.10.0.8         reroute               100.88.0.6,100.88.0.10               pkt_mark=50000
+```
+
+This approach eliminates the dependency on external IP addresses while maintaining proper load balancing for EgressIPs with multiple IP addresses.
 
 #### Router to router direct connection without a switch
 
