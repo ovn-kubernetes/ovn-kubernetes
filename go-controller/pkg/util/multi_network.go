@@ -1365,6 +1365,14 @@ func subnetOverlapCheck(netconf *ovncnitypes.NetConf) error {
 	allSubnets.Append(config.ConfigSubnetMasquerade, v4MasqueradeCIDR)
 	allSubnets.Append(config.ConfigSubnetMasquerade, v6MasqueradeCIDR)
 
+	if netconf.Topology == types.Layer3Topology {
+		_, v4TransitCIDR, _ := net.ParseCIDR(config.ClusterManager.V4TransitSwitchSubnet)
+		_, v6TransitCIDR, _ := net.ParseCIDR(config.ClusterManager.V6TransitSwitchSubnet)
+
+		allSubnets.Append(config.ConfigSubnetTransit, v4TransitCIDR)
+		allSubnets.Append(config.ConfigSubnetTransit, v6TransitCIDR)
+	}
+
 	ni, err := NewNetInfo(netconf)
 	if err != nil {
 		return fmt.Errorf("error while parsing subnets: %v", err)

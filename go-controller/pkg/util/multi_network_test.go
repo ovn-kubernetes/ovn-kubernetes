@@ -1364,6 +1364,8 @@ func TestSubnetOverlapCheck(t *testing.T) {
 	config.Gateway.V6MasqueradeSubnet = "fd69::/125"
 	config.Gateway.V4JoinSubnet = "100.64.0.0/16"
 	config.Gateway.V6JoinSubnet = "fd98::/64"
+	config.ClusterManager.V4TransitSwitchSubnet = "100.88.0.0/16"
+	config.ClusterManager.V6TransitSwitchSubnet = "fd97::/64"
 	type testConfig struct {
 		desc                        string
 		inputNetAttachDefConfigSpec string
@@ -1371,6 +1373,23 @@ func TestSubnetOverlapCheck(t *testing.T) {
 	}
 
 	tests := []testConfig{
+		{
+			desc: "return error when IPv4 POD subnet in net-attach-def overlaps with transit switch subnet",
+			inputNetAttachDefConfigSpec: `
+                {
+                    "name": "tenantred",
+                    "type": "ovn-k8s-cni-overlay",
+                    "topology": "layer3",
+                    "subnets": "100.88.0.0/17",
+                    "joinSubnet": "100.65.0.0/24",
+                    "primaryNetwork": true,
+                    "netAttachDefName": "ns1/nad1"
+                }
+			`,
+			expectedError: config.NewSubnetOverlapError(
+				config.ConfigSubnet{SubnetType: config.UserDefinedSubnets, Subnet: MustParseCIDR("100.88.0.0/17")},
+				config.ConfigSubnet{SubnetType: config.ConfigSubnetTransit, Subnet: MustParseCIDR(config.ClusterManager.V4TransitSwitchSubnet)}),
+		},
 		{
 			desc: "return error when IPv4 POD subnet in net-attach-def overlaps other subnets",
 			inputNetAttachDefConfigSpec: `
