@@ -24,6 +24,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/ipalloc"
 
 	v1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -1686,17 +1687,17 @@ metadata:
 	})
 
 	ginkgo.It("Should ensure connectivity works on an external service when mtu changes in intermediate node", func() {
-		err := framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, svcName, 4, time.Second, time.Second*180)
+		err := WaitForServingAndReadyServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, svcName, 4, time.Second, time.Second*180)
 		framework.ExpectNoError(err, fmt.Sprintf("service: %s never had an endpoint, err: %v", svcName, err))
 
 		time.Sleep(time.Second * 5) // buffer to ensure all rules are created correctly
 
 		svcLoadBalancerIP, err := getServiceLoadBalancerIP(f.ClientSet, namespaceName, svcName)
 		framework.ExpectNoError(err, fmt.Sprintf("failed to get service lb ip: %s for %s, err: %v", svcLoadBalancerIP, svcName, err))
-        discoveryClient := f.ClientSet.DiscoveryV1()
+		discoveryClient := f.ClientSet.DiscoveryV1()
 		endpointSlice, err := discoveryClient.EndpointSlices(namespaceName).List(context.TODO(), metav1.ListOptions{
-		       LabelSelector: fmt.Sprintf("kubernetes.io/service-name=%s", svcName),
-	    })
+			LabelSelector: fmt.Sprintf("kubernetes.io/service-name=%s", svcName),
+		})
 		framework.ExpectNoError(err, fmt.Sprintf("failed to get endpoints slice for service %s", svcName))
 		gomega.Expect(endpointSlice).NotTo(gomega.BeNil())
 		gomega.Expect(len(endpointSlice.Items)).To(gomega.Equal(1))
@@ -1706,7 +1707,7 @@ metadata:
 		nodeName := *endpointSlice.Items[0].Endpoints[0].NodeName
 		nodeIP, err := getNodeIP(f.ClientSet, nodeName)
 		framework.ExpectNoError(err, fmt.Sprintf("failed to get endpoint's %s node ip address", nodeIP))
-       
+
 		svcIPforCurl := svcLoadBalancerIP
 		if !utilnet.IsIPv6String(svcLoadBalancerIP) {
 			ginkgo.By("Setting up external IPv4 client with an intermediate node")
@@ -1728,7 +1729,7 @@ metadata:
 		// Use Eventually because IPv6 takes a while to finish its network configuration
 		// with network namespaces.
 		// TODO: Figure out why keeping this at 5seconds is causing CI flakes after K8s 1.33 rebase
-        // See: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5455
+		// See: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5455
 		gomega.Eventually(func() error {
 			return buildAndRunCommand(fmt.Sprintf("sudo ip netns exec client curl %s:%d/big.iso -o big.iso", svcIPforCurl, endpointHTTPPort))
 		}, 10*time.Second).Should(gomega.BeNil(), "failed to connect with external load balancer service")
@@ -1743,7 +1744,7 @@ metadata:
 		gomega.Eventually(func() error {
 			return buildAndRunCommand(fmt.Sprintf("sudo ip netns exec client curl %s:%d/big.iso -o big.iso", svcIPforCurl, endpointHTTPPort))
 		}, 5*time.Second).Should(gomega.BeNil(), "failed to connect with external load balancer service after changing mtu size")
-		
+
 	})
 
 	ginkgo.It("Should ensure load balancer service works with pmtud", func() {
@@ -1769,13 +1770,44 @@ metadata:
 		// B) lbclient->FRR router->ovn-worker2->br-ex->GR_ovn-worker2->join->cluster-router-ovn-worker->transit-switch->GENEVE->
 		//    transit-switch->cluster-router-ovn-worker->ovn-worker-switch->pod
 		// depending on which node is hit for the service traffic and which node the backendpod lives on.
-		err := framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, svcName, 4, time.Second, time.Second*120)
+		err := WaitForServingAndReadyServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, svcName, 4, time.Second, time.Second*120)
 		framework.ExpectNoError(err, fmt.Sprintf("service: %s never had an endpoint, err: %v", svcName, err))
 
 		time.Sleep(time.Second * 5) // buffer to ensure all rules are created correctly
 
 		svcLoadBalancerIP, err := getServiceLoadBalancerIP(f.ClientSet, namespaceName, svcName)
 		framework.ExpectNoError(err, fmt.Sprintf("failed to get service lb ip: %s, err: %v", svcName, err))
+
+		// The ip route must be created for the load balancer service forwarding packet into
+		// the node which hosts one of the endpoint.
+		discoveryClient := f.ClientSet.DiscoveryV1()
+		endpointSlice, err := discoveryClient.EndpointSlices(namespaceName).List(context.TODO(), metav1.ListOptions{
+			LabelSelector: fmt.Sprintf("kubernetes.io/service-name=%s", svcName),
+		})
+		framework.ExpectNoError(err, fmt.Sprintf("failed to get endpoints slice for service %s", svcName))
+		gomega.Expect(endpointSlice).NotTo(gomega.BeNil())
+		gomega.Expect(len(endpointSlice.Items)).To(gomega.Equal(1))
+		gomega.Expect(len(endpointSlice.Items[0].Endpoints)).To(gomega.Equal(4))
+		endPointIP := endpointSlice.Items[0].Endpoints[0].Addresses
+		framework.ExpectNoError(err, fmt.Sprintf("failed to get endpoint slice's %s ip address", endPointIP))
+		nodeName := *endpointSlice.Items[0].Endpoints[0].NodeName
+		nodeIP, err := getNodeIP(f.ClientSet, nodeName)
+		framework.ExpectNoError(err, fmt.Sprintf("failed to get endpoint's %s node ip address", nodeIP))
+		if !utilnet.IsIPv6String(svcLoadBalancerIP) {
+			ginkgo.By("Setting up external IPv4 client")
+			defer func() {
+				buildAndRunCommand(fmt.Sprintf("sudo ip route delete %s", svcLoadBalancerIP))
+			}()
+			err = buildAndRunCommand(fmt.Sprintf("sudo ip route add %s via %s", svcLoadBalancerIP, nodeIP))
+			framework.ExpectNoError(err, "failed to add route for external load balancer service")
+		} else {
+			ginkgo.By("Setting up external IPv6 client")
+			defer func() {
+				buildAndRunCommand(fmt.Sprintf("sudo ip -6 route delete %s", svcLoadBalancerIP))
+			}()
+			err = buildAndRunCommand(fmt.Sprintf("sudo ip -6 route add %s via %s", svcLoadBalancerIP, nodeIP))
+			framework.ExpectNoError(err, "failed to add route for external load balancer service")
+		}
 
 		numberOfETPRules := pokeNodeIPTableRules(backendNodeName, "OVN-KUBE-EXTERNALIP")
 		gomega.Expect(numberOfETPRules).To(gomega.Equal(5))
@@ -1906,13 +1938,44 @@ spec:
 
 	ginkgo.It("Should ensure load balancer service works with 0 node ports when ETP=local", func() {
 
-		err := framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, svcName, 4, time.Second, time.Second*120)
+		err := WaitForServingAndReadyServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, svcName, 4, time.Second, time.Second*120)
 		framework.ExpectNoError(err, fmt.Sprintf("service: %s never had an enpoint, err: %v", svcName, err))
 
 		svcLoadBalancerIP, err := getServiceLoadBalancerIP(f.ClientSet, namespaceName, svcName)
 		framework.ExpectNoError(err, fmt.Sprintf("failed to get service lb ip: %s, err: %v", svcName, err))
 
 		time.Sleep(time.Second * 5) // buffer to ensure all rules are created correctly
+
+		// The ip route must be created for the load balancer service forwarding packet into
+		// the node which hosts one of the endpoint.
+		discoveryClient := f.ClientSet.DiscoveryV1()
+		endpointSlice, err := discoveryClient.EndpointSlices(namespaceName).List(context.TODO(), metav1.ListOptions{
+			LabelSelector: fmt.Sprintf("kubernetes.io/service-name=%s", svcName),
+		})
+		framework.ExpectNoError(err, fmt.Sprintf("failed to get endpoints slice for service %s", svcName))
+		gomega.Expect(endpointSlice).NotTo(gomega.BeNil())
+		gomega.Expect(len(endpointSlice.Items)).To(gomega.Equal(1))
+		gomega.Expect(len(endpointSlice.Items[0].Endpoints)).To(gomega.Equal(4))
+		endPointIP := endpointSlice.Items[0].Endpoints[0].Addresses
+		framework.ExpectNoError(err, fmt.Sprintf("failed to get endpoint slice's %s ip address", endPointIP))
+		nodeName := *endpointSlice.Items[0].Endpoints[0].NodeName
+		nodeIP, err := getNodeIP(f.ClientSet, nodeName)
+		framework.ExpectNoError(err, fmt.Sprintf("failed to get endpoint's %s node ip address", nodeIP))
+		if !utilnet.IsIPv6String(svcLoadBalancerIP) {
+			ginkgo.By("Setting up external IPv4 client")
+			defer func() {
+				buildAndRunCommand(fmt.Sprintf("sudo ip route delete %s", svcLoadBalancerIP))
+			}()
+			err = buildAndRunCommand(fmt.Sprintf("sudo ip route add %s via %s", svcLoadBalancerIP, nodeIP))
+			framework.ExpectNoError(err, "failed to add route for external load balancer service")
+		} else {
+			ginkgo.By("Setting up external IPv6 client")
+			defer func() {
+				buildAndRunCommand(fmt.Sprintf("sudo ip -6 route delete %s", svcLoadBalancerIP))
+			}()
+			err = buildAndRunCommand(fmt.Sprintf("sudo ip -6 route add %s via %s", svcLoadBalancerIP, nodeIP))
+			framework.ExpectNoError(err, "failed to add route for external load balancer service")
+		}
 
 		checkNumberOfETPRules := func(value int, pattern string) wait.ConditionFunc {
 			return func() (bool, error) {
@@ -2012,7 +2075,7 @@ spec:
 
 	ginkgo.It("Should ensure load balancer service works when ETP=local and session affinity is set", func() {
 
-		err := framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, svcName, 4, time.Second, time.Second*120)
+		err := WaitForServingAndReadyServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, svcName, 4, time.Second, time.Second*120)
 		framework.ExpectNoError(err, fmt.Sprintf("service: %s never had an enpoint, err: %v", svcName, err))
 
 		svcLoadBalancerIP, err := getServiceLoadBalancerIP(f.ClientSet, namespaceName, svcName)
@@ -2508,4 +2571,53 @@ func setupNetNamespaceAndLinks() {
 func cleanupNetNamespace() {
 	buildAndRunCommand("sudo ip netns delete bridge")
 	buildAndRunCommand("sudo ip netns delete client")
+}
+
+// WaitForServingAndReadyServiceEndpointsNum waits until there are EndpointSlices for serviceName
+// containing a total of expectNum endpoints which are in both serving and ready state.
+// (If the service is dual-stack, expectNum must count the endpoints of both IP families.)
+func WaitForServingAndReadyServiceEndpointsNum(ctx context.Context, c clientset.Interface, namespace, serviceName string, expectNum int, interval, timeout time.Duration) error {
+	return wait.PollUntilContextTimeout(ctx, interval, timeout, false, func(ctx context.Context) (bool, error) {
+		framework.Logf("Waiting for amount of service:%s endpoints to be %d", serviceName, expectNum)
+		esList, err := c.DiscoveryV1().EndpointSlices(namespace).List(ctx, metav1.ListOptions{LabelSelector: fmt.Sprintf("%s=%s", discoveryv1.LabelServiceName, serviceName)})
+		if err != nil {
+			framework.Logf("Unexpected error trying to get EndpointSlices for %s : %v", serviceName, err)
+			return false, nil
+		}
+
+		if len(esList.Items) == 0 {
+			if expectNum == 0 {
+				return true, nil
+			}
+			framework.Logf("Waiting for at least 1 EndpointSlice to exist")
+			return false, nil
+		}
+
+		ready := countServingAndReadyEndpointsSlicesNum(esList)
+		if ready != expectNum {
+			framework.Logf("Unexpected number of Serving And Ready Endpoints on Slices, got %d, expected %d", ready, expectNum)
+			return false, nil
+		}
+		return true, nil
+	})
+}
+
+func countServingAndReadyEndpointsSlicesNum(epList *discoveryv1.EndpointSliceList) int {
+	// Only count unique addresses that are Ready and not Terminating
+	addresses := sets.Set[string]{}
+	for _, epSlice := range epList.Items {
+		for _, ep := range epSlice.Endpoints {
+			if len(ep.Addresses) == 0 {
+				continue
+			}
+			cond := ep.Conditions
+			ready := cond.Ready != nil && *cond.Ready
+			serving := cond.Serving != nil && *cond.Serving
+			terminating := cond.Terminating != nil && *cond.Terminating
+			if ready && serving && !terminating {
+				addresses.Insert(ep.Addresses[0])
+			}
+		}
+	}
+	return addresses.Len()
 }
