@@ -38,6 +38,10 @@ runs:
         echo "=== Remove potential leftover PV setup image ==="
         sudo rm -f /mnt/tmp-pv.img
 
+        echo "=== Remove potential leftover runner disk image ==="
+        # if /mnt/disk0.img exists, detach any loop using it, delete it to reclaim space (avoids rare disk-full)
+        sudo losetup -j /mnt/disk0.img | cut -d: -f1 | xargs -r -n1 sudo losetup -d; sudo rm -f /mnt/disk0.img || true
+
         echo "=== Disk usage after cleanup ==="
         df -h
 
