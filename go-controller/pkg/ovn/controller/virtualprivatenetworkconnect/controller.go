@@ -703,8 +703,19 @@ func (c *Controller) createNetworkRoutingPolicies(config *vpncConfig, currentNet
 			// Create routing policies for each destination subnet (IPv4 and IPv6)
 			for _, destSubnet := range destSubnets {
 				// Generate the inport name using NetInfo utilities - this is the router-to-switch port name
-				switchName := currentNetInfo.GetNetworkScopedName(nodeName)
-				inportName := ovntypes.RouterToSwitchPrefix + switchName
+				// For Layer2 networks, this will return the Layer2 switch name instead of node-specific name
+				switchName := currentNetInfo.GetNetworkScopedSwitchName(nodeName)
+
+				// Use the correct prefix based on network topology
+				var routerPrefix string
+				if currentNetInfo.TopologyType() == ovntypes.Layer2Topology {
+					// Layer2 networks use transit router
+					routerPrefix = ovntypes.TransitRouterToSwitchPrefix
+				} else {
+					// Layer3 networks use regular cluster router
+					routerPrefix = ovntypes.RouterToSwitchPrefix
+				}
+				inportName := routerPrefix + switchName
 
 				// Create match expression for traffic from this node to the other network
 				// Choose appropriate IP version based on subnet family
@@ -774,10 +785,22 @@ func (c *Controller) createInterconnectRoutes(config *vpncConfig, nodeNetworks m
 			}
 
 			networkName := allocation.NetInfo.GetNetworkName()
-			// Get the actual node subnets for this network (supports dual-stack)
-			destSubnets, err := c.getNodeSubnetForNetwork(nodeName, networkName)
-			if err != nil {
-				return fmt.Errorf("failed to get node subnets for node %s network %s: %w", nodeName, networkName, err)
+
+			// Get the destination subnets based on network topology (supports dual-stack)
+			var destSubnets []*net.IPNet
+
+			if allocation.NetInfo.TopologyType() == ovntypes.Layer2Topology {
+				// For Layer2 networks, use the full network subnet (no per-node subnets)
+				destSubnets, err = c.getNetworkAggregateSubnet(config, networkName)
+				if err != nil {
+					return fmt.Errorf("failed to get aggregate subnet for Layer2 network %s: %w", networkName, err)
+				}
+			} else {
+				// For Layer3 networks, use per-node subnets
+				destSubnets, err = c.getNodeSubnetForNetwork(nodeName, networkName)
+				if err != nil {
+					return fmt.Errorf("failed to get node subnets for node %s network %s: %w", nodeName, networkName, err)
+				}
 			}
 
 			// Create static routes for each destination subnet (IPv4 and IPv6)
