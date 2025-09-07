@@ -526,19 +526,11 @@ func (c *Controller) createPeerPortsForNetwork(config *vpncConfig, nodeName stri
 
 // addLogicalRouterPort adds a logical router port to a router
 func (c *Controller) addLogicalRouterPort(routerName string, lrp *nbdb.LogicalRouterPort) error {
-	// Check if the router exists first
+	// Get the router object
 	router := &nbdb.LogicalRouter{Name: routerName}
-	existingRouter, err := libovsdbops.GetLogicalRouter(c.nbClient, router)
-	if err != nil {
-		// Check if this might be a Layer 2 network (not yet supported)
-		if strings.Contains(routerName, "_cluster_router") {
-			return fmt.Errorf("router %s not found - this appears to be a Layer 2 network which is not yet supported by VPNC: %w", routerName, err)
-		}
-		return fmt.Errorf("router %s not found - network may not be fully initialized yet, will retry: %w", routerName, err)
-	}
 
 	// Create or update the logical router port and add it to the router
-	if err := libovsdbops.CreateOrUpdateLogicalRouterPort(c.nbClient, existingRouter, lrp, nil); err != nil {
+	if err := libovsdbops.CreateOrUpdateLogicalRouterPort(c.nbClient, router, lrp, nil); err != nil {
 		return fmt.Errorf("failed to create logical router port %s on router %s: %w", lrp.Name, routerName, err)
 	}
 
