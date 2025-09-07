@@ -652,10 +652,11 @@ func (c *Controller) createRoutingPoliciesAndRoutes(config *vpncConfig) error {
 }
 
 // createNetworkRoutingPolicies creates routing policies on a network router to redirect traffic to other networks
+// Only creates policies for the local node (c.zone) in the interconnect architecture
 func (c *Controller) createNetworkRoutingPolicies(config *vpncConfig, currentNetwork, currentRouter string, allNetworks map[string]string) error {
-	klog.V(4).Infof("Creating routing policies for network %s (router: %s)", currentNetwork, currentRouter)
+	klog.V(4).Infof("Creating routing policies for network %s (router: %s) on local node %s", currentNetwork, currentRouter, c.zone)
 
-	// For each node that has this network, create policies to route to other networks
+	// Only create policies for the local node (c.zone) in the interconnect architecture
 	for owner, _ := range config.SubnetAllocations {
 		// Parse owner to get node and network info
 		parts := strings.Split(owner, "-Network")
@@ -663,6 +664,12 @@ func (c *Controller) createNetworkRoutingPolicies(config *vpncConfig, currentNet
 			continue
 		}
 		nodeName := parts[0]
+
+		// Skip if this is not the local node
+		if nodeName != c.zone {
+			continue
+		}
+
 		networkID, err := strconv.Atoi(parts[1])
 		if err != nil {
 			continue
@@ -726,7 +733,7 @@ func (c *Controller) createNetworkRoutingPolicies(config *vpncConfig, currentNet
 					Nexthops: []string{interconnectIP},
 					ExternalIDs: map[string]string{
 						"vpnc-name":   config.Name,
-						"source-node": nodeName,
+						"source-node": c.zone,
 						"source-net":  currentNetwork,
 						"dest-net":    otherNetwork,
 						"ip-family": func() string {
