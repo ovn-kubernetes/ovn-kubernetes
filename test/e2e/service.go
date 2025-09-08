@@ -830,6 +830,151 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 			// network is removed by provider Context API
 		})
 
+		ginkgo.It("should be able to preserve UDP traffic when server pod cycles for a NodePort service via a different node", func(ctx context.Context) {
+			const (
+				serviceName = "svc-udp"
+				srcPort     = 12345
+				podClient   = "pod-client"
+				podBackend1 = "pod-server-1"
+				podBackend2 = "pod-server-2"
+			)
+			var clientNodeInfo, serverNodeInfo, backendNodeInfo nodeInfo
+
+			cs := f.ClientSet
+			ns := f.Namespace.Name
+
+			nodes, err := e2enode.GetBoundedReadySchedulableNodes(ctx, cs, 3)
+			framework.ExpectNoError(err)
+			if len(nodes.Items) < 3 {
+				e2eskipper.Skipf(
+					"Test requires >= 3 Ready nodes, but there are only %v nodes",
+					len(nodes.Items))
+			}
+
+			family := v1.IPv4Protocol
+			if IsIPv6Cluster(cs) {
+				family = v1.IPv6Protocol
+			}
+
+			ips := e2enode.GetAddressesByTypeAndFamily(&nodes.Items[0], v1.NodeInternalIP, family)
+			gomega.Expect(ips).ToNot(gomega.BeEmpty())
+
+			clientNodeInfo = nodeInfo{
+				name:   nodes.Items[0].Name,
+				nodeIP: ips[0],
+			}
+
+			ips = e2enode.GetAddressesByTypeAndFamily(&nodes.Items[1], v1.NodeInternalIP, family)
+			gomega.Expect(ips).ToNot(gomega.BeEmpty())
+
+			backendNodeInfo = nodeInfo{
+				name:   nodes.Items[1].Name,
+				nodeIP: ips[0],
+			}
+
+			ips = e2enode.GetAddressesByTypeAndFamily(&nodes.Items[2], v1.NodeInternalIP, family)
+			gomega.Expect(ips).ToNot(gomega.BeEmpty())
+
+			serverNodeInfo = nodeInfo{
+				name:   nodes.Items[2].Name,
+				nodeIP: ips[0],
+			}
+
+			// Create a NodePort service
+			udpJig := e2eservice.NewTestJig(cs, ns, serviceName)
+			ginkgo.By("creating a UDP service " + serviceName + " with type=NodePort in " + ns)
+			udpService, err := udpJig.CreateUDPService(ctx, func(svc *v1.Service) {
+				svc.Spec.Type = v1.ServiceTypeNodePort
+				svc.Spec.Ports = []v1.ServicePort{
+					{Port: 80, Name: "udp", Protocol: v1.ProtocolUDP, TargetPort: intstr.FromInt32(80)},
+				}
+			})
+			framework.ExpectNoError(err)
+
+			// Create a pod in one node to create the UDP traffic against the NodePort service every 5 seconds
+			ginkgo.By("creating a client pod for probing the service " + serviceName)
+			clientPod := e2epod.NewAgnhostPod(ns, podClient, nil, nil, nil)
+			nodeSelection := e2epod.NodeSelection{Name: clientNodeInfo.name}
+			e2epod.SetNodeSelection(&clientPod.Spec, nodeSelection)
+			cmd := fmt.Sprintf(`date; for i in $(seq 1 3000); do echo "$(date) Try: ${i}"; echo hostname | nc -u -w 5 -p %d %s %d; echo; done`, srcPort, serverNodeInfo.nodeIP, udpService.Spec.Ports[0].NodePort)
+			clientPod.Spec.Containers[0].Command = []string{"/bin/sh", "-c", cmd}
+			clientPod.Spec.Containers[0].Name = podClient
+			e2epod.NewPodClient(f).CreateSync(ctx, clientPod)
+
+			// Read the client pod logs
+			logs, err := e2epod.GetPodLogs(ctx, cs, ns, podClient, podClient)
+			framework.ExpectNoError(err)
+			framework.Logf("Pod client logs: %s", logs)
+
+			// Add a backend pod to the service in the other node
+			ginkgo.By("creating a backend pod " + podBackend1 + " for the service " + serviceName + " at node " + backendNodeInfo.name)
+			serverPod1 := e2epod.NewAgnhostPod(ns, podBackend1, nil, nil, nil, "netexec", fmt.Sprintf("--udp-port=%d", 80))
+			serverPod1.Labels = udpJig.Labels
+			nodeSelection = e2epod.NodeSelection{Name: backendNodeInfo.name}
+			e2epod.SetNodeSelection(&serverPod1.Spec, nodeSelection)
+			e2epod.NewPodClient(f).CreateSync(ctx, serverPod1)
+
+			ginkgo.By("Waiting for the endpoint to be ready")
+			err = framework.WaitForServiceEndpointsNum(ctx, f.ClientSet, f.Namespace.Name,
+				serviceName, 1, time.Second, wait.ForeverTestTimeout)
+			framework.ExpectNoError(err, "failed to validate endpoints for service %s in namespace: %s",
+				serviceName, f.Namespace.Name)
+
+			logContainsFn := func(text, podName string) wait.ConditionWithContextFunc {
+				return func(ctx context.Context) (bool, error) {
+					logs, err := e2epod.GetPodLogs(ctx, cs, ns, podName, podName)
+					if err != nil {
+						// Retry the error next time.
+						return false, nil
+					}
+					if !strings.Contains(string(logs), text) {
+						return false, nil
+					}
+					return true, nil
+				}
+			}
+			// Note that the fact that Endpoints object already exists, does NOT mean
+			// that openflows were already programmed.
+			// Additionally take into account that UDP conntract entries timeout is
+			// 30 seconds by default.
+			// Based on the above check if the pod receives the traffic.
+			ginkgo.By("checking client pod connected to the backend 1 on Node IP " + serverNodeInfo.nodeIP)
+			if err := wait.PollUntilContextTimeout(ctx, 5*time.Second, time.Minute, true, logContainsFn(podBackend1, podClient)); err != nil {
+				logs, err = e2epod.GetPodLogs(ctx, cs, ns, podClient, podClient)
+				framework.ExpectNoError(err)
+				framework.Logf("Pod client logs: %s", logs)
+				framework.Failf("Failed to connect to backend 1")
+			}
+
+			// Create a second pod
+			ginkgo.By("creating a second backend pod " + podBackend2 + " for the service " + serviceName + " at node " + backendNodeInfo.name)
+			serverPod2 := e2epod.NewAgnhostPod(ns, podBackend2, nil, nil, nil, "netexec", fmt.Sprintf("--udp-port=%d", 80))
+			serverPod2.Labels = udpJig.Labels
+			nodeSelection = e2epod.NodeSelection{Name: backendNodeInfo.name}
+			e2epod.SetNodeSelection(&serverPod2.Spec, nodeSelection)
+			e2epod.NewPodClient(f).CreateSync(ctx, serverPod2)
+
+			// and delete the first pod
+			framework.Logf("Cleaning up %s pod", podBackend1)
+			e2epod.NewPodClient(f).DeleteSync(ctx, podBackend1, metav1.DeleteOptions{}, e2epod.DefaultPodDeletionTimeout)
+
+			ginkgo.By("Waiting for the endpoint to be ready")
+			err = framework.WaitForServiceEndpointsNum(ctx, f.ClientSet, f.Namespace.Name,
+				serviceName, 1, time.Second, wait.ForeverTestTimeout)
+			framework.ExpectNoError(err, "failed to validate endpoints for service %s in namespace: %s",
+				serviceName, f.Namespace.Name)
+
+			// Check that the second pod keeps receiving traffic
+			// UDP conntrack entries timeout is 30 sec by default
+			ginkgo.By("checking client pod connected to the backend 2 on Node IP " + serverNodeInfo.nodeIP)
+			if err := wait.PollUntilContextTimeout(ctx, 5*time.Second, time.Minute, true, logContainsFn(podBackend2, podClient)); err != nil {
+				logs, err = e2epod.GetPodLogs(ctx, cs, ns, podClient, podClient)
+				framework.ExpectNoError(err)
+				framework.Logf("Pod client logs: %s", logs)
+				framework.Failf("Failed to connect to backend 2")
+			}
+		})
+
 		ginkgo.It("should listen on each host addresses", func() {
 			endPoints := make([]*v1.Pod, 0)
 			endpointsSelector := map[string]string{"servicebackend": "true"}
