@@ -721,6 +721,9 @@ func (nInfo *userDefinedNetInfo) GetNetworkScopedK8sMgmtIntfName(nodeName string
 }
 
 func (nInfo *userDefinedNetInfo) GetNetworkScopedClusterRouterName() string {
+	if nInfo.TopologyType() == types.Layer2Topology {
+		return nInfo.GetNetworkScopedName(types.TransitRouter)
+	}
 	return nInfo.GetNetworkScopedName(types.OVNClusterRouter)
 }
 
@@ -1547,6 +1550,12 @@ func IsRouteAdvertisementsEnabled() bool {
 	// for now, we require multi-network to be enabled because we rely on NADs,
 	// even for the default network
 	return config.OVNKubernetesFeature.EnableMultiNetwork && config.OVNKubernetesFeature.EnableRouteAdvertisements
+}
+
+func IsVirtualPrivateNetworkConnectEnabled() bool {
+	// require network segmentation to be enabled because VirtualPrivateNetworkConnect
+	// relies on user defined networks
+	return IsNetworkSegmentationSupportEnabled() && config.OVNKubernetesFeature.EnableVirtualPrivateNetworkConnect
 }
 
 // IsPreconfiguredUDNAddressesEnabled indicates if user defined IPs / MAC

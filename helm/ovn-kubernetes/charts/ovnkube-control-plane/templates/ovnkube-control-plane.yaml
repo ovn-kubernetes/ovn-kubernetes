@@ -126,6 +126,8 @@ spec:
           value: {{ hasKey .Values.global "enableMultiNetwork" | ternary .Values.global.enableMultiNetwork false | quote }}
         - name: OVN_NETWORK_SEGMENTATION_ENABLE
           value: {{ default "" .Values.global.enableNetworkSegmentation | quote }}
+        - name: OVN_VIRTUAL_PRIVATE_NETWORK_CONNECT_ENABLE
+          value: {{ default "" .Values.global.enableVirtualPrivateNetworkConnect | quote }}
         - name: OVN_PRE_CONF_UDN_ADDR_ENABLE
           value: {{ default "" .Values.global.enablePreconfiguredUDNAddresses | quote }}
         - name: OVN_ADVERTISED_UDN_ISOLATION_MODE
@@ -159,10 +161,10 @@ spec:
           value: {{ hasKey .Values.global "enableMultiExternalGateway" | ternary .Values.global.enableMultiExternalGateway false | quote }}
         - name: OVN_NETWORK_QOS_ENABLE
           value: {{ hasKey .Values.global "enableNetworkQos" | ternary .Values.global.enableNetworkQos false | quote }}
-        - name: OVN_V4_TRANSIT_SWITCH_SUBNET
-          value: {{ default "" .Values.global.v4TransitSwitchSubnet | quote }}
-        - name: OVN_V6_TRANSIT_SWITCH_SUBNET
-          value: {{ default "" .Values.global.v6TransitSwitchSubnet | quote }}
+        - name: OVN_V4_TRANSIT_SUBNET
+          value: {{ default "" .Values.global.v4TransitSubnet | quote }}
+        - name: OVN_V6_TRANSIT_SUBNET
+          value: {{ default "" .Values.global.v6TransitSubnet | quote }}
         - name: OVN_ENABLE_PERSISTENT_IPS
           value: {{ hasKey .Values.global "enablePersistentIPs" | ternary .Values.global.enablePersistentIPs false | quote }}
         - name: OVN_ENABLE_DNSNAMERESOLVER
