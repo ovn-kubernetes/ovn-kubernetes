@@ -20,9 +20,11 @@ import (
 
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
+
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 )
 
-var _ = Describe("Network Segmentation: Localnet", func() {
+var _ = Describe("Network Segmentation: Localnet", feature.NetworkSegmentation, func() {
 	var (
 		f           = wrappedTestFramework("network-segmentation-localnet")
 		providerCtx infraapi.Context

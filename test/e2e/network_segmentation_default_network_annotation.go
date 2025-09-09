@@ -16,9 +16,10 @@ import (
 
 	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	udnclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned"
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 )
 
-var _ = Describe("Network Segmentation: Default network multus annotation", func() {
+var _ = Describe("Network Segmentation: Default network multus annotation", feature.NetworkSegmentation, func() {
 	var (
 		f = wrappedTestFramework("default-network-annotation")
 	)

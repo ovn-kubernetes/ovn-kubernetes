@@ -41,6 +41,8 @@ import (
 )
 
 const (
+	protoPrefixV4 = "ip"
+	protoPrefixV6 = "ipv6"
 	// etpSvcOpenFlowCookie identifies constant open flow rules added to the host OVS
 	// bridge to move packets between host and external for etp=local traffic.
 	// The hex number 0xe745ecf105, represents etp(e74)-service(5ec)-flows which makes it easier for debugging.
@@ -400,32 +402,37 @@ func (npw *nodePortWatcher) updateServiceFlowCache(service *corev1.Service, netI
 				return utilerrors.Join(errors...)
 			}
 
-			ipPrefix := "ip"
-			if !utilnet.IsIPv4String(service.Spec.ClusterIP) {
-				ipPrefix = "ipv6"
-			}
-			// table 2, user-defined network host -> OVN towards default cluster network services
 			defaultNetConfig := npw.ofm.defaultBridge.GetActiveNetworkBridgeConfigCopy(types.DefaultNetworkName)
-			// sample flow: cookie=0xdeff105, duration=2319.685s, table=2, n_packets=496, n_bytes=67111, priority=300,
-			//              ip,nw_dst=10.96.0.1 actions=mod_dl_dst:02:42:ac:12:00:03,output:"patch-breth0_ov"
-			// This flow is used for UDNs and advertised UDNs to be able to reach kapi and dns services alone on default network
-			flows := []string{fmt.Sprintf("cookie=%s, priority=300, table=2, %s, %s_dst=%s, "+
-				"actions=set_field:%s->eth_dst,output:%s",
-				nodetypes.DefaultOpenFlowCookie, ipPrefix, ipPrefix, service.Spec.ClusterIP,
-				npw.ofm.getDefaultBridgeMAC().String(), defaultNetConfig.OfPortPatch)}
-			if util.IsRouteAdvertisementsEnabled() {
-				// if the network is advertised, then for the reply from kapi and dns services to go back
-				// into the UDN's VRF we need flows that statically send this to the local port
-				// sample flow: cookie=0xdeff105, duration=264.196s, table=0, n_packets=0, n_bytes=0, priority=490,ip,
-				//              in_port="patch-breth0_ov",nw_src=10.96.0.10,actions=ct(table=3,zone=64001,nat)
-				// this flow is meant to match all advertised UDNs and then the ip rules on the host will take
-				// this packet into the corresponding UDNs
-				// NOTE: We chose priority 490 to differentiate this flow from the flow at priority 500 added for the
-				// non-advertised UDNs reponse for debugging purposes:
-				// sample flow for non-advertised UDNs: cookie=0xdeff105, duration=684.087s, table=0, n_packets=0, n_bytes=0,
-				//				idle_age=684, priority=500,ip,in_port=2,nw_src=10.96.0.0/16,nw_dst=169.254.0.0/17 actions=ct(table=3,zone=64001,nat)
-				flows = append(flows, fmt.Sprintf("cookie=%s, priority=490, in_port=%s, ip, ip_src=%s,actions=ct(zone=%d,nat,table=3)",
-					nodetypes.DefaultOpenFlowCookie, defaultNetConfig.OfPortPatch, service.Spec.ClusterIP, config.Default.HostMasqConntrackZone))
+			var flows []string
+			clusterIPs := util.GetClusterIPs(service)
+			for _, clusterIP := range clusterIPs {
+				ipPrefix := protoPrefixV4
+				if utilnet.IsIPv6String(clusterIP) {
+					ipPrefix = protoPrefixV6
+				}
+				// table 2, user-defined network host -> OVN towards default cluster network services
+				// sample flow: cookie=0xdeff105, duration=2319.685s, table=2, n_packets=496, n_bytes=67111, priority=300,
+				//              ip,nw_dst=10.96.0.1 actions=mod_dl_dst:02:42:ac:12:00:03,output:"patch-breth0_ov"
+				// This flow is used for UDNs and advertised UDNs to be able to reach kapi and dns services alone on default network
+				flows = append(flows, fmt.Sprintf("cookie=%s, priority=300, table=2, %s, %s_dst=%s, "+
+					"actions=set_field:%s->eth_dst,output:%s",
+					nodetypes.DefaultOpenFlowCookie, ipPrefix, ipPrefix, clusterIP,
+					npw.ofm.getDefaultBridgeMAC().String(), defaultNetConfig.OfPortPatch))
+
+				if util.IsRouteAdvertisementsEnabled() {
+					// if the network is advertised, then for the reply from kapi and dns services to go back
+					// into the UDN's VRF we need flows that statically send this to the local port
+					// sample flow: cookie=0xdeff105, duration=264.196s, table=0, n_packets=0, n_bytes=0, priority=490,ip,
+					//              in_port="patch-breth0_ov",nw_src=10.96.0.10,actions=ct(table=3,zone=64001,nat)
+					// this flow is meant to match all advertised UDNs and then the ip rules on the host will take
+					// this packet into the corresponding UDNs
+					// NOTE: We chose priority 490 to differentiate this flow from the flow at priority 500 added for the
+					// non-advertised UDNs reponse for debugging purposes:
+					// sample flow for non-advertised UDNs: cookie=0xdeff105, duration=684.087s, table=0, n_packets=0, n_bytes=0,
+					//				idle_age=684, priority=500,ip,in_port=2,nw_src=10.96.0.0/16,nw_dst=169.254.0.0/17 actions=ct(table=3,zone=64001,nat)
+					flows = append(flows, fmt.Sprintf("cookie=%s, priority=490, in_port=%s, %s, %s_src=%s,actions=ct(zone=%d,nat,table=3)",
+						nodetypes.DefaultOpenFlowCookie, defaultNetConfig.OfPortPatch, ipPrefix, ipPrefix, clusterIP, config.Default.HostMasqConntrackZone))
+				}
 			}
 			npw.ofm.updateFlowCacheEntry(key, flows)
 		}

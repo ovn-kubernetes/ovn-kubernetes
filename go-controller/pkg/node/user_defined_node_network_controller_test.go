@@ -166,7 +166,7 @@ var _ = Describe("UserDefinedNodeNetworkController: UserDefinedPrimaryNetwork Ga
 		routeManager     *routemanager.Controller
 		ipRulesManager   *iprulemanager.Controller
 		v4NodeSubnet     = "100.128.0.0/24"
-		v6NodeSubnet     = "ae70::66/112"
+		v6NodeSubnet     = "ae70::/112"
 		mgtPort          = fmt.Sprintf("%s%d", types.K8sMgmtIntfNamePrefix, netID)
 		gatewayInterface = "eth0"
 		gatewayBridge    = "breth0"
@@ -270,6 +270,7 @@ var _ = Describe("UserDefinedNodeNetworkController: UserDefinedPrimaryNetwork Ga
 		config.IPv6Mode = true
 		config.IPv4Mode = true
 		config.Gateway.NodeportEnable = true
+		config.Kubernetes.ServiceCIDRs = ovntest.MustParseIPNets("172.16.1.0/24", "fd02::/112")
 		ifAddrs := ovntest.MustParseIPNets(v4NodeIP, v6NodeIP)
 
 		By("creating necessary mocks")
