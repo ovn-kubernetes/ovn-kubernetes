@@ -255,7 +255,7 @@ func (c *controller[T]) processNextQueueItem() bool {
 	if err != nil {
 		retry := c.config.MaxAttempts == InfiniteAttempts || c.queue.NumRequeues(key) < c.config.MaxAttempts
 		if retry {
-			klog.Infof("Controller %s: error found while processing %s: %v", c.name, key, err)
+			klog.Errorf("Controller %s: error found while processing %s: %v", c.name, key, err)
 			c.queue.AddRateLimited(key)
 			return true
 		}

@@ -6,6 +6,7 @@ import (
 
 	"k8s.io/client-go/tools/record"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -69,6 +70,7 @@ func NewForCluster(
 	wf watchFactory,
 	ovnClient *util.OVNClusterManagerClientset,
 	recorder record.EventRecorder,
+	tunnelKeysAllocator *id.TunnelKeysAllocator,
 ) (Controller, error) {
 	return new(
 		"clustermanager-nad-controller",
@@ -78,6 +80,7 @@ func NewForCluster(
 		wf,
 		ovnClient,
 		recorder,
+		tunnelKeysAllocator,
 	)
 }
 
@@ -93,6 +96,7 @@ func NewForZone(
 		"",
 		cm,
 		wf,
+		nil,
 		nil,
 		nil,
 	)
@@ -112,6 +116,7 @@ func NewForNode(
 		wf,
 		nil,
 		nil,
+		nil,
 	)
 }
 
@@ -126,8 +131,9 @@ func new(
 	wf watchFactory,
 	ovnClient *util.OVNClusterManagerClientset,
 	recorder record.EventRecorder,
+	tunnelKeysAllocator *id.TunnelKeysAllocator,
 ) (Controller, error) {
-	return newController(name, zone, node, cm, wf, ovnClient, recorder)
+	return newController(name, zone, node, cm, wf, ovnClient, recorder, tunnelKeysAllocator)
 }
 
 // ControllerManager manages controllers. Needs to be provided in order to build
