@@ -1,10 +1,12 @@
 package util
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -35,6 +37,7 @@ type NetInfo interface {
 	// static information, not expected to change.
 	GetNetworkName() string
 	GetNetworkID() int
+	GetTunnelKeys() []int
 	IsDefault() bool
 	IsPrimaryNetwork() bool
 	IsUserDefinedNetwork() bool
@@ -108,6 +111,7 @@ type MutableNetInfo interface {
 	// SetNetworkID sets the network ID before any controller handles the
 	// network
 	SetNetworkID(id int)
+	SetTunnelKeys(keys []int)
 
 	// NADs referencing a network
 	SetNADs(nadName ...string)
@@ -222,7 +226,8 @@ type mutableNetInfo struct {
 
 	// id of the network. It's mutable because is set on day-1 but it can't be
 	// changed or reconciled on day-2
-	id int
+	id         int
+	tunnelKeys []int
 
 	nads                     sets.Set[string]
 	podNetworkAdvertisements map[string][]string
@@ -265,6 +270,7 @@ func (l *mutableNetInfo) equals(r *mutableNetInfo) bool {
 	r.RLock()
 	defer r.RUnlock()
 	return reflect.DeepEqual(l.id, r.id) &&
+		reflect.DeepEqual(l.tunnelKeys, r.tunnelKeys) &&
 		reflect.DeepEqual(l.nads, r.nads) &&
 		reflect.DeepEqual(l.podNetworkAdvertisements, r.podNetworkAdvertisements) &&
 		reflect.DeepEqual(l.eipAdvertisements, r.eipAdvertisements)
@@ -277,6 +283,7 @@ func (l *mutableNetInfo) copyFrom(r *mutableNetInfo) {
 	aux := mutableNetInfo{}
 	r.RLock()
 	aux.id = r.id
+	aux.tunnelKeys = slices.Clone(r.tunnelKeys)
 	aux.nads = r.nads.Clone()
 	aux.setPodNetworkAdvertisedOnVRFs(r.podNetworkAdvertisements)
 	aux.setEgressIPAdvertisedAtNodes(r.eipAdvertisements)
@@ -285,6 +292,7 @@ func (l *mutableNetInfo) copyFrom(r *mutableNetInfo) {
 	l.Lock()
 	defer l.Unlock()
 	l.id = aux.id
+	l.tunnelKeys = aux.tunnelKeys
 	l.nads = aux.nads
 	l.podNetworkAdvertisements = aux.podNetworkAdvertisements
 	l.eipAdvertisements = aux.eipAdvertisements
@@ -301,6 +309,18 @@ func (nInfo *mutableNetInfo) SetNetworkID(id int) {
 	nInfo.Lock()
 	defer nInfo.Unlock()
 	nInfo.id = id
+}
+
+func (nInfo *mutableNetInfo) GetTunnelKeys() []int {
+	nInfo.RLock()
+	defer nInfo.RUnlock()
+	return nInfo.tunnelKeys
+}
+
+func (nInfo *mutableNetInfo) SetTunnelKeys(tunnelKeys []int) {
+	nInfo.Lock()
+	defer nInfo.Unlock()
+	nInfo.tunnelKeys = tunnelKeys
 }
 
 func (nInfo *mutableNetInfo) SetPodNetworkAdvertisedVRFs(podAdvertisements map[string][]string) {
@@ -1262,9 +1282,15 @@ func ParseNADInfo(nad *nettypes.NetworkAttachmentDefinition) (NetInfo, error) {
 			return nil, fmt.Errorf("failed to parse annotated network ID: %w", err)
 		}
 	}
-
 	n.SetNetworkID(id)
 
+	if nad.Annotations[types.OvnNetworkTunnelKeysAnnotation] != "" {
+		tunnelKeys, err := ParseTunnelKeysAnnotation(nad.Annotations[types.OvnNetworkTunnelKeysAnnotation])
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse annotated tunnel keys: %w", err)
+		}
+		n.SetTunnelKeys(tunnelKeys)
+	}
 	return n, nil
 }
 
