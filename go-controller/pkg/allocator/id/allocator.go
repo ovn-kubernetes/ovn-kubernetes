@@ -2,6 +2,7 @@ package id
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 
 	bitmapallocator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/bitmap"
@@ -115,4 +116,107 @@ func (allocator *namedAllocator) ReserveID(id int) error {
 
 func (allocator *namedAllocator) ReleaseID() {
 	allocator.allocator.ReleaseID(allocator.name)
+}
+
+// idsAllocator is used to allocate multiple ids for a resource and store the resource - ids in a map
+type idsAllocator struct {
+	// idBitmap allocated ids in range [0, maxIds-1]
+	idBitmap *bitmapallocator.AllocationBitmap
+	// offset can be used to shift the range to [offset, offset+maxIds-1]
+	offset int
+	// nameIdsMap stores the final allocated ids in range [offset, offset+maxIds-1] for a resource name
+	nameIdsMap sync.Map
+}
+
+// newIDsAllocator returns an idsAllocator.
+// If offset is non-zero, the allocated ids will be in the range [offset, offset+maxIds-1)
+func newIDsAllocator(name string, maxIds int, offset int) *idsAllocator {
+	idBitmap := bitmapallocator.NewRoundRobinAllocationMap(maxIds, name)
+	return &idsAllocator{
+		nameIdsMap: sync.Map{},
+		idBitmap:   idBitmap,
+		offset:     offset,
+	}
+}
+
+// AllocateIDs allocates numOfIDs for the resource 'name' and returns the ids.
+// If less ids than numOfIDs are already allocated for the resource name, it will allocate the missing amount.
+// If more ids than numOfIDs are already allocated for the resource name, it returns an error.
+func (idsAllocator *idsAllocator) AllocateIDs(name string, numOfIDs int) ([]int, error) {
+	// Check the idMap and return the id if its already allocated
+	v, ok := idsAllocator.nameIdsMap.Load(name)
+	var ids []int
+	if ok {
+		ids = v.([]int)
+		if len(ids) == numOfIDs {
+			return ids, nil
+		}
+		if len(ids) > numOfIDs {
+			return ids, fmt.Errorf("the resource %s already has more ids allocated %v than requested %v", name, ids, numOfIDs)
+		}
+	} else {
+		ids = make([]int, 0, numOfIDs)
+	}
+	previouslyAllocated := len(ids)
+	for len(ids) < numOfIDs {
+		id, allocated, _ := idsAllocator.idBitmap.AllocateNext()
+		if !allocated {
+			// release newly allocated ids
+			for _, id := range ids[previouslyAllocated:] {
+				idsAllocator.idBitmap.Release(id - idsAllocator.offset)
+			}
+			return ids, fmt.Errorf("failed to allocate the id for the resource %s", name)
+		}
+		ids = append(ids, id+idsAllocator.offset)
+	}
+	if len(ids) == 0 {
+		// don't store empty slice in the map
+		return ids, nil
+	}
+	idsAllocator.nameIdsMap.Store(name, ids)
+	return ids, nil
+}
+
+// ReserveIDs reserves 'ids' for the resource 'name'. It returns an
+// error if one of the 'ids' is already reserved by a resource other than 'name'.
+// It also returns an error if the resource 'name' has a different 'ids' slice
+// already reserved. Slice elements order is important for comparison.
+func (idsAllocator *idsAllocator) ReserveIDs(name string, ids []int) error {
+	v, ok := idsAllocator.nameIdsMap.Load(name)
+	if ok {
+		existingIDs := v.([]int)
+		if slices.Equal(existingIDs, ids) {
+			// All good. The ids are already reserved by the same resource name.
+			return nil
+		}
+		return fmt.Errorf("can't reserve ids %v for the resource %s. It is already allocated with different ids %v",
+			ids, name, existingIDs)
+	}
+	allocatedIDs := make([]int, 0, len(ids))
+	for _, id := range ids {
+		// don't forget to adjust the id with the offset
+		reserved, _ := idsAllocator.idBitmap.Allocate(id - idsAllocator.offset)
+		if !reserved {
+			// cleanup previously allocated ids
+			for _, allocatedID := range allocatedIDs {
+				idsAllocator.idBitmap.Release(allocatedID - idsAllocator.offset)
+			}
+			return fmt.Errorf("id %d is already reserved by another resource", id)
+		}
+		allocatedIDs = append(allocatedIDs, id)
+	}
+	idsAllocator.nameIdsMap.Store(name, allocatedIDs)
+	return nil
+}
+
+// ReleaseIDs releases all ids allocated for the resource 'name'
+func (idsAllocator *idsAllocator) ReleaseIDs(name string) {
+	v, ok := idsAllocator.nameIdsMap.Load(name)
+	if !ok {
+		return
+	}
+	for _, id := range v.([]int) {
+		idsAllocator.idBitmap.Release(id - idsAllocator.offset)
+	}
+	idsAllocator.nameIdsMap.Delete(name)
 }
