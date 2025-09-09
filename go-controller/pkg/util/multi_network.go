@@ -1830,3 +1830,19 @@ func getFirstAvailableIP(subnets []*net.IPNet, excludeIPs sets.Set[string]) net.
 	}
 	return nil
 }
+
+func ParseTunnelKeysAnnotation(annotation string) ([]int, error) {
+	tunnelKeys := []int{}
+	if err := json.Unmarshal([]byte(annotation), &tunnelKeys); err != nil {
+		return nil, fmt.Errorf("failed to parse annotated network tunnel keys: %w", err)
+	}
+	return tunnelKeys, nil
+}
+
+func FormatTunnelKeysAnnotation(tunnelKeys []int) (string, error) {
+	annotationBytes, err := json.Marshal(tunnelKeys)
+	if err != nil {
+		return "", fmt.Errorf("failed to format tunnel keys annotation: %w", err)
+	}
+	return string(annotationBytes), nil
+}
