@@ -35,7 +35,6 @@ func newNetworkController(name, zone, node string, cm ControllerManager, wf watc
 		cm:                 cm,
 		networks:           map[string]util.MutableNetInfo{},
 		networkControllers: map[string]*networkControllerState{},
-		nodeLister:         wf.NodeCoreInformer().Lister(),
 	}
 
 	// this controller does not feed from an informer, networks are manually
@@ -55,6 +54,7 @@ func newNetworkController(name, zone, node string, cm ControllerManager, wf watc
 	if nc.hasRouteAdvertisements() {
 		nc.nadLister = wf.NADInformer().Lister()
 		nc.raLister = wf.RouteAdvertisementsInformer().Lister()
+		nc.nodeLister = wf.NodeCoreInformer().Lister()
 
 		// ra controller
 		raConfig := &controller.ControllerConfig[ratypes.RouteAdvertisements]{
@@ -245,51 +245,17 @@ func (c *networkController) syncAll() error {
 	start := time.Now()
 	klog.Infof("%s: syncing all networks", c.name)
 	for _, network := range validNetworks {
-		networkName := network.GetNetworkName()
-		ready, err := c.isNetworkReadyForSync(network)
-		if err != nil {
-			return err
-		}
-		// When network is not ready, then skip syncing the network and proceed with syncing
-		// remaining networks.
-		if !ready {
-			continue
-		}
-		err = c.syncNetwork(networkName)
+		err := c.syncNetwork(network.GetNetworkName())
 		if errors.Is(err, ErrNetworkControllerTopologyNotManaged) {
-			klog.V(5).Infof("Ignoring network %q since %q does not manage it", networkName, c.name)
+			klog.V(5).Infof("Ignoring network %q since %q does not manage it", network.GetNetworkName(), c.name)
 			continue
 		}
 		if err != nil {
-			return fmt.Errorf("failed to sync network %s: %w", networkName, err)
+			return fmt.Errorf("failed to sync network %s: %w", network.GetNetworkName(), err)
 		}
 	}
 	klog.Infof("%s: finished syncing all networks. Time taken: %s", c.name, time.Since(start))
 	return nil
-}
-
-// isNetworkReadyForSync checks if the network is ready for sync. when a node is not allocated
-// with the host subnet for the given network, then the network can not be ready for sync, so
-// return false.
-func (c *networkController) isNetworkReadyForSync(network util.NetInfo) (bool, error) {
-	networkName := network.GetNetworkName()
-	if c.node != "" && util.IsNetworkSegmentationSupportEnabled() && network.IsPrimaryNetwork() &&
-		network.TopologyType() == types.Layer3Topology {
-		node, err := c.nodeLister.Get(c.node)
-		if err != nil {
-			return false, fmt.Errorf("error retrieving node %s object while syncing network %s: %w",
-				c.node, networkName, err)
-		}
-		_, err = util.ParseNodeHostSubnetAnnotation(node, networkName)
-		if err != nil && util.IsAnnotationNotSetError(err) {
-			klog.Errorf("Network %s is not ready for sync because k8s.ovn.org/node-subnets annotation is not set on node %s",
-				networkName, c.node)
-			return false, nil
-		} else if err != nil {
-			return false, err
-		}
-	}
-	return true, nil
 }
 
 func (c *networkController) syncRunningNetworks() error {

@@ -91,9 +91,6 @@ func TestSetAdvertisements(t *testing.T) {
 	testNode := corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: testNodeName,
-			Annotations: map[string]string{
-				util.OvnNodeSubnets: "{\"default\":[\"10.244.0.0/24\"],\"primary\":[\"192.168.0.0/24\"]}",
-			},
 		},
 	}
 	testNodeOnZone := corev1.Node{
@@ -101,7 +98,6 @@ func TestSetAdvertisements(t *testing.T) {
 			Name: testNodeOnZoneName,
 			Annotations: map[string]string{
 				util.OvnNodeZoneName: testZoneName,
-				util.OvnNodeSubnets:  "{\"default\":[\"10.244.0.0/24\"],\"primary\":[\"192.168.0.0/24\"]}",
 			},
 		},
 	}
@@ -135,7 +131,6 @@ func TestSetAdvertisements(t *testing.T) {
 			node:    testNodeOnZone,
 			expected: map[string][]string{
 				testNodeOnZoneName: {testVRFName},
-				testNodeName:       {testVRFName},
 			},
 		},
 		{
@@ -149,9 +144,6 @@ func TestSetAdvertisements(t *testing.T) {
 			network: defaultNetwork,
 			ra:      &podNetworkRA,
 			node:    otherNode,
-			expected: map[string][]string{
-				testNodeName: {testVRFName},
-			},
 		},
 		{
 			name:    "ignores advertisements that are not accepted",
@@ -201,12 +193,6 @@ func TestSetAdvertisements(t *testing.T) {
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 
 			_, err = fakeClient.KubeClient.CoreV1().Nodes().Create(context.Background(), &tt.node, metav1.CreateOptions{})
-			g.Expect(err).ToNot(gomega.HaveOccurred())
-			if tt.node.Name != testNodeName {
-				// Create the node associated with network controller when the test node is a different one.
-				_, err = fakeClient.KubeClient.CoreV1().Nodes().Create(context.Background(), &testNode, metav1.CreateOptions{})
-				g.Expect(err).ToNot(gomega.HaveOccurred())
-			}
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 			_, err = fakeClient.RouteAdvertisementsClient.K8sV1().RouteAdvertisements().Create(context.Background(), tt.ra, metav1.CreateOptions{})
 			g.Expect(err).ToNot(gomega.HaveOccurred())
