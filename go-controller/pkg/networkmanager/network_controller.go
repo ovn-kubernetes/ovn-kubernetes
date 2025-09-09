@@ -50,11 +50,29 @@ func newNetworkController(name, zone, node string, cm ControllerManager, wf watc
 		networkConfig,
 	)
 
+	nodeReconciler := nc.syncRunningNetworks
+	if !nc.hasRouteAdvertisements() {
+		nodeReconciler = nc.syncAll
+	}
+	// node controller
+	nc.nodeLister = wf.NodeCoreInformer().Lister()
+	nodeConfig := &controller.ControllerConfig[corev1.Node]{
+		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+		Informer:       wf.NodeCoreInformer().Informer(),
+		Lister:         nc.nodeLister.List,
+		Reconcile:      func(string) error { return nodeReconciler() },
+		ObjNeedsUpdate: nodeNeedsUpdate,
+		Threadiness:    1,
+	}
+	nc.nodeController = controller.NewController(
+		nc.name,
+		nodeConfig,
+	)
+
 	// we don't care about route advertisements in cluster manager
 	if nc.hasRouteAdvertisements() {
 		nc.nadLister = wf.NADInformer().Lister()
 		nc.raLister = wf.RouteAdvertisementsInformer().Lister()
-		nc.nodeLister = wf.NodeCoreInformer().Lister()
 
 		// ra controller
 		raConfig := &controller.ControllerConfig[ratypes.RouteAdvertisements]{
@@ -68,20 +86,6 @@ func newNetworkController(name, zone, node string, cm ControllerManager, wf watc
 		nc.raController = controller.NewController(
 			nc.name,
 			raConfig,
-		)
-
-		// node controller
-		nodeConfig := &controller.ControllerConfig[corev1.Node]{
-			RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
-			Informer:       wf.NodeCoreInformer().Informer(),
-			Lister:         nc.nodeLister.List,
-			Reconcile:      func(string) error { return nc.syncRunningNetworks() },
-			ObjNeedsUpdate: nodeNeedsUpdate,
-			Threadiness:    1,
-		}
-		nc.nodeController = controller.NewController(
-			nc.name,
-			nodeConfig,
 		)
 	}
 
@@ -343,7 +347,11 @@ func (c *networkController) ensureNetwork(network util.MutableNetInfo) error {
 	}
 
 	err = nc.Start(context.Background())
-	if err != nil {
+	if err != nil && util.IsAnnotationNotSetError(err) {
+		klog.Warningf("Node %s: network %s not ready for sync (missing annotation): %v",
+			c.node, networkName, err)
+		return nil
+	} else if err != nil {
 		return fmt.Errorf("failed to start network %s: %w", networkName, err)
 	}
 	c.setNetworkState(network.GetNetworkName(), &networkControllerState{controller: nc})
@@ -528,7 +536,8 @@ func nodeNeedsUpdate(oldNode, newNode *corev1.Node) bool {
 		return false
 	}
 
-	return !reflect.DeepEqual(oldNode.Labels, newNode.Labels) || oldNode.Annotations[util.OvnNodeZoneName] != newNode.Annotations[util.OvnNodeZoneName]
+	return !reflect.DeepEqual(oldNode.Labels, newNode.Labels) || oldNode.Annotations[util.OvnNodeZoneName] != newNode.Annotations[util.OvnNodeZoneName] ||
+		oldNode.Annotations[util.OvnNodeSubnets] != newNode.Annotations[util.OvnNodeSubnets]
 }
 
 func (c *networkController) getRunningNetwork(id int) string {

@@ -234,7 +234,7 @@ var _ = Describe("Network Segmentation: Preconfigured Layer2 UDN", feature.Netwo
 					namespace: f.Namespace.Name,
 				}
 				filterSupportedNetworkConfig(f.ClientSet, netConfig)
-				udnManifest := generateUserDefinedNetworkManifest(netConfig, f.ClientSet)
+				udnManifest := generateUserDefinedNetworkManifestWithSupportedNetworkConfig(netConfig, f.ClientSet)
 				cleanup, err := createManifest(netConfig.namespace, udnManifest)
 				Expect(err).NotTo(HaveOccurred())
 				DeferCleanup(cleanup)
