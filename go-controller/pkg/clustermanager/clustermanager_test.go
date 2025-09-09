@@ -21,6 +21,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -60,6 +61,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 	ginkgo.AfterEach(func() {
 		if f != nil {
 			f.Shutdown()
+			f = nil
 		}
 		wg.Wait()
 	})
@@ -832,6 +834,50 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 					return nil
 				}).ShouldNot(gomega.HaveOccurred())
 
+				return nil
+			}
+
+			err := app.Run([]string{
+				app.Name,
+				"-cluster-subnets=" + clusterCIDR,
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+	})
+
+	ginkgo.Context("tunnel keys allocations", func() {
+		ginkgo.It("check for tunnel keys allocations", func() {
+			app.Action = func(_ *cli.Context) error {
+				nad1 := testing.GenerateNAD("test1", "test1", "test", ovntypes.Layer2Topology,
+					"10.0.0.0/24", ovntypes.NetworkRolePrimary)
+				// start with test1 network that already has keys allocated
+				nad1.Annotations = map[string]string{
+					ovntypes.OvnNetworkTunnelKeysAnnotation: "[16711685,16715780]",
+				}
+				// and test2 network without keys allocated
+				nad2 := testing.GenerateNAD("test2", "test2", "test", ovntypes.Layer2Topology,
+					"10.0.0.0/24", ovntypes.NetworkRolePrimary)
+				clientSet := util.GetOVNClientset(nad1, nad2)
+
+				// init the allocator that should reserve already allocated keys for test1
+				allocator, err := initTunnelKeysAllocator(clientSet.NetworkAttchDefClient)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				// check that reserving different keys for test2 will fail
+				err = allocator.ReserveKeys("test1", []int{16711685, 16715779})
+				gomega.Expect(err).To(gomega.HaveOccurred())
+				gomega.Expect(err.Error()).To(gomega.ContainSubstring("can't reserve ids [16715779] for the resource test1. It is already allocated with different ids [16715780]"))
+				// now try to allocate correct number of keys for test1 and check that returned IDs are correct
+				ids, err := allocator.AllocateKeys("test1", 2, 2)
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				gomega.Expect(ids).To(gomega.Equal([]int{16711685, 16715780}))
+				// now allocate ids for networkID 1
+				ids, err = allocator.AllocateKeys("test2", 1, 2)
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				gomega.Expect(ids).To(gomega.Equal([]int{16711684, 16715779}))
+				// now try networkID 3 to make sure IDs of nad test1 are not allocated again
+				ids, err = allocator.AllocateKeys("test3", 3, 2)
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				gomega.Expect(ids).To(gomega.Equal([]int{16711686, 16715781}))
 				return nil
 			}
 

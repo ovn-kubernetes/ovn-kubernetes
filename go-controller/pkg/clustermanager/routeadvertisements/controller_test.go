@@ -24,6 +24,7 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/utils/ptr"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	controllerutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
 	eiptypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
@@ -1005,7 +1006,7 @@ func TestController_reconcile(t *testing.T) {
 			wf, err := factory.NewClusterManagerWatchFactory(fakeClientset)
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 
-			nm, err := networkmanager.NewForCluster(&nmtest.FakeControllerManager{}, wf, fakeClientset, nil)
+			nm, err := networkmanager.NewForCluster(&nmtest.FakeControllerManager{}, wf, fakeClientset, nil, id.NewTunnelKeyAllocator("TunnelKeys"))
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 
 			c := NewController(nm.Interface(), wf, fakeClientset)
