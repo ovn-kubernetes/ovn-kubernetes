@@ -255,14 +255,18 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 			hostNetworkedPodNode, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), hostNetworkedPod.Spec.NodeName, metav1.GetOptions{})
 			framework.ExpectNoError(err)
 
-			if isIPv6Supported(f.ClientSet) {
-				nodeIPv6 = e2enode.GetAddressesByTypeAndFamily(hostNetworkedPodNode, corev1.NodeInternalIP, corev1.IPv6Protocol)[0]
-			}
 			if isIPv4Supported(f.ClientSet) {
 				nodeIPv4 = e2enode.GetAddressesByTypeAndFamily(hostNetworkedPodNode, corev1.NodeInternalIP, corev1.IPv4Protocol)[0]
 			}
-			hostNetworkedPodNodeIPs = append(hostNetworkedPodNodeIPs, nodeIPv4)
-			hostNetworkedPodNodeIPs = append(hostNetworkedPodNodeIPs, nodeIPv6)
+			if isIPv6Supported(f.ClientSet) {
+				nodeIPv6 = e2enode.GetAddressesByTypeAndFamily(hostNetworkedPodNode, corev1.NodeInternalIP, corev1.IPv6Protocol)[0]
+			}
+			if nodeIPv4 != "" {
+				hostNetworkedPodNodeIPs = append(hostNetworkedPodNodeIPs, nodeIPv4)
+			}
+			if nodeIPv6 != "" {
+				hostNetworkedPodNodeIPs = append(hostNetworkedPodNodeIPs, nodeIPv6)
+			}
 			framework.Logf("hostNetworkedPodNodeIPs: %v", hostNetworkedPodNodeIPs)
 
 			ginkgo.By("With default network being advertised, queries to the external server are not SNATed (uses podIP)")
