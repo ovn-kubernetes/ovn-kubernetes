@@ -154,5 +154,6 @@ nav:
     - User Defined Networks: okeps/okep-5193-user-defined-networks.md
     - Preconfigured UDN Addresses: okeps/okep-5233-preconfigured-udn-addresses.md
     - BGP: okeps/okep-5296-bgp.md
+    - UDN Node Selector: okeps/okep-5552-udn-node-selector.md
   - Blog:
     - blog/index.md
