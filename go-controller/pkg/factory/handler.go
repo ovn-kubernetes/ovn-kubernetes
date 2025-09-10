@@ -56,6 +56,13 @@ type Handler struct {
 	// indicates which informer.internalInformers index to use
 	// clients are distributed between internal informers
 	internalInformerIndex int
+
+	// enabled if this handler is ready to process events
+	enabled atomic.Bool
+	// buffer is used to store events that cannot be processed yet since handler is disabled
+	buffer []func()
+	// mu is used to protect buffer access
+	mu sync.Mutex
 }
 
 func (h *Handler) OnAdd(obj interface{}, isInInitialList bool) {
@@ -82,6 +89,55 @@ func (h *Handler) FilterFunc(obj interface{}) bool {
 
 func (h *Handler) kill() bool {
 	return atomic.CompareAndSwapUint32(&h.tombstone, handlerAlive, handlerDead)
+}
+
+// handleEvent checks if this handler is enabled, if not it buffers the event for processing later.
+func (h *Handler) handleEvent(processEvent func()) {
+	if atomic.LoadUint32(&h.tombstone) != handlerAlive {
+		// handler is dead
+		return
+	}
+	// Fast path: handler is enabled, no buffering
+	if h.enabled.Load() {
+		processEvent()
+		return
+	}
+	// Slow path: still disabled, might need to buffer
+	h.mu.Lock()
+	if !h.enabled.Load() {
+		h.buffer = append(h.buffer, processEvent)
+		h.mu.Unlock()
+		return
+	}
+	h.mu.Unlock()
+	// Lost race: handler became enabled while we waited for the lock
+	processEvent()
+}
+
+// Enable the handler, process all buffered events
+func (h *Handler) Enable() {
+	for {
+		if atomic.LoadUint32(&h.tombstone) != handlerAlive {
+			// handler is dead
+			return
+		}
+		var pending []func()
+		h.mu.Lock()
+		if len(h.buffer) == 0 {
+			if atomic.LoadUint32(&h.tombstone) == handlerAlive {
+				h.enabled.Store(true)
+			}
+			h.mu.Unlock()
+			return
+		}
+		pending = h.buffer
+		h.buffer = nil
+		h.mu.Unlock()
+
+		for _, processEvent := range pending {
+			processEvent()
+		}
+	}
 }
 
 type event struct {
@@ -165,11 +221,16 @@ func (i *informer) addHandler(internalInformerIndex int, id uint64, priority int
 		handlerAlive,
 		priority,
 		internalInformerIndex,
+		atomic.Bool{},
+		make([]func(), 0, len(existingItems)+200),
+		sync.Mutex{},
 	}
 
 	// Send existing items to the handler's add function; informers usually
 	// do this but since we share informers, it's long-since happened so
 	// we must emulate that here
+	// We send to the buffer so that when the handler is enabled later, it will execute
+	// these adds.
 	i.initialAddFunc(handler, existingItems)
 
 	intInf := i.internalInformers[internalInformerIndex]
@@ -255,13 +316,6 @@ func (qm *queueMap) start() {
 	qm.wg.Add(len(qm.queues))
 	for _, q := range qm.queues {
 		go qm.processEvents(q)
-	}
-}
-
-func (qm *queueMap) shutdown() {
-	// Close all the event channels
-	for _, q := range qm.queues {
-		close(q)
 	}
 }
 
@@ -402,7 +456,7 @@ func (i *informer) newFederatedQueuedHandler(internalInformerIndex int) cache.Re
 				metrics.MetricResourceUpdateCount.WithLabelValues(name, "add").Inc()
 				start := time.Now()
 				intInf.forEachQueuedHandler(func(h *Handler) {
-					h.OnAdd(e.obj, false)
+					h.handleEvent(func() { h.OnAdd(e.obj, false) })
 				})
 				metrics.MetricResourceAddLatency.Observe(time.Since(start).Seconds())
 			})
@@ -416,16 +470,18 @@ func (i *informer) newFederatedQueuedHandler(internalInformerIndex int) cache.Re
 				metrics.MetricResourceUpdateCount.WithLabelValues(name, "update").Inc()
 				start := time.Now()
 				intInf.forEachQueuedHandler(func(h *Handler) {
-					old := oldObj.(metav1.Object)
-					new := newObj.(metav1.Object)
-					if old.GetUID() != new.GetUID() {
-						// This occurs not so often, so log this occurance.
-						klog.Infof("Object %s/%s is replaced, invoking delete followed by add handler", new.GetNamespace(), new.GetName())
-						h.OnDelete(e.oldObj)
-						h.OnAdd(e.obj, false)
-					} else {
-						h.OnUpdate(e.oldObj, e.obj)
-					}
+					h.handleEvent(func() {
+						old := oldObj.(metav1.Object)
+						new := newObj.(metav1.Object)
+						if old.GetUID() != new.GetUID() {
+							// This occurs not so often, so log this occurance.
+							klog.Infof("Object %s/%s is replaced, invoking delete followed by add handler", new.GetNamespace(), new.GetName())
+							h.OnDelete(e.oldObj)
+							h.OnAdd(e.obj, false)
+						} else {
+							h.OnUpdate(e.oldObj, e.obj)
+						}
+					})
 				})
 				metrics.MetricResourceUpdateLatency.Observe(time.Since(start).Seconds())
 			})
@@ -444,7 +500,9 @@ func (i *informer) newFederatedQueuedHandler(internalInformerIndex int) cache.Re
 				metrics.MetricResourceUpdateCount.WithLabelValues(name, "delete").Inc()
 				start := time.Now()
 				intInf.forEachQueuedHandlerReversed(func(h *Handler) {
-					h.OnDelete(e.obj)
+					h.handleEvent(func() {
+						h.OnDelete(e.obj)
+					})
 				})
 				metrics.MetricResourceDeleteLatency.Observe(time.Since(start).Seconds())
 			})
@@ -546,26 +604,13 @@ func newQueuedInformer(queueSize uint32, oType reflect.Type, sharedInformer cach
 	}
 
 	informer.initialAddFunc = func(h *Handler, items []interface{}) {
-		// Make a handler-specific channel array across which the
-		// initial add events will be distributed. When a new handler
-		// is added, only that handler should receive events for all
-		// existing objects.
-		addsWg := &sync.WaitGroup{}
-
-		addsMap := newQueueMap(queueSize, numEventQueues, addsWg, stopChan)
-		addsMap.start()
-
-		// Distribute the existing items into the handler-specific
-		// channel array.
+		// buffer initial adds, they will execute when the handler is enabled
 		for _, obj := range items {
-			addsMap.enqueueEvent(nil, obj, informer.oType, false, func(e *event) {
-				h.OnAdd(e.obj, false)
+			objCopy := obj
+			h.buffer = append(h.buffer, func() {
+				h.OnAdd(objCopy, false)
 			})
 		}
-
-		// Wait until all the object additions have been processed
-		addsMap.shutdown()
-		addsWg.Wait()
 	}
 
 	for i := 0; i < internalInformerPoolSize; i++ {
