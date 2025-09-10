@@ -108,32 +108,32 @@ var _ = Describe("Network Segmentation: Preconfigured Layer2 UDN", feature.Netwo
 			netConfig: &networkAttachmentConfigParams{
 				name:     "custom-l2-net",
 				topology: "layer2",
-				cidr:     joinStrings("10.128.0.0/16", "2014:100:200::0/60"),
+				cidr:     joinStrings("172.31.0.0/16", "2014:100:200::0/60"),
 				role:     "primary",
 			},
-			expectedGatewayIPs: []string{"10.128.0.1", "2014:100:200::1"},
+			expectedGatewayIPs: []string{"172.31.0.1", "2014:100:200::1"},
 		}),
 		Entry("Layer2 with custom subnets", testConfig{
 			netConfig: &networkAttachmentConfigParams{
 				name:                "custom-l2-net",
 				topology:            "layer2",
-				cidr:                joinStrings("10.128.0.0/16", "2014:100:200::0/60"),
+				cidr:                joinStrings("172.31.0.0/16", "2014:100:200::0/60"),
 				role:                "primary",
-				defaultGatewayIPs:   joinStrings("10.128.0.10", "2014:100:200::100"),
-				reservedCIDRs:       joinStrings("10.128.1.0/24", "2014:100:200::/122"),
-				infrastructureCIDRs: joinStrings("10.128.0.10/30", "2014:100:200::100/122"),
+				defaultGatewayIPs:   joinStrings("172.31.0.10", "2014:100:200::100"),
+				reservedCIDRs:       joinStrings("172.31.1.0/24", "2014:100:200::/122"),
+				infrastructureCIDRs: joinStrings("172.31.0.10/30", "2014:100:200::100/122"),
 			},
-			expectedGatewayIPs: []string{"10.128.0.10", "2014:100:200::100"},
+			expectedGatewayIPs: []string{"172.31.0.10", "2014:100:200::100"},
 		}),
 		Entry("Layer2 with inverted gateway/management IPs", testConfig{
 			netConfig: &networkAttachmentConfigParams{
 				name:              "inv-gateway-net",
 				topology:          "layer2",
-				cidr:              joinStrings("10.128.0.0/16", "2014:100:200::0/60"),
+				cidr:              joinStrings("172.31.0.0/16", "2014:100:200::0/60"),
 				role:              "primary",
-				defaultGatewayIPs: joinStrings("10.128.0.2", "2014:100:200::2"),
+				defaultGatewayIPs: joinStrings("172.31.0.2", "2014:100:200::2"),
 			},
-			expectedGatewayIPs: []string{"10.128.0.2", "2014:100:200::2"},
+			expectedGatewayIPs: []string{"172.31.0.2", "2014:100:200::2"},
 		}),
 	)
 

@@ -60,13 +60,13 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 		nodeHostnameKey                     = "kubernetes.io/hostname"
 		podClusterNetPort            uint16 = 9000
 		podClusterNetDefaultPort     uint16 = 8080
-		userDefinedNetworkIPv4Subnet        = "10.128.0.0/16"
+		userDefinedNetworkIPv4Subnet        = "172.31.0.0/16" // last subnet in private range 172.16.0.0/12 (rfc1918)
 		userDefinedNetworkIPv6Subnet        = "2014:100:200::0/60"
-		customL2IPv4Gateway                 = "10.128.0.3"
+		customL2IPv4Gateway                 = "172.31.0.3"
 		customL2IPv6Gateway                 = "2014:100:200::3"
-		customL2IPv4ReservedCIDR            = "10.128.1.0/24"
+		customL2IPv4ReservedCIDR            = "172.31.1.0/24"
 		customL2IPv6ReservedCIDR            = "2014:100:200::100/120"
-		customL2IPv4InfraCIDR               = "10.128.0.0/30"
+		customL2IPv4InfraCIDR               = "172.31.0.0/30"
 		customL2IPv6InfraCIDR               = "2014:100:200::/122"
 		userDefinedNetworkName              = "hogwarts"
 		nadName                             = "gryffindor"
@@ -719,7 +719,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 						"with L2 primary UDN",
 						"layer2",
 						4,
-						"10.128.0.0/29",
+						"172.31.0.0/29",
 						"2014:100:200::0/125",
 					),
 					// limit the number of pods to 10
