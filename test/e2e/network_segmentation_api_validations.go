@@ -6,11 +6,12 @@ import (
 
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 
+	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/testscenario"
 	testscenariocudn "github.com/ovn-org/ovn-kubernetes/test/e2e/testscenario/cudn"
 )
 
-var _ = Describe("Network Segmentation: API validations", func() {
+var _ = Describe("Network Segmentation: API validations", feature.NetworkSegmentation, func() {
 	DescribeTable("api-server should reject invalid CRs",
 		func(scenarios []testscenario.ValidateCRScenario) {
 			DeferCleanup(func() {
