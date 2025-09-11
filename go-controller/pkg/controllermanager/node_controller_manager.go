@@ -259,7 +259,7 @@ func (ncm *NodeControllerManager) Stop(isOVNKubeControllerSyncd *atomic.Bool) {
 	close(ncm.stopChan)
 
 	if ncm.defaultNodeNetworkController != nil {
-		if isOVNKubeControllerSyncd != nil {
+		if isOVNKubeControllerSyncd != nil && ncm.defaultNodeNetworkController.Gateway != nil {
 			ncm.defaultNodeNetworkController.Gateway.SetDefaultBridgeGARPDropFlows(true)
 			if err := ncm.defaultNodeNetworkController.Gateway.Reconcile(); err != nil {
 				klog.Errorf("Failed to reconcile gateway after attempting to add flows to the external bridge to drop GARPs: %v", err)
