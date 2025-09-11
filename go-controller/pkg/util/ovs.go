@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
 	"regexp"
 	"runtime"
 	"strings"
@@ -48,19 +49,69 @@ const (
 const (
 	nbdbCtlFileName = "ovnnb_db.ctl"
 	sbdbCtlFileName = "ovnsb_db.ctl"
-	OvnNbdbLocation = "/etc/ovn/ovnnb_db.db"
-	OvnSbdbLocation = "/etc/ovn/ovnsb_db.db"
 	FloodAction     = "FLOOD"
 	NormalAction    = "NORMAL"
 )
 
+// getOVSRunDirFromEnv returns OVS run directory from environment variable with default
+func getOVSRunDirFromEnv() string {
+	ovsRunDir := strings.TrimSpace(os.Getenv("OVS_RUNDIR"))
+	if ovsRunDir == "" {
+		ovsRunDir = "/var/run/openvswitch/"
+	}
+
+	// Ensure path ends with trailing slash
+	if !strings.HasSuffix(ovsRunDir, "/") {
+		ovsRunDir += "/"
+	}
+
+	return ovsRunDir
+}
+
+// getOVNRunDirFromEnv returns OVN run directory from environment variable with default
+func getOVNRunDirFromEnv() string {
+	ovnRunDir := strings.TrimSpace(os.Getenv("OVN_RUNDIR"))
+	if ovnRunDir == "" {
+		ovnRunDir = "/var/run/ovn/"
+	}
+
+	// Ensure path ends with trailing slash
+	if !strings.HasSuffix(ovnRunDir, "/") {
+		ovnRunDir += "/"
+	}
+
+	return ovnRunDir
+}
+
+// getOVNNbdbLocationFromEnv returns OVN North DB location from environment variable with default
+func getOVNNbdbLocationFromEnv() string {
+	location := strings.TrimSpace(os.Getenv("OVN_NBDB_LOCATION"))
+	if location == "" {
+		location = "/var/lib/openvswitch/ovnnb_db.db"
+	}
+	return location
+}
+
+// getOVNSbdbLocationFromEnv returns OVN South DB location from environment variable with default
+func getOVNSbdbLocationFromEnv() string {
+	location := strings.TrimSpace(os.Getenv("OVN_SBDB_LOCATION"))
+	if location == "" {
+		location = "/var/lib/openvswitch/ovnsb_db.db"
+	}
+	return location
+}
+
 var (
 	// These are variables (not constants) so that testcases can modify them
-	ovsRunDir string = "/var/run/openvswitch/"
-	ovnRunDir string = "/var/run/ovn/"
+	ovsRunDir       string = getOVSRunDirFromEnv()
+	ovnRunDir       string = getOVNRunDirFromEnv()
+	OvnNbdbLocation string = getOVNNbdbLocationFromEnv()
+	OvnSbdbLocation string = getOVNSbdbLocationFromEnv()
 
-	savedOVSRunDir = ovsRunDir
-	savedOVNRunDir = ovnRunDir
+	savedOVSRunDir       = ovsRunDir
+	savedOVNRunDir       = ovnRunDir
+	savedOvnNbdbLocation = OvnNbdbLocation
+	savedOvnSbdbLocation = OvnSbdbLocation
 )
 
 var ovnCmdRetryCount = 200
@@ -71,6 +122,8 @@ var AppFs = afero.NewOsFs()
 func PrepareTestConfig() {
 	ovsRunDir = savedOVSRunDir
 	ovnRunDir = savedOVNRunDir
+	OvnNbdbLocation = savedOvnNbdbLocation
+	OvnSbdbLocation = savedOvnSbdbLocation
 }
 
 func runningPlatform() (string, error) {
@@ -743,7 +796,7 @@ type queryResult struct {
 }
 
 func GetOVNDBServerInfo(timeout int, direction, database string) (*OVNDBServerStatus, error) {
-	sockPath := fmt.Sprintf("unix:/var/run/openvswitch/ovn%s_db.sock", direction)
+	sockPath := fmt.Sprintf("unix:%sovn%s_db.sock", getOVSRunDirFromEnv(), direction)
 	transact := fmt.Sprintf(`["_Server", {"op":"select", "table":"Database", "where":[["name", "==", "%s"]], `+
 		`"columns": ["connected", "leader", "index"]}]`, database)
 
