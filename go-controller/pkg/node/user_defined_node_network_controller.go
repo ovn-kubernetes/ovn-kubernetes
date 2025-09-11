@@ -77,6 +77,9 @@ func (nc *UserDefinedNodeNetworkController) Start(_ context.Context) error {
 	}
 	if util.IsNetworkSegmentationSupportEnabled() && nc.IsPrimaryNetwork() {
 		if err := nc.gateway.AddNetwork(); err != nil {
+			if util.IsAnnotationNotSetError(err) {
+				return err
+			}
 			return fmt.Errorf("failed to add network to node gateway for network %s at node %s: %w",
 				nc.GetNetworkName(), nc.name, err)
 		}

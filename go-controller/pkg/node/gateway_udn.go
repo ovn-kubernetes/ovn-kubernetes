@@ -207,6 +207,15 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 	if udng.openflowManager == nil {
 		return fmt.Errorf("openflow manager has not been provided for network: %s", udng.NetInfo.GetNetworkName())
 	}
+	if udng.TopologyType() == types.Layer3Topology {
+		_, err := util.ParseNodeHostSubnetAnnotation(udng.node, udng.GetNetworkName())
+		if err != nil && util.IsAnnotationNotSetError(err) {
+			return err
+		} else if err != nil {
+			return fmt.Errorf("failed to parse k8s.ovn.org/node-subnets annotation for the network %s: %w",
+				udng.GetNetworkName(), err)
+		}
+	}
 	// port is created first and its MAC address configured. The IP(s) on that link are added after enslaving to a VRF device (addUDNManagementPortIPs)
 	// because IPv6 addresses are removed by the kernel (if not link local) when enslaved to a VRF device.
 	// Add the routes(AddVRFRoutes) after setting the IP(s) to ensure that the default subnet route towards the mgmt network exists.

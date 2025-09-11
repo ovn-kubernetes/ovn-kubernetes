@@ -120,7 +120,7 @@ var _ = Describe("UserDefinedNodeNetworkController", func() {
 		Expect(err).NotTo(HaveOccurred())
 		err = controller.Start(context.Background())
 		Expect(err).To(HaveOccurred()) // we don't have the gateway pieces setup so its expected to fail here
-		Expect(err.Error()).To(ContainSubstring("could not create management port"), err.Error())
+		Expect(err.Error()).To(ContainSubstring("could not find \"k8s.ovn.org/node-subnets\" annotation"), err.Error())
 		Expect(controller.gateway).To(Not(BeNil()))
 	})
 	It("ensure UDNGateway is not invoked for Primary UDNs when feature gate is ON but network is not Primary", func() {

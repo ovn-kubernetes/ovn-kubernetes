@@ -28,7 +28,7 @@ func TestCreateSubnetAnnotation(t *testing.T) {
 	}{
 		{
 			desc:              "non-zero length annotation name and subnet list size of ONE provided as input",
-			inpAnnotName:      ovnNodeSubnets,
+			inpAnnotName:      OvnNodeSubnets,
 			inpDefaultSubnets: []string{"192.168.1.12/24"},
 		},
 		{
@@ -38,12 +38,12 @@ func TestCreateSubnetAnnotation(t *testing.T) {
 		},
 		{
 			desc:              "non-zero length annotation name and subnet list size greater than ONE provided as input",
-			inpAnnotName:      ovnNodeSubnets,
+			inpAnnotName:      OvnNodeSubnets,
 			inpDefaultSubnets: []string{"192.168.1.12/24", "fd02:0:0:2::2895/64"},
 		},
 		{
 			desc:              "subnet list of size 0 provided as input",
-			inpAnnotName:      ovnNodeSubnets,
+			inpAnnotName:      OvnNodeSubnets,
 			inpDefaultSubnets: []string{},
 		},
 	}
@@ -82,7 +82,7 @@ func TestSetSubnetAnnotation(t *testing.T) {
 		{
 			desc:             "tests function coverage, success path",
 			inpNodeAnnotator: testAnnotator,
-			inpAnnotName:     ovnNodeSubnets,
+			inpAnnotName:     OvnNodeSubnets,
 			inpDefSubnetIps:  ovntest.MustParseIPNets("192.168.1.12/24"),
 		},
 	}
@@ -119,7 +119,7 @@ func TestParseSubnetAnnotation(t *testing.T) {
 		},
 		{
 			desc:    "correct annotation with one subnet",
-			annName: ovnNodeSubnets,
+			annName: OvnNodeSubnets,
 			inpNode: corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "testNode",
@@ -131,7 +131,7 @@ func TestParseSubnetAnnotation(t *testing.T) {
 		},
 		{
 			desc:    "parse as dual-stack",
-			annName: ovnNodeSubnets,
+			annName: OvnNodeSubnets,
 			inpNode: corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "testNode",
@@ -143,7 +143,7 @@ func TestParseSubnetAnnotation(t *testing.T) {
 		},
 		{
 			desc:        "error:cannot parse as single or dual stack",
-			annName:     ovnNodeSubnets,
+			annName:     OvnNodeSubnets,
 			errExpected: true,
 			inpNode: corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
@@ -156,7 +156,7 @@ func TestParseSubnetAnnotation(t *testing.T) {
 		},
 		{
 			desc:        "error: annotation has no default network",
-			annName:     ovnNodeSubnets,
+			annName:     OvnNodeSubnets,
 			errExpected: true,
 			inpNode: corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{

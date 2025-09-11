@@ -242,6 +242,7 @@ var _ = Describe("Healthcheck tests", func() {
 			nodeListerMock.On("List", mock.Anything).Return(nodeList, nil)
 			nodeInformerMock := &coreinformermocks.NodeInformer{}
 			nodeInformerMock.On("Lister").Return(nodeListerMock)
+			nodeInformerMock.On("Informer").Return(nil)
 			factoryMock.On("NodeCoreInformer").Return(nodeInformerMock)
 
 			ncm, err := NewNodeControllerManager(fakeClient, &factoryMock, nodeName, &sync.WaitGroup{}, nil, routeManager, nil)
