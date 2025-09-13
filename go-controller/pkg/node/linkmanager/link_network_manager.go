@@ -1,6 +1,7 @@
 package linkmanager
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -186,24 +187,26 @@ func (c *Controller) syncLink(link netlink.Link) error {
 		return nil
 	}
 	// add addresses we want that are not found on the link
-	for _, addressWanted := range wantedAddresses {
-		if containsAddress(foundAddresses, addressWanted) {
+	var errs []error
+	for _, wantedAddress := range wantedAddresses {
+		if containsAddress(foundAddresses, wantedAddress) {
 			continue
 		}
-		if err = util.GetNetLinkOps().AddrAdd(link, &addressWanted); err != nil {
-			klog.Errorf("Link manager: failed to add address %q to link %q: %v", addressWanted.String(), linkName, err)
+		if err = util.GetNetLinkOps().AddrAdd(link, &wantedAddress); err != nil {
+			errs = append(errs, fmt.Errorf("failed to add address %q to link %q: %w", wantedAddress, linkName, err))
+			continue
 		}
-		// For IPv4, use arping to try to update other hosts ARP caches, in case this IP was
-		// previously active on another node
-		if addressWanted.IP.To4() != nil {
-			if err = util.BroadcastGARP(linkName, util.GARP{IP: addressWanted.IP}); err != nil {
-				klog.Errorf("Failed to send a GARP for IP %s over interface %s: %v", addressWanted.IP.String(),
+		// For IPv4, GARP to try to update other hosts ARP caches, in case this IP was
+		// previously active on another node.
+		if wantedAddress.IP.To4() != nil {
+			if err = util.BroadcastGARP(linkName, util.GARP{IP: wantedAddress.IP}); err != nil {
+				klog.Errorf("Failed to send a GARP for IP %s over interface %s: %v", wantedAddress.IP.String(),
 					linkName, err)
 			}
 		}
-		klog.Infof("Link manager: completed adding address %s to link %s", addressWanted, linkName)
+		klog.Infof("Link manager: completed adding address %s to link %s", wantedAddress, linkName)
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (c *Controller) sync() {
