@@ -78,6 +78,7 @@ var (
 		RawClusterSubnets:            "10.128.0.0/14/23",
 		Zone:                         types.OvnDefaultZone,
 		RawUDNAllowedDefaultServices: "default/kubernetes,kube-system/kube-dns",
+		UDNDeletionGracePeriod:       120 * time.Second,
 	}
 
 	// Logging holds logging-related parsed config file parameters and command-line overrides
@@ -297,6 +298,9 @@ type DefaultConfig struct {
 	// UDNAllowedDefaultServices holds a list of namespaced names of
 	// default cluster network services accessible from primary user-defined networks
 	UDNAllowedDefaultServices []string
+	// UDNDeletionGracePeriod specified in number of seconds to wait before garbage collecting a UDN. Applies
+	// only when Dynamic UDN Allocation is enabled.
+	UDNDeletionGracePeriod time.Duration `gcfg:"udn-deletion-grace-period"`
 }
 
 // LoggingConfig holds logging-related parsed config file parameters and command-line overrides
@@ -438,6 +442,7 @@ type OVNKubernetesFeatureConfig struct {
 	// This feature requires a kernel fix https://github.com/torvalds/linux/commit/7f3287db654395f9c5ddd246325ff7889f550286
 	// to work on a kind cluster. Flag allows to disable it for current CI, will be turned on when github runners have this fix.
 	AdvertisedUDNIsolationMode string `gcfg:"advertised-udn-isolation-mode"`
+	EnableDynamicUDNAllocation bool   `gcfg:"enable-dynamic-udn-allocation"`
 }
 
 // GatewayMode holds the node gateway mode
@@ -981,6 +986,13 @@ var CommonFlags = []cli.Flag{
 		Value:       Default.RawUDNAllowedDefaultServices,
 		Destination: &cliConfig.Default.RawUDNAllowedDefaultServices,
 	},
+	&cli.DurationFlag{
+		Name: "udn-deletion-grace-period",
+		Usage: "Delay time in seconds that a node will wait before removing a UDN wen the  dynamic UDN allocation" +
+			"feature is used.",
+		Destination: &cliConfig.Default.UDNDeletionGracePeriod,
+		Value:       Default.UDNDeletionGracePeriod,
+	},
 }
 
 // MonitoringFlags capture monitoring-related options
@@ -1173,6 +1185,12 @@ var OVNK8sFeatureFlags = []cli.Flag{
 		Usage:       "Configure to use NetworkQoS CRD feature with ovn-kubernetes.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnableNetworkQoS,
 		Value:       OVNKubernetesFeature.EnableNetworkQoS,
+	},
+	&cli.BoolFlag{
+		Name:        "enable-dynamic-udn-allocation",
+		Usage:       "Configure to use the dynamic UDN allocation feature with ovn-kubernetes.",
+		Destination: &cliConfig.OVNKubernetesFeature.EnableDynamicUDNAllocation,
+		Value:       OVNKubernetesFeature.EnableDynamicUDNAllocation,
 	},
 }
 
