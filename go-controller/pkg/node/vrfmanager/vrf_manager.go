@@ -265,12 +265,12 @@ func (vrfm *Controller) AddVRF(name string, slaveInterface string, table uint32,
 				return fmt.Errorf("VRF Manager: table id mismatch for VRF device %s", name)
 			}
 		} else {
-			vrfDev = vrf{name, table, slaveInterface, routes}
+			vrfDev = vrf{name, table, slaveInterface, compareAndMergeRoutes(nil, routes)}
 		}
 	}
 
 	if err != nil && util.GetNetLinkOps().IsLinkNotFoundError(err) {
-		vrfDev = vrf{name, table, slaveInterface, routes}
+		vrfDev = vrf{name, table, slaveInterface, compareAndMergeRoutes(nil, routes)}
 	} else if err != nil {
 		return fmt.Errorf("failed to retrieve VRF device %s, err: %v", name, err)
 	}
@@ -293,9 +293,42 @@ func (vrfm *Controller) AddVRFRoutes(name string, routes []netlink.Route) error 
 		return fmt.Errorf("failed to find VRF %s", name)
 	}
 
-	vrfDev.routes = append(vrfDev.routes, routes...)
+	vrfDev.routes = compareAndMergeRoutes(vrfDev.routes, routes)
 
 	return vrfm.sync(vrfDev)
+}
+
+// compareAndMergeRoutes merges newRoutes into existing without creating duplicates.
+// In case of conflict, the new route replaces the existing one.
+func compareAndMergeRoutes(existing []netlink.Route, new []netlink.Route) []netlink.Route {
+	type key struct {
+		dst      string
+		table    int
+		priority int
+	}
+	m := make(map[key]netlink.Route, len(existing)+len(new))
+	for _, r := range existing {
+		if r.Dst == nil {
+			continue
+		}
+		k := key{dst: r.Dst.String(), table: r.Table, priority: r.Priority}
+		m[k] = r
+	}
+	for _, r := range new {
+		if r.Dst == nil {
+			continue
+		}
+		k := key{dst: r.Dst.String(), table: r.Table, priority: r.Priority}
+		if prev, ok := m[k]; ok && util.RouteEqual(&r, &prev) {
+			continue
+		}
+		m[k] = r
+	}
+	out := make([]netlink.Route, 0, len(m))
+	for _, v := range m {
+		out = append(out, v)
+	}
+	return out
 }
 
 // DeleteVRFRoutes deletes a set of routes from a VRF

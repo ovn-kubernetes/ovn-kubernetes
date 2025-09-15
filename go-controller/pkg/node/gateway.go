@@ -3,6 +3,7 @@ package node
 import (
 	"fmt"
 	"net"
+	"reflect"
 	"sync"
 	"time"
 
@@ -39,6 +40,10 @@ type Gateway interface {
 	SetDefaultPodNetworkAdvertised(bool)
 	SetDefaultBridgeGARPDropFlows(bool)
 	Reconcile() error
+	AreResourcesEqual(reflect.Type, any, any) (bool, error)
+	AddResource(reflect.Type, any, bool) error
+	UpdateResource(reflect.Type, any, any, bool) error
+	DeleteResource(reflect.Type, any) error
 }
 
 type gateway struct {
@@ -336,6 +341,22 @@ func (g *gateway) Start() error {
 	}
 
 	return nil
+}
+
+func (g *gateway) AreResourcesEqual(objType reflect.Type, _, _ any) (bool, error) {
+	return false, fmt.Errorf("no object comparison for type %s", objType)
+}
+
+func (g *gateway) AddResource(objType reflect.Type, _ any, _ bool) error {
+	return fmt.Errorf("no add function for object type %s", objType)
+}
+
+func (g *gateway) UpdateResource(objType reflect.Type, _ any, _ any, _ bool) error {
+	return fmt.Errorf("no update function for object type %s", objType)
+}
+
+func (g *gateway) DeleteResource(objType reflect.Type, _ any) error {
+	return fmt.Errorf("no delete function for object type %s", objType)
 }
 
 // sets up an uplink interface for UDP Generic Receive Offload forwarding as part of

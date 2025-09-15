@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"reflect"
 	"slices"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/vishvananda/netlink"
@@ -21,11 +24,13 @@ import (
 	"sigs.k8s.io/knftables"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/iprulemanager"
 	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/vrfmanager"
+	ovnretry "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/retry"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -83,6 +88,8 @@ type UserDefinedNetworkGateway struct {
 	// reconcile channel to signal reconciliation of the gateway on network
 	// configuration changes
 	reconcile chan struct{}
+	// ensure run() is only started once per instance
+	runOnce sync.Once
 
 	// vrfTableId holds the route table ID corresponding to management port interface of the network
 	vrfTableId int
@@ -93,6 +100,9 @@ type UserDefinedNetworkGateway struct {
 	// save BGP state at the start of reconciliation loop run to handle it consistently throughout the run
 	isNetworkAdvertisedToDefaultVRF bool
 	isNetworkAdvertised             bool
+
+	// retry framework for nodes
+	retryNodes *ovnretry.RetryFramework
 }
 
 func NewUserDefinedNetworkGateway(netInfo util.NetInfo, node *corev1.Node, nodeLister listers.NodeLister,
@@ -151,6 +161,104 @@ func NewUserDefinedNetworkGateway(netInfo util.NetInfo, node *corev1.Node, nodeL
 	}, nil
 }
 
+func (udng *UserDefinedNetworkGateway) Init() error {
+	syncFunc := func([]any) error {
+		return udng.syncNetwork()
+	}
+	udng.retryNodes = udng.newRetryFrameworkNodeWithParameters(factory.NodeType, syncFunc)
+	if _, err := udng.retryNodes.WatchResource(); err != nil {
+		return fmt.Errorf("UDN gateway init failed to start watching nodes: %v", err)
+	}
+	return nil
+}
+
+func (udng *UserDefinedNetworkGateway) AreResourcesEqual(objType reflect.Type, obj1, obj2 any) (bool, error) {
+	switch objType {
+	case factory.NodeType:
+		oldNode, newNode := obj1.(*corev1.Node), obj2.(*corev1.Node)
+		// For Layer2 topology, node host subnet annotations are irrelevant to the gateway programming.
+		// Skip all node updates to avoid unnecessary reconciliations.
+		if udng.TopologyType() == types.Layer2Topology {
+			return true, nil
+		}
+		// Do not handle local node add (or) delete events.
+		if (newNode != nil && newNode.Name != udng.node.Name) && oldNode == nil {
+			return true, nil
+		}
+		if (oldNode != nil && oldNode.Name != udng.node.Name) && newNode == nil {
+			return true, nil
+		}
+		// If this is an update for a non-local node, ignore it.
+		if oldNode != nil && newNode != nil && oldNode.Name != udng.node.Name && newNode.Name != udng.node.Name {
+			return true, nil
+		}
+		// Now let's compare host subnets associated with node object.
+		var old, new []*net.IPNet
+		if oldNode != nil && oldNode.Name == udng.node.Name {
+			old, _ = util.ParseNodeHostSubnetAnnotation(oldNode, udng.GetNetworkName())
+		}
+		if newNode != nil && newNode.Name == udng.node.Name {
+			new, _ = util.ParseNodeHostSubnetAnnotation(newNode, udng.GetNetworkName())
+		}
+		AreHostSubnetsSame := func(old, new []*net.IPNet) bool {
+			if old == nil && new == nil {
+				return true
+			}
+			if old == nil || new == nil {
+				return false
+			}
+			if len(old) != len(new) {
+				return false
+			}
+			if len(old) == 0 {
+				return true
+			}
+			sort.Slice(old, func(i, j int) bool {
+				return old[i].String() < old[j].String()
+			})
+			sort.Slice(new, func(i, j int) bool {
+				return new[i].String() < new[j].String()
+			})
+			for i := range old {
+				if old[i].String() != new[i].String() {
+					return false
+				}
+			}
+			return true
+		}
+		return AreHostSubnetsSame(old, new), nil
+	default:
+		return false, fmt.Errorf("no object comparison for type %s", objType)
+	}
+}
+
+func (udng *UserDefinedNetworkGateway) AddResource(objType reflect.Type, _ any, _ bool) error {
+	switch objType {
+	case factory.NodeType:
+		return udng.syncNetwork()
+	default:
+		return fmt.Errorf("no add function for object type %s", objType)
+	}
+}
+
+func (udng *UserDefinedNetworkGateway) UpdateResource(objType reflect.Type, _ any, _ any, _ bool) error {
+	switch objType {
+	case factory.NodeType:
+		return udng.syncNetwork()
+	default:
+		return fmt.Errorf("no update function for object type %s", objType)
+	}
+}
+
+func (udng *UserDefinedNetworkGateway) DeleteResource(objType reflect.Type, _ any) error {
+	switch objType {
+	case factory.NodeType:
+		return udng.DelNetwork()
+	default:
+		return fmt.Errorf("no delete function for object type %s", objType)
+	}
+}
+
 // GetUDNMarkChain returns the UDN mark chain name
 func GetUDNMarkChain(pktMark string) string {
 	return "udn-mark-" + pktMark
@@ -201,9 +309,16 @@ func (udng *UserDefinedNetworkGateway) addMarkChain() error {
 	return nft.Run(context.TODO(), tx)
 }
 
-// AddNetwork will be responsible to create all plumbings
+// SyncNetwork will be responsible to create all plumbings
 // required by this UDN on the gateway side
 func (udng *UserDefinedNetworkGateway) AddNetwork() error {
+	err := udng.syncNetwork()
+	// run gateway reconciliation loop on network configuration changes
+	udng.run()
+	return err
+}
+
+func (udng *UserDefinedNetworkGateway) syncNetwork() error {
 	if udng.openflowManager == nil {
 		return fmt.Errorf("openflow manager has not been provided for network: %s", udng.NetInfo.GetNetworkName())
 	}
@@ -290,9 +405,6 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 	if err := udng.addMarkChain(); err != nil {
 		return fmt.Errorf("failed to add the service masquerade chain: %w", err)
 	}
-
-	// run gateway reconciliation loop on network configuration changes
-	udng.run()
 
 	return nil
 }
@@ -760,29 +872,31 @@ func addRPFilterLooseModeForManagementPort(mgmtPortName string) error {
 }
 
 func (udng *UserDefinedNetworkGateway) run() {
-	go func() {
-		for range udng.reconcile {
-			err := retry.OnError(
-				wait.Backoff{
-					Duration: 10 * time.Millisecond,
-					Steps:    4,
-					Factor:   5.0,
-				},
-				func(error) bool {
-					select {
-					case _, open := <-udng.reconcile:
-						return open
-					default:
-						return true
-					}
-				},
-				udng.doReconcile,
-			)
-			if err != nil {
-				klog.Errorf("Failed to reconcile gateway for network %s: %v", udng.GetNetworkName(), err)
+	udng.runOnce.Do(func() {
+		go func() {
+			for range udng.reconcile {
+				err := retry.OnError(
+					wait.Backoff{
+						Duration: 10 * time.Millisecond,
+						Steps:    4,
+						Factor:   5.0,
+					},
+					func(error) bool {
+						select {
+						case _, open := <-udng.reconcile:
+							return open
+						default:
+							return true
+						}
+					},
+					udng.syncNetwork,
+				)
+				if err != nil {
+					klog.Errorf("Failed to reconcile gateway for network %s: %v", udng.GetNetworkName(), err)
+				}
 			}
-		}
-	}()
+		}()
+	})
 }
 
 func (udng *UserDefinedNetworkGateway) Reconcile() {
@@ -790,47 +904,6 @@ func (udng *UserDefinedNetworkGateway) Reconcile() {
 	case udng.reconcile <- struct{}{}:
 	default:
 	}
-}
-
-func (udng *UserDefinedNetworkGateway) doReconcile() error {
-	klog.Infof("Reconciling gateway with updates for UDN %s", udng.GetNetworkName())
-
-	// shouldn't happen
-	if udng.openflowManager == nil || udng.openflowManager.defaultBridge == nil {
-		return fmt.Errorf("openflow manager with default bridge configuration has not been provided for network %s", udng.GetNetworkName())
-	}
-
-	udng.updateAdvertisementStatus()
-
-	// update bridge configuration
-	netConfig := udng.openflowManager.defaultBridge.GetNetworkConfig(udng.GetNetworkName())
-	if netConfig == nil {
-		return fmt.Errorf("missing bridge configuration for network %s", udng.GetNetworkName())
-	}
-	netConfig.Advertised.Store(udng.isNetworkAdvertised)
-
-	if err := udng.updateUDNVRFIPRules(); err != nil {
-		return fmt.Errorf("error while updating ip rule for UDN %s: %s", udng.GetNetworkName(), err)
-	}
-
-	if err := udng.updateUDNVRFIPRoute(); err != nil {
-		return fmt.Errorf("error while updating ip route for UDN %s: %s", udng.GetNetworkName(), err)
-	}
-
-	// add below OpenFlows based on the gateway mode and whether the network is advertised or not:
-	// table=1, n_packets=0, n_bytes=0, priority=16,ip,nw_dst=128.192.0.2 actions=LOCAL (Both gateway modes)
-	// table=1, n_packets=0, n_bytes=0, priority=15,ip,nw_dst=128.192.0.0/14 actions=output:3 (shared gateway mode)
-	// necessary service isolation flows based on whether network is advertised or not
-	if err := udng.openflowManager.updateBridgeFlowCache(udng.nodeIPManager.ListAddresses()); err != nil {
-		return fmt.Errorf("error while updating logical flow for UDN %s: %s", udng.GetNetworkName(), err)
-	}
-	// let's sync these flows immediately
-	udng.openflowManager.requestFlowSync()
-
-	if err := udng.updateAdvertisedUDNIsolationRules(); err != nil {
-		return fmt.Errorf("error while updating advertised UDN isolation rules for network %s: %w", udng.GetNetworkName(), err)
-	}
-	return nil
 }
 
 // updateUDNVRFIPRules updates IP rules for a network depending on whether the
