@@ -154,10 +154,11 @@ var (
 	// Metrics holds Prometheus metrics-related parameters.
 	Metrics MetricsConfig
 
-	// OVNKubernetesFeatureConfig holds OVN-Kubernetes feature enhancement config file parameters and command-line overrides
+	// OVNKubernetesFeature config holds OVN-Kubernetes feature enhancement config file parameters and command-line overrides
 	OVNKubernetesFeature = OVNKubernetesFeatureConfig{
 		EgressIPReachabiltyTotalTimeout: 1,
 		AdvertisedUDNIsolationMode:      AdvertisedUDNIsolationModeStrict,
+		UDNDeletionGracePeriod:          120 * time.Second,
 	}
 
 	// OvnNorth holds northbound OVN database client and server authentication and location details
@@ -475,6 +476,10 @@ type OVNKubernetesFeatureConfig struct {
 	// This feature requires a kernel fix https://github.com/torvalds/linux/commit/7f3287db654395f9c5ddd246325ff7889f550286
 	// to work on a kind cluster. Flag allows to disable it for current CI, will be turned on when github runners have this fix.
 	AdvertisedUDNIsolationMode string `gcfg:"advertised-udn-isolation-mode"`
+	EnableDynamicUDNAllocation bool   `gcfg:"enable-dynamic-udn-allocation"`
+	// UDNDeletionGracePeriod specified in number of seconds to wait before garbage collecting a UDN. Applies
+	// only when Dynamic UDN Allocation is enabled.
+	UDNDeletionGracePeriod time.Duration `gcfg:"udn-deletion-grace-period"`
 }
 
 // GatewayMode holds the node gateway mode
@@ -1224,6 +1229,19 @@ var OVNK8sFeatureFlags = []cli.Flag{
 		Usage:       "Use NetworkQoS CRD feature with ovn-kubernetes.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnableNetworkQoS,
 		Value:       OVNKubernetesFeature.EnableNetworkQoS,
+	},
+	&cli.BoolFlag{
+		Name:        "enable-dynamic-udn-allocation",
+		Usage:       "Configure to use the dynamic UDN allocation feature with ovn-kubernetes.",
+		Destination: &cliConfig.OVNKubernetesFeature.EnableDynamicUDNAllocation,
+		Value:       OVNKubernetesFeature.EnableDynamicUDNAllocation,
+	},
+	&cli.DurationFlag{
+		Name: "udn-deletion-grace-period",
+		Usage: "Delay time in seconds that a node will wait before removing a UDN when the dynamic UDN allocation " +
+			"feature is used.",
+		Destination: &cliConfig.OVNKubernetesFeature.UDNDeletionGracePeriod,
+		Value:       OVNKubernetesFeature.UDNDeletionGracePeriod,
 	},
 }
 
@@ -2122,6 +2140,11 @@ func buildOVNKubernetesFeatureConfig(cli, file *config) error {
 		return fmt.Errorf("invalid advertised-udn-isolation-mode %q: expect one of %s or %s",
 			OVNKubernetesFeature.AdvertisedUDNIsolationMode, AdvertisedUDNIsolationModeStrict, AdvertisedUDNIsolationModeLoose)
 	}
+
+	if OVNKubernetesFeature.EnableDynamicUDNAllocation && !OVNKubernetesFeature.EnableNetworkSegmentation {
+		return fmt.Errorf("the Dynamic UDN Allocation feature cannot be enabled without also enabling Network Segmentation")
+	}
+
 	return nil
 }
 
