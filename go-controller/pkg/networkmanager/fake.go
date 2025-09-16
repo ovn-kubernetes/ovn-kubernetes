@@ -3,7 +3,6 @@ package networkmanager
 import (
 	"context"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
 )
@@ -28,7 +27,7 @@ func (nc *FakeNetworkController) Reconcile(util.NetInfo) error {
 
 type FakeControllerManager struct{}
 
-func (fcm *FakeControllerManager) NewNetworkController(netInfo util.NetInfo) (networkmanager.NetworkController, error) {
+func (fcm *FakeControllerManager) NewNetworkController(netInfo util.NetInfo) (NetworkController, error) {
 	return &FakeNetworkController{netInfo}, nil
 }
 
@@ -36,7 +35,7 @@ func (fcm *FakeControllerManager) CleanupStaleNetworks(_ ...util.NetInfo) error 
 	return nil
 }
 
-func (fcm *FakeControllerManager) GetDefaultNetworkController() networkmanager.ReconcilableNetworkController {
+func (fcm *FakeControllerManager) GetDefaultNetworkController() ReconcilableNetworkController {
 	return nil
 }
 
