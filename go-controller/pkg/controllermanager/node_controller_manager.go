@@ -8,6 +8,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/record"
@@ -51,6 +54,8 @@ type NodeControllerManager struct {
 	ruleManager *iprulemanager.Controller
 	// ovs client that allows to read ovs info
 	ovsClient client.Client
+	// podTracker tracks pods on different nodes + nads
+	podTracker *networkmanager.PodTrackerController
 }
 
 // NewNetworkController create node user-defined network controllers for the given NetInfo
@@ -125,6 +130,9 @@ func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatch
 		if err != nil {
 			return nil, err
 		}
+		if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
+			ncm.podTracker = networkmanager.NewPodTrackerController(wf, ncm.networkManager.Interface(), ncm.OnNetworkRefChange)
+		}
 	}
 	if util.IsNetworkSegmentationSupportEnabled() {
 		ncm.vrfManager = vrfmanager.NewController(ncm.routeManager)
@@ -189,6 +197,12 @@ func (ncm *NodeControllerManager) Start(ctx context.Context, isOVNKubeController
 	err = ncm.initDefaultNodeNetworkController(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to init default node network controller: %v", err)
+	}
+
+	if ncm.podTracker != nil {
+		if err = ncm.podTracker.Start(); err != nil {
+			return fmt.Errorf("failed to start pod tracker: %w", err)
+		}
 	}
 
 	if ncm.networkManager != nil {
@@ -272,6 +286,12 @@ func (ncm *NodeControllerManager) Stop(isOVNKubeControllerSyncd *atomic.Bool) {
 	if ncm.networkManager != nil {
 		ncm.networkManager.Stop()
 	}
+
+	// stop pod tracker
+	if ncm.podTracker != nil {
+		ncm.podTracker.Stop()
+	}
+
 }
 
 // checkForStaleOVSRepresentorInterfaces checks for stale OVS ports backed by Repreresentor interfaces,
@@ -411,4 +431,33 @@ func checkForStaleOVSInternalPorts() {
 
 func (ncm *NodeControllerManager) Reconcile(_ string, _, _ util.NetInfo) error {
 	return nil
+}
+
+func (ncm *NodeControllerManager) Filter(nad *nettypes.NetworkAttachmentDefinition) (bool, error) {
+	ownerRef := metav1.GetControllerOf(nad)
+	if ownerRef == nil {
+		return false, nil
+	}
+
+	ourNode := ncm.name
+
+	if ownerRef.Kind != "ClusterUserDefinedNetwork" && ownerRef.Kind != "UserDefinedNetwork" {
+		return false, nil
+	}
+
+	// Check if our node has any pods on this NAD
+	if ncm.podTracker.NodeHasPodsOnNAD(ourNode, util.GetNADName(nad.Namespace, nad.Name)) {
+		return false, nil
+	}
+
+	// TODO(trozet): Add checking egress IP
+
+	return true, nil
+}
+
+// OnNetworkRefChange is a callback function used to signal an action to this controller when
+// a network needs to be added or removed or just updated
+func (ncm *NodeControllerManager) OnNetworkRefChange(node, name string, active bool) {
+	klog.V(5).Infof("Network change for node controller triggered by pod/egress IP events on node: %s, NAD: %s, active: %t", name, node, active)
+	ncm.networkManager.Interface().Reconcile(name)
 }

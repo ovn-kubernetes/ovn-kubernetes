@@ -3,6 +3,8 @@ package networkmanager
 import (
 	"context"
 
+	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
 )
@@ -41,6 +43,10 @@ func (fcm *FakeControllerManager) GetDefaultNetworkController() ReconcilableNetw
 
 func (fcm *FakeControllerManager) Reconcile(_ string, _, _ util.NetInfo) error {
 	return nil
+}
+
+func (fcm *FakeControllerManager) Filter(_ *nettypes.NetworkAttachmentDefinition) (bool, error) {
+	return false, nil
 }
 
 type FakeNetworkManager struct {
@@ -102,3 +108,5 @@ func (fnm *FakeNetworkManager) DoWithLock(f func(network util.NetInfo) error) er
 	}
 	return errors.Join(errs...)
 }
+
+func (fnm *FakeNetworkManager) Reconcile(_ string) {}

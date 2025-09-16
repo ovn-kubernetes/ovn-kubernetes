@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/containernetworking/cni/pkg/types"
+	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
@@ -66,6 +68,8 @@ type ControllerManager struct {
 
 	// eIPController programs OVN to support EgressIP
 	eIPController *ovn.EgressIPController
+
+	podTracker *networkmanager.PodTrackerController
 }
 
 func (cm *ControllerManager) NewNetworkController(nInfo util.NetInfo) (networkmanager.NetworkController, error) {
@@ -267,6 +271,10 @@ func NewControllerManager(ovnClient *util.OVNClientset, wf *factory.WatchFactory
 			return nil, fmt.Errorf("RouteAdvertisements can only be used if Interconnect is enabled")
 		}
 		cm.routeImportManager = routeimport.New(config.Default.Zone, cm.nbClient)
+	}
+
+	if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
+		cm.podTracker = networkmanager.NewPodTrackerController(wf, cm.networkManager.Interface(), cm.OnNetworkRefChange)
 	}
 
 	return cm, nil
@@ -486,6 +494,13 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 			return fmt.Errorf("failed to initialize advertised network isolation: %w", err)
 		}
 	}
+
+	if cm.podTracker != nil {
+		if err = cm.podTracker.Start(); err != nil {
+			return fmt.Errorf("failed to start pod tracker: %w", err)
+		}
+	}
+
 	if cm.networkManager != nil {
 		if err = cm.networkManager.Start(); err != nil {
 			return fmt.Errorf("failed to start NAD Controller :%v", err)
@@ -522,6 +537,11 @@ func (cm *ControllerManager) Stop() {
 		cm.networkManager.Stop()
 	}
 
+	// stop pod tracker
+	if cm.podTracker != nil {
+		cm.podTracker.Stop()
+	}
+
 	if cm.routeImportManager != nil {
 		cm.routeImportManager.Stop()
 	}
@@ -535,4 +555,39 @@ func (cm *ControllerManager) configureAdvertisedNetworkIsolation() error {
 	addressSetFactory := addressset.NewOvnAddressSetFactory(cm.nbClient, config.IPv4Mode, config.IPv6Mode)
 	_, err := addressSetFactory.EnsureAddressSet(ovn.GetAdvertisedNetworkSubnetsAddressSetDBIDs())
 	return err
+}
+
+// Filter out NADs that are not part of a UDN/CUDN running on our node
+func (cm *ControllerManager) Filter(nad *nettypes.NetworkAttachmentDefinition) (bool, error) {
+	ownerRef := metav1.GetControllerOf(nad)
+	if ownerRef == nil {
+		return false, nil
+	}
+
+	// if this isn't per-node zone controller in IC, don't filter
+	if config.Default.Zone == ovntypes.OvnDefaultZone {
+		return false, nil
+	}
+
+	ourNode := config.Default.Zone
+
+	if ownerRef.Kind != "ClusterUserDefinedNetwork" && ownerRef.Kind != "UserDefinedNetwork" {
+		return false, nil
+	}
+
+	// Check if our node has any pods on this NAD
+	if cm.podTracker.NodeHasPodsOnNAD(ourNode, util.GetNADName(nad.Namespace, nad.Name)) {
+		return false, nil
+	}
+
+	// TODO(trozet): Add checking egress IP
+
+	return true, nil
+}
+
+// OnNetworkRefChange is a callback function used to signal an action to this controller when
+// a network needs to be added or removed or just updated
+func (cm *ControllerManager) OnNetworkRefChange(node, name string, active bool) {
+	klog.V(5).Infof("Network change triggered by pod/egress IP events on node: %s, NAD: %s, active: %t", name, node, active)
+	cm.networkManager.Interface().Reconcile(name)
 }

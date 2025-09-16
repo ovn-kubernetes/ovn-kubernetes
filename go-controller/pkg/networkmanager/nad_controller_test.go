@@ -115,6 +115,10 @@ func (tcm *testControllerManager) Reconcile(string, util.NetInfo, util.NetInfo) 
 	return nil
 }
 
+func (tcm *testControllerManager) Filter(*nettypes.NetworkAttachmentDefinition) (bool, error) {
+	return false, nil
+}
+
 type fakeNamespaceLister struct{}
 
 func (f *fakeNamespaceLister) List(labels.Selector) (ret []*corev1.Namespace, err error) {
