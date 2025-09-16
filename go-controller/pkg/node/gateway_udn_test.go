@@ -40,7 +40,6 @@ import (
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	coreinformermocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/client-go/informers/core/v1"
 	v1mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/client-go/listers/core/v1"
-	fakenetworkmanager "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
@@ -1497,7 +1496,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		// in-order to simulate a namespace with an Invalid UDN (when GetActiveNamespace is called), we add an entry
 		// to the fake network manager but no specified network. GetActiveNetwork will return the appropriate error of Invalid Network for namespace.
 		// network manager may have a different implementation that fake network manager but both will return the same error.
-		fNPW.networkManager = &fakenetworkmanager.FakeNetworkManager{PrimaryNetworks: map[string]util.NetInfo{namespace.Name: nil}}
+		fNPW.networkManager = &networkmanager.FakeNetworkManager{PrimaryNetworks: map[string]util.NetInfo{namespace.Name: nil}}
 		services := append([]interface{}{}, service)
 		Expect(fNPW.SyncServices(services)).NotTo(HaveOccurred(), "must sync services")
 	})

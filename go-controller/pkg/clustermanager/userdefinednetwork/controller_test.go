@@ -27,7 +27,6 @@ import (
 	udnfakeclient "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
-	nmtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/networkmanager"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
@@ -61,7 +60,7 @@ var _ = Describe("User Defined Network Controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(f.Start()).To(Succeed())
 
-		networkManager, err := networkmanager.NewForCluster(&nmtest.FakeControllerManager{}, f, cs, nil)
+		networkManager, err := networkmanager.NewForCluster(&networkmanager.FakeControllerManager{}, f, cs, nil)
 		Expect(err).NotTo(HaveOccurred())
 		return New(cs.NetworkAttchDefClient, f.NADInformer(),
 			cs.UserDefinedNetworkClient, f.UserDefinedNetworkInformer(), f.ClusterUserDefinedNetworkInformer(),
