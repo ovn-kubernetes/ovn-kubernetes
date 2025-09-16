@@ -538,9 +538,24 @@ func (sni *userDefinedNetInfo) netconf() *ovncnitypes.NetConf {
 	const plugin = "ovn-k8s-cni-overlay"
 
 	role := types.NetworkRoleSecondary
+	transitSubnet := ""
 	if sni.isPrimary {
 		role = types.NetworkRolePrimary
+		if sni.topology == types.Layer2Topology {
+			transitSubnets := []string{}
+			for _, clusterSubnet := range strings.Split(sni.clustersubnets, ",") {
+				_, cidr, err := net.ParseCIDR(clusterSubnet)
+				Expect(err).NotTo(HaveOccurred())
+				if knet.IsIPv4CIDR(cidr) {
+					transitSubnets = append(transitSubnets, config.ClusterManager.V4TransitSubnet)
+				} else {
+					transitSubnets = append(transitSubnets, config.ClusterManager.V6TransitSubnet)
+				}
+			}
+			transitSubnet = strings.Join(transitSubnets, ",")
+		}
 	}
+
 	return &ovncnitypes.NetConf{
 		NetConf: cnitypes.NetConf{
 			Name: sni.netName,
@@ -551,6 +566,7 @@ func (sni *userDefinedNetInfo) netconf() *ovncnitypes.NetConf {
 		Subnets:            sni.clustersubnets,
 		Role:               role,
 		AllowPersistentIPs: sni.allowPersistentIPs,
+		TransitSubnet:      transitSubnet,
 	}
 }
 
@@ -719,7 +735,7 @@ func expectedGWRouterPlusNATAndStaticRoutes(
 		gwRouterLRPUUID = fmt.Sprintf("%s%s-UUID", types.RouterToTransitRouterPrefix, gwRouterName)
 		grOptions["lb_force_snat_ip"] = gwRouterJoinIPAddress().IP.String()
 		transitRouteOutputPort := types.RouterToTransitRouterPrefix + netInfo.GetNetworkScopedGWRouterName(nodeName)
-		trInfo := getTestTransitRouterInfo()
+		trInfo := getTestTransitRouterInfo(netInfo)
 		sr1 = expectedGRStaticRoute(staticRoute1, netInfo.Subnets()[0].CIDR.String(), trInfo.transitRouterNets[0].IP.String(), nil, &transitRouteOutputPort, netInfo)
 	}
 	nextHopIP := gwConfig.NextHops[0].String()

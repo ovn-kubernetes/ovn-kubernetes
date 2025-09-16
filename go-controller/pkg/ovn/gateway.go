@@ -644,6 +644,12 @@ func (gw *GatewayManager) updateClusterRouterStaticRoutes(gwConfig *GatewayConfi
 	for _, gwRouterIP := range gwRouterIPs {
 		nextHop, err := util.MatchIPFamily(utilnet.IsIPv6(gwRouterIP), nextHops)
 		if err != nil {
+			if gw.transitRouterInfo != nil {
+				// for layer2 networks with transit router it is not an error.
+				// JoinIPs are allocated for both IP families always, but transit router IPs and routes
+				// are only created for the actual IP families of the network
+				continue
+			}
 			return fmt.Errorf("failed to add source IP address based "+
 				"routes in distributed router %s: %v",
 				gw.clusterRouterName, err)
@@ -1551,7 +1557,7 @@ func (gw *GatewayManager) setTransitRouterInfo(nodeName string) error {
 	if err != nil {
 		return err
 	}
-	gw.transitRouterInfo, err = getTransitRouterInfo(node)
+	gw.transitRouterInfo, err = getTransitRouterInfo(gw.netInfo, node)
 	if err != nil {
 		return err
 	}

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"math/big"
 	"net"
 	"strconv"
 	"strings"
@@ -446,4 +447,19 @@ func ParseIPList(ipsStr string) ([]net.IP, error) {
 		ips = append(ips, ip)
 	}
 	return ips, nil
+}
+
+// GetLastIPOfSubnet returns the `indexFromLast`th IP address of a given subnet.
+// For example, if indexFromLast is 0 and subnet is 10.0.0.0/24, it returns
+// 10.0.0.255/24.
+func GetLastIPOfSubnet(subnet *net.IPNet, indexFromLast int) *net.IPNet {
+	mask, total := subnet.Mask.Size()
+	base := big.NewInt(1)
+	totalIPs := new(big.Int).Lsh(base, uint(total-mask))
+	lastIPIndex := totalIPs.Sub(totalIPs, big.NewInt(int64(indexFromLast+1)))
+	// this is copied from utilnet.AddIPOffset but to allow big.Int offset
+	r := big.NewInt(0).Add(utilnet.BigForIP(subnet.IP), lastIPIndex).Bytes()
+	r = append(make([]byte, 16), r...)
+	lastIP := net.IP(r[len(r)-16:])
+	return &net.IPNet{IP: lastIP, Mask: subnet.Mask}
 }
