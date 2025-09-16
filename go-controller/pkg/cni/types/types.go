@@ -50,6 +50,11 @@ type NetConf struct {
 	// valid for UDN layer3/layer2 network topology
 	// default value: 100.65.0.0/16,fd99::/64 if not provided
 	JoinSubnet string `json:"joinSubnet,omitempty"`
+	// transit subnet cidr was previously internally set to the default value,
+	// but with the recent layer2 topology changes it may overlap with the network Subnet.
+	// To avoid that, transit subnet is now configurable. Only used by Primary Layer2 networks.
+	// in case of dualstack cluster, please do a comma-separated list
+	TransitSubnet string `json:"transitSubnet,omitempty"`
 	// comma-separated list of default gateway IPs for layer2 primary networks
 	// in case of dualstack cluster, please do a comma-separated list
 	// expected format:

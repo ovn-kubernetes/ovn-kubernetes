@@ -50,6 +50,7 @@ type NetInfo interface {
 	JoinSubnetV4() *net.IPNet
 	JoinSubnetV6() *net.IPNet
 	JoinSubnets() []*net.IPNet
+	TransitSubnets() []*net.IPNet
 	Vlan() uint
 	AllowsPersistentIPs() bool
 	PhysicalNetworkName() string
@@ -649,6 +650,12 @@ func (nInfo *DefaultNetInfo) JoinSubnets() []*net.IPNet {
 	return defaultJoinSubnets
 }
 
+// TransitSubnets should not be used for the default network.
+// It will return an empty list since transit networks are not set for this type of network.
+func (nInfo *DefaultNetInfo) TransitSubnets() []*net.IPNet {
+	return []*net.IPNet{}
+}
+
 // Vlan returns the defaultNetConfInfo's Vlan value
 func (nInfo *DefaultNetInfo) Vlan() uint {
 	return config.Gateway.VLANID
@@ -691,6 +698,7 @@ type userDefinedNetInfo struct {
 	reservedSubnets       []*net.IPNet
 	infrastructureSubnets []*net.IPNet
 	joinSubnets           []*net.IPNet
+	transitSubnets        []*net.IPNet
 
 	physicalNetworkName string
 	defaultGatewayIPs   []net.IP
@@ -887,6 +895,12 @@ func (nInfo *userDefinedNetInfo) JoinSubnets() []*net.IPNet {
 	return nInfo.joinSubnets
 }
 
+// TransitSubnets returns the userDefinedNetInfo's transit subnet values (both v4&v6)
+// For now it is only set for Primary Layer2 UDNs, otherwise is empty
+func (nInfo *userDefinedNetInfo) TransitSubnets() []*net.IPNet {
+	return nInfo.transitSubnets
+}
+
 func (nInfo *userDefinedNetInfo) canReconcile(other NetInfo) bool {
 	if (nInfo == nil) != (other == nil) {
 		return false
@@ -936,7 +950,10 @@ func (nInfo *userDefinedNetInfo) canReconcile(other NetInfo) bool {
 	if !cmp.Equal(nInfo.infrastructureSubnets, other.InfrastructureSubnets(), cmpopts.SortSlices(lessIPNet)) {
 		return false
 	}
-	return cmp.Equal(nInfo.joinSubnets, other.JoinSubnets(), cmpopts.SortSlices(lessIPNet))
+	if !cmp.Equal(nInfo.joinSubnets, other.JoinSubnets(), cmpopts.SortSlices(lessIPNet)) {
+		return false
+	}
+	return cmp.Equal(nInfo.transitSubnets, other.TransitSubnets(), cmpopts.SortSlices(lessIPNet))
 }
 
 func (nInfo *userDefinedNetInfo) copy() *userDefinedNetInfo {
@@ -955,6 +972,7 @@ func (nInfo *userDefinedNetInfo) copy() *userDefinedNetInfo {
 		reservedSubnets:       nInfo.reservedSubnets,
 		infrastructureSubnets: nInfo.infrastructureSubnets,
 		joinSubnets:           nInfo.joinSubnets,
+		transitSubnets:        nInfo.transitSubnets,
 		physicalNetworkName:   nInfo.physicalNetworkName,
 		defaultGatewayIPs:     nInfo.defaultGatewayIPs,
 		managementIPs:         nInfo.managementIPs,
@@ -1028,6 +1046,11 @@ func newLayer2NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 		return nil, err
 	}
 
+	transitSubnets, err := parseTransitSubnet(netconf.Role, netconf.TransitSubnet)
+	if err != nil {
+		return nil, fmt.Errorf("invalid transit subnet for %s netconf %s: %v", netconf.Topology, netconf.Name, err)
+	}
+
 	// Allocate infrastructure IPs for primary networks
 	var defaultGatewayIPs, managementIPs []net.IP
 	if IsPreconfiguredUDNAddressesEnabled() && netconf.Role == types.NetworkRolePrimary {
@@ -1043,6 +1066,7 @@ func newLayer2NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 		topology:              types.Layer2Topology,
 		subnets:               subnets,
 		joinSubnets:           joinSubnets,
+		transitSubnets:        transitSubnets,
 		excludeSubnets:        excludes,
 		reservedSubnets:       reserved,
 		infrastructureSubnets: infra,
@@ -1179,6 +1203,15 @@ func parseJoinSubnet(joinSubnet string) ([]*net.IPNet, error) {
 		}
 	}
 	return joinSubnets, nil
+}
+
+func parseTransitSubnet(netconfRole, transitSubnet string) ([]*net.IPNet, error) {
+	transitSubnets := []*net.IPNet{}
+	if netconfRole != types.NetworkRolePrimary {
+		// only primary networks can have transit subnet
+		return transitSubnets, nil
+	}
+	return parseSubnetList(transitSubnet)
 }
 
 func getIPMode(subnets []config.CIDRNetworkEntry) (bool, bool) {
@@ -1363,7 +1396,7 @@ func ValidateNetConf(nadName string, netconf *ovncnitypes.NetConf) error {
 	}
 
 	if netconf.Topology != types.LocalnetTopology && netconf.Name != types.DefaultNetworkName {
-		if err := subnetOverlapCheck(netconf); err != nil {
+		if _, _, err := SubnetOverlapCheck(netconf); err != nil {
 			return fmt.Errorf("invalid subnet configuration: %w", err)
 		}
 	}
@@ -1371,10 +1404,10 @@ func ValidateNetConf(nadName string, netconf *ovncnitypes.NetConf) error {
 	return nil
 }
 
-// subnetOverlapCheck validates whether POD and join subnet mentioned in a net-attach-def with
+// SubnetOverlapCheck validates whether POD and join subnet mentioned in a net-attach-def with
 // topology "layer2" and "layer3" does not overlap with ClusterSubnets, ServiceCIDRs, join subnet,
 // and masquerade subnet. It also considers excluded subnets mentioned in a net-attach-def.
-func subnetOverlapCheck(netconf *ovncnitypes.NetConf) error {
+func SubnetOverlapCheck(netconf *ovncnitypes.NetConf) (*net.IPNet, *net.IPNet, error) {
 	allSubnets := config.NewConfigSubnets()
 	for _, subnet := range config.Default.ClusterSubnets {
 		allSubnets.Append(config.ConfigSubnetCluster, subnet.CIDR)
@@ -1394,6 +1427,7 @@ func subnetOverlapCheck(netconf *ovncnitypes.NetConf) error {
 	allSubnets.Append(config.ConfigSubnetMasquerade, v4MasqueradeCIDR)
 	allSubnets.Append(config.ConfigSubnetMasquerade, v6MasqueradeCIDR)
 
+	// Layer3 network only uses pre-defined transit subnets
 	if netconf.Topology == types.Layer3Topology {
 		_, v4TransitCIDR, _ := net.ParseCIDR(config.ClusterManager.V4TransitSubnet)
 		_, v6TransitCIDR, _ := net.ParseCIDR(config.ClusterManager.V6TransitSubnet)
@@ -1404,14 +1438,17 @@ func subnetOverlapCheck(netconf *ovncnitypes.NetConf) error {
 
 	ni, err := NewNetInfo(netconf)
 	if err != nil {
-		return fmt.Errorf("error while parsing subnets: %v", err)
+		return nil, nil, fmt.Errorf("error while parsing subnets: %v", err)
 	}
 	for _, subnet := range ni.Subnets() {
 		allSubnets.Append(config.UserDefinedSubnets, subnet.CIDR)
 	}
-
 	for _, subnet := range ni.JoinSubnets() {
 		allSubnets.Append(config.UserDefinedJoinSubnet, subnet)
+	}
+	// dynamic transit subnets are only set for primary Layer2 UDNs for now
+	for _, subnet := range ni.TransitSubnets() {
+		allSubnets.Append(config.ConfigSubnetTransit, subnet)
 	}
 	if ni.ExcludeSubnets() != nil {
 		for i, configSubnet := range allSubnets.Subnets {
@@ -1420,12 +1457,12 @@ func subnetOverlapCheck(netconf *ovncnitypes.NetConf) error {
 			}
 		}
 	}
-	err = allSubnets.CheckForOverlaps()
+	subnet1, subnet2, err := allSubnets.CheckForOverlaps()
 	if err != nil {
-		return fmt.Errorf("pod or join subnet overlaps with already configured internal subnets: %w", err)
+		return subnet1, subnet2, fmt.Errorf("pod or join subnet overlaps with already configured internal subnets: %w", err)
 	}
 
-	return nil
+	return nil, nil, nil
 }
 
 // GetPodNADToNetworkMapping sees if the given pod needs to plumb over this given network specified by netconf,

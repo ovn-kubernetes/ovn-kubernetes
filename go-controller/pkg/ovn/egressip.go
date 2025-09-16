@@ -2660,7 +2660,7 @@ func (e *EgressIPController) getGatewayNextHop(ni util.NetInfo, node *corev1.Nod
 		if config.Layer2UsesTransitRouter {
 			upgradedNode := util.UDNLayer2NodeUsesTransitRouter(node)
 			if upgradedNode {
-				transitRouterInfo, err := getTransitRouterInfo(node)
+				transitRouterInfo, err := getTransitRouterInfo(ni, node)
 				if err != nil {
 					return nil, err
 				}
@@ -3257,7 +3257,7 @@ func (e *EgressIPController) ensureRouterPoliciesForNetwork(ni util.NetInfo, nod
 func (e *EgressIPController) updateNodeNextHop(ni util.NetInfo, node *corev1.Node) error {
 	e.nodeUpdateMutex.Lock()
 	defer e.nodeUpdateMutex.Unlock()
-	transitRouterInfo, err := getTransitRouterInfo(node)
+	transitRouterInfo, err := getTransitRouterInfo(ni, node)
 	if err != nil {
 		return err
 	}

@@ -839,7 +839,7 @@ func (oc *Layer2UserDefinedNetworkController) addRouterSetupForRemoteNodeGR(node
 			return oc.addTransitRouterRoutes(node, gwRouterJoinIPs)
 		}
 	}
-	transitRouterInfo, err := getTransitRouterInfo(node)
+	transitRouterInfo, err := getTransitRouterInfo(oc.GetNetInfo(), node)
 	if err != nil {
 		return nil
 	}

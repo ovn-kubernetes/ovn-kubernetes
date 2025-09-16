@@ -1559,7 +1559,7 @@ func (gw *GatewayManager) setTransitRouterInfo(nodeName string) error {
 	if err != nil {
 		return err
 	}
-	gw.transitRouterInfo, err = getTransitRouterInfo(node)
+	gw.transitRouterInfo, err = getTransitRouterInfo(gw.netInfo, node)
 	if err != nil {
 		return err
 	}

@@ -824,6 +824,26 @@ func (_m *NetInfo) TopologyType() string {
 	return r0
 }
 
+// TransitSubnets provides a mock function with no fields
+func (_m *NetInfo) TransitSubnets() []*net.IPNet {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for TransitSubnets")
+	}
+
+	var r0 []*net.IPNet
+	if rf, ok := ret.Get(0).(func() []*net.IPNet); ok {
+		r0 = rf()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]*net.IPNet)
+		}
+	}
+
+	return r0
+}
+
 // Vlan provides a mock function with no fields
 func (_m *NetInfo) Vlan() uint {
 	ret := _m.Called()
