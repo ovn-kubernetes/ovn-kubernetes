@@ -6,25 +6,27 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/labels"
 	v1 "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
+
+type nodeNAD struct {
+	node string
+	nads []string
+}
 
 type PodTrackerController struct {
 	sync.Mutex
 	// cache holds a mapping of node -> NAD namespaced name -> pod namespaced name
 	cache map[string]map[string]map[string]struct{}
 	// reverse index: pod key -> (node, NAD)
-	reverse map[string]struct {
-		node string
-		nads []string
-	}
+	reverse map[string]nodeNAD
 	// callback when a node+NAD goes active/inactive
 	onNetworkRefChange func(node, nad string, active bool)
 	podController      controller.Controller
@@ -32,13 +34,10 @@ type PodTrackerController struct {
 	networkManger      Interface
 }
 
-func NewPodTrackerController(wf *factory.WatchFactory, nm Interface, onNetworkRefChange func(node, nad string, active bool)) *PodTrackerController {
+func NewPodTrackerController(wf watchFactory, nm Interface, onNetworkRefChange func(node, nad string, active bool)) *PodTrackerController {
 	p := &PodTrackerController{
-		cache: make(map[string]map[string]map[string]struct{}),
-		reverse: make(map[string]struct {
-			node string
-			nads []string
-		}),
+		cache:              make(map[string]map[string]map[string]struct{}),
+		reverse:            make(map[string]nodeNAD),
 		onNetworkRefChange: onNetworkRefChange,
 		podLister:          wf.PodCoreInformer().Lister(),
 		networkManger:      nm,
@@ -54,6 +53,83 @@ func NewPodTrackerController(wf *factory.WatchFactory, nm Interface, onNetworkRe
 	}
 	p.podController = controller.NewController[corev1.Pod]("pod-tracker", cfg)
 	return p
+}
+
+func (c *PodTrackerController) Start() error {
+	klog.Infof("Starting pod tracker controller")
+	return controller.StartWithInitialSync(c.syncAll, c.podController)
+}
+
+func (c *PodTrackerController) Stop() {
+	klog.Infof("Stopping pod tracker controller")
+	controller.Stop(c.podController)
+}
+
+func (c *PodTrackerController) NodeHasPodsOnNAD(node, nad string) bool {
+	c.Lock()
+	defer c.Unlock()
+	if _, ok := c.cache[node]; !ok {
+		return false
+	}
+	if _, ok := c.cache[node][nad]; !ok {
+		return false
+	}
+	return len(c.cache[node][nad]) > 0
+}
+
+// getNADsForPod resolves the primary and secondary networks for a pod.
+func (c *PodTrackerController) getNADsForPod(pod *corev1.Pod) ([]string, error) {
+	var nadList []string
+
+	// Primary NAD from namespace
+	primaryNetwork, err := c.networkManger.GetActiveNetworkForNamespace(pod.Namespace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get primary network for ns %q: %v", pod.Namespace, err)
+	}
+	if !primaryNetwork.IsDefault() {
+		nadList = append(nadList, primaryNetwork.GetNADs()...)
+	}
+
+	// Secondary NADs from pod annotation
+	networks, err := util.GetK8sPodAllNetworkSelections(pod)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse network annotations for pod %s/%s: %v", pod.Namespace, pod.Name, err)
+	}
+	for _, net := range networks {
+		ns := net.Namespace
+		if ns == "" {
+			ns = pod.Namespace
+		}
+		nadList = append(nadList, fmt.Sprintf("%s/%s", ns, net.Name))
+	}
+
+	return nadList, nil
+}
+
+// syncAll builds the cache on initial controller start
+func (c *PodTrackerController) syncAll() error {
+	klog.Infof("PodTrackerController: warming up cache with existing pods")
+
+	pods, err := c.podLister.List(labels.Everything())
+	if err != nil {
+		return fmt.Errorf("failed to list pods: %v", err)
+	}
+
+	for _, pod := range pods {
+		if pod.Spec.NodeName == "" || pod.DeletionTimestamp != nil {
+			continue
+		}
+
+		nadList, err := c.getNADsForPod(pod)
+		if err != nil || len(nadList) == 0 {
+			continue
+		}
+
+		c.addPodToCache(pod, pod.Spec.NodeName, nadList)
+	}
+
+	klog.Infof("PodTrackerController: cache warmup complete with %d pods", len(pods))
+	return nil
 }
 
 // needUpdate return true when the pod has been deleted or created.
@@ -85,34 +161,8 @@ func (c *PodTrackerController) reconcile(key string) error {
 		return nil
 	}
 
-	var nadList []string
-
-	// 1. Primary NAD from namespace
-	primaryNetwork, err := c.networkManger.GetActiveNetworkForNamespace(namespace)
-	if err != nil {
-		return err
-	}
-
-	if !primaryNetwork.IsDefault() {
-		nadList = append(nadList, primaryNetwork.GetNADs()...)
-	}
-
-	// 2. Secondary NADs from pod annotation
-	networks, err := util.GetK8sPodAllNetworkSelections(pod)
-	if err != nil {
-		return err
-	}
-
-	for _, net := range networks {
-		ns := net.Namespace
-		if ns == "" {
-			ns = namespace // default to pod's ns
-		}
-		nadList = append(nadList, fmt.Sprintf("%s/%s", ns, net.Name))
-	}
-
-	// If no NADs → ensure cleanup
-	if len(nadList) == 0 {
+	nadList, err := c.getNADsForPod(pod)
+	if err != nil || len(nadList) == 0 {
 		c.deletePodFromCache(key)
 		return nil
 	}
@@ -149,10 +199,7 @@ func (c *PodTrackerController) addPodToCache(pod *corev1.Pod, node string, nads 
 		}
 	}
 
-	c.reverse[key] = struct {
-		node string
-		nads []string
-	}{node: node, nads: nads}
+	c.reverse[key] = nodeNAD{node: node, nads: nads}
 }
 
 func (c *PodTrackerController) deletePodFromCache(key string) {

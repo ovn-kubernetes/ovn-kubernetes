@@ -12,7 +12,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -129,8 +128,8 @@ func TestPodTrackerControllerWithInformerAndDelete(t *testing.T) {
 			defer wf.Shutdown()
 
 			// Start pod controller
-			g.Expect(controller.Start(ptc.podController)).Should(gomega.Succeed())
-			defer controller.Stop(ptc.podController)
+			g.Expect(ptc.Start()).Should(gomega.Succeed())
+			defer ptc.Stop()
 
 			// Create node
 			_, err = fakeClient.KubeClient.CoreV1().Nodes().Create(context.Background(), &corev1.Node{
@@ -195,4 +194,120 @@ func TestPodTrackerControllerWithInformerAndDelete(t *testing.T) {
 			}, "2s", "50ms").Should(gomega.Succeed())
 		})
 	}
+}
+
+func TestPodTrackerControllerSyncAll(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	// Setup fake client + watch factory
+	fakeClient := util.GetOVNClientset().GetOVNKubeControllerClientset()
+	wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClient)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	// Fake network manager returning a primary NAD
+	primaryNetwork := &ovncnitypes.NetConf{
+		NetConf: cnitypes.NetConf{
+			Name: "primary",
+			Type: "ovn-k8s-cni-overlay",
+		},
+		Topology: "layer3",
+		Role:     "primary",
+		MTU:      1400,
+		NADName:  "testns/primary",
+	}
+	nInfo, err := util.NewNetInfo(primaryNetwork)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	m := util.NewMutableNetInfo(nInfo)
+	m.SetNADs(util.GetNADName("testns", nInfo.GetNetworkName()))
+
+	fakeNM := &FakeNetworkManager{
+		PrimaryNetworks: map[string]util.NetInfo{
+			"testns": m,
+		},
+	}
+
+	// Track callback events
+	var events []struct {
+		node   string
+		nad    string
+		active bool
+	}
+
+	// Create PodTrackerController
+	ptc := NewPodTrackerController(wf, fakeNM, func(node, nad string, active bool) {
+		events = append(events, struct {
+			node   string
+			nad    string
+			active bool
+		}{node, nad, active})
+	})
+
+	// Start informers
+	err = wf.Start()
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	defer wf.Shutdown()
+
+	// Start pod controller
+	g.Expect(ptc.Start()).Should(gomega.Succeed())
+	defer ptc.Stop()
+
+	// Create a node
+	_, err = fakeClient.KubeClient.CoreV1().Nodes().Create(context.Background(), &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "nodeX"},
+	}, metav1.CreateOptions{})
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	// Create a pod with primary + secondary NADs
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "podX",
+			Namespace: "testns",
+			Annotations: map[string]string{
+				nadv1.NetworkAttachmentAnnot: `[ {"name": "sec1", "namespace": "testns"} ]`,
+			},
+		},
+		Spec: corev1.PodSpec{NodeName: "nodeX"},
+	}
+	_, err = fakeClient.KubeClient.CoreV1().Pods("testns").Create(context.Background(), pod, metav1.CreateOptions{})
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	key := "testns/podX"
+
+	// Wait for add
+	g.Eventually(func() bool {
+		ptc.Lock()
+		_, ok := ptc.reverse[key]
+		ptc.Unlock()
+		return ok
+	}, "2s", "50ms").Should(gomega.BeTrue())
+
+	// Manually clear controller state to simulate stale cache
+	ptc.Lock()
+	ptc.cache = make(map[string]map[string]map[string]struct{})
+	ptc.reverse = make(map[string]nodeNAD)
+	ptc.Unlock()
+
+	// Call syncAll to rebuild state
+	g.Expect(ptc.syncAll()).To(gomega.Succeed())
+
+	// Verify that syncAll restored the pod->NAD mappings
+	g.Eventually(func(g gomega.Gomega) {
+		ptc.Lock()
+		defer ptc.Unlock()
+		g.Expect(ptc.reverse).To(gomega.HaveKey(key))
+		g.Expect(ptc.cache["nodeX"]).To(gomega.HaveKey("testns/primary"))
+		g.Expect(ptc.cache["nodeX"]).To(gomega.HaveKey("testns/sec1"))
+	}, "2s", "50ms").Should(gomega.Succeed())
+
+	// Verify callbacks included active=true rebuild events
+	g.Expect(events).To(gomega.ContainElements(
+		struct {
+			node, nad string
+			active    bool
+		}{"nodeX", "testns/primary", true},
+		struct {
+			node, nad string
+			active    bool
+		}{"nodeX", "testns/sec1", true},
+	))
 }
