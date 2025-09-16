@@ -405,13 +405,14 @@ func TestParseNetconf(t *testing.T) {
     }
 `,
 			expectedNetConf: &ovncnitypes.NetConf{
-				Topology:   "layer2",
-				NADName:    "ns1/nad1",
-				MTU:        1400,
-				Role:       "primary",
-				Subnets:    "192.168.200.0/16",
-				NetConf:    cnitypes.NetConf{Name: "tenant-red", Type: "ovn-k8s-cni-overlay"},
-				JoinSubnet: "100.66.0.0/16,fd99::/64",
+				Topology:      "layer2",
+				NADName:       "ns1/nad1",
+				MTU:           1400,
+				Role:          "primary",
+				Subnets:       "192.168.200.0/16",
+				TransitSubnet: config.ClusterManager.V4TransitSubnet,
+				NetConf:       cnitypes.NetConf{Name: "tenant-red", Type: "ovn-k8s-cni-overlay"},
+				JoinSubnet:    "100.66.0.0/16,fd99::/64",
 			},
 		},
 		{

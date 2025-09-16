@@ -139,9 +139,10 @@ func TestNADController(t *testing.T) {
 			Name: "networkAPrimary",
 			Type: "ovn-k8s-cni-overlay",
 		},
-		Subnets: "10.1.130.0/24",
-		Role:    types.NetworkRolePrimary,
-		MTU:     1400,
+		Subnets:       "10.1.130.0/24",
+		TransitSubnet: config.ClusterManager.V4TransitSubnet,
+		Role:          types.NetworkRolePrimary,
+		MTU:           1400,
 	}
 	networkAIncompatible := &ovncnitypes.NetConf{
 		Topology: types.LocalnetTopology,

@@ -543,8 +543,8 @@ func dummyL2TestPod(nsName string, info userDefinedNetInfo, podIdx, udnNetIdx in
 	return pod
 }
 
-func getTestTransitRouterInfo() *transitRouterInfo {
-	transitRouterInfo, err := getTransitRouterInfo(&corev1.Node{
+func getTestTransitRouterInfo(netInfo util.NetInfo) *transitRouterInfo {
+	transitRouterInfo, err := getTransitRouterInfo(netInfo, &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Annotations: map[string]string{
 				// this is hardcoded in newNodeWithSecondaryNets
@@ -558,7 +558,7 @@ func getTestTransitRouterInfo() *transitRouterInfo {
 
 func expectedGWEntitiesLayer2(nodeName string, netInfo util.NetInfo, gwConfig util.L3GatewayConfig) []libovsdbtest.TestData {
 	gwRouterName := fmt.Sprintf("GR_%s_%s", netInfo.GetNetworkName(), nodeName)
-	trInfo := getTestTransitRouterInfo()
+	trInfo := getTestTransitRouterInfo(netInfo)
 	expectedEntities := append(
 		expectedGWRouterPlusNATAndStaticRoutes(nodeName, gwRouterName, netInfo, gwConfig),
 		expectedGRToTransitRouterLRPLayer2(gwRouterName, gwRouterJoinIPAddress(), netInfo, trInfo),
@@ -599,7 +599,7 @@ func expectedLayer2EgressEntities(netInfo util.NetInfo, gwConfig util.L3GatewayC
 		staticRouteUUID2  = "sr2-UUID"
 		masqSNATUUID1     = "masq-snat1-UUID"
 	)
-	trInfo := getTestTransitRouterInfo()
+	trInfo := getTestTransitRouterInfo(netInfo)
 	transitRouterName := fmt.Sprintf("%s_transit_router", netInfo.GetNetworkName())
 
 	rtosLRPName := fmt.Sprintf("%s%s", ovntypes.TransitRouterToSwitchPrefix, netInfo.GetNetworkScopedName(ovntypes.OVNLayer2Switch))
