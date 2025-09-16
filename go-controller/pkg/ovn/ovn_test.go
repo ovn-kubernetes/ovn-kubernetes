@@ -49,7 +49,6 @@ import (
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
-	testnm "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	util "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -221,7 +220,7 @@ func (o *FakeOVN) init(nadList []nettypes.NetworkAttachmentDefinition) {
 
 	o.networkManager = networkmanager.Default()
 	if config.OVNKubernetesFeature.EnableMultiNetwork {
-		o.networkManager, err = networkmanager.NewForZone("test", &testnm.FakeControllerManager{}, o.watcher)
+		o.networkManager, err = networkmanager.NewForZone("test", &networkmanager.FakeControllerManager{}, o.watcher)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	}
 

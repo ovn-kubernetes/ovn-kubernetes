@@ -25,7 +25,6 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
-	testnm "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
@@ -320,7 +319,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				mutableNetworkConfig.SetNADs(util.GetNADName(nad.Namespace, nad.Name))
 				networkConfig = mutableNetworkConfig
 
-				fakeNetworkManager := &testnm.FakeNetworkManager{
+				fakeNetworkManager := &networkmanager.FakeNetworkManager{
 					PrimaryNetworks: make(map[string]util.NetInfo),
 				}
 				fakeNetworkManager.PrimaryNetworks[ns] = networkConfig

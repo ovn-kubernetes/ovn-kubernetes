@@ -22,7 +22,6 @@ import (
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	v1nadmocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
 	v1mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/k8s.io/client-go/listers/core/v1"
-	testnm "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/networkmanager"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/vswitchd"
@@ -216,7 +215,7 @@ var _ = Describe("Network Segmentation", func() {
 				namespace        = "foo-ns"
 			)
 
-			var fakeNetworkManager *testnm.FakeNetworkManager
+			var fakeNetworkManager *networkmanager.FakeNetworkManager
 
 			dummyGetCNIResult := func(request *PodRequest, _ PodInfoGetter, podInterfaceInfo *PodInterfaceInfo) (*current.Result, error) {
 				var gatewayIP net.IP
@@ -267,7 +266,7 @@ var _ = Describe("Network Segmentation", func() {
 				nadNamespaceLister.On("Get", "meganet").Return(nadMegaNet, nil)
 				nadNetwork, err := util.ParseNADInfo(nadMegaNet)
 				Expect(err).NotTo(HaveOccurred())
-				fakeNetworkManager = &testnm.FakeNetworkManager{
+				fakeNetworkManager = &networkmanager.FakeNetworkManager{
 					PrimaryNetworks: make(map[string]util.NetInfo),
 				}
 				fakeNetworkManager.PrimaryNetworks[nadMegaNet.Namespace] = nadNetwork
