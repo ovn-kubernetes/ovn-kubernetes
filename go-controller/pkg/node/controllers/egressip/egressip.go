@@ -45,6 +45,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/syncmap"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/egressip"
 	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
@@ -539,15 +540,15 @@ func (c *Controller) processEIP(eip *eipv1.EgressIP) (*eIPConfig, sets.Set[strin
 		if isValid := isEIPStatusItemValid(status, c.nodeName); !isValid {
 			continue
 		}
-		eIPNet, err := util.GetIPNetFullMask(status.EgressIP)
-		if err != nil {
+		ip := net.ParseIP(status.EgressIP)
+		if ip == nil {
 			return nil, selectedNamespaces, selectedPods, selectedNamespacesPodIPs,
-				fmt.Errorf("failed to generate mask for EgressIP %s IP %s: %v", eip.Name, status.EgressIP, err)
+				fmt.Errorf("failed to parse EgressIP %s IP %s", eip.Name, status.EgressIP)
 		}
-		if util.IsOVNNetwork(parsedNodeEIPConfig, eIPNet.IP) {
+		if util.IsOVNNetwork(parsedNodeEIPConfig, ip) {
 			continue
 		}
-		found, link, err := findLinkOnSameNetworkAsIP(eIPNet.IP, c.v4, c.v6)
+		found, link, err := findLinkOnSameNetworkAsIP(ip, c.v4, c.v6)
 		if err != nil {
 			return nil, selectedNamespaces, selectedPods, selectedNamespacesPodIPs,
 				fmt.Errorf("failed to find a network to host EgressIP %s IP %s: %v", eip.Name, status.EgressIP, err)
@@ -560,7 +561,7 @@ func (c *Controller) processEIP(eip *eipv1.EgressIP) (*eIPConfig, sets.Set[strin
 		if err != nil {
 			return nil, selectedNamespaces, selectedPods, selectedNamespacesPodIPs, fmt.Errorf("failed to list namespaces: %w", err)
 		}
-		isEIPV6 := utilnet.IsIPv6(eIPNet.IP)
+		isEIPV6 := utilnet.IsIPv6(ip)
 		for _, namespace := range namespaces {
 			netInfo, err := c.getActiveNetworkForNamespace(namespace.Name)
 			if err != nil {
@@ -593,13 +594,13 @@ func (c *Controller) processEIP(eip *eipv1.EgressIP) (*eIPConfig, sets.Set[strin
 				if selectedNamespacesPodIPs[namespace.Name] == nil {
 					selectedNamespacesPodIPs[namespace.Name] = make(map[ktypes.NamespacedName]*podIPConfigList)
 				}
-				selectedNamespacesPodIPs[namespace.Name][podNamespaceName] = generatePodConfig(ips, link, eIPNet, isEIPV6)
+				selectedNamespacesPodIPs[namespace.Name][podNamespaceName] = generatePodConfig(ips, link, ip, isEIPV6)
 				selectedPods.Insert(podNamespaceName)
 			}
 		}
 		// ensure at least one pod is selected before generating config
 		if len(selectedNamespacesPodIPs) > 0 {
-			eipSpecificConfig, err = generateEIPConfig(link, eIPNet, isEIPV6)
+			eipSpecificConfig, err = generateEIPConfig(link, ip, isEIPV6)
 			if err != nil {
 				return nil, selectedNamespaces, selectedPods, selectedNamespacesPodIPs,
 					fmt.Errorf("failed to generate EIP configuration for EgressIP %s IP %s: %v", eip.Name, status.EgressIP, err)
@@ -611,7 +612,7 @@ func (c *Controller) processEIP(eip *eipv1.EgressIP) (*eIPConfig, sets.Set[strin
 	return eipSpecificConfig, selectedNamespaces, selectedPods, selectedNamespacesPodIPs, nil
 }
 
-func generatePodConfig(podIPs []net.IP, link netlink.Link, eIPNet *net.IPNet, isEIPV6 bool) *podIPConfigList {
+func generatePodConfig(podIPs []net.IP, link netlink.Link, eIP net.IP, isEIPV6 bool) *podIPConfigList {
 	newPodIPConfigs := newPodIPConfigList()
 	for _, podIP := range podIPs {
 		isPodIPv6 := utilnet.IsIPv6(podIP)
@@ -619,7 +620,7 @@ func generatePodConfig(podIPs []net.IP, link netlink.Link, eIPNet *net.IPNet, is
 			continue
 		}
 		ipConfig := newPodIPConfig()
-		ipConfig.ipTableRule = generateIPTablesSNATRuleArg(podIP, isPodIPv6, link.Attrs().Name, eIPNet.IP.String())
+		ipConfig.ipTableRule = generateIPTablesSNATRuleArg(podIP, isPodIPv6, link.Attrs().Name, eIP.String())
 		ipConfig.ipRule = generateIPRule(podIP, isPodIPv6, link.Attrs().Index)
 		ipConfig.v6 = isPodIPv6
 		newPodIPConfigs.elems = append(newPodIPConfigs.elems, ipConfig)
@@ -628,14 +629,14 @@ func generatePodConfig(podIPs []net.IP, link netlink.Link, eIPNet *net.IPNet, is
 }
 
 // generateEIPConfig generates configuration that isn't related to any pod EIPs to support config of a single EIP
-func generateEIPConfig(link netlink.Link, eIPNet *net.IPNet, isEIPV6 bool) (*eIPConfig, error) {
+func generateEIPConfig(link netlink.Link, eIP net.IP, isEIPV6 bool) (*eIPConfig, error) {
 	eipConfig := newEIPConfig()
 	linkRoutes, err := generateRoutesForLink(link, isEIPV6)
 	if err != nil {
 		return nil, err
 	}
 	eipConfig.routes = linkRoutes
-	eipConfig.addr = getNetlinkAddress(eIPNet, link.Attrs().Index)
+	eipConfig.addr = egressip.GetNetlinkAddress(eIP, link.Attrs().Index)
 	return eipConfig, nil
 }
 
@@ -1480,14 +1481,6 @@ func isOneIPNetwork(ipnet *net.IPNet) bool {
 func isLinkUp(flags string) bool {
 	// exclude interfaces that aren't up
 	return strings.Contains(flags, "up")
-}
-
-func getNetlinkAddress(addr *net.IPNet, ifindex int) *netlink.Addr {
-	return &netlink.Addr{
-		IPNet:     addr,
-		Scope:     int(netlink.SCOPE_UNIVERSE),
-		LinkIndex: ifindex,
-	}
 }
 
 // generateIPRules generates IP rules at a predefined priority for each pod IP with a custom routing table based

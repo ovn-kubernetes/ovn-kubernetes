@@ -3,12 +3,8 @@ package egressip
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"net"
 	"sync"
-
-	"github.com/vishvananda/netlink"
-	"golang.org/x/sys/unix"
 
 	"k8s.io/apimachinery/pkg/util/sets"
 	corev1informers "k8s.io/client-go/informers/core/v1"
@@ -23,6 +19,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/linkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/egressip"
 )
 
 // markIPs contains packet mark and associated EgressIP IP for IPv4 / IPv6. Key is packet mark, value egress IP
@@ -451,7 +448,7 @@ func (g *BridgeEIPAddrManager) addIPBridge(ip net.IP) error {
 	if err != nil {
 		return fmt.Errorf("failed to get link obj by name %s: %v", g.bridgeName, err)
 	}
-	return g.addrManager.AddAddress(getEIPBridgeNetlinkAddress(ip, link.Attrs().Index))
+	return g.addrManager.AddAddress(*egressip.GetNetlinkAddress(ip, link.Attrs().Index))
 }
 
 func (g *BridgeEIPAddrManager) deleteIPBridge(ip net.IP) error {
@@ -459,7 +456,7 @@ func (g *BridgeEIPAddrManager) deleteIPBridge(ip net.IP) error {
 	if err != nil {
 		return fmt.Errorf("failed to get link obj by name %s: %v", g.bridgeName, err)
 	}
-	return g.addrManager.DelAddress(getEIPBridgeNetlinkAddress(ip, link.Attrs().Index))
+	return g.addrManager.DelAddress(*egressip.GetNetlinkAddress(ip, link.Attrs().Index))
 }
 
 // getAnnotationIPs retrieves the egress IP annotation from the current node Nodes object. If multiple users, callers must synchronise.
@@ -513,30 +510,4 @@ func getIPsStr(ips ...net.IP) []string {
 		ipsStr = append(ipsStr, ip.String())
 	}
 	return ipsStr
-}
-
-func getEIPBridgeNetlinkAddress(ip net.IP, ifindex int) netlink.Addr {
-	return netlink.Addr{
-		IPNet:     &net.IPNet{IP: ip, Mask: util.GetIPFullMask(ip)},
-		Flags:     getEIPNetlinkAddressFlag(ip),
-		Scope:     int(netlink.SCOPE_UNIVERSE),
-		ValidLft:  getEIPNetlinkAddressValidLft(ip),
-		LinkIndex: ifindex,
-	}
-}
-
-func getEIPNetlinkAddressFlag(ip net.IP) int {
-	// isV6?
-	if ip.To4() == nil && ip.To16() != nil {
-		return unix.IFA_F_NODAD
-	}
-	return 0
-}
-
-func getEIPNetlinkAddressValidLft(ip net.IP) int {
-	// isV6?
-	if ip.To4() == nil && ip.To16() != nil {
-		return math.MaxUint32
-	}
-	return 0
 }
