@@ -1,14 +1,18 @@
 package template
 
 import (
+	"strings"
+
 	netv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -373,6 +377,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 			  "role": "primary",
 			  "topology": "layer2",
 			  "joinSubnet": "100.65.0.0/16,fd99::/64",
+			  "transitSubnet": "100.88.0.0/16,fd97::/64",
 			  "subnets": "192.168.100.0/24,2001:dbb::/64",
 			  "mtu": 1500,
 			  "allowPersistentIPs": true
@@ -399,6 +404,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 			  "role": "primary",
 			  "topology": "layer2",
 			  "joinSubnet": "100.62.0.0/24,fd92::/64",
+			  "transitSubnet": "100.88.0.0/16,fd97::/64",
 			  "subnets": "192.168.100.0/24,2001:dbb::/64",
 			  "mtu": 1500,
 			  "allowPersistentIPs": true
@@ -509,6 +515,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 			  "role": "primary",
 			  "topology": "layer2",
 			  "joinSubnet": "100.65.0.0/16,fd99::/64",
+			  "transitSubnet": "100.88.0.0/16,fd97::/64",
 			  "subnets": "192.168.100.0/24,2001:dbb::/64",
 			  "mtu": 1500,
 			  "allowPersistentIPs": true
@@ -535,6 +542,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 			  "role": "primary",
 			  "topology": "layer2",
 			  "joinSubnet": "100.62.0.0/24,fd92::/64",
+			  "transitSubnet": "100.88.0.0/16,fd97::/64",
 			  "subnets": "192.168.100.0/24,2001:dbb::/64",
 			  "mtu": 1500,
 			  "allowPersistentIPs": true
@@ -624,4 +632,45 @@ var _ = Describe("NetAttachDefTemplate", func() {
 			}`,
 		),
 	)
+
+	It("should correctly assign transit Subnets", func() {
+		// check no overlap, use default values
+		netConf := &ovncnitypes.NetConf{
+			Role:     strings.ToLower(types.NetworkRolePrimary),
+			Topology: strings.ToLower(types.Layer2Topology),
+			Subnets:  "10.12.0.0/16,fd12:dbba::/64",
+		}
+		err := util.SetTransitSubnets(netConf)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(netConf.TransitSubnet).To(Equal("100.88.0.0/16,fd97::/64"))
+		// check Subnet with the default Transit subnet overlap
+		netConf = &ovncnitypes.NetConf{
+			Role:     strings.ToLower(types.NetworkRolePrimary),
+			Topology: strings.ToLower(types.Layer2Topology),
+			Subnets:  "100.88.0.0/15,fd97::/63",
+		}
+		err = util.SetTransitSubnets(netConf)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(netConf.TransitSubnet).To(Equal("100.90.0.0/16,fd97:0:0:2::/64"))
+		// check joinSubnet with the default Transit subnet overlap
+		netConf = &ovncnitypes.NetConf{
+			Role:       strings.ToLower(types.NetworkRolePrimary),
+			Topology:   strings.ToLower(types.Layer2Topology),
+			Subnets:    "10.12.0.0/16,fd12:dbba::/64",
+			JoinSubnet: "100.88.0.0/17,fd97::/65",
+		}
+		err = util.SetTransitSubnets(netConf)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(netConf.TransitSubnet).To(Equal("100.89.0.0/16,fd97:0:0:1::/64"))
+		// check Subnet with the default Transit subnet overlap, then joinSubnet overlaps with the next selected transit subnet
+		netConf = &ovncnitypes.NetConf{
+			Role:       strings.ToLower(types.NetworkRolePrimary),
+			Topology:   strings.ToLower(types.Layer2Topology),
+			Subnets:    "100.88.0.0/15,fd97::/65",
+			JoinSubnet: "100.90.0.0/16,fd97:0:0:1::/64",
+		}
+		err = util.SetTransitSubnets(netConf)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(netConf.TransitSubnet).To(Equal("100.91.0.0/16,fd97:0:0:2::/64"))
+	})
 })

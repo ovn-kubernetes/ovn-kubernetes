@@ -209,17 +209,18 @@ func (cs *ConfigSubnets) Append(subnetType ConfigSubnetType, subnet *net.IPNet) 
 	}
 }
 
-// CheckForOverlaps checks if any of the subnets in cs overlap
-func (cs *ConfigSubnets) CheckForOverlaps() error {
+// CheckForOverlaps checks if any of the subnets in cs overlap, and returns the first overlapping subnets
+// together with an error.
+func (cs *ConfigSubnets) CheckForOverlaps() (*net.IPNet, *net.IPNet, error) {
 	for i, si := range cs.Subnets {
 		for j := 0; j < i; j++ {
 			sj := cs.Subnets[j]
 			if si.Subnet.Contains(sj.Subnet.IP) || sj.Subnet.Contains(si.Subnet.IP) {
-				return NewSubnetOverlapError(si, sj)
+				return si.Subnet, sj.Subnet, NewSubnetOverlapError(si, sj)
 			}
 		}
 	}
-	return nil
+	return nil, nil, nil
 }
 
 func (cs *ConfigSubnets) describeSubnetType(subnetType ConfigSubnetType) string {

@@ -308,7 +308,7 @@ func Test_checkForOverlap(t *testing.T) {
 			allSubnets.Append(ConfigSubnetCluster, subnet)
 		}
 
-		err := allSubnets.CheckForOverlaps()
+		_, _, err := allSubnets.CheckForOverlaps()
 		if err == nil && tc.shouldError {
 			t.Errorf("testcase \"%s\" failed to find overlap", tc.name)
 		} else if err != nil && !tc.shouldError {

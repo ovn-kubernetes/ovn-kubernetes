@@ -839,7 +839,7 @@ func (oc *Layer2UserDefinedNetworkController) addRouterSetupForRemoteNodeGR(node
 			return oc.addTransitRouterRoutes(node, gwRouterJoinIPs)
 		}
 	}
-	transitRouterInfo, err := getTransitRouterInfo(node)
+	transitRouterInfo, err := getTransitRouterInfo(oc.GetNetInfo(), node)
 	if err != nil {
 		return nil
 	}
@@ -871,8 +871,8 @@ func (oc *Layer2UserDefinedNetworkController) addTransitRouterRoutes(node *corev
 	if err != nil {
 		return err
 	}
-	for _, gwRouterJoinIP := range gwRouterJoinIPs {
-		nexthop, err := util.MatchFirstIPNetFamily(utilnet.IsIPv6CIDR(gwRouterJoinIP), nextHops)
+	for _, nextHop := range nextHops {
+		gwRouterJoinIP, err := util.MatchFirstIPNetFamily(utilnet.IsIPv6CIDR(nextHop), gwRouterJoinIPs)
 		if err != nil {
 			return fmt.Errorf("failed to add remote node join ip based "+
 				"routes in distributed router %s: %v",
@@ -885,7 +885,7 @@ func (oc *Layer2UserDefinedNetworkController) addTransitRouterRoutes(node *corev
 				types.TopologyExternalID: oc.TopologyType(),
 			},
 			IPPrefix: gwRouterJoinIP.IP.String(),
-			Nexthop:  nexthop.IP.String(),
+			Nexthop:  nextHop.IP.String(),
 		}
 		p := func(item *nbdb.LogicalRouterStaticRoute) bool {
 			return item.IPPrefix == lrsr.IPPrefix &&
