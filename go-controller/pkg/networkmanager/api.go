@@ -75,6 +75,14 @@ type Controller interface {
 	Stop()
 }
 
+// PodTracker is the minimal interface ControllerManager needs.
+type PodTracker interface {
+	// NodeHasPodsOnNAD returns true if the given node has at least one pod using the NAD.
+	NodeHasPodsOnNAD(node, nad string) bool
+	Start() error
+	Stop()
+}
+
 // Default returns a default implementation that assumes the default network is
 // the only ever existing network. Used when multi-network capabilities are not
 // enabled or testing.

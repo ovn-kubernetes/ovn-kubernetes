@@ -55,7 +55,7 @@ type NodeControllerManager struct {
 	// ovs client that allows to read ovs info
 	ovsClient client.Client
 	// podTracker tracks pods on different nodes + nads
-	podTracker *networkmanager.PodTrackerController
+	podTracker networkmanager.PodTracker
 }
 
 // NewNetworkController create node user-defined network controllers for the given NetInfo
