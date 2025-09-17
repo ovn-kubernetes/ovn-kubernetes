@@ -123,6 +123,7 @@ func (mic *MarkIPsCache) deleteMarkIP(pktMark util.EgressIPMark, ip net.IP) {
 func (mic *MarkIPsCache) replaceAll(markIPs markIPs) {
 	mic.mu.Lock()
 	mic.markToIPs = markIPs
+	mic.IPToMark = make(map[string]int, len(markIPs.v4)+len(markIPs.v6))
 	for mark, ipv4 := range markIPs.v4 {
 		mic.IPToMark[ipv4] = mark
 	}
