@@ -6,6 +6,7 @@ import (
 
 	"github.com/containernetworking/plugins/pkg/ns"
 	"github.com/containernetworking/plugins/pkg/testutils"
+	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	"github.com/stretchr/testify/mock"
 
 	corev1 "k8s.io/api/core/v1"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	factoryMocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory/mocks"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	nadinformermocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/informers/externalversions/k8s.cni.cncf.io/v1"
@@ -279,5 +281,74 @@ var _ = Describe("Healthcheck tests", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 		})
+	})
+})
+
+var _ = Describe("NodeControllerManager NetworkRef filtering", func() {
+	var ncm *NodeControllerManager
+	var fakeNM *networkmanager.FakeNetworkManager
+	var fakePT *fakePodTracker
+	nodeName := "test-node"
+
+	BeforeEach(func() {
+		util.PrepareTestConfig()
+		config.Default.Zone = nodeName
+
+		fakeNM = &networkmanager.FakeNetworkManager{
+			PrimaryNetworks: map[string]util.NetInfo{},
+			Reconciled:      []string{},
+		}
+
+		fakePT = newFakePodTracker()
+		fakePT.setActive(nodeName, "ns1/nad1", true)
+
+		// Inject fake networkManager and podTracker
+		ncm = &NodeControllerManager{
+			networkManager: fakeNM,
+			podTracker:     fakePT,
+			name:           nodeName,
+		}
+	})
+
+	It("filters NADs correctly", func() {
+		tests := []struct {
+			name           string
+			nad            *nettypes.NetworkAttachmentDefinition
+			expectFiltered bool
+		}{
+			{
+				name:           "NAD without ownerRef is not filtered",
+				nad:            newTestNAD("ns1", "nad1", ""),
+				expectFiltered: false,
+			},
+			{
+				name:           "NAD with unrelated ownerRef is filtered",
+				nad:            newTestNAD("ns1", "nad1", "Deployment"),
+				expectFiltered: false,
+			},
+			{
+				name:           "NAD with UDN ownerRef but no pod using it is filtered",
+				nad:            newTestNAD("ns2", "nad2", "UserDefinedNetwork"),
+				expectFiltered: true,
+			},
+			{
+				name:           "NAD with UDN ownerRef and pod using it is NOT filtered",
+				nad:            newTestNAD("ns1", "nad1", "UserDefinedNetwork"),
+				expectFiltered: false,
+			},
+		}
+
+		for _, tt := range tests {
+			tt := tt
+			By(tt.name)
+			shouldFilter, err := ncm.Filter(tt.nad)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(shouldFilter).To(Equal(tt.expectFiltered))
+		}
+	})
+
+	It("triggers reconcile on OnNetworkRefChange", func() {
+		ncm.OnNetworkRefChange(nodeName, "ns1/nad1", true)
+		Expect(fakeNM.Reconciled).To(ContainElement("ns1/nad1"))
 	})
 })

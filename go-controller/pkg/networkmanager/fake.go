@@ -53,6 +53,11 @@ type FakeNetworkManager struct {
 	// namespace -> netInfo
 	// if netInfo is nil, it represents a namespace which contains the required UDN label but with no valid network. It will return invalid network error.
 	PrimaryNetworks map[string]util.NetInfo
+	Reconciled      []string
+}
+
+func (fnm *FakeNetworkManager) Interface() Interface {
+	return fnm
 }
 
 func (fnm *FakeNetworkManager) Start() error { return nil }
@@ -109,4 +114,6 @@ func (fnm *FakeNetworkManager) DoWithLock(f func(network util.NetInfo) error) er
 	return errors.Join(errs...)
 }
 
-func (fnm *FakeNetworkManager) Reconcile(_ string) {}
+func (fnm *FakeNetworkManager) Reconcile(name string) {
+	fnm.Reconciled = append(fnm.Reconciled, name)
+}

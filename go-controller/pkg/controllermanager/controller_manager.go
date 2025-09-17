@@ -69,7 +69,7 @@ type ControllerManager struct {
 	// eIPController programs OVN to support EgressIP
 	eIPController *ovn.EgressIPController
 
-	podTracker *networkmanager.PodTrackerController
+	podTracker networkmanager.PodTracker
 }
 
 func (cm *ControllerManager) NewNetworkController(nInfo util.NetInfo) (networkmanager.NetworkController, error) {
