@@ -138,10 +138,23 @@ var (
 	}
 
 	// OvnNorth holds northbound OVN database client and server authentication and location details
-	OvnNorth OvnAuthConfig
+	OvnNorth = OvnAuthConfig{
+		RunDir:     "/var/run/ovn/",
+		DbLocation: "/var/lib/openvswitch/ovnnb_db.db",
+	}
 
 	// OvnSouth holds southbound OVN database client and server authentication and location details
-	OvnSouth OvnAuthConfig
+	OvnSouth = OvnAuthConfig{
+		RunDir:     "/var/run/ovn/",
+		DbLocation: "/var/lib/openvswitch/ovnsb_db.db",
+	}
+
+	// OvsPaths holds OVS location details
+	OvsPaths = OvsPathConfig{
+		RunDir:         "/var/run/openvswitch/",
+		VswitchdPid:    "/var/run/openvswitch/ovs-vswitchd.pid",
+		OvsDbServerPid: "/var/run/openvswitch/ovsdb-server.pid",
+	}
 
 	// Gateway holds node gateway-related parsed config file parameters and command-line overrides
 	Gateway = GatewayConfig{
@@ -524,8 +537,22 @@ type OvnAuthConfig struct {
 	Scheme         OvnDBScheme
 	ElectionTimer  uint `gcfg:"election-timer"`
 	northbound     bool
+	// RunDir is OVN run directory.
+	RunDir string
+	// DbLocation is OVN northbound/southbound database location.
+	DbLocation string
 
 	exec kexec.Interface
+}
+
+// OvsPathConfig holds OVS location details.
+type OvsPathConfig struct {
+	// RunDir is OVS run directory.
+	RunDir string
+	// VswitchdPid is OVS vSwitchd PID file path.
+	VswitchdPid string
+	// OvsDbServerPid is OVSDB server PID file path.
+	OvsDbServerPid string
 }
 
 // HAConfig holds configuration for HA
@@ -2587,11 +2614,6 @@ func parseAddress(urlString string) (string, OvnDBScheme, error) {
 // OVN database, given a connection description string and authentication
 // details
 func buildOvnAuth(exec kexec.Interface, northbound bool, cliAuth, confAuth *OvnAuthConfig, readAddress bool) (*OvnAuthConfig, error) {
-	auth := &OvnAuthConfig{
-		northbound: northbound,
-		exec:       exec,
-	}
-
 	var direction string
 	var defaultAuth *OvnAuthConfig
 	if northbound {
@@ -2600,6 +2622,13 @@ func buildOvnAuth(exec kexec.Interface, northbound bool, cliAuth, confAuth *OvnA
 	} else {
 		direction = "sb"
 		defaultAuth = &savedOvnSouth
+	}
+
+	auth := &OvnAuthConfig{
+		northbound: northbound,
+		exec:       exec,
+		RunDir:     defaultAuth.RunDir,
+		DbLocation: defaultAuth.DbLocation,
 	}
 
 	// Determine final address so we know how to set cert/key defaults
