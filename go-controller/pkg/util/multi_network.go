@@ -19,6 +19,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/klog/v2"
 	knet "k8s.io/utils/net"
 
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
@@ -1395,6 +1396,13 @@ func ValidateNetConf(nadName string, netconf *ovncnitypes.NetConf) error {
 		return fmt.Errorf("defaultGatewayIPs is only supported for layer2 topology")
 	}
 
+	if netconf.TransitSubnet == "" && netconf.Role == types.NetworkRolePrimary && netconf.Topology == types.Layer2Topology {
+		klog.Warningf("transitSubnet is not specified for layer2 primary NAD %s, dynamic transit subnet will be used", netconf.Name)
+		if err := SetTransitSubnets(netconf); err != nil {
+			return fmt.Errorf("failed to set dynamic transit subnet for layer2 primary NAD %s: %v", netconf.Name, err)
+		}
+	}
+
 	if netconf.Topology != types.LocalnetTopology && netconf.Name != types.DefaultNetworkName {
 		if _, _, err := SubnetOverlapCheck(netconf); err != nil {
 			return fmt.Errorf("invalid subnet configuration: %w", err)
@@ -1911,4 +1919,70 @@ func FormatTunnelKeysAnnotation(tunnelKeys []int) (string, error) {
 		return "", fmt.Errorf("failed to format tunnel keys annotation: %w", err)
 	}
 	return string(annotationBytes), nil
+}
+
+// SetTransitSubnets generates transit subnet for primary layer2 UDNs and sets for a given netconf.
+// It should be called with the final version of netconf to make sure that util.SubnetOverlapCheck(netconf) passes.
+func SetTransitSubnets(netconf *ovncnitypes.NetConf) error {
+	transitSubnets := []string{}
+	for _, subnetStr := range strings.Split(netconf.Subnets, ",") {
+		_, subnet, err := net.ParseCIDR(subnetStr)
+		if err != nil {
+			return fmt.Errorf("can't generate transit subnets: failed to parse CIDR %q: %w", subnetStr, err)
+		}
+		transitSubnet, err := getTransitSubnet(netconf, knet.IsIPv4CIDR(subnet))
+		if err != nil {
+			return err
+		}
+		transitSubnets = append(transitSubnets, transitSubnet)
+	}
+	netconf.TransitSubnet = strings.Join(transitSubnets, ",")
+	return nil
+}
+
+func getTransitSubnet(netconf *ovncnitypes.NetConf, isIPv4 bool) (string, error) {
+	var transitSubnet *net.IPNet
+	var err error
+	if isIPv4 {
+		_, transitSubnet, err = net.ParseCIDR(config.ClusterManager.V4TransitSubnet)
+	} else {
+		_, transitSubnet, err = net.ParseCIDR(config.ClusterManager.V6TransitSubnet)
+	}
+	if err != nil {
+		return "", fmt.Errorf("can't generate transit subnets: failed to parse default transit subnet: %w", err)
+	}
+	// repeat until we find a non-overlapping subnet,
+	// but limit the number of iterations to avoid infinite loop
+	for i := 0; i < 10; i++ {
+		// only add current transit subnet to the netconf for overlap check, final assignment should be done for all ipFamilies
+		netconf.TransitSubnet = transitSubnet.String()
+		// check if there is subnet overlap
+		subnet1, subnet2, err := SubnetOverlapCheck(netconf)
+		if err == nil {
+			return transitSubnet.String(), nil
+		}
+		if subnet1 == nil || subnet2 == nil || subnet1.String() != transitSubnet.String() && subnet2.String() != transitSubnet.String() {
+			// there is another problem with the config
+			// or overlap is not with transit subnet
+			return "", err
+		}
+		transitSubnet = getFirstNonOverlappingSubnet(subnet1, subnet2, transitSubnet.Mask)
+	}
+	// if the previous loop didn't return the result, we failed to find a non-overlapping subnet
+	return "", fmt.Errorf("can't generate transit subnets: failed to find non-overlapping transit subnet: %w", err)
+}
+
+func getFirstNonOverlappingSubnet(subnet1, subnet2 *net.IPNet, netMask net.IPMask) *net.IPNet {
+	// find the bigger network, and get the first subnet outside of it with the same netmask as default transit subnet
+	subnet1MaskSize, _ := subnet1.Mask.Size()
+	subnet2MaskSize, _ := subnet2.Mask.Size()
+	// bigger mask size means smaller network
+	baseSubnet := subnet1
+	if subnet2MaskSize < subnet1MaskSize {
+		baseSubnet = subnet2
+	}
+	// now find the first subnet outside the baseSubnet with the same mask
+	baseSubnetLastIP := GetLastIPOfSubnet(baseSubnet, 0)
+	nextIP := iputils.NextIP(baseSubnetLastIP.IP)
+	return &net.IPNet{IP: nextIP, Mask: netMask}
 }

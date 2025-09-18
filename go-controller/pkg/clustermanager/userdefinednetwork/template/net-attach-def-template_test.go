@@ -640,7 +640,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 			Topology: strings.ToLower(types.Layer2Topology),
 			Subnets:  "10.12.0.0/16,fd12:dbba::/64",
 		}
-		err := setTransitSubnets(netConf)
+		err := util.SetTransitSubnets(netConf)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(netConf.TransitSubnet).To(Equal("100.88.0.0/16,fd97::/64"))
 		// check Subnet with the default Transit subnet overlap
@@ -649,7 +649,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 			Topology: strings.ToLower(types.Layer2Topology),
 			Subnets:  "100.88.0.0/15,fd97::/63",
 		}
-		err = setTransitSubnets(netConf)
+		err = util.SetTransitSubnets(netConf)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(netConf.TransitSubnet).To(Equal("100.90.0.0/16,fd97:0:0:2::/64"))
 		// check joinSubnet with the default Transit subnet overlap
@@ -659,7 +659,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 			Subnets:    "10.12.0.0/16,fd12:dbba::/64",
 			JoinSubnet: "100.88.0.0/17,fd97::/65",
 		}
-		err = setTransitSubnets(netConf)
+		err = util.SetTransitSubnets(netConf)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(netConf.TransitSubnet).To(Equal("100.89.0.0/16,fd97:0:0:1::/64"))
 		// check Subnet with the default Transit subnet overlap, then joinSubnet overlaps with the next selected transit subnet
@@ -669,7 +669,7 @@ var _ = Describe("NetAttachDefTemplate", func() {
 			Subnets:    "100.88.0.0/15,fd97::/65",
 			JoinSubnet: "100.90.0.0/16,fd97:0:0:1::/64",
 		}
-		err = setTransitSubnets(netConf)
+		err = util.SetTransitSubnets(netConf)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(netConf.TransitSubnet).To(Equal("100.91.0.0/16,fd97:0:0:2::/64"))
 	})
