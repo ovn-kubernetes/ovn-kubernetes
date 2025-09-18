@@ -182,6 +182,15 @@ func getGatewayNFTRules(service *corev1.Service, localEndpoints []string, svcHas
 	return rules
 }
 
+// getGatewayNFTSets returns the names of all of the sets used by getGatewayNFTRules.
+func getGatewayNFTSets() []string {
+	return []string{
+		types.NFTMgmtPortNoSNATNodePorts,
+		types.NFTMgmtPortNoSNATServicesV4,
+		types.NFTMgmtPortNoSNATServicesV6,
+	}
+}
+
 // getUDNNFTRules generates nftables rules for a UDN service.
 // If netConfig is nil, the resulting map elements will have empty values,
 // suitable only for entry removal.
@@ -194,6 +203,15 @@ func getUDNNFTRules(service *corev1.Service, netConfig *bridgeconfig.BridgeUDNCo
 		rules = append(rules, getUDNExternalIPsMarkNFTRules(svcPort, util.GetExternalAndLBIPs(service), netConfig)...)
 	}
 	return rules
+}
+
+// getUDNNFTMaps returns the names of all of the maps used by getUDNNFTRules.
+func getUDNNFTMaps() []string {
+	return []string{
+		nftablesUDNMarkNodePortsMap,
+		nftablesUDNMarkExternalIPsV4Map,
+		nftablesUDNMarkExternalIPsV6Map,
+	}
 }
 
 // getLocalGatewayPodSubnetMasqueradeNFTRule creates a rule for masquerading traffic from the pod subnet CIDR

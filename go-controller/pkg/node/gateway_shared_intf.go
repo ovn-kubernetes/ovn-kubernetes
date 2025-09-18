@@ -1038,18 +1038,13 @@ func (npw *nodePortWatcher) SyncServices(services []interface{}) error {
 			errors = append(errors, err)
 		}
 
-		nftableManagementPortSets := []string{
-			types.NFTMgmtPortNoSNATNodePorts,
-			types.NFTMgmtPortNoSNATServicesV4,
-			types.NFTMgmtPortNoSNATServicesV6,
-		}
-		for _, set := range nftableManagementPortSets {
+		for _, set := range getGatewayNFTSets() {
 			if err = recreateNFTSet(set, keepNFTSetElems); err != nil {
 				errors = append(errors, err)
 			}
 		}
 		if util.IsNetworkSegmentationSupportEnabled() {
-			for _, nftMap := range []string{nftablesUDNMarkNodePortsMap, nftablesUDNMarkExternalIPsV4Map, nftablesUDNMarkExternalIPsV6Map} {
+			for _, nftMap := range getUDNNFTMaps() {
 				if err = recreateNFTMap(nftMap, keepNFTMapElems); err != nil {
 					errors = append(errors, err)
 				}
@@ -1378,12 +1373,7 @@ func (npwipt *nodePortWatcherIptables) SyncServices(services []interface{}) erro
 		}
 	}
 
-	nftableManagementPortSets := []string{
-		types.NFTMgmtPortNoSNATNodePorts,
-		types.NFTMgmtPortNoSNATServicesV4,
-		types.NFTMgmtPortNoSNATServicesV6,
-	}
-	for _, set := range nftableManagementPortSets {
+	for _, set := range getGatewayNFTSets() {
 		if err = recreateNFTSet(set, keepNFTElems); err != nil {
 			errors = append(errors, err)
 		}
