@@ -185,7 +185,10 @@ else
     # https://issues.redhat.com/browse/OCPBUGS-55028
     skip "e2e egress IP validation Cluster Default Network \[secondary-host-eip\]"
 
-    
+    # https://issues.redhat.com/browse/OCPBUGS-50636
+    skip "Services of type NodePort should listen on each host addresses"
+    skip "Services of type NodePort should work on secondary node interfaces for ETP=local and ETP=cluster when backend pods are also served by EgressIP"
+
     # https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5240
     skip "e2e control plane test node readiness according to its defaults interface MTU size should get node not ready with a too small MTU"
 
