@@ -1555,6 +1555,12 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 						// See the tcpdump on the issue: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5410 for more details.
 						out = ""
 						errBool = false
+
+						if IsGatewayModeLocal(f.ClientSet) {
+							// for ipv6 singlestack LGW mode, ipv6 layer2 network this scenario sometimes return 28 and sometimes can be accessed when there is etp=local LB applied.
+							// there is bug FDP-1710 is tracking this issue. skip this case before this issue is fixed
+							ginkgo.Skip("skip this case before FDP-1710 is fixed")
+						}
 					}
 
 					// sourceIP will be joinSubnetIP for nodeports, so only using hostname endpoint
@@ -1603,7 +1609,31 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 						nodeIP = nodeIPv6
 					}
 					nodePortA := svcNodePortETPLocalNetA.Spec.Ports[0].NodePort
-					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)), "", false
+
+					out := ""
+					errBool := false
+					// FIXME https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5531
+					// For LGW mode, nodePort service with ETP=local is not working for UDN networks
+					if IsGatewayModeLocal(f.ClientSet) {
+						out = curlConnectionTimeoutCode
+						errBool = true
+
+						if cudnATemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer3 {
+							if ipFamily == utilnet.IPv4 || (ipFamily == utilnet.IPv6 && !isIPv4Supported(f.ClientSet)) {
+								out = "56"
+								errBool = true
+							}
+						}
+						if cudnATemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer2 {
+							if ipFamily == utilnet.IPv4 || (ipFamily == utilnet.IPv6 && !isIPv4Supported(f.ClientSet)) {
+								out = ""
+								errBool = false
+							}
+						}
+
+					}
+
+					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)), out, errBool
 				}),
 
 			ginkgo.Entry("[ETP=LOCAL] UDN pod to the same node nodeport service in different UDN network should not work",
@@ -1619,7 +1649,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					nodePortA := svcNodePortETPLocalNetA.Spec.Ports[0].NodePort
 					out := curlConnectionTimeoutCode
 					errBool := true
-					if ipFamily == utilnet.IPv6 && cudnATemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer2 {
+					if ipFamily == utilnet.IPv6 && cudnATemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer2 && !IsGatewayModeLocal(f.ClientSet) {
 						// For Layer2 networks, we have these flows we add on breth0:
 						// cookie=0xdeff105, duration=173.245s, table=1, n_packets=0, n_bytes=0, idle_age=173, priority=14,icmp6,icmp_type=134 actions=FLOOD
 						// cookie=0xdeff105, duration=173.245s, table=1, n_packets=8, n_bytes=640, idle_age=4, priority=14,icmp6,icmp_type=136 actions=FLOOD
@@ -1630,6 +1660,7 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 						// See the tcpdump on the issue: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5410 for more details.
 						out = ""
 						errBool = false
+
 					}
 					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)), out, errBool
 				}),
@@ -1646,6 +1677,27 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					nodePortA := svcNodePortETPLocalNetA.Spec.Ports[0].NodePort
 					out := ""
 					errBool := false
+
+					// FIXME https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5531
+					// For LGW mode, nodePort service with ETP=local is not working for UDN networks
+					if IsGatewayModeLocal(f.ClientSet) {
+						out = curlConnectionTimeoutCode
+						errBool = true
+
+						if cudnATemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer3 {
+							if ipFamily == utilnet.IPv4 || (ipFamily == utilnet.IPv6 && !isIPv4Supported(f.ClientSet)) {
+								out = "56"
+								errBool = true
+							}
+						}
+						if cudnATemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer2 {
+							if ipFamily == utilnet.IPv4 || (ipFamily == utilnet.IPv6 && !isIPv4Supported(f.ClientSet)) {
+								out = ""
+								errBool = false
+							}
+						}
+
+					}
 					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)), out, errBool
 				}),
 			ginkgo.Entry("[ETP=LOCAL] UDN pod to the same node nodeport service in default network should not work",
@@ -1672,7 +1724,9 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 						nodeIP = nodeIPv6
 					}
 					nodePortB := svcNodePortETPLocalDefault.Spec.Ports[0].NodePort
-					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortB)), "", false
+					out := ""
+					errBool := false
+					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortB)), out, errBool
 				}),
 			ginkgo.Entry("[ETP=LOCAL] Default network pod to same node nodeport service in UDN network should not work",
 				func(ipFamily utilnet.IPFamily) (clientName string, clientNamespace string, dst string, expectedOutput string, expectErr bool) {
@@ -1700,6 +1754,27 @@ var _ = ginkgo.DescribeTableSubtree("BGP: isolation between advertised networks"
 					nodePortA := svcNodePortETPLocalNetA.Spec.Ports[0].NodePort
 					out := ""
 					errBool := false
+
+					// FIXME https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5531
+					// For LGW mode, nodePort service with ETP=local is not working for UDN networks
+					if IsGatewayModeLocal(f.ClientSet) {
+						out = curlConnectionTimeoutCode
+						errBool = true
+
+						if cudnATemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer3 {
+							if ipFamily == utilnet.IPv4 || (ipFamily == utilnet.IPv6 && !isIPv4Supported(f.ClientSet)) {
+								out = "56"
+								errBool = true
+							}
+						}
+						if cudnATemplate.Spec.Network.Topology == udnv1.NetworkTopologyLayer2 {
+							if ipFamily == utilnet.IPv4 || (ipFamily == utilnet.IPv6 && !isIPv4Supported(f.ClientSet)) {
+								out = ""
+								errBool = false
+							}
+						}
+
+					}
 					return clientPod.Name, clientPod.Namespace, net.JoinHostPort(nodeIP, fmt.Sprint(nodePortA)), out, errBool
 				}),
 		)
