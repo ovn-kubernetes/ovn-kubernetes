@@ -55,7 +55,9 @@ type NodeControllerManager struct {
 	// ovs client that allows to read ovs info
 	ovsClient client.Client
 	// podTracker tracks pods on different nodes + nads
-	podTracker networkmanager.PodTracker
+	podTracker networkmanager.TrackerController
+	// egressIPTracker tracks egress nodes mapping to nads
+	egressIPTracker networkmanager.TrackerController
 }
 
 // NewNetworkController create node user-defined network controllers for the given NetInfo
@@ -132,6 +134,9 @@ func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatch
 		}
 		if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
 			ncm.podTracker = networkmanager.NewPodTrackerController(wf, ncm.networkManager.Interface(), ncm.OnNetworkRefChange)
+			if config.OVNKubernetesFeature.EnableEgressIP {
+				ncm.egressIPTracker = networkmanager.NewEgressIPTrackerController(wf, ncm.networkManager.Interface(), ncm.OnNetworkRefChange)
+			}
 		}
 	}
 	if util.IsNetworkSegmentationSupportEnabled() {
@@ -202,6 +207,12 @@ func (ncm *NodeControllerManager) Start(ctx context.Context, isOVNKubeController
 	if ncm.podTracker != nil {
 		if err = ncm.podTracker.Start(); err != nil {
 			return fmt.Errorf("failed to start pod tracker: %w", err)
+		}
+	}
+
+	if ncm.egressIPTracker != nil {
+		if err = ncm.egressIPTracker.Start(); err != nil {
+			return fmt.Errorf("failed to start egress ip tracker: %w", err)
 		}
 	}
 
@@ -290,6 +301,11 @@ func (ncm *NodeControllerManager) Stop(isOVNKubeControllerSyncd *atomic.Bool) {
 	// stop pod tracker
 	if ncm.podTracker != nil {
 		ncm.podTracker.Stop()
+	}
+
+	// stop egressIP Tracker
+	if ncm.egressIPTracker != nil {
+		ncm.egressIPTracker.Stop()
 	}
 
 }
@@ -445,12 +461,9 @@ func (ncm *NodeControllerManager) Filter(nad *nettypes.NetworkAttachmentDefiniti
 		return false, nil
 	}
 
-	// Check if our node has any pods on this NAD
-	if ncm.podTracker.NodeHasPodsOnNAD(ourNode, util.GetNADName(nad.Namespace, nad.Name)) {
+	if ncm.NodeHasNAD(ourNode, util.GetNADName(nad.Namespace, nad.Name)) {
 		return false, nil
 	}
-
-	// TODO(trozet): Add checking egress IP
 
 	return true, nil
 }
@@ -460,4 +473,14 @@ func (ncm *NodeControllerManager) Filter(nad *nettypes.NetworkAttachmentDefiniti
 func (ncm *NodeControllerManager) OnNetworkRefChange(node, name string, active bool) {
 	klog.V(5).Infof("Network change for node controller triggered by pod/egress IP events on node: %s, NAD: %s, active: %t", name, node, active)
 	ncm.networkManager.Interface().Reconcile(name)
+}
+
+func (ncm *NodeControllerManager) NodeHasNAD(node, nad string) bool {
+	if ncm.podTracker != nil && ncm.podTracker.NodeHasNAD(node, nad) {
+		return true
+	}
+	if ncm.egressIPTracker != nil && ncm.egressIPTracker.NodeHasNAD(node, nad) {
+		return true
+	}
+	return false
 }

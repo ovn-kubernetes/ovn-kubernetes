@@ -69,7 +69,8 @@ type ControllerManager struct {
 	// eIPController programs OVN to support EgressIP
 	eIPController *ovn.EgressIPController
 
-	podTracker networkmanager.PodTracker
+	podTracker      networkmanager.TrackerController
+	egressIPTracker networkmanager.TrackerController
 }
 
 func (cm *ControllerManager) NewNetworkController(nInfo util.NetInfo) (networkmanager.NetworkController, error) {
@@ -275,6 +276,9 @@ func NewControllerManager(ovnClient *util.OVNClientset, wf *factory.WatchFactory
 
 	if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
 		cm.podTracker = networkmanager.NewPodTrackerController(wf, cm.networkManager.Interface(), cm.OnNetworkRefChange)
+		if config.OVNKubernetesFeature.EnableEgressIP {
+			cm.egressIPTracker = networkmanager.NewEgressIPTrackerController(wf, cm.networkManager.Interface(), cm.OnNetworkRefChange)
+		}
 	}
 
 	return cm, nil
@@ -501,6 +505,12 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 		}
 	}
 
+	if cm.egressIPTracker != nil {
+		if err = cm.egressIPTracker.Start(); err != nil {
+			return fmt.Errorf("failed to start egress ip tracker: %w", err)
+		}
+	}
+
 	if cm.networkManager != nil {
 		if err = cm.networkManager.Start(); err != nil {
 			return fmt.Errorf("failed to start NAD Controller :%v", err)
@@ -542,6 +552,11 @@ func (cm *ControllerManager) Stop() {
 		cm.podTracker.Stop()
 	}
 
+	// stop egressIP tracker
+	if cm.egressIPTracker != nil {
+		cm.egressIPTracker.Stop()
+	}
+
 	if cm.routeImportManager != nil {
 		cm.routeImportManager.Stop()
 	}
@@ -575,12 +590,9 @@ func (cm *ControllerManager) Filter(nad *nettypes.NetworkAttachmentDefinition) (
 		return false, nil
 	}
 
-	// Check if our node has any pods on this NAD
-	if cm.podTracker.NodeHasPodsOnNAD(ourNode, util.GetNADName(nad.Namespace, nad.Name)) {
+	if cm.NodeHasNAD(ourNode, util.GetNADName(nad.Namespace, nad.Name)) {
 		return false, nil
 	}
-
-	// TODO(trozet): Add checking egress IP
 
 	return true, nil
 }
@@ -590,4 +602,14 @@ func (cm *ControllerManager) Filter(nad *nettypes.NetworkAttachmentDefinition) (
 func (cm *ControllerManager) OnNetworkRefChange(node, name string, active bool) {
 	klog.V(5).Infof("Network change triggered by pod/egress IP events on node: %s, NAD: %s, active: %t", name, node, active)
 	cm.networkManager.Interface().Reconcile(name)
+}
+
+func (cm *ControllerManager) NodeHasNAD(node, nad string) bool {
+	if cm.podTracker != nil && cm.podTracker.NodeHasNAD(node, nad) {
+		return true
+	}
+	if cm.egressIPTracker != nil && cm.egressIPTracker.NodeHasNAD(node, nad) {
+		return true
+	}
+	return false
 }

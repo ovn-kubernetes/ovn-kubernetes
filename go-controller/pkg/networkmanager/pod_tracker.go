@@ -65,7 +65,7 @@ func (c *PodTrackerController) Stop() {
 	controller.Stop(c.podController)
 }
 
-func (c *PodTrackerController) NodeHasPodsOnNAD(node, nad string) bool {
+func (c *PodTrackerController) NodeHasNAD(node, nad string) bool {
 	c.Lock()
 	defer c.Unlock()
 	if _, ok := c.cache[node]; !ok {
