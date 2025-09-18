@@ -688,6 +688,9 @@ set_default_params() {
     echo "No-overlay mode requires advertise the default network (-adv)"
     exit 1
   fi
+  if [ "$ENABLE_NO_OVERLAY" == true ] && [ -z "$OVN_MTU" ]; then
+    OVN_MTU=1500
+  fi
   OVN_COMPACT_MODE=${OVN_COMPACT_MODE:-false}
   if [ "$OVN_COMPACT_MODE" == true ]; then
     KIND_NUM_WORKER=0
