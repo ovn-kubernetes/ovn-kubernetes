@@ -108,6 +108,18 @@ func (t *EgressIPTrackerController) Stop() {
 	controller.Stop(t.eipController, t.nsController, t.nadController)
 }
 
+func (t *EgressIPTrackerController) NodeHasNAD(node, nad string) bool {
+	t.Lock()
+	defer t.Unlock()
+	if _, ok := t.cache[node]; !ok {
+		return false
+	}
+	if _, ok := t.cache[node][nad]; !ok {
+		return false
+	}
+	return len(t.cache[node][nad]) > 0
+}
+
 func (t *EgressIPTrackerController) nadNeedsUpdate(oldObj, _ *nettypes.NetworkAttachmentDefinition) bool {
 	return oldObj == nil
 }

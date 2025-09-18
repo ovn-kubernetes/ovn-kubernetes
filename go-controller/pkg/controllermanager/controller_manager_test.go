@@ -13,27 +13,27 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
-type fakePodTracker struct {
+type fakeTracker struct {
 	active map[string]bool
 }
 
-func newFakePodTracker() *fakePodTracker {
-	return &fakePodTracker{active: make(map[string]bool)}
+func newFakeTracker() *fakeTracker {
+	return &fakeTracker{active: make(map[string]bool)}
 }
 
-func (f *fakePodTracker) NodeHasPodsOnNAD(node, nad string) bool {
+func (f *fakeTracker) NodeHasNAD(node, nad string) bool {
 	return f.active[node+"/"+nad]
 }
 
-func (f *fakePodTracker) setActive(node, nad string, hasPods bool) {
+func (f *fakeTracker) setActive(node, nad string, hasPods bool) {
 	f.active[node+"/"+nad] = hasPods
 }
 
-func (f *fakePodTracker) Start() error {
+func (f *fakeTracker) Start() error {
 	return nil
 }
 
-func (f *fakePodTracker) Stop() {}
+func (f *fakeTracker) Stop() {}
 
 func newTestNAD(ns, name, ownerKind string) *nettypes.NetworkAttachmentDefinition {
 	nad := &nettypes.NetworkAttachmentDefinition{
@@ -62,12 +62,15 @@ func TestControllerManager_FilterAndOnNetworkRefChange(t *testing.T) {
 		Reconciled:      make([]string, 0),
 	}
 
-	pt := newFakePodTracker()
+	pt := newFakeTracker()
 	pt.setActive("test-node", "ns1/nad1", true)
+	et := newFakeTracker()
+	et.setActive("test-egress-node", "ns3/nad3", true)
 
 	cm := &ControllerManager{
-		networkManager: fakeNM,
-		podTracker:     pt,
+		networkManager:  fakeNM,
+		podTracker:      pt,
+		egressIPTracker: et,
 	}
 
 	tests := []struct {
@@ -92,6 +95,11 @@ func TestControllerManager_FilterAndOnNetworkRefChange(t *testing.T) {
 		},
 		{
 			name:           "NAD with UDN ownerRef and pod using it is NOT filtered",
+			nad:            newTestNAD("ns1", "nad1", "UserDefinedNetwork"),
+			expectFiltered: false,
+		},
+		{
+			name:           "NAD with UDN ownerRef and egress IP using it is NOT filtered",
 			nad:            newTestNAD("ns1", "nad1", "UserDefinedNetwork"),
 			expectFiltered: false,
 		},

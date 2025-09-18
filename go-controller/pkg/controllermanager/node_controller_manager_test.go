@@ -287,7 +287,8 @@ var _ = Describe("Healthcheck tests", func() {
 var _ = Describe("NodeControllerManager NetworkRef filtering", func() {
 	var ncm *NodeControllerManager
 	var fakeNM *networkmanager.FakeNetworkManager
-	var fakePT *fakePodTracker
+	var fakePT *fakeTracker
+	var fakeET *fakeTracker
 	nodeName := "test-node"
 
 	BeforeEach(func() {
@@ -299,14 +300,17 @@ var _ = Describe("NodeControllerManager NetworkRef filtering", func() {
 			Reconciled:      []string{},
 		}
 
-		fakePT = newFakePodTracker()
+		fakePT = newFakeTracker()
 		fakePT.setActive(nodeName, "ns1/nad1", true)
+		fakeET = newFakeTracker()
+		fakeET.setActive(nodeName, "ns3/nad3", true)
 
 		// Inject fake networkManager and podTracker
 		ncm = &NodeControllerManager{
-			networkManager: fakeNM,
-			podTracker:     fakePT,
-			name:           nodeName,
+			networkManager:  fakeNM,
+			podTracker:      fakePT,
+			egressIPTracker: fakeET,
+			name:            nodeName,
 		}
 	})
 
@@ -334,6 +338,11 @@ var _ = Describe("NodeControllerManager NetworkRef filtering", func() {
 			{
 				name:           "NAD with UDN ownerRef and pod using it is NOT filtered",
 				nad:            newTestNAD("ns1", "nad1", "UserDefinedNetwork"),
+				expectFiltered: false,
+			},
+			{
+				name:           "NAD with UDN ownerRef and egressIP node using it is NOT filtered",
+				nad:            newTestNAD("ns3", "nad3", "UserDefinedNetwork"),
 				expectFiltered: false,
 			},
 		}

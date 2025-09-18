@@ -77,10 +77,15 @@ type Controller interface {
 	Stop()
 }
 
-// PodTracker is the minimal interface ControllerManager needs.
-type PodTracker interface {
-	// NodeHasPodsOnNAD returns true if the given node has at least one pod using the NAD.
-	NodeHasPodsOnNAD(node, nad string) bool
+// Tracker informs on if a Node has a NAD active on it
+type Tracker interface {
+	// NodeHasNAD returns true if the given node has at least one pod using the NAD.
+	NodeHasNAD(node, nad string) bool
+}
+
+// TrackerController is the minimal interface ControllerManager needs.
+type TrackerController interface {
+	Tracker
 	Start() error
 	Stop()
 }
