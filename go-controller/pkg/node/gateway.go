@@ -10,6 +10,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
@@ -216,6 +217,17 @@ func (g *gateway) UpdateEndpointSlice(oldEpSlice, newEpSlice *discovery.Endpoint
 func (g *gateway) DeleteEndpointSlice(epSlice *discovery.EndpointSlice) error {
 	var err error
 	var errors []error
+
+	// Check if the namespace still exists before proceeding
+	_, err = g.watchFactory.GetNamespace(epSlice.Namespace)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			klog.V(5).Infof("Namespace %s not found, skipping endpointslice %s deletion (namespace was deleted)", epSlice.Namespace, epSlice.Name)
+			return nil // Return success to skip retry
+		}
+		// For other errors, continue with the deletion process
+		klog.Warningf("Failed to check namespace %s existence: %v, continuing with endpointslice deletion", epSlice.Namespace, err)
+	}
 
 	if g.loadBalancerHealthChecker != nil {
 		// Filter out objects without the default serviceName label to exclude mirrored EndpointSlices

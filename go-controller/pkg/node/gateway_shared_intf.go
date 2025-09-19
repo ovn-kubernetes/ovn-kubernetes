@@ -1169,6 +1169,17 @@ func (npw *nodePortWatcher) DeleteEndpointSlice(epSlice *discovery.EndpointSlice
 	var errors []error
 	var hasLocalHostNetworkEp = false
 
+	// Check if the namespace still exists before proceeding
+	_, err = npw.watchFactory.GetNamespace(epSlice.Namespace)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			klog.V(5).Infof("Namespace %s not found, skipping endpointslice %s deletion (namespace was deleted)", epSlice.Namespace, epSlice.Name)
+			return nil // Return success to skip retry
+		}
+		// For other errors, continue with the deletion process
+		klog.Warningf("Failed to check namespace %s existence: %v, continuing with endpointslice deletion", epSlice.Namespace, err)
+	}
+
 	networkName := types.DefaultNetworkName
 	if util.IsNetworkSegmentationSupportEnabled() {
 		if netName, ok := epSlice.Annotations[types.UserDefinedNetworkEndpointSliceAnnotation]; ok {
