@@ -74,11 +74,7 @@ func NewCNIServer(
 		Server: http.Server{
 			Handler: router,
 		},
-		clientSet: &ClientSet{
-			nadLister: nadLister,
-			podLister: corev1listers.NewPodLister(factory.LocalPodInformer().GetIndexer()),
-			kclient:   kclient,
-		},
+		clientSet: NewClientSet(kclient, corev1listers.NewPodLister(factory.LocalPodInformer().GetIndexer()), nadLister),
 		kubeAuth: &KubeAPIAuth{
 			Kubeconfig:       config.Kubernetes.Kubeconfig,
 			KubeAPIServer:    config.Kubernetes.APIServer,
