@@ -382,7 +382,7 @@ func (oc *DefaultNetworkController) syncNodes(kNodes []interface{}) error {
 		return fmt.Errorf("failed to sync chassis: error: %v", err)
 	}
 
-	if config.OVNKubernetesFeature.EnableInterconnect {
+	if config.OVNKubernetesFeature.EnableInterconnect && config.Default.DefaultNetworkEncapsulation != config.NetworkEncapsulationNone {
 		if err := oc.zoneChassisHandler.SyncNodes(kNodes); err != nil {
 			return fmt.Errorf("zoneChassisHandler failed to sync nodes: error: %w", err)
 		}
@@ -637,7 +637,7 @@ func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(node *corev1.Node, n
 		}
 	}
 
-	if nSyncs.syncZoneIC && config.OVNKubernetesFeature.EnableInterconnect {
+	if nSyncs.syncZoneIC && config.OVNKubernetesFeature.EnableInterconnect && config.Default.DefaultNetworkEncapsulation != config.NetworkEncapsulationNone {
 		// Call zone chassis handler's AddLocalZoneNode function to mark
 		// this node's chassis record in Southbound db as a local zone chassis.
 		// This is required when a node moves from a remote zone to local zone
