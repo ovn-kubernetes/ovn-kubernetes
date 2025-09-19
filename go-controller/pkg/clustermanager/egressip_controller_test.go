@@ -3453,6 +3453,50 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				egressIPs, nodes := getEgressIPStatus(egressIPName)
 				gomega.Expect(nodes).To(gomega.ConsistOf(egressNode1.name, egressNode2.name))
 				gomega.Expect(egressIPs).To(gomega.ConsistOf(eIP.Status.Items[0].EgressIP, eIP.Status.Items[1].EgressIP))
+				// give some time for event handler to be added and finish processing initial updates
+				time.Sleep(3 * time.Second)
+				realEIP, err := fakeClusterManagerOVN.fakeClient.EgressIPClient.K8sV1().EgressIPs().Get(context.TODO(), egressIPName, metav1.GetOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				ginkgo.By("Simulate lagging informer and send an event with outdated status")
+				eIP.Annotations = make(map[string]string)
+				for k, v := range realEIP.Annotations {
+					eIP.Annotations[k] = v
+				}
+				eIP.Status = egressipv1.EgressIPStatus{
+					Items: []egressipv1.EgressIPStatusItem{
+						{
+							EgressIP: egressIP2,
+							Node:     egressNode1.name,
+						},
+						{
+							EgressIP: egressIP1,
+							Node:     egressNode1.name,
+						},
+					},
+				}
+				_, err = fakeClusterManagerOVN.fakeClient.EgressIPClient.K8sV1().EgressIPs().Update(context.TODO(), &eIP, metav1.UpdateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				// give sometime for events to be processed
+				time.Sleep(3 * time.Second)
+				ginkgo.By("Simulate lagging informer and send an event with real updated status")
+				_, err = fakeClusterManagerOVN.fakeClient.EgressIPClient.K8sV1().EgressIPs().Update(context.TODO(), realEIP, metav1.UpdateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				// give sometime for events to be processed
+				time.Sleep(3 * time.Second)
+				gomega.Eventually(func() error {
+					defer ginkgo.GinkgoRecover()
+					tmp, err := fakeClusterManagerOVN.fakeClient.EgressIPClient.K8sV1().EgressIPs().Get(context.TODO(), egressIPName, metav1.GetOptions{})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					var egressIPs, nodes []string
+					for _, status := range tmp.Status.Items {
+						egressIPs = append(egressIPs, status.EgressIP)
+						nodes = append(nodes, status.Node)
+					}
+					gomega.Expect(nodes).To(gomega.ConsistOf(egressNode1.name, egressNode2.name))
+					gomega.Expect(egressIPs).To(gomega.ConsistOf(eIP.Status.Items[0].EgressIP, eIP.Status.Items[1].EgressIP))
+					return nil
+				}).Should(gomega.Succeed())
+
 				return nil
 			}
 
