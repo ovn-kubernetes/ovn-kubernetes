@@ -593,8 +593,8 @@ set_default_params() {
   JOIN_SUBNET_IPV6=${JOIN_SUBNET_IPV6:-fd98::/64}
   MASQUERADE_SUBNET_IPV4=${MASQUERADE_SUBNET_IPV4:-169.254.0.0/17}
   MASQUERADE_SUBNET_IPV6=${MASQUERADE_SUBNET_IPV6:-fd69::/112}
-  TRANSIT_SWITCH_SUBNET_IPV4=${TRANSIT_SWITCH_SUBNET_IPV4:-100.88.0.0/16}
-  TRANSIT_SWITCH_SUBNET_IPV6=${TRANSIT_SWITCH_SUBNET_IPV6:-fd97::/64}
+  TRANSIT_SUBNET_IPV4=${TRANSIT_SUBNET_IPV4:-100.88.0.0/16}
+  TRANSIT_SUBNET_IPV6=${TRANSIT_SUBNET_IPV6:-fd97::/64}
   METALLB_CLIENT_NET_SUBNET_IPV4=${METALLB_CLIENT_NET_SUBNET_IPV4:-172.22.0.0/16}
   METALLB_CLIENT_NET_SUBNET_IPV6=${METALLB_CLIENT_NET_SUBNET_IPV6:-fc00:f853:ccd:e792::/64}
   BGP_SERVER_NET_SUBNET_IPV4=${BGP_SERVER_NET_SUBNET_IPV4:-172.26.0.0/16}
@@ -631,7 +631,7 @@ set_default_params() {
   OVN_HOST_NETWORK_NAMESPACE=${OVN_HOST_NETWORK_NAMESPACE:-ovn-host-network}
   OVN_EGRESSIP_HEALTHCHECK_PORT=${OVN_EGRESSIP_HEALTHCHECK_PORT:-9107}
   OCI_BIN=${KIND_EXPERIMENTAL_PROVIDER:-docker}
-  OVN_DEPLOY_PODS=${OVN_DEPLOY_PODS:-"ovnkube-zone-controller ovnkube-control-plane ovnkube-master ovnkube-node"}
+  OVN_DEPLOY_PODS=${OVN_DEPLOY_PODS:-"ovnkube-identity ovnkube-zone-controller ovnkube-control-plane ovnkube-master ovnkube-node"}
   OVN_METRICS_SCALE_ENABLE=${OVN_METRICS_SCALE_ENABLE:-false}
   OVN_ISOLATED=${OVN_ISOLATED:-false}
   OVN_GATEWAY_OPTS=${OVN_GATEWAY_OPTS:-""}
@@ -914,8 +914,8 @@ create_ovn_kube_manifests() {
     --v6-join-subnet="${JOIN_SUBNET_IPV6}" \
     --v4-masquerade-subnet="${MASQUERADE_SUBNET_IPV4}" \
     --v6-masquerade-subnet="${MASQUERADE_SUBNET_IPV6}" \
-    --v4-transit-switch-subnet="${TRANSIT_SWITCH_SUBNET_IPV4}" \
-    --v6-transit-switch-subnet="${TRANSIT_SWITCH_SUBNET_IPV6}" \
+    --v4-transit-subnet="${TRANSIT_SUBNET_IPV4}" \
+    --v6-transit-subnet="${TRANSIT_SUBNET_IPV6}" \
     --ex-gw-network-interface="${OVN_EX_GW_NETWORK_INTERFACE}" \
     --multi-network-enable="${ENABLE_MULTI_NET}" \
     --network-segmentation-enable="${ENABLE_NETWORK_SEGMENTATION}" \
