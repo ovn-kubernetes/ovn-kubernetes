@@ -118,7 +118,7 @@ func TestPodTrackerControllerWithInformerAndDelete(t *testing.T) {
 			}
 
 			// Create PodTrackerController with dummy callback
-			ptc := NewPodTrackerController(wf, fakeNM, func(node, nad string, active bool) {
+			ptc := NewPodTrackerController("test-pod-tracker", wf, fakeNM, func(node, nad string, active bool) {
 				events = append(events, callbackEvent{node, nad, active})
 			})
 
@@ -234,7 +234,7 @@ func TestPodTrackerControllerSyncAll(t *testing.T) {
 	}
 
 	// Create PodTrackerController
-	ptc := NewPodTrackerController(wf, fakeNM, func(node, nad string, active bool) {
+	ptc := NewPodTrackerController("test-pod-tracker", wf, fakeNM, func(node, nad string, active bool) {
 		events = append(events, struct {
 			node   string
 			nad    string

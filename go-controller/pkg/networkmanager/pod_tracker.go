@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sync"
 
+	nadv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
@@ -13,6 +15,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -23,6 +26,7 @@ type nodeNAD struct {
 
 type PodTrackerController struct {
 	sync.Mutex
+	name string
 	// cache holds a mapping of node -> NAD namespaced name -> pod namespaced name
 	cache map[string]map[string]map[string]struct{}
 	// reverse index: pod key -> (node, NAD)
@@ -34,8 +38,9 @@ type PodTrackerController struct {
 	networkManger      Interface
 }
 
-func NewPodTrackerController(wf watchFactory, nm Interface, onNetworkRefChange func(node, nad string, active bool)) *PodTrackerController {
+func NewPodTrackerController(name string, wf watchFactory, nm Interface, onNetworkRefChange func(node, nad string, active bool)) *PodTrackerController {
 	p := &PodTrackerController{
+		name:               name,
 		cache:              make(map[string]map[string]map[string]struct{}),
 		reverse:            make(map[string]nodeNAD),
 		onNetworkRefChange: onNetworkRefChange,
@@ -47,21 +52,22 @@ func NewPodTrackerController(wf watchFactory, nm Interface, onNetworkRefChange f
 		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
 		Reconcile:      p.reconcile,
 		ObjNeedsUpdate: p.needUpdate,
+		MaxAttempts:    controller.InfiniteAttempts,
 		Threadiness:    1,
 		Informer:       wf.PodCoreInformer().Informer(),
 		Lister:         wf.PodCoreInformer().Lister().List,
 	}
-	p.podController = controller.NewController[corev1.Pod]("pod-tracker", cfg)
+	p.podController = controller.NewController[corev1.Pod](p.name, cfg)
 	return p
 }
 
 func (c *PodTrackerController) Start() error {
-	klog.Infof("Starting pod tracker controller")
+	klog.Infof("Starting %s controller", c.name)
 	return controller.StartWithInitialSync(c.syncAll, c.podController)
 }
 
 func (c *PodTrackerController) Stop() {
-	klog.Infof("Stopping pod tracker controller")
+	klog.Infof("Stopping %s controller", c.name)
 	controller.Stop(c.podController)
 }
 
@@ -82,12 +88,12 @@ func (c *PodTrackerController) getNADsForPod(pod *corev1.Pod) ([]string, error) 
 	var nadList []string
 
 	// Primary NAD from namespace
-	primaryNetwork, err := c.networkManger.GetActiveNetworkForNamespace(pod.Namespace)
+	primaryNAD, err := c.networkManger.GetPrimaryNADForNamespace(pod.Namespace)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get primary network for ns %q: %v", pod.Namespace, err)
+		return nil, fmt.Errorf("error getting primary NAD for pod %s/%s: %w", pod.Namespace, pod.Name, err)
 	}
-	if !primaryNetwork.IsDefault() {
-		nadList = append(nadList, primaryNetwork.GetNADs()...)
+	if len(primaryNAD) > 0 && primaryNAD != types.DefaultNetworkName {
+		nadList = append(nadList, primaryNAD)
 	}
 
 	// Secondary NADs from pod annotation
@@ -103,12 +109,14 @@ func (c *PodTrackerController) getNADsForPod(pod *corev1.Pod) ([]string, error) 
 		nadList = append(nadList, fmt.Sprintf("%s/%s", ns, net.Name))
 	}
 
+	klog.V(5).Infof("%s - tracked NADS for pod %q: %#v", c.name, pod.Name, nadList)
+
 	return nadList, nil
 }
 
 // syncAll builds the cache on initial controller start
 func (c *PodTrackerController) syncAll() error {
-	klog.Infof("PodTrackerController: warming up cache with existing pods")
+	klog.Infof("%s: warming up cache with existing pods", c.name)
 
 	pods, err := c.podLister.List(labels.Everything())
 	if err != nil {
@@ -128,18 +136,39 @@ func (c *PodTrackerController) syncAll() error {
 		c.addPodToCache(pod, pod.Spec.NodeName, nadList)
 	}
 
-	klog.Infof("PodTrackerController: cache warmup complete with %d pods", len(pods))
+	klog.Infof("%s: cache warmup complete with %d pods", c.name, len(pods))
 	return nil
 }
 
 // needUpdate return true when the pod has been deleted or created.
-func (c *PodTrackerController) needUpdate(old, _ *corev1.Pod) bool {
-	return old == nil
+func (c *PodTrackerController) needUpdate(old, new *corev1.Pod) bool {
+	if new != nil && util.PodWantsHostNetwork(new) {
+		return false
+	}
+
+	if old == nil {
+		return true
+	}
+
+	if new == nil {
+		// needsUpdate is only for Add/Update
+		return false
+	}
+
+	// If the node assignment changed (including unscheduled -> scheduled), reconcile.
+	if old.Spec.NodeName != new.Spec.NodeName {
+		return true
+	}
+
+	// If the network attachment annotations changed, reconcile.
+	oldAnno := old.Annotations[nadv1.NetworkAttachmentAnnot]
+	newAnno := new.Annotations[nadv1.NetworkAttachmentAnnot]
+	return oldAnno != newAnno
 }
 
 // reconcile notify subscribers with the request namespace key following namespace events.
 func (c *PodTrackerController) reconcile(key string) error {
-	klog.V(5).Infof("PodTrackerController reconcile called for pod %s", key)
+	klog.V(5).Infof("%s reconcile called for pod %s", c.name, key)
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
 		return fmt.Errorf("failed to split meta namespace key %q: %v", key, err)
@@ -162,7 +191,10 @@ func (c *PodTrackerController) reconcile(key string) error {
 	}
 
 	nadList, err := c.getNADsForPod(pod)
-	if err != nil || len(nadList) == 0 {
+	if err != nil {
+		return err
+	}
+	if len(nadList) == 0 {
 		c.deletePodFromCache(key)
 		return nil
 	}
@@ -176,7 +208,7 @@ func (c *PodTrackerController) reconcile(key string) error {
 func (c *PodTrackerController) addPodToCache(pod *corev1.Pod, node string, nads []string) {
 	c.Lock()
 	defer c.Unlock()
-	klog.V(5).Infof("podTracker - addPodToCache for pod %s/%s, node: %s, nads: %#v", pod.Namespace, pod.Name, node, nads)
+	klog.V(5).Infof("%s - addPodToCache for pod %s/%s, node: %s, nads: %#v", c.name, pod.Namespace, pod.Name, node, nads)
 
 	key := fmt.Sprintf("%s/%s", pod.Namespace, pod.Name)
 
@@ -203,6 +235,7 @@ func (c *PodTrackerController) addPodToCache(pod *corev1.Pod, node string, nads 
 }
 
 func (c *PodTrackerController) deletePodFromCache(key string) {
+	klog.V(5).Infof("%s - deletePodFromCache for pod %s", c.name, key)
 	c.Lock()
 	defer c.Unlock()
 	c.deletePodFromCacheLocked(key)

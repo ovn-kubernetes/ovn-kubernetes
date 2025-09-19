@@ -54,6 +54,11 @@ type Interface interface {
 	// use GetActiveNetworkForNamespace.
 	GetActiveNetworkForNamespaceFast(namespace string) util.NetInfo
 
+	// GetPrimaryNADForNamespace returns the full namespaced key of the
+	// primary NAD for the given namespace, if one exists.
+	// Returns default network if namespace has no primary UDN.
+	GetPrimaryNADForNamespace(namespace string) (string, error)
+
 	// GetNetwork returns the network of the given name or nil if unknown
 	GetNetwork(name string) util.NetInfo
 
@@ -226,6 +231,10 @@ func (nm defaultNetworkManager) Stop() {}
 
 func (nm defaultNetworkManager) GetActiveNetworkForNamespace(string) (util.NetInfo, error) {
 	return &util.DefaultNetInfo{}, nil
+}
+
+func (nm defaultNetworkManager) GetPrimaryNADForNamespace(_ string) (string, error) {
+	return types.DefaultNetworkName, nil
 }
 
 func (nm defaultNetworkManager) GetActiveNetworkForNamespaceFast(string) util.NetInfo {

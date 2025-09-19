@@ -133,7 +133,7 @@ func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatch
 			return nil, err
 		}
 		if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
-			ncm.podTracker = networkmanager.NewPodTrackerController(wf, ncm.networkManager.Interface(), ncm.OnNetworkRefChange)
+			ncm.podTracker = networkmanager.NewPodTrackerController("node-pod-tracker", wf, ncm.networkManager.Interface(), ncm.OnNetworkRefChange)
 			if config.OVNKubernetesFeature.EnableEgressIP {
 				ncm.egressIPTracker = networkmanager.NewEgressIPTrackerController(wf, ncm.networkManager.Interface(), ncm.OnNetworkRefChange)
 			}
@@ -471,7 +471,8 @@ func (ncm *NodeControllerManager) Filter(nad *nettypes.NetworkAttachmentDefiniti
 // OnNetworkRefChange is a callback function used to signal an action to this controller when
 // a network needs to be added or removed or just updated
 func (ncm *NodeControllerManager) OnNetworkRefChange(node, name string, active bool) {
-	klog.V(5).Infof("Network change for node controller triggered by pod/egress IP events on node: %s, NAD: %s, active: %t", name, node, active)
+	klog.V(5).Infof("Network change for node controller triggered by pod/egress IP events on node: %s ,"+
+		"NAD: %s, active: %t", node, name, active)
 	ncm.networkManager.Interface().Reconcile(name)
 }
 
