@@ -187,6 +187,10 @@ type BaseNetworkController struct {
 
 	// Controller used for programming OVN for Network QoS
 	nqosController *nqoscontroller.Controller
+
+	// Tracker used to track nodes with active NADs on them
+	// Used by Dynamic UDN allocation
+	nodeNADTracker networkmanager.Tracker
 }
 
 func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed func(string)) error {
