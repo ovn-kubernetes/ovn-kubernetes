@@ -183,15 +183,28 @@ func computeProbability(n, i int) string {
 	return fmt.Sprintf("%0.10f", 1.0/float64(n-i+1))
 }
 
-func generateIPTRulesForLoadBalancersWithoutNodePorts(svcPort corev1.ServicePort, externalIP string, localEndpoints []string) []nodeipt.Rule {
+func generateIPTRulesForLoadBalancersWithoutNodePorts(svcPort corev1.ServicePort, externalIP string, localEndpoints util.PortToLBEndpoints) []nodeipt.Rule {
 	iptRules := make([]nodeipt.Rule, 0, len(localEndpoints))
 	if len(localEndpoints) == 0 {
 		// either its smart nic mode; etp&itp not implemented, OR
 		// fetching endpointSlices error-ed out prior to reaching here so nothing to do
 		return iptRules
 	}
-	numLocalEndpoints := len(localEndpoints)
-	for i, ip := range localEndpoints {
+
+	// Get the endpoints for the port key.
+	// svcPortKey is of format e.g. "tcp/my-port-name" or "tcp/" if name is empty
+	// (is the case when only a single ServicePort is defined on this service).
+	svcPortKey := util.GetServicePortKey(svcPort.Protocol, svcPort.Name)
+	lbEndpoints := localEndpoints[svcPortKey]
+
+	// Get IPv4 or IPv6 IPs, depending on the type of the service's external IP.
+	destinations := lbEndpoints.GetV4Destinations()
+	if utilnet.IsIPv6String(externalIP) {
+		destinations = lbEndpoints.GetV6Destinations()
+	}
+
+	numLocalEndpoints := len(destinations)
+	for i, destination := range destinations {
 		iptRules = append([]nodeipt.Rule{
 			{
 				Table: "nat",
@@ -201,7 +214,7 @@ func generateIPTRulesForLoadBalancersWithoutNodePorts(svcPort corev1.ServicePort
 					"-d", externalIP,
 					"--dport", fmt.Sprintf("%v", svcPort.Port),
 					"-j", "DNAT",
-					"--to-destination", util.JoinHostPortInt32(ip, int32(svcPort.TargetPort.IntValue())),
+					"--to-destination", util.JoinHostPortInt32(destination.IP, destination.Port),
 					"-m", "statistic",
 					"--mode", "random",
 					"--probability", computeProbability(numLocalEndpoints, i+1),
@@ -476,7 +489,7 @@ func recreateIPTRules(table, chain string, keepIPTRules []nodeipt.Rule) error {
 // case3: if svcHasLocalHostNetEndPnt and svcTypeIsITPLocal, rule that redirects clusterIP traffic to host targetPort is added.
 //
 //	if !svcHasLocalHostNetEndPnt and svcTypeIsITPLocal, rule that marks clusterIP traffic to steer it to ovn-k8s-mp0 is added.
-func getGatewayIPTRules(service *corev1.Service, localEndpoints []string, svcHasLocalHostNetEndPnt bool) []nodeipt.Rule {
+func getGatewayIPTRules(service *corev1.Service, localEndpoints util.PortToLBEndpoints, svcHasLocalHostNetEndPnt bool) []nodeipt.Rule {
 	rules := make([]nodeipt.Rule, 0)
 	clusterIPs := util.GetClusterIPs(service)
 	svcTypeIsETPLocal := util.ServiceExternalTrafficPolicyLocal(service)
