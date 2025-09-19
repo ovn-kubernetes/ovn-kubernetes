@@ -377,7 +377,7 @@ func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefin
 			if !filtered {
 				c.networkController.EnsureNetwork(oldNetwork)
 			} else {
-				klog.V(5).Infof("Network is filtered and will not be rendered: %s", oldNetwork)
+				klog.V(4).Infof("Network is filtered and will not be rendered: %s", oldNetwork)
 			}
 		}
 	}
@@ -429,6 +429,8 @@ func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefin
 	if !filtered {
 		// reconcile the network
 		c.networkController.EnsureNetwork(ensureNetwork)
+	} else {
+		klog.V(4).Infof("Network is filtered and will not be rendered: %s", ensureNetwork.GetNetworkName())
 	}
 	return nil
 }
@@ -525,6 +527,35 @@ func (c *nadController) GetActiveNetworkForNamespace(namespace string) (util.Net
 func (c *nadController) GetActiveNetworkForNamespaceFast(namespace string) util.NetInfo {
 	network, _ := c.getActiveNetworkForNamespace(namespace)
 	return network
+}
+
+// GetPrimaryNADForNamespace returns the full namespaced key of the
+// primary NAD for the given namespace, if one exists.
+// Returns default network if namespace has no primary UDN
+func (c *nadController) GetPrimaryNADForNamespace(namespace string) (string, error) {
+	c.RLock()
+	primary := c.primaryNADs[namespace]
+	c.RUnlock()
+	if primary != "" {
+		return primary, nil
+	}
+
+	// Double-check if the namespace *requires* a primary UDN.
+	ns, err := c.namespaceLister.Get(namespace)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			// Namespace is gone — no primary NAD by definition.
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to fetch namespace %q: %w", namespace, err)
+	}
+	if _, exists := ns.Labels[types.RequiredUDNNamespaceLabel]; exists {
+		// Namespace promises a primary UDN, but we haven't cached one yet.
+		return "", util.NewUnprocessedActiveNetworkError(namespace, "")
+	}
+
+	// No required label: means default network only.
+	return types.DefaultNetworkName, nil
 }
 
 func (c *nadController) getActiveNetworkForNamespace(namespace string) (util.NetInfo, string) {

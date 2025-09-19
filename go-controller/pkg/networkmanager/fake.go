@@ -5,6 +5,7 @@ import (
 
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
 )
@@ -70,6 +71,13 @@ func (fnm *FakeNetworkManager) GetActiveNetworkForNamespace(namespace string) (u
 		return nil, util.NewInvalidPrimaryNetworkError(namespace)
 	}
 	return network, nil
+}
+
+func (fnm *FakeNetworkManager) GetPrimaryNADForNamespace(namespace string) (string, error) {
+	if primaryNetworks, ok := fnm.PrimaryNetworks[namespace]; ok {
+		return primaryNetworks.GetNADs()[0], nil
+	}
+	return types.DefaultNetworkName, nil
 }
 
 func (fnm *FakeNetworkManager) GetActiveNetworkForNamespaceFast(namespace string) util.NetInfo {
