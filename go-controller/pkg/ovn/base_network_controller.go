@@ -195,7 +195,7 @@ type BaseNetworkController struct {
 
 func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed func(string)) error {
 	// gather some information first
-	var reconcileNodes []string
+	reconcileNodes := sets.NewString()
 	oc.localZoneNodes.Range(func(key, _ any) bool {
 		nodeName := key.(string)
 		wasAdvertised := util.IsPodNetworkAdvertisedAtNode(oc, nodeName)
@@ -204,7 +204,7 @@ func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed f
 			// noop
 			return true
 		}
-		reconcileNodes = append(reconcileNodes, nodeName)
+		reconcileNodes.Insert(nodeName)
 		return true
 	})
 	reconcileRoutes := oc.routeImportManager != nil && oc.routeImportManager.NeedsReconciliation(netInfo)
@@ -218,13 +218,34 @@ func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed f
 			sets.NewString(oc.GetNADNamespaces()...))
 	}
 
+	if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
+		// look for remote nodes to reconcile
+		nads := oc.GetNADs()
+		nodes, err := oc.watchFactory.GetNodes()
+		if err != nil {
+			return fmt.Errorf("failed to get nodes for reconciling network: %s, error: %w", oc.GetNetworkName(), err)
+		}
+		for _, nad := range nads {
+			for _, node := range nodes {
+				_, present := oc.localZoneNodes.Load(node.Name)
+				if present {
+					// local node
+					continue
+				}
+				// remote node
+				if oc.nodeNADTracker.NodeHasNAD(node.Name, nad) {
+					reconcileNodes.Insert(node.Name)
+				}
+			}
+		}
+	}
+
 	// set the new NetInfo, point of no return
 	err := util.ReconcileNetInfo(oc.ReconcilableNetInfo, netInfo)
 	if err != nil {
 		return fmt.Errorf("failed to reconcile network information for network %s: %v", oc.GetNetworkName(), err)
 	}
-
-	oc.doReconcile(reconcileRoutes, reconcilePendingPods, reconcileNodes, setNodeFailed, reconcileNamespaces.List())
+	oc.doReconcile(reconcileRoutes, reconcilePendingPods, reconcileNodes.UnsortedList(), setNodeFailed, reconcileNamespaces.List())
 
 	return nil
 }

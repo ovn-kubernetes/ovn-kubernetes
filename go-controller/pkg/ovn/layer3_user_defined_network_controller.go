@@ -664,8 +664,14 @@ func (oc *Layer3UserDefinedNetworkController) Reconcile(netInfo util.NetInfo) er
 	return oc.BaseNetworkController.reconcile(
 		netInfo,
 		func(node string) {
-			oc.addNodeFailed.Store(node, true)
-			oc.gatewaysFailed.Store(node, true)
+			_, present := oc.localZoneNodes.Load(node)
+			if present {
+				oc.addNodeFailed.Store(node, true)
+				oc.gatewaysFailed.Store(node, true)
+			} else {
+				// remote node
+				oc.syncZoneICFailed.Store(node, true)
+			}
 		},
 	)
 }
