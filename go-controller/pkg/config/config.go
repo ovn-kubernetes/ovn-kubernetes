@@ -81,6 +81,7 @@ var (
 		RawClusterSubnets:            "10.128.0.0/14/23",
 		Zone:                         types.OvnDefaultZone,
 		RawUDNAllowedDefaultServices: "default/kubernetes,kube-system/kube-dns",
+		DefaultNetworkEncapsulation:  NetworkEncapsulationGeneve,
 	}
 
 	// Logging holds logging-related parsed config file parameters and command-line overrides
