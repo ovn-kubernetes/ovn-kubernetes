@@ -24,10 +24,11 @@ import (
 // Layer3ConfigApplyConfiguration represents a declarative configuration of the Layer3Config type for use
 // with apply.
 type Layer3ConfigApplyConfiguration struct {
-	Role        *userdefinednetworkv1.NetworkRole    `json:"role,omitempty"`
-	MTU         *int32                               `json:"mtu,omitempty"`
-	Subnets     []Layer3SubnetApplyConfiguration     `json:"subnets,omitempty"`
-	JoinSubnets *userdefinednetworkv1.DualStackCIDRs `json:"joinSubnets,omitempty"`
+	Role          *userdefinednetworkv1.NetworkRole            `json:"role,omitempty"`
+	MTU           *int32                                       `json:"mtu,omitempty"`
+	Subnets       []Layer3SubnetApplyConfiguration             `json:"subnets,omitempty"`
+	JoinSubnets   *userdefinednetworkv1.DualStackCIDRs         `json:"joinSubnets,omitempty"`
+	Encapsulation *userdefinednetworkv1.TransportEncapsulation `json:"encapsulation,omitempty"`
 }
 
 // Layer3ConfigApplyConfiguration constructs a declarative configuration of the Layer3Config type for use with
@@ -70,5 +71,13 @@ func (b *Layer3ConfigApplyConfiguration) WithSubnets(values ...*Layer3SubnetAppl
 // If called multiple times, the JoinSubnets field is set to the value of the last call.
 func (b *Layer3ConfigApplyConfiguration) WithJoinSubnets(value userdefinednetworkv1.DualStackCIDRs) *Layer3ConfigApplyConfiguration {
 	b.JoinSubnets = &value
+	return b
+}
+
+// WithEncapsulation sets the Encapsulation field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Encapsulation field is set to the value of the last call.
+func (b *Layer3ConfigApplyConfiguration) WithEncapsulation(value userdefinednetworkv1.TransportEncapsulation) *Layer3ConfigApplyConfiguration {
+	b.Encapsulation = &value
 	return b
 }

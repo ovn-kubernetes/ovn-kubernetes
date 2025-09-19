@@ -205,7 +205,7 @@ fi
 # the timeout happened.
 TEST_TIMEOUT=${TEST_TIMEOUT:-120m}
 
-ginkgo --nodes=${NUM_NODES} \
+ginkgo --dry-run -v --silence-skips \
 	--focus=${FOCUS} \
 	--skip=${SKIPPED_TESTS} \
 	--timeout=${TEST_TIMEOUT} \
