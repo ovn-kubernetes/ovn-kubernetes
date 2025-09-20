@@ -679,3 +679,212 @@ func MustParseCIDR(cidr string) *net.IPNet {
 	}
 	return ipNet
 }
+
+// GetServicePortKey creates a unique identifier key for a service port using protocol and name.
+// e.g. GetServicePortKey("TCP", "http") returns "TCP/http".
+func GetServicePortKey(protocol corev1.Protocol, name string) string {
+	return fmt.Sprintf("%s/%s", protocol, name)
+}
+
+// IPPort represents an IP address and port combination for load balancer destinations.
+// e.g. IPPort{IP: "192.168.1.10", Port: 8080}.
+type IPPort struct {
+	IP   string
+	Port int32
+}
+
+// LBEndpoints contains load balancer endpoint information with IPv4 and IPv6 addresses.
+// Port is the endpoint port (the one exposed by the pod) and IPs are the IP addresses of the backend pods.
+// e.g. LBEndpoints{Port: 8080, V4IPs: []string{"192.168.1.10", "192.168.1.11"}, V6IPs: []string{"2001:db8::1"}}.
+// TBD: there's a bad assumption in preexisting code that a named port can have
+// only a single port number. Fix this later.
+type LBEndpoints struct {
+	Port  int32
+	V4IPs []string
+	V6IPs []string
+}
+
+// GetV4Destinations builds IPv4 destination mappings from endpoint addresses to ports.
+// e.g. for V4IPs ["192.168.1.10", "192.168.1.11"] and Port 8080, returns
+// []IPPort{{IP: "192.168.1.10", Port: 8080}, {IP: "192.168.1.11", Port: 8080}}.
+func (le LBEndpoints) GetV4Destinations() []IPPort {
+	destinations := []IPPort{}
+	for _, ip := range le.V4IPs {
+		destinations = append(destinations, IPPort{IP: ip, Port: le.Port})
+	}
+	return destinations
+}
+
+// GetV6Destinations builds IPv6 destination mappings from endpoint addresses to ports.
+// e.g. for V6IPs ["2001:db8::1", "2001:db8::2"] and Port 8080, returns
+// []IPPort{{IP: "2001:db8::1", Port: 8080}, {IP: "2001:db8::2", Port: 8080}}.
+func (le LBEndpoints) GetV6Destinations() []IPPort {
+	destinations := []IPPort{}
+	for _, ip := range le.V6IPs {
+		destinations = append(destinations, IPPort{IP: ip, Port: le.Port})
+	}
+	return destinations
+}
+
+// PortToLBEndpoints maps service port keys (protocol + service port name) to load balancer endpoints.
+// e.g. map["TCP/http"] = LBEndpoints{Port: 8080, V4IPs: []string{"192.168.1.10"}}.
+// Port is the endpoint port (the one exposed by the pod) and IPs are the IP addresses of the backend pods.
+type PortToLBEndpoints map[string]LBEndpoints
+
+// GetAddresses returns all unique IP addresses from all ports in the PortToLBEndpoints map.
+// e.g. for PortToLBEndpoints{"TCP/http": {Port: 8080, V4IPs: ["192.168.1.10"]}, "UDP/dns": {Port: 53, V4IPs: ["192.168.1.11"]}},
+// returns sets.Set{"192.168.1.10", "192.168.1.11"}.
+func (p PortToLBEndpoints) GetAddresses() sets.Set[string] {
+	s := sets.New[string]()
+	for _, lbEndpoints := range p {
+		s.Insert(lbEndpoints.V4IPs...)
+		s.Insert(lbEndpoints.V6IPs...)
+	}
+	return s
+}
+
+// PortToNodeToLBEndpoints maps service port keys to node names and their load balancer endpoints.
+// e.g. map["TCP/http"]["node1"] = LBEndpoints{Port: 8080, V4IPs: []string{"192.168.1.10"}}.
+type PortToNodeToLBEndpoints map[string]map[string]LBEndpoints
+
+// GetNode extracts all port endpoints for a specific node from the PortToNodeToLBEndpoints map.
+// e.g. for PortToNodeToLBEndpoints{"TCP/http": {"node1": {Port: 8080, V4IPs: ["192.168.1.10"]}, "node2": {Port: 8080, V4IPs: ["192.168.1.11"]}}}
+// and node "node1", returns PortToLBEndpoints{"TCP/http": {Port: 8080, V4IPs: ["192.168.1.10"]}}.
+func (p PortToNodeToLBEndpoints) GetNode(node string) PortToLBEndpoints {
+	r := make(PortToLBEndpoints)
+	for port, nodeToLBEndpoints := range p {
+		if lbe, ok := nodeToLBEndpoints[node]; ok {
+			r[port] = lbe
+		}
+	}
+	return r
+}
+
+// GetEndpointsForService takes a service, all its slices and the list of nodes in the OVN zone
+// and returns two maps that hold all the endpoint addresses for the service:
+// one classified by port, one classified by port,node. This second map is only filled in
+// when the service needs local (per-node) endpoints, that is when ETP=local or ITP=local.
+// The node list helps to keep the resulting map small, since we're only interested in local endpoints.
+// e.g. returns (PortToLBEndpoints{"TCP/http": {Port: 8080, V4IPs: ["192.168.1.10"]}},
+// PortToNodeToLBEndpoints{"TCP/http": {"node1": {Port: 8080, V4IPs: ["192.168.1.10"]}}}).
+func GetEndpointsForService(slices []*discoveryv1.EndpointSlice, service *corev1.Service,
+	nodes sets.Set[string]) (PortToLBEndpoints, PortToNodeToLBEndpoints) {
+
+	// classify endpoints
+	// TBD: portNameToPortNumber wrongly assumed that there is a 1 to 1 mapping between port name
+	// e.g. "my-port-name" to slice port number, e.g. 80. However, this assumption is wrong.
+	// Fix this longstanding issue in a follow-up.
+	portNameToPortNumber, portToEndpoints, portToNodeToEndpoints, requiresLocalEndpoints := getPortToEndpoints(slices, service, nodes)
+
+	// get eligible endpoint addresses
+	portToLBEndpoints := make(map[string]LBEndpoints, len(portToEndpoints))
+	portToNodeToLBEndpoints := make(map[string]map[string]LBEndpoints, len(portToEndpoints))
+
+	for slicePort, endpoints := range portToEndpoints {
+		addresses := GetEligibleEndpointAddresses(endpoints, service)
+		v4IPs, _ := MatchAllIPStringFamily(false, addresses)
+		v6IPs, _ := MatchAllIPStringFamily(true, addresses)
+		if len(v4IPs) > 0 || len(v6IPs) > 0 {
+			portToLBEndpoints[slicePort] = LBEndpoints{
+				V4IPs: v4IPs,
+				V6IPs: v6IPs,
+				Port:  portNameToPortNumber[slicePort],
+			}
+		}
+	}
+	klog.V(5).Infof("Cluster endpoints for %s/%s for network are: %v",
+		service.Namespace, service.Name, portToLBEndpoints)
+
+	for slicePort, nodeToEndpoints := range portToNodeToEndpoints {
+		for node, endpoints := range nodeToEndpoints {
+			addresses := GetEligibleEndpointAddresses(endpoints, service)
+			v4IPs, _ := MatchAllIPStringFamily(false, addresses)
+			v6IPs, _ := MatchAllIPStringFamily(true, addresses)
+			if len(v4IPs) > 0 || len(v6IPs) > 0 {
+				if portToNodeToLBEndpoints[slicePort] == nil {
+					portToNodeToLBEndpoints[slicePort] = make(map[string]LBEndpoints, len(nodes))
+				}
+
+				portToNodeToLBEndpoints[slicePort][node] = LBEndpoints{
+					V4IPs: v4IPs,
+					V6IPs: v6IPs,
+					Port:  portNameToPortNumber[slicePort],
+				}
+			}
+		}
+	}
+
+	if requiresLocalEndpoints {
+		klog.V(5).Infof("Local endpoints for %s/%s for network are: %v",
+			service.Namespace, service.Name, portToNodeToLBEndpoints)
+	}
+
+	return portToLBEndpoints, portToNodeToLBEndpoints
+}
+
+// getPortToEndpoints takes a service, all its slices and the list of nodes in the OVN zone
+// and returns port name to port number mapping and two maps that hold all endpoint addresses:
+// one classified by port, one classified by port,node. This second map is only filled in
+// when the service needs local (per-node) endpoints, that is when ETP=local or ITP=local.
+// The node list helps to keep the resulting map small, since we're only interested in local endpoints.
+func getPortToEndpoints(slices []*discoveryv1.EndpointSlice, service *corev1.Service, nodes sets.Set[string]) (map[string]int32, map[string][]discoveryv1.Endpoint, map[string]map[string][]discoveryv1.Endpoint, bool) {
+	portToEndpoints := map[string][]discoveryv1.Endpoint{}
+	portToNodeToEndpoints := map[string]map[string][]discoveryv1.Endpoint{}
+	requiresLocalEndpoints := ServiceExternalTrafficPolicyLocal(service) || ServiceInternalTrafficPolicyLocal(service)
+
+	portNameToPortNumber := map[string]int32{}
+	for _, servicePort := range service.Spec.Ports {
+		name := GetServicePortKey(servicePort.Protocol, servicePort.Name)
+		portNameToPortNumber[name] = 0
+	}
+
+	for _, slice := range slices {
+
+		if slice.AddressType == discoveryv1.AddressTypeFQDN {
+			continue // consider only v4 and v6, discard FQDN
+		}
+
+		slicePorts := make([]string, 0, len(slice.Ports))
+
+		for _, slicePort := range slice.Ports {
+			// check if there's a service port matching the slice protocol/name
+			slicePortName := ""
+			if slicePort.Name != nil {
+				slicePortName = *slicePort.Name
+			}
+			slicePortKey := GetServicePortKey(*slicePort.Protocol, slicePortName)
+			if _, hasPort := portNameToPortNumber[slicePortKey]; hasPort {
+				slicePorts = append(slicePorts, slicePortKey)
+				portNameToPortNumber[slicePortKey] = *slicePort.Port
+				continue
+			}
+			// service port name might be empty: check against slice protocol/""
+			noName := GetServicePortKey(*slicePort.Protocol, "")
+			if _, hasPort := portNameToPortNumber[noName]; hasPort {
+				slicePorts = append(slicePorts, noName)
+				portNameToPortNumber[noName] = *slicePort.Port
+			}
+		}
+		for _, endpoint := range slice.Endpoints {
+			for _, slicePort := range slicePorts {
+
+				portToEndpoints[slicePort] = append(portToEndpoints[slicePort], endpoint)
+
+				// won't add items to portToNodeToEndpoints if  the service doesn't need it,
+				// the endpoint is not assigned to a node yet or the endpoint is not local to the OVN zone
+				if !requiresLocalEndpoints || endpoint.NodeName == nil || !nodes.Has(*endpoint.NodeName) {
+					continue
+				}
+				if portToNodeToEndpoints[slicePort] == nil {
+					portToNodeToEndpoints[slicePort] = make(map[string][]discoveryv1.Endpoint, len(nodes))
+				}
+
+				if portToNodeToEndpoints[slicePort][*endpoint.NodeName] == nil {
+					portToNodeToEndpoints[slicePort][*endpoint.NodeName] = []discoveryv1.Endpoint{}
+				}
+				portToNodeToEndpoints[slicePort][*endpoint.NodeName] = append(portToNodeToEndpoints[slicePort][*endpoint.NodeName], endpoint)
+			}
+		}
+	}
+	return portNameToPortNumber, portToEndpoints, portToNodeToEndpoints, requiresLocalEndpoints
+}
