@@ -13,6 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
 	kexec "k8s.io/utils/exec"
@@ -470,10 +471,35 @@ func (ncm *NodeControllerManager) Filter(nad *nettypes.NetworkAttachmentDefiniti
 
 // OnNetworkRefChange is a callback function used to signal an action to this controller when
 // a network needs to be added or removed or just updated
-func (ncm *NodeControllerManager) OnNetworkRefChange(node, name string, active bool) {
+func (ncm *NodeControllerManager) OnNetworkRefChange(node, nadNamespacedName string, active bool) {
 	klog.V(5).Infof("Network change for node controller triggered by pod/egress IP events on node: %s ,"+
-		"NAD: %s, active: %t", node, name, active)
-	ncm.networkManager.Interface().Reconcile(name)
+		"NAD: %s, active: %t", node, nadNamespacedName, active)
+	namespace, name, err := cache.SplitMetaNamespaceKey(nadNamespacedName)
+	if err != nil {
+		klog.Errorf("Failed splitting key %q, falling back to normal network reconcile: %v", nadNamespacedName, err)
+		// fallback to regular reconcile
+		ncm.networkManager.Interface().Reconcile(nadNamespacedName)
+		return
+	}
+
+	nad, err := ncm.watchFactory.NADInformer().Lister().NetworkAttachmentDefinitions(namespace).Get(name)
+	if err != nil {
+		klog.Errorf("Failed to find NAD %q in informer, falling back to normal network reconcile: %v", nadNamespacedName, err)
+		// fallback to regular reconcile
+		ncm.networkManager.Interface().Reconcile(nadNamespacedName)
+		return
+	}
+
+	nadNetwork, err := util.ParseNADInfo(nad)
+	if err != nil || nadNetwork == nil {
+		klog.Errorf("Failed to parse NAD %q info, falling back to normal network reconcile: %v", nadNamespacedName, err)
+		// fallback to regular reconcile
+		ncm.networkManager.Interface().Reconcile(nadNamespacedName)
+		return
+	}
+	// remove only networks local on our node
+	isActive := active || node != ncm.name
+	ncm.networkManager.Interface().ForceReconcile(nadNamespacedName, nadNetwork.GetNetworkName(), isActive)
 }
 
 func (ncm *NodeControllerManager) NodeHasNAD(node, nad string) bool {

@@ -100,6 +100,10 @@ func (fnm *FakeNetworkManager) GetActiveNetwork(networkName string) util.NetInfo
 	return fnm.GetNetwork(networkName)
 }
 
+func (fnm *FakeNetworkManager) ForceReconcile(key, _ string, _ bool) {
+	fnm.Reconciled = append(fnm.Reconciled, key)
+}
+
 func (fnm *FakeNetworkManager) GetActiveNetworkNamespaces(networkName string) ([]string, error) {
 	namespaces := make([]string, 0)
 	for namespaceName, primaryNAD := range fnm.PrimaryNetworks {
