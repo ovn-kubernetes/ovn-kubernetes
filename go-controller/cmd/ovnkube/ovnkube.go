@@ -270,6 +270,7 @@ func startOvnKube(ctx *cli.Context, cancel context.CancelFunc) error {
 		return err
 	}
 
+	config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
 	if err = util.SetExec(exec); err != nil {
 		return fmt.Errorf("failed to initialize exec helper: %v", err)
 	}
