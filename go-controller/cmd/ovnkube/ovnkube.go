@@ -270,6 +270,10 @@ func startOvnKube(ctx *cli.Context, cancel context.CancelFunc) error {
 		return err
 	}
 
+	// Temporary hack for testing
+	if config.OVNKubernetesFeature.EnableNetworkSegmentation {
+		config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
+	}
 	if err = util.SetExec(exec); err != nil {
 		return fmt.Errorf("failed to initialize exec helper: %v", err)
 	}
