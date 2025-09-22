@@ -43,6 +43,7 @@ type nadController struct {
 	sync.RWMutex
 
 	name            string
+	stopChan        chan struct{}
 	nadLister       nadlisters.NetworkAttachmentDefinitionLister
 	udnLister       userdefinednetworklister.UserDefinedNetworkLister
 	cudnLister      userdefinednetworklister.ClusterUserDefinedNetworkLister
@@ -61,6 +62,8 @@ type nadController struct {
 	// primaryNADs holds a mapping of namespace to NAD of primary UDNs
 	primaryNADs map[string]string
 
+	markedForRemoval map[string]time.Time
+
 	networkIDAllocator id.Allocator
 	nadClient          nadclientset.Interface
 
@@ -78,12 +81,14 @@ func newController(
 ) (*nadController, error) {
 	c := &nadController{
 		name:              fmt.Sprintf("[%s NAD controller]", name),
+		stopChan:          make(chan struct{}),
 		recorder:          recorder,
 		nadLister:         wf.NADInformer().Lister(),
 		nodeLister:        wf.NodeCoreInformer().Lister(),
 		networkController: newNetworkController(name, zone, node, cm, wf),
 		nads:              map[string]string{},
 		primaryNADs:       map[string]string{},
+		markedForRemoval:  map[string]time.Time{},
 	}
 
 	if cm != nil {
@@ -159,12 +164,58 @@ func (c *nadController) Start() error {
 
 func (c *nadController) Stop() {
 	klog.Infof("%s: shutting down", c.name)
+	close(c.stopChan)
 	controller.Stop(c.controller)
 	c.networkController.Stop()
 }
 
 func (c *nadController) Reconcile(key string) {
 	c.controller.Reconcile(key)
+}
+
+func (c *nadController) ForceReconcile(key, networkName string, active bool) {
+	if active {
+		c.removeMarkedForRemoval(key)
+		c.networkController.SetForceReconcile(networkName)
+	} else {
+		c.setMarkedForRemoval(key)
+		return
+	}
+	c.controller.Reconcile(key)
+}
+
+func (c *nadController) setMarkedForRemoval(key string) {
+	c.Lock()
+	removalTime := time.Now().Add(config.Default.UDNDeletionGracePeriod)
+	c.markedForRemoval[key] = removalTime
+	c.Unlock()
+
+	// ensure we reconcile later
+	go func() {
+		timer := time.NewTimer(time.Until(removalTime))
+		defer timer.Stop()
+
+		select {
+		case <-c.stopChan:
+			return
+		case <-timer.C:
+			shouldReconcile := false
+			c.Lock()
+			if rt, ok := c.markedForRemoval[key]; ok && time.Now().After(rt) {
+				shouldReconcile = true
+			}
+			c.Unlock()
+			if shouldReconcile {
+				c.Reconcile(key)
+			}
+		}
+	}()
+}
+
+func (c *nadController) removeMarkedForRemoval(key string) {
+	c.Lock()
+	defer c.Unlock()
+	delete(c.markedForRemoval, key)
 }
 
 func (c *nadController) syncAll() (err error) {
@@ -258,15 +309,29 @@ func (c *nadController) sync(key string) error {
 	return c.syncNAD(key, nad)
 }
 
-func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefinition) error {
+func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefinition) (syncErr error) {
 	var nadNetworkName string
 	var nadNetwork util.NetInfo
 	var oldNetwork, ensureNetwork util.MutableNetInfo
 	var err error
 
+	c.Lock()
+	defer c.Unlock()
+
 	namespace, _, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
 		return fmt.Errorf("%s: failed splitting key %s: %v", c.name, key, err)
+	}
+
+	deleteTime, setforDeletion := c.markedForRemoval[key]
+	if setforDeletion && time.Now().After(deleteTime) {
+		klog.Infof("NAD %q: marked for deletion and time has expired, will remove", c.name)
+		nad = nil
+		defer func() {
+			if syncErr == nil {
+				delete(c.markedForRemoval, key)
+			}
+		}()
 	}
 
 	if nad != nil {
@@ -287,8 +352,6 @@ func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefin
 		nadNetworkName = nadNetwork.GetNetworkName()
 	}
 
-	c.Lock()
-	defer c.Unlock()
 	// We can only have one primary NAD per namespace
 	primaryNAD := c.primaryNADs[namespace]
 	if nadNetwork != nil && nadNetwork.IsPrimaryNetwork() && primaryNAD != "" && primaryNAD != key {

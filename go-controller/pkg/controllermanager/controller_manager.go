@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
 
@@ -599,10 +600,41 @@ func (cm *ControllerManager) Filter(nad *nettypes.NetworkAttachmentDefinition) (
 
 // OnNetworkRefChange is a callback function used to signal an action to this controller when
 // a network needs to be added or removed or just updated
-func (cm *ControllerManager) OnNetworkRefChange(node, name string, active bool) {
+func (cm *ControllerManager) OnNetworkRefChange(node, nadNamespacedName string, active bool) {
 	klog.V(4).Infof("Network change for zone controller triggered by pod/egress IP events "+
-		"on node: %s, NAD: %s, active: %t", node, name, active)
-	cm.networkManager.Interface().Reconcile(name)
+		"on node: %s, NAD: %s, active: %t", node, nadNamespacedName, active)
+
+	namespace, name, err := cache.SplitMetaNamespaceKey(nadNamespacedName)
+	if err != nil {
+		klog.Errorf("Failed splitting key %q, falling back to normal network reconcile: %v", name, err)
+		// fallback to regular reconcile
+		cm.networkManager.Interface().Reconcile(nadNamespacedName)
+		return
+	}
+
+	nad, err := cm.watchFactory.NADInformer().Lister().NetworkAttachmentDefinitions(namespace).Get(name)
+	if err != nil {
+		klog.Errorf("Failed to find NAD %q in informer, falling back to normal network reconcile: %v", nadNamespacedName, err)
+		// fallback to regular reconcile
+		cm.networkManager.Interface().Reconcile(nadNamespacedName)
+		return
+	}
+
+	nadNetwork, err := util.ParseNADInfo(nad)
+	if err != nil || nadNetwork == nil {
+		klog.Errorf("Failed to parse NAD %q info, falling back to normal network reconcile: %v", nadNamespacedName, err)
+		// fallback to regular reconcile
+		cm.networkManager.Interface().Reconcile(nadNamespacedName)
+		return
+	}
+
+	n, err := cm.watchFactory.GetNode(node)
+	if err != nil {
+		klog.Errorf("Failed to find node %q in informer, falling back to normal network reconcile: %v", node, err)
+	}
+	// remove only networks local on our node
+	isActive := active || util.GetNodeZone(n) != config.Default.Zone
+	cm.networkManager.Interface().ForceReconcile(nadNamespacedName, nadNetwork.GetNetworkName(), isActive)
 }
 
 func (cm *ControllerManager) NodeHasNAD(node, nad string) bool {

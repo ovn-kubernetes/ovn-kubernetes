@@ -9,6 +9,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -55,6 +56,8 @@ func TestControllerManager_FilterAndOnNetworkRefChange(t *testing.T) {
 	// Setup config zone
 	util.PrepareTestConfig()
 	config.Default.Zone = "test-node"
+	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
 
 	// Fake NM + podTracker
 	fakeNM := &networkmanager.FakeNetworkManager{
@@ -67,10 +70,23 @@ func TestControllerManager_FilterAndOnNetworkRefChange(t *testing.T) {
 	et := newFakeTracker()
 	et.setActive("test-egress-node", "ns3/nad3", true)
 
+	fakeClient := util.GetOVNClientset().GetOVNKubeControllerClientset()
+	wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = wf.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer wf.Shutdown()
+
 	cm := &ControllerManager{
 		networkManager:  fakeNM,
 		podTracker:      pt,
 		egressIPTracker: et,
+		watchFactory:    wf,
 	}
 
 	tests := []struct {

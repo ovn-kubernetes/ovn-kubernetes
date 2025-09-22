@@ -196,6 +196,7 @@ type BaseNetworkController struct {
 func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed func(string)) error {
 	// gather some information first
 	reconcileNodes := sets.NewString()
+	removeNodes := sets.NewString()
 	oc.localZoneNodes.Range(func(key, _ any) bool {
 		nodeName := key.(string)
 		wasAdvertised := util.IsPodNetworkAdvertisedAtNode(oc, nodeName)
@@ -225,17 +226,25 @@ func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed f
 		if err != nil {
 			return fmt.Errorf("failed to get nodes for reconciling network: %s, error: %w", oc.GetNetworkName(), err)
 		}
-		for _, nad := range nads {
-			for _, node := range nodes {
-				_, present := oc.localZoneNodes.Load(node.Name)
-				if present {
-					// local node
-					continue
-				}
-				// remote node
+		for _, node := range nodes {
+			if _, present := oc.localZoneNodes.Load(node.Name); present {
+				// local node
+				continue
+			}
+			// remote node: reconcile if any NAD is active, else remove
+			active := false
+			for _, nad := range nads {
 				if oc.nodeNADTracker.NodeHasNAD(node.Name, nad) {
-					reconcileNodes.Insert(node.Name)
+					active = true
+					break
 				}
+			}
+			if active {
+				// we need to reconcile and configure these remote nodes
+				reconcileNodes.Insert(node.Name)
+			} else {
+				// ensure the remote node is removed
+				removeNodes.Insert(node.Name)
 			}
 		}
 	}
@@ -245,7 +254,8 @@ func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed f
 	if err != nil {
 		return fmt.Errorf("failed to reconcile network information for network %s: %v", oc.GetNetworkName(), err)
 	}
-	oc.doReconcile(reconcileRoutes, reconcilePendingPods, reconcileNodes.UnsortedList(), setNodeFailed, reconcileNamespaces.List())
+	oc.doReconcile(reconcileRoutes, reconcilePendingPods, reconcileNodes.UnsortedList(), removeNodes.UnsortedList(),
+		setNodeFailed, reconcileNamespaces.List())
 
 	return nil
 }
@@ -255,7 +265,7 @@ func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed f
 // provided on the arguments of the method. This method returns no error and logs them
 // instead since once the controller NetInfo has been updated there is no point in retrying.
 func (oc *BaseNetworkController) doReconcile(reconcileRoutes, reconcilePendingPods bool,
-	reconcileNodes []string, setNodeFailed func(string), reconcileNamespaces []string) {
+	reconcileNodes, removeNodes []string, setNodeFailed func(string), reconcileNamespaces []string) {
 	if reconcileRoutes {
 		err := oc.routeImportManager.ReconcileNetwork(oc.GetNetworkName())
 		if err != nil {
@@ -270,12 +280,27 @@ func (oc *BaseNetworkController) doReconcile(reconcileRoutes, reconcilePendingPo
 			klog.Infof("Failed to get node %s for reconciling network %s: %v", nodeName, oc.GetNetworkName(), err)
 			continue
 		}
+		klog.V(5).Infof("Requesting to add node %s to network %s", nodeName, oc.GetNetworkName())
 		err = oc.retryNodes.AddRetryObjWithAddNoBackoff(node)
 		if err != nil {
 			klog.Errorf("Failed to retry node %s for network %s: %v", nodeName, oc.GetNetworkName(), err)
 		}
 	}
-	if len(reconcileNodes) > 0 {
+
+	for _, nodeName := range removeNodes {
+		node, err := oc.watchFactory.GetNode(nodeName)
+		if err != nil {
+			klog.Infof("Failed to get node %s for reconciling network %s: %v", nodeName, oc.GetNetworkName(), err)
+			continue
+		}
+		key := nodeName
+		klog.V(5).Infof("Requesting to remove remote node %s from network %s", nodeName, oc.GetNetworkName())
+		oc.retryNodes.DoWithLock(key, func(key string) {
+			_ = oc.retryNodes.InitRetryObjWithDelete(node, key, nil, true)
+		})
+	}
+
+	if len(reconcileNodes) > 0 || len(removeNodes) > 0 {
 		oc.retryNodes.RequestRetryObjs()
 	}
 

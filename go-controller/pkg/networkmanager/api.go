@@ -73,6 +73,9 @@ type Interface interface {
 
 	// Reconcile allows for a manually invoked reconciliation of a network manager
 	Reconcile(key string)
+
+	// ForceReconcile reconciles as usual, but tags the network as it should be forced to reconcile
+	ForceReconcile(key, networkName string, active bool)
 }
 
 // Controller handles the runtime of the package
@@ -262,6 +265,8 @@ func (nm defaultNetworkManager) GetActiveNetwork(network string) util.NetInfo {
 	}
 	return &util.DefaultNetInfo{}
 }
+
+func (nm defaultNetworkManager) ForceReconcile(_, _ string, _ bool) {}
 
 func (nm defaultNetworkManager) Reconcile(_ string) {}
 
