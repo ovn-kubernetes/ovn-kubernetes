@@ -562,6 +562,7 @@ var _ = Describe("Node Operations", func() {
 				config.Gateway.Mode = config.GatewayModeLocal
 				epPortName := "https"
 				epPortValue := int32(443)
+				epPortProtocol := corev1.ProtocolTCP
 				service := *newService("service1", "namespace1", "10.129.0.2",
 					[]corev1.ServicePort{
 						{
@@ -579,8 +580,9 @@ var _ = Describe("Node Operations", func() {
 					Addresses: []string{"10.244.0.3"},
 				}
 				epPort1 := discovery.EndpointPort{
-					Name: &epPortName,
-					Port: &epPortValue,
+					Name:     &epPortName,
+					Port:     &epPortValue,
+					Protocol: &epPortProtocol,
 				}
 				// endpointSlice.Endpoints is ovn-networked so this will
 				// come under !hasLocalHostNetEp case
@@ -878,9 +880,11 @@ var _ = Describe("Node Operations", func() {
 					Cmd: "ovs-ofctl show ",
 					Err: fmt.Errorf("deliberate error to fall back to output:LOCAL"),
 				})
+				svcPortName := "http"
 				service := *newServiceWithoutNodePortAllocation("service1", "namespace1", "10.129.0.2",
 					[]corev1.ServicePort{
 						{
+							Name:       svcPortName,
 							Protocol:   corev1.ProtocolTCP,
 							Port:       int32(80),
 							TargetPort: intstr.FromInt(int(int32(8080))),
@@ -910,11 +914,12 @@ var _ = Describe("Node Operations", func() {
 					Addresses: []string{"10.244.0.4"},
 					NodeName:  &fakeNodeName,
 				}
-				epPortName := "http"
 				epPortValue := int32(8080)
+				epPortProtocol := corev1.ProtocolTCP
 				epPort1 := discovery.EndpointPort{
-					Name: &epPortName,
-					Port: &epPortValue,
+					Name:     &svcPortName,
+					Port:     &epPortValue,
+					Protocol: &epPortProtocol,
 				}
 				// endpointSlice.Endpoints is ovn-networked so this will
 				// come under !hasLocalHostNetEp case
@@ -2092,6 +2097,7 @@ var _ = Describe("Node Operations", func() {
 				config.Gateway.Mode = config.GatewayModeLocal
 				epPortName := "https"
 				epPortValue := int32(443)
+				epPortProtocol := corev1.ProtocolTCP
 				service := *newService("service1", "namespace1", "10.129.0.2",
 					[]corev1.ServicePort{
 						{
@@ -2109,8 +2115,9 @@ var _ = Describe("Node Operations", func() {
 					Addresses: []string{"10.244.0.3"},
 				}
 				epPort1 := discovery.EndpointPort{
-					Name: &epPortName,
-					Port: &epPortValue,
+					Name:     &epPortName,
+					Port:     &epPortValue,
+					Protocol: &epPortProtocol,
 				}
 				// endpointSlice.Endpoints is ovn-networked so this will come
 				// under !hasLocalHostNetEp case
@@ -2231,6 +2238,7 @@ var _ = Describe("Node Operations", func() {
 				config.Gateway.Mode = config.GatewayModeShared
 				epPortName := "https"
 				epPortValue := int32(443)
+				epPortProtocol := corev1.ProtocolTCP
 				service := *newService("service1", "namespace1", "10.129.0.2",
 					[]corev1.ServicePort{
 						{
@@ -2249,8 +2257,9 @@ var _ = Describe("Node Operations", func() {
 					Addresses: []string{"10.244.0.3"},
 				}
 				epPort1 := discovery.EndpointPort{
-					Name: &epPortName,
-					Port: &epPortValue,
+					Name:     &epPortName,
+					Port:     &epPortValue,
+					Protocol: &epPortProtocol,
 				}
 				// endpointSlice.Endpoints is ovn-networked so this will come
 				// under !hasLocalHostNetEp case
@@ -2376,9 +2385,11 @@ var _ = Describe("Node Operations", func() {
 				outport := int32(443)
 				epPortName := "https"
 				epPortValue := int32(443)
+				epPortProtocol := corev1.ProtocolTCP
 				service := *newService("service1", "namespace1", "10.129.0.2",
 					[]corev1.ServicePort{
 						{
+							Name:       epPortName,
 							NodePort:   int32(31111),
 							Protocol:   corev1.ProtocolTCP,
 							Port:       int32(8080),
@@ -2396,8 +2407,9 @@ var _ = Describe("Node Operations", func() {
 					NodeName:  &fakeNodeName,
 				}
 				epPort1 := discovery.EndpointPort{
-					Name: &epPortName,
-					Port: &epPortValue,
+					Name:     &epPortName,
+					Port:     &epPortValue,
+					Protocol: &epPortProtocol,
 				}
 				// endpointSlice.Endpoints is ovn-networked so this will
 				// come under !hasLocalHostNetEp case
@@ -2522,6 +2534,7 @@ var _ = Describe("Node Operations", func() {
 				config.Gateway.Mode = config.GatewayModeShared
 				epPortName := "https"
 				epPortValue := int32(443)
+				epPortProtocol := corev1.ProtocolTCP
 				service := *newService("service1", "namespace1", "10.129.0.2",
 					[]corev1.ServicePort{
 						{
@@ -2539,8 +2552,9 @@ var _ = Describe("Node Operations", func() {
 					Addresses: []string{"10.244.0.3"},
 				}
 				epPort1 := discovery.EndpointPort{
-					Name: &epPortName,
-					Port: &epPortValue,
+					Name:     &epPortName,
+					Port:     &epPortValue,
+					Protocol: &epPortProtocol,
 				}
 				// endpointSlice.Endpoints is ovn-networked so this will
 				// come under !hasLocalHostNetEp case
@@ -2665,9 +2679,11 @@ var _ = Describe("Node Operations", func() {
 				config.Gateway.Mode = config.GatewayModeLocal
 				epPortName := "https"
 				outport := int32(443)
+				epPortProtocol := corev1.ProtocolTCP
 				service := *newService("service1", "namespace1", "10.129.0.2",
 					[]corev1.ServicePort{
 						{
+							Name:       epPortName,
 							NodePort:   int32(31111),
 							Protocol:   corev1.ProtocolTCP,
 							Port:       int32(8080),
@@ -2684,8 +2700,9 @@ var _ = Describe("Node Operations", func() {
 					NodeName:  &fakeNodeName,
 				}
 				epPort1 := discovery.EndpointPort{
-					Name: &epPortName,
-					Port: &outport,
+					Name:     &epPortName,
+					Port:     &outport,
+					Protocol: &epPortProtocol,
 				}
 				// endpointSlice.Endpoints is host-networked so this will
 				// come under hasLocalHostNetEp case
