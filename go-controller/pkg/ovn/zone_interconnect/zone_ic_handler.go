@@ -258,7 +258,12 @@ func (zic *ZoneInterconnectHandler) AddRemoteZoneNode(node *corev1.Node) error {
 		}
 	}
 
-	if zic.GetNetworkEncapsulation() != config.NetworkEncapsulationNone {
+	if zic.GetNetworkEncapsulation() == config.NetworkEncapsulationNone {
+		klog.Infof("Removing interconnect resources for remote zone node %s for the network %s", node.Name, zic.GetNetworkName())
+		if err := zic.cleanupNode(node.Name); err != nil {
+			return fmt.Errorf("failed to cleanup interconnect resources for remote zone node %s for the network %s: %w", node.Name, zic.GetNetworkName(), err)
+		}
+	} else {
 		klog.Infof("Creating interconnect resources for remote zone node %s for the network %s", node.Name, zic.GetNetworkName())
 		if err := zic.createRemoteZoneNodeResources(node, nodeID, nodeTransitSwitchPortIPs, nodeSubnets, nodeGRPIPs); err != nil {
 			return fmt.Errorf("creating interconnect resources for remote zone node %s for the network %s failed : err - %w", node.Name, zic.GetNetworkName(), err)
