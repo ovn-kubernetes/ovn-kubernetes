@@ -60,10 +60,10 @@ func getSampleService(publishNotReadyAddresses bool) *corev1.Service {
 	}
 }
 
-func getServicePort(name string, _ int32, protocol corev1.Protocol) corev1.ServicePort {
+func getServicePort(name string, port int32, protocol corev1.Protocol) corev1.ServicePort {
 	return corev1.ServicePort{
 		Name:       name,
-		TargetPort: intstr.FromInt(int(httpPortValue)),
+		TargetPort: intstr.FromInt(int(port)),
 		Protocol:   protocol,
 	}
 }
@@ -4163,10 +4163,284 @@ func Test_GetEndpointsForService(t *testing.T) {
 
 			wantNodeEndpoints: util.PortToNodeToLBEndpoints{}, // local endpoints not filled in, since service is not ETP or ITP local
 		},
+		// According to https://kubernetes.io/docs/concepts/services-networking/service/#field-spec-ports, the following
+		// should be supported. However, in OVNK, this was never implemented.
+		{
+			name: "multiple slices with same port name, different ports, ETP=local",
+			args: args{
+				slices: []*discovery.EndpointSlice{
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "svc-ab23",
+							Namespace: "ns",
+							Labels:    map[string]string{discovery.LabelServiceName: "svc"},
+						},
+						Ports: []discovery.EndpointPort{
+							{
+								Name:     ptr.To("tcp-example"),
+								Protocol: ptr.To(corev1.ProtocolTCP),
+								Port:     ptr.To(int32(80)),
+							},
+						},
+						AddressType: discovery.AddressTypeIPv4,
+						Endpoints:   kubetest.MakeReadyEndpointList(nodeA, "10.0.0.2", "10.1.1.2"),
+					},
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "svc-ab24",
+							Namespace: "ns",
+							Labels:    map[string]string{discovery.LabelServiceName: "svc"},
+						},
+						Ports: []discovery.EndpointPort{
+							{
+								Name:     ptr.To("tcp-example"),
+								Protocol: ptr.To(corev1.ProtocolTCP),
+								Port:     ptr.To(int32(8080)),
+							},
+						},
+						AddressType: discovery.AddressTypeIPv4,
+						Endpoints:   kubetest.MakeReadyEndpointList(nodeA, "10.0.0.3", "10.2.2.3"),
+					},
+				},
+				svc:   getSampleServiceWithOnePortAndETPLocal("tcp-example", 80, tcp),
+				nodes: sets.New(nodeA), // one-node zone
+			},
+			wantClusterEndpoints: util.PortToLBEndpoints{
+				util.GetServicePortKey(tcp, "tcp-example"): {V4IPs: []string{"10.0.0.2", "10.1.1.2"}, Port: 80}},
+			wantNodeEndpoints: util.PortToNodeToLBEndpoints{
+				util.GetServicePortKey(tcp, "tcp-example"): {nodeA: util.LBEndpoints{V4IPs: []string{"10.0.0.2", "10.1.1.2"}, Port: 80}}},
+			wantError: fmt.Errorf("OVN Kubernetes does not support more than one target port per service port for " +
+				"service \"test/service-test\": servicePortKey \"TCP/tcp-example\" portNumbers [80 8080]"),
+		},
+		// The following is not supported by Kubernetes - OVNK will just ignore this and look up the matching
+		// protocol (TCP) only.
+		{
+			name: "multiple slices with same port name, different protocols, ETP=local",
+			args: args{
+				slices: []*discovery.EndpointSlice{
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "svc-ab23",
+							Namespace: "ns",
+							Labels:    map[string]string{discovery.LabelServiceName: "svc"},
+						},
+						Ports: []discovery.EndpointPort{
+							{
+								Name:     ptr.To("tcp-example"),
+								Protocol: ptr.To(corev1.ProtocolTCP),
+								Port:     ptr.To(int32(80)),
+							},
+						},
+						AddressType: discovery.AddressTypeIPv4,
+						Endpoints:   kubetest.MakeReadyEndpointList(nodeA, "10.0.0.2", "10.1.1.2"),
+					},
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "svc-ab24",
+							Namespace: "ns",
+							Labels:    map[string]string{discovery.LabelServiceName: "svc"},
+						},
+						Ports: []discovery.EndpointPort{
+							{
+								Name:     ptr.To("tcp-example"),
+								Protocol: ptr.To(corev1.ProtocolUDP),
+								Port:     ptr.To(int32(80)),
+							},
+						},
+						AddressType: discovery.AddressTypeIPv4,
+						Endpoints:   kubetest.MakeReadyEndpointList(nodeA, "10.0.0.3", "10.2.2.3"),
+					},
+				},
+				svc:   getSampleServiceWithOnePortAndETPLocal("tcp-example", 80, tcp),
+				nodes: sets.New(nodeA), // one-node zone
+			},
+			wantClusterEndpoints: util.PortToLBEndpoints{
+				util.GetServicePortKey(tcp, "tcp-example"): {V4IPs: []string{"10.0.0.2", "10.1.1.2"}, Port: 80}},
+			wantNodeEndpoints: util.PortToNodeToLBEndpoints{
+				util.GetServicePortKey(tcp, "tcp-example"): {nodeA: util.LBEndpoints{V4IPs: []string{"10.0.0.2", "10.1.1.2"}, Port: 80}}},
+		},
+		// The following should never happen in k8s - endpoints should not be empty.
+		{
+			name: "multiple slices with same port name, empty endpoints, invalid ports, ETP=local",
+			args: args{
+				slices: []*discovery.EndpointSlice{
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "svc-ab23",
+							Namespace: "ns",
+							Labels:    map[string]string{discovery.LabelServiceName: "svc"},
+						},
+						Ports: []discovery.EndpointPort{
+							{
+								Name:     ptr.To("tcp-example"),
+								Protocol: ptr.To(corev1.ProtocolTCP),
+								Port:     ptr.To(int32(80)),
+							},
+						},
+						AddressType: discovery.AddressTypeIPv4,
+						Endpoints:   []discovery.Endpoint{kubetest.MakeUnassignedEndpoint("10.1.1.2")},
+					},
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "svc-ab23",
+							Namespace: "ns",
+							Labels:    map[string]string{discovery.LabelServiceName: "svc"},
+						},
+						Ports: []discovery.EndpointPort{
+							{
+								Name:     ptr.To("tcp-example"),
+								Protocol: ptr.To(corev1.ProtocolTCP),
+								Port:     ptr.To(int32(80)),
+							},
+						},
+						AddressType: discovery.AddressTypeIPv4,
+						Endpoints:   []discovery.Endpoint{},
+					},
+				},
+				svc:   getSampleServiceWithOnePortAndETPLocal("tcp-example", 80, tcp),
+				nodes: sets.New(nodeA), // one-node zone
+			},
+			wantClusterEndpoints: util.PortToLBEndpoints{"TCP/tcp-example": util.LBEndpoints{Port: 80, V4IPs: []string{"10.1.1.2"}, V6IPs: []string(nil)}},
+			wantNodeEndpoints:    util.PortToNodeToLBEndpoints{},
+		},
+		// The following should never happen in k8s - invalid port number.
+		{
+			name: "single slices, invalid port number, ETP=local",
+			args: args{
+				slices: []*discovery.EndpointSlice{
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "svc-ab23",
+							Namespace: "ns",
+							Labels:    map[string]string{discovery.LabelServiceName: "svc"},
+						},
+						Ports: []discovery.EndpointPort{
+							{
+								Name:     ptr.To("tcp-example"),
+								Protocol: ptr.To(corev1.ProtocolTCP),
+								Port:     ptr.To(int32(-2)),
+							},
+						},
+						AddressType: discovery.AddressTypeIPv4,
+						Endpoints:   []discovery.Endpoint{kubetest.MakeUnassignedEndpoint("10.1.1.2")},
+					},
+				},
+				svc:   getSampleServiceWithOnePortAndETPLocal("tcp-example", 80, tcp),
+				nodes: sets.New(nodeA), // one-node zone
+			},
+			wantClusterEndpoints: util.PortToLBEndpoints{},
+			wantNodeEndpoints:    util.PortToNodeToLBEndpoints{},
+		},
+		{
+			name: "nil service without endpoints, ETP=local",
+			args: args{
+				slices: []*discovery.EndpointSlice{},
+				svc:    nil,
+				nodes:  sets.New(nodeA),
+			},
+			wantClusterEndpoints: util.PortToLBEndpoints{},
+			wantNodeEndpoints:    util.PortToNodeToLBEndpoints{},
+		},
+		{
+			name: "multiple slices, nil service with endpoints, ETP=local",
+			args: args{
+				slices: []*discovery.EndpointSlice{
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "svc-ab23",
+							Namespace: "ns",
+							Labels:    map[string]string{discovery.LabelServiceName: "svc"},
+						},
+						Ports: []discovery.EndpointPort{
+							{
+								Name:     ptr.To("tcp-example"),
+								Protocol: ptr.To(corev1.ProtocolTCP),
+								Port:     ptr.To(int32(80)),
+							},
+						},
+						AddressType: discovery.AddressTypeIPv4,
+						Endpoints:   kubetest.MakeReadyEndpointList(nodeA, "10.1.1.2"),
+					},
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "svc-ab23",
+							Namespace: "ns",
+							Labels:    map[string]string{discovery.LabelServiceName: "svc"},
+						},
+						Ports: []discovery.EndpointPort{
+							{
+								Name:     ptr.To("tcp-example2"),
+								Protocol: ptr.To(corev1.ProtocolTCP),
+								Port:     ptr.To(int32(80)),
+							},
+						},
+						AddressType: discovery.AddressTypeIPv4,
+						Endpoints:   kubetest.MakeReadyEndpointList(nodeA, "10.1.1.3"),
+					},
+				},
+				svc:   nil,
+				nodes: sets.New(nodeA),
+			},
+			wantClusterEndpoints: util.PortToLBEndpoints{
+				"TCP/tcp-example":  util.LBEndpoints{Port: 80, V4IPs: []string{"10.1.1.2"}, V6IPs: []string(nil)},
+				"TCP/tcp-example2": util.LBEndpoints{Port: 80, V4IPs: []string{"10.1.1.3"}, V6IPs: []string(nil)},
+			},
+			wantNodeEndpoints: util.PortToNodeToLBEndpoints{
+				"TCP/tcp-example":  map[string]util.LBEndpoints{"node-a": {Port: 80, V4IPs: []string{"10.1.1.2"}, V6IPs: []string(nil)}},
+				"TCP/tcp-example2": map[string]util.LBEndpoints{"node-a": {Port: 80, V4IPs: []string{"10.1.1.3"}, V6IPs: []string(nil)}},
+			},
+		},
+		{
+			name: "multiple slices, service selects correct slice, ETP=local",
+			args: args{
+				slices: []*discovery.EndpointSlice{
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "svc-ab23",
+							Namespace: "ns",
+							Labels:    map[string]string{discovery.LabelServiceName: "svc"},
+						},
+						Ports: []discovery.EndpointPort{
+							{
+								Name:     ptr.To("tcp-example"),
+								Protocol: ptr.To(corev1.ProtocolTCP),
+								Port:     ptr.To(int32(80)),
+							},
+						},
+						AddressType: discovery.AddressTypeIPv4,
+						Endpoints:   kubetest.MakeReadyEndpointList(nodeA, "10.1.1.2"),
+					},
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "svc-ab23",
+							Namespace: "ns",
+							Labels:    map[string]string{discovery.LabelServiceName: "svc"},
+						},
+						Ports: []discovery.EndpointPort{
+							{
+								Name:     ptr.To("tcp-example2"),
+								Protocol: ptr.To(corev1.ProtocolTCP),
+								Port:     ptr.To(int32(80)),
+							},
+						},
+						AddressType: discovery.AddressTypeIPv4,
+						Endpoints:   kubetest.MakeReadyEndpointList(nodeA, "10.1.1.3"),
+					},
+				},
+				svc:   getSampleServiceWithOnePortAndETPLocal("tcp-example2", 80, tcp),
+				nodes: sets.New(nodeA),
+			},
+			wantClusterEndpoints: util.PortToLBEndpoints{
+				"TCP/tcp-example2": util.LBEndpoints{Port: 80, V4IPs: []string{"10.1.1.3"}, V6IPs: []string(nil)},
+			},
+			wantNodeEndpoints: util.PortToNodeToLBEndpoints{
+				"TCP/tcp-example2": map[string]util.LBEndpoints{"node-a": {Port: 80, V4IPs: []string{"10.1.1.3"}, V6IPs: []string(nil)}},
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			needsLocalEndpoints := util.ServiceExternalTrafficPolicyLocal(tt.args.svc) || util.ServiceInternalTrafficPolicyLocal(tt.args.svc)
+			needsLocalEndpoints := tt.args.svc == nil || util.ServiceExternalTrafficPolicyLocal(tt.args.svc) || util.ServiceInternalTrafficPolicyLocal(tt.args.svc)
 			portToClusterEndpoints, portToNodeToEndpoints, err := util.GetEndpointsForService(
 				tt.args.slices, tt.args.svc, tt.args.nodes, true, needsLocalEndpoints)
 			assert.Equal(t, tt.wantClusterEndpoints, portToClusterEndpoints)

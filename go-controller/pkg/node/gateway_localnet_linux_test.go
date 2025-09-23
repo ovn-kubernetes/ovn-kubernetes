@@ -999,6 +999,155 @@ var _ = Describe("Node Operations", func() {
 			Expect(app.Run([]string{app.Name})).To(Succeed())
 		})
 
+		It("inits iptables rules and openflows with named port and AllocateLoadBalancerNodePorts=False, ETP=local, LGW mode", func() {
+			app.Action = func(*cli.Context) error {
+				minNFakeCommands := nInitialFakeCommands + 1
+				fExec.AddRepeatedFakeCmd(&ovntest.ExpectedCmd{
+					Cmd: "ovs-ofctl show ",
+				}, minNFakeCommands)
+
+				config.Gateway.Mode = config.GatewayModeLocal
+				svcPortName := "https-port"
+				svcPortValue := int32(8080)
+				svcProtocol := corev1.ProtocolTCP
+				svcTargetPortName := "https-target"
+				svcAllocateLoadBalancerNodePorts := false
+				svcStatusIP := "192.168.0.10"
+				svcStatusIPMode := corev1.LoadBalancerIPModeVIP
+
+				epPortValue := int32(443)
+				epPortProtocol := corev1.ProtocolTCP
+
+				nodeName := "node"
+
+				service := *newService("service1", "namespace1", "10.129.0.2",
+					[]corev1.ServicePort{
+						{
+							Name:       svcPortName,
+							Port:       svcPortValue,
+							Protocol:   svcProtocol,
+							TargetPort: intstr.FromString(svcTargetPortName),
+						},
+					},
+					corev1.ServiceTypeLoadBalancer,
+					nil,
+					corev1.ServiceStatus{
+						LoadBalancer: corev1.LoadBalancerStatus{
+							Ingress: []corev1.LoadBalancerIngress{
+								{
+									IP:     svcStatusIP,
+									IPMode: &svcStatusIPMode,
+								},
+							},
+						},
+					},
+					true, false,
+				)
+				service.Spec.AllocateLoadBalancerNodePorts = &svcAllocateLoadBalancerNodePorts
+				ep1 := discovery.Endpoint{
+					Addresses: []string{"10.244.0.3"},
+					NodeName:  &nodeName,
+				}
+				ep2 := discovery.Endpoint{
+					Addresses: []string{"10.244.0.4"},
+					NodeName:  &nodeName,
+				}
+				epPort1 := discovery.EndpointPort{
+					Name:     &svcPortName,
+					Port:     &epPortValue,
+					Protocol: &epPortProtocol,
+				}
+				// endpointSlice.Endpoints is ovn-networked so this will
+				// come under !hasLocalHostNetEp case
+				endpointSlice := *newEndpointSlice(
+					"service1",
+					"namespace1",
+					[]discovery.Endpoint{ep1, ep2},
+					[]discovery.EndpointPort{epPort1},
+				)
+
+				stopChan := make(chan struct{})
+				fakeClient := util.GetOVNClientset(&service, &endpointSlice).GetNodeClientset()
+				wf, err := factory.NewNodeWatchFactory(fakeClient, nodeName)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(wf.Start()).To(Succeed())
+				defer func() {
+					close(stopChan)
+					wf.Shutdown()
+				}()
+
+				fNPW.watchFactory = wf
+				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
+
+				expectedTables := map[string]util.FakeTable{
+					"nat": {
+						"PREROUTING": []string{
+							"-j OVN-KUBE-ETP",
+							"-j OVN-KUBE-EXTERNALIP",
+							"-j OVN-KUBE-NODEPORT",
+						},
+						"OUTPUT": []string{
+							"-j OVN-KUBE-EXTERNALIP",
+							"-j OVN-KUBE-NODEPORT",
+							"-j OVN-KUBE-ITP",
+						},
+						"OVN-KUBE-NODEPORT": []string{},
+						"OVN-KUBE-EXTERNALIP": []string{
+							fmt.Sprintf("-p %s -d %s --dport %d -j DNAT --to-destination %s:%v",
+								service.Spec.Ports[0].Protocol,
+								service.Status.LoadBalancer.Ingress[0].IP,
+								service.Spec.Ports[0].Port,
+								service.Spec.ClusterIP,
+								service.Spec.Ports[0].Port),
+						},
+						"OVN-KUBE-ETP": []string{
+							fmt.Sprintf("-p %s -d %s --dport %d -j DNAT --to-destination %s:%d -m statistic --mode random --probability 0.5000000000",
+								service.Spec.Ports[0].Protocol,
+								service.Status.LoadBalancer.Ingress[0].IP,
+								service.Spec.Ports[0].Port,
+								endpointSlice.Endpoints[0].Addresses[0],
+								*endpointSlice.Ports[0].Port),
+							fmt.Sprintf("-p %s -d %s --dport %d -j DNAT --to-destination %s:%d -m statistic --mode random --probability 1.0000000000",
+								service.Spec.Ports[0].Protocol,
+								service.Status.LoadBalancer.Ingress[0].IP,
+								service.Spec.Ports[0].Port,
+								endpointSlice.Endpoints[1].Addresses[0],
+								*endpointSlice.Ports[0].Port),
+						},
+						"OVN-KUBE-ITP": []string{},
+					},
+					"filter": {},
+					"mangle": {
+						"OUTPUT": []string{
+							"-j OVN-KUBE-ITP",
+						},
+						"OVN-KUBE-ITP": []string{},
+					},
+				}
+
+				f4 := iptV4.(*util.FakeIPTables)
+				err = f4.MatchState(expectedTables, nil)
+				Expect(err).NotTo(HaveOccurred())
+
+				expectedNFT := getBaseNFTRules(types.K8sMgmtIntfName)
+				expectedNFT += fmt.Sprintf("add element inet ovn-kubernetes mgmtport-no-snat-services-v4 { %s . tcp . %v }\n"+
+					"add element inet ovn-kubernetes mgmtport-no-snat-services-v4 { %s . tcp . %v }\n",
+					endpointSlice.Endpoints[1].Addresses[0],
+					*endpointSlice.Ports[0].Port,
+					endpointSlice.Endpoints[0].Addresses[0],
+					*endpointSlice.Ports[0].Port)
+				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
+				Expect(err).NotTo(HaveOccurred())
+
+				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
+				Expect(flows).To(BeNil())
+
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			Expect(err).NotTo(HaveOccurred())
+		})
+
 		It("inits iptables rules and openflows with LoadBalancer where ETP=cluster, LGW mode", func() {
 			app.Action = func(*cli.Context) error {
 				externalIP := "1.1.1.1"
