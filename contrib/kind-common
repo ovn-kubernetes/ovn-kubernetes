@@ -819,7 +819,7 @@ destroy_bgp() {
   fi
 }
 
-install_ffr_k8s() {
+install_frr_k8s() {
   echo "Installing frr-k8s ..."
   clone_frr
 
@@ -832,14 +832,23 @@ install_ffr_k8s() {
   # exchange routes
   pushd "${FRR_TMP_DIR}"/frr-k8s/hack/demo/configs || exit 1
   sed 's/mode: all/mode: filtered/g' receive_all.yaml > receive_filtered.yaml
-  # Allow receiving the bgp external server's prefix
-  sed -i '/mode: filtered/a\            prefixes:\n            - prefix: '"${BGP_SERVER_NET_SUBNET_IPV4}"'' receive_filtered.yaml
+  if [ "$ENABLE_NO_OVERLAY" == true ]; then
+    # Allow receiving the bgp external server's prefix and the pod network's prefix
+    sed -i '/mode: filtered/a\            prefixes:\n            - prefix: '"${BGP_SERVER_NET_SUBNET_IPV4}"'\n            - ge: 24\n              prefix: '"${NET_CIDR_IPV4}"'' receive_filtered.yaml
+  else
+    # Allow receiving the bgp external server's prefix
+    sed -i '/mode: filtered/a\            prefixes:\n            - prefix: '"${BGP_SERVER_NET_SUBNET_IPV4}"'' receive_filtered.yaml
+  fi
   # If IPv6 is enabled, add the IPv6 prefix as well
   if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     # Find all line numbers where the IPv4 prefix is defined
-    IPv6_LINE="            - prefix: ${BGP_SERVER_NET_SUBNET_IPV6}"
-    # Process each occurrence of the IPv4 prefix
-    for LINE_NUM in $(grep -n "prefix: ${BGP_SERVER_NET_SUBNET_IPV4}" receive_filtered.yaml | cut -d ':' -f 1); do
+    if [ "$ENABLE_NO_OVERLAY" == true ]; then
+      IPv6_LINE="            - prefix: ${BGP_SERVER_NET_SUBNET_IPV6}\n            - ge: 64\n              prefix: ${NET_CIDR_IPV6}"
+    else
+      IPv6_LINE="            - prefix: ${BGP_SERVER_NET_SUBNET_IPV6}"
+    fi
+    # Process each occurrence of the IPv4 prefix in reverse order to avoid line number shifting
+    for LINE_NUM in $(grep -n "prefix: ${BGP_SERVER_NET_SUBNET_IPV4}" receive_filtered.yaml | cut -d ':' -f 1 | sort -rn); do
       # Insert the IPv6 prefix after each IPv4 prefix line
       sed -i "${LINE_NUM}a\\${IPv6_LINE}" receive_filtered.yaml
     done
