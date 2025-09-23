@@ -665,7 +665,7 @@ get_kubevirt_release_url() {
     echo "$kubevirt_release_url"
 }
 
-readonly FRR_K8S_VERSION=v0.0.17
+readonly FRR_K8S_VERSION=v0.0.20
 readonly FRR_TMP_DIR=$(mktemp -d -u)
 
 clone_frr() {
@@ -679,7 +679,7 @@ clone_frr() {
 
     # Change into the cloned repo directory before applying patches
     pushd frr-k8s
-    git apply ../patches/*
+    git apply --exclude hack/kind.sh ../patches/*
     popd
 
     popd || exit 1
