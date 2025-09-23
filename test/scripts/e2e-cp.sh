@@ -201,6 +201,16 @@ else
   fi
 fi
 
+if [ "$ENABLE_NO_OVERLAY" == true ]; then
+  # No support for these features in no-overlay mode yet
+  skip "Multicast"
+  skip "egress IP"
+  skip "EgressService"
+  # In no-overlay mode, pods have the same MTU as the underly network. These tests does not make sense in no-overlay mode.
+  skip "blocking ICMP needs frag"
+  
+fi
+
 # setting these is required to make RuntimeClass tests work ... :/
 export KUBE_CONTAINER_RUNTIME=remote
 export KUBE_CONTAINER_RUNTIME_ENDPOINT=unix:///run/containerd/containerd.sock
