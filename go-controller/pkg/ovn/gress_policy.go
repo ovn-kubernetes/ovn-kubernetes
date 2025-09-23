@@ -167,35 +167,44 @@ func (gp *gressPolicy) allIPsMatch() string {
 	}
 }
 
-func (gp *gressPolicy) getMatchFromIPBlock(lportMatch, l4Match string) []string {
+func (gp *gressPolicy) getMatchFromIPBlock(lportMatch, l4Match string) ([]string, map[int]string) {
 	var direction string
+
 	if gp.policyType == knet.PolicyTypeIngress {
 		direction = "src"
 	} else {
 		direction = "dst"
 	}
-	var matchStrings []string
-	var matchStr, ipVersion string
-	for _, ipBlock := range gp.ipBlocks {
+	var cidrMatchStrings []string
+	exceptMatchStrings := make(map[int]string)
+	var cidrMatchStr, exceptMatchStr, ipVersion string
+
+	for idx, ipBlock := range gp.ipBlocks {
 		if utilnet.IsIPv6CIDRString(ipBlock.CIDR) {
 			ipVersion = "ip6"
 		} else {
 			ipVersion = "ip4"
 		}
-		if len(ipBlock.Except) == 0 {
-			matchStr = fmt.Sprintf("%s.%s == %s", ipVersion, direction, ipBlock.CIDR)
-		} else {
-			matchStr = fmt.Sprintf("%s.%s == %s && %s.%s != {%s}", ipVersion, direction, ipBlock.CIDR,
-				ipVersion, direction, strings.Join(ipBlock.Except, ", "))
-		}
+
+		cidrMatchStr = fmt.Sprintf("%s.%s == %s", ipVersion, direction, ipBlock.CIDR)
 		if l4Match == libovsdbutil.UnspecifiedL4Match {
-			matchStr = fmt.Sprintf("%s && %s", matchStr, lportMatch)
+			cidrMatchStr = fmt.Sprintf("%s && %s", cidrMatchStr, lportMatch)
 		} else {
-			matchStr = fmt.Sprintf("%s && %s && %s", matchStr, l4Match, lportMatch)
+			cidrMatchStr = fmt.Sprintf("%s && %s && %s", cidrMatchStr, l4Match, lportMatch)
 		}
-		matchStrings = append(matchStrings, matchStr)
+		cidrMatchStrings = append(cidrMatchStrings, cidrMatchStr)
+
+		if len(ipBlock.Except) > 0 {
+			exceptMatchStr = fmt.Sprintf("%s.%s == {%s}", ipVersion, direction, strings.Join(ipBlock.Except, ", "))
+			if l4Match == libovsdbutil.UnspecifiedL4Match {
+				exceptMatchStr = fmt.Sprintf("%s && %s", exceptMatchStr, lportMatch)
+			} else {
+				exceptMatchStr = fmt.Sprintf("%s && %s && %s", exceptMatchStr, l4Match, lportMatch)
+			}
+			exceptMatchStrings[idx] = exceptMatchStr
+		}
 	}
-	return matchStrings
+	return cidrMatchStrings, exceptMatchStrings
 }
 
 // addNamespaceAddressSet adds a namespace address set to the gress policy.
@@ -285,13 +294,20 @@ func (gp *gressPolicy) buildLocalPodACLs(portGroupName string, aclLogging *libov
 	for protocol, l4Match := range libovsdbutil.GetL4MatchesFromNetworkPolicyPorts(gp.portPolicies) {
 		if len(gp.ipBlocks) > 0 {
 			// Add ACL allow rule for IPBlock CIDR
-			ipBlockMatches := gp.getMatchFromIPBlock(lportMatch, l4Match)
+			ipBlockMatches, exceptMatches := gp.getMatchFromIPBlock(lportMatch, l4Match)
+			for exceptIdx, exceptMatch := range exceptMatches {
+				aclIDs := gp.getNetpolACLDbIDs(exceptIdx, protocol, true)
+				acl := libovsdbutil.BuildACLWithDefaultTier(aclIDs, types.DefaultExceptPriority, exceptMatch, nbdb.ACLActionDrop,
+					aclLogging, gp.aclPipeline)
+				createdACLs = append(createdACLs, acl)
+			}
 			for ipBlockIdx, ipBlockMatch := range ipBlockMatches {
-				aclIDs := gp.getNetpolACLDbIDs(ipBlockIdx, protocol)
+				aclIDs := gp.getNetpolACLDbIDs(ipBlockIdx, protocol, false)
 				acl := libovsdbutil.BuildACLWithDefaultTier(aclIDs, types.DefaultAllowPriority, ipBlockMatch, action,
 					aclLogging, gp.aclPipeline)
 				createdACLs = append(createdACLs, acl)
 			}
+
 		}
 		// if there are pod/namespace selector, then allow packets from/to that address_set or
 		// if the NetworkPolicyPeer is empty, then allow from all sources or to all destinations.
@@ -308,7 +324,7 @@ func (gp *gressPolicy) buildLocalPodACLs(portGroupName string, aclLogging *libov
 			} else {
 				addrSetMatch = fmt.Sprintf("%s && %s && %s", l3Match, l4Match, lportMatch)
 			}
-			aclIDs := gp.getNetpolACLDbIDs(emptyIdx, protocol)
+			aclIDs := gp.getNetpolACLDbIDs(emptyIdx, protocol, false)
 			acl := libovsdbutil.BuildACLWithDefaultTier(aclIDs, types.DefaultAllowPriority, addrSetMatch, action,
 				aclLogging, gp.aclPipeline)
 			if l3Match == "" {
@@ -324,25 +340,30 @@ func (gp *gressPolicy) buildLocalPodACLs(portGroupName string, aclLogging *libov
 	return
 }
 
-func (gp *gressPolicy) getNetpolACLDbIDs(ipBlockIdx int, protocol string) *libovsdbops.DbObjectIDs {
-	return libovsdbops.NewDbObjectIDs(libovsdbops.ACLNetworkPolicy, gp.controllerName,
-		map[libovsdbops.ExternalIDKey]string{
-			// policy namespace+name
-			libovsdbops.ObjectNameKey: libovsdbops.BuildNamespaceNameKey(gp.policyNamespace, gp.policyName),
-			// egress or ingress
-			libovsdbops.PolicyDirectionKey: string(gp.policyType),
-			// gress rule index
-			libovsdbops.GressIdxKey: strconv.Itoa(gp.idx),
-			// acls are created for every gp.portPolicies which are grouped by protocol:
-			// - for empty policy (no selectors and no ip blocks) - empty ACL
-			// OR
-			// - all selector-based peers ACL
-			// - for every IPBlock +1 ACL
-			// Therefore unique id for a given gressPolicy is protocol name + IPBlock idx
-			// (protocol will be "None" if no port policy is defined, and empty policy and all
-			// selector-based peers ACLs will have idx=-1)
-			libovsdbops.IpBlockIndexKey: strconv.Itoa(ipBlockIdx),
-			// protocol key
-			libovsdbops.PortPolicyProtocolKey: protocol,
-		})
+func (gp *gressPolicy) getNetpolACLDbIDs(ipBlockIdx int, protocol string, isExcept bool) *libovsdbops.DbObjectIDs {
+	ids := map[libovsdbops.ExternalIDKey]string{
+		// policy namespace+name
+		libovsdbops.ObjectNameKey: libovsdbops.BuildNamespaceNameKey(gp.policyNamespace, gp.policyName),
+		// egress or ingress
+		libovsdbops.PolicyDirectionKey: string(gp.policyType),
+		// gress rule index
+		libovsdbops.GressIdxKey: strconv.Itoa(gp.idx),
+		// acls are created for every gp.portPolicies which are grouped by protocol:
+		// - for empty policy (no selectors and no ip blocks) - empty ACL
+		// OR
+		// - all selector-based peers ACL
+		// - for every IPBlock +1 ACL
+		// Therefore unique id for a given gressPolicy is protocol name + IPBlock idx
+		// (protocol will be "None" if no port policy is defined, and empty policy and all
+		// selector-based peers ACLs will have idx=-1)
+		libovsdbops.IpBlockIndexKey: strconv.Itoa(ipBlockIdx),
+		// protocol key
+		libovsdbops.PortPolicyProtocolKey: protocol,
+	}
+	if isExcept {
+		ids[libovsdbops.IpBlockExceptIndexKey] = "1"
+	} else {
+		ids[libovsdbops.IpBlockExceptIndexKey] = "0"
+	}
+	return libovsdbops.NewDbObjectIDs(libovsdbops.ACLNetworkPolicy, gp.controllerName, ids)
 }

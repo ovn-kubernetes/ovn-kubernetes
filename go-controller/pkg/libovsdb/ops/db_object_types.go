@@ -54,6 +54,7 @@ const (
 	IpKey                 ExternalIDKey = "ip"
 	PortPolicyIndexKey    ExternalIDKey = "port-policy-index"
 	IpBlockIndexKey       ExternalIDKey = "ip-block-index"
+	IpBlockExceptIndexKey ExternalIDKey = "ip-block-except-index"
 	RuleIndex             ExternalIDKey = "rule-index"
 	CIDRKey               ExternalIDKey = types.OvnK8sPrefix + "/cidr"
 	PortPolicyProtocolKey ExternalIDKey = "port-policy-protocol"
@@ -257,6 +258,7 @@ var ACLNetworkPolicy = newObjectIDsType(acl, NetworkPolicyOwnerType, []ExternalI
 	GressIdxKey,
 	PortPolicyProtocolKey,
 	IpBlockIndexKey,
+	IpBlockExceptIndexKey,
 })
 
 var ACLNetpolNamespace = newObjectIDsType(acl, NetpolNamespaceOwnerType, []ExternalIDKey{

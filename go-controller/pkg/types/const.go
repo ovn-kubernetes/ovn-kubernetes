@@ -82,6 +82,8 @@ const (
 	DefaultMcastAllowPriority = 1012
 	// Default multicast deny acl rule priority
 	DefaultMcastDenyPriority = 1011
+	// Default except acl rule priority
+	DefaultExceptPriority = 1002
 	// Default allow acl rule priority
 	DefaultAllowPriority = 1001
 	// Default deny acl rule priority
