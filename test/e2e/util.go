@@ -40,7 +40,6 @@ import (
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
-	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 	testutils "k8s.io/kubernetes/test/utils"
 	admissionapi "k8s.io/pod-security-admission/api"
 	utilnet "k8s.io/utils/net"
@@ -1749,102 +1748,4 @@ func findOVNDBLeaderPod(f *framework.Framework, cs clientset.Interface, namespac
 	}
 
 	return nil, fmt.Errorf("no nbdb leader pod found among %d ovnkube-db pods", len(dbPods.Items))
-}
-
-// TestClientPodToServerConnectivity tests connectivity from a client pod to multiple server IPs
-// and verifies that the source IP seen by the server matches the expected IPs.
-// Returns true if all connectivity tests pass, false otherwise.
-func TestClientPodToServerConnectivity(clientPod *v1.Pod, serverIPs []string, portNumber int, expectedIPs []string, serverDesc string) bool {
-	for _, serverIP := range serverIPs {
-		if serverIP != "" {
-			isV6 := utilnet.IsIPv6String(serverIP)
-			var expectedIP string
-			for _, eip := range expectedIPs {
-				if eip != "" && (utilnet.IsIPv6String(eip) == isV6) {
-					expectedIP = eip
-					break
-				}
-			}
-			if expectedIP == "" {
-				ipFamily := "IPv4"
-				if isV6 {
-					ipFamily = "IPv6"
-				}
-				framework.Logf("Skipping %s check for %s: no expected %s IP provided", serverDesc, serverIP, ipFamily)
-				continue
-			}
-
-			ginkgo.By(fmt.Sprintf("Sending request to server IP %s "+
-				"and expecting to receive %s in the payload", serverIP, expectedIP))
-			cmd := fmt.Sprintf("curl --max-time 30 -g -q -s http://%s/clientip",
-				net.JoinHostPort(serverIP, strconv.Itoa(portNumber)),
-			)
-			framework.Logf("Testing pod %s to %s traffic with command %q", clientPod.Name, serverDesc, cmd)
-			stdout, err := e2epodoutput.RunHostCmdWithRetries(
-				clientPod.Namespace,
-				clientPod.Name,
-				cmd,
-				framework.Poll,
-				60*time.Second)
-			if err != nil {
-				framework.Logf("Testing pod to %s traffic failed: %v", serverDesc, err)
-				return false
-			}
-
-			// Parse the server response more robustly
-			responseIP, err := parseClientIPFromResponse(strings.TrimSpace(stdout))
-			if err != nil {
-				framework.Logf("Testing client pod to %s traffic failed while parsing output %q: %v", serverDesc, stdout, err)
-				return false
-			}
-
-			if responseIP != expectedIP {
-				framework.Logf("Testing client pod to %s traffic failed: expected %s, got %s from output %q",
-					serverDesc, expectedIP, responseIP, stdout)
-				return false
-			}
-		}
-	}
-	return true
-}
-
-// parseClientIPFromResponse extracts the client IP from the server response
-// Handles both IPv4 and IPv6 formats robustly
-func parseClientIPFromResponse(response string) (string, error) {
-	// Try to parse as host:port first (works for both IPv4:port and [IPv6]:port)
-	if host, _, err := net.SplitHostPort(response); err == nil {
-		// Validate that the host part is a valid IP
-		if ip := net.ParseIP(host); ip != nil {
-			return host, nil
-		}
-	}
-
-	// If SplitHostPort fails, try to extract IP directly
-	// This handles cases where the response might be just an IP without port
-	if ip := net.ParseIP(response); ip != nil {
-		return response, nil
-	}
-
-	// Fallback: handle malformed responses by trying to extract IP-like patterns
-	// Look for IPv6 in brackets first
-	if strings.Contains(response, "[") && strings.Contains(response, "]") {
-		start := strings.Index(response, "[")
-		end := strings.Index(response, "]")
-		if start < end {
-			candidate := response[start+1 : end]
-			if ip := net.ParseIP(candidate); ip != nil {
-				return candidate, nil
-			}
-		}
-	}
-
-	// Look for IPv4 pattern (digits.digits.digits.digits)
-	re := regexp.MustCompile(`\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b`)
-	if match := re.FindString(response); match != "" {
-		if ip := net.ParseIP(match); ip != nil {
-			return match, nil
-		}
-	}
-
-	return "", fmt.Errorf("could not extract valid IP from response: %s", response)
 }

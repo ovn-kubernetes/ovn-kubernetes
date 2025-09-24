@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/template"
 
@@ -119,7 +120,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 		// The client pod inside the KIND cluster on the default network exposed using default network Router
 		// Advertisement will curl the external server container sitting outside the cluster via a FRR router
 		// This test ensures the north-south connectivity is happening through podIP
-		ginkgo.It("default network toggle tests that are run towards the external agnhost echo server and another cluster node", func() {
+		ginkgo.It("default network toggle tests that are run towards the external agnhost echo server and another cluster node", ginkgo.Serial, func() {
 			ginkgo.By("routes from external bgp server are imported by nodes in the cluster")
 			bgpNetwork, err := infraprovider.Get().GetNetwork(bgpExternalNetworkName)
 			framework.ExpectNoError(err, "network %s must be available and precreated before test run", bgpExternalNetworkName)
@@ -285,14 +286,42 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 			framework.Logf("hostNetworkedPodNodeIPs: %v", hostNetworkedPodNodeIPs)
 
 			ginkgo.By("With default network being advertised, queries to the external server are not SNATed (uses podIP)")
-			gomega.Eventually(func() bool {
-				return TestClientPodToServerConnectivity(clientPod, serverContainerIPs, netexecPort, clientPodIPs, "external server pod")
-			}, 30*time.Second, 2*time.Second).Should(gomega.BeTrue(), "With default network being advertised initially, pod to external server test failed")
+			gomega.Eventually(func() error {
+				for i, serverIP := range serverContainerIPs {
+					if serverIP != "" {
+						expectedIP := ""
+						if i < len(clientPodIPs) {
+							expectedIP = clientPodIPs[i]
+						}
+						if expectedIP == "" {
+							continue
+						}
+						if err := curlAgnHostClientIPFromPod(clientPod.Namespace, clientPod.Name, expectedIP, serverIP, strconv.Itoa(netexecPort)); err != nil {
+							return err
+						}
+					}
+				}
+				return nil
+			}, 30*time.Second, 2*time.Second).Should(gomega.Succeed(), "With default network being advertised initially, pod to external server test failed")
 
 			ginkgo.By("With default network being advertised, queries to the second node are SNATed (uses nodeIP)")
-			gomega.Eventually(func() bool {
-				return TestClientPodToServerConnectivity(clientPod, hostNetworkedPodNodeIPs, hostNetPort, clientPodNodeIPs, "client pod to second node")
-			}, 30*time.Second, 2*time.Second).Should(gomega.BeTrue(), "With default network being advertised initially, pod to second node test failed")
+			gomega.Eventually(func() error {
+				for i, nodeIP := range hostNetworkedPodNodeIPs {
+					if nodeIP != "" {
+						expectedIP := ""
+						if i < len(clientPodNodeIPs) {
+							expectedIP = clientPodNodeIPs[i]
+						}
+						if expectedIP == "" {
+							continue
+						}
+						if err := curlAgnHostClientIPFromPod(clientPod.Namespace, clientPod.Name, expectedIP, nodeIP, strconv.Itoa(hostNetPort)); err != nil {
+							return err
+						}
+					}
+				}
+				return nil
+			}, 30*time.Second, 2*time.Second).Should(gomega.Succeed(), "With default network being advertised initially, pod to second node test failed")
 
 			// defer add default network RA back to restore to the original test setup
 			ra := &rav1.RouteAdvertisements{
@@ -346,19 +375,47 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 
 				// repeat pod to external and pod to second node tests
 				ginkgo.By("With default network being advertised again, queries to the external server are not SNATed (uses podIP)")
-				gomega.Eventually(func() bool {
-					return TestClientPodToServerConnectivity(clientPod, serverContainerIPs, netexecPort, clientPodIPs, "external server pod")
-				}, 30*time.Second, 2*time.Second).Should(gomega.BeTrue(), "With default network being advertised again, pod to external server test failed, test environment may be corrupted")
+				gomega.Eventually(func() error {
+					for i, serverIP := range serverContainerIPs {
+						if serverIP != "" {
+							expectedIP := ""
+							if i < len(clientPodIPs) {
+								expectedIP = clientPodIPs[i]
+							}
+							if expectedIP == "" {
+								continue
+							}
+							if err := curlAgnHostClientIPFromPod(clientPod.Namespace, clientPod.Name, expectedIP, serverIP, strconv.Itoa(netexecPort)); err != nil {
+								return err
+							}
+						}
+					}
+					return nil
+				}, 30*time.Second, 2*time.Second).Should(gomega.Succeed(), "With default network being advertised again, pod to external server test failed, test environment may be corrupted")
 
 				ginkgo.By("With default network being advertised again, queries to the second node are SNATed (uses nodeIP)")
-				gomega.Eventually(func() bool {
-					return TestClientPodToServerConnectivity(clientPod, hostNetworkedPodNodeIPs, hostNetPort, clientPodNodeIPs, "client pod to second node")
-				}, 30*time.Second, 2*time.Second).Should(gomega.BeTrue(), "With default network being advertised again, pod to second node test failed, test environment may be corrupted")
+				gomega.Eventually(func() error {
+					for i, nodeIP := range hostNetworkedPodNodeIPs {
+						if nodeIP != "" {
+							expectedIP := ""
+							if i < len(clientPodNodeIPs) {
+								expectedIP = clientPodNodeIPs[i]
+							}
+							if expectedIP == "" {
+								continue
+							}
+							if err := curlAgnHostClientIPFromPod(clientPod.Namespace, clientPod.Name, expectedIP, nodeIP, strconv.Itoa(hostNetPort)); err != nil {
+								return err
+							}
+						}
+					}
+					return nil
+				}, 30*time.Second, 2*time.Second).Should(gomega.Succeed(), "With default network being advertised again, pod to second node test failed, test environment may be corrupted")
 
 			}()
 
 			ginkgo.By("Delete route advertisement")
-			_, err = e2ekubectl.RunKubectl("", "delete", "ra", "default")
+			_, err = e2ekubectl.RunKubectl("", "delete", "ra", "default", "--ignore-not-found=true")
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			// Make sure default RA is deleted
@@ -366,14 +423,42 @@ var _ = ginkgo.Describe("BGP: Pod to external server when default podNetwork is 
 			gomega.Expect(err).To(gomega.HaveOccurred())
 
 			ginkgo.By("After default network is toggled to unadvertised, run test towards the external agnhost echo server from client podagain, egressing packets should be SNATed to pod's host nodeIP")
-			gomega.Eventually(func() bool {
-				return TestClientPodToServerConnectivity(clientPod, serverContainerIPs, netexecPort, clientPodNodeIPs, "external server container")
-			}, 30*time.Second, 2*time.Second).Should(gomega.BeTrue(), "After default network is toggled to unadvertised, pod to external server test failed")
+			gomega.Eventually(func() error {
+				for i, serverIP := range serverContainerIPs {
+					if serverIP != "" {
+						expectedIP := ""
+						if i < len(clientPodNodeIPs) {
+							expectedIP = clientPodNodeIPs[i]
+						}
+						if expectedIP == "" {
+							continue
+						}
+						if err := curlAgnHostClientIPFromPod(clientPod.Namespace, clientPod.Name, expectedIP, serverIP, strconv.Itoa(netexecPort)); err != nil {
+							return err
+						}
+					}
+				}
+				return nil
+			}, 30*time.Second, 2*time.Second).Should(gomega.Succeed(), "After default network is toggled to unadvertised, pod to external server test failed")
 
 			ginkgo.By("After default network is toggled to unadvertised, run test towards the second node from client pod, egressing packets should be SNATed to pod's host nodeIP")
-			gomega.Eventually(func() bool {
-				return TestClientPodToServerConnectivity(clientPod, hostNetworkedPodNodeIPs, hostNetPort, clientPodNodeIPs, "client pod to second node")
-			}, 30*time.Second, 2*time.Second).Should(gomega.BeTrue(), "After default network is toggled to unadvertised, pod to second node test failed")
+			gomega.Eventually(func() error {
+				for i, nodeIP := range hostNetworkedPodNodeIPs {
+					if nodeIP != "" {
+						expectedIP := ""
+						if i < len(clientPodNodeIPs) {
+							expectedIP = clientPodNodeIPs[i]
+						}
+						if expectedIP == "" {
+							continue
+						}
+						if err := curlAgnHostClientIPFromPod(clientPod.Namespace, clientPod.Name, expectedIP, nodeIP, strconv.Itoa(hostNetPort)); err != nil {
+							return err
+						}
+					}
+				}
+				return nil
+			}, 30*time.Second, 2*time.Second).Should(gomega.Succeed(), "After default network is toggled to unadvertised, pod to second node test failed")
 
 		})
 	})
@@ -1417,10 +1502,9 @@ var _ = ginkgo.Describe("BGP: For a VRF-Lite configured network", feature.RouteA
 		// external FRR container fails to start on the first attempt for
 		// unknown reasons delaying the overall availability, so we need to use
 		// long timeouts
-		timeout     = 240 * time.Second
-		timeoutNOK  = 10 * time.Second
-		pollingNOK  = 1 * time.Second
-		netexecPort = 8080
+		timeout    = 240 * time.Second
+		timeoutNOK = 10 * time.Second
+		pollingNOK = 1 * time.Second
 	)
 	var netexecPortStr = fmt.Sprintf("%d", netexecPort)
 	testPodToHostnameAndExpect := func(src *corev1.Pod, dstIP, expect string) {
