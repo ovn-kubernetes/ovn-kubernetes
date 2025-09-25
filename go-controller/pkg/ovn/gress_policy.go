@@ -7,8 +7,10 @@ import (
 	"strings"
 	"sync"
 
+	"inet.af/netaddr"
 	corev1 "k8s.io/api/core/v1"
 	knet "k8s.io/api/networking/v1"
+	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
@@ -167,35 +169,105 @@ func (gp *gressPolicy) allIPsMatch() string {
 	}
 }
 
-func (gp *gressPolicy) getMatchFromIPBlock(lportMatch, l4Match string) []string {
-	var direction string
+func (gp *gressPolicy) getMatchFromIPBlock(lportMatch, l4Match string) ([]string, error) {
+	direction := "dst"
 	if gp.policyType == knet.PolicyTypeIngress {
 		direction = "src"
-	} else {
-		direction = "dst"
 	}
-	var matchStrings []string
-	var matchStr, ipVersion string
+
+	var (
+		ipv4Builder netaddr.IPSetBuilder
+		ipv6Builder netaddr.IPSetBuilder
+	)
+
+	// Precompute which blocks are v4/v6 and build sets in a single pass
 	for _, ipBlock := range gp.ipBlocks {
+		cidrPrefix := netaddr.MustParseIPPrefix(ipBlock.CIDR)
+		var exceptSet *netaddr.IPSet
+		var err error
+
+		if len(ipBlock.Except) > 0 {
+			var exceptBuilder netaddr.IPSetBuilder
+			for _, except := range ipBlock.Except {
+				exceptBuilder.AddPrefix(netaddr.MustParseIPPrefix(except))
+			}
+			exceptSet, err = exceptBuilder.IPSet()
+			if err != nil {
+				return nil, fmt.Errorf("failed to build IPSet from except %v: %v", ipBlock.Except, err)
+			}
+		}
+
+		var blockBuilder netaddr.IPSetBuilder
+		blockBuilder.AddPrefix(cidrPrefix)
+		cidrSet, err := blockBuilder.IPSet()
+		if err != nil {
+			return nil, fmt.Errorf("failed to build IPSet from CIDR %s: %v", ipBlock.CIDR, err)
+		}
+
+		var finalSet *netaddr.IPSet
+		if exceptSet != nil {
+			var diffBuilder netaddr.IPSetBuilder
+			diffBuilder.AddSet(cidrSet)
+			diffBuilder.RemoveSet(exceptSet)
+			finalSet, err = diffBuilder.IPSet()
+			if err != nil {
+				return nil, fmt.Errorf("failed to build IPSet from diff %s: %v", ipBlock.CIDR, err)
+			}
+		} else {
+			finalSet = cidrSet
+		}
+
 		if utilnet.IsIPv6CIDRString(ipBlock.CIDR) {
-			ipVersion = "ip6"
+			ipv6Builder.AddSet(finalSet)
 		} else {
-			ipVersion = "ip4"
+			ipv4Builder.AddSet(finalSet)
 		}
-		if len(ipBlock.Except) == 0 {
-			matchStr = fmt.Sprintf("%s.%s == %s", ipVersion, direction, ipBlock.CIDR)
-		} else {
-			matchStr = fmt.Sprintf("%s.%s == %s && %s.%s != {%s}", ipVersion, direction, ipBlock.CIDR,
-				ipVersion, direction, strings.Join(ipBlock.Except, ", "))
-		}
-		if l4Match == libovsdbutil.UnspecifiedL4Match {
-			matchStr = fmt.Sprintf("%s && %s", matchStr, lportMatch)
-		} else {
-			matchStr = fmt.Sprintf("%s && %s && %s", matchStr, l4Match, lportMatch)
-		}
-		matchStrings = append(matchStrings, matchStr)
 	}
-	return matchStrings
+
+	var matchStrings []string
+
+	// Helper to build match string for a given IP version
+	buildMatch := func(ipVer, direction string, prefixes []netaddr.IPPrefix) string {
+		if len(prefixes) == 0 {
+			return ""
+		}
+		parts := make([]string, len(prefixes))
+		for i, p := range prefixes {
+			parts[i] = p.String()
+		}
+		match := fmt.Sprintf("%s.%s == {%s}", ipVer, direction, strings.Join(parts, ", "))
+		if l4Match == libovsdbutil.UnspecifiedL4Match {
+			return fmt.Sprintf("%s && %s", match, lportMatch)
+		}
+		return fmt.Sprintf("%s && %s && %s", match, l4Match, lportMatch)
+	}
+
+	// Only build match strings if there are prefixes
+	if ipv4Set, err := ipv4Builder.IPSet(); err != nil {
+		return nil, fmt.Errorf("failed to build IPSet from final IPv4 IPBlock: %v", err)
+	} else {
+		v4Prefixes := ipv4Set.Prefixes()
+		if len(v4Prefixes) > 0 {
+			match := buildMatch("ip4", direction, v4Prefixes)
+			if match != "" {
+				matchStrings = append(matchStrings, match)
+			}
+		}
+	}
+
+	if ipv6Set, err := ipv6Builder.IPSet(); err != nil {
+		return nil, fmt.Errorf("failed to build IPSet from final IPv6 IPBlock: %v", err)
+	} else {
+		v6Prefixes := ipv6Set.Prefixes()
+		if len(v6Prefixes) > 0 {
+			match := buildMatch("ip6", direction, v6Prefixes)
+			if match != "" {
+				matchStrings = append(matchStrings, match)
+			}
+		}
+	}
+
+	return matchStrings, nil
 }
 
 // addNamespaceAddressSet adds a namespace address set to the gress policy.
@@ -285,7 +357,11 @@ func (gp *gressPolicy) buildLocalPodACLs(portGroupName string, aclLogging *libov
 	for protocol, l4Match := range libovsdbutil.GetL4MatchesFromNetworkPolicyPorts(gp.portPolicies) {
 		if len(gp.ipBlocks) > 0 {
 			// Add ACL allow rule for IPBlock CIDR
-			ipBlockMatches := gp.getMatchFromIPBlock(lportMatch, l4Match)
+			ipBlockMatches, err := gp.getMatchFromIPBlock(lportMatch, l4Match)
+			if err != nil {
+				klog.Errorf("failed to get match from IPBlock: %v", err)
+				continue
+			}
 			for ipBlockIdx, ipBlockMatch := range ipBlockMatches {
 				aclIDs := gp.getNetpolACLDbIDs(ipBlockIdx, protocol)
 				acl := libovsdbutil.BuildACLWithDefaultTier(aclIDs, types.DefaultAllowPriority, ipBlockMatch, action,
