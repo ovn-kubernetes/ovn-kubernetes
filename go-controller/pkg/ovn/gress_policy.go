@@ -7,8 +7,10 @@ import (
 	"strings"
 	"sync"
 
+	"inet.af/netaddr"
 	corev1 "k8s.io/api/core/v1"
 	knet "k8s.io/api/networking/v1"
+	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
@@ -167,44 +169,105 @@ func (gp *gressPolicy) allIPsMatch() string {
 	}
 }
 
-func (gp *gressPolicy) getMatchFromIPBlock(lportMatch, l4Match string) ([]string, map[int]string) {
-	var direction string
-
+func (gp *gressPolicy) getMatchFromIPBlock(lportMatch, l4Match string) ([]string, error) {
+	direction := "dst"
 	if gp.policyType == knet.PolicyTypeIngress {
 		direction = "src"
-	} else {
-		direction = "dst"
 	}
-	var cidrMatchStrings []string
-	exceptMatchStrings := make(map[int]string)
-	var cidrMatchStr, exceptMatchStr, ipVersion string
 
-	for idx, ipBlock := range gp.ipBlocks {
-		if utilnet.IsIPv6CIDRString(ipBlock.CIDR) {
-			ipVersion = "ip6"
-		} else {
-			ipVersion = "ip4"
-		}
+	var (
+		ipv4Builder netaddr.IPSetBuilder
+		ipv6Builder netaddr.IPSetBuilder
+	)
 
-		cidrMatchStr = fmt.Sprintf("%s.%s == %s", ipVersion, direction, ipBlock.CIDR)
-		if l4Match == libovsdbutil.UnspecifiedL4Match {
-			cidrMatchStr = fmt.Sprintf("%s && %s", cidrMatchStr, lportMatch)
-		} else {
-			cidrMatchStr = fmt.Sprintf("%s && %s && %s", cidrMatchStr, l4Match, lportMatch)
-		}
-		cidrMatchStrings = append(cidrMatchStrings, cidrMatchStr)
+	// Precompute which blocks are v4/v6 and build sets in a single pass
+	for _, ipBlock := range gp.ipBlocks {
+		cidrPrefix := netaddr.MustParseIPPrefix(ipBlock.CIDR)
+		var exceptSet *netaddr.IPSet
+		var err error
 
 		if len(ipBlock.Except) > 0 {
-			exceptMatchStr = fmt.Sprintf("%s.%s == {%s}", ipVersion, direction, strings.Join(ipBlock.Except, ", "))
-			if l4Match == libovsdbutil.UnspecifiedL4Match {
-				exceptMatchStr = fmt.Sprintf("%s && %s", exceptMatchStr, lportMatch)
-			} else {
-				exceptMatchStr = fmt.Sprintf("%s && %s && %s", exceptMatchStr, l4Match, lportMatch)
+			var exceptBuilder netaddr.IPSetBuilder
+			for _, except := range ipBlock.Except {
+				exceptBuilder.AddPrefix(netaddr.MustParseIPPrefix(except))
 			}
-			exceptMatchStrings[idx] = exceptMatchStr
+			exceptSet, err = exceptBuilder.IPSet()
+			if err != nil {
+				return nil, fmt.Errorf("failed to build IPSet from except %v: %v", ipBlock.Except, err)
+			}
+		}
+
+		var blockBuilder netaddr.IPSetBuilder
+		blockBuilder.AddPrefix(cidrPrefix)
+		cidrSet, err := blockBuilder.IPSet()
+		if err != nil {
+			return nil, fmt.Errorf("failed to build IPSet from CIDR %s: %v", ipBlock.CIDR, err)
+		}
+
+		var finalSet *netaddr.IPSet
+		if exceptSet != nil {
+			var diffBuilder netaddr.IPSetBuilder
+			diffBuilder.AddSet(cidrSet)
+			diffBuilder.RemoveSet(exceptSet)
+			finalSet, err = diffBuilder.IPSet()
+			if err != nil {
+				return nil, fmt.Errorf("failed to build IPSet from diff %s: %v", ipBlock.CIDR, err)
+			}
+		} else {
+			finalSet = cidrSet
+		}
+
+		if utilnet.IsIPv6CIDRString(ipBlock.CIDR) {
+			ipv6Builder.AddSet(finalSet)
+		} else {
+			ipv4Builder.AddSet(finalSet)
 		}
 	}
-	return cidrMatchStrings, exceptMatchStrings
+
+	var matchStrings []string
+
+	// Helper to build match string for a given IP version
+	buildMatch := func(ipVer, direction string, prefixes []netaddr.IPPrefix) string {
+		if len(prefixes) == 0 {
+			return ""
+		}
+		parts := make([]string, len(prefixes))
+		for i, p := range prefixes {
+			parts[i] = p.String()
+		}
+		match := fmt.Sprintf("%s.%s == {%s}", ipVer, direction, strings.Join(parts, ", "))
+		if l4Match == libovsdbutil.UnspecifiedL4Match {
+			return fmt.Sprintf("%s && %s", match, lportMatch)
+		}
+		return fmt.Sprintf("%s && %s && %s", match, l4Match, lportMatch)
+	}
+
+	// Only build match strings if there are prefixes
+	if ipv4Set, err := ipv4Builder.IPSet(); err != nil {
+		return nil, fmt.Errorf("failed to build IPSet from final IPv4 IPBlock: %v", err)
+	} else {
+		v4Prefixes := ipv4Set.Prefixes()
+		if len(v4Prefixes) > 0 {
+			match := buildMatch("ip4", direction, v4Prefixes)
+			if match != "" {
+				matchStrings = append(matchStrings, match)
+			}
+		}
+	}
+
+	if ipv6Set, err := ipv6Builder.IPSet(); err != nil {
+		return nil, fmt.Errorf("failed to build IPSet from final IPv6 IPBlock: %v", err)
+	} else {
+		v6Prefixes := ipv6Set.Prefixes()
+		if len(v6Prefixes) > 0 {
+			match := buildMatch("ip6", direction, v6Prefixes)
+			if match != "" {
+				matchStrings = append(matchStrings, match)
+			}
+		}
+	}
+
+	return matchStrings, nil
 }
 
 // addNamespaceAddressSet adds a namespace address set to the gress policy.
@@ -294,20 +357,17 @@ func (gp *gressPolicy) buildLocalPodACLs(portGroupName string, aclLogging *libov
 	for protocol, l4Match := range libovsdbutil.GetL4MatchesFromNetworkPolicyPorts(gp.portPolicies) {
 		if len(gp.ipBlocks) > 0 {
 			// Add ACL allow rule for IPBlock CIDR
-			ipBlockMatches, exceptMatches := gp.getMatchFromIPBlock(lportMatch, l4Match)
-			for exceptIdx, exceptMatch := range exceptMatches {
-				aclIDs := gp.getNetpolACLDbIDs(exceptIdx, protocol, true)
-				acl := libovsdbutil.BuildACLWithDefaultTier(aclIDs, types.DefaultExceptPriority, exceptMatch, nbdb.ACLActionDrop,
-					aclLogging, gp.aclPipeline)
-				createdACLs = append(createdACLs, acl)
+			ipBlockMatches, err := gp.getMatchFromIPBlock(lportMatch, l4Match)
+			if err != nil {
+				klog.Errorf("failed to get match from IPBlock: %v", err)
+				continue
 			}
 			for ipBlockIdx, ipBlockMatch := range ipBlockMatches {
-				aclIDs := gp.getNetpolACLDbIDs(ipBlockIdx, protocol, false)
+				aclIDs := gp.getNetpolACLDbIDs(ipBlockIdx, protocol)
 				acl := libovsdbutil.BuildACLWithDefaultTier(aclIDs, types.DefaultAllowPriority, ipBlockMatch, action,
 					aclLogging, gp.aclPipeline)
 				createdACLs = append(createdACLs, acl)
 			}
-
 		}
 		// if there are pod/namespace selector, then allow packets from/to that address_set or
 		// if the NetworkPolicyPeer is empty, then allow from all sources or to all destinations.
@@ -324,7 +384,7 @@ func (gp *gressPolicy) buildLocalPodACLs(portGroupName string, aclLogging *libov
 			} else {
 				addrSetMatch = fmt.Sprintf("%s && %s && %s", l3Match, l4Match, lportMatch)
 			}
-			aclIDs := gp.getNetpolACLDbIDs(emptyIdx, protocol, false)
+			aclIDs := gp.getNetpolACLDbIDs(emptyIdx, protocol)
 			acl := libovsdbutil.BuildACLWithDefaultTier(aclIDs, types.DefaultAllowPriority, addrSetMatch, action,
 				aclLogging, gp.aclPipeline)
 			if l3Match == "" {
@@ -340,30 +400,25 @@ func (gp *gressPolicy) buildLocalPodACLs(portGroupName string, aclLogging *libov
 	return
 }
 
-func (gp *gressPolicy) getNetpolACLDbIDs(ipBlockIdx int, protocol string, isExcept bool) *libovsdbops.DbObjectIDs {
-	ids := map[libovsdbops.ExternalIDKey]string{
-		// policy namespace+name
-		libovsdbops.ObjectNameKey: libovsdbops.BuildNamespaceNameKey(gp.policyNamespace, gp.policyName),
-		// egress or ingress
-		libovsdbops.PolicyDirectionKey: string(gp.policyType),
-		// gress rule index
-		libovsdbops.GressIdxKey: strconv.Itoa(gp.idx),
-		// acls are created for every gp.portPolicies which are grouped by protocol:
-		// - for empty policy (no selectors and no ip blocks) - empty ACL
-		// OR
-		// - all selector-based peers ACL
-		// - for every IPBlock +1 ACL
-		// Therefore unique id for a given gressPolicy is protocol name + IPBlock idx
-		// (protocol will be "None" if no port policy is defined, and empty policy and all
-		// selector-based peers ACLs will have idx=-1)
-		libovsdbops.IpBlockIndexKey: strconv.Itoa(ipBlockIdx),
-		// protocol key
-		libovsdbops.PortPolicyProtocolKey: protocol,
-	}
-	if isExcept {
-		ids[libovsdbops.IpBlockExceptIndexKey] = "1"
-	} else {
-		ids[libovsdbops.IpBlockExceptIndexKey] = "0"
-	}
-	return libovsdbops.NewDbObjectIDs(libovsdbops.ACLNetworkPolicy, gp.controllerName, ids)
+func (gp *gressPolicy) getNetpolACLDbIDs(ipBlockIdx int, protocol string) *libovsdbops.DbObjectIDs {
+	return libovsdbops.NewDbObjectIDs(libovsdbops.ACLNetworkPolicy, gp.controllerName,
+		map[libovsdbops.ExternalIDKey]string{
+			// policy namespace+name
+			libovsdbops.ObjectNameKey: libovsdbops.BuildNamespaceNameKey(gp.policyNamespace, gp.policyName),
+			// egress or ingress
+			libovsdbops.PolicyDirectionKey: string(gp.policyType),
+			// gress rule index
+			libovsdbops.GressIdxKey: strconv.Itoa(gp.idx),
+			// acls are created for every gp.portPolicies which are grouped by protocol:
+			// - for empty policy (no selectors and no ip blocks) - empty ACL
+			// OR
+			// - all selector-based peers ACL
+			// - for every IPBlock +1 ACL
+			// Therefore unique id for a given gressPolicy is protocol name + IPBlock idx
+			// (protocol will be "None" if no port policy is defined, and empty policy and all
+			// selector-based peers ACLs will have idx=-1)
+			libovsdbops.IpBlockIndexKey: strconv.Itoa(ipBlockIdx),
+			// protocol key
+			libovsdbops.PortPolicyProtocolKey: protocol,
+		})
 }
