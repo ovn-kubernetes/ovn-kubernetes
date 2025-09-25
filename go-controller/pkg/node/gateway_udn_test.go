@@ -1151,7 +1151,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(udnFlows).To(Equal(0))
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // only default network
 
-			Expect(udnGateway.AddNetwork()).To(Succeed())
+			Expect(udnGateway.syncNetwork()).To(Succeed())
 			flowMap = udnGateway.gateway.openflowManager.flowCache
 			Expect(flowMap["DEFAULT"]).To(HaveLen(80))                                      // 18 UDN Flows, 5 advertisedUDN flows, and 2 packet mark flows (IPv4+IPv6) are added by default
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(2)) // default network + UDN network
