@@ -558,14 +558,15 @@ func NewOVNClientset(conf *config.KubernetesConfig) (*OVNClientset, error) {
 
 // IsClusterIPSet checks if the service is an headless service or not
 func IsClusterIPSet(service *corev1.Service) bool {
-	return service.Spec.ClusterIP != corev1.ClusterIPNone && service.Spec.ClusterIP != ""
+	customIP := GetServiceCustomIP(service)
+	return (service.Spec.ClusterIP != corev1.ClusterIPNone && service.Spec.ClusterIP != "") || len(customIP) > 0
 }
 
 // GetClusterIPs return an array with the ClusterIPs present in the service
 // for backward compatibility with versions < 1.20
 // we need to handle the case where only ClusterIP exist
 func GetClusterIPs(service *corev1.Service) []string {
-	if len(service.Spec.ClusterIPs) > 0 {
+	if len(service.Spec.ClusterIPs) > 0 && service.Spec.ClusterIPs[0] != corev1.ClusterIPNone {
 		clusterIPs := []string{}
 		for _, clusterIP := range service.Spec.ClusterIPs {
 			clusterIPs = append(clusterIPs, utilnet.ParseIPSloppy(clusterIP).String())
@@ -575,6 +576,12 @@ func GetClusterIPs(service *corev1.Service) []string {
 	if len(service.Spec.ClusterIP) > 0 && service.Spec.ClusterIP != corev1.ClusterIPNone {
 		return []string{utilnet.ParseIPSloppy(service.Spec.ClusterIP).String()}
 	}
+
+	customIP := GetServiceCustomIP(service)
+	if len(customIP) > 0 {
+		return []string{customIP}
+	}
+
 	return []string{}
 }
 
