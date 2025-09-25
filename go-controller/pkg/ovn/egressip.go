@@ -725,16 +725,17 @@ func (e *EgressIPController) addEgressIPAssignments(name string, statusAssignmen
 	if err != nil {
 		return err
 	}
+	var errs []error
 	for _, namespace := range namespaces {
 		ni, err := e.networkManager.GetActiveNetworkForNamespace(namespace.Name)
 		if err != nil {
 			return fmt.Errorf("failed to get active network for namespace %s: %v", namespace.Name, err)
 		}
 		if err := e.addNamespaceEgressIPAssignments(ni, name, statusAssignments, mark, namespace, podSelector); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return utilerrors.Join(errs...)
 }
 
 func (e *EgressIPController) addNamespaceEgressIPAssignments(ni util.NetInfo, name string, statusAssignments []egressipv1.EgressIPStatusItem, mark util.EgressIPMark,
@@ -756,12 +757,13 @@ func (e *EgressIPController) addNamespaceEgressIPAssignments(ni util.NetInfo, na
 			return err
 		}
 	}
+	var errs []error
 	for _, pod := range pods {
 		if err := e.addPodEgressIPAssignmentsWithLock(ni, name, statusAssignments, mark, pod); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return utilerrors.Join(errs...)
 }
 
 func (e *EgressIPController) addPodEgressIPAssignmentsWithLock(ni util.NetInfo, name string, statusAssignments []egressipv1.EgressIPStatusItem, mark util.EgressIPMark, pod *corev1.Pod) error {
