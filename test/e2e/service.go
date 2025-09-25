@@ -24,6 +24,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/ipalloc"
 
 	v1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -1686,8 +1687,9 @@ metadata:
 	})
 
 	ginkgo.It("Should ensure connectivity works on an external service when mtu changes in intermediate node", func() {
-		err := framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, svcName, 4, time.Second, time.Second*180)
-		framework.ExpectNoError(err, fmt.Sprintf("service: %s never had an endpoint, err: %v", svcName, err))
+		err := waitForServiceEndpointsNumAndDeploymentReady(f.ClientSet, namespaceName, svcName,
+			backendName, 4, time.Second, time.Second*180)
+		framework.ExpectNoError(err)
 
 		time.Sleep(time.Second * 5) // buffer to ensure all rules are created correctly
 
@@ -1768,8 +1770,9 @@ metadata:
 		// B) lbclient->FRR router->ovn-worker2->br-ex->GR_ovn-worker2->join->cluster-router-ovn-worker->transit-switch->GENEVE->
 		//    transit-switch->cluster-router-ovn-worker->ovn-worker-switch->pod
 		// depending on which node is hit for the service traffic and which node the backendpod lives on.
-		err := framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, svcName, 4, time.Second, time.Second*120)
-		framework.ExpectNoError(err, fmt.Sprintf("service: %s never had an endpoint, err: %v", svcName, err))
+		err := waitForServiceEndpointsNumAndDeploymentReady(f.ClientSet, namespaceName, svcName,
+			backendName, 4, time.Second, time.Second*120)
+		framework.ExpectNoError(err)
 
 		time.Sleep(time.Second * 5) // buffer to ensure all rules are created correctly
 
@@ -1905,8 +1908,9 @@ spec:
 
 	ginkgo.It("Should ensure load balancer service works with 0 node ports when ETP=local", func() {
 
-		err := framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, svcName, 4, time.Second, time.Second*120)
-		framework.ExpectNoError(err, fmt.Sprintf("service: %s never had an enpoint, err: %v", svcName, err))
+		err := waitForServiceEndpointsNumAndDeploymentReady(f.ClientSet, namespaceName, svcName,
+			backendName, 4, time.Second, time.Second*120)
+		framework.ExpectNoError(err)
 
 		svcLoadBalancerIP, err := getServiceLoadBalancerIP(f.ClientSet, namespaceName, svcName)
 		framework.ExpectNoError(err, fmt.Sprintf("failed to get service lb ip: %s, err: %v", svcName, err))
@@ -1972,8 +1976,9 @@ spec:
 
 		ginkgo.By("Scale down endpoints of service: " + svcName + " to ensure iptable rules are also getting recreated correctly")
 		e2ekubectl.RunKubectlOrDie("default", "scale", "deployment", backendName, "--replicas=3")
-		err = framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, svcName, 3, time.Second, time.Second*120)
-		framework.ExpectNoError(err, fmt.Sprintf("service: %s never had an endpoint, err: %v", svcName, err))
+		err = waitForServiceEndpointsNumAndDeploymentReady(f.ClientSet, namespaceName, svcName,
+			backendName, 3, time.Second, time.Second*120)
+		framework.ExpectNoError(err)
 		time.Sleep(time.Second * 5) // buffer to ensure all rules are created correctly
 
 		// number of rules/elements should have decreased by 2 (one for the TCP port,
@@ -1999,8 +2004,9 @@ spec:
 
 	ginkgo.It("Should ensure load balancer service works when ETP=local and session affinity is set", func() {
 
-		err := framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, svcName, 4, time.Second, time.Second*120)
-		framework.ExpectNoError(err, fmt.Sprintf("service: %s never had an enpoint, err: %v", svcName, err))
+		err := waitForServiceEndpointsNumAndDeploymentReady(f.ClientSet, namespaceName, svcName,
+			backendName, 4, time.Second, time.Second*120)
+		framework.ExpectNoError(err)
 
 		svcLoadBalancerIP, err := getServiceLoadBalancerIP(f.ClientSet, namespaceName, svcName)
 		framework.ExpectNoError(err, fmt.Sprintf("failed to get service lb ip: %s, err: %v", svcName, err))
@@ -2136,8 +2142,9 @@ spec:
 		// Now we test ETP=local works as expected without EIP re-routes messing with the reply traffic:
 		// lbclient->FRR router->ovn-worker->br-ex->GR_ovn-worker->join->cluster-router->ovn-worker-switch->pod and response goes back
 		// same way without it getting re-routed to egressNode ovn-worker2
-		err := framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, svcName, 4, time.Second, time.Second*120)
-		framework.ExpectNoError(err, fmt.Sprintf("service: %s never had an enpoint, err: %v", svcName, err))
+		err := waitForServiceEndpointsNumAndDeploymentReady(f.ClientSet, namespaceName, svcName,
+			backendName, 4, time.Second, time.Second*120)
+		framework.ExpectNoError(err)
 
 		svcLoadBalancerIP, err := getServiceLoadBalancerIP(f.ClientSet, namespaceName, svcName)
 		framework.ExpectNoError(err, fmt.Sprintf("failed to get service lb ip: %s, err: %v", svcName, err))
@@ -2331,6 +2338,41 @@ func getServiceLoadBalancerIP(c clientset.Interface, namespace, serviceName stri
 		return "", fmt.Errorf("service %s has no load balancer IPs", serviceName)
 	}
 	return svc.Status.LoadBalancer.Ingress[0].IP, nil
+}
+
+func waitForDeploymentReady(clientSet clientset.Interface, namespace, name string, retryInterval, retryTimeout time.Duration) error {
+	return wait.PollImmediate(retryInterval, retryTimeout, func() (bool, error) {
+		framework.Logf("Waiting for deployment ready %s/%s", namespace, name)
+		d, err := clientSet.AppsV1().Deployments(namespace).Get(context.Background(), name, metav1.GetOptions{})
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return false, nil
+			}
+			return false, err
+		}
+		replicas := *(d.Spec.Replicas)
+		if d.Status.UpdatedReplicas == replicas &&
+			d.Status.Replicas == replicas &&
+			d.Status.AvailableReplicas == replicas &&
+			d.Status.ReadyReplicas == replicas {
+			return true, nil
+		}
+		return false, nil
+	})
+}
+
+func waitForServiceEndpointsNumAndDeploymentReady(clientSet clientset.Interface, namespaceName, serviceName,
+	deploymentName string, expectNum int, interval, retryTimeout time.Duration) error {
+	if err := framework.WaitForServiceEndpointsNum(context.TODO(), clientSet, namespaceName, serviceName, expectNum,
+		interval, retryTimeout); err != nil {
+		return fmt.Errorf("service: %s never had an endpoint, err: %q", serviceName, err)
+	}
+	// If pods are in image pull backoff or initializing (for example), the endpoints will be marked as ready.
+	// Yet, there are no pods to listen to requests. Add this additional check to avoid false positives.
+	if err := waitForDeploymentReady(clientSet, namespaceName, deploymentName, interval, retryTimeout); err != nil {
+		return fmt.Errorf("deployment: %s never switched to ready state, err: %q", deploymentName, err)
+	}
+	return nil
 }
 
 func setupIPv4NetworkForExternalClient(svcLoadBalancerIP string, svcLoadBalancerPort int, nodeIP string) {
