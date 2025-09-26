@@ -2062,4 +2062,54 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		})
 	})
+
+	Context("OvsPathConfig and OvnAuthConfig path configurations", func() {
+		It("should have correct default values for OvsPaths", func() {
+			gomega.Expect(OvsPaths.RunDir).To(gomega.Equal("/var/run/openvswitch/"))
+			gomega.Expect(OvsPaths.VswitchdPid).To(gomega.Equal("/var/run/openvswitch/ovs-vswitchd.pid"))
+			gomega.Expect(OvsPaths.OvsDbServerPid).To(gomega.Equal("/var/run/openvswitch/ovsdb-server.pid"))
+		})
+
+		It("should have correct default values for OvnNorth", func() {
+			gomega.Expect(OvnNorth.RunDir).To(gomega.Equal("/var/run/ovn/"))
+			gomega.Expect(OvnNorth.DbLocation).To(gomega.Equal("/var/lib/openvswitch/ovnnb_db.db"))
+		})
+
+		It("should have correct default values for OvnSouth", func() {
+			gomega.Expect(OvnSouth.RunDir).To(gomega.Equal("/var/run/ovn/"))
+			gomega.Expect(OvnSouth.DbLocation).To(gomega.Equal("/var/lib/openvswitch/ovnsb_db.db"))
+		})
+
+		It("should allow OvsPathConfig to be modified", func() {
+			originalOvsPaths := OvsPaths
+
+			OvsPaths.RunDir = "/custom/ovs/run/"
+			OvsPaths.VswitchdPid = "/custom/ovs/vswitchd.pid"
+			OvsPaths.OvsDbServerPid = "/custom/ovs/ovsdb.pid"
+
+			gomega.Expect(OvsPaths.RunDir).To(gomega.Equal("/custom/ovs/run/"))
+			gomega.Expect(OvsPaths.VswitchdPid).To(gomega.Equal("/custom/ovs/vswitchd.pid"))
+			gomega.Expect(OvsPaths.OvsDbServerPid).To(gomega.Equal("/custom/ovs/ovsdb.pid"))
+
+			OvsPaths = originalOvsPaths
+		})
+
+		It("should allow OvnAuthConfig paths to be modified", func() {
+			originalNorth := OvnNorth
+			originalSouth := OvnSouth
+
+			OvnNorth.RunDir = "/custom/ovn/run/"
+			OvnNorth.DbLocation = "/custom/ovn/nb.db"
+			OvnSouth.RunDir = "/custom/ovn/run/"
+			OvnSouth.DbLocation = "/custom/ovn/sb.db"
+
+			gomega.Expect(OvnNorth.RunDir).To(gomega.Equal("/custom/ovn/run/"))
+			gomega.Expect(OvnNorth.DbLocation).To(gomega.Equal("/custom/ovn/nb.db"))
+			gomega.Expect(OvnSouth.RunDir).To(gomega.Equal("/custom/ovn/run/"))
+			gomega.Expect(OvnSouth.DbLocation).To(gomega.Equal("/custom/ovn/sb.db"))
+
+			OvnNorth = originalNorth
+			OvnSouth = originalSouth
+		})
+	})
 })
