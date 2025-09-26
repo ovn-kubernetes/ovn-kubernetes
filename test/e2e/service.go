@@ -76,8 +76,8 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 	})
 
 	ginkgo.It("Allow connection to an external IP using a source port that is equal to a node port", func() {
+		var nodePort int32 = 31990
 		const (
-			nodePort    = 31990
 			connTimeout = "2"
 			dstIPv4     = "1.1.1.1"
 			dstPort     = "80"
@@ -87,10 +87,21 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 		}
 		ginkgo.By("create node port service")
 		jig := e2eservice.NewTestJig(cs, f.Namespace.Name, serviceName)
-		_, err := jig.CreateTCPService(context.TODO(), func(svc *v1.Service) {
-			svc.Spec.Type = v1.ServiceTypeNodePort
-			svc.Spec.Ports[0].NodePort = nodePort
-		})
+		err := wait.PollImmediate(10*time.Second, 60*time.Second,
+			func() (bool, error) {
+				_, err := jig.CreateTCPService(context.TODO(), func(svc *v1.Service) {
+					svc.Spec.Type = v1.ServiceTypeNodePort
+					svc.Spec.Ports[0].NodePort = nodePort
+				})
+				if err != nil {
+					if strings.Contains(err.Error(), "provided port is already allocated") {
+						nodePort++
+						return false, nil
+					}
+					return false, err
+				}
+				return true, nil
+			})
 		framework.ExpectNoError(err, "failed to create TCP node port service")
 		ginkgo.By("create pod selected by node port service")
 		serverPod := e2epod.NewAgnhostPod(f.Namespace.Name, "svc-backend", nil, nil, nil)
@@ -101,7 +112,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 		e2epod.NewPodClient(f).CreateSync(context.TODO(), clientPod)
 		ginkgo.By("connect externally pinning the source port to equal the node port")
 		_, err = e2ekubectl.RunKubectl(clientPod.Namespace, "exec", clientPod.Name, "--", "nc",
-			"-p", strconv.Itoa(nodePort), "-z", "-w", connTimeout, dstIPv4, dstPort)
+			"-p", strconv.Itoa(int(nodePort)), "-z", "-w", connTimeout, dstIPv4, dstPort)
 		framework.ExpectNoError(err, "expected connection to succeed using source port identical to node port")
 	})
 
