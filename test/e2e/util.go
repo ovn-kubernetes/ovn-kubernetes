@@ -1004,6 +1004,27 @@ func countNFTablesElements(nodeName, name string) int {
 	return count
 }
 
+func checkNumberOfETPRules(backendNodeName string, value int, pattern string) wait.ConditionFunc {
+	return func() (bool, error) {
+		numberOfETPRules := pokeNodeIPTableRules(backendNodeName, pattern)
+		isExpected := numberOfETPRules == value
+		if !isExpected {
+			framework.Logf("numberOfETPRules got: %d, expected: %d", numberOfETPRules, value)
+		}
+		return isExpected, nil
+	}
+}
+func checkNumberOfNFTElements(backendNodeName string, value int, name string) wait.ConditionFunc {
+	return func() (bool, error) {
+		numberOfNFTElements := countNFTablesElements(backendNodeName, name)
+		isExpected := numberOfNFTElements == value
+		if !isExpected {
+			framework.Logf("numberOfNFTElements got: %d, expected: %d", numberOfNFTElements, value)
+		}
+		return isExpected, nil
+	}
+}
+
 // isDualStackCluster returns 'true' if at least one of the nodes has more than one node subnet.
 func isDualStackCluster(nodes *v1.NodeList) bool {
 	for _, node := range nodes.Items {
