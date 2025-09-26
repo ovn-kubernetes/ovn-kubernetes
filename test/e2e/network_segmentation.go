@@ -2321,7 +2321,7 @@ spec:
   topology: Layer3
   layer3:
     role: Primary
-    subnets: ` + generateCIDRforUDN(cs, "10.20.100.0/16", "2014:100:200::0/60")
+    subnets: ` + generateCIDRforUDN(cs, "10.20.0.0/16", "2014:100:200::0/60")
 }
 
 func generateCIDRforUDN(cs clientset.Interface, v4, v6 string) string {
