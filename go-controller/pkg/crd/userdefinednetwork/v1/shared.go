@@ -227,7 +227,7 @@ type NetworkIPAMLifecycle string
 
 const IPAMLifecyclePersistent NetworkIPAMLifecycle = "Persistent"
 
-// +kubebuilder:validation:XValidation:rule="isCIDR(self)", message="CIDR is invalid"
+// +kubebuilder:validation:XValidation:rule="isCIDR(self) && cidr(self) == cidr(self).masked()", message="CIDR must be a masked network address (no host bits set)"
 // +kubebuilder:validation:MaxLength=43
 type CIDR string
 

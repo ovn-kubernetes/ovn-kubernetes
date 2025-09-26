@@ -80,7 +80,7 @@ spec:
                       type: string
                       x-kubernetes-validations:
                       - message: CIDR is invalid
-                        rule: isCIDR(self)
+                        rule: isCIDR(self) && cidr(self) == cidr(self).masked()
                     maxItems: 4
                     minItems: 1
                     type: array
@@ -133,7 +133,7 @@ spec:
                       type: string
                       x-kubernetes-validations:
                       - message: CIDR is invalid
-                        rule: isCIDR(self)
+                        rule: isCIDR(self) && cidr(self) == cidr(self).masked()
                     maxItems: 2
                     minItems: 1
                     type: array
@@ -164,7 +164,7 @@ spec:
                       type: string
                       x-kubernetes-validations:
                       - message: CIDR is invalid
-                        rule: isCIDR(self)
+                        rule: isCIDR(self) && cidr(self) == cidr(self).masked()
                     maxItems: 25
                     minItems: 1
                     type: array
@@ -190,7 +190,7 @@ spec:
                       type: string
                       x-kubernetes-validations:
                       - message: CIDR is invalid
-                        rule: isCIDR(self)
+                        rule: isCIDR(self) && cidr(self) == cidr(self).masked()
                     maxItems: 2
                     minItems: 1
                     type: array
@@ -273,7 +273,7 @@ spec:
                       type: string
                       x-kubernetes-validations:
                       - message: CIDR is invalid
-                        rule: isCIDR(self)
+                        rule: isCIDR(self) && cidr(self) == cidr(self).masked()
                     maxItems: 2
                     minItems: 1
                     type: array
@@ -317,7 +317,7 @@ spec:
                           type: string
                           x-kubernetes-validations:
                           - message: CIDR is invalid
-                            rule: isCIDR(self)
+                            rule: isCIDR(self) && cidr(self) == cidr(self).masked()
                         hostSubnet:
                           description: |-
                             HostSubnet specifies the subnet size for every node.
