@@ -4,7 +4,7 @@
 function usage() {
   echo "Usage: $0 [OPTIONS]"
   echo ""
-  echo "This script deploys a kind cluster and configures it to use OVN Kubernetes CNI."
+  echo "This script deploys a kind cluster and configures it to use OVN-Kubernetes CNI."
   echo ""
   echo "Options:"
   echo "  BUILD_IMAGE=${BUILD_IMAGE:-false}      Set to true to build the Docker image instead of pulling it."
@@ -88,7 +88,7 @@ if [[ "$OVN_INTERCONNECT" == "true" ]]; then
   done
 fi
 
-# Deploy OVN Kubernetes using Helm
+# Deploy OVN-Kubernetes using Helm
 cd ${DIR}/ovn-kubernetes
 helm install ovn-kubernetes . -f ${VALUES_FILE} \
     --set k8sAPIServer="https://$(kubectl get pods -n kube-system -l component=kube-apiserver -o jsonpath='{.items[0].status.hostIP}'):6443" \

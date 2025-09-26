@@ -551,7 +551,7 @@ To be discussed.
 
 ## Risks, Known Limitations and Mitigations
 
-## OVN Kubernetes Version Skew
+## OVN-Kubernetes Version Skew
 
 To be discussed.
 
