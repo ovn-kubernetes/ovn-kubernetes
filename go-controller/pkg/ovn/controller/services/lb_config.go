@@ -29,8 +29,8 @@ type lbConfig struct {
 	protocol corev1.Protocol // TCP, UDP, or SCTP
 	inport   int32           // the incoming (virtual) port number
 
-	clusterEndpoints lbEndpoints            // addresses of cluster-wide endpoints
-	nodeEndpoints    map[string]lbEndpoints // node -> addresses of local endpoints
+	clusterEndpoints util.LBEndpoints            // addresses of cluster-wide endpoints
+	nodeEndpoints    map[string]util.LBEndpoints // node -> addresses of local endpoints
 
 	// if true, then vips added on the router are in "local" mode
 	// that means, skipSNAT, and remove any non-local endpoints.
@@ -41,12 +41,6 @@ type lbConfig struct {
 	internalTrafficLocal bool
 	// indicates if this LB is configuring service of type NodePort.
 	hasNodePort bool
-}
-
-type lbEndpoints struct {
-	Port  int32
-	V4IPs []string
-	V6IPs []string
 }
 
 func makeNodeSwitchTargetIPs(node string, c *lbConfig) (targetIPsV4, targetIPsV6 []string, v4Changed, v6Changed bool) {
@@ -137,7 +131,7 @@ var protos = []corev1.Protocol{
 //   - services with NodePort set but *without* ExternalTrafficPolicy=Local or
 //     affinity timeout set.
 func buildServiceLBConfigs(service *corev1.Service, endpointSlices []*discovery.EndpointSlice, nodeInfos []nodeInfo,
-	useLBGroup, useTemplates bool, networkName string) (perNodeConfigs, templateConfigs, clusterConfigs []lbConfig) {
+	useLBGroup, useTemplates bool) (perNodeConfigs, templateConfigs, clusterConfigs []lbConfig) {
 
 	needsAffinityTimeout := hasSessionAffinityTimeOut(service)
 
@@ -146,13 +140,21 @@ func buildServiceLBConfigs(service *corev1.Service, endpointSlices []*discovery.
 		nodes.Insert(n.name)
 	}
 	// get all the endpoints classified by port and by port,node
-	portToClusterEndpoints, portToNodeToEndpoints := getEndpointsForService(endpointSlices, service, nodes, networkName)
+	needsLocalEndpoints := util.ServiceExternalTrafficPolicyLocal(service) || util.ServiceInternalTrafficPolicyLocal(service)
+	portToClusterEndpoints, portToNodeToEndpoints, err := util.GetEndpointsForService(endpointSlices, service, nodes, true, needsLocalEndpoints)
+	if err != nil {
+		if service != nil {
+			klog.Warningf("Failed to get endpoints for service %s/%s during LB config build: %v", service.Namespace, service.Name, err)
+		} else {
+			klog.Warningf("Failed to get endpoints for service during LB config build: %v", err)
+		}
+	}
 	for _, svcPort := range service.Spec.Ports {
-		svcPortKey := getServicePortKey(svcPort.Protocol, svcPort.Name)
+		svcPortKey := util.GetServicePortKey(svcPort.Protocol, svcPort.Name)
 		clusterEndpoints := portToClusterEndpoints[svcPortKey]
 		nodeEndpoints := portToNodeToEndpoints[svcPortKey]
 		if nodeEndpoints == nil {
-			nodeEndpoints = make(map[string]lbEndpoints)
+			nodeEndpoints = make(map[string]util.LBEndpoints)
 		}
 		// if ExternalTrafficPolicy or InternalTrafficPolicy is local, then we need to do things a bit differently
 		externalTrafficLocal := util.ServiceExternalTrafficPolicyLocal(service)
@@ -887,122 +889,4 @@ func joinHostsPort(ips []string, port int32) []Addr {
 		out = append(out, Addr{IP: ip, Port: port})
 	}
 	return out
-}
-
-func getServicePortKey(protocol corev1.Protocol, name string) string {
-	return fmt.Sprintf("%s/%s", protocol, name)
-}
-
-// GetEndpointsForService takes a service, all its slices and the list of nodes in the OVN zone
-// and returns two maps that hold all the endpoint addresses for the service:
-// one classified by port, one classified by port,node. This second map is only filled in
-// when the service needs local (per-node) endpoints, that is when ETP=local or ITP=local.
-// The node list helps to keep the resulting map small, since we're only interested in local endpoints.
-func getEndpointsForService(slices []*discovery.EndpointSlice, service *corev1.Service, nodes sets.Set[string],
-	networkName string) (map[string]lbEndpoints, map[string]map[string]lbEndpoints) {
-
-	// classify endpoints
-	ports := map[string]int32{}
-	portToEndpoints := map[string][]discovery.Endpoint{}
-	portToNodeToEndpoints := map[string]map[string][]discovery.Endpoint{}
-	requiresLocalEndpoints := util.ServiceExternalTrafficPolicyLocal(service) || util.ServiceInternalTrafficPolicyLocal(service)
-
-	for _, port := range service.Spec.Ports {
-		name := getServicePortKey(port.Protocol, port.Name)
-		ports[name] = 0
-	}
-
-	for _, slice := range slices {
-
-		if slice.AddressType == discovery.AddressTypeFQDN {
-			continue // consider only v4 and v6, discard FQDN
-		}
-
-		slicePorts := make([]string, 0, len(slice.Ports))
-
-		for _, port := range slice.Ports {
-			// check if there's a service port matching the slice protocol/name
-			slicePortName := ""
-			if port.Name != nil {
-				slicePortName = *port.Name
-			}
-			name := getServicePortKey(*port.Protocol, slicePortName)
-			if _, hasPort := ports[name]; hasPort {
-				slicePorts = append(slicePorts, name)
-				ports[name] = *port.Port
-				continue
-			}
-			// service port name might be empty: check against slice protocol/""
-			noName := getServicePortKey(*port.Protocol, "")
-			if _, hasPort := ports[noName]; hasPort {
-				slicePorts = append(slicePorts, name)
-				ports[noName] = *port.Port
-			}
-		}
-		for _, endpoint := range slice.Endpoints {
-			for _, port := range slicePorts {
-
-				portToEndpoints[port] = append(portToEndpoints[port], endpoint)
-
-				// won't add items to portToNodeToEndpoints if  the service doesn't need it,
-				// the endpoint is not assigned to a node yet or the endpoint is not local to the OVN zone
-				if !requiresLocalEndpoints || endpoint.NodeName == nil || !nodes.Has(*endpoint.NodeName) {
-					continue
-				}
-				if portToNodeToEndpoints[port] == nil {
-					portToNodeToEndpoints[port] = make(map[string][]discovery.Endpoint, len(nodes))
-				}
-
-				if portToNodeToEndpoints[port][*endpoint.NodeName] == nil {
-					portToNodeToEndpoints[port][*endpoint.NodeName] = []discovery.Endpoint{}
-				}
-				portToNodeToEndpoints[port][*endpoint.NodeName] = append(portToNodeToEndpoints[port][*endpoint.NodeName], endpoint)
-			}
-		}
-	}
-
-	// get eligible endpoint addresses
-	portToLBEndpoints := make(map[string]lbEndpoints, len(portToEndpoints))
-	portToNodeToLBEndpoints := make(map[string]map[string]lbEndpoints, len(portToEndpoints))
-
-	for port, endpoints := range portToEndpoints {
-		addresses := util.GetEligibleEndpointAddresses(endpoints, service)
-		v4IPs, _ := util.MatchAllIPStringFamily(false, addresses)
-		v6IPs, _ := util.MatchAllIPStringFamily(true, addresses)
-		if len(v4IPs) > 0 || len(v6IPs) > 0 {
-			portToLBEndpoints[port] = lbEndpoints{
-				V4IPs: v4IPs,
-				V6IPs: v6IPs,
-				Port:  ports[port],
-			}
-		}
-	}
-	klog.V(5).Infof("Cluster endpoints for %s/%s for network=%s are: %v",
-		service.Namespace, service.Name, networkName, portToLBEndpoints)
-
-	for port, nodeToEndpoints := range portToNodeToEndpoints {
-		for node, endpoints := range nodeToEndpoints {
-			addresses := util.GetEligibleEndpointAddresses(endpoints, service)
-			v4IPs, _ := util.MatchAllIPStringFamily(false, addresses)
-			v6IPs, _ := util.MatchAllIPStringFamily(true, addresses)
-			if len(v4IPs) > 0 || len(v6IPs) > 0 {
-				if portToNodeToLBEndpoints[port] == nil {
-					portToNodeToLBEndpoints[port] = make(map[string]lbEndpoints, len(nodes))
-				}
-
-				portToNodeToLBEndpoints[port][node] = lbEndpoints{
-					V4IPs: v4IPs,
-					V6IPs: v6IPs,
-					Port:  ports[port],
-				}
-			}
-		}
-	}
-
-	if requiresLocalEndpoints {
-		klog.V(5).Infof("Local endpoints for %s/%s for network=%s are: %v",
-			service.Namespace, service.Name, networkName, portToNodeToLBEndpoints)
-	}
-
-	return portToLBEndpoints, portToNodeToLBEndpoints
 }
