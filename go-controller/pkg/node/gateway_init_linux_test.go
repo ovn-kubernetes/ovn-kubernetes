@@ -917,7 +917,9 @@ func shareGatewayInterfaceDPUHostTest(app *cli.App, testNS ns.NetNS, uplinkName,
 
 			nodeAnnotator := kube.NewNodeAnnotator(k, existingNode.Name)
 
-			err := nc.initGatewayDPUHost(net.ParseIP(hostIP), nodeAnnotator)
+			err := nc.initGatewayDPUHostPreStart(net.ParseIP(hostIP), nodeAnnotator)
+			Expect(err).NotTo(HaveOccurred())
+			err = nc.initGatewayDPUHost()
 			Expect(err).NotTo(HaveOccurred())
 
 			link, err := netlink.LinkByName(uplinkName)
