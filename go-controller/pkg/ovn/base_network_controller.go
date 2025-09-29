@@ -219,7 +219,8 @@ func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed f
 			sets.NewString(oc.GetNADNamespaces()...))
 	}
 
-	if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
+	// nodeTracker is nil for localnet, since it doesn't do anything for remote nodes
+	if config.OVNKubernetesFeature.EnableDynamicUDNAllocation && oc.nodeNADTracker != nil {
 		// look for remote nodes to reconcile
 		nads := oc.GetNADs()
 		nodes, err := oc.watchFactory.GetNodes()

@@ -127,6 +127,21 @@ func (h *layer2UserDefinedNetworkControllerEventHandler) AddResource(obj interfa
 					syncReroute:  true,
 				}
 			}
+			if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
+				nads := h.oc.GetNADs()
+				hasNad := false
+				for _, nadName := range nads {
+					if h.oc.nodeNADTracker != nil && h.oc.nodeNADTracker.NodeHasNAD(node.Name, nadName) {
+						hasNad = true
+						break
+					}
+				}
+				if !hasNad {
+					klog.V(5).Infof("Ignoring processing remote node: %s as it has no active NAD for network: %s",
+						node.Name, h.oc.GetNetworkName())
+					return nil
+				}
+			}
 			return h.oc.addUpdateLocalNodeEvent(node, nodeParams)
 		}
 		return h.oc.addUpdateRemoteNodeEvent(node, config.OVNKubernetesFeature.EnableInterconnect)
@@ -199,6 +214,21 @@ func (h *layer2UserDefinedNetworkControllerEventHandler) UpdateResource(oldObj, 
 
 			return h.oc.addUpdateLocalNodeEvent(newNode, nodeSyncsParam)
 		} else {
+			if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
+				nads := h.oc.GetNADs()
+				hasNad := false
+				for _, nadName := range nads {
+					if h.oc.nodeNADTracker != nil && h.oc.nodeNADTracker.NodeHasNAD(newNode.Name, nadName) {
+						hasNad = true
+						break
+					}
+				}
+				if !hasNad {
+					klog.V(5).Infof("Ignoring processing remote node: %s as it has no active NAD for network: %s",
+						newNode.Name, h.oc.GetNetworkName())
+					return nil
+				}
+			}
 			_, syncZoneIC := h.oc.syncZoneICFailed.Load(newNode.Name)
 			return h.oc.addUpdateRemoteNodeEvent(newNode, syncZoneIC)
 		}
@@ -305,7 +335,9 @@ func NewLayer2UserDefinedNetworkController(
 	networkManager networkmanager.Interface,
 	routeImportManager routeimport.Manager,
 	portCache *PortCache,
-	eIPController *EgressIPController) (*Layer2UserDefinedNetworkController, error) {
+	eIPController *EgressIPController,
+	nodeNADTracker networkmanager.Tracker,
+) (*Layer2UserDefinedNetworkController, error) {
 
 	stopChan := make(chan struct{})
 
@@ -349,6 +381,7 @@ func NewLayer2UserDefinedNetworkController(
 					cancelableCtx:               util.NewCancelableContext(),
 					networkManager:              networkManager,
 					routeImportManager:          routeImportManager,
+					nodeNADTracker:              nodeNADTracker,
 				},
 			},
 		},
