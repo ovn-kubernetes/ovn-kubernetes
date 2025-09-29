@@ -134,9 +134,9 @@ func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatch
 			return nil, err
 		}
 		if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
-			ncm.podTracker = networkmanager.NewPodTrackerController("node-pod-tracker", wf, ncm.networkManager.Interface(), ncm.OnNetworkRefChange)
+			ncm.podTracker = networkmanager.NewPodTrackerController("node-pod-tracker", wf, ncm.OnNetworkRefChange)
 			if config.OVNKubernetesFeature.EnableEgressIP {
-				ncm.egressIPTracker = networkmanager.NewEgressIPTrackerController(wf, ncm.networkManager.Interface(), ncm.OnNetworkRefChange)
+				ncm.egressIPTracker = networkmanager.NewEgressIPTrackerController(wf, ncm.OnNetworkRefChange)
 			}
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	nadlisters "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -14,10 +15,13 @@ import (
 	v1 "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
+	"k8s.io/klog/v2"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
 	egressipv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
 	egressiplisters "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/listers/egressip/v1"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 type nsInfo struct {
@@ -43,25 +47,24 @@ type EgressIPTrackerController struct {
 
 	nsLister      v1.NamespaceLister
 	eipLister     egressiplisters.EgressIPLister
+	nadLister     nadlisters.NetworkAttachmentDefinitionLister
 	eipController controller.Controller
 	nsController  controller.Controller
 	nadController controller.Controller
-	networkManger Interface
 }
 
 func NewEgressIPTrackerController(
 	wf watchFactory,
-	nm Interface,
 	onNetworkRefChange func(nodeName, nadName string, present bool),
 ) *EgressIPTrackerController {
 	t := &EgressIPTrackerController{
 		cache:              make(map[string]map[string]map[string]struct{}),
 		reverse:            make(map[string]map[string]map[string]struct{}),
 		nsCache:            make(map[string]*nsInfo),
-		networkManger:      nm,
 		onNetworkRefChange: onNetworkRefChange,
 		nsLister:           wf.NamespaceInformer().Lister(),
 		eipLister:          wf.EgressIPInformer().Lister(),
+		nadLister:          wf.NADInformer().Lister(),
 	}
 
 	cfg := &controller.ControllerConfig[egressipv1.EgressIP]{
@@ -159,17 +162,9 @@ func (t *EgressIPTrackerController) reconcileNAD(key string) error {
 	}
 
 	// Determine current active primary NAD for this namespace
-	primary, err := t.networkManger.GetActiveNetworkForNamespace(namespace)
+	newNAD, err := t.getPrimaryNADForNamespace(namespace)
 	if err != nil {
 		return fmt.Errorf("failed to get active network for namespace %q: %v", namespace, err)
-	}
-
-	var newNAD string
-	if !primary.IsDefault() {
-		nads := primary.GetNADs()
-		if len(nads) > 0 {
-			newNAD = nads[0]
-		}
 	}
 
 	oldInfo, ok := t.nsCache[namespace]
@@ -239,18 +234,13 @@ func (t *EgressIPTrackerController) reconcileEgressIP(key string) error {
 	}
 
 	for _, ns := range nsList {
-		primary, err := t.networkManger.GetActiveNetworkForNamespace(ns.Name)
+		nad, err := t.getPrimaryNADForNamespace(ns.Name)
 		if err != nil {
 			return fmt.Errorf("failed to get primary network for namespace %q: %v", ns.Name, err)
 		}
-		if primary.IsDefault() {
+		if len(nad) == 0 {
 			continue
 		}
-		nads := primary.GetNADs()
-		if len(nads) == 0 {
-			continue
-		}
-		nad := nads[0]
 
 		nodes := make(map[string]struct{})
 		for _, st := range eip.Status.Items {
@@ -316,16 +306,9 @@ func (t *EgressIPTrackerController) reconcileNamespace(key string) error {
 	}
 
 	// Step 1: determine the namespace's current primary UDN/NAD
-	primaryNetwork, err := t.networkManger.GetActiveNetworkForNamespace(ns.Name)
+	nad, err := t.getPrimaryNADForNamespace(ns.Name)
 	if err != nil {
 		return fmt.Errorf("failed to get primary network for namespace %q: %v", ns.Name, err)
-	}
-	nad := ""
-	if !primaryNetwork.IsDefault() {
-		nads := primaryNetwork.GetNADs()
-		if len(nads) > 0 {
-			nad = nads[0] // only one primary NAD is valid
-		}
 	}
 
 	// If no NAD, remove any stale cache and stop.
@@ -535,18 +518,27 @@ func (t *EgressIPTrackerController) syncAll() error {
 	for _, ns := range namespaces {
 		nsName := ns.Name
 
-		primary, err := t.networkManger.GetActiveNetworkForNamespace(nsName)
+		primaryNAD := ""
+		nads, err := t.nadLister.NetworkAttachmentDefinitions(nsName).List(labels.Everything())
 		if err != nil {
-			return fmt.Errorf("syncAll: primary network for ns %q: %v", nsName, err)
+			return fmt.Errorf("failed to list network attachment definitions: %w", err)
 		}
-		if primary.IsDefault() {
+		for _, nad := range nads {
+			if nad.Name == types.DefaultNetworkName {
+				continue
+			}
+			nadInfo, err := util.ParseNADInfo(nad)
+			if err != nil {
+				klog.Warningf("Failed to parse network attachment definition %q: %v", nad.Name, err)
+				continue
+			}
+			if nadInfo.IsPrimaryNetwork() {
+				primaryNAD = util.GetNADName(nad.Namespace, nad.Name)
+			}
+		}
+		if len(primaryNAD) == 0 {
 			continue
 		}
-		nads := primary.GetNADs()
-		if len(nads) == 0 {
-			continue
-		}
-		nad := nads[0]
 
 		for _, eip := range eips {
 			selector, err := metav1.LabelSelectorAsSelector(&eip.Spec.NamespaceSelector)
@@ -557,10 +549,32 @@ func (t *EgressIPTrackerController) syncAll() error {
 				continue
 			}
 			for node := range eipNodes[eip.Name] {
-				t.addNamespaceEIP(nsName, eip.Name, node, nad)
+				t.addNamespaceEIP(nsName, eip.Name, node, primaryNAD)
 			}
 		}
 	}
 
 	return nil
+}
+
+func (t *EgressIPTrackerController) getPrimaryNADForNamespace(namespace string) (string, error) {
+	nads, err := t.nadLister.NetworkAttachmentDefinitions(namespace).List(labels.Everything())
+	if err != nil {
+		return "", fmt.Errorf("failed to list network attachment definitions: %w", err)
+	}
+	for _, nad := range nads {
+		if nad.Name == types.DefaultNetworkName {
+			continue
+		}
+		nadInfo, err := util.ParseNADInfo(nad)
+		if err != nil {
+			klog.Warningf("Failed to parse network attachment definition %q: %v", nad.Name, err)
+			continue
+		}
+		if nadInfo.IsPrimaryNetwork() {
+			return util.GetNADName(nad.Namespace, nad.Name), nil
+		}
+	}
+
+	return "", nil
 }

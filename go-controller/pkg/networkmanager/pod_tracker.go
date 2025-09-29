@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	nadv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	nadlisters "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -35,17 +36,17 @@ type PodTrackerController struct {
 	onNetworkRefChange func(node, nad string, active bool)
 	podController      controller.Controller
 	podLister          v1.PodLister
-	networkManger      Interface
+	nadLister          nadlisters.NetworkAttachmentDefinitionLister
 }
 
-func NewPodTrackerController(name string, wf watchFactory, nm Interface, onNetworkRefChange func(node, nad string, active bool)) *PodTrackerController {
+func NewPodTrackerController(name string, wf watchFactory, onNetworkRefChange func(node, nad string, active bool)) *PodTrackerController {
 	p := &PodTrackerController{
 		name:               name,
 		cache:              make(map[string]map[string]map[string]struct{}),
 		reverse:            make(map[string]nodeNAD),
 		onNetworkRefChange: onNetworkRefChange,
 		podLister:          wf.PodCoreInformer().Lister(),
-		networkManger:      nm,
+		nadLister:          wf.NADInformer().Lister(),
 	}
 
 	cfg := &controller.ControllerConfig[corev1.Pod]{
@@ -88,11 +89,25 @@ func (c *PodTrackerController) getNADsForPod(pod *corev1.Pod) ([]string, error) 
 	var nadList []string
 
 	// Primary NAD from namespace
-	primaryNAD, err := c.networkManger.GetPrimaryNADForNamespace(pod.Namespace)
+	primaryNAD := ""
+	nads, err := c.nadLister.NetworkAttachmentDefinitions(pod.Namespace).List(labels.Everything())
 	if err != nil {
-		return nil, fmt.Errorf("error getting primary NAD for pod %s/%s: %w", pod.Namespace, pod.Name, err)
+		return nil, fmt.Errorf("failed to list network attachment definitions: %w", err)
 	}
-	if len(primaryNAD) > 0 && primaryNAD != types.DefaultNetworkName {
+	for _, nad := range nads {
+		if nad.Name == types.DefaultNetworkName {
+			continue
+		}
+		nadInfo, err := util.ParseNADInfo(nad)
+		if err != nil {
+			klog.Warningf("Failed to parse network attachment definition %q: %v", nad.Name, err)
+			continue
+		}
+		if nadInfo.IsPrimaryNetwork() {
+			primaryNAD = util.GetNADName(nad.Namespace, nad.Name)
+		}
+	}
+	if len(primaryNAD) > 0 {
 		nadList = append(nadList, primaryNAD)
 	}
 

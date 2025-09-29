@@ -2,6 +2,7 @@ package networkmanager
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
@@ -10,24 +11,15 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
 func TestPodTrackerControllerWithInformerAndDelete(t *testing.T) {
-	primaryNetwork := &ovncnitypes.NetConf{
-		NetConf: cnitypes.NetConf{
-			Name: "primary",
-			Type: "ovn-k8s-cni-overlay",
-		},
-		Topology: "layer3",
-		Role:     "primary",
-		MTU:      1400,
-		NADName:  "testns/primary",
-	}
-
 	type callbackEvent struct {
 		node   string
 		nad    string
@@ -96,6 +88,12 @@ func TestPodTrackerControllerWithInformerAndDelete(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			g := gomega.NewWithT(t)
+			err := config.PrepareTestConfig()
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+			config.OVNKubernetesFeature.EnableMultiNetwork = true
+			config.OVNKubernetesFeature.EnableInterconnect = true
+			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+			config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
 
 			// Track callback events
 			var events []callbackEvent
@@ -105,20 +103,8 @@ func TestPodTrackerControllerWithInformerAndDelete(t *testing.T) {
 			wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClient)
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 
-			// Fake network manager returning primary NAD
-			fakeNM := &FakeNetworkManager{
-				PrimaryNetworks: make(map[string]util.NetInfo),
-			}
-			if !tt.networkIsDef {
-				nInfo, err := util.NewNetInfo(primaryNetwork)
-				m := util.NewMutableNetInfo(nInfo)
-				m.SetNADs(util.GetNADName(tt.namespace, nInfo.GetNetworkName()))
-				g.Expect(err).ToNot(gomega.HaveOccurred())
-				fakeNM.PrimaryNetworks[tt.namespace] = m
-			}
-
 			// Create PodTrackerController with dummy callback
-			ptc := NewPodTrackerController("test-pod-tracker", wf, fakeNM, func(node, nad string, active bool) {
+			ptc := NewPodTrackerController("test-pod-tracker", wf, func(node, nad string, active bool) {
 				events = append(events, callbackEvent{node, nad, active})
 			})
 
@@ -130,6 +116,31 @@ func TestPodTrackerControllerWithInformerAndDelete(t *testing.T) {
 			// Start pod controller
 			g.Expect(ptc.Start()).Should(gomega.Succeed())
 			defer ptc.Stop()
+
+			if !tt.networkIsDef {
+				// Create Primary NAD NAD
+				namespace := "testns"
+				netConf := &ovncnitypes.NetConf{
+					NetConf:  cnitypes.NetConf{Name: "primary", Type: "ovn-k8s-cni-overlay"},
+					Topology: "layer3",
+					Role:     "primary",
+					MTU:      1400,
+					NADName:  "testns/primary",
+				}
+				bytes, _ := json.Marshal(netConf)
+				nad := &nadv1.NetworkAttachmentDefinition{
+					ObjectMeta: metav1.ObjectMeta{
+						UID:       types.UID(namespace),
+						Name:      "primary",
+						Namespace: namespace,
+					},
+					Spec: nadv1.NetworkAttachmentDefinitionSpec{
+						Config: string(bytes),
+					},
+				}
+				_, _ = fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespace).
+					Create(context.Background(), nad, metav1.CreateOptions{})
+			}
 
 			// Create node
 			_, err = fakeClient.KubeClient.CoreV1().Nodes().Create(context.Background(), &corev1.Node{
@@ -198,33 +209,17 @@ func TestPodTrackerControllerWithInformerAndDelete(t *testing.T) {
 
 func TestPodTrackerControllerSyncAll(t *testing.T) {
 	g := gomega.NewWithT(t)
+	err := config.PrepareTestConfig()
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	config.OVNKubernetesFeature.EnableInterconnect = true
+	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+	config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
 
 	// Setup fake client + watch factory
 	fakeClient := util.GetOVNClientset().GetOVNKubeControllerClientset()
 	wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClient)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
-
-	// Fake network manager returning a primary NAD
-	primaryNetwork := &ovncnitypes.NetConf{
-		NetConf: cnitypes.NetConf{
-			Name: "primary",
-			Type: "ovn-k8s-cni-overlay",
-		},
-		Topology: "layer3",
-		Role:     "primary",
-		MTU:      1400,
-		NADName:  "testns/primary",
-	}
-	nInfo, err := util.NewNetInfo(primaryNetwork)
-	g.Expect(err).ToNot(gomega.HaveOccurred())
-	m := util.NewMutableNetInfo(nInfo)
-	m.SetNADs(util.GetNADName("testns", nInfo.GetNetworkName()))
-
-	fakeNM := &FakeNetworkManager{
-		PrimaryNetworks: map[string]util.NetInfo{
-			"testns": m,
-		},
-	}
 
 	// Track callback events
 	var events []struct {
@@ -234,7 +229,7 @@ func TestPodTrackerControllerSyncAll(t *testing.T) {
 	}
 
 	// Create PodTrackerController
-	ptc := NewPodTrackerController("test-pod-tracker", wf, fakeNM, func(node, nad string, active bool) {
+	ptc := NewPodTrackerController("test-pod-tracker", wf, func(node, nad string, active bool) {
 		events = append(events, struct {
 			node   string
 			nad    string
@@ -250,6 +245,31 @@ func TestPodTrackerControllerSyncAll(t *testing.T) {
 	// Start pod controller
 	g.Expect(ptc.Start()).Should(gomega.Succeed())
 	defer ptc.Stop()
+
+	// Create NAD
+	namespace := "testns"
+	netConf := &ovncnitypes.NetConf{
+		NetConf:  cnitypes.NetConf{Name: "primary", Type: "ovn-k8s-cni-overlay"},
+		Topology: "layer3",
+		Role:     "primary",
+		MTU:      1400,
+		NADName:  "testns/primary",
+	}
+	bytes, err := json.Marshal(netConf)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	nad := &nadv1.NetworkAttachmentDefinition{
+		ObjectMeta: metav1.ObjectMeta{
+			UID:       types.UID(namespace),
+			Name:      "primary",
+			Namespace: namespace,
+		},
+		Spec: nadv1.NetworkAttachmentDefinitionSpec{
+			Config: string(bytes),
+		},
+	}
+	_, err = fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespace).
+		Create(context.Background(), nad, metav1.CreateOptions{})
+	g.Expect(err).ToNot(gomega.HaveOccurred())
 
 	// Create a node
 	_, err = fakeClient.KubeClient.CoreV1().Nodes().Create(context.Background(), &corev1.Node{
