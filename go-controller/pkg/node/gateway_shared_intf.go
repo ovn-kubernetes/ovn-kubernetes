@@ -331,9 +331,16 @@ func (npw *nodePortWatcher) updateServiceFlowCache(service *corev1.Service, netI
 					// case2 (see function description for details)
 					npw.ofm.updateFlowCacheEntry(key, []string{
 						// table=0, matches on service traffic towards nodePort and sends it to OVN pipeline
+						// setting the ct_mark to '0x1' to indicate that this is OVN traffic
 						fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, tp_dst=%d, "+
-							"actions=%s",
-							cookie, npw.ofportPhys, flowProtocol, svcPort.NodePort, actions),
+							"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)),%s",
+							cookie, npw.ofportPhys, flowProtocol, svcPort.NodePort, config.Default.HostNodePortConntrackZone, nodetypes.CtMarkOVN, actions),
+						// table=0, matches on service traffic towards nodePort from OVN and drops it, to prevent the traffic goes to the host.
+						// match on ct_state=+est+trk and ct_mark=0x1 to ensure that this rule only applies to return traffic from OVN.
+						// This is to prevent traffic to nodePort from being forwarded to the host accidentally during GR OVN LB resyncs.
+						fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, tp_dst=%d, ct_state=+est+trk, ct_mark=%s,"+
+							"actions=drop",
+							cookie, netConfig.OfPortPatch, flowProtocol, svcPort.NodePort, nodetypes.CtMarkOVN),
 						// table=0, matches on return traffic from service nodePort and sends it out to primary node interface (br-ex)
 						fmt.Sprintf("cookie=%s, priority=110, in_port=%s, dl_src=%s, %s, tp_src=%d, "+
 							"actions=output:%s",
