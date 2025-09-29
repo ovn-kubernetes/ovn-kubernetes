@@ -56,7 +56,10 @@ func newTestNAD(ns, name, ownerKind string) *nettypes.NetworkAttachmentDefinitio
 
 func TestControllerManager_FilterAndOnNetworkRefChange(t *testing.T) {
 	// Setup config zone
-	util.PrepareTestConfig()
+	err := config.PrepareTestConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
 	config.Default.Zone = "test-node"
 	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 	config.OVNKubernetesFeature.EnableMultiNetwork = true

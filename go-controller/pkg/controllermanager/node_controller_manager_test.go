@@ -63,7 +63,7 @@ var _ = Describe("Healthcheck tests", func() {
 	var err error
 
 	BeforeEach(func() {
-		util.PrepareTestConfig()
+		Expect(config.PrepareTestConfig()).To(Succeed())
 		execMock = ovntest.NewFakeExec()
 		Expect(util.SetExec(execMock)).To(Succeed())
 		factoryMock = factoryMocks.NodeWatchFactory{}
@@ -304,7 +304,8 @@ var _ = Describe("NodeControllerManager NetworkRef filtering", func() {
 	var wf *factory.WatchFactory
 
 	BeforeEach(func() {
-		util.PrepareTestConfig()
+		err := config.PrepareTestConfig()
+		Expect(err).NotTo(HaveOccurred())
 		config.Default.Zone = nodeName
 		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
@@ -320,7 +321,6 @@ var _ = Describe("NodeControllerManager NetworkRef filtering", func() {
 		fakeET.setActive(nodeName, "ns3/nad3", true)
 
 		fakeClient := util.GetOVNClientset().GetNodeClientset()
-		var err error
 		wf, err = factory.NewNodeWatchFactory(fakeClient, nodeName)
 		Expect(err).NotTo(HaveOccurred())
 		err = wf.Start()

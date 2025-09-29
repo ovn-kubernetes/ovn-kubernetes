@@ -67,7 +67,8 @@ func TestBaseNetworkController_shouldWatchNamespaces(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			util.PrepareTestConfig()
+			err := config.PrepareTestConfig()
+			require.NoError(t, err, "failed to prepare test config")
 			config.OVNKubernetesFeature.EnableMultiNetwork = tt.enableNetSeg || tt.enableMultiNetPolicies
 			config.OVNKubernetesFeature.EnableNetworkSegmentation = tt.enableNetSeg
 			config.OVNKubernetesFeature.EnableMultiNetworkPolicy = tt.enableMultiNetPolicies

@@ -60,18 +60,10 @@ var (
 	ovnRunDir string = "/var/run/ovn/"
 
 	savedOVSRunDir = ovsRunDir
-	savedOVNRunDir = ovnRunDir
 )
 
 var ovnCmdRetryCount = 200
 var AppFs = afero.NewOsFs()
-
-// PrepareTestConfig restores default config values. Used by testcases to
-// provide a pristine environment between tests.
-func PrepareTestConfig() {
-	ovsRunDir = savedOVSRunDir
-	ovnRunDir = savedOVNRunDir
-}
 
 func runningPlatform() (string, error) {
 	if runtime.GOOS == windowsOS {
