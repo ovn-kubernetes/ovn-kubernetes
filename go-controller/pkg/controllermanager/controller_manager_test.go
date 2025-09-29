@@ -1,10 +1,12 @@
 package controllermanager
 
 import (
+	"context"
 	"testing"
 
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 
@@ -81,6 +83,33 @@ func TestControllerManager_FilterAndOnNetworkRefChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer wf.Shutdown()
+
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-node",
+			Annotations: map[string]string{
+				util.OvnNodeZoneName: "test-node",
+			},
+		},
+	}
+
+	_, err = fakeClient.KubeClient.CoreV1().Nodes().Create(context.Background(), node, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	egressNode := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "egress",
+			Annotations: map[string]string{
+				util.OvnNodeZoneName: "test-egress-node",
+			},
+		},
+	}
+	_, err = fakeClient.KubeClient.CoreV1().Nodes().Create(context.Background(), egressNode, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	cm := &ControllerManager{
 		networkManager:  fakeNM,

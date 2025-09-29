@@ -585,14 +585,22 @@ func (cm *ControllerManager) Filter(nad *nettypes.NetworkAttachmentDefinition) (
 		return false, nil
 	}
 
-	ourNode := config.Default.Zone
-
 	if ownerRef.Kind != "ClusterUserDefinedNetwork" && ownerRef.Kind != "UserDefinedNetwork" {
 		return false, nil
 	}
 
-	if cm.NodeHasNAD(ourNode, util.GetNADName(nad.Namespace, nad.Name)) {
-		return false, nil
+	nodes, err := cm.watchFactory.GetNodes()
+	if err != nil {
+		return false, fmt.Errorf("failed to list nodes for controller manager filtering: %w", err)
+	}
+
+	for _, node := range nodes {
+		if util.GetNodeZone(node) != config.Default.Zone {
+			continue
+		}
+		if cm.NodeHasNAD(node.Name, util.GetNADName(nad.Namespace, nad.Name)) {
+			return false, nil
+		}
 	}
 
 	return true, nil
