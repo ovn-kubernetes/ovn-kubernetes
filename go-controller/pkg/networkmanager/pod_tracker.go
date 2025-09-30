@@ -37,6 +37,7 @@ type PodTrackerController struct {
 	podController      controller.Controller
 	podLister          v1.PodLister
 	nadLister          nadlisters.NetworkAttachmentDefinitionLister
+	namespaceLister    v1.NamespaceLister
 }
 
 func NewPodTrackerController(name string, wf watchFactory, onNetworkRefChange func(node, nad string, active bool)) *PodTrackerController {
@@ -47,6 +48,7 @@ func NewPodTrackerController(name string, wf watchFactory, onNetworkRefChange fu
 		onNetworkRefChange: onNetworkRefChange,
 		podLister:          wf.PodCoreInformer().Lister(),
 		nadLister:          wf.NADInformer().Lister(),
+		namespaceLister:    wf.NamespaceInformer().Lister(),
 	}
 
 	cfg := &controller.ControllerConfig[corev1.Pod]{
@@ -88,6 +90,16 @@ func (c *PodTrackerController) NodeHasNAD(node, nad string) bool {
 func (c *PodTrackerController) getNADsForPod(pod *corev1.Pod) ([]string, error) {
 	var nadList []string
 
+	requiresUDN := false
+	// check if required UDN label is on namespace
+	ns, err := c.namespaceLister.Get(pod.Namespace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get namespace %q: %w", pod.Namespace, err)
+	}
+	if _, exists := ns.Labels[types.RequiredUDNNamespaceLabel]; exists {
+		requiresUDN = true
+	}
+
 	// Primary NAD from namespace
 	primaryNAD := ""
 	nads, err := c.nadLister.NetworkAttachmentDefinitions(pod.Namespace).List(labels.Everything())
@@ -109,6 +121,8 @@ func (c *PodTrackerController) getNADsForPod(pod *corev1.Pod) ([]string, error) 
 	}
 	if len(primaryNAD) > 0 {
 		nadList = append(nadList, primaryNAD)
+	} else if requiresUDN {
+		return nil, util.NewInvalidPrimaryNetworkError(pod.Namespace)
 	}
 
 	// Secondary NADs from pod annotation
@@ -144,7 +158,11 @@ func (c *PodTrackerController) syncAll() error {
 		}
 
 		nadList, err := c.getNADsForPod(pod)
-		if err != nil || len(nadList) == 0 {
+		if err != nil {
+			klog.Errorf("Pod Tracker sync - Failed to get nads for pod %s/%s: %v", pod.Namespace, pod.Name, err)
+			continue
+		}
+		if len(nadList) == 0 {
 			continue
 		}
 

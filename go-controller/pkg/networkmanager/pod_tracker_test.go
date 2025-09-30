@@ -16,6 +16,7 @@ import (
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
+	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -53,7 +54,7 @@ func TestPodTrackerControllerWithInformerAndDelete(t *testing.T) {
 			},
 		},
 		{
-			name:         "pod deletion triggers callback on last pod removal",
+			name:         "pod with primary and secondary NADs triggers deletion callback on last pod removal",
 			nodeName:     "node2",
 			podName:      "pod2",
 			namespace:    "testns",
@@ -117,9 +118,21 @@ func TestPodTrackerControllerWithInformerAndDelete(t *testing.T) {
 			g.Expect(ptc.Start()).Should(gomega.Succeed())
 			defer ptc.Stop()
 
+			nsLabel := map[string]string{}
 			if !tt.networkIsDef {
-				// Create Primary NAD NAD
-				namespace := "testns"
+				nsLabel = map[string]string{ovntypes.RequiredUDNNamespaceLabel: ""}
+			}
+			// Create namespace
+			_, err = fakeClient.KubeClient.CoreV1().Namespaces().Create(context.Background(), &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   tt.namespace,
+					Labels: nsLabel,
+				},
+			}, metav1.CreateOptions{})
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+
+			if !tt.networkIsDef {
+				// Create Primary NAD
 				netConf := &ovncnitypes.NetConf{
 					NetConf:  cnitypes.NetConf{Name: "primary", Type: "ovn-k8s-cni-overlay"},
 					Topology: "layer3",
@@ -130,15 +143,15 @@ func TestPodTrackerControllerWithInformerAndDelete(t *testing.T) {
 				bytes, _ := json.Marshal(netConf)
 				nad := &nadv1.NetworkAttachmentDefinition{
 					ObjectMeta: metav1.ObjectMeta{
-						UID:       types.UID(namespace),
+						UID:       types.UID(tt.namespace),
 						Name:      "primary",
-						Namespace: namespace,
+						Namespace: tt.namespace,
 					},
 					Spec: nadv1.NetworkAttachmentDefinitionSpec{
 						Config: string(bytes),
 					},
 				}
-				_, _ = fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespace).
+				_, _ = fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(tt.namespace).
 					Create(context.Background(), nad, metav1.CreateOptions{})
 			}
 
@@ -267,6 +280,16 @@ func TestPodTrackerControllerSyncAll(t *testing.T) {
 			Config: string(bytes),
 		},
 	}
+	// Create namespace
+	_, err = fakeClient.KubeClient.CoreV1().Namespaces().Create(context.Background(), &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   namespace,
+			Labels: map[string]string{ovntypes.RequiredUDNNamespaceLabel: ""},
+		},
+	}, metav1.CreateOptions{})
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+
+	// Create NAD
 	_, err = fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespace).
 		Create(context.Background(), nad, metav1.CreateOptions{})
 	g.Expect(err).ToNot(gomega.HaveOccurred())
