@@ -1003,6 +1003,7 @@ var CommonFlags = []cli.Flag{
 		Usage:       "Maximum size in megabytes of the log file before it gets rolled",
 		Destination: &cliConfig.Logging.LogFileMaxSize,
 		Value:       Logging.LogFileMaxSize,
+		EnvVars:     []string{"OVNKUBE_LOGFILE_MAXSIZE"},
 	},
 	&cli.IntFlag{
 		Name:        "logfile-maxbackups",
