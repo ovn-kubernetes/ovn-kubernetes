@@ -1010,6 +1010,7 @@ var CommonFlags = []cli.Flag{
 		Usage:       "Maximum number of old log files to retain",
 		Destination: &cliConfig.Logging.LogFileMaxBackups,
 		Value:       Logging.LogFileMaxBackups,
+		EnvVars:     []string{"OVNKUBE_LOGFILE_MAXBACKUPS"},
 	},
 	&cli.IntFlag{
 		Name:        "logfile-maxage",
