@@ -86,9 +86,9 @@ func (cm *ControllerManager) NewNetworkController(nInfo util.NetInfo) (networkma
 	topoType := nInfo.TopologyType()
 	switch topoType {
 	case ovntypes.Layer3Topology:
-		return ovn.NewLayer3UserDefinedNetworkController(cnci, nInfo, cm.networkManager.Interface(), cm.routeImportManager, cm.eIPController, cm.portCache)
+		return ovn.NewLayer3UserDefinedNetworkController(cnci, nInfo, cm.networkManager.Interface(), cm.routeImportManager, cm.eIPController, cm.portCache, cm)
 	case ovntypes.Layer2Topology:
-		return ovn.NewLayer2UserDefinedNetworkController(cnci, nInfo, cm.networkManager.Interface(), cm.routeImportManager, cm.portCache, cm.eIPController)
+		return ovn.NewLayer2UserDefinedNetworkController(cnci, nInfo, cm.networkManager.Interface(), cm.routeImportManager, cm.portCache, cm.eIPController, cm)
 	case ovntypes.LocalnetTopology:
 		return ovn.NewLocalnetUserDefinedNetworkController(cnci, nInfo, cm.networkManager.Interface()), nil
 	}
@@ -106,9 +106,9 @@ func (cm *ControllerManager) newDummyNetworkController(topoType, netName string)
 	netInfo, _ := util.NewNetInfo(&ovncnitypes.NetConf{NetConf: types.NetConf{Name: netName}, Topology: topoType})
 	switch topoType {
 	case ovntypes.Layer3Topology:
-		return ovn.NewLayer3UserDefinedNetworkController(cnci, netInfo, cm.networkManager.Interface(), cm.routeImportManager, cm.eIPController, cm.portCache)
+		return ovn.NewLayer3UserDefinedNetworkController(cnci, netInfo, cm.networkManager.Interface(), cm.routeImportManager, cm.eIPController, cm.portCache, cm)
 	case ovntypes.Layer2Topology:
-		return ovn.NewLayer2UserDefinedNetworkController(cnci, netInfo, cm.networkManager.Interface(), cm.routeImportManager, cm.portCache, cm.eIPController)
+		return ovn.NewLayer2UserDefinedNetworkController(cnci, netInfo, cm.networkManager.Interface(), cm.routeImportManager, cm.portCache, cm.eIPController, cm)
 	case ovntypes.LocalnetTopology:
 		return ovn.NewLocalnetUserDefinedNetworkController(cnci, netInfo, cm.networkManager.Interface()), nil
 	}
