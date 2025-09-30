@@ -93,6 +93,12 @@ global:
   enableLFlowCache: true
   # -- Configure to use DNSNameResolver feature with ovn-kubernetes
   enableDNSNameResolver: false
+  # -- Configure to enable route advertisements
+  enableRouteAdvertisements: false
+  # -- Configure to advertise default network
+  advertiseDefaultNetwork: false
+  # -- Configure advertised UDN isolation mode (strict or loose)
+  advertisedUDNIsolationMode: strict
   # -- Maximum number of logical flow cache entries ovn-controller may create when the logical flow cache is enabled
   # @default -- unlimited
   lFlowCacheLimit: ""
@@ -133,7 +139,7 @@ global:
   # -- Maximum period in seconds for which an IPFIX flow record is cached and aggregated before being sent
   # @default 60
   ipfixCacheActiveTimeout: ""
-  # -- OVN remote probe interval in ms 
+  # -- OVN remote probe interval in ms
   # @default 100000
   remoteProbeInterval: 100000
   # -- Enable monitoring all data from SB DB instead of conditionally monitoring the data relevant to this node only
@@ -142,7 +148,7 @@ global:
   # -- ovn-controller wait time in ms before clearing OpenFlow rules during start up
   # @default 0
   ofctrlWaitBeforeClear: ""
-  # -- Separate log file for libovsdb client 
+  # -- Separate log file for libovsdb client
   libovsdbClientLogFile: ""
   # -- Label for indicating that the node is managing its own network
   noHostSubnetLabel: ""
@@ -170,8 +176,8 @@ global:
     create: false
 
 ovnkube-master:
-    # -- number of ovnkube-master pods
-    replicas: 1
+  # -- number of ovnkube-master pods
+  replicas: 1
 
 # -- prometheus monitoring related fields
 monitoring:
