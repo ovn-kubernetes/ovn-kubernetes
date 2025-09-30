@@ -105,6 +105,9 @@ else
 	echo "linter can only be run within a container since it needs a specific golangci-lint version"; exit 1
 endif
 
+lint-run-natively:
+	@GOPATH=${GOPATH} ./hack/lint.sh run-natively || { echo "running lint locally failed!"; exit 1; }
+
 gofmt:
 ifeq ($(CONTAINER_RUNNABLE), 0)
 	$(CONTAINER_RUNTIME) run -it --rm --security-opt label=disable -v $(shell dirname $(PWD)):/go/src/github.com/ovn-org/ovn-kubernetes -w /go/src/github.com/ovn-org/ovn-kubernetes/go-controller $(GO_DOCKER_IMG) hack/verify-gofmt.sh
