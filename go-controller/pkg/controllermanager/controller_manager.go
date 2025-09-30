@@ -9,12 +9,14 @@ import (
 	"time"
 
 	"github.com/containernetworking/cni/pkg/types"
+	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
 
@@ -69,6 +71,9 @@ type ControllerManager struct {
 
 	// eIPController programs OVN to support EgressIP
 	eIPController *ovn.EgressIPController
+
+	podTracker      networkmanager.TrackerController
+	egressIPTracker networkmanager.TrackerController
 }
 
 func (cm *ControllerManager) NewNetworkController(nInfo util.NetInfo) (networkmanager.NetworkController, error) {
@@ -271,6 +276,13 @@ func NewControllerManager(ovnClient *util.OVNClientset, wf *factory.WatchFactory
 			return nil, fmt.Errorf("RouteAdvertisements can only be used if Interconnect is enabled")
 		}
 		cm.routeImportManager = routeimport.New(config.Default.Zone, cm.nbClient)
+	}
+
+	if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
+		cm.podTracker = networkmanager.NewPodTrackerController("zone-pod-tracker", wf, cm.OnNetworkRefChange)
+		if config.OVNKubernetesFeature.EnableEgressIP {
+			cm.egressIPTracker = networkmanager.NewEgressIPTrackerController("zone-egress-ip-tracker", wf, cm.OnNetworkRefChange)
+		}
 	}
 
 	return cm, nil
@@ -494,6 +506,19 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 			return fmt.Errorf("failed to initialize advertised network isolation: %w", err)
 		}
 	}
+
+	if cm.podTracker != nil {
+		if err = cm.podTracker.Start(); err != nil {
+			return fmt.Errorf("failed to start pod tracker: %w", err)
+		}
+	}
+
+	if cm.egressIPTracker != nil {
+		if err = cm.egressIPTracker.Start(); err != nil {
+			return fmt.Errorf("failed to start egress ip tracker: %w", err)
+		}
+	}
+
 	if cm.networkManager != nil {
 		if err = cm.networkManager.Start(); err != nil {
 			return fmt.Errorf("failed to start NAD Controller :%v", err)
@@ -528,6 +553,16 @@ func (cm *ControllerManager) Stop() {
 	// stop the NAD controller
 	if cm.networkManager != nil {
 		cm.networkManager.Stop()
+	}
+
+	// stop pod tracker
+	if cm.podTracker != nil {
+		cm.podTracker.Stop()
+	}
+
+	// stop egressIP tracker
+	if cm.egressIPTracker != nil {
+		cm.egressIPTracker.Stop()
 	}
 
 	if cm.routeImportManager != nil {
@@ -641,4 +676,88 @@ func (cm *ControllerManager) setUDNLayer2NodeUsesTransitRouter(nodeList *corev1.
 		}
 	}
 	return nil
+}
+
+// Filter out NADs that are not part of a UDN/CUDN running on our node
+func (cm *ControllerManager) Filter(nad *nettypes.NetworkAttachmentDefinition) (bool, error) {
+	ownerRef := metav1.GetControllerOf(nad)
+	if ownerRef == nil {
+		return false, nil
+	}
+
+	// if this isn't per-node zone controller in IC, don't filter
+	if config.Default.Zone == ovntypes.OvnDefaultZone {
+		return false, nil
+	}
+
+	if ownerRef.Kind != "ClusterUserDefinedNetwork" && ownerRef.Kind != "UserDefinedNetwork" {
+		return false, nil
+	}
+
+	// we don't support multiple nodes per zone, assume zone name is node name
+	if cm.NodeHasNAD(config.Default.Zone, util.GetNADName(nad.Namespace, nad.Name)) {
+		return false, nil
+	}
+
+	return true, nil
+}
+
+// OnNetworkRefChange is a callback function used to signal an action to this controller when
+// a network needs to be added or removed or just updated
+func (cm *ControllerManager) OnNetworkRefChange(node, nadNamespacedName string, active bool) {
+	klog.V(4).Infof("Network change for zone controller triggered by pod/egress IP events "+
+		"on node: %s, NAD: %s, active: %t", node, nadNamespacedName, active)
+
+	namespace, name, err := cache.SplitMetaNamespaceKey(nadNamespacedName)
+	if err != nil {
+		klog.Errorf("Failed splitting key %q, falling back to normal network reconcile: %v", nadNamespacedName, err)
+		// fallback to regular reconcile
+		cm.networkManager.Interface().Reconcile(nadNamespacedName)
+		return
+	}
+
+	nad, err := cm.watchFactory.NADInformer().Lister().NetworkAttachmentDefinitions(namespace).Get(name)
+	if err != nil {
+		klog.Errorf("Failed to find NAD %q in informer, falling back to normal network reconcile: %v", nadNamespacedName, err)
+		// fallback to regular reconcile
+		cm.networkManager.Interface().Reconcile(nadNamespacedName)
+		return
+	}
+
+	ownerRef := metav1.GetControllerOf(nad)
+	if ownerRef == nil {
+		return
+	}
+
+	if ownerRef.Kind != "ClusterUserDefinedNetwork" && ownerRef.Kind != "UserDefinedNetwork" {
+		return
+	}
+
+	nadNetwork, err := util.ParseNADInfo(nad)
+	if err != nil || nadNetwork == nil {
+		klog.Errorf("Failed to parse NAD %q info, falling back to normal network reconcile: %v", nadNamespacedName, err)
+		// fallback to regular reconcile
+		cm.networkManager.Interface().Reconcile(nadNamespacedName)
+		return
+	}
+
+	n, err := cm.watchFactory.GetNode(node)
+	if err != nil {
+		klog.Errorf("Failed to find node %q in informer, falling back to normal network reconcile: %v", node, err)
+		// fallback to regular reconcile
+		cm.networkManager.Interface().Reconcile(nadNamespacedName)
+		return
+	}
+	isLocal := util.GetNodeZone(n) == config.Default.Zone
+	cm.networkManager.Interface().ForceReconcile(nadNamespacedName, nadNetwork.GetNetworkName(), active, isLocal)
+}
+
+func (cm *ControllerManager) NodeHasNAD(node, nad string) bool {
+	if cm.podTracker != nil && cm.podTracker.NodeHasNAD(node, nad) {
+		return true
+	}
+	if cm.egressIPTracker != nil && cm.egressIPTracker.NodeHasNAD(node, nad) {
+		return true
+	}
+	return false
 }

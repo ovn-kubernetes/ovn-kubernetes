@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	nadinformers "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/informers/externalversions/k8s.cni.cncf.io/v1"
 
 	coreinformers "k8s.io/client-go/informers/core/v1"
@@ -58,6 +59,11 @@ type Interface interface {
 	// use GetActiveNetworkForNamespace.
 	GetActiveNetworkForNamespaceFast(namespace string) util.NetInfo
 
+	// GetPrimaryNADForNamespace returns the full namespaced key of the
+	// primary NAD for the given namespace, if one exists.
+	// Returns default network if namespace has no primary UDN.
+	GetPrimaryNADForNamespace(namespace string) (string, error)
+
 	// GetNetwork returns the network of the given name or nil if unknown
 	GetNetwork(name string) util.NetInfo
 
@@ -69,6 +75,7 @@ type Interface interface {
 	// DoWithLock takes care of locking and unlocking while iterating over all role primary user defined networks.
 	DoWithLock(f func(network util.NetInfo) error) error
 	GetActiveNetworkNamespaces(networkName string) ([]string, error)
+
 	// GetNetInfoForNADKey returns a copy of the  cached network info for the given NAD key, or nil if unknown.
 	// This is a cheap lookup that does not parse the NAD object; it relies on NAD controller state.
 	GetNetInfoForNADKey(nadKey string) util.NetInfo
@@ -76,11 +83,30 @@ type Interface interface {
 	RegisterNADReconciler(r NADReconciler) (uint64, error)
 	// DeRegisterNADReconciler removes a previously registered reconciler.
 	DeRegisterNADReconciler(id uint64) error
+
+	// Reconcile allows for a manually invoked reconciliation of a network manager
+	Reconcile(key string)
+
+	// ForceReconcile reconciles as usual, but tags the network as it should be forced to reconcile
+	ForceReconcile(key, networkName string, active, local bool)
 }
 
 // Controller handles the runtime of the package
 type Controller interface {
 	Interface() Interface
+	Start() error
+	Stop()
+}
+
+// Tracker reports whether a node currently has any pods or assignments using a given NAD.
+type Tracker interface {
+	// NodeHasNAD returns true if the given node has at least one pod using the NAD.
+	NodeHasNAD(node, nad string) bool
+}
+
+// TrackerController is the minimal interface ControllerManager needs.
+type TrackerController interface {
+	Tracker
 	Start() error
 	Stop()
 }
@@ -175,6 +201,10 @@ type ControllerManager interface {
 	// Reconcile informs the manager of network changes that other managed
 	// network aware controllers might be interested in.
 	Reconcile(name string, old, new util.NetInfo) error
+
+	// Filter provides a hook where a controller manager can determine if the network should be
+	// processed or not. Returning true means the NAD should be skipped/filtered out.
+	Filter(nad *nettypes.NetworkAttachmentDefinition) (bool, error)
 }
 
 // ReconcilableNetworkController is a network controller that can reconcile
@@ -224,6 +254,10 @@ func (nm defaultNetworkManager) GetActiveNetworkForNamespace(string) (util.NetIn
 	return &util.DefaultNetInfo{}, nil
 }
 
+func (nm defaultNetworkManager) GetPrimaryNADForNamespace(_ string) (string, error) {
+	return types.DefaultNetworkName, nil
+}
+
 func (nm defaultNetworkManager) GetActiveNetworkForNamespaceFast(string) util.NetInfo {
 	return &util.DefaultNetInfo{}
 }
@@ -257,5 +291,9 @@ func (nm defaultNetworkManager) RegisterNADReconciler(_ NADReconciler) (uint64, 
 }
 
 func (nm defaultNetworkManager) DeRegisterNADReconciler(_ uint64) error { return nil }
+
+func (nm defaultNetworkManager) ForceReconcile(_, _ string, _, _ bool) {}
+
+func (nm defaultNetworkManager) Reconcile(_ string) {}
 
 var def Controller = &defaultNetworkManager{}
