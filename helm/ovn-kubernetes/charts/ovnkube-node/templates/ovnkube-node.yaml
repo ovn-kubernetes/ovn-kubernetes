@@ -233,6 +233,10 @@ spec:
           value: {{ default "" .Values.global.enablePreconfiguredUDNAddresses | quote }}
         - name: OVN_ADVERTISED_UDN_ISOLATION_MODE
           value: {{ default "strict" .Values.global.advertisedUDNIsolationMode | quote }}
+        - name: OVN_ROUTE_ADVERTISEMENTS_ENABLE
+          value: {{ default "" .Values.global.enableRouteAdvertisements | quote }}
+        - name: OVN_ADVERTISE_DEFAULT_NETWORK
+          value: {{ default "" .Values.global.advertiseDefaultNetwork | quote }}
         - name: OVN_ENABLE_INTERCONNECT
           value: {{ hasKey .Values.global "enableInterconnect" | ternary .Values.global.enableInterconnect false | quote }}
         - name: OVN_ENABLE_MULTI_EXTERNAL_GATEWAY
