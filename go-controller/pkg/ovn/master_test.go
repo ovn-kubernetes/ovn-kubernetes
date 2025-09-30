@@ -1162,8 +1162,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 		err := app.Run([]string{
 			app.Name,
 			"-cluster-subnets=" + clusterCIDR,
-			"--init-gateways",
-			"--gateway-local",
+			"--gateway-mode=local",
 			"--nodeport",
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1211,8 +1210,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 		err := app.Run([]string{
 			app.Name,
 			"-cluster-subnets=" + clusterCIDR,
-			"--init-gateways",
-			"--gateway-local",
+			"--gateway-mode=local",
 			"--nodeport",
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1246,7 +1244,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 		err := app.Run([]string{
 			app.Name,
 			"-cluster-subnets=" + clusterCIDR,
-			"--init-gateways",
+			"--gateway-mode=shared",
 			"--nodeport",
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1269,7 +1267,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 		func(condition func(*DefaultNetworkController) error, expectedExtraNATs ...*nbdb.NAT) {
 			config.OVNKubernetesFeature.AdvertisedUDNIsolationMode = config.AdvertisedUDNIsolationModeStrict
 			app.Action = func(ctx *cli.Context) error {
-				// Initialize config from CLI flags (including --init-gateways)
+				// Initialize config from CLI flags
 				_, err := config.InitConfig(ctx, nil, nil)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -1346,7 +1344,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			err := app.Run([]string{
 				app.Name,
 				"-cluster-subnets=" + clusterCIDR,
-				"--init-gateways",
+				"--gateway-mode=shared",
 				"--nodeport",
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1434,7 +1432,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 		err := app.Run([]string{
 			app.Name,
 			"-cluster-subnets=" + clusterCIDR,
-			"--init-gateways",
+			"--gateway-mode=shared",
 			"--nodeport",
 			"--disable-snat-multiple-gws=false",
 		})
@@ -1504,7 +1502,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 		err := app.Run([]string{
 			app.Name,
 			"-cluster-subnets=" + clusterCIDR,
-			"--init-gateways",
+			"--gateway-mode=shared",
 			"--nodeport",
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1560,7 +1558,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 		err := app.Run([]string{
 			app.Name,
 			"-cluster-subnets=" + clusterCIDR,
-			"--init-gateways",
+			"--gateway-mode=shared",
 			"--nodeport",
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1677,7 +1675,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 		err := app.Run([]string{
 			app.Name,
 			"-cluster-subnets=" + clusterCIDR,
-			"--init-gateways",
+			"--gateway-mode=shared",
 			"--nodeport",
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1714,7 +1712,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 		err := app.Run([]string{
 			app.Name,
 			"-cluster-subnets=" + clusterCIDR,
-			"--init-gateways",
+			"--gateway-mode=shared",
 			"--nodeport",
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1773,7 +1771,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 		err := app.Run([]string{
 			app.Name,
 			"-cluster-subnets=" + clusterCIDR,
-			"--init-gateways",
+			"--gateway-mode=shared",
 			"--nodeport",
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1836,7 +1834,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			app.Name,
 			"-cluster-subnets=" + clusterCIDR + "," + clusterv6CIDR,
 			"-k8s-service-cidr=10.96.0.0/16,fd00:10:96::/112",
-			"--init-gateways",
+			"--gateway-mode=shared",
 			"--nodeport",
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1939,7 +1937,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 		err := app.Run([]string{
 			app.Name,
 			"-cluster-subnets=" + clusterCIDR,
-			"--init-gateways",
+			"--gateway-mode=shared",
 			"--nodeport",
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
