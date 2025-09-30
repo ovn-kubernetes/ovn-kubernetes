@@ -982,6 +982,7 @@ var CommonFlags = []cli.Flag{
 		Name:        "logfile",
 		Usage:       "path of a file to direct log output to",
 		Destination: &cliConfig.Logging.File,
+		EnvVars:     []string{"OVNKUBE_LOGFILE"},
 	},
 	&cli.StringFlag{
 		Name:        "cnilogfile",

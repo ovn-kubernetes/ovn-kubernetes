@@ -1000,6 +1000,8 @@ ovn-dbchecker() {
       "
   }
 
+  export OVNKUBE_LOGFILE=/var/log/ovn-kubernetes/ovn-dbchecker.log
+
   echo "=============== ovn-dbchecker ========== OVNKUBE_DB"
   /usr/bin/ovndbchecker \
     --nb-address=${ovn_nbdb} --sb-address=${ovn_sbdb} \
@@ -1007,8 +1009,7 @@ ovn-dbchecker() {
     --logfile-maxsize=${ovnkube_logfile_maxsize} \
     --logfile-maxbackups=${ovnkube_logfile_maxbackups} \
     --logfile-maxage=${ovnkube_logfile_maxage} \
-    --pidfile ${OVN_RUNDIR}/ovn-dbchecker.pid \
-    --logfile /var/log/ovn-kubernetes/ovn-dbchecker.log &
+    --pidfile ${OVN_RUNDIR}/ovn-dbchecker.pid &
 
   echo "=============== ovn-dbchecker ========== running"
   wait_for_event attempts=3 process_ready ovn-dbchecker
@@ -1386,6 +1387,8 @@ ovn-master() {
   fi
   echo "ovn_enable_dnsnameresolver_flag=${ovn_enable_dnsnameresolver_flag}"
 
+  export OVNKUBE_LOGFILE=/var/log/ovn-kubernetes/ovnkube-master.log
+
   /usr/bin/ovnkube --init-master ${K8S_NODE} \
     ${anp_enabled_flag} \
     ${disable_forwarding_flag} \
@@ -1429,7 +1432,6 @@ ovn-master() {
     --logfile-maxage=${ovnkube_logfile_maxage} \
     --logfile-maxbackups=${ovnkube_logfile_maxbackups} \
     --logfile-maxsize=${ovnkube_logfile_maxsize} \
-    --logfile /var/log/ovn-kubernetes/ovnkube-master.log \
     --metrics-bind-address ${ovnkube_master_metrics_bind_address} \
     --metrics-enable-pprof \
     --nb-address=${ovn_nbdb} --sb-address=${ovn_sbdb} \
@@ -1710,6 +1712,8 @@ ovnkube-controller() {
   fi
   echo "ovn_stateless_netpol_enable_flag: ${ovn_stateless_netpol_enable_flag}"
 
+  export OVNKUBE_LOGFILE=/var/log/ovn-kubernetes/ovnkube-controller.log
+
   echo "=============== ovnkube-controller ========== MASTER ONLY"
   /usr/bin/ovnkube --init-ovnkube-controller ${K8S_NODE} \
     ${anp_enabled_flag} \
@@ -1752,7 +1756,6 @@ ovnkube-controller() {
     --logfile-maxage=${ovnkube_logfile_maxage} \
     --logfile-maxbackups=${ovnkube_logfile_maxbackups} \
     --logfile-maxsize=${ovnkube_logfile_maxsize} \
-    --logfile /var/log/ovn-kubernetes/ovnkube-controller.log \
     --metrics-bind-address ${ovnkube_master_metrics_bind_address} \
     --metrics-enable-pprof \
     --pidfile ${OVN_RUNDIR}/ovnkube-controller.pid \
@@ -2183,6 +2186,8 @@ ovnkube-controller-with-node() {
   fi
   echo "ovn_disable_requestedchassis_flag=${ovn_disable_requestedchassis_flag}"
 
+  export OVNKUBE_LOGFILE=/var/log/ovn-kubernetes/ovnkube-controller-with-node.log
+
   echo "=============== ovnkube-controller-with-node --init-ovnkube-controller-with-node=========="
   /usr/bin/ovnkube --init-ovnkube-controller ${K8S_NODE} --init-node ${K8S_NODE} \
     ${anp_enabled_flag} \
@@ -2247,7 +2252,6 @@ ovnkube-controller-with-node() {
     --logfile-maxage=${ovnkube_logfile_maxage} \
     --logfile-maxbackups=${ovnkube_logfile_maxbackups} \
     --logfile-maxsize=${ovnkube_logfile_maxsize} \
-    --logfile /var/log/ovn-kubernetes/ovnkube-controller-with-node.log \
     --metrics-bind-address ${metrics_bind_address} \
     --metrics-enable-pprof \
     --mtu=${mtu} \
@@ -2441,6 +2445,8 @@ ovn-cluster-manager() {
   fi
   echo "ovn_enable_dnsnameresolver_flag=${ovn_enable_dnsnameresolver_flag}"
 
+  export OVNKUBE_LOGFILE=/var/log/ovn-kubernetes/ovnkube-cluster-manager.log
+
   echo "=============== ovn-cluster-manager ========== MASTER ONLY"
   /usr/bin/ovnkube --init-cluster-manager ${K8S_NODE} \
     ${anp_enabled_flag} \
@@ -2476,7 +2482,6 @@ ovn-cluster-manager() {
     --logfile-maxage=${ovnkube_logfile_maxage} \
     --logfile-maxbackups=${ovnkube_logfile_maxbackups} \
     --logfile-maxsize=${ovnkube_logfile_maxsize} \
-    --logfile /var/log/ovn-kubernetes/ovnkube-cluster-manager.log \
     --metrics-bind-address ${ovnkube_cluster_manager_metrics_bind_address} \
     --metrics-enable-pprof \
     --pidfile ${OVN_RUNDIR}/ovnkube-cluster-manager.pid &
@@ -2856,6 +2861,8 @@ ovn-node() {
     ovn_v6_masquerade_subnet_opt="--gateway-v6-masquerade-subnet=${ovn_v6_masquerade_subnet}"
   fi
 
+  export OVNKUBE_LOGFILE=/var/log/ovn-kubernetes/ovnkube-node.log
+
   echo "=============== ovn-node   --init-node"
   /usr/bin/ovnkube --init-node ${K8S_NODE} \
         ${anp_enabled_flag} \
@@ -2908,7 +2915,6 @@ ovn-node() {
         --logfile-maxage=${ovnkube_logfile_maxage} \
         --logfile-maxbackups=${ovnkube_logfile_maxbackups} \
         --logfile-maxsize=${ovnkube_logfile_maxsize} \
-        --logfile /var/log/ovn-kubernetes/ovnkube.log \
         --metrics-bind-address ${ovnkube_node_metrics_bind_address} \
         --metrics-enable-pprof \
         --mtu=${mtu} \
@@ -2945,10 +2951,11 @@ cleanup-ovn-node() {
     ((retries += 1))
   done
 
+  export OVNKUBE_LOGFILE=/var/log/ovn-kubernetes/ovnkube.log
+
   echo "=============== time: $(date +%d-%m-%H:%M:%S:%N) cleanup-ovn-node --cleanup-node"
   /usr/bin/ovnkube --cleanup-node ${K8S_NODE} --gateway-mode=${ovn_gateway_mode} ${ovn_gateway_opts} \
-    --k8s-token=${k8s_token} --k8s-apiserver=${K8S_APISERVER} --k8s-cacert=${K8S_CACERT} \
-    --logfile /var/log/ovn-kubernetes/ovnkube.log
+    --k8s-token=${k8s_token} --k8s-apiserver=${K8S_APISERVER} --k8s-cacert=${K8S_CACERT}
 
 }
 
