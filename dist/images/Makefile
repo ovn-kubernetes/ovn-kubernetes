@@ -8,7 +8,7 @@
 # The registry is configured in /etc/containers/registries.conf
 # on each node in both "registries:" and "insecure_registries:" sections.
 
-all: ubuntu fedora
+all: ubuntu-image fedora-image
 
 SLASH = -
 ARCH = $(subst aarch64,arm64,$(subst x86_64,amd64,$(patsubst i%86,386,$(shell uname -m))))
