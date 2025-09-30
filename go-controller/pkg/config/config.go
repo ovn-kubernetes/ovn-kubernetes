@@ -989,6 +989,7 @@ var CommonFlags = []cli.Flag{
 		Usage:       "path of a file to direct log from cni shim to output to (default: /var/log/ovn-kubernetes/ovn-k8s-cni-overlay.log)",
 		Destination: &cliConfig.Logging.CNIFile,
 		Value:       "/var/log/ovn-kubernetes/ovn-k8s-cni-overlay.log",
+		EnvVars:     []string{"OVNKUBE_CNILOGFILE"},
 	},
 	&cli.StringFlag{
 		Name:        "libovsdblogfile",
