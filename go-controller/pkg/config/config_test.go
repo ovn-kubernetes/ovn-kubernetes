@@ -917,51 +917,6 @@ var _ = Describe("Config Operations", func() {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	})
 
-	It("overrides config file and defaults with CLI legacy service-cluster-ip-range option", func() {
-		err := os.WriteFile(cfgFile.Name(), []byte(`[kubernetes]
-service-cidrs=172.18.0.0/24
-`), 0o644)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-		app.Action = func(ctx *cli.Context) error {
-			var cfgPath string
-			cfgPath, err = InitConfig(ctx, kexec.New(), nil)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(cfgPath).To(gomega.Equal(cfgFile.Name()))
-			gomega.Expect(Kubernetes.RawServiceCIDRs).To(gomega.Equal("172.15.0.0/24"))
-			return nil
-		}
-		cliArgs := []string{
-			app.Name,
-			"-config-file=" + cfgFile.Name(),
-			"-service-cluster-ip-range=172.15.0.0/24",
-		}
-		err = app.Run(cliArgs)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	})
-
-	It("accepts legacy service-cidr config file option", func() {
-		err := os.WriteFile(cfgFile.Name(), []byte(`[kubernetes]
-service-cidr=172.18.0.0/24
-`), 0o644)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-		app.Action = func(ctx *cli.Context) error {
-			var cfgPath string
-			cfgPath, err = InitConfig(ctx, kexec.New(), nil)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(cfgPath).To(gomega.Equal(cfgFile.Name()))
-			gomega.Expect(Kubernetes.RawServiceCIDRs).To(gomega.Equal("172.18.0.0/24"))
-			return nil
-		}
-		cliArgs := []string{
-			app.Name,
-			"-config-file=" + cfgFile.Name(),
-		}
-		err = app.Run(cliArgs)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	})
-
 	It("returns an error when the k8s-service-cidrs is invalid", func() {
 		app.Action = func(ctx *cli.Context) error {
 			_, err := InitConfig(ctx, kexec.New(), nil)
@@ -970,36 +925,9 @@ service-cidr=172.18.0.0/24
 		}
 		cliArgs := []string{
 			app.Name,
-			"-k8s-service-cidr=adsfasdfaf",
+			"-k8s-service-cidrs=adsfasdfaf",
 		}
 		err := app.Run(cliArgs)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	})
-
-	It("overrides config file and defaults with CLI legacy cluster-subnet option", func() {
-		err := os.WriteFile(cfgFile.Name(), []byte(`[default]
-cluster-subnets=172.18.0.0/23
-`), 0o644)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-		app.Action = func(ctx *cli.Context) error {
-			var cfgPath string
-			cfgPath, err = InitConfig(ctx, kexec.New(), nil)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(cfgPath).To(gomega.Equal(cfgFile.Name()))
-			gomega.Expect(Default.ClusterSubnets).To(gomega.Equal([]CIDRNetworkEntry{
-				{ovntest.MustParseIPNet("172.15.0.0/23"), 24},
-			}))
-			gomega.Expect(IPv4Mode).To(gomega.BeTrue())
-			gomega.Expect(IPv6Mode).To(gomega.BeFalse())
-			return nil
-		}
-		cliArgs := []string{
-			app.Name,
-			"-config-file=" + cfgFile.Name(),
-			"-cluster-subnet=172.15.0.0/23",
-		}
-		err = app.Run(cliArgs)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	})
 
@@ -1369,7 +1297,7 @@ enable-pprof=true
 			"-k8s-cacert=" + kubeCAFile,
 			"-k8s-token=asdfasdfasdfasfd",
 			"-k8s-token-file=/new/path/to/token",
-			"-k8s-service-cidr=172.15.0.0/24",
+			"-k8s-service-cidrs=172.15.0.0/24",
 			"-nb-address=ssl:6.5.4.3:6651,ssl:6.5.4.4:6651,ssl:6.5.4.5:6651",
 			"-nb-client-privkey=/client/privkey",
 			"-nb-client-cert=/client/cert",
