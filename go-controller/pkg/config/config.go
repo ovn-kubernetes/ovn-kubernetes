@@ -753,6 +753,15 @@ func PrepareTestConfig() error {
 	os.Unsetenv("K8S_TOKEN")
 	os.Unsetenv("K8S_TOKEN_FILE")
 
+	os.Unsetenv("OVNKUBE_LOGLEVEL")
+	os.Unsetenv("OVNKUBE_LOGFILE")
+	os.Unsetenv("OVNKUBE_CNILOGFILE")
+	os.Unsetenv("OVNKUBE_LIBOVSDB_CLIENT_LOGFILE")
+	os.Unsetenv("OVNKUBE_LOGFILE_MAXSIZE")
+	os.Unsetenv("OVNKUBE_LOGFILE_MAXBACKUPS")
+	os.Unsetenv("OVNKUBE_LOGFILE_MAXAGE")
+	os.Unsetenv("OVN_ACL_LOGGING_RATE_LIMIT")
+
 	return nil
 }
 
