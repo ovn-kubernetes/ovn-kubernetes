@@ -7,6 +7,7 @@ import (
 
 	"github.com/containernetworking/plugins/pkg/ns"
 	"github.com/containernetworking/plugins/pkg/testutils"
+	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	"github.com/stretchr/testify/mock"
 	"github.com/vishvananda/netlink"
 
@@ -16,7 +17,9 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	factoryMocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory/mocks"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	nadinformermocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/informers/externalversions/k8s.cni.cncf.io/v1"
@@ -62,6 +65,7 @@ var _ = Describe("Healthcheck tests", func() {
 	var err error
 
 	BeforeEach(func() {
+		Expect(config.PrepareTestConfig()).To(Succeed())
 		execMock = ovntest.NewFakeExec()
 		Expect(util.SetExec(execMock)).To(Succeed())
 		factoryMock = factoryMocks.NodeWatchFactory{}
@@ -138,10 +142,19 @@ var _ = Describe("Healthcheck tests", func() {
 
 		BeforeEach(func() {
 			// setup kube output
-			factoryMock.On("NADInformer").Return(nil)
+			factoryMock.On("GetPods", "").Return(podList, nil)
+			nadListerMock := &nadlistermocks.NetworkAttachmentDefinitionLister{}
+			nadInformerMock := &nadinformermocks.NetworkAttachmentDefinitionInformer{}
+			nadInformerMock.On("Lister").Return(nadListerMock)
+			nadInformerMock.On("Informer").Return(nil)
+			factoryMock.On("NADInformer").Return(nadInformerMock)
+			nodeInformerMock := &coreinformermocks.NodeInformer{}
+			nodeListerMock := &corelistermocks.NodeLister{}
+			nodeListerMock.On("List", mock.Anything).Return(nil, nil)
+			nodeInformerMock.On("Lister").Return(nodeListerMock)
+			factoryMock.On("NodeCoreInformer").Return(nodeInformerMock)
 			ncm, err = NewNodeControllerManager(fakeClient, &factoryMock, nodeName, &sync.WaitGroup{}, nil, routeManager, nil)
 			Expect(err).NotTo(HaveOccurred())
-			factoryMock.On("GetPods", "").Return(podList, nil)
 		})
 
 		Context("bridge has stale representor ports", func() {
@@ -353,5 +366,75 @@ var _ = Describe("Healthcheck tests", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 		})
+	})
+})
+
+var _ = Describe("NodeControllerManager NetworkRef filtering", func() {
+	var ncm *NodeControllerManager
+	var fakeNM *networkmanager.FakeNetworkManager
+	var fakePT *fakeTracker
+	var fakeET *fakeTracker
+	nodeName := "test-node"
+	var wf *factory.WatchFactory
+
+	BeforeEach(func() {
+		err := config.PrepareTestConfig()
+		Expect(err).NotTo(HaveOccurred())
+		config.Default.Zone = nodeName
+		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+		config.OVNKubernetesFeature.EnableMultiNetwork = true
+
+		fakeNM = &networkmanager.FakeNetworkManager{
+			PrimaryNetworks: map[string]util.NetInfo{},
+			Reconciled:      []string{},
+		}
+
+		fakePT = newFakeTracker()
+		fakePT.setActive(nodeName, "ns1/nad1", true)
+		fakeET = newFakeTracker()
+		fakeET.setActive(nodeName, "ns3/nad3", true)
+
+		fakeClient := util.GetOVNClientset().GetNodeClientset()
+		wf, err = factory.NewNodeWatchFactory(fakeClient, nodeName)
+		Expect(err).NotTo(HaveOccurred())
+		err = wf.Start()
+		Expect(err).NotTo(HaveOccurred())
+
+		// Inject fake networkManager and podTracker
+		ncm = &NodeControllerManager{
+			networkManager:  fakeNM,
+			podTracker:      fakePT,
+			egressIPTracker: fakeET,
+			name:            nodeName,
+			watchFactory:    wf,
+		}
+	})
+
+	AfterEach(func() {
+		wf.Shutdown()
+	})
+
+	DescribeTable("filters NADs correctly",
+		func(nad *nettypes.NetworkAttachmentDefinition, expectFiltered bool) {
+			shouldFilter, err := ncm.Filter(nad)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(shouldFilter).To(Equal(expectFiltered))
+		},
+
+		Entry("NAD without ownerRef is not filtered",
+			newTestNAD("ns1", "nad1", ""), false),
+		Entry("NAD with unrelated ownerRef is not filtered",
+			newTestNAD("ns1", "nad1", "Deployment"), false),
+		Entry("NAD with UDN ownerRef but no pod using it is filtered",
+			newTestNAD("ns2", "nad2", "UserDefinedNetwork"), true),
+		Entry("NAD with UDN ownerRef and pod using it is NOT filtered",
+			newTestNAD("ns1", "nad1", "UserDefinedNetwork"), false),
+		Entry("NAD with UDN ownerRef and egressIP node using it is NOT filtered",
+			newTestNAD("ns3", "nad3", "UserDefinedNetwork"), false),
+	)
+
+	It("triggers reconcile on OnNetworkRefChange", func() {
+		ncm.OnNetworkRefChange(nodeName, "ns1/nad1", true)
+		Expect(fakeNM.Reconciled).To(ContainElement("ns1/nad1"))
 	})
 })
