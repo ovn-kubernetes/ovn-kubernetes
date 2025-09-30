@@ -976,6 +976,7 @@ var CommonFlags = []cli.Flag{
 		Usage:       "log verbosity and level: info, warn, fatal, error are always printed no matter the log level. Use 5 for debug (default: 4)",
 		Destination: &cliConfig.Logging.Level,
 		Value:       Logging.Level,
+		EnvVars:     []string{"OVNKUBE_LOGLEVEL"},
 	},
 	&cli.StringFlag{
 		Name:        "logfile",
