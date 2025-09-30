@@ -1024,6 +1024,7 @@ var CommonFlags = []cli.Flag{
 		Usage:       "The largest number of messages per second that gets logged before drop (default 20)",
 		Destination: &cliConfig.Logging.ACLLoggingRateLimit,
 		Value:       20,
+		EnvVars:     []string{"OVN_ACL_LOGGING_RATE_LIMIT"},
 	},
 	&cli.StringFlag{
 		Name:        "zone",

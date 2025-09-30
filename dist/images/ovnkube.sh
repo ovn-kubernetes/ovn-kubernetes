@@ -54,7 +54,6 @@ fi
 # OVN_LOGLEVEL_SB - log level (ovn-ctl default: -vconsole:off -vfile:info) - v3
 # OVN_LOGLEVEL_CONTROLLER - log level (ovn-ctl default: -vconsole:off -vfile:info) - v3
 # OVN_LOGLEVEL_NBCTLD - log level (ovn-ctl default: -vconsole:off -vfile:info) - v3
-# OVN_ACL_LOGGING_RATE_LIMIT - specify default ACL logging rate limit in messages per second (default: 20)
 # OVN_NB_PORT - ovn north db port (default 6641)
 # OVN_SB_PORT - ovn south db port (default 6642)
 # OVN_NB_RAFT_PORT - ovn north db raft port (default 6643)
@@ -258,7 +257,6 @@ ovn_pre_conf_udn_addr_enable=${OVN_PRE_CONF_UDN_ADDR_ENABLE:=false}
 ovn_route_advertisements_enable=${OVN_ROUTE_ADVERTISEMENTS_ENABLE:=false}
 #OVN_ADVERTISED_UDN_ISOLATION_MODE - pod network isolation between advertised UDN networks.
 ovn_advertised_udn_isolation_mode=${OVN_ADVERTISED_UDN_ISOLATION_MODE:=strict}
-ovn_acl_logging_rate_limit=${OVN_ACL_LOGGING_RATE_LIMIT:-"20"}
 ovn_netflow_targets=${OVN_NETFLOW_TARGETS:-}
 ovn_sflow_targets=${OVN_SFLOW_TARGETS:-}
 ovn_ipfix_targets=${OVN_IPFIX_TARGETS:-}
@@ -1217,11 +1215,6 @@ ovn-master() {
       "
   }
 
-  ovn_acl_logging_rate_limit_flag=
-  if [[ -n ${ovn_acl_logging_rate_limit} ]]; then
-      ovn_acl_logging_rate_limit_flag="--acl-logging-rate-limit ${ovn_acl_logging_rate_limit}"
-  fi
-
   multicast_enabled_flag=
   if [[ ${ovn_multicast_enable} == "true" ]]; then
       multicast_enabled_flag="--enable-multicast"
@@ -1385,7 +1378,6 @@ ovn-master() {
     ${network_segmentation_enabled_flag} \
     ${route_advertisements_enabled_flag} \
     ${advertised_udn_isolation_flag} \
-    ${ovn_acl_logging_rate_limit_flag} \
     ${ovn_enable_svc_template_support_flag} \
     ${ovn_observ_enable_flag} \
     ${ovnkube_config_duration_enable_flag} \
@@ -1510,12 +1502,6 @@ ovnkube-controller() {
       "
   }
   echo "ovn_master_ssl_opts=${ovn_master_ssl_opts}"
-
-  ovn_acl_logging_rate_limit_flag=
-  if [[ -n ${ovn_acl_logging_rate_limit} ]]; then
-      ovn_acl_logging_rate_limit_flag="--acl-logging-rate-limit ${ovn_acl_logging_rate_limit}"
-  fi
-  echo "ovn_acl_logging_rate_limit_flag=${ovn_acl_logging_rate_limit_flag}"
 
   multicast_enabled_flag=
   if [[ ${ovn_multicast_enable} == "true" ]]; then
@@ -1701,7 +1687,6 @@ ovnkube-controller() {
     ${pre_conf_udn_addr_enable_flag} \
     ${route_advertisements_enabled_flag} \
     ${advertised_udn_isolation_flag} \
-    ${ovn_acl_logging_rate_limit_flag} \
     ${ovn_dbs} \
     ${ovn_enable_svc_template_support_flag} \
     ${ovn_observ_enable_flag} \
@@ -1850,12 +1835,6 @@ ovnkube-controller-with-node() {
       "
   }
   echo "ssl_opts=${ssl_opts}"
-
-  ovn_acl_logging_rate_limit_flag=
-  if [[ -n ${ovn_acl_logging_rate_limit} ]]; then
-      ovn_acl_logging_rate_limit_flag="--acl-logging-rate-limit ${ovn_acl_logging_rate_limit}"
-  fi
-  echo "ovn_acl_logging_rate_limit_flag=${ovn_acl_logging_rate_limit_flag}"
 
   multicast_enabled_flag=
   if [[ ${ovn_multicast_enable} == "true" ]]; then
@@ -2178,7 +2157,6 @@ ovnkube-controller-with-node() {
     ${advertised_udn_isolation_flag} \
     ${netflow_targets} \
     ${ofctrl_wait_before_clear} \
-    ${ovn_acl_logging_rate_limit_flag} \
     ${ovn_dbs} \
     ${ovn_enable_svc_template_support_flag} \
     ${ovn_observ_enable_flag} \
