@@ -121,15 +121,6 @@ false
 			<td>Controls if forwarding is allowed on OVNK controlled interfaces</td>
 		</tr>
 		<tr>
-			<td>global.disableIfaceIdVer</td>
-			<td>bool</td>
-			<td><pre lang="json">
-false
-</pre>
-</td>
-			<td>Deprecated: iface-id-ver is always enabled</td>
-		</tr>
-		<tr>
 			<td>global.disablePacketMtuCheck</td>
 			<td>string</td>
 			<td><pre lang="json">

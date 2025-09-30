@@ -625,8 +625,6 @@ var (
 	initGateways bool
 	// legacy gateway-local CLI option
 	gatewayLocal bool
-	// legacy disable-ovn-iface-id-ver CLI option
-	disableOVNIfaceIDVer bool
 )
 
 func init() {
@@ -1648,11 +1646,6 @@ var OvnKubeNodeFlags = []cli.Flag{
 			"and used to allow host network services and pods to access k8s pod and service networks. ",
 		Value:       OvnKubeNode.MgmtPortDPResourceName,
 		Destination: &cliConfig.OvnKubeNode.MgmtPortDPResourceName,
-	},
-	&cli.BoolFlag{
-		Name:        "disable-ovn-iface-id-ver",
-		Usage:       "Deprecated; iface-id-ver is always enabled",
-		Destination: &disableOVNIfaceIDVer,
 	},
 }
 
