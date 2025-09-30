@@ -995,6 +995,7 @@ var CommonFlags = []cli.Flag{
 		Name:        "libovsdblogfile",
 		Usage:       "path of a file to direct log from libovsdb client to output to (default is to use same as --logfile)",
 		Destination: &cliConfig.Logging.LibovsdbFile,
+		EnvVars:     []string{"OVNKUBE_LIBOVSDB_CLIENT_LOGFILE"},
 	},
 	// Logfile rotation parameters
 	&cli.IntFlag{
