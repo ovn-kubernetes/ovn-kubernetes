@@ -4,10 +4,16 @@ import (
 	"context"
 	"errors"
 
+	nadinformers "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/informers/externalversions/k8s.cni.cncf.io/v1"
+
+	coreinformers "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/tools/record"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
+	egressipinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/informers/externalversions/egressip/v1"
+	rainformers "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/informers/externalversions/routeadvertisements/v1"
+	userdefinednetworkinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/informers/externalversions/userdefinednetwork/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -21,6 +27,17 @@ const (
 
 // NADReconciler is a level-driven controller notified of NAD key changes.
 type NADReconciler controller.Reconciler
+
+type watchFactory interface {
+	NADInformer() nadinformers.NetworkAttachmentDefinitionInformer
+	UserDefinedNetworkInformer() userdefinednetworkinformer.UserDefinedNetworkInformer
+	ClusterUserDefinedNetworkInformer() userdefinednetworkinformer.ClusterUserDefinedNetworkInformer
+	NamespaceInformer() coreinformers.NamespaceInformer
+	RouteAdvertisementsInformer() rainformers.RouteAdvertisementsInformer
+	NodeCoreInformer() coreinformers.NodeInformer
+	PodCoreInformer() coreinformers.PodInformer
+	EgressIPInformer() egressipinformer.EgressIPInformer
+}
 
 // Interface is the main package entrypoint and provides network related
 // information to the rest of the project.
