@@ -702,6 +702,15 @@ func PrepareTestConfig() error {
 	os.Unsetenv("K8S_TOKEN")
 	os.Unsetenv("K8S_TOKEN_FILE")
 
+	os.Unsetenv("OVNKUBE_LOGLEVEL")
+	os.Unsetenv("OVNKUBE_LOGFILE")
+	os.Unsetenv("OVNKUBE_CNILOGFILE")
+	os.Unsetenv("OVNKUBE_LIBOVSDB_CLIENT_LOGFILE")
+	os.Unsetenv("OVNKUBE_LOGFILE_MAXSIZE")
+	os.Unsetenv("OVNKUBE_LOGFILE_MAXBACKUPS")
+	os.Unsetenv("OVNKUBE_LOGFILE_MAXAGE")
+	os.Unsetenv("OVN_ACL_LOGGING_RATE_LIMIT")
+
 	return nil
 }
 
@@ -925,22 +934,26 @@ var CommonFlags = []cli.Flag{
 		Usage:       "log verbosity and level: info, warn, fatal, error are always printed no matter the log level. Use 5 for debug (default: 4)",
 		Destination: &cliConfig.Logging.Level,
 		Value:       Logging.Level,
+		EnvVars:     []string{"OVNKUBE_LOGLEVEL"},
 	},
 	&cli.StringFlag{
 		Name:        "logfile",
 		Usage:       "path of a file to direct log output to",
 		Destination: &cliConfig.Logging.File,
+		EnvVars:     []string{"OVNKUBE_LOGFILE"},
 	},
 	&cli.StringFlag{
 		Name:        "cnilogfile",
 		Usage:       "path of a file to direct log from cni shim to output to (default: /var/log/ovn-kubernetes/ovn-k8s-cni-overlay.log)",
 		Destination: &cliConfig.Logging.CNIFile,
 		Value:       "/var/log/ovn-kubernetes/ovn-k8s-cni-overlay.log",
+		EnvVars:     []string{"OVNKUBE_CNILOGFILE"},
 	},
 	&cli.StringFlag{
 		Name:        "libovsdblogfile",
 		Usage:       "path of a file to direct log from libovsdb client to output to (default is to use same as --logfile)",
 		Destination: &cliConfig.Logging.LibovsdbFile,
+		EnvVars:     []string{"OVNKUBE_LIBOVSDB_CLIENT_LOGFILE"},
 	},
 	// Logfile rotation parameters
 	&cli.IntFlag{
@@ -948,24 +961,28 @@ var CommonFlags = []cli.Flag{
 		Usage:       "Maximum size in bytes of the log file before it gets rolled",
 		Destination: &cliConfig.Logging.LogFileMaxSize,
 		Value:       Logging.LogFileMaxSize,
+		EnvVars:     []string{"OVNKUBE_LOGFILE_MAXSIZE"},
 	},
 	&cli.IntFlag{
 		Name:        "logfile-maxbackups",
 		Usage:       "Maximum number of old log files to retain",
 		Destination: &cliConfig.Logging.LogFileMaxBackups,
 		Value:       Logging.LogFileMaxBackups,
+		EnvVars:     []string{"OVNKUBE_LOGFILE_MAXBACKUPS"},
 	},
 	&cli.IntFlag{
 		Name:        "logfile-maxage",
 		Usage:       "Maximum number of days to retain old log files",
 		Destination: &cliConfig.Logging.LogFileMaxAge,
 		Value:       Logging.LogFileMaxAge,
+		EnvVars:     []string{"OVNKUBE_LOGFILE_MAXAGE"},
 	},
 	&cli.IntFlag{
 		Name:        "acl-logging-rate-limit",
 		Usage:       "The largest number of messages per second that gets logged before drop (default 20)",
 		Destination: &cliConfig.Logging.ACLLoggingRateLimit,
 		Value:       20,
+		EnvVars:     []string{"OVN_ACL_LOGGING_RATE_LIMIT"},
 	},
 	&cli.StringFlag{
 		Name:        "zone",
