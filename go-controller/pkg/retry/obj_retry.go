@@ -179,12 +179,16 @@ func (r *RetryFramework) initRetryObjWithUpdate(oldObj, newObj interface{}, lock
 	return entry
 }
 
-// InitRetryObjWithDelete creates a retry entry for an object that is being deleted,
+// initRetryObjWithDelete creates a retry entry for an object that is being deleted,
 // so that, if it fails, the delete can be potentially retried later.
 // When applied to pods, we include the config object as well in case the namespace is removed
 // and the object is orphaned from the namespace.
 // The noRetryAdd boolean argument is to indicate whether to retry for addition
-func (r *RetryFramework) InitRetryObjWithDelete(obj interface{}, lockedKey string, config interface{}, noRetryAdd bool) *retryObjEntry {
+func (r *RetryFramework) initRetryObjWithDelete(obj interface{}, lockedKey string, config interface{}, noRetryAdd bool) *retryObjEntry {
+	return r.initRetryObjWithDeleteBackoff(obj, lockedKey, config, noRetryAdd, initialBackoff)
+}
+
+func (r *RetryFramework) initRetryObjWithDeleteBackoff(obj interface{}, lockedKey string, config interface{}, noRetryAdd bool, backoff time.Duration) *retryObjEntry {
 	// even if the object was loaded and changed before with the same lock, LoadOrStore will return reference to the same object
 	entry, _ := r.retryEntries.LoadOrStore(lockedKey, &retryObjEntry{config: config, backoff: initialBackoff})
 	entry.timeStamp = time.Now()
@@ -201,7 +205,19 @@ func (r *RetryFramework) InitRetryObjWithDelete(obj interface{}, lockedKey strin
 		// will not be retried for addition
 		entry.newObj = nil
 	}
+	entry.backoff = backoff
 	return entry
+}
+
+func (r *RetryFramework) AddRetryObjWithDeleteNoBackoff(obj interface{}) error {
+	key, err := GetResourceKey(obj)
+	if err != nil {
+		return fmt.Errorf("could not get the key of %s %v: %v", r.ResourceHandler.ObjType, obj, err)
+	}
+	r.DoWithLock(key, func(key string) {
+		r.initRetryObjWithDeleteBackoff(obj, key, nil, true, noBackoff)
+	})
+	return nil
 }
 
 // AddRetryObjWithAddNoBackoff adds an object to be retried immediately for add.
@@ -482,7 +498,7 @@ func (r *RetryFramework) processObjectInTerminalState(obj interface{}, lockedKey
 	klog.Infof("Detected object %s of type %s in terminal state (e.g. completed)"+
 		" during %s event: will remove it", lockedKey, r.ResourceHandler.ObjType, event)
 	internalCacheEntry := r.ResourceHandler.GetInternalCacheEntry(obj)
-	retryEntry := r.InitRetryObjWithDelete(obj, lockedKey, internalCacheEntry, true) // set up the retry obj for deletion
+	retryEntry := r.initRetryObjWithDelete(obj, lockedKey, internalCacheEntry, true) // set up the retry obj for deletion
 	if err := r.ResourceHandler.DeleteResource(obj, internalCacheEntry); err != nil {
 		klog.Errorf("Failed to delete object %s of type %s in terminal state, during %s event: %v",
 			lockedKey, r.ResourceHandler.ObjType, event, err)
@@ -680,7 +696,7 @@ func (r *RetryFramework) WatchResourceFiltered(namespaceForFilteredHandler strin
 							klog.Errorf("Failed to delete %s %s, during update: %v",
 								r.ResourceHandler.ObjType, oldKey, err)
 							r.ResourceHandler.RecordErrorEvent(old, "ErrorDeletingResource", err)
-							retryEntry := r.InitRetryObjWithDelete(old, key, nil, false)
+							retryEntry := r.initRetryObjWithDelete(old, key, nil, false)
 							r.initRetryObjWithAdd(latest, key)
 							r.increaseFailedAttemptsCounter(retryEntry)
 							return
@@ -759,7 +775,7 @@ func (r *RetryFramework) WatchResourceFiltered(namespaceForFilteredHandler strin
 				}
 				r.DoWithLock(key, func(key string) {
 					internalCacheEntry := r.ResourceHandler.GetInternalCacheEntry(obj)
-					retryEntry := r.InitRetryObjWithDelete(obj, key, internalCacheEntry, false) // set up the retry obj for deletion
+					retryEntry := r.initRetryObjWithDelete(obj, key, internalCacheEntry, false) // set up the retry obj for deletion
 					if err = r.ResourceHandler.DeleteResource(obj, internalCacheEntry); err != nil {
 						r.increaseFailedAttemptsCounter(retryEntry)
 						klog.Errorf("Failed to delete %s %s, error: %v", r.ResourceHandler.ObjType, key, err)

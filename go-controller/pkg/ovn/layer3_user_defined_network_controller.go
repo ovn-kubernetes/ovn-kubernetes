@@ -140,6 +140,24 @@ func (h *Layer3UserDefinedNetworkControllerEventHandler) AddResource(obj interfa
 				return err
 			}
 		} else {
+			if config.OVNKubernetesFeature.EnableDynamicUDNAllocation && h.oc.nodeNADTracker != nil {
+				nads := h.oc.GetNADs()
+				hasNad := false
+				for _, nadName := range nads {
+					if h.oc.nodeNADTracker.NodeHasNAD(node.Name, nadName) {
+						hasNad = true
+						break
+					}
+				}
+				if !hasNad {
+					klog.V(5).Infof("Ignoring processing remote node: %s as it has no active NAD for network: %s",
+						node.Name, h.oc.GetNetworkName())
+					// store sync IC failed for the node, so if on node update if the NAD is no longer filtered, we actually
+					// process it
+					h.oc.syncZoneICFailed.Store(node.Name, true)
+					return nil
+				}
+			}
 			if err := h.oc.addUpdateRemoteNodeEvent(node, config.OVNKubernetesFeature.EnableInterconnect); err != nil {
 				return err
 			}
@@ -211,6 +229,22 @@ func (h *Layer3UserDefinedNetworkControllerEventHandler) UpdateResource(oldObj, 
 
 			return h.oc.addUpdateLocalNodeEvent(newNode, nodeSyncsParam)
 		} else {
+			if config.OVNKubernetesFeature.EnableDynamicUDNAllocation && h.oc.nodeNADTracker != nil {
+				nads := h.oc.GetNADs()
+				hasNad := false
+				for _, nadName := range nads {
+					if h.oc.nodeNADTracker.NodeHasNAD(newNode.Name, nadName) {
+						hasNad = true
+						break
+					}
+				}
+				if !hasNad {
+					klog.V(5).Infof("Ignoring processing remote node: %s as it has no active NAD for network: %s",
+						newNode.Name, h.oc.GetNetworkName())
+					h.oc.syncZoneICFailed.Store(newNode.Name, true)
+					return nil
+				}
+			}
 			_, syncZoneIC := h.oc.syncZoneICFailed.Load(newNode.Name)
 
 			// Check if the node moved from local zone to remote zone and if so syncZoneIC should be set to true.
@@ -329,6 +363,7 @@ func NewLayer3UserDefinedNetworkController(
 	routeImportManager routeimport.Manager,
 	eIPController *EgressIPController,
 	portCache *PortCache,
+	nodeNADTracker networkmanager.Tracker,
 ) (*Layer3UserDefinedNetworkController, error) {
 
 	stopChan := make(chan struct{})
@@ -356,6 +391,7 @@ func NewLayer3UserDefinedNetworkController(
 				cancelableCtx:               util.NewCancelableContext(),
 				networkManager:              networkManager,
 				routeImportManager:          routeImportManager,
+				nodeNADTracker:              nodeNADTracker,
 			},
 		},
 		mgmtPortFailed:              sync.Map{},
@@ -637,8 +673,14 @@ func (oc *Layer3UserDefinedNetworkController) Reconcile(netInfo util.NetInfo) er
 	return oc.BaseNetworkController.reconcile(
 		netInfo,
 		func(node string) {
-			oc.addNodeFailed.Store(node, true)
-			oc.gatewaysFailed.Store(node, true)
+			_, present := oc.localZoneNodes.Load(node)
+			if present {
+				oc.addNodeFailed.Store(node, true)
+				oc.gatewaysFailed.Store(node, true)
+			} else {
+				// remote node
+				oc.syncZoneICFailed.Store(node, true)
+			}
 		},
 	)
 }
