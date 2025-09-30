@@ -930,17 +930,20 @@ var CommonFlags = []cli.Flag{
 		Name:        "logfile",
 		Usage:       "path of a file to direct log output to",
 		Destination: &cliConfig.Logging.File,
+		TakesFile:   true,
 	},
 	&cli.StringFlag{
 		Name:        "cnilogfile",
 		Usage:       "path of a file to direct log from cni shim to output to (default: /var/log/ovn-kubernetes/ovn-k8s-cni-overlay.log)",
 		Destination: &cliConfig.Logging.CNIFile,
 		Value:       "/var/log/ovn-kubernetes/ovn-k8s-cni-overlay.log",
+		TakesFile:   true,
 	},
 	&cli.StringFlag{
 		Name:        "libovsdblogfile",
 		Usage:       "path of a file to direct log from libovsdb client to output to (default is to use same as --logfile)",
 		Destination: &cliConfig.Logging.LibovsdbFile,
+		TakesFile:   true,
 	},
 	// Logfile rotation parameters
 	&cli.IntFlag{
