@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net"
 
+	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
@@ -274,4 +276,8 @@ func (cm *ClusterManager) Reconcile(name string, old, new util.NetInfo) error {
 		cm.raController.ReconcileNetwork(name, old, new)
 	}
 	return nil
+}
+
+func (cm *ClusterManager) Filter(_ *nettypes.NetworkAttachmentDefinition) (bool, error) {
+	return false, nil
 }
