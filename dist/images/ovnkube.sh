@@ -49,7 +49,6 @@ fi
 # OVN_GATEWAY_MODE - the gateway mode (shared or local) - v3
 # OVN_GATEWAY_OPTS - the options for the ovn gateway
 # OVN_GATEWAY_ROUTER_SUBNET - the gateway router subnet (shared mode, DPU only) - v3
-# OVNKUBE_LOGLEVEL - log level for ovnkube (0..5, default 4) - v3
 # OVN_LOGLEVEL_NORTHD - log level (ovn-ctl default: -vconsole:emer -vsyslog:err -vfile:info) - v3
 # OVN_LOGLEVEL_NB - log level (ovn-ctl default: -vconsole:off -vfile:info) - v3
 # OVN_LOGLEVEL_SB - log level (ovn-ctl default: -vconsole:off -vfile:info) - v3
@@ -170,9 +169,6 @@ ovn_northd_opts=${OVN_NORTHD_OPTS:-""}
 
 # ovn-controller
 ovn_controller_opts=${OVN_CONTROLLER_OPTS:-""}
-
-# set the log level for ovnkube
-ovnkube_loglevel=${OVNKUBE_LOGLEVEL:-4}
 
 # by default it is going to be a shared gateway mode, however this can be overridden to any of the other
 # two gateway modes that we support using `images/daemonset.sh` tool
@@ -681,7 +677,6 @@ display_env() {
   echo OVN_NB_PORT ${ovn_nb_port}
   echo OVN_SB_PORT ${ovn_sb_port}
   echo K8S_APISERVER ${K8S_APISERVER}
-  echo OVNKUBE_LOGLEVEL ${ovnkube_loglevel}
   echo OVN_DAEMONSET_VERSION ${ovn_daemonset_version}
   echo OVNKUBE_NODE_MODE ${ovnkube_node_mode}
   echo OVN_ENCAP_IP ${ovn_encap_ip}
@@ -1009,7 +1004,6 @@ ovn-dbchecker() {
   /usr/bin/ovndbchecker \
     --nb-address=${ovn_nbdb} --sb-address=${ovn_sbdb} \
     ${ovn_db_ssl_opts} \
-    --loglevel=${ovnkube_loglevel} \
     --logfile-maxsize=${ovnkube_logfile_maxsize} \
     --logfile-maxbackups=${ovnkube_logfile_maxbackups} \
     --logfile-maxage=${ovnkube_logfile_maxage} \
@@ -1155,8 +1149,7 @@ ovnkube-identity() {
     ${ovnkube_enable_interconnect_flag} \
     ${ovnkube_enable_hybrid_overlay_flag} \
     --extra-allowed-user="system:serviceaccount:ovn-kubernetes:ovnkube-cluster-manager" \
-    --extra-allowed-user="system:serviceaccount:ovn-kubernetes:ovnkube-master" \
-    --loglevel="${ovnkube_loglevel}"
+    --extra-allowed-user="system:serviceaccount:ovn-kubernetes:ovnkube-master"
 
     exit 9
 }
@@ -1437,7 +1430,6 @@ ovn-master() {
     --logfile-maxbackups=${ovnkube_logfile_maxbackups} \
     --logfile-maxsize=${ovnkube_logfile_maxsize} \
     --logfile /var/log/ovn-kubernetes/ovnkube-master.log \
-    --loglevel=${ovnkube_loglevel} \
     --metrics-bind-address ${ovnkube_master_metrics_bind_address} \
     --metrics-enable-pprof \
     --nb-address=${ovn_nbdb} --sb-address=${ovn_sbdb} \
@@ -1761,7 +1753,6 @@ ovnkube-controller() {
     --logfile-maxbackups=${ovnkube_logfile_maxbackups} \
     --logfile-maxsize=${ovnkube_logfile_maxsize} \
     --logfile /var/log/ovn-kubernetes/ovnkube-controller.log \
-    --loglevel=${ovnkube_loglevel} \
     --metrics-bind-address ${ovnkube_master_metrics_bind_address} \
     --metrics-enable-pprof \
     --pidfile ${OVN_RUNDIR}/ovnkube-controller.pid \
@@ -2257,7 +2248,6 @@ ovnkube-controller-with-node() {
     --logfile-maxbackups=${ovnkube_logfile_maxbackups} \
     --logfile-maxsize=${ovnkube_logfile_maxsize} \
     --logfile /var/log/ovn-kubernetes/ovnkube-controller-with-node.log \
-    --loglevel=${ovnkube_loglevel} \
     --metrics-bind-address ${metrics_bind_address} \
     --metrics-enable-pprof \
     --mtu=${mtu} \
@@ -2487,7 +2477,6 @@ ovn-cluster-manager() {
     --logfile-maxbackups=${ovnkube_logfile_maxbackups} \
     --logfile-maxsize=${ovnkube_logfile_maxsize} \
     --logfile /var/log/ovn-kubernetes/ovnkube-cluster-manager.log \
-    --loglevel=${ovnkube_loglevel} \
     --metrics-bind-address ${ovnkube_cluster_manager_metrics_bind_address} \
     --metrics-enable-pprof \
     --pidfile ${OVN_RUNDIR}/ovnkube-cluster-manager.pid &
@@ -2920,7 +2909,6 @@ ovn-node() {
         --logfile-maxbackups=${ovnkube_logfile_maxbackups} \
         --logfile-maxsize=${ovnkube_logfile_maxsize} \
         --logfile /var/log/ovn-kubernetes/ovnkube.log \
-        --loglevel=${ovnkube_loglevel} \
         --metrics-bind-address ${ovnkube_node_metrics_bind_address} \
         --metrics-enable-pprof \
         --mtu=${mtu} \
@@ -2960,7 +2948,6 @@ cleanup-ovn-node() {
   echo "=============== time: $(date +%d-%m-%H:%M:%S:%N) cleanup-ovn-node --cleanup-node"
   /usr/bin/ovnkube --cleanup-node ${K8S_NODE} --gateway-mode=${ovn_gateway_mode} ${ovn_gateway_opts} \
     --k8s-token=${k8s_token} --k8s-apiserver=${K8S_APISERVER} --k8s-cacert=${K8S_CACERT} \
-    --loglevel=${ovnkube_loglevel} \
     --logfile /var/log/ovn-kubernetes/ovnkube.log
 
 }
@@ -2974,7 +2961,6 @@ ovs-metrics() {
 
   ovs_exporter_bind_address="${metrics_endpoint_ip}:${metrics_exporter_port}"
   /usr/bin/ovn-kube-util \
-    --loglevel=${ovnkube_loglevel} \
     ovs-exporter \
     --metrics-bind-address ${ovs_exporter_bind_address}
 
