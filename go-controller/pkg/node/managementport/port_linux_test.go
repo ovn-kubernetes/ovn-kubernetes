@@ -975,7 +975,7 @@ var _ = Describe("Management Port tests", func() {
 				err := app.Run([]string{
 					app.Name,
 					"--cluster-subnets=" + v6clusterCIDR,
-					"--k8s-service-cidr=" + v6serviceCIDR,
+					"--k8s-service-cidrs=" + v6serviceCIDR,
 				})
 				Expect(err).NotTo(HaveOccurred())
 			})
@@ -1002,7 +1002,7 @@ var _ = Describe("Management Port tests", func() {
 				err := app.Run([]string{
 					app.Name,
 					"--cluster-subnets=" + v6clusterCIDR,
-					"--k8s-service-cidr=" + v6serviceCIDR,
+					"--k8s-service-cidrs=" + v6serviceCIDR,
 				})
 				Expect(err).NotTo(HaveOccurred())
 			})
@@ -1037,7 +1037,7 @@ var _ = Describe("Management Port tests", func() {
 				err := app.Run([]string{
 					app.Name,
 					"--cluster-subnets=" + v4clusterCIDR + "," + v6clusterCIDR,
-					"--k8s-service-cidr=" + v4serviceCIDR + "," + v6serviceCIDR,
+					"--k8s-service-cidrs=" + v4serviceCIDR + "," + v6serviceCIDR,
 				})
 				Expect(err).NotTo(HaveOccurred())
 			})
@@ -1076,7 +1076,7 @@ var _ = Describe("Management Port tests", func() {
 				err := app.Run([]string{
 					app.Name,
 					"--cluster-subnets=" + v4clusterCIDR + "," + v6clusterCIDR,
-					"--k8s-service-cidr=" + v4serviceCIDR + "," + v6serviceCIDR,
+					"--k8s-service-cidrs=" + v4serviceCIDR + "," + v6serviceCIDR,
 				})
 				Expect(err).NotTo(HaveOccurred())
 			})
@@ -1114,7 +1114,7 @@ var _ = Describe("Management Port tests", func() {
 				err := app.Run([]string{
 					app.Name,
 					"--cluster-subnets=" + v4clusterCIDR,
-					"--k8s-service-cidr=" + v4serviceCIDR,
+					"--k8s-service-cidrs=" + v4serviceCIDR,
 					"--ovnkube-node-mode=" + types.NodeModeDPU,
 				})
 				Expect(err).NotTo(HaveOccurred())
@@ -1152,7 +1152,7 @@ var _ = Describe("Management Port tests", func() {
 				err := app.Run([]string{
 					app.Name,
 					"--cluster-subnets=" + v4clusterCIDR,
-					"--k8s-service-cidr=" + v4serviceCIDR,
+					"--k8s-service-cidrs=" + v4serviceCIDR,
 					"--ovnkube-node-mode=" + types.NodeModeDPUHost,
 					"--ovnkube-node-mgmt-port-netdev=" + mgmtPortNetdev,
 				})

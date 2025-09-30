@@ -1430,7 +1430,7 @@ ovn-master() {
     ${nohostsubnet_label_option} \
     ${ovn_stateless_netpol_enable_flag} \
     ${ovn_disable_requestedchassis_flag} \
-    --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
+    --cluster-subnets ${net_cidr} --k8s-service-cidrs=${svc_cidr} \
     --gateway-mode=${ovn_gateway_mode} ${ovn_gateway_opts} \
     --host-network-namespace ${ovn_host_network_namespace} \
     --logfile-maxage=${ovnkube_logfile_maxage} \
@@ -1754,7 +1754,7 @@ ovnkube-controller() {
     ${ovn_v6_masquerade_subnet_opt} \
     ${network_qos_enabled_flag} \
     ${ovn_enable_dnsnameresolver_flag} \
-    --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
+    --cluster-subnets ${net_cidr} --k8s-service-cidrs=${svc_cidr} \
     --gateway-mode=${ovn_gateway_mode} \
     --host-network-namespace ${ovn_host_network_namespace} \
     --logfile-maxage=${ovnkube_logfile_maxage} \
@@ -2247,7 +2247,7 @@ ovnkube-controller-with-node() {
     ${network_qos_enabled_flag} \
     ${ovn_enable_dnsnameresolver_flag} \
     ${ovn_disable_requestedchassis_flag} \
-    --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
+    --cluster-subnets ${net_cidr} --k8s-service-cidrs=${svc_cidr} \
     --export-ovs-metrics \
     --gateway-mode=${ovn_gateway_mode} ${ovn_gateway_opts} \
     --gateway-router-subnet=${ovn_gateway_router_subnet} \
@@ -2481,7 +2481,7 @@ ovn-cluster-manager() {
     ${network_qos_enabled_flag} \
     ${ovn_enable_dnsnameresolver_flag} \
     --gateway-mode=${ovn_gateway_mode} \
-    --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
+    --cluster-subnets ${net_cidr} --k8s-service-cidrs=${svc_cidr} \
     --host-network-namespace ${ovn_host_network_namespace} \
     --logfile-maxage=${ovnkube_logfile_maxage} \
     --logfile-maxbackups=${ovnkube_logfile_maxbackups} \
@@ -2910,7 +2910,7 @@ ovn-node() {
         ${routable_mtu_flag} \
         ${sflow_targets} \
         ${network_qos_enabled_flag} \
-        --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
+        --cluster-subnets ${net_cidr} --k8s-service-cidrs=${svc_cidr} \
         --export-ovs-metrics \
         --gateway-mode=${ovn_gateway_mode} ${ovn_gateway_opts} \
         --gateway-router-subnet=${ovn_gateway_router_subnet} \

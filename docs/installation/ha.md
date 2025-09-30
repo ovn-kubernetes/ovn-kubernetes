@@ -99,7 +99,7 @@ nohup sudo ovnkube -k8s-kubeconfig kubeconfig.yaml \
  -logfile="/var/log/openvswitch/ovnkube.log" \
  -init-master="$NODENAME" -cluster-subnets="$CLUSTER_IP_SUBNET" \
  -init-node="$NODENAME" \
- -k8s-service-cidr="$SERVICE_IP_SUBNET" \
+ -k8s-service-cidrs="$SERVICE_IP_SUBNET" \
  -k8s-token="$TOKEN" \
  -nodeport \
  -nb-address="${ovn_nb}" \
@@ -125,7 +125,7 @@ nohup sudo ovnkube -k8s-kubeconfig kubeconfig.yaml \
  -logfile="/var/log/openvswitch/ovnkube.log" \
  -init-ovnkube-controller="$NODENAME" -cluster-subnets="$CLUSTER_IP_SUBNET" \
  -init-node="$NODENAME" \
- -k8s-service-cidr="$SERVICE_IP_SUBNET" \
+ -k8s-service-cidrs="$SERVICE_IP_SUBNET" \
  -k8s-token="$TOKEN" \
  -nodeport \
  -nb-address="${ovn_nb}" \
@@ -137,7 +137,7 @@ nohup sudo ovnkube -k8s-kubeconfig kubeconfig.yaml \
  -logfile="/var/log/openvswitch/ovnkube.log" \
  -init-cluster-manager="$NODENAME" -cluster-subnets="$CLUSTER_IP_SUBNET" \
  -init-node="$NODENAME" \
- -k8s-service-cidr="$SERVICE_IP_SUBNET" \
+ -k8s-service-cidrs="$SERVICE_IP_SUBNET" \
  -k8s-token="$TOKEN" \
  -nodeport  2>&1 &
 
@@ -181,6 +181,6 @@ nohup sudo ovnkube -k8s-kubeconfig $HOME/kubeconfig.yaml -loglevel=4 \
     -sb-address="${ovn_sb}" \
     -k8s-token="$TOKEN" \
     -init-gateways \
-    -k8s-service-cidr= \
+    -k8s-service-cidrs= \
     -cluster-subnets="$SERVICE_IP_SUBNET" 2>&1 &
 ```
