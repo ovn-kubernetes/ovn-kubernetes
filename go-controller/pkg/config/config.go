@@ -1017,6 +1017,7 @@ var CommonFlags = []cli.Flag{
 		Usage:       "Maximum number of days to retain old log files",
 		Destination: &cliConfig.Logging.LogFileMaxAge,
 		Value:       Logging.LogFileMaxAge,
+		EnvVars:     []string{"OVNKUBE_LOGFILE_MAXAGE"},
 	},
 	&cli.IntFlag{
 		Name:        "acl-logging-rate-limit",

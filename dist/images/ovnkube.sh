@@ -54,7 +54,6 @@ fi
 # OVN_LOGLEVEL_SB - log level (ovn-ctl default: -vconsole:off -vfile:info) - v3
 # OVN_LOGLEVEL_CONTROLLER - log level (ovn-ctl default: -vconsole:off -vfile:info) - v3
 # OVN_LOGLEVEL_NBCTLD - log level (ovn-ctl default: -vconsole:off -vfile:info) - v3
-# OVNKUBE_LOGFILE_MAXAGE - log file max age in days (default 5 days)
 # OVN_ACL_LOGGING_RATE_LIMIT - specify default ACL logging rate limit in messages per second (default: 20)
 # OVN_NB_PORT - ovn north db port (default 6641)
 # OVN_SB_PORT - ovn south db port (default 6642)
@@ -106,9 +105,6 @@ ovn_loglevel_sb=${OVN_LOGLEVEL_SB:-"-vconsole:info"}
 ovn_loglevel_controller=${OVN_LOGLEVEL_CONTROLLER:-"-vconsole:info"}
 
 ovnkubelogdir=/var/log/ovn-kubernetes
-
-# logfile rotation parameters
-ovnkube_logfile_maxage=${OVNKUBE_LOGFILE_MAXAGE:-"5"}
 
 # ovnkube.sh version (Update during each release)
 ovnkube_version="1.1.0"
@@ -997,7 +993,6 @@ ovn-dbchecker() {
   /usr/bin/ovndbchecker \
     --nb-address=${ovn_nbdb} --sb-address=${ovn_sbdb} \
     ${ovn_db_ssl_opts} \
-    --logfile-maxage=${ovnkube_logfile_maxage} \
     --pidfile ${OVN_RUNDIR}/ovn-dbchecker.pid &
 
   echo "=============== ovn-dbchecker ========== running"
@@ -1412,7 +1407,6 @@ ovn-master() {
     --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
     --gateway-mode=${ovn_gateway_mode} ${ovn_gateway_opts} \
     --host-network-namespace ${ovn_host_network_namespace} \
-    --logfile-maxage=${ovnkube_logfile_maxage} \
     --metrics-bind-address ${ovnkube_master_metrics_bind_address} \
     --metrics-enable-pprof \
     --nb-address=${ovn_nbdb} --sb-address=${ovn_sbdb} \
@@ -1728,7 +1722,6 @@ ovnkube-controller() {
     --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
     --gateway-mode=${ovn_gateway_mode} \
     --host-network-namespace ${ovn_host_network_namespace} \
-    --logfile-maxage=${ovnkube_logfile_maxage} \
     --metrics-bind-address ${ovnkube_master_metrics_bind_address} \
     --metrics-enable-pprof \
     --pidfile ${OVN_RUNDIR}/ovnkube-controller.pid \
@@ -2216,7 +2209,6 @@ ovnkube-controller-with-node() {
     --gateway-router-subnet=${ovn_gateway_router_subnet} \
     --host-network-namespace ${ovn_host_network_namespace} \
     --inactivity-probe=${ovn_remote_probe_interval} \
-    --logfile-maxage=${ovnkube_logfile_maxage} \
     --metrics-bind-address ${metrics_bind_address} \
     --metrics-enable-pprof \
     --mtu=${mtu} \
@@ -2444,7 +2436,6 @@ ovn-cluster-manager() {
     --gateway-mode=${ovn_gateway_mode} \
     --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
     --host-network-namespace ${ovn_host_network_namespace} \
-    --logfile-maxage=${ovnkube_logfile_maxage} \
     --metrics-bind-address ${ovnkube_cluster_manager_metrics_bind_address} \
     --metrics-enable-pprof \
     --pidfile ${OVN_RUNDIR}/ovnkube-cluster-manager.pid &
@@ -2875,7 +2866,6 @@ ovn-node() {
         --gateway-router-subnet=${ovn_gateway_router_subnet} \
         --host-network-namespace ${ovn_host_network_namespace} \
         --inactivity-probe=${ovn_remote_probe_interval} \
-        --logfile-maxage=${ovnkube_logfile_maxage} \
         --metrics-bind-address ${ovnkube_node_metrics_bind_address} \
         --metrics-enable-pprof \
         --mtu=${mtu} \
