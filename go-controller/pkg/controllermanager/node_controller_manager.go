@@ -136,7 +136,7 @@ func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatch
 		if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
 			ncm.podTracker = networkmanager.NewPodTrackerController("node-pod-tracker", wf, ncm.OnNetworkRefChange)
 			if config.OVNKubernetesFeature.EnableEgressIP {
-				ncm.egressIPTracker = networkmanager.NewEgressIPTrackerController(wf, ncm.OnNetworkRefChange)
+				ncm.egressIPTracker = networkmanager.NewEgressIPTrackerController("node-egress-ip-tracker", wf, ncm.OnNetworkRefChange)
 			}
 		}
 	}

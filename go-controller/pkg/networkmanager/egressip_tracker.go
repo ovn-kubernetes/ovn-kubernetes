@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
+	"time"
 
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	nadlisters "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
@@ -24,24 +25,13 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
-type nsInfo struct {
-	nad string
-	// eip -> nodes
-	eips map[string]map[string]struct{}
-}
-
 // EgressIPTrackerController tracks which NADs must be present on which nodes
 // due to EgressIP assignments.
 type EgressIPTrackerController struct {
 	sync.Mutex
-
-	// node -> nad -> set[eipName]
-	cache map[string]map[string]map[string]struct{}
-	// eipName -> node -> set[nad]
-	reverse map[string]map[string]map[string]struct{}
-
-	// nsName -> {nad, eips: eipName -> set[node]}
-	nsCache map[string]*nsInfo
+	name string
+	// node -> nad that has EIP
+	cache map[string]map[string]struct{}
 
 	onNetworkRefChange func(nodeName, nadName string, present bool)
 
@@ -54,13 +44,12 @@ type EgressIPTrackerController struct {
 }
 
 func NewEgressIPTrackerController(
-	wf watchFactory,
+	name string, wf watchFactory,
 	onNetworkRefChange func(nodeName, nadName string, present bool),
 ) *EgressIPTrackerController {
 	t := &EgressIPTrackerController{
-		cache:              make(map[string]map[string]map[string]struct{}),
-		reverse:            make(map[string]map[string]map[string]struct{}),
-		nsCache:            make(map[string]*nsInfo),
+		name:               name,
+		cache:              make(map[string]map[string]struct{}),
 		onNetworkRefChange: onNetworkRefChange,
 		nsLister:           wf.NamespaceInformer().Lister(),
 		eipLister:          wf.EgressIPInformer().Lister(),
@@ -120,7 +109,7 @@ func (t *EgressIPTrackerController) NodeHasNAD(node, nad string) bool {
 	if _, ok := t.cache[node][nad]; !ok {
 		return false
 	}
-	return len(t.cache[node][nad]) > 0
+	return true
 }
 
 func (t *EgressIPTrackerController) nadNeedsUpdate(oldObj, _ *nettypes.NetworkAttachmentDefinition) bool {
@@ -153,76 +142,44 @@ func (t *EgressIPTrackerController) namespaceNeedsUpdate(oldObj, newObj *corev1.
 }
 
 func (t *EgressIPTrackerController) reconcileNAD(key string) error {
-	t.Lock()
-	defer t.Unlock()
-
+	klog.V(5).Infof("%s - reconciling NAD key: %q", t.name, key)
 	namespace, _, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
 		return fmt.Errorf("invalid NAD key %q: %v", key, err)
 	}
 
-	// Determine current active primary NAD for this namespace
-	newNAD, err := t.getPrimaryNADForNamespace(namespace)
-	if err != nil {
-		return fmt.Errorf("failed to get active network for namespace %q: %v", namespace, err)
-	}
-
-	oldInfo, ok := t.nsCache[namespace]
-	if !ok {
-		// If no cached info, nothing to update yet.
-		return nil
-	}
-
-	if oldInfo.nad == newNAD {
-		// No change, nothing to do.
-		return nil
-	}
-
-	// NAD changed. Remove old NAD associations and add with new NAD.
-	for eip, nodes := range oldInfo.eips {
-		for node := range nodes {
-			// Remove old NAD
-			t.removeNamespaceEIP(namespace, eip, node, oldInfo.nad)
-			// Add new NAD if it exists
-			if newNAD != "" {
-				t.addNamespaceEIP(namespace, eip, node, newNAD)
-			}
-		}
-	}
-
-	// Update stored NAD value
-	oldInfo.nad = newNAD
+	t.nsController.Reconcile(namespace)
 	return nil
 }
 
 func (t *EgressIPTrackerController) reconcileEgressIP(key string) error {
-	t.Lock()
-	defer t.Unlock()
+	klog.V(5).Infof("%s - reconciling egress IP key: %q", t.name, key)
 
 	eip, err := t.eipLister.Get(key)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			// Drive cleanup by walking nsCache; this updates all caches consistently
-			for nsName, info := range t.nsCache {
-				if nodes, ok := info.eips[key]; ok {
-					for node := range nodes {
-						t.removeNamespaceEIP(nsName, key, node, info.nad)
+			// EgressIP deleted
+			namespacesToReconcile := make(map[string]struct{})
+			t.Lock()
+			for _, nads := range t.cache {
+				for nad := range nads {
+					nsName, _, err := cache.SplitMetaNamespaceKey(nad)
+					if err != nil {
+						klog.Errorf("%s - Invalid NAD key in cache %q: %v", t.name, nad, err)
+						continue
 					}
-					if len(info.eips) == 0 {
-						delete(t.nsCache, nsName)
-					}
+					namespacesToReconcile[nsName] = struct{}{}
 				}
+			}
+			t.Unlock()
+
+			for nsName := range namespacesToReconcile {
+				t.nsController.Reconcile(nsName)
 			}
 			return nil
 		}
 		return fmt.Errorf("failed to get EgressIP %q from cache: %v", key, err)
 	}
-
-	// Build desired ns -> {nad, nodes} for this EIP
-	desiredNS := make(map[string]struct {
-		nad   string
-		nodes map[string]struct{}
-	})
 
 	nsSelector, err := metav1.LabelSelectorAsSelector(&eip.Spec.NamespaceSelector)
 	if err != nil {
@@ -234,282 +191,110 @@ func (t *EgressIPTrackerController) reconcileEgressIP(key string) error {
 	}
 
 	for _, ns := range nsList {
-		nad, err := t.getPrimaryNADForNamespace(ns.Name)
-		if err != nil {
-			return fmt.Errorf("failed to get primary network for namespace %q: %v", ns.Name, err)
-		}
-		if len(nad) == 0 {
-			continue
-		}
-
-		nodes := make(map[string]struct{})
-		for _, st := range eip.Status.Items {
-			nodes[st.Node] = struct{}{}
-		}
-		desiredNS[ns.Name] = struct {
-			nad   string
-			nodes map[string]struct{}
-		}{nad: nad, nodes: nodes}
-	}
-
-	// Current ns->nodes for this EIP from nsCache
-	currentNS := make(map[string]map[string]struct{}) // ns -> node -> {}
-	for nsName, info := range t.nsCache {
-		if nodes, ok := info.eips[key]; ok {
-			currentNS[nsName] = nodes
-		}
-	}
-
-	// Add missing links
-	for nsName, want := range desiredNS {
-		for node := range want.nodes {
-			if _, ok := currentNS[nsName]; !ok || !containsKey(currentNS[nsName], node) {
-				t.addNamespaceEIP(nsName, key, node, want.nad)
-			}
-		}
-	}
-
-	// Remove stale links
-	for nsName, curNodes := range currentNS {
-		for node := range curNodes {
-			want, ok := desiredNS[nsName]
-			if !ok || !containsKey(want.nodes, node) {
-				if info, ok := t.nsCache[nsName]; ok {
-					t.removeNamespaceEIP(nsName, key, node, info.nad)
-				}
-			}
-		}
+		t.nsController.Reconcile(ns.Name)
 	}
 
 	return nil
 }
 
 func (t *EgressIPTrackerController) reconcileNamespace(key string) error {
-	t.Lock()
-	defer t.Unlock()
-
+	klog.V(5).Infof("%s - reconciling namespace key: %q", t.name, key)
 	ns, err := t.nsLister.Get(key)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			// Namespace deleted → remove all cached eip->node->nad associations
-			if info, ok := t.nsCache[key]; ok {
-				for eip, nodes := range info.eips {
-					for node := range nodes {
-						t.removeNamespaceEIP(key, eip, node, info.nad)
+			// Namespace deleted → drop any cache
+			t.Lock()
+			defer t.Unlock()
+			for node, nads := range t.cache {
+				for nad := range nads {
+					nadNamespace, _, err := cache.SplitMetaNamespaceKey(nad)
+					if err != nil {
+						klog.Errorf("%s - Invalid NAD key in cache %q: %v", t.name, key, err)
+						delete(nads, nad)
+					} else {
+						if nadNamespace == key {
+							delete(nads, nad)
+							if t.onNetworkRefChange != nil {
+								t.onNetworkRefChange(node, nad, false)
+							}
+						}
 					}
 				}
-				delete(t.nsCache, key)
+				if len(nads) == 0 {
+					delete(t.cache, node)
+				}
 			}
 			return nil
 		}
-		return fmt.Errorf("failed to get namespace %q: %v", key, err)
+		return err
 	}
 
-	// Step 1: determine the namespace's current primary UDN/NAD
-	nad, err := t.getPrimaryNADForNamespace(ns.Name)
+	primaryNAD, err := t.getPrimaryNADForNamespace(ns.Name)
 	if err != nil {
-		return fmt.Errorf("failed to get primary network for namespace %q: %v", ns.Name, err)
+		return fmt.Errorf("failed to get primary NAD for namespace %q: %w", ns.Name, err)
 	}
-
-	// If no NAD, remove any stale cache and stop.
-	if nad == "" {
-		if info, ok := t.nsCache[ns.Name]; ok {
-			for eip, nodes := range info.eips {
-				for node := range nodes {
-					t.removeNamespaceEIP(ns.Name, eip, node, info.nad)
-				}
-			}
-		}
-		return nil
-	}
-
-	// Step 2: find all EgressIPs selecting this namespace and collect node assignments
-	desiredEIPs := make(map[string]map[string]struct{}) // eipName -> node -> {}
-	eips, err := t.eipLister.List(labels.Everything())
-	if err != nil {
-		return fmt.Errorf("failed to list EgressIPs: %v", err)
-	}
-	for _, eip := range eips {
-		selector, err := metav1.LabelSelectorAsSelector(&eip.Spec.NamespaceSelector)
-		if err != nil {
-			continue // skip invalid selectors rather than fail
-		}
-		if selector.Matches(labels.Set(ns.Labels)) {
-			nodes := make(map[string]struct{})
-			for _, st := range eip.Status.Items {
-				nodes[st.Node] = struct{}{}
-			}
-			desiredEIPs[eip.Name] = nodes
-		}
-	}
-
-	// Step 3: determine current state from cache
-	// map of eips -> nodes
-	currentEIPs := make(map[string]map[string]struct{})
-	if info, ok := t.nsCache[ns.Name]; ok {
-		currentEIPs = info.eips
-	}
-
-	// Step 4: add missing (eip,node) pairs
-	for eip, nodes := range desiredEIPs {
-		for node := range nodes {
-			if _, ok := currentEIPs[eip]; !ok || !containsKey(currentEIPs[eip], node) {
-				t.addNamespaceEIP(ns.Name, eip, node, nad)
-			}
-		}
-	}
-
-	// Step 5: remove stale (eip,node) pairs
-	if info, ok := t.nsCache[ns.Name]; ok {
-		for eip, nodes := range currentEIPs {
-			for node := range nodes {
-				if _, ok := desiredEIPs[eip]; !ok || !containsKey(desiredEIPs[eip], node) {
-					t.removeNamespaceEIP(ns.Name, eip, node, info.nad)
+	// Gather the new set of (node,nad) pairs implied by this namespace's EIPs
+	newActive := map[string]string{} // node -> nad
+	if primaryNAD != "" {
+		eips, _ := t.eipLister.List(labels.Everything())
+		for _, eip := range eips {
+			sel, _ := metav1.LabelSelectorAsSelector(&eip.Spec.NamespaceSelector)
+			if sel.Matches(labels.Set(ns.Labels)) {
+				for _, st := range eip.Status.Items {
+					newActive[st.Node] = primaryNAD
 				}
 			}
 		}
 	}
 
-	// Step 6: refresh nsCache entry with updated nad and desired eips
-	if _, ok := t.nsCache[ns.Name]; !ok {
-		t.nsCache[ns.Name] = &nsInfo{
-			nad:  nad,
-			eips: make(map[string]map[string]struct{}),
-		}
-	}
-	t.nsCache[ns.Name].nad = nad
-	t.nsCache[ns.Name].eips = desiredEIPs
+	// Diff against cache
+	t.Lock()
+	defer t.Unlock()
 
-	return nil
-}
-
-func containsKey(m map[string]struct{}, key string) bool {
-	_, ok := m[key]
-	return ok
-}
-
-// Called when an EIP selects a namespace
-func (t *EgressIPTrackerController) addNamespaceEIP(ns, eipName, node, nad string) {
-	// Update nsCache: ns -> eip -> set[node], and ns.nad
-	info, ok := t.nsCache[ns]
-	if !ok {
-		info = &nsInfo{
-			nad:  nad,
-			eips: make(map[string]map[string]struct{}),
-		}
-		t.nsCache[ns] = info
-	}
-	// If NAD changed (namespace recon), keep nsCache.nad current
-	info.nad = nad
-	if _, ok := info.eips[eipName]; !ok {
-		info.eips[eipName] = make(map[string]struct{})
-	}
-	// If node already present for this (ns,eip), nothing more to do on ns view
-	if _, exists := info.eips[eipName][node]; exists {
-		return
-	}
-	info.eips[eipName][node] = struct{}{}
-
-	// --- Update egressIP reverse cache: eipName -> node -> set[nad] ---
-	if _, ok := t.reverse[eipName]; !ok {
-		t.reverse[eipName] = make(map[string]map[string]struct{})
-	}
-	if _, ok := t.reverse[eipName][node]; !ok {
-		t.reverse[eipName][node] = make(map[string]struct{})
-	}
-	t.reverse[eipName][node][nad] = struct{}{}
-
-	// --- Update forward cache: node -> nad -> set[eipName] ---
-	if _, ok := t.cache[node]; !ok {
-		t.cache[node] = make(map[string]map[string]struct{})
-	}
-	if _, ok := t.cache[node][nad]; !ok {
-		t.cache[node][nad] = make(map[string]struct{})
-	}
-	before := len(t.cache[node][nad])
-	t.cache[node][nad][eipName] = struct{}{}
-	after := len(t.cache[node][nad])
-
-	// Fire callback only when this (node,nad) first becomes active
-	if before == 0 && after == 1 && t.onNetworkRefChange != nil {
-		t.onNetworkRefChange(node, nad, true)
-	}
-}
-
-// Called when namespace is deleted or its NAD changes
-func (t *EgressIPTrackerController) removeNamespaceEIP(ns, eipName, node, nad string) {
-	// --- Update nsCache ---
-	if info, ok := t.nsCache[ns]; ok {
-		if nodes, ok := info.eips[eipName]; ok {
-			delete(nodes, node)
-			if len(nodes) == 0 {
-				delete(info.eips, eipName)
-			}
-		}
-
-		if len(info.eips) == 0 {
-			delete(t.nsCache, ns)
-		}
-	}
-
-	// --- Update eip reverse cache ---
-	if nodes, ok := t.reverse[eipName]; ok {
-		if nads, ok := nodes[node]; ok {
-			delete(nads, nad)
-			if len(nads) == 0 {
-				delete(nodes, node)
-			}
-		}
-		if len(nodes) == 0 {
-			delete(t.reverse, eipName)
-		}
-	}
-
-	// --- Update forward cache (node -> nad -> eip set) ---
-	if nads, ok := t.cache[node]; ok {
-		if eips, ok := nads[nad]; ok {
-			before := len(eips)
-			delete(eips, eipName)
-			after := len(eips)
-
-			if before > 0 && after == 0 && t.onNetworkRefChange != nil {
-				// 1 → 0 transition
-				t.onNetworkRefChange(node, nad, false)
-			}
-			if len(eips) == 0 {
+	// Removals first
+	for node, nads := range t.cache {
+		for nad := range nads {
+			nsName, _, err := cache.SplitMetaNamespaceKey(nad)
+			if err != nil {
+				klog.Errorf("%s - Invalid NAD key in cache %q: %v", t.name, key, err)
 				delete(nads, nad)
+			}
+			if nsName == ns.Name {
+				if newActive[node] != nad {
+					delete(nads, nad)
+					if t.onNetworkRefChange != nil {
+						t.onNetworkRefChange(node, nad, false)
+					}
+				}
 			}
 		}
 		if len(nads) == 0 {
 			delete(t.cache, node)
 		}
 	}
+
+	// Additions second
+	for node, nad := range newActive {
+		if _, ok := t.cache[node]; !ok {
+			t.cache[node] = map[string]struct{}{}
+		}
+		if _, exists := t.cache[node][nad]; !exists {
+			t.cache[node][nad] = struct{}{}
+			if t.onNetworkRefChange != nil {
+				t.onNetworkRefChange(node, nad, true)
+			}
+		}
+	}
+	return nil
 }
 
 func (t *EgressIPTrackerController) syncAll() error {
-	t.Lock()
-	defer t.Unlock()
+	start := time.Now()
+	defer func() {
+		klog.V(5).Infof("%s - syncAll took %v", t.name, time.Since(start))
+	}()
 
-	// Clear everything
-	t.cache = make(map[string]map[string]map[string]struct{})
-	t.reverse = make(map[string]map[string]map[string]struct{})
-	t.nsCache = make(map[string]*nsInfo)
-
-	// Pre-list EIPs and build an index: eipName -> set[node]
-	eips, err := t.eipLister.List(labels.Everything())
-	if err != nil {
-		return fmt.Errorf("syncAll: list EgressIPs: %v", err)
-	}
-	eipNodes := make(map[string]map[string]struct{})
-	for _, eip := range eips {
-		nodes := make(map[string]struct{})
-		for _, st := range eip.Status.Items {
-			nodes[st.Node] = struct{}{}
-		}
-		eipNodes[eip.Name] = nodes
-	}
-
-	// List namespaces; for each, find primary NAD and which EIPs select it
+	// handling all namespaces will handle setting up the egress IP tracker
 	namespaces, err := t.nsLister.List(labels.Everything())
 	if err != nil {
 		return fmt.Errorf("syncAll: list Namespaces: %v", err)
@@ -517,40 +302,9 @@ func (t *EgressIPTrackerController) syncAll() error {
 
 	for _, ns := range namespaces {
 		nsName := ns.Name
-
-		primaryNAD := ""
-		nads, err := t.nadLister.NetworkAttachmentDefinitions(nsName).List(labels.Everything())
-		if err != nil {
-			return fmt.Errorf("failed to list network attachment definitions: %w", err)
-		}
-		for _, nad := range nads {
-			if nad.Name == types.DefaultNetworkName {
-				continue
-			}
-			nadInfo, err := util.ParseNADInfo(nad)
-			if err != nil {
-				klog.Warningf("Failed to parse network attachment definition %q: %v", nad.Name, err)
-				continue
-			}
-			if nadInfo.IsPrimaryNetwork() {
-				primaryNAD = util.GetNADName(nad.Namespace, nad.Name)
-			}
-		}
-		if len(primaryNAD) == 0 {
+		if err := t.reconcileNamespace(nsName); err != nil {
+			klog.Errorf("%s - Failed to sync namespace %q: %v", t.name, nsName, err)
 			continue
-		}
-
-		for _, eip := range eips {
-			selector, err := metav1.LabelSelectorAsSelector(&eip.Spec.NamespaceSelector)
-			if err != nil {
-				continue
-			}
-			if !selector.Matches(labels.Set(ns.Labels)) {
-				continue
-			}
-			for node := range eipNodes[eip.Name] {
-				t.addNamespaceEIP(nsName, eip.Name, node, primaryNAD)
-			}
 		}
 	}
 
@@ -558,6 +312,15 @@ func (t *EgressIPTrackerController) syncAll() error {
 }
 
 func (t *EgressIPTrackerController) getPrimaryNADForNamespace(namespace string) (string, error) {
+	requiresUDN := false
+	// check if required UDN label is on namespace
+	ns, err := t.nsLister.Get(namespace)
+	if err != nil {
+		return "", fmt.Errorf("failed to get namespace %q: %w", namespace, err)
+	}
+	if _, exists := ns.Labels[types.RequiredUDNNamespaceLabel]; exists {
+		requiresUDN = true
+	}
 	nads, err := t.nadLister.NetworkAttachmentDefinitions(namespace).List(labels.Everything())
 	if err != nil {
 		return "", fmt.Errorf("failed to list network attachment definitions: %w", err)
@@ -568,12 +331,16 @@ func (t *EgressIPTrackerController) getPrimaryNADForNamespace(namespace string) 
 		}
 		nadInfo, err := util.ParseNADInfo(nad)
 		if err != nil {
-			klog.Warningf("Failed to parse network attachment definition %q: %v", nad.Name, err)
+			klog.Warningf("%s - Failed to parse network attachment definition %q: %v", t.name, nad.Name, err)
 			continue
 		}
 		if nadInfo.IsPrimaryNetwork() {
 			return util.GetNADName(nad.Namespace, nad.Name), nil
 		}
+	}
+
+	if requiresUDN {
+		return "", util.NewInvalidPrimaryNetworkError(namespace)
 	}
 
 	return "", nil

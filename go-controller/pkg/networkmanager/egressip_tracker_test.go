@@ -19,6 +19,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	egressipv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
+	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -30,16 +31,16 @@ func TestEgressIPTrackerControllerWithInformer(t *testing.T) {
 	}
 
 	tests := []struct {
-		name        string
-		nodeName    string
-		namespace   string
-		eipName     string
-		labelKey    string
-		labelValue  string
-		newNodeName string
-		updateFn    func(fakeClient *util.OVNKubeControllerClientset, g *gomega.WithT)
-		expectAdds  []callbackEvent
-		expectRems  []callbackEvent
+		name          string
+		nodeName      string
+		namespace     string
+		eipName       string
+		labelKey      string
+		labelValue    string
+		newNodeName   string
+		updateFn      func(fakeClient *util.OVNKubeControllerClientset, g *gomega.WithT)
+		expectAdds    []callbackEvent
+		expectUpdates []callbackEvent
 	}{
 		{
 			name:       "basic EIP add/delete",
@@ -55,7 +56,7 @@ func TestEgressIPTrackerControllerWithInformer(t *testing.T) {
 			expectAdds: []callbackEvent{
 				{"node1", "ns1/primary", true},
 			},
-			expectRems: []callbackEvent{
+			expectUpdates: []callbackEvent{
 				{"node1", "ns1/primary", false},
 			},
 		},
@@ -76,7 +77,7 @@ func TestEgressIPTrackerControllerWithInformer(t *testing.T) {
 			expectAdds: []callbackEvent{
 				{"node2", "ns2/primary", true},
 			},
-			expectRems: []callbackEvent{
+			expectUpdates: []callbackEvent{
 				{"node2", "ns2/primary", false},
 			},
 		},
@@ -101,7 +102,7 @@ func TestEgressIPTrackerControllerWithInformer(t *testing.T) {
 			expectAdds: []callbackEvent{
 				{"node3", "ns3/primary", true},
 			},
-			expectRems: []callbackEvent{
+			expectUpdates: []callbackEvent{
 				{"node3", "ns3/primary", false},
 				{"node4", "ns3/primary", true}, // new node add
 			},
@@ -145,7 +146,7 @@ func TestEgressIPTrackerControllerWithInformer(t *testing.T) {
 			expectAdds: []callbackEvent{
 				{"node5", "ns5/primary", true},
 			},
-			expectRems: []callbackEvent{
+			expectUpdates: []callbackEvent{
 				{"node5", "ns5/primary", false},
 				{"node5", "ns5/new-primary", true},
 			},
@@ -182,7 +183,7 @@ func TestEgressIPTrackerControllerWithInformer(t *testing.T) {
 				// later selects the same namespace and NAD on the same node.
 				{"node7", "ns7/primary", true},
 			},
-			expectRems: []callbackEvent{
+			expectUpdates: []callbackEvent{
 				// No removals or additional adds, because the node+nad stays active.
 			},
 		},
@@ -203,7 +204,7 @@ func TestEgressIPTrackerControllerWithInformer(t *testing.T) {
 			wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClient)
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 
-			tracker := NewEgressIPTrackerController(wf, func(node, nad string, active bool) {
+			tracker := NewEgressIPTrackerController("test", wf, func(node, nad string, active bool) {
 				gotMu.Lock()
 				got = append(got, callbackEvent{node, nad, active})
 				gotMu.Unlock()
@@ -251,8 +252,11 @@ func TestEgressIPTrackerControllerWithInformer(t *testing.T) {
 			// Create namespace matching selector
 			_, err = fakeClient.KubeClient.CoreV1().Namespaces().Create(context.Background(), &corev1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:   tt.namespace,
-					Labels: map[string]string{tt.labelKey: tt.labelValue},
+					Name: tt.namespace,
+					Labels: map[string]string{
+						tt.labelKey:                        tt.labelValue,
+						ovntypes.RequiredUDNNamespaceLabel: "",
+					},
 				},
 			}, metav1.CreateOptions{})
 			g.Expect(err).NotTo(gomega.HaveOccurred())
@@ -281,9 +285,6 @@ func TestEgressIPTrackerControllerWithInformer(t *testing.T) {
 				defer tracker.Unlock()
 				for _, ev := range tt.expectAdds {
 					g.Expect(tracker.cache[ev.node]).To(gomega.HaveKey(ev.nad))
-					g.Expect(tracker.cache[ev.node][ev.nad]).To(gomega.HaveKey(tt.eipName))
-					g.Expect(tracker.reverse[tt.eipName][ev.node]).To(gomega.HaveKey(ev.nad))
-					g.Expect(tracker.nsCache[tt.namespace].eips[tt.eipName]).To(gomega.HaveKey(ev.node))
 				}
 			}, 3*time.Second, 100*time.Millisecond).Should(gomega.Succeed())
 
@@ -293,20 +294,20 @@ func TestEgressIPTrackerControllerWithInformer(t *testing.T) {
 			}
 
 			// Expect removal or new node events
-			if len(tt.expectRems) > 0 {
+			if len(tt.expectUpdates) > 0 {
 				g.Eventually(func() []callbackEvent {
 					gotMu.Lock()
 					defer gotMu.Unlock()
 					return got
-				}, 3*time.Second, 100*time.Millisecond).Should(gomega.ContainElements(toIfaceSlice(tt.expectRems)...))
+				}, 3*time.Second, 100*time.Millisecond).Should(gomega.ContainElements(toIfaceSlice(tt.expectUpdates)...))
 			}
 
 			g.Eventually(func(g gomega.Gomega) {
 				tracker.Lock()
 				defer tracker.Unlock()
-				for _, ev := range tt.expectRems {
+				for _, ev := range tt.expectUpdates {
 					if !ev.active { // removal
-						g.Expect(tracker.cache[ev.node][ev.nad]).NotTo(gomega.HaveKey(tt.eipName))
+						g.Expect(tracker.cache[ev.node]).NotTo(gomega.HaveKey(ev.nad))
 					}
 				}
 			}, 3*time.Second, 100*time.Millisecond).Should(gomega.Succeed())

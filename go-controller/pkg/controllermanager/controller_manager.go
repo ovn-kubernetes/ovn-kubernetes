@@ -278,7 +278,7 @@ func NewControllerManager(ovnClient *util.OVNClientset, wf *factory.WatchFactory
 	if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
 		cm.podTracker = networkmanager.NewPodTrackerController("zone-pod-tracker", wf, cm.OnNetworkRefChange)
 		if config.OVNKubernetesFeature.EnableEgressIP {
-			cm.egressIPTracker = networkmanager.NewEgressIPTrackerController(wf, cm.OnNetworkRefChange)
+			cm.egressIPTracker = networkmanager.NewEgressIPTrackerController("zone-egress-ip-tracker", wf, cm.OnNetworkRefChange)
 		}
 	}
 
