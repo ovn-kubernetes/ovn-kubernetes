@@ -206,6 +206,10 @@ spec:
           value: {{ hasKey .Values.global "enableNetworkQos" | ternary .Values.global.enableNetworkQos false | quote }}
         - name: OVNKUBE_NODE_MODE
           value: "dpu-host"
+        - name: OVN_DYNAMIC_UDN_ALLOCATION
+          value: {{ hasKey .Values.global "enableDynamicUDNAllocation" | ternary .Values.global.enableDynamicUDNAllocation false | quote }}
+        - name: OVN_DYNAMIC_UDN_GRACE_PERIOD
+          value: {{ default "" .Values.global.dynamicUDNGracePeriod | quote }}
         - name: OVNKUBE_NODE_MGMT_PORT_NETDEV
           value: {{ default "" .Values.global.nodeMgmtPortNetdev | quote }}
         - name: OVN_HOST_NETWORK_NAMESPACE
