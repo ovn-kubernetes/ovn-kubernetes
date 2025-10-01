@@ -169,7 +169,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", feature.Networ
 				return err
 			}),
 			Entry("UserDefinedNetwork", func(c networkAttachmentConfigParams) error {
-				udnManifest := generateUserDefinedNetworkManifest(&c, f.ClientSet)
+				udnManifest := generateUserDefinedNetworkManifestWithSupportedNetworkConfig(&c, f.ClientSet)
 				cleanup, err := createManifest(f.Namespace.Name, udnManifest)
 				DeferCleanup(cleanup)
 				Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, f.Namespace.Name, c.name), 5*time.Second, time.Second).Should(Succeed())
@@ -255,7 +255,7 @@ var _ = Describe("Network Segmentation EndpointSlices mirroring", feature.Networ
 				return err
 			}),
 			Entry("UserDefinedNetwork", func(c networkAttachmentConfigParams) error {
-				udnManifest := generateUserDefinedNetworkManifest(&c, f.ClientSet)
+				udnManifest := generateUserDefinedNetworkManifestWithSupportedNetworkConfig(&c, f.ClientSet)
 				cleanup, err := createManifest(fmt.Sprintf("%s-default", f.Namespace.Name), udnManifest)
 				DeferCleanup(cleanup)
 				Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, fmt.Sprintf("%s-default", f.Namespace.Name), c.name), 5*time.Second, time.Second).Should(Succeed())

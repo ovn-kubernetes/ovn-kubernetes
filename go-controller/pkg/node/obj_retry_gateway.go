@@ -68,7 +68,7 @@ func (h *gwEventHandler) AreResourcesEqual(obj1, obj2 interface{}) (bool, error)
 		return false, nil
 
 	default:
-		return false, fmt.Errorf("no object comparison for type %s", h.objType)
+		return h.g.AreResourcesEqual(h.objType, obj1, obj2)
 	}
 
 }
@@ -96,6 +96,9 @@ func (h *gwEventHandler) GetResourceFromInformerCache(key string) (interface{}, 
 	case factory.EgressIPType:
 		obj, err = h.g.watchFactory.GetEgressIP(name)
 
+	case factory.NodeType:
+		obj, err = h.g.watchFactory.GetNode(name)
+
 	default:
 		err = fmt.Errorf("object type %s not supported, cannot retrieve it from informers cache",
 			h.objType)
@@ -108,7 +111,7 @@ func (h *gwEventHandler) GetResourceFromInformerCache(key string) (interface{}, 
 // the function was executed from iterateRetryResources, AddResource adds the
 // specified object to the cluster according to its type and returns the error,
 // if any, yielded during object creation.
-func (h *gwEventHandler) AddResource(obj interface{}, _ bool) error {
+func (h *gwEventHandler) AddResource(obj interface{}, fromRetryLoop bool) error {
 	switch h.objType {
 	case factory.ServiceForGatewayType:
 		svc := obj.(*corev1.Service)
@@ -123,7 +126,7 @@ func (h *gwEventHandler) AddResource(obj interface{}, _ bool) error {
 		return h.g.AddEgressIP(eip)
 
 	default:
-		return fmt.Errorf("no add function for object type %s", h.objType)
+		return h.g.AddResource(h.objType, obj, fromRetryLoop)
 	}
 }
 
@@ -131,7 +134,7 @@ func (h *gwEventHandler) AddResource(obj interface{}, _ bool) error {
 // the specified object in the cluster to its version in newObj according to its type
 // and returns the error, if any, yielded during the object update. The inRetryCache
 // boolean argument is to indicate if the given resource is in the retryCache or not.
-func (h *gwEventHandler) UpdateResource(oldObj, newObj interface{}, _ bool) error {
+func (h *gwEventHandler) UpdateResource(oldObj, newObj interface{}, fromRetryLoop bool) error {
 	switch h.objType {
 	case factory.ServiceForGatewayType:
 		oldSvc := oldObj.(*corev1.Service)
@@ -149,7 +152,7 @@ func (h *gwEventHandler) UpdateResource(oldObj, newObj interface{}, _ bool) erro
 		return h.g.UpdateEgressIP(oldEIP, newEIP)
 
 	default:
-		return fmt.Errorf("no update function for object type %s", h.objType)
+		return h.g.UpdateResource(h.objType, oldObj, newObj, fromRetryLoop)
 	}
 }
 
@@ -172,7 +175,7 @@ func (h *gwEventHandler) DeleteResource(obj, _ interface{}) error {
 		return h.g.DeleteEgressIP(eip)
 
 	default:
-		return fmt.Errorf("no delete function for object type %s", h.objType)
+		return h.g.DeleteResource(h.objType, obj)
 	}
 }
 
