@@ -11314,6 +11314,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						},
 					},
 				}
+				fakeOvn.controller.eIPC.nodeName = node1Name
 				err = fakeOvn.controller.eIPC.reconcileEgressIP(nil, &eIP)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -11366,6 +11367,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						Name:  types.GWRouterPrefix + node1.Name,
 						UUID:  types.GWRouterPrefix + node1.Name + "-UUID",
 						Ports: []string{types.GWRouterToJoinSwitchPrefix + types.GWRouterPrefix + node1.Name + "-UUID"},
+						Nat:   []string{"pod-node-nat-UUID1"},
 					},
 					&nbdb.LogicalRouter{
 						Name:  types.GWRouterPrefix + node2.Name,
@@ -11380,6 +11382,16 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						ExternalIDs: getEgressIPNATDbIDs(egressIPName, egressPod.Namespace, egressPod.Name, IPFamilyValueV4, fakeOvn.controller.controllerName).GetExternalIDs(),
 						Type:        nbdb.NATTypeSNAT,
 						LogicalPort: &expectedNatLogicalPort2,
+						Options: map[string]string{
+							"stateless": "false",
+						},
+					},
+					&nbdb.NAT{
+						UUID:        "pod-node-nat-UUID1",
+						LogicalIP:   podV4IP,
+						ExternalIP:  node1IPv4,
+						ExternalIDs: nil,
+						Type:        nbdb.NATTypeSNAT,
 						Options: map[string]string{
 							"stateless": "false",
 						},

@@ -513,7 +513,8 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 				libovsdbOvnNBClient,
 				libovsdbOvnSBClient,
 				eventRecorder,
-				wg)
+				wg,
+				runMode.identity)
 			if err != nil {
 				controllerErr = fmt.Errorf("failed to initialize network controller: %w", err)
 				return

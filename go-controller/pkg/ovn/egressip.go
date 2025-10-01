@@ -200,6 +200,7 @@ type EgressIPController struct {
 	v6   bool
 	// controllerName is the name of the controller. For backward compatibility reasons, this is the default network controller name.
 	controllerName string
+	nodeName       string
 }
 
 func NewEIPController(
@@ -214,6 +215,7 @@ func NewEIPController(
 	v6 bool,
 	zone string,
 	controllerName string,
+	nodeName string,
 ) *EgressIPController {
 	e := &EgressIPController{
 		nbClient:          nbClient,
@@ -226,6 +228,7 @@ func NewEIPController(
 		logicalPortCache:  portCache,
 		nodeZoneState:     syncmap.NewSyncMap[bool](),
 		controllerName:    controllerName,
+		nodeName:          nodeName,
 		networkManager:    networkmanager,
 		addressSetFactory: addressSetFactor,
 		zone:              zone,
@@ -768,6 +771,33 @@ func (e *EgressIPController) addPodEgressIPAssignmentsWithLock(ni util.NetInfo, 
 	e.podAssignment.LockKey(getPodKey(pod))
 	defer e.podAssignment.UnlockKey(getPodKey(pod))
 	e.deletePreviousNetworkPodEgressIPAssignments(ni, name, statusAssignments, pod)
+	for _, eipStatus := range statusAssignments {
+		if e.nodeName != "" && eipStatus.Node != e.nodeName {
+			statusToRemove := egressipv1.EgressIPStatusItem{EgressIP: eipStatus.EgressIP, Node: e.nodeName}
+			nodesToLock := []string{statusToRemove.Node, pod.Spec.NodeName}
+			// Sort nodes lexicographically to ensure node locks are acquired in
+			// same order, preventing deadlock situations.
+			sort.Strings(nodesToLock)
+			err := e.nodeZoneState.DoWithLock(nodesToLock[0], func(_ string) error {
+				if statusToRemove.Node == pod.Spec.NodeName {
+					// we are safe, no need to grab lock again
+					if err := e.deletePodEgressIPAssignment(ni, name, statusToRemove, pod); err != nil {
+						return err
+					}
+					return nil
+				}
+				return e.nodeZoneState.DoWithLock(nodesToLock[1], func(_ string) error {
+					if err := e.deletePodEgressIPAssignment(ni, name, statusToRemove, pod); err != nil {
+						return err
+					}
+					return nil
+				})
+			})
+			if err != nil {
+				return err
+			}
+		}
+	}
 	return e.addPodEgressIPAssignments(ni, name, statusAssignments, mark, pod)
 }
 
