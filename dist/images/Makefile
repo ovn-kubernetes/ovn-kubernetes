@@ -39,12 +39,6 @@ ifeq ($(ARCH),amd64)
               "ovn-kube-ubuntu:latest"
 endif
 
-ubuntu-shared-gw-deployment: ubuntu-image
-	# This is the default in the ovnkube*.yaml files
-	# ${OCI_BIN} login -u ovnkube docker.io/ovnkube
-	# ${OCI_BIN} push docker.io/ovnkube/ovn-daemonset-ubuntu:latest
-	./daemonset.sh --image=docker.io/ovnkube/ovn-daemonset-ubuntu:latest
-
 fedora-image: bld
 	${OCI_BIN} build \
 		--build-arg OVN_FROM=${OVN_FROM} \
@@ -53,37 +47,11 @@ fedora-image: bld
 		-t ${IMAGE} \
 		-f Dockerfile.fedora .
 
-fedora-shared-gw-deployment: fedora-image
-	# ${OCI_BIN} login -u ovnkube docker.io/ovnkube
-	# ${OCI_BIN} push docker.io/ovnkube/ovn-daemonset-fedora:latest
-	./daemonset.sh --image=docker.io/ovnkube/${IMAGE}
-
-fedora-dev-local-gw-deployment: fedora-image
-	# ${OCI_BIN} login -u ovnkube docker.io/ovnkube
-	# ${OCI_BIN} push docker.io/ovnkube/ovn-daemonset-fedora:latest
-	./daemonset.sh --image=docker.io/ovnkube/${IMAGE} \
-                    --net-cidr=10.244.0.0/16 \
-                    --svc-cidr=10.96.0.0/12 \
-                    --gateway-mode="local" \
-                    --master-loglevel="5" \
-                    --node-loglevel="5" \
-                    --ovn-loglevel-northd="-vconsole:info -vfile:info" \
-                    --ovn-loglevel-nb="-vconsole:info -vfile:info" \
-                    --ovn-loglevel-sb="-vconsole:info -vfile:info" \
-                    --ovn-loglevel-controller="-vconsole:info" \
-                    --ovn_nb_raft_election_timer="1000" \
-                    --ovn_sb_raft_election_timer="1000"
-
 DOCKER_IMAGE_TAG = latest
 
 # Multi-arch the ubuntu based image with fat-manifest
 ubuntu-image-multi-arch:
 	./push_manifest.sh ovn-daemonset-ubuntu $(DOCKER_IMAGE_TAG)
-
-# This target expands the daemonset yaml templates into final form
-# Use CLI flags or environment variables to customize its behavior.
-daemonsetyaml:
-	./daemonset.sh
 
 .PHONY: ../../go-controller/_output/go/bin/ovnkube
 

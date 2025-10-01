@@ -218,7 +218,7 @@ EOF
   GOBIN="" inv dev-env -n ovn -b frr -p bgp -i "${ip_family}"
 
   $OCI_BIN network rm -f clientnet
-  $OCI_BIN network create --subnet="${METALLB_CLIENT_NET_SUBNET_IPV4}" "${ipv6_network}" --driver bridge clientnet
+  $OCI_BIN network create --subnet=${METALLB_CLIENT_NET_SUBNET_IPV4} ${ipv6_network} --driver bridge clientnet
   $OCI_BIN network connect clientnet frr
   if  [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     # Enable IPv6 forwarding in FRR
@@ -337,7 +337,7 @@ kubectl_wait_pods() {
   for ds in ovnkube-node ovs-node; do
     timeout=$(calculate_timeout ${endtime})
     echo "Waiting for k8s to launch all ${ds} pods (timeout ${timeout})..."
-    kubectl rollout status daemonset -n ovn-kubernetes ${ds} --timeout "${timeout}"s
+    kubectl rollout status daemonset -n ovn-kubernetes ${ds} --timeout "${timeout}s"
   done
 
   pods=""
@@ -349,11 +349,11 @@ kubectl_wait_pods() {
   for name in ${pods}; do
     timeout=$(calculate_timeout ${endtime})
     echo "Waiting for k8s to create ${name} pods (timeout ${timeout})..."
-    kubectl wait pods -n ovn-kubernetes -l name="${name}" --for condition=Ready --timeout="${timeout}"s
+    kubectl wait pods -n ovn-kubernetes -l name="${name}" --for condition=Ready --timeout="${timeout}s"
   done
 
   timeout=$(calculate_timeout ${endtime})
-  if ! kubectl wait -n kube-system --for=condition=ready pods --all --timeout="${timeout}"s ; then
+  if ! kubectl wait -n kube-system --for=condition=ready pods --all --timeout="${timeout}s" ; then
     echo "some pods in the system are not running"
     kubectl get pods -A -o wide || true
     exit 1
@@ -474,19 +474,19 @@ docker_create_second_disconnected_interface() {
   local bridge_name="${1:-xgw}"
   echo "bridge: $bridge_name"
 
-  if [ "${OCI_BIN}" = "podman" ]; then
-    # docker and podman do different things with the --internal parameter:
-    # - docker installs iptables rules to drop traffic on a different subnet
-    #   than the bridge and we don't want that.
-    # - podman does not set the bridge as default gateway and we want that.
-    # So we need it with podman but not with docker. Neither allows us to create
-    # a bridge network without IPAM which would be ideal, so perhaps the best
-    # option would be a manual setup.
-    local podman_params="--internal"
-  fi
-
   # Create the network without subnets; ignore if already exists.
-  "$OCI_BIN" network create --driver=bridge "${podman_params-}" "$bridge_name" || true
+  # docker and podman do different things with the --internal parameter:
+  # - docker installs iptables rules to drop traffic on a different subnet
+  #   than the bridge and we don't want that.
+  # - podman does not set the bridge as default gateway and we want that.
+  # So we need it with podman but not with docker. Neither allows us to create
+  # a bridge network without IPAM which would be ideal, so perhaps the best
+  # option would be a manual setup.
+  if [ "${OCI_BIN}" = "podman" ]; then
+    "$OCI_BIN" network create --driver=bridge --internal "$bridge_name" || true
+  else
+    "$OCI_BIN" network create --driver=bridge "$bridge_name" || true
+  fi
 
   KIND_NODES=$(kind_get_nodes)
   for n in $KIND_NODES; do
@@ -640,7 +640,7 @@ kubectl_wait_dnsnameresolver_pods() {
 
   timeout=$(calculate_timeout ${endtime})
   echo "Waiting for pods in dnsnameresolver-operator namespace to become ready (timeout ${timeout})..."
-  kubectl wait -n dnsnameresolver-operator --for=condition=ready pods --all --timeout="${timeout}"s
+  kubectl wait -n dnsnameresolver-operator --for=condition=ready pods --all --timeout="${timeout}s"
 }
 
 get_kubevirt_release_url() {
@@ -759,7 +759,7 @@ deploy_bgp_external_server() {
   fi
   $OCI_BIN rm -f bgpserver
   $OCI_BIN network rm -f bgpnet
-  $OCI_BIN network create --subnet="${BGP_SERVER_NET_SUBNET_IPV4}" "${ipv6_network}" --driver bridge bgpnet
+  $OCI_BIN network create --subnet=${BGP_SERVER_NET_SUBNET_IPV4} ${ipv6_network} --driver bridge bgpnet
   $OCI_BIN network connect bgpnet frr
   $OCI_BIN run  --cap-add NET_ADMIN --user 0  -d --network bgpnet  --rm  --name bgpserver -p 8080:8080  registry.k8s.io/e2e-test-images/agnhost:2.45 netexec
   # let's make the bgp external server have its default route towards FRR router so that we don't need to add routes during tests back to the pods in the

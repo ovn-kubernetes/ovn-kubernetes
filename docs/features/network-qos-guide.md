@@ -16,7 +16,7 @@ This guide provides a step-by-step example of how to use this feature. Before yo
 
 ```bash
 cd contrib
-./kind-helm.sh -nqe -mne ;  #  --enable-network-qos --enable-multi-network
+./kind.sh -nqe -mne ;  #  --enable-network-qos --enable-multi-network
 ```
 
 ## **2 Create a Secondary Network**
