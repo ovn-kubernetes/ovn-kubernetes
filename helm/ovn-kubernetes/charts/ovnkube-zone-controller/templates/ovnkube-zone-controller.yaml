@@ -360,6 +360,10 @@ spec:
             configMapKeyRef:
               name: ovn-config
               key: host_network_namespace
+        - name: OVN_DYNAMIC_UDN_ALLOCATION
+          value: {{ hasKey .Values.global "enableDynamicUDNAllocation" | ternary .Values.global.enableDynamicUDNAllocation false | quote }}
+        - name: OVN_DYNAMIC_UDN_GRACE_PERIOD
+          value: {{ default "" .Values.global.dynamicUDNGracePeriod | quote }}
         - name: OVN_NORTH
           value: "local"
         - name: OVN_SOUTH
