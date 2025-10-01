@@ -1152,7 +1152,7 @@ fixup_kubeconfig_names() {
 remove_default_route() {
   KIND_NODES=$(kind get nodes --name "${KIND_CLUSTER_NAME}")
   for n in $KIND_NODES; do
-    docker exec "$n" ip route delete default
+    $OCI_BIN exec "$n" ip route delete default
   done
 }
 
@@ -1161,9 +1161,9 @@ add_dns_hostnames() {
   KIND_NODES=$(kind get nodes --name "${KIND_CLUSTER_NAME}")
   # find all IPs and build dns entries
   for n in $KIND_NODES; do
-	ip=$(docker container inspect -f '{{ .NetworkSettings.Networks.kind.IPAddress }}' $n)
+	ip=$($OCI_BIN container inspect -f '{{ .NetworkSettings.Networks.kind.IPAddress }}' $n)
         dns+="$ip $n \n"
-        ip=$(docker container inspect -f '{{ .NetworkSettings.Networks.kind.GlobalIPv6Address }}' $n)
+        ip=$($OCI_BIN container inspect -f '{{ .NetworkSettings.Networks.kind.GlobalIPv6Address }}' $n)
 	dns+="$ip $n \n"
   done
 
@@ -1171,7 +1171,7 @@ add_dns_hostnames() {
 
   # update dns on each node
   for n in $KIND_NODES; do
-	docker exec $n bash -c "echo  $dns >> /etc/hosts"
+	$OCI_BIN exec $n bash -c "echo  $dns >> /etc/hosts"
   done
 }
 

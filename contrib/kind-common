@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 if [ "${BASH_SOURCE[0]}" -ef "$0" ]
 then
     >&2 echo 'This file contains bash helper functions that are common to'
@@ -76,20 +78,21 @@ setup_kubectl_bin() {
         OS_TYPE="darwin"
     fi
 
-    pushd ./bin
+    pushd ./bin || exit 1
        if [ ! -f ./kubectl ]; then
            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/${OS_TYPE}/${ARCH}/kubectl"
            if_error_exit "Failed to download kubectl failed!"
        fi
-    popd
+    popd || exit 1
 
     chmod +x ./bin/kubectl
-    export PATH=${PATH}:$(pwd)/bin
+    PATH=${PATH}:$(pwd)/bin
+    export PATH
 }
 
 command_exists() {
   cmd="$1"
-  command -v ${cmd} >/dev/null 2>&1
+  command -v "${cmd}" >/dev/null 2>&1
 }
 
 detect_apiserver_url() {
@@ -103,12 +106,12 @@ detect_apiserver_url() {
   CP_NODE=${CP_NODE%:*}
   # find node IP address in the kind network
   if [ "$PLATFORM_IPV4_SUPPORT" == false ] && [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
-    NODE_IP="[$($OCI_BIN inspect -f '{{.NetworkSettings.Networks.kind.GlobalIPv6Address}}' $CP_NODE)]"
+    NODE_IP="[$($OCI_BIN inspect -f '{{.NetworkSettings.Networks.kind.GlobalIPv6Address}}' "$CP_NODE")]"
   else
     NODE_IP=$($OCI_BIN inspect -f '{{.NetworkSettings.Networks.kind.IPAddress}}' "$CP_NODE")
   fi
   # replace node name with node IP address
-  API_URL=${DNS_NAME_URL/$CP_NODE/$NODE_IP}
+  export API_URL=${DNS_NAME_URL/$CP_NODE/$NODE_IP}
 }
 
 docker_disable_ipv6() {
@@ -130,7 +133,7 @@ coredns_patch() {
   dns_server="8.8.8.8"
   # No need for ipv6 nameserver for dual stack, it will ask for 
   # A and AAAA records
-  if [ "$IP_FAMILY" == "ipv6" ]; then
+  if [ "$IP_FAMILY" == "ipv6" ]; then  # shellcheck disable=SC2153
     dns_server="2001:4860:4860::8888"
   fi
 
@@ -177,9 +180,9 @@ install_metallb() {
   local builddir
   builddir=$(mktemp -d "${METALLB_DIR}/XXXXXX")
 
-  pushd "${builddir}"
+  pushd "${builddir}" || exit
   git clone https://github.com/metallb/metallb.git
-  cd metallb
+  cd metallb || exit 1
   git checkout $metallb_version
 
   # kindest/node image v1.32+ that we use is only compatible with kind v0.27+
@@ -215,7 +218,7 @@ EOF
   GOBIN="" inv dev-env -n ovn -b frr -p bgp -i "${ip_family}"
 
   $OCI_BIN network rm -f clientnet
-  $OCI_BIN network create --subnet="${METALLB_CLIENT_NET_SUBNET_IPV4}" ${ipv6_network} --driver bridge clientnet
+  $OCI_BIN network create --subnet="${METALLB_CLIENT_NET_SUBNET_IPV4}" "${ipv6_network}" --driver bridge clientnet
   $OCI_BIN network connect clientnet frr
   if  [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     # Enable IPv6 forwarding in FRR
@@ -224,7 +227,7 @@ EOF
   # Note: this image let's us use it also for creating load balancer backends that can send big packets
   $OCI_BIN rm -f lbclient
   $OCI_BIN run  --cap-add NET_ADMIN --user 0  -d --network clientnet  --rm  --name lbclient  quay.io/itssurya/dev-images:metallb-lbservice
-  popd
+  popd || exit 1
   delete_metallb_dir
 
   # The metallb commit https://github.com/metallb/metallb/commit/1a8e52c393d40efd17f28491616f6f9f7790a522
@@ -280,16 +283,16 @@ EOF
 
 install_plugins() {
   git clone https://github.com/containernetworking/plugins.git
-  pushd plugins
+  pushd plugins || exit
   CGO_ENABLED=0 ./build_linux.sh
   KIND_NODES=$(kind_get_nodes)
   # Opted for not overwritting the existing plugins
   for node in $KIND_NODES; do
     for plugin in bandwidth bridge dhcp dummy firewall host-device ipvlan macvlan sbr static tuning vlan vrf; do
-      $OCI_BIN cp ./bin/$plugin $node:/opt/cni/bin/
+      $OCI_BIN cp ./bin/$plugin "$node":/opt/cni/bin/
     done
   done
-  popd
+  popd || exit
   rm -rf plugins
 }
 
@@ -334,7 +337,7 @@ kubectl_wait_pods() {
   for ds in ovnkube-node ovs-node; do
     timeout=$(calculate_timeout ${endtime})
     echo "Waiting for k8s to launch all ${ds} pods (timeout ${timeout})..."
-    kubectl rollout status daemonset -n ovn-kubernetes ${ds} --timeout ${timeout}s
+    kubectl rollout status daemonset -n ovn-kubernetes ${ds} --timeout "${timeout}"s
   done
 
   pods=""
@@ -346,11 +349,11 @@ kubectl_wait_pods() {
   for name in ${pods}; do
     timeout=$(calculate_timeout ${endtime})
     echo "Waiting for k8s to create ${name} pods (timeout ${timeout})..."
-    kubectl wait pods -n ovn-kubernetes -l name=${name} --for condition=Ready --timeout=${timeout}s
+    kubectl wait pods -n ovn-kubernetes -l name="${name}" --for condition=Ready --timeout="${timeout}"s
   done
 
   timeout=$(calculate_timeout ${endtime})
-  if ! kubectl wait -n kube-system --for=condition=ready pods --all --timeout=${timeout}s ; then
+  if ! kubectl wait -n kube-system --for=condition=ready pods --all --timeout="${timeout}"s ; then
     echo "some pods in the system are not running"
     kubectl get pods -A -o wide || true
     exit 1
@@ -371,7 +374,7 @@ calculate_timeout() {
 
 sleep_until_pods_settle() {
   echo "Pods are all up, allowing things settle for ${KIND_SETTLE_DURATION} seconds..."
-  sleep ${KIND_SETTLE_DURATION}
+  sleep "${KIND_SETTLE_DURATION}"
 }
 
 is_nested_virt_enabled() {
@@ -397,16 +400,17 @@ install_kubevirt() {
     KUBEVIRT_VERSION=${KUBEVIRT_VERSION:-"v1.4.0"}
 
     for node in $(kubectl get node --no-headers  -o custom-columns=":metadata.name"); do
-        $OCI_BIN exec -t $node bash -c "echo 'fs.inotify.max_user_watches=1048576' >> /etc/sysctl.conf"
-        $OCI_BIN exec -t $node bash -c "echo 'fs.inotify.max_user_instances=512' >> /etc/sysctl.conf"
-        $OCI_BIN exec -i $node bash -c "sysctl -p /etc/sysctl.conf"
+        $OCI_BIN exec -t "$node" bash -c "echo 'fs.inotify.max_user_watches=1048576' >> /etc/sysctl.conf"
+        $OCI_BIN exec -t "$node" bash -c "echo 'fs.inotify.max_user_instances=512' >> /etc/sysctl.conf"
+        $OCI_BIN exec -i "$node" bash -c "sysctl -p /etc/sysctl.conf"
         if [[ "${node}" =~ worker ]]; then
-            kubectl label nodes $node node-role.kubernetes.io/worker="" --overwrite=true
+            kubectl label nodes "$node" node-role.kubernetes.io/worker="" --overwrite=true
         fi
     done
 
     if [ "$(kubectl get kubevirts -n kubevirt kubevirt -ojsonpath='{.status.phase}')" != "Deployed" ]; then
-      local kubevirt_release_url=$(get_kubevirt_release_url "$KUBEVIRT_VERSION")
+      local kubevirt_release_url
+      kubevirt_release_url=$(get_kubevirt_release_url "$KUBEVIRT_VERSION")
       echo "Deploying Kubevirt from $kubevirt_release_url"
       kubectl apply -f "${kubevirt_release_url}/kubevirt-operator.yaml"
       kubectl apply -f "${kubevirt_release_url}/kubevirt-cr.yaml"
@@ -419,14 +423,14 @@ install_kubevirt() {
         kubectl get pod -n kubevirt -l || true
         kubectl describe pod -n kubevirt -l || true
         for p in $(kubectl get pod -n kubevirt -l -o name |sed "s#pod/##"); do
-            kubectl logs -p --all-containers=true -n kubevirt $p || true
-            kubectl logs --all-containers=true -n kubevirt $p || true
+            kubectl logs -p --all-containers=true -n kubevirt "$p" || true
+            kubectl logs --all-containers=true -n kubevirt "$p" || true
         done
     fi
 
     kubectl -n kubevirt patch kubevirt kubevirt --type=json --patch '[{"op":"add","path":"/spec/configuration/developerConfiguration","value":{"featureGates":[]}},{"op":"add","path":"/spec/configuration/developerConfiguration/featureGates/-","value":"NetworkBindingPlugins"},{"op":"add","path":"/spec/configuration/developerConfiguration/featureGates/-","value":"DynamicPodInterfaceNaming"}]'
 
-    local kubevirt_stable_release_url=$(get_kubevirt_release_url "stable")
+    # local kubevirt_stable_release_url=$(get_kubevirt_release_url "stable")
     kubectl -n kubevirt patch kubevirt kubevirt --type=json --patch '[{"op":"add","path":"/spec/configuration/network","value":{}},{"op":"add","path":"/spec/configuration/network/binding","value":{"l2bridge":{"domainAttachmentType":"managedTap","migration":{}}}}]'
 
 }
@@ -482,7 +486,7 @@ docker_create_second_disconnected_interface() {
   fi
 
   # Create the network without subnets; ignore if already exists.
-  "$OCI_BIN" network create --driver=bridge ${podman_params-} "$bridge_name" || true
+  "$OCI_BIN" network create --driver=bridge "${podman_params-}" "$bridge_name" || true
 
   KIND_NODES=$(kind_get_nodes)
   for n in $KIND_NODES; do
@@ -515,24 +519,24 @@ set_dnsnameresolver_images() {
 # which contains the Dockerfile. The second argument is the image name along with the tag. The
 # third argument is the name of the Dockerfile to use for building the image. 
 build_image() {
-  pushd ${1}
-  $OCI_BIN build -t "${2}" -f ${3} .
+  pushd "${1}" || exit
+  $OCI_BIN build -t "${2}" -f "${3}" .
 
   # store in local registry
   if [ "$KIND_LOCAL_REGISTRY" == true ];then
     echo "Pushing built image (${2}) to local $OCI_BIN registry"
     $OCI_BIN push "${2}"
   fi
-  popd
+  popd || exit
 }
 
 build_dnsnameresolver_images() {
   set_dnsnameresolver_images
   rm -rf /tmp/coredns-ocp-dnsnameresolver
   git clone https://github.com/openshift/coredns-ocp-dnsnameresolver.git /tmp/coredns-ocp-dnsnameresolver
-  pushd /tmp/coredns-ocp-dnsnameresolver
+  pushd /tmp/coredns-ocp-dnsnameresolver || exit
   git checkout 850cb5757982d368195744d3565c1565a7f0d43a
-  popd
+  popd || exit
  
   build_image /tmp/coredns-ocp-dnsnameresolver ${COREDNS_WITH_OCP_DNSNAMERESOLVER} Dockerfile.upstream
 
@@ -557,12 +561,12 @@ install_image() {
 }
 
 install_dnsnameresolver_images() {
-  install_image ${COREDNS_WITH_OCP_DNSNAMERESOLVER}
-  install_image ${DNSNAMERESOLVER_OPERATOR}
+  install_image "${COREDNS_WITH_OCP_DNSNAMERESOLVER}"
+  install_image "${DNSNAMERESOLVER_OPERATOR}"
 }
 
 install_dnsnameresolver_operator() {
-  pushd /tmp/coredns-ocp-dnsnameresolver/operator
+  pushd /tmp/coredns-ocp-dnsnameresolver/operator || exit
   
   # Before installing DNSNameResolver operator, update the args so that the operator
   # is configured with the correct values.
@@ -572,8 +576,8 @@ install_dnsnameresolver_operator() {
     -e 's/^\(.*--coredns-port=\).*/\153/' config/default/manager_auth_proxy_patch.yaml
 
   make install
-  make deploy IMG=${DNSNAMERESOLVER_OPERATOR}
-  popd
+  make deploy IMG="${DNSNAMERESOLVER_OPERATOR}"
+  popd || exit
 }
 
 update_clusterrole_coredns() {
@@ -606,7 +610,7 @@ update_clusterrole_coredns() {
 
 add_ocp_dnsnameresolver_to_coredns_config() {
   original_corefile=$(kubectl get -n=kube-system configmap/coredns -o=jsonpath="{.data['Corefile']}")
-  if ! grep -wq "ocp_dnsnameresolver" <<< ${original_corefile}; then
+  if ! grep -wq "ocp_dnsnameresolver" <<< "${original_corefile}"; then
     echo "Original CoreDNS Corefile:"
     echo "${original_corefile}"
     updated_corefile=$(
@@ -623,7 +627,7 @@ add_ocp_dnsnameresolver_to_coredns_config() {
 }
 
 update_coredns_deployment_image() {
-  kubectl -n=kube-system set image deploy/coredns coredns=${COREDNS_WITH_OCP_DNSNAMERESOLVER}
+  kubectl -n=kube-system set image deploy/coredns coredns="${COREDNS_WITH_OCP_DNSNAMERESOLVER}"
 }
 
 # kubectl_wait_dnsnameresolver_pods will set a total timeout of 60s and wait for the pods
@@ -636,7 +640,7 @@ kubectl_wait_dnsnameresolver_pods() {
 
   timeout=$(calculate_timeout ${endtime})
   echo "Waiting for pods in dnsnameresolver-operator namespace to become ready (timeout ${timeout})..."
-  kubectl wait -n dnsnameresolver-operator --for=condition=ready pods --all --timeout=${timeout}s
+  kubectl wait -n dnsnameresolver-operator --for=condition=ready pods --all --timeout="${timeout}"s
 }
 
 get_kubevirt_release_url() {
@@ -666,7 +670,8 @@ get_kubevirt_release_url() {
 }
 
 readonly FRR_K8S_VERSION=v0.0.17
-readonly FRR_TMP_DIR=$(mktemp -d -u)
+FRR_TMP_DIR=$(mktemp -d -u)
+readonly FRR_TMP_DIR
 
 clone_frr() {
   [ -d "$FRR_TMP_DIR" ] || {
@@ -678,9 +683,9 @@ clone_frr() {
     curl -Ls https://github.com/jcaamano/frr-k8s/archive/refs/heads/ovnk-bgp.tar.gz | tar xzvf - frr-k8s-ovnk-bgp/patches --strip-components 1
 
     # Change into the cloned repo directory before applying patches
-    pushd frr-k8s
+    pushd frr-k8s || exit
     git apply ../patches/*
-    popd
+    popd || exit
 
     popd || exit 1
   }
@@ -754,7 +759,7 @@ deploy_bgp_external_server() {
   fi
   $OCI_BIN rm -f bgpserver
   $OCI_BIN network rm -f bgpnet
-  $OCI_BIN network create --subnet="${BGP_SERVER_NET_SUBNET_IPV4}" ${ipv6_network} --driver bridge bgpnet
+  $OCI_BIN network create --subnet="${BGP_SERVER_NET_SUBNET_IPV4}" "${ipv6_network}" --driver bridge bgpnet
   $OCI_BIN network connect bgpnet frr
   $OCI_BIN run  --cap-add NET_ADMIN --user 0  -d --network bgpnet  --rm  --name bgpserver -p 8080:8080  registry.k8s.io/e2e-test-images/agnhost:2.45 netexec
   # let's make the bgp external server have its default route towards FRR router so that we don't need to add routes during tests back to the pods in the
@@ -803,7 +808,7 @@ set_nodes_default_gw() {
 
   KIND_NODES=$(kind_get_nodes)
   for node in $KIND_NODES; do
-    $OCI_BIN exec "$node" $ip_cmd $route_cmd "$gw"
+    $OCI_BIN exec "$node" "$ip_cmd" "$route_cmd" "$gw"
   done
 }
 
@@ -839,7 +844,7 @@ install_ffr_k8s() {
     # Find all line numbers where the IPv4 prefix is defined
     IPv6_LINE="            - prefix: ${BGP_SERVER_NET_SUBNET_IPV6}"
     # Process each occurrence of the IPv4 prefix
-    for LINE_NUM in $(grep -n "prefix: ${BGP_SERVER_NET_SUBNET_IPV4}" receive_filtered.yaml | cut -d ':' -f 1); do
+    grep -n "prefix: ${BGP_SERVER_NET_SUBNET_IPV4}" receive_filtered.yaml | cut -d ':' -f 1 | while read -r LINE_NUM; do
       # Insert the IPv6 prefix after each IPv4 prefix line
       sed -i "${LINE_NUM}a\\${IPv6_LINE}" receive_filtered.yaml
     done
@@ -877,9 +882,9 @@ EOF
     echo "Found nodes: $NODES"
     for node in $NODES; do
       # Get the addresses
-      node_ips=$(kubectl get node $node -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')
+      node_ips=$(kubectl get node "$node" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')
       # Get subnet information
-      subnet_json=$(kubectl get node $node -o jsonpath='{.metadata.annotations.k8s\.ovn\.org/node-subnets}')
+      subnet_json=$(kubectl get node "$node" -o jsonpath='{.metadata.annotations.k8s\.ovn\.org/node-subnets}')
       
       if [ "$PLATFORM_IPV4_SUPPORT" == true ]; then
         # Extract IPv4 address (first address)
@@ -889,7 +894,7 @@ EOF
         # Add IPv4 route
         if [ -n "$ipv4_subnet" ] && [ -n "$node_ipv4" ]; then
           echo "Adding IPv4 route for $node ($node_ipv4): $ipv4_subnet"
-          sudo ip route replace $ipv4_subnet via $node_ipv4
+          sudo ip route replace "$ipv4_subnet" via "$node_ipv4"
         fi
       fi
 
@@ -901,7 +906,7 @@ EOF
         
         if [ -n "$ipv6_subnet" ] && [ -n "$node_ipv6" ]; then
           echo "Adding IPv6 route for $node ($node_ipv6): $ipv6_subnet"
-          sudo ip -6 route replace $ipv6_subnet via $node_ipv6
+          sudo ip -6 route replace "$ipv6_subnet" via "$node_ipv6"
         fi
       fi
     done
