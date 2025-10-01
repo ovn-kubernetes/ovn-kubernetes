@@ -72,6 +72,8 @@ OVN_DISABLE_OVN_IFACE_ID_VER="false"
 OVN_MULTI_NETWORK_ENABLE=
 OVN_NETWORK_SEGMENTATION_ENABLE=
 OVN_PRE_CONF_UDN_ADDR_ENABLE=
+OVN_DYNAMIC_UDN_ALLOCATION=
+OVN_DYNAMIC_UDN_GRACE_PERIOD=
 OVN_ROUTE_ADVERTISEMENTS_ENABLE=
 OVN_ADVERTISE_DEFAULT_NETWORK=
 OVN_ADVERTISED_UDN_ISOLATION_MODE=
@@ -277,6 +279,12 @@ while [ "$1" != "" ]; do
     ;;
   --preconfigured-udn-addresses-enable)
     OVN_PRE_CONF_UDN_ADDR_ENABLE=$VALUE
+    ;;
+  --enable-dynamic-udn-allocation)
+    OVN_DYNAMIC_UDN_ALLOCATION=$VALUE
+    ;;
+  --udn-deletion-grace-period)
+    OVN_DYNAMIC_UDN_GRACE_PERIOD=$VALUE
     ;;
   --route-advertisements-enable)
     OVN_ROUTE_ADVERTISEMENTS_ENABLE=$VALUE
@@ -568,6 +576,10 @@ ovn_enable_interconnect=${OVN_ENABLE_INTERCONNECT}
 echo "ovn_enable_interconnect: ${ovn_enable_interconnect}"
 ovn_enable_multi_external_gateway=${OVN_ENABLE_MULTI_EXTERNAL_GATEWAY}
 echo "ovn_enable_multi_external_gateway: ${ovn_enable_multi_external_gateway}"
+ovn_enable_dynamic_udn_allocation=${OVN_DYNAMIC_UDN_ALLOCATION}
+echo "ovn_enable_dynamic_udn_allocation: ${ovn_enable_dynamic_udn_allocation}"
+ovn_dynamic_udn_grace_period=${OVN_DYNAMIC_UDN_GRACE_PERIOD}
+echo "ovn_dynamic_udn_grace_period=${ovn_dynamic_udn_grace_period}"
 
 ovn_enable_ovnkube_identity=${OVN_ENABLE_OVNKUBE_IDENTITY}
 echo "ovn_enable_ovnkube_identity: ${ovn_enable_ovnkube_identity}"
@@ -625,6 +637,8 @@ ovn_image=${ovnkube_image} \
   ovn_multi_network_enable=${ovn_multi_network_enable} \
   ovn_network_segmentation_enable=${ovn_network_segmentation_enable} \
   ovn_pre_conf_udn_addr_enable=${ovn_pre_conf_udn_addr_enable} \
+  ovn_enable_dynamic_udn_allocation=${ovn_enable_dynamic_udn_allocation} \
+  ovn_dynamic_udn_grace_period=${ovn_dynamic_udn_grace_period} \
   ovn_route_advertisements_enable=${ovn_route_advertisements_enable} \
   ovn_advertised_udn_isolation_mode=${ovn_advertised_udn_isolation_mode} \
   ovn_egress_service_enable=${ovn_egress_service_enable} \
@@ -682,6 +696,8 @@ ovn_image=${ovnkube_image} \
   ovn_network_segmentation_enable=${ovn_network_segmentation_enable} \
   ovn_route_advertisements_enable=${ovn_route_advertisements_enable} \
   ovn_advertised_udn_isolation_mode=${ovn_advertised_udn_isolation_mode} \
+  ovn_enable_dynamic_udn_allocation=${ovn_enable_dynamic_udn_allocation} \
+  ovn_dynamic_udn_grace_period=${ovn_dynamic_udn_grace_period} \
   ovn_egress_service_enable=${ovn_egress_service_enable} \
   ovn_ssl_en=${ovn_ssl_en} \
   ovn_remote_probe_interval=${ovn_remote_probe_interval} \
@@ -738,6 +754,8 @@ ovn_image=${image} \
   ovn_egress_ip_healthcheck_port=${ovn_egress_ip_healthcheck_port} \
   ovn_egress_service_enable=${ovn_egress_service_enable} \
   ovn_netflow_targets=${ovn_netflow_targets} \
+  ovn_enable_dynamic_udn_allocation=${ovn_enable_dynamic_udn_allocation} \
+  ovn_dynamic_udn_grace_period=${ovn_dynamic_udn_grace_period} \
   ovn_sflow_targets=${ovn_sflow_targets} \
   ovn_ipfix_targets=${ovn_ipfix_targets} \
   ovn_ipfix_sampling=${ovn_ipfix_sampling} \
@@ -782,6 +800,8 @@ ovn_image=${ovnkube_image} \
   ovn_network_segmentation_enable=${ovn_network_segmentation_enable} \
   ovn_route_advertisements_enable=${ovn_route_advertisements_enable} \
   ovn_advertised_udn_isolation_mode=${ovn_advertised_udn_isolation_mode} \
+  ovn_enable_dynamic_udn_allocation=${ovn_enable_dynamic_udn_allocation} \
+  ovn_dynamic_udn_grace_period=${ovn_dynamic_udn_grace_period} \
   ovn_egress_service_enable=${ovn_egress_service_enable} \
   ovn_ssl_en=${ovn_ssl_en} \
   ovn_master_count=${ovn_master_count} \
@@ -833,6 +853,8 @@ ovn_image=${ovnkube_image} \
   ovn_pre_conf_udn_addr_enable=${ovn_pre_conf_udn_addr_enable} \
   ovn_route_advertisements_enable=${ovn_route_advertisements_enable} \
   ovn_advertised_udn_isolation_mode=${ovn_advertised_udn_isolation_mode} \
+  ovn_enable_dynamic_udn_allocation=${ovn_enable_dynamic_udn_allocation} \
+  ovn_dynamic_udn_grace_period=${ovn_dynamic_udn_grace_period} \
   ovn_egress_service_enable=${ovn_egress_service_enable} \
   ovn_ssl_en=${ovn_ssl_en} \
   ovn_master_count=${ovn_master_count} \
@@ -927,6 +949,8 @@ ovn_image=${ovnkube_image} \
   ovn_sflow_targets=${ovn_sflow_targets} \
   ovn_ipfix_targets=${ovn_ipfix_targets} \
   ovn_ipfix_sampling=${ovn_ipfix_sampling} \
+  ovn_enable_dynamic_udn_allocation=${ovn_enable_dynamic_udn_allocation} \
+  ovn_dynamic_udn_grace_period=${ovn_dynamic_udn_grace_period} \
   ovn_ipfix_cache_max_flows=${ovn_ipfix_cache_max_flows} \
   ovn_ipfix_cache_active_timeout=${ovn_ipfix_cache_active_timeout} \
   ovn_ex_gw_networking_interface=${ovn_ex_gw_networking_interface} \
@@ -982,6 +1006,8 @@ ovn_image=${ovnkube_image} \
   ovn_multi_network_enable=${ovn_multi_network_enable} \
   ovn_network_segmentation_enable=${ovn_network_segmentation_enable} \
   ovn_pre_conf_udn_addr_enable=${ovn_pre_conf_udn_addr_enable} \
+  ovn_enable_dynamic_udn_allocation=${ovn_enable_dynamic_udn_allocation} \
+  ovn_dynamic_udn_grace_period=${ovn_dynamic_udn_grace_period} \
   ovn_route_advertisements_enable=${ovn_route_advertisements_enable} \
   ovn_advertised_udn_isolation_mode=${ovn_advertised_udn_isolation_mode} \
   ovn_ssl_en=${ovn_ssl_en} \

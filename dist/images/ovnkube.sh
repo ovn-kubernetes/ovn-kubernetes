@@ -275,6 +275,10 @@ ovn_pre_conf_udn_addr_enable=${OVN_PRE_CONF_UDN_ADDR_ENABLE:=false}
 ovn_route_advertisements_enable=${OVN_ROUTE_ADVERTISEMENTS_ENABLE:=false}
 #OVN_ADVERTISED_UDN_ISOLATION_MODE - pod network isolation between advertised UDN networks.
 ovn_advertised_udn_isolation_mode=${OVN_ADVERTISED_UDN_ISOLATION_MODE:=strict}
+#OVN_DYNAMIC_UDN_ALLOCATION - dynamic UDN allocation when a node requires it (pod or egress IP)
+ovn_enable_dynamic_udn_allocation=${OVN_DYNAMIC_UDN_ALLOCATION}
+#OVN_DYNAMIC_UDN_GRACE_PERIOD - period of time before an inactive UDN will be garbage collected
+ovn_dynamic_udn_grace_period=${OVN_DYNAMIC_UDN_GRACE_PERIOD:-}
 ovn_acl_logging_rate_limit=${OVN_ACL_LOGGING_RATE_LIMIT:-"20"}
 ovn_netflow_targets=${OVN_NETFLOW_TARGETS:-}
 ovn_sflow_targets=${OVN_SFLOW_TARGETS:-}
@@ -1303,6 +1307,18 @@ ovn-master() {
       advertised_udn_isolation_flag="--advertised-udn-isolation-mode=${ovn_advertised_udn_isolation_mode}"
   fi
 
+  dynamic_udn_allocation_flag=
+  if [[ ${ovn_enable_dynamic_udn_allocation} == "true" ]]; then
+    dynamic_udn_allocation_flag="--enable-dynamic-udn-allocation"
+  fi
+  echo "dynamic_udn_allocation_flag=${dynamic_udn_allocation_flag}"
+
+  dynamic_udn_grace_period=
+  if [[ -n ${ovn_dynamic_udn_grace_period} ]]; then
+    dynamic_udn_grace_period="--udn-deletion-grace-period ${ovn_dynamic_udn_grace_period}"
+  fi
+  echo "dynamic_udn_grace_period=${dynamic_udn_grace_period}"
+
   egressservice_enabled_flag=
   if [[ ${ovn_egressservice_enable} == "true" ]]; then
 	  egressservice_enabled_flag="--enable-egress-service"
@@ -1430,6 +1446,8 @@ ovn-master() {
     ${nohostsubnet_label_option} \
     ${ovn_stateless_netpol_enable_flag} \
     ${ovn_disable_requestedchassis_flag} \
+    ${dynamic_udn_allocation_flag} \
+    ${dynamic_udn_grace_period} \
     --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
     --gateway-mode=${ovn_gateway_mode} ${ovn_gateway_opts} \
     --host-network-namespace ${ovn_host_network_namespace} \
@@ -1607,6 +1625,18 @@ ovnkube-controller() {
   fi
   echo "pre_conf_udn_addr_enable_flag=${pre_conf_udn_addr_enable_flag}"
 
+  dynamic_udn_allocation_flag=
+  if [[ ${ovn_enable_dynamic_udn_allocation} == "true" ]]; then
+    dynamic_udn_allocation_flag="--enable-dynamic-udn-allocation"
+  fi
+  echo "dynamic_udn_allocation_flag=${dynamic_udn_allocation_flag}"
+
+  dynamic_udn_grace_period=
+  if [[ -n ${ovn_dynamic_udn_grace_period} ]]; then
+    dynamic_udn_grace_period="--udn-deletion-grace-period ${ovn_dynamic_udn_grace_period}"
+  fi
+  echo "dynamic_udn_grace_period=${dynamic_udn_grace_period}"
+
   route_advertisements_enabled_flag=
   if [[ ${ovn_route_advertisements_enable} == "true" ]]; then
 	  route_advertisements_enabled_flag="--enable-route-advertisements"
@@ -1754,6 +1784,8 @@ ovnkube-controller() {
     ${ovn_v6_masquerade_subnet_opt} \
     ${network_qos_enabled_flag} \
     ${ovn_enable_dnsnameresolver_flag} \
+    ${dynamic_udn_allocation_flag} \
+    ${dynamic_udn_grace_period} \
     --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
     --gateway-mode=${ovn_gateway_mode} \
     --host-network-namespace ${ovn_host_network_namespace} \
@@ -2186,6 +2218,18 @@ ovnkube-controller-with-node() {
           ovn_stateless_netpol_enable_flag="--enable-stateless-netpol"
   fi
 
+  dynamic_udn_allocation_flag=
+  if [[ ${ovn_enable_dynamic_udn_allocation} == "true" ]]; then
+    dynamic_udn_allocation_flag="--enable-dynamic-udn-allocation"
+  fi
+  echo "dynamic_udn_allocation_flag=${dynamic_udn_allocation_flag}"
+
+  dynamic_udn_grace_period=
+  if [[ -n ${ovn_dynamic_udn_grace_period} ]]; then
+    dynamic_udn_grace_period="--udn-deletion-grace-period ${ovn_dynamic_udn_grace_period}"
+  fi
+  echo "dynamic_udn_grace_period=${dynamic_udn_grace_period}"
+
   ovn_disable_requestedchassis_flag=
   if [[ ${ovn_disable_requestedchassis} == "true" ]]; then
           ovn_disable_requestedchassis_flag="--disable-requestedchassis"
@@ -2244,6 +2288,8 @@ ovnkube-controller-with-node() {
     ${routable_mtu_flag} \
     ${sflow_targets} \
     ${ssl_opts} \
+    ${dynamic_udn_allocation_flag} \
+    ${dynamic_udn_grace_period} \
     ${network_qos_enabled_flag} \
     ${ovn_enable_dnsnameresolver_flag} \
     ${ovn_disable_requestedchassis_flag} \
@@ -2451,6 +2497,18 @@ ovn-cluster-manager() {
   fi
   echo "ovn_enable_dnsnameresolver_flag=${ovn_enable_dnsnameresolver_flag}"
 
+  dynamic_udn_allocation_flag=
+  if [[ ${ovn_enable_dynamic_udn_allocation} == "true" ]]; then
+    dynamic_udn_allocation_flag="--enable-dynamic-udn-allocation"
+  fi
+  echo "dynamic_udn_allocation_flag=${dynamic_udn_allocation_flag}"
+
+  dynamic_udn_grace_period=
+  if [[ -n ${ovn_dynamic_udn_grace_period} ]]; then
+    dynamic_udn_grace_period="--udn-deletion-grace-period ${ovn_dynamic_udn_grace_period}"
+  fi
+  echo "dynamic_udn_grace_period=${dynamic_udn_grace_period}"
+
   echo "=============== ovn-cluster-manager ========== MASTER ONLY"
   /usr/bin/ovnkube --init-cluster-manager ${K8S_NODE} \
     ${anp_enabled_flag} \
@@ -2479,6 +2537,8 @@ ovn-cluster-manager() {
     ${ovn_v4_transit_subnet_opt} \
     ${ovn_v6_transit_subnet_opt} \
     ${network_qos_enabled_flag} \
+    ${dynamic_udn_allocation_flag} \
+    ${dynamic_udn_grace_period} \
     ${ovn_enable_dnsnameresolver_flag} \
     --gateway-mode=${ovn_gateway_mode} \
     --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
@@ -2867,6 +2927,18 @@ ovn-node() {
     ovn_v6_masquerade_subnet_opt="--gateway-v6-masquerade-subnet=${ovn_v6_masquerade_subnet}"
   fi
 
+  dynamic_udn_allocation_flag=
+  if [[ ${ovn_enable_dynamic_udn_allocation} == "true" ]]; then
+    dynamic_udn_allocation_flag="--enable-dynamic-udn-allocation"
+  fi
+  echo "dynamic_udn_allocation_flag=${dynamic_udn_allocation_flag}"
+
+  dynamic_udn_grace_period=
+  if [[ -n ${ovn_dynamic_udn_grace_period} ]]; then
+    dynamic_udn_grace_period="--udn-deletion-grace-period ${ovn_dynamic_udn_grace_period}"
+  fi
+  echo "dynamic_udn_grace_period=${dynamic_udn_grace_period}"
+
   echo "=============== ovn-node   --init-node"
   /usr/bin/ovnkube --init-node ${K8S_NODE} \
         ${anp_enabled_flag} \
@@ -2909,6 +2981,8 @@ ovn-node() {
         ${ovn_unprivileged_flag} \
         ${routable_mtu_flag} \
         ${sflow_targets} \
+        ${dynamic_udn_allocation_flag} \
+        ${dynamic_udn_grace_period} \
         ${network_qos_enabled_flag} \
         --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
         --export-ovs-metrics \
