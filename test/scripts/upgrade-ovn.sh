@@ -3,6 +3,11 @@
 # always exit on errors
 set -ex
 
+DIR="$( cd -- "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+export DIR
+
+source ${DIR}/../../contrib/kind-common
+
 export KUBECONFIG=${KUBECONFIG:-${HOME}/ovn.conf}
 export OVN_IMAGE=${OVN_IMAGE:-ovn-daemonset-fedora:pr}
 
@@ -13,147 +18,58 @@ case $(uname -m) in
     aarch64) ARCH="arm64"   ;;
 esac
 
-kubectl_wait_pods() {
-  # Check that everything is fine and running. IPv6 cluster seems to take a little
-  # longer to come up, so extend the wait time.
-  OVN_TIMEOUT=900s
-  if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
-    OVN_TIMEOUT=1400s
-  fi
-  if ! kubectl wait -n ovn-kubernetes --for=condition=ready pods --all --timeout=${OVN_TIMEOUT} ; then
-    echo "some pods in OVN Kubernetes are not running"
-    kubectl get pods -A -o wide || true
-    kubectl describe po -n ovn-kubernetes
-    exit 1
-  fi
-  if ! kubectl wait -n kube-system --for=condition=ready pods --all --timeout=300s ; then
-    echo "some pods in the system are not running"
-    kubectl get pods -A -o wide || true
-    kubectl describe po -A
-    exit 1
-  fi
-}
-
-kubectl_wait_daemonset(){
-  # takes one daemonset and makes sure its desiredNumberScheduled and numberReady are equal
-  local retries=0
-  local attempts=15
-  while true; do
-    sleep 30
-    run_kubectl get daemonsets.apps $1 -n ovn-kubernetes
-    DESIRED_REPLICAS=$(run_kubectl get daemonsets.apps $1 -n ovn-kubernetes -o=jsonpath='{.status.desiredNumberScheduled}')
-    READY_REPLICAS=$(run_kubectl get daemonsets.apps $1 -n ovn-kubernetes -o=jsonpath='{.status.numberReady}')
-    echo "CURRENT READY REPLICAS: $READY_REPLICAS, CURRENT DESIRED REPLICAS: $DESIRED_REPLICAS for the DaemonSet $1"
-    if [[ $READY_REPLICAS -eq $DESIRED_REPLICAS ]]; then
-      UP_TO_DATE_REPLICAS=$(run_kubectl get daemonsets.apps $1 -n ovn-kubernetes  -o=jsonpath='{.status.updatedNumberScheduled}')
-      echo "CURRENT UP TO DATE REPLICAS: $UP_TO_DATE_REPLICAS for the DaemonSet $1"
-      if [[ $READY_REPLICAS -eq $UP_TO_DATE_REPLICAS ]]; then
-        break
-      fi
-    fi
-    ((retries += 1))
-    if [[ "${retries}" -gt ${attempts} ]]; then
-      echo "error: daemonset did not succeed, failing"
-      kubectl describe po -A
-      exit 1
-    fi
-  done
-}
-
-kubectl_wait_deployment(){
-  # takes one deployment and makes sure its replicas and readyReplicas are equal
-  local retries=0
-  local attempts=30
-  while true; do
-    sleep 30
-    run_kubectl get deployments.apps $1 -n ovn-kubernetes 
-    DESIRED_REPLICAS=$(run_kubectl get deployments.apps $1 -n ovn-kubernetes -o=jsonpath='{.status.replicas}')
-    READY_REPLICAS=$(run_kubectl get deployments.apps $1 -n ovn-kubernetes -o=jsonpath='{.status.readyReplicas}')
-    echo "CURRENT READY REPLICAS: $READY_REPLICAS, CURRENT DESIRED REPLICAS: $DESIRED_REPLICAS for the Deployment $1"
-    if [[ $READY_REPLICAS -eq $DESIRED_REPLICAS ]]; then
-      UP_TO_DATE_REPLICAS=$(run_kubectl get deployments.apps $1 -n ovn-kubernetes -o=jsonpath='{.status.updatedReplicas}')
-      echo "CURRENT UP TO DATE REPLICAS: $UP_TO_DATE_REPLICAS for the Deployment $1"
-      if [[ $READY_REPLICAS -eq $UP_TO_DATE_REPLICAS ]]; then
-        break
-      fi
-    fi
-    ((retries += 1))
-    if [[ "${retries}" -gt ${attempts} ]]; then
-      echo "error: deployment did not succeed, failing"
-      kubectl describe po -A
-      exit 1
-    fi
-  done
-  
-}
-
-run_kubectl() {
-  local retries=0
-  local attempts=10
-  while true; do
-    if kubectl "$@"; then
-      break
-    fi
-
-    ((retries += 1))
-    if [[ "${retries}" -gt ${attempts} ]]; then
-      echo "error: 'kubectl $*' did not succeed, failing"
-      exit 1
-    fi
-    echo "info: waiting for 'kubectl $*' to succeed..."
-    sleep 1
-  done
-}
-
-
 install_ovn_image() {
   kind load docker-image "${OVN_IMAGE}" --name "${KIND_CLUSTER_NAME}"
 }
 
-kubectl_wait_for_upgrade(){
-    # waits until new image is updated into all relevant pods
-    count=0
-    while [ $count -lt 5 ];
-    do
-        echo "waiting for ovnkube-master, ovnkube-node, ovnkube-db to have new image, ${OVN_IMAGE}, sleeping 30 seconds"
-        sleep 30
-        count=$(run_kubectl get pods -n ovn-kubernetes -o=jsonpath='{range .items[*]}{"\n"}{.metadata.name}{":\t"}{range .spec.containers[*]}{.image}{", "}{end}{end}'|grep -c ${OVN_IMAGE})
-        echo "Currently count is $count, expected 5"
-    done;
-
-}
-
-create_ovn_kube_manifests() {
-  pushd ../dist/images
-  ./daemonset.sh \
-    --image="${OVN_IMAGE}" \
-    --net-cidr="${NET_CIDR}" \
-    --svc-cidr="${SVC_CIDR}" \
-    --gateway-mode="${OVN_GATEWAY_MODE}" \
-    --enable-interconnect="${OVN_ENABLE_INTERCONNECT}" \
-    --hybrid-enabled="${OVN_HYBRID_OVERLAY_ENABLE}" \
-    --disable-snat-multiple-gws="${OVN_DISABLE_SNAT_MULTIPLE_GWS}" \
-    --disable-forwarding="${OVN_DISABLE_FORWARDING}" \
-    --disable-pkt-mtu-check="${OVN_DISABLE_PKT_MTU_CHECK}" \
-    --ovn-empty-lb-events="${OVN_EMPTY_LB_EVENTS}" \
-    --multicast-enabled="${OVN_MULTICAST_ENABLE}" \
-    --k8s-apiserver="${API_URL}" \
-    --ovn-master-count="${KIND_NUM_MASTER}" \
-    --ovn-unprivileged-mode=no \
-    --master-loglevel="${MASTER_LOG_LEVEL}" \
-    --node-loglevel="${NODE_LOG_LEVEL}" \
-    --dbchecker-loglevel="${DBCHECKER_LOG_LEVEL}" \
-    --ovn-loglevel-northd="${OVN_LOG_LEVEL_NORTHD}" \
-    --ovn-loglevel-nb="${OVN_LOG_LEVEL_NB}" \
-    --ovn-loglevel-sb="${OVN_LOG_LEVEL_SB}" \
-    --ovn-loglevel-controller="${OVN_LOG_LEVEL_CONTROLLER}" \
-    --egress-ip-enable=true \
-    --egress-firewall-enable=true \
-    --v4-join-subnet="${JOIN_SUBNET_IPV4}" \
-    --v6-join-subnet="${JOIN_SUBNET_IPV6}" \
-    --ex-gw-network-interface="${OVN_EX_GW_NETWORK_INTERFACE}" \
-    --in-upgrade
-  popd
+upgrade_ovn_kubernetes_helm() {
+  # Extract image repository and tag from OVN_IMAGE
+  IMAGE_REPO=$(echo $OVN_IMAGE | cut -d: -f1)
+  IMAGE_TAG=$(echo $OVN_IMAGE | cut -d: -f2)
+  
+  # Determine which values file to use based on interconnect mode
+  if [ "${OVN_ENABLE_INTERCONNECT}" == true ]; then
+    VALUES_FILE="values-single-node-zone.yaml"
+  else
+    VALUES_FILE="values-no-ic.yaml"
+  fi
+  
+  echo "Upgrading OVN-Kubernetes using Helm with values file: $VALUES_FILE"
+  
+  # Perform the Helm upgrade
+  helm upgrade ovn-kubernetes ../helm/ovn-kubernetes \
+    -f ../helm/ovn-kubernetes/${VALUES_FILE} \
+    --set k8sAPIServer="${API_URL}" \
+    --set podNetwork="${NET_CIDR}" \
+    --set serviceNetwork="${SVC_CIDR}" \
+    --set global.image.repository="${IMAGE_REPO}" \
+    --set global.image.tag="${IMAGE_TAG}" \
+    --set global.gatewayMode="${OVN_GATEWAY_MODE}" \
+    --set global.enableInterconnect="${OVN_ENABLE_INTERCONNECT}" \
+    --set global.enableHybridOverlay="${OVN_HYBRID_OVERLAY_ENABLE}" \
+    --set global.disableSnatMultipleGws="${OVN_DISABLE_SNAT_MULTIPLE_GWS}" \
+    --set global.disableForwarding="${OVN_DISABLE_FORWARDING}" \
+    --set global.disablePktMTUCheck="${OVN_DISABLE_PKT_MTU_CHECK}" \
+    --set global.emptyLbEvents="${OVN_EMPTY_LB_EVENTS}" \
+    --set global.enableMulticast="${OVN_MULTICAST_ENABLE}" \
+    --set global.enableEgressIp=true \
+    --set global.enableEgressFirewall=true \
+    --set global.enableEgressQos=true \
+    --set global.enableAdminNetworkPolicy=true \
+    --set global.mtu="${OVN_MTU:-1400}" \
+    --set global.encapPort="${OVN_ENCAP_PORT:-6081}" \
+    --set global.v4JoinSubnet="${JOIN_SUBNET_IPV4}" \
+    --set global.v6JoinSubnet="${JOIN_SUBNET_IPV6}" \
+    --set global.extGatewayNetworkInterface="${OVN_EX_GW_NETWORK_INTERFACE}" \
+    --set global.masterLogLevel="${MASTER_LOG_LEVEL}" \
+    --set global.nodeLogLevel="${NODE_LOG_LEVEL}" \
+    --set global.dbcheckerLogLevel="${DBCHECKER_LOG_LEVEL}" \
+    --set global.ovnLogLevelNorthd="${OVN_LOG_LEVEL_NORTHD}" \
+    --set global.ovnLogLevelNb="${OVN_LOG_LEVEL_NB}" \
+    --set global.ovnLogLevelSb="${OVN_LOG_LEVEL_SB}" \
+    --set global.ovnLogLevelController="${OVN_LOG_LEVEL_CONTROLLER}" \
+    --wait \
+    --timeout=900s
 }
 
 set_default_ovn_manifest_params() {
@@ -185,6 +101,10 @@ set_default_ovn_manifest_params() {
   if [ "$OVN_ENABLE_EX_GW_NETWORK_BRIDGE" == true ]; then
     OVN_EX_GW_NETWORK_INTERFACE="eth1"
   fi
+  # Additional parameters for Helm upgrade
+  OVN_MTU=${OVN_MTU:-1400}
+  OVN_ENCAP_PORT=${OVN_ENCAP_PORT:-6081}
+  API_URL=${API_URL:-https://172.18.0.4:6443}
   # Input not currently validated. Modify outside script at your own risk.
   # These are the same values defaulted to in KIND code (kind/default.go).
   # NOTE: KIND NET_CIDR_IPV6 default use a /64 but OVN have a /64 per host
@@ -237,6 +157,9 @@ print_ovn_manifest_params() {
      echo "OVN_ENABLE_EX_GW_NETWORK_BRIDGE = $OVN_ENABLE_EX_GW_NETWORK_BRIDGE"
      echo "OVN_EX_GW_NETWORK_INTERFACE = $OVN_EX_GW_NETWORK_INTERFACE"
      echo "OVN_ENABLE_OVNKUBE_IDENTITY =  $OVN_ENABLE_OVNKUBE_IDENTITY"
+     echo "OVN_MTU = $OVN_MTU"
+     echo "OVN_ENCAP_PORT = $OVN_ENCAP_PORT"
+     echo "API_URL = $API_URL"
      echo ""
 }
 
@@ -263,8 +186,8 @@ set_cluster_cidr_ip_families() {
 }
 
 # This script is responsible for upgrading the ovn-kubernetes related resources 
-# within a running cluster built from master, to new resources buit from the 
-# checked-out branch.  
+# within a running cluster built from master, to new resources built from the 
+# checked-out branch.
 
 KIND_CLUSTER_NAME=${KIND_CLUSTER_NAME:-ovn} # Set default values
 
@@ -273,83 +196,24 @@ KIND_CLUSTER_NAME=${KIND_CLUSTER_NAME:-ovn} # Set default values
 set_default_ovn_manifest_params
 print_ovn_manifest_params
 
-# create upgraded OVN manifests from checked-out branch
+# Set up cluster CIDR and API URL
 set_cluster_cidr_ip_families
-create_ovn_kube_manifests
+
+# Detect API server URL
+detect_apiserver_url
+
+# Load the new OVN image into the cluster
 install_ovn_image
 
-pushd ../dist/yaml
+# Perform Helm upgrade
+upgrade_ovn_kubernetes_helm
 
-# install updated k8s configuration for ovn-k (useful in case of ClusterRole updates)
-run_kubectl apply -f ovn-setup.yaml
-run_kubectl apply -f rbac-ovnkube-identity.yaml
-run_kubectl apply -f rbac-ovnkube-cluster-manager.yaml
-run_kubectl apply -f rbac-ovnkube-master.yaml
-run_kubectl apply -f rbac-ovnkube-node.yaml
-run_kubectl apply -f rbac-ovnkube-db.yaml
+# Wait for all pods to be ready
+kubectl_wait_pods
 
-if [ "${OVN_ENABLE_OVNKUBE_IDENTITY}" == true ]; then
-  run_kubectl apply -f ovnkube-identity.yaml
-  kubectl_wait_daemonset ovnkube-identity
-fi
-
-if [ "${OVN_ENABLE_OVNKUBE_IDENTITY}" == false ]; then
-  # install updated ovnkube-node daemonset
-  run_kubectl apply -f ovnkube-node.yaml
-
-  kubectl_wait_daemonset ovnkube-node
-
-  run_kubectl get all -n ovn-kubernetes
-  CURRENT_REPLICAS_OVNKUBE_DB=$(run_kubectl get deploy -n ovn-kubernetes ovnkube-db -o=jsonpath='{.spec.replicas}')
-  run_kubectl scale deploy -n ovn-kubernetes ovnkube-db --replicas=0
-
-  # install updated ovnkube-db daemonset
-  if [ "$OVN_HA" == true ]; then
-    run_kubectl apply -f ovnkube-db-raft.yaml
-  else
-    run_kubectl apply -f ovnkube-db.yaml
-  fi
-
-  run_kubectl scale deploy -n ovn-kubernetes ovnkube-db --replicas=$CURRENT_REPLICAS_OVNKUBE_DB
-  kubectl_wait_deployment ovnkube-db
-
-  CURRENT_REPLICAS_OVNKUBE_MASTER=$(run_kubectl get deploy -n ovn-kubernetes ovnkube-master -o=jsonpath='{.spec.replicas}')
-
-  # scaling down replica before changing image briefly helps get around an issue seen with KIND
-  # The issue was sometimes the KIND cluster won't scale down the ovnkube-master pod in time
-  # and the new pod with the new image would be stuck in "Pending" state
-  run_kubectl scale deploy -n ovn-kubernetes ovnkube-master --replicas=0
-
-  # install updated ovnkube-master deployment
-  run_kubectl apply -f ovnkube-master.yaml
-
-  popd
-
-  run_kubectl scale deploy -n ovn-kubernetes ovnkube-master --replicas=$CURRENT_REPLICAS_OVNKUBE_MASTER
-  kubectl_wait_deployment ovnkube-master
-  kubectl_wait_for_upgrade
-
-  run_kubectl describe ds ovnkube-node -n ovn-kubernetes
-
-  run_kubectl describe deployments.apps ovnkube-master -n ovn-kubernetes
-
-else
-  # we only support single node per zone IC upgrades.
-  run_kubectl apply -f ovnkube-single-node-zone.yaml
-  kubectl_wait_daemonset ovnkube-node
-
-  run_kubectl get all -n ovn-kubernetes
-  CURRENT_REPLICAS_OVNKUBE_CONTROL_PLANE=$(run_kubectl get deploy -n ovn-kubernetes ovnkube-control-plane -o=jsonpath='{.spec.replicas}')
-
-  run_kubectl scale deploy -n ovn-kubernetes ovnkube-control-plane --replicas=0
-
-  # install updated ovnkube-control-plane deployment
-  run_kubectl apply -f ovnkube-control-plane.yaml
-
-  run_kubectl scale deploy -n ovn-kubernetes ovnkube-control-plane --replicas=$CURRENT_REPLICAS_OVNKUBE_CONTROL_PLANE
-  kubectl_wait_deployment ovnkube-control-plane
-  kubectl_wait_for_upgrade
-fi
+# Verify the upgrade was successful
+echo "Upgrade completed successfully!"
+run_kubectl get all -n ovn-kubernetes
 
 KIND_REMOVE_TAINT=${KIND_REMOVE_TAINT:-true}
 MASTER_NODES=$(kubectl get nodes -l node-role.kubernetes.io/control-plane -o name)

@@ -118,22 +118,22 @@ echo "Editing EgressQoS CRD"
 sed -i -e':begin;$!N;s/.*metadata:\n.*type: object/&\n            properties:\n              name:\n                type: string\n                pattern: ^default$/;P;D' \
 	_output/crds/k8s.ovn.org_egressqoses.yaml
 
-echo "Copying the CRDs to dist/templates as j2 files... Add them to your commit..."
+echo "Copying the CRDs to helm/ovn-kubernetes/crds... Add them to your commit..."
 echo "Copying egressFirewall CRD"
-cp _output/crds/k8s.ovn.org_egressfirewalls.yaml ../dist/templates/k8s.ovn.org_egressfirewalls.yaml.j2
+cp _output/crds/k8s.ovn.org_egressfirewalls.yaml ../helm/ovn-kubernetes/crds/k8s.ovn.org_egressfirewalls.yaml
 echo "Copying egressIP CRD"
-cp _output/crds/k8s.ovn.org_egressips.yaml ../dist/templates/k8s.ovn.org_egressips.yaml.j2
+cp _output/crds/k8s.ovn.org_egressips.yaml ../helm/ovn-kubernetes/crds/k8s.ovn.org_egressips.yaml
 echo "Copying egressQoS CRD"
-cp _output/crds/k8s.ovn.org_egressqoses.yaml ../dist/templates/k8s.ovn.org_egressqoses.yaml.j2
+cp _output/crds/k8s.ovn.org_egressqoses.yaml ../helm/ovn-kubernetes/crds/k8s.ovn.org_egressqoses.yaml
 echo "Copying adminpolicybasedexternalroutes CRD"
-cp _output/crds/k8s.ovn.org_adminpolicybasedexternalroutes.yaml ../dist/templates/k8s.ovn.org_adminpolicybasedexternalroutes.yaml.j2
+cp _output/crds/k8s.ovn.org_adminpolicybasedexternalroutes.yaml ../helm/ovn-kubernetes/crds/k8s.ovn.org_adminpolicybasedexternalroutes.yaml
 echo "Copying egressService CRD"
-cp _output/crds/k8s.ovn.org_egressservices.yaml ../dist/templates/k8s.ovn.org_egressservices.yaml.j2
+cp _output/crds/k8s.ovn.org_egressservices.yaml ../helm/ovn-kubernetes/crds/k8s.ovn.org_egressservices.yaml
 echo "Copying networkQoS CRD"
-cp _output/crds/k8s.ovn.org_networkqoses.yaml ../dist/templates/k8s.ovn.org_networkqoses.yaml.j2
+cp _output/crds/k8s.ovn.org_networkqoses.yaml ../helm/ovn-kubernetes/crds/k8s.ovn.org_networkqoses.yaml
 echo "Copying userdefinednetworks CRD"
-cp _output/crds/k8s.ovn.org_userdefinednetworks.yaml ../dist/templates/k8s.ovn.org_userdefinednetworks.yaml.j2
+cp _output/crds/k8s.ovn.org_userdefinednetworks.yaml ../helm/ovn-kubernetes/crds/k8s.ovn.org_userdefinednetworks.yaml
 echo "Copying clusteruserdefinednetworks CRD"
-cp _output/crds/k8s.ovn.org_clusteruserdefinednetworks.yaml ../dist/templates/k8s.ovn.org_clusteruserdefinednetworks.yaml.j2
+cp _output/crds/k8s.ovn.org_clusteruserdefinednetworks.yaml ../helm/ovn-kubernetes/crds/k8s.ovn.org_clusteruserdefinednetworks.yaml
 echo "Copying routeAdvertisements CRD"
-cp _output/crds/k8s.ovn.org_routeadvertisements.yaml ../dist/templates/k8s.ovn.org_routeadvertisements.yaml.j2
+cp _output/crds/k8s.ovn.org_routeadvertisements.yaml ../helm/ovn-kubernetes/crds/k8s.ovn.org_routeadvertisements.yaml

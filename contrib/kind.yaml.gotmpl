@@ -5,21 +5,21 @@ networking:
   kubeProxyMode: "none"
   # the default CNI will not be installed
   disableDefaultCNI: true
-{%- if net_cidr %}
-  podSubnet: "{{ net_cidr }}"
-{%- endif %}
-{%- if svc_cidr %}
-  serviceSubnet: "{{ svc_cidr }}"
-{%- endif %}
-{%- if ovn_ip_family %}
-  ipFamily: {{ ovn_ip_family }}
-{%- endif %}
-{%- if use_local_registy == "true"%}
+{{- if .NetCIDR }}
+  podSubnet: "{{ .NetCIDR }}"
+{{- end }}
+{{- if .SvcCIDR }}
+  serviceSubnet: "{{ .SvcCIDR }}"
+{{- end }}
+{{- if .IPFamily }}
+  ipFamily: {{ .IPFamily }}
+{{- end }}
+{{- if .UseLocalRegistry }}
 containerdConfigPatches:
   - |-
-    [plugins."io.containerd.grpc.v1.cri".registry.mirrors."localhost:{{ kind_local_registry_port }}"]
-      endpoint = ["http://{{ kind_local_registry_name }}:5000"]
-{%- endif %}
+    [plugins."io.containerd.grpc.v1.cri".registry.mirrors."localhost:{{ .KindLocalRegistryPort }}"]
+      endpoint = ["http://{{ .KindLocalRegistryName }}:5000"]
+{{- end }}
 kubeadmConfigPatches:
 - |
   kind: ClusterConfiguration
@@ -27,10 +27,10 @@ kubeadmConfigPatches:
     name: config
   apiServer:
     extraArgs:
-      "v": "{{ cluster_log_level }}"
+      "v": "{{ .ClusterLogLevel }}"
   controllerManager:
     extraArgs:
-      "v": "{{ cluster_log_level }}"
+      "v": "{{ .ClusterLogLevel }}"
       # Disable service-lb-controller for now
       # https://github.com/kubernetes/kubernetes/issues/128121
       # Once the upstream issue is fixed we can remove this controller
@@ -39,19 +39,19 @@ kubeadmConfigPatches:
       "controllers": "*,bootstrap-signer-controller,token-cleaner-controller,-service-lb-controller"
   scheduler:
     extraArgs:
-      "v": "{{ cluster_log_level }}"
+      "v": "{{ .ClusterLogLevel }}"
   networking: 
-    dnsDomain: {{ dns_domain }}
+    dnsDomain: {{ .DNSDomain }}
   ---
   kind: InitConfiguration
   nodeRegistration:
     kubeletExtraArgs:
-      "v": "{{ cluster_log_level }}"
+      "v": "{{ .ClusterLogLevel }}"
   ---
   kind: JoinConfiguration
   nodeRegistration:
     kubeletExtraArgs:
-      "v": "{{ cluster_log_level }}"
+      "v": "{{ .ClusterLogLevel }}"
 nodes:
  - role: control-plane
    kubeadmConfigPatches:
@@ -61,11 +61,11 @@ nodes:
        kubeletExtraArgs:
          node-labels: "ingress-ready=true"
          authorization-mode: "AlwaysAllow"
-{%- if ovn_ha is equalto "true" %}
-{%- for _ in range(1, ovn_num_master | int) %}
+{{- if .OVNHA }}
+{{- range $i := .AdditionalMasterNodes }}
  - role: worker
-{%- endfor %}
-{%- endif %}
-{%- for _ in range(ovn_num_worker | int) %}
+{{- end }}
+{{- end }}
+{{- range $i := .WorkerNodes }}
  - role: worker
-{%- endfor %}
+{{- end }}

@@ -19,6 +19,7 @@ KIND (Kubernetes in Docker) deployment of OVN kubernetes is a fast and easy mean
 - openssl
 - openvswitch
 - Go 1.23.0 or above
+- [Helm](https://helm.sh/docs/intro/install/)
 - For podman users: skopeo
 
 For OVN kubernetes KIND deployment, use the `kind.sh` script.
