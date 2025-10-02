@@ -998,7 +998,7 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 				"kubevirt.io/allow-pod-bridge-network-live-migration": "",
 			}
 			nodeSelector := map[string]string{
-				namespace: "",
+				namespace: "true",
 			}
 			networkSource := kubevirtv1.NetworkSource{
 				Pod: &kubevirtv1.PodNetwork{},
@@ -1119,7 +1119,7 @@ passwd:
 				by(vm.Name, "Live migrate for the third time to the node owning the subnet")
 				// Patch back the original node with the label and remove it
 				// from the rest of nodes to force live migration target to it.
-				e2enode.AddOrUpdateLabelOnNode(fr.ClientSet, originalNode, namespace, "")
+				e2enode.AddOrUpdateLabelOnNode(fr.ClientSet, originalNode, namespace, "true")
 				for _, selectedNode := range selectedNodes {
 					if selectedNode.Name != originalNode {
 						e2enode.RemoveLabelOffNode(fr.ClientSet, selectedNode.Name, namespace)
@@ -1405,7 +1405,7 @@ fi
 			// configure VM nodeSelector with it and live migration will take only
 			// them into consideration
 			for _, node := range selectedNodes {
-				e2enode.AddOrUpdateLabelOnNode(fr.ClientSet, node.Name, namespace, "")
+				e2enode.AddOrUpdateLabelOnNode(fr.ClientSet, node.Name, namespace, "true")
 			}
 
 			prepareHTTPServerPods(map[string]string{}, checkPodHasIPAtStatus)
