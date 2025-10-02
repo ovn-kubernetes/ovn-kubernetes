@@ -770,6 +770,12 @@ ovs-server() {
     USER_ARGS="--ovs-user=${ovs_user_id}"
   fi
 
+  # OVN-K marks NIC port as transient on capture. Detach captured nic from ovs
+  # bridge on startup; let ovn-k rewire it later. This should let the node
+  # communicate through the nic until ovn-k re-attaches it back to the bridge,
+  # with correct ip configuration.
+  ovs_options="${ovs_options} --delete-transient-ports"
+
   /usr/share/openvswitch/scripts/ovs-ctl start --no-ovs-vswitchd \
     --system-id=random ${ovs_options} ${USER_ARGS} "$@"
 
