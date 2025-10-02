@@ -238,10 +238,10 @@ ovn_v6_join_subnet=${OVN_V6_JOIN_SUBNET:-}
 ovn_v4_masquerade_subnet=${OVN_V4_MASQUERADE_SUBNET:-}
 # OVN_V6_MASQUERADE_SUBNET - v6 masquerade subnet
 ovn_v6_masquerade_subnet=${OVN_V6_MASQUERADE_SUBNET:-}
-# OVN_V4_TRANSIT_SWITCH_SUBNET - v4 Transit switch subnet
-ovn_v4_transit_switch_subnet=${OVN_V4_TRANSIT_SWITCH_SUBNET:-}
-# OVN_V6_TRANSIT_SWITCH_SUBNET - v6 Transit switch subnet
-ovn_v6_transit_switch_subnet=${OVN_V6_TRANSIT_SWITCH_SUBNET:-}
+# OVN_V4_TRANSIT_SUBNET - v4 Transit subnet
+ovn_v4_transit_subnet=${OVN_V4_TRANSIT_SUBNET:-}
+# OVN_V6_TRANSIT_SUBNET - v6 Transit subnet
+ovn_v6_transit_subnet=${OVN_V6_TRANSIT_SUBNET:-}
 #OVN_REMOTE_PROBE_INTERVAL - ovn remote probe interval in ms (default 100000)
 ovn_remote_probe_interval=${OVN_REMOTE_PROBE_INTERVAL:-100000}
 #OVN_MONITOR_ALL - ovn-controller monitor all data in SB DB
@@ -269,6 +269,8 @@ ovn_disable_ovn_iface_id_ver=${OVN_DISABLE_OVN_IFACE_ID_VER:-false}
 ovn_multi_network_enable=${OVN_MULTI_NETWORK_ENABLE:-false}
 #OVN_NETWORK_SEGMENTATION_ENABLE - enable user defined primary networks for ovn-kubernetes
 ovn_network_segmentation_enable=${OVN_NETWORK_SEGMENTATION_ENABLE:=false}
+#OVN_VIRTUAL_PRIVATE_NETWORK_CONNECT_ENABLE - enable virtual private network connect for ovn-kubernetes
+ovn_virtual_private_network_connect_enable=${OVN_VIRTUAL_PRIVATE_NETWORK_CONNECT_ENABLE:=false}
 #OVN_PRE_CONF_UDN_ADDR_ENABLE - enable connecting workloads with custom network configuration to UDNs
 ovn_pre_conf_udn_addr_enable=${OVN_PRE_CONF_UDN_ADDR_ENABLE:=false}
 #OVN_NROUTE_ADVERTISEMENTS_ENABLE - enable route advertisements for ovn-kubernetes
@@ -1292,6 +1294,12 @@ ovn-master() {
   fi
   echo "network_segmentation_enabled_flag=${network_segmentation_enabled_flag}"
 
+  virtual_private_network_connect_enabled_flag=
+  if [[ ${ovn_virtual_private_network_connect_enable} == "true" ]]; then
+	  virtual_private_network_connect_enabled_flag="--enable-virtual-private-network-connect"
+  fi
+  echo "virtual_private_network_connect_enabled_flag=${virtual_private_network_connect_enabled_flag}"
+
   route_advertisements_enabled_flag=
   if [[ ${ovn_route_advertisements_enable} == "true" ]]; then
 	  route_advertisements_enabled_flag="--enable-route-advertisements"
@@ -1409,6 +1417,7 @@ ovn-master() {
     ${multicast_enabled_flag} \
     ${multi_network_enabled_flag} \
     ${network_segmentation_enabled_flag} \
+    ${virtual_private_network_connect_enabled_flag} \
     ${route_advertisements_enabled_flag} \
     ${advertised_udn_isolation_flag} \
     ${ovn_acl_logging_rate_limit_flag} \
@@ -1601,6 +1610,12 @@ ovnkube-controller() {
   fi
   echo "network_segmentation_enabled_flag=${network_segmentation_enabled_flag}"
 
+  virtual_private_network_connect_enabled_flag=
+  if [[ ${ovn_virtual_private_network_connect_enable} == "true" ]]; then
+	  virtual_private_network_connect_enabled_flag="--enable-virtual-private-network-connect"
+  fi
+  echo "virtual_private_network_connect_enabled_flag=${virtual_private_network_connect_enabled_flag}"
+
   pre_conf_udn_addr_enable_flag=
   if [[ ${ovn_pre_conf_udn_addr_enable} == "true" ]]; then
 	  pre_conf_udn_addr_enable_flag="--enable-preconfigured-udn-addresses"
@@ -1733,6 +1748,7 @@ ovnkube-controller() {
     ${multicast_enabled_flag} \
     ${multi_network_enabled_flag} \
     ${network_segmentation_enabled_flag} \
+    ${virtual_private_network_connect_enabled_flag} \
     ${pre_conf_udn_addr_enable_flag} \
     ${route_advertisements_enabled_flag} \
     ${advertised_udn_isolation_flag} \
@@ -1938,6 +1954,12 @@ ovnkube-controller-with-node() {
 	  network_segmentation_enabled_flag="--enable-multi-network --enable-network-segmentation"
   fi
   echo "network_segmentation_enabled_flag=${network_segmentation_enabled_flag}"
+
+  virtual_private_network_connect_enabled_flag=
+  if [[ ${ovn_virtual_private_network_connect_enable} == "true" ]]; then
+	  virtual_private_network_connect_enabled_flag="--enable-virtual-private-network-connect"
+  fi
+  echo "virtual_private_network_connect_enabled_flag=${virtual_private_network_connect_enabled_flag}"
 
   pre_conf_udn_addr_enable_flag=
   if [[ ${ovn_pre_conf_udn_addr_enable} == "true" ]]; then
@@ -2217,6 +2239,7 @@ ovnkube-controller-with-node() {
     ${multicast_enabled_flag} \
     ${multi_network_enabled_flag} \
     ${network_segmentation_enabled_flag} \
+    ${virtual_private_network_connect_enabled_flag} \
     ${pre_conf_udn_addr_enable_flag} \
     ${route_advertisements_enabled_flag} \
     ${advertised_udn_isolation_flag} \
@@ -2356,17 +2379,17 @@ ovn-cluster-manager() {
   fi
   echo "ovn_v6_masquerade_subnet_opt=${ovn_v6_masquerade_subnet_opt}"
 
-  ovn_v4_transit_switch_subnet_opt=
-  if [[ -n ${ovn_v4_transit_switch_subnet} ]]; then
-      ovn_v4_transit_switch_subnet_opt="--cluster-manager-v4-transit-switch-subnet=${ovn_v4_transit_switch_subnet}"
+  ovn_v4_transit_subnet_opt=
+  if [[ -n ${ovn_v4_transit_subnet} ]]; then
+      ovn_v4_transit_subnet_opt="--cluster-manager-v4-transit-subnet=${ovn_v4_transit_subnet}"
   fi
-  echo "ovn_v4_transit_switch_subnet_opt=${ovn_v4_transit_switch_subnet}"
+  echo "ovn_v4_transit_subnet_opt=${ovn_v4_transit_subnet}"
 
-  ovn_v6_transit_switch_subnet_opt=
-  if [[ -n ${ovn_v6_transit_switch_subnet} ]]; then
-      ovn_v6_transit_switch_subnet_opt="--cluster-manager-v6-transit-switch-subnet=${ovn_v6_transit_switch_subnet}"
+  ovn_v6_transit_subnet_opt=
+  if [[ -n ${ovn_v6_transit_subnet} ]]; then
+      ovn_v6_transit_subnet_opt="--cluster-manager-v6-transit-subnet=${ovn_v6_transit_subnet}"
   fi
-  echo "ovn_v6_transit_switch_subnet_opt=${ovn_v6_transit_switch_subnet}"
+  echo "ovn_v6_transit_subnet_opt=${ovn_v6_transit_subnet}"
 
   multicast_enabled_flag=
   if [[ ${ovn_multicast_enable} == "true" ]]; then
@@ -2385,6 +2408,12 @@ ovn-cluster-manager() {
 	  network_segmentation_enabled_flag="--enable-multi-network --enable-network-segmentation"
   fi
   echo "network_segmentation_enabled_flag=${network_segmentation_enabled_flag}"
+
+  virtual_private_network_connect_enabled_flag=
+  if [[ ${ovn_virtual_private_network_connect_enable} == "true" ]]; then
+	  virtual_private_network_connect_enabled_flag="--enable-virtual-private-network-connect"
+  fi
+  echo "virtual_private_network_connect_enabled_flag=${virtual_private_network_connect_enabled_flag}"
 
   pre_conf_udn_addr_enable_flag=
   if [[ ${ovn_pre_conf_udn_addr_enable} == "true" ]]; then
@@ -2464,6 +2493,7 @@ ovn-cluster-manager() {
     ${multicast_enabled_flag} \
     ${multi_network_enabled_flag} \
     ${network_segmentation_enabled_flag} \
+    ${virtual_private_network_connect_enabled_flag} \
     ${pre_conf_udn_addr_enable_flag} \
     ${route_advertisements_enabled_flag} \
     ${advertised_udn_isolation_flag} \
@@ -2476,8 +2506,8 @@ ovn-cluster-manager() {
     ${ovn_v4_masquerade_subnet_opt} \
     ${ovn_v6_join_subnet_opt} \
     ${ovn_v6_masquerade_subnet_opt} \
-    ${ovn_v4_transit_switch_subnet_opt} \
-    ${ovn_v6_transit_switch_subnet_opt} \
+    ${ovn_v4_transit_subnet_opt} \
+    ${ovn_v6_transit_subnet_opt} \
     ${network_qos_enabled_flag} \
     ${ovn_enable_dnsnameresolver_flag} \
     --gateway-mode=${ovn_gateway_mode} \
@@ -2641,6 +2671,11 @@ ovn-node() {
   network_segmentation_enabled_flag=
   if [[ ${ovn_network_segmentation_enable} == "true" ]]; then
 	  network_segmentation_enabled_flag="--enable-multi-network --enable-network-segmentation"
+  fi
+
+  virtual_private_network_connect_enabled_flag=
+  if [[ ${ovn_virtual_private_network_connect_enable} == "true" ]]; then
+	  virtual_private_network_connect_enabled_flag="--enable-virtual-private-network-connect"
   fi
 
   pre_conf_udn_addr_enable_flag=
@@ -2888,6 +2923,7 @@ ovn-node() {
         ${multicast_enabled_flag} \
         ${multi_network_enabled_flag} \
         ${network_segmentation_enabled_flag} \
+        ${virtual_private_network_connect_enabled_flag} \
         ${pre_conf_udn_addr_enable_flag} \
         ${route_advertisements_enabled_flag} \
         ${advertised_udn_isolation_flag} \
