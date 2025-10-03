@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/vishvananda/netlink"
@@ -24,6 +23,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/iprulemanager"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/managementport"
 	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/vrfmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
@@ -79,6 +79,9 @@ type UserDefinedNetworkGateway struct {
 	// iprules manager that creates and manages iprules for
 	// all UDNs. Must be accessed with a lock
 	ruleManager *iprulemanager.Controller
+
+	// management port controller
+	mgmtPortController *managementport.UDNManagementPortController
 
 	// reconcile channel to signal reconciliation of the gateway on network
 	// configuration changes
@@ -211,15 +214,37 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 	if config.OvnKubeNode.Mode != types.NodeModeDPUHost && udng.openflowManager == nil {
 		return fmt.Errorf("openflow manager has not been provided for network: %s", udng.NetInfo.GetNetworkName())
 	}
-	// port is created first and its MAC address configured. The IP(s) on that link are added after enslaving to a VRF device (addUDNManagementPortIPs)
-	// because IPv6 addresses are removed by the kernel (if not link local) when enslaved to a VRF device.
-	// Add the routes(AddVRFRoutes) after setting the IP(s) to ensure that the default subnet route towards the mgmt network exists.
-	mplink, err := udng.addUDNManagementPort()
+
+	nodeSubnets, err := udng.getLocalSubnets()
 	if err != nil {
-		return fmt.Errorf("could not create management port netdevice for network %s: %w", udng.GetNetworkName(), err)
+		return fmt.Errorf("could not create management port for network %s, cannot determine subnets: %v",
+			udng.GetNetworkName(), err)
+	}
+
+	// TBD-merge udng.node.Name, needs lower case?
+	udng.mgmtPortController, err = managementport.NewUDNManagementPortController(udng.nodeLister, udng.node.Name, nodeSubnets, udng.NetInfo)
+	if err != nil {
+		return fmt.Errorf("could not create management port for network %s, UDN management port controller init failure: %v",
+			udng.GetNetworkName(), err)
+	}
+
+	err = udng.mgmtPortController.Create()
+	if err != nil {
+		klog.Errorf("Create management port for network %s failed: %v", udng.GetNetworkName(), err)
+		return fmt.Errorf("could not create management port for network %s, management port creation failure: %v",
+			udng.GetNetworkName(), err)
 	}
 
 	if config.OvnKubeNode.Mode != types.NodeModeDPU {
+		mgmtPortName := util.GetNetworkScopedK8sMgmtHostIntfName(uint(udng.GetNetworkID()))
+		mplink, err := util.LinkByName(mgmtPortName)
+		if err != nil {
+			return err
+		}
+
+		vrfTableId := util.CalculateRouteTableID(mplink.Attrs().Index)
+		udng.vrfTableId = vrfTableId
+
 		vrfDeviceName := util.GetNetworkVRFName(udng.NetInfo)
 		routes, err := udng.computeRoutesForUDN(mplink)
 		if err != nil {
@@ -234,6 +259,7 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 		if err = udng.vrfManager.AddVRFRoutes(vrfDeviceName, routes); err != nil {
 			return fmt.Errorf("could not add VRF %s routes for network %s, err: %v", vrfDeviceName, udng.GetNetworkName(), err)
 		}
+
 	}
 
 	udng.updateAdvertisementStatus()
@@ -248,22 +274,12 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 			return fmt.Errorf("failed to update isolation rules for network %s: %w", udng.GetNetworkName(), err)
 		}
 
-		if err := udng.updateUDNVRFIPRoute(); err != nil {
+		if err = udng.updateUDNVRFIPRoute(); err != nil {
 			return fmt.Errorf("failed to update ip routes for network %s: %w", udng.GetNetworkName(), err)
-		}
-
-		// add loose mode for rp filter on management port
-		mgmtPortName := util.GetNetworkScopedK8sMgmtHostIntfName(uint(udng.GetNetworkID()))
-		if err := addRPFilterLooseModeForManagementPort(mgmtPortName); err != nil {
-			return fmt.Errorf("could not set loose mode for reverse path filtering on management port %s: %v", mgmtPortName, err)
 		}
 	}
 
 	if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
-		nodeSubnets, err := udng.getLocalSubnets()
-		if err != nil {
-			return fmt.Errorf("failed to get node subnets for network %s: %w", udng.GetNetworkName(), err)
-		}
 		var mgmtIPs []*net.IPNet
 		for _, subnet := range nodeSubnets {
 			mgmtIPs = append(mgmtIPs, udng.GetNodeManagementIP(subnet))
@@ -356,69 +372,18 @@ func (udng *UserDefinedNetworkGateway) DelNetwork() error {
 		}
 	}
 	// delete the management port interface for this network
-	err := udng.deleteUDNManagementPort()
-	if err != nil {
-		return err
+	if udng.mgmtPortController != nil {
+		err := udng.mgmtPortController.Delete()
+		if err != nil {
+			klog.Errorf("Failed to delete management port controller for network %s: %v", udng.GetNetworkName(), err)
+			return err
+		}
 	}
 
 	// close channel only when succesful since we can be called multiple times
 	// on failure
 	close(udng.reconcile)
 	return nil
-}
-
-// addUDNManagementPort does the following:
-// STEP1: creates the (netdevice) OVS interface on br-int for the UDN's management port
-// STEP2: sets up the management port link on the host
-// STEP3: enables IPv4 forwarding on the interface if the network has a v4 subnet
-// Returns a netlink Link which is the UDN management port interface along with its MAC address
-func (udng *UserDefinedNetworkGateway) addUDNManagementPort() (netlink.Link, error) {
-	var err error
-	interfaceName := util.GetNetworkScopedK8sMgmtHostIntfName(uint(udng.GetNetworkID()))
-	networkLocalSubnets, err := udng.getLocalSubnets()
-	if err != nil {
-		return nil, err
-	}
-	if len(networkLocalSubnets) == 0 {
-		return nil, fmt.Errorf("cannot determine subnets while configuring management port for network: %s", udng.GetNetworkName())
-	}
-	macAddr := util.IPAddrToHWAddr(udng.GetNodeManagementIP(networkLocalSubnets[0]).IP)
-
-	// STEP1
-	stdout, stderr, err := util.RunOVSVsctl(
-		"--", "--may-exist", "add-port", "br-int", interfaceName,
-		"--", "set", "interface", interfaceName, fmt.Sprintf("mac=\"%s\"", macAddr.String()),
-		"type=internal", "mtu_request="+fmt.Sprintf("%d", udng.NetInfo.MTU()),
-		"external-ids:iface-id="+udng.GetNetworkScopedK8sMgmtIntfName(udng.node.Name),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to add port to br-int for network %s, stdout: %q, stderr: %q, error: %w",
-			udng.GetNetworkName(), stdout, stderr, err)
-	}
-	klog.V(3).Infof("Added OVS management port interface %s for network %s", interfaceName, udng.GetNetworkName())
-
-	// STEP2
-	mplink, err := util.LinkSetUp(interfaceName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to set the link up for interface %s while plumbing network %s, err: %v",
-			interfaceName, udng.GetNetworkName(), err)
-	}
-	vrfTableId := util.CalculateRouteTableID(mplink.Attrs().Index)
-	udng.vrfTableId = vrfTableId
-	klog.V(3).Infof("Setup management port link %s for network %s succeeded", interfaceName, udng.GetNetworkName())
-
-	// STEP3
-	// IPv6 forwarding is enabled globally
-	if ipv4, _ := udng.IPMode(); ipv4 {
-		// we use forward slash as path separator to allow dotted interfaceName e.g. foo.200
-		stdout, stderr, err := util.RunSysctl("-w", fmt.Sprintf("net/ipv4/conf/%s/forwarding=1", interfaceName))
-		// systctl output enforces dot as path separator
-		if err != nil || stdout != fmt.Sprintf("net.ipv4.conf.%s.forwarding = 1", strings.ReplaceAll(interfaceName, ".", "/")) {
-			return nil, fmt.Errorf("could not set the correct forwarding value for interface %s: stdout: %v, stderr: %v, err: %v",
-				interfaceName, stdout, stderr, err)
-		}
-	}
-	return mplink, nil
 }
 
 // getLocalSubnets returns pod subnets used by the current node.
@@ -450,6 +415,9 @@ func (udng *UserDefinedNetworkGateway) addUDNManagementPortIPs(mpLink netlink.Li
 		return err
 	}
 
+	klog.V(5).Infof("Add management port IPs on interface %s for network %s subnets %+v",
+		mpLink.Attrs().Name, udng.GetNetworkName(), networkLocalSubnets)
+
 	// extract management port IP from subnets and add it to link
 	for _, subnet := range networkLocalSubnets {
 		if config.IPv6Mode && utilnet.IsIPv6CIDR(subnet) || config.IPv4Mode && utilnet.IsIPv4CIDR(subnet) {
@@ -465,24 +433,6 @@ func (udng *UserDefinedNetworkGateway) addUDNManagementPortIPs(mpLink netlink.Li
 			}
 		}
 	}
-	return nil
-}
-
-// deleteUDNManagementPort does the following:
-// STEP1: deletes the OVS interface on br-int for the UDN's management port interface
-// STEP2: deletes the mac address from the annotation
-func (udng *UserDefinedNetworkGateway) deleteUDNManagementPort() error {
-	var err error
-	interfaceName := util.GetNetworkScopedK8sMgmtHostIntfName(uint(udng.GetNetworkID()))
-	// STEP1
-	stdout, stderr, err := util.RunOVSVsctl(
-		"--", "--if-exists", "del-port", "br-int", interfaceName,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to delete port from br-int for network %s, stdout: %q, stderr: %q, error: %v",
-			udng.GetNetworkName(), stdout, stderr, err)
-	}
-	klog.V(3).Infof("Removed OVS management port interface %s for network %s", interfaceName, udng.GetNetworkName())
 	return nil
 }
 
@@ -765,23 +715,6 @@ func generateIPRuleForUDNSubnet(udnIP *net.IPNet, isIPv6 bool, vrfTableId uint) 
 	}
 	r.Dst = udnIP
 	return r
-}
-
-func addRPFilterLooseModeForManagementPort(mgmtPortName string) error {
-	// update the reverse path filtering options for ovn-k8s-mpX interface to avoid dropping packets with masqueradeIP
-	// coming out of managementport interface
-	// NOTE: v6 doesn't have rp_filter strict mode block
-	rpFilterLooseMode := "2"
-	// TODO: Convert testing framework to mock golang module utilities. Example:
-	// result, err := sysctl.Sysctl(fmt.Sprintf("net/ipv4/conf/%s/rp_filter", types.K8sMgmtIntfName), rpFilterLooseMode)
-	// we use forward slash as path separator to allow dotted mgmtPortName e.g. foo.200
-	stdout, stderr, err := util.RunSysctl("-w", fmt.Sprintf("net/ipv4/conf/%s/rp_filter=%s", mgmtPortName, rpFilterLooseMode))
-	// systctl output enforces dot as path separator
-	if err != nil || stdout != fmt.Sprintf("net.ipv4.conf.%s.rp_filter = %s", strings.ReplaceAll(mgmtPortName, ".", "/"), rpFilterLooseMode) {
-		return fmt.Errorf("could not set the correct rp_filter value for interface %s: stdout: %v, stderr: %v, err: %v",
-			mgmtPortName, stdout, stderr, err)
-	}
-	return nil
 }
 
 func (udng *UserDefinedNetworkGateway) run() {

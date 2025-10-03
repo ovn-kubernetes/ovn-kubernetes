@@ -53,6 +53,16 @@ func genFindInterfaceWithSandboxCmd() string {
 		"--format=csv find Interface external_ids:sandbox!=\"\" external_ids:vf-netdev-name!=\"\"")
 }
 
+func genSyncFindInternalInterface() string {
+	return fmt.Sprintf("ovs-vsctl --timeout=15 --no-headings --data bare --format csv --columns name " +
+		"find Interface type=internal")
+}
+
+func genSyncFindRepInterface() string {
+	return fmt.Sprintf("ovs-vsctl --timeout=15 --no-headings --data bare --format csv --columns name,external_ids find "+
+		"Interface external_ids:%s!=\"\"", types.OvnManagementPortNameExternalID)
+}
+
 var _ = Describe("Healthcheck tests", func() {
 	var execMock *ovntest.FakeExec
 	var factoryMock factoryMocks.NodeWatchFactory
@@ -243,6 +253,16 @@ var _ = Describe("Healthcheck tests", func() {
 			nodeInformerMock := &coreinformermocks.NodeInformer{}
 			nodeInformerMock.On("Lister").Return(nodeListerMock)
 			factoryMock.On("NodeCoreInformer").Return(nodeInformerMock)
+			execMock.AddFakeCmd(&ovntest.ExpectedCmd{
+				Cmd:    genSyncFindInternalInterface(),
+				Output: "",
+				Err:    nil,
+			})
+			execMock.AddFakeCmd(&ovntest.ExpectedCmd{
+				Cmd:    genSyncFindRepInterface(),
+				Output: "",
+				Err:    nil,
+			})
 
 			ncm, err := NewNodeControllerManager(fakeClient, &factoryMock, nodeName, &sync.WaitGroup{}, nil, routeManager, nil)
 			Expect(err).NotTo(HaveOccurred())
