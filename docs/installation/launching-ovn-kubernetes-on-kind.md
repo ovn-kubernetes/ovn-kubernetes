@@ -177,7 +177,7 @@ usage: kind.sh [[[-cf |--config-file <file>] [-kt|keep-taint] [-ha|--ha-enabled]
 -nqe | --network-qos-enable         Enable network QoS. DEFAULT: Disabled.
 -lr  |--local-kind-registry         Will start and connect a kind local registry to push/retrieve images
 --delete                      	    Delete current cluster
---deploy                      	    Deploy ovn kubernetes without restarting kind
+--deploy                      	    Deploy ovn-kubernetes without restarting kind
 ```
 
 As seen above, if you do not specify any options the script will assume the default values.
