@@ -335,15 +335,27 @@ func (oc *DefaultNetworkController) removeRemoteZonePod(pod *corev1.Pod) error {
 		return fmt.Errorf("failed to remove the remote zone pod: %w", err)
 	}
 
+	// FIXME: there are other things we are probably leaving behind and should
+	// be removed for completed VMs, like per-pod SNAT. Also
+	// removeRemoteZonePodFromNamespaceAddressSet above should probably not be
+	// called for migrations.
+	// https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5627
 	if kubevirt.IsPodLiveMigratable(pod) {
-		ips, err := util.GetPodCIDRsWithFullMask(pod, oc.GetNetInfo())
-		if err != nil && !errors.Is(err, util.ErrNoPodIPFound) {
-			return fmt.Errorf("failed to get pod ips for the pod %s/%s: %w", pod.Namespace, pod.Name, err)
+		allVMPodsAreCompleted, err := kubevirt.AllVMPodsAreCompleted(oc.watchFactory, pod)
+		if err != nil {
+			return err
 		}
-		switchName, zoneContainsPodSubnet := kubevirt.ZoneContainsPodSubnet(oc.lsManager, ips)
-		if zoneContainsPodSubnet {
-			if err := oc.lsManager.ReleaseIPs(switchName, ips); err != nil {
-				return err
+
+		if allVMPodsAreCompleted {
+			ips, err := util.GetPodCIDRsWithFullMask(pod, oc.GetNetInfo())
+			if err != nil && !errors.Is(err, util.ErrNoPodIPFound) {
+				return fmt.Errorf("failed to get pod ips for the pod %s/%s: %w", pod.Namespace, pod.Name, err)
+			}
+			switchName, zoneContainsPodSubnet := kubevirt.ZoneContainsPodSubnet(oc.lsManager, ips)
+			if zoneContainsPodSubnet {
+				if err := oc.lsManager.ReleaseIPs(switchName, ips); err != nil {
+					return err
+				}
 			}
 		}
 	}
