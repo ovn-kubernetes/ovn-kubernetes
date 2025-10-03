@@ -640,7 +640,7 @@ func getMgmtPortAndRepNameModeDPU(node *corev1.Node) (string, string, error) {
 	}
 	cfg, ok := cfgs[types.DefaultNetworkName]
 	if !ok {
-		return "", "", fmt.Errorf("failed to find management port defails for %s network", types.DefaultNetworkName)
+		return "", "", fmt.Errorf("failed to find management port details for %s network", types.DefaultNetworkName)
 	}
 	rep, err := util.GetSriovnetOps().GetVfRepresentorDPU(fmt.Sprintf("%d", cfg.PfId), fmt.Sprintf("%d", cfg.FuncId))
 	return "", rep, err
@@ -679,10 +679,11 @@ func createNodeManagementPortController(
 		return nil, err
 	}
 
-	// if config.OvnKubeNode.MgmtPortDPResourceName is not empty, management port annotation is already set
-	// by node controller manage. Also, in full mode, above getMgmtPortAndRepName() function already returns
-	// the representor interface. So only set the default network management port annotation in dpu-host mode.
 	if config.OvnKubeNode.MgmtPortDPResourceName == "" && config.OvnKubeNode.Mode == types.NodeModeDPUHost {
+		// this is called only when config.OvnKubeNode.MgmtPortDPResourceName is empty and in dpu-host mode:
+		// 1. If config.OvnKubeNode.MgmtPortDPResourceName is not empty, management port annotation is taken care
+		//    of by node controller manage.
+		// 2. In full mode, representor interface is returned by calling getMgmtPortAndRepName(), not from the annotation.
 		err := exportManagementPortAnnotation(netdevName, nodeAnnotator)
 		if err != nil {
 			return nil, err

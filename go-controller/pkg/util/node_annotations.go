@@ -419,6 +419,10 @@ type NetworkDeviceDetails struct {
 type NetworkDeviceDetailsMap map[string]*NetworkDeviceDetails
 
 func (ndm *NetworkDeviceDetailsMap) String() string {
+	if ndm == nil || *ndm == nil {
+		return "nil"
+	}
+
 	ndmString := ""
 	for k, v := range *ndm {
 		ndmString += fmt.Sprintf("%v: %+v,", k, v)
@@ -441,22 +445,6 @@ func UpdateNodeManagementPortAnnotation(kube kube.Interface, nodeName string, cf
 	return retry.RetryOnConflict(OvnConflictBackoff, func() error {
 		return kube.SetAnnotationsOnNode(nodeName, map[string]interface{}{OvnNodeManagementPort: string(bytes)})
 	})
-}
-
-func UpdateNodeManagementPortAnnotationForNetwork(kube kube.Interface, node *corev1.Node, network string, cfg *NetworkDeviceDetails) error {
-	cfgs, err := ParseNodeManagementPortAnnotation(node)
-	if err != nil {
-		if !IsAnnotationNotSetError(err) {
-			return err
-		}
-		cfgs = NetworkDeviceDetailsMap{}
-	}
-	if cfg == nil {
-		delete(cfgs, network)
-	} else {
-		cfgs[network] = cfg
-	}
-	return UpdateNodeManagementPortAnnotation(kube, node.Name, cfgs)
 }
 
 // SetNodeManagementPortAnnotation is used only when resource name is not specified,

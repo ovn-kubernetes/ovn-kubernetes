@@ -60,7 +60,7 @@ func genSyncFindInternalInterface() string {
 
 func genSyncFindRepInterface() string {
 	return fmt.Sprintf("ovs-vsctl --timeout=15 --no-headings --data bare --format csv --columns name,external_ids find "+
-		"Interface external_ids:%s!=\"\"", types.OvnManagementPortNameExternalId)
+		"Interface external_ids:%s!=\"\"", types.OvnManagementPortNameExternalID)
 }
 
 var _ = Describe("Healthcheck tests", func() {

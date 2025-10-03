@@ -13,8 +13,8 @@ import (
 )
 
 // there is a case that even resource name is defined, it is not associated with any real device,
-// ErrorResourceNotDefined is to indicate this error
-var ErrorResourceNotDefined = errors.New("resource not defined")
+// ErrResourceNotDefined is to indicate this error
+var ErrResourceNotDefined = errors.New("resource not defined")
 
 // Device resource manager, each reserved resource will be owned by a unique owner
 type DeviceResourceAllocator struct {
@@ -82,9 +82,12 @@ func (drm *DeviceResourceAllocator) ResourceName() string {
 }
 
 func (drm *DeviceResourceAllocator) DeviceIDs() []string {
-	drm.resourceLock.Lock()
-	defer drm.resourceLock.Unlock()
-	return drm.deviceIds
+	drm.resourceLock.RLock()
+	defer drm.resourceLock.RUnlock()
+
+	ids := make([]string, len(drm.deviceIds))
+	copy(ids, drm.deviceIds)
+	return ids
 }
 
 func (drm *DeviceResourceAllocator) ReserveResourcesDeviceIDByIndex(owner string, index int) (string, error) {
@@ -201,8 +204,15 @@ func getEnvNameFromResourceName(resource string) string {
 func getDeviceIdsFromEnv(envName string) ([]string, error) {
 	envVar := os.Getenv(envName)
 	if len(envVar) == 0 {
-		return nil, ErrorResourceNotDefined
+		return nil, ErrResourceNotDefined
 	}
-	deviceIds := strings.Split(envVar, ",")
+	raw := strings.Split(envVar, ",")
+	deviceIds := make([]string, 0, len(raw))
+	for _, s := range raw {
+		deviceId := strings.TrimSpace(s)
+		if deviceId != "" {
+			deviceIds = append(deviceIds, deviceId)
+		}
+	}
 	return deviceIds, nil
 }

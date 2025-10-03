@@ -903,6 +903,7 @@ func TestParseNodeManagementPortAnnotation(t *testing.T) {
 			desc: "if management port annotation has no fields set",
 			node: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
+					Name:        "my-node",
 					Annotations: map[string]string{},
 				},
 			},
@@ -927,6 +928,7 @@ func TestParseNodeManagementPortAnnotation(t *testing.T) {
 				},
 			},
 			expectedOutput: NetworkDeviceDetailsMap{"default": &NetworkDeviceDetails{PfId: 0, FuncId: 4}},
+			expectError:    nil,
 		},
 		{
 			desc: "if management port annotation has device information for two different networks",
@@ -946,7 +948,7 @@ func TestParseNodeManagementPortAnnotation(t *testing.T) {
 				},
 			},
 			expectedOutput: nil,
-			expectError:    nil,
+			expectError:    fmt.Errorf("failed to unmarshal management port annotation {\"default\":{} for node \"\": unexpected end of JSON input"),
 		},
 	}
 
@@ -955,8 +957,10 @@ func TestParseNodeManagementPortAnnotation(t *testing.T) {
 			mpDetails, err := ParseNodeManagementPortAnnotation(tc.node)
 			t.Log(mpDetails, err)
 			if tc.expectError != nil {
-				assert.Error(t, err)
+				require.Error(t, err)
+				assert.EqualError(t, err, tc.expectError.Error())
 			} else {
+				require.NoError(t, err)
 				assert.True(t, reflect.DeepEqual(mpDetails, tc.expectedOutput))
 			}
 		})

@@ -6,7 +6,7 @@ import (
 
 	v1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
-	corev1 "k8s.io/api/core/v1"
+	listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
@@ -26,21 +26,21 @@ type UDNManagementPortController struct {
 
 type udnManagementPortConfig struct {
 	util.NetInfo
-	node    *corev1.Node // TBD-merge lower case?
-	subnets []*net.IPNet
-	mpMAC   net.HardwareAddr
+	nodeName string
+	subnets  []*net.IPNet
+	mpMAC    net.HardwareAddr
 }
 
-func newUDNManagementPortConfig(node *corev1.Node, networkLocalSubnets []*net.IPNet, netInfo util.NetInfo) (*udnManagementPortConfig, error) {
+func newUDNManagementPortConfig(nodeName string, networkLocalSubnets []*net.IPNet, netInfo util.NetInfo) (*udnManagementPortConfig, error) {
 	if len(networkLocalSubnets) == 0 {
 		return nil, fmt.Errorf("cannot determine subnets while configuring management port for network: %s", netInfo.GetNetworkName())
 	}
 
 	return &udnManagementPortConfig{
-		NetInfo: netInfo,
-		subnets: networkLocalSubnets,
-		node:    node,
-		mpMAC:   util.IPAddrToHWAddr(netInfo.GetNodeManagementIP(networkLocalSubnets[0]).IP),
+		NetInfo:  netInfo,
+		subnets:  networkLocalSubnets,
+		nodeName: nodeName,
+		mpMAC:    util.IPAddrToHWAddr(netInfo.GetNodeManagementIP(networkLocalSubnets[0]).IP),
 	}, nil
 }
 
@@ -64,9 +64,10 @@ func (c *UDNManagementPortController) Delete() error {
 	return nil
 }
 
-// NewUDNManagementPortControlle creates a new ManagementPorts for a primary UDN
+// NewUDNManagementPortController creates a new management port controller for a primary UDN
 func NewUDNManagementPortController(
-	node *corev1.Node,
+	nodeLister listers.NodeLister,
+	nodeName string,
 	networkLocalSubnets []*net.IPNet,
 	netInfo util.NetInfo,
 ) (*UDNManagementPortController, error) {
@@ -74,15 +75,19 @@ func NewUDNManagementPortController(
 
 	mgmtIfName := util.GetNetworkScopedK8sMgmtHostIntfName(uint(netInfo.GetNetworkID()))
 
-	cfg, err := newUDNManagementPortConfig(node, networkLocalSubnets, netInfo)
+	cfg, err := newUDNManagementPortConfig(nodeName, networkLocalSubnets, netInfo)
 	if err != nil {
 		return nil, err
 	}
 
+	node, err := nodeLister.Get(nodeName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get node %s: %v", nodeName, err)
+	}
 	mpdevs, err := util.ParseNodeManagementPortAnnotation(node)
 	if err != nil {
 		if !util.IsAnnotationNotSetError(err) {
-			return nil, fmt.Errorf("failed to get management port defails for network %s: %v", netInfo.GetNetworkName(), err)
+			return nil, fmt.Errorf("failed to get management port details for network %s: %v", netInfo.GetNetworkName(), err)
 		}
 	} else {
 		mpdev = mpdevs[netInfo.GetNetworkName()]
@@ -149,7 +154,7 @@ type udnManagementPortRep struct {
 	repDevice string
 }
 
-// newManagementPortUDNOVS creates a new managementPortUDNOVS
+// newUDNManagementPortOVS creates a new udnManagementPortOVS
 func newUDNManagementPortOVS(cfg *udnManagementPortConfig, ifName string) *udnManagementPortOVS {
 	return &udnManagementPortOVS{
 		udnManagementPortConfig: *cfg,
@@ -182,7 +187,7 @@ func syncUDNManagementPort(cfg *udnManagementPortConfig, mgmtIfName string, mpde
 		"--data", "bare",
 		"--format", "csv",
 		"--columns", "name",
-		"find", "Interface", fmt.Sprintf("external-ids:%s=%s", types.OvnManagementPortNameExternalId, mgmtIfName))
+		"find", "Interface", fmt.Sprintf("external-ids:%s=%s", types.OvnManagementPortNameExternalID, mgmtIfName))
 	// internal OVS interface
 	ovsInternalIfName, _, _ := util.RunOVSVsctl("--no-headings",
 		"--data", "bare",
@@ -223,7 +228,7 @@ func syncUDNManagementPort(cfg *udnManagementPortConfig, mgmtIfName string, mpde
 				mgmtIfName, cfg.GetNetworkName())
 			err = DeleteManagementPortOVSInterface(cfg.GetNetworkName(), mgmtIfName)
 			if err != nil {
-				klog.Errorf("Failed to delete OVS internal interface %s for network %s: %v", ovsInternalIfName, cfg.GetNetworkName(), err)
+				klog.Errorf("Failed to delete OVS internal interface %s for network %s: %v", mgmtIfName, cfg.GetNetworkName(), err)
 			}
 		}
 		// then check the current mgmtIfName to see if it is the same netdevice
@@ -273,7 +278,7 @@ func (mp *udnManagementPortOVS) create() error {
 		"--", "--may-exist", "add-port", "br-int", mp.ifName,
 		"--", "set", "interface", mp.ifName, fmt.Sprintf("mac=\"%s\"", mp.mpMAC.String()),
 		"type=internal", "mtu_request="+fmt.Sprintf("%d", mp.MTU()),
-		"external-ids:iface-id="+mp.GetNetworkScopedK8sMgmtIntfName(mp.node.Name),
+		"external-ids:iface-id="+mp.GetNetworkScopedK8sMgmtIntfName(mp.nodeName),
 		"external-ids:"+fmt.Sprintf("%s=%s", types.NetworkExternalID, mp.GetNetworkName()),
 	)
 	if err != nil {
@@ -299,6 +304,10 @@ func (mp *udnManagementPortOVS) create() error {
 		}
 	}
 
+	// add loose mode for rp filter on management port
+	if err = util.SetRPFilterLooseModeForInterface(mp.ifName); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -306,6 +315,8 @@ func (mp *udnManagementPortOVS) delete() error {
 	return DeleteManagementPortOVSInterface(mp.GetNetworkName(), mp.ifName)
 }
 
+// Create management port representor. Note that the representor device is not renamed. One can determine its associated
+// UDN network and its management netdev interface from its external-ids.
 func (mp *udnManagementPortRep) create() error {
 	klog.V(5).Infof("Lookup representor link and existing management port for '%v'", mp.repDevice)
 	// Get management port representor netdevice
@@ -323,9 +334,9 @@ func (mp *udnManagementPortRep) create() error {
 
 	externalIds := []string{
 		fmt.Sprintf("%s=%s", types.NetworkExternalID, mp.GetNetworkName()),
-		fmt.Sprintf("%s=%s", types.OvnManagementPortNameExternalId, util.GetNetworkScopedK8sMgmtHostIntfName(uint(mp.GetNetworkID()))),
+		fmt.Sprintf("%s=%s", types.OvnManagementPortNameExternalID, util.GetNetworkScopedK8sMgmtHostIntfName(uint(mp.GetNetworkID()))),
 	}
-	return createManagementPortOVSRepresentor(mp.GetNetworkName(), mp.repDevice, mp.GetNetworkScopedK8sMgmtIntfName(mp.node.Name), mp.MTU(), externalIds)
+	return createManagementPortOVSRepresentor(mp.GetNetworkName(), mp.repDevice, mp.GetNetworkScopedK8sMgmtIntfName(mp.nodeName), mp.MTU(), externalIds)
 }
 
 func (mp *udnManagementPortRep) delete() error {
@@ -340,7 +351,7 @@ func (mp *udnManagementPortNetdev) create() error {
 
 	link, err := util.GetNetLinkOps().LinkByName(netdevice)
 	if err != nil {
-		return fmt.Errorf("failed to get management port link %s for network %s", netdevice, mp.GetNetworkName())
+		return fmt.Errorf("failed to get management port link %s for network %s: %v", netdevice, mp.GetNetworkName(), err)
 	}
 
 	klog.V(5).Infof("Setup netdevice management port %s for network %s: netdevice %s, MAC %v MTU: %v",
@@ -355,6 +366,11 @@ func (mp *udnManagementPortNetdev) create() error {
 		if err != nil {
 			return err
 		}
+	}
+
+	// add loose mode for rp filter on management port
+	if err = util.SetRPFilterLooseModeForInterface(mp.ifName); err != nil {
+		return err
 	}
 	return err
 }
