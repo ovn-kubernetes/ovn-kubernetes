@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 
+	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
@@ -102,15 +103,21 @@ func (nc *UserDefinedNodeNetworkController) Stop() {
 
 // Cleanup cleans up node entities for the given user-defined network
 func (nc *UserDefinedNodeNetworkController) Cleanup() error {
+	var errors []error
+	var err error
+
 	if nc.gateway != nil {
-		if err := nc.gateway.DelNetwork(); err != nil {
-			return fmt.Errorf("deleting network gateway for network %s failed: %v", nc.GetNetworkName(), err)
+		if err = nc.gateway.DelNetwork(); err != nil {
+			errors = append(errors, fmt.Errorf("deleting network gateway for network %s failed: %v", nc.GetNetworkName(), err))
 		}
 	}
-	if nc.mpdm != nil {
-		if err := nc.mpdm.ReleaseDeviceIDForNetwork(nc.GetNetworkName()); err != nil {
-			return fmt.Errorf("deleting device ID for network %s failed: %v", nc.GetNetworkName(), err)
+	if nc.mpdm != nil && util.IsNetworkSegmentationSupportEnabled() && nc.IsPrimaryNetwork() {
+		if err = nc.mpdm.ReleaseDeviceIDForNetwork(nc.GetNetworkName()); err != nil {
+			errors = append(errors, fmt.Errorf("deleting device ID for network %s failed: %v", nc.GetNetworkName(), err))
 		}
+	}
+	if len(errors) > 0 {
+		return kerrors.NewAggregate(errors)
 	}
 	return nil
 }

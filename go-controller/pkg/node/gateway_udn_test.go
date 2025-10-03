@@ -242,7 +242,7 @@ func setUpUDNOpenflowManagerCheckPortsFakeOVSCommands(fexec *ovntest.FakeExec) {
 
 func deleteStaleManagementPortFakeCommands(fexec *ovntest.FakeExec, mgtPort string) {
 	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd: fmt.Sprintf("ovs-vsctl --timeout=15 --no-headings --data bare --format csv --columns name find Interface external-ids:%s=%s", types.OvnManagementPortNameExternalId, mgtPort),
+		Cmd: fmt.Sprintf("ovs-vsctl --timeout=15 --no-headings --data bare --format csv --columns name find Interface external-ids:%s=%s", types.OvnManagementPortNameExternalID, mgtPort),
 	})
 	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 		Cmd: fmt.Sprintf("ovs-vsctl --timeout=15 --no-headings --data bare --format csv --columns name find Interface type=internal name=%s", mgtPort),
@@ -381,6 +381,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		Expect(err).NotTo(HaveOccurred())
 		mgtPortMAC = util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(ipNet).IP).String()
 		getCreationFakeCommands(fexec, mgtPort, mgtPortMAC, netName, nodeName, netInfo.MTU())
+		getRPFilterLooseModeFakeCommands(fexec)
 		nodeLister.On("Get", mock.AnythingOfType("string")).Return(node, nil)
 		factoryMock.On("GetNodeForWindows", "worker1").Return(node, nil)
 
@@ -392,7 +393,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(err).NotTo(HaveOccurred())
 			localSubnets, err := udnGateway.getLocalSubnets()
 			Expect(err).NotTo(HaveOccurred())
-			udnGateway.mgmtPortController, err = managementport.NewUDNManagementPortController(udnGateway.node, localSubnets, udnGateway.NetInfo)
+			udnGateway.mgmtPortController, err = managementport.NewUDNManagementPortController(udnGateway.nodeLister, udnGateway.node.Name, localSubnets, udnGateway.NetInfo)
 			Expect(err).NotTo(HaveOccurred())
 			err = udnGateway.mgmtPortController.Create()
 			Expect(err).NotTo(HaveOccurred())
@@ -443,7 +444,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(err).NotTo(HaveOccurred())
 			localSubnets, err := udnGateway.getLocalSubnets()
 			Expect(err).NotTo(HaveOccurred())
-			udnGateway.mgmtPortController, err = managementport.NewUDNManagementPortController(udnGateway.node, localSubnets, udnGateway.NetInfo)
+			udnGateway.mgmtPortController, err = managementport.NewUDNManagementPortController(udnGateway.nodeLister, udnGateway.node.Name, localSubnets, udnGateway.NetInfo)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(udnGateway.mgmtPortController.Delete()).To(Succeed())
 			return nil
@@ -472,6 +473,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		Expect(err).NotTo(HaveOccurred())
 		mgtPortMAC = util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(ipNet).IP).String()
 		getCreationFakeCommands(fexec, mgtPort, mgtPortMAC, netName, nodeName, netInfo.MTU())
+		getRPFilterLooseModeFakeCommands(fexec)
 		nodeLister.On("Get", mock.AnythingOfType("string")).Return(node, nil)
 		factoryMock.On("GetNodeForWindows", "worker1").Return(node, nil)
 		err = testNS.Do(func(ns.NetNS) error {
@@ -482,7 +484,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(err).NotTo(HaveOccurred())
 			localSubnets, err := udnGateway.getLocalSubnets()
 			Expect(err).NotTo(HaveOccurred())
-			udnGateway.mgmtPortController, err = managementport.NewUDNManagementPortController(udnGateway.node, localSubnets, udnGateway.NetInfo)
+			udnGateway.mgmtPortController, err = managementport.NewUDNManagementPortController(udnGateway.nodeLister, udnGateway.node.Name, localSubnets, udnGateway.NetInfo)
 			Expect(err).NotTo(HaveOccurred())
 			err = udnGateway.mgmtPortController.Create()
 			Expect(err).NotTo(HaveOccurred())
@@ -533,7 +535,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(err).NotTo(HaveOccurred())
 			localSubnets, err := udnGateway.getLocalSubnets()
 			Expect(err).NotTo(HaveOccurred())
-			udnGateway.mgmtPortController, err = managementport.NewUDNManagementPortController(udnGateway.node, localSubnets, udnGateway.NetInfo)
+			udnGateway.mgmtPortController, err = managementport.NewUDNManagementPortController(udnGateway.nodeLister, udnGateway.node.Name, localSubnets, udnGateway.NetInfo)
 			Expect(err).NotTo(HaveOccurred())
 			err = udnGateway.mgmtPortController.Delete()
 			Expect(err).NotTo(HaveOccurred())
@@ -1501,7 +1503,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
 	})
 
-	ovntest.OnSupportedPlatformsIt("should set rp filer to loose mode for management port interface", func() {
+	ovntest.OnSupportedPlatformsIt("should set rp filter to loose mode for management port interface", func() {
 		getRPFilterLooseModeFakeCommands(fexec)
 		err := testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()

@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"sync"
 
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/deviceresource"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -16,8 +16,9 @@ import (
 // MgmtPortDeviceManager manages the mapping between network name and its management port VF device details information
 // it calls into device allocator to allocate/release VF device for networks (default network and primary networks)
 type MgmtPortDeviceManager struct {
-	node *corev1.Node
-	Kube kube.Interface
+	nodeName     string
+	Kube         kube.Interface
+	watchFactory factory.NodeWatchFactory
 
 	// manages default and primary network management ports VF allocation,
 	// it will be nil if no VF resource is defined
@@ -26,10 +27,11 @@ type MgmtPortDeviceManager struct {
 	mgmtPortDetails util.NetworkDeviceDetailsMap
 }
 
-func NewMgmtPortDeviceManager(Kube kube.Interface, node *corev1.Node, deviceAllocator *deviceresource.DeviceResourceAllocator) *MgmtPortDeviceManager {
+func NewMgmtPortDeviceManager(Kube kube.Interface, wf factory.NodeWatchFactory, nodeName string, deviceAllocator *deviceresource.DeviceResourceAllocator) *MgmtPortDeviceManager {
 	return &MgmtPortDeviceManager{
-		node:            node,
+		nodeName:        nodeName,
 		Kube:            Kube,
+		watchFactory:    wf,
 		deviceAllocator: deviceAllocator,
 		mgmtPortMutex:   sync.Mutex{},
 		mgmtPortDetails: util.NetworkDeviceDetailsMap{},
@@ -39,13 +41,18 @@ func NewMgmtPortDeviceManager(Kube kube.Interface, node *corev1.Node, deviceAllo
 func (mpdm *MgmtPortDeviceManager) Init() error {
 	var annotationNeedUpdate bool
 
+	node, err := mpdm.watchFactory.GetNode(mpdm.nodeName)
+	if err != nil {
+		return fmt.Errorf("failed to get node %s: %v", mpdm.nodeName, err)
+	}
+
 	mpdm.mgmtPortMutex.Lock()
 	defer mpdm.mgmtPortMutex.Unlock()
-	annotatedMgmtPortDetailsMap, err := util.ParseNodeManagementPortAnnotation(mpdm.node)
+	annotatedMgmtPortDetailsMap, err := util.ParseNodeManagementPortAnnotation(node)
 	if err != nil {
 		if !util.IsAnnotationNotSetError(err) {
 			return fmt.Errorf("failed to parse node network management port annotation %q: %v",
-				mpdm.node.Annotations, err)
+				node.Annotations, err)
 		}
 		annotatedMgmtPortDetailsMap = util.NetworkDeviceDetailsMap{}
 	}
@@ -61,19 +68,25 @@ func (mpdm *MgmtPortDeviceManager) Init() error {
 				mgmtDetails, err := util.GetNetworkDeviceDetails(d)
 				if err == nil && mgmtDetails.PfId == annotatedMgmtPortDetails.PfId && mgmtDetails.FuncId == annotatedMgmtPortDetails.FuncId {
 					deviceId = d
+					break
 				}
 			}
 			if deviceId == "" {
 				return fmt.Errorf("failed to find match manage port device %v of resource %s for network %s",
 					annotatedMgmtPortDetails, mpdm.deviceAllocator.ResourceName(), network)
 			}
+			err = mpdm.deviceAllocator.ReserveResourcesDeviceIDByDeviceID(network, deviceId)
+			if err != nil {
+				return fmt.Errorf("failed to reserve manage port device %v of resource %s for network %s: %v",
+					deviceId, mpdm.deviceAllocator.ResourceName(), network, err)
+			}
 			annotatedMgmtPortDetails.DeviceId = deviceId
 			annotationNeedUpdate = true
 		} else {
 			err = mpdm.deviceAllocator.ReserveResourcesDeviceIDByDeviceID(network, deviceId)
 			if err != nil {
-				return fmt.Errorf("failed to reserve manage port device of resource %s for network %s: %v",
-					mpdm.deviceAllocator.ResourceName(), network, err)
+				return fmt.Errorf("failed to reserve manage port device %v of resource %s for network %s: %v",
+					deviceId, mpdm.deviceAllocator.ResourceName(), network, err)
 			}
 			curMgmtPortDetails, err := util.GetNetworkDeviceDetails(deviceId)
 			if err != nil {
@@ -85,7 +98,7 @@ func (mpdm *MgmtPortDeviceManager) Init() error {
 		}
 	}
 	if annotationNeedUpdate {
-		err = util.UpdateNodeManagementPortAnnotation(mpdm.Kube, mpdm.node.Name, annotatedMgmtPortDetailsMap)
+		err = util.UpdateNodeManagementPortAnnotation(mpdm.Kube, mpdm.nodeName, annotatedMgmtPortDetailsMap)
 		if err != nil {
 			return fmt.Errorf("failed to update node management port annotation: %v", err)
 		}
@@ -117,7 +130,7 @@ func (mpdm *MgmtPortDeviceManager) SyncManagementPorts(validNetworks ...util.Net
 		}
 	}
 	if needUpdate {
-		err := util.UpdateNodeManagementPortAnnotation(mpdm.Kube, mpdm.node.Name, mpdm.mgmtPortDetails)
+		err := util.UpdateNodeManagementPortAnnotation(mpdm.Kube, mpdm.nodeName, mpdm.mgmtPortDetails)
 		if err != nil {
 			return fmt.Errorf("failed to update management port devices annotation after deleting stale network node management port %v", err)
 		}
@@ -145,7 +158,7 @@ func (mpdm *MgmtPortDeviceManager) AllocateDeviceIDForNetwork(network string) er
 			return fmt.Errorf("failed to get network manage port device details for device %s: %v", deviceId, err)
 		}
 		mpdm.mgmtPortDetails[network] = mgmtPortDetails
-		err = util.UpdateNodeManagementPortAnnotation(mpdm.Kube, mpdm.node.Name, mpdm.mgmtPortDetails)
+		err = util.UpdateNodeManagementPortAnnotation(mpdm.Kube, mpdm.nodeName, mpdm.mgmtPortDetails)
 		if err != nil {
 			mpdm.deviceAllocator.ReleaseResourcesDeviceID(network)
 			delete(mpdm.mgmtPortDetails, network)
@@ -174,7 +187,7 @@ func (mpdm *MgmtPortDeviceManager) AllocateDeviceIDForDefaultNetwork() (*util.Ne
 			return nil, fmt.Errorf("failed to get network manage port device details for device %s: %v", deviceId, err)
 		}
 		mpdm.mgmtPortDetails[ovntypes.DefaultNetworkName] = mgmtPortDetails
-		err = util.UpdateNodeManagementPortAnnotation(mpdm.Kube, mpdm.node.Name, mpdm.mgmtPortDetails)
+		err = util.UpdateNodeManagementPortAnnotation(mpdm.Kube, mpdm.nodeName, mpdm.mgmtPortDetails)
 		if err != nil {
 			mpdm.deviceAllocator.ReleaseResourcesDeviceID(ovntypes.DefaultNetworkName)
 			delete(mpdm.mgmtPortDetails, ovntypes.DefaultNetworkName)
@@ -192,11 +205,15 @@ func (mpdm *MgmtPortDeviceManager) ReleaseDeviceIDForNetwork(network string) err
 	defer mpdm.mgmtPortMutex.Unlock()
 
 	klog.V(5).Infof("Release management device allocated for network %s", network)
-	err := util.UpdateNodeManagementPortAnnotationForNetwork(mpdm.Kube, mpdm.node, network, nil)
-	if err != nil {
-		return fmt.Errorf("error updating node management port annotation for network %s: %v", network, err)
+	mgmtPortDetails, ok := mpdm.mgmtPortDetails[network]
+	if ok {
+		delete(mpdm.mgmtPortDetails, network)
+		err := util.UpdateNodeManagementPortAnnotation(mpdm.Kube, mpdm.nodeName, mpdm.mgmtPortDetails)
+		if err != nil {
+			mpdm.mgmtPortDetails[network] = mgmtPortDetails
+			return fmt.Errorf("error updating node management port annotation for network %s: %v", network, err)
+		}
 	}
 	mpdm.deviceAllocator.ReleaseResourcesDeviceID(network)
-	delete(mpdm.mgmtPortDetails, network)
 	return nil
 }

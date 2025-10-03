@@ -221,7 +221,8 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 			udng.GetNetworkName(), err)
 	}
 
-	udng.mgmtPortController, err = managementport.NewUDNManagementPortController(udng.node, nodeSubnets, udng.NetInfo)
+	// TBD-merge udng.node.Name, needs lower case?
+	udng.mgmtPortController, err = managementport.NewUDNManagementPortController(udng.nodeLister, udng.node.Name, nodeSubnets, udng.NetInfo)
 	if err != nil {
 		return fmt.Errorf("could not create management port for network %s, UDN management port controller init failure: %v",
 			udng.GetNetworkName(), err)
@@ -234,16 +235,16 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 			udng.GetNetworkName(), err)
 	}
 
-	mgmtPortName := util.GetNetworkScopedK8sMgmtHostIntfName(uint(udng.GetNetworkID()))
-	mplink, err := util.LinkByName(mgmtPortName)
-	if err != nil {
-		return err
-	}
-
-	vrfTableId := util.CalculateRouteTableID(mplink.Attrs().Index)
-	udng.vrfTableId = vrfTableId
-
 	if config.OvnKubeNode.Mode != types.NodeModeDPU {
+		mgmtPortName := util.GetNetworkScopedK8sMgmtHostIntfName(uint(udng.GetNetworkID()))
+		mplink, err := util.LinkByName(mgmtPortName)
+		if err != nil {
+			return err
+		}
+
+		vrfTableId := util.CalculateRouteTableID(mplink.Attrs().Index)
+		udng.vrfTableId = vrfTableId
+
 		vrfDeviceName := util.GetNetworkVRFName(udng.NetInfo)
 		routes, err := udng.computeRoutesForUDN(mplink)
 		if err != nil {
@@ -275,11 +276,6 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 
 		if err = udng.updateUDNVRFIPRoute(); err != nil {
 			return fmt.Errorf("failed to update ip routes for network %s: %w", udng.GetNetworkName(), err)
-		}
-
-		// add loose mode for rp filter on management port
-		if err = util.SetRPFilterLooseModeForInterface(mgmtPortName); err != nil {
-			return fmt.Errorf("could not set loose mode for reverse path filtering on management port %s: %v", mgmtPortName, err)
 		}
 	}
 
@@ -376,10 +372,12 @@ func (udng *UserDefinedNetworkGateway) DelNetwork() error {
 		}
 	}
 	// delete the management port interface for this network
-	err := udng.mgmtPortController.Delete()
-	if err != nil {
-		klog.Errorf("Failed to delete management port controller for network %s: %v", udng.GetNetworkName(), err)
-		return err
+	if udng.mgmtPortController != nil {
+		err := udng.mgmtPortController.Delete()
+		if err != nil {
+			klog.Errorf("Failed to delete management port controller for network %s: %v", udng.GetNetworkName(), err)
+			return err
+		}
 	}
 
 	// close channel only when succesful since we can be called multiple times
