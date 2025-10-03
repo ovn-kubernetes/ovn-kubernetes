@@ -236,8 +236,8 @@ enable-admin-network-policy=false
 enable-persistent-ips=false
 
 [clustermanager]
-v4-transit-switch-subnet=100.89.0.0/16
-v6-transit-switch-subnet=fd98::/64
+v4-transit-subnet=100.89.0.0/16
+v6-transit-subnet=fd98::/64
 `
 
 	var newData string
@@ -703,8 +703,8 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(HybridOverlay.ClusterSubnets).To(gomega.Equal([]CIDRNetworkEntry{
 				{ovntest.MustParseIPNet("11.132.0.0/14"), 23},
 			}))
-			gomega.Expect(ClusterManager.V4TransitSwitchSubnet).To(gomega.Equal("100.89.0.0/16"))
-			gomega.Expect(ClusterManager.V6TransitSwitchSubnet).To(gomega.Equal("fd98::/64"))
+			gomega.Expect(ClusterManager.V4TransitSubnet).To(gomega.Equal("100.89.0.0/16"))
+			gomega.Expect(ClusterManager.V6TransitSubnet).To(gomega.Equal("fd98::/64"))
 
 			return nil
 		}
@@ -815,8 +815,8 @@ var _ = Describe("Config Operations", func() {
 			}))
 			gomega.Expect(Default.MonitorAll).To(gomega.BeFalse())
 			gomega.Expect(Default.OfctrlWaitBeforeClear).To(gomega.Equal(5000))
-			gomega.Expect(ClusterManager.V4TransitSwitchSubnet).To(gomega.Equal("100.90.0.0/16"))
-			gomega.Expect(ClusterManager.V6TransitSwitchSubnet).To(gomega.Equal("fd96::/64"))
+			gomega.Expect(ClusterManager.V4TransitSubnet).To(gomega.Equal("100.90.0.0/16"))
+			gomega.Expect(ClusterManager.V6TransitSubnet).To(gomega.Equal("fd96::/64"))
 
 			return nil
 		}
@@ -891,8 +891,8 @@ var _ = Describe("Config Operations", func() {
 			"-dns-service-namespace=kube-system-2",
 			"-dns-service-name=kube-dns-2",
 			"-disable-requestedchassis=true",
-			"-cluster-manager-v4-transit-switch-subnet=100.90.0.0/16",
-			"-cluster-manager-v6-transit-switch-subnet=fd96::/64",
+			"-cluster-manager-v4-transit-subnet=100.90.0.0/16",
+			"-cluster-manager-v6-transit-subnet=fd96::/64",
 		}
 		err = app.Run(cliArgs)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1224,7 +1224,7 @@ enable-pprof=true
 		}
 		cliArgs := []string{
 			app.Name,
-			"-cluster-manager-v4-transit-switch-subnet=foobar",
+			"-cluster-manager-v4-transit-subnet=foobar",
 		}
 		err := app.Run(cliArgs)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1237,7 +1237,7 @@ enable-pprof=true
 		}
 		cliArgs := []string{
 			app.Name,
-			"-cluster-manager-v6-transit-switch-subnet=100.89.0.0/16",
+			"-cluster-manager-v6-transit-subnet=100.89.0.0/16",
 		}
 		err := app.Run(cliArgs)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1250,13 +1250,13 @@ enable-pprof=true
 		}
 		cliArgs := []string{
 			app.Name,
-			"-cluster-manager-v4-transit-switch-subnet=100.89.0.0/16",
-			"-cluster-manager-v6-transit-switch-subnet=fd99::/64",
+			"-cluster-manager-v4-transit-subnet=100.89.0.0/16",
+			"-cluster-manager-v6-transit-subnet=fd99::/64",
 		}
 		err := app.Run(cliArgs)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		gomega.Expect(ClusterManager.V4TransitSwitchSubnet).To(gomega.Equal("100.89.0.0/16"))
-		gomega.Expect(ClusterManager.V6TransitSwitchSubnet).To(gomega.Equal("fd99::/64"))
+		gomega.Expect(ClusterManager.V4TransitSubnet).To(gomega.Equal("100.89.0.0/16"))
+		gomega.Expect(ClusterManager.V6TransitSubnet).To(gomega.Equal("fd99::/64"))
 	})
 	It("overrides config file and defaults with CLI options (multi-master)", func() {
 		kubeconfigFile, _, err := createTempFile("kubeconfig")
