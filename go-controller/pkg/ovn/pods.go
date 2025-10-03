@@ -211,6 +211,23 @@ func (oc *DefaultNetworkController) deleteLogicalPort(pod *corev1.Pod, portInfo 
 		return fmt.Errorf("cannot delete GW Routes for pod %s: %w", podDesc, err)
 	}
 
+	if kubevirt.IsPodLiveMigratable(pod) {
+		switchName, hasLocalIPs := oc.lsManager.GetSubnetName(pInfo.ips)
+		// don't attempt to release IPs that are not managed by this zone which can
+		// happen with live migratable pods, otherwise we would get distracting
+		// error logs on release
+		if !hasLocalIPs {
+			klog.V(5).Infof("Inhibiting release of live migratable pod %s/%s IPs %s not managed by this zone",
+				pod.Namespace, pod.Name,
+				util.JoinIPNetIPs(pInfo.ips, " "),
+			)
+			return nil
+		}
+		// a pod might have migrated from one node to another node in the same
+		// zone so fix the switch for which the release needs to happen
+		pInfo.logicalSwitch = switchName
+	}
+
 	// Releasing IPs needs to happen last so that we can deterministically know that if delete failed that
 	// the IP of the pod needs to be released. Otherwise we could have a completed pod failed to be removed
 	// and we dont know if the IP was released or not, and subsequently could accidentally release the IP

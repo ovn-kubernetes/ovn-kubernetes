@@ -1032,22 +1032,17 @@ func (bnc *BaseNetworkController) allocatesPodAnnotation() bool {
 
 func (bnc *BaseNetworkController) shouldReleaseDeletedPod(pod *corev1.Pod, switchName, nad string, podIfAddrs []*net.IPNet) (bool, error) {
 	var err error
-	var isMigratedSourcePodStale bool
-	if !bnc.IsUserDefinedNetwork() {
-		isMigratedSourcePodStale, err = kubevirt.IsMigratedSourcePodStale(bnc.watchFactory, pod)
+	if !bnc.IsUserDefinedNetwork() && kubevirt.IsPodLiveMigratable(pod) {
+		allVMPodsAreCompleted, err := kubevirt.AllVMPodsAreCompleted(bnc.watchFactory, pod)
 		if err != nil {
 			return false, err
 		}
-	}
 
-	// Removing the the kubevirt stale pods should not de allocate the IPs
-	// to ensure that new pods do not take them
-	if isMigratedSourcePodStale {
-		return false, nil
-	}
-
-	if !util.PodCompleted(pod) {
-		return true, nil
+		// Removing the the kubevirt stale pods should not de allocate the IPs
+		// to ensure that new pods do not take them
+		if !allVMPodsAreCompleted {
+			return false, nil
+		}
 	}
 
 	if bnc.wasPodReleasedBeforeStartup(string(pod.UID), nad) {
@@ -1059,16 +1054,21 @@ func (bnc *BaseNetworkController) shouldReleaseDeletedPod(pod *corev1.Pod, switc
 		return false, nil
 	}
 
-	shouldReleasePodIPs := func() (bool, error) {
-		// If this pod applies to live migration it could have migrated so get the
-		// correct node name corresponding with the subnet. If the subnet is not
-		// tracked within the zone, nodeName will be empty which will force
-		// canReleasePodIPs to lookup all nodes.
-		nodeName := pod.Spec.NodeName
-		if !bnc.IsUserDefinedNetwork() && kubevirt.IsPodLiveMigratable(pod) {
-			nodeName, _ = bnc.lsManager.GetSubnetName(podIfAddrs)
-		}
+	// If this pod applies to live migration it could have migrated within the
+	// zone so get the correct node name corresponding with the subnet. If the
+	// subnet is not tracked within the zone, nodeName will be empty which
+	// will force a lookup for all nodes.
+	zoneOwnsSubnet := true
+	nodeName := pod.Spec.NodeName
+	if !bnc.IsUserDefinedNetwork() && kubevirt.IsPodLiveMigratable(pod) {
+		switchName, zoneOwnsSubnet = bnc.lsManager.GetSubnetName(podIfAddrs)
+	}
+	if !zoneOwnsSubnet {
+		// force shouldReleasePodIPs to search all nodes
+		nodeName = ""
+	}
 
+	shouldReleasePodIPs := func() (bool, error) {
 		shouldRelease, err := bnc.canReleasePodIPs(podIfAddrs, nodeName)
 		if err != nil {
 			return false, err
@@ -1082,7 +1082,7 @@ func (bnc *BaseNetworkController) shouldReleaseDeletedPod(pod *corev1.Pod, switc
 	// if other pods are using the same IPs just in case we are processing
 	// events in different order than cluster manager did (best effort, there
 	// can still be issues with this)
-	if !bnc.allocatesPodAnnotation() {
+	if !bnc.allocatesPodAnnotation() || !zoneOwnsSubnet {
 		shouldRelease, err = shouldReleasePodIPs()
 	} else {
 		shouldRelease, err = bnc.lsManager.ConditionalIPRelease(switchName, podIfAddrs, shouldReleasePodIPs)
