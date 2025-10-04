@@ -24,6 +24,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/ipalloc"
 
 	v1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -33,7 +34,6 @@ import (
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
-	e2eoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 	e2erc "k8s.io/kubernetes/test/e2e/framework/rc"
 	e2eservice "k8s.io/kubernetes/test/e2e/framework/service"
@@ -200,7 +200,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 
 		ensureStickySession := func() string {
 			hosts := getServiceBackendsFromPod(execPod, svc.Spec.ClusterIP, int(svc.Spec.Ports[0].Port))
-			uniqHosts := sets.New[string](hosts...)
+			uniqHosts := sets.New(hosts...)
 			gomega.Expect(uniqHosts.Len()).To(gomega.Equal(1), fmt.Sprintf("expected the same backend for every connection with session-affinity set, got %v", uniqHosts))
 			backendPod, _ := uniqHosts.PopAny()
 			return backendPod
@@ -1411,7 +1411,7 @@ func getServiceBackendsFromPod(execPod *v1.Pod, serviceIP string, servicePort in
 	curl := fmt.Sprintf(`curl -q -s --connect-timeout 2 http://%s/`, serviceIPPort)
 	cmd := fmt.Sprintf("for i in $(seq 1 %d); do echo; %s ; done", connectionAttempts, curl)
 
-	stdout, err := e2eoutput.RunHostCmd(execPod.Namespace, execPod.Name, cmd)
+	stdout, err := e2epodoutput.RunHostCmd(execPod.Namespace, execPod.Name, cmd)
 	if err != nil {
 		framework.Logf("Failed to get response from %s. Retry until timeout", serviceIPPort)
 		return nil
@@ -1686,7 +1686,7 @@ metadata:
 	})
 
 	ginkgo.It("Should ensure connectivity works on an external service when mtu changes in intermediate node", func() {
-		err := framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, svcName, 4, time.Second, time.Second*180)
+		err := WaitForServingAndReadyServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, svcName, 4, time.Second, time.Second*180)
 		framework.ExpectNoError(err, fmt.Sprintf("service: %s never had an endpoint, err: %v", svcName, err))
 
 		time.Sleep(time.Second * 5) // buffer to ensure all rules are created correctly
@@ -1727,11 +1727,9 @@ metadata:
 		// Ensure service connectivity works from external client with default settings.
 		// Use Eventually because IPv6 takes a while to finish its network configuration
 		// with network namespaces.
-		// TODO: Figure out why keeping this at 5seconds is causing CI flakes after K8s 1.33 rebase
-		// See: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5455
 		gomega.Eventually(func() error {
 			return buildAndRunCommand(fmt.Sprintf("sudo ip netns exec client curl %s:%d/big.iso -o big.iso", svcIPforCurl, endpointHTTPPort))
-		}, 10*time.Second).Should(gomega.BeNil(), "failed to connect with external load balancer service")
+		}, 5*time.Second).Should(gomega.BeNil(), "failed to connect with external load balancer service")
 
 		// Change MTU size of vmtobridge veth pair and verify service connectivity still works.
 		// Set the value >=1280 so that it works for IPv6 as well.
@@ -1768,7 +1766,7 @@ metadata:
 		// B) lbclient->FRR router->ovn-worker2->br-ex->GR_ovn-worker2->join->cluster-router-ovn-worker->transit-switch->GENEVE->
 		//    transit-switch->cluster-router-ovn-worker->ovn-worker-switch->pod
 		// depending on which node is hit for the service traffic and which node the backendpod lives on.
-		err := framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, svcName, 4, time.Second, time.Second*120)
+		err := WaitForServingAndReadyServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, svcName, 4, time.Second, time.Second*180)
 		framework.ExpectNoError(err, fmt.Sprintf("service: %s never had an endpoint, err: %v", svcName, err))
 
 		time.Sleep(time.Second * 5) // buffer to ensure all rules are created correctly
@@ -1784,7 +1782,7 @@ metadata:
 		primaryProviderNetwork, err := infraprovider.Get().PrimaryNetwork()
 		framework.ExpectNoError(err, "must fetch primary provider network")
 		externalContainer := infraapi.ExternalContainer{Name: "lbclient", Network: primaryProviderNetwork} // pre-created
-		_, err = wgetInExternalContainer(externalContainer, svcLoadBalancerIP, endpointHTTPPort, "big.iso", 120)
+		_, err = wgetInExternalContainer(externalContainer, svcLoadBalancerIP, endpointHTTPPort, "big.iso")
 		framework.ExpectNoError(err, "failed to curl load balancer service")
 
 		ginkgo.By("all 3 nodeIP routes are advertised correctly by metalb BGP routes")
@@ -1877,7 +1875,7 @@ spec:
 
 			ginkgo.By("by sending a TCP packet to service " + svcName + " with type=LoadBalancer in namespace " + namespaceName + " with backend pod " + backendName + " via node " + node)
 
-			_, err = wgetInExternalContainer(externalContainer, svcLoadBalancerIP, endpointHTTPPort, "big.iso", 120)
+			_, err = wgetInExternalContainer(externalContainer, svcLoadBalancerIP, endpointHTTPPort, "big.iso")
 			framework.ExpectNoError(err, "failed to curl load balancer service")
 
 			ginkgo.By("change MTU on intermediary router to force icmp related packets")
@@ -1891,7 +1889,7 @@ spec:
 
 			ginkgo.By("by sending a TCP packet to service " + svcName + " with type=LoadBalancer in namespace " + namespaceName + " with backend pod " + backendName + " via node " + node)
 
-			_, err = wgetInExternalContainer(externalContainer, svcLoadBalancerIP, endpointHTTPPort, "big.iso", 120)
+			_, err = wgetInExternalContainer(externalContainer, svcLoadBalancerIP, endpointHTTPPort, "big.iso")
 			framework.ExpectNoError(err, "failed to curl load balancer service")
 
 			ginkgo.By("reset MTU on intermediary router to allow large packets")
@@ -1905,7 +1903,7 @@ spec:
 
 	ginkgo.It("Should ensure load balancer service works with 0 node ports when ETP=local", func() {
 
-		err := framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, svcName, 4, time.Second, time.Second*120)
+		err := WaitForServingAndReadyServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, svcName, 4, time.Second, time.Second*180)
 		framework.ExpectNoError(err, fmt.Sprintf("service: %s never had an enpoint, err: %v", svcName, err))
 
 		svcLoadBalancerIP, err := getServiceLoadBalancerIP(f.ClientSet, namespaceName, svcName)
@@ -1941,7 +1939,7 @@ spec:
 
 		ginkgo.By("by sending a TCP packet to service " + svcName + " with type=LoadBalancer in namespace " + namespaceName + " with backend pod " + backendName)
 		externalContainer := infraapi.ExternalContainer{Name: externalClientContainerName}
-		_, err = wgetInExternalContainer(externalContainer, svcLoadBalancerIP, endpointHTTPPort, "big.iso", 120)
+		_, err = wgetInExternalContainer(externalContainer, svcLoadBalancerIP, endpointHTTPPort, "big.iso")
 		framework.ExpectNoError(err, "failed to curl load balancer service")
 
 		ginkgo.By("patching service " + svcName + " to allocateLoadBalancerNodePorts=false and externalTrafficPolicy=local")
@@ -1969,7 +1967,7 @@ spec:
 
 		ginkgo.By("by sending a TCP packet to service " + svcName + " with type=LoadBalancer in namespace " + namespaceName + " with backend pod " + backendName)
 
-		_, err = wgetInExternalContainer(externalContainer, svcLoadBalancerIP, endpointHTTPPort, "big.iso", 120)
+		_, err = wgetInExternalContainer(externalContainer, svcLoadBalancerIP, endpointHTTPPort, "big.iso")
 		framework.ExpectNoError(err, "failed to curl load balancer service")
 
 		pktSize := 60
@@ -1999,7 +1997,7 @@ spec:
 
 		ginkgo.By("by sending a TCP packet to service " + svcName + " with type=LoadBalancer in namespace " + namespaceName + " with backend pod " + backendName)
 
-		_, err = wgetInExternalContainer(externalContainer, svcLoadBalancerIP, endpointHTTPPort, "big.iso", 120)
+		_, err = wgetInExternalContainer(externalContainer, svcLoadBalancerIP, endpointHTTPPort, "big.iso")
 		framework.ExpectNoError(err, "failed to curl load balancer service")
 
 		err = wait.PollImmediate(retryInterval, retryTimeout, checkNumberOfETPRules(1, fmt.Sprintf("[1:%d] -A OVN-KUBE-ETP", pktSize)))
@@ -2011,7 +2009,7 @@ spec:
 
 	ginkgo.It("Should ensure load balancer service works when ETP=local and session affinity is set", func() {
 
-		err := framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, svcName, 4, time.Second, time.Second*120)
+		err := WaitForServingAndReadyServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, svcName, 4, time.Second, time.Second*180)
 		framework.ExpectNoError(err, fmt.Sprintf("service: %s never had an enpoint, err: %v", svcName, err))
 
 		svcLoadBalancerIP, err := getServiceLoadBalancerIP(f.ClientSet, namespaceName, svcName)
@@ -2148,7 +2146,7 @@ spec:
 		// Now we test ETP=local works as expected without EIP re-routes messing with the reply traffic:
 		// lbclient->FRR router->ovn-worker->br-ex->GR_ovn-worker->join->cluster-router->ovn-worker-switch->pod and response goes back
 		// same way without it getting re-routed to egressNode ovn-worker2
-		err := framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, svcName, 4, time.Second, time.Second*120)
+		err := framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, namespaceName, svcName, 4, time.Second, time.Second*180)
 		framework.ExpectNoError(err, fmt.Sprintf("service: %s never had an enpoint, err: %v", svcName, err))
 
 		svcLoadBalancerIP, err := getServiceLoadBalancerIP(f.ClientSet, namespaceName, svcName)
@@ -2307,14 +2305,6 @@ spec:
 		}
 	})
 })
-
-func getEndpointsForService(c clientset.Interface, namespace, serviceName string) (*v1.Endpoints, error) {
-	endpoints, err := c.CoreV1().Endpoints(namespace).Get(context.TODO(), serviceName, metav1.GetOptions{})
-	if err != nil {
-		return nil, err
-	}
-	return endpoints, nil
-}
 
 func getNodeIP(c clientset.Interface, nodeName string) (string, error) {
 	node, err := c.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
@@ -2507,4 +2497,54 @@ func setupNetNamespaceAndLinks() {
 func cleanupNetNamespace() {
 	buildAndRunCommand("sudo ip netns delete bridge")
 	buildAndRunCommand("sudo ip netns delete client")
+}
+
+// WaitForServingAndReadyServiceEndpointsNum waits until there are EndpointSlices for serviceName
+// containing a total of expectNum endpoints which are in both serving and ready state.
+// (If the service is dual-stack, expectNum must count the endpoints of both IP families.)
+func WaitForServingAndReadyServiceEndpointsNum(ctx context.Context, c clientset.Interface, namespace, serviceName string, expectNum int, interval, timeout time.Duration) error {
+	return wait.PollUntilContextTimeout(ctx, interval, timeout, false, func(ctx context.Context) (bool, error) {
+		framework.Logf("Waiting for amount of service:%s endpoints to be %d", serviceName, expectNum)
+		esList, err := c.DiscoveryV1().EndpointSlices(namespace).List(ctx, metav1.ListOptions{LabelSelector: fmt.Sprintf("%s=%s", discoveryv1.LabelServiceName, serviceName)})
+		if err != nil {
+			framework.Logf("Unexpected error trying to get EndpointSlices for %s : %v", serviceName, err)
+			return false, nil
+		}
+
+		if len(esList.Items) == 0 {
+			if expectNum == 0 {
+				return true, nil
+			}
+			framework.Logf("Waiting for at least 1 EndpointSlice to exist")
+			return false, nil
+		}
+
+		ready := countServingAndReadyEndpointsSlicesNum(esList)
+		if ready != expectNum {
+			framework.Logf("Unexpected number of Serving And Ready Endpoints on Slices, got %d, expected %d", ready, expectNum)
+			return false, nil
+		}
+		return true, nil
+	})
+}
+
+func countServingAndReadyEndpointsSlicesNum(epList *discoveryv1.EndpointSliceList) int {
+	// Only count unique addresses that are Ready and not Terminating
+	addresses := sets.New[string]()
+	for _, epSlice := range epList.Items {
+		for _, ep := range epSlice.Endpoints {
+			cond := ep.Conditions
+			ready := cond.Ready == nil || *cond.Ready
+			serving := cond.Serving == nil || *cond.Serving
+			terminating := cond.Terminating != nil && *cond.Terminating
+			if !ready || !serving || terminating {
+				continue
+			}
+			if len(ep.Addresses) == 0 || ep.Addresses[0] == "" {
+				continue
+			}
+			addresses.Insert(ep.Addresses[0])
+		}
+	}
+	return addresses.Len()
 }

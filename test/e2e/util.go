@@ -483,7 +483,7 @@ func isNeighborEntryStable(externalContainer infraapi.ExternalContainer, targetH
 
 // wgetInExternalContainer issues a request to target host and port at endpoint.
 // Returns a pair of either result, nil or "", error in case of an error.
-func wgetInExternalContainer(externalContainer infraapi.ExternalContainer, targetHost string, targetPort int32, endPoint string, maxTime int) (string, error) {
+func wgetInExternalContainer(externalContainer infraapi.ExternalContainer, targetHost string, targetPort int32, endPoint string) (string, error) {
 	if utilnet.IsIPv6String(targetHost) {
 		targetHost = fmt.Sprintf("[%s]", targetHost)
 	}
