@@ -556,7 +556,11 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 			}
 
 			// register ovnkube node specific prometheus metrics exported by the node
-			metrics.RegisterNodeMetrics(ctx.Done())
+			err = metrics.RegisterNodeMetrics(ctx.Done(), wg)
+			if err != nil {
+				nodeErr = fmt.Errorf("failed to register node metrics %w", err)
+				return
+			}
 
 			// OVS is not running on dpu-host nodes
 			if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
