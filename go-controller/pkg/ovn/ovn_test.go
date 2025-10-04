@@ -242,6 +242,7 @@ func (o *FakeOVN) init(nadList []nettypes.NetworkAttachmentDefinition) {
 		config.IPv6Mode,
 		"",
 		DefaultNetworkControllerName,
+		"",
 	)
 	if o.asf == nil {
 		o.eIPController.addressSetFactory = addressset.NewOvnAddressSetFactory(o.nbClient, config.IPv4Mode, config.IPv6Mode)

@@ -66,6 +66,7 @@ type ControllerManager struct {
 
 	// eIPController programs OVN to support EgressIP
 	eIPController *ovn.EgressIPController
+	nodeName      string
 }
 
 func (cm *ControllerManager) NewNetworkController(nInfo util.NetInfo) (networkmanager.NetworkController, error) {
@@ -224,7 +225,7 @@ func (cm *ControllerManager) CleanupStaleNetworks(validNetworks ...util.NetInfo)
 // NewControllerManager creates a new ovnkube controller manager to manage all the controller for all networks
 func NewControllerManager(ovnClient *util.OVNClientset, wf *factory.WatchFactory,
 	libovsdbOvnNBClient libovsdbclient.Client, libovsdbOvnSBClient libovsdbclient.Client,
-	recorder record.EventRecorder, wg *sync.WaitGroup) (*ControllerManager, error) {
+	recorder record.EventRecorder, wg *sync.WaitGroup, nodeName string) (*ControllerManager, error) {
 	podRecorder := metrics.NewPodRecorder()
 
 	stopCh := make(chan struct{})
@@ -251,6 +252,7 @@ func NewControllerManager(ovnClient *util.OVNClientset, wf *factory.WatchFactory
 		portCache:        ovn.NewPortCache(stopCh),
 		wg:               wg,
 		multicastSupport: config.EnableMulticast,
+		nodeName:         nodeName,
 	}
 
 	var err error
@@ -446,7 +448,7 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 
 	if config.OVNKubernetesFeature.EnableEgressIP {
 		cm.eIPController = ovn.NewEIPController(cm.nbClient, cm.kube, cm.watchFactory, cm.recorder, cm.portCache, cm.networkManager.Interface(),
-			addressset.NewOvnAddressSetFactory(cm.nbClient, config.IPv4Mode, config.IPv6Mode), config.IPv4Mode, config.IPv6Mode, zone, ovn.DefaultNetworkControllerName)
+			addressset.NewOvnAddressSetFactory(cm.nbClient, config.IPv4Mode, config.IPv6Mode), config.IPv4Mode, config.IPv6Mode, zone, ovn.DefaultNetworkControllerName, cm.nodeName)
 		// FIXME(martinkennelly): remove when EIP controller is fully extracted from from DNC and started here. Ensure SyncLocalNodeZonesCache is re-enabled in EIP controller.
 		if err = cm.eIPController.SyncLocalNodeZonesCache(); err != nil {
 			klog.Warningf("Failed to sync EgressIP controllers local node node cache: %v", err)
