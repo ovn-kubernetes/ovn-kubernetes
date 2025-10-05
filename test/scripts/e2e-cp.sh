@@ -141,6 +141,13 @@ if [[ "${WHAT}" != "${NETWORK_SEGMENTATION_TESTS}"* ]]; then
   skip $NETWORK_SEGMENTATION_TESTS
 fi
 
+# Only run cluster network connect tests if they are explicitly requested
+# To conserve CI resources, we run these tests as part of the network segmentation tests
+CLUSTER_NETWORK_CONNECT_TESTS="ClusterNetworkConnect"
+if [[ "${WHAT}" != "${CLUSTER_NETWORK_CONNECT_TESTS}"* ]]; then
+  skip $CLUSTER_NETWORK_CONNECT_TESTS
+fi
+
 BGP_TESTS="BGP"
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then
   skip $BGP_TESTS
