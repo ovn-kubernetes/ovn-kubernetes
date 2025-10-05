@@ -51,6 +51,7 @@ usage() {
     echo "                 [-is | --ipsec]"
     echo "                 [-cm | --compact-mode]"
     echo "                 [-ic | --enable-interconnect]"
+    echo "                 [-nce | --network-connect-enable]"
     echo "                 [-uae | --preconfigured-udn-addresses-enable]"
     echo "                 [-rae | --enable-route-advertisements]"
     echo "                 [-rud | --routed-udn-isolation-disable]"
@@ -313,6 +314,8 @@ parse_args() {
                                                 ;;
             -nse | --network-segmentation-enable) ENABLE_NETWORK_SEGMENTATION=true
                                                   ;;
+            -nce | --network-connect-enable )    ENABLE_NETWORK_CONNECT=true
+                                                  ;;
             -uae | --preconfigured-udn-addresses-enable) ENABLE_PRE_CONF_UDN_ADDR=true
                                                   ;;
             -rae | --route-advertisements-enable) ENABLE_ROUTE_ADVERTISEMENTS=true
@@ -423,6 +426,7 @@ print_params() {
      echo "OVN_ISOLATED = $OVN_ISOLATED"
      echo "ENABLE_MULTI_NET = $ENABLE_MULTI_NET"
      echo "ENABLE_NETWORK_SEGMENTATION= $ENABLE_NETWORK_SEGMENTATION"
+     echo "ENABLE_NETWORK_CONNECT = $ENABLE_NETWORK_CONNECT"
      echo "ENABLE_ROUTE_ADVERTISEMENTS= $ENABLE_ROUTE_ADVERTISEMENTS"
      echo "ADVERTISED_UDN_ISOLATION_MODE= $ADVERTISED_UDN_ISOLATION_MODE"
      echo "ADVERTISE_DEFAULT_NETWORK = $ADVERTISE_DEFAULT_NETWORK"
@@ -675,6 +679,11 @@ set_default_params() {
   fi
   if [[ $ENABLE_PRE_CONF_UDN_ADDR == true && $OVN_ENABLE_INTERCONNECT != true ]]; then
     echo "Preconfigured UDN addresses requires interconnect to be enabled (-ic)"
+    exit 1
+  fi
+  ENABLE_NETWORK_CONNECT=${ENABLE_NETWORK_CONNECT:-false}
+  if [[ $ENABLE_NETWORK_CONNECT == true && $ENABLE_NETWORK_SEGMENTATION != true ]]; then
+    echo "Network connect requires network-segmentation to be enabled (-nse)"
     exit 1
   fi
   ADVERTISED_UDN_ISOLATION_MODE=${ADVERTISED_UDN_ISOLATION_MODE:-strict}
@@ -936,6 +945,7 @@ create_ovn_kube_manifests() {
     --ex-gw-network-interface="${OVN_EX_GW_NETWORK_INTERFACE}" \
     --multi-network-enable="${ENABLE_MULTI_NET}" \
     --network-segmentation-enable="${ENABLE_NETWORK_SEGMENTATION}" \
+    --network-connect-enable="${ENABLE_NETWORK_CONNECT}" \
     --preconfigured-udn-addresses-enable="${ENABLE_PRE_CONF_UDN_ADDR}" \
     --route-advertisements-enable="${ENABLE_ROUTE_ADVERTISEMENTS}" \
     --advertise-default-network="${ADVERTISE_DEFAULT_NETWORK}" \
