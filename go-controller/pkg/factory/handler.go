@@ -22,6 +22,7 @@ import (
 	"k8s.io/klog/v2"
 	anplister "sigs.k8s.io/network-policy-api/pkg/client/listers/apis/v1alpha1"
 
+	networkconnectlister "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/listers/clusternetworkconnect/v1"
 	egressfirewalllister "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1/apis/listers/egressfirewall/v1"
 	egressiplister "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/listers/egressip/v1"
 	egressqoslister "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressqos/v1/apis/listers/egressqos/v1"
@@ -509,6 +510,8 @@ func newInformerLister(oType reflect.Type, sharedInformer cache.SharedIndexInfor
 		return userdefinednetworklister.NewUserDefinedNetworkLister(sharedInformer.GetIndexer()), nil
 	case ClusterUserDefinedNetworkType:
 		return userdefinednetworklister.NewClusterUserDefinedNetworkLister(sharedInformer.GetIndexer()), nil
+	case ClusterNetworkConnectType:
+		return networkconnectlister.NewClusterNetworkConnectLister(sharedInformer.GetIndexer()), nil
 	case NetworkQoSType:
 		return networkqoslister.NewNetworkQoSLister(sharedInformer.GetIndexer()), nil
 	}
