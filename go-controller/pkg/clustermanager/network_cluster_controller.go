@@ -225,10 +225,8 @@ func (ncc *networkClusterController) init() error {
 		}
 		ncc.subnetAllocator = ipAllocator
 
-		var (
-			podAllocationAnnotator *annotationalloc.PodAnnotationAllocator
-			ipamClaimsReconciler   persistentips.PersistentAllocations
-		)
+		var podAllocationAnnotator *annotationalloc.PodAnnotationAllocator
+		var podAllocOpts []annotationalloc.AllocatorOption
 
 		persistentIPsEnabled := ncc.allowPersistentIPs()
 		if persistentIPsEnabled {
@@ -238,10 +236,9 @@ func (ncc *networkClusterController) init() error {
 				ncc.GetNetInfo(),
 				ncc.watchFactory.IPAMClaimsInformer().Lister(),
 			)
-			ipamClaimsReconciler = ncc.ipamClaimReconciler
+			podAllocOpts = append(podAllocOpts, annotationalloc.WithIPAMClaimReconciler(ncc.ipamClaimReconciler))
 		}
 
-		var podAllocOpts []annotationalloc.AllocatorOption
 		if util.IsPreconfiguredUDNAddressesEnabled() &&
 			ncc.IsPrimaryNetwork() &&
 			persistentIPsEnabled &&
@@ -253,7 +250,6 @@ func (ncc *networkClusterController) init() error {
 			ncc.GetNetInfo(),
 			ncc.watchFactory.PodCoreInformer().Lister(),
 			ncc.kube,
-			ipamClaimsReconciler,
 			podAllocOpts...,
 		)
 
@@ -261,7 +257,7 @@ func (ncc *networkClusterController) init() error {
 			ncc.GetNetInfo(),
 			podAllocationAnnotator,
 			ipAllocator,
-			ipamClaimsReconciler,
+			ncc.ipamClaimReconciler,
 			ncc.networkManager,
 			ncc.recorder,
 			ncc.tunnelIDAllocator,
