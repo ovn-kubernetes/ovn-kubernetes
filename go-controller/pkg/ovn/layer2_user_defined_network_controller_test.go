@@ -571,6 +571,41 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 				}
 				return false
 			}).Should(BeFalse())
+
+			By("verifying that local node rtos and stor ports still exist after remote node removal")
+			expectedLRP := &nbdb.LogicalRouterPort{
+				Name: "rtos-isolatednet_ovn_layer2_switch",
+				MAC:  "0a:58:64:41:00:04",
+				Networks: []string{
+					"100.65.0.4/16",
+					"100.200.0.1/16",
+				},
+				Options: map[string]string{
+					"gateway_mtu": "1400",
+				},
+				ExternalIDs: map[string]string{
+					"k8s.ovn.org/network":  "isolatednet",
+					"k8s.ovn.org/topology": "layer2",
+				},
+			}
+
+			expectedLSP := &nbdb.LogicalSwitchPort{
+				Name:      "stor-isolatednet_ovn_layer2_switch",
+				Type:      "router",
+				Addresses: []string{"router"},
+				Options: map[string]string{
+					"router-port":       "rtos-isolatednet_ovn_layer2_switch",
+					"requested-tnl-key": "25",
+				},
+				ExternalIDs: map[string]string{
+					"k8s.ovn.org/network":  "isolatednet",
+					"k8s.ovn.org/topology": "layer2",
+				},
+			}
+
+			Eventually(fakeOvn.nbClient).Should(
+				libovsdbtest.HaveDataSubset([]libovsdbtest.TestData{expectedLRP, expectedLSP}),
+			)
 		})
 	})
 })

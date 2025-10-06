@@ -550,6 +550,45 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				}
 				return false
 			}).Should(BeFalse())
+
+			By("Verifying core gateway router and cluster router are intact after remote node removal")
+			Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveDataSubsetMatching([]libovsdbtest.TestData{
+				// Gateway router must remain, still connected to GR ports
+				&nbdb.LogicalRouter{
+					Name: "GR_isolatednet_test-node",
+					ExternalIDs: map[string]string{
+						"k8s.ovn.org/network":  "isolatednet",
+						"k8s.ovn.org/topology": "layer3",
+					},
+					Ports: []string{
+						"rtoj-GR_isolatednet_test-node",
+						"rtoe-GR_isolatednet_test-node",
+					},
+				},
+				// Cluster router still present and has peer to GR
+				&nbdb.LogicalRouter{
+					Name: "isolatednet_ovn_cluster_router",
+					ExternalIDs: map[string]string{
+						"k8s.ovn.org/network":  "isolatednet",
+						"k8s.ovn.org/topology": "layer3",
+					},
+					Ports: []string{
+						"rtoj-isolatednet_ovn_cluster_router",
+						"rtos-isolatednet_test-node",
+					},
+				},
+				// Transit switch connecting cluster router and GR
+				&nbdb.LogicalSwitch{
+					Name: "isolatednet_transit_switch",
+					ExternalIDs: map[string]string{
+						"k8s.ovn.org/network":  "isolatednet",
+						"k8s.ovn.org/topology": "layer3",
+					},
+					Ports: []string{
+						"jtor-GR_isolatednet_test-node",
+					},
+				},
+			}, libovsdbtest.MatchSubsetFields("Name", "ExternalIDs", "Ports")))
 		})
 	})
 
