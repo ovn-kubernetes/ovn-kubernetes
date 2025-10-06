@@ -133,6 +133,68 @@ func (k *kind) GetK8HostPort() uint16 {
 	return k.hostPort.Allocate()
 }
 
+// getContainerState returns the state of a container by name
+// Returns empty string if container doesn't exist
+func getContainerState(containerName string) (string, error) {
+	stdOut, err := exec.Command(containerengine.Get().String(), "ps", "-a", "-f", fmt.Sprintf("name=^%s$", containerName), "--format", "{{.State}}").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("failed to check container state for %s: %s (%s)", containerName, err, stdOut)
+	}
+
+	state := strings.TrimSpace(string(stdOut))
+	return state, nil
+}
+
+func (k *kind) ShutdownNode(nodeName string) error {
+	state, err := getContainerState(nodeName)
+	if err != nil {
+		return err
+	}
+
+	if state == "" {
+		return fmt.Errorf("cannot shutdown node %q because it doesn't exist: %w", nodeName, api.NotFound)
+	}
+
+	// If container is already stopped/exited, consider it success
+	if state == "exited" || state == "stopped" {
+		framework.Logf("Node %s is already stopped (state: %s)", nodeName, state)
+		return nil
+	}
+
+	framework.Logf("Shutting down node %s (current state: %s)", nodeName, state)
+	stdOut, err := exec.Command(containerengine.Get().String(), "stop", nodeName).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to shutdown node %s: %s (%s)", nodeName, err, stdOut)
+	}
+	framework.Logf("Successfully shut down node %s", nodeName)
+	return nil
+}
+
+func (k *kind) StartNode(nodeName string) error {
+	state, err := getContainerState(nodeName)
+	if err != nil {
+		return err
+	}
+
+	if state == "" {
+		return fmt.Errorf("cannot start node %q because it doesn't exist: %w", nodeName, api.NotFound)
+	}
+
+	// If container is already running, consider it success
+	if state == "running" || state == "up" {
+		framework.Logf("Node %s is already running (state: %s)", nodeName, state)
+		return nil
+	}
+
+	framework.Logf("Starting node %s (current state: %s)", nodeName, state)
+	stdOut, err := exec.Command(containerengine.Get().String(), "start", nodeName).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to start node %s: %s (%s)", nodeName, err, stdOut)
+	}
+	framework.Logf("Successfully started node %s", nodeName)
+	return nil
+}
+
 func (k *kind) NewTestContext() api.Context {
 	ck := &contextKind{Mutex: sync.Mutex{}}
 	ginkgo.DeferCleanup(ck.CleanUp)
