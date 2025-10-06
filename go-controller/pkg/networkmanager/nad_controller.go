@@ -255,6 +255,7 @@ func (c *nadController) setMarkedForRemoval(key string) {
 
 	// ensure we reconcile later
 	go func() {
+		klog.V(5).Infof("Scheduling to remove nad %q after %v", key, removalTime)
 		timer := time.NewTimer(time.Until(removalTime))
 		defer timer.Stop()
 

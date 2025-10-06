@@ -758,6 +758,108 @@ func TestNADController(t *testing.T) {
 	}
 }
 
+func TestNetworkGracePeriodCleanup(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+
+	// Enable segmentation and grace period
+	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	config.OVNKubernetesFeature.UDNDeletionGracePeriod = 2 * time.Second // short grace period for test
+
+	tcm := &testControllerManager{
+		controllers: map[string]NetworkController{},
+		defaultNetwork: &testNetworkController{
+			ReconcilableNetInfo: &util.DefaultNetInfo{},
+		},
+	}
+
+	fakeClient := util.GetOVNClientset().GetClusterManagerClientset()
+	fakeCtrl := &controller.FakeController{}
+
+	nadController := &nadController{
+		nads:                map[string]string{},
+		primaryNADs:         map[string]string{},
+		networkController:   newNetworkController("", "", "", tcm, nil),
+		networkIDAllocator:  id.NewIDAllocator("NetworkIDs", MaxNetworks),
+		tunnelKeysAllocator: id.NewTunnelKeyAllocator("TunnelKeys"),
+		nadClient:           fakeClient.NetworkAttchDefClient,
+		namespaceLister:     &fakeNamespaceLister{},
+		markedForRemoval:    map[string]time.Time{},
+		controller:          fakeCtrl,
+	}
+
+	g.Expect(nadController.networkIDAllocator.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)).To(gomega.Succeed())
+	g.Expect(nadController.networkController.Start()).To(gomega.Succeed())
+	defer nadController.networkController.Stop()
+
+	// --- Step 1: Add a NAD ---
+	netConf := &ovncnitypes.NetConf{
+		Topology: types.Layer2Topology,
+		NetConf: cnitypes.NetConf{
+			Name: "networkAPrimary",
+			Type: "ovn-k8s-cni-overlay",
+		},
+		Subnets: "10.1.130.0/24",
+		Role:    types.NetworkRolePrimary,
+		MTU:     1400,
+	}
+	netConf.NADName = util.GetNADName("test", "nad1")
+	nad, err := buildNADWithAnnotations("nad1", "test", netConf, map[string]string{
+		types.OvnNetworkIDAnnotation: "1",
+	})
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	// Create the NAD in the fake client so syncNAD can find it
+	_, err = fakeClient.NetworkAttchDefClient.
+		K8sCniCncfIoV1().
+		NetworkAttachmentDefinitions(nad.Namespace).
+		Create(context.Background(), nad, metav1.CreateOptions{})
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	err = nadController.syncNAD("test/nad1", nad)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	netInfo, err := util.NewNetInfo(netConf)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	// Should have been started
+	g.Eventually(func() []string {
+		tcm.Lock()
+		defer tcm.Unlock()
+		return append([]string(nil), tcm.started...)
+	}).WithTimeout(1*time.Second).Should(gomega.ContainElement(testNetworkKey(netInfo)),
+		"network should be started before we check grace period")
+
+	fakeCtrl.Lock()
+	numberOfReconciles := len(fakeCtrl.Reconciles)
+	fakeCtrl.Unlock()
+
+	// --- Step 2: Mark as inactive (simulate ForceReconcile behavior) ---
+	// This triggers the grace-period timer, not immediate deletion.
+	nadController.ForceReconcile(util.GetNADName(nad.Namespace, nad.Name), netInfo.GetNetworkName(), false, true)
+	// --- Step 3: Verify that within the grace period, cleanup has NOT happened ---
+	g.Consistently(func() []string {
+		tcm.Lock()
+		defer tcm.Unlock()
+		return append([]string(nil), tcm.cleaned...)
+	}).WithTimeout(1*time.Second).Should(gomega.BeEmpty(),
+		"cleanup should not happen before grace period ends")
+
+	// --- Step 4: Verify cleanup AFTER grace period expires ---
+	g.Eventually(func() []string {
+		fakeCtrl.Lock()
+		defer fakeCtrl.Unlock()
+		return append([]string(nil), fakeCtrl.Reconciles...)
+	}).WithTimeout(5 * time.Second).Should(gomega.ContainElement("Reconcile:test/nad1"))
+
+	g.Eventually(func() int {
+		fakeCtrl.Lock()
+		defer fakeCtrl.Unlock()
+		return len(fakeCtrl.Reconciles)
+	}).WithTimeout(5 * time.Second).Should(gomega.Equal(numberOfReconciles + 1))
+}
+
 func TestSyncAll(t *testing.T) {
 	const nodeNetworkID = 1337
 	type mode string
