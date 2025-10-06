@@ -1360,6 +1360,11 @@ func isInterconnectEnabled() bool {
 	return present && val == "true"
 }
 
+func isDynamicUDNEnabled() bool {
+	val, present := os.LookupEnv("DYNAMIC_UDN_ALLOCATION")
+	return present && val == "true"
+}
+
 func isNetworkSegmentationEnabled() bool {
 	val, present := os.LookupEnv("ENABLE_NETWORK_SEGMENTATION")
 	return present && val == "true"
