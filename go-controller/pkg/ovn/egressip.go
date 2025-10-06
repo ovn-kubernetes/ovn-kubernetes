@@ -843,7 +843,7 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 		// podState.egressIPName can be empty if no re-routes were found in
 		// syncPodAssignmentCache for the existing pod, we will treat this case as a new add
 		for _, status := range statusAssignments {
-			if exists := podState.egressStatuses.contains(status); !exists {
+			if value, exists := podState.egressStatuses.statusMap[status]; !exists || value == egressStatusStateSynced {
 				remainingAssignments = append(remainingAssignments, status)
 			}
 		}
@@ -922,6 +922,9 @@ func (e *EgressIPController) deleteEgressIPAssignments(name string, statusesToRe
 					return nil
 				}
 				if podStatus.egressIPName != name {
+					if ok := podStatus.egressStatuses.contains(statusToRemove); ok {
+						podStatus.egressStatuses.delete(statusToRemove)
+					}
 					// we can continue here since this pod was not managed by this EIP object
 					podStatus.standbyEgressIPNames.Delete(name)
 					return nil
@@ -1156,6 +1159,8 @@ type egressIPCache struct {
 	egressLocalNodesCache sets.Set[string]
 	// egressIP IP -> assigned node name
 	egressIPIPToNodeCache map[string]string
+	// egressIP name -> egress IP -> assigned node name
+	egressIPToAssignedNodes map[string]map[string]string
 	// node name -> network name -> redirect IPs
 	egressNodeRedirectsCache nodeNetworkRedirects
 	// network name -> OVN cluster router name
@@ -1595,6 +1600,12 @@ func (e *EgressIPController) syncPodAssignmentCache(egressIPCache egressIPCache)
 						}
 					}
 
+					// populate podState.egressStatuses with assigned node for each egressIP IP.
+					for egressIPIP, nodeName := range egressIPCache.egressIPToAssignedNodes[egressIPName] {
+						podState.egressStatuses.statusMap[egressipv1.EgressIPStatusItem{
+							EgressIP: egressIPIP, Node: nodeName}] = egressStatusStateSynced
+					}
+
 					e.podAssignment.Store(podKey, podState)
 					return nil
 				}); err != nil {
@@ -1952,6 +1963,9 @@ func (e *EgressIPController) generateCacheForEgressIP() (egressIPCache, error) {
 	// egressIP IP -> node name. Assigned node for EIP.
 	egressIPIPNodeCache := make(map[string]string, 0)
 	cache.egressIPIPToNodeCache = egressIPIPNodeCache
+	// egressIP name -> egressIP IP -> node name.
+	egressIPToAssignedNodes := make(map[string]map[string]string, 0)
+	cache.egressIPToAssignedNodes = egressIPToAssignedNodes
 	cache.markCache = make(map[string]string)
 	egressIPs, err := e.watchFactory.GetEgressIPs()
 	if err != nil {
@@ -1965,6 +1979,7 @@ func (e *EgressIPController) generateCacheForEgressIP() (egressIPCache, error) {
 		cache.markCache[egressIP.Name] = mark.String()
 		egressIPsCache[egressIP.Name] = make(map[string]selectedPods, 0)
 		egressIPNameNodesCache[egressIP.Name] = make([]string, 0, len(egressIP.Status.Items))
+		egressIPToAssignedNodes[egressIP.Name] = make(map[string]string, 0)
 		for _, status := range egressIP.Status.Items {
 			eipIP := net.ParseIP(status.EgressIP)
 			if eipIP == nil {
@@ -1972,6 +1987,7 @@ func (e *EgressIPController) generateCacheForEgressIP() (egressIPCache, error) {
 				continue
 			}
 			egressIPIPNodeCache[eipIP.String()] = status.Node
+			egressIPToAssignedNodes[egressIP.Name][eipIP.String()] = status.Node
 			if localZoneNodes.Has(status.Node) {
 				egressLocalNodesCache.Insert(status.Node)
 			}
@@ -2228,9 +2244,18 @@ func InitClusterEgressPolicies(nbClient libovsdbclient.Client, addressSetFactory
 	return nil
 }
 
+// egressStatusStateSynced marks entries seeded during controller sync and
+// indicates they must be (re)applied on the next reconciliation cycle.
+const egressStatusStateSynced = "sync"
+
 type statusMap map[egressipv1.EgressIPStatusItem]string
 
 type egressStatuses struct {
+	// statusMap tracks per EIP status assignment for a pod.
+	// Key: egressipv1.EgressIPStatusItem {EgressIP, Node}
+	// Values:
+	//   ""                      -> applied/reconciled
+	//   egressStatusStateSynced -> seeded during controller sync; pending (re)apply
 	statusMap
 }
 

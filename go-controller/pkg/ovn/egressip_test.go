@@ -7973,17 +7973,8 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 					pas = getPodAssignmentState(&egressPod1)
 					gomega.Expect(pas).NotTo(gomega.BeNil())
 					gomega.Expect(pas.egressIPName).To(gomega.Equal(egressIPName))
-					gomega.Expect(pas.egressStatuses.statusMap).To(gomega.Equal(statusMap{}))
+					gomega.Expect(pas.egressStatuses.statusMap).To(gomega.HaveLen(3))
 					gomega.Expect(pas.standbyEgressIPNames.Has(egressIP2Name)).To(gomega.BeTrue())
-
-					// reset egressStatuses for rest of the test to progress correctly
-					fakeOvn.controller.eIPC.podAssignment.LockKey(egressPod1Key)
-					podStatus, exists := fakeOvn.controller.eIPC.podAssignment.Load(egressPod1Key)
-					gomega.Expect(exists).To(gomega.BeTrue())
-					podStatus.egressStatuses.statusMap[eip1Obj.Status.Items[0]] = ""
-					podStatus.egressStatuses.statusMap[eip1Obj.Status.Items[1]] = ""
-					fakeOvn.controller.eIPC.podAssignment.Store(egressPod1Key, podStatus)
-					fakeOvn.controller.eIPC.podAssignment.UnlockKey(egressPod1Key)
 
 					// delete the standby egressIP object to make sure the cache is updated
 					err = fakeOvn.fakeClient.EgressIPClient.K8sV1().EgressIPs().Delete(context.TODO(), egressIP2Name, metav1.DeleteOptions{})
@@ -7995,8 +7986,8 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						eip1Obj, err = fakeOvn.fakeClient.EgressIPClient.K8sV1().EgressIPs().Get(context.TODO(), eIP1.Name, metav1.GetOptions{})
 						g.Expect(err).NotTo(gomega.HaveOccurred())
 						g.Expect(pas.egressStatuses.statusMap).To(gomega.HaveLen(2))
-						g.Expect(pas.egressStatuses.statusMap[eip1Obj.Status.Items[0]]).To(gomega.Equal(""))
-						g.Expect(pas.egressStatuses.statusMap[eip1Obj.Status.Items[1]]).To(gomega.Equal(""))
+						g.Expect(pas.egressStatuses.statusMap[eip1Obj.Status.Items[0]]).To(gomega.Equal(egressStatusStateSynced))
+						g.Expect(pas.egressStatuses.statusMap[eip1Obj.Status.Items[1]]).To(gomega.Equal(egressStatusStateSynced))
 						g.Expect(pas.standbyEgressIPNames.Has(egressIP2Name)).To(gomega.BeFalse())
 					}).Should(gomega.Succeed())
 					// add back the standby egressIP object
@@ -8022,8 +8013,8 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						eip1Obj, err = fakeOvn.fakeClient.EgressIPClient.K8sV1().EgressIPs().Get(context.TODO(), eIP1.Name, metav1.GetOptions{})
 						g.Expect(err).NotTo(gomega.HaveOccurred())
 						g.Expect(pas.egressStatuses.statusMap).To(gomega.HaveLen(2))
-						g.Expect(pas.egressStatuses.statusMap[eip1Obj.Status.Items[0]]).To(gomega.Equal(""))
-						g.Expect(pas.egressStatuses.statusMap[eip1Obj.Status.Items[1]]).To(gomega.Equal(""))
+						g.Expect(pas.egressStatuses.statusMap[eip1Obj.Status.Items[0]]).To(gomega.Equal(egressStatusStateSynced))
+						g.Expect(pas.egressStatuses.statusMap[eip1Obj.Status.Items[1]]).To(gomega.Equal(egressStatusStateSynced))
 						g.Expect(pas.standbyEgressIPNames.Has(egressIP2Name)).To(gomega.BeTrue())
 					}).Should(gomega.Succeed())
 					gomega.Eventually(fakeOvn.fakeRecorder.Events).Should(gomega.Receive(
@@ -8088,7 +8079,7 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 						eip1Obj, err = fakeOvn.fakeClient.EgressIPClient.K8sV1().EgressIPs().Get(context.TODO(), eIP1.Name, metav1.GetOptions{})
 						g.Expect(err).NotTo(gomega.HaveOccurred())
 						g.Expect(pas.egressStatuses.statusMap).To(gomega.HaveLen(1))
-						g.Expect(pas.egressStatuses.statusMap[eip1Obj.Status.Items[0]]).To(gomega.Equal(""))
+						g.Expect(pas.egressStatuses.statusMap[eip1Obj.Status.Items[0]]).To(gomega.Equal(egressStatusStateSynced))
 						g.Expect(pas.standbyEgressIPNames.Has(egressIP2Name)).To(gomega.BeTrue())
 					}).Should(gomega.Succeed())
 					// delete the first egressIP object and make sure the cache is updated
