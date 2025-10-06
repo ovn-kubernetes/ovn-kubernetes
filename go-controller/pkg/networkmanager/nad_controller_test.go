@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
@@ -24,6 +25,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -616,6 +618,105 @@ func TestNADController(t *testing.T) {
 			g.Consistently(meetsExpectations).Should(gomega.Succeed())
 		})
 	}
+}
+
+func TestNetworkGracePeriodCleanup(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+
+	// Enable segmentation and grace period
+	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	config.Default.UDNDeletionGracePeriod = 2 * time.Second // short grace period for test
+
+	tcm := &testControllerManager{
+		controllers: map[string]NetworkController{},
+		defaultNetwork: &testNetworkController{
+			ReconcilableNetInfo: &util.DefaultNetInfo{},
+		},
+	}
+
+	fakeClient := util.GetOVNClientset().GetClusterManagerClientset()
+	fakeCtrl := &controller.FakeController{}
+
+	nadController := &nadController{
+		nads:               map[string]string{},
+		primaryNADs:        map[string]string{},
+		networkController:  newNetworkController("", "", "", tcm, nil),
+		networkIDAllocator: id.NewIDAllocator("NetworkIDs", MaxNetworks),
+		nadClient:          fakeClient.NetworkAttchDefClient,
+		namespaceLister:    &fakeNamespaceLister{},
+		markedForRemoval:   map[string]time.Time{},
+		controller:         fakeCtrl,
+	}
+
+	g.Expect(nadController.networkIDAllocator.ReserveID(types.DefaultNetworkName, types.DefaultNetworkID)).To(gomega.Succeed())
+	g.Expect(nadController.networkController.Start()).To(gomega.Succeed())
+	defer nadController.networkController.Stop()
+
+	// --- Step 1: Add a NAD ---
+	netConf := &ovncnitypes.NetConf{
+		Topology: types.Layer2Topology,
+		NetConf: cnitypes.NetConf{
+			Name: "networkAPrimary",
+			Type: "ovn-k8s-cni-overlay",
+		},
+		Subnets: "10.1.130.0/24",
+		Role:    types.NetworkRolePrimary,
+		MTU:     1400,
+	}
+	netConf.NADName = util.GetNADName("test", "nad1")
+	nad, err := buildNAD("nad1", "test", netConf)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	// Create the NAD in the fake client so syncNAD can find it
+	_, err = fakeClient.NetworkAttchDefClient.
+		K8sCniCncfIoV1().
+		NetworkAttachmentDefinitions(nad.Namespace).
+		Create(context.Background(), nad, metav1.CreateOptions{})
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	err = nadController.syncNAD("test/nad1", nad)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	netInfo, err := util.NewNetInfo(netConf)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	// Should have been started
+	g.Eventually(func() []string {
+		tcm.Lock()
+		defer tcm.Unlock()
+		return append([]string(nil), tcm.started...)
+	}).WithTimeout(1*time.Second).Should(gomega.ContainElement(testNetworkKey(netInfo)),
+		"network should be started before we check grace period")
+
+	// --- Step 2: Mark as inactive (simulate ForceReconcile behavior) ---
+	// This triggers the grace-period timer, not immediate deletion.
+	nadController.ForceReconcile(util.GetNADName(nad.Namespace, nad.Name), netInfo.GetNetworkName(), false, true)
+
+	fakeCtrl.Lock()
+	numberOfReconciles := len(fakeCtrl.Reconciles)
+	fakeCtrl.Unlock()
+	// --- Step 3: Verify that within the grace period, cleanup has NOT happened ---
+	g.Consistently(func() []string {
+		tcm.Lock()
+		defer tcm.Unlock()
+		return append([]string(nil), tcm.cleaned...)
+	}).WithTimeout(1*time.Second).Should(gomega.BeEmpty(),
+		"cleanup should not happen before grace period ends")
+
+	// --- Step 4: Verify cleanup AFTER grace period expires ---
+	g.Eventually(func() []string {
+		fakeCtrl.Lock()
+		defer fakeCtrl.Unlock()
+		return append([]string(nil), fakeCtrl.Reconciles...)
+	}).WithTimeout(5 * time.Second).Should(gomega.ContainElement("Reconcile:test/nad1"))
+
+	g.Eventually(func() int {
+		fakeCtrl.Lock()
+		defer fakeCtrl.Unlock()
+		return len(fakeCtrl.Reconciles)
+	}).WithTimeout(5 * time.Second).Should(gomega.Equal(numberOfReconciles + 1))
 }
 
 func TestSyncAll(t *testing.T) {
