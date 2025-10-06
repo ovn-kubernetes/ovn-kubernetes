@@ -55,23 +55,34 @@ func getNoSNATNodePortRules(svcPort corev1.ServicePort) []*knftables.Element {
 // "mgmtport-no-snat-services-v4" and "mgmtport-no-snat-services-v6" sets to prevent SNAT
 // of sourceIP when passing through the management port, for an `externalTrafficPolicy:
 // Local` service *without* NodePorts.
-func getNoSNATLoadBalancerIPRules(svcPort corev1.ServicePort, localEndpoints []string) []*knftables.Element {
+func getNoSNATLoadBalancerIPRules(svcPort corev1.ServicePort, localEndpoints util.PortToLBEndpoints) []*knftables.Element {
 	var nftRules []*knftables.Element
 	protocol := strings.ToLower(string(svcPort.Protocol))
-	port := fmt.Sprintf("%v", svcPort.TargetPort.IntValue())
-	for _, ip := range localEndpoints {
-		setName := types.NFTMgmtPortNoSNATServicesV4
-		if utilnet.IsIPv6String(ip) {
-			setName = types.NFTMgmtPortNoSNATServicesV6
-		}
 
+	// Get the endpoints for the port key.
+	// svcPortKey is of format e.g. "TCP/my-port-name" or "TCP/" if name is empty
+	// (is the case when only a single ServicePort is defined on this service).
+	svcPortKey := util.GetServicePortKey(svcPort.Protocol, svcPort.Name)
+	lbEndpoints := localEndpoints[svcPortKey]
+
+	for _, destination := range lbEndpoints.GetV4Destinations() {
 		nftRules = append(nftRules,
 			&knftables.Element{
-				Set: setName,
-				Key: []string{ip, protocol, port},
+				Set: types.NFTMgmtPortNoSNATServicesV4,
+				Key: []string{destination.IP, protocol, fmt.Sprintf("%d", destination.Port)},
 			},
 		)
 	}
+
+	for _, destination := range lbEndpoints.GetV6Destinations() {
+		nftRules = append(nftRules,
+			&knftables.Element{
+				Set: types.NFTMgmtPortNoSNATServicesV6,
+				Key: []string{destination.IP, protocol, fmt.Sprintf("%d", destination.Port)},
+			},
+		)
+	}
+
 	return nftRules
 }
 
@@ -164,7 +175,7 @@ func recreateNFTMap(mapName string, keepNFTElems []*knftables.Element) error {
 
 // getGatewayNFTRules returns nftables rules for service. This must be used in conjunction
 // with getGatewayIPTRules.
-func getGatewayNFTRules(service *corev1.Service, localEndpoints []string, svcHasLocalHostNetEndPnt bool) []*knftables.Element {
+func getGatewayNFTRules(service *corev1.Service, localEndpoints util.PortToLBEndpoints, svcHasLocalHostNetEndPnt bool) []*knftables.Element {
 	rules := make([]*knftables.Element, 0)
 	svcTypeIsETPLocal := util.ServiceExternalTrafficPolicyLocal(service)
 	for _, svcPort := range service.Spec.Ports {

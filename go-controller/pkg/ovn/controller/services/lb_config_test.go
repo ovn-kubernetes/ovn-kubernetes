@@ -60,10 +60,10 @@ func getSampleService(publishNotReadyAddresses bool) *corev1.Service {
 	}
 }
 
-func getServicePort(name string, _ int32, protocol corev1.Protocol) corev1.ServicePort {
+func getServicePort(name string, port int32, protocol corev1.Protocol) corev1.ServicePort {
 	return corev1.ServicePort{
 		Name:       name,
-		TargetPort: intstr.FromInt(int(httpPortValue)),
+		TargetPort: intstr.FromInt(int(port)),
 		Protocol:   protocol,
 	}
 }
@@ -247,8 +247,8 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 				vips:             []string{"192.168.1.1"},
 				protocol:         corev1.ProtocolTCP,
 				inport:           80,
-				clusterEndpoints: lbEndpoints{},
-				nodeEndpoints:    map[string]lbEndpoints{},
+				clusterEndpoints: util.LBEndpoints{},
+				nodeEndpoints:    util.PortToLBEndpoints{},
 			}},
 			resultsSame: true,
 		},
@@ -275,11 +275,11 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 				vips:     []string{"192.168.1.1"},
 				protocol: corev1.ProtocolTCP,
 				inport:   inport,
-				clusterEndpoints: lbEndpoints{
+				clusterEndpoints: util.LBEndpoints{
 					V4IPs: []string{"10.128.0.2"},
 					Port:  outport,
 				},
-				nodeEndpoints: map[string]lbEndpoints{}, // service is not ETP=local or ITP=local, so nodeEndpoints is not filled out
+				nodeEndpoints: util.PortToLBEndpoints{}, // service is not ETP=local or ITP=local, so nodeEndpoints is not filled out
 			}},
 			resultsSame: true,
 		},
@@ -307,11 +307,11 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 				vips:     []string{"192.168.1.1"},
 				protocol: corev1.ProtocolTCP,
 				inport:   inport,
-				clusterEndpoints: lbEndpoints{
+				clusterEndpoints: util.LBEndpoints{
 					V4IPs: []string{"10.128.0.2"},
 					Port:  outport,
 				},
-				nodeEndpoints: map[string]lbEndpoints{ // service is ETP=local, so nodeEndpoints is filled out
+				nodeEndpoints: util.PortToLBEndpoints{ // service is ETP=local, so nodeEndpoints is filled out
 					nodeA: {
 						V4IPs: []string{"10.128.0.2"},
 						Port:  outport,
@@ -374,21 +374,21 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					vips:     []string{"192.168.1.1"},
 					protocol: corev1.ProtocolTCP,
 					inport:   inport,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"10.128.0.2", "10.128.1.2"},
 						Port:  outport,
 					},
-					nodeEndpoints: map[string]lbEndpoints{},
+					nodeEndpoints: util.PortToLBEndpoints{},
 				},
 				{
 					vips:     []string{"192.168.1.1"},
 					protocol: corev1.ProtocolTCP,
 					inport:   inport1,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"10.128.0.2", "10.128.1.2"},
 						Port:  outport1,
 					},
-					nodeEndpoints: map[string]lbEndpoints{},
+					nodeEndpoints: util.PortToLBEndpoints{},
 				},
 			},
 		},
@@ -446,21 +446,21 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					vips:     []string{"192.168.1.1"},
 					protocol: corev1.ProtocolTCP,
 					inport:   inport,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"10.128.0.2", "10.128.1.2"},
 						Port:  outport,
 					},
-					nodeEndpoints: map[string]lbEndpoints{},
+					nodeEndpoints: util.PortToLBEndpoints{},
 				},
 				{
 					vips:     []string{"192.168.1.1"},
 					protocol: corev1.ProtocolUDP,
 					inport:   inport,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"10.128.0.2", "10.128.1.2"},
 						Port:  outport,
 					},
-					nodeEndpoints: map[string]lbEndpoints{},
+					nodeEndpoints: util.PortToLBEndpoints{},
 				},
 			},
 		},
@@ -488,12 +488,12 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 				vips:     []string{"192.168.1.1", "2002::1"},
 				protocol: corev1.ProtocolTCP,
 				inport:   inport,
-				clusterEndpoints: lbEndpoints{
+				clusterEndpoints: util.LBEndpoints{
 					V4IPs: []string{"10.128.0.2"},
 					V6IPs: []string{"fe00::1:1"},
 					Port:  outport,
 				},
-				nodeEndpoints: map[string]lbEndpoints{},
+				nodeEndpoints: util.PortToLBEndpoints{},
 			}},
 		},
 		{
@@ -528,12 +528,12 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 				vips:     []string{"192.168.1.1", "2002::1", "4.2.2.2", "42::42", "5.5.5.5"},
 				protocol: corev1.ProtocolTCP,
 				inport:   inport,
-				clusterEndpoints: lbEndpoints{
+				clusterEndpoints: util.LBEndpoints{
 					V4IPs: []string{"10.128.0.2"},
 					V6IPs: []string{"fe00::1:1"},
 					Port:  outport,
 				},
-				nodeEndpoints: map[string]lbEndpoints{}, // ETP=cluster (default), so nodeEndpoints is not filled out
+				nodeEndpoints: util.PortToLBEndpoints{}, // ETP=cluster (default), so nodeEndpoints is not filled out
 			}},
 		},
 		{
@@ -570,12 +570,12 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					vips:     []string{"192.168.1.1", "2002::1"},
 					protocol: corev1.ProtocolTCP,
 					inport:   inport,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"10.128.0.2"},
 						V6IPs: []string{"fe00::1:1"},
 						Port:  outport,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"10.128.0.2"},
 							V6IPs: []string{"fe00::1:1"},
@@ -590,12 +590,12 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					protocol:             corev1.ProtocolTCP,
 					inport:               inport,
 					externalTrafficLocal: true,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"10.128.0.2"},
 						V6IPs: []string{"fe00::1:1"},
 						Port:  outport,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"10.128.0.2"},
 							V6IPs: []string{"fe00::1:1"},
@@ -630,23 +630,23 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 				vips:     []string{"192.168.1.1", "2002::1"},
 				protocol: corev1.ProtocolTCP,
 				inport:   inport,
-				clusterEndpoints: lbEndpoints{
+				clusterEndpoints: util.LBEndpoints{
 					V4IPs: []string{"10.128.0.2"},
 					V6IPs: []string{"fe00::1:1"},
 					Port:  outport,
 				},
-				nodeEndpoints: map[string]lbEndpoints{},
+				nodeEndpoints: util.PortToLBEndpoints{},
 			}},
 			resultSharedGatewayTemplate: []lbConfig{{
 				vips:     []string{"node"},
 				protocol: corev1.ProtocolTCP,
 				inport:   5,
-				clusterEndpoints: lbEndpoints{
+				clusterEndpoints: util.LBEndpoints{
 					V4IPs: []string{"10.128.0.2"},
 					V6IPs: []string{"fe00::1:1"},
 					Port:  outport,
 				},
-				nodeEndpoints: map[string]lbEndpoints{},
+				nodeEndpoints: util.PortToLBEndpoints{},
 				hasNodePort:   true,
 			}},
 		},
@@ -677,12 +677,12 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					vips:     []string{"192.168.1.1", "2002::1"},
 					protocol: corev1.ProtocolTCP,
 					inport:   inport,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"192.168.0.1"},
 						V6IPs: []string{"2001::1"},
 						Port:  outport,
 					},
-					nodeEndpoints: map[string]lbEndpoints{},
+					nodeEndpoints: util.PortToLBEndpoints{},
 				},
 			},
 			resultSharedGatewayTemplate: []lbConfig{
@@ -690,12 +690,12 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					vips:     []string{"node"},
 					protocol: corev1.ProtocolTCP,
 					inport:   5,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"192.168.0.1"},
 						V6IPs: []string{"2001::1"},
 						Port:  outport,
 					},
-					nodeEndpoints: map[string]lbEndpoints{},
+					nodeEndpoints: util.PortToLBEndpoints{},
 					hasNodePort:   true,
 				},
 			},
@@ -705,12 +705,12 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					vips:     []string{"192.168.1.1", "2002::1"},
 					protocol: corev1.ProtocolTCP,
 					inport:   inport,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"192.168.0.1"},
 						V6IPs: []string{"2001::1"},
 						Port:  outport,
 					},
-					nodeEndpoints: map[string]lbEndpoints{},
+					nodeEndpoints: util.PortToLBEndpoints{},
 				},
 			},
 			resultLocalGatewayTemplate: []lbConfig{
@@ -718,12 +718,12 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					vips:     []string{"node"},
 					protocol: corev1.ProtocolTCP,
 					inport:   5,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"192.168.0.1"},
 						V6IPs: []string{"2001::1"},
 						Port:  outport,
 					},
-					nodeEndpoints: map[string]lbEndpoints{},
+					nodeEndpoints: util.PortToLBEndpoints{},
 					hasNodePort:   true,
 				},
 			},
@@ -756,12 +756,12 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					vips:     []string{"node"},
 					protocol: corev1.ProtocolTCP,
 					inport:   5,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"192.168.0.1"},
 						V6IPs: []string{"2001::1"},
 						Port:  outport,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"192.168.0.1"},
 							V6IPs: []string{"2001::1"},
@@ -775,12 +775,12 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					vips:     []string{"192.168.1.1", "2002::1"},
 					protocol: corev1.ProtocolTCP,
 					inport:   inport,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"192.168.0.1"},
 						V6IPs: []string{"2001::1"},
 						Port:  outport,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"192.168.0.1"},
 							V6IPs: []string{"2001::1"},
@@ -794,12 +794,12 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					vips:     []string{"node"},
 					protocol: corev1.ProtocolTCP,
 					inport:   5,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"192.168.0.1"},
 						V6IPs: []string{"2001::1"},
 						Port:  outport,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"192.168.0.1"},
 							V6IPs: []string{"2001::1"},
@@ -813,12 +813,12 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					vips:     []string{"192.168.1.1", "2002::1"},
 					protocol: corev1.ProtocolTCP,
 					inport:   inport,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"192.168.0.1"},
 						V6IPs: []string{"2001::1"},
 						Port:  outport,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"192.168.0.1"},
 							V6IPs: []string{"2001::1"},
@@ -854,12 +854,12 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					vips:     []string{"192.168.1.1", "2002::1"},
 					protocol: corev1.ProtocolTCP,
 					inport:   inport,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"192.168.0.1"},
 						V6IPs: []string{"2001::1"},
 						Port:  outport,
 					},
-					nodeEndpoints: map[string]lbEndpoints{},
+					nodeEndpoints: util.PortToLBEndpoints{},
 				},
 			},
 			resultLocalGatewayNode: []lbConfig{
@@ -867,12 +867,12 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					vips:     []string{"192.168.1.1", "2002::1"},
 					protocol: corev1.ProtocolTCP,
 					inport:   inport,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"192.168.0.1"},
 						V6IPs: []string{"2001::1"},
 						Port:  outport,
 					},
-					nodeEndpoints: map[string]lbEndpoints{},
+					nodeEndpoints: util.PortToLBEndpoints{},
 				},
 			},
 		},
@@ -915,11 +915,11 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					vips:     []string{"192.168.1.1"},
 					protocol: corev1.ProtocolTCP,
 					inport:   inport,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"10.128.0.2", "10.128.1.2"},
 						Port:  outport,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"10.128.0.2"},
 							Port:  outport,
@@ -938,11 +938,11 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					inport:               5,
 					hasNodePort:          true,
 					externalTrafficLocal: true,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"10.128.0.2", "10.128.1.2"},
 						Port:  outport,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"10.128.0.2"},
 							Port:  outport,
@@ -959,11 +959,11 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					inport:               inport,
 					hasNodePort:          false,
 					externalTrafficLocal: true,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"10.128.0.2", "10.128.1.2"},
 						Port:  outport,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"10.128.0.2"},
 							Port:  outport,
@@ -1016,11 +1016,11 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					vips:     []string{"192.168.1.1"},
 					protocol: corev1.ProtocolTCP,
 					inport:   inport,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"10.128.0.2"},
 						Port:  outport,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"10.128.0.2"},
 							Port:  outport,
@@ -1039,11 +1039,11 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					inport:               5,
 					hasNodePort:          true,
 					externalTrafficLocal: true,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"10.128.0.2"},
 						Port:  outport,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"10.128.0.2"},
 							Port:  outport,
@@ -1060,11 +1060,11 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					inport:               inport,
 					hasNodePort:          false,
 					externalTrafficLocal: true,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"10.128.0.2"},
 						Port:  outport,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"10.128.0.2"},
 							Port:  outport,
@@ -1115,11 +1115,11 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					vips:     []string{"192.168.1.1"},
 					protocol: corev1.ProtocolTCP,
 					inport:   inport,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"10.128.0.2"},
 						Port:  outport,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"10.128.0.2"},
 							Port:  outport,
@@ -1134,11 +1134,11 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					inport:               5,
 					hasNodePort:          true,
 					externalTrafficLocal: true,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"10.128.0.2"},
 						Port:  outport,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"10.128.0.2"},
 							Port:  outport,
@@ -1151,11 +1151,11 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					inport:               inport,
 					hasNodePort:          false,
 					externalTrafficLocal: true,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"10.128.0.2"},
 						Port:  outport,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"10.128.0.2"},
 							Port:  outport,
@@ -1170,7 +1170,7 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 		t.Run(fmt.Sprintf("%d_%s", i, tt.name), func(t *testing.T) {
 			// shared gateway mode
 			globalconfig.Gateway.Mode = globalconfig.GatewayModeShared
-			perNode, template, clusterWide := buildServiceLBConfigs(tt.args.service, tt.args.slices, defaultNodes, true, true, types.DefaultNetworkName)
+			perNode, template, clusterWide := buildServiceLBConfigs(tt.args.service, tt.args.slices, defaultNodes, true, true)
 
 			assert.EqualValues(t, tt.resultSharedGatewayNode, perNode, "SGW per-node configs should be equal")
 			assert.EqualValues(t, tt.resultSharedGatewayTemplate, template, "SGW template configs should be equal")
@@ -1179,7 +1179,7 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 			// local gateway mode
 			globalconfig.Gateway.Mode = globalconfig.GatewayModeLocal
 
-			perNode, template, clusterWide = buildServiceLBConfigs(tt.args.service, tt.args.slices, defaultNodes, true, true, types.DefaultNetworkName)
+			perNode, template, clusterWide = buildServiceLBConfigs(tt.args.service, tt.args.slices, defaultNodes, true, true)
 			if tt.resultsSame {
 				assert.EqualValues(t, tt.resultSharedGatewayNode, perNode, "LGW per-node configs should be equal")
 				assert.EqualValues(t, tt.resultSharedGatewayTemplate, template, "LGW template configs should be equal")
@@ -1239,11 +1239,11 @@ func Test_buildClusterLBs(t *testing.T) {
 					vips:     []string{"1.2.3.4"},
 					protocol: corev1.ProtocolTCP,
 					inport:   80,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"192.168.0.1", "192.168.0.2"},
 						Port:  8080,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"192.168.0.1", "192.168.0.2"},
 							Port:  8080,
@@ -1254,11 +1254,11 @@ func Test_buildClusterLBs(t *testing.T) {
 					vips:     []string{"1.2.3.4"},
 					protocol: corev1.ProtocolTCP,
 					inport:   443,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"192.168.0.1"},
 						Port:  8043,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"192.168.0.1"},
 							Port:  8043,
@@ -1298,11 +1298,11 @@ func Test_buildClusterLBs(t *testing.T) {
 					vips:     []string{"1.2.3.4"},
 					protocol: corev1.ProtocolTCP,
 					inport:   80,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"192.168.0.1", "192.168.0.2"},
 						Port:  8080,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"192.168.0.1", "192.168.0.2"},
 							Port:  8080,
@@ -1313,11 +1313,11 @@ func Test_buildClusterLBs(t *testing.T) {
 					vips:     []string{"1.2.3.4"},
 					protocol: corev1.ProtocolUDP,
 					inport:   443,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"192.168.0.1"},
 						Port:  8043,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"192.168.0.1"},
 							Port:  8043,
@@ -1369,13 +1369,13 @@ func Test_buildClusterLBs(t *testing.T) {
 					vips:     []string{"1.2.3.4", "fe80::1"},
 					protocol: corev1.ProtocolTCP,
 					inport:   80,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"192.168.0.1", "192.168.0.2"},
 						V6IPs: []string{"fe90::1", "fe91::1"},
 
 						Port: 8080,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"192.168.0.1", "192.168.0.2"},
 							V6IPs: []string{"fe90::1", "fe91::1"},
@@ -1387,13 +1387,13 @@ func Test_buildClusterLBs(t *testing.T) {
 					vips:     []string{"1.2.3.4", "fe80::1"},
 					protocol: corev1.ProtocolTCP,
 					inport:   443,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"192.168.0.1"},
 						V6IPs: []string{"fe90::1"},
 
 						Port: 8043,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"192.168.0.1"},
 							V6IPs: []string{"fe90::1"},
@@ -1554,11 +1554,11 @@ func Test_buildPerNodeLBs(t *testing.T) {
 					vips:     []string{"1.2.3.4"},
 					protocol: corev1.ProtocolTCP,
 					inport:   80,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"10.0.0.1"},
 						Port:  8080,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"10.0.0.1"},
 							Port:  8080,
@@ -1604,11 +1604,11 @@ func Test_buildPerNodeLBs(t *testing.T) {
 					vips:     []string{"node"},
 					protocol: corev1.ProtocolTCP,
 					inport:   80,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"10.128.0.2"},
 						Port:  8080,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {V4IPs: []string{"10.128.0.2"}, Port: 8080},
 					},
 				},
@@ -1690,11 +1690,11 @@ func Test_buildPerNodeLBs(t *testing.T) {
 					vips:     []string{"192.168.0.1"},
 					protocol: corev1.ProtocolTCP,
 					inport:   80,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"10.0.0.1"},
 						Port:  8080,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"10.0.0.1"},
 							Port:  8080,
@@ -1705,11 +1705,11 @@ func Test_buildPerNodeLBs(t *testing.T) {
 					vips:     []string{"node"},
 					protocol: corev1.ProtocolTCP,
 					inport:   80,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"10.0.0.1"},
 						Port:  8080,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"10.0.0.1"},
 							Port:  8080,
@@ -1851,11 +1851,11 @@ func Test_buildPerNodeLBs(t *testing.T) {
 					vips:     []string{"192.168.0.1"},
 					protocol: corev1.ProtocolTCP,
 					inport:   80,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"10.0.0.1"},
 						Port:  8080,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"10.0.0.1"},
 							Port:  8080,
@@ -1868,11 +1868,11 @@ func Test_buildPerNodeLBs(t *testing.T) {
 					inport:               80,
 					externalTrafficLocal: true,
 					hasNodePort:          true,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"10.0.0.1"},
 						Port:  8080,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"10.0.0.1"},
 							Port:  8080,
@@ -1998,11 +1998,11 @@ func Test_buildPerNodeLBs(t *testing.T) {
 					protocol:             corev1.ProtocolTCP,
 					inport:               80,
 					internalTrafficLocal: true,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"10.128.0.1", "10.128.1.1"},
 						Port:  8080,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"10.128.0.1"},
 							Port:  8080,
@@ -2017,11 +2017,11 @@ func Test_buildPerNodeLBs(t *testing.T) {
 					vips:     []string{"1.2.3.4"}, // externalIP config
 					protocol: corev1.ProtocolTCP,
 					inport:   80,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"10.128.0.1", "10.128.1.1"},
 						Port:  8080,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"10.128.0.1"},
 							Port:  8080,
@@ -2149,11 +2149,11 @@ func Test_buildPerNodeLBs(t *testing.T) {
 					protocol:             corev1.ProtocolTCP,
 					inport:               80,
 					internalTrafficLocal: true,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"10.0.0.1", "10.0.0.2"},
 						Port:  8080,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"10.0.0.1"},
 							Port:  8080,
@@ -2168,11 +2168,11 @@ func Test_buildPerNodeLBs(t *testing.T) {
 					vips:     []string{"1.2.3.4"}, // externalIP config
 					protocol: corev1.ProtocolTCP,
 					inport:   80,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"10.0.0.1", "10.0.0.2"},
 						Port:  8080,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"10.0.0.1"},
 							Port:  8080,
@@ -2336,11 +2336,11 @@ func Test_buildPerNodeLBs(t *testing.T) {
 					inport:               80,
 					internalTrafficLocal: true,
 					externalTrafficLocal: false, // ETP is applicable only to nodePorts and LBs
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"10.0.0.1"},
 						Port:  8080,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"10.0.0.1"}, // only one ep on node-a
 							Port:  8080,
@@ -2354,11 +2354,11 @@ func Test_buildPerNodeLBs(t *testing.T) {
 					externalTrafficLocal: true,
 					internalTrafficLocal: false, // ITP is applicable only to clusterIPs
 					hasNodePort:          true,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"10.0.0.1"},
 						Port:  8080,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"10.0.0.1"}, // only one ep on node-a
 							Port:  8080,
@@ -2576,11 +2576,11 @@ func Test_buildPerNodeLBs(t *testing.T) {
 					inport:               5, // nodePort
 					hasNodePort:          true,
 					externalTrafficLocal: true,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"10.128.0.2", "10.128.1.2"},
 						Port:  8080,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"10.128.0.2"},
 							Port:  8080,
@@ -2597,11 +2597,11 @@ func Test_buildPerNodeLBs(t *testing.T) {
 					inport:               80,
 					hasNodePort:          false,
 					externalTrafficLocal: true,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"10.128.0.2", "10.128.1.2"},
 						Port:  8080,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {
 							V4IPs: []string{"10.128.0.2"},
 							Port:  8080,
@@ -2731,11 +2731,11 @@ func Test_buildPerNodeLBs(t *testing.T) {
 					inport:               5, // nodePort
 					hasNodePort:          true,
 					externalTrafficLocal: true,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"10.128.0.2"},
 						Port:  8080,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {V4IPs: []string{"10.128.0.2"}, Port: 8080},
 						nodeB: {V4IPs: []string{"10.128.1.2"}, Port: 8080},
 					},
@@ -2746,11 +2746,11 @@ func Test_buildPerNodeLBs(t *testing.T) {
 					inport:               80,
 					hasNodePort:          false,
 					externalTrafficLocal: true,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V4IPs: []string{"10.128.0.2"},
 						Port:  8080,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {V4IPs: []string{"10.128.0.2"}, Port: 8080},
 						nodeB: {V4IPs: []string{"10.128.1.2"}, Port: 8080},
 					},
@@ -2883,11 +2883,11 @@ func Test_buildPerNodeLBs(t *testing.T) {
 					vips:     []string{"node"},
 					protocol: corev1.ProtocolTCP,
 					inport:   80,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V6IPs: []string{"fe00:0:0:0:1::2"},
 						Port:  8080,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {V6IPs: []string{"fe00:0:0:0:1::2"}, Port: 8080},
 					},
 				},
@@ -2972,11 +2972,11 @@ func Test_buildPerNodeLBs(t *testing.T) {
 					inport:               5, // nodePort
 					hasNodePort:          true,
 					externalTrafficLocal: true,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V6IPs: []string{"fe00:0:0:0:1::2"},
 						Port:  8080,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {V6IPs: []string{"fe00:0:0:0:1::2"}, Port: 8080},
 						nodeB: {V6IPs: []string{"fe00:0:0:0:2::2"}, Port: 8080},
 					},
@@ -2987,11 +2987,11 @@ func Test_buildPerNodeLBs(t *testing.T) {
 					inport:               80,
 					hasNodePort:          false,
 					externalTrafficLocal: true,
-					clusterEndpoints: lbEndpoints{
+					clusterEndpoints: util.LBEndpoints{
 						V6IPs: []string{"fe00:0:0:0:1::2"},
 						Port:  8080,
 					},
-					nodeEndpoints: map[string]lbEndpoints{
+					nodeEndpoints: util.PortToLBEndpoints{
 						nodeA: {V6IPs: []string{"fe00:0:0:0:1::2"}, Port: 8080},
 						nodeB: {V6IPs: []string{"fe00:0:0:0:2::2"}, Port: 8080},
 					},
@@ -3274,7 +3274,7 @@ func Test_idledServices(t *testing.T) {
 	}
 }
 
-func Test_getEndpointsForService(t *testing.T) {
+func Test_GetEndpointsForService(t *testing.T) {
 	type args struct {
 		slices []*discovery.EndpointSlice
 		svc    *corev1.Service
@@ -3284,8 +3284,9 @@ func Test_getEndpointsForService(t *testing.T) {
 	tests := []struct {
 		name                 string
 		args                 args
-		wantClusterEndpoints map[string]lbEndpoints
-		wantNodeEndpoints    map[string]map[string]lbEndpoints
+		wantClusterEndpoints util.PortToLBEndpoints
+		wantNodeEndpoints    util.PortToNodeToLBEndpoints
+		wantError            error
 	}{
 		{
 			name: "empty slices",
@@ -3293,8 +3294,8 @@ func Test_getEndpointsForService(t *testing.T) {
 				slices: []*discovery.EndpointSlice{},
 				svc:    getSampleServiceWithOnePort(httpPortName, httpPortValue, tcp),
 			},
-			wantClusterEndpoints: map[string]lbEndpoints{},            // no cluster-wide endpoints
-			wantNodeEndpoints:    map[string]map[string]lbEndpoints{}, // no local endpoints
+			wantClusterEndpoints: util.PortToLBEndpoints{},       // no cluster-wide endpoints
+			wantNodeEndpoints:    util.PortToNodeToLBEndpoints{}, // no local endpoints
 		},
 		{
 			name: "slice with one local endpoint",
@@ -3320,9 +3321,9 @@ func Test_getEndpointsForService(t *testing.T) {
 				svc:   getSampleServiceWithOnePort("tcp-example", 80, tcp),
 				nodes: sets.New(nodeA), // one-node zone
 			},
-			wantClusterEndpoints: map[string]lbEndpoints{
-				getServicePortKey(tcp, "tcp-example"): {V4IPs: []string{"10.0.0.2"}, Port: 80}}, // one cluster-wide endpoint
-			wantNodeEndpoints: map[string]map[string]lbEndpoints{}, // no need for local endpoints, service is not ETP or ITP local
+			wantClusterEndpoints: util.PortToLBEndpoints{
+				util.GetServicePortKey(tcp, "tcp-example"): {V4IPs: []string{"10.0.0.2"}, Port: 80}}, // one cluster-wide endpoint
+			wantNodeEndpoints: util.PortToNodeToLBEndpoints{}, // no need for local endpoints, service is not ETP or ITP local
 		},
 		{
 			name: "slice with one local endpoint, ETP=local",
@@ -3348,10 +3349,10 @@ func Test_getEndpointsForService(t *testing.T) {
 				svc:   getSampleServiceWithOnePortAndETPLocal("tcp-example", 80, tcp),
 				nodes: sets.New(nodeA), // one-node zone
 			},
-			wantClusterEndpoints: map[string]lbEndpoints{
-				getServicePortKey(tcp, "tcp-example"): {V4IPs: []string{"10.0.0.2"}, Port: 80}}, // one cluster-wide endpoint
-			wantNodeEndpoints: map[string]map[string]lbEndpoints{
-				getServicePortKey(tcp, "tcp-example"): {nodeA: lbEndpoints{V4IPs: []string{"10.0.0.2"}, Port: 80}}}, // ETP=local, one local endpoint
+			wantClusterEndpoints: util.PortToLBEndpoints{
+				util.GetServicePortKey(tcp, "tcp-example"): {V4IPs: []string{"10.0.0.2"}, Port: 80}}, // one cluster-wide endpoint
+			wantNodeEndpoints: util.PortToNodeToLBEndpoints{
+				util.GetServicePortKey(tcp, "tcp-example"): {nodeA: util.LBEndpoints{V4IPs: []string{"10.0.0.2"}, Port: 80}}}, // ETP=local, one local endpoint
 		},
 		{
 			name: "slice with one non-local endpoint, ETP=local",
@@ -3377,9 +3378,9 @@ func Test_getEndpointsForService(t *testing.T) {
 				svc:   getSampleServiceWithOnePortAndETPLocal("tcp-example", 80, tcp),
 				nodes: sets.New(nodeA), // one-node zone
 			},
-			wantClusterEndpoints: map[string]lbEndpoints{
-				getServicePortKey(tcp, "tcp-example"): {V4IPs: []string{"10.0.0.2"}, Port: 80}}, // one cluster-wide endpoint
-			wantNodeEndpoints: map[string]map[string]lbEndpoints{}, // ETP=local but no local endpoint
+			wantClusterEndpoints: util.PortToLBEndpoints{
+				util.GetServicePortKey(tcp, "tcp-example"): {V4IPs: []string{"10.0.0.2"}, Port: 80}}, // one cluster-wide endpoint
+			wantNodeEndpoints: util.PortToNodeToLBEndpoints{}, // ETP=local but no local endpoint
 		},
 		{
 			name: "slice of address type FQDN",
@@ -3405,8 +3406,8 @@ func Test_getEndpointsForService(t *testing.T) {
 				svc:   getSampleServiceWithOnePort("tcp-example", 80, tcp),
 				nodes: sets.New(nodeA), // one-node zone
 			},
-			wantClusterEndpoints: map[string]lbEndpoints{},            // no endpoints
-			wantNodeEndpoints:    map[string]map[string]lbEndpoints{}, // no local endpoint
+			wantClusterEndpoints: util.PortToLBEndpoints{},       // no endpoints
+			wantNodeEndpoints:    util.PortToNodeToLBEndpoints{}, // no local endpoint
 		},
 		{
 			name: "slice with one endpoint, OVN zone with two nodes, ETP=local",
@@ -3432,10 +3433,10 @@ func Test_getEndpointsForService(t *testing.T) {
 				svc:   getSampleServiceWithOnePortAndETPLocal("tcp-example", 80, tcp),
 				nodes: sets.New(nodeA, nodeB), // one-node zone
 			},
-			wantClusterEndpoints: map[string]lbEndpoints{
-				getServicePortKey(tcp, "tcp-example"): {V4IPs: []string{"10.0.0.2"}, Port: 80}}, // one cluster-wide endpoint
-			wantNodeEndpoints: map[string]map[string]lbEndpoints{
-				getServicePortKey(tcp, "tcp-example"): {nodeB: lbEndpoints{V4IPs: []string{"10.0.0.2"}, Port: 80}}}, // endpoint on nodeB
+			wantClusterEndpoints: util.PortToLBEndpoints{
+				util.GetServicePortKey(tcp, "tcp-example"): {V4IPs: []string{"10.0.0.2"}, Port: 80}}, // one cluster-wide endpoint
+			wantNodeEndpoints: util.PortToNodeToLBEndpoints{
+				util.GetServicePortKey(tcp, "tcp-example"): {nodeB: util.LBEndpoints{V4IPs: []string{"10.0.0.2"}, Port: 80}}}, // endpoint on nodeB
 		},
 		{
 			name: "slice with different port name than the service",
@@ -3461,8 +3462,8 @@ func Test_getEndpointsForService(t *testing.T) {
 				svc:   getSampleServiceWithOnePort("tcp-example", 80, tcp),
 				nodes: sets.New(nodeA), // one-node zone
 			},
-			wantClusterEndpoints: map[string]lbEndpoints{},            // no cluster-wide endpoints
-			wantNodeEndpoints:    map[string]map[string]lbEndpoints{}, // no local endpoints
+			wantClusterEndpoints: util.PortToLBEndpoints{},       // no cluster-wide endpoints
+			wantNodeEndpoints:    util.PortToNodeToLBEndpoints{}, // no local endpoints
 		},
 		{
 			name: "slice and service without a port name, ETP=local",
@@ -3488,10 +3489,10 @@ func Test_getEndpointsForService(t *testing.T) {
 				nodes: sets.New(nodeA),                                     // one-node zone
 
 			},
-			wantClusterEndpoints: map[string]lbEndpoints{
-				getServicePortKey(tcp, ""): {V4IPs: []string{"10.0.0.2"}, Port: 8080}}, // one cluster-wide endpoint
-			wantNodeEndpoints: map[string]map[string]lbEndpoints{
-				getServicePortKey(tcp, ""): {nodeA: lbEndpoints{V4IPs: []string{"10.0.0.2"}, Port: 8080}}}, // one local endpoint
+			wantClusterEndpoints: util.PortToLBEndpoints{
+				util.GetServicePortKey(tcp, ""): {V4IPs: []string{"10.0.0.2"}, Port: 8080}}, // one cluster-wide endpoint
+			wantNodeEndpoints: util.PortToNodeToLBEndpoints{
+				util.GetServicePortKey(tcp, ""): {nodeA: util.LBEndpoints{V4IPs: []string{"10.0.0.2"}, Port: 8080}}}, // one local endpoint
 		},
 		{
 			name: "slice with an IPv6 endpoint",
@@ -3517,9 +3518,9 @@ func Test_getEndpointsForService(t *testing.T) {
 				svc:   getSampleServiceWithOnePort("tcp-example", 80, tcp),
 				nodes: sets.New(nodeA), // one-node zone
 			},
-			wantClusterEndpoints: map[string]lbEndpoints{
-				getServicePortKey(tcp, "tcp-example"): {V6IPs: []string{"2001:db2::2"}, Port: 80}}, // one cluster-wide endpoint
-			wantNodeEndpoints: map[string]map[string]lbEndpoints{}, //  local endpoints not filled in, since service is not ETP or ITP local
+			wantClusterEndpoints: util.PortToLBEndpoints{
+				util.GetServicePortKey(tcp, "tcp-example"): {V6IPs: []string{"2001:db2::2"}, Port: 80}}, // one cluster-wide endpoint
+			wantNodeEndpoints: util.PortToNodeToLBEndpoints{}, //  local endpoints not filled in, since service is not ETP or ITP local
 		},
 		{
 			name: "a slice with an IPv4 endpoint and a slice with an IPv6 endpoint (dualstack cluster), ETP=local",
@@ -3561,10 +3562,10 @@ func Test_getEndpointsForService(t *testing.T) {
 				svc:   getSampleServiceWithOnePortAndETPLocal("tcp-example", 80, tcp),
 				nodes: sets.New(nodeA), // one-node zone
 			},
-			wantClusterEndpoints: map[string]lbEndpoints{
-				getServicePortKey(tcp, "tcp-example"): {V4IPs: []string{"10.0.0.2"}, V6IPs: []string{"2001:db2::2"}, Port: 80}},
-			wantNodeEndpoints: map[string]map[string]lbEndpoints{
-				getServicePortKey(tcp, "tcp-example"): {nodeA: lbEndpoints{V4IPs: []string{"10.0.0.2"}, V6IPs: []string{"2001:db2::2"}, Port: 80}}},
+			wantClusterEndpoints: util.PortToLBEndpoints{
+				util.GetServicePortKey(tcp, "tcp-example"): {V4IPs: []string{"10.0.0.2"}, V6IPs: []string{"2001:db2::2"}, Port: 80}},
+			wantNodeEndpoints: util.PortToNodeToLBEndpoints{
+				util.GetServicePortKey(tcp, "tcp-example"): {nodeA: util.LBEndpoints{V4IPs: []string{"10.0.0.2"}, V6IPs: []string{"2001:db2::2"}, Port: 80}}},
 		},
 		{
 			name: "one slice with a duplicate address in the same endpoint",
@@ -3590,9 +3591,9 @@ func Test_getEndpointsForService(t *testing.T) {
 				svc:   getSampleServiceWithOnePort("tcp-example", 80, tcp),
 				nodes: sets.New(nodeA), // one-node zone
 			},
-			wantClusterEndpoints: map[string]lbEndpoints{
-				getServicePortKey(tcp, "tcp-example"): {V4IPs: []string{"10.0.0.2"}, Port: 80}},
-			wantNodeEndpoints: map[string]map[string]lbEndpoints{}, // local endpoints not filled in, since service is not ETP or ITP local
+			wantClusterEndpoints: util.PortToLBEndpoints{
+				util.GetServicePortKey(tcp, "tcp-example"): {V4IPs: []string{"10.0.0.2"}, Port: 80}},
+			wantNodeEndpoints: util.PortToNodeToLBEndpoints{}, // local endpoints not filled in, since service is not ETP or ITP local
 		},
 		{
 			name: "one slice with a duplicate address across two endpoints",
@@ -3618,9 +3619,9 @@ func Test_getEndpointsForService(t *testing.T) {
 				svc:   getSampleServiceWithOnePort("tcp-example", 80, tcp),
 				nodes: sets.New(nodeA), // one-node zone
 			},
-			wantClusterEndpoints: map[string]lbEndpoints{
-				getServicePortKey(tcp, "tcp-example"): {V4IPs: []string{"10.0.0.2"}, Port: 80}},
-			wantNodeEndpoints: map[string]map[string]lbEndpoints{}, // local endpoints not filled in, since service is not ETP or ITP local
+			wantClusterEndpoints: util.PortToLBEndpoints{
+				util.GetServicePortKey(tcp, "tcp-example"): {V4IPs: []string{"10.0.0.2"}, Port: 80}},
+			wantNodeEndpoints: util.PortToNodeToLBEndpoints{}, // local endpoints not filled in, since service is not ETP or ITP local
 		},
 		{
 			name: "multiples slices with a duplicate address, with both address being ready",
@@ -3662,9 +3663,9 @@ func Test_getEndpointsForService(t *testing.T) {
 				svc:   getSampleServiceWithOnePort("tcp-example", 80, tcp),
 				nodes: sets.New(nodeA), // one-node zone
 			},
-			wantClusterEndpoints: map[string]lbEndpoints{
-				getServicePortKey(tcp, "tcp-example"): {V4IPs: []string{"10.0.0.2", "10.1.1.2", "10.2.2.2"}, Port: 80}},
-			wantNodeEndpoints: map[string]map[string]lbEndpoints{}, // local endpoints not filled in, since service is not ETP or ITP local
+			wantClusterEndpoints: util.PortToLBEndpoints{
+				util.GetServicePortKey(tcp, "tcp-example"): {V4IPs: []string{"10.0.0.2", "10.1.1.2", "10.2.2.2"}, Port: 80}},
+			wantNodeEndpoints: util.PortToNodeToLBEndpoints{}, // local endpoints not filled in, since service is not ETP or ITP local
 		},
 		{
 			name: "multiples slices with different ports, ETP=local",
@@ -3706,12 +3707,12 @@ func Test_getEndpointsForService(t *testing.T) {
 				svc:   getSampleServiceWithTwoPortsAndETPLocal("tcp-example", "other-port", 80, 8080, tcp, tcp),
 				nodes: sets.New(nodeA), // one-node zone
 			},
-			wantClusterEndpoints: map[string]lbEndpoints{
-				getServicePortKey(tcp, "tcp-example"): {V4IPs: []string{"10.0.0.2", "10.1.1.2"}, Port: 80},
-				getServicePortKey(tcp, "other-port"):  {V4IPs: []string{"10.0.0.3", "10.2.2.3"}, Port: 8080}},
-			wantNodeEndpoints: map[string]map[string]lbEndpoints{
-				getServicePortKey(tcp, "tcp-example"): {nodeA: lbEndpoints{V4IPs: []string{"10.0.0.2", "10.1.1.2"}, Port: 80}},
-				getServicePortKey(tcp, "other-port"):  {nodeA: lbEndpoints{V4IPs: []string{"10.0.0.3", "10.2.2.3"}, Port: 8080}}},
+			wantClusterEndpoints: util.PortToLBEndpoints{
+				util.GetServicePortKey(tcp, "tcp-example"): {V4IPs: []string{"10.0.0.2", "10.1.1.2"}, Port: 80},
+				util.GetServicePortKey(tcp, "other-port"):  {V4IPs: []string{"10.0.0.3", "10.2.2.3"}, Port: 8080}},
+			wantNodeEndpoints: util.PortToNodeToLBEndpoints{
+				util.GetServicePortKey(tcp, "tcp-example"): {nodeA: util.LBEndpoints{V4IPs: []string{"10.0.0.2", "10.1.1.2"}, Port: 80}},
+				util.GetServicePortKey(tcp, "other-port"):  {nodeA: util.LBEndpoints{V4IPs: []string{"10.0.0.3", "10.2.2.3"}, Port: 8080}}},
 		},
 		{
 			name: "multiples slices with different ports, OVN zone with two nodes, ETP=local",
@@ -3753,12 +3754,12 @@ func Test_getEndpointsForService(t *testing.T) {
 				svc:   getSampleServiceWithTwoPortsAndETPLocal("tcp-example", "other-port", 80, 8080, tcp, tcp),
 				nodes: sets.New(nodeA, nodeB), // zone with two nodes
 			},
-			wantClusterEndpoints: map[string]lbEndpoints{
-				getServicePortKey(tcp, "tcp-example"): {V4IPs: []string{"10.0.0.2", "10.1.1.2"}, Port: 80},
-				getServicePortKey(tcp, "other-port"):  {V4IPs: []string{"10.0.0.3", "10.2.2.3"}, Port: 8080}},
-			wantNodeEndpoints: map[string]map[string]lbEndpoints{
-				getServicePortKey(tcp, "tcp-example"): {nodeA: lbEndpoints{V4IPs: []string{"10.0.0.2", "10.1.1.2"}, Port: 80}},
-				getServicePortKey(tcp, "other-port"):  {nodeB: lbEndpoints{V4IPs: []string{"10.0.0.3", "10.2.2.3"}, Port: 8080}}},
+			wantClusterEndpoints: util.PortToLBEndpoints{
+				util.GetServicePortKey(tcp, "tcp-example"): {V4IPs: []string{"10.0.0.2", "10.1.1.2"}, Port: 80},
+				util.GetServicePortKey(tcp, "other-port"):  {V4IPs: []string{"10.0.0.3", "10.2.2.3"}, Port: 8080}},
+			wantNodeEndpoints: util.PortToNodeToLBEndpoints{
+				util.GetServicePortKey(tcp, "tcp-example"): {nodeA: util.LBEndpoints{V4IPs: []string{"10.0.0.2", "10.1.1.2"}, Port: 80}},
+				util.GetServicePortKey(tcp, "other-port"):  {nodeB: util.LBEndpoints{V4IPs: []string{"10.0.0.3", "10.2.2.3"}, Port: 8080}}},
 		},
 		{
 			name: "slice with a mix of ready and terminating (serving and non-serving) endpoints",
@@ -3791,9 +3792,9 @@ func Test_getEndpointsForService(t *testing.T) {
 				nodes: sets.New(nodeA), // one-node zone
 
 			},
-			wantClusterEndpoints: map[string]lbEndpoints{
-				getServicePortKey(tcp, "tcp-example"): {V6IPs: []string{"2001:db2::2", "2001:db2::3"}, Port: 80}},
-			wantNodeEndpoints: map[string]map[string]lbEndpoints{}, // local endpoints not filled in, since service is not ETP or ITP local
+			wantClusterEndpoints: util.PortToLBEndpoints{
+				util.GetServicePortKey(tcp, "tcp-example"): {V6IPs: []string{"2001:db2::2", "2001:db2::3"}, Port: 80}},
+			wantNodeEndpoints: util.PortToNodeToLBEndpoints{}, // local endpoints not filled in, since service is not ETP or ITP local
 		},
 		{
 			name: "slice with a mix of terminating (serving and non-serving) endpoints and no ready endpoints",
@@ -3824,9 +3825,9 @@ func Test_getEndpointsForService(t *testing.T) {
 				svc:   getSampleServiceWithOnePort("tcp-example", 80, tcp),
 				nodes: sets.New(nodeA), // one-node zone
 			},
-			wantClusterEndpoints: map[string]lbEndpoints{
-				getServicePortKey(tcp, "tcp-example"): {V6IPs: []string{"2001:db2::4", "2001:db2::5"}, Port: 80}},
-			wantNodeEndpoints: map[string]map[string]lbEndpoints{}, // local endpoints not filled in, since service is not ETP or ITP local
+			wantClusterEndpoints: util.PortToLBEndpoints{
+				util.GetServicePortKey(tcp, "tcp-example"): {V6IPs: []string{"2001:db2::4", "2001:db2::5"}, Port: 80}},
+			wantNodeEndpoints: util.PortToNodeToLBEndpoints{}, // local endpoints not filled in, since service is not ETP or ITP local
 		},
 		{
 			name: "slice with only terminating non-serving endpoints",
@@ -3855,8 +3856,8 @@ func Test_getEndpointsForService(t *testing.T) {
 				svc:   getSampleServiceWithOnePort("tcp-example", 80, tcp),
 				nodes: sets.New(nodeA), // one-node zone
 			},
-			wantClusterEndpoints: map[string]lbEndpoints{},            // no cluster-wide endpoints
-			wantNodeEndpoints:    map[string]map[string]lbEndpoints{}, // local endpoints not filled in, since service is not ETP or ITP local
+			wantClusterEndpoints: util.PortToLBEndpoints{},       // no cluster-wide endpoints
+			wantNodeEndpoints:    util.PortToNodeToLBEndpoints{}, // local endpoints not filled in, since service is not ETP or ITP local
 
 		},
 		{
@@ -3905,9 +3906,9 @@ func Test_getEndpointsForService(t *testing.T) {
 				svc:   getSampleServiceWithOnePort("tcp-example", 80, tcp),
 				nodes: sets.New(nodeA), // one-node zone
 			},
-			wantClusterEndpoints: map[string]lbEndpoints{
-				getServicePortKey(tcp, "tcp-example"): {V6IPs: []string{"2001:db2::3", "2001:db2::4"}, Port: 80}},
-			wantNodeEndpoints: map[string]map[string]lbEndpoints{}, // local endpoints not filled in, since service is not ETP or ITP local
+			wantClusterEndpoints: util.PortToLBEndpoints{
+				util.GetServicePortKey(tcp, "tcp-example"): {V6IPs: []string{"2001:db2::3", "2001:db2::4"}, Port: 80}},
+			wantNodeEndpoints: util.PortToNodeToLBEndpoints{}, // local endpoints not filled in, since service is not ETP or ITP local
 		},
 		{
 			name: "multiple slices with only terminating non-serving endpoints",
@@ -3953,8 +3954,8 @@ func Test_getEndpointsForService(t *testing.T) {
 				svc:   getSampleServiceWithOnePort("tcp-example", 80, tcp),
 				nodes: sets.New(nodeA), // one-node zone
 			},
-			wantClusterEndpoints: map[string]lbEndpoints{},            // no cluster-wide endpoints
-			wantNodeEndpoints:    map[string]map[string]lbEndpoints{}, // no local endpoints
+			wantClusterEndpoints: util.PortToLBEndpoints{},       // no cluster-wide endpoints
+			wantNodeEndpoints:    util.PortToNodeToLBEndpoints{}, // no local endpoints
 
 		},
 		{
@@ -4005,9 +4006,9 @@ func Test_getEndpointsForService(t *testing.T) {
 				svc:   getSampleServiceWithOnePort("tcp-example", 80, tcp),
 				nodes: sets.New(nodeA), // one-node zone
 			},
-			wantClusterEndpoints: map[string]lbEndpoints{
-				getServicePortKey(tcp, "tcp-example"): {V4IPs: []string{"10.0.0.2"}, V6IPs: []string{"2001:db2::2"}, Port: 80}},
-			wantNodeEndpoints: map[string]map[string]lbEndpoints{}, // local endpoints not filled in, since service is not ETP or ITP local
+			wantClusterEndpoints: util.PortToLBEndpoints{
+				util.GetServicePortKey(tcp, "tcp-example"): {V4IPs: []string{"10.0.0.2"}, V6IPs: []string{"2001:db2::2"}, Port: 80}},
+			wantNodeEndpoints: util.PortToNodeToLBEndpoints{}, // local endpoints not filled in, since service is not ETP or ITP local
 		},
 		{
 			name: "multiple slices with a mix of IPv4 and IPv6 terminating (serving and non-serving) endpoints and no ready endpoints (dualstack cluster)",
@@ -4055,9 +4056,9 @@ func Test_getEndpointsForService(t *testing.T) {
 				svc:   getSampleServiceWithOnePort("tcp-example", 80, tcp),
 				nodes: sets.New(nodeA), // one-node zone
 			},
-			wantClusterEndpoints: map[string]lbEndpoints{
-				getServicePortKey(tcp, "tcp-example"): {V4IPs: []string{"10.0.0.3"}, V6IPs: []string{"2001:db2::3"}, Port: 80}},
-			wantNodeEndpoints: map[string]map[string]lbEndpoints{}, // local endpoints not filled in, since service is not ETP or ITP local
+			wantClusterEndpoints: util.PortToLBEndpoints{
+				util.GetServicePortKey(tcp, "tcp-example"): {V4IPs: []string{"10.0.0.3"}, V6IPs: []string{"2001:db2::3"}, Port: 80}},
+			wantNodeEndpoints: util.PortToNodeToLBEndpoints{}, // local endpoints not filled in, since service is not ETP or ITP local
 		},
 		{
 			name: "multiple slices with a mix of IPv4 and IPv6 terminating non-serving endpoints (dualstack cluster)",
@@ -4104,8 +4105,8 @@ func Test_getEndpointsForService(t *testing.T) {
 				nodes: sets.New(nodeA), // one-node zone
 
 			},
-			wantClusterEndpoints: map[string]lbEndpoints{},            // no endpoints
-			wantNodeEndpoints:    map[string]map[string]lbEndpoints{}, // no endpoints
+			wantClusterEndpoints: util.PortToLBEndpoints{},       // no endpoints
+			wantNodeEndpoints:    util.PortToNodeToLBEndpoints{}, // no endpoints
 		},
 		{
 			name: "multiple slices with a mix of IPv4 and IPv6 ready and terminating (serving and non-serving) endpoints (dualstack cluster) and service.PublishNotReadyAddresses=true",
@@ -4155,21 +4156,300 @@ func Test_getEndpointsForService(t *testing.T) {
 				svc:   getSampleServiceWithOnePortAndPublishNotReadyAddresses("tcp-example", 80, tcp), // <-- publishNotReadyAddresses=true
 				nodes: sets.New(nodeA),                                                                // one-node zone
 			},
-			wantClusterEndpoints: map[string]lbEndpoints{
-				getServicePortKey(tcp, "tcp-example"): {
+			wantClusterEndpoints: util.PortToLBEndpoints{
+				util.GetServicePortKey(tcp, "tcp-example"): {
 					V4IPs: []string{"10.0.0.2", "10.0.0.3", "10.0.0.4"},
 					V6IPs: []string{"2001:db2::2", "2001:db2::3", "2001:db2::4"}, Port: 80}},
 
-			wantNodeEndpoints: map[string]map[string]lbEndpoints{}, // local endpoints not filled in, since service is not ETP or ITP local
+			wantNodeEndpoints: util.PortToNodeToLBEndpoints{}, // local endpoints not filled in, since service is not ETP or ITP local
+		},
+		// According to https://kubernetes.io/docs/concepts/services-networking/service/#field-spec-ports, the following
+		// should be supported. However, in OVNK, this was never implemented.
+		{
+			name: "multiple slices with same port name, different ports, ETP=local",
+			args: args{
+				slices: []*discovery.EndpointSlice{
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "svc-ab23",
+							Namespace: "ns",
+							Labels:    map[string]string{discovery.LabelServiceName: "svc"},
+						},
+						Ports: []discovery.EndpointPort{
+							{
+								Name:     ptr.To("tcp-example"),
+								Protocol: ptr.To(corev1.ProtocolTCP),
+								Port:     ptr.To(int32(80)),
+							},
+						},
+						AddressType: discovery.AddressTypeIPv4,
+						Endpoints:   kubetest.MakeReadyEndpointList(nodeA, "10.0.0.2", "10.1.1.2"),
+					},
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "svc-ab24",
+							Namespace: "ns",
+							Labels:    map[string]string{discovery.LabelServiceName: "svc"},
+						},
+						Ports: []discovery.EndpointPort{
+							{
+								Name:     ptr.To("tcp-example"),
+								Protocol: ptr.To(corev1.ProtocolTCP),
+								Port:     ptr.To(int32(8080)),
+							},
+						},
+						AddressType: discovery.AddressTypeIPv4,
+						Endpoints:   kubetest.MakeReadyEndpointList(nodeA, "10.0.0.3", "10.2.2.3"),
+					},
+				},
+				svc:   getSampleServiceWithOnePortAndETPLocal("tcp-example", 80, tcp),
+				nodes: sets.New(nodeA), // one-node zone
+			},
+			wantClusterEndpoints: util.PortToLBEndpoints{
+				util.GetServicePortKey(tcp, "tcp-example"): {V4IPs: []string{"10.0.0.2", "10.1.1.2"}, Port: 80}},
+			wantNodeEndpoints: util.PortToNodeToLBEndpoints{
+				util.GetServicePortKey(tcp, "tcp-example"): {nodeA: util.LBEndpoints{V4IPs: []string{"10.0.0.2", "10.1.1.2"}, Port: 80}}},
+			wantError: fmt.Errorf("OVN Kubernetes does not support more than one target port per service port for " +
+				"service \"test/service-test\": servicePortKey \"TCP/tcp-example\" portNumbers [80 8080]"),
+		},
+		// The following is not supported by Kubernetes - OVNK will just ignore this and look up the matching
+		// protocol (TCP) only.
+		{
+			name: "multiple slices with same port name, different protocols, ETP=local",
+			args: args{
+				slices: []*discovery.EndpointSlice{
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "svc-ab23",
+							Namespace: "ns",
+							Labels:    map[string]string{discovery.LabelServiceName: "svc"},
+						},
+						Ports: []discovery.EndpointPort{
+							{
+								Name:     ptr.To("tcp-example"),
+								Protocol: ptr.To(corev1.ProtocolTCP),
+								Port:     ptr.To(int32(80)),
+							},
+						},
+						AddressType: discovery.AddressTypeIPv4,
+						Endpoints:   kubetest.MakeReadyEndpointList(nodeA, "10.0.0.2", "10.1.1.2"),
+					},
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "svc-ab24",
+							Namespace: "ns",
+							Labels:    map[string]string{discovery.LabelServiceName: "svc"},
+						},
+						Ports: []discovery.EndpointPort{
+							{
+								Name:     ptr.To("tcp-example"),
+								Protocol: ptr.To(corev1.ProtocolUDP),
+								Port:     ptr.To(int32(80)),
+							},
+						},
+						AddressType: discovery.AddressTypeIPv4,
+						Endpoints:   kubetest.MakeReadyEndpointList(nodeA, "10.0.0.3", "10.2.2.3"),
+					},
+				},
+				svc:   getSampleServiceWithOnePortAndETPLocal("tcp-example", 80, tcp),
+				nodes: sets.New(nodeA), // one-node zone
+			},
+			wantClusterEndpoints: util.PortToLBEndpoints{
+				util.GetServicePortKey(tcp, "tcp-example"): {V4IPs: []string{"10.0.0.2", "10.1.1.2"}, Port: 80}},
+			wantNodeEndpoints: util.PortToNodeToLBEndpoints{
+				util.GetServicePortKey(tcp, "tcp-example"): {nodeA: util.LBEndpoints{V4IPs: []string{"10.0.0.2", "10.1.1.2"}, Port: 80}}},
+		},
+		// The following should never happen in k8s - endpoints should not be empty.
+		{
+			name: "multiple slices with same port name, empty endpoints, invalid ports, ETP=local",
+			args: args{
+				slices: []*discovery.EndpointSlice{
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "svc-ab23",
+							Namespace: "ns",
+							Labels:    map[string]string{discovery.LabelServiceName: "svc"},
+						},
+						Ports: []discovery.EndpointPort{
+							{
+								Name:     ptr.To("tcp-example"),
+								Protocol: ptr.To(corev1.ProtocolTCP),
+								Port:     ptr.To(int32(80)),
+							},
+						},
+						AddressType: discovery.AddressTypeIPv4,
+						Endpoints:   []discovery.Endpoint{kubetest.MakeUnassignedEndpoint("10.1.1.2")},
+					},
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "svc-ab23",
+							Namespace: "ns",
+							Labels:    map[string]string{discovery.LabelServiceName: "svc"},
+						},
+						Ports: []discovery.EndpointPort{
+							{
+								Name:     ptr.To("tcp-example"),
+								Protocol: ptr.To(corev1.ProtocolTCP),
+								Port:     ptr.To(int32(80)),
+							},
+						},
+						AddressType: discovery.AddressTypeIPv4,
+						Endpoints:   []discovery.Endpoint{},
+					},
+				},
+				svc:   getSampleServiceWithOnePortAndETPLocal("tcp-example", 80, tcp),
+				nodes: sets.New(nodeA), // one-node zone
+			},
+			wantClusterEndpoints: util.PortToLBEndpoints{"TCP/tcp-example": util.LBEndpoints{Port: 80, V4IPs: []string{"10.1.1.2"}, V6IPs: []string(nil)}},
+			wantNodeEndpoints:    util.PortToNodeToLBEndpoints{},
+		},
+		// The following should never happen in k8s - invalid port number.
+		{
+			name: "single slices, invalid port number, ETP=local",
+			args: args{
+				slices: []*discovery.EndpointSlice{
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "svc-ab23",
+							Namespace: "ns",
+							Labels:    map[string]string{discovery.LabelServiceName: "svc"},
+						},
+						Ports: []discovery.EndpointPort{
+							{
+								Name:     ptr.To("tcp-example"),
+								Protocol: ptr.To(corev1.ProtocolTCP),
+								Port:     ptr.To(int32(-2)),
+							},
+						},
+						AddressType: discovery.AddressTypeIPv4,
+						Endpoints:   []discovery.Endpoint{kubetest.MakeUnassignedEndpoint("10.1.1.2")},
+					},
+				},
+				svc:   getSampleServiceWithOnePortAndETPLocal("tcp-example", 80, tcp),
+				nodes: sets.New(nodeA), // one-node zone
+			},
+			wantClusterEndpoints: util.PortToLBEndpoints{},
+			wantNodeEndpoints:    util.PortToNodeToLBEndpoints{},
+		},
+		{
+			name: "nil service without endpoints, ETP=local",
+			args: args{
+				slices: []*discovery.EndpointSlice{},
+				svc:    nil,
+				nodes:  sets.New(nodeA),
+			},
+			wantClusterEndpoints: util.PortToLBEndpoints{},
+			wantNodeEndpoints:    util.PortToNodeToLBEndpoints{},
+		},
+		{
+			name: "multiple slices, nil service with endpoints, ETP=local",
+			args: args{
+				slices: []*discovery.EndpointSlice{
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "svc-ab23",
+							Namespace: "ns",
+							Labels:    map[string]string{discovery.LabelServiceName: "svc"},
+						},
+						Ports: []discovery.EndpointPort{
+							{
+								Name:     ptr.To("tcp-example"),
+								Protocol: ptr.To(corev1.ProtocolTCP),
+								Port:     ptr.To(int32(80)),
+							},
+						},
+						AddressType: discovery.AddressTypeIPv4,
+						Endpoints:   kubetest.MakeReadyEndpointList(nodeA, "10.1.1.2"),
+					},
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "svc-ab23",
+							Namespace: "ns",
+							Labels:    map[string]string{discovery.LabelServiceName: "svc"},
+						},
+						Ports: []discovery.EndpointPort{
+							{
+								Name:     ptr.To("tcp-example2"),
+								Protocol: ptr.To(corev1.ProtocolTCP),
+								Port:     ptr.To(int32(80)),
+							},
+						},
+						AddressType: discovery.AddressTypeIPv4,
+						Endpoints:   kubetest.MakeReadyEndpointList(nodeA, "10.1.1.3"),
+					},
+				},
+				svc:   nil,
+				nodes: sets.New(nodeA),
+			},
+			wantClusterEndpoints: util.PortToLBEndpoints{
+				"TCP/tcp-example":  util.LBEndpoints{Port: 80, V4IPs: []string{"10.1.1.2"}, V6IPs: []string(nil)},
+				"TCP/tcp-example2": util.LBEndpoints{Port: 80, V4IPs: []string{"10.1.1.3"}, V6IPs: []string(nil)},
+			},
+			wantNodeEndpoints: util.PortToNodeToLBEndpoints{
+				"TCP/tcp-example":  map[string]util.LBEndpoints{"node-a": {Port: 80, V4IPs: []string{"10.1.1.2"}, V6IPs: []string(nil)}},
+				"TCP/tcp-example2": map[string]util.LBEndpoints{"node-a": {Port: 80, V4IPs: []string{"10.1.1.3"}, V6IPs: []string(nil)}},
+			},
+		},
+		{
+			name: "multiple slices, service selects correct slice, ETP=local",
+			args: args{
+				slices: []*discovery.EndpointSlice{
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "svc-ab23",
+							Namespace: "ns",
+							Labels:    map[string]string{discovery.LabelServiceName: "svc"},
+						},
+						Ports: []discovery.EndpointPort{
+							{
+								Name:     ptr.To("tcp-example"),
+								Protocol: ptr.To(corev1.ProtocolTCP),
+								Port:     ptr.To(int32(80)),
+							},
+						},
+						AddressType: discovery.AddressTypeIPv4,
+						Endpoints:   kubetest.MakeReadyEndpointList(nodeA, "10.1.1.2"),
+					},
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "svc-ab23",
+							Namespace: "ns",
+							Labels:    map[string]string{discovery.LabelServiceName: "svc"},
+						},
+						Ports: []discovery.EndpointPort{
+							{
+								Name:     ptr.To("tcp-example2"),
+								Protocol: ptr.To(corev1.ProtocolTCP),
+								Port:     ptr.To(int32(80)),
+							},
+						},
+						AddressType: discovery.AddressTypeIPv4,
+						Endpoints:   kubetest.MakeReadyEndpointList(nodeA, "10.1.1.3"),
+					},
+				},
+				svc:   getSampleServiceWithOnePortAndETPLocal("tcp-example2", 80, tcp),
+				nodes: sets.New(nodeA),
+			},
+			wantClusterEndpoints: util.PortToLBEndpoints{
+				"TCP/tcp-example2": util.LBEndpoints{Port: 80, V4IPs: []string{"10.1.1.3"}, V6IPs: []string(nil)},
+			},
+			wantNodeEndpoints: util.PortToNodeToLBEndpoints{
+				"TCP/tcp-example2": map[string]util.LBEndpoints{"node-a": {Port: 80, V4IPs: []string{"10.1.1.3"}, V6IPs: []string(nil)}},
+			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			portToClusterEndpoints, portToNodeToEndpoints := getEndpointsForService(
-				tt.args.slices, tt.args.svc, tt.args.nodes, types.DefaultNetworkName)
+			needsLocalEndpoints := tt.args.svc == nil || util.ServiceExternalTrafficPolicyLocal(tt.args.svc) || util.ServiceInternalTrafficPolicyLocal(tt.args.svc)
+			portToClusterEndpoints, portToNodeToEndpoints, err := util.GetEndpointsForService(
+				tt.args.slices, tt.args.svc, tt.args.nodes, true, needsLocalEndpoints)
 			assert.Equal(t, tt.wantClusterEndpoints, portToClusterEndpoints)
 			assert.Equal(t, tt.wantNodeEndpoints, portToNodeToEndpoints)
-
+			if tt.wantError == nil {
+				assert.NoError(t, err)
+			} else {
+				assert.ErrorContains(t, err, tt.wantError.Error())
+			}
 		})
 	}
 }
@@ -4190,12 +4470,12 @@ func Test_makeNodeSwitchTargetIPs(t *testing.T) {
 				vips:     []string{"1.2.3.4", "fe10::1"},
 				protocol: corev1.ProtocolTCP,
 				inport:   80,
-				clusterEndpoints: lbEndpoints{
+				clusterEndpoints: util.LBEndpoints{
 					V4IPs: []string{"192.168.0.1"},
 					V6IPs: []string{"fe00:0:0:0:1::2"},
 					Port:  8080,
 				},
-				nodeEndpoints: map[string]lbEndpoints{
+				nodeEndpoints: util.PortToLBEndpoints{
 					nodeA: {
 						V4IPs: []string{"192.168.0.1"},
 						V6IPs: []string{"fe00:0:0:0:1::2"},
@@ -4215,13 +4495,13 @@ func Test_makeNodeSwitchTargetIPs(t *testing.T) {
 				vips:     []string{"1.2.3.4", "fe10::1"},
 				protocol: corev1.ProtocolTCP,
 				inport:   80,
-				clusterEndpoints: lbEndpoints{
+				clusterEndpoints: util.LBEndpoints{
 					V4IPs: []string{"192.168.0.1", "192.168.1.1"},
 					V6IPs: []string{"fe00:0:0:0:1::2", "fe00:0:0:0:2::2"},
 
 					Port: 8080,
 				},
-				nodeEndpoints: map[string]lbEndpoints{
+				nodeEndpoints: util.PortToLBEndpoints{
 					nodeA: {
 						V4IPs: []string{"192.168.0.1"},
 						V6IPs: []string{"fe00:0:0:0:1::2"},
@@ -4242,13 +4522,13 @@ func Test_makeNodeSwitchTargetIPs(t *testing.T) {
 				vips:     []string{"1.2.3.4", "fe10::1"},
 				protocol: corev1.ProtocolTCP,
 				inport:   80,
-				clusterEndpoints: lbEndpoints{
+				clusterEndpoints: util.LBEndpoints{
 					V4IPs: []string{"192.168.0.1"},
 					V6IPs: []string{"fe00:0:0:0:1::2"},
 
 					Port: 8080,
 				},
-				nodeEndpoints: map[string]lbEndpoints{
+				nodeEndpoints: util.PortToLBEndpoints{
 					nodeA: {
 						V4IPs: []string{"192.168.0.1"},
 						V6IPs: []string{"fe00:0:0:0:1::2"},
@@ -4268,7 +4548,7 @@ func Test_makeNodeSwitchTargetIPs(t *testing.T) {
 				vips:     []string{"1.2.3.4", "fe10::1"},
 				protocol: corev1.ProtocolTCP,
 				inport:   80,
-				clusterEndpoints: lbEndpoints{
+				clusterEndpoints: util.LBEndpoints{
 					V4IPs: []string{"192.168.1.1"},     // on nodeB
 					V6IPs: []string{"fe00:0:0:0:2::2"}, // on nodeB
 					Port:  8080,

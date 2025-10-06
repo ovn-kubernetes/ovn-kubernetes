@@ -52,6 +52,18 @@ func MakeTerminatingNonServingEndpoint(node string, addresses ...string) discove
 	}
 }
 
+func MakeUnassignedEndpoint(addresses ...string) discovery.Endpoint {
+	return discovery.Endpoint{
+		Conditions: discovery.EndpointConditions{
+			Ready:       ptr.To(true),
+			Serving:     ptr.To(true),
+			Terminating: ptr.To(false),
+		},
+		Addresses: addresses,
+		NodeName:  nil,
+	}
+}
+
 func MirrorEndpointSlice(defaultEndpointSlice *discovery.EndpointSlice, network string, keepEndpoints bool) *discovery.EndpointSlice {
 	mirror := defaultEndpointSlice.DeepCopy()
 	mirror.Name = defaultEndpointSlice.Name + "-mirrored"
