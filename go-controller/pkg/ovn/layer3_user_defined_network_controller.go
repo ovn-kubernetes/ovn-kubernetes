@@ -968,26 +968,28 @@ func (oc *Layer3UserDefinedNetworkController) deleteNodeEvent(node *corev1.Node)
 	klog.V(5).Infof("Deleting Node %q for network %s. Removing the node from "+
 		"various caches", node.Name, oc.GetNetworkName())
 
-	if err := oc.deleteNode(node.Name); err != nil {
-		return err
-	}
-
-	if err := oc.gatewayManagerForNode(node.Name).Cleanup(); err != nil {
-		return fmt.Errorf("failed to cleanup gateway on node %q: %w", node.Name, err)
-	}
-	oc.gatewayManagers.Delete(node.Name)
-	oc.localZoneNodes.Delete(node.Name)
-
-	oc.lsManager.DeleteSwitch(oc.GetNetworkScopedName(node.Name))
-	oc.addNodeFailed.Delete(node.Name)
-	oc.mgmtPortFailed.Delete(node.Name)
-	oc.nodeClusterRouterPortFailed.Delete(node.Name)
-	if config.OVNKubernetesFeature.EnableInterconnect {
-		if err := oc.zoneICHandler.DeleteNode(node); err != nil {
+	if _, local := oc.localZoneNodes.Load(node.Name); local {
+		if err := oc.deleteNode(node.Name); err != nil {
 			return err
 		}
-		oc.syncZoneICFailed.Delete(node.Name)
+
+		if err := oc.gatewayManagerForNode(node.Name).Cleanup(); err != nil {
+			return fmt.Errorf("failed to cleanup gateway on node %q: %w", node.Name, err)
+		}
+		oc.gatewayManagers.Delete(node.Name)
+		oc.lsManager.DeleteSwitch(oc.GetNetworkScopedName(node.Name))
+		oc.addNodeFailed.Delete(node.Name)
+		oc.mgmtPortFailed.Delete(node.Name)
+		oc.nodeClusterRouterPortFailed.Delete(node.Name)
+	} else {
+		if config.OVNKubernetesFeature.EnableInterconnect {
+			if err := oc.zoneICHandler.DeleteNode(node); err != nil {
+				return err
+			}
+		}
 	}
+	oc.syncZoneICFailed.Delete(node.Name)
+	oc.localZoneNodes.Delete(node.Name)
 	oc.syncEIPNodeRerouteFailed.Delete(node.Name)
 	return nil
 }
