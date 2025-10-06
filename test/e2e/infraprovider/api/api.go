@@ -37,6 +37,11 @@ type Provider interface {
 	// tests utilizing conflicting ports. It also allows infra provider implementations to set Nodes
 	// allowed port range and therefore comply with cloud provider firewall rules.
 	GetK8HostPort() uint16 // supported K8 host ports
+
+	// ShutdownNode shuts down the specified node
+	ShutdownNode(nodeName string) error
+	// StartNode starts the specified node
+	StartNode(nodeName string) error
 }
 
 // Underlay represents the configuration for an underlay network.
