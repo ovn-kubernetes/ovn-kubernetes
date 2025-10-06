@@ -1012,25 +1012,26 @@ func (oc *Layer2UserDefinedNetworkController) cleanupRouterSetupForRemoteNodeGR(
 }
 
 func (oc *Layer2UserDefinedNetworkController) deleteNodeEvent(node *corev1.Node) error {
-	// GatewayManager only exists for local nodes.
-	if err := oc.gatewayManagerForNode(node.Name).Cleanup(); err != nil {
-		return fmt.Errorf("failed to cleanup gateway on node %q: %w", node.Name, err)
+	if _, local := oc.localZoneNodes.Load(node.Name); local {
+		if err := oc.gatewayManagerForNode(node.Name).Cleanup(); err != nil {
+			return fmt.Errorf("failed to cleanup gateway on node %q: %w", node.Name, err)
+		}
+		oc.gatewayManagers.Delete(node.Name)
+	} else {
+		if config.Layer2UsesTransitRouter {
+			// this is a no-op for local nodes
+			if err := oc.cleanupRouterSetupForRemoteNodeGR(node.Name); err != nil {
+				return fmt.Errorf("failed to cleanup remote node %q gateway: %w", node.Name, err)
+			}
+		} else if config.OVNKubernetesFeature.EnableInterconnect { // Legacy check - pre-transit router
+			if err := oc.delPortForRemoteNodeGR(node); err != nil {
+				return fmt.Errorf("failed to cleanup remote zone node %s's remote LRP, %w", node.Name, err)
+			}
+		}
 	}
-	oc.gatewayManagers.Delete(node.Name)
 	oc.localZoneNodes.Delete(node.Name)
 	oc.mgmtPortFailed.Delete(node.Name)
 	oc.syncEIPNodeRerouteFailed.Delete(node.Name)
-
-	if config.Layer2UsesTransitRouter {
-		// this is a no-op for local nodes
-		if err := oc.cleanupRouterSetupForRemoteNodeGR(node.Name); err != nil {
-			return fmt.Errorf("failed to cleanup remote node %q gateway: %w", node.Name, err)
-		}
-	} else if config.OVNKubernetesFeature.EnableInterconnect { // Legacy check - pre-transit router
-		if err := oc.delPortForRemoteNodeGR(node); err != nil {
-			return fmt.Errorf("failed to cleanup remote zone node %s's remote LRP, %w", node.Name, err)
-		}
-	}
 	oc.syncZoneICFailed.Delete(node.Name)
 	return nil
 }
