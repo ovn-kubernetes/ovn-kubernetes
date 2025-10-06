@@ -69,14 +69,19 @@ func getFlagsByCategory() map[string][]cli.Flag {
 	m := map[string][]cli.Flag{}
 	m["Generic Options"] = config.CommonFlags
 	m["CNI Options"] = config.CNIFlags
+	m["Feature Flags"] = config.OVNK8sFeatureFlags
 	m["K8s-related Options"] = config.K8sFlags
 	m["OVN Northbound DB Options"] = config.OvnNBFlags
 	m["OVN Southbound DB Options"] = config.OvnSBFlags
 	m["OVN Gateway Options"] = config.OVNGatewayFlags
+	m["Cluster Manager Options"] = config.ClusterManagerFlags
+	m["Cluster Manager HA Options"] = config.ClusterMgrHAFlags
 	m["Master HA Options"] = config.MasterHAFlags
 	m["OVN Kube Node Options"] = config.OvnKubeNodeFlags
 	m["Monitoring Options"] = config.MonitoringFlags
 	m["IPFIX Flow Tracing Options"] = config.IPFIXFlags
+	m["Metrics Options"] = config.MetricsFlags
+	m["Hybrid Overlay Options"] = config.HybridOverlayFlags
 
 	return m
 }
