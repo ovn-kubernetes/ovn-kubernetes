@@ -19,6 +19,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
 	ipallocator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip/subnet"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/mac"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/pod"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
@@ -97,6 +98,11 @@ func (a *PodAllocator) Init() error {
 			"network %q allows persistent IPs but missing the claims reconciler",
 			a.netInfo.GetNetworkName(),
 		)
+	}
+
+	klog.Infof("Initializing network %s pod annotation allocator MAC registry", a.netInfo.GetNetworkName())
+	if err := a.podAnnotationAllocator.InitializeMACRegistry(); err != nil {
+		return fmt.Errorf("failed to initialize MAC addresses registry: %w", err)
 	}
 
 	return nil
@@ -274,6 +280,7 @@ func (a *PodAllocator) releasePodOnNAD(pod *corev1.Pod, nad string, network *net
 		hasIPAMClaim = false
 	}
 	if hasIPAMClaim {
+		var err error
 		ipamClaim, err := a.ipamClaimsReconciler.FindIPAMClaim(network.IPAMClaimReference, network.Namespace)
 		hasIPAMClaim = ipamClaim != nil && len(ipamClaim.Status.IPs) > 0
 		if apierrors.IsNotFound(err) {
@@ -313,6 +320,13 @@ func (a *PodAllocator) releasePodOnNAD(pod *corev1.Pod, nad string, network *net
 			)
 		}
 		klog.V(5).Infof("Released IPs %v", util.StringSlice(podAnnotation.IPs))
+	}
+
+	if doRelease {
+		if err := a.podAnnotationAllocator.ReleasePodReservedMacAddress(pod, podAnnotation.MAC); err != nil {
+			return fmt.Errorf(`failed to release pod "%s/%s" mac %q: %v`,
+				pod.Namespace, pod.Name, podAnnotation.MAC, err)
+		}
 	}
 
 	if podDeleted {
@@ -365,7 +379,8 @@ func (a *PodAllocator) allocatePodOnNAD(pod *corev1.Pod, nad string, network *ne
 
 	if err != nil {
 		if errors.Is(err, ipallocator.ErrFull) ||
-			errors.Is(err, ipallocator.ErrAllocated) {
+			errors.Is(err, ipallocator.ErrAllocated) ||
+			errors.Is(err, mac.ErrReserveMACConflict) {
 			a.recordPodErrorEvent(pod, err)
 		}
 		return err

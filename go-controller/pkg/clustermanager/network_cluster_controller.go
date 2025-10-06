@@ -21,6 +21,7 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip/subnet"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/mac"
 	annotationalloc "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/pod"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/node"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/pod"
@@ -224,33 +225,39 @@ func (ncc *networkClusterController) init() error {
 		}
 		ncc.subnetAllocator = ipAllocator
 
-		var (
-			podAllocationAnnotator *annotationalloc.PodAnnotationAllocator
-			ipamClaimsReconciler   persistentips.PersistentAllocations
-		)
+		var podAllocationAnnotator *annotationalloc.PodAnnotationAllocator
+		var podAllocOpts []annotationalloc.AllocatorOption
 
-		if ncc.allowPersistentIPs() {
+		persistentIPsEnabled := ncc.allowPersistentIPs()
+		if persistentIPsEnabled {
 			ncc.retryIPAMClaims = ncc.newRetryFramework(factory.IPAMClaimsType, true)
 			ncc.ipamClaimReconciler = persistentips.NewIPAMClaimReconciler(
 				ncc.kube,
 				ncc.GetNetInfo(),
 				ncc.watchFactory.IPAMClaimsInformer().Lister(),
 			)
-			ipamClaimsReconciler = ncc.ipamClaimReconciler
+			podAllocOpts = append(podAllocOpts, annotationalloc.WithIPAMClaimReconciler(ncc.ipamClaimReconciler))
+		}
+
+		if util.IsPreconfiguredUDNAddressesEnabled() &&
+			ncc.IsPrimaryNetwork() &&
+			persistentIPsEnabled &&
+			ncc.TopologyType() == types.Layer2Topology {
+			podAllocOpts = append(podAllocOpts, annotationalloc.WithMACRegistry(mac.NewManager()))
 		}
 
 		podAllocationAnnotator = annotationalloc.NewPodAnnotationAllocator(
 			ncc.GetNetInfo(),
 			ncc.watchFactory.PodCoreInformer().Lister(),
 			ncc.kube,
-			ipamClaimsReconciler,
+			podAllocOpts...,
 		)
 
 		ncc.podAllocator = pod.NewPodAllocator(
 			ncc.GetNetInfo(),
 			podAllocationAnnotator,
 			ipAllocator,
-			ipamClaimsReconciler,
+			ncc.ipamClaimReconciler,
 			ncc.networkManager,
 			ncc.recorder,
 			ncc.tunnelIDAllocator,
