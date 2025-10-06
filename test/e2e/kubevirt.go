@@ -2331,7 +2331,7 @@ chpasswd: { expire: False }
 			checkEastWestIperfTraffic(vmi, testPodsIPs, step)
 
 			By("Stop iperf3 traffic before force killing vm, so iperf3 server do not get stuck")
-			output, err = virtClient.RunCommand(vmi, "killall iperf3", 5*time.Second)
+			output, err = virtClient.RunCommand(vmi, "killall --wait iperf3", 5*time.Second)
 			Expect(err).ToNot(HaveOccurred(), output)
 
 			step = by(vmi.Name, fmt.Sprintf("Force kill qemu at node %q where VM is running on", vmi.Status.NodeName))
