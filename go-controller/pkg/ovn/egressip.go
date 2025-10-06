@@ -807,7 +807,7 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 	if !proceed && !e.isPodScheduledinLocalZone(pod) {
 		return nil // nothing to do if none of the status nodes are local to this master and pod is also remote
 	}
-	var remainingAssignments []egressipv1.EgressIPStatusItem
+	var remainingAssignments, staleAssignments []egressipv1.EgressIPStatusItem
 	nadName := ni.GetNetworkName()
 	if ni.IsUserDefinedNetwork() {
 		nadNames := ni.GetNADs()
@@ -846,6 +846,11 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 			if value, exists := podState.egressStatuses.statusMap[status]; !exists || value == egressStatusStateSynced {
 				remainingAssignments = append(remainingAssignments, status)
 			}
+			// Detect stale EIP status entries (same EgressIP reassigned to a different node)
+			// and queue the outdated entry for cleanup.
+			if staleStatus := podState.egressStatuses.hasStaleEIPStatus(status); staleStatus != nil {
+				staleAssignments = append(staleAssignments, *staleStatus)
+			}
 		}
 		podState.podIPs = podIPs
 		podState.egressIPName = name
@@ -866,6 +871,14 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 		)
 		podState.standbyEgressIPNames.Insert(name)
 		return nil
+	}
+	for _, staleStatus := range staleAssignments {
+		klog.V(2).Infof("Deleting stale pod egress IP status: %v for EgressIP: %s and pod: %s/%s/%v", staleStatus, name, pod.Namespace, pod.Name, podIPNets)
+		err = e.deletePodEgressIPAssignments(ni, name, []egressipv1.EgressIPStatusItem{staleStatus}, pod)
+		if err != nil {
+			return fmt.Errorf("failed to delete stale EgressIP status %s/%v for pod %s", name, staleStatus, podKey)
+		}
+		delete(podState.egressStatuses.statusMap, staleStatus)
 	}
 	for _, status := range remainingAssignments {
 		klog.V(2).Infof("Adding pod egress IP status: %v for EgressIP: %s and pod: %s/%s/%v", status, name, pod.Namespace, pod.Name, podIPNets)
@@ -2265,6 +2278,18 @@ func (e egressStatuses) contains(potentialStatus egressipv1.EgressIPStatusItem) 
 		return true
 	}
 	return false
+}
+
+func (e egressStatuses) hasStaleEIPStatus(potentialStatus egressipv1.EgressIPStatusItem) *egressipv1.EgressIPStatusItem {
+	var staleStatus *egressipv1.EgressIPStatusItem
+	for status := range e.statusMap {
+		if status.EgressIP == potentialStatus.EgressIP &&
+			status.Node != potentialStatus.Node {
+			staleStatus = &egressipv1.EgressIPStatusItem{EgressIP: status.EgressIP, Node: status.Node}
+			break
+		}
+	}
+	return staleStatus
 }
 
 func (e egressStatuses) delete(deleteStatus egressipv1.EgressIPStatusItem) {
