@@ -674,13 +674,13 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 				return exists
 			}).WithTimeout(3*time.Second).Should(BeTrue(), "remote node must be flagged for interconnect sync")
 
-			By("Remote node should have a port created on transit subnet")
+			By("Remote node should have a transit-router port created")
 			Eventually(func() bool {
-				p := func(item *nbdb.LogicalSwitchPort) bool {
+				p := func(item *nbdb.LogicalRouterPort) bool {
 					return item.ExternalIDs[ovntypes.NodeExternalID] == remoteNode.Name && item.ExternalIDs[ovntypes.NetworkExternalID] == l2Controller.GetNetworkName()
 				}
-				portList, err := libovsdbops.FindLogicalSwitchPortWithPredicate(fakeOvn.nbClient, p)
-				if err == nil && len(portList) > 0 {
+				ports, err := libovsdbops.FindLogicalRouterPortWithPredicate(fakeOvn.nbClient, p)
+				if err == nil && len(ports) > 0 {
 					return true
 				}
 				return false
@@ -692,15 +692,48 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 			Expect(err).NotTo(HaveOccurred())
 			By("Remote node should not have a port on transit subnet")
 			Eventually(func() bool {
-				p := func(item *nbdb.LogicalSwitchPort) bool {
+				p := func(item *nbdb.LogicalRouterPort) bool {
 					return item.ExternalIDs[ovntypes.NodeExternalID] == remoteNode.Name && item.ExternalIDs[ovntypes.NetworkExternalID] == l2Controller.GetNetworkName()
 				}
-				portList, err := libovsdbops.FindLogicalSwitchPortWithPredicate(fakeOvn.nbClient, p)
-				if err == nil && len(portList) > 0 {
+				ports, err := libovsdbops.FindLogicalRouterPortWithPredicate(fakeOvn.nbClient, p)
+				if err == nil && len(ports) > 0 {
 					return true
 				}
 				return false
 			}).Should(BeFalse())
+
+			By("verifying that local node trtos and stotr ports still exist after remote node removal")
+			expectedLRP := &nbdb.LogicalRouterPort{
+				Name: "trtos-isolatednet_ovn_layer2_switch",
+				MAC:  "0a:58:64:c8:00:01",
+				GatewayChassis: []string{
+					"00000000-0000-0000-0000-000000000000",
+				},
+				Networks: []string{
+					"100.200.0.1/16",
+				},
+				Options: map[string]string{
+					"gateway_mtu":       "1400",
+					"requested-tnl-key": "1",
+				},
+			}
+
+			expectedLSP := &nbdb.LogicalSwitchPort{
+				Name:      "stotr-isolatednet_ovn_layer2_switch",
+				Type:      "router",
+				Addresses: []string{"router"},
+				Options: map[string]string{
+					"router-port": "trtos-isolatednet_ovn_layer2_switch",
+				},
+				ExternalIDs: map[string]string{
+					"k8s.ovn.org/network":  "isolatednet",
+					"k8s.ovn.org/topology": "layer2",
+				},
+			}
+
+			Eventually(fakeOvn.nbClient).Should(
+				libovsdbtest.HaveDataSubset([]libovsdbtest.TestData{expectedLRP, expectedLSP}),
+			)
 		})
 	})
 })

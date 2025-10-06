@@ -541,14 +541,88 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 			By("Remote node should not have a port on transit subnet")
 			Eventually(func() bool {
 				p := func(item *nbdb.LogicalSwitchPort) bool {
-					return item.ExternalIDs["node"] == remoteNode.Name // ignore UDN LSPs
+					return item.ExternalIDs[types.NetworkExternalID] == l3Controller.GetNetworkName() && item.ExternalIDs["node"] == remoteNode.Name
 				}
 				portList, err := libovsdbops.FindLogicalSwitchPortWithPredicate(fakeOvn.nbClient, p)
 				if err == nil && len(portList) > 0 {
 					return true
 				}
 				return false
-			}).Should(BeFalse())
+			}).WithTimeout(3 * time.Second).Should(BeFalse())
+
+			By("Verifying core gateway router and cluster router are intact after remote node removal")
+			hasPort := func(ports []string, target string) bool {
+				for _, port := range ports {
+					if port == target {
+						return true
+					}
+				}
+				return false
+			}
+			hasRouterPorts := func(routerName string, portNames ...string) bool {
+				routers, err := libovsdbops.FindLogicalRoutersWithPredicate(fakeOvn.nbClient, func(router *nbdb.LogicalRouter) bool {
+					return router.Name == routerName
+				})
+				if err != nil || len(routers) == 0 {
+					return false
+				}
+				router := routers[0]
+				for _, portName := range portNames {
+					ports, err := libovsdbops.FindLogicalRouterPortWithPredicate(fakeOvn.nbClient, func(port *nbdb.LogicalRouterPort) bool {
+						return port.Name == portName
+					})
+					if err != nil || len(ports) == 0 {
+						return false
+					}
+					if !hasPort(router.Ports, ports[0].UUID) {
+						return false
+					}
+				}
+				return true
+			}
+			hasSwitchPorts := func(switchName string, portNames ...string) bool {
+				switches, err := libovsdbops.FindLogicalSwitchesWithPredicate(fakeOvn.nbClient, func(sw *nbdb.LogicalSwitch) bool {
+					return sw.Name == switchName
+				})
+				if err != nil || len(switches) == 0 {
+					return false
+				}
+				sw := switches[0]
+				for _, portName := range portNames {
+					ports, err := libovsdbops.FindLogicalSwitchPortWithPredicate(fakeOvn.nbClient, func(port *nbdb.LogicalSwitchPort) bool {
+						return port.Name == portName
+					})
+					if err != nil || len(ports) == 0 {
+						return false
+					}
+					if !hasPort(sw.Ports, ports[0].UUID) {
+						return false
+					}
+				}
+				return true
+			}
+			Eventually(func() bool {
+				return hasRouterPorts(
+					"GR_isolatednet_test-node",
+					"rtoj-GR_isolatednet_test-node",
+					"rtoe-GR_isolatednet_test-node",
+				) &&
+					hasRouterPorts(
+						"isolatednet_ovn_cluster_router",
+						"rtoj-isolatednet_ovn_cluster_router",
+						"rtos-isolatednet_test-node",
+						"isolatednet_rtots-test-node",
+					) &&
+					hasSwitchPorts(
+						"isolatednet_join",
+						"jtor-GR_isolatednet_test-node",
+						"jtor-isolatednet_ovn_cluster_router",
+					) &&
+					hasSwitchPorts(
+						"isolatednet_transit_switch",
+						"isolatednet_tstor-test-node",
+					)
+			}).WithTimeout(3 * time.Second).Should(BeTrue())
 		})
 	})
 
