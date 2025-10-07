@@ -8,8 +8,11 @@ import (
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	networkattchmentdefclientset "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
 
@@ -65,6 +68,9 @@ type ClusterManager struct {
 	networkManager networkmanager.Controller
 
 	raController *routeadvertisements.Controller
+
+	podTracker      networkmanager.TrackerController
+	egressIPTracker networkmanager.TrackerController
 }
 
 // NewClusterManager creates a new cluster manager to manage the cluster nodes.
@@ -185,6 +191,13 @@ func NewClusterManager(
 		cm.raController = routeadvertisements.NewController(cm.networkManager.Interface(), wf, ovnClient)
 	}
 
+	if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
+		cm.podTracker = networkmanager.NewPodTrackerController("cluster-manager-pod-tracker", wf, cm.OnNetworkRefChange)
+		if config.OVNKubernetesFeature.EnableEgressIP {
+			cm.egressIPTracker = networkmanager.NewEgressIPTrackerController("cluster-manager-egress-ip-tracker", wf, cm.OnNetworkRefChange)
+		}
+	}
+
 	return cm, nil
 }
 
@@ -256,6 +269,17 @@ func (cm *ClusterManager) Start(ctx context.Context) error {
 		}
 	}
 
+	if cm.podTracker != nil {
+		if err := cm.podTracker.Start(); err != nil {
+			return fmt.Errorf("failed to start pod tracker: %w", err)
+		}
+	}
+
+	if cm.egressIPTracker != nil {
+		if err := cm.egressIPTracker.Start(); err != nil {
+			return fmt.Errorf("failed to start egress ip tracker: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -273,6 +297,12 @@ func (cm *ClusterManager) Stop() {
 	}
 	if util.IsNetworkSegmentationSupportEnabled() {
 		cm.endpointSliceMirrorController.Stop()
+	}
+	if cm.podTracker != nil {
+		cm.podTracker.Stop()
+	}
+	if cm.egressIPTracker != nil {
+		cm.egressIPTracker.Stop()
 	}
 	cm.statusManager.Stop()
 	if util.IsDNSNameResolverEnabled() {
@@ -364,4 +394,96 @@ func initTunnelKeysAllocator(nadClient networkattchmentdefclientset.Interface, c
 
 func (cm *ClusterManager) Filter(_ *nettypes.NetworkAttachmentDefinition) (bool, error) {
 	return false, nil
+}
+
+// OnNetworkRefChange is a callback function used to signal an action to this controller when
+// a network needs to be added or removed or just updated
+func (cm *ClusterManager) OnNetworkRefChange(node, nadNamespacedName string, active bool) {
+	klog.V(4).Infof("Network change for cluster manager triggered by pod/egress IP events "+
+		"on node: %s, NAD: %s, active: %t", node, nadNamespacedName, active)
+
+	// determine if NAD belongs to a UDN if we need to update status
+	namespace, name, err := cache.SplitMetaNamespaceKey(nadNamespacedName)
+	if err != nil {
+		klog.Errorf("Failed splitting key %q during network change update: %v", nadNamespacedName, err)
+		return
+	}
+
+	nad, err := cm.wf.NADInformer().Lister().NetworkAttachmentDefinitions(namespace).Get(name)
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			klog.Errorf("Failed retrieving network attachment definition %q: %v", name, err)
+		}
+		return
+	}
+
+	ownerRef := metav1.GetControllerOf(nad)
+	if ownerRef == nil || (ownerRef.Kind != "ClusterUserDefinedNetwork" && ownerRef.Kind != "UserDefinedNetwork") {
+		return // not managed by (C)UDN, won't update status
+	}
+
+	netInfo, err := util.ParseNADInfo(nad)
+	if err != nil {
+		klog.Errorf("Failed parsing network attachment definition %q: %v", name, err)
+		return
+	}
+
+	networkName := netInfo.GetNetworkName()
+	if len(networkName) == 0 {
+		return
+	}
+
+	allNodes, err := cm.wf.GetNodes()
+	if err != nil {
+		klog.Errorf("Failed getting nodes for UDN status update %q: %v", name, err)
+		return
+	}
+
+	uniqueNodes := sets.New[string]()
+	for _, node := range allNodes {
+		if cm.NodeHasNAD(node.Name, util.GetNADName(nad.Namespace, nad.Name)) {
+			uniqueNodes.Insert(node.Name)
+		}
+	}
+
+	var cond *metav1.Condition
+	if uniqueNodes.Len() == 0 {
+		msg := "no nodes currently rendered with network"
+		cond = &metav1.Condition{
+			Type:               "NodesSelected",
+			Status:             metav1.ConditionFalse,
+			Reason:             "DynamicAllocation",
+			Message:            msg,
+			LastTransitionTime: metav1.Now(),
+		}
+	} else {
+		msg := fmt.Sprintf("%d node(s) rendered with network", uniqueNodes.Len())
+		cond = &metav1.Condition{
+			Type:               "NodesSelected",
+			Status:             metav1.ConditionTrue,
+			Reason:             "DynamicAllocation",
+			Message:            msg,
+			LastTransitionTime: metav1.Now(),
+		}
+	}
+
+	if err := cm.userDefinedNetworkController.UpdateSubsystemCondition(
+		networkName,
+		"ClusterManager", // FieldManager – must be unique per subsystem
+		cond,
+	); err != nil {
+		klog.Errorf("Failed to update NodesSelected condition for %s: %v", networkName, err)
+	} else {
+		klog.Infof("Updated Dynamic Allocation NodesSelected condition for %s: %s", networkName, cond.Message)
+	}
+}
+
+func (cm *ClusterManager) NodeHasNAD(node, nad string) bool {
+	if cm.podTracker != nil && cm.podTracker.NodeHasNAD(node, nad) {
+		return true
+	}
+	if cm.egressIPTracker != nil && cm.egressIPTracker.NodeHasNAD(node, nad) {
+		return true
+	}
+	return false
 }
