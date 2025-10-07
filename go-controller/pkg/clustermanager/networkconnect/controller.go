@@ -174,16 +174,6 @@ func nadNeedsUpdate(oldObj, newObj *nadv1.NetworkAttachmentDefinition) bool {
 	return oldObj == nil || newObj == nil || labelsChanged || annotationsChanged
 }
 
-func (c *Controller) reconcileClusterNetworkConnect(key string) error {
-	// STEP1: Validate the CNC
-	// STEP2: Discover the selected UDNs and CUDNs
-	// STEP3: Generate subnets of size CNC.Spec.ConnectSubnets.NetworkPrefix for each layer3 network
-	//  and /31 subnet for each layer2 networks
-	// STEP4: Generate a tunnelID for the connect router corresponding to this CNC
-
-	return nil
-}
-
 func (c *Controller) reconcileNAD(key string) error {
 	return nil
 }
