@@ -1056,7 +1056,7 @@ func (bnc *BaseNetworkController) isLocalZoneNode(node *corev1.Node) bool {
 
 // GetNetworkRole returns the role of this controller's network for the given pod
 func (bnc *BaseNetworkController) GetNetworkRole(pod *corev1.Pod) (string, error) {
-	role, err := util.GetNetworkRole(bnc.GetNetInfo(), bnc.networkManager.GetActiveNetworkForNamespace, pod)
+	role, err := util.GetNetworkRole(bnc.GetNetInfo(), bnc.networkManager.GetPrimaryNADForNamespace, pod)
 	if err != nil {
 		if util.IsUnprocessedActiveNetworkError(err) {
 			bnc.recordPodErrorEvent(pod, err)
