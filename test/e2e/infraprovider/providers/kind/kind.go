@@ -580,15 +580,11 @@ func isNetworkAttachedToContainer(networkName, containerName string) bool {
 }
 
 func doesContainerNameExist(name string) bool {
-	// check if it is present before retrieving logs
-	stdOut, err := exec.Command(containerengine.Get().String(), "ps", "-f", fmt.Sprintf("name=^%s$", name), "-q").CombinedOutput()
+	state, err := getContainerState(name)
 	if err != nil {
-		panic(fmt.Sprintf("failed to check if external container (%s) exists: %v (%s)", name, err, stdOut))
+		panic(fmt.Sprintf("failed to check if external container (%s) exists: %v", name, err))
 	}
-	if string(stdOut) == "" {
-		return false
-	}
-	return true
+	return state != ""
 }
 
 func doesNetworkExist(networkName string) bool {
