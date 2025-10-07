@@ -113,6 +113,19 @@ var metricCUDNCount = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 	},
 )
 
+var metricUDNNodesRendered = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Namespace: types.MetricOvnkubeNamespace,
+		Subsystem: types.MetricOvnkubeSubsystemClusterManager,
+		Name:      "udn_nodes_rendered",
+		Help:      "Number of nodes on which a UserDefinedNetwork (UDN) or ClusterUserDefinedNetwork (CUDN) is currently rendered.",
+	},
+	[]string{
+		"network_name",
+		"network_kind",
+	},
+)
+
 // RegisterClusterManagerBase registers ovnkube cluster manager base metrics with the Prometheus registry.
 // This function should only be called once.
 func RegisterClusterManagerBase() {
@@ -154,6 +167,9 @@ func RegisterClusterManagerFunctional() {
 	}
 	prometheus.MustRegister(metricUDNCount)
 	prometheus.MustRegister(metricCUDNCount)
+	if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
+		prometheus.MustRegister(metricUDNNodesRendered)
+	}
 	if err := prometheus.Register(MetricResourceRetryFailuresCount); err != nil {
 		if _, ok := err.(prometheus.AlreadyRegisteredError); !ok {
 			panic(err)
@@ -208,4 +224,14 @@ func IncrementCUDNCount(role, topology string) {
 // DecrementCUDNCount decrements the number of ClusterUserDefinedNetworks of the given type
 func DecrementCUDNCount(role, topology string) {
 	metricCUDNCount.WithLabelValues(role, topology).Dec()
+}
+
+// SetDynamicUDNNodeCount sets the number of nodes currently active with a CUDN/UDN
+func SetDynamicUDNNodeCount(networkName, networkKind string, nodeCount float64) {
+	metricUDNNodesRendered.WithLabelValues(networkName, networkKind).Set(nodeCount)
+}
+
+// DeleteDynamicUDNNodeCount when CUDN/UDN is deleted
+func DeleteDynamicUDNNodeCount(networkName, networkKind string) {
+	metricUDNNodesRendered.DeleteLabelValues(networkName, networkKind)
 }
