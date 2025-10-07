@@ -25,6 +25,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/unidling"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/healthcheck"
@@ -362,6 +363,9 @@ func (cm *ClusterManager) OnNetworkRefChange(node, nadNamespacedName string, act
 			uniqueNodes.Insert(node.Name)
 		}
 	}
+
+	metrics.SetDynamicUDNNodeCount(networkName, ownerRef.Kind, float64(uniqueNodes.Len()))
+	klog.V(5).Infof("Updated metric: network=%s kind=%s nodes=%d", networkName, ownerRef.Kind, uniqueNodes.Len())
 
 	var cond *metav1.Condition
 	if uniqueNodes.Len() == 0 {
