@@ -261,6 +261,14 @@ func (bsnc *BaseUserDefinedNetworkController) ensurePodForUserDefinedNetwork(pod
 
 	var activeNetwork util.NetInfo
 	if bsnc.IsPrimaryNetwork() {
+		// check to see if the primary NAD is even applicable to our controller
+		foundNamespaceNAD, err := bsnc.networkManager.GetPrimaryNADForNamespace(pod.Namespace)
+		if err != nil {
+			return fmt.Errorf("failed to get primary network namespace NAD: %w", err)
+		}
+		if !bsnc.HasNAD(foundNamespaceNAD) {
+			return nil
+		}
 		activeNetwork, err = bsnc.networkManager.GetActiveNetworkForNamespace(pod.Namespace)
 		if err != nil {
 			return fmt.Errorf("failed looking for the active network at namespace '%s': %w", pod.Namespace, err)
@@ -591,6 +599,14 @@ func (bsnc *BaseUserDefinedNetworkController) syncPodsForUserDefinedNetwork(pods
 		var activeNetwork util.NetInfo
 		var err error
 		if bsnc.IsPrimaryNetwork() {
+			// check to see if the primary NAD is even applicable to our controller
+			foundNamespaceNAD, err := bsnc.networkManager.GetPrimaryNADForNamespace(pod.Namespace)
+			if err != nil {
+				return fmt.Errorf("failed to get primary network namespace NAD: %w", err)
+			}
+			if !bsnc.HasNAD(foundNamespaceNAD) {
+				continue
+			}
 			activeNetwork, err = bsnc.networkManager.GetActiveNetworkForNamespace(pod.Namespace)
 			if err != nil {
 				if apierrors.IsNotFound(err) {
