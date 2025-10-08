@@ -161,10 +161,21 @@ var (
 	}
 
 	// OvnNorth holds northbound OVN database client and server authentication and location details
-	OvnNorth OvnAuthConfig
+	OvnNorth = OvnAuthConfig{
+		RunDir:     "/var/run/ovn/",
+		DbLocation: "/etc/ovn/ovnnb_db.db",
+	}
 
 	// OvnSouth holds southbound OVN database client and server authentication and location details
-	OvnSouth OvnAuthConfig
+	OvnSouth = OvnAuthConfig{
+		RunDir:     "/var/run/ovn/",
+		DbLocation: "/etc/ovn/ovnsb_db.db",
+	}
+
+	// OvsPaths holds OVS location details
+	OvsPaths = OvsPathConfig{
+		RunDir: "/var/run/openvswitch/",
+	}
 
 	// Gateway holds node gateway-related parsed config file parameters and command-line overrides
 	Gateway = GatewayConfig{
@@ -550,8 +561,18 @@ type OvnAuthConfig struct {
 	Scheme         OvnDBScheme
 	ElectionTimer  uint `gcfg:"election-timer"`
 	northbound     bool
+	// RunDir is OVN run directory.
+	RunDir string `gcfg:"run-dir"`
+	// DbLocation is OVN northbound/southbound database location.
+	DbLocation string `gcfg:"db-location"`
 
 	exec kexec.Interface
+}
+
+// OvsPathConfig holds OVS location details.
+type OvsPathConfig struct {
+	// RunDir is OVS run directory.
+	RunDir string `gcfg:"run-dir"`
 }
 
 // HAConfig holds configuration for HA
@@ -623,6 +644,7 @@ type config struct {
 	HybridOverlay        HybridOverlayConfig
 	OvnKubeNode          OvnKubeNodeConfig
 	ClusterManager       ClusterManagerConfig
+	OvsPaths             OvsPathConfig
 }
 
 var (
@@ -642,6 +664,7 @@ var (
 	savedHybridOverlay        HybridOverlayConfig
 	savedOvnKubeNode          OvnKubeNodeConfig
 	savedClusterManager       ClusterManagerConfig
+	savedOvsPaths             OvsPathConfig
 
 	// legacy service-cluster-ip-range CLI option
 	serviceClusterIPRange string
@@ -673,6 +696,7 @@ func init() {
 	savedHybridOverlay = HybridOverlay
 	savedOvnKubeNode = OvnKubeNode
 	savedClusterManager = ClusterManager
+	savedOvsPaths = OvsPaths
 	cli.VersionPrinter = func(_ *cli.Context) {
 		fmt.Printf("Version: %s\n", Version)
 		fmt.Printf("Git commit: %s\n", Commit)
@@ -703,6 +727,7 @@ func PrepareTestConfig() error {
 	HybridOverlay = savedHybridOverlay
 	OvnKubeNode = savedOvnKubeNode
 	ClusterManager = savedClusterManager
+	OvsPaths = savedOvsPaths
 	Kubernetes.DisableRequestedChassis = false
 	EnableMulticast = false
 	UnprivilegedMode = false
@@ -1412,6 +1437,18 @@ var OvnNBFlags = []cli.Flag{
 		Usage:       "The desired northbound database election timer.",
 		Destination: &cliConfig.OvnNorth.ElectionTimer,
 	},
+	&cli.StringFlag{
+		Name:        "nb-run-dir",
+		Usage:       "OVN northbound run directory path",
+		Destination: &cliConfig.OvnNorth.RunDir,
+		Value:       OvnNorth.RunDir,
+	},
+	&cli.StringFlag{
+		Name:        "nb-db-location",
+		Usage:       "OVN northbound database file location",
+		Destination: &cliConfig.OvnNorth.DbLocation,
+		Value:       OvnNorth.DbLocation,
+	},
 }
 
 // OvnSBFlags capture OVN southbound database options
@@ -1453,6 +1490,18 @@ var OvnSBFlags = []cli.Flag{
 		Name:        "sb-raft-election-timer",
 		Usage:       "The desired southbound database election timer.",
 		Destination: &cliConfig.OvnSouth.ElectionTimer,
+	},
+	&cli.StringFlag{
+		Name:        "sb-run-dir",
+		Usage:       "OVN southbound run directory path",
+		Destination: &cliConfig.OvnSouth.RunDir,
+		Value:       OvnSouth.RunDir,
+	},
+	&cli.StringFlag{
+		Name:        "sb-db-location",
+		Usage:       "OVN southbound database file location",
+		Destination: &cliConfig.OvnSouth.DbLocation,
+		Value:       OvnSouth.DbLocation,
 	},
 }
 
@@ -1699,6 +1748,16 @@ var ClusterManagerFlags = []cli.Flag{
 	},
 }
 
+// OvsPathsFlags capture OVS path configuration options
+var OvsPathsFlags = []cli.Flag{
+	&cli.StringFlag{
+		Name:        "ovs-run-dir",
+		Usage:       "OVS run directory path",
+		Destination: &cliConfig.OvsPaths.RunDir,
+		Value:       OvsPaths.RunDir,
+	},
+}
+
 // Flags are general command-line flags. Apps should add these flags to their
 // own urfave/cli flags and call InitConfig() early in the application.
 var Flags []cli.Flag
@@ -1721,6 +1780,7 @@ func GetFlags(customFlags []cli.Flag) []cli.Flag {
 	flags = append(flags, IPFIXFlags...)
 	flags = append(flags, OvnKubeNodeFlags...)
 	flags = append(flags, ClusterManagerFlags...)
+	flags = append(flags, OvsPathsFlags...)
 	flags = append(flags, customFlags...)
 	return flags
 }
@@ -2228,6 +2288,20 @@ func completeClusterManagerConfig(allSubnets *ConfigSubnets) error {
 	return nil
 }
 
+func buildOvsPathsConfig(cli, file *config) error {
+	// Copy config file values over default values
+	if err := overrideFields(&OvsPaths, &file.OvsPaths, &savedOvsPaths); err != nil {
+		return err
+	}
+
+	// And CLI overrides over config file and default values
+	if err := overrideFields(&OvsPaths, &cli.OvsPaths, &savedOvsPaths); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func buildDefaultConfig(cli, file *config) error {
 	if err := overrideFields(&Default, &file.Default, &savedDefault); err != nil {
 		return err
@@ -2357,6 +2431,7 @@ func initConfigWithPath(ctx *cli.Context, exec kexec.Interface, saPath string, d
 		HybridOverlay:        savedHybridOverlay,
 		OvnKubeNode:          savedOvnKubeNode,
 		ClusterManager:       savedClusterManager,
+		OvsPaths:             savedOvsPaths,
 	}
 
 	configFile, configFileIsDefault = getConfigFilePath(ctx)
@@ -2478,6 +2553,10 @@ func initConfigWithPath(ctx *cli.Context, exec kexec.Interface, saPath string, d
 		return "", err
 	}
 
+	if err = buildOvsPathsConfig(&cliConfig, &cfg); err != nil {
+		return "", err
+	}
+
 	tmpAuth, err := buildOvnAuth(exec, true, &cliConfig.OvnNorth, &cfg.OvnNorth, defaults.OvnNorthAddress)
 	if err != nil {
 		return "", err
@@ -2506,6 +2585,7 @@ func initConfigWithPath(ctx *cli.Context, exec kexec.Interface, saPath string, d
 	klog.V(5).Infof("Hybrid Overlay config: %+v", HybridOverlay)
 	klog.V(5).Infof("Ovnkube Node config: %+v", OvnKubeNode)
 	klog.V(5).Infof("Ovnkube Cluster Manager config: %+v", ClusterManager)
+	klog.V(5).Infof("OVS Paths config: %+v", OvsPaths)
 
 	return retConfigFile, nil
 }
@@ -2614,11 +2694,6 @@ func parseAddress(urlString string) (string, OvnDBScheme, error) {
 // OVN database, given a connection description string and authentication
 // details
 func buildOvnAuth(exec kexec.Interface, northbound bool, cliAuth, confAuth *OvnAuthConfig, readAddress bool) (*OvnAuthConfig, error) {
-	auth := &OvnAuthConfig{
-		northbound: northbound,
-		exec:       exec,
-	}
-
 	var direction string
 	var defaultAuth *OvnAuthConfig
 	if northbound {
@@ -2627,6 +2702,13 @@ func buildOvnAuth(exec kexec.Interface, northbound bool, cliAuth, confAuth *OvnA
 	} else {
 		direction = "sb"
 		defaultAuth = &savedOvnSouth
+	}
+
+	auth := &OvnAuthConfig{
+		northbound: northbound,
+		exec:       exec,
+		RunDir:     defaultAuth.RunDir,
+		DbLocation: defaultAuth.DbLocation,
 	}
 
 	// Determine final address so we know how to set cert/key defaults
@@ -2657,7 +2739,7 @@ func buildOvnAuth(exec kexec.Interface, northbound bool, cliAuth, confAuth *OvnA
 			return nil, fmt.Errorf("certificate or key given; perhaps you mean to use the 'ssl' scheme?")
 		}
 		auth.Scheme = OvnDBSchemeUnix
-		auth.Address = fmt.Sprintf("unix:/var/run/ovn/ovn%s_db.sock", direction)
+		auth.Address = fmt.Sprintf("unix:%s", filepath.Join(auth.RunDir, fmt.Sprintf("ovn%s_db.sock", direction)))
 		return auth, nil
 	}
 
