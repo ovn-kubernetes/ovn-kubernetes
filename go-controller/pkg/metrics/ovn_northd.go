@@ -1,14 +1,10 @@
 package metrics
 
 import (
-	"context"
 	"strings"
-	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
@@ -114,16 +110,15 @@ var ovnNorthdStopwatchShowMetricsMap = map[string]*stopwatchMetricDetails{
 	"ovnsb_db_run":     {},
 }
 
-func RegisterOvnNorthdMetrics(clientset kubernetes.Interface, k8sNodeName string, stopChan <-chan struct{}) {
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 300*time.Second, true, func(_ context.Context) (bool, error) {
-		return checkPodRunsOnGivenNode(clientset, []string{"ovn-db-pod=true"}, k8sNodeName, true)
-	})
-	if err != nil {
-		klog.Infof("Not registering OVN North Metrics because OVNKube Master Pod was not found running on this "+
-			"node (%s)", k8sNodeName)
+func RegisterOvnNorthdMetrics(
+	waitTimeoutFunc func() bool,
+	stopChan <-chan struct{},
+) {
+	if ok := waitTimeoutFunc(); !ok {
+		klog.Info("OVN northd metrics registration skipped: readiness gate not satisfied")
 		return
 	}
-	klog.Info("Found OVNKube Master Pod running on this node. Registering OVN North Metrics")
+	klog.Info("Registering OVN northd metrics")
 
 	// ovn-northd metrics
 	getOvnNorthdVersionInfo()

@@ -897,11 +897,11 @@ func registerOvsMetrics(ovsDBClient libovsdbclient.Client, metricsScrapeInterval
 		// and therefore it can monitor OVS running on the host using PID.
 		if !config.UnprivilegedMode {
 			registry.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{
-				PidFn:     prometheus.NewPidFileFn("/var/run/openvswitch/ovs-vswitchd.pid"),
+				PidFn:     prometheus.NewPidFileFn(config.OvsPaths.VswitchdPid),
 				Namespace: fmt.Sprintf("%s_%s", types.MetricOvsNamespace, types.MetricOvsSubsystemVswitchd),
 			}))
 			registry.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{
-				PidFn:     prometheus.NewPidFileFn("/var/run/openvswitch/ovsdb-server.pid"),
+				PidFn:     prometheus.NewPidFileFn(config.OvsPaths.OvsDbServerPid),
 				Namespace: fmt.Sprintf("%s_%s", types.MetricOvsNamespace, types.MetricOvsSubsystemDB),
 			}))
 		}
