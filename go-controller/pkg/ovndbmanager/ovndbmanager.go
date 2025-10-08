@@ -47,7 +47,7 @@ func RunDBChecker(kclient kube.Interface, stopCh <-chan struct{}) {
 		if err := convertNBDBSchema(); err != nil {
 			klog.Fatalf("NBDB conversion failed: %v", err)
 		}
-		ensureOvnDBState(util.OvnNbdbLocation, kclient, stopCh)
+		ensureOvnDBState(config.OvnNorth.DbLocation, kclient, stopCh)
 	}()
 
 	wg.Add(1)
@@ -56,7 +56,7 @@ func RunDBChecker(kclient kube.Interface, stopCh <-chan struct{}) {
 		if err := convertSBDBSchema(); err != nil {
 			klog.Fatalf("SBDB conversion failed: %v", err)
 		}
-		ensureOvnDBState(util.OvnSbdbLocation, kclient, stopCh)
+		ensureOvnDBState(config.OvnSouth.DbLocation, kclient, stopCh)
 	}()
 	<-stopCh
 	klog.Info("Shutting down db checker")
