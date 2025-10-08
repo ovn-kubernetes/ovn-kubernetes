@@ -205,6 +205,13 @@ else
   fi
 fi
 
+# if we set PARALLEL=true, skip serial test
+if [ "${PARALLEL:-false}" = "true" ]; then
+  export GINKGO_PARALLEL=y
+  export GINKGO_PARALLEL_NODES=10
+  skip "[Serial]"
+fi
+
 # setting these is required to make RuntimeClass tests work ... :/
 export KUBE_CONTAINER_RUNTIME=remote
 export KUBE_CONTAINER_RUNTIME_ENDPOINT=unix:///run/containerd/containerd.sock
