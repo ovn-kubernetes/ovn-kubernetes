@@ -1,6 +1,8 @@
 package testing
 
 import (
+	"fmt"
+
 	"github.com/stretchr/testify/mock"
 )
 
@@ -57,6 +59,10 @@ func ProcessMockFn(mockObj *mock.Mock, mArgs TestifyMockHelper) {
 	}
 	for _, ret := range mArgs.RetArgList {
 		call.ReturnArguments = append(call.ReturnArguments, ret)
+	}
+
+	call.RunFn = func(args mock.Arguments) {
+		fmt.Printf("MOCK CALL: %s %v\n", mArgs.OnCallMethodName, args)
 	}
 	// set the default to once if no input is provided.
 	if mArgs.CallTimes == 0 {

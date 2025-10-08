@@ -1,17 +1,12 @@
 package metrics
 
 import (
-	"context"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
@@ -245,7 +240,8 @@ var metricDBClusterConnOutErr = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 	},
 )
 
-func ovnDBSizeMetricsUpdater(dbProps *util.OvsDbProperties) {
+// updateOvnDBSizeMetrics collects and updates the OVN DB size metric
+func updateOvnDBSizeMetrics(dbProps *util.OvsDbProperties) {
 	if size, err := getOvnDBSizeViaPath(dbProps); err != nil {
 		klog.Errorf("Failed to update OVN DB size metric: %v", err)
 	} else {
@@ -270,7 +266,7 @@ func isOvnDBFoundViaPath(dbProperties []*util.OvsDbProperties) bool {
 }
 
 func getOvnDBSizeViaPath(dbProperties *util.OvsDbProperties) (int64, error) {
-	fileInfo, err := os.Stat(dbProperties.DbAlias)
+	fileInfo, err := util.AppFs.Stat(dbProperties.DbAlias)
 	if err != nil {
 		return 0, fmt.Errorf("failed to find OVN DB database %s at path %s: %v",
 			dbProperties.DbName, dbProperties.DbAlias, err)
@@ -278,7 +274,8 @@ func getOvnDBSizeViaPath(dbProperties *util.OvsDbProperties) (int64, error) {
 	return fileInfo.Size(), nil
 }
 
-func ovnDBMemoryMetricsUpdater(dbProperties *util.OvsDbProperties) {
+// updateOvnDBMemoryMetrics collects and updates the OVN DB memory metric
+func updateOvnDBMemoryMetrics(dbProperties *util.OvsDbProperties) {
 	var stdout, stderr string
 	var err error
 
@@ -325,7 +322,7 @@ var (
 func getNBDBSockPath() (string, error) {
 	paths := []string{"/var/run/openvswitch/", "/var/run/ovn/"}
 	for _, basePath := range paths {
-		if _, err := os.Stat(basePath + "ovnnb_db.sock"); err == nil {
+		if _, err := util.AppFs.Stat(basePath + "ovnnb_db.sock"); err == nil {
 			klog.Infof("ovnnb_db.sock found at %s", basePath)
 			return basePath, nil
 		} else {
@@ -361,21 +358,7 @@ func getOvnDbVersionInfo() {
 	}
 }
 
-func RegisterOvnDBMetrics(clientset kubernetes.Interface, k8sNodeName string, stopChan <-chan struct{}) {
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 300*time.Second, true, func(_ context.Context) (bool, error) {
-		return checkPodRunsOnGivenNode(clientset, []string{"ovn-db-pod=true"}, k8sNodeName, false)
-	})
-	if err != nil {
-		if wait.Interrupted(err) {
-			klog.Errorf("Timed out while checking if OVN DB Pod runs on this %q K8s Node: %v. "+
-				"Not registering OVN DB Metrics on this Node.", k8sNodeName, err)
-		} else {
-			klog.Infof("Not registering OVN DB Metrics on this Node since OVN DBs are not running on this node.")
-		}
-		return
-	}
-	klog.Info("Found OVN DB Pod running on this node. Registering OVN DB Metrics")
-
+func RegisterOvnDBMetrics(ovnRegistry *prometheus.Registry) ([]*util.OvsDbProperties, bool, bool) {
 	// get the ovsdb server version info
 	getOvnDbVersionInfo()
 	// register metrics that will be served off of /metrics path
@@ -401,17 +384,19 @@ func RegisterOvnDBMetrics(clientset kubernetes.Interface, k8sNodeName string, st
 	if err != nil {
 		klog.Errorf("Failed to init nbdb properties: %s", err)
 	} else {
+		klog.Infof("Found OVN NB DB: %v", nbdbProps)
 		dbProperties = append(dbProperties, nbdbProps)
 	}
 	sbdbProps, err := util.GetOvsDbProperties(util.OvnSbdbLocation)
 	if err != nil {
 		klog.Errorf("Failed to init sbdb properties: %s", err)
 	} else {
+		klog.Infof("Found OVN SB DB: %v", sbdbProps)
 		dbProperties = append(dbProperties, sbdbProps)
 	}
 	if len(dbProperties) == 0 {
 		klog.Errorf("Failed to init properties for all databases")
-		return
+		return nil, false, false
 	}
 	// check if DB is clustered or not
 	// the usual way would be to call `ovsdb-tool db-is-standalone`,
@@ -450,35 +435,7 @@ func RegisterOvnDBMetrics(clientset kubernetes.Interface, k8sNodeName string, st
 		klog.Infof("Unable to enable OVN DB size metric because no OVN DBs found")
 	}
 
-	// functions responsible for collecting the values and updating the prometheus metrics
-	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				// To update not only values but also labels for metrics, we use Reset() to delete previous labels+value
-				if dbIsClustered {
-					resetOvnDbClusterMetrics()
-				}
-				if dbFoundViaPath {
-					resetOvnDbSizeMetric()
-				}
-				resetOvnDbMemoryMetrics()
-				for _, dbProperty := range dbProperties {
-					if dbIsClustered {
-						ovnDBClusterStatusMetricsUpdater(dbProperty)
-					}
-					if dbFoundViaPath {
-						ovnDBSizeMetricsUpdater(dbProperty)
-					}
-					ovnDBMemoryMetricsUpdater(dbProperty)
-				}
-			case <-stopChan:
-				return
-			}
-		}
-	}()
+	return dbProperties, dbIsClustered, dbFoundViaPath
 }
 
 type OVNDBClusterStatus struct {
