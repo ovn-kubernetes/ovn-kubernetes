@@ -699,8 +699,9 @@ func addServiceRules(service *corev1.Service, netInfo util.NetInfo, localEndpoin
 			}
 		}
 		nftElems := getGatewayNFTRules(service, localEndpoints, svcHasLocalHostNetEndPnt)
-		if netInfo.IsPrimaryNetwork() && activeNetwork != nil {
-			nftElems = append(nftElems, getUDNNFTRules(service, activeNetwork)...)
+		if util.IsNetworkSegmentationSupportEnabled() && netInfo.IsPrimaryNetwork() {
+			pktMark := fmt.Sprintf("0x%x", pktMarkBase+uint(netInfo.GetNetworkID()))
+			nftElems = append(nftElems, getUDNNFTRules(service, pktMark)...)
 		}
 		if len(nftElems) > 0 {
 			if err := nodenft.UpdateNFTElements(nftElems); err != nil {
@@ -780,7 +781,7 @@ func delServiceRules(service *corev1.Service, localEndpoints []string, npw *node
 			// Attempt to delete the elements directly and handle the IsNotFound error.
 			//
 			// TODO: Switch to `nft destroy` when supported.
-			nftElems = getUDNNFTRules(service, nil)
+			nftElems = getUDNNFTRules(service, "")
 			if len(nftElems) > 0 {
 				nft, err := nodenft.GetNFTablesHelper()
 				if err != nil {
@@ -1044,11 +1045,8 @@ func (npw *nodePortWatcher) SyncServices(services []interface{}) error {
 			keepIPTRules = append(keepIPTRules, getGatewayIPTRules(service, localEndpointsArray, hasLocalHostNetworkEp)...)
 			keepNFTSetElems = append(keepNFTSetElems, getGatewayNFTRules(service, localEndpointsArray, hasLocalHostNetworkEp)...)
 			if util.IsNetworkSegmentationSupportEnabled() && netInfo.IsPrimaryNetwork() {
-				netConfig := npw.ofm.getActiveNetwork(netInfo)
-				if netConfig == nil {
-					return fmt.Errorf("failed to get active network config for network %s", netInfo.GetNetworkName())
-				}
-				keepNFTMapElems = append(keepNFTMapElems, getUDNNFTRules(service, netConfig)...)
+				pktMark := fmt.Sprintf("0x%x", pktMarkBase+uint(netInfo.GetNetworkID()))
+				keepNFTMapElems = append(keepNFTMapElems, getUDNNFTRules(service, pktMark)...)
 			}
 		}
 	}
@@ -1398,6 +1396,18 @@ func (npwipt *nodePortWatcherIptables) SyncServices(services []interface{}) erro
 		// TODO: ETP and ITP is not implemented for smart NIC mode.
 		keepIPTRules = append(keepIPTRules, getGatewayIPTRules(service, nil, false)...)
 		keepNFTElems = append(keepNFTElems, getGatewayNFTRules(service, nil, false)...)
+
+		netInfo, err := npwipt.networkManager.GetActiveNetworkForNamespace(service.Namespace)
+		if util.IsInvalidPrimaryNetworkError(err) {
+			continue
+		}
+		if err != nil {
+			errors = append(errors, err)
+			continue
+		} else if util.IsNetworkSegmentationSupportEnabled() && netInfo.IsPrimaryNetwork() {
+			pktMark := fmt.Sprintf("0x%x", pktMarkBase+uint(netInfo.GetNetworkID()))
+			keepNFTElems = append(keepNFTElems, getUDNNFTRules(service, pktMark)...)
+		}
 	}
 
 	// sync rules once
