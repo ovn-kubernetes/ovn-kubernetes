@@ -261,13 +261,20 @@ func setOvnControllerConfigurationMetrics(ovsDBClient libovsdbclient.Client) (er
 		return fmt.Errorf("failed to get Open_vSwitch entry (%v)", err)
 	}
 
+	// OVN 24.09+ probe interval configs may not be set (disabled by default).
+	// Check for empty values to maintain backward compatibility.
+	// See: https://www.ovn.org/en/releases/24.09/
 	openflowProbeField := openvSwitch.ExternalIDs["ovn-bridge-remote-probe-interval"]
-	openflowProbeVal := parseMetricToFloat(types.MetricOvnSubsystemController, "ovn-bridge-remote-probe-interval", openflowProbeField)
-	metricOpenFlowProbeInterval.Set(openflowProbeVal)
+	if openflowProbeField != "" {
+		openflowProbeVal := parseMetricToFloat(types.MetricOvnSubsystemController, "ovn-bridge-remote-probe-interval", openflowProbeField)
+		metricOpenFlowProbeInterval.Set(openflowProbeVal)
+	}
 
 	remoteProbeField := openvSwitch.ExternalIDs["ovn-remote-probe-interval"]
-	remoteProbeValue := parseMetricToFloat(types.MetricOvnSubsystemController, "ovn-remote-probe-interval", remoteProbeField)
-	metricRemoteProbeInterval.Set(remoteProbeValue / 1000)
+	if remoteProbeField != "" {
+		remoteProbeValue := parseMetricToFloat(types.MetricOvnSubsystemController, "ovn-remote-probe-interval", remoteProbeField)
+		metricRemoteProbeInterval.Set(remoteProbeValue / 1000)
+	}
 
 	var ovnMonitorValue float64
 	ovnMonitorField := openvSwitch.ExternalIDs["ovn-monitor-all"]
