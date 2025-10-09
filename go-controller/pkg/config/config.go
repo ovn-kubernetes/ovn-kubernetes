@@ -945,7 +945,7 @@ var CommonFlags = []cli.Flag{
 	// Logfile rotation parameters
 	&cli.IntFlag{
 		Name:        "logfile-maxsize",
-		Usage:       "Maximum size in bytes of the log file before it gets rolled",
+		Usage:       "Maximum size in megabytes of the log file before it gets rolled",
 		Destination: &cliConfig.Logging.LogFileMaxSize,
 		Value:       Logging.LogFileMaxSize,
 	},
