@@ -40,7 +40,28 @@ func filterCIDRsAndJoin(cs clientset.Interface, cidrs string) string {
 	if cidrs == "" {
 		return "" // we may not always set CIDR - i.e. CDN
 	}
-	return joinStrings(filterCIDRs(cs, strings.Split(cidrs, ",")...)...)
+
+	// Split and normalize CIDRs to handle both single-slash (e.g., "172.31.0.0/24")
+	// and double-slash formats (e.g., "172.31.0.0/16/24" used in layer3 topology)
+	splitCIDRs := strings.Split(cidrs, ",")
+	var normalizedCIDRs []string
+	for _, cidr := range splitCIDRs {
+		cidr = strings.TrimSpace(cidr)
+		if cidr == "" {
+			continue
+		}
+		// Extract subnet from double-slash format (e.g., "172.31.0.0/16/24" → "172.31.0.0/16")
+		// This is necessary because utilnet.IsIPv6CIDRString() cannot parse double-slash format
+		subnet, err := getNetCIDRSubnet(cidr)
+		if err != nil {
+			// If extraction fails, use original (for single-slash format)
+			normalizedCIDRs = append(normalizedCIDRs, cidr)
+		} else {
+			normalizedCIDRs = append(normalizedCIDRs, subnet)
+		}
+	}
+
+	return joinStrings(filterCIDRs(cs, normalizedCIDRs...)...)
 }
 
 func filterCIDRs(cs clientset.Interface, cidrs ...string) []string {
