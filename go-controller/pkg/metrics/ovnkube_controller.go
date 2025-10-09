@@ -6,9 +6,14 @@ import (
 	"runtime"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 
+	"github.com/containernetworking/plugins/pkg/ns"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/vishvananda/netlink/nl"
+	"github.com/vishvananda/netns"
+	"golang.org/x/sys/unix"
 
 	corev1 "k8s.io/api/core/v1"
 	kapimtypes "k8s.io/apimachinery/pkg/types"
@@ -27,6 +32,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/sbdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
 
 // metricNbE2eTimestamp is the UNIX timestamp value set to NB DB. Northd will eventually copy this
@@ -250,8 +256,15 @@ var metricEgressFirewallRuleCount = prometheus.NewGauge(prometheus.GaugeOpts{
 var metricIPsecEnabled = prometheus.NewGauge(prometheus.GaugeOpts{
 	Namespace: types.MetricOvnkubeNamespace,
 	Subsystem: types.MetricOvnkubeSubsystemController,
-	Name:      "ipsec_enabled",
+	Name:      types.MetricIPsecEnabled,
 	Help:      "Specifies whether IPSec is enabled for this cluster(1) or not enabled for this cluster(0)",
+})
+
+var metricIPsecTunnelIKEChildSAState = prometheus.NewGauge(prometheus.GaugeOpts{
+	Namespace: types.MetricOvnkubeNamespace,
+	Subsystem: types.MetricOvnkubeSubsystemController,
+	Name:      types.MetricIPsecTunnelIKEChildSAState,
+	Help:      "Specifies whether IPSec Child SAs are established for the Geneve tunnels(1) or not(0)",
 })
 
 var metricEgressRoutingViaHost = prometheus.NewGauge(prometheus.GaugeOpts{
@@ -337,6 +350,23 @@ var metricPortBindingUpLatency = prometheus.NewHistogram(prometheus.HistogramOpt
 	Help:      "The duration between a pods port binding chassis update and port binding up observed in cache",
 	Buckets:   prometheus.ExponentialBuckets(.01, 2, 15),
 })
+
+// GaugeVecInterface interface for GaugeVec metric so that it can be mocked for
+// unit testing. This can be replaced once prometheus library provides such
+// interface for GaugeVec as similar to prometheus.ObserverVec for HistogramVec.
+type GaugeVecInterface interface {
+	GetMetricWithLabelValues(lvs ...string) (prometheus.Gauge, error)
+	GetMetricWith(labels prometheus.Labels) (prometheus.Gauge, error)
+	WithLabelValues(lvs ...string) prometheus.Gauge
+	With(labels prometheus.Labels) prometheus.Gauge
+	MustCurryWith(labels prometheus.Labels) *prometheus.GaugeVec
+	DeleteLabelValues(lvs ...string) bool
+	Delete(labels prometheus.Labels) bool
+	DeletePartialMatch(labels prometheus.Labels) int
+	Describe(chan<- *prometheus.Desc)
+	Collect(chan<- prometheus.Metric)
+	Reset()
+}
 
 const (
 	globalOptionsTimestampField     = "e2e_timestamp"
@@ -616,6 +646,180 @@ func ipsecMetricHandler(table string, model model.Model) {
 		metricIPsecEnabled.Set(1)
 	} else {
 		metricIPsecEnabled.Set(0)
+	}
+}
+
+// subscribeFn defines the function signature for subscribing to xfrm events.
+type xfrmSubscribeFn func() (bool, chan []syscall.NetlinkMessage, *nl.NetlinkSocket, error)
+
+// MonitorIPsecTunnelsState will register a metric for the ipsec tunnel ike child sa establishment status.
+// It will then subscribe to xfrm netlink events and update the metric with ike child sa establishment up
+// or down status.
+func MonitorIPsecTunnelsState(stopChan <-chan struct{}, wg *sync.WaitGroup, ovsVsctl ovsClient, ipsec ipsecClient) error {
+	if err := prometheus.Register(metricIPsecTunnelIKEChildSAState); err != nil {
+		if _, ok := err.(prometheus.AlreadyRegisteredError); !ok {
+			return err
+		}
+	}
+	subscribe := func() (bool, chan []syscall.NetlinkMessage, *nl.NetlinkSocket, error) {
+		groups, err := getXfrmMcastGroups([]nl.XfrmMsgType{nl.XFRM_MSG_NEWSA, nl.XFRM_MSG_DELSA, nl.XFRM_MSG_UPDSA,
+			nl.XFRM_MSG_NEWPOLICY, nl.XFRM_MSG_DELPOLICY, nl.XFRM_MSG_UPDPOLICY})
+		if err != nil {
+			return false, nil, nil, fmt.Errorf("error creating XFRM groups: %v", err)
+		}
+		sock, err := nl.SubscribeAt(netns.None(), netns.None(), unix.NETLINK_XFRM, groups...)
+		if err != nil {
+			return false, nil, nil, fmt.Errorf("error subscribing XFRM events: %v", err)
+		}
+		msgCh := make(chan []syscall.NetlinkMessage)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer close(msgCh)
+			for {
+				msgs, from, err := sock.Receive()
+				if err != nil {
+					klog.Infof("XFRM reader exiting: %v", err)
+					return
+				}
+				if from.Pid != nl.PidKernel {
+					klog.Warningf("Unexpected XFRM sender pid %d (expected %d)", from.Pid, nl.PidKernel)
+					continue
+				}
+				msgCh <- msgs
+			}
+		}()
+		// Initial reconciliation
+		updateIPsecTunnelStateMetric(ovsVsctl, ipsec)
+		return true, msgCh, sock, nil
+	}
+
+	return runInternalIPsec(stopChan, wg, ovsVsctl, ipsec, subscribe)
+}
+
+// reconcile period for xfrm event handler, this would kick in for every 60 seconds if
+// there is no explicit xfrm events. when xfrm event occurs, reconcile period is
+// automatically extended by another 60 seconds.
+var xfrmHandlerReconcilePeriod = 60 * time.Second
+
+// runInternalIPsec runs the main monitoring loop with subscription handling.
+func runInternalIPsec(stopChan <-chan struct{}, wg *sync.WaitGroup,
+	ovsVsctl ovsClient, ipsec ipsecClient, subscribe xfrmSubscribeFn) error {
+	// Get the current network namespace handle
+	currentNs, err := ns.GetCurrentNS()
+	if err != nil {
+		return fmt.Errorf("error retrieving current net namespace, err: %v", err)
+	}
+	subscribed, xfrmCh, sock, err := subscribe()
+	if err != nil {
+		return err
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		err = currentNs.Do(func(_ ns.NetNS) error {
+			xfrmSyncTimer := time.NewTicker(xfrmHandlerReconcilePeriod)
+			defer xfrmSyncTimer.Stop()
+			for {
+				select {
+				case msgs, ok := <-xfrmCh:
+					xfrmSyncTimer.Reset(xfrmHandlerReconcilePeriod)
+					if !ok {
+						// Channel closed (i.e. netlink socket reader is exited)
+						// Check if shutdown is requested.
+						select {
+						case <-stopChan:
+							return nil
+						default:
+							if subscribed, xfrmCh, sock, err = subscribe(); err != nil {
+								klog.Errorf("Error during XFRM re-subscribe due to channel closing: %v", err)
+							}
+						}
+						continue
+					}
+					if len(msgs) > 0 {
+						updateIPsecTunnelStateMetric(ovsVsctl, ipsec)
+					}
+				case <-xfrmSyncTimer.C:
+					// Nothing else to do other than re-subscribe.
+					if !subscribed {
+						if subscribed, xfrmCh, sock, err = subscribe(); err != nil {
+							klog.Errorf("Error during XFRM events re-subscribe: %v", err)
+						}
+					}
+				case <-stopChan:
+					// Trigger xfrm netlink socket reader exit.
+					if sock != nil {
+						sock.Close()
+					}
+					return nil
+				}
+			}
+		})
+		if err != nil {
+			klog.Errorf("Failed to run XFRM event handler goroutine, err: %v", err)
+		}
+	}()
+	return nil
+}
+
+func getXfrmMcastGroups(types []nl.XfrmMsgType) ([]uint, error) {
+	groups := make([]uint, 0)
+	if len(types) == 0 {
+		return nil, fmt.Errorf("no xfrm msg type specified")
+	}
+	for _, t := range types {
+		var group uint
+		switch t {
+		case nl.XFRM_MSG_ACQUIRE:
+			group = nl.XFRMNLGRP_ACQUIRE
+		case nl.XFRM_MSG_EXPIRE:
+			group = nl.XFRMNLGRP_EXPIRE
+		case nl.XFRM_MSG_NEWSA, nl.XFRM_MSG_DELSA, nl.XFRM_MSG_UPDSA:
+			group = nl.XFRMNLGRP_SA
+		case nl.XFRM_MSG_NEWPOLICY, nl.XFRM_MSG_DELPOLICY, nl.XFRM_MSG_UPDPOLICY:
+			group = nl.XFRMNLGRP_POLICY
+		default:
+			return nil, fmt.Errorf("unsupported xfrm group: %x", t)
+		}
+		groups = append(groups, group)
+	}
+	return groups, nil
+}
+
+func updateIPsecTunnelStateMetric(ovsVsctl ovsClient, ipsec ipsecClient) {
+	geneveTunnels, err := listGeneveTunnels(ovsVsctl)
+	if err != nil {
+		klog.Errorf("Error in retrieving Geneve tunnels, err: %v", err)
+		return
+	}
+	if len(geneveTunnels) == 0 {
+		metricIPsecTunnelIKEChildSAState.Set(0)
+		return
+	}
+	ipsecTunnels, err := listEstablishedIPsecTunnels(ipsec)
+	if err != nil {
+		klog.Errorf("Error in retrieving established IPsec tunnels, err: %v", err)
+		metricIPsecTunnelIKEChildSAState.Set(0)
+		return
+	}
+	ipsecEstablished := true
+	for _, geneveTunnel := range geneveTunnels {
+		if geneveTunnel.AdminState == vswitchd.InterfaceAdminStateDown ||
+			geneveTunnel.OperState == vswitchd.InterfaceLinkStateDown {
+			ipsecEstablished = false
+			break
+		}
+		if !ipsecTunnels.Has(fmt.Sprintf("%s-in-1", geneveTunnel.Name)) ||
+			!ipsecTunnels.Has(fmt.Sprintf("%s-out-1", geneveTunnel.Name)) {
+			ipsecEstablished = false
+			break
+		}
+	}
+	if ipsecEstablished {
+		metricIPsecTunnelIKEChildSAState.Set(1)
+	} else {
+		metricIPsecTunnelIKEChildSAState.Set(0)
 	}
 }
 
