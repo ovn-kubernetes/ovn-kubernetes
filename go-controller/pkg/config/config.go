@@ -787,13 +787,15 @@ var CommonFlags = []cli.Flag{
 		Usage: "cleanup node, requires the name that node is registered with in kubernetes cluster",
 	},
 	&cli.StringFlag{
-		Name:  "pidfile",
-		Usage: "Name of file that will hold the ovnkube pid (optional)",
+		Name:      "pidfile",
+		Usage:     "Name of file that will hold the ovnkube pid (optional)",
+		TakesFile: true,
 	},
 	&cli.StringFlag{
 		Name:  "config-file",
 		Usage: "configuration file path (default: /etc/openvswitch/ovn_k8s.conf)",
 		//Value: "/etc/openvswitch/ovn_k8s.conf",
+		TakesFile: true,
 	},
 	&cli.IntFlag{
 		Name:        "mtu",
@@ -930,17 +932,20 @@ var CommonFlags = []cli.Flag{
 		Name:        "logfile",
 		Usage:       "path of a file to direct log output to",
 		Destination: &cliConfig.Logging.File,
+		TakesFile:   true,
 	},
 	&cli.StringFlag{
 		Name:        "cnilogfile",
 		Usage:       "path of a file to direct log from cni shim to output to (default: /var/log/ovn-kubernetes/ovn-k8s-cni-overlay.log)",
 		Destination: &cliConfig.Logging.CNIFile,
 		Value:       "/var/log/ovn-kubernetes/ovn-k8s-cni-overlay.log",
+		TakesFile:   true,
 	},
 	&cli.StringFlag{
 		Name:        "libovsdblogfile",
 		Usage:       "path of a file to direct log from libovsdb client to output to (default is to use same as --logfile)",
 		Destination: &cliConfig.Logging.LibovsdbFile,
+		TakesFile:   true,
 	},
 	// Logfile rotation parameters
 	&cli.IntFlag{
@@ -1201,11 +1206,13 @@ var K8sFlags = []cli.Flag{
 		Name:        "k8s-kubeconfig",
 		Usage:       "absolute path to the Kubernetes kubeconfig file (not required if the --k8s-apiserver, --k8s-ca-cert, and --k8s-token are given)",
 		Destination: &cliConfig.Kubernetes.Kubeconfig,
+		TakesFile:   true,
 	},
 	&cli.StringFlag{
 		Name:        "bootstrap-kubeconfig",
 		Usage:       "absolute path to the Kubernetes kubeconfig file that is used to create the initial, per node, client certificates (should only be used together with 'cert-dir')",
 		Destination: &cliConfig.Kubernetes.BootstrapKubeconfig,
+		TakesFile:   true,
 	},
 	&cli.StringFlag{
 		Name:        "k8s-apiserver",
@@ -1217,6 +1224,7 @@ var K8sFlags = []cli.Flag{
 		Name:        "cert-dir",
 		Usage:       "absolute path to the directory of the client key and certificate (not required if --k8s-kubeconfig or --k8s-apiserver, --k8s-ca-cert, and --k8s-token are given)",
 		Destination: &cliConfig.Kubernetes.CertDir,
+		TakesFile:   true,
 	},
 	&cli.DurationFlag{
 		Name:        "cert-duration",
@@ -1228,6 +1236,7 @@ var K8sFlags = []cli.Flag{
 		Name:        "k8s-cacert",
 		Usage:       "the absolute path to the Kubernetes API CA certificate (not required if --k8s-kubeconfig is given)",
 		Destination: &cliConfig.Kubernetes.CACert,
+		TakesFile:   true,
 	},
 	&cli.StringFlag{
 		Name:        "k8s-token",
@@ -1238,6 +1247,7 @@ var K8sFlags = []cli.Flag{
 		Name:        "k8s-token-file",
 		Usage:       "the path to Kubernetes API token. If set, it is periodically read and takes precedence over k8s-token",
 		Destination: &cliConfig.Kubernetes.TokenFile,
+		TakesFile:   true,
 	},
 	&cli.StringFlag{
 		Name:        "ovn-config-namespace",
@@ -1327,11 +1337,13 @@ var MetricsFlags = []cli.Flag{
 		Name:        "node-server-privkey",
 		Usage:       "Private key that the OVN node K8s metrics server uses to serve metrics over TLS.",
 		Destination: &cliConfig.Metrics.NodeServerPrivKey,
+		TakesFile:   true,
 	},
 	&cli.StringFlag{
 		Name:        "node-server-cert",
 		Usage:       "Certificate that the OVN node K8s metrics server uses to serve metrics over TLS.",
 		Destination: &cliConfig.Metrics.NodeServerCert,
+		TakesFile:   true,
 	},
 	&cli.BoolFlag{
 		Name:        "metrics-enable-config-duration",
@@ -1359,18 +1371,21 @@ var OvnNBFlags = []cli.Flag{
 		Usage: "Private key that the client should use for talking to the OVN database (default when ssl address is used: /etc/openvswitch/ovnnb-privkey.pem).  " +
 			"Default value for this setting is empty which defaults to use local unix socket.",
 		Destination: &cliConfig.OvnNorth.PrivKey,
+		TakesFile:   true,
 	},
 	&cli.StringFlag{
 		Name: "nb-client-cert",
 		Usage: "Client certificate that the client should use for talking to the OVN database (default when ssl address is used: /etc/openvswitch/ovnnb-cert.pem). " +
 			"Default value for this setting is empty which defaults to use local unix socket.",
 		Destination: &cliConfig.OvnNorth.Cert,
+		TakesFile:   true,
 	},
 	&cli.StringFlag{
 		Name: "nb-client-cacert",
 		Usage: "CA certificate that the client should use for talking to the OVN database (default when ssl address is used: /etc/openvswitch/ovnnb-ca.cert)." +
 			"Default value for this setting is empty which defaults to use local unix socket.",
 		Destination: &cliConfig.OvnNorth.CACert,
+		TakesFile:   true,
 	},
 	&cli.StringFlag{
 		Name: "nb-cert-common-name",
@@ -1401,18 +1416,21 @@ var OvnSBFlags = []cli.Flag{
 		Usage: "Private key that the client should use for talking to the OVN database (default when ssl address is used: /etc/openvswitch/ovnsb-privkey.pem)." +
 			"Default value for this setting is empty which defaults to use local unix socket.",
 		Destination: &cliConfig.OvnSouth.PrivKey,
+		TakesFile:   true,
 	},
 	&cli.StringFlag{
 		Name: "sb-client-cert",
 		Usage: "Client certificate that the client should use for talking to the OVN database(default when ssl address is used: /etc/openvswitch/ovnsb-cert.pem).  " +
 			"Default value for this setting is empty which defaults to use local unix socket.",
 		Destination: &cliConfig.OvnSouth.Cert,
+		TakesFile:   true,
 	},
 	&cli.StringFlag{
 		Name: "sb-client-cacert",
 		Usage: "CA certificate that the client should use for talking to the OVN database (default when ssl address is used /etc/openvswitch/ovnsb-ca.cert). " +
 			"Default value for this setting is empty which defaults to use local unix socket.",
 		Destination: &cliConfig.OvnSouth.CACert,
+		TakesFile:   true,
 	},
 	&cli.StringFlag{
 		Name: "sb-cert-common-name",
