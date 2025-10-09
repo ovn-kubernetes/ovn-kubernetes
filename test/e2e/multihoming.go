@@ -689,7 +689,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				name:      secondaryNetworkName,
 				namespace: f.Namespace.Name,
 				topology:  "layer2",
-				cidr:      joinStrings(secondaryNetworkCIDR, secondaryIPv6CIDR),
+				cidr:      joinStrings(secondaryFlatL2NetworkCIDR, secondaryIPv6CIDR),
 			})
 
 			By("creating the attachment configuration")
@@ -857,7 +857,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				networkAttachmentConfigParams{
 					name:     secondaryNetworkName,
 					topology: "layer2",
-					cidr:     joinStrings(secondaryNetworkCIDR, secondaryIPv6CIDR),
+					cidr:     joinStrings(secondaryFlatL2NetworkCIDR, secondaryIPv6CIDR),
 				},
 				podConfiguration{
 					attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
@@ -874,7 +874,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				networkAttachmentConfigParams{
 					name:         secondaryNetworkName,
 					topology:     "layer2",
-					cidr:         joinStrings(secondaryNetworkCIDR, secondaryIPv6CIDR),
+					cidr:         joinStrings(secondaryFlatL2NetworkCIDR, secondaryIPv6CIDR),
 					excludeCIDRs: []string{secondaryFlatL2IgnoreCIDR},
 				},
 				podConfiguration{
