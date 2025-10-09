@@ -377,7 +377,6 @@ type KubernetesConfig struct {
 	ServiceCIDRs            []*net.IPNet
 	OVNConfigNamespace      string `gcfg:"ovn-config-namespace"`
 	OVNEmptyLbEvents        bool   `gcfg:"ovn-empty-lb-events"`
-	PodIP                   string `gcfg:"pod-ip"` // UNUSED
 	RawNoHostSubnetNodes    string `gcfg:"no-hostsubnet-nodes"`
 	NoHostSubnetNodes       labels.Selector
 	HostNetworkNamespace    string `gcfg:"host-network-namespace"`
