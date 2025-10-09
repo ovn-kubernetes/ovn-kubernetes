@@ -180,7 +180,7 @@ nohup sudo ovnkube -k8s-kubeconfig $HOME/kubeconfig.yaml -loglevel=4 \
     -nb-address="${ovn_nb}" \
     -sb-address="${ovn_sb}" \
     -k8s-token="$TOKEN" \
-    -init-gateways \
+    -gateway-mode=shared \
     -k8s-service-cidr= \
     -cluster-subnets="$SERVICE_IP_SUBNET" 2>&1 &
 ```
