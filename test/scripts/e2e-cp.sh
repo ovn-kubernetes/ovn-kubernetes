@@ -239,7 +239,7 @@ fi
 if [ "${PARALLEL:-false}" = "true" ]; then
   export GINKGO_PARALLEL=y
   export GINKGO_PARALLEL_NODES=10
-  skip "[Serial]"
+  skip_label "$SERIAL_LABEL"
 fi
 
 # setting these is required to make RuntimeClass tests work ... :/
