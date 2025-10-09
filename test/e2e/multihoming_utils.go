@@ -33,7 +33,14 @@ func netCIDR(netCIDR string, netPrefixLengthPerNode int) string {
 }
 
 func joinStrings(vals ...string) string {
-	return strings.Join(vals, ",")
+	// Filter out empty strings to avoid malformed CIDR lists
+	var nonEmpty []string
+	for _, val := range vals {
+		if val != "" {
+			nonEmpty = append(nonEmpty, val)
+		}
+	}
+	return strings.Join(nonEmpty, ",")
 }
 
 func filterCIDRsAndJoin(cs clientset.Interface, cidrs string) string {
