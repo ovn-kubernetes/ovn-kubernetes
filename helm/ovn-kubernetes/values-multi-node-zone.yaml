@@ -1,6 +1,6 @@
 # Values for ovn-kubernetes with multi-node zone interconnect
 # Requires: ovnkube-control-plane, ovnkube-zone-controller, ovnkube-node
-# enableOvnKubeIdentity need to be false 
+# enableOvnKubeIdentity need to be false
 
 # -- list of dependent subcharts that need to be installed for the given deployment mode, these subcharts haven't been tested yet.
 tags:
@@ -106,6 +106,12 @@ global:
   lFlowCacheLimitKb: ""
   # -- Configure to use DNSNameResolver feature with ovn-kubernetes
   enableDNSNameResolver: false
+  # -- Configure to enable route advertisements
+  enableRouteAdvertisements: false
+  # -- Configure to advertise default network
+  advertiseDefaultNetwork: false
+  # -- Configure advertised UDN isolation mode (strict or loose)
+  advertisedUDNIsolationMode: strict
   # -- Whether to disable SNAT of egress traffic in namespaces annotated with routing-external-gws
   disableSnatMultipleGws: ""
   # -- Controls if forwarding is allowed on OVNK controlled interfaces
@@ -139,7 +145,7 @@ global:
   # -- Maximum period in seconds for which an IPFIX flow record is cached and aggregated before being sent
   # @default 60
   ipfixCacheActiveTimeout: ""
-  # -- OVN remote probe interval in ms 
+  # -- OVN remote probe interval in ms
   # @default 100000
   remoteProbeInterval: 100000
   # -- Enable monitoring all data from SB DB instead of conditionally monitoring the data relevant to this node only
@@ -148,7 +154,7 @@ global:
   # -- ovn-controller wait time in ms before clearing OpenFlow rules during start up
   # @default 0
   ofctrlWaitBeforeClear: ""
-  # -- Separate log file for libovsdb client 
+  # -- Separate log file for libovsdb client
   libovsdbClientLogFile: ""
   image:
     # -- Image repository for ovn-kubernetes components

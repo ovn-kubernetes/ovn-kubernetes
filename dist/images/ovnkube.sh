@@ -175,7 +175,7 @@ ovn_controller_opts=${OVN_CONTROLLER_OPTS:-""}
 ovnkube_loglevel=${OVNKUBE_LOGLEVEL:-4}
 
 # by default it is going to be a shared gateway mode, however this can be overridden to any of the other
-# two gateway modes that we support using `images/daemonset.sh` tool
+# two gateway modes that we support using helm.
 ovn_gateway_mode=${OVN_GATEWAY_MODE:-"shared"}
 ovn_gateway_opts=${OVN_GATEWAY_OPTS:-""}
 ovn_gateway_router_subnet=${OVN_GATEWAY_ROUTER_SUBNET:-""}

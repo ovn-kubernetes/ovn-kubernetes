@@ -18,7 +18,7 @@ FROM quay.io/fedora/fedora:42 AS ovnbuilder
 
 USER root
 
-ENV PYTHONDONTWRITEBYTECODE yes
+ENV PYTHONDONTWRITEBYTECODE=yes
 
 # Install tools that are required for building ovs/ovn.
 RUN INSTALL_PKGS="git rpm-build dnf-plugins-core" && \
@@ -91,7 +91,7 @@ RUN echo "Running on $BUILDPLATFORM, building for $TARGETPLATFORM"
 
 # Install koji, don't clean dnf cache we will install extra packages at
 # Final stage
-RUN dnf install --best --refresh -y --setopt=tsflags=nodocs koji 
+RUN dnf install --best --refresh -y --setopt=tsflags=nodocs koji
 
 RUN if [ "$TARGETPLATFORM" = "linux/amd64" ] || [ -z "$TARGETPLATFORM" ] ; then koji download-build $ovnver --arch=x86_64  ; \
     else koji download-build $ovnver --arch=aarch64 ; fi
@@ -117,7 +117,7 @@ FROM ${OVN_FROM}
 
 USER root
 
-ENV PYTHONDONTWRITEBYTECODE yes
+ENV PYTHONDONTWRITEBYTECODE=yes
 
 # install needed rpms - openvswitch must be 2.10.4 or higher
 RUN INSTALL_PKGS=" \
@@ -158,8 +158,8 @@ COPY ./iptables-scripts/ip6tables-save /usr/sbin/
 COPY ./iptables-scripts/ip6tables-restore /usr/sbin/
 
 LABEL io.k8s.display-name="ovn-kubernetes" \
-      io.k8s.description="This is a Kubernetes network plugin that provides an overlay network using OVN." \
-      maintainer="Tim Rozet <trozet@redhat.com>"
+    io.k8s.description="This is a Kubernetes network plugin that provides an overlay network using OVN." \
+    maintainer="Tim Rozet <trozet@redhat.com>"
 
 WORKDIR /root
-ENTRYPOINT /root/ovnkube.sh
+ENTRYPOINT ["/root/ovnkube.sh"]

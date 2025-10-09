@@ -57,14 +57,14 @@ CNI features, this can be done by editing `tags` section in values.yaml file.
 
 ## Quickstart:
 - Install Kind, see https://kind.sigs.k8s.io
-- Run script `contrib/kind-helm.sh` to set up a basic OVN/Kubernetes cluster.
+- Run script `contrib/kind.sh` to set up a basic OVN/Kubernetes cluster.
 - Run following command to set up a OVN/Kubernetes cluster with single-node-zone interconnect enabled.
   ```
-  contrib/kind-helm.sh -ic
+  contrib/kind.sh -ic
   ```
 - Add `-npz` (node-per-zone) to set up cluster with multi-node-zone interconnect
   ```
-  contrib/kind-helm.sh -ic -wk 3 -npz 2
+  contrib/kind.sh -ic -wk 3 -npz 2
   ```
 
 ## Manual steps:

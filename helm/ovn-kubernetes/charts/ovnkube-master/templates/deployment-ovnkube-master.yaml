@@ -238,6 +238,10 @@ spec:
           value: {{ default "" .Values.global.enableNetworkSegmentation | quote }}
         - name: OVN_ADVERTISED_UDN_ISOLATION_MODE
           value: {{ default "strict" .Values.global.advertisedUDNIsolationMode | quote }}
+        - name: OVN_ROUTE_ADVERTISEMENTS_ENABLE
+          value: {{ default "" .Values.global.enableRouteAdvertisements | quote }}
+        - name: OVN_ADVERTISE_DEFAULT_NETWORK
+          value: {{ default "" .Values.global.advertiseDefaultNetwork | quote }}
         - name: OVN_EGRESSSERVICE_ENABLE
           value: {{ default "" .Values.global.enableEgressService | quote }}
         - name: OVN_HYBRID_OVERLAY_NET_CIDR

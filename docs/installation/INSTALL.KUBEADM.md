@@ -425,6 +425,13 @@ source ~/.bashrc
 go version
 ~~~
 
+Install helm, for further details see [https://helm.sh/docs/intro/install/](https://helm.sh/docs/intro/install/):
+~~~
+curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+chmod 700 get_helm.sh
+./get_helm.sh
+~~~
+
 Now, clone the OVN Kubernetes repository:
 ~~~
 mkdir -p $HOME/work/src/github.com/ovn-org
@@ -459,10 +466,15 @@ OVN_IMAGE=192.168.123.254:5000/ovn-daemonset-fedora:latest
 MASTER_IP=192.168.123.1
 NET_CIDR="172.16.0.0/16/24"
 SVC_CIDR="172.17.0.0/16"
-./daemonset.sh --image=${OVN_IMAGE} \
-    --net-cidr="${NET_CIDR}" --svc-cidr="${SVC_CIDR}" \
-    --gateway-mode="local" \
-    --k8s-apiserver=https://${MASTER_IP}:6443
+
+# Convert to Helm install
+helm install ovn-kubernetes ./helm/ovn-kubernetes \
+    --set k8sAPIServer=https://${MASTER_IP}:6443 \
+    --set podNetwork="${NET_CIDR}" \
+    --set serviceNetwork="${SVC_CIDR}" \
+    --set global.gatewayMode=local \
+    --set global.image.repository=192.168.123.254:5000/ovn-daemonset-fedora \
+    --set global.image.tag=latest
 ~~~
 
 You might also have to work around an issue where br-int is added by OVN, but the necessary files in /var/run/openvswitch are not created until Open vSwitch is restarted - [see here for more details](#issues-workarounds). This only happens on the master, so let's pre-create `br-int` there:
