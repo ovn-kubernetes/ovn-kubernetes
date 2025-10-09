@@ -1774,14 +1774,22 @@ ovnkube-controller() {
   exit 9
 }
 
+# (IHAR) Let's take as an example this function.
 ovnkube-controller-with-node() {
+  # (IHAR) Cleanup can be implemented natively via service atexit() handler
   # send sig term to background job (ovnkube-node process), remove CNI conf and resume background job until it ends.
   # currently we the process to background, therefore wait until that process removes its pid file on exit.
   # if the pid file doesnt exist, we exit immediately.
   trap 'kill $(jobs -p) ; rm -f /etc/cni/net.d/10-ovn-kubernetes.conf ; wait_ovnkube_controller_with_node_done; exit 0' TERM
+
+  # (IHAR) Unclear what value this daemonset version check brings here. Remove?
   check_ovn_daemonset_version "1.1.0"
+
+  # (IHAR) Why remove the pid file here? Maybe let the service manage the file.
   rm -f ${OVN_RUNDIR}/ovnkube-controller-with-node.pid
 
+  # (IHAR) Next few waits should be implemented in-service, gracefully handling
+  # missing dependencies by retrying, if it's not done already.
   if [[ ${ovnkube_node_mode} != "dpu-host" ]]; then
     echo "=============== ovnkube-controller-with-node - (wait for ovs)"
     wait_for_event ovs_ready
@@ -1803,6 +1811,8 @@ ovnkube-controller-with-node() {
     wait_for_event process_ready ovn-controller
   fi
 
+  # (IHAR) In general, such fixes should move to the service itself. But since
+  # it's a temporary workaround, we can just remove it.
   # start temp work around
   # remove when https://issues.redhat.com/browse/FDP-1537 is avilable
   if [[ ${ovnkube_node_mode} == "full" && ${ovn_enable_interconnect} == "true" && ${ovn_egressip_enable} == "true" ]]; then
@@ -1820,6 +1830,15 @@ ovnkube-controller-with-node() {
     fi
   fi
 
+  # (IHAR) Next 400(!) lines are just setting up flags. These should be env
+  # variables transparently supported by the service for each cli option.
+  # urfave library we use to parse flags has support for env variables via
+  # EnvVars field in cli.Flag struct.
+  # See example of transformation the below code would have to go through:
+  # https://github.com/ovn-kubernetes/ovn-kubernetes/pull/5609
+  #
+  # There are a few places below that would need special attention. I will
+  # comment on these separately.
   ovn_routable_mtu_flag=
   if [[ -n "${routable_mtu}" ]]; then
     routable_mtu_flag="--routable-mtu ${routable_mtu}"
@@ -1877,6 +1896,9 @@ ovnkube-controller-with-node() {
 
   local ssl_opts=""
 
+  # (IHAR) These would become separate envvars per flag. We could also move
+  # OVN_SSL_ENABLE to a new cli flag to simplify enablement if default values
+  # currently hardcoded in this script are acceptable.
   [[ "yes" == ${OVN_SSL_ENABLE} ]] && {
     ssl_opts="
         --nb-client-privkey ${ovn_controller_pk}
@@ -1999,6 +2021,9 @@ ovnkube-controller-with-node() {
      monitor_all="--monitor-all=${ovn_monitor_all}"
   fi
 
+  # (IHAR) Some flags may not be needed at all, e.g. the one below is no longer
+  # supported in 25.03+. Depending on how ovn-k defines the minimal version for
+  # OVS/OVN, we may just drop it (eventually).
   ofctrl_wait_before_clear=
   if [[ -n ${ovn_ofctrl_wait_before_clear} ]]; then
      ofctrl_wait_before_clear="--ofctrl-wait-before-clear=${ovn_ofctrl_wait_before_clear}"
@@ -2024,6 +2049,7 @@ ovnkube-controller-with-node() {
       egress_interface="--exgw-interface ${ovn_ex_gw_network_interface}"
   fi
 
+  # (IHAR) extraction from ovsdb should be done in the service itself.
   ovn_encap_ip_flag=
   if [[ ${ovn_encap_ip} != "" ]]; then
     ovn_encap_ip_flag="--encap-ip=${ovn_encap_ip}"
@@ -2049,6 +2075,7 @@ ovnkube-controller-with-node() {
     fi
   fi
 
+  # (IHAR) ditto
   if [[ ${ovnkube_node_mode} != "dpu-host" && ! ${ovn_gateway_opts} =~ "gateway-vlanid" ]]; then
       # get the gateway vlanid
       gw_vlanid=$(ovs-vsctl --if-exists get Open_vSwitch . external_ids:ovn-gw-vlanid | tr -d \")
@@ -2065,6 +2092,9 @@ ovnkube-controller-with-node() {
     node_mgmt_port_netdev_flags="$node_mgmt_port_netdev_flags --ovnkube-node-mgmt-port-dp-resource-name ${ovnkube_node_mgmt_port_dp_resource_name}"
   fi
 
+  # (IHAR) It looks like this code maybe flips the default defined in the
+  # service? If so, this case may need special consideration. Or we should make
+  # it use the service default. Or change the service default.
   ovn_unprivileged_flag="--unprivileged-mode"
   if test -z "${OVN_UNPRIVILEGED_MODE+x}" -o "x${OVN_UNPRIVILEGED_MODE}" = xno; then
     ovn_unprivileged_flag=""
@@ -2090,6 +2120,7 @@ ovnkube-controller-with-node() {
   fi
   echo "ovnkube_config_duration_enable_flag: ${ovnkube_config_duration_enable_flag}"
 
+  # (IHAR) service has access to k8s api and can extract the zone name itself.
   ovn_zone=$(get_node_zone)
   echo "ovnkube-controller-with-node's configured zone is ${ovn_zone}"
 
@@ -2193,6 +2224,8 @@ ovnkube-controller-with-node() {
   echo "ovn_disable_requestedchassis_flag=${ovn_disable_requestedchassis_flag}"
 
   echo "=============== ovnkube-controller-with-node --init-ovnkube-controller-with-node=========="
+  # (IHAR) once all cli flags are supported via env vars in the service,
+  # this franken-command can become much simpler.
   /usr/bin/ovnkube --init-ovnkube-controller ${K8S_NODE} --init-node ${K8S_NODE} \
     ${anp_enabled_flag} \
     ${disable_forwarding_flag} \
@@ -2266,14 +2299,22 @@ ovnkube-controller-with-node() {
     --pidfile ${OVN_RUNDIR}/ovnkube-controller-with-node.pid \
     --zone ${ovn_zone} &
 
+  # (IHAR) I think we could just avoid putting the daemon to background and
+  # wait here for it to exit.
   wait_for_event attempts=3 process_ready ovnkube-controller-with-node
+
+  # (IHAR) ovnkube can copy the file itself.
   if [[ ${ovnkube_node_mode} != "dpu" ]]; then
     setup_cni
   fi
   echo "=============== ovnkube-controller-with-node ========== running"
 
+  # (IHAR) Health checks should be implemented externally to the container.
   process_healthy ovnkube-controller-with-node
   # TODO exit 9 vs 7
+  # (IHAR) there seems to be some arbitrary exit code usage in this script. We
+  # should let ovnkube return whatever the exit code it wants and propagate it
+  # to user.
   exit 9
 }
 
