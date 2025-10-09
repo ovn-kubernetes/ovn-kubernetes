@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openshift/api/config/v1"
 	"github.com/urfave/cli/v2"
 	gcfg "gopkg.in/gcfg.v1"
 	lumberjack "gopkg.in/natefinch/lumberjack.v2"
@@ -27,6 +28,28 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 )
+
+// getSupportedPlatformTypes returns a list of all supported platform types
+func getSupportedPlatformTypes() []string {
+	return []string{
+		string(v1.AWSPlatformType),          // "AWS"
+		string(v1.AzurePlatformType),        // "Azure"
+		string(v1.BareMetalPlatformType),    // "BareMetal"
+		string(v1.GCPPlatformType),          // "GCP"
+		string(v1.LibvirtPlatformType),      // "Libvirt"
+		string(v1.OpenStackPlatformType),    // "OpenStack"
+		string(v1.NonePlatformType),         // "None"
+		string(v1.VSpherePlatformType),      // "VSphere"
+		string(v1.OvirtPlatformType),        // "oVirt"
+		string(v1.IBMCloudPlatformType),     // "IBMCloud"
+		string(v1.KubevirtPlatformType),     // "KubeVirt"
+		string(v1.EquinixMetalPlatformType), // "EquinixMetal"
+		string(v1.PowerVSPlatformType),      // "PowerVS"
+		string(v1.AlibabaCloudPlatformType), // "AlibabaCloud"
+		string(v1.NutanixPlatformType),      // "Nutanix"
+		string(v1.ExternalPlatformType),     // "External"
+	}
+}
 
 // DefaultEncapPort number used if not supplied
 const DefaultEncapPort = 6081
@@ -1277,7 +1300,7 @@ var K8sFlags = []cli.Flag{
 	&cli.StringFlag{
 		Name: "platform-type",
 		Usage: "The cloud provider platform type ovn-kubernetes is deployed on. " +
-			"Valid values can be found in: https://github.com/ovn-org/ovn-kubernetes/blob/master/go-controller/vendor/github.com/openshift/api/config/v1/types_infrastructure.go#L130-L172",
+			"Valid values: " + strings.Join(getSupportedPlatformTypes(), ", "),
 		Destination: &cliConfig.Kubernetes.PlatformType,
 		Value:       Kubernetes.PlatformType,
 	},
