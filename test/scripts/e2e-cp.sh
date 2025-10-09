@@ -40,12 +40,19 @@ skip() {
   SKIPPED_TESTS+=$*
 }
 
-SKIPPED_LABELED_TESTS=""
+LABELED_TESTS=""
 skip_label() {
-  if [ "$SKIPPED_LABELED_TESTS" != "" ]; then
-  	SKIPPED_LABELED_TESTS+=" && "
+  if [ "$LABELED_TESTS" != "" ]; then
+  	LABELED_TESTS+=" && "
   fi
-  SKIPPED_LABELED_TESTS+="!($*)"
+  LABELED_TESTS+="!($*)"
+}
+
+require_label() {
+  if [ "$LABELED_TESTS" != "" ]; then
+  	LABELED_TESTS+=" && "
+  fi
+  LABELED_TESTS+="$*"
 }
 
 if [ "$PLATFORM_IPV4_SUPPORT" == true ]; then
@@ -148,6 +155,12 @@ if [[ "${WHAT}" != "${CLUSTER_NETWORK_CONNECT_TESTS}"* ]]; then
   skip $CLUSTER_NETWORK_CONNECT_TESTS
 fi
 
+SERIAL_LABEL="Serial"
+if [[ "${WHAT}" = "$SERIAL_LABEL" ]]; then
+  require_label "$SERIAL_LABEL"
+  shift
+fi
+
 BGP_TESTS="BGP"
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then
   skip $BGP_TESTS
@@ -209,7 +222,7 @@ fi
 if [ "${PARALLEL:-false}" = "true" ]; then
   export GINKGO_PARALLEL=y
   export GINKGO_PARALLEL_NODES=10
-  skip "[Serial]"
+  skip_label "$SERIAL_LABEL"
 fi
 
 # setting these is required to make RuntimeClass tests work ... :/
@@ -234,7 +247,7 @@ go test -test.timeout ${GO_TEST_TIMEOUT}m -v . \
         -ginkgo.timeout ${TEST_TIMEOUT}m \
         -ginkgo.flake-attempts ${FLAKE_ATTEMPTS:-2} \
         -ginkgo.skip="${SKIPPED_TESTS}" \
-        ${SKIPPED_LABELED_TESTS:+-ginkgo.label-filter="${SKIPPED_LABELED_TESTS}"} \
+        ${LABELED_TESTS:+-ginkgo.label-filter="${LABELED_TESTS}"} \
         -ginkgo.junit-report=${E2E_REPORT_DIR}/junit_${E2E_REPORT_PREFIX}report.xml \
         -provider skeleton \
         -kubeconfig ${KUBECONFIG} \
