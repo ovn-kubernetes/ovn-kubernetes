@@ -160,14 +160,6 @@ else
     # TODO: perhaps the secondary network attached pods should not be attached to default network
     skip "Multi Homing A single pod with an OVN-K secondary network attached to a localnet network mapped to external primary interface bridge can be reached by a client pod in the default network on the same node"
     skip "Multi Homing A single pod with an OVN-K secondary network attached to a localnet network mapped to external primary interface bridge can be reached by a client pod in the default network on a different node"
-    if [ "$PLATFORM_IPV6_SUPPORT" == true ] && [ "$PLATFORM_IPV4_SUPPORT" == false ]; then
-      # Skip all Multi Homing tests in BGP IPv6 only mode
-      # TODO: The tests are doing weird static ipv4, ipv6, dualstack specific ginkgo entries instead of relying on
-      # cluster family type to make a dynamic determination. These tests need to be refactored to be family-friendly
-      # instead of assuming only single stack v4 or dualstack lanes exist.
-      # https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5569
-      skip "Multi Homing"
-    fi
     # these tests require metallb but the configuration we do for it is not compatible with the configuration we do to advertise the default network
     # TODO: consolidate configuration
     skip "Load Balancer Service Tests with MetalLB"

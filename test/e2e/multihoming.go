@@ -129,19 +129,10 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 			Entry(
 				"when attaching to an L3 - routed - network",
 				networkAttachmentConfigParams{
-					cidr:     netCIDR(secondaryNetworkCIDR, netPrefixLengthPerNode),
-					name:     secondaryNetworkName,
-					topology: "layer3",
-				},
-				podConfiguration{
-					attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
-					name:        podName,
-				},
-			),
-			Entry(
-				"when attaching to an L3 - routed - network with IPv6 network",
-				networkAttachmentConfigParams{
-					cidr:     netCIDR(secondaryIPv6CIDR, netPrefixLengthIPv6PerNode),
+					cidr: joinStrings(
+						netCIDR(secondaryNetworkCIDR, netPrefixLengthPerNode),
+						netCIDR(secondaryIPv6CIDR, netPrefixLengthIPv6PerNode),
+					),
 					name:     secondaryNetworkName,
 					topology: "layer3",
 				},
@@ -153,7 +144,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 			Entry(
 				"when attaching to an L2 - switched - network",
 				networkAttachmentConfigParams{
-					cidr:     secondaryFlatL2NetworkCIDR,
+					cidr:     joinStrings(secondaryFlatL2NetworkCIDR, secondaryIPv6CIDR),
 					name:     secondaryNetworkName,
 					topology: "layer2",
 				},
@@ -187,33 +178,9 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				},
 			),
 			Entry(
-				"when attaching to an L2 - switched - network with an IPv6 subnet",
-				networkAttachmentConfigParams{
-					cidr:     secondaryIPv6CIDR,
-					name:     secondaryNetworkName,
-					topology: "layer2",
-				},
-				podConfiguration{
-					attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
-					name:        podName,
-				},
-			),
-			Entry(
-				"when attaching to an L2 - switched - network with a dual stack configuration",
-				networkAttachmentConfigParams{
-					cidr:     strings.Join([]string{secondaryFlatL2NetworkCIDR, secondaryIPv6CIDR}, ","),
-					name:     secondaryNetworkName,
-					topology: "layer2",
-				},
-				podConfiguration{
-					attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
-					name:        podName,
-				},
-			),
-			Entry(
 				"when attaching to a localnet - switched - network",
 				networkAttachmentConfigParams{
-					cidr:     secondaryLocalnetNetworkCIDR,
+					cidr:     joinStrings(secondaryLocalnetNetworkCIDR, secondaryIPv6CIDR),
 					name:     secondaryNetworkName,
 					topology: "localnet",
 					vlanID:   localnetVLANID,
@@ -240,32 +207,6 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 			Entry(
 				"when attaching to a localnet - switched - network without IPAM",
 				networkAttachmentConfigParams{
-					name:     secondaryNetworkName,
-					topology: "localnet",
-					vlanID:   localnetVLANID,
-				},
-				podConfiguration{
-					attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
-					name:        podName,
-				},
-			),
-			Entry(
-				"when attaching to a localnet - switched - network with an IPv6 subnet",
-				networkAttachmentConfigParams{
-					cidr:     secondaryIPv6CIDR,
-					name:     secondaryNetworkName,
-					topology: "localnet",
-					vlanID:   localnetVLANID,
-				},
-				podConfiguration{
-					attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
-					name:        podName,
-				},
-			),
-			Entry(
-				"when attaching to an L2 - switched - network with a dual stack configuration",
-				networkAttachmentConfigParams{
-					cidr:     strings.Join([]string{secondaryLocalnetNetworkCIDR, secondaryIPv6CIDR}, ","),
 					name:     secondaryNetworkName,
 					topology: "localnet",
 					vlanID:   localnetVLANID,
@@ -949,43 +890,12 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 			Entry(
 				"can communicate over an L3 - routed - secondary network",
 				networkAttachmentConfigParams{
-					name:     secondaryNetworkName,
+					name: secondaryNetworkName,
 					topology: "layer3",
-					cidr:     netCIDR(secondaryNetworkCIDR, netPrefixLengthPerNode),
-				},
-				podConfiguration{
-					attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
-					name:        clientPodName,
-				},
-				podConfiguration{
-					attachments:  []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
-					name:         podName,
-					containerCmd: httpServerContainerCmd(port),
-				},
-			),
-			Entry(
-				"can communicate over an L3 - routed - secondary network with IPv6 subnet",
-				networkAttachmentConfigParams{
-					name:     secondaryNetworkName,
-					topology: "layer3",
-					cidr:     netCIDR(secondaryIPv6CIDR, netPrefixLengthIPv6PerNode),
-				},
-				podConfiguration{
-					attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
-					name:        clientPodName,
-				},
-				podConfiguration{
-					attachments:  []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
-					name:         podName,
-					containerCmd: httpServerContainerCmd(port),
-				},
-			),
-			Entry(
-				"can communicate over an L3 - routed - secondary network with a dual stack configuration",
-				networkAttachmentConfigParams{
-					name:     secondaryNetworkName,
-					topology: "layer3",
-					cidr:     strings.Join([]string{netCIDR(secondaryNetworkCIDR, netPrefixLengthPerNode), netCIDR(secondaryIPv6CIDR, netPrefixLengthIPv6PerNode)}, ","),
+					cidr: joinStrings(
+						netCIDR(secondaryNetworkCIDR, netPrefixLengthPerNode),
+						netCIDR(secondaryIPv6CIDR, netPrefixLengthIPv6PerNode),
+					),
 				},
 				podConfiguration{
 					attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
@@ -1033,40 +943,6 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 						Name:      secondaryNetworkName,
 						IPRequest: []string{staticServerIP},
 					}},
-					name:         podName,
-					containerCmd: httpServerContainerCmd(port),
-				},
-			),
-			Entry(
-				"can communicate over an L2 secondary network with an IPv6 subnet when pods are scheduled in different nodes",
-				networkAttachmentConfigParams{
-					name:     secondaryNetworkName,
-					topology: "layer2",
-					cidr:     secondaryIPv6CIDR,
-				},
-				podConfiguration{
-					attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
-					name:        clientPodName,
-				},
-				podConfiguration{
-					attachments:  []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
-					name:         podName,
-					containerCmd: httpServerContainerCmd(port),
-				},
-			),
-			Entry(
-				"can communicate over an L2 secondary network with a dual stack configuration",
-				networkAttachmentConfigParams{
-					name:     secondaryNetworkName,
-					topology: "layer2",
-					cidr:     strings.Join([]string{secondaryFlatL2NetworkCIDR, secondaryIPv6CIDR}, ","),
-				},
-				podConfiguration{
-					attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
-					name:        clientPodName,
-				},
-				podConfiguration{
-					attachments:  []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
 					name:         podName,
 					containerCmd: httpServerContainerCmd(port),
 				},
@@ -1127,42 +1003,6 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 						Name:      secondaryNetworkName,
 						IPRequest: []string{staticServerIP},
 					}},
-					name:         podName,
-					containerCmd: httpServerContainerCmd(port),
-				},
-			),
-			Entry(
-				"can communicate over a localnet secondary network with an IPv6 subnet when pods are scheduled on different nodes",
-				networkAttachmentConfigParams{
-					name:     secondaryNetworkName,
-					topology: "localnet",
-					cidr:     secondaryIPv6CIDR,
-					vlanID:   localnetVLANID,
-				},
-				podConfiguration{
-					attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
-					name:        clientPodName,
-				},
-				podConfiguration{
-					attachments:  []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
-					name:         podName,
-					containerCmd: httpServerContainerCmd(port),
-				},
-			),
-			Entry(
-				"can communicate over a localnet secondary network with a dual stack configuration when pods are scheduled on different nodes",
-				networkAttachmentConfigParams{
-					name:     secondaryNetworkName,
-					topology: "localnet",
-					cidr:     strings.Join([]string{secondaryLocalnetNetworkCIDR, secondaryIPv6CIDR}, ","),
-					vlanID:   localnetVLANID,
-				},
-				podConfiguration{
-					attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
-					name:        clientPodName,
-				},
-				podConfiguration{
-					attachments:  []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
 					name:         podName,
 					containerCmd: httpServerContainerCmd(port),
 				},
