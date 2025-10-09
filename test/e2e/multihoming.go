@@ -156,7 +156,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 			Entry(
 				"when attaching to an L2 - switched - network featuring `excludeCIDR`s",
 				networkAttachmentConfigParams{
-					cidr:         secondaryFlatL2NetworkCIDR,
+					cidr:         joinStrings(secondaryFlatL2NetworkCIDR, secondaryIPv6CIDR),
 					name:         secondaryNetworkName,
 					topology:     "layer2",
 					excludeCIDRs: []string{secondaryFlatL2IgnoreCIDR},
@@ -193,7 +193,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 			Entry(
 				"when attaching to a localnet - switched - network featuring `excludeCIDR`s",
 				networkAttachmentConfigParams{
-					cidr:         secondaryLocalnetNetworkCIDR,
+					cidr:         joinStrings(secondaryLocalnetNetworkCIDR, secondaryIPv6CIDR),
 					name:         secondaryNetworkName,
 					topology:     "localnet",
 					excludeCIDRs: []string{secondaryLocalnetIgnoreCIDR},
@@ -689,7 +689,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				name:      secondaryNetworkName,
 				namespace: f.Namespace.Name,
 				topology:  "layer2",
-				cidr:      secondaryNetworkCIDR,
+				cidr:      joinStrings(secondaryNetworkCIDR, secondaryIPv6CIDR),
 			})
 
 			By("creating the attachment configuration")
@@ -857,7 +857,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				networkAttachmentConfigParams{
 					name:     secondaryNetworkName,
 					topology: "layer2",
-					cidr:     secondaryNetworkCIDR,
+					cidr:     joinStrings(secondaryNetworkCIDR, secondaryIPv6CIDR),
 				},
 				podConfiguration{
 					attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
@@ -874,7 +874,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				networkAttachmentConfigParams{
 					name:         secondaryNetworkName,
 					topology:     "layer2",
-					cidr:         secondaryNetworkCIDR,
+					cidr:         joinStrings(secondaryNetworkCIDR, secondaryIPv6CIDR),
 					excludeCIDRs: []string{secondaryFlatL2IgnoreCIDR},
 				},
 				podConfiguration{
@@ -890,7 +890,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 			Entry(
 				"can communicate over an L3 - routed - secondary network",
 				networkAttachmentConfigParams{
-					name: secondaryNetworkName,
+					name:     secondaryNetworkName,
 					topology: "layer3",
 					cidr: joinStrings(
 						netCIDR(secondaryNetworkCIDR, netPrefixLengthPerNode),
@@ -952,7 +952,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 				networkAttachmentConfigParams{
 					name:     secondaryNetworkName,
 					topology: "localnet",
-					cidr:     secondaryLocalnetNetworkCIDR,
+					cidr:     joinStrings(secondaryLocalnetNetworkCIDR, secondaryIPv6CIDR),
 					vlanID:   localnetVLANID,
 				},
 				podConfiguration{
@@ -1032,7 +1032,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 							namespace:    f.Namespace.Name,
 							vlanID:       localnetVLANID,
 							topology:     "localnet",
-							cidr:         secondaryLocalnetNetworkCIDR,
+							cidr:         joinStrings(secondaryLocalnetNetworkCIDR, secondaryIPv6CIDR),
 							excludeCIDRs: []string{underlayServiceIP + "/32"},
 							mtu:          expectedOriginalMTU,
 						})
@@ -1400,7 +1400,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 							name:         secondaryNetworkName,
 							namespace:    f.Namespace.Name,
 							topology:     "localnet",
-							cidr:         secondaryLocalnetNetworkCIDR,
+							cidr:         joinStrings(secondaryLocalnetNetworkCIDR, secondaryIPv6CIDR),
 							excludeCIDRs: []string{underlayServiceIP + "/32"},
 						})
 
@@ -1445,7 +1445,7 @@ ip a add %[4]s/24 dev %[2]s
 							namespace:           f.Namespace.Name,
 							vlanID:              vlanID,
 							topology:            "localnet",
-							cidr:                secondaryLocalnetNetworkCIDR,
+							cidr:                joinStrings(secondaryLocalnetNetworkCIDR, secondaryIPv6CIDR),
 							excludeCIDRs:        []string{underlayServiceIP + "/32"},
 						})
 
@@ -1553,7 +1553,7 @@ ip a add %[4]s/24 dev %[2]s
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
 						topology: "layer2",
-						cidr:     secondaryFlatL2NetworkCIDR,
+						cidr:     joinStrings(secondaryFlatL2NetworkCIDR, secondaryIPv6CIDR),
 					},
 					podConfiguration{
 						attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
@@ -1590,7 +1590,7 @@ ip a add %[4]s/24 dev %[2]s
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
 						topology: "layer2",
-						cidr:     secondaryFlatL2NetworkCIDR,
+						cidr:     joinStrings(secondaryFlatL2NetworkCIDR, secondaryIPv6CIDR),
 					},
 					podConfiguration{
 						attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
@@ -1628,7 +1628,10 @@ ip a add %[4]s/24 dev %[2]s
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
 						topology: "layer3",
-						cidr:     netCIDR(secondaryNetworkCIDR, netPrefixLengthPerNode),
+						cidr: joinStrings(
+							netCIDR(secondaryNetworkCIDR, netPrefixLengthPerNode),
+							netCIDR(secondaryIPv6CIDR, netPrefixLengthIPv6PerNode),
+						),
 					},
 					podConfiguration{
 						attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
@@ -1665,7 +1668,7 @@ ip a add %[4]s/24 dev %[2]s
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
 						topology: "localnet",
-						cidr:     secondaryLocalnetNetworkCIDR,
+						cidr:     joinStrings(secondaryLocalnetNetworkCIDR, secondaryIPv6CIDR),
 					},
 					podConfiguration{
 						attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
@@ -1702,7 +1705,7 @@ ip a add %[4]s/24 dev %[2]s
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
 						topology: "layer2",
-						cidr:     secondaryFlatL2NetworkCIDR,
+						cidr:     joinStrings(secondaryFlatL2NetworkCIDR, secondaryIPv6CIDR),
 					},
 					podConfiguration{
 						attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
@@ -1734,7 +1737,10 @@ ip a add %[4]s/24 dev %[2]s
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
 						topology: "layer3",
-						cidr:     netCIDR(secondaryNetworkCIDR, netPrefixLengthPerNode),
+						cidr: joinStrings(
+							netCIDR(secondaryNetworkCIDR, netPrefixLengthPerNode),
+							netCIDR(secondaryIPv6CIDR, netPrefixLengthIPv6PerNode),
+						),
 					},
 					podConfiguration{
 						attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
@@ -1766,7 +1772,7 @@ ip a add %[4]s/24 dev %[2]s
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
 						topology: "localnet",
-						cidr:     secondaryLocalnetNetworkCIDR,
+						cidr:     joinStrings(secondaryLocalnetNetworkCIDR, secondaryIPv6CIDR),
 					},
 					podConfiguration{
 						attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
@@ -1798,7 +1804,7 @@ ip a add %[4]s/24 dev %[2]s
 					networkAttachmentConfigParams{
 						name:        secondaryNetworkName,
 						topology:    "layer2",
-						cidr:        secondaryFlatL2NetworkCIDR,
+						cidr:        joinStrings(secondaryFlatL2NetworkCIDR, secondaryIPv6CIDR),
 						networkName: uniqueNadName("spans-multiple-namespaces"),
 					},
 					podConfiguration{
@@ -1830,9 +1836,12 @@ ip a add %[4]s/24 dev %[2]s
 				Entry(
 					"using namespace selectors for a routed topology",
 					networkAttachmentConfigParams{
-						name:        secondaryNetworkName,
-						topology:    "layer3",
-						cidr:        netCIDR(secondaryNetworkCIDR, netPrefixLengthPerNode),
+						name:     secondaryNetworkName,
+						topology: "layer3",
+						cidr: joinStrings(
+							netCIDR(secondaryNetworkCIDR, netPrefixLengthPerNode),
+							netCIDR(secondaryIPv6CIDR, netPrefixLengthIPv6PerNode),
+						),
 						networkName: uniqueNadName("spans-multiple-namespaces"),
 					},
 					podConfiguration{
@@ -1866,7 +1875,7 @@ ip a add %[4]s/24 dev %[2]s
 					networkAttachmentConfigParams{
 						name:        secondaryNetworkName,
 						topology:    "localnet",
-						cidr:        secondaryLocalnetNetworkCIDR,
+						cidr:        joinStrings(secondaryLocalnetNetworkCIDR, secondaryIPv6CIDR),
 						networkName: uniqueNadName("spans-multiple-namespaces"),
 					},
 					podConfiguration{
@@ -1962,7 +1971,7 @@ ip a add %[4]s/24 dev %[2]s
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
 						topology: "localnet",
-						cidr:     secondaryLocalnetNetworkCIDR,
+						cidr:     joinStrings(secondaryLocalnetNetworkCIDR, secondaryIPv6CIDR),
 					},
 					podConfiguration{
 						attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
@@ -1994,7 +2003,7 @@ ip a add %[4]s/24 dev %[2]s
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
 						topology: "localnet",
-						cidr:     secondaryLocalnetNetworkCIDR,
+						cidr:     joinStrings(secondaryLocalnetNetworkCIDR, secondaryIPv6CIDR),
 					},
 					podConfiguration{
 						attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
@@ -2026,7 +2035,7 @@ ip a add %[4]s/24 dev %[2]s
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
 						topology: "localnet",
-						cidr:     secondaryLocalnetNetworkCIDR,
+						cidr:     joinStrings(secondaryLocalnetNetworkCIDR, secondaryIPv6CIDR),
 					},
 					podConfiguration{
 						attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
@@ -2089,7 +2098,7 @@ ip a add %[4]s/24 dev %[2]s
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
 						topology: "localnet",
-						cidr:     secondaryLocalnetNetworkCIDR,
+						cidr:     joinStrings(secondaryLocalnetNetworkCIDR, secondaryIPv6CIDR),
 					},
 					podConfiguration{
 						attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
@@ -2121,7 +2130,7 @@ ip a add %[4]s/24 dev %[2]s
 					networkAttachmentConfigParams{
 						name:     secondaryNetworkName,
 						topology: "localnet",
-						cidr:     secondaryLocalnetNetworkCIDR,
+						cidr:     joinStrings(secondaryLocalnetNetworkCIDR, secondaryIPv6CIDR),
 					},
 					podConfiguration{
 						attachments: []nadapi.NetworkSelectionElement{{Name: secondaryNetworkName}},
