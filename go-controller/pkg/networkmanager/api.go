@@ -4,8 +4,15 @@ import (
 	"context"
 	"errors"
 
+	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	nadinformers "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/informers/externalversions/k8s.cni.cncf.io/v1"
+
+	coreinformers "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/tools/record"
 
+	egressipinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/informers/externalversions/egressip/v1"
+	rainformers "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/informers/externalversions/routeadvertisements/v1"
+	userdefinednetworkinformer "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/informers/externalversions/userdefinednetwork/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -16,6 +23,17 @@ const (
 	// MaxNetworks is the maximum number of networks allowed.
 	MaxNetworks = 4096
 )
+
+type watchFactory interface {
+	NADInformer() nadinformers.NetworkAttachmentDefinitionInformer
+	UserDefinedNetworkInformer() userdefinednetworkinformer.UserDefinedNetworkInformer
+	ClusterUserDefinedNetworkInformer() userdefinednetworkinformer.ClusterUserDefinedNetworkInformer
+	NamespaceInformer() coreinformers.NamespaceInformer
+	RouteAdvertisementsInformer() rainformers.RouteAdvertisementsInformer
+	NodeCoreInformer() coreinformers.NodeInformer
+	PodCoreInformer() coreinformers.PodInformer
+	EgressIPInformer() egressipinformer.EgressIPInformer
+}
 
 // Interface is the main package entrypoint and provides network related
 // information to the rest of the project.
@@ -36,6 +54,11 @@ type Interface interface {
 	// use GetActiveNetworkForNamespace.
 	GetActiveNetworkForNamespaceFast(namespace string) util.NetInfo
 
+	// GetPrimaryNADForNamespace returns the full namespaced key of the
+	// primary NAD for the given namespace, if one exists.
+	// Returns default network if namespace has no primary UDN.
+	GetPrimaryNADForNamespace(namespace string) (string, error)
+
 	// GetNetwork returns the network of the given name or nil if unknown
 	GetNetwork(name string) util.NetInfo
 
@@ -47,11 +70,30 @@ type Interface interface {
 	// DoWithLock takes care of locking and unlocking while iterating over all role primary user defined networks.
 	DoWithLock(f func(network util.NetInfo) error) error
 	GetActiveNetworkNamespaces(networkName string) ([]string, error)
+
+	// Reconcile allows for a manually invoked reconciliation of a network manager
+	Reconcile(key string)
+
+	// ForceReconcile reconciles as usual, but tags the network as it should be forced to reconcile
+	ForceReconcile(key, networkName string, active, local bool)
 }
 
 // Controller handles the runtime of the package
 type Controller interface {
 	Interface() Interface
+	Start() error
+	Stop()
+}
+
+// Tracker informs on if a Node has a NAD active on it
+type Tracker interface {
+	// NodeHasNAD returns true if the given node has at least one pod using the NAD.
+	NodeHasNAD(node, nad string) bool
+}
+
+// TrackerController is the minimal interface ControllerManager needs.
+type TrackerController interface {
+	Tracker
 	Start() error
 	Stop()
 }
@@ -141,6 +183,10 @@ type ControllerManager interface {
 	// Reconcile informs the manager of network changes that other managed
 	// network aware controllers might be interested in.
 	Reconcile(name string, old, new util.NetInfo) error
+
+	// Filter provides a hook where a controller manager can determine if the network should be
+	// processed or not.
+	Filter(nad *nettypes.NetworkAttachmentDefinition) (bool, error)
 }
 
 // ReconcilableNetworkController is a network controller that can reconcile
@@ -190,6 +236,10 @@ func (nm defaultNetworkManager) GetActiveNetworkForNamespace(string) (util.NetIn
 	return &util.DefaultNetInfo{}, nil
 }
 
+func (nm defaultNetworkManager) GetPrimaryNADForNamespace(_ string) (string, error) {
+	return types.DefaultNetworkName, nil
+}
+
 func (nm defaultNetworkManager) GetActiveNetworkForNamespaceFast(string) util.NetInfo {
 	return &util.DefaultNetInfo{}
 }
@@ -215,5 +265,9 @@ func (nm defaultNetworkManager) GetActiveNetwork(network string) util.NetInfo {
 	}
 	return &util.DefaultNetInfo{}
 }
+
+func (nm defaultNetworkManager) ForceReconcile(_, _ string, _, _ bool) {}
+
+func (nm defaultNetworkManager) Reconcile(_ string) {}
 
 var def Controller = &defaultNetworkManager{}

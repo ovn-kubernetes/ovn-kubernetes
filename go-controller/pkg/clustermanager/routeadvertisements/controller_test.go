@@ -33,7 +33,6 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
-	nmtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -1005,7 +1004,7 @@ func TestController_reconcile(t *testing.T) {
 			wf, err := factory.NewClusterManagerWatchFactory(fakeClientset)
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 
-			nm, err := networkmanager.NewForCluster(&nmtest.FakeControllerManager{}, wf, fakeClientset, nil)
+			nm, err := networkmanager.NewForCluster(&networkmanager.FakeControllerManager{}, wf, fakeClientset, nil)
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 
 			c := NewController(nm.Interface(), wf, fakeClientset)
