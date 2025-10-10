@@ -581,7 +581,7 @@ type IPAMSpec struct {
     
     // Lifecycle controls IP addresses management lifecycle.
     //
-    // The only allowed value is Persistent. When set, OVN Kubernetes assigned IP addresses will be persisted in an
+    // The only allowed value is Persistent. When set, OVN-Kubernetes assigned IP addresses will be persisted in an
     // `ipamclaims.k8s.cni.cncf.io` object. These IP addresses will be reused by other pods if requested.
     // Only supported when "mode" is `Enabled`.
     //
@@ -1473,7 +1473,7 @@ addresses are used. With this new design, users will need to reconfigure their s
 desired number of networks. Note, API changes will need to be made in order to support changing the masquerade subnet
 post-installation.
 
-## OVN Kubernetes Version Skew
+## OVN-Kubernetes Version Skew
 
 UDN will be delivered in version 1.1.0.
 

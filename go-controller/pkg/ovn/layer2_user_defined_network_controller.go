@@ -888,7 +888,7 @@ func (oc *Layer2UserDefinedNetworkController) StartServiceController(wg *sync.Wa
 	// do not use LB templates for UDNs - OVN bug https://issues.redhat.com/browse/FDP-988
 	err := oc.svcController.Run(5, oc.stopChan, wg, runRepair, useLBGroups, false)
 	if err != nil {
-		return fmt.Errorf("error running OVN Kubernetes Services controller for network %s: %v", oc.GetNetworkName(), err)
+		return fmt.Errorf("error running OVN-Kubernetes Services controller for network %s: %v", oc.GetNetworkName(), err)
 	}
 	return nil
 }

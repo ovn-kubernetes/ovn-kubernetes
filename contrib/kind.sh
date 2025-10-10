@@ -121,7 +121,7 @@ echo "-npz | --nodes-per-zone                       If interconnect is enabled, 
 echo "-mtu                                          Define the overlay mtu"
 echo "--isolated                                    Deploy with an isolated environment (no default gateway)"
 echo "--delete                                      Delete current cluster"
-echo "--deploy                                      Deploy ovn kubernetes without restarting kind"
+echo "--deploy                                      Deploy ovn-kubernetes without restarting kind"
 echo "--add-nodes                                   Adds nodes to an existing cluster. The number of nodes to be added is specified by --num-workers. Also use -ic if the cluster is using interconnect."
 echo "-dns | --enable-dnsnameresolver               Enable DNSNameResolver for resolving the DNS names used in the DNS rules of EgressFirewall."
 echo "-obs | --observability                        Enable OVN Observability feature."

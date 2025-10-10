@@ -163,7 +163,7 @@ spec:
 - `excludeSubnets` (string, optional): a comma separated list of CIDRs / IPs.
   These IPs will be removed from the assignable IP pool, and never handed over
   to the pods.
-- `allowPersistentIPs` (boolean, optional): persist the OVN Kubernetes assigned
+- `allowPersistentIPs` (boolean, optional): persist the OVN-Kubernetes assigned
   IP addresses in a `ipamclaims.k8s.cni.cncf.io` object. This IP addresses will
   be reused by other pods if requested. Useful for KubeVirt VMs. Only makes
   sense if the `subnets` attribute is also defined.
@@ -220,7 +220,7 @@ localnet network.
   These IPs will be removed from the assignable IP pool, and never handed over
   to the pods.
 - `vlanID` (integer, optional): assign VLAN tag. Defaults to none.
-- `allowPersistentIPs` (boolean, optional): persist the OVN Kubernetes assigned
+- `allowPersistentIPs` (boolean, optional): persist the OVN-Kubernetes assigned
   IP addresses in a `ipamclaims.k8s.cni.cncf.io` object. This IP addresses will
   be reused by other pods if requested. Useful for KubeVirt VMs. Only makes
   sense if the `subnets` attribute is also defined.

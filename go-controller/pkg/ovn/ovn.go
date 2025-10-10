@@ -471,7 +471,7 @@ func (oc *DefaultNetworkController) StartServiceController(wg *sync.WaitGroup, r
 	err := oc.svcController.Run(5, oc.stopChan, wg, runRepair, useLBGroups, oc.svcTemplateSupport)
 	if err != nil {
 
-		return fmt.Errorf("error running OVN Kubernetes Services controller: %v", err)
+		return fmt.Errorf("error running OVN-Kubernetes Services controller: %v", err)
 	}
 	return nil
 }

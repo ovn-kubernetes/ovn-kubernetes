@@ -1,6 +1,6 @@
 # Security Policy
 
-OVNKubernetes repo uses the [dependabot](https://docs.github.com/en/code-security/dependabot/dependabot-security-updates/configuring-dependabot-security-updates) which does automatic security updates by scanning the repo and opening PRs to update the effected libraries.
+OVN-Kubernetes repo uses the [dependabot](https://docs.github.com/en/code-security/dependabot/dependabot-security-updates/configuring-dependabot-security-updates) which does automatic security updates by scanning the repo and opening PRs to update the effected libraries.
 
 ## Reporting a Vulnerability
 

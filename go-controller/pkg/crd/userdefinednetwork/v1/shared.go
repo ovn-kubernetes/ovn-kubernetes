@@ -201,7 +201,7 @@ type IPAMConfig struct {
 
 	// Lifecycle controls IP addresses management lifecycle.
 	//
-	// The only allowed value is Persistent. When set, the IP addresses assigned by OVN Kubernetes will be persisted in an
+	// The only allowed value is Persistent. When set, the IP addresses assigned by OVN-Kubernetes will be persisted in an
 	// `ipamclaims.k8s.cni.cncf.io` object. These IP addresses will be reused by other pods if requested.
 	// Only supported when mode is `Enabled`.
 	//

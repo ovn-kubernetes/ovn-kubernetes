@@ -94,7 +94,7 @@ to include the path to your new OKEP (i.e Feature Title: okeps/<filename.md>)
 
 ## Risks, Known Limitations and Mitigations
 
-## OVN Kubernetes Version Skew
+## OVN-Kubernetes Version Skew
 
 which version is this feature planned to be introduced in?
 check repo milestones/releases to get this information for
