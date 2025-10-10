@@ -33,9 +33,8 @@ type ClusterUserDefinedNetworkSpec struct {
 	// +kubebuilder:validation:XValidation:rule="has(self.topology) && self.topology == 'Layer3' ? has(self.layer3): !has(self.layer3)", message="spec.layer3 is required when topology is Layer3 and forbidden otherwise"
 	// +kubebuilder:validation:XValidation:rule="has(self.topology) && self.topology == 'Layer2' ? has(self.layer2): !has(self.layer2)", message="spec.layer2 is required when topology is Layer2 and forbidden otherwise"
 	// +kubebuilder:validation:XValidation:rule="has(self.topology) && self.topology == 'Localnet' ? has(self.localnet): !has(self.localnet)", message="spec.localnet is required when topology is Localnet and forbidden otherwise"
-	// +kubebuilder:validation:XValidation:rule="!has(self.transport) || self.transport != 'NoOverlay' || (self.topology == 'Layer3' && has(self.layer3) && self.layer3.role == 'Primary')", message="transport 'NoOverlay' is only supported for Layer3 primary networks"
-	// +kubebuilder:validation:XValidation:rule="!has(self.transport) || self.transport != 'NoOverlay' || has(self.noOverlayOptions)", message="noOverlayOptions is required when transport is 'NoOverlay'"
-	// +kubebuilder:validation:XValidation:rule="self.transport == 'NoOverlay' || !has(self.noOverlayOptions)", message="noOverlayOptions is forbidden when transport is not 'NoOverlay'"
+	// +kubebuilder:validation:XValidation:rule="!has(self.transport) || self.transport != 'NoOverlay' || (self.topology == 'Layer3' && has(self.layer3) && self.layer3.role == 'Primary')", message="transport NoOverlay can only be used with a Primary Layer3 network"
+	// +kubebuilder:validation:XValidation:rule="(has(self.transport) && self.transport == 'NoOverlay') == has(self.noOverlayOptions)", message="noOverlayOptions is required if and only if transport is 'NoOverlay'"
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="Network spec is immutable"
 	// +required
 	Network NetworkSpec `json:"network"`
@@ -69,11 +68,11 @@ type NetworkSpec struct {
 	// +optional
 	Localnet *LocalnetConfig `json:"localnet,omitempty"`
 
-	// Transport describes the transport technology for pod-to-pod traffic.
+	// Transport describes the transport protocol for east-west traffic.
 	// Allowed values are "NoOverlay" and "Geneve".
 	// - "NoOverlay": The network operates in no-overlay mode.
 	// - "Geneve": The network uses Geneve overlay.
-	// When omitted, the default behaviour is Geneve.
+	// Defaults to "Geneve".
 	// +kubebuilder:validation:Enum=NoOverlay;Geneve
 	// +optional
 	Transport TransportOption `json:"transport,omitempty"`

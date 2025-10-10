@@ -652,11 +652,11 @@ spec:
                     type: string
                   transport:
                     description: |-
-                      Transport describes the transport technology for pod-to-pod traffic.
+                      Transport describes the transport protocol for east-west traffic.
                       Allowed values are "NoOverlay" and "Geneve".
                       - "NoOverlay": The network operates in no-overlay mode.
                       - "Geneve": The network uses Geneve overlay.
-                      When omitted, the default behaviour is Geneve.
+                      Defaults to "Geneve".
                     enum:
                     - NoOverlay
                     - Geneve
@@ -677,16 +677,15 @@ spec:
                     forbidden otherwise
                   rule: 'has(self.topology) && self.topology == ''Localnet'' ? has(self.localnet):
                     !has(self.localnet)'
-                - message: transport 'NoOverlay' is only supported for Layer3 primary
-                    networks
+                - message: transport NoOverlay can only be used with a Primary Layer3
+                    network
                   rule: '!has(self.transport) || self.transport != ''NoOverlay'' ||
                     (self.topology == ''Layer3'' && has(self.layer3) && self.layer3.role
                     == ''Primary'')'
-                - message: noOverlayOptions is required when transport is 'NoOverlay'
-                  rule: '!has(self.transport) || self.transport != ''NoOverlay'' ||
-                    has(self.noOverlayOptions)'
-                - message: noOverlayOptions is forbidden when transport is not 'NoOverlay'
-                  rule: self.transport == 'NoOverlay' || !has(self.noOverlayOptions)
+                - message: noOverlayOptions is required if and only if transport is
+                    'NoOverlay'
+                  rule: (has(self.transport) && self.transport == 'NoOverlay') ==
+                    has(self.noOverlayOptions)
                 - message: Network spec is immutable
                   rule: self == oldSelf
             required:
