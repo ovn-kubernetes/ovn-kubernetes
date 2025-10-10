@@ -891,8 +891,9 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(err).NotTo(HaveOccurred())
 			localGw.openflowManager.syncFlows()
 
+			By("injecting error into ipRulesManager to ensure everything else still cleans up")
 			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, wf.NodeCoreInformer().Lister(),
-				&kubeMock, vrf, ipRulesManager, localGw)
+				&kubeMock, vrf, &iprulemanager.FakeControllerWithError{}, localGw)
 			Expect(err).NotTo(HaveOccurred())
 			flowMap := udnGateway.gateway.openflowManager.flowCache
 			Expect(flowMap["DEFAULT"]).To(HaveLen(50))
@@ -910,9 +911,9 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			}
 			Expect(udnFlows).To(Equal(0))
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // only default network
-
-			By("Deleting the gateway network")
-			Expect(udnGateway.DelNetwork()).To(Succeed())
+			By("Deleting the gateway network with injected error")
+			Expect(udnGateway.DelNetwork()).ToNot(Succeed())
+			By("Ensuring everything else was still cleaned up correctly")
 			flowMap = udnGateway.gateway.openflowManager.flowCache
 			Expect(flowMap["DEFAULT"]).To(HaveLen(50))                                      // only default network flows are present
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // default network only

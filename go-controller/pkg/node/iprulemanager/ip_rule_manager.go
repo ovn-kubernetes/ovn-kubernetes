@@ -12,6 +12,15 @@ import (
 	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
+type Interface interface {
+	Run(stopCh <-chan struct{}, syncPeriod time.Duration)
+	Add(rule netlink.Rule) error
+	AddWithMetadata(rule netlink.Rule, metadata string) error
+	Delete(rule netlink.Rule) error
+	DeleteWithMetadata(metadata string) error
+	OwnPriority(priority int) error
+}
+
 type ipRule struct {
 	rule     *netlink.Rule
 	metadata string
@@ -104,7 +113,7 @@ func (rm *Controller) Delete(rule netlink.Rule) error {
 	return nil
 }
 
-// Delete stops managing all IP rules with the provided metadata and ensures they are all deleted
+// DeleteWithMetadata stops managing all IP rules with the provided metadata and ensures they are all deleted
 func (rm *Controller) DeleteWithMetadata(metadata string) error {
 	if metadata == "" {
 		return nil

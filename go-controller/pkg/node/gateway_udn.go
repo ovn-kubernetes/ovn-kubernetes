@@ -28,6 +28,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/vrfmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
 const (
@@ -78,7 +79,7 @@ type UserDefinedNetworkGateway struct {
 	*gateway
 	// iprules manager that creates and manages iprules for
 	// all UDNs. Must be accessed with a lock
-	ruleManager *iprulemanager.Controller
+	ruleManager iprulemanager.Interface
 
 	// reconcile channel to signal reconciliation of the gateway on network
 	// configuration changes
@@ -96,7 +97,7 @@ type UserDefinedNetworkGateway struct {
 }
 
 func NewUserDefinedNetworkGateway(netInfo util.NetInfo, node *corev1.Node, nodeLister listers.NodeLister,
-	kubeInterface kube.Interface, vrfManager *vrfmanager.Controller, ruleManager *iprulemanager.Controller,
+	kubeInterface kube.Interface, vrfManager *vrfmanager.Controller, ruleManager iprulemanager.Interface,
 	defaultNetworkGateway Gateway) (*UserDefinedNetworkGateway, error) {
 	// Generate a per network conntrack mark and masquerade IPs to be used for egress traffic.
 	var (
@@ -322,11 +323,12 @@ func (udng *UserDefinedNetworkGateway) GetNetworkRuleMetadata() string {
 // the gateway side. It's considered invalid to call this instance after
 // DelNetwork has returned succesfully.
 func (udng *UserDefinedNetworkGateway) DelNetwork() error {
+	var errs []error
 	if config.OvnKubeNode.Mode != types.NodeModeDPU {
 		vrfDeviceName := util.GetNetworkVRFName(udng.NetInfo)
 		// delete the iprules for this network
 		if err := udng.ruleManager.DeleteWithMetadata(udng.GetNetworkRuleMetadata()); err != nil {
-			return fmt.Errorf("unable to delete iprules for network %s, err: %v", udng.GetNetworkName(), err)
+			errs = append(errs, fmt.Errorf("unable to delete iprules for network %s, err: %v", udng.GetNetworkName(), err))
 		}
 		// delete the VRF device for this network
 		if err := udng.vrfManager.DeleteVRF(vrfDeviceName); err != nil {
@@ -341,24 +343,27 @@ func (udng *UserDefinedNetworkGateway) DelNetwork() error {
 	}
 	if udng.openflowManager != nil || config.OvnKubeNode.Mode == types.NodeModeDPUHost {
 		if err := udng.gateway.Reconcile(); err != nil {
-			return fmt.Errorf("failed to reconcile default gateway for network %s, err: %v", udng.GetNetworkName(), err)
+			errs = append(errs, fmt.Errorf("failed to reconcile default gateway for network %s, err: %v", udng.GetNetworkName(), err))
 		}
 	}
 
 	if config.OvnKubeNode.Mode != types.NodeModeDPU {
 		err := udng.deleteAdvertisedUDNIsolationRules()
 		if err != nil {
-			return fmt.Errorf("failed to remove advertised UDN isolation rules for network %s: %w", udng.GetNetworkName(), err)
+			errs = append(errs, fmt.Errorf("failed to remove advertised UDN isolation rules for network %s: %w", udng.GetNetworkName(), err))
 		}
 
 		if err := udng.delMarkChain(); err != nil {
-			return err
+			errs = append(errs, fmt.Errorf("failed to remove mark chain for network %s, err: %v", udng.GetNetworkName(), err))
 		}
 	}
 	// delete the management port interface for this network
 	err := udng.deleteUDNManagementPort()
 	if err != nil {
-		return err
+		errs = append(errs, fmt.Errorf("failed to delete UDN management port for network %s, err: %w", udng.GetNetworkName(), err))
+	}
+	if len(errs) > 0 {
+		return utilerrors.Join(errs...)
 	}
 
 	// close channel only when successful since we can be called multiple times
@@ -479,8 +484,8 @@ func (udng *UserDefinedNetworkGateway) deleteUDNManagementPort() error {
 		"--", "--if-exists", "del-port", "br-int", interfaceName,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to delete port from br-int for network %s, stdout: %q, stderr: %q, error: %v",
-			udng.GetNetworkName(), stdout, stderr, err)
+		return fmt.Errorf("failed to delete port from br-int - stdout: %q, stderr: %q, error: %w",
+			stdout, stderr, err)
 	}
 	klog.V(3).Infof("Removed OVS management port interface %s for network %s", interfaceName, udng.GetNetworkName())
 	// verify linux device removal - insurance in case something happens with OVS/OVSDB and interface is not removed
@@ -488,8 +493,7 @@ func (udng *UserDefinedNetworkGateway) deleteUDNManagementPort() error {
 		klog.Warningf("Management port interface %s still exists after OVS del-port, deleting manually", interfaceName)
 		err = netlink.LinkDel(link)
 		if err != nil {
-			return fmt.Errorf("failed force remove managment port %q for network %q, error: %w",
-				interfaceName, udng.GetNetworkName(), err)
+			return fmt.Errorf("failed force remove management port %q, error: %w", interfaceName, err)
 		}
 	}
 	return nil
