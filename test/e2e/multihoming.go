@@ -117,7 +117,7 @@ var _ = Describe("Multi Homing", feature.MultiHoming, func() {
 			if netConfig.excludeCIDRs != nil {
 				podIP, err := podIPForAttachment(cs, pod.GetNamespace(), pod.GetName(), secondaryNetworkName, 0)
 				Expect(err).NotTo(HaveOccurred())
-				subnet, err := getNetCIDRSubnet(netConfig.cidr)
+				subnet, err := getMatchingSubnetForIP(netConfig.cidr, podIP)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(inRange(subnet, podIP)).To(Succeed())
 				for _, excludedRange := range netConfig.excludeCIDRs {
@@ -2293,7 +2293,7 @@ func kickstartPodInNamespace(cs clientset.Interface, podConfig *podConfiguration
 
 func assertServerPodIPInRange(cidr string, serverIP string, netPrefixLengthPerNode int) {
 	By(fmt.Sprintf("asserting the server pod IP %v is from the configured range %v/%v", serverIP, cidr, netPrefixLengthPerNode))
-	subnet, err := getNetCIDRSubnet(cidr)
+	subnet, err := getMatchingSubnetForIP(cidr, serverIP)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred())
 	ExpectWithOffset(1, inRange(subnet, serverIP)).To(Succeed())
 }

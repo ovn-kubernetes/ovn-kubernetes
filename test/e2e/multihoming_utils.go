@@ -115,6 +115,37 @@ func getNetCIDRSubnet(netCIDR string) (string, error) {
 	return "", fmt.Errorf("invalid network cidr: %q", netCIDR)
 }
 
+// getMatchingSubnetForIP extracts the subnet from a comma-separated CIDR list
+// that matches the IP family (IPv4 or IPv6) of the given IP address.
+// For example, given CIDRs "172.31.0.0/24,2010:100:200::0/60" and IP "10.244.0.1",
+// it returns "172.31.0.0/24" (the IPv4 CIDR).
+func getMatchingSubnetForIP(cidrs string, ip string) (string, error) {
+	isIPv6 := utilnet.IsIPv6String(ip)
+
+	// Split CIDRs by comma
+	cidrList := strings.Split(cidrs, ",")
+	for _, cidr := range cidrList {
+		cidr = strings.TrimSpace(cidr)
+		if cidr == "" {
+			continue
+		}
+
+		// Extract subnet from potential double-slash format
+		subnet, err := getNetCIDRSubnet(cidr)
+		if err != nil {
+			continue
+		}
+
+		// Check if this CIDR matches the IP family
+		isCIDRv6 := utilnet.IsIPv6CIDRString(subnet)
+		if isIPv6 == isCIDRv6 {
+			return subnet, nil
+		}
+	}
+
+	return "", fmt.Errorf("no matching CIDR found for IP %q in CIDR list %q", ip, cidrs)
+}
+
 type networkAttachmentConfigParams struct {
 	cidr                string
 	excludeCIDRs        []string
