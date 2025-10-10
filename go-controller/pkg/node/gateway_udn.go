@@ -361,7 +361,7 @@ func (udng *UserDefinedNetworkGateway) DelNetwork() error {
 		return err
 	}
 
-	// close channel only when succesful since we can be called multiple times
+	// close channel only when successful since we can be called multiple times
 	// on failure
 	close(udng.reconcile)
 	return nil
@@ -483,6 +483,15 @@ func (udng *UserDefinedNetworkGateway) deleteUDNManagementPort() error {
 			udng.GetNetworkName(), stdout, stderr, err)
 	}
 	klog.V(3).Infof("Removed OVS management port interface %s for network %s", interfaceName, udng.GetNetworkName())
+	// verify linux device removal - insurance in case something happens with OVS/OVSDB and interface is not removed
+	if link, err := netlink.LinkByName(interfaceName); err == nil {
+		klog.Warningf("Management port interface %s still exists after OVS del-port, deleting manually", interfaceName)
+		err = netlink.LinkDel(link)
+		if err != nil {
+			return fmt.Errorf("failed force remove managment port %q for network %q, error: %w",
+				interfaceName, udng.GetNetworkName(), err)
+		}
+	}
 	return nil
 }
 
