@@ -245,3 +245,30 @@ type IP string
 // +kubebuilder:validation:MaxItems=2
 // +kubebuilder:validation:XValidation:rule="size(self) != 2 || !isIP(self[0]) || !isIP(self[1]) || ip(self[0]).family() != ip(self[1]).family()", message="When 2 IPs are set, they must be from different IP families"
 type DualStackIPs []IP
+
+type TransportOption string
+type SNATOption string
+type RoutingOption string
+
+const (
+	TransportOptionNoOverlay TransportOption = "NoOverlay"
+	TransportOptionGeneve    TransportOption = "Geneve"
+
+	SNATEnable  SNATOption = "Enable"
+	SNATDisable SNATOption = "Disable"
+
+	RoutingManaged   RoutingOption = "Managed"
+	RoutingUnmanaged RoutingOption = "Unmanaged"
+)
+
+// NoOverlayOptions contains configuration options for networks operating in no-overlay mode.
+type NoOverlayOptions struct {
+	// OutboundSNAT defines the SNAT behavior for outbound traffic from pods.
+	// +kubebuilder:validation:Enum=Enable;Disable
+	// +required
+	OutboundSNAT SNATOption `json:"outboundSNAT"`
+	// Routing specifies whether the pod network routing is managed by OVN-Kubernetes or users.
+	// +kubebuilder:validation:Enum=Managed;Unmanaged
+	// +required
+	Routing RoutingOption `json:"routing"`
+}
