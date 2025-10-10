@@ -789,24 +789,6 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 	if len(statusAssignments) == 0 {
 		return nil
 	}
-	// We need to proceed with add only under two conditions
-	// 1) egressNode present in at least one status is local to this zone
-	// (NOTE: The relation between egressIPName and nodeName is 1:1 i.e in the same object the given node will be present only in one status)
-	// 2) the pod being added is local to this zone
-	proceed := false
-	for _, status := range statusAssignments {
-		e.nodeZoneState.LockKey(status.Node)
-		isLocalZoneEgressNode, loadedEgressNode := e.nodeZoneState.Load(status.Node)
-		if loadedEgressNode && isLocalZoneEgressNode {
-			proceed = true
-			e.nodeZoneState.UnlockKey(status.Node)
-			break
-		}
-		e.nodeZoneState.UnlockKey(status.Node)
-	}
-	if !proceed && !e.isPodScheduledinLocalZone(pod) {
-		return nil // nothing to do if none of the status nodes are local to this master and pod is also remote
-	}
 	var remainingAssignments, staleAssignments []egressipv1.EgressIPStatusItem
 	nadName := ni.GetNetworkName()
 	if ni.IsUserDefinedNetwork() {
@@ -876,9 +858,27 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 		klog.V(2).Infof("Deleting stale pod egress IP status: %v for EgressIP: %s and pod: %s/%s/%v", staleStatus, name, pod.Namespace, pod.Name, podIPNets)
 		err = e.deletePodEgressIPAssignments(ni, name, []egressipv1.EgressIPStatusItem{staleStatus}, pod)
 		if err != nil {
-			return fmt.Errorf("failed to delete stale EgressIP status %s/%v for pod %s", name, staleStatus, podKey)
+			return fmt.Errorf("failed to delete stale EgressIP status %s/%v for pod %s: %w", name, staleStatus, podKey, err)
 		}
 		delete(podState.egressStatuses.statusMap, staleStatus)
+	}
+	// We need to proceed with add only under two conditions
+	// 1) egressNode present in at least one status is local to this zone
+	// (NOTE: The relation between egressIPName and nodeName is 1:1 i.e in the same object the given node will be present only in one status)
+	// 2) the pod being added is local to this zone
+	proceed := false
+	for _, status := range statusAssignments {
+		e.nodeZoneState.LockKey(status.Node)
+		isLocalZoneEgressNode, loadedEgressNode := e.nodeZoneState.Load(status.Node)
+		if loadedEgressNode && isLocalZoneEgressNode {
+			proceed = true
+			e.nodeZoneState.UnlockKey(status.Node)
+			break
+		}
+		e.nodeZoneState.UnlockKey(status.Node)
+	}
+	if !proceed && !e.isPodScheduledinLocalZone(pod) {
+		return nil // nothing to do if none of the status nodes are local to this master and pod is also remote
 	}
 	for _, status := range remainingAssignments {
 		klog.V(2).Infof("Adding pod egress IP status: %v for EgressIP: %s and pod: %s/%s/%v", status, name, pod.Namespace, pod.Name, podIPNets)
