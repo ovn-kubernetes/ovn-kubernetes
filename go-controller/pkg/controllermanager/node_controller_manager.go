@@ -27,6 +27,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/vrfmanager"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
 )
 
 // NodeControllerManager structure is the object manages all controllers for all networks for ovnkube-node
@@ -72,6 +73,7 @@ func (ncm *NodeControllerManager) GetDefaultNetworkController() networkmanager.R
 
 // CleanupStaleNetworks cleans up all stale entities giving list of all existing node UDN controllers
 func (ncm *NodeControllerManager) CleanupStaleNetworks(validNetworks ...util.NetInfo) error {
+	var errs []error
 	if !util.IsNetworkSegmentationSupportEnabled() {
 		return nil
 	}
@@ -84,9 +86,14 @@ func (ncm *NodeControllerManager) CleanupStaleNetworks(validNetworks ...util.Net
 			}
 			validVRFDevices.Insert(util.GetNetworkVRFName(network))
 		}
-		return ncm.vrfManager.Repair(validVRFDevices)
+		if err := ncm.vrfManager.Repair(validVRFDevices); err != nil {
+			errs = append(errs, err)
+		}
 	}
-	return nil
+	if err := node.CleanupManagementPorts(ncm.ovsClient, validNetworks...); err != nil {
+		errs = append(errs, err)
+	}
+	return utilerrors.Join(errs...)
 }
 
 // newCommonNetworkControllerInfo creates and returns the base node network controller info
