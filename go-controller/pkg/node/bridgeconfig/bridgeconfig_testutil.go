@@ -18,6 +18,7 @@ import (
 func TestDefaultBridgeConfig() *BridgeConfiguration {
 	defaultNetConfig := &BridgeUDNConfiguration{
 		OfPortPatch: "patch-breth0_ov",
+		MasqCTMark:  "0x1",
 	}
 	return &BridgeConfiguration{
 		netConfig: map[string]*BridgeUDNConfiguration{
