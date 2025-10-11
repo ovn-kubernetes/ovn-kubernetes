@@ -614,6 +614,28 @@ spec:
                         IPv6 subnet is used
                       rule: '!has(self.subnets) || !has(self.mtu) || !self.subnets.exists_one(i,
                         isCIDR(i) && cidr(i).ip().family() == 6) || self.mtu >= 1280'
+                  noOverlayOptions:
+                    description: |-
+                      NoOverlayOptions contains configuration for no-overlay mode.
+                      This is only allowed when Transport is "NoOverlay".
+                    properties:
+                      outboundSNAT:
+                        default: Disable
+                        description: OutboundSNAT defines the SNAT behavior for outbound
+                          traffic from pods.
+                        enum:
+                        - Enable
+                        - Disable
+                        type: string
+                      routing:
+                        default: Unmanaged
+                        description: Routing specifies whether the pod network routing
+                          is managed by OVN-Kubernetes or users.
+                        enum:
+                        - Managed
+                        - Unmanaged
+                        type: string
+                    type: object
                   topology:
                     description: |-
                       Topology describes network configuration.
@@ -626,6 +648,18 @@ spec:
                     - Layer2
                     - Layer3
                     - Localnet
+                    type: string
+                  transport:
+                    default: Geneve
+                    description: |-
+                      Transport describes the transport protocol for east-west traffic.
+                      Allowed values are "NoOverlay" and "Geneve".
+                      - "NoOverlay": The network operates in no-overlay mode.
+                      - "Geneve": The network uses Geneve overlay.
+                      Defaults to "Geneve".
+                    enum:
+                    - NoOverlay
+                    - Geneve
                     type: string
                 required:
                 - topology
@@ -645,6 +679,8 @@ spec:
                     !has(self.localnet)'
                 - message: Network spec is immutable
                   rule: self == oldSelf
+                - message: noOverlayOptions is only allowed when transport is NoOverlay
+                  rule: '!has(self.noOverlayOptions) || self.transport == ''NoOverlay'''
             required:
             - namespaceSelector
             - network

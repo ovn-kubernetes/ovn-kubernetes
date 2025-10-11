@@ -40,6 +40,7 @@ type ClusterUserDefinedNetworkSpec struct {
 
 // NetworkSpec defines the desired state of UserDefinedNetworkSpec.
 // +union
+// +kubebuilder:validation:XValidation:rule="!has(self.noOverlayOptions) || self.transport == 'NoOverlay'", message="noOverlayOptions is only allowed when transport is NoOverlay"
 type NetworkSpec struct {
 	// Topology describes network configuration.
 	//
@@ -65,6 +66,20 @@ type NetworkSpec struct {
 	// Localnet is the Localnet topology configuration.
 	// +optional
 	Localnet *LocalnetConfig `json:"localnet,omitempty"`
+
+	// Transport describes the transport protocol for east-west traffic.
+	// Allowed values are "NoOverlay" and "Geneve".
+	// - "NoOverlay": The network operates in no-overlay mode.
+	// - "Geneve": The network uses Geneve overlay.
+	// Defaults to "Geneve".
+	// +kubebuilder:validation:Enum=NoOverlay;Geneve
+	// +kubebuilder:default=Geneve
+	// +optional
+	Transport TransportOption `json:"transport,omitempty"`
+	// NoOverlayOptions contains configuration for no-overlay mode.
+	// This is only allowed when Transport is "NoOverlay".
+	// +optional
+	NoOverlayOptions *NoOverlayOptions `json:"noOverlayOptions,omitempty"`
 }
 
 // ClusterUserDefinedNetworkStatus contains the observed status of the ClusterUserDefinedNetwork.
