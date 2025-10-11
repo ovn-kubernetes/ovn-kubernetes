@@ -123,6 +123,7 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 	inport1 := int32(81)
 	outport1 := int32(8081)
 	outportstr := intstr.FromInt(int(outport))
+	internalTrafficPolicy := corev1.ServiceInternalTrafficPolicyLocal
 
 	// make slices
 	// nil slice = don't use this family
@@ -280,6 +281,48 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 					Port:  outport,
 				},
 				nodeEndpoints: map[string]lbEndpoints{}, // service is not ETP=local or ITP=local, so nodeEndpoints is not filled out
+			}},
+			resultsSame: true,
+		},
+		{
+			name: "v4 clusterip with custom IP, one port, endpoints, ITP=Local (metadata service simulation)",
+			args: args{
+				slices: makeSlices([]string{"10.128.0.2"}, nil, corev1.ProtocolTCP),
+				service: &corev1.Service{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:        serviceName,
+						Namespace:   ns,
+						Annotations: map[string]string{types.CustomServiceIP: "169.254.169.254"},
+					},
+					Spec: corev1.ServiceSpec{
+						Type:       corev1.ServiceTypeClusterIP,
+						ClusterIP:  corev1.ClusterIPNone,
+						ClusterIPs: []string{corev1.ClusterIPNone},
+						Ports: []corev1.ServicePort{{
+							Name:       portName,
+							Port:       inport,
+							Protocol:   corev1.ProtocolTCP,
+							TargetPort: outportstr,
+						}},
+						InternalTrafficPolicy: &internalTrafficPolicy,
+					},
+				},
+			},
+			resultSharedGatewayNode: []lbConfig{{
+				vips:     []string{"169.254.169.254"},
+				protocol: corev1.ProtocolTCP,
+				inport:   inport,
+				nodeEndpoints: map[string]lbEndpoints{ // service is ITP=local, so nodeEndpoints is filled out
+					nodeA: {
+						V4IPs: []string{"10.128.0.2"},
+						Port:  outport,
+					},
+				},
+				clusterEndpoints: lbEndpoints{
+					V4IPs: []string{"10.128.0.2"},
+					Port:  outport,
+				},
+				internalTrafficLocal: true,
 			}},
 			resultsSame: true,
 		},
@@ -1496,6 +1539,21 @@ func Test_buildPerNodeLBs(t *testing.T) {
 		},
 	}
 
+	itp := corev1.ServiceInternalTrafficPolicyCluster
+	customIPService := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        name,
+			Namespace:   namespace,
+			Annotations: map[string]string{types.CustomServiceIP: "169.254.169.254"},
+		},
+		Spec: corev1.ServiceSpec{
+			Type:                  corev1.ServiceTypeClusterIP,
+			ClusterIP:             corev1.ClusterIPNone,
+			ClusterIPs:            []string{corev1.ClusterIPNone},
+			InternalTrafficPolicy: &itp,
+		},
+	}
+
 	defaultNodes := []nodeInfo{
 		{
 			name:               nodeA,
@@ -2134,6 +2192,88 @@ func Test_buildPerNodeLBs(t *testing.T) {
 						{
 							Source:  Addr{IP: "1.2.3.4", Port: 80},
 							Targets: []Addr{{IP: "10.128.0.1", Port: 8080}, {IP: "10.128.1.1", Port: 8080}}, // ITP is only applicable for clusterIPs
+						},
+					},
+					Opts: defaultOpts,
+				},
+			},
+		},
+		{
+			name:    "clusterIP service with custom IP, standard pods, InternalTrafficPolicy=local",
+			service: customIPService,
+			configs: []lbConfig{
+				{
+					vips:                 []string{"169.254.169.254"}, // clusterIP config
+					protocol:             corev1.ProtocolTCP,
+					inport:               80,
+					internalTrafficLocal: true,
+					clusterEndpoints: lbEndpoints{
+						V4IPs: []string{"10.128.0.1", "10.128.1.1"},
+						Port:  8080,
+					},
+					nodeEndpoints: map[string]lbEndpoints{
+						nodeA: {
+							V4IPs: []string{"10.128.0.1"},
+							Port:  8080,
+						},
+						nodeB: {
+							V4IPs: []string{"10.128.1.1"},
+							Port:  8080,
+						},
+					},
+				},
+			},
+			expectedShared: []LB{
+				{
+					Name:        "Service_testns/foo_TCP_node_switch_node-a",
+					ExternalIDs: loadBalancerExternalIDs(namespacedServiceName(namespace, name)),
+					Switches:    []string{"switch-node-a"},
+					Protocol:    "TCP",
+					Rules: []LBRule{
+						{
+							Source:  Addr{IP: "169.254.169.254", Port: 80},
+							Targets: []Addr{{IP: "10.128.0.1", Port: 8080}}, // filters out the ep present only on node-a
+						},
+					},
+					Opts: defaultOpts,
+				},
+				{
+					Name:        "Service_testns/foo_TCP_node_switch_node-b",
+					ExternalIDs: loadBalancerExternalIDs(namespacedServiceName(namespace, name)),
+					Switches:    []string{"switch-node-b"},
+					Protocol:    "TCP",
+					Rules: []LBRule{
+						{
+							Source:  Addr{IP: "169.254.169.254", Port: 80},
+							Targets: []Addr{{IP: "10.128.1.1", Port: 8080}}, // filters out the ep present only on node-b
+						},
+					},
+					Opts: defaultOpts,
+				},
+			},
+			expectedLocal: []LB{
+				{
+					Name:        "Service_testns/foo_TCP_node_switch_node-a",
+					ExternalIDs: loadBalancerExternalIDs(namespacedServiceName(namespace, name)),
+					Switches:    []string{"switch-node-a"},
+					Protocol:    "TCP",
+					Rules: []LBRule{
+						{
+							Source:  Addr{IP: "169.254.169.254", Port: 80},
+							Targets: []Addr{{IP: "10.128.0.1", Port: 8080}}, // filters out the ep present only on node-a
+						},
+					},
+					Opts: defaultOpts,
+				},
+				{
+					Name:        "Service_testns/foo_TCP_node_switch_node-b",
+					ExternalIDs: loadBalancerExternalIDs(namespacedServiceName(namespace, name)),
+					Switches:    []string{"switch-node-b"},
+					Protocol:    "TCP",
+					Rules: []LBRule{
+						{
+							Source:  Addr{IP: "169.254.169.254", Port: 80},
+							Targets: []Addr{{IP: "10.128.1.1", Port: 8080}}, // filters out the ep present only on node-b
 						},
 					},
 					Opts: defaultOpts,

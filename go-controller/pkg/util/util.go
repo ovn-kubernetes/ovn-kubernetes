@@ -349,8 +349,35 @@ ipLoop:
 	return out
 }
 
+// GetServiceCustomIP returns a cluster IP if a service has a valid one
+func GetServiceCustomIP(service *corev1.Service) string {
+	if service.Spec.ClusterIP != corev1.ClusterIPNone {
+		return ""
+	}
+
+	if cip, ok := service.Annotations[types.CustomServiceIP]; ok {
+		ip := net.ParseIP(cip)
+		if ip == nil {
+			klog.Errorf("CustomServiceIP %q on %s/%s is not a valid IP",
+				cip, service.Namespace, service.Name)
+			return ""
+		}
+
+		// Must not overlap any configured Service CIDR.
+		for _, cidr := range config.Kubernetes.ServiceCIDRs {
+			if cidr.Contains(ip) {
+				klog.Errorf("CustomServiceIP %q for %s/%s overlaps service CIDR %s",
+					cip, service.Namespace, service.Name, cidr.String())
+				return ""
+			}
+		}
+		return cip
+	}
+	return ""
+}
+
 // IsClusterIP checks if the provided IP is a clusterIP
-func IsClusterIP(svcVIP string) bool {
+func IsClusterIP(svcVIP string, service *corev1.Service) bool {
 	ip := net.ParseIP(svcVIP)
 	is4 := ip.To4() != nil
 	for _, svcCIDR := range config.Kubernetes.ServiceCIDRs {
@@ -360,6 +387,11 @@ func IsClusterIP(svcVIP string) bool {
 		if !is4 && svcCIDR.IP.To4() == nil && svcCIDR.Contains(ip) {
 			return true
 		}
+	}
+
+	customIP := GetServiceCustomIP(service)
+	if len(customIP) > 0 && customIP == svcVIP {
+		return true
 	}
 	return false
 }
