@@ -279,5 +279,76 @@ var _ = Describe("Healthcheck tests", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 		})
+
+		ovntest.OnSupportedPlatformsIt("check stale mpx devices are cleaned for deleted networks", func() {
+			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+			config.OVNKubernetesFeature.EnableMultiNetwork = true
+
+			staleMgtPort := fmt.Sprintf("%s%d", types.K8sMgmtIntfNamePrefix, staleNetID)
+			fexec := ovntest.NewFakeExec()
+			Expect(util.SetExec(fexec)).To(Succeed())
+			fexec.AddFakeCmdsNoOutputNoError([]string{
+				"ovs-vsctl --timeout=15" +
+					" -- --if-exists del-port br-int " + staleMgtPort,
+			})
+			factoryMock := factoryMocks.NodeWatchFactory{}
+			netInfo, err := util.ParseNADInfo(nad)
+			mutableNetInfo := util.NewMutableNetInfo(netInfo)
+			Expect(err).NotTo(HaveOccurred())
+			node := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: nodeName,
+					Annotations: map[string]string{
+						"k8s.ovn.org/network-ids":  fmt.Sprintf("{\"%s\": \"%d\"}", netName, netID),
+						"k8s.ovn.org/node-subnets": fmt.Sprintf("{\"%s\":[\"%s\", \"%s\"]}", netName, v4NodeSubnet, v6NodeSubnet)},
+				},
+			}
+			nodeList := []*corev1.Node{node}
+			factoryMock.On("GetNodeForWindows", nodeName).Return(nodeList[0], nil)
+			factoryMock.On("GetNodes").Return(nodeList, nil)
+			factoryMock.On("UserDefinedNetworkInformer").Return(nil)
+			factoryMock.On("ClusterUserDefinedNetworkInformer").Return(nil)
+			factoryMock.On("NamespaceInformer").Return(nil)
+			nadListerMock := &nadlistermocks.NetworkAttachmentDefinitionLister{}
+			nadInformerMock := &nadinformermocks.NetworkAttachmentDefinitionInformer{}
+			nadInformerMock.On("Lister").Return(nadListerMock)
+			nadInformerMock.On("Informer").Return(nil)
+			factoryMock.On("NADInformer").Return(nadInformerMock)
+			nodeListerMock := &corelistermocks.NodeLister{}
+			nodeListerMock.On("List", mock.Anything).Return(nodeList, nil)
+			nodeInformerMock := &coreinformermocks.NodeInformer{}
+			nodeInformerMock.On("Lister").Return(nodeListerMock)
+			factoryMock.On("NodeCoreInformer").Return(nodeInformerMock)
+			Expect(err).NotTo(HaveOccurred())
+			ncm, err := NewNodeControllerManager(fakeClient, &factoryMock, nodeName, &sync.WaitGroup{}, nil, routeManager, nil)
+			Expect(err).NotTo(HaveOccurred())
+
+			err = testNS.Do(func(ns.NetNS) error {
+				defer GinkgoRecover()
+				By("Add stale kernel mpx interface")
+				ovntest.AddLink(staleMgtPort)
+
+				By("Add active UDN kernel mpx interface")
+				validMgtPort := fmt.Sprintf("%s%d", types.K8sMgmtIntfNamePrefix, netID)
+				ovntest.AddLink(validMgtPort)
+
+				mutableNetInfo.SetNetworkID(int(netID))
+
+				By("Cleaning up stale networks")
+				err = ncm.CleanupStaleNetworks(mutableNetInfo)
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Stale mpx interface should have been removed")
+				_, err = util.GetNetLinkOps().LinkByName(staleMgtPort)
+				Expect(err).To(HaveOccurred())
+
+				By("Valid mpx interface should NOT have been removed")
+				_, err = util.GetNetLinkOps().LinkByName(validMgtPort)
+				Expect(err).NotTo(HaveOccurred())
+
+				return nil
+			})
+			Expect(err).NotTo(HaveOccurred())
+		})
 	})
 })
