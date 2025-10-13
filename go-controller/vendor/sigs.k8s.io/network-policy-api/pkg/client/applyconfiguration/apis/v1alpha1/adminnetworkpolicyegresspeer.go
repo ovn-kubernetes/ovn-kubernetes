@@ -19,20 +19,21 @@ limitations under the License.
 package v1alpha1
 
 import (
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 	apisv1alpha1 "sigs.k8s.io/network-policy-api/apis/v1alpha1"
 )
 
-// AdminNetworkPolicyEgressPeerApplyConfiguration represents an declarative configuration of the AdminNetworkPolicyEgressPeer type for use
+// AdminNetworkPolicyEgressPeerApplyConfiguration represents a declarative configuration of the AdminNetworkPolicyEgressPeer type for use
 // with apply.
 type AdminNetworkPolicyEgressPeerApplyConfiguration struct {
-	Namespaces *v1.LabelSelector                `json:"namespaces,omitempty"`
-	Pods       *NamespacedPodApplyConfiguration `json:"pods,omitempty"`
-	Nodes      *v1.LabelSelector                `json:"nodes,omitempty"`
-	Networks   []apisv1alpha1.CIDR              `json:"networks,omitempty"`
+	Namespaces  *v1.LabelSelectorApplyConfiguration `json:"namespaces,omitempty"`
+	Pods        *NamespacedPodApplyConfiguration    `json:"pods,omitempty"`
+	Nodes       *v1.LabelSelectorApplyConfiguration `json:"nodes,omitempty"`
+	Networks    []apisv1alpha1.CIDR                 `json:"networks,omitempty"`
+	DomainNames []apisv1alpha1.DomainName           `json:"domainNames,omitempty"`
 }
 
-// AdminNetworkPolicyEgressPeerApplyConfiguration constructs an declarative configuration of the AdminNetworkPolicyEgressPeer type for use with
+// AdminNetworkPolicyEgressPeerApplyConfiguration constructs a declarative configuration of the AdminNetworkPolicyEgressPeer type for use with
 // apply.
 func AdminNetworkPolicyEgressPeer() *AdminNetworkPolicyEgressPeerApplyConfiguration {
 	return &AdminNetworkPolicyEgressPeerApplyConfiguration{}
@@ -41,8 +42,8 @@ func AdminNetworkPolicyEgressPeer() *AdminNetworkPolicyEgressPeerApplyConfigurat
 // WithNamespaces sets the Namespaces field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Namespaces field is set to the value of the last call.
-func (b *AdminNetworkPolicyEgressPeerApplyConfiguration) WithNamespaces(value v1.LabelSelector) *AdminNetworkPolicyEgressPeerApplyConfiguration {
-	b.Namespaces = &value
+func (b *AdminNetworkPolicyEgressPeerApplyConfiguration) WithNamespaces(value *v1.LabelSelectorApplyConfiguration) *AdminNetworkPolicyEgressPeerApplyConfiguration {
+	b.Namespaces = value
 	return b
 }
 
@@ -57,8 +58,8 @@ func (b *AdminNetworkPolicyEgressPeerApplyConfiguration) WithPods(value *Namespa
 // WithNodes sets the Nodes field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Nodes field is set to the value of the last call.
-func (b *AdminNetworkPolicyEgressPeerApplyConfiguration) WithNodes(value v1.LabelSelector) *AdminNetworkPolicyEgressPeerApplyConfiguration {
-	b.Nodes = &value
+func (b *AdminNetworkPolicyEgressPeerApplyConfiguration) WithNodes(value *v1.LabelSelectorApplyConfiguration) *AdminNetworkPolicyEgressPeerApplyConfiguration {
+	b.Nodes = value
 	return b
 }
 
@@ -68,6 +69,16 @@ func (b *AdminNetworkPolicyEgressPeerApplyConfiguration) WithNodes(value v1.Labe
 func (b *AdminNetworkPolicyEgressPeerApplyConfiguration) WithNetworks(values ...apisv1alpha1.CIDR) *AdminNetworkPolicyEgressPeerApplyConfiguration {
 	for i := range values {
 		b.Networks = append(b.Networks, values[i])
+	}
+	return b
+}
+
+// WithDomainNames adds the given value to the DomainNames field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the DomainNames field.
+func (b *AdminNetworkPolicyEgressPeerApplyConfiguration) WithDomainNames(values ...apisv1alpha1.DomainName) *AdminNetworkPolicyEgressPeerApplyConfiguration {
+	for i := range values {
+		b.DomainNames = append(b.DomainNames, values[i])
 	}
 	return b
 }

@@ -19,17 +19,14 @@ limitations under the License.
 package v1alpha1
 
 import (
-	"context"
-	json "encoding/json"
-	"fmt"
-	"time"
+	context "context"
 
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
 	watch "k8s.io/apimachinery/pkg/watch"
-	rest "k8s.io/client-go/rest"
-	v1alpha1 "sigs.k8s.io/network-policy-api/apis/v1alpha1"
-	apisv1alpha1 "sigs.k8s.io/network-policy-api/pkg/client/applyconfiguration/apis/v1alpha1"
+	gentype "k8s.io/client-go/gentype"
+	apisv1alpha1 "sigs.k8s.io/network-policy-api/apis/v1alpha1"
+	applyconfigurationapisv1alpha1 "sigs.k8s.io/network-policy-api/pkg/client/applyconfiguration/apis/v1alpha1"
 	scheme "sigs.k8s.io/network-policy-api/pkg/client/clientset/versioned/scheme"
 )
 
@@ -41,203 +38,37 @@ type AdminNetworkPoliciesGetter interface {
 
 // AdminNetworkPolicyInterface has methods to work with AdminNetworkPolicy resources.
 type AdminNetworkPolicyInterface interface {
-	Create(ctx context.Context, adminNetworkPolicy *v1alpha1.AdminNetworkPolicy, opts v1.CreateOptions) (*v1alpha1.AdminNetworkPolicy, error)
-	Update(ctx context.Context, adminNetworkPolicy *v1alpha1.AdminNetworkPolicy, opts v1.UpdateOptions) (*v1alpha1.AdminNetworkPolicy, error)
-	UpdateStatus(ctx context.Context, adminNetworkPolicy *v1alpha1.AdminNetworkPolicy, opts v1.UpdateOptions) (*v1alpha1.AdminNetworkPolicy, error)
+	Create(ctx context.Context, adminNetworkPolicy *apisv1alpha1.AdminNetworkPolicy, opts v1.CreateOptions) (*apisv1alpha1.AdminNetworkPolicy, error)
+	Update(ctx context.Context, adminNetworkPolicy *apisv1alpha1.AdminNetworkPolicy, opts v1.UpdateOptions) (*apisv1alpha1.AdminNetworkPolicy, error)
+	// Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
+	UpdateStatus(ctx context.Context, adminNetworkPolicy *apisv1alpha1.AdminNetworkPolicy, opts v1.UpdateOptions) (*apisv1alpha1.AdminNetworkPolicy, error)
 	Delete(ctx context.Context, name string, opts v1.DeleteOptions) error
 	DeleteCollection(ctx context.Context, opts v1.DeleteOptions, listOpts v1.ListOptions) error
-	Get(ctx context.Context, name string, opts v1.GetOptions) (*v1alpha1.AdminNetworkPolicy, error)
-	List(ctx context.Context, opts v1.ListOptions) (*v1alpha1.AdminNetworkPolicyList, error)
+	Get(ctx context.Context, name string, opts v1.GetOptions) (*apisv1alpha1.AdminNetworkPolicy, error)
+	List(ctx context.Context, opts v1.ListOptions) (*apisv1alpha1.AdminNetworkPolicyList, error)
 	Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error)
-	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1alpha1.AdminNetworkPolicy, err error)
-	Apply(ctx context.Context, adminNetworkPolicy *apisv1alpha1.AdminNetworkPolicyApplyConfiguration, opts v1.ApplyOptions) (result *v1alpha1.AdminNetworkPolicy, err error)
-	ApplyStatus(ctx context.Context, adminNetworkPolicy *apisv1alpha1.AdminNetworkPolicyApplyConfiguration, opts v1.ApplyOptions) (result *v1alpha1.AdminNetworkPolicy, err error)
+	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *apisv1alpha1.AdminNetworkPolicy, err error)
+	Apply(ctx context.Context, adminNetworkPolicy *applyconfigurationapisv1alpha1.AdminNetworkPolicyApplyConfiguration, opts v1.ApplyOptions) (result *apisv1alpha1.AdminNetworkPolicy, err error)
+	// Add a +genclient:noStatus comment above the type to avoid generating ApplyStatus().
+	ApplyStatus(ctx context.Context, adminNetworkPolicy *applyconfigurationapisv1alpha1.AdminNetworkPolicyApplyConfiguration, opts v1.ApplyOptions) (result *apisv1alpha1.AdminNetworkPolicy, err error)
 	AdminNetworkPolicyExpansion
 }
 
 // adminNetworkPolicies implements AdminNetworkPolicyInterface
 type adminNetworkPolicies struct {
-	client rest.Interface
+	*gentype.ClientWithListAndApply[*apisv1alpha1.AdminNetworkPolicy, *apisv1alpha1.AdminNetworkPolicyList, *applyconfigurationapisv1alpha1.AdminNetworkPolicyApplyConfiguration]
 }
 
 // newAdminNetworkPolicies returns a AdminNetworkPolicies
 func newAdminNetworkPolicies(c *PolicyV1alpha1Client) *adminNetworkPolicies {
 	return &adminNetworkPolicies{
-		client: c.RESTClient(),
+		gentype.NewClientWithListAndApply[*apisv1alpha1.AdminNetworkPolicy, *apisv1alpha1.AdminNetworkPolicyList, *applyconfigurationapisv1alpha1.AdminNetworkPolicyApplyConfiguration](
+			"adminnetworkpolicies",
+			c.RESTClient(),
+			scheme.ParameterCodec,
+			"",
+			func() *apisv1alpha1.AdminNetworkPolicy { return &apisv1alpha1.AdminNetworkPolicy{} },
+			func() *apisv1alpha1.AdminNetworkPolicyList { return &apisv1alpha1.AdminNetworkPolicyList{} },
+		),
 	}
-}
-
-// Get takes name of the adminNetworkPolicy, and returns the corresponding adminNetworkPolicy object, and an error if there is any.
-func (c *adminNetworkPolicies) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1alpha1.AdminNetworkPolicy, err error) {
-	result = &v1alpha1.AdminNetworkPolicy{}
-	err = c.client.Get().
-		Resource("adminnetworkpolicies").
-		Name(name).
-		VersionedParams(&options, scheme.ParameterCodec).
-		Do(ctx).
-		Into(result)
-	return
-}
-
-// List takes label and field selectors, and returns the list of AdminNetworkPolicies that match those selectors.
-func (c *adminNetworkPolicies) List(ctx context.Context, opts v1.ListOptions) (result *v1alpha1.AdminNetworkPolicyList, err error) {
-	var timeout time.Duration
-	if opts.TimeoutSeconds != nil {
-		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
-	}
-	result = &v1alpha1.AdminNetworkPolicyList{}
-	err = c.client.Get().
-		Resource("adminnetworkpolicies").
-		VersionedParams(&opts, scheme.ParameterCodec).
-		Timeout(timeout).
-		Do(ctx).
-		Into(result)
-	return
-}
-
-// Watch returns a watch.Interface that watches the requested adminNetworkPolicies.
-func (c *adminNetworkPolicies) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
-	var timeout time.Duration
-	if opts.TimeoutSeconds != nil {
-		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
-	}
-	opts.Watch = true
-	return c.client.Get().
-		Resource("adminnetworkpolicies").
-		VersionedParams(&opts, scheme.ParameterCodec).
-		Timeout(timeout).
-		Watch(ctx)
-}
-
-// Create takes the representation of a adminNetworkPolicy and creates it.  Returns the server's representation of the adminNetworkPolicy, and an error, if there is any.
-func (c *adminNetworkPolicies) Create(ctx context.Context, adminNetworkPolicy *v1alpha1.AdminNetworkPolicy, opts v1.CreateOptions) (result *v1alpha1.AdminNetworkPolicy, err error) {
-	result = &v1alpha1.AdminNetworkPolicy{}
-	err = c.client.Post().
-		Resource("adminnetworkpolicies").
-		VersionedParams(&opts, scheme.ParameterCodec).
-		Body(adminNetworkPolicy).
-		Do(ctx).
-		Into(result)
-	return
-}
-
-// Update takes the representation of a adminNetworkPolicy and updates it. Returns the server's representation of the adminNetworkPolicy, and an error, if there is any.
-func (c *adminNetworkPolicies) Update(ctx context.Context, adminNetworkPolicy *v1alpha1.AdminNetworkPolicy, opts v1.UpdateOptions) (result *v1alpha1.AdminNetworkPolicy, err error) {
-	result = &v1alpha1.AdminNetworkPolicy{}
-	err = c.client.Put().
-		Resource("adminnetworkpolicies").
-		Name(adminNetworkPolicy.Name).
-		VersionedParams(&opts, scheme.ParameterCodec).
-		Body(adminNetworkPolicy).
-		Do(ctx).
-		Into(result)
-	return
-}
-
-// UpdateStatus was generated because the type contains a Status member.
-// Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-func (c *adminNetworkPolicies) UpdateStatus(ctx context.Context, adminNetworkPolicy *v1alpha1.AdminNetworkPolicy, opts v1.UpdateOptions) (result *v1alpha1.AdminNetworkPolicy, err error) {
-	result = &v1alpha1.AdminNetworkPolicy{}
-	err = c.client.Put().
-		Resource("adminnetworkpolicies").
-		Name(adminNetworkPolicy.Name).
-		SubResource("status").
-		VersionedParams(&opts, scheme.ParameterCodec).
-		Body(adminNetworkPolicy).
-		Do(ctx).
-		Into(result)
-	return
-}
-
-// Delete takes name of the adminNetworkPolicy and deletes it. Returns an error if one occurs.
-func (c *adminNetworkPolicies) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
-	return c.client.Delete().
-		Resource("adminnetworkpolicies").
-		Name(name).
-		Body(&opts).
-		Do(ctx).
-		Error()
-}
-
-// DeleteCollection deletes a collection of objects.
-func (c *adminNetworkPolicies) DeleteCollection(ctx context.Context, opts v1.DeleteOptions, listOpts v1.ListOptions) error {
-	var timeout time.Duration
-	if listOpts.TimeoutSeconds != nil {
-		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
-	}
-	return c.client.Delete().
-		Resource("adminnetworkpolicies").
-		VersionedParams(&listOpts, scheme.ParameterCodec).
-		Timeout(timeout).
-		Body(&opts).
-		Do(ctx).
-		Error()
-}
-
-// Patch applies the patch and returns the patched adminNetworkPolicy.
-func (c *adminNetworkPolicies) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1alpha1.AdminNetworkPolicy, err error) {
-	result = &v1alpha1.AdminNetworkPolicy{}
-	err = c.client.Patch(pt).
-		Resource("adminnetworkpolicies").
-		Name(name).
-		SubResource(subresources...).
-		VersionedParams(&opts, scheme.ParameterCodec).
-		Body(data).
-		Do(ctx).
-		Into(result)
-	return
-}
-
-// Apply takes the given apply declarative configuration, applies it and returns the applied adminNetworkPolicy.
-func (c *adminNetworkPolicies) Apply(ctx context.Context, adminNetworkPolicy *apisv1alpha1.AdminNetworkPolicyApplyConfiguration, opts v1.ApplyOptions) (result *v1alpha1.AdminNetworkPolicy, err error) {
-	if adminNetworkPolicy == nil {
-		return nil, fmt.Errorf("adminNetworkPolicy provided to Apply must not be nil")
-	}
-	patchOpts := opts.ToPatchOptions()
-	data, err := json.Marshal(adminNetworkPolicy)
-	if err != nil {
-		return nil, err
-	}
-	name := adminNetworkPolicy.Name
-	if name == nil {
-		return nil, fmt.Errorf("adminNetworkPolicy.Name must be provided to Apply")
-	}
-	result = &v1alpha1.AdminNetworkPolicy{}
-	err = c.client.Patch(types.ApplyPatchType).
-		Resource("adminnetworkpolicies").
-		Name(*name).
-		VersionedParams(&patchOpts, scheme.ParameterCodec).
-		Body(data).
-		Do(ctx).
-		Into(result)
-	return
-}
-
-// ApplyStatus was generated because the type contains a Status member.
-// Add a +genclient:noStatus comment above the type to avoid generating ApplyStatus().
-func (c *adminNetworkPolicies) ApplyStatus(ctx context.Context, adminNetworkPolicy *apisv1alpha1.AdminNetworkPolicyApplyConfiguration, opts v1.ApplyOptions) (result *v1alpha1.AdminNetworkPolicy, err error) {
-	if adminNetworkPolicy == nil {
-		return nil, fmt.Errorf("adminNetworkPolicy provided to Apply must not be nil")
-	}
-	patchOpts := opts.ToPatchOptions()
-	data, err := json.Marshal(adminNetworkPolicy)
-	if err != nil {
-		return nil, err
-	}
-
-	name := adminNetworkPolicy.Name
-	if name == nil {
-		return nil, fmt.Errorf("adminNetworkPolicy.Name must be provided to Apply")
-	}
-
-	result = &v1alpha1.AdminNetworkPolicy{}
-	err = c.client.Patch(types.ApplyPatchType).
-		Resource("adminnetworkpolicies").
-		Name(*name).
-		SubResource("status").
-		VersionedParams(&patchOpts, scheme.ParameterCodec).
-		Body(data).
-		Do(ctx).
-		Into(result)
-	return
 }

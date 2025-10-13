@@ -18,7 +18,7 @@ limitations under the License.
 
 package v1alpha1
 
-// AdminNetworkPolicyPortApplyConfiguration represents an declarative configuration of the AdminNetworkPolicyPort type for use
+// AdminNetworkPolicyPortApplyConfiguration represents a declarative configuration of the AdminNetworkPolicyPort type for use
 // with apply.
 type AdminNetworkPolicyPortApplyConfiguration struct {
 	PortNumber *PortApplyConfiguration      `json:"portNumber,omitempty"`
@@ -26,7 +26,7 @@ type AdminNetworkPolicyPortApplyConfiguration struct {
 	PortRange  *PortRangeApplyConfiguration `json:"portRange,omitempty"`
 }
 
-// AdminNetworkPolicyPortApplyConfiguration constructs an declarative configuration of the AdminNetworkPolicyPort type for use with
+// AdminNetworkPolicyPortApplyConfiguration constructs a declarative configuration of the AdminNetworkPolicyPort type for use with
 // apply.
 func AdminNetworkPolicyPort() *AdminNetworkPolicyPortApplyConfiguration {
 	return &AdminNetworkPolicyPortApplyConfiguration{}

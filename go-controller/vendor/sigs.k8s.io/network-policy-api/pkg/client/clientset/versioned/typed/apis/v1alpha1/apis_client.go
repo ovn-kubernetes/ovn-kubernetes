@@ -19,11 +19,11 @@ limitations under the License.
 package v1alpha1
 
 import (
-	"net/http"
+	http "net/http"
 
 	rest "k8s.io/client-go/rest"
-	v1alpha1 "sigs.k8s.io/network-policy-api/apis/v1alpha1"
-	"sigs.k8s.io/network-policy-api/pkg/client/clientset/versioned/scheme"
+	apisv1alpha1 "sigs.k8s.io/network-policy-api/apis/v1alpha1"
+	scheme "sigs.k8s.io/network-policy-api/pkg/client/clientset/versioned/scheme"
 )
 
 type PolicyV1alpha1Interface interface {
@@ -50,9 +50,7 @@ func (c *PolicyV1alpha1Client) BaselineAdminNetworkPolicies() BaselineAdminNetwo
 // where httpClient was generated with rest.HTTPClientFor(c).
 func NewForConfig(c *rest.Config) (*PolicyV1alpha1Client, error) {
 	config := *c
-	if err := setConfigDefaults(&config); err != nil {
-		return nil, err
-	}
+	setConfigDefaults(&config)
 	httpClient, err := rest.HTTPClientFor(&config)
 	if err != nil {
 		return nil, err
@@ -64,9 +62,7 @@ func NewForConfig(c *rest.Config) (*PolicyV1alpha1Client, error) {
 // Note the http client provided takes precedence over the configured transport values.
 func NewForConfigAndClient(c *rest.Config, h *http.Client) (*PolicyV1alpha1Client, error) {
 	config := *c
-	if err := setConfigDefaults(&config); err != nil {
-		return nil, err
-	}
+	setConfigDefaults(&config)
 	client, err := rest.RESTClientForConfigAndClient(&config, h)
 	if err != nil {
 		return nil, err
@@ -89,17 +85,15 @@ func New(c rest.Interface) *PolicyV1alpha1Client {
 	return &PolicyV1alpha1Client{c}
 }
 
-func setConfigDefaults(config *rest.Config) error {
-	gv := v1alpha1.SchemeGroupVersion
+func setConfigDefaults(config *rest.Config) {
+	gv := apisv1alpha1.SchemeGroupVersion
 	config.GroupVersion = &gv
 	config.APIPath = "/apis"
-	config.NegotiatedSerializer = scheme.Codecs.WithoutConversion()
+	config.NegotiatedSerializer = rest.CodecFactoryForGeneratedClient(scheme.Scheme, scheme.Codecs).WithoutConversion()
 
 	if config.UserAgent == "" {
 		config.UserAgent = rest.DefaultKubernetesUserAgent()
 	}
-
-	return nil
 }
 
 // RESTClient returns a RESTClient that is used to communicate

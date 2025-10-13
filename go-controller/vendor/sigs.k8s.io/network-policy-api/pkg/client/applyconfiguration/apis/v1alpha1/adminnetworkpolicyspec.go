@@ -18,7 +18,7 @@ limitations under the License.
 
 package v1alpha1
 
-// AdminNetworkPolicySpecApplyConfiguration represents an declarative configuration of the AdminNetworkPolicySpec type for use
+// AdminNetworkPolicySpecApplyConfiguration represents a declarative configuration of the AdminNetworkPolicySpec type for use
 // with apply.
 type AdminNetworkPolicySpecApplyConfiguration struct {
 	Priority *int32                                            `json:"priority,omitempty"`
@@ -27,7 +27,7 @@ type AdminNetworkPolicySpecApplyConfiguration struct {
 	Egress   []AdminNetworkPolicyEgressRuleApplyConfiguration  `json:"egress,omitempty"`
 }
 
-// AdminNetworkPolicySpecApplyConfiguration constructs an declarative configuration of the AdminNetworkPolicySpec type for use with
+// AdminNetworkPolicySpecApplyConfiguration constructs a declarative configuration of the AdminNetworkPolicySpec type for use with
 // apply.
 func AdminNetworkPolicySpec() *AdminNetworkPolicySpecApplyConfiguration {
 	return &AdminNetworkPolicySpecApplyConfiguration{}

@@ -18,7 +18,7 @@ limitations under the License.
 
 package v1alpha1
 
-// BaselineAdminNetworkPolicySpecApplyConfiguration represents an declarative configuration of the BaselineAdminNetworkPolicySpec type for use
+// BaselineAdminNetworkPolicySpecApplyConfiguration represents a declarative configuration of the BaselineAdminNetworkPolicySpec type for use
 // with apply.
 type BaselineAdminNetworkPolicySpecApplyConfiguration struct {
 	Subject *AdminNetworkPolicySubjectApplyConfiguration              `json:"subject,omitempty"`
@@ -26,7 +26,7 @@ type BaselineAdminNetworkPolicySpecApplyConfiguration struct {
 	Egress  []BaselineAdminNetworkPolicyEgressRuleApplyConfiguration  `json:"egress,omitempty"`
 }
 
-// BaselineAdminNetworkPolicySpecApplyConfiguration constructs an declarative configuration of the BaselineAdminNetworkPolicySpec type for use with
+// BaselineAdminNetworkPolicySpecApplyConfiguration constructs a declarative configuration of the BaselineAdminNetworkPolicySpec type for use with
 // apply.
 func BaselineAdminNetworkPolicySpec() *BaselineAdminNetworkPolicySpecApplyConfiguration {
 	return &BaselineAdminNetworkPolicySpecApplyConfiguration{}

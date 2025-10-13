@@ -19,16 +19,16 @@ limitations under the License.
 package v1alpha1
 
 import (
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
-// AdminNetworkPolicyStatusApplyConfiguration represents an declarative configuration of the AdminNetworkPolicyStatus type for use
+// AdminNetworkPolicyStatusApplyConfiguration represents a declarative configuration of the AdminNetworkPolicyStatus type for use
 // with apply.
 type AdminNetworkPolicyStatusApplyConfiguration struct {
-	Conditions []v1.Condition `json:"conditions,omitempty"`
+	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`
 }
 
-// AdminNetworkPolicyStatusApplyConfiguration constructs an declarative configuration of the AdminNetworkPolicyStatus type for use with
+// AdminNetworkPolicyStatusApplyConfiguration constructs a declarative configuration of the AdminNetworkPolicyStatus type for use with
 // apply.
 func AdminNetworkPolicyStatus() *AdminNetworkPolicyStatusApplyConfiguration {
 	return &AdminNetworkPolicyStatusApplyConfiguration{}
@@ -37,9 +37,12 @@ func AdminNetworkPolicyStatus() *AdminNetworkPolicyStatusApplyConfiguration {
 // WithConditions adds the given value to the Conditions field in the declarative configuration
 // and returns the receiver, so that objects can be build by chaining "With" function invocations.
 // If called multiple times, values provided by each call will be appended to the Conditions field.
-func (b *AdminNetworkPolicyStatusApplyConfiguration) WithConditions(values ...v1.Condition) *AdminNetworkPolicyStatusApplyConfiguration {
+func (b *AdminNetworkPolicyStatusApplyConfiguration) WithConditions(values ...*v1.ConditionApplyConfiguration) *AdminNetworkPolicyStatusApplyConfiguration {
 	for i := range values {
-		b.Conditions = append(b.Conditions, values[i])
+		if values[i] == nil {
+			panic("nil value passed to WithConditions")
+		}
+		b.Conditions = append(b.Conditions, *values[i])
 	}
 	return b
 }

@@ -19,19 +19,19 @@ limitations under the License.
 package v1alpha1
 
 import (
-	v1alpha1 "sigs.k8s.io/network-policy-api/apis/v1alpha1"
+	apisv1alpha1 "sigs.k8s.io/network-policy-api/apis/v1alpha1"
 )
 
-// AdminNetworkPolicyEgressRuleApplyConfiguration represents an declarative configuration of the AdminNetworkPolicyEgressRule type for use
+// AdminNetworkPolicyEgressRuleApplyConfiguration represents a declarative configuration of the AdminNetworkPolicyEgressRule type for use
 // with apply.
 type AdminNetworkPolicyEgressRuleApplyConfiguration struct {
 	Name   *string                                          `json:"name,omitempty"`
-	Action *v1alpha1.AdminNetworkPolicyRuleAction           `json:"action,omitempty"`
+	Action *apisv1alpha1.AdminNetworkPolicyRuleAction       `json:"action,omitempty"`
 	To     []AdminNetworkPolicyEgressPeerApplyConfiguration `json:"to,omitempty"`
 	Ports  *[]AdminNetworkPolicyPortApplyConfiguration      `json:"ports,omitempty"`
 }
 
-// AdminNetworkPolicyEgressRuleApplyConfiguration constructs an declarative configuration of the AdminNetworkPolicyEgressRule type for use with
+// AdminNetworkPolicyEgressRuleApplyConfiguration constructs a declarative configuration of the AdminNetworkPolicyEgressRule type for use with
 // apply.
 func AdminNetworkPolicyEgressRule() *AdminNetworkPolicyEgressRuleApplyConfiguration {
 	return &AdminNetworkPolicyEgressRuleApplyConfiguration{}
@@ -48,7 +48,7 @@ func (b *AdminNetworkPolicyEgressRuleApplyConfiguration) WithName(value string) 
 // WithAction sets the Action field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Action field is set to the value of the last call.
-func (b *AdminNetworkPolicyEgressRuleApplyConfiguration) WithAction(value v1alpha1.AdminNetworkPolicyRuleAction) *AdminNetworkPolicyEgressRuleApplyConfiguration {
+func (b *AdminNetworkPolicyEgressRuleApplyConfiguration) WithAction(value apisv1alpha1.AdminNetworkPolicyRuleAction) *AdminNetworkPolicyEgressRuleApplyConfiguration {
 	b.Action = &value
 	return b
 }

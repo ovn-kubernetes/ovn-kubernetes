@@ -19,19 +19,19 @@ limitations under the License.
 package v1alpha1
 
 import (
-	v1alpha1 "sigs.k8s.io/network-policy-api/apis/v1alpha1"
+	apisv1alpha1 "sigs.k8s.io/network-policy-api/apis/v1alpha1"
 )
 
-// BaselineAdminNetworkPolicyEgressRuleApplyConfiguration represents an declarative configuration of the BaselineAdminNetworkPolicyEgressRule type for use
+// BaselineAdminNetworkPolicyEgressRuleApplyConfiguration represents a declarative configuration of the BaselineAdminNetworkPolicyEgressRule type for use
 // with apply.
 type BaselineAdminNetworkPolicyEgressRuleApplyConfiguration struct {
-	Name   *string                                          `json:"name,omitempty"`
-	Action *v1alpha1.BaselineAdminNetworkPolicyRuleAction   `json:"action,omitempty"`
-	To     []AdminNetworkPolicyEgressPeerApplyConfiguration `json:"to,omitempty"`
-	Ports  *[]AdminNetworkPolicyPortApplyConfiguration      `json:"ports,omitempty"`
+	Name   *string                                                  `json:"name,omitempty"`
+	Action *apisv1alpha1.BaselineAdminNetworkPolicyRuleAction       `json:"action,omitempty"`
+	To     []BaselineAdminNetworkPolicyEgressPeerApplyConfiguration `json:"to,omitempty"`
+	Ports  *[]AdminNetworkPolicyPortApplyConfiguration              `json:"ports,omitempty"`
 }
 
-// BaselineAdminNetworkPolicyEgressRuleApplyConfiguration constructs an declarative configuration of the BaselineAdminNetworkPolicyEgressRule type for use with
+// BaselineAdminNetworkPolicyEgressRuleApplyConfiguration constructs a declarative configuration of the BaselineAdminNetworkPolicyEgressRule type for use with
 // apply.
 func BaselineAdminNetworkPolicyEgressRule() *BaselineAdminNetworkPolicyEgressRuleApplyConfiguration {
 	return &BaselineAdminNetworkPolicyEgressRuleApplyConfiguration{}
@@ -48,7 +48,7 @@ func (b *BaselineAdminNetworkPolicyEgressRuleApplyConfiguration) WithName(value 
 // WithAction sets the Action field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Action field is set to the value of the last call.
-func (b *BaselineAdminNetworkPolicyEgressRuleApplyConfiguration) WithAction(value v1alpha1.BaselineAdminNetworkPolicyRuleAction) *BaselineAdminNetworkPolicyEgressRuleApplyConfiguration {
+func (b *BaselineAdminNetworkPolicyEgressRuleApplyConfiguration) WithAction(value apisv1alpha1.BaselineAdminNetworkPolicyRuleAction) *BaselineAdminNetworkPolicyEgressRuleApplyConfiguration {
 	b.Action = &value
 	return b
 }
@@ -56,7 +56,7 @@ func (b *BaselineAdminNetworkPolicyEgressRuleApplyConfiguration) WithAction(valu
 // WithTo adds the given value to the To field in the declarative configuration
 // and returns the receiver, so that objects can be build by chaining "With" function invocations.
 // If called multiple times, values provided by each call will be appended to the To field.
-func (b *BaselineAdminNetworkPolicyEgressRuleApplyConfiguration) WithTo(values ...*AdminNetworkPolicyEgressPeerApplyConfiguration) *BaselineAdminNetworkPolicyEgressRuleApplyConfiguration {
+func (b *BaselineAdminNetworkPolicyEgressRuleApplyConfiguration) WithTo(values ...*BaselineAdminNetworkPolicyEgressPeerApplyConfiguration) *BaselineAdminNetworkPolicyEgressRuleApplyConfiguration {
 	for i := range values {
 		if values[i] == nil {
 			panic("nil value passed to WithTo")
