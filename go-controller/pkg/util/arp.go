@@ -6,13 +6,53 @@ import (
 	"net/netip"
 
 	"github.com/mdlayher/arp"
+
+	"k8s.io/klog/v2"
 )
 
-type GARP struct {
-	// IP to advertise the MAC address
-	IP net.IP
-	// MAC to advertise (optional), default: link mac address
-	MAC *net.HardwareAddr
+// GARP represents a gratuitous ARP request for an IPv4 address.
+type GARP interface {
+	// IP returns the IPv4 address as a net.IP
+	IP() net.IP
+	// IPv4 returns the raw 4-byte IPv4 address
+	IPv4() [net.IPv4len]byte
+	// MAC returns the MAC address to advertise (nil means use interface MAC)
+	MAC() *net.HardwareAddr
+}
+
+// garp is the private implementation of GARP
+type garp struct {
+	ip  [4]byte
+	mac *net.HardwareAddr
+}
+
+// NewGARP creates a new GARP with validation that the IP is IPv4.
+// Returns error if the IP is not a valid IPv4 address.
+// mac can be nil to use the interface's MAC address.
+func NewGARP(ip net.IP, mac *net.HardwareAddr) (GARP, error) {
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return nil, fmt.Errorf("GARP only supports IPv4 addresses, got %s (len=%d bytes)", ip.String(), len(ip))
+	}
+	return &garp{
+		ip:  [4]byte(ip4),
+		mac: mac,
+	}, nil
+}
+
+// IP returns the IPv4 address as a net.IP
+func (g *garp) IP() net.IP {
+	return net.IP(g.ip[:])
+}
+
+// IPv4 returns the raw 4-byte IPv4 address
+func (g *garp) IPv4() [4]byte {
+	return g.ip
+}
+
+// MAC returns the MAC address to advertise
+func (g *garp) MAC() *net.HardwareAddr {
+	return g.mac
 }
 
 // BroadcastGARP send a pair of GARPs with "request" and "reply" operations
@@ -20,15 +60,15 @@ type GARP struct {
 // If "garp.MAC" is not passed the link form "interfaceName" mac will be
 // advertise
 func BroadcastGARP(interfaceName string, garp GARP) error {
-	srcIP := netip.AddrFrom4([4]byte(garp.IP))
-
 	iface, err := net.InterfaceByName(interfaceName)
 	if err != nil {
 		return fmt.Errorf("failed finding interface %s: %v", interfaceName, err)
 	}
 
-	if garp.MAC == nil {
-		garp.MAC = &iface.HardwareAddr
+	srcIP := netip.AddrFrom4(garp.IPv4())
+	mac := garp.MAC()
+	if mac == nil {
+		mac = &iface.HardwareAddr
 	}
 
 	c, err := arp.Dial(iface)
@@ -50,7 +90,7 @@ func BroadcastGARP(interfaceName string, garp GARP) error {
 	for _, op := range []arp.Operation{arp.OperationRequest, arp.OperationReply} {
 		// At at GARP the source and target IP should be the same and point to the
 		// the IP we want to reconcile -> https://wiki.wireshark.org/Gratuitous_ARP
-		p, err := arp.NewPacket(op, *garp.MAC /* srcHw */, srcIP, net.HardwareAddr{0, 0, 0, 0, 0, 0}, srcIP)
+		p, err := arp.NewPacket(op, *mac /* srcHw */, srcIP, net.HardwareAddr{0, 0, 0, 0, 0, 0}, srcIP)
 		if err != nil {
 			return fmt.Errorf("failed creating %q GARP %+v: %w", op, garp, err)
 		}
@@ -60,5 +100,6 @@ func BroadcastGARP(interfaceName string, garp GARP) error {
 		}
 	}
 
+	klog.Infof("BroadcastGARP: completed GARP broadcast for IP %s on interface %s with MAC: %s", garp.IP().String(), interfaceName, mac.String())
 	return nil
 }

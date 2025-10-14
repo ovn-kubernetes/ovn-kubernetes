@@ -196,8 +196,13 @@ func (c *Controller) syncLink(link netlink.Link) error {
 		// For IPv4, use arping to try to update other hosts ARP caches, in case this IP was
 		// previously active on another node
 		if addressWanted.IP.To4() != nil {
-			if err = util.BroadcastGARP(linkName, util.GARP{IP: addressWanted.IP}); err != nil {
-				klog.Errorf("Failed to send a GARP for IP %s over interface %s: %v", addressWanted.IP.String(),
+			garp, err := util.NewGARP(addressWanted.IP, nil)
+			if err != nil {
+				klog.Errorf("Link manager: failed to create GARP for IP %s: %v", addressWanted.IP.String(), err)
+				continue
+			}
+			if err = util.BroadcastGARP(linkName, garp); err != nil {
+				klog.Errorf("Link manager: failed to send GARP for IP %s over interface %s: %v", addressWanted.IP.String(),
 					linkName, err)
 			}
 		}

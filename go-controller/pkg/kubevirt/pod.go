@@ -550,7 +550,10 @@ func (r *DefaultGatewayReconciler) ReconcileIPv4AfterLiveMigration(liveMigration
 		if config.Layer2UsesTransitRouter {
 			gwMAC = util.IPAddrToHWAddr(gwIP)
 		}
-		garp := util.GARP{IP: gwIP, MAC: &gwMAC}
+		garp, err := util.NewGARP(gwIP, &gwMAC)
+		if err != nil {
+			return fmt.Errorf("failed to create GARP for gateway IP %s: %w", gwIP, err)
+		}
 		if err := util.BroadcastGARP(r.interfaceName, garp); err != nil {
 			return err
 		}

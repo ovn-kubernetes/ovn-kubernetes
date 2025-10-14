@@ -57,8 +57,8 @@ const (
 var singleNodePerZoneResult *bool
 
 type IpNeighbor struct {
-	Dst    string `dst`
-	Lladdr string `lladdr`
+	Dst    string `json:"dst"`
+	Lladdr string `json:"lladdr"`
 }
 
 // PodAnnotation describes the assigned network details for a single pod network. (The
