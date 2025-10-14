@@ -560,7 +560,7 @@ func TestSetupSriovInterface(t *testing.T) {
 		t.Fatal("failed to get NameSpace for test")
 	}*/
 
-	netNsDoForward := &mocks.NetNS{}
+	netNsDoForward := &cni_ns_mocks.NetNS{}
 	netNsDoForward.On("Fd", mock.Anything).Return(uintptr(0))
 	var netNsDoError error
 	netNsDoForward.On("Do", mock.AnythingOfType("func(ns.NetNS) error")).Run(func(args mock.Arguments) {

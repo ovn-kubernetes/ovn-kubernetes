@@ -88,3 +88,14 @@ func getGWRouterIP(subnet string, nodeID int) (*net.IPNet, error) {
 	}
 	return nodeGWRouterLRPIPGenerator.GenerateIP(nodeID)
 }
+
+func GetLastIPsFromJoinSubnet(netInfo util.NetInfo) []*net.IPNet {
+	var gwRouterAddrs []*net.IPNet
+	if config.IPv4Mode {
+		gwRouterAddrs = append(gwRouterAddrs, util.GetLastIPOfSubnet(netInfo.JoinSubnetV4(), 1))
+	}
+	if config.IPv6Mode {
+		gwRouterAddrs = append(gwRouterAddrs, util.GetLastIPOfSubnet(netInfo.JoinSubnetV6(), 1))
+	}
+	return gwRouterAddrs
+}

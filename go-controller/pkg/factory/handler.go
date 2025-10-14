@@ -28,6 +28,7 @@ import (
 	egressservicelister "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/listers/egressservice/v1"
 	networkqoslister "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/listers/networkqos/v1alpha1"
 	userdefinednetworklister "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/listers/userdefinednetwork/v1"
+	virtualprivatenetworkconnectlister "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/virtualprivatenetworkconnect/v1/apis/listers/virtualprivatenetworkconnect/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
 )
 
@@ -511,6 +512,8 @@ func newInformerLister(oType reflect.Type, sharedInformer cache.SharedIndexInfor
 		return userdefinednetworklister.NewClusterUserDefinedNetworkLister(sharedInformer.GetIndexer()), nil
 	case NetworkQoSType:
 		return networkqoslister.NewNetworkQoSLister(sharedInformer.GetIndexer()), nil
+	case VirtualPrivateNetworkConnectType:
+		return virtualprivatenetworkconnectlister.NewVirtualPrivateNetworkConnectLister(sharedInformer.GetIndexer()), nil
 	}
 
 	return nil, fmt.Errorf("cannot create lister from type %v", oType)

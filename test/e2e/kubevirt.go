@@ -1333,13 +1333,13 @@ fi
 			}, 30*time.Second, time.Second).Should(Equal("Accepted"))
 		}
 
-		getJoinIPs = func(cudn *udnv1.ClusterUserDefinedNetwork) []string {
+		getCUDNSubnets = func(cudn *udnv1.ClusterUserDefinedNetwork) []string {
 			nad, err := nadClient.NetworkAttachmentDefinitions(namespace).Get(context.TODO(), cudn.Name, metav1.GetOptions{})
 			Expect(err).NotTo(HaveOccurred())
 			var result map[string]interface{}
 			err = json.Unmarshal([]byte(nad.Spec.Config), &result)
 			Expect(err).NotTo(HaveOccurred())
-			return strings.Split(result["joinSubnet"].(string), ",")
+			return strings.Split(result["subnets"].(string), ",")
 		}
 	)
 	BeforeEach(func() {
@@ -1894,10 +1894,7 @@ ip route add %[3]s via %[4]s
 				if isIPv6Supported(fr.ClientSet) && isInterconnectEnabled() {
 					step = by(vmi.Name, fmt.Sprintf("Checking IPv6 gateway before %s %s", td.resource.description, td.test.description))
 
-					nodeRunningVMI, err := fr.ClientSet.CoreV1().Nodes().Get(context.Background(), vmi.Status.NodeName, metav1.GetOptions{})
-					Expect(err).NotTo(HaveOccurred(), step)
-
-					expectedIPv6GatewayPath, err := kubevirt.GenerateGatewayIPv6RouterLLA(nodeRunningVMI, getJoinIPs(cudn))
+					expectedIPv6GatewayPath, err := kubevirt.GenerateGatewayIPv6RouterLLA(getCUDNSubnets(cudn))
 					Expect(err).NotTo(HaveOccurred())
 					Eventually(kubevirt.RetrieveIPv6Gateways).
 						WithArguments(virtClient, vmi).
@@ -1965,10 +1962,7 @@ ip route add %[3]s via %[4]s
 					step = by(vmi.Name, fmt.Sprintf("Checking IPv4 gateway cached mac after %s %s", td.resource.description, td.test.description))
 					Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
 
-					targetNode, err := fr.ClientSet.CoreV1().Nodes().Get(context.Background(), vmi.Status.MigrationState.TargetNode, metav1.GetOptions{})
-					Expect(err).NotTo(HaveOccurred(), step)
-
-					expectedGatewayMAC, err := kubevirt.GenerateGatewayMAC(targetNode, getJoinIPs(cudn))
+					expectedGatewayMAC, err := kubevirt.GenerateGatewayMAC(getCUDNSubnets(cudn))
 					Expect(err).NotTo(HaveOccurred(), step)
 
 					Expect(err).NotTo(HaveOccurred(), step)
@@ -1981,10 +1975,7 @@ ip route add %[3]s via %[4]s
 				if isIPv6Supported(fr.ClientSet) {
 					step = by(vmi.Name, fmt.Sprintf("Checking IPv6 gateway after %s %s", td.resource.description, td.test.description))
 
-					targetNode, err := fr.ClientSet.CoreV1().Nodes().Get(context.Background(), vmi.Status.MigrationState.TargetNode, metav1.GetOptions{})
-					Expect(err).NotTo(HaveOccurred(), step)
-
-					targetNodeIPv6GatewayPath, err := kubevirt.GenerateGatewayIPv6RouterLLA(targetNode, getJoinIPs(cudn))
+					targetNodeIPv6GatewayPath, err := kubevirt.GenerateGatewayIPv6RouterLLA(getCUDNSubnets(cudn))
 					Expect(err).NotTo(HaveOccurred())
 					Eventually(kubevirt.RetrieveIPv6Gateways).
 						WithArguments(virtClient, vmi).

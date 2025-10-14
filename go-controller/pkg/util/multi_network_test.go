@@ -405,13 +405,14 @@ func TestParseNetconf(t *testing.T) {
     }
 `,
 			expectedNetConf: &ovncnitypes.NetConf{
-				Topology:   "layer2",
-				NADName:    "ns1/nad1",
-				MTU:        1400,
-				Role:       "primary",
-				Subnets:    "192.168.200.0/16",
-				NetConf:    cnitypes.NetConf{Name: "tenant-red", Type: "ovn-k8s-cni-overlay"},
-				JoinSubnet: "100.66.0.0/16,fd99::/64",
+				Topology:      "layer2",
+				NADName:       "ns1/nad1",
+				MTU:           1400,
+				Role:          "primary",
+				Subnets:       "192.168.200.0/16",
+				TransitSubnet: config.ClusterManager.V4TransitSubnet,
+				NetConf:       cnitypes.NetConf{Name: "tenant-red", Type: "ovn-k8s-cni-overlay"},
+				JoinSubnet:    "100.66.0.0/16,fd99::/64",
 			},
 		},
 		{
@@ -1418,8 +1419,8 @@ func TestSubnetOverlapCheck(t *testing.T) {
 	config.Gateway.V6MasqueradeSubnet = "fd69::/125"
 	config.Gateway.V4JoinSubnet = "100.64.0.0/16"
 	config.Gateway.V6JoinSubnet = "fd98::/64"
-	config.ClusterManager.V4TransitSwitchSubnet = "100.88.0.0/16"
-	config.ClusterManager.V6TransitSwitchSubnet = "fd97::/64"
+	config.ClusterManager.V4TransitSubnet = "100.88.0.0/16"
+	config.ClusterManager.V6TransitSubnet = "fd97::/64"
 	type testConfig struct {
 		desc                        string
 		inputNetAttachDefConfigSpec string
@@ -1442,7 +1443,7 @@ func TestSubnetOverlapCheck(t *testing.T) {
 			`,
 			expectedError: config.NewSubnetOverlapError(
 				config.ConfigSubnet{SubnetType: config.UserDefinedSubnets, Subnet: MustParseCIDR("100.88.0.0/17")},
-				config.ConfigSubnet{SubnetType: config.ConfigSubnetTransit, Subnet: MustParseCIDR(config.ClusterManager.V4TransitSwitchSubnet)}),
+				config.ConfigSubnet{SubnetType: config.ConfigSubnetTransit, Subnet: MustParseCIDR(config.ClusterManager.V4TransitSubnet)}),
 		},
 		{
 			desc: "return error when IPv4 POD subnet in net-attach-def overlaps other subnets",

@@ -5,10 +5,14 @@ import (
 	"fmt"
 	"net"
 
+	networkattchmentdefclientset "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/dnsnameresolver"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/egressservice"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/endpointslicemirror"
@@ -16,12 +20,14 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/status_manager"
 	udncontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork"
 	udntemplate "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/template"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/virtualprivatenetworkconnect"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/unidling"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/healthcheck"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -55,6 +61,8 @@ type ClusterManager struct {
 	networkManager networkmanager.Controller
 
 	raController *routeadvertisements.Controller
+
+	vpncController *virtualprivatenetworkconnect.Controller
 }
 
 // NewClusterManager creates a new cluster manager to manage the cluster nodes.
@@ -85,7 +93,16 @@ func NewClusterManager(
 
 	cm.networkManager = networkmanager.Default()
 	if config.OVNKubernetesFeature.EnableMultiNetwork {
-		cm.networkManager, err = networkmanager.NewForCluster(cm, wf, ovnClient, recorder)
+		// tunnelKeysAllocator is now only used for NAD tunnel keys allocation, but will be reused
+		// for Connecting UDNs. So we initialize it here and pass it to the networkManager.
+		// The same instance should be initialized only once and passed to all the
+		// users of tunnel-keys.
+		tunnelKeysAllocator, err := initTunnelKeysAllocator(ovnClient.NetworkAttchDefClient)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize tunnel keys allocator: %w", err)
+		}
+
+		cm.networkManager, err = networkmanager.NewForCluster(cm, wf, ovnClient, recorder, tunnelKeysAllocator)
 		if err != nil {
 			return nil, err
 		}
@@ -161,6 +178,10 @@ func NewClusterManager(
 		cm.raController = routeadvertisements.NewController(cm.networkManager.Interface(), wf, ovnClient)
 	}
 
+	if util.IsVirtualPrivateNetworkConnectEnabled() {
+		cm.vpncController = virtualprivatenetworkconnect.NewController(cm.networkManager.Interface(), wf, ovnClient)
+	}
+
 	return cm, nil
 }
 
@@ -226,6 +247,13 @@ func (cm *ClusterManager) Start(ctx context.Context) error {
 		}
 	}
 
+	if cm.vpncController != nil {
+		err := cm.vpncController.Start()
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -255,6 +283,10 @@ func (cm *ClusterManager) Stop() {
 		cm.raController.Stop()
 		cm.raController = nil
 	}
+	if cm.vpncController != nil {
+		cm.vpncController.Stop()
+		cm.vpncController = nil
+	}
 }
 
 func (cm *ClusterManager) NewNetworkController(netInfo util.NetInfo) (networkmanager.NetworkController, error) {
@@ -274,4 +306,40 @@ func (cm *ClusterManager) Reconcile(name string, old, new util.NetInfo) error {
 		cm.raController.ReconcileNetwork(name, old, new)
 	}
 	return nil
+}
+
+// initTunnelKeysAllocator reserves any existing tunnel keys to avoid re-allocation.
+// It will be shared across multiple controllers and should account for different object types.
+// Good news is that we don't care about missing events, because we only need to reserve ids that are already
+// annotated, and no one else can annotate them except ClusterManager.
+func initTunnelKeysAllocator(nadClient networkattchmentdefclientset.Interface) (*id.TunnelKeysAllocator, error) {
+	tunnelKeysAllocator := id.NewTunnelKeyAllocator("TunnelKeys")
+
+	existingNADs, err := nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("").List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list existing NADs: %w", err)
+	}
+	for _, nad := range existingNADs.Items {
+		// reserve tunnel keys that are already allocated to make sure they are
+		if nad.Annotations[types.OvnNetworkTunnelKeysAnnotation] != "" {
+			netconf, err := util.ParseNetConf(&nad)
+			if err != nil {
+				// ignore non-OVN NADs; otherwise log and continue
+				if err.Error() == util.ErrorAttachDefNotOvnManaged.Error() {
+					continue
+				}
+				klog.Warningf("Failed to parse NAD annotation %s: %v", nad.Name, err)
+				continue
+			}
+			networkName := netconf.Name
+			tunnelKeys, err := util.ParseTunnelKeysAnnotation(nad.Annotations[types.OvnNetworkTunnelKeysAnnotation])
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse annotated tunnel keys: %w", err)
+			}
+			if err = tunnelKeysAllocator.ReserveKeys(networkName, tunnelKeys); err != nil {
+				return nil, fmt.Errorf("failed to reserve tunnel keys %v for network %s: %w", tunnelKeys, networkName, err)
+			}
+		}
+	}
+	return tunnelKeysAllocator, nil
 }
