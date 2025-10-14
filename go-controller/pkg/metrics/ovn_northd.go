@@ -1,14 +1,10 @@
 package metrics
 
 import (
-	"context"
 	"strings"
-	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
@@ -114,17 +110,8 @@ var ovnNorthdStopwatchShowMetricsMap = map[string]*stopwatchMetricDetails{
 	"ovnsb_db_run":     {},
 }
 
-func RegisterOvnNorthdMetrics(clientset kubernetes.Interface, k8sNodeName string, stopChan <-chan struct{}) {
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 300*time.Second, true, func(_ context.Context) (bool, error) {
-		return checkPodRunsOnGivenNode(clientset, []string{"ovn-db-pod=true"}, k8sNodeName, true)
-	})
-	if err != nil {
-		klog.Infof("Not registering OVN North Metrics because OVNKube Master Pod was not found running on this "+
-			"node (%s)", k8sNodeName)
-		return
-	}
-	klog.Info("Found OVNKube Master Pod running on this node. Registering OVN North Metrics")
-
+// RegisterOvnNorthdMetrics registers the ovn-northd metrics
+func RegisterOvnNorthdMetrics(ovnRegistry prometheus.Registerer) {
 	// ovn-northd metrics
 	getOvnNorthdVersionInfo()
 	ovnRegistry.MustRegister(prometheus.NewGaugeFunc(
@@ -191,11 +178,9 @@ func RegisterOvnNorthdMetrics(clientset kubernetes.Interface, k8sNodeName string
 
 	// Register the ovn-northd coverage/show metrics with prometheus
 	componentCoverageShowMetricsMap[ovnNorthd] = ovnNorthdCoverageShowMetricsMap
-	registerCoverageShowMetrics(ovnNorthd, types.MetricOvnNamespace, types.MetricOvnSubsystemNorthd)
-	go coverageShowMetricsUpdater(ovnNorthd, stopChan)
+	registerCoverageShowMetrics(ovnRegistry, ovnNorthd, types.MetricOvnNamespace, types.MetricOvnSubsystemNorthd)
 
 	// Register the ovn-northd stopwatch/show metrics with prometheus
 	componentStopwatchShowMetricsMap[ovnNorthd] = ovnNorthdStopwatchShowMetricsMap
-	registerStopwatchShowMetrics(ovnNorthd, types.MetricOvnNamespace, types.MetricOvnSubsystemNorthd)
-	go stopwatchShowMetricsUpdater(ovnNorthd, stopChan)
+	registerStopwatchShowMetrics(ovnRegistry, ovnNorthd, types.MetricOvnNamespace, types.MetricOvnSubsystemNorthd)
 }
