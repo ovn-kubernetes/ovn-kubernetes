@@ -256,14 +256,20 @@ func (sm *StatusManager) onZoneUpdate(newZones sets.Set[string]) {
 		typedManager.ReconcileAll()
 	}
 	deletedZones.Delete(zone_tracker.UnknownZone) // delete the unknown zone, but proceed to cleanup for other known zones if any
-	if len(deletedZones) > 0 && config.OVNKubernetesFeature.EnableAdminNetworkPolicy {
+	if len(deletedZones) > 0 {
 		klog.Infof("Zones that got deleted are %s", deletedZones.UnsortedList())
 		// there are zones that got deleted, this is expensive because we do a list from kapi server directly but
 		// we don't anticipate too many node deletes in an env, it should be a rare operation which is why we are
-		// not maintaining local caches for ANP/BANP
-		// we must try to clean up statuses across all ANPs that were managed by that zone
-		anpZoneDeleteCleanupManager := newANPManager(sm.ovnClient.ANPClient)
-		anpZoneDeleteCleanupManager.cleanupDeletedZoneStatuses(deletedZones)
+		// not maintaining local caches for these resources
+		// we must try to clean up statuses across all objects that were managed by that zone
+		if config.OVNKubernetesFeature.EnableAdminNetworkPolicy {
+			anpZoneDeleteCleanupManager := newANPManager(sm.ovnClient.ANPClient)
+			anpZoneDeleteCleanupManager.cleanupDeletedZoneStatuses(deletedZones)
+		}
+		if config.OVNKubernetesFeature.EnableEgressFirewall {
+			egressFirewallZoneDeleteCleanupManager := newEgressFirewallZoneDeleteCleanupManager(sm.ovnClient.EgressFirewallClient)
+			egressFirewallZoneDeleteCleanupManager.cleanupDeletedZoneStatuses(deletedZones)
+		}
 	}
 }
 
