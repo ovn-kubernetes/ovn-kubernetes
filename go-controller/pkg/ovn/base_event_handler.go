@@ -9,6 +9,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	knet "k8s.io/api/networking/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
@@ -55,7 +56,9 @@ func (h *baseNetworkControllerEventHandler) areResourcesEqual(objType reflect.Ty
 		if !ok {
 			return false, fmt.Errorf("could not cast obj2 of type %T to *knet.NetworkPolicy", obj2)
 		}
-		return reflect.DeepEqual(np1, np2), nil
+		areEqual := apiequality.Semantic.DeepEqual(np1.Spec, np2.Spec) &&
+			np1.Annotations[ovnStatelessNetPolAnnotationName] == np2.Annotations[ovnStatelessNetPolAnnotationName]
+		return areEqual, nil
 
 	case factory.NodeType:
 		node1, ok := obj1.(*corev1.Node)
