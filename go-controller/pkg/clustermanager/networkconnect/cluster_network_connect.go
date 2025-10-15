@@ -54,9 +54,15 @@ func (c *Controller) reconcileClusterNetworkConnect(key string) error {
 	}
 	// STEP3: Generate subnets of size CNC.Spec.ConnectSubnets.NetworkPrefix for each layer3 network
 	//  and /31 subnet for each layer2 networks
-	_, err = c.allocateSubnets(discoveredLayer3Networks, discoveredLayer2Networks, cnc.Spec.ConnectSubnets, cncName)
+	allocatedSubnets, err := c.allocateSubnets(discoveredLayer3Networks, discoveredLayer2Networks, cnc.Spec.ConnectSubnets, cncName)
 	if err != nil {
 		return err
+	}
+	if len(allocatedSubnets) > 0 {
+		err = util.UpdateNetworkConnectSubnetAnnotation(cnc, c.cncClient, allocatedSubnets)
+		if err != nil {
+			return err
+		}
 	}
 	// STEP4: Generate a tunnelID for the connect router corresponding to this CNC
 
