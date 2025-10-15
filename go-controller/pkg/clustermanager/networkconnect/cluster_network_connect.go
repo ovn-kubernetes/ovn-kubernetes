@@ -95,7 +95,7 @@ func (c *Controller) reconcileClusterNetworkConnect(key string) error {
 	//  and /31 or /127 subnets for each layer2 network
 	// We intentionally don't compute or use the networksNeedingAllocation set here because we want to return all
 	// currently allocated subnets for each owner back to the annotation update step.
-	_, allMatchingNetworkKeys, err := c.allocateSubnets(discoveredNetworks, cncState.allocator)
+	allocatedSubnets, allMatchingNetworkKeys, err := c.allocateSubnets(discoveredNetworks, cncState.allocator)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("failed to allocate subnets for CNC %s: %w", cncName, err))
 	}
@@ -111,6 +111,18 @@ func (c *Controller) reconcileClusterNetworkConnect(key string) error {
 			errs = append(errs, fmt.Errorf("failed to release subnets for CNC %s: %w", cncName, err))
 		}
 	}
+	networksNeedingAllocation := allMatchingNetworkKeys.Difference(cncState.selectedNetworks)
+	klog.V(5).Infof("DEBUG: cncState.selectedNetworks=%v, allMatchingNetworkKeys=%v, networksNeedingAllocation=%v, networksNeedingRelease=%v",
+		cncState.selectedNetworks.UnsortedList(), allMatchingNetworkKeys.UnsortedList(), networksNeedingAllocation.UnsortedList(),
+		networksNeedingRelease.UnsortedList())
+	// we need to update the annotation only if there are networks that are newly matched or newly released
+	if len(networksNeedingAllocation) > 0 || len(networksNeedingRelease) > 0 {
+		err = util.UpdateNetworkConnectSubnetAnnotation(cnc, c.cncClient, allocatedSubnets)
+		if err != nil {
+			return fmt.Errorf("failed to update network connect subnet annotation for CNC %s: %w", cncName, err)
+		}
+	}
+
 	// plumbing is now done, update the cache with latest
 	cncState.selectedNADs = allMatchingNADKeys
 	klog.V(5).Infof("Updated selectedNADs cache for CNC %s with %d NADs", cncName, allMatchingNADKeys.Len())
