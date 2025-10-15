@@ -526,12 +526,9 @@ func getIntfName(gatewayIntf string) (string, error) {
 func bridgedGatewayNodeSetup(nodeName, bridgeName, physicalNetworkName string) (string, error) {
 	// IPv6 forwarding is enabled globally
 	if config.IPv4Mode {
-		// we use forward slash as path separator to allow dotted bridgeName e.g. foo.200
-		stdout, stderr, err := util.RunSysctl("-w", fmt.Sprintf("net/ipv4/conf/%s/forwarding=1", bridgeName))
-		// systctl output enforces dot as path separator
-		if err != nil || stdout != fmt.Sprintf("net.ipv4.conf.%s.forwarding = 1", strings.ReplaceAll(bridgeName, ".", "/")) {
-			return "", fmt.Errorf("could not set the correct forwarding value for interface %s: stdout: %v, stderr: %v, err: %v",
-				bridgeName, stdout, stderr, err)
+		err := util.SetforwardingModeForInterface(bridgeName)
+		if err != nil {
+			return "", err
 		}
 	}
 
