@@ -2,6 +2,7 @@ package networkconnect
 
 import (
 	"reflect"
+	"sync"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -43,6 +44,10 @@ type Controller struct {
 	// Controller for managing NetworkAttachmentDefinition events
 	nadController  controllerutil.Controller
 	networkManager networkmanager.Interface
+
+	// holds the hybrid connect subnet allocator for each CNC keyed by CNC name
+	hybridConnectSubnetAllocator     map[string]HybridConnectSubnetAllocator
+	hybridConnectSubnetAllocatorLock sync.RWMutex
 }
 
 func NewController(
@@ -54,13 +59,14 @@ func NewController(
 	nadLister := wf.NADInformer().Lister()
 
 	c := &Controller{
-		wf:              wf,
-		cncClient:       ovnClient.NetworkConnectClient,
-		nadClient:       ovnClient.NetworkAttchDefClient,
-		cncLister:       cncLister,
-		nadLister:       nadLister,
-		namespaceLister: wf.NamespaceInformer().Lister(),
-		networkManager:  networkManager,
+		wf:                           wf,
+		cncClient:                    ovnClient.NetworkConnectClient,
+		nadClient:                    ovnClient.NetworkAttchDefClient,
+		cncLister:                    cncLister,
+		nadLister:                    nadLister,
+		namespaceLister:              wf.NamespaceInformer().Lister(),
+		networkManager:               networkManager,
+		hybridConnectSubnetAllocator: make(map[string]HybridConnectSubnetAllocator),
 	}
 
 	cncCfg := &controllerutil.ControllerConfig[networkconnectv1.ClusterNetworkConnect]{

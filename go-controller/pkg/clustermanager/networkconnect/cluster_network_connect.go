@@ -3,13 +3,16 @@ package networkconnect
 import (
 	"errors"
 	"fmt"
+	"net"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
+	utilnet "k8s.io/utils/net"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	networkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
 	apitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
@@ -51,6 +54,10 @@ func (c *Controller) reconcileClusterNetworkConnect(key string) error {
 	}
 	// STEP3: Generate subnets of size CNC.Spec.ConnectSubnets.NetworkPrefix for each layer3 network
 	//  and /31 subnet for each layer2 networks
+	_, err = c.allocateSubnets(discoveredLayer3Networks, discoveredLayer2Networks, cnc.Spec.ConnectSubnets, cncName)
+	if err != nil {
+		return err
+	}
 	// STEP4: Generate a tunnelID for the connect router corresponding to this CNC
 
 	return nil
@@ -122,4 +129,78 @@ func (c *Controller) discoverSelectedNetworks(cnc *networkconnectv1.ClusterNetwo
 		}
 	}
 	return discoveredLayer3Networks, discoveredLayer2Networks, nil
+}
+
+func computeNetworkOwner(networkType string, networkID int) string {
+	return fmt.Sprintf("%s_%d", networkType, networkID)
+}
+
+func (c *Controller) allocateSubnets(layer3Networks []*util.NetInfo, layer2Networks []*util.NetInfo, connectSubnets []networkconnectv1.ConnectSubnet,
+	cncName string) (map[string][]*net.IPNet, error) {
+	connectSubnetAllocator, err := c.fetchConnectSubnetAllocator(connectSubnets, cncName)
+	if err != nil {
+		return nil, err
+	}
+	allocations := make(map[string][]*net.IPNet)
+	if len(layer3Networks) > 0 {
+		for _, network := range layer3Networks {
+			netInfo := *network
+			networkID := netInfo.GetNetworkID()
+			if networkID == ovntypes.NoNetworkID {
+				return nil, fmt.Errorf("network id is invalid for network %s", netInfo.GetNetworkName())
+			}
+
+			owner := computeNetworkOwner(ovntypes.Layer3Topology, networkID)
+			subnets, err := connectSubnetAllocator.AllocateLayer3Subnet(owner)
+			if err != nil {
+				return nil, err
+			}
+			klog.V(5).Infof("Allocated subnets %v for %s (network: %s)", subnets, owner, netInfo.GetNetworkName())
+			allocations[owner] = subnets
+
+		}
+	}
+	if len(layer2Networks) > 0 {
+		for _, network := range layer2Networks {
+			netInfo := *network
+			networkID := netInfo.GetNetworkID()
+			owner := computeNetworkOwner(ovntypes.Layer2Topology, networkID)
+			subnets, err := connectSubnetAllocator.AllocateLayer2Subnet(owner)
+			if err != nil {
+				return nil, err
+			}
+			klog.V(5).Infof("Allocated subnets %v for %s (network: %s)", subnets, owner, netInfo.GetNetworkName())
+			allocations[owner] = subnets
+		}
+	}
+	return allocations, nil
+}
+
+func (c *Controller) fetchConnectSubnetAllocator(connectSubnets []networkconnectv1.ConnectSubnet, cncName string) (HybridConnectSubnetAllocator, error) {
+	c.hybridConnectSubnetAllocatorLock.Lock()
+	defer c.hybridConnectSubnetAllocatorLock.Unlock()
+	connectSubnetAllocator, ok := c.hybridConnectSubnetAllocator[cncName]
+	if !ok {
+		connectSubnetAllocator = NewHybridConnectSubnetAllocator()
+		c.hybridConnectSubnetAllocator[cncName] = connectSubnetAllocator
+		for _, connectSubnet := range connectSubnets {
+			_, netCIDR, err := net.ParseCIDR(string(connectSubnet.CIDR))
+			if err != nil {
+				return nil, err
+			}
+			if utilnet.IsIPv4CIDR(netCIDR) && config.IPv4Mode {
+				if err := connectSubnetAllocator.AddNetworkRange(netCIDR, int(connectSubnet.NetworkPrefix)); err != nil {
+					return nil, err
+				}
+				klog.V(5).Infof("Added network range %s to cluster network connect %s subnet allocator", netCIDR, cncName)
+			}
+			if utilnet.IsIPv6CIDR(netCIDR) && config.IPv6Mode {
+				if err := connectSubnetAllocator.AddNetworkRange(netCIDR, int(connectSubnet.NetworkPrefix)); err != nil {
+					return nil, err
+				}
+				klog.V(5).Infof("Added network range %s to cluster network connect %s subnet allocator", netCIDR, cncName)
+			}
+		}
+	}
+	return connectSubnetAllocator, nil
 }
