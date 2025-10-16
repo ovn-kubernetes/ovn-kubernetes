@@ -11,6 +11,7 @@ import (
 	utilnet "k8s.io/utils/net"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/ndp"
 )
 
 // Gather all suitable interface address + network mask and offer this as a service.
@@ -203,6 +204,18 @@ func (c *Controller) syncLink(link netlink.Link) error {
 			}
 			if err = util.BroadcastGARP(linkName, garp); err != nil {
 				klog.Errorf("Link manager: failed to send GARP for IP %s over interface %s: %v", addressWanted.IP.String(),
+					linkName, err)
+			}
+		} else if addressWanted.IP.To16() != nil {
+			// For IPv6, send an unsolicited neighbor advertisement to update neighbor caches, in case this IP was
+			// previously active on another node
+			na, err := ndp.NewNeighborAdvertisement(addressWanted.IP, nil)
+			if err != nil {
+				klog.Errorf("Link manager: failed to create NeighborAdvertisement for IP %s: %v", addressWanted.IP.String(), err)
+				continue
+			}
+			if err = ndp.SendUnsolicitedNeighborAdvertisement(linkName, na); err != nil {
+				klog.Errorf("Link manager: failed to send an unsolicited neighbor advertisement for IP %s over interface %s: %v", addressWanted.IP.String(),
 					linkName, err)
 			}
 		}

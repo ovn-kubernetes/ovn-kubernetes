@@ -2958,15 +2958,15 @@ spec:
 	})
 
 	ginkgo.It("[secondary-host-eip] should send address advertisements for EgressIP", func() {
-		if utilnet.IsIPv6(net.ParseIP(egress1Node.nodeIP)) {
-			ginkgo.Skip("GARP test only supports IPv4")
-		}
-
 		if isUserDefinedNetwork(netConfigParams) {
 			ginkgo.Skip("Unsupported for UDNs")
 		}
 
 		egressIPSecondaryHost := "10.10.10.220"
+		isV6Node := utilnet.IsIPv6(net.ParseIP(egress1Node.nodeIP))
+		if isV6Node {
+			egressIPSecondaryHost = "2001:db8:abcd:1234:c001::"
+		}
 
 		// flush any potentially stale MACs
 		_, err := infraprovider.Get().ExecExternalContainerCommand(secondaryTargetExternalContainer,
@@ -2983,9 +2983,19 @@ spec:
 
 		// The following is required for the test purposes since we are sending and unsolicited advertisement
 		// for an address that is not tracked already
-		_, err = infraprovider.Get().ExecExternalContainerCommand(secondaryTargetExternalContainer,
-			[]string{"sysctl", "-w", fmt.Sprintf("net.ipv4.conf.%s.arp_accept=1", inf.InfName)})
-		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "should enable arp_accept")
+		if !isV6Node {
+			_, err = infraprovider.Get().ExecExternalContainerCommand(secondaryTargetExternalContainer,
+				[]string{"sysctl", "-w", fmt.Sprintf("net.ipv4.conf.%s.arp_accept=1", inf.InfName)})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "should enable arp_accept")
+		} else {
+			_, err = infraprovider.Get().ExecExternalContainerCommand(secondaryTargetExternalContainer,
+				[]string{"sysctl", "-w", fmt.Sprintf("net.ipv6.conf.%s.forwarding=1", inf.InfName)})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "should enable forwarding")
+
+			_, err = infraprovider.Get().ExecExternalContainerCommand(secondaryTargetExternalContainer,
+				[]string{"sysctl", "-w", fmt.Sprintf("net.ipv6.conf.%s.accept_untracked_na=1", inf.InfName)})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "should enable accept_untracked_na")
+		}
 
 		podNamespace := f.Namespace
 		labels := map[string]string{"name": f.Namespace.Name}
