@@ -917,14 +917,20 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 			framework.ExpectNoError(err)
 
 			ginkgo.By("Waiting for the endpoints to pop up")
+			var expectedEndpointsNum int
+			if isDualStackCluster(nodes) {
+				expectedEndpointsNum = len(endPoints) * 2
+			} else {
+				expectedEndpointsNum = len(endPoints)
+			}
 
 			err = framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, f.Namespace.Name,
-				etpLocalServiceName, len(endPoints), time.Second, wait.ForeverTestTimeout)
+				etpLocalServiceName, expectedEndpointsNum, time.Second, wait.ForeverTestTimeout)
 			framework.ExpectNoError(err, "failed to validate endpoints for service %s in namespace: %s",
 				etpLocalServiceName, f.Namespace.Name)
 
 			err = framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, f.Namespace.Name,
-				etpClusterServiceName, len(endPoints), time.Second, wait.ForeverTestTimeout)
+				etpClusterServiceName, expectedEndpointsNum, time.Second, wait.ForeverTestTimeout)
 			framework.ExpectNoError(err, "failed to validate endpoints for service %s in namespace: %s",
 				etpClusterServiceName, f.Namespace.Name)
 
@@ -1171,13 +1177,20 @@ spec:
 
 			ginkgo.By("Waiting for the endpoints to pop up")
 
+			var expectedEndpointsNum int
+			if isDualStackCluster(nodes) {
+				expectedEndpointsNum = len(endPoints) * 2
+			} else {
+				expectedEndpointsNum = len(endPoints)
+			}
+
 			err = framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, f.Namespace.Name,
-				etpLocalServiceName, len(endPoints), time.Second, wait.ForeverTestTimeout)
+				etpLocalServiceName, expectedEndpointsNum, time.Second, wait.ForeverTestTimeout)
 			framework.ExpectNoError(err, "failed to validate endpoints for service %s in namespace: %s",
 				etpLocalServiceName, f.Namespace.Name)
 
 			err = framework.WaitForServiceEndpointsNum(context.TODO(), f.ClientSet, f.Namespace.Name,
-				etpClusterServiceName, len(endPoints), time.Second, wait.ForeverTestTimeout)
+				etpClusterServiceName, expectedEndpointsNum, time.Second, wait.ForeverTestTimeout)
 			framework.ExpectNoError(err, "failed to validate endpoints for service %s in namespace: %s",
 				etpClusterServiceName, f.Namespace.Name)
 

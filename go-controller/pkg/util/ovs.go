@@ -362,11 +362,6 @@ func RunOVSAppctlWithTimeout(timeout int, args ...string) (string, string, error
 	return strings.Trim(strings.TrimSpace(stdout.String()), "\""), stderr.String(), err
 }
 
-// RunOVSAppctl runs a command via ovs-appctl.
-func RunOVSAppctl(args ...string) (string, string, error) {
-	return RunOVSAppctlWithTimeout(ovsCommandTimeout, args...)
-}
-
 // RunOVNAppctlWithTimeout runs a command via ovn-appctl. If ovn-appctl is not present, then it
 // falls back to using ovs-appctl.
 func RunOVNAppctlWithTimeout(timeout int, args ...string) (string, string, error) {
@@ -802,7 +797,7 @@ func DetectSCTPSupport() (bool, error) {
 
 // DetectCheckPktLengthSupport checks if OVN supports check packet length action in OVS kernel datapath
 func DetectCheckPktLengthSupport(bridge string) (bool, error) {
-	stdout, stderr, err := RunOVSAppctl("dpif/show-dp-features", bridge)
+	stdout, stderr, err := RunOvsVswitchdAppCtl("dpif/show-dp-features", bridge)
 	if err != nil {
 		klog.Errorf("Failed to query OVS for check packet length support, "+
 			"stdout: %q, stderr: %q, error: %v", stdout, stderr, err)
@@ -824,7 +819,7 @@ func DetectCheckPktLengthSupport(bridge string) (bool, error) {
 func SetStaticFDBEntry(bridge, port string, mac net.HardwareAddr) error {
 	// Assume default VLAN for local port
 	vlan := "0"
-	stdout, stderr, err := RunOVSAppctl("fdb/add", bridge, port, vlan, mac.String())
+	stdout, stderr, err := RunOvsVswitchdAppCtl("fdb/add", bridge, port, vlan, mac.String())
 	if err != nil {
 		return fmt.Errorf("failed to add FDB entry to OVS for LOCAL port, "+
 			"stdout: %q, stderr: %q, error: %v", stdout, stderr, err)

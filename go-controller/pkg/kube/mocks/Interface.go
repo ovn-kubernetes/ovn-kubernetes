@@ -145,24 +145,6 @@ func (_m *Interface) PatchNode(old *corev1.Node, new *corev1.Node) error {
 	return r0
 }
 
-// RemoveTaintFromNode provides a mock function with given fields: nodeName, taint
-func (_m *Interface) RemoveTaintFromNode(nodeName string, taint *corev1.Taint) error {
-	ret := _m.Called(nodeName, taint)
-
-	if len(ret) == 0 {
-		panic("no return value specified for RemoveTaintFromNode")
-	}
-
-	var r0 error
-	if rf, ok := ret.Get(0).(func(string, *corev1.Taint) error); ok {
-		r0 = rf(nodeName, taint)
-	} else {
-		r0 = ret.Error(0)
-	}
-
-	return r0
-}
-
 // SetAnnotationsOnNamespace provides a mock function with given fields: namespaceName, annotations
 func (_m *Interface) SetAnnotationsOnNamespace(namespaceName string, annotations map[string]interface{}) error {
 	ret := _m.Called(namespaceName, annotations)
@@ -246,24 +228,6 @@ func (_m *Interface) SetLabelsOnNode(nodeName string, labels map[string]interfac
 	var r0 error
 	if rf, ok := ret.Get(0).(func(string, map[string]interface{}) error); ok {
 		r0 = rf(nodeName, labels)
-	} else {
-		r0 = ret.Error(0)
-	}
-
-	return r0
-}
-
-// SetTaintOnNode provides a mock function with given fields: nodeName, taint
-func (_m *Interface) SetTaintOnNode(nodeName string, taint *corev1.Taint) error {
-	ret := _m.Called(nodeName, taint)
-
-	if len(ret) == 0 {
-		panic("no return value specified for SetTaintOnNode")
-	}
-
-	var r0 error
-	if rf, ok := ret.Get(0).(func(string, *corev1.Taint) error); ok {
-		r0 = rf(nodeName, taint)
 	} else {
 		r0 = ret.Error(0)
 	}

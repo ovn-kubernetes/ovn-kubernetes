@@ -377,7 +377,6 @@ type KubernetesConfig struct {
 	ServiceCIDRs            []*net.IPNet
 	OVNConfigNamespace      string `gcfg:"ovn-config-namespace"`
 	OVNEmptyLbEvents        bool   `gcfg:"ovn-empty-lb-events"`
-	PodIP                   string `gcfg:"pod-ip"` // UNUSED
 	RawNoHostSubnetNodes    string `gcfg:"no-hostsubnet-nodes"`
 	NoHostSubnetNodes       labels.Selector
 	HostNetworkNamespace    string `gcfg:"host-network-namespace"`
@@ -945,7 +944,7 @@ var CommonFlags = []cli.Flag{
 	// Logfile rotation parameters
 	&cli.IntFlag{
 		Name:        "logfile-maxsize",
-		Usage:       "Maximum size in bytes of the log file before it gets rolled",
+		Usage:       "Maximum size in megabytes of the log file before it gets rolled",
 		Destination: &cliConfig.Logging.LogFileMaxSize,
 		Value:       Logging.LogFileMaxSize,
 	},
