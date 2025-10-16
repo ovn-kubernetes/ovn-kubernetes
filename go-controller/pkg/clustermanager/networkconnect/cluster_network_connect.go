@@ -24,6 +24,9 @@ var (
 )
 
 func (c *Controller) reconcileClusterNetworkConnect(key string) error {
+	c.Lock()
+	defer c.Unlock()
+
 	startTime := time.Now()
 	_, cncName, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
@@ -38,7 +41,10 @@ func (c *Controller) reconcileClusterNetworkConnect(key string) error {
 		return err
 	}
 	if cnc == nil {
-		// TODO: delete the CNC and related resources
+		// CNC is being deleted, clean up the cache
+		delete(c.cncCache, cncName)
+		klog.V(4).Infof("Cleaned up cache for deleted CNC %s", cncName)
+		// TODO: delete other CNC-related resources
 		return nil
 	}
 
@@ -72,6 +78,7 @@ func (c *Controller) reconcileClusterNetworkConnect(key string) error {
 func (c *Controller) discoverSelectedNetworks(cnc *networkconnectv1.ClusterNetworkConnect) ([]*util.NetInfo, []*util.NetInfo, error) {
 	discoveredLayer3Networks := []*util.NetInfo{}
 	discoveredLayer2Networks := []*util.NetInfo{}
+	allMatchingNADKeys := []string{}
 
 	for _, selector := range cnc.Spec.NetworkSelectors {
 		switch selector.NetworkSelectionType {
@@ -99,6 +106,9 @@ func (c *Controller) discoverSelectedNetworks(cnc *networkconnectv1.ClusterNetwo
 				if !network.IsPrimaryNetwork() {
 					continue
 				}
+				// This NAD passed all validation checks, so it's selected by this CNC
+				nadKey := nad.Namespace + "/" + nad.Name
+				allMatchingNADKeys = append(allMatchingNADKeys, nadKey)
 				if network.TopologyType() == ovntypes.Layer3Topology {
 					discoveredLayer3Networks = append(discoveredLayer3Networks, &network)
 				}
@@ -123,6 +133,11 @@ func (c *Controller) discoverSelectedNetworks(cnc *networkconnectv1.ClusterNetwo
 				if namespacePrimaryNetwork.IsDefault() || !namespacePrimaryNetwork.IsPrimaryNetwork() {
 					continue
 				}
+				// Add NAD key for primary UDN (NAD is in the same namespace as the network)
+				// TODO (tssurya): Need to add the NAD name here. Right now we are using the network name as the NAD name.
+				nadKey := ns.Name + "/" + namespacePrimaryNetwork.GetNetworkName()
+				allMatchingNADKeys = append(allMatchingNADKeys, nadKey)
+
 				if namespacePrimaryNetwork.TopologyType() == ovntypes.Layer3Topology {
 					discoveredLayer3Networks = append(discoveredLayer3Networks, &namespacePrimaryNetwork)
 				}
@@ -134,6 +149,11 @@ func (c *Controller) discoverSelectedNetworks(cnc *networkconnectv1.ClusterNetwo
 			return nil, nil, fmt.Errorf("%w: unsupported network selection type %s", errConfig, selector.NetworkSelectionType)
 		}
 	}
+
+	// Update the selectedNADs cache with all matching NADs found during discovery.
+	// This includes NADs from both ClusterUserDefinedNetworks and PrimaryUserDefinedNetworks selectors.
+	c.updateCNCSelectedNADs(cnc, allMatchingNADKeys)
+
 	return discoveredLayer3Networks, discoveredLayer2Networks, nil
 }
 
@@ -183,12 +203,13 @@ func (c *Controller) allocateSubnets(layer3Networks []*util.NetInfo, layer2Netwo
 }
 
 func (c *Controller) fetchConnectSubnetAllocator(connectSubnets []networkconnectv1.ConnectSubnet, cncName string) (HybridConnectSubnetAllocator, error) {
-	c.hybridConnectSubnetAllocatorLock.Lock()
-	defer c.hybridConnectSubnetAllocatorLock.Unlock()
-	connectSubnetAllocator, ok := c.hybridConnectSubnetAllocator[cncName]
-	if !ok {
-		connectSubnetAllocator = NewHybridConnectSubnetAllocator()
-		c.hybridConnectSubnetAllocator[cncName] = connectSubnetAllocator
+	// NOTE: Caller must hold the global lock
+	cncState := c.cncCache[cncName] // Cache entry should exist from updateCNCSelectedNADs
+
+	// Check if allocator is already set up
+	if cncState.allocator == nil {
+		connectSubnetAllocator := NewHybridConnectSubnetAllocator()
+		cncState.allocator = connectSubnetAllocator
 		for _, connectSubnet := range connectSubnets {
 			_, netCIDR, err := net.ParseCIDR(string(connectSubnet.CIDR))
 			if err != nil {
@@ -208,5 +229,30 @@ func (c *Controller) fetchConnectSubnetAllocator(connectSubnets []networkconnect
 			}
 		}
 	}
-	return connectSubnetAllocator, nil
+	return cncState.allocator, nil
+}
+
+// updateCNCSelectedNADs updates the selectedNADs cache for a CNC with the current set of matching NAD keys.
+// This is ONLY called during CNC reconciliation (discoverSelectedNetworks) to populate the cache
+// with the authoritative set of NADs that match the CNC's selectors (both CUDN and PUDN).
+// NOTE: Caller must hold the global lock.
+func (c *Controller) updateCNCSelectedNADs(cnc *networkconnectv1.ClusterNetworkConnect, matchingNADKeys []string) {
+	cncState, cncExists := c.cncCache[cnc.Name]
+
+	// If CNC state doesn't exist yet, create it
+	if !cncExists {
+		cncState = &clusterNetworkConnectState{
+			name:         cnc.Name,
+			selectedNADs: make(map[string]bool),
+		}
+		c.cncCache[cnc.Name] = cncState
+	}
+
+	// Clear the current selected NADs and repopulate with current matches
+	cncState.selectedNADs = make(map[string]bool)
+	for _, nadKey := range matchingNADKeys {
+		cncState.selectedNADs[nadKey] = true
+	}
+
+	klog.V(5).Infof("Updated selectedNADs cache for CNC %s with %d NADs", cnc.Name, len(matchingNADKeys))
 }

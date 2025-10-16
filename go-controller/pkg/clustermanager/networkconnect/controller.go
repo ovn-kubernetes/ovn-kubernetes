@@ -3,10 +3,13 @@ package networkconnect
 import (
 	"reflect"
 	"sync"
+	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	corelisters "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
@@ -17,6 +20,7 @@ import (
 	networkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
 	networkconnectclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/clientset/versioned"
 	networkconnectlisters "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/listers/clusternetworkconnect/v1"
+	apitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
 	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
@@ -28,6 +32,18 @@ var (
 	cudnController = userdefinednetworkv1.SchemeGroupVersion.WithKind("ClusterUserDefinedNetwork")
 	udnController  = userdefinednetworkv1.SchemeGroupVersion.WithKind("UserDefinedNetwork")
 )
+
+// clusterNetworkConnectState is the cache that keeps the state of a single
+// cluster network connect in the cluster with name being unique
+type clusterNetworkConnectState struct {
+	// name of the cluster network connect (unique across cluster)
+	name string
+	// allocator for this CNC's subnet allocation
+	allocator HybridConnectSubnetAllocator
+	// map of NADs currently selected by this CNC's network selectors
+	// {K: NAD namespace/name key; V: true if selected}
+	selectedNADs map[string]bool
+}
 
 type Controller struct {
 	// wf is the watch factory for accessing informers
@@ -45,9 +61,11 @@ type Controller struct {
 	nadController  controllerutil.Controller
 	networkManager networkmanager.Interface
 
-	// holds the hybrid connect subnet allocator for each CNC keyed by CNC name
-	hybridConnectSubnetAllocator     map[string]HybridConnectSubnetAllocator
-	hybridConnectSubnetAllocatorLock sync.RWMutex
+	// Single global lock protecting all controller state
+	// We can improve this later by using a more fine-grained lock based on performance testing
+	sync.RWMutex
+	// holds the state for each CNC keyed by CNC name
+	cncCache map[string]*clusterNetworkConnectState
 }
 
 func NewController(
@@ -59,14 +77,14 @@ func NewController(
 	nadLister := wf.NADInformer().Lister()
 
 	c := &Controller{
-		wf:                           wf,
-		cncClient:                    ovnClient.NetworkConnectClient,
-		nadClient:                    ovnClient.NetworkAttchDefClient,
-		cncLister:                    cncLister,
-		nadLister:                    nadLister,
-		namespaceLister:              wf.NamespaceInformer().Lister(),
-		networkManager:               networkManager,
-		hybridConnectSubnetAllocator: make(map[string]HybridConnectSubnetAllocator),
+		wf:              wf,
+		cncClient:       ovnClient.NetworkConnectClient,
+		nadClient:       ovnClient.NetworkAttchDefClient,
+		cncLister:       cncLister,
+		nadLister:       nadLister,
+		namespaceLister: wf.NamespaceInformer().Lister(),
+		networkManager:  networkManager,
+		cncCache:        make(map[string]*clusterNetworkConnectState),
 	}
 
 	cncCfg := &controllerutil.ControllerConfig[networkconnectv1.ClusterNetworkConnect]{
@@ -181,5 +199,104 @@ func nadNeedsUpdate(oldObj, newObj *nadv1.NetworkAttachmentDefinition) bool {
 }
 
 func (c *Controller) reconcileNAD(key string) error {
+	// Use single global lock following ANP controller pattern
+	c.Lock()
+	defer c.Unlock()
+
+	startTime := time.Now()
+	namespace, name, err := cache.SplitMetaNamespaceKey(key)
+	if err != nil {
+		return err
+	}
+
+	klog.V(5).Infof("reconcileNAD %s", key)
+	defer func() {
+		klog.Infof("reconcileNAD %s took %v", key, time.Since(startTime))
+	}()
+
+	nad, err := c.nadLister.NetworkAttachmentDefinitions(namespace).Get(name)
+	if err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+
+	existingCNCs, err := c.cncLister.List(labels.Everything())
+	if err != nil {
+		return err
+	}
+
+	// Process each CNC to check if this NAD's matching state changed
+	for _, cnc := range existingCNCs {
+		// Check if matching state changed for this CNC
+		if c.nadMatchingStateChanged(nad, cnc, key) {
+			// Only reconcile if there was a change in matching state
+			c.cncController.Reconcile(cnc.Name)
+		}
+	}
 	return nil
+}
+
+// nadMatchingStateChanged checks if the provided NAD's matching state has changed
+// for the given CNC by comparing current selector matching against the cache.
+// Returns true if there was a change in matching state that requires reconciliation.
+// This function is READ-ONLY and does not update the cache.
+// NOTE: Caller must hold the global lock.
+func (c *Controller) nadMatchingStateChanged(nad *nadv1.NetworkAttachmentDefinition, cnc *networkconnectv1.ClusterNetworkConnect, nadKey string) bool {
+	cncState, cncExists := c.cncCache[cnc.Name]
+
+	// If CNC state doesn't exist yet, we don't know the previous state
+	// so we assume no change (cache will be populated during CNC reconciliation)
+	if !cncExists {
+		klog.V(5).Infof("CNC %s state not found in cache, assuming no matching state change for NAD %s", cnc.Name, nadKey)
+		return false
+	}
+
+	// Check if NAD used to be selected (using cache)
+	wasSelected := cncState.selectedNADs[nadKey]
+
+	// Determine if NAD started to be selected now
+	isSelected := false
+	if nad != nil {
+		nadLabels := labels.Set(nad.Labels)
+	selectorLoop: // break out of the loop if we find a match
+		for _, networkSelector := range cnc.Spec.NetworkSelectors {
+			switch networkSelector.NetworkSelectionType {
+			case apitypes.ClusterUserDefinedNetworks:
+				cudnSelector, err := metav1.LabelSelectorAsSelector(&networkSelector.ClusterUserDefinedNetworkSelector.NetworkSelector)
+				if err != nil {
+					klog.Errorf("Failed to create selector for CNC %s: %v", cnc.Name, err)
+					continue
+				}
+				if cudnSelector.Matches(nadLabels) {
+					isSelected = true
+					break selectorLoop
+				}
+			case apitypes.PrimaryUserDefinedNetworks:
+				namespaceSelector, err := metav1.LabelSelectorAsSelector(&networkSelector.PrimaryUserDefinedNetworkSelector.NamespaceSelector)
+				if err != nil {
+					klog.Errorf("Failed to create selector for CNC %s: %v", cnc.Name, err)
+					continue
+				}
+				// TODO(tssurya): wrong logic here, we need to pull the primary NAD from this namespace
+				if namespaceSelector.Matches(nadLabels) {
+					isSelected = true
+					break selectorLoop
+				}
+			default:
+				klog.Errorf("Unsupported network selection type %s for CNC %s", networkSelector.NetworkSelectionType, cnc.Name)
+				continue
+			}
+		}
+	}
+
+	// Log state changes
+	stateChanged := wasSelected != isSelected
+	if stateChanged {
+		if isSelected && !wasSelected {
+			klog.V(4).Infof("NAD %s started to match CNC %s, requeuing...", nadKey, cnc.Name)
+		} else if !isSelected && wasSelected {
+			klog.V(4).Infof("NAD %s used to match CNC %s, requeuing...", nadKey, cnc.Name)
+		}
+	}
+
+	return stateChanged
 }
