@@ -371,26 +371,14 @@ jobs:
       run: |
         docker load --input ${CI_IMAGE_PR_TAR} && rm -rf ${CI_IMAGE_PR_TAR}
 
-    - name: Runner Diagnostics
-      if: always()
-      uses: ./.github/actions/diagnostics
-
     - name: ovn upgrade
       run: |
         export OVN_IMAGE="ovn-daemonset-fedora:pr"
         make -C test upgrade-ovn
 
-    - name: Runner Diagnostics
-      if: always()
-      uses: ./.github/actions/diagnostics
-
     - name: Run E2E shard-conformance
       run: |
         make -C test shard-conformance
-
-    - name: Runner Diagnostics
-      if: always()
-      uses: ./.github/actions/diagnostics
 
     - name: Export kind logs
       if: always()
@@ -504,10 +492,6 @@ jobs:
     - name: Check out code into the Go module directory
       uses: actions/checkout@v4
 
-    - name: Runner Diagnostics
-      if: always()
-      uses: ./.github/actions/diagnostics
-
     - name: Install VRF kernel module
       run: |
         set -x
@@ -608,10 +592,6 @@ jobs:
       if: env.TRAFFIC_FLOW_TESTS != ''
       run: make -C test traffic-flow-tests WHAT="setup"
 
-    - name: Runner Diagnostics
-      if: always()
-      uses: ./.github/actions/diagnostics
-
     - name: Run Tests
       # e2e tests take ~60 minutes normally, 120 should be more than enough
       # set 3 hours for control-plane tests as these might take a while
@@ -662,10 +642,6 @@ jobs:
           make -C test traffic-flow-tests WHAT="run"
         fi
 
-    - name: Runner Diagnostics
-      if: always()
-      uses: ./.github/actions/diagnostics
-
     - name: Export kind logs
       if: always()
       run: |
@@ -712,10 +688,6 @@ jobs:
     - name: Check out code into the Go module directory
       uses: actions/checkout@v4
 
-    - name: Runner Diagnostics
-      if: always()
-      uses: ./.github/actions/diagnostics
-
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
@@ -760,25 +732,13 @@ jobs:
       run: |
         ./contrib/kind-dual-stack-conversion.sh
 
-    - name: Runner Diagnostics
-      if: always()
-      uses: ./.github/actions/diagnostics
-
     - name: Run Dual-Stack Tests
       run: |
         make -C test shard-test WHAT="Networking Granular Checks\|DualStack"
 
-    - name: Runner Diagnostics
-      if: always()
-      uses: ./.github/actions/diagnostics
-
     - name: Run Dual-Stack Control-Plane Tests
       run: |
         make -C test control-plane WHAT="DualStack"
-
-    - name: Runner Diagnostics
-      if: always()
-      uses: ./.github/actions/diagnostics
 
     - name: Export kind logs
       if: always()
