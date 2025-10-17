@@ -383,6 +383,15 @@ func (bnc *BaseNetworkController) getOVNClusterRouterPortToJoinSwitchIfAddrs() (
 	return gwLRPIPs, nil
 }
 
+// getCRToSwitchPortName returns a cluster router name for layer3 topo and transit router name for layer2 topo.
+// In the context of baseNetworkController they are similar.
+func (bnc *BaseNetworkController) getCRToSwitchPortName(switchName string) string {
+	if bnc.TopologyType() == types.Layer2Topology {
+		return types.TransitRouterToSwitchPrefix + switchName
+	}
+	return types.RouterToSwitchPrefix + switchName
+}
+
 // syncNodeClusterRouterPort ensures a node's LS to the cluster router's LRP is created.
 // NOTE: We could have created the router port in createNodeLogicalSwitch() instead of here,
 // but chassis ID is not available at that moment. We need the chassis ID to set the
@@ -412,9 +421,9 @@ func (bnc *BaseNetworkController) syncNodeClusterRouterPort(node *corev1.Node, h
 		}
 	}
 
-	switchName := bnc.GetNetworkScopedName(node.Name)
+	switchName := bnc.GetNetworkScopedSwitchName(node.Name)
 	logicalRouterName := bnc.GetNetworkScopedClusterRouterName()
-	lrpName := types.RouterToSwitchPrefix + switchName
+	lrpName := bnc.getCRToSwitchPortName(switchName)
 	lrpNetworks := []string{}
 	for _, hostSubnet := range hostSubnets {
 		gwIfAddr := bnc.GetNodeGatewayIP(hostSubnet)
@@ -440,6 +449,22 @@ func (bnc *BaseNetworkController) syncNodeClusterRouterPort(node *corev1.Node, h
 		ChassisName: chassisID,
 		Priority:    1,
 	}
+	_, isNetIPv6 := bnc.IPMode()
+	if bnc.TopologyType() == types.Layer2Topology &&
+		isNetIPv6 &&
+		util.IsNetworkSegmentationSupportEnabled() &&
+		bnc.IsPrimaryNetwork() {
+		logicalRouterPort.Ipv6RaConfigs = map[string]string{
+			"address_mode":      "dhcpv6_stateful",
+			"send_periodic":     "true",
+			"max_interval":      "900", // 15 minutes
+			"min_interval":      "300", // 5 minutes
+			"router_preference": "LOW", // The static gateway configured by CNI is MEDIUM, so make this LOW so it has less effect for pods
+		}
+		if bnc.MTU() > 0 {
+			logicalRouterPort.Ipv6RaConfigs["mtu"] = fmt.Sprintf("%d", bnc.MTU())
+		}
+	}
 
 	err = libovsdbops.CreateOrUpdateLogicalRouterPort(bnc.nbClient, &logicalRouter, &logicalRouterPort,
 		&gatewayChassis, &logicalRouterPort.MAC, &logicalRouterPort.Networks, &logicalRouterPort.Options)
@@ -450,7 +475,8 @@ func (bnc *BaseNetworkController) syncNodeClusterRouterPort(node *corev1.Node, h
 
 	if util.IsNetworkSegmentationSupportEnabled() &&
 		bnc.IsPrimaryNetwork() && !config.OVNKubernetesFeature.EnableInterconnect &&
-		bnc.TopologyType() == types.Layer3Topology {
+		(bnc.TopologyType() == types.Layer3Topology ||
+			bnc.TopologyType() == types.Layer2Topology) {
 		// since in nonIC the ovn_cluster_router is distributed, we must specify the gatewayPort for the
 		// conditional SNATs to signal OVN which gatewayport should be chosen if there are mutiple distributed
 		// gateway ports. Now that the LRP is created, let's update the NATs to reflect that.
