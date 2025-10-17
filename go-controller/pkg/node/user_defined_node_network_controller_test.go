@@ -12,6 +12,7 @@ import (
 	"github.com/containernetworking/plugins/pkg/ns"
 	"github.com/containernetworking/plugins/pkg/testutils"
 	nadfake "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/mock"
 	"github.com/vishvananda/netlink"
 
@@ -57,6 +58,9 @@ var _ = Describe("UserDefinedNodeNetworkController", func() {
 		config.Gateway.V4MasqueradeSubnet = "169.254.0.0/17"
 		// Set up a fake vsctl command mock interface
 		fexec = ovntest.NewFakeExec()
+		// Setup mock filesystem for ovs-vswitchd.pid file needed by ovs-appctl commands
+		Expect(util.AppFs.MkdirAll("/var/run/openvswitch/", 0o755)).To(Succeed())
+		Expect(afero.WriteFile(util.AppFs, "/var/run/openvswitch/ovs-vswitchd.pid", []byte("1234"), 0o644)).To(Succeed())
 		Expect(util.SetExec(fexec)).To(Succeed())
 		ovntest.AnnotateNADWithNetworkID(networkID, nad)
 		ovntest.AddLink("breth0")
@@ -185,6 +189,9 @@ var _ = Describe("UserDefinedNodeNetworkController: UserDefinedPrimaryNetwork Ga
 		// Set up a fake vsctl command mock interface
 		kubeMock = kubemocks.Interface{}
 		fexec = ovntest.NewFakeExec()
+		// Setup mock filesystem for ovs-vswitchd.pid file needed by ovs-appctl commands
+		Expect(util.AppFs.MkdirAll("/var/run/openvswitch/", 0o755)).To(Succeed())
+		Expect(afero.WriteFile(util.AppFs, "/var/run/openvswitch/ovs-vswitchd.pid", []byte("1234"), 0o644)).To(Succeed())
 		err := util.SetExec(fexec)
 		Expect(err).NotTo(HaveOccurred())
 		// Set up a fake k8sMgmt interface
