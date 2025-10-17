@@ -2,10 +2,13 @@ package ovn
 
 import (
 	"fmt"
+	"net/netip"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+
+	"go4.org/netipx"
 
 	corev1 "k8s.io/api/core/v1"
 	knet "k8s.io/api/networking/v1"
@@ -167,35 +170,80 @@ func (gp *gressPolicy) allIPsMatch() string {
 	}
 }
 
-func (gp *gressPolicy) getMatchFromIPBlock(lportMatch, l4Match string) []string {
-	var direction string
+func (gp *gressPolicy) getMatchFromIPBlock(lportMatch, l4Match string) ([]string, error) {
+	direction := "dst"
 	if gp.policyType == knet.PolicyTypeIngress {
 		direction = "src"
-	} else {
-		direction = "dst"
 	}
-	var matchStrings []string
-	var matchStr, ipVersion string
-	for _, ipBlock := range gp.ipBlocks {
+
+	// Preserve 1:1 index mapping with gp.ipBlocks to keep IpBlockIndexKey stable
+	matchStrings := make([]string, len(gp.ipBlocks))
+
+	for i, ipBlock := range gp.ipBlocks {
+		cidrPrefix, err := netip.ParsePrefix(ipBlock.CIDR)
+		if err != nil {
+			return nil, fmt.Errorf("invalid ipBlock.CIDR %q: %v", ipBlock.CIDR, err)
+		}
+
+		var exceptSet *netipx.IPSet
+		if len(ipBlock.Except) > 0 {
+			var exceptBuilder netipx.IPSetBuilder
+			for _, ex := range ipBlock.Except {
+				exPrefix, err := netip.ParsePrefix(ex)
+				if err != nil {
+					return nil, fmt.Errorf("invalid ipBlock.except %q: %v", ex, err)
+				}
+				exceptBuilder.AddPrefix(exPrefix)
+			}
+			es, err := exceptBuilder.IPSet()
+			if err != nil {
+				return nil, fmt.Errorf("failed to build IPSet from except %v: %v", ipBlock.Except, err)
+			}
+			exceptSet = es
+		}
+
+		var blockBuilder netipx.IPSetBuilder
+		blockBuilder.AddPrefix(cidrPrefix)
+		cidrSet, err := blockBuilder.IPSet()
+		if err != nil {
+			return nil, fmt.Errorf("failed to build IPSet from CIDR %s: %v", ipBlock.CIDR, err)
+		}
+
+		var finalSet *netipx.IPSet
+		if exceptSet != nil {
+			var diffBuilder netipx.IPSetBuilder
+			diffBuilder.AddSet(cidrSet)
+			diffBuilder.RemoveSet(exceptSet)
+			finalSet, err = diffBuilder.IPSet()
+			if err != nil {
+				return nil, fmt.Errorf("failed to build IPSet from diff %s: %v", ipBlock.CIDR, err)
+			}
+		} else {
+			finalSet = cidrSet
+		}
+
+		prefixes := finalSet.Prefixes()
+		if len(prefixes) == 0 {
+			// Leave matchStrings[i] empty; caller will skip ACL creation but retain index
+			continue
+		}
+		parts := make([]string, len(prefixes))
+		for i, p := range prefixes {
+			parts[i] = p.String()
+		}
+		ipVer := "ip4"
 		if utilnet.IsIPv6CIDRString(ipBlock.CIDR) {
-			ipVersion = "ip6"
-		} else {
-			ipVersion = "ip4"
+			ipVer = "ip6"
 		}
-		if len(ipBlock.Except) == 0 {
-			matchStr = fmt.Sprintf("%s.%s == %s", ipVersion, direction, ipBlock.CIDR)
-		} else {
-			matchStr = fmt.Sprintf("%s.%s == %s && %s.%s != {%s}", ipVersion, direction, ipBlock.CIDR,
-				ipVersion, direction, strings.Join(ipBlock.Except, ", "))
-		}
+		match := fmt.Sprintf("%s.%s == {%s}", ipVer, direction, strings.Join(parts, ", "))
 		if l4Match == libovsdbutil.UnspecifiedL4Match {
-			matchStr = fmt.Sprintf("%s && %s", matchStr, lportMatch)
+			match = fmt.Sprintf("%s && %s", match, lportMatch)
 		} else {
-			matchStr = fmt.Sprintf("%s && %s && %s", matchStr, l4Match, lportMatch)
+			match = fmt.Sprintf("%s && %s && %s", match, l4Match, lportMatch)
 		}
-		matchStrings = append(matchStrings, matchStr)
+		matchStrings[i] = match
 	}
-	return matchStrings
+	return matchStrings, nil
 }
 
 // addNamespaceAddressSet adds a namespace address set to the gress policy.
@@ -285,8 +333,14 @@ func (gp *gressPolicy) buildLocalPodACLs(portGroupName string, aclLogging *libov
 	for protocol, l4Match := range libovsdbutil.GetL4MatchesFromNetworkPolicyPorts(gp.portPolicies) {
 		if len(gp.ipBlocks) > 0 {
 			// Add ACL allow rule for IPBlock CIDR
-			ipBlockMatches := gp.getMatchFromIPBlock(lportMatch, l4Match)
+			ipBlockMatches, err := gp.getMatchFromIPBlock(lportMatch, l4Match)
+			if err != nil {
+				continue
+			}
 			for ipBlockIdx, ipBlockMatch := range ipBlockMatches {
+				if ipBlockMatch == "" {
+					continue
+				}
 				aclIDs := gp.getNetpolACLDbIDs(ipBlockIdx, protocol)
 				acl := libovsdbutil.BuildACLWithDefaultTier(aclIDs, types.DefaultAllowPriority, ipBlockMatch, action,
 					aclLogging, gp.aclPipeline)
