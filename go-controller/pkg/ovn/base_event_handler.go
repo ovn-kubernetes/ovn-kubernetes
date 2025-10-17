@@ -109,7 +109,10 @@ func (h *baseNetworkControllerEventHandler) areResourcesEqual(objType reflect.Ty
 		if !ok {
 			return false, fmt.Errorf("could not cast obj2 of type %T to *multinetworkpolicyapi.MultiNetworkPolicy", obj2)
 		}
-		return reflect.DeepEqual(mnp1, mnp2), nil
+		areEqual := apiequality.Semantic.DeepEqual(mnp1.Spec, mnp2.Spec) &&
+			mnp1.Annotations[ovnStatelessNetPolAnnotationName] == mnp2.Annotations[ovnStatelessNetPolAnnotationName] &&
+			mnp1.Annotations[PolicyForAnnotation] == mnp2.Annotations[PolicyForAnnotation]
+		return areEqual, nil
 
 	case factory.IPAMClaimsType:
 		ipamClaim1, ok := obj1.(*ipamclaimsapi.IPAMClaim)
