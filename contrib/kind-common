@@ -34,7 +34,7 @@ if_error_exit() {
 
 set_common_default_params() {
   KIND_IMAGE=${KIND_IMAGE:-kindest/node}
-  K8S_VERSION=${K8S_VERSION:-v1.33.1}
+  K8S_VERSION=${K8S_VERSION:-v1.34.1}
   KIND_SETTLE_DURATION=${KIND_SETTLE_DURATION:-30}
 }
 

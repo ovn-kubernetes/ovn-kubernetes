@@ -22,7 +22,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 )
 
-// PortRangeApplyConfiguration represents an declarative configuration of the PortRange type for use
+// PortRangeApplyConfiguration represents a declarative configuration of the PortRange type for use
 // with apply.
 type PortRangeApplyConfiguration struct {
 	Protocol *v1.Protocol `json:"protocol,omitempty"`
@@ -30,7 +30,7 @@ type PortRangeApplyConfiguration struct {
 	End      *int32       `json:"end,omitempty"`
 }
 
-// PortRangeApplyConfiguration constructs an declarative configuration of the PortRange type for use with
+// PortRangeApplyConfiguration constructs a declarative configuration of the PortRange type for use with
 // apply.
 func PortRange() *PortRangeApplyConfiguration {
 	return &PortRangeApplyConfiguration{}

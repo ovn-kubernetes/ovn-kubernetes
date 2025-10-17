@@ -19,17 +19,17 @@ limitations under the License.
 package v1alpha1
 
 import (
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
-// AdminNetworkPolicySubjectApplyConfiguration represents an declarative configuration of the AdminNetworkPolicySubject type for use
+// AdminNetworkPolicySubjectApplyConfiguration represents a declarative configuration of the AdminNetworkPolicySubject type for use
 // with apply.
 type AdminNetworkPolicySubjectApplyConfiguration struct {
-	Namespaces *v1.LabelSelector                `json:"namespaces,omitempty"`
-	Pods       *NamespacedPodApplyConfiguration `json:"pods,omitempty"`
+	Namespaces *v1.LabelSelectorApplyConfiguration `json:"namespaces,omitempty"`
+	Pods       *NamespacedPodApplyConfiguration    `json:"pods,omitempty"`
 }
 
-// AdminNetworkPolicySubjectApplyConfiguration constructs an declarative configuration of the AdminNetworkPolicySubject type for use with
+// AdminNetworkPolicySubjectApplyConfiguration constructs a declarative configuration of the AdminNetworkPolicySubject type for use with
 // apply.
 func AdminNetworkPolicySubject() *AdminNetworkPolicySubjectApplyConfiguration {
 	return &AdminNetworkPolicySubjectApplyConfiguration{}
@@ -38,8 +38,8 @@ func AdminNetworkPolicySubject() *AdminNetworkPolicySubjectApplyConfiguration {
 // WithNamespaces sets the Namespaces field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Namespaces field is set to the value of the last call.
-func (b *AdminNetworkPolicySubjectApplyConfiguration) WithNamespaces(value v1.LabelSelector) *AdminNetworkPolicySubjectApplyConfiguration {
-	b.Namespaces = &value
+func (b *AdminNetworkPolicySubjectApplyConfiguration) WithNamespaces(value *v1.LabelSelectorApplyConfiguration) *AdminNetworkPolicySubjectApplyConfiguration {
+	b.Namespaces = value
 	return b
 }
 
