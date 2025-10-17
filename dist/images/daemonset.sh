@@ -79,8 +79,8 @@ OVN_V4_JOIN_SUBNET=""
 OVN_V6_JOIN_SUBNET=""
 OVN_V4_MASQUERADE_SUBNET=""
 OVN_V6_MASQUERADE_SUBNET=""
-OVN_V4_TRANSIT_SWITCH_SUBNET=""
-OVN_V6_TRANSIT_SWITCH_SUBNET=""
+OVN_V4_TRANSIT_SUBNET=""
+OVN_V6_TRANSIT_SUBNET=""
 OVN_NETFLOW_TARGETS=""
 OVN_SFLOW_TARGETS=""
 OVN_IPFIX_TARGETS=""
@@ -302,11 +302,11 @@ while [ "$1" != "" ]; do
   --v6-masquerade-subnet)
     OVN_V6_MASQUERADE_SUBNET=$VALUE
     ;;
-  --v4-transit-switch-subnet)
-    OVN_V4_TRANSIT_SWITCH_SUBNET=$VALUE
+  --v4-transit-subnet)
+    OVN_V4_TRANSIT_SUBNET=$VALUE
     ;; 
-  --v6-transit-switch-subnet)
-    OVN_V6_TRANSIT_SWITCH_SUBNET=$VALUE
+  --v6-transit-subnet)
+    OVN_V6_TRANSIT_SUBNET=$VALUE
     ;; 
   --netflow-targets)
     OVN_NETFLOW_TARGETS=$VALUE
@@ -536,10 +536,10 @@ ovn_v4_masquerade_subnet=${OVN_V4_MASQUERADE_SUBNET}
 echo "ovn_v4_masquerade_subnet: ${ovn_v4_masquerade_subnet}"
 ovn_v6_masquerade_subnet=${OVN_V6_MASQUERADE_SUBNET}
 echo "ovn_v6_masquerade_subnet: ${ovn_v6_masquerade_subnet}"
-ovn_v4_transit_switch_subnet=${OVN_V4_TRANSIT_SWITCH_SUBNET}
-echo "ovn_v4_transit_switch_subnet: ${ovn_v4_transit_switch_subnet}"
-ovn_v6_transit_switch_subnet=${OVN_V6_TRANSIT_SWITCH_SUBNET}
-echo "ovn_v6_transit_switch_subnet: ${ovn_v6_transit_switch_subnet}"
+ovn_v4_transit_subnet=${OVN_V4_TRANSIT_SUBNET}
+echo "ovn_v4_transit_subnet: ${ovn_v4_transit_subnet}"
+ovn_v6_transit_subnet=${OVN_V6_TRANSIT_SUBNET}
+echo "ovn_v6_transit_subnet: ${ovn_v6_transit_subnet}"
 ovn_netflow_targets=${OVN_NETFLOW_TARGETS}
 echo "ovn_netflow_targets: ${ovn_netflow_targets}"
 ovn_sflow_targets=${OVN_SFLOW_TARGETS}
@@ -842,8 +842,8 @@ ovn_image=${ovnkube_image} \
   ovn_enable_multi_external_gateway=${ovn_enable_multi_external_gateway} \
   ovn_enable_ovnkube_identity=${ovn_enable_ovnkube_identity} \
   ovn_network_qos_enable=${ovn_network_qos_enable} \
-  ovn_v4_transit_switch_subnet=${ovn_v4_transit_switch_subnet} \
-  ovn_v6_transit_switch_subnet=${ovn_v6_transit_switch_subnet} \
+  ovn_v4_transit_subnet=${ovn_v4_transit_subnet} \
+  ovn_v6_transit_subnet=${ovn_v6_transit_subnet} \
   ovn_enable_persistent_ips=${ovn_enable_persistent_ips} \
   ovn_enable_dnsnameresolver=${ovn_enable_dnsnameresolver} \
   ovn_observ_enable=${ovn_observ_enable} \
