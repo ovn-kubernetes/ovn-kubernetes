@@ -869,6 +869,11 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 	})
 
 	ginkgo.Context("Error scenarios", func() {
+		ginkgo.BeforeEach(func() {
+			initialNBDB = []libovsdbtest.TestData{}
+			initialSBDB = []libovsdbtest.TestData{}
+		})
+
 		ginkgo.It("Missing annotations and error scenarios for local node", func() {
 			app.Action = func(ctx *cli.Context) error {
 				dbSetup := libovsdbtest.TestSetup{
@@ -903,22 +908,17 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				err = zoneICHandler.AddLocalZoneNode(&testNode4)
-				gomega.Expect(err).To(gomega.HaveOccurred(), "failed to get node id for node - node4")
+				gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("failed to get node id for node - node4")))
 
 				// Set the node id
 				testNode4.Annotations = map[string]string{ovnNodeIDAnnotaton: "5"}
 				err = zoneICHandler.AddLocalZoneNode(&testNode4)
-				gomega.Expect(err).To(gomega.HaveOccurred(), "failed to get the node transit switch port ips for node node4")
+				gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("failed to get the node transit switch port ips for node node4")))
 
 				// Set the node transit switch port ips
 				testNode4.Annotations[ovnTransitSwitchPortAddrAnnotation] = "{\"ipv4\":\"100.88.0.5/16\"}"
 				err = zoneICHandler.AddLocalZoneNode(&testNode4)
-				gomega.Expect(err).To(gomega.HaveOccurred(), "failed to get the network id for the network default on node node4")
-
-				// Set the network id for default network
-				testNode4.Annotations[ovnNodeNetworkIDsAnnotation] = "{\"default\":\"0\"}"
-				err = zoneICHandler.AddLocalZoneNode(&testNode4)
-				gomega.Expect(err).To(gomega.HaveOccurred(), "failed to create/update cluster router ovn_cluster_router to add transit switch port rtots-node4 for the node node4")
+				gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("failed to create/update cluster router ovn_cluster_router to add transit switch port rtots-node4 for the node node4")))
 
 				// Create the cluster router
 				r := newOVNClusterRouter(types.DefaultNetworkName)
@@ -926,7 +926,7 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				err = zoneICHandler.AddLocalZoneNode(&testNode4)
-				gomega.Expect(err).To(gomega.HaveOccurred(), "failed to parse node node4 subnets annotation")
+				gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("failed to parse node node4 subnets annotation")))
 
 				// Set node subnet annotation
 				testNode4.Annotations[ovnNodeSubnetsAnnotation] = "{\"default\":[\"10.244.5.0/24\"]}"
@@ -989,41 +989,22 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				err = zoneICHandler.AddRemoteZoneNode(&testNode4)
-				gomega.Expect(err).To(gomega.HaveOccurred(), "failed to get node id for node - node4")
+				gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("failed to get node id for node - node4")))
 
 				// Set the node id
 				testNode4.Annotations[ovnNodeIDAnnotaton] = "5"
 				err = zoneICHandler.AddRemoteZoneNode(&testNode4)
-				gomega.Expect(err).To(gomega.HaveOccurred(), "failed to parse node chassis-id for node")
-
-				// Set the node-chassis-id
-				testNode4.Annotations[ovnNodeChassisIDAnnotatin] = "cb9ec8fa-b409-4ef3-9f42-d9283c47aac9"
-				err = zoneICHandler.AddRemoteZoneNode(&testNode4)
-				gomega.Expect(err).To(gomega.HaveOccurred(), "failed to get the node transit switch port ips for node node4")
-
-				// Set the node transit switch port ips
-				testNode4.Annotations[ovnTransitSwitchPortAddrAnnotation] = "{\"ipv4\":\"100.88.0.5/16\"}"
-				err = zoneICHandler.AddRemoteZoneNode(&testNode4)
-				gomega.Expect(err).To(gomega.HaveOccurred(), "failed to get the network id for the network default on node node4")
-
-				// Set the network id for default network
-				testNode4.Annotations[ovnNodeNetworkIDsAnnotation] = "{\"default\":\"0\"}"
-				err = zoneICHandler.AddLocalZoneNode(&testNode4)
-				gomega.Expect(err).To(gomega.HaveOccurred(), "failed to update chassis node4 for remote port tstor-node4")
-
-				// Create remote chassis
-				node4Chassis := &sbdb.Chassis{Name: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac9", Hostname: "node4", UUID: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac9"}
-				encap := &sbdb.Encap{ChassisName: node4Chassis.Name, IP: "10.0.0.12"}
-				err = libovsdbops.CreateOrUpdateChassis(libovsdbOvnSBClient, node4Chassis, encap)
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-				err = zoneICHandler.AddRemoteZoneNode(&testNode4)
-				gomega.Expect(err).To(gomega.HaveOccurred(), "failed to parse node node4 subnets annotation")
+				gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("failed to parse node node4 subnets annotation")))
 
 				// Set node subnet annotation
 				testNode4.Annotations[ovnNodeSubnetsAnnotation] = "{\"default\":[\"10.244.5.0/24\"]}"
 				err = zoneICHandler.AddRemoteZoneNode(&testNode4)
-				gomega.Expect(err).To(gomega.HaveOccurred(), "unable to create static routes")
+				gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("failed to get the node transit switch port IP addresses")))
+
+				// Set the node transit switch port ips
+				testNode4.Annotations[ovnTransitSwitchPortAddrAnnotation] = "{\"ipv4\":\"100.88.0.5/16\"}"
+				err = zoneICHandler.AddRemoteZoneNode(&testNode4)
+				gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("failed to create static route ops: unable to get logical router static routes with predicate on router ovn_cluster_router")))
 
 				// Create the cluster router
 				r := newOVNClusterRouter(types.DefaultNetworkName)
