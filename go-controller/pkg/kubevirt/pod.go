@@ -544,7 +544,10 @@ func (r *DefaultGatewayReconciler) ReconcileIPv4AfterLiveMigration(liveMigration
 		if gwIP == nil {
 			continue
 		}
-		garp := util.GARP{IP: gwIP, MAC: &lrpMAC}
+		garp, err := util.NewGARP(gwIP, &lrpMAC)
+		if err != nil {
+			return fmt.Errorf("failed to create GARP for gateway IP %s: %w", gwIP, err)
+		}
 		if err := util.BroadcastGARP(r.interfaceName, garp); err != nil {
 			return err
 		}
