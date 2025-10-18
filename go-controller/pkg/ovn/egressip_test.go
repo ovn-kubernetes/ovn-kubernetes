@@ -58,6 +58,7 @@ const (
 	v6GatewayIP     = "ae70::1"
 	v6Node1Subnet   = "ae70::66/64"
 	v6Node2Subnet   = "be70::66/64"
+	v6Node3Subnet   = "ce70::66/64"
 	v4ClusterSubnet = "10.128.0.0/14"
 	v4Node1Subnet   = "10.128.0.0/16"
 	v4Node2Subnet   = "10.90.0.0/16"
@@ -13880,6 +13881,247 @@ var _ = ginkgo.Describe("OVN master EgressIP Operations cluster default network"
 	})
 
 	ginkgo.Context("Sync", func() {
+		ginkgo.DescribeTable("remove invalid next hop from LRP", func(isV6 bool) {
+			// scenario is OVNDB is config'd with pod is local and EIP egress is local and remote.
+			// The EgressIPs assigned Nodes is however different from the OVNDB config therefore we expect Sync to
+			// reconcile and update the local pod LRP (attached to cluster router) next hops to reflect the current state.
+			// removes invalid next hop from LRP. Controller may have missed the signal that the EIP moved to another node.
+			app.Action = func(*cli.Context) error {
+				config.OVNKubernetesFeature.EnableInterconnect = true
+				if isV6 {
+					config.IPv6Mode = true
+				} else {
+					config.IPv4Mode = true
+				}
+				getSupportedByIPFamily := func(inputForV4, inputForV6 string) string { // helper to return the current supported single stack IP family (IP/CIDR/IP family name)
+					if isV6 {
+						return inputForV6
+					}
+					return inputForV4
+				}
+				getSupportedIPFamilyForDBID := func() egressIPFamilyValue {
+					if isV6 {
+						return IPFamilyValueV6
+					}
+					return IPFamilyValueV4
+				}
+				getSupportedOVNIPFamily := func() string {
+					if isV6 {
+						return "6"
+					}
+					return "4"
+				}
+				type nodeInfo struct { // help construct a Node obj / ovn config for each test node
+					nodeName     string
+					primaryINFIP string
+					podSubnet    string
+					transitSWIP  string
+				}
+				// node 1 is index 0, node 2 is index 1, node 3 is index 2 in the slice
+				nodes := []nodeInfo{{node1Name, getSupportedByIPFamily("192.168.126.12", "fc00:f853:ccd:e793::2"),
+					getSupportedByIPFamily(v4Node1Subnet, v6Node1Subnet), getSupportedByIPFamily("100.88.0.2", "fd97::2")},
+					{node2Name, getSupportedByIPFamily("192.168.126.13", "fc00:f853:ccd:e793::3"),
+						getSupportedByIPFamily(v4Node2Subnet, v6Node2Subnet), getSupportedByIPFamily("100.88.0.3", "fd97::3")},
+					{node3Name, getSupportedByIPFamily("192.168.126.14", "fc00:f853:ccd:e793::4"),
+						getSupportedByIPFamily(v4Node3Subnet, v6Node3Subnet), getSupportedByIPFamily("100.88.0.4", "fd97::4")}}
+				mask := "/24" // use same mask for all IP family's since it doesn't matter for this test
+
+				generateNodeObj := func(n nodeInfo) corev1.Node {
+					// used to populate annotations - supports only a single IP family
+					addValueToIPFamilyKey := func(value string) string {
+						key := "ipv4"
+						if isV6 {
+							key = "ipv6"
+						}
+						return fmt.Sprintf("\"%s\":\"%s\"", key, value)
+					}
+					nodeAnnotations := map[string]string{
+						"k8s.ovn.org/l3-gateway-config":               fmt.Sprintf(`{"default":{"mode":"shared","mac-address":"7e:57:f8:f0:3c:49", "ip-address":"%s", "next-hop":"192.168.126.1"}}`, n.primaryINFIP+mask),
+						"k8s.ovn.org/node-primary-ifaddr":             fmt.Sprintf("{%s}", addValueToIPFamilyKey(n.primaryINFIP+mask)),
+						"k8s.ovn.org/node-subnets":                    fmt.Sprintf("{\"default\":[\"%s\"]}", n.podSubnet),
+						"k8s.ovn.org/node-transit-switch-port-ifaddr": fmt.Sprintf("{%s}", addValueToIPFamilyKey(n.transitSWIP+mask)),
+						"k8s.ovn.org/zone-name":                       n.nodeName,
+						util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", n.primaryINFIP+mask),
+					}
+					return getNodeObj(n.nodeName, nodeAnnotations, map[string]string{})
+				}
+				node1, node2, node3 := generateNodeObj(nodes[0]), generateNodeObj(nodes[1]), generateNodeObj(nodes[2])
+				egressNamespace := newNamespace(eipNamespace)
+				podIP := getSupportedByIPFamily(podV4IP, podV6IP)
+				egressPod := newPodWithLabels(eipNamespace, podName, node1.Name, podIP, egressPodLabel)
+				eipIP1 := getSupportedByIPFamily("192.168.126.200", "fc00:f853:ccd:e793::200")
+				eipIP2 := getSupportedByIPFamily("192.168.126.201", "fc00:f853:ccd:e793::201")
+				ginkgo.By("creating EgressIP that is assigned to node 2 and node 3")
+				eIPObj := egressipv1.EgressIP{
+					ObjectMeta: newEgressIPMeta(egressIPName),
+					Spec: egressipv1.EgressIPSpec{
+						EgressIPs: []string{
+							eipIP1,
+							eipIP2,
+						},
+						PodSelector: metav1.LabelSelector{
+							MatchLabels: egressPodLabel,
+						},
+						NamespaceSelector: metav1.LabelSelector{
+							MatchLabels: map[string]string{
+								"name": egressNamespace.Name,
+							},
+						},
+					},
+					Status: egressipv1.EgressIPStatus{
+						Items: []egressipv1.EgressIPStatusItem{
+							// node 1 was assigned eipIP1 however, it is no longer assigned to this node. The OVN DBs will start
+							// with node 1 configured with IP eipIP1 and upon sync, the OVN DB must update to reflect
+							// the state defined here in the EgressIPStatus
+							{
+								Node:     node2.Name, // remote
+								EgressIP: eipIP1,
+							},
+							{
+								Node:     node3.Name, // remote
+								EgressIP: eipIP2,
+							},
+						},
+					},
+				}
+				ginkgo.By("start OVN DBs with egress nodes set to node 1 & 2 (EIP status states node 2 & 3)")
+				getNodeLogicalPortName := func(nodeName string) *string { n := "k8s-" + nodeName; return &n }
+				// node 1 is a stale next hop. EIP IP moved to node 3.
+				node1GWToJoinIP := getSupportedByIPFamily(nodeLogicalRouterIPv4[0], nodeLogicalRouterIPv6[0])
+				staleHops := []string{node1GWToJoinIP, nodes[1].transitSWIP} // nodes[1] is node 2
+
+				fakeOvn.startWithDBSetup(
+					libovsdbtest.TestSetup{
+						NBData: []libovsdbtest.TestData{
+							&nbdb.NBGlobal{UUID: "nbglobal-UUID", Name: node1.Name},
+							// LRPs to support EIP assigned to local and a remote node
+							getReRoutePolicy(podIP, getSupportedOVNIPFamily(), "stale-reroute-UUID",
+								staleHops, getEgressIPLRPReRouteDbIDs(eIPObj.Name, egressPod.Namespace, egressPod.Name,
+									getSupportedIPFamilyForDBID(), types.DefaultNetworkName, DefaultNetworkControllerName).GetExternalIDs()),
+							// stale NAT to support EIP that was previously assigned to the local node but OVN DB config persists
+							&nbdb.NAT{
+								UUID:       "stale-nat-UUID",
+								LogicalIP:  podIP,
+								ExternalIP: eipIP1,
+								ExternalIDs: getEgressIPNATDbIDs(egressIPName, egressPod.Namespace, egressPod.Name, getSupportedIPFamilyForDBID(),
+									DefaultNetworkControllerName).GetExternalIDs(),
+								Type:        nbdb.NATTypeSNAT,
+								LogicalPort: getNodeLogicalPortName(node1.Name),
+								Options: map[string]string{
+									"stateless": "false",
+								},
+							},
+							&nbdb.LogicalRouterPort{
+								UUID:     types.GWRouterToJoinSwitchPrefix + types.GWRouterPrefix + node1.Name + "-UUID",
+								Name:     types.GWRouterToJoinSwitchPrefix + types.GWRouterPrefix + node1.Name,
+								Networks: []string{node1GWToJoinIP + mask},
+							},
+							&nbdb.LogicalRouter{
+								Name:     types.OVNClusterRouter,
+								UUID:     types.OVNClusterRouter + "-UUID",
+								Policies: []string{"stale-reroute-UUID"},
+							},
+							&nbdb.LogicalRouter{
+								Name:  types.GWRouterPrefix + node1.Name,
+								UUID:  types.GWRouterPrefix + node1.Name + "-UUID",
+								Ports: []string{types.GWRouterToJoinSwitchPrefix + types.GWRouterPrefix + node1.Name + "-UUID"},
+								Nat:   []string{"stale-nat-UUID"},
+							},
+							&nbdb.LogicalSwitchPort{
+								UUID: "k8s-" + node1.Name + "-UUID",
+								Name: "k8s-" + node1.Name,
+								Addresses: []string{"fe:1a:b2:3f:0e:fb " + util.GetNodeManagementIfAddr(
+									ovntest.MustParseIPNet(nodes[0].podSubnet)).IP.String()},
+							},
+							&nbdb.LogicalSwitch{
+								UUID:  node1.Name + "-UUID",
+								Name:  node1.Name,
+								Ports: []string{"k8s-" + node1.Name + "-UUID"},
+							},
+						},
+					},
+					&corev1.NamespaceList{
+						Items: []corev1.Namespace{*egressNamespace},
+					},
+					&corev1.PodList{
+						Items: []corev1.Pod{*egressPod},
+					},
+					&corev1.NodeList{
+						Items: []corev1.Node{node1, node2, node3},
+					},
+					&egressipv1.EgressIPList{
+						Items: []egressipv1.EgressIP{eIPObj},
+					},
+				)
+				i, podIPv4Net, _ := net.ParseCIDR(podIP + mask)
+				podIPv4Net.IP = i
+				fakeOvn.controller.logicalPortCache.add(egressPod, "", types.DefaultNetworkName, "",
+					nil, []*net.IPNet{podIPv4Net})
+
+				err := fakeOvn.controller.WatchEgressIPNamespaces()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = fakeOvn.controller.WatchEgressIPPods()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = fakeOvn.controller.WatchEgressIP()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				ginkgo.By("ensuring removal of invalid local external gateway next hop")
+				egressIPServedPodsASv4, egressIPServedPodsASv6 := buildEgressIPServedPodsAddressSets([]string{podIP},
+					types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName)
+				egressIPServedPodsAS := egressIPServedPodsASv4
+				if isV6 {
+					egressIPServedPodsAS = egressIPServedPodsASv6
+				}
+				validNextHops := []string{nodes[1].transitSWIP, nodes[2].transitSWIP} // node 2 and 3
+				expectedDatabaseState := []libovsdbtest.TestData{
+					&nbdb.NBGlobal{UUID: "nbglobal-UUID", Name: node1.Name},
+					// LRPs to support EIP assigned to a remote node
+					// valid LRP for IPv4/IPv6. IPv4 Egress Node is local, IPv6 is remote
+					getReRoutePolicy(podIP, getSupportedOVNIPFamily(), "valid-reroute-UUID",
+						validNextHops, getEgressIPLRPReRouteDbIDs(eIPObj.Name, egressPod.Namespace, egressPod.Name,
+							getSupportedIPFamilyForDBID(), types.DefaultNetworkName, fakeOvn.controller.eIPC.controllerName).GetExternalIDs()),
+					&nbdb.LogicalRouter{
+						Name:     types.OVNClusterRouter,
+						UUID:     types.OVNClusterRouter + "-UUID",
+						Policies: []string{"valid-reroute-UUID"},
+					},
+					&nbdb.LogicalRouterPort{
+						UUID:     types.GWRouterToJoinSwitchPrefix + types.GWRouterPrefix + node1.Name + "-UUID",
+						Name:     types.GWRouterToJoinSwitchPrefix + types.GWRouterPrefix + node1.Name,
+						Networks: []string{node1GWToJoinIP + mask},
+					},
+					&nbdb.LogicalRouter{
+						Name:  types.GWRouterPrefix + node1.Name,
+						UUID:  types.GWRouterPrefix + node1.Name + "-UUID",
+						Ports: []string{types.GWRouterToJoinSwitchPrefix + types.GWRouterPrefix + node1.Name + "-UUID"},
+					},
+					&nbdb.LogicalSwitchPort{
+						UUID: "k8s-" + node1.Name + "-UUID",
+						Name: "k8s-" + node1.Name,
+						Addresses: []string{"fe:1a:b2:3f:0e:fb " + util.GetNodeManagementIfAddr(
+							ovntest.MustParseIPNet(nodes[0].podSubnet)).IP.String()},
+					},
+					&nbdb.LogicalSwitch{
+						UUID:  node1.Name + "-UUID",
+						Name:  node1.Name,
+						Ports: []string{"k8s-" + node1.Name + "-UUID"},
+					},
+					egressIPServedPodsAS,
+				}
+				// if IPv6 enabled and IPv4 is disabled, we still create the IPv4 served pods AS
+				if isV6 {
+					expectedDatabaseState = append(expectedDatabaseState, egressIPServedPodsASv4)
+				}
+				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+				ginkgo.By("ensure config is consistent")
+				gomega.Consistently(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))
+				return nil
+			}
+
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		}, ginkgo.Entry("IPv4", false), ginkgo.Entry("IPv6", true))
+
 		ginkgo.It("removes config for previously selected pods on a deleted Node", func() {
 			// node 1 is local zone and egress Node.
 			// pod was on node 2 but it is deleted. Node 2 previously was also an egress Node.
