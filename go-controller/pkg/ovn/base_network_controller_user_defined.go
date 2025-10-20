@@ -402,6 +402,22 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod 
 	}
 	txOkCallBack()
 
+	// For Layer 3 interconnect with multi-VTEP, ensure transit switch port exists for this pod's encap IP
+	if isLocalPod && bsnc.isLayer3Interconnect() {
+		klog.V(5).Infof("Ensuring transit switch port for local pod %s/%s in network %s", pod.Namespace, pod.Name, bsnc.GetNetworkName())
+		if err = bsnc.zoneICHandler.EnsureLocalNodeTransitSwitchPortForPod(pod, podAnnotation); err != nil {
+			return fmt.Errorf("failed to ensure transit switch port for local pod %s/%s: %w", pod.Namespace, pod.Name, err)
+		}
+	}
+
+	// For Layer 3 interconnect with multi-VTEP, ensure remote transit switch port exists for this pod's encap IP
+	if !isLocalPod && bsnc.isLayer3Interconnect() {
+		klog.V(5).Infof("Ensuring transit switch port for remote pod %s/%s in network %s", pod.Namespace, pod.Name, bsnc.GetNetworkName())
+		if err = bsnc.zoneICHandler.EnsureRemoteNodeTransitSwitchPortForPod(pod, podAnnotation); err != nil {
+			return fmt.Errorf("failed to ensure remote transit switch port for pod %s/%s: %w", pod.Namespace, pod.Name, err)
+		}
+	}
+
 	// set remote layer 2 LSP's Port Binding's encap field according to encap ip in the pod annotation
 	if !isLocalPod && bsnc.isLayer2Interconnect() && podAnnotation.EncapIP != "" {
 		nodeObj, err := bsnc.watchFactory.GetNode(pod.Spec.NodeName)
@@ -468,8 +484,19 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 			continue
 		}
 
+		networkAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, nadKey)
+		if err != nil {
+			return err
+		}
 		// pod has a network managed by this controller
 		klog.Infof("Deleting pod: %s for network %s, NAD key: %s", podDesc, bsnc.GetNetworkName(), nadKey)
+		if !isLocalPod && bsnc.isLayer3Interconnect() {
+			err = bsnc.zoneICHandler.DeleteRemotePod(pod, networkAnnotation)
+			if err != nil {
+				klog.Errorf("Failed to delete remote pod %s/%s for network %s: %v", pod.Namespace, pod.Name, bsnc.GetNetworkName(), err)
+				// ignore error and continue with the delete flow
+			}
+		}
 
 		// handle remote pod clean up but only do this one time
 		if !hasLogicalPort && !alreadyProcessed {

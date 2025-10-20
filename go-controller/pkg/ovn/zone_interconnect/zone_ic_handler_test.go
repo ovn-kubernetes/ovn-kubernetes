@@ -1,9 +1,12 @@
 package zoneinterconnect
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"sort"
+	"strconv"
+	"strings"
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 	"github.com/onsi/ginkgo/v2"
@@ -12,11 +15,13 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/sbdb"
@@ -35,8 +40,8 @@ const (
 	// ovnNodeZoneNameAnnotation is the node annotation name to store the node zone name.
 	ovnNodeZoneNameAnnotation = "k8s.ovn.org/zone-name"
 
-	// ovnNodeChassisIDAnnotatin is the node annotation name to store the node chassis id.
-	ovnNodeChassisIDAnnotatin = "k8s.ovn.org/node-chassis-id"
+	// ovnNodeChassisIDAnnotation is the node annotation name to store the node chassis id.
+	ovnNodeChassisIDAnnotation = "k8s.ovn.org/node-chassis-id"
 
 	// ovnNodeSubnetsAnnotation is the node annotation name to store the node subnets.
 	ovnNodeSubnetsAnnotation = "k8s.ovn.org/node-subnets"
@@ -63,6 +68,12 @@ func createTransitSwitchPortBindings(sbClient libovsdbclient.Client, netName str
 	var ports []string
 	for _, node := range nodes {
 		ports = append(ports, getNetworkScopedName(netName, types.TransitSwitchToRouterPrefix+node.Name))
+		// for multi-VTEP nodes, create additional transit switch ports for each encap IP
+		encapIPs, _ := util.ParseNodeEncapIPsAnnotation(node)
+		numEncapIPs := len(encapIPs)
+		for i := 1; i < numEncapIPs; i++ {
+			ports = append(ports, getNetworkScopedName(netName, types.TransitSwitchToRouterPrefix+node.Name+"_encap"+strconv.Itoa(i)))
+		}
 	}
 
 	return libovsdbtest.CreateTransitSwitchPortBindings(sbClient, netName, ports...)
@@ -246,6 +257,104 @@ func checkInterconnectResources(zone string, netName string, nbClient libovsdbcl
 	return nil
 }
 
+func CheckNorthboundResources(nbClient libovsdbclient.Client, transitSwitchName string, routerName string, expectedTransitSwitchPorts []string, expectedClusterRouterPorts []string, expectedStaticRoutes []string) error {
+
+	// check if the transit switch ports are as expected
+	s := nbdb.LogicalSwitch{
+		Name: transitSwitchName,
+	}
+	ts, err := libovsdbops.GetLogicalSwitch(nbClient, &s)
+	if err != nil {
+		return fmt.Errorf("could not find transit switch %s in the nb db: %v", s.Name, err)
+	}
+
+	if len(ts.Ports) != len(expectedTransitSwitchPorts) {
+		return fmt.Errorf("transit switch %s has %d logical ports, expected %d ports",
+			transitSwitchName, len(ts.Ports), len(expectedTransitSwitchPorts))
+	}
+
+	actualTransitSwitchPorts := []string{}
+	for _, p := range ts.Ports {
+		lp := nbdb.LogicalSwitchPort{
+			UUID: p,
+		}
+		lsp, err := libovsdbops.GetLogicalSwitchPort(nbClient, &lp)
+		if err != nil {
+			return fmt.Errorf("could not find logical switch port with uuid %s in the nb db: %v", p, err)
+		}
+		actualTransitSwitchPorts = append(actualTransitSwitchPorts, lsp.Name+":"+lsp.Type)
+	}
+	gomega.Expect(actualTransitSwitchPorts).To(gomega.ConsistOf(expectedTransitSwitchPorts))
+
+	// check if the cluster router ports are as expected
+	r := nbdb.LogicalRouter{
+		Name: routerName,
+	}
+	clusterRouter, err := libovsdbops.GetLogicalRouter(nbClient, &r)
+	if err != nil {
+		return fmt.Errorf("could not find cluster router %s in the nb db: %v", r.Name, err)
+	}
+
+	if len(clusterRouter.Ports) != len(expectedClusterRouterPorts) {
+		return fmt.Errorf("router %s has %d logical router ports, expected %d ports",
+			routerName, len(clusterRouter.Ports), len(expectedClusterRouterPorts))
+	}
+
+	actualClusterRouterPorts := []string{}
+	for _, p := range clusterRouter.Ports {
+		lp := nbdb.LogicalRouterPort{
+			UUID: p,
+		}
+		lrp, err := libovsdbops.GetLogicalRouterPort(nbClient, &lp)
+		if err != nil {
+			return fmt.Errorf("could not find logical router port with uuid %s in the nb db: %v", p, err)
+		}
+		actualClusterRouterPorts = append(actualClusterRouterPorts, lrp.Name)
+	}
+	gomega.Expect(actualClusterRouterPorts).To(gomega.ConsistOf(expectedClusterRouterPorts))
+
+	// check if the static routes are as expected
+	actualStaticRoutes := []string{}
+	for _, srUUID := range clusterRouter.StaticRoutes {
+		sr, err := libovsdbops.FindLogicalRouterStaticRoutesWithPredicate(nbClient, func(item *nbdb.LogicalRouterStaticRoute) bool {
+			return item.UUID == srUUID
+		})
+		if err != nil {
+			return fmt.Errorf("could not find static route with uuid %s in the nb db: %v", srUUID, err)
+		}
+		actualStaticRoutes = append(actualStaticRoutes, sr[0].IPPrefix+"-"+sr[0].Nexthop)
+	}
+	gomega.Expect(actualStaticRoutes).To(gomega.ConsistOf(expectedStaticRoutes))
+	return nil
+}
+
+func CheckSouthboundResources(sbClient libovsdbclient.Client, expectedPortBindings []string) error {
+
+	var actualPortBindings []string
+	var sbPortBindings []*sbdb.PortBinding
+	gomega.Expect(sbClient.List(context.Background(), &sbPortBindings)).To(gomega.Succeed())
+	for _, pb := range sbPortBindings {
+		encapIP := ""
+		if pb.Encap != nil {
+			encapPredicate := func(item *sbdb.Encap) bool {
+				return item.UUID == *pb.Encap
+			}
+			encaps, err := libovsdbops.FindEncapWithPredicate(sbClient, encapPredicate)
+			if err != nil {
+				return fmt.Errorf("failed to find encap ip %s on for port_binding %s: %w", encapIP, pb.LogicalPort, err)
+			}
+			if len(encaps) > 0 {
+				encapIP = encaps[0].IP
+			}
+		}
+
+		actualPortBindings = append(actualPortBindings, fmt.Sprintf("%s:%s", pb.LogicalPort, encapIP))
+	}
+	gomega.Expect(actualPortBindings).To(gomega.ConsistOf(expectedPortBindings))
+
+	return nil
+}
+
 var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 	var (
 		app                *cli.App
@@ -260,6 +369,11 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 		initialSBDB        []libovsdbtest.TestData
 		testNodesRouteInfo map[string]map[string]string
 		nodeRouteInfoMap   map[string]map[string]map[string]string
+
+		testPod1 corev1.Pod
+		testPod2 corev1.Pod
+		testPod3 corev1.Pod
+		testPod4 corev1.Pod
 	)
 
 	const (
@@ -298,7 +412,7 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "node1",
 					Annotations: map[string]string{
-						ovnNodeChassisIDAnnotatin:          "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6",
+						ovnNodeChassisIDAnnotation:         "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6",
 						ovnNodeZoneNameAnnotation:          "global",
 						ovnNodeIDAnnotaton:                 "2",
 						ovnNodeSubnetsAnnotation:           "{\"default\":[\"10.244.2.0/24\"]}",
@@ -315,7 +429,7 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "node2",
 					Annotations: map[string]string{
-						ovnNodeChassisIDAnnotatin:          "cb9ec8fa-b409-4ef3-9f42-d9283c47aac7",
+						ovnNodeChassisIDAnnotation:         "cb9ec8fa-b409-4ef3-9f42-d9283c47aac7",
 						ovnNodeZoneNameAnnotation:          "global",
 						ovnNodeIDAnnotaton:                 "3",
 						ovnNodeSubnetsAnnotation:           "{\"default\":[\"10.244.3.0/24\"]}",
@@ -332,7 +446,7 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "node3",
 					Annotations: map[string]string{
-						ovnNodeChassisIDAnnotatin:          "cb9ec8fa-b409-4ef3-9f42-d9283c47aac8",
+						ovnNodeChassisIDAnnotation:         "cb9ec8fa-b409-4ef3-9f42-d9283c47aac8",
 						ovnNodeZoneNameAnnotation:          "foo",
 						ovnNodeIDAnnotaton:                 "4",
 						ovnNodeSubnetsAnnotation:           "{\"default\":[\"10.244.4.0/24\"]}",
@@ -377,7 +491,8 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				err = createTransitSwitchPortBindings(libovsdbOvnSBClient, types.DefaultNetworkName, &testNode1, &testNode2, &testNode3)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				zoneICHandler := NewZoneInterconnectHandler(&util.DefaultNetInfo{}, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
+				zoneICHandler, err := NewZoneInterconnectHandler(&util.DefaultNetInfo{}, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = zoneICHandler.createOrUpdateTransitSwitch(0)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = invokeICHandlerAddNodeFunction("global", zoneICHandler, &testNode1, &testNode2, &testNode3)
@@ -420,7 +535,8 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				err = createTransitSwitchPortBindings(libovsdbOvnSBClient, types.DefaultNetworkName, &testNode1, &testNode2, &testNode3)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				zoneICHandler := NewZoneInterconnectHandler(&util.DefaultNetInfo{}, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
+				zoneICHandler, err := NewZoneInterconnectHandler(&util.DefaultNetInfo{}, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = zoneICHandler.createOrUpdateTransitSwitch(0)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = invokeICHandlerAddNodeFunction("global", zoneICHandler, &testNode1, &testNode2, &testNode3)
@@ -502,7 +618,8 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				err = createTransitSwitchPortBindings(libovsdbOvnSBClient, types.DefaultNetworkName, &testNode1, &testNode2, &testNode3)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				zoneICHandler := NewZoneInterconnectHandler(&util.DefaultNetInfo{}, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
+				zoneICHandler, err := NewZoneInterconnectHandler(&util.DefaultNetInfo{}, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = zoneICHandler.createOrUpdateTransitSwitch(0)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = invokeICHandlerAddNodeFunction("global", zoneICHandler, &testNode1, &testNode2, &testNode3)
@@ -554,7 +671,8 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				err = createTransitSwitchPortBindings(libovsdbOvnSBClient, types.DefaultNetworkName, &testNode1, &testNode2, &testNode3)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				zoneICHandler := NewZoneInterconnectHandler(&util.DefaultNetInfo{}, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
+				zoneICHandler, err := NewZoneInterconnectHandler(&util.DefaultNetInfo{}, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = zoneICHandler.createOrUpdateTransitSwitch(0)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = invokeICHandlerAddNodeFunction("global", zoneICHandler, &testNode1, &testNode2, &testNode3)
@@ -591,7 +709,7 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "node1",
 					Annotations: map[string]string{
-						ovnNodeChassisIDAnnotatin:          "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6",
+						ovnNodeChassisIDAnnotation:         "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6",
 						ovnNodeZoneNameAnnotation:          "global",
 						ovnNodeIDAnnotaton:                 "2",
 						ovnNodeSubnetsAnnotation:           "{\"blue\":[\"10.244.2.0/24\"]}",
@@ -608,7 +726,7 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "node2",
 					Annotations: map[string]string{
-						ovnNodeChassisIDAnnotatin:          "cb9ec8fa-b409-4ef3-9f42-d9283c47aac7",
+						ovnNodeChassisIDAnnotation:         "cb9ec8fa-b409-4ef3-9f42-d9283c47aac7",
 						ovnNodeZoneNameAnnotation:          "global",
 						ovnNodeIDAnnotaton:                 "3",
 						ovnNodeSubnetsAnnotation:           "{\"blue\":[\"10.244.3.0/24\"]}",
@@ -625,7 +743,7 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "node3",
 					Annotations: map[string]string{
-						ovnNodeChassisIDAnnotatin:          "cb9ec8fa-b409-4ef3-9f42-d9283c47aac8",
+						ovnNodeChassisIDAnnotation:         "cb9ec8fa-b409-4ef3-9f42-d9283c47aac8",
 						ovnNodeZoneNameAnnotation:          "foo",
 						ovnNodeIDAnnotaton:                 "4",
 						ovnNodeSubnetsAnnotation:           "{\"blue\":[\"10.244.4.0/24\"]}",
@@ -670,7 +788,8 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 
 				netInfo, err := util.NewNetInfo(&ovncnitypes.NetConf{NetConf: cnitypes.NetConf{Name: "blue"}, Topology: types.Layer3Topology})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				zoneICHandler := NewZoneInterconnectHandler(netInfo, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
+				zoneICHandler, err := NewZoneInterconnectHandler(netInfo, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = zoneICHandler.createOrUpdateTransitSwitch(1)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = invokeICHandlerAddNodeFunction("global", zoneICHandler, &testNode1, &testNode2, &testNode3)
@@ -710,7 +829,8 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 
 				netInfo, err := util.NewNetInfo(&ovncnitypes.NetConf{NetConf: cnitypes.NetConf{Name: "blue"}, Topology: types.Layer3Topology})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				zoneICHandler := NewZoneInterconnectHandler(netInfo, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
+				zoneICHandler, err := NewZoneInterconnectHandler(netInfo, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = zoneICHandler.createOrUpdateTransitSwitch(1)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = invokeICHandlerAddNodeFunction("global", zoneICHandler, &testNode1, &testNode2, &testNode3)
@@ -746,7 +866,7 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "node1",
 					Annotations: map[string]string{
-						ovnNodeChassisIDAnnotatin:          "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6",
+						ovnNodeChassisIDAnnotation:         "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6",
 						ovnNodeZoneNameAnnotation:          "global",
 						ovnNodeIDAnnotaton:                 "2",
 						ovnNodeSubnetsAnnotation:           "{\"red\":[\"10.244.2.0/24\"], \"blue\":[\"11.244.2.0/24\"]}",
@@ -763,7 +883,7 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "node2",
 					Annotations: map[string]string{
-						ovnNodeChassisIDAnnotatin:          "cb9ec8fa-b409-4ef3-9f42-d9283c47aac7",
+						ovnNodeChassisIDAnnotation:         "cb9ec8fa-b409-4ef3-9f42-d9283c47aac7",
 						ovnNodeZoneNameAnnotation:          "foo",
 						ovnNodeIDAnnotaton:                 "3",
 						ovnNodeSubnetsAnnotation:           "{\"red\":[\"10.244.3.0/24\"], \"blue\":[\"11.244.3.0/24\"]}",
@@ -780,7 +900,7 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "node3",
 					Annotations: map[string]string{
-						ovnNodeChassisIDAnnotatin:          "cb9ec8fa-b409-4ef3-9f42-d9283c47aac8",
+						ovnNodeChassisIDAnnotation:         "cb9ec8fa-b409-4ef3-9f42-d9283c47aac8",
 						ovnNodeZoneNameAnnotation:          "foo",
 						ovnNodeIDAnnotaton:                 "4",
 						ovnNodeSubnetsAnnotation:           "{\"red\":[\"10.244.4.0/24\"], \"blue\":[\"11.244.4.0/24\"]}",
@@ -836,7 +956,8 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 
 					netInfo, err := util.NewNetInfo(&ovncnitypes.NetConf{NetConf: cnitypes.NetConf{Name: netName}, Topology: types.Layer3Topology})
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
-					zoneICHandler[netName] = NewZoneInterconnectHandler(netInfo, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
+					zoneICHandler[netName], err = NewZoneInterconnectHandler(netInfo, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					err = zoneICHandler[netName].createOrUpdateTransitSwitch(1)
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					err = invokeICHandlerAddNodeFunction("global", zoneICHandler[netName], &testNode1, &testNode2, &testNode3)
@@ -901,7 +1022,8 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				err = createTransitSwitchPortBindings(libovsdbOvnSBClient, types.DefaultNetworkName, &testNode1, &testNode2, &testNode3)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				zoneICHandler := NewZoneInterconnectHandler(&util.DefaultNetInfo{}, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
+				zoneICHandler, err := NewZoneInterconnectHandler(&util.DefaultNetInfo{}, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				gomega.Expect(zoneICHandler).NotTo(gomega.BeNil())
 
 				err = zoneICHandler.createOrUpdateTransitSwitch(0)
@@ -982,7 +1104,8 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				err = createTransitSwitchPortBindings(libovsdbOvnSBClient, types.DefaultNetworkName, &testNode1, &testNode2, &testNode3, &testNode4)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				zoneICHandler := NewZoneInterconnectHandler(&util.DefaultNetInfo{}, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
+				zoneICHandler, err := NewZoneInterconnectHandler(&util.DefaultNetInfo{}, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				gomega.Expect(zoneICHandler).NotTo(gomega.BeNil())
 
 				err = zoneICHandler.createOrUpdateTransitSwitch(0)
@@ -1033,4 +1156,501 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 		})
 
 	})
+
+	ginkgo.Context("Layer3 network with multi-VTEP nodes", func() {
+		var (
+			node1Encap1 sbdb.Encap
+			node1Encap2 sbdb.Encap
+			node2Encap1 sbdb.Encap
+			node2Encap2 sbdb.Encap
+		)
+
+		ginkgo.BeforeEach(func() {
+
+			config.OVNKubernetesFeature.EnableMultiVTEP = true
+			node1Chassis = sbdb.Chassis{Name: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6", Hostname: "node1", UUID: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6", Encaps: []string{"6b6216bc-b409-4ef3-9f42-d9283c47aac6", "6b6216bc-b409-4ef3-9f42-d9283c47aac7"}}
+			node2Chassis = sbdb.Chassis{Name: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac7", Hostname: "node2", UUID: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac7", Encaps: []string{"6b6216bc-b409-4ef3-9f42-d9283c47aac8", "6b6216bc-b409-4ef3-9f42-d9283c47aac9"}}
+
+			node1Encap1 = sbdb.Encap{ChassisName: node1Chassis.Name, IP: "10.0.1.2", UUID: "6b6216bc-b409-4ef3-9f42-d9283c47aac6", Type: "geneve"}
+			node1Encap2 = sbdb.Encap{ChassisName: node1Chassis.Name, IP: "10.0.1.3", UUID: "6b6216bc-b409-4ef3-9f42-d9283c47aac7", Type: "geneve"}
+			node2Encap1 = sbdb.Encap{ChassisName: node2Chassis.Name, IP: "10.0.1.4", UUID: "6b6216bc-b409-4ef3-9f42-d9283c47aac8", Type: "geneve"}
+			node2Encap2 = sbdb.Encap{ChassisName: node2Chassis.Name, IP: "10.0.1.5", UUID: "6b6216bc-b409-4ef3-9f42-d9283c47aac9", Type: "geneve"}
+
+			// node1 is a local zone node
+			testNode1 = corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "node1",
+					Annotations: map[string]string{
+						ovnNodeChassisIDAnnotation:         "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6",
+						ovnNodeZoneNameAnnotation:          "foo",
+						ovnNodeIDAnnotaton:                 "2",
+						ovnTransitSwitchPortAddrAnnotation: `{"ipv4":"100.88.0.2/16"}`,
+						util.OvnTransitSwitchPortTunnelIDs: `[2, 3]`,
+						util.OVNNodeEncapIPs:               `["10.0.1.2", "10.0.1.3"]`,
+						ovnNodeSubnetsAnnotation:           `{"default":["10.244.2.0/24"]}`,
+						ovnNodeNetworkIDsAnnotation:        `{"default":"0"}`,
+					},
+				},
+				Status: corev1.NodeStatus{
+					Addresses: []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "10.0.0.10"}},
+				},
+			}
+			// node2 is a remote zone node
+			testNode2 = corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "node2",
+					Annotations: map[string]string{
+						ovnNodeChassisIDAnnotation:         "cb9ec8fa-b409-4ef3-9f42-d9283c47aac7",
+						ovnNodeZoneNameAnnotation:          "bar",
+						ovnNodeIDAnnotaton:                 "4",
+						ovnTransitSwitchPortAddrAnnotation: `{"ipv4":"100.88.0.4/16"}`,
+						util.OvnTransitSwitchPortTunnelIDs: `[4, 5]`,
+						util.OVNNodeEncapIPs:               `["10.0.1.4", "10.0.1.5"]`,
+						ovnNodeSubnetsAnnotation:           `{"default":["10.244.3.0/24"]}`,
+						ovnNodeNetworkIDsAnnotation:        `{"default":"0"}`,
+					},
+				},
+				Status: corev1.NodeStatus{
+					Addresses: []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "10.0.0.11"}},
+				},
+			}
+
+			// pod with VF interface on first VTEP of node1
+			testPod1 = corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "test",
+					Name:      "pod-1",
+					Annotations: map[string]string{
+						"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["10.244.2.5/24"],"mac_address":"0a:58:0a:f4:02:05","encap_ip":"10.0.1.2","role":"infrastructure-locked"}}`,
+					},
+				},
+				Spec: corev1.PodSpec{
+					NodeName: testNode1.ObjectMeta.Name,
+				},
+			}
+			// pod with VF interface on second VTEP of node1
+			testPod2 = corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "test",
+					Name:      "pod-2",
+					Annotations: map[string]string{
+						"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["10.244.2.6/24"],"mac_address":"0a:58:0a:f4:02:06","encap_ip":"10.0.1.3","role":"infrastructure-locked"}}`,
+					},
+				},
+				Spec: corev1.PodSpec{
+					NodeName: testNode1.ObjectMeta.Name,
+				},
+			}
+			// pod with VF interface on first VTEP of node1
+			testPod3 = corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "test",
+					Name:      "pod-3",
+					Annotations: map[string]string{
+						"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["10.244.2.7/24"],"mac_address":"0a:58:0a:f4:02:07","encap_ip":"10.0.1.2","role":"infrastructure-locked"}}`,
+					},
+				},
+				Spec: corev1.PodSpec{
+					NodeName: testNode1.ObjectMeta.Name,
+				},
+			}
+			// pod with veth interface on node1 -- no encap IP specified
+			testPod4 = corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "test",
+					Name:      "pod-4",
+					Annotations: map[string]string{
+						"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["10.244.2.8/24"],"mac_address":"0a:58:0a:f4:02:08", "role":"infrastructure-locked"}}`,
+					},
+				},
+				Spec: corev1.PodSpec{
+					NodeName: testNode1.ObjectMeta.Name,
+				},
+			}
+			testNodesRouteInfo = map[string]map[string]string{
+				"node1": {"node-subnets": "10.244.2.0/24", "ts-ip": "100.88.0.2", "host-route": "100.64.0.2/32"},
+				"node2": {"node-subnets": "10.244.3.0/24", "ts-ip": "100.88.0.4", "host-route": "100.64.0.4/32"},
+			}
+			initialNBDB = []libovsdbtest.TestData{
+				newClusterJoinSwitch(),
+				newOVNClusterRouter(types.DefaultNetworkName),
+			}
+
+			initialSBDB = []libovsdbtest.TestData{
+				&node1Encap1, &node1Encap2, &node2Encap1, &node2Encap2,
+				&node1Chassis, &node2Chassis}
+		})
+
+		ginkgo.DescribeTable("node resources creation is postponed", func(zone string, node *corev1.Node) {
+			app.Action = func(ctx *cli.Context) error {
+				dbSetup := libovsdbtest.TestSetup{
+					NBData: initialNBDB,
+					SBData: initialSBDB,
+				}
+
+				_, err := config.InitConfig(ctx, nil, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				config.Kubernetes.HostNetworkNamespace = ""
+
+				var libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
+				libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				zoneICHandler, err := NewZoneInterconnectHandler(&util.DefaultNetInfo{}, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = zoneICHandler.createOrUpdateTransitSwitch(0)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = invokeICHandlerAddNodeFunction(zone, zoneICHandler, node)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				transitSwitchName := getNetworkScopedName(types.DefaultNetworkName, types.TransitSwitch)
+				routerName := getNetworkScopedName(types.DefaultNetworkName, types.OVNClusterRouter)
+
+				// no resources should be created yet
+				err = CheckNorthboundResources(libovsdbOvnNBClient, transitSwitchName, routerName, []string{}, []string{}, []string{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				return nil
+			}
+
+			err := app.Run([]string{
+				app.Name,
+				"-cluster-subnets=" + clusterCIDR,
+				"-init-cluster-manager",
+				"-zone-join-switch-subnets=" + joinSubnetCIDR,
+				"-enable-interconnect",
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		},
+			ginkgo.Entry("with local node ", "foo", &testNode1),
+			ginkgo.Entry("with remote node", "foo", &testNode2),
+		)
+
+		type NodeResources struct {
+			TransitSwitchPorts []string
+			LogicalRouterPorts []string
+			StaticRoutes       []string
+			PortBindings       []string
+		}
+
+		type NodeResourcesTest struct {
+			zone    string
+			node    *corev1.Node
+			pods    []*corev1.Pod
+			dbSetup libovsdbtest.TestSetup
+
+			expectedAfterCreatePods *NodeResources
+			expectedAfterDeletePods *NodeResources
+		}
+
+		ginkgo.DescribeTable("node resource creation", func(t NodeResourcesTest) {
+			app.Action = func(ctx *cli.Context) error {
+				dbSetup := libovsdbtest.TestSetup{
+					NBData: initialNBDB,
+					SBData: initialSBDB,
+				}
+
+				dbSetup.NBData = append(dbSetup.NBData, t.dbSetup.NBData...)
+				dbSetup.SBData = append(dbSetup.SBData, t.dbSetup.SBData...)
+
+				_, err := config.InitConfig(ctx, nil, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				config.Kubernetes.HostNetworkNamespace = ""
+
+				var libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
+				libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				ginkgo.By("creating the transit switch port bindings")
+				requestedPortBindings := []string{}
+				for _, pb := range t.expectedAfterCreatePods.PortBindings {
+					// split pb by :
+					parts := strings.Split(pb, ":")
+					requestedPortBindings = append(requestedPortBindings, parts[0])
+				}
+				err = libovsdbtest.CreateTransitSwitchPortBindings(libovsdbOvnSBClient, types.DefaultNetworkName, requestedPortBindings...)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Create a fake Kubernetes client with the test node
+				kubeClient := fake.NewSimpleClientset(t.node)
+				fakeClient := &util.OVNClusterManagerClientset{
+					KubeClient: kubeClient,
+				}
+
+				// Create and start watch factory
+				watchFactory, err := factory.NewClusterManagerWatchFactory(fakeClient)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = watchFactory.Start()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				defer watchFactory.Shutdown()
+
+				zoneICHandler, err := NewZoneInterconnectHandler(&util.DefaultNetInfo{}, libovsdbOvnNBClient, libovsdbOvnSBClient, watchFactory)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = zoneICHandler.createOrUpdateTransitSwitch(0)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = invokeICHandlerAddNodeFunction(t.zone, zoneICHandler, t.node)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				isLocalNode := t.zone == util.GetNodeZone(t.node)
+
+				transitSwitchName := getNetworkScopedName(types.DefaultNetworkName, types.TransitSwitch)
+				routerName := getNetworkScopedName(types.DefaultNetworkName, types.OVNClusterRouter)
+
+				if len(t.dbSetup.NBData) == 0 {
+					ginkgo.By("Verify no node resource created before pod is scheduled")
+					err = CheckNorthboundResources(libovsdbOvnNBClient, transitSwitchName, routerName, []string{}, []string{}, []string{})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				}
+
+				ginkgo.By("Create pods")
+				for _, pod := range t.pods {
+					gomega.Expect(pod.Spec.NodeName).To(gomega.Equal(t.node.Name), "pod %s should be scheduled on the specified node", pod.Name)
+					podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, zoneICHandler.GetNetworkName())
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					if isLocalNode {
+						err = zoneICHandler.EnsureLocalNodeTransitSwitchPortForPod(pod, podAnnotation)
+					} else {
+						err = zoneICHandler.EnsureRemoteNodeTransitSwitchPortForPod(pod, podAnnotation)
+					}
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				}
+
+				ginkgo.By("Verify node resource after pod is scheduled")
+				err = CheckNorthboundResources(libovsdbOvnNBClient, transitSwitchName, routerName,
+					t.expectedAfterCreatePods.TransitSwitchPorts,
+					t.expectedAfterCreatePods.LogicalRouterPorts,
+					t.expectedAfterCreatePods.StaticRoutes)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				ginkgo.By("Verify port bindings")
+				err = CheckSouthboundResources(libovsdbOvnSBClient, t.expectedAfterCreatePods.PortBindings)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				ginkgo.By("Delete pods")
+				for _, pod := range t.pods {
+					podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, zoneICHandler.GetNetworkName())
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					if !isLocalNode {
+						err = zoneICHandler.DeleteRemotePod(pod, podAnnotation)
+						gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					}
+				}
+
+				ginkgo.By("Validate node resource after pod is deleted")
+				var expectedResources *NodeResources
+				if isLocalNode {
+					// delete local pod doesn't affect the node resources
+					expectedResources = t.expectedAfterCreatePods
+				} else {
+					expectedResources = t.expectedAfterDeletePods
+				}
+
+				err = CheckNorthboundResources(libovsdbOvnNBClient, transitSwitchName, routerName,
+					expectedResources.TransitSwitchPorts,
+					expectedResources.LogicalRouterPorts,
+					expectedResources.StaticRoutes)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = CheckSouthboundResources(libovsdbOvnSBClient, expectedResources.PortBindings)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				ginkgo.By("Delete nodes")
+				err = invokeICHandlerDeleteNodeFunction(zoneICHandler, t.node)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				ginkgo.By("Validate node resource after node is deleted")
+				err = CheckNorthboundResources(libovsdbOvnNBClient, transitSwitchName, routerName,
+					[]string{}, []string{}, []string{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				return nil
+			}
+
+			err := app.Run([]string{
+				app.Name,
+				"-cluster-subnets=" + clusterCIDR,
+				"-init-cluster-manager",
+				"-zone-join-switch-subnets=" + joinSubnetCIDR,
+				"-enable-interconnect",
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		},
+			ginkgo.Entry("with one local pod on 1st VTEP",
+				NodeResourcesTest{zone: "foo", node: &testNode1,
+					pods: []*corev1.Pod{&testPod1},
+					expectedAfterCreatePods: &NodeResources{
+						TransitSwitchPorts: []string{"tstor-node1:router"},
+						LogicalRouterPorts: []string{"rtots-node1"},
+						StaticRoutes:       []string{},
+						PortBindings:       []string{"tstor-node1:10.0.1.2"},
+					},
+				}),
+
+			ginkgo.Entry("with one local pod on 2nd VTEP",
+				NodeResourcesTest{zone: "foo", node: &testNode1,
+					pods: []*corev1.Pod{&testPod2},
+					expectedAfterCreatePods: &NodeResources{
+						TransitSwitchPorts: []string{"tstor-node1_encap1:router"},
+						LogicalRouterPorts: []string{"rtots-node1_encap1"},
+						StaticRoutes:       []string{},
+						PortBindings:       []string{"tstor-node1_encap1:10.0.1.3"},
+					},
+				}),
+
+			ginkgo.Entry("with one local pod on each VTEP",
+				NodeResourcesTest{zone: "foo", node: &testNode1,
+					pods: []*corev1.Pod{&testPod1, &testPod2},
+					expectedAfterCreatePods: &NodeResources{
+						TransitSwitchPorts: []string{"tstor-node1:router", "tstor-node1_encap1:router"},
+						LogicalRouterPorts: []string{"rtots-node1", "rtots-node1_encap1"},
+						StaticRoutes:       []string{},
+						PortBindings:       []string{"tstor-node1:10.0.1.2", "tstor-node1_encap1:10.0.1.3"},
+					},
+				}),
+
+			ginkgo.Entry("with one remote pod on 1st VTEP",
+				NodeResourcesTest{zone: "bar", node: &testNode1,
+					pods: []*corev1.Pod{&testPod1},
+					expectedAfterCreatePods: &NodeResources{
+						TransitSwitchPorts: []string{"tstor-node1:remote"},
+						LogicalRouterPorts: []string{},
+						StaticRoutes:       []string{"100.64.0.2/32-100.88.0.2", "10.244.2.0/24-100.88.0.2"},
+						PortBindings:       []string{"tstor-node1:10.0.1.2"},
+					},
+					// this case only adds static route for node subnet
+					// no change expected after pod is deleted
+					expectedAfterDeletePods: &NodeResources{
+						TransitSwitchPorts: []string{"tstor-node1:remote"},
+						LogicalRouterPorts: []string{},
+						StaticRoutes:       []string{"100.64.0.2/32-100.88.0.2", "10.244.2.0/24-100.88.0.2"},
+						PortBindings:       []string{"tstor-node1:10.0.1.2"},
+					},
+				}),
+
+			ginkgo.Entry("with one remote pod on 2nd VTEP ",
+				NodeResourcesTest{zone: "bar", node: &testNode1,
+					pods: []*corev1.Pod{&testPod2},
+					expectedAfterCreatePods: &NodeResources{
+						TransitSwitchPorts: []string{"tstor-node1_encap1:remote"},
+						LogicalRouterPorts: []string{},
+						StaticRoutes:       []string{"100.64.0.2/32-100.88.0.3", "10.244.2.0/24-100.88.0.3"},
+						PortBindings:       []string{"tstor-node1_encap1:10.0.1.3"},
+					},
+					// this case only adds static route for node subnet
+					// no change expected after pod is deleted
+					expectedAfterDeletePods: &NodeResources{
+						TransitSwitchPorts: []string{"tstor-node1_encap1:remote"},
+						LogicalRouterPorts: []string{},
+						StaticRoutes:       []string{"100.64.0.2/32-100.88.0.3", "10.244.2.0/24-100.88.0.3"},
+						PortBindings:       []string{"tstor-node1_encap1:10.0.1.3"},
+					},
+				}),
+
+			ginkgo.Entry("with two remote pods on 1st VTEP ",
+				NodeResourcesTest{zone: "bar", node: &testNode1,
+					pods: []*corev1.Pod{&testPod1, &testPod3},
+					expectedAfterCreatePods: &NodeResources{
+						TransitSwitchPorts: []string{"tstor-node1:remote"},
+						LogicalRouterPorts: []string{},
+						StaticRoutes:       []string{"100.64.0.2/32-100.88.0.2", "10.244.2.0/24-100.88.0.2"},
+						PortBindings:       []string{"tstor-node1:10.0.1.2"},
+					},
+					// this case only adds static route for node subnet
+					// no change expected after pod is deleted
+					expectedAfterDeletePods: &NodeResources{
+						TransitSwitchPorts: []string{"tstor-node1:remote"},
+						LogicalRouterPorts: []string{},
+						StaticRoutes:       []string{"100.64.0.2/32-100.88.0.2", "10.244.2.0/24-100.88.0.2"},
+						PortBindings:       []string{"tstor-node1:10.0.1.2"},
+					},
+				}),
+
+			ginkgo.Entry("with one remote pod on each VTEP",
+				NodeResourcesTest{zone: "bar", node: &testNode1,
+					pods: []*corev1.Pod{&testPod1, &testPod2},
+					expectedAfterCreatePods: &NodeResources{
+						TransitSwitchPorts: []string{"tstor-node1:remote", "tstor-node1_encap1:remote"},
+						LogicalRouterPorts: []string{},
+						StaticRoutes:       []string{"100.64.0.2/32-100.88.0.2", "10.244.2.0/24-100.88.0.2", "10.244.2.6/32-100.88.0.3"},
+						PortBindings:       []string{"tstor-node1:10.0.1.2", "tstor-node1_encap1:10.0.1.3"},
+					},
+					// this case create a /32 static route for the 2nd pod
+					// expected to delete the /32 static route after pod is deleted
+					expectedAfterDeletePods: &NodeResources{
+						TransitSwitchPorts: []string{"tstor-node1:remote", "tstor-node1_encap1:remote"},
+						LogicalRouterPorts: []string{},
+						StaticRoutes:       []string{"100.64.0.2/32-100.88.0.2", "10.244.2.0/24-100.88.0.2"},
+						PortBindings:       []string{"tstor-node1:10.0.1.2", "tstor-node1_encap1:10.0.1.3"},
+					},
+				}),
+
+			ginkgo.Entry("with one local pod uses veth interface",
+				NodeResourcesTest{zone: "foo", node: &testNode1,
+					pods: []*corev1.Pod{&testPod4},
+					expectedAfterCreatePods: &NodeResources{
+						TransitSwitchPorts: []string{"tstor-node1:router"},
+						LogicalRouterPorts: []string{"rtots-node1"},
+						StaticRoutes:       []string{},
+						PortBindings:       []string{"tstor-node1:10.0.1.2"},
+					},
+				}),
+
+			ginkgo.Entry("with one remote pod uses veth interface",
+				NodeResourcesTest{zone: "bar", node: &testNode1,
+					pods: []*corev1.Pod{&testPod4},
+					expectedAfterCreatePods: &NodeResources{
+						TransitSwitchPorts: []string{"tstor-node1:remote"},
+						LogicalRouterPorts: []string{},
+						StaticRoutes:       []string{"100.64.0.2/32-100.88.0.2", "10.244.2.0/24-100.88.0.2"},
+						PortBindings:       []string{"tstor-node1:10.0.1.2"},
+					},
+					// no change expected after pod is deleted
+					expectedAfterDeletePods: &NodeResources{
+						TransitSwitchPorts: []string{"tstor-node1:remote"},
+						LogicalRouterPorts: []string{},
+						StaticRoutes:       []string{"100.64.0.2/32-100.88.0.2", "10.244.2.0/24-100.88.0.2"},
+						PortBindings:       []string{"tstor-node1:10.0.1.2"},
+					},
+				}),
+
+			ginkgo.Entry("ensure remote node resource creation is idemponent",
+				NodeResourcesTest{zone: "bar", node: &testNode1,
+					pods: []*corev1.Pod{&testPod1},
+					// simulate the case where remote transit switch port exists, but static routes are missing
+					dbSetup: libovsdbtest.TestSetup{
+						NBData: []libovsdbtest.TestData{
+							&nbdb.LogicalSwitch{
+								UUID:  "eddd5207-79b8-40a7-8da9-405f4d191232",
+								Name:  "transit_switch",
+								Ports: []string{"ffb7b077-e768-4689-a0ba-ffaf09b8ccc2"},
+							},
+							&nbdb.LogicalSwitchPort{
+								UUID: "ffb7b077-e768-4689-a0ba-ffaf09b8ccc2",
+								Name: "tstor-node1",
+								Type: "remote",
+								ExternalIDs: map[string]string{
+									"node": "node1",
+								},
+							},
+						},
+					},
+					expectedAfterCreatePods: &NodeResources{
+						TransitSwitchPorts: []string{"tstor-node1:remote"},
+						LogicalRouterPorts: []string{},
+						StaticRoutes:       []string{"100.64.0.2/32-100.88.0.2", "10.244.2.0/24-100.88.0.2"},
+						PortBindings:       []string{"tstor-node1:10.0.1.2"},
+					},
+					// no change expected after pod is deleted
+					expectedAfterDeletePods: &NodeResources{
+						TransitSwitchPorts: []string{"tstor-node1:remote"},
+						LogicalRouterPorts: []string{},
+						StaticRoutes:       []string{"100.64.0.2/32-100.88.0.2", "10.244.2.0/24-100.88.0.2"},
+						PortBindings:       []string{"tstor-node1:10.0.1.2"},
+					},
+				}),
+		)
+
+	})
+
 })

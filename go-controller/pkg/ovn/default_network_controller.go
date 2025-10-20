@@ -185,7 +185,10 @@ func newDefaultNetworkControllerCommon(
 	var zoneICHandler *zoneic.ZoneInterconnectHandler
 	var zoneChassisHandler *zoneic.ZoneChassisHandler
 	if config.OVNKubernetesFeature.EnableInterconnect {
-		zoneICHandler = zoneic.NewZoneInterconnectHandler(defaultNetInfo, cnci.nbClient, cnci.sbClient, cnci.watchFactory)
+		zoneICHandler, err = zoneic.NewZoneInterconnectHandler(defaultNetInfo, cnci.nbClient, cnci.sbClient, cnci.watchFactory)
+		if err != nil {
+			return nil, fmt.Errorf("unable to create new zone interconnect handler while creating new default network controller: %w", err)
+		}
 		zoneChassisHandler = zoneic.NewZoneChassisHandler(cnci.sbClient)
 	}
 	apbExternalRouteController, err := apbroutecontroller.NewExternalMasterController(
@@ -897,7 +900,7 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 		oldPod := oldObj.(*corev1.Pod)
 		newPod := newObj.(*corev1.Pod)
 
-		return h.oc.ensurePod(oldPod, newPod, inRetryCache || util.PodScheduled(oldPod) != util.PodScheduled(newPod))
+		return h.oc.ensurePod(oldPod, newPod, shouldAddPort(oldPod, newPod, inRetryCache))
 
 	case factory.NodeType:
 		newNode, ok := newObj.(*corev1.Node)

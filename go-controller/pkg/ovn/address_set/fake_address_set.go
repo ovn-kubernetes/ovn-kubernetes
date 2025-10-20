@@ -60,8 +60,14 @@ func (f *FakeAddressSetFactory) NewAddressSet(dbIDs *libovsdbops.DbObjectIDs, ad
 	defer f.Unlock()
 	name := getOvnAddressSetsName(dbIDs)
 
-	_, ok := f.sets[name]
-	gomega.Expect(ok).To(gomega.BeFalse(), fmt.Sprintf("new address set %s already exists", name))
+	// Match real implementation behavior: CreateOrUpdateAddressSetsOps is idempotent
+	// If address set already exists, update it instead of failing
+	if existingSet, ok := f.sets[name]; ok {
+		if err := existingSet.SetAddresses(addresses); err != nil {
+			return nil, err
+		}
+		return existingSet, nil
+	}
 	set, err := f.newFakeAddressSets(addresses, dbIDs, f.removeAddressSet)
 	if err != nil {
 		return nil, err
@@ -83,8 +89,14 @@ func (f *FakeAddressSetFactory) NewAddressSetOps(dbIDs *libovsdbops.DbObjectIDs,
 	defer f.Unlock()
 	name := getOvnAddressSetsName(dbIDs)
 
-	_, ok := f.sets[name]
-	gomega.Expect(ok).To(gomega.BeFalse(), fmt.Sprintf("new address set %s already exists", name))
+	// Match real implementation behavior: CreateOrUpdateAddressSetsOps is idempotent
+	// If address set already exists, update it instead of failing
+	if existingSet, ok := f.sets[name]; ok {
+		if err := existingSet.SetAddresses(addresses); err != nil {
+			return nil, nil, err
+		}
+		return existingSet, nil, nil
+	}
 	set, err := f.newFakeAddressSets(addresses, dbIDs, f.removeAddressSet)
 	if err != nil {
 		return nil, nil, err

@@ -369,7 +369,11 @@ func NewLayer3UserDefinedNetworkController(
 	}
 
 	if config.OVNKubernetesFeature.EnableInterconnect {
-		oc.zoneICHandler = zoneic.NewZoneInterconnectHandler(oc.GetNetInfo(), cnci.nbClient, cnci.sbClient, cnci.watchFactory)
+		var err error
+		oc.zoneICHandler, err = zoneic.NewZoneInterconnectHandler(oc.GetNetInfo(), cnci.nbClient, cnci.sbClient, cnci.watchFactory)
+		if err != nil {
+			return nil, fmt.Errorf("unable to create new zone interconnect handler while creating new layer3 network controller: %w", err)
+		}
 	}
 
 	if util.IsNetworkSegmentationSupportEnabled() && netInfo.IsPrimaryNetwork() {
