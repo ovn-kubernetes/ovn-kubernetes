@@ -208,8 +208,8 @@ var _ = Describe("Zone Cluster Controller", func() {
 			config.OVNKubernetesFeature.EnableInterconnect = true
 			config.IPv4Mode = true
 			config.IPv6Mode = true
-			config.ClusterManager.V4TransitSwitchSubnet = "100.88.0.0/16"
-			config.ClusterManager.V6TransitSwitchSubnet = "fd97::/64"
+			config.ClusterManager.V4TransitSubnet = "100.88.0.0/16"
+			config.ClusterManager.V6TransitSubnet = "fd97::/64"
 		})
 
 		It("add nodes with different number of encap IPs", func() {
@@ -433,10 +433,10 @@ var _ = Describe("Zone Cluster Controller", func() {
 			// mock zcc.nodeIDAllocator to test release tunnel IDs
 			var callCount int32
 			mockAllocator := &mockNodeIDAllocator{}
-			mockAllocator.On("ReleaseID", node.Name).Run(func(args mock.Arguments) {
+			mockAllocator.On("ReleaseID", node.Name).Run(func(_ mock.Arguments) {
 				atomic.AddInt32(&callCount, 1)
 			}).Return()
-			mockAllocator.On("ReleaseID", util.GetNodeIdName(node.Name, 1)).Run(func(args mock.Arguments) {
+			mockAllocator.On("ReleaseID", util.GetNodeIdName(node.Name, 1)).Run(func(_ mock.Arguments) {
 				atomic.AddInt32(&callCount, 1)
 			}).Return()
 
