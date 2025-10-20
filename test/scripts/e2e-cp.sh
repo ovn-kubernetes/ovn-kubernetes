@@ -18,6 +18,8 @@ export KUBECONFIG=${KUBECONFIG:-${HOME}/ovn.conf}
 # https://github.com/ovn-org/ovn-kubernetes/issues/4131 for details.
 # TODO: Fix EIP tests. See https://github.com/ovn-org/ovn-kubernetes/issues/4130 for details.
 # TODO: Fix MTU tests. See https://github.com/ovn-org/ovn-kubernetes/issues/4160 for details.
+# "be able to send multicast UDP traffic between nodes" broken by https://github.com/actions/runner-images/issues/13190
+# "Services of type NodePort.*should handle IP fragments" broken by https://github.com/actions/runner-images/issues/13190
 IPV6_SKIPPED_TESTS="Should be allowed by externalip services|\
 should provide connection to external host by DNS name from a pod|\
 should provide Internet connection continuously when ovnkube-node pod is killed|\
@@ -30,7 +32,9 @@ test node readiness according to its defaults interface MTU size|\
 Pod to pod TCP with low MTU|\
 queries to the hostNetworked server pod on another node shall work for TCP|\
 queries to the hostNetworked server pod on another node shall work for UDP|\
-ipv4 pod"
+ipv4 pod|\
+be able to send multicast UDP traffic between nodes|\
+Services of type NodePort.*should handle IP fragments"
 
 SKIPPED_TESTS=""
 skip() {

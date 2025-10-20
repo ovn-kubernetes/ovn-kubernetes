@@ -127,13 +127,19 @@ RA_SKIPPED_TESTS="
 \[sig-network\] Services should fallback to local terminating endpoints when there are no ready endpoints with externalTrafficPolicy=Local
 "
 
+# REMOVE when https://github.com/actions/runner-images/issues/13190 is fixed
+GH_RUNNER_IPv6_SKIPPED="
+Granular Checks.*Services.*should be able to handle large requests.*udp
+Granular Checks.*Services.*should function for service endpoints using hostNetwork
+"
+
 # Github CI doesn´t offer IPv6 connectivity, so always skip IPv6 only tests.
 #  See: https://github.com/ovn-org/ovn-kubernetes/issues/1522
 SKIPPED_TESTS=$SKIPPED_TESTS$IPV6_ONLY_TESTS
 
 # Either single stack IPV6 or dualstack
 if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
-  SKIPPED_TESTS=$SKIPPED_TESTS$SINGLESTACK_IPV4_ONLY_TESTS
+  SKIPPED_TESTS=$SKIPPED_TESTS$SINGLESTACK_IPV4_ONLY_TESTS$GH_RUNNER_IPv6_SKIPPED
 fi
 
 # IPv6 Only, skip any IPv4 Only Tests
