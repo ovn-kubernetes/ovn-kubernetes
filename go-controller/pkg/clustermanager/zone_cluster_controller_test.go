@@ -442,10 +442,10 @@ var _ = Describe("Zone Cluster Controller", func() {
 			// mock zcc.nodeIDAllocator to test release tunnel IDs
 			var callCount int32
 			mockAllocator := &mockNodeIDAllocator{}
-			mockAllocator.On("ReleaseID", node.Name).Run(func(args mock.Arguments) {
+			mockAllocator.On("ReleaseID", node.Name).Run(func(_ mock.Arguments) {
 				atomic.AddInt32(&callCount, 1)
 			}).Return()
-			mockAllocator.On("ReleaseID", util.GetNodeIdName(node.Name, 1)).Run(func(args mock.Arguments) {
+			mockAllocator.On("ReleaseID", util.GetNodeIdName(node.Name, 1)).Run(func(_ mock.Arguments) {
 				atomic.AddInt32(&callCount, 1)
 			}).Return()
 

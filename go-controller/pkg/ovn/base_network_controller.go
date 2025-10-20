@@ -1021,6 +1021,10 @@ func (bnc *BaseNetworkController) isLayer2Interconnect() bool {
 	return config.OVNKubernetesFeature.EnableInterconnect && bnc.TopologyType() == types.Layer2Topology
 }
 
+func (bnc *BaseNetworkController) isLayer3Interconnect() bool {
+	return config.OVNKubernetesFeature.EnableInterconnect && bnc.TopologyType() == types.Layer3Topology
+}
+
 func (bnc *BaseNetworkController) nodeZoneClusterChanged(oldNode, newNode *corev1.Node) bool {
 	// Check if the annotations have changed. Use network topology and local params to skip unnecessary checks
 
