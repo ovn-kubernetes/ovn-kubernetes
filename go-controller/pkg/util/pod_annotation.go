@@ -507,7 +507,11 @@ func PodAnnotationChanged(oldPod, newPod *corev1.Pod) bool {
 	if oldPod == nil {
 		return false
 	}
-	return oldPod.Annotations[OvnPodAnnotationName] != newPod.Annotations[OvnPodAnnotationName]
+	// Only return true if annotation changed AND newPod still has the annotation.
+	// This prevents triggering re-add when annotation is removed (e.g., some test case
+	// remove annotation from pod to mimic pod deletion error case).
+	newAnnotation := newPod.Annotations[OvnPodAnnotationName]
+	return newAnnotation != "" && oldPod.Annotations[OvnPodAnnotationName] != newAnnotation
 }
 
 // UpdatePodAnnotationWithRetry updates the pod annotation on the pod retrying
