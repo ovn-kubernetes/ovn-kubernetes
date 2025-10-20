@@ -672,9 +672,21 @@ func (npw *nodePortWatcher) updateServiceInfo(index ktypes.NamespacedName, servi
 
 // addServiceRules ensures the correct iptables rules and OpenFlow physical
 // flows are programmed for a given service and endpoint configuration
-func addServiceRules(service *corev1.Service, netInfo util.NetInfo, localEndpoints util.PortToLBEndpoints, svcHasLocalHostNetEndPnt bool, npw *nodePortWatcher) error {
-	// For dpu or Full mode
+func addServiceRules(service *corev1.Service, localEndpoints util.PortToLBEndpoints, svcHasLocalHostNetEndPnt bool, npw *nodePortWatcher, networkManager networkmanager.Interface) error {
+	// Fetch network info
+	var netInfo util.NetInfo
 	var err error
+	if networkManager != nil {
+		netInfo, err = networkManager.GetActiveNetworkForNamespace(service.Namespace)
+		if err != nil {
+			return fmt.Errorf("error getting active network for service %s/%s: %w", service.Namespace, service.Name, err)
+		}
+	} else {
+		// This should never happen in practice, but handle defensively
+		return fmt.Errorf("networkManager is nil, can't get active network for service %s/%s", service.Namespace, service.Name)
+	}
+
+	// For dpu or Full mode
 	var errors []error
 	var activeNetwork *bridgeconfig.BridgeUDNConfiguration
 	if npw != nil {
@@ -853,7 +865,7 @@ func (npw *nodePortWatcher) AddService(service *corev1.Service) error {
 	if exists := npw.addOrSetServiceInfo(name, service, hasLocalHostNetworkEp, localEndpoints); !exists {
 		klog.V(5).Infof("Service Add %s event in namespace %s came before endpoint event setting svcConfig",
 			service.Name, service.Namespace)
-		if err := addServiceRules(service, netInfo, localEndpoints, hasLocalHostNetworkEp, npw); err != nil {
+		if err := addServiceRules(service, localEndpoints, hasLocalHostNetworkEp, npw, npw.networkManager); err != nil {
 			npw.getAndDeleteServiceInfo(name)
 			return fmt.Errorf("AddService failed for nodePortWatcher: %w, trying delete: %v", err, delServiceRules(service, localEndpoints, npw))
 		}
@@ -900,12 +912,7 @@ func (npw *nodePortWatcher) UpdateService(old, new *corev1.Service) error {
 	if util.ServiceTypeHasClusterIP(new) && util.IsClusterIPSet(new) {
 		klog.V(5).Infof("Adding new service rules for: %v", new)
 
-		netInfo, err := npw.networkManager.GetActiveNetworkForNamespace(new.Namespace)
-		if err != nil {
-			return fmt.Errorf("error getting active network for service %s in namespace %s: %w", new.Name, new.Namespace, err)
-		}
-
-		if err = addServiceRules(new, netInfo, svcConfig.localEndpoints, svcConfig.hasLocalHostNetworkEp, npw); err != nil {
+		if err = addServiceRules(new, svcConfig.localEndpoints, svcConfig.hasLocalHostNetworkEp, npw, npw.networkManager); err != nil {
 			errors = append(errors, err)
 		}
 	}
@@ -1139,7 +1146,7 @@ func (npw *nodePortWatcher) AddEndpointSlice(epSlice *discovery.EndpointSlice) e
 	out, exists := npw.getServiceInfo(*svcNamespacedName)
 	if !exists {
 		klog.V(5).Infof("Endpointslice %s ADD event in namespace %s is creating rules", epSlice.Name, epSlice.Namespace)
-		if err = addServiceRules(svc, netInfo, localEndpoints, hasLocalHostNetworkEp, npw); err != nil {
+		if err = addServiceRules(svc, localEndpoints, hasLocalHostNetworkEp, npw, npw.networkManager); err != nil {
 			return err
 		}
 		npw.addOrSetServiceInfo(*svcNamespacedName, svc, hasLocalHostNetworkEp, localEndpoints)
@@ -1152,7 +1159,7 @@ func (npw *nodePortWatcher) AddEndpointSlice(epSlice *discovery.EndpointSlice) e
 		if err = delServiceRules(svc, out.localEndpoints, npw); err != nil {
 			errors = append(errors, err)
 		}
-		if err = addServiceRules(svc, netInfo, localEndpoints, hasLocalHostNetworkEp, npw); err != nil {
+		if err = addServiceRules(svc, localEndpoints, hasLocalHostNetworkEp, npw, npw.networkManager); err != nil {
 			errors = append(errors, err)
 		} else {
 			npw.updateServiceInfo(*svcNamespacedName, svc, &hasLocalHostNetworkEp, localEndpoints)
@@ -1200,11 +1207,6 @@ func (npw *nodePortWatcher) DeleteEndpointSlice(epSlice *discovery.EndpointSlice
 	}
 	localEndpoints := npw.GetLocalEligibleEndpointAddresses(epSlices, svc)
 	if svcConfig, exists := npw.updateServiceInfo(*namespacedName, nil, &hasLocalHostNetworkEp, localEndpoints); exists {
-		netInfo, err := npw.networkManager.GetActiveNetworkForNamespace(namespacedName.Namespace)
-		if err != nil {
-			return fmt.Errorf("error getting active network for service %s/%s: %w", namespacedName.Namespace, namespacedName.Name, err)
-		}
-
 		// Lock the cache mutex here so we don't miss a service delete during an endpoint delete
 		// we have to do this because deleting and adding iptables rules is slow.
 		npw.serviceInfoLock.Lock()
@@ -1213,7 +1215,11 @@ func (npw *nodePortWatcher) DeleteEndpointSlice(epSlice *discovery.EndpointSlice
 		if err = delServiceRules(svcConfig.service, svcConfig.localEndpoints, npw); err != nil {
 			errors = append(errors, err)
 		}
-		if err = addServiceRules(svcConfig.service, netInfo, localEndpoints, hasLocalHostNetworkEp, npw); err != nil {
+		if err = addServiceRules(svcConfig.service, localEndpoints, hasLocalHostNetworkEp, npw, npw.networkManager); err != nil {
+			// namespace not found, skip to add service rules
+			if strings.Contains(err.Error(), fmt.Sprintf("namespace \"%s\" not found", namespacedName.Namespace)) {
+				return nil
+			}
 			errors = append(errors, err)
 		}
 		return utilerrors.Join(errors...)
@@ -1336,12 +1342,7 @@ func (npwipt *nodePortWatcherIptables) AddService(service *corev1.Service) error
 		return nil
 	}
 
-	netInfo, err := npwipt.networkManager.GetActiveNetworkForNamespace(service.Namespace)
-	if err != nil {
-		return fmt.Errorf("error getting active network for service %s in namespace %s: %w", service.Name, service.Namespace, err)
-	}
-
-	if err := addServiceRules(service, netInfo, nil, false, nil); err != nil {
+	if err := addServiceRules(service, nil, false, nil, npwipt.networkManager); err != nil {
 		return fmt.Errorf("AddService failed for nodePortWatcherIptables: %v", err)
 	}
 	return nil
@@ -1364,12 +1365,7 @@ func (npwipt *nodePortWatcherIptables) UpdateService(old, new *corev1.Service) e
 	}
 
 	if util.ServiceTypeHasClusterIP(new) && util.IsClusterIPSet(new) {
-		netInfo, err := npwipt.networkManager.GetActiveNetworkForNamespace(new.Namespace)
-		if err != nil {
-			return fmt.Errorf("error getting active network for service %s in namespace %s: %w", new.Name, new.Namespace, err)
-		}
-
-		if err = addServiceRules(new, netInfo, nil, false, nil); err != nil {
+		if err = addServiceRules(new, nil, false, nil, npwipt.networkManager); err != nil {
 			errors = append(errors, err)
 		}
 	}
