@@ -72,8 +72,7 @@ func (m *apbRouteManager) updateStatus(route *adminpolicybasedrouteapi.AdminPoli
 
 //lint:ignore U1000 generic interfaces throw false-positives
 func (m *apbRouteManager) cleanupStatus(route *adminpolicybasedrouteapi.AdminPolicyBasedExternalRoute, applyOpts *metav1.ApplyOptions) error {
-	applyObj := adminpolicybasedrouteapply.AdminPolicyBasedExternalRoute(route.Name).
-		WithStatus(adminpolicybasedrouteapply.AdminPolicyBasedRouteStatus())
+	applyObj := adminpolicybasedrouteapply.AdminPolicyBasedExternalRoute(route.Name)
 	_, err := m.client.K8sV1().AdminPolicyBasedExternalRoutes().ApplyStatus(context.TODO(), applyObj, *applyOpts)
 	return err
 }
