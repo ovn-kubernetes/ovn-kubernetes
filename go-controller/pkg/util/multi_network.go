@@ -1684,35 +1684,33 @@ func CanServeNamespace(network NetInfo, namespace string) bool {
 //	is otherwise locked for all intents and purposes.
 //
 // (4) "none" if the pod has no networks on this controller
-func GetNetworkRole(controllerNetInfo NetInfo, getActiveNetworkForNamespace func(namespace string) (NetInfo, error), pod *corev1.Pod) (string, error) {
+func GetNetworkRole(controllerNetInfo NetInfo, getPrimaryNADForNamespace func(namespace string) (string, error), pod *corev1.Pod) (string, error) {
 
 	// no network segmentation enabled, and is default controller, must be default network
 	if !IsNetworkSegmentationSupportEnabled() && controllerNetInfo.IsDefault() {
 		return types.NetworkRolePrimary, nil
 	}
 
-	var activeNetwork NetInfo
 	var err error
 	// controller is serving primary network or is default, we need to get the active network
 	if controllerNetInfo.IsPrimaryNetwork() || controllerNetInfo.IsDefault() {
-		activeNetwork, err = getActiveNetworkForNamespace(pod.Namespace)
+		// check if primary NAD exists
+		primaryNAD, err := getPrimaryNADForNamespace(pod.Namespace)
 		if err != nil {
 			return "", err
 		}
-
-		// if active network for pod matches controller network, then primary interface is handled by this controller
-		if activeNetwork.GetNetworkName() == controllerNetInfo.GetNetworkName() {
-			return types.NetworkRolePrimary, nil
-		}
-
-		// otherwise, if this is the default controller, and the pod active network does not match the default network
-		// we know the role for this default controller is infra locked
 		if controllerNetInfo.IsDefault() {
+			if primaryNAD == types.DefaultNetworkName {
+				return types.NetworkRolePrimary, nil
+			}
 			return types.NetworkRoleInfrastructure, nil
 		}
 
-		// this is a primary network controller, and it does not match the pod's active network
-		// the controller must not be serving this pod
+		if controllerNetInfo.HasNAD(primaryNAD) {
+			return types.NetworkRolePrimary, nil
+		}
+
+		// this is a primary network controller, and it does not have the pod's primary NAD
 		return types.NetworkRoleNone, nil
 	}
 
