@@ -13,7 +13,6 @@ import (
 	discovery "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/sets"
 	clientsetfake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/utils/ptr"
 
@@ -610,22 +609,26 @@ func TestHasLocalHostNetworkEndpoints(t *testing.T) {
 	nodeAddresses := []net.IP{ep1IP}
 	var tests = []struct {
 		name           string
-		localEndpoints sets.Set[string]
+		localEndpoints PortToLBEndpoints
 		want           bool
 	}{
 		{
 			"Tests with local endpoints that include the node address",
-			sets.New(ep1Address, ep2Address),
+			PortToLBEndpoints{"test": LBEndpoints{
+				V4IPs: []string{ep1Address, ep2Address},
+			}},
 			true,
 		},
 		{
 			"Tests against a different local endpoint than the node address",
-			sets.New(ep2Address),
+			PortToLBEndpoints{"test": LBEndpoints{
+				V4IPs: []string{ep2Address},
+			}},
 			false,
 		},
 		{
 			"Tests against no local endpoints",
-			sets.New[string](),
+			PortToLBEndpoints{"test": LBEndpoints{}},
 			false,
 		},
 	}

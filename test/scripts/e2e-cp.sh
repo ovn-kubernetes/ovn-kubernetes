@@ -68,7 +68,7 @@ if [ "$OVN_HA" == false ]; then
   # TODO streamline the db delete tests
   skip "recovering from deleting db files while maintaining connectivity"
   skip "Should validate connectivity before and after deleting all the db-pods at once in HA mode"
-else 
+else
   skip "Should validate connectivity before and after deleting all the db-pods at once in Non-HA mode"
   skip "e2e br-int NetFlow export validation"
 fi
@@ -150,7 +150,7 @@ else
     if [ "$ENABLE_NETWORK_SEGMENTATION" = true ]; then
       skip_label "Feature:RouteAdvertisements && EXTENDED"
     fi
-    
+
     # Some test don't work when the default network is advertised, either because
     # the configuration that the test excercises does not make sense for an advertised network, or
     # there is some bug or functional gap
@@ -185,9 +185,6 @@ else
     # https://issues.redhat.com/browse/OCPBUGS-55028
     skip "e2e egress IP validation Cluster Default Network \[secondary-host-eip\]"
 
-    # https://issues.redhat.com/browse/OCPBUGS-50636
-    skip "Services of type NodePort should listen on each host addresses"
-    skip "Services of type NodePort should work on secondary node interfaces for ETP=local and ETP=cluster when backend pods are also served by EgressIP"
 
     # https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5240
     skip "e2e control plane test node readiness according to its defaults interface MTU size should get node not ready with a too small MTU"

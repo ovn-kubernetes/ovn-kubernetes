@@ -906,7 +906,14 @@ Nodes using the new topology must perform the following actions:
   - Create a tmp transit router port `trtos-layer2-switch-upgrade` with the GR MAC address
   - Add a dummy IP from the join subnet to the `trtos-layer2-switch-upgrade` port to enable pod on node1 -> remote GR traffic.
   - Add `trasit_router` routes to steer joinIP traffic for the ole nodes to the `trtos-layer2-switch-upgrade` port.
-    These routes look silly, but they work, like `100.65.0.3 100.65.0.3 dst-ip` for every joinIP of the old nodes.
+    These routes look weird, but they work, like `100.65.0.3 100.65.0.3 dst-ip` for every joinIP of the old nodes. We need this because
+    in OVN routes with dst-ip and src-ip policies are evaluated at the same time and selected based on longest-prefix-match,
+    and we have the following route for pod network `10.10.0.0/24`:
+    `10.10.0.0/24                 10.10.0.2 src-ip`
+    Connected route for the join IP is based on the joinSubnet, which is always `/16`.
+    That means, that for traffic with src IP from the podSubnet dst IP from joinSubnet,
+    the winning route is joinIP if podSubnet mask is <= 16 and podSubnet otherwise.
+    That is not the desired behavior, that is why we add always-winning routes (aka /32 or /128) for joinIPs.
 
 We need to make sure joinSubnet works between upgraded and non-upgraded nodes, as this is the only network that both topologies
 understand:

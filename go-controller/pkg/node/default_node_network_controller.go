@@ -511,13 +511,7 @@ func setEncapPort(ctx context.Context) error {
 
 func isOVNControllerReady() (bool, error) {
 	// check node's connection status
-	runDir := util.GetOvnRunDir()
-	pid, err := os.ReadFile(runDir + "ovn-controller.pid")
-	if err != nil {
-		return false, fmt.Errorf("unknown pid for ovn-controller process: %v", err)
-	}
-	ctlFile := runDir + fmt.Sprintf("ovn-controller.%s.ctl", strings.TrimSuffix(string(pid), "\n"))
-	ret, _, err := util.RunOVSAppctl("-t", ctlFile, "connection-status")
+	ret, _, err := util.RunOVNControllerAppCtl("connection-status")
 	if err != nil {
 		return false, fmt.Errorf("could not get connection status: %w", err)
 	}

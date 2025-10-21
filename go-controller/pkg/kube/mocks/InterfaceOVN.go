@@ -415,24 +415,6 @@ func (_m *InterfaceOVN) SetLabelsOnNode(nodeName string, labels map[string]inter
 	return r0
 }
 
-// SetTaintOnNode provides a mock function with given fields: nodeName, taint
-func (_m *InterfaceOVN) SetTaintOnNode(nodeName string, taint *apicorev1.Taint) error {
-	ret := _m.Called(nodeName, taint)
-
-	if len(ret) == 0 {
-		panic("no return value specified for SetTaintOnNode")
-	}
-
-	var r0 error
-	if rf, ok := ret.Get(0).(func(string, *apicorev1.Taint) error); ok {
-		r0 = rf(nodeName, taint)
-	} else {
-		r0 = ret.Error(0)
-	}
-
-	return r0
-}
-
 // UpdateCloudPrivateIPConfig provides a mock function with given fields: cloudPrivateIPConfig
 func (_m *InterfaceOVN) UpdateCloudPrivateIPConfig(cloudPrivateIPConfig *v1.CloudPrivateIPConfig) (*v1.CloudPrivateIPConfig, error) {
 	ret := _m.Called(cloudPrivateIPConfig)

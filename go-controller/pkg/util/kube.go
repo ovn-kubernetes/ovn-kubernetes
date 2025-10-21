@@ -867,13 +867,6 @@ func GetEligibleEndpointAddressesFromSlices(endpointSlices []*discovery.Endpoint
 	return getEligibleEndpointAddresses(getEndpointsFromEndpointSlices(endpointSlices), service, "")
 }
 
-// GetLocalEligibleEndpointAddressesFromSlices returns a set of IP addresses of endpoints that are local to the specified node
-// and are eligible.
-func GetLocalEligibleEndpointAddressesFromSlices(endpointSlices []*discovery.EndpointSlice, service *corev1.Service, nodeName string) sets.Set[string] {
-	endpoints := getEligibleEndpointAddresses(getEndpointsFromEndpointSlices(endpointSlices), service, nodeName)
-	return sets.New(endpoints...)
-}
-
 // DoesEndpointSliceContainEndpoint returns true if the endpointslice
 // contains an endpoint with the given IP, port and Protocol and if this endpoint is considered eligible.
 func DoesEndpointSliceContainEligibleEndpoint(endpointSlice *discovery.EndpointSlice,
@@ -893,7 +886,8 @@ func DoesEndpointSliceContainEligibleEndpoint(endpointSlice *discovery.EndpointS
 
 // HasLocalHostNetworkEndpoints returns true if any of the nodeAddresses appear in given the set of
 // localEndpointAddresses. This is useful to check whether any of the provided local endpoints are host-networked.
-func HasLocalHostNetworkEndpoints(localEndpointAddresses sets.Set[string], nodeAddresses []net.IP) bool {
+func HasLocalHostNetworkEndpoints(portToLBEndpoints PortToLBEndpoints, nodeAddresses []net.IP) bool {
+	localEndpointAddresses := portToLBEndpoints.GetAddresses()
 	if len(localEndpointAddresses) == 0 || len(nodeAddresses) == 0 {
 		return false
 	}

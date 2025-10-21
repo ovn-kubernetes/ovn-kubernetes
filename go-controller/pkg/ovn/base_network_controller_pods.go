@@ -1045,6 +1045,12 @@ func (bnc *BaseNetworkController) shouldReleaseDeletedPod(pod *corev1.Pod, switc
 		}
 	}
 
+	// this pod is being deleted before completion so there is no risk (and no
+	// need to check) that its IPs are being used by other pod
+	if !util.PodCompleted(pod) {
+		return true, nil
+	}
+
 	if bnc.wasPodReleasedBeforeStartup(string(pod.UID), nad) {
 		klog.Infof("Completed pod %s/%s was already released for nad %s before startup",
 			pod.Namespace,
