@@ -75,8 +75,7 @@ func (m *networkQoSManager) updateStatus(networkQoS *networkqosapi.NetworkQoS, a
 
 //lint:ignore U1000 generic interfaces throw false-positives
 func (m *networkQoSManager) cleanupStatus(networkQoS *networkqosapi.NetworkQoS, applyOpts *metav1.ApplyOptions) error {
-	applyObj := networkqosapply.NetworkQoS(networkQoS.Name, networkQoS.Namespace).
-		WithStatus(networkqosapply.Status())
+	applyObj := networkqosapply.NetworkQoS(networkQoS.Name, networkQoS.Namespace)
 
 	_, err := m.client.K8sV1alpha1().NetworkQoSes(networkQoS.Namespace).ApplyStatus(context.TODO(), applyObj, *applyOpts)
 	return err
