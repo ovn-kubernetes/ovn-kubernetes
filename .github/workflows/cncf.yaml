@@ -1,0 +1,18 @@
+name: cncf runner test
+on:
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  show-runner-labels:
+    runs-on: [oracle-vm-8cpu-32gb-x86-64]
+    steps:
+      - name: Get runner labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          REPO: ${{ github.repository }}
+        run: |
+          curl -s -H "Authorization: Bearer $GH_TOKEN" \
+          https://api.github.com/repos/$REPO/actions/runs/$RUN_ID/jobs \
+          | jq -r ".jobs[] | select(.runner_name==\"$RUNNER_NAME\") | .labels[]"
