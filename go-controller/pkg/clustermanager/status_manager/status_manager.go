@@ -128,7 +128,7 @@ func (m *typedStatusManager[T]) updateStatus(key string) error {
 					klog.Infof("StatusManager %s: delete stale zone %s", m.name, zoneID)
 					err = m.resource.cleanupStatus(obj, applyAsZoneController)
 					if err != nil {
-						return err
+						return fmt.Errorf("StatusManager %s: failed to cleanup status for stale zone %s: %w", m.name, zoneID, err)
 					}
 				}
 			}
