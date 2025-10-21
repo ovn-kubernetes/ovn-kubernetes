@@ -3,13 +3,13 @@
 package v1
 
 import (
-	"context"
+	context "context"
 	time "time"
 
-	networkv1 "github.com/openshift/api/network/v1"
+	apinetworkv1 "github.com/openshift/api/network/v1"
 	versioned "github.com/openshift/client-go/network/clientset/versioned"
 	internalinterfaces "github.com/openshift/client-go/network/informers/externalversions/internalinterfaces"
-	v1 "github.com/openshift/client-go/network/listers/network/v1"
+	networkv1 "github.com/openshift/client-go/network/listers/network/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	watch "k8s.io/apimachinery/pkg/watch"
@@ -20,7 +20,7 @@ import (
 // HostSubnets.
 type HostSubnetInformer interface {
 	Informer() cache.SharedIndexInformer
-	Lister() v1.HostSubnetLister
+	Lister() networkv1.HostSubnetLister
 }
 
 type hostSubnetInformer struct {
@@ -45,16 +45,28 @@ func NewFilteredHostSubnetInformer(client versioned.Interface, resyncPeriod time
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.NetworkV1().HostSubnets().List(context.TODO(), options)
+				return client.NetworkV1().HostSubnets().List(context.Background(), options)
 			},
 			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.NetworkV1().HostSubnets().Watch(context.TODO(), options)
+				return client.NetworkV1().HostSubnets().Watch(context.Background(), options)
+			},
+			ListWithContextFunc: func(ctx context.Context, options metav1.ListOptions) (runtime.Object, error) {
+				if tweakListOptions != nil {
+					tweakListOptions(&options)
+				}
+				return client.NetworkV1().HostSubnets().List(ctx, options)
+			},
+			WatchFuncWithContext: func(ctx context.Context, options metav1.ListOptions) (watch.Interface, error) {
+				if tweakListOptions != nil {
+					tweakListOptions(&options)
+				}
+				return client.NetworkV1().HostSubnets().Watch(ctx, options)
 			},
 		},
-		&networkv1.HostSubnet{},
+		&apinetworkv1.HostSubnet{},
 		resyncPeriod,
 		indexers,
 	)
@@ -65,9 +77,9 @@ func (f *hostSubnetInformer) defaultInformer(client versioned.Interface, resyncP
 }
 
 func (f *hostSubnetInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&networkv1.HostSubnet{}, f.defaultInformer)
+	return f.factory.InformerFor(&apinetworkv1.HostSubnet{}, f.defaultInformer)
 }
 
-func (f *hostSubnetInformer) Lister() v1.HostSubnetLister {
-	return v1.NewHostSubnetLister(f.Informer().GetIndexer())
+func (f *hostSubnetInformer) Lister() networkv1.HostSubnetLister {
+	return networkv1.NewHostSubnetLister(f.Informer().GetIndexer())
 }
