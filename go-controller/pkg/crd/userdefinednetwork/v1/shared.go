@@ -23,6 +23,14 @@ const (
 	NetworkTopologyLayer3 NetworkTopology = "Layer3"
 )
 
+// +kubebuilder:validation:Enum=Geneve;None
+type TransportEncapsulation string
+
+const (
+	TransportEncapsulationGeneve TransportEncapsulation = "Geneve"
+	TransportEncapsulationNone   TransportEncapsulation = "None"
+)
+
 // +kubebuilder:validation:XValidation:rule="!has(self.joinSubnets) || has(self.role) && self.role == 'Primary'", message="JoinSubnets is only supported for Primary network"
 // +kubebuilder:validation:XValidation:rule="!has(self.subnets) || !has(self.mtu) || !self.subnets.exists_one(i, isCIDR(i.cidr) && cidr(i.cidr).ip().family() == 6) || self.mtu >= 1280", message="MTU should be greater than or equal to 1280 when IPv6 subnet is used"
 type Layer3Config struct {
@@ -66,6 +74,14 @@ type Layer3Config struct {
 	//
 	// +optional
 	JoinSubnets DualStackCIDRs `json:"joinSubnets,omitempty"`
+
+	// Encapsulation specifies the encapsulation type used for the network.
+	// Allowed values are "Geneve", "None".
+	// When set to "None", the east-west traffic will not use encapsulation. When unset, the default value is "Geneve".
+	//
+	// +kubebuilder:validation:Enum=Geneve;None
+	// +optional
+	Encapsulation TransportEncapsulation `json:"encapsulation,omitempty"`
 }
 
 // +kubebuilder:validation:XValidation:rule="!has(self.hostSubnet) || !isCIDR(self.cidr) || self.hostSubnet > cidr(self.cidr).prefixLength()", message="HostSubnet must be smaller than CIDR subnet"

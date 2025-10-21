@@ -64,6 +64,9 @@ const DefaultDBTxnTimeout = time.Second * 100
 // DefaultEphemeralPortRange is used for unit testing only
 const DefaultEphemeralPortRange = "32768-60999"
 
+const NetworkEncapsulationGeneve = "geneve"
+const NetworkEncapsulationNone = "none"
+
 // The following are global config parameters that other modules may access directly
 var (
 	// Build information. Populated at build-time.
@@ -101,6 +104,7 @@ var (
 		RawClusterSubnets:            "10.128.0.0/14/23",
 		Zone:                         types.OvnDefaultZone,
 		RawUDNAllowedDefaultServices: "default/kubernetes,kube-system/kube-dns",
+		DefaultNetworkEncapsulation:  NetworkEncapsulationGeneve,
 	}
 
 	// Logging holds logging-related parsed config file parameters and command-line overrides
@@ -320,6 +324,9 @@ type DefaultConfig struct {
 	// UDNAllowedDefaultServices holds a list of namespaced names of
 	// default cluster network services accessible from primary user-defined networks
 	UDNAllowedDefaultServices []string
+
+	// DefaultNetworkEncapsulation is the default network encapsulation type used for the default network
+	DefaultNetworkEncapsulation string `gcfg:"default-network-encapsulation"`
 }
 
 // LoggingConfig holds logging-related parsed config file parameters and command-line overrides
@@ -819,7 +826,7 @@ var CommonFlags = []cli.Flag{
 	},
 	&cli.IntFlag{
 		Name:        "mtu",
-		Usage:       "MTU value used for the overlay networks (default: 1400)",
+		Usage:       "MTU value used for the pod networks (default: 1400)",
 		Destination: &cliConfig.Default.MTU,
 		Value:       Default.MTU,
 	},
@@ -1002,6 +1009,12 @@ var CommonFlags = []cli.Flag{
 			"Only used when enable-network-segmentation is set",
 		Value:       Default.RawUDNAllowedDefaultServices,
 		Destination: &cliConfig.Default.RawUDNAllowedDefaultServices,
+	},
+	&cli.StringFlag{
+		Name:        "default-network-encapsulation",
+		Usage:       "the default network encapsulation mode (default: geneve)",
+		Value:       Default.DefaultNetworkEncapsulation,
+		Destination: &cliConfig.Default.DefaultNetworkEncapsulation,
 	},
 }
 
