@@ -5,14 +5,14 @@ import (
 	"net"
 	"strings"
 
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
+
 	net2 "k8s.io/utils/net"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
-
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
 )
 
 func TestDefaultBridgeConfig() *BridgeConfiguration {
@@ -40,7 +40,7 @@ func (b *BridgeConfiguration) GetNetConfigLen() int {
 }
 
 func CheckUDNSvcIsolationOVSFlows(flows []string, netConfig *BridgeUDNConfiguration, netName string, svcCIDR *net.IPNet, expectedNFlows int) {
-	By(fmt.Sprintf("Checking UDN %s service isolation flows for %s; expected %d flows",
+	ginkgo.By(fmt.Sprintf("Checking UDN %s service isolation flows for %s; expected %d flows",
 		netName, svcCIDR.String(), expectedNFlows))
 
 	var mgmtMasqIP string
@@ -61,11 +61,11 @@ func CheckUDNSvcIsolationOVSFlows(flows []string, netConfig *BridgeUDNConfigurat
 		}
 	}
 
-	Expect(nFlows).To(Equal(expectedNFlows))
+	gomega.Expect(nFlows).To(gomega.Equal(expectedNFlows))
 }
 
 func CheckAdvertisedUDNSvcIsolationOVSFlows(flows []string, netConfig *BridgeUDNConfiguration, netName string, svcCIDR *net.IPNet, expectedNFlows int) {
-	By(fmt.Sprintf("Checking advertised UDN %s service isolation flows for %s; expected %d flows",
+	ginkgo.By(fmt.Sprintf("Checking advertised UDN %s service isolation flows for %s; expected %d flows",
 		netName, svcCIDR.String(), expectedNFlows))
 
 	var matchingIPFamilySubnet *net.IPNet
@@ -77,11 +77,11 @@ func CheckAdvertisedUDNSvcIsolationOVSFlows(flows []string, netConfig *BridgeUDN
 	}
 	if net2.IsIPv4CIDR(svcCIDR) {
 		matchingIPFamilySubnet, err = util.MatchFirstIPNetFamily(false, udnAdvertisedSubnets)
-		Expect(err).ToNot(HaveOccurred())
+		gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		protoPrefix = protoPrefixV4
 	} else {
 		matchingIPFamilySubnet, err = util.MatchFirstIPNetFamily(true, udnAdvertisedSubnets)
-		Expect(err).ToNot(HaveOccurred())
+		gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		protoPrefix = protoPrefixV6
 	}
 
@@ -97,11 +97,11 @@ func CheckAdvertisedUDNSvcIsolationOVSFlows(flows []string, netConfig *BridgeUDN
 		}
 	}
 
-	Expect(nFlows).To(Equal(expectedNFlows))
+	gomega.Expect(nFlows).To(gomega.Equal(expectedNFlows))
 }
 
 func CheckDefaultSvcIsolationOVSFlows(flows []string, defaultConfig *BridgeUDNConfiguration, ofPortHost, bridgeMAC string, svcCIDR *net.IPNet) {
-	By(fmt.Sprintf("Checking default service isolation flows for %s", svcCIDR.String()))
+	ginkgo.By(fmt.Sprintf("Checking default service isolation flows for %s", svcCIDR.String()))
 
 	var masqIP string
 	var masqSubnet string
@@ -133,7 +133,7 @@ func CheckDefaultSvcIsolationOVSFlows(flows []string, defaultConfig *BridgeUDNCo
 		}
 	}
 
-	Expect(nTable0DefaultFlows).To(Equal(1))
-	Expect(nTable0UDNMasqFlows).To(Equal(1))
-	Expect(nTable2Flows).To(Equal(1))
+	gomega.Expect(nTable0DefaultFlows).To(gomega.Equal(1))
+	gomega.Expect(nTable0UDNMasqFlows).To(gomega.Equal(1))
+	gomega.Expect(nTable2Flows).To(gomega.Equal(1))
 }
