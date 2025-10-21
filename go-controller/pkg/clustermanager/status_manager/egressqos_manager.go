@@ -75,8 +75,7 @@ func (m *egressQoSManager) updateStatus(egressQoS *egressqosapi.EgressQoS, apply
 
 //lint:ignore U1000 generic interfaces throw false-positives
 func (m *egressQoSManager) cleanupStatus(egressQoS *egressqosapi.EgressQoS, applyOpts *metav1.ApplyOptions) error {
-	applyObj := egressqosapply.EgressQoS(egressQoS.Name, egressQoS.Namespace).
-		WithStatus(egressqosapply.EgressQoSStatus())
+	applyObj := egressqosapply.EgressQoS(egressQoS.Name, egressQoS.Namespace)
 
 	_, err := m.client.K8sV1().EgressQoSes(egressQoS.Namespace).ApplyStatus(context.TODO(), applyObj, *applyOpts)
 	return err
