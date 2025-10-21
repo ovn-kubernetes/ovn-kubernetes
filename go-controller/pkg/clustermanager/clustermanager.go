@@ -149,6 +149,7 @@ func NewClusterManager(
 			cm.networkManager.Interface(),
 			wf.PodCoreInformer(),
 			wf.NamespaceInformer(),
+			wf.EgressFirewallInformer(),
 			cm.recorder,
 		)
 		cm.userDefinedNetworkController = udnController

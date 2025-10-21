@@ -22,6 +22,7 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/template"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	egressfirewallapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
 	udnv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	udnclient "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned"
 	udnfakeclient "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/fake"
@@ -46,6 +47,7 @@ var _ = Describe("User Defined Network Controller", func() {
 		Expect(config.PrepareTestConfig()).To(Succeed())
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
 		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+		config.OVNKubernetesFeature.EnableEgressFirewall = true
 	})
 
 	AfterEach(func() {
@@ -65,7 +67,7 @@ var _ = Describe("User Defined Network Controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 		return New(cs.NetworkAttchDefClient, f.NADInformer(),
 			cs.UserDefinedNetworkClient, f.UserDefinedNetworkInformer(), f.ClusterUserDefinedNetworkInformer(),
-			renderNADStub, networkManager.Interface(), f.PodCoreInformer(), f.NamespaceInformer(), nil,
+			renderNADStub, networkManager.Interface(), f.PodCoreInformer(), f.NamespaceInformer(), f.EgressFirewallInformer(), nil,
 		)
 	}
 
@@ -383,13 +385,55 @@ var _ = Describe("User Defined Network Controller", func() {
 				c.networkInUseRequeueInterval = 50 * time.Millisecond
 				Expect(c.Run()).To(Succeed())
 
-				assertFinalizersPresent(cs.UserDefinedNetworkClient, cs.NetworkAttchDefClient, udn, pod1, pod2)
+				assertFinalizersPresentForPods(cs.UserDefinedNetworkClient, cs.NetworkAttchDefClient, udn, pod1, pod2)
 
 				Expect(cs.KubeClient.CoreV1().Pods(udn.Namespace).Delete(context.Background(), pod1.Name, metav1.DeleteOptions{})).To(Succeed())
 
-				assertFinalizersPresent(cs.UserDefinedNetworkClient, cs.NetworkAttchDefClient, udn, pod2)
+				assertFinalizersPresentForPods(cs.UserDefinedNetworkClient, cs.NetworkAttchDefClient, udn, pod2)
 
 				Expect(cs.KubeClient.CoreV1().Pods(udn.Namespace).Delete(context.Background(), pod2.Name, metav1.DeleteOptions{})).To(Succeed())
+
+				Eventually(func() []string {
+					udn, err := cs.UserDefinedNetworkClient.K8sV1().UserDefinedNetworks(udn.Namespace).Get(context.Background(), udn.Name, metav1.GetOptions{})
+					Expect(err).NotTo(HaveOccurred())
+					return udn.Finalizers
+				}).Should(BeEmpty(), "should remove finalizer on UDN following deletion and not being used")
+				_, err = cs.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nad.Namespace).Get(context.Background(), nad.Name, metav1.GetOptions{})
+				Expect(err).To(HaveOccurred())
+				Expect(apierrors.IsNotFound(err)).To(BeTrue())
+			})
+			It("when UDN is being deleted, NAD exist, egress firewall using UDN, should delete NAD once no egress firewall uses the network", func() {
+				var err error
+				nad := testNAD()
+				udn := testPrimaryUDN()
+				udn.SetDeletionTimestamp(&metav1.Time{Time: time.Now()})
+
+				egressFirewall := &egressfirewallapi.EgressFirewall{
+					ObjectMeta: metav1.ObjectMeta{
+						UID:       types.UID(udn.Namespace),
+						Name:      "test",
+						Namespace: udn.Namespace,
+					},
+					Spec: egressfirewallapi.EgressFirewallSpec{
+						Egress: []egressfirewallapi.EgressFirewallRule{
+							{
+								Type: "Allow",
+								To: egressfirewallapi.EgressFirewallDestination{
+									CIDRSelector: "1.2.3.4/23",
+								},
+							},
+						},
+					},
+				}
+
+				c = newTestController(renderNadStub(nad), udn, nad, egressFirewall, testNamespace(udn.Namespace))
+				// user short interval to make the controller re-enqueue requests
+				c.networkInUseRequeueInterval = 50 * time.Millisecond
+				Expect(c.Run()).To(Succeed())
+
+				assertFinalizersPresentForEgressFirewall(cs.UserDefinedNetworkClient, cs.NetworkAttchDefClient, udn, egressFirewall.Name)
+
+				Expect(cs.EgressFirewallClient.K8sV1().EgressFirewalls(udn.Namespace).Delete(context.Background(), egressFirewall.Name, metav1.DeleteOptions{})).To(Succeed())
 
 				Eventually(func() []string {
 					udn, err := cs.UserDefinedNetworkClient.K8sV1().UserDefinedNetworks(udn.Namespace).Get(context.Background(), udn.Name, metav1.GetOptions{})
@@ -1408,7 +1452,7 @@ func assertUserDefinedNetworkStatus(udnClient udnclient.Interface, udn *udnv1.Us
 	Expect(actualUDN.Status).To(Equal(*expectedStatus))
 }
 
-func assertFinalizersPresent(
+func assertFinalizersPresentForPods(
 	udnClient udnclient.Interface,
 	nadClient netv1clientset.Interface,
 	udn *udnv1.UserDefinedNetwork,
@@ -1422,6 +1466,35 @@ func assertFinalizersPresent(
 	}
 	expectedConditionMsg := fmt.Sprintf(`failed to delete NetworkAttachmentDefinition [%s/%s]: network in use by the following pods: %v`,
 		udn.Namespace, udn.Name, podNames)
+
+	Eventually(func() []metav1.Condition {
+		updatedUDN, err := udnClient.K8sV1().UserDefinedNetworks(udn.Namespace).Get(context.Background(), udn.Name, metav1.GetOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		return normalizeConditions(updatedUDN.Status.Conditions)
+	}).Should(Equal([]metav1.Condition{{
+		Type:    "NetworkCreated",
+		Status:  "False",
+		Reason:  "SyncError",
+		Message: expectedConditionMsg,
+	}}))
+	udn, err := udnClient.K8sV1().UserDefinedNetworks(udn.Namespace).Get(context.Background(), udn.Name, metav1.GetOptions{})
+	Expect(err).NotTo(HaveOccurred())
+	Expect(udn.Finalizers).To(ConsistOf("k8s.ovn.org/user-defined-network-protection"))
+	nad, err := nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(udn.Namespace).Get(context.Background(), udn.Name, metav1.GetOptions{})
+	Expect(err).NotTo(HaveOccurred())
+	Expect(nad.Finalizers).To(ConsistOf("k8s.ovn.org/user-defined-network-protection"))
+}
+
+func assertFinalizersPresentForEgressFirewall(
+	udnClient udnclient.Interface,
+	nadClient netv1clientset.Interface,
+	udn *udnv1.UserDefinedNetwork,
+	efName string,
+) {
+	GinkgoHelper()
+
+	expectedConditionMsg := fmt.Sprintf(`failed to delete NetworkAttachmentDefinition [%s/%s]: network still in use and has egress firewalls configured: %v`,
+		udn.Namespace, udn.Name, efName)
 
 	Eventually(func() []metav1.Condition {
 		updatedUDN, err := udnClient.K8sV1().UserDefinedNetworks(udn.Namespace).Get(context.Background(), udn.Name, metav1.GetOptions{})

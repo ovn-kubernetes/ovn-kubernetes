@@ -32,6 +32,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/notifier"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/template"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
+	v1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1/apis/informers/externalversions/egressfirewall/v1"
 	userdefinednetworkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	udnapplyconfkv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/applyconfiguration/userdefinednetwork/v1"
 	userdefinednetworkclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned"
@@ -83,6 +84,7 @@ type Controller struct {
 	nadLister         netv1lister.NetworkAttachmentDefinitionLister
 	podInformer       corev1informer.PodInformer
 	namespaceInformer corev1informer.NamespaceInformer
+	efInformer        v1.EgressFirewallInformer
 
 	networkInUseRequeueInterval time.Duration
 	eventRecorder               record.EventRecorder
@@ -98,6 +100,7 @@ func New(
 	networkManager networkmanager.Interface,
 	podInformer corev1informer.PodInformer,
 	namespaceInformer corev1informer.NamespaceInformer,
+	efInformer v1.EgressFirewallInformer,
 	eventRecorder record.EventRecorder,
 ) *Controller {
 	udnLister := udnInformer.Lister()
@@ -110,6 +113,7 @@ func New(
 		cudnLister:        cudnLister,
 		renderNadFn:       renderNadFn,
 		podInformer:       podInformer,
+		efInformer:        efInformer,
 		namespaceInformer: namespaceInformer,
 		networkManager:    networkManager,
 		namespaceTracker:  map[string]sets.Set[string]{},
