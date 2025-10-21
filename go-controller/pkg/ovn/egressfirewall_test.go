@@ -31,6 +31,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/retry"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/networkmanager"
 	t "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	util_mocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/mocks"
@@ -105,6 +106,42 @@ func getEFExpectedDb(initialData []libovsdb.TestData, fakeOVN *FakeOVN, nsName s
 	namespacePortGroup := libovsdbutil.BuildPortGroup(pgIDs, nil, []*nbdb.ACL{acl})
 	namespacePortGroup.UUID = pgName + "-UUID"
 	return append(initialData, acl, namespacePortGroup)
+}
+
+func getEFExpectedDbUDN(initialData []libovsdb.TestData, fakeOVN *FakeOVN, nsName string, dstMatch, portMatch string,
+	action nbdb.ACLAction, udnName string) []libovsdb.TestData {
+	//pgName := fakeOVN.controller.getNamespacePortGroupName(nsName)
+	ownerController := udnName + "-network-controller"
+	pgIDs := getNamespacePortGroupDbIDs(nsName, ownerController)
+	dbIDs := fakeOVN.controller.getEgressFirewallACLDbIDs(nsName, 0)
+	match := dstMatch + " && inport == @" + libovsdbutil.GetPortGroupName(pgIDs)
+	if portMatch != "" {
+		match += " && " + portMatch
+	}
+	acl := libovsdbops.BuildACL(
+		libovsdbutil.GetACLName(dbIDs),
+		nbdb.ACLDirectionToLport,
+		t.EgressFirewallStartPriority,
+		match,
+		action,
+		t.OvnACLLoggingMeter,
+		"",
+		false,
+		dbIDs.GetExternalIDs(),
+		nil,
+		t.DefaultACLTier,
+	)
+	acl.UUID = "acl-UUID"
+
+	// new ACL will be added to the port group
+	//pgIDs := getNamespacePortGroupDbIDs(nsName, ownerController)
+	namespacePortGroup := libovsdbutil.BuildPortGroup(pgIDs, nil, []*nbdb.ACL{acl})
+	namespacePortGroup.UUID = libovsdbutil.GetPortGroupName(pgIDs) + "-UUID"
+
+	defaultPGIDs := getNamespacePortGroupDbIDs(nsName, DefaultNetworkControllerName)
+	namespaceDefaultPortGroup := libovsdbutil.BuildPortGroup(defaultPGIDs, nil, nil)
+	namespaceDefaultPortGroup.UUID = libovsdbutil.GetPortGroupName(defaultPGIDs) + "-UUID"
+	return append(initialData, namespaceDefaultPortGroup, acl, namespacePortGroup)
 }
 
 func getEFExpectedDbAfterDelete(prevExpectedData []libovsdb.TestData) []libovsdb.TestData {
@@ -588,6 +625,100 @@ var _ = ginkgo.Describe("OVN EgressFirewall Operations", func() {
 					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
 					return nil
 				}
+				err := app.Run([]string{app.Name})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			})
+			ginkgo.It(fmt.Sprintf("correctly creates an egressfirewall with UDN denying traffic udp traffic on port 100, gateway mode %s", gwMode), func() {
+				config.Gateway.Mode = gwMode
+				config.OVNKubernetesFeature.EnableMultiNetwork = true
+				config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+				app.Action = func(*cli.Context) error {
+					namespace1 := *newUDNNamespace(ns)
+					egressFirewall := newEgressFirewallObject("default", namespace1.Name, []egressfirewallapi.EgressFirewallRule{
+						{
+							Type: "Deny",
+							Ports: []egressfirewallapi.EgressFirewallPort{
+								{
+									Protocol: "UDP",
+									Port:     100,
+								},
+							},
+							To: egressfirewallapi.EgressFirewallDestination{
+								CIDRSelector: "1.2.3.4/23",
+							},
+						},
+					})
+					netconf := dummyLayer2PrimaryUserDefinedNetwork("192.168.0.0/16")
+					networkConfig, err := util.NewNetInfo(netconf.netconf())
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					fakeOVN.networkManager = &networkmanager.FakeNetworkManager{PrimaryNetworks: map[string]util.NetInfo{
+						namespace1.Name: networkConfig,
+					}}
+					// add UDN namespaced port group
+					ownerController := networkConfig.GetNetworkName() + "-network-controller"
+					pgIDs := getNamespacePortGroupDbIDs(ns, ownerController)
+					namespacePortGroup := libovsdbutil.BuildPortGroup(pgIDs, nil, nil)
+					dbSetup.NBData = append(dbSetup.NBData, namespacePortGroup)
+					startOvn(dbSetup, []corev1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall}, true)
+
+					_, err = fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).Get(context.TODO(), egressFirewall.Name, metav1.GetOptions{})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+					expectedDatabaseState := getEFExpectedDbUDN(initialData, fakeOVN, namespace1.Name,
+						"(ip4.dst == 1.2.3.4/23)", "((udp && ( udp.dst == 100 )))", nbdb.ACLActionDrop, networkConfig.GetNetworkName())
+					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
+					return nil
+				}
+				err := app.Run([]string{app.Name})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			})
+			ginkgo.It(fmt.Sprintf("correctly deletes an egressfirewall with UDN, gateway mode %s", gwMode), func() {
+				config.Gateway.Mode = gwMode
+				config.OVNKubernetesFeature.EnableMultiNetwork = true
+				config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+				app.Action = func(*cli.Context) error {
+					namespace1 := *newUDNNamespace(ns)
+					netconf := dummyLayer2PrimaryUserDefinedNetwork("192.168.0.0/16")
+					networkConfig, err := util.NewNetInfo(netconf.netconf())
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					fakeOVN.networkManager = &networkmanager.FakeNetworkManager{PrimaryNetworks: map[string]util.NetInfo{
+						namespace1.Name: networkConfig,
+					}}
+					// add UDN namespaced port group
+					ownerController := networkConfig.GetNetworkName() + "-network-controller"
+					pgIDs := getNamespacePortGroupDbIDs(ns, ownerController)
+					namespacePortGroup := libovsdbutil.BuildPortGroup(pgIDs, nil, nil)
+					dbSetup.NBData = append(dbSetup.NBData, namespacePortGroup)
+					egressFirewall := newEgressFirewallObject("default", namespace1.Name, []egressfirewallapi.EgressFirewallRule{
+						{
+							Type: "Allow",
+							Ports: []egressfirewallapi.EgressFirewallPort{
+								{
+									Protocol: "TCP",
+									Port:     100,
+								},
+							},
+							To: egressfirewallapi.EgressFirewallDestination{
+								CIDRSelector: "1.2.3.5/23",
+							},
+						},
+					})
+
+					startOvn(dbSetup, []corev1.Namespace{namespace1}, []egressfirewallapi.EgressFirewall{*egressFirewall}, true)
+
+					expectedDatabaseState := getEFExpectedDbUDN(initialData, fakeOVN, namespace1.Name,
+						"(ip4.dst == 1.2.3.5/23)", "((tcp && ( tcp.dst == 100 )))", nbdb.ACLActionAllow, networkConfig.GetNetworkName())
+					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
+
+					err = fakeOVN.fakeClient.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).Delete(context.TODO(), egressFirewall.Name, *metav1.NewDeleteOptions(0))
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+					expectedDatabaseState = getEFExpectedDbAfterDelete(expectedDatabaseState)
+					gomega.Eventually(fakeOVN.nbClient).Should(libovsdb.HaveData(expectedDatabaseState))
+
+					return nil
+				}
+
 				err := app.Run([]string{app.Name})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			})

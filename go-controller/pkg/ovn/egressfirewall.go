@@ -164,14 +164,41 @@ func (oc *DefaultNetworkController) syncEgressFirewall(egressFirewalls []interfa
 	err = batching.BatchMap[*nbdb.ACL](aclChangePGBatchSize, deletedNSACLs, func(batchNsACLs map[string][]*nbdb.ACL) error {
 		var ops []ovsdb.Operation
 		var err error
-		for namespace, acls := range batchNsACLs {
-			pgName := oc.getNamespacePortGroupName(namespace)
-			// delete stale ACLs from namespaced port group
-			// both port group and acls may not exist after moveACLsToNamespacedPortGroups,
-			// but DeleteACLsFromPortGroupOps doesn't return error in these cases
-			ops, err = libovsdbops.DeleteACLsFromPortGroupOps(oc.nbClient, ops, pgName, acls...)
-			if err != nil {
-				return fmt.Errorf("failed to build cleanup ops: %w", err)
+		for _, acls := range batchNsACLs {
+			// find the port group that has the stale acl
+			for _, acl := range acls {
+				p := func(item *nbdb.PortGroup) bool {
+					if len(item.ACLs) == 0 {
+						return false
+					}
+					for _, aclUUID := range item.ACLs {
+						if acl.UUID == aclUUID {
+							return true
+						}
+					}
+					return false
+				}
+				foundPGs, err := libovsdbops.FindPortGroupsWithPredicate(oc.nbClient, p)
+				if err != nil {
+					return fmt.Errorf("failed to search for port groups during egress firewall ACL sync: %w", err)
+				}
+				if len(foundPGs) > 0 {
+					pgNames := make([]string, len(foundPGs))
+					for _, pg := range foundPGs {
+						pgNames = append(pgNames, pg.Name)
+					}
+					klog.Warningf("Found multiple port groups associated with the same ACL %q: %s",
+						*acl.Name, strings.Join(pgNames, ","))
+				}
+				for _, pg := range foundPGs {
+					// delete stale ACLs from namespaced port group
+					// both port group and acls may not exist after moveACLsToNamespacedPortGroups,
+					// but DeleteACLsFromPortGroupOps doesn't return error in these cases
+					ops, err = libovsdbops.DeleteACLsFromPortGroupOps(oc.nbClient, ops, pg.Name, acls...)
+					if err != nil {
+						return fmt.Errorf("failed to build cleanup ops: %w", err)
+					}
+				}
 			}
 		}
 		_, err = libovsdbops.TransactAndCheck(oc.nbClient, ops)
@@ -263,7 +290,11 @@ func (oc *DefaultNetworkController) moveACLsToNamespacedPortGroups(existingEFNam
 		var err error
 		for namespace, acls := range batchNsACLs {
 			if namespace != "" && existingEFNamespaces[namespace] {
-				pgName := oc.getNamespacePortGroupName(namespace)
+				pgName, err := oc.getNamespacePortGroupNameUnknownOwner(namespace)
+				if err != nil {
+					return fmt.Errorf("failed to get port group name for egress firewall ACL move with "+
+						"namespace: %s, err: %w", namespace, err)
+				}
 				// re-attach from ClusterPortGroupNameBase to namespaced port group.
 				// port group should exist, because namespace handler will create it.
 				ops, err = libovsdbops.AddACLsToPortGroupOps(oc.nbClient, ops, pgName, acls...)
@@ -323,7 +354,10 @@ func (oc *DefaultNetworkController) addEgressFirewall(egressFirewall *egressfire
 		return utilerrors.Join(errorList...)
 	}
 
-	pgName := oc.getNamespacePortGroupName(egressFirewall.Namespace)
+	pgName, err := oc.getNamespacePortGroupNameUnknownOwner(egressFirewall.Namespace)
+	if err != nil {
+		return fmt.Errorf("failed to find port group name for egress firewall namespace %s: %w", egressFirewall.Namespace, err)
+	}
 	aclLoggingLevels := oc.GetNamespaceACLLogging(ef.namespace)
 	// store egress firewall before calling addEgressFirewallRules, since it doesn't have a cleanup, and oc.egressFirewalls
 	// object will be used on retry to cleanup
@@ -529,7 +563,11 @@ func (oc *DefaultNetworkController) deleteEgressFirewallRules(namespace string) 
 		klog.Warningf("No egressFirewall ACLs to delete in ns: %s", namespace)
 		return nil
 	}
-	pgName := oc.getNamespacePortGroupName(namespace)
+
+	pgName, err := oc.getNamespacePortGroupNameUnknownOwner(namespace)
+	if err != nil {
+		return fmt.Errorf("failed to find port group for egress firewall deletion with namespace %q: %w", namespace, err)
+	}
 	err = libovsdbops.DeleteACLsFromPortGroups(oc.nbClient, []string{pgName}, egressFirewallACLs...)
 	if err != nil {
 		return err
@@ -813,7 +851,12 @@ func (oc *DefaultNetworkController) updateEgressFirewallForNode(nodeName string)
 			return true
 		}
 		// update egress firewall rules
-		pgName := oc.getNamespacePortGroupName(ef.namespace)
+		pgName, err := oc.getNamespacePortGroupNameUnknownOwner(ef.namespace)
+		if err != nil {
+			efErr = fmt.Errorf("failed to get pg name for updating egress firewall with namespace %q, err: %w",
+				ef.namespace, err)
+			return false
+		}
 		aclLoggingLevels := oc.GetNamespaceACLLogging(ef.namespace)
 		if err := oc.addEgressFirewallRules(ef, pgName,
 			aclLoggingLevels, modifiedRuleIDs...); err != nil {

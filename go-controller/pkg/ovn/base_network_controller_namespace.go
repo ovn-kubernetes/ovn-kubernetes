@@ -444,6 +444,16 @@ func (bnc *BaseNetworkController) getNamespacePortGroupName(namespace string) st
 	return libovsdbutil.GetPortGroupName(getNamespacePortGroupDbIDs(namespace, bnc.controllerName))
 }
 
+// getNamespacePortGroupNameUnknownOwner figures out the namespace pg name, even if it belongs to another owner
+func (bnc *BaseNetworkController) getNamespacePortGroupNameUnknownOwner(namespace string) (string, error) {
+	activeNetwork, err := bnc.networkManager.GetActiveNetworkForNamespace(namespace)
+	if err != nil {
+		return "", fmt.Errorf("failed to get active network for namespace %s: %v", namespace, err)
+	}
+	ownerController := activeNetwork.GetNetworkName() + "-network-controller"
+	return libovsdbutil.GetPortGroupName(getNamespacePortGroupDbIDs(namespace, ownerController)), nil
+}
+
 // removeRemoteZonePodFromNamespaceAddressset tries to remove the remote zone pod ips from the pod namespace address set.
 // failure indicates it should be retried later.
 func (bsnc *BaseNetworkController) removeRemoteZonePodFromNamespaceAddressSet(pod *corev1.Pod) error {
