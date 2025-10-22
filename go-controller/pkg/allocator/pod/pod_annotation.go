@@ -9,6 +9,8 @@ import (
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
@@ -146,10 +148,9 @@ func allocatePodAnnotation(
 		allocateToPodWithRollback,
 	)
 
-	if ipamClaim != nil && err == nil {
-		newIPAMClaim := ipamClaim.DeepCopy()
-		newIPAMClaim.Status.IPs = util.StringSlice(podAnnotation.IPs)
-		err = claimsReconciler.Reconcile(ipamClaim, newIPAMClaim, ipAllocator)
+	if ipamClaim != nil {
+		updatedIPAMClaim := updateIPAMClaimStatus(ipamClaim, podAnnotation, pod.Name, err)
+		err = claimsReconciler.Reconcile(ipamClaim, updatedIPAMClaim, ipAllocator)
 	}
 
 	if err != nil {
@@ -244,10 +245,9 @@ func allocatePodAnnotationWithTunnelID(
 	)
 
 	// Reconcile IPAM claim
-	if ipamClaim != nil && err == nil {
-		newIPAMClaim := ipamClaim.DeepCopy()
-		newIPAMClaim.Status.IPs = util.StringSlice(podAnnotation.IPs)
-		err = claimsReconciler.Reconcile(ipamClaim, newIPAMClaim, ipAllocator)
+	if ipamClaim != nil {
+		updatedIPAMClaim := updateIPAMClaimStatus(ipamClaim, podAnnotation, pod.Name, err)
+		err = claimsReconciler.Reconcile(ipamClaim, updatedIPAMClaim, ipAllocator)
 	}
 
 	if err != nil {
@@ -288,6 +288,64 @@ func fetchIPAMClaim(
 	}
 
 	return nil, nil
+}
+
+// updateIPAMClaimStatus updates the IPAM claim status with conditions and IPs.
+// Returns an updated copy of the claim with:
+// - Conditions set based on allocation success/failure
+// - IPs set only on successful allocation
+// - Owner pod set on successful allocation
+func updateIPAMClaimStatus(
+	ipamClaim *ipamclaimsapi.IPAMClaim,
+	podAnnotation *util.PodAnnotation,
+	podName string,
+	allocationErr error,
+) *ipamclaimsapi.IPAMClaim {
+	updatedClaim := ipamClaim.DeepCopy()
+
+	updatedClaim.Status.OwnerPod = &ipamclaimsapi.OwnerPod{Name: podName}
+	updatedClaim.Status.IPs = []string{}
+
+	if allocationErr == nil &&
+		podAnnotation != nil &&
+		len(podAnnotation.IPs) > 0 {
+		updatedClaim.Status.IPs = util.StringSlice(podAnnotation.IPs)
+	}
+
+	const conditionType = "IPsAllocated"
+	now := metav1.Now()
+	if allocationErr == nil {
+		meta.SetStatusCondition(&updatedClaim.Status.Conditions, metav1.Condition{
+			Type:               conditionType,
+			Status:             metav1.ConditionTrue,
+			Reason:             "SuccessfulAllocation",
+			Message:            "IP addresses successfully allocated",
+			ObservedGeneration: updatedClaim.Generation,
+			LastTransitionTime: now,
+		})
+	} else {
+		var reason string
+		message := allocationErr.Error()
+
+		if ip.IsErrFull(allocationErr) {
+			reason = "SubnetExhausted"
+		} else if ip.IsErrAllocated(allocationErr) {
+			reason = "IPAddressConflict"
+		}
+
+		if reason != "" {
+			meta.SetStatusCondition(&updatedClaim.Status.Conditions, metav1.Condition{
+				Type:               conditionType,
+				Status:             metav1.ConditionFalse,
+				Reason:             reason,
+				Message:            message,
+				ObservedGeneration: updatedClaim.Generation,
+				LastTransitionTime: now,
+			})
+		}
+	}
+
+	return updatedClaim
 }
 
 // validateStaticIPRequest checks if a static IP request can be honored when IPAM is enabled for the given network.
