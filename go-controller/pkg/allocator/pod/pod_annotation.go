@@ -146,10 +146,11 @@ func allocatePodAnnotation(
 		allocateToPodWithRollback,
 	)
 
-	if ipamClaim != nil && err == nil {
-		newIPAMClaim := ipamClaim.DeepCopy()
-		newIPAMClaim.Status.IPs = util.StringSlice(podAnnotation.IPs)
-		err = claimsReconciler.Reconcile(ipamClaim, newIPAMClaim, ipAllocator)
+	if ipamClaim != nil {
+		updatedClaim := claimsReconciler.UpdateIPAMClaimStatus(ipamClaim, podAnnotation, pod.Name, err)
+		if reconcileErr := claimsReconciler.Reconcile(ipamClaim, updatedClaim, ipAllocator); reconcileErr != nil {
+			err = errors.Join(err, fmt.Errorf("failed to reconcile IPAM claim %s/%s: %w", ipamClaim.Namespace, ipamClaim.Name, reconcileErr))
+		}
 	}
 
 	if err != nil {
@@ -244,10 +245,11 @@ func allocatePodAnnotationWithTunnelID(
 	)
 
 	// Reconcile IPAM claim
-	if ipamClaim != nil && err == nil {
-		newIPAMClaim := ipamClaim.DeepCopy()
-		newIPAMClaim.Status.IPs = util.StringSlice(podAnnotation.IPs)
-		err = claimsReconciler.Reconcile(ipamClaim, newIPAMClaim, ipAllocator)
+	if ipamClaim != nil {
+		updatedClaim := claimsReconciler.UpdateIPAMClaimStatus(ipamClaim, podAnnotation, pod.Name, err)
+		if reconcileErr := claimsReconciler.Reconcile(ipamClaim, updatedClaim, ipAllocator); reconcileErr != nil {
+			err = errors.Join(err, fmt.Errorf("failed to reconcile IPAM claim %s/%s: %w", ipamClaim.Namespace, ipamClaim.Name, reconcileErr))
+		}
 	}
 
 	if err != nil {
