@@ -146,10 +146,8 @@ func allocatePodAnnotation(
 		allocateToPodWithRollback,
 	)
 
-	if ipamClaim != nil && err == nil {
-		newIPAMClaim := ipamClaim.DeepCopy()
-		newIPAMClaim.Status.IPs = util.StringSlice(podAnnotation.IPs)
-		err = claimsReconciler.Reconcile(ipamClaim, newIPAMClaim, ipAllocator)
+	if ipamClaim != nil {
+		claimsReconciler.UpdateIPAMClaimStatus(ipamClaim, podAnnotation, pod.Name, ipAllocator, err)
 	}
 
 	if err != nil {
@@ -244,10 +242,8 @@ func allocatePodAnnotationWithTunnelID(
 	)
 
 	// Reconcile IPAM claim
-	if ipamClaim != nil && err == nil {
-		newIPAMClaim := ipamClaim.DeepCopy()
-		newIPAMClaim.Status.IPs = util.StringSlice(podAnnotation.IPs)
-		err = claimsReconciler.Reconcile(ipamClaim, newIPAMClaim, ipAllocator)
+	if ipamClaim != nil {
+		claimsReconciler.UpdateIPAMClaimStatus(ipamClaim, podAnnotation, pod.Name, ipAllocator, err)
 	}
 
 	if err != nil {
