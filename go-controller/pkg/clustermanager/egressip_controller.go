@@ -1313,20 +1313,20 @@ func (eIPC *egressIPClusterController) assignEgressIPs(name string, egressIPs []
 			if egressIPNetwork == "" {
 				continue
 			}
-			if eNode.egressIPConfig.Capacity.IP < util.UnlimitedNodeCapacity {
-				if eNode.egressIPConfig.Capacity.IP-len(eNode.allocations) <= 0 {
+			if eNode.egressIPConfig.Capacity.IP != nil && *eNode.egressIPConfig.Capacity.IP < util.UnlimitedNodeCapacity {
+				if *eNode.egressIPConfig.Capacity.IP-len(eNode.allocations) <= 0 {
 					klog.V(5).Infof("Additional allocation on Node: %s exhausts it's IP capacity, trying another node", eNode.name)
 					continue
 				}
 			}
-			if eNode.egressIPConfig.Capacity.IPv4 < util.UnlimitedNodeCapacity && utilnet.IsIPv4(eIP) {
-				if eNode.egressIPConfig.Capacity.IPv4-getIPFamilyAllocationCount(eNode.allocations, false) <= 0 {
+			if eNode.egressIPConfig.Capacity.IPv4 != nil && *eNode.egressIPConfig.Capacity.IPv4 < util.UnlimitedNodeCapacity && utilnet.IsIPv4(eIP) {
+				if *eNode.egressIPConfig.Capacity.IPv4-getIPFamilyAllocationCount(eNode.allocations, false) <= 0 {
 					klog.V(5).Infof("Additional allocation on Node: %s exhausts it's IPv4 capacity, trying another node", eNode.name)
 					continue
 				}
 			}
-			if eNode.egressIPConfig.Capacity.IPv6 < util.UnlimitedNodeCapacity && utilnet.IsIPv6(eIP) {
-				if eNode.egressIPConfig.Capacity.IPv6-getIPFamilyAllocationCount(eNode.allocations, true) <= 0 {
+			if eNode.egressIPConfig.Capacity.IPv6 != nil && *eNode.egressIPConfig.Capacity.IPv6 < util.UnlimitedNodeCapacity && utilnet.IsIPv6(eIP) {
+				if *eNode.egressIPConfig.Capacity.IPv6-getIPFamilyAllocationCount(eNode.allocations, true) <= 0 {
 					klog.V(5).Infof("Additional allocation on Node: %s exhausts it's IPv6 capacity, trying another node", eNode.name)
 					continue
 				}

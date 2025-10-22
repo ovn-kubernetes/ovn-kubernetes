@@ -142,10 +142,11 @@ func newCloudPrivateIPConfigMeta(egressIP string) metav1.ObjectMeta {
 }
 
 func setupNode(nodeName string, ipNets []string, mockAllocationIPs map[string]string) egressNode {
+	unlimited := util.UnlimitedNodeCapacity
 	var config = &util.ParsedNodeEgressIPConfiguration{Capacity: util.Capacity{
-		IP:   util.UnlimitedNodeCapacity,
-		IPv4: util.UnlimitedNodeCapacity,
-		IPv6: util.UnlimitedNodeCapacity,
+		IP:   &unlimited,
+		IPv4: &unlimited,
+		IPv6: &unlimited,
 	}}
 	for _, ipNetStr := range ipNets {
 		ip, ipNet, _ := net.ParseCIDR(ipNetStr)

@@ -587,9 +587,9 @@ type ifAddr struct {
 }
 
 type Capacity struct {
-	IPv4 int `json:"ipv4,omitempty"`
-	IPv6 int `json:"ipv6,omitempty"`
-	IP   int `json:"ip,omitempty"`
+	IPv4 *int `json:"ipv4,omitempty"`
+	IPv6 *int `json:"ipv6,omitempty"`
+	IP   *int `json:"ip,omitempty"`
 }
 
 type nodeEgressIPConfiguration struct {
@@ -630,12 +630,13 @@ func ParseNodePrimaryIfAddr(node *corev1.Node) (*ParsedNodeEgressIPConfiguration
 	if err != nil {
 		return nil, err
 	}
+	unlimited := UnlimitedNodeCapacity
 	nodeEgressIPConfig := nodeEgressIPConfiguration{
 		IFAddr: ifAddr(*nodeIfAddr),
 		Capacity: Capacity{
-			IP:   UnlimitedNodeCapacity,
-			IPv4: UnlimitedNodeCapacity,
-			IPv6: UnlimitedNodeCapacity,
+			IP:   &unlimited,
+			IPv4: &unlimited,
+			IPv6: &unlimited,
 		},
 	}
 	parsedEgressIPConfig, err := parseNodeEgressIPConfig(&nodeEgressIPConfig)
@@ -749,12 +750,13 @@ func ParseCloudEgressIPConfig(node *corev1.Node) (*ParsedNodeEgressIPConfigurati
 	if !ok {
 		return nil, newAnnotationNotSetError("%s annotation not found for node %q", cloudEgressIPConfigAnnotationKey, node.Name)
 	}
+	unlimited := UnlimitedNodeCapacity
 	nodeEgressIPConfig := []nodeEgressIPConfiguration{
 		{
 			Capacity: Capacity{
-				IP:   UnlimitedNodeCapacity,
-				IPv4: UnlimitedNodeCapacity,
-				IPv6: UnlimitedNodeCapacity,
+				IP:   &unlimited,
+				IPv4: &unlimited,
+				IPv6: &unlimited,
 			},
 		},
 	}
