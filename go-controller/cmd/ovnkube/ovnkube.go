@@ -528,12 +528,12 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 			metrics.MetricOVNKubeControllerReadyDuration.Set(time.Since(startTime).Seconds())
 
 			if isOVNKubeControllerSyncd != nil {
-				klog.Infof("Waiting for OVN northbound database changes to sync to OVN Southbound database")
-				if err = libovsdbutil.WaitUntilNorthdSyncOnce(ctx, libovsdbOvnNBClient, libovsdbOvnSBClient); err != nil {
-					controllerErr = fmt.Errorf("failed waiting for northd to sync OVN Northbound DB to Southbound: %v", err)
+				klog.Infof("Waiting for OVN northbound database changes to be processed by ovn-controller")
+				if err = libovsdbutil.WaitUntilFlowsInstalled(ctx, libovsdbOvnNBClient); err != nil {
+					controllerErr = fmt.Errorf("failed waiting for OVN northbound database changes to be processed by ovn-controller: %v", err)
 					return
 				} else {
-					klog.Infof("OVN northbound database changes synced to OVN Southbound database")
+					klog.Infof("Finished waiting for OVN northbound database changes to be processed by ovn-controller")
 					isOVNKubeControllerSyncd.Store(true)
 				}
 			}

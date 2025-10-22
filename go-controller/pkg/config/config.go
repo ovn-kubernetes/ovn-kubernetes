@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openshift/api/config/v1"
 	"github.com/urfave/cli/v2"
 	gcfg "gopkg.in/gcfg.v1"
 	lumberjack "gopkg.in/natefinch/lumberjack.v2"
@@ -27,6 +28,28 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 )
+
+// getSupportedPlatformTypes returns a list of all supported platform types
+func getSupportedPlatformTypes() []string {
+	return []string{
+		string(v1.AWSPlatformType),          // "AWS"
+		string(v1.AzurePlatformType),        // "Azure"
+		string(v1.BareMetalPlatformType),    // "BareMetal"
+		string(v1.GCPPlatformType),          // "GCP"
+		string(v1.LibvirtPlatformType),      // "Libvirt"
+		string(v1.OpenStackPlatformType),    // "OpenStack"
+		string(v1.NonePlatformType),         // "None"
+		string(v1.VSpherePlatformType),      // "VSphere"
+		string(v1.OvirtPlatformType),        // "oVirt"
+		string(v1.IBMCloudPlatformType),     // "IBMCloud"
+		string(v1.KubevirtPlatformType),     // "KubeVirt"
+		string(v1.EquinixMetalPlatformType), // "EquinixMetal"
+		string(v1.PowerVSPlatformType),      // "PowerVS"
+		string(v1.AlibabaCloudPlatformType), // "AlibabaCloud"
+		string(v1.NutanixPlatformType),      // "Nutanix"
+		string(v1.ExternalPlatformType),     // "External"
+	}
+}
 
 // DefaultEncapPort number used if not supplied
 const DefaultEncapPort = 6081
@@ -203,9 +226,13 @@ var (
 	}
 
 	ClusterManager = ClusterManagerConfig{
-		V4TransitSwitchSubnet: "100.88.0.0/16",
-		V6TransitSwitchSubnet: "fd97::/64",
+		V4TransitSubnet: "100.88.0.0/16",
+		V6TransitSubnet: "fd97::/64",
 	}
+
+	// Layer2UsesTransitRouter indicated whether the layer2 primary networks will use transit router.
+	// It is a per-node setting and is also reflected in the node annotations.
+	Layer2UsesTransitRouter bool
 )
 
 const (
@@ -377,7 +404,6 @@ type KubernetesConfig struct {
 	ServiceCIDRs            []*net.IPNet
 	OVNConfigNamespace      string `gcfg:"ovn-config-namespace"`
 	OVNEmptyLbEvents        bool   `gcfg:"ovn-empty-lb-events"`
-	PodIP                   string `gcfg:"pod-ip"` // UNUSED
 	RawNoHostSubnetNodes    string `gcfg:"no-hostsubnet-nodes"`
 	NoHostSubnetNodes       labels.Selector
 	HostNetworkNamespace    string `gcfg:"host-network-namespace"`
@@ -561,10 +587,10 @@ type OvnKubeNodeConfig struct {
 
 // ClusterManagerConfig holds configuration for ovnkube-cluster-manager
 type ClusterManagerConfig struct {
-	// V4TransitSwitchSubnet to be used in the cluster for interconnecting multiple zones
-	V4TransitSwitchSubnet string `gcfg:"v4-transit-switch-subnet"`
-	// V6TransitSwitchSubnet to be used in the cluster for interconnecting multiple zones
-	V6TransitSwitchSubnet string `gcfg:"v6-transit-switch-subnet"`
+	// V4TransitSubnet to be used in the cluster for interconnecting multiple zones
+	V4TransitSubnet string `gcfg:"v4-transit-subnet"`
+	// V6TransitSubnet to be used in the cluster for interconnecting multiple zones
+	V6TransitSubnet string `gcfg:"v6-transit-subnet"`
 }
 
 // OvnDBScheme describes the OVN database connection transport method
@@ -684,6 +710,7 @@ func PrepareTestConfig() error {
 	if Gateway.Mode != GatewayModeDisabled {
 		Gateway.EphemeralPortRange = DefaultEphemeralPortRange
 	}
+	Layer2UsesTransitRouter = true
 
 	if err := completeConfig(); err != nil {
 		return err
@@ -945,7 +972,7 @@ var CommonFlags = []cli.Flag{
 	// Logfile rotation parameters
 	&cli.IntFlag{
 		Name:        "logfile-maxsize",
-		Usage:       "Maximum size in bytes of the log file before it gets rolled",
+		Usage:       "Maximum size in megabytes of the log file before it gets rolled",
 		Destination: &cliConfig.Logging.LogFileMaxSize,
 		Value:       Logging.LogFileMaxSize,
 	},
@@ -1277,7 +1304,7 @@ var K8sFlags = []cli.Flag{
 	&cli.StringFlag{
 		Name: "platform-type",
 		Usage: "The cloud provider platform type ovn-kubernetes is deployed on. " +
-			"Valid values can be found in: https://github.com/ovn-org/ovn-kubernetes/blob/master/go-controller/vendor/github.com/openshift/api/config/v1/types_infrastructure.go#L130-L172",
+			"Valid values: " + strings.Join(getSupportedPlatformTypes(), ", "),
 		Destination: &cliConfig.Kubernetes.PlatformType,
 		Value:       Kubernetes.PlatformType,
 	},
@@ -1659,16 +1686,16 @@ var OvnKubeNodeFlags = []cli.Flag{
 // ClusterManagerFlags captures ovnkube-cluster-manager specific configurations
 var ClusterManagerFlags = []cli.Flag{
 	&cli.StringFlag{
-		Name:        "cluster-manager-v4-transit-switch-subnet",
-		Usage:       "The v4 transit switch subnet used for assigning transit switch IPv4 addresses for interconnect",
-		Destination: &cliConfig.ClusterManager.V4TransitSwitchSubnet,
-		Value:       ClusterManager.V4TransitSwitchSubnet,
+		Name:        "cluster-manager-v4-transit-subnet",
+		Usage:       "The v4 transit subnet used for assigning transit switch and transit router IPv4 addresses for interconnect",
+		Destination: &cliConfig.ClusterManager.V4TransitSubnet,
+		Value:       ClusterManager.V4TransitSubnet,
 	},
 	&cli.StringFlag{
-		Name:        "cluster-manager-v6-transit-switch-subnet",
-		Usage:       "The v6 transit switch subnet used for assigning transit switch IPv6 addresses for interconnect",
-		Destination: &cliConfig.ClusterManager.V6TransitSwitchSubnet,
-		Value:       ClusterManager.V6TransitSwitchSubnet,
+		Name:        "cluster-manager-v6-transit-subnet",
+		Usage:       "The v6 transit switch subnet used for assigning transit switch and transit router IPv6 addresses for interconnect",
+		Destination: &cliConfig.ClusterManager.V6TransitSubnet,
+		Value:       ClusterManager.V6TransitSubnet,
 	},
 }
 
@@ -2187,14 +2214,14 @@ func buildClusterManagerConfig(cli, file *config) error {
 // into their final form.
 func completeClusterManagerConfig(allSubnets *ConfigSubnets) error {
 	// Validate v4 and v6 transit switch subnets
-	v4IP, v4TransitCIDR, err := net.ParseCIDR(ClusterManager.V4TransitSwitchSubnet)
+	v4IP, v4TransitCIDR, err := net.ParseCIDR(ClusterManager.V4TransitSubnet)
 	if err != nil || utilnet.IsIPv6(v4IP) {
-		return fmt.Errorf("invalid transit switch v4 subnet specified, subnet: %s: error: %v", ClusterManager.V4TransitSwitchSubnet, err)
+		return fmt.Errorf("invalid transit switch v4 subnet specified, subnet: %s: error: %v", ClusterManager.V4TransitSubnet, err)
 	}
 
-	v6IP, v6TransitCIDR, err := net.ParseCIDR(ClusterManager.V6TransitSwitchSubnet)
+	v6IP, v6TransitCIDR, err := net.ParseCIDR(ClusterManager.V6TransitSubnet)
 	if err != nil || !utilnet.IsIPv6(v6IP) {
-		return fmt.Errorf("invalid transit switch v6 subnet specified, subnet: %s: error: %v", ClusterManager.V6TransitSwitchSubnet, err)
+		return fmt.Errorf("invalid transit switch v6 subnet specified, subnet: %s: error: %v", ClusterManager.V6TransitSubnet, err)
 	}
 	allSubnets.Append(ConfigSubnetTransit, v4TransitCIDR)
 	allSubnets.Append(ConfigSubnetTransit, v6TransitCIDR)
@@ -2507,7 +2534,7 @@ func completeConfig() error {
 		return err
 	}
 
-	if err := allSubnets.CheckForOverlaps(); err != nil {
+	if _, _, err := allSubnets.CheckForOverlaps(); err != nil {
 		return err
 	}
 

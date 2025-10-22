@@ -19,6 +19,7 @@ import (
 	"github.com/containernetworking/plugins/pkg/testutils"
 	nadfake "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
 	"github.com/k8snetworkplumbingwg/sriovnet"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/mock"
 	"github.com/urfave/cli/v2"
 	"github.com/vishvananda/netlink"
@@ -39,7 +40,7 @@ import (
 	nodenft "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/nftables"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/routemanager"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
-	nodemocks "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node"
+	mgmtportmock "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/managementport"
 	linkMock "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/vishvananda/netlink"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -203,7 +204,7 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 			Output: systemID,
 		})
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd:    "ovs-appctl --timeout=15 dpif/show-dp-features breth0",
+			Cmd:    "ovs-appctl -t /var/run/openvswitch/ovs-vswitchd.1234.ctl dpif/show-dp-features breth0",
 			Output: "Check pkt length action: Yes",
 		})
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
@@ -211,7 +212,7 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 			Output: fmt.Sprintf("%t", hwOffload),
 		})
 		fexec.AddFakeCmdsNoOutputNoError([]string{
-			"ovs-appctl --timeout=15 fdb/add breth0 breth0 0 " + eth0MAC,
+			"ovs-appctl -t /var/run/openvswitch/ovs-vswitchd.1234.ctl fdb/add breth0 breth0 0 " + eth0MAC,
 		})
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 			Cmd:    "ovs-vsctl --timeout=15 get Interface patch-breth0_node1-to-br-int ofport",
@@ -258,7 +259,13 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 		})
 		// syncServices()
 
-		err := util.SetExec(fexec)
+		// Setup mock filesystem for ovs-vswitchd.pid file needed by ovs-appctl commands
+		err := util.AppFs.MkdirAll("/var/run/openvswitch/", 0o755)
+		Expect(err).NotTo(HaveOccurred())
+		err = afero.WriteFile(util.AppFs, "/var/run/openvswitch/ovs-vswitchd.pid", []byte("1234"), 0o644)
+		Expect(err).NotTo(HaveOccurred())
+
+		err = util.SetExec(fexec)
 		Expect(err).NotTo(HaveOccurred())
 
 		_, err = config.InitConfig(ctx, fexec, nil)
@@ -645,7 +652,7 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 		})
 		// DetectCheckPktLengthSupport
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd:    "ovs-appctl --timeout=15 dpif/show-dp-features " + brphys,
+			Cmd:    "ovs-appctl -t /var/run/openvswitch/ovs-vswitchd.1234.ctl dpif/show-dp-features " + brphys,
 			Output: "Check pkt length action: Yes",
 		})
 		// IsOvsHwOffloadEnabled
@@ -654,7 +661,7 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 			Output: "false",
 		})
 		fexec.AddFakeCmdsNoOutputNoError([]string{
-			fmt.Sprintf("ovs-appctl --timeout=15 fdb/add %s %s 0 %s", brphys, brphys, hostMAC),
+			fmt.Sprintf("ovs-appctl -t /var/run/openvswitch/ovs-vswitchd.1234.ctl fdb/add %s %s 0 %s", brphys, brphys, hostMAC),
 		})
 		// GetDPUHostInterface
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
@@ -706,7 +713,14 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 			Output: "7",
 		})
 		// syncServices()
-		err := util.SetExec(fexec)
+
+		// Setup mock filesystem for ovs-vswitchd.pid file needed by ovs-appctl commands
+		err := util.AppFs.MkdirAll("/var/run/openvswitch/", 0o755)
+		Expect(err).NotTo(HaveOccurred())
+		err = afero.WriteFile(util.AppFs, "/var/run/openvswitch/ovs-vswitchd.pid", []byte("1234"), 0o644)
+		Expect(err).NotTo(HaveOccurred())
+
+		err = util.SetExec(fexec)
 		Expect(err).NotTo(HaveOccurred())
 
 		_, err = config.InitConfig(ctx, fexec, nil)
@@ -769,7 +783,7 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 		// FIXME(mk): starting the gateway causing go routines to be spawned within sub functions and therefore they escape the
 		// netns we wanted to set it to originally here. Refactor test cases to not spawn a go routine or just fake out everything
 		// and remove need to create netns
-		mpmock := &nodemocks.ManagementPort{}
+		mpmock := &mgmtportmock.Interface{}
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 
@@ -917,7 +931,9 @@ func shareGatewayInterfaceDPUHostTest(app *cli.App, testNS ns.NetNS, uplinkName,
 
 			nodeAnnotator := kube.NewNodeAnnotator(k, existingNode.Name)
 
-			err := nc.initGatewayDPUHost(net.ParseIP(hostIP), nodeAnnotator)
+			err := nc.initGatewayDPUHostPreStart(net.ParseIP(hostIP), nodeAnnotator)
+			Expect(err).NotTo(HaveOccurred())
+			err = nc.initGatewayDPUHost()
 			Expect(err).NotTo(HaveOccurred())
 
 			link, err := netlink.LinkByName(uplinkName)
@@ -1108,7 +1124,7 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 			Output: systemID,
 		})
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd:    "ovs-appctl --timeout=15 dpif/show-dp-features breth0",
+			Cmd:    "ovs-appctl -t /var/run/openvswitch/ovs-vswitchd.1234.ctl dpif/show-dp-features breth0",
 			Output: "Check pkt length action: Yes",
 		})
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
@@ -1116,7 +1132,7 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 			Output: "false",
 		})
 		fexec.AddFakeCmdsNoOutputNoError([]string{
-			"ovs-appctl --timeout=15 fdb/add breth0 breth0 0 " + eth0MAC,
+			"ovs-appctl -t /var/run/openvswitch/ovs-vswitchd.1234.ctl fdb/add breth0 breth0 0 " + eth0MAC,
 		})
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 			Cmd:    "ovs-vsctl --timeout=15 get Interface patch-breth0_node1-to-br-int ofport",
@@ -1168,7 +1184,13 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 		})
 		// syncServices()
 
-		err := util.SetExec(fexec)
+		// Setup mock filesystem for ovs-vswitchd.pid file needed by ovs-appctl commands
+		err := util.AppFs.MkdirAll("/var/run/openvswitch/", 0o755)
+		Expect(err).NotTo(HaveOccurred())
+		err = afero.WriteFile(util.AppFs, "/var/run/openvswitch/ovs-vswitchd.pid", []byte("1234"), 0o644)
+		Expect(err).NotTo(HaveOccurred())
+
+		err = util.SetExec(fexec)
 		Expect(err).NotTo(HaveOccurred())
 
 		_, err = config.InitConfig(ctx, fexec, nil)

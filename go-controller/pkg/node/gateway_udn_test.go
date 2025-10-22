@@ -14,6 +14,7 @@ import (
 	"github.com/containernetworking/plugins/pkg/testutils"
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	nadfake "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/mock"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
@@ -170,7 +171,7 @@ func setUpGatewayFakeOVSCommands(fexec *ovntest.FakeExec) {
 		Output: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac6",
 	})
 	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "ovs-appctl --timeout=15 dpif/show-dp-features breth0",
+		Cmd:    "ovs-appctl -t /var/run/openvswitch/ovs-vswitchd.1234.ctl dpif/show-dp-features breth0",
 		Output: "Check pkt length action: Yes",
 	})
 	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
@@ -178,7 +179,7 @@ func setUpGatewayFakeOVSCommands(fexec *ovntest.FakeExec) {
 		Output: "false",
 	})
 	fexec.AddFakeCmdsNoOutputNoError([]string{
-		"ovs-appctl --timeout=15 fdb/add breth0 breth0 0 00:00:00:55:66:99",
+		"ovs-appctl -t /var/run/openvswitch/ovs-vswitchd.1234.ctl fdb/add breth0 breth0 0 00:00:00:55:66:99",
 	})
 	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 		Cmd:    "ovs-vsctl --timeout=15 get Interface patch-breth0_worker1-to-br-int ofport",
@@ -293,6 +294,9 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		config.Gateway.V4MasqueradeSubnet = "169.254.0.0/17"
 		// Set up a fake vsctl command mock interface
 		fexec = ovntest.NewFakeExec()
+		// Setup mock filesystem for ovs-vswitchd.pid file needed by ovs-appctl commands
+		Expect(util.AppFs.MkdirAll("/var/run/openvswitch/", 0o755)).To(Succeed())
+		Expect(afero.WriteFile(util.AppFs, "/var/run/openvswitch/ovs-vswitchd.pid", []byte("1234"), 0o644)).To(Succeed())
 		Expect(util.SetExec(fexec)).To(Succeed())
 		// Set up a fake k8sMgmt interface
 		testNS, err = testutils.NewNS()

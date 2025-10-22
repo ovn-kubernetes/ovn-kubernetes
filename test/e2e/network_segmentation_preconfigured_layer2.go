@@ -121,7 +121,7 @@ var _ = Describe("Network Segmentation: Preconfigured Layer2 UDN", feature.Netwo
 				role:                "primary",
 				defaultGatewayIPs:   joinStrings("172.31.0.10", "2014:100:200::100"),
 				reservedCIDRs:       joinStrings("172.31.1.0/24", "2014:100:200::/122"),
-				infrastructureCIDRs: joinStrings("172.31.0.10/30", "2014:100:200::100/122"),
+				infrastructureCIDRs: joinStrings("172.31.0.8/30", "2014:100:200::100/122"),
 			},
 			expectedGatewayIPs: []string{"172.31.0.10", "2014:100:200::100"},
 		}),
@@ -134,6 +134,77 @@ var _ = Describe("Network Segmentation: Preconfigured Layer2 UDN", feature.Netwo
 				defaultGatewayIPs: joinStrings("172.31.0.2", "2014:100:200::2"),
 			},
 			expectedGatewayIPs: []string{"172.31.0.2", "2014:100:200::2"},
+		}),
+	)
+
+	type invalidAPITestConfig struct {
+		netConfig     *networkAttachmentConfigParams
+		expectedError interface{}
+	}
+	DescribeTable("unmasked reserved / infrastructure subnets are not allowed",
+		func(config invalidAPITestConfig) {
+			podIPs := filterCIDRs(f.ClientSet, config.netConfig.cidr)
+			if len(podIPs) == 0 {
+				Skip("IP family not supported in this environment")
+			}
+
+			By("creating the L2 network")
+			netConfig := config.netConfig
+
+			netConfig.namespace = f.Namespace.Name
+
+			udnManifest := generateUserDefinedNetworkManifest(netConfig, f.ClientSet)
+			cleanup, err := createManifest(netConfig.namespace, udnManifest)
+			Expect(err).To(MatchError(config.expectedError))
+			DeferCleanup(cleanup)
+		},
+		Entry("Layer2 with unmasked IPv4 reserved subnets", invalidAPITestConfig{
+			netConfig: &networkAttachmentConfigParams{
+				name:          "invalid-l2-net-reserved-subnets",
+				topology:      "layer2",
+				cidr:          "172.31.0.0/16",
+				role:          "primary",
+				reservedCIDRs: "172.31.0.10/30",
+			},
+			expectedError: ContainSubstring(
+				"Invalid value: \"object\": reservedSubnets must be a masked network address (no host bits set)",
+			),
+		}),
+		Entry("Layer2 with unmasked IPv6 reserved subnets", invalidAPITestConfig{
+			netConfig: &networkAttachmentConfigParams{
+				name:          "invalid-l2-net-reserved-subnets",
+				topology:      "layer2",
+				cidr:          "2014:100:200::0/60",
+				role:          "primary",
+				reservedCIDRs: "2014:100:200::88/122",
+			},
+			expectedError: ContainSubstring(
+				"Invalid value: \"object\": reservedSubnets must be a masked network address (no host bits set)",
+			),
+		}),
+		Entry("Layer2 with unmasked IPv4 infrastructure subnets", invalidAPITestConfig{
+			netConfig: &networkAttachmentConfigParams{
+				name:                "invalid-l2-net-infra-subnets",
+				topology:            "layer2",
+				cidr:                "172.31.0.0/16",
+				role:                "primary",
+				infrastructureCIDRs: "172.31.0.10/30",
+			},
+			expectedError: ContainSubstring(
+				"Invalid value: \"object\": infrastructureSubnets must be a masked network address (no host bits set)",
+			),
+		}),
+		Entry("Layer2 with unmasked IPv6 infrastructure subnets", invalidAPITestConfig{
+			netConfig: &networkAttachmentConfigParams{
+				name:                "invalid-l2-net-infra-subnets",
+				topology:            "layer2",
+				cidr:                "2014:100:200::0/60",
+				role:                "primary",
+				infrastructureCIDRs: "2014:100:200::88/122",
+			},
+			expectedError: ContainSubstring(
+				"Invalid value: \"object\": infrastructureSubnets must be a masked network address (no host bits set)",
+			),
 		}),
 	)
 

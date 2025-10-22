@@ -55,8 +55,6 @@ type Interface interface {
 	SetAnnotationsOnService(namespace, serviceName string, annotations map[string]interface{}) error
 	SetAnnotationsOnNode(nodeName string, annotations map[string]interface{}) error
 	SetAnnotationsOnNamespace(namespaceName string, annotations map[string]interface{}) error
-	SetTaintOnNode(nodeName string, taint *corev1.Taint) error
-	RemoveTaintFromNode(nodeName string, taint *corev1.Taint) error
 	SetLabelsOnNode(nodeName string, labels map[string]interface{}) error
 	PatchNode(old, new *corev1.Node) error
 	UpdateNodeStatus(node *corev1.Node) error
@@ -195,68 +193,6 @@ func (k *Kube) SetAnnotationsOnService(namespace, name string, annotations map[s
 		klog.Errorf("Error in setting annotation on service %s: %v", serviceDesc, err)
 	}
 	return err
-}
-
-// SetTaintOnNode tries to add a new taint to the node. If the taint already exists, it doesn't do anything.
-func (k *Kube) SetTaintOnNode(nodeName string, taint *corev1.Taint) error {
-	node, err := k.GetNodeForWindows(nodeName)
-	if err != nil {
-		klog.Errorf("Unable to retrieve node %s for tainting %s: %v", nodeName, taint.ToString(), err)
-		return err
-	}
-	newNode := node.DeepCopy()
-	nodeTaints := newNode.Spec.Taints
-
-	var newTaints []corev1.Taint
-	for i := range nodeTaints {
-		if taint.MatchTaint(&nodeTaints[i]) {
-			klog.Infof("Taint %s already exists on Node %s", taint.ToString(), node.Name)
-			return nil
-		}
-		newTaints = append(newTaints, nodeTaints[i])
-	}
-
-	klog.Infof("Setting taint %s on Node %s", taint.ToString(), node.Name)
-	newTaints = append(newTaints, *taint)
-	newNode.Spec.Taints = newTaints
-	err = k.PatchNode(node, newNode)
-	if err != nil {
-		klog.Errorf("Unable to add taint %s on node %s: %v", taint.ToString(), node.Name, err)
-		return err
-	}
-
-	klog.Infof("Added taint %s on node %s", taint.ToString(), node.Name)
-	return nil
-}
-
-// RemoveTaintFromNode removes all the taints that have the same key and effect from the node.
-// If the taint doesn't exist, it doesn't do anything.
-func (k *Kube) RemoveTaintFromNode(nodeName string, taint *corev1.Taint) error {
-	node, err := k.GetNodeForWindows(nodeName)
-	if err != nil {
-		klog.Errorf("Unable to retrieve node %s for tainting %s: %v", nodeName, taint.ToString(), err)
-		return err
-	}
-	newNode := node.DeepCopy()
-	nodeTaints := newNode.Spec.Taints
-
-	var newTaints []corev1.Taint
-	for i := range nodeTaints {
-		if taint.MatchTaint(&nodeTaints[i]) {
-			klog.Infof("Removing taint %s from Node %s", taint.ToString(), node.Name)
-			continue
-		}
-		newTaints = append(newTaints, nodeTaints[i])
-	}
-
-	newNode.Spec.Taints = newTaints
-	err = k.PatchNode(node, newNode)
-	if err != nil {
-		klog.Errorf("Unable to remove taint %s on node %s: %v", taint.ToString(), node.Name, err)
-		return err
-	}
-	klog.Infof("Removed taint %s on node %s", taint.ToString(), node.Name)
-	return nil
 }
 
 // SetLabelsOnNode takes the node name and map of key/value string pairs to set as labels

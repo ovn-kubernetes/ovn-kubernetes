@@ -35,9 +35,9 @@ and traffic segregation.
 
 * vf<sup>R</sup> is VF representor.
 
-## How to enable this feature on an OVN Kubernetes cluster?
+## How to enable this feature on an OVN-Kubernetes cluster?
 
-On OVN Kubernetes side, no additional configuration required to enable this feature.
+On OVN-Kubernetes side, no additional configuration required to enable this feature.
 
 This feature depends on a specific underlay network setup; it cannot be turned on
 without an adequate underlay network configuration.
@@ -83,7 +83,7 @@ OVS Database on chassis:
   added to define the mapping between PF interface name and its VTEP IP.
 
 
-### OVN Kubernetes Implementation Details
+### OVN-Kubernetes Implementation Details
 
 To support this feature, the VTEP interfaces must be configured in advance.
 This can be accomplished using a system network management tool, such as

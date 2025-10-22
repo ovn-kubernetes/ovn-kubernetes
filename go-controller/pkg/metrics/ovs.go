@@ -907,7 +907,7 @@ func registerOvsMetrics(ovsDBClient libovsdbclient.Client, metricsScrapeInterval
 		}
 
 		// OVS datapath metrics updater
-		go ovsDatapathMetricsUpdater(util.RunOVSAppctl, metricsScrapeInterval, stopChan)
+		go ovsDatapathMetricsUpdater(util.RunOvsVswitchdAppCtl, metricsScrapeInterval, stopChan)
 		// OVS bridge metrics updater
 		go ovsBridgeMetricsUpdater(ovsDBClient, util.RunOVSOfctl, metricsScrapeInterval, stopChan)
 		// OVS interface metrics updater

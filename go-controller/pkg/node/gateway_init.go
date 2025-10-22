@@ -384,13 +384,9 @@ func interfaceForEXGW(intfName string) string {
 	return intfName
 }
 
-func (nc *DefaultNodeNetworkController) initGatewayDPUHost(kubeNodeIP net.IP, nodeAnnotator kube.Annotator) error {
-	// A DPU host gateway is complementary to the shared gateway running
-	// on the DPU embedded CPU. it performs some initializations and
-	// watch on services for iptable rule updates and run a loadBalancerHealth checker
-	// Note: all K8s Node related annotations are handled from DPU.
-	klog.Info("Initializing Shared Gateway Functionality on DPU host")
-	var err error
+// TODO(adrianc): revisit if support for nodeIPManager is needed.
+func (nc *DefaultNodeNetworkController) initGatewayDPUHostPreStart(kubeNodeIP net.IP, nodeAnnotator kube.Annotator) error {
+	klog.Info("Initializing Shared Gateway Functionality for Gateway PreStart on DPU host")
 
 	// Find the network interface that has the Kubernetes node IP assigned to it
 	// This interface will be used for DPU host gateway operations
@@ -470,17 +466,42 @@ func (nc *DefaultNodeNetworkController) initGatewayDPUHost(kubeNodeIP net.IP, no
 		return err
 	}
 
-	gw := &gateway{
+	if err = addHostMACBindings(kubeIntf); err != nil {
+		return fmt.Errorf("failed to add MAC bindings for service routing: %w", err)
+	}
+
+	gatewayNextHops, _, err := getGatewayNextHops()
+	if err != nil {
+		return err
+	}
+
+	nc.Gateway = &gateway{
 		initFunc:     func() error { return nil },
 		readyFunc:    func() (bool, error) { return true, nil },
 		watchFactory: nc.watchFactory.(*factory.WatchFactory),
+		nextHops:     gatewayNextHops,
 	}
+	return nil
+}
+
+func (nc *DefaultNodeNetworkController) initGatewayDPUHost() error {
+	// A DPU host gateway is complementary to the shared gateway running
+	// on the DPU embedded CPU. it performs some initializations and
+	// watch on services for iptable rule updates and run a loadBalancerHealth checker
+	// Note: all K8s Node related annotations are handled from DPU.
+	klog.Info("Initializing Shared Gateway Functionality for Gateway Start on DPU host")
+	var err error
 
 	// TODO(adrianc): revisit if support for nodeIPManager is needed.
-
+	gw := nc.Gateway.(*gateway)
 	if config.Gateway.NodeportEnable {
 		if err := initSharedGatewayIPTables(); err != nil {
 			return err
+		}
+		if util.IsNetworkSegmentationSupportEnabled() {
+			if err := configureUDNServicesNFTables(); err != nil {
+				return fmt.Errorf("unable to configure UDN nftables: %w", err)
+			}
 		}
 		gw.nodePortWatcherIptables = newNodePortWatcherIptables(nc.networkManager)
 		gw.loadBalancerHealthChecker = newLoadBalancerHealthChecker(nc.name, nc.watchFactory)
@@ -489,10 +510,6 @@ func (nc *DefaultNodeNetworkController) initGatewayDPUHost(kubeNodeIP net.IP, no
 			return err
 		}
 		gw.portClaimWatcher = portClaimWatcher
-	}
-
-	if err := addHostMACBindings(kubeIntf); err != nil {
-		return fmt.Errorf("failed to add MAC bindings for service routing")
 	}
 
 	err = gw.Init(nc.stopChan, nc.wg)

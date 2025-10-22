@@ -41,6 +41,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/retry"
 	e2eframework "k8s.io/kubernetes/test/e2e/framework"
@@ -998,7 +999,7 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 				"kubevirt.io/allow-pod-bridge-network-live-migration": "",
 			}
 			nodeSelector := map[string]string{
-				namespace: "",
+				namespace: "true",
 			}
 			networkSource := kubevirtv1.NetworkSource{
 				Pod: &kubevirtv1.PodNetwork{},
@@ -1119,7 +1120,7 @@ passwd:
 				by(vm.Name, "Live migrate for the third time to the node owning the subnet")
 				// Patch back the original node with the label and remove it
 				// from the rest of nodes to force live migration target to it.
-				e2enode.AddOrUpdateLabelOnNode(fr.ClientSet, originalNode, namespace, "")
+				e2enode.AddOrUpdateLabelOnNode(fr.ClientSet, originalNode, namespace, "true")
 				for _, selectedNode := range selectedNodes {
 					if selectedNode.Name != originalNode {
 						e2enode.RemoveLabelOffNode(fr.ClientSet, selectedNode.Name, namespace)
@@ -1332,13 +1333,13 @@ fi
 			}, 30*time.Second, time.Second).Should(Equal("Accepted"))
 		}
 
-		getJoinIPs = func(cudn *udnv1.ClusterUserDefinedNetwork) []string {
+		getCUDNSubnets = func(cudn *udnv1.ClusterUserDefinedNetwork) []string {
 			nad, err := nadClient.NetworkAttachmentDefinitions(namespace).Get(context.TODO(), cudn.Name, metav1.GetOptions{})
 			Expect(err).NotTo(HaveOccurred())
 			var result map[string]interface{}
 			err = json.Unmarshal([]byte(nad.Spec.Config), &result)
 			Expect(err).NotTo(HaveOccurred())
-			return strings.Split(result["joinSubnet"].(string), ",")
+			return strings.Split(result["subnets"].(string), ",")
 		}
 	)
 	BeforeEach(func() {
@@ -1405,7 +1406,7 @@ fi
 			// configure VM nodeSelector with it and live migration will take only
 			// them into consideration
 			for _, node := range selectedNodes {
-				e2enode.AddOrUpdateLabelOnNode(fr.ClientSet, node.Name, namespace, "")
+				e2enode.AddOrUpdateLabelOnNode(fr.ClientSet, node.Name, namespace, "true")
 			}
 
 			prepareHTTPServerPods(map[string]string{}, checkPodHasIPAtStatus)
@@ -1893,10 +1894,7 @@ ip route add %[3]s via %[4]s
 				if isIPv6Supported(fr.ClientSet) && isInterconnectEnabled() {
 					step = by(vmi.Name, fmt.Sprintf("Checking IPv6 gateway before %s %s", td.resource.description, td.test.description))
 
-					nodeRunningVMI, err := fr.ClientSet.CoreV1().Nodes().Get(context.Background(), vmi.Status.NodeName, metav1.GetOptions{})
-					Expect(err).NotTo(HaveOccurred(), step)
-
-					expectedIPv6GatewayPath, err := kubevirt.GenerateGatewayIPv6RouterLLA(nodeRunningVMI, getJoinIPs(cudn))
+					expectedIPv6GatewayPath, err := kubevirt.GenerateGatewayIPv6RouterLLA(getCUDNSubnets(cudn))
 					Expect(err).NotTo(HaveOccurred())
 					Eventually(kubevirt.RetrieveIPv6Gateways).
 						WithArguments(virtClient, vmi).
@@ -1964,10 +1962,7 @@ ip route add %[3]s via %[4]s
 					step = by(vmi.Name, fmt.Sprintf("Checking IPv4 gateway cached mac after %s %s", td.resource.description, td.test.description))
 					Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
 
-					targetNode, err := fr.ClientSet.CoreV1().Nodes().Get(context.Background(), vmi.Status.MigrationState.TargetNode, metav1.GetOptions{})
-					Expect(err).NotTo(HaveOccurred(), step)
-
-					expectedGatewayMAC, err := kubevirt.GenerateGatewayMAC(targetNode, getJoinIPs(cudn))
+					expectedGatewayMAC, err := kubevirt.GenerateGatewayMAC(getCUDNSubnets(cudn))
 					Expect(err).NotTo(HaveOccurred(), step)
 
 					Expect(err).NotTo(HaveOccurred(), step)
@@ -1980,10 +1975,7 @@ ip route add %[3]s via %[4]s
 				if isIPv6Supported(fr.ClientSet) {
 					step = by(vmi.Name, fmt.Sprintf("Checking IPv6 gateway after %s %s", td.resource.description, td.test.description))
 
-					targetNode, err := fr.ClientSet.CoreV1().Nodes().Get(context.Background(), vmi.Status.MigrationState.TargetNode, metav1.GetOptions{})
-					Expect(err).NotTo(HaveOccurred(), step)
-
-					targetNodeIPv6GatewayPath, err := kubevirt.GenerateGatewayIPv6RouterLLA(targetNode, getJoinIPs(cudn))
+					targetNodeIPv6GatewayPath, err := kubevirt.GenerateGatewayIPv6RouterLLA(getCUDNSubnets(cudn))
 					Expect(err).NotTo(HaveOccurred())
 					Eventually(kubevirt.RetrieveIPv6Gateways).
 						WithArguments(virtClient, vmi).
@@ -2330,7 +2322,7 @@ chpasswd: { expire: False }
 			checkEastWestIperfTraffic(vmi, testPodsIPs, step)
 
 			By("Stop iperf3 traffic before force killing vm, so iperf3 server do not get stuck")
-			output, err = virtClient.RunCommand(vmi, "killall iperf3", 5*time.Second)
+			output, err = virtClient.RunCommand(vmi, "killall --wait iperf3", 5*time.Second)
 			Expect(err).ToNot(HaveOccurred(), output)
 
 			step = by(vmi.Name, fmt.Sprintf("Force kill qemu at node %q where VM is running on", vmi.Status.NodeName))
@@ -2359,7 +2351,7 @@ chpasswd: { expire: False }
 		)
 	})
 
-	Context("duplicate IP validation", func() {
+	Context("duplicate addresses validation", func() {
 		var (
 			cudn          *udnv1.ClusterUserDefinedNetwork
 			duplicateIPv4 = "10.128.0.200" // Static IP that will be used by both VMs
@@ -2474,6 +2466,59 @@ ethernets:
 
 			By("Verifying first VM is still running normally")
 			waitForVMReadinessAndVerifyIPs(vm1.Name, staticIPs)
+		})
+
+		newVMIWithPrimaryIfaceMAC := func(mac string) *kubevirtv1.VirtualMachineInstance {
+			vm := fedoraWithTestToolingVMI(nil, nil, nil, kubevirtv1.NetworkSource{Pod: &kubevirtv1.PodNetwork{}}, "#", "")
+			vm.Spec.Domain.Devices.Interfaces[0].Bridge = nil
+			vm.Spec.Domain.Devices.Interfaces[0].Binding = &kubevirtv1.PluginBinding{Name: "l2bridge"}
+			vm.Spec.Domain.Devices.Interfaces[0].MacAddress = mac
+			return vm
+		}
+
+		It("should fail when creating second VM with duplicate user requested MAC", func() {
+			const testMAC = "02:a1:b2:c3:d4:e5"
+			vmi1 := newVMIWithPrimaryIfaceMAC(testMAC)
+			vm1 := generateVM(vmi1)
+			createVirtualMachine(vm1)
+
+			By("Asserting VM with static MAC is running as expected")
+			Eventually(func(g Gomega) []kubevirtv1.VirtualMachineInstanceCondition {
+				g.Expect(crClient.Get(context.Background(), crclient.ObjectKeyFromObject(vm1), vmi1)).To(Succeed())
+				return vmi1.Status.Conditions
+			}).WithPolling(time.Second).WithTimeout(5 * time.Minute).Should(ContainElement(SatisfyAll(
+				HaveField("Type", kubevirtv1.VirtualMachineInstanceAgentConnected),
+				HaveField("Status", corev1.ConditionTrue),
+			)))
+			Expect(crClient.Get(context.Background(), crclient.ObjectKeyFromObject(vm1), vmi1)).To(Succeed())
+			Expect(vmi1.Status.Interfaces[0].MAC).To(Equal(testMAC), "vmi status should report the requested mac")
+
+			By("Create second VM requesting the same MAC address")
+			vmi2 := newVMIWithPrimaryIfaceMAC(testMAC)
+			vm2 := generateVM(vmi2)
+			createVirtualMachine(vm2)
+
+			By("Asserting second VM pod has attached event reflecting MAC conflict error")
+			vm2Selector := fmt.Sprintf("%s=%s", kubevirtv1.VirtualMachineNameLabel, vm2.Name)
+			Eventually(func(g Gomega) []corev1.Event {
+				podList, err := fr.ClientSet.CoreV1().Pods(vm2.Namespace).List(context.Background(), metav1.ListOptions{LabelSelector: vm2Selector})
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(podList.Items).ToNot(BeEmpty())
+				events, err := fr.ClientSet.CoreV1().Events(vm2.Namespace).SearchWithContext(context.Background(), scheme.Scheme, &podList.Items[0])
+				g.Expect(err).ToNot(HaveOccurred())
+				return events.Items
+			}).WithTimeout(time.Minute * 1).WithPolling(time.Second * 3).Should(ContainElement(SatisfyAll(
+				HaveField("Type", "Warning"),
+				HaveField("Reason", "ErrorAllocatingPod"),
+				HaveField("Message", ContainSubstring("MAC address already in use")),
+			)))
+
+			By("Assert second VM not running")
+			Expect(crClient.Get(context.Background(), crclient.ObjectKeyFromObject(vm2), vmi2)).To(Succeed())
+			Expect(vmi2.Status.Conditions).To(ContainElement(SatisfyAll(
+				HaveField("Type", kubevirtv1.VirtualMachineInstanceReady),
+				HaveField("Status", corev1.ConditionFalse),
+			)), "second VM should not be ready due to MAC conflict")
 		})
 	})
 })

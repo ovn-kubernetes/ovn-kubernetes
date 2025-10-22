@@ -145,7 +145,7 @@ spec:
                             description: |-
                               Lifecycle controls IP addresses management lifecycle.
 
-                              The only allowed value is Persistent. When set, the IP addresses assigned by OVN Kubernetes will be persisted in an
+                              The only allowed value is Persistent. When set, the IP addresses assigned by OVN-Kubernetes will be persisted in an
                               `ipamclaims.k8s.cni.cncf.io` object. These IP addresses will be reused by other pods if requested.
                               Only supported when mode is `Enabled`.
                             enum:
@@ -313,6 +313,14 @@ spec:
                       rule: '!has(self.infrastructureSubnets) || !has(self.reservedSubnets)
                         || self.infrastructureSubnets.all(infra, !self.reservedSubnets.exists(reserved,
                         cidr(infra).containsCIDR(reserved) || cidr(reserved).containsCIDR(infra)))'
+                    - message: infrastructureSubnets must be a masked network address
+                        (no host bits set)
+                      rule: '!has(self.infrastructureSubnets) || self.infrastructureSubnets.all(s,
+                        isCIDR(s) && cidr(s) == cidr(s).masked())'
+                    - message: reservedSubnets must be a masked network address (no
+                        host bits set)
+                      rule: '!has(self.reservedSubnets) || self.reservedSubnets.all(s,
+                        isCIDR(s) && cidr(s) == cidr(s).masked())'
                   layer3:
                     description: Layer3 is the Layer3 topology configuration.
                     properties:
@@ -460,7 +468,7 @@ spec:
                             description: |-
                               Lifecycle controls IP addresses management lifecycle.
 
-                              The only allowed value is Persistent. When set, the IP addresses assigned by OVN Kubernetes will be persisted in an
+                              The only allowed value is Persistent. When set, the IP addresses assigned by OVN-Kubernetes will be persisted in an
                               `ipamclaims.k8s.cni.cncf.io` object. These IP addresses will be reused by other pods if requested.
                               Only supported when mode is `Enabled`.
                             enum:

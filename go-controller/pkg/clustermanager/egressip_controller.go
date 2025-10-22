@@ -129,6 +129,15 @@ func (eIPC *egressIPClusterController) getAllocationTotalCount() float64 {
 	return float64(count)
 }
 
+func (e *egressNode) hasAllocatedEgressIP(name string, eip string) bool {
+	for ip, egressIPName := range e.allocations {
+		if egressIPName == name && ip == eip {
+			return true
+		}
+	}
+	return false
+}
+
 // nodeAllocator contains all the information required to manage EgressIP assignment to egress node. This includes assignment
 // of EgressIP IPs to nodes and ensuring the egress nodes are reachable. For cloud nodes, it also tracks limits for
 // IP assignment to each node.
@@ -865,6 +874,7 @@ func (eIPC *egressIPClusterController) addAllocatorEgressIPAssignments(name stri
 	defer eIPC.nodeAllocator.Unlock()
 	for _, status := range statusAssignments {
 		if eNode, exists := eIPC.nodeAllocator.cache[status.Node]; exists {
+			klog.V(5).Infof("Setting egress IP node allocation - node: %s, EIP name: %s, IP: %s", eNode.name, name, status.EgressIP)
 			eNode.allocations[status.EgressIP] = name
 		}
 	}
@@ -1421,6 +1431,10 @@ func (eIPC *egressIPClusterController) validateEgressIPStatus(name string, items
 		} else {
 			if eNode.getAllocationCountForEgressIP(name) > 1 {
 				klog.Errorf("Allocator error: EgressIP: %s claims multiple egress IPs on same node: %s, will attempt rebalancing", name, eIPStatus.Node)
+				validAssignment = false
+			}
+			if !eNode.hasAllocatedEgressIP(name, eIPStatus.EgressIP) {
+				klog.Errorf("Allocator error: EgressIP: %s has mistmach with status vs cache for node: %s with IP: %s", name, eIPStatus.Node, eIPStatus.EgressIP)
 				validAssignment = false
 			}
 			if !eNode.isEgressAssignable {

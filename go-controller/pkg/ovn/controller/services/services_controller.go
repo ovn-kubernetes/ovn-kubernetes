@@ -464,7 +464,7 @@ func (c *Controller) syncService(key string) error {
 	}
 
 	// Build the abstract LB configs for this service
-	perNodeConfigs, templateConfigs, clusterConfigs := buildServiceLBConfigs(service, endpointSlices, c.nodeInfos, c.useLBGroups, c.useTemplates, c.netInfo.GetNetworkName())
+	perNodeConfigs, templateConfigs, clusterConfigs := buildServiceLBConfigs(service, endpointSlices, c.nodeInfos, c.useLBGroups, c.useTemplates)
 	klog.V(5).Infof("Built service %s LB cluster-wide configs for network=%s: %#v", key, c.netInfo.GetNetworkName(), clusterConfigs)
 	klog.V(5).Infof("Built service %s LB per-node configs for network=%s:  %#v", key, c.netInfo.GetNetworkName(), perNodeConfigs)
 	klog.V(5).Infof("Built service %s LB template configs for network=%s: %#v", key, c.netInfo.GetNetworkName(), templateConfigs)
@@ -779,7 +779,7 @@ func (c *Controller) cleanupUDNEnabledServiceRoute(key string) error {
 
 	var ops []ovsdb.Operation
 	var err error
-	if c.netInfo.TopologyType() == types.Layer2Topology {
+	if c.netInfo.TopologyType() == types.Layer2Topology && !globalconfig.Layer2UsesTransitRouter {
 		for _, node := range c.nodeInfos {
 			if ops, err = libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicateOps(c.nbClient, ops, c.netInfo.GetNetworkScopedGWRouterName(node.name), delPredicate); err != nil {
 				return err
@@ -824,7 +824,7 @@ func (c *Controller) configureUDNEnabledServiceRoute(service *corev1.Service) er
 			ExternalIDs: extIDs,
 		}
 		routerName := c.netInfo.GetNetworkScopedClusterRouterName()
-		if c.netInfo.TopologyType() == types.Layer2Topology {
+		if c.netInfo.TopologyType() == types.Layer2Topology && !globalconfig.Layer2UsesTransitRouter {
 			routerName = nodeInfo.gatewayRouterName
 		}
 		ops, err = libovsdbops.CreateOrUpdateLogicalRouterStaticRoutesWithPredicateOps(c.nbClient, nil, routerName, &staticRoute, func(item *nbdb.LogicalRouterStaticRoute) bool {

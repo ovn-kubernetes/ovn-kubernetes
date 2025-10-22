@@ -3,7 +3,7 @@ name: ovn-ci
 on:
   merge_group:
   pull_request:
-    branches: [ master ]
+    branches: [ master,release-* ]
     # Only run jobs if at least one non-doc file is changed
     paths-ignore:
       - '**/*.md'
@@ -30,7 +30,7 @@ env:
 
   # This must be a directory
   CI_IMAGE_CACHE: tmp/image_cache/
-  CI_IMAGE_MASTER_TAR: image-master.tar
+  CI_IMAGE_BASE_TAR: image-base.tar
   CI_IMAGE_PR_TAR: image-pr.tar
   CI_DIST_IMAGES_OUTPUT: dist/images/_output/
 
@@ -65,49 +65,49 @@ jobs:
         working-directory: go-controller
         args: --modules-download-mode=vendor --timeout=15m0s --verbose
 
-  build-master:
-    name: Build-master
+  build-base:
+    name: Build-base
     runs-on: ubuntu-24.04
     steps:
-    # Create a cache for the built master image
-    - name: Restore master image cache
-      id: image_cache_master
+    # Create a cache for the built base image
+    - name: Restore base image cache
+      id: image_cache_base
       uses: actions/cache@v4
       with:
         path: |
           ${{ env.CI_IMAGE_CACHE }}
-        key: ${{ github.run_id }}-image-cache-master
-    # if CI_IMAGE_MASTER_TAR isn't in cache, try pulling it and saving to the cache rather
+        key: ${{ github.run_id }}-image-cache-base
+    # if CI_IMAGE_BASE_TAR isn't in cache, try pulling it and saving to the cache rather
     # than building, resort back to building if the cache isn't populated and
     # pulling the image fails.
-    - name: Check if master image build is needed
-      id: is_master_image_build_needed
+    - name: Check if base image build is needed
+      id: is_base_image_build_needed
       continue-on-error: false
       run: |
         set -x
-        if [ -f ${CI_IMAGE_CACHE}${CI_IMAGE_MASTER_TAR}.gz ]; then
-            cp ${CI_IMAGE_CACHE}/${CI_IMAGE_MASTER_TAR}.gz ${CI_IMAGE_MASTER_TAR}.gz
-            gunzip ${CI_IMAGE_MASTER_TAR}.gz
-            echo "MASTER_IMAGE_RESTORED_FROM_CACHE=true" >> "$GITHUB_OUTPUT"
-            echo "MASTER_IMAGE_RESTORED=true" >> "$GITHUB_OUTPUT"
+        if [ -f ${CI_IMAGE_CACHE}${CI_IMAGE_BASE_TAR}.gz ]; then
+            cp ${CI_IMAGE_CACHE}/${CI_IMAGE_BASE_TAR}.gz ${CI_IMAGE_BASE_TAR}.gz
+            gunzip ${CI_IMAGE_BASE_TAR}.gz
+            echo "BASE_IMAGE_RESTORED_FROM_CACHE=true" >> "$GITHUB_OUTPUT"
+            echo "BASE_IMAGE_RESTORED=true" >> "$GITHUB_OUTPUT"
             exit 0
         fi
 
-        if docker pull ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-fedora:master; then
-            docker tag ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-fedora:master ovn-daemonset-fedora:dev
+        if docker pull ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-fedora:${{ github.base_ref || github.ref_name }}; then
+            docker tag ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-fedora:${{ github.base_ref || github.ref_name }} ovn-daemonset-fedora:dev
 
-            echo "MASTER_IMAGE_RESTORED=true" >> "$GITHUB_OUTPUT"
+            echo "BASE_IMAGE_RESTORED=true" >> "$GITHUB_OUTPUT"
             exit 0
         fi
-    # only run the following steps if the master image was not found in the cache
-    - name: Check out code into the Go module directory - from master branch
-      if: steps.is_master_image_build_needed.outputs.MASTER_IMAGE_RESTORED != 'true' && success()
+    # only run the following steps if the base image was not found in the cache
+    - name: Check out code into the Go module directory - from base branch
+      if: steps.is_base_image_build_needed.outputs.BASE_IMAGE_RESTORED != 'true' && success()
       uses: actions/checkout@v4
       with:
-        ref: master
+        ref: ${{ github.base_ref || github.ref_name }}
 
     - name: Set up Go
-      if: steps.is_master_image_build_needed.outputs.MASTER_IMAGE_RESTORED != 'true' && success()
+      if: steps.is_base_image_build_needed.outputs.BASE_IMAGE_RESTORED != 'true' && success()
       uses: actions/setup-go@v5
       with:
         go-version-file: 'go-controller/go.mod'
@@ -118,8 +118,8 @@ jobs:
         cache: false
       id: go
 
-    - name: Build - from master branch
-      if: steps.is_master_image_build_needed.outputs.MASTER_IMAGE_RESTORED != 'true' && success()
+    - name: Build - from base branch
+      if: steps.is_base_image_build_needed.outputs.BASE_IMAGE_RESTORED != 'true' && success()
       run: |
         set -x
         pushd go-controller
@@ -127,8 +127,8 @@ jobs:
            make windows
         popd
 
-    - name: Build docker image - from master branch
-      if: steps.is_master_image_build_needed.outputs.MASTER_IMAGE_RESTORED != 'true' && success()
+    - name: Build docker image - from base branch
+      if: steps.is_base_image_build_needed.outputs.BASE_IMAGE_RESTORED != 'true' && success()
       run: |
         make -C dist/images \
           IMAGE=ovn-daemonset-fedora:dev \
@@ -136,27 +136,27 @@ jobs:
           OVN_GITREF=${{ env.OVN_GITREF }} \
           fedora-image
 
-    - name: Cache master image
-      if: steps.is_master_image_build_needed.outputs.MASTER_IMAGE_RESTORED_FROM_CACHE != 'true' && success()
+    - name: Cache base image
+      if: steps.is_base_image_build_needed.outputs.BASE_IMAGE_RESTORED_FROM_CACHE != 'true' && success()
       continue-on-error: false
       run: |
         set -x
-        if [ -f ${CI_IMAGE_CACHE}${CI_IMAGE_MASTER_TAR} ]; then
-            rm -f ${CI_IMAGE_CACHE}${CI_IMAGE_MASTER_TAR}
+        if [ -f ${CI_IMAGE_CACHE}${CI_IMAGE_BASE_TAR} ]; then
+            rm -f ${CI_IMAGE_CACHE}${CI_IMAGE_BASE_TAR}
         fi
-        if [ -f ${CI_IMAGE_CACHE}${CI_IMAGE_MASTER_TAR}.gz ]; then
-            rm -f ${CI_IMAGE_CACHE}${CI_IMAGE_MASTER_TAR}.gz
+        if [ -f ${CI_IMAGE_CACHE}${CI_IMAGE_BASE_TAR}.gz ]; then
+            rm -f ${CI_IMAGE_CACHE}${CI_IMAGE_BASE_TAR}.gz
         fi
-        docker save ovn-daemonset-fedora:dev -o ${CI_IMAGE_MASTER_TAR}
+        docker save ovn-daemonset-fedora:dev -o ${CI_IMAGE_BASE_TAR}
         mkdir -p ${CI_IMAGE_CACHE}
-        cp ${CI_IMAGE_MASTER_TAR} ${CI_IMAGE_CACHE}${CI_IMAGE_MASTER_TAR}
-        gzip ${CI_IMAGE_CACHE}${CI_IMAGE_MASTER_TAR}
+        cp ${CI_IMAGE_BASE_TAR} ${CI_IMAGE_CACHE}${CI_IMAGE_BASE_TAR}
+        gzip ${CI_IMAGE_CACHE}${CI_IMAGE_BASE_TAR}
 
     # run the following always if none of the steps before failed
     - uses: actions/upload-artifact@v4
       with:
-        name: test-image-master
-        path: ${{ env.CI_IMAGE_MASTER_TAR }}
+        name: test-image-base
+        path: ${{ env.CI_IMAGE_BASE_TAR }}
 
   build-pr:
     name: Build-PR
@@ -273,12 +273,12 @@ jobs:
         path: ${{ env.CI_DIST_IMAGES_OUTPUT }}/${{ env.CI_IMAGE_PR_TAR }}
 
   ovn-upgrade-e2e:
-    name: Upgrade OVN from Master to PR branch based image
+    name: Upgrade OVN from Base to PR branch based image
     if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     needs:
-      - build-master
+      - build-base
       - build-pr
     strategy:
       fail-fast: false
@@ -296,10 +296,10 @@ jobs:
       OVN_MULTICAST_ENABLE:  "false"
     steps:
 
-    - name: Check out code into the Go module directory - from Master branch
+    - name: Check out code into the Go module directory - from Base branch
       uses: actions/checkout@v4
       with:
-          ref: master
+          ref: ${{ github.base_ref || github.ref_name }}
 
     - name: Set up Go
       uses: actions/setup-go@v5
@@ -324,10 +324,10 @@ jobs:
     - name: Free up disk space
       uses: ./.github/actions/free-disk-space
 
-    - name: Download test-image-master
+    - name: Download test-image-base
       uses: actions/download-artifact@v4
       with:
-        name: test-image-master
+        name: test-image-base
 
     - name: Disable ufw
       # For IPv6 and Dualstack, ufw (Uncomplicated Firewall) should be disabled.
@@ -337,7 +337,7 @@ jobs:
 
     - name: Load docker image
       run: |
-        docker load --input ${CI_IMAGE_MASTER_TAR} && rm -rf ${CI_IMAGE_MASTER_TAR}
+        docker load --input ${CI_IMAGE_BASE_TAR} && rm -rf ${CI_IMAGE_BASE_TAR}
 
     - name: kind setup
       run: |
