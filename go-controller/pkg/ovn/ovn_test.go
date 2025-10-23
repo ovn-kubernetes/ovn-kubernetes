@@ -219,10 +219,12 @@ func (o *FakeOVN) init(nadList []nettypes.NetworkAttachmentDefinition) {
 	o.stopChan = make(chan struct{})
 	o.wg = &sync.WaitGroup{}
 
-	o.networkManager = networkmanager.Default()
-	if config.OVNKubernetesFeature.EnableMultiNetwork {
-		o.networkManager, err = networkmanager.NewForZone("test", &testnm.FakeControllerManager{}, o.watcher)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	if o.networkManager == nil {
+		o.networkManager = networkmanager.Default()
+		if config.OVNKubernetesFeature.EnableMultiNetwork {
+			o.networkManager, err = networkmanager.NewForZone("test", &testnm.FakeControllerManager{}, o.watcher)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		}
 	}
 
 	o.portCache = NewPortCache(o.stopChan)

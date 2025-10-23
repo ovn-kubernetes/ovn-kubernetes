@@ -6,7 +6,9 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
 
@@ -287,12 +289,19 @@ func (oc *DefaultNetworkController) updateNamespace(old, newer *corev1.Namespace
 		}
 		// Trigger an egress fw logging update - this will only happen if an egress firewall exists for the NS, otherwise
 		// this will not do anything.
-		updated, err := oc.updateACLLoggingForEgressFirewall(old.Name, nsInfo)
+		egressFirewalls, err := oc.watchFactory.EgressFirewallInformer().Lister().EgressFirewalls(old.Name).List(labels.Everything())
 		if err != nil {
 			errors = append(errors, err)
-		} else if updated {
-			klog.Infof("Namespace %s: EgressFirewall ACL logging setting updated to deny=%s allow=%s",
+		}
+		for _, fw := range egressFirewalls {
+			fwKey, err := cache.MetaNamespaceKeyFunc(fw)
+			if err != nil {
+				klog.Errorf("Failed to get key for EgressFirewall %s/%s, will not update ACL logging: %v", old.Name, fwKey, err)
+				continue
+			}
+			klog.Infof("Namespace %s: EgressFirewall ACL logging setting updating to deny=%s allow=%s",
 				old.Name, nsInfo.aclLogging.Deny, nsInfo.aclLogging.Allow)
+			oc.efController.Reconcile(fwKey)
 		}
 	}
 
