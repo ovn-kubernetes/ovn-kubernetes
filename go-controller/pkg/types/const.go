@@ -252,6 +252,11 @@ const (
 	NetworkRoleInfrastructure = "infrastructure-locked"
 	NetworkRoleNone           = "none"
 
+	// Network transport types - canonical format (lowercase)
+	NetworkTransportGeneve    = "geneve"
+	NetworkTransportNoOverlay = "nooverlay"
+	NetworkTransportEVPN      = "evpn"
+
 	// db index keys
 	// PrimaryIDKey is used as a primary client index
 	PrimaryIDKey = OvnK8sPrefix + "/id"
@@ -348,3 +353,61 @@ const (
 	NFTMgmtPortNoSNATSubnetsV4 = "mgmtport-no-snat-subnets-v4"
 	NFTMgmtPortNoSNATSubnetsV6 = "mgmtport-no-snat-subnets-v6"
 )
+
+// TransportFromINI converts INI config format to canonical format.
+// INI format uses kebab-case for no-overlay: "geneve", "no-overlay"
+// Returns canonical lowercase format: "geneve", "nooverlay", "evpn"
+func TransportFromINI(iniTransport string) string {
+	switch iniTransport {
+	case "geneve":
+		return NetworkTransportGeneve
+	case "no-overlay":
+		return NetworkTransportNoOverlay
+	default:
+		return iniTransport // Return as-is for validation to catch
+	}
+}
+
+// TransportToINI converts canonical format to INI config format.
+// Returns kebab-case: "geneve", "no-overlay"
+func TransportToINI(canonicalTransport string) string {
+	switch canonicalTransport {
+	case NetworkTransportGeneve:
+		return "geneve"
+	case NetworkTransportNoOverlay:
+		return "no-overlay"
+	default:
+		return canonicalTransport
+	}
+}
+
+// TransportFromCRD converts CRD PascalCase format to canonical format.
+// CRD format uses PascalCase: "Geneve", "NoOverlay", "EVPN"
+// Returns canonical lowercase format: "geneve", "nooverlay", "evpn"
+func TransportFromCRD(crdTransport string) string {
+	switch crdTransport {
+	case "Geneve":
+		return NetworkTransportGeneve
+	case "NoOverlay":
+		return NetworkTransportNoOverlay
+	case "EVPN":
+		return NetworkTransportEVPN
+	default:
+		return crdTransport // Return as-is for validation to catch
+	}
+}
+
+// TransportToCRD converts canonical format to CRD PascalCase format.
+// Returns PascalCase: "Geneve", "NoOverlay", "EVPN"
+func TransportToCRD(canonicalTransport string) string {
+	switch canonicalTransport {
+	case NetworkTransportGeneve:
+		return "Geneve"
+	case NetworkTransportNoOverlay:
+		return "NoOverlay"
+	case NetworkTransportEVPN:
+		return "EVPN"
+	default:
+		return canonicalTransport
+	}
+}
