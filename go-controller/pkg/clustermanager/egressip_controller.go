@@ -18,6 +18,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/record"
@@ -211,6 +212,26 @@ func (eIPC *egressIPClusterController) executeCloudPrivateIPConfigOps(egressIPNa
 				if cloudPrivateIPConfig.GetDeletionTimestamp() != nil && !cloudPrivateIPConfig.GetDeletionTimestamp().IsZero() {
 					return fmt.Errorf("cloud update request failed, CloudPrivateIPConfig: %s is being deleted", cloudPrivateIPConfigName)
 				}
+
+				// Handle a scenario in which the object exists in a failed state by removing it
+				assignedCondition := meta.FindStatusCondition(cloudPrivateIPConfig.Status.Conditions, string(ocpcloudnetworkapi.Assigned))
+				if assignedCondition != nil && assignedCondition.Status == metav1.ConditionFalse {
+					klog.Warningf("CloudPrivateIPConfig: %s is in Failed state (reason: %s), deleting to allow retry", cloudPrivateIPConfigName, assignedCondition.Message)
+					eIPRef := corev1.ObjectReference{
+						Kind: "EgressIP",
+						Name: egressIPName,
+					}
+					eIPC.recorder.Eventf(&eIPRef, corev1.EventTypeWarning, "CloudAssignmentRetry",
+						"egress IP: %s previously failed on node %s (reason: %s), will retry assignment",
+						egressIP, cloudPrivateIPConfig.Spec.Node, assignedCondition.Message)
+					if err := eIPC.kube.DeleteCloudPrivateIPConfig(cloudPrivateIPConfigName); err != nil {
+						return fmt.Errorf("failed to delete failed CloudPrivateIPConfig: %s, err: %v", cloudPrivateIPConfigName, err)
+					}
+
+					// Return an error to trigger retry
+					return fmt.Errorf("deleted failed CloudPrivateIPConfig: %s, will retry creation in next reconciliation", cloudPrivateIPConfigName)
+				}
+
 				if op.toAdd == cloudPrivateIPConfig.Spec.Node {
 					klog.Infof("CloudPrivateIPConfig: %s already assigned to node: %s", cloudPrivateIPConfigName, cloudPrivateIPConfig.Spec.Node)
 					continue
