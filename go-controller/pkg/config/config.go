@@ -2738,7 +2738,21 @@ func initConfigWithPath(ctx *cli.Context, exec kexec.Interface, saPath string, d
 		return "", err
 	}
 
-	if err = buildOvsPathsConfig(&cliConfig, &cfg); err != nil {
+	if err = buildNoOverlayConfig(&cliConfig, &cfg); err != nil {
+		return "", err
+	}
+
+	if err = buildManagedBGPConfig(&cliConfig, &cfg); err != nil {
+		return "", err
+	}
+
+	// Validate no-overlay configuration
+	if err = validateNoOverlayConfig(); err != nil {
+		return "", err
+	}
+
+	// Validate managed BGP configuration
+	if err = validateManagedBGPConfig(); err != nil {
 		return "", err
 	}
 
