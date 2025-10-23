@@ -1543,7 +1543,6 @@ func overrideActiveNSEWithDefaultNSE(defaultNSE, activeNSE *nettypes.NetworkSele
 	}
 	activeNSE.IPRequest = defaultNSE.IPRequest
 	activeNSE.MacRequest = defaultNSE.MacRequest
-	activeNSE.IPAMClaimReference = defaultNSE.IPAMClaimReference
 	return nil
 }
 
@@ -1586,16 +1585,20 @@ func GetPodNADToNetworkMappingWithActiveNetwork(pod *corev1.Pod, nInfo NetInfo, 
 		Name:      activeNADKey.Name,
 	}
 
+	defaultNSE, err := GetK8sPodDefaultNetworkSelection(pod)
+	if err != nil {
+		return false, nil, fmt.Errorf("failed getting default-network annotation for pod %q: %w", pod.Namespace+"/"+pod.Name, err)
+	}
+	if defaultNSE != nil {
+		activeNSE.IPAMClaimReference = defaultNSE.IPAMClaimReference
+	}
+
 	// Feature gate integration: EnablePreconfiguredUDNAddresses controls default network IP/MAC transfer to active network
 	if IsPreconfiguredUDNAddressesEnabled() {
 		// Limit the static ip and mac requests to the layer2 primary UDN when EnablePreconfiguredUDNAddresses is enabled, we
 		// don't need to explicitly check this is primary UDN since
 		// the "active network" concept is exactly that.
 		if activeNetwork.TopologyType() == types.Layer2Topology {
-			defaultNSE, err := GetK8sPodDefaultNetworkSelection(pod)
-			if err != nil {
-				return false, nil, fmt.Errorf("failed getting default-network annotation for pod %q: %w", pod.Namespace+"/"+pod.Name, err)
-			}
 			// If there are static IPs and MACs at the default NSE, override the active NSE with them
 			if defaultNSE != nil {
 				if err := overrideActiveNSEWithDefaultNSE(defaultNSE, activeNSE); err != nil {
@@ -1605,9 +1608,10 @@ func GetPodNADToNetworkMappingWithActiveNetwork(pod *corev1.Pod, nInfo NetInfo, 
 		}
 	}
 
-	if nInfo.IsPrimaryNetwork() && AllowsPersistentIPs(nInfo) && activeNSE.IPAMClaimReference == "" {
-		ipamClaimName, wasPersistentIPRequested := pod.Annotations[OvnUDNIPAMClaimName]
-		if wasPersistentIPRequested {
+	if nInfo.IsPrimaryNetwork() && AllowsPersistentIPs(nInfo) {
+		// 'k8s.ovn.org/primary-udn-ipamclaim' annotation has been deprecated. Maintain backward compatibility by
+		// respecting 'k8s.ovn.org/primary-udn-ipamclaim' value.
+		if ipamClaimName, wasPersistentIPRequested := pod.Annotations[DeprecatedOvnUDNIPAMClaimName]; wasPersistentIPRequested {
 			activeNSE.IPAMClaimReference = ipamClaimName
 		}
 	}

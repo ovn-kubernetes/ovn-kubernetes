@@ -54,11 +54,13 @@ const (
 	OvnPodAnnotationName = "k8s.ovn.org/pod-networks"
 	// DefNetworkAnnotation is the pod annotation for the cluster-wide active network
 	DefNetworkAnnotation = "v1.multus-cni.io/default-network"
-	// OvnUDNIPAMClaimName is used for workload owners to instruct OVN-K which
-	// IPAMClaim will hold the allocation for the workload
-	OvnUDNIPAMClaimName = "k8s.ovn.org/primary-udn-ipamclaim"
 	// UDNOpenPortsAnnotationName is the pod annotation to open default network pods on UDN pods.
 	UDNOpenPortsAnnotationName = "k8s.ovn.org/open-default-ports"
+
+	// DeprecatedOvnUDNIPAMClaimName is used for workload owners to instruct OVN-K which
+	// IPAMClaim will hold the allocation for the workload.
+	// Deprecated: Use 'v1.multus-cni.io/default-network' annotation instead, specifying the 'ipam-claim-reference' attribute.
+	DeprecatedOvnUDNIPAMClaimName = "k8s.ovn.org/primary-udn-ipamclaim"
 )
 
 var ErrNoPodIPFound = errors.New("no pod IPs found")
