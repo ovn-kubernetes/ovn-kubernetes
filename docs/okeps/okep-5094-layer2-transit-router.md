@@ -1033,6 +1033,31 @@ router to iptables on the nodes. If this occurs, the disruption
 would be resolved. Therefore, it might be advisable to await this
 enhancement's implementation before proceeding.
 
+### Tunnel keys on local ports of distributed switches and routers
+
+In general, for OVN (transit) routers and switches the logical port keys (SB.Port_Binding.tunnel-key populated by ovn-northd 
+from the NB requested-tnl-key if any is provided or allocated otherwise) need to match on all chassis that process 
+traffic for the routers/switches.
+
+That's because the "logical ingress port" key is embedded in the geneve metadata of the packet that's tunneled between 
+chassis for routers/switches. Tunneling happens in between the logical ingress and egress pipelines. 
+OVN uses the logical ingress port key in the egress pipeline for various features (e.g., to-lport ACLs, SNAT). 
+In general, there's no guarantee ovn-northd won't be using the logical inport in the egress pipeline in the future for more features.
+
+In the OVN interconnect case the constraint also stands. If the native ovn-ic daemon were to be used to synchronize 
+transit switches (and routers in the future) it would ensure that in all AZ's NBs the logical switch ports would have 
+the same tunnel key. As ovn-kubernetes doesn't use the native ovn-ic daemon, it has to ensure itself that the constraint is satisfied.
+
+Note: In this specific case no current OVN feature would break if we didn't synchronize keys for the L2 network ports. However, it's best if we do.
+
+We will update the transit router to use the same tunnel key for transit router to layer2 switch ports across all nodes.
+But for the layer2 switch, we have a centralized tunnel key distribution logic via annotations, and there is a management port
+that is local and should use tunnel-key too, but it doesn't.
+We think it is ok to leave it as is (since this feature aka transit router doesn't change the layer2 switch and its tunnel key allocation logic),
+and we don't seem to use any of the "broken" features mentioned above.
+
+It still would be nice to address if we ever get to change the tunnel key allocation logic on the layer2 switch.
+
 ## OVN Kubernetes Version Skew
 
 which version is this feature planned to be introduced in?
