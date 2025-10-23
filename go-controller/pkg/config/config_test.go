@@ -2374,5 +2374,23 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 			err = validateManagedBGPConfig()
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		})
+
+		It("skips AS number validation when transport is not no-overlay", func() {
+			Default.Transport = TransportGeneve
+			NoOverlay.Routing = NoOverlayRoutingManaged
+			// Even with an invalid AS number, validation should be skipped
+			ManagedBGP.ASNumber = 0
+			err := validateManagedBGPConfig()
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		})
+
+		It("skips AS number validation when routing is not managed", func() {
+			Default.Transport = TransportNoOverlay
+			NoOverlay.Routing = NoOverlayRoutingUnmanaged
+			// Even with an invalid AS number, validation should be skipped
+			ManagedBGP.ASNumber = 0
+			err := validateManagedBGPConfig()
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		})
 	})
 })
