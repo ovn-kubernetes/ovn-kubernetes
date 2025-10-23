@@ -872,7 +872,7 @@ func (b *BridgeConfiguration) commonFlows(hostSubnets []*net.IPNet) ([]string, e
 					)
 				}
 
-				if (disableSNATMultipleGWs && config.OVNKubernetesFeature.EnableEgressIP) || isNetworkAdvertised {
+				if disableSNATMultipleGWs || isNetworkAdvertised {
 					// MEG and advertised UDN networks requires that local pod traffic can leave the node without SNAT.
 					// We match on the pod subnets and forward the traffic to the physical interface.
 					// Select priority 104 for the scenario when both EgressIP and advertised UDN are active:
