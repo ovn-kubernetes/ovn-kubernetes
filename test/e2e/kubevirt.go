@@ -32,6 +32,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -2352,6 +2353,7 @@ chpasswd: { expire: False }
 	})
 
 	Context("duplicate addresses validation", func() {
+		const networkName = "net1"
 		var (
 			cudn          *udnv1.ClusterUserDefinedNetwork
 			duplicateIPv4 = "10.128.0.200" // Static IP that will be used by both VMs
@@ -2375,12 +2377,12 @@ chpasswd: { expire: False }
 			namespace = fr.Namespace.Name
 
 			dualCIDRs := filterDualStackCIDRs(fr.ClientSet, []udnv1.CIDR{udnv1.CIDR(cidrIPv4), udnv1.CIDR(cidrIPv6)})
-			cudn, _ = kubevirt.GenerateCUDN(namespace, "net1", udnv1.NetworkTopologyLayer2, udnv1.NetworkRolePrimary, dualCIDRs)
+			cudn, _ = kubevirt.GenerateCUDN(namespace, networkName, udnv1.NetworkTopologyLayer2, udnv1.NetworkRolePrimary, dualCIDRs)
 			createCUDN(cudn)
 		})
 
 		createVMWithStaticIP := func(vmName string, staticIPs []string) *kubevirtv1.VirtualMachine {
-			annotations, err := kubevirt.GenerateAddressesAnnotations("net1", staticIPs)
+			annotations, err := kubevirt.GenerateAddressesAnnotations(networkName, staticIPs)
 			Expect(err).NotTo(HaveOccurred())
 
 			vm := fedoraWithTestToolingVM(
@@ -2449,6 +2451,37 @@ ethernets:
 				)), fmt.Sprintf("VM %s should fail with IP allocation error", vmName))
 		}
 
+		verifyIPAMClaimStatus := func(vmName string, expectedConditionStatus metav1.ConditionStatus, expectedReason string) {
+			ipamClaimName := fmt.Sprintf("%s.%s", vmName, networkName)
+
+			Eventually(func(g Gomega) {
+				ipamClaim := &ipamclaimsv1alpha1.IPAMClaim{}
+				err := crClient.Get(context.TODO(), crclient.ObjectKey{
+					Namespace: namespace,
+					Name:      ipamClaimName,
+				}, ipamClaim)
+				g.Expect(err).NotTo(HaveOccurred(), "Should get IPAMClaim")
+
+				g.Expect(ipamClaim.Status.OwnerPod).NotTo(BeNil(), "OwnerPod should be set")
+				g.Expect(ipamClaim.Status.OwnerPod.Name).To(HavePrefix("virt-launcher-"), "OwnerPod should be the virt-launcher pod")
+
+				g.Expect(ipamClaim.Status.Conditions).NotTo(BeEmpty(), "Conditions should be set")
+				condition := meta.FindStatusCondition(ipamClaim.Status.Conditions, "IPsAllocated")
+				g.Expect(condition).NotTo(BeNil(), "IPsAllocated condition should exist")
+				g.Expect(condition.Status).To(Equal(expectedConditionStatus), "Condition status should match")
+				g.Expect(condition.Reason).To(Equal(expectedReason), "Condition reason should match")
+
+				if expectedConditionStatus == metav1.ConditionTrue {
+					g.Expect(ipamClaim.Status.IPs).NotTo(BeEmpty(), "IPs should be set on successful allocation")
+				} else {
+					g.Expect(ipamClaim.Status.IPs).To(BeEmpty(), "IPs should not be set on failed allocation")
+				}
+			}).
+				WithTimeout(30*time.Second).
+				WithPolling(2*time.Second).
+				Should(Succeed(), fmt.Sprintf("IPAMClaim %s should have correct status", ipamClaimName))
+		}
+
 		It("should fail when creating second VM with duplicate static IP", func() {
 			staticIPs := filterIPs(fr.ClientSet, duplicateIPv4, duplicateIPv6)
 
@@ -2457,6 +2490,9 @@ ethernets:
 			createVirtualMachine(vm1)
 			waitForVMReadinessAndVerifyIPs(vm1.Name, staticIPs)
 
+			By("Verifying first VM IPAMClaim has successful status")
+			verifyIPAMClaimStatus(vm1.Name, metav1.ConditionTrue, "SuccessfulAllocation")
+
 			By("Creating second VM with duplicate static IP - should fail")
 			vm2 := createVMWithStaticIP("test-vm-2", staticIPs)
 			createVirtualMachine(vm2)
@@ -2464,8 +2500,120 @@ ethernets:
 			By("Verifying pod fails with duplicate IP allocation error")
 			waitForVMIPodDuplicateIPFailure(vm2.Name)
 
+			By("Verifying second VM IPAMClaim has failure status with IPAddressConflict")
+			verifyIPAMClaimStatus(vm2.Name, metav1.ConditionFalse, "IPAddressConflict")
+
 			By("Verifying first VM is still running normally")
 			waitForVMReadinessAndVerifyIPs(vm1.Name, staticIPs)
+		})
+
+		It("should fail when subnet is exhausted", func() {
+			const (
+				smallSubnetIPv4 = "10.130.0.0/30"       // Only 2 usable IPs (.1 and .2, .0 is network, .3 is broadcast)
+				smallSubnetIPv6 = "2011:100:200::0/126" // Only 2 usable IPs
+			)
+
+			By("Creating a UDN with small subnet")
+			smallSubnetNamespace := fr.Namespace.Name
+			dualCIDRs := filterDualStackCIDRs(fr.ClientSet, []udnv1.CIDR{udnv1.CIDR(smallSubnetIPv4), udnv1.CIDR(smallSubnetIPv6)})
+			smallSubnetCUDN, _ := kubevirt.GenerateCUDN(smallSubnetNamespace, networkName, udnv1.NetworkTopologyLayer2, udnv1.NetworkRolePrimary, dualCIDRs)
+			createCUDN(smallSubnetCUDN)
+
+			By("Creating filler VMs to consume available IPs")
+			// Create VMs without static IPs - they will get IPs from the pool
+			createFillerVM := func(vmName string) *kubevirtv1.VirtualMachine {
+				vm := fedoraWithTestToolingVM(
+					nil, // labels
+					nil, // no static IP annotations
+					nil, // nodeSelector
+					kubevirtv1.NetworkSource{
+						Pod: &kubevirtv1.PodNetwork{},
+					},
+					`#cloud-config
+password: fedora
+chpasswd: { expire: False }
+`,
+					`version: 2
+ethernets:
+  eth0:
+    dhcp4: true
+    dhcp6: true
+    ipv6-address-generation: eui64`,
+				)
+				vm.Name = vmName
+				vm.Namespace = smallSubnetNamespace
+				vm.Spec.Template.Spec.Domain.Devices.Interfaces[0].Bridge = nil
+				vm.Spec.Template.Spec.Domain.Devices.Interfaces[0].Binding = &kubevirtv1.PluginBinding{Name: "l2bridge"}
+				return vm
+			}
+
+			// Create 2 VMs to fill the subnet (assuming .1 and .2 are available)
+			vm1 := createFillerVM("filler-vm-1")
+			createVirtualMachine(vm1)
+
+			vmi1 := &kubevirtv1.VirtualMachineInstance{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: smallSubnetNamespace,
+					Name:      vm1.Name,
+				},
+			}
+			waitVirtualMachineInstanceReadiness(vmi1)
+
+			vm2 := createFillerVM("filler-vm-2")
+			createVirtualMachine(vm2)
+
+			vmi2 := &kubevirtv1.VirtualMachineInstance{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: smallSubnetNamespace,
+					Name:      vm2.Name,
+				},
+			}
+			waitVirtualMachineInstanceReadiness(vmi2)
+
+			By("Creating third VM that should fail due to subnet exhaustion")
+			vm3 := createFillerVM("exhausted-vm")
+			createVirtualMachine(vm3)
+
+			By("Verifying pod fails with subnet exhaustion error")
+			Eventually(func() []corev1.Event {
+				podList, err := fr.ClientSet.CoreV1().Pods(smallSubnetNamespace).List(context.TODO(), metav1.ListOptions{
+					LabelSelector: fmt.Sprintf("%s=%s", kubevirtv1.VirtualMachineNameLabel, vm3.Name),
+				})
+				if err != nil || len(podList.Items) == 0 {
+					return nil
+				}
+
+				events, err := fr.ClientSet.CoreV1().Events(smallSubnetNamespace).List(context.TODO(), metav1.ListOptions{
+					FieldSelector: fmt.Sprintf("involvedObject.name=%s", podList.Items[0].Name),
+				})
+				if err != nil {
+					return nil
+				}
+
+				return events.Items
+			}).
+				WithTimeout(60*time.Second).
+				WithPolling(2*time.Second).
+				Should(ContainElement(SatisfyAll(
+					HaveField("Type", Equal("Warning")),
+					HaveField("Message", ContainSubstring("subnet address pool exhausted")),
+				)), fmt.Sprintf("VM %s should fail with subnet exhaustion error", vm3.Name))
+
+			By("Verifying third VM IPAMClaim has failure status with SubnetExhausted")
+			verifyIPAMClaimStatus(vm3.Name, metav1.ConditionFalse, "SubnetExhausted")
+
+			By("Verifying first two VMs are still running normally")
+			Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi1), vmi1)).To(Succeed())
+			Expect(vmi1.Status.Conditions).To(ContainElement(SatisfyAll(
+				HaveField("Type", kubevirtv1.VirtualMachineInstanceReady),
+				HaveField("Status", corev1.ConditionTrue),
+			)))
+
+			Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi2), vmi2)).To(Succeed())
+			Expect(vmi2.Status.Conditions).To(ContainElement(SatisfyAll(
+				HaveField("Type", kubevirtv1.VirtualMachineInstanceReady),
+				HaveField("Status", corev1.ConditionTrue),
+			)))
 		})
 
 		newVMIWithPrimaryIfaceMAC := func(mac string) *kubevirtv1.VirtualMachineInstance {
