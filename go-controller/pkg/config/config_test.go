@@ -2115,4 +2115,166 @@ udn-allowed-default-services= ns/svc, ns1/svc1
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 	})
+
+	Describe("No-Overlay Configuration", func() {
+		BeforeEach(func() {
+			err := PrepareTestConfig()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
+		It("validates transport option correctly", func() {
+			// Test valid geneve transport
+			Default.Transport = TransportGeneve
+			err := validateNoOverlayConfig()
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+			// Test valid no-overlay transport with required options
+			Default.Transport = TransportNoOverlay
+			NoOverlay.OutboundSNAT = NoOverlaySNATEnable
+			NoOverlay.Routing = NoOverlayRoutingManaged
+			ManagedBGP.Topology = ManagedBGPTopologyFullMesh
+			err = validateNoOverlayConfig()
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+			// Test invalid transport
+			Default.Transport = "invalid-transport"
+			err = validateNoOverlayConfig()
+			gomega.Expect(err).To(gomega.HaveOccurred())
+			gomega.Expect(err.Error()).To(gomega.ContainSubstring("invalid transport"))
+		})
+
+		It("requires outbound-snat when transport is no-overlay", func() {
+			Default.Transport = TransportNoOverlay
+			NoOverlay.OutboundSNAT = ""
+			NoOverlay.Routing = NoOverlayRoutingManaged
+			ManagedBGP.Topology = ManagedBGPTopologyFullMesh
+			err := validateNoOverlayConfig()
+			gomega.Expect(err).To(gomega.HaveOccurred())
+			gomega.Expect(err.Error()).To(gomega.ContainSubstring("outbound-snat is required"))
+		})
+
+		It("validates outbound-snat values", func() {
+			Default.Transport = TransportNoOverlay
+			NoOverlay.Routing = NoOverlayRoutingManaged
+			ManagedBGP.Topology = ManagedBGPTopologyFullMesh
+
+			// Test valid enable
+			NoOverlay.OutboundSNAT = NoOverlaySNATEnable
+			err := validateNoOverlayConfig()
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+			// Test valid disable
+			NoOverlay.OutboundSNAT = NoOverlaySNATDisable
+			err = validateNoOverlayConfig()
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+			// Test invalid value
+			NoOverlay.OutboundSNAT = "maybe"
+			err = validateNoOverlayConfig()
+			gomega.Expect(err).To(gomega.HaveOccurred())
+			gomega.Expect(err.Error()).To(gomega.ContainSubstring("invalid outbound-snat"))
+		})
+
+		It("requires routing when transport is no-overlay", func() {
+			Default.Transport = TransportNoOverlay
+			NoOverlay.OutboundSNAT = NoOverlaySNATEnable
+			NoOverlay.Routing = ""
+			err := validateNoOverlayConfig()
+			gomega.Expect(err).To(gomega.HaveOccurred())
+			gomega.Expect(err.Error()).To(gomega.ContainSubstring("routing is required"))
+		})
+
+		It("validates routing values", func() {
+			Default.Transport = TransportNoOverlay
+			NoOverlay.OutboundSNAT = NoOverlaySNATEnable
+
+			// Test valid managed (requires topology)
+			NoOverlay.Routing = NoOverlayRoutingManaged
+			ManagedBGP.Topology = ManagedBGPTopologyFullMesh
+			err := validateNoOverlayConfig()
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+			// Test valid unmanaged (topology not required)
+			NoOverlay.Routing = NoOverlayRoutingUnmanaged
+			ManagedBGP.Topology = ""
+			err = validateNoOverlayConfig()
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+			// Test invalid value
+			NoOverlay.Routing = "automatic"
+			err = validateNoOverlayConfig()
+			gomega.Expect(err).To(gomega.HaveOccurred())
+			gomega.Expect(err.Error()).To(gomega.ContainSubstring("invalid routing"))
+		})
+
+		It("builds no-overlay config from CLI and file", func() {
+			cliConfig := config{
+				NoOverlay: NoOverlayConfig{
+					OutboundSNAT: NoOverlaySNATEnable,
+					Routing:      NoOverlayRoutingManaged,
+				},
+				Bgp: BGPConfig{
+					Managed: ManagedBGPConfig{
+						Topology: ManagedBGPTopologyFullMesh,
+					},
+				},
+			}
+			fileConfig := config{
+				NoOverlay: NoOverlayConfig{
+					OutboundSNAT: NoOverlaySNATDisable,
+					Routing:      NoOverlayRoutingUnmanaged,
+				},
+				Bgp: BGPConfig{
+					Managed: ManagedBGPConfig{
+						Topology: "",
+					},
+				},
+			}
+			err := buildNoOverlayConfig(&cliConfig, &fileConfig)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			err = buildManagedBGPConfig(&cliConfig, &fileConfig)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			// CLI should override file config
+			gomega.Expect(NoOverlay.OutboundSNAT).To(gomega.Equal(NoOverlaySNATEnable))
+			gomega.Expect(NoOverlay.Routing).To(gomega.Equal(NoOverlayRoutingManaged))
+			gomega.Expect(ManagedBGP.Topology).To(gomega.Equal(ManagedBGPTopologyFullMesh))
+		})
+
+		It("requires topology when routing is managed", func() {
+			Default.Transport = TransportNoOverlay
+			NoOverlay.OutboundSNAT = NoOverlaySNATEnable
+			NoOverlay.Routing = NoOverlayRoutingManaged
+			ManagedBGP.Topology = ""
+			err := validateNoOverlayConfig()
+			gomega.Expect(err).To(gomega.HaveOccurred())
+			gomega.Expect(err.Error()).To(gomega.ContainSubstring("topology is required when routing=managed"))
+		})
+
+		It("validates topology values", func() {
+			Default.Transport = TransportNoOverlay
+			NoOverlay.OutboundSNAT = NoOverlaySNATEnable
+			NoOverlay.Routing = NoOverlayRoutingManaged
+
+			// Test valid full-mesh
+			ManagedBGP.Topology = ManagedBGPTopologyFullMesh
+			err := validateNoOverlayConfig()
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+
+			// Test invalid value
+			ManagedBGP.Topology = "route-reflector"
+			err = validateNoOverlayConfig()
+			gomega.Expect(err).To(gomega.HaveOccurred())
+			gomega.Expect(err.Error()).To(gomega.ContainSubstring("invalid topology"))
+			gomega.Expect(err.Error()).To(gomega.ContainSubstring(`must be "full-mesh"`))
+		})
+
+		It("does not require topology when routing is unmanaged", func() {
+			Default.Transport = TransportNoOverlay
+			NoOverlay.OutboundSNAT = NoOverlaySNATEnable
+			NoOverlay.Routing = NoOverlayRoutingUnmanaged
+			ManagedBGP.Topology = ""
+			err := validateNoOverlayConfig()
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		})
+	})
 })
