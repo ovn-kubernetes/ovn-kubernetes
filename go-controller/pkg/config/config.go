@@ -2396,6 +2396,9 @@ func validateNoOverlayConfig() error {
 		if NoOverlay.OutboundSNAT != "" || NoOverlay.Routing != "" {
 			klog.Warningf("[no-overlay] configuration specified but transport is %q; configuration will be ignored", Default.Transport)
 		}
+		if ManagedBGP.Topology != "" || (ManagedBGP.ASNumber != 0 && ManagedBGP.ASNumber != savedManagedBGP.ASNumber) {
+			klog.Warningf("[bgp-managed] configuration specified but transport is %q; configuration will be ignored", Default.Transport)
+		}
 	}
 
 	return nil
@@ -2414,25 +2417,28 @@ func buildManagedBGPConfig(file *config) error {
 
 // validateManagedBGPConfig validates the managed BGP configuration
 func validateManagedBGPConfig() error {
-	// Validate AS number is in valid range
-	// Valid AS numbers: 1-4294967295 (32-bit)
-	// Reserved ranges:
-	//   0                    - Reserved (RFC 7607)
-	//   23456                - AS_TRANS (RFC 6793)
-	//   65535                - Reserved (RFC 7300)
-	//   4294967295           - Reserved (RFC 7300)
+	// Only validate if transport is no-overlay and routing is managed
+	if Default.Transport == TransportNoOverlay && NoOverlay.Routing == NoOverlayRoutingManaged {
+		// Validate AS number is in valid range
+		// Valid AS numbers: 1-4294967295 (32-bit)
+		// Reserved ranges:
+		//   0                    - Reserved (RFC 7607)
+		//   23456                - AS_TRANS (RFC 6793)
+		//   65535                - Reserved (RFC 7300)
+		//   4294967295           - Reserved (RFC 7300)
 
-	if ManagedBGP.ASNumber == 0 {
-		return fmt.Errorf("invalid as-number: 0 is reserved")
-	}
-	if ManagedBGP.ASNumber == 23456 {
-		return fmt.Errorf("invalid as-number: 23456 is reserved (AS_TRANS for 16-bit to 32-bit AS translation)")
-	}
-	if ManagedBGP.ASNumber == 65535 {
-		return fmt.Errorf("invalid as-number: 65535 is reserved")
-	}
-	if ManagedBGP.ASNumber == 4294967295 {
-		return fmt.Errorf("invalid as-number: 4294967295 is reserved")
+		if ManagedBGP.ASNumber == 0 {
+			return fmt.Errorf("invalid as-number: 0 is reserved")
+		}
+		if ManagedBGP.ASNumber == 23456 {
+			return fmt.Errorf("invalid as-number: 23456 is reserved (AS_TRANS for 16-bit to 32-bit AS translation)")
+		}
+		if ManagedBGP.ASNumber == 65535 {
+			return fmt.Errorf("invalid as-number: 65535 is reserved")
+		}
+		if ManagedBGP.ASNumber == 4294967295 {
+			return fmt.Errorf("invalid as-number: 4294967295 is reserved")
+		}
 	}
 
 	return nil
