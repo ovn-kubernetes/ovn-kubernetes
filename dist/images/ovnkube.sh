@@ -49,17 +49,11 @@ fi
 # OVN_GATEWAY_MODE - the gateway mode (shared or local) - v3
 # OVN_GATEWAY_OPTS - the options for the ovn gateway
 # OVN_GATEWAY_ROUTER_SUBNET - the gateway router subnet (shared mode, DPU only) - v3
-# OVNKUBE_LOGLEVEL - log level for ovnkube (0..5, default 4) - v3
 # OVN_LOGLEVEL_NORTHD - log level (ovn-ctl default: -vconsole:emer -vsyslog:err -vfile:info) - v3
 # OVN_LOGLEVEL_NB - log level (ovn-ctl default: -vconsole:off -vfile:info) - v3
 # OVN_LOGLEVEL_SB - log level (ovn-ctl default: -vconsole:off -vfile:info) - v3
 # OVN_LOGLEVEL_CONTROLLER - log level (ovn-ctl default: -vconsole:off -vfile:info) - v3
 # OVN_LOGLEVEL_NBCTLD - log level (ovn-ctl default: -vconsole:off -vfile:info) - v3
-# OVNKUBE_LOGFILE_MAXSIZE - log file max size in MB(default 100 MB)
-# OVNKUBE_LOGFILE_MAXBACKUPS - log file max backups (default 5)
-# OVNKUBE_LOGFILE_MAXAGE - log file max age in days (default 5 days)
-# OVNKUBE_LIBOVSDB_CLIENT_LOGFILE - separate log file for libovsdb client (default: do not separate from logfile)
-# OVN_ACL_LOGGING_RATE_LIMIT - specify default ACL logging rate limit in messages per second (default: 20)
 # OVN_NB_PORT - ovn north db port (default 6641)
 # OVN_SB_PORT - ovn south db port (default 6642)
 # OVN_NB_RAFT_PORT - ovn north db raft port (default 6643)
@@ -111,15 +105,6 @@ ovn_loglevel_controller=${OVN_LOGLEVEL_CONTROLLER:-"-vconsole:info"}
 
 ovnkubelogdir=/var/log/ovn-kubernetes
 
-# logfile rotation parameters
-ovnkube_logfile_maxsize=${OVNKUBE_LOGFILE_MAXSIZE:-"100"}
-ovnkube_logfile_maxbackups=${OVNKUBE_LOGFILE_MAXBACKUPS:-"5"}
-ovnkube_logfile_maxage=${OVNKUBE_LOGFILE_MAXAGE:-"5"}
-
-# logfile for libovsdb client. When not specified, the ovsdb client logs
-# are not separated from the "main" --logfile used by ovnkube
-ovnkube_libovsdb_client_logfile=${OVNKUBE_LIBOVSDB_CLIENT_LOGFILE:-}
-
 # ovnkube.sh version (Update during each release)
 ovnkube_version="1.1.0"
 
@@ -170,9 +155,6 @@ ovn_northd_opts=${OVN_NORTHD_OPTS:-""}
 
 # ovn-controller
 ovn_controller_opts=${OVN_CONTROLLER_OPTS:-""}
-
-# set the log level for ovnkube
-ovnkube_loglevel=${OVNKUBE_LOGLEVEL:-4}
 
 # by default it is going to be a shared gateway mode, however this can be overridden to any of the other
 # two gateway modes that we support using `images/daemonset.sh` tool
@@ -275,7 +257,6 @@ ovn_pre_conf_udn_addr_enable=${OVN_PRE_CONF_UDN_ADDR_ENABLE:=false}
 ovn_route_advertisements_enable=${OVN_ROUTE_ADVERTISEMENTS_ENABLE:=false}
 #OVN_ADVERTISED_UDN_ISOLATION_MODE - pod network isolation between advertised UDN networks.
 ovn_advertised_udn_isolation_mode=${OVN_ADVERTISED_UDN_ISOLATION_MODE:=strict}
-ovn_acl_logging_rate_limit=${OVN_ACL_LOGGING_RATE_LIMIT:-"20"}
 ovn_netflow_targets=${OVN_NETFLOW_TARGETS:-}
 ovn_sflow_targets=${OVN_SFLOW_TARGETS:-}
 ovn_ipfix_targets=${OVN_IPFIX_TARGETS:-}
@@ -681,7 +662,6 @@ display_env() {
   echo OVN_NB_PORT ${ovn_nb_port}
   echo OVN_SB_PORT ${ovn_sb_port}
   echo K8S_APISERVER ${K8S_APISERVER}
-  echo OVNKUBE_LOGLEVEL ${ovnkube_loglevel}
   echo OVN_DAEMONSET_VERSION ${ovn_daemonset_version}
   echo OVNKUBE_NODE_MODE ${ovnkube_node_mode}
   echo OVN_ENCAP_IP ${ovn_encap_ip}
@@ -1005,16 +985,13 @@ ovn-dbchecker() {
       "
   }
 
+  export OVNKUBE_LOGFILE=/var/log/ovn-kubernetes/ovn-dbchecker.log
+
   echo "=============== ovn-dbchecker ========== OVNKUBE_DB"
   /usr/bin/ovndbchecker \
     --nb-address=${ovn_nbdb} --sb-address=${ovn_sbdb} \
     ${ovn_db_ssl_opts} \
-    --loglevel=${ovnkube_loglevel} \
-    --logfile-maxsize=${ovnkube_logfile_maxsize} \
-    --logfile-maxbackups=${ovnkube_logfile_maxbackups} \
-    --logfile-maxage=${ovnkube_logfile_maxage} \
-    --pidfile ${OVN_RUNDIR}/ovn-dbchecker.pid \
-    --logfile /var/log/ovn-kubernetes/ovn-dbchecker.log &
+    --pidfile ${OVN_RUNDIR}/ovn-dbchecker.pid &
 
   echo "=============== ovn-dbchecker ========== running"
   wait_for_event attempts=3 process_ready ovn-dbchecker
@@ -1155,8 +1132,7 @@ ovnkube-identity() {
     ${ovnkube_enable_interconnect_flag} \
     ${ovnkube_enable_hybrid_overlay_flag} \
     --extra-allowed-user="system:serviceaccount:ovn-kubernetes:ovnkube-cluster-manager" \
-    --extra-allowed-user="system:serviceaccount:ovn-kubernetes:ovnkube-master" \
-    --loglevel="${ovnkube_loglevel}"
+    --extra-allowed-user="system:serviceaccount:ovn-kubernetes:ovnkube-master"
 
     exit 9
 }
@@ -1238,16 +1214,6 @@ ovn-master() {
         --sb-cert-common-name ${ovn_controller_cname}
       "
   }
-
-  libovsdb_client_logfile_flag=
-  if [[ -n ${ovnkube_libovsdb_client_logfile} ]]; then
-      libovsdb_client_logfile_flag="--libovsdblogfile ${ovnkube_libovsdb_client_logfile}"
-  fi
-
-  ovn_acl_logging_rate_limit_flag=
-  if [[ -n ${ovn_acl_logging_rate_limit} ]]; then
-      ovn_acl_logging_rate_limit_flag="--acl-logging-rate-limit ${ovn_acl_logging_rate_limit}"
-  fi
 
   multicast_enabled_flag=
   if [[ ${ovn_multicast_enable} == "true" ]]; then
@@ -1393,6 +1359,8 @@ ovn-master() {
   fi
   echo "ovn_enable_dnsnameresolver_flag=${ovn_enable_dnsnameresolver_flag}"
 
+  export OVNKUBE_LOGFILE=/var/log/ovn-kubernetes/ovnkube-master.log
+
   /usr/bin/ovnkube --init-master ${K8S_NODE} \
     ${anp_enabled_flag} \
     ${disable_forwarding_flag} \
@@ -1405,13 +1373,11 @@ ovn-master() {
     ${empty_lb_events_flag} \
     ${hybrid_overlay_flags} \
     ${init_node_flags} \
-    ${libovsdb_client_logfile_flag} \
     ${multicast_enabled_flag} \
     ${multi_network_enabled_flag} \
     ${network_segmentation_enabled_flag} \
     ${route_advertisements_enabled_flag} \
     ${advertised_udn_isolation_flag} \
-    ${ovn_acl_logging_rate_limit_flag} \
     ${ovn_enable_svc_template_support_flag} \
     ${ovn_observ_enable_flag} \
     ${ovnkube_config_duration_enable_flag} \
@@ -1433,11 +1399,6 @@ ovn-master() {
     --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
     --gateway-mode=${ovn_gateway_mode} ${ovn_gateway_opts} \
     --host-network-namespace ${ovn_host_network_namespace} \
-    --logfile-maxage=${ovnkube_logfile_maxage} \
-    --logfile-maxbackups=${ovnkube_logfile_maxbackups} \
-    --logfile-maxsize=${ovnkube_logfile_maxsize} \
-    --logfile /var/log/ovn-kubernetes/ovnkube-master.log \
-    --loglevel=${ovnkube_loglevel} \
     --metrics-bind-address ${ovnkube_master_metrics_bind_address} \
     --metrics-enable-pprof \
     --nb-address=${ovn_nbdb} --sb-address=${ovn_sbdb} \
@@ -1541,17 +1502,6 @@ ovnkube-controller() {
       "
   }
   echo "ovn_master_ssl_opts=${ovn_master_ssl_opts}"
-
-  libovsdb_client_logfile_flag=
-  if [[ -n ${ovnkube_libovsdb_client_logfile} ]]; then
-      libovsdb_client_logfile_flag="--libovsdblogfile ${ovnkube_libovsdb_client_logfile}"
-  fi
-
-  ovn_acl_logging_rate_limit_flag=
-  if [[ -n ${ovn_acl_logging_rate_limit} ]]; then
-      ovn_acl_logging_rate_limit_flag="--acl-logging-rate-limit ${ovn_acl_logging_rate_limit}"
-  fi
-  echo "ovn_acl_logging_rate_limit_flag=${ovn_acl_logging_rate_limit_flag}"
 
   multicast_enabled_flag=
   if [[ ${ovn_multicast_enable} == "true" ]]; then
@@ -1718,6 +1668,8 @@ ovnkube-controller() {
   fi
   echo "ovn_stateless_netpol_enable_flag: ${ovn_stateless_netpol_enable_flag}"
 
+  export OVNKUBE_LOGFILE=/var/log/ovn-kubernetes/ovnkube-controller.log
+
   echo "=============== ovnkube-controller ========== MASTER ONLY"
   /usr/bin/ovnkube --init-ovnkube-controller ${K8S_NODE} \
     ${anp_enabled_flag} \
@@ -1729,14 +1681,12 @@ ovnkube-controller() {
     ${egressservice_enabled_flag} \
     ${empty_lb_events_flag} \
     ${hybrid_overlay_flags} \
-    ${libovsdb_client_logfile_flag} \
     ${multicast_enabled_flag} \
     ${multi_network_enabled_flag} \
     ${network_segmentation_enabled_flag} \
     ${pre_conf_udn_addr_enable_flag} \
     ${route_advertisements_enabled_flag} \
     ${advertised_udn_isolation_flag} \
-    ${ovn_acl_logging_rate_limit_flag} \
     ${ovn_dbs} \
     ${ovn_enable_svc_template_support_flag} \
     ${ovn_observ_enable_flag} \
@@ -1757,11 +1707,6 @@ ovnkube-controller() {
     --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
     --gateway-mode=${ovn_gateway_mode} \
     --host-network-namespace ${ovn_host_network_namespace} \
-    --logfile-maxage=${ovnkube_logfile_maxage} \
-    --logfile-maxbackups=${ovnkube_logfile_maxbackups} \
-    --logfile-maxsize=${ovnkube_logfile_maxsize} \
-    --logfile /var/log/ovn-kubernetes/ovnkube-controller.log \
-    --loglevel=${ovnkube_loglevel} \
     --metrics-bind-address ${ovnkube_master_metrics_bind_address} \
     --metrics-enable-pprof \
     --pidfile ${OVN_RUNDIR}/ovnkube-controller.pid \
@@ -1890,12 +1835,6 @@ ovnkube-controller-with-node() {
       "
   }
   echo "ssl_opts=${ssl_opts}"
-
-  ovn_acl_logging_rate_limit_flag=
-  if [[ -n ${ovn_acl_logging_rate_limit} ]]; then
-      ovn_acl_logging_rate_limit_flag="--acl-logging-rate-limit ${ovn_acl_logging_rate_limit}"
-  fi
-  echo "ovn_acl_logging_rate_limit_flag=${ovn_acl_logging_rate_limit_flag}"
 
   multicast_enabled_flag=
   if [[ ${ovn_multicast_enable} == "true" ]]; then
@@ -2113,11 +2052,6 @@ ovnkube-controller-with-node() {
   fi
   echo "ovnkube_enable_multi_external_gateway_flag=${ovnkube_enable_multi_external_gateway_flag}"
 
-  libovsdb_client_logfile_flag=
-  if [[ -n ${ovnkube_libovsdb_client_logfile} ]]; then
-      libovsdb_client_logfile_flag="--libovsdblogfile ${ovnkube_libovsdb_client_logfile}"
-  fi
-
   anp_enabled_flag=
   if [[ ${ovn_admin_network_policy_enable} == "true" ]]; then
       anp_enabled_flag="--enable-admin-network-policy"
@@ -2192,6 +2126,8 @@ ovnkube-controller-with-node() {
   fi
   echo "ovn_disable_requestedchassis_flag=${ovn_disable_requestedchassis_flag}"
 
+  export OVNKUBE_LOGFILE=/var/log/ovn-kubernetes/ovnkube-controller-with-node.log
+
   echo "=============== ovnkube-controller-with-node --init-ovnkube-controller-with-node=========="
   /usr/bin/ovnkube --init-ovnkube-controller ${K8S_NODE} --init-node ${K8S_NODE} \
     ${anp_enabled_flag} \
@@ -2210,7 +2146,6 @@ ovnkube-controller-with-node() {
     ${hybrid_overlay_flags} \
     ${ipfix_config} \
     ${ipfix_targets} \
-    ${libovsdb_client_logfile_flag} \
     ${lflow_cache_limit} \
     ${lflow_cache_limit_kb} \
     ${monitor_all} \
@@ -2222,7 +2157,6 @@ ovnkube-controller-with-node() {
     ${advertised_udn_isolation_flag} \
     ${netflow_targets} \
     ${ofctrl_wait_before_clear} \
-    ${ovn_acl_logging_rate_limit_flag} \
     ${ovn_dbs} \
     ${ovn_enable_svc_template_support_flag} \
     ${ovn_observ_enable_flag} \
@@ -2253,11 +2187,6 @@ ovnkube-controller-with-node() {
     --gateway-router-subnet=${ovn_gateway_router_subnet} \
     --host-network-namespace ${ovn_host_network_namespace} \
     --inactivity-probe=${ovn_remote_probe_interval} \
-    --logfile-maxage=${ovnkube_logfile_maxage} \
-    --logfile-maxbackups=${ovnkube_logfile_maxbackups} \
-    --logfile-maxsize=${ovnkube_logfile_maxsize} \
-    --logfile /var/log/ovn-kubernetes/ovnkube-controller-with-node.log \
-    --loglevel=${ovnkube_loglevel} \
     --metrics-bind-address ${metrics_bind_address} \
     --metrics-enable-pprof \
     --mtu=${mtu} \
@@ -2451,6 +2380,8 @@ ovn-cluster-manager() {
   fi
   echo "ovn_enable_dnsnameresolver_flag=${ovn_enable_dnsnameresolver_flag}"
 
+  export OVNKUBE_LOGFILE=/var/log/ovn-kubernetes/ovnkube-cluster-manager.log
+
   echo "=============== ovn-cluster-manager ========== MASTER ONLY"
   /usr/bin/ovnkube --init-cluster-manager ${K8S_NODE} \
     ${anp_enabled_flag} \
@@ -2483,11 +2414,6 @@ ovn-cluster-manager() {
     --gateway-mode=${ovn_gateway_mode} \
     --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
     --host-network-namespace ${ovn_host_network_namespace} \
-    --logfile-maxage=${ovnkube_logfile_maxage} \
-    --logfile-maxbackups=${ovnkube_logfile_maxbackups} \
-    --logfile-maxsize=${ovnkube_logfile_maxsize} \
-    --logfile /var/log/ovn-kubernetes/ovnkube-cluster-manager.log \
-    --loglevel=${ovnkube_loglevel} \
     --metrics-bind-address ${ovnkube_cluster_manager_metrics_bind_address} \
     --metrics-enable-pprof \
     --pidfile ${OVN_RUNDIR}/ovnkube-cluster-manager.pid &
@@ -2867,6 +2793,8 @@ ovn-node() {
     ovn_v6_masquerade_subnet_opt="--gateway-v6-masquerade-subnet=${ovn_v6_masquerade_subnet}"
   fi
 
+  export OVNKUBE_LOGFILE=/var/log/ovn-kubernetes/ovnkube-node.log
+
   echo "=============== ovn-node   --init-node"
   /usr/bin/ovnkube --init-node ${K8S_NODE} \
         ${anp_enabled_flag} \
@@ -2916,11 +2844,6 @@ ovn-node() {
         --gateway-router-subnet=${ovn_gateway_router_subnet} \
         --host-network-namespace ${ovn_host_network_namespace} \
         --inactivity-probe=${ovn_remote_probe_interval} \
-        --logfile-maxage=${ovnkube_logfile_maxage} \
-        --logfile-maxbackups=${ovnkube_logfile_maxbackups} \
-        --logfile-maxsize=${ovnkube_logfile_maxsize} \
-        --logfile /var/log/ovn-kubernetes/ovnkube.log \
-        --loglevel=${ovnkube_loglevel} \
         --metrics-bind-address ${ovnkube_node_metrics_bind_address} \
         --metrics-enable-pprof \
         --mtu=${mtu} \
@@ -2957,11 +2880,11 @@ cleanup-ovn-node() {
     ((retries += 1))
   done
 
+  export OVNKUBE_LOGFILE=/var/log/ovn-kubernetes/ovnkube.log
+
   echo "=============== time: $(date +%d-%m-%H:%M:%S:%N) cleanup-ovn-node --cleanup-node"
   /usr/bin/ovnkube --cleanup-node ${K8S_NODE} --gateway-mode=${ovn_gateway_mode} ${ovn_gateway_opts} \
-    --k8s-token=${k8s_token} --k8s-apiserver=${K8S_APISERVER} --k8s-cacert=${K8S_CACERT} \
-    --loglevel=${ovnkube_loglevel} \
-    --logfile /var/log/ovn-kubernetes/ovnkube.log
+    --k8s-token=${k8s_token} --k8s-apiserver=${K8S_APISERVER} --k8s-cacert=${K8S_CACERT}
 
 }
 
@@ -2974,7 +2897,6 @@ ovs-metrics() {
 
   ovs_exporter_bind_address="${metrics_endpoint_ip}:${metrics_exporter_port}"
   /usr/bin/ovn-kube-util \
-    --loglevel=${ovnkube_loglevel} \
     ovs-exporter \
     --metrics-bind-address ${ovs_exporter_bind_address}
 
