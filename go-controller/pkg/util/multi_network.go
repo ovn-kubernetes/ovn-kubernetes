@@ -84,6 +84,8 @@ type NetInfo interface {
 	// GetEgressIPAdvertisedNodes return the nodes where egress IP are
 	// advertised.
 	GetEgressIPAdvertisedNodes() []string
+	// GetNetworkTransport returns the transport technology used by this network.
+	GetNetworkTransport() string
 
 	// derived information.
 	GetNADNamespaces() []string
@@ -402,6 +404,47 @@ func (nInfo *mutableNetInfo) GetEgressIPAdvertisedNodes() []string {
 	return maps.Keys(nInfo.eipAdvertisements)
 }
 
+func (nInfo *mutableNetInfo) GetNetworkTransport() string {
+	return ""
+}
+
+// GetNADs returns all the NADs associated with this network
+func (nInfo *mutableNetInfo) GetNADs() []string {
+	nInfo.RLock()
+	defer nInfo.RUnlock()
+	return nInfo.getNads().UnsortedList()
+}
+
+// EqualNADs checks if the NADs associated with nInfo are the same as the ones
+// passed in the nads slice.
+func (nInfo *mutableNetInfo) EqualNADs(nads ...string) bool {
+	nInfo.RLock()
+	defer nInfo.RUnlock()
+	if nInfo.getNads().Len() != len(nads) {
+		return false
+	}
+	return nInfo.getNads().HasAll(nads...)
+}
+
+// HasNADKey returns true if the given NADKey (perhaps with index) exists, used
+// to check if the network needs to be plumbed over
+func (nInfo *mutableNetInfo) HasNADKey(nadKey string) bool {
+	nadName, _, err := GetNadFromIndexedNADKey(nadKey)
+	if err != nil {
+		return false
+	}
+
+	return nInfo.HasNAD(nadName)
+}
+
+// HasNAD returns true if the given NAD exists, used
+// to check if the network needs to be plumbed over
+func (nInfo *mutableNetInfo) HasNAD(nadName string) bool {
+	nInfo.RLock()
+	defer nInfo.RUnlock()
+	return nInfo.getNads().Has(nadName)
+}
+
 // SetNADs replaces the NADs associated with the network
 func (nInfo *mutableNetInfo) SetNADs(nadNames ...string) {
 	nInfo.Lock()
@@ -708,6 +751,10 @@ func (nInfo *DefaultNetInfo) GetNodeManagementIP(hostSubnet *net.IPNet) *net.IPN
 	return GetNodeManagementIfAddr(hostSubnet)
 }
 
+func (nInfo *DefaultNetInfo) GetNetworkTransport() string {
+	return config.Default.Transport
+}
+
 // userDefinedNetInfo holds the network name information for a User Defined Network if non-nil
 type userDefinedNetInfo struct {
 	mutableNetInfo
@@ -720,6 +767,7 @@ type userDefinedNetInfo struct {
 	mtu                int
 	vlan               uint
 	allowPersistentIPs bool
+	transport          string
 
 	ipv4mode, ipv6mode    bool
 	subnets               []config.CIDRNetworkEntry
@@ -733,8 +781,7 @@ type userDefinedNetInfo struct {
 	defaultGatewayIPs   []net.IP
 	managementIPs       []net.IP
 
-	transport string
-	evpn      *ovncnitypes.EVPNConfig
+	evpn *ovncnitypes.EVPNConfig
 }
 
 func (nInfo *userDefinedNetInfo) GetNetInfo() NetInfo {
@@ -1009,6 +1056,10 @@ func (nInfo *userDefinedNetInfo) TransitSubnets() []*net.IPNet {
 	return nInfo.transitSubnets
 }
 
+func (nInfo *userDefinedNetInfo) GetNetworkTransport() string {
+	return nInfo.transport
+}
+
 func (nInfo *userDefinedNetInfo) canReconcile(other NetInfo) bool {
 	if (nInfo == nil) != (other == nil) {
 		return false
@@ -1061,6 +1112,9 @@ func (nInfo *userDefinedNetInfo) canReconcile(other NetInfo) bool {
 		return false
 	}
 
+	if nInfo.transport != other.GetNetworkTransport() {
+		return false
+	}
 	lessCIDRNetworkEntry := func(a, b config.CIDRNetworkEntry) bool { return a.String() < b.String() }
 	if !cmp.Equal(nInfo.subnets, other.Subnets(), cmpopts.SortSlices(lessCIDRNetworkEntry)) {
 		return false
