@@ -64,6 +64,25 @@ data:
   mtu:           "{{ mtu_value }}"
   host_network_namespace: "{{ host_network_namespace }}"
 
+---
+# ovnkube-config ConfigMap
+#
+# Configuration for ovnkube binaries
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: ovnkube-config
+  namespace: ovn-kubernetes
+data:
+  ovnkube.conf: |
+{%- if ovn_no_overlay_enable == "true" %}
+    [default]
+    transport = no-overlay
+
+    [no-overlay]
+    outbound-snat = disabled
+    routing = unmanaged
+{%- endif %}
 
 ---
 # ovn-host-network-namespace.yaml
