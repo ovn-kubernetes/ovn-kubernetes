@@ -2135,22 +2135,6 @@ func TestEVPNConfig(t *testing.T) {
 			expectedIPVRFVID:          13,
 		},
 		{
-			desc: "layer2 network with nooverlay transport",
-			inputNetConf: &ovncnitypes.NetConf{
-				NetConf:   cnitypes.NetConf{Name: "nooverlay-network"},
-				Topology:  ovntypes.Layer2Topology,
-				Transport: "nooverlay",
-			},
-			expectedTransport:         "nooverlay",
-			expectedVTEPName:          "",
-			expectedMACVRFVNI:         0,
-			expectedMACVRFRouteTarget: "",
-			expectedMACVRFVID:         0,
-			expectedIPVRFVNI:          0,
-			expectedIPVRFRouteTarget:  "",
-			expectedIPVRFVID:          0,
-		},
-		{
 			desc: "EVPN config with VNI only (no route target)",
 			inputNetConf: &ovncnitypes.NetConf{
 				NetConf:   cnitypes.NetConf{Name: "evpn-minimal"},
@@ -2208,7 +2192,7 @@ func TestEVPNNetworkCompatibility(t *testing.T) {
 		{
 			desc:                   "different transport should not be compatible",
 			aNetwork:               &userDefinedNetInfo{transport: "evpn"},
-			anotherNetwork:         &userDefinedNetInfo{transport: "nooverlay"},
+			anotherNetwork:         &userDefinedNetInfo{transport: "no-overlay"},
 			expectedResult:         false,
 			expectationDescription: "networks with different transport should not be compatible",
 		},
