@@ -56,7 +56,7 @@ of the same package as where the interface is defined.
     
 ### How to regenerate all existing mocks when interfaces (locally defined or in vendor libraries) are updated?
 
-    - Execute the ```go-controller/hack/regenerate_vendor_mocks.sh``` in situations where all existing mocks have to be regenerated.
+    - Execute the ```make mocksgen``` in situations where all existing mocks have to be regenerated.
     NOTE: It would take a while(approx 20+ minutes) for all mocks to be regenerated.
 
 ### Reference links that explain how to use mocks with testify
