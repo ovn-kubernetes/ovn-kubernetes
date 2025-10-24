@@ -119,14 +119,26 @@ func (c *Controller) deleteNAD(obj client.Object, namespace string) error {
 
 	pods, err := c.podInformer.Lister().Pods(nadCopy.Namespace).List(labels.Everything())
 	if err != nil {
-		return fmt.Errorf("failed to list pods at target namesapce %q: %w", nadCopy.Namespace, err)
+		return fmt.Errorf("failed to list pods at target namespace %q: %w", nadCopy.Namespace, err)
 	}
 	// This is best-effort check no pod using the subject NAD,
-	// noting prevent a from being pod creation right after this check.
+	// nothing prevents pod creation right after this check.
 	if err := NetAttachDefNotInUse(nadCopy, pods); err != nil {
 		return &networkInUseError{err: err}
 	}
 
+	// Check if an egress firewall still exists in this namespace
+	efs, err := c.efInformer.Lister().EgressFirewalls(nadCopy.Namespace).List(labels.Everything())
+	if err != nil {
+		return fmt.Errorf("failed to list egressFirewalls at target namespace %q: %w", nadCopy.Namespace, err)
+	}
+	if len(efs) > 0 {
+		efNames := make([]string, 0, len(efs))
+		for _, ef := range efs {
+			efNames = append(efNames, ef.Name)
+		}
+		return &networkInUseError{err: fmt.Errorf("network still in use and has egress firewalls configured: %v", strings.Join(efNames, ","))}
+	}
 	controllerutil.RemoveFinalizer(nadCopy, template.FinalizerUserDefinedNetwork)
 	updatedNAD, err := c.nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nadCopy.Namespace).Update(context.Background(), nadCopy, metav1.UpdateOptions{})
 	if err != nil {

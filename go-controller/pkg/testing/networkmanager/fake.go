@@ -54,6 +54,10 @@ func (fnm *FakeNetworkManager) Start() error { return nil }
 
 func (fnm *FakeNetworkManager) Stop() {}
 
+func (fnm *FakeNetworkManager) Interface() networkmanager.Interface {
+	return fnm
+}
+
 func (fnm *FakeNetworkManager) GetActiveNetworkForNamespace(namespace string) (util.NetInfo, error) {
 	network := fnm.GetActiveNetworkForNamespaceFast(namespace)
 	if network == nil {
