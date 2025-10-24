@@ -100,7 +100,7 @@ func ParseNetConf(bytes []byte) (*ovncnitypes.NetConf, error) {
 }
 
 func parseNetConfSingle(bytes []byte) (*ovncnitypes.NetConf, error) {
-	netconf := &ovncnitypes.NetConf{MTU: Default.MTU}
+	netconf := &ovncnitypes.NetConf{MTU: Default.MTU, Transport: Default.Transport}
 	err := json.Unmarshal(bytes, &netconf)
 	if err != nil {
 		return nil, err
@@ -120,7 +120,7 @@ func parseNetConfSingle(bytes []byte) (*ovncnitypes.NetConf, error) {
 }
 
 func parseNetConfList(confList *libcni.NetworkConfigList) (*ovncnitypes.NetConf, error) {
-	netconf := &ovncnitypes.NetConf{MTU: Default.MTU}
+	netconf := &ovncnitypes.NetConf{MTU: Default.MTU, Transport: Default.Transport}
 	if err := json.Unmarshal(confList.Plugins[0].Bytes, netconf); err != nil {
 		return nil, err
 	}
