@@ -329,11 +329,31 @@ func (npw *nodePortWatcher) updateServiceFlowCache(service *corev1.Service, netI
 					npw.ofm.updateFlowCacheEntry(key, nodeportFlows)
 				} else if config.Gateway.Mode == config.GatewayModeShared {
 					// case2 (see function description for details)
+					var ipProtocol, gwIP string
+					if strings.Contains(flowProtocol, "6") {
+						ipProtocol = "ip6"
+						gwIP = npw.gatewayIPv6
+					} else {
+						ipProtocol = "ip"
+						gwIP = npw.gatewayIPv4
+					}
+
 					npw.ofm.updateFlowCacheEntry(key, []string{
 						// table=0, matches on service traffic towards nodePort and sends it to OVN pipeline
 						fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, tp_dst=%d, "+
 							"actions=%s",
 							cookie, npw.ofportPhys, flowProtocol, svcPort.NodePort, actions),
+						// table=0, matches on service traffic towards nodePort from OVN and drops it, to prevent the ingress traffic goes to the host.
+						// This is to prevent ingress traffic to nodePort from being forwarded to the host accidentally during GR OVN LB resyncs.
+						fmt.Sprintf("cookie=%s, priority=109, in_port=%s, dl_src=%s, %s, tp_dst=%d, "+
+							"actions=drop",
+							cookie, netConfig.OfPortPatch, npw.ofm.getDefaultBridgeMAC(), flowProtocol, svcPort.NodePort),
+						// table=0, matches on local host/pods egress traffic to service nodePort and sends it out to physical network.
+						// This is needed for the case where a local pod/host is trying to access the service via nodePort. It gets higher
+						// priority than the previous rule to allow local traffic to nodePort to be sent out.
+						fmt.Sprintf("cookie=%s, priority=110, in_port=%s, dl_src=%s, %s, tp_dst=%d, %s, nw_src=%s, "+
+							"actions=ct(commit, zone=%d, exec(set_field:%s->ct_mark)), output:NORMAL",
+							cookie, netConfig.OfPortPatch, npw.ofm.getDefaultBridgeMAC(), flowProtocol, svcPort.NodePort, ipProtocol, gwIP, config.Default.ConntrackZone, netConfig.MasqCTMark),
 						// table=0, matches on return traffic from service nodePort and sends it out to primary node interface (br-ex)
 						fmt.Sprintf("cookie=%s, priority=110, in_port=%s, dl_src=%s, %s, tp_src=%d, "+
 							"actions=output:%s",
