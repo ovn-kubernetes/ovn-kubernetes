@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-VERSION=v1.64.8
+VERSION=v2.5.0
 extra_flags=""
 if [ "$#" -ne 1 ]; then
   if [ "$#" -eq 2 ] && [ "$2" == "fix" ]; then

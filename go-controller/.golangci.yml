@@ -1,16 +1,9 @@
-issues:
-  exclude-dirs:
-    - vendor
-    - pkg/crd
-
+version: "2"
 linters:
-  disable-all: true
+  default: none
   enable:
     - errcheck
-    - gci
     - ginkgolinter
-    - gofmt
-    - gosimple
     - govet
     - importas
     - ineffassign
@@ -19,55 +12,82 @@ linters:
     - staticcheck
     - testifylint
     - thelper
-    - typecheck
     - unused
-
-linters-settings:
-  gci:
-    # default ordering except:
-    # - prefix sections ordered as stated
-    # - dot section at the very end
-    custom-order: true
-    sections:
-      - standard
-      - default
-      - prefix(k8s.io,sigs.k8s.io)
-      - prefix(github.com/ovn-org)
-      - prefix(github.com/ovn-kubernetes)
-      - localmodule
-      - dot
-
-  govet:
-    enable-all: true
-    disable:
-      - fieldalignment
-      - shadow
-
-  importas:
-    no-unaliased: true
-    alias:
-      # Kubernetes
-      - pkg: k8s.io/api/core/v1
-        alias: corev1
-      - pkg: k8s.io/apimachinery/pkg/apis/meta/v1
-        alias: metav1
-      - pkg: k8s.io/apimachinery/pkg/api/errors
-        alias: apierrors
-      - pkg: k8s.io/apimachinery/pkg/util/errors
-        alias: kerrors
-      - pkg: sigs.k8s.io/controller-runtime
-        alias: ctrl
-      # Other frequently used deps
-      - pkg: github.com/ovn-kubernetes/libovsdb/ovsdb
-        alias: ""
-      - pkg: github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/util
-        alias: nodeutil
-      - pkg: github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/types
-        alias: nodetypes
-
-  revive:
-    rules:
-      # TODO: enable recommended (default) revive rules
-      - name: duplicated-imports
-      - name: error-naming
-      - name: unused-parameter
+  settings:
+    govet:
+      disable:
+        - fieldalignment
+        - shadow
+      enable-all: true
+    importas:
+      alias:
+        - pkg: k8s.io/api/core/v1
+          alias: corev1
+        - pkg: k8s.io/apimachinery/pkg/apis/meta/v1
+          alias: metav1
+        - pkg: k8s.io/apimachinery/pkg/api/errors
+          alias: apierrors
+        - pkg: k8s.io/apimachinery/pkg/util/errors
+          alias: kerrors
+        - pkg: sigs.k8s.io/controller-runtime
+          alias: ctrl
+        - pkg: github.com/ovn-kubernetes/libovsdb/ovsdb
+          alias: ""
+        - pkg: github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/util
+          alias: nodeutil
+        - pkg: github.com/ovn-org/ovn-kubernetes/go-controller/pkg/node/types
+          alias: nodetypes
+      no-unaliased: true
+    revive:
+      rules:
+        - name: duplicated-imports
+        - name: error-naming
+        - name: unused-parameter
+    staticcheck:
+        checks:
+          # Default
+          - all
+          - -ST1000
+          - -ST1003
+          - -ST1016
+          - -ST1020
+          - -ST1021
+          - -ST1022
+          # Disable quickfix checks
+          - -QF*
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - vendor
+      - pkg/crd
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - gci
+    - gofmt
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(k8s.io,sigs.k8s.io)
+        - prefix(github.com/ovn-org)
+        - prefix(github.com/ovn-kubernetes)
+        - localmodule
+        - dot
+      custom-order: true
+  exclusions:
+    generated: lax
+    paths:
+      - vendor
+      - pkg/crd
+      - third_party$
+      - builtin$
+      - examples$

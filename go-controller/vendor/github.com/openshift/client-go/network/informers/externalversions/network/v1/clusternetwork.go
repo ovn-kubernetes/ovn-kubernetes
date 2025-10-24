@@ -3,13 +3,13 @@
 package v1
 
 import (
-	"context"
+	context "context"
 	time "time"
 
-	networkv1 "github.com/openshift/api/network/v1"
+	apinetworkv1 "github.com/openshift/api/network/v1"
 	versioned "github.com/openshift/client-go/network/clientset/versioned"
 	internalinterfaces "github.com/openshift/client-go/network/informers/externalversions/internalinterfaces"
-	v1 "github.com/openshift/client-go/network/listers/network/v1"
+	networkv1 "github.com/openshift/client-go/network/listers/network/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	watch "k8s.io/apimachinery/pkg/watch"
@@ -20,7 +20,7 @@ import (
 // ClusterNetworks.
 type ClusterNetworkInformer interface {
 	Informer() cache.SharedIndexInformer
-	Lister() v1.ClusterNetworkLister
+	Lister() networkv1.ClusterNetworkLister
 }
 
 type clusterNetworkInformer struct {
@@ -45,16 +45,28 @@ func NewFilteredClusterNetworkInformer(client versioned.Interface, resyncPeriod 
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.NetworkV1().ClusterNetworks().List(context.TODO(), options)
+				return client.NetworkV1().ClusterNetworks().List(context.Background(), options)
 			},
 			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.NetworkV1().ClusterNetworks().Watch(context.TODO(), options)
+				return client.NetworkV1().ClusterNetworks().Watch(context.Background(), options)
+			},
+			ListWithContextFunc: func(ctx context.Context, options metav1.ListOptions) (runtime.Object, error) {
+				if tweakListOptions != nil {
+					tweakListOptions(&options)
+				}
+				return client.NetworkV1().ClusterNetworks().List(ctx, options)
+			},
+			WatchFuncWithContext: func(ctx context.Context, options metav1.ListOptions) (watch.Interface, error) {
+				if tweakListOptions != nil {
+					tweakListOptions(&options)
+				}
+				return client.NetworkV1().ClusterNetworks().Watch(ctx, options)
 			},
 		},
-		&networkv1.ClusterNetwork{},
+		&apinetworkv1.ClusterNetwork{},
 		resyncPeriod,
 		indexers,
 	)
@@ -65,9 +77,9 @@ func (f *clusterNetworkInformer) defaultInformer(client versioned.Interface, res
 }
 
 func (f *clusterNetworkInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&networkv1.ClusterNetwork{}, f.defaultInformer)
+	return f.factory.InformerFor(&apinetworkv1.ClusterNetwork{}, f.defaultInformer)
 }
 
-func (f *clusterNetworkInformer) Lister() v1.ClusterNetworkLister {
-	return v1.NewClusterNetworkLister(f.Informer().GetIndexer())
+func (f *clusterNetworkInformer) Lister() networkv1.ClusterNetworkLister {
+	return networkv1.NewClusterNetworkLister(f.Informer().GetIndexer())
 }
