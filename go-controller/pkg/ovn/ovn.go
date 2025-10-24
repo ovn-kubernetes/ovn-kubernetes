@@ -363,13 +363,6 @@ func (oc *DefaultNetworkController) removeRemoteZonePod(pod *corev1.Pod) error {
 	return nil
 }
 
-// WatchEgressFirewall starts the watching of egressfirewall resource and calls
-// back the appropriate handler logic
-func (oc *DefaultNetworkController) WatchEgressFirewall() error {
-	_, err := oc.retryEgressFirewalls.WatchResource()
-	return err
-}
-
 // WatchEgressNodes starts the watching of egress assignable nodes and calls
 // back the appropriate handler logic.
 func (oc *DefaultNetworkController) WatchEgressNodes() error {

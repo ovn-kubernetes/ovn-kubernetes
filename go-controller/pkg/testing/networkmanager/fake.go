@@ -50,6 +50,10 @@ type FakeNetworkManager struct {
 	PrimaryNetworks map[string]util.NetInfo
 }
 
+func (fnm *FakeNetworkManager) Interface() networkmanager.Interface {
+	return fnm
+}
+
 func (fnm *FakeNetworkManager) Start() error { return nil }
 
 func (fnm *FakeNetworkManager) Stop() {}
