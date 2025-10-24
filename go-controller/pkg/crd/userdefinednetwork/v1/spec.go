@@ -17,6 +17,11 @@ func (s *UserDefinedNetworkSpec) GetLocalnet() *LocalnetConfig {
 	return nil
 }
 
+func (s *UserDefinedNetworkSpec) GetTransport() TransportOption {
+	// transport is not configurable for UDN, only for CUDN
+	return ""
+}
+
 func (s *NetworkSpec) GetTopology() NetworkTopology {
 	return s.Topology
 }
@@ -31,4 +36,8 @@ func (s *NetworkSpec) GetLayer2() *Layer2Config {
 
 func (s *NetworkSpec) GetLocalnet() *LocalnetConfig {
 	return s.Localnet
+}
+
+func (s *NetworkSpec) GetTransport() TransportOption {
+	return s.Transport
 }
