@@ -97,6 +97,7 @@ fi
 # OVN_ENABLE_SVC_TEMPLATE_SUPPORT - enable svc template support
 # OVN_ENABLE_DNSNAMERESOLVER - enable dns name resolver support
 # OVN_OBSERV_ENABLE - enable observability for ovnkube
+# OVN_ENABLE_IPSEC - enable ipsec for ovn networked pod traffic
 
 # The argument to the command is the operation to be performed
 # ovn-master ovn-controller ovn-node display display_env ovn_debug
@@ -327,6 +328,8 @@ ovn_nohostsubnet_label=${OVN_NOHOSTSUBNET_LABEL:-""}
 # OVN_DISABLE_REQUESTEDCHASSIS - disable requested-chassis option during pod creation
 # should be set to true when dpu nodes are in the cluster
 ovn_disable_requestedchassis=${OVN_DISABLE_REQUESTEDCHASSIS:-false}
+# OVN_IPSEC_ENABLE - enable ipsec for ovnk networked pod traffic
+ovn_ipsec_enable=${OVN_ENABLE_IPSEC:-false}
 
 # external_ids:host-k8s-nodename is set on an Open_vSwitch enabled system if the ovnkube stack
 # should function on behalf of a different host than external_ids:hostname. This includes
@@ -907,7 +910,7 @@ nb-ovsdb() {
     ovn-nbctl set-ssl ${ovn_nb_pk} ${ovn_nb_cert} ${ovn_ca_cert}
     echo "=============== nb-ovsdb ========== reconfigured for SSL"
   }
- [[ "true" == "${ENABLE_IPSEC}" ]] && {
+ [[ "true" == "${OVN_ENABLE_IPSEC}" ]] && {
     ovn-nbctl set nb_global . ipsec=true
     echo "=============== nb-ovsdb ========== reconfigured for ipsec"
   }
@@ -1049,6 +1052,11 @@ local-nb-ovsdb() {
 
   ovn-nbctl set NB_Global . name=${K8S_NODE}
   ovn-nbctl set NB_Global . options:name=${K8S_NODE}
+
+ [[ "true" == "${OVN_ENABLE_IPSEC}" ]] && {
+    ovn-nbctl set nb_global . ipsec=true
+    echo "=============== nb-ovsdb ========== reconfigured for ipsec"
+  }
 
   tail --follow=name ${OVN_LOGDIR}/ovsdb-server-nb.log &
   ovn_tail_pid=$!
@@ -1625,6 +1633,12 @@ ovnkube-controller() {
   fi
   echo "egressservice_enabled_flag=${egressservice_enabled_flag}"
 
+  ipsec_enabled_flag=
+  if [[ ${ovn_ipsec_enable} == "true" ]]; then
+	  ipsec_enabled_flag="--enable-ipsec"
+  fi
+  echo "ipsec_enabled_flag=${ipsec_enabled_flag}"
+
   ovnkube_master_metrics_bind_address="${metrics_endpoint_ip}:${metrics_master_port}"
   echo "ovnkube_master_metrics_bind_address=${ovnkube_master_metrics_bind_address}"
 
@@ -1754,6 +1768,7 @@ ovnkube-controller() {
     ${ovn_v6_masquerade_subnet_opt} \
     ${network_qos_enabled_flag} \
     ${ovn_enable_dnsnameresolver_flag} \
+    ${ipsec_enabled_flag} \
     --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
     --gateway-mode=${ovn_gateway_mode} \
     --host-network-namespace ${ovn_host_network_namespace} \
@@ -1967,6 +1982,12 @@ ovnkube-controller-with-node() {
   if [[ ${ovn_disable_ovn_iface_id_ver} == "true" ]]; then
       disable_ovn_iface_id_ver_flag="--disable-ovn-iface-id-ver"
   fi
+
+  ipsec_enabled_flag=
+  if [[ ${ovn_ipsec_enable} == "true" ]]; then
+	  ipsec_enabled_flag="--enable-ipsec"
+  fi
+  echo "ipsec_enabled_flag=${ipsec_enabled_flag}"
 
   netflow_targets=
   if [[ -n ${ovn_netflow_targets} ]]; then
@@ -2247,6 +2268,7 @@ ovnkube-controller-with-node() {
     ${network_qos_enabled_flag} \
     ${ovn_enable_dnsnameresolver_flag} \
     ${ovn_disable_requestedchassis_flag} \
+    ${ipsec_enabled_flag} \
     --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
     --export-ovs-metrics \
     --gateway-mode=${ovn_gateway_mode} ${ovn_gateway_opts} \
@@ -2867,6 +2889,11 @@ ovn-node() {
     ovn_v6_masquerade_subnet_opt="--gateway-v6-masquerade-subnet=${ovn_v6_masquerade_subnet}"
   fi
 
+  ipsec_enabled_flag=
+  if [[ ${ovn_ipsec_enable} == "true" ]]; then
+	  ipsec_enabled_flag="--enable-ipsec"
+  fi
+
   echo "=============== ovn-node   --init-node"
   /usr/bin/ovnkube --init-node ${K8S_NODE} \
         ${anp_enabled_flag} \
@@ -2910,6 +2937,7 @@ ovn-node() {
         ${routable_mtu_flag} \
         ${sflow_targets} \
         ${network_qos_enabled_flag} \
+        ${ipsec_enabled_flag} \
         --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
         --export-ovs-metrics \
         --gateway-mode=${ovn_gateway_mode} ${ovn_gateway_opts} \
