@@ -85,6 +85,8 @@ type NetInfo interface {
 	// GetEgressIPAdvertisedNodes return the nodes where egress IP are
 	// advertised.
 	GetEgressIPAdvertisedNodes() []string
+	// GetNetworkTransport returns the transport technology used by this network.
+	GetNetworkTransport() string
 
 	// derived information.
 	GetNADNamespaces() []string
@@ -401,6 +403,10 @@ func (nInfo *mutableNetInfo) GetEgressIPAdvertisedNodes() []string {
 	nInfo.RLock()
 	defer nInfo.RUnlock()
 	return maps.Keys(nInfo.eipAdvertisements)
+}
+
+func (nInfo *mutableNetInfo) GetNetworkTransport() string {
+	return ""
 }
 
 // GetNADs returns all the NADs associated with this network
@@ -734,6 +740,10 @@ func (nInfo *DefaultNetInfo) GetNodeManagementIP(hostSubnet *net.IPNet) *net.IPN
 	return GetNodeManagementIfAddr(hostSubnet)
 }
 
+func (nInfo *DefaultNetInfo) GetNetworkTransport() string {
+	return config.Default.Transport
+}
+
 // userDefinedNetInfo holds the network name information for a User Defined Network if non-nil
 type userDefinedNetInfo struct {
 	mutableNetInfo
@@ -746,6 +756,7 @@ type userDefinedNetInfo struct {
 	mtu                int
 	vlan               uint
 	allowPersistentIPs bool
+	transport          string
 
 	ipv4mode, ipv6mode    bool
 	subnets               []config.CIDRNetworkEntry
@@ -1014,6 +1025,10 @@ func (nInfo *userDefinedNetInfo) JoinSubnets() []*net.IPNet {
 // For now it is only set for Primary Layer2 UDNs, otherwise is empty
 func (nInfo *userDefinedNetInfo) TransitSubnets() []*net.IPNet {
 	return nInfo.transitSubnets
+}
+
+func (nInfo *userDefinedNetInfo) GetNetworkTransport() string {
+	return nInfo.transport
 }
 
 func (nInfo *userDefinedNetInfo) canReconcile(other NetInfo) bool {
