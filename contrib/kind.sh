@@ -57,7 +57,7 @@ usage() {
     echo "                 [-rud | --routed-udn-isolation-disable]"
     echo "                 [-adv | --advertise-default-network]"
     echo "                 [-nqe | --network-qos-enable]"
-    echo "                 [-noe | --enable-no-overlay [snat-enabled]]"
+    echo "                 [-noe | --enable-no-overlay [snat-enabled|managed]]"
     echo "                 [--isolated]"
     echo "                 [--enable-coredumps]"
     echo "                 [-dns | --enable-dnsnameresolver]"
