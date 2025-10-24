@@ -42,6 +42,7 @@ usage() {
     echo "                 [-dug | --dynamic-udn-removal-grace-period <seconds>]"
     echo "                 [-adv | --advertise-default-network]"
     echo "                 [-nqe | --network-qos-enable]"
+    echo "                 [-noe | --no-overlay-enable]"
     echo "                 [--isolated]"
     echo "                 [--enable-coredumps]"
     echo "                 [-dns | --enable-dnsnameresolver]"
@@ -124,6 +125,7 @@ echo "-dug | --dynamic-udn-removal-grace-period <seconds>     Configure the grac
 echo "-adv | --advertise-default-network            Applies a RouteAdvertisements configuration to advertise the default network on all nodes"
 echo "-rud | --routed-udn-isolation-disable         Disable isolation across BGP-advertised UDNs (sets advertised-udn-isolation-mode=loose). DEFAULT: strict."
 echo "-mps | --multi-pod-subnet                     Use multiple subnets for the default cluster network"
+echo "-noe | --no-overlay-enable                    Enable no overlay"
 echo ""
 }
 
@@ -354,6 +356,8 @@ parse_args() {
             -ic | --enable-interconnect )         OVN_ENABLE_INTERCONNECT=true
                                                   IC_ARG_PROVIDED=true
                                                   ;;
+            -noe | --no-overlay-enable)         ENABLE_NO_OVERLAY=true
+                                                  ;;
             --disable-ovnkube-identity)         OVN_ENABLE_OVNKUBE_IDENTITY=false
                                                 ;;
             -mtu  )                             shift
@@ -460,6 +464,7 @@ print_params() {
      echo "ENABLE_PRE_CONF_UDN_ADDR = $ENABLE_PRE_CONF_UDN_ADDR"
      echo "DYNAMIC_UDN_ALLOCATION = $DYNAMIC_UDN_ALLOCATION"
      echo "DYNAMIC_UDN_GRACE_PERIOD =  $DYNAMIC_UDN_GRACE_PERIOD"
+     echo "ENABLE_NO_OVERLAY = $ENABLE_NO_OVERLAY"
      echo "OVN_ENABLE_INTERCONNECT = $OVN_ENABLE_INTERCONNECT"
      if [ "$OVN_ENABLE_INTERCONNECT" == true ]; then
        echo "KIND_NUM_NODES_PER_ZONE = $KIND_NUM_NODES_PER_ZONE"
@@ -553,8 +558,6 @@ set_default_params() {
   if [ "$OVN_DUMMY_GATEWAY_BRIDGE" == true ]; then
     OVN_GATEWAY_OPTS="--allow-no-uplink --gateway-interface=br-ex"
   fi
-
-  OVN_MTU=${OVN_MTU:-1400}
 }
 
 check_ipv6() {
@@ -747,6 +750,7 @@ create_ovn_kube_manifests() {
     --evpn-enable="${ENABLE_EVPN}" \
     --advertise-default-network="${ADVERTISE_DEFAULT_NETWORK}" \
     --advertised-udn-isolation-mode="${ADVERTISED_UDN_ISOLATION_MODE}" \
+    --no-overlay-enable="${ENABLE_NO_OVERLAY}" \
     --ovnkube-metrics-scale-enable="${OVN_METRICS_SCALE_ENABLE}" \
     --metrics-ip="${METRICS_IP}" \
     --compact-mode="${OVN_COMPACT_MODE}" \
@@ -757,7 +761,6 @@ create_ovn_kube_manifests() {
     --network-qos-enable="${OVN_NETWORK_QOS_ENABLE}" \
     --mtu="${OVN_MTU}" \
     --enable-dnsnameresolver="${OVN_ENABLE_DNSNAMERESOLVER}" \
-    --mtu="${OVN_MTU}" \
     --enable-observ="${OVN_OBSERV_ENABLE}"
   popd
 }

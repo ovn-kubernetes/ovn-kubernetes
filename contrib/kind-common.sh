@@ -175,6 +175,24 @@ set_common_default_params() {
     echo "EVPN requires Route advertisements to be enabled (-rae)"
     exit 1
   fi
+
+  ENABLE_NO_OVERLAY=${ENABLE_NO_OVERLAY:-false}
+  if [ "$ENABLE_NO_OVERLAY" == true ] && [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then
+    echo "No-overlay mode requires route advertisement to be enabled (-rae)"
+    exit 1
+  fi
+  if [ "$ENABLE_NO_OVERLAY" == true ] && [ "$ADVERTISE_DEFAULT_NETWORK" != true ]; then
+    echo "No-overlay mode requires advertise the default network (-adv)"
+    exit 1
+  fi
+
+  if [ "$ENABLE_NO_OVERLAY" == true ]; then
+    # Set default MTU for no-overlay mode (1500) if not already set
+    OVN_MTU=${OVN_MTU:-1500}
+  else
+    # Set default MTU for overlay mode (1400) if not already set
+    OVN_MTU=${OVN_MTU:-1400}
+  fi
 }
 
 set_ovn_image() {
@@ -1080,8 +1098,8 @@ install_frr_k8s() {
   if [ "$PLATFORM_IPV6_SUPPORT" == true ]; then
     # Find all line numbers where the IPv4 prefix is defined
     IPv6_LINE="            - prefix: ${BGP_SERVER_NET_SUBNET_IPV6}"
-    # Process each occurrence of the IPv4 prefix
-    for LINE_NUM in $(grep -n "prefix: ${BGP_SERVER_NET_SUBNET_IPV4}" receive_filtered.yaml | cut -d ':' -f 1); do
+    # Process each occurrence of the IPv4 prefix in reverse order to avoid line number shifting
+    for LINE_NUM in $(grep -n "prefix: ${BGP_SERVER_NET_SUBNET_IPV4}" receive_filtered.yaml | cut -d ':' -f 1 | sort -rn); do
       # Insert the IPv6 prefix after each IPv4 prefix line
       sed -i "${LINE_NUM}a\\${IPv6_LINE}" receive_filtered.yaml
     done
