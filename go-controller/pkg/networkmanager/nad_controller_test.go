@@ -469,6 +469,7 @@ func TestNADController(t *testing.T) {
 		TransitSubnet: config.ClusterManager.V4TransitSubnet,
 		Role:          types.NetworkRolePrimary,
 		MTU:           1400,
+		Transport:     types.NetworkTransportGeneve,
 	}
 	networkAIncompatible := &ovncnitypes.NetConf{
 		Topology: types.LocalnetTopology,
@@ -476,7 +477,8 @@ func TestNADController(t *testing.T) {
 			Name: "networkAPrimary",
 			Type: "ovn-k8s-cni-overlay",
 		},
-		MTU: 1400,
+		MTU:       1400,
+		Transport: types.NetworkTransportGeneve,
 	}
 	networkASecondary := &ovncnitypes.NetConf{
 		Topology: types.Layer2Topology,
@@ -484,9 +486,10 @@ func TestNADController(t *testing.T) {
 			Name: "networkAPrimary",
 			Type: "ovn-k8s-cni-overlay",
 		},
-		Subnets: "10.1.130.0/24",
-		Role:    types.NetworkRoleSecondary,
-		MTU:     1400,
+		Subnets:   "10.1.130.0/24",
+		Role:      types.NetworkRoleSecondary,
+		MTU:       1400,
+		Transport: types.NetworkTransportGeneve,
 	}
 
 	networkBSecondary := &ovncnitypes.NetConf{
@@ -495,7 +498,8 @@ func TestNADController(t *testing.T) {
 			Name: "networkBSecondary",
 			Type: "ovn-k8s-cni-overlay",
 		},
-		MTU: 1400,
+		MTU:       1400,
+		Transport: types.NetworkTransportGeneve,
 	}
 
 	networkDefault := &ovncnitypes.NetConf{
@@ -503,7 +507,8 @@ func TestNADController(t *testing.T) {
 			Name: types.DefaultNetworkName,
 			Type: "ovn-k8s-cni-overlay",
 		},
-		MTU: 1400,
+		MTU:       1400,
+		Transport: types.NetworkTransportGeneve,
 	}
 
 	type args struct {
@@ -1241,8 +1246,9 @@ func TestSyncAll(t *testing.T) {
 			Name: "network_A",
 			Type: "ovn-k8s-cni-overlay",
 		},
-		Role: types.NetworkRolePrimary,
-		MTU:  1400,
+		Role:      types.NetworkRolePrimary,
+		MTU:       1400,
+		Transport: types.NetworkTransportGeneve,
 	}
 	network_A_Copy := *network_A
 	network_B := &ovncnitypes.NetConf{
@@ -1251,7 +1257,8 @@ func TestSyncAll(t *testing.T) {
 			Name: "network_B",
 			Type: "ovn-k8s-cni-overlay",
 		},
-		MTU: 1400,
+		MTU:       1400,
+		Transport: types.NetworkTransportGeneve,
 	}
 	type TestNAD struct {
 		name      string
