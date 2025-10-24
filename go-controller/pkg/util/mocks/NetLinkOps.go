@@ -260,6 +260,24 @@ func (_m *NetLinkOps) LinkList() ([]netlink.Link, error) {
 	return r0, r1
 }
 
+// LinkSetAlias provides a mock function with given fields: link, name
+func (_m *NetLinkOps) LinkSetAlias(link netlink.Link, name string) error {
+	ret := _m.Called(link, name)
+
+	if len(ret) == 0 {
+		panic("no return value specified for LinkSetAlias")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(netlink.Link, string) error); ok {
+		r0 = rf(link, name)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // LinkSetDown provides a mock function with given fields: link
 func (_m *NetLinkOps) LinkSetDown(link netlink.Link) error {
 	ret := _m.Called(link)

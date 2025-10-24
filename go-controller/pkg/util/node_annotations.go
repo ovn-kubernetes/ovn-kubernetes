@@ -12,6 +12,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/client-go/util/retry"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
@@ -55,7 +56,7 @@ const (
 	// OvnDefaultNetworkGateway captures L3 gateway config for default OVN network interface
 	ovnDefaultNetworkGateway = "default"
 
-	// OvnNodeManagementPort is the constant string representing the annotation key
+	// Deprecated OvnNodeManagementPort is the constant string representing the annotation key
 	OvnNodeManagementPort = "k8s.ovn.org/node-mgmt-port"
 
 	// OvnNodeManagementPortMacAddresses contains all mac addresses of the management ports
@@ -406,37 +407,86 @@ func NodeChassisIDAnnotationChanged(oldNode, newNode *corev1.Node) bool {
 	return oldNode.Annotations[OvnNodeChassisID] != newNode.Annotations[OvnNodeChassisID]
 }
 
-type ManagementPortDetails struct {
+// Deprecated
+type legacyManagementPortDetails struct {
 	PfId   int `json:"PfId"`
 	FuncId int `json:"FuncId"`
 }
 
-func SetNodeManagementPortAnnotation(nodeAnnotator kube.Annotator, PfId int, FuncId int) error {
-	mgmtPortDetails := ManagementPortDetails{
-		PfId:   PfId,
-		FuncId: FuncId,
+type NetworkDeviceDetails struct {
+	DeviceId string `json:"DeviceId"`
+	PfId     int    `json:"PfId"`
+	FuncId   int    `json:"FuncId"`
+}
+
+type NetworkDeviceDetailsMap map[string]*NetworkDeviceDetails
+
+func (ndm *NetworkDeviceDetailsMap) String() string {
+	if ndm == nil || *ndm == nil {
+		return "nil"
 	}
-	bytes, err := json.Marshal(mgmtPortDetails)
+
+	ndmString := ""
+	for k, v := range *ndm {
+		ndmString += fmt.Sprintf("%v: %+v,", k, v)
+	}
+	return ndmString
+}
+
+func (cfg *NetworkDeviceDetails) String() string {
+	if cfg == nil {
+		return "none"
+	}
+	return fmt.Sprintf("DeviceId %s PfId: %d, FuncId: %d", cfg.DeviceId, cfg.PfId, cfg.FuncId)
+}
+
+func UpdateNodeManagementPortAnnotation(kube kube.Interface, nodeName string, cfgs NetworkDeviceDetailsMap) error {
+	bytes, err := json.Marshal(cfgs)
 	if err != nil {
-		return fmt.Errorf("failed to marshal mgmtPortDetails with PfId '%v', FuncId '%v'", PfId, FuncId)
+		return fmt.Errorf("failed to marshal node management port details %v: %w", cfgs, err)
+	}
+	return retry.RetryOnConflict(OvnConflictBackoff, func() error {
+		return kube.SetAnnotationsOnNode(nodeName, map[string]interface{}{OvnNodeManagementPort: string(bytes)})
+	})
+}
+
+// SetNodeManagementPortAnnotation is used only when resource name is not specified,
+// only default network management port information needs to be updated
+func SetNodeManagementPortAnnotation(nodeAnnotator kube.Annotator, cfg *NetworkDeviceDetails) error {
+	cfgs := NetworkDeviceDetailsMap{types.DefaultNetworkName: cfg}
+	bytes, err := json.Marshal(cfgs)
+	if err != nil {
+		return fmt.Errorf("failed to marshal mgmtPortDetails %+v: %w", cfg, err)
 	}
 	return nodeAnnotator.Set(OvnNodeManagementPort, string(bytes))
 }
 
-// ParseNodeManagementPortAnnotation returns the parsed host addresses living on a node
-func ParseNodeManagementPortAnnotation(node *corev1.Node) (int, int, error) {
+// ParseNodeManagementPortAnnotation returns the parsed node management port information
+func ParseNodeManagementPortAnnotation(node *corev1.Node) (NetworkDeviceDetailsMap, error) {
 	mgmtPortAnnotation, ok := node.Annotations[OvnNodeManagementPort]
 	if !ok {
-		return -1, -1, newAnnotationNotSetError("%s annotation not found for node %q", OvnNodeManagementPort, node.Name)
+		return nil, newAnnotationNotSetError("%s annotation not found for node %q", OvnNodeManagementPort, node.Name)
 	}
 
-	cfg := ManagementPortDetails{}
-	if err := json.Unmarshal([]byte(mgmtPortAnnotation), &cfg); err != nil {
-		return -1, -1, fmt.Errorf("failed to unmarshal management port annotation %s for node %q: %v",
-			mgmtPortAnnotation, node.Name, err)
+	cfgs := NetworkDeviceDetailsMap{}
+	err := json.Unmarshal([]byte(mgmtPortAnnotation), &cfgs)
+	if err != nil {
+		// possibly it is still in the legacy format
+		legacyCfg := legacyManagementPortDetails{}
+		err = json.Unmarshal([]byte(mgmtPortAnnotation), &legacyCfg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to unmarshal management port annotation %s for node %q: %v",
+				mgmtPortAnnotation, node.Name, err)
+		}
+		cfgs = NetworkDeviceDetailsMap{
+			types.DefaultNetworkName: {
+				PfId:   legacyCfg.PfId,
+				FuncId: legacyCfg.FuncId,
+			},
+		}
 	}
 
-	return cfg.PfId, cfg.FuncId, nil
+	return cfgs, nil
 }
 
 // UpdateNodeManagementPortMACAddresses used only from unit tests

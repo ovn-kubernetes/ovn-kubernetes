@@ -229,7 +229,7 @@ func testManagementPort(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.Net
 		// We do not enable per-interface forwarding for IPv6
 		if cfg.family == netlink.FAMILY_V4 {
 			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-				Cmd:    "sysctl -w net.ipv4.conf.ovn-k8s-mp0.forwarding=1",
+				Cmd:    "sysctl -w net/ipv4/conf/ovn-k8s-mp0/forwarding=1",
 				Output: "net.ipv4.conf.ovn-k8s-mp0.forwarding = 1",
 			})
 		}
@@ -337,17 +337,12 @@ func testManagementPortDPU(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.
 		},
 	}
 
-	// OVS cmd setup
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "ovs-vsctl --timeout=15 --if-exists get bridge br-int datapath_type",
-		Output: "",
-	})
-
 	fexec.AddFakeCmdsNoOutputNoError([]string{
 		"ovs-vsctl --timeout=15 --no-headings --data bare --format csv --columns type,name find Interface name=" + mgtPort,
+		"ovs-vsctl --timeout=15 --if-exists get bridge br-int datapath_type",
 		fmt.Sprintf("ovs-vsctl --timeout=15 -- --may-exist add-port br-int %s -- set interface %s "+
-			"external-ids:iface-id=%s external-ids:ovn-orig-mgmt-port-rep-name=%s",
-			mgtPort, mgtPort, "k8s-"+nodeName, mgmtPortNetdev),
+			"external-ids:iface-id=%s external-ids:%s=%s external-ids:ovn-orig-mgmt-port-rep-name=%s",
+			mgtPort, mgtPort, "k8s-"+nodeName, types.OvnManagementPortNameExternalID, types.K8sMgmtIntfName, mgmtPortNetdev),
 	})
 
 	err := util.SetExec(fexec)
@@ -448,7 +443,7 @@ func testManagementPortDPUHost(ctx *cli.Context, fexec *ovntest.FakeExec, testNS
 		// We do not enable per-interface forwarding for IPv6
 		if cfg.family == netlink.FAMILY_V4 {
 			fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-				Cmd:    "sysctl -w net.ipv4.conf.ovn-k8s-mp0.forwarding=1",
+				Cmd:    "sysctl -w net/ipv4/conf/ovn-k8s-mp0/forwarding=1",
 				Output: "net.ipv4.conf.ovn-k8s-mp0.forwarding = 1",
 			})
 		}
@@ -567,8 +562,8 @@ var _ = Describe("Management Port tests", func() {
 					"ovs-vsctl --timeout=15 --no-headings --data bare --format csv --columns type,name find Interface name=" + mgmtPortName,
 				})
 				netlinkOpsMock.On("LinkByName", mgmtPortName).Return(linkMock, nil)
+				linkMock.On("Attrs").Return(&netlink.LinkAttrs{Name: mgmtPortName})
 				netlinkOpsMock.On("AddrList", linkMock, netlink.FAMILY_ALL).Return([]netlink.Addr{}, netlinkMockErr)
-				linkMock.On("Attrs").Return(&netlink.LinkAttrs{Name: netdevName})
 
 				err := syncMgmtPortInterface(mgmtPortName, false)
 				Expect(err).To(HaveOccurred())
@@ -578,6 +573,11 @@ var _ = Describe("Management Port tests", func() {
 				execMock.AddFakeCmdsNoOutputNoError([]string{
 					"ovs-vsctl --timeout=15 --no-headings --data bare --format csv --columns type,name find Interface name=" + mgmtPortName,
 				})
+				execMock.AddFakeCmd(&ovntest.ExpectedCmd{
+					Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external-ids:ovn-orig-mgmt-port-netdev-name",
+					Output: netdevName,
+				})
+				netlinkOpsMock.On("LinkByName", netdevName).Return(nil, netlinkMockErr)
 				netlinkOpsMock.On("LinkByName", mgmtPortName).Return(linkMock, nil)
 				netlinkOpsMock.On("AddrList", linkMock, netlink.FAMILY_ALL).Return([]netlink.Addr{}, nil)
 				netlinkOpsMock.On("RouteList", linkMock, netlink.FAMILY_ALL).Return([]netlink.Route{}, nil)
@@ -595,7 +595,9 @@ var _ = Describe("Management Port tests", func() {
 					Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external-ids:ovn-orig-mgmt-port-netdev-name",
 					Output: netdevName,
 				})
+				netlinkOpsMock.On("LinkByName", netdevName).Return(nil, netlinkMockErr)
 				netlinkOpsMock.On("LinkByName", mgmtPortName).Return(linkMock, nil)
+				linkMock.On("Attrs").Return(&netlink.LinkAttrs{Name: mgmtPortName})
 				netlinkOpsMock.On("AddrList", linkMock, netlink.FAMILY_ALL).Return([]netlink.Addr{}, nil)
 				netlinkOpsMock.On("RouteList", linkMock, netlink.FAMILY_ALL).Return([]netlink.Route{}, nil)
 				netlinkOpsMock.On("LinkSetDown", linkMock).Return(nil)
@@ -612,6 +614,7 @@ var _ = Describe("Management Port tests", func() {
 					Cmd:    "ovs-vsctl --timeout=15 --if-exists get Open_vSwitch . external-ids:ovn-orig-mgmt-port-netdev-name",
 					Output: netdevName,
 				})
+				netlinkOpsMock.On("LinkByName", netdevName).Return(nil, netlinkMockErr)
 				netlinkOpsMock.On("LinkByName", mgmtPortName).Return(linkMock, nil)
 				netlinkOpsMock.On("AddrList", linkMock, netlink.FAMILY_ALL).Return([]netlink.Addr{}, nil)
 				netlinkOpsMock.On("RouteList", linkMock, netlink.FAMILY_ALL).Return([]netlink.Route{}, nil)
@@ -639,7 +642,7 @@ var _ = Describe("Management Port tests", func() {
 					Output: "internal," + mgmtPortName,
 				})
 				execMock.AddFakeCmd(&ovntest.ExpectedCmd{
-					Cmd: "ovs-vsctl --timeout=15 del-port br-int " + mgmtPortName,
+					Cmd: "ovs-vsctl --timeout=15 --if-exists del-port br-int " + mgmtPortName,
 					Err: fakeExecErr,
 				})
 
@@ -653,7 +656,7 @@ var _ = Describe("Management Port tests", func() {
 					Output: "internal," + mgmtPortName,
 				})
 				execMock.AddFakeCmdsNoOutputNoError([]string{
-					"ovs-vsctl --timeout=15 del-port br-int " + mgmtPortName,
+					"ovs-vsctl --timeout=15 --if-exists del-port br-int " + mgmtPortName,
 				})
 
 				err := syncMgmtPortInterface(mgmtPortName, false)
@@ -723,6 +726,8 @@ var _ = Describe("Management Port tests", func() {
 					"ovs-vsctl --timeout=15 --if-exists del-port br-int " + mgmtPortName,
 				})
 				netlinkOpsMock.On("LinkByName", mgmtPortName).Return(linkMock, nil)
+				linkMock.On("Attrs").Return(&netlink.LinkAttrs{Name: mgmtPortName})
+				netlinkOpsMock.On("AddrList", linkMock, netlink.FAMILY_ALL).Return([]netlink.Addr{}, nil)
 				netlinkOpsMock.On("LinkSetDown", linkMock).Return(netlinkMockErr)
 
 				err := syncMgmtPortInterface(mgmtPortName, false)
@@ -741,7 +746,9 @@ var _ = Describe("Management Port tests", func() {
 				execMock.AddFakeCmdsNoOutputNoError([]string{
 					"ovs-vsctl --timeout=15 --if-exists del-port br-int " + mgmtPortName,
 				})
+				netlinkOpsMock.On("LinkByName", repName).Return(nil, netlinkMockErr)
 				netlinkOpsMock.On("LinkByName", mgmtPortName).Return(linkMock, nil)
+				netlinkOpsMock.On("AddrList", linkMock, netlink.FAMILY_ALL).Return([]netlink.Addr{}, nil)
 				netlinkOpsMock.On("LinkSetDown", linkMock).Return(nil)
 				netlinkOpsMock.On("LinkSetName", linkMock, repName).Return(netlinkMockErr)
 
@@ -761,7 +768,9 @@ var _ = Describe("Management Port tests", func() {
 				execMock.AddFakeCmdsNoOutputNoError([]string{
 					"ovs-vsctl --timeout=15 --if-exists del-port br-int " + mgmtPortName,
 				})
+				netlinkOpsMock.On("LinkByName", repName).Return(nil, netlinkMockErr)
 				netlinkOpsMock.On("LinkByName", mgmtPortName).Return(linkMock, nil)
+				netlinkOpsMock.On("AddrList", linkMock, netlink.FAMILY_ALL).Return([]netlink.Addr{}, nil)
 				netlinkOpsMock.On("LinkSetDown", linkMock).Return(nil)
 				netlinkOpsMock.On("LinkSetName", linkMock, repName).Return(nil)
 
