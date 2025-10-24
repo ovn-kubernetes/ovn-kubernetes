@@ -33,6 +33,7 @@ type SpecGetter interface {
 	GetLayer3() *userdefinednetworkv1.Layer3Config
 	GetLayer2() *userdefinednetworkv1.Layer2Config
 	GetLocalnet() *userdefinednetworkv1.LocalnetConfig
+	GetTransport() userdefinednetworkv1.TransportOption
 }
 
 func RenderNetAttachDefManifest(obj client.Object, targetNamespace string) (*netv1.NetworkAttachmentDefinition, error) {
@@ -256,6 +257,12 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter) (map[s
 			cniNetConf["defaultGatewayIPs"] = netConfSpec.DefaultGatewayIPs
 		}
 	}
+
+	if spec.GetTransport() != "" {
+		// Read transport from UDN/CUDN spec and translate from CRD PascalCase format to canonical lowercase
+		cniNetConf["transport"] = types.TransportFromCRD(string(spec.GetTransport()))
+	}
+
 	return cniNetConf, nil
 }
 
