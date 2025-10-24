@@ -1337,6 +1337,9 @@ ovn-master() {
   fi
   echo "dynamic_udn_grace_period=${dynamic_udn_grace_period}"
 
+  ovnkube_config_file_flag="--config-file=/run/ovnkube-config/ovnkube.conf"
+  echo "ovnkube_config_file_flag=${ovnkube_config_file_flag}"
+
   egressservice_enabled_flag=
   if [[ ${ovn_egressservice_enable} == "true" ]]; then
 	  egressservice_enabled_flag="--enable-egress-service"
@@ -1445,6 +1448,7 @@ ovn-master() {
     ${route_advertisements_enabled_flag} \
     ${evpn_enabled_flag} \
     ${advertised_udn_isolation_flag} \
+    ${ovnkube_config_file_flag} \
     ${ovn_acl_logging_rate_limit_flag} \
     ${ovn_enable_svc_template_support_flag} \
     ${ovn_observ_enable_flag} \
@@ -1679,6 +1683,9 @@ ovnkube-controller() {
   fi
   echo "advertised_udn_isolation_flag=${advertised_udn_isolation_flag}"
 
+  ovnkube_config_file_flag="--config-file=/run/ovnkube-config/ovnkube.conf"
+  echo "ovnkube_config_file_flag=${ovnkube_config_file_flag}"
+
   egressservice_enabled_flag=
   if [[ ${ovn_egressservice_enable} == "true" ]]; then
 	  egressservice_enabled_flag="--enable-egress-service"
@@ -1798,6 +1805,7 @@ ovnkube-controller() {
     ${route_advertisements_enabled_flag} \
     ${evpn_enabled_flag} \
     ${advertised_udn_isolation_flag} \
+    ${ovnkube_config_file_flag} \
     ${ovn_acl_logging_rate_limit_flag} \
     ${ovn_dbs} \
     ${ovn_enable_svc_template_support_flag} \
@@ -2032,6 +2040,9 @@ ovnkube-controller-with-node() {
       advertised_udn_isolation_flag="--advertised-udn-isolation-mode=${ovn_advertised_udn_isolation_mode}"
   fi
   echo "advertised_udn_isolation_flag=${advertised_udn_isolation_flag}"
+
+  ovnkube_config_file_flag="--config-file=/run/ovnkube-config/ovnkube.conf"
+  echo "ovnkube_config_file_flag=${ovnkube_config_file_flag}"
 
   egressservice_enabled_flag=
   if [[ ${ovn_egressservice_enable} == "true" ]]; then
@@ -2304,6 +2315,7 @@ ovnkube-controller-with-node() {
     ${route_advertisements_enabled_flag} \
     ${evpn_enabled_flag} \
     ${advertised_udn_isolation_flag} \
+    ${ovnkube_config_file_flag} \
     ${netflow_targets} \
     ${ofctrl_wait_before_clear} \
     ${ovn_acl_logging_rate_limit_flag} \
@@ -2501,6 +2513,9 @@ ovn-cluster-manager() {
       advertised_udn_isolation_flag="--advertised-udn-isolation-mode=${ovn_advertised_udn_isolation_mode}"
   fi
 
+  ovnkube_config_file_flag="--config-file=/run/ovnkube-config/ovnkube.conf"
+  echo "ovnkube_config_file_flag=${ovnkube_config_file_flag}"
+
   persistent_ips_enabled_flag=
   if [[ ${ovn_enable_persistent_ips} == "true" ]]; then
 	  persistent_ips_enabled_flag="--enable-persistent-ips"
@@ -2579,6 +2594,7 @@ ovn-cluster-manager() {
     ${route_advertisements_enabled_flag} \
     ${evpn_enabled_flag} \
     ${advertised_udn_isolation_flag} \
+    ${ovnkube_config_file_flag} \
     ${persistent_ips_enabled_flag} \
     ${ovnkube_enable_interconnect_flag} \
     ${ovnkube_enable_multi_external_gateway_flag} \
@@ -2777,6 +2793,9 @@ ovn-node() {
   if [[ -n ${ovn_advertised_udn_isolation_mode} ]]; then
       advertised_udn_isolation_flag="--advertised-udn-isolation-mode=${ovn_advertised_udn_isolation_mode}"
   fi
+
+  ovnkube_config_file_flag="--config-file=/run/ovnkube-config/ovnkube.conf"
+  echo "ovnkube_config_file_flag=${ovnkube_config_file_flag}"
 
   netflow_targets=
   if [[ -n ${ovn_netflow_targets} ]]; then
@@ -3024,6 +3043,7 @@ ovn-node() {
         ${route_advertisements_enabled_flag} \
         ${evpn_enabled_flag} \
         ${advertised_udn_isolation_flag} \
+        ${ovnkube_config_file_flag} \
         ${netflow_targets} \
         ${ofctrl_wait_before_clear} \
         ${ovn_dbs} \

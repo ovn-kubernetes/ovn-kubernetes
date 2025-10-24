@@ -100,6 +100,9 @@ spec:
         - mountPath: /ovn-cert
           name: host-ovn-cert
           readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
         - mountPath: /etc/openvswitch/
           name: host-etc-ovs
           readOnly: true
@@ -256,6 +259,8 @@ spec:
           value: "{{ ovn_enable_dynamic_udn_allocation }}"
         - name: OVN_DYNAMIC_UDN_GRACE_PERIOD
           value: "{{ ovn_dynamic_udn_grace_period }}"
+        - name: OVN_NO_OVERLAY_ENABLE
+          value: "{{ ovn_no_overlay_enable }}"
         - name: OVN_ENABLE_INTERCONNECT
           value: "{{ ovn_enable_interconnect }}"
         - name: OVN_ENABLE_MULTI_EXTERNAL_GATEWAY
@@ -330,6 +335,9 @@ spec:
           name: host-var-run-ovs
         - mountPath: /ovn-cert
           name: host-ovn-cert
+          readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
           readOnly: true
 
         resources:
@@ -457,6 +465,9 @@ spec:
       - name: run-systemd
         hostPath:
           path: /run/systemd
+      - name: ovnkube-config
+        configMap:
+          name: ovnkube-config
       {%- if ovnkube_app_name!="ovnkube-node-dpu-host" %}
       # non DPU related volumes
       - name: host-var-log-ovs

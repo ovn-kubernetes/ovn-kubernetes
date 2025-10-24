@@ -63,6 +63,9 @@ spec:
         - mountPath: /ovn-cert
           name: host-ovn-cert
           readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
         - mountPath: /var/run/ovn/
           name: host-var-run-ovs
         - mountPath: /var/run/openvswitch/
@@ -136,6 +139,9 @@ spec:
           name: host-var-log-ovs
         - mountPath: /ovn-cert
           name: host-ovn-cert
+          readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
           readOnly: true
         - mountPath: /var/run/ovn/
           name: host-var-run-ovs
@@ -306,6 +312,9 @@ spec:
         - mountPath: /var/run/k8s.cni.cncf.io/devinfo/dp
           name: host-devinfo-dp
           readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
 
         resources:
           requests:
@@ -458,6 +467,8 @@ spec:
           value: "{{ ovn_evpn_enable }}"
         - name: OVN_ADVERTISED_UDN_ISOLATION_MODE
           value: "{{ ovn_advertised_udn_isolation_mode }}"
+        - name: OVN_NO_OVERLAY_ENABLE
+          value: "{{ ovn_no_overlay_enable }}"
         - name: OVNKUBE_NODE_MGMT_PORT_NETDEV
           value: "{{ ovnkube_node_mgmt_port_netdev }}"
         - name: OVN_EMPTY_LB_EVENTS
@@ -649,6 +660,9 @@ spec:
         hostPath:
           path: /etc/ovn
           type: DirectoryOrCreate
+      - name: ovnkube-config
+        configMap:
+          name: ovnkube-config
       - name: host-etc-ovs
         hostPath:
           path: /etc/openvswitch
