@@ -789,25 +789,7 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 	if len(statusAssignments) == 0 {
 		return nil
 	}
-	// We need to proceed with add only under two conditions
-	// 1) egressNode present in at least one status is local to this zone
-	// (NOTE: The relation between egressIPName and nodeName is 1:1 i.e in the same object the given node will be present only in one status)
-	// 2) the pod being added is local to this zone
-	proceed := false
-	for _, status := range statusAssignments {
-		e.nodeZoneState.LockKey(status.Node)
-		isLocalZoneEgressNode, loadedEgressNode := e.nodeZoneState.Load(status.Node)
-		if loadedEgressNode && isLocalZoneEgressNode {
-			proceed = true
-			e.nodeZoneState.UnlockKey(status.Node)
-			break
-		}
-		e.nodeZoneState.UnlockKey(status.Node)
-	}
-	if !proceed && !e.isPodScheduledinLocalZone(pod) {
-		return nil // nothing to do if none of the status nodes are local to this master and pod is also remote
-	}
-	var remainingAssignments []egressipv1.EgressIPStatusItem
+	var remainingAssignments, staleAssignments []egressipv1.EgressIPStatusItem
 	nadName := ni.GetNetworkName()
 	if ni.IsUserDefinedNetwork() {
 		nadNames := ni.GetNADs()
@@ -843,8 +825,15 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 		// podState.egressIPName can be empty if no re-routes were found in
 		// syncPodAssignmentCache for the existing pod, we will treat this case as a new add
 		for _, status := range statusAssignments {
-			if exists := podState.egressStatuses.contains(status); !exists {
+			// Add the status if it's not already in the cache, or if it exists but is in pending state
+			// (meaning it was populated during EIP sync and needs to be processed for the pod).
+			if value, exists := podState.egressStatuses.statusMap[status]; !exists || value == egressStatusStatePending {
 				remainingAssignments = append(remainingAssignments, status)
+			}
+			// Detect stale EIP status entries (same EgressIP reassigned to a different node)
+			// and queue the outdated entry for cleanup.
+			if staleStatus := podState.egressStatuses.hasStaleEIPStatus(status); staleStatus != nil {
+				staleAssignments = append(staleAssignments, *staleStatus)
 			}
 		}
 		podState.podIPs = podIPs
@@ -866,6 +855,32 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 		)
 		podState.standbyEgressIPNames.Insert(name)
 		return nil
+	}
+	for _, staleStatus := range staleAssignments {
+		klog.V(2).Infof("Deleting stale pod egress IP status: %v for EgressIP: %s and pod: %s/%s/%v", staleStatus, name, pod.Namespace, pod.Name, podIPNets)
+		err = e.deletePodEgressIPAssignments(ni, name, []egressipv1.EgressIPStatusItem{staleStatus}, pod)
+		if err != nil {
+			klog.Warningf("Failed to delete stale EgressIP status %s/%v for pod %s: %v", name, staleStatus, podKey, err)
+		}
+		delete(podState.egressStatuses.statusMap, staleStatus)
+	}
+	// We need to proceed with add only under two conditions
+	// 1) egressNode present in at least one status is local to this zone
+	// (NOTE: The relation between egressIPName and nodeName is 1:1 i.e in the same object the given node will be present only in one status)
+	// 2) the pod being added is local to this zone
+	proceed := false
+	for _, status := range statusAssignments {
+		e.nodeZoneState.LockKey(status.Node)
+		isLocalZoneEgressNode, loadedEgressNode := e.nodeZoneState.Load(status.Node)
+		if loadedEgressNode && isLocalZoneEgressNode {
+			proceed = true
+			e.nodeZoneState.UnlockKey(status.Node)
+			break
+		}
+		e.nodeZoneState.UnlockKey(status.Node)
+	}
+	if !proceed && !e.isPodScheduledinLocalZone(pod) {
+		return nil // nothing to do if none of the status nodes are local to this master and pod is also remote
 	}
 	for _, status := range remainingAssignments {
 		klog.V(2).Infof("Adding pod egress IP status: %v for EgressIP: %s and pod: %s/%s/%v", status, name, pod.Namespace, pod.Name, podIPNets)
@@ -1156,6 +1171,8 @@ type egressIPCache struct {
 	egressLocalNodesCache sets.Set[string]
 	// egressIP IP -> assigned node name
 	egressIPIPToNodeCache map[string]string
+	// egressIP name -> egress IP -> assigned node name
+	egressIPToAssignedNodes map[string]map[string]string
 	// node name -> network name -> redirect IPs
 	egressNodeRedirectsCache nodeNetworkRedirects
 	// network name -> OVN cluster router name
@@ -1590,6 +1607,14 @@ func (e *EgressIPController) syncPodAssignmentCache(egressIPCache egressIPCache)
 						}
 					}
 
+					// populate podState.egressStatuses with assigned node for active egressIP IPs.
+					if podState.egressIPName == egressIPName {
+						for egressIPIP, nodeName := range egressIPCache.egressIPToAssignedNodes[egressIPName] {
+							podState.egressStatuses.statusMap[egressipv1.EgressIPStatusItem{
+								EgressIP: egressIPIP, Node: nodeName}] = egressStatusStatePending
+						}
+					}
+
 					e.podAssignment.Store(podKey, podState)
 					return nil
 				}); err != nil {
@@ -1971,6 +1996,9 @@ func (e *EgressIPController) generateCacheForEgressIP() (egressIPCache, error) {
 	// egressIP IP -> node name. Assigned node for EIP.
 	egressIPIPNodeCache := make(map[string]string, 0)
 	cache.egressIPIPToNodeCache = egressIPIPNodeCache
+	// egressIP name -> egressIP IP -> node name.
+	egressIPToAssignedNodes := make(map[string]map[string]string, 0)
+	cache.egressIPToAssignedNodes = egressIPToAssignedNodes
 	cache.markCache = make(map[string]string)
 	egressIPs, err := e.watchFactory.GetEgressIPs()
 	if err != nil {
@@ -1984,6 +2012,7 @@ func (e *EgressIPController) generateCacheForEgressIP() (egressIPCache, error) {
 		cache.markCache[egressIP.Name] = mark.String()
 		egressIPsCache[egressIP.Name] = make(map[string]selectedPods, 0)
 		egressIPNameNodesCache[egressIP.Name] = make([]string, 0, len(egressIP.Status.Items))
+		egressIPToAssignedNodes[egressIP.Name] = make(map[string]string, 0)
 		for _, status := range egressIP.Status.Items {
 			eipIP := net.ParseIP(status.EgressIP)
 			if eipIP == nil {
@@ -1991,6 +2020,7 @@ func (e *EgressIPController) generateCacheForEgressIP() (egressIPCache, error) {
 				continue
 			}
 			egressIPIPNodeCache[eipIP.String()] = status.Node
+			egressIPToAssignedNodes[egressIP.Name][eipIP.String()] = status.Node
 			if localZoneNodes.Has(status.Node) {
 				egressLocalNodesCache.Insert(status.Node)
 			}
@@ -2247,9 +2277,18 @@ func InitClusterEgressPolicies(nbClient libovsdbclient.Client, addressSetFactory
 	return nil
 }
 
+// egressStatusStatePending marks entries populated during EIP sync and
+// indicates they must be reconciled again for the pod.
+const egressStatusStatePending = "pending"
+
 type statusMap map[egressipv1.EgressIPStatusItem]string
 
 type egressStatuses struct {
+	// statusMap tracks per EIP status assignment for a pod.
+	// Key: egressipv1.EgressIPStatusItem {EgressIP, Node}
+	// Values:
+	//   ""                      -> applied/reconciled
+	//   egressStatusStatePending -> populated during EIP sync, pending reconcile.
 	statusMap
 }
 
@@ -2259,6 +2298,21 @@ func (e egressStatuses) contains(potentialStatus egressipv1.EgressIPStatusItem) 
 		return true
 	}
 	return false
+}
+
+// hasStaleEIPStatus checks for stale EIP status entries already in cache.
+// This addresses the race condition where an EIP is reassigned to a different node
+// but the cache still contains the old assignment, leading to stale SNAT/LRP entries.
+func (e egressStatuses) hasStaleEIPStatus(potentialStatus egressipv1.EgressIPStatusItem) *egressipv1.EgressIPStatusItem {
+	var staleStatus *egressipv1.EgressIPStatusItem
+	for status := range e.statusMap {
+		if status.EgressIP == potentialStatus.EgressIP &&
+			status.Node != potentialStatus.Node {
+			staleStatus = &egressipv1.EgressIPStatusItem{EgressIP: status.EgressIP, Node: status.Node}
+			break
+		}
+	}
+	return staleStatus
 }
 
 func (e egressStatuses) delete(deleteStatus egressipv1.EgressIPStatusItem) {
