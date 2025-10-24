@@ -9,6 +9,8 @@ import (
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
@@ -116,6 +118,12 @@ func allocatePodAnnotation(
 	// no id allocation
 	var idAllocator id.NamedAllocator
 
+	// Fetch IPAM claim if applicable
+	ipamClaim, err := fetchIPAMClaim(netInfo, network, claimsReconciler, pod)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	allocateToPodWithRollback := func(pod *corev1.Pod) (*corev1.Pod, func(), error) {
 		var rollback func()
 		pod, podAnnotation, rollback, err = allocatePodAnnotationWithRollback(
@@ -125,7 +133,7 @@ func allocatePodAnnotation(
 			node,
 			pod,
 			network,
-			claimsReconciler,
+			ipamClaim,
 			macRegistry,
 			reallocateIP,
 			networkRole,
@@ -139,6 +147,11 @@ func allocatePodAnnotation(
 		pod,
 		allocateToPodWithRollback,
 	)
+
+	if ipamClaim != nil {
+		updatedIPAMClaim := updateIPAMClaimStatus(ipamClaim, podAnnotation, pod.Name, err)
+		err = claimsReconciler.Reconcile(ipamClaim, updatedIPAMClaim, ipAllocator)
+	}
 
 	if err != nil {
 		return nil, nil, err
@@ -201,6 +214,12 @@ func allocatePodAnnotationWithTunnelID(
 	podAnnotation *util.PodAnnotation,
 	err error) {
 
+	// Fetch IPAM claim if applicable
+	ipamClaim, err := fetchIPAMClaim(netInfo, network, claimsReconciler, pod)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	allocateToPodWithRollback := func(pod *corev1.Pod) (*corev1.Pod, func(), error) {
 		var rollback func()
 		pod, podAnnotation, rollback, err = allocatePodAnnotationWithRollback(
@@ -210,7 +229,7 @@ func allocatePodAnnotationWithTunnelID(
 			node,
 			pod,
 			network,
-			claimsReconciler,
+			ipamClaim,
 			macRegistry,
 			reallocateIP,
 			networkRole,
@@ -225,11 +244,108 @@ func allocatePodAnnotationWithTunnelID(
 		allocateToPodWithRollback,
 	)
 
+	// Reconcile IPAM claim
+	if ipamClaim != nil {
+		updatedIPAMClaim := updateIPAMClaimStatus(ipamClaim, podAnnotation, pod.Name, err)
+		err = claimsReconciler.Reconcile(ipamClaim, updatedIPAMClaim, ipAllocator)
+	}
+
 	if err != nil {
 		return nil, nil, err
 	}
 
 	return pod, podAnnotation, nil
+}
+
+// fetchIPAMClaim retrieves the IPAM claim for a pod if applicable.
+// Returns the claim if found and valid, nil if not applicable, or an error if retrieval fails.
+func fetchIPAMClaim(
+	netInfo util.NetInfo,
+	network *nadapi.NetworkSelectionElement,
+	claimsReconciler persistentips.PersistentAllocations,
+	pod *corev1.Pod,
+) (*ipamclaimsapi.IPAMClaim, error) {
+	hasIPAM := util.DoesNetworkRequireIPAM(netInfo)
+	hasPersistentIPs := netInfo.AllowsPersistentIPs() && hasIPAM && claimsReconciler != nil
+	hasIPAMClaim := network != nil && network.IPAMClaimReference != ""
+
+	if hasIPAMClaim && !hasPersistentIPs {
+		klog.Errorf(
+			"Pod %s/%s referencing an IPAMClaim on network %q which does not honor it",
+			pod.GetNamespace(),
+			pod.GetName(),
+			netInfo.GetNetworkName(),
+		)
+		return nil, nil
+	}
+
+	if hasIPAMClaim {
+		ipamClaim, err := claimsReconciler.FindIPAMClaim(network.IPAMClaimReference, network.Namespace)
+		if err != nil {
+			return nil, fmt.Errorf("error retrieving IPAMClaim for pod %s/%s: %w", pod.GetNamespace(), pod.GetName(), err)
+		}
+		return ipamClaim, nil
+	}
+
+	return nil, nil
+}
+
+// updateIPAMClaimStatus updates the IPAM claim status with conditions and IPs.
+// Returns an updated copy of the claim with:
+// - Conditions set based on allocation success/failure
+// - IPs set only on successful allocation
+// - Owner pod set on successful allocation
+func updateIPAMClaimStatus(
+	ipamClaim *ipamclaimsapi.IPAMClaim,
+	podAnnotation *util.PodAnnotation,
+	podName string,
+	allocationErr error,
+) *ipamclaimsapi.IPAMClaim {
+	updatedClaim := ipamClaim.DeepCopy()
+
+	updatedClaim.Status.OwnerPod = &ipamclaimsapi.OwnerPod{Name: podName}
+	updatedClaim.Status.IPs = []string{}
+
+	if allocationErr == nil &&
+		podAnnotation != nil &&
+		len(podAnnotation.IPs) > 0 {
+		updatedClaim.Status.IPs = util.StringSlice(podAnnotation.IPs)
+	}
+
+	const conditionType = "IPsAllocated"
+	now := metav1.Now()
+	if allocationErr == nil {
+		meta.SetStatusCondition(&updatedClaim.Status.Conditions, metav1.Condition{
+			Type:               conditionType,
+			Status:             metav1.ConditionTrue,
+			Reason:             "SuccessfulAllocation",
+			Message:            "IP addresses successfully allocated",
+			ObservedGeneration: updatedClaim.Generation,
+			LastTransitionTime: now,
+		})
+	} else {
+		var reason string
+		message := allocationErr.Error()
+
+		if ip.IsErrFull(allocationErr) {
+			reason = "SubnetExhausted"
+		} else if ip.IsErrAllocated(allocationErr) {
+			reason = "IPAddressConflict"
+		}
+
+		if reason != "" {
+			meta.SetStatusCondition(&updatedClaim.Status.Conditions, metav1.Condition{
+				Type:               conditionType,
+				Status:             metav1.ConditionFalse,
+				Reason:             reason,
+				Message:            message,
+				ObservedGeneration: updatedClaim.Generation,
+				LastTransitionTime: now,
+			})
+		}
+	}
+
+	return updatedClaim
 }
 
 // validateStaticIPRequest checks if a static IP request can be honored when IPAM is enabled for the given network.
@@ -285,7 +401,7 @@ func allocatePodAnnotationWithRollback(
 	node *corev1.Node,
 	pod *corev1.Pod,
 	network *nadapi.NetworkSelectionElement,
-	claimsReconciler persistentips.PersistentAllocations,
+	ipamClaim *ipamclaimsapi.IPAMClaim,
 	macRegistry mac.Register,
 	reallocateIP bool,
 	networkRole string) (
@@ -378,27 +494,7 @@ func allocatePodAnnotationWithRollback(
 	hasIPAM := util.DoesNetworkRequireIPAM(netInfo)
 	hasIPRequest := network != nil && len(network.IPRequest) > 0
 	hasStaticIPRequest := hasIPRequest && !reallocateIP
-
-	var ipamClaim *ipamclaimsapi.IPAMClaim
-	hasPersistentIPs := netInfo.AllowsPersistentIPs() && hasIPAM && claimsReconciler != nil
-	hasIPAMClaim := network != nil && network.IPAMClaimReference != ""
-	if hasIPAMClaim && !hasPersistentIPs {
-		klog.Errorf(
-			"Pod %s/%s referencing an IPAMClaim on network %q which does not honor it",
-			pod.GetNamespace(),
-			pod.GetName(),
-			netInfo.GetNetworkName(),
-		)
-		hasIPAMClaim = false
-	}
-	if hasIPAMClaim {
-		ipamClaim, err = claimsReconciler.FindIPAMClaim(network.IPAMClaimReference, network.Namespace)
-		if err != nil {
-			err = fmt.Errorf("error retrieving IPAMClaim for pod %s/%s: %w", pod.GetNamespace(), pod.GetName(), err)
-			return
-		}
-		hasIPAMClaim = ipamClaim != nil && len(ipamClaim.Status.IPs) > 0
-	}
+	hasIPAMClaim := ipamClaim != nil && len(ipamClaim.Status.IPs) > 0
 
 	if hasIPAM && hasStaticIPRequest {
 		if err = validateStaticIPRequest(netInfo, network, ipamClaim, podDesc); err != nil {
@@ -501,12 +597,6 @@ func allocatePodAnnotationWithRollback(
 		updatedPod = pod
 		updatedPod.Annotations, err = util.MarshalPodAnnotation(updatedPod.Annotations, tentative, nadName)
 		podAnnotation = tentative
-	}
-
-	if ipamClaim != nil && err == nil {
-		newIPAMClaim := ipamClaim.DeepCopy()
-		newIPAMClaim.Status.IPs = util.StringSlice(podAnnotation.IPs)
-		err = claimsReconciler.Reconcile(ipamClaim, newIPAMClaim, ipAllocator)
 	}
 
 	return
