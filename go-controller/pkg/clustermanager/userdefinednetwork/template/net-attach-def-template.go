@@ -256,6 +256,7 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter) (map[s
 			cniNetConf["defaultGatewayIPs"] = netConfSpec.DefaultGatewayIPs
 		}
 	}
+	// Transport field will be set when CRD supports it
 	return cniNetConf, nil
 }
 
