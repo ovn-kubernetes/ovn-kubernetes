@@ -61,8 +61,7 @@ func (m *anpZoneDeleteCleanupManager) GetBANPs() ([]*anpapi.BaselineAdminNetwork
 func (m *anpZoneDeleteCleanupManager) removeZoneStatusFromAllANPs(existingANPs []*anpapi.AdminNetworkPolicy, existingBANPs []*anpapi.BaselineAdminNetworkPolicy, zone string) {
 	klog.Infof("Deleting status for zone %s from existing admin network policies", zone)
 	for _, existingANP := range existingANPs {
-		applyObj := anpapiapply.AdminNetworkPolicy(existingANP.Name).
-			WithStatus(anpapiapply.AdminNetworkPolicyStatus())
+		applyObj := anpapiapply.AdminNetworkPolicy(existingANP.Name)
 		_, err := m.client.PolicyV1alpha1().AdminNetworkPolicies().
 			ApplyStatus(context.TODO(), applyObj, metav1.ApplyOptions{FieldManager: zone, Force: true})
 		if err != nil {
@@ -70,8 +69,7 @@ func (m *anpZoneDeleteCleanupManager) removeZoneStatusFromAllANPs(existingANPs [
 		}
 	}
 	for _, existingBANP := range existingBANPs {
-		applyObj := anpapiapply.BaselineAdminNetworkPolicy(existingBANP.Name).
-			WithStatus(anpapiapply.BaselineAdminNetworkPolicyStatus())
+		applyObj := anpapiapply.BaselineAdminNetworkPolicy(existingBANP.Name)
 		_, err := m.client.PolicyV1alpha1().BaselineAdminNetworkPolicies().
 			ApplyStatus(context.TODO(), applyObj, metav1.ApplyOptions{FieldManager: zone, Force: true})
 		if err != nil {
