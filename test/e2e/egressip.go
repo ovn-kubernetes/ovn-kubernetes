@@ -2957,6 +2957,115 @@ spec:
 			"and verify the expected IP, failed for EgressIP %s: %v", egressIPName, err)
 	})
 
+	ginkgo.It("[secondary-host-eip] should send address advertisements for EgressIP", func() {
+		if isUserDefinedNetwork(netConfigParams) {
+			ginkgo.Skip("Unsupported for UDNs")
+		}
+
+		egressIPSecondaryHost := "10.10.10.220"
+		isV6Node := utilnet.IsIPv6(net.ParseIP(egress1Node.nodeIP))
+		if isV6Node {
+			egressIPSecondaryHost = "2001:db8:abcd:1234:c001::"
+		}
+
+		// flush any potentially stale MACs
+		_, err := infraprovider.Get().ExecExternalContainerCommand(secondaryTargetExternalContainer,
+			[]string{"ip", "neigh", "flush", egressIPSecondaryHost})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "should flush neighbor cache")
+
+		networks, err := providerCtx.GetAttachedNetworks()
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "should get attached networks")
+		secondaryNetwork, exists := networks.Get(secondaryNetworkName)
+		gomega.Expect(exists).Should(gomega.BeTrue(), "network %s must exist", secondaryNetworkName)
+
+		inf, err := infraprovider.Get().GetExternalContainerNetworkInterface(secondaryTargetExternalContainer, secondaryNetwork)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "should have network interface for network %s on instance %s", secondaryNetwork.Name(), secondaryTargetExternalContainer.Name)
+
+		// The following is required for the test purposes since we are sending and unsolicited advertisement
+		// for an address that is not tracked already
+		if !isV6Node {
+			_, err = infraprovider.Get().ExecExternalContainerCommand(secondaryTargetExternalContainer,
+				[]string{"sysctl", "-w", fmt.Sprintf("net.ipv4.conf.%s.arp_accept=1", inf.InfName)})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "should enable arp_accept")
+		} else {
+			_, err = infraprovider.Get().ExecExternalContainerCommand(secondaryTargetExternalContainer,
+				[]string{"sysctl", "-w", fmt.Sprintf("net.ipv6.conf.%s.forwarding=1", inf.InfName)})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "should enable forwarding")
+
+			_, err = infraprovider.Get().ExecExternalContainerCommand(secondaryTargetExternalContainer,
+				[]string{"sysctl", "-w", fmt.Sprintf("net.ipv6.conf.%s.accept_untracked_na=1", inf.InfName)})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "should enable accept_untracked_na")
+		}
+
+		podNamespace := f.Namespace
+		labels := map[string]string{"name": f.Namespace.Name}
+		updateNamespaceLabels(f, podNamespace, labels)
+
+		ginkgo.By("Labeling node as available for egress")
+		egressNodeAvailabilityHandler := egressNodeAvailabilityHandlerViaLabel{f}
+		egressNodeAvailabilityHandler.Enable(egress1Node.name)
+		defer egressNodeAvailabilityHandler.Restore(egress1Node.name)
+
+		_, err = createGenericPodWithLabel(f, pod1Name, egress1Node.name, f.Namespace.Name, []string{"/agnhost", "pause"}, podEgressLabel)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "should create egress pod")
+
+		egressIPConfig := `apiVersion: k8s.ovn.org/v1
+kind: EgressIP
+metadata:
+    name: ` + egressIPName + `
+spec:
+    egressIPs:
+    - "` + egressIPSecondaryHost + `"
+    podSelector:
+        matchLabels:
+            wants: egress
+    namespaceSelector:
+        matchLabels:
+            name: ` + f.Namespace.Name + `
+`
+		if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
+			framework.Failf("Unable to write CRD config to disk: %v", err)
+		}
+		defer func() {
+			if err := os.Remove(egressIPYaml); err != nil {
+				framework.Logf("Unable to remove the CRD config from disk: %v", err)
+			}
+		}()
+		e2ekubectl.RunKubectlOrDie("default", "create", "-f", egressIPYaml)
+
+		status := verifyEgressIPStatusLengthEquals(1, nil)
+		inf, err = infraprovider.Get().GetK8NodeNetworkInterface(status[0].Node, secondaryNetwork)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "should have network interface for network %s on instance %s", secondaryNetwork.Name(), egress1Node.name)
+
+		ginkgo.By("Verifying neighbor table")
+		var neighborMAC string
+		gomega.Eventually(func() bool {
+			output, err := infraprovider.Get().ExecExternalContainerCommand(secondaryTargetExternalContainer,
+				[]string{"ip", "-j", "neigh", "show", egressIPSecondaryHost})
+			if err != nil {
+				framework.Logf("Failed to get neighbor table: %v", err)
+				return false
+			}
+
+			var neighbors []IpNeighbor
+			if err := json.Unmarshal([]byte(output), &neighbors); err != nil {
+				framework.Logf("Failed to parse neighbor JSON: %v", err)
+				return false
+			}
+
+			for _, n := range neighbors {
+				if n.Lladdr != "" {
+					neighborMAC = n.Lladdr
+					framework.Logf("Neighbor entry found for %s -> MAC %s", egressIPSecondaryHost, neighborMAC)
+					return true
+				}
+			}
+			return false
+		}, 30*time.Second, 2*time.Second).Should(gomega.BeTrue(),
+			"Neighbor entry should appear")
+		gomega.Expect(neighborMAC).Should(gomega.Equal(inf.MAC), "neighbor entry should have the correct MAC address")
+	})
+
 	// two pods attached to different namespaces but the same role primary user defined network
 	// One pod is deleted and ensure connectivity for the other pod is ok
 	// The previous pod namespace is deleted and again, ensure connectivity for the other pod is ok
