@@ -1829,3 +1829,70 @@ func TestDetectSCTPSupport(t *testing.T) {
 		})
 	}
 }
+
+func TestPathVariableInitialization(t *testing.T) {
+	tests := []struct {
+		name     string
+		testFunc func(t *testing.T)
+	}{
+		{
+			name: "path variables initialized from config",
+			testFunc: func(t *testing.T) {
+				t.Helper()
+				if err := config.PrepareTestConfig(); err != nil {
+					t.Fatalf("failed to PrepareTestConfig: %v", err)
+				}
+
+				// Test that path variables are properly initialized from config
+				assert.Equal(t, config.OvsPaths.RunDir, ovsRunDir)
+				assert.Equal(t, config.OvnNorth.RunDir, ovnRunDir)
+				assert.Equal(t, config.OvnSouth.RunDir, ovnRunDir)
+				assert.Equal(t, "/etc/ovn/ovnnb_db.db", config.OvnNorth.DbLocation)
+				assert.Equal(t, "/etc/ovn/ovnsb_db.db", config.OvnSouth.DbLocation)
+			},
+		},
+		{
+			name: "PrepareTestConfig restores saved values",
+			testFunc: func(t *testing.T) {
+				t.Helper()
+				// Save original values
+				originalOvsRunDir := ovsRunDir
+				originalOvnRunDir := ovnRunDir
+				originalOvnNorth := config.OvnNorth
+				originalOvnSouth := config.OvnSouth
+
+				// Modify the variables
+				ovsRunDir = "/modified/ovs/"
+				ovnRunDir = "/modified/ovn/"
+
+				// Call PrepareTestConfig
+				PrepareTestConfig()
+
+				// Verify values are restored
+				assert.Equal(t, originalOvsRunDir, ovsRunDir)
+				assert.Equal(t, originalOvnRunDir, ovnRunDir)
+				// Restore config values
+				config.OvnNorth = originalOvnNorth
+				config.OvnSouth = originalOvnSouth
+			},
+		},
+		{
+			name: "default path values are correct",
+			testFunc: func(t *testing.T) {
+				t.Helper()
+				// Ensure PrepareTestConfig is called to reset to defaults
+				PrepareTestConfig()
+
+				// Test default values match config defaults
+				assert.Equal(t, "/var/run/openvswitch/", ovsRunDir)
+				assert.Equal(t, "/var/run/ovn/", ovnRunDir)
+				assert.Equal(t, "/etc/ovn/ovnnb_db.db", config.OvnNorth.DbLocation)
+				assert.Equal(t, "/etc/ovn/ovnsb_db.db", config.OvnSouth.DbLocation)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, tt.testFunc)
+	}
+}
