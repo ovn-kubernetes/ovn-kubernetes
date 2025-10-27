@@ -1387,6 +1387,174 @@ var _ = Describe("Node Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
+		It("inits iptables rules and openflows with LoadBalancer where ETP=local, SGW mode, with named ports, with "+
+			"host networked pods and with external IP", func() {
+			app.Action = func(*cli.Context) error {
+				nodeName := "node"
+				svcPortName := "https-port"
+				svcTargetPortName := "https-target"
+				svcStatusIPMode := corev1.LoadBalancerIPModeVIP
+				config.Gateway.Mode = config.GatewayModeShared
+				svcNodePort := int32(31111)
+				svcPort := int32(8080)
+				externalIP := "1.1.1.1"
+				svcStatusIP := "5.5.5.5"
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
+					Cmd: "ovs-ofctl show ",
+					Err: fmt.Errorf("deliberate error to fall back to output:LOCAL"),
+				})
+				fExec.AddFakeCmd(&ovntest.ExpectedCmd{
+					Cmd: "ovs-ofctl show ",
+					Err: fmt.Errorf("deliberate error to fall back to output:LOCAL"),
+				})
+				service := *newService("service1", "namespace1", "10.129.0.2",
+					[]corev1.ServicePort{
+						{
+							Name:       svcPortName,
+							NodePort:   svcNodePort,
+							Protocol:   corev1.ProtocolTCP,
+							Port:       svcPort,
+							TargetPort: intstr.FromString(svcTargetPortName),
+						},
+					},
+					corev1.ServiceTypeLoadBalancer,
+					[]string{externalIP},
+					corev1.ServiceStatus{
+						LoadBalancer: corev1.LoadBalancerStatus{
+							Ingress: []corev1.LoadBalancerIngress{{
+								IP:     svcStatusIP,
+								IPMode: &svcStatusIPMode,
+							}},
+						},
+					},
+					true, false,
+				)
+				epPortValue := int32(8888)
+				epPortProtocol := corev1.ProtocolTCP
+				ep1 := discovery.Endpoint{
+					Addresses: []string{"192.168.18.15"}, // host-networked endpoint local to this node
+					NodeName:  &nodeName,
+				}
+				epPort1 := discovery.EndpointPort{
+					Name:     &svcPortName,
+					Port:     &epPortValue,
+					Protocol: &epPortProtocol,
+				}
+				endpointSlice := *newEndpointSlice(
+					"service1",
+					"namespace1",
+					[]discovery.Endpoint{ep1},
+					[]discovery.EndpointPort{epPort1},
+				)
+
+				stopChan := make(chan struct{})
+				fakeClient := util.GetOVNClientset(&service, &endpointSlice).GetNodeClientset()
+				wf, err := factory.NewNodeWatchFactory(fakeClient, nodeName)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(wf.Start()).To(Succeed())
+				defer func() {
+					close(stopChan)
+					wf.Shutdown()
+				}()
+				fNPW.watchFactory = wf
+				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
+
+				expectedTables := map[string]util.FakeTable{
+					"nat": {
+						"PREROUTING": []string{
+							"-j OVN-KUBE-ETP",
+							"-j OVN-KUBE-EXTERNALIP",
+							"-j OVN-KUBE-NODEPORT",
+						},
+						"OUTPUT": []string{
+							"-j OVN-KUBE-EXTERNALIP",
+							"-j OVN-KUBE-NODEPORT",
+							"-j OVN-KUBE-ITP",
+						},
+						"OVN-KUBE-NODEPORT": []string{
+							fmt.Sprintf("-p %s -m addrtype --dst-type LOCAL --dport %v -j DNAT --to-destination %s:%v",
+								service.Spec.Ports[0].Protocol,
+								service.Spec.Ports[0].NodePort,
+								service.Spec.ClusterIP,
+								service.Spec.Ports[0].Port),
+						},
+						"OVN-KUBE-EXTERNALIP": []string{
+							fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%v",
+								service.Spec.Ports[0].Protocol,
+								svcStatusIP,
+								service.Spec.Ports[0].Port,
+								service.Spec.ClusterIP,
+								service.Spec.Ports[0].Port),
+							fmt.Sprintf("-p %s -d %s --dport %v -j DNAT --to-destination %s:%v",
+								service.Spec.Ports[0].Protocol,
+								externalIP,
+								service.Spec.Ports[0].Port,
+								service.Spec.ClusterIP,
+								service.Spec.Ports[0].Port),
+						},
+						"OVN-KUBE-ETP": []string{},
+						"OVN-KUBE-ITP": []string{},
+					},
+					"filter": {},
+					"mangle": {
+						"OUTPUT": []string{
+							"-j OVN-KUBE-ITP",
+						},
+						"OVN-KUBE-ITP": []string{},
+					},
+				}
+				expectedNodePortFlows := []string{
+					fmt.Sprintf("cookie=0x453ae29bcbbc08bd, priority=110, in_port=eth0, tcp, tp_dst=%d, "+
+						"actions=ct(commit,zone=64003,nat(dst=%s:%d),table=6)", svcNodePort, v4localnetGatewayIP, epPortValue),
+					"cookie=0xe745ecf105, priority=110, table=6, actions=output:LOCAL",
+					fmt.Sprintf("cookie=0x453ae29bcbbc08bd, priority=110, in_port=LOCAL, tcp, tp_src=%d, "+
+						"actions=ct(zone=64003 nat,table=7)", epPortValue),
+					"cookie=0xe745ecf105, priority=110, table=7, actions=output:eth0",
+				}
+				expectedLBIngressFlows := []string{
+					fmt.Sprintf("cookie=0x10c6b89e483ea111, priority=110, in_port=eth0, arp, arp_op=1, arp_tpa=%s, "+
+						"actions=output:LOCAL", svcStatusIP),
+					fmt.Sprintf("cookie=0x10c6b89e483ea111, priority=110, in_port=eth0, tcp, nw_dst=%s, tp_dst=%d, "+
+						"actions=ct(commit,zone=64003,nat(dst=%s:%d),table=6)",
+						svcStatusIP, svcPort, v4localnetGatewayIP, epPortValue),
+					"cookie=0xe745ecf105, priority=110, table=6, actions=output:LOCAL",
+					fmt.Sprintf("cookie=0x10c6b89e483ea111, priority=110, in_port=LOCAL, tcp, tp_src=%d, "+
+						"actions=ct(commit,zone=64003 nat,table=7)", epPortValue),
+					"cookie=0xe745ecf105, priority=110, table=7, actions=output:eth0",
+				}
+				expectedLBExternalIPFlows := []string{
+					fmt.Sprintf("cookie=0x71765945a31dc2f1, priority=110, in_port=eth0, arp, arp_op=1, arp_tpa=%s, "+
+						"actions=output:LOCAL", externalIP),
+					fmt.Sprintf("cookie=0x71765945a31dc2f1, priority=110, in_port=eth0, tcp, nw_dst=%s, tp_dst=%d, "+
+						"actions=ct(commit,zone=64003,nat(dst=%s:%d),table=6)",
+						externalIP, svcPort, v4localnetGatewayIP, epPortValue),
+					"cookie=0xe745ecf105, priority=110, table=6, actions=output:LOCAL",
+					fmt.Sprintf("cookie=0x71765945a31dc2f1, priority=110, in_port=LOCAL, tcp, tp_src=%d, "+
+						"actions=ct(commit,zone=64003 nat,table=7)", epPortValue),
+					"cookie=0xe745ecf105, priority=110, table=7, actions=output:eth0",
+				}
+
+				f4 := iptV4.(*util.FakeIPTables)
+				err = f4.MatchState(expectedTables, nil)
+				Expect(err).NotTo(HaveOccurred())
+
+				expectedNFT := getBaseNFTRules(types.K8sMgmtIntfName)
+				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
+				Expect(err).NotTo(HaveOccurred())
+
+				flows := fNPW.ofm.getFlowsByKey("NodePort_namespace1_service1_tcp_31111")
+				Expect(flows).To(Equal(expectedNodePortFlows))
+				flows = fNPW.ofm.getFlowsByKey("Ingress_namespace1_service1_5.5.5.5_8080")
+				Expect(flows).To(Equal(expectedLBIngressFlows))
+				flows = fNPW.ofm.getFlowsByKey("External_namespace1_service1_1.1.1.1_8080")
+				Expect(flows).To(Equal(expectedLBExternalIPFlows))
+
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			Expect(err).NotTo(HaveOccurred())
+		})
+
 		It("inits iptables rules with DualStack NodePort", func() {
 			app.Action = func(*cli.Context) error {
 				nodePort := int32(31111)
