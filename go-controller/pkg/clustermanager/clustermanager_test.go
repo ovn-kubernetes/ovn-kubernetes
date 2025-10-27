@@ -18,6 +18,7 @@ import (
 
 	hotypes "github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	networkconnect "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
@@ -860,7 +861,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				clientSet := util.GetOVNClientset(nad1, nad2)
 
 				// init the allocator that should reserve already allocated keys for test1
-				allocator, err := initTunnelKeysAllocator(clientSet.NetworkAttchDefClient)
+				allocator, err := initTunnelKeysAllocator(clientSet.NetworkAttchDefClient, clientSet.NetworkConnectClient)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				// check that reserving different keys for test2 will fail
 				err = allocator.ReserveKeys("test1", []int{16711685, 16715779})
@@ -878,6 +879,119 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				ids, err = allocator.AllocateKeys("test3", 3, 2)
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 				gomega.Expect(ids).To(gomega.Equal([]int{16711686, 16715781}))
+				return nil
+			}
+
+			err := app.Run([]string{
+				app.Name,
+				"-cluster-subnets=" + clusterCIDR,
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("check for CNC tunnel keys allocations", func() {
+			app.Action = func(_ *cli.Context) error {
+				// CNC uses networkID 4097 (4096+1) which allocates from the idsAllocator range
+				// The idsAllocator starts at 16715779 (16711683 + 4096)
+				// create CNC with already allocated tunnel key
+				cnc1 := &networkconnect.ClusterNetworkConnect{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "cnc1",
+						Annotations: map[string]string{
+							util.OvnConnectRouterTunnelKeyAnnotation: "16715779",
+						},
+					},
+				}
+				// create CNC without tunnel key annotation
+				cnc2 := &networkconnect.ClusterNetworkConnect{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "cnc2",
+					},
+				}
+				clientSet := util.GetOVNClientset(cnc1, cnc2)
+
+				// init the allocator that should reserve already allocated key for cnc1
+				allocator, err := initTunnelKeysAllocator(clientSet.NetworkAttchDefClient, clientSet.NetworkConnectClient)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				// check that reserving different keys for cnc1 will fail
+				err = allocator.ReserveKeys("cnc1", []int{16715780})
+				gomega.Expect(err).To(gomega.HaveOccurred())
+				gomega.Expect(err.Error()).To(gomega.ContainSubstring("can't reserve ids [16715780] for the resource cnc1. It is already allocated with different ids [16715779]"))
+				// now try to allocate key for cnc1 (using networkID 4097 as CNCs do)
+				// and check that returned ID is the already reserved one
+				ids, err := allocator.AllocateKeys("cnc1", 4097, 1)
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				gomega.Expect(ids).To(gomega.Equal([]int{16715779}))
+				// now allocate id for cnc2 (which had no annotation, also using networkID 4097)
+				ids, err = allocator.AllocateKeys("cnc2", 4097, 1)
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				gomega.Expect(ids).To(gomega.Equal([]int{16715780}))
+				// now try cnc3 to make sure IDs of cnc1 and cnc2 are not allocated again
+				ids, err = allocator.AllocateKeys("cnc3", 4097, 1)
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				gomega.Expect(ids).To(gomega.Equal([]int{16715781}))
+				return nil
+			}
+
+			err := app.Run([]string{
+				app.Name,
+				"-cluster-subnets=" + clusterCIDR,
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("check for combined NAD and CNC tunnel keys allocations", func() {
+			app.Action = func(_ *cli.Context) error {
+				// create NAD with already allocated tunnel keys
+				// NAD with networkID 2 gets keys: [16711685 (preserved), 16715779 (idsAllocator)]
+				nad1 := testing.GenerateNAD("test1", "test1", "test", ovntypes.Layer2Topology,
+					"10.0.0.0/24", ovntypes.NetworkRolePrimary)
+				nad1.Annotations = map[string]string{
+					ovntypes.OvnNetworkTunnelKeysAnnotation: "[16711685,16715779]",
+				}
+				// create CNC with already allocated tunnel key
+				// CNC uses networkID 4097, so it gets keys from idsAllocator range (16715779+)
+				cnc1 := &networkconnect.ClusterNetworkConnect{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "cnc1",
+						Annotations: map[string]string{
+							util.OvnConnectRouterTunnelKeyAnnotation: "16715780",
+						},
+					},
+				}
+				clientSet := util.GetOVNClientset(nad1, cnc1)
+
+				// init the allocator that should reserve keys for both NAD and CNC
+				allocator, err := initTunnelKeysAllocator(clientSet.NetworkAttchDefClient, clientSet.NetworkConnectClient)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				// verify NAD keys are reserved (networkID 2 => first key from preserved range)
+				ids, err := allocator.AllocateKeys("test1", 2, 2)
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				gomega.Expect(ids).To(gomega.Equal([]int{16711685, 16715779}))
+				// verify CNC key is reserved (networkID 4097 => all keys from idsAllocator)
+				ids, err = allocator.AllocateKeys("cnc1", 4097, 1)
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				gomega.Expect(ids).To(gomega.Equal([]int{16715780}))
+				// test conflict: CNC tries to reserve NAD's random pool key (16715779)
+				err = allocator.ReserveKeys("conflicting-cnc", []int{16715779})
+				gomega.Expect(err).To(gomega.HaveOccurred())
+				gomega.Expect(err.Error()).To(gomega.ContainSubstring("already reserved"))
+				// test conflict: NAD tries to reserve CNC's key (16715780)
+				err = allocator.ReserveKeys("conflicting-nad", []int{16715780})
+				gomega.Expect(err).To(gomega.HaveOccurred())
+				gomega.Expect(err.Error()).To(gomega.ContainSubstring("already reserved"))
+				// allocate new keys for a new NAD (networkID 3) and ensure reserved keys are not reused
+				ids, err = allocator.AllocateKeys("newnetwork", 3, 2)
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				// first key: 16711686 (preserved range for networkID 3)
+				// second key: 16715781 (skipping 16715779 for test1 and 16715780 for cnc1)
+				gomega.Expect(ids).To(gomega.Equal([]int{16711686, 16715781}))
+				// allocate new keys for a resource with networkID > 4096 (like CNCs do)
+				// this should get ALL keys from the random pool, no deterministic key
+				ids, err = allocator.AllocateKeys("newresource", 4097, 2)
+				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				// both keys from random pool: 16715782, 16715783 (skipping all previously allocated)
+				gomega.Expect(ids).To(gomega.Equal([]int{16715782, 16715783}))
 				return nil
 			}
 
