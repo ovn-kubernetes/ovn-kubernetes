@@ -92,12 +92,13 @@ func NewClusterManager(
 	}
 
 	cm.networkManager = networkmanager.Default()
+	var tunnelKeysAllocator *id.TunnelKeysAllocator
 	if config.OVNKubernetesFeature.EnableMultiNetwork {
 		// tunnelKeysAllocator is now only used for NAD tunnel keys allocation, but will be reused
 		// for Connecting UDNs. So we initialize it here and pass it to the networkManager.
 		// The same instance should be initialized only once and passed to all the
 		// users of tunnel-keys.
-		tunnelKeysAllocator, err := initTunnelKeysAllocator(ovnClient.NetworkAttchDefClient)
+		tunnelKeysAllocator, err = initTunnelKeysAllocator(ovnClient.NetworkAttchDefClient)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize tunnel keys allocator: %w", err)
 		}
@@ -175,7 +176,7 @@ func NewClusterManager(
 	}
 
 	if util.IsNetworkConnectEnabled() {
-		cm.networkConnectController = networkconnect.NewController(wf, ovnClient, cm.networkManager.Interface())
+		cm.networkConnectController = networkconnect.NewController(wf, ovnClient, cm.networkManager.Interface(), tunnelKeysAllocator)
 	}
 
 	if util.IsRouteAdvertisementsEnabled() {

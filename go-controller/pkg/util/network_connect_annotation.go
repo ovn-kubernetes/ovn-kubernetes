@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"strconv"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -13,7 +14,8 @@ import (
 )
 
 const (
-	ovnNetworkConnectSubnetAnnotation = "k8s.ovn.org/network-connect-subnet"
+	ovnNetworkConnectSubnetAnnotation   = "k8s.ovn.org/network-connect-subnet"
+	ovnConnectRouterTunnelKeyAnnotation = "k8s.ovn.org/connect-router-tunnel-key"
 )
 
 type NetworkConnectSubnetAnnotation struct {
@@ -95,4 +97,18 @@ func parseNetworkConnectSubnetAnnotation(annotations map[string]string) (map[str
 	}
 
 	return subnetsMap, nil
+}
+
+func UpdateNetworkConnectRouterTunnelKeyAnnotation(cnc *networkconnectv1.ClusterNetworkConnect, cncClient networkconnectclientset.Interface, tunnelID int) error {
+	annotations := cnc.GetAnnotations()
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+	annotations[ovnConnectRouterTunnelKeyAnnotation] = strconv.Itoa(tunnelID)
+	cnc.SetAnnotations(annotations)
+	_, err := cncClient.K8sV1().ClusterNetworkConnects().Update(context.TODO(), cnc, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to update network connect router tunnel key annotation: %v", err)
+	}
+	return nil
 }
