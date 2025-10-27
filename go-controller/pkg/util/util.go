@@ -732,6 +732,14 @@ func (le LBEndpoints) GetV6Destinations() []IPPort {
 // Port is the endpoint port (the one exposed by the pod) and IPs are the IP addresses of the backend pods.
 type PortToLBEndpoints map[string]LBEndpoints
 
+// GetLBEndpoints returns the LBEndpoints belonging to key, or an error otherwise.
+func (p PortToLBEndpoints) GetLBEndpoints(key string) (LBEndpoints, error) {
+	if lbe, ok := p[key]; ok {
+		return lbe, nil
+	}
+	return LBEndpoints{}, fmt.Errorf("cannot find key %q in PortToLBEndpoints %+v", key, p)
+}
+
 // GetAddresses returns all unique IP addresses from all ports in the PortToLBEndpoints map.
 // e.g. for PortToLBEndpoints{"TCP/http": {Port: 8080, V4IPs: ["192.168.1.10"]}, "UDP/dns": {Port: 53, V4IPs: ["192.168.1.11"]}},
 // returns sets.Set{"192.168.1.10", "192.168.1.11"}.

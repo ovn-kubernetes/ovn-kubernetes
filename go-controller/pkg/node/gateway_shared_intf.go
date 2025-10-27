@@ -243,7 +243,8 @@ func (npw *nodePortWatcher) updateGatewayIPs() {
 //
 // `add` parameter indicates if the flows should exist or be removed from the cache
 // `hasLocalHostNetworkEp` indicates if at least one host networked endpoint exists for this service which is local to this node.
-func (npw *nodePortWatcher) updateServiceFlowCache(service *corev1.Service, netInfo util.NetInfo, add, hasLocalHostNetworkEp bool) error {
+func (npw *nodePortWatcher) updateServiceFlowCache(service *corev1.Service, netInfo util.NetInfo, add,
+	hasLocalHostNetworkEp bool, localEndpoints util.PortToLBEndpoints) error {
 	if config.Gateway.Mode == config.GatewayModeLocal && config.Gateway.AllowNoUplink && npw.ofportPhys == "" {
 		// if LGW mode and no uplink gateway bridge, ingress traffic enters host from node physical interface instead of the breth0. Skip adding these service flows to br-ex.
 		return nil
@@ -300,19 +301,35 @@ func (npw *nodePortWatcher) updateServiceFlowCache(service *corev1.Service, netI
 				// Flows that will DNAT all traffic coming into nodeport to the nodeIP:Port and
 				// ensure that the return traffic is UnDNATed to correct the nodeIP:Nodeport
 				if isServiceTypeETPLocal && hasLocalHostNetworkEp {
+					// Get the target port (this is important for named ports).
+					svcPortKey := util.GetServicePortKey(svcPort.Protocol, svcPort.Name)
+					lbe, err := localEndpoints.GetLBEndpoints(svcPortKey)
+					if err != nil {
+						errors = append(errors, err)
+						continue
+					}
+					targetPort := lbe.Port
+
 					// case1 (see function description for details)
 					var nodeportFlows []string
-					klog.V(5).Infof("Adding flows on breth0 for Nodeport Service %s in Namespace: %s since ExternalTrafficPolicy=local", service.Name, service.Namespace)
+					klog.V(5).Infof("Adding flows on breth0 for Nodeport Service %s with targetPort %d in "+
+						"Namespace: %s since ExternalTrafficPolicy=local", service.Name, targetPort, service.Namespace)
 					// table 0, This rule matches on all traffic with dst port == NodePort, DNAT's the nodePort to the svc targetPort
 					// If ipv6 make sure to choose the ipv6 node address for rule
 					if strings.Contains(flowProtocol, "6") {
+						// Regardless of the IP addresses in the local endpoints list, we always send to npw.gatewayIPv6.
 						nodeportFlows = append(nodeportFlows,
-							fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, tp_dst=%d, actions=ct(commit,zone=%d,nat(dst=[%s]:%s),table=6)",
-								cookie, npw.ofportPhys, flowProtocol, svcPort.NodePort, config.Default.HostNodePortConntrackZone, npw.gatewayIPv6, svcPort.TargetPort.String()))
+							fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, tp_dst=%d, "+
+								"actions=ct(commit,zone=%d,nat(dst=[%s]:%d),table=6)",
+								cookie, npw.ofportPhys, flowProtocol, svcPort.NodePort,
+								config.Default.HostNodePortConntrackZone, npw.gatewayIPv6, targetPort))
 					} else {
+						// Regardless of the IP addresses in the local endpoints list, we always send to npw.gatewayIPv4.
 						nodeportFlows = append(nodeportFlows,
-							fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, tp_dst=%d, actions=ct(commit,zone=%d,nat(dst=%s:%s),table=6)",
-								cookie, npw.ofportPhys, flowProtocol, svcPort.NodePort, config.Default.HostNodePortConntrackZone, npw.gatewayIPv4, svcPort.TargetPort.String()))
+							fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, tp_dst=%d, "+
+								"actions=ct(commit,zone=%d,nat(dst=%s:%d),table=6)",
+								cookie, npw.ofportPhys, flowProtocol, svcPort.NodePort,
+								config.Default.HostNodePortConntrackZone, npw.gatewayIPv4, targetPort))
 					}
 					nodeportFlows = append(nodeportFlows,
 						// table 6, Sends the packet to the host. Note that the constant etp svc cookie is used since this flow would be
@@ -320,8 +337,8 @@ func (npw *nodePortWatcher) updateServiceFlowCache(service *corev1.Service, netI
 						fmt.Sprintf("cookie=%s, priority=110, table=6, actions=output:LOCAL",
 							etpSvcOpenFlowCookie),
 						// table 0, Matches on return traffic, i.e traffic coming from the host networked pod's port, and unDNATs
-						fmt.Sprintf("cookie=%s, priority=110, in_port=LOCAL, %s, tp_src=%s, actions=ct(zone=%d nat,table=7)",
-							cookie, flowProtocol, svcPort.TargetPort.String(), config.Default.HostNodePortConntrackZone),
+						fmt.Sprintf("cookie=%s, priority=110, in_port=LOCAL, %s, tp_src=%d, actions=ct(zone=%d nat,table=7)",
+							cookie, flowProtocol, targetPort, config.Default.HostNodePortConntrackZone),
 						// table 7, Sends the packet back out eth0 to the external client. Note that the constant etp svc
 						// cookie is used since this would be same for all such services.
 						fmt.Sprintf("cookie=%s, priority=110, table=7, "+
@@ -378,13 +395,13 @@ func (npw *nodePortWatcher) updateServiceFlowCache(service *corev1.Service, netI
 					err)
 			}
 		}
-		if err = npw.createLbAndExternalSvcFlows(service, netConfig, &svcPort, add, hasLocalHostNetworkEp, protocol, actions,
-			ingParsedIPs, "Ingress", ofPorts); err != nil {
+		if err = npw.createLbAndExternalSvcFlows(service, netConfig, &svcPort, add, hasLocalHostNetworkEp,
+			localEndpoints, protocol, actions, ingParsedIPs, "Ingress", ofPorts); err != nil {
 			errors = append(errors, err)
 		}
 
-		if err = npw.createLbAndExternalSvcFlows(service, netConfig, &svcPort, add, hasLocalHostNetworkEp, protocol, actions,
-			extParsedIPs, "External", ofPorts); err != nil {
+		if err = npw.createLbAndExternalSvcFlows(service, netConfig, &svcPort, add, hasLocalHostNetworkEp,
+			localEndpoints, protocol, actions, extParsedIPs, "External", ofPorts); err != nil {
 			errors = append(errors, err)
 		}
 	}
@@ -464,8 +481,10 @@ func (npw *nodePortWatcher) updateServiceFlowCache(service *corev1.Service, netI
 // `actions`: "send to patchport"
 // `externalIPOrLBIngressIP` is either externalIP.IP or LB.status.ingress.IP
 // `ipType` is either "External" or "Ingress"
-func (npw *nodePortWatcher) createLbAndExternalSvcFlows(service *corev1.Service, netConfig *bridgeconfig.BridgeUDNConfiguration, svcPort *corev1.ServicePort, add bool,
-	hasLocalHostNetworkEp bool, protocol string, actions string, externalIPOrLBIngressIPs []string, ipType string, ofPorts []string) error {
+func (npw *nodePortWatcher) createLbAndExternalSvcFlows(service *corev1.Service, netConfig *bridgeconfig.BridgeUDNConfiguration,
+	svcPort *corev1.ServicePort, add bool, hasLocalHostNetworkEp bool, localEndpoints util.PortToLBEndpoints,
+	protocol string, actions string, externalIPOrLBIngressIPs []string, ipType string, ofPorts []string) error {
+	var errors []error
 
 	for _, externalIPOrLBIngressIP := range externalIPOrLBIngressIPs {
 		// each path has per IP generates about 4-5 flows. So we preallocate a slice with capacity.
@@ -505,18 +524,33 @@ func (npw *nodePortWatcher) createLbAndExternalSvcFlows(service *corev1.Service,
 		// to the ingress / external IP
 		isServiceTypeETPLocal := util.ServiceExternalTrafficPolicyLocal(service)
 		if isServiceTypeETPLocal && hasLocalHostNetworkEp {
+			// Get the target port (this is important for named ports).
+			svcPortKey := util.GetServicePortKey(svcPort.Protocol, svcPort.Name)
+			lbe, err := localEndpoints.GetLBEndpoints(svcPortKey)
+			if err != nil {
+				errors = append(errors, err)
+				continue
+			}
+			targetPort := lbe.Port
+
 			// case1 (see function description for details)
 			klog.V(5).Infof("Adding flows on breth0 for %s Service %s in Namespace: %s since ExternalTrafficPolicy=local", ipType, service.Name, service.Namespace)
 			// table 0, This rule matches on all traffic with dst ip == LoadbalancerIP / externalIP, DNAT's the nodePort to the svc targetPort
 			// If ipv6 make sure to choose the ipv6 node address for rule
 			if strings.Contains(flowProtocol, "6") {
+				// Regardless of the IP addresses in the local endpoints list, we always send to npw.gatewayIPv6.
 				externalIPFlows = append(externalIPFlows,
-					fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, %s=%s, tp_dst=%d, actions=ct(commit,zone=%d,nat(dst=[%s]:%s),table=6)",
-						cookie, npw.ofportPhys, flowProtocol, nwDst, externalIPOrLBIngressIP, svcPort.Port, config.Default.HostNodePortConntrackZone, npw.gatewayIPv6, svcPort.TargetPort.String()))
+					fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, %s=%s, tp_dst=%d, "+
+						"actions=ct(commit,zone=%d,nat(dst=[%s]:%d),table=6)",
+						cookie, npw.ofportPhys, flowProtocol, nwDst, externalIPOrLBIngressIP, svcPort.Port,
+						config.Default.HostNodePortConntrackZone, npw.gatewayIPv6, targetPort))
 			} else {
+				// Regardless of the IP addresses in the local endpoints list, we always send to npw.gatewayIPv4.
 				externalIPFlows = append(externalIPFlows,
-					fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, %s=%s, tp_dst=%d, actions=ct(commit,zone=%d,nat(dst=%s:%s),table=6)",
-						cookie, npw.ofportPhys, flowProtocol, nwDst, externalIPOrLBIngressIP, svcPort.Port, config.Default.HostNodePortConntrackZone, npw.gatewayIPv4, svcPort.TargetPort.String()))
+					fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, %s=%s, tp_dst=%d, "+
+						"actions=ct(commit,zone=%d,nat(dst=%s:%d),table=6)",
+						cookie, npw.ofportPhys, flowProtocol, nwDst, externalIPOrLBIngressIP, svcPort.Port,
+						config.Default.HostNodePortConntrackZone, npw.gatewayIPv4, targetPort))
 			}
 			externalIPFlows = append(externalIPFlows,
 				// table 6, Sends the packet to Host. Note that the constant etp svc cookie is used since this flow would be
@@ -524,8 +558,8 @@ func (npw *nodePortWatcher) createLbAndExternalSvcFlows(service *corev1.Service,
 				fmt.Sprintf("cookie=%s, priority=110, table=6, actions=output:LOCAL",
 					etpSvcOpenFlowCookie),
 				// table 0, Matches on return traffic, i.e traffic coming from the host networked pod's port, and unDNATs
-				fmt.Sprintf("cookie=%s, priority=110, in_port=LOCAL, %s, tp_src=%s, actions=ct(commit,zone=%d nat,table=7)",
-					cookie, flowProtocol, svcPort.TargetPort.String(), config.Default.HostNodePortConntrackZone),
+				fmt.Sprintf("cookie=%s, priority=110, in_port=LOCAL, %s, tp_src=%d, actions=ct(commit,zone=%d nat,table=7)",
+					cookie, flowProtocol, targetPort, config.Default.HostNodePortConntrackZone),
 				// table 7, Sends the reply packet back out eth0 to the external client. Note that the constant etp svc
 				// cookie is used since this would be same for all such services.
 				fmt.Sprintf("cookie=%s, priority=110, table=7, actions=output:%s",
@@ -548,7 +582,7 @@ func (npw *nodePortWatcher) createLbAndExternalSvcFlows(service *corev1.Service,
 		npw.ofm.updateFlowCacheEntry(key, externalIPFlows)
 	}
 
-	return nil
+	return utilerrors.Join(errors...)
 }
 
 // generate ARP/NS bypass flow which will send the ARP/NS request everywhere *but* to OVN
@@ -678,7 +712,7 @@ func addServiceRules(service *corev1.Service, netInfo util.NetInfo, localEndpoin
 	var errors []error
 	var activeNetwork *bridgeconfig.BridgeUDNConfiguration
 	if npw != nil {
-		if err = npw.updateServiceFlowCache(service, netInfo, true, svcHasLocalHostNetEndPnt); err != nil {
+		if err = npw.updateServiceFlowCache(service, netInfo, true, svcHasLocalHostNetEndPnt, localEndpoints); err != nil {
 			errors = append(errors, err)
 		}
 		npw.ofm.requestFlowSync()
@@ -721,7 +755,7 @@ func delServiceRules(service *corev1.Service, localEndpoints util.PortToLBEndpoi
 	var errors []error
 	// full mode || dpu mode
 	if npw != nil {
-		if err = npw.updateServiceFlowCache(service, nil, false, false); err != nil {
+		if err = npw.updateServiceFlowCache(service, nil, false, false, localEndpoints); err != nil {
 			errors = append(errors, fmt.Errorf("error updating service flow cache: %v", err))
 		}
 		npw.ofm.requestFlowSync()
@@ -860,7 +894,7 @@ func (npw *nodePortWatcher) AddService(service *corev1.Service) error {
 	} else {
 		// Need to update flows here in case an attribute of the gateway has changed, such as MAC address
 		klog.V(5).Infof("Updating already programmed rules for %s in namespace %s", service.Name, service.Namespace)
-		if err = npw.updateServiceFlowCache(service, netInfo, true, hasLocalHostNetworkEp); err != nil {
+		if err = npw.updateServiceFlowCache(service, netInfo, true, hasLocalHostNetworkEp, localEndpoints); err != nil {
 			return fmt.Errorf("failed to update flows for service %s/%s: %w", service.Namespace, service.Name, err)
 		}
 		npw.ofm.requestFlowSync()
@@ -1032,10 +1066,10 @@ func (npw *nodePortWatcher) SyncServices(services []interface{}) error {
 		npw.getAndSetServiceInfo(name, service, hasLocalHostNetworkEp, localEndpoints)
 
 		// Delete OF rules for service if they exist
-		if err = npw.updateServiceFlowCache(service, netInfo, false, hasLocalHostNetworkEp); err != nil {
+		if err = npw.updateServiceFlowCache(service, netInfo, false, hasLocalHostNetworkEp, localEndpoints); err != nil {
 			errors = append(errors, err)
 		}
-		if err = npw.updateServiceFlowCache(service, netInfo, true, hasLocalHostNetworkEp); err != nil {
+		if err = npw.updateServiceFlowCache(service, netInfo, true, hasLocalHostNetworkEp, localEndpoints); err != nil {
 			errors = append(errors, err)
 		}
 		// Add correct netfilter rules only for Full mode
