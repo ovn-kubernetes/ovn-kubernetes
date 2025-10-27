@@ -71,7 +71,16 @@ func (c *Controller) reconcileClusterNetworkConnect(key string) error {
 		}
 	}
 	// STEP4: Generate a tunnelID for the connect router corresponding to this CNC
-
+	// passing a value greater than 4096 as networkID - actually we don't need this value,
+	// but it's required by the allocator.
+	tunnelID, err := c.tunnelKeysAllocator.AllocateKeys(cnc.Name, 4096+1, 1)
+	if err != nil {
+		return err
+	}
+	err = util.UpdateNetworkConnectRouterTunnelKeyAnnotation(cnc, c.cncClient, tunnelID[0])
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
