@@ -47,6 +47,14 @@ func (c *Controller) reconcileClusterNetworkConnect(key string) error {
 		// Clean up the cache
 		// Note: allocator cleanup is not needed - it will be garbage collected
 		// when the cache entry is deleted below since it's self-contained per-CNC
+		// Annotations also don't need to be removed since object is already deleted.
+		if cncExists {
+			// Release tunnel key
+			c.tunnelKeysAllocator.ReleaseKeys(cncName)
+			klog.V(4).Infof("Released tunnel key for deleted CNC %s", cncName)
+		}
+
+		// Clean up the cache
 		delete(c.cncCache, cncName)
 		klog.V(4).Infof("Cleaned up cache for deleted CNC %s", cncName)
 		return nil
@@ -83,6 +91,22 @@ func (c *Controller) reconcileClusterNetworkConnect(key string) error {
 	}
 	// STEP1: Validate the CNC
 	// STEP2: Generate a tunnelID for the connect router corresponding to this CNC
+	// passing a value greater than 4096 as networkID - actually we don't need this value,
+	// but it's required by the allocator to ensure that the prederministic tunnel keys
+	// that are derived from the networkID are not reused for backwards compatibility reasons.
+	// So we want to skip that range and use the next available tunnel key.
+	// do this only if the CNC is being created - its a one time allocation.
+	if cncState.tunnelID == 0 { // cncState will exist as its created above
+		tunnelID, err := c.tunnelKeysAllocator.AllocateKeys(cnc.Name, 4096+1, 1)
+		if err != nil {
+			return fmt.Errorf("failed to allocate tunnel key for CNC %s: %w", cncName, err)
+		}
+		err = util.UpdateNetworkConnectRouterTunnelKeyAnnotation(cnc.Name, c.cncClient, tunnelID[0])
+		if err != nil {
+			return fmt.Errorf("failed to update network connect router tunnel key annotation for CNC %s: %w", cncName, err)
+		}
+		cncState.tunnelID = tunnelID[0]
+	}
 	// STEP3: Discover the selected UDNs and CUDNs
 	// Discovery, allocation, and release continue on per-network errors, so healthy networks
 	// make progress. Errors are aggregated and returned at the end.
@@ -122,7 +146,6 @@ func (c *Controller) reconcileClusterNetworkConnect(key string) error {
 			return fmt.Errorf("failed to update network connect subnet annotation for CNC %s: %w", cncName, err)
 		}
 	}
-
 	// plumbing is now done, update the cache with latest
 	cncState.selectedNADs = allMatchingNADKeys
 	klog.V(5).Infof("Updated selectedNADs cache for CNC %s with %d NADs", cncName, allMatchingNADKeys.Len())

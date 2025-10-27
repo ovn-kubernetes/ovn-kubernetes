@@ -19,6 +19,7 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
 	controllerutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
 	networkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
 	networkconnectclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/clientset/versioned"
@@ -59,6 +60,8 @@ type clusterNetworkConnectState struct {
 	// Owner keys are computed from topology type (layer3 or layer2) and network ID, enabling subnet release
 	// without needing to re-discover network info.
 	selectedNetworks sets.Set[string]
+	// tunnelID for this CNC's connect router
+	tunnelID int
 }
 
 type Controller struct {
@@ -81,26 +84,29 @@ type Controller struct {
 	// We can improve this later by using a more fine-grained lock based on performance testing
 	sync.RWMutex
 	// holds the state for each CNC keyed by CNC name
-	cncCache map[string]*clusterNetworkConnectState
+	cncCache            map[string]*clusterNetworkConnectState
+	tunnelKeysAllocator *id.TunnelKeysAllocator
 }
 
 func NewController(
 	wf *factory.WatchFactory,
 	ovnClient *util.OVNClusterManagerClientset,
 	networkManager networkmanager.Interface,
+	tunnelKeysAllocator *id.TunnelKeysAllocator,
 ) *Controller {
 	cncLister := wf.ClusterNetworkConnectInformer().Lister()
 	nadLister := wf.NADInformer().Lister()
 
 	c := &Controller{
-		wf:              wf,
-		cncClient:       ovnClient.NetworkConnectClient,
-		nadClient:       ovnClient.NetworkAttchDefClient,
-		cncLister:       cncLister,
-		nadLister:       nadLister,
-		namespaceLister: wf.NamespaceInformer().Lister(),
-		networkManager:  networkManager,
-		cncCache:        make(map[string]*clusterNetworkConnectState),
+		wf:                  wf,
+		cncClient:           ovnClient.NetworkConnectClient,
+		nadClient:           ovnClient.NetworkAttchDefClient,
+		cncLister:           cncLister,
+		nadLister:           nadLister,
+		namespaceLister:     wf.NamespaceInformer().Lister(),
+		networkManager:      networkManager,
+		cncCache:            make(map[string]*clusterNetworkConnectState),
+		tunnelKeysAllocator: tunnelKeysAllocator,
 	}
 
 	cncCfg := &controllerutil.ControllerConfig[networkconnectv1.ClusterNetworkConnect]{

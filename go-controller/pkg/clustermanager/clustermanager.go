@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strconv"
 
 	networkattchmentdefclientset "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned"
 
@@ -22,6 +23,7 @@ import (
 	udncontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork"
 	udntemplate "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/template"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	networkconnectclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1/apis/clientset/versioned"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
@@ -92,12 +94,13 @@ func NewClusterManager(
 	}
 
 	cm.networkManager = networkmanager.Default()
+	var tunnelKeysAllocator *id.TunnelKeysAllocator
 	if config.OVNKubernetesFeature.EnableMultiNetwork {
 		// tunnelKeysAllocator is now only used for NAD tunnel keys allocation, but will be reused
 		// for Connecting UDNs. So we initialize it here and pass it to the networkManager.
 		// The same instance should be initialized only once and passed to all the
 		// users of tunnel-keys.
-		tunnelKeysAllocator, err := initTunnelKeysAllocator(ovnClient.NetworkAttchDefClient)
+		tunnelKeysAllocator, err = initTunnelKeysAllocator(ovnClient.NetworkAttchDefClient, ovnClient.NetworkConnectClient)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize tunnel keys allocator: %w", err)
 		}
@@ -175,7 +178,7 @@ func NewClusterManager(
 	}
 
 	if util.IsNetworkConnectEnabled() {
-		cm.networkConnectController = networkconnect.NewController(wf, ovnClient, cm.networkManager.Interface())
+		cm.networkConnectController = networkconnect.NewController(wf, ovnClient, cm.networkManager.Interface(), tunnelKeysAllocator)
 	}
 
 	if util.IsRouteAdvertisementsEnabled() {
@@ -310,7 +313,7 @@ func (cm *ClusterManager) Reconcile(name string, old, new util.NetInfo) error {
 // It will be shared across multiple controllers and should account for different object types.
 // Good news is that we don't care about missing events, because we only need to reserve ids that are already
 // annotated, and no one else can annotate them except ClusterManager.
-func initTunnelKeysAllocator(nadClient networkattchmentdefclientset.Interface) (*id.TunnelKeysAllocator, error) {
+func initTunnelKeysAllocator(nadClient networkattchmentdefclientset.Interface, cncClient networkconnectclientset.Interface) (*id.TunnelKeysAllocator, error) {
 	tunnelKeysAllocator := id.NewTunnelKeyAllocator("TunnelKeys")
 
 	existingNADs, err := nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("").List(context.TODO(), metav1.ListOptions{})
@@ -336,6 +339,21 @@ func initTunnelKeysAllocator(nadClient networkattchmentdefclientset.Interface) (
 			}
 			if err = tunnelKeysAllocator.ReserveKeys(networkName, tunnelKeys); err != nil {
 				return nil, fmt.Errorf("failed to reserve tunnel keys %v for network %s: %w", tunnelKeys, networkName, err)
+			}
+		}
+	}
+	existingCNCs, err := cncClient.K8sV1().ClusterNetworkConnects().List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list existing CNCs: %w", err)
+	}
+	for _, cnc := range existingCNCs.Items {
+		if cnc.Annotations[util.OvnConnectRouterTunnelKeyAnnotation] != "" {
+			tunnelID, err := strconv.Atoi(cnc.Annotations[util.OvnConnectRouterTunnelKeyAnnotation])
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse annotated tunnel ID: %w", err)
+			}
+			if err = tunnelKeysAllocator.ReserveKeys(cnc.Name, []int{tunnelID}); err != nil {
+				return nil, fmt.Errorf("failed to reserve tunnel ID %d for CNC %s: %w", tunnelID, cnc.Name, err)
 			}
 		}
 	}

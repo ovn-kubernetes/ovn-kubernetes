@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"strconv"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
@@ -16,7 +17,9 @@ import (
 
 const (
 	ovnNetworkConnectSubnetAnnotation          = "k8s.ovn.org/network-connect-subnet"
+	OvnConnectRouterTunnelKeyAnnotation        = "k8s.ovn.org/connect-router-tunnel-key"
 	networkConnectSubnetAnnotationFieldManager = "ovn-kubernetes-network-connect-controller-subnet-annotation"
+	networkConnectRouterTunnelKeyFieldManager  = "ovn-kubernetes-network-connect-controller-tunnel-key-annotation"
 )
 
 type NetworkConnectSubnetAnnotation struct {
@@ -58,5 +61,25 @@ func UpdateNetworkConnectSubnetAnnotation(cnc *networkconnectv1.ClusterNetworkCo
 		return fmt.Errorf("failed to apply network connect subnet annotation: %v", err)
 	}
 	klog.V(5).Infof("Updated network connect subnet annotation for CNC %s with %d subnets", cnc.Name, len(allocatedSubnets))
+	return nil
+}
+
+// UpdateNetworkConnectRouterTunnelKeyAnnotation updates the router tunnel key annotation for the given CNC and given tunnel ID.
+// It uses the Apply method to patch the annotation and has its own manager field to avoid conflicts with other annotation patches
+// like the subnet annotation patch above.
+func UpdateNetworkConnectRouterTunnelKeyAnnotation(cncName string, cncClient networkconnectclientset.Interface, tunnelID int) error {
+	applyObj := networkconnectapply.ClusterNetworkConnect(cncName).
+		WithAnnotations(map[string]string{
+			OvnConnectRouterTunnelKeyAnnotation: strconv.Itoa(tunnelID),
+		})
+	_, err := cncClient.K8sV1().ClusterNetworkConnects().Apply(
+		context.TODO(),
+		applyObj,
+		metav1.ApplyOptions{FieldManager: networkConnectRouterTunnelKeyFieldManager, Force: true},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to apply network connect router tunnel key annotation: %v", err)
+	}
+	klog.V(5).Infof("Updated network connect router tunnel key annotation for CNC %s with tunnel ID %d", cncName, tunnelID)
 	return nil
 }
