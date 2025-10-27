@@ -532,6 +532,12 @@ func (npw *nodePortWatcher) createLbAndExternalSvcFlows(service *corev1.Service,
 				continue
 			}
 			targetPort := lbe.Port
+			targetPortCookie, err := svcToCookie(service.Namespace, service.Name, "", targetPort)
+			if err != nil {
+				klog.Warningf("Unable to generate target port cookie for %s svc: %s, %s, %d, error: %v",
+					ipType, service.Namespace, service.Name, targetPort, err)
+				targetPortCookie = "0"
+			}
 
 			// case1 (see function description for details)
 			klog.V(5).Infof("Adding flows on breth0 for %s Service %s in Namespace: %s since ExternalTrafficPolicy=local", ipType, service.Name, service.Namespace)
@@ -557,9 +563,10 @@ func (npw *nodePortWatcher) createLbAndExternalSvcFlows(service *corev1.Service,
 				// same for all such services.
 				fmt.Sprintf("cookie=%s, priority=110, table=6, actions=output:LOCAL",
 					etpSvcOpenFlowCookie),
-				// table 0, Matches on return traffic, i.e traffic coming from the host networked pod's port, and unDNATs
+				// table 0, Matches on return traffic, i.e traffic coming from the host networked pod's port, and unDNATs.
+				// Use targetPortCookie, as the flow will be the same for each ExternalIP / LB status IP.
 				fmt.Sprintf("cookie=%s, priority=110, in_port=LOCAL, %s, tp_src=%d, actions=ct(commit,zone=%d nat,table=7)",
-					cookie, flowProtocol, targetPort, config.Default.HostNodePortConntrackZone),
+					targetPortCookie, flowProtocol, targetPort, config.Default.HostNodePortConntrackZone),
 				// table 7, Sends the reply packet back out eth0 to the external client. Note that the constant etp svc
 				// cookie is used since this would be same for all such services.
 				fmt.Sprintf("cookie=%s, priority=110, table=7, actions=output:%s",
