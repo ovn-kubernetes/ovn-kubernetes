@@ -1518,7 +1518,7 @@ var _ = Describe("Node Operations", func() {
 						"actions=ct(commit,zone=64003,nat(dst=%s:%d),table=6)",
 						svcStatusIP, svcPort, v4localnetGatewayIP, epPortValue),
 					"cookie=0xe745ecf105, priority=110, table=6, actions=output:LOCAL",
-					fmt.Sprintf("cookie=0x10c6b89e483ea111, priority=110, in_port=LOCAL, tcp, tp_src=%d, "+
+					fmt.Sprintf("cookie=0x3ae7a2ee9dfc2625, priority=110, in_port=LOCAL, tcp, tp_src=%d, "+
 						"actions=ct(commit,zone=64003 nat,table=7)", epPortValue),
 					"cookie=0xe745ecf105, priority=110, table=7, actions=output:eth0",
 				}
@@ -1529,7 +1529,7 @@ var _ = Describe("Node Operations", func() {
 						"actions=ct(commit,zone=64003,nat(dst=%s:%d),table=6)",
 						externalIP, svcPort, v4localnetGatewayIP, epPortValue),
 					"cookie=0xe745ecf105, priority=110, table=6, actions=output:LOCAL",
-					fmt.Sprintf("cookie=0x71765945a31dc2f1, priority=110, in_port=LOCAL, tcp, tp_src=%d, "+
+					fmt.Sprintf("cookie=0x3ae7a2ee9dfc2625, priority=110, in_port=LOCAL, tcp, tp_src=%d, "+
 						"actions=ct(commit,zone=64003 nat,table=7)", epPortValue),
 					"cookie=0xe745ecf105, priority=110, table=7, actions=output:eth0",
 				}
