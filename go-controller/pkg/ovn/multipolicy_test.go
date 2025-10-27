@@ -658,7 +658,7 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 				node := *newNode(nodeName, "192.168.126.202/24")
 
 				startOvn(initialDB, watchNodes, []corev1.Node{node}, []corev1.Namespace{namespace1, namespace2}, nil, nil,
-					[]nettypes.NetworkAttachmentDefinition{*nad}, []testPod{nPodTest}, map[string]string{labelName: labelVal})
+					[]nettypes.NetworkAttachmentDefinition{*nad, *nad2}, []testPod{nPodTest}, map[string]string{labelName: labelVal})
 
 				ginkgo.By("Creating multi-networkPolicy applied to the pod")
 				mpolicy := convertNetPolicyToMultiNetPolicy(networkPolicy)
@@ -689,14 +689,15 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData(expectedData2))
 
 				ginkgo.By("Updating the multi network policy ingress and egress rules")
+				intstrPort := intstr.FromInt(int(portNum + 1))
 				mpolicy.Spec.Ingress = []mnpapi.MultiNetworkPolicyIngressRule{{
 					Ports: []mnpapi.MultiNetworkPolicyPort{{
-						Port: &intstr.IntOrString{IntVal: portNum + 1},
+						Port: &intstrPort,
 					}},
 				}}
 				mpolicy.Spec.Egress = []mnpapi.MultiNetworkPolicyEgressRule{{
 					Ports: []mnpapi.MultiNetworkPolicyPort{{
-						Port: &intstr.IntOrString{IntVal: portNum + 1},
+						Port: &intstrPort,
 					}},
 				}}
 
@@ -719,7 +720,7 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData(expectedData3))
 				gomega.Consistently(fakeOvn.nbClient).Should(libovsdb.HaveData(expectedData3))
 
-				ginkgo.By("Updating the multi network policy stateless OVN ACLs annotation")
+				ginkgo.By("Updating the multi network policy stateless OVN ACLs annotation to true")
 				mpolicy.Annotations[ovnStatelessNetPolAnnotationName] = "true"
 				_, err = fakeOvn.fakeClient.MultiNetworkPolicyClient.K8sCniCncfIoV1beta1().MultiNetworkPolicies(mpolicy.Namespace).
 					Update(context.TODO(), mpolicy, metav1.UpdateOptions{})
@@ -739,13 +740,33 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 				expectedData4 = append(expectedData4, defaultDenyExpectedData4...)
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData(expectedData4))
 
+				ginkgo.By("Updating the multi network policy stateless OVN ACLs annotation to false")
+				mpolicy.Annotations[ovnStatelessNetPolAnnotationName] = "false"
+				_, err = fakeOvn.fakeClient.MultiNetworkPolicyClient.K8sCniCncfIoV1beta1().MultiNetworkPolicies(mpolicy.Namespace).
+					Update(context.TODO(), mpolicy, metav1.UpdateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				updatedNetworkPolicy, err = convertMultiNetPolicyToNetPolicy(mpolicy, true)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				dataParams5 := newNetpolDataParams(updatedNetworkPolicy).
+					withLocalPortUUIDs(portInfo.portUUID).
+					withTCPPeerPorts(portNum + 1).
+					withStateless(false).
+					withNetInfo(netInfo)
+				gressPolicyExpectedData5 := getPolicyData(dataParams5)
+				defaultDenyExpectedData5 := getDefaultDenyData(dataParams5)
+				expectedData5 := append(initData, gressPolicyExpectedData5...)
+				expectedData5 = append(expectedData5, defaultDenyExpectedData5...)
+				gomega.Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData(expectedData5))
+
 				ginkgo.By("Updating the multi network policy labels")
 				mpolicy.Labels = map[string]string{labelName: labelVal}
 				_, err = fakeOvn.fakeClient.MultiNetworkPolicyClient.K8sCniCncfIoV1beta1().MultiNetworkPolicies(mpolicy.Namespace).
 					Update(context.TODO(), mpolicy, metav1.UpdateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				gomega.Consistently(fakeOvn.nbClient).Should(libovsdb.HaveData(expectedData4))
+				gomega.Consistently(fakeOvn.nbClient).Should(libovsdb.HaveData(expectedData5))
 
 				ginkgo.By("Updating the multi network policy unrelated annotation")
 				mpolicy.Annotations["test-annotation"] = "test-value"
@@ -753,7 +774,7 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 					Update(context.TODO(), mpolicy, metav1.UpdateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				gomega.Consistently(fakeOvn.nbClient).Should(libovsdb.HaveData(expectedData4))
+				gomega.Consistently(fakeOvn.nbClient).Should(libovsdb.HaveData(expectedData5))
 
 				ginkgo.By("Updating the multi network policy policy-for annotation to the other namespace")
 				mpolicy.Annotations[PolicyForAnnotation] = util.GetNADName(namespace2.Name, nadName)
@@ -761,7 +782,7 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 					Update(context.TODO(), mpolicy, metav1.UpdateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				gomega.Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData(initData))
+				gomega.Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData(expectedData5))
 
 				ginkgo.By("Updating the multi network policy policy-for annotation to the original namespace")
 				mpolicy.Annotations[PolicyForAnnotation] = nadNamespacedName
@@ -769,7 +790,7 @@ var _ = ginkgo.Describe("OVN MultiNetworkPolicy Operations", func() {
 					Update(context.TODO(), mpolicy, metav1.UpdateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				gomega.Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData(expectedData4))
+				gomega.Eventually(fakeOvn.nbClient).Should(libovsdb.HaveData(expectedData5))
 
 				// Delete the multi network policy
 				ginkgo.By("Deleting the multi network policy")
