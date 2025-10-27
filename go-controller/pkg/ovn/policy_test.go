@@ -273,10 +273,7 @@ func getGressACLs(gressIdx int, peers []knet.NetworkPolicyPeer, policyType knet.
 	if len(hashedASNames) > 0 {
 		gressAsMatch := asMatch(hashedASNames)
 		match := fmt.Sprintf("ip4.%s == {%s} && %s == @%s", ipDir, gressAsMatch, portDir, pgName)
-		action := nbdb.ACLActionAllowRelated
-		if params.statelessNetPol {
-			action = nbdb.ACLActionAllowStateless
-		}
+		action := allowAction(params.statelessNetPol)
 		dbIDs := gp.getNetpolACLDbIDs(emptyIdx, libovsdbutil.UnspecifiedL4Protocol)
 		acl := libovsdbops.BuildACL(
 			libovsdbutil.GetACLName(dbIDs),
@@ -296,10 +293,7 @@ func getGressACLs(gressIdx int, peers []knet.NetworkPolicyPeer, policyType knet.
 	}
 	for i, ipBlock := range ipBlocks {
 		match := fmt.Sprintf("ip4.%s == %s && %s == @%s", ipDir, ipBlock, portDir, pgName)
-		action := nbdb.ACLActionAllowRelated
-		if params.statelessNetPol {
-			action = nbdb.ACLActionAllowStateless
-		}
+		action := allowAction(params.statelessNetPol)
 		dbIDs := gp.getNetpolACLDbIDs(i, libovsdbutil.UnspecifiedL4Protocol)
 		acl := libovsdbops.BuildACL(
 			libovsdbutil.GetACLName(dbIDs),
@@ -319,10 +313,7 @@ func getGressACLs(gressIdx int, peers []knet.NetworkPolicyPeer, policyType knet.
 	}
 	for _, v := range params.tcpPeerPorts {
 		dbIDs := gp.getNetpolACLDbIDs(emptyIdx, "tcp")
-		action := nbdb.ACLActionAllowRelated
-		if params.statelessNetPol {
-			action = nbdb.ACLActionAllowStateless
-		}
+		action := allowAction(params.statelessNetPol)
 		acl := libovsdbops.BuildACL(
 			libovsdbutil.GetACLName(dbIDs),
 			direction,
@@ -340,6 +331,13 @@ func getGressACLs(gressIdx int, peers []knet.NetworkPolicyPeer, policyType knet.
 		acls = append(acls, acl)
 	}
 	return acls
+}
+
+func allowAction(statelessNetPol bool) nbdb.ACLAction {
+	if statelessNetPol {
+		return nbdb.ACLActionAllowStateless
+	}
+	return nbdb.ACLActionAllowRelated
 }
 
 type netpolDataParams struct {
@@ -1993,7 +1991,7 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 
 				gomega.Consistently(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedData...))
 
-				ginkgo.By("Updating network policy stateless OVN ACLs annotation")
+				ginkgo.By("Updating network policy stateless OVN ACLs annotation to true")
 				networkPolicy.Annotations = map[string]string{ovnStatelessNetPolAnnotationName: "true"}
 				_, err = fakeOvn.fakeClient.KubeClient.NetworkingV1().NetworkPolicies(networkPolicy.Namespace).
 					Update(context.TODO(), networkPolicy, metav1.UpdateOptions{})
@@ -2002,6 +2000,39 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 				expectedData = getNamespaceWithSinglePolicyExpectedData(
 					newNetpolDataParams(networkPolicy).
 						withStateless(true),
+					initialDB.NBData)
+				namespace1AddressSetv4, _ = buildNamespaceAddressSets(namespace1.Name, nil)
+				expectedData = append(expectedData, namespace1AddressSetv4)
+				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedData...))
+
+				ginkgo.By("Updating network policy with IPBlock when stateless OVN ACLs annotation is set to true")
+				networkPolicy.Spec.Ingress = []knet.NetworkPolicyIngressRule{{
+					From: []knet.NetworkPolicyPeer{{
+						IPBlock: &knet.IPBlock{
+							CIDR: "192.168.1.0/24",
+						},
+					}},
+				}}
+				_, err = fakeOvn.fakeClient.KubeClient.NetworkingV1().NetworkPolicies(networkPolicy.Namespace).
+					Update(context.TODO(), networkPolicy, metav1.UpdateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				expectedData = getNamespaceWithSinglePolicyExpectedData(
+					newNetpolDataParams(networkPolicy).
+						withStateless(true),
+					initialDB.NBData)
+				namespace1AddressSetv4, _ = buildNamespaceAddressSets(namespace1.Name, nil)
+				expectedData = append(expectedData, namespace1AddressSetv4)
+				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedData...))
+
+				ginkgo.By("Updating network policy stateless OVN ACLs annotation to false")
+				networkPolicy.Annotations = map[string]string{ovnStatelessNetPolAnnotationName: "false"}
+				_, err = fakeOvn.fakeClient.KubeClient.NetworkingV1().NetworkPolicies(networkPolicy.Namespace).
+					Update(context.TODO(), networkPolicy, metav1.UpdateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				expectedData = getNamespaceWithSinglePolicyExpectedData(
+					newNetpolDataParams(networkPolicy).
+						withStateless(false),
 					initialDB.NBData)
 				namespace1AddressSetv4, _ = buildNamespaceAddressSets(namespace1.Name, nil)
 				expectedData = append(expectedData, namespace1AddressSetv4)
