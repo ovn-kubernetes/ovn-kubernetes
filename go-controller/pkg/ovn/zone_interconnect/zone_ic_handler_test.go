@@ -1265,5 +1265,97 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 
+		ginkgo.It("No-overlay transport should cleanup interconnect resources for remote nodes", func() {
+			app.Action = func(ctx *cli.Context) error {
+				dbSetup := libovsdbtest.TestSetup{
+					NBData: initialNBDB,
+					SBData: initialSBDB,
+				}
+
+				_, err := config.InitConfig(ctx, nil, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				config.Kubernetes.HostNetworkNamespace = ""
+				config.Default.Transport = config.TransportNoOverlay
+
+				var libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
+				libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				testNode4 := corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "node4",
+						Annotations: map[string]string{
+							ovnNodeIDAnnotaton:                 "5",
+							ovnNodeChassisIDAnnotatin:          "cb9ec8fa-b409-4ef3-9f42-d9283c47aac9",
+							ovnTransitSwitchPortAddrAnnotation: "{\"ipv4\":\"100.88.0.5/16\"}",
+							ovnNodeNetworkIDsAnnotation:        "{\"default\":\"0\"}",
+							ovnNodeSubnetsAnnotation:           "{\"default\":[\"10.244.5.0/24\"]}",
+							ovnNodeZoneNameAnnotation:          "remote",
+						},
+					},
+					Status: corev1.NodeStatus{
+						Addresses: []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "10.0.0.12"}},
+					},
+				}
+
+				err = createTransitSwitchPortBindings(libovsdbOvnSBClient, types.DefaultNetworkName, &testNode1, &testNode2, &testNode3)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				zoneICHandler := NewZoneInterconnectHandler(&util.DefaultNetInfo{}, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
+				gomega.Expect(zoneICHandler).NotTo(gomega.BeNil())
+
+				err = zoneICHandler.createOrUpdateTransitSwitch(0)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Create the cluster router
+				r := newOVNClusterRouter(types.DefaultNetworkName)
+				err = libovsdbops.CreateOrUpdateLogicalRouter(libovsdbOvnNBClient, r)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Create remote chassis
+				node4Chassis := &sbdb.Chassis{Name: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac9", Hostname: "node4", UUID: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac9"}
+				encap := &sbdb.Encap{ChassisName: node4Chassis.Name, IP: "10.0.0.12"}
+				err = libovsdbops.CreateOrUpdateChassis(libovsdbOvnSBClient, node4Chassis, encap)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// When transport is no-overlay, AddRemoteZoneNode should NOT create interconnect resources
+				// Instead it should cleanup any existing resources
+				err = zoneICHandler.AddRemoteZoneNode(&testNode4)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Verify that no interconnect resources were created for the remote node
+				// Check that transit switch port was not created
+				transitSwitchPort := &nbdb.LogicalSwitchPort{
+					Name: types.TransitSwitchToRouterPrefix + testNode4.Name,
+				}
+				ports, err := libovsdbops.FindLogicalSwitchPortWithPredicate(libovsdbOvnNBClient, func(lsp *nbdb.LogicalSwitchPort) bool {
+					return lsp.Name == transitSwitchPort.Name
+				})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(ports).To(gomega.BeEmpty(), "Transit switch port should not exist for no-overlay transport")
+
+				// Check that router port was not created
+				routerPort := &nbdb.LogicalRouterPort{
+					Name: types.RouterToTransitSwitchPrefix + testNode4.Name,
+				}
+				rports, err := libovsdbops.FindLogicalRouterPortWithPredicate(libovsdbOvnNBClient, func(lrp *nbdb.LogicalRouterPort) bool {
+					return lrp.Name == routerPort.Name
+				})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(rports).To(gomega.BeEmpty(), "Router port should not exist for no-overlay transport")
+
+				return nil
+			}
+
+			err := app.Run([]string{
+				app.Name,
+				"-cluster-subnets=" + clusterCIDR,
+				"-init-cluster-manager",
+				"-zone-join-switch-subnets=" + joinSubnetCIDR,
+				"-enable-interconnect",
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
 	})
 })
