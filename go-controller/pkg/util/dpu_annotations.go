@@ -85,7 +85,7 @@ func UnmarshalPodDPUConnDetailsAllNetworks(annotations map[string]string) (map[s
 
 // MarshalPodDPUConnDetails adds the pod's connection details of the specified NAD to the corresponding pod annotation;
 // if dcd is nil, delete the pod's connection details of the specified NAD
-func MarshalPodDPUConnDetails(annotations map[string]string, dcd *DPUConnectionDetails, nadName string) (map[string]string, error) {
+func MarshalPodDPUConnDetails(annotations map[string]string, dcd *DPUConnectionDetails, nadKey string) (map[string]string, error) {
 	if annotations == nil {
 		annotations = make(map[string]string)
 	}
@@ -93,19 +93,19 @@ func MarshalPodDPUConnDetails(annotations map[string]string, dcd *DPUConnectionD
 	if err != nil {
 		return nil, err
 	}
-	dc, ok := podDcds[nadName]
+	dc, ok := podDcds[nadKey]
 	if dcd != nil {
 		if ok && dc == *dcd {
 			return nil, newAnnotationAlreadySetError("OVN pod %s annotation for NAD %s already exists in %v",
-				DPUConnectionDetailsAnnot, nadName, annotations)
+				DPUConnectionDetailsAnnot, nadKey, annotations)
 		}
-		podDcds[nadName] = *dcd
+		podDcds[nadKey] = *dcd
 	} else {
 		if !ok {
 			return nil, newAnnotationAlreadySetError("OVN pod %s annotation for NAD %s already removed",
-				DPUConnectionDetailsAnnot, nadName)
+				DPUConnectionDetailsAnnot, nadKey)
 		}
-		delete(podDcds, nadName)
+		delete(podDcds, nadKey)
 	}
 
 	bytes, err := json.Marshal(podDcds)
@@ -117,7 +117,7 @@ func MarshalPodDPUConnDetails(annotations map[string]string, dcd *DPUConnectionD
 }
 
 // UnmarshalPodDPUConnDetails returns dpu connection details for the specified NAD
-func UnmarshalPodDPUConnDetails(annotations map[string]string, nadName string) (*DPUConnectionDetails, error) {
+func UnmarshalPodDPUConnDetails(annotations map[string]string, nadKey string) (*DPUConnectionDetails, error) {
 	ovnAnnotation, ok := annotations[DPUConnectionDetailsAnnot]
 	if !ok {
 		return nil, newAnnotationNotSetError("could not find OVN pod %s annotation in %v",
@@ -129,10 +129,10 @@ func UnmarshalPodDPUConnDetails(annotations map[string]string, nadName string) (
 		return nil, err
 	}
 
-	dcd, ok := podDcds[nadName]
+	dcd, ok := podDcds[nadKey]
 	if !ok {
-		return nil, newAnnotationNotSetError("no OVN %s annotation for network %s: %q",
-			DPUConnectionDetailsAnnot, nadName, ovnAnnotation)
+		return nil, newAnnotationNotSetError("no OVN %s annotation for NAD %s: %q",
+			DPUConnectionDetailsAnnot, nadKey, ovnAnnotation)
 	}
 	return &dcd, nil
 }
@@ -158,7 +158,7 @@ func UnmarshalPodDPUConnStatusAllNetworks(annotations map[string]string) (map[st
 
 // MarshalPodDPUConnStatus adds the pod's connection status of the specified NAD to the corresponding pod annotation.
 // if scs is nil, delete the pod's connection status of the specified NAD
-func MarshalPodDPUConnStatus(annotations map[string]string, scs *DPUConnectionStatus, nadName string) (map[string]string, error) {
+func MarshalPodDPUConnStatus(annotations map[string]string, scs *DPUConnectionStatus, nadKey string) (map[string]string, error) {
 	if annotations == nil {
 		annotations = make(map[string]string)
 	}
@@ -166,19 +166,19 @@ func MarshalPodDPUConnStatus(annotations map[string]string, scs *DPUConnectionSt
 	if err != nil {
 		return nil, err
 	}
-	sc, ok := podScss[nadName]
+	sc, ok := podScss[nadKey]
 	if scs != nil {
 		if ok && sc == *scs {
-			return nil, newAnnotationAlreadySetError("OVN pod %s annotation for NAD %s already exists in %v",
-				DPUConnectionStatusAnnot, nadName, annotations)
+			return nil, newAnnotationAlreadySetError("OVN pod %s annotation for NAD key %s already exists in %v",
+				DPUConnectionStatusAnnot, nadKey, annotations)
 		}
-		podScss[nadName] = *scs
+		podScss[nadKey] = *scs
 	} else {
 		if !ok {
-			return nil, newAnnotationAlreadySetError("OVN pod %s annotation for NAD %s already removed",
-				DPUConnectionStatusAnnot, nadName)
+			return nil, newAnnotationAlreadySetError("OVN pod %s annotation for NAD key %s already removed",
+				DPUConnectionStatusAnnot, nadKey)
 		}
-		delete(podScss, nadName)
+		delete(podScss, nadKey)
 	}
 	bytes, err := json.Marshal(podScss)
 	if err != nil {
@@ -189,7 +189,7 @@ func MarshalPodDPUConnStatus(annotations map[string]string, scs *DPUConnectionSt
 }
 
 // UnmarshalPodDPUConnStatus returns DPU connection status for the specified NAD
-func UnmarshalPodDPUConnStatus(annotations map[string]string, nadName string) (*DPUConnectionStatus, error) {
+func UnmarshalPodDPUConnStatus(annotations map[string]string, nadKey string) (*DPUConnectionStatus, error) {
 	ovnAnnotation, ok := annotations[DPUConnectionStatusAnnot]
 	if !ok {
 		return nil, newAnnotationNotSetError("could not find OVN pod annotation in %v", annotations)
@@ -199,20 +199,20 @@ func UnmarshalPodDPUConnStatus(annotations map[string]string, nadName string) (*
 	if err != nil {
 		return nil, err
 	}
-	scs, ok := podScss[nadName]
+	scs, ok := podScss[nadKey]
 	if !ok {
-		return nil, newAnnotationNotSetError("no OVN %s annotation for network %s: %q",
-			DPUConnectionStatusAnnot, nadName, ovnAnnotation)
+		return nil, newAnnotationNotSetError("no OVN %s annotation for NAD %s: %q",
+			DPUConnectionStatusAnnot, nadKey, ovnAnnotation)
 	}
 	return &scs, nil
 }
 
 // UpdatePodDPUConnStatusWithRetry updates the DPU connection status annotation
 // on the pod retrying on conflict
-func UpdatePodDPUConnStatusWithRetry(podLister listers.PodLister, kube kube.Interface, pod *corev1.Pod, dpuConnStatus *DPUConnectionStatus, nadName string) error {
+func UpdatePodDPUConnStatusWithRetry(podLister listers.PodLister, kube kube.Interface, pod *corev1.Pod, dpuConnStatus *DPUConnectionStatus, nadKey string) error {
 	updatePodAnnotationNoRollback := func(pod *corev1.Pod) (*corev1.Pod, func(), error) {
 		var err error
-		pod.Annotations, err = MarshalPodDPUConnStatus(pod.Annotations, dpuConnStatus, nadName)
+		pod.Annotations, err = MarshalPodDPUConnStatus(pod.Annotations, dpuConnStatus, nadKey)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -229,10 +229,10 @@ func UpdatePodDPUConnStatusWithRetry(podLister listers.PodLister, kube kube.Inte
 
 // UpdatePodDPUConnDetailsWithRetry updates the DPU connection details
 // annotation on the pod retrying on conflict
-func UpdatePodDPUConnDetailsWithRetry(podLister listers.PodLister, kube kube.Interface, pod *corev1.Pod, dpuConnDetails *DPUConnectionDetails, nadName string) error {
+func UpdatePodDPUConnDetailsWithRetry(podLister listers.PodLister, kube kube.Interface, pod *corev1.Pod, dpuConnDetails *DPUConnectionDetails, nadKey string) error {
 	updatePodAnnotationNoRollback := func(pod *corev1.Pod) (*corev1.Pod, func(), error) {
 		var err error
-		pod.Annotations, err = MarshalPodDPUConnDetails(pod.Annotations, dpuConnDetails, nadName)
+		pod.Annotations, err = MarshalPodDPUConnDetails(pod.Annotations, dpuConnDetails, nadKey)
 		if err != nil {
 			return nil, nil, err
 		}

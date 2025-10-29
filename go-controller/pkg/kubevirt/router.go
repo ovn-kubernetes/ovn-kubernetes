@@ -67,7 +67,7 @@ func DeleteRoutingForMigratedPod(nbClient libovsdbclient.Client, pod *corev1.Pod
 // Both:
 //   - static route with VM ip as dst-ip prefix and output port the LRP pointing to the VM's node switch
 func EnsureLocalZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory, nbClient libovsdbclient.Client,
-	lsManager *logicalswitchmanager.LogicalSwitchManager, pod *corev1.Pod, nadName string, clusterSubnets []config.CIDRNetworkEntry) error {
+	lsManager *logicalswitchmanager.LogicalSwitchManager, pod *corev1.Pod, nadKey string, clusterSubnets []config.CIDRNetworkEntry) error {
 	vmReady, err := virtualMachineReady(watchFactory, pod)
 	if err != nil {
 		return err
@@ -75,7 +75,7 @@ func EnsureLocalZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory, 
 	if !vmReady {
 		return nil
 	}
-	podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, nadName)
+	podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, nadKey)
 	if err != nil {
 		return fmt.Errorf("failed reading local pod annotation: %v", err)
 	}
@@ -175,7 +175,7 @@ func EnsureLocalZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory, 
 // port of the node where the pod is running:
 //   - A dst-ip with live migrated pod ip as prefix and nexthop the pod's
 //     current node transit switch port.
-func EnsureRemoteZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory, nbClient libovsdbclient.Client, pod *corev1.Pod, nadName string) error {
+func EnsureRemoteZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory, nbClient libovsdbclient.Client, pod *corev1.Pod) error {
 	vmReady, err := virtualMachineReady(watchFactory, pod)
 	if err != nil {
 		return err
@@ -189,12 +189,12 @@ func EnsureRemoteZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory,
 		return err
 	}
 
-	podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, nadName)
+	podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations, types.DefaultNetworkName)
 	if err != nil {
 		return fmt.Errorf("failed reading remote pod annotation: %v", err)
 	}
 
-	vmRunningAtNodeOwningSubnet, err := nodeContainsPodSubnet(watchFactory, pod.Spec.NodeName, podAnnotation, nadName)
+	vmRunningAtNodeOwningSubnet, err := nodeContainsPodSubnet(watchFactory, pod.Spec.NodeName, podAnnotation, types.DefaultNetworkName)
 	if err != nil {
 		return err
 	}

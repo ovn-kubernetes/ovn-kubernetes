@@ -597,9 +597,9 @@ func (bnc *BaseNetworkController) getNewLocalPolicyPorts(np *networkPolicy,
 			continue
 		}
 
-		nadNames := bnc.getPodNADNames(pod)
-		for _, nadName := range nadNames {
-			logicalPortName := bnc.GetLogicalPortName(pod, nadName)
+		nadKeys := bnc.getPodNADKeys(pod)
+		for _, nadKey := range nadKeys {
+			logicalPortName := bnc.GetLogicalPortName(pod, nadKey)
 			if _, ok := np.localPods.Load(logicalPortName); ok {
 				// port is already added for this policy
 				continue
@@ -608,11 +608,11 @@ func (bnc *BaseNetworkController) getNewLocalPolicyPorts(np *networkPolicy,
 			// Return error for retry if
 			// 1. getting pod LSP from the cache fails,
 			// 2. the gotten LSP is scheduled for removal (stateful-sets).
-			portInfo, err := bnc.logicalPortCache.get(pod, nadName)
+			portInfo, err := bnc.logicalPortCache.get(pod, nadKey)
 			if err != nil {
-				klog.Warningf("Failed to get get LSP for pod %s/%s NAD %s for networkPolicy %s, err: %v",
-					pod.Namespace, pod.Name, nadName, np.name, err)
-				errs = append(errs, fmt.Errorf("unable to get port info for pod %s/%s NAD %s", pod.Namespace, pod.Name, nadName))
+				klog.Warningf("Failed to get get LSP for pod %s/%s NAD key %s for networkPolicy %s, err: %v",
+					pod.Namespace, pod.Name, nadKey, np.name, err)
+				errs = append(errs, fmt.Errorf("unable to get port info for pod %s/%s NAD key %s", pod.Namespace, pod.Name, nadKey))
 				continue
 			}
 
@@ -620,7 +620,7 @@ func (bnc *BaseNetworkController) getNewLocalPolicyPorts(np *networkPolicy,
 			if !portInfo.expires.IsZero() {
 				klog.Warningf("Stale LSP %s for network policy %s found in cache",
 					portInfo.name, np.name)
-				errs = append(errs, fmt.Errorf("unable to get port info for pod %s/%s NAD %s", pod.Namespace, pod.Name, nadName))
+				errs = append(errs, fmt.Errorf("unable to get port info for pod %s/%s NAD key %s", pod.Namespace, pod.Name, nadKey))
 				continue
 			}
 
@@ -646,9 +646,9 @@ func (bnc *BaseNetworkController) getExistingLocalPolicyPorts(np *networkPolicy,
 	for _, obj := range objs {
 		pod := obj.(*corev1.Pod)
 
-		nadNames := bnc.getPodNADNames(pod)
-		for _, nadName := range nadNames {
-			logicalPortName := bnc.GetLogicalPortName(pod, nadName)
+		nadKeys := bnc.getPodNADKeys(pod)
+		for _, nadKey := range nadKeys {
+			logicalPortName := bnc.GetLogicalPortName(pod, nadKey)
 			loadedPortUUID, ok := np.localPods.Load(logicalPortName)
 			if !ok {
 				// port is already deleted for this policy
