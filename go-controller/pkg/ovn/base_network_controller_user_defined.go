@@ -290,9 +290,9 @@ func (bsnc *BaseUserDefinedNetworkController) ensurePodForUserDefinedNetwork(pod
 	}
 
 	var errs []error
-	for nadName, network := range networkMap {
-		if err = bsnc.addLogicalPortToNetworkForNAD(pod, nadName, switchName, network, kubevirtLiveMigrationStatus); err != nil {
-			errs = append(errs, fmt.Errorf("failed to add logical port of Pod %s/%s for NAD %s: %w", pod.Namespace, pod.Name, nadName, err))
+	for nadKey, network := range networkMap {
+		if err = bsnc.addLogicalPortToNetworkForNAD(pod, nadKey, switchName, network, kubevirtLiveMigrationStatus); err != nil {
+			errs = append(errs, fmt.Errorf("failed to add logical port of Pod %s/%s for NAD key %s: %w", pod.Namespace, pod.Name, nadKey, err))
 		}
 	}
 	if len(errs) != 0 {
@@ -301,14 +301,14 @@ func (bsnc *BaseUserDefinedNetworkController) ensurePodForUserDefinedNetwork(pod
 	return nil
 }
 
-func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod *corev1.Pod, nadName, switchName string,
+func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod *corev1.Pod, nadKey, switchName string,
 	network *nadapi.NetworkSelectionElement, kubevirtLiveMigrationStatus *kubevirt.LiveMigrationStatus) error {
 	var libovsdbExecuteTime time.Duration
 
 	start := time.Now()
 	defer func() {
-		klog.Infof("[%s/%s] addLogicalPort for NAD %s took %v, libovsdb time %v",
-			pod.Namespace, pod.Name, nadName, time.Since(start), libovsdbExecuteTime)
+		klog.Infof("[%s/%s] addLogicalPort for NAD key %s took %v, libovsdb time %v",
+			pod.Namespace, pod.Name, nadKey, time.Since(start), libovsdbExecuteTime)
 	}()
 
 	var err error
@@ -333,7 +333,7 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod 
 	requiresLogicalPort := isLocalPod || bsnc.isLayer2Interconnect()
 
 	if requiresLogicalPort {
-		ops, lsp, podAnnotation, newlyCreated, err = bsnc.addLogicalPortToNetwork(pod, nadName, network, lspEnabled)
+		ops, lsp, podAnnotation, newlyCreated, err = bsnc.addLogicalPortToNetwork(pod, nadKey, network, lspEnabled)
 		if err != nil {
 			return err
 		}
@@ -345,7 +345,7 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod 
 		// Not needed for layer3 networks as in that case the whole node switch
 		// is removed
 		// No need to release IPs as those are allocated from cluster manager
-		logicalPort := bsnc.GetLogicalPortName(pod, nadName)
+		logicalPort := bsnc.GetLogicalPortName(pod, nadKey)
 		expectedSwitchName, err := bsnc.getExpectedSwitchName(pod)
 		if err != nil {
 			return err
@@ -354,21 +354,21 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod 
 		if err != nil {
 			return err
 		}
-		bsnc.logicalPortCache.remove(pod, nadName)
+		bsnc.logicalPortCache.remove(pod, nadKey)
 	}
 
 	if shouldHandleLiveMigration &&
 		kubevirtLiveMigrationStatus.IsTargetDomainReady() &&
 		// At localnet there is no source pod remote LSP so it should be skipped
 		(bsnc.TopologyType() != types.LocalnetTopology || bsnc.isPodScheduledinLocalZone(kubevirtLiveMigrationStatus.SourcePod)) {
-		ops, err = bsnc.disableLiveMigrationSourceLSPOps(kubevirtLiveMigrationStatus, nadName, ops)
+		ops, err = bsnc.disableLiveMigrationSourceLSPOps(kubevirtLiveMigrationStatus, nadKey, ops)
 		if err != nil {
 			return fmt.Errorf("failed to create LSP ops for source pod during Live-migration status: %w", err)
 		}
 	}
 
 	if podAnnotation == nil {
-		podAnnotation, err = util.UnmarshalPodAnnotation(pod.Annotations, nadName)
+		podAnnotation, err = util.UnmarshalPodAnnotation(pod.Annotations, nadKey)
 		if err != nil {
 			return err
 		}
@@ -403,7 +403,7 @@ func (bsnc *BaseUserDefinedNetworkController) addLogicalPortToNetworkForNAD(pod 
 	txOkCallBack()
 
 	if lsp != nil {
-		_ = bsnc.logicalPortCache.add(pod, switchName, nadName, lsp.UUID, podAnnotation.MAC, podAnnotation.IPs)
+		_ = bsnc.logicalPortCache.add(pod, switchName, nadKey, lsp.UUID, podAnnotation.MAC, podAnnotation.IPs)
 		if bsnc.requireDHCP(pod) {
 			if err := bsnc.ensureDHCP(pod, podAnnotation, lsp); err != nil {
 				return err
@@ -437,7 +437,7 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 
 	// for a specific NAD belongs to this network, Pod's logical port might already be created half-way
 	// without its lpInfo cache being created; need to deleted resources created for that NAD as well.
-	// So, first get all nadNames from pod annotation, but handle NADs belong to this network only.
+	// So, first get all nadKeys from pod annotation, but handle NADs belong to this network only.
 	podNetworks, err := util.UnmarshalPodAnnotationAllNetworks(pod.Annotations)
 	if err != nil {
 		return err
@@ -448,13 +448,13 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 	}
 
 	var alreadyProcessed bool
-	for nadName, podAnnotation := range podNetworks {
-		if !bsnc.HasNAD(nadName) {
+	for nadKey, podAnnotation := range podNetworks {
+		if !bsnc.HasNADKey(nadKey) {
 			continue
 		}
 
 		// pod has a network managed by this controller
-		klog.Infof("Deleting pod: %s for network %s, NAD: %s", podDesc, bsnc.GetNetworkName(), nadName)
+		klog.Infof("Deleting pod: %s for network %s, NAD key: %s", podDesc, bsnc.GetNetworkName(), nadKey)
 
 		// handle remote pod clean up but only do this one time
 		if !hasLogicalPort && !alreadyProcessed {
@@ -475,12 +475,12 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 		}
 
 		if kubevirt.IsPodAllowedForMigration(pod, bsnc.GetNetInfo()) {
-			if err = bsnc.enableSourceLSPFailedLiveMigration(pod, nadName, podAnnotation.MAC, podAnnotation.IPs); err != nil {
+			if err = bsnc.enableSourceLSPFailedLiveMigration(pod, nadKey, podAnnotation.MAC, podAnnotation.IPs); err != nil {
 				return err
 			}
 		}
-		bsnc.logicalPortCache.remove(pod, nadName)
-		pInfo, err := bsnc.deletePodLogicalPort(pod, portInfoMap[nadName], nadName)
+		bsnc.logicalPortCache.remove(pod, nadKey)
+		pInfo, err := bsnc.deletePodLogicalPort(pod, portInfoMap[nadKey], nadKey)
 		if err != nil {
 			return err
 		}
@@ -492,13 +492,13 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 
 		// do not release IP address unless we have validated no other pod is using it
 		if pInfo == nil || len(pInfo.ips) == 0 {
-			bsnc.forgetPodReleasedBeforeStartup(string(pod.UID), nadName)
+			bsnc.forgetPodReleasedBeforeStartup(string(pod.UID), nadKey)
 			continue
 		}
 
 		// if we allow for persistent IPs, then we need to check if this pod has an IPAM Claim
 		if bsnc.allowPersistentIPs() {
-			hasIPAMClaim, err := bsnc.hasIPAMClaim(pod, nadName)
+			hasIPAMClaim, err := bsnc.hasIPAMClaim(pod, nadKey)
 			if err != nil {
 				return fmt.Errorf("unable to determine if pod %s has IPAM Claim: %w", podDesc, err)
 			}
@@ -518,14 +518,14 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 			return err
 		}
 
-		bsnc.forgetPodReleasedBeforeStartup(string(pod.UID), nadName)
+		bsnc.forgetPodReleasedBeforeStartup(string(pod.UID), nadKey)
 
 	}
 	return nil
 }
 
 // hasIPAMClaim determines whether a pod's IPAM is being handled by IPAMClaim CR.
-// pod passed should already be validated as having a network connection to nadName
+// pod passed should already be validated as having a network connection to nadKey
 func (bsnc *BaseUserDefinedNetworkController) hasIPAMClaim(pod *corev1.Pod, nadNamespacedName string) (bool, error) {
 	if !bsnc.AllowsPersistentIPs() {
 		return false, nil
@@ -540,16 +540,16 @@ func (bsnc *BaseUserDefinedNetworkController) hasIPAMClaim(pod *corev1.Pod, nadN
 		// secondary network the IPAM claim reference is on the network selection element
 		nadKeys := strings.Split(nadNamespacedName, "/")
 		if len(nadKeys) != 2 {
-			return false, fmt.Errorf("invalid NAD name %s", nadNamespacedName)
+			return false, fmt.Errorf("invalid NAD key %s", nadNamespacedName)
 		}
 		nadNamespace := nadKeys[0]
-		nadName := nadKeys[1]
+		nadKey := nadKeys[1]
 		allNetworks, err := util.GetK8sPodAllNetworkSelections(pod)
 		if err != nil {
 			return false, err
 		}
 		for _, network := range allNetworks {
-			if network.Namespace == nadNamespace && network.Name == nadName {
+			if network.Namespace == nadNamespace && network.Name == nadKey {
 				// found network selection element, check if it has IPAM
 				if len(network.IPAMClaimReference) > 0 {
 					ipamClaimName = network.IPAMClaimReference
@@ -617,11 +617,11 @@ func (bsnc *BaseUserDefinedNetworkController) syncPodsForUserDefinedNetwork(pods
 		isLocalPod := bsnc.isPodScheduledinLocalZone(pod)
 		hasRemotePort := !isLocalPod || bsnc.isLayer2Interconnect()
 
-		for nadName := range networkMap {
-			annotations, err := util.UnmarshalPodAnnotation(pod.Annotations, nadName)
+		for nadKey := range networkMap {
+			annotations, err := util.UnmarshalPodAnnotation(pod.Annotations, nadKey)
 			if err != nil {
 				if !util.IsAnnotationNotSetError(err) {
-					klog.Errorf("Failed to get pod annotation of pod %s/%s for NAD %s", pod.Namespace, pod.Name, nadName)
+					klog.Errorf("Failed to get pod annotation of pod %s/%s for NAD key %s", pod.Namespace, pod.Name, nadKey)
 				}
 				continue
 			}
@@ -629,7 +629,7 @@ func (bsnc *BaseUserDefinedNetworkController) syncPodsForUserDefinedNetwork(pods
 			if bsnc.allocatesPodAnnotation() && isLocalPod {
 				// only keep track of IPs/ports that have been allocated by this
 				// controller
-				expectedLogicalPortName, err := bsnc.allocatePodIPs(pod, annotations, nadName)
+				expectedLogicalPortName, err := bsnc.allocatePodIPs(pod, annotations, nadKey)
 				if err != nil {
 					return err
 				}
@@ -640,11 +640,11 @@ func (bsnc *BaseUserDefinedNetworkController) syncPodsForUserDefinedNetwork(pods
 				if annotatedLocalPods[pod] == nil {
 					annotatedLocalPods[pod] = map[string]*util.PodAnnotation{}
 				}
-				annotatedLocalPods[pod][nadName] = annotations
+				annotatedLocalPods[pod][nadKey] = annotations
 			} else if hasRemotePort {
 				// keep also track of remote ports created for layer2 on
 				// interconnect
-				expectedLogicalPorts[bsnc.GetLogicalPortName(pod, nadName)] = true
+				expectedLogicalPorts[bsnc.GetLogicalPortName(pod, nadKey)] = true
 			}
 		}
 	}
@@ -951,8 +951,8 @@ func (bsnc *BaseUserDefinedNetworkController) requireDHCP(pod *corev1.Pod) bool 
 }
 
 func (bsnc *BaseUserDefinedNetworkController) setPodLogicalSwitchPortAddressesAndEnabledField(
-	pod *corev1.Pod, nadName string, mac string, ips []string, enabled bool, ops []ovsdb.Operation) ([]ovsdb.Operation, *nbdb.LogicalSwitchPort, error) {
-	lsp := &nbdb.LogicalSwitchPort{Name: bsnc.GetLogicalPortName(pod, nadName)}
+	pod *corev1.Pod, nadKey string, mac string, ips []string, enabled bool, ops []ovsdb.Operation) ([]ovsdb.Operation, *nbdb.LogicalSwitchPort, error) {
+	lsp := &nbdb.LogicalSwitchPort{Name: bsnc.GetLogicalPortName(pod, nadKey)}
 	lsp.Enabled = ptr.To(enabled)
 	customFields := []libovsdbops.ModelUpdateField{
 		libovsdbops.LogicalSwitchPortEnabled,
@@ -987,13 +987,13 @@ func (bsnc *BaseUserDefinedNetworkController) setPodLogicalSwitchPortAddressesAn
 
 func (bsnc *BaseUserDefinedNetworkController) disableLiveMigrationSourceLSPOps(
 	kubevirtLiveMigrationStatus *kubevirt.LiveMigrationStatus,
-	nadName string, ops []ovsdb.Operation) ([]ovsdb.Operation, error) {
+	nadKey string, ops []ovsdb.Operation) ([]ovsdb.Operation, error) {
 	// closing the sourcePod lsp to ensure traffic goes to the now ready targetPod.
-	ops, _, err := bsnc.setPodLogicalSwitchPortAddressesAndEnabledField(kubevirtLiveMigrationStatus.SourcePod, nadName, "", nil, false, ops)
+	ops, _, err := bsnc.setPodLogicalSwitchPortAddressesAndEnabledField(kubevirtLiveMigrationStatus.SourcePod, nadKey, "", nil, false, ops)
 	return ops, err
 }
 
-func (bsnc *BaseUserDefinedNetworkController) enableSourceLSPFailedLiveMigration(pod *corev1.Pod, nadName string, mac string, ips []string) error {
+func (bsnc *BaseUserDefinedNetworkController) enableSourceLSPFailedLiveMigration(pod *corev1.Pod, nadKey string, mac string, ips []string) error {
 	kubevirtLiveMigrationStatus, err := kubevirt.DiscoverLiveMigrationStatus(bsnc.watchFactory, pod)
 	if err != nil {
 		return fmt.Errorf("failed to discover Live-migration status after pod termination: %w", err)
@@ -1004,7 +1004,7 @@ func (bsnc *BaseUserDefinedNetworkController) enableSourceLSPFailedLiveMigration
 		return nil
 	}
 	// make sure sourcePod lsp is enabled if migration failed after DomainReady was set.
-	ops, sourcePodLsp, err := bsnc.setPodLogicalSwitchPortAddressesAndEnabledField(kubevirtLiveMigrationStatus.SourcePod, nadName, mac, ips, true, nil)
+	ops, sourcePodLsp, err := bsnc.setPodLogicalSwitchPortAddressesAndEnabledField(kubevirtLiveMigrationStatus.SourcePod, nadKey, mac, ips, true, nil)
 	if err != nil {
 		return fmt.Errorf("failed to set source Pod lsp to enabled after migration failed: %w", err)
 	}
