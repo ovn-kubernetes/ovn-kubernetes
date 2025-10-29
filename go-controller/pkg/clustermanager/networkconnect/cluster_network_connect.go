@@ -41,10 +41,23 @@ func (c *Controller) reconcileClusterNetworkConnect(key string) error {
 		return err
 	}
 	if cnc == nil {
-		// CNC is being deleted, clean up the cache
+		// CNC is being deleted, clean up resources
+		cncState, exists := c.cncCache[cncName]
+		if exists {
+			// Release tunnel key
+			c.tunnelKeysAllocator.ReleaseKeys(cncName)
+			klog.V(4).Infof("Released tunnel key for deleted CNC %s", cncName)
+
+			// Release allocated subnets from this CNC's allocator
+			if cncState.allocator != nil {
+				cncState.allocator.ReleaseAllAllocations()
+				klog.V(4).Infof("Released all subnets for deleted CNC %s", cncName)
+			}
+		}
+
+		// Clean up the cache
 		delete(c.cncCache, cncName)
 		klog.V(4).Infof("Cleaned up cache for deleted CNC %s", cncName)
-		// TODO: delete other CNC-related resources
 		return nil
 	}
 

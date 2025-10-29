@@ -18,7 +18,7 @@ var (
 
 // HybridConnectSubnetAllocator provides hybrid allocation for network connect subnets:
 //   - Layer3 networks: Each gets a full layer3NetworkPrefix block (e.g., /24)
-//   - Layer2 networks: Pooled allocation - multiple Layer2 networks share layer3NetworkPrefix blocks,
+//   - Layer2 networks: Pooled allocation - multiple Layer2 networks share layer3Network‍Prefix blocks,
 //     with each Layer2 network getting a /31 (IPv4) or /127 (IPv6) from the shared pool
 //
 // This allocator uses the node.SubnetAllocator to allocate subnets underneath using the layer3NetworkPrefix.
@@ -37,6 +37,13 @@ type HybridConnectSubnetAllocator interface {
 
 	// MarkAllocatedSubnets marks multiple subnets as already allocated (for existing allocations)
 	MarkAllocatedSubnets(owner string, subnets ...*net.IPNet) error
+
+	// GetAllOwners returns the list of all owners that have allocations
+	GetAllOwners() []string
+
+	// ReleaseAllAllocations releases all allocations in this allocator
+	// This should be called when deleting a CNC
+	ReleaseAllAllocations()
 }
 
 // layer2SubnetPool manages dual-stack networkPrefix blocks subdivided into Layer2 subnets
@@ -287,4 +294,57 @@ func (hca *hybridConnectSubnetAllocator) markSingleAllocatedSubnet(owner string,
 	}
 
 	return fmt.Errorf("subnet %s does not belong to any known range", subnet.String())
+}
+
+// GetAllOwners returns the list of all owners that have allocations
+func (hca *hybridConnectSubnetAllocator) GetAllOwners() []string {
+	hca.RLock()
+	defer hca.RUnlock()
+
+	owners := make([]string, 0, len(hca.allAllocations))
+	for owner := range hca.allAllocations {
+		owners = append(owners, owner)
+	}
+	return owners
+}
+
+// ReleaseAllAllocations releases all allocations in this allocator
+// This should be called when deleting a CNC
+func (hca *hybridConnectSubnetAllocator) ReleaseAllAllocations() {
+	hca.Lock()
+	defer hca.Unlock()
+
+	if hca.layer3Allocator == nil {
+		return
+	}
+
+	// Get all owners first
+	owners := make([]string, 0, len(hca.allAllocations))
+	for owner := range hca.allAllocations {
+		owners = append(owners, owner)
+	}
+
+	// Release each owner
+	for _, owner := range owners {
+		// Determine if this is a layer3 or layer2 allocation based on owner prefix
+		// Owners are formatted as "layer3_<networkID>" or "layer2_<networkID>"
+		if len(owner) >= 7 && owner[:7] == "layer3_" {
+			// Release from layer3 allocator
+			hca.layer3Allocator.ReleaseAllNetworks(owner)
+		} else if len(owner) >= 7 && owner[:7] == "layer2_" {
+			// Release from the specific layer2 pool that contains this owner
+			for _, pool := range hca.layer2Pools {
+				if _, exists := pool.allocated[owner]; exists {
+					pool.allocator.ReleaseAllNetworks(owner)
+					break
+				}
+			}
+		}
+
+		// Remove from tracking maps
+		delete(hca.allAllocations, owner)
+		for _, pool := range hca.layer2Pools {
+			delete(pool.allocated, owner)
+		}
+	}
 }
