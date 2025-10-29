@@ -59,8 +59,8 @@ type PodInterfaceInfo struct {
 
 	// network name, for default network, it is "default", otherwise it is net-attach-def's netconf spec name
 	NetName string `json:"netName"`
-	// NADName, for default network, it is "default", otherwise, in the form of net-attach-def's <Namespace>/<Name>
-	NADName string `json:"nadName"`
+	// NADKey, for default network, it is "default", otherwise, in the form of net-attach-def's <Namespace>/<Name>{/index}
+	NADKey string `json:"nadKey"`
 }
 
 // Explicit type for CNI commands the server handles
@@ -168,6 +168,10 @@ type PodRequest struct {
 	// also, need to find the pod annotation, dpu pod connection/status annotations of the given NAD ("default"
 	// for default network).
 	nadName string
+	// for default/primary UDN network, nadKey is the same as nadName, for secondary UDN, if a Pod requests
+	// network attachment of multiple same secondary UDN, nadKey would be nadName for its first interface CNI request,
+	// and <nadName>/<index> (index starting from 1) for the subsequent interface CNI request
+	nadKey string
 
 	// the DeviceInfo struct
 	deviceInfo nadapi.DeviceInfo
