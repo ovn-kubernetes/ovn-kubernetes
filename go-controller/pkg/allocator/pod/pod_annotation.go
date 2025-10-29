@@ -75,6 +75,7 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotation(
 	ipAllocator subnet.NamedAllocator,
 	node *corev1.Node,
 	pod *corev1.Pod,
+	nadName string,
 	network *nadapi.NetworkSelectionElement,
 	reallocateIP bool,
 	networkRole string) (
@@ -89,6 +90,7 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotation(
 		allocator.netInfo,
 		node,
 		pod,
+		nadName,
 		network,
 		allocator.ipamClaimsReconciler,
 		allocator.macRegistry,
@@ -104,6 +106,7 @@ func allocatePodAnnotation(
 	netInfo util.NetInfo,
 	node *corev1.Node,
 	pod *corev1.Pod,
+	nadName string,
 	network *nadapi.NetworkSelectionElement,
 	claimsReconciler persistentips.PersistentAllocations,
 	macRegistry mac.Register,
@@ -124,6 +127,7 @@ func allocatePodAnnotation(
 			netInfo,
 			node,
 			pod,
+			nadName,
 			network,
 			claimsReconciler,
 			macRegistry,
@@ -161,6 +165,7 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotationWithTunnelID(
 	idAllocator id.NamedAllocator,
 	node *corev1.Node,
 	pod *corev1.Pod,
+	nadName string,
 	network *nadapi.NetworkSelectionElement,
 	reallocateIP bool,
 	networkRole string) (
@@ -176,6 +181,7 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotationWithTunnelID(
 		allocator.netInfo,
 		node,
 		pod,
+		nadName,
 		network,
 		allocator.ipamClaimsReconciler,
 		allocator.macRegistry,
@@ -192,6 +198,7 @@ func allocatePodAnnotationWithTunnelID(
 	netInfo util.NetInfo,
 	node *corev1.Node,
 	pod *corev1.Pod,
+	nadName string,
 	network *nadapi.NetworkSelectionElement,
 	claimsReconciler persistentips.PersistentAllocations,
 	macRegistry mac.Register,
@@ -209,6 +216,7 @@ func allocatePodAnnotationWithTunnelID(
 			netInfo,
 			node,
 			pod,
+			nadName,
 			network,
 			claimsReconciler,
 			macRegistry,
@@ -284,6 +292,7 @@ func allocatePodAnnotationWithRollback(
 	netInfo util.NetInfo,
 	node *corev1.Node,
 	pod *corev1.Pod,
+	nadName string,
 	network *nadapi.NetworkSelectionElement,
 	claimsReconciler persistentips.PersistentAllocations,
 	macRegistry mac.Register,
@@ -294,9 +303,8 @@ func allocatePodAnnotationWithRollback(
 	rollback func(),
 	err error) {
 
-	nadName := types.DefaultNetworkName
-	if netInfo.IsUserDefinedNetwork() {
-		nadName = util.GetNADName(network.Namespace, network.Name)
+	if !netInfo.IsUserDefinedNetwork() {
+		nadName = types.DefaultNetworkName
 	}
 	podDesc := fmt.Sprintf("%s/%s/%s", nadName, pod.Namespace, pod.Name)
 	macOwnerID := macOwner(pod)

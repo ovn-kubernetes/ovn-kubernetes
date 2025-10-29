@@ -989,6 +989,7 @@ func (bnc *BaseNetworkController) allocatePodAnnotationForUserDefinedNetwork(pod
 		ipAllocator,
 		node,
 		pod,
+		nadName,
 		network,
 		reallocate,
 		networkRole,
