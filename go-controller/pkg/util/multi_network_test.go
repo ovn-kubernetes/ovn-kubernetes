@@ -922,6 +922,7 @@ func TestGetPodNADToNetworkMapping(t *testing.T) {
 		inputPodAnnotations           map[string]string
 		expectedError                 error
 		expectedIsAttachmentRequested bool
+		expectedNetworkMapping        map[string]struct{}
 	}
 
 	tests := []testConfig{
@@ -935,6 +936,7 @@ func TestGetPodNADToNetworkMapping(t *testing.T) {
 				NADName:  GetNADName(namespaceName, attachmentName),
 			},
 			expectedIsAttachmentRequested: false,
+			expectedNetworkMapping:        map[string]struct{}{},
 		},
 		{
 			desc: "Looking for a network present in the pod's attachment requests",
@@ -947,9 +949,10 @@ func TestGetPodNADToNetworkMapping(t *testing.T) {
 				nadv1.NetworkAttachmentAnnot: GetNADName(namespaceName, attachmentName),
 			},
 			expectedIsAttachmentRequested: true,
+			expectedNetworkMapping:        map[string]struct{}{GetNADName(namespaceName, attachmentName): {}},
 		},
 		{
-			desc:           "Multiple attachments to the same network in the same pod are not supported",
+			desc:           "Multiple attachments to the same network in the same pod",
 			inputNamespace: namespaceName,
 			inputNetConf: &ovncnitypes.NetConf{
 				NetConf:  cnitypes.NetConf{Name: networkName},
@@ -959,7 +962,11 @@ func TestGetPodNADToNetworkMapping(t *testing.T) {
 			inputPodAnnotations: map[string]string{
 				nadv1.NetworkAttachmentAnnot: fmt.Sprintf("%[1]s,%[1]s", GetNADName(namespaceName, attachmentName)),
 			},
-			expectedError: fmt.Errorf("unexpected error: more than one of the same NAD ns1/attachment1 specified for pod ns1/test-pod"),
+			expectedIsAttachmentRequested: true,
+			expectedNetworkMapping: map[string]struct{}{
+				GetNADName(namespaceName, attachmentName):                      {},
+				GetIndexedNADKey(GetNADName(namespaceName, attachmentName), 1): {},
+			},
 		},
 		{
 			desc:           "Attaching to a secondary network to a user defined primary network is not supported",
@@ -973,7 +980,8 @@ func TestGetPodNADToNetworkMapping(t *testing.T) {
 			inputPodAnnotations: map[string]string{
 				nadv1.NetworkAttachmentAnnot: GetNADName(namespaceName, attachmentName),
 			},
-			expectedError: fmt.Errorf("unexpected primary network \"l3-network\" specified with a NetworkSelectionElement &{Name:attachment1 Namespace:ns1 IPRequest:[] MacRequest: InfinibandGUIDRequest: InterfaceRequest: PortMappingsRequest:[] BandwidthRequest:<nil> CNIArgs:<nil> GatewayRequest:[] IPAMClaimReference:}"),
+			expectedError:          fmt.Errorf("unexpected primary network \"l3-network\" specified with a NetworkSelectionElement &{Name:attachment1 Namespace:ns1 IPRequest:[] MacRequest: InfinibandGUIDRequest: InterfaceRequest: PortMappingsRequest:[] BandwidthRequest:<nil> CNIArgs:<nil> GatewayRequest:[] IPAMClaimReference:}"),
+			expectedNetworkMapping: map[string]struct{}{},
 		},
 	}
 
@@ -996,12 +1004,19 @@ func TestGetPodNADToNetworkMapping(t *testing.T) {
 				},
 			}
 
-			isAttachmentRequested, _, err := GetPodNADToNetworkMapping(pod, netInfo)
-
-			if err != nil {
+			isAttachmentRequested, networkMap, err := GetPodNADToNetworkMapping(pod, netInfo)
+			if test.expectedError != nil {
+				g.Expect(err).To(gomega.HaveOccurred())
 				g.Expect(err).To(gomega.MatchError(test.expectedError))
+			} else {
+				g.Expect(err).NotTo(gomega.HaveOccurred())
+			}
+			actualNetworkMapping := map[string]struct{}{}
+			for nadName := range networkMap {
+				actualNetworkMapping[nadName] = struct{}{}
 			}
 			g.Expect(isAttachmentRequested).To(gomega.Equal(test.expectedIsAttachmentRequested))
+			g.Expect(actualNetworkMapping).To(gomega.Equal(test.expectedNetworkMapping))
 		})
 	}
 }

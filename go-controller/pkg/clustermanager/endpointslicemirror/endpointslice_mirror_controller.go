@@ -349,7 +349,7 @@ func isManagedByDefault(endpointSlice *v1.EndpointSlice) bool {
 // getPodIP retrieves the IP address of a specified Pod within a given namespace and network.
 // If the pod is host networked it returns default pod IP from the status ignoring the network.
 // Otherwise, it unmarshals the Pod's network annotation, and matches the IP from the provided network.
-func (c *Controller) getPodIP(name, namespace, network string, isIPv6 bool) (string, error) {
+func (c *Controller) getPodIP(name, namespace, nadKey string, isIPv6 bool) (string, error) {
 	var podIP string
 	pod, err := c.podLister.Pods(namespace).Get(name)
 	if err != nil {
@@ -370,7 +370,7 @@ func (c *Controller) getPodIP(name, namespace, network string, isIPv6 bool) (str
 
 		podIP = ipAddr.String()
 	} else {
-		net, err := util.UnmarshalPodAnnotation(pod.Annotations, network)
+		net, err := util.UnmarshalPodAnnotation(pod.Annotations, nadKey)
 		if err != nil {
 			return "", err
 		}

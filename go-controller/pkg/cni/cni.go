@@ -86,7 +86,7 @@ func extractPodBandwidth(podAnnotations map[string]string, dir direction) (int64
 }
 
 func (pr *PodRequest) String() string {
-	return fmt.Sprintf("[%s/%s %s network %s NAD %s]", pr.PodNamespace, pr.PodName, pr.SandboxID, pr.netName, pr.nadName)
+	return fmt.Sprintf("[%s/%s %s network %s NAD %s NAD key %s]", pr.PodNamespace, pr.PodName, pr.SandboxID, pr.netName, pr.nadName, pr.nadKey)
 }
 
 // checkOrUpdatePodUID validates the given pod UID against the request's existing
@@ -119,9 +119,9 @@ func (pr *PodRequest) cmdAdd(kubeAuth *KubeAPIAuth, clientset *ClientSet, networ
 // primaryDPUReady makes sure previous annotation condition is ready, then if primary UDN interface is needed and it is
 // in the DPU-HOST/DPU setup, checks if DPU connection annotations for primary UDN interface are ready.
 func (pr *PodRequest) primaryDPUReady(primaryUDN *udn.UserDefinedPrimaryNetwork, k kube.Interface, podLister corev1listers.PodLister, annotCondFn podAnnotWaitCond) podAnnotWaitCond {
-	return func(pod *corev1.Pod, nadName string) (*util.PodAnnotation, bool, error) {
+	return func(pod *corev1.Pod, nadKey string) (*util.PodAnnotation, bool, error) {
 		// First, check the original annotation condition
-		annotation, isReady, err := annotCondFn(pod, nadName)
+		annotation, isReady, err := annotCondFn(pod, nadKey)
 		if err != nil || !isReady {
 			return annotation, isReady, err
 		}
@@ -135,7 +135,7 @@ func (pr *PodRequest) primaryDPUReady(primaryUDN *udn.UserDefinedPrimaryNetwork,
 				return annotation, false, err
 			}
 			// Check if DPU status annotation is ready (passing nil as we've already checked annotation)
-			return isDPUReady(nil, primaryUDN.NADName())(pod, nadName)
+			return isDPUReady(nil, primaryUDN.NADName())(pod, nadKey)
 		}
 		// Non-DPU case: proceed normally
 		return annotation, true, nil
@@ -156,6 +156,26 @@ func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
 	}
 
 	kubecli := &kube.Kube{KClient: clientset.kclient}
+
+	pod, _, _, err := GetPodWithAnnotations(pr.ctx, clientset, namespace, podName, "",
+		func(*corev1.Pod, string) (*util.PodAnnotation, bool, error) {
+			return nil, true, nil
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pod %s/%s: %v", namespace, podName, err)
+	}
+
+	if pr.netName != types.DefaultNetworkName {
+		nadKey, err := GetCNINADKey(pod, pr.IfName, pr.nadName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get NAD key for CNI Add request %v: %v", pr, err)
+		}
+		pr.nadKey = nadKey
+	} else {
+		pr.nadKey = pr.nadName
+	}
+
 	annotCondFn := isOvnReady
 	netdevName := ""
 	if pr.CNIConf.DeviceID != "" {
@@ -191,10 +211,10 @@ func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
 	// now checks for default network's DPU connection status
 	if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
 		if pr.CNIConf.DeviceID != "" {
-			annotCondFn = isDPUReady(annotCondFn, pr.nadName)
+			annotCondFn = isDPUReady(annotCondFn, pr.nadKey)
 		}
 	}
-	pod, annotations, podNADAnnotation, err := GetPodWithAnnotations(pr.ctx, clientset, namespace, podName, pr.nadName, annotCondFn)
+	pod, annotations, podNADAnnotation, err := GetPodWithAnnotations(pr.ctx, clientset, namespace, podName, pr.nadKey, annotCondFn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pod annotation: %v", err)
 	}
@@ -289,26 +309,43 @@ func (pr *PodRequest) cmdDel(clientset *ClientSet) (*Response, error) {
 		return nil, fmt.Errorf("required CNI variable missing")
 	}
 
+	pod, err := clientset.getPod(pr.PodNamespace, pr.PodName)
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return nil, fmt.Errorf("failed to get pod %s/%s: %w", pr.PodNamespace, pr.PodName, err)
+		}
+	}
+
+	if pod != nil && pr.netName != types.DefaultNetworkName {
+		nadKey, err := GetCNINADKey(pod, pr.IfName, pr.nadName)
+		if err != nil {
+			return nil, err
+		}
+		pr.nadKey = nadKey
+	} else {
+		pr.nadKey = pr.nadName
+	}
+
 	netdevName := ""
 	if pr.CNIConf.DeviceID != "" {
 		if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
-			pod, err := clientset.getPod(pr.PodNamespace, pr.PodName)
-			if err != nil {
+			if pod == nil {
+				// no need to update DPU connection-details annotation if pod is already removed
 				klog.Warningf("Failed to get pod %s/%s: %v", pr.PodNamespace, pr.PodName, err)
 				return response, nil
 			}
-			dpuCD, err := util.UnmarshalPodDPUConnDetails(pod.Annotations, pr.nadName)
+			dpuCD, err := util.UnmarshalPodDPUConnDetails(pod.Annotations, pr.nadKey)
 			if err != nil {
-				klog.Warningf("Failed to get DPU connection details annotation for pod %s/%s NAD %s: %v", pr.PodNamespace,
-					pr.PodName, pr.nadName, err)
+				klog.Warningf("Failed to get DPU connection details annotation for pod %s/%s NAD key %s: %v", pr.PodNamespace,
+					pr.PodName, pr.nadKey, err)
 				return response, nil
 			}
 
 			// check if this cmdDel is meant for the current sandbox, if not, directly return
 			if dpuCD.SandboxId != pr.SandboxID {
 				klog.Infof("The cmdDel request for sandbox %s is not meant for the currently configured "+
-					"pod %s/%s on NAD %s with sandbox %s. Ignoring this request.",
-					pr.SandboxID, namespace, podName, pr.nadName, dpuCD.SandboxId)
+					"pod %s/%s on NAD key %s with sandbox %s. Ignoring this request.",
+					pr.SandboxID, namespace, podName, pr.nadKey, dpuCD.SandboxId)
 				return response, nil
 			}
 
@@ -333,26 +370,26 @@ func (pr *PodRequest) cmdDel(clientset *ClientSet) (*Response, error) {
 			}
 			// not an error if pod has already been deleted
 			if err != nil && !apierrors.IsNotFound(err) {
-				return nil, fmt.Errorf("failed to cleanup the DPU connection details annotation for NAD %s: %v", pr.nadName, err)
+				return nil, fmt.Errorf("failed to cleanup the DPU connection details annotation for NAD key %s: %v", pr.nadKey, err)
 			}
 		} else {
 			// Find the hostInterface name
 			condString := []string{"external-ids:sandbox=" + pr.SandboxID}
 			if pr.netName != types.DefaultNetworkName {
-				condString = append(condString, fmt.Sprintf("external_ids:%s=%s", types.NADExternalID, pr.nadName))
+				condString = append(condString, fmt.Sprintf("external_ids:%s=%s", types.NADExternalID, pr.nadKey))
 			} else {
 				condString = append(condString, fmt.Sprintf("external_ids:%s{=}[]", types.NADExternalID))
 			}
 			ovsIfNames, err := ovsFind("Interface", "name", condString...)
+
 			if err != nil || len(ovsIfNames) != 1 {
-				klog.Warningf("Couldn't find the OVS interface for pod %s/%s NAD %s: %v",
-					pr.PodNamespace, pr.PodName, pr.nadName, err)
+				klog.Warningf("Couldn't find the OVS interface for pod %s/%s NAD key %s: %v",
+					pr.PodNamespace, pr.PodName, pr.nadKey, err)
 			} else {
-				ovsIfName := ovsIfNames[0]
-				out, err := ovsGet("interface", ovsIfName, "external_ids", "vf-netdev-name")
+				out, err := ovsGet("interface", ovsIfNames[0], "external_ids", "vf-netdev-name")
 				if err != nil {
 					klog.Warningf("Couldn't find the original Netdev name from OVS interface %s for pod %s/%s: %v",
-						ovsIfName, pr.PodNamespace, pr.PodName, err)
+						ovsIfNames[0], pr.PodNamespace, pr.PodName, err)
 				} else {
 					netdevName = out
 				}
@@ -501,6 +538,7 @@ func (pr *PodRequest) buildPrimaryUDNPodRequest(
 		IsVFIO:     isVFIO,
 		netName:    primaryUDN.NetworkName(),
 		nadName:    primaryUDN.NADName(),
+		nadKey:     primaryUDN.NADName(),
 		deviceInfo: *deviceInfo,
 	}
 
@@ -514,7 +552,7 @@ func (pr *PodRequest) buildPodInterfaceInfo(annotations map[string]string, podAn
 		podAnnotation,
 		pr.PodUID,
 		netDevice,
-		pr.nadName,
+		pr.nadKey,
 		pr.netName,
 		pr.CNIConf.MTU,
 	)

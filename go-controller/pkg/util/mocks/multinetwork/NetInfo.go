@@ -532,6 +532,24 @@ func (_m *NetInfo) GetTunnelKeys() []int {
 	return r0
 }
 
+// HasNADKey provides a mock function with given fields: nadKey
+func (_m *NetInfo) HasNADKey(nadKey string) bool {
+	ret := _m.Called(nadKey)
+
+	if len(ret) == 0 {
+		panic("no return value specified for HasNADKey")
+	}
+
+	var r0 bool
+	if rf, ok := ret.Get(0).(func(string) bool); ok {
+		r0 = rf(nadKey)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+
+	return r0
+}
+
 // HasNAD provides a mock function with given fields: nadName
 func (_m *NetInfo) HasNAD(nadName string) bool {
 	ret := _m.Called(nadName)

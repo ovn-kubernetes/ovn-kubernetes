@@ -979,21 +979,6 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			// ID allocation error
-			name:         "expect ID allocation error",
-			idAllocation: true,
-			args: args{
-				idAllocator: &idAllocatorStub{
-					reserveIDError: errors.New("ID allocation error"),
-				},
-			},
-			podAnnotation: &util.PodAnnotation{
-				MAC:      randomMac,
-				TunnelID: 200,
-			},
-			wantErr: true,
-		},
-		{
 			// expect ID release on error
 			name:         "expect error, release ID",
 			idAllocation: true,
@@ -1262,6 +1247,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 				tt.netInfo,
 				node,
 				pod,
+				fmt.Sprintf("%s/%s", network.Namespace, network.Name),
 				network,
 				claimsReconciler,
 				macRegistry,

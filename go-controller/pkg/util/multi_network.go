@@ -62,6 +62,7 @@ type NetInfo interface {
 	// dynamic information, can change over time
 	GetNADs() []string
 	EqualNADs(nads ...string) bool
+	HasNADKey(nadKey string) bool
 	HasNAD(nadName string) bool
 	// GetPodNetworkAdvertisedVRFs returns the target VRFs where the pod network
 	// is advertised per node, through a map of node names to slice of VRFs.
@@ -411,6 +412,17 @@ func (nInfo *mutableNetInfo) EqualNADs(nads ...string) bool {
 		return false
 	}
 	return nInfo.getNads().HasAll(nads...)
+}
+
+// HasNADKey returns true if the given NADKey (perhaps with index) exists, used
+// to check if the network needs to be plumbed over
+func (nInfo *mutableNetInfo) HasNADKey(nadKey string) bool {
+	nadName, _, err := GetNadFromIndexedNADKey(nadKey)
+	if err != nil {
+		return false
+	}
+
+	return nInfo.HasNAD(nadName)
 }
 
 // HasNAD returns true if the given NAD exists, used
@@ -1233,6 +1245,35 @@ func GetNADName(namespace, name string) string {
 	return fmt.Sprintf("%s/%s", namespace, name)
 }
 
+// GetIndexedNADKey returns key of NetAttachDefInfo.NetAttachDefs map for multiple identical NADs, also used as Pod annotation key
+// the resulted nadKey example is like "ns/nad", "ns/nad/1", "ns/nad/2" etc...
+func GetIndexedNADKey(nadName string, n int) string {
+	if n == 0 {
+		return nadName
+	}
+	return fmt.Sprintf("%s/%d", nadName, n)
+}
+
+// GetNadFromIndexedNADKey returns NAD name part from a nadName key (with or without index)
+func GetNadFromIndexedNADKey(nadKey string) (string, int, error) {
+	parts := strings.Split(nadKey, "/")
+
+	if len(parts) == 3 {
+		// Attempt to parse the integer part
+		num, err := strconv.Atoi(parts[2])
+		if err != nil {
+			return "", 0, fmt.Errorf("malformed index for NAD key %s: %v", nadKey, err)
+		}
+		return fmt.Sprintf("%s/%s", parts[0], parts[1]), num, nil
+	}
+
+	if len(parts) == 2 {
+		return fmt.Sprintf("%s/%s", parts[0], parts[1]), 0, nil
+	}
+
+	return "", 0, fmt.Errorf("malformed NAD key %s, expect in the form of namespace/name{/index}", nadKey)
+}
+
 // GetUserDefinedNetworkPrefix gets the string used as prefix of the logical entities
 // of the User Defined Network of the given network name, in the form of <netName>_.
 //
@@ -1480,11 +1521,13 @@ func SubnetOverlapCheck(netconf *ovncnitypes.NetConf) (*net.IPNet, *net.IPNet, e
 //
 // Return value:
 //
-//	bool: if this Pod is on this Network; true or false
-//	map[string]*nettypes.NetworkSelectionElement: all NetworkSelectionElement that pod is requested
-//	    for the specified network, key is NADName. Note multiple NADs of the same network are allowed
-//	    on one pod, as long as they are of different NADName.
-//	error:  error in case of failure
+//		bool: if this Pod is on this Network; true or false
+//		map[string]*nettypes.NetworkSelectionElement: all NetworkSelectionElement that the pod requests
+//		    for the specified network, keyed by NAD key. NAD keys are of the form "namespace/name"
+//	        for the first attachment of a NAD, and "namespace/name/<idx>" (idx start from 1) for
+//	        additional attachments of the same NAD on the same pod. Note multiple NADs of the same
+//	        network are allowed on one pod. They can be of different NAD Name or the same NAD Name.
+//		error:  error in case of failure
 func GetPodNADToNetworkMapping(pod *corev1.Pod, nInfo NetInfo) (bool, map[string]*nettypes.NetworkSelectionElement, error) {
 	if pod.Spec.HostNetwork {
 		return false, nil, nil
@@ -1511,17 +1554,24 @@ func GetPodNADToNetworkMapping(pod *corev1.Pod, nInfo NetInfo) (bool, map[string
 		return false, nil, err
 	}
 
+	// Get map of per-NAD NetworkSelectionElement, if there are multiple NetworkSelectionElements of the same NAD,
+	// calculate numbers of network elements of that same NAD.
+	nNADs := map[string]int{}
 	for _, network := range allNetworks {
 		nadName := GetNADName(network.Namespace, network.Name)
 		if nInfo.HasNAD(nadName) {
 			if nInfo.IsPrimaryNetwork() {
 				return false, nil, fmt.Errorf("unexpected primary network %q specified with a NetworkSelectionElement %+v", nInfo.GetNetworkName(), network)
 			}
-			if _, ok := networkSelections[nadName]; ok {
-				return false, nil, fmt.Errorf("unexpected error: more than one of the same NAD %s specified for pod %s",
-					nadName, podDesc)
+
+			// for multiple NetworkSelectionElements of the same NAD, set its nadName to indexed nadName
+			cnt := nNADs[nadName]
+			if cnt > 0 && nInfo.TopologyType() == types.LocalnetTopology {
+				return false, nil, fmt.Errorf("pod %s/%s cannot have same networkSelectionElement %s of type %s multiple times",
+					pod.Namespace, pod.Name, nadName, types.LocalnetTopology)
 			}
-			networkSelections[nadName] = network
+			nNADs[nadName] = cnt + 1
+			networkSelections[GetIndexedNADKey(nadName, cnt)] = network
 		}
 	}
 
