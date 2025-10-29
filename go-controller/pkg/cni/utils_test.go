@@ -251,8 +251,9 @@ var _ = Describe("CNI Utils tests", func() {
 
 			podNamespaceLister.On("Get", mock.AnythingOfType("string")).Return(nil, apierrors.NewNotFound(corev1.Resource("pod"), podName))
 			_, _, _, err := GetPodWithAnnotations(ctx, clientset, namespace, podName, ovntypes.DefaultNetworkName, cond)
+			By(fmt.Sprintf("GetPodWithAnnotations returns %v", err))
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("timed out waiting for pod after 1s"))
+			Expect(err.Error()).To(ContainSubstring("failed to get pod for annotations"))
 		})
 	})
 

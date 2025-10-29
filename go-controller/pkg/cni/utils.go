@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -79,7 +80,6 @@ func (c *ClientSet) getPod(namespace, name string) (*corev1.Pod, error) {
 // GetPodAnnotations obtains the pod UID and annotation from the cache or apiserver
 func GetPodWithAnnotations(ctx context.Context, getter PodInfoGetter,
 	namespace, name, nadName string, annotCond podAnnotWaitCond) (*corev1.Pod, map[string]string, *util.PodAnnotation, error) {
-	var notFoundCount uint
 
 	for {
 		select {
@@ -92,15 +92,7 @@ func GetPodWithAnnotations(ctx context.Context, getter PodInfoGetter,
 		default:
 			pod, err := getter.getPod(namespace, name)
 			if err != nil {
-				if !apierrors.IsNotFound(err) {
-					return nil, nil, nil, fmt.Errorf("failed to get pod for annotations: %v", err)
-				}
-				// Allow up to 1 second for pod to be found
-				notFoundCount++
-				if notFoundCount >= 5 {
-					return nil, nil, nil, fmt.Errorf("timed out waiting for pod after 1s: %v", err)
-				}
-				// drop through to try again
+				return nil, nil, nil, fmt.Errorf("failed to get pod for annotations: %v", err)
 			} else if pod != nil {
 				podNADAnnotation, ready, err := annotCond(pod, nadName)
 				if err != nil {
@@ -150,6 +142,36 @@ func PodAnnotation2PodInfo(podAnnotation map[string]string, podNADAnnotation *ut
 		EnableUDPAggregation: config.Default.EnableUDPAggregation,
 	}
 	return podInterfaceInfo, nil
+}
+
+// GetCNINADKey gets the pod's nadKey (nadName with index in case there are multiple same NADs in the pod)
+func GetCNINADKey(pod *corev1.Pod, ifName, nadName string) (string, error) {
+	networks, err := util.GetK8sPodAllNetworkSelections(pod)
+	if err != nil {
+		return "", fmt.Errorf("failed to find NAD key associated with CNI request with ifName %s: %v", ifName, err)
+	}
+	nNADs := map[string]int{}
+	for idx, network := range networks {
+		nad := util.GetNADName(network.Namespace, network.Name)
+		// for multiple NetworkSelectionElements of the same NAD, set its nadName to indexed nadName
+		cnt := nNADs[nad]
+		nNADs[nad] = cnt + 1
+		if network.InterfaceRequest != "" {
+			if network.InterfaceRequest != ifName {
+				continue
+			}
+		} else if fmt.Sprintf("net%d", idx+1) != ifName {
+			continue
+		}
+		nadKey := util.GetIndexedNADKey(nad, cnt)
+		// check if the derived nadKey is for the given nadName
+		if nadKey != nadName && !strings.HasPrefix(nadKey, nadName+"/") {
+			return "", fmt.Errorf("unexpected NAD key %s associated with CNI request with ifName %s, expected for NAD %s", nadKey, ifName, nadName)
+		}
+		return nadKey, nil
+	}
+	return "", fmt.Errorf("failed to find NAD key associated with CNI request for pod %s/%s with ifName %s",
+		pod.Namespace, pod.Name, ifName)
 }
 
 // START taken from https://github.com/kubernetes/kubernetes/blob/master/pkg/kubelet/types/pod_update.go

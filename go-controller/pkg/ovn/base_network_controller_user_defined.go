@@ -449,7 +449,7 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 
 	var alreadyProcessed bool
 	for nadName, podAnnotation := range podNetworks {
-		if !bsnc.HasNAD(nadName) {
+		if !bsnc.HasNADKey(nadName) {
 			continue
 		}
 
@@ -498,6 +498,7 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 
 		// if we allow for persistent IPs, then we need to check if this pod has an IPAM Claim
 		if bsnc.allowPersistentIPs() {
+			// TBD-Multiple_Same_NAD ipamClaim to work with multiple same NADs on Pod
 			hasIPAMClaim, err := bsnc.hasIPAMClaim(pod, nadName)
 			if err != nil {
 				return fmt.Errorf("unable to determine if pod %s has IPAM Claim: %w", podDesc, err)
