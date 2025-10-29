@@ -1,0 +1,360 @@
+package clustermanager
+
+import (
+	"fmt"
+	"reflect"
+	"strings"
+	"sync"
+
+	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/workqueue"
+	"k8s.io/klog/v2"
+
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	controllerutil "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/controller"
+	ratypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
+	apitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
+	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
+)
+
+// validationError represents different types of validation failures
+type validationError struct {
+	errorType string
+	message   string
+	raNames   []string // Names of RAs that exist but aren't accepted (for notAccepted scenario)
+}
+
+func (e *validationError) Error() string {
+	return e.message
+}
+
+// noOverlayController validates no-overlay configuration with RouteAdvertisements.
+// It watches NetworkAttachmentDefinition (NAD) resources for the default network
+// and RouteAdvertisements CRs, triggering validation when relevant changes occur.
+type noOverlayController struct {
+	wf       *factory.WatchFactory
+	recorder record.EventRecorder
+
+	// nadController watches NetworkAttachmentDefinition resources
+	nadController controllerutil.Controller
+	// raController watches RouteAdvertisements resources
+	raController controllerutil.Controller
+
+	// validationLock protects validation state
+	validationLock sync.Mutex
+	// lastValidationError tracks the last validation error to avoid spamming events
+	lastValidationError string
+}
+
+// newNoOverlayController creates a new no-overlay validation controller.
+// This should only be called when config.Default.Transport == config.TransportNoOverlay.
+func newNoOverlayController(wf *factory.WatchFactory, recorder record.EventRecorder) (*noOverlayController, error) {
+	klog.Infof("Creating no-overlay validation controller")
+
+	c := &noOverlayController{
+		wf:       wf,
+		recorder: recorder,
+	}
+
+	// Create controller config with NetworkAttachmentDefinition informer
+	// We only care about the default network NAD
+	nadConfig := &controllerutil.ControllerConfig[nettypes.NetworkAttachmentDefinition]{
+		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+		Reconcile:      c.reconcileNAD,
+		Threadiness:    1,
+		Informer:       wf.NADInformer().Informer(),
+		Lister:         wf.NADInformer().Lister().List,
+		ObjNeedsUpdate: c.nadNeedsValidation,
+	}
+	c.nadController = controllerutil.NewController("no-overlay-nad-watcher", nadConfig)
+
+	// Create controller config with RouteAdvertisements informer
+	raConfig := &controllerutil.ControllerConfig[ratypes.RouteAdvertisements]{
+		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+		Reconcile:      c.reconcileRA,
+		Threadiness:    1,
+		Informer:       wf.RouteAdvertisementsInformer().Informer(),
+		Lister:         wf.RouteAdvertisementsInformer().Lister().List,
+		ObjNeedsUpdate: c.raNeedsValidation,
+	}
+	c.raController = controllerutil.NewController("no-overlay-ra-watcher", raConfig)
+
+	return c, nil
+}
+
+// Start starts the no-overlay validation controller
+func (c *noOverlayController) Start() error {
+	if c == nil {
+		return nil
+	}
+
+	klog.Infof("Starting no-overlay validation controller")
+
+	// Run initial validation
+	c.runValidation()
+
+	// Start both controllers
+	return controllerutil.Start(c.nadController, c.raController)
+}
+
+// Stop stops the no-overlay validation controller
+func (c *noOverlayController) Stop() {
+	if c == nil {
+		return
+	}
+
+	klog.Infof("Stopping no-overlay validation controller")
+
+	controllerutil.Stop(c.nadController, c.raController)
+}
+
+// reconcileNAD is called whenever a NetworkAttachmentDefinition resource changes
+func (c *noOverlayController) reconcileNAD(key string) error {
+	klog.V(5).Infof("No-overlay controller reconciling NAD %q", key)
+	c.runValidation()
+	return nil
+}
+
+// reconcileRA is called whenever a RouteAdvertisements resource changes
+func (c *noOverlayController) reconcileRA(key string) error {
+	klog.V(5).Infof("No-overlay controller reconciling RouteAdvertisements %q", key)
+	c.runValidation()
+	return nil
+}
+
+// nadNeedsValidation checks if the NAD update requires validation
+// We only care about changes to the route-advertisements annotation for the default network
+func (c *noOverlayController) nadNeedsValidation(oldNAD, newNAD *nettypes.NetworkAttachmentDefinition) bool {
+	// If either object is nil, we need to validate
+	if oldNAD == nil || newNAD == nil {
+		return true
+	}
+
+	if config.Default.Transport != config.TransportNoOverlay || newNAD.Name != ovntypes.DefaultNetworkName || newNAD.Namespace != config.Kubernetes.OVNConfigNamespace {
+		return false
+	}
+
+	// Only validate for default network NAD
+	if newNAD.Name != ovntypes.DefaultNetworkName || newNAD.Namespace != config.Kubernetes.OVNConfigNamespace {
+		return false
+	}
+
+	// Check if the route-advertisements annotation changed
+	oldAnnotation := ""
+	if oldNAD.Annotations != nil {
+		oldAnnotation = oldNAD.Annotations[ovntypes.OvnRouteAdvertisementsKey]
+	}
+
+	newAnnotation := ""
+	if newNAD.Annotations != nil {
+		newAnnotation = newNAD.Annotations[ovntypes.OvnRouteAdvertisementsKey]
+	}
+
+	return oldAnnotation != newAnnotation
+}
+
+// raNeedsValidation checks if the RouteAdvertisements update requires validation
+func (c *noOverlayController) raNeedsValidation(oldRA, newRA *ratypes.RouteAdvertisements) bool {
+	// If either object is nil, we need to validate
+	if oldRA == nil || newRA == nil {
+		return true
+	}
+
+	isRAAdvertisingDefaultNetwork := func(ra *ratypes.RouteAdvertisements) bool {
+		for _, networkSelector := range ra.Spec.NetworkSelectors {
+			if networkSelector.NetworkSelectionType == apitypes.DefaultNetwork {
+				return true
+			}
+		}
+		return false
+	}
+	if config.Default.Transport != config.TransportNoOverlay || isRAAdvertisingDefaultNetwork(oldRA) == isRAAdvertisingDefaultNetwork(newRA) {
+		return false
+	}
+
+	// Check if Advertisements changed
+	if !reflect.DeepEqual(oldRA.Spec.Advertisements, newRA.Spec.Advertisements) {
+		return true
+	}
+
+	// Check if the Accepted status changed
+	oldAccepted := metav1.ConditionUnknown
+	for _, condition := range oldRA.Status.Conditions {
+		if condition.Type == "Accepted" {
+			oldAccepted = condition.Status
+			break
+		}
+	}
+
+	newAccepted := metav1.ConditionUnknown
+	for _, condition := range newRA.Status.Conditions {
+		if condition.Type == "Accepted" {
+			newAccepted = condition.Status
+			break
+		}
+	}
+
+	return oldAccepted != newAccepted
+}
+
+// runValidation runs validation and emits events if the state changed
+func (c *noOverlayController) runValidation() {
+	c.validationLock.Lock()
+	defer c.validationLock.Unlock()
+
+	err := c.validate()
+	currentError := ""
+	if err != nil {
+		currentError = err.Error()
+	}
+
+	// Only emit event if error state changed
+	if currentError != c.lastValidationError {
+		if err != nil {
+			klog.Errorf("No-overlay validation failed: %v", err)
+			c.emitValidationEvent(err)
+		} else {
+			klog.Infof("No-overlay validation passed: RouteAdvertisements configuration is now valid")
+			c.emitReadyEvent()
+		}
+		c.lastValidationError = currentError
+	}
+}
+
+// validate checks if the no-overlay configuration is valid
+func (c *noOverlayController) validate() error {
+	// Get all RouteAdvertisements CRs
+	ras, err := c.wf.RouteAdvertisementsInformer().Lister().List(labels.Everything())
+	if err != nil {
+		return fmt.Errorf("failed to list RouteAdvertisements: %w", err)
+	}
+
+	// Track if we found RAs advertising default network (but not accepted)
+	foundDefaultNetworkRA := false
+	notAcceptedRANames := []string{}
+
+	// Check if any RouteAdvertisements CR is configured for the default network
+	for _, ra := range ras {
+		// Check if this RouteAdvertisements selects the default network
+		for _, networkSelector := range ra.Spec.NetworkSelectors {
+			// Check if it's selecting the default network
+			if networkSelector.NetworkSelectionType == apitypes.DefaultNetwork {
+				// Found a RouteAdvertisements for default network
+				// Check if it advertises pod networks
+				advertisePodNetwork := false
+				for _, adv := range ra.Spec.Advertisements {
+					if adv == ratypes.PodNetwork {
+						advertisePodNetwork = true
+						break
+					}
+				}
+
+				if !advertisePodNetwork {
+					continue
+				}
+
+				// We found at least one RA advertising default network
+				foundDefaultNetworkRA = true
+
+				// Check if the RouteAdvertisements status is Accepted=True
+				accepted := false
+				for _, condition := range ra.Status.Conditions {
+					if condition.Type == "Accepted" && condition.Status == metav1.ConditionTrue {
+						accepted = true
+						break
+					}
+				}
+
+				if accepted {
+					// Valid configuration found
+					klog.V(5).Infof("Found valid RouteAdvertisements %q for default network with no-overlay transport", ra.Name)
+					return nil
+				} else {
+					klog.Warningf("RouteAdvertisements %q selects default network but status is not Accepted", ra.Name)
+					notAcceptedRANames = append(notAcceptedRANames, ra.Name)
+				}
+			}
+		}
+	}
+
+	// Return specific error based on what we found
+	if !foundDefaultNetworkRA {
+		return &validationError{
+			errorType: "noRouteAdvertisements",
+			message:   "no RouteAdvertisements CR is advertising the default network pod networks",
+		}
+	}
+
+	// Found RAs advertising default network, but none are accepted
+	return &validationError{
+		errorType: "notAccepted",
+		message:   fmt.Sprintf("RouteAdvertisements CRs %v are advertising the default network pod networks but none have status Accepted=True", notAcceptedRANames),
+		raNames:   notAcceptedRANames,
+	}
+}
+
+// emitValidationEvent emits a Kubernetes event for validation failures
+func (c *noOverlayController) emitValidationEvent(err error) {
+	var eventReason, eventMessage string
+
+	// Check if this is our custom validation error type
+	if valErr, ok := err.(*validationError); ok {
+		switch valErr.errorType {
+		case "notAccepted":
+			// Scenario: RAs exist but none are accepted
+			eventReason = "RouteAdvertisementsNotAccepted"
+			if len(valErr.raNames) > 0 {
+				eventMessage = fmt.Sprintf("RouteAdvertisements CR(s) %v exist for the default network but none have status Accepted=True. "+
+					"When transport=no-overlay, at least one RouteAdvertisements CR must be accepted to advertise pod networks.",
+					strings.Join(valErr.raNames, ", "))
+			} else {
+				eventMessage = "RouteAdvertisements CR(s) exist for the default network but none have status Accepted=True. " +
+					"When transport=no-overlay, at least one RouteAdvertisements CR must be accepted to advertise pod networks."
+			}
+		case "noRouteAdvertisements":
+			// Scenario: No RAs advertising default network
+			eventReason = "NoRouteAdvertisements"
+			eventMessage = "No RouteAdvertisements CR is advertising the default network pod networks. " +
+				"RouteAdvertisements configuration is required when transport=no-overlay."
+		default:
+			// Unknown validation error type
+			eventReason = "NoOverlayConfigurationError"
+			eventMessage = fmt.Sprintf("No-overlay transport configuration error: %v", err)
+		}
+	} else {
+		// Generic error
+		eventReason = "NoOverlayConfigurationError"
+		eventMessage = fmt.Sprintf("No-overlay transport configuration error: %v", err)
+	}
+
+	c.recorder.Eventf(
+		&corev1.ObjectReference{
+			Kind:      "ClusterManager",
+			Name:      "ovn-kubernetes",
+			Namespace: config.Kubernetes.OVNConfigNamespace,
+		},
+		corev1.EventTypeWarning,
+		eventReason,
+		eventMessage,
+	)
+}
+
+// emitReadyEvent emits a Normal event when validation passes
+func (c *noOverlayController) emitReadyEvent() {
+	c.recorder.Eventf(
+		&corev1.ObjectReference{
+			Kind:      "ClusterManager",
+			Name:      "ovn-kubernetes",
+			Namespace: config.Kubernetes.OVNConfigNamespace,
+		},
+		corev1.EventTypeNormal,
+		"NoOverlayConfigurationReady",
+		"No-overlay transport is properly configured with RouteAdvertisements CR advertising the default network pod networks with status Accepted=True",
+	)
+}
