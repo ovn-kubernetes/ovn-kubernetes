@@ -616,8 +616,10 @@ func (c *Controller) generateFRRConfiguration(
 			matchedVRF = router.VRF
 			matchedNetwork = selectedNetworks.networkVRFs[matchedVRF]
 			advertisePrefixes = selectedNetworks.hostNetworkSubnets[matchedNetwork]
-		case targetVRF == "":
+		case targetVRF == "" || targetVRF == "default":
 			// match on default network/VRF, advertise node prefixes
+			// Note: empty string ("") and "default" both represent the default VRF
+			// FRR uses empty string for default VRF, so we normalize to "" for matching
 			matchedVRF = ""
 			matchedNetwork = types.DefaultNetworkName
 			advertisePrefixes = selectedNetworks.hostSubnets
