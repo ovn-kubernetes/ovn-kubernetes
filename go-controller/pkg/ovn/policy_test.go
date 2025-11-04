@@ -292,7 +292,11 @@ func getGressACLs(gressIdx int, peers []knet.NetworkPolicyPeer, policyType knet.
 		acls = append(acls, acl)
 	}
 	for i, ipBlock := range ipBlocks {
-		match := fmt.Sprintf("ip4.%s == %s && %s == @%s", ipDir, ipBlock, portDir, pgName)
+		ipVer := "ip4"
+		if utilnet.IsIPv6CIDRString(ipBlock) {
+			ipVer = "ip6"
+		}
+		match := fmt.Sprintf("%s.%s == {%s} && %s == @%s", ipVer, ipDir, ipBlock, portDir, pgName)
 		action := allowAction(params.statelessNetPol)
 		dbIDs := gp.getNetpolACLDbIDs(i, libovsdbutil.UnspecifiedL4Protocol)
 		acl := libovsdbops.BuildACL(
@@ -906,7 +910,7 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 				namespace1AddressSetv4, _ := buildNamespaceAddressSets(namespace1.Name, nil)
 				peer := knet.NetworkPolicyPeer{
 					IPBlock: &knet.IPBlock{
-						CIDR: "1.1.1.1",
+						CIDR: "1.1.1.1/32",
 					},
 				}
 				// equivalent rules in one peer
@@ -1704,7 +1708,7 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 
 				peer := knet.NetworkPolicyPeer{
 					IPBlock: &knet.IPBlock{
-						CIDR: "1.1.1.1",
+						CIDR: "1.1.1.1/32",
 					},
 				}
 				// equivalent rules in one peer
