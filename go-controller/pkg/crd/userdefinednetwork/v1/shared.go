@@ -27,6 +27,10 @@ const (
 // +kubebuilder:validation:XValidation:rule="!has(self.subnets) || !has(self.mtu) || !self.subnets.exists_one(i, isCIDR(i.cidr) && cidr(i.cidr).ip().family() == 6) || self.mtu >= 1280", message="MTU should be greater than or equal to 1280 when IPv6 subnet is used"
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.subnets) || oldSelf.subnets.all(old, self.subnets.exists(new, new.cidr == old.cidr))", message="Removing existing subnets is not allowed"
 // +kubebuilder:validation:XValidation:rule="!has(self.subnets) || self.subnets.size() == 1 || !self.subnets.exists(i, self.subnets.exists(j, i != j && cidr(i.cidr).containsCIDR(j.cidr)))", message="Subnets must not overlap or contain each other"
+// +kubebuilder:validation:XValidation:rule="!has(self.subnets) || self.subnets.size() == 1 || !self.subnets.exists(i, self.subnets.filter(j, j.cidr == i.cidr).size() > 1)", message="Subnets with same CIDR are not allowed"
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.subnets) || oldSelf.subnets.all(old, self.subnets.exists(new, new.cidr == old.cidr && (!has(old.hostSubnet) && !has(new.hostSubnet) || has(old.hostSubnet) && has(new.hostSubnet) && old.hostSubnet == new.hostSubnet)))", message="hostSubnet is immutable"
+// +kubebuilder:validation:XValidation:rule="!has(self.subnets) || self.subnets.size() == 1 || self.subnets.all(i, self.subnets.all(j, cidr(i.cidr).ip().family() != cidr(j.cidr).ip().family() || (has(i.hostSubnet) == has(j.hostSubnet) && (!has(i.hostSubnet) || i.hostSubnet == j.hostSubnet))))", message="Subnets from the same IP family must use the same hostSubnet value"
+
 type Layer3Config struct {
 	// Role describes the network role in the pod.
 	//

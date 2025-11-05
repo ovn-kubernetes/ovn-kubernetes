@@ -377,6 +377,20 @@ spec:
                 - message: Subnets must not overlap or contain each other
                   rule: '!has(self.subnets) || self.subnets.size() == 1 || !self.subnets.exists(i,
                     self.subnets.exists(j, i != j && cidr(i.cidr).containsCIDR(j.cidr)))'
+                - message: Subnets with same CIDR are not allowed
+                  rule: '!has(self.subnets) || self.subnets.size() == 1 || !self.subnets.exists(i,
+                    self.subnets.filter(j, j.cidr == i.cidr).size() > 1)'
+                - message: hostSubnet is immutable
+                  rule: '!has(oldSelf.subnets) || oldSelf.subnets.all(old, self.subnets.exists(new,
+                    new.cidr == old.cidr && (!has(old.hostSubnet) && !has(new.hostSubnet)
+                    || has(old.hostSubnet) && has(new.hostSubnet) && old.hostSubnet
+                    == new.hostSubnet)))'
+                - message: Subnets from the same IP family must use the same hostSubnet
+                    value
+                  rule: '!has(self.subnets) || self.subnets.size() == 1 || self.subnets.all(i,
+                    self.subnets.all(j, cidr(i.cidr).ip().family() != cidr(j.cidr).ip().family()
+                    || (has(i.hostSubnet) == has(j.hostSubnet) && (!has(i.hostSubnet)
+                    || i.hostSubnet == j.hostSubnet))))'
               topology:
                 description: |-
                   Topology describes network configuration.
