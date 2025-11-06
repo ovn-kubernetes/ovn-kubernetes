@@ -311,9 +311,28 @@ func (pr *PodRequest) cmdDel(clientset *ClientSet) (*Response, error) {
 				return response, nil
 			}
 
-			// Delete the DPU connection-details annotation
-			_ = pr.updatePodDPUConnDetailsWithRetry(&kube.Kube{KClient: clientset.kclient}, clientset.podLister, nil)
 			netdevName = dpuCD.VfNetdevName
+			if pr.netName == types.DefaultNetworkName {
+				// if this is the default network name, remove the whole DPU connection-details annotation,
+				// including the primary UDN connection-details if any
+				updatePodAnnotationNoRollback := func(pod *corev1.Pod) (*corev1.Pod, func(), error) {
+					delete(pod.Annotations, util.DPUConnectionDetailsAnnot)
+					return pod, nil, nil
+				}
+
+				err = util.UpdatePodWithRetryOrRollback(
+					clientset.podLister,
+					&kube.Kube{KClient: clientset.kclient},
+					pod,
+					updatePodAnnotationNoRollback,
+				)
+			} else {
+				// Delete the DPU connection-details annotation for this NAD
+				err = pr.updatePodDPUConnDetailsWithRetry(&kube.Kube{KClient: clientset.kclient}, clientset.podLister, nil)
+			}
+			if err != nil {
+				return nil, fmt.Errorf("failed to cleanup the DPU connection details annotation for NAD %s: %v", pr.nadName, err)
+			}
 		} else {
 			// Find the hostInterface name
 			condString := []string{"external-ids:sandbox=" + pr.SandboxID}
