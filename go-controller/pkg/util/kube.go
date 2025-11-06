@@ -28,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	k8stypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
@@ -952,4 +953,9 @@ func IsLastUpdatedByManager(manager string, managedFields []metav1.ManagedFields
 		}
 	}
 	return lastUpdateOurs.After(lastUpdateTheirs)
+}
+
+// JoinServiceIPPortTargetPort returns the IP:port:targetPort combination for a service port
+func JoinServiceIPPortTargetPort(ip string, port int32, targetPort intstr.IntOrString) string {
+	return fmt.Sprintf("%s:%d:%s", ip, port, targetPort.String())
 }
