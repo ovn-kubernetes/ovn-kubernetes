@@ -470,6 +470,16 @@ func (nc *DefaultNodeNetworkController) initGatewayDPUHostPreStart(kubeNodeIP ne
 		return fmt.Errorf("failed to add MAC bindings for service routing: %w", err)
 	}
 
+	// Configure iptables FORWARD rules for cluster and service CIDRs.
+	// In DPU-host mode, while there is no OVS bridge on the host, iptables FORWARD rules
+	// are still required to allow traffic forwarding between the host interface and cluster/service
+	// networks. Without these rules, packets would be dropped by the default FORWARD policy,
+	// breaking external connectivity to NodePort services and other cluster endpoints.
+	// See docs/features/hardware-offload/dpu-support.md for more details.
+	if err := configureForwardingRules(); err != nil {
+		return fmt.Errorf("failed to configure forwarding rules for DPU host: %v", err)
+	}
+
 	gatewayNextHops, _, err := getGatewayNextHops()
 	if err != nil {
 		return err

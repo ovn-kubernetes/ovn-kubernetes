@@ -45,6 +45,31 @@ These aforementioned parts are expected to be deployed also on two different Kub
 
 For detailed configuration of gateway interfaces in DPU host mode, see [DPU Gateway Interface Configuration](dpu-gateway-interface.md).
 
+#### Network Forwarding Configuration
+
+In DPU-host mode, the host does not run an OVS bridge like in standard deployments. However, iptables FORWARD rules are still required to allow traffic forwarding for cluster and service networks.
+
+OVN-Kubernetes automatically configures iptables FORWARD rules for:
+- **Cluster subnets** (pod CIDRs): Allows forwarding of pod-to-pod traffic
+- **Service CIDRs**: Allows forwarding of traffic destined to Kubernetes services
+- **Masquerade IPs**: Allows forwarding of traffic using OVN masquerade addresses
+
+These rules are essential for external connectivity to NodePort services and other cluster endpoints via the DPU-host node. Without these rules, packets would be dropped by the default iptables FORWARD policy, preventing external sources from reaching cluster resources.
+
+The FORWARD rules are configured based on the `config.Gateway.DisableForwarding` setting:
+- When `DisableForwarding=true`: FORWARD ACCEPT rules are added for all configured CIDRs
+- When `DisableForwarding=false`: FORWARD rules are removed to allow default policy
+
+Example rules applied:
+```
+-A FORWARD -s 10.128.0.0/14 -j ACCEPT    # Cluster subnet source
+-A FORWARD -d 10.128.0.0/14 -j ACCEPT    # Cluster subnet destination
+-A FORWARD -s 172.30.0.0/16 -j ACCEPT    # Service CIDR source
+-A FORWARD -d 172.30.0.0/16 -j ACCEPT    # Service CIDR destination
+-A FORWARD -s 169.254.0.1/32 -j ACCEPT   # Masquerade IP source
+-A FORWARD -d 169.254.0.1/32 -j ACCEPT   # Masquerade IP destination
+```
+
 ### DPU Cluster
 ---
 

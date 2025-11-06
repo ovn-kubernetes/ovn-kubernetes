@@ -364,6 +364,39 @@ func delExternalBridgeServiceForwardingRules(cidrs []*net.IPNet) error {
 	return deleteIptRules(getGatewayForwardRules(cidrs))
 }
 
+// configureForwardingRules sets up or removes iptables FORWARD rules for cluster and service CIDRs
+// based on config.Gateway.DisableForwarding setting.
+//
+// This function creates bidirectional FORWARD rules for:
+//   - Cluster subnets (pod CIDRs)
+//   - Service CIDRs
+//   - Masquerade IPs used by OVN
+//
+// These rules are essential in both standard gateway modes and DPU-host mode to allow
+// traffic forwarding for cluster resources. Without these rules, packets would be dropped
+// by the default iptables FORWARD policy, breaking external connectivity to services.
+//
+// When config.Gateway.DisableForwarding is true, rules are added.
+// When config.Gateway.DisableForwarding is false, rules are removed.
+func configureForwardingRules() error {
+	var subnets []*net.IPNet
+	for _, subnet := range config.Default.ClusterSubnets {
+		subnets = append(subnets, subnet.CIDR)
+	}
+	subnets = append(subnets, config.Kubernetes.ServiceCIDRs...)
+
+	if config.Gateway.DisableForwarding {
+		if err := initExternalBridgeServiceForwardingRules(subnets); err != nil {
+			return fmt.Errorf("failed to add iptables FORWARD rules: %v", err)
+		}
+	} else {
+		if err := delExternalBridgeServiceForwardingRules(subnets); err != nil {
+			return fmt.Errorf("failed to delete iptables FORWARD rules: %v", err)
+		}
+	}
+	return nil
+}
+
 func getLocalGatewayFilterRules(ifname string, cidr *net.IPNet) []nodeipt.Rule {
 	// Allow packets to/from the gateway interface in case defaults deny
 	protocol := getIPTablesProtocol(cidr.IP.String())

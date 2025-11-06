@@ -1618,21 +1618,10 @@ func newNodePortWatcher(
 				return nil, fmt.Errorf("unable to configure UDN isolation nftables: %w", err)
 			}
 		}
+		if err := configureForwardingRules(); err != nil {
+			return nil, fmt.Errorf("failed to configure forwarding rules for bridge %s: %v", gwBridge.GetGatewayIface(), err)
+		}
 
-		var subnets []*net.IPNet
-		for _, subnet := range config.Default.ClusterSubnets {
-			subnets = append(subnets, subnet.CIDR)
-		}
-		subnets = append(subnets, config.Kubernetes.ServiceCIDRs...)
-		if config.Gateway.DisableForwarding {
-			if err := initExternalBridgeServiceForwardingRules(subnets); err != nil {
-				return nil, fmt.Errorf("failed to add accept rules in forwarding table for bridge %s: err %v", gwBridge.GetGatewayIface(), err)
-			}
-		} else {
-			if err := delExternalBridgeServiceForwardingRules(subnets); err != nil {
-				return nil, fmt.Errorf("failed to delete accept rules in forwarding table for bridge %s: err %v", gwBridge.GetGatewayIface(), err)
-			}
-		}
 	}
 
 	// used to tell addServiceRules which rules to add
