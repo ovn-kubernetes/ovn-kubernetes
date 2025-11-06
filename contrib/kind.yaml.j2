@@ -14,12 +14,14 @@ networking:
 {%- if ovn_ip_family %}
   ipFamily: {{ ovn_ip_family }}
 {%- endif %}
-{%- if use_local_registy == "true"%}
 containerdConfigPatches:
   - |-
+{%- if use_local_registy == "true"%}
     [plugins."io.containerd.grpc.v1.cri".registry.mirrors."localhost:{{ kind_local_registry_port }}"]
       endpoint = ["http://{{ kind_local_registry_name }}:5000"]
 {%- endif %}
+    [plugins."io.containerd.grpc.v1.cri"]
+      stream_server_port = '33333'
 kubeadmConfigPatches:
 - |
   kind: ClusterConfiguration
