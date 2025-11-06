@@ -43,6 +43,7 @@ func (bnc *BaseNetworkController) newNetpolRetryFramework(
 		EventHandler:           eventHandler,
 	}
 	return retry.NewRetryFramework(
+		bnc.GetNetworkName()+"/netPolController",
 		stopChan,
 		bnc.wg,
 		bnc.watchFactory,
