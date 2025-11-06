@@ -118,6 +118,16 @@ func withClusterPortGroup() option {
 	}
 }
 
+func (em *userDefinedNetworkExpectationMachine) shouldExpectManagementPort(topology string) bool {
+	if topology == ovntypes.Layer3Topology {
+		return true
+	}
+	if topology == ovntypes.Layer2Topology {
+		return em.gatewayConfig != nil
+	}
+	return false
+}
+
 func (em *userDefinedNetworkExpectationMachine) expectedLogicalSwitchesAndPorts(isPrimary bool) []libovsdbtest.TestData {
 	return em.expectedLogicalSwitchesAndPortsWithLspEnabled(isPrimary, nil)
 }
@@ -181,7 +191,7 @@ func (em *userDefinedNetworkExpectationMachine) expectedLogicalSwitchesAndPortsW
 					nodeslsps[switchName] = append(nodeslsps[switchName], switchToRouterPortUUID)
 
 					if _, alreadyAdded := alreadyAddedManagementElements[pod.nodeName]; !alreadyAdded &&
-						em.gatewayConfig != nil {
+						em.shouldExpectManagementPort(ovntypes.Layer3Topology) {
 						mgmtPortName := managementPortName(switchName)
 						mgmtPortUUID := mgmtPortName + "-UUID"
 						mgmtPort := expectedManagementPort(mgmtPortName, managementIP)
@@ -199,7 +209,7 @@ func (em *userDefinedNetworkExpectationMachine) expectedLogicalSwitchesAndPortsW
 					managementIP := managementPortIP(subnet)
 
 					if _, alreadyAdded := alreadyAddedManagementElements[pod.nodeName]; !alreadyAdded &&
-						em.gatewayConfig != nil {
+						em.shouldExpectManagementPort(ovntypes.Layer2Topology) {
 						// there are multiple mgmt ports in the cluster, thus the ports must be scoped with the node name
 						mgmtPortName := managementPortName(ocInfo.bnc.GetNetworkScopedName(nodeName))
 						mgmtPortUUID := mgmtPortName + "-UUID"
