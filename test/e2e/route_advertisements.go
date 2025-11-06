@@ -660,7 +660,9 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 			cUDN, err := udnClient.K8sV1().ClusterUserDefinedNetworks().Create(context.Background(), cudnTemplate, metav1.CreateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			ginkgo.DeferCleanup(func() {
-				udnClient.K8sV1().ClusterUserDefinedNetworks().Delete(context.TODO(), cUDN.Name, metav1.DeleteOptions{})
+				if err := udnClient.K8sV1().ClusterUserDefinedNetworks().Delete(context.TODO(), cUDN.Name, metav1.DeleteOptions{}); err != nil {
+				framework.Logf("Warning: failed to delete CUDN during cleanup: %v", err)
+			}
 			})
 			gomega.Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, cUDN.Name), 5*time.Second, time.Second).Should(gomega.Succeed())
 
@@ -690,7 +692,11 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 
 			ra, err = raClient.K8sV1().RouteAdvertisements().Create(context.TODO(), ra, metav1.CreateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			ginkgo.DeferCleanup(func() { raClient.K8sV1().RouteAdvertisements().Delete(context.TODO(), ra.Name, metav1.DeleteOptions{}) })
+			ginkgo.DeferCleanup(func() {
+			if err := raClient.K8sV1().RouteAdvertisements().Delete(context.TODO(), ra.Name, metav1.DeleteOptions{}); err != nil {
+				framework.Logf("Warning: failed to delete RouteAdvertisements during cleanup: %v", err)
+			}
+		})
 			ginkgo.By("ensure route advertisement matching CUDN was created successfully")
 			gomega.Eventually(func() string {
 				ra, err := raClient.K8sV1().RouteAdvertisements().Get(context.TODO(), ra.Name, metav1.GetOptions{})
@@ -2669,7 +2675,7 @@ func createUserDefinedNetwork(
 	ictx.AddCleanUpFn(func() error {
 		return client.Delete(context.Background(), name, metav1.DeleteOptions{})
 	})
-	wait.PollUntilContextTimeout(
+	if err := wait.PollUntilContextTimeout(
 		context.Background(),
 		time.Second,
 		5*time.Second,
@@ -2678,7 +2684,9 @@ func createUserDefinedNetwork(
 			err = networkReadyFunc(client, name)()
 			return err == nil, nil
 		},
-	)
+	); err != nil {
+		return fmt.Errorf("failed to wait for network to be ready: %w", err)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to wait for the network to be ready: %w", err)
 	}
@@ -2731,7 +2739,7 @@ func createRouteAdvertisements(
 	ictx.AddCleanUpFn(func() error {
 		return raClient.K8sV1().RouteAdvertisements().Delete(context.Background(), name, metav1.DeleteOptions{})
 	})
-	wait.PollUntilContextTimeout(
+	if err := wait.PollUntilContextTimeout(
 		context.Background(),
 		time.Second,
 		5*time.Second,
@@ -2740,7 +2748,9 @@ func createRouteAdvertisements(
 			err = routeAdvertisementsReadyFunc(*raClient, name)()
 			return err == nil, nil
 		},
-	)
+	); err != nil {
+		return fmt.Errorf("failed to wait for RouteAdvertisements to be ready: %w", err)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to wait for the RouteAdvertisements to be ready: %w", err)
 	}

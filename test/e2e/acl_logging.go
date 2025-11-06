@@ -1111,8 +1111,10 @@ func isCountUpdatedAfterPokePod(fr *framework.Framework, clientPod, pokedPod *v1
 	if err != nil {
 		return false, err
 	}
-	pokePod(fr, clientPod.GetName(), pokedPod.Status.PodIP)
-	endCount, _ := countACLLogs(
+	if err := pokePod(fr, clientPod.GetName(), pokedPod.Status.PodIP); err != nil {
+		return false, err
+	}
+	endCount, err := countACLLogs(
 		clientPod.Spec.NodeName,
 		regex,
 		aclVerdict,
@@ -1137,7 +1139,7 @@ func pokeExternalHost(fr *framework.Framework, pokePod *v1.Pod, dstIP string, ds
 		pokePod.GetName(),
 		pokePod.Spec.NodeName,
 	)
-	pokeExternalHostFromPod(fr, pokePod.Namespace, pokePod.GetName(), dstIP, dstPort)
+	framework.ExpectNoError(pokeExternalHostFromPod(fr, pokePod.Namespace, pokePod.GetName(), dstIP, dstPort))
 }
 
 const (

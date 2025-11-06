@@ -1,5 +1,6 @@
 E2E_REPORT_DIR:=$(CURDIR)/_artifacts
 JOB_NAME?="$@"
+export GOLANGCI_LINT_VERSION ?= v1.60.3
 
 # Make no assumptions about network, so run all tests. If on IPv4 or
 # IPv6 only network, set appropriately to skip related tests.
@@ -50,3 +51,11 @@ tools:
 traffic-flow-tests:
 	TRAFFIC_FLOW_TESTS=$(TRAFFIC_FLOW_TESTS) \
 	./scripts/traffic-flow-tests.sh $(WHAT)
+
+.PHONY: lint
+lint:
+	./scripts/lint.sh $(WHAT)
+
+.PHONY: lint-fix
+lint-fix:
+	./scripts/lint.sh --fix $(WHAT)

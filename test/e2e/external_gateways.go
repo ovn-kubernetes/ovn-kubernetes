@@ -3052,7 +3052,9 @@ func setupGatewayContainers(f *framework.Framework, providerCtx infraapi.Context
 				_, err = infraprovider.Get().ExecExternalContainerCommand(gwContainer, []string{"ip", "address", "add", address + "/32", "dev", "lo"})
 				framework.ExpectNoError(err, "failed to add the loopback ip to dev lo on the test container %s", gwContainer.Name)
 				providerCtx.AddCleanUpFn(func() error {
-					infraprovider.Get().ExecExternalContainerCommand(gwContainer, []string{"ip", "address", "del", address + "/32", "dev", "lo"})
+					if _, err := infraprovider.Get().ExecExternalContainerCommand(gwContainer, []string{"ip", "address", "del", address + "/32", "dev", "lo"}); err != nil {
+					framework.Logf("Warning: failed to delete address during cleanup: %v", err)
+				}
 					return nil
 				})
 			}
@@ -3061,7 +3063,9 @@ func setupGatewayContainers(f *framework.Framework, providerCtx infraapi.Context
 			_, err = infraprovider.Get().ExecExternalContainerCommand(gwContainer, []string{"ip", "route", "add", addressesv4.srcPodIP, "via", addressesv4.nodeIP})
 			framework.ExpectNoError(err, "failed to add the pod host route on the test container %s", gwContainer.Name)
 			providerCtx.AddCleanUpFn(func() error {
-				infraprovider.Get().ExecExternalContainerCommand(gwContainer, []string{"ip", "route", "del", addressesv4.srcPodIP, "via", addressesv4.nodeIP})
+				if _, err := infraprovider.Get().ExecExternalContainerCommand(gwContainer, []string{"ip", "route", "del", addressesv4.srcPodIP, "via", addressesv4.nodeIP}); err != nil {
+				framework.Logf("Warning: failed to delete route during cleanup: %v", err)
+			}
 				return nil
 			})
 
@@ -3083,7 +3087,9 @@ func setupGatewayContainers(f *framework.Framework, providerCtx infraapi.Context
 				_, err = infraprovider.Get().ExecExternalContainerCommand(gwContainer, []string{"ip", "address", "add", address + "/128", "dev", "lo"})
 				framework.ExpectNoError(err, "ipv6: failed to add the loopback ip to dev lo on the test container %s", gwContainer.Name)
 				providerCtx.AddCleanUpFn(func() error {
-					infraprovider.Get().ExecExternalContainerCommand(gwContainer, []string{"ip", "address", "del", address + "/128", "dev", "lo"})
+					if _, err := infraprovider.Get().ExecExternalContainerCommand(gwContainer, []string{"ip", "address", "del", address + "/128", "dev", "lo"}); err != nil {
+					framework.Logf("Warning: failed to delete IPv6 address during cleanup: %v", err)
+				}
 					return nil
 				})
 			}
@@ -3452,7 +3458,9 @@ spec:
 }
 
 func deleteAPBExternalRouteCR(policyName string) {
-	e2ekubectl.RunKubectl("", "delete", "apbexternalroute", policyName)
+	if _, err := e2ekubectl.RunKubectl("", "delete", "apbexternalroute", policyName); err != nil {
+		framework.Logf("Warning: failed to delete apbexternalroute %s: %v", policyName, err)
+	}
 }
 func formatStaticHops(bfd bool, gateways ...string) string {
 	b := strings.Builder{}

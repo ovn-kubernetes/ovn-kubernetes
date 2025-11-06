@@ -638,7 +638,8 @@ spec:
 			for _, node := range nodes.Items {
 				patchData, err := json.Marshal(&patch)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				f.ClientSet.CoreV1().Nodes().Patch(context.TODO(), node.Name, types.MergePatchType, patchData, metav1.PatchOptions{})
+				_, err = f.ClientSet.CoreV1().Nodes().Patch(context.TODO(), node.Name, types.MergePatchType, patchData, metav1.PatchOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			}
 
 			ginkgo.By("Should be able to reach each host networked pod via node selector")

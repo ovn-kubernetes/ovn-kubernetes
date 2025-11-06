@@ -4,6 +4,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"k8s.io/kubernetes/test/e2e/framework"
 	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/feature"
@@ -59,7 +60,9 @@ func runKubectlInputWithFullOutput(namespace string, data string, args ...string
 
 func cleanupValidateCRsTest(scenarios []testscenario.ValidateCRScenario) {
 	for _, s := range scenarios {
-		e2ekubectl.RunKubectlInput("", s.Manifest, "delete", "-f", "-")
+		if _, err := e2ekubectl.RunKubectlInput("", s.Manifest, "delete", "-f", "-"); err != nil {
+			framework.Logf("Warning: failed to delete resource during cleanup: %v", err)
+		}
 	}
 	_, stderr, err := e2ekubectl.RunKubectlWithFullOutput("", "get", "clusteruserdefinednetworks")
 	Expect(err).NotTo(HaveOccurred())

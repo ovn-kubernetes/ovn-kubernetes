@@ -1310,7 +1310,9 @@ fi
 			Expect(crClient.Create(context.Background(), cudn)).To(Succeed())
 			DeferCleanup(func() {
 				if e2eframework.TestContext.DeleteNamespace && (e2eframework.TestContext.DeleteNamespaceOnFailure || !CurrentSpecReport().Failed()) {
-					crClient.Delete(context.Background(), cudn)
+					if err := crClient.Delete(context.Background(), cudn); err != nil {
+				e2eframework.Logf("Warning: failed to delete CUDN during cleanup: %v", err)
+			}
 				}
 			})
 			Eventually(clusterUserDefinedNetworkReadyFunc(fr.DynamicClient, cudn.Name), 5*time.Second, time.Second).Should(Succeed())
@@ -1322,7 +1324,9 @@ fi
 			Expect(crClient.Create(context.Background(), ra)).To(Succeed())
 			DeferCleanup(func() {
 				if e2eframework.TestContext.DeleteNamespace && (e2eframework.TestContext.DeleteNamespaceOnFailure || !CurrentSpecReport().Failed()) {
-					crClient.Delete(context.Background(), ra)
+					if err := crClient.Delete(context.Background(), ra); err != nil {
+				e2eframework.Logf("Warning: failed to delete RouteAdvertisements during cleanup: %v", err)
+			}
 				}
 			})
 

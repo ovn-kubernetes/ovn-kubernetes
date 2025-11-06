@@ -1,0 +1,68 @@
+issues:
+  exclude-dirs:
+    - vendor
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck
+#    - gci
+#    - ginkgolinter
+#    - gofmt
+#    - gosimple
+#    - govet
+#    - importas
+#    - ineffassign
+#    - nosprintfhostport
+#    - revive
+#    - staticcheck
+#    - testifylint
+#    - thelper
+#    - typecheck
+#    - unused
+
+linters-settings:
+  gci:
+    # default ordering except:
+    # - prefix sections ordered as stated
+    # - dot section at the very end
+    custom-order: true
+    sections:
+      - standard
+      - default
+      - prefix(k8s.io,sigs.k8s.io)
+      - prefix(github.com/ovn-org)
+      - localmodule
+      - dot
+
+  govet:
+    enable-all: true
+    disable:
+      - fieldalignment
+      - shadow
+      - printf
+
+  importas:
+    no-unaliased: true
+    alias:
+      # Kubernetes
+      - pkg: k8s.io/api/core/v1
+        alias: corev1
+      - pkg: k8s.io/apimachinery/pkg/apis/meta/v1
+        alias: metav1
+      - pkg: k8s.io/apimachinery/pkg/api/errors
+        alias: apierrors
+      - pkg: k8s.io/apimachinery/pkg/util/errors
+        alias: kerrors
+      - pkg: sigs.k8s.io/controller-runtime
+        alias: ctrl
+      # Other frequently used deps
+      - pkg: github.com/ovn-org/libovsdb/ovsdb
+        alias: ""
+
+  revive:
+    rules:
+      # TODO: enable recommended (default) revive rules
+      - name: duplicated-imports
+      - name: error-naming
+      - name: unused-parameter
