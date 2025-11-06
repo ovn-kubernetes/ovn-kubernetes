@@ -58,12 +58,20 @@ jobs:
         cache: false
       id: go
 
-    - name: Verify
+    - name: Verify go-controller
       uses: golangci/golangci-lint-action@v6
       with:
         version: v1.64.8
         working-directory: go-controller
         args: --modules-download-mode=vendor --timeout=15m0s --verbose
+
+- name: Verify e2e tests
+      uses: golangci/golangci-lint-action@v6
+      with:
+        version: v1.64.8
+        working-directory: test/e2e
+        args: --timeout=15m0s --verbose
+
 
   build-base:
     name: Build-base

@@ -344,10 +344,14 @@ spec:
 
 				JustAfterEach(func() {
 					By("Deleting the gressip service")
-					e2ekubectl.RunKubectl("default", "delete", "eip", podLabels["app"])
+					if _, err := e2ekubectl.RunKubectl("default", "delete", "eip", podLabels["app"]); err != nil {
+					framework.Logf("Warning: failed to delete eip during cleanup: %v", err)
+				}
 
 					By(fmt.Sprintf("Removing the egress assignable label from node %s", workerNode.Name))
-					e2ekubectl.RunKubectl("default", "label", "node", workerNode.Name, "k8s.ovn.org/egress-assignable-")
+					if _, err := e2ekubectl.RunKubectl("default", "label", "node", workerNode.Name, "k8s.ovn.org/egress-assignable-"); err != nil {
+					framework.Logf("Warning: failed to remove label during cleanup: %v", err)
+				}
 				})
 
 				for _, updateKubeletFirst := range []bool{true, false} {
@@ -476,10 +480,14 @@ spec:
 
 				JustAfterEach(func() {
 					By("Deleting the service")
-					e2ekubectl.RunKubectl(f.Namespace.Name, "delete", "service", serviceName)
+					if _, err := e2ekubectl.RunKubectl(f.Namespace.Name, "delete", "service", serviceName); err != nil {
+					framework.Logf("Warning: failed to delete service during cleanup: %v", err)
+				}
 
 					By("Deleting host network backend pod")
-					e2ekubectl.RunKubectl(f.Namespace.Name, "delete", "pod", podName)
+					if _, err := e2ekubectl.RunKubectl(f.Namespace.Name, "delete", "pod", podName); err != nil {
+					framework.Logf("Warning: failed to delete pod during cleanup: %v", err)
+				}
 				})
 
 				for _, updateKubeletFirst := range []bool{true, false} {
@@ -590,7 +598,9 @@ spec:
 
 			JustAfterEach(func() {
 				By("Deleting the service")
-				e2ekubectl.RunKubectl(f.Namespace.Name, "delete", "service", serviceName)
+				if _, err := e2ekubectl.RunKubectl(f.Namespace.Name, "delete", "service", serviceName); err != nil {
+					framework.Logf("Warning: failed to delete service during cleanup: %v", err)
+				}
 			})
 
 			It(fmt.Sprintf("Ensures flows are updated when MAC address changes"), func() {

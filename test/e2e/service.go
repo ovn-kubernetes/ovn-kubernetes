@@ -312,7 +312,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 
 					err := e2epod.WaitTimeoutForPodReadyInNamespace(context.TODO(), f.ClientSet, serverPod.Name, f.Namespace.Name, 1*time.Minute)
 					if err != nil {
-						e2epod.NewPodClient(f).Delete(context.TODO(), serverPod.Name, metav1.DeleteOptions{})
+						_ = e2epod.NewPodClient(f).Delete(context.TODO(), serverPod.Name, metav1.DeleteOptions{})
 						return err
 					}
 					serverPod, err = e2epod.NewPodClient(f).Get(context.TODO(), serverPod.Name, metav1.GetOptions{})
@@ -1080,7 +1080,9 @@ spec:
 					framework.Logf("Error: failed to get the EgressIP object, err: %v", err)
 					return false, nil
 				}
-				json.Unmarshal([]byte(egressIPStdout), &egressIP)
+				if err := json.Unmarshal([]byte(egressIPStdout), &egressIP); err != nil {
+			return false, err
+		}
 				if len(egressIP.Items) > 1 {
 					framework.Failf("Didn't expect to retrieve more than one egress IP during the execution of this test, saw: %v", len(egressIP.Items))
 				}
@@ -2478,7 +2480,9 @@ spec:
 				framework.Logf("Error: failed to get the EgressIP object, err: %v", err)
 				return false, nil
 			}
-			json.Unmarshal([]byte(egressIPStdout), &egressIP)
+			if err := json.Unmarshal([]byte(egressIPStdout), &egressIP); err != nil {
+			return false, err
+		}
 			if len(egressIP.Items) > 1 {
 				framework.Failf("Didn't expect to retrieve more than one egress IP during the execution of this test, saw: %v", len(egressIP.Items))
 			}
@@ -2587,7 +2591,9 @@ func setupIPv4NetworkForExternalClient(svcLoadBalancerIP string, svcLoadBalancer
 	err = buildAndRunCommand("sudo ip netns exec bridge ip route add default via 192.168.222.1")
 	framework.ExpectNoError(err, "failed to add default route on bridge netns")
 
-	buildAndRunCommand("sudo ip route delete 192.168.223.0/24")
+	if err := buildAndRunCommand("sudo ip route delete 192.168.223.0/24"); err != nil {
+		framework.Logf("Warning: failed to delete route: %v", err)
+	}
 	err = buildAndRunCommand("sudo ip route add 192.168.223.0/24 via 192.168.222.2")
 	framework.ExpectNoError(err, "failed to add route for client to handle reverse service traffic")
 
@@ -2600,9 +2606,15 @@ func setupIPv4NetworkForExternalClient(svcLoadBalancerIP string, svcLoadBalancer
 
 func cleanupIPv4NetworkForExternalClient(svcLoadBalancerIP string, svcLoadBalancerPort int) {
 	cleanupNetNamespace()
-	buildAndRunCommand("sudo ip route delete 192.168.223.0/24 via 192.168.222.2")
-	buildAndRunCommand(fmt.Sprintf("sudo ip route delete %s", svcLoadBalancerIP))
-	buildAndRunCommand(fmt.Sprintf("sudo iptables -t filter -D FORWARD -d %s -p tcp -m tcp --dport %d -j ACCEPT", svcLoadBalancerIP, svcLoadBalancerPort))
+	if err := buildAndRunCommand("sudo ip route delete 192.168.223.0/24 via 192.168.222.2"); err != nil {
+		framework.Logf("Warning: failed to delete route during cleanup: %v", err)
+	}
+	if err := buildAndRunCommand(fmt.Sprintf("sudo ip route delete %s", svcLoadBalancerIP)); err != nil {
+		framework.Logf("Warning: failed to delete load balancer route during cleanup: %v", err)
+	}
+	if err := buildAndRunCommand(fmt.Sprintf("sudo iptables -t filter -D FORWARD -d %s -p tcp -m tcp --dport %d -j ACCEPT", svcLoadBalancerIP, svcLoadBalancerPort)); err != nil {
+		framework.Logf("Warning: failed to delete iptables rule during cleanup: %v", err)
+	}
 }
 
 func setupIPv6NetworkForExternalClient(svcLoadBalancerIP string, svcLoadBalancerPort int, nodeIP string) {
@@ -2663,9 +2675,15 @@ func setupIPv6NetworkForExternalClient(svcLoadBalancerIP string, svcLoadBalancer
 
 func cleanupIPv6NetworkForExternalClient(svcLoadBalancerIP string, svcLoadBalancerPort int) {
 	cleanupNetNamespace()
-	buildAndRunCommand("sudo ip -6 route delete fc00:f853:ccd:e223::2")
-	buildAndRunCommand(fmt.Sprintf("sudo ip -6 route delete %s", svcLoadBalancerIP))
-	buildAndRunCommand(fmt.Sprintf("sudo ip6tables -t filter -D FORWARD -d %s -p tcp -m tcp --dport %d -j ACCEPT", svcLoadBalancerIP, svcLoadBalancerPort))
+	if err := buildAndRunCommand("sudo ip -6 route delete fc00:f853:ccd:e223::2"); err != nil {
+		framework.Logf("Warning: failed to delete IPv6 route during cleanup: %v", err)
+	}
+	if err := buildAndRunCommand(fmt.Sprintf("sudo ip -6 route delete %s", svcLoadBalancerIP)); err != nil {
+		framework.Logf("Warning: failed to delete IPv6 load balancer route during cleanup: %v", err)
+	}
+	if err := buildAndRunCommand(fmt.Sprintf("sudo ip6tables -t filter -D FORWARD -d %s -p tcp -m tcp --dport %d -j ACCEPT", svcLoadBalancerIP, svcLoadBalancerPort)); err != nil {
+		framework.Logf("Warning: failed to delete ip6tables rule during cleanup: %v", err)
+	}
 }
 
 func setupNetNamespaceAndLinks() {
@@ -2697,8 +2715,12 @@ func setupNetNamespaceAndLinks() {
 }
 
 func cleanupNetNamespace() {
-	buildAndRunCommand("sudo ip netns delete bridge")
-	buildAndRunCommand("sudo ip netns delete client")
+	if err := buildAndRunCommand("sudo ip netns delete bridge"); err != nil {
+		framework.Logf("Warning: failed to delete bridge netns during cleanup: %v", err)
+	}
+	if err := buildAndRunCommand("sudo ip netns delete client"); err != nil {
+		framework.Logf("Warning: failed to delete client netns during cleanup: %v", err)
+	}
 }
 
 // WaitForServingAndReadyServiceEndpointsNum waits until there are EndpointSlices for serviceName

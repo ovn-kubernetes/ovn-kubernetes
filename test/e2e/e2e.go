@@ -291,7 +291,7 @@ func getPodGWRoute(f *framework.Framework, nodeName string, podName string) net.
 	}
 
 	// Wait for pod network setup to be almost ready
-	wait.PollImmediate(1*time.Second, 30*time.Second, func() (bool, error) {
+	if err := wait.PollImmediate(1*time.Second, 30*time.Second, func() (bool, error) {
 		podGet, err := podClient.Get(context.Background(), podName, metav1.GetOptions{})
 		if err != nil {
 			return false, nil
@@ -300,7 +300,9 @@ func getPodGWRoute(f *framework.Framework, nodeName string, podName string) net.
 			return true, nil
 		}
 		return false, nil
-	})
+	}); err != nil {
+		framework.Logf("Warning: pod network setup wait timed out: %v", err)
+	}
 	if err != nil {
 		framework.Failf("Error trying to get the pod annotations")
 	}
@@ -436,7 +438,7 @@ func forwardIPWithIPTables(ip string) (func() error, error) {
 		return cleanUp, fmt.Errorf("failed to insert rule to forward IP %q: %w", ip+mask, err)
 	}
 	cleanUpFns = append(cleanUpFns, func() error {
-		exec.Command("sudo", ipTablesBin, "-D", "FORWARD", "-s", ip+mask, "-j", "ACCEPT").CombinedOutput()
+		_, _ = exec.Command("sudo", ipTablesBin, "-D", "FORWARD", "-s", ip+mask, "-j", "ACCEPT").CombinedOutput()
 		return nil
 	})
 	_, err = exec.Command("sudo", ipTablesBin, "-I", "FORWARD", "-d", ip+mask, "-j", "ACCEPT").CombinedOutput()
@@ -444,7 +446,7 @@ func forwardIPWithIPTables(ip string) (func() error, error) {
 		return cleanUp, fmt.Errorf("failed to insert rule to forward IP %q: %w", ip+mask, err)
 	}
 	cleanUpFns = append(cleanUpFns, func() error {
-		exec.Command("sudo", ipTablesBin, "-D", "FORWARD", "-d", ip+mask, "-j", "ACCEPT").CombinedOutput()
+		_, _ = exec.Command("sudo", ipTablesBin, "-D", "FORWARD", "-d", ip+mask, "-j", "ACCEPT").CombinedOutput()
 		return nil
 	})
 	return cleanUp, nil
@@ -846,7 +848,8 @@ var _ = ginkgo.Describe("e2e control plane", func() {
 		}
 
 		ginkgo.By("Deleting ovnkube control plane pod " + podName)
-		e2epod.DeletePodWithWaitByName(context.TODO(), f.ClientSet, podName, ovnKubeNamespace)
+		framework.ExpectNoError(e2epod.DeletePodWithWaitByName(context.TODO(), f.ClientSet, podName, ovnKubeNamespace),
+			"failed to delete ovnkube control plane pod %q", podName)
 		framework.Logf("Deleted ovnkube control plane pod %q", podName)
 
 		ginkgo.By("Ensuring there were no connectivity errors")
@@ -892,7 +895,8 @@ var _ = ginkgo.Describe("e2e control plane", func() {
 				!strings.HasPrefix(pod.Name, "ovnkube-identity") &&
 				!strings.HasPrefix(pod.Name, "ovs-node") {
 				framework.Logf("%q", pod.Namespace)
-				deletePodWithWaitByName(context.Background(), f.ClientSet, pod.GetName(), ovnKubeNamespace)
+				framework.ExpectNoError(deletePodWithWaitByName(context.Background(), f.ClientSet, pod.GetName(), ovnKubeNamespace),
+					"failed to delete control plane pod %q", pod.Name)
 				framework.Logf("Deleted control plane pod %q", pod.Name)
 			}
 		}
@@ -1113,7 +1117,8 @@ var _ = ginkgo.Describe("test e2e inter-node connectivity between worker nodes",
 		ginkgo.By(fmt.Sprintf("Creating a container on node %s and verifying connectivity to a pod on node %s", ciWorkerNodeSrc, ciWorkerNodeDst))
 
 		// Create the pod that will be used as the destination for the connectivity test
-		createGenericPod(f, dstPingPodName, ciWorkerNodeDst, f.Namespace.Name, command)
+		_, err = createGenericPod(f, dstPingPodName, ciWorkerNodeDst, f.Namespace.Name, command)
+		framework.ExpectNoError(err, "failed to create generic pod %s", dstPingPodName)
 
 		// There is a condition somewhere with e2e WaitForPodNotPending that returns ready
 		// before calling for the IP address will succeed. This simply adds some retries.
@@ -2197,7 +2202,9 @@ var _ = ginkgo.Describe("e2e delete databases", func() {
 
 	deleteFileFromPod := func(f *framework.Framework, namespace string, pod *v1.Pod, file string) {
 		containerFlag := fmt.Sprintf("-c=%s", pod.Spec.Containers[0].Name)
-		e2ekubectl.RunKubectl(namespace, "exec", pod.Name, containerFlag, "--", "rm", file)
+		if _, err := e2ekubectl.RunKubectl(namespace, "exec", pod.Name, containerFlag, "--", "rm", file); err != nil {
+			framework.Logf("Warning: failed to run rm command: %v", err)
+		}
 		if fileExistsOnPod(f, namespace, pod, file) {
 			framework.Failf("Error: failed to delete file %s", file)
 		}
