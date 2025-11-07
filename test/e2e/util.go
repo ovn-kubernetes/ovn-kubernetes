@@ -1314,6 +1314,9 @@ func randStr(n int) string {
 func isCIDRIPFamilySupported(cs kubernetes.Interface, cidr string) bool {
 	ginkgo.GinkgoHelper()
 	gomega.Expect(cidr).To(gomega.ContainSubstring("/"))
+	if tokens := strings.Split(cidr, "/"); len(tokens) == 3 {
+		cidr = fmt.Sprintf(`%s/%s`, tokens[0], tokens[1])
+	}
 	isIPv6 := utilnet.IsIPv6CIDRString(cidr)
 	return (isIPv4Supported(cs) && !isIPv6) || (isIPv6Supported(cs) && isIPv6)
 }
