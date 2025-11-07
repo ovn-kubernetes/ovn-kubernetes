@@ -18,6 +18,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/record"
@@ -36,7 +37,6 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
 )
 
 const (
@@ -1697,21 +1697,21 @@ func cloudPrivateIPConfigNameToIPString(name string) string {
 // removePendingOps removes the existing pending CloudPrivateIPConfig operations
 // from the cache and returns the EgressIP object which can be re-synced given
 // the new assignment possibilities.
-func (eIPC *egressIPClusterController) removePendingOpsAndGetResyncs(egressIPName, egressIP string) ([]*egressipv1.EgressIP, error) {
+func (eIPC *egressIPClusterController) removePendingOpsAndGetResyncs(egressIPName, egressIPAddr string) ([]*egressipv1.EgressIP, error) {
 	eIPC.pendingCloudPrivateIPConfigsMutex.Lock()
 	defer eIPC.pendingCloudPrivateIPConfigsMutex.Unlock()
 	ops, pending := eIPC.pendingCloudPrivateIPConfigsOps[egressIPName]
 	if !pending {
 		return nil, fmt.Errorf("no pending operation found for EgressIP: %s", egressIPName)
 	}
-	op, exists := ops[egressIP]
+	op, exists := ops[egressIPAddr]
 	if !exists {
-		return nil, fmt.Errorf("pending operations found for EgressIP: %s, but not for the finalized IP: %s", egressIPName, egressIP)
+		return nil, fmt.Errorf("pending operations found for EgressIP: %s, but not for the finalized IP: %s", egressIPName, egressIPAddr)
 	}
 	// Make sure we are dealing with a delete operation, since for update
 	// operations will still need to process the add afterwards.
 	if op.toAdd == "" && op.toDelete != "" {
-		delete(ops, egressIP)
+		delete(ops, egressIPAddr)
 	}
 	if len(ops) == 0 {
 		delete(eIPC.pendingCloudPrivateIPConfigsOps, egressIPName)
@@ -1729,10 +1729,16 @@ func (eIPC *egressIPClusterController) removePendingOpsAndGetResyncs(egressIPNam
 	resyncs := make([]*egressipv1.EgressIP, 0, len(egressIPs))
 	for _, egressIP := range egressIPs {
 		egressIP := *egressIP
-		// Do not process the egress IP object which owns the
-		// CloudPrivateIPConfig for which we are currently processing the
-		// deletion for.
 		if egressIP.Name == egressIPName {
+			for _, specIP := range egressIP.Spec.EgressIPs {
+				// Do not process the egress IP object which owns the
+				// CloudPrivateIPConfig for which we are currently processing the
+				// deletion for unless it still has the IP in it's spec
+				if specIP == egressIPAddr {
+					resyncs = append(resyncs, &egressIP)
+					break
+				}
+			}
 			continue
 		}
 		unassigned := len(egressIP.Spec.EgressIPs) - len(egressIP.Status.Items)
