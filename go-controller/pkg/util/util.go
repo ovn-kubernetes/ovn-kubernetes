@@ -888,6 +888,23 @@ func GetEndpointsForService(endpointSlices []*discoveryv1.EndpointSlice, service
 	return globalEndpoints, localEndpoints, errors.Join(validationErrors...)
 }
 
+// FindServicePortForEndpointSlicePort returns the ServicePort that corresponds to an EndpointSlice port
+// by matching the port name and protocol. This is the canonical way to map EndpointSlice ports to
+// Service ports, as Kubernetes guarantees that ServicePort.Name matches EndpointPort.Name.
+func FindServicePortForEndpointSlicePort(service *corev1.Service, endpointslicePortName string, endpointslicePortProtocol corev1.Protocol) (*corev1.ServicePort, error) {
+	if service == nil {
+		return nil, fmt.Errorf("unable to resolve port for endpointslice %q/%q: service is nil",
+			endpointslicePortName, endpointslicePortProtocol)
+	}
+	for _, servicePort := range service.Spec.Ports {
+		if servicePort.Name == endpointslicePortName && servicePort.Protocol == endpointslicePortProtocol {
+			return &servicePort, nil
+		}
+	}
+	return nil, fmt.Errorf("service %s/%s has no port with name %q and protocol %s",
+		service.Namespace, service.Name, endpointslicePortName, endpointslicePortProtocol)
+}
+
 // groupEndpointsByNode organizes a list of endpoints by their associated node names.
 // Endpoints without a NodeName are skipped, as they cannot be assigned to specific nodes.
 // This is used for building per-node endpoint mappings for local traffic policies.

@@ -6,16 +6,20 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/containernetworking/plugins/pkg/ns"
 	"github.com/containernetworking/plugins/pkg/testutils"
 	nadfake "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
+	"github.com/stretchr/testify/mock"
 	"github.com/urfave/cli/v2"
 	"github.com/vishvananda/netlink"
 
 	corev1 "k8s.io/api/core/v1"
+	discovery "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
@@ -1743,4 +1747,439 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 			})
 		})
 	})
+
+	Describe("reconcileConntrackUponEndpointSliceEvents", func() {
+		const (
+			testNamespace     = "test-ns"
+			testServiceName   = "test-service"
+			testEndpointSlice = "test-endpointslice"
+		)
+
+		var (
+			udpProtocol       = corev1.ProtocolUDP
+			tcpProtocol       = corev1.ProtocolTCP
+			testEndpointPort1 = int32(8080)
+			testEndpointPort2 = int32(8443)
+			testServicePort1  = int32(80)
+			testServicePort2  = int32(443)
+		)
+
+		// expectedConntrackFilter represents the expected parameters for a conntrack filter
+		type expectedConntrackFilter struct {
+			ip       string
+			port     uint16
+			protocol uint8
+			family   netlink.InetFamily
+		}
+
+		// Test data structure for table-driven tests
+		type reconcileConntrackTestCase struct {
+			desc                   string
+			service                *corev1.Service // nil means service not found
+			oldEndpointSlice       *discovery.EndpointSlice
+			newEndpointSlice       *discovery.EndpointSlice
+			expectedConntrackCalls int
+			expectedFilters        []expectedConntrackFilter
+		}
+
+		// Helper to create EndpointSlice
+		makeEndpointSlice := func(portConfigs []struct {
+			name     *string
+			port     int32
+			protocol corev1.Protocol
+		}, addresses []string) *discovery.EndpointSlice {
+			ports := make([]discovery.EndpointPort, len(portConfigs))
+			for i, pc := range portConfigs {
+				p := pc.port
+				proto := pc.protocol
+				ports[i] = discovery.EndpointPort{
+					Name:     pc.name,
+					Port:     &p,
+					Protocol: &proto,
+				}
+			}
+
+			return &discovery.EndpointSlice{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      testEndpointSlice,
+					Namespace: testNamespace,
+					Labels: map[string]string{
+						discovery.LabelServiceName: testServiceName,
+					},
+				},
+				Ports: ports,
+				Endpoints: []discovery.Endpoint{
+					{Addresses: addresses},
+				},
+			}
+		}
+
+		// Helper to create Service
+		makeService := func(portConfigs []struct {
+			name       string
+			port       int32
+			targetPort int32
+			protocol   corev1.Protocol
+		}) *corev1.Service {
+			ports := make([]corev1.ServicePort, len(portConfigs))
+			for i, pc := range portConfigs {
+				ports[i] = corev1.ServicePort{
+					Name:       pc.name,
+					Port:       pc.port,
+					TargetPort: intstr.FromInt(int(pc.targetPort)),
+					Protocol:   pc.protocol,
+				}
+			}
+
+			return &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      testServiceName,
+					Namespace: testNamespace,
+				},
+				Spec: corev1.ServiceSpec{
+					Ports: ports,
+				},
+			}
+		}
+
+		// Helper function to build expected ConntrackFilter for verification
+		buildExpectedFilter := func(ef expectedConntrackFilter) *netlink.ConntrackFilter {
+			filter := &netlink.ConntrackFilter{}
+
+			// Add protocol
+			if err := filter.AddProtocol(ef.protocol); err != nil {
+				GinkgoT().Fatalf("Failed to add protocol to expected filter: %v", err)
+			}
+
+			// Add port
+			if ef.port > 0 {
+				if err := filter.AddPort(netlink.ConntrackOrigDstPort, ef.port); err != nil {
+					GinkgoT().Fatalf("Failed to add port to expected filter: %v", err)
+				}
+			}
+
+			// Add IP
+			ipAddr := net.ParseIP(ef.ip)
+			if ipAddr == nil {
+				GinkgoT().Fatalf("Invalid IP address: %s", ef.ip)
+			}
+			if err := filter.AddIP(netlink.ConntrackReplyAnyIP, ipAddr); err != nil {
+				GinkgoT().Fatalf("Failed to add IP to expected filter: %v", err)
+			}
+
+			return filter
+		}
+
+		DescribeTable("should handle conntrack deletion correctly",
+			func(tc reconcileConntrackTestCase) {
+				// Setup mock for ConntrackDeleteFilters
+				mockNetLinkOps := new(utilMocks.NetLinkOps)
+				util.SetNetLinkOpMockInst(mockNetLinkOps)
+				defer util.ResetNetLinkOpMockInst()
+
+				// Mock ConntrackDeleteFilters
+				mockNetLinkOps.On("ConntrackDeleteFilters",
+					mock.AnythingOfType("netlink.ConntrackTableType"),
+					mock.AnythingOfType("netlink.InetFamily"),
+					mock.AnythingOfType("*netlink.ConntrackFilter")).
+					Return(uint(1), nil).Maybe()
+
+				// Setup fake client with service if provided
+				var fakeClient *fake.Clientset
+				if tc.service != nil {
+					fakeClient = fake.NewSimpleClientset(tc.service)
+				} else {
+					fakeClient = fake.NewSimpleClientset()
+				}
+
+				wf, err := factory.NewNodeWatchFactory(&util.OVNNodeClientset{
+					KubeClient: fakeClient,
+				}, "test-node")
+				Expect(err).NotTo(HaveOccurred())
+				defer wf.Shutdown()
+
+				err = wf.Start()
+				Expect(err).NotTo(HaveOccurred())
+
+				nc := &DefaultNodeNetworkController{
+					BaseNodeNetworkController: BaseNodeNetworkController{
+						CommonNodeNetworkControllerInfo: CommonNodeNetworkControllerInfo{
+							watchFactory: wf,
+						},
+					},
+				}
+
+				// Execute the function under test
+				err = nc.reconcileConntrackUponEndpointSliceEvents(tc.oldEndpointSlice, tc.newEndpointSlice)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Verify the number of ConntrackDeleteFilters calls
+				mockNetLinkOps.AssertNumberOfCalls(GinkgoT(), "ConntrackDeleteFilters", tc.expectedConntrackCalls)
+
+				// Collect all actual filters from the mock calls.
+				actualFilters := []*netlink.ConntrackFilter{}
+				for _, call := range mockNetLinkOps.Calls {
+					if call.Method == "ConntrackDeleteFilters" {
+						_, ok1 := call.Arguments.Get(0).(netlink.ConntrackTableType)
+						_, ok2 := call.Arguments.Get(1).(netlink.InetFamily)
+						filter, ok3 := call.Arguments.Get(2).(*netlink.ConntrackFilter)
+
+						if ok1 && ok2 && ok3 {
+							actualFilters = append(actualFilters, filter)
+						}
+					}
+				}
+
+				// Build the list of expected filters.
+				expectedNetlinkFilters := make([]*netlink.ConntrackFilter, 0, len(tc.expectedFilters))
+				for _, expectedFilter := range tc.expectedFilters {
+					expectedNetlinkFilters = append(expectedNetlinkFilters, buildExpectedFilter(expectedFilter))
+				}
+
+				// Use gomega's ConsistOf to compare the actual and expected filters.
+				Expect(actualFilters).To(ConsistOf(expectedNetlinkFilters), "The set of conntrack filters to be deleted should match the expected set.")
+			},
+
+			Entry("old endpointslice is nil",
+				reconcileConntrackTestCase{
+					desc: "should not delete any conntrack entries when old endpoint is nil",
+					service: makeService([]struct {
+						name       string
+						port       int32
+						targetPort int32
+						protocol   corev1.Protocol
+					}{{name: "", port: testServicePort1, targetPort: testEndpointPort1, protocol: udpProtocol}}),
+					oldEndpointSlice:       nil,
+					newEndpointSlice:       &discovery.EndpointSlice{},
+					expectedConntrackCalls: 0,
+				},
+			),
+
+			Entry("service exists with matching unnamed port",
+				reconcileConntrackTestCase{
+					desc: "should delete conntrack with service port for unnamed port",
+					service: makeService([]struct {
+						name       string
+						port       int32
+						targetPort int32
+						protocol   corev1.Protocol
+					}{{name: "", port: testServicePort1, targetPort: testEndpointPort1, protocol: udpProtocol}}),
+					oldEndpointSlice: makeEndpointSlice(
+						[]struct {
+							name     *string
+							port     int32
+							protocol corev1.Protocol
+						}{{name: nil, port: testEndpointPort1, protocol: udpProtocol}},
+						[]string{"10.0.0.1"},
+					),
+					newEndpointSlice:       nil,
+					expectedConntrackCalls: 1,
+					expectedFilters: []expectedConntrackFilter{
+						{ip: "10.0.0.1", port: uint16(testServicePort1), protocol: syscall.IPPROTO_UDP, family: netlink.FAMILY_V4},
+					},
+				},
+			),
+
+			Entry("service exists with matching named port",
+				reconcileConntrackTestCase{
+					desc: "should delete conntrack with service port for named port",
+					service: makeService([]struct {
+						name       string
+						port       int32
+						targetPort int32
+						protocol   corev1.Protocol
+					}{{name: "http", port: testServicePort1, targetPort: testEndpointPort1, protocol: udpProtocol}}),
+					oldEndpointSlice: makeEndpointSlice(
+						[]struct {
+							name     *string
+							port     int32
+							protocol corev1.Protocol
+						}{{name: strPtr("http"), port: testEndpointPort1, protocol: udpProtocol}},
+						[]string{"10.0.0.1"},
+					),
+					newEndpointSlice:       nil,
+					expectedConntrackCalls: 1,
+					expectedFilters: []expectedConntrackFilter{
+						{ip: "10.0.0.1", port: uint16(testServicePort1), protocol: syscall.IPPROTO_UDP, family: netlink.FAMILY_V4},
+					},
+				},
+			),
+
+			Entry("service exists but port name mismatch",
+				reconcileConntrackTestCase{
+					desc: "should skip conntrack deletion when port name doesn't match",
+					service: makeService([]struct {
+						name       string
+						port       int32
+						targetPort int32
+						protocol   corev1.Protocol
+					}{{name: "http", port: testServicePort1, targetPort: testEndpointPort1, protocol: udpProtocol}}),
+					oldEndpointSlice: makeEndpointSlice(
+						[]struct {
+							name     *string
+							port     int32
+							protocol corev1.Protocol
+						}{{name: strPtr("grpc"), port: testEndpointPort1, protocol: udpProtocol}},
+						[]string{"10.0.0.1"},
+					),
+					newEndpointSlice:       nil,
+					expectedConntrackCalls: 0,
+				},
+			),
+
+			Entry("service not found",
+				reconcileConntrackTestCase{
+					desc:    "should return early without deleting conntrack when service not found",
+					service: nil,
+					oldEndpointSlice: makeEndpointSlice(
+						[]struct {
+							name     *string
+							port     int32
+							protocol corev1.Protocol
+						}{{name: nil, port: testEndpointPort1, protocol: udpProtocol}},
+						[]string{"10.0.0.1"},
+					),
+					newEndpointSlice:       nil,
+					expectedConntrackCalls: 0,
+				},
+			),
+
+			Entry("TCP protocol should be skipped",
+				reconcileConntrackTestCase{
+					desc: "should skip conntrack deletion for TCP protocol",
+					service: makeService([]struct {
+						name       string
+						port       int32
+						targetPort int32
+						protocol   corev1.Protocol
+					}{{name: "", port: testServicePort1, targetPort: testEndpointPort1, protocol: tcpProtocol}}),
+					oldEndpointSlice: makeEndpointSlice(
+						[]struct {
+							name     *string
+							port     int32
+							protocol corev1.Protocol
+						}{{name: nil, port: testEndpointPort1, protocol: tcpProtocol}},
+						[]string{"10.0.0.1"},
+					),
+					newEndpointSlice:       nil,
+					expectedConntrackCalls: 0,
+				},
+			),
+
+			Entry("multiple endpoints",
+				reconcileConntrackTestCase{
+					desc: "should delete conntrack for each endpoint",
+					service: makeService([]struct {
+						name       string
+						port       int32
+						targetPort int32
+						protocol   corev1.Protocol
+					}{{name: "", port: testServicePort1, targetPort: testEndpointPort1, protocol: udpProtocol}}),
+					oldEndpointSlice: makeEndpointSlice(
+						[]struct {
+							name     *string
+							port     int32
+							protocol corev1.Protocol
+						}{{name: nil, port: testEndpointPort1, protocol: udpProtocol}},
+						[]string{"10.0.0.1", "10.0.0.2", "10.0.0.3"},
+					),
+					newEndpointSlice:       nil,
+					expectedConntrackCalls: 3,
+					expectedFilters: []expectedConntrackFilter{
+						{ip: "10.0.0.1", port: uint16(testServicePort1), protocol: syscall.IPPROTO_UDP, family: netlink.FAMILY_V4},
+						{ip: "10.0.0.2", port: uint16(testServicePort1), protocol: syscall.IPPROTO_UDP, family: netlink.FAMILY_V4},
+						{ip: "10.0.0.3", port: uint16(testServicePort1), protocol: syscall.IPPROTO_UDP, family: netlink.FAMILY_V4},
+					},
+				},
+			),
+
+			Entry("IPv6 endpoint",
+				reconcileConntrackTestCase{
+					desc: "should delete conntrack for IPv6 endpoint",
+					service: makeService([]struct {
+						name       string
+						port       int32
+						targetPort int32
+						protocol   corev1.Protocol
+					}{{name: "", port: testServicePort1, targetPort: testEndpointPort1, protocol: udpProtocol}}),
+					oldEndpointSlice: makeEndpointSlice(
+						[]struct {
+							name     *string
+							port     int32
+							protocol corev1.Protocol
+						}{{name: nil, port: testEndpointPort1, protocol: udpProtocol}},
+						[]string{"fd00::1"},
+					),
+					newEndpointSlice:       nil,
+					expectedConntrackCalls: 1,
+					expectedFilters: []expectedConntrackFilter{
+						{ip: "fd00::1", port: uint16(testServicePort1), protocol: syscall.IPPROTO_UDP, family: netlink.FAMILY_V6},
+					},
+				},
+			),
+
+			Entry("dual-stack endpoints",
+				reconcileConntrackTestCase{
+					desc: "should delete conntrack for both IPv4 and IPv6",
+					service: makeService([]struct {
+						name       string
+						port       int32
+						targetPort int32
+						protocol   corev1.Protocol
+					}{{name: "", port: testServicePort1, targetPort: testEndpointPort1, protocol: udpProtocol}}),
+					oldEndpointSlice: makeEndpointSlice(
+						[]struct {
+							name     *string
+							port     int32
+							protocol corev1.Protocol
+						}{{name: nil, port: testEndpointPort1, protocol: udpProtocol}},
+						[]string{"10.0.0.1", "fd00::1"},
+					),
+					newEndpointSlice:       nil,
+					expectedConntrackCalls: 2,
+					expectedFilters: []expectedConntrackFilter{
+						{ip: "10.0.0.1", port: uint16(testServicePort1), protocol: syscall.IPPROTO_UDP, family: netlink.FAMILY_V4},
+						{ip: "fd00::1", port: uint16(testServicePort1), protocol: syscall.IPPROTO_UDP, family: netlink.FAMILY_V6},
+					},
+				},
+			),
+
+			Entry("multiple service ports with matching names",
+				reconcileConntrackTestCase{
+					desc: "should match correct service port by name for multiple ports",
+					service: makeService([]struct {
+						name       string
+						port       int32
+						targetPort int32
+						protocol   corev1.Protocol
+					}{
+						{name: "http", port: testServicePort1, targetPort: testEndpointPort1, protocol: udpProtocol},
+						{name: "https", port: testServicePort2, targetPort: testEndpointPort2, protocol: udpProtocol},
+					}),
+					oldEndpointSlice: makeEndpointSlice(
+						[]struct {
+							name     *string
+							port     int32
+							protocol corev1.Protocol
+						}{
+							{name: strPtr("http"), port: testEndpointPort1, protocol: udpProtocol},
+							{name: strPtr("https"), port: testEndpointPort2, protocol: udpProtocol},
+						},
+						[]string{"10.0.0.1"},
+					),
+					newEndpointSlice:       nil,
+					expectedConntrackCalls: 2,
+					expectedFilters: []expectedConntrackFilter{
+						{ip: "10.0.0.1", port: uint16(testServicePort1), protocol: syscall.IPPROTO_UDP, family: netlink.FAMILY_V4},
+						{ip: "10.0.0.1", port: uint16(testServicePort2), protocol: syscall.IPPROTO_UDP, family: netlink.FAMILY_V4},
+					},
+				},
+			),
+		)
+	})
 })
+
+// Helper function to create string pointer
+func strPtr(s string) *string {
+	return &s
+}

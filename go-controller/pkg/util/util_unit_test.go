@@ -13,9 +13,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
@@ -259,6 +261,153 @@ func TestGenerateId(t *testing.T) {
 func TestGetNetworkScopedK8sMgmtHostIntfName(t *testing.T) {
 	intfName := GetNetworkScopedK8sMgmtHostIntfName(1245678)
 	assert.Equal(t, "ovn-k8s-mp12456", intfName)
+}
+
+func TestFindServicePortForEndpointSlicePort(t *testing.T) {
+	tcp := corev1.ProtocolTCP
+	udp := corev1.ProtocolUDP
+
+	tests := []struct {
+		name                      string
+		service                   *corev1.Service
+		endpointslicePortName     string
+		endpointslicePortProtocol corev1.Protocol
+		wantPort                  *corev1.ServicePort
+		wantErr                   bool
+	}{
+		{
+			name: "Match named port with TCP protocol",
+			service: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "test-ns",
+					Name:      "test-svc",
+				},
+				Spec: corev1.ServiceSpec{
+					Ports: []corev1.ServicePort{
+						{Name: "http", Protocol: tcp, Port: 80, TargetPort: intstr.FromInt(8080)},
+						{Name: "https", Protocol: tcp, Port: 443, TargetPort: intstr.FromInt(8443)},
+					},
+				},
+			},
+			endpointslicePortName:     "http",
+			endpointslicePortProtocol: tcp,
+			wantPort:                  &corev1.ServicePort{Name: "http", Protocol: tcp, Port: 80, TargetPort: intstr.FromInt(8080)},
+			wantErr:                   false,
+		},
+		{
+			name: "Match unnamed port (empty string)",
+			service: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "test-ns",
+					Name:      "test-svc",
+				},
+				Spec: corev1.ServiceSpec{
+					Ports: []corev1.ServicePort{
+						{Name: "", Protocol: tcp, Port: 80, TargetPort: intstr.FromInt(8080)},
+					},
+				},
+			},
+			endpointslicePortName:     "",
+			endpointslicePortProtocol: tcp,
+			wantPort:                  &corev1.ServicePort{Name: "", Protocol: tcp, Port: 80, TargetPort: intstr.FromInt(8080)},
+			wantErr:                   false,
+		},
+		{
+			name: "Protocol mismatch",
+			service: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "test-ns",
+					Name:      "test-svc",
+				},
+				Spec: corev1.ServiceSpec{
+					Ports: []corev1.ServicePort{
+						{Name: "dns", Protocol: tcp, Port: 53, TargetPort: intstr.FromInt(5353)},
+					},
+				},
+			},
+			endpointslicePortName:     "dns",
+			endpointslicePortProtocol: udp,
+			wantPort:                  nil,
+			wantErr:                   true,
+		},
+		{
+			name: "Port name not found",
+			service: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "test-ns",
+					Name:      "test-svc",
+				},
+				Spec: corev1.ServiceSpec{
+					Ports: []corev1.ServicePort{
+						{Name: "http", Protocol: tcp, Port: 80, TargetPort: intstr.FromInt(8080)},
+					},
+				},
+			},
+			endpointslicePortName:     "https",
+			endpointslicePortProtocol: tcp,
+			wantPort:                  nil,
+			wantErr:                   true,
+		},
+		{
+			name: "Multiple ports, match second one",
+			service: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "test-ns",
+					Name:      "test-svc",
+				},
+				Spec: corev1.ServiceSpec{
+					Ports: []corev1.ServicePort{
+						{Name: "http", Protocol: tcp, Port: 80, TargetPort: intstr.FromInt(8080)},
+						{Name: "grpc", Protocol: tcp, Port: 9090, TargetPort: intstr.FromInt(9091)},
+						{Name: "metrics", Protocol: tcp, Port: 8080, TargetPort: intstr.FromInt(8081)},
+					},
+				},
+			},
+			endpointslicePortName:     "grpc",
+			endpointslicePortProtocol: tcp,
+			wantPort:                  &corev1.ServicePort{Name: "grpc", Protocol: tcp, Port: 9090, TargetPort: intstr.FromInt(9091)},
+			wantErr:                   false,
+		},
+		{
+			name: "Named target port (not numeric)",
+			service: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "test-ns",
+					Name:      "test-svc",
+				},
+				Spec: corev1.ServiceSpec{
+					Ports: []corev1.ServicePort{
+						{Name: "web", Protocol: tcp, Port: 80, TargetPort: intstr.FromString("http")},
+					},
+				},
+			},
+			endpointslicePortName:     "web",
+			endpointslicePortProtocol: tcp,
+			wantPort:                  &corev1.ServicePort{Name: "web", Protocol: tcp, Port: 80, TargetPort: intstr.FromString("http")},
+			wantErr:                   false,
+		},
+		{
+			name:                      "Nil service input",
+			service:                   nil,
+			endpointslicePortName:     "web",
+			endpointslicePortProtocol: tcp,
+			wantPort:                  nil,
+			wantErr:                   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := FindServicePortForEndpointSlicePort(tt.service, tt.endpointslicePortName, tt.endpointslicePortProtocol)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Nil(t, got)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantPort, got)
+			}
+		})
+	}
 }
 
 func TestServiceFromEndpointSlice(t *testing.T) {
