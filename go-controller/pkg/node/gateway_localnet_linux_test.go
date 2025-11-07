@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 
+	"github.com/stretchr/testify/mock"
 	"github.com/urfave/cli/v2"
 	"github.com/vishvananda/netlink"
 
@@ -1759,6 +1761,415 @@ var _ = Describe("Node Operations", func() {
 					expectedNFT := getBaseNFTRules(types.K8sMgmtIntfName)
 					return nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				}, "2s").Should(Succeed())
+
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+
+	Context("on update", func() {
+		It("deletes conntrack entries for UDP ports when target port changes", func() {
+			app.Action = func(*cli.Context) error {
+				nodePort := int32(31111)
+				service := *newService("service1", "namespace1", "10.129.0.2",
+					[]corev1.ServicePort{
+						{
+							NodePort:   nodePort,
+							Protocol:   corev1.ProtocolUDP,
+							Port:       int32(53),
+							TargetPort: intstr.FromInt(5353),
+						},
+					},
+					corev1.ServiceTypeNodePort,
+					nil,
+					corev1.ServiceStatus{},
+					false, false,
+				)
+
+				stopChan := make(chan struct{})
+				fakeClient := util.GetOVNClientset(&service).GetNodeClientset()
+				wf, err := factory.NewNodeWatchFactory(fakeClient, "node")
+				Expect(err).ToNot(HaveOccurred())
+				Expect(wf.Start()).To(Succeed())
+				defer func() {
+					close(stopChan)
+					wf.Shutdown()
+				}()
+
+				fNPW.watchFactory = wf
+				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
+
+				// Update service with new targetPort
+				updatedService := service.DeepCopy()
+				updatedService.Spec.Ports[0].TargetPort = intstr.FromInt(5454)
+
+				// Atomic variable to track the number of conntrack delete filters calls
+				var conntrackDeleteFiltersCount atomic.Int32
+
+				// Mock conntrack deletion expectations
+				netlinkMock.
+					On("ConntrackDeleteFilters",
+						netlink.ConntrackTableType(netlink.ConntrackTable),
+						netlink.InetFamily(netlink.FAMILY_V4),
+						makeConntrackFilter(service.Spec.ClusterIP, int(service.Spec.Ports[0].Port), corev1.ProtocolUDP)).
+					Return(uint(1), nil).
+					Run(func(_ mock.Arguments) {
+						conntrackDeleteFiltersCount.Add(1)
+					}).
+					Once()
+				netlinkMock.
+					On("ConntrackDeleteFilters",
+						netlink.ConntrackTableType(netlink.ConntrackTable),
+						netlink.InetFamily(netlink.FAMILY_V4),
+						makeConntrackFilter("192.168.18.15", int(nodePort), corev1.ProtocolUDP)).
+					Return(uint(1), nil).
+					Run(func(_ mock.Arguments) {
+						conntrackDeleteFiltersCount.Add(1)
+					}).
+					Once()
+
+				// Update the service
+				_, err = fakeClient.KubeClient.CoreV1().Services(service.Namespace).Update(
+					context.Background(), updatedService, metav1.UpdateOptions{})
+				Expect(err).ToNot(HaveOccurred())
+
+				// Verify conntrack deletion was called
+				Eventually(func() bool {
+					return conntrackDeleteFiltersCount.Load() == 2
+				}, "2s").Should(BeTrue())
+
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("deletes conntrack entries for UDP ports when port changes", func() {
+			app.Action = func(*cli.Context) error {
+				nodePort := int32(31111)
+				service := *newService("service1", "namespace1", "10.129.0.2",
+					[]corev1.ServicePort{
+						{
+							NodePort:   nodePort,
+							Protocol:   corev1.ProtocolUDP,
+							Port:       int32(53),
+							TargetPort: intstr.FromInt(5353),
+						},
+					},
+					corev1.ServiceTypeNodePort,
+					nil,
+					corev1.ServiceStatus{},
+					false, false,
+				)
+
+				stopChan := make(chan struct{})
+				fakeClient := util.GetOVNClientset(&service).GetNodeClientset()
+				wf, err := factory.NewNodeWatchFactory(fakeClient, "node")
+				Expect(err).ToNot(HaveOccurred())
+				Expect(wf.Start()).To(Succeed())
+				defer func() {
+					close(stopChan)
+					wf.Shutdown()
+				}()
+
+				fNPW.watchFactory = wf
+				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
+
+				// Update service with new port
+				updatedService := service.DeepCopy()
+				updatedService.Spec.Ports[0].Port = 54
+
+				// Atomic variable to track the number of conntrack delete filters calls
+				var conntrackDeleteFiltersCount atomic.Int32
+
+				// Mock conntrack deletion expectations
+				netlinkMock.
+					On("ConntrackDeleteFilters",
+						netlink.ConntrackTableType(netlink.ConntrackTable),
+						netlink.InetFamily(netlink.FAMILY_V4),
+						makeConntrackFilter(service.Spec.ClusterIP, int(service.Spec.Ports[0].Port), corev1.ProtocolUDP)).
+					Return(uint(1), nil).
+					Run(func(_ mock.Arguments) {
+						conntrackDeleteFiltersCount.Add(1)
+					}).
+					Once()
+				netlinkMock.
+					On("ConntrackDeleteFilters",
+						netlink.ConntrackTableType(netlink.ConntrackTable),
+						netlink.InetFamily(netlink.FAMILY_V4),
+						makeConntrackFilter("192.168.18.15", int(nodePort), corev1.ProtocolUDP)).
+					Return(uint(1), nil).
+					Run(func(_ mock.Arguments) {
+						conntrackDeleteFiltersCount.Add(1)
+					}).
+					Once()
+
+				// Update the service
+				_, err = fakeClient.KubeClient.CoreV1().Services(service.Namespace).Update(
+					context.Background(), updatedService, metav1.UpdateOptions{})
+				Expect(err).ToNot(HaveOccurred())
+
+				// Verify conntrack deletion was called
+				Eventually(func() bool {
+					return conntrackDeleteFiltersCount.Load() == 2
+				}, "2s").Should(BeTrue())
+
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("does not delete conntrack entries when TCP service target port changes", func() {
+			app.Action = func(*cli.Context) error {
+				service := *newService("service1", "namespace1", "10.129.0.2",
+					[]corev1.ServicePort{
+						{
+							Protocol:   corev1.ProtocolTCP,
+							Port:       int32(80),
+							TargetPort: intstr.FromInt(8080),
+						},
+					},
+					corev1.ServiceTypeClusterIP,
+					nil,
+					corev1.ServiceStatus{},
+					false, false,
+				)
+
+				stopChan := make(chan struct{})
+				fakeClient := util.GetOVNClientset(&service).GetNodeClientset()
+				wf, err := factory.NewNodeWatchFactory(fakeClient, "node")
+				Expect(err).ToNot(HaveOccurred())
+				Expect(wf.Start()).To(Succeed())
+				defer func() {
+					close(stopChan)
+					wf.Shutdown()
+				}()
+
+				fNPW.watchFactory = wf
+				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
+
+				// Update TCP service with new targetPort
+				updatedService := service.DeepCopy()
+				updatedService.Spec.Ports[0].TargetPort = intstr.FromInt(9090)
+
+				// Update the service
+				_, err = fakeClient.KubeClient.CoreV1().Services(service.Namespace).Update(
+					context.Background(), updatedService, metav1.UpdateOptions{})
+				Expect(err).ToNot(HaveOccurred())
+
+				// Verify conntrack deletion was not called
+				Consistently(func() bool {
+					netlinkMock.AssertNotCalled(GinkgoT(), "ConntrackDeleteFilters")
+					return true
+				}, "1s", "100ms").Should(BeTrue())
+
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("deletes conntrack entries for UDP when ExternalIP changes", func() {
+			app.Action = func(*cli.Context) error {
+				externalIP1 := "1.1.1.1"
+				service := *newService("service1", "namespace1", "10.129.0.2",
+					[]corev1.ServicePort{
+						{
+							Protocol:   corev1.ProtocolUDP,
+							Port:       int32(53),
+							TargetPort: intstr.FromInt(5353),
+						},
+					},
+					corev1.ServiceTypeClusterIP,
+					[]string{externalIP1},
+					corev1.ServiceStatus{},
+					false, false,
+				)
+
+				stopChan := make(chan struct{})
+				fakeClient := util.GetOVNClientset(&service).GetNodeClientset()
+				wf, err := factory.NewNodeWatchFactory(fakeClient, "node")
+				Expect(err).ToNot(HaveOccurred())
+				Expect(wf.Start()).To(Succeed())
+				defer func() {
+					close(stopChan)
+					wf.Shutdown()
+				}()
+
+				fNPW.watchFactory = wf
+				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
+
+				// Update service with new ExternalIP
+				updatedService := service.DeepCopy()
+				updatedService.Spec.ExternalIPs = []string{"2.2.2.2"}
+
+				// Atomic variable to track the number of conntrack delete filters calls
+				var conntrackDeleteFiltersCount atomic.Int32
+
+				// Mock conntrack deletion for old ExternalIP
+				netlinkMock.
+					On("ConntrackDeleteFilters",
+						netlink.ConntrackTableType(netlink.ConntrackTable),
+						netlink.InetFamily(netlink.FAMILY_V4),
+						makeConntrackFilter(externalIP1, int(service.Spec.Ports[0].Port), corev1.ProtocolUDP)).
+					Return(uint(1), nil).
+					Run(func(_ mock.Arguments) {
+						conntrackDeleteFiltersCount.Add(1)
+					}).
+					Once()
+
+				// Update the service
+				_, err = fakeClient.KubeClient.CoreV1().Services(service.Namespace).Update(
+					context.Background(), updatedService, metav1.UpdateOptions{})
+				Expect(err).ToNot(HaveOccurred())
+
+				// Verify conntrack deletion was called
+				Eventually(func() bool {
+					return conntrackDeleteFiltersCount.Load() == 1
+				}, "2s").Should(BeTrue())
+
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("deletes conntrack entries for UDP when LoadBalancer IP changes", func() {
+			app.Action = func(*cli.Context) error {
+				lbIP1 := "1.1.1.1"
+				service := *newService("service1", "namespace1", "10.129.0.2",
+					[]corev1.ServicePort{
+						{
+							Protocol:   corev1.ProtocolUDP,
+							Port:       int32(53),
+							TargetPort: intstr.FromInt(5353),
+						},
+					},
+					corev1.ServiceTypeLoadBalancer,
+					[]string{},
+					corev1.ServiceStatus{
+						LoadBalancer: corev1.LoadBalancerStatus{
+							Ingress: []corev1.LoadBalancerIngress{{
+								IP: lbIP1,
+							}},
+						},
+					},
+					false, false,
+				)
+
+				stopChan := make(chan struct{})
+				fakeClient := util.GetOVNClientset(&service).GetNodeClientset()
+				wf, err := factory.NewNodeWatchFactory(fakeClient, "node")
+				Expect(err).ToNot(HaveOccurred())
+				Expect(wf.Start()).To(Succeed())
+				defer func() {
+					close(stopChan)
+					wf.Shutdown()
+				}()
+
+				fNPW.watchFactory = wf
+				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
+
+				// Update service with new LoadBalancer IP
+				updatedService := service.DeepCopy()
+				updatedService.Status.LoadBalancer.Ingress[0].IP = "2.2.2.2"
+
+				// Atomic variable to track the number of conntrack delete filters calls
+				var conntrackDeleteFiltersCount atomic.Int32
+
+				// Mock conntrack deletion for old LoadBalancer IP
+				netlinkMock.
+					On("ConntrackDeleteFilters",
+						netlink.ConntrackTableType(netlink.ConntrackTable),
+						netlink.InetFamily(netlink.FAMILY_V4),
+						makeConntrackFilter(lbIP1, int(service.Spec.Ports[0].Port), corev1.ProtocolUDP)).
+					Return(uint(1), nil).
+					Run(func(_ mock.Arguments) {
+						conntrackDeleteFiltersCount.Add(1)
+					}).
+					Once()
+
+				// Update the service
+				_, err = fakeClient.KubeClient.CoreV1().Services(service.Namespace).Update(
+					context.Background(), updatedService, metav1.UpdateOptions{})
+				Expect(err).ToNot(HaveOccurred())
+
+				// Verify conntrack deletion was called
+				Eventually(func() bool {
+					return conntrackDeleteFiltersCount.Load() == 1
+				}, "2s").Should(BeTrue())
+
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("deletes conntrack entries only for changed UDP ports in multi-port service", func() {
+			app.Action = func(*cli.Context) error {
+				service := *newService("service1", "namespace1", "10.129.0.2",
+					[]corev1.ServicePort{
+						{
+							Protocol:   corev1.ProtocolUDP,
+							Port:       int32(53),
+							TargetPort: intstr.FromInt(5353),
+						},
+						{
+							Protocol:   corev1.ProtocolUDP,
+							Port:       int32(80),
+							TargetPort: intstr.FromInt(8080),
+						},
+					},
+					corev1.ServiceTypeClusterIP,
+					nil,
+					corev1.ServiceStatus{},
+					false, false,
+				)
+
+				stopChan := make(chan struct{})
+				fakeClient := util.GetOVNClientset(&service).GetNodeClientset()
+				wf, err := factory.NewNodeWatchFactory(fakeClient, "node")
+				Expect(err).ToNot(HaveOccurred())
+				Expect(wf.Start()).To(Succeed())
+				defer func() {
+					close(stopChan)
+					wf.Shutdown()
+				}()
+
+				fNPW.watchFactory = wf
+				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
+
+				// Update service - change only port 80's targetPort
+				updatedService := service.DeepCopy()
+				updatedService.Spec.Ports[1].TargetPort = intstr.FromInt(9090)
+
+				// Atomic variable to track the number of conntrack delete filters calls
+				var conntrackDeleteFiltersCount atomic.Int32
+
+				// Mock conntrack deletion ONLY for port 80
+				netlinkMock.
+					On("ConntrackDeleteFilters",
+						netlink.ConntrackTableType(netlink.ConntrackTable),
+						netlink.InetFamily(netlink.FAMILY_V4),
+						makeConntrackFilter(service.Spec.ClusterIP, 80, corev1.ProtocolUDP)).
+					Return(uint(1), nil).
+					Run(func(_ mock.Arguments) {
+						conntrackDeleteFiltersCount.Add(1)
+					}).
+					Once()
+
+				// Update the service
+				_, err = fakeClient.KubeClient.CoreV1().Services(service.Namespace).Update(
+					context.Background(), updatedService, metav1.UpdateOptions{})
+				Expect(err).ToNot(HaveOccurred())
+
+				// Verify conntrack deletion called once for port 80 only
+				Eventually(func() bool {
+					return conntrackDeleteFiltersCount.Load() == 1
+				}, "2s").Should(BeTrue())
 
 				return nil
 			}
