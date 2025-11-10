@@ -498,7 +498,6 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 
 		// if we allow for persistent IPs, then we need to check if this pod has an IPAM Claim
 		if bsnc.allowPersistentIPs() {
-			// TBD-Multiple_Same_NAD ipamClaim to work with multiple same NADs on Pod
 			hasIPAMClaim, err := bsnc.hasIPAMClaim(pod, nadName)
 			if err != nil {
 				return fmt.Errorf("unable to determine if pod %s has IPAM Claim: %w", podDesc, err)
@@ -527,7 +526,7 @@ func (bsnc *BaseUserDefinedNetworkController) removePodForUserDefinedNetwork(pod
 
 // hasIPAMClaim determines whether a pod's IPAM is being handled by IPAMClaim CR.
 // pod passed should already be validated as having a network connection to nadName
-func (bsnc *BaseUserDefinedNetworkController) hasIPAMClaim(pod *corev1.Pod, nadNamespacedName string) (bool, error) {
+func (bsnc *BaseUserDefinedNetworkController) hasIPAMClaim(pod *corev1.Pod, nadKey string) (bool, error) {
 	if !bsnc.AllowsPersistentIPs() {
 		return false, nil
 	}
@@ -539,19 +538,17 @@ func (bsnc *BaseUserDefinedNetworkController) hasIPAMClaim(pod *corev1.Pod, nadN
 		ipamClaimName, wasPersistentIPRequested = pod.Annotations[util.OvnUDNIPAMClaimName]
 	} else {
 		// secondary network the IPAM claim reference is on the network selection element
-		nadKeys := strings.Split(nadNamespacedName, "/")
-		if len(nadKeys) != 2 {
-			return false, fmt.Errorf("invalid NAD name %s", nadNamespacedName)
-		}
-		nadNamespace := nadKeys[0]
-		nadName := nadKeys[1]
-		allNetworks, err := util.GetK8sPodAllNetworkSelections(pod)
+		on, networkMap, err := util.GetPodNADToNetworkMapping(pod, bsnc)
 		if err != nil {
-			return false, err
+			return false, fmt.Errorf("pod %s/%s is not scheduled on network %s: %v",
+				pod.Namespace, pod.Name, bsnc.GetNetworkName(), err)
 		}
-		for _, network := range allNetworks {
-			if network.Namespace == nadNamespace && network.Name == nadName {
-				// found network selection element, check if it has IPAM
+		if !on {
+			klog.Warningf("Pod %s/%s is not scheduled on network %s", pod.Namespace, pod.Name, bsnc.GetNetworkName())
+			return false, nil
+		}
+		for nadName, network := range networkMap {
+			if nadName == nadKey {
 				if len(network.IPAMClaimReference) > 0 {
 					ipamClaimName = network.IPAMClaimReference
 					wasPersistentIPRequested = true
