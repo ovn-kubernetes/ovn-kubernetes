@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"net"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -388,6 +389,43 @@ func pokeExternalIpService(externalContainer infraapi.ExternalContainer, protoco
 		// each endpoint returns its hostname. By doing this, we validate that each ep was reached at least once.
 		if responses.Equal(nodesHostnames) {
 			framework.Logf("Validated external address %s after %d tries", externalAddress, i)
+			return true
+		}
+	}
+	return false
+}
+
+// pokeServiceFromPod connects to clientPodName inside clientPodNamespace and runs a curl against targetIP:targetPort.
+// Within maxTries limit, it expects to find all nodesHostnames.
+// Command is passed as an escaped value to http://<host>:<port>/shell?=cmd=<command>.
+func pokeServiceFromPod(clientPodNamespace, clientPodName, targetIP string, targetPort int, command string,
+	maxTries int, expectedResults sets.Set[string]) bool {
+	responses := sets.New[string]()
+
+	if utilnet.IsIPv6String(targetIP) {
+		targetIP = fmt.Sprintf("[%s]", targetIP)
+	}
+
+	for i := 0; i < maxTries; i++ {
+		cmd := []string{
+			"exec", clientPodName, "--", "curl", "--max-time", "10", "-g", "-q", "-s",
+			fmt.Sprintf("http://%s:%d/shell?cmd=%s", targetIP, targetPort, url.QueryEscape(command)),
+		}
+		framework.Logf("Running command %q, try %d", cmd, i)
+		if output, err := e2ekubectl.RunKubectl(clientPodNamespace, cmd...); err == nil {
+			outputStruct := struct {
+				Output string `json:"output"`
+			}{}
+			if err := json.Unmarshal([]byte(output), &outputStruct); err != nil {
+				framework.Logf("Error unmarshalling command output, try: %d, err: %q", i, err)
+				continue
+			}
+			responses.Insert(strings.Trim(outputStruct.Output, "\n"))
+		} else {
+			framework.Logf("Error running command, try: %d, err: %q", i, err)
+		}
+		if responses.Equal(expectedResults) {
+			framework.Logf("Found all expected hostnames %+v after %d tries", expectedResults, i)
 			return true
 		}
 	}
