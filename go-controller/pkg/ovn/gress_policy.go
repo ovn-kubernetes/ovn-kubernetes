@@ -184,14 +184,21 @@ func (gp *gressPolicy) getMatchFromIPBlock(lportMatch, l4Match string) ([]string
 		if err != nil {
 			return nil, fmt.Errorf("invalid ipBlock.CIDR %q: %v", ipBlock.CIDR, err)
 		}
-
 		var exceptSet *netipx.IPSet
 		if len(ipBlock.Except) > 0 {
 			var exceptBuilder netipx.IPSetBuilder
 			for _, ex := range ipBlock.Except {
 				exPrefix, err := netip.ParsePrefix(ex)
 				if err != nil {
-					return nil, fmt.Errorf("invalid ipBlock.except %q: %v", ex, err)
+					if addr, addrErr := netip.ParseAddr(ex); addrErr == nil {
+						hostBits := 32
+						if addr.Is6() {
+							hostBits = 128
+						}
+						exPrefix = netip.PrefixFrom(addr, hostBits)
+					} else {
+						return nil, fmt.Errorf("invalid ipBlock.except %q: %v", ex, err)
+					}
 				}
 				exceptBuilder.AddPrefix(exPrefix)
 			}
