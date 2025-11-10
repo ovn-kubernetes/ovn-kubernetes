@@ -166,16 +166,14 @@ func (c *noOverlayController) raNeedsValidation(oldRA, newRA *ratypes.RouteAdver
 		return true
 	}
 
-	isRAAdvertisingDefaultNetwork := func(ra *ratypes.RouteAdvertisements) bool {
-		for _, networkSelector := range ra.Spec.NetworkSelectors {
-			if networkSelector.NetworkSelectionType == apitypes.DefaultNetwork {
-				return true
-			}
-		}
+	// Only validate if we're in no-overlay mode
+	if config.Default.Transport != config.TransportNoOverlay {
 		return false
 	}
-	if config.Default.Transport != config.TransportNoOverlay || isRAAdvertisingDefaultNetwork(oldRA) == isRAAdvertisingDefaultNetwork(newRA) {
-		return false
+
+	// Check if NetworkSelectors changed
+	if !reflect.DeepEqual(oldRA.Spec.NetworkSelectors, newRA.Spec.NetworkSelectors) {
+		return true
 	}
 
 	// Check if Advertisements changed
@@ -229,6 +227,11 @@ func (c *noOverlayController) runValidation() {
 
 // validate checks if the no-overlay configuration is valid
 func (c *noOverlayController) validate() error {
+	// Check if RouteAdvertisements feature is enabled
+	if !config.OVNKubernetesFeature.EnableRouteAdvertisements {
+		return fmt.Errorf("no-overlay transport requires RouteAdvertisements feature to be enabled")
+	}
+
 	// Get all RouteAdvertisements CRs
 	ras, err := c.wf.RouteAdvertisementsInformer().Lister().List(labels.Everything())
 	if err != nil {
