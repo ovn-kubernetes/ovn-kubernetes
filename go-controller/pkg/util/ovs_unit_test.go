@@ -4,10 +4,14 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"regexp"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	kexec "k8s.io/utils/exec"
@@ -1894,5 +1898,623 @@ func TestPathVariableInitialization(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, tt.testFunc)
+	}
+}
+
+// mockGroupManager holds bridge -> groupID -> groupRule.
+type mockGroupManager map[string]map[int]string
+
+func (m mockGroupManager) Add(bridge, input string) error {
+	if _, ok := m[bridge]; !ok {
+		return fmt.Errorf("ovs-ofctl: %s is not a bridge or a socket", bridge)
+	}
+	re := regexp.MustCompile(`group_id=([0-9]+)`)
+	matches := re.FindStringSubmatch(input)
+	if len(matches) != 2 {
+		return fmt.Errorf("ovs-ofctl: -:1: must specify a group_id")
+	}
+	groupIDStr := matches[1]
+	groupID, _ := strconv.Atoi(groupIDStr)
+	if _, ok := m[bridge][groupID]; ok {
+		return fmt.Errorf("OFPT_ERROR (OF1.3) (xid=0x6): OFPGMFC_GROUP_EXISTS\n"+
+			"OFPT_GROUP_MOD (OF1.3) (xid=0x6):\n"+
+			" Add %s", input)
+	}
+	m[bridge][groupID] = input
+	return nil
+}
+
+func (m mockGroupManager) Mod(bridge, input string) error {
+	if _, ok := m[bridge]; !ok {
+		return fmt.Errorf("ovs-ofctl: %s is not a bridge or a socket", bridge)
+	}
+	re := regexp.MustCompile(`group_id=([0-9]+)`)
+	matches := re.FindStringSubmatch(input)
+	if len(matches) != 2 {
+		return fmt.Errorf("ovs-ofctl: -:1: must specify a group_id")
+	}
+	groupIDStr := matches[1]
+	groupID, _ := strconv.Atoi(groupIDStr)
+	if _, ok := m[bridge][groupID]; !ok {
+		return fmt.Errorf("OFPT_ERROR (OF1.3) (xid=0x6): OFPGMFC_UNKNOWN_GROUP\n"+
+			"OFPT_GROUP_MOD (OF1.3) (xid=0x6):\n"+
+			" MOD %s", input)
+	}
+	m[bridge][groupID] = input
+	return nil
+}
+
+func (m mockGroupManager) Del(bridge, groupIDStr string) error {
+	if _, ok := m[bridge]; !ok {
+		return fmt.Errorf("ovs-ofctl: %s is not a bridge or a socket", bridge)
+	}
+	re := regexp.MustCompile(`group_id=([0-9]+)`)
+	matches := re.FindStringSubmatch(groupIDStr)
+	if len(matches) != 2 {
+		return fmt.Errorf("ovs-ofctl: must specify a group_id")
+	}
+	groupID, _ := strconv.Atoi(matches[1])
+	if _, ok := m[bridge][groupID]; !ok {
+		// OVS doesn't return an error when deleting a non-existent group
+		return nil
+	}
+	delete(m[bridge], groupID)
+	return nil
+}
+
+func (m mockGroupManager) Flush(bridge string) error {
+	if _, ok := m[bridge]; !ok {
+		return fmt.Errorf("ovs-ofctl: %s is not a bridge or a socket", bridge)
+	}
+	m[bridge] = map[int]string{}
+	return nil
+}
+
+func (m mockGroupManager) Dump(bridge string) (string, error) {
+	if _, ok := m[bridge]; !ok {
+		return "", fmt.Errorf("ovs-ofctl: %s is not a bridge or a socket", bridge)
+	}
+	retVal := "NXST_GROUP_DESC reply (xid=0x2):\n"
+	for _, line := range m[bridge] {
+		retVal += " " + line + "\n"
+	}
+	return retVal, nil
+}
+
+func TestGetOFGroups(t *testing.T) {
+	tests := []struct {
+		desc        string
+		groups      mockGroupManager
+		bridge      string
+		expectedErr error
+		expectedOut map[int]string
+	}{
+		{
+			desc:        "Return an error when the wrong bridge is specified",
+			groups:      mockGroupManager{"breth0": {}},
+			bridge:      "breth1",
+			expectedErr: fmt.Errorf("error: ovs-ofctl: breth1 is not a bridge or a socket"),
+			expectedOut: nil,
+		},
+		{
+			desc:        "Dump all rules when no rules are present",
+			groups:      mockGroupManager{"breth0": {}},
+			bridge:      "breth0",
+			expectedErr: nil,
+			expectedOut: map[int]string{},
+		},
+		{
+			desc: "Dump all rules when rules are present",
+			groups: mockGroupManager{
+				"breth0": {
+					0: "group_id=0,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+					1: "group_id=1,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8888))",
+					2: "group_id=2,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+					3: "group_id=3,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+				},
+			},
+			bridge:      "breth0",
+			expectedErr: nil,
+			expectedOut: map[int]string{
+				0: "group_id=0,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+				1: "group_id=1,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8888))",
+				2: "group_id=2,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+				3: "group_id=3,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+			},
+		},
+	}
+
+	for i, tc := range tests {
+		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
+			mockKexecIface := new(mock_k8s_io_utils_exec.Interface)
+			mockExecRunner := new(mocks.ExecRunner)
+			mockCmd := new(mock_k8s_io_utils_exec.Cmd)
+			// below is defined in ovs.go
+			runCmdExecRunner = mockExecRunner
+			// note runner is defined in ovs.go file
+			runner = &execHelper{exec: mockKexecIface}
+
+			mockKexecIface.On("Command",
+				mock.AnythingOfType("string"),
+				"dump-groups", mock.AnythingOfType("string"),
+			).Return(mockCmd)
+			mockRunCmd := mockExecRunner.On("RunCmd",
+				mock.AnythingOfType("*mocks.Cmd"),
+				mock.AnythingOfType("string"),
+				mock.AnythingOfType("[]string"),
+				"dump-groups", mock.AnythingOfType("string"),
+			)
+			mockRunCmd.Run(func(args mock.Arguments) {
+				bridge := args.Get(4).(string)
+				stdout, err := tc.groups.Dump(bridge)
+				mockRunCmd.Return(bytes.NewBuffer([]byte(stdout)), bytes.NewBuffer([]byte("")), err)
+			})
+
+			// Run GetOFGroups and make sure that everything is as expected.
+			groups, err := GetOFGroups(tc.bridge)
+			if tc.expectedErr != nil {
+				assert.Contains(t, err.Error(), tc.expectedErr.Error())
+			} else {
+				require.NoError(t, err)
+			}
+			mockExecRunner.AssertExpectations(t)
+			mockKexecIface.AssertExpectations(t)
+			assert.Equal(t, tc.expectedOut, groups)
+		})
+	}
+}
+
+func TestDelOFGroup(t *testing.T) {
+	tests := []struct {
+		desc                  string
+		groups                mockGroupManager
+		bridge                string
+		groupID               int
+		expectedErr           error
+		expectedInternalState map[int]string
+	}{
+		{
+			desc: "Delete existing group",
+			groups: mockGroupManager{
+				"breth0": {
+					0: "group_id=0,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+				},
+			},
+			bridge:                "breth0",
+			groupID:               0,
+			expectedErr:           nil,
+			expectedInternalState: map[int]string{},
+		},
+		{
+			desc: "Delete group on non-existing bridge",
+			groups: mockGroupManager{
+				"breth0": {
+					0: "group_id=0,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+				},
+			},
+			bridge:      "breth1",
+			groupID:     0,
+			expectedErr: fmt.Errorf("ovs-ofctl: breth1 is not a bridge or a socket"),
+			expectedInternalState: map[int]string{
+				0: "group_id=0,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+			},
+		},
+		{
+			desc: "Delete non-existing group",
+			groups: mockGroupManager{
+				"breth0": {
+					0: "group_id=0,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+				},
+			},
+			bridge:      "breth0",
+			groupID:     1,
+			expectedErr: nil,
+			expectedInternalState: map[int]string{
+				0: "group_id=0,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+			},
+		},
+		{
+			desc: "Delete group from beginning",
+			groups: mockGroupManager{
+				"breth0": {
+					0: "group_id=0,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+					1: "group_id=1,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+					2: "group_id=2,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+				},
+			},
+			bridge:      "breth0",
+			groupID:     0,
+			expectedErr: nil,
+			expectedInternalState: map[int]string{
+				1: "group_id=1,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+				2: "group_id=2,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+			},
+		},
+		{
+			desc: "Delete group from end",
+			groups: mockGroupManager{
+				"breth0": {
+					0: "group_id=0,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+					1: "group_id=1,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+					2: "group_id=2,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+				},
+			},
+			bridge:      "breth0",
+			groupID:     2,
+			expectedErr: nil,
+			expectedInternalState: map[int]string{
+				0: "group_id=0,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+				1: "group_id=1,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+			},
+		},
+		{
+			desc: "Delete group from middle",
+			groups: mockGroupManager{
+				"breth0": {
+					0: "group_id=0,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+					1: "group_id=1,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+					2: "group_id=2,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+				},
+			},
+			bridge:      "breth0",
+			groupID:     1,
+			expectedErr: nil,
+			expectedInternalState: map[int]string{
+				0: "group_id=0,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+				2: "group_id=2,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+			},
+		},
+	}
+
+	for i, tc := range tests {
+		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
+			mockKexecIface := new(mock_k8s_io_utils_exec.Interface)
+			mockExecRunner := new(mocks.ExecRunner)
+			mockCmd := new(mock_k8s_io_utils_exec.Cmd)
+			// below is defined in ovs.go
+			runCmdExecRunner = mockExecRunner
+			// note runner is defined in ovs.go file
+			runner = &execHelper{exec: mockKexecIface}
+
+			// Mock commands for deleting.
+			mockKexecIface.On("Command",
+				mock.AnythingOfType("string"),
+				"del-groups", tc.bridge, mock.AnythingOfType("string"),
+			).Return(mockCmd)
+			mockRunCmd := mockExecRunner.On("RunCmd",
+				mock.AnythingOfType("*mocks.Cmd"),
+				mock.AnythingOfType("string"),
+				mock.AnythingOfType("[]string"),
+				"del-groups", tc.bridge, mock.AnythingOfType("string"),
+			)
+			mockRunCmd.Run(func(args mock.Arguments) {
+				bridge := args.Get(4).(string)
+				groupIDStr := args.Get(5).(string)
+				err := tc.groups.Del(bridge, groupIDStr)
+				mockRunCmd.Return(bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte("")), err)
+			})
+
+			// Run DelOFGroup and make sure that everything is as expected.
+			err := DelOFGroup(tc.bridge, tc.groupID)
+			if tc.expectedErr != nil {
+				assert.Contains(t, err.Error(), tc.expectedErr.Error())
+			} else {
+				require.NoError(t, err)
+			}
+			mockExecRunner.AssertExpectations(t)
+			mockKexecIface.AssertExpectations(t)
+			if state, ok := tc.groups[tc.bridge]; ok {
+				assert.Equal(t, tc.expectedInternalState, state)
+			}
+		})
+	}
+}
+
+func TestFlushOFGroup(t *testing.T) {
+	tests := []struct {
+		desc                  string
+		groups                mockGroupManager
+		bridge                string
+		expectedErr           error
+		expectedInternalState map[int]string
+	}{
+		{
+			desc: "Flush all groups",
+			groups: mockGroupManager{
+				"breth0": {
+					0: "group_id=0,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+					1: "group_id=1,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+				},
+			},
+			bridge:                "breth0",
+			expectedErr:           nil,
+			expectedInternalState: map[int]string{},
+		},
+		{
+			desc: "Flush groups on non-existing bridge",
+			groups: mockGroupManager{
+				"breth0": {
+					0: "group_id=0,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+				},
+			},
+			bridge:      "breth1",
+			expectedErr: fmt.Errorf("ovs-ofctl: breth1 is not a bridge or a socket"),
+			expectedInternalState: map[int]string{
+				0: "group_id=0,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+			},
+		},
+		{
+			desc: "Flush when no groups are present",
+			groups: mockGroupManager{
+				"breth0": {},
+			},
+			bridge:                "breth0",
+			expectedErr:           nil,
+			expectedInternalState: map[int]string{},
+		},
+		{
+			desc: "Flush multiple groups",
+			groups: mockGroupManager{
+				"breth0": {
+					0: "group_id=0,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+					1: "group_id=1,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+					2: "group_id=2,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889)),bucket=bucket_id:1,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+				},
+			},
+			bridge:                "breth0",
+			expectedErr:           nil,
+			expectedInternalState: map[int]string{},
+		},
+	}
+
+	for i, tc := range tests {
+		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
+			mockKexecIface := new(mock_k8s_io_utils_exec.Interface)
+			mockExecRunner := new(mocks.ExecRunner)
+			mockCmd := new(mock_k8s_io_utils_exec.Cmd)
+			// below is defined in ovs.go
+			runCmdExecRunner = mockExecRunner
+			// note runner is defined in ovs.go file
+			runner = &execHelper{exec: mockKexecIface}
+
+			// Mock commands for flushing.
+			mockKexecIface.On("Command",
+				mock.AnythingOfType("string"),
+				"del-groups", tc.bridge,
+			).Return(mockCmd)
+			mockRunCmd := mockExecRunner.On("RunCmd",
+				mock.AnythingOfType("*mocks.Cmd"),
+				mock.AnythingOfType("string"),
+				mock.AnythingOfType("[]string"),
+				"del-groups", tc.bridge,
+			)
+			mockRunCmd.Run(func(args mock.Arguments) {
+				bridge := args.Get(4).(string)
+				err := tc.groups.Flush(bridge)
+				mockRunCmd.Return(bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte("")), err)
+			})
+
+			// Run FlushOFGroup and make sure that everything is as expected.
+			err := FlushOFGroup(tc.bridge)
+			if tc.expectedErr != nil {
+				assert.Contains(t, err.Error(), tc.expectedErr.Error())
+			} else {
+				require.NoError(t, err)
+			}
+			mockExecRunner.AssertExpectations(t)
+			mockKexecIface.AssertExpectations(t)
+			if state, ok := tc.groups[tc.bridge]; ok {
+				assert.Equal(t, tc.expectedInternalState, state)
+			}
+		})
+	}
+}
+
+func TestReplaceOFGroups(t *testing.T) {
+	tests := []struct {
+		desc                  string
+		groups                mockGroupManager
+		bridge                string
+		groupsToReplace       map[int]string
+		expectedErr           error
+		expectedInternalState map[int]string
+	}{
+		{
+			desc: "Replace existing groups, add new ones, and delete unlisted ones",
+			groups: mockGroupManager{
+				"breth0": {
+					0: "group_id=0,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+					1: "group_id=1,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+				},
+			},
+			bridge: "breth0",
+			groupsToReplace: map[int]string{
+				0: "type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.2:8889))",
+				2: "type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.3:8889))",
+			},
+			expectedErr: nil,
+			expectedInternalState: map[int]string{
+				0: "group_id=0,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.2:8889))",
+				2: "group_id=2,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.3:8889))",
+			},
+		},
+		{
+			desc: "Add multiple new groups",
+			groups: mockGroupManager{
+				"breth0": {},
+			},
+			bridge: "breth0",
+			groupsToReplace: map[int]string{
+				0: "type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+				1: "type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.2:8889))",
+			},
+			expectedErr: nil,
+			expectedInternalState: map[int]string{
+				0: "group_id=0,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+				1: "group_id=1,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.2:8889))",
+			},
+		},
+		{
+			desc: "Replace multiple existing groups",
+			groups: mockGroupManager{
+				"breth0": {
+					0: "group_id=0,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+					1: "group_id=1,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+					2: "group_id=2,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+				},
+			},
+			bridge: "breth0",
+			groupsToReplace: map[int]string{
+				0: "type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.2:8889))",
+				2: "type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.3:8889))",
+			},
+			expectedErr: nil,
+			expectedInternalState: map[int]string{
+				0: "group_id=0,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.2:8889))",
+				2: "group_id=2,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.3:8889))",
+			},
+		},
+		{
+			desc: "Fail on non-existing bridge",
+			groups: mockGroupManager{
+				"breth0": {},
+			},
+			bridge: "breth1",
+			groupsToReplace: map[int]string{
+				0: "type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+			},
+			expectedErr: fmt.Errorf("error: ovs-ofctl: breth1 is not a bridge or a socket"),
+		},
+		{
+			desc: "Fail when group_id is present in string",
+			groups: mockGroupManager{
+				"breth0": {},
+			},
+			bridge: "breth0",
+			groupsToReplace: map[int]string{
+				0: "group_id=0,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+			},
+			expectedErr:           fmt.Errorf("group string for group 0 should not contain 'group_id='"),
+			expectedInternalState: map[int]string{},
+		},
+		{
+			desc: "Delete all existing groups when empty map provided",
+			groups: mockGroupManager{
+				"breth0": {
+					0: "group_id=0,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+					1: "group_id=1,type=select,bucket=bucket_id:0,actions=ct(commit,table=6,zone=64003,nat(dst=10.244.0.1:8889))",
+				},
+			},
+			bridge:                "breth0",
+			groupsToReplace:       map[int]string{},
+			expectedErr:           nil,
+			expectedInternalState: map[int]string{},
+		},
+	}
+
+	for i, tc := range tests {
+		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
+			mockKexecIface := new(mock_k8s_io_utils_exec.Interface)
+			mockExecRunner := new(mocks.ExecRunner)
+			mockCmd := new(mock_k8s_io_utils_exec.Cmd)
+			// below is defined in ovs.go
+			runCmdExecRunner = mockExecRunner
+			// note runner is defined in ovs.go file
+			runner = &execHelper{exec: mockKexecIface}
+
+			// Mock commands for dumping groups.
+			mockKexecIface.On("Command",
+				mock.AnythingOfType("string"),
+				"dump-groups", mock.AnythingOfType("string"),
+			).Return(mockCmd)
+			mockRunCmd := mockExecRunner.On("RunCmd",
+				mock.AnythingOfType("*mocks.Cmd"),
+				mock.AnythingOfType("string"),
+				mock.AnythingOfType("[]string"),
+				"dump-groups", mock.AnythingOfType("string"),
+			)
+			mockRunCmd.Run(func(args mock.Arguments) {
+				bridge := args.Get(4).(string)
+				stdout, err := tc.groups.Dump(bridge)
+				mockRunCmd.Return(bytes.NewBuffer([]byte(stdout)), bytes.NewBuffer([]byte("")), err)
+			})
+
+			// Mock commands for deleting, modifying and adding groups if we expect success.
+			if tc.expectedErr == nil ||
+				!(strings.Contains(tc.expectedErr.Error(), "ovs-ofctl: breth1 is not a bridge or a socket") ||
+					strings.Contains(tc.expectedErr.Error(), "should not contain 'group_id='")) {
+
+				// Mock deletions for groups not in the replacement map
+				for existingGroupID := range tc.groups[tc.bridge] {
+					if _, shouldKeep := tc.groupsToReplace[existingGroupID]; !shouldKeep {
+						mockKexecIface.On("Command",
+							mock.AnythingOfType("string"),
+							"del-groups", tc.bridge, fmt.Sprintf("group_id=%d", existingGroupID),
+						).Return(mockCmd)
+						mockRunCmdDel := mockExecRunner.On("RunCmd",
+							mock.AnythingOfType("*mocks.Cmd"),
+							mock.AnythingOfType("string"),
+							mock.AnythingOfType("[]string"),
+							"del-groups", tc.bridge, fmt.Sprintf("group_id=%d", existingGroupID),
+						)
+						mockRunCmdDel.Run(func(args mock.Arguments) {
+							bridge := args.Get(4).(string)
+							groupIDStr := args.Get(5).(string)
+							err := tc.groups.Del(bridge, groupIDStr)
+							mockRunCmdDel.Return(bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte("")), err)
+						})
+					}
+				}
+
+				// Mock modifications and additions
+				for groupID := range tc.groupsToReplace {
+					groupString := tc.groupsToReplace[groupID]
+					// Prepend group_id to match what the implementation does
+					fullGroupString := fmt.Sprintf("group_id=%d,%s", groupID, groupString)
+					var operation string
+					if _, exists := tc.groups[tc.bridge][groupID]; exists {
+						operation = "mod-group"
+					} else {
+						operation = "add-group"
+					}
+
+					mockCmdOp := new(mock_k8s_io_utils_exec.Cmd)
+					mockKexecIface.On("Command",
+						mock.AnythingOfType("string"),
+						"-O", "OpenFlow13", operation, tc.bridge, "-",
+					).Return(mockCmdOp).Once()
+					mockCmdOp.On("SetStdin", mock.AnythingOfType("*bytes.Buffer")).Return().Once()
+					mockRunCmd2 := mockExecRunner.On("RunCmd",
+						mockCmdOp,
+						mock.AnythingOfType("string"),
+						mock.AnythingOfType("[]string"),
+						"-O", "OpenFlow13", operation, tc.bridge, "-",
+					)
+					mockRunCmd2.Run(func(args mock.Arguments) {
+						bridge := args.Get(6).(string)
+						var err error
+						if operation == "mod-group" {
+							err = tc.groups.Mod(bridge, fullGroupString)
+						} else {
+							err = tc.groups.Add(bridge, fullGroupString)
+						}
+						mockRunCmd2.Return(bytes.NewBuffer([]byte("")), bytes.NewBuffer([]byte("")), err)
+					}).Once()
+				}
+			}
+
+			// Run ReplaceOFGroups and make sure that everything is as expected.
+			err := ReplaceOFGroups(tc.bridge, tc.groupsToReplace)
+			if tc.expectedErr != nil {
+				assert.Contains(t, err.Error(), tc.expectedErr.Error())
+			} else {
+				require.NoError(t, err)
+			}
+			mockExecRunner.AssertExpectations(t)
+			mockKexecIface.AssertExpectations(t)
+			if tc.expectedInternalState != nil {
+				assert.Equal(t, tc.expectedInternalState, tc.groups[tc.bridge])
+			}
+		})
 	}
 }
