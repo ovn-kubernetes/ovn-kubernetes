@@ -851,6 +851,33 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 			return addresses
 		}
 
+		waitForVMPodErrorEvent = func(vmName string, expectedErrorSubstring string) {
+			GinkgoHelper()
+			Eventually(func() []corev1.Event {
+				podList, err := fr.ClientSet.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{
+					LabelSelector: fmt.Sprintf("%s=%s", kubevirtv1.VirtualMachineNameLabel, vmName),
+				})
+				if err != nil || len(podList.Items) == 0 {
+					return nil
+				}
+
+				events, err := fr.ClientSet.CoreV1().Events(namespace).List(context.TODO(), metav1.ListOptions{
+					FieldSelector: fmt.Sprintf("involvedObject.name=%s", podList.Items[0].Name),
+				})
+				if err != nil {
+					return nil
+				}
+
+				return events.Items
+			}).
+				WithTimeout(60*time.Second).
+				WithPolling(2*time.Second).
+				Should(ContainElement(SatisfyAll(
+					HaveField("Type", Equal("Warning")),
+					HaveField("Message", ContainSubstring(expectedErrorSubstring)),
+				)), fmt.Sprintf("VM %s should fail with error: %s", vmName, expectedErrorSubstring))
+		}
+
 		virtualMachineAddressesFromStatus = func(vmi *kubevirtv1.VirtualMachineInstance, expectedNumberOfAddresses int) []string {
 			GinkgoHelper()
 			step := by(vmi.Name, "Wait for virtual machine to report addresses")
@@ -2423,32 +2450,6 @@ ethernets:
 			Expect(actualAddresses).To(ConsistOf(expectedIPs), fmt.Sprintf("VM %s should get the requested static IPs", vmName))
 		}
 
-		waitForVMIPodDuplicateIPFailure := func(vmName string) {
-			Eventually(func() []corev1.Event {
-				podList, err := fr.ClientSet.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{
-					LabelSelector: fmt.Sprintf("%s=%s", kubevirtv1.VirtualMachineNameLabel, vmName),
-				})
-				if err != nil || len(podList.Items) == 0 {
-					return nil
-				}
-
-				events, err := fr.ClientSet.CoreV1().Events(namespace).List(context.TODO(), metav1.ListOptions{
-					FieldSelector: fmt.Sprintf("involvedObject.name=%s", podList.Items[0].Name),
-				})
-				if err != nil {
-					return nil
-				}
-
-				return events.Items
-			}).
-				WithTimeout(60*time.Second).
-				WithPolling(2*time.Second).
-				Should(ContainElement(SatisfyAll(
-					HaveField("Type", Equal("Warning")),
-					HaveField("Message", ContainSubstring("provided IP is already allocated")),
-				)), fmt.Sprintf("VM %s should fail with IP allocation error", vmName))
-		}
-
 		It("should fail when creating second VM with duplicate static IP", func() {
 			staticIPs := filterIPs(fr.ClientSet, duplicateIPv4, duplicateIPv6)
 
@@ -2462,7 +2463,7 @@ ethernets:
 			createVirtualMachine(vm2)
 
 			By("Verifying pod fails with duplicate IP allocation error")
-			waitForVMIPodDuplicateIPFailure(vm2.Name)
+			waitForVMPodErrorEvent(vm2.Name, "provided IP is already allocated")
 
 			By("Verifying first VM is still running normally")
 			waitForVMReadinessAndVerifyIPs(vm1.Name, staticIPs)
