@@ -1021,6 +1021,36 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 			return generateVM(fedoraWithTestToolingVMI(labels, annotations, nodeSelector, networkSource, userData, networkData))
 		}
 
+		createVMWithStaticIP = func(vmName string, staticIPs []string) *kubevirtv1.VirtualMachine {
+			GinkgoHelper()
+			annotations, err := kubevirt.GenerateAddressesAnnotations("net1", staticIPs)
+			Expect(err).NotTo(HaveOccurred())
+
+			vm := fedoraWithTestToolingVM(
+				nil,         // labels
+				annotations, // annotations with static IP
+				nil,         // nodeSelector
+				kubevirtv1.NetworkSource{
+					Pod: &kubevirtv1.PodNetwork{},
+				},
+				`#cloud-config
+password: fedora
+chpasswd: { expire: False }
+`,
+				`version: 2
+ethernets:
+  eth0:
+    dhcp4: true
+    dhcp6: true
+    ipv6-address-generation: eui64`,
+			)
+			vm.Name = vmName
+			vm.Namespace = namespace
+			vm.Spec.Template.Spec.Domain.Devices.Interfaces[0].Bridge = nil
+			vm.Spec.Template.Spec.Domain.Devices.Interfaces[0].Binding = &kubevirtv1.PluginBinding{Name: "l2bridge"}
+			return vm
+		}
+
 		composeDefaultNetworkLiveMigratableVM = func(labels map[string]string, butane string) (*kubevirtv1.VirtualMachine, error) {
 			annotations := map[string]string{
 				"kubevirt.io/allow-pod-bridge-network-live-migration": "",
@@ -2405,35 +2435,6 @@ chpasswd: { expire: False }
 			cudn, _ = kubevirt.GenerateCUDN(namespace, "net1", udnv1.NetworkTopologyLayer2, udnv1.NetworkRolePrimary, dualCIDRs)
 			createCUDN(cudn)
 		})
-
-		createVMWithStaticIP := func(vmName string, staticIPs []string) *kubevirtv1.VirtualMachine {
-			annotations, err := kubevirt.GenerateAddressesAnnotations("net1", staticIPs)
-			Expect(err).NotTo(HaveOccurred())
-
-			vm := fedoraWithTestToolingVM(
-				nil,         // labels
-				annotations, // annotations with static IP
-				nil,         // nodeSelector
-				kubevirtv1.NetworkSource{
-					Pod: &kubevirtv1.PodNetwork{},
-				},
-				`#cloud-config
-password: fedora
-chpasswd: { expire: False }
-`,
-				`version: 2
-ethernets:
-  eth0:
-    dhcp4: true
-    dhcp6: true
-    ipv6-address-generation: eui64`,
-			)
-			vm.Name = vmName
-			vm.Namespace = namespace
-			vm.Spec.Template.Spec.Domain.Devices.Interfaces[0].Bridge = nil
-			vm.Spec.Template.Spec.Domain.Devices.Interfaces[0].Binding = &kubevirtv1.PluginBinding{Name: "l2bridge"}
-			return vm
-		}
 
 		waitForVMReadinessAndVerifyIPs := func(vmName string, expectedIPs []string) {
 			vmi := &kubevirtv1.VirtualMachineInstance{
