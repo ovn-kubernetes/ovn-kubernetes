@@ -606,6 +606,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			enablePreconfiguredUDNAddresses: true,
 			role:                            types.NetworkRolePrimary, // has to be primary network for default routes to be set
 			persistentIPAllocation:          true,
+			isSingleStackIPv4:               true,
 			args: args{
 				network: &nadapi.NetworkSelectionElement{
 					MacRequest: requestedMAC,
@@ -637,6 +638,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			enablePreconfiguredUDNAddresses: true,
 			persistentIPAllocation:          true,
 			role:                            types.NetworkRolePrimary,
+			isSingleStackIPv4:               true,
 			args: args{
 				network: &nadapi.NetworkSelectionElement{
 					IPRequest: []string{"192.168.0.101/24"},
@@ -713,6 +715,98 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 				},
 			},
 			role:    types.NetworkRoleSecondary,
+			wantErr: true,
+		},
+		{
+			// IP family validation: dual-stack network with correct IPs (1 IPv4 + 1 IPv6)
+			name:                            "expect success, dual-stack layer2 primary with correct IPs (1 IPv4 + 1 IPv6)",
+			ipam:                            true,
+			enablePreconfiguredUDNAddresses: true,
+			persistentIPAllocation:          true,
+			role:                            types.NetworkRolePrimary,
+			args: args{
+				network: &nadapi.NetworkSelectionElement{
+					IPRequest: []string{"192.168.0.101/24", "2001:db8::101/64"},
+				},
+				ipAllocator: &ipAllocatorStub{
+					nextIPs: ovntest.MustParseIPNets("192.168.0.101/24", "2001:db8::101/64"),
+				},
+			},
+			wantUpdatedPod: true,
+			wantPodAnnotation: &util.PodAnnotation{
+				IPs:      ovntest.MustParseIPNets("192.168.0.101/24", "2001:db8::101/64"),
+				MAC:      util.IPAddrToHWAddr(ovntest.MustParseIPNets("192.168.0.101/24")[0].IP),
+				Gateways: []net.IP{ovntest.MustParseIP("192.168.0.1").To4(), ovntest.MustParseIP("2001:db8::1")},
+				Routes: []util.PodRoute{
+					{
+						Dest:    ovntest.MustParseIPNet("100.65.0.0/16"),
+						NextHop: ovntest.MustParseIP("192.168.0.1").To4(),
+					},
+					{
+						Dest:    ovntest.MustParseIPNet("fd99::/64"),
+						NextHop: ovntest.MustParseIP("2001:db8::1"),
+					},
+				},
+				Role: types.NetworkRolePrimary,
+			},
+			wantReleasedIPsOnRollback: ovntest.MustParseIPNets("192.168.0.101/24", "2001:db8::101/64"),
+		},
+		{
+			// IP family validation: dual-stack network with only IPv4 (should fail)
+			name:                            "expect error, dual-stack layer2 primary with only IPv4",
+			ipam:                            true,
+			enablePreconfiguredUDNAddresses: true,
+			persistentIPAllocation:          true,
+			role:                            types.NetworkRolePrimary,
+			args: args{
+				network: &nadapi.NetworkSelectionElement{
+					IPRequest: []string{"192.168.0.101/24"},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			// IP family validation: dual-stack network with only IPv6 (should fail)
+			name:                            "expect error, dual-stack layer2 primary with only IPv6",
+			ipam:                            true,
+			enablePreconfiguredUDNAddresses: true,
+			persistentIPAllocation:          true,
+			role:                            types.NetworkRolePrimary,
+			args: args{
+				network: &nadapi.NetworkSelectionElement{
+					IPRequest: []string{"2001:db8::101/64"},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			// IP family validation: single-stack IPv4 network with IPv6 (should fail)
+			name:                            "expect error, single-stack IPv4 layer2 primary with IPv6 IP",
+			ipam:                            true,
+			enablePreconfiguredUDNAddresses: true,
+			persistentIPAllocation:          true,
+			role:                            types.NetworkRolePrimary,
+			isSingleStackIPv4:               true,
+			args: args{
+				network: &nadapi.NetworkSelectionElement{
+					IPRequest: []string{"2001:db8::101/64"},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			// IP family validation: single-stack IPv6 network with IPv4 (should fail)
+			name:                            "expect error, single-stack IPv6 layer2 primary with IPv4 IP",
+			ipam:                            true,
+			enablePreconfiguredUDNAddresses: true,
+			persistentIPAllocation:          true,
+			role:                            types.NetworkRolePrimary,
+			isSingleStackIPv6:               true,
+			args: args{
+				network: &nadapi.NetworkSelectionElement{
+					IPRequest: []string{"192.168.0.101/24"},
+				},
+			},
 			wantErr: true,
 		},
 		{
