@@ -2523,4 +2523,123 @@ chpasswd: { expire: False }
 			)), "second VM should not be ready due to MAC conflict")
 		})
 	})
+
+	Context("IP family validation for layer2 primary networks", func() {
+		BeforeEach(func() {
+			if !isPreConfiguredUdnAddressesEnabled() {
+				Skip("ENABLE_PRE_CONF_UDN_ADDR not configured")
+			}
+
+			l := map[string]string{
+				"e2e-framework":           fr.BaseName,
+				RequiredUDNNamespaceLabel: "",
+			}
+			ns, err := fr.CreateNamespace(context.TODO(), fr.BaseName, l)
+			Expect(err).NotTo(HaveOccurred())
+			fr.Namespace = ns
+			namespace = fr.Namespace.Name
+		})
+
+		It("should fail when dual-stack network requests only IPv4", func() {
+			cidrIPv4 := "10.130.0.0/24"
+			cidrIPv6 := "2010:100:201::0/60"
+			staticIPv4 := "10.130.0.101"
+
+			dualCIDRs := filterDualStackCIDRs(fr.ClientSet, []udnv1.CIDR{udnv1.CIDR(cidrIPv4), udnv1.CIDR(cidrIPv6)})
+			if len(dualCIDRs) < 2 {
+				Skip("Cluster does not support dual-stack")
+			}
+
+			cudn, _ := kubevirt.GenerateCUDN(namespace, "net1", udnv1.NetworkTopologyLayer2, udnv1.NetworkRolePrimary, dualCIDRs)
+			createCUDN(cudn)
+
+			vm := createVMWithStaticIP("test-vm-dualstack-ipv4-only", []string{staticIPv4})
+			createVirtualMachine(vm)
+			waitForVMPodErrorEvent(vm.Name, "requested IPs family types must match network's IP family configuration")
+		})
+
+		It("should fail when dual-stack network requests only IPv6", func() {
+			cidrIPv4 := "10.131.0.0/24"
+			cidrIPv6 := "2010:100:202::0/60"
+			staticIPv6 := "2010:100:202::101"
+
+			dualCIDRs := filterDualStackCIDRs(fr.ClientSet, []udnv1.CIDR{udnv1.CIDR(cidrIPv4), udnv1.CIDR(cidrIPv6)})
+			if len(dualCIDRs) < 2 {
+				Skip("Cluster does not support dual-stack")
+			}
+
+			cudn, _ := kubevirt.GenerateCUDN(namespace, "net1", udnv1.NetworkTopologyLayer2, udnv1.NetworkRolePrimary, dualCIDRs)
+			createCUDN(cudn)
+
+			vm := createVMWithStaticIP("test-vm-dualstack-ipv6-only", []string{staticIPv6})
+			createVirtualMachine(vm)
+			waitForVMPodErrorEvent(vm.Name, "requested IPs family types must match network's IP family configuration")
+		})
+
+		It("should fail when single-stack IPv4 network requests multiple IPv4 IPs", func() {
+			cidrIPv4 := "10.132.0.0/24"
+			staticIPv4_1 := "10.132.0.101"
+			staticIPv4_2 := "10.132.0.102"
+
+			singleStackIPv4CIDRs := filterDualStackCIDRs(fr.ClientSet, []udnv1.CIDR{udnv1.CIDR(cidrIPv4)})
+
+			cudn, _ := kubevirt.GenerateCUDN(namespace, "net1", udnv1.NetworkTopologyLayer2, udnv1.NetworkRolePrimary, singleStackIPv4CIDRs)
+			createCUDN(cudn)
+
+			vm := createVMWithStaticIP("test-vm-ipv4-network-two-ipv4", []string{staticIPv4_1, staticIPv4_2})
+			createVirtualMachine(vm)
+			waitForVMPodErrorEvent(vm.Name, "requested IPs family types must match network's IP family configuration")
+		})
+
+		It("should fail when single-stack IPv6 network requests multiple IPv6 IPs", func() {
+			cidrIPv6 := "2010:100:204::0/60"
+			staticIPv6_1 := "2010:100:204::101"
+			staticIPv6_2 := "2010:100:204::102"
+
+			singleStackIPv6CIDRs := filterDualStackCIDRs(fr.ClientSet, []udnv1.CIDR{udnv1.CIDR(cidrIPv6)})
+			if len(singleStackIPv6CIDRs) == 0 {
+				Skip("Cluster does not support IPv6")
+			}
+
+			cudn, _ := kubevirt.GenerateCUDN(namespace, "net1", udnv1.NetworkTopologyLayer2, udnv1.NetworkRolePrimary, singleStackIPv6CIDRs)
+			createCUDN(cudn)
+
+			vm := createVMWithStaticIP("test-vm-ipv6-network-two-ipv6", []string{staticIPv6_1, staticIPv6_2})
+			createVirtualMachine(vm)
+			waitForVMPodErrorEvent(vm.Name, "requested IPs family types must match network's IP family configuration")
+		})
+
+		It("should succeed when dual-stack network requests correct IPs (1 IPv4 + 1 IPv6)", func() {
+			cidrIPv4 := "10.134.0.0/24"
+			cidrIPv6 := "2010:100:205::0/60"
+			staticIPv4 := "10.134.0.101"
+			staticIPv6 := "2010:100:205::101"
+
+			dualCIDRs := filterDualStackCIDRs(fr.ClientSet, []udnv1.CIDR{udnv1.CIDR(cidrIPv4), udnv1.CIDR(cidrIPv6)})
+			if len(dualCIDRs) < 2 {
+				Skip("Cluster does not support dual-stack")
+			}
+
+			cudn, _ := kubevirt.GenerateCUDN(namespace, "net1", udnv1.NetworkTopologyLayer2, udnv1.NetworkRolePrimary, dualCIDRs)
+			createCUDN(cudn)
+
+			staticIPs := filterIPs(fr.ClientSet, staticIPv4, staticIPv6)
+			vm := createVMWithStaticIP("test-vm-dualstack-correct", staticIPs)
+			createVirtualMachine(vm)
+
+			// VM should start successfully
+			vmi := &kubevirtv1.VirtualMachineInstance{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: namespace,
+					Name:      vm.Name,
+				},
+			}
+			waitVirtualMachineInstanceReadiness(vmi)
+			Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
+
+			// Verify it got the requested IPs
+			actualAddresses := virtualMachineAddressesFromStatus(vmi, len(staticIPs))
+			Expect(actualAddresses).To(ConsistOf(staticIPs), "VM should get the requested static IPs")
+		})
+	})
 })
