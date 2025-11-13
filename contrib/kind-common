@@ -870,6 +870,11 @@ EOF
     kubectl logs -n frr-k8s-system -l app=frr-k8s-webhook-server
   fi
 
+  # override FRR-K8s with an upstream image needed to support EVPN
+  kubectl set image -n frr-k8s-system ds/frr-k8s-daemon frr=quay.io/frrouting/frr:10.4.1 reloader=quay.io/frrouting/frr:10.4.1
+  echo "Waiting for daemonset 'frr-k8s' to rollout..."
+  kubectl rollout status -n frr-k8s-system daemonset frr-k8s-daemon --timeout 2m
+
   kubectl apply -n frr-k8s-system -f receive_filtered.yaml
   popd || exit 1
 
