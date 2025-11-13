@@ -347,6 +347,7 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(OVNKubernetesFeature.EgressIPNodeHealthCheckPort).To(gomega.Equal(0))
 			gomega.Expect(OVNKubernetesFeature.EnableMultiNetwork).To(gomega.BeFalse())
 			gomega.Expect(OVNKubernetesFeature.EnableNetworkSegmentation).To(gomega.BeFalse())
+			gomega.Expect(OVNKubernetesFeature.EnableNetworkConnect).To(gomega.BeFalse())
 			gomega.Expect(OVNKubernetesFeature.EnablePreconfiguredUDNAddresses).To(gomega.BeFalse())
 			gomega.Expect(OVNKubernetesFeature.EnableRouteAdvertisements).To(gomega.BeFalse())
 			gomega.Expect(OVNKubernetesFeature.EnableMultiNetworkPolicy).To(gomega.BeFalse())
@@ -608,6 +609,7 @@ var _ = Describe("Config Operations", func() {
 			"enable-multi-network=true",
 			"enable-multi-networkpolicy=true",
 			"enable-network-segmentation=true",
+			"enable-network-connect=true",
 			"enable-preconfigured-udn-addresses=true",
 			"enable-route-advertisements=true",
 			"advertised-udn-isolation-mode=loose",
@@ -704,6 +706,7 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(OVNKubernetesFeature.EgressIPNodeHealthCheckPort).To(gomega.Equal(1234))
 			gomega.Expect(OVNKubernetesFeature.EnableMultiNetwork).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnableNetworkSegmentation).To(gomega.BeTrue())
+			gomega.Expect(OVNKubernetesFeature.EnableNetworkConnect).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnablePreconfiguredUDNAddresses).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnableRouteAdvertisements).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.AdvertisedUDNIsolationMode).To(gomega.Equal(AdvertisedUDNIsolationModeLoose))
@@ -815,6 +818,7 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(OVNKubernetesFeature.EgressIPNodeHealthCheckPort).To(gomega.Equal(4321))
 			gomega.Expect(OVNKubernetesFeature.EnableMultiNetwork).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnableNetworkSegmentation).To(gomega.BeTrue())
+			gomega.Expect(OVNKubernetesFeature.EnableNetworkConnect).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnablePreconfiguredUDNAddresses).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EnableRouteAdvertisements).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.AdvertisedUDNIsolationMode).To(gomega.Equal(AdvertisedUDNIsolationModeLoose))
@@ -892,6 +896,7 @@ var _ = Describe("Config Operations", func() {
 			"-enable-multi-network=true",
 			"-enable-multi-networkpolicy=true",
 			"-enable-network-segmentation=true",
+			"-enable-network-connect=true",
 			"-enable-preconfigured-udn-addresses=true",
 			"-enable-route-advertisements=true",
 			"-advertised-udn-isolation-mode=loose",

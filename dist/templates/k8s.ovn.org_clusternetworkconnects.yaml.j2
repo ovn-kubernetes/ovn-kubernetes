@@ -1,0 +1,621 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.4
+  name: clusternetworkconnects.k8s.ovn.org
+spec:
+  group: k8s.ovn.org
+  names:
+    kind: ClusterNetworkConnect
+    listKind: ClusterNetworkConnectList
+    plural: clusternetworkconnects
+    shortNames:
+    - cnc
+    singular: clusternetworkconnect
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    - jsonPath: .status.status
+      name: Status
+      type: string
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          ClusterNetworkConnect enables connecting multiple User Defined Networks
+          and/or Cluster User Defined Networks together.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ClusterNetworkConnectSpec defines the desired state of ClusterNetworkConnect.
+            properties:
+              connectSubnets:
+                description: |-
+                  connectSubnets specifies the subnets used for interconnecting the selected networks.
+                  This creates a shared subnet space that connected networks can use to communicate.
+                  Can have at most 1 CIDR for each IP family (IPv4 and IPv6).
+                  Must not overlap with:
+                   any of the pod subnets used by the selected networks.
+                   any of the transit subnets used by the selected networks.
+                   any of the service CIDR range used in the cluster.
+                   any of the join subnet of the selected networks to be connected.
+                   any of the masquerade subnet range used in the cluster.
+                   any of the node subnets chosen by the platform.
+                   any of other connect subnets for other ClusterNetworkConnects that might be selecting same networks.
+
+                  Does not have a default value for the above reason so
+                  that user takes care in setting non-overlapping subnets.
+                items:
+                  properties:
+                    cidr:
+                      description: |-
+                        CIDR specifies ConnectSubnet, which is split into smaller subnets for every connected network.
+                        This CIDR should be containing 2*((Number of L3 networks*Max Number of Nodes)+Number of L2 networks) IPs.
+                        Example: cidr= "192.168.0.0/16", networkPrefix= 24 means that you can connect 256 Layer3 networks
+                        if the cluster has 128 nodes and 0 layer2 networks OR 255 Layer3 networks and 128 Layer2 networks
+                        if the cluster has 128 nodes.
+
+                        CIDR also restricts the maximum number of networks that can be connected together
+                        based on what CIDR range is picked. So choosing a large enough CIDR for future use cases
+                        is important.
+
+                        The largest CIDR that can be used for this field is /16 (65536 IPs) because OVN
+                        has a limit of 32K(2^15) tunnel keys per router. So we will only ever have 32K /31 or /127 slices
+                        which is 2^16 IPs.
+                        Having a CIDR greater than /16 will not be utilized fully for the same reason.
+                      maxLength: 43
+                      type: string
+                      x-kubernetes-validations:
+                      - message: CIDR must be a valid network address
+                        rule: isCIDR(self) && cidr(self) == cidr(self).masked()
+                    networkPrefix:
+                      description: |-
+                        NetworkPrefix specifies the prefix length for every connected network.
+                        This prefix length should be equal to or longer than the length of the CIDR prefix.
+
+                        For example, if the CIDR is 10.0.0.0/16 and the networkPrefix is 24,
+                        then the connect subnet for each connected layer3 network will be 10.0.0.0/24, 10.0.1.0/24, 10.0.2.0/24 etc.
+
+                        For layer2 networks we will allocate the next available /networkPrefix range
+                        that is then split into /31 or /127 slices for each layer2 network
+                        A good practice is to set this to a value that ensures it contains more
+                        than twice the number of maximum nodes planned to be deployed in the cluster.
+                        Each node gets a /31 subnet for the layer3 networks, hence networkPrefix should
+                        contain enough IPs for 4 times the maximum nodes planned
+                        Example - recommended values:
+                        if you plan to deploy 10 nodes, set the networkPrefix to /26 (40+ IPs)
+                        if you plan to deploy 100 nodes, set the networkPrefix to /23 (400+ IPs)
+                        if you plan to deploy 1000 nodes, set the networkPrefix to /20 (4000+ IPs)
+                        if you plan to deploy 5000 nodes, set the networkPrefix to /17 (20000+ IPs)
+                        This field restricts the maximum number of nodes that can be deployed in the cluster
+                        and hence its good to plan this value carefully along with the CIDR.
+                      format: int32
+                      maximum: 127
+                      minimum: 1
+                      type: integer
+                  required:
+                  - cidr
+                  - networkPrefix
+                  type: object
+                  x-kubernetes-validations:
+                  - message: NetworkPrefix must be smaller than CIDR subnet
+                    rule: '!has(self.networkPrefix) || !isCIDR(self.cidr) || self.networkPrefix
+                      > cidr(self.cidr).prefixLength()'
+                  - message: NetworkPrefix must < 32 for ipv4 CIDR
+                    rule: '!has(self.networkPrefix) || !isCIDR(self.cidr) || (cidr(self.cidr).ip().family()
+                      != 4 || self.networkPrefix < 32)'
+                maxItems: 2
+                minItems: 1
+                type: array
+                x-kubernetes-validations:
+                - message: connectSubnets is immutable
+                  rule: self == oldSelf
+                - message: When 2 CIDRs are set, they must be from different IP families
+                  rule: size(self) != 2 || !isCIDR(self[0].cidr) || !isCIDR(self[1].cidr)
+                    || cidr(self[0].cidr).ip().family() != cidr(self[1].cidr).ip().family()
+              connectivityEnabled:
+                description: connectivityEnabled specifies which connectivity types
+                  should be enabled for the connected networks.
+                items:
+                  description: ConnectivityType represents the different connectivity
+                    types that can be enabled for connected networks.
+                  enum:
+                  - PodNetwork
+                  - ClusterIPServiceNetwork
+                  type: string
+                maxItems: 2
+                minItems: 1
+                type: array
+                x-kubernetes-validations:
+                - message: connectivityEnabled cannot contain duplicate values
+                  rule: self.all(x, self.exists_one(y, x == y))
+              networkSelectors:
+                description: |-
+                  networkSelectors selects the networks to be connected together.
+                  This can match User Defined Networks (UDNs) and/or Cluster User Defined Networks (CUDNs).
+                  Only ClusterUserDefinedNetworkSelector and PrimaryUserDefinedNetworkSelector can be selected.
+                items:
+                  description: NetworkSelector selects a set of networks.
+                  properties:
+                    clusterUserDefinedNetworkSelector:
+                      description: |-
+                        clusterUserDefinedNetworkSelector selects ClusterUserDefinedNetworks when
+                        NetworkSelectionType is 'ClusterUserDefinedNetworks'.
+                      properties:
+                        networkSelector:
+                          description: |-
+                            networkSelector selects ClusterUserDefinedNetworks by label. A null
+                            selector will mot match anything, while an empty ({}) selector will match
+                            all.
+                          properties:
+                            matchExpressions:
+                              description: matchExpressions is a list of label selector
+                                requirements. The requirements are ANDed.
+                              items:
+                                description: |-
+                                  A label selector requirement is a selector that contains values, a key, and an operator that
+                                  relates the key and values.
+                                properties:
+                                  key:
+                                    description: key is the label key that the selector
+                                      applies to.
+                                    type: string
+                                  operator:
+                                    description: |-
+                                      operator represents a key's relationship to a set of values.
+                                      Valid operators are In, NotIn, Exists and DoesNotExist.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      values is an array of string values. If the operator is In or NotIn,
+                                      the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                      the values array must be empty. This array is replaced during a strategic
+                                      merge patch.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                operator is "In", and the values array contains only "value". The requirements are ANDed.
+                              type: object
+                          type: object
+                          x-kubernetes-map-type: atomic
+                      required:
+                      - networkSelector
+                      type: object
+                    networkAttachmentDefinitionSelector:
+                      description: |-
+                        networkAttachmentDefinitionSelector selects networks defined in the
+                        selected NetworkAttachmentDefinitions when NetworkSelectionType is
+                        'SecondaryUserDefinedNetworks'.
+                      properties:
+                        namespaceSelector:
+                          description: |-
+                            namespaceSelector selects namespaces where the
+                            NetworkAttachmentDefinitions are defined. This field follows standard
+                            label selector semantics.
+                          properties:
+                            matchExpressions:
+                              description: matchExpressions is a list of label selector
+                                requirements. The requirements are ANDed.
+                              items:
+                                description: |-
+                                  A label selector requirement is a selector that contains values, a key, and an operator that
+                                  relates the key and values.
+                                properties:
+                                  key:
+                                    description: key is the label key that the selector
+                                      applies to.
+                                    type: string
+                                  operator:
+                                    description: |-
+                                      operator represents a key's relationship to a set of values.
+                                      Valid operators are In, NotIn, Exists and DoesNotExist.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      values is an array of string values. If the operator is In or NotIn,
+                                      the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                      the values array must be empty. This array is replaced during a strategic
+                                      merge patch.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                operator is "In", and the values array contains only "value". The requirements are ANDed.
+                              type: object
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        networkSelector:
+                          description: |-
+                            networkSelector selects NetworkAttachmentDefinitions within the selected
+                            namespaces by label. This field follows standard label selector
+                            semantics.
+                          properties:
+                            matchExpressions:
+                              description: matchExpressions is a list of label selector
+                                requirements. The requirements are ANDed.
+                              items:
+                                description: |-
+                                  A label selector requirement is a selector that contains values, a key, and an operator that
+                                  relates the key and values.
+                                properties:
+                                  key:
+                                    description: key is the label key that the selector
+                                      applies to.
+                                    type: string
+                                  operator:
+                                    description: |-
+                                      operator represents a key's relationship to a set of values.
+                                      Valid operators are In, NotIn, Exists and DoesNotExist.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      values is an array of string values. If the operator is In or NotIn,
+                                      the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                      the values array must be empty. This array is replaced during a strategic
+                                      merge patch.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                operator is "In", and the values array contains only "value". The requirements are ANDed.
+                              type: object
+                          type: object
+                          x-kubernetes-map-type: atomic
+                      required:
+                      - namespaceSelector
+                      - networkSelector
+                      type: object
+                    networkSelectionType:
+                      description: networkSelectionType determines the type of networks
+                        selected.
+                      enum:
+                      - DefaultNetwork
+                      - ClusterUserDefinedNetworks
+                      - PrimaryUserDefinedNetworks
+                      - SecondaryUserDefinedNetworks
+                      - NetworkAttachmentDefinitions
+                      type: string
+                    primaryUserDefinedNetworkSelector:
+                      description: |-
+                        primaryUserDefinedNetworkSelector selects primary UserDefinedNetworks when
+                        NetworkSelectionType is 'PrimaryUserDefinedNetworks'.
+                      properties:
+                        namespaceSelector:
+                          description: |-
+                            namespaceSelector select the primary UserDefinedNetworks that are servind
+                            the selected namespaces. This field follows standard label selector
+                            semantics.
+                          properties:
+                            matchExpressions:
+                              description: matchExpressions is a list of label selector
+                                requirements. The requirements are ANDed.
+                              items:
+                                description: |-
+                                  A label selector requirement is a selector that contains values, a key, and an operator that
+                                  relates the key and values.
+                                properties:
+                                  key:
+                                    description: key is the label key that the selector
+                                      applies to.
+                                    type: string
+                                  operator:
+                                    description: |-
+                                      operator represents a key's relationship to a set of values.
+                                      Valid operators are In, NotIn, Exists and DoesNotExist.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      values is an array of string values. If the operator is In or NotIn,
+                                      the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                      the values array must be empty. This array is replaced during a strategic
+                                      merge patch.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                operator is "In", and the values array contains only "value". The requirements are ANDed.
+                              type: object
+                          type: object
+                          x-kubernetes-map-type: atomic
+                      required:
+                      - namespaceSelector
+                      type: object
+                    secondaryUserDefinedNetworkSelector:
+                      description: |-
+                        secondaryUserDefinedNetworkSelector selects secondary UserDefinedNetworks
+                        when NetworkSelectionType is 'SecondaryUserDefinedNetworks'.
+                      properties:
+                        namespaceSelector:
+                          description: |-
+                            namespaceSelector selects namespaces where the secondary
+                            UserDefinedNetworks are defined. This field follows standard label
+                            selector semantics.
+                          properties:
+                            matchExpressions:
+                              description: matchExpressions is a list of label selector
+                                requirements. The requirements are ANDed.
+                              items:
+                                description: |-
+                                  A label selector requirement is a selector that contains values, a key, and an operator that
+                                  relates the key and values.
+                                properties:
+                                  key:
+                                    description: key is the label key that the selector
+                                      applies to.
+                                    type: string
+                                  operator:
+                                    description: |-
+                                      operator represents a key's relationship to a set of values.
+                                      Valid operators are In, NotIn, Exists and DoesNotExist.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      values is an array of string values. If the operator is In or NotIn,
+                                      the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                      the values array must be empty. This array is replaced during a strategic
+                                      merge patch.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                operator is "In", and the values array contains only "value". The requirements are ANDed.
+                              type: object
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        networkSelector:
+                          description: |-
+                            networkSelector selects secondary UserDefinedNetworks within the selected
+                            namespaces by label. This field follows standard label selector
+                            semantics.
+                          properties:
+                            matchExpressions:
+                              description: matchExpressions is a list of label selector
+                                requirements. The requirements are ANDed.
+                              items:
+                                description: |-
+                                  A label selector requirement is a selector that contains values, a key, and an operator that
+                                  relates the key and values.
+                                properties:
+                                  key:
+                                    description: key is the label key that the selector
+                                      applies to.
+                                    type: string
+                                  operator:
+                                    description: |-
+                                      operator represents a key's relationship to a set of values.
+                                      Valid operators are In, NotIn, Exists and DoesNotExist.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      values is an array of string values. If the operator is In or NotIn,
+                                      the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                      the values array must be empty. This array is replaced during a strategic
+                                      merge patch.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - key
+                                - operator
+                                type: object
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                operator is "In", and the values array contains only "value". The requirements are ANDed.
+                              type: object
+                          type: object
+                          x-kubernetes-map-type: atomic
+                      required:
+                      - namespaceSelector
+                      - networkSelector
+                      type: object
+                  required:
+                  - networkSelectionType
+                  type: object
+                  x-kubernetes-validations:
+                  - message: 'Inconsistent selector: both networkSelectionType ClusterUserDefinedNetworks
+                      and clusterUserDefinedNetworkSelector have to be set or neither'
+                    rule: '!has(self.networkSelectionType) ? true : has(self.clusterUserDefinedNetworkSelector)
+                      ? self.networkSelectionType == ''ClusterUserDefinedNetworks''
+                      : self.networkSelectionType != ''ClusterUserDefinedNetworks'''
+                  - message: 'Inconsistent selector: both networkSelectionType PrimaryUserDefinedNetworks
+                      and primaryUserDefinedNetworkSelector have to be set or neither'
+                    rule: '!has(self.networkSelectionType) ? true : has(self.primaryUserDefinedNetworkSelector)
+                      ? self.networkSelectionType == ''PrimaryUserDefinedNetworks''
+                      : self.networkSelectionType != ''PrimaryUserDefinedNetworks'''
+                  - message: 'Inconsistent selector: both networkSelectionType SecondaryUserDefinedNetworks
+                      and secondaryUserDefinedNetworkSelector have to be set or neither'
+                    rule: '!has(self.networkSelectionType) ? true : has(self.secondaryUserDefinedNetworkSelector)
+                      ? self.networkSelectionType == ''SecondaryUserDefinedNetworks''
+                      : self.networkSelectionType != ''SecondaryUserDefinedNetworks'''
+                  - message: 'Inconsistent selector: both networkSelectionType NetworkAttachmentDefinitions
+                      and networkAttachmentDefinitionSelector have to be set or neither'
+                    rule: '!has(self.networkSelectionType) ? true : has(self.networkAttachmentDefinitionSelector)
+                      ? self.networkSelectionType == ''NetworkAttachmentDefinitions''
+                      : self.networkSelectionType != ''NetworkAttachmentDefinitions'''
+                maxItems: 5
+                minItems: 1
+                type: array
+                x-kubernetes-list-map-keys:
+                - networkSelectionType
+                x-kubernetes-list-type: map
+            required:
+            - connectSubnets
+            - connectivityEnabled
+            - networkSelectors
+            type: object
+            x-kubernetes-validations:
+            - message: Only ClusterUserDefinedNetworks or PrimaryUserDefinedNetworks
+                can be selected
+              rule: '!self.networkSelectors.exists(i, i.networkSelectionType != ''ClusterUserDefinedNetworks''
+                && i.networkSelectionType != ''PrimaryUserDefinedNetworks'')'
+          status:
+            description: ClusterNetworkConnectStatus defines the observed state of
+              ClusterNetworkConnect.
+            properties:
+              conditions:
+                description: |-
+                  conditions is an array of condition objects indicating details about
+                  status of ClusterNetworkConnect object.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              status:
+                description: |-
+                  status is a concise indication of whether the ClusterNetworkConnect
+                  resource is applied with success.
+                enum:
+                - Success
+                - Failure
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
