@@ -58,27 +58,31 @@ COMMANDS:{{range .VisibleCategories}}{{if .Name}}
    {{.Name}}:{{end}}{{range .VisibleCommands}}
      {{join .Names ", "}}{{"\t"}}{{.Usage}}{{end}}{{end}}
 
-GLOBAL OPTIONS:{{range $title, $category := getFlagsByCategory}}
-   {{upper $title}}
-   {{range $index, $option := $category}}{{if $index}}
+GLOBAL OPTIONS:{{range getFlagsByCategory}}
+   {{upper .Title}}
+   {{range $index, $option := .Flags}}{{if $index}}
    {{end}}{{$option}}{{end}}
    {{end}}`
 )
 
-func getFlagsByCategory() map[string][]cli.Flag {
-	m := map[string][]cli.Flag{}
-	m["Generic Options"] = config.CommonFlags
-	m["CNI Options"] = config.CNIFlags
-	m["K8s-related Options"] = config.K8sFlags
-	m["OVN Northbound DB Options"] = config.OvnNBFlags
-	m["OVN Southbound DB Options"] = config.OvnSBFlags
-	m["OVN Gateway Options"] = config.OVNGatewayFlags
-	m["Master HA Options"] = config.MasterHAFlags
-	m["OVN Kube Node Options"] = config.OvnKubeNodeFlags
-	m["Monitoring Options"] = config.MonitoringFlags
-	m["IPFIX Flow Tracing Options"] = config.IPFIXFlags
+type flagCategory struct {
+	Title string
+	Flags []cli.Flag
+}
 
-	return m
+func getFlagsByCategory() []flagCategory {
+	return []flagCategory{
+		{"Generic Options", config.CommonFlags},
+		{"CNI Options", config.CNIFlags},
+		{"K8s-related Options", config.K8sFlags},
+		{"OVN Northbound DB Options", config.OvnNBFlags},
+		{"OVN Southbound DB Options", config.OvnSBFlags},
+		{"OVN Gateway Options", config.OVNGatewayFlags},
+		{"Master HA Options", config.MasterHAFlags},
+		{"OVN Kube Node Options", config.OvnKubeNodeFlags},
+		{"Monitoring Options", config.MonitoringFlags},
+		{"IPFIX Flow Tracing Options", config.IPFIXFlags},
+	}
 }
 
 // borrowed from cli packages' printHelpCustom()
