@@ -266,7 +266,7 @@ var _ = ginkgo.Describe("Hybrid SDN Master Operations", func() {
 			"-no-hostsubnet-nodes=" + corev1.LabelOSStable + "=windows",
 			"-enable-hybrid-overlay",
 			"-hybrid-overlay-cluster-subnets=" + hybridOverlayClusterCIDR,
-			"-init-gateways",
+			"--gateway-mode=shared",
 		})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	})
