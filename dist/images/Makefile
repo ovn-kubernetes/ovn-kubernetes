@@ -11,12 +11,9 @@
 all: ubuntu fedora
 
 SLASH = -
-ARCH = $(subst aarch64,arm64,$(subst x86_64,amd64,$(patsubst i%86,386,$(shell uname -m))))
+ARCH ?= $(subst aarch64,arm64,$(subst x86_64,amd64,$(patsubst i%86,386,$(shell uname -m))))
 IMAGE_ARCH = $(SLASH)$(ARCH)
-DOCKERFILE_ARCH =
-ifeq ($(ARCH),arm64)
-        DOCKERFILE_ARCH=.arm64
-endif
+DOCKERFILE_ARCH = .$(ARCH)
 IMAGE ?= ovn-daemonset-fedora
 
 OVN_REPO ?= https://github.com/ovn-org/ovn
@@ -28,9 +25,12 @@ OVN_FROM := source
 OVN_GITSHA := $(shell git ls-remote "${OVN_REPO}" "${OVN_GITREF}" | sort -k2  -V  |tail -1 | awk '{ print $$1 }')
 endif
 
+GO_VERSION ?= 1.24
+GO_IMAGE = quay.io/projectquay/golang:${GO_VERSION}
 
 OCI_BIN ?= docker
 
+# Legacy ubuntu image build - uses pre-built binaries from 'bld' target
 # The image of ovnkube/ovn-daemonset-ubuntu should be multi-arched before using it on arm64
 ubuntu-image: bld
 	${OCI_BIN} build -t ovn-kube-ubuntu$(IMAGE_ARCH) -f Dockerfile.ubuntu$(DOCKERFILE_ARCH) .
@@ -38,6 +38,15 @@ ifeq ($(ARCH),amd64)
 	${OCI_BIN} tag "ovn-kube-ubuntu$(IMAGE_ARCH):latest" \
               "ovn-kube-ubuntu:latest"
 endif
+
+# Multi-arch ubuntu image build using multi-stage approach (similar to fedora-image)
+# This builds ovn-kubernetes binaries inside the container for proper cross-platform support
+ubuntu-image-multiarch:
+	${OCI_BIN} build \
+		--build-arg OVN_KUBERNETES_DIR=${OVN_KUBERNETES_DIR} \
+		--build-arg BUILDER_IMAGE=${GO_IMAGE} \
+		-t ovn-kube-ubuntu-multiarch \
+		-f Dockerfile.ubuntu ./../..
 
 ubuntu-shared-gw-deployment: ubuntu-image
 	# This is the default in the ovnkube*.yaml files
