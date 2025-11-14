@@ -109,10 +109,13 @@ type PodRoute struct {
 	Dest *net.IPNet
 	// NextHop is the IP address of the next hop for traffic destined for Dest
 	NextHop net.IP
+	// Metric is the route metric/priority (optional, 0 means use system default)
+	// Lower metric values have higher priority
+	Metric int
 }
 
 func (r PodRoute) String() string {
-	return fmt.Sprintf("%s %s", r.Dest, r.NextHop)
+	return fmt.Sprintf("%s %s %d", r.Dest, r.NextHop, r.Metric)
 }
 
 // Internal struct used to marshal PodAnnotation to the pod annotation
@@ -134,6 +137,7 @@ type podAnnotation struct {
 type podRoute struct {
 	Dest    string `json:"dest"`
 	NextHop string `json:"nextHop"`
+	Metric  int    `json:"metric,omitempty"`
 }
 
 type OpenPort struct {
@@ -196,6 +200,7 @@ func MarshalPodAnnotation(annotations map[string]string, podInfo *PodAnnotation,
 		pa.Routes = append(pa.Routes, podRoute{
 			Dest:    r.Dest.String(),
 			NextHop: nh,
+			Metric:  r.Metric,
 		})
 	}
 
@@ -290,6 +295,7 @@ func UnmarshalPodAnnotation(annotations map[string]string, nadKey string) (*PodA
 				return nil, fmt.Errorf("pod route %s has next hop %s of different family", r.Dest, r.NextHop)
 			}
 		}
+		route.Metric = r.Metric
 		podAnnotation.Routes = append(podAnnotation.Routes, route)
 	}
 
