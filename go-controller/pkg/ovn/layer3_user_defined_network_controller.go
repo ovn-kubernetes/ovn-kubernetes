@@ -742,7 +742,7 @@ func (oc *Layer3UserDefinedNetworkController) addUpdateLocalNodeEvent(node *core
 		}
 	}
 
-	if util.IsNetworkSegmentationSupportEnabled() && oc.IsPrimaryNetwork() {
+	if util.IsNetworkSegmentationSupportEnabled() {
 		if nSyncs.syncMgmtPort {
 			hostSubnets, err := util.ParseNodeHostSubnetAnnotation(node, oc.GetNetworkName())
 			if err != nil {
