@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openshift/api/config/v1"
+	v1 "github.com/openshift/api/config/v1"
 	"github.com/urfave/cli/v2"
 	gcfg "gopkg.in/gcfg.v1"
 	lumberjack "gopkg.in/natefinch/lumberjack.v2"
@@ -89,7 +89,7 @@ var (
 	Default = DefaultConfig{
 		MTU:                          1400,
 		ConntrackZone:                64000,
-		EncapType:                    "geneve",
+		EncapType:                    TransportGeneve,
 		EncapIP:                      "",
 		EncapPort:                    DefaultEncapPort,
 		InactivityProbe:              100000, // in Milliseconds
@@ -101,6 +101,7 @@ var (
 		RawClusterSubnets:            "10.128.0.0/14/23",
 		Zone:                         types.OvnDefaultZone,
 		RawUDNAllowedDefaultServices: "default/kubernetes,kube-system/kube-dns",
+		Transport:                    "", // Empty by default, will be set from config file or defaults to geneve
 	}
 
 	// Logging holds logging-related parsed config file parameters and command-line overrides
@@ -241,6 +242,14 @@ var (
 		V6TransitSubnet: "fd97::/64",
 	}
 
+	// NoOverlay holds no-overlay mode configuration
+	NoOverlay = NoOverlayConfig{}
+
+	// ManagedBGP holds managed BGP configuration
+	ManagedBGP = ManagedBGPConfig{
+		ASNumber: 64512, // Default AS number
+	}
+
 	// Layer2UsesTransitRouter indicated whether the layer2 primary networks will use transit router.
 	// It is a per-node setting and is also reflected in the node annotations.
 	Layer2UsesTransitRouter bool
@@ -250,6 +259,31 @@ const (
 	kubeServiceAccountPath       string = "/var/run/secrets/kubernetes.io/serviceaccount/"
 	kubeServiceAccountFileToken  string = "token"
 	kubeServiceAccountFileCACert string = "ca.crt"
+)
+
+// Network encapsulation/transport constants for INI config file format.
+// Note: For NAD/NetConf JSON format, see types.NetworkTransport* constants which use camelCase.
+const (
+	// TransportGeneve represents geneve transport mode
+	TransportGeneve string = "geneve"
+	// TransportNoOverlay represents no-overlay mode
+	TransportNoOverlay string = "no-overlay"
+)
+
+// No-overlay mode configuration option constants
+const (
+	// NoOverlayRoutingManaged indicates OVN-Kubernetes manages the routing
+	NoOverlayRoutingManaged string = "managed"
+	// NoOverlayRoutingUnmanaged indicates users manage the routing themselves
+	NoOverlayRoutingUnmanaged string = "unmanaged"
+
+	// ManagedBGPTopologyFullMesh represents a full-mesh BGP topology
+	ManagedBGPTopologyFullMesh string = "full-mesh"
+
+	// NoOverlaySNATEnable enables SNAT for outbound traffic
+	NoOverlaySNATEnable string = "enable"
+	// NoOverlaySNATDisable disables SNAT for outbound traffic
+	NoOverlaySNATDisable string = "disable"
 )
 
 // DefaultConfig holds parsed config file parameters and command-line overrides
@@ -335,6 +369,10 @@ type DefaultConfig struct {
 	// UDNAllowedDefaultServices holds a list of namespaced names of
 	// default cluster network services accessible from primary user-defined networks
 	UDNAllowedDefaultServices []string
+
+	// Transport specifies the transport technology used for the default network.
+	// Supported values: "geneve" or "no-overlay". Defaults to "geneve".
+	Transport string `gcfg:"transport"`
 }
 
 // LoggingConfig holds logging-related parsed config file parameters and command-line overrides
@@ -613,6 +651,32 @@ type ClusterManagerConfig struct {
 	V6TransitSubnet string `gcfg:"v6-transit-subnet"`
 }
 
+// NoOverlayConfig holds configuration for no-overlay mode
+type NoOverlayConfig struct {
+	// OutboundSNAT configures SNAT behavior for outbound traffic from pods on the default network.
+	// Supported values: "enable" or "disable".
+	// Required when transport=no-overlay.
+	OutboundSNAT string `gcfg:"outbound-snat"`
+	// Routing configures whether the pod network routing configuration is managed by
+	// OVN-Kubernetes or users. Supported values: "managed" or "unmanaged".
+	// Required when transport=no-overlay.
+	Routing string `gcfg:"routing"`
+}
+
+// ManagedBGPConfig holds configuration for managed BGP
+type ManagedBGPConfig struct {
+	// ASNumber specifies the AS number to be used by the BGP speakers on each node for its
+	// default VRF when no-overlay networks are configured with managed routing.
+	// It is shared by both the cluster default network and CUDNs.
+	// Supports both 16-bit (1-65535) and 32-bit (1-4294967295) AS numbers.
+	// Optional. Defaults to 64512 if not specified.
+	ASNumber uint32 `gcfg:"as-number"`
+	// Topology configures the BGP peering topology when routing is managed.
+	// Supported values: "full-mesh".
+	// Required when transport=no-overlay and routing=managed.
+	Topology string `gcfg:"topology"`
+}
+
 // OvnDBScheme describes the OVN database connection transport method
 type OvnDBScheme string
 
@@ -624,6 +688,11 @@ const (
 	// OvnDBSchemeUnix specifies Unix domains sockets as the OVN database transport method
 	OvnDBSchemeUnix OvnDBScheme = "unix"
 )
+
+// BGPConfig is a container for BGP-related configuration subsections
+type BGPConfig struct {
+	Managed ManagedBGPConfig
+}
 
 // Config is used to read the structured config file and to cache config in testcases
 type config struct {
@@ -644,6 +713,8 @@ type config struct {
 	OvnKubeNode          OvnKubeNodeConfig
 	ClusterManager       ClusterManagerConfig
 	OvsPaths             OvsPathConfig
+	NoOverlay            NoOverlayConfig `gcfg:"no-overlay"`
+	Bgp                  BGPConfig
 }
 
 var (
@@ -664,6 +735,8 @@ var (
 	savedOvnKubeNode          OvnKubeNodeConfig
 	savedClusterManager       ClusterManagerConfig
 	savedOvsPaths             OvsPathConfig
+	savedNoOverlay            NoOverlayConfig
+	savedBGP                  BGPConfig
 
 	// legacy service-cluster-ip-range CLI option
 	serviceClusterIPRange string
@@ -696,6 +769,8 @@ func init() {
 	savedOvnKubeNode = OvnKubeNode
 	savedClusterManager = ClusterManager
 	savedOvsPaths = OvsPaths
+	savedNoOverlay = NoOverlay
+	savedBGP = BGPConfig{Managed: ManagedBGP}
 	cli.VersionPrinter = func(_ *cli.Context) {
 		fmt.Printf("Version: %s\n", Version)
 		fmt.Printf("Git commit: %s\n", Commit)
@@ -727,6 +802,8 @@ func PrepareTestConfig() error {
 	OvnKubeNode = savedOvnKubeNode
 	ClusterManager = savedClusterManager
 	OvsPaths = savedOvsPaths
+	NoOverlay = savedNoOverlay
+	ManagedBGP = savedBGP.Managed
 	Kubernetes.DisableRequestedChassis = false
 	EnableMulticast = false
 	UnprivilegedMode = false
@@ -2269,6 +2346,107 @@ func buildClusterManagerConfig(cli, file *config) error {
 	return nil
 }
 
+// buildNoOverlayConfig updates NoOverlay config from cli and config file
+func buildNoOverlayConfig(cli, file *config) error {
+	// Copy config file values over default values
+	if err := overrideFields(&NoOverlay, &file.NoOverlay, &savedNoOverlay); err != nil {
+		return err
+	}
+
+	// And CLI overrides over config file and default values
+	if err := overrideFields(&NoOverlay, &cli.NoOverlay, &savedNoOverlay); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateNoOverlayConfig validates the no-overlay configuration
+func validateNoOverlayConfig() error {
+	// Validate transport option
+	if Default.Transport != "" && Default.Transport != TransportGeneve && Default.Transport != TransportNoOverlay {
+		return fmt.Errorf("invalid transport %q: must be %q or %q", Default.Transport, TransportGeneve, TransportNoOverlay)
+	}
+
+	// If transport is no-overlay, validate required no-overlay options
+	if Default.Transport == TransportNoOverlay {
+		if NoOverlay.OutboundSNAT == "" {
+			return fmt.Errorf("outbound-snat is required when transport=no-overlay")
+		}
+		if NoOverlay.OutboundSNAT != NoOverlaySNATEnable && NoOverlay.OutboundSNAT != NoOverlaySNATDisable {
+			return fmt.Errorf("invalid outbound-snat %q: must be %q or %q", NoOverlay.OutboundSNAT, NoOverlaySNATEnable, NoOverlaySNATDisable)
+		}
+
+		if NoOverlay.Routing == "" {
+			return fmt.Errorf("routing is required when transport=no-overlay")
+		}
+		if NoOverlay.Routing != NoOverlayRoutingManaged && NoOverlay.Routing != NoOverlayRoutingUnmanaged {
+			return fmt.Errorf("invalid routing %q: must be %q or %q", NoOverlay.Routing, NoOverlayRoutingManaged, NoOverlayRoutingUnmanaged)
+		}
+
+		// If routing is managed, topology is required
+		if NoOverlay.Routing == NoOverlayRoutingManaged {
+			if ManagedBGP.Topology == "" {
+				return fmt.Errorf("topology is required when routing=managed")
+			}
+			if ManagedBGP.Topology != ManagedBGPTopologyFullMesh {
+				return fmt.Errorf("invalid topology %q: must be %q", ManagedBGP.Topology, ManagedBGPTopologyFullMesh)
+			}
+		}
+	}
+
+	return nil
+}
+
+// buildManagedBGPConfig updates managed BGP config from cli and config file
+func buildManagedBGPConfig(cli, file *config) error {
+	// Copy config file values over default values
+	if err := overrideFields(&ManagedBGP, &file.Bgp.Managed, &savedBGP.Managed); err != nil {
+		return err
+	}
+
+	// And CLI overrides over config file and default values
+	if err := overrideFields(&ManagedBGP, &cli.Bgp.Managed, &savedBGP.Managed); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateManagedBGPConfig validates the managed BGP configuration
+func validateManagedBGPConfig() error {
+	// Only validate if transport is no-overlay and routing is managed
+	if Default.Transport == TransportNoOverlay && NoOverlay.Routing == NoOverlayRoutingManaged {
+		// Validate AS number is in valid range
+		// Valid AS numbers: 1-4294967295 (32-bit)
+		// Reserved ranges per RFC 7607, RFC 6996, RFC 5398, RFC 4893:
+		//   0                    - Reserved (RFC 7607)
+		//   23456                - AS_TRANS (RFC 6793)
+		//   64496-64511          - Reserved for documentation (RFC 5398)
+		//   65535                - Reserved (RFC 7300)
+		//   65536-65551          - Reserved for documentation (RFC 5398)
+		//   4200000000-4294967294 - Reserved for Private Use (RFC 6996)
+		//   4294967295           - Reserved (RFC 7300)
+
+		if ManagedBGP.ASNumber == 0 {
+			return fmt.Errorf("invalid as-number: 0 is reserved")
+		}
+		if ManagedBGP.ASNumber == 23456 {
+			return fmt.Errorf("invalid as-number: 23456 is reserved (AS_TRANS for 16-bit to 32-bit AS translation)")
+		}
+		if ManagedBGP.ASNumber == 65535 {
+			return fmt.Errorf("invalid as-number: 65535 is reserved")
+		}
+		if ManagedBGP.ASNumber == 4294967295 {
+			return fmt.Errorf("invalid as-number: 4294967295 is reserved")
+		}
+		// Note: Documentation AS ranges (64496-64511, 65536-65551) are technically reserved
+		// but we allow them for testing purposes as they're meant for documentation/examples
+	}
+
+	return nil
+}
+
 // completeClusterManagerConfig completes the ClusterManager config by parsing raw values
 // into their final form.
 func completeClusterManagerConfig(allSubnets *ConfigSubnets) error {
@@ -2321,6 +2499,12 @@ func buildDefaultConfig(cli, file *config) error {
 	if Default.Zone == "" {
 		Default.Zone = types.OvnDefaultZone
 	}
+
+	// Set default transport if not specified
+	if Default.Transport == "" {
+		Default.Transport = TransportGeneve
+	}
+
 	return nil
 }
 
@@ -2431,6 +2615,8 @@ func initConfigWithPath(ctx *cli.Context, exec kexec.Interface, saPath string, d
 		OvnKubeNode:          savedOvnKubeNode,
 		ClusterManager:       savedClusterManager,
 		OvsPaths:             savedOvsPaths,
+		NoOverlay:            savedNoOverlay,
+		Bgp:                  savedBGP,
 	}
 
 	configFile, configFileIsDefault = getConfigFilePath(ctx)
@@ -2556,6 +2742,24 @@ func initConfigWithPath(ctx *cli.Context, exec kexec.Interface, saPath string, d
 		return "", err
 	}
 
+	if err = buildNoOverlayConfig(&cliConfig, &cfg); err != nil {
+		return "", err
+	}
+
+	if err = buildManagedBGPConfig(&cliConfig, &cfg); err != nil {
+		return "", err
+	}
+
+	// Validate no-overlay configuration
+	if err = validateNoOverlayConfig(); err != nil {
+		return "", err
+	}
+
+	// Validate managed BGP configuration
+	if err = validateManagedBGPConfig(); err != nil {
+		return "", err
+	}
+
 	tmpAuth, err := buildOvnAuth(exec, true, &cliConfig.OvnNorth, &cfg.OvnNorth, defaults.OvnNorthAddress)
 	if err != nil {
 		return "", err
@@ -2585,6 +2789,8 @@ func initConfigWithPath(ctx *cli.Context, exec kexec.Interface, saPath string, d
 	klog.V(5).Infof("Ovnkube Node config: %+v", OvnKubeNode)
 	klog.V(5).Infof("Ovnkube Cluster Manager config: %+v", ClusterManager)
 	klog.V(5).Infof("OVS Paths config: %+v", OvsPaths)
+	klog.V(5).Infof("No Overlay config: %+v", NoOverlay)
+	klog.V(5).Infof("Managed BGP config: %+v", ManagedBGP)
 
 	return retConfigFile, nil
 }
