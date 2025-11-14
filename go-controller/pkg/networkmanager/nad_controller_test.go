@@ -2,7 +2,6 @@ package networkmanager
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -25,6 +24,7 @@ import (
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
+	ovntesting "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -523,7 +523,7 @@ func TestNADController(t *testing.T) {
 				var nad *nettypes.NetworkAttachmentDefinition
 				if args.network != nil {
 					args.network.NADName = args.nad
-					nad, err = buildNAD(name, namespace, args.network)
+					nad, err = ovntesting.BuildNAD(name, namespace, args.network)
 					g.Expect(err).ToNot(gomega.HaveOccurred())
 					_, err = fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespace).Create(context.Background(), nad, metav1.CreateOptions{})
 					g.Expect(err).To(gomega.Or(gomega.Not(gomega.HaveOccurred()), gomega.MatchError(apierrors.IsAlreadyExists, "AlreadyExists")))
@@ -826,7 +826,7 @@ func TestResourceCleanup(t *testing.T) {
 		MTU:     1400,
 		NADName: nadKey,
 	}
-	nad, err := buildNAD(nadName, nadNs, networkAPrimary)
+	nad, err := ovntesting.BuildNAD(nadName, nadNs, networkAPrimary)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
 	// make annotation update fail (nad doesn't exist), make sure networkID and tunnel keys are released
@@ -841,25 +841,8 @@ func TestResourceCleanup(t *testing.T) {
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 }
 
-func buildNAD(name, namespace string, network *ovncnitypes.NetConf) (*nettypes.NetworkAttachmentDefinition, error) {
-	config, err := json.Marshal(network)
-	if err != nil {
-		return nil, err
-	}
-	nad := &nettypes.NetworkAttachmentDefinition{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-		},
-		Spec: nettypes.NetworkAttachmentDefinitionSpec{
-			Config: string(config),
-		},
-	}
-	return nad, nil
-}
-
 func buildNADWithAnnotations(name, namespace string, network *ovncnitypes.NetConf, annotations map[string]string) (*nettypes.NetworkAttachmentDefinition, error) {
-	nad, err := buildNAD(name, namespace, network)
+	nad, err := ovntesting.BuildNAD(name, namespace, network)
 	if err != nil {
 		return nil, err
 	}
