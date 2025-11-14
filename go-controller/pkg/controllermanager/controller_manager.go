@@ -441,7 +441,7 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 
 	err = cm.createACLLoggingMeter()
 	if err != nil {
-		return nil
+		return fmt.Errorf("failed to create acl logging meter: %w", err)
 	}
 
 	if config.Metrics.EnableConfigDuration {

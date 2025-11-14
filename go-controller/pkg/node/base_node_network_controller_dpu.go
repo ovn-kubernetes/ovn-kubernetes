@@ -63,8 +63,8 @@ func (bnnc *BaseNodeNetworkController) delDPUPodForNAD(pod *corev1.Pod, dpuCD *u
 	podDesc := fmt.Sprintf("pod %s/%s for NAD %s", pod.Namespace, pod.Name, nadName)
 	klog.Infof("Deleting %s from DPU", podDesc)
 
-	if podDeleted {
-		// no need to unset connection status annotation if pod is deleted anyway
+	// no need to unset connection status annotation if pod is deleted anyway
+	if !podDeleted {
 		err := bnnc.updatePodDPUConnStatusWithRetry(pod, nil, nadName)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("failed to remove the old DPU connection status annotation for %s: %v", podDesc, err))
