@@ -2,7 +2,6 @@ package pod
 
 import (
 	"errors"
-	"fmt"
 	"net"
 	"testing"
 
@@ -21,7 +20,6 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/mac"
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/persistentips"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
@@ -66,28 +64,6 @@ func (a *idAllocatorStub) ReserveID(int) error {
 
 func (a *idAllocatorStub) ReleaseID() {
 	a.releasedID = true
-}
-
-type persistentIPsStub struct {
-	datastore map[string]ipamclaimsapi.IPAMClaim
-}
-
-func (c *persistentIPsStub) Reconcile(_ *ipamclaimsapi.IPAMClaim, newIPAMClaim *ipamclaimsapi.IPAMClaim, _ persistentips.IPReleaser) error {
-	c.datastore[ipamClaimKey(newIPAMClaim.Namespace, newIPAMClaim.Name)] = *newIPAMClaim
-	return nil
-}
-
-func (c *persistentIPsStub) FindIPAMClaim(claimName string, namespace string) (*ipamclaimsapi.IPAMClaim, error) {
-	ipamClaimKey := fmt.Sprintf("%s/%s", namespace, claimName)
-	ipamClaim, wasFound := c.datastore[ipamClaimKey]
-	if !wasFound {
-		return nil, fmt.Errorf("not found")
-	}
-	return &ipamClaim, nil
-}
-
-func ipamClaimKey(namespace string, claimName string) string {
-	return fmt.Sprintf("%s/%s", namespace, claimName)
 }
 
 type macRegistryStub struct {
@@ -764,23 +740,16 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			},
 		},
 		{
-			// on networks with IPAM, with persistent IPs *not* allowed, but
+			// on networks with IPAM, with persistent IPs *not* allowed (so IPAM claim is nil), but
 			// the pod requests a claim, new IPs are allocated, and rolled back
 			// on failures.
-			name: "IPAM, persistent IPs *not* allowed, requested by pod; new IP address allocated, and rolled back on failures",
+			name: "IPAM, ipamClaim is nil, but IPAM requested by pod; new IP address allocated, and rolled back on failures",
 			ipam: true,
 			args: args{
 				network: &nadapi.NetworkSelectionElement{
 					IPAMClaimReference: "my-ipam-claim",
 				},
-				ipamClaim: &ipamclaimsapi.IPAMClaim{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: "my-ipam-claim",
-					},
-					Status: ipamclaimsapi.IPAMClaimStatus{
-						IPs: []string{"192.168.0.200/24"},
-					},
-				},
+				ipamClaim: nil,
 				ipAllocator: &ipAllocatorStub{
 					nextIPs: ovntest.MustParseIPNets("192.168.0.3/24"),
 				},
@@ -1086,7 +1055,8 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 			if tt.netInfo == nil {
 				tt.netInfo = &util.DefaultNetInfo{}
 				tt.nadName = types.DefaultNetworkName
-				if !tt.ipam || tt.idAllocation || tt.persistentIPAllocation || tt.args.ipamClaim != nil {
+				shouldHaveIPAMClaimRef := tt.args.network != nil && tt.args.network.IPAMClaimReference != ""
+				if !tt.ipam || tt.idAllocation || tt.persistentIPAllocation || shouldHaveIPAMClaimRef {
 					tt.nadName = util.GetNADName(network.Namespace, network.Name)
 					var subnets string
 					if tt.ipam {
@@ -1140,15 +1110,8 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 				}
 			}
 
-			var claimsReconciler persistentips.PersistentAllocations
-			dummyDatastore := map[string]ipamclaimsapi.IPAMClaim{}
 			if tt.args.ipamClaim != nil {
 				tt.args.ipamClaim.Namespace = network.Namespace
-				dummyDatastore[fmt.Sprintf("%s/%s", tt.args.ipamClaim.Namespace, tt.args.ipamClaim.Name)] = *tt.args.ipamClaim
-			}
-
-			claimsReconciler = &persistentIPsStub{
-				datastore: dummyDatastore,
 			}
 
 			pod, podAnnotation, rollback, err := allocatePodAnnotationWithRollback(
@@ -1158,7 +1121,7 @@ func Test_allocatePodAnnotationWithRollback(t *testing.T) {
 				node,
 				pod,
 				network,
-				claimsReconciler,
+				tt.args.ipamClaim,
 				macRegistry,
 				tt.args.reallocate,
 				tt.role,
