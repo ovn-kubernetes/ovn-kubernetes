@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
+	mock "github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	kexec "k8s.io/utils/exec"
@@ -94,26 +96,30 @@ func TestRunOVNretry(t *testing.T) {
 	mockKexecIface := new(mock_k8s_io_utils_exec.Interface)
 	mockExecRunner := new(mocks.ExecRunner)
 	mockCmd := new(mock_k8s_io_utils_exec.Cmd)
-	// Below is defined in ovs.go
+	// Variables below are defined in ovs.go
 	ovnCmdRetryCount = 0
-	// below is defined in ovs.go
+	ovnCmdRetryInterval = 1 * time.Millisecond
 	runCmdExecRunner = mockExecRunner
-	// note runner is defined in ovs.go file
 	runner = &execHelper{exec: mockKexecIface}
+
+	// Used for "test path when PID changes" test case
+	extraArgsFuncAlreadyCalled := false
 
 	tests := []struct {
 		desc                    string
+		retryCountOverride      int
 		inpCmdPath              string
 		inpEnvVars              []string
+		inpExtraArgsFunc        func() ([]string, error)
 		errMatch                error
-		onRetArgsExecUtilsIface *ovntest.TestifyMockHelper
+		onRetArgsExecUtilsIface []*ovntest.TestifyMockHelper
 		onRetArgsKexecIface     *ovntest.TestifyMockHelper
 	}{
 		{
 			desc:                    "test path when runWithEnvVars returns no error",
 			inpCmdPath:              runner.ovnctlPath,
 			inpEnvVars:              []string{},
-			onRetArgsExecUtilsIface: &ovntest.TestifyMockHelper{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{nil, nil, nil}},
+			onRetArgsExecUtilsIface: []*ovntest.TestifyMockHelper{{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{nil, nil, nil}}},
 			onRetArgsKexecIface:     &ovntest.TestifyMockHelper{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockCmd}},
 		},
 		{
@@ -121,7 +127,7 @@ func TestRunOVNretry(t *testing.T) {
 			inpCmdPath:              runner.ovnctlPath,
 			inpEnvVars:              []string{},
 			errMatch:                fmt.Errorf("connection refused"),
-			onRetArgsExecUtilsIface: &ovntest.TestifyMockHelper{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{nil, bytes.NewBuffer([]byte("Connection refused")), fmt.Errorf("connection refused")}},
+			onRetArgsExecUtilsIface: []*ovntest.TestifyMockHelper{{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{nil, bytes.NewBuffer([]byte("Connection refused")), fmt.Errorf("connection refused")}}},
 			onRetArgsKexecIface:     &ovntest.TestifyMockHelper{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockCmd}},
 		},
 		{
@@ -129,16 +135,37 @@ func TestRunOVNretry(t *testing.T) {
 			inpCmdPath:              runner.ovnctlPath,
 			inpEnvVars:              []string{},
 			errMatch:                fmt.Errorf("OVN command"),
-			onRetArgsExecUtilsIface: &ovntest.TestifyMockHelper{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{nil, nil, fmt.Errorf("mock error")}},
+			onRetArgsExecUtilsIface: []*ovntest.TestifyMockHelper{{OnCallMethodName: "RunCmd", OnCallMethodArgType: []string{"*mocks.Cmd", "string", "[]string"}, RetArgList: []interface{}{nil, nil, fmt.Errorf("mock error")}}},
 			onRetArgsKexecIface:     &ovntest.TestifyMockHelper{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{mockCmd}},
+		},
+		{
+			desc:               "test path when PID changes",
+			retryCountOverride: 1,
+			inpCmdPath:         runner.ovnctlPath,
+			inpEnvVars:         []string{},
+			inpExtraArgsFunc: func() ([]string, error) {
+				if !extraArgsFuncAlreadyCalled {
+					extraArgsFuncAlreadyCalled = true
+					return []string{"-t", "ovn-northd.1.ctl"}, nil
+				}
+				return []string{"-t", "ovn-northd.2.ctl"}, nil
+			},
+			onRetArgsExecUtilsIface: []*ovntest.TestifyMockHelper{
+				{OnCallMethodName: "RunCmd", OnCallMethodArgs: []interface{}{mock.Anything, runner.ovnctlPath, []string{}, "-t", "ovn-northd.1.ctl"}, RetArgList: []interface{}{nil, bytes.NewBuffer([]byte("Connection refused")), fmt.Errorf("connection refused")}},
+				{OnCallMethodName: "RunCmd", OnCallMethodArgs: []interface{}{mock.Anything, runner.ovnctlPath, []string{}, "-t", "ovn-northd.2.ctl"}, RetArgList: []interface{}{nil, nil, nil}},
+			},
+			onRetArgsKexecIface: &ovntest.TestifyMockHelper{OnCallMethodName: "Command", OnCallMethodArgType: []string{"string", "string", "string"}, RetArgList: []interface{}{mockCmd}, CallTimes: 2},
 		},
 	}
 	for i, tc := range tests {
 		t.Run(fmt.Sprintf("%d:%s", i, tc.desc), func(t *testing.T) {
-			ovntest.ProcessMockFn(&mockExecRunner.Mock, *tc.onRetArgsExecUtilsIface)
+			for _, item := range tc.onRetArgsExecUtilsIface {
+				ovntest.ProcessMockFn(&mockExecRunner.Mock, *item)
+			}
 			ovntest.ProcessMockFn(&mockKexecIface.Mock, *tc.onRetArgsKexecIface)
+			ovnCmdRetryCount = tc.retryCountOverride
 
-			_, _, e := runOVNretry(tc.inpCmdPath, tc.inpEnvVars)
+			_, _, e := runOVNretry(tc.inpCmdPath, tc.inpEnvVars, tc.inpExtraArgsFunc)
 
 			if tc.errMatch != nil {
 				assert.Contains(t, e.Error(), tc.errMatch.Error())
