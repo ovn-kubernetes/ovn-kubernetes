@@ -640,6 +640,7 @@ jobs:
           fi
         elif [ "${{ matrix.target }}" == "network-segmentation" ]; then
           make -C test control-plane WHAT="Network Segmentation"
+          make -C test control-plane WHAT="ClusterNetworkConnect"
         elif [ "${{ matrix.target }}" == "bgp" ] || [ "${{ matrix.target }}" == "bgp-loose-isolation" ]; then
           make -C test control-plane
         elif [ "${{ matrix.target }}" == "tools" ]; then
