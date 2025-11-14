@@ -6,8 +6,6 @@ import (
 	"strings"
 	"sync"
 
-	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
-
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -21,7 +19,6 @@ import (
 	ratypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
 	apitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
-	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 )
 
 // validationError represents different types of validation failures
@@ -42,8 +39,6 @@ type noOverlayController struct {
 	wf       *factory.WatchFactory
 	recorder record.EventRecorder
 
-	// nadController watches NetworkAttachmentDefinition resources
-	nadController controllerutil.Controller
 	// raController watches RouteAdvertisements resources
 	raController controllerutil.Controller
 
@@ -62,18 +57,6 @@ func newNoOverlayController(wf *factory.WatchFactory, recorder record.EventRecor
 		wf:       wf,
 		recorder: recorder,
 	}
-
-	// Create controller config with NetworkAttachmentDefinition informer
-	// We only care about the default network NAD
-	nadConfig := &controllerutil.ControllerConfig[nettypes.NetworkAttachmentDefinition]{
-		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
-		Reconcile:      c.reconcileNAD,
-		Threadiness:    1,
-		Informer:       wf.NADInformer().Informer(),
-		Lister:         wf.NADInformer().Lister().List,
-		ObjNeedsUpdate: c.nadNeedsValidation,
-	}
-	c.nadController = controllerutil.NewController("no-overlay-nad-watcher", nadConfig)
 
 	// Create controller config with RouteAdvertisements informer
 	raConfig := &controllerutil.ControllerConfig[ratypes.RouteAdvertisements]{
@@ -102,7 +85,7 @@ func (c *noOverlayController) Start() error {
 	go c.runValidation()
 
 	// Start both controllers
-	return controllerutil.Start(c.nadController, c.raController)
+	return controllerutil.Start(c.raController)
 }
 
 // Stop stops the no-overlay validation controller
@@ -113,14 +96,7 @@ func (c *noOverlayController) Stop() {
 
 	klog.Infof("Stopping no-overlay validation controller")
 
-	controllerutil.Stop(c.nadController, c.raController)
-}
-
-// reconcileNAD is called whenever a NetworkAttachmentDefinition resource changes
-func (c *noOverlayController) reconcileNAD(key string) error {
-	klog.V(5).Infof("No-overlay controller reconciling NAD %q", key)
-	c.runValidation()
-	return nil
+	controllerutil.Stop(c.raController)
 }
 
 // reconcileRA is called whenever a RouteAdvertisements resource changes
@@ -128,32 +104,6 @@ func (c *noOverlayController) reconcileRA(key string) error {
 	klog.V(5).Infof("No-overlay controller reconciling RouteAdvertisements %q", key)
 	c.runValidation()
 	return nil
-}
-
-// nadNeedsValidation checks if the NAD update requires validation
-// We only care about changes to the route-advertisements annotation for the default network
-func (c *noOverlayController) nadNeedsValidation(oldNAD, newNAD *nettypes.NetworkAttachmentDefinition) bool {
-	// If either object is nil, we need to validate
-	if oldNAD == nil || newNAD == nil {
-		return true
-	}
-
-	if config.Default.Transport != config.TransportNoOverlay || newNAD.Name != ovntypes.DefaultNetworkName || newNAD.Namespace != config.Kubernetes.OVNConfigNamespace {
-		return false
-	}
-
-	// Check if the route-advertisements annotation changed
-	oldAnnotation := ""
-	if oldNAD.Annotations != nil {
-		oldAnnotation = oldNAD.Annotations[ovntypes.OvnRouteAdvertisementsKey]
-	}
-
-	newAnnotation := ""
-	if newNAD.Annotations != nil {
-		newAnnotation = newNAD.Annotations[ovntypes.OvnRouteAdvertisementsKey]
-	}
-
-	return oldAnnotation != newAnnotation
 }
 
 // raNeedsValidation checks if the RouteAdvertisements update requires validation
