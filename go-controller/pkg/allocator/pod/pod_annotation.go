@@ -497,7 +497,7 @@ func allocatePodAnnotationWithRollback(
 		}
 
 		// handle routes & gateways
-		err = AddRoutesGatewayIP(netInfo, node, pod, tentative, network)
+		err = AddRoutesGatewayIP(netInfo, node, pod, tentative, nadName, network)
 		if err != nil {
 			return
 		}
@@ -565,12 +565,18 @@ func AddRoutesGatewayIP(
 	node *corev1.Node,
 	pod *corev1.Pod,
 	podAnnotation *util.PodAnnotation,
+	nadName string,
 	network *nadapi.NetworkSelectionElement) error {
 
 	// generate the nodeSubnets from the allocated IPs
 	nodeSubnets := util.IPsToNetworkIPs(podAnnotation.IPs...)
 
 	if netinfo.IsUserDefinedNetwork() {
+		_, index, err := util.GetNadFromIndexedNADKey(nadName)
+		if err != nil {
+			return fmt.Errorf("failed getting index from indexed NAD key %s: %w", nadName, err)
+		}
+
 		// for secondary network, see if its network-attachment's annotation has default-route key.
 		// If present, then we need to add default route for it
 		podAnnotation.Gateways = append(podAnnotation.Gateways, network.GatewayRequest...)
@@ -642,6 +648,7 @@ func AddRoutesGatewayIP(
 						podAnnotation.Routes = append(podAnnotation.Routes, util.PodRoute{
 							Dest:    clusterSubnet.CIDR,
 							NextHop: gatewayIPnet.IP,
+							Metric:  index * 100, // 0 for first interface, 100 for second, 200 for third, etc.
 						})
 					}
 				}
