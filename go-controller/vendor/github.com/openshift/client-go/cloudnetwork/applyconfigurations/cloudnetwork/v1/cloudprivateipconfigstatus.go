@@ -3,17 +3,17 @@
 package v1
 
 import (
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metav1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
-// CloudPrivateIPConfigStatusApplyConfiguration represents an declarative configuration of the CloudPrivateIPConfigStatus type for use
+// CloudPrivateIPConfigStatusApplyConfiguration represents a declarative configuration of the CloudPrivateIPConfigStatus type for use
 // with apply.
 type CloudPrivateIPConfigStatusApplyConfiguration struct {
-	Node       *string        `json:"node,omitempty"`
-	Conditions []v1.Condition `json:"conditions,omitempty"`
+	Node       *string                              `json:"node,omitempty"`
+	Conditions []metav1.ConditionApplyConfiguration `json:"conditions,omitempty"`
 }
 
-// CloudPrivateIPConfigStatusApplyConfiguration constructs an declarative configuration of the CloudPrivateIPConfigStatus type for use with
+// CloudPrivateIPConfigStatusApplyConfiguration constructs a declarative configuration of the CloudPrivateIPConfigStatus type for use with
 // apply.
 func CloudPrivateIPConfigStatus() *CloudPrivateIPConfigStatusApplyConfiguration {
 	return &CloudPrivateIPConfigStatusApplyConfiguration{}
@@ -30,9 +30,12 @@ func (b *CloudPrivateIPConfigStatusApplyConfiguration) WithNode(value string) *C
 // WithConditions adds the given value to the Conditions field in the declarative configuration
 // and returns the receiver, so that objects can be build by chaining "With" function invocations.
 // If called multiple times, values provided by each call will be appended to the Conditions field.
-func (b *CloudPrivateIPConfigStatusApplyConfiguration) WithConditions(values ...v1.Condition) *CloudPrivateIPConfigStatusApplyConfiguration {
+func (b *CloudPrivateIPConfigStatusApplyConfiguration) WithConditions(values ...*metav1.ConditionApplyConfiguration) *CloudPrivateIPConfigStatusApplyConfiguration {
 	for i := range values {
-		b.Conditions = append(b.Conditions, values[i])
+		if values[i] == nil {
+			panic("nil value passed to WithConditions")
+		}
+		b.Conditions = append(b.Conditions, *values[i])
 	}
 	return b
 }

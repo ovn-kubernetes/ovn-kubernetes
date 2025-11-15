@@ -13,7 +13,7 @@ type FakeCloudV1 struct {
 }
 
 func (c *FakeCloudV1) CloudPrivateIPConfigs() v1.CloudPrivateIPConfigInterface {
-	return &FakeCloudPrivateIPConfigs{c}
+	return newFakeCloudPrivateIPConfigs(c)
 }
 
 // RESTClient returns a RESTClient that is used to communicate

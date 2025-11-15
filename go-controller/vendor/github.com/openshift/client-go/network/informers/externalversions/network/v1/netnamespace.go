@@ -3,13 +3,13 @@
 package v1
 
 import (
-	"context"
+	context "context"
 	time "time"
 
-	networkv1 "github.com/openshift/api/network/v1"
+	apinetworkv1 "github.com/openshift/api/network/v1"
 	versioned "github.com/openshift/client-go/network/clientset/versioned"
 	internalinterfaces "github.com/openshift/client-go/network/informers/externalversions/internalinterfaces"
-	v1 "github.com/openshift/client-go/network/listers/network/v1"
+	networkv1 "github.com/openshift/client-go/network/listers/network/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	watch "k8s.io/apimachinery/pkg/watch"
@@ -20,7 +20,7 @@ import (
 // NetNamespaces.
 type NetNamespaceInformer interface {
 	Informer() cache.SharedIndexInformer
-	Lister() v1.NetNamespaceLister
+	Lister() networkv1.NetNamespaceLister
 }
 
 type netNamespaceInformer struct {
@@ -45,16 +45,28 @@ func NewFilteredNetNamespaceInformer(client versioned.Interface, resyncPeriod ti
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.NetworkV1().NetNamespaces().List(context.TODO(), options)
+				return client.NetworkV1().NetNamespaces().List(context.Background(), options)
 			},
 			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.NetworkV1().NetNamespaces().Watch(context.TODO(), options)
+				return client.NetworkV1().NetNamespaces().Watch(context.Background(), options)
+			},
+			ListWithContextFunc: func(ctx context.Context, options metav1.ListOptions) (runtime.Object, error) {
+				if tweakListOptions != nil {
+					tweakListOptions(&options)
+				}
+				return client.NetworkV1().NetNamespaces().List(ctx, options)
+			},
+			WatchFuncWithContext: func(ctx context.Context, options metav1.ListOptions) (watch.Interface, error) {
+				if tweakListOptions != nil {
+					tweakListOptions(&options)
+				}
+				return client.NetworkV1().NetNamespaces().Watch(ctx, options)
 			},
 		},
-		&networkv1.NetNamespace{},
+		&apinetworkv1.NetNamespace{},
 		resyncPeriod,
 		indexers,
 	)
@@ -65,9 +77,9 @@ func (f *netNamespaceInformer) defaultInformer(client versioned.Interface, resyn
 }
 
 func (f *netNamespaceInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&networkv1.NetNamespace{}, f.defaultInformer)
+	return f.factory.InformerFor(&apinetworkv1.NetNamespace{}, f.defaultInformer)
 }
 
-func (f *netNamespaceInformer) Lister() v1.NetNamespaceLister {
-	return v1.NewNetNamespaceLister(f.Informer().GetIndexer())
+func (f *netNamespaceInformer) Lister() networkv1.NetNamespaceLister {
+	return networkv1.NewNetNamespaceLister(f.Informer().GetIndexer())
 }
