@@ -691,6 +691,46 @@ var _ = ginkgo.DescribeTableSubtree("e2e egress IP validation", feature.EgressIP
 		return false
 	}
 
+	getOVNPodOnNode := func(nodeName string) string {
+		ovnKubernetesNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+		dbPods, err := e2ekubectl.RunKubectl(ovnKubernetesNamespace, "get", "pods", "-l", "name=ovnkube-db", "-o=jsonpath='{.items..metadata.name}'")
+		if isInterconnectEnabled() {
+			dbPods, err = e2ekubectl.RunKubectl(ovnKubernetesNamespace, "get", "pods", "-l", "app=ovnkube-node", "--field-selector", fmt.Sprintf("spec.nodeName=%s", nodeName), "-o=jsonpath='{.items..metadata.name}'")
+		}
+		if err != nil || len(dbPods) == 0 {
+			framework.Failf("Error: No OVN pod found on node: %v", nodeName)
+		}
+		dbPod := strings.Split(dbPods, " ")[0]
+		dbPod = strings.TrimPrefix(dbPod, "'")
+		dbPod = strings.TrimSuffix(dbPod, "'")
+		if len(dbPod) == 0 {
+			framework.Failf("Error: No OVN pod found on node: %v", nodeName)
+		}
+		return dbPod
+	}
+
+	// Verify SNAT rule exists for a given EgressIP
+	verifySNATRule := func(egressIPName string, egressIP, srcPodIP net.IP, ovnPod string, dbContainerName string, ovnKubernetesNamespace string) bool {
+		snatCmd := "ovn-nbctl --format=csv --no-heading find nat | grep " + egressIPName
+		snats, err := e2ekubectl.RunKubectl(ovnKubernetesNamespace, "exec", ovnPod, "-c", dbContainerName, "--", "sh", "-c", snatCmd)
+		if err != nil {
+			framework.Logf("Error: Check the OVN DB for SNAT is added for egressIP or not %s, err: %v", egressIP.String(), err)
+			return false
+		}
+		return strings.Contains(snats, egressIP.String()) && strings.Contains(snats, srcPodIP.String())
+	}
+
+	// Verify LRP rule exists for a given pod IP
+	verifyLRPRule := func(srcPodIP net.IP, podOVNPod string, dbContainerName string, ovnKubernetesNamespace string) bool {
+		lrpCmd := "ovn-nbctl lr-policy-list ovn_cluster_router | grep -v inport | grep reroute"
+		lrps, err := e2ekubectl.RunKubectl(ovnKubernetesNamespace, "exec", podOVNPod, "-c", dbContainerName, "--", "sh", "-c", lrpCmd)
+		if err != nil {
+			framework.Logf("Error: Check the OVN DB to ensure LRP is added, err: %v", err)
+			return false
+		}
+		return strings.Contains(lrps, srcPodIP.String()) && strings.Count(lrps, "100 ") == 1
+	}
+
 	f := wrappedTestFramework(egressIPName)
 	f.SkipNamespaceCreation = true
 
@@ -3180,6 +3220,440 @@ spec:
 		ginkgo.By("11. Check connectivity from other pod and verify that the srcIP is the expected egressIP")
 		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer, pod2OtherNetworkNamespace, pod2Name, true, []string{egressIP1.String()}))
 		framework.ExpectNoError(err, "Step 11. Check connectivity from other pod and verify that the srcIP is the expected egressIP and verify that the srcIP is the expected nodeIP, failed: %v", err)
+	})
+
+	ginkgo.It("should handle EIP reassignment correctly on namespace label update", func() {
+		if isUserDefinedNetwork(netConfigParams) {
+			ginkgo.Skip("Unsupported for UDNs")
+		}
+
+		ginkgo.By("0. Add the \"k8s.ovn.org/egress-assignable\" label to two nodes")
+		e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable", "dummy")
+		e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress2Node.name, "k8s.ovn.org/egress-assignable", "dummy")
+
+		ginkgo.By("1. Create an EgressIP object with one egress IP defined")
+		var egressIP1, egressIP2 net.IP
+		var err error
+		if utilnet.IsIPv6String(egress1Node.nodeIP) {
+			egressIP1, err = ipalloc.NewPrimaryIPv6()
+			egressIP2, err = ipalloc.NewPrimaryIPv6()
+		} else {
+			egressIP1, err = ipalloc.NewPrimaryIPv4()
+			egressIP2, err = ipalloc.NewPrimaryIPv4()
+		}
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate new Node IP")
+
+		podNamespace := f.Namespace
+		nsEIPLabels := map[string]string{
+			"wants": "egress",
+		}
+		nsEIPLabels2 := map[string]string{
+			"wants": "egress2",
+		}
+
+		var egressIPConfig = `apiVersion: k8s.ovn.org/v1
+kind: EgressIP
+metadata:
+    name: ` + egressIPName + `
+spec:
+    egressIPs:
+    - ` + egressIP1.String() + `
+    podSelector:
+        matchLabels:
+            wants: egress
+    namespaceSelector:
+        matchLabels:
+            wants: egress
+`
+		if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
+			framework.Failf("Unable to write CRD config to disk: %v", err)
+		}
+		defer func() {
+			if err := os.Remove(egressIPYaml); err != nil {
+				framework.Logf("Unable to remove the CRD config from disk: %v", err)
+			}
+		}()
+
+		framework.Logf("Applying the EgressIP configuration")
+		e2ekubectl.RunKubectlOrDie("default", "create", "-f", egressIPYaml)
+
+		ginkgo.By("2. Create second EgressIP object with one egress IP defined")
+		var egressIPConfig2 = `apiVersion: k8s.ovn.org/v1
+kind: EgressIP
+metadata:
+    name: ` + egressIPName2 + `
+spec:
+    egressIPs:
+    - ` + egressIP2.String() + `
+    podSelector:
+        matchLabels:
+            wants: egress
+    namespaceSelector:
+        matchLabels:
+            wants: egress2
+`
+		if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig2), 0644); err != nil {
+			framework.Failf("Unable to write CRD config to disk: %v", err)
+		}
+		defer func() {
+			if err := os.Remove(egressIPYaml); err != nil {
+				framework.Logf("Unable to remove the CRD config from disk: %v", err)
+			}
+		}()
+
+		framework.Logf("Create the EgressIP configuration")
+		e2ekubectl.RunKubectlOrDie("default", "create", "-f", egressIPYaml)
+
+		ginkgo.By("3. Check that status of both EgressIP objects is of length one")
+		verifySpecificEgressIPStatusLengthEquals(egressIPName, 1, nil)
+		verifySpecificEgressIPStatusLengthEquals(egressIPName2, 1, nil)
+		eipNode1 := getSpecificEgressIPStatusItems(egressIPName)[0].Node
+		eipNode2 := getSpecificEgressIPStatusItems(egressIPName2)[0].Node
+		framework.Logf("Egress IP %s assigned to node %s", egressIP1.String(), eipNode1)
+		framework.Logf("Egress IP %s assigned to node %s", egressIP2.String(), eipNode2)
+
+		ginkgo.By("4. Create one pod matching the EgressIP")
+		_, err = createGenericPodWithLabel(f, pod1Name, pod1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
+		framework.ExpectNoError(err, "failed to create pod %s/%s", f.Namespace.Name, pod1Name)
+		srcPodIP, err := getPodIPWithRetry(f.ClientSet, isIPv6TestRun, f.Namespace.Name, pod1Name)
+		framework.ExpectNoError(err, "Failed to get pod IP: %v", err)
+		framework.Logf("Created pod %s on node %s", pod1Name, pod1Node.name)
+
+		ginkgo.By("5. Get the OVN pods and DB container name for the EgressIPs")
+		ovnPodEIP1 := getOVNPodOnNode(eipNode1)
+		ovnPodEIP2 := getOVNPodOnNode(eipNode2)
+		dbContainerName := "nb-ovsdb"
+		podOVNPod := getOVNPodOnNode(pod1Node.name)
+		ovnKubernetesNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+
+		// Run namespace label updates multiple times to ensure no stale SNAT/LRP rules
+		for i := 1; i <= 5; i++ {
+			ginkgo.By(fmt.Sprintf("6.%d. Update namespace labels match egressIP %s selectors (iteration %d)", i, egressIPName, i))
+			podNamespace = getNamespace(f, podNamespace.Name)
+			updateNamespaceLabels(f, podNamespace, nsEIPLabels)
+			ginkgo.By(fmt.Sprintf("7.%d. Check that both SNAT and LRP rules are present for egress IPs %s and no stale rules for egress IP %s (iteration %d)", i, egressIPName, egressIPName2, i))
+			gomega.Eventually(func() bool {
+				if !verifySNATRule(egressIPName, egressIP1, srcPodIP, ovnPodEIP1, dbContainerName, ovnKubernetesNamespace) {
+					return false
+				}
+				return !verifySNATRule(egressIPName, egressIP2, srcPodIP, ovnPodEIP2, dbContainerName, ovnKubernetesNamespace)
+			}, retryTimeout).Should(gomega.BeTrue(), fmt.Sprintf("snat rule is not correct for EgressIP %s (iteration %d)", egressIP1.String(), i))
+
+			gomega.Eventually(func() bool {
+				return verifyLRPRule(srcPodIP, podOVNPod, dbContainerName, ovnKubernetesNamespace)
+			}, retryTimeout).Should(gomega.BeTrue(), fmt.Sprintf("lrp rule is not correct for EgressIP %s (iteration %d)", egressIP1.String(), i))
+
+			ginkgo.By(fmt.Sprintf("8.%d. Update namespace labels to match egressIP 2 (iteration %d)", i, i))
+			podNamespace = getNamespace(f, podNamespace.Name)
+			updateNamespaceLabels(f, podNamespace, nsEIPLabels2)
+			ginkgo.By(fmt.Sprintf("9.%d. Check that both SNAT and LRP rules are present for egress IP %s and no stale rules for egress IP %s (iteration %d)", i, egressIPName2, egressIPName, i))
+			gomega.Eventually(func() bool {
+				if !verifySNATRule(egressIPName2, egressIP2, srcPodIP, ovnPodEIP2, dbContainerName, ovnKubernetesNamespace) {
+					return false
+				}
+				return !verifySNATRule(egressIPName, egressIP1, srcPodIP, ovnPodEIP1, dbContainerName, ovnKubernetesNamespace)
+			}, retryTimeout).Should(gomega.BeTrue(), fmt.Sprintf("snat rule is not correct for EgressIP %s or stale rules exist for %s (iteration %d)", egressIP2.String(), egressIP1.String(), i))
+			gomega.Eventually(func() bool {
+				return verifyLRPRule(srcPodIP, podOVNPod, dbContainerName, ovnKubernetesNamespace)
+			}, retryTimeout).Should(gomega.BeTrue(), fmt.Sprintf("lrp rule is not correct (iteration %d)", i))
+		}
+
+	})
+
+	ginkgo.It("should handle EIP reassignment correctly on pod label update", func() {
+		if isUserDefinedNetwork(netConfigParams) {
+			ginkgo.Skip("Unsupported for UDNs")
+		}
+
+		ginkgo.By("0. Add the \"k8s.ovn.org/egress-assignable\" label to two nodes")
+		e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable", "dummy")
+		e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress2Node.name, "k8s.ovn.org/egress-assignable", "dummy")
+
+		ginkgo.By("1. Create an EgressIP object with one egress IP defined")
+		var egressIP1, egressIP2 net.IP
+		var err error
+		if utilnet.IsIPv6String(egress1Node.nodeIP) {
+			egressIP1, err = ipalloc.NewPrimaryIPv6()
+			egressIP2, err = ipalloc.NewPrimaryIPv6()
+		} else {
+			egressIP1, err = ipalloc.NewPrimaryIPv4()
+			egressIP2, err = ipalloc.NewPrimaryIPv4()
+		}
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate new Node IP")
+
+		podEIPLabels := map[string]string{
+			"wants": "egress",
+		}
+		podEIPLabels2 := map[string]string{
+			"wants": "egress2",
+		}
+
+		var egressIPConfig = `apiVersion: k8s.ovn.org/v1
+kind: EgressIP
+metadata:
+    name: ` + egressIPName + `
+spec:
+    egressIPs:
+    - ` + egressIP1.String() + `
+    podSelector:
+        matchLabels:
+            wants: egress
+    namespaceSelector:
+        matchLabels:
+            wants: egress
+`
+		if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
+			framework.Failf("Unable to write CRD config to disk: %v", err)
+		}
+		defer func() {
+			if err := os.Remove(egressIPYaml); err != nil {
+				framework.Logf("Unable to remove the CRD config from disk: %v", err)
+			}
+		}()
+
+		framework.Logf("Applying the EgressIP configuration")
+		e2ekubectl.RunKubectlOrDie("default", "create", "-f", egressIPYaml)
+
+		ginkgo.By("2. Create second EgressIP object with one egress IP defined")
+		var egressIPConfig2 = `apiVersion: k8s.ovn.org/v1
+kind: EgressIP
+metadata:
+    name: ` + egressIPName2 + `
+spec:
+    egressIPs:
+    - ` + egressIP2.String() + `
+    podSelector:
+        matchLabels:
+            wants: egress2
+    namespaceSelector:
+        matchLabels:
+            wants: egress
+`
+		if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig2), 0644); err != nil {
+			framework.Failf("Unable to write CRD config to disk: %v", err)
+		}
+		defer func() {
+			if err := os.Remove(egressIPYaml); err != nil {
+				framework.Logf("Unable to remove the CRD config from disk: %v", err)
+			}
+		}()
+
+		framework.Logf("Create the EgressIP configuration")
+		e2ekubectl.RunKubectlOrDie("default", "create", "-f", egressIPYaml)
+
+		ginkgo.By("3. Check that status of both EgressIP objects is of length one")
+		verifySpecificEgressIPStatusLengthEquals(egressIPName, 1, nil)
+		verifySpecificEgressIPStatusLengthEquals(egressIPName2, 1, nil)
+		eipNode1 := getSpecificEgressIPStatusItems(egressIPName)[0].Node
+		eipNode2 := getSpecificEgressIPStatusItems(egressIPName2)[0].Node
+		framework.Logf("Egress IP %s assigned to node %s", egressIP1.String(), eipNode1)
+		framework.Logf("Egress IP %s assigned to node %s", egressIP2.String(), eipNode2)
+
+		ginkgo.By("4. Create one pod matching the EgressIP")
+		pod1, err := createGenericPodWithLabel(f, pod1Name, pod1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEIPLabels)
+		framework.ExpectNoError(err, "failed to create pod %s/%s", f.Namespace.Name, pod1Name)
+		srcPodIP, err := getPodIPWithRetry(f.ClientSet, isIPv6TestRun, f.Namespace.Name, pod1Name)
+		framework.ExpectNoError(err, "Failed to get pod IP: %v", err)
+		framework.Logf("Created pod %s on node %s", pod1Name, pod1Node.name)
+		podNamespace := getNamespace(f, f.Namespace.Name)
+		updateNamespaceLabels(f, podNamespace, podEIPLabels)
+
+		ovnPodEIP1 := getOVNPodOnNode(eipNode1)
+		ovnPodEIP2 := getOVNPodOnNode(eipNode2)
+		dbContainerName := "nb-ovsdb"
+		podOVNPod := getOVNPodOnNode(pod1Node.name)
+		ovnKubernetesNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+
+		// Run pod label updates multiple times to ensure no stale SNAT/LRP rules
+		for i := 1; i <= 5; i++ {
+			ginkgo.By(fmt.Sprintf("5.%d. Update pod labels match egressIP %s selectors (iteration %d)", i, egressIPName, i))
+			pod1 = getPod(f, pod1Name)
+			for k, v := range podEIPLabels {
+				pod1.Labels[k] = v
+			}
+			updatePod(f, pod1)
+			ginkgo.By(fmt.Sprintf("6.%d. Check that both SNAT and LRP rules are present for egress IPs %s and no stale rules for egress IP %s (iteration %d)", i, egressIPName, egressIPName2, i))
+			gomega.Eventually(func() bool {
+				if !verifySNATRule(egressIPName, egressIP1, srcPodIP, ovnPodEIP1, dbContainerName, ovnKubernetesNamespace) {
+					return false
+				}
+				return !verifySNATRule(egressIPName, egressIP2, srcPodIP, ovnPodEIP2, dbContainerName, ovnKubernetesNamespace)
+			}, retryTimeout).Should(gomega.BeTrue(), fmt.Sprintf("snat rule is not correct for EgressIP %s (iteration %d)", egressIP1.String(), i))
+
+			gomega.Eventually(func() bool {
+				return verifyLRPRule(srcPodIP, podOVNPod, dbContainerName, ovnKubernetesNamespace)
+			}, retryTimeout).Should(gomega.BeTrue(), fmt.Sprintf("lrp rule is not correct for EgressIP %s (iteration %d)", egressIP1.String(), i))
+
+			ginkgo.By(fmt.Sprintf("7.%d. Update pod labels to match egressIP 2 (iteration %d)", i, i))
+			pod1 = getPod(f, pod1Name)
+			for k, v := range podEIPLabels2 {
+				pod1.Labels[k] = v
+			}
+			updatePod(f, pod1)
+			ginkgo.By(fmt.Sprintf("8.%d. Check that both SNAT and LRP rules are present for egress IP %s and no stale rules for egress IP %s (iteration %d)", i, egressIPName2, egressIPName, i))
+			gomega.Eventually(func() bool {
+				if !verifySNATRule(egressIPName2, egressIP2, srcPodIP, ovnPodEIP2, dbContainerName, ovnKubernetesNamespace) {
+					return false
+				}
+				return !verifySNATRule(egressIPName, egressIP1, srcPodIP, ovnPodEIP1, dbContainerName, ovnKubernetesNamespace)
+			}, retryTimeout).Should(gomega.BeTrue(), fmt.Sprintf("snat rule is not correct for EgressIP %s or stale rules exist for %s (iteration %d)", egressIP2.String(), egressIP1.String(), i))
+
+			gomega.Eventually(func() bool {
+				return verifyLRPRule(srcPodIP, podOVNPod, dbContainerName, ovnKubernetesNamespace)
+			}, retryTimeout).Should(gomega.BeTrue(), fmt.Sprintf("lrp rule is not correct (iteration %d)", i))
+		}
+
+	})
+
+	ginkgo.It("should handle EIP reassignment correctly on EgressIP object update", func() {
+		if isUserDefinedNetwork(netConfigParams) {
+			ginkgo.Skip("Unsupported for UDNs")
+		}
+
+		ginkgo.By("0. Add the \"k8s.ovn.org/egress-assignable\" label to two nodes")
+		e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable", "dummy")
+		e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress2Node.name, "k8s.ovn.org/egress-assignable", "dummy")
+
+		ginkgo.By("1. Create two namespaces with different labels")
+		pod1Labels := map[string]string{
+			"wants": "egress",
+		}
+		pod2Labels := map[string]string{
+			"wants": "egress2",
+		}
+
+		ginkgo.By("2. Create an EgressIP object with one egress IP defined")
+		var egressIP1 net.IP
+		var err error
+		if utilnet.IsIPv6String(egress1Node.nodeIP) {
+			egressIP1, err = ipalloc.NewPrimaryIPv6()
+		} else {
+			egressIP1, err = ipalloc.NewPrimaryIPv4()
+		}
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate new Node IP")
+
+		var egressIPConfig = `apiVersion: k8s.ovn.org/v1
+kind: EgressIP
+metadata:
+    name: ` + egressIPName + `
+spec:
+    egressIPs:
+    - ` + egressIP1.String() + `
+    podSelector:
+        matchLabels:
+            wants: egress
+    namespaceSelector:
+        matchLabels:
+            wants: egress
+`
+		if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
+			framework.Failf("Unable to write CRD config to disk: %v", err)
+		}
+		defer func() {
+			if err := os.Remove(egressIPYaml); err != nil {
+				framework.Logf("Unable to remove the CRD config from disk: %v", err)
+			}
+		}()
+
+		framework.Logf("Applying the EgressIP configuration")
+		e2ekubectl.RunKubectlOrDie("default", "create", "-f", egressIPYaml)
+
+		ginkgo.By("3. Check that status of EgressIP object is of length one")
+		verifySpecificEgressIPStatusLengthEquals(egressIPName, 1, nil)
+		eipNode1 := getSpecificEgressIPStatusItems(egressIPName)[0].Node
+		framework.Logf("Egress IP %s assigned to node %s", egressIP1.String(), eipNode1)
+
+		ginkgo.By("4. Create two pods in the namespace matching the EgressIP")
+		_, err = createGenericPodWithLabel(f, pod1Name, pod1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), pod1Labels)
+		framework.ExpectNoError(err, "failed to create pod %s/%s", f.Namespace.Name, pod1Name)
+		srcPod1IP, err := getPodIPWithRetry(f.ClientSet, isIPv6TestRun, f.Namespace.Name, pod1Name)
+		framework.ExpectNoError(err, "Failed to get pod IP: %v", err)
+		framework.Logf("Created pod %s on node %s", pod1Name, pod1Node.name)
+		_, err = createGenericPodWithLabel(f, pod2Name, pod2Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), pod2Labels)
+		framework.ExpectNoError(err, "failed to create pod %s/%s", f.Namespace.Name, pod2Name)
+		srcPod2IP, err := getPodIPWithRetry(f.ClientSet, isIPv6TestRun, f.Namespace.Name, pod2Name)
+		framework.ExpectNoError(err, "Failed to get pod IP: %v", err)
+		framework.Logf("Created pod %s on node %s", pod2Name, pod2Node.name)
+		podNamespace := getNamespace(f, f.Namespace.Name)
+		updateNamespaceLabels(f, podNamespace, pod1Labels)
+
+		ginkgo.By("5. Get the OVN pods and DB container name for the EgressIP")
+		ovnPodEIP := getOVNPodOnNode(eipNode1)
+		dbContainerName := "nb-ovsdb"
+		pod1OVNPod := getOVNPodOnNode(pod1Node.name)
+		pod2OVNPod := getOVNPodOnNode(pod2Node.name)
+		ovnKubernetesNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+
+		// Run EgressIP object updates multiple times to ensure no stale SNAT/LRP rules
+		for i := 1; i <= 5; i++ {
+			ginkgo.By(fmt.Sprintf("6.%d. Update EgressIP namespaceSelector to match pod1 %s (iteration %d)", i, pod1Name, i))
+			var egressIPConfig = `apiVersion: k8s.ovn.org/v1
+kind: EgressIP
+metadata:
+    name: ` + egressIPName + `
+spec:
+    egressIPs:
+    - ` + egressIP1.String() + `
+    podSelector:
+        matchLabels:
+            wants: egress
+    namespaceSelector:
+        matchLabels:
+            wants: egress
+`
+			if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
+				framework.Failf("Unable to write CRD config to disk: %v", err)
+			}
+			e2ekubectl.RunKubectlOrDie("default", "apply", "-f", egressIPYaml)
+
+			ginkgo.By(fmt.Sprintf("7.%d. Check that both SNAT and LRP rules are present for pod1 %s and no stale rules for pod2 %s (iteration %d)", i, pod1Name, pod2Name, i))
+			gomega.Eventually(func() bool {
+				if !verifySNATRule(egressIPName, egressIP1, srcPod1IP, ovnPodEIP, dbContainerName, ovnKubernetesNamespace) {
+					return false
+				}
+				if verifySNATRule(egressIPName, egressIP1, srcPod2IP, ovnPodEIP, dbContainerName, ovnKubernetesNamespace) {
+					return false
+				}
+				if verifyLRPRule(srcPod2IP, pod2OVNPod, dbContainerName, ovnKubernetesNamespace) {
+					return false
+				}
+				return verifyLRPRule(srcPod1IP, pod1OVNPod, dbContainerName, ovnKubernetesNamespace)
+			}, retryTimeout).Should(gomega.BeTrue(), fmt.Sprintf("snat or lrp rule is not correct for egressip update for pod %s (iteration %d)", pod1Name, i))
+
+			ginkgo.By(fmt.Sprintf("6.%d. Update EgressIP namespaceSelector to match pod2 %s (iteration %d)", i, pod2Name, i))
+			var egressIPConfig2 = `apiVersion: k8s.ovn.org/v1
+kind: EgressIP
+metadata:
+    name: ` + egressIPName + `
+spec:
+    egressIPs:
+    - ` + egressIP1.String() + `
+    podSelector:
+        matchLabels:
+            wants: egress2
+    namespaceSelector:
+        matchLabels:
+            wants: egress
+`
+			if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig2), 0644); err != nil {
+				framework.Failf("Unable to write CRD config to disk: %v", err)
+			}
+			e2ekubectl.RunKubectlOrDie("default", "apply", "-f", egressIPYaml)
+
+			ginkgo.By(fmt.Sprintf("8.%d. Check that both SNAT and LRP rules are present for pod2 %s and no stale rules for pod1 %s (iteration %d)", i, pod2Name, pod1Name, i))
+			gomega.Eventually(func() bool {
+				if !verifySNATRule(egressIPName, egressIP1, srcPod2IP, ovnPodEIP, dbContainerName, ovnKubernetesNamespace) {
+					return false
+				}
+				if verifySNATRule(egressIPName, egressIP1, srcPod1IP, ovnPodEIP, dbContainerName, ovnKubernetesNamespace) {
+					return false
+				}
+				if verifyLRPRule(srcPod1IP, pod1OVNPod, dbContainerName, ovnKubernetesNamespace) {
+					return false
+				}
+				return verifyLRPRule(srcPod2IP, pod2OVNPod, dbContainerName, ovnKubernetesNamespace)
+			}, retryTimeout).Should(gomega.BeTrue(), fmt.Sprintf("snat or lrp rule is not correct for egressip update for pod %s (iteration %d)", pod2Name, i))
+		}
 	})
 
 	ginkgo.DescribeTable("[OVN network] multiple namespaces with different primary networks", func(otherNetworkAttachParms networkAttachmentConfigParams) {
