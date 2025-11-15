@@ -10,7 +10,9 @@ import (
 	current "github.com/containernetworking/cni/pkg/types/100"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/util/wait"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
@@ -148,6 +150,8 @@ func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
 	networkManager networkmanager.Interface,
 	ovsClient client.Client,
 ) (*Response, error) {
+	var pod *corev1.Pod
+
 	namespace := pr.PodNamespace
 	podName := pr.PodName
 	if namespace == "" || podName == "" {
@@ -155,6 +159,32 @@ func (pr *PodRequest) cmdAddWithGetCNIResultFunc(
 	}
 
 	kubecli := &kube.Kube{KClient: clientset.kclient}
+	err := wait.PollUntilContextTimeout(pr.ctx, 200*time.Millisecond, 5*time.Second, true,
+		func(_ context.Context) (bool, error) {
+			var err error
+			pod, err = clientset.getPod(pr.PodNamespace, pr.PodName)
+			if err != nil {
+				if !apierrors.IsNotFound(err) {
+					return false, err
+				} else {
+					return false, nil
+				}
+			} else {
+				return true, nil
+			}
+		})
+	if pod == nil {
+		return nil, fmt.Errorf("failed to get pod %s/%s: %v", pr.PodNamespace, pr.PodName, err)
+	}
+
+	if pr.netName != types.DefaultNetworkName {
+		nadKey, err := GetCNINADKey(pod, pr.IfName, pr.nadName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get NAD key for CNI Add request %v: %v", pr, err)
+		}
+		pr.nadName = nadKey
+	}
+
 	annotCondFn := isOvnReady
 	netdevName := ""
 	if pr.CNIConf.DeviceID != "" {
@@ -288,11 +318,26 @@ func (pr *PodRequest) cmdDel(clientset *ClientSet) (*Response, error) {
 		return nil, fmt.Errorf("required CNI variable missing")
 	}
 
+	pod, err := clientset.getPod(pr.PodNamespace, pr.PodName)
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return nil, fmt.Errorf("failed to get pod %s/%s: %w", pr.PodNamespace, pr.PodName, err)
+		}
+	}
+
+	if pod != nil && pr.netName != types.DefaultNetworkName {
+		nadKey, err := GetCNINADKey(pod, pr.IfName, pr.nadName)
+		if err != nil {
+			return nil, err
+		}
+		pr.nadName = nadKey
+	}
+
 	netdevName := ""
 	if pr.CNIConf.DeviceID != "" {
 		if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
-			pod, err := clientset.getPod(pr.PodNamespace, pr.PodName)
-			if err != nil {
+			if pod == nil {
+				// no need to update DPU connection-details annotation if pod is already removed
 				klog.Warningf("Failed to get pod %s/%s: %v", pr.PodNamespace, pr.PodName, err)
 				return response, nil
 			}
@@ -317,21 +362,28 @@ func (pr *PodRequest) cmdDel(clientset *ClientSet) (*Response, error) {
 		} else {
 			// Find the hostInterface name
 			condString := []string{"external-ids:sandbox=" + pr.SandboxID}
-			if pr.netName != types.DefaultNetworkName {
-				condString = append(condString, fmt.Sprintf("external_ids:%s=%s", types.NADExternalID, pr.nadName))
-			} else {
-				condString = append(condString, fmt.Sprintf("external_ids:%s{=}[]", types.NADExternalID))
-			}
+			condString = append(condString, fmt.Sprintf("external_ids:pod-if-name=%s", pr.IfName))
 			ovsIfNames, err := ovsFind("Interface", "name", condString...)
+			if err != nil || len(ovsIfNames) != 1 {
+				// the pod was added before "external_ids:pod-if-name" was introduced, fall back to the old way to find
+				// out the OVS interface associated with this CNIDel request
+				condString = []string{"external-ids:sandbox=" + pr.SandboxID}
+				if pr.netName != types.DefaultNetworkName {
+					condString = append(condString, fmt.Sprintf("external_ids:%s=%s", types.NADExternalID, pr.nadName))
+				} else {
+					condString = append(condString, fmt.Sprintf("external_ids:%s{=}[]", types.NADExternalID))
+				}
+				ovsIfNames, err = ovsFind("Interface", "name", condString...)
+			}
+
 			if err != nil || len(ovsIfNames) != 1 {
 				klog.Warningf("Couldn't find the OVS interface for pod %s/%s NAD %s: %v",
 					pr.PodNamespace, pr.PodName, pr.nadName, err)
 			} else {
-				ovsIfName := ovsIfNames[0]
-				out, err := ovsGet("interface", ovsIfName, "external_ids", "vf-netdev-name")
+				out, err := ovsGet("interface", ovsIfNames[0], "external_ids", "vf-netdev-name")
 				if err != nil {
 					klog.Warningf("Couldn't find the original Netdev name from OVS interface %s for pod %s/%s: %v",
-						ovsIfName, pr.PodNamespace, pr.PodName, err)
+						ovsIfNames[0], pr.PodNamespace, pr.PodName, err)
 				} else {
 					netdevName = out
 				}
