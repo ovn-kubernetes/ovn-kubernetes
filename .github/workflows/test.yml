@@ -200,15 +200,7 @@ jobs:
         cache: false
       id: go
 
-    - name: Install VRF kernel module
-      if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
-      run: |
-        set -x
-        sudo apt update
-        sudo apt-get install linux-modules-extra-$(uname -r) -y
-        sudo modprobe vrf
-
-    - name: Build and Test - from current pr branch
+    - name: Build - from current pr branch
       if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
       run: |
         set -x
@@ -218,7 +210,6 @@ jobs:
            make verify-go-mod-vendor
            make
            make windows
-           COVERALLS=1 CONTAINER_RUNNABLE=1 make check
         popd
 
     - name: Build docker image - from current pr branch
@@ -233,23 +224,6 @@ jobs:
           mkdir _output
           docker save ${IMAGE} > _output/${CI_IMAGE_PR_TAR}
         popd
-
-    - name: Submit code coverage to Coveralls
-      if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
-      continue-on-error: true
-      env:
-        COVERALLS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        set -x
-        go install github.com/mattn/goveralls@latest
-        go install github.com/modocache/gover@latest
-        PATH=$PATH:$(go env GOPATH)/bin
-
-        mkdir -p $(go env GOPATH)/src/github.com/ovn-org
-        ln -sf $(pwd) $(go env GOPATH)/src/github.com/ovn-org/ovn-kubernetes
-
-        gover
-        GO111MODULE=off goveralls -coverprofile=gover.coverprofile -service=github
 
     - name: Cache PR image
       if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
@@ -271,6 +245,54 @@ jobs:
       with:
         name: test-image-pr
         path: ${{ env.CI_DIST_IMAGES_OUTPUT }}/${{ env.CI_IMAGE_PR_TAR }}
+
+  test-pr:
+    name: Test-PR
+    runs-on: ubuntu-24.04
+    steps:
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: 'go-controller/go.mod'
+        # Disabling cache to avoid warnings until these two issues are fixed
+        # https://github.com/actions/setup-go/issues/424
+        # https://github.com/actions/setup-go/issues/403
+        # cache-dependency-path: "**/*.sum"
+        cache: false
+      id: go
+
+    - name: Install VRF kernel module
+      run: |
+        set -x
+        sudo apt update
+        sudo apt-get install linux-modules-extra-$(uname -r) -y
+        sudo modprobe vrf
+
+    - name: Run unit tests
+      run: |
+        set -x
+        pushd go-controller
+        COVERALLS=1 CONTAINER_RUNNABLE=1 make check
+        popd
+
+    - name: Submit code coverage to Coveralls
+      continue-on-error: true
+      env:
+        COVERALLS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        set -x
+        go install github.com/mattn/goveralls@latest
+        go install github.com/modocache/gover@latest
+        PATH=$PATH:$(go env GOPATH)/bin
+
+        mkdir -p $(go env GOPATH)/src/github.com/ovn-org
+        ln -sf $(pwd) $(go env GOPATH)/src/github.com/ovn-org/ovn-kubernetes
+
+        gover
+        GO111MODULE=off goveralls -coverprofile=gover.coverprofile -service=github
 
   ovn-upgrade-e2e:
     name: Upgrade OVN from Base to PR branch based image
