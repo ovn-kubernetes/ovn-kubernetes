@@ -144,7 +144,15 @@ fi
 BGP_TESTS="BGP"
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then
   skip $BGP_TESTS
-else
+fi
+
+# Skip BGP-no-overlay tests if no-overlay mode is not enabled
+NO_OVERLAY_TESTS="BGP-no-overlay"
+if [ "$OVN_NO_OVERLAY" != "true" ]; then
+  skip $NO_OVERLAY_TESTS
+fi
+
+if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
   if [ "$ADVERTISE_DEFAULT_NETWORK" = true ]; then
     # Filter out extended RouteAdvertisements tests to keep job run time down
     if [ "$ENABLE_NETWORK_SEGMENTATION" = true ]; then
