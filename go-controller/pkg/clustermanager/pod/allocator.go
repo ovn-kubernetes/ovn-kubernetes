@@ -20,7 +20,7 @@ import (
 	ipallocator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip/subnet"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/mac"
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/pod"
+	podallocator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/pod"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/persistentips"
@@ -41,7 +41,7 @@ type PodAllocator struct {
 	idAllocator id.Allocator
 
 	// An utility to allocate the PodAnnotation to pods
-	podAnnotationAllocator *pod.PodAnnotationAllocator
+	podAnnotationAllocator *podallocator.PodAnnotationAllocator
 
 	ipamClaimsReconciler persistentips.PersistentAllocations
 
@@ -61,7 +61,7 @@ type PodAllocator struct {
 // NewPodAllocator builds a new PodAllocator
 func NewPodAllocator(
 	netInfo util.NetInfo,
-	podAnnotationAllocator *pod.PodAnnotationAllocator,
+	podAnnotationAllocator *podallocator.PodAnnotationAllocator,
 	ipAllocator subnet.Allocator,
 	claimsReconciler persistentips.PersistentAllocations,
 	networkManager networkmanager.Interface,
@@ -380,7 +380,8 @@ func (a *PodAllocator) allocatePodOnNAD(pod *corev1.Pod, nad string, network *ne
 	if err != nil {
 		if errors.Is(err, ipallocator.ErrFull) ||
 			errors.Is(err, ipallocator.ErrAllocated) ||
-			errors.Is(err, mac.ErrReserveMACConflict) {
+			errors.Is(err, mac.ErrReserveMACConflict) ||
+			errors.Is(err, podallocator.ErrIPFamilyMismatch) {
 			a.recordPodErrorEvent(pod, err)
 		}
 		return err
