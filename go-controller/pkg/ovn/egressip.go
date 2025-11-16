@@ -767,7 +767,7 @@ func (e *EgressIPController) addNamespaceEgressIPAssignments(ni util.NetInfo, na
 func (e *EgressIPController) addPodEgressIPAssignmentsWithLock(ni util.NetInfo, name string, statusAssignments []egressipv1.EgressIPStatusItem, mark util.EgressIPMark, pod *corev1.Pod) error {
 	e.podAssignment.LockKey(getPodKey(pod))
 	defer e.podAssignment.UnlockKey(getPodKey(pod))
-	e.deletePreviousNetworkPodEgressIPAssignments(ni, name, statusAssignments, pod)
+	e.deletePreviousNetworkPodEgressIPAssignments(ni, name, statusAssignments, pod, false)
 	return e.addPodEgressIPAssignments(ni, name, statusAssignments, mark, pod)
 }
 
@@ -857,7 +857,13 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 	}
 	for _, staleStatus := range staleAssignments {
 		klog.V(2).Infof("Deleting stale pod egress IP status: %v for EgressIP: %s and pod: %s/%s/%v", staleStatus, name, pod.Namespace, pod.Name, podIPNets)
-		err = e.deletePodEgressIPAssignments(ni, name, []egressipv1.EgressIPStatusItem{staleStatus}, pod)
+		// When deleting stale status during assignment, assignStandby=true is passed, but standby promotion
+		// will never occur because standbyEgressIPNames is empty (or doesn't contain this EgressIP) at this point:
+		// - If podState is new, standbyEgressIPNames is initialized empty
+		// - If this EIP is already active, it was removed from standbyEgressIPNames
+		// - If another EIP is active, we return early and never reach this code
+		// Additionally, even if statusMap becomes temporarily empty, new statuses are added immediately after.
+		err = e.deletePodEgressIPAssignments(ni, name, []egressipv1.EgressIPStatusItem{staleStatus}, pod, true)
 		if err != nil {
 			klog.Warningf("Failed to delete stale EgressIP status %s/%v for pod %s: %v", name, staleStatus, podKey, err)
 		}
@@ -1043,12 +1049,14 @@ func (e *EgressIPController) deleteNamespaceEgressIPAssignment(ni util.NetInfo, 
 func (e *EgressIPController) deletePodEgressIPAssignmentsWithCleanup(ni util.NetInfo, name string, statusesToRemove []egressipv1.EgressIPStatusItem, pod *corev1.Pod) error {
 	e.podAssignment.LockKey(getPodKey(pod))
 	defer e.podAssignment.UnlockKey(getPodKey(pod))
-	e.deletePreviousNetworkPodEgressIPAssignments(ni, name, statusesToRemove, pod)
-	return e.deletePodEgressIPAssignments(ni, name, statusesToRemove, pod)
+	e.deletePreviousNetworkPodEgressIPAssignments(ni, name, statusesToRemove, pod, false)
+	return e.deletePodEgressIPAssignments(ni, name, statusesToRemove, pod, true)
 }
 
 // deletePodEgressIPAssignments *must* be called with podAssignment lock on pod
-func (e *EgressIPController) deletePodEgressIPAssignments(ni util.NetInfo, name string, statusesToRemove []egressipv1.EgressIPStatusItem, pod *corev1.Pod) error {
+// If assignStandby is true, any standby EgressIP for the pod will be promoted to active.
+func (e *EgressIPController) deletePodEgressIPAssignments(ni util.NetInfo, name string, statusesToRemove []egressipv1.EgressIPStatusItem, pod *corev1.Pod,
+	assignStandby bool) error {
 	podKey := getPodKey(pod)
 	podStatus, exists := e.podAssignment.Load(podKey)
 	if !exists {
@@ -1056,42 +1064,42 @@ func (e *EgressIPController) deletePodEgressIPAssignments(ni util.NetInfo, name 
 	} else if podStatus.egressIPName != name {
 		// standby egressIP no longer matches this pod, update cache
 		podStatus.standbyEgressIPNames.Delete(name)
-		return nil
-	}
-	for _, statusToRemove := range statusesToRemove {
-		if ok := podStatus.egressStatuses.contains(statusToRemove); !ok {
-			// we can continue here since this pod was not managed by this statusToRemove
-			continue
-		}
-		klog.V(2).Infof("Deleting pod egress IP status: %v for EgressIP: %s and pod: %s/%s", statusToRemove, name, pod.Name, pod.Namespace)
-		nodesToLock := []string{statusToRemove.Node, pod.Spec.NodeName}
-		// Sort nodes lexicographically to ensure node locks are acquired in
-		// same order, preventing deadlock situations.
-		sort.Strings(nodesToLock)
-		err := e.nodeZoneState.DoWithLock(nodesToLock[0], func(_ string) error {
-			if statusToRemove.Node == pod.Spec.NodeName {
-				// we are safe, no need to grab lock again
-				if err := e.deletePodEgressIPAssignment(ni, name, statusToRemove, pod); err != nil {
-					return err
-				}
-				podStatus.egressStatuses.delete(statusToRemove)
-				return nil
+	} else {
+		for _, statusToRemove := range statusesToRemove {
+			if ok := podStatus.egressStatuses.contains(statusToRemove); !ok {
+				// we can continue here since this pod was not managed by this statusToRemove
+				continue
 			}
-			return e.nodeZoneState.DoWithLock(nodesToLock[1], func(_ string) error {
-				if err := e.deletePodEgressIPAssignment(ni, name, statusToRemove, pod); err != nil {
-					return err
+			klog.V(2).Infof("Deleting pod egress IP status: %v for EgressIP: %s and pod: %s/%s", statusToRemove, name, pod.Name, pod.Namespace)
+			nodesToLock := []string{statusToRemove.Node, pod.Spec.NodeName}
+			// Sort nodes lexicographically to ensure node locks are acquired in
+			// same order, preventing deadlock situations.
+			sort.Strings(nodesToLock)
+			err := e.nodeZoneState.DoWithLock(nodesToLock[0], func(_ string) error {
+				if statusToRemove.Node == pod.Spec.NodeName {
+					// we are safe, no need to grab lock again
+					if err := e.deletePodEgressIPAssignment(ni, name, statusToRemove, pod); err != nil {
+						return err
+					}
+					podStatus.egressStatuses.delete(statusToRemove)
+					return nil
 				}
-				podStatus.egressStatuses.delete(statusToRemove)
-				return nil
+				return e.nodeZoneState.DoWithLock(nodesToLock[1], func(_ string) error {
+					if err := e.deletePodEgressIPAssignment(ni, name, statusToRemove, pod); err != nil {
+						return err
+					}
+					podStatus.egressStatuses.delete(statusToRemove)
+					return nil
+				})
 			})
-		})
-		if err != nil {
-			return err
+			if err != nil {
+				return err
+			}
 		}
 	}
 	// Delete the key if there are no more status assignments to keep
-	// for the pod.
-	if len(podStatus.egressStatuses.statusMap) == 0 {
+	// for the pod and no other assigned standby EgressIPs.
+	if len(podStatus.egressStatuses.statusMap) == 0 && len(podStatus.standbyEgressIPNames) == 0 {
 		// pod could be managed by more than one egressIP
 		// so remove the podKey from cache only if we are sure
 		// there are no more egressStatuses managing this pod
@@ -1102,17 +1110,41 @@ func (e *EgressIPController) deletePodEgressIPAssignments(ni util.NetInfo, name 
 			}
 		}
 		e.podAssignment.Delete(podKey)
+	} else if len(podStatus.egressStatuses.statusMap) == 0 && len(podStatus.standbyEgressIPNames) > 0 && assignStandby {
+		// If the pod is no longer assigned an active EgressIP, promote a standby EgressIP to active.
+		// If the pod is already deleted, addStandByEgressIPAssignment is a no-op, so calling it is safe.
+		// The pod's state is removed from the podAssignment cache when deletePodEgressIPAssignments is invoked
+		// for the standby EgressIP.
+		// This block is not executed in the following cases:
+		// 1. During stale-assignment cleanup in addPodEgressIPAssignments, because podStatus.standbyEgressIPNames
+		//    is empty.
+		// 2. During stale-network cleanup (assignStandby=false).
+		klog.V(2).Infof("Pod %s has standby egress IP %+v", podKey, podStatus.standbyEgressIPNames.UnsortedList())
+		// We have deleted the current egressIP (i.e. podStatus.egressStatuses.statusMap is empty now) that was managing
+		// the pod, so set podStatus.egressIPName to empty string. This allows the promotion of a standby EgressIP to active:
+		// addStandByEgressIPAssignment (called below) invokes addPodEgressIPAssignments, which checks if
+		// podState.egressIPName matches the new EgressIP name or is empty. When empty, it allows the standby EgressIP
+		// to become the active one for this pod.
+		podStatus.egressIPName = ""
+		if err := e.addStandByEgressIPAssignment(ni, podKey, podStatus); err != nil {
+			klog.Errorf("Adding standby egressIPs for pod %s with status %v failed: %v", podKey, podStatus, err)
+			// We are not returning the error on purpose, this will be best effort without any retries because
+			// retrying deletePodEgressIPAssignments for original EIP because addStandByEgressIPAssignment failed is
+			// useless.
+			return nil
+		}
 	}
 	return nil
 }
 
 // deletePreviousNetworkPodEgressIPAssignments checks if the network changed and remove any stale config on the previous network.
 // must be called with podAssignment lock on pod
-func (e *EgressIPController) deletePreviousNetworkPodEgressIPAssignments(ni util.NetInfo, name string, statusesToRemove []egressipv1.EgressIPStatusItem, pod *corev1.Pod) {
+func (e *EgressIPController) deletePreviousNetworkPodEgressIPAssignments(ni util.NetInfo, name string, statusesToRemove []egressipv1.EgressIPStatusItem,
+	pod *corev1.Pod, assignStandby bool) {
 	cachedNetwork := e.getNetworkFromPodAssignment(getPodKey(pod))
 	if cachedNetwork != nil {
 		if !util.AreNetworksCompatible(cachedNetwork, ni) {
-			if err := e.deletePodEgressIPAssignments(cachedNetwork, name, statusesToRemove, pod); err != nil {
+			if err := e.deletePodEgressIPAssignments(cachedNetwork, name, statusesToRemove, pod, assignStandby); err != nil {
 				// no error is returned because high probability network is deleted
 				klog.Errorf("Failed to delete EgressIP %s assignment for pod %s/%s attached to network %s: %v",
 					name, pod.Namespace, pod.Name, cachedNetwork.GetNetworkName(), err)
