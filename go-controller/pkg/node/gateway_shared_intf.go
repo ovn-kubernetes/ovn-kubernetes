@@ -15,6 +15,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ktypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -895,6 +896,14 @@ func (npw *nodePortWatcher) UpdateService(old, new *corev1.Service) error {
 		if err = delServiceRules(old, svcConfig.localEndpoints, npw); err != nil {
 			errors = append(errors, err)
 		}
+
+		// Delete conntrack entries for UDP ports of the service if they have changed.
+		// UDP is connectionless, so stale conntrack entries can cause packets to be routed to
+		// old target ports even after service updates. Unlike TCP (which is stateful and manages
+		// its own connection lifecycle), UDP conntrack entries must be explicitly cleaned up.
+		if err = npw.deleteConntrackForUpdatedUDPServiceIPPorts(old, new); err != nil {
+			errors = append(errors, fmt.Errorf("failed to delete conntrack entries for UDP ports of service %v: %v", name, err))
+		}
 	}
 
 	if util.ServiceTypeHasClusterIP(new) && util.IsClusterIPSet(new) {
@@ -914,6 +923,131 @@ func (npw *nodePortWatcher) UpdateService(old, new *corev1.Service) error {
 	}
 	return nil
 
+}
+
+// deleteConntrackForUpdatedUDPServiceIPPorts deletes the conntrack entries for the updated UDP ports of the service.
+// The conntrack entries are deleted for the old IP:port:targetPort combinations if they are not present in the
+// corresponding new IP:port:targetPort combinations for External and LB IP, ClusterIP and Node IP.
+func (npw *nodePortWatcher) deleteConntrackForUpdatedUDPServiceIPPorts(old, new *corev1.Service) error {
+	// Skip if there are no service IPs and ports changed
+	if apiequality.Semantic.DeepEqual(old.Spec.Ports, new.Spec.Ports) &&
+		apiequality.Semantic.DeepEqual(old.Spec.ExternalIPs, new.Spec.ExternalIPs) &&
+		apiequality.Semantic.DeepEqual(old.Spec.ClusterIP, new.Spec.ClusterIP) &&
+		apiequality.Semantic.DeepEqual(old.Spec.ClusterIPs, new.Spec.ClusterIPs) &&
+		apiequality.Semantic.DeepEqual(old.Status.LoadBalancer.Ingress, new.Status.LoadBalancer.Ingress) {
+		return nil
+	}
+
+	klog.V(5).Infof("Service %s/%s IPs/ports changed, evaluating UDP conntrack cleanup", old.Namespace, old.Name)
+
+	// Get the new IP:port:targetPort combinations for External and LB IP, ClusterIP and Node IP and delete the
+	// conntrack entries for the old IP:port:targetPort combinations that are not present in the
+	// corresponding new IP:port:targetPort combinations
+	deletedCount := 0
+	var errs []error
+
+	// External and LB IPs
+	newExternalIPs := util.GetExternalAndLBIPs(new)
+	oldExternalIPs := util.GetExternalAndLBIPs(old)
+	extIPsDeletedCount, extIPsErrs := deleteStaleUDPConntrackForUDPPortsAndIPs(new.Spec.Ports, newExternalIPs, old.Spec.Ports, oldExternalIPs, old.Namespace, old.Name, "svcPort")
+
+	// Cluster IPs
+	newClusterIPs := util.GetClusterIPs(new)
+	oldClusterIPs := util.GetClusterIPs(old)
+	clusterIPsDeletedCount, clusterIPsErrs := deleteStaleUDPConntrackForUDPPortsAndIPs(new.Spec.Ports, newClusterIPs, old.Spec.Ports, oldClusterIPs, old.Namespace, old.Name, "svcPort")
+
+	// Node IPs
+	var newNodeIPs []net.IP
+	if util.ServiceTypeHasNodePort(new) {
+		newNodeIPs, _ = npw.nodeIPManager.ListAddresses()
+	}
+	var oldNodeIPs []net.IP
+	if util.ServiceTypeHasNodePort(old) {
+		oldNodeIPs, _ = npw.nodeIPManager.ListAddresses()
+	}
+	nodePortDeletedCount, nodePortErrs := deleteStaleUDPConntrackForUDPPortsAndIPs(new.Spec.Ports, newNodeIPs, old.Spec.Ports, oldNodeIPs, old.Namespace, old.Name, "nodePort")
+
+	deletedCount = extIPsDeletedCount + clusterIPsDeletedCount + nodePortDeletedCount
+	errs = append(errs, extIPsErrs...)
+	errs = append(errs, clusterIPsErrs...)
+	errs = append(errs, nodePortErrs...)
+
+	if deletedCount > 0 {
+		klog.Infof("Deleted %d UDP conntrack entries for service %s/%s", deletedCount, old.Namespace, old.Name)
+	}
+
+	return utilerrors.Join(errs...)
+}
+
+// IPStringer is a constraint for types that can be converted to string IP representations
+type IPStringer interface {
+	~string | net.IP
+}
+
+// ipToString converts various IP types to string
+func ipToString[T IPStringer](ip T) string {
+	switch v := any(ip).(type) {
+	case string:
+		return v
+	case net.IP:
+		return v.String()
+	default:
+		return ""
+	}
+}
+
+// deleteStaleUDPConntrackForUDPPortsAndIPs deletes the conntrack entries for the updated UDP ports of the service.
+// The conntrack entries are deleted for the old IP:port:targetPort combinations that are not present in the
+// corresponding new IP:port:targetPort combinations.
+func deleteStaleUDPConntrackForUDPPortsAndIPs[T IPStringer](
+	newServicePorts []corev1.ServicePort,
+	newIPs []T,
+	oldServicePorts []corev1.ServicePort,
+	oldIPs []T,
+	namespace,
+	name,
+	portType string,
+) (int, []error) {
+	var errs []error
+	deletedCount := 0
+
+	// Get the new IP:port:targetPort combinations
+	newIPPortTargetPorts := sets.New[string]()
+	for _, newPort := range newServicePorts {
+		if newPort.Protocol != corev1.ProtocolUDP {
+			continue
+		}
+		for _, newIP := range newIPs {
+			newIPPortTargetPorts.Insert(util.JoinServiceIPPortTargetPort(ipToString(newIP), newPort.Port, newPort.TargetPort))
+		}
+	}
+
+	// Delete the conntrack entries for the old IP:port:targetPort combinations that are not present in the
+	// corresponding new IP:port:targetPort combinations
+	for _, oldPort := range oldServicePorts {
+		if oldPort.Protocol != corev1.ProtocolUDP {
+			continue
+		}
+		for _, oldIP := range oldIPs {
+			port := oldPort.Port
+			ipType := "svcVIP"
+			if portType == "nodePort" {
+				port = oldPort.NodePort
+				ipType = "nodeIP"
+			}
+			if !newIPPortTargetPorts.Has(util.JoinServiceIPPortTargetPort(ipToString(oldIP), port, oldPort.TargetPort)) {
+				if err := util.DeleteConntrackServicePort(ipToString(oldIP), port, oldPort.Protocol,
+					netlink.ConntrackOrigDstIP, nil); err != nil {
+					errs = append(errs, fmt.Errorf("failed to delete conntrack entry for service %s/%s with %s %s, %s %d, protocol %s: %v",
+						namespace, name, ipType, ipToString(oldIP), portType, port, oldPort.Protocol, err))
+				} else {
+					deletedCount++
+				}
+			}
+		}
+	}
+
+	return deletedCount, errs
 }
 
 // deleteConntrackForServiceVIP deletes the conntrack entries for the provided svcVIP:svcPort by comparing them to ConntrackOrigDstIP:ConntrackOrigDstPort
@@ -945,7 +1079,7 @@ func (npw *nodePortWatcher) deleteConntrackForService(service *corev1.Service) e
 				if err := util.DeleteConntrackServicePort(nodeIP.String(), svcPort.NodePort, svcPort.Protocol,
 					netlink.ConntrackOrigDstIP, nil); err != nil {
 					return fmt.Errorf("failed to delete conntrack entry for service %s/%s with nodeIP %s, nodePort %d, protocol %s: %v",
-						service.Namespace, service.Name, nodeIP, svcPort.Port, svcPort.Protocol, err)
+						service.Namespace, service.Name, nodeIP, svcPort.NodePort, svcPort.Protocol, err)
 				}
 			}
 		}
