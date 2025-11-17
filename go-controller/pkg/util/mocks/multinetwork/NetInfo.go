@@ -198,24 +198,6 @@ func (_m *NetInfo) GetNetInfo() util.NetInfo {
 	return r0
 }
 
-// GetNetworkTransport provides a mock function with given fields:
-func (_m *NetInfo) GetNetworkTransport() string {
-	ret := _m.Called()
-
-	if len(ret) == 0 {
-		panic("no return value specified for GetNetworkTransport")
-	}
-
-	var r0 string
-	if rf, ok := ret.Get(0).(func() string); ok {
-		r0 = rf()
-	} else {
-		r0 = ret.Get(0).(string)
-	}
-
-	return r0
-}
-
 // GetNetworkID provides a mock function with no fields
 func (_m *NetInfo) GetNetworkID() int {
 	ret := _m.Called()
@@ -450,6 +432,24 @@ func (_m *NetInfo) GetNetworkScopedSwitchName(nodeName string) string {
 	return r0
 }
 
+// GetNetworkTransport provides a mock function with no fields
+func (_m *NetInfo) GetNetworkTransport() string {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetNetworkTransport")
+	}
+
+	var r0 string
+	if rf, ok := ret.Get(0).(func() string); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	return r0
+}
+
 // GetNodeGatewayIP provides a mock function with given fields: hostSubnet
 func (_m *NetInfo) GetNodeGatewayIP(hostSubnet *net.IPNet) *net.IPNet {
 	ret := _m.Called(hostSubnet)
@@ -485,6 +485,24 @@ func (_m *NetInfo) GetNodeManagementIP(hostSubnet *net.IPNet) *net.IPNet {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(*net.IPNet)
 		}
+	}
+
+	return r0
+}
+
+// GetOutboundSNAT provides a mock function with no fields
+func (_m *NetInfo) GetOutboundSNAT() string {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetOutboundSNAT")
+	}
+
+	var r0 string
+	if rf, ok := ret.Get(0).(func() string); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(string)
 	}
 
 	return r0

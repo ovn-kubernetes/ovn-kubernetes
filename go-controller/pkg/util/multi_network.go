@@ -58,6 +58,9 @@ type NetInfo interface {
 	PhysicalNetworkName() string
 	GetNodeGatewayIP(hostSubnet *net.IPNet) *net.IPNet
 	GetNodeManagementIP(hostSubnet *net.IPNet) *net.IPNet
+	// GetNetworkTransport returns the transport technology used by this network.
+	GetNetworkTransport() string
+	GetOutboundSNAT() string
 
 	// dynamic information, can change over time
 	GetNADs() []string
@@ -78,8 +81,6 @@ type NetInfo interface {
 	// GetEgressIPAdvertisedNodes return the nodes where egress IP are
 	// advertised.
 	GetEgressIPAdvertisedNodes() []string
-	// GetNetworkTransport returns the transport technology used by this network.
-	GetNetworkTransport() string
 
 	// derived information.
 	GetNADNamespaces() []string
@@ -401,6 +402,10 @@ func (nInfo *mutableNetInfo) GetNetworkTransport() string {
 	return ""
 }
 
+func (nInfo *mutableNetInfo) GetOutboundSNAT() string {
+	return ""
+}
+
 // GetNADs returns all the NADs associated with this network
 func (nInfo *mutableNetInfo) GetNADs() []string {
 	nInfo.RLock()
@@ -691,6 +696,10 @@ func (nInfo *DefaultNetInfo) GetNetworkTransport() string {
 	return config.Default.Transport
 }
 
+func (nInfo *DefaultNetInfo) GetOutboundSNAT() string {
+	return config.NoOverlay.OutboundSNAT
+}
+
 // userDefinedNetInfo holds the network name information for a User Defined Network if non-nil
 type userDefinedNetInfo struct {
 	mutableNetInfo
@@ -916,6 +925,10 @@ func (nInfo *userDefinedNetInfo) TransitSubnets() []*net.IPNet {
 
 func (nInfo *userDefinedNetInfo) GetNetworkTransport() string {
 	return nInfo.transport
+}
+
+func (nInfo *userDefinedNetInfo) GetOutboundSNAT() string {
+	return ""
 }
 
 func (nInfo *userDefinedNetInfo) canReconcile(other NetInfo) bool {
