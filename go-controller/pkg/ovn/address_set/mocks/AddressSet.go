@@ -154,6 +154,34 @@ func (_m *AddressSet) GetASHashNames() (string, string) {
 	return r0, r1
 }
 
+// GetASUUID provides a mock function with no fields
+func (_m *AddressSet) GetASUUID() (string, string) {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetASUUID")
+	}
+
+	var r0 string
+	var r1 string
+	if rf, ok := ret.Get(0).(func() (string, string)); ok {
+		return rf()
+	}
+	if rf, ok := ret.Get(0).(func() string); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	if rf, ok := ret.Get(1).(func() string); ok {
+		r1 = rf()
+	} else {
+		r1 = ret.Get(1).(string)
+	}
+
+	return r0, r1
+}
+
 // GetAddresses provides a mock function with no fields
 func (_m *AddressSet) GetAddresses() ([]string, []string) {
 	ret := _m.Called()
