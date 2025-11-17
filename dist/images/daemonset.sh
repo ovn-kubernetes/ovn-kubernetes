@@ -68,7 +68,6 @@ OVN_EGRESSIP_HEALTHCHECK_PORT=
 OVN_EGRESSFIREWALL_ENABLE=
 OVN_EGRESSQOS_ENABLE=
 OVN_EGRESSSERVICE_ENABLE=
-OVN_DISABLE_OVN_IFACE_ID_VER="false"
 OVN_MULTI_NETWORK_ENABLE=
 OVN_NETWORK_SEGMENTATION_ENABLE=
 OVN_PRE_CONF_UDN_ADDR_ENABLE=
@@ -259,9 +258,6 @@ while [ "$1" != "" ]; do
     ;;
   --egress-ip-healthcheck-port)
     OVN_EGRESSIP_HEALTHCHECK_PORT=$VALUE
-    ;;
-  --disabe-ovn-iface-id-ver)
-    OVN_DISABLE_OVN_IFACE_ID_VER=$VALUE
     ;;
   --egress-firewall-enable)
     OVN_EGRESSFIREWALL_ENABLE=$VALUE
@@ -470,8 +466,6 @@ ovn_egress_qos_enable=${OVN_EGRESSQOS_ENABLE}
 echo "ovn_egress_qos_enable: ${ovn_egress_qos_enable}"
 ovn_egress_service_enable=${OVN_EGRESSSERVICE_ENABLE}
 echo "ovn_egress_service_enable: ${ovn_egress_service_enable}"
-ovn_disable_ovn_iface_id_ver=${OVN_DISABLE_OVN_IFACE_ID_VER}
-echo "ovn_disable_ovn_iface_id_ver: ${ovn_disable_ovn_iface_id_ver}"
 ovn_multi_network_enable=${OVN_MULTI_NETWORK_ENABLE}
 echo "ovn_multi_network_enable: ${ovn_multi_network_enable}"
 ovn_network_segmentation_enable=${OVN_NETWORK_SEGMENTATION_ENABLE}
@@ -642,7 +636,6 @@ ovn_image=${ovnkube_image} \
   ovn_ipfix_cache_max_flows=${ovn_ipfix_cache_max_flows} \
   ovn_ipfix_cache_active_timeout=${ovn_ipfix_cache_active_timeout} \
   ovn_ex_gw_networking_interface=${ovn_ex_gw_networking_interface} \
-  ovn_disable_ovn_iface_id_ver=${ovn_disable_ovn_iface_id_ver} \
   ovnkube_node_mgmt_port_netdev=${ovnkube_node_mgmt_port_netdev} \
   ovn_enable_interconnect=${ovn_enable_interconnect} \
   ovn_enable_multi_external_gateway=${ovn_enable_multi_external_gateway} \
@@ -697,7 +690,6 @@ ovn_image=${ovnkube_image} \
   ovn_ipfix_cache_max_flows=${ovn_ipfix_cache_max_flows} \
   ovn_ipfix_cache_active_timeout=${ovn_ipfix_cache_active_timeout} \
   ovn_ex_gw_networking_interface=${ovn_ex_gw_networking_interface} \
-  ovn_disable_ovn_iface_id_ver=${ovn_disable_ovn_iface_id_ver} \
   ovnkube_node_mgmt_port_netdev=${ovnkube_node_mgmt_port_netdev} \
   ovn_enable_interconnect=${ovn_enable_interconnect} \
   ovn_enable_multi_external_gateway=${ovn_enable_multi_external_gateway} \
@@ -931,7 +923,6 @@ ovn_image=${ovnkube_image} \
   ovn_ipfix_cache_active_timeout=${ovn_ipfix_cache_active_timeout} \
   ovn_ex_gw_networking_interface=${ovn_ex_gw_networking_interface} \
   ovnkube_node_mgmt_port_netdev=${ovnkube_node_mgmt_port_netdev} \
-  ovn_disable_ovn_iface_id_ver=${ovn_disable_ovn_iface_id_ver} \
   ovnkube_master_loglevel=${master_loglevel} \
   ovn_loglevel_northd=${ovn_loglevel_northd} \
   ovn_loglevel_nbctld=${ovn_loglevel_nbctld} \
@@ -999,7 +990,6 @@ ovn_image=${ovnkube_image} \
   ovn_ipfix_cache_active_timeout=${ovn_ipfix_cache_active_timeout} \
   ovn_ex_gw_networking_interface=${ovn_ex_gw_networking_interface} \
   ovnkube_node_mgmt_port_netdev=${ovnkube_node_mgmt_port_netdev} \
-  ovn_disable_ovn_iface_id_ver=${ovn_disable_ovn_iface_id_ver} \
   ovnkube_master_loglevel=${master_loglevel} \
   ovn_loglevel_northd=${ovn_loglevel_northd} \
   ovn_loglevel_nbctld=${ovn_loglevel_nbctld} \
