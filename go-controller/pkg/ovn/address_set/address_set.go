@@ -55,6 +55,8 @@ type AddressSetFactory interface {
 type AddressSet interface {
 	// GetASHashNames returns the hashed name for v6 and v4 addressSets
 	GetASHashNames() (string, string)
+	// GetASUUID returns the UUIDs for v6 and v4 addressSets
+	GetASUUID() (string, string)
 	// GetName returns the descriptive name of the address set
 	GetName() string
 	// AddAddresses adds the slice of addresses to the address set
@@ -390,6 +392,18 @@ func (as *ovnAddressSets) GetASHashNames() (string, string) {
 	}
 	if as.v6 != nil {
 		v6AS = as.v6.hashName
+	}
+	return v4AS, v6AS
+}
+
+func (as *ovnAddressSets) GetASUUID() (string, string) {
+	var v4AS string
+	var v6AS string
+	if as.v4 != nil {
+		v4AS = as.v4.uuid
+	}
+	if as.v6 != nil {
+		v6AS = as.v6.uuid
 	}
 	return v4AS, v6AS
 }
