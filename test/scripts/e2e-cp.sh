@@ -225,6 +225,17 @@ if [ "${PARALLEL:-false}" = "true" ]; then
   skip_label "$SERIAL_LABEL"
 fi
 
+if [ "$ENABLE_NO_OVERLAY" == true ]; then
+  # No-overlay mode uses underlying network infrastructure directly.
+  # Overlay-dependent features are not supported.
+  skip_label "Feature:Multicast"
+  skip_label "Feature:EgressIP"
+  skip_label "Feature:EgressService"
+  # This test validates MTU reduction behavior specific to overlay mode (1500->1400).
+  # In no-overlay mode, pods use the full underlying network MTU without reduction.
+  skip "blocking ICMP needs frag"
+fi
+
 # setting these is required to make RuntimeClass tests work ... :/
 export KUBE_CONTAINER_RUNTIME=remote
 export KUBE_CONTAINER_RUNTIME_ENDPOINT=unix:///run/containerd/containerd.sock
