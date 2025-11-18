@@ -27,6 +27,8 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/ipalloc"
 
 	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
+	egressipv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
+	egressipclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/clientset/versioned"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -3180,6 +3182,50 @@ spec:
 		ginkgo.By("11. Check connectivity from other pod and verify that the srcIP is the expected egressIP")
 		err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer, pod2OtherNetworkNamespace, pod2Name, true, []string{egressIP1.String()}))
 		framework.ExpectNoError(err, "Step 11. Check connectivity from other pod and verify that the srcIP is the expected egressIP and verify that the srcIP is the expected nodeIP, failed: %v", err)
+	})
+
+	ginkgo.It("Should fail if egressip-mark annotation is present during EgressIP creation", func() {
+		ginkgo.By("0. Add the \"k8s.ovn.org/egress-assignable\" label to egress1Node node")
+		egressNodeAvailabilityHandler := egressNodeAvailabilityHandlerViaLabel{f}
+		egressNodeAvailabilityHandler.Enable(egress1Node.name)
+		defer egressNodeAvailabilityHandler.Restore(egress1Node.name)
+
+		ginkgo.By("1. Create an EgressIP object with one egress IP defined")
+		var egressIP1 net.IP
+		var err error
+		if utilnet.IsIPv6String(egress1Node.nodeIP) {
+			egressIP1, err = ipalloc.NewPrimaryIPv6()
+		} else {
+			egressIP1, err = ipalloc.NewPrimaryIPv4()
+		}
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate new Node IP")
+
+		eIP := egressipv1.EgressIP{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:        egressIPName,
+				Annotations: map[string]string{util.EgressIPMarkAnnotation: "50001"},
+			},
+			Spec: egressipv1.EgressIPSpec{
+				EgressIPs: []string{
+					egressIP1.String(),
+				},
+				NamespaceSelector: metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"name": f.Namespace.Name,
+					},
+				},
+			},
+			Status: egressipv1.EgressIPStatus{
+				Items: []egressipv1.EgressIPStatusItem{},
+			},
+		}
+		egressIPClient, err := egressipclientset.NewForConfig(f.ClientConfig())
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "Should create EgressIP client")
+
+		ginkgo.By("2. Create an EgressIP with k8s.ovn.org/egressip-mark annotation defined")
+		_, err = egressIPClient.K8sV1().EgressIPs().Create(context.TODO(), &eIP, metav1.CreateOptions{})
+		gomega.Expect(err).To(gomega.HaveOccurred(), "Should fail if k8s.ovn.org/egressip-mark annotation is present during creation")
+		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("EgressIP resources cannot be created with the \"k8s.ovn.org/egressip-mark\" annotation. This annotation is managed by the system.")))
 	})
 
 	ginkgo.DescribeTable("[OVN network] multiple namespaces with different primary networks", func(otherNetworkAttachParms networkAttachmentConfigParams) {
