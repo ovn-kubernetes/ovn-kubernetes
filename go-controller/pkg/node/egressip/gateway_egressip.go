@@ -208,86 +208,164 @@ func (g *BridgeEIPAddrManager) GetCache() *MarkIPsCache {
 	return g.cache
 }
 
+// isOVNNetworkIP checks if the given IP belongs to the OVN (primary) network
+// Returns true if the IP is on the OVN network, false if it's on a secondary network
+func (g *BridgeEIPAddrManager) isOVNNetworkIP(ip net.IP) (bool, error) {
+	node, err := g.nodeLister.Get(g.nodeName)
+	if err != nil {
+		return false, fmt.Errorf("failed to get node %s: %v", g.nodeName, err)
+	}
+	nodePrimaryIPs, err := util.ParseNodePrimaryIfAddr(node)
+	if err != nil {
+		return false, fmt.Errorf("failed to parse node primary interface address for node %s: %v", g.nodeName, err)
+	}
+	return util.IsOVNNetwork(nodePrimaryIPs, ip), nil
+}
+
+// parseAndValidateEIP parses and validates an EgressIP for this node
+// Returns:
+// - ip: the parsed IP address
+// - pktMark: the parsed packet mark
+// - shouldSkip: true if this EgressIP should be skipped (e.g., belongs to secondary network)
+// - error: any error encountered during parsing/validation
+func (g *BridgeEIPAddrManager) parseAndValidateEIP(eip *egressipv1.EgressIP) (net.IP, util.EgressIPMark, bool, error) {
+	var pktMark util.EgressIPMark
+	var eipAddr string
+
+	// Find the EgressIP assigned to this node
+	for _, status := range eip.Status.Items {
+		if status.Node == g.nodeName {
+			eipAddr = status.EgressIP
+			break
+		}
+	}
+	if eipAddr == "" {
+		return nil, pktMark, true, nil
+	}
+
+	// Parse the IP address
+	ip := net.ParseIP(eipAddr)
+	if ip == nil {
+		return nil, pktMark, false, fmt.Errorf("failed to parse EgressIP %s", eipAddr)
+	}
+
+	// Parse the packet mark
+	var err error
+	pktMark, err = util.ParseEgressIPMark(eip.Annotations)
+	if err != nil {
+		return nil, pktMark, false, fmt.Errorf("failed to extract packet mark from EgressIP annotations: %v", err)
+	}
+
+	// Validate packet mark
+	if !pktMark.IsAvailable() {
+		return nil, pktMark, false, fmt.Errorf("packet mark is not set")
+	}
+	if !pktMark.IsValid() {
+		return nil, pktMark, false, fmt.Errorf("packet mark is not valid")
+	}
+
+	// Check if this IP belongs to the OVN (primary) network
+	isOVN, err := g.isOVNNetworkIP(ip)
+	if err != nil {
+		return nil, pktMark, false, fmt.Errorf("failed to check if IP is OVN network: %w", err)
+	}
+	if !isOVN {
+		// Skip IPs not on OVN network (i.e., secondary network IPs)
+		klog.V(5).Infof("Skipping EgressIP %s on bridge %s because it does not belong to the OVN network", ip.String(), g.bridgeName)
+		return ip, pktMark, true, nil
+	}
+
+	return ip, pktMark, false, nil
+}
+
 func (g *BridgeEIPAddrManager) AddEgressIP(eip *egressipv1.EgressIP) (bool, error) {
 	var isUpdated bool
 	if !util.IsEgressIPMarkSet(eip.Annotations) {
 		return isUpdated, nil
 	}
-	for _, status := range eip.Status.Items {
-		if status.Node != g.nodeName {
-			continue
-		}
-		ip, pktMark, err := parseEIPMarkIP(eip.Annotations, status.EgressIP)
-		if err != nil {
-			return isUpdated, fmt.Errorf("failed to add EgressIP gateway config because unable to extract config from EgressIP obj: %v", err)
-		}
-		// must always add to cache before adding IP because we want to inform node ip handler that this is not a valid node IP
-		g.cache.insertMarkIP(pktMark, ip)
-		if err = g.addIPToAnnotation(ip); err != nil {
-			return isUpdated, fmt.Errorf("failed to add EgressIP gateway config because unable to add EgressIP IP to Node annotation: %v", err)
-		}
-		if err = g.addIPBridge(ip); err != nil {
-			return isUpdated, fmt.Errorf("failed to add EgressIP gateway config because failed to add address to link: %v", err)
-		}
-		isUpdated = true
-		break // no need to continue as only one EIP IP is assigned to a node
+	ip, pktMark, shouldSkip, err := g.parseAndValidateEIP(eip)
+	if err != nil {
+		return isUpdated, fmt.Errorf("failed to add EgressIP gateway config because unable to parse and validate EgressIP: %v", err)
 	}
+	if shouldSkip {
+		return isUpdated, nil
+	}
+	// must always add to cache before adding IP because we want to inform node ip handler that this is not a valid node IP
+	g.cache.insertMarkIP(pktMark, ip)
+	if err = g.addIPToAnnotation(ip); err != nil {
+		return isUpdated, fmt.Errorf("failed to add EgressIP gateway config because unable to add EgressIP IP to Node annotation: %v", err)
+	}
+	if err = g.addIPBridge(ip); err != nil {
+		return isUpdated, fmt.Errorf("failed to add EgressIP gateway config because failed to add address to link: %v", err)
+	}
+	isUpdated = true
 	return isUpdated, nil
 }
 
 func (g *BridgeEIPAddrManager) UpdateEgressIP(oldEIP, newEIP *egressipv1.EgressIP) (bool, error) {
 	var isUpdated bool
-	// at most, one status item for this node will be found.
-	for _, oldStatus := range oldEIP.Status.Items {
-		if oldStatus.Node != g.nodeName {
-			continue
-		}
-		if !util.IsEgressIPMarkSet(oldEIP.Annotations) {
-			// this scenario may occur during upgrade from when ovn-k didn't apply marks to EIP objs
+	// Check if we need to update.
+	var oldStatus egressipv1.EgressIPStatusItem
+	var oldStatusFound bool
+	for _, status := range oldEIP.Status.Items {
+		if status.Node == g.nodeName {
+			oldStatus = status
+			oldStatusFound = true
 			break
 		}
-		if util.IsItemInSlice(newEIP.Status.Items, oldStatus) {
-			// if one status entry exists in both status items, then nothing needs to be done because no status update.
-			// also, because at most only one status item can be assigned to a node, we can return early.
-			return isUpdated, nil
-		}
-		ip, pktMark, err := parseEIPMarkIP(oldEIP.Annotations, oldStatus.EgressIP)
-		if err != nil {
-			return isUpdated, fmt.Errorf("failed to update EgressIP SNAT for ext bridge cache because unable to extract config from old EgressIP obj: %v", err)
-		}
-		if err = g.deleteIPBridge(ip); err != nil {
-			return isUpdated, fmt.Errorf("failed to update EgressIP gateway config because failed to delete address from link: %v", err)
-		}
-		g.cache.deleteMarkIP(pktMark, ip)
-		if err = g.deleteIPsFromAnnotation(ip); err != nil {
-			return isUpdated, fmt.Errorf("failed to update EgressIP gateway config because unable to delete EgressIP IP from Node annotation: %v", err)
-		}
-		isUpdated = true
-		break
 	}
-	for _, newStatus := range newEIP.Status.Items {
-		if newStatus.Node != g.nodeName {
-			continue
-		}
-		if !util.IsEgressIPMarkSet(newEIP.Annotations) {
+
+	if oldStatusFound {
+		if !util.IsEgressIPMarkSet(oldEIP.Annotations) {
 			// this scenario may occur during upgrade from when ovn-k didn't apply marks to EIP objs
-			return isUpdated, nil
+		} else {
+			// Check if this is a secondary network IP that was mistakenly configured
+			ip, pktMark, shouldSkip, err := g.parseAndValidateEIP(oldEIP)
+			if err != nil {
+				return isUpdated, fmt.Errorf("failed to update EgressIP gateway config because unable to parse and validate old EgressIP: %v", err)
+			}
+
+			// If it's a secondary network IP and in annotation, it needs cleanup even if status didn't change.
+			// This scenario may occur when old code added secondary network IP to the bridge.
+			if shouldSkip && g.isIPInAnnotation(ip) {
+				if err = g.deleteEgressIPConfig(ip, pktMark); err != nil {
+					return isUpdated, fmt.Errorf("failed to update EgressIP gateway config because %v", err)
+				}
+				isUpdated = true
+			} else if util.IsItemInSlice(newEIP.Status.Items, oldStatus) {
+				// if one status entry exists in both status items, then nothing needs to be done because no status update.
+				// also, because at most only one status item can be assigned to a node, we can return early.
+				return isUpdated, nil
+			} else if !shouldSkip {
+				// Normal case: IP changed, delete the old IP
+				if err = g.deleteEgressIPConfig(ip, pktMark); err != nil {
+					return isUpdated, fmt.Errorf("failed to update EgressIP gateway config because %v", err)
+				}
+				isUpdated = true
+			}
 		}
-		ip, pktMark, err := parseEIPMarkIP(newEIP.Annotations, newStatus.EgressIP)
-		if err != nil {
-			return isUpdated, fmt.Errorf("failed to update EgressIP gateway config because unable to extract config from EgressIP obj: %v", err)
-		}
-		// must always add to OF cache before adding IP because we want to inform node ip handler that this is not a valid node IP
-		g.cache.insertMarkIP(pktMark, ip)
-		if err = g.addIPToAnnotation(ip); err != nil {
-			return isUpdated, fmt.Errorf("failed to update EgressIP gateway config because unable to add EgressIP IP to Node annotation: %v", err)
-		}
-		if err = g.addIPBridge(ip); err != nil {
-			return isUpdated, fmt.Errorf("failed to update EgressIP gateway config because failed to add address to link: %v", err)
-		}
-		isUpdated = true
-		break
 	}
+
+	if !util.IsEgressIPMarkSet(newEIP.Annotations) {
+		// this scenario may occur during upgrade from when ovn-k didn't apply marks to EIP objs
+		return isUpdated, nil
+	}
+	ip, pktMark, shouldSkip, err := g.parseAndValidateEIP(newEIP)
+	if err != nil {
+		return isUpdated, fmt.Errorf("failed to update EgressIP gateway config because unable to parse and validate new EgressIP: %v", err)
+	}
+	if shouldSkip {
+		return isUpdated, nil
+	}
+	// must always add to OF cache before adding IP because we want to inform node ip handler that this is not a valid node IP
+	g.cache.insertMarkIP(pktMark, ip)
+	if err = g.addIPToAnnotation(ip); err != nil {
+		return isUpdated, fmt.Errorf("failed to update EgressIP gateway config because unable to add EgressIP IP to Node annotation: %v", err)
+	}
+	if err = g.addIPBridge(ip); err != nil {
+		return isUpdated, fmt.Errorf("failed to update EgressIP gateway config because failed to add address to link: %v", err)
+	}
+	isUpdated = true
 	return isUpdated, nil
 }
 
@@ -296,27 +374,18 @@ func (g *BridgeEIPAddrManager) DeleteEgressIP(eip *egressipv1.EgressIP) (bool, e
 	if !util.IsEgressIPMarkSet(eip.Annotations) {
 		return isUpdated, nil
 	}
-	for _, status := range eip.Status.Items {
-		if status.Node != g.nodeName {
-			continue
-		}
-		if !util.IsEgressIPMarkSet(eip.Annotations) {
-			continue
-		}
-		ip, pktMark, err := parseEIPMarkIP(eip.Annotations, status.EgressIP)
-		if err != nil {
-			return isUpdated, fmt.Errorf("failed to delete EgressIP gateway config because unable to extract config from EgressIP obj: %v", err)
-		}
-		if err = g.deleteIPBridge(ip); err != nil {
-			return isUpdated, fmt.Errorf("failed to delete EgressIP gateway config because failed to delete address from link: %v", err)
-		}
-		g.cache.deleteMarkIP(pktMark, ip)
-		if err = g.deleteIPsFromAnnotation(ip); err != nil {
-			return isUpdated, fmt.Errorf("failed to delete EgressIP gateway config because failed to delete EgressIP IP from Node annotation: %v", err)
-		}
-		isUpdated = true
-		break // no need to continue as only one EIP IP is assigned per node
+	ip, pktMark, shouldSkip, err := g.parseAndValidateEIP(eip)
+	if err != nil {
+		return isUpdated, fmt.Errorf("failed to delete EgressIP gateway config because unable to parse and validate EgressIP: %v", err)
 	}
+	// Skip secondary network IPs. Cleanup of stale secondary IPs from old code is handled in UpdateEgressIP.
+	if shouldSkip {
+		return isUpdated, nil
+	}
+	if err = g.deleteEgressIPConfig(ip, pktMark); err != nil {
+		return isUpdated, fmt.Errorf("failed to delete EgressIP gateway config because %v", err)
+	}
+	isUpdated = true
 	return isUpdated, nil
 }
 
@@ -337,22 +406,22 @@ func (g *BridgeEIPAddrManager) SyncEgressIP(objs []interface{}) error {
 		if !util.IsEgressIPMarkSet(eip.Annotations) {
 			continue
 		}
-		for _, status := range eip.Status.Items {
-			if status.Node != g.nodeName {
-				continue
+		ip, pktMark, shouldSkip, err := g.parseAndValidateEIP(eip)
+		if err != nil {
+			klog.Errorf("Failed to sync EgressIP %s gateway config because unable to parse and validate EgressIP: %v", eip.Name, err)
+		} else if shouldSkip {
+			// Skip IPs not on OVN network (i.e., secondary network IPs)
+			if ip != nil {
+				klog.V(5).Infof("Skipping EgressIP %s during sync because it does not belong to the OVN network", ip.String())
 			}
-			if ip, pktMark, err := parseEIPMarkIP(eip.Annotations, status.EgressIP); err != nil {
-				klog.Errorf("Failed to sync EgressIP %s gateway config because unable to extract config from EIP obj: %v", eip.Name, err)
-			} else {
-				configs.insert(pktMark, ip)
-				if err = g.addIPToAnnotation(ip); err != nil {
-					return fmt.Errorf("failed to sync EgressIP gateway config because unable to add EgressIP IP to Node annotation: %v", err)
-				}
-				if err = g.addIPBridge(ip); err != nil {
-					return fmt.Errorf("failed to sync EgressIP gateway config because failed to add address to link: %v", err)
-				}
+		} else {
+			configs.insert(pktMark, ip)
+			if err = g.addIPToAnnotation(ip); err != nil {
+				return fmt.Errorf("failed to sync EgressIP gateway config because unable to add EgressIP IP to Node annotation: %v", err)
 			}
-			break
+			if err = g.addIPBridge(ip); err != nil {
+				return fmt.Errorf("failed to sync EgressIP gateway config because failed to add address to link: %v", err)
+			}
 		}
 	}
 	ipsToDel := make([]net.IP, 0)
@@ -486,29 +555,41 @@ func (g *BridgeEIPAddrManager) getAnnotationIPs() ([]net.IP, error) {
 	return ips, nil
 }
 
-func parseEIPMarkIP(annotations map[string]string, eip string) (net.IP, util.EgressIPMark, error) {
-	pktMark, err := util.ParseEgressIPMark(annotations)
-	if err != nil {
-		return nil, pktMark, fmt.Errorf("failed to extract packet mark from EgressIP annotations: %v", err)
-	}
-	// status update and pkt mark should be configured as one operation by cluster manager
-	if !pktMark.IsAvailable() {
-		return nil, pktMark, fmt.Errorf("packet mark is not set")
-	}
-	if !pktMark.IsValid() {
-		return nil, pktMark, fmt.Errorf("packet mark is not valid")
-	}
-	ip := net.ParseIP(eip)
-	if ip == nil {
-		return nil, pktMark, fmt.Errorf("invalid IP")
-	}
-	return ip, pktMark, nil
-}
-
 func getIPsStr(ips ...net.IP) []string {
 	ipsStr := make([]string, 0, len(ips))
 	for _, ip := range ips {
 		ipsStr = append(ipsStr, ip.String())
 	}
 	return ipsStr
+}
+
+// isIPInAnnotation checks if the given IP exists in the node's bridge EgressIP annotation.
+// Returns false if ip is nil or if there's an error reading the annotation.
+func (g *BridgeEIPAddrManager) isIPInAnnotation(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	annotIPs, err := g.getAnnotationIPs()
+	if err != nil {
+		klog.Errorf("Failed to get annotation IPs while checking if IP %s is present: %v", ip.String(), err)
+		return false
+	}
+	ipStr := ip.String()
+	for _, annotIP := range annotIPs {
+		if annotIP.String() == ipStr {
+			return true
+		}
+	}
+	return false
+}
+
+func (g *BridgeEIPAddrManager) deleteEgressIPConfig(ip net.IP, pktMark util.EgressIPMark) error {
+	if err := g.deleteIPBridge(ip); err != nil {
+		return fmt.Errorf("failed to delete address from link: %v", err)
+	}
+	g.cache.deleteMarkIP(pktMark, ip)
+	if err := g.deleteIPsFromAnnotation(ip); err != nil {
+		return fmt.Errorf("failed to delete EgressIP IP from Node annotation: %v", err)
+	}
+	return nil
 }
