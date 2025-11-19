@@ -323,22 +323,17 @@ func (npw *nodePortWatcher) updateServiceFlowCache(service *corev1.Service, netI
 					klog.V(5).Infof("Adding flows on breth0 for Nodeport Service %s with targetPort %d in "+
 						"Namespace: %s since ExternalTrafficPolicy=local", service.Name, targetPort, service.Namespace)
 					// table 0, This rule matches on all traffic with dst port == NodePort, DNAT's the nodePort to the svc targetPort
-					// If ipv6 make sure to choose the ipv6 node address for rule
+					// If IPv6 make sure to choose the IPv6 node address for rule, otherwise send to the IPv4 node address.
+					gatewayAddress := npw.gatewayIPv4
 					if strings.Contains(flowProtocol, "6") {
-						// Regardless of the IP addresses in the local endpoints list, we always send to npw.gatewayIPv6.
-						nodeportFlows = append(nodeportFlows,
-							fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, tp_dst=%d, "+
-								"actions=ct(commit,zone=%d,nat(dst=[%s]:%d),table=6)",
-								cookie, npw.ofportPhys, flowProtocol, svcPort.NodePort,
-								config.Default.HostNodePortConntrackZone, npw.gatewayIPv6, targetPort))
-					} else {
-						// Regardless of the IP addresses in the local endpoints list, we always send to npw.gatewayIPv4.
-						nodeportFlows = append(nodeportFlows,
-							fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, tp_dst=%d, "+
-								"actions=ct(commit,zone=%d,nat(dst=%s:%d),table=6)",
-								cookie, npw.ofportPhys, flowProtocol, svcPort.NodePort,
-								config.Default.HostNodePortConntrackZone, npw.gatewayIPv4, targetPort))
+						gatewayAddress = fmt.Sprintf("[%s]", npw.gatewayIPv6)
 					}
+					nodeportFlows = append(nodeportFlows,
+						fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, tp_dst=%d, "+
+							"actions=ct(commit,zone=%d,nat(dst=%s:%d),table=6)",
+							cookie, npw.ofportPhys, flowProtocol, svcPort.NodePort,
+							config.Default.HostNodePortConntrackZone, gatewayAddress, targetPort))
+
 					nodeportFlows = append(nodeportFlows,
 						// table 6, Sends the packet to the host. Note that the constant etp svc cookie is used since this flow would be
 						// same for all such services.
@@ -555,22 +550,17 @@ func (npw *nodePortWatcher) createLbAndExternalSvcFlows(service *corev1.Service,
 			// case1 (see function description for details)
 			klog.V(5).Infof("Adding flows on breth0 for %s Service %s in Namespace: %s since ExternalTrafficPolicy=local", ipType, service.Name, service.Namespace)
 			// table 0, This rule matches on all traffic with dst ip == LoadbalancerIP / externalIP, DNAT's the nodePort to the svc targetPort
-			// If ipv6 make sure to choose the ipv6 node address for rule
+			// If IPv6 make sure to choose the IPv6 node address for rule, otherwise send to the IPv4 node address.
+			gatewayAddress := npw.gatewayIPv4
 			if strings.Contains(flowProtocol, "6") {
-				// Regardless of the IP addresses in the local endpoints list, we always send to npw.gatewayIPv6.
-				externalIPFlows = append(externalIPFlows,
-					fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, %s=%s, tp_dst=%d, "+
-						"actions=ct(commit,zone=%d,nat(dst=[%s]:%d),table=6)",
-						cookie, npw.ofportPhys, flowProtocol, nwDst, externalIPOrLBIngressIP, svcPort.Port,
-						config.Default.HostNodePortConntrackZone, npw.gatewayIPv6, targetPort))
-			} else {
-				// Regardless of the IP addresses in the local endpoints list, we always send to npw.gatewayIPv4.
-				externalIPFlows = append(externalIPFlows,
-					fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, %s=%s, tp_dst=%d, "+
-						"actions=ct(commit,zone=%d,nat(dst=%s:%d),table=6)",
-						cookie, npw.ofportPhys, flowProtocol, nwDst, externalIPOrLBIngressIP, svcPort.Port,
-						config.Default.HostNodePortConntrackZone, npw.gatewayIPv4, targetPort))
+				gatewayAddress = fmt.Sprintf("[%s]", npw.gatewayIPv6)
 			}
+			externalIPFlows = append(externalIPFlows,
+				fmt.Sprintf("cookie=%s, priority=110, in_port=%s, %s, %s=%s, tp_dst=%d, "+
+					"actions=ct(commit,zone=%d,nat(dst=%s:%d),table=6)",
+					cookie, npw.ofportPhys, flowProtocol, nwDst, externalIPOrLBIngressIP, svcPort.Port,
+					config.Default.HostNodePortConntrackZone, gatewayAddress, targetPort))
+
 			externalIPFlows = append(externalIPFlows,
 				// table 6, Sends the packet to Host. Note that the constant etp svc cookie is used since this flow would be
 				// same for all such services.
