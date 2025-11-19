@@ -243,7 +243,6 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 	for _, hostNetwork := range []bool{true, false} {
 		for _, namedPort := range []bool{true, false} {
 			for _, etp := range []v1.ServiceExternalTrafficPolicy{v1.ServiceExternalTrafficPolicyCluster, v1.ServiceExternalTrafficPolicyLocal} {
-				hostNetwork := hostNetwork
 				ginkgo.When(fmt.Sprintf("a nodePort service targeting a pod with hostNetwork:%t, namedPort:%t, ETP:%s is created",
 					hostNetwork, namedPort, etp), func() {
 					var serverPod *v1.Pod
