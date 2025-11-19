@@ -305,11 +305,14 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 						// Create the server pod.
 						// Wait for 1 minute and if the pod does not come up, select a different port and try again.
 						// Wait for a max of 5 minutes.
-						serverPodPortTCP := infraprovider.Get().GetK8HostPort() // maybe a host net or cluster net pod but select host port anyway
-						serverPodPortUDP := infraprovider.Get().GetK8HostPort() // maybe a host net or cluster net pod but select host port anyway
+						var serverPodPortTCP, serverPodPortUDP uint16
 						gomega.Eventually(func() error {
+							// May be a host net or cluster net pod but select host port anyway.
+							serverPodPortTCP = infraprovider.Get().GetK8HostPort()
+							serverPodPortUDP = infraprovider.Get().GetK8HostPort()
 							serverPodName = fmt.Sprintf(echoServerPodNameTemplate, serverPodPortTCP)
-							framework.Logf("Creating server pod listening on TCP and UDP port %d", serverPodPortTCP)
+							framework.Logf("Creating server pod listening on TCP port %d and UDP port %d",
+								serverPodPortTCP, serverPodPortUDP)
 							serverPod = e2epod.NewAgnhostPod(f.Namespace.Name, serverPodName, nil, nil, nil, "netexec",
 								"--http-port",
 								fmt.Sprintf("%d", serverPodPortTCP),
