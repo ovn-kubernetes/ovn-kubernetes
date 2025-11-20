@@ -848,7 +848,7 @@ var CommonFlags = []cli.Flag{
 	},
 	&cli.IntFlag{
 		Name:        "mtu",
-		Usage:       "MTU value used for the overlay networks (default: 1400)",
+		Usage:       "MTU value used for the overlay networks",
 		Destination: &cliConfig.Default.MTU,
 		Value:       Default.MTU,
 	},
@@ -859,13 +859,13 @@ var CommonFlags = []cli.Flag{
 	},
 	&cli.IntFlag{
 		Name:        "conntrack-zone",
-		Usage:       "For gateway nodes, the conntrack zone used for conntrack flow rules (default: 64000)",
+		Usage:       "For gateway nodes, the conntrack zone used for conntrack flow rules",
 		Destination: &cliConfig.Default.ConntrackZone,
 		Value:       Default.ConntrackZone,
 	},
 	&cli.StringFlag{
 		Name:        "encap-type",
-		Usage:       "The encapsulation protocol to use to transmit packets between hypervisors (default: geneve)",
+		Usage:       "The encapsulation protocol to use to transmit packets between hypervisors",
 		Destination: &cliConfig.Default.EncapType,
 		Value:       Default.EncapType,
 	},
@@ -876,7 +876,7 @@ var CommonFlags = []cli.Flag{
 	},
 	&cli.UintFlag{
 		Name:        "encap-port",
-		Usage:       "The UDP port used by the encapsulation endpoint (default: 6081)",
+		Usage:       "The UDP port used by the encapsulation endpoint",
 		Destination: &cliConfig.Default.EncapPort,
 		Value:       Default.EncapPort,
 	},
@@ -913,7 +913,7 @@ var CommonFlags = []cli.Flag{
 	&cli.DurationFlag{
 		Name: "db-txn-timeout",
 		Usage: "OVSDBTxnTimeout is the timeout for db transaction in seconds, " +
-			"may be useful to increase for high-scale clusters. default value is 60 seconds.",
+			"may be useful to increase for high-scale clusters.",
 		Destination: &cliConfig.Default.OVSDBTxnTimeout,
 		Value:       Default.OVSDBTxnTimeout,
 	},
@@ -973,7 +973,7 @@ var CommonFlags = []cli.Flag{
 	// Logging options
 	&cli.IntFlag{
 		Name:        "loglevel",
-		Usage:       "log verbosity and level: info, warn, fatal, error are always printed no matter the log level. Use 5 for debug (default: 4)",
+		Usage:       "log verbosity and level: info, warn, fatal, error are always printed no matter the log level. Use 5 for debug",
 		Destination: &cliConfig.Logging.Level,
 		Value:       Logging.Level,
 	},
@@ -984,7 +984,7 @@ var CommonFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name:        "cnilogfile",
-		Usage:       "path of a file to direct log from cni shim to output to (default: /var/log/ovn-kubernetes/ovn-k8s-cni-overlay.log)",
+		Usage:       "path of a file to direct log from cni shim to output to",
 		Destination: &cliConfig.Logging.CNIFile,
 		Value:       "/var/log/ovn-kubernetes/ovn-k8s-cni-overlay.log",
 	},
@@ -1014,7 +1014,7 @@ var CommonFlags = []cli.Flag{
 	},
 	&cli.IntFlag{
 		Name:        "acl-logging-rate-limit",
-		Usage:       "The largest number of messages per second that gets logged before drop (default 20)",
+		Usage:       "The largest number of messages per second that gets logged before drop",
 		Destination: &cliConfig.Logging.ACLLoggingRateLimit,
 		Value:       20,
 	},
@@ -1064,18 +1064,18 @@ var MonitoringFlags = []cli.Flag{
 var IPFIXFlags = []cli.Flag{
 	&cli.UintFlag{
 		Name:        "ipfix-sampling",
-		Usage:       "Rate at which packets should be sampled and sent to each target collector (default: 400)",
+		Usage:       "Rate at which packets should be sampled and sent to each target collector",
 		Destination: &cliConfig.IPFIX.Sampling,
 		Value:       IPFIX.Sampling,
 	},
 	&cli.UintFlag{
 		Name:        "ipfix-cache-max-flows",
-		Usage:       "Maximum number of IPFIX flow records that can be cached at a time. If 0, caching is disabled (default: 0)",
+		Usage:       "Maximum number of IPFIX flow records that can be cached at a time. If 0, caching is disabled",
 		Destination: &cliConfig.IPFIX.CacheMaxFlows,
 		Value:       IPFIX.CacheMaxFlows,
 	}, &cli.UintFlag{
 		Name:        "ipfix-cache-active-timeout",
-		Usage:       "Maximum period in seconds for which an IPFIX flow record is cached and aggregated before being sent. If 0, caching is disabled (default: 60)",
+		Usage:       "Maximum period in seconds for which an IPFIX flow record is cached and aggregated before being sent. If 0, caching is disabled",
 		Destination: &cliConfig.IPFIX.CacheActiveTimeout,
 		Value:       IPFIX.CacheActiveTimeout,
 	},
@@ -1086,13 +1086,13 @@ var CNIFlags = []cli.Flag{
 	// CNI options
 	&cli.StringFlag{
 		Name:        "cni-conf-dir",
-		Usage:       "the CNI config directory in which to write the overlay CNI config file (default: /etc/cni/net.d)",
+		Usage:       "the CNI config directory in which to write the overlay CNI config file",
 		Destination: &cliConfig.CNI.ConfDir,
 		Value:       CNI.ConfDir,
 	},
 	&cli.StringFlag{
 		Name:        "cni-plugin",
-		Usage:       "the name of the CNI plugin (default: ovn-k8s-cni-overlay)",
+		Usage:       "the name of the CNI plugin",
 		Destination: &cliConfig.CNI.Plugin,
 		Value:       CNI.Plugin,
 	},
@@ -1114,7 +1114,7 @@ var OVNK8sFeatureFlags = []cli.Flag{
 	},
 	&cli.IntFlag{
 		Name:        "egressip-reachability-total-timeout",
-		Usage:       "EgressIP node reachability total timeout in seconds (default: 1)",
+		Usage:       "EgressIP node reachability total timeout in seconds",
 		Destination: &cliConfig.OVNKubernetesFeature.EgressIPReachabiltyTotalTimeout,
 		Value:       1,
 	},
@@ -1244,7 +1244,7 @@ var K8sFlags = []cli.Flag{
 		Usage: "A comma-separated set of CIDR notation IP ranges from which k8s assigns " +
 			"service cluster IPs. This should be the same as the value " +
 			"provided for kube-apiserver \"--service-cluster-ip-range\" " +
-			"option. (default: 172.16.1.0/24)",
+			"option.",
 		Destination: &cliConfig.Kubernetes.RawServiceCIDRs,
 		Value:       Kubernetes.RawServiceCIDRs,
 	},
@@ -1260,7 +1260,7 @@ var K8sFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name:        "k8s-apiserver",
-		Usage:       "URL of the Kubernetes API server (not required if --k8s-kubeconfig is given) (default: http://localhost:8443)",
+		Usage:       "URL of the Kubernetes API server (not required if --k8s-kubeconfig is given)",
 		Destination: &cliConfig.Kubernetes.APIServer,
 		Value:       Kubernetes.APIServer,
 	},
@@ -1467,7 +1467,7 @@ var OvnSBFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name: "sb-client-cert",
-		Usage: "Client certificate that the client should use for talking to the OVN database(default when ssl address is used: /etc/openvswitch/ovnsb-cert.pem).  " +
+		Usage: "Client certificate that the client should use for talking to the OVN database (default when ssl address is used: /etc/openvswitch/ovnsb-cert.pem).  " +
 			"Default value for this setting is empty which defaults to use local unix socket.",
 		Destination: &cliConfig.OvnSouth.Cert,
 	},
@@ -1635,19 +1635,19 @@ var OVNGatewayFlags = []cli.Flag{
 var MasterHAFlags = []cli.Flag{
 	&cli.IntFlag{
 		Name:        "ha-election-lease-duration",
-		Usage:       "Leader election lease duration (in secs) (default: 60)",
+		Usage:       "Leader election lease duration (in secs)",
 		Destination: &cliConfig.MasterHA.ElectionLeaseDuration,
 		Value:       MasterHA.ElectionLeaseDuration,
 	},
 	&cli.IntFlag{
 		Name:        "ha-election-renew-deadline",
-		Usage:       "Leader election renew deadline (in secs) (default: 30)",
+		Usage:       "Leader election renew deadline (in secs)",
 		Destination: &cliConfig.MasterHA.ElectionRenewDeadline,
 		Value:       MasterHA.ElectionRenewDeadline,
 	},
 	&cli.IntFlag{
 		Name:        "ha-election-retry-period",
-		Usage:       "Leader election retry period (in secs) (default: 20)",
+		Usage:       "Leader election retry period (in secs)",
 		Destination: &cliConfig.MasterHA.ElectionRetryPeriod,
 		Value:       MasterHA.ElectionRetryPeriod,
 	},
@@ -1657,19 +1657,19 @@ var MasterHAFlags = []cli.Flag{
 var ClusterMgrHAFlags = []cli.Flag{
 	&cli.IntFlag{
 		Name:        "cluster-manager-ha-election-lease-duration",
-		Usage:       "Leader election lease duration (in secs) (default: 60)",
+		Usage:       "Leader election lease duration (in secs)",
 		Destination: &cliConfig.ClusterMgrHA.ElectionLeaseDuration,
 		Value:       ClusterMgrHA.ElectionLeaseDuration,
 	},
 	&cli.IntFlag{
 		Name:        "cluster-manager-ha-election-renew-deadline",
-		Usage:       "Leader election renew deadline (in secs) (default: 30)",
+		Usage:       "Leader election renew deadline (in secs)",
 		Destination: &cliConfig.ClusterMgrHA.ElectionRenewDeadline,
 		Value:       ClusterMgrHA.ElectionRenewDeadline,
 	},
 	&cli.IntFlag{
 		Name:        "cluster-manager-ha-election-retry-period",
-		Usage:       "Leader election retry period (in secs) (default: 20)",
+		Usage:       "Leader election retry period (in secs)",
 		Destination: &cliConfig.ClusterMgrHA.ElectionRetryPeriod,
 		Value:       ClusterMgrHA.ElectionRetryPeriod,
 	},
@@ -1705,7 +1705,7 @@ var HybridOverlayFlags = []cli.Flag{
 var OvnKubeNodeFlags = []cli.Flag{
 	&cli.StringFlag{
 		Name:        "ovnkube-node-mode",
-		Usage:       "ovnkube-node operating mode full(default), dpu, dpu-host",
+		Usage:       "ovnkube-node operating mode full (default), dpu, dpu-host",
 		Value:       OvnKubeNode.Mode,
 		Destination: &cliConfig.OvnKubeNode.Mode,
 	},
