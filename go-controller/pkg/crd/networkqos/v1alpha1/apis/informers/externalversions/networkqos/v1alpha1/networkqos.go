@@ -61,25 +61,13 @@ func NewFilteredNetworkQoSInformer(client versioned.Interface, namespace string,
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.K8sV1alpha1().NetworkQoSes(namespace).List(context.Background(), options)
+				return client.K8sV1alpha1().NetworkQoSes(namespace).List(context.TODO(), options)
 			},
 			WatchFunc: func(options v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.K8sV1alpha1().NetworkQoSes(namespace).Watch(context.Background(), options)
-			},
-			ListWithContextFunc: func(ctx context.Context, options v1.ListOptions) (runtime.Object, error) {
-				if tweakListOptions != nil {
-					tweakListOptions(&options)
-				}
-				return client.K8sV1alpha1().NetworkQoSes(namespace).List(ctx, options)
-			},
-			WatchFuncWithContext: func(ctx context.Context, options v1.ListOptions) (watch.Interface, error) {
-				if tweakListOptions != nil {
-					tweakListOptions(&options)
-				}
-				return client.K8sV1alpha1().NetworkQoSes(namespace).Watch(ctx, options)
+				return client.K8sV1alpha1().NetworkQoSes(namespace).Watch(context.TODO(), options)
 			},
 		},
 		&crdnetworkqosv1alpha1.NetworkQoS{},

@@ -61,25 +61,13 @@ func NewFilteredEgressServiceInformer(client versioned.Interface, namespace stri
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.K8sV1().EgressServices(namespace).List(context.Background(), options)
+				return client.K8sV1().EgressServices(namespace).List(context.TODO(), options)
 			},
 			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.K8sV1().EgressServices(namespace).Watch(context.Background(), options)
-			},
-			ListWithContextFunc: func(ctx context.Context, options metav1.ListOptions) (runtime.Object, error) {
-				if tweakListOptions != nil {
-					tweakListOptions(&options)
-				}
-				return client.K8sV1().EgressServices(namespace).List(ctx, options)
-			},
-			WatchFuncWithContext: func(ctx context.Context, options metav1.ListOptions) (watch.Interface, error) {
-				if tweakListOptions != nil {
-					tweakListOptions(&options)
-				}
-				return client.K8sV1().EgressServices(namespace).Watch(ctx, options)
+				return client.K8sV1().EgressServices(namespace).Watch(context.TODO(), options)
 			},
 		},
 		&crdegressservicev1.EgressService{},

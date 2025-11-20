@@ -12,12 +12,6 @@ import (
 //
 // Compatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).
 // +openshift:compatibility-gen:level=1
-// +openshift:api-approved.openshift.io=https://github.com/openshift/api/pull/470
-// +openshift:file-pattern=cvoRunLevel=0000_03,operatorName=config-operator,operatorOrdering=01
-// +kubebuilder:object:root=true
-// +kubebuilder:resource:path=proxies,scope=Cluster
-// +kubebuilder:subresource:status
-// +kubebuilder:metadata:annotations=release.openshift.io/bootstrap-required=true
 type Proxy struct {
 	metav1.TypeMeta `json:",inline"`
 
@@ -25,7 +19,8 @@ type Proxy struct {
 	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	// spec holds user-settable values for the proxy configuration
+	// Spec holds user-settable values for the proxy configuration
+	// +kubebuilder:validation:Required
 	// +required
 	Spec ProxySpec `json:"spec"`
 	// status holds observed values from the cluster. They may not be overridden.

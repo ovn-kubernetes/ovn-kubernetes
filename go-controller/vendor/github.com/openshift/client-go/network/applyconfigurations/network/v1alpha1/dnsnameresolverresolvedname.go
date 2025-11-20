@@ -3,20 +3,20 @@
 package v1alpha1
 
 import (
-	networkv1alpha1 "github.com/openshift/api/network/v1alpha1"
-	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
+	v1alpha1 "github.com/openshift/api/network/v1alpha1"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// DNSNameResolverResolvedNameApplyConfiguration represents a declarative configuration of the DNSNameResolverResolvedName type for use
+// DNSNameResolverResolvedNameApplyConfiguration represents an declarative configuration of the DNSNameResolverResolvedName type for use
 // with apply.
 type DNSNameResolverResolvedNameApplyConfiguration struct {
-	Conditions         []v1.ConditionApplyConfiguration                   `json:"conditions,omitempty"`
-	DNSName            *networkv1alpha1.DNSName                           `json:"dnsName,omitempty"`
+	Conditions         []v1.Condition                                     `json:"conditions,omitempty"`
+	DNSName            *v1alpha1.DNSName                                  `json:"dnsName,omitempty"`
 	ResolvedAddresses  []DNSNameResolverResolvedAddressApplyConfiguration `json:"resolvedAddresses,omitempty"`
 	ResolutionFailures *int32                                             `json:"resolutionFailures,omitempty"`
 }
 
-// DNSNameResolverResolvedNameApplyConfiguration constructs a declarative configuration of the DNSNameResolverResolvedName type for use with
+// DNSNameResolverResolvedNameApplyConfiguration constructs an declarative configuration of the DNSNameResolverResolvedName type for use with
 // apply.
 func DNSNameResolverResolvedName() *DNSNameResolverResolvedNameApplyConfiguration {
 	return &DNSNameResolverResolvedNameApplyConfiguration{}
@@ -25,12 +25,9 @@ func DNSNameResolverResolvedName() *DNSNameResolverResolvedNameApplyConfiguratio
 // WithConditions adds the given value to the Conditions field in the declarative configuration
 // and returns the receiver, so that objects can be build by chaining "With" function invocations.
 // If called multiple times, values provided by each call will be appended to the Conditions field.
-func (b *DNSNameResolverResolvedNameApplyConfiguration) WithConditions(values ...*v1.ConditionApplyConfiguration) *DNSNameResolverResolvedNameApplyConfiguration {
+func (b *DNSNameResolverResolvedNameApplyConfiguration) WithConditions(values ...v1.Condition) *DNSNameResolverResolvedNameApplyConfiguration {
 	for i := range values {
-		if values[i] == nil {
-			panic("nil value passed to WithConditions")
-		}
-		b.Conditions = append(b.Conditions, *values[i])
+		b.Conditions = append(b.Conditions, values[i])
 	}
 	return b
 }
@@ -38,7 +35,7 @@ func (b *DNSNameResolverResolvedNameApplyConfiguration) WithConditions(values ..
 // WithDNSName sets the DNSName field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the DNSName field is set to the value of the last call.
-func (b *DNSNameResolverResolvedNameApplyConfiguration) WithDNSName(value networkv1alpha1.DNSName) *DNSNameResolverResolvedNameApplyConfiguration {
+func (b *DNSNameResolverResolvedNameApplyConfiguration) WithDNSName(value v1alpha1.DNSName) *DNSNameResolverResolvedNameApplyConfiguration {
 	b.DNSName = &value
 	return b
 }

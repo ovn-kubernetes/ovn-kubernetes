@@ -13,19 +13,19 @@ type FakeNetworkV1 struct {
 }
 
 func (c *FakeNetworkV1) ClusterNetworks() v1.ClusterNetworkInterface {
-	return newFakeClusterNetworks(c)
+	return &FakeClusterNetworks{c}
 }
 
 func (c *FakeNetworkV1) EgressNetworkPolicies(namespace string) v1.EgressNetworkPolicyInterface {
-	return newFakeEgressNetworkPolicies(c, namespace)
+	return &FakeEgressNetworkPolicies{c, namespace}
 }
 
 func (c *FakeNetworkV1) HostSubnets() v1.HostSubnetInterface {
-	return newFakeHostSubnets(c)
+	return &FakeHostSubnets{c}
 }
 
 func (c *FakeNetworkV1) NetNamespaces() v1.NetNamespaceInterface {
-	return newFakeNetNamespaces(c)
+	return &FakeNetNamespaces{c}
 }
 
 // RESTClient returns a RESTClient that is used to communicate

@@ -3,13 +3,13 @@
 package v1alpha1
 
 import (
-	context "context"
+	"context"
 	time "time"
 
-	apinetworkv1alpha1 "github.com/openshift/api/network/v1alpha1"
+	networkv1alpha1 "github.com/openshift/api/network/v1alpha1"
 	versioned "github.com/openshift/client-go/network/clientset/versioned"
 	internalinterfaces "github.com/openshift/client-go/network/informers/externalversions/internalinterfaces"
-	networkv1alpha1 "github.com/openshift/client-go/network/listers/network/v1alpha1"
+	v1alpha1 "github.com/openshift/client-go/network/listers/network/v1alpha1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	watch "k8s.io/apimachinery/pkg/watch"
@@ -20,7 +20,7 @@ import (
 // DNSNameResolvers.
 type DNSNameResolverInformer interface {
 	Informer() cache.SharedIndexInformer
-	Lister() networkv1alpha1.DNSNameResolverLister
+	Lister() v1alpha1.DNSNameResolverLister
 }
 
 type dNSNameResolverInformer struct {
@@ -46,28 +46,16 @@ func NewFilteredDNSNameResolverInformer(client versioned.Interface, namespace st
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.NetworkV1alpha1().DNSNameResolvers(namespace).List(context.Background(), options)
+				return client.NetworkV1alpha1().DNSNameResolvers(namespace).List(context.TODO(), options)
 			},
 			WatchFunc: func(options v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.NetworkV1alpha1().DNSNameResolvers(namespace).Watch(context.Background(), options)
-			},
-			ListWithContextFunc: func(ctx context.Context, options v1.ListOptions) (runtime.Object, error) {
-				if tweakListOptions != nil {
-					tweakListOptions(&options)
-				}
-				return client.NetworkV1alpha1().DNSNameResolvers(namespace).List(ctx, options)
-			},
-			WatchFuncWithContext: func(ctx context.Context, options v1.ListOptions) (watch.Interface, error) {
-				if tweakListOptions != nil {
-					tweakListOptions(&options)
-				}
-				return client.NetworkV1alpha1().DNSNameResolvers(namespace).Watch(ctx, options)
+				return client.NetworkV1alpha1().DNSNameResolvers(namespace).Watch(context.TODO(), options)
 			},
 		},
-		&apinetworkv1alpha1.DNSNameResolver{},
+		&networkv1alpha1.DNSNameResolver{},
 		resyncPeriod,
 		indexers,
 	)
@@ -78,9 +66,9 @@ func (f *dNSNameResolverInformer) defaultInformer(client versioned.Interface, re
 }
 
 func (f *dNSNameResolverInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&apinetworkv1alpha1.DNSNameResolver{}, f.defaultInformer)
+	return f.factory.InformerFor(&networkv1alpha1.DNSNameResolver{}, f.defaultInformer)
 }
 
-func (f *dNSNameResolverInformer) Lister() networkv1alpha1.DNSNameResolverLister {
-	return networkv1alpha1.NewDNSNameResolverLister(f.Informer().GetIndexer())
+func (f *dNSNameResolverInformer) Lister() v1alpha1.DNSNameResolverLister {
+	return v1alpha1.NewDNSNameResolverLister(f.Informer().GetIndexer())
 }

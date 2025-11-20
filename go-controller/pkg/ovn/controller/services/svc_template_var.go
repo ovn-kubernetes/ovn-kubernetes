@@ -252,7 +252,7 @@ func (n *NodeIPsTemplates) AddIP(chassisID string, ip net.IP) {
 }
 
 func (n *NodeIPsTemplates) AsTemplateMap() TemplateMap {
-	var ret = TemplateMap{}
+	var ret TemplateMap = TemplateMap{}
 
 	for _, t := range n.templates {
 		ret[t.Name] = t

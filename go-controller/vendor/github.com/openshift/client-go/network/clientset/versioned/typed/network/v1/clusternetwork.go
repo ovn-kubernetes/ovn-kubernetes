@@ -3,15 +3,18 @@
 package v1
 
 import (
-	context "context"
+	"context"
+	json "encoding/json"
+	"fmt"
+	"time"
 
-	networkv1 "github.com/openshift/api/network/v1"
-	applyconfigurationsnetworkv1 "github.com/openshift/client-go/network/applyconfigurations/network/v1"
+	v1 "github.com/openshift/api/network/v1"
+	networkv1 "github.com/openshift/client-go/network/applyconfigurations/network/v1"
 	scheme "github.com/openshift/client-go/network/clientset/versioned/scheme"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
 	watch "k8s.io/apimachinery/pkg/watch"
-	gentype "k8s.io/client-go/gentype"
+	rest "k8s.io/client-go/rest"
 )
 
 // ClusterNetworksGetter has a method to return a ClusterNetworkInterface.
@@ -22,33 +25,157 @@ type ClusterNetworksGetter interface {
 
 // ClusterNetworkInterface has methods to work with ClusterNetwork resources.
 type ClusterNetworkInterface interface {
-	Create(ctx context.Context, clusterNetwork *networkv1.ClusterNetwork, opts metav1.CreateOptions) (*networkv1.ClusterNetwork, error)
-	Update(ctx context.Context, clusterNetwork *networkv1.ClusterNetwork, opts metav1.UpdateOptions) (*networkv1.ClusterNetwork, error)
+	Create(ctx context.Context, clusterNetwork *v1.ClusterNetwork, opts metav1.CreateOptions) (*v1.ClusterNetwork, error)
+	Update(ctx context.Context, clusterNetwork *v1.ClusterNetwork, opts metav1.UpdateOptions) (*v1.ClusterNetwork, error)
 	Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error
 	DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error
-	Get(ctx context.Context, name string, opts metav1.GetOptions) (*networkv1.ClusterNetwork, error)
-	List(ctx context.Context, opts metav1.ListOptions) (*networkv1.ClusterNetworkList, error)
+	Get(ctx context.Context, name string, opts metav1.GetOptions) (*v1.ClusterNetwork, error)
+	List(ctx context.Context, opts metav1.ListOptions) (*v1.ClusterNetworkList, error)
 	Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error)
-	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *networkv1.ClusterNetwork, err error)
-	Apply(ctx context.Context, clusterNetwork *applyconfigurationsnetworkv1.ClusterNetworkApplyConfiguration, opts metav1.ApplyOptions) (result *networkv1.ClusterNetwork, err error)
+	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.ClusterNetwork, err error)
+	Apply(ctx context.Context, clusterNetwork *networkv1.ClusterNetworkApplyConfiguration, opts metav1.ApplyOptions) (result *v1.ClusterNetwork, err error)
 	ClusterNetworkExpansion
 }
 
 // clusterNetworks implements ClusterNetworkInterface
 type clusterNetworks struct {
-	*gentype.ClientWithListAndApply[*networkv1.ClusterNetwork, *networkv1.ClusterNetworkList, *applyconfigurationsnetworkv1.ClusterNetworkApplyConfiguration]
+	client rest.Interface
 }
 
 // newClusterNetworks returns a ClusterNetworks
 func newClusterNetworks(c *NetworkV1Client) *clusterNetworks {
 	return &clusterNetworks{
-		gentype.NewClientWithListAndApply[*networkv1.ClusterNetwork, *networkv1.ClusterNetworkList, *applyconfigurationsnetworkv1.ClusterNetworkApplyConfiguration](
-			"clusternetworks",
-			c.RESTClient(),
-			scheme.ParameterCodec,
-			"",
-			func() *networkv1.ClusterNetwork { return &networkv1.ClusterNetwork{} },
-			func() *networkv1.ClusterNetworkList { return &networkv1.ClusterNetworkList{} },
-		),
+		client: c.RESTClient(),
 	}
+}
+
+// Get takes name of the clusterNetwork, and returns the corresponding clusterNetwork object, and an error if there is any.
+func (c *clusterNetworks) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.ClusterNetwork, err error) {
+	result = &v1.ClusterNetwork{}
+	err = c.client.Get().
+		Resource("clusternetworks").
+		Name(name).
+		VersionedParams(&options, scheme.ParameterCodec).
+		Do(ctx).
+		Into(result)
+	return
+}
+
+// List takes label and field selectors, and returns the list of ClusterNetworks that match those selectors.
+func (c *clusterNetworks) List(ctx context.Context, opts metav1.ListOptions) (result *v1.ClusterNetworkList, err error) {
+	var timeout time.Duration
+	if opts.TimeoutSeconds != nil {
+		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
+	}
+	result = &v1.ClusterNetworkList{}
+	err = c.client.Get().
+		Resource("clusternetworks").
+		VersionedParams(&opts, scheme.ParameterCodec).
+		Timeout(timeout).
+		Do(ctx).
+		Into(result)
+	return
+}
+
+// Watch returns a watch.Interface that watches the requested clusterNetworks.
+func (c *clusterNetworks) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
+	var timeout time.Duration
+	if opts.TimeoutSeconds != nil {
+		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
+	}
+	opts.Watch = true
+	return c.client.Get().
+		Resource("clusternetworks").
+		VersionedParams(&opts, scheme.ParameterCodec).
+		Timeout(timeout).
+		Watch(ctx)
+}
+
+// Create takes the representation of a clusterNetwork and creates it.  Returns the server's representation of the clusterNetwork, and an error, if there is any.
+func (c *clusterNetworks) Create(ctx context.Context, clusterNetwork *v1.ClusterNetwork, opts metav1.CreateOptions) (result *v1.ClusterNetwork, err error) {
+	result = &v1.ClusterNetwork{}
+	err = c.client.Post().
+		Resource("clusternetworks").
+		VersionedParams(&opts, scheme.ParameterCodec).
+		Body(clusterNetwork).
+		Do(ctx).
+		Into(result)
+	return
+}
+
+// Update takes the representation of a clusterNetwork and updates it. Returns the server's representation of the clusterNetwork, and an error, if there is any.
+func (c *clusterNetworks) Update(ctx context.Context, clusterNetwork *v1.ClusterNetwork, opts metav1.UpdateOptions) (result *v1.ClusterNetwork, err error) {
+	result = &v1.ClusterNetwork{}
+	err = c.client.Put().
+		Resource("clusternetworks").
+		Name(clusterNetwork.Name).
+		VersionedParams(&opts, scheme.ParameterCodec).
+		Body(clusterNetwork).
+		Do(ctx).
+		Into(result)
+	return
+}
+
+// Delete takes name of the clusterNetwork and deletes it. Returns an error if one occurs.
+func (c *clusterNetworks) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
+	return c.client.Delete().
+		Resource("clusternetworks").
+		Name(name).
+		Body(&opts).
+		Do(ctx).
+		Error()
+}
+
+// DeleteCollection deletes a collection of objects.
+func (c *clusterNetworks) DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error {
+	var timeout time.Duration
+	if listOpts.TimeoutSeconds != nil {
+		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
+	}
+	return c.client.Delete().
+		Resource("clusternetworks").
+		VersionedParams(&listOpts, scheme.ParameterCodec).
+		Timeout(timeout).
+		Body(&opts).
+		Do(ctx).
+		Error()
+}
+
+// Patch applies the patch and returns the patched clusterNetwork.
+func (c *clusterNetworks) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.ClusterNetwork, err error) {
+	result = &v1.ClusterNetwork{}
+	err = c.client.Patch(pt).
+		Resource("clusternetworks").
+		Name(name).
+		SubResource(subresources...).
+		VersionedParams(&opts, scheme.ParameterCodec).
+		Body(data).
+		Do(ctx).
+		Into(result)
+	return
+}
+
+// Apply takes the given apply declarative configuration, applies it and returns the applied clusterNetwork.
+func (c *clusterNetworks) Apply(ctx context.Context, clusterNetwork *networkv1.ClusterNetworkApplyConfiguration, opts metav1.ApplyOptions) (result *v1.ClusterNetwork, err error) {
+	if clusterNetwork == nil {
+		return nil, fmt.Errorf("clusterNetwork provided to Apply must not be nil")
+	}
+	patchOpts := opts.ToPatchOptions()
+	data, err := json.Marshal(clusterNetwork)
+	if err != nil {
+		return nil, err
+	}
+	name := clusterNetwork.Name
+	if name == nil {
+		return nil, fmt.Errorf("clusterNetwork.Name must be provided to Apply")
+	}
+	result = &v1.ClusterNetwork{}
+	err = c.client.Patch(types.ApplyPatchType).
+		Resource("clusternetworks").
+		Name(*name).
+		VersionedParams(&patchOpts, scheme.ParameterCodec).
+		Body(data).
+		Do(ctx).
+		Into(result)
+	return
 }

@@ -138,7 +138,8 @@ func TestPrintCPUSetAll(t *testing.T) {
 		printCPUSet(x),
 	)
 
-	assert.Empty(t,
+	assert.Equal(t,
+		"",
 		printCPUSet(unix.CPUSet{}),
 	)
 }

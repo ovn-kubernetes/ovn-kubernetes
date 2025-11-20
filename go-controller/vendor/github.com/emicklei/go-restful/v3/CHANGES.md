@@ -1,8 +1,5 @@
 # Change history of go-restful
 
-## [v3.12.2] - 2025-02-21
-
-- allow empty payloads in post,put,patch, issue #580 ( thanks @liggitt, Jordan Liggitt)
 
 ## [v3.12.1] - 2024-05-28
 
@@ -21,7 +18,7 @@
 
 - fix by restoring custom JSON handler functions (Mike Beaumont #540)
 
-## [v3.11.0] - 2023-08-19
+## [v3.12.0] - 2023-08-19
 
 - restored behavior as <= v3.9.0 with option to change path strategy using TrimRightSlashEnabled. 
 

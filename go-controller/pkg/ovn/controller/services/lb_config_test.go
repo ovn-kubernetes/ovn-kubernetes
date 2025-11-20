@@ -1172,22 +1172,22 @@ func Test_buildServiceLBConfigs(t *testing.T) {
 			globalconfig.Gateway.Mode = globalconfig.GatewayModeShared
 			perNode, template, clusterWide := buildServiceLBConfigs(tt.args.service, tt.args.slices, defaultNodes, true, true)
 
-			assert.Equal(t, tt.resultSharedGatewayNode, perNode, "SGW per-node configs should be equal")
-			assert.Equal(t, tt.resultSharedGatewayTemplate, template, "SGW template configs should be equal")
-			assert.Equal(t, tt.resultSharedGatewayCluster, clusterWide, "SGW cluster-wide configs should be equal")
+			assert.EqualValues(t, tt.resultSharedGatewayNode, perNode, "SGW per-node configs should be equal")
+			assert.EqualValues(t, tt.resultSharedGatewayTemplate, template, "SGW template configs should be equal")
+			assert.EqualValues(t, tt.resultSharedGatewayCluster, clusterWide, "SGW cluster-wide configs should be equal")
 
 			// local gateway mode
 			globalconfig.Gateway.Mode = globalconfig.GatewayModeLocal
 
 			perNode, template, clusterWide = buildServiceLBConfigs(tt.args.service, tt.args.slices, defaultNodes, true, true)
 			if tt.resultsSame {
-				assert.Equal(t, tt.resultSharedGatewayNode, perNode, "LGW per-node configs should be equal")
-				assert.Equal(t, tt.resultSharedGatewayTemplate, template, "LGW template configs should be equal")
-				assert.Equal(t, tt.resultSharedGatewayCluster, clusterWide, "LGW cluster-wide configs should be equal")
+				assert.EqualValues(t, tt.resultSharedGatewayNode, perNode, "LGW per-node configs should be equal")
+				assert.EqualValues(t, tt.resultSharedGatewayTemplate, template, "LGW template configs should be equal")
+				assert.EqualValues(t, tt.resultSharedGatewayCluster, clusterWide, "LGW cluster-wide configs should be equal")
 			} else {
-				assert.Equal(t, tt.resultLocalGatewayNode, perNode, "LGW per-node configs should be equal")
-				assert.Equal(t, tt.resultLocalGatewayTemplate, template, "LGW template configs should be equal")
-				assert.Equal(t, tt.resultLocalGatewayCluster, clusterWide, "LGW cluster-wide configs should be equal")
+				assert.EqualValues(t, tt.resultLocalGatewayNode, perNode, "LGW per-node configs should be equal")
+				assert.EqualValues(t, tt.resultLocalGatewayTemplate, template, "LGW template configs should be equal")
+				assert.EqualValues(t, tt.resultLocalGatewayCluster, clusterWide, "LGW cluster-wide configs should be equal")
 			}
 		})
 	}

@@ -183,9 +183,9 @@ var _ = Describe("Healthcheck tests", func() {
 
 	Context("verify cleanup of deleted networks", func() {
 		var (
-			staleNetID uint = 1000
-			nodeName        = "worker1"
-			nad             = ovntest.GenerateNAD("bluenet", "rednad", "greenamespace",
+			staleNetID uint   = 1000
+			nodeName   string = "worker1"
+			nad               = ovntest.GenerateNAD("bluenet", "rednad", "greenamespace",
 				types.Layer3Topology, "100.128.0.0/16", types.NetworkRolePrimary)
 			netName      = "bluenet"
 			netID        = 1003

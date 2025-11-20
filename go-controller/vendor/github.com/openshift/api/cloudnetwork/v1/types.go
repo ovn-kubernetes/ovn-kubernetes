@@ -23,8 +23,6 @@ import (
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:path=cloudprivateipconfigs,scope=Cluster
-// +openshift:api-approved.openshift.io=https://github.com/openshift/api/pull/859
-// +openshift:file-pattern=operatorOrdering=001
 // +openshift:compatibility-gen:level=1
 type CloudPrivateIPConfig struct {
 	metav1.TypeMeta `json:",inline"`
@@ -33,9 +31,11 @@ type CloudPrivateIPConfig struct {
 	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata
 	metav1.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
 	// spec is the definition of the desired private IP request.
+	// +kubebuilder:validation:Required
 	// +required
 	Spec CloudPrivateIPConfigSpec `json:"spec" protobuf:"bytes,2,opt,name=spec"`
 	// status is the observed status of the desired private IP request. Read-only.
+	// +kubebuilder:validation:Optional
 	// +optional
 	Status CloudPrivateIPConfigStatus `json:"status,omitempty" protobuf:"bytes,3,opt,name=status"`
 }
@@ -44,6 +44,7 @@ type CloudPrivateIPConfig struct {
 // +k8s:openapi-gen=true
 type CloudPrivateIPConfigSpec struct {
 	// node is the node name, as specified by the Kubernetes field: node.metadata.name
+	// +kubebuilder:validation:Optional
 	// +optional
 	Node string `json:"node" protobuf:"bytes,1,opt,name=node"`
 }
@@ -52,15 +53,13 @@ type CloudPrivateIPConfigSpec struct {
 // +k8s:openapi-gen=true
 type CloudPrivateIPConfigStatus struct {
 	// node is the node name, as specified by the Kubernetes field: node.metadata.name
+	// +kubebuilder:validation:Optional
 	// +optional
 	Node string `json:"node" protobuf:"bytes,1,opt,name=node"`
 	// condition is the assignment condition of the private IP and its status
+	// +kubebuilder:validation:Required
 	// +required
-	// +listType=map
-	// +listMapKey=type
-	// +patchMergeKey=type
-	// +patchStrategy=merge
-	Conditions []metav1.Condition `json:"conditions" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,2,rep,name=conditions"`
+	Conditions []metav1.Condition `json:"conditions" protobuf:"bytes,2,rep,name=conditions"`
 }
 
 // CloudPrivateIPConfigConditionType specifies the current condition type of the CloudPrivateIPConfig

@@ -3,10 +3,10 @@
 package v1alpha1
 
 import (
-	networkv1alpha1 "github.com/openshift/api/network/v1alpha1"
-	labels "k8s.io/apimachinery/pkg/labels"
-	listers "k8s.io/client-go/listers"
-	cache "k8s.io/client-go/tools/cache"
+	v1alpha1 "github.com/openshift/api/network/v1alpha1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/client-go/tools/cache"
 )
 
 // DNSNameResolverLister helps list DNSNameResolvers.
@@ -14,7 +14,7 @@ import (
 type DNSNameResolverLister interface {
 	// List lists all DNSNameResolvers in the indexer.
 	// Objects returned here must be treated as read-only.
-	List(selector labels.Selector) (ret []*networkv1alpha1.DNSNameResolver, err error)
+	List(selector labels.Selector) (ret []*v1alpha1.DNSNameResolver, err error)
 	// DNSNameResolvers returns an object that can list and get DNSNameResolvers.
 	DNSNameResolvers(namespace string) DNSNameResolverNamespaceLister
 	DNSNameResolverListerExpansion
@@ -22,17 +22,25 @@ type DNSNameResolverLister interface {
 
 // dNSNameResolverLister implements the DNSNameResolverLister interface.
 type dNSNameResolverLister struct {
-	listers.ResourceIndexer[*networkv1alpha1.DNSNameResolver]
+	indexer cache.Indexer
 }
 
 // NewDNSNameResolverLister returns a new DNSNameResolverLister.
 func NewDNSNameResolverLister(indexer cache.Indexer) DNSNameResolverLister {
-	return &dNSNameResolverLister{listers.New[*networkv1alpha1.DNSNameResolver](indexer, networkv1alpha1.Resource("dnsnameresolver"))}
+	return &dNSNameResolverLister{indexer: indexer}
+}
+
+// List lists all DNSNameResolvers in the indexer.
+func (s *dNSNameResolverLister) List(selector labels.Selector) (ret []*v1alpha1.DNSNameResolver, err error) {
+	err = cache.ListAll(s.indexer, selector, func(m interface{}) {
+		ret = append(ret, m.(*v1alpha1.DNSNameResolver))
+	})
+	return ret, err
 }
 
 // DNSNameResolvers returns an object that can list and get DNSNameResolvers.
 func (s *dNSNameResolverLister) DNSNameResolvers(namespace string) DNSNameResolverNamespaceLister {
-	return dNSNameResolverNamespaceLister{listers.NewNamespaced[*networkv1alpha1.DNSNameResolver](s.ResourceIndexer, namespace)}
+	return dNSNameResolverNamespaceLister{indexer: s.indexer, namespace: namespace}
 }
 
 // DNSNameResolverNamespaceLister helps list and get DNSNameResolvers.
@@ -40,15 +48,36 @@ func (s *dNSNameResolverLister) DNSNameResolvers(namespace string) DNSNameResolv
 type DNSNameResolverNamespaceLister interface {
 	// List lists all DNSNameResolvers in the indexer for a given namespace.
 	// Objects returned here must be treated as read-only.
-	List(selector labels.Selector) (ret []*networkv1alpha1.DNSNameResolver, err error)
+	List(selector labels.Selector) (ret []*v1alpha1.DNSNameResolver, err error)
 	// Get retrieves the DNSNameResolver from the indexer for a given namespace and name.
 	// Objects returned here must be treated as read-only.
-	Get(name string) (*networkv1alpha1.DNSNameResolver, error)
+	Get(name string) (*v1alpha1.DNSNameResolver, error)
 	DNSNameResolverNamespaceListerExpansion
 }
 
 // dNSNameResolverNamespaceLister implements the DNSNameResolverNamespaceLister
 // interface.
 type dNSNameResolverNamespaceLister struct {
-	listers.ResourceIndexer[*networkv1alpha1.DNSNameResolver]
+	indexer   cache.Indexer
+	namespace string
+}
+
+// List lists all DNSNameResolvers in the indexer for a given namespace.
+func (s dNSNameResolverNamespaceLister) List(selector labels.Selector) (ret []*v1alpha1.DNSNameResolver, err error) {
+	err = cache.ListAllByNamespace(s.indexer, s.namespace, selector, func(m interface{}) {
+		ret = append(ret, m.(*v1alpha1.DNSNameResolver))
+	})
+	return ret, err
+}
+
+// Get retrieves the DNSNameResolver from the indexer for a given namespace and name.
+func (s dNSNameResolverNamespaceLister) Get(name string) (*v1alpha1.DNSNameResolver, error) {
+	obj, exists, err := s.indexer.GetByKey(s.namespace + "/" + name)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, errors.NewNotFound(v1alpha1.Resource("dnsnameresolver"), name)
+	}
+	return obj.(*v1alpha1.DNSNameResolver), nil
 }

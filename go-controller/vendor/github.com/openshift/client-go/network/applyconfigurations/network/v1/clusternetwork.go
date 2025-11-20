@@ -3,29 +3,29 @@
 package v1
 
 import (
-	networkv1 "github.com/openshift/api/network/v1"
+	apinetworkv1 "github.com/openshift/api/network/v1"
 	internal "github.com/openshift/client-go/network/applyconfigurations/internal"
-	apismetav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
 	managedfields "k8s.io/apimachinery/pkg/util/managedfields"
-	metav1 "k8s.io/client-go/applyconfigurations/meta/v1"
+	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
-// ClusterNetworkApplyConfiguration represents a declarative configuration of the ClusterNetwork type for use
+// ClusterNetworkApplyConfiguration represents an declarative configuration of the ClusterNetwork type for use
 // with apply.
 type ClusterNetworkApplyConfiguration struct {
-	metav1.TypeMetaApplyConfiguration    `json:",inline"`
-	*metav1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
-	Network                              *string                                 `json:"network,omitempty"`
-	HostSubnetLength                     *uint32                                 `json:"hostsubnetlength,omitempty"`
-	ServiceNetwork                       *string                                 `json:"serviceNetwork,omitempty"`
-	PluginName                           *string                                 `json:"pluginName,omitempty"`
-	ClusterNetworks                      []ClusterNetworkEntryApplyConfiguration `json:"clusterNetworks,omitempty"`
-	VXLANPort                            *uint32                                 `json:"vxlanPort,omitempty"`
-	MTU                                  *uint32                                 `json:"mtu,omitempty"`
+	v1.TypeMetaApplyConfiguration    `json:",inline"`
+	*v1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
+	Network                          *string                                 `json:"network,omitempty"`
+	HostSubnetLength                 *uint32                                 `json:"hostsubnetlength,omitempty"`
+	ServiceNetwork                   *string                                 `json:"serviceNetwork,omitempty"`
+	PluginName                       *string                                 `json:"pluginName,omitempty"`
+	ClusterNetworks                  []ClusterNetworkEntryApplyConfiguration `json:"clusterNetworks,omitempty"`
+	VXLANPort                        *uint32                                 `json:"vxlanPort,omitempty"`
+	MTU                              *uint32                                 `json:"mtu,omitempty"`
 }
 
-// ClusterNetwork constructs a declarative configuration of the ClusterNetwork type for use with
+// ClusterNetwork constructs an declarative configuration of the ClusterNetwork type for use with
 // apply.
 func ClusterNetwork(name string) *ClusterNetworkApplyConfiguration {
 	b := &ClusterNetworkApplyConfiguration{}
@@ -46,18 +46,18 @@ func ClusterNetwork(name string) *ClusterNetworkApplyConfiguration {
 // Note that an extracted apply configuration will contain fewer fields than what the fieldManager previously
 // applied if another fieldManager has updated or force applied any of the previously applied fields.
 // Experimental!
-func ExtractClusterNetwork(clusterNetwork *networkv1.ClusterNetwork, fieldManager string) (*ClusterNetworkApplyConfiguration, error) {
+func ExtractClusterNetwork(clusterNetwork *apinetworkv1.ClusterNetwork, fieldManager string) (*ClusterNetworkApplyConfiguration, error) {
 	return extractClusterNetwork(clusterNetwork, fieldManager, "")
 }
 
 // ExtractClusterNetworkStatus is the same as ExtractClusterNetwork except
 // that it extracts the status subresource applied configuration.
 // Experimental!
-func ExtractClusterNetworkStatus(clusterNetwork *networkv1.ClusterNetwork, fieldManager string) (*ClusterNetworkApplyConfiguration, error) {
+func ExtractClusterNetworkStatus(clusterNetwork *apinetworkv1.ClusterNetwork, fieldManager string) (*ClusterNetworkApplyConfiguration, error) {
 	return extractClusterNetwork(clusterNetwork, fieldManager, "status")
 }
 
-func extractClusterNetwork(clusterNetwork *networkv1.ClusterNetwork, fieldManager string, subresource string) (*ClusterNetworkApplyConfiguration, error) {
+func extractClusterNetwork(clusterNetwork *apinetworkv1.ClusterNetwork, fieldManager string, subresource string) (*ClusterNetworkApplyConfiguration, error) {
 	b := &ClusterNetworkApplyConfiguration{}
 	err := managedfields.ExtractInto(clusterNetwork, internal.Parser().Type("com.github.openshift.api.network.v1.ClusterNetwork"), fieldManager, b, subresource)
 	if err != nil {
@@ -69,13 +69,12 @@ func extractClusterNetwork(clusterNetwork *networkv1.ClusterNetwork, fieldManage
 	b.WithAPIVersion("network.openshift.io/v1")
 	return b, nil
 }
-func (b ClusterNetworkApplyConfiguration) IsApplyConfiguration() {}
 
 // WithKind sets the Kind field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Kind field is set to the value of the last call.
 func (b *ClusterNetworkApplyConfiguration) WithKind(value string) *ClusterNetworkApplyConfiguration {
-	b.TypeMetaApplyConfiguration.Kind = &value
+	b.Kind = &value
 	return b
 }
 
@@ -83,7 +82,7 @@ func (b *ClusterNetworkApplyConfiguration) WithKind(value string) *ClusterNetwor
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the APIVersion field is set to the value of the last call.
 func (b *ClusterNetworkApplyConfiguration) WithAPIVersion(value string) *ClusterNetworkApplyConfiguration {
-	b.TypeMetaApplyConfiguration.APIVersion = &value
+	b.APIVersion = &value
 	return b
 }
 
@@ -92,7 +91,7 @@ func (b *ClusterNetworkApplyConfiguration) WithAPIVersion(value string) *Cluster
 // If called multiple times, the Name field is set to the value of the last call.
 func (b *ClusterNetworkApplyConfiguration) WithName(value string) *ClusterNetworkApplyConfiguration {
 	b.ensureObjectMetaApplyConfigurationExists()
-	b.ObjectMetaApplyConfiguration.Name = &value
+	b.Name = &value
 	return b
 }
 
@@ -101,7 +100,7 @@ func (b *ClusterNetworkApplyConfiguration) WithName(value string) *ClusterNetwor
 // If called multiple times, the GenerateName field is set to the value of the last call.
 func (b *ClusterNetworkApplyConfiguration) WithGenerateName(value string) *ClusterNetworkApplyConfiguration {
 	b.ensureObjectMetaApplyConfigurationExists()
-	b.ObjectMetaApplyConfiguration.GenerateName = &value
+	b.GenerateName = &value
 	return b
 }
 
@@ -110,7 +109,7 @@ func (b *ClusterNetworkApplyConfiguration) WithGenerateName(value string) *Clust
 // If called multiple times, the Namespace field is set to the value of the last call.
 func (b *ClusterNetworkApplyConfiguration) WithNamespace(value string) *ClusterNetworkApplyConfiguration {
 	b.ensureObjectMetaApplyConfigurationExists()
-	b.ObjectMetaApplyConfiguration.Namespace = &value
+	b.Namespace = &value
 	return b
 }
 
@@ -119,7 +118,7 @@ func (b *ClusterNetworkApplyConfiguration) WithNamespace(value string) *ClusterN
 // If called multiple times, the UID field is set to the value of the last call.
 func (b *ClusterNetworkApplyConfiguration) WithUID(value types.UID) *ClusterNetworkApplyConfiguration {
 	b.ensureObjectMetaApplyConfigurationExists()
-	b.ObjectMetaApplyConfiguration.UID = &value
+	b.UID = &value
 	return b
 }
 
@@ -128,7 +127,7 @@ func (b *ClusterNetworkApplyConfiguration) WithUID(value types.UID) *ClusterNetw
 // If called multiple times, the ResourceVersion field is set to the value of the last call.
 func (b *ClusterNetworkApplyConfiguration) WithResourceVersion(value string) *ClusterNetworkApplyConfiguration {
 	b.ensureObjectMetaApplyConfigurationExists()
-	b.ObjectMetaApplyConfiguration.ResourceVersion = &value
+	b.ResourceVersion = &value
 	return b
 }
 
@@ -137,25 +136,25 @@ func (b *ClusterNetworkApplyConfiguration) WithResourceVersion(value string) *Cl
 // If called multiple times, the Generation field is set to the value of the last call.
 func (b *ClusterNetworkApplyConfiguration) WithGeneration(value int64) *ClusterNetworkApplyConfiguration {
 	b.ensureObjectMetaApplyConfigurationExists()
-	b.ObjectMetaApplyConfiguration.Generation = &value
+	b.Generation = &value
 	return b
 }
 
 // WithCreationTimestamp sets the CreationTimestamp field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the CreationTimestamp field is set to the value of the last call.
-func (b *ClusterNetworkApplyConfiguration) WithCreationTimestamp(value apismetav1.Time) *ClusterNetworkApplyConfiguration {
+func (b *ClusterNetworkApplyConfiguration) WithCreationTimestamp(value metav1.Time) *ClusterNetworkApplyConfiguration {
 	b.ensureObjectMetaApplyConfigurationExists()
-	b.ObjectMetaApplyConfiguration.CreationTimestamp = &value
+	b.CreationTimestamp = &value
 	return b
 }
 
 // WithDeletionTimestamp sets the DeletionTimestamp field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the DeletionTimestamp field is set to the value of the last call.
-func (b *ClusterNetworkApplyConfiguration) WithDeletionTimestamp(value apismetav1.Time) *ClusterNetworkApplyConfiguration {
+func (b *ClusterNetworkApplyConfiguration) WithDeletionTimestamp(value metav1.Time) *ClusterNetworkApplyConfiguration {
 	b.ensureObjectMetaApplyConfigurationExists()
-	b.ObjectMetaApplyConfiguration.DeletionTimestamp = &value
+	b.DeletionTimestamp = &value
 	return b
 }
 
@@ -164,7 +163,7 @@ func (b *ClusterNetworkApplyConfiguration) WithDeletionTimestamp(value apismetav
 // If called multiple times, the DeletionGracePeriodSeconds field is set to the value of the last call.
 func (b *ClusterNetworkApplyConfiguration) WithDeletionGracePeriodSeconds(value int64) *ClusterNetworkApplyConfiguration {
 	b.ensureObjectMetaApplyConfigurationExists()
-	b.ObjectMetaApplyConfiguration.DeletionGracePeriodSeconds = &value
+	b.DeletionGracePeriodSeconds = &value
 	return b
 }
 
@@ -174,11 +173,11 @@ func (b *ClusterNetworkApplyConfiguration) WithDeletionGracePeriodSeconds(value 
 // overwriting an existing map entries in Labels field with the same key.
 func (b *ClusterNetworkApplyConfiguration) WithLabels(entries map[string]string) *ClusterNetworkApplyConfiguration {
 	b.ensureObjectMetaApplyConfigurationExists()
-	if b.ObjectMetaApplyConfiguration.Labels == nil && len(entries) > 0 {
-		b.ObjectMetaApplyConfiguration.Labels = make(map[string]string, len(entries))
+	if b.Labels == nil && len(entries) > 0 {
+		b.Labels = make(map[string]string, len(entries))
 	}
 	for k, v := range entries {
-		b.ObjectMetaApplyConfiguration.Labels[k] = v
+		b.Labels[k] = v
 	}
 	return b
 }
@@ -189,11 +188,11 @@ func (b *ClusterNetworkApplyConfiguration) WithLabels(entries map[string]string)
 // overwriting an existing map entries in Annotations field with the same key.
 func (b *ClusterNetworkApplyConfiguration) WithAnnotations(entries map[string]string) *ClusterNetworkApplyConfiguration {
 	b.ensureObjectMetaApplyConfigurationExists()
-	if b.ObjectMetaApplyConfiguration.Annotations == nil && len(entries) > 0 {
-		b.ObjectMetaApplyConfiguration.Annotations = make(map[string]string, len(entries))
+	if b.Annotations == nil && len(entries) > 0 {
+		b.Annotations = make(map[string]string, len(entries))
 	}
 	for k, v := range entries {
-		b.ObjectMetaApplyConfiguration.Annotations[k] = v
+		b.Annotations[k] = v
 	}
 	return b
 }
@@ -201,13 +200,13 @@ func (b *ClusterNetworkApplyConfiguration) WithAnnotations(entries map[string]st
 // WithOwnerReferences adds the given value to the OwnerReferences field in the declarative configuration
 // and returns the receiver, so that objects can be build by chaining "With" function invocations.
 // If called multiple times, values provided by each call will be appended to the OwnerReferences field.
-func (b *ClusterNetworkApplyConfiguration) WithOwnerReferences(values ...*metav1.OwnerReferenceApplyConfiguration) *ClusterNetworkApplyConfiguration {
+func (b *ClusterNetworkApplyConfiguration) WithOwnerReferences(values ...*v1.OwnerReferenceApplyConfiguration) *ClusterNetworkApplyConfiguration {
 	b.ensureObjectMetaApplyConfigurationExists()
 	for i := range values {
 		if values[i] == nil {
 			panic("nil value passed to WithOwnerReferences")
 		}
-		b.ObjectMetaApplyConfiguration.OwnerReferences = append(b.ObjectMetaApplyConfiguration.OwnerReferences, *values[i])
+		b.OwnerReferences = append(b.OwnerReferences, *values[i])
 	}
 	return b
 }
@@ -218,14 +217,14 @@ func (b *ClusterNetworkApplyConfiguration) WithOwnerReferences(values ...*metav1
 func (b *ClusterNetworkApplyConfiguration) WithFinalizers(values ...string) *ClusterNetworkApplyConfiguration {
 	b.ensureObjectMetaApplyConfigurationExists()
 	for i := range values {
-		b.ObjectMetaApplyConfiguration.Finalizers = append(b.ObjectMetaApplyConfiguration.Finalizers, values[i])
+		b.Finalizers = append(b.Finalizers, values[i])
 	}
 	return b
 }
 
 func (b *ClusterNetworkApplyConfiguration) ensureObjectMetaApplyConfigurationExists() {
 	if b.ObjectMetaApplyConfiguration == nil {
-		b.ObjectMetaApplyConfiguration = &metav1.ObjectMetaApplyConfiguration{}
+		b.ObjectMetaApplyConfiguration = &v1.ObjectMetaApplyConfiguration{}
 	}
 }
 
@@ -288,26 +287,4 @@ func (b *ClusterNetworkApplyConfiguration) WithVXLANPort(value uint32) *ClusterN
 func (b *ClusterNetworkApplyConfiguration) WithMTU(value uint32) *ClusterNetworkApplyConfiguration {
 	b.MTU = &value
 	return b
-}
-
-// GetKind retrieves the value of the Kind field in the declarative configuration.
-func (b *ClusterNetworkApplyConfiguration) GetKind() *string {
-	return b.TypeMetaApplyConfiguration.Kind
-}
-
-// GetAPIVersion retrieves the value of the APIVersion field in the declarative configuration.
-func (b *ClusterNetworkApplyConfiguration) GetAPIVersion() *string {
-	return b.TypeMetaApplyConfiguration.APIVersion
-}
-
-// GetName retrieves the value of the Name field in the declarative configuration.
-func (b *ClusterNetworkApplyConfiguration) GetName() *string {
-	b.ensureObjectMetaApplyConfigurationExists()
-	return b.ObjectMetaApplyConfiguration.Name
-}
-
-// GetNamespace retrieves the value of the Namespace field in the declarative configuration.
-func (b *ClusterNetworkApplyConfiguration) GetNamespace() *string {
-	b.ensureObjectMetaApplyConfigurationExists()
-	return b.ObjectMetaApplyConfiguration.Namespace
 }

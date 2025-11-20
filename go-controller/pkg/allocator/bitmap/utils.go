@@ -20,7 +20,7 @@ import "math/big"
 
 // countBits returns the number of set bits in n
 func countBits(n *big.Int) int {
-	var count = 0
+	var count int = 0
 	for _, b := range n.Bytes() {
 		count += int(bitCounts[b])
 	}

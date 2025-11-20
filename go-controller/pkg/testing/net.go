@@ -2,8 +2,9 @@ package testing
 
 import (
 	"github.com/onsi/ginkgo/v2"
-	"github.com/onsi/gomega"
 	"github.com/vishvananda/netlink"
+
+	. "github.com/onsi/gomega"
 )
 
 // AddLink sets up a dummy link for testing networking implementations
@@ -15,20 +16,20 @@ func AddLink(name string) netlink.Link {
 			Name: name,
 		},
 	})
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	Expect(err).NotTo(HaveOccurred())
 	origLink, err := netlink.LinkByName(name)
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	Expect(err).NotTo(HaveOccurred())
 	err = netlink.LinkSetUp(origLink)
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	Expect(err).NotTo(HaveOccurred())
 	return origLink
 }
 
 func DelLink(name string) {
 	ginkgo.GinkgoHelper()
 	origLink, err := netlink.LinkByName(name)
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	Expect(err).NotTo(HaveOccurred())
 	err = netlink.LinkDel(origLink)
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	Expect(err).NotTo(HaveOccurred())
 }
 
 func AddVRFLink(name string, tableId uint32) netlink.Link {
@@ -38,10 +39,10 @@ func AddVRFLink(name string, tableId uint32) netlink.Link {
 		Table:     tableId,
 	}
 	err := netlink.LinkAdd(vrfLink)
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	Expect(err).NotTo(HaveOccurred())
 	origLink, err := netlink.LinkByName(name)
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	Expect(err).NotTo(HaveOccurred())
 	err = netlink.LinkSetUp(origLink)
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	Expect(err).NotTo(HaveOccurred())
 	return origLink
 }

@@ -13,7 +13,7 @@ type FakeNetworkV1alpha1 struct {
 }
 
 func (c *FakeNetworkV1alpha1) DNSNameResolvers(namespace string) v1alpha1.DNSNameResolverInterface {
-	return newFakeDNSNameResolvers(c, namespace)
+	return &FakeDNSNameResolvers{c, namespace}
 }
 
 // RESTClient returns a RESTClient that is used to communicate

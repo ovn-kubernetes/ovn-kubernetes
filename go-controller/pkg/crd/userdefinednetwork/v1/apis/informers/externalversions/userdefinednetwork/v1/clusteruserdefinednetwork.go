@@ -60,25 +60,13 @@ func NewFilteredClusterUserDefinedNetworkInformer(client versioned.Interface, re
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.K8sV1().ClusterUserDefinedNetworks().List(context.Background(), options)
+				return client.K8sV1().ClusterUserDefinedNetworks().List(context.TODO(), options)
 			},
 			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.K8sV1().ClusterUserDefinedNetworks().Watch(context.Background(), options)
-			},
-			ListWithContextFunc: func(ctx context.Context, options metav1.ListOptions) (runtime.Object, error) {
-				if tweakListOptions != nil {
-					tweakListOptions(&options)
-				}
-				return client.K8sV1().ClusterUserDefinedNetworks().List(ctx, options)
-			},
-			WatchFuncWithContext: func(ctx context.Context, options metav1.ListOptions) (watch.Interface, error) {
-				if tweakListOptions != nil {
-					tweakListOptions(&options)
-				}
-				return client.K8sV1().ClusterUserDefinedNetworks().Watch(ctx, options)
+				return client.K8sV1().ClusterUserDefinedNetworks().Watch(context.TODO(), options)
 			},
 		},
 		&crduserdefinednetworkv1.ClusterUserDefinedNetwork{},

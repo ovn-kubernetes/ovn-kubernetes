@@ -3,13 +3,13 @@
 package v1
 
 import (
-	context "context"
+	"context"
 	time "time"
 
-	apinetworkv1 "github.com/openshift/api/network/v1"
+	networkv1 "github.com/openshift/api/network/v1"
 	versioned "github.com/openshift/client-go/network/clientset/versioned"
 	internalinterfaces "github.com/openshift/client-go/network/informers/externalversions/internalinterfaces"
-	networkv1 "github.com/openshift/client-go/network/listers/network/v1"
+	v1 "github.com/openshift/client-go/network/listers/network/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	watch "k8s.io/apimachinery/pkg/watch"
@@ -20,7 +20,7 @@ import (
 // EgressNetworkPolicies.
 type EgressNetworkPolicyInformer interface {
 	Informer() cache.SharedIndexInformer
-	Lister() networkv1.EgressNetworkPolicyLister
+	Lister() v1.EgressNetworkPolicyLister
 }
 
 type egressNetworkPolicyInformer struct {
@@ -46,28 +46,16 @@ func NewFilteredEgressNetworkPolicyInformer(client versioned.Interface, namespac
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.NetworkV1().EgressNetworkPolicies(namespace).List(context.Background(), options)
+				return client.NetworkV1().EgressNetworkPolicies(namespace).List(context.TODO(), options)
 			},
 			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.NetworkV1().EgressNetworkPolicies(namespace).Watch(context.Background(), options)
-			},
-			ListWithContextFunc: func(ctx context.Context, options metav1.ListOptions) (runtime.Object, error) {
-				if tweakListOptions != nil {
-					tweakListOptions(&options)
-				}
-				return client.NetworkV1().EgressNetworkPolicies(namespace).List(ctx, options)
-			},
-			WatchFuncWithContext: func(ctx context.Context, options metav1.ListOptions) (watch.Interface, error) {
-				if tweakListOptions != nil {
-					tweakListOptions(&options)
-				}
-				return client.NetworkV1().EgressNetworkPolicies(namespace).Watch(ctx, options)
+				return client.NetworkV1().EgressNetworkPolicies(namespace).Watch(context.TODO(), options)
 			},
 		},
-		&apinetworkv1.EgressNetworkPolicy{},
+		&networkv1.EgressNetworkPolicy{},
 		resyncPeriod,
 		indexers,
 	)
@@ -78,9 +66,9 @@ func (f *egressNetworkPolicyInformer) defaultInformer(client versioned.Interface
 }
 
 func (f *egressNetworkPolicyInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&apinetworkv1.EgressNetworkPolicy{}, f.defaultInformer)
+	return f.factory.InformerFor(&networkv1.EgressNetworkPolicy{}, f.defaultInformer)
 }
 
-func (f *egressNetworkPolicyInformer) Lister() networkv1.EgressNetworkPolicyLister {
-	return networkv1.NewEgressNetworkPolicyLister(f.Informer().GetIndexer())
+func (f *egressNetworkPolicyInformer) Lister() v1.EgressNetworkPolicyLister {
+	return v1.NewEgressNetworkPolicyLister(f.Informer().GetIndexer())
 }

@@ -60,25 +60,13 @@ func NewFilteredClusterNetworkConnectInformer(client versioned.Interface, resync
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.K8sV1().ClusterNetworkConnects().List(context.Background(), options)
+				return client.K8sV1().ClusterNetworkConnects().List(context.TODO(), options)
 			},
 			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.K8sV1().ClusterNetworkConnects().Watch(context.Background(), options)
-			},
-			ListWithContextFunc: func(ctx context.Context, options metav1.ListOptions) (runtime.Object, error) {
-				if tweakListOptions != nil {
-					tweakListOptions(&options)
-				}
-				return client.K8sV1().ClusterNetworkConnects().List(ctx, options)
-			},
-			WatchFuncWithContext: func(ctx context.Context, options metav1.ListOptions) (watch.Interface, error) {
-				if tweakListOptions != nil {
-					tweakListOptions(&options)
-				}
-				return client.K8sV1().ClusterNetworkConnects().Watch(ctx, options)
+				return client.K8sV1().ClusterNetworkConnects().Watch(context.TODO(), options)
 			},
 		},
 		&crdclusternetworkconnectv1.ClusterNetworkConnect{},
