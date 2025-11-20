@@ -23,9 +23,8 @@ import (
 
 const RetryObjInterval = 30 * time.Second
 const MaxFailedAttempts = 15 // same value used for the services level-driven controller
-const initialBackoff = 1 * time.Second
+const initialBackoff = 1
 const noBackoff = 0
-const maxBackoff = 60 * time.Second
 
 // retryObjEntry is a generic object caching with retry mechanism
 // that resources can use to eventually complete their intended operations.
@@ -36,9 +35,9 @@ type retryObjEntry struct {
 	oldObj interface{}
 	// config holds feature specific configuration,
 	// currently used by network policies and pods.
-	config    interface{}
-	timeStamp time.Time
-	backoff   time.Duration
+	config     interface{}
+	timeStamp  time.Time
+	backoffSec time.Duration
 	// number of times this object has been unsuccessfully added/updated/deleted
 	failedAttempts uint8
 }
@@ -143,11 +142,11 @@ func (r *RetryFramework) DoWithLock(key string, f func(key string)) {
 
 func (r *RetryFramework) initRetryObjWithAddBackoff(obj interface{}, lockedKey string, backoff time.Duration) *retryObjEntry {
 	// even if the object was loaded and changed before with the same lock, LoadOrStore will return reference to the same object
-	entry, _ := r.retryEntries.LoadOrStore(lockedKey, &retryObjEntry{backoff: backoff})
+	entry, _ := r.retryEntries.LoadOrStore(lockedKey, &retryObjEntry{backoffSec: backoff})
 	entry.timeStamp = time.Now()
 	entry.newObj = obj
 	entry.failedAttempts = 0
-	entry.backoff = backoff
+	entry.backoffSec = backoff
 	return entry
 }
 
@@ -159,7 +158,7 @@ func (r *RetryFramework) initRetryObjWithAdd(obj interface{}, lockedKey string) 
 
 // initRetryObjWithUpdate tracks objects that failed to be updated to potentially retry later
 func (r *RetryFramework) initRetryObjWithUpdate(oldObj, newObj interface{}, lockedKey string) *retryObjEntry {
-	entry, _ := r.retryEntries.LoadOrStore(lockedKey, &retryObjEntry{config: oldObj, backoff: initialBackoff})
+	entry, _ := r.retryEntries.LoadOrStore(lockedKey, &retryObjEntry{config: oldObj, backoffSec: initialBackoff})
 	// even if the object was loaded and changed before with the same lock, LoadOrStore will return reference to the same object
 	entry.timeStamp = time.Now()
 	entry.newObj = newObj
@@ -175,7 +174,7 @@ func (r *RetryFramework) initRetryObjWithUpdate(oldObj, newObj interface{}, lock
 // The noRetryAdd boolean argument is to indicate whether to retry for addition
 func (r *RetryFramework) InitRetryObjWithDelete(obj interface{}, lockedKey string, config interface{}, noRetryAdd bool) *retryObjEntry {
 	// even if the object was loaded and changed before with the same lock, LoadOrStore will return reference to the same object
-	entry, _ := r.retryEntries.LoadOrStore(lockedKey, &retryObjEntry{config: config, backoff: initialBackoff})
+	entry, _ := r.retryEntries.LoadOrStore(lockedKey, &retryObjEntry{config: config, backoffSec: initialBackoff})
 	entry.timeStamp = time.Now()
 	entry.oldObj = obj
 	if entry.config == nil {
@@ -214,7 +213,7 @@ func (r *RetryFramework) DeleteRetryObj(lockedKey string) {
 // immediately during the next retry iteration
 // Used only for testing right now
 func (r *RetryFramework) setRetryObjWithNoBackoff(entry *retryObjEntry) {
-	entry.backoff = noBackoff
+	entry.backoffSec = noBackoff
 }
 
 // removeDeleteFromRetryObj removes any old object from a retry entry
@@ -272,11 +271,11 @@ func (r *RetryFramework) resourceRetry(objKey string, now time.Time) {
 		}
 		forceRetry := false
 		// check if immediate retry is requested
-		if entry.backoff == noBackoff {
-			entry.backoff = initialBackoff
+		if entry.backoffSec == noBackoff {
+			entry.backoffSec = initialBackoff
 			forceRetry = true
 		}
-		backoff := entry.backoff + (time.Duration(rand.Intn(500)) * time.Millisecond)
+		backoff := (entry.backoffSec * time.Second) + (time.Duration(rand.Intn(500)) * time.Millisecond)
 		objTimer := entry.timeStamp.Add(backoff)
 		if !forceRetry && now.Before(objTimer) {
 			klog.V(5).Infof("Attempting retry of %s %s before timer (time: %s): skip", r.ResourceHandler.ObjType, objKey, objTimer)
@@ -284,9 +283,9 @@ func (r *RetryFramework) resourceRetry(objKey string, now time.Time) {
 		}
 
 		// update backoff for future attempts in case of failure
-		entry.backoff = entry.backoff * 2
-		if entry.backoff > maxBackoff {
-			entry.backoff = maxBackoff
+		entry.backoffSec = entry.backoffSec * 2
+		if entry.backoffSec > 60 {
+			entry.backoffSec = 60
 		}
 
 		// storing original obj for metrics
