@@ -2039,3 +2039,19 @@ func isOutboundSNATEnabled() bool {
 	}
 	return false
 }
+
+func isManagedRoutingEnabled() bool {
+	if !isNoOverlayEnabled() {
+		return false
+	}
+	ovnKubeNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+	args := []string{"get", "configmap", "ovnkube-config", "-o=jsonpath={.data.ovnkube\\.conf}"}
+	conf := e2ekubectl.RunKubectlOrDie(ovnKubeNamespace, args...)
+
+	// Simplistic check for routing = managed
+	if strings.Contains(conf, "routing = managed") || strings.Contains(conf, "routing=managed") {
+		framework.Logf("Managed routing is enabled in ovnkube-config")
+		return true
+	}
+	return false
+}
