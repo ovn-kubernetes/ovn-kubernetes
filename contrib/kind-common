@@ -34,7 +34,7 @@ if_error_exit() {
 
 set_common_default_params() {
   KIND_IMAGE=${KIND_IMAGE:-kindest/node}
-  K8S_VERSION=${K8S_VERSION:-v1.34.0}
+  K8S_VERSION=${K8S_VERSION:-v1.33.1}
   KIND_SETTLE_DURATION=${KIND_SETTLE_DURATION:-30}
 }
 
@@ -188,8 +188,7 @@ install_metallb() {
   # instead of their build
   patch tasks.py << 'EOF'
 @@ -29,7 +29,7 @@ extra_network = "network2"
--controller_gen_version = "v0.16.3"
-+controller_gen_version = "v0.19.0"
+ controller_gen_version = "v0.16.3"
  build_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "build")
  kubectl_path = os.path.join(build_path, "kubectl")
 -kind_path = os.path.join(build_path, "kind")
@@ -576,8 +575,8 @@ install_dnsnameresolver_operator() {
     -e 's/^\(.*--dns-name-resolver-namespace=\).*/\1ovn-kubernetes/' \
     -e 's/^\(.*--coredns-port=\).*/\153/' config/default/manager_auth_proxy_patch.yaml
 
-  make install CONTROLLER_TOOLS_VERSION=v0.19.0
-  make deploy IMG=${DNSNAMERESOLVER_OPERATOR} CONTROLLER_TOOLS_VERSION=v0.19.0
+  make install
+  make deploy IMG=${DNSNAMERESOLVER_OPERATOR}
   popd
 }
 
