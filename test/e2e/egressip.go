@@ -327,7 +327,7 @@ func targetExternalContainerAndTest(externalContainer infraapi.ExternalContainer
 		if err != nil {
 			if !expectSuccess {
 				// curl should timeout with a string containing this error, and this should be the case if we expect a failure
-				if !strings.Contains(strings.ToLower(err.Error()), " timed out ") {
+				if !strings.Contains(strings.ToLower(err.Error()), " timeout ") {
 					framework.Logf("the test expected netserver container to not be able to connect, but it did with another error, err : %v", err)
 					return false, nil
 				}

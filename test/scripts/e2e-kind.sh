@@ -66,12 +66,6 @@ should prevent Ingress creation if more than 1 IngressClass marked as default
 # TODO: Figure out why the below test is failing and if we need to add support in OVN-K for them
 validates that there is no conflict between pods with same hostPort but different hostIP and protocol
 
-# https://issues.redhat.com/browse/OCPBUGS-61380
-should support named targetPorts that resolve to different ports on different endpoints
-
-# https://issues.redhat.com/browse/OCPBUGS-61378
-should be able to cleanup conntrack entries when UDP service target port changes for a NodePort service
-
 # https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5119
 \[sig-network\] Services should implement NodePort and HealthCheckNodePort correctly when ExternalTrafficPolicy changes
 
