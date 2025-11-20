@@ -67,6 +67,8 @@ func TestNetworkPolicyV2Conformance(t *testing.T) {
 				SupportedFeatures: sets.New(
 					suite.SupportAdminNetworkPolicyEgressNodePeers,
 					suite.SupportBaselineAdminNetworkPolicyEgressNodePeers,
+					suite.SupportAdminNetworkPolicyEgressInlineCIDRPeers,
+					suite.SupportBaselineAdminNetworkPolicyEgressInlineCIDRPeers,
 					suite.SupportAdminNetworkPolicyNamedPorts,
 					suite.SupportBaselineAdminNetworkPolicyNamedPorts,
 				),
