@@ -100,6 +100,12 @@ type NetConf struct {
 		// see https://github.com/k8snetworkplumbingwg/device-info-spec
 		CNIDeviceInfoFile string `json:"CNIDeviceInfoFile,omitempty"`
 	} `json:"runtimeConfig,omitempty"`
+
+	// Transport specifies the transport technology used for the network.
+	// The allowed values are "noOverlay" and "geneve". If not specified,
+	// the default value is "geneve".
+	// Note: Users must not set this field manually; OVN-Kubernetes manages it.
+	Transport string `json:"transport,omitempty"`
 }
 
 // NetworkSelectionElement represents one element of the JSON format
