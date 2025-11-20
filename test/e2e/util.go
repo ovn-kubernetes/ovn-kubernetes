@@ -1374,6 +1374,12 @@ func isLocalGWModeEnabled() bool {
 	return present && val == "local"
 }
 
+func isNoOverlayEnabled() bool {
+	ovnKubeNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+	val := getTemplateContainerEnv(ovnKubeNamespace, "daemonset/ovnkube-node", getNodeContainerName(), "OVN_NO_OVERLAY_ENABLE")
+	return val == "true"
+}
+
 func isPreConfiguredUdnAddressesEnabled() bool {
 	ovnKubeNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
 	val := getTemplateContainerEnv(ovnKubeNamespace, "daemonset/ovnkube-node", getNodeContainerName(), "OVN_PRE_CONF_UDN_ADDR_ENABLE")
@@ -1994,20 +2000,4 @@ func isNoOverlayEnabled() bool {
 	ovnKubeNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
 	val := getTemplateContainerEnv(ovnKubeNamespace, "daemonset/ovnkube-node", getNodeContainerName(), "OVN_NO_OVERLAY_ENABLE")
 	return val == "true"
-}
-
-func isOutboundSNATEnabled() bool {
-	if !isNoOverlayEnabled() {
-		return false
-	}
-	ovnKubeNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
-	args := []string{"get", "configmap", "ovnkube-config", "-o=jsonpath={.data.ovnkube\\.conf}"}
-	conf := e2ekubectl.RunKubectlOrDie(ovnKubeNamespace, args...)
-
-	// Simplistic check for outbound-snat = enable
-	if strings.Contains(conf, "outbound-snat = enable") || strings.Contains(conf, "outbound-snat=enable") {
-		framework.Logf("Outbound SNAT is enabled in ovnkube-config")
-		return true
-	}
-	return false
 }

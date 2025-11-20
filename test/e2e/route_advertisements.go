@@ -36,6 +36,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/dynamic"
@@ -133,7 +134,7 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 
 	ginkgo.BeforeEach(func() {
 		// noOverlaySNATEnabled determines if no-overlay mode uses outbound SNAT.
-		noOverlaySNATEnabled = isOutboundSNATEnabled()
+		noOverlaySNATEnabled = isOutboundSNATEnabled(f)
 		serverContainerIPs = getBGPServerContainerIPs(f)
 		framework.Logf("The external server IPs are: %+v", serverContainerIPs)
 		providerPrimaryNetwork, err := infraprovider.Get().PrimaryNetwork()
@@ -546,8 +547,190 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 			ginkgo.By("After default network is toggled to unadvertised, run test towards the second node from client pod, egressing packets should be SNATed to pod's host nodeIP")
 			testPodToExternalConnectivity(clientPod.Namespace, clientPod.Name, hostNetworkedPodNodeIPs, clientPodNodeIPs, strconv.Itoa(hostNetPort), "After default network is toggled to unadvertised, pod to second node test failed")
 
+			if isNoOverlayEnabled() {
+				ginkgo.By("Verifying warning event is emitted after default network is toggled to unadvertised")
+				found := checkNoOverlayEvent(f, "NoRouteAdvertisements", corev1.EventTypeWarning, 30*time.Second)
+				gomega.Expect(found).To(gomega.BeTrue(), "Should emit warning event after RA deletion")
+			}
 		})
 	})
+	ginkgo.When("no-overlay mode is enabled", func() {
+		var clientPod, serverPod, tcpdumpPod *corev1.Pod
+		var serverService *corev1.Service
+		const (
+			tcpdumpPodName = "tcpdump-pod-no-overlay"
+			serverPodName  = "server-pod-no-overlay"
+			clientPodName  = "client-pod-no-overlay"
+		)
+
+		ginkgo.BeforeEach(func() {
+			if !isNoOverlayEnabled() {
+				ginkgo.Skip("Test requires no-overlay mode to be enabled (OVN_NO_OVERLAY_ENABLE=true)")
+			}
+
+			var err error
+			ginkgo.By("Selecting nodes")
+			nodes, err = f.ClientSet.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(len(nodes.Items)).To(gomega.BeNumerically(">", 2))
+
+			ginkgo.By("Creating server pod on first node")
+			serverPod = e2epod.NewAgnhostPod(f.Namespace.Name, serverPodName, nil, nil, []corev1.ContainerPort{{ContainerPort: netexecPort}}, "netexec")
+			serverPod.Labels = map[string]string{"app": "no-overlay-server"}
+			serverPod.Spec.NodeName = nodes.Items[0].Name
+			e2epod.NewPodClient(f).CreateSync(context.TODO(), serverPod)
+
+			ginkgo.By("Creating client pod on second node")
+			clientPod = e2epod.NewAgnhostPod(f.Namespace.Name, clientPodName, nil, nil, []corev1.ContainerPort{{ContainerPort: netexecPort}}, "netexec")
+			clientPod.Spec.NodeName = nodes.Items[1].Name
+			e2epod.NewPodClient(f).CreateSync(context.TODO(), clientPod)
+
+			// Wait for pods to be ready and refresh their status
+			ginkgo.By("Waiting for server pod to be ready")
+			err = e2epod.WaitTimeoutForPodReadyInNamespace(context.TODO(), f.ClientSet, serverPod.Name, f.Namespace.Name, 60*time.Second)
+			framework.ExpectNoError(err, "Server pod failed to become ready")
+
+			ginkgo.By("Waiting for client pod to be ready")
+			err = e2epod.WaitTimeoutForPodReadyInNamespace(context.TODO(), f.ClientSet, clientPod.Name, f.Namespace.Name, 60*time.Second)
+			framework.ExpectNoError(err, "Client pod failed to become ready")
+
+			// Refresh pod status to get IP addresses
+			serverPod, err = e2epod.NewPodClient(f).Get(context.TODO(), serverPod.Name, metav1.GetOptions{})
+			framework.ExpectNoError(err, "Failed to get server pod status")
+
+			clientPod, err = e2epod.NewPodClient(f).Get(context.TODO(), clientPod.Name, metav1.GetOptions{})
+			framework.ExpectNoError(err, "Failed to get client pod status")
+
+			framework.Logf("Server pod IPs: %v", serverPod.Status.PodIPs)
+			framework.Logf("Client pod IPs: %v", clientPod.Status.PodIPs)
+
+			// Verify pods have IP addresses
+			gomega.Expect(len(serverPod.Status.PodIPs)).To(gomega.BeNumerically(">", 0), "Server pod should have at least one IP address")
+			gomega.Expect(len(clientPod.Status.PodIPs)).To(gomega.BeNumerically(">", 0), "Client pod should have at least one IP address")
+
+			ginkgo.By("Creating service to select server pod")
+			familyPolicy := corev1.IPFamilyPolicyPreferDualStack
+			serverService = &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "no-overlay-server-service",
+				},
+				Spec: corev1.ServiceSpec{
+					Selector: map[string]string{"app": "no-overlay-server"},
+					Ports: []corev1.ServicePort{
+						{
+							Protocol: corev1.ProtocolTCP,
+							Port:     netexecPort,
+							TargetPort: intstr.IntOrString{
+								Type:   intstr.Int,
+								IntVal: netexecPort,
+							},
+						},
+					},
+					Type:           corev1.ServiceTypeClusterIP,
+					IPFamilyPolicy: &familyPolicy,
+				},
+			}
+			serverService, err = f.ClientSet.CoreV1().Services(f.Namespace.Name).Create(context.TODO(), serverService, metav1.CreateOptions{})
+			framework.ExpectNoError(err, "Failed to create server service")
+			framework.Logf("Created service %s with ClusterIPs %v", serverService.Name, serverService.Spec.ClusterIPs)
+
+			ginkgo.By("Creating tcpdump pod")
+			tcpdumpPod, err = createPod(f, tcpdumpPodName, nodes.Items[1].Name, f.Namespace.Name, []string{"bash", "-c", "apk update; apk add tcpdump; sleep 20000"}, map[string]string{}, func(p *corev1.Pod) {
+				p.Spec.HostNetwork = true
+			})
+			framework.ExpectNoError(err)
+			framework.Logf("tcpdumpPod pod IPs: %v", tcpdumpPod.Status.PodIPs)
+
+			ginkgo.By("Verifying tcpdump is installed successfully")
+			gomega.Eventually(func() bool {
+				checkCmd := "which tcpdump"
+				output, err := e2epodoutput.RunHostCmd(tcpdumpPod.Namespace, tcpdumpPod.Name, checkCmd)
+				if err != nil {
+					framework.Logf("tcpdump check failed: %v", err)
+					return false
+				}
+				framework.Logf("tcpdump check output: %s", output)
+				return output != "" && err == nil
+			}, 30*time.Second, 1*time.Second).Should(gomega.BeTrue(), "tcpdump should be installed within 30 seconds")
+		})
+
+		ginkgo.It("should maintain pod2pod/pod2service/host2pod/host2service connectivity without overlay before and after ovnpod restarted", ginkgo.Serial, func() {
+			ginkgo.By("Testing pod2pod connectivity without overlay on different node before OVN pod restart")
+			checkPod2PodConnectivityWithoutOverlay(serverPod, clientPod, tcpdumpPod)
+
+			ginkgo.By("Testing host2pod connectivity without overlay on different node before OVN pod restart")
+			// here use tcpdumpPod as the client (since it's host networked)
+			checkPod2PodConnectivityWithoutOverlay(serverPod, tcpdumpPod, tcpdumpPod)
+
+			ginkgo.By("Testing pod2service connectivity without overlay via service IPs before OVN pod restart")
+			checkPod2ServiceConnectivityWithoutOverlay(serverService, serverPod, clientPod, tcpdumpPod)
+
+			ginkgo.By("Testing host2service connectivity without overlay via service IPs before OVN pod restart")
+			// here use tcpdumpPod as the client (since it's host networked)
+			checkPod2ServiceConnectivityWithoutOverlay(serverService, serverPod, tcpdumpPod, tcpdumpPod)
+
+			ginkgo.By("Getting ovnkube-node pod on worker node")
+			ovnNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+			ovnPodList, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+				LabelSelector: "app=ovnkube-node",
+				FieldSelector: fmt.Sprintf("spec.nodeName=%s", nodes.Items[0].Name),
+			})
+			framework.ExpectNoError(err, "Failed to list ovnkube-node pods")
+			gomega.Expect(ovnPodList.Items).NotTo(gomega.BeEmpty(), "Should find ovnkube-node pod")
+			ovnPod := &ovnPodList.Items[0]
+			framework.Logf("Found ovnkube-node pod: %s on node %s", ovnPod.Name, nodes.Items[0].Name)
+
+			ginkgo.By("Deleting ovnkube-node pod to trigger restart")
+			err = f.ClientSet.CoreV1().Pods(ovnNamespace).Delete(context.TODO(), ovnPod.Name, metav1.DeleteOptions{})
+			framework.ExpectNoError(err, "Failed to delete ovnkube-node pod")
+
+			ginkgo.By("Waiting for new ovnkube-node pod to be ready")
+			gomega.Eventually(func() bool {
+				newOvnPodList, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(context.TODO(), metav1.ListOptions{
+					LabelSelector: "app=ovnkube-node",
+					FieldSelector: fmt.Sprintf("spec.nodeName=%s", nodes.Items[0].Name),
+				})
+				if err != nil {
+					framework.Logf("Failed to list ovnkube-node pods: %v", err)
+					return false
+				}
+				if len(newOvnPodList.Items) == 0 {
+					framework.Logf("No ovnkube-node pod found yet")
+					return false
+				}
+				newOvnPod := &newOvnPodList.Items[0]
+				// Check if it's a new pod (different UID)
+				if newOvnPod.UID == ovnPod.UID {
+					framework.Logf("Still the old pod, waiting for deletion to complete")
+					return false
+				}
+				// Check if all containers are ready
+				for _, condition := range newOvnPod.Status.Conditions {
+					if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+						framework.Logf("New ovnkube-node pod %s is ready", newOvnPod.Name)
+						return true
+					}
+				}
+				framework.Logf("New ovnkube-node pod %s is not ready yet", newOvnPod.Name)
+				return false
+			}, 120*time.Second, 2*time.Second).Should(gomega.BeTrue(), "New ovnkube-node pod should be ready within 120 seconds")
+
+			ginkgo.By("Verifying pod2pod connectivity after OVN pod restart")
+			checkPod2PodConnectivityWithoutOverlay(serverPod, clientPod, tcpdumpPod)
+
+			ginkgo.By("Verifying host2pod connectivity after OVN pod restart")
+			checkPod2PodConnectivityWithoutOverlay(serverPod, tcpdumpPod, tcpdumpPod)
+
+			ginkgo.By("Verifying pod2service connectivity after OVN pod restart")
+			checkPod2ServiceConnectivityWithoutOverlay(serverService, serverPod, clientPod, tcpdumpPod)
+
+			ginkgo.By("Verifying host2service connectivity after OVN pod restart")
+			checkPod2ServiceConnectivityWithoutOverlay(serverService, serverPod, tcpdumpPod, tcpdumpPod)
+
+			framework.Logf("Pod2pod and pod2service connectivity maintained after OVN pod restart - test passed!")
+		})
+	})
+
 })
 
 var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advertised", feature.RouteAdvertisements, func() {
@@ -2792,4 +2975,131 @@ func checkRouteInFRR(node corev1.Node, podCIDR, routerContainerName string, isIP
 		framework.Logf("Routes in FRR for %s: %s", podCIDR, routes)
 		return strings.Contains(routes, nodeIP[0])
 	}, 30*time.Second).Should(gomega.BeTrue(), "route for %s via %s not found on %s", podCIDR, nodeIP[0], routerContainerName)
+}
+
+// checkNoOverlayEvent checks if a specific event exists in the ovn-kubernetes namespace
+func checkNoOverlayEvent(f *framework.Framework, eventReason string, eventType string, timeout time.Duration) bool {
+	found := false
+	err := wait.PollUntilContextTimeout(context.TODO(), 2*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		events, err := f.ClientSet.CoreV1().Events(deploymentconfig.Get().OVNKubernetesNamespace()).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			framework.Logf("Failed to list events: %v", err)
+			return false, nil
+		}
+
+		for _, event := range events.Items {
+			if event.Reason == eventReason && event.Type == eventType {
+				framework.Logf("Found expected event: Reason=%s Type=%s Message=%s", event.Reason, event.Type, event.Message)
+				found = true
+				return true, nil
+			}
+		}
+		return false, nil
+	})
+
+	if err != nil && !wait.Interrupted(err) {
+		framework.Logf("Error while polling for event: %v", err)
+	}
+
+	return found
+}
+
+func isOutboundSNATEnabled(f *framework.Framework) bool {
+	if !isNoOverlayEnabled() {
+		return false
+	}
+	configMap, err := f.ClientSet.CoreV1().ConfigMaps(deploymentconfig.Get().OVNKubernetesNamespace()).Get(context.TODO(), "ovnkube-config", metav1.GetOptions{})
+	if err != nil {
+		framework.Logf("Failed to get ovnkube-config: %v", err)
+		return false
+	}
+	if conf, ok := configMap.Data["ovnkube.conf"]; ok {
+		// Simplistic check for outbound-snat = enable
+		if strings.Contains(conf, "outbound-snat = enable") || strings.Contains(conf, "outbound-snat=enable") {
+			framework.Logf("Outbound SNAT is enabled in ovnkube-config")
+			return true
+		}
+	}
+	return false
+}
+
+func getTcpdumpOnGenevSys(tcpdumpPod *corev1.Pod, clientPod *corev1.Pod, curlCmd string, serverPodIP string) (string, string) {
+	ginkgo.By("start tcpdump on genev_sys_6081 interface to capture traffic")
+	startCmd := fmt.Sprintf("sh -lc 'rm -f /tmp/tcpdump.log /tmp/tcpdump.pid; tcpdump -ni genev_sys_6081 tcp and host %s -n -vv -s 0 -l > /tmp/tcpdump.log 2>&1 & echo $! > /tmp/tcpdump.pid'", serverPodIP)
+	_, tcpdumpErr := e2epodoutput.RunHostCmdWithRetries(
+		tcpdumpPod.Namespace,
+		tcpdumpPod.Name, startCmd,
+		framework.Poll,
+		10*time.Second)
+	framework.ExpectNoError(tcpdumpErr, "run tcpdump failed on genev_sys_6081 interface")
+	// Wait 2 seconds to let the tcpdump ready for capturing traffic
+	time.Sleep(2 * time.Second)
+
+	ginkgo.By("Generating tcp traffic")
+	framework.Logf("Testing connectivity with command %q", curlCmd)
+	curlOutput, curlErr := e2epodoutput.RunHostCmdWithRetries(
+		clientPod.Namespace,
+		clientPod.Name,
+		curlCmd,
+		framework.Poll,
+		10*time.Second)
+	framework.ExpectNoError(curlErr, "Curl server from client failed")
+	framework.Logf("curl output:\n%s", curlOutput)
+
+	collectCmd := "sh -lc 'kill -INT $(cat /tmp/tcpdump.pid) >/dev/null 2>&1 || true; sleep 1; cat /tmp/tcpdump.log'"
+	tcpdumpOut, _ := e2epodoutput.RunHostCmdWithRetries(tcpdumpPod.Namespace, tcpdumpPod.Name, collectCmd, framework.Poll, 10*time.Second)
+	framework.Logf("tcpdump output:\n%s", tcpdumpOut)
+	return tcpdumpOut, curlOutput
+}
+
+// checkPod2PodConnectivityWithoutOverlay checks that the client pod can connect to the server pod without overlay
+// and the client IP is received in the response without any overlay traffic.
+
+func checkPod2PodConnectivityWithoutOverlay(serverPod, clientPod, tcpdumpPod *corev1.Pod) {
+	for _, pip := range serverPod.Status.PodIPs {
+		destIP := pip.IP
+		ginkgo.By(fmt.Sprintf("curl server IP %s", destIP))
+		curlCmd := fmt.Sprintf("curl -s -m 2 %s/clientip", net.JoinHostPort(destIP, fmt.Sprint(netexecPort)))
+		tcpdumpOut, curlOutput := getTcpdumpOnGenevSys(tcpdumpPod, clientPod, curlCmd, destIP)
+		gomega.Expect(tcpdumpOut).To(gomega.ContainSubstring("0 packets captured"), "Should not capture Geneve packets for no-overlay")
+
+		var clientIP string
+		isIPv6 := utilnet.IsIPv6String(destIP)
+		for _, pip := range clientPod.Status.PodIPs {
+			if utilnet.IsIPv6String(pip.IP) == isIPv6 {
+				clientIP = pip.IP
+				break
+			}
+		}
+		gomega.Expect(clientIP).NotTo(gomega.BeEmpty())
+		gomega.Expect(curlOutput).To(gomega.ContainSubstring(clientIP), "Should receive client IP %s", clientIP)
+
+	}
+}
+
+// checkPod2ServiceConnectivityWithoutOverlay checks that the client pod can connect to the server service without overlay
+func checkPod2ServiceConnectivityWithoutOverlay(serverService *corev1.Service, serverPod, clientPod, tcpdumpPod *corev1.Pod) {
+	for _, serviceIP := range serverService.Spec.ClusterIPs {
+		ginkgo.By(fmt.Sprintf("curl service IP %s", serviceIP))
+		curlCmd := fmt.Sprintf("curl -I -s -m 2 %s/clientip", net.JoinHostPort(serviceIP, fmt.Sprint(netexecPort)))
+
+		// Determine server pod IP based on service IP family for filtering
+		isIPv6 := utilnet.IsIPv6String(serviceIP)
+		var serverIP string
+		for _, pip := range serverPod.Status.PodIPs {
+			if utilnet.IsIPv6String(pip.IP) == isIPv6 {
+				serverIP = pip.IP
+				break
+			}
+		}
+		gomega.Expect(serverIP).NotTo(gomega.BeEmpty(), "Could not find matching server pod IP family")
+
+		// Use getTcpdumpOnGenevSys to verify no overlay traffic (filtering by backend server IP)
+		tcpdumpOut, output := getTcpdumpOnGenevSys(tcpdumpPod, clientPod, curlCmd, serverIP)
+		gomega.Expect(tcpdumpOut).To(gomega.ContainSubstring("0 packets captured"), "Should not capture Geneve packets for no-overlay")
+
+		framework.Logf("Service connectivity test output for %s: %s", serviceIP, output)
+		// Verify the response contains 200 OK
+		gomega.Expect(output).To(gomega.ContainSubstring("200 OK"), fmt.Sprintf("Should receive 200 OK from service %s", serviceIP))
+	}
 }
