@@ -102,7 +102,7 @@ spec:
           value: {{ include "isSslEnabled" . | quote }}
         - name: OVN_NB_PORT
           value: {{ default 6641 .Values.global.nbPort | quote }}
-        - name: ENABLE_IPSEC
+        - name: OVN_ENABLE_IPSEC
           value: {{ hasKey .Values.global "enableIpsec" | ternary .Values.global.enableIpsec false | quote }}
         readinessProbe:
           exec:

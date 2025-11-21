@@ -331,6 +331,8 @@ const (
 	MetricOvsNamespace                   = "ovs"
 	MetricOvsSubsystemVswitchd           = "vswitchd"
 	MetricOvsSubsystemDB                 = "db"
+	MetricIPsecEnabled                   = "ipsec_enabled"
+	MetricIPsecTunnelIKEChildSAState     = "ipsec_tunnel_ike_child_sa_state"
 
 	// "mgmtport-no-snat-subnets-v4" and "mgmtport-no-snat-subnets-v6" are sets containing
 	// subnets, indicating traffic that should not be SNATted when passing through the
