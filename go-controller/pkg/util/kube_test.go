@@ -446,13 +446,16 @@ func TestPodScheduled(t *testing.T) {
 }
 
 var (
-	testNode   string          = "testNode"
-	otherNode                  = "otherNode"
-	ep1Address string          = "10.244.0.3"
-	ep2Address string          = "10.244.0.4"
-	ep3Address string          = "10.244.1.3"
-	tcpv1      corev1.Protocol = corev1.ProtocolTCP
-	udpv1      corev1.Protocol = corev1.ProtocolUDP
+	testNode       string          = "testNode"
+	otherNode                      = "otherNode"
+	ep1Address     string          = "10.244.0.3"
+	ep2Address     string          = "10.244.0.4"
+	ep3Address     string          = "10.244.1.3"
+	ep1AddressIPv6 string          = "fc00::3"
+	ep2AddressIPv6 string          = "fc00::4"
+	ep3AddressIPv6 string          = "fc00::1:3"
+	tcpv1          corev1.Protocol = corev1.ProtocolTCP
+	udpv1          corev1.Protocol = corev1.ProtocolUDP
 
 	httpsPortName   string = "https"
 	httpsPortValue  int32  = int32(443)
@@ -601,43 +604,137 @@ func TestGetEndpointAddresses(t *testing.T) {
 	}
 }
 
-func TestHasLocalHostNetworkEndpoints(t *testing.T) {
+func TestExtractHostNetworkEndpoints(t *testing.T) {
 	ep1IP := net.ParseIP(ep1Address)
 	if ep1IP == nil {
 		t.Errorf("error parsing ep1 address %s", ep1Address)
 	}
-	nodeAddresses := []net.IP{ep1IP}
+	ep1IPv6 := net.ParseIP(ep1AddressIPv6)
+	if ep1IPv6 == nil {
+		t.Errorf("error parsing ep1 IPv6 address %s", ep1AddressIPv6)
+	}
+	nodeAddresses := []net.IP{ep1IP, ep1IPv6}
 	var tests = []struct {
-		name           string
-		localEndpoints PortToLBEndpoints
-		want           bool
+		name                          string
+		localEndpoints                PortToLBEndpointsList
+		wantLocalHostNetworkEndpoints PortToLBEndpointsList
+		wantLocalEndpoints            PortToLBEndpointsList
 	}{
 		{
 			"Tests with local endpoints that include the node address",
-			PortToLBEndpoints{"test": LBEndpoints{
+			PortToLBEndpointsList{"test": {{
+				Port:  httpsPortValue,
 				V4IPs: []string{ep1Address, ep2Address},
-			}},
-			true,
+			}}},
+			PortToLBEndpointsList{"test": {{
+				Port:  httpsPortValue,
+				V4IPs: []string{ep1Address},
+			}}},
+			PortToLBEndpointsList{"test": {{
+				Port:  httpsPortValue,
+				V4IPs: []string{ep2Address},
+			}}},
 		},
 		{
 			"Tests against a different local endpoint than the node address",
-			PortToLBEndpoints{"test": LBEndpoints{
+			PortToLBEndpointsList{"test": {{
+				Port:  httpsPortValue,
 				V4IPs: []string{ep2Address},
-			}},
-			false,
+			}}},
+			PortToLBEndpointsList{},
+			PortToLBEndpointsList{"test": {{
+				Port:  httpsPortValue,
+				V4IPs: []string{ep2Address},
+			}}},
+		},
+		{
+			"Tests with local endpoints that include both node V4 and V6 addresses",
+			PortToLBEndpointsList{"test": {{
+				Port:  httpsPortValue,
+				V4IPs: []string{ep1Address, ep2Address},
+				V6IPs: []string{ep1AddressIPv6, ep2AddressIPv6},
+			}}},
+			PortToLBEndpointsList{"test": {{
+				Port:  httpsPortValue,
+				V4IPs: []string{ep1Address},
+				V6IPs: []string{ep1AddressIPv6},
+			}}},
+			PortToLBEndpointsList{"test": {{
+				Port:  httpsPortValue,
+				V4IPs: []string{ep2Address},
+				V6IPs: []string{ep2AddressIPv6},
+			}}},
+		},
+		{
+			"Tests against a different local endpoint than the node address with multiple endpoints",
+			PortToLBEndpointsList{
+				"test": {
+					{
+						Port:  httpsPortValue,
+						V4IPs: []string{ep1Address},
+						V6IPs: []string{ep1AddressIPv6},
+					},
+					{
+						Port:  customPortValue,
+						V4IPs: []string{ep1Address, ep2Address},
+						V6IPs: []string{ep1AddressIPv6, ep2AddressIPv6},
+					},
+				},
+				"test2": {
+					{
+						Port:  httpsPortValue,
+						V4IPs: []string{ep3Address},
+						V6IPs: []string{ep3AddressIPv6},
+					},
+				},
+			},
+			PortToLBEndpointsList{
+				"test": {
+					{
+						Port:  httpsPortValue,
+						V4IPs: []string{ep1Address},
+						V6IPs: []string{ep1AddressIPv6},
+					},
+					{
+						Port:  customPortValue,
+						V4IPs: []string{ep1Address},
+						V6IPs: []string{ep1AddressIPv6},
+					},
+				},
+			},
+			PortToLBEndpointsList{
+				"test": {
+					{
+						Port:  customPortValue,
+						V4IPs: []string{ep2Address},
+						V6IPs: []string{ep2AddressIPv6},
+					},
+				},
+				"test2": {
+					{
+						Port:  httpsPortValue,
+						V4IPs: []string{ep3Address},
+						V6IPs: []string{ep3AddressIPv6},
+					},
+				},
+			},
 		},
 		{
 			"Tests against no local endpoints",
-			PortToLBEndpoints{"test": LBEndpoints{}},
-			false,
+			PortToLBEndpointsList{},
+			PortToLBEndpointsList{},
+			PortToLBEndpointsList{},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			answer := HasLocalHostNetworkEndpoints(tt.localEndpoints, nodeAddresses)
-			if !reflect.DeepEqual(answer, tt.want) {
-				t.Errorf("got %v, want %v", answer, tt.want)
+			localHostNetworkEndpoints, localEndpoints := tt.localEndpoints.ExtractHostNetworkEndpoints(nodeAddresses)
+			if !reflect.DeepEqual(localHostNetworkEndpoints, tt.wantLocalHostNetworkEndpoints) {
+				t.Errorf("got localHostNetworkEndpoints %v, want %v", localHostNetworkEndpoints, tt.wantLocalHostNetworkEndpoints)
+			}
+			if !reflect.DeepEqual(localEndpoints, tt.wantLocalEndpoints) {
+				t.Errorf("got localEndpoints %v, want %v", localEndpoints, tt.wantLocalEndpoints)
 			}
 		})
 	}
