@@ -953,3 +953,13 @@ func IsLastUpdatedByManager(manager string, managedFields []metav1.ManagedFields
 	}
 	return lastUpdateOurs.After(lastUpdateTheirs)
 }
+
+// JoinIPServicePort returns the IP:port:targetPort:nodePort combination of a service port for
+// a NodePort type service, otherwise returns IP:port:targetPort combination of the service port.
+func JoinIPServicePort(ip string, servicePort corev1.ServicePort, isNodePort bool) string {
+	joinString := fmt.Sprintf("%s:%d:%s", ip, servicePort.Port, servicePort.TargetPort.String())
+	if isNodePort {
+		joinString = fmt.Sprintf("%s:%d", joinString, servicePort.NodePort)
+	}
+	return joinString
+}
