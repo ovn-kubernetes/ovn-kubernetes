@@ -916,7 +916,7 @@ func (bnc *BaseNetworkController) allocatePodAnnotation(pod *corev1.Pod, existin
 		return nil, false, err
 	}
 
-	err = podallocator.AddRoutesGatewayIP(bnc.GetNetInfo(), node, pod, podAnnotation, network)
+	err = podallocator.AddRoutesGatewayIP(bnc.GetNetInfo(), node, pod, podAnnotation, nadName, network)
 	if err != nil {
 		return nil, false, err
 	}
@@ -989,6 +989,7 @@ func (bnc *BaseNetworkController) allocatePodAnnotationForUserDefinedNetwork(pod
 		ipAllocator,
 		node,
 		pod,
+		nadName,
 		network,
 		reallocate,
 		networkRole,
