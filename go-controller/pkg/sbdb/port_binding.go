@@ -20,6 +20,7 @@ type PortBinding struct {
 	HaChassisGroup             *string           `ovsdb:"ha_chassis_group"`
 	LogicalPort                string            `ovsdb:"logical_port"`
 	MAC                        []string          `ovsdb:"mac"`
+	MirrorPort                 *string           `ovsdb:"mirror_port"`
 	MirrorRules                []string          `ovsdb:"mirror_rules"`
 	NatAddresses               []string          `ovsdb:"nat_addresses"`
 	Options                    map[string]string `ovsdb:"options"`
@@ -252,6 +253,28 @@ func equalPortBindingMAC(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func (a *PortBinding) GetMirrorPort() *string {
+	return a.MirrorPort
+}
+
+func copyPortBindingMirrorPort(a *string) *string {
+	if a == nil {
+		return nil
+	}
+	b := *a
+	return &b
+}
+
+func equalPortBindingMirrorPort(a, b *string) bool {
+	if (a == nil) != (b == nil) {
+		return false
+	}
+	if a == b {
+		return true
+	}
+	return *a == *b
 }
 
 func (a *PortBinding) GetMirrorRules() []string {
@@ -524,6 +547,7 @@ func (a *PortBinding) DeepCopyInto(b *PortBinding) {
 	b.GatewayChassis = copyPortBindingGatewayChassis(a.GatewayChassis)
 	b.HaChassisGroup = copyPortBindingHaChassisGroup(a.HaChassisGroup)
 	b.MAC = copyPortBindingMAC(a.MAC)
+	b.MirrorPort = copyPortBindingMirrorPort(a.MirrorPort)
 	b.MirrorRules = copyPortBindingMirrorRules(a.MirrorRules)
 	b.NatAddresses = copyPortBindingNatAddresses(a.NatAddresses)
 	b.Options = copyPortBindingOptions(a.Options)
@@ -563,6 +587,7 @@ func (a *PortBinding) Equals(b *PortBinding) bool {
 		equalPortBindingHaChassisGroup(a.HaChassisGroup, b.HaChassisGroup) &&
 		a.LogicalPort == b.LogicalPort &&
 		equalPortBindingMAC(a.MAC, b.MAC) &&
+		equalPortBindingMirrorPort(a.MirrorPort, b.MirrorPort) &&
 		equalPortBindingMirrorRules(a.MirrorRules, b.MirrorRules) &&
 		equalPortBindingNatAddresses(a.NatAddresses, b.NatAddresses) &&
 		equalPortBindingOptions(a.Options, b.Options) &&
