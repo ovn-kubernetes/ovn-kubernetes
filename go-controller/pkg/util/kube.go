@@ -908,20 +908,6 @@ func DoesEndpointSliceContainEligibleEndpoint(endpointSlice *discovery.EndpointS
 	return false
 }
 
-// HasLocalHostNetworkEndpoints returns true if any of the nodeAddresses appear in given the set of
-// localEndpointAddresses. This is useful to check whether any of the provided local endpoints are host-networked.
-func HasLocalHostNetworkEndpoints(portToLBEndpoints PortToLBEndpoints, nodeAddresses []net.IP) bool {
-	localEndpointAddresses := portToLBEndpoints.GetAddresses()
-	if len(localEndpointAddresses) == 0 || len(nodeAddresses) == 0 {
-		return false
-	}
-	nodeAddressesSet := sets.New[string]()
-	for _, ip := range nodeAddresses {
-		nodeAddressesSet.Insert(ip.String())
-	}
-	return len(localEndpointAddresses.Intersection(nodeAddressesSet)) != 0
-}
-
 // ServiceNamespacedNameFromEndpointSlice returns the namespaced name of the service
 // that corresponds to the given endpointSlice
 func ServiceNamespacedNameFromEndpointSlice(endpointSlice *discovery.EndpointSlice) (k8stypes.NamespacedName, error) {

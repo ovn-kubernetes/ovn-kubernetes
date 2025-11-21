@@ -15,7 +15,6 @@ import (
 
 	"github.com/urfave/cli/v2"
 	"golang.org/x/exp/constraints"
-	"golang.org/x/exp/maps"
 
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
@@ -282,36 +281,6 @@ func HashForOVN(s string) string {
 	}
 	hashString := strconv.FormatUint(h.Sum64(), 10)
 	return fmt.Sprintf("a%s", hashString)
-}
-
-// UpdateIPsSlice will search for values of oldIPs in the slice "s" and update it with newIPs values of same IP family
-func UpdateIPsSlice(s, oldIPs, newIPs []string) ([]string, bool) {
-	n := make([]string, len(s))
-	copy(n, s)
-	updated := false
-	for i, entry := range s {
-		for _, oldIP := range oldIPs {
-			if entry == oldIP {
-				for _, newIP := range newIPs {
-					if utilnet.IsIPv6(net.ParseIP(oldIP)) {
-						if utilnet.IsIPv6(net.ParseIP(newIP)) {
-							n[i] = newIP
-							updated = true
-							break
-						}
-					} else {
-						if !utilnet.IsIPv6(net.ParseIP(newIP)) {
-							n[i] = newIP
-							updated = true
-							break
-						}
-					}
-				}
-				break
-			}
-		}
-	}
-	return n, updated
 }
 
 // FilterIPsSlice will filter a list of IPs by a list of CIDRs. By default,
@@ -677,6 +646,70 @@ type IPPort struct {
 	Port int32
 }
 
+// LBEndpointsList is a slice of LBEndpoints, typically used when a service port maps to multiple backend ports.
+// e.g. []LBEndpoints{{Port: 8080, V4IPs: []string{"192.168.1.10"}}, {Port: 9090, V4IPs: []string{"192.168.1.11"}}}.
+type LBEndpointsList []LBEndpoints
+
+// GetV4Destinations returns all IPv4 destinations from all LBEndpoints in the list.
+func (lel LBEndpointsList) GetV4Destinations() []IPPort {
+	destinations := []IPPort{}
+	for _, le := range lel {
+		destinations = append(destinations, le.GetV4Destinations()...)
+	}
+	return destinations
+}
+
+// GetV6Destinations returns all IPv6 destinations from all LBEndpoints in the list.
+func (lel LBEndpointsList) GetV6Destinations() []IPPort {
+	destinations := []IPPort{}
+	for _, le := range lel {
+		destinations = append(destinations, le.GetV6Destinations()...)
+	}
+	return destinations
+}
+
+// Equals returns true if the 2 provided LBEndpointsLists are equal. Equality
+// is not determined by order of elements.
+// IP addresses will be converted into net.IP representation before being compared. This means that invalid IP addresses
+// will evaluate to nil and be compared as such.
+func (lel LBEndpointsList) Equals(other LBEndpointsList) bool {
+	if len(lel) != len(other) {
+		return false
+	}
+	foundIndexes := make([]bool, len(other))
+	for _, lbe := range lel {
+		found := false
+		for i, lbeOther := range other {
+			if lbe.Equals(lbeOther) && !foundIndexes[i] {
+				found = true
+				foundIndexes[i] = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+// Insert adds the provided element in the LBEndpointsList, ordered by port number.
+func (lel LBEndpointsList) Insert(toInsert LBEndpoints) LBEndpointsList {
+	i := 0
+	for ; i < len(lel); i++ {
+		if lel[i].Port == toInsert.Port {
+			lel[i] = lel[i].Merge(toInsert)
+			return lel
+		}
+		if lel[i].Port > toInsert.Port {
+			// Use full slice expression [:i:i] to avoid modifying the original slice.
+			result := append(lel[:i:i], toInsert)
+			return append(result, lel[i:]...)
+		}
+	}
+	return append(lel, toInsert)
+}
+
 // LBEndpoints contains load balancer endpoint information with IPv4 and IPv6 addresses.
 // Port is the endpoint port (the one exposed by the pod) and IPs are the IP addresses of the backend pods.
 // e.g. LBEndpoints{Port: 8080, V4IPs: []string{"192.168.1.10", "192.168.1.11"}, V6IPs: []string{"2001:db8::1"}}.
@@ -709,46 +742,194 @@ func (le LBEndpoints) GetV6Destinations() []IPPort {
 	return destinations
 }
 
-// PortToLBEndpoints maps service port keys (protocol + service port name) to load balancer endpoints.
-// e.g. map["TCP/http"] = LBEndpoints{Port: 8080, V4IPs: []string{"192.168.1.10"}}.
-// Port is the endpoint port (the one exposed by the pod) and IPs are the IP addresses of the backend pods.
-type PortToLBEndpoints map[string]LBEndpoints
+// Empty returns true if the LBEndpoints contains neither IPv4 nor IPv6 addresses.
+func (le LBEndpoints) Empty() bool {
+	return len(le.V4IPs) == 0 && len(le.V6IPs) == 0
+}
 
-// GetLBEndpoints returns the LBEndpoints belonging to key, or an error otherwise.
-func (p PortToLBEndpoints) GetLBEndpoints(key string) (LBEndpoints, error) {
+// Equals compares 2 LBEndpoints for equality, ignoring order of IP addresses.
+// IP addresses will be converted into net.IP representation before being compared. This means that invalid IP addresses
+// will evaluate to nil and be compared as such.
+func (le LBEndpoints) Equals(other LBEndpoints) bool {
+	if le.Port != other.Port {
+		return false
+	}
+	if len(le.V4IPs) != len(other.V4IPs) {
+		return false
+	}
+	if len(le.V6IPs) != len(other.V6IPs) {
+		return false
+	}
+
+	foundIndexes := make([]bool, len(other.V4IPs))
+	for _, ip := range le.V4IPs {
+		found := false
+		ipParsed := net.ParseIP(ip)
+		for i, ipOther := range other.V4IPs {
+			if !foundIndexes[i] && ipParsed.Equal(net.ParseIP(ipOther)) {
+				found = true
+				foundIndexes[i] = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+
+	foundIndexes = make([]bool, len(other.V6IPs))
+	for _, ip := range le.V6IPs {
+		found := false
+		ipParsed := net.ParseIP(ip)
+		for i, ipOther := range other.V6IPs {
+			if !foundIndexes[i] && ipParsed.Equal(net.ParseIP(ipOther)) {
+				found = true
+				foundIndexes[i] = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+// ExtractHostNetworkEndpoints takes the LBEndpoints and divides it into 2: the first returned value,
+// hostNetworked, contains only addresses that match the provided nodeAddresses. The second returned value,
+// notHostNetworked, contains all other addresses.
+func (le LBEndpoints) ExtractHostNetworkEndpoints(nodeAddresses []net.IP) (hostNetworked, notHostNetworked LBEndpoints) {
+	hostNetworked.Port = le.Port
+	notHostNetworked.Port = le.Port
+	for _, v4ip := range le.V4IPs {
+		isHostNetworked := false
+		for _, nodeAddress := range nodeAddresses {
+			if !utilnet.IsIPv6(nodeAddress) && nodeAddress.Equal(net.ParseIP(v4ip)) {
+				isHostNetworked = true
+				hostNetworked.V4IPs = append(hostNetworked.V4IPs, v4ip)
+				break
+			}
+		}
+		if !isHostNetworked {
+			notHostNetworked.V4IPs = append(notHostNetworked.V4IPs, v4ip)
+		}
+	}
+	for _, v6ip := range le.V6IPs {
+		isHostNetworked := false
+		for _, nodeAddress := range nodeAddresses {
+			if utilnet.IsIPv6(nodeAddress) && nodeAddress.Equal(net.ParseIP(v6ip)) {
+				isHostNetworked = true
+				hostNetworked.V6IPs = append(hostNetworked.V6IPs, v6ip)
+				break
+			}
+		}
+		if !isHostNetworked {
+			notHostNetworked.V6IPs = append(notHostNetworked.V6IPs, v6ip)
+		}
+	}
+	return
+}
+
+// Merge returns the result of the merge between the current endpoint with the provided endpoint if Port matches,
+// otherwise it will return the current endpoint. IP addresses are string sorted so the result is guaranteed to be
+// stable, with duplicate IP addresses being compacted into a single occurrence.
+func (le LBEndpoints) Merge(other LBEndpoints) LBEndpoints {
+	if le.Port != other.Port {
+		return le
+	}
+	merged := LBEndpoints{
+		Port:  le.Port,
+		V4IPs: append(le.V4IPs, other.V4IPs...),
+		V6IPs: append(le.V6IPs, other.V6IPs...),
+	}
+	slices.Sort(merged.V4IPs)
+	slices.Sort(merged.V6IPs)
+	merged.V4IPs = slices.Compact(merged.V4IPs)
+	merged.V6IPs = slices.Compact(merged.V6IPs)
+	return merged
+}
+
+// PortToLBEndpointsList maps service port keys (protocol + service port name) to load balancer endpoints lists.
+// e.g. map["TCP/http"] = LBEndpointsList{LBEndpoints{Port: 8080, V4IPs: []string{"192.168.1.10"}}}.
+type PortToLBEndpointsList map[string]LBEndpointsList
+
+// Equals compares two PortToLBEndpointsList for equality. Equality is not determined by element order.
+// IP addresses will be converted into net.IP representation before being compared. This means that invalid IP addresses
+// will evaluate to nil and be compared as such.
+func (p PortToLBEndpointsList) Equals(other PortToLBEndpointsList) bool {
+	if len(p) != len(other) {
+		return false
+	}
+	for i := range p {
+		peElem, ok := other[i]
+		if !ok {
+			return false
+		}
+		if !p[i].Equals(peElem) {
+			return false
+		}
+	}
+	return true
+}
+
+// Empty returns true if the PortToLBEndpointsList has no entries.
+func (p PortToLBEndpointsList) Empty() bool {
+	return len(p) == 0
+}
+
+// GetLBEndpoints returns the LBEndpoints belonging to key, or an empty LBEndpointsList + an error otherwise.
+func (p PortToLBEndpointsList) GetLBEndpoints(key string) (LBEndpointsList, error) {
 	if lbe, ok := p[key]; ok {
 		return lbe, nil
 	}
-	return LBEndpoints{}, fmt.Errorf("cannot find key %q in PortToLBEndpoints %+v", key, p)
+	return LBEndpointsList{}, fmt.Errorf("cannot find key %q in PortToLBEndpoints %+v", key, p)
 }
 
-// GetAddresses returns all unique IP addresses from all ports in the PortToLBEndpoints map.
-// e.g. for PortToLBEndpoints{"TCP/http": {Port: 8080, V4IPs: ["192.168.1.10"]}, "UDP/dns": {Port: 53, V4IPs: ["192.168.1.11"]}},
-// returns sets.Set{"192.168.1.10", "192.168.1.11"}.
-func (p PortToLBEndpoints) GetAddresses() sets.Set[string] {
-	s := sets.New[string]()
-	for _, lbEndpoints := range p {
-		s.Insert(lbEndpoints.V4IPs...)
-		s.Insert(lbEndpoints.V6IPs...)
+// ExtractHostNetworkEndpoints takes the PortToLBEndpointsList and divides it into 2: the first returned value,
+// hostNetworked, contains only addresses that match the provided nodeAddresses. The second returned value,
+// notHostNetworked, contains all other addresses.
+func (p PortToLBEndpointsList) ExtractHostNetworkEndpoints(nodeAddresses []net.IP) (
+	hostNetworked, notHostNetworked PortToLBEndpointsList) {
+	hostNetworked = make(PortToLBEndpointsList)
+	notHostNetworked = make(PortToLBEndpointsList)
+	for port, lbel := range p {
+		for _, lbe := range lbel {
+			lbeHostNet, lbeNotHostNet := lbe.ExtractHostNetworkEndpoints(nodeAddresses)
+			if !lbeHostNet.Empty() {
+				hostNetworked[port] = append(hostNetworked[port], lbeHostNet)
+			}
+			if !lbeNotHostNet.Empty() {
+				notHostNetworked[port] = append(notHostNetworked[port], lbeNotHostNet)
+			}
+		}
 	}
-	return s
+	return
 }
 
-// PortToNodeToLBEndpoints maps service port keys to node names and their load balancer endpoints.
-// e.g. map["TCP/http"]["node1"] = LBEndpoints{Port: 8080, V4IPs: []string{"192.168.1.10"}}.
-type PortToNodeToLBEndpoints map[string]map[string]LBEndpoints
+// PortToNodeToLBEndpointsList maps service port keys to node names and their load balancer endpoints.
+// e.g. map["TCP/http"]["node1"] = LBEndpointsList{LBEndpoints{{Port: 8080, V4IPs: []string{"192.168.1.10"}}}}.
+type PortToNodeToLBEndpointsList map[string]map[string]LBEndpointsList
 
-// GetNode extracts all port endpoints for a specific node from the PortToNodeToLBEndpoints map.
-// e.g. for PortToNodeToLBEndpoints{"TCP/http": {"node1": {Port: 8080, V4IPs: ["192.168.1.10"]}, "node2": {Port: 8080, V4IPs: ["192.168.1.11"]}}}
-// and node "node1", returns PortToLBEndpoints{"TCP/http": {Port: 8080, V4IPs: ["192.168.1.10"]}}.
-func (p PortToNodeToLBEndpoints) GetNode(node string) PortToLBEndpoints {
-	r := make(PortToLBEndpoints)
+// GetNode extracts all port endpoints for a specific node from the PortToNodeToLBEndpointsList.
+// e.g. for PortToNodeToLBEndpoints{"TCP/http": {"node1": []LBEndpoints{{Port: 8080, V4IPs: ["192.168.1.10"]}}, "node2": []LBEndpoints{{Port: 8080, V4IPs: ["192.168.1.11"]}}}}
+// and node "node1", returns PortToLBEndpoints{"TCP/http": []LBEndpoints{{Port: 8080, V4IPs: ["192.168.1.10"]}}}.
+func (p PortToNodeToLBEndpointsList) GetNode(node string) PortToLBEndpointsList {
+	r := make(PortToLBEndpointsList)
 	for port, nodeToLBEndpoints := range p {
 		if lbe, ok := nodeToLBEndpoints[node]; ok {
 			r[port] = lbe
 		}
 	}
 	return r
+}
+
+// Get returns the NodeToLbEndpointsList that belongs to the provided Port. Can never return a nil value, instead
+// it will provide an initialized NodeToLbEndpointsList if the port string cannot be found.
+func (p PortToNodeToLBEndpointsList) Get(port string) NodeToLBEndpointsList {
+	if v, ok := p[port]; ok && v != nil {
+		return v
+	}
+	return make(NodeToLBEndpointsList)
 }
 
 // GetEndpointsForService extracts endpoints from EndpointSlices for a given Service.
@@ -777,25 +958,24 @@ func (p PortToNodeToLBEndpoints) GetNode(node string) PortToLBEndpoints {
 //   - needsLocalEndpoints: request to populate PortToNodeToLBEndpoints
 //
 // Returns:
-//   - PortToLBEndpoints: Global endpoint mapping by port (empty if not needed)
-//   - PortToNodeToLBEndpoints: Per-node endpoint mapping by port (empty if not needed)
+//   - PortToLBEndpointsList: Global endpoint list mapping by port (empty if not needed)
+//   - PortToNodeToLBEndpointsList: Per-node endpoint list mapping by port (empty if not needed)
 //   - error: Validation errors encountered during processing
 //
 // Example output:
 //
-//	Global: {"TCP/http": {Port: 8080, V4IPs: ["192.168.1.10", "192.168.1.11"]}}
-//	Local:  {"TCP/http": {"node1": {Port: 8080, V4IPs: ["192.168.1.10"]}}}
+//	Global: {"TCP/http": {{Port: 8080, V4IPs: ["192.168.1.10", "192.168.1.11"]}}}
+//	Local:  {"TCP/http": {"node1": {{Port: 8080, V4IPs: ["192.168.1.10"]}}}}
 //
 // Validation requirements:
 //   - EndpointSlice port names must match Service port names (when service is not nil)
 //   - Only one protocol per port name is supported (Kubernetes requirement).
-//   - Only one target port number per protocol/port combination is supported (OVNKubernetes limitation).
 func GetEndpointsForService(endpointSlices []*discoveryv1.EndpointSlice, service *corev1.Service,
-	nodes sets.Set[string], needsGlobalEndpoints, needsLocalEndpoints bool) (PortToLBEndpoints, PortToNodeToLBEndpoints, error) {
+	nodes sets.Set[string], needsGlobalEndpoints, needsLocalEndpoints bool) (PortToLBEndpointsList, PortToNodeToLBEndpointsList, error) {
 
 	var validationErrors []error
-	globalEndpoints := make(PortToLBEndpoints)
-	localEndpoints := make(PortToNodeToLBEndpoints)
+	globalEndpoints := PortToLBEndpointsList{}
+	localEndpoints := PortToNodeToLBEndpointsList{}
 
 	addValidationError := func(msg string, detail interface{}) {
 		ns, name := "<unknown>", "<unknown>"
@@ -827,37 +1007,29 @@ func GetEndpointsForService(endpointSlices []*discoveryv1.EndpointSlice, service
 				continue
 			}
 
+			// Due to the way how newTargetEndpoints is implemented, portNumberMap can never be empty.
+			// However, be defensive here and verify nevertheless.
 			if len(portNumberMap) == 0 {
-				// Return an error here as this should not happen.
 				addValidationError("service protocol has no associated endpoints",
 					fmt.Sprintf("servicePortKey %q", slicePortKey))
 				continue
 			}
 
-			// Process the first (and typically only) target port number.
-			// OVN currently does not support multiple target port numbers for the same service name.
-			portNumbers := maps.Keys(portNumberMap)
-			slices.Sort(portNumbers)
-			if len(portNumbers) > 1 {
-				addValidationError("OVN Kubernetes does not support more than one target port per service port",
-					fmt.Sprintf("servicePortKey %q portNumbers %v",
-						slicePortKey, portNumbers))
-			}
-			targetPortNumber := portNumbers[0]
-			endpointList := portNumberMap[targetPortNumber]
 			// Build global endpoint mapping.
 			if needsGlobalEndpoints {
-				lbe, err := buildLBEndpoints(service, targetPortNumber, endpointList)
+				lbe, err := buildLBEndpointsList(service, portNumberMap)
 				if err != nil {
 					klog.Warningf("Failed to build global endpoints for port %s: %v", slicePortKey, err)
-					continue
+				} else if len(lbe) > 0 {
+					globalEndpoints[slicePortKey] = lbe
 				}
-				globalEndpoints[slicePortKey] = lbe
 			}
 			// Build per-node endpoint mapping if needed for traffic policies.
 			if needsLocalEndpoints {
-				if lbe, err := buildNodeLBEndpoints(service, targetPortNumber, endpointList, nodes); err == nil {
-					localEndpoints[slicePortKey] = lbe
+				if nlbe, err := buildNodeLBEndpointsList(service, portNumberMap, nodes); err != nil {
+					klog.Warningf("Failed to build local endpoints for port %s: %v", slicePortKey, err)
+				} else if len(nlbe) > 0 {
+					localEndpoints[slicePortKey] = nlbe
 				}
 			}
 		}
@@ -916,9 +1088,53 @@ func groupEndpointsByNode(endpoints []discoveryv1.Endpoint) map[string][]discove
 	return nodeEndpoints
 }
 
+// nodeToLBEndpoints maps node names to their load balancer endpoints.
+// e.g. map["node1"] = LBEndpoints{Port: 8080, V4IPs: []string{"192.168.1.10"}}.
+// This struct is a helper that's only used by buildNodeLBEndpoints.
+type nodeToLBEndpoints map[string]LBEndpoints
+
+// NodeToLBEndpointsList maps node names to lists of load balancer endpoints.
+// This type supports services with named ports that resolve to different numeric ports across pods.
+// e.g. map["node1"] = []LBEndpoints{{Port: 8080, V4IPs: []string{"192.168.1.10"}}, {Port: 9090, V4IPs: []string{"192.168.1.11"}}}.
+type NodeToLBEndpointsList map[string]LBEndpointsList
+
+// buildNodeLBEndpointsList creates a per-node mapping of load balancer endpoint lists.
+// It processes multiple port numbers and their associated endpoints, organizing them by node.
+// Only nodes present in the provided node set are included in the result.
+// This function supports services with named ports that resolve to different numeric ports across pods.
+//
+// Parameters:
+//   - service: The Kubernetes Service object (for endpoint filtering)
+//   - portNumberMap: Map of port numbers to their endpoint lists
+//   - nodes: Set of valid node names to include
+//
+// Returns:
+//   - NodeToLBEndpointsList: Map of node names to their LBEndpointsList
+//   - error: Any errors encountered while building the endpoints
+func buildNodeLBEndpointsList(service *corev1.Service, portNumberMap map[int32][]discoveryv1.Endpoint, nodes sets.Set[string]) (NodeToLBEndpointsList, error) {
+	nlbes := make(NodeToLBEndpointsList)
+	var errs []error
+
+	for port, endpoints := range portNumberMap {
+		nlbe, err := buildNodeLBEndpoints(service, port, endpoints, nodes)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		for node, lbe := range nlbe {
+			if _, ok := nlbes[node]; !ok {
+				nlbes[node] = LBEndpointsList{}
+			}
+			nlbes[node] = nlbes[node].Insert(lbe)
+		}
+	}
+	return nlbes, errors.Join(errs...)
+}
+
 // buildNodeLBEndpoints creates a per-node mapping of load balancer endpoints.
 // Only nodes present in the provided node set are included in the result.
 // This is used for services with local traffic policies that require per-node endpoint tracking.
+// This function is a helper which is used by buildNodeLBEndpointsList only.
 //
 // Parameters:
 //   - service: The Kubernetes Service object (for endpoint filtering)
@@ -928,8 +1144,8 @@ func groupEndpointsByNode(endpoints []discoveryv1.Endpoint) map[string][]discove
 //
 // Returns:
 //   - map[string]LBEndpoints: Node name to LBEndpoints mapping
-func buildNodeLBEndpoints(service *corev1.Service, portNumber int32, endpoints []discoveryv1.Endpoint, nodes sets.Set[string]) (map[string]LBEndpoints, error) {
-	nodeLBEndpoints := map[string]LBEndpoints{}
+func buildNodeLBEndpoints(service *corev1.Service, portNumber int32, endpoints []discoveryv1.Endpoint, nodes sets.Set[string]) (nodeToLBEndpoints, error) {
+	nodeLBEndpoints := nodeToLBEndpoints{}
 
 	nodeEndpoints := groupEndpointsByNode(endpoints)
 	for node, nodeEndpoints := range nodeEndpoints {
@@ -948,6 +1164,22 @@ func buildNodeLBEndpoints(service *corev1.Service, portNumber int32, endpoints [
 		return nodeLBEndpoints, fmt.Errorf("empty node lb endpoints")
 	}
 	return nodeLBEndpoints, nil
+}
+
+// buildLBEndpointsList builds an LBEndpointsList list from the provided service and portNumberMap. The resulting
+// LBEndpoints objects are built with buildLBEndpoints.
+func buildLBEndpointsList(service *corev1.Service, portNumberMap map[int32][]discoveryv1.Endpoint) (LBEndpointsList, error) {
+	var lbes LBEndpointsList
+	var errs []error
+	for port, endpoints := range portNumberMap {
+		lbe, err := buildLBEndpoints(service, port, endpoints)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		lbes = lbes.Insert(lbe)
+	}
+	return lbes, errors.Join(errs...)
 }
 
 // buildLBEndpoints constructs an LBEndpoints structure from a list of discovery endpoints.
@@ -1007,6 +1239,7 @@ type targetEndpoints map[string]map[corev1.Protocol]map[int32][]discoveryv1.Endp
 // addEndpoint adds a discovery endpoint to the TargetEndpoints structure.
 // It initializes nested maps as needed to maintain the hierarchical structure.
 // Multiple endpoints can be added for the same port name/protocol/port number combination.
+// Note: This method does _not_ verify that only a single protocol is added.
 //
 // Parameters:
 //   - portName: Name of the port (can be empty string for unnamed ports)
@@ -1075,4 +1308,21 @@ func getPortName(name *string) string {
 		return ""
 	}
 	return *name
+}
+
+// Buckets represents a list of OVS group bucket action strings for load balancing.
+// e.g. []string{"ct(commit,table=6)", "ct(commit,table=7)"}.
+type Buckets []string
+
+// String formats Buckets into an OVS group bucket specification string.
+// e.g. "bucket=bucket_id:0,actions=ct(commit,table=6),bucket=bucket_id:1,actions=ct(commit,table=7)".
+func (b Buckets) String() string {
+	if len(b) == 0 {
+		return ""
+	}
+	str := fmt.Sprintf("bucket=bucket_id:0,actions=%s", b[0])
+	for i := 1; i < len(b); i++ {
+		str = fmt.Sprintf("%s,bucket=bucket_id:%d,actions=%s", str, i, b[i])
+	}
+	return str
 }
