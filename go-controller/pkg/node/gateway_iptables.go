@@ -185,7 +185,7 @@ func computeProbability(n, i int) string {
 
 // generateIPTRulesForLoadBalancersWithoutNodePorts generates iptables DNAT rules for load balancer services
 // without NodePort allocation. It performs statistical load balancing between endpoints via iptables.
-func generateIPTRulesForLoadBalancersWithoutNodePorts(svcPort corev1.ServicePort, externalIP string, localEndpoints util.PortToLBEndpoints) []nodeipt.Rule {
+func generateIPTRulesForLoadBalancersWithoutNodePorts(svcPort corev1.ServicePort, externalIP string, localEndpoints util.PortToLBEndpointsList) []nodeipt.Rule {
 	if len(localEndpoints) == 0 {
 		// either its smart nic mode; etp&itp not implemented, OR
 		// fetching endpointSlices error-ed out prior to reaching here so nothing to do
@@ -491,7 +491,7 @@ func recreateIPTRules(table, chain string, keepIPTRules []nodeipt.Rule) error {
 // case3: if svcHasLocalHostNetEndPnt and svcTypeIsITPLocal, rule that redirects clusterIP traffic to host targetPort is added.
 //
 //	if !svcHasLocalHostNetEndPnt and svcTypeIsITPLocal, rule that marks clusterIP traffic to steer it to ovn-k8s-mp0 is added.
-func getGatewayIPTRules(service *corev1.Service, localEndpoints util.PortToLBEndpoints, svcHasLocalHostNetEndPnt bool) []nodeipt.Rule {
+func getGatewayIPTRules(service *corev1.Service, localEndpoints util.PortToLBEndpointsList, svcHasLocalHostNetEndPnt bool) []nodeipt.Rule {
 	rules := make([]nodeipt.Rule, 0)
 	clusterIPs := util.GetClusterIPs(service)
 	svcTypeIsETPLocal := util.ServiceExternalTrafficPolicyLocal(service)
