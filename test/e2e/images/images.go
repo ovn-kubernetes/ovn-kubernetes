@@ -15,11 +15,13 @@ var (
 	// pre-approve new images.
 	agnHost = image.GetE2EImage(image.Agnhost)
 	// FIXME: iperf3 image should not be retrieved from a users repo and should not have latest tag
-	iperf3                = "quay.io/sronanrh/iperf:latest"
-	netshoot              = "ghcr.io/nicolaka/netshoot:v0.13"
-	nginx                 = "nginx:1"
-	metallbLBService      = "quay.io/itssurya/dev-images:metallb-lbservice"
-	udpServerSrcIPPrinter = "quay.io/itssurya/dev-images:udp-server-srcip-printer"
+	iperf3           = "quay.io/sronanrh/iperf:latest"
+	netshoot         = "ghcr.io/nicolaka/netshoot:v0.13"
+	nginx            = "nginx:1"
+	metallbLBService = "quay.io/itssurya/dev-images:metallb-lbservice"
+	// udpServerSrcIPPrinter = "quay.io/itssurya/dev-images:udp-server-srcip-printer"
+	// TODO: The original image by surya needs an update - in the meantime, use akaris image for PR review.
+	udpServerSrcIPPrinter = "quay.io/akaris/dev-images:udp-server-srcip-printer"
 
 	extraImages []string
 )
