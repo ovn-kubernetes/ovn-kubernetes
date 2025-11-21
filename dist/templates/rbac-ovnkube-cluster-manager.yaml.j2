@@ -77,6 +77,7 @@ rules:
           - clusteruserdefinednetworks
           - routeadvertisements
           - networkqoses
+          - clusternetworkconnects
       verbs: [ "get", "list", "watch" ]
     - apiGroups: ["k8s.ovn.org"]
       resources:
@@ -88,6 +89,7 @@ rules:
           - clusteruserdefinednetworks/status
           - clusteruserdefinednetworks/finalizers
           - routeadvertisements/status
+          - clusternetworkconnects
       verbs: [ "patch", "update" ]
     - apiGroups: [""]
       resources:

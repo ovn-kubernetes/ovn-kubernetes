@@ -16,6 +16,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/dnsnameresolver"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/egressservice"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/endpointslicemirror"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/networkconnect"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/routeadvertisements"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/status_manager"
 	udncontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork"
@@ -48,6 +49,8 @@ type ClusterManager struct {
 	dnsNameResolverController *dnsnameresolver.Controller
 	// Controller for managing user-defined-network CRD
 	userDefinedNetworkController *udncontroller.Controller
+	// Controller for managing cluster-network-connect CRD
+	networkConnectController *networkconnect.Controller
 	// event recorder used to post events to k8s
 	recorder record.EventRecorder
 
@@ -89,12 +92,13 @@ func NewClusterManager(
 	}
 
 	cm.networkManager = networkmanager.Default()
+	var tunnelKeysAllocator *id.TunnelKeysAllocator
 	if config.OVNKubernetesFeature.EnableMultiNetwork {
 		// tunnelKeysAllocator is now only used for NAD tunnel keys allocation, but will be reused
 		// for Connecting UDNs. So we initialize it here and pass it to the networkManager.
 		// The same instance should be initialized only once and passed to all the
 		// users of tunnel-keys.
-		tunnelKeysAllocator, err := initTunnelKeysAllocator(ovnClient.NetworkAttchDefClient)
+		tunnelKeysAllocator, err = initTunnelKeysAllocator(ovnClient.NetworkAttchDefClient)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize tunnel keys allocator: %w", err)
 		}
@@ -171,6 +175,10 @@ func NewClusterManager(
 		}
 	}
 
+	if util.IsNetworkConnectEnabled() {
+		cm.networkConnectController = networkconnect.NewController(wf, ovnClient, cm.networkManager.Interface(), tunnelKeysAllocator)
+	}
+
 	if util.IsRouteAdvertisementsEnabled() {
 		cm.raController = routeadvertisements.NewController(cm.networkManager.Interface(), wf, ovnClient)
 	}
@@ -233,6 +241,12 @@ func (cm *ClusterManager) Start(ctx context.Context) error {
 		}
 	}
 
+	if cm.networkConnectController != nil {
+		if err := cm.networkConnectController.Start(); err != nil {
+			return err
+		}
+	}
+
 	if cm.raController != nil {
 		err := cm.raController.Start()
 		if err != nil {
@@ -264,6 +278,9 @@ func (cm *ClusterManager) Stop() {
 	}
 	if util.IsNetworkSegmentationSupportEnabled() {
 		cm.userDefinedNetworkController.Shutdown()
+	}
+	if cm.networkConnectController != nil {
+		cm.networkConnectController.Stop()
 	}
 	if cm.raController != nil {
 		cm.raController.Stop()
