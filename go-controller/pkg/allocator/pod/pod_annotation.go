@@ -261,6 +261,63 @@ func validateStaticIPRequest(netInfo util.NetInfo, network *nadapi.NetworkSelect
 	return nil
 }
 
+var (
+	ErrIPFamilyMismatch = errors.New("requested IPs family types must match network's IP family configuration")
+)
+
+func validateIPFamilyMatchesNetwork(netInfo util.NetInfo, requestedIPs []*net.IPNet) error {
+	if !util.IsPreconfiguredUDNAddressesEnabled() {
+		return nil
+	}
+	if !netInfo.IsPrimaryNetwork() {
+		return nil
+	}
+	if netInfo.TopologyType() != types.Layer2Topology {
+		return nil
+	}
+
+	if len(requestedIPs) == 0 {
+		return nil
+	}
+
+	if len(requestedIPs) > 2 {
+		return fmt.Errorf("layer2 network expects at most 2 IPs, got %d: %w", len(requestedIPs), ErrIPFamilyMismatch)
+	}
+
+	var ipv4Count, ipv6Count int
+	for _, ipNet := range requestedIPs {
+		if utilnet.IsIPv6CIDR(ipNet) {
+			ipv6Count++
+		} else {
+			ipv4Count++
+		}
+	}
+
+	ipv4Mode, ipv6Mode := netInfo.IPMode()
+
+	if ipv4Mode && ipv6Mode {
+		// Dual-stack: must have exactly one IPv4 and one IPv6
+		if ipv4Count != 1 || ipv6Count != 1 {
+			return fmt.Errorf("dual-stack layer2 network requires exactly one IPv4 and one IPv6 address, got %d IPv4 and %d IPv6: %w",
+				ipv4Count, ipv6Count, ErrIPFamilyMismatch)
+		}
+	} else if ipv4Mode && !ipv6Mode {
+		// Single-stack IPv4: must have exactly one IPv4, no IPv6
+		if ipv4Count != 1 || ipv6Count != 0 {
+			return fmt.Errorf("single-stack IPv4 layer2 network requires exactly one IPv4 address, got %d IPv4 and %d IPv6: %w",
+				ipv4Count, ipv6Count, ErrIPFamilyMismatch)
+		}
+	} else if !ipv4Mode && ipv6Mode {
+		// Single-stack IPv6: must have exactly one IPv6, no IPv4
+		if ipv4Count != 0 || ipv6Count != 1 {
+			return fmt.Errorf("single-stack IPv6 layer2 network requires exactly one IPv6 address, got %d IPv4 and %d IPv6: %w",
+				ipv4Count, ipv6Count, ErrIPFamilyMismatch)
+		}
+	}
+
+	return nil
+}
+
 // allocatePodAnnotationWithRollback allocates the PodAnnotation which includes
 // IPs, a mac address, routes, gateways and an ID. Returns the allocated pod
 // annotation and a pod with that annotation set. Returns a nil pod and the existing
@@ -416,6 +473,9 @@ func allocatePodAnnotationWithRollback(
 			tentative.IPs, err = util.ParseIPNets(network.IPRequest)
 			if err != nil {
 				klog.Warningf("Failed parsing IPRequest %+v for pod %s: %v", network.IPRequest, podDesc, err)
+				return
+			}
+			if err = validateIPFamilyMatchesNetwork(netInfo, tentative.IPs); err != nil {
 				return
 			}
 		} else if hasIPAMClaim {
