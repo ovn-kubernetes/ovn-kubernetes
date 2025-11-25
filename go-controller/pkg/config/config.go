@@ -410,7 +410,6 @@ type KubernetesConfig struct {
 	APIServer               string `gcfg:"apiserver"`
 	Token                   string `gcfg:"token"`
 	TokenFile               string `gcfg:"tokenFile"`
-	CompatServiceCIDR       string `gcfg:"service-cidr"`
 	RawServiceCIDRs         string `gcfg:"service-cidrs"`
 	ServiceCIDRs            []*net.IPNet
 	OVNConfigNamespace      string `gcfg:"ovn-config-namespace"`
@@ -665,10 +664,6 @@ var (
 	savedClusterManager       ClusterManagerConfig
 	savedOvsPaths             OvsPathConfig
 
-	// legacy service-cluster-ip-range CLI option
-	serviceClusterIPRange string
-	// legacy cluster-subnet CLI option
-	clusterSubnet string
 	// legacy init-gateways CLI option
 	initGateways bool
 	// legacy gateway-local CLI option
@@ -940,11 +935,6 @@ var CommonFlags = []cli.Flag{
 			"default the size of the cache is unlimited.",
 		Destination: &cliConfig.Default.LFlowCacheLimitKb,
 		Value:       Default.LFlowCacheLimitKb,
-	},
-	&cli.StringFlag{
-		Name:        "cluster-subnet",
-		Usage:       "Deprecated alias for cluster-subnets.",
-		Destination: &clusterSubnet,
 	},
 	&cli.StringFlag{
 		Name:  "cluster-subnets",
@@ -1229,16 +1219,6 @@ var OVNK8sFeatureFlags = []cli.Flag{
 
 // K8sFlags capture Kubernetes-related options
 var K8sFlags = []cli.Flag{
-	&cli.StringFlag{
-		Name:        "service-cluster-ip-range",
-		Usage:       "Deprecated alias for k8s-service-cidrs.",
-		Destination: &serviceClusterIPRange,
-	},
-	&cli.StringFlag{
-		Name:        "k8s-service-cidr",
-		Usage:       "Deprecated alias for k8s-service-cidrs.",
-		Destination: &cliConfig.Kubernetes.CompatServiceCIDR,
-	},
 	&cli.StringFlag{
 		Name: "k8s-service-cidrs",
 		Usage: "A comma-separated set of CIDR notation IP ranges from which k8s assigns " +
@@ -1935,12 +1915,6 @@ func buildKubernetesConfig(exec kexec.Interface, cli, file *config, saPath strin
 		return fmt.Errorf("kubernetes API server URL scheme %q invalid", url.Scheme)
 	}
 
-	// Legacy --service-cluster-ip-range or --k8s-service-cidr options override config file or --k8s-service-cidrs.
-	if serviceClusterIPRange != "" {
-		Kubernetes.RawServiceCIDRs = serviceClusterIPRange
-	} else if Kubernetes.CompatServiceCIDR != "" {
-		Kubernetes.RawServiceCIDRs = Kubernetes.CompatServiceCIDR
-	}
 	if Kubernetes.RawServiceCIDRs == "" {
 		return fmt.Errorf("kubernetes service-cidrs is required")
 	}
@@ -2310,10 +2284,6 @@ func buildDefaultConfig(cli, file *config) error {
 		return err
 	}
 
-	// Legacy cluster-subnet CLI option overrides config file or --cluster-subnets
-	if clusterSubnet != "" {
-		Default.RawClusterSubnets = clusterSubnet
-	}
 	if Default.RawClusterSubnets == "" {
 		return fmt.Errorf("cluster subnet is required")
 	}
