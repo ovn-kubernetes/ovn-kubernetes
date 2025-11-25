@@ -1009,7 +1009,8 @@ func RemoveLoadBalancersFromLogicalRouterOps(nbClient libovsdbclient.Client, ops
 
 func getNATMutableFields(nat *nbdb.NAT) []interface{} {
 	return []interface{}{&nat.Type, &nat.ExternalIP, &nat.LogicalIP, &nat.LogicalPort, &nat.ExternalMAC,
-		&nat.ExternalIDs, &nat.Match, &nat.Options, &nat.ExternalPortRange, &nat.GatewayPort, &nat.Priority}
+		&nat.ExternalIDs, &nat.Match, &nat.Options, &nat.ExternalPortRange, &nat.GatewayPort, &nat.Priority,
+		&nat.ExemptedExtIPs}
 }
 
 func buildNAT(
