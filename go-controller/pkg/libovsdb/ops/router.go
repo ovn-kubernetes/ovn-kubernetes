@@ -1075,6 +1075,22 @@ func BuildSNATWithMatch(
 	return buildNAT(nbdb.NATTypeSNAT, externalIPStr, logicalIPStr, logicalPort, "", externalIDs, match)
 }
 
+// BuildSNATWithExemptedExtIPs builds a logical router SNAT with exempted external IPs
+func BuildSNATWithExemptedExtIPs(
+	externalIP *net.IP,
+	logicalIP *net.IPNet,
+	logicalPort string,
+	externalIDs map[string]string,
+	match string,
+	exemptedExtIPs string,
+) *nbdb.NAT {
+	nat := BuildSNATWithMatch(externalIP, logicalIP, logicalPort, externalIDs, match)
+	if exemptedExtIPs != "" {
+		nat.ExemptedExtIPs = &exemptedExtIPs
+	}
+	return nat
+}
+
 // BuildDNATAndSNAT builds a logical router DNAT/SNAT
 func BuildDNATAndSNAT(
 	externalIP *net.IP,
