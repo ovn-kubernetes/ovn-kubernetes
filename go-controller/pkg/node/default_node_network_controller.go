@@ -1372,8 +1372,7 @@ func (nc *DefaultNodeNetworkController) reconcileConntrackUponEndpointSliceEvent
 					continue
 				}
 				// upon update and delete events, flush conntrack only for UDP
-				klog.V(5).Infof("Deleting conntrack entry for endpoint %s, port %d, protocol %s", oldIPStr, servicePort.Port, *oldPort.Protocol)
-				if err := util.DeleteConntrackServicePort(oldIPStr, servicePort.Port, *oldPort.Protocol,
+				if _, err := util.DeleteConntrackServicePort(oldIPStr, servicePort.Port, *oldPort.Protocol,
 					netlink.ConntrackReplyAnyIP, nil); err != nil {
 					klog.Errorf("Failed to delete conntrack entry for %s port %d: %v", oldIPStr, servicePort.Port, err)
 					errors = append(errors, err)

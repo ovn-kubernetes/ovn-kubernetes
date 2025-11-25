@@ -920,7 +920,7 @@ func (npw *nodePortWatcher) UpdateService(old, new *corev1.Service) error {
 func deleteConntrackForServiceVIP(svcVIPs []string, svcPorts []corev1.ServicePort, ns, name string) error {
 	for _, svcVIP := range svcVIPs {
 		for _, svcPort := range svcPorts {
-			if err := util.DeleteConntrackServicePort(svcVIP, svcPort.Port, svcPort.Protocol,
+			if _, err := util.DeleteConntrackServicePort(svcVIP, svcPort.Port, svcPort.Protocol,
 				netlink.ConntrackOrigDstIP, nil); err != nil {
 				return fmt.Errorf("failed to delete conntrack entry for service %s/%s with svcVIP %s, svcPort %d, protocol %s: %v",
 					ns, name, svcVIP, svcPort.Port, svcPort.Protocol, err)
@@ -942,7 +942,7 @@ func (npw *nodePortWatcher) deleteConntrackForService(service *corev1.Service) e
 		nodeIPs, _ := npw.nodeIPManager.ListAddresses()
 		for _, nodeIP := range nodeIPs {
 			for _, svcPort := range service.Spec.Ports {
-				if err := util.DeleteConntrackServicePort(nodeIP.String(), svcPort.NodePort, svcPort.Protocol,
+				if _, err := util.DeleteConntrackServicePort(nodeIP.String(), svcPort.NodePort, svcPort.Protocol,
 					netlink.ConntrackOrigDstIP, nil); err != nil {
 					return fmt.Errorf("failed to delete conntrack entry for service %s/%s with nodeIP %s, nodePort %d, protocol %s: %v",
 						service.Namespace, service.Name, nodeIP, svcPort.Port, svcPort.Protocol, err)
