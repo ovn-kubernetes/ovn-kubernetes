@@ -8,12 +8,10 @@ import (
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
-	"github.com/onsi/gomega"
 
 	"github.com/ovn-org/ovn-kubernetes/test/e2e/infraprovider"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
@@ -88,26 +86,16 @@ var _ = ginkgo.Describe("Node Shutdown and Startup", ginkgo.Serial, func() {
 			framework.Logf("Ensuring node %s is started (cleanup)", testNodeName)
 			if startErr := infraprovider.Get().StartNode(testNodeName); startErr != nil {
 				framework.Logf("Failed to start node %s during cleanup: %v", testNodeName, startErr)
+			} else {
+				// Wait for the node to become Ready after startup in cleanup
+				framework.Logf("Waiting for node %s to become Ready after cleanup startup", testNodeName)
+				waitForNodeReadyState(f, testNodeName, nodeStartupTimeout, true)
 			}
 		}()
 
 		// Wait for the node to be marked as NotReady
 		ginkgo.By("Waiting for node to be marked as NotReady")
-		gomega.Eventually(func() bool {
-			node, err := f.ClientSet.CoreV1().Nodes().Get(context.Background(), testNodeName, metav1.GetOptions{})
-			if err != nil {
-				framework.Logf("Error getting node %s: %v", testNodeName, err)
-				return false
-			}
-
-			for _, condition := range node.Status.Conditions {
-				if condition.Type == corev1.NodeReady && condition.Status != corev1.ConditionTrue {
-					framework.Logf("Node %s is now NotReady", testNodeName)
-					return true
-				}
-			}
-			return false
-		}, nodeShutdownTimeout, 10*time.Second).Should(gomega.BeTrue(), "Node should become NotReady after shutdown")
+		waitForNodeReadyState(f, testNodeName, nodeShutdownTimeout, false)
 
 		ginkgo.By("Start the node")
 		framework.Logf("Starting node %s", testNodeName)
@@ -116,21 +104,7 @@ var _ = ginkgo.Describe("Node Shutdown and Startup", ginkgo.Serial, func() {
 
 		// Wait for the node to become Ready again
 		ginkgo.By("Waiting for node to become Ready")
-		gomega.Eventually(func() bool {
-			node, err := f.ClientSet.CoreV1().Nodes().Get(context.Background(), testNodeName, metav1.GetOptions{})
-			if err != nil {
-				framework.Logf("Error getting node %s: %v", testNodeName, err)
-				return false
-			}
-
-			for _, condition := range node.Status.Conditions {
-				if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
-					framework.Logf("Node %s is now Ready", testNodeName)
-					return true
-				}
-			}
-			return false
-		}, nodeStartupTimeout, 10*time.Second).Should(gomega.BeTrue(), "Node should become Ready after startup")
+		waitForNodeReadyState(f, testNodeName, nodeStartupTimeout, true)
 
 		ginkgo.By("Confirm that ovn-k cluster is back to healthy after all services are settled")
 		err = waitOVNKubernetesHealthy(f)
