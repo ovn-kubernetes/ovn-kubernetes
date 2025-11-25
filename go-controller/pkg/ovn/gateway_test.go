@@ -2129,3 +2129,138 @@ func extractExternalIPs(l3GatewayConfig *util.L3GatewayConfig) []net.IP {
 	}
 	return externalIPs
 }
+
+type testNetInfo struct {
+	util.NetInfo
+	topology     string
+	outboundSNAT bool
+	subnets      []config.CIDRNetworkEntry
+}
+
+func (ni *testNetInfo) TopologyType() string {
+	return ni.topology
+}
+
+func (ni *testNetInfo) GetOutboundSNAT() string {
+	if ni.outboundSNAT {
+		return config.NoOverlaySNATEnabled
+	}
+	return config.NoOverlaySNATDisabled
+}
+
+func (ni *testNetInfo) Subnets() []config.CIDRNetworkEntry {
+	if ni.subnets != nil {
+		return ni.subnets
+	}
+	return ni.NetInfo.Subnets()
+}
+
+var _ = ginkgo.Describe("GetNetworkScopedClusterSubnetSNATMatch", func() {
+	var (
+		fakeOvn           *FakeOVN
+		addressSetFactory addressset.AddressSetFactory
+		netInfo           *testNetInfo
+		nodeName          = "test-node"
+	)
+
+	ginkgo.BeforeEach(func() {
+		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+		gomega.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+		fakeOvn = NewFakeOVN(false)
+		fakeOvn.start()
+		netInfo = &testNetInfo{
+			NetInfo: fakeOvn.controller.GetNetInfo(),
+		}
+	})
+
+	ginkgo.AfterEach(func() {
+		fakeOvn.shutdown()
+	})
+
+	ginkgo.Context("when network is not advertised", func() {
+		ginkgo.It("returns empty match for Layer3 topology", func() {
+			netInfo.topology = types.Layer3Topology
+			match, err := GetNetworkScopedClusterSubnetSNATMatch(fakeOvn.nbClient, netInfo, nodeName, false, utilnet.IPv4)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(match).To(gomega.BeEmpty())
+		})
+
+		ginkgo.It("returns empty match for Layer2 topology with transit router", func() {
+			config.Layer2UsesTransitRouter = true
+			netInfo.topology = types.Layer2Topology
+			match, err := GetNetworkScopedClusterSubnetSNATMatch(fakeOvn.nbClient, netInfo, nodeName, false, utilnet.IPv4)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(match).To(gomega.BeEmpty())
+		})
+
+		ginkgo.It("returns outport match for Layer2 topology without transit router", func() {
+			config.Layer2UsesTransitRouter = false
+			netInfo.topology = types.Layer2Topology
+			match, err := GetNetworkScopedClusterSubnetSNATMatch(fakeOvn.nbClient, netInfo, nodeName, false, utilnet.IPv4)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			expectedMatch := fmt.Sprintf("outport == %q", types.GWRouterToExtSwitchPrefix+netInfo.GetNetworkScopedGWRouterName(nodeName))
+			gomega.Expect(match).To(gomega.Equal(expectedMatch))
+		})
+	})
+
+	ginkgo.Context("when network is advertised", func() {
+		ginkgo.Context("when outbound SNAT is enabled", func() {
+			ginkgo.BeforeEach(func() {
+				netInfo.outboundSNAT = true
+			})
+
+			ginkgo.It("returns empty match for Layer3 topology", func() {
+				netInfo.topology = types.Layer3Topology
+				match, err := GetNetworkScopedClusterSubnetSNATMatch(fakeOvn.nbClient, netInfo, nodeName, true, utilnet.IPv4)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(match).To(gomega.BeEmpty())
+			})
+		})
+
+		ginkgo.Context("when outbound SNAT is disabled", func() {
+			ginkgo.BeforeEach(func() {
+				addressSetFactory = addressset.NewOvnAddressSetFactory(fakeOvn.nbClient, config.IPv4Mode, config.IPv6Mode)
+				dbIDs := getEgressIPAddrSetDbIDs(NodeIPAddrSetName, types.DefaultNetworkName, DefaultNetworkControllerName)
+				as, err := addressSetFactory.EnsureAddressSet(dbIDs)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				err = as.AddAddresses([]string{"10.0.0.1"})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			})
+
+			ginkgo.It("returns destination match for Layer3 topology", func() {
+				netInfo.topology = types.Layer3Topology
+				match, err := GetNetworkScopedClusterSubnetSNATMatch(fakeOvn.nbClient, netInfo, nodeName, true, utilnet.IPv4)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				as, err := addressSetFactory.GetAddressSet(getEgressIPAddrSetDbIDs(NodeIPAddrSetName, types.DefaultNetworkName, DefaultNetworkControllerName))
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				v4Hash, _ := as.GetASHashNames()
+				expectedMatch := fmt.Sprintf("ip4.dst == $%s", v4Hash)
+				gomega.Expect(match).To(gomega.Equal(expectedMatch))
+			})
+
+			ginkgo.It("returns destination match for Layer2 topology with transit router", func() {
+				config.Layer2UsesTransitRouter = true
+				netInfo.topology = types.Layer2Topology
+				match, err := GetNetworkScopedClusterSubnetSNATMatch(fakeOvn.nbClient, netInfo, nodeName, true, utilnet.IPv4)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				as, err := addressSetFactory.GetAddressSet(getEgressIPAddrSetDbIDs(NodeIPAddrSetName, types.DefaultNetworkName, DefaultNetworkControllerName))
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				v4Hash, _ := as.GetASHashNames()
+				expectedMatch := fmt.Sprintf("ip4.dst == $%s", v4Hash)
+				gomega.Expect(match).To(gomega.Equal(expectedMatch))
+			})
+
+			ginkgo.It("returns outport and destination match for Layer2 topology without transit router", func() {
+				config.Layer2UsesTransitRouter = false
+				netInfo.topology = types.Layer2Topology
+				match, err := GetNetworkScopedClusterSubnetSNATMatch(fakeOvn.nbClient, netInfo, nodeName, true, utilnet.IPv4)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				as, err := addressSetFactory.GetAddressSet(getEgressIPAddrSetDbIDs(NodeIPAddrSetName, types.DefaultNetworkName, DefaultNetworkControllerName))
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				v4Hash, _ := as.GetASHashNames()
+				expectedMatch := fmt.Sprintf("outport == %q && ip4.dst == $%s", types.GWRouterToExtSwitchPrefix+netInfo.GetNetworkScopedGWRouterName(nodeName), v4Hash)
+				gomega.Expect(match).To(gomega.Equal(expectedMatch))
+			})
+		})
+	})
+})
