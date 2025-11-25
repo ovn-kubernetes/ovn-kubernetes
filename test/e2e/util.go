@@ -1954,3 +1954,34 @@ func waitOVNKubernetesHealthy(f *framework.Framework) error {
 		return true, nil
 	})
 }
+
+// waitForNodeReadyState waits for the specified node to reach the desired Ready state within the given timeout
+func waitForNodeReadyState(f *framework.Framework, nodeName string, timeout time.Duration, desiredReady bool) {
+	var stateDescription, expectationMessage string
+	if desiredReady {
+		stateDescription = "Ready"
+		expectationMessage = "Node should become Ready after startup"
+	} else {
+		stateDescription = "NotReady"
+		expectationMessage = "Node should become NotReady after shutdown"
+	}
+
+	gomega.Eventually(func() bool {
+		node, err := f.ClientSet.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
+		if err != nil {
+			framework.Logf("Error getting node %s: %v", nodeName, err)
+			return false
+		}
+
+		for _, condition := range node.Status.Conditions {
+			if condition.Type == v1.NodeReady {
+				isReady := condition.Status == v1.ConditionTrue
+				if isReady == desiredReady {
+					framework.Logf("Node %s is now %s", nodeName, stateDescription)
+					return true
+				}
+			}
+		}
+		return false
+	}, timeout, 10*time.Second).Should(gomega.BeTrue(), expectationMessage)
+}
