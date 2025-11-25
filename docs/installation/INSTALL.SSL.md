@@ -215,7 +215,7 @@ sudo ovnkube -k8s-kubeconfig $HOME/kubeconfig.yaml -loglevel=4 \
     -sb-client-cert /etc/openvswitch/ovncontroller-cert.pem \
     -sb-client-cacert /etc/openvswitch/cacert.pem \
     -sb-cert-common-name ovncontroller \
-    -init-gateways \
+    -gateway-mode=shared \
     -k8s-service-cidr=$SERVICE_IP_SUBNET \
     -cluster-subnets=$CLUSTER_IP_SUBNET
 ```

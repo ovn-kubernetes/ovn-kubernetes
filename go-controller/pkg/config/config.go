@@ -669,10 +669,6 @@ var (
 	serviceClusterIPRange string
 	// legacy cluster-subnet CLI option
 	clusterSubnet string
-	// legacy init-gateways CLI option
-	initGateways bool
-	// legacy gateway-local CLI option
-	gatewayLocal bool
 	// legacy disable-ovn-iface-id-ver CLI option
 	disableOVNIfaceIDVer bool
 )
@@ -1516,7 +1512,7 @@ var OVNGatewayFlags = []cli.Flag{
 		Usage: "The interface on nodes that will be the gateway interface. " +
 			"If none specified, then the node's interface on which the " +
 			"default gateway is configured will be used as the gateway " +
-			"interface. Only useful with \"init-gateways\"",
+			"interface. Only useful with \"gateway-mode\"",
 		Destination: &cliConfig.Gateway.Interface,
 	},
 	&cli.StringFlag{
@@ -1538,7 +1534,7 @@ var OVNGatewayFlags = []cli.Flag{
 			"OVN gateway.  This is many times just the default gateway " +
 			"of the node in question. If not specified, the default gateway" +
 			"configured in the node is used. Only useful with " +
-			"\"init-gateways\"",
+			"\"gateway-mode\"",
 		Destination: &cliConfig.Gateway.NextHop,
 	},
 	&cli.UintFlag{
@@ -1617,17 +1613,6 @@ var OVNGatewayFlags = []cli.Flag{
 			"the default value will be derived from checking the sysctl value of net.ipv4.ip_local_port_range on the node.",
 		Destination: &cliConfig.Gateway.EphemeralPortRange,
 		Value:       Gateway.EphemeralPortRange,
-	},
-	// Deprecated CLI options
-	&cli.BoolFlag{
-		Name:        "init-gateways",
-		Usage:       "DEPRECATED; use --gateway-mode instead",
-		Destination: &initGateways,
-	},
-	&cli.BoolFlag{
-		Name:        "gateway-local",
-		Usage:       "DEPRECATED; use --gateway-mode instead",
-		Destination: &gatewayLocal,
 	},
 }
 
@@ -2011,15 +1996,6 @@ func buildGatewayConfig(ctx *cli.Context, cli, file *config) error {
 	}
 
 	cli.Gateway.Mode = GatewayMode(ctx.String("gateway-mode"))
-	if cli.Gateway.Mode == GatewayModeDisabled {
-		// Handle legacy CLI options
-		if ctx.Bool("init-gateways") {
-			cli.Gateway.Mode = GatewayModeShared
-			if ctx.Bool("gateway-local") {
-				cli.Gateway.Mode = GatewayModeLocal
-			}
-		}
-	}
 	// And CLI overrides over config file and default values
 	if err := overrideFields(&Gateway, &cli.Gateway, &savedGateway); err != nil {
 		return err
