@@ -263,6 +263,7 @@ var _ = ginkgo.Describe("No-Overlay SNAT Exemption Address Set", func() {
 
 		ginkgo.It("returns empty strings when outbound SNAT is disabled", func() {
 			config.Default.Transport = config.TransportNoOverlay
+			netInfo.outboundSNAT = false
 
 			v4UUID, v6UUID, err := getClusterCIDRAsUUID(addressSetFactory, netInfo, controllerName)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
