@@ -4,12 +4,13 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 )
 
-var _ = ginkgo.Describe("Cluster CIDR Address Set", func() {
+var _ = ginkgo.Describe("No-Overlay SNAT Exemption Address Set", func() {
 	var (
 		fakeOvn           *FakeOVN
 		addressSetFactory addressset.AddressSetFactory
@@ -34,7 +35,7 @@ var _ = ginkgo.Describe("Cluster CIDR Address Set", func() {
 	ginkgo.Context("initClusterCIDRAddressSet", func() {
 		ginkgo.It("creates address set for no-overlay mode with outbound SNAT enabled", func() {
 			// Set the transport to no-overlay
-			config.Default.Transport = config.TransportNoOverlay
+			config.Default.Transport = types.NetworkTransportNoOverlay
 			netInfo.outboundSNAT = true
 
 			err := initClusterCIDRAddressSet(addressSetFactory, netInfo, controllerName)
@@ -56,7 +57,7 @@ var _ = ginkgo.Describe("Cluster CIDR Address Set", func() {
 
 		ginkgo.It("skips creation for overlay mode", func() {
 			// Set the transport to overlay (geneve)
-			config.Default.Transport = config.TransportGeneve
+			config.Default.Transport = types.NetworkTransportGeneve
 
 			err := initClusterCIDRAddressSet(addressSetFactory, netInfo, controllerName)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -68,7 +69,7 @@ var _ = ginkgo.Describe("Cluster CIDR Address Set", func() {
 		})
 
 		ginkgo.It("skips creation when outbound SNAT is disabled", func() {
-			config.Default.Transport = config.TransportNoOverlay
+			config.Default.Transport = types.NetworkTransportNoOverlay
 
 			err := initClusterCIDRAddressSet(addressSetFactory, netInfo, controllerName)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -80,19 +81,20 @@ var _ = ginkgo.Describe("Cluster CIDR Address Set", func() {
 		})
 	})
 
-	ginkgo.Context("addClusterCIDRsToAddressSet", func() {
+	ginkgo.Context("syncNoOverlaySNATExemptionAddressSet", func() {
 		ginkgo.BeforeEach(func() {
-			config.Default.Transport = config.TransportNoOverlay
+			config.Default.Transport = types.NetworkTransportNoOverlay
 			netInfo.outboundSNAT = true
 			err := initClusterCIDRAddressSet(addressSetFactory, netInfo, controllerName)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		})
 
-		ginkgo.It("adds cluster subnets to the address set", func() {
-			err := addClusterCIDRsToAddressSet(addressSetFactory, netInfo, controllerName)
+		ginkgo.It("syncs cluster subnets and node IPs to the address set", func() {
+			nodeIPs := []string{"192.168.1.10", "192.168.1.11"}
+			err := syncNoOverlaySNATExemptionAddressSet(addressSetFactory, netInfo, controllerName, nodeIPs)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-			// Verify subnets were added
+			// Verify subnets and node IPs were added
 			dbIDs := libovsdbops.NewDbObjectIDs(
 				libovsdbops.AddressSetClusterCIDR,
 				controllerName,
@@ -105,37 +107,93 @@ var _ = ginkgo.Describe("Cluster CIDR Address Set", func() {
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			ipv4Addrs, ipv6Addrs := as.GetAddresses()
-			// Check that addresses match the cluster subnets
-			expectedSubnets := []string{}
+			// Check that addresses match the cluster subnets plus node IPs
+			expectedAddrs := []string{}
 			for _, subnet := range netInfo.Subnets() {
-				expectedSubnets = append(expectedSubnets, subnet.CIDR.String())
+				expectedAddrs = append(expectedAddrs, subnet.CIDR.String())
 			}
+			expectedAddrs = append(expectedAddrs, nodeIPs...)
 			allAddrs := append(ipv4Addrs, ipv6Addrs...)
-			gomega.Expect(allAddrs).To(gomega.ConsistOf(expectedSubnets))
+			gomega.Expect(allAddrs).To(gomega.ConsistOf(expectedAddrs))
 		})
 
-		ginkgo.It("handles empty subnets gracefully", func() {
-			// Create a test NetInfo with no subnets
-			emptyNetInfo := &testNetInfo{
-				NetInfo: netInfo.NetInfo,
-				subnets: []config.CIDRNetworkEntry{},
+		ginkgo.It("handles idempotent syncs correctly", func() {
+			nodeIPs := []string{"192.168.1.10", "192.168.1.11"}
+
+			// First sync
+			err := syncNoOverlaySNATExemptionAddressSet(addressSetFactory, netInfo, controllerName, nodeIPs)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Get the addresses after first sync
+			dbIDs := libovsdbops.NewDbObjectIDs(
+				libovsdbops.AddressSetClusterCIDR,
+				controllerName,
+				map[libovsdbops.ExternalIDKey]string{
+					libovsdbops.ObjectNameKey: clusterCIDR,
+					libovsdbops.NetworkKey:    netInfo.GetNetworkName(),
+				},
+			)
+			as, err := addressSetFactory.GetAddressSet(dbIDs)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			firstIPv4, firstIPv6 := as.GetAddresses()
+
+			// Second sync with same data
+			err = syncNoOverlaySNATExemptionAddressSet(addressSetFactory, netInfo, controllerName, nodeIPs)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Verify addresses remain the same
+			secondIPv4, secondIPv6 := as.GetAddresses()
+			gomega.Expect(secondIPv4).To(gomega.Equal(firstIPv4))
+			gomega.Expect(secondIPv6).To(gomega.Equal(firstIPv6))
+		})
+
+		ginkgo.It("updates node IPs when they change", func() {
+			// First sync with initial node IPs
+			initialNodeIPs := []string{"192.168.1.10"}
+			err := syncNoOverlaySNATExemptionAddressSet(addressSetFactory, netInfo, controllerName, initialNodeIPs)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Verify initial state
+			dbIDs := libovsdbops.NewDbObjectIDs(
+				libovsdbops.AddressSetClusterCIDR,
+				controllerName,
+				map[libovsdbops.ExternalIDKey]string{
+					libovsdbops.ObjectNameKey: clusterCIDR,
+					libovsdbops.NetworkKey:    netInfo.GetNetworkName(),
+				},
+			)
+			as, err := addressSetFactory.GetAddressSet(dbIDs)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			ipv4Addrs, ipv6Addrs := as.GetAddresses()
+			initialExpected := []string{}
+			for _, subnet := range netInfo.Subnets() {
+				initialExpected = append(initialExpected, subnet.CIDR.String())
 			}
+			initialExpected = append(initialExpected, initialNodeIPs...)
+			allAddrs := append(ipv4Addrs, ipv6Addrs...)
+			gomega.Expect(allAddrs).To(gomega.ConsistOf(initialExpected))
 
-			err := addClusterCIDRsToAddressSet(addressSetFactory, emptyNetInfo, controllerName)
+			// Sync with updated node IPs
+			updatedNodeIPs := []string{"192.168.1.10", "192.168.1.11", "192.168.1.12"}
+			err = syncNoOverlaySNATExemptionAddressSet(addressSetFactory, netInfo, controllerName, updatedNodeIPs)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		})
 
-		ginkgo.It("skips adding for overlay mode", func() {
-			config.Default.Transport = config.TransportGeneve
-
-			err := addClusterCIDRsToAddressSet(addressSetFactory, netInfo, controllerName)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			// Verify updated state
+			ipv4Addrs, ipv6Addrs = as.GetAddresses()
+			updatedExpected := []string{}
+			for _, subnet := range netInfo.Subnets() {
+				updatedExpected = append(updatedExpected, subnet.CIDR.String())
+			}
+			updatedExpected = append(updatedExpected, updatedNodeIPs...)
+			allAddrs = append(ipv4Addrs, ipv6Addrs...)
+			gomega.Expect(allAddrs).To(gomega.ConsistOf(updatedExpected))
 		})
 	})
 
 	ginkgo.Context("cleanupClusterCIDRAddressSet", func() {
 		ginkgo.It("removes the address set", func() {
-			config.Default.Transport = config.TransportNoOverlay
+			config.Default.Transport = types.NetworkTransportNoOverlay
 			netInfo.outboundSNAT = true
 			err := initClusterCIDRAddressSet(addressSetFactory, netInfo, controllerName)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -177,7 +235,7 @@ var _ = ginkgo.Describe("Cluster CIDR Address Set", func() {
 
 	ginkgo.Context("getClusterCIDRAsUUID", func() {
 		ginkgo.It("returns UUIDs for IPv4 and IPv6 address sets", func() {
-			config.Default.Transport = config.TransportNoOverlay
+			config.Default.Transport = types.NetworkTransportNoOverlay
 			netInfo.outboundSNAT = true
 			err := initClusterCIDRAddressSet(addressSetFactory, netInfo, controllerName)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -196,7 +254,7 @@ var _ = ginkgo.Describe("Cluster CIDR Address Set", func() {
 		})
 
 		ginkgo.It("returns empty strings for overlay mode", func() {
-			config.Default.Transport = config.TransportGeneve
+			config.Default.Transport = types.NetworkTransportGeneve
 
 			v4UUID, v6UUID, err := getClusterCIDRAsUUID(addressSetFactory, netInfo, controllerName)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -205,7 +263,7 @@ var _ = ginkgo.Describe("Cluster CIDR Address Set", func() {
 		})
 
 		ginkgo.It("returns empty strings when outbound SNAT is disabled", func() {
-			config.Default.Transport = config.TransportNoOverlay
+			config.Default.Transport = types.NetworkTransportNoOverlay
 
 			v4UUID, v6UUID, err := getClusterCIDRAsUUID(addressSetFactory, netInfo, controllerName)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
