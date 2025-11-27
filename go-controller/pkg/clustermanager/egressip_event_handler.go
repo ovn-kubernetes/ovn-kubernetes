@@ -210,7 +210,7 @@ func (h *egressIPClusterControllerEventHandler) SyncFunc(objs []interface{}) err
 	} else {
 		switch h.objType {
 		case factory.EgressIPType:
-			syncFunc = h.eIPC.syncEgressIPMarkAllocator
+			syncFunc = h.eIPC.syncEgressIPs
 		case factory.EgressNodeType:
 			syncFunc = h.eIPC.initEgressNodeReachability
 		case factory.CloudPrivateIPConfigType:
