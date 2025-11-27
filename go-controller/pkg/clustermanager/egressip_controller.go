@@ -531,7 +531,26 @@ func (eIPC *egressIPClusterController) getSortedEgressData() ([]*egressNode, map
 	return assignableNodes, allAllocations
 }
 
-func (eIPC *egressIPClusterController) initEgressNodeReachability(_ []interface{}) error {
+func (eIPC *egressIPClusterController) initEgressNodeReachability(objs []interface{}) error {
+	for _, obj := range objs {
+		node := obj.(*corev1.Node)
+		if err := eIPC.initEgressIPAllocator(node); err != nil {
+			klog.Warningf("Egress node initialization error: %v", err)
+		}
+	}
+
+	// Before reconciling unassigned EgressIPs, ensure the allocator cache is populated
+	// with existing assignments from EgressIP statuses. This prevents duplicate IP
+	// assignments when two EgressIPs have the same IP in their specs but only one has
+	// it assigned in status (e.g., after control-plane restart or during initial sync).
+	egressIPs, err := eIPC.kube.GetEgressIPs()
+	if err != nil {
+		return fmt.Errorf("unable to list EgressIPs, err: %v", err)
+	}
+	for _, egressIP := range egressIPs {
+		eIPC.ensureAllocatorEgressIPAssignments(egressIP)
+	}
+
 	go eIPC.checkEgressNodesReachability()
 	return nil
 }
@@ -1825,10 +1844,21 @@ func generateStatusPatchOp(statusItems []egressipv1.EgressIPStatusItem) jsonPatc
 	}
 }
 
+// ensureAllocatorEgressIPAssignments adds EgressIP assignments to the allocator cache
+// if the EgressIP has status items. This is critical to prevent duplicate IP assignments
+// during restart when EgressIPs are processed in arbitrary order.
+func (eIPC *egressIPClusterController) ensureAllocatorEgressIPAssignments(egressIP *egressipv1.EgressIP) {
+	if len(egressIP.Status.Items) > 0 {
+		eIPC.addAllocatorEgressIPAssignments(egressIP.Name, egressIP.Status.Items)
+	}
+}
+
 // syncEgressIPMarkAllocator iterates over all existing EgressIPs. It builds a mark cache of existing marks stored on each
-// EgressIP annotation or allocates and adds a new mark to an EgressIP if it doesn't exist
+// EgressIP annotation or allocates and adds a new mark to an EgressIP if it doesn't exist.
 func (eIPC *egressIPClusterController) syncEgressIPMarkAllocator(egressIPs []interface{}) error {
-	// reserve previously assigned marks
+	// Reserve previously assigned marks. Note: the allocator cache is pre-populated with
+	// existing assignments from EgressIP statuses in initEgressNodeReachability, which runs
+	// before this sync function.
 	for _, object := range egressIPs {
 		egressIP, ok := object.(*egressipv1.EgressIP)
 		if !ok {
