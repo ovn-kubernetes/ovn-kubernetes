@@ -272,7 +272,10 @@ func buildClusterLBs(service *corev1.Service, configs []lbConfig, nodeInfos []no
 			// The node may not have a gateway router - it might be waiting initialization, or
 			// might have disabled GWR creation via the k8s.ovn.org/l3-gateway-config annotation
 			if node.gatewayRouterName != "" {
-				nodeRouters = append(nodeRouters, node.gatewayRouterName)
+				// Do not set routerTargets for a custom service IP
+				if customIP := util.GetServiceCustomIP(service); customIP == "" {
+					nodeRouters = append(nodeRouters, node.gatewayRouterName)
+				}
 			}
 		}
 	}
@@ -529,16 +532,19 @@ func buildTemplateLBs(service *corev1.Service, configs []lbConfig, nodes []nodeI
 					Templates:   getTemplatesFromRulesTargets(switchV4Rules),
 				})
 			}
-			if len(routerV4Rules) > 0 {
-				out = append(out, LB{
-					Name:        makeLBNameForNetwork(service, proto, "node_router_template_IPv4", netInfo),
-					Protocol:    string(proto),
-					ExternalIDs: eids,
-					Opts:        optsV4,
-					Groups:      []string{netInfo.GetNetworkScopedLoadBalancerGroupName(types.ClusterRouterLBGroupName)},
-					Rules:       routerV4Rules,
-					Templates:   getTemplatesFromRulesTargets(routerV4Rules),
-				})
+			// Do not set routerTargets for a custom service IP
+			if customIP := util.GetServiceCustomIP(service); customIP == "" {
+				if len(routerV4Rules) > 0 {
+					out = append(out, LB{
+						Name:        makeLBNameForNetwork(service, proto, "node_router_template_IPv4", netInfo),
+						Protocol:    string(proto),
+						ExternalIDs: eids,
+						Opts:        optsV4,
+						Groups:      []string{netInfo.GetNetworkScopedLoadBalancerGroupName(types.ClusterRouterLBGroupName)},
+						Rules:       routerV4Rules,
+						Templates:   getTemplatesFromRulesTargets(routerV4Rules),
+					})
+				}
 			}
 		}
 
@@ -555,15 +561,18 @@ func buildTemplateLBs(service *corev1.Service, configs []lbConfig, nodes []nodeI
 				})
 			}
 			if len(routerV6Rules) > 0 {
-				out = append(out, LB{
-					Name:        makeLBNameForNetwork(service, proto, "node_router_template_IPv6", netInfo),
-					Protocol:    string(proto),
-					ExternalIDs: eids,
-					Opts:        optsV6,
-					Groups:      []string{netInfo.GetNetworkScopedLoadBalancerGroupName(types.ClusterRouterLBGroupName)},
-					Rules:       routerV6Rules,
-					Templates:   getTemplatesFromRulesTargets(routerV6Rules),
-				})
+				// Do not set routerTargets for a custom service IP
+				if customIP := util.GetServiceCustomIP(service); customIP == "" {
+					out = append(out, LB{
+						Name:        makeLBNameForNetwork(service, proto, "node_router_template_IPv6", netInfo),
+						Protocol:    string(proto),
+						ExternalIDs: eids,
+						Opts:        optsV6,
+						Groups:      []string{netInfo.GetNetworkScopedLoadBalancerGroupName(types.ClusterRouterLBGroupName)},
+						Rules:       routerV6Rules,
+						Templates:   getTemplatesFromRulesTargets(routerV6Rules),
+					})
+				}
 			}
 		}
 	}
@@ -667,7 +676,7 @@ func buildPerNodeLBs(service *corev1.Service, configs []lbConfig, nodes []nodeIn
 							Targets: targetsETP,
 						})
 					}
-					if cfg.internalTrafficLocal && util.IsClusterIP(vip) { // ITP only applicable to CIP
+					if cfg.internalTrafficLocal && util.IsClusterIP(vip, service) { // ITP only applicable to CIP
 						targetsITP := joinHostsPort(switchV4TargetIPs, cfg.clusterEndpoints.Port)
 						if isv6 {
 							targetsITP = joinHostsPort(switchV6TargetIPs, cfg.clusterEndpoints.Port)
@@ -700,7 +709,10 @@ func buildPerNodeLBs(service *corev1.Service, configs []lbConfig, nodes []nodeIn
 					if cfg.externalTrafficLocal && len(targets) > 0 {
 						noSNATRouterRules = append(noSNATRouterRules, rule)
 					} else {
-						routerRules = append(routerRules, rule)
+						// Do not set routerTargets for a custom service IP
+						if customIP := util.GetServiceCustomIP(service); customIP == "" {
+							routerRules = append(routerRules, rule)
+						}
 					}
 				}
 			}
