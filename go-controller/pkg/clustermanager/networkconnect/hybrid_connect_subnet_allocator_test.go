@@ -998,3 +998,201 @@ func TestHybridConnectSubnetAllocator_Layer2CanReuseFromEarlierRange(t *testing.
 	// This confirms the allocator can pick from earlier ranges, not just the latest
 	g.Expect(subnets[0].String()).To(gomega.Equal("192.168.0.0/31"))
 }
+
+func TestHybridConnectSubnetAllocator_Layer2ReleaseReleasesPoolBlockToLayer3(t *testing.T) {
+	// Test that pool blocks are released back to layer3 only when ALL layer2 owners
+	// in that block are released (refCount reaches 0)
+	// This test covers both partial release (block NOT released) and full release (block released)
+	g := gomega.NewWithT(t)
+
+	config.IPv4Mode = true
+	config.IPv6Mode = true
+
+	allocator := NewHybridConnectSubnetAllocator()
+	// Small ranges: 4 blocks each
+	// IPv4: 10.100.0.0/26 with /28 prefix = 4 /28 blocks (each has 8 /31 slots)
+	// IPv6: fd00::/124 with /127 prefix (each /124 block has 8 /127 slots - but we use /126 for 4 blocks)
+	// Actually let's use: IPv6: fd00::/121 with /123 prefix = 4 /123 blocks
+	err := allocator.AddNetworkRange(mustParseCIDR("10.100.0.0/26"), 28)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	err = allocator.AddNetworkRange(mustParseCIDR("fd00::/121"), 123)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	// Allocate 2 layer2 networks - both in the same pool block
+	l2Sub1, err := allocator.AllocateLayer2Subnet("layer2_1")
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(l2Sub1).To(gomega.HaveLen(2)) // dual-stack
+
+	l2Sub2, err := allocator.AllocateLayer2Subnet("layer2_2")
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(l2Sub2).To(gomega.HaveLen(2)) // dual-stack
+
+	// Use up the remaining layer3 blocks
+	_, err = allocator.AllocateLayer3Subnet("layer3_1")
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	_, err = allocator.AllocateLayer3Subnet("layer3_2")
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	_, err = allocator.AllocateLayer3Subnet("layer3_3")
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	// Layer3 should be full now (1 block used by layer2 pool + 3 blocks used by layer3)
+	_, err = allocator.AllocateLayer3Subnet("layer3_should_fail")
+	g.Expect(err).To(gomega.HaveOccurred())
+	g.Expect(err.Error()).To(gomega.ContainSubstring("Layer3 allocation failed"))
+
+	// PARTIAL RELEASE: Release only ONE layer2 network - pool block should NOT be released
+	allocator.ReleaseLayer2Subnet("layer2_1")
+
+	// Layer3 should still be full (pool block not released because layer2_2 still using it)
+	_, err = allocator.AllocateLayer3Subnet("layer3_still_full")
+	g.Expect(err).To(gomega.HaveOccurred())
+	g.Expect(err.Error()).To(gomega.ContainSubstring("Layer3 allocation failed"))
+
+	// FULL RELEASE: Release the other layer2 network - pool block should now be released
+	allocator.ReleaseLayer2Subnet("layer2_2")
+
+	// Now layer3 should have a free block (the pool block was released back)
+	l3Sub4, err := allocator.AllocateLayer3Subnet("layer3_4")
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(l3Sub4).To(gomega.HaveLen(2)) // dual-stack
+}
+
+func TestHybridConnectSubnetAllocator_getParentBlockCIDR(t *testing.T) {
+	// Test the mathematical derivation of parent block CIDR from a subnet
+	// The function masks the subnet IP to the networkPrefix boundary
+	tests := []struct {
+		name            string
+		v4NetworkPrefix int
+		v6NetworkPrefix int
+		subnet          string
+		expectedParent  string
+	}{
+		// IPv4 tests with /28 networkPrefix (using 10.0.0.0/8 range)
+		{
+			name:            "IPv4 first address in block",
+			v4NetworkPrefix: 28,
+			subnet:          "10.20.30.0/31",
+			expectedParent:  "10.20.30.0/28",
+		},
+		{
+			name:            "IPv4 middle address in block",
+			v4NetworkPrefix: 28,
+			subnet:          "10.20.30.6/31",
+			expectedParent:  "10.20.30.0/28",
+		},
+		{
+			name:            "IPv4 last address in block",
+			v4NetworkPrefix: 28,
+			subnet:          "10.20.30.14/31",
+			expectedParent:  "10.20.30.0/28",
+		},
+		{
+			name:            "IPv4 second block first address",
+			v4NetworkPrefix: 28,
+			subnet:          "10.20.30.16/31",
+			expectedParent:  "10.20.30.16/28",
+		},
+		{
+			name:            "IPv4 second block middle address",
+			v4NetworkPrefix: 28,
+			subnet:          "10.20.30.22/31",
+			expectedParent:  "10.20.30.16/28",
+		},
+		// IPv4 with /24 networkPrefix (using 172.16.0.0/12 range)
+		{
+			name:            "IPv4 /24 prefix first block",
+			v4NetworkPrefix: 24,
+			subnet:          "172.16.5.100/31",
+			expectedParent:  "172.16.5.0/24",
+		},
+		{
+			name:            "IPv4 /24 prefix second block",
+			v4NetworkPrefix: 24,
+			subnet:          "172.16.6.50/31",
+			expectedParent:  "172.16.6.0/24",
+		},
+		// IPv6 tests with /124 networkPrefix
+		{
+			name:            "IPv6 first address in block",
+			v6NetworkPrefix: 124,
+			subnet:          "2001:db8::0/127",
+			expectedParent:  "2001:db8::/124",
+		},
+		{
+			name:            "IPv6 middle address in block",
+			v6NetworkPrefix: 124,
+			subnet:          "2001:db8::6/127",
+			expectedParent:  "2001:db8::/124",
+		},
+		{
+			name:            "IPv6 last address in block",
+			v6NetworkPrefix: 124,
+			subnet:          "2001:db8::e/127",
+			expectedParent:  "2001:db8::/124",
+		},
+		{
+			name:            "IPv6 second block",
+			v6NetworkPrefix: 124,
+			subnet:          "2001:db8::10/127",
+			expectedParent:  "2001:db8::10/124",
+		},
+		{
+			name:            "IPv6 second block middle",
+			v6NetworkPrefix: 124,
+			subnet:          "2001:db8::1a/127",
+			expectedParent:  "2001:db8::10/124",
+		},
+		// IPv6 with /64 networkPrefix
+		{
+			name:            "IPv6 /64 prefix",
+			v6NetworkPrefix: 64,
+			subnet:          "2001:db8:cafe:1::abcd/127",
+			expectedParent:  "2001:db8:cafe:1::/64",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+
+			// Create allocator with the specified network prefixes
+			allocator := &hybridConnectSubnetAllocator{
+				v4NetworkPrefix: tt.v4NetworkPrefix,
+				v6NetworkPrefix: tt.v6NetworkPrefix,
+			}
+
+			subnet := mustParseCIDR(tt.subnet)
+			parentCIDR := allocator.getParentBlockCIDR(subnet)
+
+			g.Expect(parentCIDR).To(gomega.Equal(tt.expectedParent))
+		})
+	}
+}
+
+func TestHybridConnectSubnetAllocator_getParentBlockCIDR_AllAddressesInBlockMapToSameParent(t *testing.T) {
+	// Verify that ALL addresses within a block map to the same parent
+	g := gomega.NewWithT(t)
+
+	allocator := &hybridConnectSubnetAllocator{
+		v4NetworkPrefix: 28, // /28 = 16 addresses (0-15)
+	}
+
+	// All /31 subnets in 10.50.100.0/28 should map to the same parent
+	// Block has addresses .0 to .15, so /31 subnets are .0, .2, .4, .6, .8, .10, .12, .14
+	expectedParent := "10.50.100.0/28"
+	for i := 0; i < 16; i += 2 {
+		subnet := mustParseCIDR(fmt.Sprintf("10.50.100.%d/31", i))
+		parentCIDR := allocator.getParentBlockCIDR(subnet)
+		g.Expect(parentCIDR).To(gomega.Equal(expectedParent),
+			"Address 10.50.100.%d/31 should map to %s", i, expectedParent)
+	}
+
+	// All /31 subnets in 10.50.100.16/28 should map to a different parent
+	expectedParent2 := "10.50.100.16/28"
+	for i := 16; i < 32; i += 2 {
+		subnet := mustParseCIDR(fmt.Sprintf("10.50.100.%d/31", i))
+		parentCIDR := allocator.getParentBlockCIDR(subnet)
+		g.Expect(parentCIDR).To(gomega.Equal(expectedParent2),
+			"Address 10.50.100.%d/31 should map to %s", i, expectedParent2)
+	}
+}
