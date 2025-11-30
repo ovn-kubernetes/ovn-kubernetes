@@ -998,3 +998,83 @@ func TestHybridConnectSubnetAllocator_Layer2CanReuseFromEarlierRange(t *testing.
 	// This confirms the allocator can pick from earlier ranges, not just the latest
 	g.Expect(subnets[0].String()).To(gomega.Equal("192.168.0.0/31"))
 }
+
+func TestHybridConnectSubnetAllocator_Layer2ReleaseReleasesBlockToLayer3(t *testing.T) {
+	// Test that blocks are released back to layer3 only when ALL layer2 owners
+	// in that block are released. Also verifies the range is removed from layer2Allocator.
+	// This test covers:
+	// 1. Partial release (block NOT released back to layer3)
+	// 2. Full release (block released back to layer3 AND removed from layer2Allocator)
+	g := gomega.NewWithT(t)
+
+	config.IPv4Mode = true
+	config.IPv6Mode = true
+
+	allocator := NewHybridConnectSubnetAllocator()
+	// Small ranges: 4 blocks each
+	// IPv4: 10.100.0.0/26 with /28 prefix = 4 /28 blocks (each has 8 /31 slots)
+	// IPv6: fd00::/121 with /123 prefix = 4 /123 blocks (each has 4 /127 slots)
+	err := allocator.AddNetworkRange(mustParseCIDR("10.100.0.0/26"), 28)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	err = allocator.AddNetworkRange(mustParseCIDR("fd00::/121"), 123)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	// Allocate 2 layer2 networks - both in the same block
+	l2Sub1, err := allocator.AllocateLayer2Subnet("layer2_1")
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(l2Sub1).To(gomega.HaveLen(2)) // dual-stack
+	g.Expect(l2Sub1[0].String()).To(gomega.Equal("10.100.0.0/31"))
+	// /123 to /127: subnetBits = 4, which is < 16, so it doesn't skip subnet 0
+	g.Expect(l2Sub1[1].String()).To(gomega.Equal("fd00::/127"))
+
+	l2Sub2, err := allocator.AllocateLayer2Subnet("layer2_2")
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(l2Sub2).To(gomega.HaveLen(2)) // dual-stack
+
+	// Verify layer2 allocator has 1 range each (the block)
+	v4RangeCount, v6RangeCount := allocator.Layer2RangeCount()
+	g.Expect(v4RangeCount).To(gomega.Equal(uint64(1)))
+	g.Expect(v6RangeCount).To(gomega.Equal(uint64(1)))
+
+	// Use up the remaining layer3 blocks
+	_, err = allocator.AllocateLayer3Subnet("layer3_1")
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	_, err = allocator.AllocateLayer3Subnet("layer3_2")
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	_, err = allocator.AllocateLayer3Subnet("layer3_3")
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	// Layer3 should be full now (1 block used by layer2 networks + 3 blocks used by layer3)
+	_, err = allocator.AllocateLayer3Subnet("layer3_should_fail")
+	g.Expect(err).To(gomega.HaveOccurred())
+	g.Expect(err.Error()).To(gomega.ContainSubstring("Layer3 allocation failed"))
+
+	// PARTIAL RELEASE: Release only ONE layer2 network - block should NOT be released
+	allocator.ReleaseLayer2Subnet("layer2_1")
+
+	// Layer2 allocator should still have 1 range each (block not released yet)
+	v4RangeCount, v6RangeCount = allocator.Layer2RangeCount()
+	g.Expect(v4RangeCount).To(gomega.Equal(uint64(1)))
+	g.Expect(v6RangeCount).To(gomega.Equal(uint64(1)))
+
+	// Layer3 should still be full (block not released because layer2_2 still using it)
+	_, err = allocator.AllocateLayer3Subnet("layer3_still_full")
+	g.Expect(err).To(gomega.HaveOccurred())
+	g.Expect(err.Error()).To(gomega.ContainSubstring("Layer3 allocation failed"))
+
+	// FULL RELEASE: Release the other layer2 network - block should now be released
+	allocator.ReleaseLayer2Subnet("layer2_2")
+
+	// Layer2 allocator should now have 0 ranges (block removed via FreeUnusedRanges)
+	v4RangeCount, v6RangeCount = allocator.Layer2RangeCount()
+	g.Expect(v4RangeCount).To(gomega.Equal(uint64(0)))
+	g.Expect(v6RangeCount).To(gomega.Equal(uint64(0)))
+
+	// Now layer3 should have a free block (the block was released back)
+	l3Sub4, err := allocator.AllocateLayer3Subnet("layer3_4")
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(l3Sub4).To(gomega.HaveLen(2)) // dual-stack
+	// Should get the block that was released from layer2 networks
+	g.Expect(l3Sub4[0].String()).To(gomega.Equal("10.100.0.0/28"))
+	g.Expect(l3Sub4[1].String()).To(gomega.Equal("fd00::/123"))
+}
