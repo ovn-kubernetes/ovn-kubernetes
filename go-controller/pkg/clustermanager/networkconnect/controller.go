@@ -40,9 +40,16 @@ var (
 type clusterNetworkConnectState struct {
 	// name of the cluster network connect (unique across cluster)
 	name string
+	// allocator for this CNC's subnet allocation
+	allocator HybridConnectSubnetAllocator
 	// map of NADs currently selected by this CNC's network selectors
 	// {value: NAD namespace/name key}
 	selectedNADs sets.Set[string]
+	// set of networks currently selected by this CNC's network selectors
+	// {value: network owner key like "layer3_1" or "layer2_2"}
+	// Owner keys are computed from topology type (layer3 or layer2) and network ID, enabling subnet release
+	// without needing to re-discover network info.
+	selectedNetworks sets.Set[string]
 }
 
 type Controller struct {

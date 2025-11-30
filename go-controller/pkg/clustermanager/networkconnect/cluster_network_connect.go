@@ -3,6 +3,7 @@ package networkconnect
 import (
 	"errors"
 	"fmt"
+	"net"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -10,9 +11,12 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
+	utilnet "k8s.io/utils/net"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	networkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
 	apitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
+	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -40,6 +44,8 @@ func (c *Controller) reconcileClusterNetworkConnect(key string) error {
 	if cnc == nil {
 		// CNC is being deleted, clean up resources
 		// Clean up the cache
+		// Note: allocator cleanup is not needed - it will be garbage collected
+		// when the cache entry is deleted below since it's self-contained per-CNC
 		delete(c.cncCache, cncName)
 		klog.V(4).Infof("Cleaned up cache for deleted CNC %s", cncName)
 		return nil
@@ -47,8 +53,9 @@ func (c *Controller) reconcileClusterNetworkConnect(key string) error {
 	// If CNC state doesn't exist yet (means its a CNC creation), create entry in the cache
 	if !cncExists {
 		cncState = &clusterNetworkConnectState{
-			name:         cnc.Name,
-			selectedNADs: sets.New[string](),
+			name:             cnc.Name,
+			selectedNADs:     sets.New[string](),
+			selectedNetworks: sets.New[string](),
 		}
 		c.cncCache[cnc.Name] = cncState
 	}
@@ -59,23 +66,33 @@ func (c *Controller) reconcileClusterNetworkConnect(key string) error {
 	if err != nil {
 		return err
 	}
-	if len(discoveredNetworks) == 0 {
-		klog.Infof("No networks found for CNC %s", cncName)
-		return nil
+	// STEP4: Generate or release subnets of size CNC.Spec.ConnectSubnets.NetworkPrefix for each layer3 network
+	//  and /31 or /127 subnets for each layer2 network
+	// We intentionally don't compute or use the networksNeedingAllocation set here because we want to return all
+	// currently allocated subnets for each owner back to the annotation update step.
+	_, allMatchingNetworkKeys, err := c.allocateSubnets(discoveredNetworks, cnc.Spec.ConnectSubnets, cncName)
+	if err != nil {
+		return err
 	}
-	// STEP4: Generate subnets of size CNC.Spec.ConnectSubnets.NetworkPrefix for each layer3 network
-	//  and /31 or /127 subnet for each layer2 networks
-
+	// This step will handle the release of subnets for networks that are no longer matched or are deleted.
+	networksNeedingRelease := cncState.selectedNetworks.Difference(allMatchingNetworkKeys)
+	if len(networksNeedingRelease) > 0 {
+		err = c.releaseSubnets(cnc.Spec.ConnectSubnets, cncName, networksNeedingRelease)
+		if err != nil {
+			return err
+		}
+	}
 	// plumbing is now done, update the cache with latest
 	cncState.selectedNADs = allMatchingNADKeys
 	klog.V(5).Infof("Updated selectedNADs cache for CNC %s with %d NADs", cncName, allMatchingNADKeys.Len())
+	cncState.selectedNetworks = allMatchingNetworkKeys
+	klog.V(5).Infof("Updated selectedNetworks cache for CNC %s with %d networks", cncName, allMatchingNetworkKeys.Len())
 	return nil
 }
 
 func (c *Controller) discoverSelectedNetworks(cnc *networkconnectv1.ClusterNetworkConnect) ([]*util.NetInfo, sets.Set[string], error) {
 	discoveredNetworks := []*util.NetInfo{}
 	allMatchingNADKeys := sets.New[string]()
-
 	for _, selector := range cnc.Spec.NetworkSelectors {
 		switch selector.NetworkSelectionType {
 		case apitypes.ClusterUserDefinedNetworks:
@@ -147,4 +164,121 @@ func (c *Controller) discoverSelectedNetworks(cnc *networkconnectv1.ClusterNetwo
 	}
 
 	return discoveredNetworks, allMatchingNADKeys, nil
+}
+
+func computeNetworkOwner(networkType string, networkID int) string {
+	return fmt.Sprintf("%s_%d", networkType, networkID)
+}
+
+// parseNetworkOwner extracts the topology type from an owner key.
+// Owner keys are formatted as "{topology}_{networkID}" (e.g., "layer3_1", "layer2_2").
+func parseNetworkOwner(owner string) (topologyType string, ok bool) {
+	if len(owner) > len(ovntypes.Layer3Topology)+1 && owner[:len(ovntypes.Layer3Topology)] == ovntypes.Layer3Topology {
+		return ovntypes.Layer3Topology, true
+	}
+	if len(owner) > len(ovntypes.Layer2Topology)+1 && owner[:len(ovntypes.Layer2Topology)] == ovntypes.Layer2Topology {
+		return ovntypes.Layer2Topology, true
+	}
+	return "", false
+}
+
+// allocateSubnets allocates subnets for the given discovered networks
+// It returns a map of owner to subnets
+// NOTE: If owner already had its subnets allocated, it will simply return those existing subnets
+func (c *Controller) allocateSubnets(discoveredNetworks []*util.NetInfo, connectSubnets []networkconnectv1.ConnectSubnet,
+	cncName string) (map[string][]*net.IPNet, sets.Set[string], error) {
+	connectSubnetAllocator, err := c.fetchConnectSubnetAllocator(connectSubnets, cncName)
+	if err != nil {
+		return nil, nil, err
+	}
+	var owner string
+	var subnets []*net.IPNet
+	allMatchingNetworkKeys := sets.New[string]()
+	allocatedSubnets := make(map[string][]*net.IPNet)
+	for _, network := range discoveredNetworks {
+		netInfo := *network
+		networkID := netInfo.GetNetworkID()
+		if networkID == ovntypes.NoNetworkID {
+			return nil, nil, fmt.Errorf("network id is invalid for network %s", netInfo.GetNetworkName())
+		}
+		if netInfo.TopologyType() == ovntypes.Layer3Topology {
+			owner = computeNetworkOwner(ovntypes.Layer3Topology, networkID)
+			subnets, err = connectSubnetAllocator.AllocateLayer3Subnet(owner)
+			if err != nil {
+				return nil, nil, err
+			}
+		} else if netInfo.TopologyType() == ovntypes.Layer2Topology {
+			owner = computeNetworkOwner(ovntypes.Layer2Topology, networkID)
+			subnets, err = connectSubnetAllocator.AllocateLayer2Subnet(owner)
+			if err != nil {
+				return nil, nil, err
+			}
+		} else {
+			// This should never happen
+			return nil, nil, fmt.Errorf("unsupported network topology type %s for network %s", netInfo.TopologyType(), netInfo.GetNetworkName())
+		}
+		allocatedSubnets[owner] = subnets
+		allMatchingNetworkKeys.Insert(owner)
+		klog.V(5).Infof("Allocated subnets %v for %s (network: %s)", subnets, owner, netInfo.GetNetworkName())
+	}
+	return allocatedSubnets, allMatchingNetworkKeys, nil
+}
+
+func (c *Controller) fetchConnectSubnetAllocator(connectSubnets []networkconnectv1.ConnectSubnet, cncName string) (HybridConnectSubnetAllocator, error) {
+	// NOTE: Caller must hold the global lock
+	cncState := c.cncCache[cncName] // Cache entry should exist from updateCNCSelectedNADs
+
+	// Check if allocator is already set up
+	if cncState.allocator == nil {
+		connectSubnetAllocator := NewHybridConnectSubnetAllocator()
+		for _, connectSubnet := range connectSubnets {
+			_, netCIDR, err := net.ParseCIDR(string(connectSubnet.CIDR))
+			if err != nil {
+				return nil, err
+			}
+			if utilnet.IsIPv4CIDR(netCIDR) && config.IPv4Mode {
+				if err := connectSubnetAllocator.AddNetworkRange(netCIDR, int(connectSubnet.NetworkPrefix)); err != nil {
+					return nil, err
+				}
+				klog.V(5).Infof("Added network range %s to cluster network connect %s subnet allocator", netCIDR, cncName)
+			}
+			if utilnet.IsIPv6CIDR(netCIDR) && config.IPv6Mode {
+				if err := connectSubnetAllocator.AddNetworkRange(netCIDR, int(connectSubnet.NetworkPrefix)); err != nil {
+					return nil, err
+				}
+				klog.V(5).Infof("Added network range %s to cluster network connect %s subnet allocator", netCIDR, cncName)
+			}
+		}
+		cncState.allocator = connectSubnetAllocator
+		klog.V(5).Infof("Initialized subnet allocator for CNC %s", cncName)
+	}
+	return cncState.allocator, nil
+}
+
+// releaseSubnets releases subnets for the given network keys.
+// Network keys encode topology type and network ID (e.g., "layer3_1", "layer2_2"),
+// allowing subnet release without needing to re-discover network info.
+func (c *Controller) releaseSubnets(connectSubnets []networkconnectv1.ConnectSubnet,
+	cncName string, networksNeedingRelease sets.Set[string]) error {
+	connectSubnetAllocator, err := c.fetchConnectSubnetAllocator(connectSubnets, cncName)
+	if err != nil {
+		return err
+	}
+	for networkKey := range networksNeedingRelease {
+		topologyType, ok := parseNetworkOwner(networkKey)
+		if !ok {
+			klog.Warningf("Invalid network key format: %s, skipping release", networkKey)
+			continue
+		}
+		switch topologyType {
+		case ovntypes.Layer3Topology:
+			connectSubnetAllocator.ReleaseLayer3Subnet(networkKey)
+		case ovntypes.Layer2Topology:
+			connectSubnetAllocator.ReleaseLayer2Subnet(networkKey)
+		default:
+			return fmt.Errorf("unsupported network topology type %s for network %s", topologyType, networkKey)
+		}
+		klog.V(5).Infof("Released subnets for network %s", networkKey)
+	}
+	return nil
 }
