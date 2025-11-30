@@ -86,6 +86,17 @@ func (c *persistentIPsStub) FindIPAMClaim(claimName string, namespace string) (*
 	return &ipamClaim, nil
 }
 
+func (c *persistentIPsStub) UpdateIPAMClaimStatus(ipamClaim *ipamclaimsapi.IPAMClaim, podAnnotation *util.PodAnnotation, podName string, allocationErr error) *ipamclaimsapi.IPAMClaim {
+	updatedClaim := ipamClaim.DeepCopy()
+	updatedClaim.Status.OwnerPod = &ipamclaimsapi.OwnerPod{Name: podName}
+	if allocationErr != nil {
+		updatedClaim.Status.IPs = []string{}
+	} else if podAnnotation != nil && len(podAnnotation.IPs) > 0 {
+		updatedClaim.Status.IPs = util.StringSlice(podAnnotation.IPs)
+	}
+	return updatedClaim
+}
+
 func ipamClaimKey(namespace string, claimName string) string {
 	return fmt.Sprintf("%s/%s", namespace, claimName)
 }

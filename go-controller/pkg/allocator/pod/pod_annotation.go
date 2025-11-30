@@ -400,6 +400,16 @@ func allocatePodAnnotationWithRollback(
 		hasIPAMClaim = ipamClaim != nil && len(ipamClaim.Status.IPs) > 0
 	}
 
+	defer func() {
+		if ipamClaim == nil || claimsReconciler == nil {
+			return
+		}
+		updatedClaim := claimsReconciler.UpdateIPAMClaimStatus(ipamClaim, podAnnotation, pod.Name, err)
+		if reconcileErr := claimsReconciler.Reconcile(ipamClaim, updatedClaim, ipAllocator); reconcileErr != nil {
+			err = errors.Join(err, fmt.Errorf("failed to reconcile IPAM claim %s/%s: %w", ipamClaim.Namespace, ipamClaim.Name, reconcileErr))
+		}
+	}()
+
 	if hasIPAM && hasStaticIPRequest {
 		if err = validateStaticIPRequest(netInfo, network, ipamClaim, podDesc); err != nil {
 			return
@@ -501,12 +511,6 @@ func allocatePodAnnotationWithRollback(
 		updatedPod = pod
 		updatedPod.Annotations, err = util.MarshalPodAnnotation(updatedPod.Annotations, tentative, nadName)
 		podAnnotation = tentative
-	}
-
-	if ipamClaim != nil && err == nil {
-		newIPAMClaim := ipamClaim.DeepCopy()
-		newIPAMClaim.Status.IPs = util.StringSlice(podAnnotation.IPs)
-		err = claimsReconciler.Reconcile(ipamClaim, newIPAMClaim, ipAllocator)
 	}
 
 	return
