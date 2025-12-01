@@ -65,6 +65,8 @@ spec:
 
         terminationMessagePolicy: FallbackToLogsOnError
         volumeMounts:
+        - mountPath: /tmp/cores
+          name: host-cores
         # Run directories where we need to be able to access sockets
         - mountPath: /var/run/dbus/
           name: host-var-run-dbus
@@ -84,6 +86,8 @@ spec:
             cpu: 100m
             memory: 300Mi
         env:
+        - name: GOTRACEBACK
+          value: "crash"
         - name: OVN_DAEMONSET_VERSION
           value: "1.1.0"
         - name: OVNKUBE_LOGLEVEL
@@ -185,6 +189,10 @@ spec:
       # end of container
 
       volumes:
+      - name: host-cores
+        hostPath:
+          path: /tmp/cores
+          type: DirectoryOrCreate
       # TODO: Need to check why we need this?
       - name: host-var-run-dbus
         hostPath:

@@ -1023,6 +1023,20 @@ install_ovn_multiple_nodes_zones() {
   run_kubectl apply -f ovnkube-node.yaml
 }
 
+setup_coredumps() {
+  echo "Setting up coredump collection on all KIND nodes..."
+  OCI_BIN=${KIND_EXPERIMENTAL_PROVIDER:-docker}
+  for node in $(kind get nodes --name "${KIND_CLUSTER_NAME}"); do
+    ${OCI_BIN} exec "$node" bash -c '
+      sysctl -w kernel.core_pattern="/tmp/cores/core.%e.%p.%t"
+      mkdir -p /tmp/cores
+      chmod 777 /tmp/cores
+      ulimit -c unlimited
+    '
+    echo "Configured coredumps on node: $node"
+  done
+}
+
 install_ovn() {
   pushd ${MANIFEST_OUTPUT_DIR}
 
@@ -1249,6 +1263,7 @@ fi
 build_ovn_image
 detect_apiserver_url
 create_ovn_kube_manifests
+setup_coredumps
 install_ovn_image
 install_ovn
 if [ "$KIND_INSTALL_INGRESS" == true ]; then

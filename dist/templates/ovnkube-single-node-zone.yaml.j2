@@ -49,6 +49,8 @@ spec:
 
         terminationMessagePolicy: FallbackToLogsOnError
         volumeMounts:
+        - mountPath: /tmp/cores
+          name: host-cores
         # ovn db is stored in the pod in /etc/openvswitch
         # (or in /etc/ovn if OVN from new repository is used)
         # and on the host in /var/lib/openvswitch/
@@ -123,6 +125,8 @@ spec:
 
         terminationMessagePolicy: FallbackToLogsOnError
         volumeMounts:
+        - mountPath: /tmp/cores
+          name: host-cores
         # ovn db is stored in the pod in /etc/openvswitch
         # (or in /etc/ovn if OVN from new repository is used)
         # and on the host in /var/lib/openvswitch/
@@ -193,6 +197,8 @@ spec:
 
         terminationMessagePolicy: FallbackToLogsOnError
         volumeMounts:
+        - mountPath: /tmp/cores
+          name: host-cores
         # Run directories where we need to be able to access sockets
         - mountPath: /var/run/dbus/
           name: host-var-run-dbus
@@ -259,6 +265,8 @@ spec:
 
         terminationMessagePolicy: FallbackToLogsOnError
         volumeMounts:
+        - mountPath: /tmp/cores
+          name: host-cores
         # Common mounts
         # for the iptables wrapper
         - mountPath: /host
@@ -496,6 +504,8 @@ spec:
 
         terminationMessagePolicy: FallbackToLogsOnError
         volumeMounts:
+        - mountPath: /tmp/cores
+          name: host-cores
         - mountPath: /var/run/dbus/
           name: host-var-run-dbus
           readOnly: true
@@ -558,6 +568,8 @@ spec:
 
         terminationMessagePolicy: FallbackToLogsOnError
         volumeMounts:
+        - mountPath: /tmp/cores
+          name: host-cores
         - mountPath: /var/run/dbus/
           name: host-var-run-dbus
           readOnly: true
@@ -595,6 +607,10 @@ spec:
                 operator: DoesNotExist
       volumes:
       # Common volumes
+      - name: host-cores
+        hostPath:
+          path: /tmp/cores
+          type: DirectoryOrCreate
       - name: host-var-run-dbus
         hostPath:
           path: /var/run/dbus
