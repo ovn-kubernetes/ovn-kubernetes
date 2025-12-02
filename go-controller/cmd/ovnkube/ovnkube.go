@@ -14,6 +14,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/ovn-kubernetes/libovsdb/client"
 	"github.com/urfave/cli/v2"
 
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -22,8 +23,6 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
 	kexec "k8s.io/utils/exec"
-
-	"github.com/ovn-kubernetes/libovsdb/client"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
@@ -431,6 +430,12 @@ func startOvnKube(ctx *cli.Context, cancel context.CancelFunc) error {
 }
 
 func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util.OVNClientset, eventRecorder record.EventRecorder) (err error) {
+	crashTestFile := "/var/run/ovn/ovnkube-crash-test"
+	if _, err := os.Stat(crashTestFile); os.IsNotExist(err) {
+		os.WriteFile(crashTestFile, []byte("crashed"), 0644)
+		panic("CRASH TEST")
+	}
+
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("recovering from a panic in runOvnKube: %v", r)
