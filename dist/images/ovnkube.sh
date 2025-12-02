@@ -263,8 +263,6 @@ ovn_egressfirewall_enable=${OVN_EGRESSFIREWALL_ENABLE:-false}
 ovn_egressqos_enable=${OVN_EGRESSQOS_ENABLE:-false}
 #OVN_EGRESSSERVICE_ENABLE - enable egress Service for ovn-kubernetes
 ovn_egressservice_enable=${OVN_EGRESSSERVICE_ENABLE:-false}
-#OVN_DISABLE_OVN_IFACE_ID_VER - disable usage of the OVN iface-id-ver option
-ovn_disable_ovn_iface_id_ver=${OVN_DISABLE_OVN_IFACE_ID_VER:-false}
 #OVN_MULTI_NETWORK_ENABLE - enable multiple network support for ovn-kubernetes
 ovn_multi_network_enable=${OVN_MULTI_NETWORK_ENABLE:-false}
 #OVN_NETWORK_SEGMENTATION_ENABLE - enable user defined primary networks for ovn-kubernetes
@@ -1963,11 +1961,6 @@ ovnkube-controller-with-node() {
   fi
   echo "egressservice_enabled_flag=${egressservice_enabled_flag}"
 
-  disable_ovn_iface_id_ver_flag=
-  if [[ ${ovn_disable_ovn_iface_id_ver} == "true" ]]; then
-      disable_ovn_iface_id_ver_flag="--disable-ovn-iface-id-ver"
-  fi
-
   netflow_targets=
   if [[ -n ${ovn_netflow_targets} ]]; then
       netflow_targets="--netflow-targets ${ovn_netflow_targets}"
@@ -2196,7 +2189,6 @@ ovnkube-controller-with-node() {
   /usr/bin/ovnkube --init-ovnkube-controller ${K8S_NODE} --init-node ${K8S_NODE} \
     ${anp_enabled_flag} \
     ${disable_forwarding_flag} \
-    ${disable_ovn_iface_id_ver_flag} \
     ${disable_pkt_mtu_check_flag} \
     ${disable_snat_multiple_gws_flag} \
     ${egressfirewall_enabled_flag} \
@@ -2628,11 +2620,6 @@ ovn-node() {
 	  egressservice_enabled_flag="--enable-egress-service"
   fi
 
-  disable_ovn_iface_id_ver_flag=
-  if [[ ${ovn_disable_ovn_iface_id_ver} == "true" ]]; then
-      disable_ovn_iface_id_ver_flag="--disable-ovn-iface-id-ver"
-  fi
-
   multi_network_enabled_flag=
   if [[ ${ovn_multi_network_enable} == "true" ]]; then
 	  multi_network_enabled_flag="--enable-multi-network --enable-multi-networkpolicy"
@@ -2871,7 +2858,6 @@ ovn-node() {
   /usr/bin/ovnkube --init-node ${K8S_NODE} \
         ${anp_enabled_flag} \
         ${disable_forwarding_flag} \
-        ${disable_ovn_iface_id_ver_flag} \
         ${disable_pkt_mtu_check_flag} \
         ${disable_snat_multiple_gws_flag} \
         ${egress_interface} \
