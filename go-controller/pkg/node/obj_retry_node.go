@@ -53,7 +53,7 @@ func (nc *DefaultNodeNetworkController) newRetryFrameworkNodeWithParameters(
 		},
 	}
 
-	r := retry.NewRetryFramework(nc.stopChan, nc.wg, nc.watchFactory.(*factory.WatchFactory), resourceHandler)
+	r := retry.NewRetryFramework("Default/NodeController", nc.stopChan, nc.wg, nc.watchFactory.(*factory.WatchFactory), resourceHandler)
 
 	return r
 }
