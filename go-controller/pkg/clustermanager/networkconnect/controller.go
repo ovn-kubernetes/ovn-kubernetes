@@ -10,6 +10,7 @@ import (
 	nadclientset "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned"
 	nadlisters "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -77,8 +78,10 @@ type Controller struct {
 	// Controller for managing cluster-network-connect events
 	cncController controllerutil.Controller
 	// Controller for managing NetworkAttachmentDefinition events
-	nadController  controllerutil.Controller
-	networkManager networkmanager.Interface
+	nadController controllerutil.Controller
+	// Controller for managing Namespace events
+	namespaceController controllerutil.Controller
+	networkManager      networkmanager.Interface
 
 	// Single global lock protecting all controller state
 	// We can improve this later by using a more fine-grained lock based on performance testing
@@ -96,14 +99,14 @@ func NewController(
 ) *Controller {
 	cncLister := wf.ClusterNetworkConnectInformer().Lister()
 	nadLister := wf.NADInformer().Lister()
-
+	namespaceLister := wf.NamespaceInformer().Lister()
 	c := &Controller{
 		wf:                  wf,
 		cncClient:           ovnClient.NetworkConnectClient,
 		nadClient:           ovnClient.NetworkAttchDefClient,
 		cncLister:           cncLister,
 		nadLister:           nadLister,
-		namespaceLister:     wf.NamespaceInformer().Lister(),
+		namespaceLister:     namespaceLister,
 		networkManager:      networkManager,
 		cncCache:            make(map[string]*clusterNetworkConnectState),
 		tunnelKeysAllocator: tunnelKeysAllocator,
@@ -135,6 +138,19 @@ func NewController(
 		nadCfg,
 	)
 
+	namespaceCfg := &controllerutil.ControllerConfig[corev1.Namespace]{
+		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+		Informer:       wf.NamespaceInformer().Informer(),
+		Lister:         namespaceLister.List,
+		Reconcile:      c.reconcileNamespace,
+		ObjNeedsUpdate: namespaceNeedsUpdate,
+		Threadiness:    1,
+	}
+	c.namespaceController = controllerutil.NewController(
+		"clustermanager-network-connect-namespace-controller",
+		namespaceCfg,
+	)
+
 	return c
 }
 
@@ -143,6 +159,7 @@ func (c *Controller) Start() error {
 	return controllerutil.Start(
 		c.cncController,
 		c.nadController,
+		c.namespaceController,
 	)
 }
 
@@ -150,6 +167,7 @@ func (c *Controller) Stop() {
 	controllerutil.Stop(
 		c.cncController,
 		c.nadController,
+		c.namespaceController,
 	)
 	klog.Infof("Cluster manager network connect controllers stopped")
 }
@@ -334,4 +352,121 @@ func (c *Controller) mustProcessCNCForNAD(nad *nadv1.NetworkAttachmentDefinition
 	// NAD could have had its network-id annotation update which we use in CNC reconciliation to
 	// generate the subnet for the connect router corresponding to this CNC.
 	return wasSelected || isSelected
+}
+
+func namespaceNeedsUpdate(oldObj, newObj *corev1.Namespace) bool {
+	// Case 1: namespace is being deleted
+	// Case 2: namespace is being created
+	// for both these cases, we don't care because
+	// we only care about UDNs being created or deleted
+	// in those namespaces which is already handled by the NAD controller
+	if oldObj == nil || newObj == nil {
+		return false
+	}
+	namespaceSupported := func(namespace *corev1.Namespace) bool {
+		if namespace == nil {
+			return false
+		}
+		// we only support primary UDNs in namespaces that have the required label
+		_, ok := namespace.Labels[ovntypes.RequiredUDNNamespaceLabel]
+		return ok
+	}
+	if !namespaceSupported(oldObj) && !namespaceSupported(newObj) {
+		return false
+	}
+	// Case 3: namespace is being updated (we only care about labels changes)
+	oldNamespaceLabels := labels.Set(oldObj.Labels)
+	newNamespaceLabels := labels.Set(newObj.Labels)
+	labelsChanged := !labels.Equals(oldNamespaceLabels, newNamespaceLabels)
+	return labelsChanged
+}
+
+func (c *Controller) reconcileNamespace(key string) error {
+	c.Lock()
+	defer c.Unlock()
+
+	startTime := time.Now()
+	klog.V(5).Infof("reconcileNamespace %s", key)
+	defer func() {
+		klog.Infof("reconcileNamespace %s took %v", key, time.Since(startTime))
+	}()
+
+	namespace, err := c.namespaceLister.Get(key)
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to get namespace %s: %w", key, err)
+	}
+
+	namespacePrimaryNetwork, err := c.networkManager.GetActiveNetworkForNamespace(namespace.Name)
+	if err != nil {
+		klog.Errorf("Failed to get active network for namespace %s: %v", namespace.Name, err)
+		// best effort, usually if a NAD then gets created/deleted in this namespace,
+		// we will get a NAD event anyways
+		return nil
+	}
+	if namespacePrimaryNetwork.IsDefault() {
+		// no primary UDN in this namespace, so we don't need to do anything
+		return nil
+	}
+	primaryNADs := namespacePrimaryNetwork.GetNADs()
+	if len(primaryNADs) != 1 {
+		return fmt.Errorf("unexpected number of primary NADs for namespace %s, got %d", namespace.Name, len(primaryNADs))
+	}
+	primaryNAD := primaryNADs[0]
+
+	existingCNCs, err := c.cncLister.List(labels.Everything())
+	if err != nil {
+		return fmt.Errorf("failed to list CNCs: %w", err)
+	}
+	for _, cnc := range existingCNCs {
+		if c.mustProcessCNCForNamespace(cnc, namespace, primaryNAD) {
+			c.cncController.Reconcile(cnc.Name)
+		}
+	}
+	return nil
+}
+
+// mustProcessCNCForNamespace determines if:
+// 1. the given namespace was previously selected by the given CNC and now it stopped matching OR
+// 2. if its currently selected by the given CNC and previously it didn't match
+// returns true if either of the above conditions are true
+func (c *Controller) mustProcessCNCForNamespace(cnc *networkconnectv1.ClusterNetworkConnect, namespace *corev1.Namespace, primaryNAD string) bool {
+	cncState, cncExists := c.cncCache[cnc.Name]
+
+	// If CNC state doesn't exist yet, we don't know the previous state
+	// so we assume no change (cache will be populated during CNC reconciliation)
+	if !cncExists {
+		klog.V(5).Infof("CNC %s state not found in cache, assuming no matching state change for namespace %s", cnc.Name, namespace.Name)
+		return false
+	}
+	wasSelected := cncState.selectedNADs.Has(primaryNAD)
+	isSelected := false
+
+selectorLoop:
+	for _, networkSelector := range cnc.Spec.NetworkSelectors {
+		switch networkSelector.NetworkSelectionType {
+		case apitypes.PrimaryUserDefinedNetworks:
+			namespaceSelector, err := metav1.LabelSelectorAsSelector(
+				&networkSelector.PrimaryUserDefinedNetworkSelector.NamespaceSelector)
+			if err != nil {
+				klog.Errorf("Failed to create selector for CNC %s: %v", cnc.Name, err)
+				continue
+			}
+			if namespaceSelector.Matches(labels.Set(namespace.Labels)) {
+				isSelected = true
+				break selectorLoop
+			}
+		}
+	}
+	stateChanged := wasSelected != isSelected
+	if stateChanged {
+		if isSelected && !wasSelected {
+			klog.V(4).Infof("Namespace %s started to match CNC %s, requeuing...", namespace.Name, cnc.Name)
+		} else if !isSelected && wasSelected {
+			klog.V(4).Infof("Namespace %s used to match CNC %s, requeuing...", namespace.Name, cnc.Name)
+		}
+	}
+	// If state didn't change, that is if this namespace was previously selected
+	// and continues to be selected, it means it was some other label updates to
+	// namespace that we don't care about. State changes are the only ones we care about.
+	return stateChanged
 }
