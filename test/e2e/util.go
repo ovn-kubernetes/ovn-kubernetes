@@ -1376,6 +1376,11 @@ func isPreConfiguredUdnAddressesEnabled() bool {
 	return val == "true"
 }
 
+func isIPsecEnabled() bool {
+	val, present := os.LookupEnv("ENABLE_IPSEC")
+	return present && val == "true"
+}
+
 func singleNodePerZone() bool {
 	if singleNodePerZoneResult == nil {
 		args := []string{"get", "pods", "--selector=app=ovnkube-node", "-o", "jsonpath={.items[0].spec.containers[*].name}"}

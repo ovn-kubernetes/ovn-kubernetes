@@ -601,13 +601,13 @@ func TestSetExec(t *testing.T) {
 		{
 			desc:         "positive, test when 'runner' is nil",
 			expectedErr:  nil,
-			onRetArgs:    &ovntest.TestifyMockHelper{OnCallMethodName: "LookPath", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{"ip", nil}, CallTimes: 10},
+			onRetArgs:    &ovntest.TestifyMockHelper{OnCallMethodName: "LookPath", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{"ip", nil}, CallTimes: 11},
 			setRunnerNil: true,
 		},
 		{
 			desc:         "positive, test when 'runner' is not nil",
 			expectedErr:  nil,
-			onRetArgs:    &ovntest.TestifyMockHelper{OnCallMethodName: "LookPath", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{"", nil}, CallTimes: 10},
+			onRetArgs:    &ovntest.TestifyMockHelper{OnCallMethodName: "LookPath", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{"", nil}, CallTimes: 11},
 			setRunnerNil: false,
 		},
 	}
@@ -636,17 +636,27 @@ func TestSetExecWithoutOVS(t *testing.T) {
 		{
 			desc:        "positive, ip path found",
 			expectedErr: nil,
-			onRetArgs:   &ovntest.TestifyMockHelper{OnCallMethodName: "LookPath", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{"ip", nil}, CallTimes: 2},
+			onRetArgs:   &ovntest.TestifyMockHelper{OnCallMethodName: "LookPath", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{"ip", nil}, CallTimes: 3},
+		},
+		{
+			desc:        "positive, ipsec path found",
+			expectedErr: nil,
+			onRetArgs:   &ovntest.TestifyMockHelper{OnCallMethodName: "LookPath", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{"ipsec", nil}, CallTimes: 3},
 		},
 		{
 			desc:        "positive, sysctl path found",
 			expectedErr: nil,
-			onRetArgs:   &ovntest.TestifyMockHelper{OnCallMethodName: "LookPath", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{"sysctl", nil}, CallTimes: 2},
+			onRetArgs:   &ovntest.TestifyMockHelper{OnCallMethodName: "LookPath", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{"sysctl", nil}, CallTimes: 3},
 		},
 		{
 			desc:        "negative, ip path not found",
 			expectedErr: fmt.Errorf(`exec: \"ip:\" executable file not found in $PATH`),
 			onRetArgs:   &ovntest.TestifyMockHelper{OnCallMethodName: "LookPath", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{"", fmt.Errorf(`exec: \"ip:\" executable file not found in $PATH`)}},
+		},
+		{
+			desc:        "negative, ipsec path not found",
+			expectedErr: fmt.Errorf(`exec: \"ipsec:\" executable file not found in $PATH`),
+			onRetArgs:   &ovntest.TestifyMockHelper{OnCallMethodName: "LookPath", OnCallMethodArgType: []string{"string"}, RetArgList: []interface{}{"", fmt.Errorf(`exec: \"ipsec:\" executable file not found in $PATH`)}},
 		},
 		{
 			desc:        "negative, sysctl path not found",

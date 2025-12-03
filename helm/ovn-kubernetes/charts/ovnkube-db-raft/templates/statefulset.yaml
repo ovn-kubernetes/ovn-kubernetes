@@ -120,7 +120,7 @@ spec:
               fieldPath: status.hostIP
         - name: OVN_SSL_ENABLE
           value: {{ default "" .Values.global.enableSsl | quote }}
-        - name: ENABLE_IPSEC
+        - name: OVN_ENABLE_IPSEC
           value: {{ hasKey .Values.global "enableIpsec" | ternary .Values.global.enableIpsec false | quote }}
         - name: OVN_NB_RAFT_ELECTION_TIMER
           value: {{ default 1000 .Values.nbElectionTimer | quote }}

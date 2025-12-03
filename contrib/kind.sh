@@ -1087,7 +1087,7 @@ install_ipsec() {
   success=false
   for i in {1..60}; do
     # ... try to get all CSRs and sign them
-    csrs=$(oc get csr -o go-template='{{range .items}}{{if not .status}}{{.metadata.name}}{{"\n"}}{{end}}{{end}}')
+    csrs=$(kubectl get csr -o go-template='{{range .items}}{{if not .status}}{{.metadata.name}}{{"\n"}}{{end}}{{end}}')
     for csr in ${csrs}; do
       kubectl get csr "${csr}" -o jsonpath='{.spec.request}' | base64 --decode | \
           sed -n '/BEGIN CERTIFICATE REQUEST/,$p' > "${csr}"

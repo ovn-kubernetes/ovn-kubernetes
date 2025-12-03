@@ -4,6 +4,7 @@
 package metrics
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	ovsops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
 
 var (
@@ -920,4 +922,81 @@ func registerOvsMetrics(ovsDBClient libovsdbclient.Client, metricsScrapeInterval
 		// OVS coverage/show metrics updater.
 		go coverageShowMetricsUpdater(ovsVswitchd, stopChan)
 	})
+}
+
+type TunnelInfo struct {
+	Name       string
+	AdminState vswitchd.InterfaceAdminState
+	OperState  vswitchd.InterfaceLinkState
+	LocalIP    string
+	RemoteIP   string
+	RemoteName string
+}
+
+func listGeneveTunnels(ovsVsctl ovsClient) ([]TunnelInfo, error) {
+	var geneveTunnels []TunnelInfo
+	stdout, stderr, err := ovsVsctl("--format=json", "--columns=name,admin_state,link_state,options",
+		"find", "Interface", "type=geneve")
+	if err != nil {
+		return geneveTunnels, fmt.Errorf("failed to retrieve Geneve tunnels stderr %v: %v", stderr, err)
+	}
+	if stdout == "" {
+		return geneveTunnels, nil
+	}
+	type OvsdbData struct {
+		Data [][]interface{} `json:"data"`
+	}
+	var ovsResult OvsdbData
+	err = json.Unmarshal([]byte(stdout), &ovsResult)
+	if err != nil {
+		return geneveTunnels, fmt.Errorf("failed to parse json output %s for Geneve tunnels, err: %v",
+			stdout, err)
+	}
+	// sample output for data:
+	// {"data":[["ovn-b4fd07-0","up","up",["map",[["csum","true"],["key","flow"],["local_ip","172.18.0.2"],["remote_ip","172.18.0.3"],["remote_name","b4fd07bf-ba35-40a6-af0c-116226d806a6"]]]],
+	// ["ovn-60abc6-0","up","up",["map",[["csum","true"],["key","flow"],["local_ip","172.18.0.2"],["remote_ip","172.18.0.4"],["remote_name","60abc6e1-fb4b-4816-9370-9e0fb1a2c9d7"]]]]]}
+	for _, entry := range ovsResult.Data {
+		if len(entry) != 4 {
+			klog.Errorf("Can not to parse retrieved Geneve tunnel entry %v", entry)
+			continue
+		}
+		name, ok := entry[0].(string)
+		if !ok {
+			continue
+		}
+		adminState, ok := entry[1].(string)
+		if !ok {
+			continue
+		}
+		operState, ok := entry[2].(string)
+		if !ok {
+			continue
+		}
+		optionMap, ok := entry[3].([]interface{})
+		if !ok || len(optionMap) != 2 || optionMap[0] != "map" {
+			continue
+		}
+		mapEntry, ok := optionMap[1].([]interface{})
+		if !ok {
+			continue
+		}
+		options := make(map[string]string)
+		for _, pair := range mapEntry {
+			kv, ok := pair.([]interface{})
+			if !ok || len(kv) != 2 {
+				continue
+			}
+			key, value := kv[0].(string), kv[1].(string)
+			options[key] = value
+		}
+		geneveTunnels = append(geneveTunnels, TunnelInfo{
+			Name:       name,
+			AdminState: adminState,
+			OperState:  operState,
+			LocalIP:    options["local_ip"],
+			RemoteIP:   options["remote_ip"],
+			RemoteName: options["remote_name"],
+		})
+	}
+	return geneveTunnels, nil
 }

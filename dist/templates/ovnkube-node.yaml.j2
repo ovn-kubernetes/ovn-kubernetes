@@ -111,6 +111,10 @@ spec:
         - mountPath: /var/run/ovn
           name: var-run-ovn
         {%- endif %}
+        {% if enable_ipsec=="true" -%}
+        - mountPath: /var/run/pluto
+          name: run-pluto
+        {% endif %}
 
         resources:
           requests:
@@ -468,6 +472,11 @@ spec:
       - name: var-run-ovn
         emptyDir: {}
       {%- endif %}
+      {% if enable_ipsec=="true" -%}
+      - name: run-pluto
+        hostPath:
+          path: /var/run/pluto
+      {% endif %}
 
       tolerations:
       - operator: "Exists"

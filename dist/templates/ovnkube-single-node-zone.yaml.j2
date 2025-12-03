@@ -83,6 +83,8 @@ spec:
           value: "{{ ovn_gateway_mode }}"
         - name: OVN_ROUTE_ADVERTISEMENTS_ENABLE
           value: "{{ ovn_route_advertisements_enable }}"
+        - name: OVN_ENABLE_IPSEC
+          value: "{{ enable_ipsec }}"
         - name: K8S_APISERVER
           valueFrom:
             configMapKeyRef:
@@ -306,6 +308,10 @@ spec:
         - mountPath: /var/run/k8s.cni.cncf.io/devinfo/dp
           name: host-devinfo-dp
           readOnly: true
+        {% if enable_ipsec=="true" -%}
+        - mountPath: /var/run/pluto
+          name: run-pluto
+        {% endif %}
 
         resources:
           requests:
@@ -475,6 +481,8 @@ spec:
           value: "{{ ovn_network_qos_enable }}"
         - name: OVN_ENABLE_DNSNAMERESOLVER
           value: "{{ ovn_enable_dnsnameresolver }}"
+        - name: OVN_ENABLE_IPSEC
+          value: "{{ enable_ipsec }}"
 
         readinessProbe:
           exec:
@@ -647,6 +655,11 @@ spec:
       - name: host-devinfo-dp
         hostPath:
           path: /var/run/k8s.cni.cncf.io/devinfo/dp
+      {% if enable_ipsec=="true" -%}
+      - name: run-pluto
+        hostPath:
+          path: /var/run/pluto
+      {% endif %}
 
       tolerations:
       - operator: "Exists"

@@ -472,6 +472,7 @@ type OVNKubernetesFeatureConfig struct {
 	EnableServiceTemplateSupport    bool `gcfg:"enable-svc-template-support"`
 	EnableObservability             bool `gcfg:"enable-observability"`
 	EnableNetworkQoS                bool `gcfg:"enable-network-qos"`
+	EnableIPsec                     bool `gcfg:"enable-ipsec"`
 	// This feature requires a kernel fix https://github.com/torvalds/linux/commit/7f3287db654395f9c5ddd246325ff7889f550286
 	// to work on a kind cluster. Flag allows to disable it for current CI, will be turned on when github runners have this fix.
 	AdvertisedUDNIsolationMode string `gcfg:"advertised-udn-isolation-mode"`
@@ -1224,6 +1225,12 @@ var OVNK8sFeatureFlags = []cli.Flag{
 		Usage:       "Use NetworkQoS CRD feature with ovn-kubernetes.",
 		Destination: &cliConfig.OVNKubernetesFeature.EnableNetworkQoS,
 		Value:       OVNKubernetesFeature.EnableNetworkQoS,
+	},
+	&cli.BoolFlag{
+		Name:        "enable-ipsec",
+		Usage:       "Configure IPsec Encryption for ovn-kubernetes managed pod to pod traffic.",
+		Destination: &cliConfig.OVNKubernetesFeature.EnableIPsec,
+		Value:       OVNKubernetesFeature.EnableIPsec,
 	},
 }
 

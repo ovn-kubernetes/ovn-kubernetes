@@ -370,7 +370,7 @@ ovsdb-raft() {
       set_election_timer ${db} ${election_timer}
       if [[ ${db} == "nb" ]]; then
         set_northd_probe_interval
-        [[ "true" == "${ENABLE_IPSEC}" ]] && {
+        [[ "true" == "${OVN_ENABLE_IPSEC}" ]] && {
           ovn-nbctl set nb_global . ipsec=true
         }
       fi

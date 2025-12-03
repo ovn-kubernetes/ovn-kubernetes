@@ -66,6 +66,7 @@ spec:
       serviceAccountName: ovnkube-node
       hostNetwork: true
       dnsPolicy: Default
+      {{ "hostPID: true" if ovn_unprivileged_mode=="no" }}
       priorityClassName: "system-node-critical"
       initContainers:
       - name: ovn-keys
@@ -101,7 +102,6 @@ spec:
             # Generate an SSL private key and use the key to create a certitificate signing request
             umask 077 && openssl genrsa -out /etc/openvswitch/keys/ipsec-privkey.pem 2048
             openssl req -new -text \
-                        -extensions v3_req \
                         -addext "subjectAltName = DNS:${cn}" \
                         -subj "/C=US/O=ovnkubernetes/OU=kind/CN=${cn}" \
                         -key /etc/openvswitch/keys/ipsec-privkey.pem \
@@ -230,6 +230,16 @@ spec:
           # Workaround for https://github.com/libreswan/libreswan/issues/373
           ulimit -n 1024
 
+          # On ovn-ipsec pod restart, the old pluto PID file may remain even though the
+          # process is gone. This prevents the new pluto daemon from starting, with the
+          # error: "/run/pluto/pluto.pid already exists".
+          # If the file exists but no pluto process is running, remove the stale PID file
+          # before starting a new pluto process.
+          if [ -f /var/run/pluto/pluto.pid ] && ! pgrep -F /var/run/pluto/pluto.pid > /dev/null 2>&1; then
+            echo "Removing stale pluto.pid"
+            rm -f /var/run/pluto/pluto.pid
+          fi
+
           /usr/libexec/ipsec/addconn --config /etc/ipsec.conf --checkconfig
           # Check kernel modules
           /usr/libexec/ipsec/_stackmanager start
@@ -264,6 +274,8 @@ spec:
           name: host-var-log-ovs
         - mountPath: /etc/openvswitch
           name: etc-openvswitch
+        - mountPath: /var/run/pluto
+          name: host-var-run-pluto
         resources:
           requests:
             cpu: 10m
@@ -290,6 +302,10 @@ spec:
       - name: host-var-run-ovs
         hostPath:
           path: /var/run/openvswitch
+          type: DirectoryOrCreate
+      - name: host-var-run-pluto
+        hostPath:
+          path: /var/run/pluto
           type: DirectoryOrCreate
       - name: signer-ca
         configMap:

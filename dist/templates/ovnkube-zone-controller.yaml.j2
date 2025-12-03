@@ -97,6 +97,8 @@ spec:
           value: "{{ ovn_loglevel_nb }}"
         - name: OVN_NORTHD_BACKOFF_INTERVAL
           value: "{{ ovn_northd_backoff_interval }}"
+        - name: OVN_ENABLE_IPSEC
+          value: "{{ enable_ipsec }}"
         - name: K8S_APISERVER
           valueFrom:
             configMapKeyRef:
@@ -264,6 +266,13 @@ spec:
 
         securityContext:
           runAsUser: 0
+          {% if ovn_unprivileged_mode=="no" -%}
+          privileged: true
+          {% else -%}
+          capabilities:
+            add:
+            - NET_ADMIN
+          {% endif %}
 
         terminationMessagePolicy: FallbackToLogsOnError
         volumeMounts:
@@ -280,6 +289,10 @@ spec:
         - mountPath: /ovn-cert
           name: host-ovn-cert
           readOnly: true
+        {% if enable_ipsec=="true" -%}
+        - mountPath: /var/run/pluto
+          name: run-pluto
+        {% endif %}
 
         resources:
           requests:
@@ -396,6 +409,8 @@ spec:
           value: "{{ ovn_enable_dnsnameresolver }}"
         - name: OVN_OBSERV_ENABLE
           value: "{{ ovn_observ_enable }}"
+        - name: OVN_ENABLE_IPSEC
+          value: "{{ enable_ipsec }}"
       # end of container
 
       volumes:
@@ -440,6 +455,11 @@ spec:
       - name: host-etc-ovs
         hostPath:
           path: /etc/openvswitch
+      {% if enable_ipsec=="true" -%}
+      - name: run-pluto
+        hostPath:
+          path: /var/run/pluto
+      {% endif %}
 
       tolerations:
       - operator: "Exists"
