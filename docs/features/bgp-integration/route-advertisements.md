@@ -141,7 +141,7 @@ in shared gateway mode.
 > previous example must correspond to the remote BGP router's configuration
 > (router ID, AS number, accept routes, etc...), and vice versa.
 
-### Import routes into a CUDN
+### Import routes from the default VRF into a CUDN
 
 Assuming we have a CUDN:
 
@@ -165,48 +165,9 @@ spec:
         hostSubnet: 24
 ```
 
-This example is similar to the previous one with the exception that the BGP
-peering session is configured to happen over VRF `extranet`:
-
-```yaml
-apiVersion: frrk8s.metallb.io/v1beta1
-kind: FRRConfiguration
-metadata:
-  labels:
-    use-for-advertisements: extranet
-  name: receive-filtered-extranet
-  namespace: frr-k8s-system
-spec:
-  nodeSelector: {}
-  bgp:
-    routers:
-    - asn: 64512
-      neighbors:
-      - address: 192.168.221.3
-        asn: 64512
-        disableMP: true
-        toReceive:
-          allowed:
-            mode: filtered
-            prefixes:
-            - prefix: 172.20.0.0/16
-      vrf: extranet
-```
-
-This will result in the routes being installed in the extranet VRF associated to
-the CUDN of the same name. If `route-advertisements` feature is enabled,
-OVN-Kubernetes will synchronize the BGP routes installed on a VRF to the OVN
-gateway router of the associated CUDN and hence will be used for the egress
-traffic of the pods on that network.
-
-> [!NOTE]
-> As long as the name of the CUDN is less than 16 characters, the corresponding
-> VRF name for the network will have the same name. Otherwise the name will be
-> pseudo-randomly generated and not easy to predict. Future enhancements will
-> allow for the VRF name to be configurable.
-
-A typical scenario is to import installed BGP routes from the default VRF to a
-CUDN. This can be achieved with:
+After routes have been imported to the default VRF as in the previous example,
+a typical scenario is to import those routes from the default VRF to a CUDN as
+well. This can be achieved with:
 
 ```yaml
 apiVersion: frrk8s.metallb.io/v1beta1
@@ -225,6 +186,18 @@ spec:
       - vrf: default
       vrf: extranet
 ```
+
+This will result in the routes being installed in the extranet VRF associated to
+the CUDN of the same name. If `route-advertisements` feature is enabled,
+OVN-Kubernetes will synchronize the BGP routes installed on a VRF to the OVN
+gateway router of the associated CUDN and hence will be used for the egress
+traffic of the pods on that network.
+
+> [!NOTE]
+> As long as the name of the CUDN is less than 16 characters, the corresponding
+> VRF name for the network will have the same name. Otherwise the name will be
+> pseudo-randomly generated and not easy to predict. Future enhancements will
+> allow for the VRF name to be configurable.
 
 > [!NOTE]
 > If you export routes for a CUDN over the default VRF as detailed on the next
@@ -342,10 +315,42 @@ spec:
           advertise: true
 ```
 
-### Export routes to a CUDN over the network VRF (VRF-Lite)
+### Import and export routes to a CUDN over the network VRF (VRF-Lite)
 
-It is also possible to export routes to a CUDN over a BGP session established
-over that network's VRF:
+It is also possible to import and export routes to a CUDN over a BGP session
+established over that network's VRF without involving the default VRF at all.
+
+To import, we define the proper `FRRConfiguration` first. This example is
+similar to how routes are imported for the default pod network with the
+exception that the BGP peering session is configured to happen over the CUDN VRF
+`extranet`:
+
+```yaml
+apiVersion: frrk8s.metallb.io/v1beta1
+kind: FRRConfiguration
+metadata:
+  labels:
+    use-for-advertisements: extranet
+  name: receive-filtered-extranet
+  namespace: frr-k8s-system
+spec:
+  nodeSelector: {}
+  bgp:
+    routers:
+    - asn: 64512
+      neighbors:
+      - address: 192.168.221.3
+        asn: 64512
+        disableMP: true
+        toReceive:
+          allowed:
+            mode: filtered
+            prefixes:
+            - prefix: 172.20.0.0/16
+      vrf: extranet
+```
+
+Then we define the `RouteAdvertisements` to export:
 
 ```yaml
 apiVersion: k8s.ovn.org/v1
@@ -379,11 +384,11 @@ BGP router could map this isolated traffic to an EVPN achieving a similar use
 case as if EVPN were to be supported directly.
 
 > [!NOTE]
-> For the BGP session to be actually established over that network's
-> VRF, at least one interface with proper IP configuration needs to be attached
-> to the network's VRF. The resulting network egress traffic will be routed
-> through that interface. OVN-Kubernetes does not manage this interface nor its
-> attachment to the network's VRF.
+> For the BGP session to be actually established over that network's VRF, at
+> least one interface with proper IP configuration needs to be attached to the
+> network's VRF. The CUDN egress traffic matching the learned routes will be
+> routed through that interface. OVN-Kubernetes does not manage this interface
+> nor its attachment to the network's VRF.
 
 > [!NOTE]
 > This configuration is only supported in local gateway mode.
