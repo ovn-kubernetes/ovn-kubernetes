@@ -196,6 +196,15 @@ func NewDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, net
 		if err != nil {
 			return nil, fmt.Errorf("failed to setup PMTUD nftables chain: %w", err)
 		}
+
+		// Setup nftables sets for no-overlay SNAT exemption in LGW mode.
+		// In SGW mode, OVN address sets are used instead.
+		if config.Default.Transport == config.TransportNoOverlay && config.NoOverlay.OutboundSNAT == config.NoOverlaySNATEnabled && config.Gateway.Mode == config.GatewayModeLocal {
+			err = setupNoOverlaySNATExemptNFTSets()
+			if err != nil {
+				return nil, fmt.Errorf("failed to setup no-overlay SNAT exemption nftables sets: %w", err)
+			}
+		}
 	}
 
 	return nc, nil
@@ -914,6 +923,18 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 
 	if err := nodeAnnotator.Run(); err != nil {
 		return fmt.Errorf("failed to set node %s annotations: %w", nc.name, err)
+	}
+
+	// Sync nftables sets for no-overlay SNAT exemption in LGW mode.
+	// In SGW mode, OVN address sets are used instead.
+	if config.OvnKubeNode.Mode != types.NodeModeDPU && config.Default.Transport == config.TransportNoOverlay && config.NoOverlay.OutboundSNAT == config.NoOverlaySNATEnabled && config.Gateway.Mode == config.GatewayModeLocal {
+		hostAddrs, err := util.GetNodeHostAddrs(node)
+		if err != nil {
+			return fmt.Errorf("failed to get host addresses for node %s: %w", nc.name, err)
+		}
+		if err := syncNoOverlaySNATExemptNFTSets(hostAddrs); err != nil {
+			return fmt.Errorf("failed to sync no-overlay SNAT exemption nftables sets: %w", err)
+		}
 	}
 
 	// Connect ovn-controller to SBDB
