@@ -123,21 +123,16 @@ Login and check that the VM has receive a proper address `virtctl console fedora
 Also we can check the neighbours cache to verify it later on
 ```bash
 [fedora@fedora ~]arp -a
-_gateway (169.254.1.1) at 0a:58:a9:fe:01:01 [ether] on eth0
+_gateway (10.244.2.1) at 0a:58:a9:fe:01:01 [ether] on eth0
 ```
 
-
-Keep in mind the default gw is a link local address; that is because 
-the live migration feature is implemented using ARP proxy.
-
-The last route is needed since the link local address subnet is not bound to any interface, that
-route is automatically created by dhcp client.
+The default gateway is the pod network subnet gateway IP. The ARP proxy feature
+ensures the gateway MAC address remains consistent across live migrations.
 
 ```bash
 [fedora@fedora ~]ip route
-default via 169.254.1.1 dev eth0 proto dhcp src 10.244.2.26 metric 100
+default via 10.244.2.1 dev eth0 proto dhcp src 10.244.2.26 metric 100
 10.244.2.0/24 dev eth0 proto kernel scope link src 10.244.2.26 metric 100
-169.254.1.1 dev eth0 proto dhcp scope link src 10.244.2.26 metric 100
 ```
 
 Then a live migration can be initialized with `virtctl migrate fedora` and wait
@@ -171,7 +166,7 @@ default     fedora   16m   Running   10.244.2.26   ovn-worker   True
     inet6 fe80::32d2:10d4:f5ed:3064/64 scope link noprefixroute
        valid_lft forever preferred_lft forever
 [fedora@fedora ~]arp -a
-_gateway (169.254.1.1) at 0a:58:a9:fe:01:01 [ether] on eth0
+_gateway (10.244.2.1) at 0a:58:a9:fe:01:01 [ether] on eth0
 ```
 
 ### Configuring dns server
@@ -264,9 +259,9 @@ Benefit of the bridge binding is that is able to expose the pod IP to the VM as 
 ### OVN-Kubernetes Implementation Details
 
 To implement live migration ovn-kubernetes do the following:
-- Send DHCP replies advertising the allocated IP address to the guest VM (via OVN-Kubernetes DHCP options configured for the logical switch ports).
+- Send DHCP replies advertising the allocated IP address and subnet gateway to the guest VM (via OVN-Kubernetes DHCP options configured for the logical switch ports).
 - A point to point routing is used so one node's subnet IP can be routed from different node
-- The VM's gateway IP and MAC are independent of the node they are running on using proxy arp
+- The VM's gateway IP (subnet gateway) and MAC are kept consistent across nodes using ARP proxy
 
 **Point to point routing:**
 
@@ -330,16 +325,16 @@ Remote zone:
 
 **Nodes logical switch ports:**
 
-To have a consistent gateway at VMs (keep ip and mac after live migration) 
-the "arp_proxy" feature is used and it need to be activated at 
-the logical switch port of type router connects node's logical switch to 
+To have a consistent gateway at VMs (keep ip and mac after live migration)
+the "arp_proxy" feature is used and it need to be activated at
+the logical switch port of type router connects node's logical switch to
 ovn_cluster_router logical router.
 
 The "arp_proxy" LSP option will include the MAC to answer ARPs with, and the
-link local ipv4 and ipv6 to answer for and the cluster wide pod CIDR to answer
-to pod subnets when the node switch do not have the live migrated ip. The
-flows from arp_proxy has less priority than the ones from the node logical 
-switch so ARP flows are not overriden.
+link local ipv4 and ipv6 addresses, as well as the cluster wide pod CIDR. This
+allows the proxy to answer ARP requests for the subnet gateway IP when the node
+switch does not have the live migrated IP. The flows from arp_proxy have less
+priority than the ones from the node logical switch so ARP flows are not overriden.
 
 ```text
     ┌────────────────────┐   ┌────────────────────┐
@@ -381,7 +376,7 @@ Also the DHCP options will be configured to deliver the address to the VMs
 ┌─────────────────────────────────┐
 │ dhcp-options 1234               │
 │   lease_time: 3500              │
-│   router: 169.254.1.1           │
+│   router: 10.244.0.1            │
 │   dns_server: [kubedns]         │
 │   server_id: 169.254.1.1        │
 │   server_mac: c0:ff:ee:00:00:01 │

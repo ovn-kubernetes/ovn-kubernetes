@@ -381,12 +381,24 @@ func (oc *DefaultNetworkController) addLogicalPort(pod *corev1.Pod) (err error) 
 	_ = oc.logicalPortCache.add(pod, switchName, types.DefaultNetworkName, lsp.UUID, podAnnotation.MAC, podAnnotation.IPs)
 
 	if kubevirt.IsPodLiveMigratable(pod) {
-		if err := kubevirt.EnsureDHCPOptionsForMigratablePod(oc.controllerName, oc.nbClient, oc.watchFactory, pod, podAnnotation.IPs, lsp); err != nil {
+		dnsServerIPv4, dnsServerIPv6, err := kubevirt.RetrieveDNSServiceClusterIPs(oc.watchFactory)
+		if err != nil {
+			return fmt.Errorf("failed retrieving dns service cluster ip: %v", err)
+		}
+		opts := []kubevirt.DHCPConfigsOpt{
+			kubevirt.WithIPv4DNSServer(dnsServerIPv4),
+			kubevirt.WithIPv6DNSServer(dnsServerIPv6),
+		}
+		ipv4Gateway, _ := util.MatchFirstIPFamily(false /*ipv4*/, podAnnotation.Gateways)
+		if ipv4Gateway != nil {
+			opts = append(opts, kubevirt.WithIPv4Router(ipv4Gateway.String()))
+		}
+		if err := kubevirt.EnsureDHCPOptionsForLSP(oc.controllerName, oc.nbClient, pod, podAnnotation.IPs, lsp, opts...); err != nil {
 			return err
 		}
 	}
 
-	//observe the pod creation latency metric for newly created pods only
+	// observe the pod creation latency metric for newly created pods only
 	if newlyCreatedPort {
 		metrics.RecordPodCreated(pod, oc.GetNetInfo())
 	}
