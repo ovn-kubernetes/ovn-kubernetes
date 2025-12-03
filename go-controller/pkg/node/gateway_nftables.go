@@ -207,8 +207,8 @@ func getUDNNFTRules(service *corev1.Service, netConfig *bridgeconfig.BridgeUDNCo
 	return rules
 }
 
-// getLocalGatewayPodSubnetMasqueradeNFTRule creates a rule for masquerading traffic from the pod subnet CIDR
-// in local gateway node in a seperate chain which is then called from local gateway masquerade chain.
+// getLocalGatewayPodSubnetMasqueradeNFTRule creates rules for masquerading traffic from the pod subnet CIDR
+// in local gateway node in a separate chain which is then called from local gateway masquerade chain.
 //
 //	chain ovn-kube-pod-subnet-masq {
 //		ip saddr 10.244.0.0/24 masquerade
@@ -219,7 +219,19 @@ func getUDNNFTRules(service *corev1.Service, netConfig *bridgeconfig.BridgeUDNCo
 // Rules look like:
 // ip saddr 10.244.0.0/24 ip daddr @remote-node-ips-v4 masquerade
 // ip6 saddr fd00:10:244:1::/64 ip6 daddr @remote-node-ips-v6 masquerade
-func getLocalGatewayPodSubnetMasqueradeNFTRule(cidr *net.IPNet, isAdvertisedNetwork bool) (*knftables.Rule, error) {
+//
+// For no-overlay mode with outboundSNAT enabled, returns multiple rules:
+// 1. A return rule to exempt pod-to-pod traffic from SNAT
+// 2. A masquerade rule for all other traffic
+// Example for outboundSNAT=enabled:
+//
+//		chain ovn-kube-pod-subnet-masq {
+//			ip saddr 10.128.0.0/24 ip daddr 10.128.0.0/16 return
+//			ip saddr 10.128.0.0/24 masquerade
+//	 	ip6 saddr fd00:10:244:1::/64 ip6 daddr fd00:10:244::/48 return
+//			ip6 saddr fd00:10:244:1::/64 masquerade
+//	 }
+func getLocalGatewayPodSubnetMasqueradeNFTRule(cidr *net.IPNet, isAdvertisedNetwork bool) ([]*knftables.Rule, error) {
 	// Create the rule for masquerading traffic from the CIDR
 	var ipPrefix string
 	var remoteNodeSetName string
@@ -231,12 +243,47 @@ func getLocalGatewayPodSubnetMasqueradeNFTRule(cidr *net.IPNet, isAdvertisedNetw
 		remoteNodeSetName = types.NFTRemoteNodeIPsv4
 	}
 
-	// If network is advertised, only masquerade if destination is a remote node IP
+	var rules []*knftables.Rule
+
+	// For no-overlay mode with outboundSNAT enabled, use simple logic:
+	// 1. Return rules to skip SNAT for pod-to-pod traffic (all cluster CIDRs)
+	// 2. Unconditional masquerade for everything else (pod-to-external and pod-to-node)
+	if config.Default.Transport == config.TransportNoOverlay && config.NoOverlay.OutboundSNAT == config.NoOverlaySNATEnabled {
+		// Add return rules for all cluster CIDRs that match this subnet's IP family
+		for _, clusterSubnet := range config.Default.ClusterSubnets {
+			if utilnet.IsIPv6CIDR(cidr) == utilnet.IsIPv6CIDR(clusterSubnet.CIDR) {
+				// Add return rule to skip SNAT for pod-to-pod traffic
+				returnRule := &knftables.Rule{
+					Rule: knftables.Concat(
+						ipPrefix, "saddr", cidr,
+						ipPrefix, "daddr", clusterSubnet.CIDR,
+						"return",
+					),
+					Chain: nftablesPodSubnetMasqChain,
+				}
+				rules = append(rules, returnRule)
+			}
+		}
+		// Add unconditional masquerade rule for all other traffic
+		masqRule := &knftables.Rule{
+			Rule: knftables.Concat(
+				ipPrefix, "saddr", cidr,
+				"masquerade",
+			),
+			Chain: nftablesPodSubnetMasqChain,
+		}
+		rules = append(rules, masqRule)
+		return rules, nil
+	}
+
+	// For BGP advertised networks (without outboundSNAT enabled):
+	// Only masquerade traffic to remote node IPs (for NodePort services)
+	// All other traffic (pod-to-pod and pod-to-external) is not SNATed
 	var optionalDestRules []string
 	if isAdvertisedNetwork {
 		optionalDestRules = []string{ipPrefix, "daddr", "@", remoteNodeSetName}
 	}
-	rule := &knftables.Rule{
+	masqRule := &knftables.Rule{
 		Rule: knftables.Concat(
 			ipPrefix, "saddr", cidr,
 			optionalDestRules,
@@ -244,8 +291,9 @@ func getLocalGatewayPodSubnetMasqueradeNFTRule(cidr *net.IPNet, isAdvertisedNetw
 		),
 		Chain: nftablesPodSubnetMasqChain,
 	}
+	rules = append(rules, masqRule)
 
-	return rule, nil
+	return rules, nil
 }
 
 // getLocalGatewayNATNFTRules returns the nftables rules for local gateway NAT including masquerade IP rule,
@@ -288,11 +336,11 @@ func getLocalGatewayNATNFTRules(cidrs ...*net.IPNet) ([]*knftables.Rule, error) 
 		rules = append(rules, masqRule)
 
 		// Rule2: Pod subnet NAT rule for the pod subnet chain
-		podSubnetRule, err := getLocalGatewayPodSubnetMasqueradeNFTRule(cidr, false)
+		podSubnetRules, err := getLocalGatewayPodSubnetMasqueradeNFTRule(cidr, false)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create pod subnet masquerade rule: %w", err)
 		}
-		rules = append(rules, podSubnetRule)
+		rules = append(rules, podSubnetRules...)
 	}
 
 	// Rule 3: UDN masquerade rules (if network segmentation is enabled)
@@ -479,13 +527,15 @@ func addOrUpdateLocalGatewayPodSubnetNFTRules(isAdvertisedNetwork bool, cidrs ..
 
 	// Add the new rules for each CIDR
 	for _, cidr := range cidrs {
-		rule, err := getLocalGatewayPodSubnetMasqueradeNFTRule(cidr, isAdvertisedNetwork)
+		ruleList, err := getLocalGatewayPodSubnetMasqueradeNFTRule(cidr, isAdvertisedNetwork)
 		if err != nil {
 			return fmt.Errorf("failed to create nftables rules for CIDR %s: %w", cidr.String(), err)
 		}
 
-		// Add the rule
-		tx.Add(rule)
+		// Add all the rules for this CIDR
+		for _, rule := range ruleList {
+			tx.Add(rule)
+		}
 	}
 
 	if err := nft.Run(context.TODO(), tx); err != nil {
