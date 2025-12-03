@@ -334,6 +334,14 @@ const (
 	// the local node's subnet.
 	NFTRemoteNodeIPsv6 = "remote-node-ips-v6"
 
+	// NFTNoOverlaySNATExemptV4 is a set used for no-overlay mode with outbound SNAT enabled.
+	// Contains cluster CIDRs + local node IPv4 addresses that should be exempted from SNAT.
+	NFTNoOverlaySNATExemptV4 = "no-overlay-snat-exempt-v4"
+
+	// NFTNoOverlaySNATExemptV6 is a set used for no-overlay mode with outbound SNAT enabled.
+	// Contains cluster CIDRs + local node IPv6 addresses that should be exempted from SNAT.
+	NFTNoOverlaySNATExemptV6 = "no-overlay-snat-exempt-v6"
+
 	// Metrics
 	MetricOvnkubeNamespace               = "ovnkube"
 	MetricOvnkubeSubsystemController     = "controller"

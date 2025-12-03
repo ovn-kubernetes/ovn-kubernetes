@@ -197,6 +197,15 @@ func NewDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, net
 		if err != nil {
 			return nil, fmt.Errorf("failed to setup PMTUD nftables chain: %w", err)
 		}
+
+		// Setup nftables sets for no-overlay SNAT exemption in LGW mode.
+		// In SGW mode, OVN address sets are used instead.
+		if config.Default.Transport == types.NetworkTransportNoOverlay && config.NoOverlay.OutboundSNAT == config.NoOverlaySNATEnabled && config.Gateway.Mode == config.GatewayModeLocal {
+			err = setupNoOverlaySNATExemptNFTSets()
+			if err != nil {
+				return nil, fmt.Errorf("failed to setup no-overlay SNAT exemption nftables sets: %w", err)
+			}
+		}
 	}
 
 	return nc, nil
