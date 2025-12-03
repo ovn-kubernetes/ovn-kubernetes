@@ -156,11 +156,100 @@ func NewController(
 
 func (c *Controller) Start() error {
 	defer klog.Infof("Cluster manager network connect controllers started")
-	return controllerutil.Start(
+	return controllerutil.StartWithInitialSync(
+		c.initialSync,
 		c.cncController,
 		c.nadController,
 		c.namespaceController,
 	)
+}
+
+// initialSync restores allocator state from existing CNC annotations at startup.
+// This is called after informers are synced but before workers start processing.
+// It ensures that subnets already allocated (stored in annotations) are not re-allocated.
+func (c *Controller) initialSync() error {
+	c.Lock()
+	defer c.Unlock()
+
+	cncs, err := c.cncLister.List(labels.Everything())
+	if err != nil {
+		return fmt.Errorf("failed to list CNCs during initial sync: %v", err)
+	}
+
+	for _, cnc := range cncs {
+		// Parse existing subnet annotation
+		allocatedSubnets, err := util.ParseNetworkConnectSubnetAnnotation(cnc)
+		if err != nil {
+			klog.Warningf("Failed to parse subnet annotation for CNC %s: %v, skipping", cnc.Name, err)
+			continue
+		}
+
+		// Parse existing tunnel key annotation
+		tunnelID, err := util.ParseNetworkConnectTunnelKeyAnnotation(cnc)
+		if err != nil {
+			klog.Warningf("Failed to parse tunnel key annotation for CNC %s: %v, skipping", cnc.Name, err)
+			continue
+		}
+
+		// Initialize CNC state in cache
+		cncState := &clusterNetworkConnectState{
+			name: cnc.Name,
+			// NOTE: We intentionally don't restore selectedNADs as its not strictly needed.
+			// Why this is okay:
+			// selectedNADs tracks NAD keys (e.g., "namespace/name") which aren't stored in
+			// the annotation - the annotation only has owner keys.
+			// During the first CNC reconcile (which happens right after initialSync since the
+			// Add events are queued), reconcileClusterNetworkConnect runs discoverSelectedNetworks which:
+			// Iterates through NADs matching the selectors
+			// Returns allMatchingNADKeys
+			// Then updates the cache: cncState.selectedNADs = allMatchingNADKeys
+			// The ordering is safe because StartWithInitialSync ensures:
+			// Informer caches are synced (all NADs visible)
+			// initialSync runs (allocator state restored)
+			// THEN workers start processing the queue (CNC reconciles happen)
+			// Edge case: If a NAD update comes in during this window, mustProcessCNCForNAD might
+			// see wasSelected=false (empty cache) and isSelected=true → trigger an extra reconcile.
+			// But that's benign - just an extra no-op reconcile.
+			selectedNADs:     sets.New[string](),
+			selectedNetworks: sets.New[string](),
+			tunnelID:         tunnelID,
+		}
+		connectSubnetAllocator, err := NewHybridConnectSubnetAllocator(cnc.Spec.ConnectSubnets, cnc.Name)
+		if err != nil {
+			return fmt.Errorf("failed to initialize subnet allocator for CNC %s: %w", cnc.Name, err)
+		}
+		cncState.allocator = connectSubnetAllocator
+		c.cncCache[cnc.Name] = cncState
+
+		// Restore tunnel key in allocator if present
+		if tunnelID > 0 {
+			// Reserve tunnel key in the allocator so it won't be re-allocated
+			// We already reserve the key from cluster manager sync in initTunnelKeysAllocator,
+			// but no harm in doing it again here for completeness.
+			if err := c.tunnelKeysAllocator.ReserveKeys(cnc.Name, []int{tunnelID}); err != nil {
+				klog.Warningf("Failed to restore tunnel key %d for CNC %s: %v", tunnelID, cnc.Name, err)
+			} else {
+				klog.V(4).Infof("Restored tunnel key %d for CNC %s", tunnelID, cnc.Name)
+			}
+		}
+
+		// Restore subnets if present
+		if len(allocatedSubnets) > 0 {
+			if err := cncState.allocator.MarkAllocatedSubnets(allocatedSubnets); err != nil {
+				klog.Warningf("Failed to restore subnets for CNC %s: %v", cnc.Name, err)
+				continue
+			}
+
+			// Populate selectedNetworks from the restored allocations
+			for owner := range allocatedSubnets {
+				cncState.selectedNetworks.Insert(owner)
+			}
+			klog.V(4).Infof("Restored %d subnet allocations for CNC %s", len(allocatedSubnets), cnc.Name)
+		}
+	}
+
+	klog.Infof("Initial sync completed: restored state for %d CNCs", len(cncs))
+	return nil
 }
 
 func (c *Controller) Stop() {

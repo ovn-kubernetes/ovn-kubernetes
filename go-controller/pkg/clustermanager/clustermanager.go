@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"strconv"
 
 	networkattchmentdefclientset "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned"
 
@@ -347,11 +346,11 @@ func initTunnelKeysAllocator(nadClient networkattchmentdefclientset.Interface, c
 		return nil, fmt.Errorf("failed to list existing CNCs: %w", err)
 	}
 	for _, cnc := range existingCNCs.Items {
-		if cnc.Annotations[util.OvnConnectRouterTunnelKeyAnnotation] != "" {
-			tunnelID, err := strconv.Atoi(cnc.Annotations[util.OvnConnectRouterTunnelKeyAnnotation])
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse annotated tunnel ID: %w", err)
-			}
+		tunnelID, err := util.ParseNetworkConnectTunnelKeyAnnotation(&cnc)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse annotated tunnel ID: %w", err)
+		}
+		if tunnelID != 0 {
 			if err = tunnelKeysAllocator.ReserveKeys(cnc.Name, []int{tunnelID}); err != nil {
 				return nil, fmt.Errorf("failed to reserve tunnel ID %d for CNC %s: %w", tunnelID, cnc.Name, err)
 			}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"sync"
 	"testing"
 	"time"
@@ -2500,6 +2501,308 @@ func TestController_reconcileNamespace(t *testing.T) {
 					defer reconciledMutex.Unlock()
 					return reconciledCNCs.UnsortedList()
 				}).Should(gomega.ConsistOf(tt.expectCNCReconciled))
+			}
+		})
+	}
+}
+
+// expectedCNCCacheState represents the expected state of a CNC cache entry after initialSync
+type expectedCNCCacheState struct {
+	tunnelID         int
+	selectedNetworks []string
+}
+
+// expectedSubnetAllocation represents an expected subnet allocation for verification
+type expectedSubnetAllocation struct {
+	owner    string
+	topology string // types.Layer3Topology or types.Layer2Topology
+	ipv4     string // expected IPv4 subnet CIDR
+	ipv6     string // expected IPv6 subnet CIDR (optional)
+}
+
+// TestController_initialSync tests that initialSync correctly restores allocator state from CNC annotations.
+// It verifies that tunnel keys and subnet allocations are restored, and that re-allocating the same owner
+// returns the exact same subnet (idempotency).
+func TestController_initialSync(t *testing.T) {
+	tests := []struct {
+		name string
+		// existingCNCs are CNC objects that exist before initialSync (with annotations set)
+		existingCNCs []*networkconnectv1.ClusterNetworkConnect
+		// expectCacheEntries maps CNC name to expected cache state after initialSync
+		expectCacheEntries map[string]expectedCNCCacheState
+		// verifyAllocations verifies that re-allocating the same owner returns exact same subnets
+		// Maps CNC name to list of expected allocations to verify
+		verifyAllocations map[string][]expectedSubnetAllocation
+	}{
+		{
+			name: "restores single CNC with layer3 subnets",
+			existingCNCs: []*networkconnectv1.ClusterNetworkConnect{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "cnc1",
+						Annotations: map[string]string{
+							util.OvnConnectRouterTunnelKeyAnnotation: "5",
+							"k8s.ovn.org/network-connect-subnet":     `{"layer3_1":{"ipv4":"192.168.0.0/24","ipv6":"fd00:10:244::/64"},"layer3_2":{"ipv4":"192.168.1.0/24","ipv6":"fd00:10:244:1::/64"}}`,
+						},
+					},
+					Spec: networkconnectv1.ClusterNetworkConnectSpec{
+						ConnectSubnets: []networkconnectv1.ConnectSubnet{
+							{CIDR: "192.168.0.0/16", NetworkPrefix: 24},
+							{CIDR: "fd00:10:244::/48", NetworkPrefix: 64},
+						},
+						Connectivity: []networkconnectv1.ConnectivityType{networkconnectv1.PodNetwork},
+					},
+				},
+			},
+			expectCacheEntries: map[string]expectedCNCCacheState{
+				"cnc1": {tunnelID: 5, selectedNetworks: []string{"layer3_1", "layer3_2"}},
+			},
+			verifyAllocations: map[string][]expectedSubnetAllocation{
+				"cnc1": {
+					{owner: "layer3_1", topology: types.Layer3Topology, ipv4: "192.168.0.0/24", ipv6: "fd00:10:244::/64"},
+					{owner: "layer3_2", topology: types.Layer3Topology, ipv4: "192.168.1.0/24", ipv6: "fd00:10:244:1::/64"},
+				},
+			},
+		},
+		{
+			name: "restores multiple CNCs with different subnets",
+			existingCNCs: []*networkconnectv1.ClusterNetworkConnect{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "cnc1",
+						Annotations: map[string]string{
+							util.OvnConnectRouterTunnelKeyAnnotation: "1",
+							"k8s.ovn.org/network-connect-subnet":     `{"layer3_10":{"ipv4":"192.168.0.0/24","ipv6":"fd00:10:244::/64"}}`,
+						},
+					},
+					Spec: networkconnectv1.ClusterNetworkConnectSpec{
+						ConnectSubnets: []networkconnectv1.ConnectSubnet{
+							{CIDR: "192.168.0.0/16", NetworkPrefix: 24},
+							{CIDR: "fd00:10:244::/48", NetworkPrefix: 64},
+						},
+						Connectivity: []networkconnectv1.ConnectivityType{networkconnectv1.PodNetwork},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "cnc2",
+						Annotations: map[string]string{
+							util.OvnConnectRouterTunnelKeyAnnotation: "2",
+							"k8s.ovn.org/network-connect-subnet":     `{"layer3_20":{"ipv4":"10.100.0.0/24"},"layer3_21":{"ipv4":"10.100.1.0/24"}}`,
+						},
+					},
+					Spec: networkconnectv1.ClusterNetworkConnectSpec{
+						ConnectSubnets: []networkconnectv1.ConnectSubnet{
+							{CIDR: "10.100.0.0/16", NetworkPrefix: 24},
+						},
+						Connectivity: []networkconnectv1.ConnectivityType{networkconnectv1.PodNetwork},
+					},
+				},
+			},
+			expectCacheEntries: map[string]expectedCNCCacheState{
+				"cnc1": {tunnelID: 1, selectedNetworks: []string{"layer3_10"}},
+				"cnc2": {tunnelID: 2, selectedNetworks: []string{"layer3_20", "layer3_21"}},
+			},
+			verifyAllocations: map[string][]expectedSubnetAllocation{
+				"cnc1": {
+					{owner: "layer3_10", topology: types.Layer3Topology, ipv4: "192.168.0.0/24", ipv6: "fd00:10:244::/64"},
+				},
+				"cnc2": {
+					{owner: "layer3_20", topology: types.Layer3Topology, ipv4: "10.100.0.0/24"},
+					{owner: "layer3_21", topology: types.Layer3Topology, ipv4: "10.100.1.0/24"},
+				},
+			},
+		},
+		{
+			name: "restores CNC with layer2 subnets and pool blocks",
+			existingCNCs: []*networkconnectv1.ClusterNetworkConnect{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "cnc-layer2",
+						Annotations: map[string]string{
+							util.OvnConnectRouterTunnelKeyAnnotation: "10",
+							"k8s.ovn.org/network-connect-subnet":     `{"layer2_100":{"ipv4":"192.168.0.0/31","ipv6":"fd00:10:244::/127"},"layer2_101":{"ipv4":"192.168.0.2/31","ipv6":"fd00:10:244::2/127"}}`,
+						},
+					},
+					Spec: networkconnectv1.ClusterNetworkConnectSpec{
+						ConnectSubnets: []networkconnectv1.ConnectSubnet{
+							{CIDR: "192.168.0.0/16", NetworkPrefix: 24},
+							{CIDR: "fd00:10:244::/48", NetworkPrefix: 64},
+						},
+						Connectivity: []networkconnectv1.ConnectivityType{networkconnectv1.PodNetwork},
+					},
+				},
+			},
+			expectCacheEntries: map[string]expectedCNCCacheState{
+				"cnc-layer2": {tunnelID: 10, selectedNetworks: []string{"layer2_100", "layer2_101"}},
+			},
+			verifyAllocations: map[string][]expectedSubnetAllocation{
+				"cnc-layer2": {
+					{owner: "layer2_100", topology: types.Layer2Topology, ipv4: "192.168.0.0/31", ipv6: "fd00:10:244::/127"},
+					{owner: "layer2_101", topology: types.Layer2Topology, ipv4: "192.168.0.2/31", ipv6: "fd00:10:244::2/127"},
+				},
+			},
+		},
+		{
+			name: "restores CNC with mixed layer3 and layer2 subnets",
+			existingCNCs: []*networkconnectv1.ClusterNetworkConnect{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "cnc-mixed",
+						Annotations: map[string]string{
+							util.OvnConnectRouterTunnelKeyAnnotation: "7",
+							"k8s.ovn.org/network-connect-subnet":     `{"layer3_5":{"ipv4":"192.168.0.0/24","ipv6":"fd00:10:244::/64"},"layer2_6":{"ipv4":"192.168.1.0/31","ipv6":"fd00:10:244:1::/127"}}`,
+						},
+					},
+					Spec: networkconnectv1.ClusterNetworkConnectSpec{
+						ConnectSubnets: []networkconnectv1.ConnectSubnet{
+							{CIDR: "192.168.0.0/16", NetworkPrefix: 24},
+							{CIDR: "fd00:10:244::/48", NetworkPrefix: 64},
+						},
+						Connectivity: []networkconnectv1.ConnectivityType{networkconnectv1.PodNetwork},
+					},
+				},
+			},
+			expectCacheEntries: map[string]expectedCNCCacheState{
+				"cnc-mixed": {tunnelID: 7, selectedNetworks: []string{"layer3_5", "layer2_6"}},
+			},
+			verifyAllocations: map[string][]expectedSubnetAllocation{
+				"cnc-mixed": {
+					{owner: "layer3_5", topology: types.Layer3Topology, ipv4: "192.168.0.0/24", ipv6: "fd00:10:244::/64"},
+					{owner: "layer2_6", topology: types.Layer2Topology, ipv4: "192.168.1.0/31", ipv6: "fd00:10:244:1::/127"},
+				},
+			},
+		},
+		{
+			name: "handles CNC with empty annotations gracefully",
+			existingCNCs: []*networkconnectv1.ClusterNetworkConnect{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "cnc-empty",
+					},
+					Spec: networkconnectv1.ClusterNetworkConnectSpec{
+						ConnectSubnets: []networkconnectv1.ConnectSubnet{
+							{CIDR: "192.168.0.0/16", NetworkPrefix: 24},
+						},
+						Connectivity: []networkconnectv1.ConnectivityType{networkconnectv1.PodNetwork},
+					},
+				},
+			},
+			expectCacheEntries: map[string]expectedCNCCacheState{
+				"cnc-empty": {tunnelID: 0, selectedNetworks: []string{}},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+
+			config.IPv4Mode = true
+			config.IPv6Mode = true
+			config.OVNKubernetesFeature.EnableMultiNetwork = true
+			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+			config.OVNKubernetesFeature.EnableNetworkConnect = true
+
+			fakeClientset := util.GetOVNClientset().GetClusterManagerClientset()
+			ovntest.AddNetworkConnectApplyReactor(fakeClientset.NetworkConnectClient.(*networkconnectfake.Clientset))
+
+			// Create existing CNCs (simulating state from before restart)
+			for _, cnc := range tt.existingCNCs {
+				_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+					context.Background(), cnc, metav1.CreateOptions{})
+				g.Expect(err).ToNot(gomega.HaveOccurred())
+			}
+
+			wf, err := factory.NewClusterManagerWatchFactory(fakeClientset)
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+
+			err = wf.Start()
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+			defer wf.Shutdown()
+
+			// Wait for informer caches to sync
+			syncCtx, syncCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer syncCancel()
+			synced := cache.WaitForCacheSync(
+				syncCtx.Done(),
+				wf.ClusterNetworkConnectInformer().Informer().HasSynced,
+			)
+			g.Expect(synced).To(gomega.BeTrue(), "informer caches should sync")
+
+			fakeNM := &networkmanager.FakeNetworkManager{
+				PrimaryNetworks: make(map[string]util.NetInfo),
+			}
+
+			tunnelKeysAllocator := id.NewTunnelKeyAllocator("TunnelKeys")
+			c := NewController(wf, fakeClientset, fakeNM.Interface(), tunnelKeysAllocator)
+
+			// Run initialSync
+			err = c.initialSync()
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+
+			// Verify cache entries
+			for cncName, expected := range tt.expectCacheEntries {
+				cncState, exists := c.cncCache[cncName]
+				g.Expect(exists).To(gomega.BeTrue(), "cache entry for %s should exist", cncName)
+
+				// Verify tunnel ID
+				g.Expect(cncState.tunnelID).To(gomega.Equal(expected.tunnelID),
+					"tunnel ID for %s should match", cncName)
+
+				// Verify selected networks
+				g.Expect(cncState.selectedNetworks.UnsortedList()).To(gomega.ConsistOf(expected.selectedNetworks),
+					"selected networks for %s should match", cncName)
+
+				// Verify allocator was populated (if there are subnets)
+				if len(expected.selectedNetworks) > 0 && cncState.allocator != nil {
+					// The allocator should have the ranges configured
+					// We verify this indirectly by checking that it exists and was set up
+					g.Expect(cncState.allocator).ToNot(gomega.BeNil(),
+						"allocator for %s should be initialized", cncName)
+				}
+			}
+
+			// Verify that re-allocating the same owner returns exact same subnets (idempotency)
+			for cncName, allocations := range tt.verifyAllocations {
+				cncState := c.cncCache[cncName]
+				g.Expect(cncState).ToNot(gomega.BeNil(), "cache entry for %s should exist", cncName)
+				g.Expect(cncState.allocator).ToNot(gomega.BeNil(), "allocator for %s should exist", cncName)
+
+				for _, expected := range allocations {
+					var allocatedSubnets []*net.IPNet
+					var err error
+
+					if expected.topology == types.Layer3Topology {
+						allocatedSubnets, err = cncState.allocator.AllocateLayer3Subnet(expected.owner)
+					} else {
+						allocatedSubnets, err = cncState.allocator.AllocateLayer2Subnet(expected.owner)
+					}
+					g.Expect(err).ToNot(gomega.HaveOccurred(),
+						"re-allocation for owner %s should succeed", expected.owner)
+					g.Expect(allocatedSubnets).ToNot(gomega.BeEmpty(),
+						"re-allocation for owner %s should return subnets", expected.owner)
+
+					// Build map of allocated subnets by type for comparison
+					allocatedByType := make(map[string]string) // "ipv4" or "ipv6" -> CIDR
+					for _, subnet := range allocatedSubnets {
+						if subnet.IP.To4() != nil {
+							allocatedByType["ipv4"] = subnet.String()
+						} else {
+							allocatedByType["ipv6"] = subnet.String()
+						}
+					}
+
+					// Verify exact match of subnet values
+					if expected.ipv4 != "" {
+						g.Expect(allocatedByType["ipv4"]).To(gomega.Equal(expected.ipv4),
+							"owner %s: IPv4 subnet should match exactly", expected.owner)
+					}
+					if expected.ipv6 != "" {
+						g.Expect(allocatedByType["ipv6"]).To(gomega.Equal(expected.ipv6),
+							"owner %s: IPv6 subnet should match exactly", expected.owner)
+					}
+				}
 			}
 		})
 	}

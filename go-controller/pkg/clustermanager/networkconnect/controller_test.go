@@ -33,6 +33,74 @@ import (
 
 const ovnNetworkConnectSubnetAnnotation = "k8s.ovn.org/network-connect-subnet"
 
+// =============================================================================
+// Shared test helpers for creating test objects
+// =============================================================================
+
+// newTestCNC creates a test CNC object with the given name, selectors, and connect subnets.
+// If connectSubnets is nil, it defaults to 192.168.0.0/16 with /24 prefix.
+func newTestCNC(name string, selectors []apitypes.NetworkSelector, connectSubnets []networkconnectv1.ConnectSubnet) *networkconnectv1.ClusterNetworkConnect {
+	if connectSubnets == nil {
+		connectSubnets = []networkconnectv1.ConnectSubnet{
+			{CIDR: "192.168.0.0/16", NetworkPrefix: 24},
+		}
+	}
+	return &networkconnectv1.ClusterNetworkConnect{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+		},
+		Spec: networkconnectv1.ClusterNetworkConnectSpec{
+			NetworkSelectors: selectors,
+			ConnectSubnets:   connectSubnets,
+			Connectivity: []networkconnectv1.ConnectivityType{
+				networkconnectv1.PodNetwork,
+			},
+		},
+	}
+}
+
+// newTestUDNNAD creates a test NAD owned by a UserDefinedNetwork.
+func newTestUDNNAD(name, namespace, network string, networkID string) *nadv1.NetworkAttachmentDefinition {
+	return &nadv1.NetworkAttachmentDefinition{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			Annotations: map[string]string{
+				types.OvnNetworkNameAnnotation: network,
+				types.OvnNetworkIDAnnotation:   networkID,
+			},
+			OwnerReferences: []metav1.OwnerReference{makeUDNOwnerRef(name)},
+		},
+		Spec: nadv1.NetworkAttachmentDefinitionSpec{
+			Config: fmt.Sprintf(
+				`{"cniVersion": "0.4.0", "name": "%s", "type": "%s", "topology": "layer3", "netAttachDefName": "%s/%s", "role": "primary", "subnets": "10.0.0.0/16/24"}`,
+				network,
+				config.CNI.Plugin,
+				namespace,
+				name,
+			),
+		},
+	}
+}
+
+// newTestCUDNNAD creates a test NAD owned by a ClusterUserDefinedNetwork.
+func newTestCUDNNAD(name, namespace, network string, labels map[string]string, networkID string) *nadv1.NetworkAttachmentDefinition {
+	nad := newTestUDNNAD(name, namespace, network, networkID)
+	nad.Labels = labels
+	nad.OwnerReferences = []metav1.OwnerReference{makeCUDNOwnerRef(network)}
+	return nad
+}
+
+// newTestNamespace creates a test namespace with the given name and labels.
+func newTestNamespace(name string, labels map[string]string) *corev1.Namespace {
+	return &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   name,
+			Labels: labels,
+		},
+	}
+}
+
 var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Tests", func() {
 	var (
 		app           *cli.App
@@ -65,72 +133,12 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	}
 
-	// Helper to create a test CNC object
+	// Local aliases for shared helpers (for cleaner test code)
 	testCNC := func(name string, selectors []apitypes.NetworkSelector) *networkconnectv1.ClusterNetworkConnect {
-		return &networkconnectv1.ClusterNetworkConnect{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: name,
-			},
-			Spec: networkconnectv1.ClusterNetworkConnectSpec{
-				NetworkSelectors: selectors,
-				ConnectSubnets: []networkconnectv1.ConnectSubnet{
-					{CIDR: "192.168.0.0/16", NetworkPrefix: 24},
-				},
-				Connectivity: []networkconnectv1.ConnectivityType{
-					networkconnectv1.PodNetwork,
-				},
-			},
-		}
+		return newTestCNC(name, selectors, nil)
 	}
-
-	// Helper to create a test NAD owned by CUDN
-	testCUDNNAD := func(name, namespace, network string, labels map[string]string, networkID string) *nadv1.NetworkAttachmentDefinition {
-		return &nadv1.NetworkAttachmentDefinition{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      name,
-				Namespace: namespace,
-				Labels:    labels,
-				Annotations: map[string]string{
-					types.OvnNetworkNameAnnotation: network,
-					types.OvnNetworkIDAnnotation:   networkID,
-				},
-				OwnerReferences: []metav1.OwnerReference{makeCUDNOwnerRef(network)},
-			},
-			Spec: nadv1.NetworkAttachmentDefinitionSpec{
-				Config: fmt.Sprintf(
-					`{"cniVersion": "0.4.0", "name": "%s", "type": "%s", "topology": "layer3", "netAttachDefName": "%s/%s", "role": "primary", "subnets": "10.0.0.0/16/24"}`,
-					network,
-					config.CNI.Plugin,
-					namespace,
-					name,
-				),
-			},
-		}
-	}
-
-	// Helper to create a test NAD owned by UDN
-	testUDNNAD := func(name, namespace, network string, networkID string) *nadv1.NetworkAttachmentDefinition {
-		return &nadv1.NetworkAttachmentDefinition{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      name,
-				Namespace: namespace,
-				Annotations: map[string]string{
-					types.OvnNetworkNameAnnotation: network,
-					types.OvnNetworkIDAnnotation:   networkID,
-				},
-				OwnerReferences: []metav1.OwnerReference{makeUDNOwnerRef(name)},
-			},
-			Spec: nadv1.NetworkAttachmentDefinitionSpec{
-				Config: fmt.Sprintf(
-					`{"cniVersion": "0.4.0", "name": "%s", "type": "%s", "topology": "layer3", "netAttachDefName": "%s/%s", "role": "primary", "subnets": "10.0.0.0/16/24"}`,
-					network,
-					config.CNI.Plugin,
-					namespace,
-					name,
-				),
-			},
-		}
-	}
+	testCUDNNAD := newTestCUDNNAD
+	testUDNNAD := newTestUDNNAD
 
 	// Helper to get CNC annotations
 	getCNCAnnotations := func(cncName string) (map[string]string, error) {
@@ -1129,6 +1137,384 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 
 				// Should still have tunnel ID
 				gomega.Expect(hasTunnelIDAnnotation(cncName)).To(gomega.BeTrue())
+
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		})
+	})
+})
+
+var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller InitialSync Tests", func() {
+	var (
+		app *cli.App
+	)
+
+	ginkgo.BeforeEach(func() {
+		err := config.PrepareTestConfig()
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		config.IPv4Mode = true
+		config.IPv6Mode = false
+		config.OVNKubernetesFeature.EnableMultiNetwork = true
+		config.OVNKubernetesFeature.EnableNetworkConnect = true
+		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+		app = cli.NewApp()
+		app.Name = "test"
+		app.Flags = config.Flags
+	})
+
+	ginkgo.Context("Controller restart preserves allocator state", func() {
+		ginkgo.It("initialSync correctly restores tunnel IDs and subnet allocations after restart", func() {
+			app.Action = func(*cli.Context) error {
+				// ============================================================
+				// PHASE 1: Set up controller with 2 CNCs selecting multiple networks
+				// ============================================================
+
+				// CNC1: 2 CUDNs + 2 PUDNs
+				cnc1Name := "test-cnc1"
+				cnc1CUDNLabel := map[string]string{"cnc1-cudn": "true"}
+				cudn1Network := util.GenerateCUDNNetworkName("cudn1")
+				cudn2Network := util.GenerateCUDNNetworkName("cudn2")
+
+				// CNC2: 1 CUDN + 1 PUDN
+				cnc2Name := "test-cnc2"
+				cnc2CUDNLabel := map[string]string{"cnc2-cudn": "true"}
+				cudn3Network := util.GenerateCUDNNetworkName("cudn3")
+
+				// Create clientset and watch factory
+				fakeClientset := util.GetOVNClientset().GetClusterManagerClientset()
+				ovntest.AddNetworkConnectApplyReactor(fakeClientset.NetworkConnectClient.(*networkconnectfake.Clientset))
+
+				wf, err := factory.NewClusterManagerWatchFactory(fakeClientset)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				fakeNM := &networkmanager.FakeNetworkManager{
+					PrimaryNetworks: make(map[string]util.NetInfo),
+				}
+
+				tunnelKeysAllocator := id.NewTunnelKeyAllocator("TunnelKeys")
+				controller := NewController(wf, fakeClientset, fakeNM.Interface(), tunnelKeysAllocator)
+
+				err = wf.Start()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				err = controller.Start()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// ============================================================
+				// Create NADs for CNC1 (2 CUDNs)
+				// ============================================================
+				nad1 := newTestCUDNNAD("cudn1-nad", "ns-cudn1", cudn1Network, cnc1CUDNLabel, "1")
+				_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("ns-cudn1").Create(
+					context.Background(), nad1, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				nad2 := newTestCUDNNAD("cudn2-nad", "ns-cudn2", cudn2Network, cnc1CUDNLabel, "2")
+				_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("ns-cudn2").Create(
+					context.Background(), nad2, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// ============================================================
+				// Create P-UDN namespaces and NADs for CNC1 (2 P-UDNs)
+				// ============================================================
+				ns1 := newTestNamespace("pudn1-ns", map[string]string{
+					"cnc1-pudn":                     "true",
+					types.RequiredUDNNamespaceLabel: "",
+				})
+				_, err = fakeClientset.KubeClient.CoreV1().Namespaces().Create(
+					context.Background(), ns1, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				pudn1Network := util.GenerateUDNNetworkName("pudn1-ns", "primary-udn")
+				nad3 := newTestUDNNAD("primary-udn", "pudn1-ns", pudn1Network, "3")
+				_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("pudn1-ns").Create(
+					context.Background(), nad3, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				netInfo1, err := util.ParseNADInfo(nad3)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				mutableNetInfo1 := util.NewMutableNetInfo(netInfo1)
+				mutableNetInfo1.AddNADs("pudn1-ns/primary-udn")
+				fakeNM.PrimaryNetworks["pudn1-ns"] = mutableNetInfo1
+
+				ns2 := newTestNamespace("pudn2-ns", map[string]string{
+					"cnc1-pudn":                     "true",
+					types.RequiredUDNNamespaceLabel: "",
+				})
+				_, err = fakeClientset.KubeClient.CoreV1().Namespaces().Create(
+					context.Background(), ns2, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				pudn2Network := util.GenerateUDNNetworkName("pudn2-ns", "primary-udn")
+				nad4 := newTestUDNNAD("primary-udn", "pudn2-ns", pudn2Network, "4")
+				_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("pudn2-ns").Create(
+					context.Background(), nad4, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				netInfo2, err := util.ParseNADInfo(nad4)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				mutableNetInfo2 := util.NewMutableNetInfo(netInfo2)
+				mutableNetInfo2.AddNADs("pudn2-ns/primary-udn")
+				fakeNM.PrimaryNetworks["pudn2-ns"] = mutableNetInfo2
+
+				// ============================================================
+				// Create NADs for CNC2 (1 CUDN + 1 P-UDN)
+				// ============================================================
+				nad5 := newTestCUDNNAD("cudn3-nad", "ns-cudn3", cudn3Network, cnc2CUDNLabel, "5")
+				_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("ns-cudn3").Create(
+					context.Background(), nad5, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				ns3 := newTestNamespace("pudn3-ns", map[string]string{
+					"cnc2-pudn":                     "true",
+					types.RequiredUDNNamespaceLabel: "",
+				})
+				_, err = fakeClientset.KubeClient.CoreV1().Namespaces().Create(
+					context.Background(), ns3, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				pudn3Network := util.GenerateUDNNetworkName("pudn3-ns", "primary-udn")
+				nad6 := newTestUDNNAD("primary-udn", "pudn3-ns", pudn3Network, "6")
+				_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("pudn3-ns").Create(
+					context.Background(), nad6, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				netInfo3, err := util.ParseNADInfo(nad6)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				mutableNetInfo3 := util.NewMutableNetInfo(netInfo3)
+				mutableNetInfo3.AddNADs("pudn3-ns/primary-udn")
+				fakeNM.PrimaryNetworks["pudn3-ns"] = mutableNetInfo3
+
+				// ============================================================
+				// Create CNCs
+				// ============================================================
+				cnc1 := newTestCNC(cnc1Name, []apitypes.NetworkSelector{
+					{
+						NetworkSelectionType: apitypes.ClusterUserDefinedNetworks,
+						ClusterUserDefinedNetworkSelector: &apitypes.ClusterUserDefinedNetworkSelector{
+							NetworkSelector: metav1.LabelSelector{
+								MatchLabels: cnc1CUDNLabel,
+							},
+						},
+					},
+					{
+						NetworkSelectionType: apitypes.PrimaryUserDefinedNetworks,
+						PrimaryUserDefinedNetworkSelector: &apitypes.PrimaryUserDefinedNetworkSelector{
+							NamespaceSelector: metav1.LabelSelector{
+								MatchLabels: map[string]string{"cnc1-pudn": "true"},
+							},
+						},
+					},
+				}, nil) // uses default 192.168.0.0/16 /24
+				_, err = fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+					context.Background(), cnc1, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				cnc2 := newTestCNC(cnc2Name, []apitypes.NetworkSelector{
+					{
+						NetworkSelectionType: apitypes.ClusterUserDefinedNetworks,
+						ClusterUserDefinedNetworkSelector: &apitypes.ClusterUserDefinedNetworkSelector{
+							NetworkSelector: metav1.LabelSelector{
+								MatchLabels: cnc2CUDNLabel,
+							},
+						},
+					},
+					{
+						NetworkSelectionType: apitypes.PrimaryUserDefinedNetworks,
+						PrimaryUserDefinedNetworkSelector: &apitypes.PrimaryUserDefinedNetworkSelector{
+							NamespaceSelector: metav1.LabelSelector{
+								MatchLabels: map[string]string{"cnc2-pudn": "true"},
+							},
+						},
+					},
+				}, []networkconnectv1.ConnectSubnet{{CIDR: "10.100.0.0/16", NetworkPrefix: 24}})
+				_, err = fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+					context.Background(), cnc2, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// ============================================================
+				// Wait for annotations to be set
+				// ============================================================
+				getCNCAnnotations := func(cncName string) (map[string]string, error) {
+					cnc, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Get(
+						context.Background(), cncName, metav1.GetOptions{})
+					if err != nil {
+						return nil, err
+					}
+					return cnc.Annotations, nil
+				}
+
+				getSubnetAnnotationNetworkCount := func(cncName string) int {
+					annotations, err := getCNCAnnotations(cncName)
+					if err != nil {
+						return -1
+					}
+					subnetAnnotation, exists := annotations[ovnNetworkConnectSubnetAnnotation]
+					if !exists {
+						return 0
+					}
+					if subnetAnnotation == "{}" {
+						return 0
+					}
+					var subnets map[string]util.NetworkConnectSubnetAnnotation
+					if err := json.Unmarshal([]byte(subnetAnnotation), &subnets); err != nil {
+						return -1
+					}
+					return len(subnets)
+				}
+
+				// Wait for CNC1 to have 4 networks (2 CUDNs + 2 PUDNs)
+				gomega.Eventually(func() int {
+					return getSubnetAnnotationNetworkCount(cnc1Name)
+				}).WithTimeout(10 * time.Second).Should(gomega.Equal(4))
+
+				// Wait for CNC2 to have 2 networks (1 CUDN + 1 PUDN)
+				gomega.Eventually(func() int {
+					return getSubnetAnnotationNetworkCount(cnc2Name)
+				}).WithTimeout(10 * time.Second).Should(gomega.Equal(2))
+
+				// ============================================================
+				// PHASE 2: Capture state before restart
+				// ============================================================
+				cnc1BeforeRestart, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Get(
+					context.Background(), cnc1Name, metav1.GetOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				cnc2BeforeRestart, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Get(
+					context.Background(), cnc2Name, metav1.GetOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Store original annotations
+				cnc1TunnelIDBefore := cnc1BeforeRestart.Annotations[util.OvnConnectRouterTunnelKeyAnnotation]
+				cnc1SubnetsBefore := cnc1BeforeRestart.Annotations[ovnNetworkConnectSubnetAnnotation]
+				cnc2TunnelIDBefore := cnc2BeforeRestart.Annotations[util.OvnConnectRouterTunnelKeyAnnotation]
+				cnc2SubnetsBefore := cnc2BeforeRestart.Annotations[ovnNetworkConnectSubnetAnnotation]
+
+				gomega.Expect(cnc1TunnelIDBefore).NotTo(gomega.BeEmpty())
+				gomega.Expect(cnc1SubnetsBefore).NotTo(gomega.BeEmpty())
+				gomega.Expect(cnc2TunnelIDBefore).NotTo(gomega.BeEmpty())
+				gomega.Expect(cnc2SubnetsBefore).NotTo(gomega.BeEmpty())
+
+				// ============================================================
+				// PHASE 3: Stop the controller
+				// ============================================================
+				controller.Stop()
+				wf.Shutdown()
+
+				// ============================================================
+				// PHASE 4: Restart with same objects (simulating restart)
+				// ============================================================
+				// Create new watch factory and controller with same clientset (keeps objects)
+				wf2, err := factory.NewClusterManagerWatchFactory(fakeClientset)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Create new FakeNetworkManager with same primary networks config
+				fakeNM2 := &networkmanager.FakeNetworkManager{
+					PrimaryNetworks: make(map[string]util.NetInfo),
+				}
+				// Re-setup primary networks (in real deployment this comes from network manager cache)
+				fakeNM2.PrimaryNetworks["pudn1-ns"] = mutableNetInfo1
+				fakeNM2.PrimaryNetworks["pudn2-ns"] = mutableNetInfo2
+				fakeNM2.PrimaryNetworks["pudn3-ns"] = mutableNetInfo3
+
+				tunnelKeysAllocator2 := id.NewTunnelKeyAllocator("TunnelKeys")
+				controller2 := NewController(wf2, fakeClientset, fakeNM2.Interface(), tunnelKeysAllocator2)
+
+				err = wf2.Start()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				err = controller2.Start()
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// ============================================================
+				// PHASE 5: Verify state is correctly restored
+				// ============================================================
+
+				// Get CNCs after restart
+				cnc1AfterRestart, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Get(
+					context.Background(), cnc1Name, metav1.GetOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				cnc2AfterRestart, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Get(
+					context.Background(), cnc2Name, metav1.GetOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Verify tunnel IDs are unchanged
+				gomega.Expect(cnc1AfterRestart.Annotations[util.OvnConnectRouterTunnelKeyAnnotation]).To(
+					gomega.Equal(cnc1TunnelIDBefore), "CNC1 tunnel ID should be preserved after restart")
+				gomega.Expect(cnc2AfterRestart.Annotations[util.OvnConnectRouterTunnelKeyAnnotation]).To(
+					gomega.Equal(cnc2TunnelIDBefore), "CNC2 tunnel ID should be preserved after restart")
+
+				// Verify subnet annotations are unchanged
+				gomega.Expect(cnc1AfterRestart.Annotations[ovnNetworkConnectSubnetAnnotation]).To(
+					gomega.Equal(cnc1SubnetsBefore), "CNC1 subnet allocations should be preserved after restart")
+				gomega.Expect(cnc2AfterRestart.Annotations[ovnNetworkConnectSubnetAnnotation]).To(
+					gomega.Equal(cnc2SubnetsBefore), "CNC2 subnet allocations should be preserved after restart")
+
+				// Verify network counts are unchanged
+				gomega.Expect(getSubnetAnnotationNetworkCount(cnc1Name)).To(gomega.Equal(4))
+				gomega.Expect(getSubnetAnnotationNetworkCount(cnc2Name)).To(gomega.Equal(2))
+
+				// ============================================================
+				// PHASE 6: Verify allocator state by adding new networks
+				// ============================================================
+				// Add a new CUDN to CNC1 and verify it gets a NEW subnet (not conflicting)
+				newCUDNNetwork := util.GenerateCUDNNetworkName("new-cudn")
+				newNAD := newTestCUDNNAD("new-cudn-nad", "ns-new-cudn", newCUDNNetwork, cnc1CUDNLabel, "7")
+				_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("ns-new-cudn").Create(
+					context.Background(), newNAD, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Wait for CNC1 to have 5 networks now (4 original + 1 new)
+				gomega.Eventually(func() int {
+					return getSubnetAnnotationNetworkCount(cnc1Name)
+				}).WithTimeout(10 * time.Second).Should(gomega.Equal(5))
+
+				// Get the updated CNC1 and verify new subnet doesn't conflict with existing ones
+				cnc1Final, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Get(
+					context.Background(), cnc1Name, metav1.GetOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Parse the subnet annotations
+				var subnetsBefore map[string]util.NetworkConnectSubnetAnnotation
+				err = json.Unmarshal([]byte(cnc1SubnetsBefore), &subnetsBefore)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				var subnetsAfter map[string]util.NetworkConnectSubnetAnnotation
+				err = json.Unmarshal([]byte(cnc1Final.Annotations[ovnNetworkConnectSubnetAnnotation]), &subnetsAfter)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// All original subnets should still be present with same values
+				for owner, subnet := range subnetsBefore {
+					gomega.Expect(subnetsAfter).To(gomega.HaveKey(owner))
+					gomega.Expect(subnetsAfter[owner]).To(gomega.Equal(subnet),
+						"Original subnet for %s should be unchanged", owner)
+				}
+
+				// The new network should get the next sequential subnet after the existing ones
+				// CNC1 uses default 192.168.0.0/16 with /24 prefix, subnets are allocated sequentially:
+				// 192.168.0.0/24, 192.168.1.0/24, 192.168.2.0/24, 192.168.3.0/24, ...
+				// CNC1 had 4 networks before (subnets 0-3), so the 5th should get 192.168.4.0/24
+				expectedNextSubnet := "192.168.4.0/24"
+
+				// Find the new network's subnet
+				var newNetworkSubnet string
+				for owner, subnet := range subnetsAfter {
+					if _, existed := subnetsBefore[owner]; !existed {
+						// This is the new network
+						newNetworkSubnet = subnet.IPv4
+						break
+					}
+				}
+
+				gomega.Expect(newNetworkSubnet).To(gomega.Equal(expectedNextSubnet),
+					"New network should get the next sequential subnet %s, but got %s",
+					expectedNextSubnet, newNetworkSubnet)
+
+				// Cleanup
+				controller2.Stop()
+				wf2.Shutdown()
 
 				return nil
 			}

@@ -64,6 +64,50 @@ func UpdateNetworkConnectSubnetAnnotation(cnc *networkconnectv1.ClusterNetworkCo
 	return nil
 }
 
+// ParseNetworkConnectSubnetAnnotation parses the subnet annotation from the given CNC.
+// Returns a map of owner (e.g., "layer3_1", "layer2_2") to allocated subnets.
+// Returns empty map if annotation is missing or empty.
+func ParseNetworkConnectSubnetAnnotation(cnc *networkconnectv1.ClusterNetworkConnect) (map[string][]*net.IPNet, error) {
+	result := make(map[string][]*net.IPNet)
+
+	if cnc == nil || cnc.Annotations == nil {
+		return result, nil
+	}
+
+	annotationValue, exists := cnc.Annotations[ovnNetworkConnectSubnetAnnotation]
+	if !exists || annotationValue == "" || annotationValue == "{}" {
+		return result, nil
+	}
+
+	var subnetsMap map[string]NetworkConnectSubnetAnnotation
+	if err := json.Unmarshal([]byte(annotationValue), &subnetsMap); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal network connect subnet annotation: %v", err)
+	}
+
+	for owner, annotation := range subnetsMap {
+		var subnets []*net.IPNet
+		if annotation.IPv4 != "" {
+			_, ipnet, err := net.ParseCIDR(annotation.IPv4)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse IPv4 subnet %s for owner %s: %v", annotation.IPv4, owner, err)
+			}
+			subnets = append(subnets, ipnet)
+		}
+		if annotation.IPv6 != "" {
+			_, ipnet, err := net.ParseCIDR(annotation.IPv6)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse IPv6 subnet %s for owner %s: %v", annotation.IPv6, owner, err)
+			}
+			subnets = append(subnets, ipnet)
+		}
+		if len(subnets) > 0 {
+			result[owner] = subnets
+		}
+	}
+
+	return result, nil
+}
+
 // UpdateNetworkConnectRouterTunnelKeyAnnotation updates the router tunnel key annotation for the given CNC and given tunnel ID.
 // It uses the Apply method to patch the annotation and has its own manager field to avoid conflicts with other annotation patches
 // like the subnet annotation patch above.
@@ -82,4 +126,24 @@ func UpdateNetworkConnectRouterTunnelKeyAnnotation(cncName string, cncClient net
 	}
 	klog.V(5).Infof("Updated network connect router tunnel key annotation for CNC %s with tunnel ID %d", cncName, tunnelID)
 	return nil
+}
+
+// ParseNetworkConnectTunnelKeyAnnotation parses the tunnel key annotation from the given CNC.
+// Returns 0 if annotation is missing.
+func ParseNetworkConnectTunnelKeyAnnotation(cnc *networkconnectv1.ClusterNetworkConnect) (int, error) {
+	if cnc == nil || cnc.Annotations == nil {
+		return 0, nil
+	}
+
+	annotationValue, exists := cnc.Annotations[OvnConnectRouterTunnelKeyAnnotation]
+	if !exists || annotationValue == "" {
+		return 0, nil
+	}
+
+	tunnelID, err := strconv.Atoi(annotationValue)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse tunnel key annotation: %v", err)
+	}
+
+	return tunnelID, nil
 }

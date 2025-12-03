@@ -13,12 +13,20 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/node"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	networkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
+	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 )
 
 var (
 	p2pIPV4SubnetMask = 31
 	p2pIPV6SubnetMask = 127
 )
+
+// randomizedLayer2BlockOwner returns the block owner name for new layer2 block allocations.
+// Used during runtime when a new block is allocated for the first layer2 network.
+// This is a random string to avoid conflicts.
+func randomizedLayer2BlockOwner() string {
+	return fmt.Sprintf("l2-block-%s", rand.String(15))
+}
 
 // HybridConnectSubnetAllocator provides hybrid allocation for network connect subnets:
 //   - Layer3 networks: Each gets a full layer3NetworkPrefix block (e.g., /24)
@@ -47,6 +55,11 @@ type HybridConnectSubnetAllocator interface {
 
 	// Layer2RangeCount returns the number of v4 and v6 ranges in the layer2 allocator (for testing)
 	Layer2RangeCount() (uint64, uint64)
+
+	// MarkAllocatedSubnets restores previously allocated subnets from annotation at startup.
+	// This should be called after AddNetworkRange but before any new allocations.
+	// It marks subnets as already allocated so they won't be handed out again.
+	MarkAllocatedSubnets(allocatedSubnets map[string][]*net.IPNet) error
 }
 
 // hybridConnectSubnetAllocator implements HybridConnectSubnetAllocator
@@ -82,6 +95,7 @@ type hybridConnectSubnetAllocator struct {
 }
 
 // NewHybridConnectSubnetAllocator creates a new hybrid connect subnet allocator
+// and adds the network ranges for the connect subnets to the allocator.
 func NewHybridConnectSubnetAllocator(connectSubnets []networkconnectv1.ConnectSubnet, cncName string) (HybridConnectSubnetAllocator, error) {
 	allocator := &hybridConnectSubnetAllocator{
 		layer3Allocator:   node.NewSubnetAllocator(),
@@ -183,6 +197,26 @@ func (hca *hybridConnectSubnetAllocator) AllocateLayer2Subnet(owner string) ([]*
 	return subnets, nil
 }
 
+// getParentBlockCIDR computes the parent block CIDR for a given subnet
+// by masking the subnet IP to the networkPrefix boundary
+func (hca *hybridConnectSubnetAllocator) getParentBlockCIDR(subnet *net.IPNet) *net.IPNet {
+	var networkPrefix int
+	var bits int
+
+	if utilnet.IsIPv6CIDR(subnet) {
+		networkPrefix = hca.v6NetworkPrefix
+		bits = 128
+	} else {
+		networkPrefix = hca.v4NetworkPrefix
+		bits = 32
+	}
+
+	mask := net.CIDRMask(networkPrefix, bits)
+	parentIP := subnet.IP.Mask(mask)
+	parentNet := &net.IPNet{IP: parentIP, Mask: mask}
+	return parentNet
+}
+
 // getL2BlocksKey generates a consistent map key from layer2 block subnets.
 // For single-stack: returns the CIDR string (e.g., "192.168.0.0/24")
 // For dual-stack: returns "v4,v6" format (e.g., "192.168.0.0/24,fd00::/64")
@@ -207,7 +241,7 @@ func getL2BlocksKey(subnets []*net.IPNet) string {
 // It tries to allocate both IPv4 and IPv6 blocks from the Layer3 allocator
 // If only one family is available, the block will be single-stack
 func (hca *hybridConnectSubnetAllocator) expandLayer2Allocator() error {
-	blockOwnerName := fmt.Sprintf("l2-block-%s", rand.String(15)) // Random string to avoid conflicts
+	blockOwnerName := randomizedLayer2BlockOwner()
 
 	allocatedBlocks, err := hca.layer3Allocator.AllocateNetworks(blockOwnerName)
 	if err != nil {
@@ -265,4 +299,69 @@ func (hca *hybridConnectSubnetAllocator) ReleaseLayer2Subnet(owner string) {
 			delete(hca.layer2BlockOwners, l2BlockKey)
 		}
 	}
+}
+
+// MarkAllocatedSubnets restores previously allocated subnets from annotation at startup.
+// This should be called after AddNetworkRange but before any new allocations.
+// It marks subnets as already allocated so they won't be handed out again.
+func (hca *hybridConnectSubnetAllocator) MarkAllocatedSubnets(allocatedSubnets map[string][]*net.IPNet) error {
+	hca.mu.Lock()
+	defer hca.mu.Unlock()
+
+	for owner, subnets := range allocatedSubnets {
+		topologyType, ok := parseNetworkOwnerTopology(owner)
+		if !ok {
+			continue
+		}
+
+		switch topologyType {
+		case ovntypes.Layer3Topology:
+			// Simple: just mark in layer3 allocator
+			if err := hca.layer3Allocator.MarkAllocatedNetworks(owner, subnets...); err != nil {
+				return fmt.Errorf("failed to mark layer3 subnets for %s: %v", owner, err)
+			}
+
+		case ovntypes.Layer2Topology:
+			// First ensure l2 block is already reserved in layer3 allocator
+			l2BlockSubnets := []*net.IPNet{}
+			// loop through the v4 and v6 allocated subnets for this network owner and get the parent block CIDR
+			for _, subnet := range subnets {
+				parentCIDR := hca.getParentBlockCIDR(subnet)
+				l2BlockSubnets = append(l2BlockSubnets, parentCIDR)
+			}
+
+			l2BlockKey := getL2BlocksKey(l2BlockSubnets)
+			if _, exists := hca.layer2BlockOwners[l2BlockKey]; !exists {
+				// Set up block if not seen yet
+				blockOwnerName := randomizedLayer2BlockOwner()
+				for _, parentNet := range l2BlockSubnets {
+
+					// Mark parent block in layer3 allocator (as a block)
+					err := hca.layer3Allocator.MarkAllocatedNetworks(blockOwnerName, parentNet)
+					if err != nil {
+						return fmt.Errorf("failed to mark block %s: %v", parentNet.String(), err)
+					}
+
+					// Add range to layer2 allocator for /31 or /127 allocations
+					prefixLen := p2pIPV4SubnetMask
+					if utilnet.IsIPv6CIDR(parentNet) {
+						prefixLen = p2pIPV6SubnetMask
+					}
+					if err := hca.layer2Allocator.AddNetworkRange(parentNet, prefixLen); err != nil {
+						return fmt.Errorf("failed to add layer2 range %s: %v", parentNet.String(), err)
+					}
+
+				}
+				hca.layer2BlockOwners[l2BlockKey] = blockOwnerName
+			}
+			// Now mark current l2 networks as allocated
+			for _, subnet := range subnets {
+				// Mark the /31 or /127 subnet in layer2 allocator
+				if err := hca.layer2Allocator.MarkAllocatedNetworks(owner, subnet); err != nil {
+					return fmt.Errorf("failed to mark layer2 subnet %s for %s: %v", subnet.String(), owner, err)
+				}
+			}
+		}
+	}
+	return nil
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	networkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 )
 
 func mustParseCIDR(cidr string) *net.IPNet {
@@ -1146,4 +1147,435 @@ func TestHybridConnectSubnetAllocator_Layer2ReleaseReleasesBlockToLayer3(t *test
 	// Should get the block that was released from layer2 networks
 	g.Expect(l3Sub4[0].String()).To(gomega.Equal("10.100.0.0/28"))
 	g.Expect(l3Sub4[1].String()).To(gomega.Equal("fd00::/123"))
+}
+
+func TestHybridConnectSubnetAllocator_getParentBlockCIDR(t *testing.T) {
+	// Test the mathematical derivation of parent block CIDR from a subnet
+	// The function masks the subnet IP to the networkPrefix boundary
+	tests := []struct {
+		name            string
+		v4NetworkPrefix int
+		v6NetworkPrefix int
+		subnet          string
+		expectedParent  string
+	}{
+		// IPv4 tests with /28 networkPrefix (using 10.0.0.0/8 range)
+		{
+			name:            "IPv4 first address in block",
+			v4NetworkPrefix: 28,
+			subnet:          "10.20.30.0/31",
+			expectedParent:  "10.20.30.0/28",
+		},
+		{
+			name:            "IPv4 middle address in block",
+			v4NetworkPrefix: 28,
+			subnet:          "10.20.30.6/31",
+			expectedParent:  "10.20.30.0/28",
+		},
+		{
+			name:            "IPv4 last address in block",
+			v4NetworkPrefix: 28,
+			subnet:          "10.20.30.14/31",
+			expectedParent:  "10.20.30.0/28",
+		},
+		{
+			name:            "IPv4 second block first address",
+			v4NetworkPrefix: 28,
+			subnet:          "10.20.30.16/31",
+			expectedParent:  "10.20.30.16/28",
+		},
+		{
+			name:            "IPv4 second block middle address",
+			v4NetworkPrefix: 28,
+			subnet:          "10.20.30.22/31",
+			expectedParent:  "10.20.30.16/28",
+		},
+		// IPv4 with /24 networkPrefix (using 172.16.0.0/12 range)
+		{
+			name:            "IPv4 /24 prefix first block",
+			v4NetworkPrefix: 24,
+			subnet:          "172.16.5.100/31",
+			expectedParent:  "172.16.5.0/24",
+		},
+		{
+			name:            "IPv4 /24 prefix second block",
+			v4NetworkPrefix: 24,
+			subnet:          "172.16.6.50/31",
+			expectedParent:  "172.16.6.0/24",
+		},
+		// IPv6 tests with /124 networkPrefix
+		{
+			name:            "IPv6 first address in block",
+			v6NetworkPrefix: 124,
+			subnet:          "2001:db8::0/127",
+			expectedParent:  "2001:db8::/124",
+		},
+		{
+			name:            "IPv6 middle address in block",
+			v6NetworkPrefix: 124,
+			subnet:          "2001:db8::6/127",
+			expectedParent:  "2001:db8::/124",
+		},
+		{
+			name:            "IPv6 last address in block",
+			v6NetworkPrefix: 124,
+			subnet:          "2001:db8::e/127",
+			expectedParent:  "2001:db8::/124",
+		},
+		{
+			name:            "IPv6 second block",
+			v6NetworkPrefix: 124,
+			subnet:          "2001:db8::10/127",
+			expectedParent:  "2001:db8::10/124",
+		},
+		{
+			name:            "IPv6 second block middle",
+			v6NetworkPrefix: 124,
+			subnet:          "2001:db8::1a/127",
+			expectedParent:  "2001:db8::10/124",
+		},
+		// IPv6 with /64 networkPrefix
+		{
+			name:            "IPv6 /64 prefix",
+			v6NetworkPrefix: 64,
+			subnet:          "2001:db8:cafe:1::abcd/127",
+			expectedParent:  "2001:db8:cafe:1::/64",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+
+			// Create allocator with the specified network prefixes
+			allocator := &hybridConnectSubnetAllocator{
+				v4NetworkPrefix: tt.v4NetworkPrefix,
+				v6NetworkPrefix: tt.v6NetworkPrefix,
+			}
+
+			subnet := mustParseCIDR(tt.subnet)
+			parentCIDR := allocator.getParentBlockCIDR(subnet)
+
+			g.Expect(parentCIDR.String()).To(gomega.Equal(tt.expectedParent))
+		})
+	}
+}
+
+func TestHybridConnectSubnetAllocator_getParentBlockCIDR_AllAddressesInBlockMapToSameParent(t *testing.T) {
+	// Verify that ALL addresses within a block map to the same parent
+	g := gomega.NewWithT(t)
+
+	allocator := &hybridConnectSubnetAllocator{
+		v4NetworkPrefix: 28, // /28 = 16 addresses (0-15)
+	}
+
+	// All /31 subnets in 10.50.100.0/28 should map to the same parent
+	// Block has addresses .0 to .15, so /31 subnets are .0, .2, .4, .6, .8, .10, .12, .14
+	expectedParent := "10.50.100.0/28"
+	for i := 0; i < 16; i += 2 {
+		subnet := mustParseCIDR(fmt.Sprintf("10.50.100.%d/31", i))
+		parentCIDR := allocator.getParentBlockCIDR(subnet)
+		g.Expect(parentCIDR.String()).To(gomega.Equal(expectedParent), "Address 10.50.100.%d/31 should map to %s", i, expectedParent)
+	}
+
+	// All /31 subnets in 10.50.100.16/28 should map to a different parent
+	expectedParent2 := "10.50.100.16/28"
+	for i := 16; i < 32; i += 2 {
+		subnet := mustParseCIDR(fmt.Sprintf("10.50.100.%d/31", i))
+		parentCIDR := allocator.getParentBlockCIDR(subnet)
+		g.Expect(parentCIDR.String()).To(gomega.Equal(expectedParent2), "Address 10.50.100.%d/31 should map to %s", i, expectedParent2)
+	}
+}
+
+// newAllocationCheck verifies new allocations don't conflict with marked subnets
+type newAllocationCheck struct {
+	owner    string
+	topology string // types.Layer3Topology or types.Layer2Topology
+	notIPv4  string // expected to NOT be this IPv4 CIDR
+	notIPv6  string // expected to NOT be this IPv6 CIDR
+}
+
+func TestHybridConnectSubnetAllocator_MarkAllocatedSubnets(t *testing.T) {
+	tests := []struct {
+		name string
+		// ipv4Mode and ipv6Mode configure the IP mode
+		ipv4Mode bool
+		ipv6Mode bool
+		// allocatedSubnets is the map of owner -> subnets to mark as allocated
+		allocatedSubnets map[string][]*net.IPNet
+		// verifyAllocations checks that re-allocating returns exact same subnets
+		verifyAllocations []expectedSubnetAllocation
+		// verifyBlocks checks layer2 block state (expected block CIDRs in layer2BlockOwners)
+		verifyBlocks []string
+		// newAllocation verifies new allocations don't conflict
+		newAllocation *newAllocationCheck
+	}{
+		{
+			name:     "marks layer3 subnets - re-allocation returns same subnets",
+			ipv4Mode: true,
+			ipv6Mode: true,
+			allocatedSubnets: map[string][]*net.IPNet{
+				"layer3_1": {mustParseCIDR("192.168.0.0/24"), mustParseCIDR("fd00:10:244::/64")},
+				"layer3_2": {mustParseCIDR("192.168.1.0/24"), mustParseCIDR("fd00:10:244:1::/64")},
+			},
+			verifyAllocations: []expectedSubnetAllocation{
+				{owner: "layer3_1", topology: types.Layer3Topology, ipv4: "192.168.0.0/24", ipv6: "fd00:10:244::/64"},
+				{owner: "layer3_2", topology: types.Layer3Topology, ipv4: "192.168.1.0/24", ipv6: "fd00:10:244:1::/64"},
+			},
+			newAllocation: &newAllocationCheck{
+				owner:    "layer3_3",
+				topology: types.Layer3Topology,
+				notIPv4:  "192.168.0.0/24",
+				notIPv6:  "fd00:10:244::/64",
+			},
+		},
+		{
+			name:     "marks layer2 subnets - re-allocation returns same subnets and blocks are tracked",
+			ipv4Mode: true,
+			ipv6Mode: true,
+			allocatedSubnets: map[string][]*net.IPNet{
+				"layer2_100": {mustParseCIDR("192.168.0.0/31"), mustParseCIDR("fd00:10:244::/127")},
+				"layer2_101": {mustParseCIDR("192.168.0.2/31"), mustParseCIDR("fd00:10:244::2/127")},
+			},
+			verifyAllocations: []expectedSubnetAllocation{
+				{owner: "layer2_100", topology: types.Layer2Topology, ipv4: "192.168.0.0/31", ipv6: "fd00:10:244::/127"},
+				{owner: "layer2_101", topology: types.Layer2Topology, ipv4: "192.168.0.2/31", ipv6: "fd00:10:244::2/127"},
+			},
+			// In dual-stack, getL2BlocksKey creates combined key "v4,v6"
+			verifyBlocks: []string{"192.168.0.0/24,fd00:10:244::/64"},
+			newAllocation: &newAllocationCheck{
+				owner:    "layer2_102",
+				topology: types.Layer2Topology,
+				notIPv4:  "192.168.0.0/31",
+				notIPv6:  "fd00:10:244::/127",
+			},
+		},
+		{
+			name:     "marks mixed layer3 and layer2 subnets",
+			ipv4Mode: true,
+			ipv6Mode: true,
+			allocatedSubnets: map[string][]*net.IPNet{
+				"layer3_5": {mustParseCIDR("192.168.0.0/24"), mustParseCIDR("fd00:10:244::/64")},
+				"layer2_6": {mustParseCIDR("192.168.1.0/31"), mustParseCIDR("fd00:10:244:1::/127")},
+			},
+			verifyAllocations: []expectedSubnetAllocation{
+				{owner: "layer3_5", topology: types.Layer3Topology, ipv4: "192.168.0.0/24", ipv6: "fd00:10:244::/64"},
+				{owner: "layer2_6", topology: types.Layer2Topology, ipv4: "192.168.1.0/31", ipv6: "fd00:10:244:1::/127"},
+			},
+			// In dual-stack, getL2BlocksKey creates combined key "v4,v6"
+			verifyBlocks: []string{"192.168.1.0/24,fd00:10:244:1::/64"},
+		},
+		{
+			name:     "marks IPv4-only layer3 subnets",
+			ipv4Mode: true,
+			ipv6Mode: false,
+			allocatedSubnets: map[string][]*net.IPNet{
+				// Use subnets from 192.168.0.0/16 range which is the first range added
+				"layer3_10": {mustParseCIDR("192.168.0.0/24")},
+				"layer3_11": {mustParseCIDR("192.168.1.0/24")},
+			},
+			verifyAllocations: []expectedSubnetAllocation{
+				{owner: "layer3_10", topology: types.Layer3Topology, ipv4: "192.168.0.0/24"},
+				{owner: "layer3_11", topology: types.Layer3Topology, ipv4: "192.168.1.0/24"},
+			},
+		},
+		{
+			name:     "marks layer2 subnets from multiple blocks with ref count tracking",
+			ipv4Mode: true,
+			ipv6Mode: false,
+			allocatedSubnets: map[string][]*net.IPNet{
+				// All from same block: 192.168.0.0/24
+				// This tests that multiple owners share the same block
+				"layer2_1": {mustParseCIDR("192.168.0.0/31")},
+				"layer2_2": {mustParseCIDR("192.168.0.2/31")},
+				"layer2_3": {mustParseCIDR("192.168.0.4/31")},
+			},
+			verifyAllocations: []expectedSubnetAllocation{
+				{owner: "layer2_1", topology: types.Layer2Topology, ipv4: "192.168.0.0/31"},
+				{owner: "layer2_2", topology: types.Layer2Topology, ipv4: "192.168.0.2/31"},
+				{owner: "layer2_3", topology: types.Layer2Topology, ipv4: "192.168.0.4/31"},
+			},
+			verifyBlocks: []string{"192.168.0.0/24"},
+		},
+		{
+			name:             "handles empty allocatedSubnets",
+			ipv4Mode:         true,
+			ipv6Mode:         true,
+			allocatedSubnets: map[string][]*net.IPNet{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+
+			config.IPv4Mode = tt.ipv4Mode
+			config.IPv6Mode = tt.ipv6Mode
+
+			connectSubnets := []networkconnectv1.ConnectSubnet{}
+			if tt.ipv4Mode {
+				connectSubnets = append(connectSubnets, networkconnectv1.ConnectSubnet{
+					CIDR:          networkconnectv1.CIDR("192.168.0.0/16"),
+					NetworkPrefix: 24,
+				})
+			}
+			if tt.ipv6Mode {
+				connectSubnets = append(connectSubnets, networkconnectv1.ConnectSubnet{
+					CIDR:          networkconnectv1.CIDR("fd00:10:244::/48"),
+					NetworkPrefix: 64,
+				})
+			}
+			allocator, err := NewHybridConnectSubnetAllocator(connectSubnets, "test-cnc")
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+
+			// Mark allocated subnets
+			err = allocator.MarkAllocatedSubnets(tt.allocatedSubnets)
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+
+			// Verify re-allocations return exact same subnets
+			for _, verify := range tt.verifyAllocations {
+				var subnets []*net.IPNet
+				var err error
+				if verify.topology == types.Layer2Topology {
+					subnets, err = allocator.AllocateLayer2Subnet(verify.owner)
+				} else {
+					subnets, err = allocator.AllocateLayer3Subnet(verify.owner)
+				}
+				g.Expect(err).ToNot(gomega.HaveOccurred(),
+					"re-allocation for %s should succeed", verify.owner)
+
+				// Build map of allocated by type
+				allocatedByType := make(map[string]string)
+				for _, subnet := range subnets {
+					if subnet.IP.To4() != nil {
+						allocatedByType["ipv4"] = subnet.String()
+					} else {
+						allocatedByType["ipv6"] = subnet.String()
+					}
+				}
+
+				if verify.ipv4 != "" {
+					g.Expect(allocatedByType["ipv4"]).To(gomega.Equal(verify.ipv4),
+						"owner %s: IPv4 should match exactly", verify.owner)
+				}
+				if verify.ipv6 != "" {
+					g.Expect(allocatedByType["ipv6"]).To(gomega.Equal(verify.ipv6),
+						"owner %s: IPv6 should match exactly", verify.owner)
+				}
+			}
+
+			// Verify block tracking for layer2
+			if len(tt.verifyBlocks) > 0 {
+				hca := allocator.(*hybridConnectSubnetAllocator)
+
+				// Verify all expected blocks exist with proper owner names
+				for _, expectedKey := range tt.verifyBlocks {
+					blockOwner, exists := hca.layer2BlockOwners[expectedKey]
+					g.Expect(exists).To(gomega.BeTrue(),
+						"block %s should be tracked", expectedKey)
+					g.Expect(blockOwner).To(gomega.HavePrefix("l2-block-"),
+						"block %s should have a l2-block- prefix owner", expectedKey)
+				}
+			}
+
+			// Verify new allocation doesn't conflict
+			if tt.newAllocation != nil {
+				var subnets []*net.IPNet
+				var err error
+				if tt.newAllocation.topology == types.Layer2Topology {
+					subnets, err = allocator.AllocateLayer2Subnet(tt.newAllocation.owner)
+				} else {
+					subnets, err = allocator.AllocateLayer3Subnet(tt.newAllocation.owner)
+				}
+				g.Expect(err).ToNot(gomega.HaveOccurred())
+				g.Expect(subnets).ToNot(gomega.BeEmpty())
+
+				for _, subnet := range subnets {
+					if subnet.IP.To4() != nil && tt.newAllocation.notIPv4 != "" {
+						g.Expect(subnet.String()).ToNot(gomega.Equal(tt.newAllocation.notIPv4),
+							"new allocation should not get %s", tt.newAllocation.notIPv4)
+					}
+					if subnet.IP.To4() == nil && tt.newAllocation.notIPv6 != "" {
+						g.Expect(subnet.String()).ToNot(gomega.Equal(tt.newAllocation.notIPv6),
+							"new allocation should not get %s", tt.newAllocation.notIPv6)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestHybridConnectSubnetAllocator_AfterMarkAllocatedSubnets_ReleaseWorks tests that after
+// marking layer2 subnets, the release path works correctly and releases blocks
+// back to layer3 when all owners are released.
+func TestHybridConnectSubnetAllocator_AfterMarkAllocatedSubnets_ReleaseWorks(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	config.IPv4Mode = true
+	config.IPv6Mode = false
+
+	connectSubnets := []networkconnectv1.ConnectSubnet{
+		{
+			CIDR:          networkconnectv1.CIDR("192.168.0.0/16"),
+			NetworkPrefix: 24,
+		},
+	}
+	// Initialize with range
+	allocator, err := NewHybridConnectSubnetAllocator(connectSubnets, "test-cnc")
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	hca := allocator.(*hybridConnectSubnetAllocator)
+
+	// Verify layer3 allocator starts with 0 usage
+	v4used, _ := hca.layer3Allocator.Usage()
+	g.Expect(v4used).To(gomega.Equal(uint64(0)), "layer3 allocator should start with 0 usage")
+
+	// Mark two layer2 subnets from the same block
+	allocatedSubnets := map[string][]*net.IPNet{
+		"layer2_1": {mustParseCIDR("192.168.0.0/31")},
+		"layer2_2": {mustParseCIDR("192.168.0.2/31")},
+	}
+	err = allocator.MarkAllocatedSubnets(allocatedSubnets)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	// Verify layer3 allocator now has 1 block used (the block for layer2)
+	v4used, _ = hca.layer3Allocator.Usage()
+	g.Expect(v4used).To(gomega.Equal(uint64(1)), "layer3 allocator should have 1 block used for layer2 block")
+
+	// Verify initial state
+	blockCIDR := "192.168.0.0/24"
+	pbOwner := hca.layer2BlockOwners[blockCIDR]
+	g.Expect(pbOwner).ToNot(gomega.BeEmpty(), "block owner should be set")
+	g.Expect(pbOwner).To(gomega.HavePrefix("l2-block-"), "block owner should have l2-block- prefix")
+	// Store the initial block owner (could be layer2_1 or layer2_2 depending on map iteration order)
+	initialblockOwner := pbOwner
+
+	// Release first owner - block should still exist, layer3 usage unchanged
+	allocator.ReleaseLayer2Subnet("layer2_1")
+	g.Expect(hca.layer2BlockOwners[blockCIDR]).ToNot(gomega.BeEmpty(), "block should still exist after first release")
+	g.Expect(hca.layer2BlockOwners[blockCIDR]).To(gomega.Equal(initialblockOwner), "block owner should remain the same after first release")
+
+	// Verify layer3 allocator still has 1 block used (block not released yet)
+	v4used, _ = hca.layer3Allocator.Usage()
+	g.Expect(v4used).To(gomega.Equal(uint64(1)), "layer3 allocator should still have 1 block used after first release")
+
+	// Release second owner - block should be released back to layer3
+	allocator.ReleaseLayer2Subnet("layer2_2")
+	_, exists := hca.layer2BlockOwners[blockCIDR]
+	g.Expect(exists).To(gomega.BeFalse(), "block should be removed after all owners released")
+
+	// Verify layer3 allocator now has 0 blocks used (block released)
+	v4used, _ = hca.layer3Allocator.Usage()
+	g.Expect(v4used).To(gomega.Equal(uint64(0)), "layer3 allocator should have 0 blocks after all layer2 owners released")
+
+	// Now the block should be available for new layer3 allocation
+	// A new layer3 allocation should get 192.168.0.0/24 (the released block)
+	subnets, err := allocator.AllocateLayer3Subnet("layer3_new")
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(subnets).To(gomega.HaveLen(1))
+	g.Expect(subnets[0].String()).To(gomega.Equal("192.168.0.0/24"),
+		"released block should be available for layer3 allocation")
+
+	// Verify layer3 allocator now has 1 block used again
+	v4used, _ = hca.layer3Allocator.Usage()
+	g.Expect(v4used).To(gomega.Equal(uint64(1)), "layer3 allocator should have 1 block after new layer3 allocation")
 }
