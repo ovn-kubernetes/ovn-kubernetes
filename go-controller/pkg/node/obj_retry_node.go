@@ -176,10 +176,24 @@ func (h *nodeEventHandler) AddResource(obj interface{}, _ bool) error {
 		node := obj.(*corev1.Node)
 		// if it's our node that is changing, then nothing to do as we dont add our own IP to the nftables rules
 		if node.Name == h.nc.name {
-			if config.OvnKubeNode.Mode != types.NodeModeDPU && util.NodeDontSNATSubnetAnnotationExist(node) {
-				err := managementport.UpdateNoSNATSubnetsSets(node, util.ParseNodeDontSNATSubnetsList)
-				if err != nil {
-					return fmt.Errorf("error updating no snat subnets sets: %w", err)
+			if config.OvnKubeNode.Mode != types.NodeModeDPU {
+				if util.NodeDontSNATSubnetAnnotationExist(node) {
+					err := managementport.UpdateNoSNATSubnetsSets(node, util.ParseNodeDontSNATSubnetsList)
+					if err != nil {
+						return fmt.Errorf("error updating no snat subnets sets: %w", err)
+					}
+				}
+
+				// Sync nftables sets for no-overlay SNAT exemption in LGW mode.
+				// In SGW mode, OVN address sets are used instead.
+				if config.Default.Transport == config.TransportNoOverlay && config.NoOverlay.OutboundSNAT == config.NoOverlaySNATEnabled && config.Gateway.Mode == config.GatewayModeLocal {
+					hostAddrs, err := util.GetNodeHostAddrs(node)
+					if err != nil {
+						return fmt.Errorf("failed to get host addresses for node %s: %w", node.Name, err)
+					}
+					if err := syncNoOverlaySNATExemptNFTSets(hostAddrs); err != nil {
+						return fmt.Errorf("failed to sync no-overlay SNAT exemption nftables sets: %w", err)
+					}
 				}
 			}
 
@@ -226,14 +240,27 @@ func (h *nodeEventHandler) UpdateResource(oldObj, newObj interface{}, _ bool) er
 
 		// if it's our node that is changing, then nothing to do as we dont add our own IP to the nftables rules
 		if newNode.Name == h.nc.name {
+			if config.OvnKubeNode.Mode != types.NodeModeDPU && !reflect.DeepEqual(oldNode.Annotations, newNode.Annotations) {
+				// if node's dont SNAT subnet annotation changed sync nftables
+				if util.NodeDontSNATSubnetAnnotationChanged(oldNode, newNode) {
+					err := managementport.UpdateNoSNATSubnetsSets(newNode, util.ParseNodeDontSNATSubnetsList)
+					if err != nil {
+						return fmt.Errorf("error updating no snat subnets sets: %w", err)
+					}
+				}
 
-			// if node's dont SNAT subnet annotation changed sync nftables
-			if config.OvnKubeNode.Mode != types.NodeModeDPU &&
-				!reflect.DeepEqual(oldNode.Annotations, newNode.Annotations) &&
-				util.NodeDontSNATSubnetAnnotationChanged(oldNode, newNode) {
-				err := managementport.UpdateNoSNATSubnetsSets(newNode, util.ParseNodeDontSNATSubnetsList)
-				if err != nil {
-					return fmt.Errorf("error updating no snat subnets sets: %w", err)
+				// Sync nftables sets for no-overlay SNAT exemption in LGW mode if host addresses annotation changed.
+				// In SGW mode, OVN address sets are used instead.
+				if config.Default.Transport == config.TransportNoOverlay && config.NoOverlay.OutboundSNAT == config.NoOverlaySNATEnabled && config.Gateway.Mode == config.GatewayModeLocal {
+					if util.NodeHostCIDRsAnnotationChanged(oldNode, newNode) {
+						hostAddrs, err := util.GetNodeHostAddrs(newNode)
+						if err != nil {
+							return fmt.Errorf("failed to get host addresses for node %s: %w", newNode.Name, err)
+						}
+						if err := syncNoOverlaySNATExemptNFTSets(hostAddrs); err != nil {
+							return fmt.Errorf("failed to sync no-overlay SNAT exemption nftables sets: %w", err)
+						}
+					}
 				}
 			}
 			return nil
