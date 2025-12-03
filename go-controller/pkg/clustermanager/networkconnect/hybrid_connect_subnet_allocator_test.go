@@ -8,6 +8,7 @@ import (
 	"github.com/onsi/gomega"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 )
 
 func mustParseCIDR(cidr string) *net.IPNet {
@@ -1195,4 +1196,352 @@ func TestHybridConnectSubnetAllocator_getParentBlockCIDR_AllAddressesInBlockMapT
 		g.Expect(parentCIDR).To(gomega.Equal(expectedParent2),
 			"Address 10.50.100.%d/31 should map to %s", i, expectedParent2)
 	}
+}
+
+// newAllocationCheck verifies new allocations don't conflict with marked subnets
+type newAllocationCheck struct {
+	owner    string
+	topology string // types.Layer3Topology or types.Layer2Topology
+	notIPv4  string // expected to NOT be this IPv4 CIDR
+	notIPv6  string // expected to NOT be this IPv6 CIDR
+}
+
+func TestHybridConnectSubnetAllocator_MarkAllocatedSubnets(t *testing.T) {
+	tests := []struct {
+		name string
+		// ipv4Mode and ipv6Mode configure the IP mode
+		ipv4Mode bool
+		ipv6Mode bool
+		// allocatedSubnets is the map of owner -> subnets to mark as allocated
+		allocatedSubnets map[string][]*net.IPNet
+		// verifyAllocations checks that re-allocating returns exact same subnets
+		verifyAllocations []expectedSubnetAllocation
+		// verifyPoolBlocks checks layer2 pool block state
+		verifyPoolBlocks []string // expected pool block CIDRs
+		// verifyLayer2OwnerTracking checks layer2 owner -> pool block tracking
+		verifyLayer2OwnerTracking map[string]string // owner -> expected pool block CIDR
+		// newAllocation verifies new allocations don't conflict
+		newAllocation *newAllocationCheck
+	}{
+		{
+			name:     "marks layer3 subnets - re-allocation returns same subnets",
+			ipv4Mode: true,
+			ipv6Mode: true,
+			allocatedSubnets: map[string][]*net.IPNet{
+				"layer3_1": {mustParseCIDR("192.168.0.0/24"), mustParseCIDR("fd00:10:244::/64")},
+				"layer3_2": {mustParseCIDR("192.168.1.0/24"), mustParseCIDR("fd00:10:244:1::/64")},
+			},
+			verifyAllocations: []expectedSubnetAllocation{
+				{owner: "layer3_1", topology: types.Layer3Topology, ipv4: "192.168.0.0/24", ipv6: "fd00:10:244::/64"},
+				{owner: "layer3_2", topology: types.Layer3Topology, ipv4: "192.168.1.0/24", ipv6: "fd00:10:244:1::/64"},
+			},
+			newAllocation: &newAllocationCheck{
+				owner:    "layer3_3",
+				topology: types.Layer3Topology,
+				notIPv4:  "192.168.0.0/24",
+				notIPv6:  "fd00:10:244::/64",
+			},
+		},
+		{
+			name:     "marks layer2 subnets - re-allocation returns same subnets and pool blocks are tracked",
+			ipv4Mode: true,
+			ipv6Mode: true,
+			allocatedSubnets: map[string][]*net.IPNet{
+				"layer2_100": {mustParseCIDR("192.168.0.0/31"), mustParseCIDR("fd00:10:244::/127")},
+				"layer2_101": {mustParseCIDR("192.168.0.2/31"), mustParseCIDR("fd00:10:244::2/127")},
+			},
+			verifyAllocations: []expectedSubnetAllocation{
+				{owner: "layer2_100", topology: types.Layer2Topology, ipv4: "192.168.0.0/31", ipv6: "fd00:10:244::/127"},
+				{owner: "layer2_101", topology: types.Layer2Topology, ipv4: "192.168.0.2/31", ipv6: "fd00:10:244::2/127"},
+			},
+			verifyPoolBlocks:          []string{"192.168.0.0/24", "fd00:10:244::/64"},
+			verifyLayer2OwnerTracking: map[string]string{"layer2_100": "192.168.0.0/24", "layer2_101": "192.168.0.0/24"},
+			newAllocation: &newAllocationCheck{
+				owner:    "layer2_102",
+				topology: types.Layer2Topology,
+				notIPv4:  "192.168.0.0/31",
+				notIPv6:  "fd00:10:244::/127",
+			},
+		},
+		{
+			name:     "marks mixed layer3 and layer2 subnets",
+			ipv4Mode: true,
+			ipv6Mode: true,
+			allocatedSubnets: map[string][]*net.IPNet{
+				"layer3_5": {mustParseCIDR("192.168.0.0/24"), mustParseCIDR("fd00:10:244::/64")},
+				"layer2_6": {mustParseCIDR("192.168.1.0/31"), mustParseCIDR("fd00:10:244:1::/127")},
+			},
+			verifyAllocations: []expectedSubnetAllocation{
+				{owner: "layer3_5", topology: types.Layer3Topology, ipv4: "192.168.0.0/24", ipv6: "fd00:10:244::/64"},
+				{owner: "layer2_6", topology: types.Layer2Topology, ipv4: "192.168.1.0/31", ipv6: "fd00:10:244:1::/127"},
+			},
+			verifyPoolBlocks:          []string{"192.168.1.0/24", "fd00:10:244:1::/64"},
+			verifyLayer2OwnerTracking: map[string]string{"layer2_6": "192.168.1.0/24"},
+		},
+		{
+			name:     "marks IPv4-only layer3 subnets",
+			ipv4Mode: true,
+			ipv6Mode: false,
+			allocatedSubnets: map[string][]*net.IPNet{
+				// Use subnets from 192.168.0.0/16 range which is the first range added
+				"layer3_10": {mustParseCIDR("192.168.0.0/24")},
+				"layer3_11": {mustParseCIDR("192.168.1.0/24")},
+			},
+			verifyAllocations: []expectedSubnetAllocation{
+				{owner: "layer3_10", topology: types.Layer3Topology, ipv4: "192.168.0.0/24"},
+				{owner: "layer3_11", topology: types.Layer3Topology, ipv4: "192.168.1.0/24"},
+			},
+		},
+		{
+			name:     "marks layer2 subnets from multiple pool blocks with ref count tracking",
+			ipv4Mode: true,
+			ipv6Mode: false,
+			allocatedSubnets: map[string][]*net.IPNet{
+				// All from same pool block: 192.168.0.0/24
+				// This tests that multiple owners share the same pool block
+				"layer2_1": {mustParseCIDR("192.168.0.0/31")},
+				"layer2_2": {mustParseCIDR("192.168.0.2/31")},
+				"layer2_3": {mustParseCIDR("192.168.0.4/31")},
+			},
+			verifyAllocations: []expectedSubnetAllocation{
+				{owner: "layer2_1", topology: types.Layer2Topology, ipv4: "192.168.0.0/31"},
+				{owner: "layer2_2", topology: types.Layer2Topology, ipv4: "192.168.0.2/31"},
+				{owner: "layer2_3", topology: types.Layer2Topology, ipv4: "192.168.0.4/31"},
+			},
+			verifyPoolBlocks: []string{"192.168.0.0/24"},
+			verifyLayer2OwnerTracking: map[string]string{
+				"layer2_1": "192.168.0.0/24",
+				"layer2_2": "192.168.0.0/24",
+				"layer2_3": "192.168.0.0/24",
+			},
+		},
+		{
+			name:             "handles empty allocatedSubnets",
+			ipv4Mode:         true,
+			ipv6Mode:         true,
+			allocatedSubnets: map[string][]*net.IPNet{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+
+			config.IPv4Mode = tt.ipv4Mode
+			config.IPv6Mode = tt.ipv6Mode
+
+			allocator := NewHybridConnectSubnetAllocator()
+
+			// Initialize the allocator with ranges
+			if tt.ipv4Mode {
+				err := allocator.AddNetworkRange(mustParseCIDR("192.168.0.0/16"), 24)
+				g.Expect(err).ToNot(gomega.HaveOccurred())
+				// Also add 10.100.0.0/16 for IPv4-only tests
+				err = allocator.AddNetworkRange(mustParseCIDR("10.100.0.0/16"), 24)
+				g.Expect(err).ToNot(gomega.HaveOccurred())
+			}
+			if tt.ipv6Mode {
+				err := allocator.AddNetworkRange(mustParseCIDR("fd00:10:244::/48"), 64)
+				g.Expect(err).ToNot(gomega.HaveOccurred())
+			}
+
+			// Mark allocated subnets
+			err := allocator.MarkAllocatedSubnets(tt.allocatedSubnets)
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+
+			// Verify re-allocations return exact same subnets
+			for _, verify := range tt.verifyAllocations {
+				var subnets []*net.IPNet
+				var err error
+				if verify.topology == types.Layer2Topology {
+					subnets, err = allocator.AllocateLayer2Subnet(verify.owner)
+				} else {
+					subnets, err = allocator.AllocateLayer3Subnet(verify.owner)
+				}
+				g.Expect(err).ToNot(gomega.HaveOccurred(),
+					"re-allocation for %s should succeed", verify.owner)
+
+				// Build map of allocated by type
+				allocatedByType := make(map[string]string)
+				for _, subnet := range subnets {
+					if subnet.IP.To4() != nil {
+						allocatedByType["ipv4"] = subnet.String()
+					} else {
+						allocatedByType["ipv6"] = subnet.String()
+					}
+				}
+
+				if verify.ipv4 != "" {
+					g.Expect(allocatedByType["ipv4"]).To(gomega.Equal(verify.ipv4),
+						"owner %s: IPv4 should match exactly", verify.owner)
+				}
+				if verify.ipv6 != "" {
+					g.Expect(allocatedByType["ipv6"]).To(gomega.Equal(verify.ipv6),
+						"owner %s: IPv6 should match exactly", verify.owner)
+				}
+			}
+
+			// Verify pool block tracking for layer2
+			if len(tt.verifyPoolBlocks) > 0 {
+				hca := allocator.(*hybridConnectSubnetAllocator)
+
+				// Verify all expected pool blocks exist
+				for _, expectedCIDR := range tt.verifyPoolBlocks {
+					pbDetails, exists := hca.poolBlocks[expectedCIDR]
+					g.Expect(exists).To(gomega.BeTrue(),
+						"pool block %s should be tracked", expectedCIDR)
+					g.Expect(pbDetails.ownerName).To(gomega.HavePrefix("layer2-pool-"),
+						"pool block %s should have a layer2-pool- ownerName", expectedCIDR)
+				}
+
+				// In dual-stack, IPv4 and IPv6 pool blocks should share the SAME poolBlockDetails instance
+				// (matching the behavior of expandLayer2Allocator during normal allocation)
+				if tt.ipv4Mode && tt.ipv6Mode && len(tt.verifyPoolBlocks) == 2 {
+					pb1 := hca.poolBlocks[tt.verifyPoolBlocks[0]]
+					pb2 := hca.poolBlocks[tt.verifyPoolBlocks[1]]
+					g.Expect(pb1).To(gomega.BeIdenticalTo(pb2),
+						"dual-stack pool blocks %s and %s should share the same poolBlockDetails instance",
+						tt.verifyPoolBlocks[0], tt.verifyPoolBlocks[1])
+				}
+
+				// In single-stack, verify exact ownerName
+				if !tt.ipv4Mode || !tt.ipv6Mode {
+					for _, expectedCIDR := range tt.verifyPoolBlocks {
+						pbDetails := hca.poolBlocks[expectedCIDR]
+						expectedOwnerName := layer2PoolOwnerFromCIDR(expectedCIDR)
+						g.Expect(pbDetails.ownerName).To(gomega.Equal(expectedOwnerName),
+							"pool block %s should have exact ownerName %s", expectedCIDR, expectedOwnerName)
+					}
+				}
+			}
+
+			// Verify layer2 owner -> pool block tracking and refCount
+			if len(tt.verifyLayer2OwnerTracking) > 0 {
+				hca := allocator.(*hybridConnectSubnetAllocator)
+
+				// Count expected refCount per pool block
+				expectedRefCount := make(map[string]int)
+				for _, poolCIDR := range tt.verifyLayer2OwnerTracking {
+					expectedRefCount[poolCIDR]++
+				}
+
+				// Verify each owner's tracking
+				for owner, expectedPoolCIDR := range tt.verifyLayer2OwnerTracking {
+					pbDetails, exists := hca.layer2OwnerToPoolBlockDetails[owner]
+					g.Expect(exists).To(gomega.BeTrue(),
+						"layer2 owner %s should be tracked", owner)
+
+					// Verify pbDetails is the same instance as poolBlocks[expectedPoolCIDR]
+					expectedPB := hca.poolBlocks[expectedPoolCIDR]
+					g.Expect(pbDetails).To(gomega.BeIdenticalTo(expectedPB),
+						"owner %s should point to same pool block instance as %s", owner, expectedPoolCIDR)
+				}
+
+				// Verify refCount for each pool block
+				for poolCIDR, expectedCount := range expectedRefCount {
+					pbDetails := hca.poolBlocks[poolCIDR]
+					g.Expect(pbDetails.refCount).To(gomega.Equal(expectedCount),
+						"pool block %s should have refCount %d", poolCIDR, expectedCount)
+				}
+			}
+
+			// Verify new allocation doesn't conflict
+			if tt.newAllocation != nil {
+				var subnets []*net.IPNet
+				var err error
+				if tt.newAllocation.topology == types.Layer2Topology {
+					subnets, err = allocator.AllocateLayer2Subnet(tt.newAllocation.owner)
+				} else {
+					subnets, err = allocator.AllocateLayer3Subnet(tt.newAllocation.owner)
+				}
+				g.Expect(err).ToNot(gomega.HaveOccurred())
+				g.Expect(subnets).ToNot(gomega.BeEmpty())
+
+				for _, subnet := range subnets {
+					if subnet.IP.To4() != nil && tt.newAllocation.notIPv4 != "" {
+						g.Expect(subnet.String()).ToNot(gomega.Equal(tt.newAllocation.notIPv4),
+							"new allocation should not get %s", tt.newAllocation.notIPv4)
+					}
+					if subnet.IP.To4() == nil && tt.newAllocation.notIPv6 != "" {
+						g.Expect(subnet.String()).ToNot(gomega.Equal(tt.newAllocation.notIPv6),
+							"new allocation should not get %s", tt.newAllocation.notIPv6)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestHybridConnectSubnetAllocator_AfterMarkAllocatedSubnets_ReleaseWorks tests that after
+// marking layer2 subnets, the release path works correctly and releases pool blocks
+// back to layer3 when all owners are released.
+func TestHybridConnectSubnetAllocator_AfterMarkAllocatedSubnets_ReleaseWorks(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	config.IPv4Mode = true
+	config.IPv6Mode = false
+
+	allocator := NewHybridConnectSubnetAllocator()
+	hca := allocator.(*hybridConnectSubnetAllocator)
+
+	// Initialize with range
+	err := allocator.AddNetworkRange(mustParseCIDR("192.168.0.0/16"), 24)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	// Verify layer3 allocator starts with 0 usage
+	v4used, _ := hca.layer3Allocator.Usage()
+	g.Expect(v4used).To(gomega.Equal(uint64(0)), "layer3 allocator should start with 0 usage")
+
+	// Mark two layer2 subnets from the same pool block
+	allocatedSubnets := map[string][]*net.IPNet{
+		"layer2_1": {mustParseCIDR("192.168.0.0/31")},
+		"layer2_2": {mustParseCIDR("192.168.0.2/31")},
+	}
+	err = allocator.MarkAllocatedSubnets(allocatedSubnets)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	// Verify layer3 allocator now has 1 block used (the pool block for layer2)
+	v4used, _ = hca.layer3Allocator.Usage()
+	g.Expect(v4used).To(gomega.Equal(uint64(1)), "layer3 allocator should have 1 block used for layer2 pool")
+
+	// Verify initial state
+	poolCIDR := "192.168.0.0/24"
+	pbDetails := hca.poolBlocks[poolCIDR]
+	g.Expect(pbDetails).ToNot(gomega.BeNil())
+	g.Expect(pbDetails.refCount).To(gomega.Equal(2))
+	g.Expect(pbDetails.ownerName).To(gomega.Equal(layer2PoolOwnerFromCIDR(poolCIDR)))
+
+	// Release first owner - pool block should still exist, layer3 usage unchanged
+	allocator.ReleaseLayer2Subnet("layer2_1")
+	g.Expect(hca.poolBlocks[poolCIDR]).ToNot(gomega.BeNil(), "pool block should still exist after first release")
+	g.Expect(hca.poolBlocks[poolCIDR].refCount).To(gomega.Equal(1))
+	_, exists := hca.layer2OwnerToPoolBlockDetails["layer2_1"]
+	g.Expect(exists).To(gomega.BeFalse(), "layer2_1 should be removed from tracking")
+
+	// Verify layer3 allocator still has 1 block used (pool block not released yet)
+	v4used, _ = hca.layer3Allocator.Usage()
+	g.Expect(v4used).To(gomega.Equal(uint64(1)), "layer3 allocator should still have 1 block used after first release")
+
+	// Release second owner - pool block should be released back to layer3
+	allocator.ReleaseLayer2Subnet("layer2_2")
+	_, exists = hca.poolBlocks[poolCIDR]
+	g.Expect(exists).To(gomega.BeFalse(), "pool block should be removed after all owners released")
+	_, exists = hca.layer2OwnerToPoolBlockDetails["layer2_2"]
+	g.Expect(exists).To(gomega.BeFalse(), "layer2_2 should be removed from tracking")
+
+	// Verify layer3 allocator now has 0 blocks used (pool block released)
+	v4used, _ = hca.layer3Allocator.Usage()
+	g.Expect(v4used).To(gomega.Equal(uint64(0)), "layer3 allocator should have 0 blocks after all layer2 owners released")
+
+	// Now the pool block should be available for new layer3 allocation
+	// A new layer3 allocation should get 192.168.0.0/24 (the released pool block)
+	subnets, err := allocator.AllocateLayer3Subnet("layer3_new")
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+	g.Expect(subnets).To(gomega.HaveLen(1))
+	g.Expect(subnets[0].String()).To(gomega.Equal("192.168.0.0/24"),
+		"released pool block should be available for layer3 allocation")
+
+	// Verify layer3 allocator now has 1 block used again
+	v4used, _ = hca.layer3Allocator.Usage()
+	g.Expect(v4used).To(gomega.Equal(uint64(1)), "layer3 allocator should have 1 block after new layer3 allocation")
 }

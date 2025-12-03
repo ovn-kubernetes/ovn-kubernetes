@@ -10,12 +10,25 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/node"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 )
 
 var (
 	p2pIPV4SubnetMask = 31
 	p2pIPV6SubnetMask = 127
 )
+
+// layer2PoolOwnerFromNetwork returns the pool owner name for new layer2 pool allocations.
+// Used during runtime when a new pool block is allocated for the first layer2 network.
+func layer2PoolOwnerFromNetwork(networkName string) string {
+	return fmt.Sprintf("layer2-pool-%s", networkName)
+}
+
+// layer2PoolOwnerFromCIDR returns the pool owner name for restored layer2 pool blocks.
+// Used during startup when restoring pool blocks from persisted subnet annotations.
+func layer2PoolOwnerFromCIDR(cidr string) string {
+	return fmt.Sprintf("layer2-pool-%s", cidr)
+}
 
 // poolBlockDetails represents the details of the layer3 block allocated for the layer2 pool
 // this ends up representing a single contiguous range within the layer2 allocator
@@ -48,6 +61,11 @@ type HybridConnectSubnetAllocator interface {
 
 	// ReleaseLayer2Subnet releases all subnets for the layer2 network owner
 	ReleaseLayer2Subnet(owner string)
+
+	// MarkAllocatedSubnets restores previously allocated subnets from annotation at startup.
+	// This should be called after AddNetworkRange but before any new allocations.
+	// It marks subnets as already allocated so they won't be handed out again.
+	MarkAllocatedSubnets(allocatedSubnets map[string][]*net.IPNet) error
 }
 
 // hybridConnectSubnetAllocator implements HybridConnectSubnetAllocator
@@ -144,7 +162,9 @@ func (hca *hybridConnectSubnetAllocator) AllocateLayer2Subnet(owner string) ([]*
 	if err == nil && len(subnets) > 0 {
 		// Allocation succeeded from existing pool - find which block it came from
 		pbDetails := hca.findPoolBlockForSubnets(subnets)
-		if pbDetails != nil {
+		// Only increment refCount if this owner isn't already tracked
+		// (could happen if subnets were marked via MarkAllocatedSubnets at startup)
+		if pbDetails != nil && hca.layer2OwnerToPoolBlockDetails[owner] == nil {
 			pbDetails.refCount++
 			hca.layer2OwnerToPoolBlockDetails[owner] = pbDetails
 		}
@@ -214,7 +234,7 @@ func (hca *hybridConnectSubnetAllocator) getParentBlockCIDR(subnet *net.IPNet) s
 // If only one family is available, the pool will be single-stack
 // Returns the new pool block for tracking purposes
 func (hca *hybridConnectSubnetAllocator) expandLayer2Allocator(firstNetworkName string) (*poolBlockDetails, error) {
-	poolOwner := fmt.Sprintf("layer2-pool-%s", firstNetworkName)
+	poolOwner := layer2PoolOwnerFromNetwork(firstNetworkName)
 
 	allocatedBlocks, err := hca.layer3Allocator.AllocateNetworks(poolOwner)
 	if err != nil {
@@ -284,4 +304,89 @@ func (hca *hybridConnectSubnetAllocator) removePoolBlock(pb *poolBlockDetails) {
 			delete(hca.poolBlocks, cidr)
 		}
 	}
+}
+
+// MarkAllocatedSubnets restores previously allocated subnets from annotation at startup.
+// This should be called after AddNetworkRange but before any new allocations.
+// It marks subnets as already allocated so they won't be handed out again.
+func (hca *hybridConnectSubnetAllocator) MarkAllocatedSubnets(allocatedSubnets map[string][]*net.IPNet) error {
+	hca.mu.Lock()
+	defer hca.mu.Unlock()
+
+	// Track which pool blocks we've seen (to avoid duplicate setup for dual-stack)
+	seenPoolBlocks := make(map[string]*poolBlockDetails)
+
+	for owner, subnets := range allocatedSubnets {
+		topologyType, ok := parseNetworkOwner(owner)
+		if !ok {
+			continue
+		}
+
+		switch topologyType {
+		case ovntypes.Layer3Topology:
+			// Simple: just mark in layer3 allocator
+			if err := hca.layer3Allocator.MarkAllocatedNetworks(owner, subnets...); err != nil {
+				return fmt.Errorf("failed to mark layer3 subnets for %s: %v", owner, err)
+			}
+
+		case ovntypes.Layer2Topology:
+			// In dual-stack, an owner has both IPv4 and IPv6 subnets from different parent blocks.
+			// During normal allocation (expandLayer2Allocator), these blocks share a SINGLE poolBlockDetails.
+			// For restoration, we need to do the same: create one poolBlockDetails for the first subnet's
+			// parent, then reuse it for subsequent subnets from the same owner.
+			var ownerPoolBlockDetails *poolBlockDetails
+
+			for _, subnet := range subnets {
+				parentCIDR := hca.getParentBlockCIDR(subnet)
+
+				// Set up pool block if not seen yet
+				pbDetails, exists := seenPoolBlocks[parentCIDR]
+				if !exists {
+					// Parse parent block
+					_, parentNet, err := net.ParseCIDR(parentCIDR)
+					if err != nil {
+						return fmt.Errorf("failed to parse parent CIDR %s: %v", parentCIDR, err)
+					}
+
+					// Mark parent block in layer3 allocator (as a pool)
+					poolOwner := layer2PoolOwnerFromCIDR(parentCIDR)
+					if err := hca.layer3Allocator.MarkAllocatedNetworks(poolOwner, parentNet); err != nil {
+						return fmt.Errorf("failed to mark pool block %s: %v", parentCIDR, err)
+					}
+
+					// Add range to layer2 allocator for /31 or /127 allocations
+					prefixLen := p2pIPV4SubnetMask
+					if utilnet.IsIPv6CIDR(parentNet) {
+						prefixLen = p2pIPV6SubnetMask
+					}
+					if err := hca.layer2Allocator.AddNetworkRange(parentNet, prefixLen); err != nil {
+						return fmt.Errorf("failed to add layer2 range %s: %v", parentCIDR, err)
+					}
+
+					// For dual-stack: reuse the same poolBlockDetails for both IPv4 and IPv6 parent blocks
+					// This matches the behavior of expandLayer2Allocator during normal allocation
+					if ownerPoolBlockDetails == nil {
+						pbDetails = &poolBlockDetails{ownerName: poolOwner, refCount: 0}
+						ownerPoolBlockDetails = pbDetails
+					} else {
+						pbDetails = ownerPoolBlockDetails
+					}
+					hca.poolBlocks[parentCIDR] = pbDetails
+					seenPoolBlocks[parentCIDR] = pbDetails
+				}
+
+				// Mark the /31 or /127 subnet in layer2 allocator
+				if err := hca.layer2Allocator.MarkAllocatedNetworks(owner, subnet); err != nil {
+					return fmt.Errorf("failed to mark layer2 subnet %s for %s: %v", subnet.String(), owner, err)
+				}
+
+				// Update tracking (only increment once per owner, not per subnet in dual-stack)
+				if hca.layer2OwnerToPoolBlockDetails[owner] == nil {
+					pbDetails.refCount++
+					hca.layer2OwnerToPoolBlockDetails[owner] = pbDetails
+				}
+			}
+		}
+	}
+	return nil
 }
