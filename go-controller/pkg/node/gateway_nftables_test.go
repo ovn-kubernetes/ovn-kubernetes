@@ -4,6 +4,8 @@
 package node
 
 import (
+	"testing"
+
 	"sigs.k8s.io/knftables"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
@@ -275,3 +277,8 @@ var _ = Describe("Gateway NFTables", func() {
 		})
 	})
 })
+
+func TestGatewayNFTables(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "Gateway NFTables Suite")
+}
