@@ -9,7 +9,7 @@
 # are built locally and included in the image (instead of the rpm)
 #
 
-ARG OVN_FROM=koji
+ARG OVN_FROM=source
 
 #############################################
 # Stage to get OVN and OVS RPMs from source #
@@ -25,8 +25,8 @@ RUN INSTALL_PKGS="git rpm-build dnf-plugins-core" && \
     dnf install --best --refresh -y --setopt=tsflags=nodocs $INSTALL_PKGS
 
 # Clone OVN Source Code.
-ARG OVN_REPO=https://github.com/ovn-org/ovn.git
-ARG OVN_GITREF=main
+ARG OVN_REPO=https://github.com/dceara/ovn.git
+ARG OVN_GITREF=branch-25.09-northd-idl-crashes
 WORKDIR /root
 RUN mkdir ovn && pushd ovn && \
     git init && \
@@ -36,9 +36,9 @@ RUN mkdir ovn && pushd ovn && \
     popd
 
 # Clone OVS Source Code.
-ARG OVS_REPO=https://github.com/openvswitch/ovs.git
+ARG OVS_REPO=https://github.com/dceara/ovs.git
 # OVS_GITREF can be set to a specific commit or branch, otherwise the version pinned by OVN will be used.
-ARG OVS_GITREF=""
+ARG OVS_GITREF="FDP-2784-controller-idl-fix"
 WORKDIR /root
 RUN OVS_OVN_GITREF=$(cd ovn && git submodule status ovs|cut -c 2-|cut -d ' ' -f 1) && \
     mkdir ovs && pushd ovs && \
