@@ -143,3 +143,5 @@ echo "Copying routeAdvertisements CRD"
 cp _output/crds/k8s.ovn.org_routeadvertisements.yaml ../dist/templates/k8s.ovn.org_routeadvertisements.yaml.j2
 echo "Copying clusterNetworkConnect CRD"
 cp _output/crds/k8s.ovn.org_clusternetworkconnects.yaml ../dist/templates/k8s.ovn.org_clusternetworkconnects.yaml.j2
+echo "Copying vtep CRD"
+cp _output/crds/k8s.ovn.org_vteps.yaml ../dist/templates/k8s.ovn.org_vteps.yaml.j2
