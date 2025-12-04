@@ -253,6 +253,7 @@ type RoutingOption string
 const (
 	TransportOptionNoOverlay TransportOption = "NoOverlay"
 	TransportOptionGeneve    TransportOption = "Geneve"
+	TransportOptionEVPN      TransportOption = "EVPN"
 
 	SNATEnabled  SNATOption = "Enabled"
 	SNATDisabled SNATOption = "Disabled"
