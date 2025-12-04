@@ -411,9 +411,6 @@ user defined networks.
 
 ## Implementation Details
 
-> [!NOTE]
-> This section is work in progress.
-
 ### Overview
 
 ```mermaid
@@ -603,14 +600,78 @@ advertised.
 
 Usually N/S egress traffic from a pod is SNATed to the node IP. This does not
 happen when the network is advertised. In that case the traffic egresses the
-cluster with the pod IP as source. For shared gateway mode this is handled with
-a conditional SNAT on the OVN configuration for the network which ensures that
-E/W egress traffic continues to be SNATed. Egress IP SNAT is unaffected.
+cluster with the pod IP as source. In shared gateway mode this is handled with
+a conditional SNAT on the gateway routers OVN configuration for the network
+which ensures that E/W egress traffic continues to be SNATed. 
+
+```shell
+❯ kubectl exec -n ovn-kubernetes ovnkube-node-vkmkt -c ovnkube-controller -- ovn-nbctl list nat
+...
+_uuid               : 7855a3a5-412c-4083-963c-b11aa80b7784
+allowed_ext_ips     : []
+exempted_ext_ips    : []
+external_ids        : {}
+external_ip         : "172.18.0.2"
+external_mac        : []
+external_port_range : "32768-60999"
+gateway_port        : []
+logical_ip          : "10.244.1.3"
+logical_port        : []
+match               : "ip4.dst == $a712973235162149816" # added condition matching E/W traffic when advertised
+options             : {stateless="false"}
+priority            : 0
+type                : snat
+
+...
+
+_uuid               : 7be1b70b-88c7-4482-85ff-487663be9eda
+addresses           : ["172.18.0.2", "172.18.0.3", "172.18.0.4", "172.19.0.2", "172.19.0.3", "172.19.0.4"]
+external_ids        : {ip-family=v4, "k8s.ovn.org/id"="default-network-controller:EgressIP:node-ips:v4:default", "k8s.ovn.org/name"=node-ips, "k8s.ovn.org/owner-controller"=default-network-controller, "k8s.ovn.org/owner-type"=EgressIP, network=default}
+name                : a712973235162149816
+...
+```
+
+For CUDNs in local gateway mode, this is handled on a similar way with a
+conditional SNAT to the network's masquerade IP which would then finally be
+SNATed to the node IP on the host.
+
+```shell
+❯ kubectl exec -n ovn-kubernetes ovnkube-node-vkmkt -c ovnkube-controller -- ovn-nbctl list nat
+...
+_uuid               : 61b26442-fa08-4aa8-b326-97afb71edab1
+allowed_ext_ips     : []
+exempted_ext_ips    : []
+external_ids        : {"k8s.ovn.org/network"=cluster_udn_udn-l2, "k8s.ovn.org/topology"=layer2}
+external_ip         : "169.254.0.11"
+external_mac        : []
+external_port_range : "32768-60999"
+gateway_port        : []
+logical_ip          : "22.100.0.0/16"
+logical_port        : []
+match               : "ip4.dst == $a712973235162149816"
+options             : {stateless="false"}
+priority            : 0
+type                : snat
+...
+```
+
+Egress IP SNAT is unaffected.
 
 #### Route import
 
 When BGP routes get installed in a node's routing table, OVN-Kubernetes
-synchronizes them to the gateway router of the corresponding OVN network.
+synchronizes them to the gateway router of the corresponding OVN network making
+them available for egress in shared gateway mode.
+
+```shell
+❯ kubectl exec -n ovn-kubernetes ovnkube-node-vkmkt -c ovnkube-controller -- ovn-nbctl lr-route-list 076a4cba-c680-4fa3-ae2f-1ce7e0a1e153
+IPv4 Routes
+Route Table <main>:
+           169.254.0.0/17               169.254.0.4 dst-ip rtoe-GR_ovn-worker2
+            10.244.0.0/16                100.64.0.1 dst-ip
+            172.26.0.0/16                172.18.0.5 dst-ip rtoe-GR_ovn-worker2  # learned route synced from host VRF
+                0.0.0.0/0                172.18.0.1 dst-ip rtoe-GR_ovn-worker2
+```
 
 ### Host network controllers: impacts on host networking stack
 
@@ -621,19 +682,81 @@ advertised pod networks. This traffic is forwarded to the corresponding patch
 port of the network and is then handled by OVN with no extra changes required in
 shared gateway mode.
 
+```shell
+❯ kubectl exec -n ovn-kubernetes ovnkube-node-q76br -c ovnkube-controller -- ovs-ofctl dump-flows breth0
+...
+ # flows forwarding pod networks to hthe corresponding patch ports
+ cookie=0xdeff105, duration=445.802s, table=0, n_packets=0, n_bytes=0, idle_age=445, priority=300,ip,in_port=1,nw_dst=10.244.0.0/24 actions=output:2
+ cookie=0xdeff105, duration=300.323s, table=0, n_packets=0, n_bytes=0, idle_age=300, priority=300,ip,in_port=1,nw_dst=22.100.0.0/16 actions=output:3
+```
+
 In local gateway mode, the traffic is forwarded to the host networking stack
-where it is handled with no further configuration changes required.
+from where it is routed to the network management port.
+
+```shell
+❯ kubectl exec -n ovn-kubernetes ovnkube-node-vkmkt -c ovnkube-controller -- ovs-ofctl dump-flows breth0
+ ...
+ # flows forwarding pod networks to host
+ cookie=0xdeff105, duration=57.620s, table=0, n_packets=0, n_bytes=0, idle_age=57, priority=300,ip,in_port=1,nw_dst=22.100.0.0/16 actions=LOCAL
+ cookie=0xdeff105, duration=9589.541s, table=0, n_packets=0, n_bytes=0, idle_age=9706, priority=300,ip,in_port=1,nw_dst=10.244.1.0/24 actions=LOCAL
+ ...
+
+❯ kubectl exec -n ovn-kubernetes ovnkube-node-vkmkt -c ovnkube-controller -- ip route
+...
+# routing to the default pod network management port
+10.244.0.0/16 via 10.244.1.1 dev ovn-k8s-mp0 
+10.244.1.0/24 dev ovn-k8s-mp0 proto kernel scope link src 10.244.1.2
+...
+
+❯ kubectl exec -n ovn-kubernetes ovnkube-node-vkmkt -c ovnkube-controller -- ip rule
+...
+# for a CUDN, an ip rule takes care of routing on the currect VRF
+2000:	from all to 22.100.0.0/16 lookup 1010
+...
+
+❯ kubectl exec -n ovn-kubernetes ovnkube-node-vkmkt -c ovnkube-controller -- ip r show table 1010
+...
+# also routing to the CUDN management port
+22.100.0.0/16 dev ovn-k8s-mp1 proto kernel scope link src 22.100.0.2 
+...
+```
 
 #### Host SNAT behavior with BGP Advertisement
 
 In the same way that was done for the OVN configuration, the host networking
 stack configuration is updated to inhibit the SNAT for N/S traffic.
 
+```shell
+❯ kubectl exec -n ovn-kubernetes ovnkube-node-vkmkt -c ovnkube-controller -- nft list ruleset
+...
+	set remote-node-ips-v4 {
+		type ipv4_addr
+		comment "Block egress ICMP needs frag to remote Kubernetes nodes"
+		elements = { 172.18.0.3, 172.18.0.4,
+			     172.19.0.2, 172.19.0.4 }
+	}
+...
+  chain ovn-kube-pod-subnet-masq {
+    # ip daddr condition added if default pod network advertised
+    ip saddr 10.244.1.0/24 ip daddr @remote-node-ips-v4 masquerade # ip daddr condition if advertised
+  }
+...
+```
+
 #### VRF-Lite isolation
 
 To ensure isolation in VRF-Lite configurations, the default route pointing to
 the default VRF gateway present on the network's VRF is inhibited. Thus only BGP
 installed routes will be used for N/S traffic.
+
+```shell
+❯ kubectl exec -n ovn-kubernetes ovnkube-node-vkmkt -c ovnkube-controller -- ip r show table 1010
+# default match unreachable
+unreachable default metric 4278198272 
+...
+# installed route going through interface attached to VRF
+172.26.0.0/16 nhid 28 via 172.19.0.5 dev eth1 proto bgp metric 20 
+```
 
 ## Troubleshooting
 
