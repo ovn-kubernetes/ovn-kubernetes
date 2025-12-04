@@ -919,3 +919,29 @@ interconnect_arg_check() {
     echo "INFO: Interconnect mode is now the default mode, you do not need to use pass -ic or --enable-interconnect anymore"
   fi
 }
+
+setup_coredumps() {
+  # Setup core dump collection
+  #
+  # Core dumps will be saved on the HOST at /tmp/kind/logs/coredumps (not inside containers)
+  # because kernel.core_pattern is a kernel-level setting shared across all containers.
+  #
+  # - Using a pipe instead of a file path avoids needing to mount
+  #   /tmp/kind/logs/coredumps into every container that might crash
+  # - The pipe executes in the host's namespace, so /tmp/kind/logs/coredumps
+  #   automatically refers to the host path
+  #
+  # Location: /tmp/kind/logs is used to ensure coredumps are exported in CI
+  # Use container exec to avoid asking for root permissions
+
+  mkdir -p "/tmp/kind/logs/coredumps"
+  ulimit -c unlimited
+  for node in $(kind get nodes --name "${KIND_CLUSTER_NAME}"); do
+    # Core dump filename pattern variables:
+    #   %P - global PID
+    #   %e - executable filename
+    #   %h - hostname (container hostname)
+    #   %s - signal number that caused dump
+    ${OCI_BIN} exec "$node" sysctl -w kernel.core_pattern="|/bin/dd of=/tmp/kind/logs/coredumps/core.%P.%e.%h.%s bs=1M status=none"
+  done
+}
