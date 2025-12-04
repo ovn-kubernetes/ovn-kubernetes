@@ -30,6 +30,7 @@ type NetworkSpecApplyConfiguration struct {
 	Localnet  *LocalnetConfigApplyConfiguration     `json:"localnet,omitempty"`
 	Transport *userdefinednetworkv1.TransportOption `json:"transport,omitempty"`
 	NoOverlay *NoOverlayConfigApplyConfiguration    `json:"noOverlay,omitempty"`
+	EVPN      *EVPNConfigApplyConfiguration         `json:"evpn,omitempty"`
 }
 
 // NetworkSpecApplyConfiguration constructs a declarative configuration of the NetworkSpec type for use with
@@ -83,5 +84,13 @@ func (b *NetworkSpecApplyConfiguration) WithTransport(value userdefinednetworkv1
 // If called multiple times, the NoOverlay field is set to the value of the last call.
 func (b *NetworkSpecApplyConfiguration) WithNoOverlay(value *NoOverlayConfigApplyConfiguration) *NetworkSpecApplyConfiguration {
 	b.NoOverlay = value
+	return b
+}
+
+// WithEVPN sets the EVPN field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the EVPN field is set to the value of the last call.
+func (b *NetworkSpecApplyConfiguration) WithEVPN(value *EVPNConfigApplyConfiguration) *NetworkSpecApplyConfiguration {
+	b.EVPN = value
 	return b
 }
