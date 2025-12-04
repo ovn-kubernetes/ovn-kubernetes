@@ -80,6 +80,15 @@ type NetConf struct {
 	// network mapping in the hosts.
 	PhysicalNetworkName string `json:"physicalNetworkName,omitempty"`
 
+	// Transport describes the transport protocol for east-west traffic.
+	// Valid values are "nooverlay", "geneve", and "evpn".
+	// Defaults to "geneve".
+	Transport string `json:"transport,omitempty"`
+
+	// EVPNConfig contains configuration for EVPN mode.
+	// Only valid when Transport is "evpn".
+	EVPN *EVPNConfig `json:"evpn,omitempty"`
+
 	// PciAddrs in case of using sriov or Auxiliry device name in case of SF
 	DeviceID string `json:"deviceID,omitempty"`
 	// LogFile to log all the messages from cni shim binary to
@@ -100,6 +109,24 @@ type NetConf struct {
 		// see https://github.com/k8snetworkplumbingwg/device-info-spec
 		CNIDeviceInfoFile string `json:"CNIDeviceInfoFile,omitempty"`
 	} `json:"runtimeConfig,omitempty"`
+}
+
+// EVPNConfig contains EVPN-specific configuration for the network.
+type EVPNConfig struct {
+	// VTEP is the name of the VTEP CR that defines VTEP IPs for EVPN.
+	VTEP string `json:"vtep"`
+	// MACVRF contains the MAC-VRF configuration for Layer 2 EVPN.
+	MACVRF *VRFConfig `json:"macVRF,omitempty"`
+	// IPVRF contains the IP-VRF configuration for Layer 3 EVPN.
+	IPVRF *VRFConfig `json:"ipVRF,omitempty"`
+}
+
+// VRFConfig contains configuration for a VRF in EVPN.
+type VRFConfig struct {
+	// VNI is the VXLAN Network Identifier for this VRF.
+	VNI int32 `json:"vni"`
+	// RouteTarget is the BGP route target for this VRF.
+	RouteTarget string `json:"routeTarget,omitempty"`
 }
 
 // NetworkSelectionElement represents one element of the JSON format
