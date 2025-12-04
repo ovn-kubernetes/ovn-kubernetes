@@ -406,8 +406,11 @@ and will egress the cluster towards the provider network; and if the provider
 network is able to route it back to the cluster by virtue of learned BGP routes,
 the traffic will still be dropped to upkeep the CUDN isolation promise.
 
-In the future, different alternatives will be provided to allow interconnecting
-user defined networks.
+OVN-Kubernetes can be configured in "loose advertised UDN isolation mode" using
+the configuration flag `advertised-udn-isolation-mode` set to `loose`. In this
+configuration, if the provider network routes back to the cluster traffic
+originating from a CUDN addressing a different CUDN, the traffic will be
+allowed.
 
 ## Implementation Details
 
@@ -757,6 +760,32 @@ unreachable default metric 4278198272
 # installed route going through interface attached to VRF
 172.26.0.0/16 nhid 28 via 172.19.0.5 dev eth1 proto bgp metric 20 
 ```
+
+#### CUDN isolation
+
+To ensure CUDN isolation in local gateway mode filtering rules are added to the host configuration
+
+```shell
+❯ kubectl exec -n ovn-kubernetes ovnkube-node-vkmkt -c ovnkube-controller -- nft list ruleset
+...
+	set advertised-udn-subnets-v4 {
+		type ipv4_addr
+		flags interval
+		comment "advertised UDN V4 subnets"
+		elements = { 22.100.0.0/16 comment "cluster_udn_udn-l2" }
+	}
+...
+  chain udn-bgp-drop {
+          comment "Drop traffic generated locally towards advertised UDN subnets"
+          type filter hook output priority filter; policy accept;
+          ct state new ip daddr @advertised-udn-subnets-v4 counter packets 0 bytes 0 drop
+          ct state new ip6 daddr @advertised-udn-subnets-v6 counter packets 0 bytes 0 drop
+  }
+...
+```
+
+These rules are inhibited if OVN-Kubernetes is configured in "loose advertised
+UDN isolation mode".
 
 ## Troubleshooting
 
