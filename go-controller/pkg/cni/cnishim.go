@@ -98,6 +98,10 @@ func (p *Plugin) doCNI(url string, req interface{}) ([]byte, error) {
 	}
 
 	if resp.StatusCode != 200 {
+		var cniErr types.Error
+		if err := json.Unmarshal(body, &cniErr); err == nil && cniErr.Code != 0 {
+			return nil, &cniErr
+		}
 		return nil, fmt.Errorf("CNI request failed with status %v: '%s'", resp.StatusCode, string(body))
 	}
 
@@ -336,6 +340,29 @@ func (p *Plugin) CmdDel(args *skel.CmdArgs) error {
 
 		err = podRequestInterfaceOps.UnconfigureInterface(pr, response.PodIFInfo)
 	}
+	return err
+}
+
+// CmdStatus is the callback for plugin readiness checks
+func (p *Plugin) CmdStatus(args *skel.CmdArgs) error {
+	var err error
+
+	startTime := time.Now()
+	defer func() {
+		p.postMetrics(startTime, CNIStatus, err)
+		if err != nil {
+			klog.Errorf("Error on CmdStatus: %v", err)
+		}
+	}()
+
+	conf, err := config.ReadCNIConfig(args.StdinData)
+	if err != nil {
+		return err
+	}
+	setupLogging(conf)
+
+	req := newCNIRequest(args, nadapi.DeviceInfo{})
+	_, err = p.doCNIFunc("http://dummy/", req)
 	return err
 }
 

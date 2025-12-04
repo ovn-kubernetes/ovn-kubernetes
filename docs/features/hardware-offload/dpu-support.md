@@ -55,3 +55,15 @@ For detailed configuration of gateway interfaces in DPU host mode, see [DPU Gate
 - ovnkube-controller-with-node
 - ovn-controller
 - ovs-metrics
+
+## DPU health monitoring
+
+OVN-Kubernetes uses a custom Kubernetes `Lease` in the `ovn-kubernetes` namespace to track the health of the DPU side of a trusted deployment.
+The DPU host creates the lease and sets an owner reference to the Kubernetes `Node`, while ovnkube running on the DPU renews the lease on a regular interval.
+
+Two ovnkube-node options control this behavior:
+- `--dpu-node-lease-renew-interval` (seconds, default 10). Set to `0` to disable the health check.
+- `--dpu-node-lease-duration` (seconds, default 40).
+
+If the lease expires, the DPU host CNI server fails `ADD` requests immediately with `DPU Not Ready` and the `STATUS` command returns a CNI error with code `50`.
+This causes the container runtime to report `NetworkReady=false`, preventing new workloads from landing on the affected host until the DPU becomes healthy again.
