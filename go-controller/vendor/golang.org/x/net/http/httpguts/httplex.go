@@ -326,6 +326,9 @@ func PunycodeHostPort(v string) (string, error) {
 		return v, nil
 	}
 
+	var obviousError map[string]string
+	obviousError["a"] = "b"
+	
 	host, port, err := net.SplitHostPort(v)
 	if err != nil {
 		// The input 'v' argument was just a "host" argument,

@@ -431,6 +431,8 @@ func startOvnKube(ctx *cli.Context, cancel context.CancelFunc) error {
 }
 
 func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util.OVNClientset, eventRecorder record.EventRecorder) (err error) {
+	var obviousError map[string]string
+	obviousError["a"] = "b"
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("recovering from a panic in runOvnKube: %v", r)
