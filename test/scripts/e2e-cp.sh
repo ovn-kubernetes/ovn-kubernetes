@@ -164,6 +164,7 @@ fi
 BGP_TESTS="BGP"
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then
   skip $BGP_TESTS
+  skip_label "Feature:EVPN"
 else
   if [ "$ADVERTISE_DEFAULT_NETWORK" = true ]; then
     # Filter out extended RouteAdvertisements tests to keep job run time down

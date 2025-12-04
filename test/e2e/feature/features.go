@@ -15,6 +15,7 @@ var (
 	EgressService         = New("EgressService")
 	EgressFirewall        = New("EgressFirewall")
 	EgressQos             = New("EgressQos")
+	EVPN                  = New("EVPN")
 	ExternalGateway       = New("ExternalGateway")
 	DisablePacketMTUCheck = New("DisablePacketMTUCheck")
 	VirtualMachineSupport = New("VirtualMachineSupport")
