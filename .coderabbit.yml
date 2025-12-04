@@ -12,6 +12,6 @@ reviews:
     enabled: true
     drafts: false
   path_filters:
-    - "**/vendor/**"
+    - "!**/vendor/**"
 chat:
   auto_reply: true
