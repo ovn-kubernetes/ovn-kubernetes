@@ -148,6 +148,12 @@ if [[ "${WHAT}" != "${CLUSTER_NETWORK_CONNECT_TESTS}"* ]]; then
   skip $CLUSTER_NETWORK_CONNECT_TESTS
 fi
 
+# Only run VTEP/EVPN API validation tests if they are explicitly requested
+VTEP_TESTS="VTEP"
+if [[ "${WHAT}" != "${VTEP_TESTS}"* ]]; then
+  skip $VTEP_TESTS
+fi
+
 BGP_TESTS="BGP"
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then
   skip $BGP_TESTS
