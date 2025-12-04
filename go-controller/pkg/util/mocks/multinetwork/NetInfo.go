@@ -34,6 +34,96 @@ func (_m *NetInfo) AllowsPersistentIPs() bool {
 	return r0
 }
 
+// EVPNIPVRFRouteTarget provides a mock function with no fields
+func (_m *NetInfo) EVPNIPVRFRouteTarget() string {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for EVPNIPVRFRouteTarget")
+	}
+
+	var r0 string
+	if rf, ok := ret.Get(0).(func() string); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	return r0
+}
+
+// EVPNIPVRFVNI provides a mock function with no fields
+func (_m *NetInfo) EVPNIPVRFVNI() int32 {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for EVPNIPVRFVNI")
+	}
+
+	var r0 int32
+	if rf, ok := ret.Get(0).(func() int32); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(int32)
+	}
+
+	return r0
+}
+
+// EVPNMACVRFRouteTarget provides a mock function with no fields
+func (_m *NetInfo) EVPNMACVRFRouteTarget() string {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for EVPNMACVRFRouteTarget")
+	}
+
+	var r0 string
+	if rf, ok := ret.Get(0).(func() string); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	return r0
+}
+
+// EVPNMACVRFVNI provides a mock function with no fields
+func (_m *NetInfo) EVPNMACVRFVNI() int32 {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for EVPNMACVRFVNI")
+	}
+
+	var r0 int32
+	if rf, ok := ret.Get(0).(func() int32); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(int32)
+	}
+
+	return r0
+}
+
+// EVPNVTEPName provides a mock function with no fields
+func (_m *NetInfo) EVPNVTEPName() string {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for EVPNVTEPName")
+	}
+
+	var r0 string
+	if rf, ok := ret.Get(0).(func() string); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	return r0
+}
+
 // EqualNADs provides a mock function with given fields: nads
 func (_m *NetInfo) EqualNADs(nads ...string) bool {
 	_va := make([]interface{}, len(nads))
@@ -857,6 +947,24 @@ func (_m *NetInfo) TransitSubnets() []*net.IPNet {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).([]*net.IPNet)
 		}
+	}
+
+	return r0
+}
+
+// Transport provides a mock function with no fields
+func (_m *NetInfo) Transport() string {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for Transport")
+	}
+
+	var r0 string
+	if rf, ok := ret.Get(0).(func() string); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(string)
 	}
 
 	return r0

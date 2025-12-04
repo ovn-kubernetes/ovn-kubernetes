@@ -1942,6 +1942,258 @@ func TestGetNodeManagementIP(t *testing.T) {
 	}
 }
 
+func TestEVPNConfig(t *testing.T) {
+	type testConfig struct {
+		desc                      string
+		inputNetConf              *ovncnitypes.NetConf
+		expectedTransport         string
+		expectedVTEPName          string
+		expectedMACVRFVNI         int32
+		expectedMACVRFRouteTarget string
+		expectedIPVRFVNI          int32
+		expectedIPVRFRouteTarget  string
+	}
+
+	tests := []testConfig{
+		{
+			desc: "default network has no EVPN config",
+			inputNetConf: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: ovntypes.DefaultNetworkName},
+				Topology: ovntypes.Layer3Topology,
+			},
+			expectedTransport:         "",
+			expectedVTEPName:          "",
+			expectedMACVRFVNI:         0,
+			expectedMACVRFRouteTarget: "",
+			expectedIPVRFVNI:          0,
+			expectedIPVRFRouteTarget:  "",
+		},
+		{
+			desc: "layer3 network without EVPN config",
+			inputNetConf: &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: "l3-network"},
+				Topology: ovntypes.Layer3Topology,
+			},
+			expectedTransport:         "",
+			expectedVTEPName:          "",
+			expectedMACVRFVNI:         0,
+			expectedMACVRFRouteTarget: "",
+			expectedIPVRFVNI:          0,
+			expectedIPVRFRouteTarget:  "",
+		},
+		{
+			desc: "layer3 network with EVPN transport and IP-VRF only",
+			inputNetConf: &ovncnitypes.NetConf{
+				NetConf:   cnitypes.NetConf{Name: "evpn-l3-network"},
+				Topology:  ovntypes.Layer3Topology,
+				Transport: "evpn",
+				EVPN: &ovncnitypes.EVPNConfig{
+					VTEP: "my-vtep",
+					IPVRF: &ovncnitypes.VRFConfig{
+						VNI:         2000,
+						RouteTarget: "65000:2000",
+					},
+				},
+			},
+			expectedTransport:         "evpn",
+			expectedVTEPName:          "my-vtep",
+			expectedMACVRFVNI:         0,
+			expectedMACVRFRouteTarget: "",
+			expectedIPVRFVNI:          2000,
+			expectedIPVRFRouteTarget:  "65000:2000",
+		},
+		{
+			desc: "layer2 network with EVPN transport and MAC-VRF only",
+			inputNetConf: &ovncnitypes.NetConf{
+				NetConf:   cnitypes.NetConf{Name: "evpn-l2-network"},
+				Topology:  ovntypes.Layer2Topology,
+				Transport: "evpn",
+				EVPN: &ovncnitypes.EVPNConfig{
+					VTEP: "my-vtep",
+					MACVRF: &ovncnitypes.VRFConfig{
+						VNI:         100,
+						RouteTarget: "65000:100",
+					},
+				},
+			},
+			expectedTransport:         "evpn",
+			expectedVTEPName:          "my-vtep",
+			expectedMACVRFVNI:         100,
+			expectedMACVRFRouteTarget: "65000:100",
+			expectedIPVRFVNI:          0,
+			expectedIPVRFRouteTarget:  "",
+		},
+		{
+			desc: "layer2 network with EVPN transport and both MAC-VRF and IP-VRF (symmetric IRB)",
+			inputNetConf: &ovncnitypes.NetConf{
+				NetConf:   cnitypes.NetConf{Name: "evpn-l2-symmetric"},
+				Topology:  ovntypes.Layer2Topology,
+				Transport: "evpn",
+				EVPN: &ovncnitypes.EVPNConfig{
+					VTEP: "symmetric-vtep",
+					MACVRF: &ovncnitypes.VRFConfig{
+						VNI:         100,
+						RouteTarget: "65000:100",
+					},
+					IPVRF: &ovncnitypes.VRFConfig{
+						VNI:         1000,
+						RouteTarget: "65000:1000",
+					},
+				},
+			},
+			expectedTransport:         "evpn",
+			expectedVTEPName:          "symmetric-vtep",
+			expectedMACVRFVNI:         100,
+			expectedMACVRFRouteTarget: "65000:100",
+			expectedIPVRFVNI:          1000,
+			expectedIPVRFRouteTarget:  "65000:1000",
+		},
+		{
+			desc: "layer2 network with nooverlay transport",
+			inputNetConf: &ovncnitypes.NetConf{
+				NetConf:   cnitypes.NetConf{Name: "nooverlay-network"},
+				Topology:  ovntypes.Layer2Topology,
+				Transport: "nooverlay",
+			},
+			expectedTransport:         "nooverlay",
+			expectedVTEPName:          "",
+			expectedMACVRFVNI:         0,
+			expectedMACVRFRouteTarget: "",
+			expectedIPVRFVNI:          0,
+			expectedIPVRFRouteTarget:  "",
+		},
+		{
+			desc: "EVPN config with VNI only (no route target)",
+			inputNetConf: &ovncnitypes.NetConf{
+				NetConf:   cnitypes.NetConf{Name: "evpn-minimal"},
+				Topology:  ovntypes.Layer2Topology,
+				Transport: "evpn",
+				EVPN: &ovncnitypes.EVPNConfig{
+					VTEP: "minimal-vtep",
+					MACVRF: &ovncnitypes.VRFConfig{
+						VNI: 500,
+					},
+				},
+			},
+			expectedTransport:         "evpn",
+			expectedVTEPName:          "minimal-vtep",
+			expectedMACVRFVNI:         500,
+			expectedMACVRFRouteTarget: "",
+			expectedIPVRFVNI:          0,
+			expectedIPVRFRouteTarget:  "",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.desc, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			netInfo, err := NewNetInfo(test.inputNetConf)
+			g.Expect(err).ToNot(gomega.HaveOccurred())
+
+			g.Expect(netInfo.Transport()).To(gomega.Equal(test.expectedTransport), "Transport mismatch")
+			g.Expect(netInfo.EVPNVTEPName()).To(gomega.Equal(test.expectedVTEPName), "VTEP name mismatch")
+			g.Expect(netInfo.EVPNMACVRFVNI()).To(gomega.Equal(test.expectedMACVRFVNI), "MAC-VRF VNI mismatch")
+			g.Expect(netInfo.EVPNMACVRFRouteTarget()).To(gomega.Equal(test.expectedMACVRFRouteTarget), "MAC-VRF RouteTarget mismatch")
+			g.Expect(netInfo.EVPNIPVRFVNI()).To(gomega.Equal(test.expectedIPVRFVNI), "IP-VRF VNI mismatch")
+			g.Expect(netInfo.EVPNIPVRFRouteTarget()).To(gomega.Equal(test.expectedIPVRFRouteTarget), "IP-VRF RouteTarget mismatch")
+		})
+	}
+}
+
+func TestEVPNNetworkCompatibility(t *testing.T) {
+	tests := []struct {
+		desc                   string
+		aNetwork               NetInfo
+		anotherNetwork         NetInfo
+		expectedResult         bool
+		expectationDescription string
+	}{
+		{
+			desc:                   "same EVPN config should be compatible",
+			aNetwork:               &userDefinedNetInfo{transport: "evpn", evpn: &ovncnitypes.EVPNConfig{VTEP: "vtep1"}},
+			anotherNetwork:         &userDefinedNetInfo{transport: "evpn", evpn: &ovncnitypes.EVPNConfig{VTEP: "vtep1"}},
+			expectedResult:         true,
+			expectationDescription: "networks with same EVPN config should be compatible",
+		},
+		{
+			desc:                   "different transport should not be compatible",
+			aNetwork:               &userDefinedNetInfo{transport: "evpn"},
+			anotherNetwork:         &userDefinedNetInfo{transport: "nooverlay"},
+			expectedResult:         false,
+			expectationDescription: "networks with different transport should not be compatible",
+		},
+		{
+			desc:                   "different VTEP name should not be compatible",
+			aNetwork:               &userDefinedNetInfo{transport: "evpn", evpn: &ovncnitypes.EVPNConfig{VTEP: "vtep1"}},
+			anotherNetwork:         &userDefinedNetInfo{transport: "evpn", evpn: &ovncnitypes.EVPNConfig{VTEP: "vtep2"}},
+			expectedResult:         false,
+			expectationDescription: "networks with different VTEP name should not be compatible",
+		},
+		{
+			desc: "different MAC-VRF VNI should not be compatible",
+			aNetwork: &userDefinedNetInfo{
+				transport: "evpn",
+				evpn: &ovncnitypes.EVPNConfig{
+					VTEP:   "vtep1",
+					MACVRF: &ovncnitypes.VRFConfig{VNI: 100},
+				},
+			},
+			anotherNetwork: &userDefinedNetInfo{
+				transport: "evpn",
+				evpn: &ovncnitypes.EVPNConfig{
+					VTEP:   "vtep1",
+					MACVRF: &ovncnitypes.VRFConfig{VNI: 200},
+				},
+			},
+			expectedResult:         false,
+			expectationDescription: "networks with different MAC-VRF VNI should not be compatible",
+		},
+		{
+			desc: "different IP-VRF route target should not be compatible",
+			aNetwork: &userDefinedNetInfo{
+				transport: "evpn",
+				evpn: &ovncnitypes.EVPNConfig{
+					VTEP:  "vtep1",
+					IPVRF: &ovncnitypes.VRFConfig{VNI: 1000, RouteTarget: "65000:1000"},
+				},
+			},
+			anotherNetwork: &userDefinedNetInfo{
+				transport: "evpn",
+				evpn: &ovncnitypes.EVPNConfig{
+					VTEP:  "vtep1",
+					IPVRF: &ovncnitypes.VRFConfig{VNI: 1000, RouteTarget: "65001:1000"},
+				},
+			},
+			expectedResult:         false,
+			expectationDescription: "networks with different IP-VRF route target should not be compatible",
+		},
+		{
+			desc:                   "both nil EVPN config should be compatible",
+			aNetwork:               &userDefinedNetInfo{transport: "geneve"},
+			anotherNetwork:         &userDefinedNetInfo{transport: "geneve"},
+			expectedResult:         true,
+			expectationDescription: "networks with no EVPN config should be compatible",
+		},
+		{
+			desc:                   "one nil EVPN config should not be compatible",
+			aNetwork:               &userDefinedNetInfo{transport: "evpn", evpn: &ovncnitypes.EVPNConfig{VTEP: "vtep1"}},
+			anotherNetwork:         &userDefinedNetInfo{transport: "evpn"},
+			expectedResult:         false,
+			expectationDescription: "network with EVPN config vs without should not be compatible",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.desc, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			g.Expect(AreNetworksCompatible(test.aNetwork, test.anotherNetwork)).To(
+				gomega.Equal(test.expectedResult),
+				test.expectationDescription,
+			)
+		})
+	}
+}
+
 func TestGetNodeGatewayIP(t *testing.T) {
 	testCases := []struct {
 		name       string

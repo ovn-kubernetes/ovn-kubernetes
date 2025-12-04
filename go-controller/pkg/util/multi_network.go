@@ -56,6 +56,12 @@ type NetInfo interface {
 	Vlan() uint
 	AllowsPersistentIPs() bool
 	PhysicalNetworkName() string
+	Transport() string
+	EVPNVTEPName() string
+	EVPNMACVRFVNI() int32
+	EVPNMACVRFRouteTarget() string
+	EVPNIPVRFVNI() int32
+	EVPNIPVRFRouteTarget() string
 	GetNodeGatewayIP(hostSubnet *net.IPNet) *net.IPNet
 	GetNodeManagementIP(hostSubnet *net.IPNet) *net.IPNet
 
@@ -685,6 +691,36 @@ func (nInfo *DefaultNetInfo) PhysicalNetworkName() string {
 	return ""
 }
 
+// Transport returns the transport protocol for east-west traffic
+func (nInfo *DefaultNetInfo) Transport() string {
+	return ""
+}
+
+// EVPNVTEPName returns empty as EVPN is not supported on the default network
+func (nInfo *DefaultNetInfo) EVPNVTEPName() string {
+	return ""
+}
+
+// EVPNMACVRFVNI returns 0 as EVPN is not supported on the default network
+func (nInfo *DefaultNetInfo) EVPNMACVRFVNI() int32 {
+	return 0
+}
+
+// EVPNMACVRFRouteTarget returns empty as EVPN is not supported on the default network
+func (nInfo *DefaultNetInfo) EVPNMACVRFRouteTarget() string {
+	return ""
+}
+
+// EVPNIPVRFVNI returns 0 as EVPN is not supported on the default network
+func (nInfo *DefaultNetInfo) EVPNIPVRFVNI() int32 {
+	return 0
+}
+
+// EVPNIPVRFRouteTarget returns empty as EVPN is not supported on the default network
+func (nInfo *DefaultNetInfo) EVPNIPVRFRouteTarget() string {
+	return ""
+}
+
 func (nInfo *DefaultNetInfo) GetNodeGatewayIP(hostSubnet *net.IPNet) *net.IPNet {
 	return GetNodeGatewayIfAddr(hostSubnet)
 }
@@ -717,6 +753,9 @@ type userDefinedNetInfo struct {
 	physicalNetworkName string
 	defaultGatewayIPs   []net.IP
 	managementIPs       []net.IP
+
+	transport string
+	evpn      *ovncnitypes.EVPNConfig
 }
 
 func (nInfo *userDefinedNetInfo) GetNetInfo() NetInfo {
@@ -835,6 +874,51 @@ func (nInfo *userDefinedNetInfo) PhysicalNetworkName() string {
 	return nInfo.physicalNetworkName
 }
 
+// Transport returns the transport protocol for east-west traffic
+func (nInfo *userDefinedNetInfo) Transport() string {
+	return nInfo.transport
+}
+
+// EVPNVTEPName returns the name of the VTEP CR for EVPN
+func (nInfo *userDefinedNetInfo) EVPNVTEPName() string {
+	if nInfo.evpn == nil {
+		return ""
+	}
+	return nInfo.evpn.VTEP
+}
+
+// EVPNMACVRFVNI returns the MAC-VRF VNI for EVPN
+func (nInfo *userDefinedNetInfo) EVPNMACVRFVNI() int32 {
+	if nInfo.evpn == nil || nInfo.evpn.MACVRF == nil {
+		return 0
+	}
+	return nInfo.evpn.MACVRF.VNI
+}
+
+// EVPNMACVRFRouteTarget returns the MAC-VRF route target for EVPN
+func (nInfo *userDefinedNetInfo) EVPNMACVRFRouteTarget() string {
+	if nInfo.evpn == nil || nInfo.evpn.MACVRF == nil {
+		return ""
+	}
+	return nInfo.evpn.MACVRF.RouteTarget
+}
+
+// EVPNIPVRFVNI returns the IP-VRF VNI for EVPN
+func (nInfo *userDefinedNetInfo) EVPNIPVRFVNI() int32 {
+	if nInfo.evpn == nil || nInfo.evpn.IPVRF == nil {
+		return 0
+	}
+	return nInfo.evpn.IPVRF.VNI
+}
+
+// EVPNIPVRFRouteTarget returns the IP-VRF route target for EVPN
+func (nInfo *userDefinedNetInfo) EVPNIPVRFRouteTarget() string {
+	if nInfo.evpn == nil || nInfo.evpn.IPVRF == nil {
+		return ""
+	}
+	return nInfo.evpn.IPVRF.RouteTarget
+}
+
 func (nInfo *userDefinedNetInfo) GetNodeGatewayIP(hostSubnet *net.IPNet) *net.IPNet {
 	if IsPreconfiguredUDNAddressesEnabled() && nInfo.TopologyType() == types.Layer2Topology && nInfo.IsPrimaryNetwork() {
 		isIPV6 := knet.IsIPv6CIDR(hostSubnet)
@@ -948,6 +1032,24 @@ func (nInfo *userDefinedNetInfo) canReconcile(other NetInfo) bool {
 	if nInfo.physicalNetworkName != other.PhysicalNetworkName() {
 		return false
 	}
+	if nInfo.transport != other.Transport() {
+		return false
+	}
+	if nInfo.EVPNVTEPName() != other.EVPNVTEPName() {
+		return false
+	}
+	if nInfo.EVPNMACVRFVNI() != other.EVPNMACVRFVNI() {
+		return false
+	}
+	if nInfo.EVPNMACVRFRouteTarget() != other.EVPNMACVRFRouteTarget() {
+		return false
+	}
+	if nInfo.EVPNIPVRFVNI() != other.EVPNIPVRFVNI() {
+		return false
+	}
+	if nInfo.EVPNIPVRFRouteTarget() != other.EVPNIPVRFRouteTarget() {
+		return false
+	}
 
 	lessCIDRNetworkEntry := func(a, b config.CIDRNetworkEntry) bool { return a.String() < b.String() }
 	if !cmp.Equal(nInfo.subnets, other.Subnets(), cmpopts.SortSlices(lessCIDRNetworkEntry)) {
@@ -990,6 +1092,8 @@ func (nInfo *userDefinedNetInfo) copy() *userDefinedNetInfo {
 		physicalNetworkName:   nInfo.physicalNetworkName,
 		defaultGatewayIPs:     nInfo.defaultGatewayIPs,
 		managementIPs:         nInfo.managementIPs,
+		transport:             nInfo.transport,
+		evpn:                  nInfo.evpn,
 	}
 	// copy mutables
 	c.mutableNetInfo.copyFrom(&nInfo.mutableNetInfo)
@@ -1013,6 +1117,8 @@ func newLayer3NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 		subnets:        subnets,
 		joinSubnets:    joinSubnets,
 		mtu:            netconf.MTU,
+		transport:      netconf.Transport,
+		evpn:           netconf.EVPN,
 		mutableNetInfo: mutableNetInfo{
 			id:   types.InvalidID,
 			nads: sets.Set[string]{},
@@ -1088,6 +1194,8 @@ func newLayer2NetConfInfo(netconf *ovncnitypes.NetConf) (MutableNetInfo, error) 
 		allowPersistentIPs:    netconf.AllowPersistentIPs,
 		defaultGatewayIPs:     defaultGatewayIPs,
 		managementIPs:         managementIPs,
+		transport:             netconf.Transport,
+		evpn:                  netconf.EVPN,
 		mutableNetInfo: mutableNetInfo{
 			id:   types.InvalidID,
 			nads: sets.Set[string]{},
