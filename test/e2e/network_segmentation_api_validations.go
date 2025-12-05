@@ -19,7 +19,7 @@ var _ = Describe("Network Segmentation: API validations", feature.NetworkSegment
 			})
 			for _, s := range scenarios {
 				By(s.Description)
-				_, stderr, err := runKubectlInputWithFullOutput("", s.Manifest, "create", "-f", "-")
+				_, stderr, err := runKubectlInputWithFullOutput("", s.Manifest, "apply", "-f", "-")
 				Expect(err).To(HaveOccurred(), "should fail to create invalid CR")
 				Expect(stderr).To(ContainSubstring(s.ExpectedErr))
 			}
@@ -32,6 +32,7 @@ var _ = Describe("Network Segmentation: API validations", feature.NetworkSegment
 		Entry("ClusterUserDefinedNetwork, localnet, invalid vlan", testscenariocudn.LocalnetInvalidVLAN),
 		Entry("ClusterUserDefinedNetwork, layer2", testscenariocudn.Layer2CUDNInvalid),
 		Entry("UserDefinedNetwork, layer2", testscenariocudn.Layer2UDNInvalid),
+		Entry("ClusterUserDefinedNetwork, layer3, multi-subnets", testscenariocudn.Layer3InvalidSubnets),
 	)
 
 	DescribeTable("api-server should accept valid CRs",
@@ -48,6 +49,7 @@ var _ = Describe("Network Segmentation: API validations", feature.NetworkSegment
 		Entry("ClusterUserDefinedNetwork, localnet", testscenariocudn.LocalnetValid),
 		Entry("ClusterUserDefinedNetwork, layer2", testscenariocudn.Layer2CUDNValid),
 		Entry("UserDefinedNetwork, layer2", testscenariocudn.Layer2UDNValid),
+		Entry("ClusterUserDefinedNetwork, layer3, multi-subnets", testscenariocudn.Layer3ValidSubnets),
 	)
 })
 
