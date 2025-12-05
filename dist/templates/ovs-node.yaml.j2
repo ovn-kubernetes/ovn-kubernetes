@@ -63,6 +63,8 @@ spec:
 
         terminationMessagePolicy: FallbackToLogsOnError
         volumeMounts:
+        - mountPath: /tmp/cores
+          name: host-cores
         - mountPath: /lib/modules
           name: host-modules
           readOnly: true
@@ -106,6 +108,10 @@ spec:
               - key: k8s.ovn.org/dpu-host
                 operator: DoesNotExist
       volumes:
+      - name: host-cores
+        hostPath:
+          path: /tmp/cores
+          type: DirectoryOrCreate
       - name: host-modules
         hostPath:
           path: /lib/modules

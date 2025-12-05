@@ -19,8 +19,8 @@ ifeq ($(ARCH),arm64)
 endif
 IMAGE ?= ovn-daemonset-fedora
 
-OVN_REPO ?= https://github.com/ovn-org/ovn
-OVN_GITREF ?=
+OVN_REPO ?= https://github.com/dceara/ovn
+OVN_GITREF ?= branch-25.09-northd-idl-crashes
 ifeq ($(OVN_GITREF),)
 OVN_FROM := koji
 else

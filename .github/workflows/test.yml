@@ -35,8 +35,8 @@ env:
   CI_DIST_IMAGES_OUTPUT: dist/images/_output/
 
   # To run CI over custom OVN
-  # OVN_REPO: https://github.com/ovn-org/ovn
-  # OVN_GITREF: main
+  OVN_REPO: https://github.com/dceara/ovn
+  OVN_GITREF: branch-25.09-northd-idl-crashes
 
 jobs:
   # separate job for parallelism
@@ -368,9 +368,11 @@ jobs:
 
     - name: Export kind logs
       if: always()
+      uses: ./.github/actions/export-kind-logs
+
+    - name: Show container info
+      if: always()
       run: |
-        mkdir -p /tmp/kind/logs
-        kind export logs --name ${KIND_CLUSTER_NAME} --verbosity 4 /tmp/kind/logs
         set -x
         docker ps -a
         docker exec ovn-control-plane crictl images
@@ -416,9 +418,9 @@ jobs:
 
     - name: Export kind logs
       if: always()
-      run: |
-        mkdir -p /tmp/kind/logs-kind-pr-branch
-        kind export logs --name ${KIND_CLUSTER_NAME} --verbosity 4 /tmp/kind/logs-kind-pr-branch
+      uses: ./.github/actions/export-kind-logs
+      with:
+        log-path: /tmp/kind/logs-kind-pr-branch
 
     - name: Upload kind logs
       if: always()
@@ -701,12 +703,9 @@ jobs:
 
     - name: Export kind logs
       if: always()
-      run: |
-        mkdir -p /tmp/kind/logs
-        kind export logs --name ${KIND_CLUSTER_NAME} --verbosity 4 /tmp/kind/logs
-        if [ -n "${TRAFFIC_FLOW_TESTS}" ]; then
-            mv -v /tmp/{,kind/logs/}traffic_flow_test_result.json ||:
-        fi
+      uses: ./.github/actions/export-kind-logs
+      with:
+        collect-traffic-flow: 'true'
 
     - name: Upload kind logs
       if: always()
@@ -815,9 +814,7 @@ jobs:
 
     - name: Export kind logs
       if: always()
-      run: |
-        mkdir -p /tmp/kind/logs
-        kind export logs --name ${KIND_CLUSTER_NAME} --verbosity 4 /tmp/kind/logs
+      uses: ./.github/actions/export-kind-logs
 
     - name: Upload kind logs
       if: always()

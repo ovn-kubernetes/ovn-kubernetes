@@ -25,7 +25,12 @@ shard-%:
 	PLATFORM_IPV6_SUPPORT=$(PLATFORM_IPV6_SUPPORT) \
 	DUALSTACK_CONVERSION=$(DUALSTACK_CONVERSION) \
 	SINGLE_NODE_CLUSTER=$(SINGLE_NODE_CLUSTER) \
-	./scripts/e2e-kind.sh $@ $(WHAT)
+	./scripts/e2e-kind.sh $@ $(WHAT); \
+	result=$$?; \
+	$(MAKE) check-coredumps; \
+	coredump_result=$$?; \
+	[ $$result -eq 0 ] && result=$$coredump_result; \
+	exit $$result
 
 .PHONY: control-plane
 control-plane:
@@ -34,13 +39,23 @@ control-plane:
 	PLATFORM_IPV4_SUPPORT=$(PLATFORM_IPV4_SUPPORT) \
 	PLATFORM_IPV6_SUPPORT=$(PLATFORM_IPV6_SUPPORT) \
 	OVN_HA=$(OVN_HA) \
-	./scripts/e2e-cp.sh $(WHAT)
+	./scripts/e2e-cp.sh $(WHAT); \
+	result=$$?; \
+	$(MAKE) check-coredumps; \
+	coredump_result=$$?; \
+	[ $$result -eq 0 ] && result=$$coredump_result; \
+	exit $$result
 
 .PHONY: conformance
 conformance:
 	E2E_REPORT_DIR=$(E2E_REPORT_DIR) \
 	E2E_REPORT_PREFIX=$(JOB_NAME)_ \
-	./scripts/conformance.sh
+	./scripts/conformance.sh; \
+	result=$$?; \
+	$(MAKE) check-coredumps; \
+	coredump_result=$$?; \
+	[ $$result -eq 0 ] && result=$$coredump_result; \
+	exit $$result
 
 .PHONY: tools
 tools:
@@ -50,3 +65,20 @@ tools:
 traffic-flow-tests:
 	TRAFFIC_FLOW_TESTS=$(TRAFFIC_FLOW_TESTS) \
 	./scripts/traffic-flow-tests.sh $(WHAT)
+
+.PHONY: check-coredumps
+check-coredumps:
+	@exit_code=0; \
+	KIND_CLUSTER_NAME=$${KIND_CLUSTER_NAME:-ovn}; \
+	OCI_BIN=$${KIND_EXPERIMENTAL_PROVIDER:-docker}; \
+	for node in $$(kind get nodes --name $$KIND_CLUSTER_NAME 2>/dev/null || echo ""); do \
+		if $$OCI_BIN exec "$$node" sh -c 'ls /tmp/cores/core.* 2>/dev/null'; then \
+			echo "ERROR: Core dump(s) found in node $$node!"; \
+			$$OCI_BIN exec "$$node" sh -c 'ls -lh /tmp/cores/core.*'; \
+			exit_code=1; \
+		fi; \
+	done; \
+	if [ $$exit_code -eq 1 ]; then \
+		echo "ERROR: core dumps found in KIND nodes"; \
+		exit 1; \
+	fi; \

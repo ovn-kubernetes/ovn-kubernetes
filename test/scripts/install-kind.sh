@@ -12,6 +12,7 @@ KIND_URL=https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-${ARCH}
 KIND_SHA_URL=$KIND_URL.sha256sum
 KIND_SHA="$( curl -L -s ${KIND_SHA_URL}| awk '{ print $1 }')"
 KIND_DOWNLOAD_RETRIES=5
+KIND_CLUSTER_NAME=${KIND_CLUSTER_NAME:-ovn}
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 TMP_DIR="$(mktemp -d)"
@@ -79,4 +80,3 @@ else
 fi
 
 popd # go our of $SCRIPT_DIR/../../contrib
-

@@ -1,0 +1,34 @@
+name: 'Export KIND data'
+description: 'Export KIND cluster logs and collect any core dumps from nodes'
+inputs:
+  log-path:
+    description: 'Path where logs should be exported'
+    required: false
+    default: '/tmp/kind/logs'
+  collect-traffic-flow:
+    description: 'Whether to collect traffic flow test results'
+    required: false
+    default: 'false'
+runs:
+  using: 'composite'
+  steps:
+    - name: Export logs and collect core dumps
+      shell: bash
+      run: |
+        mkdir -p "${{ inputs.log-path }}/coredumps"
+        KIND_CLUSTER_NAME="${KIND_CLUSTER_NAME:-ovn}"
+        OCI_BIN="${KIND_EXPERIMENTAL_PROVIDER:-docker}"
+        for node in $(kind get nodes --name "${KIND_CLUSTER_NAME}"); do
+          if ${OCI_BIN} exec "$node" sh -c 'ls /tmp/cores/core.* 2>/dev/null'; then
+            ${OCI_BIN} exec "$node" sh -c 'ls /tmp/cores/core.*' | while read corefile; do
+              # It isn't possible to `docker cp` certain system files such as resources under tmpfs. use tar instead
+              ${OCI_BIN} exec "$node" tar -c -C /tmp/cores "$(basename $corefile)" | tar -xO > "${{ inputs.log-path }}/coredumps/${node}_$(basename $corefile)" || true
+            done
+          fi
+        done
+
+        kind export logs --name ${KIND_CLUSTER_NAME} --verbosity 4 "${{ inputs.log-path }}"
+
+        if [ "${{ inputs.collect-traffic-flow }}" == "true" ] && [ -n "${TRAFFIC_FLOW_TESTS}" ]; then
+          mv -v /tmp/traffic_flow_test_result.json "${{ inputs.log-path }}/" || true
+        fi
