@@ -75,6 +75,7 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotation(
 	ipAllocator subnet.NamedAllocator,
 	node *corev1.Node,
 	pod *corev1.Pod,
+	nadName string,
 	network *nadapi.NetworkSelectionElement,
 	reallocateIP bool,
 	networkRole string) (
@@ -89,6 +90,7 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotation(
 		allocator.netInfo,
 		node,
 		pod,
+		nadName,
 		network,
 		allocator.ipamClaimsReconciler,
 		allocator.macRegistry,
@@ -104,6 +106,7 @@ func allocatePodAnnotation(
 	netInfo util.NetInfo,
 	node *corev1.Node,
 	pod *corev1.Pod,
+	nadName string,
 	network *nadapi.NetworkSelectionElement,
 	claimsReconciler persistentips.PersistentAllocations,
 	macRegistry mac.Register,
@@ -124,6 +127,7 @@ func allocatePodAnnotation(
 			netInfo,
 			node,
 			pod,
+			nadName,
 			network,
 			claimsReconciler,
 			macRegistry,
@@ -161,6 +165,7 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotationWithTunnelID(
 	idAllocator id.NamedAllocator,
 	node *corev1.Node,
 	pod *corev1.Pod,
+	nadName string,
 	network *nadapi.NetworkSelectionElement,
 	reallocateIP bool,
 	networkRole string) (
@@ -176,6 +181,7 @@ func (allocator *PodAnnotationAllocator) AllocatePodAnnotationWithTunnelID(
 		allocator.netInfo,
 		node,
 		pod,
+		nadName,
 		network,
 		allocator.ipamClaimsReconciler,
 		allocator.macRegistry,
@@ -192,6 +198,7 @@ func allocatePodAnnotationWithTunnelID(
 	netInfo util.NetInfo,
 	node *corev1.Node,
 	pod *corev1.Pod,
+	nadName string,
 	network *nadapi.NetworkSelectionElement,
 	claimsReconciler persistentips.PersistentAllocations,
 	macRegistry mac.Register,
@@ -209,6 +216,7 @@ func allocatePodAnnotationWithTunnelID(
 			netInfo,
 			node,
 			pod,
+			nadName,
 			network,
 			claimsReconciler,
 			macRegistry,
@@ -329,6 +337,7 @@ func allocatePodAnnotationWithRollback(
 	netInfo util.NetInfo,
 	node *corev1.Node,
 	pod *corev1.Pod,
+	nadName string,
 	network *nadapi.NetworkSelectionElement,
 	claimsReconciler persistentips.PersistentAllocations,
 	macRegistry mac.Register,
@@ -339,9 +348,8 @@ func allocatePodAnnotationWithRollback(
 	rollback func(),
 	err error) {
 
-	nadName := types.DefaultNetworkName
-	if netInfo.IsUserDefinedNetwork() {
-		nadName = util.GetNADName(network.Namespace, network.Name)
+	if !netInfo.IsUserDefinedNetwork() {
+		nadName = types.DefaultNetworkName
 	}
 	podDesc := fmt.Sprintf("%s/%s/%s", nadName, pod.Namespace, pod.Name)
 	macOwnerID := macOwner(pod)
@@ -534,7 +542,7 @@ func allocatePodAnnotationWithRollback(
 		}
 
 		// handle routes & gateways
-		err = AddRoutesGatewayIP(netInfo, node, pod, tentative, network)
+		err = AddRoutesGatewayIP(netInfo, node, pod, tentative, nadName, network)
 		if err != nil {
 			return
 		}
@@ -602,12 +610,18 @@ func AddRoutesGatewayIP(
 	node *corev1.Node,
 	pod *corev1.Pod,
 	podAnnotation *util.PodAnnotation,
+	nadName string,
 	network *nadapi.NetworkSelectionElement) error {
 
 	// generate the nodeSubnets from the allocated IPs
 	nodeSubnets := util.IPsToNetworkIPs(podAnnotation.IPs...)
 
 	if netinfo.IsUserDefinedNetwork() {
+		_, index, err := util.GetNadFromIndexedNADKey(nadName)
+		if err != nil {
+			return fmt.Errorf("failed getting index from indexed NAD key %s: %w", nadName, err)
+		}
+
 		// for secondary network, see if its network-attachment's annotation has default-route key.
 		// If present, then we need to add default route for it
 		podAnnotation.Gateways = append(podAnnotation.Gateways, network.GatewayRequest...)
@@ -679,6 +693,7 @@ func AddRoutesGatewayIP(
 						podAnnotation.Routes = append(podAnnotation.Routes, util.PodRoute{
 							Dest:    clusterSubnet.CIDR,
 							NextHop: gatewayIPnet.IP,
+							Metric:  index * 100, // 0 for first interface, 100 for second, 200 for third, etc.
 						})
 					}
 				}

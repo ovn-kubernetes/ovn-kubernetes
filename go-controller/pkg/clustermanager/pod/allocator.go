@@ -201,7 +201,7 @@ func (a *PodAllocator) reconcile(old, new *corev1.Pod, releaseFromAllocator bool
 			return err
 		}
 		for nadName := range podNetworks {
-			if a.netInfo.HasNAD(nadName) {
+			if a.netInfo.HasNADKey(nadName) {
 				activeNetwork = a.netInfo
 				break
 			}
@@ -372,6 +372,7 @@ func (a *PodAllocator) allocatePodOnNAD(pod *corev1.Pod, nad string, network *ne
 		idAllocator,
 		node,
 		pod,
+		nad,
 		network,
 		reallocate,
 		networkRole,
