@@ -52,6 +52,8 @@ spec:
           - mountPath: /etc/webhook-cert/
             name: webhook-cert
         env:
+          - name: GOTRACEBACK
+            value: "crash"
           - name: OVN_DAEMONSET_VERSION
             value: "1.1.0"
           - name: K8S_APISERVER
