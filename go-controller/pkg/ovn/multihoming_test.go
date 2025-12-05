@@ -471,7 +471,8 @@ func newMultiHomedPod(testPod testPod, multiHomingConfigs ...userDefinedNetInfo)
 	for _, multiHomingConf := range multiHomingConfigs {
 		if multiHomingConf.isPrimary {
 			if multiHomingConf.ipamClaimReference != "" {
-				pod.Annotations[util.OvnUDNIPAMClaimName] = multiHomingConf.ipamClaimReference
+				pod.Annotations[util.DeprecatedOvnUDNIPAMClaimName] = multiHomingConf.ipamClaimReference
+				pod.Annotations[util.DefNetworkAnnotation] = generateDefaultNSEAnnotation(multiHomingConf)
 			}
 			continue // these will be automatically plugged in
 		}
@@ -498,6 +499,22 @@ func newMultiHomedPod(testPod testPod, multiHomingConfigs ...userDefinedNetInfo)
 		}
 	}
 	return pod
+}
+
+func generateDefaultNSEAnnotation(multiHomingConf userDefinedNetInfo) string {
+	nadNamePair := strings.Split(multiHomingConf.nadName, "/")
+	if len(nadNamePair) != 2 {
+		panic("failed to generate default NSE: invalid NAD name. Expected NAD name format: '<namespace>/<name>'")
+	}
+	bytes, err := json.Marshal([]nadapi.NetworkSelectionElement{{
+		Namespace:          nadNamePair[0],
+		Name:               nadNamePair[1],
+		IPAMClaimReference: multiHomingConf.ipamClaimReference,
+	}})
+	if err != nil {
+		panic(fmt.Errorf("failed to generate default NSE: %v", err))
+	}
+	return string(bytes)
 }
 
 func dummyOVNPodNetworkAnnotations(secondaryPodInfos map[string]*udnPodInfo, multiHomingConfigs []userDefinedNetInfo) string {
