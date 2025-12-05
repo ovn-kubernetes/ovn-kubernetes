@@ -248,6 +248,7 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 			Cmd:    "sysctl -w net/ipv4/conf/ovn-k8s-mp0/rp_filter=2",
 			Output: "net.ipv4.conf.ovn-k8s-mp0.rp_filter = 2",
 		})
+		fexec.AddFakeCmdsNoOutputNoError([]string{"ovs-ofctl -O OpenFlow13 dump-groups breth0"})
 		fexec.AddFakeCmdsNoOutputNoError([]string{
 			"ovs-ofctl -O OpenFlow13 --bundle replace-flows breth0 -",
 		})
@@ -713,6 +714,7 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 			Output: "9",
 		})
 		// cleanup flows
+		fexec.AddFakeCmdsNoOutputNoError([]string{"ovs-ofctl -O OpenFlow13 dump-groups " + brphys})
 		fexec.AddFakeCmdsNoOutputNoError([]string{
 			"ovs-ofctl -O OpenFlow13 --bundle replace-flows " + brphys + " -",
 		})
@@ -1201,6 +1203,10 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 			Cmd:    "ovs-ofctl show breth0",
 			Output: ovsOFOutput,
+		})
+		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
+			Cmd:    "ovs-ofctl -O OpenFlow13 dump-groups breth0",
+			Output: "",
 		})
 		// syncServices()
 
