@@ -289,6 +289,8 @@ spec:
             cpu: 100m
             memory: 300Mi
         env:
+        - name: GOTRACEBACK
+          value: "crash"
         - name: OVN_EGRESSSERVICE_ENABLE
           value: {{ default "" .Values.global.enableEgressService | quote }}
         - name: OVN_DAEMONSET_VERSION

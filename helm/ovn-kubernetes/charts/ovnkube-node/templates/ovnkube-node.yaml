@@ -113,6 +113,8 @@ spec:
             cpu: 100m
             memory: 300Mi
         env:
+        - name: GOTRACEBACK
+          value: "crash"
         - name: OVN_DAEMONSET_VERSION
           value: "1.1.0"
         - name: OVNKUBE_LOGLEVEL
