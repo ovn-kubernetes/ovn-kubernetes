@@ -3805,6 +3805,13 @@ func startIperfServerAndClientForConntrackTest(f *framework.Framework, iperfPodN
 		}
 
 		for i := range len(externalContainers) {
+			ginkgo.By("Install iputils for ping")
+			_, err = e2ekubectl.RunKubectl(f.Namespace.Name, []string{"exec", iperfPodName, "--", "dnf", "install", "-y", "iputils"}...)
+			framework.ExpectNoError(err, "failed to install iputils package on the test container %s", iperfPodName)
+			ginkgo.By("Ping the gateway IP to ensure the gateway is reachable")
+			_, err = e2ekubectl.RunKubectl(f.Namespace.Name, []string{"exec", iperfPodName, "--", "ping", "-c1", gatewayIPs[i]}...)
+			framework.ExpectNoError(err, "failed to ping the gateway IP %s", gatewayIPs[i])
+
 			ginkgo.By(fmt.Sprintf("Start iperf3 client on the src app pod to connect to iperf3 server running on the external container at port %d", 5201+i))
 			args := []string{"exec", iperfPodName, "--", "iperf3", "-u", "-c", gatewayIPs[i],
 				"-p", fmt.Sprintf("%d", 5201+i), "-b", "1M", "-i", "1", "-t", "3", "&"}
