@@ -29,6 +29,7 @@ import (
 	apbroutecontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/apbroute"
 	efcontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/egressfirewall"
 	egresssvc "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/egressservice"
+	networkconnectcontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/networkconnect"
 	svccontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/services"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/unidling"
 	dnsnameresolver "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/dns_name_resolver"
@@ -97,6 +98,9 @@ type DefaultNetworkController struct {
 	egressSvcController *egresssvc.Controller
 	// Controller used for programming OVN for Admin Network Policy
 	anpController *anpcontroller.Controller
+
+	// Controller used for programming OVN for Network Connect
+	networkConnectController *networkconnectcontroller.Controller
 
 	// Controller used to handle the admin policy based external route resources
 	apbExternalRouteController *apbroutecontroller.ExternalGatewayMasterController
@@ -342,6 +346,9 @@ func (oc *DefaultNetworkController) Stop() {
 	if oc.routeImportManager != nil {
 		oc.routeImportManager.ForgetNetwork(oc.GetNetworkName())
 	}
+	if oc.networkConnectController != nil {
+		oc.networkConnectController.Stop()
+	}
 
 	close(oc.stopChan)
 	oc.cancelableCtx.Cancel()
@@ -562,6 +569,16 @@ func (oc *DefaultNetworkController) run(_ context.Context) error {
 			// Until we have scale issues in future let's spawn only one thread
 			oc.nqosController.Run(1, oc.stopChan)
 		}()
+	}
+
+	if util.IsNetworkConnectEnabled() {
+		err := oc.newNetworkConnectController()
+		if err != nil {
+			return fmt.Errorf("unable to create network connect controller, err: %w", err)
+		}
+		if err := oc.networkConnectController.Start(); err != nil {
+			return fmt.Errorf("unable to start network connect controller, err: %w", err)
+		}
 	}
 
 	end := time.Since(start)
