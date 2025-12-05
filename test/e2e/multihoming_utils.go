@@ -102,6 +102,8 @@ type networkAttachmentConfigParams struct {
 	role                string
 	mtu                 int
 	physicalNetworkName string
+	labelKey            string
+	labelValue          string
 }
 
 type networkAttachmentConfig struct {
