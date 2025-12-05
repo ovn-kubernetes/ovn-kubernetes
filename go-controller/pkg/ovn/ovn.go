@@ -25,6 +25,7 @@ import (
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	anpcontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/admin_network_policy"
 	egresssvc_zone "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/egressservice"
+	networkconnectcontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/networkconnect"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -515,4 +516,14 @@ func (oc *DefaultNetworkController) newANPController() error {
 		oc.observManager,
 	)
 	return err
+}
+
+func (oc *DefaultNetworkController) newNetworkConnectController() error {
+	oc.networkConnectController = networkconnectcontroller.NewController(
+		oc.zone,
+		oc.nbClient,
+		oc.watchFactory,
+		oc.networkManager,
+	)
+	return nil
 }
