@@ -106,6 +106,8 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 		lrpNetworkIPv6        string
 		subnetIPv4            string
 		subnetIPv6            string
+		gwIPv4                string
+		gwIPv6                string
 		transitSwitchPortIPv4 string
 		transitSwitchPortIPv6 string
 		addressIPv4           string
@@ -126,6 +128,8 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 				nodeID:                "4",
 				subnetIPv4:            "10.128.1.0/24",
 				subnetIPv6:            "fd11::/64",
+				gwIPv4:                "10.128.1.1",
+				gwIPv6:                "fd11::1",
 				lrpNetworkIPv4:        "100.64.0.4/24",
 				lrpNetworkIPv6:        "fd98::4/64",
 				transitSwitchPortIPv4: "100.65.0.4/24",
@@ -137,6 +141,8 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 				nodeID:                "5",
 				subnetIPv4:            "10.128.2.0/24",
 				subnetIPv6:            "fd12::/64",
+				gwIPv4:                "10.128.2.1",
+				gwIPv6:                "fd12::1",
 				lrpNetworkIPv4:        "100.64.0.5/24",
 				lrpNetworkIPv6:        "fd98::5/64",
 				transitSwitchPortIPv4: "100.65.0.5/24",
@@ -148,6 +154,8 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 				nodeID:                "6",
 				subnetIPv4:            "10.128.3.0/24",
 				subnetIPv6:            "fd13::/64",
+				gwIPv4:                "10.128.3.1",
+				gwIPv6:                "fd13::1",
 				lrpNetworkIPv4:        "100.64.0.6/24",
 				lrpNetworkIPv6:        "fd98::6/64",
 				transitSwitchPortIPv4: "100.65.0.6/24",
@@ -298,7 +306,8 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 				pod.Annotations[k] = v
 			}
 		}
-		ComposeDHCPv4Options = func(uuid, namespace string, t *testDHCPOptions) *nbdb.DHCPOptions {
+		ComposeDHCPv4Options = func(uuid, namespace string, nodeName string, t *testDHCPOptions) *nbdb.DHCPOptions {
+			GinkgoHelper()
 			dhcpOptions := kubevirt.ComposeDHCPv4Options(
 				t.cidr,
 				DefaultNetworkControllerName,
@@ -307,8 +316,9 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 					Name:      t.hostname,
 				},
 			)
+
 			dhcpOptions.Options["dns_server"] = t.dns
-			dhcpOptions.Options["router"] = kubevirt.ARPProxyIPv4
+			dhcpOptions.Options["router"] = nodeByName[nodeName].gwIPv4
 			dhcpOptions.UUID = uuid
 
 			return dhcpOptions
@@ -458,14 +468,14 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 				addressIPv4 = vmByName[t.vmName].addressIPv4
 				addresses = addressIPv4
 				mac = util.IPAddrToHWAddr(net.ParseIP(addressIPv4)).String()
-				nodeGWIP = kubevirt.ARPProxyIPv4
+				nodeGWIP = nodeByName[t.nodeName].gwIPv4
 			} else if config.IPv6Mode && !config.IPv4Mode {
 				subnetIPv6 = nodeByName[t.nodeName].subnetIPv6
 				subnets = subnetIPv6
 				addressIPv6 = vmByName[t.vmName].addressIPv6
 				addresses = addressIPv6
 				mac = util.IPAddrToHWAddr(net.ParseIP(addressIPv6)).String()
-				nodeGWIP = kubevirt.ARPProxyIPv6
+				nodeGWIP = nodeByName[t.nodeName].gwIPv6
 			} else if config.IPv4Mode && config.IPv6Mode {
 				subnetIPv4 = nodeByName[t.nodeName].subnetIPv4
 				subnetIPv6 = nodeByName[t.nodeName].subnetIPv6
@@ -474,7 +484,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 				addressIPv6 = vmByName[t.vmName].addressIPv6
 				addresses = addressIPv4 + " " + addressIPv6
 				mac = util.IPAddrToHWAddr(net.ParseIP(addressIPv4)).String()
-				nodeGWIP = kubevirt.ARPProxyIPv4 + " " + kubevirt.ARPProxyIPv6
+				nodeGWIP = nodeByName[t.nodeName].gwIPv4 + " " + nodeByName[t.nodeName].gwIPv6
 			}
 			labels := map[string]string{
 				kubevirtv1.VirtualMachineNameLabel: t.vmName,
@@ -489,7 +499,6 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 			for k, v := range t.extraAnnotations {
 				annotations[k] = v
 			}
-
 			t.testPod = newTPod(t.nodeName, subnets, "", nodeGWIP, "virt-launcher-"+t.suffix, addresses, mac, "namespace1")
 			t.annotations = annotations
 			t.labels = labels
@@ -642,7 +651,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 			}
 
 			for i, d := range t.dhcpv4 {
-				initialDB.NBData = append(initialDB.NBData, ComposeDHCPv4Options(fmt.Sprintf("dhcpv4%d%s", i, d.hostname), t.namespace, &d))
+				initialDB.NBData = append(initialDB.NBData, ComposeDHCPv4Options(fmt.Sprintf("dhcpv4%d%s", i, d.hostname), t.namespace, t.nodeName, &d))
 			}
 
 			for i, d := range t.dhcpv6 {
@@ -847,7 +856,7 @@ var _ = Describe("OVN Kubevirt Operations", func() {
 					expectedOVN = append(expectedOVN, expectedStaticRoute)
 				}
 				for _, d := range t.expectedDhcpv4 {
-					expectedOVN = append(expectedOVN, ComposeDHCPv4Options(dhcpv4OptionsUUID+d.hostname, t.namespace, &d))
+					expectedOVN = append(expectedOVN, ComposeDHCPv4Options(dhcpv4OptionsUUID+d.hostname, t.namespace, t.nodeName, &d))
 				}
 
 				for _, d := range t.expectedDhcpv6 {
