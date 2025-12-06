@@ -381,7 +381,11 @@ func NewLayer2UserDefinedNetworkController(
 	}
 
 	if config.OVNKubernetesFeature.EnableInterconnect {
-		oc.zoneICHandler = zoneinterconnect.NewZoneInterconnectHandler(oc.GetNetInfo(), oc.nbClient, oc.sbClient, oc.watchFactory)
+		var err error
+		oc.zoneICHandler, err = zoneinterconnect.NewZoneInterconnectHandler(oc.GetNetInfo(), oc.nbClient, oc.sbClient, oc.watchFactory)
+		if err != nil {
+			return nil, fmt.Errorf("unable to create new zone interconnect handler while creating new layer2 network controller: %w", err)
+		}
 	}
 
 	if util.IsNetworkSegmentationSupportEnabled() && netInfo.IsPrimaryNetwork() {
