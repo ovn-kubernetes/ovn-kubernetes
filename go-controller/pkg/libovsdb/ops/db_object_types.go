@@ -10,6 +10,7 @@ const (
 	logicalRouterPolicy
 	qos
 	nat
+	logicalRouter
 )
 
 const (
@@ -42,7 +43,8 @@ const (
 	// ClusterOwnerType means the object is cluster-scoped and doesn't belong to any k8s objects
 	ClusterOwnerType ownerType = "Cluster"
 	// UDNIsolationOwnerType means the object is needed to implement UserDefinedNetwork isolation
-	UDNIsolationOwnerType ownerType = "UDNIsolation"
+	UDNIsolationOwnerType          ownerType = "UDNIsolation"
+	ClusterNetworkConnectOwnerType ownerType = "ClusterNetworkConnect"
 
 	// owner extra IDs, make sure to define only 1 ExternalIDKey for every string value
 	PriorityKey           ExternalIDKey = "priority"
@@ -373,4 +375,9 @@ var NetworkQoS = newObjectIDsType(qos, NetworkQoSOwnerType, []ExternalIDKey{
 	ObjectNameKey,
 	// rule index
 	RuleIndex,
+})
+
+var LogicalRouterClusterNetworkConnect = newObjectIDsType(logicalRouter, ClusterNetworkConnectOwnerType, []ExternalIDKey{
+	// logical router name
+	ObjectNameKey,
 })
