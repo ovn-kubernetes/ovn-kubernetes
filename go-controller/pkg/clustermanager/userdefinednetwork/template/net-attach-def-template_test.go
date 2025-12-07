@@ -25,6 +25,9 @@ var _ = Describe("NetAttachDefTemplate", func() {
 	BeforeEach(func() {
 		config.IPv4Mode = true
 		config.IPv6Mode = true
+		// Set cluster join subnets to avoid conflicts with UDN tests
+		config.Gateway.V4JoinSubnet = "100.64.0.0/16"
+		config.Gateway.V6JoinSubnet = "fd98::/64"
 	})
 
 	DescribeTable("should fail to render NAD spec given",
@@ -293,6 +296,38 @@ var _ = Describe("NetAttachDefTemplate", func() {
 	It("should fail given unknown type", func() {
 		_, err := RenderNetAttachDefManifest(&netv1.NetworkAttachmentDefinition{}, "foo")
 		Expect(err).To(HaveOccurred())
+	})
+
+	// Regression test: secondary Layer2 networks should not get join subnets assigned,
+	// even when cluster join subnet matches the UDN default join subnet.
+	// Before the fix, secondary Layer2 networks would fail with overlap error because
+	// they were incorrectly assigned the default UDN join subnet (100.65.0.0/16).
+	It("should succeed for secondary Layer2 network when cluster join subnet matches UDN default", func() {
+		// Set cluster join subnet to match UDN default join subnet
+		config.Gateway.V4JoinSubnet = "100.65.0.0/16"
+		config.Gateway.V6JoinSubnet = "fd99::/64"
+		config.IPv4Mode = true
+		config.IPv6Mode = true
+
+		testUdn := &udnv1.UserDefinedNetwork{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "test-ns", Name: "gryffindor", UID: "1"},
+			Spec: udnv1.UserDefinedNetworkSpec{
+				Topology: udnv1.NetworkTopologyLayer2,
+				Layer2: &udnv1.Layer2Config{
+					Role:    udnv1.NetworkRoleSecondary,
+					Subnets: udnv1.DualStackCIDRs{"203.203.0.0/16"},
+					MTU:     1500,
+				},
+			},
+		}
+
+		// This should NOT fail - secondary Layer2 networks don't get join subnets
+		Expect(RenderNetAttachDefManifest(testUdn, "test-ns")).To(WithTransform(
+		    func (nad NAD) string {
+		        return nad.Spec.Config
+		    },
+		    Equal(<expectedNAD>),
+		))
 	})
 
 	DescribeTable("should create UDN NAD from spec",
