@@ -440,6 +440,15 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				cudnLabelValue = "l2-net"
 			)
 
+			var cudnCleanup func()
+
+			ginkgo.AfterEach(func() {
+				if cudnCleanup != nil {
+					cudnCleanup()
+					cudnCleanup = nil
+				}
+			})
+
 			// OCP-84026: Verify ingress network policies with static IP and MAC assignments
 			ginkgo.DescribeTable(
 				"ingress network policies in L2 primary UDN with static IP and MAC",
@@ -474,7 +483,8 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 					[]string{l2Subnet},
 					[]string{defaultGatewayIP},
 				)
-				cleanup, err := createClusterUserDefinedNetwork(cs, cudn)
+				var err error
+				cudnCleanup, err = createClusterUserDefinedNetwork(cs, cudn)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				// Step 2: Create UDN namespace, label it and verify NAD is created
@@ -649,9 +659,6 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				gomega.Eventually(func() error {
 					return reachServerPodFromClient(cs, pod1Config, pod4Config, pod1IP, staticPort)
 				}, 1*time.Minute, 6*time.Second).Should(gomega.Succeed())
-
-				// Defer CUDN cleanup to ensure it runs after namespace cleanup
-				ginkgo.DeferCleanup(cleanup)
 			},
 			ginkgo.Entry(
 				"with default pod configuration",
@@ -722,7 +729,8 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 					[]string{gatewayIP},
 					[]string{reservedSubnet1, reservedSubnet2},
 				)
-				cleanup, err := createClusterUserDefinedNetwork(cs, cudn)
+				var err error
+				cudnCleanup, err = createClusterUserDefinedNetwork(cs, cudn)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				ginkgo.By("Creating namespaces a1 and a2 with UDN labels")
@@ -877,9 +885,6 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				gomega.Eventually(func() error {
 					return reachServerPodFromClient(cs, pod3Config, pod1Config, pod3IP, staticPort)
 				}, 1*time.Minute, 6*time.Second).ShouldNot(gomega.Succeed())
-
-				// Defer CUDN cleanup to ensure it runs after namespace cleanup
-				ginkgo.DeferCleanup(cleanup)
 			},
 			ginkgo.Entry(
 				"with default pod configuration",
@@ -1043,7 +1048,7 @@ spec:
     %s:
       role: %s
       subnets: [%s]`, params.name, labelKey, labelValue,
-		strings.Title(topologyType), topologyType, roleType, params.cidr)
+	  	strings.ToUpper(topologyType[:1]) + topologyType[1:], topologyType, roleType, params.cidr)
 
 	// Add optional fields
 	if len(params.defaultGatewayIPs) > 0 {
