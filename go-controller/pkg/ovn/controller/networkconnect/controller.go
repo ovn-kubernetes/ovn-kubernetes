@@ -3,11 +3,13 @@ package networkconnect
 import (
 	"fmt"
 	"reflect"
+	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/sets"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
@@ -21,6 +23,10 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+)
+
+const (
+	controllerName = "ovnkube-network-connect-controller"
 )
 
 // Controller manages network connectivity between (C)UDNs based on ClusterNetworkConnect CRs.
@@ -51,6 +57,23 @@ type Controller struct {
 
 	// nodeController handles Node events (for updating routes when nodes change)
 	nodeController controllerutil.Controller
+
+	// Single global lock protecting all controller state
+	sync.RWMutex
+
+	// cncCache holds the state for each CNC keyed by CNC name
+	cncCache map[string]*networkConnectState
+}
+
+// networkConnectState tracks the state of a single ClusterNetworkConnect
+type networkConnectState struct {
+	// name of the ClusterNetworkConnect
+	name string
+	// tunnelID for the connect router
+	tunnelID int
+	// connectedNetworks is the set of owner keys (e.g., "layer3_1", "layer2_2") for networks
+	// connected by this CNC. Used to track OVN resources created and detect NAD matching changes.
+	connectedNetworks sets.Set[string]
 }
 
 // NewController creates a new network connect controller for ovnkube-controller.
@@ -70,6 +93,7 @@ func NewController(
 		cncLister:      cncLister,
 		nodeLister:     nodeLister,
 		networkManager: networkManager,
+		cncCache:       make(map[string]*networkConnectState),
 	}
 
 	cncCfg := &controllerutil.ControllerConfig[networkconnectv1.ClusterNetworkConnect]{
@@ -168,6 +192,8 @@ func nodeNeedsUpdate(oldObj, newObj *corev1.Node) bool {
 
 // reconcileCNC reconciles a ClusterNetworkConnect object.
 func (c *Controller) reconcileCNC(key string) error {
+	c.Lock()
+	defer c.Unlock()
 
 	startTime := time.Now()
 	_, cncName, err := cache.SplitMetaNamespaceKey(key)
@@ -180,21 +206,20 @@ func (c *Controller) reconcileCNC(key string) error {
 		klog.V(4).Infof("Reconciling CNC %s took %v", cncName, time.Since(startTime))
 	}()
 
-	_, err = c.cncLister.Get(cncName)
+	cnc, err := c.cncLister.Get(cncName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			// CNC was deleted, clean up OVN resources
-			return c.cleanupCNC()
+			return c.cleanupCNC(cncName)
 		}
 		return err
 	}
 
-	return c.syncCNC()
+	return c.syncCNC(cnc)
 }
 
 // reconcileNode reconciles node changes that might affect network connectivity.
 func (c *Controller) reconcileNode(key string) error {
-
 	startTime := time.Now()
 	klog.V(5).Infof("Reconciling node %s for network connect", key)
 	defer func() {
@@ -230,8 +255,38 @@ func (c *Controller) requeueAllCNCs() error {
 }
 
 // syncCNC synchronizes the OVN topology for a CNC.
-func (c *Controller) syncCNC() error {
+func (c *Controller) syncCNC(cnc *networkconnectv1.ClusterNetworkConnect) error {
+	// Get or create CNC state
+	cncState, exists := c.cncCache[cnc.Name]
+	if !exists {
+		// this means its CNC create event
+		cncState = &networkConnectState{
+			name:              cnc.Name,
+			connectedNetworks: sets.New[string](),
+		}
+		c.cncCache[cnc.Name] = cncState
+	}
 	// STEP1: Create the connect router for the CNC using tunnel ID from CNC annotation
+	// This is always a one time operation - Every CNC has exactly one connect router.
+	// tunnelID is set by cluster manager during CNC creation and is considered immutable
+	if cncState.tunnelID == 0 {
+		// Parse tunnel key from annotation (set by cluster manager)
+		tunnelID, err := util.ParseNetworkConnectTunnelKeyAnnotation(cnc)
+		if err != nil {
+			return fmt.Errorf("failed to parse tunnel key annotation for CNC %s: %v", cnc.Name, err)
+		}
+		if tunnelID == 0 {
+			klog.V(4).Infof("CNC %s does not have tunnel key annotation yet, waiting for cluster manager", cnc.Name)
+			// we don't return error here because we want to wait for the cluster manager to set the annotation
+			// and cncUpdate event will trigger the reconciliation again.
+			return nil
+		}
+		// Create the connect router
+		if err := c.ensureConnectRouter(cnc, tunnelID); err != nil {
+			return fmt.Errorf("failed to ensure connect router for CNC %s: %v", cnc.Name, err)
+		}
+		cncState.tunnelID = tunnelID
+	}
 	// STEP2: Create the patch ports connecting network router's to the connect router
 	// using IPs from the network subnet CNC annotation.
 	// STEP3: If PodNetworkConnect is enabled, create the logical router policies on network router's
@@ -242,6 +297,23 @@ func (c *Controller) syncCNC() error {
 }
 
 // cleanupCNC removes OVN resources for a deleted CNC.
-func (c *Controller) cleanupCNC() error {
+func (c *Controller) cleanupCNC(cncName string) error {
+	klog.V(4).Infof("Cleaning up CNC %s", cncName)
+
+	_, exists := c.cncCache[cncName]
+	if !exists {
+		klog.V(4).Infof("CNC %s not found in cache, nothing to clean up", cncName)
+		return nil
+	}
+
+	// Remove the connect router
+	if err := c.deleteConnectRouter(cncName); err != nil {
+		return fmt.Errorf("failed to delete connect router for CNC %s: %v", cncName, err)
+	}
+
+	// Remove from cache
+	delete(c.cncCache, cncName)
+	klog.V(4).Infof("Cleaned up CNC %s", cncName)
+
 	return nil
 }

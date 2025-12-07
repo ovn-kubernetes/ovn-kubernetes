@@ -69,6 +69,9 @@ const (
 	TransitRouterToSwitchPrefix = "trtos-"
 	SwitchToTransitRouterPrefix = "stotr-"
 
+	// Connect router prefix (for ClusterNetworkConnect feature)
+	ConnectRouterPrefix = "connect_router_"
+
 	// DefaultACLTier Priorities
 
 	// Default routed multicast allow acl rule priority
