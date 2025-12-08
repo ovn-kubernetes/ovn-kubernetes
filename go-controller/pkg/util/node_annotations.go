@@ -1349,8 +1349,8 @@ func filterIPVersion(cidrs []netip.Prefix, v6 bool) []netip.Prefix {
 	return validCIDRs
 }
 
-func SetNodeEncapIPs(nodeAnnotator kube.Annotator, encapips sets.Set[string]) error {
-	return nodeAnnotator.Set(OVNNodeEncapIPs, sets.List(encapips))
+func SetNodeEncapIPs(nodeAnnotator kube.Annotator, encapips []string) error {
+	return nodeAnnotator.Set(OVNNodeEncapIPs, encapips)
 }
 
 // ParseNodeEncapIPsAnnotation returns the encap IPs set on a node
