@@ -44,6 +44,8 @@ set_common_default_params() {
   KIND_SETTLE_DURATION=${KIND_SETTLE_DURATION:-30}
   KIND_CONFIG=${KIND_CONFIG:-${DIR}/kind.yaml.j2}
   KIND_LOCAL_REGISTRY=${KIND_LOCAL_REGISTRY:-false}
+  KIND_LOCAL_REGISTRY_NAME=${KIND_LOCAL_REGISTRY_NAME:-kind-registry}
+  KIND_LOCAL_REGISTRY_PORT=${KIND_LOCAL_REGISTRY_PORT:-5000}
   KIND_INSTALL_INGRESS=${KIND_INSTALL_INGRESS:-false}
   KIND_INSTALL_METALLB=${KIND_INSTALL_METALLB:-false}
   KIND_INSTALL_PLUGINS=${KIND_INSTALL_PLUGINS:-false}
@@ -324,7 +326,7 @@ docker_disable_ipv6() {
 
 coredns_patch() {
   dns_server="8.8.8.8"
-  # No need for ipv6 nameserver for dual stack, it will ask for 
+  # No need for ipv6 nameserver for dual stack, it will ask for
   # A and AAAA records
   if [ "$IP_FAMILY" == "ipv6" ]; then
     dns_server="2001:4860:4860::8888"
@@ -696,6 +698,100 @@ enable_multi_net() {
   docker_create_second_disconnected_interface "underlay"  # localnet scenarios require an extra interface
 }
 
+
+add_2nd_vtep_interface() {
+  echo "add second VTEP interface to nodes"
+
+  KIND_NODES=$(kind_get_nodes)
+  # e2e test case could create docker containers, the IP_OFFSET should be large enough to avoid collision
+  IP_OFFSET=4096
+
+  for n in $KIND_NODES; do
+    echo "adding VTEP interface to node $n"
+    veth_host="veth`openssl rand -hex 4`"
+    veth_cont="veth`openssl rand -hex 4`"
+    ns_cont=`"$OCI_BIN" inspect -f '{{ .State.Pid }}' $n`
+    bridge=`"$OCI_BIN" network inspect kind --format 'br-{{.Id}}' | cut -c1-15`
+    eth0_ip=`sudo nsenter -t $ns_cont -n ip -br addr show dev eth0  | awk '{print $3}' | cut -d '/' -f 1`
+    sudo ip link add $veth_host type veth peer name $veth_cont
+    sudo ip link set $veth_cont netns $ns_cont
+    sudo ip link set $veth_host master $bridge
+    sudo ip link set $veth_host up
+
+    vtep1_ip=$(python3 -c "import ipaddress; n=ipaddress.ip_network('$eth0_ip', strict=False); print(f'{n.network_address + $IP_OFFSET}/{n.prefixlen}')")
+    sudo nsenter -t $ns_cont -n ip link set $veth_cont name vtep1
+    sudo nsenter -t $ns_cont -n ip link set vtep1 up
+    sudo nsenter -t $ns_cont -n ip addr add $vtep1_ip dev vtep1 noprefixroute
+  done
+}
+
+
+configure_multi_vtep_encap_ips() {
+  echo "configuring encap IPs on kind nodes"
+
+  OVS_PODS=$(kubectl -n ovn-kubernetes get pods -l app=ovs-node -o name)
+  for p in $OVS_PODS; do
+    echo "configuring encap IPs on $p"
+    kubectl -n ovn-kubernetes exec -i $p -- bash -s <<'EOF'
+      set -x
+      # breth0 should be created by ovnkube-node
+      echo "wait breth0 interface to be created..."
+      timeout 120 bash -c 'while ! ip link show breth0 &>/dev/null; do sleep 1; done'
+
+      if ! ip link show brvtep1 &>/dev/null; then
+        ovn-kube-util nics-to-bridge vtep1
+      fi
+
+      vtep0=`ip -br addr show dev breth0  | awk '{print $3}' | cut -d '/' -f 1`
+      vtep1=`ip -br addr show dev brvtep1 | awk '{print $3}' | cut -d '/' -f 1`
+
+      ovs-vsctl set open . external_ids:ovn-encap-ip=$vtep0,$vtep1
+      ovs-vsctl set open . external_ids:ovn-encap-ip-default=$vtep0
+
+      # Below settings are required when using multi-VTEP
+      # - rp_filter=2
+      #   prevent kernel complaining about martian packet
+      # - arp_ignore=1
+      #   prevents ARP confusion - only answer ARP when target IP is assigned to the receiving interface
+      # - arp_announce=2
+      #   prevents ARP cache corruption on peers - sending ARP with wrong source IP
+      sysctl -w net.ipv4.conf.breth0.rp_filter=2
+      sysctl -w net.ipv4.conf.breth0.arp_ignore=1
+      sysctl -w net.ipv4.conf.breth0.arp_announce=2
+
+      sysctl -w net.ipv4.conf.brvtep1.rp_filter=2
+      sysctl -w net.ipv4.conf.brvtep1.arp_ignore=1
+      sysctl -w net.ipv4.conf.brvtep1.arp_announce=2
+EOF
+
+  done
+}
+
+
+configure_multi_vtep_routing() {
+  echo "configuring multi-VTEP routing on kind nodes"
+
+  KIND_NODES=$(kind get nodes --name "${KIND_CLUSTER_NAME}" | sort)
+  for n in $KIND_NODES; do
+    "$OCI_BIN" exec  -i "$n" bash -s <<'EOF'
+      set -x
+
+      echo "wait breth0 interface to be created..."
+      timeout 120 bash -c 'while ! ip link show breth0 &>/dev/null; do sleep 1; done'
+
+      # add source-based routing rules for the VTEP interfaces
+      vtep0=`ip -br addr show dev breth0  | awk '{print $3}' | cut -d '/' -f 1`
+      vtep1=`ip -br addr show dev brvtep1 | awk '{print $3}' | cut -d '/' -f 1`
+      subnet=`ip -br addr show breth0 | awk '{print $3}' | xargs -I{} python3 -c "import ipaddress; n=ipaddress.ip_interface('{}'); print(f'{n.network}')"`
+      ip rule add from $vtep0 table 6081 priority 6081 || true
+      ip route add $subnet dev breth0 table 6081 metric 800 || true
+
+      ip rule add from $vtep1 table 6082 priority 6082 || true
+      ip route add $subnet dev brvtep1 table 6082 metric 802 || true
+EOF
+  done
+}
+
 kind_get_nodes() {
   kind get nodes --name "${KIND_CLUSTER_NAME}" | grep -v external-load-balancer
 }
@@ -712,7 +808,7 @@ set_dnsnameresolver_images() {
 
 # build_image accepts three arguments. The first argument is the absolute path to the directory
 # which contains the Dockerfile. The second argument is the image name along with the tag. The
-# third argument is the name of the Dockerfile to use for building the image. 
+# third argument is the name of the Dockerfile to use for building the image.
 build_image() {
   pushd ${1}
   $OCI_BIN build -t "${2}" -f ${3} .
@@ -732,7 +828,7 @@ build_dnsnameresolver_images() {
   pushd /tmp/coredns-ocp-dnsnameresolver
   git checkout release-4.21
   popd
- 
+
   build_image /tmp/coredns-ocp-dnsnameresolver ${COREDNS_WITH_OCP_DNSNAMERESOLVER} Dockerfile.upstream
 
   build_image /tmp/coredns-ocp-dnsnameresolver/operator ${DNSNAMERESOLVER_OPERATOR} Dockerfile
@@ -827,7 +923,7 @@ install_dnsnameresolver_images() {
 
 install_dnsnameresolver_operator() {
   pushd /tmp/coredns-ocp-dnsnameresolver/operator
-  
+
   # Before installing DNSNameResolver operator, update the args so that the operator
   # is configured with the correct values.
   sed -i -e 's/^\(.*--coredns-namespace=\).*/\1kube-system/' \
@@ -953,11 +1049,11 @@ clone_frr() {
 deploy_frr_external_container() {
   echo "Deploying FRR external container ..."
   clone_frr
- 
+
   pushd "$FRR_TMP_DIR" || exit 1
   run_kubectl apply -f frr-k8s/charts/frr-k8s/charts/crds/templates/frrk8s.metallb.io_frrconfigurations.yaml
   popd || exit 1
- 
+
   # apply the demo which will deploy an external FRR container that the cluster
   # can peer with acting as BGP (reflector) external gateway
   pushd "${FRR_TMP_DIR}"/frr-k8s/hack/demo || exit 1
@@ -1108,10 +1204,10 @@ install_frr_k8s() {
       sed -i "${LINE_NUM}a\\${IPv6_LINE}" receive_filtered.yaml
     done
   fi
-  
+
   # frr-k8s webhook is declaring readiness before its endpoint is serving.
   # Let's do our own probing. Also will print logs in case of failure so we get
-  # insights on why this is hapenning 
+  # insights on why this is hapenning
   local r
   r=0
   timeout 60s bash -x <<EOF || r=$?
@@ -1147,12 +1243,12 @@ EOF
       node_ips=$(kubectl get node $node -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')
       # Get subnet information
       subnet_json=$(kubectl get node $node -o jsonpath='{.metadata.annotations.k8s\.ovn\.org/node-subnets}')
-      
+
       if [ "$PLATFORM_IPV4_SUPPORT" == true ]; then
         # Extract IPv4 address (first address)
         node_ipv4=$(echo "$node_ips" | awk '{print $1}')
         ipv4_subnet=$(echo "$subnet_json" | jq -r '.default[0]')
-        
+
         # Add IPv4 route
         if [ -n "$ipv4_subnet" ] && [ -n "$node_ipv4" ]; then
           echo "Adding IPv4 route for $node ($node_ipv4): $ipv4_subnet"
@@ -1165,7 +1261,7 @@ EOF
         # Extract IPv6 address (second address, if present)
         node_ipv6=$(echo "$node_ips" | awk '{print $2}')
         ipv6_subnet=$(echo "$subnet_json" | jq -r '.default[1] // empty')
-        
+
         if [ -n "$ipv6_subnet" ] && [ -n "$node_ipv6" ]; then
           echo "Adding IPv6 route for $node ($node_ipv6): $ipv6_subnet"
           sudo ip -6 route replace $ipv6_subnet via $node_ipv6
@@ -1406,6 +1502,37 @@ delete() {
   timeout 5 kubectl --kubeconfig "${KUBECONFIG}" delete namespace ovn-kubernetes || true
   sleep 5
   kind delete cluster --name "${KIND_CLUSTER_NAME:-ovn}"
+}
+
+create_local_registry() {
+  # create registry container unless it already exists
+  if [ "$($OCI_BIN inspect -f '{{.State.Running}}' "${KIND_LOCAL_REGISTRY_NAME}" 2>/dev/null || true)" != 'true' ]; then
+    $OCI_BIN run \
+      -d --restart=always -p "127.0.0.1:${KIND_LOCAL_REGISTRY_PORT}:5000" --name "${KIND_LOCAL_REGISTRY_NAME}" \
+      registry:2
+  fi
+}
+
+connect_local_registry() {
+  # connect the registry to the cluster network if not already connected
+  if [ "$($OCI_BIN inspect -f='{{json .NetworkSettings.Networks.kind}}' "${KIND_LOCAL_REGISTRY_NAME}")" = 'null' ]; then
+    $OCI_BIN network connect "kind" "${KIND_LOCAL_REGISTRY_NAME}"
+  fi
+
+  # Reference docs for local registry:
+  # - https://kind.sigs.k8s.io/docs/user/local-registry/
+  # - https://github.com/kubernetes/enhancements/tree/master/keps/sig-cluster-lifecycle/generic/1755-communicating-a-local-registry
+  cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: local-registry-hosting
+  namespace: kube-public
+data:
+  localRegistryHosting.v1: |
+    host: "localhost:${KIND_LOCAL_REGISTRY_PORT}"
+    help: "https://kind.sigs.k8s.io/docs/user/local-registry/"
+EOF
 }
 
 create_kind_cluster() {

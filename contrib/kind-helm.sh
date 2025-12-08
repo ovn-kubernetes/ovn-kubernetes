@@ -133,7 +133,9 @@ parse_args() {
             -ikv | --install-kubevirt)            KIND_INSTALL_KUBEVIRT=true
                                                   ;;
             -mne | --multi-network-enable )       ENABLE_MULTI_NET=true
-                                                  ;;
+                                                 ;;
+            -mve | --multi-vtep-enable )         ENABLE_MULTI_VTEP=true
+                                                 ;;
             -nse | --network-segmentation-enable) ENABLE_NETWORK_SEGMENTATION=true
                                                   ;;
             -nce | --network-connect-enable )     ENABLE_NETWORK_CONNECT=true
@@ -247,6 +249,7 @@ print_params() {
      echo "KIND_CLUSTER_NAME = $KIND_CLUSTER_NAME"
      echo "KIND_REMOVE_TAINT = $KIND_REMOVE_TAINT"
      echo "ENABLE_MULTI_NET = $ENABLE_MULTI_NET"
+     echo "ENABLE_MULTI_VTEP = $ENABLE_MULTI_VTEP"
      echo "ENABLE_NETWORK_SEGMENTATION = $ENABLE_NETWORK_SEGMENTATION"
      echo "ENABLE_NETWORK_CONNECT = $ENABLE_NETWORK_CONNECT"
      echo "ENABLE_PRE_CONF_UDN_ADDR = $ENABLE_PRE_CONF_UDN_ADDR"
@@ -350,11 +353,12 @@ helm install ovn-kubernetes . -f "${value_file}" \
           --set serviceNetwork=${SVC_CIDR_IPV4} \
           --set mtu=${OVN_MTU} \
           --set ovnkube-master.replicas=${MASTER_REPLICAS} \
-          --set global.image.repository=${OVN_IMAGE%%:*} \
-          --set global.image.tag=${OVN_IMAGE##*:} \
+          --set global.image.repository="${OVN_IMAGE%:*}" \
+          --set global.image.tag="${OVN_IMAGE##*:}" \
           --set global.enableAdminNetworkPolicy=true \
           --set global.enableMulticast=$(if [ "${OVN_MULTICAST_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableMultiNetwork=$(if [ "${ENABLE_MULTI_NET}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          --set global.enableMultiVTEP=$(if [ "${ENABLE_MULTI_VTEP}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableNetworkSegmentation=$(if [ "${ENABLE_NETWORK_SEGMENTATION}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableNetworkConnect=$(if [ "${ENABLE_NETWORK_CONNECT}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableDynamicUDNAllocation=$(if [ "${DYNAMIC_UDN_ALLOCATION}" == "true" ]; then echo "true"; else echo "false"; fi) \
@@ -391,12 +395,18 @@ print_params
 helm_prereqs
 build_ovn_image
 create_kind_cluster
+if [[ "${KIND_LOCAL_REGISTRY}" == true ]]; then
+  connect_local_registry
+fi
 if [ "$ENABLE_COREDUMPS" == true ]; then
   setup_coredumps
 fi
 detect_apiserver_url
 install_ovn_image
 docker_disable_ipv6
+if [ "$ENABLE_MULTI_VTEP" == true ]; then
+  add_2nd_vtep_interface
+fi
 coredns_patch
 if [ "$OVN_ENABLE_DNSNAMERESOLVER" == true ]; then
     build_dnsnameresolver_images
@@ -423,6 +433,18 @@ fi
 if [ "$ENABLE_MULTI_NET" == true ]; then
   enable_multi_net
 fi
+
+if [ "$ENABLE_MULTI_VTEP" == true ]; then
+  kubectl -n ovn-kubernetes rollout status daemonset ovs-node --timeout 3m
+  if [ $? -ne 0 ]; then
+    echo "ovs-node did not roll out successfully"
+    exit 1
+  fi
+  configure_multi_vtep_encap_ips
+  configure_multi_vtep_routing
+  kubectl -n ovn-kubernetes rollout restart daemonset ovnkube-node
+fi
+
 
 # if ! kubectl wait -n ovn-kubernetes --for=condition=ready pods --all --timeout=300s ; then
 #  echo "some pods in the system are not running"

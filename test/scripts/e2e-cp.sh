@@ -244,6 +244,15 @@ if [ "$ENABLE_NO_OVERLAY" == true ]; then
   skip "Pod to pod TCP with low MTU"
 fi
 
+if [ "$ENABLE_MULTI_VTEP" == true ]; then
+  # transit router has ARP/ND flooding issue with multi-VTEP, which
+  # is fixed by https://github.com/ovn-org/ovn/commit/a6f5a68eb
+  # this can be removed after bump to OVN version that includes the fix.
+ skip "e2e egress IP"
+else
+  skip "Multi-VTEP"
+fi
+
 # setting these is required to make RuntimeClass tests work ... :/
 export KUBE_CONTAINER_RUNTIME=remote
 export KUBE_CONTAINER_RUNTIME_ENDPOINT=unix:///run/containerd/containerd.sock
