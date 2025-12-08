@@ -439,6 +439,11 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				cudnLabel      = "cudn-group"
 				cudnLabelValue = "l2-net"
 			)
+			ginkgo.BeforeEach(func() {
+				if IsIPv6Cluster(f.ClientSet) {
+					ginkgo.Skip("Test not supported on IPv6 clusters")
+				}  
+			})
 
 			var cudnCleanup func()
 
@@ -665,7 +670,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				*podConfig(
 					"hello-pod",
 					withLabels(map[string]string{"name": "hello-pod"}),
-					withStaticIPMAC("192.168.40.3", "02:03:04:05:06:01"),
+					withStaticIPMAC("192.168.40.3/24", "02:03:04:05:06:01"),
 					withCommand(func() []string {
 						return httpServerContainerCmd(8080)
 					}),
@@ -673,15 +678,15 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				*podConfig(
 					"hello-pod-1",
 					withLabels(map[string]string{"name": "hello-pod"}),
-					withStaticIPMAC("192.168.40.4", "02:03:04:05:06:02"),
+					withStaticIPMAC("192.168.40.4/24", "02:03:04:05:06:02"),
 				),
 				*podConfig(
 					"hello-pod",
-					withStaticIPMAC("192.168.40.5", "02:03:04:05:06:04"),
+					withStaticIPMAC("192.168.40.5/24", "02:03:04:05:06:04"),
 				),
 				*podConfig(
 					"hello-pod-1",
-					withStaticIPMAC("192.168.40.6", "02:03:04:05:06:05"),
+					withStaticIPMAC("192.168.40.6/24", "02:03:04:05:06:05"),
 				),
 				"192.168.40.3", // pod1IP
 				"192.168.40.4", // pod2IP
@@ -891,12 +896,12 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				*podConfig(
 					"hello-pod",
 					withLabels(map[string]string{"name": "hello-pod"}),
-					withStaticIPMAC("192.168.40.6", "02:03:04:05:06:01"),
+					withStaticIPMAC("192.168.40.6/24", "02:03:04:05:06:01"),
 				),
 				*podConfig(
 					"hello-pod",
 					withLabels(map[string]string{"name": "hello-pod"}),
-					withStaticIPMAC("192.168.40.7", "02:03:04:05:06:02"),
+					withStaticIPMAC("192.168.40.7/24", "02:03:04:05:06:02"),
 					withCommand(func() []string {
 						return httpServerContainerCmd(8080)
 					}),
@@ -904,7 +909,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				*podConfig(
 					"hello-pod-1",
 					withLabels(map[string]string{"name": "hello-pod"}),
-					withStaticIPMAC("192.168.40.8", "02:03:04:05:06:03"),
+					withStaticIPMAC("192.168.40.8/24", "02:03:04:05:06:03"),
 					withCommand(func() []string {
 						return httpServerContainerCmd(8080)
 					}),
@@ -912,7 +917,7 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 				*podConfig(
 					"hello-pod",
 					withLabels(map[string]string{"name": "hello-pod"}),
-					withStaticIPMAC("192.168.40.9", "02:03:04:05:06:04"),
+					withStaticIPMAC("192.168.40.9/24", "02:03:04:05:06:04"),
 					withCommand(func() []string {
 						return httpServerContainerCmd(8080)
 					}),
@@ -979,7 +984,7 @@ func makeDenyEgressPolicy(cs clientset.Interface, namespace, policyName string) 
 
 // Helper function to set static IP and MAC via annotations
 func withStaticIPMAC(ip, mac string) podOption {
-	annotation := fmt.Sprintf(`[{"name":"default","namespace":"ovn-kubernetes","ips":["%s/24"],"mac":"%s"}]`, ip, mac)
+	annotation := fmt.Sprintf(`[{"name":"default","namespace":"ovn-kubernetes","ips":["%s"],"mac":"%s"}]`, ip, mac)
 	return func(pod *podConfiguration) {
 		if pod.annotations == nil {
 			pod.annotations = make(map[string]string)
@@ -1020,10 +1025,13 @@ func createClusterUserDefinedNetwork(cs clientset.Interface, params *networkAtta
 	// Parse label from namespace field (format: "key=value")
 	labelParts := strings.Split(params.namespace, "=")
 	if len(labelParts) != 2 {
-		return nil, fmt.Errorf("invalid label format in namespace field: %s", params.namespace)
+		return nil, fmt.Errorf("invalid label format in namespace field: %s (expected 'key=value')", params.namespace)
 	}
 	labelKey := labelParts[0]
 	labelValue := labelParts[1]
+	if labelKey == "" || labelValue == "" {
+		return nil, fmt.Errorf("label key and value cannot be empty")
+	}
 
 	// Generate CUDN manifest with label-based namespace selector
 	topologyType := "layer2"
@@ -1070,8 +1078,10 @@ spec:
 	// Return a cleanup function that deletes the CUDN and the temp file
 	cleanup := func() {
 		// Delete the CUDN resource with timeout to prevent hanging
-		e2ekubectl.RunKubectl("", "delete", "clusteruserdefinednetwork", params.name, "--ignore-not-found=true", "--timeout=60s")
-		// Clean up the temp file
+		_, err := e2ekubectl.RunKubectl("", "delete", "clusteruserdefinednetwork", params.name, "--ignore-not-found=true", "--timeout=60s", "--wait=true")
+		if err != nil {
+			framework.Logf("Warning: failed to delete CUDN %s: %v", params.name, err)
+		}// Clean up the temp file
 		fileCleanup()
 	}
 	return cleanup, nil
