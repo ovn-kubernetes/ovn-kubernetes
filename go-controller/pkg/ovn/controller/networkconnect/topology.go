@@ -10,9 +10,10 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
+	utilnet "k8s.io/utils/net"
 
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
-
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	networkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -24,6 +25,10 @@ import (
 const (
 	// connectRouterPrefix is the prefix for connect router names
 	connectRouterPrefix = "connect-router-"
+
+	// policyPriority is the priority for routing policies on network routers
+	// This should be higher than normal routing but lower than critical policies
+	policyPriority = 9001
 )
 
 // getConnectRouterName returns the connect router name for a CNC.
@@ -190,6 +195,46 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 		})
 	}
 
+	// Ensure routing policies for ALL desired networks.
+	// These operations are idempotent (CreateOrUpdate), so we reconcile them on every sync.
+	// It's tricky to use per network per node caches to be able to react on both
+	// source network, destination network, and node events for the policies.
+	// This handles:
+	// - New networks needing policies
+	// - Existing networks needing policies to newly added networks
+	for owner := range allocatedSubnets {
+		_, networkID, err := parseOwnerKey(owner)
+		if err != nil {
+			klog.Warningf("Failed to parse owner key %s: %v", owner, err)
+			continue
+		}
+
+		netInfo, err := c.findNetworkByID(networkID)
+		if err != nil {
+			klog.V(4).Infof("Network with ID %d not found, skipping policies: %v", networkID, err)
+			continue
+		}
+
+		// Skip if this network's router doesn't exist yet (new network not yet in cache)
+		if networksToCreate.Has(owner) {
+			networkRouterName := netInfo.GetNetworkScopedClusterRouterName()
+			_, err = libovsdbops.GetLogicalRouter(c.nbClient, &nbdb.LogicalRouter{Name: networkRouterName})
+			if err != nil {
+				// Already logged and error tracked in port creation phase
+				continue
+			}
+		}
+
+		klog.V(5).Infof("CNC %s: ensuring routing policies for network %s", cncName, netInfo.GetNetworkName())
+
+		// Ensure routing policies on the network router
+		ops, err = c.ensureRoutingPoliciesOps(ops, cnc, netInfo, allocatedSubnets)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to ensure routing policies for network %s: %w", netInfo.GetNetworkName(), err))
+			continue
+		}
+	}
+
 	connectRouterName := getConnectRouterName(cncName)
 
 	// Cleanup ports for nodes that no longer exist.
@@ -260,6 +305,34 @@ func (c *Controller) syncNetworkConnections(cnc *networkconnectv1.ClusterNetwork
 			continue
 		}
 
+		// Delete routing policies from the disconnected network's router
+		// These are policies that route traffic FROM this network TO other connected networks
+		ops, err = libovsdbops.DeleteLogicalRouterPolicyWithPredicateOps(c.nbClient, ops, networkRouterName, func(item *nbdb.LogicalRouterPolicy) bool {
+			return item.ExternalIDs[libovsdbops.ObjectNameKey.String()] == cncName
+		})
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to delete routing policies from network router %s: %w", networkRouterName, err))
+			continue
+		}
+
+		// Delete routing policies from other connected networks' routers that reference this deleted network
+		for otherOwner, otherNetworkRouterName := range cncState.connectedNetworksRouterNames {
+			// Skip the network being deleted (we already cleaned its router above)
+			if otherOwner == owner {
+				continue
+			}
+
+			// Delete policies on other network's router that reference the deleted network
+			ops, err = libovsdbops.DeleteLogicalRouterPolicyWithPredicateOps(c.nbClient, ops, otherNetworkRouterName, func(item *nbdb.LogicalRouterPolicy) bool {
+				return item.ExternalIDs[libovsdbops.ObjectNameKey.String()] == cncName &&
+					item.ExternalIDs[libovsdbops.NetworkIDKey.String()] == strconv.Itoa(networkID)
+			})
+			if err != nil {
+				errs = append(errs, fmt.Errorf("failed to delete routing policies on %s for network %s: %w", otherNetworkRouterName, owner, err))
+				// Don't continue here - we still want to try other cleanups
+			}
+		}
+
 		// Track this network for cache cleanup after successful transact
 		successfullyDeleted = append(successfullyDeleted, owner)
 	}
@@ -308,6 +381,14 @@ func (c *Controller) cleanupNetworkConnections(cncName string, cncState *network
 		})
 		if err != nil {
 			return fmt.Errorf("failed to delete network router ports for network %s: %w", owner, err)
+		}
+
+		// Delete routing policies created by this CNC on the network router
+		ops, err = libovsdbops.DeleteLogicalRouterPolicyWithPredicateOps(c.nbClient, ops, networkRouterName, func(item *nbdb.LogicalRouterPolicy) bool {
+			return item.ExternalIDs[libovsdbops.ObjectNameKey.String()] == cncName
+		})
+		if err != nil {
+			return fmt.Errorf("failed to delete routing policies from network router %s: %w", networkRouterName, err)
 		}
 	}
 
@@ -458,6 +539,154 @@ func (c *Controller) createRouterPortOps(ops []ovsdb.Operation, routerName, port
 	}
 
 	klog.V(5).Infof("Created router port ops %s on %s with peer %s and tunnel key %d", portName, routerName, peerPortName, tunnelKey)
+	return ops, nil
+}
+
+// ensureRoutingPoliciesOps returns ops to create routing policies on the network router to steer traffic to connected networks.
+// For Layer3: creates policy for the local node only (each zone handles its own node)
+// For Layer2: creates a single policy (transit router is distributed)
+func (c *Controller) ensureRoutingPoliciesOps(ops []ovsdb.Operation, cnc *networkconnectv1.ClusterNetworkConnect, srcNetwork util.NetInfo,
+	allocatedSubnets map[string][]*net.IPNet) ([]ovsdb.Operation, error) {
+	cncName := cnc.Name
+	networkRouterName := srcNetwork.GetNetworkScopedClusterRouterName()
+	zoneName := c.zone // zone name is the node name
+
+	// Get the source network's subnets to build the inport match
+	srcSubnets := srcNetwork.Subnets()
+	if len(srcSubnets) == 0 {
+		return nil, fmt.Errorf("source network %s has no subnets", srcNetwork.GetNetworkName())
+	}
+
+	// Get the source network's connect subnets - these determine the nexthop for routing policies
+	// The nexthop is the connect-router's port IP that connects to the source network
+	srcOwnerKey := fmt.Sprintf("%s_%d", srcNetwork.TopologyType(), srcNetwork.GetNetworkID())
+	srcConnectSubnets, found := allocatedSubnets[srcOwnerKey]
+	if !found || len(srcConnectSubnets) == 0 {
+		return nil, fmt.Errorf("source network %s connect subnets not found in allocated subnets", srcNetwork.GetNetworkName())
+	}
+
+	// Calculate inport and nexthop once - these are constant for the source network
+	// The nexthop is the connect-router's port that connects to the source network.
+	// Traffic flow: srcNetwork router -> connect-router (via srcConnectSubnets) -> dstNetwork
+	var inportName string
+	var nexthops []net.IP
+
+	if srcNetwork.TopologyType() == ovntypes.Layer3Topology {
+		// For Layer3, create policy for the local node
+		localNode, err := c.nodeLister.Get(zoneName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get local node %s: %v", zoneName, err)
+		}
+		nodeID, err := util.GetNodeID(localNode)
+		if err != nil {
+			return nil, fmt.Errorf("local node %s does not have node ID: %v", zoneName, err)
+		}
+
+		inportName = srcNetwork.GetNetworkScopedSwitchToRouterPortName(zoneName)
+
+		p2pSubnets, err := calculateP2PSubnets(srcConnectSubnets, nodeID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to calculate P2P subnets for node %s: %v", zoneName, err)
+		}
+		connectPortIPs, _ := getP2PIPs(p2pSubnets)
+		nexthops = util.IPNetsToIPs(connectPortIPs)
+	} else if srcNetwork.TopologyType() == ovntypes.Layer2Topology {
+		// For Layer2, create a single policy (nodeName ignored for Layer2 switch)
+		inportName = srcNetwork.GetNetworkScopedSwitchToRouterPortName("")
+		connectPortIPs, _ := getP2PIPs(srcConnectSubnets)
+		nexthops = util.IPNetsToIPs(connectPortIPs)
+	}
+
+	// For each other connected network, add a routing policy.
+	// Note: We iterate allocatedSubnets again here (it's also iterated by the caller) because
+	// this creates the full mesh of policies. The outer loop in syncNetworkConnections selects
+	// the SOURCE network (where policies are created), while this inner loop finds all
+	// DESTINATION networks (what the policies route to). This is O(N²) which is intentional
+	// for a full mesh connectivity between N networks.
+	// This is typically fine since number of networks that are expected to be connected by a CNC is small, eg. 10.
+	for owner := range allocatedSubnets {
+		_, dstNetworkID, err := parseOwnerKey(owner)
+		if err != nil {
+			continue
+		}
+
+		// Skip if this is the same network
+		if dstNetworkID == srcNetwork.GetNetworkID() {
+			continue
+		}
+
+		// Find destination network info
+		dstNetwork, err := c.findNetworkByID(dstNetworkID)
+		if err != nil {
+			klog.V(4).Infof("Destination network %d not found, skipping policy: %v", dstNetworkID, err)
+			continue
+		}
+
+		// Get destination network's pod subnets
+		dstPodSubnets := dstNetwork.Subnets()
+
+		// Create policies for each destination subnet
+		ops, err = c.createRoutingPoliciesOps(ops, dstNetworkID, networkRouterName, inportName, dstPodSubnets, srcNetwork.GetNetworkName(), nexthops, cncName)
+		if err != nil {
+			return nil, err
+		}
+	}
+	klog.V(5).Infof("Created/updated routing policies ops on %s: %s -> %s", networkRouterName, inportName, nexthops)
+
+	return ops, nil
+}
+
+// createRoutingPoliciesOps returns ops to create logical router policies.
+func (c *Controller) createRoutingPoliciesOps(ops []ovsdb.Operation, dstNetworkID int, routerName, inportName string, dstSubnets []config.CIDRNetworkEntry,
+	srcNetworkName string, nexthops []net.IP, cncName string) ([]ovsdb.Operation, error) {
+	for _, dstSubnet := range dstSubnets {
+		// Determine IP version and get appropriate nexthop
+		var nexthop string
+		for _, nh := range nexthops {
+			isIPv4Subnet := utilnet.IsIPv4(dstSubnet.CIDR.IP)
+			isIPv4Nexthop := utilnet.IsIPv4(nh)
+			if isIPv4Subnet == isIPv4Nexthop {
+				nexthop = nh.String()
+				break
+			}
+		}
+		if nexthop == "" {
+			continue
+		}
+
+		// Build the match string
+		ipVersion := "ip4"
+		if utilnet.IsIPv6(dstSubnet.CIDR.IP) {
+			ipVersion = "ip6"
+		}
+		match := fmt.Sprintf(`inport == "%s" && %s.dst == %s`, inportName, ipVersion, dstSubnet.CIDR.String())
+
+		dbIndexes := libovsdbops.NewDbObjectIDs(libovsdbops.LogicalRouterPolicyClusterNetworkConnect, controllerName,
+			map[libovsdbops.ExternalIDKey]string{
+				libovsdbops.NetworkIDKey:  strconv.Itoa(dstNetworkID),
+				libovsdbops.NetworkKey:    srcNetworkName,
+				libovsdbops.ObjectNameKey: cncName,
+			})
+		policy := &nbdb.LogicalRouterPolicy{
+			Priority:    policyPriority,
+			Match:       match,
+			Action:      nbdb.LogicalRouterPolicyActionReroute,
+			Nexthops:    []string{nexthop},
+			ExternalIDs: dbIndexes.GetExternalIDs(),
+		}
+
+		var err error
+		ops, err = libovsdbops.CreateOrUpdateLogicalRouterPolicyWithPredicateOps(c.nbClient, ops, routerName, policy,
+			func(item *nbdb.LogicalRouterPolicy) bool {
+				return item.Priority == policy.Priority && item.Match == policy.Match
+			})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create routing policy ops on %s: %v", routerName, err)
+		}
+
+		klog.V(5).Infof("Created/updated routing policy ops on %s: %s -> %s", routerName, match, nexthop)
+	}
+
 	return ops, nil
 }
 

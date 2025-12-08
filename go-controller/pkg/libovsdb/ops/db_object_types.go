@@ -395,3 +395,12 @@ var LogicalRouterPortClusterNetworkConnect = newObjectIDsType(logicalRouterPort,
 	// for layer3 network type ports, the node ID is the node ID of the node that the port is connected to.
 	NodeIDKey,
 })
+
+var LogicalRouterPolicyClusterNetworkConnect = newObjectIDsType(logicalRouterPolicy, ClusterNetworkConnectOwnerType, []ExternalIDKey{
+	// CNC name
+	ObjectNameKey,
+	// source network name
+	NetworkKey,
+	// destination network ID
+	NetworkIDKey,
+})
