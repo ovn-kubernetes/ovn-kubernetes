@@ -12,6 +12,7 @@ const (
 	nat
 	logicalRouter
 	logicalRouterPort
+	logicalRouterStaticRoute
 )
 
 const (
@@ -403,4 +404,13 @@ var LogicalRouterPolicyClusterNetworkConnect = newObjectIDsType(logicalRouterPol
 	NetworkKey,
 	// destination network ID
 	NetworkIDKey,
+})
+
+var LogicalRouterStaticRouteClusterNetworkConnect = newObjectIDsType(logicalRouterStaticRoute, ClusterNetworkConnectOwnerType, []ExternalIDKey{
+	// CNC name
+	ObjectNameKey,
+	// destination network name
+	NetworkKey,
+	// destination node ID
+	NodeIDKey,
 })
