@@ -122,6 +122,7 @@ const (
 	EgressSVCReroutePriority              = 101
 	EgressIPReroutePriority               = 100
 	EgressIPRerouteQoSRulePriority        = 103
+	NetworkConnectPolicyPriority          = 9001
 	// priority of logical router policies on a nodes gateway router
 	EgressIPSNATMarkPriority           = 95
 	EgressLiveMigrationReroutePriority = 10
