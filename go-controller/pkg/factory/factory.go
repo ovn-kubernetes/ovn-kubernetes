@@ -321,6 +321,7 @@ func NewOVNKubeControllerWatchFactory(ovnClientset *util.OVNKubeControllerClient
 		egressServiceFactory: egressserviceinformerfactory.NewSharedInformerFactory(ovnClientset.EgressServiceClient, resyncInterval),
 		apbRouteFactory:      adminbasedpolicyinformerfactory.NewSharedInformerFactory(ovnClientset.AdminPolicyRouteClient, resyncInterval),
 		networkQoSFactory:    networkqosinformerfactory.NewSharedInformerFactory(ovnClientset.NetworkQoSClient, resyncInterval),
+		cncFactory:           networkconnectinformerfactory.NewSharedInformerFactory(ovnClientset.NetworkConnectClient, resyncInterval),
 		informers:            make(map[reflect.Type]*informer),
 		stopChan:             make(chan struct{}),
 	}
@@ -367,6 +368,10 @@ func NewOVNKubeControllerWatchFactory(ovnClientset *util.OVNKubeControllerClient
 	}
 
 	if err := networkqosapi.AddToScheme(networkqosscheme.Scheme); err != nil {
+		return nil, err
+	}
+
+	if err := networkconnectapi.AddToScheme(networkconnectscheme.Scheme); err != nil {
 		return nil, err
 	}
 
@@ -523,6 +528,15 @@ func NewOVNKubeControllerWatchFactory(ovnClientset *util.OVNKubeControllerClient
 	if config.OVNKubernetesFeature.EnableNetworkQoS {
 		wf.informers[NetworkQoSType], err = newQueuedInformer(eventQueueSize, NetworkQoSType,
 			wf.networkQoSFactory.K8s().V1alpha1().NetworkQoSes().Informer(), wf.stopChan, minNumEventQueues)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if util.IsNetworkConnectEnabled() {
+		wf.cncFactory = networkconnectinformerfactory.NewSharedInformerFactory(ovnClientset.NetworkConnectClient, resyncInterval)
+		wf.informers[ClusterNetworkConnectType], err = newQueuedInformer(eventQueueSize,
+			ClusterNetworkConnectType,
+			wf.cncFactory.K8s().V1().ClusterNetworkConnects().Informer(), wf.stopChan, minNumEventQueues)
 		if err != nil {
 			return nil, err
 		}
