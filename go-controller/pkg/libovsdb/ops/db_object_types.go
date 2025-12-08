@@ -11,6 +11,7 @@ const (
 	qos
 	nat
 	logicalRouterPort
+	logicalRouterStaticRoute
 )
 
 const (
@@ -406,4 +407,15 @@ var LogicalRouterPolicyClusterNetworkConnect = newObjectIDsType(logicalRouterPol
 	// router name - stores the name of the router this port belongs to
 	// This allows cleanup without maintaining a cache of router names
 	RouterNameKey,
+})
+
+var LogicalRouterStaticRouteClusterNetworkConnect = newObjectIDsType(logicalRouterStaticRoute, ClusterNetworkConnectOwnerType, []ExternalIDKey{
+	// CNC name
+	ObjectNameKey,
+	// destination network name
+	NetworkKey,
+	// destination node ID
+	NodeIDKey,
+	// IP family (v4 or v6)
+	IPFamilyKey,
 })
