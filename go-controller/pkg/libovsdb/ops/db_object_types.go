@@ -393,3 +393,17 @@ var LogicalRouterPortClusterNetworkConnect = newObjectIDsType(logicalRouterPort,
 	// This allows cleanup without maintaining a cache of router names
 	RouterNameKey,
 })
+
+var LogicalRouterPolicyClusterNetworkConnect = newObjectIDsType(logicalRouterPolicy, ClusterNetworkConnectOwnerType, []ExternalIDKey{
+	// CNC name
+	ObjectNameKey,
+	// source network owner (topology_networkID, e.g. "layer2_3")
+	NetworkKey,
+	// destination network ID
+	NetworkIDKey,
+	// IP family (v4 or v6)
+	IPFamilyKey,
+	// router name - stores the name of the router this port belongs to
+	// This allows cleanup without maintaining a cache of router names
+	RouterNameKey,
+})
