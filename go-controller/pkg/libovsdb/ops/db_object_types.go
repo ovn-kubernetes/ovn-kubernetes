@@ -11,6 +11,7 @@ const (
 	qos
 	nat
 	logicalRouter
+	logicalRouterPort
 )
 
 const (
@@ -52,6 +53,8 @@ const (
 	GressIdxKey           ExternalIDKey = "gress-index"
 	IPFamilyKey           ExternalIDKey = "ip-family"
 	NetworkKey            ExternalIDKey = "network"
+	NetworkIDKey          ExternalIDKey = "network-id"
+	NodeIDKey             ExternalIDKey = "node-id"
 	TypeKey               ExternalIDKey = "type"
 	IpKey                 ExternalIDKey = "ip"
 	PortPolicyIndexKey    ExternalIDKey = "port-policy-index"
@@ -380,4 +383,15 @@ var NetworkQoS = newObjectIDsType(qos, NetworkQoSOwnerType, []ExternalIDKey{
 var LogicalRouterClusterNetworkConnect = newObjectIDsType(logicalRouter, ClusterNetworkConnectOwnerType, []ExternalIDKey{
 	// logical router name
 	ObjectNameKey,
+})
+
+var LogicalRouterPortClusterNetworkConnect = newObjectIDsType(logicalRouterPort, ClusterNetworkConnectOwnerType, []ExternalIDKey{
+	// CNC name
+	ObjectNameKey,
+	// source network ID
+	NetworkIDKey,
+	// node ID
+	// for layer2 network type ports, the node ID is 0 since there is only one port per network.
+	// for layer3 network type ports, the node ID is the node ID of the node that the port is connected to.
+	NodeIDKey,
 })

@@ -78,6 +78,11 @@ type networkConnectState struct {
 	// connectedNetworks is the set of owner keys (e.g., "layer3_1", "layer2_2") for networks
 	// connected by this CNC. Used to track OVN resources created and detect NAD matching changes.
 	connectedNetworks sets.Set[string]
+	// connectedNetworksRouterNames maps owner keys to their network router names.
+	// We store the router name so we can clean up policies even after the network is deleted from cache.
+	// NOTE: In future, we could get rid of this cache if we start storing networkID as a dbIndex
+	// on the network routers in addition to the name and topology type.
+	connectedNetworksRouterNames map[string]string
 }
 
 // NewController creates a new network connect controller for ovnkube-controller.
@@ -271,8 +276,9 @@ func (c *Controller) syncCNC(cnc *networkconnectv1.ClusterNetworkConnect) error 
 	if !exists {
 		// this means its CNC create event
 		cncState = &networkConnectState{
-			name:              cnc.Name,
-			connectedNetworks: sets.New[string](),
+			name:                         cnc.Name,
+			connectedNetworks:            sets.New[string](),
+			connectedNetworksRouterNames: make(map[string]string),
 		}
 		c.cncCache[cnc.Name] = cncState
 	}
@@ -302,6 +308,13 @@ func (c *Controller) syncCNC(cnc *networkconnectv1.ClusterNetworkConnect) error 
 	// to steer traffic to the connect router for other connected networks.
 	// STEP4: If PodNetworkConnect is disabled, add static routes to connect router towards
 	// each of the connected networks.
+	allocatedSubnets, err := util.ParseNetworkConnectSubnetAnnotation(cnc)
+	if err != nil {
+		return fmt.Errorf("failed to parse subnet annotation for CNC %s: %w", cnc.Name, err)
+	}
+	if err := c.syncNetworkConnections(cnc, allocatedSubnets); err != nil {
+		return fmt.Errorf("failed to sync network connections for CNC %s: %v", cnc.Name, err)
+	}
 	return nil
 }
 
@@ -309,10 +322,15 @@ func (c *Controller) syncCNC(cnc *networkconnectv1.ClusterNetworkConnect) error 
 func (c *Controller) cleanupCNC(cncName string) error {
 	klog.V(4).Infof("Cleaning up CNC %s", cncName)
 
-	_, exists := c.cncCache[cncName]
+	cncState, exists := c.cncCache[cncName]
 	if !exists {
 		klog.V(4).Infof("CNC %s not found in cache, nothing to clean up", cncName)
 		return nil
+	}
+
+	// Cleanup network connections
+	if err := c.cleanupNetworkConnections(cncName, cncState); err != nil {
+		return fmt.Errorf("failed to cleanup network connections for CNC %s: %v", cncName, err)
 	}
 
 	// Remove the connect router
