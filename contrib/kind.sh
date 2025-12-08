@@ -126,6 +126,7 @@ echo "-adv | --advertise-default-network            Applies a RouteAdvertisement
 echo "-rud | --routed-udn-isolation-disable         Disable isolation across BGP-advertised UDNs (sets advertised-udn-isolation-mode=loose). DEFAULT: strict."
 echo "-mps | --multi-pod-subnet                     Use multiple subnets for the default cluster network"
 echo "-noe | --no-overlay-enable                    Enable no overlay"
+echo "-mve | --multi-vtep-enable                    Enable multi-VTEP feature."
 echo ""
 }
 
@@ -322,6 +323,8 @@ parse_args() {
                                                 ;;
             -mne | --multi-network-enable )     ENABLE_MULTI_NET=true
                                                 ;;
+            -mve | --multi-vtep-enable )        ENABLE_MULTI_VTEP=true
+                                                ;;
             -nse | --network-segmentation-enable) ENABLE_NETWORK_SEGMENTATION=true
                                                   ;;
             -nce | --network-connect-enable )    ENABLE_NETWORK_CONNECT=true
@@ -455,6 +458,7 @@ print_params() {
      echo "OVN_METRICS_SCALE_ENABLE = $OVN_METRICS_SCALE_ENABLE"
      echo "OVN_ISOLATED = $OVN_ISOLATED"
      echo "ENABLE_MULTI_NET = $ENABLE_MULTI_NET"
+     echo "ENABLE_MULTI_VTEP = $ENABLE_MULTI_VTEP"
      echo "ENABLE_NETWORK_SEGMENTATION= $ENABLE_NETWORK_SEGMENTATION"
      echo "ENABLE_NETWORK_CONNECT = $ENABLE_NETWORK_CONNECT"
      echo "ENABLE_ROUTE_ADVERTISEMENTS= $ENABLE_ROUTE_ADVERTISEMENTS"
@@ -515,8 +519,6 @@ set_default_params() {
   RUN_IN_CONTAINER=${RUN_IN_CONTAINER:-false}
   OVN_GATEWAY_MODE=${OVN_GATEWAY_MODE:-shared}
   KIND_OPT_OUT_KUBEVIRT_IPAM=${KIND_OPT_OUT_KUBEVIRT_IPAM:-false}
-  KIND_LOCAL_REGISTRY_NAME=${KIND_LOCAL_REGISTRY_NAME:-kind-registry}
-  KIND_LOCAL_REGISTRY_PORT=${KIND_LOCAL_REGISTRY_PORT:-5000}
   KIND_DNS_DOMAIN=${KIND_DNS_DOMAIN:-"cluster.local"}
   ENABLE_IPSEC=${ENABLE_IPSEC:-false}
   OVN_DISABLE_SNAT_MULTIPLE_GWS=${OVN_DISABLE_SNAT_MULTIPLE_GWS:-false}
@@ -558,6 +560,7 @@ set_default_params() {
   if [ "$OVN_DUMMY_GATEWAY_BRIDGE" == true ]; then
     OVN_GATEWAY_OPTS="--allow-no-uplink --gateway-interface=br-ex"
   fi
+  ENABLE_MULTI_VTEP=${ENABLE_MULTI_VTEP:-false}
 }
 
 check_ipv6() {
@@ -624,38 +627,6 @@ set_cluster_cidr_ip_families() {
     echo "Invalid setup. PLATFORM_IPV4_SUPPORT and/or PLATFORM_IPV6_SUPPORT must be true."
     exit 1
   fi
-}
-
-create_local_registry() {
-    # create registry container unless it already exists
-    if [ "$($OCI_BIN inspect -f '{{.State.Running}}' "${KIND_LOCAL_REGISTRY_NAME}" 2>/dev/null || true)" != 'true' ]; then
-      $OCI_BIN run \
-        -d --restart=always -p "127.0.0.1:${KIND_LOCAL_REGISTRY_PORT}:5000" --name "${KIND_LOCAL_REGISTRY_NAME}" \
-        registry:2
-    fi
-}
-
-connect_local_registry() {
-    # connect the registry to the cluster network if not already connected
-    if [ "$($OCI_BIN inspect -f='{{json .NetworkSettings.Networks.kind}}' "${KIND_LOCAL_REGISTRY_NAME}")" = 'null' ]; then
-      $OCI_BIN network connect "kind" "${KIND_LOCAL_REGISTRY_NAME}"
-    fi
-
-    # Reference docs for local registry:
-    # - https://kind.sigs.k8s.io/docs/user/local-registry/
-    # - https://github.com/kubernetes/enhancements/tree/master/keps/sig-cluster-lifecycle/generic/1755-communicating-a-local-registry
-    cat <<EOF | kubectl apply -f -
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: local-registry-hosting
-  namespace: kube-public
-data:
-  localRegistryHosting.v1: |
-    host: "localhost:${KIND_LOCAL_REGISTRY_PORT}"
-    help: "https://kind.sigs.k8s.io/docs/user/local-registry/"
-EOF
-
 }
 
 scale_kind_cluster() {
@@ -874,9 +845,21 @@ install_ovn() {
     fi
   fi
 
+  if [ "$ENABLE_MULTI_VTEP" == true ]; then
+    kubectl -n ovn-kubernetes rollout status daemonset ovs-node --timeout 3m
+    if [ $? -ne 0 ]; then
+      echo "ovs-node did not roll out successfully"
+      exit 1
+    fi
+    configure_multi_vtep_encap_ips
+    configure_multi_vtep_routing
+    # restart ovnkube-node to pick up the new encap IP
+    kubectl -n ovn-kubernetes rollout restart daemonset ovnkube-node
+  fi
+
   popd
 
-  # When using internal registry force pod reload just the ones with 
+  # When using internal registry force pod reload just the ones with
   # non OVS containers, restarting OVS pods breaks the cluster.
   if [ "${KIND_CREATE}" == false ] && [ "${KIND_LOCAL_REGISTRY}" == false ] ; then
     for pod in ${OVN_DEPLOY_PODS}; do
@@ -1030,6 +1013,9 @@ if [ "$KIND_CREATE" == true ]; then
       connect_local_registry
     fi
     docker_disable_ipv6
+    if [ "$ENABLE_MULTI_VTEP" == true ]; then
+      add_2nd_vtep_interface
+    fi
     if [ "$OVN_ENABLE_EX_GW_NETWORK_BRIDGE" == true ]; then
       docker_create_second_interface
     fi
@@ -1051,6 +1037,9 @@ if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
   deploy_frr_external_container
   deploy_bgp_external_server
 fi
+if [ "$ENABLE_MULTI_NET" == true ]; then
+  enable_multi_net
+fi
 build_ovn_image
 detect_apiserver_url
 create_ovn_kube_manifests
@@ -1059,9 +1048,7 @@ install_ovn
 if [ "$KIND_INSTALL_INGRESS" == true ]; then
   install_ingress
 fi
-if [ "$ENABLE_MULTI_NET" == true ]; then
-  enable_multi_net
-fi
+
 kubectl_wait_pods
 if [ "$OVN_ENABLE_DNSNAMERESOLVER" == true ]; then
     kubectl_wait_dnsnameresolver_pods
