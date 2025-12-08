@@ -1,19 +1,25 @@
 package networkconnect
 
 import (
+	"context"
 	"net"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/cache"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	networkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	ovntest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
@@ -936,6 +942,560 @@ func TestCleanupNetworkConnections(t *testing.T) {
 				if err == nil {
 					assert.Len(t, networkRouter.Ports, tt.expectedNetworkPortCount, "network router ports should be deleted")
 				}
+			}
+		})
+	}
+}
+
+func TestCreateRoutingPoliciesOps(t *testing.T) {
+	type expectedPolicy struct {
+		match    string
+		nexthop  string
+		ipFamily string
+	}
+
+	tests := []struct {
+		name             string
+		dstNetworkID     int
+		routerName       string
+		inportName       string
+		nexthops         []net.IP
+		cncName          string
+		srcOwner         string
+		dstSubnets       []string // CIDR strings
+		initialDB        []libovsdbtest.TestData
+		expectError      bool
+		expectedPolicies []expectedPolicy
+	}{
+		{
+			name:         "create single IPv4 routing policy",
+			dstNetworkID: 2,
+			routerName:   "network-router-1",
+			inportName:   "switch-to-router-port",
+			nexthops: []net.IP{
+				net.ParseIP("192.168.0.0"),
+			},
+			cncName:    "test-cnc",
+			srcOwner:   "layer3_1",
+			dstSubnets: []string{"10.200.0.0/24"},
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LogicalRouter{
+					UUID: "router-uuid",
+					Name: "network-router-1",
+				},
+			},
+			expectError: false,
+			expectedPolicies: []expectedPolicy{
+				{
+					match:    `inport == "switch-to-router-port" && ip4.dst == 10.200.0.0/24`,
+					nexthop:  "192.168.0.0",
+					ipFamily: "v4",
+				},
+			},
+		},
+		{
+			name:         "create dual-stack routing policies",
+			dstNetworkID: 2,
+			routerName:   "network-router-1",
+			inportName:   "switch-to-router-port",
+			nexthops: []net.IP{
+				net.ParseIP("192.168.0.0"),
+				net.ParseIP("fd00::"),
+			},
+			cncName:    "test-cnc",
+			srcOwner:   "layer3_1",
+			dstSubnets: []string{"10.200.0.0/24", "fd00:10:200::/64"},
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LogicalRouter{
+					UUID: "router-uuid",
+					Name: "network-router-1",
+				},
+			},
+			expectError: false,
+			expectedPolicies: []expectedPolicy{
+				{
+					match:    `inport == "switch-to-router-port" && ip4.dst == 10.200.0.0/24`,
+					nexthop:  "192.168.0.0",
+					ipFamily: "v4",
+				},
+				{
+					match:    `inport == "switch-to-router-port" && ip6.dst == fd00:10:200::/64`,
+					nexthop:  "fd00::",
+					ipFamily: "v6",
+				},
+			},
+		},
+		{
+			name:         "skip when no matching nexthop for IP family",
+			dstNetworkID: 2,
+			routerName:   "network-router-1",
+			inportName:   "switch-to-router-port",
+			nexthops: []net.IP{
+				net.ParseIP("fd00::"), // IPv6 only
+			},
+			cncName:    "test-cnc",
+			srcOwner:   "layer3_1",
+			dstSubnets: []string{"10.200.0.0/24"}, // IPv4 destination
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LogicalRouter{
+					UUID: "router-uuid",
+					Name: "network-router-1",
+				},
+			},
+			expectError:      false,
+			expectedPolicies: nil, // no policies created due to family mismatch
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{
+				NBData: tt.initialDB,
+			}, nil)
+			require.NoError(t, err)
+			defer cleanup.Cleanup()
+
+			c := &Controller{
+				nbClient: nbClient,
+			}
+
+			// Convert string subnets to config.CIDRNetworkEntry
+			var dstSubnets []config.CIDRNetworkEntry
+			for _, s := range tt.dstSubnets {
+				dstSubnets = append(dstSubnets, config.CIDRNetworkEntry{CIDR: ovntest.MustParseIPNet(s)})
+			}
+
+			ops, err := c.createRoutingPoliciesOps(nil, tt.dstNetworkID, tt.routerName, tt.inportName, dstSubnets, tt.srcOwner, tt.nexthops, tt.cncName)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+
+			if len(tt.expectedPolicies) == 0 {
+				assert.Empty(t, ops)
+				return
+			}
+
+			require.NotEmpty(t, ops)
+
+			// Execute ops
+			_, err = libovsdbops.TransactAndCheck(nbClient, ops)
+			require.NoError(t, err)
+
+			// Verify the policies were created
+			router, err := libovsdbops.GetLogicalRouter(nbClient, &nbdb.LogicalRouter{Name: tt.routerName})
+			require.NoError(t, err)
+			assert.Len(t, router.Policies, len(tt.expectedPolicies))
+
+			// Fetch all policies attached to the router and verify their fields
+			policies, err := libovsdbops.FindLogicalRouterPoliciesWithPredicate(nbClient, func(item *nbdb.LogicalRouterPolicy) bool {
+				return item.ExternalIDs[libovsdbops.ObjectNameKey.String()] == tt.cncName
+			})
+			require.NoError(t, err)
+			assert.Len(t, policies, len(tt.expectedPolicies))
+
+			for _, expected := range tt.expectedPolicies {
+				// Find the policy with matching ipFamily
+				var found *nbdb.LogicalRouterPolicy
+				for _, p := range policies {
+					if p.ExternalIDs[libovsdbops.IPFamilyKey.String()] == expected.ipFamily {
+						found = p
+						break
+					}
+				}
+				require.NotNilf(t, found, "expected policy with ipFamily %s not found", expected.ipFamily)
+
+				// Verify policy fields
+				assert.Equal(t, ovntypes.NetworkConnectPolicyPriority, found.Priority, "Priority mismatch for ipFamily %s", expected.ipFamily)
+				assert.Equal(t, expected.match, found.Match, "Match mismatch for ipFamily %s", expected.ipFamily)
+				assert.Equal(t, nbdb.LogicalRouterPolicyActionReroute, found.Action, "Action mismatch for ipFamily %s", expected.ipFamily)
+				assert.Equal(t, []string{expected.nexthop}, found.Nexthops, "Nexthops mismatch for ipFamily %s", expected.ipFamily)
+
+				// Verify ExternalIDs
+				assert.Equal(t, strconv.Itoa(tt.dstNetworkID), found.ExternalIDs[libovsdbops.NetworkIDKey.String()], "NetworkIDKey mismatch")
+				assert.Equal(t, tt.srcOwner, found.ExternalIDs[libovsdbops.NetworkKey.String()], "NetworkKey mismatch")
+				assert.Equal(t, tt.cncName, found.ExternalIDs[libovsdbops.ObjectNameKey.String()], "ObjectNameKey mismatch")
+				assert.Equal(t, expected.ipFamily, found.ExternalIDs[libovsdbops.IPFamilyKey.String()], "IPFamilyKey mismatch")
+			}
+		})
+	}
+}
+
+func TestEnsureRoutingPoliciesOps(t *testing.T) {
+	tests := []struct {
+		name             string
+		cncName          string
+		zone             string
+		srcNetworkName   string
+		srcNetworkID     int
+		srcTopologyType  string
+		srcSubnets       []string // CIDR strings for source network
+		allocatedSubnets map[string][]*net.IPNet
+		dstNetworks      []struct { // destination networks
+			name         string
+			id           int
+			topologyType string
+			subnets      []string
+		}
+		initialDB        []libovsdbtest.TestData
+		expectError      bool
+		expectedPolicies int
+	}{
+		{
+			name:            "Layer3 source with single destination network",
+			cncName:         "test-cnc",
+			zone:            "node1",
+			srcNetworkName:  "src-network",
+			srcNetworkID:    1,
+			srcTopologyType: ovntypes.Layer3Topology,
+			srcSubnets:      []string{"10.128.0.0/24"},
+			allocatedSubnets: map[string][]*net.IPNet{
+				"layer3_1": {ovntest.MustParseIPNet("192.168.0.0/24")}, // source network's connect subnet (large enough for P2P)
+				"layer3_2": {ovntest.MustParseIPNet("192.168.1.0/24")}, // destination network's connect subnet
+			},
+			dstNetworks: []struct {
+				name         string
+				id           int
+				topologyType string
+				subnets      []string
+			}{
+				{name: "dst-network", id: 2, topologyType: ovntypes.Layer3Topology, subnets: []string{"10.129.0.0/24"}},
+			},
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LogicalRouter{UUID: "network-router-uuid", Name: "cluster-router_src-network"},
+			},
+			expectError:      false,
+			expectedPolicies: 1, // one policy for dst-network's subnet
+		},
+		{
+			name:            "Layer3 source with multiple destination networks",
+			cncName:         "test-cnc",
+			zone:            "node1",
+			srcNetworkName:  "src-network",
+			srcNetworkID:    1,
+			srcTopologyType: ovntypes.Layer3Topology,
+			srcSubnets:      []string{"10.128.0.0/24"},
+			allocatedSubnets: map[string][]*net.IPNet{
+				"layer3_1": {ovntest.MustParseIPNet("192.168.0.0/24")},
+				"layer3_2": {ovntest.MustParseIPNet("192.168.1.0/24")},
+				"layer3_3": {ovntest.MustParseIPNet("192.168.2.0/24")},
+			},
+			dstNetworks: []struct {
+				name         string
+				id           int
+				topologyType string
+				subnets      []string
+			}{
+				{name: "dst-network-1", id: 2, topologyType: ovntypes.Layer3Topology, subnets: []string{"10.129.0.0/24"}},
+				{name: "dst-network-2", id: 3, topologyType: ovntypes.Layer3Topology, subnets: []string{"10.130.0.0/24"}},
+			},
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LogicalRouter{UUID: "network-router-uuid", Name: "cluster-router_src-network"},
+			},
+			expectError:      false,
+			expectedPolicies: 2, // one policy for each dst network
+		},
+		{
+			name:            "Layer2 source with destination network",
+			cncName:         "test-cnc",
+			zone:            "node1",
+			srcNetworkName:  "src-l2-network",
+			srcNetworkID:    1,
+			srcTopologyType: ovntypes.Layer2Topology,
+			srcSubnets:      []string{"10.128.0.0/24"},
+			allocatedSubnets: map[string][]*net.IPNet{
+				"layer2_1": {ovntest.MustParseIPNet("192.168.0.0/31")}, // Layer2 doesn't use P2P per node
+				"layer3_2": {ovntest.MustParseIPNet("192.168.1.0/24")},
+			},
+			dstNetworks: []struct {
+				name         string
+				id           int
+				topologyType string
+				subnets      []string
+			}{
+				{name: "dst-network", id: 2, topologyType: ovntypes.Layer3Topology, subnets: []string{"10.129.0.0/24"}},
+			},
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LogicalRouter{UUID: "network-router-uuid", Name: "transit_src-l2-network"},
+			},
+			expectError:      false,
+			expectedPolicies: 1,
+		},
+		{
+			name:            "Layer2 only - both source and destination are Layer2",
+			cncName:         "test-cnc",
+			zone:            "node1",
+			srcNetworkName:  "src-l2-network",
+			srcNetworkID:    1,
+			srcTopologyType: ovntypes.Layer2Topology,
+			srcSubnets:      []string{"10.128.0.0/24"},
+			allocatedSubnets: map[string][]*net.IPNet{
+				"layer2_1": {ovntest.MustParseIPNet("192.168.0.0/31")},
+				"layer2_2": {ovntest.MustParseIPNet("192.168.0.2/31")},
+			},
+			dstNetworks: []struct {
+				name         string
+				id           int
+				topologyType string
+				subnets      []string
+			}{
+				{name: "dst-l2-network", id: 2, topologyType: ovntypes.Layer2Topology, subnets: []string{"10.129.0.0/24"}},
+			},
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LogicalRouter{UUID: "network-router-uuid", Name: "transit_src-l2-network"},
+			},
+			expectError:      false,
+			expectedPolicies: 1,
+		},
+		{
+			name:            "Mixed Layer2 and Layer3 networks",
+			cncName:         "test-cnc",
+			zone:            "node1",
+			srcNetworkName:  "src-l3-network",
+			srcNetworkID:    1,
+			srcTopologyType: ovntypes.Layer3Topology,
+			srcSubnets:      []string{"10.128.0.0/24"},
+			allocatedSubnets: map[string][]*net.IPNet{
+				"layer3_1": {ovntest.MustParseIPNet("192.168.0.0/24")},
+				"layer2_2": {ovntest.MustParseIPNet("192.168.1.0/31")},
+				"layer3_3": {ovntest.MustParseIPNet("192.168.2.0/24")},
+			},
+			dstNetworks: []struct {
+				name         string
+				id           int
+				topologyType string
+				subnets      []string
+			}{
+				{name: "dst-l2-network", id: 2, topologyType: ovntypes.Layer2Topology, subnets: []string{"10.129.0.0/24"}},
+				{name: "dst-l3-network", id: 3, topologyType: ovntypes.Layer3Topology, subnets: []string{"10.130.0.0/24"}},
+			},
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LogicalRouter{UUID: "network-router-uuid", Name: "cluster-router_src-l3-network"},
+			},
+			expectError:      false,
+			expectedPolicies: 2, // one for each dst network
+		},
+		{
+			name:            "IPv6 single-stack allocated subnets",
+			cncName:         "test-cnc",
+			zone:            "node1",
+			srcNetworkName:  "src-network",
+			srcNetworkID:    1,
+			srcTopologyType: ovntypes.Layer3Topology,
+			srcSubnets:      []string{"fd00:10:128::/64"},
+			allocatedSubnets: map[string][]*net.IPNet{
+				"layer3_1": {ovntest.MustParseIPNet("fd00:192:168::/120")}, // IPv6 connect subnet
+				"layer3_2": {ovntest.MustParseIPNet("fd00:192:169::/120")},
+			},
+			dstNetworks: []struct {
+				name         string
+				id           int
+				topologyType string
+				subnets      []string
+			}{
+				{name: "dst-network", id: 2, topologyType: ovntypes.Layer3Topology, subnets: []string{"fd00:10:129::/64"}},
+			},
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LogicalRouter{UUID: "network-router-uuid", Name: "cluster-router_src-network"},
+			},
+			expectError:      false,
+			expectedPolicies: 1,
+		},
+		{
+			name:            "Dual-stack allocated subnets",
+			cncName:         "test-cnc",
+			zone:            "node1",
+			srcNetworkName:  "src-network",
+			srcNetworkID:    1,
+			srcTopologyType: ovntypes.Layer3Topology,
+			srcSubnets:      []string{"10.128.0.0/24", "fd00:10:128::/64"},
+			allocatedSubnets: map[string][]*net.IPNet{
+				"layer3_1": {ovntest.MustParseIPNet("192.168.0.0/24"), ovntest.MustParseIPNet("fd00:192:168::/120")},
+				"layer3_2": {ovntest.MustParseIPNet("192.168.1.0/24"), ovntest.MustParseIPNet("fd00:192:169::/120")},
+			},
+			dstNetworks: []struct {
+				name         string
+				id           int
+				topologyType string
+				subnets      []string
+			}{
+				{name: "dst-network", id: 2, topologyType: ovntypes.Layer3Topology, subnets: []string{"10.129.0.0/24", "fd00:10:129::/64"}},
+			},
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LogicalRouter{UUID: "network-router-uuid", Name: "cluster-router_src-network"},
+			},
+			expectError:      false,
+			expectedPolicies: 2, // one for IPv4, one for IPv6
+		},
+		{
+			name:            "Dual-stack with mixed Layer2 and Layer3",
+			cncName:         "test-cnc",
+			zone:            "node1",
+			srcNetworkName:  "src-l3-network",
+			srcNetworkID:    1,
+			srcTopologyType: ovntypes.Layer3Topology,
+			srcSubnets:      []string{"10.128.0.0/24", "fd00:10:128::/64"},
+			allocatedSubnets: map[string][]*net.IPNet{
+				"layer3_1": {ovntest.MustParseIPNet("192.168.0.0/24"), ovntest.MustParseIPNet("fd00:192:168::/120")},
+				"layer2_2": {ovntest.MustParseIPNet("192.168.1.0/31"), ovntest.MustParseIPNet("fd00:192:169::/127")},
+				"layer3_3": {ovntest.MustParseIPNet("192.168.2.0/24"), ovntest.MustParseIPNet("fd00:192:170::/120")},
+			},
+			dstNetworks: []struct {
+				name         string
+				id           int
+				topologyType string
+				subnets      []string
+			}{
+				{name: "dst-l2-network", id: 2, topologyType: ovntypes.Layer2Topology, subnets: []string{"10.129.0.0/24", "fd00:10:129::/64"}},
+				{name: "dst-l3-network", id: 3, topologyType: ovntypes.Layer3Topology, subnets: []string{"10.130.0.0/24", "fd00:10:130::/64"}},
+			},
+			initialDB: []libovsdbtest.TestData{
+				&nbdb.LogicalRouter{UUID: "network-router-uuid", Name: "cluster-router_src-l3-network"},
+			},
+			expectError:      false,
+			expectedPolicies: 4, // 2 dst networks x 2 IP families
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create fake clientset with multiple nodes
+			nodes := []*corev1.Node{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "node1",
+						Annotations: map[string]string{
+							"k8s.ovn.org/node-id": "1",
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "node2",
+						Annotations: map[string]string{
+							"k8s.ovn.org/node-id": "2",
+						},
+					},
+				},
+			}
+			fakeClientset := util.GetOVNClientset().GetOVNKubeControllerClientset()
+			for _, node := range nodes {
+				_, err := fakeClientset.KubeClient.CoreV1().Nodes().Create(
+					context.Background(), node, metav1.CreateOptions{})
+				require.NoError(t, err)
+			}
+			defer func() {
+				for _, node := range nodes {
+					err := fakeClientset.KubeClient.CoreV1().Nodes().Delete(context.Background(), node.Name, metav1.DeleteOptions{})
+					require.NoError(t, err)
+				}
+			}()
+
+			// Create watch factory
+			wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClientset)
+			require.NoError(t, err)
+			err = wf.Start()
+			require.NoError(t, err)
+			defer wf.Shutdown()
+
+			// Wait for cache sync
+			syncCtx, syncCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer syncCancel()
+			synced := cache.WaitForCacheSync(syncCtx.Done(), wf.NodeCoreInformer().Informer().HasSynced)
+			require.True(t, synced, "informer caches should sync")
+
+			// Create NB test harness
+			nbClient, cleanup, err := libovsdbtest.NewNBTestHarness(libovsdbtest.TestSetup{
+				NBData: tt.initialDB,
+			}, nil)
+			require.NoError(t, err)
+			defer cleanup.Cleanup()
+
+			// Create mock source network
+			srcNetwork := &mocks.NetInfo{}
+			srcNetwork.On("GetNetworkName").Return(tt.srcNetworkName)
+			srcNetwork.On("GetNetworkID").Return(tt.srcNetworkID)
+			srcNetwork.On("TopologyType").Return(tt.srcTopologyType)
+			if tt.srcTopologyType == ovntypes.Layer2Topology {
+				srcNetwork.On("GetNetworkScopedClusterRouterName").Return("transit_" + tt.srcNetworkName)
+				srcNetwork.On("GetNetworkScopedSwitchToRouterPortName", "").Return("stor-" + tt.srcNetworkName)
+			} else {
+				srcNetwork.On("GetNetworkScopedClusterRouterName").Return("cluster-router_" + tt.srcNetworkName)
+				srcNetwork.On("GetNetworkScopedSwitchToRouterPortName", tt.zone).Return("stor-" + tt.srcNetworkName + "-" + tt.zone)
+			}
+			var srcSubnets []config.CIDRNetworkEntry
+			for _, s := range tt.srcSubnets {
+				srcSubnets = append(srcSubnets, config.CIDRNetworkEntry{CIDR: ovntest.MustParseIPNet(s)})
+			}
+			srcNetwork.On("Subnets").Return(srcSubnets)
+
+			// Create mock destination networks and FakeNetworkManager
+			fakeNM := &networkmanager.FakeNetworkManager{
+				PrimaryNetworks: make(map[string]util.NetInfo),
+			}
+			for _, dst := range tt.dstNetworks {
+				dstNet := &mocks.NetInfo{}
+				dstNet.On("GetNetworkName").Return(dst.name)
+				dstNet.On("GetNetworkID").Return(dst.id)
+				dstNet.On("TopologyType").Return(dst.topologyType)
+				var dstSubnets []config.CIDRNetworkEntry
+				for _, s := range dst.subnets {
+					dstSubnets = append(dstSubnets, config.CIDRNetworkEntry{CIDR: ovntest.MustParseIPNet(s)})
+				}
+				dstNet.On("Subnets").Return(dstSubnets)
+				// Add to FakeNetworkManager (key is namespace but we use name for simplicity)
+				fakeNM.PrimaryNetworks[dst.name] = dstNet
+			}
+
+			// Create controller
+			c := &Controller{
+				nbClient:       nbClient,
+				zone:           tt.zone,
+				nodeLister:     wf.NodeCoreInformer().Lister(),
+				networkManager: fakeNM,
+			}
+
+			cnc := &networkconnectv1.ClusterNetworkConnect{
+				ObjectMeta: metav1.ObjectMeta{Name: tt.cncName},
+			}
+
+			ops, err := c.ensureRoutingPoliciesOps(nil, cnc.Name, srcNetwork, tt.allocatedSubnets, nodes[0])
+
+			if tt.expectError {
+				assert.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+
+			if tt.expectedPolicies == 0 {
+				assert.Empty(t, ops)
+				return
+			}
+
+			require.NotEmpty(t, ops)
+
+			// Execute ops
+			_, err = libovsdbops.TransactAndCheck(nbClient, ops)
+			require.NoError(t, err)
+
+			// Verify policies were created
+			policies, err := libovsdbops.FindLogicalRouterPoliciesWithPredicate(nbClient, func(item *nbdb.LogicalRouterPolicy) bool {
+				return item.ExternalIDs[libovsdbops.ObjectNameKey.String()] == tt.cncName
+			})
+			require.NoError(t, err)
+			assert.Len(t, policies, tt.expectedPolicies)
+
+			// Verify each policy has expected fields
+			for _, policy := range policies {
+				assert.Equal(t, ovntypes.NetworkConnectPolicyPriority, policy.Priority)
+				assert.Equal(t, nbdb.LogicalRouterPolicyActionReroute, policy.Action)
+				assert.NotEmpty(t, policy.Match)
+				assert.NotEmpty(t, policy.Nexthops)
+				assert.Equal(t, tt.cncName, policy.ExternalIDs[libovsdbops.ObjectNameKey.String()])
 			}
 		})
 	}
