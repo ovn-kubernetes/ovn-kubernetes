@@ -18,7 +18,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
-	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
@@ -849,8 +848,16 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 	// Set the node-encap-ips annotation with the configured encap IP.
 	// This encap IP is unavailable on the DPU host mode, so we don't need to set it there.
 	if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
-		encapIPList := sets.New[string]()
-		encapIPList.Insert(strings.Split(config.Default.EffectiveEncapIP, ",")...)
+		// Deduplicate encap IPs while preserving order
+		seen := make(map[string]bool)
+		encapIPList := make([]string, 0)
+		for _, ip := range strings.Split(config.Default.EffectiveEncapIP, ",") {
+			ip = strings.TrimSpace(ip)
+			if !seen[ip] {
+				seen[ip] = true
+				encapIPList = append(encapIPList, ip)
+			}
+		}
 		if err := util.SetNodeEncapIPs(nodeAnnotator, encapIPList); err != nil {
 			return fmt.Errorf("failed to set node-encap-ips annotation for node %s: %w", nc.name, err)
 		}
