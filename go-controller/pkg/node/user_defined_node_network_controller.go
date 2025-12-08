@@ -92,8 +92,13 @@ func (nc *UserDefinedNodeNetworkController) Start(_ context.Context) error {
 
 // Stop gracefully stops the controller
 func (nc *UserDefinedNodeNetworkController) Stop() {
+	if nc.stopChan == nil {
+		klog.Infof("UDN node network controller for network %s is already stopped", nc.GetNetworkName())
+		return
+	}
 	klog.Infof("Stopping UDN node network controller for network %s", nc.GetNetworkName())
 	close(nc.stopChan)
+	nc.stopChan = nil
 	nc.wg.Wait()
 
 	if nc.podHandler != nil {
