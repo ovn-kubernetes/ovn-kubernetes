@@ -339,7 +339,7 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 				}
 				// Fail fast
 				Expect(iperfLog).NotTo(ContainSubstring("iperf3: error"), stage+": "+iperfLogFile)
-				//Remove last carriage return to propertly split by new line.
+				// Remove last carriage return to properly split by new line.
 				iperfLog = strings.TrimSuffix(iperfLog, "\n")
 				iperfLogLines := strings.Split(iperfLog, "\n")
 				if len(iperfLogLines) == 0 {
@@ -744,7 +744,6 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 				}
 				return familyFn(*iface), nil
 			}
-
 		}
 
 		addressesFromStatus = func(vmi *kubevirtv1.VirtualMachineInstance) func() ([]string, error) {
@@ -1186,7 +1185,6 @@ passwd:
 				}
 				liveMigrateAndCheck(vm.Name, td.mode, endpoints, "after live migration to node owning the subnet")
 			}
-
 		}
 
 		checkPodHasIPAtStatus = func(g Gomega, pod *corev1.Pod) {
@@ -1248,7 +1246,7 @@ fi
 				if err != nil {
 					return nil, err
 				}
-				for _ = range idx {
+				for range idx {
 					ip = iputils.NextIP(ip)
 				}
 				ipNet.IP = ip
@@ -1277,7 +1275,6 @@ fi
 					}
 					pod.Spec.Containers[0].Image = images.IPerf3()
 					pod.Spec.Containers[0].Args = []string{iperfServerScript + "\n sleep infinity"}
-
 				})
 				if err != nil {
 					return nil, err
@@ -1353,7 +1350,7 @@ fi
 		removeImagesInNodes = func(imageURL string) error {
 			nodesList, err := fr.ClientSet.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
 			Expect(err).NotTo(HaveOccurred())
-			for nodeIdx, _ := range nodesList.Items {
+			for nodeIdx := range nodesList.Items {
 				err = removeImagesInNode(nodesList.Items[nodeIdx].Name, imageURL)
 				if err != nil {
 					return err
@@ -1417,7 +1414,6 @@ fi
 	})
 
 	Context("with default pod network", Ordered, func() {
-
 		BeforeEach(func() {
 			ns, err := fr.CreateNamespace(context.TODO(), fr.BaseName, map[string]string{
 				"e2e-framework": fr.BaseName,
@@ -1468,7 +1464,6 @@ fi
 			}
 
 			prepareHTTPServerPods(map[string]string{}, checkPodHasIPAtStatus)
-
 		})
 
 		AfterEach(func() {
@@ -1488,9 +1483,7 @@ fi
 			if td.mode == kubevirtv1.MigrationPostCopy && os.Getenv("KUBEVIRT_SKIP_MIGRATE_POST_COPY") == "true" {
 				Skip("Post copy live migration explicitly skipped")
 			}
-			var (
-				err error
-			)
+			var err error
 
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1973,7 +1966,8 @@ ip route add %[3]s via %[4]s
 					By("Check egress src ip is not node IP on 'routed' ingress mode")
 					for _, vmAddress := range expectedAddreses {
 						output, err := infraprovider.Get().ExecExternalContainerCommand(externalContainer, []string{
-							"bash", "-c", fmt.Sprintf("grep 'connected to %s' /tmp/test_*", vmAddress)})
+							"bash", "-c", fmt.Sprintf("grep 'connected to %s' /tmp/test_*", vmAddress),
+						})
 						Expect(err).NotTo(HaveOccurred(), step+": "+output)
 					}
 					checkNorthSouthEgressIperfTraffic(vmi, externalContainerIPs, iperf3DefaultPort, step)
@@ -2213,7 +2207,6 @@ ip route add %[3]s via %[4]s
 			By("Reconfigure primary UDN interface to use dhcp/nd for ipv4 and ipv6")
 			_, err = virtLauncherCommand(kubevirt.GenerateAddressDiscoveryConfigurationCommand("ovn-udn1"))
 			Expect(err).NotTo(HaveOccurred())
-
 		})
 		It("should configure IPv4 and IPv6 using DHCP and NDP", func() {
 			dnsService, err := fr.ClientSet.CoreV1().Services(config.Kubernetes.DNSServiceNamespace).
@@ -2266,7 +2259,6 @@ ip route add %[3]s via %[4]s
 				Expect(primaryUDNValueForConnection("IP6.ROUTE")).To(ContainElement(ContainSubstring(fmt.Sprintf("dst = %s", cidrIPv6))))
 				Expect(primaryUDNValueForDevice("GENERAL.MTU")).To(ConsistOf("1300"))
 			}
-
 		})
 	})
 	Context("with user defined networks with ipamless localnet topology", Ordered, func() {
@@ -2289,6 +2281,8 @@ ip route add %[3]s via %[4]s
 			vmiMAC               = "0A:58:0A:80:00:64"
 			staticIPsNetworkData = func(ips []string) (string, error) {
 				type Ethernet struct {
+					DHCP4     *bool    `json:"dhcp4,omitempty"`
+					DHCP6     *bool    `json:"dhcp6,omitempty"`
 					Addresses []string `json:"addresses,omitempty"`
 				}
 				networkData, err := yaml.Marshal(&struct {
@@ -2298,6 +2292,8 @@ ip route add %[3]s via %[4]s
 					Version: 2,
 					Ethernets: map[string]Ethernet{
 						"eth0": {
+							DHCP4:     ptr.To(false),
+							DHCP6:     ptr.To(false),
 							Addresses: ips,
 						},
 					},
@@ -2328,7 +2324,8 @@ chpasswd: { expire: False }
 			iperfServerTestPods, err = createIperfServerPods(selectedNodes, cudn.Name, cudn.Spec.Network.Localnet.Role, filterCIDRs(fr.ClientSet, ipv4CIDR, ipv6CIDR))
 			Expect(err).NotTo(HaveOccurred())
 
-			networkData, err := staticIPsNetworkData(filterCIDRs(fr.ClientSet, vmiIPv4, vmiIPv6))
+			filteredCIDRs := filterCIDRs(fr.ClientSet, vmiIPv4, vmiIPv6)
+			networkData, err := staticIPsNetworkData(filteredCIDRs)
 			Expect(err).NotTo(HaveOccurred())
 
 			vm := fedoraWithTestToolingVM(nil /*labels*/, nil /*annotations*/, nil /*nodeSelector*/, kubevirtv1.NetworkSource{
@@ -2384,15 +2381,30 @@ chpasswd: { expire: False }
 			Expect(err).ToNot(HaveOccurred(), output)
 
 			step = by(vmi.Name, fmt.Sprintf("Force kill qemu at node %q where VM is running on", vmi.Status.NodeName))
-			Expect(kubevirt.ForceKillVirtLauncherAtNode(infraprovider.Get(), vmi.Status.NodeName, vmi.Namespace, vmi.Name)).To(Succeed())
+			Expect(kubevirt.ForceKillVirtLauncherAtNode(infraprovider.Get(), vmi.Status.NodeName, vmi.Namespace, vmi.Name)).To(Succeed(), step)
 
 			step = by(vmi.Name, "Waiting for failed restarted VMI to reach ready state")
 			waitVirtualMachineInstanceFailed(vmi)
 			waitVirtualMachineInstanceReadiness(vmi)
-			Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
+			Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed(), step)
 
 			step = by(vmi.Name, "Login to virtual machine after virtual machine instance force killed")
 			Expect(virtClient.LoginToFedora(vmi, "fedora", "fedora")).To(Succeed(), step)
+
+			step = by(vmi.Name, "Wait for cloud init to finish after vm restart")
+			output, err = virtClient.RunCommand(vmi, "cloud-init status --wait", time.Minute)
+			Expect(err).NotTo(HaveOccurred(), step+": "+output)
+
+			step = by(vmi.Name, "Verify static IP is configured after vm restart")
+			filteredIPs := []string{}
+			for _, filteredCIDR := range filteredCIDRs {
+				filteredIPs = append(filteredIPs, strings.Split(filteredCIDR, "/")[0])
+			}
+			Eventually(kubevirt.RetrieveAllGlobalAddressesFromGuest).
+				WithArguments(virtClient, vmi).
+				WithTimeout(5*time.Second).
+				WithPolling(time.Second).
+				Should(ConsistOf(filteredIPs), step)
 
 			step = by(vmi.Name, "Restart iperf traffic after forcing a vm failure")
 			Expect(startEastWestIperfTraffic(vmi, testPodsIPs, step)).To(Succeed(), step)
