@@ -57,7 +57,7 @@ usage() {
     echo "                 [-rud | --routed-udn-isolation-disable]"
     echo "                 [-adv | --advertise-default-network]"
     echo "                 [-nqe | --network-qos-enable]"
-    echo "                 [-noe | --enable-no-overlay]"
+    echo "                 [-noe | --enable-no-overlay [snat-enabled]]"
     echo "                 [--isolated]"
     echo "                 [--enable-coredumps]"
     echo "                 [-dns | --enable-dnsnameresolver]"
@@ -134,7 +134,7 @@ echo "-rae | --enable-route-advertisements          Enable route advertisements"
 echo "-adv | --advertise-default-network            Applies a RouteAdvertisements configuration to advertise the default network on all nodes"
 echo "-rud | --routed-udn-isolation-disable         Disable isolation across BGP-advertised UDNs (sets advertised-udn-isolation-mode=loose). DEFAULT: strict."
 echo "-mps | --multi-pod-subnet                     Use multiple subnets for the default cluster network"
-echo "-noe | --enable-no-overlay                    Enable no overlay"
+echo "-noe | --enable-no-overlay [snat-enabled]     Enable no overlay for the default network. Optional value: 'snat-enabled' to enable SNAT for pod outbound traffic. DEFAULT: disabled."
 echo ""
 }
 
@@ -338,6 +338,19 @@ parse_args() {
                                                   IC_ARG_PROVIDED=true
                                                   ;;
             -noe | --enable-no-overlay)         ENABLE_NO_OVERLAY=true
+                                                  # Check if next argument is a valid value
+                                                  if [[ -n "$2" && ! "$2" =~ ^- ]]; then
+                                                    if [[ "$2" == "snat-enabled" ]]; then
+                                                      ENABLE_NO_OVERLAY_OUTBOUND_SNAT=true
+                                                      shift  # consume the value argument
+                                                    else
+                                                      echo "Error: Invalid value for --enable-no-overlay: $2"
+                                                      echo "Valid value is: snat-enabled"
+                                                      exit 1
+                                                    fi
+                                                  else
+                                                    ENABLE_NO_OVERLAY_OUTBOUND_SNAT=false
+                                                  fi
                                                   ;;
             --disable-ovnkube-identity)         OVN_ENABLE_OVNKUBE_IDENTITY=false
                                                 ;;
@@ -441,6 +454,7 @@ print_params() {
      echo "ADVERTISE_DEFAULT_NETWORK = $ADVERTISE_DEFAULT_NETWORK"
      echo "ENABLE_PRE_CONF_UDN_ADDR = $ENABLE_PRE_CONF_UDN_ADDR"
      echo "ENABLE_NO_OVERLAY = $ENABLE_NO_OVERLAY"
+     echo "ENABLE_NO_OVERLAY_OUTBOUND_SNAT = $ENABLE_NO_OVERLAY_OUTBOUND_SNAT"
      echo "OVN_ENABLE_INTERCONNECT = $OVN_ENABLE_INTERCONNECT"
      if [ "$OVN_ENABLE_INTERCONNECT" == true ]; then
        echo "KIND_NUM_NODES_PER_ZONE = $KIND_NUM_NODES_PER_ZONE"
@@ -700,6 +714,7 @@ set_default_params() {
   ADVERTISED_UDN_ISOLATION_MODE=${ADVERTISED_UDN_ISOLATION_MODE:-strict}
   ADVERTISE_DEFAULT_NETWORK=${ADVERTISE_DEFAULT_NETWORK:-false}
   ENABLE_NO_OVERLAY=${ENABLE_NO_OVERLAY:-false}
+  ENABLE_NO_OVERLAY_OUTBOUND_SNAT=${ENABLE_NO_OVERLAY_OUTBOUND_SNAT:-false}
   if [ "$ENABLE_NO_OVERLAY" == true ] && [ "$ENABLE_MULTI_NET" != true ]; then
     echo "No-overlay mode requires multi-network to be enabled (-mne)"
     exit 1
@@ -981,6 +996,7 @@ create_ovn_kube_manifests() {
     --advertise-default-network="${ADVERTISE_DEFAULT_NETWORK}" \
     --advertised-udn-isolation-mode="${ADVERTISED_UDN_ISOLATION_MODE}" \
     --no-overlay-enable="${ENABLE_NO_OVERLAY}" \
+    --no-overlay-enable-snat="${ENABLE_NO_OVERLAY_OUTBOUND_SNAT}" \
     --ovnkube-metrics-scale-enable="${OVN_METRICS_SCALE_ENABLE}" \
     --compact-mode="${OVN_COMPACT_MODE}" \
     --enable-interconnect="${OVN_ENABLE_INTERCONNECT}" \
