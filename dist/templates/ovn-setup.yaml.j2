@@ -94,7 +94,11 @@ data:
     transport = no-overlay
 
     [no-overlay]
+{%- if ovn_no_overlay_outbound_snat_enable == "true" %}
+    outbound-snat = enabled
+{%- else %}
     outbound-snat = disabled
+{%- endif %}
     routing = unmanaged
 {%- endif %}
 

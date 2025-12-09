@@ -193,6 +193,11 @@ set_common_default_params() {
     # Set default MTU for overlay mode (1400) if not already set
     OVN_MTU=${OVN_MTU:-1400}
   fi
+  ENABLE_NO_OVERLAY_OUTBOUND_SNAT=${ENABLE_NO_OVERLAY_OUTBOUND_SNAT:-false}
+  if [ "$ENABLE_NO_OVERLAY_OUTBOUND_SNAT" == true ] && [ "$ENABLE_NO_OVERLAY" != true ]; then
+    echo "No-overlay outbound SNAT can only be enabled when no-overlay mode is enabled (-noe)"
+    exit 1
+  fi
 }
 
 set_ovn_image() {

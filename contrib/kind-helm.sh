@@ -45,7 +45,7 @@ usage() {
     echo "       [-adv | --advertise-default-network]"
     echo "       [-rud | --routed-udn-isolation-disable]"
     echo "       [ -nqe | --network-qos-enable ]"
-    echo "       [ -noe | --no-overlay-enable ]"
+    echo "       [ -noe | --no-overlay-enable [snat-enabled] ]"
     echo "       [ -wk  | --num-workers <num> ]"
     echo "       [ -ic  | --enable-interconnect]"
     echo "       [ -npz | --node-per-zone ]"
@@ -82,7 +82,7 @@ usage() {
     echo "-adv | --advertise-default-network            Applies a RouteAdvertisements configuration to advertise the default network on all nodes"
     echo "-rud | --routed-udn-isolation-disable         Disable isolation across BGP-advertised UDNs (sets advertised-udn-isolation-mode=loose). DEFAULT: strict."
     echo "-nqe | --network-qos-enable                   Enable network QoS. DEFAULT: Disabled"
-    echo "-noe | --no-overlay-enable                    Enable no-overlay mode for the default network. DEFAULT: Disabled"
+    echo "-noe | --no-overlay-enable [snat-enabled]     Enable no overlay for the default network. Optional value: 'snat-enabled' to enable SNAT for pod outbound traffic. DEFAULT: disabled."
     echo "-ha  | --ha-enabled                           Enable high availability. DEFAULT: HA Disabled"
     echo "-wk  | --num-workers                          Number of worker nodes. DEFAULT: 2 workers"
     echo "-ov  | --ovn-image                            Use the specified docker image instead of building locally. DEFAULT: local build."
@@ -164,6 +164,19 @@ parse_args() {
             -nqe | --network-qos-enable )         OVN_NETWORK_QOS_ENABLE=true
                                                   ;;
             -noe | --no-overlay-enable )          ENABLE_NO_OVERLAY=true
+                                                  # Check if next argument is a valid value
+                                                  if [[ -n "$2" && ! "$2" =~ ^- ]]; then
+                                                    if [[ "$2" == "snat-enabled" ]]; then
+                                                      ENABLE_NO_OVERLAY_OUTBOUND_SNAT=true
+                                                      shift  # consume the value argument
+                                                    else
+                                                      echo "Error: Invalid value for --no-overlay-enable: $2"
+                                                      echo "Valid value is: snat-enabled"
+                                                      exit 1
+                                                    fi
+                                                  else
+                                                    ENABLE_NO_OVERLAY_OUTBOUND_SNAT=false
+                                                  fi
                                                   ;;
             -ha | --ha-enabled )                  OVN_HA=true
                                                   KIND_NUM_MASTER=3
@@ -256,6 +269,7 @@ print_params() {
      echo "ADVERTISED_UDN_ISOLATION_MODE = $ADVERTISED_UDN_ISOLATION_MODE"
      echo "OVN_NETWORK_QOS_ENABLE = $OVN_NETWORK_QOS_ENABLE"
      echo "ENABLE_NO_OVERLAY = $ENABLE_NO_OVERLAY"
+     echo "ENABLE_NO_OVERLAY_OUTBOUND_SNAT = $ENABLE_NO_OVERLAY_OUTBOUND_SNAT"
      echo "OVN_MTU = $OVN_MTU"
      echo "OVN_IMAGE = $OVN_IMAGE"
      echo "OVN_REPO = $OVN_REPO"
@@ -370,6 +384,7 @@ helm install ovn-kubernetes . -f "${value_file}" \
           --set global.enableDNSNameResolver=$(if [ "${OVN_ENABLE_DNSNAMERESOLVER}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableNetworkQos=$(if [ "${OVN_NETWORK_QOS_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableNoOverlay=$(if [ "${ENABLE_NO_OVERLAY}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          --set global.enableNoOverlaySnat=$(if [ "${ENABLE_NO_OVERLAY_OUTBOUND_SNAT}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableCoredumps=$(if [ "${ENABLE_COREDUMPS}" == "true" ]; then echo "true"; else echo "false"; fi) \
           ${ovnkube_db_options}
 EOF

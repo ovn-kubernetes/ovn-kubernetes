@@ -80,6 +80,8 @@ global:
   advertisedUDNIsolationMode: "strict"
   # -- Configure to enable no-overlay mode for the default network
   enableNoOverlay: false
+  # -- Configure to enable SNAT for outbound traffic in no-overlay mode
+  enableNoOverlaySnat: false
   # -- Configure to enable IPsec
   enableIpsec: false
   # -- Use SSL transport to NB/SB db and northd
