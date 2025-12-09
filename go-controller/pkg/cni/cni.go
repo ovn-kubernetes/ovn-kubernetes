@@ -375,12 +375,19 @@ func (pr *PodRequest) cmdDel(clientset *ClientSet) (*Response, error) {
 		} else {
 			// Find the hostInterface name
 			condString := []string{"external-ids:sandbox=" + pr.SandboxID}
-			if pr.netName != types.DefaultNetworkName {
-				condString = append(condString, fmt.Sprintf("external_ids:%s=%s", types.NADExternalID, pr.nadKey))
-			} else {
-				condString = append(condString, fmt.Sprintf("external_ids:%s{=}[]", types.NADExternalID))
-			}
+			condString = append(condString, fmt.Sprintf("external_ids:pod-if-name=%s", pr.IfName))
 			ovsIfNames, err := ovsFind("Interface", "name", condString...)
+			if err != nil || len(ovsIfNames) != 1 {
+				// the pod was added before "external_ids:pod-if-name" was introduced, fall back to the old way to find
+				// out the OVS interface associated with this CNIDel request
+				condString = []string{"external-ids:sandbox=" + pr.SandboxID}
+				if pr.netName != types.DefaultNetworkName {
+					condString = append(condString, fmt.Sprintf("external_ids:%s=%s", types.NADExternalID, pr.nadKey))
+				} else {
+					condString = append(condString, fmt.Sprintf("external_ids:%s{=}[]", types.NADExternalID))
+				}
+				ovsIfNames, err = ovsFind("Interface", "name", condString...)
+			}
 
 			if err != nil || len(ovsIfNames) != 1 {
 				klog.Warningf("Couldn't find the OVS interface for pod %s/%s NAD key %s: %v",

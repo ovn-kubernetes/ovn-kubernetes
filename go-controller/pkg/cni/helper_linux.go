@@ -494,6 +494,11 @@ func ConfigureOVS(ctx context.Context, namespace, podName, podIfName, hostIfaceN
 		fmt.Sprintf("external_ids:sandbox=%s", sandboxID),
 	}
 
+	// pod interface name, used to identify CNI request with the same NAD
+	if podIfName != "" {
+		ovsArgs = append(ovsArgs, fmt.Sprintf("external_ids:pod-if-name=%s", podIfName))
+	}
+
 	// In case of multi-vtep, host has multipe NICs and each NIC has a VTEP interface, the mapping
 	// of VTEP IP to NIC is stored in Open_vSwitch table's `external_ids:ovn-pf-encap-ip-mapping`,
 	// the value's format is:
