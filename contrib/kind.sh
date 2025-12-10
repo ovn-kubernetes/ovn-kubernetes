@@ -1244,7 +1244,9 @@ if [ "$OVN_ENABLE_DNSNAMERESOLVER" == true ]; then
 fi
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
   deploy_frr_external_container
-  deploy_bgp_external_server
+  if [ "$ADVERTISE_DEFAULT_NETWORK" == true ]; then
+    deploy_bgp_external_server
+  fi
 fi
 build_ovn_image
 detect_apiserver_url

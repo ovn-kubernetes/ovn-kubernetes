@@ -784,7 +784,7 @@ func getNetworkInterface(containerName, networkName string) (api.NetworkInterfac
 	if err != nil {
 		return ni, err
 	}
-	if ni.IPv4 != "" {
+	if ni.IPv4 != "" && net.ParseIP(ni.IPv4) != nil {
 		ni.InfName, err = getInterfaceNameUsingIP(ni.IPv4)
 		if err != nil {
 			framework.Logf("failed to get network interface name using IPv4 address %s: %v", ni.IPv4, err)
@@ -802,10 +802,10 @@ func getNetworkInterface(containerName, networkName string) (api.NetworkInterfac
 	if err != nil {
 		return ni, err
 	}
-	if ni.IPv6 != "" {
+	if ni.IPv6 != "" && net.ParseIP(ni.IPv6) != nil {
 		ni.InfName, err = getInterfaceNameUsingIP(ni.IPv6)
 		if err != nil {
-			framework.Logf("failed to get network interface name using IPv4 address %s: %v", ni.IPv6, err)
+			framework.Logf("failed to get network interface name using IPv6 address %s: %v", ni.IPv6, err)
 		}
 	}
 	ni.IPv6Prefix, err = getContainerNetwork(inspectNetworkIPv6PrefixKeyStr)
