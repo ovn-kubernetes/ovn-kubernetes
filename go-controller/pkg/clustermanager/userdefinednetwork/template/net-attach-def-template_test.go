@@ -631,6 +631,166 @@ var _ = Describe("NetAttachDefTemplate", func() {
 			  "allowPersistentIPs": true
 			}`,
 		),
+		Entry("primary network, layer2 with EVPN transport and MAC-VRF",
+			udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLayer2,
+				Layer2: &udnv1.Layer2Config{
+					Role:    udnv1.NetworkRolePrimary,
+					Subnets: udnv1.DualStackCIDRs{"192.168.100.0/24"},
+					MTU:     1500,
+				},
+				Transport: udnv1.TransportOptionEVPN,
+				EVPN: &udnv1.EVPNConfig{
+					VTEP: "my-vtep",
+					MACVRF: &udnv1.VRFConfig{
+						VNI:         100,
+						RouteTarget: "65000:100",
+					},
+				},
+			},
+			`{
+			  "cniVersion": "1.0.0",
+			  "type": "ovn-k8s-cni-overlay",
+			  "name": "cluster_udn_test-net",
+			  "netAttachDefName": "mynamespace/test-net",
+			  "role": "primary",
+			  "topology": "layer2",
+			  "joinSubnet": "100.65.0.0/16,fd99::/64",
+			  "transitSubnet": "100.88.0.0/16",
+			  "subnets": "192.168.100.0/24",
+			  "mtu": 1500,
+			  "transport": "evpn",
+			  "evpn": {
+			    "vtep": "my-vtep",
+			    "macVRF": {
+			      "vni": 100,
+			      "routeTarget": "65000:100"
+			    }
+			  }
+			}`,
+		),
+		Entry("primary network, layer3 with EVPN transport and IP-VRF",
+			udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLayer3,
+				Layer3: &udnv1.Layer3Config{
+					Role: udnv1.NetworkRolePrimary,
+					Subnets: []udnv1.Layer3Subnet{
+						{CIDR: "192.168.100.0/16"},
+					},
+					MTU: 1500,
+				},
+				Transport: udnv1.TransportOptionEVPN,
+				EVPN: &udnv1.EVPNConfig{
+					VTEP: "my-vtep",
+					IPVRF: &udnv1.VRFConfig{
+						VNI:         200,
+						RouteTarget: "65000:200",
+					},
+				},
+			},
+			`{
+			  "cniVersion": "1.0.0",
+			  "type": "ovn-k8s-cni-overlay",
+			  "name": "cluster_udn_test-net",
+			  "netAttachDefName": "mynamespace/test-net",
+			  "role": "primary",
+			  "topology": "layer3",
+			  "joinSubnet": "100.65.0.0/16,fd99::/64",
+			  "subnets": "192.168.100.0/16",
+			  "mtu": 1500,
+			  "transport": "evpn",
+			  "evpn": {
+			    "vtep": "my-vtep",
+			    "ipVRF": {
+			      "vni": 200,
+			      "routeTarget": "65000:200"
+			    }
+			  }
+			}`,
+		),
+		Entry("primary network, layer2 with EVPN transport, MAC-VRF and IP-VRF",
+			udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLayer2,
+				Layer2: &udnv1.Layer2Config{
+					Role:    udnv1.NetworkRolePrimary,
+					Subnets: udnv1.DualStackCIDRs{"192.168.100.0/24"},
+					MTU:     1500,
+				},
+				Transport: udnv1.TransportOptionEVPN,
+				EVPN: &udnv1.EVPNConfig{
+					VTEP: "my-vtep",
+					MACVRF: &udnv1.VRFConfig{
+						VNI:         100,
+						RouteTarget: "100000:100", // 4-byte ASN format
+					},
+					IPVRF: &udnv1.VRFConfig{
+						VNI:         200,
+						RouteTarget: "192.168.1.1:200", // IPv4 format
+					},
+				},
+			},
+			`{
+			  "cniVersion": "1.0.0",
+			  "type": "ovn-k8s-cni-overlay",
+			  "name": "cluster_udn_test-net",
+			  "netAttachDefName": "mynamespace/test-net",
+			  "role": "primary",
+			  "topology": "layer2",
+			  "joinSubnet": "100.65.0.0/16,fd99::/64",
+			  "transitSubnet": "100.88.0.0/16",
+			  "subnets": "192.168.100.0/24",
+			  "mtu": 1500,
+			  "transport": "evpn",
+			  "evpn": {
+			    "vtep": "my-vtep",
+			    "macVRF": {
+			      "vni": 100,
+			      "routeTarget": "100000:100"
+			    },
+			    "ipVRF": {
+			      "vni": 200,
+			      "routeTarget": "192.168.1.1:200"
+			    }
+			  }
+			}`,
+		),
+		Entry("primary network, layer2 with EVPN transport, MAC-VRF with VNI only (no RouteTarget)",
+			udnv1.NetworkSpec{
+				Topology: udnv1.NetworkTopologyLayer2,
+				Layer2: &udnv1.Layer2Config{
+					Role:    udnv1.NetworkRolePrimary,
+					Subnets: udnv1.DualStackCIDRs{"192.168.100.0/24"},
+					MTU:     1500,
+				},
+				Transport: udnv1.TransportOptionEVPN,
+				EVPN: &udnv1.EVPNConfig{
+					VTEP: "my-vtep",
+					MACVRF: &udnv1.VRFConfig{
+						VNI: 100,
+						// RouteTarget intentionally omitted
+					},
+				},
+			},
+			`{
+			  "cniVersion": "1.0.0",
+			  "type": "ovn-k8s-cni-overlay",
+			  "name": "cluster_udn_test-net",
+			  "netAttachDefName": "mynamespace/test-net",
+			  "role": "primary",
+			  "topology": "layer2",
+			  "joinSubnet": "100.65.0.0/16,fd99::/64",
+			  "transitSubnet": "100.88.0.0/16",
+			  "subnets": "192.168.100.0/24",
+			  "mtu": 1500,
+			  "transport": "evpn",
+			  "evpn": {
+			    "vtep": "my-vtep",
+			    "macVRF": {
+			      "vni": 100
+			    }
+			  }
+			}`,
+		),
 	)
 
 	It("should correctly assign transit Subnets", func() {
