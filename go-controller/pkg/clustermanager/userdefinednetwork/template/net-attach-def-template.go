@@ -33,6 +33,8 @@ type SpecGetter interface {
 	GetLayer3() *userdefinednetworkv1.Layer3Config
 	GetLayer2() *userdefinednetworkv1.Layer2Config
 	GetLocalnet() *userdefinednetworkv1.LocalnetConfig
+	GetTransport() userdefinednetworkv1.TransportOption
+	GetEVPN() *userdefinednetworkv1.EVPNConfig
 }
 
 func RenderNetAttachDefManifest(obj client.Object, targetNamespace string) (*netv1.NetworkAttachmentDefinition, error) {
@@ -41,7 +43,7 @@ func RenderNetAttachDefManifest(obj client.Object, targetNamespace string) (*net
 	}
 
 	if targetNamespace == "" {
-		return nil, fmt.Errorf("namspace should not be empty")
+		return nil, fmt.Errorf("namespace should not be empty")
 	}
 
 	var ownerRef metav1.OwnerReference
@@ -141,8 +143,9 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter) (map[s
 			Type:       OvnK8sCNIOverlay,
 			Name:       networkName,
 		},
-		NADName:  nadName,
-		Topology: strings.ToLower(string(spec.GetTopology())),
+		NADName:   nadName,
+		Topology:  strings.ToLower(string(spec.GetTopology())),
+		Transport: strings.ToLower(string(spec.GetTransport())),
 	}
 
 	switch spec.GetTopology() {
@@ -194,6 +197,11 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter) (map[s
 			netConfSpec.VLANID = int(cfg.VLAN.Access.ID)
 		}
 	}
+
+	if spec.GetTransport() == userdefinednetworkv1.TransportOptionEVPN {
+		netConfSpec.EVPN = renderEVPNConfig(spec)
+	}
+
 	if netConfSpec.AllowPersistentIPs && !config.OVNKubernetesFeature.EnablePersistentIPs {
 		return nil, fmt.Errorf("allowPersistentIPs is set but persistentIPs is Disabled")
 	}
@@ -256,6 +264,14 @@ func renderCNINetworkConfig(networkName, nadName string, spec SpecGetter) (map[s
 			cniNetConf["defaultGatewayIPs"] = netConfSpec.DefaultGatewayIPs
 		}
 	}
+
+	if netConfSpec.Transport != "" {
+		cniNetConf["transport"] = netConfSpec.Transport
+	}
+	if netConfSpec.EVPN != nil {
+		cniNetConf["evpn"] = netConfSpec.EVPN
+	}
+
 	return cniNetConf, nil
 }
 
@@ -330,6 +346,30 @@ func ipString(ips userdefinednetworkv1.DualStackIPs) string {
 		ipStrings = append(ipStrings, string(ip))
 	}
 	return strings.Join(ipStrings, ",")
+}
+
+// renderEVPNConfig converts the EVPN configuration from the spec into the CNI EVPNConfig format.
+// Note: evpnCfg is guaranteed to be non-nil by CEL validation on the CRD.
+func renderEVPNConfig(spec SpecGetter) *ovncnitypes.EVPNConfig {
+	evpnCfg := spec.GetEVPN()
+	evpnConfig := &ovncnitypes.EVPNConfig{
+		VTEP: evpnCfg.VTEP,
+	}
+
+	if evpnCfg.MACVRF != nil {
+		evpnConfig.MACVRF = &ovncnitypes.VRFConfig{
+			VNI:         evpnCfg.MACVRF.VNI,
+			RouteTarget: string(evpnCfg.MACVRF.RouteTarget),
+		}
+	}
+	if evpnCfg.IPVRF != nil {
+		evpnConfig.IPVRF = &ovncnitypes.VRFConfig{
+			VNI:         evpnCfg.IPVRF.VNI,
+			RouteTarget: string(evpnCfg.IPVRF.RouteTarget),
+		}
+	}
+
+	return evpnConfig
 }
 
 func GetSpec(obj client.Object) SpecGetter {
