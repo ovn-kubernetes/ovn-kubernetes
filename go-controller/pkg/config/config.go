@@ -1027,7 +1027,7 @@ var CommonFlags = []cli.Flag{
 	&cli.StringFlag{
 		Name: "udn-allowed-default-services",
 		Usage: "a list of namespaced names of default cluster network services accessible from primary" +
-			"user-defined networks. If not specified defaults to [\"default/kubernetes\", \"kube-system/kube-dns\"]." +
+			"user-defined networks. If not specified defaults to [\"default/kubernetes\", \"kube-system/kube-dns\"]. " +
 			"Only used when enable-network-segmentation is set",
 		Value:       Default.RawUDNAllowedDefaultServices,
 		Destination: &cliConfig.Default.RawUDNAllowedDefaultServices,
@@ -1040,21 +1040,21 @@ var MonitoringFlags = []cli.Flag{
 	&cli.StringFlag{
 		Name:  "netflow-targets",
 		Value: Monitoring.RawNetFlowTargets,
-		Usage: "A comma separated set of NetFlow collectors to export flow data (eg, \"10.128.0.150:2056,10.0.0.151:2056\")." +
+		Usage: "A comma separated set of NetFlow collectors to export flow data (eg, \"10.128.0.150:2056,10.0.0.151:2056\"). " +
 			"Each entry is given in the form [IP address:port] or [:port]. If only port is provided, it uses the Node IP",
 		Destination: &cliConfig.Monitoring.RawNetFlowTargets,
 	},
 	&cli.StringFlag{
 		Name:  "sflow-targets",
 		Value: Monitoring.RawSFlowTargets,
-		Usage: "A comma separated set of SFlow collectors to export flow data (eg, \"10.128.0.150:6343,10.0.0.151:6343\")." +
+		Usage: "A comma separated set of SFlow collectors to export flow data (eg, \"10.128.0.150:6343,10.0.0.151:6343\"). " +
 			"Each entry is given in the form [IP address:port] or [:port]. If only port is provided, it uses the Node IP",
 		Destination: &cliConfig.Monitoring.RawSFlowTargets,
 	},
 	&cli.StringFlag{
 		Name:  "ipfix-targets",
 		Value: Monitoring.RawIPFIXTargets,
-		Usage: "A comma separated set of IPFIX collectors to export flow data (eg, \"10.128.0.150:2055,10.0.0.151:2055\")." +
+		Usage: "A comma separated set of IPFIX collectors to export flow data (eg, \"10.128.0.150:2055,10.0.0.151:2055\"). " +
 			"Each entry is given in the form [IP address:port] or [:port]. If only port is provided, it uses the Node IP",
 		Destination: &cliConfig.Monitoring.RawIPFIXTargets,
 	},
@@ -1419,7 +1419,7 @@ var OvnNBFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name: "nb-client-cacert",
-		Usage: "CA certificate that the client should use for talking to the OVN database (default when ssl address is used: /etc/openvswitch/ovnnb-ca.cert)." +
+		Usage: "CA certificate that the client should use for talking to the OVN database (default when ssl address is used: /etc/openvswitch/ovnnb-ca.cert). " +
 			"Default value for this setting is empty which defaults to use local unix socket.",
 		Destination: &cliConfig.OvnNorth.CACert,
 	},
@@ -1461,7 +1461,7 @@ var OvnSBFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name: "sb-client-privkey",
-		Usage: "Private key that the client should use for talking to the OVN database (default when ssl address is used: /etc/openvswitch/ovnsb-privkey.pem)." +
+		Usage: "Private key that the client should use for talking to the OVN database (default when ssl address is used: /etc/openvswitch/ovnsb-privkey.pem). " +
 			"Default value for this setting is empty which defaults to use local unix socket.",
 		Destination: &cliConfig.OvnSouth.PrivKey,
 	},
