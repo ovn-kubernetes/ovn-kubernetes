@@ -485,22 +485,17 @@ func (c *Controller) reconcileNamespace(key string) error {
 		return fmt.Errorf("failed to get namespace %s: %w", key, err)
 	}
 
-	namespacePrimaryNetwork, err := c.networkManager.GetActiveNetworkForNamespace(namespace.Name)
+	primaryNAD, _, err := getPrimaryNADForNamespace(c.networkManager, namespace.Name)
 	if err != nil {
-		klog.Errorf("Failed to get active network for namespace %s: %v", namespace.Name, err)
+		klog.Errorf("Failed to get primary NAD for namespace %s: %v", namespace.Name, err)
 		// best effort, usually if a NAD then gets created/deleted in this namespace,
 		// we will get a NAD event anyways
 		return nil
 	}
-	if namespacePrimaryNetwork.IsDefault() {
+	if primaryNAD == "" {
 		// no primary UDN in this namespace, so we don't need to do anything
 		return nil
 	}
-	primaryNADs := namespacePrimaryNetwork.GetNADs()
-	if len(primaryNADs) != 1 {
-		return fmt.Errorf("unexpected number of primary NADs for namespace %s, got %d", namespace.Name, len(primaryNADs))
-	}
-	primaryNAD := primaryNADs[0]
 
 	existingCNCs, err := c.cncLister.List(labels.Everything())
 	if err != nil {

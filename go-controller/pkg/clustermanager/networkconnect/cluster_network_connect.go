@@ -15,6 +15,7 @@ import (
 
 	networkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
 	apitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/networkmanager"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -22,6 +23,40 @@ import (
 var (
 	errConfig = errors.New("configuration error")
 )
+
+// getPrimaryNADForNamespace returns the primary NAD key and network info for a namespace.
+// This is used when processing namespaces that may have a primary UDN.
+// Returns:
+//   - nadKey: the primary NAD key in "namespace/name" format (empty if namespace uses default network)
+//   - network: the network info for the primary network (nil if namespace uses default network)
+//   - err: error if failed to get/validate the network
+//
+// If the namespace uses the default network (no primary UDN), returns ("", nil, nil).
+// Callers should check for empty nadKey to determine if namespace has a primary UDN.
+func getPrimaryNADForNamespace(networkMgr networkmanager.Interface, namespaceName string) (nadKey string, network util.NetInfo, err error) {
+	namespacePrimaryNetwork, err := networkMgr.GetActiveNetworkForNamespace(namespaceName)
+	if err != nil {
+		return "", nil, err
+	}
+	if namespacePrimaryNetwork.IsDefault() {
+		// No primary UDN in this namespace
+		return "", nil, nil
+	}
+	// Get the NAD key for the primary network in this namespace.
+	// Since this is for namespace-scoped UDNs, we expect exactly one NAD per network.
+	// Today we don't support multiple primary NADs for a namespace, so this is safe.
+	// Also note if the user misconfigures and ends up with CUDN and UDN for the same namespace,
+	// and if the CUDN was created first - which means the UDN won't be created successfully,
+	// then the user uses the P-UDN selector, the CUDN's NAD will be chosen here for this selector
+	// but that's a design flaw in the user's configuration, and expectation is for users to use
+	// the selectors correctly.
+	primaryNADs := namespacePrimaryNetwork.GetNADs()
+	if len(primaryNADs) != 1 {
+		return "", nil, fmt.Errorf("expected exactly one primary NAD for namespace %s, got %d", namespaceName, len(primaryNADs))
+	}
+	// GetNADs() returns NADs in "namespace/name" format, so use directly
+	return primaryNADs[0], namespacePrimaryNetwork, nil
+}
 
 func (c *Controller) reconcileClusterNetworkConnect(key string) error {
 	c.Lock()
@@ -187,30 +222,15 @@ func (c *Controller) discoverSelectedNetworks(cnc *networkconnectv1.ClusterNetwo
 				continue
 			}
 			for _, ns := range namespaces {
-				namespacePrimaryNetwork, err := c.networkManager.GetActiveNetworkForNamespace(ns.Name)
+				nadKey, namespacePrimaryNetwork, err := getPrimaryNADForNamespace(c.networkManager, ns.Name)
 				if err != nil {
 					errs = append(errs, fmt.Errorf("failed to get active network for namespace %s: %w", ns.Name, err))
 					continue
 				}
-				if namespacePrimaryNetwork.IsDefault() {
+				if nadKey == "" {
+					// Namespace uses default network (no primary UDN)
 					continue
 				}
-				// Get the NAD key for the primary network in this namespace.
-				// Since this is the PrimaryUserDefinedNetworks selector (for namespace-scoped UDNs),
-				// we expect exactly one NAD per network.
-				// Today we don't support multiple primary NADs for a namespace, so this is safe.
-				// Also note if the user misconfigures and ends up with CUDN and UDN for the same namespace,
-				// and if the CUDN was created first - which means the UDN won't be created successfully,
-				// then the user uses the P-UDN selector, the CUDN's NAD will be chosen here for this selector
-				// but that's a design flaw in the user's configuration, and expectation is for users to use
-				// the selectors correctly.
-				primaryNADs := namespacePrimaryNetwork.GetNADs()
-				if len(primaryNADs) != 1 {
-					errs = append(errs, fmt.Errorf("expected exactly one primary NAD for namespace %s, got %d", ns.Name, len(primaryNADs)))
-					continue
-				}
-				// GetNADs() returns NADs in "namespace/name" format, so use directly
-				nadKey := primaryNADs[0]
 				allMatchingNADKeys.Insert(nadKey)
 				discoveredNetworks = append(discoveredNetworks, &namespacePrimaryNetwork)
 			}
