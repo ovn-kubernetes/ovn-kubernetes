@@ -12,9 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
-	utilnet "k8s.io/utils/net"
 
-	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	networkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
 	apitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/types"
 	ovntypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
@@ -66,24 +64,9 @@ func (c *Controller) reconcileClusterNetworkConnect(key string) error {
 			selectedNADs:     sets.New[string](),
 			selectedNetworks: sets.New[string](),
 		}
-		connectSubnetAllocator := NewHybridConnectSubnetAllocator()
-		for _, connectSubnet := range cnc.Spec.ConnectSubnets {
-			_, netCIDR, err := net.ParseCIDR(string(connectSubnet.CIDR))
-			if err != nil {
-				return fmt.Errorf("failed to parse connect subnet CIDR %s: %w", connectSubnet.CIDR, err)
-			}
-			if utilnet.IsIPv4CIDR(netCIDR) && config.IPv4Mode {
-				if err := connectSubnetAllocator.AddNetworkRange(netCIDR, int(connectSubnet.NetworkPrefix)); err != nil {
-					return fmt.Errorf("failed to add IPV4 network range %s to cluster network connect %s subnet allocator: %w", netCIDR, cncName, err)
-				}
-				klog.V(5).Infof("Added IPV4 network range %s to cluster network connect %s subnet allocator", netCIDR, cncName)
-			}
-			if utilnet.IsIPv6CIDR(netCIDR) && config.IPv6Mode {
-				if err := connectSubnetAllocator.AddNetworkRange(netCIDR, int(connectSubnet.NetworkPrefix)); err != nil {
-					return fmt.Errorf("failed to add IPV6 network range %s to cluster network connect %s subnet allocator: %w", netCIDR, cncName, err)
-				}
-				klog.V(5).Infof("Added IPV6 network range %s to cluster network connect %s subnet allocator", netCIDR, cncName)
-			}
+		connectSubnetAllocator, err := NewHybridConnectSubnetAllocator(cnc.Spec.ConnectSubnets, cncName)
+		if err != nil {
+			return fmt.Errorf("failed to initialize subnet allocator for CNC %s: %w", cncName, err)
 		}
 		cncState.allocator = connectSubnetAllocator
 		klog.V(5).Infof("Initialized subnet allocator for CNC %s", cncName)

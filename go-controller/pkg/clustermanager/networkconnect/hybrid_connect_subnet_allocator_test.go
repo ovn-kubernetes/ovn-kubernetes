@@ -8,6 +8,7 @@ import (
 	"github.com/onsi/gomega"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	networkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
 )
 
 func mustParseCIDR(cidr string) *net.IPNet {
@@ -70,9 +71,12 @@ func TestHybridConnectSubnetAllocator_AddNetworkRange(t *testing.T) {
 			config.IPv4Mode = true
 			config.IPv6Mode = true
 
-			allocator := NewHybridConnectSubnetAllocator()
+			allocator, err := NewHybridConnectSubnetAllocator(nil, "test-cnc")
+			if err != nil {
+				t.Fatalf("failed to create subnet allocator: %v", err)
+			}
 			network := mustParseCIDR(tt.network)
-			err := allocator.AddNetworkRange(network, tt.networkPrefix)
+			err = allocator.AddNetworkRange(network, tt.networkPrefix)
 
 			if tt.expectErr != "" {
 				g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring(tt.expectErr)))
@@ -182,16 +186,19 @@ func TestHybridConnectSubnetAllocator_AllocateLayer3Subnet(t *testing.T) {
 			config.IPv4Mode = tt.ipv4Mode
 			config.IPv6Mode = tt.ipv6Mode
 
-			allocator := NewHybridConnectSubnetAllocator()
-
-			// Add network ranges based on IP mode
-			if tt.ipv4Mode {
-				err := allocator.AddNetworkRange(mustParseCIDR("192.168.0.0/16"), 24)
-				g.Expect(err).ToNot(gomega.HaveOccurred())
+			connectSubnets := []networkconnectv1.ConnectSubnet{
+				{
+					CIDR:          "192.168.0.0/16",
+					NetworkPrefix: 24,
+				},
+				{
+					CIDR:          "fd00::/48",
+					NetworkPrefix: 64,
+				},
 			}
-			if tt.ipv6Mode {
-				err := allocator.AddNetworkRange(mustParseCIDR("fd00::/48"), 64)
-				g.Expect(err).ToNot(gomega.HaveOccurred())
+			allocator, err := NewHybridConnectSubnetAllocator(connectSubnets, "test-cnc")
+			if err != nil {
+				t.Fatalf("failed to create subnet allocator: %v", err)
 			}
 
 			// Allocate subnets
@@ -311,16 +318,19 @@ func TestHybridConnectSubnetAllocator_AllocateLayer2Subnet(t *testing.T) {
 			config.IPv4Mode = tt.ipv4Mode
 			config.IPv6Mode = tt.ipv6Mode
 
-			allocator := NewHybridConnectSubnetAllocator()
-
-			// Add network ranges based on IP mode
-			if tt.ipv4Mode {
-				err := allocator.AddNetworkRange(mustParseCIDR("192.168.0.0/16"), 24)
-				g.Expect(err).ToNot(gomega.HaveOccurred())
+			connectSubnets := []networkconnectv1.ConnectSubnet{
+				{
+					CIDR:          "192.168.0.0/16",
+					NetworkPrefix: 24,
+				},
+				{
+					CIDR:          "fd00::/48",
+					NetworkPrefix: 64,
+				},
 			}
-			if tt.ipv6Mode {
-				err := allocator.AddNetworkRange(mustParseCIDR("fd00::/48"), 64)
-				g.Expect(err).ToNot(gomega.HaveOccurred())
+			allocator, err := NewHybridConnectSubnetAllocator(connectSubnets, "test-cnc")
+			if err != nil {
+				t.Fatalf("failed to create subnet allocator: %v", err)
 			}
 
 			// Allocate layer2 subnets
@@ -345,9 +355,16 @@ func TestHybridConnectSubnetAllocator_AllocateMixedLayer3AndLayer2Subnets(t *tes
 	config.IPv4Mode = true
 	config.IPv6Mode = false
 
-	allocator := NewHybridConnectSubnetAllocator()
-	err := allocator.AddNetworkRange(mustParseCIDR("192.168.0.0/16"), 24)
-	g.Expect(err).ToNot(gomega.HaveOccurred())
+	connectSubnets := []networkconnectv1.ConnectSubnet{
+		{
+			CIDR:          "192.168.0.0/16",
+			NetworkPrefix: 24,
+		},
+	}
+	allocator, err := NewHybridConnectSubnetAllocator(connectSubnets, "test-cnc")
+	if err != nil {
+		t.Fatalf("failed to create subnet allocator: %v", err)
+	}
 
 	// Allocate some Layer3 subnets first
 	layer3Subnets := make(map[string][]*net.IPNet)
@@ -527,14 +544,22 @@ func TestHybridConnectSubnetAllocator_ReleaseLayer3Subnets(t *testing.T) {
 			config.IPv4Mode = tt.ipv4Mode
 			config.IPv6Mode = tt.ipv6Mode
 
-			allocator := NewHybridConnectSubnetAllocator()
+			connectSubnets := []networkconnectv1.ConnectSubnet{}
 			if tt.ipv4Mode && tt.ipv4Network != "" {
-				err := allocator.AddNetworkRange(mustParseCIDR(tt.ipv4Network), tt.ipv4NetworkPrefix)
-				g.Expect(err).ToNot(gomega.HaveOccurred())
+				connectSubnets = append(connectSubnets, networkconnectv1.ConnectSubnet{
+					CIDR:          networkconnectv1.CIDR(tt.ipv4Network),
+					NetworkPrefix: int32(tt.ipv4NetworkPrefix),
+				})
 			}
 			if tt.ipv6Mode && tt.ipv6Network != "" {
-				err := allocator.AddNetworkRange(mustParseCIDR(tt.ipv6Network), tt.ipv6NetworkPrefix)
-				g.Expect(err).ToNot(gomega.HaveOccurred())
+				connectSubnets = append(connectSubnets, networkconnectv1.ConnectSubnet{
+					CIDR:          networkconnectv1.CIDR(tt.ipv6Network),
+					NetworkPrefix: int32(tt.ipv6NetworkPrefix),
+				})
+			}
+			allocator, err := NewHybridConnectSubnetAllocator(connectSubnets, "test-cnc")
+			if err != nil {
+				t.Fatalf("failed to create subnet allocator: %v", err)
 			}
 
 			// First allocation
@@ -705,15 +730,21 @@ func TestHybridConnectSubnetAllocator_ReleaseLayer2Subnets(t *testing.T) {
 			config.IPv4Mode = tt.ipv4Mode
 			config.IPv6Mode = tt.ipv6Mode
 
-			allocator := NewHybridConnectSubnetAllocator()
+			connectSubnets := []networkconnectv1.ConnectSubnet{}
 			if tt.ipv4Mode && tt.ipv4Network != "" {
-				err := allocator.AddNetworkRange(mustParseCIDR(tt.ipv4Network), tt.ipv4NetworkPrefix)
-				g.Expect(err).ToNot(gomega.HaveOccurred())
+				connectSubnets = append(connectSubnets, networkconnectv1.ConnectSubnet{
+					CIDR:          networkconnectv1.CIDR(tt.ipv4Network),
+					NetworkPrefix: int32(tt.ipv4NetworkPrefix),
+				})
 			}
 			if tt.ipv6Mode && tt.ipv6Network != "" {
-				err := allocator.AddNetworkRange(mustParseCIDR(tt.ipv6Network), tt.ipv6NetworkPrefix)
-				g.Expect(err).ToNot(gomega.HaveOccurred())
+				connectSubnets = append(connectSubnets, networkconnectv1.ConnectSubnet{
+					CIDR:          networkconnectv1.CIDR(tt.ipv6Network),
+					NetworkPrefix: int32(tt.ipv6NetworkPrefix),
+				})
 			}
+			allocator, err := NewHybridConnectSubnetAllocator(connectSubnets, "test-cnc")
+			g.Expect(err).ToNot(gomega.HaveOccurred())
 
 			// First allocation
 			for _, owner := range tt.allocateFirst {
@@ -748,10 +779,17 @@ func TestHybridConnectSubnetAllocator_ReleaseMixedLayer3AndLayer2Subnets(t *test
 	config.IPv4Mode = true
 	config.IPv6Mode = true
 
-	allocator := NewHybridConnectSubnetAllocator()
-	err := allocator.AddNetworkRange(mustParseCIDR("192.168.0.0/16"), 24)
-	g.Expect(err).ToNot(gomega.HaveOccurred())
-	err = allocator.AddNetworkRange(mustParseCIDR("fd00::/32"), 64)
+	connectSubnets := []networkconnectv1.ConnectSubnet{
+		{
+			CIDR:          networkconnectv1.CIDR("192.168.0.0/16"),
+			NetworkPrefix: 24,
+		},
+		{
+			CIDR:          networkconnectv1.CIDR("fd00::/32"),
+			NetworkPrefix: 64,
+		},
+	}
+	allocator, err := NewHybridConnectSubnetAllocator(connectSubnets, "test-cnc")
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
 	// Allocate layer3 subnets (dual-stack: both IPv4 and IPv6)
@@ -830,13 +868,20 @@ func TestHybridConnectSubnetAllocator_Layer2BlockExpansionFromLayer3(t *testing.
 	config.IPv4Mode = true
 	config.IPv6Mode = true
 
-	allocator := NewHybridConnectSubnetAllocator()
 	// Use small CIDRs to test block exhaustion and expansion
 	// IPv4: 192.168.0.0/24 with /28 prefix gives us 16 /28 blocks, each holding 8 /31 subnets
 	// IPv6: fd00::/120 with /124 prefix gives us 16 /124 blocks, each holding 8 /127 subnets
-	err := allocator.AddNetworkRange(mustParseCIDR("192.168.0.0/24"), 28)
-	g.Expect(err).ToNot(gomega.HaveOccurred())
-	err = allocator.AddNetworkRange(mustParseCIDR("fd00::/120"), 124)
+	connectSubnets := []networkconnectv1.ConnectSubnet{
+		{
+			CIDR:          networkconnectv1.CIDR("192.168.0.0/24"),
+			NetworkPrefix: 28,
+		},
+		{
+			CIDR:          networkconnectv1.CIDR("fd00::/120"),
+			NetworkPrefix: 124,
+		},
+	}
+	allocator, err := NewHybridConnectSubnetAllocator(connectSubnets, "test-cnc")
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
 	// Allocate more than 8 subnets to trigger expansion of new blocks from layer3 to layer2
@@ -894,10 +939,15 @@ func TestHybridConnectSubnetAllocator_Layer3RangeFull(t *testing.T) {
 	config.IPv4Mode = true
 	config.IPv6Mode = false
 
-	allocator := NewHybridConnectSubnetAllocator()
 	// Use a very small CIDR that can only hold 4 /26 subnets
 	// 192.168.0.0/24 with /26 prefix = 4 subnets (256 IPs / 64 IPs per /26 = 4)
-	err := allocator.AddNetworkRange(mustParseCIDR("192.168.0.0/24"), 26)
+	connectSubnets := []networkconnectv1.ConnectSubnet{
+		{
+			CIDR:          networkconnectv1.CIDR("192.168.0.0/24"),
+			NetworkPrefix: 26,
+		},
+	}
+	allocator, err := NewHybridConnectSubnetAllocator(connectSubnets, "test-cnc")
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
 	// Allocate all 4 available /26 subnets
@@ -924,13 +974,20 @@ func TestHybridConnectSubnetAllocator_Layer2RangeFullAfterLayer3Exhausted(t *tes
 	config.IPv4Mode = true
 	config.IPv6Mode = true
 
-	allocator := NewHybridConnectSubnetAllocator()
 	// Use very small CIDRs that can only hold 2 subnets each
 	// IPv4: 192.168.0.0/24 with /25 prefix = 2 subnets
 	// IPv6: fd00::/121 with /122 prefix = 2 subnets
-	err := allocator.AddNetworkRange(mustParseCIDR("192.168.0.0/24"), 25)
-	g.Expect(err).ToNot(gomega.HaveOccurred())
-	err = allocator.AddNetworkRange(mustParseCIDR("fd00::/121"), 122)
+	connectSubnets := []networkconnectv1.ConnectSubnet{
+		{
+			CIDR:          networkconnectv1.CIDR("192.168.0.0/24"),
+			NetworkPrefix: 25,
+		},
+		{
+			CIDR:          networkconnectv1.CIDR("fd00::/121"),
+			NetworkPrefix: 122,
+		},
+	}
+	allocator, err := NewHybridConnectSubnetAllocator(connectSubnets, "test-cnc")
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
 	// Allocate both subnets as layer3 (exhausts both IPv4 and IPv6 ranges)
@@ -957,10 +1014,15 @@ func TestHybridConnectSubnetAllocator_Layer2CanReuseFromEarlierRange(t *testing.
 	config.IPv4Mode = true
 	config.IPv6Mode = false
 
-	allocator := NewHybridConnectSubnetAllocator()
 	// Small range: 192.168.0.0/26 with /28 prefix = 4 /28 blocks
 	// Each /28 block has 8 /31 slots
-	err := allocator.AddNetworkRange(mustParseCIDR("192.168.0.0/26"), 28)
+	connectSubnets := []networkconnectv1.ConnectSubnet{
+		{
+			CIDR:          networkconnectv1.CIDR("192.168.0.0/26"),
+			NetworkPrefix: 28,
+		},
+	}
+	allocator, err := NewHybridConnectSubnetAllocator(connectSubnets, "test-cnc")
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
 	// Allocate 8 layer2 networks - this fills the first /28 block
@@ -1010,14 +1072,21 @@ func TestHybridConnectSubnetAllocator_Layer2ReleaseReleasesBlockToLayer3(t *test
 	config.IPv4Mode = true
 	config.IPv6Mode = true
 
-	allocator := NewHybridConnectSubnetAllocator()
+	connectSubnets := []networkconnectv1.ConnectSubnet{
+		{
+			CIDR:          networkconnectv1.CIDR("10.100.0.0/26"),
+			NetworkPrefix: 28,
+		},
+		{
+			CIDR:          networkconnectv1.CIDR("fd00::/121"),
+			NetworkPrefix: 123,
+		},
+	}
+	allocator, err := NewHybridConnectSubnetAllocator(connectSubnets, "test-cnc")
+	g.Expect(err).ToNot(gomega.HaveOccurred())
 	// Small ranges: 4 blocks each
 	// IPv4: 10.100.0.0/26 with /28 prefix = 4 /28 blocks (each has 8 /31 slots)
 	// IPv6: fd00::/121 with /123 prefix = 4 /123 blocks (each has 4 /127 slots)
-	err := allocator.AddNetworkRange(mustParseCIDR("10.100.0.0/26"), 28)
-	g.Expect(err).ToNot(gomega.HaveOccurred())
-	err = allocator.AddNetworkRange(mustParseCIDR("fd00::/121"), 123)
-	g.Expect(err).ToNot(gomega.HaveOccurred())
 
 	// Allocate 2 layer2 networks - both in the same block
 	l2Sub1, err := allocator.AllocateLayer2Subnet("layer2_1")

@@ -12,6 +12,7 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/clustermanager/node"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	networkconnectv1 "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
 )
 
 var (
@@ -81,12 +82,31 @@ type hybridConnectSubnetAllocator struct {
 }
 
 // NewHybridConnectSubnetAllocator creates a new hybrid connect subnet allocator
-func NewHybridConnectSubnetAllocator() HybridConnectSubnetAllocator {
-	return &hybridConnectSubnetAllocator{
+func NewHybridConnectSubnetAllocator(connectSubnets []networkconnectv1.ConnectSubnet, cncName string) (HybridConnectSubnetAllocator, error) {
+	allocator := &hybridConnectSubnetAllocator{
 		layer3Allocator:   node.NewSubnetAllocator(),
 		layer2Allocator:   node.NewSubnetAllocator(),
 		layer2BlockOwners: make(map[string]string),
 	}
+	for _, connectSubnet := range connectSubnets {
+		_, netCIDR, err := net.ParseCIDR(string(connectSubnet.CIDR))
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse connect subnet CIDR %s: %w", connectSubnet.CIDR, err)
+		}
+		if utilnet.IsIPv4CIDR(netCIDR) && config.IPv4Mode {
+			if err := allocator.AddNetworkRange(netCIDR, int(connectSubnet.NetworkPrefix)); err != nil {
+				return nil, fmt.Errorf("failed to add IPV4 network range %s to cluster network connect %s subnet allocator: %w", netCIDR, cncName, err)
+			}
+			klog.V(5).Infof("Added IPV4 network range %s to cluster network connect %s subnet allocator", netCIDR, cncName)
+		}
+		if utilnet.IsIPv6CIDR(netCIDR) && config.IPv6Mode {
+			if err := allocator.AddNetworkRange(netCIDR, int(connectSubnet.NetworkPrefix)); err != nil {
+				return nil, fmt.Errorf("failed to add IPV6 network range %s to cluster network connect %s subnet allocator: %w", netCIDR, cncName, err)
+			}
+			klog.V(5).Infof("Added IPV6 network range %s to cluster network connect %s subnet allocator", netCIDR, cncName)
+		}
+	}
+	return allocator, nil
 }
 
 // AddNetworkRange initializes the allocator with the base CIDR range and network prefix.
