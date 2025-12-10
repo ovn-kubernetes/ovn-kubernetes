@@ -41,7 +41,7 @@ func (g *gateway) newRetryFrameworkNodeWithParameters(
 			syncFunc: syncFunc,
 		},
 	}
-	r := retry.NewRetryFramework(g.stopChan, g.wg, g.watchFactory, resourceHandler)
+	r := retry.NewRetryFramework("nodeGateway", g.stopChan, g.wg, g.watchFactory, resourceHandler)
 
 	return r
 }

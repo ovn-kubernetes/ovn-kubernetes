@@ -421,7 +421,7 @@ func (eIPC *egressIPClusterController) newRetryFramework(objectType reflect.Type
 		ObjType:                objectType,
 		EventHandler:           eventHandler,
 	}
-	return objretry.NewRetryFramework(eIPC.stopChan, eIPC.wg, eIPC.watchFactory, resourceHandler)
+	return objretry.NewRetryFramework("EgressIPClusterController", eIPC.stopChan, eIPC.wg, eIPC.watchFactory, resourceHandler)
 }
 
 func (eIPC *egressIPClusterController) Start() error {

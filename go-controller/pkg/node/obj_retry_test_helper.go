@@ -36,7 +36,7 @@ func (n *nodePortWatcher) newRetryFrameworkForTests(objectType reflect.Type, sto
 			n:       n,
 		},
 	}
-	r := retry.NewRetryFramework(stopChan, wg, n.watchFactory.(*factory.WatchFactory), resourceHandler)
+	r := retry.NewRetryFramework("nodePortWatcher", stopChan, wg, n.watchFactory.(*factory.WatchFactory), resourceHandler)
 
 	return r
 }
