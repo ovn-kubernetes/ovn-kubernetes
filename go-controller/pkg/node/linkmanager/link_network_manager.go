@@ -1,11 +1,13 @@
 package linkmanager
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
@@ -152,7 +154,7 @@ func (c *Controller) DelAddress(address netlink.Addr) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := util.GetNetLinkOps().AddrDel(link, &address); err != nil {
-		if !util.GetNetLinkOps().IsLinkNotFoundError(err) {
+		if !util.GetNetLinkOps().IsLinkNotFoundError(err) && !errors.Is(err, unix.EADDRNOTAVAIL) {
 			return fmt.Errorf("failed to delete address %s: %v", address.String(), err)
 		}
 	}
