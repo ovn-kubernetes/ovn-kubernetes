@@ -2362,6 +2362,35 @@ func TestController_reconcileNamespace(t *testing.T) {
 			reconcileNamespace:  "frontend-ns",
 			expectCNCReconciled: []string{"cnc1"}, // only cnc1 matches
 		},
+		{
+			name: "deleted namespace does not panic and does not trigger CNC reconciliation",
+			cncs: []*testCNC{
+				{
+					Name: "cnc1",
+					NetworkSelectors: []apitypes.NetworkSelector{
+						{
+							NetworkSelectionType: apitypes.PrimaryUserDefinedNetworks,
+							PrimaryUserDefinedNetworkSelector: &apitypes.PrimaryUserDefinedNetworkSelector{
+								NamespaceSelector: metav1.LabelSelector{
+									MatchLabels: map[string]string{"tier": "frontend"},
+								},
+							},
+						},
+					},
+				},
+			},
+			namespaces: []*testNamespace{}, // namespace does not exist (deleted)
+			nads:       []*testNAD{},
+			prePopulateCache: map[string]*clusterNetworkConnectState{
+				"cnc1": {
+					name:             "cnc1",
+					selectedNADs:     sets.New[string](),
+					selectedNetworks: sets.New[string](),
+				},
+			},
+			reconcileNamespace: "deleted-namespace", // namespace that doesn't exist
+			expectNoReconcile:  true,
+		},
 	}
 
 	for _, tt := range tests {

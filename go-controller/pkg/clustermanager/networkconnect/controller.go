@@ -481,13 +481,20 @@ func (c *Controller) reconcileNamespace(key string) error {
 	}()
 
 	namespace, err := c.namespaceLister.Get(key)
-	if err != nil && !apierrors.IsNotFound(err) {
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			// Namespace deleted - nothing to do since NAD controller
+			// will handle any NAD deletions in this namespace
+			// which will trigger a CNC reconcile for any CNCs selecting
+			// this namespace.
+			return nil
+		}
 		return fmt.Errorf("failed to get namespace %s: %w", key, err)
 	}
 
-	primaryNAD, _, err := getPrimaryNADForNamespace(c.networkManager, namespace.Name)
+	primaryNAD, _, err := getPrimaryNADForNamespace(c.networkManager, key)
 	if err != nil {
-		klog.Errorf("Failed to get primary NAD for namespace %s: %v", namespace.Name, err)
+		klog.Errorf("Failed to get primary NAD for namespace %s: %v", key, err)
 		// best effort, usually if a NAD then gets created/deleted in this namespace,
 		// we will get a NAD event anyways
 		return nil
