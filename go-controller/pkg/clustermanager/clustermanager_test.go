@@ -893,6 +893,9 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 
 		ginkgo.It("check for CNC tunnel keys allocations", func() {
 			app.Action = func(_ *cli.Context) error {
+				config.OVNKubernetesFeature.EnableNetworkConnect = true
+				config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+				config.OVNKubernetesFeature.EnableMultiNetwork = true
 				// CNC uses networkID 4097 (4096+1) which allocates from the idsAllocator range
 				// The idsAllocator starts at 16715779 (16711683 + 4096)
 				// create CNC with already allocated tunnel key
@@ -944,6 +947,9 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 
 		ginkgo.It("check for combined NAD and CNC tunnel keys allocations", func() {
 			app.Action = func(_ *cli.Context) error {
+				config.OVNKubernetesFeature.EnableNetworkConnect = true
+				config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+				config.OVNKubernetesFeature.EnableMultiNetwork = true
 				// create NAD with already allocated tunnel keys
 				// NAD with networkID 2 gets keys: [16711685 (preserved), 16715779 (idsAllocator)]
 				nad1 := testing.GenerateNAD("test1", "test1", "test", ovntypes.Layer2Topology,

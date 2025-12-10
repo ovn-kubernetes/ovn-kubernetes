@@ -341,18 +341,20 @@ func initTunnelKeysAllocator(nadClient networkattchmentdefclientset.Interface, c
 			}
 		}
 	}
-	existingCNCs, err := cncClient.K8sV1().ClusterNetworkConnects().List(context.TODO(), metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list existing CNCs: %w", err)
-	}
-	for _, cnc := range existingCNCs.Items {
-		tunnelID, err := util.ParseNetworkConnectTunnelKeyAnnotation(&cnc)
+	if util.IsNetworkConnectEnabled() {
+		existingCNCs, err := cncClient.K8sV1().ClusterNetworkConnects().List(context.TODO(), metav1.ListOptions{})
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse annotated tunnel ID: %w", err)
+			return nil, fmt.Errorf("failed to list existing CNCs: %w", err)
 		}
-		if tunnelID != 0 {
-			if err = tunnelKeysAllocator.ReserveKeys(cnc.Name, []int{tunnelID}); err != nil {
-				return nil, fmt.Errorf("failed to reserve tunnel ID %d for CNC %s: %w", tunnelID, cnc.Name, err)
+		for _, cnc := range existingCNCs.Items {
+			tunnelID, err := util.ParseNetworkConnectTunnelKeyAnnotation(&cnc)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse annotated tunnel ID: %w", err)
+			}
+			if tunnelID != 0 {
+				if err = tunnelKeysAllocator.ReserveKeys(cnc.Name, []int{tunnelID}); err != nil {
+					return nil, fmt.Errorf("failed to reserve tunnel ID %d for CNC %s: %w", tunnelID, cnc.Name, err)
+				}
 			}
 		}
 	}
