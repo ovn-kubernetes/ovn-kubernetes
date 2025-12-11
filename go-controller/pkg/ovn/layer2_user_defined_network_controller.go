@@ -1509,3 +1509,11 @@ func (oc *Layer2UserDefinedNetworkController) setRemoteNodesNoRouter(nodes []*co
 		}
 	}
 }
+
+// HandleNetworkRefChange marks the node for interconnect sync so a queued update does not skip it.
+func (oc *Layer2UserDefinedNetworkController) HandleNetworkRefChange(nodeName string, active bool) {
+	if active {
+		oc.syncZoneICFailed.Store(nodeName, true)
+	}
+	oc.BaseNetworkController.HandleNetworkRefChange(nodeName, active)
+}

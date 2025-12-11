@@ -190,6 +190,8 @@ func (tnc *testNetworkController) Reconcile(netInfo util.NetInfo) error {
 	return util.ReconcileNetInfo(tnc.ReconcilableNetInfo, netInfo)
 }
 
+func (tnc *testNetworkController) HandleNetworkRefChange(_ string, _ bool) {}
+
 // GomegaString is used to avoid printing embedded mutexes which can cause a
 // race
 func (tnc *testNetworkController) GomegaString() string {
@@ -837,7 +839,7 @@ func TestNetworkGracePeriodCleanup(t *testing.T) {
 
 	// --- Step 2: Mark as inactive (simulate ForceReconcile behavior) ---
 	// This triggers the grace-period timer, not immediate deletion.
-	nadController.ForceReconcile(util.GetNADName(nad.Namespace, nad.Name), netInfo.GetNetworkName(), false, true)
+	nadController.UpdateNADState(util.GetNADName(nad.Namespace, nad.Name), false)
 	// --- Step 3: Verify that within the grace period, cleanup has NOT happened ---
 	g.Consistently(func() []string {
 		tcm.Lock()

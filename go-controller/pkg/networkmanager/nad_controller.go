@@ -219,28 +219,18 @@ func (c *nadController) Reconcile(key string) {
 	c.controller.Reconcile(key)
 }
 
-// ForceReconcile enqueues a sync for a given NAD.
-// "local" defines whether the reconciliation is for a local or remote node
+// UpdateNADState enqueues a sync for a given NAD.
 // "active" defines if the network is actively being used by a dynamic resource
 //   - For local events, we either want to wait for grace period before tearing down an inactive network
 //     or clear any removal timer, but both conditions should lead to the network being reconciled (nad sync)
-//   - For remote events, we do not use any grace period before cleaning up, since there is no heavy cost
-//     for remote events (unlike local where we spin up new controllers).
-//     Remote events set underlying network controllers to force reconciliation.
-//     Normally a network controller will ignore reconciliation if the NAD has not changed, and in this case we need
-//     to force the network controller to update due to remote entities changing.
-func (c *nadController) ForceReconcile(key, networkName string, active bool, local bool) {
-	if local {
-		if active { // if local and active, clear the mark for removal
-			c.removeMarkedForRemoval(key)
-		} else { // inactive start timer for removal
-			c.setMarkedForRemoval(key)
-		}
+func (c *nadController) UpdateNADState(key string, active bool) {
+	if active { // if local and active, clear the mark for removal
+		c.removeMarkedForRemoval(key)
+	} else { // inactive start timer for removal
+		c.setMarkedForRemoval(key)
 	}
-	if !local || active { // force network controller to reconcile if it's a remote node or an active local network
-		c.networkController.SetForceReconcile(networkName)
-	}
-	c.controller.Reconcile(key) // always requeue to nad controller to syncNAD again
+	// always requeue to nad controller to syncNAD again
+	c.controller.Reconcile(key)
 }
 
 func (c *nadController) setMarkedForRemoval(key string) {
@@ -767,6 +757,10 @@ func (c *nadController) GetNetInfoForNADKey(nadKey string) util.NetInfo {
 	}
 	// Return a copy so callers can safely read fields without depending on controller locks.
 	return util.NewMutableNetInfo(network)
+}
+
+func (c *nadController) NotifyNetworkRefChange(networkName, node string, active bool) {
+	c.networkController.NotifyNetworkRefChange(networkName, node, active)
 }
 
 func (c *nadController) GetActiveNetworkNamespaces(networkName string) ([]string, error) {

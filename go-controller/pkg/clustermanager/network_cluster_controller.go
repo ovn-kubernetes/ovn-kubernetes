@@ -84,6 +84,10 @@ type networkClusterController struct {
 	util.ReconcilableNetInfo
 }
 
+// HandleNetworkRefChange satisfies the NetworkController interface; cluster manager controllers
+// do not currently act on remote node ref changes.
+func (ncc *networkClusterController) HandleNetworkRefChange(_ string, _ bool) {}
+
 func newNetworkClusterController(
 	netInfo util.NetInfo,
 	ovnClient *util.OVNClusterManagerClientset,

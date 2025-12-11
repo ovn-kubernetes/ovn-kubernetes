@@ -699,7 +699,14 @@ func (ncm *NodeControllerManager) OnNetworkRefChange(node, nadNamespacedName str
 		return
 	}
 	isLocal := node == ncm.name
-	ncm.networkManager.Interface().ForceReconcile(nadNamespacedName, nadNetwork.GetNetworkName(), active, isLocal)
+	// Enqueue node-level reconcile on the running network controller (non-blocking).
+	if !isLocal {
+		ncm.networkManager.Interface().NotifyNetworkRefChange(nadNetwork.GetNetworkName(), node, active)
+	}
+	// Let the NAD controller handle lifecycle/teardown decisions asynchronously for local networks only.
+	if isLocal {
+		ncm.networkManager.Interface().UpdateNADState(nadNamespacedName, active)
+	}
 }
 
 func (ncm *NodeControllerManager) NodeHasNAD(node, nad string) bool {

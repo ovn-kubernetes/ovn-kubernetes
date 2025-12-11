@@ -1201,3 +1201,11 @@ func (oc *Layer3UserDefinedNetworkController) StartServiceController(wg *sync.Wa
 	}
 	return nil
 }
+
+// HandleNetworkRefChange marks the node for interconnect sync so a queued update does not skip it.
+func (oc *Layer3UserDefinedNetworkController) HandleNetworkRefChange(nodeName string, active bool) {
+	if active {
+		oc.syncZoneICFailed.Store(nodeName, true)
+	}
+	oc.BaseNetworkController.HandleNetworkRefChange(nodeName, active)
+}

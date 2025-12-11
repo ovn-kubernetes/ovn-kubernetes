@@ -91,7 +91,6 @@ func newNetworkController(name, zone, node string, cm ControllerManager, wf watc
 type networkControllerState struct {
 	controller         NetworkController
 	stoppedAndDeleting bool
-	forceReconcile     bool
 }
 
 type networkController struct {
@@ -192,25 +191,6 @@ func (c *networkController) getAllNetworks() []util.NetInfo {
 	return networks
 }
 
-func (c *networkController) clearForceReconcile(network string) {
-	c.Lock()
-	defer c.Unlock()
-	if _, ok := c.networkControllers[network]; !ok {
-		return
-	}
-	c.networkControllers[network].forceReconcile = false
-}
-
-func (c *networkController) SetForceReconcile(network string) {
-	c.Lock()
-	defer c.Unlock()
-	if _, ok := c.networkControllers[network]; !ok {
-		return
-	}
-	klog.V(4).Infof("%s: force reconcile set for network %s", c.name, network)
-	c.networkControllers[network].forceReconcile = true
-}
-
 func (c *networkController) setNetworkState(network string, state *networkControllerState) {
 	c.Lock()
 	defer c.Unlock()
@@ -231,17 +211,36 @@ func (c *networkController) getNetworkState(network string) *networkControllerSt
 	return state
 }
 
-func (c *networkController) getReconcilableNetworkState(network string) (ReconcilableNetworkController, bool, bool) {
+func (c *networkController) getReconcilableNetworkState(network string) (ReconcilableNetworkController, bool) {
 	if network == types.DefaultNetworkName {
-		return c.cm.GetDefaultNetworkController(), false, false
+		return c.cm.GetDefaultNetworkController(), false
 	}
 	c.RLock()
 	defer c.RUnlock()
 	state := c.networkControllers[network]
 	if state == nil {
-		return nil, false, false
+		return nil, false
 	}
-	return state.controller, state.stoppedAndDeleting, state.forceReconcile
+	return state.controller, state.stoppedAndDeleting
+}
+
+func (c *networkController) getControllerForNotify(networkName string) (NetworkController, bool) {
+	c.RLock()
+	defer c.RUnlock()
+	state := c.networkControllers[networkName]
+	if state == nil || state.controller == nil || state.stoppedAndDeleting {
+		return nil, false
+	}
+	return state.controller, true
+}
+
+// NotifyNetworkRefChange enqueues node-level reconciliation on the running network controller, if it supports it.
+func (c *networkController) NotifyNetworkRefChange(networkName, node string, active bool) {
+	ctrl, ok := c.getControllerForNotify(networkName)
+	if !ok {
+		return
+	}
+	ctrl.HandleNetworkRefChange(node, active)
 }
 
 func (c *networkController) getAllNetworkStates() []*networkControllerState {
@@ -300,7 +299,7 @@ func (c *networkController) syncNetwork(network string) error {
 		klog.V(4).Infof("%s: finished syncing network %s, took %v", c.name, network, time.Since(startTime))
 	}()
 
-	have, stoppedAndDeleting, forceReconcile := c.getReconcilableNetworkState(network)
+	have, stoppedAndDeleting := c.getReconcilableNetworkState(network)
 	want := c.getNetwork(network)
 
 	compatible := util.AreNetworksCompatible(have, want)
@@ -322,7 +321,7 @@ func (c *networkController) syncNetwork(network string) error {
 		return fmt.Errorf("failed to fetch other network information for network %s: %w", network, err)
 	}
 
-	ensureNetwork := !compatible || util.DoesNetworkNeedReconciliation(have, want) || forceReconcile
+	ensureNetwork := !compatible || util.DoesNetworkNeedReconciliation(have, want)
 	if !ensureNetwork {
 		// no network changes
 		return nil
@@ -350,7 +349,7 @@ func (c *networkController) ensureNetwork(network util.MutableNetInfo) error {
 	}
 
 	networkName := network.GetNetworkName()
-	reconcilable, _, _ := c.getReconcilableNetworkState(networkName)
+	reconcilable, _ := c.getReconcilableNetworkState(networkName)
 
 	// this might just be an update of reconcilable network configuration
 	if reconcilable != nil {
@@ -358,7 +357,6 @@ func (c *networkController) ensureNetwork(network util.MutableNetInfo) error {
 		if err != nil {
 			return fmt.Errorf("failed to reconcile controller for network %s: %w", networkName, err)
 		}
-		c.clearForceReconcile(networkName)
 		return nil
 	}
 
@@ -378,17 +376,22 @@ func (c *networkController) ensureNetwork(network util.MutableNetInfo) error {
 }
 
 func (c *networkController) deleteNetwork(network string) error {
-	have := c.getNetworkState(network)
-	if have.controller == nil {
+	c.Lock()
+	have := c.networkControllers[network]
+	if have == nil || have.controller == nil {
+		c.Unlock()
 		return nil
 	}
-
-	if !have.stoppedAndDeleting {
-		have.controller.Stop()
-	}
+	ctrl := have.controller
+	alreadyStopping := have.stoppedAndDeleting
 	have.stoppedAndDeleting = true
+	c.Unlock()
 
-	err := have.controller.Cleanup()
+	if !alreadyStopping {
+		ctrl.Stop()
+	}
+
+	err := ctrl.Cleanup()
 	if err != nil {
 		return fmt.Errorf("%s: failed to cleanup network %s: %w", c.name, network, err)
 	}
