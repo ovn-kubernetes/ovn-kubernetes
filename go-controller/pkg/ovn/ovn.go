@@ -438,6 +438,10 @@ func nodeChassisChanged(oldNode, node *corev1.Node) bool {
 	return util.NodeChassisIDAnnotationChanged(oldNode, node)
 }
 
+func nodeChassisHostnameChanged(oldNode, node *corev1.Node) bool {
+	return util.NodeChassisHostnameAnnotationChanged(oldNode, node)
+}
+
 // nodeGatewayMTUSupportChanged returns true if annotation "k8s.ovn.org/gateway-mtu-support" on the node was updated.
 func nodeGatewayMTUSupportChanged(oldNode, node *corev1.Node) bool {
 	return oldNode.Annotations[util.OvnNodeGatewayMtuSupport] != node.Annotations[util.OvnNodeGatewayMtuSupport]
