@@ -208,6 +208,8 @@ spec:
           value: "dpu-host"
         - name: OVNKUBE_NODE_MGMT_PORT_NETDEV
           value: {{ default "" .Values.global.nodeMgmtPortNetdev | quote }}
+        - name: OVN_ENABLE_INTERCONNECT
+          value: {{ default "false" .Values.global.enableInterconnect | quote }}
         - name: OVN_HOST_NETWORK_NAMESPACE
           valueFrom:
             configMapKeyRef:
