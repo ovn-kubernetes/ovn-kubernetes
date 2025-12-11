@@ -244,6 +244,17 @@ func (c *networkController) getReconcilableNetworkState(network string) (Reconci
 	return state.controller, state.stoppedAndDeleting, state.forceReconcile
 }
 
+// NotifyNetworkRefChange enqueues node-level reconciliation on the running network controller, if it supports it.
+func (c *networkController) NotifyNetworkRefChange(networkName, node string, active bool) {
+	c.RLock()
+	state := c.networkControllers[networkName]
+	c.RUnlock()
+	if state == nil || state.controller == nil {
+		return
+	}
+	state.controller.HandleNetworkRefChange(node, active)
+}
+
 func (c *networkController) getAllNetworkStates() []*networkControllerState {
 	c.RLock()
 	defer c.RUnlock()

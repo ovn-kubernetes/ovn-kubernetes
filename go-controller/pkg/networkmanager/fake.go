@@ -31,6 +31,8 @@ func (fnc *FakeNetworkController) Reconcile(util.NetInfo) error {
 	return nil
 }
 
+func (fnc *FakeNetworkController) HandleNetworkRefChange(_ string, _ bool) {}
+
 type FakeControllerManager struct{}
 
 func (fcm *FakeControllerManager) NewNetworkController(netInfo util.NetInfo) (NetworkController, error) {
@@ -134,9 +136,11 @@ func (fnm *FakeNetworkManager) GetActiveNetwork(networkName string) util.NetInfo
 	return fnm.GetNetwork(networkName)
 }
 
-func (fnm *FakeNetworkManager) ForceReconcile(key, _ string, _, _ bool) {
+func (fnm *FakeNetworkManager) UpdateNADState(key string, _ bool) {
 	fnm.Reconciled = append(fnm.Reconciled, key)
 }
+
+func (fnm *FakeNetworkManager) NotifyNetworkRefChange(_, _ string, _ bool) {}
 
 func (fnm *FakeNetworkManager) GetActiveNetworkNamespaces(networkName string) ([]string, error) {
 	namespaces := make([]string, 0)

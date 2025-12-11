@@ -749,7 +749,14 @@ func (cm *ControllerManager) OnNetworkRefChange(node, nadNamespacedName string, 
 		return
 	}
 	isLocal := util.GetNodeZone(n) == config.Default.Zone
-	cm.networkManager.Interface().ForceReconcile(nadNamespacedName, nadNetwork.GetNetworkName(), active, isLocal)
+	// Enqueue node-level reconcile on the running network controller for remote nodes (non-blocking).
+	if !isLocal {
+		cm.networkManager.Interface().NotifyNetworkRefChange(nadNetwork.GetNetworkName(), node, active)
+	}
+	// Let the NAD controller handle lifecycle/teardown decisions asynchronously for local networks only.
+	if isLocal {
+		cm.networkManager.Interface().UpdateNADState(nadNamespacedName, active)
+	}
 }
 
 func (cm *ControllerManager) NodeHasNAD(node, nad string) bool {
