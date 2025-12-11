@@ -225,6 +225,8 @@ spec:
           value: "{{ ovn_enable_ovnkube_identity }}"
         - name: OVN_NETWORK_QOS_ENABLE
           value: "{{ ovn_network_qos_enable }}"
+        - name: OVN_ENABLE_INTERCONNECT
+          value: "{{ ovn_enable_interconnect }}"
         {% if ovnkube_app_name!="ovnkube-node-dpu-host" -%}
         - name: OVN_SSL_ENABLE
           value: "{{ ovn_ssl_en }}"
@@ -250,8 +252,6 @@ spec:
           value: "{{ ovn_route_advertisements_enable }}"
         - name: OVN_ADVERTISED_UDN_ISOLATION_MODE
           value: "{{ ovn_advertised_udn_isolation_mode }}"
-        - name: OVN_ENABLE_INTERCONNECT
-          value: "{{ ovn_enable_interconnect }}"
         - name: OVN_ENABLE_MULTI_EXTERNAL_GATEWAY
           value: "{{ ovn_enable_multi_external_gateway }}"
         {% endif -%}
