@@ -36,6 +36,13 @@ var (
 func getPrimaryNADForNamespace(networkMgr networkmanager.Interface, namespaceName string) (nadKey string, network util.NetInfo, err error) {
 	namespacePrimaryNetwork, err := networkMgr.GetActiveNetworkForNamespace(namespaceName)
 	if err != nil {
+		if util.IsInvalidPrimaryNetworkError(err) || util.IsUnprocessedActiveNetworkError(err) {
+			// We intentionally ignore the unprocessed active network error because
+			// UDN Controller hasn't created the NAD yet, OR NAD doesn't exist in a
+			// namespace that has the required UDN label. It could also be that the
+			// UDN was deleted and the NAD is also gone.
+			return "", nil, nil
+		}
 		return "", nil, err
 	}
 	if namespacePrimaryNetwork.IsDefault() {
@@ -228,7 +235,7 @@ func (c *Controller) discoverSelectedNetworks(cnc *networkconnectv1.ClusterNetwo
 					continue
 				}
 				if nadKey == "" {
-					// Namespace uses default network (no primary UDN)
+					// Namespace uses default network (no primary UDN) or UDN was deleted
 					continue
 				}
 				allMatchingNADKeys.Insert(nadKey)

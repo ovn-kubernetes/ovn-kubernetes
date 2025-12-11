@@ -600,9 +600,9 @@ func TestController_reconcileClusterNetworkConnect(t *testing.T) {
 			expectSubnetsAllocated:  true,
 			expectCacheEntryExists:  true,
 		},
-		// Error condition tests
+		// Graceful handling tests - these used to error but now skip gracefully
 		{
-			name: "errors when namespace requires UDN but has no active network",
+			name: "skips namespace when UDN was deleted (InvalidPrimaryNetworkError) and continues reconciliation",
 			cnc: &testCNC{
 				Name: "test-cnc",
 				NetworkSelectors: []apitypes.NetworkSelector{
@@ -621,8 +621,15 @@ func TestController_reconcileClusterNetworkConnect(t *testing.T) {
 			},
 			nads:      []*testNAD{},
 			reconcile: "test-cnc",
-			wantErr:   true,
+			// No error - we gracefully skip namespaces with deleted UDNs so subnet release can proceed
+			wantErr:                 false,
+			expectSelectedNADs:      []string{},
+			expectSelectedNetworks:  []string{},
+			expectTunnelIDAllocated: true,
+			expectSubnetsAllocated:  false, // no subnets allocated since no networks matched
+			expectCacheEntryExists:  true,
 		},
+		// Error condition tests
 		{
 			name: "errors when more than 1 primary NAD is found for namespace",
 			cnc: &testCNC{
