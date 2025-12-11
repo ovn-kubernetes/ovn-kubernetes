@@ -488,6 +488,9 @@ func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefin
 				klog.V(4).Infof("Network is filtered and will not be rendered: %s", oldNetwork)
 			}
 		}
+		if c.primaryNADs[namespace] == key {
+			delete(c.primaryNADs, namespace)
+		}
 		c.executeHandlers(key, oldNetwork, true)
 	}
 
@@ -498,9 +501,6 @@ func (c *nadController) syncNAD(key string, nad *nettypes.NetworkAttachmentDefin
 	// this was a nad delete
 	if ensureNetwork == nil {
 		delete(c.nads, key)
-		if c.primaryNADs[namespace] == key {
-			delete(c.primaryNADs, namespace)
-		}
 		return err
 	}
 
