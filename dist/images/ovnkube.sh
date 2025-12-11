@@ -632,6 +632,32 @@ check_health() {
   return 1
 }
 
+get_dpu_gw_options() {
+  # If ovn_gateway_opts or ovn_gateway_router_subnet is not set as environment variable, gather them from ovs settings
+  if [[ ${ovn_gateway_opts} == "" ]]; then
+    # get the gateway interface
+    gw_iface=$(ovs-vsctl --if-exists get Open_vSwitch . external_ids:ovn-gw-interface | tr -d \")
+    if [[ ${gw_iface} == "" ]]; then
+      echo "Couldn't get OVN Gateway Interface from ovs external_ids setting"
+    else
+      ovn_gateway_opts="--gateway-interface=${gw_iface} "
+    fi
+
+    # get the gateway nexthop
+    gw_nexthop=$(ovs-vsctl --if-exists get Open_vSwitch . external_ids:ovn-gw-nexthop | tr -d \")
+    if [[ ${gw_nexthop} == "" ]]; then
+      echo "Couldn't get OVN Gateway NextHop from ovs external_ids setting"
+    else
+      ovn_gateway_opts+="--gateway-nexthop=${gw_nexthop} "
+    fi
+  fi
+
+  # this is only required if the DPU and DPU Host are in different subnets
+  if [[ ${ovn_gateway_router_subnet} == "" ]]; then
+    ovn_gateway_router_subnet=$(ovs-vsctl --if-exists get Open_vSwitch . external_ids:ovn-gw-router-subnet | tr -d \")
+  fi
+}
+
 display_file() {
   if [[ -f $3 ]]; then
     echo "====================== $1 pid "
@@ -2120,6 +2146,11 @@ ovnkube-controller-with-node() {
     fi
   fi
 
+  # Get gateway options for DPUs
+  if [[ ${ovnkube_node_mode} == "dpu" ]]; then
+      get_dpu_gw_options
+  fi
+
   if [[ ${ovnkube_node_mode} != "dpu-host" && ! ${ovn_gateway_opts} =~ "gateway-vlanid" ]]; then
       # get the gateway vlanid
       gw_vlanid=$(ovs-vsctl --if-exists get Open_vSwitch . external_ids:ovn-gw-vlanid | tr -d \")
@@ -2867,31 +2898,9 @@ ovn-node() {
     ovnkube_node_mgmt_port_netdev_flag="--ovnkube-node-mgmt-port-dp-resource-name=${ovnkube_node_mgmt_port_dp_resource_name}"
   fi
 
+  # Get gateway options for DPUs
   if [[ ${ovnkube_node_mode} == "dpu" ]]; then
-    if [[ ${ovn_gateway_opts} == "" ]]; then
-      # get the gateway interface
-      gw_iface=$(ovs-vsctl --if-exists get Open_vSwitch . external_ids:ovn-gw-interface | tr -d \")
-      if [[ ${gw_iface} == "" ]]; then
-        echo "Couldn't get the required OVN Gateway Interface. Exiting..."
-        exit 1
-      fi
-      ovn_gateway_opts="--gateway-interface=${gw_iface} "
-
-      # get the gateway nexthop
-      gw_nexthop=$(ovs-vsctl --if-exists get Open_vSwitch . external_ids:ovn-gw-nexthop | tr -d \")
-      if [[ ${gw_nexthop} == "" ]]; then
-        echo "Couldn't get the required OVN Gateway NextHop. Exiting..."
-        exit 1
-      fi
-      ovn_gateway_opts+="--gateway-nexthop=${gw_nexthop} "
-    fi
-
-    # this is required if the DPU and DPU Host are in different subnets
-    if [[ ${ovn_gateway_router_subnet} == "" ]]; then
-      # get the gateway router subnet
-      ovn_gateway_router_subnet=$(ovs-vsctl --if-exists get Open_vSwitch . external_ids:ovn-gw-router-subnet | tr -d \")
-    fi
-
+      get_dpu_gw_options
   fi
 
   if [[ ${ovnkube_node_mode} != "dpu-host" && ! ${ovn_gateway_opts} =~ "gateway-vlanid" ]]; then
