@@ -790,6 +790,7 @@ ovn_image=${image} \
   ovn_enable_ovnkube_identity=${ovn_enable_ovnkube_identity} \
   ovn_network_qos_enable=${ovn_network_qos_enable} \
   metrics_ip=${metrics_ip} \
+  ovn_enable_interconnect=${ovn_enable_interconnect} \
   ovnkube_app_name=ovnkube-node-dpu-host \
   jinjanate ../templates/ovnkube-node.yaml.j2 -o ${output_dir}/ovnkube-node-dpu-host.yaml
 
