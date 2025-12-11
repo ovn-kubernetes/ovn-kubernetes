@@ -35,6 +35,8 @@ type EgressIPTrackerController struct {
 
 	onNetworkRefChange func(nodeName, nadName string, present bool)
 
+	primaryNADForNamespace func(namespace string) (string, error)
+
 	nsLister      v1.NamespaceLister
 	eipLister     egressiplisters.EgressIPLister
 	nadLister     nadlisters.NetworkAttachmentDefinitionLister
@@ -46,14 +48,20 @@ type EgressIPTrackerController struct {
 func NewEgressIPTrackerController(
 	name string, wf watchFactory,
 	onNetworkRefChange func(nodeName, nadName string, present bool),
+	primaryNADForNamespace func(namespace string) (string, error),
 ) *EgressIPTrackerController {
 	t := &EgressIPTrackerController{
-		name:               name,
-		cache:              make(map[string]map[string]struct{}),
-		onNetworkRefChange: onNetworkRefChange,
-		nsLister:           wf.NamespaceInformer().Lister(),
-		eipLister:          wf.EgressIPInformer().Lister(),
-		nadLister:          wf.NADInformer().Lister(),
+		name:                   name,
+		cache:                  make(map[string]map[string]struct{}),
+		onNetworkRefChange:     onNetworkRefChange,
+		nsLister:               wf.NamespaceInformer().Lister(),
+		eipLister:              wf.EgressIPInformer().Lister(),
+		nadLister:              wf.NADInformer().Lister(),
+		primaryNADForNamespace: primaryNADForNamespace,
+	}
+
+	if t.primaryNADForNamespace == nil {
+		t.primaryNADForNamespace = t.getPrimaryNADForNamespaceFromLister
 	}
 
 	cfg := &controller.ControllerConfig[egressipv1.EgressIP]{
@@ -245,7 +253,7 @@ func (t *EgressIPTrackerController) reconcileNamespace(key string) error {
 		return nil
 	}
 
-	primaryNAD, err := t.getPrimaryNADForNamespace(ns.Name)
+	primaryNAD, err := t.primaryNADForNamespace(ns.Name)
 	if err != nil {
 		if util.IsUnprocessedActiveNetworkError(err) {
 			// Namespace requires a primary network but none exists yet; NAD controller will requeue.
@@ -348,17 +356,16 @@ func (t *EgressIPTrackerController) syncAll() error {
 	return nil
 }
 
-// getPrimaryNADForNamespace resolves the primary NAD in a namespace on-demand.
-func (t *EgressIPTrackerController) getPrimaryNADForNamespace(namespace string) (string, error) {
-	requiresUDN := false
-	// check if required UDN label is on namespace
+// getPrimaryNADForNamespaceFromLister is a fallback resolver used in tests when no resolver is injected.
+func (t *EgressIPTrackerController) getPrimaryNADForNamespaceFromLister(namespace string) (string, error) {
 	ns, err := t.nsLister.Get(namespace)
 	if err != nil {
 		return "", fmt.Errorf("failed to get namespace %q: %w", namespace, err)
 	}
-	if _, exists := ns.Labels[types.RequiredUDNNamespaceLabel]; exists {
-		requiresUDN = true
+	if _, exists := ns.Labels[types.RequiredUDNNamespaceLabel]; !exists {
+		return types.DefaultNetworkName, nil
 	}
+
 	nads, err := t.nadLister.NetworkAttachmentDefinitions(namespace).List(labels.Everything())
 	if err != nil {
 		return "", fmt.Errorf("failed to list network attachment definitions: %w", err)
@@ -377,10 +384,6 @@ func (t *EgressIPTrackerController) getPrimaryNADForNamespace(namespace string) 
 		}
 	}
 
-	if requiresUDN {
-		// The namespace declared it needs a primary UDN but none exists yet.
-		return "", util.NewUnprocessedActiveNetworkError(namespace, "")
-	}
-
-	return "", nil
+	// The namespace declared it needs a primary UDN but none exists yet.
+	return "", util.NewUnprocessedActiveNetworkError(namespace, "")
 }
