@@ -111,7 +111,7 @@ func TestPodTrackerControllerWithInformerAndDelete(t *testing.T) {
 				eventsMu.Lock()
 				events = append(events, callbackEvent{node, nad, active})
 				eventsMu.Unlock()
-			})
+			}, nil)
 
 			// Start informers
 			err = wf.Start()
@@ -262,7 +262,7 @@ func TestPodTrackerControllerSyncAll(t *testing.T) {
 			active bool
 		}{node, nad, active})
 		eventsMu.Unlock()
-	})
+	}, nil)
 
 	// Start informers
 	err = wf.Start()

@@ -208,7 +208,7 @@ func TestEgressIPTrackerControllerWithInformer(t *testing.T) {
 				gotMu.Lock()
 				got = append(got, callbackEvent{node, nad, active})
 				gotMu.Unlock()
-			})
+			}, nil)
 
 			g.Expect(wf.Start()).To(gomega.Succeed())
 			defer wf.Shutdown()

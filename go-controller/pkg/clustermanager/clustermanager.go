@@ -193,9 +193,9 @@ func NewClusterManager(
 	}
 
 	if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
-		cm.podTracker = networkmanager.NewPodTrackerController("cluster-manager-pod-tracker", wf, cm.OnNetworkRefChange)
+		cm.podTracker = networkmanager.NewPodTrackerController("cluster-manager-pod-tracker", wf, cm.OnNetworkRefChange, cm.networkManager.Interface().GetPrimaryNADForNamespace)
 		if config.OVNKubernetesFeature.EnableEgressIP {
-			cm.egressIPTracker = networkmanager.NewEgressIPTrackerController("cluster-manager-egress-ip-tracker", wf, cm.OnNetworkRefChange)
+			cm.egressIPTracker = networkmanager.NewEgressIPTrackerController("cluster-manager-egress-ip-tracker", wf, cm.OnNetworkRefChange, cm.networkManager.Interface().GetPrimaryNADForNamespace)
 		}
 	}
 

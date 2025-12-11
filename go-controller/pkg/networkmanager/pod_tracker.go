@@ -37,6 +37,8 @@ type PodTrackerController struct {
 	// cacheMutex guards nodeNADToPodCache and podToNodeNAD
 	cacheMutex sync.Mutex
 	name       string
+	// primaryNADForNamespace resolves the primary NAD for a namespace (cached in NAD controller)
+	primaryNADForNamespace func(namespace string) (string, error)
 	// nodeNADToPodCache holds a mapping of node -> NAD namespaced name -> pod namespaced name
 	nodeNADToPodCache map[string]map[string]map[string]struct{}
 	// podToNodeNAD is the reverse index: pod key -> (node, NAD)
@@ -49,15 +51,25 @@ type PodTrackerController struct {
 	namespaceLister    v1.NamespaceLister
 }
 
-func NewPodTrackerController(name string, wf watchFactory, onNetworkRefChange func(node, nad string, active bool)) *PodTrackerController {
+func NewPodTrackerController(
+	name string,
+	wf watchFactory,
+	onNetworkRefChange func(node, nad string, active bool),
+	primaryNADForNamespace func(namespace string) (string, error),
+) *PodTrackerController {
 	p := &PodTrackerController{
-		name:               name,
-		nodeNADToPodCache:  make(map[string]map[string]map[string]struct{}),
-		podToNodeNAD:       make(map[string]nodeNAD),
-		onNetworkRefChange: onNetworkRefChange,
-		podLister:          wf.PodCoreInformer().Lister(),
-		nadLister:          wf.NADInformer().Lister(),
-		namespaceLister:    wf.NamespaceInformer().Lister(),
+		name:                   name,
+		nodeNADToPodCache:      make(map[string]map[string]map[string]struct{}),
+		podToNodeNAD:           make(map[string]nodeNAD),
+		onNetworkRefChange:     onNetworkRefChange,
+		podLister:              wf.PodCoreInformer().Lister(),
+		nadLister:              wf.NADInformer().Lister(),
+		namespaceLister:        wf.NamespaceInformer().Lister(),
+		primaryNADForNamespace: primaryNADForNamespace,
+	}
+
+	if p.primaryNADForNamespace == nil {
+		p.primaryNADForNamespace = p.getPrimaryNADForNamespaceFromLister
 	}
 
 	cfg := &controller.ControllerConfig[corev1.Pod]{
@@ -110,25 +122,11 @@ func (c *PodTrackerController) getNADsForPod(pod *corev1.Pod) ([]string, error) 
 	}
 
 	// Primary NAD from namespace
-	primaryNAD := ""
-	nads, err := c.nadLister.NetworkAttachmentDefinitions(pod.Namespace).List(labels.Everything())
+	primaryNAD, err := c.primaryNADForNamespace(pod.Namespace)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list network attachment definitions: %w", err)
+		return nil, err
 	}
-	for _, nad := range nads {
-		if nad.Name == types.DefaultNetworkName {
-			continue
-		}
-		nadInfo, err := util.ParseNADInfo(nad)
-		if err != nil {
-			klog.Warningf("Failed to parse network attachment definition %q: %v", nad.Name, err)
-			continue
-		}
-		if nadInfo.IsPrimaryNetwork() {
-			primaryNAD = util.GetNADName(nad.Namespace, nad.Name)
-		}
-	}
-	if len(primaryNAD) > 0 {
+	if len(primaryNAD) > 0 && primaryNAD != types.DefaultNetworkName {
 		nadList = append(nadList, primaryNAD)
 	} else if requiresUDN {
 		return nil, util.NewInvalidPrimaryNetworkError(pod.Namespace)
@@ -150,6 +148,36 @@ func (c *PodTrackerController) getNADsForPod(pod *corev1.Pod) ([]string, error) 
 	klog.V(5).Infof("%s - tracked NADS for pod %q: %#v", c.name, pod.Name, nadList)
 
 	return nadList, nil
+}
+
+// getPrimaryNADForNamespaceFromLister is a fallback resolver used in tests when no resolver is injected.
+func (c *PodTrackerController) getPrimaryNADForNamespaceFromLister(namespace string) (string, error) {
+	ns, err := c.namespaceLister.Get(namespace)
+	if err != nil {
+		return "", fmt.Errorf("failed to get namespace %q: %w", namespace, err)
+	}
+	if _, hasLabel := ns.Labels[types.RequiredUDNNamespaceLabel]; !hasLabel {
+		return types.DefaultNetworkName, nil
+	}
+
+	nads, err := c.nadLister.NetworkAttachmentDefinitions(namespace).List(labels.Everything())
+	if err != nil {
+		return "", fmt.Errorf("failed to list network attachment definitions: %w", err)
+	}
+	for _, nad := range nads {
+		if nad.Name == types.DefaultNetworkName {
+			continue
+		}
+		nadInfo, err := util.ParseNADInfo(nad)
+		if err != nil {
+			klog.Warningf("Failed to parse network attachment definition %q: %v", nad.Name, err)
+			continue
+		}
+		if nadInfo.IsPrimaryNetwork() {
+			return util.GetNADName(nad.Namespace, nad.Name), nil
+		}
+	}
+	return "", util.NewUnprocessedActiveNetworkError(namespace, "")
 }
 
 // syncAll builds the cache on initial controller start
