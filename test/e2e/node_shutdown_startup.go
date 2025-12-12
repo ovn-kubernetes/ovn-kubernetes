@@ -69,6 +69,9 @@ var _ = ginkgo.Describe("Node Shutdown and Startup", ginkgo.Serial, func() {
 		initialIPFamilies, err := getBridgeIPAddressFamilies(testNodeName)
 		framework.ExpectNoError(err, "Should be able to get breth0 IP address families before shutdown")
 		framework.Logf("Node %s breth0 initial IP families: IPv4=%v, IPv6=%v", testNodeName, initialIPFamilies.hasIPv4, initialIPFamilies.hasIPv6)
+		if !initialIPFamilies.hasIPv4 && !initialIPFamilies.hasIPv6 {
+			framework.Failf("breth0 should have at least one IP address family (IPv4 or IPv6) before shutdown, but found IPv4=%v, IPv6=%v", initialIPFamilies.hasIPv4, initialIPFamilies.hasIPv6)
+		}
 
 		ginkgo.By("Shut down the node")
 		framework.Logf("Shutting down node %s", testNodeName)
@@ -156,6 +159,10 @@ func getBridgeIPAddressFamilies(nodeName string) (ipAddressFamilies, error) {
 	families := ipAddressFamilies{
 		hasIPv4: strings.Contains(stdout, "inet "),
 		hasIPv6: strings.Contains(stdout, "inet6 "),
+	}
+
+	if !families.hasIPv4 && !families.hasIPv6 {
+		return families, fmt.Errorf("breth0 interface on node %s has no IP addresses (neither IPv4 nor IPv6)", nodeName)
 	}
 
 	return families, nil
