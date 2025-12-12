@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"strings"
-	"sync"
 	"time"
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
@@ -146,7 +145,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				networkPolicy := getMatchLabelsNetworkPolicy(denyPolicyName, ns, "", "", false, false)
 				nodes := []corev1.Node{*testNode}
 				if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
-					fakeOvn.fakeNodeNADTracker.addEntry(testNode.Name, netInfo.nadName)
 					testNode2, err := newNodeWithUserDefinedNetworks("test-node2", "192.168.127.202/24", netInfo)
 					Expect(err).NotTo(HaveOccurred())
 					testNode2.Annotations["k8s.ovn.org/zone-name"] = "blah"
@@ -422,7 +420,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 
 				Expect(fakeOvn.fakeClient.KubeClient.CoreV1().Pods(pod.Namespace).Delete(context.Background(), pod.Name, metav1.DeleteOptions{})).To(Succeed())
 				Expect(fakeOvn.fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nad.Namespace).Delete(context.Background(), nad.Name, metav1.DeleteOptions{})).To(Succeed())
-				fakeNodeTracker := newFakeNodeNADTracker()
 
 				// we must access the layer3 controller to be able to issue its cleanup function (to remove the GW related stuff).
 				Expect(
@@ -433,7 +430,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 						fakeNetworkManager,
 						nil,
 						NewPortCache(ctx.Done()),
-						fakeNodeTracker,
 					).Cleanup()).To(Succeed())
 				Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(defaultNetExpectations))
 
@@ -463,7 +459,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 		),
 	)
 	Describe("Dynamic UDN allocation with remote node", func() {
-		It("marks a remote node with a NAD for reconcile and queues it in retry framework", func() {
+		It("activates a remote node when a NAD becomes active and cleans it up when inactive", func() {
 			Expect(config.PrepareTestConfig()).To(Succeed())
 			config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
 			config.OVNKubernetesFeature.EnableInterconnect = true
@@ -482,17 +478,37 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 			localNode, err := newNodeWithUserDefinedNetworks(nodeName, "192.168.126.202/24", netInfo)
 			Expect(err).NotTo(HaveOccurred())
 			localNode.Annotations[util.OvnTransitSwitchPortAddr] = `{"ipv4":"100.88.0.3/16"}`
-			fakeOvn.fakeNodeNADTracker.addEntry(localNode.Name, netInfo.nadName)
 
 			remoteNode, err := newNodeWithUserDefinedNetworks("remoteNode", "192.168.127.202/24", netInfo)
 			Expect(err).NotTo(HaveOccurred())
 			remoteNode.Annotations["k8s.ovn.org/zone-name"] = "other-zone" // force remote
 			remoteNode.Annotations[util.OvnTransitSwitchPortAddr] = `{"ipv4":"100.88.0.4/16"}`
 
-			// Preload DB
+			remotePod := corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "remote-pod",
+					Namespace: ns,
+				},
+				Spec: corev1.PodSpec{
+					NodeName:   remoteNode.Name,
+					Containers: []corev1.Container{{Name: "c", Image: "scratch"}},
+				},
+			}
+
+			localPod := corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "local-pod",
+					Namespace: ns,
+				},
+				Spec: corev1.PodSpec{
+					NodeName:   localNode.Name,
+					Containers: []corev1.Container{{Name: "c", Image: "scratch"}},
+				},
+			}
+
 			fakeOvn.startWithDBSetup(libovsdbtest.TestSetup{}, &corev1.NamespaceList{Items: []corev1.Namespace{*n}},
 				&corev1.NodeList{Items: []corev1.Node{*localNode, *remoteNode}},
-				&corev1.PodList{},
+				&corev1.PodList{Items: []corev1.Pod{localPod}},
 				&nadapi.NetworkAttachmentDefinitionList{Items: []nadapi.NetworkAttachmentDefinition{*nad}})
 
 			Expect(fakeOvn.networkManager.Start()).To(Succeed())
@@ -511,20 +527,28 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(userDefinedNetController.bnc.WatchNodes()).To(Succeed())
 
-			By("Triggering networkRefChange callback after updating remote node as active on NAD")
-			fakeOvn.fakeNodeNADTracker.addEntry(remoteNode.Name, netInfo.nadName)
-			l3Controller.HandleNetworkRefChange(remoteNode.Name, true)
+			By("Remote node should not have a port on transit subnet before activation")
+			Consistently(func() bool {
+				p := func(item *nbdb.LogicalSwitchPort) bool {
+					return item.ExternalIDs["node"] == remoteNode.Name
+				}
+				portList, err := libovsdbops.FindLogicalSwitchPortWithPredicate(fakeOvn.nbClient, p)
+				return err == nil && len(portList) > 0
+			}).WithTimeout(500 * time.Millisecond).Should(BeFalse())
 
-			By("Remote node should now be configured in the controller cache")
+			By("Creating a pod on the remote node should activate it")
+			_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(ns).Create(context.TODO(), &remotePod, metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred())
 			Eventually(func() bool {
-				_, exists := l3Controller.syncZoneICFailed.Load("remoteNode")
-				return exists
-			}).WithTimeout(3*time.Second).Should(BeTrue(), "remote node must be flagged for interconnect sync")
+				return fakeOvn.networkManager.Interface().NodeHasNAD(remoteNode.Name, fmt.Sprintf("%s/%s", nad.Namespace, nad.Name))
+			}).WithTimeout(3 * time.Second).Should(BeTrue())
+			By("Triggering networkRefChange callback after updating remote node as active on NAD")
+			l3Controller.HandleNetworkRefChange(remoteNode.Name, true)
 
 			By("Remote node should have a port created on transit subnet")
 			Eventually(func() bool {
 				p := func(item *nbdb.LogicalSwitchPort) bool {
-					return item.ExternalIDs["node"] == remoteNode.Name // ignore UDN LSPs
+					return item.ExternalIDs["node"] == remoteNode.Name
 				}
 				portList, err := libovsdbops.FindLogicalSwitchPortWithPredicate(fakeOvn.nbClient, p)
 				if err == nil && len(portList) > 0 {
@@ -533,13 +557,18 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 3 network", func() {
 				return false
 			}).Should(BeTrue())
 
+			By("Deleting a pod on the remote node should set it as inactive")
+			err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(ns).Delete(context.TODO(), remotePod.Name, metav1.DeleteOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(func() bool {
+				return fakeOvn.networkManager.Interface().NodeHasNAD(remoteNode.Name, fmt.Sprintf("%s/%s", nad.Namespace, nad.Name))
+			}).WithTimeout(3 * time.Second).Should(BeFalse())
 			By("Triggering networkRefChange callback after updating remote node as inactive on NAD")
-			fakeOvn.fakeNodeNADTracker.delEntry(remoteNode.Name, netInfo.nadName)
 			l3Controller.HandleNetworkRefChange(remoteNode.Name, false)
 			By("Remote node should not have a port on transit subnet")
 			Eventually(func() bool {
 				p := func(item *nbdb.LogicalSwitchPort) bool {
-					return item.ExternalIDs[types.NetworkExternalID] == l3Controller.GetNetworkName() && item.ExternalIDs["node"] == remoteNode.Name
+					return item.ExternalIDs["node"] == remoteNode.Name
 				}
 				portList, err := libovsdbops.FindLogicalSwitchPortWithPredicate(fakeOvn.nbClient, p)
 				if err == nil && len(portList) > 0 {
@@ -1249,9 +1278,8 @@ func newLayer3UserDefinedNetworkController(
 	networkManager networkmanager.Interface,
 	eIPController *EgressIPController,
 	portCache *PortCache,
-	nodeNADTracker *fakeNodeNADTracker,
 ) *Layer3UserDefinedNetworkController {
-	layer3NetworkController, err := NewLayer3UserDefinedNetworkController(cnci, netInfo, networkManager, nil, eIPController, portCache, nodeNADTracker)
+	layer3NetworkController, err := NewLayer3UserDefinedNetworkController(cnci, netInfo, networkManager, nil, eIPController, portCache)
 	Expect(err).NotTo(HaveOccurred())
 	layer3NetworkController.gatewayManagers.Store(
 		nodeName,
@@ -1272,49 +1300,4 @@ func getNetworkPolicyPortGroupDbIDs(namespace, controllerName, name string) *lib
 		map[libovsdbops.ExternalIDKey]string{
 			libovsdbops.ObjectNameKey: libovsdbops.BuildNamespaceNameKey(namespace, name),
 		})
-}
-
-func newFakeNodeNADTracker() *fakeNodeNADTracker {
-	return &fakeNodeNADTracker{
-		cache: make(map[string]map[string]struct{}),
-	}
-}
-
-type fakeNodeNADTracker struct {
-	sync.Mutex
-	cache map[string]map[string]struct{}
-}
-
-func (f *fakeNodeNADTracker) NodeHasNAD(node, nad string) bool {
-	f.Lock()
-	defer f.Unlock()
-	if nads, ok := f.cache[node]; ok {
-		if _, ok := nads[nad]; ok {
-			return true
-		}
-	}
-	return false
-}
-
-func (f *fakeNodeNADTracker) addEntry(node, nad string) {
-	f.Lock()
-	defer f.Unlock()
-	if f.cache == nil {
-		f.cache = make(map[string]map[string]struct{})
-	}
-	if _, ok := f.cache[node]; !ok {
-		f.cache[node] = make(map[string]struct{})
-	}
-	f.cache[node][nad] = struct{}{}
-}
-
-func (f *fakeNodeNADTracker) delEntry(node, nad string) {
-	f.Lock()
-	defer f.Unlock()
-	if f.cache == nil {
-		return
-	}
-	if _, ok := f.cache[node]; ok {
-		delete(f.cache[node], nad)
-	}
 }

@@ -140,11 +140,11 @@ func (h *Layer3UserDefinedNetworkControllerEventHandler) AddResource(obj interfa
 				return err
 			}
 		} else {
-			if config.OVNKubernetesFeature.EnableDynamicUDNAllocation && h.oc.nodeNADTracker != nil {
+			if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
 				nads := h.oc.GetNADs()
 				hasNad := false
 				for _, nadName := range nads {
-					if h.oc.nodeNADTracker.NodeHasNAD(node.Name, nadName) {
+					if h.oc.networkManager.NodeHasNAD(node.Name, nadName) {
 						hasNad = true
 						break
 					}
@@ -229,11 +229,11 @@ func (h *Layer3UserDefinedNetworkControllerEventHandler) UpdateResource(oldObj, 
 
 			return h.oc.addUpdateLocalNodeEvent(newNode, nodeSyncsParam)
 		} else {
-			if config.OVNKubernetesFeature.EnableDynamicUDNAllocation && h.oc.nodeNADTracker != nil {
+			if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
 				nads := h.oc.GetNADs()
 				hasNad := false
 				for _, nadName := range nads {
-					if h.oc.nodeNADTracker.NodeHasNAD(newNode.Name, nadName) {
+					if h.oc.networkManager.NodeHasNAD(newNode.Name, nadName) {
 						hasNad = true
 						break
 					}
@@ -363,7 +363,6 @@ func NewLayer3UserDefinedNetworkController(
 	routeImportManager routeimport.Manager,
 	eIPController *EgressIPController,
 	portCache *PortCache,
-	nodeNADTracker networkmanager.Tracker,
 ) (*Layer3UserDefinedNetworkController, error) {
 
 	stopChan := make(chan struct{})
@@ -391,7 +390,6 @@ func NewLayer3UserDefinedNetworkController(
 				cancelableCtx:               util.NewCancelableContext(),
 				networkManager:              networkManager,
 				routeImportManager:          routeImportManager,
-				nodeNADTracker:              nodeNADTracker,
 			},
 		},
 		mgmtPortFailed:              sync.Map{},
@@ -673,14 +671,8 @@ func (oc *Layer3UserDefinedNetworkController) Reconcile(netInfo util.NetInfo) er
 	return oc.BaseNetworkController.reconcile(
 		netInfo,
 		func(node string) {
-			_, present := oc.localZoneNodes.Load(node)
-			if present {
-				oc.addNodeFailed.Store(node, true)
-				oc.gatewaysFailed.Store(node, true)
-			} else {
-				// remote node
-				oc.syncZoneICFailed.Store(node, true)
-			}
+			oc.addNodeFailed.Store(node, true)
+			oc.gatewaysFailed.Store(node, true)
 		},
 	)
 }
@@ -1020,6 +1012,12 @@ func (oc *Layer3UserDefinedNetworkController) deleteNode(nodeName string) error 
 // do not want to delete.
 func (oc *Layer3UserDefinedNetworkController) syncNodes(nodes []interface{}) error {
 	foundNodes := sets.New[string]()
+	activeNodes := nodes
+	dynamicUDN := config.OVNKubernetesFeature.EnableDynamicUDNAllocation
+	nads := oc.GetNADs()
+	if dynamicUDN {
+		activeNodes = make([]interface{}, 0, len(nodes))
+	}
 	for _, tmp := range nodes {
 		node, ok := tmp.(*corev1.Node)
 		if !ok {
@@ -1033,6 +1031,20 @@ func (oc *Layer3UserDefinedNetworkController) syncNodes(nodes []interface{}) err
 		if oc.isLocalZoneNode(node) {
 			foundNodes.Insert(node.Name)
 			oc.localZoneNodes.Store(node.Name, true)
+			if dynamicUDN {
+				activeNodes = append(activeNodes, node)
+			}
+			continue
+		}
+		if dynamicUDN {
+			if oc.nodeHasActiveNAD(node.Name, nads) {
+				foundNodes.Insert(node.Name)
+				activeNodes = append(activeNodes, node)
+			} else {
+				if err := oc.deleteNodeEvent(node); err != nil {
+					return err
+				}
+			}
 		}
 	}
 
@@ -1053,12 +1065,21 @@ func (oc *Layer3UserDefinedNetworkController) syncNodes(nodes []interface{}) err
 	}
 
 	if config.OVNKubernetesFeature.EnableInterconnect {
-		if err := oc.zoneICHandler.SyncNodes(nodes); err != nil {
+		if err := oc.zoneICHandler.SyncNodes(activeNodes); err != nil {
 			return fmt.Errorf("zoneICHandler failed to sync nodes: error: %w", err)
 		}
 	}
 
 	return nil
+}
+
+func (oc *Layer3UserDefinedNetworkController) nodeHasActiveNAD(nodeName string, nads []string) bool {
+	for _, nad := range nads {
+		if oc.networkManager.NodeHasNAD(nodeName, nad) {
+			return true
+		}
+	}
+	return false
 }
 
 func (oc *Layer3UserDefinedNetworkController) gatherJoinSwitchIPs() error {

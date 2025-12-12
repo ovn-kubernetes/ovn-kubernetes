@@ -95,7 +95,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 				Expect(err).NotTo(HaveOccurred())
 				nodes := []corev1.Node{*testNode}
 				if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
-					fakeOvn.fakeNodeNADTracker.addEntry(testNode.Name, netInfo.nadName)
 					testNode2, err := newNodeWithUserDefinedNetworks("test-node2", "192.168.127.202/24", netInfo)
 					Expect(err).NotTo(HaveOccurred())
 					testNode2.Annotations["k8s.ovn.org/zone-name"] = "blah"
@@ -615,7 +614,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 	})
 
 	Describe("Dynamic UDN allocation with remote node", func() {
-		It("marks a remote node with a NAD for reconcile and queues it in retry framework", func() {
+		It("activates a remote node when a NAD becomes active and cleans it up when inactive", func() {
 			Expect(config.PrepareTestConfig()).To(Succeed())
 			config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
 			config.OVNKubernetesFeature.EnableInterconnect = true
@@ -634,17 +633,38 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 			localNode, err := newNodeWithUserDefinedNetworks(nodeName, "192.168.126.202/24", netInfo)
 			Expect(err).NotTo(HaveOccurred())
 			localNode.Annotations[util.OvnTransitSwitchPortAddr] = `{"ipv4":"100.88.0.3/16"}`
-			fakeOvn.fakeNodeNADTracker.addEntry(localNode.Name, netInfo.nadName)
 
 			remoteNode, err := newNodeWithUserDefinedNetworks("remoteNode", "192.168.127.202/24", netInfo)
 			Expect(err).NotTo(HaveOccurred())
 			remoteNode.Annotations["k8s.ovn.org/zone-name"] = "other-zone" // force remote
 			remoteNode.Annotations[util.OvnTransitSwitchPortAddr] = `{"ipv4":"100.88.0.4/16"}`
 
+			remotePod := corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "remote-pod",
+					Namespace: ns,
+				},
+				Spec: corev1.PodSpec{
+					NodeName:   remoteNode.Name,
+					Containers: []corev1.Container{{Name: "c", Image: "scratch"}},
+				},
+			}
+
+			localPod := corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "local-pod",
+					Namespace: ns,
+				},
+				Spec: corev1.PodSpec{
+					NodeName:   localNode.Name,
+					Containers: []corev1.Container{{Name: "c", Image: "scratch"}},
+				},
+			}
+
 			// Preload DB
 			fakeOvn.startWithDBSetup(libovsdbtest.TestSetup{}, &corev1.NamespaceList{Items: []corev1.Namespace{*n}},
 				&corev1.NodeList{Items: []corev1.Node{*localNode, *remoteNode}},
-				&corev1.PodList{},
+				&corev1.PodList{Items: []corev1.Pod{localPod}},
 				&nadapi.NetworkAttachmentDefinitionList{Items: []nadapi.NetworkAttachmentDefinition{*nad}})
 
 			Expect(fakeOvn.networkManager.Start()).To(Succeed())
@@ -663,16 +683,23 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(userDefinedNetController.bnc.WatchNodes()).To(Succeed())
 
-			By("Triggering networkRefChange callback after updating remote node as active on NAD")
-			fakeOvn.fakeNodeNADTracker.addEntry(remoteNode.Name, netInfo.nadName)
-			l2Controller.HandleNetworkRefChange(remoteNode.Name, true)
-			Expect(err).NotTo(HaveOccurred())
+			By("Remote node should not have a transit-router port before activation")
+			Consistently(func() bool {
+				p := func(item *nbdb.LogicalRouterPort) bool {
+					return item.ExternalIDs[ovntypes.NodeExternalID] == remoteNode.Name && item.ExternalIDs[ovntypes.NetworkExternalID] == l2Controller.GetNetworkName()
+				}
+				ports, err := libovsdbops.FindLogicalRouterPortWithPredicate(fakeOvn.nbClient, p)
+				return err == nil && len(ports) > 0
+			}).WithTimeout(500 * time.Millisecond).Should(BeFalse())
 
-			By("Remote node should now be configured in the controller cache")
+			By("Creating a pod on the remote node should activate it")
+			_, err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(ns).Create(context.TODO(), &remotePod, metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred())
 			Eventually(func() bool {
-				_, exists := l2Controller.syncZoneICFailed.Load("remoteNode")
-				return exists
-			}).WithTimeout(3*time.Second).Should(BeTrue(), "remote node must be flagged for interconnect sync")
+				return fakeOvn.networkManager.Interface().NodeHasNAD(remoteNode.Name, fmt.Sprintf("%s/%s", nad.Namespace, nad.Name))
+			}).WithTimeout(3 * time.Second).Should(BeTrue())
+			By("Triggering networkRefChange callback after updating remote node as active on NAD")
+			l2Controller.HandleNetworkRefChange(remoteNode.Name, true)
 
 			By("Remote node should have a transit-router port created")
 			Eventually(func() bool {
@@ -684,12 +711,16 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 					return true
 				}
 				return false
-			}).Should(BeTrue())
+			}).WithTimeout(3 * time.Second).Should(BeTrue())
 
-			By("Triggering networkRefChange callback after updating remote node as inactive on NAD")
-			fakeOvn.fakeNodeNADTracker.delEntry(remoteNode.Name, netInfo.nadName)
-			l2Controller.HandleNetworkRefChange(remoteNode.Name, false)
+			By("Deleting a pod on the remote node should set it as inactive")
+			err = fakeOvn.fakeClient.KubeClient.CoreV1().Pods(ns).Delete(context.TODO(), remotePod.Name, metav1.DeleteOptions{})
 			Expect(err).NotTo(HaveOccurred())
+			Eventually(func() bool {
+				return fakeOvn.networkManager.Interface().NodeHasNAD(remoteNode.Name, fmt.Sprintf("%s/%s", nad.Namespace, nad.Name))
+			}).WithTimeout(3 * time.Second).Should(BeFalse())
+			By("Triggering networkRefChange callback after updating remote node as inactive on NAD")
+			l2Controller.HandleNetworkRefChange(remoteNode.Name, false)
 			By("Remote node should not have a port on transit subnet")
 			Eventually(func() bool {
 				p := func(item *nbdb.LogicalRouterPort) bool {
@@ -700,7 +731,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 					return true
 				}
 				return false
-			}).Should(BeFalse())
+			}).WithTimeout(3 * time.Second).Should(BeFalse())
 
 			By("verifying that local node trtos and stotr ports still exist after remote node removal")
 			expectedLRP := &nbdb.LogicalRouterPort{
@@ -731,7 +762,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 				},
 			}
 
-			Eventually(fakeOvn.nbClient).Should(
+			Eventually(fakeOvn.nbClient).WithTimeout(3 * time.Second).Should(
 				libovsdbtest.HaveDataSubset([]libovsdbtest.TestData{expectedLRP, expectedLSP}),
 			)
 		})

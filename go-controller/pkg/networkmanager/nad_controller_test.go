@@ -198,6 +198,8 @@ func (tnc *testNetworkController) GomegaString() string {
 	return format.Object(tnc.GetNetworkName(), 1)
 }
 
+func ptrTo[T any](v T) *T { return &v }
+
 func testNetworkKey(nInfo util.NetInfo) string {
 	return nInfo.GetNetworkName() + " " + nInfo.TopologyType()
 }
@@ -270,6 +272,85 @@ func (f *fakeNamespaceLister) Get(name string) (*corev1.Namespace, error) {
 }
 
 func TestNADController(t *testing.T) {
+	t.Run("filter respects node trackers", func(t *testing.T) {
+		pt := &PodTrackerController{
+			nodeNADToPodCache: map[string]map[string]map[string]struct{}{},
+		}
+		pt.nodeNADToPodCache["node1"] = map[string]map[string]struct{}{
+			"ns1/nad1": {"pod": {}},
+		}
+
+		cm := &nadController{
+			filterNADsOnNode: "node1",
+			podTracker:       pt,
+		}
+
+		tests := []struct {
+			name     string
+			nad      *nettypes.NetworkAttachmentDefinition
+			expected bool
+		}{
+			{
+				name: "no ownerRef",
+				nad: &nettypes.NetworkAttachmentDefinition{
+					ObjectMeta: metav1.ObjectMeta{Namespace: "ns1", Name: "nad1"},
+				},
+				expected: false,
+			},
+			{
+				name: "unrelated ownerRef",
+				nad: &nettypes.NetworkAttachmentDefinition{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: "ns1", Name: "nad1",
+						OwnerReferences: []metav1.OwnerReference{{
+							Kind:       "Deployment",
+							Controller: ptrTo(true),
+						}},
+					},
+				},
+				expected: false,
+			},
+			{
+				name: "UDN ownerRef but unused on node -> filtered",
+				nad: &nettypes.NetworkAttachmentDefinition{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: "ns2", Name: "nad2",
+						OwnerReferences: []metav1.OwnerReference{{
+							Kind:       "UserDefinedNetwork",
+							Controller: ptrTo(true),
+						}},
+					},
+				},
+				expected: true,
+			},
+			{
+				name: "UDN ownerRef and used on node -> not filtered",
+				nad: &nettypes.NetworkAttachmentDefinition{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: "ns1", Name: "nad1",
+						OwnerReferences: []metav1.OwnerReference{{
+							Kind:       "UserDefinedNetwork",
+							Controller: ptrTo(true),
+						}},
+					},
+				},
+				expected: false,
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				got, err := cm.filter(tt.nad)
+				if err != nil {
+					t.Fatalf("unexpected err: %v", err)
+				}
+				if got != tt.expected {
+					t.Fatalf("expected filter=%v got %v", tt.expected, got)
+				}
+			})
+		}
+	})
+
 	networkAPrimary := &ovncnitypes.NetConf{
 		Topology: types.Layer2Topology,
 		NetConf: cnitypes.NetConf{
@@ -839,7 +920,7 @@ func TestNetworkGracePeriodCleanup(t *testing.T) {
 
 	// --- Step 2: Mark as inactive (simulate ForceReconcile behavior) ---
 	// This triggers the grace-period timer, not immediate deletion.
-	nadController.UpdateNADState(util.GetNADName(nad.Namespace, nad.Name), false)
+	nadController.updateNADState(util.GetNADName(nad.Namespace, nad.Name), false)
 	// --- Step 3: Verify that within the grace period, cleanup has NOT happened ---
 	g.Consistently(func() []string {
 		tcm.Lock()

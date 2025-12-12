@@ -138,11 +138,11 @@ func (h *layer2UserDefinedNetworkControllerEventHandler) AddResource(obj interfa
 			}
 			return h.oc.addUpdateLocalNodeEvent(node, nodeParams)
 		}
-		if config.OVNKubernetesFeature.EnableDynamicUDNAllocation && h.oc.nodeNADTracker != nil {
+		if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
 			nads := h.oc.GetNADs()
 			hasNad := false
 			for _, nadName := range nads {
-				if h.oc.nodeNADTracker.NodeHasNAD(node.Name, nadName) {
+				if h.oc.networkManager.NodeHasNAD(node.Name, nadName) {
 					hasNad = true
 					break
 				}
@@ -229,11 +229,11 @@ func (h *layer2UserDefinedNetworkControllerEventHandler) UpdateResource(oldObj, 
 
 			return h.oc.addUpdateLocalNodeEvent(newNode, nodeSyncsParam)
 		} else {
-			if config.OVNKubernetesFeature.EnableDynamicUDNAllocation && h.oc.nodeNADTracker != nil {
+			if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
 				nads := h.oc.GetNADs()
 				hasNad := false
 				for _, nadName := range nads {
-					if h.oc.nodeNADTracker.NodeHasNAD(newNode.Name, nadName) {
+					if h.oc.networkManager.NodeHasNAD(newNode.Name, nadName) {
 						hasNad = true
 						break
 					}
@@ -360,7 +360,6 @@ func NewLayer2UserDefinedNetworkController(
 	routeImportManager routeimport.Manager,
 	portCache *PortCache,
 	eIPController *EgressIPController,
-	nodeNADTracker networkmanager.Tracker,
 ) (*Layer2UserDefinedNetworkController, error) {
 
 	stopChan := make(chan struct{})
@@ -405,7 +404,6 @@ func NewLayer2UserDefinedNetworkController(
 					cancelableCtx:               util.NewCancelableContext(),
 					networkManager:              networkManager,
 					routeImportManager:          routeImportManager,
-					nodeNADTracker:              nodeNADTracker,
 				},
 			},
 		},
@@ -611,15 +609,7 @@ func (oc *Layer2UserDefinedNetworkController) Stop() {
 func (oc *Layer2UserDefinedNetworkController) Reconcile(netInfo util.NetInfo) error {
 	return oc.BaseNetworkController.reconcile(
 		netInfo,
-		func(node string) {
-			_, present := oc.localZoneNodes.Load(node)
-			if present {
-				oc.gatewaysFailed.Store(node, true)
-			} else {
-				// remote node
-				oc.syncZoneICFailed.Store(node, true)
-			}
-		},
+		func(node string) { oc.gatewaysFailed.Store(node, true) },
 	)
 }
 
@@ -1448,16 +1438,31 @@ func (oc *Layer2UserDefinedNetworkController) syncNodes(nodes []interface{}) err
 		return err
 	}
 	foundNodeNames := sets.New[string]()
-	foundNodes := make([]*corev1.Node, len(nodes))
-	for i, obj := range nodes {
+	activeNodes := make([]*corev1.Node, 0, len(nodes))
+	nads := oc.GetNADs()
+	dynamicUDN := config.OVNKubernetesFeature.EnableDynamicUDNAllocation
+	for _, obj := range nodes {
 		node, ok := obj.(*corev1.Node)
 		if !ok {
 			return fmt.Errorf("spurious object in syncNodes: %v", obj)
 		}
+		if oc.isLocalZoneNode(node) {
+			foundNodeNames.Insert(node.Name)
+			activeNodes = append(activeNodes, node)
+			continue
+		}
+		// Clean up remote nodes that went inactive
+		if dynamicUDN && !oc.nodeHasActiveNAD(node.Name, nads) {
+			if err := oc.deleteNodeEvent(node); err != nil {
+				return err
+			}
+			continue
+		}
 		foundNodeNames.Insert(node.Name)
-		foundNodes[i] = node
+		activeNodes = append(activeNodes, node)
 	}
-	oc.setRemoteNodesNoRouter(foundNodes)
+	// Transit Router cleanup
+	oc.setRemoteNodesNoTransitRouter(activeNodes)
 	// Get the transit router. If it's not present - no cleanup to do
 	tr := &nbdb.LogicalRouter{
 		Name: oc.GetNetworkScopedClusterRouterName(),
@@ -1498,8 +1503,17 @@ func (oc *Layer2UserDefinedNetworkController) syncNodes(nodes []interface{}) err
 	return nil
 }
 
-// setRemoteNodesNoRouter finds remote nodes that do not use transit router.
-func (oc *Layer2UserDefinedNetworkController) setRemoteNodesNoRouter(nodes []*corev1.Node) {
+func (oc *Layer2UserDefinedNetworkController) nodeHasActiveNAD(nodeName string, nads []string) bool {
+	for _, nad := range nads {
+		if oc.networkManager.NodeHasNAD(nodeName, nad) {
+			return true
+		}
+	}
+	return false
+}
+
+// setRemoteNodesNoTransitRouter finds remote nodes that do not use transit router.
+func (oc *Layer2UserDefinedNetworkController) setRemoteNodesNoTransitRouter(nodes []*corev1.Node) {
 	for _, node := range nodes {
 		if oc.isLocalZoneNode(node) {
 			continue

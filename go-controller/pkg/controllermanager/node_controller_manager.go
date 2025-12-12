@@ -10,11 +10,9 @@ import (
 
 	v1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
 	kexec "k8s.io/utils/exec"
@@ -68,10 +66,6 @@ type NodeControllerManager struct {
 	ruleManager *iprulemanager.Controller
 	// ovs client that allows to read ovs info
 	ovsClient client.Client
-	// podTracker tracks pods on different nodes + nads
-	podTracker networkmanager.TrackerController
-	// egressIPTracker tracks egress nodes mapping to nads
-	egressIPTracker networkmanager.TrackerController
 }
 
 // NewNetworkController create node user-defined network controllers for the given NetInfo
@@ -279,12 +273,6 @@ func NewNodeControllerManager(ovnClient *util.OVNClientset, wf factory.NodeWatch
 		if err != nil {
 			return nil, err
 		}
-		if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
-			ncm.podTracker = networkmanager.NewPodTrackerController("node-pod-tracker", wf, ncm.OnNetworkRefChange, ncm.networkManager.Interface().GetPrimaryNADForNamespace)
-			if config.OVNKubernetesFeature.EnableEgressIP {
-				ncm.egressIPTracker = networkmanager.NewEgressIPTrackerController("node-egress-ip-tracker", wf, ncm.OnNetworkRefChange, ncm.networkManager.Interface().GetPrimaryNADForNamespace)
-			}
-		}
 	}
 
 	if config.OvnKubeNode.MgmtPortDPResourceName != "" && config.OvnKubeNode.Mode != ovntypes.NodeModeDPU {
@@ -397,18 +385,6 @@ func (ncm *NodeControllerManager) Start(ctx context.Context, isOVNKubeController
 		return fmt.Errorf("failed to init default node network controller: %v", err)
 	}
 
-	if ncm.podTracker != nil {
-		if err = ncm.podTracker.Start(); err != nil {
-			return fmt.Errorf("failed to start pod tracker: %w", err)
-		}
-	}
-
-	if ncm.egressIPTracker != nil {
-		if err = ncm.egressIPTracker.Start(); err != nil {
-			return fmt.Errorf("failed to start egress ip tracker: %w", err)
-		}
-	}
-
 	if ncm.networkManager != nil {
 		err = ncm.networkManager.Start()
 		if err != nil {
@@ -490,17 +466,6 @@ func (ncm *NodeControllerManager) Stop(isOVNKubeControllerSyncd *atomic.Bool) {
 	if ncm.networkManager != nil {
 		ncm.networkManager.Stop()
 	}
-
-	// stop pod tracker
-	if ncm.podTracker != nil {
-		ncm.podTracker.Stop()
-	}
-
-	// stop egressIP Tracker
-	if ncm.egressIPTracker != nil {
-		ncm.egressIPTracker.Stop()
-	}
-
 }
 
 // checkForStaleOVSRepresentorInterfaces checks for stale OVS ports backed by Repreresentor interfaces,
@@ -640,81 +605,4 @@ func checkForStaleOVSInternalPorts() {
 
 func (ncm *NodeControllerManager) Reconcile(_ string, _, _ util.NetInfo) error {
 	return nil
-}
-
-func (ncm *NodeControllerManager) Filter(nad *v1.NetworkAttachmentDefinition) (bool, error) {
-	ownerRef := metav1.GetControllerOf(nad)
-	if ownerRef == nil {
-		return false, nil
-	}
-
-	ourNode := ncm.name
-
-	if ownerRef.Kind != "ClusterUserDefinedNetwork" && ownerRef.Kind != "UserDefinedNetwork" {
-		return false, nil
-	}
-
-	if ncm.NodeHasNAD(ourNode, util.GetNADName(nad.Namespace, nad.Name)) {
-		return false, nil
-	}
-
-	return true, nil
-}
-
-// OnNetworkRefChange is a callback function used to signal an action to this controller when
-// a network needs to be added or removed or just updated
-func (ncm *NodeControllerManager) OnNetworkRefChange(node, nadNamespacedName string, active bool) {
-	klog.V(5).Infof("Network change for node controller triggered by pod/egress IP events on node: %s ,"+
-		"NAD: %s, active: %t", node, nadNamespacedName, active)
-	namespace, name, err := cache.SplitMetaNamespaceKey(nadNamespacedName)
-	if err != nil {
-		klog.Errorf("Failed splitting key %q, falling back to normal network reconcile: %v", nadNamespacedName, err)
-		// fallback to regular reconcile
-		ncm.networkManager.Interface().Reconcile(nadNamespacedName)
-		return
-	}
-
-	nad, err := ncm.watchFactory.NADInformer().Lister().NetworkAttachmentDefinitions(namespace).Get(name)
-	if err != nil {
-		klog.Errorf("Failed to find NAD %q in informer, falling back to normal network reconcile: %v", nadNamespacedName, err)
-		// fallback to regular reconcile
-		ncm.networkManager.Interface().Reconcile(nadNamespacedName)
-		return
-	}
-
-	ownerRef := metav1.GetControllerOf(nad)
-	if ownerRef == nil {
-		return
-	}
-
-	if ownerRef.Kind != "ClusterUserDefinedNetwork" && ownerRef.Kind != "UserDefinedNetwork" {
-		return
-	}
-
-	nadNetwork, err := util.ParseNADInfo(nad)
-	if err != nil || nadNetwork == nil {
-		klog.Errorf("Failed to parse NAD %q info, falling back to normal network reconcile: %v", nadNamespacedName, err)
-		// fallback to regular reconcile
-		ncm.networkManager.Interface().Reconcile(nadNamespacedName)
-		return
-	}
-	isLocal := node == ncm.name
-	// Enqueue node-level reconcile on the running network controller (non-blocking).
-	if !isLocal {
-		ncm.networkManager.Interface().NotifyNetworkRefChange(nadNetwork.GetNetworkName(), node, active)
-	}
-	// Let the NAD controller handle lifecycle/teardown decisions asynchronously for local networks only.
-	if isLocal {
-		ncm.networkManager.Interface().UpdateNADState(nadNamespacedName, active)
-	}
-}
-
-func (ncm *NodeControllerManager) NodeHasNAD(node, nad string) bool {
-	if ncm.podTracker != nil && ncm.podTracker.NodeHasNAD(node, nad) {
-		return true
-	}
-	if ncm.egressIPTracker != nil && ncm.egressIPTracker.NodeHasNAD(node, nad) {
-		return true
-	}
-	return false
 }
