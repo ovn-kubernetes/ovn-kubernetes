@@ -33,6 +33,13 @@ type ClusterUserDefinedNetworkSpec struct {
 	// +kubebuilder:validation:XValidation:rule="has(self.topology) && self.topology == 'Layer3' ? has(self.layer3): !has(self.layer3)", message="spec.layer3 is required when topology is Layer3 and forbidden otherwise"
 	// +kubebuilder:validation:XValidation:rule="has(self.topology) && self.topology == 'Layer2' ? has(self.layer2): !has(self.layer2)", message="spec.layer2 is required when topology is Layer2 and forbidden otherwise"
 	// +kubebuilder:validation:XValidation:rule="has(self.topology) && self.topology == 'Localnet' ? has(self.localnet): !has(self.localnet)", message="spec.localnet is required when topology is Localnet and forbidden otherwise"
+	// +kubebuilder:validation:XValidation:rule="!has(self.transport) || self.transport != 'NoOverlay' || (self.topology == 'Layer3' && has(self.layer3) && self.layer3.role == 'Primary')", message="transport 'NoOverlay' is only supported for Layer3 primary networks"
+	// +kubebuilder:validation:XValidation:rule="(has(self.transport) && self.transport == 'NoOverlay') == has(self.noOverlayOptions)", message="noOverlayOptions is required if and only if transport is 'NoOverlay'"
+	// +kubebuilder:validation:XValidation:rule="!has(self.transport) || self.transport != 'EVPN' || ((self.topology == 'Layer2' && has(self.layer2) && self.layer2.role == 'Primary') || (self.topology == 'Layer3' && has(self.layer3) && self.layer3.role == 'Primary'))", message="transport 'EVPN' is only supported for Layer2 or Layer3 primary networks"
+	// +kubebuilder:validation:XValidation:rule="(has(self.transport) && self.transport == 'EVPN') == has(self.evpnConfiguration)", message="evpnConfiguration is required if and only if transport is 'EVPN'"
+	// +kubebuilder:validation:XValidation:rule="!has(self.transport) || self.transport != 'EVPN' || self.topology != 'Layer2' || (has(self.evpnConfiguration) && has(self.evpnConfiguration.macVRF))", message="macVRF is required for Layer2 topology when transport is 'EVPN'"
+	// +kubebuilder:validation:XValidation:rule="!has(self.transport) || self.transport != 'EVPN' || self.topology != 'Layer3' || (has(self.evpnConfiguration) && has(self.evpnConfiguration.ipVRF))", message="ipVRF is required for Layer3 topology when transport is 'EVPN'"
+	// +kubebuilder:validation:XValidation:rule="!has(self.transport) || self.transport != 'EVPN' || self.topology != 'Layer3' || !has(self.evpnConfiguration) || !has(self.evpnConfiguration.macVRF)", message="macVRF is forbidden for Layer3 topology when transport is 'EVPN'"
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf", message="Network spec is immutable"
 	// +required
 	Network NetworkSpec `json:"network"`
@@ -65,6 +72,24 @@ type NetworkSpec struct {
 	// Localnet is the Localnet topology configuration.
 	// +optional
 	Localnet *LocalnetConfig `json:"localnet,omitempty"`
+
+	// Transport describes the transport protocol for east-west traffic.
+	// Allowed values are "NoOverlay", "Geneve", and "EVPN".
+	// - "NoOverlay": The network operates in no-overlay mode.
+	// - "Geneve": The network uses Geneve overlay.
+	// - "EVPN": The network uses EVPN/VXLAN for overlay.
+	// Defaults to "Geneve".
+	// +kubebuilder:validation:Enum=NoOverlay;Geneve;EVPN
+	// +optional
+	Transport TransportOption `json:"transport,omitempty"`
+	// NoOverlayOptions contains configuration for no-overlay mode.
+	// This is only allowed when Transport is "NoOverlay".
+	// +optional
+	NoOverlayOptions *NoOverlayOptions `json:"noOverlayOptions,omitempty"`
+	// EVPNConfiguration contains configuration for EVPN mode.
+	// This is only allowed when Transport is "EVPN".
+	// +optional
+	EVPNConfiguration *EVPNConfiguration `json:"evpnConfiguration,omitempty"`
 }
 
 // ClusterUserDefinedNetworkStatus contains the observed status of the ClusterUserDefinedNetwork.

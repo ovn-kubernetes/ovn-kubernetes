@@ -31,6 +31,7 @@ var _ = Describe("Network Segmentation: API validations", feature.NetworkSegment
 		Entry("ClusterUserDefinedNetwork, localnet, invalid mtu", testscenariocudn.LocalnetInvalidMTU),
 		Entry("ClusterUserDefinedNetwork, localnet, invalid vlan", testscenariocudn.LocalnetInvalidVLAN),
 		Entry("ClusterUserDefinedNetwork, layer2", testscenariocudn.Layer2CUDNInvalid),
+		Entry("ClusterUserDefinedNetwork, evpn", testscenariocudn.EVPNCUDNInvalid),
 		Entry("UserDefinedNetwork, layer2", testscenariocudn.Layer2UDNInvalid),
 	)
 
@@ -47,6 +48,7 @@ var _ = Describe("Network Segmentation: API validations", feature.NetworkSegment
 		},
 		Entry("ClusterUserDefinedNetwork, localnet", testscenariocudn.LocalnetValid),
 		Entry("ClusterUserDefinedNetwork, layer2", testscenariocudn.Layer2CUDNValid),
+		Entry("ClusterUserDefinedNetwork, evpn", testscenariocudn.EVPNCUDNValid),
 		Entry("UserDefinedNetwork, layer2", testscenariocudn.Layer2UDNValid),
 	)
 })
