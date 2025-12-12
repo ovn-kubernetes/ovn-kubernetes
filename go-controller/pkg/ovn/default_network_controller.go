@@ -398,6 +398,22 @@ func (oc *DefaultNetworkController) init() error {
 		}
 	}
 
+	if config.Default.Transport == config.TransportNoOverlay && config.NoOverlay.OutboundSNAT == config.NoOverlaySNATEnabled {
+		// Initialize cluster CIDR address set for no-overlay mode if outbound SNAT is enabled
+		err = initClusterCIDRAddressSet(oc.addressSetFactory, oc.GetNetInfo(), oc.controllerName)
+		if err != nil {
+			return fmt.Errorf("failed to initialize cluster CIDR address set: %w", err)
+		}
+		err = addClusterCIDRsToAddressSet(oc.addressSetFactory, oc.GetNetInfo(), oc.controllerName)
+		if err != nil {
+			return fmt.Errorf("failed to add cluster CIDRs to address set: %w", err)
+		}
+	} else {
+		if err := cleanupClusterCIDRAddressSet(oc.addressSetFactory, oc.GetNetInfo(), oc.controllerName); err != nil {
+			klog.Warningf("Failed to cleanup cluster CIDR address set: %v", err)
+		}
+	}
+
 	return nil
 }
 
