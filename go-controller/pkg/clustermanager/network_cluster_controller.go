@@ -244,7 +244,6 @@ func (ncc *networkClusterController) init() error {
 		var podAllocOpts []annotationalloc.AllocatorOption
 		if util.IsPreconfiguredUDNAddressesEnabled() &&
 			ncc.IsPrimaryNetwork() &&
-			persistentIPsEnabled &&
 			ncc.TopologyType() == types.Layer2Topology {
 			podAllocOpts = append(podAllocOpts, annotationalloc.WithMACRegistry(mac.NewManager()))
 		}
