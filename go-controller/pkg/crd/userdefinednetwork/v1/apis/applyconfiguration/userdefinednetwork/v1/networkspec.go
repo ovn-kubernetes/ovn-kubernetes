@@ -24,10 +24,12 @@ import (
 // NetworkSpecApplyConfiguration represents a declarative configuration of the NetworkSpec type for use
 // with apply.
 type NetworkSpecApplyConfiguration struct {
-	Topology *userdefinednetworkv1.NetworkTopology `json:"topology,omitempty"`
-	Layer3   *Layer3ConfigApplyConfiguration       `json:"layer3,omitempty"`
-	Layer2   *Layer2ConfigApplyConfiguration       `json:"layer2,omitempty"`
-	Localnet *LocalnetConfigApplyConfiguration     `json:"localnet,omitempty"`
+	Topology         *userdefinednetworkv1.NetworkTopology `json:"topology,omitempty"`
+	Layer3           *Layer3ConfigApplyConfiguration       `json:"layer3,omitempty"`
+	Layer2           *Layer2ConfigApplyConfiguration       `json:"layer2,omitempty"`
+	Localnet         *LocalnetConfigApplyConfiguration     `json:"localnet,omitempty"`
+	Transport        *userdefinednetworkv1.TransportOption `json:"transport,omitempty"`
+	NoOverlayOptions *NoOverlayOptionsApplyConfiguration   `json:"noOverlayOptions,omitempty"`
 }
 
 // NetworkSpecApplyConfiguration constructs a declarative configuration of the NetworkSpec type for use with
@@ -65,5 +67,21 @@ func (b *NetworkSpecApplyConfiguration) WithLayer2(value *Layer2ConfigApplyConfi
 // If called multiple times, the Localnet field is set to the value of the last call.
 func (b *NetworkSpecApplyConfiguration) WithLocalnet(value *LocalnetConfigApplyConfiguration) *NetworkSpecApplyConfiguration {
 	b.Localnet = value
+	return b
+}
+
+// WithTransport sets the Transport field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Transport field is set to the value of the last call.
+func (b *NetworkSpecApplyConfiguration) WithTransport(value userdefinednetworkv1.TransportOption) *NetworkSpecApplyConfiguration {
+	b.Transport = &value
+	return b
+}
+
+// WithNoOverlayOptions sets the NoOverlayOptions field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the NoOverlayOptions field is set to the value of the last call.
+func (b *NetworkSpecApplyConfiguration) WithNoOverlayOptions(value *NoOverlayOptionsApplyConfiguration) *NetworkSpecApplyConfiguration {
+	b.NoOverlayOptions = value
 	return b
 }
