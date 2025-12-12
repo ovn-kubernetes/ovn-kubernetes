@@ -122,8 +122,8 @@ func TestHybridConnectSubnetAllocator_AllocateLayer3Subnet(t *testing.T) {
 			ipv6Mode: true,
 			owners:   []string{"layer3_1"},
 			expectSubnets: map[string][]string{
-				// IPv6 allocator skips subnet 0 when subnetBits >= 16 to avoid address compression issues
-				"layer3_1": {"fd00:0:0:1::/64"},
+				// With /112 CIDR and /120 prefix, blocks are /120 (256 addresses each)
+				"layer3_1": {"fd00::/120"},
 			},
 		},
 		{
@@ -132,10 +132,10 @@ func TestHybridConnectSubnetAllocator_AllocateLayer3Subnet(t *testing.T) {
 			ipv6Mode: true,
 			owners:   []string{"layer3_1", "layer3_2", "layer3_3"},
 			expectSubnets: map[string][]string{
-				// IPv6 allocator skips subnet 0 when subnetBits >= 16 to avoid address compression issues
-				"layer3_1": {"fd00:0:0:1::/64"},
-				"layer3_2": {"fd00:0:0:2::/64"},
-				"layer3_3": {"fd00:0:0:3::/64"},
+				// /120 blocks: fd00::/120, fd00::100/120, fd00::200/120, etc.
+				"layer3_1": {"fd00::/120"},
+				"layer3_2": {"fd00::100/120"},
+				"layer3_3": {"fd00::200/120"},
 			},
 		},
 		{
@@ -144,8 +144,8 @@ func TestHybridConnectSubnetAllocator_AllocateLayer3Subnet(t *testing.T) {
 			ipv6Mode: true,
 			owners:   []string{"layer3_1"},
 			expectSubnets: map[string][]string{
-				// IPv6 allocator skips subnet 0 when subnetBits >= 16
-				"layer3_1": {"192.168.0.0/24", "fd00:0:0:1::/64"},
+				// IPv4 /24, IPv6 /120 (both have 8 host bits)
+				"layer3_1": {"192.168.0.0/24", "fd00::/120"},
 			},
 		},
 		{
@@ -154,9 +154,9 @@ func TestHybridConnectSubnetAllocator_AllocateLayer3Subnet(t *testing.T) {
 			ipv6Mode: true,
 			owners:   []string{"layer3_1", "layer3_2", "layer3_3"},
 			expectSubnets: map[string][]string{
-				"layer3_1": {"192.168.0.0/24", "fd00:0:0:1::/64"},
-				"layer3_2": {"192.168.1.0/24", "fd00:0:0:2::/64"},
-				"layer3_3": {"192.168.2.0/24", "fd00:0:0:3::/64"},
+				"layer3_1": {"192.168.0.0/24", "fd00::/120"},
+				"layer3_2": {"192.168.1.0/24", "fd00::100/120"},
+				"layer3_3": {"192.168.2.0/24", "fd00::200/120"},
 			},
 		},
 		{
@@ -193,8 +193,8 @@ func TestHybridConnectSubnetAllocator_AllocateLayer3Subnet(t *testing.T) {
 					NetworkPrefix: 24,
 				},
 				{
-					CIDR:          "fd00::/48",
-					NetworkPrefix: 64,
+					CIDR:          "fd00::/112",
+					NetworkPrefix: 120, // 32-24=8, so 128-8=120
 				},
 			}
 			allocator, err := NewHybridConnectSubnetAllocator(connectSubnets, "test-cnc")
@@ -252,10 +252,9 @@ func TestHybridConnectSubnetAllocator_AllocateLayer2Subnet(t *testing.T) {
 			ipv6Mode: true,
 			owners:   []string{"layer2_1"},
 			expectSubnets: map[string][]string{
-				// Layer2 block gets /64 block from layer3 (fd00:0:0:1::/64), then allocates /127 from it
-				// /127 has subnetBits = 127 - 64 = 63, which is >= 16, so it skips subnets with 0s in low word
-				// First non-zero low word is ::2 (since ::1 has low word = 1 which is non-zero but ::0 is skipped)
-				"layer2_1": {"fd00:0:0:1::2/127"},
+				// Layer2 block gets /120 block from layer3 (fd00::/120), then allocates /127 from it
+				// /127 has subnetBits = 127 - 120 = 7, which is < 16, so no address skipping
+				"layer2_1": {"fd00::/127"},
 			},
 		},
 		{
@@ -264,9 +263,9 @@ func TestHybridConnectSubnetAllocator_AllocateLayer2Subnet(t *testing.T) {
 			ipv6Mode: true,
 			owners:   []string{"layer2_1", "layer2_2", "layer2_3"},
 			expectSubnets: map[string][]string{
-				"layer2_1": {"fd00:0:0:1::2/127"},
-				"layer2_2": {"fd00:0:0:1::4/127"},
-				"layer2_3": {"fd00:0:0:1::6/127"},
+				"layer2_1": {"fd00::/127"},
+				"layer2_2": {"fd00::2/127"},
+				"layer2_3": {"fd00::4/127"},
 			},
 		},
 		{
@@ -276,8 +275,8 @@ func TestHybridConnectSubnetAllocator_AllocateLayer2Subnet(t *testing.T) {
 			owners:   []string{"layer2_1"},
 			expectSubnets: map[string][]string{
 				// Layer2 block gets /24 block from layer3 (192.168.0.0/24), then allocates /31 from it
-				// IPv6 block gets /64 block from layer3 (fd00:0:0:1::/64), then allocates /127 from it
-				"layer2_1": {"192.168.0.0/31", "fd00:0:0:1::2/127"},
+				// IPv6 block gets /120 block from layer3 (fd00::/120), then allocates /127 from it
+				"layer2_1": {"192.168.0.0/31", "fd00::/127"},
 			},
 		},
 		{
@@ -286,9 +285,9 @@ func TestHybridConnectSubnetAllocator_AllocateLayer2Subnet(t *testing.T) {
 			ipv6Mode: true,
 			owners:   []string{"layer2_1", "layer2_2", "layer2_3"},
 			expectSubnets: map[string][]string{
-				"layer2_1": {"192.168.0.0/31", "fd00:0:0:1::2/127"},
-				"layer2_2": {"192.168.0.2/31", "fd00:0:0:1::4/127"},
-				"layer2_3": {"192.168.0.4/31", "fd00:0:0:1::6/127"},
+				"layer2_1": {"192.168.0.0/31", "fd00::/127"},
+				"layer2_2": {"192.168.0.2/31", "fd00::2/127"},
+				"layer2_3": {"192.168.0.4/31", "fd00::4/127"},
 			},
 		},
 		{
@@ -325,8 +324,8 @@ func TestHybridConnectSubnetAllocator_AllocateLayer2Subnet(t *testing.T) {
 					NetworkPrefix: 24,
 				},
 				{
-					CIDR:          "fd00::/48",
-					NetworkPrefix: 64,
+					CIDR:          "fd00::/112",
+					NetworkPrefix: 120, // 32-24=8, so 128-8=120
 				},
 			}
 			allocator, err := NewHybridConnectSubnetAllocator(connectSubnets, "test-cnc")
@@ -453,28 +452,29 @@ func TestHybridConnectSubnetAllocator_ReleaseLayer3Subnets(t *testing.T) {
 			name:              "IPv6 allocation continues from where it left off after release",
 			ipv4Mode:          false,
 			ipv6Mode:          true,
-			ipv6Network:       "fd00::/32",
-			ipv6NetworkPrefix: 64,
+			ipv6Network:       "fd00::/112",
+			ipv6NetworkPrefix: 120, // matches ipv4 /24: 32-24=8, 128-8=120
 			allocateFirst:     []string{"layer3_1", "layer3_2"},
 			release:           []string{"layer3_1"},
 			allocateAgain:     []string{"layer3_3"},
 			expectSubnets: map[string][]string{
-				// Allocator continues from next position (IPv6 skips subnet 0)
-				"layer3_3": {"fd00:0:0:3::/64"},
+				// Allocator continues from next position: layer3_1=fd00::/120, layer3_2=fd00::100/120
+				// layer3_3 gets fd00::200/120
+				"layer3_3": {"fd00::200/120"},
 			},
 		},
 		{
 			name:              "IPv6 released subnet is reused when allocator wraps around",
 			ipv4Mode:          false,
 			ipv6Mode:          true,
-			ipv6Network:       "fd00::/60", // Small range: only 4 /62 subnets
-			ipv6NetworkPrefix: 62,
+			ipv6Network:       "fd00::/120",                                             // Small range: only 4 /122 subnets
+			ipv6NetworkPrefix: 122,                                                      // matches ipv4 /26: 32-26=6, 128-6=122
 			allocateFirst:     []string{"layer3_1", "layer3_2", "layer3_3", "layer3_4"}, // Allocate all 4
 			release:           []string{"layer3_2"},                                     // Release the second one
 			allocateAgain:     []string{"layer3_5"},
 			expectSubnets: map[string][]string{
-				// Allocator wraps around and reuses the released subnet
-				"layer3_5": {"fd00:0:0:4::/62"},
+				// Allocator wraps around and reuses the released subnet (fd00::40/122)
+				"layer3_5": {"fd00::40/122"},
 			},
 		},
 		{
@@ -483,14 +483,14 @@ func TestHybridConnectSubnetAllocator_ReleaseLayer3Subnets(t *testing.T) {
 			ipv6Mode:          true,
 			ipv4Network:       "192.168.0.0/16",
 			ipv4NetworkPrefix: 24,
-			ipv6Network:       "fd00::/32",
-			ipv6NetworkPrefix: 64,
+			ipv6Network:       "fd00::/112",
+			ipv6NetworkPrefix: 120, // matches ipv4 /24: 32-24=8, 128-8=120
 			allocateFirst:     []string{"layer3_1", "layer3_2"},
 			release:           []string{"layer3_1"},
 			allocateAgain:     []string{"layer3_3"},
 			expectSubnets: map[string][]string{
 				// Both IPv4 and IPv6 continue from next position
-				"layer3_3": {"192.168.2.0/24", "fd00:0:0:3::/64"},
+				"layer3_3": {"192.168.2.0/24", "fd00::200/120"},
 			},
 		},
 		{
@@ -499,14 +499,15 @@ func TestHybridConnectSubnetAllocator_ReleaseLayer3Subnets(t *testing.T) {
 			ipv6Mode:          true,
 			ipv4Network:       "192.168.0.0/24", // Small range: only 4 /26 subnets
 			ipv4NetworkPrefix: 26,
-			ipv6Network:       "fd00::/60", // Small range: only 4 /62 subnets
-			ipv6NetworkPrefix: 62,
+			ipv6Network:       "fd00::/120",                                             // Small range: only 4 /122 subnets
+			ipv6NetworkPrefix: 122,                                                      // matches ipv4 /26: 32-26=6, 128-6=122
 			allocateFirst:     []string{"layer3_1", "layer3_2", "layer3_3", "layer3_4"}, // Allocate all 4
 			release:           []string{"layer3_2"},                                     // Release the second one
 			allocateAgain:     []string{"layer3_5"},
 			expectSubnets: map[string][]string{
 				// Both IPv4 and IPv6 wrap around and reuse the released subnet
-				"layer3_5": {"192.168.0.64/26", "fd00:0:0:4::/62"},
+				// IPv4: 192.168.0.64/26 was layer3_2; IPv6: fd00::40/122 was layer3_2
+				"layer3_5": {"192.168.0.64/26", "fd00::40/122"},
 			},
 		},
 		{
@@ -668,14 +669,14 @@ func TestHybridConnectSubnetAllocator_ReleaseLayer2Subnets(t *testing.T) {
 			ipv6Mode:          true,
 			ipv4Network:       "192.168.0.0/16",
 			ipv4NetworkPrefix: 24,
-			ipv6Network:       "fd00::/48",
-			ipv6NetworkPrefix: 64,
+			ipv6Network:       "fd00::/112",
+			ipv6NetworkPrefix: 120, // matches ipv4 /24: 32-24=8, 128-8=120
 			allocateFirst:     []string{"layer2_1", "layer2_2"},
 			release:           []string{"layer2_1"},
 			allocateAgain:     []string{"layer2_3"},
 			expectSubnets: map[string][]string{
-				// Both IPv4 and IPv6 continue from next position
-				"layer2_3": {"192.168.0.4/31", "fd00:0:0:1::6/127"},
+				// Both IPv4 and IPv6 continue from next position (index 2)
+				"layer2_3": {"192.168.0.4/31", "fd00::4/127"},
 			},
 		},
 		{
@@ -786,38 +787,39 @@ func TestHybridConnectSubnetAllocator_ReleaseMixedLayer3AndLayer2Subnets(t *test
 			NetworkPrefix: 24,
 		},
 		{
-			CIDR:          networkconnectv1.CIDR("fd00::/32"),
-			NetworkPrefix: 64,
+			CIDR:          networkconnectv1.CIDR("fd00::/112"),
+			NetworkPrefix: 120, // matches ipv4 /24: 32-24=8, 128-8=120
 		},
 	}
 	allocator, err := NewHybridConnectSubnetAllocator(connectSubnets, "test-cnc")
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 
 	// Allocate layer3 subnets (dual-stack: both IPv4 and IPv6)
+	// With /120 prefix, IPv6 blocks are fd00::/120, fd00::100/120, etc.
 	l3Sub1, err := allocator.AllocateLayer3Subnet("layer3_1")
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(l3Sub1).To(gomega.HaveLen(2))
 	g.Expect(l3Sub1[0].String()).To(gomega.Equal("192.168.0.0/24"))
-	g.Expect(l3Sub1[1].String()).To(gomega.Equal("fd00:0:0:1::/64"))
+	g.Expect(l3Sub1[1].String()).To(gomega.Equal("fd00::/120"))
 
 	l3Sub2, err := allocator.AllocateLayer3Subnet("layer3_2")
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(l3Sub2).To(gomega.HaveLen(2))
 	g.Expect(l3Sub2[0].String()).To(gomega.Equal("192.168.1.0/24"))
-	g.Expect(l3Sub2[1].String()).To(gomega.Equal("fd00:0:0:2::/64"))
+	g.Expect(l3Sub2[1].String()).To(gomega.Equal("fd00::100/120"))
 
-	// Allocate layer2 subnets (will get new blocks from layer3: 192.168.2.0/24 and fd00:0:0:3::/64)
+	// Allocate layer2 subnets (will get new blocks from layer3: 192.168.2.0/24 and fd00::200/120)
 	l2Sub1, err := allocator.AllocateLayer2Subnet("layer2_1")
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(l2Sub1).To(gomega.HaveLen(2))
 	g.Expect(l2Sub1[0].String()).To(gomega.Equal("192.168.2.0/31"))
-	g.Expect(l2Sub1[1].String()).To(gomega.Equal("fd00:0:0:3::2/127"))
+	g.Expect(l2Sub1[1].String()).To(gomega.Equal("fd00::200/127"))
 
 	l2Sub2, err := allocator.AllocateLayer2Subnet("layer2_2")
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(l2Sub2).To(gomega.HaveLen(2))
 	g.Expect(l2Sub2[0].String()).To(gomega.Equal("192.168.2.2/31"))
-	g.Expect(l2Sub2[1].String()).To(gomega.Equal("fd00:0:0:3::4/127"))
+	g.Expect(l2Sub2[1].String()).To(gomega.Equal("fd00::202/127"))
 
 	// Release one layer3 and one layer2
 	allocator.ReleaseLayer3Subnet("layer3_1")
@@ -825,19 +827,19 @@ func TestHybridConnectSubnetAllocator_ReleaseMixedLayer3AndLayer2Subnets(t *test
 
 	// Allocate new layer3 - allocator continues from where it left off
 	// IPv4: 192.168.2.0/24 is taken by layer2-block, so next available is 192.168.3.0/24
-	// IPv6: fd00:0:0:3::/64 is taken by layer2-block, so next available is fd00:0:0:4::/64
+	// IPv6: fd00::200/120 is taken by layer2-block, so next available is fd00::300/120
 	l3Sub3, err := allocator.AllocateLayer3Subnet("layer3_3")
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(l3Sub3).To(gomega.HaveLen(2))
 	g.Expect(l3Sub3[0].String()).To(gomega.Equal("192.168.3.0/24"))
-	g.Expect(l3Sub3[1].String()).To(gomega.Equal("fd00:0:0:4::/64"))
+	g.Expect(l3Sub3[1].String()).To(gomega.Equal("fd00::300/120"))
 
 	// Allocate new layer2 - allocator continues from where it left off
 	l2Sub3, err := allocator.AllocateLayer2Subnet("layer2_3")
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(l2Sub3).To(gomega.HaveLen(2))
 	g.Expect(l2Sub3[0].String()).To(gomega.Equal("192.168.2.4/31"))
-	g.Expect(l2Sub3[1].String()).To(gomega.Equal("fd00:0:0:3::6/127"))
+	g.Expect(l2Sub3[1].String()).To(gomega.Equal("fd00::204/127"))
 
 	// Verify layer3 and layer2 allocators are independent
 	// Allocate more layer2 - should continue in layer2 block
@@ -845,14 +847,14 @@ func TestHybridConnectSubnetAllocator_ReleaseMixedLayer3AndLayer2Subnets(t *test
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(l2Sub4).To(gomega.HaveLen(2))
 	g.Expect(l2Sub4[0].String()).To(gomega.Equal("192.168.2.6/31"))
-	g.Expect(l2Sub4[1].String()).To(gomega.Equal("fd00:0:0:3::8/127"))
+	g.Expect(l2Sub4[1].String()).To(gomega.Equal("fd00::206/127"))
 
 	// Allocate layer3 - should continue in layer3 space
 	l3Sub4, err := allocator.AllocateLayer3Subnet("layer3_4")
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(l3Sub4).To(gomega.HaveLen(2))
 	g.Expect(l3Sub4[0].String()).To(gomega.Equal("192.168.4.0/24"))
-	g.Expect(l3Sub4[1].String()).To(gomega.Equal("fd00:0:0:5::/64"))
+	g.Expect(l3Sub4[1].String()).To(gomega.Equal("fd00::400/120"))
 
 	// Verify released owner gets new subnet (not the old one)
 	l3Sub1Again, err := allocator.AllocateLayer3Subnet("layer3_1")
@@ -860,7 +862,7 @@ func TestHybridConnectSubnetAllocator_ReleaseMixedLayer3AndLayer2Subnets(t *test
 	g.Expect(l3Sub1Again).To(gomega.HaveLen(2))
 	// layer3_1 was released, so new allocation continues from next position
 	g.Expect(l3Sub1Again[0].String()).To(gomega.Equal("192.168.5.0/24"))
-	g.Expect(l3Sub1Again[1].String()).To(gomega.Equal("fd00:0:0:6::/64"))
+	g.Expect(l3Sub1Again[1].String()).To(gomega.Equal("fd00::500/120"))
 }
 
 func TestHybridConnectSubnetAllocator_Layer2BlockExpansionFromLayer3(t *testing.T) {
@@ -984,8 +986,8 @@ func TestHybridConnectSubnetAllocator_Layer2RangeFullAfterLayer3Exhausted(t *tes
 			NetworkPrefix: 25,
 		},
 		{
-			CIDR:          networkconnectv1.CIDR("fd00::/121"),
-			NetworkPrefix: 122,
+			CIDR:          networkconnectv1.CIDR("fd00::/114"),
+			NetworkPrefix: 121, // matches ipv4 /25: 32-25=7, 128-7=121
 		},
 	}
 	allocator, err := NewHybridConnectSubnetAllocator(connectSubnets, "test-cnc")
@@ -1076,25 +1078,25 @@ func TestHybridConnectSubnetAllocator_Layer2ReleaseReleasesBlockToLayer3(t *test
 	connectSubnets := []networkconnectv1.ConnectSubnet{
 		{
 			CIDR:          networkconnectv1.CIDR("10.100.0.0/26"),
-			NetworkPrefix: 28,
+			NetworkPrefix: 28, // 32-28=4 host bits
 		},
 		{
-			CIDR:          networkconnectv1.CIDR("fd00::/121"),
-			NetworkPrefix: 123,
+			CIDR:          networkconnectv1.CIDR("fd00::/122"),
+			NetworkPrefix: 124, // 128-124=4 host bits (matches IPv4)
 		},
 	}
 	allocator, err := NewHybridConnectSubnetAllocator(connectSubnets, "test-cnc")
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	// Small ranges: 4 blocks each
 	// IPv4: 10.100.0.0/26 with /28 prefix = 4 /28 blocks (each has 8 /31 slots)
-	// IPv6: fd00::/121 with /123 prefix = 4 /123 blocks (each has 4 /127 slots)
+	// IPv6: fd00::/122 with /124 prefix = 4 /124 blocks (each has 8 /127 slots)
 
 	// Allocate 2 layer2 networks - both in the same block
 	l2Sub1, err := allocator.AllocateLayer2Subnet("layer2_1")
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(l2Sub1).To(gomega.HaveLen(2)) // dual-stack
 	g.Expect(l2Sub1[0].String()).To(gomega.Equal("10.100.0.0/31"))
-	// /123 to /127: subnetBits = 4, which is < 16, so it doesn't skip subnet 0
+	// /124 to /127: subnetBits = 3, which is < 16, so it doesn't skip subnet 0
 	g.Expect(l2Sub1[1].String()).To(gomega.Equal("fd00::/127"))
 
 	l2Sub2, err := allocator.AllocateLayer2Subnet("layer2_2")
@@ -1146,7 +1148,101 @@ func TestHybridConnectSubnetAllocator_Layer2ReleaseReleasesBlockToLayer3(t *test
 	g.Expect(l3Sub4).To(gomega.HaveLen(2)) // dual-stack
 	// Should get the block that was released from layer2 networks
 	g.Expect(l3Sub4[0].String()).To(gomega.Equal("10.100.0.0/28"))
-	g.Expect(l3Sub4[1].String()).To(gomega.Equal("fd00::/123"))
+	g.Expect(l3Sub4[1].String()).To(gomega.Equal("fd00::/124"))
+}
+
+func TestHybridConnectSubnetAllocator_Layer2DesyncBugWithMismatchedNetworkPrefix(t *testing.T) {
+	// BUG DEMONSTRATION: When IPv4 and IPv6 have different networkPrefix "host bits",
+	// they have different capacities per block. When one fills up before the other,
+	// the allocator expands but the next allocation gets IPv4 from new block and
+	// IPv6 from old block (still has room). This causes desync and breaks block release.
+	//
+	// Formula for matching: 32 - v4NetworkPrefix == 128 - v6NetworkPrefix
+	// This test intentionally uses MISMATCHED prefixes to demonstrate the bug.
+	// We have added CEL validation for this on the API so that its not possible, but
+	// this test is left here for reference and to ensure we don't use the allocator
+	// in this fashion.
+	t.Skip("This test demonstrates the desync bug that CEL validation prevents - skipped in CI but kept for documentation")
+	g := gomega.NewWithT(t)
+
+	config.IPv4Mode = true
+	config.IPv6Mode = true
+
+	// MISMATCHED networkPrefix values:
+	// IPv4 /28: host bits = 32 - 28 = 4 → 2^4 / 2 = 8 /31 slots per block
+	// IPv6 /123: host bits = 128 - 123 = 5 → 2^5 / 2 = 16 /127 slots per block
+	// IPv4 will fill up FIRST!
+	//
+	// Use SMALL CIDRs so we can detect leaks:
+	// IPv4: /26 with /28 = 4 blocks only
+	// IPv6: /121 with /123 = 4 blocks only
+	connectSubnets := []networkconnectv1.ConnectSubnet{
+		{
+			CIDR:          networkconnectv1.CIDR("10.100.0.0/26"), // Only 4 /28 blocks
+			NetworkPrefix: 28,                                     // 8 /31 slots per block
+		},
+		{
+			CIDR:          networkconnectv1.CIDR("fd00::/121"), // Only 4 /123 blocks
+			NetworkPrefix: 123,                                 // 16 /127 slots per block
+		},
+	}
+	allocator, err := NewHybridConnectSubnetAllocator(connectSubnets, "test-cnc")
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	// Allocate 9 L2 networks - this will exceed IPv4's 8 slots per block
+	// Networks 1-8: both from block1
+	// Network 9: IPv4 from block2, IPv6 from block1 (DESYNC!)
+	l2Owners := make([]string, 9)
+	for i := 0; i < 9; i++ {
+		owner := fmt.Sprintf("layer2_%d", i)
+		l2Owners[i] = owner
+		subnets, err := allocator.AllocateLayer2Subnet(owner)
+		g.Expect(err).ToNot(gomega.HaveOccurred())
+		g.Expect(subnets).To(gomega.HaveLen(2)) // dual-stack
+
+		if i == 8 {
+			// Network 9 (index 8) should show the desync:
+			// IPv4: 10.100.0.16/31 (first slot in block2 = 10.100.0.16/28)
+			// IPv6: fd00::10/127 (slot 9 in block1 = fd00::/123)
+			t.Logf("Network 9 (desynced): IPv4=%s, IPv6=%s", subnets[0].String(), subnets[1].String())
+
+			// IPv4 should be from block2 (10.100.0.16/28)
+			g.Expect(subnets[0].String()).To(gomega.Equal("10.100.0.16/31"))
+			// IPv6 should still be from block1 (fd00::/123) - index 8
+			g.Expect(subnets[1].String()).To(gomega.Equal("fd00::10/127"))
+		}
+	}
+
+	// Both families have 2 blocks because expandLayer2Allocator() adds blocks for both
+	// But the ALLOCATION is desynced: IPv4 from block2, IPv6 from block1
+	v4RangeCount, v6RangeCount := allocator.Layer2RangeCount()
+	g.Expect(v4RangeCount).To(gomega.Equal(uint64(2)), "IPv4 should have 2 blocks")
+	g.Expect(v6RangeCount).To(gomega.Equal(uint64(2)), "IPv6 should have 2 blocks (both added, but only block1 used)")
+
+	// Now release all L2 networks and watch the bug manifest
+	// When we release networks 1-8, block1 should be freed for both families
+	// But network 9's IPv4 is in block2 alone - the release will fail to find the owner!
+	for i := 0; i < 9; i++ {
+		allocator.ReleaseLayer2Subnet(l2Owners[i])
+	}
+
+	// Layer2 allocator removes ranges via FreeUnusedRanges() regardless of layer3 release success
+	v4RangeCount, v6RangeCount = allocator.Layer2RangeCount()
+	t.Logf("After release - layer2 IPv4 ranges: %d, IPv6 ranges: %d", v4RangeCount, v6RangeCount)
+	g.Expect(v4RangeCount).To(gomega.Equal(uint64(0)))
+	g.Expect(v6RangeCount).To(gomega.Equal(uint64(0)))
+
+	// THE REAL BUG: Check layer3 allocator for leaked blocks via Usage()
+	// L2 used 2 blocks during allocation (block1 for networks 0-7, block2 for network 8's IPv4)
+	// If properly released, layer3 should have 0 allocated blocks
+	// If leaked, some blocks are still marked as allocated
+	l3v4Usage, l3v6Usage := allocator.Layer3Usage()
+	t.Logf("Layer3 usage - IPv4: %d, IPv6: %d (expected 0 each if no leak)", l3v4Usage, l3v6Usage)
+
+	// BUG: Usage should be 0 after releasing all L2 networks
+	// If blocks leaked (weren't released back to layer3), usage will be > 0
+	g.Expect(l3v4Usage).To(gomega.Equal(uint64(0)), "BUG: IPv4 blocks leaked in layer3 - usage should be 0 but got %d", l3v4Usage)
+	g.Expect(l3v6Usage).To(gomega.Equal(uint64(0)), "BUG: IPv6 blocks leaked in layer3 - usage should be 0 but got %d", l3v6Usage)
 }
 
 func TestHybridConnectSubnetAllocator_getParentBlockCIDR(t *testing.T) {
@@ -1315,18 +1411,19 @@ func TestHybridConnectSubnetAllocator_MarkAllocatedSubnets(t *testing.T) {
 			ipv4Mode: true,
 			ipv6Mode: true,
 			allocatedSubnets: map[string][]*net.IPNet{
-				"layer3_1": {mustParseCIDR("192.168.0.0/24"), mustParseCIDR("fd00:10:244::/64")},
-				"layer3_2": {mustParseCIDR("192.168.1.0/24"), mustParseCIDR("fd00:10:244:1::/64")},
+				// IPv6 /120 blocks within the fd00:10:244::/112 range
+				"layer3_1": {mustParseCIDR("192.168.0.0/24"), mustParseCIDR("fd00:10:244::/120")},
+				"layer3_2": {mustParseCIDR("192.168.1.0/24"), mustParseCIDR("fd00:10:244::100/120")},
 			},
 			verifyAllocations: []expectedSubnetAllocation{
-				{owner: "layer3_1", topology: types.Layer3Topology, ipv4: "192.168.0.0/24", ipv6: "fd00:10:244::/64"},
-				{owner: "layer3_2", topology: types.Layer3Topology, ipv4: "192.168.1.0/24", ipv6: "fd00:10:244:1::/64"},
+				{owner: "layer3_1", topology: types.Layer3Topology, ipv4: "192.168.0.0/24", ipv6: "fd00:10:244::/120"},
+				{owner: "layer3_2", topology: types.Layer3Topology, ipv4: "192.168.1.0/24", ipv6: "fd00:10:244::100/120"},
 			},
 			newAllocation: &newAllocationCheck{
 				owner:    "layer3_3",
 				topology: types.Layer3Topology,
 				notIPv4:  "192.168.0.0/24",
-				notIPv6:  "fd00:10:244::/64",
+				notIPv6:  "fd00:10:244::/120",
 			},
 		},
 		{
@@ -1334,6 +1431,7 @@ func TestHybridConnectSubnetAllocator_MarkAllocatedSubnets(t *testing.T) {
 			ipv4Mode: true,
 			ipv6Mode: true,
 			allocatedSubnets: map[string][]*net.IPNet{
+				// /127 subnets within the fd00:10:244::/120 block
 				"layer2_100": {mustParseCIDR("192.168.0.0/31"), mustParseCIDR("fd00:10:244::/127")},
 				"layer2_101": {mustParseCIDR("192.168.0.2/31"), mustParseCIDR("fd00:10:244::2/127")},
 			},
@@ -1341,8 +1439,8 @@ func TestHybridConnectSubnetAllocator_MarkAllocatedSubnets(t *testing.T) {
 				{owner: "layer2_100", topology: types.Layer2Topology, ipv4: "192.168.0.0/31", ipv6: "fd00:10:244::/127"},
 				{owner: "layer2_101", topology: types.Layer2Topology, ipv4: "192.168.0.2/31", ipv6: "fd00:10:244::2/127"},
 			},
-			// In dual-stack, getL2BlocksKey creates combined key "v4,v6"
-			verifyBlocks: []string{"192.168.0.0/24,fd00:10:244::/64"},
+			// In dual-stack, getL2BlocksKey creates combined key "v4,v6" with parent blocks
+			verifyBlocks: []string{"192.168.0.0/24,fd00:10:244::/120"},
 			newAllocation: &newAllocationCheck{
 				owner:    "layer2_102",
 				topology: types.Layer2Topology,
@@ -1355,15 +1453,16 @@ func TestHybridConnectSubnetAllocator_MarkAllocatedSubnets(t *testing.T) {
 			ipv4Mode: true,
 			ipv6Mode: true,
 			allocatedSubnets: map[string][]*net.IPNet{
-				"layer3_5": {mustParseCIDR("192.168.0.0/24"), mustParseCIDR("fd00:10:244::/64")},
-				"layer2_6": {mustParseCIDR("192.168.1.0/31"), mustParseCIDR("fd00:10:244:1::/127")},
+				// IPv6 /120 blocks within the fd00:10:244::/112 range
+				"layer3_5": {mustParseCIDR("192.168.0.0/24"), mustParseCIDR("fd00:10:244::/120")},
+				"layer2_6": {mustParseCIDR("192.168.1.0/31"), mustParseCIDR("fd00:10:244::100/127")},
 			},
 			verifyAllocations: []expectedSubnetAllocation{
-				{owner: "layer3_5", topology: types.Layer3Topology, ipv4: "192.168.0.0/24", ipv6: "fd00:10:244::/64"},
-				{owner: "layer2_6", topology: types.Layer2Topology, ipv4: "192.168.1.0/31", ipv6: "fd00:10:244:1::/127"},
+				{owner: "layer3_5", topology: types.Layer3Topology, ipv4: "192.168.0.0/24", ipv6: "fd00:10:244::/120"},
+				{owner: "layer2_6", topology: types.Layer2Topology, ipv4: "192.168.1.0/31", ipv6: "fd00:10:244::100/127"},
 			},
-			// In dual-stack, getL2BlocksKey creates combined key "v4,v6"
-			verifyBlocks: []string{"192.168.1.0/24,fd00:10:244:1::/64"},
+			// In dual-stack, getL2BlocksKey creates combined key "v4,v6" with parent blocks
+			verifyBlocks: []string{"192.168.1.0/24,fd00:10:244::100/120"},
 		},
 		{
 			name:     "marks IPv4-only layer3 subnets",
@@ -1421,8 +1520,8 @@ func TestHybridConnectSubnetAllocator_MarkAllocatedSubnets(t *testing.T) {
 			}
 			if tt.ipv6Mode {
 				connectSubnets = append(connectSubnets, networkconnectv1.ConnectSubnet{
-					CIDR:          networkconnectv1.CIDR("fd00:10:244::/48"),
-					NetworkPrefix: 64,
+					CIDR:          networkconnectv1.CIDR("fd00:10:244::/112"),
+					NetworkPrefix: 120, // matches ipv4 /24: 32-24=8, 128-8=120
 				})
 			}
 			allocator, err := NewHybridConnectSubnetAllocator(connectSubnets, "test-cnc")

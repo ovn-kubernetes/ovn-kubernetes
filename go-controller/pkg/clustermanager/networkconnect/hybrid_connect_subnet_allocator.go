@@ -56,6 +56,12 @@ type HybridConnectSubnetAllocator interface {
 	// Layer2RangeCount returns the number of v4 and v6 ranges in the layer2 allocator (for testing)
 	Layer2RangeCount() (uint64, uint64)
 
+	// Layer3RangeCount returns the number of v4 and v6 ranges in the layer3 allocator (for testing)
+	Layer3RangeCount() (uint64, uint64)
+
+	// Layer3Usage returns the number of allocated v4 and v6 subnets in the layer3 allocator (for testing)
+	Layer3Usage() (uint64, uint64)
+
 	// MarkAllocatedSubnets restores previously allocated subnets from annotation at startup.
 	// This should be called after AddNetworkRange but before any new allocations.
 	// It marks subnets as already allocated so they won't be handed out again.
@@ -275,6 +281,14 @@ func (hca *hybridConnectSubnetAllocator) ReleaseLayer3Subnet(owner string) {
 
 func (hca *hybridConnectSubnetAllocator) Layer2RangeCount() (uint64, uint64) {
 	return hca.layer2Allocator.RangeCount()
+}
+
+func (hca *hybridConnectSubnetAllocator) Layer3RangeCount() (uint64, uint64) {
+	return hca.layer3Allocator.RangeCount()
+}
+
+func (hca *hybridConnectSubnetAllocator) Layer3Usage() (uint64, uint64) {
+	return hca.layer3Allocator.Usage()
 }
 
 func (hca *hybridConnectSubnetAllocator) ReleaseLayer2Subnet(owner string) {

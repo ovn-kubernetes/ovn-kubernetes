@@ -44,8 +44,10 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 	const (
 		cncConnectSubnetIPv4CIDR   = "192.168.0.0/16"
 		cncConnectSubnetIPv4Prefix = 24
-		cncConnectSubnetIPv6CIDR   = "fd00:10::/48"
-		cncConnectSubnetIPv6Prefix = 64
+		// IPv6 networkPrefix must satisfy: 32 - ipv4Prefix == 128 - ipv6Prefix
+		// With ipv4Prefix=24: 32-24=8, so ipv6Prefix must be 128-8=120
+		cncConnectSubnetIPv6CIDR   = "fd00:10::/112"
+		cncConnectSubnetIPv6Prefix = 120
 		// Layer3 UDN CIDRs with hostSubnet (IPv4: /24, IPv6: /64)
 		layer3UserDefinedNetworkIPv4CIDR       = "172.31.0.0/16"
 		layer3UserDefinedNetworkIPv4HostSubnet = 24
@@ -361,7 +363,7 @@ spec:
 
 				// Verify IPv6 format if present (should be CIDR within connectSubnets range)
 				if hasIPv6 {
-					g.Expect(subnet.IPv6).To(MatchRegexp(`^fd00:10:[0-9a-f:]+/\d+$`),
+					g.Expect(subnet.IPv6).To(MatchRegexp(`^fd00:10::[0-9a-f:]*/\d+$`),
 						fmt.Sprintf("network %s IPv6 subnet should be in connectSubnets range", networkKey))
 					// Layer2 networks use point-to-point /127 subnets
 					if isLayer2 {

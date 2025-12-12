@@ -81,7 +81,7 @@ func (tc testCNC) ClusterNetworkConnect() *networkconnectv1.ClusterNetworkConnec
 	if len(tc.ConnectSubnets) == 0 {
 		cnc.Spec.ConnectSubnets = []networkconnectv1.ConnectSubnet{
 			{CIDR: "192.168.0.0/16", NetworkPrefix: 24},
-			{CIDR: "fd00:10:244::/48", NetworkPrefix: 64},
+			{CIDR: "fd00:10:244::/112", NetworkPrefix: 120}, // matches ipv4 /24: 32-24=8, 128-8=120
 		}
 	}
 	if len(tc.Connectivity) == 0 {
@@ -2578,13 +2578,14 @@ func TestController_initialSync(t *testing.T) {
 						Name: "cnc1",
 						Annotations: map[string]string{
 							util.OvnConnectRouterTunnelKeyAnnotation: "5",
-							"k8s.ovn.org/network-connect-subnet":     `{"layer3_1":{"ipv4":"192.168.0.0/24","ipv6":"fd00:10:244::/64"},"layer3_2":{"ipv4":"192.168.1.0/24","ipv6":"fd00:10:244:1::/64"}}`,
+							// IPv6 /120 blocks within fd00:10:244::/112 range (256 /120 blocks available)
+							"k8s.ovn.org/network-connect-subnet": `{"layer3_1":{"ipv4":"192.168.0.0/24","ipv6":"fd00:10:244::/120"},"layer3_2":{"ipv4":"192.168.1.0/24","ipv6":"fd00:10:244::100/120"}}`,
 						},
 					},
 					Spec: networkconnectv1.ClusterNetworkConnectSpec{
 						ConnectSubnets: []networkconnectv1.ConnectSubnet{
 							{CIDR: "192.168.0.0/16", NetworkPrefix: 24},
-							{CIDR: "fd00:10:244::/48", NetworkPrefix: 64},
+							{CIDR: "fd00:10:244::/112", NetworkPrefix: 120},
 						},
 						Connectivity: []networkconnectv1.ConnectivityType{networkconnectv1.PodNetwork},
 					},
@@ -2595,8 +2596,8 @@ func TestController_initialSync(t *testing.T) {
 			},
 			verifyAllocations: map[string][]expectedSubnetAllocation{
 				"cnc1": {
-					{owner: "layer3_1", topology: types.Layer3Topology, ipv4: "192.168.0.0/24", ipv6: "fd00:10:244::/64"},
-					{owner: "layer3_2", topology: types.Layer3Topology, ipv4: "192.168.1.0/24", ipv6: "fd00:10:244:1::/64"},
+					{owner: "layer3_1", topology: types.Layer3Topology, ipv4: "192.168.0.0/24", ipv6: "fd00:10:244::/120"},
+					{owner: "layer3_2", topology: types.Layer3Topology, ipv4: "192.168.1.0/24", ipv6: "fd00:10:244::100/120"},
 				},
 			},
 		},
@@ -2608,13 +2609,14 @@ func TestController_initialSync(t *testing.T) {
 						Name: "cnc1",
 						Annotations: map[string]string{
 							util.OvnConnectRouterTunnelKeyAnnotation: "1",
-							"k8s.ovn.org/network-connect-subnet":     `{"layer3_10":{"ipv4":"192.168.0.0/24","ipv6":"fd00:10:244::/64"}}`,
+							// IPv6 /120 block within fd00:10:244::/112 range
+							"k8s.ovn.org/network-connect-subnet": `{"layer3_10":{"ipv4":"192.168.0.0/24","ipv6":"fd00:10:244::/120"}}`,
 						},
 					},
 					Spec: networkconnectv1.ClusterNetworkConnectSpec{
 						ConnectSubnets: []networkconnectv1.ConnectSubnet{
 							{CIDR: "192.168.0.0/16", NetworkPrefix: 24},
-							{CIDR: "fd00:10:244::/48", NetworkPrefix: 64},
+							{CIDR: "fd00:10:244::/112", NetworkPrefix: 120},
 						},
 						Connectivity: []networkconnectv1.ConnectivityType{networkconnectv1.PodNetwork},
 					},
@@ -2641,7 +2643,7 @@ func TestController_initialSync(t *testing.T) {
 			},
 			verifyAllocations: map[string][]expectedSubnetAllocation{
 				"cnc1": {
-					{owner: "layer3_10", topology: types.Layer3Topology, ipv4: "192.168.0.0/24", ipv6: "fd00:10:244::/64"},
+					{owner: "layer3_10", topology: types.Layer3Topology, ipv4: "192.168.0.0/24", ipv6: "fd00:10:244::/120"},
 				},
 				"cnc2": {
 					{owner: "layer3_20", topology: types.Layer3Topology, ipv4: "10.100.0.0/24"},
@@ -2663,7 +2665,7 @@ func TestController_initialSync(t *testing.T) {
 					Spec: networkconnectv1.ClusterNetworkConnectSpec{
 						ConnectSubnets: []networkconnectv1.ConnectSubnet{
 							{CIDR: "192.168.0.0/16", NetworkPrefix: 24},
-							{CIDR: "fd00:10:244::/48", NetworkPrefix: 64},
+							{CIDR: "fd00:10:244::/112", NetworkPrefix: 120},
 						},
 						Connectivity: []networkconnectv1.ConnectivityType{networkconnectv1.PodNetwork},
 					},
@@ -2687,13 +2689,15 @@ func TestController_initialSync(t *testing.T) {
 						Name: "cnc-mixed",
 						Annotations: map[string]string{
 							util.OvnConnectRouterTunnelKeyAnnotation: "7",
-							"k8s.ovn.org/network-connect-subnet":     `{"layer3_5":{"ipv4":"192.168.0.0/24","ipv6":"fd00:10:244::/64"},"layer2_6":{"ipv4":"192.168.1.0/31","ipv6":"fd00:10:244:1::/127"}}`,
+							// Layer3 gets /120 block, Layer2 gets /127 subnet within a /120 block
+							// IPv6 addresses must be within fd00:10:244::/112 range
+							"k8s.ovn.org/network-connect-subnet": `{"layer3_5":{"ipv4":"192.168.0.0/24","ipv6":"fd00:10:244::/120"},"layer2_6":{"ipv4":"192.168.1.0/31","ipv6":"fd00:10:244::100/127"}}`,
 						},
 					},
 					Spec: networkconnectv1.ClusterNetworkConnectSpec{
 						ConnectSubnets: []networkconnectv1.ConnectSubnet{
 							{CIDR: "192.168.0.0/16", NetworkPrefix: 24},
-							{CIDR: "fd00:10:244::/48", NetworkPrefix: 64},
+							{CIDR: "fd00:10:244::/112", NetworkPrefix: 120},
 						},
 						Connectivity: []networkconnectv1.ConnectivityType{networkconnectv1.PodNetwork},
 					},
@@ -2704,8 +2708,8 @@ func TestController_initialSync(t *testing.T) {
 			},
 			verifyAllocations: map[string][]expectedSubnetAllocation{
 				"cnc-mixed": {
-					{owner: "layer3_5", topology: types.Layer3Topology, ipv4: "192.168.0.0/24", ipv6: "fd00:10:244::/64"},
-					{owner: "layer2_6", topology: types.Layer2Topology, ipv4: "192.168.1.0/31", ipv6: "fd00:10:244:1::/127"},
+					{owner: "layer3_5", topology: types.Layer3Topology, ipv4: "192.168.0.0/24", ipv6: "fd00:10:244::/120"},
+					{owner: "layer2_6", topology: types.Layer2Topology, ipv4: "192.168.1.0/31", ipv6: "fd00:10:244::100/127"},
 				},
 			},
 		},

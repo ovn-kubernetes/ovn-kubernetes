@@ -479,4 +479,54 @@ spec:
   connectivity: ["PodNetwork"]
 `,
 	},
+
+	// CEL validation (dual-stack networkPrefix host bits must match)
+	{
+		Description: "dual-stack with mismatched networkPrefix host bits - IPv4 /24 vs IPv6 /64",
+		ExpectedErr: "networkPrefix must have matching host bits",
+		Manifest: `
+apiVersion: k8s.ovn.org/v1
+kind: ClusterNetworkConnect
+metadata:
+  name: mismatched-host-bits-v4-24-v6-64
+spec:
+  networkSelectors:
+    - networkSelectionType: "ClusterUserDefinedNetworks"
+      clusterUserDefinedNetworkSelector:
+        networkSelector:
+          matchLabels:
+            name: test
+  connectSubnets:
+    - cidr: "192.168.0.0/16"
+      networkPrefix: 24
+    - cidr: "fd01::/48"
+      networkPrefix: 64
+  connectivity: ["PodNetwork"]
+`,
+		// IPv4: 32-24=8 host bits, IPv6: 128-64=64 host bits - MISMATCH!
+	},
+	{
+		Description: "dual-stack with mismatched networkPrefix host bits - IPv4 /28 vs IPv6 /123",
+		ExpectedErr: "networkPrefix must have matching host bits",
+		Manifest: `
+apiVersion: k8s.ovn.org/v1
+kind: ClusterNetworkConnect
+metadata:
+  name: mismatched-host-bits-v4-28-v6-123
+spec:
+  networkSelectors:
+    - networkSelectionType: "ClusterUserDefinedNetworks"
+      clusterUserDefinedNetworkSelector:
+        networkSelector:
+          matchLabels:
+            name: test
+  connectSubnets:
+    - cidr: "192.168.0.0/24"
+      networkPrefix: 28
+    - cidr: "fd01::/120"
+      networkPrefix: 123
+  connectivity: ["PodNetwork"]
+`,
+		// IPv4: 32-28=4 host bits, IPv6: 128-123=5 host bits - MISMATCH!
+	},
 }
