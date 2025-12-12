@@ -911,10 +911,10 @@ func GetOVSPortPodInfo(hostIfName string) (bool, string, string, error) {
 		return false, "", "", nil
 	}
 	sandbox := GetExternalIDValByKey(stdout, "sandbox")
-	nadName := GetExternalIDValByKey(stdout, types.NADExternalID)
+	nadkey := GetExternalIDValByKey(stdout, types.NADExternalID)
 	// if network_name does not exists, it is default network
-	if nadName == "" {
-		nadName = types.DefaultNetworkName
+	if nadkey == "" {
+		nadkey = types.DefaultNetworkName
 	}
-	return true, sandbox, nadName, nil
+	return true, sandbox, nadkey, nil
 }

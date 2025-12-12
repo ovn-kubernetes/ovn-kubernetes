@@ -256,7 +256,7 @@ func (oc *DefaultNetworkController) ensureRemoteZonePod(oldPod, pod *corev1.Pod,
 		}
 	}
 	if kubevirt.IsPodLiveMigratable(pod) {
-		return kubevirt.EnsureRemoteZonePodAddressesToNodeRoute(oc.watchFactory, oc.nbClient, pod, ovntypes.DefaultNetworkName)
+		return kubevirt.EnsureRemoteZonePodAddressesToNodeRoute(oc.watchFactory, oc.nbClient, pod)
 	}
 	return nil
 }
