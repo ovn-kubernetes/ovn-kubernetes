@@ -618,29 +618,32 @@ func (bsnc *BaseUserDefinedNetworkController) syncPodsForUserDefinedNetwork(pods
 		hasRemotePort := !isLocalPod || bsnc.isLayer2Interconnect()
 
 		for nadName := range networkMap {
-			annotations, err := util.UnmarshalPodAnnotation(pod.Annotations, nadName)
-			if err != nil {
-				if !util.IsAnnotationNotSetError(err) {
-					klog.Errorf("Failed to get pod annotation of pod %s/%s for NAD %s", pod.Namespace, pod.Name, nadName)
-				}
-				continue
-			}
-
 			if bsnc.allocatesPodAnnotation() && isLocalPod {
-				// only keep track of IPs/ports that have been allocated by this
-				// controller
-				expectedLogicalPortName, err := bsnc.allocatePodIPs(pod, annotations, nadName)
-				if err != nil {
-					return err
-				}
+				// Independently of the ovn annotation the LSP should
+				// be marked as expected so it do not get deleted
+				// if the pod takes time be annotated by nad controller
+				expectedLogicalPortName := bsnc.GetLogicalPortName(pod, nadName)
 				if expectedLogicalPortName != "" {
 					expectedLogicalPorts[expectedLogicalPortName] = true
 				}
 
-				if annotatedLocalPods[pod] == nil {
-					annotatedLocalPods[pod] = map[string]*util.PodAnnotation{}
+				annotations, err := util.UnmarshalPodAnnotation(pod.Annotations, nadName)
+				if err != nil {
+					if !util.IsAnnotationNotSetError(err) {
+						klog.Errorf("Failed to get pod annotation of pod %s/%s for NAD %s", pod.Namespace, pod.Name, nadName)
+					}
+				} else {
+					// only keep track of IPs/ports that have been allocated by this
+					// controller
+					_, err := bsnc.allocatePodIPs(pod, annotations, nadName)
+					if err != nil {
+						return err
+					}
+					if annotatedLocalPods[pod] == nil {
+						annotatedLocalPods[pod] = map[string]*util.PodAnnotation{}
+					}
+					annotatedLocalPods[pod][nadName] = annotations
 				}
-				annotatedLocalPods[pod][nadName] = annotations
 			} else if hasRemotePort {
 				// keep also track of remote ports created for layer2 on
 				// interconnect
