@@ -18,7 +18,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
-	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
@@ -702,7 +701,7 @@ func getOVNSBZone() (string, error) {
 	return dbZone, nil
 }
 
-/** HACK BEGIN **/
+/** HACK BEGIN
 // TODO(tssurya): Remove this HACK a few months from now.
 // checkOVNSBNodeLRSR returns true if the logical router static route for the
 // the given nodeSubnet is present in the SBDB
@@ -754,7 +753,7 @@ func portExists(namespace, name string) bool {
 	return err == nil && stderr == "" && stdout != ""
 }
 
-/** HACK END **/
+HACK END **/
 
 // Init executes the first steps to start the DefaultNodeNetworkController.
 // It is split from Start() and executed before UserDefinedNodeNetworkController (UDNNC)
@@ -905,8 +904,15 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 	// Set the node-encap-ips annotation with the configured encap IP.
 	// This encap IP is unavailable on the DPU host mode, so we don't need to set it there.
 	if config.OvnKubeNode.Mode != types.NodeModeDPUHost {
-		encapIPList := sets.New[string]()
-		encapIPList.Insert(strings.Split(config.Default.EffectiveEncapIP, ",")...)
+		// Deduplicate encap IPs while preserving order
+		seen := make(map[string]bool)
+		encapIPList := make([]string, 0)
+		for _, ip := range strings.Split(config.Default.EffectiveEncapIP, ",") {
+			if !seen[ip] {
+				seen[ip] = true
+				encapIPList = append(encapIPList, ip)
+			}
+		}
 		if err := util.SetNodeEncapIPs(nodeAnnotator, encapIPList); err != nil {
 			return fmt.Errorf("failed to set node-encap-ips annotation for node %s: %w", nc.name, err)
 		}
@@ -966,6 +972,7 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 	}
 
 	nodeAnnotator := kube.NewNodeAnnotator(nc.Kube, node.Name)
+	_ = nodeAnnotator
 	waiter := newStartupWaiter()
 
 	// Complete gateway initialization
@@ -993,7 +1000,7 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 		}
 	}
 
-	/** HACK BEGIN **/
+	/** HACK BEGIN
 	// TODO(tssurya): Remove this HACK a few months from now. This has been added only to
 	// minimize disruption for upgrades when moving to interconnect=true.
 	// We want the legacy ovnkube-master to wait for remote ovnkube-node to
@@ -1110,7 +1117,7 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 		}
 		klog.Infof("Upgrade hack: ovnkube-node %s finished setting DB Auth; took: %v", nc.name, time.Since(start))
 	}
-	/** HACK END **/
+	HACK END **/
 
 	// Wait for management port and gateway resources to be created by the master
 	klog.Infof("Waiting for gateway and management port readiness...")
