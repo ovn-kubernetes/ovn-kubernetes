@@ -1138,14 +1138,37 @@ func isDualStackCluster(nodes *v1.NodeList) bool {
 // used to inject OVN specific test actions
 func wrappedTestFramework(basename string) *framework.Framework {
 	f := newPrivelegedTestFramework(basename)
-	// inject dumping dbs on failure
 	ginkgo.JustAfterEach(func() {
-		if !ginkgo.CurrentSpecReport().Failed() {
+		logLocation := "/var/log"
+		coredumpDir := "/tmp/kind/logs/coredumps"
+		dbLocation := "/var/lib/openvswitch"
+		// https://github.com/ovn-kubernetes/ovn-kubernetes/issues/5782
+		skippedCoredumps := []string{"zebra", "bgpd", "mgmtd"}
+
+		// Check for coredumps on host
+		var coredumpFiles []string
+		files, err := os.ReadDir(coredumpDir)
+		if err == nil {
+			for _, file := range files {
+				if file.IsDir() {
+					continue
+				}
+				fileName := file.Name()
+				if slices.ContainsFunc(skippedCoredumps, func(s string) bool {
+					return strings.Contains(fileName, s)
+				}) {
+					framework.Logf("Ignoring coredump for skipped process: %s", fileName)
+					continue
+				}
+				coredumpFiles = append(coredumpFiles, fileName)
+			}
+		}
+
+		// If coredumps found OR test already failed, collect dbs
+		if len(coredumpFiles) == 0 && !ginkgo.CurrentSpecReport().Failed() {
 			return
 		}
 
-		logLocation := "/var/log"
-		dbLocation := "/var/lib/openvswitch"
 		// Potential database locations
 		ovsdbLocations := []string{"/etc/origin/openvswitch", "/etc/openvswitch"}
 		dbs := []string{"ovnnb_db.db", "ovnsb_db.db"}
@@ -1182,6 +1205,11 @@ func wrappedTestFramework(basename string) *framework.Framework {
 					framework.ExpectNoError(err, "copy DBs to file location must succeed")
 				}
 			}
+		}
+
+		// Abort testing if any coredump found
+		if len(coredumpFiles) != 0 {
+			ginkgo.AbortSuite(fmt.Sprintf("Coredumps found during test execution: %s", strings.Join(coredumpFiles, ", ")))
 		}
 	})
 

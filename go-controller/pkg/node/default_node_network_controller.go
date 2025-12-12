@@ -1273,7 +1273,12 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 // Stop gracefully stops the controller
 // deleteLogicalEntities will never be true for default network
 func (nc *DefaultNodeNetworkController) Stop() {
+	if nc.stopChan == nil {
+		klog.Infof("Default node network controller is already stopped")
+		return
+	}
 	close(nc.stopChan)
+	nc.stopChan = nil
 	nc.wg.Wait()
 }
 
