@@ -1143,6 +1143,72 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 			err := app.Run([]string{app.Name})
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())
 		})
+
+		ginkgo.It("16. CNC continues processing healthy networks even when one NAD has parse error", func() {
+			app.Action = func(*cli.Context) error {
+				cncName := "test-cnc-error-aggregation"
+				testLabel := map[string]string{"error-test": "true"}
+				healthyNetwork := util.GenerateCUDNNetworkName("healthy")
+
+				start()
+
+				// Create a NAD with malformed config (will cause ParseNADInfo to fail)
+				malformedNAD := &nadv1.NetworkAttachmentDefinition{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "malformed-nad",
+						Namespace: "malformed-ns",
+						Labels:    testLabel,
+						Annotations: map[string]string{
+							types.OvnNetworkNameAnnotation: "malformed-network",
+							types.OvnNetworkIDAnnotation:   "1",
+						},
+						OwnerReferences: []metav1.OwnerReference{makeCUDNOwnerRef("malformed-cudn")},
+					},
+					Spec: nadv1.NetworkAttachmentDefinitionSpec{
+						// Invalid JSON config - missing required fields, will fail ParseNADInfo
+						Config: `{"cniVersion": "0.4.0", "name": "malformed", "type": "invalid-type"}`,
+					},
+				}
+				_, err := fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("malformed-ns").Create(
+					context.Background(), malformedNAD, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Create a healthy NAD
+				healthyNAD := testCUDNNAD("healthy-nad", "healthy-ns", healthyNetwork, testLabel, "2")
+				_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("healthy-ns").Create(
+					context.Background(), healthyNAD, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Create CNC that matches both NADs
+				cnc := testCNC(cncName, []apitypes.NetworkSelector{
+					{
+						NetworkSelectionType: apitypes.ClusterUserDefinedNetworks,
+						ClusterUserDefinedNetworkSelector: &apitypes.ClusterUserDefinedNetworkSelector{
+							NetworkSelector: metav1.LabelSelector{
+								MatchLabels: testLabel,
+							},
+						},
+					},
+				})
+				_, err = fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
+					context.Background(), cnc, metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				// Wait for CNC to have tunnel ID and subnet annotation
+				// The healthy NAD should be processed even though the malformed one fails
+				gomega.Eventually(func() bool {
+					return hasTunnelIDAnnotation(cncName) && hasNonEmptySubnetAnnotation(cncName)
+				}).WithTimeout(5 * time.Second).Should(gomega.BeTrue())
+
+				// Verify subnet annotation has 1 network (the healthy one)
+				// The malformed NAD should have been skipped due to parse error
+				gomega.Expect(getSubnetAnnotationNetworkCount(cncName)).To(gomega.Equal(1))
+
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+		})
 	})
 })
 
