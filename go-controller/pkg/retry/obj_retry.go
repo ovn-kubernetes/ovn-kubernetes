@@ -41,6 +41,9 @@ type retryObjEntry struct {
 	backoff   time.Duration
 	// number of times this object has been unsuccessfully added/updated/deleted
 	failedAttempts uint8
+	// infiniteRetry indicates whether this object should be retried indefinitely, regardless of the number of failed attempts
+	// Used for pods only right now
+	infiniteRetry bool
 }
 
 type EventHandler interface {
@@ -146,6 +149,10 @@ func (r *RetryFramework) initRetryObjWithAddBackoff(obj interface{}, lockedKey s
 	entry, _ := r.retryEntries.LoadOrStore(lockedKey, &retryObjEntry{backoff: backoff})
 	entry.timeStamp = time.Now()
 	entry.newObj = obj
+	if _, isPod := obj.(*corev1.Pod); isPod {
+		// for pods we want to retry indefinitely
+		entry.infiniteRetry = true
+	}
 	entry.failedAttempts = 0
 	entry.backoff = backoff
 	return entry
@@ -163,6 +170,10 @@ func (r *RetryFramework) initRetryObjWithUpdate(oldObj, newObj interface{}, lock
 	// even if the object was loaded and changed before with the same lock, LoadOrStore will return reference to the same object
 	entry.timeStamp = time.Now()
 	entry.newObj = newObj
+	if _, isPod := newObj.(*corev1.Pod); isPod {
+		// for pods we want to retry indefinitely
+		entry.infiniteRetry = true
+	}
 	entry.config = oldObj
 	entry.failedAttempts = 0
 	return entry
@@ -178,6 +189,10 @@ func (r *RetryFramework) InitRetryObjWithDelete(obj interface{}, lockedKey strin
 	entry, _ := r.retryEntries.LoadOrStore(lockedKey, &retryObjEntry{config: config, backoff: initialBackoff})
 	entry.timeStamp = time.Now()
 	entry.oldObj = obj
+	if _, isPod := obj.(*corev1.Pod); isPod {
+		// for pods we want to retry indefinitely
+		entry.infiniteRetry = true
+	}
 	if entry.config == nil {
 		entry.config = config
 	}
@@ -259,7 +274,7 @@ func (r *RetryFramework) resourceRetry(objKey string, now time.Time) {
 			return
 		}
 
-		if entry.failedAttempts >= MaxFailedAttempts {
+		if entry.failedAttempts >= MaxFailedAttempts && !entry.infiniteRetry {
 			klog.Warningf("Dropping retry entry for %s %s: exceeded number of failed attempts",
 				r.ResourceHandler.ObjType, objKey)
 			r.DeleteRetryObj(key)
@@ -325,7 +340,7 @@ func (r *RetryFramework) resourceRetry(objKey string, now time.Time) {
 			} else if err := r.ResourceHandler.UpdateResource(entry.config, entry.newObj, true); err != nil {
 				entry.timeStamp = time.Now()
 				entry.failedAttempts++
-				if entry.failedAttempts >= MaxFailedAttempts {
+				if entry.failedAttempts >= MaxFailedAttempts && !entry.infiniteRetry {
 					klog.Errorf("Retry update failed final attempt for %s %s: error: %v", r.ResourceHandler.ObjType, objKey, err)
 				} else {
 					klog.Infof("%v retry update failed for %s, will try again later: %v", r.ResourceHandler.ObjType, objKey, err)
@@ -346,7 +361,7 @@ func (r *RetryFramework) resourceRetry(objKey string, now time.Time) {
 				} else if err := r.ResourceHandler.DeleteResource(entry.oldObj, entry.config); err != nil {
 					entry.timeStamp = time.Now()
 					entry.failedAttempts++
-					if entry.failedAttempts >= MaxFailedAttempts {
+					if entry.failedAttempts >= MaxFailedAttempts && !entry.infiniteRetry {
 						klog.Errorf("Retry delete failed final attempt for %s %s: error: %v", r.ResourceHandler.ObjType, objKey, err)
 					} else {
 						klog.Infof("Retry delete failed for %s %s, will try again later: %v",
@@ -369,7 +384,7 @@ func (r *RetryFramework) resourceRetry(objKey string, now time.Time) {
 				} else if err := r.ResourceHandler.AddResource(entry.newObj, true); err != nil {
 					entry.timeStamp = time.Now()
 					entry.failedAttempts++
-					if entry.failedAttempts >= MaxFailedAttempts {
+					if entry.failedAttempts >= MaxFailedAttempts && !entry.infiniteRetry {
 						klog.Errorf("Retry add failed final attempt for %s %s: error: %v", r.ResourceHandler.ObjType, objKey, err)
 					} else {
 						klog.Infof("Retry add failed for %s %s, will try again later: %v", r.ResourceHandler.ObjType, objKey, err)
