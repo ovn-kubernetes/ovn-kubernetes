@@ -133,6 +133,68 @@ func (k *kind) GetK8HostPort() uint16 {
 	return k.hostPort.Allocate()
 }
 
+// getContainerState returns the state of a container by name
+// Returns empty string if container doesn't exist
+func getContainerState(containerName string) (string, error) {
+	stdOut, err := exec.Command(containerengine.Get().String(), "ps", "-a", "-f", fmt.Sprintf("name=^%s$", containerName), "--format", "{{.State}}").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("failed to check container state for %s: %s (%s)", containerName, err, stdOut)
+	}
+
+	state := strings.TrimSpace(string(stdOut))
+	return state, nil
+}
+
+func (k *kind) ShutdownNode(nodeName string) error {
+	state, err := getContainerState(nodeName)
+	if err != nil {
+		return err
+	}
+
+	if state == "" {
+		return fmt.Errorf("cannot shutdown node %q because it doesn't exist: %w", nodeName, api.NotFound)
+	}
+
+	// If container is already stopped/exited, consider it success
+	if state == "exited" || state == "stopped" {
+		framework.Logf("Node %s is already stopped (state: %s)", nodeName, state)
+		return nil
+	}
+
+	framework.Logf("Shutting down node %s (current state: %s)", nodeName, state)
+	stdOut, err := exec.Command(containerengine.Get().String(), "stop", nodeName).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to shutdown node %s: %s (%s)", nodeName, err, stdOut)
+	}
+	framework.Logf("Successfully shut down node %s", nodeName)
+	return nil
+}
+
+func (k *kind) StartNode(nodeName string) error {
+	state, err := getContainerState(nodeName)
+	if err != nil {
+		return err
+	}
+
+	if state == "" {
+		return fmt.Errorf("cannot start node %q because it doesn't exist: %w", nodeName, api.NotFound)
+	}
+
+	// If container is already running, consider it success
+	if state == "running" || state == "up" {
+		framework.Logf("Node %s is already running (state: %s)", nodeName, state)
+		return nil
+	}
+
+	framework.Logf("Starting node %s (current state: %s)", nodeName, state)
+	stdOut, err := exec.Command(containerengine.Get().String(), "start", nodeName).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to start node %s: %s (%s)", nodeName, err, stdOut)
+	}
+	framework.Logf("Successfully started node %s", nodeName)
+	return nil
+}
+
 func (k *kind) NewTestContext() api.Context {
 	ck := &contextKind{Mutex: sync.Mutex{}}
 	ginkgo.DeferCleanup(ck.CleanUp)
@@ -557,15 +619,12 @@ func isNetworkAttachedToContainer(networkName, containerName string) bool {
 }
 
 func doesContainerNameExist(name string) (bool, error) {
-	// check if it is present before retrieving logs
-	stdOut, err := exec.Command(containerengine.Get().String(), "ps", "-f", fmt.Sprintf("name=^%s$", name), "-q").CombinedOutput()
+	state, err := getContainerState(name)
 	if err != nil {
-		return false, fmt.Errorf("failed to check if external container (%s) exists: %v (%s)", name, err, stdOut)
+		return false, err
 	}
-	if string(stdOut) == "" {
-		return false, nil
-	}
-	return true, nil
+	// Empty state means container doesn't exist
+	return state != "", nil
 }
 
 func doesNetworkExist(networkName string) (bool, error) {

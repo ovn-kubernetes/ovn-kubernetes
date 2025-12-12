@@ -768,6 +768,16 @@ ovs-server() {
     USER_ARGS="--ovs-user=${ovs_user_id}"
   fi
 
+  # OVN-K marks NIC port as transient on startup when plugging it into ovs
+  # bridge. This is done so that on ovsdb-server resrtart, the NIC interface is
+  # detached from the bridge, which is necessary to restore connectivity
+  # through the NIC and make the node healthy. Marking the port as transient
+  # works only when we also start ovsdb-server with --delete-transient-ports.
+  #
+  # Note: once ovnkube is started, it will rewire the NIC port back into the
+  # bridge, and move IP configuration as necessary.
+  ovs_options="${ovs_options} --delete-transient-ports"
+
   /usr/share/openvswitch/scripts/ovs-ctl start --no-ovs-vswitchd \
     --system-id=random ${ovs_options} ${USER_ARGS} "$@"
 
