@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"time"
@@ -2052,16 +2053,22 @@ func networkReadyFunc(client dynamic.ResourceInterface, name string) func() erro
 }
 
 func createManifest(namespace, manifest string) (func(), error) {
-	path := "test-" + randString(5) + ".yaml"
-	if err := os.WriteFile(path, []byte(manifest), 0644); err != nil {
-		framework.Failf("Unable to write yaml to disk: %v", err)
+	tmpDir, err := os.MkdirTemp("", "udn-test")
+	if err != nil {
+		return nil, err
 	}
 	cleanup := func() {
-		if err := os.Remove(path); err != nil {
-			framework.Logf("Unable to remove yaml from disk: %v", err)
+		if err := os.RemoveAll(tmpDir); err != nil {
+			framework.Logf("Unable to remove udn test yaml files from disk %s: %v", tmpDir, err)
 		}
 	}
-	_, err := e2ekubectl.RunKubectl(namespace, "create", "-f", path)
+
+	path := filepath.Join(tmpDir, "test-ovn-k-udn-"+rand.String(5)+".yaml")
+	if err := os.WriteFile(path, []byte(manifest), 0644); err != nil {
+		framework.Failf("Unable to write udn yaml to disk: %v", err)
+	}
+
+	_, err = e2ekubectl.RunKubectl(namespace, "create", "-f", path)
 	if err != nil {
 		return cleanup, err
 	}
