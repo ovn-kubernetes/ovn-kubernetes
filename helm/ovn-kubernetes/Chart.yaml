@@ -60,3 +60,7 @@ dependencies:
     version: 1.2.0
     tags:
       - ovs-node
+  - name: ovnkube-single-node-zone-dpu
+    version: 1.2.0
+    tags:
+      - ovnkube-single-node-zone-dpu

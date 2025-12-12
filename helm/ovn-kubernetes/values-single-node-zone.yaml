@@ -9,6 +9,7 @@ tags:
   ovnkube-master: false
   ovnkube-node: false
   ovnkube-node-dpu: false
+  ovnkube-single-node-zone-dpu: false
   ovnkube-node-dpu-host: false
   ovnkube-zone-controller: false
 
