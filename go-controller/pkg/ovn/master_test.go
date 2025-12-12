@@ -2018,6 +2018,10 @@ func newNodeSNATWithMatch(uuid, logicalIP, externalIP, match string) *nbdb.NAT {
 	return nat
 }
 
+func nodeDPUHostLabel() map[string]string {
+	return map[string]string{"k8s.ovn.org/dpu-host": ""}
+}
+
 func TestController_syncNodes(t *testing.T) {
 	gomega.RegisterFailHandler(ginkgo.Fail)
 
@@ -2310,6 +2314,137 @@ func TestController_deleteStaleNodeChassis(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s: Error on syncNodes: %v", tt.name, err)
 			}
+
+			matcher := libovsdbtest.HaveDataIgnoringUUIDs(tt.expectedSBDB)
+			match, err := matcher.Match(sbClient)
+			if err != nil {
+				t.Fatalf("%s: matcher error: %v", tt.name, err)
+			}
+			if !match {
+				t.Fatalf("%s: DB state did not match: %s", tt.name, matcher.FailureMessage(sbClient))
+			}
+		})
+	}
+}
+
+func TestController_syncNodesPeriodic(t *testing.T) {
+	gomega.RegisterFailHandler(ginkgo.Fail)
+	tests := []struct {
+		name         string
+		node1        corev1.Node
+		node2        corev1.Node
+		node3        corev1.Node
+		initialSBDB  []libovsdbtest.TestData
+		expectedSBDB []libovsdbtest.TestData
+		icmode       bool
+	}{
+		{
+			// DPU-Host node
+			node1: corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "node1",
+					Labels: nodeDPUHostLabel(),
+					Annotations: map[string]string{
+						"k8s.ovn.org/node-chassis-id":       "chassis-node1-dpu",
+						"k8s.ovn.org/node-chassis-hostname": "node1-dpu",
+					},
+				},
+			},
+			// Non DPU-Host node without chassis-hostname annotation
+			node2: corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "node2",
+					Annotations: map[string]string{
+						"k8s.ovn.org/node-chassis-id": "chassis-node2",
+					},
+				},
+			},
+			// DPU-Host node without chassis-hostname annotation
+			// unfortunate action from cluster Admin after chassis records for this remote node was created
+			node3: corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "node3",
+					Labels: nodeDPUHostLabel(),
+					Annotations: map[string]string{
+						"k8s.ovn.org/node-chassis-id": "chassis-node3-dpu",
+					},
+				},
+			},
+			name: "removes stale chassis when a node or annotation on DPU hosts is not present in OVN IC mode",
+			// DPU-Host should have node-chassis-hostname annotation to retain the Chassis
+			// corresponding to its DPU.
+			// Non DPU-Host nodes will not have this annotation and stale chassis is instead based
+			// on their nodename.
+			initialSBDB: []libovsdbtest.TestData{
+				&sbdb.Chassis{Name: "chassis-node1-dpu", Hostname: "node1-dpu"},
+				&sbdb.ChassisPrivate{Name: "chassis-node1-dpu"},
+				&sbdb.Chassis{Name: "chassis-node2", Hostname: "node2"},
+				&sbdb.ChassisPrivate{Name: "chassis-node2"},
+				&sbdb.Chassis{Name: "chassis-node3-dpu", Hostname: "node3-dpu"},
+				&sbdb.ChassisPrivate{Name: "chassis-node3-dpu"},
+				&sbdb.Chassis{Name: "chassis-node4", Hostname: "node4"},
+				&sbdb.ChassisPrivate{Name: "chassis-node4"},
+			},
+			expectedSBDB: []libovsdbtest.TestData{
+				&sbdb.Chassis{Name: "chassis-node1-dpu", Hostname: "node1-dpu"},
+				&sbdb.ChassisPrivate{Name: "chassis-node1-dpu"},
+				&sbdb.Chassis{Name: "chassis-node2", Hostname: "node2"},
+				&sbdb.ChassisPrivate{Name: "chassis-node2"},
+			},
+			icmode: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stopChan := make(chan struct{})
+			wg := &sync.WaitGroup{}
+			defer func() {
+				close(stopChan)
+				wg.Wait()
+			}()
+			kubeFakeClient := fake.NewSimpleClientset(&corev1.NodeList{
+				Items: []corev1.Node{tt.node1, tt.node2},
+			})
+			egressFirewallFakeClient := &egressfirewallfake.Clientset{}
+			egressIPFakeClient := &egressipfake.Clientset{}
+			fakeClient := &util.OVNMasterClientset{
+				KubeClient:           kubeFakeClient,
+				EgressIPClient:       egressIPFakeClient,
+				EgressFirewallClient: egressFirewallFakeClient,
+			}
+			f, err := factory.NewMasterWatchFactory(fakeClient)
+			if err != nil {
+				t.Fatalf("%s: Error creating master watch factory: %v", tt.name, err)
+			}
+			err = f.Start()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			defer f.Shutdown()
+
+			dbSetup := libovsdbtest.TestSetup{
+				SBData: tt.initialSBDB,
+			}
+			nbClient, sbClient, libovsdbCleanup, err := libovsdbtest.NewNBSBTestHarness(dbSetup)
+			if err != nil {
+				t.Fatalf("Error creating libovsdb test harness: %v", err)
+			}
+			t.Cleanup(libovsdbCleanup.Cleanup)
+
+			controller, err := NewOvnController(
+				fakeClient,
+				f,
+				stopChan,
+				nil,
+				networkmanager.Default().Interface(),
+				nbClient,
+				sbClient,
+				record.NewFakeRecorder(0),
+				wg,
+				nil,
+				NewPortCache(stopChan),
+			)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			config.OVNKubernetesFeature.EnableInterconnect = tt.icmode
+			controller.syncNodesPeriodic()
 
 			matcher := libovsdbtest.HaveDataIgnoringUUIDs(tt.expectedSBDB)
 			match, err := matcher.Match(sbClient)

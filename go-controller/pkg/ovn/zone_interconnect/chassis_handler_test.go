@@ -28,11 +28,15 @@ var _ = ginkgo.Describe("Zone Interconnect Chassis Operations", func() {
 		testNode3       corev1.Node
 		testNode4       corev1.Node
 		testNode5       corev1.Node
+		testNode6       corev1.Node
+		testNode7       corev1.Node
 		node1Chassis    sbdb.Chassis
 		node2Chassis    sbdb.Chassis
 		node3Chassis    sbdb.Chassis
 		node4Chassis    sbdb.Chassis
 		node5Chassis    sbdb.Chassis
+		node6Chassis    sbdb.Chassis
+		node7Chassis    sbdb.Chassis
 		node5Encap      sbdb.Encap
 		initialSBDB     []libovsdbtest.TestData
 	)
@@ -57,10 +61,13 @@ var _ = ginkgo.Describe("Zone Interconnect Chassis Operations", func() {
 		node2Chassis = sbdb.Chassis{Name: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac7", Hostname: "node2", UUID: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac7"}
 		node3Chassis = sbdb.Chassis{Name: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac8", Hostname: "node3", UUID: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac8"}
 		node4Chassis = sbdb.Chassis{Name: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac9", Hostname: "node4", UUID: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac9"}
-		node5Chassis = sbdb.Chassis{Name: "cb9ec8fa-b409-4ef3-9f42-d9283c47aaca", Hostname: "node5", UUID: "cb9ec8fa-b409-4ef3-9f42-d9283c47aac9a",
+		node5Chassis = sbdb.Chassis{Name: "cb9ec8fa-b409-4ef3-9f42-d9283c47aaca", Hostname: "node5", UUID: "cb9ec8fa-b409-4ef3-9f42-d9283c47aaca",
 			Encaps: []string{"cb9ec8fa-b409-4ef3-9f42-d9283c47aacb"}}
 		node5Encap = sbdb.Encap{ChassisName: "cb9ec8fa-b409-4ef3-9f42-d9283c47aaca", IP: "10.0.0.16", Type: "geneve",
 			UUID: "cb9ec8fa-b409-4ef3-9f42-d9283c47aacb"}
+		node6Chassis = sbdb.Chassis{Name: "cb9ec8fa-b409-4ef3-9f42-d9283c47aacc", Hostname: "node6-dpu", UUID: "cb9ec8fa-b409-4ef3-9f42-d9283c47aacc",
+			Encaps: []string{"cb9ec8fa-b409-4ef3-9f42-d9283c47aacd"}, OtherConfig: map[string]string{"is-remote": "true"}}
+		node7Chassis = sbdb.Chassis{Name: "cb9ec8fa-b409-4ef3-9f42-d9283c47aace"}
 
 		testNode1 = corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
@@ -104,6 +111,23 @@ var _ = ginkgo.Describe("Zone Interconnect Chassis Operations", func() {
 				Name: "node5",
 				Annotations: map[string]string{"k8s.ovn.org/node-chassis-id": "cb9ec8fa-b409-4ef3-9f42-d9283c47aaca",
 					"k8s.ovn.org/node-encap-ips": "[\"10.0.0.11\"]"},
+			},
+		}
+		testNode6 = corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "node6",
+				Labels: map[string]string{"k8s.ovn.org/dpu-host": ""},
+				Annotations: map[string]string{"k8s.ovn.org/node-chassis-id": "cb9ec8fa-b409-4ef3-9f42-d9283c47aacc",
+					"k8s.ovn.org/node-chassis-hostname": "node6-dpu",
+					"k8s.ovn.org/node-encap-ips":        "[\"10.0.0.20\"]"},
+			},
+		}
+		testNode7 = corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "node7",
+				Labels: map[string]string{"k8s.ovn.org/dpu-host": ""},
+				Annotations: map[string]string{"k8s.ovn.org/node-chassis-id": "cb9ec8fa-b409-4ef3-9f42-d9283c47aace",
+					"k8s.ovn.org/node-encap-ips": "[\"10.0.0.21\"]"},
 			},
 		}
 
@@ -348,6 +372,53 @@ var _ = ginkgo.Describe("Zone Interconnect Chassis Operations", func() {
 			nodeCh, err = libovsdbops.GetChassis(libovsdbOvnSBClient, &node1Chassis)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			gomega.Expect(nodeCh.OtherConfig).Should(gomega.HaveKeyWithValue("is-remote", "false"))
+
+			return nil
+		}
+
+		err := app.Run([]string{
+			app.Name,
+			"-cluster-subnets=" + clusterCIDR,
+			"-init-cluster-manager",
+			"-zone-join-switch-subnets=" + joinSubnetCIDR,
+			"-enable-interconnect",
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	})
+
+	ginkgo.It("Add remote zone DPU Host nodes", func() {
+		app.Action = func(ctx *cli.Context) error {
+			dbSetup := libovsdbtest.TestSetup{
+				SBData: initialSBDB,
+			}
+
+			_, err := config.InitConfig(ctx, nil, nil)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			config.Kubernetes.HostNetworkNamespace = ""
+
+			var libovsdbOvnSBClient libovsdbclient.Client
+			_, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			zoneChassisHandler := NewZoneChassisHandler(libovsdbOvnSBClient)
+
+			// Add testNode6 as a remote node
+			err = zoneChassisHandler.AddRemoteZoneNode(&testNode6)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Check the SB Chassis.
+			nodeCh, err := libovsdbops.GetChassis(libovsdbOvnSBClient, &node6Chassis)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(nodeCh.OtherConfig).Should(gomega.HaveKeyWithValue("is-remote", "true"))
+
+			// Add testNode7 as a remote node
+			// Should fail as node-chassis-hostname annotation is not present
+			err = zoneChassisHandler.AddRemoteZoneNode(&testNode7)
+			gomega.Expect(err).To(gomega.HaveOccurred())
+
+			// Check the SB Chassis.
+			_, err = libovsdbops.GetChassis(libovsdbOvnSBClient, &node7Chassis)
+			gomega.Expect(err).To(gomega.HaveOccurred())
 
 			return nil
 		}
