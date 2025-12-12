@@ -224,6 +224,96 @@ func HaveEmptyData() gomegatypes.GomegaMatcher {
 	return gomega.WithTransform(transform, gomega.BeEmpty())
 }
 
+// HaveDataSubset asserts that all expected TestData objects exist in the actual database,
+// but ignores any extra data. UUIDs are ignored when comparing.
+func HaveDataSubset(expected ...TestData) gomegatypes.GomegaMatcher {
+	if len(expected) == 1 {
+		if e, ok := expected[0].([]TestData); ok {
+			expected = e
+		}
+	}
+	matchers := []*testDataMatcher{}
+	for _, e := range expected {
+		matchers = append(matchers, matchTestData(true, e))
+	}
+
+	transform := func(client libovsdbclient.Client) []TestData {
+		return getTestDataFromClientCache(client)
+	}
+
+	return gomega.WithTransform(transform, gomega.ContainElements(matchers))
+}
+
+type SubsetOption func(expected, actual TestData) bool
+
+// HaveDataSubsetMatching asserts that for each expected object, there exists a corresponding
+// object in the actual DB for which the provided SubsetOption returns true.
+func HaveDataSubsetMatching(expected []TestData, subset SubsetOption) gomegatypes.GomegaMatcher {
+	transform := func(client libovsdbclient.Client) []TestData {
+		return getTestDataFromClientCache(client)
+	}
+
+	matchers := make([]gomegatypes.GomegaMatcher, 0, len(expected))
+	for _, e := range expected {
+		eCopy := e
+		matcher := gomega.WithTransform(func(actual TestData) bool {
+			return subset(eCopy, actual)
+		}, gomega.BeTrue())
+		matchers = append(matchers, matcher)
+	}
+
+	return gomega.WithTransform(transform, gomega.ContainElements(matchers))
+}
+
+// MatchSubsetFields returns a SubsetOption that only compares the provided fields.
+func MatchSubsetFields(fields ...string) SubsetOption {
+	return func(expected, actual TestData) bool {
+		ev := reflect.ValueOf(expected)
+		av := reflect.ValueOf(actual)
+
+		if ev.Kind() == reflect.Ptr {
+			ev = ev.Elem()
+		}
+		if av.Kind() == reflect.Ptr {
+			av = av.Elem()
+		}
+		if !ev.IsValid() || !av.IsValid() {
+			return false
+		}
+
+		// Require struct inputs to safely FieldByName
+		if ev.Kind() != reflect.Struct || av.Kind() != reflect.Struct {
+			return false
+		}
+
+		for _, f := range fields {
+			ef := ev.FieldByName(f)
+			af := av.FieldByName(f)
+			if !ef.IsValid() || !af.IsValid() {
+				// field doesn't exist — skip or fail depending on strictness
+				continue
+			}
+			// Avoid panic when accessing unexported fields
+			if !ef.CanInterface() || !af.CanInterface() {
+				continue
+			}
+
+			// Handle slice order-insensitive comparison (e.g. Ports)
+			if ef.Kind() == reflect.Slice && af.Kind() == reflect.Slice {
+				if !isSetEqual(ef.Interface(), af.Interface()) {
+					return false
+				}
+				continue
+			}
+
+			if !reflect.DeepEqual(ef.Interface(), af.Interface()) {
+				return false
+			}
+		}
+		return true
+	}
+}
+
 func haveData(ignoreUUIDs, nameUUIDs bool, expected []TestData) gomegatypes.GomegaMatcher {
 	if len(expected) == 1 {
 		if e, ok := expected[0].([]TestData); ok {

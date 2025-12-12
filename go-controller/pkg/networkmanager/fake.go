@@ -4,8 +4,11 @@ import (
 	"context"
 	"sync"
 
+	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+
 	"k8s.io/apimachinery/pkg/util/sets"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
 )
@@ -24,9 +27,11 @@ func (fnc *FakeNetworkController) Cleanup() error {
 	return nil
 }
 
-func (nc *FakeNetworkController) Reconcile(util.NetInfo) error {
+func (fnc *FakeNetworkController) Reconcile(util.NetInfo) error {
 	return nil
 }
+
+func (fnc *FakeNetworkController) HandleNetworkRefChange(_ string, _ bool) {}
 
 type FakeControllerManager struct{}
 
@@ -46,6 +51,10 @@ func (fcm *FakeControllerManager) Reconcile(_ string, _, _ util.NetInfo) error {
 	return nil
 }
 
+func (fcm *FakeControllerManager) Filter(_ *nettypes.NetworkAttachmentDefinition) (bool, error) {
+	return false, nil
+}
+
 type FakeNetworkManager struct {
 	sync.Mutex
 	// namespace -> netInfo
@@ -54,6 +63,7 @@ type FakeNetworkManager struct {
 	HandlerFuncs    []handlerFunc
 	// UDNNamespaces are a list of namespaces that require UDN for primary network
 	UDNNamespaces sets.Set[string]
+	Reconciled    []string
 }
 
 func (fnm *FakeNetworkManager) RegisterNADHandler(h handlerFunc) error {
@@ -87,6 +97,20 @@ func (fnm *FakeNetworkManager) GetActiveNetworkForNamespace(namespace string) (u
 	return network, nil
 }
 
+func (fnm *FakeNetworkManager) GetPrimaryNADForNamespace(namespace string) (string, error) {
+	if primaryNetwork, ok := fnm.PrimaryNetworks[namespace]; ok {
+		if primaryNetwork == nil {
+			return "", util.NewInvalidPrimaryNetworkError(namespace)
+		}
+		nads := primaryNetwork.GetNADs()
+		if len(nads) == 0 {
+			return "", util.NewInvalidPrimaryNetworkError(namespace)
+		}
+		return nads[0], nil
+	}
+	return types.DefaultNetworkName, nil
+}
+
 func (fnm *FakeNetworkManager) GetActiveNetworkForNamespaceFast(namespace string) util.NetInfo {
 	fnm.Lock()
 	defer fnm.Unlock()
@@ -112,6 +136,12 @@ func (fnm *FakeNetworkManager) GetActiveNetwork(networkName string) util.NetInfo
 	return fnm.GetNetwork(networkName)
 }
 
+func (fnm *FakeNetworkManager) UpdateNADState(key string, _ bool) {
+	fnm.Reconciled = append(fnm.Reconciled, key)
+}
+
+func (fnm *FakeNetworkManager) NotifyNetworkRefChange(_, _ string, _ bool) {}
+
 func (fnm *FakeNetworkManager) GetActiveNetworkNamespaces(networkName string) ([]string, error) {
 	namespaces := make([]string, 0)
 	for namespaceName, primaryNAD := range fnm.PrimaryNetworks {
@@ -132,4 +162,8 @@ func (fnm *FakeNetworkManager) DoWithLock(f func(network util.NetInfo) error) er
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func (fnm *FakeNetworkManager) Reconcile(name string) {
+	fnm.Reconciled = append(fnm.Reconciled, name)
 }

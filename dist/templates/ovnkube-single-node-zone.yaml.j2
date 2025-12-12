@@ -440,6 +440,10 @@ spec:
           value: "{{ ovn_network_segmentation_enable }}"
         - name: OVN_PRE_CONF_UDN_ADDR_ENABLE
           value: "{{ ovn_pre_conf_udn_addr_enable }}"
+        - name: OVN_DYNAMIC_UDN_ALLOCATION
+          value: "{{ ovn_enable_dynamic_udn_allocation }}"
+        - name: OVN_DYNAMIC_UDN_GRACE_PERIOD
+          value: "{{ ovn_dynamic_udn_grace_period }}"
         - name: OVN_ROUTE_ADVERTISEMENTS_ENABLE
           value: "{{ ovn_route_advertisements_enable }}"
         - name: OVN_ADVERTISED_UDN_ISOLATION_MODE
