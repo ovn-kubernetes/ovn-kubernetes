@@ -1,5 +1,5 @@
-# Values for ovn-kubernetes with single-node zone interconnect
-# Requires: ovnkube-single-node-zone, ovnkube-control-plane
+# Values for ovn-kubernetes with single-node zone interconnect for DPUs cluster
+# Requires: ovnkube-single-node-zone-dpu
 
 # -- list of dependent subcharts that need to be installed for the given deployment mode, these subcharts haven't been tested yet.
 tags:
@@ -8,25 +8,16 @@ tags:
   ovnkube-db-raft: false
   ovnkube-master: false
   ovnkube-node: false
-  ovnkube-node-dpu: false
-  ovnkube-single-node-zone-dpu: false
+  ovnkube-control-plane: false
   ovnkube-node-dpu-host: false
+  ovnkube-node-dpu: false
+  ovnkube-single-node-zone: false
   ovnkube-zone-controller: false
 
-# -- Endpoint of Kubernetes api server
-k8sAPIServer: https://172.25.0.2:6443
-# -- IP range for Kubernetes pods, /16 is the top level range, under which each /24 range will be assigned to a node
-podNetwork: 10.244.0.0/16/24
-# -- A comma-separated set of CIDR notation IP ranges from which k8s assigns service cluster IPs. This should be the same as the value provided for kube-apiserver "--service-cluster-ip-range" option
-serviceNetwork: 10.96.0.0/16
-# -- MTU of network interface in a Kubernetes pod
-mtu: 1400
 # -- Whether or not call `lookup` Helm function, set it to `true` if you want to run `helm dry-run/template/lint`
 skipCallToK8s: false
 
 global:
-  # -- The net device to be used for management port, will be renamed to ovn-k8s-mp0 and used to allow host network services and pods to access k8s pod and service networks
-  nodeMgmtPortNetdev: ""
   # -- The interface on nodes that will be used for external gateway network traffic
   extGatewayNetworkInterface: ""
   # -- GENEVE UDP port (default 6081)
@@ -50,9 +41,7 @@ global:
   # -- The v6 subnet for transit switches and routers
   v6TransitSubnet: "fd97::/64"
   # -- Whether or not enable ovnkube identity webhook
-  enableOvnKubeIdentity: true
-  # -- Indicate if ovnkube run master and node in one process
-  enableCompactMode: false
+  enableOvnKubeIdentity: false
   # -- Whether or not to enable hybrid overlay functionality
   enableHybridOverlay: ""
   # -- A comma separated set of IP subnets and the associated hostsubnetlengths (eg, \"10.128.0.0/14/23,10.0.0.0/14/23\") to use with the extended hybrid network
@@ -139,7 +128,7 @@ global:
   # -- Maximum period in seconds for which an IPFIX flow record is cached and aggregated before being sent
   # @default 60
   ipfixCacheActiveTimeout: ""
-  # -- OVN remote probe interval in ms 
+  # -- OVN remote probe interval in ms
   # @default 100000
   remoteProbeInterval: 100000
   # -- Enable monitoring all data from SB DB instead of conditionally monitoring the data relevant to this node only
@@ -148,15 +137,35 @@ global:
   # -- ovn-controller wait time in ms before clearing OpenFlow rules during start up
   # @default 0
   ofctrlWaitBeforeClear: ""
-  # -- Separate log file for libovsdb client 
+  # -- Separate log file for libovsdb client
   libovsdbClientLogFile: ""
-  image:
+  # -- Container images
+  # -- Image for DPUs
+  dpuImage:
     # -- Image repository for ovn-kubernetes components
     repository: ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-ubuntu
     # -- Specify image tag to run
     tag: master
     # -- Image pull policy
     pullPolicy: IfNotPresent
+  # -- The name of secret used for pulling image. Use only if needed
+  imagePullSecretName: ""
+  # -- Endpoint of DPU Host cluster's Kubernetes api server
+  dpuHostClusterK8sAPIServer: https://172.25.0.2:6443
+  # -- DPU Host cluster's Kubernetes Access Token
+  dpuHostClusterK8sToken: ""
+  # -- DPU Host cluster's Kubernetes Access Certs Data
+  dpuHostClusterK8sCACertData: ""
+  # -- DPU Host cluster's Kubernetes Access Token FIle
+  dpuHostClusterK8sTokenFile: ""
+  # -- DPU Host cluster's Kubernetes Access Certs file
+  dpuHostClusterK8sCACert: ""
+  # -- DPU Host cluster's Network CIDR
+  dpuHostClusterNetworkCIDR: 10.244.0.0/16/24
+  # -- DPU Host cluster's Service CIDR
+  dpuHostClusterServiceCIDR: 10.96.0.0/16
+  # -- MTU of network interface in a Kubernetes pod
+  mtu: 1400
 
 # -- prometheus monitoring related fields
 monitoring:
@@ -166,8 +175,3 @@ monitoring:
   # in defining that.
   commonServiceMonitorSelectorLabels:
     release: kube-prometheus-stack
-  # -- deploy ServiceMonitors for service discovery using the Prometheus Operator
-  enableServiceMonitor: false
-  # -- deploy PrometheusRules for specific metric collection using the Prometheus Operator
-  enablePrometheusRule: false
-
