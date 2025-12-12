@@ -6,6 +6,8 @@ import (
 	"net"
 	"time"
 
+	nadlisters "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
+
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -33,7 +35,7 @@ var (
 //
 // If the namespace uses the default network (no primary UDN), returns ("", nil, nil).
 // Callers should check for empty nadKey to determine if namespace has a primary UDN.
-func getPrimaryNADForNamespace(networkMgr networkmanager.Interface, namespaceName string) (nadKey string, network util.NetInfo, err error) {
+func getPrimaryNADForNamespace(networkMgr networkmanager.Interface, namespaceName string, nadLister nadlisters.NetworkAttachmentDefinitionLister) (nadKey string, network util.NetInfo, err error) {
 	namespacePrimaryNetwork, err := networkMgr.GetActiveNetworkForNamespace(namespaceName)
 	if err != nil {
 		if util.IsInvalidPrimaryNetworkError(err) || util.IsUnprocessedActiveNetworkError(err) {
@@ -60,6 +62,23 @@ func getPrimaryNADForNamespace(networkMgr networkmanager.Interface, namespaceNam
 	primaryNADs := namespacePrimaryNetwork.GetNADs()
 	if len(primaryNADs) != 1 {
 		return "", nil, fmt.Errorf("expected exactly one primary NAD for namespace %s, got %d", namespaceName, len(primaryNADs))
+	}
+	// There is a race condition where NAD is already deleted from kapi
+	// but network manager is too slow to update the network manager cache.
+	// In this case, GetNADs() will return the NADs even though they are deleted.
+	// So let's fetch the NAD again from the kapi to double confirm it exists
+	// before returning it.
+	nadNamespace, nadName, err := cache.SplitMetaNamespaceKey(primaryNADs[0])
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to split NAD key %s: %w", primaryNADs[0], err)
+	}
+	_, err = nadLister.NetworkAttachmentDefinitions(nadNamespace).Get(nadName)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			klog.Warningf("NAD %s not found in kapi, returning empty network info even if network manager cache says it exists", primaryNADs[0])
+			return "", nil, nil
+		}
+		return "", nil, err
 	}
 	// GetNADs() returns NADs in "namespace/name" format, so use directly
 	return primaryNADs[0], namespacePrimaryNetwork, nil
@@ -229,7 +248,7 @@ func (c *Controller) discoverSelectedNetworks(cnc *networkconnectv1.ClusterNetwo
 				continue
 			}
 			for _, ns := range namespaces {
-				nadKey, namespacePrimaryNetwork, err := getPrimaryNADForNamespace(c.networkManager, ns.Name)
+				nadKey, namespacePrimaryNetwork, err := getPrimaryNADForNamespace(c.networkManager, ns.Name, c.nadLister)
 				if err != nil {
 					errs = append(errs, fmt.Errorf("failed to get active network for namespace %s: %w", ns.Name, err))
 					continue

@@ -492,7 +492,7 @@ func (c *Controller) reconcileNamespace(key string) error {
 		return fmt.Errorf("failed to get namespace %s: %w", key, err)
 	}
 
-	primaryNAD, _, err := getPrimaryNADForNamespace(c.networkManager, key)
+	primaryNAD, _, err := getPrimaryNADForNamespace(c.networkManager, key, c.nadLister)
 	if err != nil {
 		klog.Errorf("Failed to get primary NAD for namespace %s: %v", key, err)
 		// best effort, usually if a NAD then gets created/deleted in this namespace,
