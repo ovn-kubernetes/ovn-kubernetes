@@ -72,24 +72,23 @@ type userDefinedNetworkControllerInfo struct {
 }
 
 type FakeOVN struct {
-	fakeClient         *util.OVNMasterClientset
-	watcher            *factory.WatchFactory
-	controller         *DefaultNetworkController
-	stopChan           chan struct{}
-	wg                 *sync.WaitGroup
-	asf                *addressset.FakeAddressSetFactory
-	fakeRecorder       *record.FakeRecorder
-	nbClient           libovsdbclient.Client
-	sbClient           libovsdbclient.Client
-	dbSetup            libovsdbtest.TestSetup
-	nbsbCleanup        *libovsdbtest.Context
-	egressQoSWg        *sync.WaitGroup
-	egressSVCWg        *sync.WaitGroup
-	anpWg              *sync.WaitGroup
-	networkManager     networkmanager.Controller
-	eIPController      *EgressIPController
-	portCache          *PortCache
-	fakeNodeNADTracker *fakeNodeNADTracker
+	fakeClient     *util.OVNMasterClientset
+	watcher        *factory.WatchFactory
+	controller     *DefaultNetworkController
+	stopChan       chan struct{}
+	wg             *sync.WaitGroup
+	asf            *addressset.FakeAddressSetFactory
+	fakeRecorder   *record.FakeRecorder
+	nbClient       libovsdbclient.Client
+	sbClient       libovsdbclient.Client
+	dbSetup        libovsdbtest.TestSetup
+	nbsbCleanup    *libovsdbtest.Context
+	egressQoSWg    *sync.WaitGroup
+	egressSVCWg    *sync.WaitGroup
+	anpWg          *sync.WaitGroup
+	networkManager networkmanager.Controller
+	eIPController  *EgressIPController
+	portCache      *PortCache
 
 	// information map of all UDN controllers
 	userDefinedNetworkControllers map[string]userDefinedNetworkControllerInfo
@@ -104,12 +103,11 @@ func NewFakeOVN(useFakeAddressSet bool) *FakeOVN {
 		asf = addressset.NewFakeAddressSetFactory(DefaultNetworkControllerName)
 	}
 	return &FakeOVN{
-		asf:                asf,
-		fakeRecorder:       record.NewFakeRecorder(10),
-		egressQoSWg:        &sync.WaitGroup{},
-		egressSVCWg:        &sync.WaitGroup{},
-		anpWg:              &sync.WaitGroup{},
-		fakeNodeNADTracker: &fakeNodeNADTracker{},
+		asf:          asf,
+		fakeRecorder: record.NewFakeRecorder(10),
+		egressQoSWg:  &sync.WaitGroup{},
+		egressSVCWg:  &sync.WaitGroup{},
+		anpWg:        &sync.WaitGroup{},
 
 		userDefinedNetworkControllers: map[string]userDefinedNetworkControllerInfo{},
 		fullL2UDNControllers:          map[string]*Layer2UserDefinedNetworkController{},
@@ -567,7 +565,7 @@ func (o *FakeOVN) NewUserDefinedNetworkController(netattachdef *nettypes.Network
 
 		switch topoType {
 		case types.Layer3Topology:
-			l3Controller, err := NewLayer3UserDefinedNetworkController(cnci, mutableNetInfo, o.networkManager.Interface(), nil, o.eIPController, o.portCache, o.fakeNodeNADTracker)
+			l3Controller, err := NewLayer3UserDefinedNetworkController(cnci, mutableNetInfo, o.networkManager.Interface(), nil, o.eIPController, o.portCache)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			if o.asf != nil { // use fake asf only when enabled
 				l3Controller.addressSetFactory = asf
@@ -575,7 +573,7 @@ func (o *FakeOVN) NewUserDefinedNetworkController(netattachdef *nettypes.Network
 			userDefinedNetworkController = &l3Controller.BaseUserDefinedNetworkController
 			o.fullL3UDNControllers[netName] = l3Controller
 		case types.Layer2Topology:
-			l2Controller, err := NewLayer2UserDefinedNetworkController(cnci, mutableNetInfo, o.networkManager.Interface(), nil, o.portCache, o.eIPController, o.fakeNodeNADTracker)
+			l2Controller, err := NewLayer2UserDefinedNetworkController(cnci, mutableNetInfo, o.networkManager.Interface(), nil, o.portCache, o.eIPController)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			if o.asf != nil { // use fake asf only when enabled
 				l2Controller.addressSetFactory = asf

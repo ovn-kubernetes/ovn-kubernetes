@@ -138,11 +138,11 @@ func (h *layer2UserDefinedNetworkControllerEventHandler) AddResource(obj interfa
 			}
 			return h.oc.addUpdateLocalNodeEvent(node, nodeParams)
 		}
-		if config.OVNKubernetesFeature.EnableDynamicUDNAllocation && h.oc.nodeNADTracker != nil {
+		if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
 			nads := h.oc.GetNADs()
 			hasNad := false
 			for _, nadName := range nads {
-				if h.oc.nodeNADTracker.NodeHasNAD(node.Name, nadName) {
+				if h.oc.networkManager.NodeHasNAD(node.Name, nadName) {
 					hasNad = true
 					break
 				}
@@ -229,11 +229,11 @@ func (h *layer2UserDefinedNetworkControllerEventHandler) UpdateResource(oldObj, 
 
 			return h.oc.addUpdateLocalNodeEvent(newNode, nodeSyncsParam)
 		} else {
-			if config.OVNKubernetesFeature.EnableDynamicUDNAllocation && h.oc.nodeNADTracker != nil {
+			if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
 				nads := h.oc.GetNADs()
 				hasNad := false
 				for _, nadName := range nads {
-					if h.oc.nodeNADTracker.NodeHasNAD(newNode.Name, nadName) {
+					if h.oc.networkManager.NodeHasNAD(newNode.Name, nadName) {
 						hasNad = true
 						break
 					}
@@ -360,7 +360,6 @@ func NewLayer2UserDefinedNetworkController(
 	routeImportManager routeimport.Manager,
 	portCache *PortCache,
 	eIPController *EgressIPController,
-	nodeNADTracker networkmanager.Tracker,
 ) (*Layer2UserDefinedNetworkController, error) {
 
 	stopChan := make(chan struct{})
@@ -405,7 +404,6 @@ func NewLayer2UserDefinedNetworkController(
 					cancelableCtx:               util.NewCancelableContext(),
 					networkManager:              networkManager,
 					routeImportManager:          routeImportManager,
-					nodeNADTracker:              nodeNADTracker,
 				},
 			},
 		},

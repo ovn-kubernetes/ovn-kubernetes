@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 
-	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	networkattchmentdefclientset "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -70,8 +69,8 @@ type ClusterManager struct {
 
 	raController *routeadvertisements.Controller
 
-	podTracker      networkmanager.TrackerController
-	egressIPTracker networkmanager.TrackerController
+	podTracker      *networkmanager.PodTrackerController
+	egressIPTracker *networkmanager.EgressIPTrackerController
 }
 
 // NewClusterManager creates a new cluster manager to manage the cluster nodes.
@@ -193,9 +192,9 @@ func NewClusterManager(
 	}
 
 	if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
-		cm.podTracker = networkmanager.NewPodTrackerController("cluster-manager-pod-tracker", wf, cm.OnNetworkRefChange, cm.networkManager.Interface().GetPrimaryNADForNamespace)
+		cm.podTracker = networkmanager.NewPodTrackerController("cluster-manager-pod-tracker", wf, cm.onNetworkRefChange, cm.networkManager.Interface().GetPrimaryNADForNamespace)
 		if config.OVNKubernetesFeature.EnableEgressIP {
-			cm.egressIPTracker = networkmanager.NewEgressIPTrackerController("cluster-manager-egress-ip-tracker", wf, cm.OnNetworkRefChange, cm.networkManager.Interface().GetPrimaryNADForNamespace)
+			cm.egressIPTracker = networkmanager.NewEgressIPTrackerController("cluster-manager-egress-ip-tracker", wf, cm.onNetworkRefChange, cm.networkManager.Interface().GetPrimaryNADForNamespace)
 		}
 	}
 
@@ -393,13 +392,9 @@ func initTunnelKeysAllocator(nadClient networkattchmentdefclientset.Interface, c
 	return tunnelKeysAllocator, nil
 }
 
-func (cm *ClusterManager) Filter(_ *nettypes.NetworkAttachmentDefinition) (bool, error) {
-	return false, nil
-}
-
 // OnNetworkRefChange is a callback function used to signal an action to this controller when
 // a network needs to be added or removed or just updated
-func (cm *ClusterManager) OnNetworkRefChange(node, nadNamespacedName string, active bool) {
+func (cm *ClusterManager) onNetworkRefChange(node, nadNamespacedName string, active bool) {
 	klog.V(4).Infof("Network change for cluster manager triggered by pod/egress IP events "+
 		"on node: %s, NAD: %s, active: %t", node, nadNamespacedName, active)
 
@@ -442,7 +437,7 @@ func (cm *ClusterManager) OnNetworkRefChange(node, nadNamespacedName string, act
 
 	uniqueNodes := sets.New[string]()
 	for _, node := range allNodes {
-		if cm.NodeHasNAD(node.Name, util.GetNADName(nad.Namespace, nad.Name)) {
+		if cm.nodeHasNAD(node.Name, util.GetNADName(nad.Namespace, nad.Name)) {
 			uniqueNodes.Insert(node.Name)
 		}
 	}
@@ -482,7 +477,7 @@ func (cm *ClusterManager) OnNetworkRefChange(node, nadNamespacedName string, act
 	}
 }
 
-func (cm *ClusterManager) NodeHasNAD(node, nad string) bool {
+func (cm *ClusterManager) nodeHasNAD(node, nad string) bool {
 	if cm.podTracker != nil && cm.podTracker.NodeHasNAD(node, nad) {
 		return true
 	}
