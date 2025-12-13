@@ -10,6 +10,9 @@ const (
 	logicalRouterPolicy
 	qos
 	nat
+	logicalRouter
+	logicalRouterPort
+	logicalRouterStaticRoute
 )
 
 const (
@@ -42,7 +45,8 @@ const (
 	// ClusterOwnerType means the object is cluster-scoped and doesn't belong to any k8s objects
 	ClusterOwnerType ownerType = "Cluster"
 	// UDNIsolationOwnerType means the object is needed to implement UserDefinedNetwork isolation
-	UDNIsolationOwnerType ownerType = "UDNIsolation"
+	UDNIsolationOwnerType          ownerType = "UDNIsolation"
+	ClusterNetworkConnectOwnerType ownerType = "ClusterNetworkConnect"
 
 	// owner extra IDs, make sure to define only 1 ExternalIDKey for every string value
 	PriorityKey           ExternalIDKey = "priority"
@@ -50,6 +54,8 @@ const (
 	GressIdxKey           ExternalIDKey = "gress-index"
 	IPFamilyKey           ExternalIDKey = "ip-family"
 	NetworkKey            ExternalIDKey = "network"
+	NetworkIDKey          ExternalIDKey = "network-id"
+	NodeIDKey             ExternalIDKey = "node-id"
 	TypeKey               ExternalIDKey = "type"
 	IpKey                 ExternalIDKey = "ip"
 	PortPolicyIndexKey    ExternalIDKey = "port-policy-index"
@@ -373,4 +379,38 @@ var NetworkQoS = newObjectIDsType(qos, NetworkQoSOwnerType, []ExternalIDKey{
 	ObjectNameKey,
 	// rule index
 	RuleIndex,
+})
+
+var LogicalRouterClusterNetworkConnect = newObjectIDsType(logicalRouter, ClusterNetworkConnectOwnerType, []ExternalIDKey{
+	// logical router name
+	ObjectNameKey,
+})
+
+var LogicalRouterPortClusterNetworkConnect = newObjectIDsType(logicalRouterPort, ClusterNetworkConnectOwnerType, []ExternalIDKey{
+	// CNC name
+	ObjectNameKey,
+	// source network ID
+	NetworkIDKey,
+	// node ID
+	// for layer2 network type ports, the node ID is 0 since there is only one port per network.
+	// for layer3 network type ports, the node ID is the node ID of the node that the port is connected to.
+	NodeIDKey,
+})
+
+var LogicalRouterPolicyClusterNetworkConnect = newObjectIDsType(logicalRouterPolicy, ClusterNetworkConnectOwnerType, []ExternalIDKey{
+	// CNC name
+	ObjectNameKey,
+	// source network name
+	NetworkKey,
+	// destination network ID
+	NetworkIDKey,
+})
+
+var LogicalRouterStaticRouteClusterNetworkConnect = newObjectIDsType(logicalRouterStaticRoute, ClusterNetworkConnectOwnerType, []ExternalIDKey{
+	// CNC name
+	ObjectNameKey,
+	// destination network name
+	NetworkKey,
+	// destination node ID
+	NodeIDKey,
 })

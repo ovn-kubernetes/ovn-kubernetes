@@ -26,6 +26,7 @@ var (
 	RouteAdvertisements   = New("RouteAdvertisements")
 	Unidle                = New("Unidle")
 	NetworkQos            = New("NetworkQos")
+	NetworkConnect        = New("NetworkConnect")
 )
 
 func New(name string) ginkgo.Labels {
