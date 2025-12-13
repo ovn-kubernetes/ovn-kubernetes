@@ -267,6 +267,8 @@ ovn_egressservice_enable=${OVN_EGRESSSERVICE_ENABLE:-false}
 ovn_multi_network_enable=${OVN_MULTI_NETWORK_ENABLE:-false}
 #OVN_NETWORK_SEGMENTATION_ENABLE - enable user defined primary networks for ovn-kubernetes
 ovn_network_segmentation_enable=${OVN_NETWORK_SEGMENTATION_ENABLE:=false}
+#OVN_NETWORK_CONNECT_ENABLE - enable network connect for ovn-kubernetes
+ovn_network_connect_enable=${OVN_NETWORK_CONNECT_ENABLE:=false}
 #OVN_PRE_CONF_UDN_ADDR_ENABLE - enable connecting workloads with custom network configuration to UDNs
 ovn_pre_conf_udn_addr_enable=${OVN_PRE_CONF_UDN_ADDR_ENABLE:=false}
 #OVN_NROUTE_ADVERTISEMENTS_ENABLE - enable route advertisements for ovn-kubernetes
@@ -1599,6 +1601,12 @@ ovnkube-controller() {
   fi
   echo "network_segmentation_enabled_flag=${network_segmentation_enabled_flag}"
 
+  network_connect_enabled_flag=
+  if [[ ${ovn_network_connect_enable} == "true" ]]; then
+	  network_connect_enabled_flag="--enable-network-connect"
+  fi
+  echo "network_connect_enabled_flag=${network_connect_enabled_flag}"
+
   pre_conf_udn_addr_enable_flag=
   if [[ ${ovn_pre_conf_udn_addr_enable} == "true" ]]; then
 	  pre_conf_udn_addr_enable_flag="--enable-preconfigured-udn-addresses"
@@ -1731,6 +1739,7 @@ ovnkube-controller() {
     ${multicast_enabled_flag} \
     ${multi_network_enabled_flag} \
     ${network_segmentation_enabled_flag} \
+    ${network_connect_enabled_flag} \
     ${pre_conf_udn_addr_enable_flag} \
     ${route_advertisements_enabled_flag} \
     ${advertised_udn_isolation_flag} \
@@ -1936,6 +1945,12 @@ ovnkube-controller-with-node() {
 	  network_segmentation_enabled_flag="--enable-multi-network --enable-network-segmentation"
   fi
   echo "network_segmentation_enabled_flag=${network_segmentation_enabled_flag}"
+
+  network_connect_enabled_flag=
+  if [[ ${ovn_network_connect_enable} == "true" ]]; then
+	  network_connect_enabled_flag="--enable-network-connect"
+  fi
+  echo "network_connect_enabled_flag=${network_connect_enabled_flag}"
 
   pre_conf_udn_addr_enable_flag=
   if [[ ${ovn_pre_conf_udn_addr_enable} == "true" ]]; then
@@ -2209,6 +2224,7 @@ ovnkube-controller-with-node() {
     ${multicast_enabled_flag} \
     ${multi_network_enabled_flag} \
     ${network_segmentation_enabled_flag} \
+    ${network_connect_enabled_flag} \
     ${pre_conf_udn_addr_enable_flag} \
     ${route_advertisements_enabled_flag} \
     ${advertised_udn_isolation_flag} \
@@ -2378,6 +2394,12 @@ ovn-cluster-manager() {
   fi
   echo "network_segmentation_enabled_flag=${network_segmentation_enabled_flag}"
 
+  network_connect_enabled_flag=
+  if [[ ${ovn_network_connect_enable} == "true" ]]; then
+	  network_connect_enabled_flag="--enable-network-connect"
+  fi
+  echo "network_connect_enabled_flag=${network_connect_enabled_flag}"
+
   pre_conf_udn_addr_enable_flag=
   if [[ ${ovn_pre_conf_udn_addr_enable} == "true" ]]; then
 	  pre_conf_udn_addr_enable_flag="--enable-preconfigured-udn-addresses"
@@ -2456,6 +2478,7 @@ ovn-cluster-manager() {
     ${multicast_enabled_flag} \
     ${multi_network_enabled_flag} \
     ${network_segmentation_enabled_flag} \
+    ${network_connect_enabled_flag} \
     ${pre_conf_udn_addr_enable_flag} \
     ${route_advertisements_enabled_flag} \
     ${advertised_udn_isolation_flag} \
@@ -2629,6 +2652,12 @@ ovn-node() {
   if [[ ${ovn_network_segmentation_enable} == "true" ]]; then
 	  network_segmentation_enabled_flag="--enable-multi-network --enable-network-segmentation"
   fi
+
+  network_connect_enabled_flag=
+  if [[ ${ovn_network_connect_enable} == "true" ]]; then
+	  network_connect_enabled_flag="--enable-network-connect"
+  fi
+  echo "network_connect_enabled_flag=${network_connect_enabled_flag}"
 
   pre_conf_udn_addr_enable_flag=
   if [[ ${ovn_pre_conf_udn_addr_enable} == "true" ]]; then
@@ -2874,6 +2903,7 @@ ovn-node() {
         ${multicast_enabled_flag} \
         ${multi_network_enabled_flag} \
         ${network_segmentation_enabled_flag} \
+        ${network_connect_enabled_flag} \
         ${pre_conf_udn_addr_enable_flag} \
         ${route_advertisements_enabled_flag} \
         ${advertised_udn_isolation_flag} \

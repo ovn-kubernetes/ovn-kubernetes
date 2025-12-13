@@ -3,6 +3,7 @@ package node
 import (
 	"fmt"
 	"net"
+	"slices"
 	"sync"
 
 	"k8s.io/klog/v2"
@@ -20,6 +21,8 @@ type SubnetAllocator interface {
 	Usage() (uint64, uint64)
 	// Count returns the number available (both used and unused) v4 and v6 subnets
 	Count() (uint64, uint64)
+	// RangeCount returns the number of v4 and v6 ranges configured in the allocator
+	RangeCount() (uint64, uint64)
 	AllocateNetworks(string) ([]*net.IPNet, error)
 	AllocateIPv4Network(string) (*net.IPNet, error)
 	AllocateIPv6Network(string) (*net.IPNet, error)
@@ -30,6 +33,8 @@ type SubnetAllocator interface {
 	ReleaseNetworks(string, ...*net.IPNet) error
 	// ReleaseAllNetworks releases all networks owned by the given owner
 	ReleaseAllNetworks(string)
+	// FreeUnusedRanges returns the list of unused ranges in the allocator
+	FreeUnusedRanges() []*net.IPNet
 }
 
 type BaseSubnetAllocator struct {
@@ -43,6 +48,13 @@ var _ SubnetAllocator = &BaseSubnetAllocator{}
 
 func NewSubnetAllocator() SubnetAllocator {
 	return &BaseSubnetAllocator{}
+}
+
+// RangeCount returns the number of v4 and v6 ranges configured in the allocator
+func (sna *BaseSubnetAllocator) RangeCount() (uint64, uint64) {
+	sna.Lock()
+	defer sna.Unlock()
+	return uint64(len(sna.v4ranges)), uint64(len(sna.v6ranges))
 }
 
 // Usage returns the number of used/allocated v4 and v6 subnets
@@ -220,6 +232,27 @@ func (sna *BaseSubnetAllocator) ReleaseAllNetworks(owner string) {
 	sna.Lock()
 	defer sna.Unlock()
 	sna.releaseAllNetworks(owner)
+}
+
+func (sna *BaseSubnetAllocator) FreeUnusedRanges() []*net.IPNet {
+	sna.Lock()
+	defer sna.Unlock()
+	var freedSubnets []*net.IPNet
+	sna.v4ranges = slices.DeleteFunc(sna.v4ranges, func(snr *subnetAllocatorRange) bool {
+		if snr.usage() == 0 {
+			freedSubnets = append(freedSubnets, snr.network)
+			return true
+		}
+		return false
+	})
+	sna.v6ranges = slices.DeleteFunc(sna.v6ranges, func(snr *subnetAllocatorRange) bool {
+		if snr.usage() == 0 {
+			freedSubnets = append(freedSubnets, snr.network)
+			return true
+		}
+		return false
+	})
+	return freedSubnets
 }
 
 // releaseNetworks attempts to release all given subnets, even if a failure

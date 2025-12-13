@@ -44,11 +44,11 @@ spec:
 `,
 	},
 	{
-		Description: "valid dual-stack CIDRs",
+		Description: "valid dual-stack CIDRs with matching host bits",
 		Manifest: `
 apiVersion: k8s.ovn.org/v1
 kind: ClusterNetworkConnect
-metadata:	
+metadata:
   name: valid-dual-stack
 spec:
   networkSelectors:
@@ -60,8 +60,8 @@ spec:
   connectSubnets:
     - cidr: "192.168.0.0/16"
       networkPrefix: 24
-    - cidr: "fd01::/64"
-      networkPrefix: 96
+    - cidr: "fd01::/112"
+      networkPrefix: 120
   connectivity: ["PodNetwork"]
 `,
 	},
@@ -107,8 +107,8 @@ spec:
   connectSubnets:
     - cidr: "192.168.0.0/16"
       networkPrefix: 24
-    - cidr: "fd01::/64"
-      networkPrefix: 96
+    - cidr: "fd01::/112"
+      networkPrefix: 120
   connectivity: ["PodNetwork", "ClusterIPServiceNetwork"]
 `,
 	},
