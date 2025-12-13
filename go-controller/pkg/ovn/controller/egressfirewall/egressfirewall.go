@@ -317,10 +317,10 @@ func (oc *EFController) initialSync() error {
 
 func (oc *EFController) Start() error {
 	klog.Infof("Starting EgressFirewall controller")
-	if err := controller.StartWithInitialSync(oc.initialSync, oc.controller, oc.nodeController); err != nil {
+	if err := oc.networkManager.RegisterNADHandler(oc.handleNetworkEvent); err != nil {
 		return err
 	}
-	return oc.networkManager.RegisterNADHandler(oc.handleNetworkEvent)
+	return controller.StartWithInitialSync(oc.initialSync, oc.controller, oc.nodeController)
 }
 
 func (oc *EFController) Stop() {
@@ -332,17 +332,19 @@ func (oc *EFController) handleNetworkEvent(nadName string, info util.NetInfo, re
 	if info != nil && !info.IsPrimaryNetwork() { // egressFirewall only supported for primary network
 		return
 	}
+	namespace, _, err := cache.SplitMetaNamespaceKey(nadName)
+	if err != nil {
+		klog.Errorf("%s: failed splitting key %s: %v", oc.name, nadName, err)
+		return
+	}
 	if removed { // delete case
-		namespace, _, err := cache.SplitMetaNamespaceKey(nadName)
-		if err != nil {
-			klog.Errorf("%s: failed splitting key %s: %v", oc.name, nadName, err)
-			return
-		}
 		oc.cache.LockKey(namespace)
 		entry, ok := oc.cache.Load(namespace)
 		if !ok {
 			oc.cache.UnlockKey(namespace)
-			return // no cache entry exists, so nothing to remove
+			// No cache entry yet; still reconcile to ensure stale ACLs are cleaned once cache is built.
+			oc.controller.Reconcile(fmt.Sprintf("%s/%s", namespace, egressFirewallName))
+			return
 		}
 		entry.stale = true
 		oc.cache.UnlockKey(namespace)
@@ -351,11 +353,6 @@ func (oc *EFController) handleNetworkEvent(nadName string, info util.NetInfo, re
 		return
 	}
 	// add/update case
-	namespace, _, err := cache.SplitMetaNamespaceKey(nadName)
-	if err != nil {
-		klog.Errorf("%s: failed splitting key %s: %v", oc.name, nadName, err)
-		return
-	}
 	ef, err := oc.efLister.EgressFirewalls(namespace).Get(egressFirewallName)
 	if err != nil || ef == nil {
 		return
