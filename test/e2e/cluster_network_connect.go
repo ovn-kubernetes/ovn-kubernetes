@@ -1914,3 +1914,458 @@ var _ = Describe("ClusterNetworkConnect ClusterManagerController", feature.Netwo
 		})
 	})
 })
+
+// ============================================================================
+// OVN Database Side Testing - End-to-End Connectivity Validation
+// ============================================================================
+var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.NetworkConnect, func() {
+	f := wrappedTestFramework("cnc-ovndb")
+	// disable automatic namespace creation, we need to add the required UDN label
+	f.SkipNamespaceCreation = true
+
+	var (
+		cs clientset.Interface
+	)
+
+	BeforeEach(func() {
+		cs = f.ClientSet
+	})
+
+	// httpServerPodConfig returns a podConfiguration for an HTTP server pod
+	httpServerPodConfig := func(podName, namespace string) podConfiguration {
+		cfg := *podConfig(podName, withCommand(func() []string {
+			return httpServerContainerCmd(8080)
+		}))
+		cfg.namespace = namespace
+		return cfg
+	}
+
+	// getPrimaryNetworkPodIPs gets the pod IPs for supported IP families on a given primary network
+	// Returns a slice of IP strings based on cluster's supported IP families
+	getPrimaryNetworkPodIPs := func(namespace, podName, networkName string) []string {
+		ips := make([]string, 0, 2)
+		for _, family := range getSupportedIPFamiliesSlice(cs) {
+			ip, err := getPodAnnotationIPsForPrimaryNetworkByIPFamily(cs, namespace, podName, networkName, family)
+			Expect(err).NotTo(HaveOccurred(), fmt.Sprintf("failed to get %s IP for pod %s/%s on network %s", family, namespace, podName, networkName))
+			if ip != "" {
+				ips = append(ips, ip)
+			}
+		}
+		Expect(ips).NotTo(BeEmpty(), fmt.Sprintf("pod %s/%s should have at least one IP on network %s", namespace, podName, networkName))
+		return ips
+	}
+
+	// checkConnectivity checks connectivity from one pod to another
+	// Returns true if connection succeeds/fails as expected
+	checkConnectivity := func(fromNamespace, fromPodName, toIP string, expectSuccess bool) bool {
+		stdout, err := e2ekubectl.RunKubectl(fromNamespace, "exec", fromPodName, "--",
+			"curl", "--connect-timeout", "5", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+			fmt.Sprintf("http://%s:8080/hostname", toIP))
+		if expectSuccess {
+			return err == nil && stdout == "200"
+		}
+		return err != nil || stdout != "200"
+	}
+
+	// verifyCrossNetworkConnectivity verifies connectivity from a set of pods to another set
+	// Supports dual-stack by testing all IPs for each pod
+	// Uses Eventually for expected success, Consistently for expected failure
+	verifyCrossNetworkConnectivity := func(fromPods map[string]*corev1.Pod, toPodIPs map[string][]string, expectSuccess bool) {
+		for fromName, fromPod := range fromPods {
+			for toName, toIPs := range toPodIPs {
+				for _, toIP := range toIPs {
+					msg := fmt.Sprintf("cross-network connectivity from %s to %s (%s) expectSuccess=%v", fromName, toName, toIP, expectSuccess)
+					if expectSuccess {
+						Eventually(func() bool {
+							return checkConnectivity(fromPod.Namespace, fromPod.Name, toIP, true)
+						}, 2*time.Minute, 5*time.Second).Should(BeTrue(), msg)
+					} else {
+						// When connectivity is expected to fail, it should fail consistently
+						Consistently(func() bool {
+							return checkConnectivity(fromPod.Namespace, fromPod.Name, toIP, false)
+						}, 15*time.Second, 2*time.Second).Should(BeTrue(), msg)
+					}
+				}
+			}
+		}
+	}
+
+	// verifyFullMeshConnectivity verifies connectivity between all pods
+	// Uses Eventually for expected success, Consistently for expected failure
+	verifyFullMeshConnectivity := func(pods map[string]*corev1.Pod, podIPs map[string][]string, expectSuccess bool) {
+		for fromName, fromPod := range pods {
+			for toName, toIPs := range podIPs {
+				if fromName == toName {
+					continue // Skip self-connectivity
+				}
+				for _, toIP := range toIPs {
+					msg := fmt.Sprintf("connectivity from %s to %s (%s) expectSuccess=%v", fromName, toName, toIP, expectSuccess)
+					if expectSuccess {
+						Eventually(func() bool {
+							return checkConnectivity(fromPod.Namespace, fromPod.Name, toIP, true)
+						}, 2*time.Minute, 5*time.Second).Should(BeTrue(), msg)
+					} else {
+						Consistently(func() bool {
+							return checkConnectivity(fromPod.Namespace, fromPod.Name, toIP, false)
+						}, 15*time.Second, 2*time.Second).Should(BeTrue(), msg)
+					}
+				}
+			}
+		}
+	}
+
+	/*
+	   This test validates end-to-end connectivity through CNC (ClusterNetworkConnect).
+
+	   Test Scenario:
+	   - Create 2 CUDNs: "black" and "white", each serving 2 namespaces with pods
+	   - Create 2 UDNs: "blue" and "green", each in its own namespace with pods
+	   - Initially verify pods cannot communicate across different networks
+	   - Create CNC selecting all 4 networks
+	   - Verify pods can now communicate across all connected networks
+	   - Test dynamic deselection and reselection of networks via label changes
+	   - Verify proper isolation when networks are disconnected
+	   - Test cleanup when CNC is deleted
+
+	   Steps:
+	   1.  Create 2 CUDNs (black, white) each with 2 namespaces and pods
+	   2.  Create 2 UDNs (blue, green) each with 1 namespace and pods
+	   3.  Verify initial isolation - pods cannot talk across networks
+	   4.  Create CNC selecting all 4 networks
+	   5.  Verify CM annotations are set correctly (subnet allocation)
+	   6.  Verify pods can now communicate across all networks
+	   7.  Deselect blue UDN by changing namespace label
+	   8.  Verify blue pods cannot talk to other network pods
+	   9.  Deselect green UDN by updating CNC selector
+	   10. Verify green pods cannot talk to other network pods
+	   11. Add back namespace label and CNC selector for both UDNs
+	   12. Verify blue and green pods can talk to other networks again
+	   13. Change black CUDN labels to stop matching CNC
+	   14. Verify CM annotations are updated
+	   15. Verify black pods cannot talk with other networks
+	   16. Restore black CUDN labels
+	   17. Verify black pods can communicate again
+	   18. Delete CNC
+	   19. Verify all pods cannot talk to pods in other networks
+	   20. Re-create the CNC
+	   21. Verify pods can communicate across all networks again
+	*/
+	Context("End-to-end connectivity validation", func() {
+		It("should manage cross-network connectivity through CNC lifecycle", func() {
+			// Test identifiers
+			testID := rand.String(5)
+			cncName := generateCNCName()
+
+			// Network names
+			blackCUDN := fmt.Sprintf("black-cudn-%s", testID)
+			whiteCUDN := fmt.Sprintf("white-cudn-%s", testID)
+			blueUDN := "blue-udn"
+			greenUDN := "green-udn"
+
+			// Namespace names (fixed for predictability in CUDN selectors)
+			blackNs0 := fmt.Sprintf("black-ns-0-%s", testID)
+			blackNs1 := fmt.Sprintf("black-ns-1-%s", testID)
+			whiteNs0 := fmt.Sprintf("white-ns-0-%s", testID)
+			whiteNs1 := fmt.Sprintf("white-ns-1-%s", testID)
+			blueNs := fmt.Sprintf("blue-ns-%s", testID)
+			greenNs := fmt.Sprintf("green-ns-%s", testID)
+
+			// Labels for CNC selection
+			cudnLabel := map[string]string{"cnc-test": testID, "type": "cudn"}
+			pudnLabel := map[string]string{"cnc-test": testID, "type": "pudn"}
+
+			// Store pods and their IPs for connectivity testing (supports dual-stack)
+			pods := make(map[string]*corev1.Pod)
+			podIPs := make(map[string][]string)
+			var err error
+
+			// Cleanup
+			DeferCleanup(func() {
+				By("Cleanup: Deleting all test resources")
+				deleteCNC(cncName)
+
+				// Delete pods first
+				for _, pod := range pods {
+					_ = cs.CoreV1().Pods(pod.Namespace).Delete(context.Background(), pod.Name, metav1.DeleteOptions{})
+				}
+
+				// Delete UDNs
+				deleteUDN(blueNs, blueUDN)
+				deleteUDN(greenNs, greenUDN)
+
+				// Delete CUDNs
+				deleteCUDN(blackCUDN)
+				deleteCUDN(whiteCUDN)
+
+				// Delete namespaces
+				deleteNamespace(cs, blackNs0)
+				deleteNamespace(cs, blackNs1)
+				deleteNamespace(cs, whiteNs0)
+				deleteNamespace(cs, whiteNs1)
+				deleteNamespace(cs, blueNs)
+				deleteNamespace(cs, greenNs)
+			})
+
+			// =====================================================================
+			// Step 1: Create 2 CUDNs (black, white) each with 2 namespaces and pods
+			// =====================================================================
+			By("1. Creating namespaces for black and white CUDNs")
+			createUDNNamespaceWithName(cs, blackNs0, nil)
+			createUDNNamespaceWithName(cs, blackNs1, nil)
+			createUDNNamespaceWithName(cs, whiteNs0, nil)
+			createUDNNamespaceWithName(cs, whiteNs1, nil)
+
+			By("1. Creating black CUDN targeting black-ns-0 and black-ns-1")
+			createLayer3PrimaryCUDN(cs, blackCUDN, cudnLabel, blackNs0, blackNs1)
+
+			By("1. Waiting for black CUDN to be ready")
+			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, blackCUDN), 60*time.Second, time.Second).Should(Succeed())
+
+			By("1. Creating white CUDN targeting white-ns-0 and white-ns-1")
+			createLayer3PrimaryCUDN(cs, whiteCUDN, cudnLabel, whiteNs0, whiteNs1)
+
+			By("1. Waiting for white CUDN to be ready")
+			Eventually(clusterUserDefinedNetworkReadyFunc(f.DynamicClient, whiteCUDN), 60*time.Second, time.Second).Should(Succeed())
+
+			By("1. Creating pods in black CUDN namespaces")
+			pods["black-pod-0"] = runUDNPod(cs, blackNs0, httpServerPodConfig("black-pod-0", blackNs0), nil)
+			pods["black-pod-1"] = runUDNPod(cs, blackNs1, httpServerPodConfig("black-pod-1", blackNs1), nil)
+			podIPs["black-pod-0"] = getPrimaryNetworkPodIPs(blackNs0, "black-pod-0", namespacedName(blackNs0, blackCUDN))
+			podIPs["black-pod-1"] = getPrimaryNetworkPodIPs(blackNs1, "black-pod-1", namespacedName(blackNs1, blackCUDN))
+
+			By("1. Creating pods in white CUDN namespaces")
+			pods["white-pod-0"] = runUDNPod(cs, whiteNs0, httpServerPodConfig("white-pod-0", whiteNs0), nil)
+			pods["white-pod-1"] = runUDNPod(cs, whiteNs1, httpServerPodConfig("white-pod-1", whiteNs1), nil)
+			podIPs["white-pod-0"] = getPrimaryNetworkPodIPs(whiteNs0, "white-pod-0", namespacedName(whiteNs0, whiteCUDN))
+			podIPs["white-pod-1"] = getPrimaryNetworkPodIPs(whiteNs1, "white-pod-1", namespacedName(whiteNs1, whiteCUDN))
+
+			// =====================================================================
+			// Step 2: Create 2 UDNs (blue, green) each with 1 namespace and pods
+			// =====================================================================
+			By("2. Creating namespaces for blue and green UDNs with PUDN labels")
+			createUDNNamespaceWithName(cs, blueNs, pudnLabel)
+			createUDNNamespaceWithName(cs, greenNs, pudnLabel)
+
+			By("2. Creating blue UDN")
+			createLayer3PrimaryUDN(cs, blueNs, blueUDN)
+
+			By("2. Waiting for blue UDN to be ready")
+			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, blueNs, blueUDN), 60*time.Second, time.Second).Should(Succeed())
+
+			By("2. Creating green UDN")
+			createLayer3PrimaryUDN(cs, greenNs, greenUDN)
+
+			By("2. Waiting for green UDN to be ready")
+			Eventually(userDefinedNetworkReadyFunc(f.DynamicClient, greenNs, greenUDN), 60*time.Second, time.Second).Should(Succeed())
+
+			By("2. Creating pods in blue and green UDN namespaces")
+			pods["blue-pod"] = runUDNPod(cs, blueNs, httpServerPodConfig("blue-pod", blueNs), nil)
+			pods["green-pod"] = runUDNPod(cs, greenNs, httpServerPodConfig("green-pod", greenNs), nil)
+			podIPs["blue-pod"] = getPrimaryNetworkPodIPs(blueNs, "blue-pod", namespacedName(blueNs, blueUDN))
+			podIPs["green-pod"] = getPrimaryNetworkPodIPs(greenNs, "green-pod", namespacedName(greenNs, greenUDN))
+
+			// =====================================================================
+			// Step 3: Verify initial isolation - pods cannot talk across networks
+			// =====================================================================
+			By("3. Verifying initial isolation - black pods cannot reach white pods")
+			blackPods := map[string]*corev1.Pod{"black-pod-0": pods["black-pod-0"], "black-pod-1": pods["black-pod-1"]}
+			whitePodIPs := map[string][]string{"white-pod-0": podIPs["white-pod-0"], "white-pod-1": podIPs["white-pod-1"]}
+			verifyCrossNetworkConnectivity(blackPods, whitePodIPs, false)
+
+			By("3. Verifying initial isolation - white pods cannot reach blue pods")
+			whitePods := map[string]*corev1.Pod{"white-pod-0": pods["white-pod-0"], "white-pod-1": pods["white-pod-1"]}
+			bluePodIPs := map[string][]string{"blue-pod": podIPs["blue-pod"]}
+			verifyCrossNetworkConnectivity(whitePods, bluePodIPs, false)
+
+			By("3. Verifying initial isolation - blue pods cannot reach green pods")
+			bluePods := map[string]*corev1.Pod{"blue-pod": pods["blue-pod"]}
+			greenPodIPs := map[string][]string{"green-pod": podIPs["green-pod"]}
+			verifyCrossNetworkConnectivity(bluePods, greenPodIPs, false)
+
+			// =====================================================================
+			// Step 4: Create CNC selecting all 4 networks
+			// =====================================================================
+			By("4. Creating CNC selecting all 4 networks (2 CUDNs + 2 UDNs)")
+			createOrUpdateCNC(cs, cncName, cudnLabel, pudnLabel)
+
+			// =====================================================================
+			// Step 5: Verify CM annotations are set correctly
+			// =====================================================================
+			By("5. Verifying CNC has both tunnel ID and subnet annotations")
+			verifyCNCHasBothAnnotations(cncName)
+
+			By("5. Verifying CNC subnet annotation has 4 networks")
+			verifyCNCSubnetAnnotationNetworkCount(cncName, 4)
+
+			// =====================================================================
+			// Step 6: Verify pods can now communicate across all networks
+			// =====================================================================
+			By("6. Verifying pods can communicate across all connected networks")
+			verifyFullMeshConnectivity(pods, podIPs, true)
+
+			// =====================================================================
+			// Step 7: Deselect blue UDN by changing namespace label
+			// =====================================================================
+			By("7. Removing PUDN label from blue namespace to deselect blue UDN")
+			_, err = cs.CoreV1().Namespaces().Patch(context.Background(), blueNs,
+				types.MergePatchType,
+				[]byte(`{"metadata":{"labels":{"type":null}}}`),
+				metav1.PatchOptions{})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("7. Verifying CNC subnet annotation now has 3 networks")
+			verifyCNCSubnetAnnotationNetworkCount(cncName, 3)
+
+			// =====================================================================
+			// Step 8: Verify blue pods cannot talk to other network pods
+			// =====================================================================
+			By("8. Verifying blue pods cannot reach other network pods")
+			verifyCrossNetworkConnectivity(bluePods, whitePodIPs, false)
+			verifyCrossNetworkConnectivity(bluePods, greenPodIPs, false)
+
+			By("8. Verifying other networks can still communicate with each other")
+			verifyCrossNetworkConnectivity(blackPods, whitePodIPs, true)
+			verifyCrossNetworkConnectivity(whitePods, greenPodIPs, true)
+
+			// =====================================================================
+			// Step 9: Deselect green UDN by changing its namespace label
+			// =====================================================================
+			By("9. Removing PUDN label from green namespace to deselect green UDN")
+			_, err = cs.CoreV1().Namespaces().Patch(context.Background(), greenNs,
+				types.MergePatchType,
+				[]byte(`{"metadata":{"labels":{"type":null}}}`),
+				metav1.PatchOptions{})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("9. Verifying CNC subnet annotation now has 2 networks (only CUDNs)")
+			verifyCNCSubnetAnnotationNetworkCount(cncName, 2)
+
+			// =====================================================================
+			// Step 10: Verify green pods cannot talk to other network pods
+			// =====================================================================
+			greenPods := map[string]*corev1.Pod{"green-pod": pods["green-pod"]}
+			By("10. Verifying green pods cannot reach other network pods")
+			verifyCrossNetworkConnectivity(greenPods, whitePodIPs, false)
+			verifyCrossNetworkConnectivity(greenPods, bluePodIPs, false)
+
+			By("10. Verifying black and white CUDNs can still communicate")
+			verifyCrossNetworkConnectivity(blackPods, whitePodIPs, true)
+			verifyCrossNetworkConnectivity(whitePods, map[string][]string{"black-pod-0": podIPs["black-pod-0"]}, true)
+
+			// =====================================================================
+			// Step 11: Add back namespace labels to select both UDNs
+			// =====================================================================
+			By("11. Adding PUDN label back to blue namespace")
+			_, err = cs.CoreV1().Namespaces().Patch(context.Background(), blueNs,
+				types.MergePatchType,
+				[]byte(`{"metadata":{"labels":{"type":"pudn"}}}`),
+				metav1.PatchOptions{})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("11. Adding PUDN label back to green namespace")
+			_, err = cs.CoreV1().Namespaces().Patch(context.Background(), greenNs,
+				types.MergePatchType,
+				[]byte(`{"metadata":{"labels":{"type":"pudn"}}}`),
+				metav1.PatchOptions{})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("11. Verifying CNC subnet annotation has 4 networks again")
+			verifyCNCSubnetAnnotationNetworkCount(cncName, 4)
+
+			// =====================================================================
+			// Step 12: Verify blue and green pods can talk to other networks
+			// =====================================================================
+			By("12. Verifying blue and green pods can communicate with other networks")
+			verifyCrossNetworkConnectivity(bluePods, whitePodIPs, true)
+			verifyCrossNetworkConnectivity(greenPods, whitePodIPs, true)
+			verifyCrossNetworkConnectivity(bluePods, greenPodIPs, true)
+
+			// =====================================================================
+			// Step 13: Change black CUDN labels to stop matching CNC
+			// =====================================================================
+			By("13. Removing CNC-matching label from black CUDN")
+			_, err = e2ekubectl.RunKubectl("", "label", "clusteruserdefinednetwork", blackCUDN, "type-")
+			Expect(err).NotTo(HaveOccurred())
+
+			// =====================================================================
+			// Step 14: Verify CM annotations are updated
+			// =====================================================================
+			By("14. Verifying CNC subnet annotation now has 3 networks")
+			verifyCNCSubnetAnnotationNetworkCount(cncName, 3)
+
+			// =====================================================================
+			// Step 15: Verify black pods cannot talk with other networks
+			// =====================================================================
+			By("15. Verifying black pods cannot reach other network pods")
+			verifyCrossNetworkConnectivity(blackPods, whitePodIPs, false)
+			verifyCrossNetworkConnectivity(blackPods, bluePodIPs, false)
+			verifyCrossNetworkConnectivity(blackPods, greenPodIPs, false)
+
+			By("15. Verifying white, blue, and green networks can still communicate")
+			verifyCrossNetworkConnectivity(whitePods, bluePodIPs, true)
+			verifyCrossNetworkConnectivity(whitePods, greenPodIPs, true)
+			verifyCrossNetworkConnectivity(bluePods, greenPodIPs, true)
+
+			// =====================================================================
+			// Step 16: Restore black CUDN labels
+			// =====================================================================
+			By("16. Adding CNC-matching label back to black CUDN")
+			_, err = e2ekubectl.RunKubectl("", "label", "clusteruserdefinednetwork", blackCUDN, "type=cudn")
+			Expect(err).NotTo(HaveOccurred())
+
+			By("16. Verifying CNC subnet annotation has 4 networks again")
+			verifyCNCSubnetAnnotationNetworkCount(cncName, 4)
+
+			// =====================================================================
+			// Step 17: Verify black pods can communicate again
+			// =====================================================================
+			By("17. Verifying black pods can reach other network pods again")
+			verifyCrossNetworkConnectivity(blackPods, whitePodIPs, true)
+			verifyCrossNetworkConnectivity(blackPods, bluePodIPs, true)
+			verifyCrossNetworkConnectivity(blackPods, greenPodIPs, true)
+
+			// =====================================================================
+			// Step 18: Delete CNC
+			// =====================================================================
+			By("18. Deleting CNC")
+			deleteCNC(cncName)
+
+			By("18. Waiting for CNC deletion to complete")
+			Eventually(func() bool {
+				_, err := getCNCAnnotations(cncName)
+				return err != nil
+			}, 60*time.Second, 2*time.Second).Should(BeTrue())
+
+			// =====================================================================
+			// Step 19: Verify all pods cannot talk to pods in other networks
+			// =====================================================================
+			By("19. Verifying all cross-network connectivity is disabled")
+			verifyCrossNetworkConnectivity(blackPods, whitePodIPs, false)
+			verifyCrossNetworkConnectivity(blackPods, bluePodIPs, false)
+			verifyCrossNetworkConnectivity(blackPods, greenPodIPs, false)
+			verifyCrossNetworkConnectivity(whitePods, bluePodIPs, false)
+			verifyCrossNetworkConnectivity(whitePods, greenPodIPs, false)
+			verifyCrossNetworkConnectivity(bluePods, greenPodIPs, false)
+
+			// =====================================================================
+			// Step 20: Re-create the CNC
+			// =====================================================================
+			By("20. Re-creating CNC selecting all 4 networks")
+			createOrUpdateCNC(cs, cncName, cudnLabel, pudnLabel)
+
+			By("20. Verifying CNC has both tunnel ID and subnet annotations")
+			verifyCNCHasBothAnnotations(cncName)
+
+			By("20. Verifying CNC subnet annotation has 4 networks")
+			verifyCNCSubnetAnnotationNetworkCount(cncName, 4)
+
+			// =====================================================================
+			// Step 21: Verify pods can communicate across all networks again
+			// =====================================================================
+			By("21. Verifying pods can communicate across all connected networks again")
+			verifyFullMeshConnectivity(pods, podIPs, true)
+
+			By("Test completed successfully - CNC lifecycle validated")
+		})
+	})
+})
