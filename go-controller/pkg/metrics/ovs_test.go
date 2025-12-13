@@ -46,11 +46,49 @@ const (
 	ovsAppctlDumpAggregateSampleOutput = "NXST_AGGREGATE reply (xid=0x4): packet_count=856244 byte_count=3464651294 flow_count=30"
 )
 
-var _ = ginkgo.Describe("OVS metrics", func() {
+var _ = ginkgo.Describe("OVS metrics", ginkgo.Ordered, func() {
 	var stopChan chan struct{}
 	var resetsTotalMock, rxDroppedTotalMock, txDroppedTotalMock *mocks.GaugeMock
 	var rxErrorsTotalMock, txErrorsTotalMock, collisionsTotalMock, bridgeTotalMock *mocks.GaugeMock
 	var hwOffloadMock, tcPolicyMock *mocks.GaugeMock
+
+	// This test case pollutes the package-level variables, so here
+	// save original package-level variables to restore after tests
+	var _metricOvsInterfaceResetsTotal prometheus.Gauge
+	var _metricOvsInterfaceRxDroppedTotal prometheus.Gauge
+	var _metricOvsInterfaceTxDroppedTotal prometheus.Gauge
+	var _metricOvsInterfaceRxErrorsTotal prometheus.Gauge
+	var _metricOvsInterfaceTxErrorsTotal prometheus.Gauge
+	var _metricOvsInterfaceCollisionsTotal prometheus.Gauge
+	var _metricOvsBridgeTotal prometheus.Gauge
+	var _metricOvsHwOffload prometheus.Gauge
+	var _metricOvsTcPolicy prometheus.Gauge
+
+	ginkgo.BeforeAll(func() {
+		// Save all original metrics
+		_metricOvsInterfaceResetsTotal = metricOvsInterfaceResetsTotal
+		_metricOvsInterfaceRxDroppedTotal = metricOvsInterfaceRxDroppedTotal
+		_metricOvsInterfaceTxDroppedTotal = metricOvsInterfaceTxDroppedTotal
+		_metricOvsInterfaceRxErrorsTotal = metricOvsInterfaceRxErrorsTotal
+		_metricOvsInterfaceTxErrorsTotal = metricOvsInterfaceTxErrorsTotal
+		_metricOvsInterfaceCollisionsTotal = metricOvsInterfaceCollisionsTotal
+		_metricOvsBridgeTotal = metricOvsBridgeTotal
+		_metricOvsHwOffload = metricOvsHwOffload
+		_metricOvsTcPolicy = metricOvsTcPolicy
+	})
+
+	ginkgo.AfterAll(func() {
+		// Restore all original metrics
+		metricOvsInterfaceResetsTotal = _metricOvsInterfaceResetsTotal
+		metricOvsInterfaceRxDroppedTotal = _metricOvsInterfaceRxDroppedTotal
+		metricOvsInterfaceTxDroppedTotal = _metricOvsInterfaceTxDroppedTotal
+		metricOvsInterfaceRxErrorsTotal = _metricOvsInterfaceRxErrorsTotal
+		metricOvsInterfaceTxErrorsTotal = _metricOvsInterfaceTxErrorsTotal
+		metricOvsInterfaceCollisionsTotal = _metricOvsInterfaceCollisionsTotal
+		metricOvsBridgeTotal = _metricOvsBridgeTotal
+		metricOvsHwOffload = _metricOvsHwOffload
+		metricOvsTcPolicy = _metricOvsTcPolicy
+	})
 
 	linkResets := 1
 	intf1 := vswitchd.Interface{Name: "porta", UUID: buildUUID()}

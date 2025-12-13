@@ -79,7 +79,7 @@ var (
 		Help: "Total number of retries handled by workqueue",
 	}, []string{"name"})
 
-	metrics = []prometheus.Collector{
+	workqueueMetrics = []prometheus.Collector{
 		depth, adds, latency, workDuration, unfinished, longestRunningProcessor, retries,
 	}
 )
@@ -124,7 +124,7 @@ func registerWorkqueueMetrics(namespace, subsystem string) {
 		fmt.Sprintf("%s_%s_workqueue_", namespace, subsystem),
 		prometheus.DefaultRegisterer,
 	)
-	for _, m := range metrics {
+	for _, m := range workqueueMetrics {
 		registry.MustRegister(m)
 	}
 }
