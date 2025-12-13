@@ -39,3 +39,14 @@ the `types.go` has been created according to sig-apimachinery docs, the develope
 `make codegen` to be able to generate all the clientgen, listers and informers for the new
 CRD along with the deep-copy methods and actual yaml files which get created in `_output/crd`
 folder and are copied over to `dist/templates` to then be used when creating a KIND cluster.
+
+## Level-Driven Controllers
+
+We prefer level-driven controllers built with `pkg/controller/controller.go`. When adding a new controller:
+
+- Use the shared controller framework rather than bespoke loops or per-network controllers.
+- Design controllers to be User Defined Network (UDN) aware: a single controller instance should reconcile objects across all networks instead of spinning up one instance per network.
+- If the controller is network-aware, do **not** create a separate NAD informer or reconciler. The network manager is the source of truth for NADs; register a lightweight, non-blocking handler via `RegisterNADHandler` that simply requeues the controller's main objects.
+- Register NAD handlers **before** starting controller workers to avoid missing events during startup.
+- Keep handlers cheap and non-blocking; heavy work belongs in the main controller queue.
+- For a concrete example, see `go-controller/pkg/ovn/controller/egressfirewall/egressfirewall.go`.
